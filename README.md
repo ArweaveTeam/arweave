@@ -4,15 +4,18 @@ This repository holds the Archain server prototype, as well as the App Developer
 
 # Requirements
 
-In order to run the Archain server prototype and ADT, a recent (R19 and bove) version of Erlang is required.
+In order to run the Archain server prototype and ADT, a recent (R19 and above) version of Erlang is required.
 
 # Getting Started
 
 To get started building Archain ADT applications please clone this repository
-and consider checking out the sample applications found in `src/apps`. The
-sample applications provided guide the reader through the development of a
-number of simple Archain applications, form a basic monitoring app, to a
+and consider checking out the sample applications found in `src/apps`. These
+sample applications provided a guide through the development of a
+number of simple Archain applications, from a basic monitoring app, to a
 de-centralised microblogging service.
+
+You can start an Archain server session by running `make session`. The tests
+can be executed by calling `make test_all`.
 
 You can also find detailed tutorials about building Archain apps and services
 on the [Archain youtube channel](http://www.youtube.com/archain).

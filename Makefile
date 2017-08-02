@@ -8,12 +8,12 @@ test: all
 test_apps: all
 	@erl -noshell -s ar test_apps -pa ebin/ -s init stop
 
-all: ebin
+all:
 	erlc +export_all -o ebin/ src/ar.erl
 	erl -noshell -s ar rebuild -pa ebin/ -s init stop
 
-ebin:
-	mkdir -p ebin
+session: all
+	erl -pa ebin/
 
 clean:
 	rm -rf ebin/*
