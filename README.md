@@ -35,13 +35,13 @@ Unimplemented callbacks will be ignored.
 Supported events and callbacks:
 ```
  	new_transaction             Processes a new transaction that has been
-                                submitted to the weave.
+                                  submitted to the weave.
  	confirmed_transaction       Processes new transactions that have been
-                                accepted onto a block.
+                                  accepted onto a block.
  	new_block                   Processes a new block that has been added
-                                to the weave.
+                                  to the weave.
  	message                     Called when non-gossip messages are received
-                                by the server.
+                                  by the server.
 ```
 Each callback can take two optional arguments: the gossip server state
 and an arbitrary application state term. The required inputs and outputs of
