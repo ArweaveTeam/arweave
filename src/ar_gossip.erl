@@ -1,5 +1,5 @@
 -module(ar_gossip).
--export([init/0, init/1, add_peers/2, send/2, recv/2]).
+-export([init/0, init/1, add_peers/2, set_loss_probability/2, send/2, recv/2]).
 -export([pick_random_peers/2, pick_random/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -12,7 +12,9 @@
 
 %% Create a new gossip node state. Optionally, with peer list.
 init() -> init([]).
-init(Peers) -> #gs_state { peers = Peers }.
+init(Peers) when is_list(Peers) -> #gs_state { peers = Peers };
+init(PacketLossP) when is_float(PacketLossP) ->
+	#gs_state { loss_probability = PacketLossP }.
 
 %% Update a gossip protocol state with new peers.
 add_peers(S, []) -> S;
@@ -22,6 +24,10 @@ add_peers(S, [Peer|Peers]) ->
 		false -> add_peers(S#gs_state { peers = [Peer|S#gs_state.peers] }, Peers);
 		true -> add_peers(S, Peers)
 	end.
+
+%% update the probability that a packet will be loss.
+set_loss_probability(S, Prob) ->
+	S#gs_state { loss_probability = Prob }.
 
 %% Send a message to your peers in the gossip network,
 %% if the message has not already been sent.
