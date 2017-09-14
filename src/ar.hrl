@@ -19,13 +19,6 @@
 	wallet_list % A map of wallet blanaces, or undefined.
 }).
 
-%% A weave with associated meta data. Might even be unnecessary?
--record(weave, {
-	block_hashes,
-	wallets,
-	blocks
-}).
-
 %% A transaction, as stored in a block.
 -record(tx, {
 	id,
