@@ -2,6 +2,7 @@
 -export([start/0, start/1, start/2]).
 -export([get_blocks/1, get_balance/2]).
 -export([mine/1, truncate/1, add_tx/2, add_peers/2]).
+-export([set_loss_probability/2]).
 -export([apply_txs/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -58,6 +59,10 @@ mine(Node) ->
 %% Cause a node to forget all but the latest block.
 truncate(Node) ->
 	Node ! truncate.
+
+%% Set the likelohood that a message will be dropped in transmission.
+set_loss_probability(Node, Prob) ->
+	Node ! {set_loss_probability, Prob}.
 
 %% Add a transaction to the current block.
 add_tx(Node, TX) ->
@@ -197,7 +202,13 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 					block_list =
 						Bs -- [lists:keyfind(BlockNum, #block.height, Bs)]
 				}
-			)
+			);
+		{set_loss_probability, Prob} ->
+			server(
+				S#state {
+					gossip = ar_gossip:set_loss_probability(S#state.gossip, Prob)
+				}
+			)	
 	end.
 
 %% Validate a new block, given a server state, a claimed new block, the last block,

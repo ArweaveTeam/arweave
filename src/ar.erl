@@ -1,5 +1,7 @@
 -module(ar).
--export([start/0, test/0, test_apps/0, rebuild/0]).
+-export([start/0, rebuild/0]).
+-export([test/0, test_apps/0]).
+-export([report/1]).
 
 %%% ArkChain server entrypoint and basic utilities.
 
@@ -38,3 +40,7 @@ test() ->
 %% Run tests on the apps.
 test_apps() ->
 	eunit:test(?APP_TEST_MODS, [verbose]).
+
+%% Print an informational message to the console.
+report(X) ->
+	error_logger:info_report(X).

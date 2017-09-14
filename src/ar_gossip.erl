@@ -25,7 +25,7 @@ add_peers(S, [Peer|Peers]) ->
 		true -> add_peers(S, Peers)
 	end.
 
-%% update the probability that a packet will be loss.
+%% Update the probability that a packet will be loss.
 set_loss_probability(S, Prob) ->
 	S#gs_state { loss_probability = Prob }.
 
@@ -41,9 +41,20 @@ send(S, Data) when not is_record(Data, gs_msg) ->
 send(S, Msg) ->
 	case already_heard(S, Msg) of
 		false ->
-			lists:foreach(fun(Peer) -> Peer ! Msg end, S#gs_state.peers),
+			lists:foreach(
+				fun(Peer) -> possibly_send(S, Peer, Msg) end,
+				S#gs_state.peers
+			),
 			{S#gs_state { heard = [Msg#gs_msg.hash|S#gs_state.heard] }, sent};
 		true -> {S, ignored}
+	end.
+
+%% Potentially send a message to a node, depending on state.
+possibly_send(S, Peer, Msg) ->
+	case rand:uniform() >= S#gs_state.loss_probability of
+		true ->
+			Peer ! Msg;
+		false -> not_sent
 	end.
 
 %% Takes a gs_msg and gs_state, returning the message, if it needs to
