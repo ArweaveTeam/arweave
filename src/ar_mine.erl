@@ -1,5 +1,6 @@
 -module(ar_mine).
--export([start/3, change_data/2, stop/1, validate/4]).
+-export([start/3, start/4]).
+-export([change_data/2, stop/1, validate/4]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -7,8 +8,10 @@
 
 %% Returns the PID of a new mining worker process.
 start(Hash, Diff, Data) ->
+	start(Hash, Diff, Data, 0).
+start(Hash, Diff, Data, Delay) ->
 	Parent = self(),
-	spawn(fun() -> server(Parent, Hash, Diff, Data) end).
+	spawn(fun() -> server(Parent, Hash, Diff, Data, Delay) end).
 
 %% Stop a running miner.
 stop(PID) ->
@@ -19,16 +22,17 @@ change_data(PID, NewData) ->
 	PID ! {new_data, NewData}.
 
 %% The main mining server.
-server(Parent, Hash, Diff, Data) ->
+server(Parent, Hash, Diff, Data, Delay) ->
 	receive
 		stop -> ok;
 		{new_data, NewData} ->
-			server(Parent, Hash, Diff, NewData)
-	after 0 ->
+			server(Parent, Hash, Diff, NewData, Delay)
+	after Delay ->
 		case validate(Hash, Diff, Data, Nonce = generate()) of
-			false -> 
-				server(Parent, Hash, Diff, Data);
+			false ->
+				server(Parent, Hash, Diff, Data, Delay);
 			NextHash ->
+				ar:report([{miner, self()}, {found_block, Nonce}]),
 				Parent ! {work_complete, Hash, NextHash, Diff, Nonce},
 				ok
 		end

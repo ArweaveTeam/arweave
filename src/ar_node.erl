@@ -1,8 +1,8 @@
 -module(ar_node).
 -export([start/0, start/1, start/2]).
 -export([get_blocks/1, get_balance/2]).
--export([mine/1, truncate/1, add_tx/2, add_peers/2]).
--export([set_loss_probability/2, set_delay/2]).
+-export([mine/1, automine/1, truncate/1, add_tx/2, add_peers/2]).
+-export([set_loss_probability/2, set_delay/2, set_mining_delay/2]).
 -export([apply_txs/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -15,13 +15,16 @@
 	wallet_list = [],
 	gossip,
 	txs = [],
-	miner
+	miner,
+	mining_delay = 0,
+	automine = false
 }).
 
 %% Start a node, optionally with a list of peers.
 start() -> start([]).
 start(Peers) -> start(Peers, undefined).
-start(Peers, BlockList) ->
+start(Peers, BlockList) -> start(Peers, BlockList, 0).
+start(Peers, BlockList, MiningDelay) ->
 	spawn(
 		fun() ->
 			server(
@@ -32,7 +35,8 @@ start(Peers, BlockList) ->
 						case BlockList of
 							undefined -> [];
 							_ -> (find_sync_block(BlockList))#block.wallet_list
-						end
+						end,
+					mining_delay = MiningDelay
 				}
 			)
 		end
@@ -56,6 +60,10 @@ get_balance(Node, PubKey) ->
 mine(Node) ->
 	Node ! mine.
 
+%% Trigger a node to mine continually.
+automine(Node) ->
+	Node ! automine.
+
 %% Cause a node to forget all but the latest block.
 truncate(Node) ->
 	Node ! truncate.
@@ -67,6 +75,10 @@ set_loss_probability(Node, Prob) ->
 %% Set the max network latency delay for a node.
 set_delay(Node, MaxDelay) ->
 	Node ! {set_delay, MaxDelay}.
+
+%% Set the number of milliseconds to wait between hashes.
+set_mining_delay(Node, Delay) ->
+	Node ! {set_mining_delay, Delay}.
 
 %% Add a transaction to the current block.
 add_tx(Node, TX) ->
@@ -92,6 +104,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 						true ->
 							% It is legit.
 							% Filter completed TXs from the pending list.
+							ar:report([{node, self()}, {got_block, NextHeight}]),
 							NewBlockList = [NewB|Bs],
 							NewTXs =
 								lists:filter(
@@ -99,6 +112,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 									TXs
 								),
 							% Recurse over the new block.
+							possibly_mine(S),
 							server(
 								NewS#state {
 									block_list = NewBlockList,
@@ -159,11 +173,15 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 						ar_mine:start(
 							(hd(Bs))#block.hash,
 							(hd(Bs))#block.diff,
-							generate_data_segment(TXs, RecallB)
+							generate_data_segment(TXs, RecallB),
+							S#state.mining_delay
 						),
-					io:format("INFO: Started miner ~p...~n", [Miner]),
+					ar:report([{node, self()}, {started_miner, Miner}]),
 					server(S#state { miner = Miner })
 			end;
+		automine ->
+			self() ! mine,
+			server(S#state { automine = true });
 		{work_complete, _Hash, _NewHash, _Diff, Nonce} ->
 			% The miner thinks it has found a new block!
 			% Build the block record, verify it, and gossip it to the other nodes.
@@ -183,6 +201,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 								find_recall_block(Bs)
 							}
 						),
+					possibly_mine(S),
 					server(
 						NewS#state {
 							miner = undefined,
@@ -217,6 +236,12 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 			server(
 				S#state {
 					gossip = ar_gossip:set_delay(S#state.gossip, MaxDelay)
+				}
+			);
+		{set_mining_delay, Delay} ->
+			server(
+				S#state {
+					mining_delay = Delay
 				}
 			)
 	end.
@@ -303,6 +328,15 @@ generate_data_segment(TXs, RecallB) ->
 		(RecallB#block.hash)/binary,
 		(ar_weave:generate_block_data(RecallB#block.txs))/binary
 	>>.
+
+%% Optionally start a new miner, depending on the automine setting.
+possibly_mine(#state { automine = false }) -> do_nothing;
+possibly_mine(#state { miner = PID }) ->
+	case PID of
+		undefined -> do_nothing;
+		_ -> ar_mine:stop(PID)
+	end,
+	self() ! mine.
 
 %%% Tests
 
