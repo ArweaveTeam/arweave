@@ -1,6 +1,6 @@
 -module(ar_network).
--export([start/1, start/2, start/3]).
--export([set_loss_probability/2]).
+-export([start/1, start/2, start/3, start/4]).
+-export([set_loss_probability/2, set_delay/2]).
 
 %%% Manages virtual networks of gossip nodes.
 
@@ -9,6 +9,8 @@
 start(Size) -> start(Size, Size).
 start(Size, Connections) -> start(Size, Connections, 0).
 start(Size, Connections, LossProb) ->
+	start(Size, Connections, LossProb, 0).
+start(Size, Connections, LossProb, MaxDelay) ->
 	B0 = ar_weave:init(),
 	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, Size) ],
 	lists:foreach(
@@ -17,7 +19,8 @@ start(Size, Connections, LossProb) ->
 				Node,
 				ar_gossip:pick_random_peers(Nodes, Connections)
 			),
-			ar_node:set_loss_probability(Node, LossProb)
+			ar_node:set_loss_probability(Node, LossProb),
+			ar_node:set_delay(Node, MaxDelay)
 		end,
 		Nodes
 	),
@@ -28,6 +31,14 @@ start(Size, Connections, LossProb) ->
 set_loss_probability(Net, Prob) ->
 	lists:map(
 		fun(Node) -> ar_node:set_loss_probability(Node, Prob) end,
+		Net
+	),
+	ok.
+
+%% Change the maximum delay time for a network.
+set_delay(Net, MaxDelay) ->
+	lists:map(
+		fun(Node) -> ar_node:set_delay(Node, MaxDelay) end,
 		Net
 	),
 	ok.

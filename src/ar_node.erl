@@ -2,7 +2,7 @@
 -export([start/0, start/1, start/2]).
 -export([get_blocks/1, get_balance/2]).
 -export([mine/1, truncate/1, add_tx/2, add_peers/2]).
--export([set_loss_probability/2]).
+-export([set_loss_probability/2, set_delay/2]).
 -export([apply_txs/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -60,9 +60,13 @@ mine(Node) ->
 truncate(Node) ->
 	Node ! truncate.
 
-%% Set the likelohood that a message will be dropped in transmission.
+%% Set the likelihood that a message will be dropped in transmission.
 set_loss_probability(Node, Prob) ->
 	Node ! {set_loss_probability, Prob}.
+
+%% Set the max network latency delay for a node.
+set_delay(Node, MaxDelay) ->
+	Node ! {set_delay, MaxDelay}.
 
 %% Add a transaction to the current block.
 add_tx(Node, TX) ->
@@ -208,7 +212,13 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 				S#state {
 					gossip = ar_gossip:set_loss_probability(S#state.gossip, Prob)
 				}
-			)	
+			);
+		{set_delay, MaxDelay} ->
+			server(
+				S#state {
+					gossip = ar_gossip:set_delay(S#state.gossip, MaxDelay)
+				}
+			)
 	end.
 
 %% Validate a new block, given a server state, a claimed new block, the last block,

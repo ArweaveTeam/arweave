@@ -1,6 +1,7 @@
 -module(ar_gossip).
--export([init/0, init/1, add_peers/2, set_loss_probability/2, send/2, recv/2]).
+-export([init/0, init/1, add_peers/2, send/2, recv/2]).
 -export([pick_random_peers/2, pick_random/1]).
+-export([set_loss_probability/2, set_delay/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -14,7 +15,9 @@
 init() -> init([]).
 init(Peers) when is_list(Peers) -> #gs_state { peers = Peers };
 init(PacketLossP) when is_float(PacketLossP) ->
-	#gs_state { loss_probability = PacketLossP }.
+	#gs_state { loss_probability = PacketLossP };
+init(MaxDelayMS) when is_integer(MaxDelayMS) ->
+	#gs_state { delay = MaxDelayMS }.
 
 %% Update a gossip protocol state with new peers.
 add_peers(S, []) -> S;
@@ -28,6 +31,13 @@ add_peers(S, [Peer|Peers]) ->
 %% Update the probability that a packet will be loss.
 set_loss_probability(S, Prob) ->
 	S#gs_state { loss_probability = Prob }.
+
+%% Adjust the maximum network delay length.
+%% Note: This is the /maximum/ delay in milliseconds.
+%% All messages will be delayed for a random number of
+%% milliseconds between 0 and this value.
+set_delay(S, Delay) ->
+	S#gs_state { delay = Delay }.
 
 %% Send a message to your peers in the gossip network,
 %% if the message has not already been sent.
@@ -53,7 +63,16 @@ send(S, Msg) ->
 possibly_send(S, Peer, Msg) ->
 	case rand:uniform() >= S#gs_state.loss_probability of
 		true ->
-			Peer ! Msg;
+			case S#gs_state.delay of
+				0 ->
+					Peer ! Msg;
+				MaxDelay ->
+					erlang:send_after(
+						rand:uniform(MaxDelay),
+						Peer,
+						Msg
+					)
+			end;
 		false -> not_sent
 	end.
 

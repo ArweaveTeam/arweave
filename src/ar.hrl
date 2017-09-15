@@ -36,7 +36,8 @@
 -record(gs_state, {
 	peers, % A list of the peers known to this node.
 	heard = [], % Hashes of the messages received thus far.
-	loss_probability = 0
+	loss_probability = 0,
+	delay = 0
 }).
 
 %% A message intended to be handled by the gossip protocol library.
