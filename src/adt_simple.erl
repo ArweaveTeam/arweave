@@ -65,7 +65,11 @@ server(S = #state { gossip = GS }) ->
 					server(S#state { gossip = NewGS });
 				{NewGS, {add_tx, TX}} ->
 					server(
-						apply_callback(S#state { gossip = NewGS }, new_transaction, TX)
+						apply_callback(
+							S#state { gossip = NewGS },
+							new_transaction,
+							TX
+						)
 					);
 				{NewGS, {new_block, _, B, _}} ->
 					NewS =

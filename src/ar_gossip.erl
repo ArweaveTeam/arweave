@@ -1,7 +1,7 @@
 -module(ar_gossip).
 -export([init/0, init/1, add_peers/2, send/2, recv/2]).
 -export([pick_random_peers/2, pick_random/1]).
--export([set_loss_probability/2, set_delay/2]).
+-export([set_loss_probability/2, set_delay/2, set_xfer_speed/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -39,6 +39,10 @@ set_loss_probability(S, Prob) ->
 set_delay(S, Delay) ->
 	S#gs_state { delay = Delay }.
 
+%% Set the number of bytes transferred from a node per second.
+set_xfer_speed(S, Speed) ->
+	S#gs_state { xfer_speed = Speed }.
+
 %% Send a message to your peers in the gossip network,
 %% if the message has not already been sent.
 send(S, Data) when not is_record(Data, gs_msg) ->
@@ -68,13 +72,19 @@ possibly_send(S, Peer, Msg) ->
 					Peer ! Msg;
 				MaxDelay ->
 					erlang:send_after(
-						rand:uniform(MaxDelay),
+						rand:uniform(MaxDelay)
+							+ calculate_xfer_time(S, Msg),
 						Peer,
 						Msg
 					)
 			end;
 		false -> not_sent
 	end.
+
+%% Returns a number of milliseconds to wait in order to simulate transfer time.
+calculate_xfer_time(#gs_state { xfer_speed = undefined }, _) -> 0;
+calculate_xfer_time(S, Msg) ->
+	erlang:byte_size(term_to_binary(Msg)) div S#gs_state.xfer_speed.
 
 %% Takes a gs_msg and gs_state, returning the message, if it needs to
 %% be processed.

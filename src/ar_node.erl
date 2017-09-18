@@ -80,6 +80,10 @@ set_delay(Node, MaxDelay) ->
 set_mining_delay(Node, Delay) ->
 	Node ! {set_mining_delay, Delay}.
 
+%% Set the number of bytes the node can transfer in a second.
+set_xfer_speed(Node, Speed) ->
+	Node ! {set_xfer_speed, Speed}.
+
 %% Add a transaction to the current block.
 add_tx(Node, TX) ->
 	Node ! {add_tx, TX},
@@ -236,6 +240,12 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 			server(
 				S#state {
 					gossip = ar_gossip:set_delay(S#state.gossip, MaxDelay)
+				}
+			);
+		{set_xfer_speed, Speed} ->
+			server(
+				S#state {
+					gossip = ar_gossip:set_xfer_speed(S#state.gossip, Speed)
 				}
 			);
 		{set_mining_delay, Delay} ->

@@ -9,6 +9,8 @@
 
 %% Default spawned network size.
 -define(DEFAULT_SIZE, 5).
+%% Default speed of transmission in the network (in bytes/sec).
+-define(DEFAULT_XFER_SPEED, 512 * 1024).
 %% Calculate MS to wait in order to hit target block time.
 -define(DEFAULT_MINING_DELAY,
 	((30 * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
@@ -20,8 +22,10 @@ start(Size, Connections) -> start(Size, Connections, 0).
 start(Size, Connections, LossProb) ->
 	start(Size, Connections, LossProb, 0).
 start(Size, Connections, LossProb, MaxDelay) ->
-	start(Size, Connections, LossProb, MaxDelay, 0).
-start(Size, Connections, LossProb, MaxDelay, MiningDelay) ->
+	start(Size, Connections, LossProb, MaxDelay, ?DEFAULT_XFER_SPEED).
+start(Size, Connections, LossProb, MaxDelay, XferSpeed) ->
+	start(Size, Connections, LossProb, MaxDelay, XferSpeed, 0).
+start(Size, Connections, LossProb, MaxDelay, XferSpeed, MiningDelay) ->
 	B0 = ar_weave:init(),
 	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, Size) ],
 	lists:foreach(
@@ -32,7 +36,8 @@ start(Size, Connections, LossProb, MaxDelay, MiningDelay) ->
 			),
 			ar_node:set_loss_probability(Node, LossProb),
 			ar_node:set_delay(Node, MaxDelay),
-			ar_node:set_mining_delay(Node, MiningDelay)
+			ar_node:set_mining_delay(Node, MiningDelay),
+			ar_node:set_xfer_speed(Node, XferSpeed)
 		end,
 		Nodes
 	),
@@ -41,10 +46,17 @@ start(Size, Connections, LossProb, MaxDelay, MiningDelay) ->
 %% Create a template network.
 spawn(realistic) -> spawn({realistic, ?DEFAULT_SIZE});
 spawn({realistic, Size}) ->
-	start(Size, 3, 0.025, 200, ?DEFAULT_MINING_DELAY * Size);
+	start(Size, 3, 0.025, 200, ?DEFAULT_XFER_SPEED, ?DEFAULT_MINING_DELAY * Size);
 spawn(hard) -> spawn({hard, ?DEFAULT_SIZE});
 spawn({hard, Size}) ->
-	start(Size, 2, 0.1, 3000, ?DEFAULT_MINING_DELAY * Size).
+	start(
+		Size,
+		2,
+		0.1,
+		3000,
+		?DEFAULT_XFER_SPEED div 10,
+		?DEFAULT_MINING_DELAY * Size
+	).
 
 %% Change the likelihood of experiencing simulated network packet loss
 %% for an entire network.
