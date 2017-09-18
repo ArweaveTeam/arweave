@@ -6,6 +6,12 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 512).
 -define(DEFAULT_DIFF, 8).
+-define(TARGET_TIME, 300).
+
+%% ENABLE ONLY WHILE TESTING
+%-define(DEBUG, true).
+%% Speed to run the network at when simulating.
+-define(DEBUG_TIME_SCALAR, 0.1).
 
 %% A block on the weave.
 -record(block, {

@@ -27,7 +27,7 @@ server(Parent, Hash, Diff, Data, Delay) ->
 		stop -> ok;
 		{new_data, NewData} ->
 			server(Parent, Hash, Diff, NewData, Delay)
-	after Delay ->
+	after ar:scale_time(Delay) ->
 		case validate(Hash, Diff, Data, Nonce = generate()) of
 			false ->
 				server(Parent, Hash, Diff, Data, Delay);

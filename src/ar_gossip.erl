@@ -72,8 +72,9 @@ possibly_send(S, Peer, Msg) ->
 					Peer ! Msg;
 				MaxDelay ->
 					erlang:send_after(
-						rand:uniform(MaxDelay)
-							+ calculate_xfer_time(S, Msg),
+						ar:scale_time(
+							rand:uniform(MaxDelay) + calculate_xfer_time(S, Msg)
+						),
 						Peer,
 						Msg
 					)

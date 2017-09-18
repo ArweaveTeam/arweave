@@ -18,6 +18,12 @@ ebin:
 session: all
 	erl -pa ebin/
 
+sim_realistic: all
+	erl -pa ebin/ -s ar_network spawn_and_mine realistic
+
+sim_hard: all
+	erl -pa ebin/ -s ar_network spawn_and_mine hard
+
 clean:
 	rm -rf ebin/*
 	rm -f erl_crash.dump

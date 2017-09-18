@@ -2,6 +2,7 @@
 -export([start/0, rebuild/0]).
 -export([test/0, test_apps/0]).
 -export([report/1]).
+-export([scale_time/1]).
 
 %%% ArkChain server entrypoint and basic utilities.
 
@@ -44,3 +45,10 @@ test_apps() ->
 %% Print an informational message to the console.
 report(X) ->
 	error_logger:info_report(X).
+
+%% A multiplier applied to all simulated time elements in the system.
+-ifdef(DEBUG).
+scale_time(Time) -> erlang:trunc(?DEBUG_TIME_SCALAR * Time).
+-else.
+scale_time(Time) -> Time.
+-endif.

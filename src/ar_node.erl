@@ -2,7 +2,7 @@
 -export([start/0, start/1, start/2]).
 -export([get_blocks/1, get_balance/2]).
 -export([mine/1, automine/1, truncate/1, add_tx/2, add_peers/2]).
--export([set_loss_probability/2, set_delay/2, set_mining_delay/2]).
+-export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
