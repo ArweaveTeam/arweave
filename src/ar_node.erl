@@ -85,7 +85,11 @@ set_xfer_speed(Node, Speed) ->
 	Node ! {set_xfer_speed, Speed}.
 
 %% Add a transaction to the current block.
+add_tx(GS, TX) when is_record(GS, gs_state) ->
+	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
+	NewGS;
 add_tx(Node, TX) ->
+	ar:d(Node),
 	Node ! {add_tx, TX},
 	ok.
 
@@ -205,6 +209,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 								find_recall_block(Bs)
 							}
 						),
+					ar:report([{node, self()}, work_complete]),
 					possibly_mine(S),
 					server(
 						NewS#state {

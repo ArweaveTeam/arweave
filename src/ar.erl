@@ -1,8 +1,9 @@
 -module(ar).
 -export([start/0, rebuild/0]).
 -export([test/0, test_apps/0]).
--export([report/1]).
+-export([report/1, d/1]).
 -export([scale_time/1]).
+-include("ar.hrl").
 
 %%% ArkChain server entrypoint and basic utilities.
 
@@ -46,9 +47,15 @@ test_apps() ->
 report(X) ->
 	error_logger:info_report(X).
 
+%% Report a value and return it.
+d(X) ->
+	report(X),
+	X.
+
 %% A multiplier applied to all simulated time elements in the system.
 -ifdef(DEBUG).
-scale_time(Time) -> erlang:trunc(?DEBUG_TIME_SCALAR * Time).
+scale_time(Time) ->
+	erlang:trunc(?DEBUG_TIME_SCALAR * Time).
 -else.
 scale_time(Time) -> Time.
 -endif.

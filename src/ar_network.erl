@@ -60,6 +60,8 @@ spawn({hard, Size}) ->
 	).
 
 %% Create and start an automining network.
+spawn_and_mine([Type]) -> spawn_and_mine(Type);
+spawn_and_mine([[Type]]) -> spawn_and_mine(Type);
 spawn_and_mine(Type) ->
 	Net = spawn(Type),
 	automine(Net),
@@ -68,7 +70,7 @@ spawn_and_mine(Type) ->
 %% Change the likelihood of experiencing simulated network packet loss
 %% for an entire network.
 set_loss_probability(Net, Prob) ->
-	lists:map(
+	lists:foreach(
 		fun(Node) -> ar_node:set_loss_probability(Node, Prob) end,
 		Net
 	),
@@ -76,7 +78,7 @@ set_loss_probability(Net, Prob) ->
 
 %% Change the maximum delay time for a network.
 set_delay(Net, MaxDelay) ->
-	lists:map(
+	lists:foreach(
 		fun(Node) -> ar_node:set_delay(Node, MaxDelay) end,
 		Net
 	),
@@ -85,7 +87,7 @@ set_delay(Net, MaxDelay) ->
 %% Set the idle miner delay for each hash.
 %% Wait this many MS before performing each individual hash.
 set_mining_delay(Net, Delay) ->
-	lists:map(
+	lists:foreach(
 		fun(Node) -> ar_node:set_mining_delay(Node, Delay) end,
 		Net
 	),
@@ -93,7 +95,7 @@ set_mining_delay(Net, Delay) ->
 
 %% Make every node in a network begin mining (if it can).
 automine(Net) ->
-	lists:map(
+	lists:foreach(
 		fun(Node) -> ar_node:automine(Node) end,
 		Net
 	),
