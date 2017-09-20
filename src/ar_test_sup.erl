@@ -10,6 +10,7 @@
 	finished = []
 }).
 
+%% Representation of live tests.
 -record(test_run, {
 	name,
 	monitor,

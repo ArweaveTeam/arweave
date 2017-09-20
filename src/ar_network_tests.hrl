@@ -23,6 +23,7 @@
 -define(NETWORK_TESTS,
 	[
 		#network_test { name = default },
+		#network_test { name = no_clients, num_clients = 0 },
 		#network_test {
 			name = realistic,
 			num_miners = 10,

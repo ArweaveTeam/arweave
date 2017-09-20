@@ -151,8 +151,12 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 				{NewGS, ignore} ->
 					server(S#state { gossip = NewGS });
 				{NewGS, X} ->
-					io:format("WARN: ~p recvd unhandeled gossip message: ~p.~n",
-						[self(), X]),
+					ar:report(
+						[
+							{miner, self()},
+							{unhandeled_gossip_msg, X}
+						]
+					),
 					server(S#state { gossip = NewGS })
 			end;
 		{add_tx, TX} ->
@@ -207,7 +211,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 			NextBs = ar_weave:add(Bs, HashList, WalletList, TXs, Nonce),
 			case validate(NewS = apply_txs(S, TXs), hd(NextBs), hd(Bs), find_recall_block(Bs)) of
 				false ->
-					io:format("WARN: Miner sent us an incorrect nonce!~n"),
+					ar:report([{miner, self()}, incorrect_nonce]),
 					server(S);
 				true ->
 					{NewGS, _} =
