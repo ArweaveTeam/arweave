@@ -1,5 +1,5 @@
 -module(ar_network).
--export([start/1, start/2, start/3, start/4, start/5, spawn/1]).
+-export([start/1, start/2, start/3, start/4, start/5, start/6, spawn/1]).
 -export([spawn_and_mine/1]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2]).
 -export([automine/1, add_tx/2]).
@@ -12,9 +12,6 @@
 -define(DEFAULT_SIZE, 5).
 %% Default speed of transmission in the network (in bytes/sec).
 -define(DEFAULT_XFER_SPEED, 512 * 1024).
-%% Calculate MS to wait in order to hit target block time.
--define(DEFAULT_MINING_DELAY,
-	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 
 %% Create a netwokr of Size ar_nodes, with Links connections each.
 %% Defaults to creating a fully connected network.

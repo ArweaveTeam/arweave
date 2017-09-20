@@ -1,5 +1,5 @@
 -module(ar_node).
--export([start/0, start/1, start/2]).
+-export([start/0, start/1, start/2, stop/1]).
 -export([get_blocks/1, get_balance/2]).
 -export([mine/1, automine/1, truncate/1, add_tx/2, add_peers/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
@@ -41,6 +41,11 @@ start(Peers, BlockList, MiningDelay) ->
 			)
 		end
 	).
+
+%% Stop a node (and its miner)
+stop(Node) ->
+	Node ! stop,
+	ok.
 
 %% Return the entire block list from a node.
 get_blocks(Node) ->
@@ -112,7 +117,13 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 						true ->
 							% It is legit.
 							% Filter completed TXs from the pending list.
-							ar:report([{node, self()}, {got_block, NextHeight}]),
+							ar:report(
+								[
+									{node, self()},
+									{got_block, NextHeight},
+									{txs, length(NewB#block.txs)}
+								]
+							),
 							NewBlockList = [NewB|Bs],
 							NewTXs =
 								lists:filter(
@@ -224,6 +235,12 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 			end;
 		{add_peers, Ps} ->
 			server(S#state { gossip = ar_gossip:add_peers(GS, Ps) });
+		stop ->
+			case S#state.miner of
+				undefined -> do_nothing;
+				PID -> ar_mine:stop(PID)
+			end,
+			ok;
 		%% TESTING FUNCTIONALITY
 		truncate ->
 			% Forget all bar the last block.

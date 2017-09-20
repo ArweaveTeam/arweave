@@ -8,15 +8,21 @@ test: all
 test_apps: all
 	@erl -noshell -s ar test_apps -pa ebin/ -s init stop
 
-all: ebin
+test_networks: all
+	@erl -noshell -s ar test_networks -pa ebin/
+
+all: ebin logs
 	erlc +export_all -o ebin/ src/ar.erl
 	erl -noshell -s ar rebuild -pa ebin/ -s init stop
 
 ebin:
 	mkdir -p ebin
 
+logs:
+	mkdir -p logs
+
 session: all
-	erl -pa ebin/
+	erl -s ar start -pa ebin/
 
 sim_realistic: all
 	erl -pa ebin/ -s ar_network spawn_and_mine realistic

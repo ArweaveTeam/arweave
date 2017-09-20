@@ -6,12 +6,19 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 512).
 -define(DEFAULT_DIFF, 8).
--define(TARGET_TIME, 300).
+-define(TARGET_TIME, 60).
 
 %% ENABLE ONLY WHILE TESTING
 -define(DEBUG, true).
 %% Speed to run the network at when simulating.
--define(DEBUG_TIME_SCALAR, 0.05).
+-define(DEBUG_TIME_SCALAR, 0.2).
+
+%% Calculate MS to wait in order to hit target block time.
+-define(DEFAULT_MINING_DELAY,
+	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
+
+%% Log output directory
+-define(LOG_DIR, "logs").
 
 %% A block on the weave.
 -record(block, {

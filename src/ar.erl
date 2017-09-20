@@ -1,7 +1,7 @@
 -module(ar).
 -export([start/0, rebuild/0]).
--export([test/0, test_apps/0]).
--export([report/1, d/1]).
+-export([test/0, test_apps/0, test_networks/0]).
+-export([report/1, report_console/1, d/1]).
 -export([scale_time/1]).
 -include("ar.hrl").
 
@@ -29,7 +29,20 @@
 %% Start an ArkChain node on this BEAM.
 start() ->
 	%io:format("Starting up node...~n"),
+	error_logger:logfile({open, Filename = generate_logfile_name()}),
+	error_logger:tty(false),
+	report_console([{session_log, Filename}]),
 	ok.
+
+%% Create a name for a session log file.
+generate_logfile_name() ->
+	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
+	lists:flatten(
+		io_lib:format(
+			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b.log",
+			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se]
+		)
+	).
 
 %% Run the erlang make system on the project.
 rebuild() ->
@@ -37,15 +50,27 @@ rebuild() ->
 
 %% Run all of the tests associated with the core project.
 test() ->
+	start(),
 	eunit:test(?CORE_TEST_MODS, [verbose]).
 
 %% Run tests on the apps.
 test_apps() ->
+	start(),
 	eunit:test(?APP_TEST_MODS, [verbose]).
 
-%% Print an informational message to the console.
+test_networks() ->
+	error_logger:tty(false),
+	ar_test_sup:start().
+
+%% Print an informational message to the log file.
 report(X) ->
 	error_logger:info_report(X).
+
+%% Print an information message to the log file and console.
+report_console(X) ->
+	error_logger:tty(true),
+	error_logger:info_report(X),
+	error_logger:tty(false).
 
 %% Report a value and return it.
 d(X) ->
