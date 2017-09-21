@@ -6,12 +6,33 @@
 
 %%% A module for managing mining of blocks on the weave.
 
+%% State record for miners
+-record(state,{
+	parent, % parent process
+	hash,
+	diff,
+	data,
+	delay
+}).
+
 %% Returns the PID of a new mining worker process.
 start(Hash, Diff, Data) ->
 	start(Hash, Diff, Data, 0).
 start(Hash, Diff, Data, Delay) ->
 	Parent = self(),
-	spawn(fun() -> server(Parent, Hash, Diff, Data, Delay) end).
+	spawn(
+		fun() ->
+			server(
+				#state {
+					parent = Parent,
+					hash = Hash,
+					diff = Diff,
+					data = Data,
+					delay = Delay
+				}
+			)
+		end
+	).
 
 %% Stop a running miner.
 stop(PID) ->
@@ -22,15 +43,38 @@ change_data(PID, NewData) ->
 	PID ! {new_data, NewData}.
 
 %% The main mining server.
-server(Parent, Hash, Diff, Data, Delay) ->
+server(
+	#state {
+		parent = Parent,
+		hash = Hash,
+		diff = Diff,
+		data = Data,
+		delay = Delay
+	}) ->
 	receive
 		stop -> ok;
 		{new_data, NewData} ->
-			server(Parent, Hash, Diff, NewData, Delay)
+			server(
+				#state {
+				 parent = Parent,
+				 hash = Hash,
+				 diff = Diff,
+				 data = NewData,
+				 delay = Delay
+				}
+			)
 	after ar:scale_time(Delay) ->
 		case validate(Hash, Diff, Data, Nonce = generate()) of
 			false ->
-				server(Parent, Hash, Diff, Data, Delay);
+				server(
+					#state {
+						parent = Parent,
+						hash = Hash,
+						diff = Diff,
+						data = Data,
+						delay = Delay
+					}
+				);
 			NextHash ->
 				ar:report([{miner, self()}, {found_block, Nonce}]),
 				Parent ! {work_complete, Hash, NextHash, Diff, Nonce},

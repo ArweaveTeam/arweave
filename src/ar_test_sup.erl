@@ -28,7 +28,7 @@ start(RawTests) ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
 	error_logger:logfile(
 		{open,
-			LogFile = 
+			LogFile =
 				lists:flatten(
 					io_lib:format(
 						"~s/test_run_"
@@ -70,7 +70,7 @@ server(S = #state { tests = Tests, finished = Finished }) ->
 					{name, Test#test_run.name},
 					{start_time, Test#test_run.start_time},
 					{failure_time, Test#test_run.fail_time},
-					{log_file, save_log(Test)}
+					{log_file, ar_logging:save_log(Test)}
 				]
 			),
 			server(
@@ -129,54 +129,3 @@ stop_test(#test_run{ miners = Miners, clients = Clients, monitor = Monitor }) ->
 	lists:foreach(fun ar_node:stop/1, Miners),
 	% Cut the monitor!
 	ar_test_monitor:stop(Monitor).
-
-%% Save a log object from a monitor to a file.
-save_log(T) ->
-	file:write_file(
-		Filename = generate_filename(T),
-		io_lib:format(
-			"Name: ~p~nStart time: ~p~nFail time: ~p~n~n~s~n",
-			[
-				T#test_run.name,
-				T#test_run.start_time,
-				T#test_run.fail_time,
-				lists:flatten(format_logs(T#test_run.log))
-			]
-		)
-	),
-	lists:flatten(Filename).
-
-%% Turn a #test_run into a reasonable file name.
-generate_filename(
-	#test_run {
-		name = Name,
-		start_time = {{Yr, Mo, Da}, {Hr, Mi, Se}}
-	}) ->
-	io_lib:format("~s/~p_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b.log",
-		[?LOG_DIR, Name, Yr, Mo, Da, Hr, Mi, Se]
-	).
-
-%% Output a string representing a log.
-format_logs([]) -> "";
-format_logs([[{B, _}]|Logs]) ->
-	io_lib:format("No forks. Block height: ~p.~n", [B#block.height])
-		++ format_logs(Logs);
-format_logs([Log|Logs]) ->
-	io_lib:format("Fork detected:~n", []) ++
-		string:join(
-			lists:map(
-				fun({B, Num}) ->
-					io_lib:format(
-						"\tBlock: ~p~n\t\tHeight: ~p~n\t\tNodes: ~p~n",
-						[
-							B#block.hash,
-							B#block.height,
-							Num
-						]
-					)
-				end,
-				Log
-			),
-			[$\n]
-		) ++
-		format_logs(Logs).
