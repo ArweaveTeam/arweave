@@ -131,14 +131,15 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 									TXs
 								),
 							% Recurse over the new block.
-							possibly_mine(S),
 							server(
-								NewS#state {
-									block_list = NewBlockList,
-									hash_list = HashList ++ [NewB#block.indep_hash],
-									gossip = NewGS,
-									txs = NewTXs
-								}
+								reset_miner(
+									NewS#state {
+										block_list = NewBlockList,
+										hash_list = HashList ++ [NewB#block.indep_hash],
+										gossip = NewGS,
+										txs = NewTXs
+									}
+								)
 							);
 						false ->
 							% The new block was a forgery. Discard it.
@@ -147,13 +148,13 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 							server(S#state { gossip = NewGS })
 					end;
 				{NewGS, {add_tx, TX}} ->
-					server(S#state { gossip = NewGS, txs = [TX|TXs] });
+					server((add_tx_to_server(S, TX))#state { gossip = NewGS });
 				{NewGS, ignore} ->
 					server(S#state { gossip = NewGS });
 				{NewGS, X} ->
 					ar:report(
 						[
-							{miner, self()},
+							{node, self()},
 							{unhandeled_gossip_msg, X}
 						]
 					),
@@ -161,13 +162,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 			end;
 		{add_tx, TX} ->
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-			NewTXs = [TX|TXs],
-			case S#state.miner of
-				undefined -> do_nothing;
-				PID ->
-					ar_mine:change_data(PID, generate_data_segment(TXs, find_recall_block(Bs)))
-			end,
-			server(S#state { gossip = NewGS, txs = NewTXs });
+			server((add_tx_to_server(S, TX))#state { gossip = NewGS });
 		{replace_block_list, NewBL} ->
 			% Replace the entire stored block list, regenerating the hash list.
 			server(
@@ -187,24 +182,8 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 					false -> 0
 				end},
 			server(S);
-		mine ->
-			% Start a miner process and update the state.
-			case find_recall_block(Bs) of
-				unavailable -> server(S);
-				RecallB ->
-					Miner =
-						ar_mine:start(
-							(hd(Bs))#block.hash,
-							(hd(Bs))#block.diff,
-							generate_data_segment(TXs, RecallB),
-							S#state.mining_delay
-						),
-					ar:report([{node, self()}, {started_miner, Miner}]),
-					server(S#state { miner = Miner })
-			end;
-		automine ->
-			self() ! mine,
-			server(S#state { automine = true });
+		mine -> server(start_mining(S));
+		automine -> server(start_mining(S#state { automine = true }));
 		{work_complete, _Hash, _NewHash, _Diff, Nonce} ->
 			% The miner thinks it has found a new block!
 			% Build the block record, verify it, and gossip it to the other nodes.
@@ -224,17 +203,22 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 								find_recall_block(Bs)
 							}
 						),
-					ar:report([{node, self()}, work_complete]),
-					possibly_mine(S),
+					ar:report(
+						[
+							{node, self()},
+							{accepted_block, (hd(NextBs))#block.height}
+						]
+					),
 					server(
-						NewS#state {
-							miner = undefined,
-							gossip = NewGS,
-							block_list = NextBs,
-							hash_list =
-								HashList ++ [(hd(NextBs))#block.indep_hash],
-							txs = []
-						}
+						reset_miner(
+							NewS#state {
+								gossip = NewGS,
+								block_list = NextBs,
+								hash_list =
+									HashList ++ [(hd(NextBs))#block.indep_hash],
+								txs = []
+							}
+						)
 					)
 			end;
 		{add_peers, Ps} ->
@@ -365,14 +349,46 @@ generate_data_segment(TXs, RecallB) ->
 		(ar_weave:generate_block_data(RecallB#block.txs))/binary
 	>>.
 
-%% Optionally start a new miner, depending on the automine setting.
-possibly_mine(#state { automine = false }) -> do_nothing;
-possibly_mine(#state { miner = PID }) ->
-	case PID of
+%% Kill the old miner, optionally start a new miner, depending on the automine setting.
+reset_miner(S = #state { miner = undefined, automine = false }) -> S;
+reset_miner(S = #state { miner = PID, automine = false }) ->
+	ar_mine:stop(PID),
+	S#state { miner = undefined };
+reset_miner(S = #state { miner = PID, automine = true }) ->
+	ar_mine:stop(PID),
+	start_mining(S).
+
+%% Force a node to start mining, update state.
+start_mining(S = #state { block_list = Bs, txs = TXs }) ->
+	case find_recall_block(Bs) of
+		unavailable -> S;
+		RecallB ->
+			Miner =
+				ar_mine:start(
+					(hd(Bs))#block.hash,
+					(hd(Bs))#block.diff,
+					generate_data_segment(TXs, RecallB),
+					S#state.mining_delay
+				),
+			ar:report([{node, self()}, {started_miner, Miner}]),
+			S#state { miner = Miner }
+	end.
+
+%% Update miner and amend server state when encountering a new transaction.
+add_tx_to_server(S, TX) ->
+	NewTXs = [TX|S#state.txs],
+	case S#state.miner of
 		undefined -> do_nothing;
-		_ -> ar_mine:stop(PID)
+		PID ->
+			ar_mine:change_data(
+				PID,
+				generate_data_segment(
+					NewTXs,
+					find_recall_block(S#state.block_list)
+				)
+			)
 	end,
-	self() ! mine.
+	S#state { txs = NewTXs }.
 
 %%% Tests
 

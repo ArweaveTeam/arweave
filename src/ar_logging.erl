@@ -1,5 +1,5 @@
--module(ar_logging.erl).
--exports([save_log/1]).
+-module(ar_logging).
+-export([save_log/1]).
 -include("ar_network_tests.hrl").
 
 %%% Manages logging of large scale, long term, nightly network tests
@@ -15,7 +15,7 @@ save_log(T) ->
 				T#test_run.name,
 				T#test_run.start_time,
 				T#test_run.fail_time,
-				lists:flatten(format_logs(T#test_run.log))
+				lists:flatten(format_logs(lists:reverse(T#test_run.log)))
 			]
 		)
 	),

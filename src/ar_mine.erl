@@ -23,13 +23,15 @@ start(Hash, Diff, Data, Delay) ->
 	spawn(
 		fun() ->
 			server(
-				#state {
-					parent = Parent,
-					hash = Hash,
-					diff = Diff,
-					data = Data,
-					delay = Delay
-				}
+				schedule_hash(
+					#state {
+						parent = Parent,
+						hash = Hash,
+						diff = Diff,
+						data = Data,
+						delay = Delay
+					}
+				)
 			)
 		end
 	).
@@ -44,37 +46,26 @@ change_data(PID, NewData) ->
 
 %% The main mining server.
 server(
-	#state {
+	S = #state {
 		parent = Parent,
 		hash = Hash,
 		diff = Diff,
-		data = Data,
-		delay = Delay
+		data = Data
 	}) ->
 	receive
-		stop -> ok;
+		stop ->
+			ar:report([{miner, self()}, stopping]),
+			ok;
 		{new_data, NewData} ->
 			server(
-				#state {
-				 parent = Parent,
-				 hash = Hash,
-				 diff = Diff,
-				 data = NewData,
-				 delay = Delay
+				S#state {
+					data = NewData
 				}
-			)
-	after ar:scale_time(Delay) ->
+			);
+	hash ->
+		schedule_hash(S),
 		case validate(Hash, Diff, Data, Nonce = generate()) of
-			false ->
-				server(
-					#state {
-						parent = Parent,
-						hash = Hash,
-						diff = Diff,
-						data = Data,
-						delay = Delay
-					}
-				);
+			false -> server(S);
 			NextHash ->
 				ar:report([{miner, self()}, {found_block, Nonce}]),
 				Parent ! {work_complete, Hash, NextHash, Diff, Nonce},
@@ -89,6 +80,12 @@ validate(Hash, Diff, Data, Nonce) ->
 		_ -> false
 	end.
 
+%% Send a message to ourselves at some point in the future, asking us to mine.
+schedule_hash(S = #state { delay = Delay }) ->
+	Parent = self(),
+	spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
+	S.
+
 %% Generate a random nonce, to be added to the previous hash.
 generate() -> crypto:strong_rand_bytes(8).
 
@@ -98,7 +95,7 @@ generate() -> crypto:strong_rand_bytes(8).
 basic_test() ->
 	LastHash = crypto:strong_rand_bytes(32),
 	Data = crypto:strong_rand_bytes(32),
-	Diff = 16,
+	Diff = 18,
 	start(LastHash, Diff, Data),
 	receive
 		{work_complete, LastHash, _NewHash, Diff, Nonce} ->

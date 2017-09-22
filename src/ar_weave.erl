@@ -33,7 +33,7 @@ add(Bs, TXs, Nonce) ->
 add(Bs, HashList, TXs, Nonce) ->
 	add(Bs, HashList, [], TXs, Nonce).
 add(Bs = [B|_], HashList, WalletList, TXs, Nonce) ->
-	NewB=
+	NewB =
 		#block {
 			nonce = Nonce,
 			height = B#block.height + 1,
@@ -81,7 +81,14 @@ calculate_recall_block(IndepHash, Height) ->
 generate_block_data(B) when is_record(B, block) -> generate_block_data(B#block.txs);
 generate_block_data(TXs) ->
 	<<
-		(binary:list_to_bin(lists:map(fun ar_tx:to_binary/1, TXs)))/binary
+		(
+			binary:list_to_bin(
+				lists:map(
+					fun ar_tx:to_binary/1,
+					lists:sort(TXs)
+				)
+			)
+		)/binary
 	>>.
 
 %% Create the hash of the next block in the list, given a previous block,

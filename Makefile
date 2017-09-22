@@ -11,6 +11,12 @@ test_apps: all
 test_networks: all
 	@erl -noshell -s ar test_networks -pa ebin/
 
+realistic: all
+	@erl -noshell -s ar start -s ar_test_sup start realistic -pa ebin/
+
+log:
+	tail -f logs/`ls -t logs |  head -n 1`
+
 all: ebin logs
 	erlc +export_all -o ebin/ src/ar.erl
 	erl -noshell -s ar rebuild -pa ebin/ -s init stop

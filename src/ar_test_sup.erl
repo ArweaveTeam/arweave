@@ -10,22 +10,12 @@
 	finished = []
 }).
 
-%% Representation of live tests.
--record(test_run, {
-	name,
-	monitor,
-	miners,
-	clients,
-	start_time = erlang:universaltime(),
-	fail_time = undefined,
-	log = undefined
-}).
-
 %% Starts all or a list of tests for ar_network_tests.hrl.
 start() -> start(?NETWORK_TESTS).
 start(TestName) when is_atom(TestName) -> start([TestName]);
-start(RawTests) ->
+start(Tests) ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
+	error_logger:logfile(close),
 	error_logger:logfile(
 		{open,
 			LogFile =
@@ -38,17 +28,6 @@ start(RawTests) ->
 				)
 		}
 	),
-	Tests =
-	 	lists:map(
-			fun(Test) ->
-				case is_record(Test, network_test) of
-					false ->
-						lists:keyfind(Test, #network_test.name, ?NETWORK_TESTS);
-					true -> Test
-				end
-			end,
-			RawTests
-		),
 	ar:report_console([{test_log_file, LogFile}, {test_count, length(Tests)}]),
 	spawn(
 		fun() ->
