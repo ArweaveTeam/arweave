@@ -117,13 +117,6 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 						true ->
 							% It is legit.
 							% Filter completed TXs from the pending list.
-							ar:report(
-								[
-									{node, self()},
-									{got_block, NextHeight},
-									{txs, length(NewB#block.txs)}
-								]
-							),
 							NewBlockList = [NewB|Bs],
 							NewTXs =
 								lists:filter(
@@ -184,11 +177,15 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 			server(S);
 		mine -> server(start_mining(S));
 		automine -> server(start_mining(S#state { automine = true }));
-		{work_complete, _Hash, _NewHash, _Diff, Nonce} ->
+		{work_complete, MinedTXs, _Hash, _NewHash, _Diff, Nonce} ->
 			% The miner thinks it has found a new block!
 			% Build the block record, verify it, and gossip it to the other nodes.
-			NextBs = ar_weave:add(Bs, HashList, WalletList, TXs, Nonce),
-			case validate(NewS = apply_txs(S, TXs), hd(NextBs), hd(Bs), find_recall_block(Bs)) of
+			NextBs = ar_weave:add(Bs, HashList, WalletList, MinedTXs, Nonce),
+			% Store the transactions that we know about, but were not mined in
+			% this block.
+			NotMinedTXs = TXs -- MinedTXs,
+			NewS = apply_txs(S#state { txs = MinedTXs }, MinedTXs),
+			case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs)) of
 				false ->
 					ar:report([{miner, self()}, incorrect_nonce]),
 					server(S);
@@ -203,10 +200,11 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 								find_recall_block(Bs)
 							}
 						),
-					ar:report(
+					ar:report_console(
 						[
 							{node, self()},
-							{accepted_block, (hd(NextBs))#block.height}
+							{accepted_block, (hd(NextBs))#block.height},
+							{txs, length(MinedTXs)}
 						]
 					),
 					server(
@@ -216,7 +214,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 								block_list = NextBs,
 								hash_list =
 									HashList ++ [(hd(NextBs))#block.indep_hash],
-								txs = []
+								txs = NotMinedTXs % TXs not included in the block
 							}
 						)
 					)
@@ -263,7 +261,10 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 				S#state {
 					mining_delay = Delay
 				}
-			)
+			);
+		Msg ->
+			ar:report_console([{unknown_msg, Msg}]),
+			server(S)
 	end.
 
 %% Validate a new block, given a server state, a claimed new block, the last block,
@@ -368,9 +369,10 @@ start_mining(S = #state { block_list = Bs, txs = TXs }) ->
 					(hd(Bs))#block.hash,
 					(hd(Bs))#block.diff,
 					generate_data_segment(TXs, RecallB),
-					S#state.mining_delay
+					S#state.mining_delay,
+					TXs
 				),
-			ar:report([{node, self()}, {started_miner, Miner}]),
+			%ar:report([{node, self()}, {started_miner, Miner}]),
 			S#state { miner = Miner }
 	end.
 
@@ -385,7 +387,8 @@ add_tx_to_server(S, TX) ->
 				generate_data_segment(
 					NewTXs,
 					find_recall_block(S#state.block_list)
-				)
+				),
+				NewTXs
 			)
 	end,
 	S#state { txs = NewTXs }.

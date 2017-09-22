@@ -1,6 +1,6 @@
 -module(ar_mine).
--export([start/3, start/4]).
--export([change_data/2, stop/1, validate/4]).
+-export([start/3, start/4, start/5]).
+-export([change_data/3, stop/1, validate/4]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -12,13 +12,16 @@
 	hash,
 	diff,
 	data,
-	delay
+	delay,
+	txs
 }).
 
 %% Returns the PID of a new mining worker process.
 start(Hash, Diff, Data) ->
 	start(Hash, Diff, Data, 0).
 start(Hash, Diff, Data, Delay) ->
+	start(Hash, Diff, Data, Delay, []).
+start(Hash, Diff, Data, Delay, TXs) ->
 	Parent = self(),
 	spawn(
 		fun() ->
@@ -29,7 +32,8 @@ start(Hash, Diff, Data, Delay) ->
 						hash = Hash,
 						diff = Diff,
 						data = Data,
-						delay = Delay
+						delay = Delay,
+						txs = TXs
 					}
 				)
 			)
@@ -41,8 +45,8 @@ stop(PID) ->
 	PID ! stop.
 
 %% Change the data attachment that the miner is using.
-change_data(PID, NewData) ->
-	PID ! {new_data, NewData}.
+change_data(PID, NewData, TXs) ->
+	PID ! {new_data, NewData, TXs}.
 
 %% The main mining server.
 server(
@@ -50,16 +54,18 @@ server(
 		parent = Parent,
 		hash = Hash,
 		diff = Diff,
-		data = Data
+		data = Data,
+		txs = TXs
 	}) ->
 	receive
 		stop ->
-			ar:report([{miner, self()}, stopping]),
+			%ar:report([{miner, self()}, stopping]),
 			ok;
-		{new_data, NewData} ->
+		{new_data, NewData, TXs} ->
 			server(
 				S#state {
-					data = NewData
+					data = NewData,
+					txs = TXs
 				}
 			);
 	hash ->
@@ -67,8 +73,8 @@ server(
 		case validate(Hash, Diff, Data, Nonce = generate()) of
 			false -> server(S);
 			NextHash ->
-				ar:report([{miner, self()}, {found_block, Nonce}]),
-				Parent ! {work_complete, Hash, NextHash, Diff, Nonce},
+				%ar:report_console([{miner, self()}, {found_block, Nonce}]),
+				Parent ! {work_complete, TXs, Hash, NextHash, Diff, Nonce},
 				ok
 		end
 	end.
@@ -98,7 +104,7 @@ basic_test() ->
 	Diff = 18,
 	start(LastHash, Diff, Data),
 	receive
-		{work_complete, LastHash, _NewHash, Diff, Nonce} ->
+		{work_complete, [], LastHash, _NewHash, Diff, Nonce} ->
 			<< 0:Diff, _/bitstring >>
 				= crypto:hash(?HASH_ALG, << LastHash/binary, Data/binary, Nonce/binary >>)
 	end.
@@ -110,9 +116,9 @@ change_data_test() ->
 	NewData = crypto:strong_rand_bytes(32),
 	Diff = 18,
 	PID = start(LastHash, Diff, Data),
-	change_data(PID, NewData),
+	change_data(PID, NewData, []),
 	receive
-		{work_complete, LastHash, _NewHash, Diff, Nonce} ->
+		{work_complete, [], LastHash, _NewHash, Diff, Nonce} ->
 			<< 0:Diff, _/bitstring >>
 				= crypto:hash(?HASH_ALG, << LastHash/binary, NewData/binary, Nonce/binary >>)
 	end.

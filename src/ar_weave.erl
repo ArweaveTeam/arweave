@@ -112,7 +112,7 @@ indep_hash(B) ->
 mine(B, TXs) ->
 	ar_mine:start(B#block.hash, B#block.diff, generate_block_data(TXs)),
 	receive
-		{work_complete, _Hash, _NewHash, _Diff, Nonce} ->
+		{work_complete, _TXs, _Hash, _NewHash, _Diff, Nonce} ->
 			Nonce
 	end.
 

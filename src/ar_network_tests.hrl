@@ -33,15 +33,15 @@
 
 -define(NETWORK_TESTS,
 	[
-		#network_test { name = default }
+%		#network_test { name = default }
 %		#network_test { name = no_clients, num_clients = 0 },
-%		#network_test {
-%			name = realistic,
-%			num_miners = 10,
-%			num_clients = 20,
-%			client_max_tx_len = 8,
-%			miner_connections = 5,
-%			miner_delay = ?DEFAULT_MINING_DELAY * 1000
-%		}
+		#network_test {
+			name = realistic,
+			num_miners = 100,
+			num_clients = 200,
+			client_max_tx_len = 8,
+			miner_connections = 5,
+			miner_delay = ?DEFAULT_MINING_DELAY * 100
+		}
 	]
 ).
