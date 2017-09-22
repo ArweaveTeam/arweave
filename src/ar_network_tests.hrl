@@ -4,7 +4,8 @@
 
 -record(network_test, {
 	name,
-	timeout = ?TARGET_TIME * 10, % in seconds
+	timeout = 10, % in seconds
+	%timeout = ?TARGET_TIME * 10, % in seconds
 	% Spawn settings
 	num_miners = 10,
 	num_clients = 20,
@@ -38,7 +39,7 @@
 		#network_test {
 			name = realistic,
 			num_miners = 100,
-			num_clients = 200,
+			num_clients = 25,
 			client_max_tx_len = 8,
 			miner_connections = 5,
 			miner_delay = ?DEFAULT_MINING_DELAY * 100

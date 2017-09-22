@@ -10,6 +10,11 @@
 	finished = []
 }).
 
+%% The maximum amount of time to wait between asking nodes to start mining.
+%% Setting this to a non-zero value helps better ensure an unsynchonised simulated
+%% network.
+-define(STAGGER_TIME, 3000).
+
 %% Starts all or a list of tests for ar_network_tests.hrl.
 start() -> start(?NETWORK_TESTS).
 start(TestName) when is_atom(TestName) -> start([TestName]);
@@ -77,7 +82,9 @@ start_test(T) when is_record(T, network_test) ->
 			T#network_test.miner_xfer_speed,
 			T#network_test.miner_delay
 		),
-	ar_network:automine(Miners),
+	ar:report_console(starting_to_mine),
+	ar_network:automine_staggered(Miners, ?STAGGER_TIME),
+	ar:report_console(mining),
 	#test_run {
 		name = T#network_test.name,
 		monitor = ar_test_monitor:start(Miners, self(), T#network_test.timeout),

@@ -61,7 +61,7 @@ server(
 
 %% Ask all nodes for the current block, count the number of each result.
 gather_results(Miners) ->
-	lists:foldr(
+	ar:d(lists:foldr(
 		fun(B, Dict) ->
 			case lists:keyfind(B, 1, Dict) of
 				false -> [{B, 1}|Dict];
@@ -71,7 +71,7 @@ gather_results(Miners) ->
 		end,
 		[],
 		lists:map(fun(Miner) -> hd(ar_node:get_blocks(Miner)) end, Miners)
-	).
+	)).
 
 %% Stop all network nodes and report log to listener.
 end_test(#state { log = Log, listener = Listener }) ->

@@ -74,7 +74,7 @@ report_console(X) ->
 
 %% Report a value and return it.
 d(X) ->
-	report(X),
+	report_console(X),
 	X.
 
 %% A multiplier applied to all simulated time elements in the system.

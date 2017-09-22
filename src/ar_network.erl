@@ -2,7 +2,8 @@
 -export([start/1, start/2, start/3, start/4, start/5, start/6, spawn/1]).
 -export([spawn_and_mine/1]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2]).
--export([automine/1, add_tx/2]).
+-export([automine/1, automine_staggered/2]).
+-export([add_tx/2]).
 -include("ar.hrl").
 -compile({no_auto_import, [{spawn,1}]}).
 
@@ -92,11 +93,18 @@ set_mining_delay(Net, Delay) ->
 
 %% Make every node in a network begin mining (if it can).
 automine(Net) ->
+	lists:foreach(fun ar_node:automine/1, Net).
+
+%% Make a network start mining in a staggered fashion.
+automine_staggered(Net, StaggerTime) ->
 	lists:foreach(
-		fun(Node) -> ar_node:automine(Node) end,
+		fun(Miner) ->
+			receive after rand:uniform(StaggerTime) ->
+				ar_node:automine(Miner)
+			end
+		end,
 		Net
-	),
-	ok.
+	).
 
 %% Deliver a TX to a randomly selected node in the network.
 add_tx(Net, TX) ->
