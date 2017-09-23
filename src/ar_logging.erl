@@ -42,19 +42,21 @@ format_logs(Logs) ->
 	).
 
 %% Format an individual log for printing or storage.
-format_log([{B, _}]) ->
-	io_lib:format("No forks. Block height: ~p.~n", [B#block.height]);
+format_log([{B, TXs, _}]) ->
+	io_lib:format("No forks. Block height: ~p. Transactions: ~p~n",
+		[B#block.height, TXs]);
 format_log(Log) ->
 	io_lib:format("Fork detected:~n", []) ++
 		string:join(
 			lists:map(
-				fun({B, Num}) ->
+				fun({B, TXs, Num}) ->
 					io_lib:format(
-						"\tBlock: ~p~n\t\tHeight: ~p~n\t\tNodes: ~p~n",
+						"\tBlock: ~p~n\t\tHeight: ~p~n"
+						"\t\tTransactions: ~p~n\t\tNodes: ~p~n",
 						[
 							B#block.hash,
 							B#block.height,
-							Num
+							TXs, Num
 						]
 					)
 				end,

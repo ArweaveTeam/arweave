@@ -72,7 +72,8 @@ server(S = #state { tests = Tests, finished = Finished }) ->
 
 %% Start a test, given a #network_test or test name.
 %% Returns a #test_run.
-start_test(T) when is_record(T, network_test) ->
+start_test(RawT) when is_record(RawT, network_test) ->
+	T = preprocess_test(RawT),
 	Miners =
 		ar_network:start(
 			T#network_test.num_miners,
@@ -113,6 +114,15 @@ start_test(Name) ->
 		false -> not_found;
 		Test -> start_test(Test)
 	end.
+
+%% Calculate sensible bvalues for fields left with 'calculate' atoms.
+preprocess_test(T = #network_test { miner_delay = calculate }) ->
+	preprocess_test(
+		T#network_test {
+			miner_delay = T#network_test.num_miners * ?DEFAULT_MINING_DELAY
+		}
+	);
+preprocess_test(T) -> T.
 
 %% Stop a test run (including the clients, miners, and monitor).
 stop_test(#test_run{ miners = Miners, clients = Clients, monitor = Monitor }) ->

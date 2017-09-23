@@ -6,7 +6,7 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 512).
 -define(DEFAULT_DIFF, 8).
--define(TARGET_TIME, 30).
+-define(TARGET_TIME, 300).
 
 %% ENABLE ONLY WHILE TESTING
 -define(DEBUG, true).

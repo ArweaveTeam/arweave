@@ -1,5 +1,6 @@
 -module(ar_test_monitor).
 -export([start/1, start/2, start/3, start/4, stop/1]).
+-include("ar.hrl").
 
 %%% Represents a monitoring system for test network.
 %%% Checks for forward progress on the network and fork events.
@@ -55,7 +56,7 @@ server(
 		}
 	) ->
 	receive stop -> ok
-	after ar:scale_time(CheckTime * 1000) ->
+	after CheckTime * 1000 ->
 		% Check for progress on the network.
 		case gather_results(Miners) of
 			Last when (ProgTime + CheckTime) >= FailureTime ->
@@ -82,15 +83,21 @@ server(
 %% Ask all nodes for the current block, count the number of each result.
 gather_results(Miners) ->
 	lists:foldr(
-		fun(B, Dict) ->
+		fun({B, TXs}, Dict) ->
 			case lists:keyfind(B, 1, Dict) of
-				false -> [{B, 1}|Dict];
-				{B, Num} ->
-					lists:keyreplace(B, 1, Dict, {B, Num + 1})
+				false -> [{B, TXs, 1}|Dict];
+				{B, OldTXs, Num} ->
+					lists:keyreplace(B, 1, Dict, {B, erlang:max(TXs, OldTXs), Num + 1})
 			end
 		end,
 		[],
-		lists:map(fun(Miner) -> hd(ar_node:get_blocks(Miner)) end, Miners)
+		lists:map(
+			fun(Miner) ->
+				Bs = ar_node:get_blocks(Miner),
+				{hd(Bs), count_txs(Bs)}
+			end,
+			Miners
+		)
 	).
 
 %% Stop all network nodes and report log to listener.
@@ -98,3 +105,7 @@ end_test(#state { log = Log, listener = Listener }) ->
 	ar:report_console([{test, unknown}, stopping]),
 	Listener ! {test_report, self(), stopped, Log},
 	ok.
+
+%% Count the number of transactions in a list of blocks.
+count_txs(Bs) ->
+	lists:sum([ length(B#block.txs) || B <- Bs ]).

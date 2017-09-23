@@ -19,7 +19,7 @@
 	miner_loss_probability = 0.025,
 	miner_max_latency = 200,
 	miner_xfer_speed = 512 * 1024,
-	miner_delay = ?DEFAULT_MINING_DELAY * 10
+	miner_delay = calculate
 }).
 
 %% Representation of live tests.
@@ -39,12 +39,11 @@
 %		#network_test { name = no_clients, num_clients = 0 },
 		#network_test {
 			name = realistic,
-			num_miners = 100,
+			num_miners = 1000,
 			num_clients = 25,
 			client_max_tx_len = 8,
 			miner_connections = 5,
-			miner_delay = ?DEFAULT_MINING_DELAY * 100,
-			stagger_time = 10
+			stagger_time = 3000
 		}
 	]
 ).
