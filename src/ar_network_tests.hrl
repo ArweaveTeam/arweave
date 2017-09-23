@@ -4,8 +4,9 @@
 
 -record(network_test, {
 	name,
-	timeout = 10, % in seconds
-	%timeout = ?TARGET_TIME * 10, % in seconds
+	check_time = 10, % How frequently to check the net in seconds
+	failure_time = ?TARGET_TIME * 10, % When to restart the net (in seconds)
+	stagger_time = 3000, % Maximum period (in ms) to leave between node spawns.
 	% Spawn settings
 	num_miners = 10,
 	num_clients = 20,
@@ -42,7 +43,8 @@
 			num_clients = 25,
 			client_max_tx_len = 8,
 			miner_connections = 5,
-			miner_delay = ?DEFAULT_MINING_DELAY * 100
+			miner_delay = ?DEFAULT_MINING_DELAY * 100,
+			stagger_time = 10
 		}
 	]
 ).

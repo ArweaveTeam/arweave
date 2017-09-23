@@ -9,7 +9,7 @@ test_apps: all
 	@erl -noshell -s ar test_apps -pa ebin/ -s init stop
 
 test_networks: all
-	@erl -noshell -s ar test_networks -pa ebin/
+	@erl -s ar test_networks -pa ebin/
 
 realistic: all
 	@erl -noshell -s ar start -s ar_test_sup start realistic -pa ebin/

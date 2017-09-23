@@ -1,5 +1,5 @@
 -module(ar_logging).
--export([save_log/1]).
+-export([save_log/1, format_log/1]).
 -include("ar_network_tests.hrl").
 
 %%% Manages logging of large scale, long term, nightly network tests
@@ -15,7 +15,7 @@ save_log(T) ->
 				T#test_run.name,
 				T#test_run.start_time,
 				T#test_run.fail_time,
-				lists:flatten(format_logs(lists:reverse(T#test_run.log)))
+				lists:flatten(format_logs(T#test_run.log))
 			]
 		)
 	),
@@ -31,12 +31,20 @@ generate_filename(
 		[?LOG_DIR, Name, Yr, Mo, Da, Hr, Mi, Se]
 	).
 
-%% Output a string representing a log.
-format_logs([]) -> "";
-format_logs([[{B, _}]|Logs]) ->
-	io_lib:format("No forks. Block height: ~p.~n", [B#block.height])
-		++ format_logs(Logs);
-format_logs([Log|Logs]) ->
+%% Output a string representing a series of logs.
+format_logs(Logs) ->
+	lists:foldr(
+		fun(Log, Acc) ->
+			Acc ++ format_log(Log)
+		end,
+		"",
+		Logs
+	).
+
+%% Format an individual log for printing or storage.
+format_log([{B, _}]) ->
+	io_lib:format("No forks. Block height: ~p.~n", [B#block.height]);
+format_log(Log) ->
 	io_lib:format("Fork detected:~n", []) ++
 		string:join(
 			lists:map(
@@ -53,5 +61,4 @@ format_logs([Log|Logs]) ->
 				Log
 			),
 			[$\n]
-		) ++
-		format_logs(Logs).
+		).

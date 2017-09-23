@@ -136,8 +136,14 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 							);
 						false ->
 							% The new block was a forgery. Discard it.
-							io:format("WARN: ~p received invalid block ~p (hash: ~p).~nSHL: ~p~nBHL: ~p~n",
-								[self(), NextHeight, NewB#block.hash, HashList, NewB#block.hash_list]),
+							ar:report(
+								[
+									{node, self()},
+									{rejecting_block, NextHeight},
+									{hash, NewB#block.hash},
+									{divergence_height, divergence_height(HashList, NewB#block.hash_list)}
+								]
+							),
 							server(S#state { gossip = NewGS })
 					end;
 				{NewGS, {add_tx, TX}} ->
@@ -200,7 +206,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 								find_recall_block(Bs)
 							}
 						),
-					ar:report_console(
+					ar:report(
 						[
 							{node, self()},
 							{accepted_block, (hd(NextBs))#block.height},
@@ -349,6 +355,16 @@ generate_data_segment(TXs, RecallB) ->
 		(RecallB#block.hash)/binary,
 		(ar_weave:generate_block_data(RecallB#block.txs))/binary
 	>>.
+
+%% Find the block height at which the weaves diverged.
+divergence_height([], []) -> 0;
+divergence_height([], _) -> 0;
+divergence_height(_, []) -> 0;
+divergence_height([Hash|HL1], [Hash|HL2]) ->
+	1 + divergence_height(HL1, HL2);
+divergence_height([Hash1|HL1], [Hash2|HL2]) when Hash1 =/= Hash2 ->
+	1 + divergence_height(HL1, HL2);
+divergence_height(_, _) -> unknown.
 
 %% Kill the old miner, optionally start a new miner, depending on the automine setting.
 reset_miner(S = #state { miner = undefined, automine = false }) -> S;

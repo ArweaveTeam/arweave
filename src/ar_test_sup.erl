@@ -82,12 +82,19 @@ start_test(T) when is_record(T, network_test) ->
 			T#network_test.miner_xfer_speed,
 			T#network_test.miner_delay
 		),
+	MonitorPID =
+		ar_test_monitor:start(
+			Miners,
+			self(),
+			T#network_test.check_time,
+			T#network_test.failure_time
+		),
 	ar:report_console(starting_to_mine),
-	ar_network:automine_staggered(Miners, ?STAGGER_TIME),
+	ar_network:automine_staggered(Miners, T#network_test.stagger_time),
 	ar:report_console(mining),
 	#test_run {
 		name = T#network_test.name,
-		monitor = ar_test_monitor:start(Miners, self(), T#network_test.timeout),
+		monitor = MonitorPID,
 		miners = Miners,
 		clients =
 			[
