@@ -6,7 +6,7 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 512).
 -define(DEFAULT_DIFF, 8).
--define(TARGET_TIME, 300).
+-define(TARGET_TIME, 30).
 
 %% ENABLE ONLY WHILE TESTING
 -define(DEBUG, true).
@@ -27,7 +27,7 @@
 	height, % How many blocks have passed since the Genesis block?
 	hash, % A hash of this block, the previous block and the recall block.
 	indep_hash, % A hash of just this block.
-	txs, % A list of transaction records associated with this block.
+	txs = [], % A list of transaction records associated with this block.
 	hash_list, % A list of every indep hash to this point, or undefined.
 	wallet_list % A map of wallet blanaces, or undefined.
 }).

@@ -1,9 +1,9 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, stop/1]).
--export([get_blocks/1, get_balance/2]).
+-export([get_blocks/1, get_block/2, get_balance/2, generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1, add_tx/2, add_peers/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_txs/2]).
+-export([apply_txs/2, validate/4, validate/5, find_recall_block/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -17,6 +17,7 @@
 	txs = [],
 	miner,
 	mining_delay = 0,
+	recovery = undefined,
 	automine = false
 }).
 
@@ -52,6 +53,13 @@ get_blocks(Node) ->
 	Node ! {get_blocks, self()},
 	receive
 		{blocks, Node, B} -> B
+	end.
+
+%% Return a specific block from a node, if it has it.
+get_block(Node, Height) ->
+	Node ! {get_block, self(), Height},
+	receive
+		{block, Node, B} -> B
 	end.
 
 %% Return the current balance associated with a wallet.
@@ -94,7 +102,6 @@ add_tx(GS, TX) when is_record(GS, gs_state) ->
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	NewGS;
 add_tx(Node, TX) ->
-	ar:d(Node),
 	Node ! {add_tx, TX},
 	ok.
 
@@ -105,12 +112,20 @@ add_peers(Node, Peers) ->
 	ok.
 
 %% The main node server loop.
-server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_list = WalletList, txs = TXs }) ->
+server(
+	S = #state {
+		gossip = GS,
+		block_list = Bs,
+		hash_list = HashList,
+		wallet_list = WalletList,
+		recovery = RecoveryPID,
+		txs = TXs
+	}) ->
 	receive
 		Msg when is_record(Msg, gs_msg) ->
 			% We have received a gossip mesage. Use the library to process it.
 			case ar_gossip:recv(GS, Msg) of
-				{NewGS, {new_block, NextHeight, NewB, RecallB}}
+				{NewGS, {new_block, Peer, NextHeight, NewB, RecallB}}
 						when (hd(Bs))#block.height + 1 == NextHeight ->
 					% We are being informed of a newly mined block. Is it legit?
 					case validate(NewS = apply_txs(S, NewB#block.txs), NewB, hd(Bs), RecallB) of
@@ -120,7 +135,9 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 							NewBlockList = [NewB|Bs],
 							NewTXs =
 								lists:filter(
-									fun(T) -> not ar_weave:is_tx_on_block_list(NewBlockList, T#tx.id) end,
+									fun(T) ->
+										not ar_weave:is_tx_on_block_list(NewBlockList, T#tx.id)
+									end,
 									TXs
 								),
 							% Recurse over the new block.
@@ -135,17 +152,37 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 								)
 							);
 						false ->
-							% The new block was a forgery. Discard it.
-							ar:report(
-								[
-									{node, self()},
-									{rejecting_block, NextHeight},
-									{hash, NewB#block.hash},
-									{divergence_height, divergence_height(HashList, NewB#block.hash_list)}
-								]
-							),
-							server(S#state { gossip = NewGS })
+							% The new block was a forgery or is on a different fork.
+							%ar:report(
+							%	[
+							%		{node, self()},
+							%		{rejecting_block, NextHeight},
+							%		{hash, NewB#block.hash},
+							%		{divergence_height,
+							%			divergence_height(HashList, NewB#block.hash_list)}
+							%	]
+							%),
+							server(
+								S#state {
+									gossip = NewGS,
+									recovery =
+										ar_fork_recovery:start(
+											self(),
+											Peer,
+											NextHeight,
+											drop_blocks_to(
+												divergence_height(
+													HashList,
+													NewB#block.hash_list
+												),
+												Bs
+											)
+										)
+								}
+							)
 					end;
+				{NewGS, {new_block, _, NextHeight, _, _}} when (hd(Bs))#block.height + 1 >= NextHeight ->
+					server(S#state { gossip = NewGS });
 				{NewGS, {add_tx, TX}} ->
 					server((add_tx_to_server(S, TX))#state { gossip = NewGS });
 				{NewGS, ignore} ->
@@ -174,6 +211,9 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 		{get_blocks, PID} ->
 			PID ! {blocks, self(), Bs},
 			server(S);
+		{get_block, PID, Height} ->
+			PID ! {block, self(), find_block(Height, Bs)},
+			server(S);
 		{get_balance, PID, PubKey} ->
 			PID ! {balance, PubKey,
 				case lists:keyfind(PubKey, 1, WalletList) of
@@ -201,6 +241,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 							GS,
 							{
 								new_block,
+								self(),
 								(hd(NextBs))#block.height,
 								hd(NextBs),
 								find_recall_block(Bs)
@@ -219,6 +260,7 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 								gossip = NewGS,
 								block_list = NextBs,
 								hash_list =
+									% TODO: Build hashlist in sensible direction
 									HashList ++ [(hd(NextBs))#block.indep_hash],
 								txs = NotMinedTXs % TXs not included in the block
 							}
@@ -268,6 +310,24 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 					mining_delay = Delay
 				}
 			);
+		{fork_recovered, RecoveryPID, NewBs = [NewB = #block { height = NewHeight }|_]}
+				when NewHeight > (hd(Bs))#block.height ->
+			server(
+				#state {
+					block_list = NewBs,
+					hash_list = NewB#block.hash_list,
+					wallet_list = NewB#block.wallet_list,
+					txs = [], % TODO: Merge transaction states across forks
+					recovery = undefined
+				}
+			);
+		{fork_recovered, _, _} ->
+			ar:report(
+				[
+					{node, self()},
+					rejecting_fork_recovery
+				]
+			);
 		Msg ->
 			ar:report_console([{unknown_msg, Msg}]),
 			server(S)
@@ -276,7 +336,8 @@ server(S = #state { gossip = GS, block_list = Bs, hash_list = HashList, wallet_l
 %% Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
 validate(
-		_S = #state { hash_list = HashList, wallet_list = WalletList },
+		HashList,
+		WalletList,
 		_NewB =
 			#block {
 				hash_list = HashList,
@@ -288,12 +349,17 @@ validate(
 		RecallB) ->
 	ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce) =/= false
 		and ar_weave:verify_indep(RecallB, HashList);
-validate(S, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
-	validate(S#state { hash_list = undefined }, NewB, OldB, RecallB);
-validate(S, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
-	validate(S#state { wallet_list = undefined }, NewB, OldB, RecallB);
-validate(_S, _NewB, _, _) ->
+validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
+	validate(undefined, WL, NewB, OldB, RecallB);
+validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
+	validate(HL, undefined, NewB, OldB, RecallB);
+validate(_HL, _WL, _NewB, _, _) ->
 	false.
+
+validate(#block { hash_list = HL, wallet_list = WL}, B, OldB, RecallB) ->
+	validate(HL, WL, B, OldB, RecallB);
+validate(#state { hash_list = HashList, wallet_list = WalletList }, B, OldB, RecallB) ->
+	validate(HashList, WalletList, B, OldB, RecallB).
 
 %% Update the wallet list of a server with a set of new transactions
 apply_txs(S, TXs) when is_record(S, state) ->
@@ -336,7 +402,11 @@ alter_wallet(WalletList, Target, Adjustment) ->
 %% Search a block list for the next recall block.
 find_recall_block([B0]) -> B0;
 find_recall_block(Bs) ->
-	case lists:keyfind(ar_weave:calculate_recall_block(hd(Bs)), #block.height, Bs) of
+	find_block(ar_weave:calculate_recall_block(hd(Bs)), Bs).
+
+%% Find a block from an ordered block list.
+find_block(Height, Bs) ->
+	case lists:keyfind(Height, #block.height, Bs) of
 		false -> unavailable;
 		B -> B
 	end.
@@ -357,9 +427,9 @@ generate_data_segment(TXs, RecallB) ->
 	>>.
 
 %% Find the block height at which the weaves diverged.
-divergence_height([], []) -> 0;
-divergence_height([], _) -> 0;
-divergence_height(_, []) -> 0;
+divergence_height([], []) -> -1;
+divergence_height([], _) -> -1;
+divergence_height(_, []) -> -1;
 divergence_height([Hash|HL1], [Hash|HL2]) ->
 	1 + divergence_height(HL1, HL2);
 divergence_height([Hash1|HL1], [Hash2|HL2]) when Hash1 =/= Hash2 ->
@@ -409,7 +479,33 @@ add_tx_to_server(S, TX) ->
 	end,
 	S#state { txs = NewTXs }.
 
+%% Drop blocks in a block list down to a given height.
+drop_blocks_to(Height, Bs) ->
+	lists:filter(fun(B) -> B#block.height =< Height end, Bs).
+
 %%% Tests
+
+%% Ensure that divergence heights are appropriately calculated.
+divergence_height_test() ->
+	2 = divergence_height([a, b, c], [a, b, c, d, e, f]),
+	1 = divergence_height([a, b], [a, b, c, d, e, f]),
+	2 = divergence_height([1,2,3], [1,2,3]),
+	2 = divergence_height([1,2,3, a, b, c], [1,2,3]).
+
+%% Ensure that forked nodes can appropriately resolve their differences.
+fork_recovery_test() ->
+	Node1 = start(),
+	Node2 = start(),
+	B1 = ar_weave:add(ar_weave:init(), []),
+	B2 = ar_weave:add(B1, []),
+	B3 = ar_weave:add(B2, []),
+	B4A = ar_weave:add(B3, []),
+	B4B = ar_weave:add(B3, []),
+	B5 = ar_weave:add(B4A, []),
+	Node1 ! {replace_block_list, B4A},
+	Node2 ! {replace_block_list, B4B},
+	add_peers(Node1, [Node2]),
+	incomplete.
 
 %% Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
@@ -421,6 +517,7 @@ add_bogus_block_test() ->
 	ar_gossip:send(GS0,
 		{
 			new_block,
+			self(),
 			(hd(B2))#block.height,
 			(hd(B2))#block { hash = <<"INCORRECT">> }
 		}),
@@ -437,8 +534,12 @@ add_bogus_block_nonce_test() ->
 	B2 = ar_weave:add(B1, [ar_tx:new(<<"NEXT BLOCK.">>)]),
 	ar_gossip:send(GS0,
 		{new_block,
+			self(),
 			(hd(B2))#block.height,
-			(hd(B2))#block { nonce = <<"INCORRECT">> }}),
+			(hd(B2))#block { nonce = <<"INCORRECT">> },
+			find_recall_block(B2)
+		}
+	),
 	receive after 500 -> ok end,
 	Node ! {get_blocks, self()},
 	receive {blocks, Node, RecvdB} -> B1 = RecvdB end.
@@ -453,10 +554,13 @@ add_bogus_hash_list_test() ->
 	B2 = ar_weave:add(B1, [ar_tx:new(<<"NEXT BLOCK.">>)]),
 	ar_gossip:send(GS0,
 		{new_block,
+			self(),
 			(hd(B2))#block.height,
 			(hd(B2))#block {
 				hash_list = [<<"INCORRECT HASH">>|tl((hd(B2))#block.hash_list)]
-			}}),
+			},
+			find_recall_block(B2)
+		}),
 	receive after 500 -> ok end,
 	Node ! {get_blocks, self()},
 	receive {blocks, Node, RecvdB} -> B1 = RecvdB end.

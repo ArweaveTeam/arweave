@@ -42,7 +42,7 @@ server(S = #state { gossip = GS, report = ReportPID }) ->
 				{NewGS, ignore} ->
 					% Message not important. Ignore.
 					server(S#state { gossip = NewGS });
-				{NewGS, {new_block, NewHeight, _NewB}} ->
+				{NewGS, {new_block, _, NewHeight, _NewB}} ->
 					% We are being told about a new block. Report its height.
 					case ReportPID of
 						undefined ->
@@ -70,7 +70,7 @@ simple_test() ->
 	% Create a new block in the weave.
 	B1 = ar_weave:add(B0, [ar_tx:new(<<"HELLO WORLD">>)]),
 	% Send the new block to the gossip node, which should inform our monitor.
-	ar_gossip:send(GS0, {new_block, (hd(B1))#block.height, hd(B1)}),
+	ar_gossip:send(GS0, {new_block, self(), (hd(B1))#block.height, hd(B1)}),
 	% Receive the 'new block found; message for the first block.
 	receive {new_block, 1} -> ok end.
 
@@ -86,9 +86,9 @@ multiple_test() ->
 	Node2 = ar_node:start([Node1], B0),
 	GS0 = ar_gossip:init([Node2]),
 	% Send new block messages to the the gossip network.
-	{GS1, _} = ar_gossip:send(GS0, {new_block, (hd(B1))#block.height, hd(B1)}),
-	{GS2, _} = ar_gossip:send(GS1, {new_block, (hd(B2))#block.height, hd(B2)}),
-	ar_gossip:send(GS2, {new_block, (hd(B3))#block.height, hd(B3)}),
+	{GS1, _} = ar_gossip:send(GS0, {new_block, self(), (hd(B1))#block.height, hd(B1)}),
+	{GS2, _} = ar_gossip:send(GS1, {new_block, self(), (hd(B2))#block.height, hd(B2)}),
+	ar_gossip:send(GS2, {new_block, self(), (hd(B3))#block.height, hd(B3)}),
 	% Receive the new block notifications for all three gossiped blocks.
 	receive {new_block, 1} -> ok end,
 	receive {new_block, 2} -> ok end,

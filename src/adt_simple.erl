@@ -71,7 +71,7 @@ server(S = #state { gossip = GS }) ->
 							TX
 						)
 					);
-				{NewGS, {new_block, _, B, _}} ->
+				{NewGS, {new_block, _, _, B, _}} ->
 					NewS =
 						lists:foldl(
 							fun(TX, NextS) ->
