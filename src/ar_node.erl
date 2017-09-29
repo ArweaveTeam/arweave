@@ -134,7 +134,8 @@ server(
 							{node, self()},
 							{processing_block, NextHeight},
 							{bhl, NewS#state.hash_list},
-							{new_bhl, NewB#block.hash_list}
+							{new_bhl, NewB#block.hash_list},
+							{recall_block_hash, RecallB#block.hash}
 						]
 					),
 					case validate(NewS, NewB, hd(Bs), RecallB) of
@@ -366,8 +367,6 @@ validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
 validate(_HL, _WL, _NewB, _, _) ->
 	false.
 
-validate(#block { hash_list = HL, wallet_list = WL}, B, OldB, RecallB) ->
-	validate(HL, WL, B, OldB, RecallB);
 validate(#state { hash_list = HashList, wallet_list = WalletList }, B, OldB, RecallB) ->
 	validate(HashList, WalletList, B, OldB, RecallB).
 
@@ -511,6 +510,7 @@ fork_recovery_test() ->
 	B3 = ar_weave:add(B2, []),
 	B4A = ar_weave:add(B3, []),
 	B4B = ar_weave:add(B3, []),
+	ar:report([{recall_block_3, (find_recall_block(B3))#block.hash}]),
 	Node1 ! {replace_block_list, B4A},
 	Node2 ! {replace_block_list, B4B},
 	add_peers(Node1, Node2),

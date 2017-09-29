@@ -56,16 +56,18 @@ server(
 	Parent ! {fork_recovered, Bs};
 server(S = #state { peer = Peer, blocks = Bs = [B|_], target = Target }) ->
 	NextB = ar_node:get_block(Peer, B#block.height + 1),
+	BHL = B#block.hash_list ++ [B#block.indep_hash],
 	ar:report(
 		[
 			{got_block, NextB#block.height},
 			{bl_height, B#block.height},
 			{target, Target},
-			{current_bhl, B#block.hash_list ++ [B#block.hash]},
+			{current_bhl, BHL},
 			{next_bhl, NextB#block.hash_list},
 			{next_hash, NextB#block.indep_hash},
 			{current_wl, ar_node:apply_txs(B#block.wallet_list, NextB#block.txs)},
 			{next_wl, NextB#block.wallet_list},
+			{recall_block, (ar_node:find_recall_block(Bs))#block.hash},
 			{ar_mine_validate,
 				ar_mine:validate(
 					B#block.hash,
@@ -77,12 +79,12 @@ server(S = #state { peer = Peer, blocks = Bs = [B|_], target = Target }) ->
 				)
 			},
 			{ar_weave_verify_indep,
-				ar_weave:verify_indep(ar_node:find_recall_block(Bs), B#block.hash_list ++ [B#block.hash])
+				ar_weave:verify_indep(ar_node:find_recall_block(Bs), BHL)
 			}
 		]
 	),
 	case ar_node:validate(
-			B#block.hash_list,
+			BHL,
 			ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
 			NextB, B, ar_node:find_recall_block(Bs)) of
 		false ->
