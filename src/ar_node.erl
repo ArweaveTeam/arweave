@@ -125,24 +125,50 @@ server(
 		Msg when is_record(Msg, gs_msg) ->
 			% We have received a gossip mesage. Use the library to process it.
 			case ar_gossip:recv(GS, Msg) of
+				{NewGS, {new_block, Peer, Height, _B, _RecallB}} when Bs == undefined ->
+					% We have no functional blockweave. Try to recover to this one.
+					server(
+						S#state {
+							gossip = NewGS,
+							recovery =
+								ar_fork_recovery:start(
+									self(),
+									Peer,
+									Height,
+									[]
+								)
+						}
+					);
+				{NewGS, {new_block, Peer, NextHeight, NewB, _RecallB}}
+						when (Bs == undefined) or (NextHeight > (hd(Bs))#block.height + 1) ->
+					% If the block is highger than we were expecting, attempt to
+					% catch up.
+					server(
+						S#state {
+							gossip = NewGS,
+							recovery =
+								ar_fork_recovery:start(
+									self(),
+									Peer,
+									NextHeight,
+									drop_blocks_to(
+										divergence_height(
+											HashList,
+											NewB#block.hash_list
+										),
+										Bs
+									)
+								)
+						}
+					);
 				{NewGS, {new_block, Peer, NextHeight, NewB, RecallB}}
 						when (hd(Bs))#block.height + 1 == NextHeight ->
 					% We are being informed of a newly mined block. Is it legit?
 					NewS = apply_txs(S, NewB#block.txs),
-					ar:report(
-						[
-							{node, self()},
-							{processing_block, NextHeight},
-							{bhl, NewS#state.hash_list},
-							{new_bhl, NewB#block.hash_list},
-							{recall_block_hash, RecallB#block.hash}
-						]
-					),
 					case validate(NewS, NewB, hd(Bs), RecallB) of
 						true ->
 							% It is legit.
 							% Filter completed TXs from the pending list.
-							ar:report([{integrating_block, NextHeight}]),
 							NewBlockList = [NewB|Bs],
 							NewTXs =
 								lists:filter(
@@ -164,15 +190,6 @@ server(
 							);
 						false ->
 							% The new block was a forgery or is on a different fork.
-							ar:report(
-								[
-									{node, self()},
-									{rejecting_block, NextHeight},
-									{hash, NewB#block.hash},
-									{divergence_height,
-										divergence_height(HashList, NewB#block.hash_list)}
-								]
-							),
 							server(
 								S#state {
 									gossip = NewGS,
@@ -185,7 +202,7 @@ server(
 												divergence_height(
 													HashList,
 													NewB#block.hash_list
-												) - 1,
+												),
 												Bs
 											)
 										)
@@ -242,7 +259,7 @@ server(
 			% this block.
 			NotMinedTXs = TXs -- MinedTXs,
 			NewS = apply_txs(S#state { txs = MinedTXs }, MinedTXs),
-			case validate(NewS, hd(NextBs), hd(Bs), RecallB = find_recall_block(Bs)) of
+			case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs)) of
 				false ->
 					ar:report([{miner, self()}, incorrect_nonce]),
 					server(S);
@@ -262,8 +279,8 @@ server(
 						[
 							{node, self()},
 							{accepted_block, (hd(NextBs))#block.height},
-							{txs, length(MinedTXs)},
-							{recall_block, RecallB#block.hash}
+							{hash, (hd(NextBs))#block.hash},
+							{txs, length(MinedTXs)}
 						]
 					),
 					server(
@@ -322,15 +339,12 @@ server(
 					mining_delay = Delay
 				}
 			);
-		{fork_recovered, RecoveryPID, NewBs = [NewB = #block { height = NewHeight }|_]}
-				when NewHeight > (hd(Bs))#block.height ->
+		{fork_recovered, NewBs} when Bs == undefined ->
 			server(
-				#state {
+				S#state {
 					block_list = NewBs,
-					hash_list = NewB#block.hash_list,
-					wallet_list = NewB#block.wallet_list,
-					txs = [], % TODO: Merge transaction states across forks
-					recovery = undefined
+					hash_list = ar_weave:generate_hash_list(NewBs),
+					wallet_list = (find_sync_block(NewBs))#block.wallet_list
 				}
 			);
 		{fork_recovered, [TopB|_] = NewBs}
@@ -445,9 +459,8 @@ divergence_height([], _) -> -1;
 divergence_height(_, []) -> -1;
 divergence_height([Hash|HL1], [Hash|HL2]) ->
 	1 + divergence_height(HL1, HL2);
-divergence_height([Hash1|HL1], [Hash2|HL2]) when Hash1 =/= Hash2 ->
-	1 + divergence_height(HL1, HL2);
-divergence_height(_, _) -> unknown.
+divergence_height([_Hash1|_HL1], [_Hash2|_HL2]) ->
+	-1.
 
 %% Kill the old miner, optionally start a new miner, depending on the automine setting.
 reset_miner(S = #state { miner = undefined, automine = false }) -> S;
@@ -504,23 +517,6 @@ divergence_height_test() ->
 	1 = divergence_height([a, b], [a, b, c, d, e, f]),
 	2 = divergence_height([1,2,3], [1,2,3]),
 	2 = divergence_height([1,2,3, a, b, c], [1,2,3]).
-
-%% Ensure that forked nodes can appropriately resolve their differences.
-fork_recovery_test() ->
-	Node1 = start(),
-	Node2 = start(),
-	B1 = ar_weave:add(ar_weave:init(), []),
-	B2 = ar_weave:add(B1, []),
-	B3 = ar_weave:add(B2, []),
-	Node1 ! Node2 ! {replace_block_list, B3},
-	mine(Node1),
-	mine(Node2),
-	receive after 300 -> ok end,
-	add_peers(Node1, Node2),
-	mine(Node1),
-	receive after 300 -> ok end,
-	[B|_] = get_blocks(Node2),
-	5 = B#block.height.
 
 %% Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->

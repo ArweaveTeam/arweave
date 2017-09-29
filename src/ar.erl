@@ -13,6 +13,7 @@
 -define(
 	CORE_TEST_MODS,
 	[
+		ar_fork_recovery,
 		ar_simple_reporter,
 		ar_wallet,
 		ar_tx,
