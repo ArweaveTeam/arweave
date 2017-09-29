@@ -24,7 +24,8 @@ start(Parent, Peer, TargetHeight, BlockList) ->
 				[
 					{started_fork_recovery_proc, self()},
 					{target_height, TargetHeight},
-					{current_block_height, (hd(BlockList))#block.height}
+					{current_block_height, (hd(BlockList))#block.height},
+					{blocklist_length, length(BlockList)}
 				]
 			),
 			server(
@@ -54,17 +55,17 @@ server(
 	),
 	Parent ! {fork_recovered, Bs};
 server(S = #state { peer = Peer, blocks = Bs = [B|_], target = Target }) ->
-	NextB = ar_node:get_block(Peer, B#block.height),
+	NextB = ar_node:get_block(Peer, B#block.height + 1),
 	ar:report(
 		[
 			{got_block, NextB#block.height},
 			{bl_height, B#block.height},
 			{target, Target},
-			{local_bhl, B#block.hash_list},
-			{remote_bhl, NextB#block.hash_list},
-			{remote_hash, NextB#block.indep_hash},
-			{local_wl, ar_node:apply_txs(B#block.wallet_list, NextB#block.txs)},
-			{remote_wl, NextB#block.wallet_list},
+			{current_bhl, B#block.hash_list ++ [B#block.hash]},
+			{next_bhl, NextB#block.hash_list},
+			{next_hash, NextB#block.indep_hash},
+			{current_wl, ar_node:apply_txs(B#block.wallet_list, NextB#block.txs)},
+			{next_wl, NextB#block.wallet_list},
 			{ar_mine_validate,
 				ar_mine:validate(
 					B#block.hash,
@@ -76,7 +77,7 @@ server(S = #state { peer = Peer, blocks = Bs = [B|_], target = Target }) ->
 				)
 			},
 			{ar_weave_verify_indep,
-				ar_weave:verify_indep(ar_node:find_recall_block(Bs), B#block.hash_list)
+				ar_weave:verify_indep(ar_node:find_recall_block(Bs), B#block.hash_list ++ [B#block.hash])
 			}
 		]
 	),

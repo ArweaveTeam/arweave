@@ -51,7 +51,7 @@ generate_hash_list(Bs = [B|_]) ->
 	lists:reverse(generate_hash_list(Bs, B#block.height + 1)).
 generate_hash_list([], 0) -> [];
 generate_hash_list([B|Bs], N) ->
-	[B#block.hash|generate_hash_list(Bs, N - 1)].
+	[B#block.indep_hash|generate_hash_list(Bs, N - 1)].
 
 %% Verify that a list of blocks is valid.
 verify([_GenesisBlock]) -> true;

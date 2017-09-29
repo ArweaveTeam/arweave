@@ -128,10 +128,20 @@ server(
 				{NewGS, {new_block, Peer, NextHeight, NewB, RecallB}}
 						when (hd(Bs))#block.height + 1 == NextHeight ->
 					% We are being informed of a newly mined block. Is it legit?
-					case validate(NewS = apply_txs(S, NewB#block.txs), NewB, hd(Bs), RecallB) of
+					NewS = apply_txs(S, NewB#block.txs),
+					ar:report(
+						[
+							{node, self()},
+							{processing_block, NextHeight},
+							{bhl, NewS#state.hash_list},
+							{new_bhl, NewB#block.hash_list}
+						]
+					),
+					case validate(NewS, NewB, hd(Bs), RecallB) of
 						true ->
 							% It is legit.
 							% Filter completed TXs from the pending list.
+							ar:report([{integrating_block, NextHeight}]),
 							NewBlockList = [NewB|Bs],
 							NewTXs =
 								lists:filter(
@@ -153,15 +163,15 @@ server(
 							);
 						false ->
 							% The new block was a forgery or is on a different fork.
-							%ar:report(
-							%	[
-							%		{node, self()},
-							%		{rejecting_block, NextHeight},
-							%		{hash, NewB#block.hash},
-							%		{divergence_height,
-							%			divergence_height(HashList, NewB#block.hash_list)}
-							%	]
-							%),
+							ar:report(
+								[
+									{node, self()},
+									{rejecting_block, NextHeight},
+									{hash, NewB#block.hash},
+									{divergence_height,
+										divergence_height(HashList, NewB#block.hash_list)}
+								]
+							),
 							server(
 								S#state {
 									gossip = NewGS,
@@ -174,7 +184,7 @@ server(
 												divergence_height(
 													HashList,
 													NewB#block.hash_list
-												),
+												) - 1,
 												Bs
 											)
 										)
@@ -501,23 +511,10 @@ fork_recovery_test() ->
 	B3 = ar_weave:add(B2, []),
 	B4A = ar_weave:add(B3, []),
 	B4B = ar_weave:add(B3, []),
-	B5 = ar_weave:add(B4A, []),
 	Node1 ! {replace_block_list, B4A},
 	Node2 ! {replace_block_list, B4B},
-	receive after 500 -> ok end,
-	[TestB|_] = get_blocks(Node1),
-	4 = TestB#block.height,
-	add_peers(Node1, [Node2]),
-	GS0 = ar_gossip:init([Node1]),
-	ar_gossip:send(GS0,
-		{
-			new_block,
-			Node1,
-			(hd(B5))#block.height,
-			hd(B5),
-			find_recall_block(B5)
-		}
-	),
+	add_peers(Node1, Node2),
+	mine(Node1),
 	receive after 1000 -> ok end,
 	[B|_] = get_blocks(Node2),
 	5 = B#block.height.
