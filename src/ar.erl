@@ -1,6 +1,6 @@
 -module(ar).
 -export([start/0, rebuild/0]).
--export([test/0, test_apps/0, test_networks/0]).
+-export([test/0, test/1, test_apps/0, test_networks/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1]).
 -include("ar.hrl").
@@ -52,6 +52,10 @@ rebuild() ->
 test() ->
 	start(),
 	eunit:test(?CORE_TEST_MODS, [verbose]).
+
+%% Run the tests for a single module.
+test(Mod) ->
+	eunit:test([Mod], [verbose]).
 
 %% Run tests on the apps.
 test_apps() ->

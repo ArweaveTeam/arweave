@@ -33,7 +33,7 @@ start(Parent, Peer, TargetHeight, BlockList) ->
 					peer = Peer,
 					target = TargetHeight,
 					blocks = BlockList,
-					hash_list = 
+					hash_list = []
 				}
 			)
 		end

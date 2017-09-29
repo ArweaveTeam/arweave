@@ -504,8 +504,23 @@ fork_recovery_test() ->
 	B5 = ar_weave:add(B4A, []),
 	Node1 ! {replace_block_list, B4A},
 	Node2 ! {replace_block_list, B4B},
+	receive after 500 -> ok end,
+	[TestB|_] = get_blocks(Node1),
+	4 = TestB#block.height,
 	add_peers(Node1, [Node2]),
-	incomplete.
+	GS0 = ar_gossip:init([Node1]),
+	ar_gossip:send(GS0,
+		{
+			new_block,
+			Node1,
+			(hd(B5))#block.height,
+			hd(B5),
+			find_recall_block(B5)
+		}
+	),
+	receive after 1000 -> ok end,
+	[B|_] = get_blocks(Node2),
+	5 = B#block.height.
 
 %% Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
@@ -519,7 +534,8 @@ add_bogus_block_test() ->
 			new_block,
 			self(),
 			(hd(B2))#block.height,
-			(hd(B2))#block { hash = <<"INCORRECT">> }
+			(hd(B2))#block { hash = <<"INCORRECT">> },
+			find_recall_block(B2)
 		}),
 	receive after 500 -> ok end,
 	Node ! {get_blocks, self()},
