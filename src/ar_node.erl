@@ -242,7 +242,7 @@ server(
 			% this block.
 			NotMinedTXs = TXs -- MinedTXs,
 			NewS = apply_txs(S#state { txs = MinedTXs }, MinedTXs),
-			case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs)) of
+			case validate(NewS, hd(NextBs), hd(Bs), RecallB = find_recall_block(Bs)) of
 				false ->
 					ar:report([{miner, self()}, incorrect_nonce]),
 					server(S);
@@ -262,7 +262,8 @@ server(
 						[
 							{node, self()},
 							{accepted_block, (hd(NextBs))#block.height},
-							{txs, length(MinedTXs)}
+							{txs, length(MinedTXs)},
+							{recall_block, RecallB#block.hash}
 						]
 					),
 					server(
@@ -332,13 +333,16 @@ server(
 					recovery = undefined
 				}
 			);
-		{fork_recovered, _, _} ->
-			ar:report(
-				[
-					{node, self()},
-					rejecting_fork_recovery
-				]
+		{fork_recovered, [TopB|_] = NewBs}
+ 				when TopB#block.height > (hd(Bs))#block.height ->
+			server(
+				S#state {
+					block_list = NewBs,
+					hash_list = ar_weave:generate_hash_list(NewBs),
+					wallet_list = (find_sync_block(NewBs))#block.wallet_list
+				}
 			);
+		{fork_recovered, _} -> server(S);
 		Msg ->
 			ar:report_console([{unknown_msg, Msg}]),
 			server(S)
@@ -508,14 +512,13 @@ fork_recovery_test() ->
 	B1 = ar_weave:add(ar_weave:init(), []),
 	B2 = ar_weave:add(B1, []),
 	B3 = ar_weave:add(B2, []),
-	B4A = ar_weave:add(B3, []),
-	B4B = ar_weave:add(B3, []),
-	ar:report([{recall_block_3, (find_recall_block(B3))#block.hash}]),
-	Node1 ! {replace_block_list, B4A},
-	Node2 ! {replace_block_list, B4B},
+	Node1 ! Node2 ! {replace_block_list, B3},
+	mine(Node1),
+	mine(Node2),
+	receive after 300 -> ok end,
 	add_peers(Node1, Node2),
 	mine(Node1),
-	receive after 1000 -> ok end,
+	receive after 300 -> ok end,
 	[B|_] = get_blocks(Node2),
 	5 = B#block.height.
 

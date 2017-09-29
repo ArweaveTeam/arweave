@@ -39,11 +39,11 @@
 %		#network_test { name = no_clients, num_clients = 0 },
 		#network_test {
 			name = realistic,
-			num_miners = 1000,
+			num_miners = 100,
 			num_clients = 0,
 			client_max_tx_len = 8,
 			miner_connections = 8,
-			stagger_time = 300
+			stagger_time = 100
 		}
 	]
 ).

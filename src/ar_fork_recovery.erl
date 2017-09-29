@@ -47,42 +47,10 @@ server(
 		target = Target,
 		blocks = Bs = [#block { height = Target }|_]
 	}) ->
-	ar:report_console(
-		[
-			{fork_recovered, self()},
-			{parent, Parent}
-		]
-	),
 	Parent ! {fork_recovered, Bs};
-server(S = #state { peer = Peer, blocks = Bs = [B|_], target = Target }) ->
+server(S = #state { peer = Peer, blocks = Bs = [B|_] }) ->
 	NextB = ar_node:get_block(Peer, B#block.height + 1),
 	BHL = B#block.hash_list ++ [B#block.indep_hash],
-	ar:report(
-		[
-			{got_block, NextB#block.height},
-			{bl_height, B#block.height},
-			{target, Target},
-			{current_bhl, BHL},
-			{next_bhl, NextB#block.hash_list},
-			{next_hash, NextB#block.indep_hash},
-			{current_wl, ar_node:apply_txs(B#block.wallet_list, NextB#block.txs)},
-			{next_wl, NextB#block.wallet_list},
-			{recall_block, (ar_node:find_recall_block(Bs))#block.hash},
-			{ar_mine_validate,
-				ar_mine:validate(
-					B#block.hash,
-					B#block.diff,
-					ar_node:generate_data_segment(
-						NextB#block.txs,
-						ar_node:find_recall_block(Bs)),
-					NextB#block.nonce
-				)
-			},
-			{ar_weave_verify_indep,
-				ar_weave:verify_indep(ar_node:find_recall_block(Bs), BHL)
-			}
-		]
-	),
 	case ar_node:validate(
 			BHL,
 			ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
@@ -90,6 +58,5 @@ server(S = #state { peer = Peer, blocks = Bs = [B|_], target = Target }) ->
 		false ->
 			ok;
 		true ->
-			ar:d(success),
 			server(S#state { blocks = [NextB|Bs] })
 	end.
