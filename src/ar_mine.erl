@@ -68,15 +68,15 @@ server(
 					txs = TXs
 				}
 			);
-	hash ->
-		schedule_hash(S),
-		case validate(Hash, Diff, Data, Nonce = generate()) of
-			false -> server(S);
-			NextHash ->
-				%ar:report_console([{miner, self()}, {found_block, Nonce}]),
-				Parent ! {work_complete, TXs, Hash, NextHash, Diff, Nonce},
-				ok
-		end
+		hash ->
+			schedule_hash(S),
+			case validate(Hash, Diff, Data, Nonce = generate()) of
+				false -> server(S);
+				NextHash ->
+					%ar:report_console([{miner, self()}, {found_block, Nonce}]),
+					Parent ! {work_complete, TXs, Hash, NextHash, Diff, Nonce},
+					ok
+			end
 	end.
 
 %% Validate that a hash and a nonce satisfy the difficulty.

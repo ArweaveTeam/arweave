@@ -21,6 +21,9 @@
 	automine = false
 }).
 
+%% Maximum number of blocks to hold at any time.
+-define(MAX_BLOCKS, 50).
+
 %% Start a node, optionally with a list of peers.
 start() -> start([]).
 start(Peers) -> start(Peers, undefined).
@@ -112,13 +115,14 @@ add_peers(Node, Peers) ->
 	ok.
 
 %% The main node server loop.
+server(S = #state { block_list = Bs }) when length(Bs) > ?MAX_BLOCKS ->
+	server(S#state { block_list = ar_gossip:pick_random_peers(Bs, ?MAX_BLOCKS - 1) });
 server(
 	S = #state {
 		gossip = GS,
 		block_list = Bs,
 		hash_list = HashList,
 		wallet_list = WalletList,
-		recovery = RecoveryPID,
 		txs = TXs
 	}) ->
 	receive
