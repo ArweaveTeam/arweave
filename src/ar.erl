@@ -13,14 +13,15 @@
 -define(
 	CORE_TEST_MODS,
 	[
-		ar_fork_recovery,
-		ar_simple_reporter,
 		ar_wallet,
+		ar_router,
 		ar_tx,
 		ar_weave,
 		ar_gossip,
 		ar_mine,
-		ar_node
+		ar_fork_recovery,
+		ar_node,
+		ar_simple_reporter
 	]
 ).
 
