@@ -121,9 +121,7 @@ server(
 	S = #state {
 		gossip = GS,
 		block_list = Bs,
-		hash_list = HashList,
-		wallet_list = WalletList,
-		txs = TXs
+		wallet_list = WalletList
 	}) ->
 	receive
 		Msg when is_record(Msg, gs_msg) ->
@@ -131,92 +129,22 @@ server(
 			case ar_gossip:recv(GS, Msg) of
 				{NewGS, {new_block, Peer, Height, _B, _RecallB}} when Bs == undefined ->
 					% We have no functional blockweave. Try to recover to this one.
-					server(
-						S#state {
-							gossip = NewGS,
-							recovery =
-								ar_fork_recovery:start(
-									self(),
-									Peer,
-									Height,
-									[]
-								)
-						}
-					);
+					join_weave(S, NewGS, Peer, Height);
 				{NewGS, {new_block, Peer, NextHeight, NewB, _RecallB}}
 						when (Bs == undefined) or (NextHeight > (hd(Bs))#block.height + 1) ->
 					% If the block is highger than we were expecting, attempt to
 					% catch up.
-					server(
-						S#state {
-							gossip = NewGS,
-							recovery =
-								ar_fork_recovery:start(
-									self(),
-									Peer,
-									NextHeight,
-									drop_blocks_to(
-										divergence_height(
-											HashList,
-											NewB#block.hash_list
-										),
-										Bs
-									)
-								)
-						}
-					);
+					fork_recover(S, NewGS, Peer, NextHeight, NewB);
 				{NewGS, {new_block, Peer, NextHeight, NewB, RecallB}}
 						when (hd(Bs))#block.height + 1 == NextHeight ->
 					% We are being informed of a newly mined block. Is it legit?
-					NewS = apply_txs(S, NewB#block.txs),
-					case validate(NewS, NewB, hd(Bs), RecallB) of
-						true ->
-							% It is legit.
-							% Filter completed TXs from the pending list.
-							NewBlockList = [NewB|Bs],
-							NewTXs =
-								lists:filter(
-									fun(T) ->
-										not ar_weave:is_tx_on_block_list(NewBlockList, T#tx.id)
-									end,
-									TXs
-								),
-							% Recurse over the new block.
-							server(
-								reset_miner(
-									NewS#state {
-										block_list = NewBlockList,
-										hash_list = HashList ++ [NewB#block.indep_hash],
-										gossip = NewGS,
-										txs = NewTXs
-									}
-								)
-							);
-						false ->
-							% The new block was a forgery or is on a different fork.
-							server(
-								S#state {
-									gossip = NewGS,
-									recovery =
-										ar_fork_recovery:start(
-											self(),
-											Peer,
-											NextHeight,
-											drop_blocks_to(
-												divergence_height(
-													HashList,
-													NewB#block.hash_list
-												),
-												Bs
-											)
-										)
-								}
-							)
-					end;
-				{NewGS, {new_block, _, NextHeight, _, _}} when (hd(Bs))#block.height + 1 >= NextHeight ->
+					process_new_block(S, NewGS, NewB, hd(Bs), RecallB, Peer);
+				{NewGS, {new_block, _, NextHeight, _, _}}
+						when (hd(Bs))#block.height + 1 >= NextHeight ->
+					% The distributed block is below our height.
 					server(S#state { gossip = NewGS });
 				{NewGS, {add_tx, TX}} ->
-					server((add_tx_to_server(S, TX))#state { gossip = NewGS });
+					add_tx_to_server(S, NewGS, TX);
 				{NewGS, ignore} ->
 					server(S#state { gossip = NewGS });
 				{NewGS, X} ->
@@ -229,8 +157,10 @@ server(
 					server(S#state { gossip = NewGS })
 			end;
 		{add_tx, TX} ->
+			% We have a new TX. Distribute it to the
+			% gossip network.
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-			server((add_tx_to_server(S, TX))#state { gossip = NewGS });
+			add_tx_to_server(S, NewGS, TX);
 		{replace_block_list, NewBL} ->
 			% Replace the entire stored block list, regenerating the hash list.
 			server(
@@ -257,49 +187,7 @@ server(
 		automine -> server(start_mining(S#state { automine = true }));
 		{work_complete, MinedTXs, _Hash, _NewHash, _Diff, Nonce} ->
 			% The miner thinks it has found a new block!
-			% Build the block record, verify it, and gossip it to the other nodes.
-			NextBs = ar_weave:add(Bs, HashList, WalletList, MinedTXs, Nonce),
-			% Store the transactions that we know about, but were not mined in
-			% this block.
-			NotMinedTXs = TXs -- MinedTXs,
-			NewS = apply_txs(S#state { txs = MinedTXs }, MinedTXs),
-			case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs)) of
-				false ->
-					ar:report([{miner, self()}, incorrect_nonce]),
-					server(S);
-				true ->
-					{NewGS, _} =
-						ar_gossip:send(
-							GS,
-							{
-								new_block,
-								self(),
-								(hd(NextBs))#block.height,
-								hd(NextBs),
-								find_recall_block(Bs)
-							}
-						),
-					ar:report(
-						[
-							{node, self()},
-							{accepted_block, (hd(NextBs))#block.height},
-							{hash, (hd(NextBs))#block.hash},
-							{txs, length(MinedTXs)}
-						]
-					),
-					server(
-						reset_miner(
-							NewS#state {
-								gossip = NewGS,
-								block_list = NextBs,
-								hash_list =
-									% TODO: Build hashlist in sensible direction
-									HashList ++ [(hd(NextBs))#block.indep_hash],
-								txs = NotMinedTXs % TXs not included in the block
-							}
-						)
-					)
-			end;
+			integrate_block_from_miner(S, MinedTXs, Nonce);
 		{add_peers, Ps} ->
 			server(S#state { gossip = ar_gossip:add_peers(GS, Ps) });
 		stop ->
@@ -365,6 +253,152 @@ server(
 			ar:report_console([{unknown_msg, Msg}]),
 			server(S)
 	end.
+
+%%% Abstracted server functionality
+
+%% Catch up to the current height, from 0.
+join_weave(S, NewGS, Peer, Height) ->
+	server(
+		S#state {
+			gossip = NewGS,
+			recovery =
+				ar_fork_recovery:start(
+					self(),
+					Peer,
+					Height,
+					[]
+				)
+		}
+	).
+
+%% Recovery from a fork.
+fork_recover(
+	S = #state {
+		block_list = Bs,
+		hash_list = HashList
+	}, Peer, Height, NewB) ->
+	server(
+		S#state {
+			recovery =
+				ar_fork_recovery:start(
+					self(),
+					Peer,
+					Height,
+					drop_blocks_to(
+						divergence_height(
+							HashList,
+							NewB#block.hash_list
+						),
+						Bs
+					)
+				)
+		}
+	).
+fork_recover(S, NewGS, Peer, Height, NewB) ->
+	fork_recover(S#state { gossip = NewGS }, Peer, Height, NewB).
+
+%% Validate whether a new lbock is legitimate, then handle it appropriately.
+process_new_block(RawS, NewGS, NewB, OldB, RecallB, Peer) ->
+	S = RawS#state { gossip = NewGS },
+	case validate(NewS = apply_txs(S, NewB#block.txs), NewB, OldB, RecallB) of
+		true ->
+			% The block is legit. Accept it.
+			integrate_new_block(NewS, NewB);
+		false ->
+			fork_recover(S, Peer, NewB#block.height, NewB)
+	end.
+
+%% We have received a new valid block. Update the node state accordingly.
+integrate_new_block(S = #state { txs = TXs, block_list = Bs, hash_list = HashList }, NewB) ->
+	% Filter completed TXs from the pending list.
+	NewTXs =
+		lists:filter(
+			fun(T) ->
+				not ar_weave:is_tx_on_block_list([NewB|Bs], T#tx.id)
+			end,
+			TXs
+		),
+	% Recurse over the new block.
+	server(
+		reset_miner(
+			S#state {
+				block_list = [NewB|Bs],
+				hash_list = HashList ++ [NewB#block.indep_hash],
+				txs = NewTXs
+			}
+		)
+	).
+
+%% Verify a new block found by a miner, integrate it.
+integrate_block_from_miner(
+		S = #state {
+			hash_list = HashList,
+			wallet_list = WalletList,
+			block_list = Bs,
+			txs = TXs,
+			gossip = GS
+		},
+		MinedTXs, Nonce) ->
+	% Build the block record, verify it, and gossip it to the other nodes.
+	NextBs = ar_weave:add(Bs, HashList, WalletList, MinedTXs, Nonce),
+	% Store the transactions that we know about, but were not mined in
+	% this block.
+	NotMinedTXs = TXs -- MinedTXs,
+	NewS = apply_txs(S#state { txs = MinedTXs }, MinedTXs),
+	case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs)) of
+		false ->
+			ar:report([{miner, self()}, incorrect_nonce]),
+			server(S);
+		true ->
+			{NewGS, _} =
+				ar_gossip:send(
+					GS,
+					{
+						new_block,
+						self(),
+						(hd(NextBs))#block.height,
+						hd(NextBs),
+						find_recall_block(Bs)
+					}
+				),
+			ar:report(
+				[
+					{node, self()},
+					{accepted_block, (hd(NextBs))#block.height},
+					{hash, (hd(NextBs))#block.hash},
+					{txs, length(MinedTXs)}
+				]
+			),
+			server(
+				reset_miner(
+					NewS#state {
+						gossip = NewGS,
+						block_list = NextBs,
+						hash_list =
+							% TODO: Build hashlist in sensible direction
+							HashList ++ [(hd(NextBs))#block.indep_hash],
+						txs = NotMinedTXs % TXs not included in the block
+					}
+				)
+			)
+	end.
+
+%% Update miner and amend server state when encountering a new transaction.
+add_tx_to_server(S, NewGS, TX) ->
+	NewTXs = [TX|S#state.txs],
+	case S#state.miner of
+		undefined -> do_nothing;
+		PID ->
+			ar_mine:change_data(
+				PID,
+				generate_data_segment(
+					NewTXs,
+					find_recall_block(S#state.block_list)
+				),
+				NewTXs
+			)
+	end,
+	server(S#state { txs = NewTXs, gossip = NewGS }).
 
 %% Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
@@ -491,23 +525,6 @@ start_mining(S = #state { block_list = Bs, txs = TXs }) ->
 			%ar:report([{node, self()}, {started_miner, Miner}]),
 			S#state { miner = Miner }
 	end.
-
-%% Update miner and amend server state when encountering a new transaction.
-add_tx_to_server(S, TX) ->
-	NewTXs = [TX|S#state.txs],
-	case S#state.miner of
-		undefined -> do_nothing;
-		PID ->
-			ar_mine:change_data(
-				PID,
-				generate_data_segment(
-					NewTXs,
-					find_recall_block(S#state.block_list)
-				),
-				NewTXs
-			)
-	end,
-	S#state { txs = NewTXs }.
 
 %% Drop blocks in a block list down to a given height.
 drop_blocks_to(Height, Bs) ->
