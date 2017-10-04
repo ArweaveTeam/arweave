@@ -2,7 +2,7 @@
 -export([start/0, rebuild/0]).
 -export([test/0, test/1, test_apps/0, test_networks/0]).
 -export([report/1, report_console/1, d/1]).
--export([scale_time/1]).
+-export([scale_time/1, timestamp/0]).
 -include("ar.hrl").
 
 %%% ArkChain server entrypoint and basic utilities.
@@ -19,6 +19,7 @@
 		ar_weave,
 		ar_gossip,
 		ar_mine,
+		ar_retarget,
 		ar_fork_recovery,
 		ar_node,
 		ar_simple_reporter
@@ -90,3 +91,8 @@ scale_time(Time) ->
 -else.
 scale_time(Time) -> Time.
 -endif.
+
+%% Get the unix timestamp (in seconds).
+timestamp() ->
+	{MegaSec, Sec, _MilliSec} = os:timestamp(),
+	(MegaSec * 1000000) + Sec.

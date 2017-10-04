@@ -14,7 +14,7 @@
 %% for the genesis block.
 init() -> init([]).
 init(WalletList) ->
-	B =
+	B0 =
 		#block{
 			height = 0,
 			hash = crypto:strong_rand_bytes(32),
@@ -23,7 +23,8 @@ init(WalletList) ->
 			wallet_list = WalletList,
 			hash_list = []
 		},
-	[B#block { indep_hash = indep_hash(B) }].
+	B1 = B0#block { last_retarget = B0#block.timestamp },
+	[B1#block { indep_hash = indep_hash(B1) }].
 
 %% Add a new block to the weave, with assiocated TXs and archive data.
 add(Bs, TXs) ->
@@ -33,15 +34,17 @@ add(Bs, TXs, Nonce) ->
 add(Bs, HashList, TXs, Nonce) ->
 	add(Bs, HashList, [], TXs, Nonce).
 add(Bs = [B|_], HashList, WalletList, TXs, Nonce) ->
-	NewB =
+	RawNewB =
 		#block {
 			nonce = Nonce,
 			height = B#block.height + 1,
 			hash = hash(B, TXs, Nonce),
 			hash_list = HashList,
 			wallet_list = ar_node:apply_txs(WalletList, TXs),
-			txs = TXs
+			txs = TXs,
+			diff = B#block.diff
 		},
+	NewB = ar_retarget:maybe_retarget(RawNewB, B),
 	[NewB#block { indep_hash = indep_hash(NewB) }|Bs].
 
 %% Take a complete block list and return a list of block hashes.
@@ -149,7 +152,8 @@ init_add_add_forge_add_verify_test() ->
 				nonce = <<>>,
 				height = 3,
 				hash = crypto:hash(?HASH_ALG, <<"NOT THE CORRECT HASH">>),
-				txs = []
+				txs = [],
+				last_retarget = ar:timestamp()
 			}
 		|B2],
 	false = verify(add(ForgedB3, [ar_tx:new(<<"TEST TX2">>), ar_tx:new(<<"TEST DATA3">>)])).
@@ -164,7 +168,8 @@ init_add_add_forge_add_verify_subtle_test() ->
 				nonce = <<>>,
 				height = 3,
 				hash = hash(hd(B1), [], <<>>),
-				txs = []
+				txs = [],
+				last_retarget = ar:timestamp()
 			}
 		|B2],
 	false = verify(add(ForgedB3, [ar_tx:new(<<"TEST TX2">>), ar_tx:new(<<"TEST DATA3">>)])).

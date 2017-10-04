@@ -7,6 +7,8 @@
 -define(PRIV_KEY_SZ, 512).
 -define(DEFAULT_DIFF, 8).
 -define(TARGET_TIME, 30).
+-define(RETARGET_BLOCKS, 10).
+-define(RETARGET_TOLERANCE, 0.1).
 
 %% ENABLE ONLY WHILE TESTING
 -define(DEBUG, true).
@@ -23,6 +25,8 @@
 %% A block on the weave.
 -record(block, {
 	nonce,
+	timestamp = ar:timestamp(), % Unix time of block discovery
+	last_retarget, % Unix timestamp of the last defficulty retarget
 	diff = ?DEFAULT_DIFF, % How many zeros need to preceed the next hash?
 	height, % How many blocks have passed since the Genesis block?
 	hash, % A hash of this block, the previous block and the recall block.

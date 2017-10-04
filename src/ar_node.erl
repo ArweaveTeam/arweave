@@ -405,17 +405,18 @@ add_tx_to_server(S, NewGS, TX) ->
 validate(
 		HashList,
 		WalletList,
-		_NewB =
+		NewB =
 			#block {
 				hash_list = HashList,
 				wallet_list = WalletList,
 				txs = TXs,
 				nonce = Nonce
 			},
-		_OldB = #block { hash = Hash, diff = Diff },
+		OldB = #block { hash = Hash, diff = Diff },
 		RecallB) ->
 	ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce) =/= false
-		and ar_weave:verify_indep(RecallB, HashList);
+		and ar_weave:verify_indep(RecallB, HashList)
+		and ar_retarget:validate(NewB, OldB);
 validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
 	validate(undefined, WL, NewB, OldB, RecallB);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
