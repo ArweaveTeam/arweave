@@ -24,7 +24,7 @@
 %% Maximum number of blocks to hold at any time.
 %% %% NOTE: This value should be greater than ?RETARGET_BLOCKS + 1
 %% in order for the TNT test suite to pass.
--define(MAX_BLOCKS, 10).
+-define(MAX_BLOCKS, undefined).
 
 %% Ensure this number of the last blocks are not dropped.
 -define(KEEP_LAST_BLOCKS, 5).

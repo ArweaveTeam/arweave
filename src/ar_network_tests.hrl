@@ -37,14 +37,21 @@
 	[
 %		#network_test { name = default }
 %		#network_test { name = no_clients, num_clients = 0 },
+		%#network_test {
+			%name = realistic,
+			%num_miners = 500,
+			%client_action_time = 900,
+			%num_clients = 100,
+			%client_max_tx_len = 8,
+			%miner_connections = 8,
+			%stagger_time = 300
+		%}
 		#network_test {
-			name = realistic,
-			num_miners = 500,
+			name = natural_hashing,
+			num_miners = 50,
 			client_action_time = 900,
-			num_clients = 100,
-			client_max_tx_len = 8,
-			miner_connections = 8,
-			stagger_time = 300
+			num_clients = 10,
+			miner_delay = 0
 		}
 	]
 ).

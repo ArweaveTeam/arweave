@@ -5,8 +5,8 @@
 -define(HASH_ALG, sha256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 512).
--define(DEFAULT_DIFF, 8).
--define(TARGET_TIME, 30).
+-define(DEFAULT_DIFF, 12).
+-define(TARGET_TIME, 300).
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).
 

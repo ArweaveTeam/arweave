@@ -87,6 +87,9 @@ validate(Hash, Diff, Data, Nonce) ->
 	end.
 
 %% Send a message to ourselves at some point in the future, asking us to mine.
+schedule_hash(S = #state { delay = 0 }) ->
+	self() ! hash,
+	S;
 schedule_hash(S = #state { delay = Delay }) ->
 	Parent = self(),
 	spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
