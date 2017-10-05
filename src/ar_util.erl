@@ -6,6 +6,7 @@
 
 %% Pick a list of random elements from a given list.
 pick_random(_, 0) -> [];
+pick_random([], _) -> [];
 pick_random(List, N) ->
 	Elem = pick_random(List),
 	[Elem|pick_random(List -- [Elem], N - 1)].

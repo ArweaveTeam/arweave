@@ -24,7 +24,7 @@
 %% Maximum number of blocks to hold at any time.
 %% %% NOTE: This value should be greater than ?RETARGET_BLOCKS + 1
 %% in order for the TNT test suite to pass.
--define(MAX_BLOCKS, 15).
+-define(MAX_BLOCKS, 3).
 
 %% Start a node, optionally with a list of peers.
 start() -> start([]).
@@ -117,8 +117,6 @@ add_peers(Node, Peers) ->
 	ok.
 
 %% The main node server loop.
-server(S = #state { block_list = Bs }) when length(Bs) > ?MAX_BLOCKS ->
-	server(S#state { block_list = ar_util:pick_random(Bs, ?MAX_BLOCKS - 1) });
 server(
 	S = #state {
 		gossip = GS,
@@ -134,7 +132,7 @@ server(
 					join_weave(S, NewGS, Peer, Height);
 				{NewGS, {new_block, Peer, NextHeight, NewB, _RecallB}}
 						when (NextHeight > (hd(Bs))#block.height + 1) ->
-					% If the block is highger than we were expecting, attempt to
+					% If the block is higher than we were expecting, attempt to
 					% catch up.
 					fork_recover(S, NewGS, Peer, NextHeight, NewB);
 				{NewGS, {new_block, Peer, NextHeight, NewB, RecallB}}
@@ -236,7 +234,7 @@ server(
 		{fork_recovered, NewBs} when Bs == undefined ->
 			server(
 				S#state {
-					block_list = NewBs,
+					block_list = maybe_drop_blocks(NewBs),
 					hash_list = ar_weave:generate_hash_list(NewBs),
 					wallet_list = (find_sync_block(NewBs))#block.wallet_list
 				}
@@ -244,11 +242,13 @@ server(
 		{fork_recovered, [TopB|_] = NewBs}
  				when TopB#block.height > (hd(Bs))#block.height ->
 			server(
-				S#state {
-					block_list = NewBs,
-					hash_list = ar_weave:generate_hash_list(NewBs),
-					wallet_list = (find_sync_block(NewBs))#block.wallet_list
-				}
+				reset_miner(
+					S#state {
+						block_list = maybe_drop_blocks(NewBs),
+						hash_list = ar_weave:generate_hash_list(NewBs),
+						wallet_list = (find_sync_block(NewBs))#block.wallet_list
+					}
+				)
 			);
 		{fork_recovered, _} -> server(S);
 		Msg ->
@@ -311,7 +311,13 @@ process_new_block(RawS, NewGS, NewB, OldB, RecallB, Peer) ->
 	end.
 
 %% We have received a new valid block. Update the node state accordingly.
-integrate_new_block(S = #state { txs = TXs, block_list = Bs, hash_list = HashList }, NewB) ->
+integrate_new_block(
+		S = #state {
+			txs = TXs,
+			block_list = Bs,
+			hash_list = HashList
+		},
+		NewB) ->
 	% Filter completed TXs from the pending list.
 	NewTXs =
 		lists:filter(
@@ -324,7 +330,7 @@ integrate_new_block(S = #state { txs = TXs, block_list = Bs, hash_list = HashLis
 	server(
 		reset_miner(
 			S#state {
-				block_list = [NewB|Bs],
+				block_list = maybe_drop_blocks([NewB|Bs]),
 				hash_list = HashList ++ [NewB#block.indep_hash],
 				txs = NewTXs
 			}
@@ -375,7 +381,7 @@ integrate_block_from_miner(
 				reset_miner(
 					NewS#state {
 						gossip = NewGS,
-						block_list = NextBs,
+						block_list = maybe_drop_blocks(NextBs),
 						hash_list =
 							% TODO: Build hashlist in sensible direction
 							HashList ++ [(hd(NextBs))#block.indep_hash],
@@ -384,6 +390,11 @@ integrate_block_from_miner(
 				)
 			)
 	end.
+
+%% Drop blocks until length of block list = ?MAX_BLOCKS.
+maybe_drop_blocks(Bs) when length(Bs) > ?MAX_BLOCKS ->
+	maybe_drop_blocks(Bs -- [ar_util:pick_random(tl(Bs))]);
+maybe_drop_blocks(Bs) -> Bs.
 
 %% Update miner and amend server state when encountering a new transaction.
 add_tx_to_server(S, NewGS, TX) ->
@@ -404,6 +415,7 @@ add_tx_to_server(S, NewGS, TX) ->
 
 %% Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
+validate(_, _, _, _, unavailable) -> false;
 validate(
 		HashList,
 		WalletList,
@@ -443,7 +455,7 @@ apply_txs(WalletList, TXs) ->
 			TXs
 		)
 	).
-		
+
 %% Apply a transaction to a wallet list, updating it.
 apply_tx(WalletList, #tx { type = data }) -> WalletList;
 apply_tx(
@@ -454,7 +466,7 @@ apply_tx(
 %% Alter a wallet in a wallet list.
 alter_wallet(WalletList, Target, Adjustment) ->
 	case lists:keyfind(Target, 1, WalletList) of
-		false -> 
+		false ->
 			io:format("~p: Could not find pub ~p in ~p~n", [self(), Target, WalletList]),
 			[{Target, Adjustment}|WalletList];
 		{Target, Balance} ->
@@ -508,18 +520,21 @@ divergence_height([_Hash1|_HL1], [_Hash2|_HL2]) ->
 
 %% Kill the old miner, optionally start a new miner, depending on the automine setting.
 reset_miner(S = #state { miner = undefined, automine = false }) -> S;
+reset_miner(S = #state { miner = undefined, automine = true }) ->
+	start_mining(S);
 reset_miner(S = #state { miner = PID, automine = false }) ->
 	ar_mine:stop(PID),
 	S#state { miner = undefined };
 reset_miner(S = #state { miner = PID, automine = true }) ->
 	ar_mine:stop(PID),
-	start_mining(S).
+	start_mining(S#state { miner = undefined }).
 
 %% Force a node to start mining, update state.
 start_mining(S = #state { block_list = Bs, txs = TXs }) ->
 	case find_recall_block(Bs) of
 		unavailable -> S;
 		RecallB ->
+			ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}]),
 			Miner =
 				ar_mine:start(
 					(hd(Bs))#block.hash,
@@ -528,7 +543,7 @@ start_mining(S = #state { block_list = Bs, txs = TXs }) ->
 					S#state.mining_delay,
 					TXs
 				),
-			%ar:report([{node, self()}, {started_miner, Miner}]),
+			ar:report([{node, self()}, {started_miner, Miner}]),
 			S#state { miner = Miner }
 	end.
 
