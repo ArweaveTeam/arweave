@@ -60,12 +60,13 @@ server(S = #state { blocks = [], peer = Peer }) ->
 	);
 server(S = #state { peer = Peer, blocks = Bs = [B|_] }) ->
 	% Get and verify the next block.
+	RecallB = ar_node:get_block(Peer, ar_weave:calculate_recall_block(B)),
 	NextB = ar_node:get_block(Peer, B#block.height + 1),
 	BHL = B#block.hash_list ++ [B#block.indep_hash],
 	case ar_node:validate(
 			BHL,
 			ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
-			NextB, B, ar_node:find_recall_block(Bs)) of
+			NextB, B, RecallB) of
 		false ->
 			ar:report([could_not_validate_recovery_block]),
 			ok;

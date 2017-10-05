@@ -24,7 +24,10 @@
 %% Maximum number of blocks to hold at any time.
 %% %% NOTE: This value should be greater than ?RETARGET_BLOCKS + 1
 %% in order for the TNT test suite to pass.
--define(MAX_BLOCKS, 3).
+-define(MAX_BLOCKS, 10).
+
+%% Ensure this number of the last blocks are not dropped.
+-define(KEEP_LAST_BLOCKS, 5).
 
 %% Start a node, optionally with a list of peers.
 start() -> start([]).
@@ -393,8 +396,19 @@ integrate_block_from_miner(
 
 %% Drop blocks until length of block list = ?MAX_BLOCKS.
 maybe_drop_blocks(Bs) when length(Bs) > ?MAX_BLOCKS ->
-	maybe_drop_blocks(Bs -- [ar_util:pick_random(tl(Bs))]);
-maybe_drop_blocks(Bs) -> Bs.
+	RecallBs = calculate_prior_recall_blocks(?KEEP_LAST_BLOCKS, Bs),
+	DropB = ar_util:pick_random(lists:nthtail(?KEEP_LAST_BLOCKS, Bs)),
+	case lists:member(DropB, RecallBs) of
+		false -> maybe_drop_blocks(Bs -- [DropB]);
+		true -> maybe_drop_blocks(Bs)
+	end;
+	maybe_drop_blocks(Bs) -> Bs.
+
+%% Calculates Recall blocks to be stored.
+calculate_prior_recall_blocks(0, _) -> [];
+calculate_prior_recall_blocks(N, Bs) ->
+	[ar_weave:calculate_recall_block(Bs) |
+		calculate_prior_recall_blocks(N-1, tl(Bs))].
 
 %% Update miner and amend server state when encountering a new transaction.
 add_tx_to_server(S, NewGS, TX) ->
