@@ -40,7 +40,7 @@ start(Peers, ActionTime, MaxTXLen, NumConnections) ->
 					max_tx_len = MaxTXLen,
 					gossip =
 						ar_gossip:init(
-							ar_gossip:pick_random_peers(
+							ar_util:pick_random(
 								Peers,
 								NumConnections
 							)

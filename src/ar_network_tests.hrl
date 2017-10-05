@@ -39,7 +39,7 @@
 %		#network_test { name = no_clients, num_clients = 0 },
 		#network_test {
 			name = realistic,
-			num_miners = 500,
+			num_miners = 5,
 			client_action_time = 900,
 			num_clients = 10,
 			client_max_tx_len = 8,

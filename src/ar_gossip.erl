@@ -1,6 +1,5 @@
 -module(ar_gossip).
 -export([init/0, init/1, add_peers/2, send/2, recv/2]).
--export([pick_random_peers/2, pick_random/1]).
 -export([set_loss_probability/2, set_delay/2, set_xfer_speed/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -156,7 +155,7 @@ partially_connected_test() ->
 		end,
 	% Start the gossip servers and send them the complete list of peers.
 	Servers = [ spawn(fun() -> BasicServer(init()) end) || _ <- lists:seq(1, 1000) ],
-	[ Serv ! {peers, pick_random_peers(Servers, 20)} || Serv <- Servers ],
+	[ Serv ! {peers, ar_util:pick_random(Servers, 20)} || Serv <- Servers ],
 	% Start a local gossip node.
 	State = init([lists:last(Servers)]),
 	send(State, test_message),
@@ -170,12 +169,3 @@ count_receipts(Msg, Timeout, N) ->
 	receive Msg -> count_receipts(Msg, Timeout, N + 1)
 	after Timeout -> N
 	end.
-
-%% Pick a list of random peers from a given set.
-pick_random_peers(_, 0) -> [];
-pick_random_peers(Peers, N) ->
-	[pick_random(Peers)|pick_random_peers(Peers, N - 1)].
-
-%% Select a random option from a list
-pick_random(Xs) ->
-	lists:nth(rand:uniform(length(Xs)), Xs).

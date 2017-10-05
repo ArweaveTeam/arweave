@@ -22,7 +22,9 @@
 }).
 
 %% Maximum number of blocks to hold at any time.
--define(MAX_BLOCKS, 50).
+%% %% NOTE: This value should be greater than ?RETARGET_BLOCKS + 1
+%% in order for the TNT test suite to pass.
+-define(MAX_BLOCKS, 15).
 
 %% Start a node, optionally with a list of peers.
 start() -> start([]).
@@ -116,7 +118,7 @@ add_peers(Node, Peers) ->
 
 %% The main node server loop.
 server(S = #state { block_list = Bs }) when length(Bs) > ?MAX_BLOCKS ->
-	server(S#state { block_list = ar_gossip:pick_random_peers(Bs, ?MAX_BLOCKS - 1) });
+	server(S#state { block_list = ar_util:pick_random(Bs, ?MAX_BLOCKS - 1) });
 server(
 	S = #state {
 		gossip = GS,
@@ -131,7 +133,7 @@ server(
 					% We have no functional blockweave. Try to recover to this one.
 					join_weave(S, NewGS, Peer, Height);
 				{NewGS, {new_block, Peer, NextHeight, NewB, _RecallB}}
-						when (Bs == undefined) or (NextHeight > (hd(Bs))#block.height + 1) ->
+						when (NextHeight > (hd(Bs))#block.height + 1) ->
 					% If the block is highger than we were expecting, attempt to
 					% catch up.
 					fork_recover(S, NewGS, Peer, NextHeight, NewB);
@@ -257,7 +259,7 @@ server(
 %%% Abstracted server functionality
 
 %% Catch up to the current height, from 0.
-join_weave(S, NewGS, Peer, Height) ->
+join_weave(S, NewGS, Peer, TargetHeight) ->
 	server(
 		S#state {
 			gossip = NewGS,
@@ -265,7 +267,7 @@ join_weave(S, NewGS, Peer, Height) ->
 				ar_fork_recovery:start(
 					self(),
 					Peer,
-					Height,
+					TargetHeight,
 					[]
 				)
 		}
@@ -456,7 +458,10 @@ alter_wallet(WalletList, Target, Adjustment) ->
 			io:format("~p: Could not find pub ~p in ~p~n", [self(), Target, WalletList]),
 			[{Target, Adjustment}|WalletList];
 		{Target, Balance} ->
-			io:format("~p: Target: ~p Balance: ~p Adjustment: ~p~n", [self(), Target, Balance, Adjustment]),
+			io:format(
+				"~p: Target: ~p Balance: ~p Adjustment: ~p~n",
+				[self(), Target, Balance, Adjustment]
+			),
 			lists:keyreplace(
 				Target,
 				1,
@@ -629,12 +634,12 @@ large_blockweave_with_data_test() ->
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	B0 = ar_weave:init(),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 500) ],
-	[ add_peers(Node, ar_gossip:pick_random_peers(Nodes, 100)) || Node <- Nodes ],
-	add_tx(ar_gossip:pick_random(Nodes), TestData),
+	[ add_peers(Node, ar_util:pick_random(Nodes, 100)) || Node <- Nodes ],
+	add_tx(ar_util:pick_random(Nodes), TestData),
 	receive after 2000 -> ok end,
-	mine(ar_gossip:pick_random(Nodes)),
+	mine(ar_util:pick_random(Nodes)),
 	receive after 2000 -> ok end,
-	B1 = get_blocks(ar_gossip:pick_random(Nodes)),
+	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	[TestData] = (hd(B1))#block.txs.
 
 %% Test that large networks (500 nodes) with only 1% connectivity still function correctly.
@@ -642,12 +647,12 @@ large_weakly_connected_blockweave_with_data_test() ->
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	B0 = ar_weave:init(),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 500) ],
-	[ add_peers(Node, ar_gossip:pick_random_peers(Nodes, 5)) || Node <- Nodes ],
-	add_tx(ar_gossip:pick_random(Nodes), TestData),
+	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+	add_tx(ar_util:pick_random(Nodes), TestData),
 	receive after 2000 -> ok end,
-	mine(ar_gossip:pick_random(Nodes)),
+	mine(ar_util:pick_random(Nodes)),
 	receive after 2000 -> ok end,
-	B1 = get_blocks(ar_gossip:pick_random(Nodes)),
+	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	[TestData] = (hd(B1))#block.txs.
 
 %% Ensure that the network can add multiple peices of data and have it mined into blocks.
@@ -656,13 +661,13 @@ medium_blockweave_mine_multiple_data_test() ->
 	TestData2 = ar_tx:new(<<"TEST DATA2">>),
 	B0 = ar_weave:init(),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 50) ],
-	[ add_peers(Node, ar_gossip:pick_random_peers(Nodes, 5)) || Node <- Nodes ],
-	add_tx(ar_gossip:pick_random(Nodes), TestData1),
-	add_tx(ar_gossip:pick_random(Nodes), TestData2),
+	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+	add_tx(ar_util:pick_random(Nodes), TestData1),
+	add_tx(ar_util:pick_random(Nodes), TestData2),
 	receive after 1000 -> ok end,
-	mine(ar_gossip:pick_random(Nodes)),
+	mine(ar_util:pick_random(Nodes)),
 	receive after 1000 -> ok end,
-	B1 = get_blocks(ar_gossip:pick_random(Nodes)),
+	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	true = lists:member(TestData1, (hd(B1))#block.txs),
 	true = lists:member(TestData2, (hd(B1))#block.txs).
 
@@ -672,17 +677,17 @@ medium_blockweave_multi_mine_test() ->
 	TestData2 = ar_tx:new(<<"TEST DATA2">>),
 	B0 = ar_weave:init(),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 50) ],
-	[ add_peers(Node, ar_gossip:pick_random_peers(Nodes, 5)) || Node <- Nodes ],
-	add_tx(ar_gossip:pick_random(Nodes), TestData1),
+	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+	add_tx(ar_util:pick_random(Nodes), TestData1),
 	receive after 1000 -> ok end,
-	mine(ar_gossip:pick_random(Nodes)),
+	mine(ar_util:pick_random(Nodes)),
 	receive after 1000 -> ok end,
-	B1 = get_blocks(ar_gossip:pick_random(Nodes)),
-	add_tx(ar_gossip:pick_random(Nodes), TestData2),
+	B1 = get_blocks(ar_util:pick_random(Nodes)),
+	add_tx(ar_util:pick_random(Nodes), TestData2),
 	receive after 1000 -> ok end,
-	mine(ar_gossip:pick_random(Nodes)),
+	mine(ar_util:pick_random(Nodes)),
 	receive after 1000 -> ok end,
-	B2 = get_blocks(ar_gossip:pick_random(Nodes)),
+	B2 = get_blocks(ar_util:pick_random(Nodes)),
 	[TestData1] = (hd(B1))#block.txs,
 	[TestData2] = (hd(B2))#block.txs.
 

@@ -31,7 +31,7 @@ start(Size, Connections, LossProb, MaxDelay, XferSpeed, MiningDelay) ->
 		fun(Node) ->
 			ar_node:add_peers(
 				Node,
-				ar_gossip:pick_random_peers(Nodes, Connections)
+				ar_util:pick_random(Nodes, Connections)
 			),
 			ar_node:set_loss_probability(Node, LossProb),
 			ar_node:set_delay(Node, MaxDelay),
