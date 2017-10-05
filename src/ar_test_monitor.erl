@@ -58,7 +58,7 @@ server(
 	receive stop -> ok
 	after CheckTime * 1000 ->
 		% Check for progress on the network.
-		case ar:d(gather_results(Miners)) of
+		case gather_results(Miners) of
 			Last when (ProgTime + CheckTime) >= FailureTime ->
 				% No progress for longer than FailureTime, so reporting
 				% that the network has stalled.
