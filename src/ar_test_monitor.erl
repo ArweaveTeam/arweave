@@ -58,7 +58,7 @@ server(
 	receive stop -> ok
 	after CheckTime * 1000 ->
 		% Check for progress on the network.
-		case gather_results(Miners) of
+		case ar:d(gather_results(Miners)) of
 			Last when (ProgTime + CheckTime) >= FailureTime ->
 				% No progress for longer than FailureTime, so reporting
 				% that the network has stalled.
@@ -88,13 +88,21 @@ gather_results(Miners) ->
 				false -> [{B, TXs, 1}|Dict];
 				{B, OldTXs, Num} ->
 					lists:keyreplace(B, 1, Dict, {B, erlang:max(TXs, OldTXs), Num + 1})
+			end;
+		(unavailable, Dict) ->
+			case lists:keyfind(unavailable, 1, Dict) of
+				false -> [{unavailable, 1}|Dict];
+				{unavailable, N} ->
+					lists:keyreplace(unavailable, 1, Dict, {unavailable, N + 1})
 			end
 		end,
 		[],
 		lists:map(
 			fun(Miner) ->
-				Bs = ar_node:get_blocks(Miner),
-				{hd(Bs), count_txs(Bs)}
+				case ar_node:get_blocks(Miner) of
+					no_response -> unavailable;
+					Bs -> {hd(Bs), count_txs(Bs)}
+				end
 			end,
 			Miners
 		)

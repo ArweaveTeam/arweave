@@ -65,7 +65,9 @@ format_log(Log) ->
 							B#block.diff,
 							Num
 						]
-					)
+					);
+				({unavailable, N}) ->
+					io_lib:format("\tUnavailable: ~p~n", [N])
 				end,
 				Log
 			),

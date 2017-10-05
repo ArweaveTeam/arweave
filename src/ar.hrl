@@ -19,6 +19,9 @@
 -define(DEFAULT_MINING_DELAY,
 	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 
+%% Default timeout value for network requests.
+-define(NET_TIMEOUT, 5000).
+
 %% Log output directory
 -define(LOG_DIR, "logs").
 

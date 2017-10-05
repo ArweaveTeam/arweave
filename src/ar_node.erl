@@ -60,7 +60,8 @@ stop(Node) ->
 get_blocks(Node) ->
 	Node ! {get_blocks, self()},
 	receive
-		{blocks, Node, B} -> B
+		{blocks, Node, Bs} -> Bs
+	after ?NET_TIMEOUT -> no_response
 	end.
 
 %% Return a specific block from a node, if it has it.
@@ -68,6 +69,7 @@ get_block(Node, Height) ->
 	Node ! {get_block, self(), Height},
 	receive
 		{block, Node, B} -> B
+	after ?NET_TIMEOUT -> no_response
 	end.
 
 %% Return the current balance associated with a wallet.
