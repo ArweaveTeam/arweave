@@ -27,7 +27,7 @@ For more information on the Archain project and to read our whitepaper visit
 Caution: Archain is in active development. Please be aware that the API for the
 Archain ADT will likely change before the release of the final product.
 
-#TNT/NO-VLNS
+# TNT/NO-VLNS
 TNT (Tiny Network Tests) and NO-VLNS (Never Off Very Large Network Simulator)
 are the two halves of Archain's testing suite.
 
@@ -35,14 +35,14 @@ You can launch TNT by running `make tnt` and NO-VLNS by running `make no-vlns`.
 
 More information on [TNT](https://medium.com/@archain/tnt-exploding-edge-case-bugs-42a36c36f15e) and [NO-VLNS](https://medium.com/@archain/no-vlns-simulating-huge-archain-networks-on-a-single-machine-d34bccf5045b) can be found on our [Medium blog](https://medium.com/@archain).
 
-#App Developer Toolkit (ADT)
+# App Developer Toolkit (ADT)
 You can find separate documentation for the App Developer Toolkit [here](ADT_README.md).
 
-#Contact
+# Contact
 If you have questions or comments on the Archain you can get in touch by
 finding us on [Twitter](https://twitter.com/ArchainTeam/), [Reddit](https://www.reddit.com/r/archain), [Discord](https://discord.gg/2ZpV8nM) or by
 emailing us at team@archain.org.
 
-#License
+# License
 The Archain project is released under GNU General Public License v2.0.
 See [LICENSE](LICENSE.md) for full license conditions.
