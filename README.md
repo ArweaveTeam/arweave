@@ -1,4 +1,4 @@
-# Archain Project
+# Archain Server
 
 This repository holds the Archain server prototype, as well as the App Developer
 Toolkit (ADT) and the Archain testing framework, TNT/NO-VLNS.
@@ -6,7 +6,7 @@ Toolkit (ADT) and the Archain testing framework, TNT/NO-VLNS.
 # Requirements
 
 In order to run the Archain server prototype and ADT, a recent (R20 and above)
-version of Erlang/OTP is required.
+version of Erlang/OTP is required as well as a version of make.
 
 # Getting Started
 
@@ -25,7 +25,8 @@ For more information on the Archain project and to read our whitepaper visit
 [Archain.org](https://www.archain.org/).
 
 Caution: Archain is in active development. Please be aware that the API for the
-Archain ADT will likely change before the release of the final product.
+Archain ADT will likely be added to such that the current state is a subset
+of its future capabilities.
 
 # TNT/NO-VLNS
 TNT (Tiny Network Tests) and NO-VLNS (Never Off Very Large Network Simulator)
