@@ -1,10 +1,12 @@
-# Archain Server and App Developer Toolkit
+# Archain Project
 
-This repository holds the Archain server prototype, as well as the App Developer Toolkit (ADT).
+This repository holds the Archain server prototype, as well as the App Developer
+Toolkit (ADT) and the Archain testing framework, TNT/NO-VLNS.
 
 # Requirements
 
-In order to run the Archain server prototype and ADT, a recent (R19 and above) version of Erlang is required.
+In order to run the Archain server prototype and ADT, a recent (R20 and above)
+version of Erlang/OTP is required.
 
 # Getting Started
 
@@ -14,40 +16,33 @@ sample applications provided a guide through the development of a
 number of simple Archain applications, from a basic monitoring app, to a
 de-centralised microblogging service.
 
-You can start an Archain server session by running `make session`. The tests
-can be executed by calling `make test_all`.
+You can start an Archain server session by running `make session`.
 
 You can also find detailed tutorials about building Archain apps and services
 on the [Archain youtube channel](http://www.youtube.com/archain).
 
+For more information on the Archain project and to read our whitepaper visit
+[Archain.org](https://www.archain.org/).
+
 Caution: Archain is in active development. Please be aware that the API for the
 Archain ADT will likely change before the release of the final product.
 
-# Archain App Developer Toolkit API
+#TNT/NO-VLNS
+TNT (Tiny Network Tests) and NO-VLNS (Never Off Very Large Network Simulator)
+are the two halves of Archain's testing suite.
 
-`adt_simple` provides an easy to use abstraction for building Archain apps.
-The module provides a simple method (using a callback module) for interacting
-with the Archain.
+You can launch TNT by running `make tnt` and NO-VLNS by running `make no-vlns`.
 
-All callback functions in the modules that use this system are optional.
-Unimplemented callbacks will be ignored.
+More information on [TNT](https://medium.com/@archain/tnt-exploding-edge-case-bugs-42a36c36f15e) and [NO-VLNS](https://medium.com/@archain/no-vlns-simulating-huge-archain-networks-on-a-single-machine-d34bccf5045b) can be found on our [Medium blog](https://medium.com/@archain).
 
-Supported events and callbacks:
-```
- 	new_transaction             Processes a new transaction that has been
-                                  submitted to the weave.
- 	confirmed_transaction       Processes new transactions that have been
-                                  accepted onto a block.
- 	new_block                   Processes a new block that has been added
-                                  to the weave.
- 	message                     Called when non-gossip messages are received
-                                  by the server.
-```
-Each callback can take two optional arguments: the gossip server state
-and an arbitrary application state term. The required inputs and outputs of
-these functions are defined in the following way:
-```
- 	callback(NewData) -> _
- 	callback(AppState, NewData) -> NewAppState
- 	callback(AppState, GossipState, NewData) -> {NewAppState, GossipState}
-```
+#App Developer Toolkit (ADT)
+You can find separate documentation for the App Developer Toolkit [here](ADT_README.md).
+
+#Contact
+If you have questions or comments on the Archain you can get in touch by
+finding us on [Twitter](https://twitter.com/ArchainTeam/), [Reddit](https://www.reddit.com/r/archain), [Discord](https://discord.gg/2ZpV8nM) or by
+emailing us at team@archain.org.
+
+#License
+The Archain project is released under GNU General Public License v2.0.
+See [LICENSE](LICENSE.md) for full license conditions.
