@@ -14,7 +14,7 @@
 %% Default speed of transmission in the network (in bytes/sec).
 -define(DEFAULT_XFER_SPEED, 512 * 1024).
 
-%% Create a netwokr of Size ar_nodes, with Links connections each.
+%% @doc Create a netwokr of Size ar_nodes, with Links connections each.
 %% Defaults to creating a fully connected network.
 start(Size) -> start(Size, Size).
 start(Size, Connections) -> start(Size, Connections, 0).
@@ -42,7 +42,7 @@ start(Size, Connections, LossProb, MaxDelay, XferSpeed, MiningDelay) ->
 	),
 	Nodes.
 
-%% Create a template network.
+%% @doc Create a template network.
 spawn(realistic) -> spawn({realistic, ?DEFAULT_SIZE});
 spawn({realistic, Size}) ->
 	start(Size, 3, 0.025, 200, ?DEFAULT_XFER_SPEED, ?DEFAULT_MINING_DELAY * Size);
@@ -57,7 +57,7 @@ spawn({hard, Size}) ->
 		?DEFAULT_MINING_DELAY * Size
 	).
 
-%% Create and start an automining network.
+%% @doc Create and start an automining network.
 spawn_and_mine([Type]) -> spawn_and_mine(Type);
 spawn_and_mine([[Type]]) -> spawn_and_mine(Type);
 spawn_and_mine(Type) ->
@@ -65,7 +65,7 @@ spawn_and_mine(Type) ->
 	automine(Net),
 	Net.
 
-%% Change the likelihood of experiencing simulated network packet loss
+%% @doc Change the likelihood of experiencing simulated network packet loss
 %% for an entire network.
 set_loss_probability(Net, Prob) ->
 	lists:foreach(
@@ -74,7 +74,7 @@ set_loss_probability(Net, Prob) ->
 	),
 	ok.
 
-%% Change the maximum delay time for a network.
+%% @doc Change the maximum delay time for a network.
 set_delay(Net, MaxDelay) ->
 	lists:foreach(
 		fun(Node) -> ar_node:set_delay(Node, MaxDelay) end,
@@ -82,7 +82,7 @@ set_delay(Net, MaxDelay) ->
 	),
 	ok.
 
-%% Set the idle miner delay for each hash.
+%% @doc Set the idle miner delay for each hash.
 %% Wait this many MS before performing each individual hash.
 set_mining_delay(Net, Delay) ->
 	lists:foreach(
@@ -91,11 +91,11 @@ set_mining_delay(Net, Delay) ->
 	),
 	ok.
 
-%% Make every node in a network begin mining (if it can).
+%% @doc Make every node in a network begin mining (if it can).
 automine(Net) ->
 	lists:foreach(fun ar_node:automine/1, Net).
 
-%% Make a network start mining in a staggered fashion.
+%% @doc Make a network start mining in a staggered fashion.
 automine_staggered(Net, StaggerTime) ->
 	lists:foreach(
 		fun(Miner) ->
@@ -106,6 +106,6 @@ automine_staggered(Net, StaggerTime) ->
 		Net
 	).
 
-%% Deliver a TX to a randomly selected node in the network.
+%% @doc Deliver a TX to a randomly selected node in the network.
 add_tx(Net, TX) ->
 	ar_node:add_tx(ar_gossip:pick_random(Net), TX).

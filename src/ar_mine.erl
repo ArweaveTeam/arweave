@@ -16,7 +16,7 @@
 	txs
 }).
 
-%% Returns the PID of a new mining worker process.
+%% @doc Returns the PID of a new mining worker process.
 start(Hash, Diff, Data) ->
 	start(Hash, Diff, Data, 0).
 start(Hash, Diff, Data, Delay) ->
@@ -40,15 +40,15 @@ start(Hash, Diff, Data, Delay, TXs) ->
 		end
 	).
 
-%% Stop a running miner.
+%% @doc Stop a running miner.
 stop(PID) ->
 	PID ! stop.
 
-%% Change the data attachment that the miner is using.
+%% @doc Change the data attachment that the miner is using.
 change_data(PID, NewData, TXs) ->
 	PID ! {new_data, NewData, TXs}.
 
-%% The main mining server.
+%% @doc The main mining server.
 server(
 	S = #state {
 		parent = Parent,
@@ -79,14 +79,14 @@ server(
 			end
 	end.
 
-%% Validate that a hash and a nonce satisfy the difficulty.
+%% @doc Validate that a hash and a nonce satisfy the difficulty.
 validate(Hash, Diff, Data, Nonce) ->
 	case NewHash = ar_weave:hash(Hash, Data, Nonce) of
 		<< 0:Diff, _/bitstring >> -> NewHash;
 		_ -> false
 	end.
 
-%% Send a message to ourselves at some point in the future, asking us to mine.
+%% @doc Send a message to ourselves at some point in the future, asking us to mine.
 schedule_hash(S = #state { delay = 0 }) ->
 	self() ! hash,
 	S;
@@ -95,12 +95,12 @@ schedule_hash(S = #state { delay = Delay }) ->
 	spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
 	S.
 
-%% Generate a random nonce, to be added to the previous hash.
+%% @doc Generate a random nonce, to be added to the previous hash.
 generate() -> crypto:strong_rand_bytes(8).
 
 %%% Tests
 
-%% Test that found nonces abide by the difficulty criteria.
+%% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->
 	LastHash = crypto:strong_rand_bytes(32),
 	Data = crypto:strong_rand_bytes(32),
@@ -112,7 +112,7 @@ basic_test() ->
 				= crypto:hash(?HASH_ALG, << LastHash/binary, Data/binary, Nonce/binary >>)
 	end.
 
-%% Ensure that we can change the data while mining is in progress.
+%% @doc Ensure that we can change the data while mining is in progress.
 change_data_test() ->
 	LastHash = crypto:strong_rand_bytes(32),
 	Data = crypto:strong_rand_bytes(32),

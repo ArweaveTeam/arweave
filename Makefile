@@ -34,6 +34,10 @@ ebin:
 logs:
 	mkdir -p logs
 
+docs: all
+	mkdir -p docs
+	(cd docs && erl -noshell -s ar docs -pa ../ebin -s init stop)
+
 session: all
 	erl -s ar start -pa ebin/
 

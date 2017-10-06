@@ -10,7 +10,7 @@
 %%% The state object is changed and returned as the first element
 %%% of a two element tuple for every library call.
 
-%% Create a new gossip node state. Optionally, with peer list.
+%% @doc Create a new gossip node state. Optionally, with peer list.
 init() -> init([]).
 init(Peers) when is_list(Peers) -> #gs_state { peers = Peers };
 init(PacketLossP) when is_float(PacketLossP) ->
@@ -18,7 +18,7 @@ init(PacketLossP) when is_float(PacketLossP) ->
 init(MaxDelayMS) when is_integer(MaxDelayMS) ->
 	#gs_state { delay = MaxDelayMS }.
 
-%% Update a gossip protocol state with new peers.
+%% @doc Update a gossip protocol state with new peers.
 add_peers(S, []) -> S;
 add_peers(S, [Peer|Peers]) when self() == Peer -> add_peers(S, Peers);
 add_peers(S, [Peer|Peers]) ->
@@ -27,22 +27,22 @@ add_peers(S, [Peer|Peers]) ->
 		true -> add_peers(S, Peers)
 	end.
 
-%% Update the probability that a packet will be loss.
+%% @doc Update the probability that a packet will be loss.
 set_loss_probability(S, Prob) ->
 	S#gs_state { loss_probability = Prob }.
 
-%% Adjust the maximum network delay length.
+%% @doc Adjust the maximum network delay length.
 %% Note: This is the /maximum/ delay in milliseconds.
 %% All messages will be delayed for a random number of
 %% milliseconds between 0 and this value.
 set_delay(S, Delay) ->
 	S#gs_state { delay = Delay }.
 
-%% Set the number of bytes transferred from a node per second.
+%% @doc Set the number of bytes transferred from a node per second.
 set_xfer_speed(S, Speed) ->
 	S#gs_state { xfer_speed = Speed }.
 
-%% Send a message to your peers in the gossip network,
+%% @doc Send a message to your peers in the gossip network,
 %% if the message has not already been sent.
 send(S, Data) when not is_record(Data, gs_msg) ->
 	send(S,
@@ -62,7 +62,7 @@ send(S, Msg) ->
 		true -> {S, ignored}
 	end.
 
-%% Potentially send a message to a node, depending on state.
+%% @doc Potentially send a message to a node, depending on state.
 possibly_send(S, Peer, Msg) ->
 	case rand:uniform() >= S#gs_state.loss_probability of
 		true ->
@@ -81,12 +81,12 @@ possibly_send(S, Peer, Msg) ->
 		false -> not_sent
 	end.
 
-%% Returns a number of milliseconds to wait in order to simulate transfer time.
+%% @doc Returns a number of milliseconds to wait in order to simulate transfer time.
 calculate_xfer_time(#gs_state { xfer_speed = undefined }, _) -> 0;
 calculate_xfer_time(S, Msg) ->
 	erlang:byte_size(term_to_binary(Msg)) div S#gs_state.xfer_speed.
 
-%% Takes a gs_msg and gs_state, returning the message, if it needs to
+%% @doc Takes a gs_msg and gs_state, returning the message, if it needs to
 %% be processed.
 recv(S, Msg) ->
 	case already_heard(S, Msg) of
@@ -97,7 +97,7 @@ recv(S, Msg) ->
 			{S, ignore}
 	end.
 
-%% Has this node already heard about this message?
+%% @doc Has this node already heard about this message?
 already_heard(S, Msg) when is_record(Msg, gs_msg) ->
 	already_heard(S, Msg#gs_msg.hash);
 already_heard(S, Hash) ->
@@ -105,7 +105,7 @@ already_heard(S, Hash) ->
 
 %%% Gossip protocol tests.
 
-%% Ensure single message receipt on every process in a fully
+%% @doc Ensure single message receipt on every process in a fully
 %% connected network of gossipers.
 fully_connected_test() ->
 	TestPID = self(),
@@ -133,7 +133,7 @@ fully_connected_test() ->
 	send(State, test_message),
 	100 = count_receipts(test_message, 1000).
 
-%% Ensure single message receipt on every process in a partially
+%% @doc Ensure single message receipt on every process in a partially
 %% connected network of gossipers.
 partially_connected_test() ->
 	TestPID = self(),
@@ -163,7 +163,7 @@ partially_connected_test() ->
 
 %%% Testing utility functions
 
-%% Count the number of times a message is received before the timeout is hit.
+%% @doc Count the number of times a message is received before the timeout is hit.
 count_receipts(Msg, Timeout) -> count_receipts(Msg, Timeout, 0).
 count_receipts(Msg, Timeout, N) ->
 	receive Msg -> count_receipts(Msg, Timeout, N + 1)

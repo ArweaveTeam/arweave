@@ -1,6 +1,7 @@
 -module(ar).
 -export([start/0, rebuild/0]).
 -export([test/0, test/1, test_apps/0, test_networks/0]).
+-export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -include("ar.hrl").
@@ -29,7 +30,7 @@
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
 
-%% Start an ArkChain node on this BEAM.
+%% @doc Start an ArkChain node on this BEAM.
 start() ->
 	%io:format("Starting up node...~n"),
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -37,7 +38,7 @@ start() ->
 	report_console([{session_log, Filename}]),
 	ok.
 
-%% Create a name for a session log file.
+%% @doc Create a name for a session log file.
 generate_logfile_name() ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
 	lists:flatten(
@@ -47,20 +48,20 @@ generate_logfile_name() ->
 		)
 	).
 
-%% Run the erlang make system on the project.
+%% @doc Run the erlang make system on the project.
 rebuild() ->
 	make:all([load]).
 
-%% Run all of the tests associated with the core project.
+%% @doc Run all of the tests associated with the core project.
 test() ->
 	start(),
 	eunit:test(?CORE_TEST_MODS, [verbose]).
 
-%% Run the tests for a single module.
+%% @doc Run the tests for a single module.
 test(Mod) ->
 	eunit:test([Mod], [verbose]).
 
-%% Run tests on the apps.
+%% @doc Run tests on the apps.
 test_apps() ->
 	start(),
 	eunit:test(?APP_TEST_MODS, [verbose]).
@@ -69,22 +70,31 @@ test_networks() ->
 	error_logger:tty(false),
 	ar_test_sup:start().
 
-%% Print an informational message to the log file.
+%% @doc Generate the project documentation.
+docs() ->
+	Mods =
+		lists:filter(
+			fun(File) -> string:str(File, ".erl") > 0 end,
+			element(2, file:list_dir("../src"))
+		),
+	edoc:files([ "../src/" ++ Mod || Mod <- Mods ]).
+
+%% @doc Print an informational message to the log file.
 report(X) ->
 	error_logger:info_report(X).
 
-%% Print an information message to the log file and console.
+%% @doc Print an information message to the log file and console.
 report_console(X) ->
 	error_logger:tty(true),
 	error_logger:info_report(X),
 	error_logger:tty(false).
 
-%% Report a value and return it.
+%% @doc Report a value and return it.
 d(X) ->
 	report_console(X),
 	X.
 
-%% A multiplier applied to all simulated time elements in the system.
+%% @doc A multiplier applied to all simulated time elements in the system.
 -ifdef(DEBUG).
 scale_time(Time) ->
 	erlang:trunc(?DEBUG_TIME_SCALAR * Time).
@@ -92,7 +102,7 @@ scale_time(Time) ->
 scale_time(Time) -> Time.
 -endif.
 
-%% Get the unix timestamp (in seconds).
+%% @doc Get the unix timestamp (in seconds).
 timestamp() ->
 	{MegaSec, Sec, _MilliSec} = os:timestamp(),
 	(MegaSec * 1000000) + Sec.

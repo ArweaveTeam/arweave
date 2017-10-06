@@ -16,7 +16,7 @@
 	blocks
 }).
 
-%% Start the 'catch up' server.
+%% @doc Start the 'catch up' server.
 start(Parent, Peer, TargetHeight, BlockList) ->
 	spawn(
 		fun() ->
@@ -37,7 +37,7 @@ start(Parent, Peer, TargetHeight, BlockList) ->
 		end
 	).
 
-%% Main server loop.
+%% @doc Main server loop.
 server(
 	#state {
 		parent = Parent,
@@ -76,7 +76,7 @@ server(S = #state { peer = Peer, blocks = Bs = [B|_] }) ->
 
 %%% Tests
 
-%% Ensure forks that are one block behind will resolve.
+%% @doc Ensure forks that are one block behind will resolve.
 single_block_ahead_recovery_test() ->
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
@@ -93,7 +93,7 @@ single_block_ahead_recovery_test() ->
 	[B|_] = ar_node:get_blocks(Node2),
 	5 = B#block.height.
 
-%% Ensure that nodes on a fork that is far behind will catchup correctly.
+%% @doc Ensure that nodes on a fork that is far behind will catchup correctly.
 multiple_blocks_ahead_recovery_test() ->
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
@@ -116,7 +116,7 @@ multiple_blocks_ahead_recovery_test() ->
 	[B|_] = ar_node:get_blocks(Node2),
 	8 = B#block.height.
 
-%% Ensure that nodes that have diverged by multiple blocks each can reconcile.
+%% @doc Ensure that nodes that have diverged by multiple blocks each can reconcile.
 multiple_blocks_since_fork_test() ->
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
@@ -138,7 +138,7 @@ multiple_blocks_since_fork_test() ->
 	[B|_] = ar_node:get_blocks(Node2),
 	7 = B#block.height.
 
-%% Check that nodes can join a running network by using the fork recoverer.
+%% @doc Check that nodes can join a running network by using the fork recoverer.
 node_join_test() ->
 	Node1 = ar_node:start([], ar_weave:init()),
 	Node2 = ar_node:start(),

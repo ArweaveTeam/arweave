@@ -15,7 +15,7 @@
 %% network.
 -define(STAGGER_TIME, 3000).
 
-%% Starts all or a list of tests for ar_network_tests.hrl.
+%% @doc Starts all or a list of tests for ar_network_tests.hrl.
 start() -> start(?NETWORK_TESTS).
 start(TestName) when is_atom(TestName) -> start([TestName]);
 start(Tests) ->
@@ -40,7 +40,7 @@ start(Tests) ->
 		end
 	).
 
-%% Main server loop
+%% @doc Main server loop
 server(S = #state { tests = Tests, finished = Finished }) ->
 	receive
 		{test_report, MonitorPID, stopped, Log} ->
@@ -70,7 +70,7 @@ server(S = #state { tests = Tests, finished = Finished }) ->
 
 %%% Utility functions
 
-%% Start a test, given a #network_test or test name.
+%% @doc Start a test, given a #network_test or test name.
 %% Returns a #test_run.
 start_test(RawT) when is_record(RawT, network_test) ->
 	T = preprocess_test(RawT),
@@ -115,7 +115,7 @@ start_test(Name) ->
 		Test -> start_test(Test)
 	end.
 
-%% Calculate sensible bvalues for fields left with 'calculate' atoms.
+%% @doc Calculate sensible bvalues for fields left with 'calculate' atoms.
 preprocess_test(T = #network_test { miner_delay = calculate }) ->
 	preprocess_test(
 		T#network_test {
@@ -124,7 +124,7 @@ preprocess_test(T = #network_test { miner_delay = calculate }) ->
 	);
 preprocess_test(T) -> T.
 
-%% Stop a test run (including the clients, miners, and monitor).
+%% @doc Stop a test run (including the clients, miners, and monitor).
 stop_test(#test_run{ miners = Miners, clients = Clients, monitor = Monitor }) ->
 	% Kill the clients
 	lists:foreach(fun ar_sim_client:stop/1, Clients),

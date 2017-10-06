@@ -5,7 +5,7 @@
 %%% Manages logging of large scale, long term, nightly network tests
 %%% found in ar_network_tests.
 
-%% Save a log object from a test monitor to a file.
+%% @doc Save a log object from a test monitor to a file.
 save_log(T) ->
 	file:write_file(
 		Filename = generate_filename(T),
@@ -21,7 +21,7 @@ save_log(T) ->
 	),
 	lists:flatten(Filename).
 
-%% Turn a #test_run into a reasonable file name.
+%% @doc Turn a #test_run into a reasonable file name.
 generate_filename(
 	#test_run {
 		name = Name,
@@ -31,7 +31,7 @@ generate_filename(
 		[?LOG_DIR, Name, Yr, Mo, Da, Hr, Mi, Se]
 	).
 
-%% Output a string representing a series of logs.
+%% @doc Output a string representing a series of logs.
 format_logs(Logs) ->
 	lists:foldr(
 		fun(Log, Acc) ->
@@ -41,7 +41,7 @@ format_logs(Logs) ->
 		Logs
 	).
 
-%% Format an individual log for printing or storage.
+%% @doc Format an individual log for printing or storage.
 format_log([{B, TXs, _}]) ->
 	io_lib:format(
 		"No forks. Block height: ~p. Transactions: ~p. Difficulty: ~p.~n",

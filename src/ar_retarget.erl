@@ -9,7 +9,7 @@
 
 %%% Functions for manipulating and calculating new difficulty values.
 
-%% Optionally re-calculate the difficulty of the next block, if
+%% @doc Optionally re-calculate the difficulty of the next block, if
 %% a retarget block height has been reached.
 maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
 	B#block {
@@ -24,7 +24,7 @@ maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
 maybe_retarget(B, OldB) ->
 	B#block { last_retarget = OldB#block.last_retarget }.
 
-%% Calculate a new difficulty, given an old difficulty and the retarget
+%% @doc Calculate a new difficulty, given an old difficulty and the retarget
 %% period it produced.
 calculate_difficulty(OldDiff, TS, OldTS) ->
 	%% TODO: Improve the stability of this mechanism.
@@ -36,7 +36,7 @@ calculate_difficulty(OldDiff, TS, OldTS) ->
 	true -> OldDiff - 1
 	end.
 
-%% Validate that a new block has an appropriate difficulty.
+%% @doc Validate that a new block has an appropriate difficulty.
 validate(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
 	(NewB#block.diff ==
 		calculate_difficulty(
@@ -50,6 +50,7 @@ validate(NewB, OldB) ->
 
 %%% Tests
 
+%% @doc Ensure that after a series of very fast mines, the diff increases.
 simple_retarget_test() ->
 	Node = ar_node:start([], ar_weave:init()),
 	lists:foreach(

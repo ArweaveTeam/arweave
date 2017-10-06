@@ -14,17 +14,17 @@
 	db = []
 }).
 
-%% Start and register the router for this node.
+%% @doc Start and register the router for this node.
 start() ->
 	erlang:register(?MODULE, spawn(fun() -> server(#state {}) end)).
 
-%% Register a process (by default, self()) to be remotely addressable.
+%% @doc Register a process (by default, self()) to be remotely addressable.
 register() -> register(self()).
 register(PID) ->
 	?MODULE ! {register, self(), PID},
 	receive {registered, PID, ID} -> ID end.
 
-%% Lookup a local process identifier or registered ID.
+%% @doc Lookup a local process identifier or registered ID.
 lookup(PID) when is_pid(PID) ->
 	?MODULE ! {lookup, pid, self(), PID},
 	receive {lookedup, PID, ID} -> ID end;
@@ -48,7 +48,7 @@ server(S = #state { db = DB }) ->
 
 %%% Utility functions.
 
-%% Either find the PID/ID, or return not_found.
+%% @doc Either find the PID/ID, or return not_found.
 find(id, ID, DB) ->
 	case lists:keyfind(ID, 1, DB) of
 		false -> not_found;
@@ -60,7 +60,7 @@ find(pid, PID, DB) ->
 		{ID, PID} -> ID
 	end.
 
-%% Add a process identifier to the register, returning the new ID and database.
+%% @doc Add a process identifier to the register, returning the new ID and database.
 add_pid(DB, PID) ->
 	case find(pid, PID, DB) of
 		not_found ->

@@ -22,7 +22,7 @@
 	max_tx_len
 }).
 
-%% Spawns a simulated client, when given a list
+%% @doc Spawns a simulated client, when given a list
 %% of peers to connect to.
 start(Peers) -> start(Peers, ?DEFAULT_ACTION_TIME).
 start(Peers, ActionTime) -> start(Peers, ActionTime, ?DEFAULT_MAX_TX_LEN).
@@ -50,12 +50,12 @@ start(Peers, ActionTime, MaxTXLen, NumConnections) ->
 		end
 	).
 
-%% Stop a client node.
+%% @doc Stop a client node.
 stop(PID) ->
 	PID ! stop,
 	ok.
 
-%% Main client server loop.
+%% @doc Main client server loop.
 server(
 	S = #state {
 		private_key = Priv,

@@ -6,7 +6,7 @@
 
 %%% Utilities for manipulating wallets.
 
-%% Generate a new wallet public key and private key.
+%% @doc Generate a new wallet public key and private key.
 new() ->
 	{Pub, Priv} = crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 	{Priv, Pub}.

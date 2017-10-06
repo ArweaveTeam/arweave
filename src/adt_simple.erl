@@ -32,7 +32,7 @@
 	app_state = undefined % The state variable associated with the app.
 }).
 
-%% Start a new adt_simple app. Takes the module that implements our callbacks,
+%% @doc Start a new adt_simple app. Takes the module that implements our callbacks,
 %% and an optional peer list.
 start(CallbackMod) -> start(CallbackMod, []).
 start(CallbackMod, AppState) -> start(CallbackMod, AppState, []).
@@ -49,11 +49,11 @@ start(CallbackMod, AppState, Peers) ->
 		end
 	).
 
-%% Stop the app.
+%% @doc Stop the app.
 stop(PID) ->
 	PID ! stop.
 
-%% The main app server loop.
+%% @doc The main app server loop.
 server(S = #state { gossip = GS }) ->
 	%% Listen for gossip and normal messages.
 	%% Recurse through the message box, updating one's state each time.
@@ -94,7 +94,7 @@ server(S = #state { gossip = GS }) ->
 
 %%% Utility functions
 
-%% Make a callback call. Returns the new gossip protocol state.
+%% @doc Make a callback call. Returns the new gossip protocol state.
 apply_callback(S = #state { app_state = AppS, gossip = GS }, Fun, Val) ->
 	apply_callback(S, GS, AppS, Fun, Val).
 apply_callback(S = #state { mod = Mod }, GS, AppS, Fun, Val) ->

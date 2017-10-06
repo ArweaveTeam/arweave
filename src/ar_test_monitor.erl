@@ -21,7 +21,7 @@
 %% The default amount of time to wait before storing network state.
 -define(DEFAULT_TIMEOUT, 15 * 60).
 
-%% Start a monitor, given a list of mining nodes.
+%% @doc Start a monitor, given a list of mining nodes.
 start(Miners) -> start(Miners, self()).
 start(Miners, Listener) -> start(Miners, Listener, ?DEFAULT_TIMEOUT).
 start(Miners, Listener, CheckTime) ->
@@ -41,11 +41,11 @@ start(Miners, Listener, CheckTime, FailureTime) ->
 		end
 	).
 
-%% Stop a monitor process (does not kill nodes or miners).
+%% @doc Stop a monitor process (does not kill nodes or miners).
 stop(PID) ->
 	PID ! stop.
 
-%% Main server loop
+%% @doc Main server loop
 server(
 		S = #state {
 			miners = Miners,
@@ -80,7 +80,7 @@ server(
 
 %%% Utility functions
 
-%% Ask all nodes for the current block, count the number of each result.
+%% @doc Ask all nodes for the current block, count the number of each result.
 gather_results(Miners) ->
 	lists:foldr(
 		fun({B, TXs}, Dict) ->
@@ -108,12 +108,12 @@ gather_results(Miners) ->
 		)
 	).
 
-%% Stop all network nodes and report log to listener.
+%% @doc Stop all network nodes and report log to listener.
 end_test(#state { log = Log, listener = Listener }) ->
 	ar:report_console([{test, unknown}, stopping]),
 	Listener ! {test_report, self(), stopped, Log},
 	ok.
 
-%% Count the number of transactions in a list of blocks.
+%% @doc Count the number of transactions in a list of blocks.
 count_txs(Bs) ->
 	lists:sum([ length(B#block.txs) || B <- Bs ]).

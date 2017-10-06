@@ -13,7 +13,7 @@
 	report
 }).
 
-%% Start a node, optionally with a list of peers.
+%% @doc Start a node, optionally with a list of peers.
 start() -> start(undefined).
 start(ReportPID) -> start(ReportPID, []).
 start(ReportPID, Peers) ->
@@ -28,11 +28,11 @@ start(ReportPID, Peers) ->
 		end
 	).
 
-%% Stop the app.
+%% @doc Stop the app.
 stop(PID) ->
 	PID ! stop.
 
-%% The main app server loop.
+%% @doc The main app server loop.
 server(S = #state { gossip = GS, report = ReportPID }) ->
 	%% Listen for gossip and normal messages.
 	%% Recurse through the message box, updating one's state each time.
@@ -56,7 +56,7 @@ server(S = #state { gossip = GS, report = ReportPID }) ->
 		stop -> ok
 	end.
 
-%% Start an Archain network with a simple monitor.
+%% @doc Start an Archain network with a simple monitor.
 %% Ensure that new block notifications are received.
 simple_test() ->
 	% Create genesis block.
@@ -74,7 +74,7 @@ simple_test() ->
 	% Receive the 'new block found; message for the first block.
 	receive {new_block, 1} -> ok end.
 
-%% Test that multiple block notifications are received correctly.
+%% @doc Test that multiple block notifications are received correctly.
 multiple_test() ->
 	% Create weave iterations.
 	B0 = ar_weave:init(),

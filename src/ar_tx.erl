@@ -5,7 +5,7 @@
 
 %%% Transaction creation, signing and verification for Archain.
 
-%% Generate a new transaction for entry onto a weave.
+%% @doc Generate a new transaction for entry onto a weave.
 new() ->
 	#tx { id = generate_id() }.
 new(Data) ->
@@ -13,14 +13,14 @@ new(Data) ->
 new(Dest, Qty) ->
 	#tx { id = generate_id(), type = transfer, quantity = Qty, target = Dest, data = <<>> }.
 
-%% Create an ID for an object on the weave.
+%% @doc Create an ID for an object on the weave.
 generate_id() -> crypto:strong_rand_bytes(32).
 
-%% Generate a hashable binary from a #tx object.
+%% @doc Generate a hashable binary from a #tx object.
 to_binary(T) ->
 	<< (T#tx.id)/binary, (T#tx.data)/binary, (T#tx.quantity):64 >>.
 
-%% Sign ('claim ownership') of a transaction. After it is signed, it can be
+%% @doc Sign ('claim ownership') of a transaction. After it is signed, it can be
 %% placed onto a block and verified at a later date.
 sign(TX, PrivKey, PubKey) ->
 	TX#tx {
@@ -28,7 +28,7 @@ sign(TX, PrivKey, PubKey) ->
 		signature = crypto:sign(?SIGN_ALG, ?HASH_ALG, to_binary(TX), PrivKey)
 	}.
 
-%% Ensure that a transaction's signature is valid.
+%% @doc Ensure that a transaction's signature is valid.
 verify(TX) ->
 	crypto:verify(
 		rsa,
