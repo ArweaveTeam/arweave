@@ -3,6 +3,12 @@
 This repository holds the Archain server prototype, as well as the App Developer
 Toolkit (ADT) and the Archain testing framework, TNT/NO-VLNS.
 
+Archain is a distributed, cryptographically verified permanent archive built
+on a cryptocurrency that aims to, for the first time, provide feasible data
+permanence. By leveraging our novel Blockweave datastructure, data is stored
+in a decentralised, peer-to-peer manner where miners are incentivised to
+store rare data. 
+
 # Requirements
 
 In order to run the Archain server prototype and ADT, a recent (R20 and above)
