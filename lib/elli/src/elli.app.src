@@ -1,0 +1,16 @@
+{application, elli,
+ [
+  {description, "Fast and robust web server for building high-throughput, low-latency apps"},
+  {vsn, "1.0.5"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  inets
+                 ]},
+  {env, []},
+
+  {maintainers,["Knut Nesheim"]},
+  {licenses,["MIT"]},
+  {links,[{"Github","https://github.com/knutin/elli"}]}
+ ]}.

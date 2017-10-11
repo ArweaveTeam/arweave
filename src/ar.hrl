@@ -25,6 +25,9 @@
 %% Log output directory
 -define(LOG_DIR, "logs").
 
+%% Port to use for cross-machine message transfer.
+-define(DEFAULT_HTTP_IFACE_PORT, 1984).
+
 %% A block on the weave.
 -record(block, {
 	nonce,

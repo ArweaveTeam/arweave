@@ -30,12 +30,13 @@
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
 
-%% @doc Start an ArkChain node on this BEAM.
+%% @doc Start an Archain node on this BEAM.
 start() ->
 	%io:format("Starting up node...~n"),
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
 	report_console([{session_log, Filename}]),
+	ar_http_iface:start(),
 	ok.
 
 %% @doc Create a name for a session log file.
