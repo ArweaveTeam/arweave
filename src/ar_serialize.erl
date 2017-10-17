@@ -1,7 +1,6 @@
 -module(ar_serialize).
 -export([block_to_fields/1, fields_to_block/1, tx_to_fields/1, fields_to_tx/1]).
 -include("ar.hrl").
--include("../lib/yaws/json2.erl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Module containing serialisation/deserialisation utility functions
@@ -9,17 +8,18 @@
 
 %% @doc Translate a block into json for HTTP
 block_to_json(
-  B =
-  #block {
+  B = #block {
     nonce = Nonce,
     txs = Txs
   }) ->
     EncodedB =
-      #block {
-        nonce = base64:encode(Nonce),
-        txs = lists:foreach(base64:encode(), Txs)
-      },
-    json2:encode_object(EncodedB).
+   	{struct,
+		[
+			{"nonce", base64:encode(Nonce)},
+			{"txs", {array, lists:map(fun tx_to_json/1, Txs) }}
+		]
+	},
+    json2:encode(EncodedB).
 
 %% @doc Translate fields parsed json from HTTP request into a block
 json_to_block(Charlist) ->
@@ -28,7 +28,7 @@ json_to_block(Charlist) ->
       DecodedBlock =
         Block#block {
           nonce = base64:decode(Block#block.nonce),
-          txs = lists.foreach(base64:decode(), Block#block.txs)
+          txs = lists:map(fun tx_to_json/1, Block#block.txs)
         },
       DecodedBlock;
     {_, {error, Reason}, _} ->
