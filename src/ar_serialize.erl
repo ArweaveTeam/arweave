@@ -6,7 +6,11 @@
 %%% Module containing serialisation/deserialisation utility functions
 %%% for use in HTTP server.
 
-%% @doc Translate a block into json for HTTP
+%% @doc turns IOList JSON representation into flat list.
+to_json(Input) ->
+  lists:flatten(Input).
+
+%% @doc Translate a block into json for HTTP.
 block_to_json(
 	#block {
 		nonce = Nonce,
@@ -35,21 +39,26 @@ block_to_json(
 				{wallet_list, Wallet_list}
 			]
 		},
-	json2:encode(EncodedB).
+	to_json(json2:encode(EncodedB)).
 
-%% @doc Translate fields parsed json from HTTP request into a block
+%% @doc Translate fields parsed json from HTTP request into a block.
 json_to_block(Json) ->
 	case json2:decode_string(Json) of
-		{done, {ok, Block} , _} ->
-			Block#block {
+		{ok,{struct, Block}}  ->
+			B = Block#block {
 				nonce = base64:decode(Block#block.nonce),
 				txs = lists:map(fun json_to_tx/1, Block#block.txs)
-			};
+			},
+    add_fields_to_record(B, Block);
 		{_, {error, Reason}, _} ->
 			ar:report([{json_error, Reason}])
 	end.
 
-%% @doc Translate a transaction into json for HTTP
+%% @doc Adds fields to Record if they do not already exist.
+add_fields_to_record(Record, Fields) ->
+  lists.map(fun() ->)
+
+%% @doc Translate a transaction into json for HTTP.
 tx_to_json(
 	#tx {
 		id = ID,
@@ -74,9 +83,9 @@ tx_to_json(
 				{signature, Sig}
 			]
 		},
-	json2:encode(EncodedTx).
+	to_json(json2:encode(EncodedTx)).
 
-%% @doc Translate parsed json from fields to a transaction
+%% @doc Translate parsed json from fields to a transaction.
 json_to_tx(Json) ->
 	case json2:decode_string(Json) of
 		{ok,{struct, TX}} ->
