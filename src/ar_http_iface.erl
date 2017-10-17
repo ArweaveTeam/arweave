@@ -47,13 +47,17 @@ add_external_tx_test() ->
 	register(http_entrypoint_node, Node),
 	TX = ar_tx:new(<<"DATA">>),
 	%% TODO: Implement ar_serialize.
-	Fields = ar_serialize:tx_to_json(TX),
+	JsonBlock = ar_serialize:tx_to_json(TX),
 	httpc:request(
 		post,
-		%% Check in docs for args!!!
-		"http://127.0.0.1:"
-			++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-			++ "/api/add_tx"
+		{
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/api/add_tx",
+			[],
+			"application/x-www-form-urlencoded",
+			JsonBlock
+		}, [], []
 	),
 	receive after 1000 -> ok end,
 	ar_node:mine(Node),

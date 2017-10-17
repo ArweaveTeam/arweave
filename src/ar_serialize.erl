@@ -1,5 +1,5 @@
 -module(ar_serialize).
--export([block_to_fields/1, fields_to_block/1, tx_to_fields/1, fields_to_tx/1]).
+-export([block_to_json/1, json_to_block/1, tx_to_json/1, json_to_tx/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -8,27 +8,35 @@
 
 %% @doc Translate a block into json for HTTP
 block_to_json(
-  B = #block {
+  #block {
+    height = Height,
+    hash = Hash,
     nonce = Nonce,
-    txs = Txs
+    txs = Txs,
+    wallet_list = Wallet_list,
+    hash_list = Hash_list
   }) ->
     EncodedB =
    	{struct,
 		[
-			{"nonce", base64:encode(Nonce)},
-			{"txs", {array, lists:map(fun tx_to_json/1, Txs) }}
+      {height, Height},
+      {hash, Hash},
+			{nonce, base64:encode(Nonce)},
+      {txs, {array, lists:map(fun tx_to_json/1, Txs) }},
+      {wallet_list, Wallet_list},
+      {hash_list, Hash_list}
 		]
 	},
     json2:encode(EncodedB).
 
 %% @doc Translate fields parsed json from HTTP request into a block
-json_to_block(Charlist) ->
-  case json2:decode(CharList) of
-    {_, {ok, Block} , _} ->
+json_to_block(Json) ->
+  case json2:decode_string(Json) of
+    {done, {ok, Block} , _} ->
       DecodedBlock =
         Block#block {
           nonce = base64:decode(Block#block.nonce),
-          txs = lists:map(fun tx_to_json/1, Block#block.txs)
+          txs = lists:map(fun json_to_tx/1, Block#block.txs)
         },
       DecodedBlock;
     {_, {error, Reason}, _} ->
@@ -37,16 +45,37 @@ json_to_block(Charlist) ->
 
 %% @doc Translate a transaction into json for HTTP
 tx_to_json(
-  TX = #tx { data = Data }) ->
-    EncodedTx = #tx { data = base64:encode(Data) },
-    json2:encode_object(EncodedTx).
+    #tx {
+      id = ID,
+      owner = Owner,
+      tags = Tags,
+      target = Target,
+      quantity = Quantity,
+      type = Type,
+      data = Data,
+      signature = Sig
+    }) ->
+  EncodedTx =
+      {struct,
+  		  [
+          {id, ID},
+          {owner, Owner},
+          {tags, Tags},
+          {target, Target},
+          {quantity, Quantity},
+          {type, Type},
+          {data, base64:encode(Data)},
+          {signature, Sig}
+        ]
+      },
+  json2:encode(EncodedTx).
 
 %% @doc Translate parsed json from fields to a transaction
-json_to_txs(Charlist) ->
-  case json2:decode(CharList) of
-    {_, {ok, Tx} , _} ->
+json_to_tx(Json) ->
+  case json2:decode_string(Json) of
+    {ok,{struct, TX}} ->
       DecodedTx =
-        Tx#tx { data = base64:decode(Tx#tx.data) },
+        #tx { data = base64:decode(Tx#tx.data) },
       DecodedTx;
     {_, {error, Reason}, _} ->
       ar:report([{json_error, Reason}])
