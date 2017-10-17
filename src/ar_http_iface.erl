@@ -1,7 +1,7 @@
 -module(ar_http_iface).
 -export([start/0, start/1, handle/2, handle_event/3]).
 -include("ar.hrl").
--include_lib("elli.hrl").
+-include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Exposes access to an internal Archain network to external nodes.
@@ -18,18 +18,17 @@ handle(Req, _Args) ->
 
 handle('GET', [<<"api">>], _Req) ->
 	{200, [], <<"OK">>};
-handle('POST', [<<"api">>, <<"add_block">>], _Req) ->
-
-	Block_content = elli_request:get_arg(<<"content">>, _Req, <<"undefined">>),
-	Block = ar_serialize:json_to_block(Block_content),
+handle('POST', [<<"api">>, <<"add_block">>], Req) ->
+	BlockContent = elli_request:get_arg(<<"content">>, Req, <<"undefined">>),
+	Block = ar_serialize:json_to_block(BlockContent),
 	ar_weave:add_block(Block, Block#block.txs),
 
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_block(Node, parsed_block),
 	{200, [], <<"OK">>};
-handle('POST', [<<"api">>, <<"add_tx">>], _Req) ->
-	Tx_content = elli_request:get_arg(<<"content">>, _Req, <<"undefined">>),
-	Tx = ar_serialize:json_to_block(Block_content),
+handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
+	TxContent = elli_request:get_arg(<<"content">>, Req, <<"undefined">>),
+	_Tx = ar_serialize:json_to_block(TxContent),
 	{200, [], <<"OK">>};
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
@@ -42,7 +41,7 @@ handle_event(Event, Data, Args) ->
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
 	B0 = ar_weave:init(),
-	Node = start([], B0),
+	Node = ar_node:start([], B0),
 	%% TODO: Register node with router process.
 	register(http_entrypoint_node, Node),
 	TX = ar_tx:new(<<"DATA">>),
@@ -62,14 +61,14 @@ add_external_tx_test() ->
 	receive after 1000 -> ok end,
 	ar_node:mine(Node),
 	receive after 1000 -> ok end,
-	[B1|_] = get_blocks(Node),
+	[B1|_] = ar_node:get_blocks(Node),
 	[TX] = B1#block.txs.
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test() ->
 	B0 = ar_weave:init(),
-	Node1 = start([], B0),
+	Node1 = ar_node:start([], B0),
 	%% TODO: Register node with router process.
 	register(http_entrypoint_node, Node1),
 	[B1|_] = ar_weave:add(B0, []),
@@ -88,5 +87,5 @@ add_external_block_test() ->
 		}, [], []
 	),
 	receive after 1000 -> ok end,
-	B1 = get_blocks(Node2),
+	B1 = ar_node:get_blocks(Node1),
 	1 = (hd(B1))#block.height.

@@ -30,28 +30,28 @@
 
 %% A block on the weave.
 -record(block, {
-	nonce,
+	nonce = <<>>,
 	timestamp = ar:timestamp(), % Unix time of block discovery
-	last_retarget, % Unix timestamp of the last defficulty retarget
+	last_retarget = -1, % Unix timestamp of the last defficulty retarget
 	diff = ?DEFAULT_DIFF, % How many zeros need to preceed the next hash?
-	height, % How many blocks have passed since the Genesis block?
-	hash, % A hash of this block, the previous block and the recall block.
-	indep_hash, % A hash of just this block.
+	height = -1, % How many blocks have passed since the Genesis block?
+	hash = <<>>, % A hash of this block, the previous block and the recall block.
+	indep_hash = [], % A hash of just this block.
 	txs = [], % A list of transaction records associated with this block.
-	hash_list, % A list of every indep hash to this point, or undefined.
-	wallet_list % A map of wallet blanaces, or undefined.
+	hash_list = [], % A list of every indep hash to this point, or undefined.
+	wallet_list = [] % A map of wallet blanaces, or undefined.
 }).
 
 %% A transaction, as stored in a block.
 -record(tx, {
-	id,
-	owner,
+	id = <<>>,
+	owner = <<>>,
 	tags = [],
-	target,
+	target = <<>>,
 	quantity = 0,
 	type = transfer,
-	data = undefined,
-	signature
+	data = <<>>,
+	signature = <<>>
 }).
 
 

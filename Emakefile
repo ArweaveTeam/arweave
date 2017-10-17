@@ -8,3 +8,4 @@
 {'lib/elli/src/*', [debug_info,
            {i, "lib/elli/include/"},
            {outdir, "ebin"}]}.
+{'lib/yaws/*', [debug_info, {outdir, "ebin"}]}.

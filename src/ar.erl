@@ -14,6 +14,7 @@
 -define(
 	CORE_TEST_MODS,
 	[
+		ar_serialize,
 		ar_wallet,
 		ar_router,
 		ar_tx,
