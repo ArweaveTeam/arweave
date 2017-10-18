@@ -26,7 +26,6 @@ handle('POST', [<<"api">>, <<"add_block">>], Req) ->
 	B = ar_serialize:json_struct_to_block(JSONB),
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
 	Node = whereis(http_entrypoint_node),
-	ar:report([{adding_block, B}, {recall_block, RecallB}]),
 	ar_node:add_block(Node, B, RecallB),
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
@@ -48,7 +47,7 @@ handle_event(Event, Data, Args) ->
 add_external_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
-	register(http_entrypoint_node, Node),
+	reregister(Node),
 	TX = ar_tx:new(<<"DATA">>),
 	TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
 	httpc:request(
@@ -73,12 +72,11 @@ add_external_tx_test() ->
 add_external_block_test() ->
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
-	%% TODO: Register node with router process.
-	%register(http_entrypoint_node, Node1),
-	[B1|_] = ar_weave:add([B0]),
-	ar:report([{new_block, B1}]),
-	%% Remember to string:join("|", lists:map(fun tx_to_field, TXs))
-	%% in ar_serialize:block_to_fields.
+	reregister(Node1),
+	Node2 = ar_node:start([], [B0]),
+	ar_node:mine(Node2),
+	receive after 1000 -> ok end,
+	[B1|_] = ar_node:get_blocks(Node2),
 	JSONB0 = ar_serialize:block_to_json_struct(B0),
 	JSONB1 = ar_serialize:block_to_json_struct(B1),
 	httpc:request(
@@ -103,3 +101,11 @@ add_external_block_test() ->
 	),
 	receive after 1000 -> ok end,
 	[B1, B0] = ar_node:get_blocks(Node1).
+
+%% @doc Helper function : registers a new node as the entrypoint.
+reregister(Node) ->
+	case erlang:whereis(http_entrypoint_node) of
+		undefined -> do_nothing;
+		_ -> erlang:unregister(http_entrypoint_node)
+	end,
+	erlang:register(http_entrypoint_node, Node).

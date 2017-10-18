@@ -50,6 +50,7 @@ add(Bs = [B|_], HashList, WalletList, TXs, Nonce) ->
 
 %% @doc Take a complete block list and return a list of block hashes.
 %% Throws an error if the block list is not complete.
+generate_hash_list(undefined) -> [];
 generate_hash_list([]) -> [];
 generate_hash_list(Bs = [B|_]) ->
 	lists:reverse(generate_hash_list(Bs, B#block.height + 1)).
@@ -73,7 +74,7 @@ verify([B|Rest]) ->
 %% @doc Verify a block from a hash list. Hash lists are stored in reverse order
 verify_indep(#block{ height = 0 }, []) -> true;
 verify_indep(B = #block { height = Height }, HashList) ->
-	lists:nth(Height + 1, HashList) == indep_hash(B#block { indep_hash = undefined }).
+	lists:nth(Height + 1, HashList) == indep_hash(B).
 
 %% @doc Generate a recall block number from a block or a hash and block height.
 calculate_recall_block(B) when is_record(B, block) ->
@@ -108,8 +109,16 @@ hash(Hash, TXs, Nonce) ->
 %% @doc Create an independent hash from a block. Independent hashes verify a block's
 %% contents in isolation and are stored in a node's hash list.
 indep_hash(B) ->
-	% TODO: Making hashing independent of the serialisation format.
-	crypto:hash(?HASH_ALG, << (term_to_binary(B))/binary >>).
+	crypto:hash(
+		?HASH_ALG,
+		list_to_binary(
+			ar_serialize:jsonify(
+				ar_serialize:block_to_json_struct(
+					B#block { indep_hash = <<>> }
+				)
+			)
+		)
+	).
 
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.

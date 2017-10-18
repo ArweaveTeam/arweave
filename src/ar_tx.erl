@@ -25,18 +25,12 @@ to_binary(T) ->
 sign(TX, PrivKey, PubKey) ->
 	TX#tx {
 		owner = PubKey,
-		signature = crypto:sign(?SIGN_ALG, ?HASH_ALG, to_binary(TX), PrivKey)
+		signature = ar_wallet:sign(PrivKey, to_binary(TX))
 	}.
 
 %% @doc Ensure that a transaction's signature is valid.
 verify(TX) ->
-	crypto:verify(
-		rsa,
-		sha256,
-		to_binary(TX),
-		TX#tx.signature,
-		TX#tx.owner
-	).
+	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature).
 
 sign_tx_test() ->
 	NewTX = new(<<"TEST DATA">>),

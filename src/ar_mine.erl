@@ -81,6 +81,7 @@ server(
 
 %% @doc Validate that a hash and a nonce satisfy the difficulty.
 validate(Hash, Diff, Data, Nonce) ->
+	%ar:d([{hash, Hash}, {diff, Diff}, {data, Data}, {nonce, Nonce}]),
 	case NewHash = ar_weave:hash(Hash, Data, Nonce) of
 		<< 0:Diff, _/bitstring >> -> NewHash;
 		_ -> false
