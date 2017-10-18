@@ -1,7 +1,7 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, stop/1]).
 -export([get_blocks/1, get_block/2, get_balance/2, generate_data_segment/2]).
--export([mine/1, automine/1, truncate/1, add_tx/2, add_peers/2]).
+-export([mine/1, automine/1, truncate/1, add_tx/2, add_block/3, add_block/4, add_peers/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2, validate/4, validate/5, find_recall_block/1]).
 -include("ar.hrl").
@@ -115,6 +115,16 @@ add_tx(Node, TX) ->
 	Node ! {add_tx, TX},
 	ok.
 
+%% @doc Add a transaction to the current block.
+add_block(Conn, NewB, RecallB) ->
+	add_block(Conn, NewB, RecallB, NewB#block.height).
+add_block(GS, NewB, RecallB, Height) when is_record(GS, gs_state) ->
+	{NewGS, _} = ar_gossip:send(GS, {new_block, undefined, Height, NewB, RecallB}),
+	NewGS;
+add_block(Node, NewB, RecallB, Height) ->
+	Node ! {new_block, undefined, Height, NewB, RecallB},
+	ok.
+
 %% @doc Add peer(s) to a node.
 add_peers(Node, Peer) when not is_list(Peer) -> add_peers(Node, [Peer]);
 add_peers(Node, Peers) ->
@@ -166,6 +176,12 @@ server(
 			% gossip network.
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			add_tx_to_server(S, NewGS, TX);
+		{new_block, Peer, Height, NewB, RecallB} ->
+			% We have a new block. Distribute it to the
+			% gossip network.
+			{NewGS, _} =
+				ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
+			process_new_block(S, NewGS, NewB, hd(Bs), RecallB, Peer);
 		{replace_block_list, NewBL} ->
 			% Replace the entire stored block list, regenerating the hash list.
 			server(
@@ -304,9 +320,10 @@ fork_recover(
 fork_recover(S, NewGS, Peer, Height, NewB) ->
 	fork_recover(S#state { gossip = NewGS }, Peer, Height, NewB).
 
-%% @doc Validate whether a new lbock is legitimate, then handle it appropriately.
+%% @doc Validate whether a new block is legitimate, then handle it appropriately.
 process_new_block(RawS, NewGS, NewB, OldB, RecallB, Peer) ->
 	S = RawS#state { gossip = NewGS },
+	ar:report([{new_block, NewB}]),
 	case validate(NewS = apply_txs(S, NewB#block.txs), NewB, OldB, RecallB) of
 		true ->
 			% The block is legit. Accept it.
@@ -444,17 +461,22 @@ validate(
 			},
 		OldB = #block { hash = Hash, diff = Diff },
 		RecallB) ->
+	ar:d(p1),
 	ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce) =/= false
 		and ar_weave:verify_indep(RecallB, HashList)
 		and ar_retarget:validate(NewB, OldB);
 validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
+	ar:d(p2),
 	validate(undefined, WL, NewB, OldB, RecallB);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
+	ar:d(p3),
 	validate(HL, undefined, NewB, OldB, RecallB);
-validate(_HL, _WL, _NewB, _, _) ->
+validate(HL, WL, NewB, OldB, RecallB) ->
+	ar:d([{hl, HL}, {wl, WL}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
 	false.
 
 validate(#state { hash_list = HashList, wallet_list = WalletList }, B, OldB, RecallB) ->
+	ar:d(p5),
 	validate(HashList, WalletList, B, OldB, RecallB).
 
 %% @doc Update the wallet list of a server with a set of new transactions
@@ -575,6 +597,25 @@ divergence_height_test() ->
 	1 = divergence_height([a, b], [a, b, c, d, e, f]),
 	2 = divergence_height([1,2,3], [1,2,3]),
 	2 = divergence_height([1,2,3, a, b, c], [1,2,3]).
+
+%% @doc Check that blocks can be added (if valid) by external processes.
+add_block_test() ->
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
+	[B1|_] = ar_weave:add([B0]),
+	add_block(Node1, B1, B0),
+	receive after 500 -> ok end,
+	[B1, B0] = get_blocks(Node1).
+
+%% @doc Check that blocks can be added (if valid) by external processes.
+gossip_add_block_test() ->
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
+	GS0 = ar_gossip:init([Node1]),
+	[B1|_] = ar_weave:add([B0]),
+	add_block(GS0, B1, B0),
+	receive after 500 -> ok end,
+	[B1, B0] = get_blocks(Node1).
 
 %% @doc Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->

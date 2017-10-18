@@ -21,17 +21,17 @@ handle('GET', [<<"api">>], _Req) ->
 handle('POST', [<<"api">>, <<"add_block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
-	{"recall_block", JSONRecallB} = lists:keyfind(Struct, 1, "recall_block"),
-	{"new_block", JSONB} = lists:keyfind(Struct, 1, "new_block"),
-	B = ar_serialize:json_to_block(JSONB),
-	RecallB = ar_serialize:json_to_block(JSONRecallB),
+	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
+	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
+	B = ar_serialize:json_struct_to_block(JSONB),
+	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
 	Node = whereis(http_entrypoint_node),
 	ar:report([{adding_block, B}, {recall_block, RecallB}]),
 	ar_node:add_block(Node, B, RecallB),
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
-	TX = ar_serialize:json_to_tx(binary_to_list(TXJSON)),
+	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
 	ar:report(TX),
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_tx(Node, TX),
@@ -46,11 +46,11 @@ handle_event(Event, Data, Args) ->
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
-	B0 = ar_weave:init(),
-	Node = ar_node:start([], B0),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
 	register(http_entrypoint_node, Node),
 	TX = ar_tx:new(<<"DATA">>),
-	TXJSON = ar_serialize:tx_to_json(TX),
+	TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
 	httpc:request(
 		post,
 		{
@@ -75,11 +75,12 @@ add_external_block_test() ->
 	Node1 = ar_node:start([], [B0]),
 	%% TODO: Register node with router process.
 	%register(http_entrypoint_node, Node1),
-	[B1|_] = ar_weave:add([B0], []),
+	[B1|_] = ar_weave:add([B0]),
+	ar:report([{new_block, B1}]),
 	%% Remember to string:join("|", lists:map(fun tx_to_field, TXs))
 	%% in ar_serialize:block_to_fields.
-	JSONB0 = ar_serialize:block_to_json(B0),
-	JSONB1 = ar_serialize:block_to_json(B1),
+	JSONB0 = ar_serialize:block_to_json_struct(B0),
+	JSONB1 = ar_serialize:block_to_json_struct(B1),
 	httpc:request(
 		post,
 		{
@@ -89,7 +90,7 @@ add_external_block_test() ->
 			[],
 			"application/x-www-form-urlencoded",
 			lists:flatten(
-				json2:encode(
+				ar_serialize:jsonify(
 					{struct,
 						[
 							{new_block, JSONB1},
