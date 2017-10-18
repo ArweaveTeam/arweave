@@ -6,7 +6,15 @@
 %%% Module containing serialisation/deserialisation utility functions
 %%% for use in HTTP server.
 
-%% @doc Translate a block into json for HTTP.
+%% @doc Take a JSON struct and produce JSON string.
+jsonify(JSONStruct) ->
+  lists:flatten(json2:encode(JSONStruct)).
+
+%% @doc Decode JSON string into JSON struct.
+dejsonify(JSON) ->
+  json2:decode_string(JSON).
+
+%% @doc Translate a block into JSON struct.
 block_to_json(
 	#block {
 		nonce = Nonce,
@@ -51,23 +59,23 @@ block_to_json(
 				}
 			]
 		},
-	to_json(EncodedB).
+	jsonify(EncodedB).
 
 %% @doc Translate fields parsed json from HTTP request into a block.
-json_to_block(Json) ->
-	case json2:decode_string(Json) of
-		{ok, {struct, Block}}  ->
-			{array, TXs} = find_value("txs", Block),
-			{array, WalletList} = find_value("wallet_list", Block),
-			{array, HashList} = find_value("hash_list", Block),
+json_to_block(JSON) ->
+	case dejsonify(JSON) of
+		{ok, {struct, BlockStruct}}  ->
+			{array, TXs} = find_value("txs", BlockStruct),
+			{array, WalletList} = find_value("wallet_list", BlockStruct),
+			{array, HashList} = find_value("hash_list", BlockStruct),
 			#block {
-				nonce = base64:decode(find_value("nonce", Block)),
-				timestamp = find_value("timestamp", Block),
-				last_retarget = find_value("last_retarget", Block),
-				diff = find_value("diff", Block),
-				height = find_value("height", Block),
-				hash = base64:decode(find_value("hash", Block)),
-				indep_hash = base64:decode(find_value("indep_hash", Block)),
+				nonce = base64:decode(find_value("nonce", BlockStruct)),
+				timestamp = find_value("timestamp", BlockStruct),
+				last_retarget = find_value("last_retarget", BlockStruct),
+				diff = find_value("diff", BlockStruct),
+				height = find_value("height", BlockStruct),
+				hash = base64:decode(find_value("hash", BlockStruct)),
+				indep_hash = base64:decode(find_value("indep_hash", BlockStruct)),
 				txs = lists:map(fun json_to_tx/1, TXs),
 				hash_list = [ base64:decode(Hash) || Hash <- HashList ],
 				wallet_list =
@@ -107,23 +115,22 @@ tx_to_json(
 				{signature, base64:encode_to_string(Sig)}
 			]
 		},
-	ar:report(EncodedTX),
-	to_json(EncodedTX).
+	jsonify(EncodedTX).
 
 %% @doc Translate parsed JSON from fields to a transaction.
-json_to_tx(Json) ->
-	case json2:decode_string(Json) of
-		{ok, {struct, TX}} ->
-			{array, Tags} = find_value("tags", TX),
+json_to_tx(JSON) ->
+	case dejsonify(JSON) of
+		{ok, {struct, TXStruct}} ->
+			{array, Tags} = find_value("tags", TXStruct),
 			#tx {
-				id = base64:decode(find_value("id", TX)),
-				owner = base64:decode(find_value("owner", TX)),
+				id = base64:decode(find_value("id", TXStruct)),
+				owner = base64:decode(find_value("owner", TXStruct)),
 				tags = Tags,
-				target = base64:decode(find_value("target", TX)),
-				quantity = find_value("quantity", TX),
-				type = list_to_existing_atom(find_value("type", TX)),
-				data = base64:decode(find_value("data", TX)),
-				signature = base64:decode(find_value("signature", TX))
+				target = base64:decode(find_value("target", TXStruct)),
+				quantity = find_value("quantity", TXStruct),
+				type = list_to_existing_atom(find_value("type", TXStruct)),
+				data = base64:decode(find_value("data", TXStruct)),
+				signature = base64:decode(find_value("signature", TXStruct))
 			};
 		{_, {error, Reason}, _} ->
 			ar:report([{json_error, Reason}])
@@ -135,9 +142,6 @@ find_value(Key, List) ->
 		{Key, Val} -> Val;
 		false -> undefined
 	end.
-
-%% @doc turns IOList JSON representation into flat list.
-to_json(IOList) -> lists:flatten(json2:encode(IOList)).
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->
