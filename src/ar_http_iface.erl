@@ -19,16 +19,17 @@ handle(Req, _Args) ->
 handle('GET', [<<"api">>], _Req) ->
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"add_block">>], Req) ->
-	BlockContent = elli_request:get_arg(<<"content">>, Req, <<"undefined">>),
+	BlockContent = elli_request:body(Req),
 	Block = ar_serialize:json_to_block(BlockContent),
-	ar_weave:add_block(Block, Block#block.txs),
+	ar_node:add_block(Block, Block#block.txs),
 
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_block(Node, parsed_block),
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
-	TxContent = elli_request:get_arg(<<"content">>, Req, <<"undefined">>),
-	_Tx = ar_serialize:json_to_block(TxContent),
+	TxContent = elli_request:body(Req),
+	TX = ar_serialize:json_to_tx(TxContent),
+	ar_node:add_tx(TX),
 	{200, [], <<"OK">>};
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
@@ -40,7 +41,7 @@ handle_event(Event, Data, Args) ->
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
-	B0 = ar_weave:init(),
+	[B0] = ar_weave:init(),
 	Node = ar_node:start([], B0),
 	%% TODO: Register node with router process.
 	register(http_entrypoint_node, Node),
@@ -67,13 +68,11 @@ add_external_tx_test() ->
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test() ->
-	B0 = ar_weave:init(),
+	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], B0),
 	%% TODO: Register node with router process.
 	register(http_entrypoint_node, Node1),
 	[B1|_] = ar_weave:add(B0, []),
-	%% Remember to string:join("|", lists:map(fun tx_to_field, TXs))
-	%% in ar_serialize:block_to_fields.
 	JsonBlock = ar_serialize:block_to_json(B1),
 	httpc:request(
 		post,
