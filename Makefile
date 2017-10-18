@@ -24,7 +24,7 @@ log:
 catlog:
 	cat logs/`ls -t logs | head -n 1`
 
-all: ebin logs
+all: ebin logs blocks
 	erlc +export_all -o ebin/ src/ar.erl
 	erl -noshell -s ar rebuild -pa ebin/ -s init stop
 
@@ -33,6 +33,9 @@ ebin:
 
 logs:
 	mkdir -p logs
+
+blocks:
+	mkdir -p blocks
 
 docs: all
 	mkdir -p docs

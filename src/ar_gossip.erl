@@ -63,7 +63,13 @@ send(S, Msg) ->
 	end.
 
 %% @doc Potentially send a message to a node, depending on state.
-possibly_send(S, Peer, Msg) ->
+%% No warning is issued for messages that cannot be sent to network peers!
+possibly_send(_S, Peer, #gs_msg { data = {new_block, _, _Height, NewB, RecallB} })
+		when not is_pid(Peer) ->
+	ar_http_iface:send_new_block(Peer, NewB, RecallB);
+possibly_send(_S, Peer, #gs_msg { data = {add_tx, TX} }) when not is_pid(Peer) ->
+	ar_http_iface:send_new_tx(Peer, TX);
+possibly_send(S, Peer, Msg) when is_pid(Peer) ->
 	case rand:uniform() >= S#gs_state.loss_probability of
 		true ->
 			case S#gs_state.delay of
@@ -79,7 +85,9 @@ possibly_send(S, Peer, Msg) ->
 					)
 			end;
 		false -> not_sent
-	end.
+	end;
+possibly_send(_S, _NetworkPeer, _Msg) ->
+	not_sent.
 
 %% @doc Returns a number of milliseconds to wait in order to simulate transfer time.
 calculate_xfer_time(#gs_state { xfer_speed = undefined }, _) -> 0;

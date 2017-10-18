@@ -1,5 +1,5 @@
 -module(ar_http_iface).
--export([start/0, start/1, handle/2, handle_event/3]).
+-export([start/0, start/1, start/2, handle/2, handle_event/3]).
 -export([send_new_block/3, send_new_tx/2]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
@@ -12,6 +12,9 @@ start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
 	{ok, PID} = elli:start_link([{callback, ?MODULE}, {port, Port}]),
 	PID.
+start(Port, Node) ->
+	reregister(Node),
+	start(Port).
 
 %%% Server side functions.
 
@@ -22,6 +25,7 @@ handle(Req, _Args) ->
 handle('GET', [<<"api">>], _Req) ->
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"add_block">>], Req) ->
+	ar:d(recvd_new_block),
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
 	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
