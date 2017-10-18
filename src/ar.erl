@@ -15,6 +15,7 @@
 	CORE_TEST_MODS,
 	[
 		ar_serialize,
+		ar_http_iface,
 		ar_wallet,
 		ar_router,
 		ar_tx,
@@ -34,6 +35,7 @@
 %% @doc Start an Archain node on this BEAM.
 start() ->
 	%io:format("Starting up node...~n"),
+	inets:start(),
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
 	report_console([{session_log, Filename}]),

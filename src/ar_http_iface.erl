@@ -19,16 +19,22 @@ handle(Req, _Args) ->
 handle('GET', [<<"api">>], _Req) ->
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"add_block">>], Req) ->
-	BlockContent = elli_request:get_arg(<<"content">>, Req, <<"undefined">>),
-	Block = ar_serialize:json_to_block(BlockContent),
-	ar_weave:add_block(Block, Block#block.txs),
-
+	BlockJSON = elli_request:body(Req),
+	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
+	{"recall_block", JSONRecallB} = lists:keyfind(Struct, 1, "recall_block"),
+	{"new_block", JSONB} = lists:keyfind(Struct, 1, "new_block"),
+	B = ar_serialize:json_to_block(JSONB),
+	RecallB = ar_serialize:json_to_block(JSONRecallB),
 	Node = whereis(http_entrypoint_node),
-	ar_node:add_block(Node, parsed_block),
+	ar:report([{adding_block, B}, {recall_block, RecallB}]),
+	ar_node:add_block(Node, B, RecallB),
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
-	TxContent = elli_request:get_arg(<<"content">>, Req, <<"undefined">>),
-	_Tx = ar_serialize:json_to_block(TxContent),
+	TXJSON = elli_request:body(Req),
+	TX = ar_serialize:json_to_tx(binary_to_list(TXJSON)),
+	ar:report(TX),
+	Node = whereis(http_entrypoint_node),
+	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
@@ -42,11 +48,9 @@ handle_event(Event, Data, Args) ->
 add_external_tx_test() ->
 	B0 = ar_weave:init(),
 	Node = ar_node:start([], B0),
-	%% TODO: Register node with router process.
 	register(http_entrypoint_node, Node),
 	TX = ar_tx:new(<<"DATA">>),
-	%% TODO: Implement ar_serialize.
-	JsonBlock = ar_serialize:tx_to_json(TX),
+	TXJSON = ar_serialize:tx_to_json(TX),
 	httpc:request(
 		post,
 		{
@@ -55,7 +59,7 @@ add_external_tx_test() ->
 				++ "/api/add_tx",
 			[],
 			"application/x-www-form-urlencoded",
-			JsonBlock
+			TXJSON
 		}, [], []
 	),
 	receive after 1000 -> ok end,
@@ -67,25 +71,34 @@ add_external_tx_test() ->
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test() ->
-	B0 = ar_weave:init(),
-	Node1 = ar_node:start([], B0),
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
 	%% TODO: Register node with router process.
-	register(http_entrypoint_node, Node1),
-	[B1|_] = ar_weave:add(B0, []),
+	%register(http_entrypoint_node, Node1),
+	[B1|_] = ar_weave:add([B0], []),
 	%% Remember to string:join("|", lists:map(fun tx_to_field, TXs))
 	%% in ar_serialize:block_to_fields.
-	JsonBlock = ar_serialize:block_to_json(B1),
+	JSONB0 = ar_serialize:block_to_json(B0),
+	JSONB1 = ar_serialize:block_to_json(B1),
 	httpc:request(
 		post,
 		{
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/api/new_block",
+				++ "/api/add_block",
 			[],
 			"application/x-www-form-urlencoded",
-			JsonBlock
+			lists:flatten(
+				json2:encode(
+					{struct,
+						[
+							{new_block, JSONB1},
+							{recall_block, JSONB0}
+						]
+					}
+				)
+			)
 		}, [], []
 	),
 	receive after 1000 -> ok end,
-	B1 = ar_node:get_blocks(Node1),
-	1 = (hd(B1))#block.height.
+	[B1, B0] = ar_node:get_blocks(Node1).
