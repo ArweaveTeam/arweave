@@ -24,7 +24,7 @@ handle(Req, _Args) ->
 
 handle('GET', [<<"api">>], _Req) ->
 	{200, [], <<"OK">>};
-handle('POST', [<<"api">>, <<"add_block">>], Req) ->
+handle('POST', [<<"api">>, <<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
 	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
@@ -34,7 +34,7 @@ handle('POST', [<<"api">>, <<"add_block">>], Req) ->
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_block(Node, B, RecallB),
 	{200, [], <<"OK">>};
-handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
+handle('POST', [<<"api">>, <<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
 	ar:report(TX),
@@ -44,7 +44,7 @@ handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
 handle('GET', [<<"api">>,<<"block">>, <<"hash">>, Hash], _Req) ->
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
-			base64:decode(Hash))
+			base64:decode(http_uri:decode(Hash)))
 	);
 handle('GET', [<<"api">>,<<"block">>, <<"height">>, Height], _Req) ->
 	return_block(
@@ -77,7 +77,7 @@ send_new_tx(Host, TX) ->
 	httpc:request(
 		post,
 		{
-			"http://" ++ format_host(Host) ++ "/api/add_tx",
+			"http://" ++ format_host(Host) ++ "/api/tx",
 			[],
 			"application/x-www-form-urlencoded",
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
@@ -89,7 +89,7 @@ send_new_block(Host, NewB, RecallB) ->
 	httpc:request(
 		post,
 		{
-			"http://" ++ format_host(Host) ++ "/api/add_block",
+			"http://" ++ format_host(Host) ++ "/api/block",
 			[],
 			"application/x-www-form-urlencoded",
 			lists:flatten(
@@ -116,12 +116,13 @@ get_block(Host, Height) when is_integer(Height) ->
 				++ "/api/block/height/"
 				++ integer_to_list(Height)));
 get_block(Host, Hash) when is_binary(Hash) ->
+	% TODO: Change HTTP URI encoding for hex?
 	handle_block_response(
 		httpc:request(
 			"http://"
 				++ format_host(Host)
 				++ "/api/block/hash/"
-				++ base64:encode_to_string(Hash))).
+				++ http_uri:encode(base64:encode_to_string(Hash)))).
 
 %% @doc Process the response of an /api/block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
@@ -149,6 +150,22 @@ reregister(Node) ->
 
 %%% Tests
 
+
+%% @doc Ensure that blocks can be received via a hash.
+get_block_by_hash_test() ->
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	receive after 200 -> ok end,
+	B0 = get_block({127, 0, 0, 1}, B0#block.hash).
+
+%% @doc Ensure that blocks can be received via a height.
+get_block_by_height_test() ->
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	B0 = get_block({127, 0, 0, 1}, 0).
+
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
 	[B0] = ar_weave:init(),
@@ -174,17 +191,3 @@ add_external_block_test() ->
 	send_new_block({127, 0, 0, 1}, B1, B0),
 	receive after 500 -> ok end,
 	[B1, B0] = ar_node:get_blocks(Node1).
-
-%% @doc Ensure that blocks can be received via a height.
-get_block_by_height_test() ->
-	[B0] = ar_weave:init(),
-	Node1 = ar_node:start([], [B0]),
-	reregister(Node1),
-	B0 = get_block({127, 0, 0, 1}, 0).
-
-%% @doc Ensure that blocks can be received via a hash.
-get_block_by_hash_test() ->
-	[B0] = ar_weave:init(),
-	Node1 = ar_node:start([], [B0]),
-	reregister(Node1),
-	B0 = get_block({127, 0, 0, 1}, B0#block.hash).
