@@ -25,7 +25,6 @@ handle(Req, _Args) ->
 handle('GET', [<<"api">>], _Req) ->
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"add_block">>], Req) ->
-	ar:d(recvd_new_block),
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
 	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
@@ -43,7 +42,17 @@ handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
 handle(_, _, _) ->
-	{500, [], <<"Request type not found.">>}.
+	{500, [], <<"Request type not found.">>};
+handle('POST', [<<"api">>,<<"get_block">>], Req) ->
+	Host = elli_request:body(Req),
+	Fhost = format_host(Host)
+	[B|_] = ar_node:get_blocks(PID),
+	Resp = whereis(http_entrypoint_node),
+	StructB = ar_serialize:block_to_json_struct(B),
+	StrRecallB = ar_serialize:block_to_json_struct(RecallB),
+	send_new_block(Resp, B, StrRecallB),
+	{200, [], <<"OK">>}.
+
 
 %% @doc Handles elli metadata events.
 handle_event(Event, Data, Args) ->
