@@ -116,7 +116,6 @@ get_block(Host, Height) when is_integer(Height) ->
 				++ "/api/block/height/"
 				++ integer_to_list(Height)));
 get_block(Host, Hash) when is_binary(Hash) ->
-	% TODO: Change HTTP URI encoding for hex?
 	handle_block_response(
 		httpc:request(
 			"http://"
