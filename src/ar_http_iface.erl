@@ -41,12 +41,12 @@ handle('POST', [<<"api">>, <<"tx">>], Req) ->
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
-handle('GET', [<<"api">>,<<"block">>, <<"hash">>, Hash], _Req) ->
+handle('GET', [<<"api">>, <<"block">>, <<"hash">>, Hash], _Req) ->
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
-			base64:decode(http_uri:decode(Hash)))
+			ar_util:dehexify(Hash))
 	);
-handle('GET', [<<"api">>,<<"block">>, <<"height">>, Height], _Req) ->
+handle('GET', [<<"api">>, <<"block">>, <<"height">>, Height], _Req) ->
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
@@ -122,7 +122,7 @@ get_block(Host, Hash) when is_binary(Hash) ->
 			"http://"
 				++ format_host(Host)
 				++ "/api/block/hash/"
-				++ http_uri:encode(base64:encode_to_string(Hash)))).
+				++ ar_util:hexify(Hash))).
 
 %% @doc Process the response of an /api/block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->

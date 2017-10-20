@@ -14,6 +14,7 @@
 -define(
 	CORE_TEST_MODS,
 	[
+		ar_storage,
 		ar_serialize,
 		ar_http_iface,
 		ar_wallet,
