@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_tx/2]).
+-export([send_new_block/3, send_new_tx/2, get_block/2]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -41,23 +41,34 @@ handle('POST', [<<"api">>, <<"add_tx">>], Req) ->
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
+handle('GET', [<<"api">>,<<"block">>, <<"hash">>, Hash], _Req) ->
+	return_block(
+		ar_node:get_block(whereis(http_entrypoint_node),
+			base64:decode(Hash))
+	);
+handle('GET', [<<"api">>,<<"block">>, <<"height">>, Height], _Req) ->
+	return_block(
+		ar_node:get_block(whereis(http_entrypoint_node),
+			list_to_integer(binary_to_list(Height)))
+	);
 handle(_, _, _) ->
-	{500, [], <<"Request type not found.">>};
-handle('POST', [<<"api">>,<<"get_block">>], Req) ->
-	Host = elli_request:body(Req),
-	Fhost = format_host(Host)
-	[B|_] = ar_node:get_blocks(PID),
-	Resp = whereis(http_entrypoint_node),
-	StructB = ar_serialize:block_to_json_struct(B),
-	StrRecallB = ar_serialize:block_to_json_struct(RecallB),
-	send_new_block(Resp, B, StrRecallB),
-	{200, [], <<"OK">>}.
-
+	{500, [], <<"Request type not found.">>}.
 
 %% @doc Handles elli metadata events.
 handle_event(Event, Data, Args) ->
 	ar:report([{elli_event, Event}, {data, Data}, {args, Args}]),
 	ok.
+
+%% @doc Return a block via HTTP.
+return_block(unavailable) -> {404, [], <<"Block not found.">>};
+return_block(B) ->
+	{200, [],
+		list_to_binary(
+			ar_serialize:jsonify(
+				ar_serialize:block_to_json_struct(B)
+			)
+		)
+	}.
 
 %%% Client functions
 
@@ -96,6 +107,28 @@ send_new_block(Host, NewB, RecallB) ->
 		}, [], []
 	).
 
+%% @doc Retreive a block (by height or hash) from a node.
+get_block(Host, Height) when is_integer(Height) ->
+	handle_block_response(
+		httpc:request(
+			"http://"
+				++ format_host(Host)
+				++ "/api/block/height/"
+				++ integer_to_list(Height)));
+get_block(Host, Hash) when is_binary(Hash) ->
+	handle_block_response(
+		httpc:request(
+			"http://"
+				++ format_host(Host)
+				++ "/api/block/hash/"
+				++ base64:encode_to_string(Hash))).
+
+%% @doc Process the response of an /api/block call.
+handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
+	ar_serialize:json_struct_to_block(Body);
+handle_block_response({ok, {{_, 404, _}, _, _}}) ->
+	not_found.
+
 %% @doc Take a remote host ID in various formats, return a HTTP-friendly string.
 format_host({A, B, C, D}) ->
 	format_host({A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT});
@@ -105,6 +138,14 @@ format_host(Host) when is_list(Host) ->
 	format_host({Host, ?DEFAULT_HTTP_IFACE_PORT});
 format_host({Host, Port}) ->
 	lists:flatten(io_lib:format("~s:~w", [Host, Port])).
+
+%% @doc Helper function : registers a new node as the entrypoint.
+reregister(Node) ->
+	case erlang:whereis(http_entrypoint_node) of
+		undefined -> do_nothing;
+		_ -> erlang:unregister(http_entrypoint_node)
+	end,
+	erlang:register(http_entrypoint_node, Node).
 
 %%% Tests
 
@@ -134,10 +175,16 @@ add_external_block_test() ->
 	receive after 500 -> ok end,
 	[B1, B0] = ar_node:get_blocks(Node1).
 
-%% @doc Helper function : registers a new node as the entrypoint.
-reregister(Node) ->
-	case erlang:whereis(http_entrypoint_node) of
-		undefined -> do_nothing;
-		_ -> erlang:unregister(http_entrypoint_node)
-	end,
-	erlang:register(http_entrypoint_node, Node).
+%% @doc Ensure that blocks can be received via a height.
+get_block_by_height_test() ->
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	B0 = get_block({127, 0, 0, 1}, 0).
+
+%% @doc Ensure that blocks can be received via a hash.
+get_block_by_hash_test() ->
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	B0 = get_block({127, 0, 0, 1}, B0#block.hash).

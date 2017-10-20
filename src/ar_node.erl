@@ -66,8 +66,8 @@ get_blocks(Node) ->
 	end.
 
 %% @doc Return a specific block from a node, if it has it.
-get_block(Node, Height) ->
-	Node ! {get_block, self(), Height},
+get_block(Node, ID) ->
+	Node ! {get_block, self(), ID},
 	receive
 		{block, Node, B} -> B
 	after ?NET_TIMEOUT -> no_response
@@ -195,8 +195,8 @@ server(
 		{get_blocks, PID} ->
 			PID ! {blocks, self(), Bs},
 			server(S);
-		{get_block, PID, Height} ->
-			PID ! {block, self(), find_block(Height, Bs)},
+		{get_block, PID, ID} ->
+			PID ! {block, self(), find_block(ID, Bs)},
 			server(S);
 		{get_balance, PID, PubKey} ->
 			PID ! {balance, PubKey,
@@ -526,6 +526,11 @@ find_recall_block(Bs) ->
 	find_block(ar_weave:calculate_recall_block(hd(Bs)), Bs).
 
 %% @doc Find a block from an ordered block list.
+find_block(Hash, Bs) when is_binary(Hash) ->
+	case lists:keyfind(Hash, #block.hash, Bs) of
+		false -> unavilable;
+		B -> B
+	end;
 find_block(Height, Bs) ->
 	case lists:keyfind(Height, #block.height, Bs) of
 		false -> unavailable;
