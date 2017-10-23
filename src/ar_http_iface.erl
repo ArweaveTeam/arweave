@@ -31,6 +31,7 @@ handle('POST', [<<"api">>, <<"block">>], Req) ->
 	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
 	B = ar_serialize:json_struct_to_block(JSONB),
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
+	%ar:report_console([{recvd_block, B#block.height}]),
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_block(Node, B, RecallB),
 	{200, [], <<"OK">>};
@@ -42,6 +43,7 @@ handle('POST', [<<"api">>, <<"tx">>], Req) ->
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
 handle('GET', [<<"api">>, <<"block">>, <<"hash">>, Hash], _Req) ->
+	%ar:report_console([{getting_block, Hash}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			ar_util:dehexify(Hash))

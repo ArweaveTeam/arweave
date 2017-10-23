@@ -47,9 +47,7 @@ main("") ->
 	io:format("Starts an Archain mining server.~n"),
 	io:format("Usage: archain-server [init] [mine] "
    		"[peer ip_addr_and_port]* [port port_number]~n");
-main(Args) ->
-	io:format("~p~n", [Args]),
-	main(Args, #opts{}).
+main(Args) -> main(Args, #opts{}).
 main([], O) -> start(O);
 main(["init"|Rest], O) ->
 	main(Rest, O#opts { init = true });
@@ -84,11 +82,12 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,
-		ar_node:start(
+		Node = ar_node:start(
 			Peers,
 			if Init -> ar_weave:init(); true -> undefined end
 		)
 	),
+	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	ok.
 
 %% @doc Create a name for a session log file.
