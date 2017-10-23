@@ -149,7 +149,6 @@ reregister(Node) ->
 
 %%% Tests
 
-
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
 	[B0] = ar_weave:init(),

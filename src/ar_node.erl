@@ -66,12 +66,14 @@ get_blocks(Node) ->
 	end.
 
 %% @doc Return a specific block from a node, if it has it.
-get_block(Node, ID) ->
-	Node ! {get_block, self(), ID},
+get_block(Proc, ID) when is_pid(Proc) ->
+	Proc ! {get_block, self(), ID},
 	receive
-		{block, Node, B} -> B
+		{block, Proc, B} -> B
 	after ?NET_TIMEOUT -> no_response
-	end.
+	end;
+get_block(Host, ID) ->
+	ar_http_iface:get_block(Host, ID).
 
 %% @doc Return the current balance associated with a wallet.
 get_balance(Node, PubKey) ->
@@ -112,9 +114,11 @@ set_xfer_speed(Node, Speed) ->
 add_tx(GS, TX) when is_record(GS, gs_state) ->
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	NewGS;
-add_tx(Node, TX) ->
+add_tx(Node, TX) when is_pid(Node) ->
 	Node ! {add_tx, TX},
-	ok.
+	ok;
+add_tx(Host, TX) ->
+	ar_http_iface:send_new_tx(Host, TX).
 
 %% @doc Add a transaction to the current block.
 add_block(Conn, NewB, RecallB) ->
@@ -122,8 +126,11 @@ add_block(Conn, NewB, RecallB) ->
 add_block(GS, NewB, RecallB, Height) when is_record(GS, gs_state) ->
 	{NewGS, _} = ar_gossip:send(GS, {new_block, undefined, Height, NewB, RecallB}),
 	NewGS;
-add_block(Node, NewB, RecallB, Height) ->
+add_block(Node, NewB, RecallB, Height) when is_pid(Node) ->
 	Node ! {new_block, undefined, Height, NewB, RecallB},
+	ok;
+add_block(Host, NewB, RecallB, _Height) ->
+	ar_http_iface:send_new_block(Host, NewB, RecallB),
 	ok.
 
 %% @doc Add peer(s) to a node.

@@ -1,12 +1,12 @@
 -module(ar).
--export([start/0, rebuild/0]).
+-export([main/0, main/1, start/0, start/1, rebuild/0]).
 -export([test/0, test/1, test_apps/0, test_networks/0]).
 -export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -include("ar.hrl").
 
-%%% ArkChain server entrypoint and basic utilities.
+%%% Archain server entrypoint and basic utilities.
 
 %% A list of the modules to test.
 %% At some point we might want to make this just test all mods starting with
@@ -33,14 +33,62 @@
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
 
+%% Start options
+-record(opts, {
+	port = ?DEFAULT_HTTP_IFACE_PORT,
+	init = false,
+	mine = false,
+	peers = []
+}).
+
+%% @doc Command line program entrypoint. Takes a list of arguments.
+main() -> main("").
+main("") ->
+	io:format("Starts an Archain mining server.~n"),
+	io:format("Usage: archain-server [init] [mine] "
+   		"[peer ip_addr_and_port]* [port port_number]~n");
+main(Args) ->
+	io:format("~p~n", [Args]),
+	main(Args, #opts{}).
+main([], O) -> start(O);
+main(["init"|Rest], O) ->
+	main(Rest, O#opts { init = true });
+main(["mine"|Rest], O) ->
+	main(Rest, O#opts { mine = true });
+main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
+	main(Rest, O#opts { peers = [parse_peer(Peer)|Ps] });
+main(["port", Port|Rest], O) ->
+	main(Rest, O#opts { port = list_to_integer(Port) });
+main([Arg|_Rest], _O) ->
+	io:format("Unknown argument: ~s. Terminating.", [Arg]).
+
 %% @doc Start an Archain node on this BEAM.
-start() ->
-	%io:format("Starting up node...~n"),
+start() -> start(?DEFAULT_HTTP_IFACE_PORT).
+start(Port) when is_integer(Port) -> start(#opts { port = Port });
+start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
+	ar:report(
+		[
+			starting_server,
+			{port, Port},
+			{init_new_blockweave, Init},
+			{automine, Mine},
+			{peers, Peers}
+		]
+	),
+	% Start apps which we depend on.
 	inets:start(),
+	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
 	report_console([{session_log, Filename}]),
-	ar_http_iface:start(),
+	% Start the first node in the gossip network (with HTTP interface)
+	ar_http_iface:start(
+		Port,
+		ar_node:start(
+			Peers,
+			if Init -> ar_weave:init(); true -> undefined end
+		)
+	),
 	ok.
 
 %% @doc Create a name for a session log file.
@@ -98,6 +146,21 @@ report_console(X) ->
 d(X) ->
 	report_console(X),
 	X.
+
+%% @doc Parse a string representing a remote host into our internal format.
+parse_peer(Str) ->
+	case io_lib:fread("~d.~d.~d.~d", Str) of
+		{ok, [A, B, C, D], PortStr} ->
+			{A, B, C, D, parse_port(PortStr)};
+		{error, _} ->
+			{127, 0, 0, 1, parse_port(Str)}
+	end.
+
+%% @doc Parses a port string into an integer.
+parse_port("") -> ?DEFAULT_HTTP_IFACE_PORT;
+parse_port(PortStr) ->
+	{ok, [Port], ""} = io_lib:fread(":~d", PortStr),
+	Port.
 
 %% @doc A multiplier applied to all simulated time elements in the system.
 -ifdef(DEBUG).

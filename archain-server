@@ -1,5 +1,3 @@
 #!/bin/bash
 
-rm ebin/*
-erlc -o ebin src/ar.erl
-erl -mnesia dir '"data"' -pa ebin/ -s ar rebuild -s ar start
+erl -pa ebin/ -run ar main "$@"
