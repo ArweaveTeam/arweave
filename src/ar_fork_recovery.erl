@@ -20,7 +20,7 @@
 start(Parent, Peer, TargetHeight, BlockList) ->
 	spawn(
 		fun() ->
-			ar:report_console(
+			ar:report(
 				[
 					{started_fork_recovery_proc, self()},
 					{target_height, TargetHeight},
@@ -87,10 +87,10 @@ single_block_ahead_recovery_test() ->
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
-	receive after 300 -> ok end,
+	receive after 2000 -> ok end,
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
-	receive after 300 -> ok end,
+	receive after 2000 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
 	5 = B#block.height.
 
