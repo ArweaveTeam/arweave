@@ -64,31 +64,32 @@ main([Arg|_Rest], _O) ->
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#opts { port = Port });
 start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
-	ar:report(
-		[
-			starting_server,
-			{port, Port},
-			{init_new_blockweave, Init},
-			{automine, Mine},
-			{peers, Peers}
-		]
-	),
 	% Start apps which we depend on.
 	inets:start(),
+	Node = ar_node:start(
+		Peers,
+		if Init -> ar_weave:init(); true -> undefined end
+	),
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
-	report_console([{session_log, Filename}]),
+	ar:report_console(
+		[
+			starting_server,
+			{session_log, Filename},
+			{port, Port},
+			{init_new_blockweave, Init},
+			{automine, Mine},
+			{miner, Node},
+			{peers, Peers}
+		]
+	),
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,
-		Node = ar_node:start(
-			Peers,
-			if Init -> ar_weave:init(); true -> undefined end
-		)
+		Node
 	),
-	if Mine -> ar_node:automine(Node); true -> do_nothing end,
-	ok.
+	if Mine -> ar_node:automine(Node); true -> do_nothing end.
 
 %% @doc Create a name for a session log file.
 generate_logfile_name() ->

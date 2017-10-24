@@ -10,8 +10,12 @@
 %% @doc Start the interface.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
-	{ok, PID} = elli:start_link([{callback, ?MODULE}, {port, Port}]),
-	PID.
+	spawn(
+		fun() ->
+			{ok, PID} = elli:start_link([{callback, ?MODULE}, {port, Port}]),
+			receive stop -> elli:stop(PID) end
+		end
+	).
 start(Port, Node) ->
 	reregister(Node),
 	start(Port).
@@ -31,7 +35,7 @@ handle('POST', [<<"api">>, <<"block">>], Req) ->
 	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
 	B = ar_serialize:json_struct_to_block(JSONB),
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
-	%ar:report_console([{recvd_block, B#block.height}]),
+	ar:report_console([{recvd_block, B#block.height}]),
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_block(Node, B, RecallB),
 	{200, [], <<"OK">>};
@@ -42,13 +46,14 @@ handle('POST', [<<"api">>, <<"tx">>], Req) ->
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
-handle('GET', [<<"api">>, <<"block">>, <<"hash">>, Hash], _Req) ->
-	%ar:report_console([{getting_block, Hash}]),
+handle('GET', [<<"api">>, <<"block">>, <<"hash">>, Hash], Req) ->
+	ar:report_console([{getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			ar_util:dehexify(Hash))
 	);
 handle('GET', [<<"api">>, <<"block">>, <<"height">>, Height], _Req) ->
+	ar:report_console([{getting_block, Height}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
@@ -88,6 +93,7 @@ send_new_tx(Host, TX) ->
 
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Host, NewB, RecallB) ->
+	ar:report_console([{sending_new_block, NewB#block.height}]),
 	httpc:request(
 		post,
 		{
@@ -111,6 +117,7 @@ send_new_block(Host, NewB, RecallB) ->
 
 %% @doc Retreive a block (by height or hash) from a node.
 get_block(Host, Height) when is_integer(Height) ->
+	ar:report_console([{getting_block, Height}]),
 	handle_block_response(
 		httpc:request(
 			"http://"
