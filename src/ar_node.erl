@@ -134,7 +134,6 @@ add_block(Node, Peer, NewB, RecallB, Height) when is_pid(Node) ->
 	Node ! {new_block, Peer, Height, NewB, RecallB},
 	ok;
 add_block(Host, Peer, NewB, RecallB, _Height) ->
-	ar:d({asb,Peer}),
 	ar_http_iface:send_new_block(Host, Peer, NewB, RecallB),
 	ok.
 
@@ -277,7 +276,6 @@ server(
 			);
 		{fork_recovered, [TopB|_] = NewBs}
  				when TopB#block.height > (hd(Bs))#block.height ->
-			ar:d(recovered),
 			server(
 				reset_miner(
 					S#state {
@@ -336,8 +334,11 @@ fork_recover(
 fork_recover(S, NewGS, Peer, Height, NewB) ->
 	fork_recover(S#state { gossip = NewGS }, Peer, Height, NewB).
 
-%% @doc Validate whether a new block is legitimate, then handle it appropriately.
-process_new_block(RawS, NewGS, NewB, OldB, RecallB, Peer) ->
+%% @doc Validate whether a new block is legitimate, then handle it, optionally
+%% dropping or starting a fork recoverer as appropriate.
+process_new_block(RawS, NewGS, NewB, OldB, RecallB, Peer)
+		when NewB#block.height == OldB#block.height + 1 ->
+	% This block is at the correct height.
 	S = RawS#state { gossip = NewGS },
 	case validate(NewS = apply_txs(S, NewB#block.txs), NewB, OldB, RecallB) of
 		true ->
@@ -345,7 +346,14 @@ process_new_block(RawS, NewGS, NewB, OldB, RecallB, Peer) ->
 			integrate_new_block(NewS, NewB);
 		false ->
 			fork_recover(S, Peer, NewB#block.height, NewB)
-	end.
+	end;
+process_new_block(S, NewGS, NewB, OldB, _RecallB, _Peer)
+		when NewB#block.height =< OldB#block.height ->
+	% Block is lower than us, ignore it.
+	server(S#state { gossip = NewGS });
+process_new_block(S, NewGS, NewB, OldB, _, Peer)
+		when NewB#block.height > OldB#block.height + 1 ->
+	fork_recover(S, NewGS, Peer, NewB#block.height, NewB).
 
 %% @doc We have received a new valid block. Update the node state accordingly.
 integrate_new_block(
@@ -406,7 +414,7 @@ integrate_block_from_miner(
 						find_recall_block(Bs)
 					}
 				),
-			ar:report(
+			ar:report_console(
 				[
 					{node, self()},
 					{accepted_block, (hd(NextBs))#block.height},
@@ -589,6 +597,10 @@ reset_miner(S = #state { miner = PID, automine = true }) ->
 	start_mining(S#state { miner = undefined }).
 
 %% @doc Force a node to start mining, update state.
+start_mining(S = #state { block_list = undefined }) ->
+	% We don't have a block list. Wait until we have one before
+	% starting to mine.
+	S;
 start_mining(S = #state { block_list = Bs, txs = TXs }) ->
 	case find_recall_block(Bs) of
 		unavailable -> S;

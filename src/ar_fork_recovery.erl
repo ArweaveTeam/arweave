@@ -20,7 +20,7 @@
 start(Parent, Peer, TargetHeight, BlockList) ->
 	spawn(
 		fun() ->
-			ar:report(
+			ar:report_console(
 				[
 					{started_fork_recovery_proc, self()},
 					{target_height, TargetHeight},

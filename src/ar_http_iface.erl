@@ -36,7 +36,7 @@ handle('POST', [<<"api">>, <<"block">>], Req) ->
 	{"port", Port} = lists:keyfind("port", 1, Struct),
 	B = ar_serialize:json_struct_to_block(JSONB),
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
-	ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
+	%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
 	ar_node:add_block(
 		whereis(http_entrypoint_node),
 		ar_util:parse_peer(
@@ -52,18 +52,18 @@ handle('POST', [<<"api">>, <<"block">>], Req) ->
 handle('POST', [<<"api">>, <<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
-	ar:report(TX),
+	%ar:report(TX),
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
-handle('GET', [<<"api">>, <<"block">>, <<"hash">>, Hash], Req) ->
-	ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
+handle('GET', [<<"api">>, <<"block">>, <<"hash">>, Hash], _Req) ->
+	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			ar_util:dehexify(Hash))
 	);
 handle('GET', [<<"api">>, <<"block">>, <<"height">>, Height], _Req) ->
-	ar:report_console([{resp_getting_block, list_to_integer(binary_to_list(Height))}]),
+	%ar:report_console([{resp_getting_block, list_to_integer(binary_to_list(Height))}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
@@ -103,7 +103,7 @@ send_new_tx(Host, TX) ->
 
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Host, Port, NewB, RecallB) ->
-	ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
+	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
 	httpc:request(
 		post,
 		{
@@ -128,7 +128,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 
 %% @doc Retreive a block (by height or hash) from a node.
 get_block(Host, Height) when is_integer(Height) ->
-	ar:report_console([{req_getting_block_by_height, Height}]),
+	%ar:report_console([{req_getting_block_by_height, Height}]),
 	handle_block_response(
 		httpc:request(
 			"http://"
@@ -136,7 +136,7 @@ get_block(Host, Height) when is_integer(Height) ->
 				++ "/api/block/height/"
 				++ integer_to_list(Height)));
 get_block(Host, Hash) when is_binary(Hash) ->
-	ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	handle_block_response(
 		httpc:request(
 			"http://"
