@@ -64,9 +64,9 @@ send(S, Msg) ->
 
 %% @doc Potentially send a message to a node, depending on state.
 %% No warning is issued for messages that cannot be sent to network peers!
-possibly_send(_S, Peer, #gs_msg { data = {new_block, _, _Height, NewB, RecallB} })
-		when not is_pid(Peer) ->
-	ar_http_iface:send_new_block(Peer, NewB, RecallB);
+possibly_send(_S, Peer, #gs_msg { data = {new_block, _Node, _Height, NewB, RecallB} })
+		when (not is_pid(Peer)) ->
+	ar_http_iface:send_new_block(Peer, ar_meta_db:get(port), NewB, RecallB);
 possibly_send(_S, Peer, #gs_msg { data = {add_tx, TX} }) when not is_pid(Peer) ->
 	ar_http_iface:send_new_tx(Peer, TX);
 possibly_send(S, Peer, Msg) when is_pid(Peer) ->

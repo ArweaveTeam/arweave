@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_tx/2, get_block/2]).
+-export([send_new_block/4, send_new_tx/2, get_block/2]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -33,11 +33,21 @@ handle('POST', [<<"api">>, <<"block">>], Req) ->
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
 	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
 	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
+	{"port", Port} = lists:keyfind("port", 1, Struct),
 	B = ar_serialize:json_struct_to_block(JSONB),
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
-	ar:report_console([{recvd_block, B#block.height}]),
-	Node = whereis(http_entrypoint_node),
-	ar_node:add_block(Node, B, RecallB),
+	ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
+	ar_node:add_block(
+		whereis(http_entrypoint_node),
+		ar_util:parse_peer(
+			bitstring_to_list(elli_request:peer(Req))
+			++ ":"
+			++ integer_to_list(Port)
+		),
+		B,
+		RecallB,
+		B#block.height
+	),
 	{200, [], <<"OK">>};
 handle('POST', [<<"api">>, <<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
@@ -47,13 +57,13 @@ handle('POST', [<<"api">>, <<"tx">>], Req) ->
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
 handle('GET', [<<"api">>, <<"block">>, <<"hash">>, Hash], Req) ->
-	ar:report_console([{getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
+	ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			ar_util:dehexify(Hash))
 	);
 handle('GET', [<<"api">>, <<"block">>, <<"height">>, Height], _Req) ->
-	ar:report_console([{getting_block, Height}]),
+	ar:report_console([{resp_getting_block, list_to_integer(binary_to_list(Height))}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
@@ -84,7 +94,7 @@ send_new_tx(Host, TX) ->
 	httpc:request(
 		post,
 		{
-			"http://" ++ format_host(Host) ++ "/api/tx",
+			"http://" ++ ar_util:format_peer(Host) ++ "/api/tx",
 			[],
 			"application/x-www-form-urlencoded",
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
@@ -92,12 +102,12 @@ send_new_tx(Host, TX) ->
 	).
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Host, NewB, RecallB) ->
-	ar:report_console([{sending_new_block, NewB#block.height}]),
+send_new_block(Host, Port, NewB, RecallB) ->
+	ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
 	httpc:request(
 		post,
 		{
-			"http://" ++ format_host(Host) ++ "/api/block",
+			"http://" ++ ar_util:format_peer(Host) ++ "/api/block",
 			[],
 			"application/x-www-form-urlencoded",
 			lists:flatten(
@@ -107,7 +117,8 @@ send_new_block(Host, NewB, RecallB) ->
 							{new_block,
 								ar_serialize:block_to_json_struct(NewB)},
 							{recall_block,
-								ar_serialize:block_to_json_struct(RecallB)}
+								ar_serialize:block_to_json_struct(RecallB)},
+							{port, Port}
 						]
 					}
 				)
@@ -117,18 +128,19 @@ send_new_block(Host, NewB, RecallB) ->
 
 %% @doc Retreive a block (by height or hash) from a node.
 get_block(Host, Height) when is_integer(Height) ->
-	ar:report_console([{getting_block, Height}]),
+	ar:report_console([{req_getting_block_by_height, Height}]),
 	handle_block_response(
 		httpc:request(
 			"http://"
-				++ format_host(Host)
+				++ ar_util:format_peer(Host)
 				++ "/api/block/height/"
 				++ integer_to_list(Height)));
 get_block(Host, Hash) when is_binary(Hash) ->
+	ar:report_console([{req_getting_block_by_hash, Hash}]),
 	handle_block_response(
 		httpc:request(
 			"http://"
-				++ format_host(Host)
+				++ ar_util:format_peer(Host)
 				++ "/api/block/hash/"
 				++ ar_util:hexify(Hash))).
 
@@ -138,15 +150,7 @@ handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 handle_block_response({ok, {{_, 404, _}, _, _}}) ->
 	not_found.
 
-%% @doc Take a remote host ID in various formats, return a HTTP-friendly string.
-format_host({A, B, C, D}) ->
-	format_host({A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT});
-format_host({A, B, C, D, Port}) ->
-	lists:flatten(io_lib:format("~w.~w.~w.~w:~w", [A, B, C, D, Port]));
-format_host(Host) when is_list(Host) ->
-	format_host({Host, ?DEFAULT_HTTP_IFACE_PORT});
-format_host({Host, Port}) ->
-	lists:flatten(io_lib:format("~s:~w", [Host, Port])).
+
 
 %% @doc Helper function : registers a new node as the entrypoint.
 reregister(Node) ->
@@ -195,6 +199,6 @@ add_external_block_test() ->
 	ar_node:mine(Node2),
 	receive after 1000 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node2),
-	send_new_block({127, 0, 0, 1}, B1, B0),
+	send_new_block({127, 0, 0, 1}, ?DEFAULT_HTTP_IFACE_PORT, B1, B0),
 	receive after 500 -> ok end,
 	[B1, B0] = ar_node:get_blocks(Node1).

@@ -23,7 +23,8 @@ start(Parent, Peer, TargetHeight, BlockList) ->
 			ar:report(
 				[
 					{started_fork_recovery_proc, self()},
-					{target_height, TargetHeight}
+					{target_height, TargetHeight},
+					{peer, Peer}
 				]
 			),
 			server(

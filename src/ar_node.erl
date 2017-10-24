@@ -1,7 +1,9 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, stop/1]).
 -export([get_blocks/1, get_block/2, get_balance/2, generate_data_segment/2]).
--export([mine/1, automine/1, truncate/1, add_tx/2, add_block/3, add_block/4, add_peers/2]).
+-export([mine/1, automine/1, truncate/1]).
+-export([add_block/3, add_block/4, add_block/5]).
+-export([add_tx/2, add_peers/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2, validate/4, validate/5, find_recall_block/1]).
 -include("ar.hrl").
@@ -123,14 +125,17 @@ add_tx(Host, TX) ->
 %% @doc Add a transaction to the current block.
 add_block(Conn, NewB, RecallB) ->
 	add_block(Conn, NewB, RecallB, NewB#block.height).
-add_block(GS, NewB, RecallB, Height) when is_record(GS, gs_state) ->
-	{NewGS, _} = ar_gossip:send(GS, {new_block, undefined, Height, NewB, RecallB}),
+add_block(Conn, NewB, RecallB, Height) ->
+	add_block(Conn, undefined, NewB, RecallB, Height).
+add_block(GS, Peer, NewB, RecallB, Height) when is_record(GS, gs_state) ->
+	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
 	NewGS;
-add_block(Node, NewB, RecallB, Height) when is_pid(Node) ->
-	Node ! {new_block, undefined, Height, NewB, RecallB},
+add_block(Node, Peer, NewB, RecallB, Height) when is_pid(Node) ->
+	Node ! {new_block, Peer, Height, NewB, RecallB},
 	ok;
-add_block(Host, NewB, RecallB, _Height) ->
-	ar_http_iface:send_new_block(Host, NewB, RecallB),
+add_block(Host, Peer, NewB, RecallB, _Height) ->
+	ar:d({asb,Peer}),
+	ar_http_iface:send_new_block(Host, Peer, NewB, RecallB),
 	ok.
 
 %% @doc Add peer(s) to a node.
@@ -184,6 +189,8 @@ server(
 			% gossip network.
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			add_tx_to_server(S, NewGS, TX);
+		{new_block, Peer, Height, _B, _RecallB} when Bs == undefined ->
+			join_weave(S, GS, Peer, Height);
 		{new_block, Peer, Height, NewB, RecallB} ->
 			% We have a new block. Distribute it to the
 			% gossip network.
@@ -270,6 +277,7 @@ server(
 			);
 		{fork_recovered, [TopB|_] = NewBs}
  				when TopB#block.height > (hd(Bs))#block.height ->
+			ar:d(recovered),
 			server(
 				reset_miner(
 					S#state {

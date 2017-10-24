@@ -3,13 +3,13 @@
 test_all: test test_apps
 
 test: all
-	@erl -noshell -s ar test -pa ebin/ -s init stop
+	@erl -noshell -s ar start -s ar test -pa ebin/ -s init stop
 
 test_apps: all
 	@erl -noshell -s ar test_apps -pa ebin/ -s init stop
 
 test_networks: all
-	@erl -s ar test_networks -pa ebin/
+	@erl -s ar start -s ar test_networks -pa ebin/
 
 tnt: test
 
@@ -51,7 +51,7 @@ sim_hard: all
 	erl -pa ebin/ -s ar_network spawn_and_mine hard
 
 clean:
-	rm -rf ebin docs blocks
+	rm -rf ebin docs blocks logs
 	rm -f erl_crash.dump
 
 status: clean
