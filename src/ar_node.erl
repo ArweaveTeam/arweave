@@ -154,22 +154,8 @@ server(
 		Msg when is_record(Msg, gs_msg) ->
 			% We have received a gossip mesage. Use the library to process it.
 			case ar_gossip:recv(GS, Msg) of
-				{NewGS, {new_block, Peer, Height, _B, _RecallB}} when Bs == undefined ->
-					% We have no functional blockweave. Try to recover to this one.
-					join_weave(S, NewGS, Peer, Height);
-				{NewGS, {new_block, Peer, NextHeight, NewB, _RecallB}}
-						when (NextHeight > (hd(Bs))#block.height + 1) ->
-					% If the block is higher than we were expecting, attempt to
-					% catch up.
-					fork_recover(S, NewGS, Peer, NextHeight, NewB);
-				{NewGS, {new_block, Peer, NextHeight, NewB, RecallB}}
-						when (hd(Bs))#block.height + 1 == NextHeight ->
-					% We are being informed of a newly mined block. Is it legit?
-					process_new_block(S, NewGS, NewB, hd(Bs), RecallB, Peer);
-				{NewGS, {new_block, _, NextHeight, _, _}}
-						when (hd(Bs))#block.height + 1 >= NextHeight ->
-					% The distributed block is below our height.
-					server(S#state { gossip = NewGS });
+				{NewGS, {new_block, Peer, _Height, NewB, RecallB}} ->
+					process_new_block(S, NewGS, NewB, Bs, RecallB, Peer);
 				{NewGS, {add_tx, TX}} ->
 					add_tx_to_server(S, NewGS, TX);
 				{NewGS, ignore} ->
@@ -188,14 +174,12 @@ server(
 			% gossip network.
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			add_tx_to_server(S, NewGS, TX);
-		{new_block, Peer, Height, _B, _RecallB} when Bs == undefined ->
-			join_weave(S, GS, Peer, Height);
 		{new_block, Peer, Height, NewB, RecallB} ->
 			% We have a new block. Distribute it to the
 			% gossip network.
 			{NewGS, _} =
 				ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
-			process_new_block(S, NewGS, NewB, hd(Bs), RecallB, Peer);
+			process_new_block(S, NewGS, NewB, Bs, RecallB, Peer);
 		{replace_block_list, NewBL} ->
 			% Replace the entire stored block list, regenerating the hash list.
 			server(
@@ -336,7 +320,9 @@ fork_recover(S, NewGS, Peer, Height, NewB) ->
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
-process_new_block(RawS, NewGS, NewB, OldB, RecallB, Peer)
+process_new_block(S, NewGS, NewB, undefined, _, Peer) ->
+	join_weave(S, NewGS, Peer, NewB#block.height);
+process_new_block(RawS, NewGS, NewB, [OldB|_], RecallB, Peer)
 		when NewB#block.height == OldB#block.height + 1 ->
 	% This block is at the correct height.
 	S = RawS#state { gossip = NewGS },
@@ -347,11 +333,11 @@ process_new_block(RawS, NewGS, NewB, OldB, RecallB, Peer)
 		false ->
 			fork_recover(S, Peer, NewB#block.height, NewB)
 	end;
-process_new_block(S, NewGS, NewB, OldB, _RecallB, _Peer)
+process_new_block(S, NewGS, NewB, [OldB|_], _RecallB, _Peer)
 		when NewB#block.height =< OldB#block.height ->
 	% Block is lower than us, ignore it.
 	server(S#state { gossip = NewGS });
-process_new_block(S, NewGS, NewB, OldB, _, Peer)
+process_new_block(S, NewGS, NewB, [OldB|_], _, Peer)
 		when NewB#block.height > OldB#block.height + 1 ->
 	fork_recover(S, NewGS, Peer, NewB#block.height, NewB).
 
@@ -414,7 +400,7 @@ integrate_block_from_miner(
 						find_recall_block(Bs)
 					}
 				),
-			ar:report_console(
+			ar:report(
 				[
 					{node, self()},
 					{accepted_block, (hd(NextBs))#block.height},
