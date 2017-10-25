@@ -145,6 +145,10 @@ report_console(X) ->
 	error_logger:info_report(X),
 	error_logger:tty(false).
 
+%% @doc Launches test coverage.
+test_cover() ->
+	ar_coverage:analyse(fun ar:test/0).
+
 %% @doc Report a value and return it.
 d(X) ->
 	report_console(X),
