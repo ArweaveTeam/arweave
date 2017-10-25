@@ -1,5 +1,5 @@
 -module(ar_node).
--export([start/0, start/1, start/2, stop/1]).
+-export([start/0, start/1, start/2, start/3, start/5, stop/1]).
 -export([get_blocks/1, get_block/2, get_balance/2, generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
@@ -20,7 +20,8 @@
 	miner,
 	mining_delay = 0,
 	recovery = undefined,
-	automine = false
+	automine = false,
+	reward_addr = unclaimed
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -34,8 +35,10 @@
 %% @doc Start a node, optionally with a list of peers.
 start() -> start([]).
 start(Peers) -> start(Peers, undefined).
-start(Peers, BlockList) -> start(Peers, BlockList, 0, ar_weave:generate_hash_list(BlockList)).
-start(Peers, BlockList, MiningDelay, HashList) ->
+start(Peers, BlockList) -> start(Peers, BlockList, unclaimed).
+start(Peers, BlockList, RewardAddr) ->
+	start(Peers, BlockList, RewardAddr, 0, ar_weave:generate_hash_list(BlockList)).
+start(Peers, BlockList, RewardAddr, MiningDelay, HashList) ->
 	spawn(
 		fun() ->
 			server(
@@ -48,7 +51,8 @@ start(Peers, BlockList, MiningDelay, HashList) ->
 							undefined -> [];
 							_ -> (find_sync_block(BlockList))#block.wallet_list
 						end,
-					mining_delay = MiningDelay
+					mining_delay = MiningDelay,
+					reward_addr = RewardAddr
 				}
 			)
 		end
@@ -322,11 +326,19 @@ fork_recover(S, NewGS, Peer, Height, NewB) ->
 %% dropping or starting a fork recoverer as appropriate.
 process_new_block(S, NewGS, NewB, undefined, _, Peer) ->
 	join_weave(S, NewGS, Peer, NewB#block.height);
-process_new_block(RawS, NewGS, NewB, [OldB|_], RecallB, Peer)
+process_new_block(RawS1, NewGS, NewB, [OldB|_], RecallB, Peer)
 		when NewB#block.height == OldB#block.height + 1 ->
 	% This block is at the correct height.
-	S = RawS#state { gossip = NewGS },
-	case validate(NewS = apply_txs(S, NewB#block.txs), NewB, OldB, RecallB) of
+	S = RawS1#state { gossip = NewGS },
+	WalletList =
+		apply_mining_reward(
+			apply_txs(S#state.wallet_list, NewB#block.txs),
+			NewB#block.reward_addr,
+			NewB#block.txs,
+			NewB#block.height
+		),
+	NewS = S#state { wallet_list = WalletList },
+	case validate(NewS, NewB, OldB, RecallB) of
 		true ->
 			% The block is legit. Accept it.
 			integrate_new_block(NewS, NewB);
@@ -370,24 +382,34 @@ integrate_new_block(
 
 %% @doc Verify a new block found by a miner, integrate it.
 integrate_block_from_miner(
-		S = #state {
+		OldS = #state {
 			hash_list = HashList,
-			wallet_list = WalletList,
+			wallet_list = RawWalletList,
 			block_list = Bs,
 			txs = TXs,
-			gossip = GS
+			gossip = GS,
+			reward_addr = RewardAddr
 		},
 		MinedTXs, Nonce) ->
-	% Build the block record, verify it, and gossip it to the other nodes.
-	NextBs = ar_weave:add(Bs, HashList, WalletList, MinedTXs, Nonce),
 	% Store the transactions that we know about, but were not mined in
 	% this block.
 	NotMinedTXs = TXs -- MinedTXs,
-	NewS = apply_txs(S#state { txs = MinedTXs }, MinedTXs),
+	% Calculate the new wallet list (applying TXs and mining rewards).
+	WalletList =
+		apply_mining_reward(
+			apply_txs(RawWalletList, MinedTXs),
+			RewardAddr,
+			MinedTXs,
+			(hd(Bs))#block.height
+		),
+	NewS = OldS#state { wallet_list = WalletList },
+	% Build the block record, verify it, and gossip it to the other nodes.
+	NextBs =
+		ar_weave:add(Bs, HashList, WalletList, MinedTXs, Nonce, RewardAddr),
 	case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs)) of
 		false ->
 			ar:report([{miner, self()}, incorrect_nonce]),
-			server(S);
+			server(OldS);
 		true ->
 			{NewGS, _} =
 				ar_gossip:send(
@@ -490,7 +512,9 @@ validate(#state { hash_list = HashList, wallet_list = WalletList }, B, OldB, Rec
 
 %% @doc Update the wallet list of a server with a set of new transactions
 apply_txs(S, TXs) when is_record(S, state) ->
-	S#state { wallet_list = apply_txs(S#state.wallet_list, TXs) };
+	S#state {
+		wallet_list = apply_txs(S#state.wallet_list, TXs)
+	};
 apply_txs(WalletList, TXs) ->
 	%% TODO: Sorting here probably isn't sufficient...
 	lists:sort(
@@ -502,6 +526,11 @@ apply_txs(WalletList, TXs) ->
 			TXs
 		)
 	).
+
+%% @doc Calculate and apply minging reward quantities to a wallet list.
+apply_mining_reward(WalletList, unclaimed, _TXs, _Height) -> WalletList;
+apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
+	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, TXs)).
 
 %% @doc Apply a transaction to a wallet list, updating it.
 apply_tx(WalletList, #tx { type = data }) -> WalletList;
@@ -554,13 +583,33 @@ find_sync_block([_|Bs]) -> find_sync_block(Bs).
 
 %% @doc Given a recall block and a list of new transactions, generate a data segment to mine on.
 generate_data_segment(TXs, RecallB) ->
-	%ar:d([{txs, TXs}, {recallb, RecallB}]),
+	generate_data_segment(TXs, RecallB, <<>>).
+generate_data_segment(TXs, RecallB, undefined) ->
+	generate_data_segment(TXs, RecallB, <<>>);
+generate_data_segment(TXs, RecallB, RewardAddr) ->
 	<<
 		(ar_weave:generate_block_data(TXs))/binary,
 		(RecallB#block.nonce)/binary,
 		(RecallB#block.hash)/binary,
-		(ar_weave:generate_block_data(RecallB#block.txs))/binary
+		(ar_weave:generate_block_data(RecallB#block.txs))/binary,
+		RewardAddr/binary
 	>>.
+
+%% @doc Calculate the total mining reward for the a block and it's associated TXs.
+%calculate_reward(B) -> calculate_reward(B#block.height, B#block.txs).
+calculate_reward(Height, TXs) ->
+	erlang:truncate(calculate_static_reward(Height) +
+		lists:sum(lists:map(fun calculate_tx_reward/1, TXs))).
+
+%% @doc Calculate the static reward received for mining a given block.
+%% This reward portion depends only on block height, not the number of transactions.
+calculate_static_reward(Height) ->
+	% TODO: Implement sensible reward calculation algorithm.
+	(0.1 * ?GENESIS_TOKENS * 2 - (Height/105120) * math:log(2))/105120.
+
+%% @doc Given a TX, calculate an appropriate reward.
+calculate_tx_reward(#tx { data = Data }) ->
+	?MIN_TX_REWARD + (byte_size(Data) * ?COST_PER_BYTE).
 
 %% @doc Find the block height at which the weaves diverged.
 divergence_height([], []) -> -1;

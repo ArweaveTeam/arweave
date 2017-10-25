@@ -1,5 +1,5 @@
 -module(ar_weave).
--export([init/0, init/1, add/1, add/2, add/3, add/4, add/5]).
+-export([init/0, init/1, add/1, add/2, add/3, add/4, add/5, add/6]).
 -export([hash/3, indep_hash/1]).
 -export([verify/1, verify_indep/2]).
 -export([calculate_recall_block/1, calculate_recall_block/2]).
@@ -34,7 +34,9 @@ add(Bs, TXs, Nonce) ->
 	add(Bs, generate_hash_list(Bs), TXs, Nonce).
 add(Bs, HashList, TXs, Nonce) ->
 	add(Bs, HashList, [], TXs, Nonce).
-add(Bs = [B|_], HashList, WalletList, TXs, Nonce) ->
+add(Bs, HashList, WalletList, TXs, Nonce) ->
+	add(Bs, HashList, WalletList, TXs, Nonce, unclaimed).
+add(Bs = [B|_], HashList, WalletList, TXs, Nonce, RewardAddr) ->
 	RawNewB =
 		#block {
 			nonce = Nonce,
@@ -43,7 +45,8 @@ add(Bs = [B|_], HashList, WalletList, TXs, Nonce) ->
 			hash_list = HashList,
 			wallet_list = ar_node:apply_txs(WalletList, TXs),
 			txs = TXs,
-			diff = B#block.diff
+			diff = B#block.diff,
+			reward_addr = RewardAddr
 		},
 	NewB = ar_retarget:maybe_retarget(RawNewB, B),
 	[NewB#block { indep_hash = indep_hash(NewB) }|Bs].

@@ -10,6 +10,14 @@
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).
 
+%% The total supply of tokens in the Genesis block,
+-define(GENESIS_TOKENS, 55000000).
+
+%% The minimum cost/reward for a single TX.
+-define(MIN_TX_REWARD, 1).
+%% The minimum cost/reward for a single TX.
+-define(COST_PER_BYTE, 0.001).
+
 %% ENABLE ONLY WHILE TESTING
 -define(DEBUG, true).
 %% Speed to run the network at when simulating.
@@ -39,7 +47,8 @@
 	indep_hash = [], % A hash of just this block.
 	txs = [], % A list of transaction records associated with this block.
 	hash_list = [], % A list of every indep hash to this point, or undefined.
-	wallet_list = [] % A map of wallet blanaces, or undefined.
+	wallet_list = [], % A map of wallet blanaces, or undefined.
+	reward_addr = unclaimed
 }).
 
 %% A transaction, as stored in a block.
@@ -53,7 +62,6 @@
 	data = <<>>,
 	signature = <<>>
 }).
-
 
 %% Gossip protocol state. Passed to and from the gossip library functions.
 -record(gs_state, {

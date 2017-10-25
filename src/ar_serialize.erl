@@ -27,7 +27,8 @@ block_to_json_struct(
 		indep_hash = IndepHash,
 		txs = TXs,
 		hash_list = HashList,
-		wallet_list = WalletList
+		wallet_list = WalletList,
+		reward_addr = RewardAddr
 	}) ->
 	{struct,
 		[
@@ -56,7 +57,13 @@ block_to_json_struct(
 						WalletList
 					)
 				}
+			},
+			{reward_addr,
+				if RewardAddr == unclaimed -> "unclaimed";
+				true -> base64:encode_to_string(RewardAddr)
+				end
 			}
+					
 		]
 	}.
 
@@ -87,7 +94,12 @@ json_struct_to_block({struct, BlockStruct}) ->
 			||
 				{struct, [{"wallet", Wallet}, {"quantity", Qty}]}
 					<- WalletList
-			]
+			],
+		reward_addr =
+			case find_value("reward_addr", BlockStruct) of
+				"unclaimed" -> unclaimed;
+				StrAddr -> base64:decode(StrAddr)
+			end
 	}.
 
 %% @doc Translate a transaction into JSON.
