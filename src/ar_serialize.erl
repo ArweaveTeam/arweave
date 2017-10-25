@@ -63,7 +63,6 @@ block_to_json_struct(
 				true -> base64:encode_to_string(RewardAddr)
 				end
 			}
-					
 		]
 	}.
 
