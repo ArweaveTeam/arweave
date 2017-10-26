@@ -69,7 +69,7 @@ server(S = #state { peer = Peer, blocks = Bs = [B|_] }) ->
 			ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
 			NextB, B, RecallB) of
 		false ->
-			ar:report([could_not_validate_recovery_block]),
+			ar:report_console([could_not_validate_recovery_block]),
 			ok;
 		true ->
 			server(S#state { blocks = [NextB|Bs] })

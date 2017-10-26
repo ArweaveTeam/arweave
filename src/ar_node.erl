@@ -5,11 +5,11 @@
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_txs/2, validate/4, validate/5, find_recall_block/1]).
+-export([apply_txs/2, validate/3, validate/4, validate/5, find_recall_block/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Blockweave maintaining nodes in the ArkChain system.
+%%% Blockweave maintaining nodes in the Archain system.
 
 -record(state, {
 	block_list,
@@ -507,8 +507,28 @@ validate(_HL, _WL, _NewB, _OldB, _RecallB) ->
 	%ar:d(p4),
 	false.
 
+%% @doc Validate a block, given a node state and the dependencies.
 validate(#state { hash_list = HashList, wallet_list = WalletList }, B, OldB, RecallB) ->
 	validate(HashList, WalletList, B, OldB, RecallB).
+
+%% @doc Validate block, given the previous block and recall block.
+validate(
+		NewB = #block {
+			wallet_list = NewWalletList,
+			hash_list = NewHashList,
+			txs = TXs,
+			reward_addr = RewardAddr,
+			height = Height
+		},
+		OldB = #block { wallet_list = OldWalletList, hash_list = OldHashList },
+		RecallB) ->
+	(apply_mining_rewards(
+		apply_txs(OldWalletList, TXs),
+		RewardAddr,
+		TXs,
+		Height) == NewWalletList) andalso
+	(lists:reverse(tl(lists:reverse(NewHashList))) == OldHashList) andalso
+	validate(NewB#block.wallet_list, NewB#block.hash_list, NewB, OldB, RecallB).
 
 %% @doc Update the wallet list of a server with a set of new transactions
 apply_txs(S, TXs) when is_record(S, state) ->
