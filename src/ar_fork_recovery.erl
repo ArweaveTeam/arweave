@@ -139,21 +139,3 @@ multiple_blocks_since_fork_test() ->
 	[B|_] = ar_node:get_blocks(Node2),
 	7 = B#block.height.
 
-%% @doc Check that nodes can join a running network by using the fork recoverer.
-node_join_test() ->
-	Node1 = ar_node:start([], ar_weave:init()),
-	Node2 = ar_node:start(),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:add_peers(Node1, Node2),
-	ar_node:mine(Node1),
-	receive after 600 -> ok end,
-	[B|_] = ar_node:get_blocks(Node2),
-	5 = B#block.height.

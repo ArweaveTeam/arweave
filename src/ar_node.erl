@@ -282,17 +282,12 @@ server(
 %%% Abstracted server functionality
 
 %% @doc Catch up to the current height, from 0.
-join_weave(S, NewGS, Peer, TargetHeight) ->
+join_weave(S, NewGS, TargetHeight) ->
 	server(
 		S#state {
 			gossip = NewGS,
 			recovery =
-				ar_fork_recovery:start(
-					self(),
-					Peer,
-					TargetHeight,
-					[]
-				)
+				ar_join:start(self(), ar_gossip:peers(NewGS), TargetHeight)
 		}
 	).
 
@@ -324,8 +319,8 @@ fork_recover(S, NewGS, Peer, Height, NewB) ->
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
-process_new_block(S, NewGS, NewB, undefined, _, Peer) ->
-	join_weave(S, NewGS, Peer, NewB#block.height);
+process_new_block(S, NewGS, NewB, undefined, _, _Peer) ->
+	join_weave(S, NewGS, NewB#block.height);
 process_new_block(RawS1, NewGS, NewB, [OldB|_], RecallB, Peer)
 		when NewB#block.height == OldB#block.height + 1 ->
 	% This block is at the correct height.
@@ -522,7 +517,7 @@ validate(
 		},
 		OldB = #block { wallet_list = OldWalletList, hash_list = OldHashList },
 		RecallB) ->
-	(apply_mining_rewards(
+	(apply_mining_reward(
 		apply_txs(OldWalletList, TXs),
 		RewardAddr,
 		TXs,

@@ -24,6 +24,7 @@
 		ar_weave,
 		ar_gossip,
 		ar_mine,
+		ar_join,
 		ar_fork_recovery,
 		ar_node,
 		ar_simple_reporter,

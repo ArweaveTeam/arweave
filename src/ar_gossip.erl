@@ -1,5 +1,5 @@
 -module(ar_gossip).
--export([init/0, init/1, add_peers/2, send/2, recv/2]).
+-export([init/0, init/1, peers/1, add_peers/2, send/2, recv/2]).
 -export([set_loss_probability/2, set_delay/2, set_xfer_speed/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -26,6 +26,9 @@ add_peers(S, [Peer|Peers]) ->
 		false -> add_peers(S#gs_state { peers = [Peer|S#gs_state.peers] }, Peers);
 		true -> add_peers(S, Peers)
 	end.
+
+%% @doc Take a gossip state, return the contained peers.
+peers(S) -> S#gs_state.peers.
 
 %% @doc Update the probability that a packet will be loss.
 set_loss_probability(S, Prob) ->
