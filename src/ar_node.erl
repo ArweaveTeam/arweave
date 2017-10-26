@@ -598,7 +598,7 @@ generate_data_segment(TXs, RecallB, RewardAddr) ->
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 %calculate_reward(B) -> calculate_reward(B#block.height, B#block.txs).
 calculate_reward(Height, TXs) ->
-	erlang:truncate(calculate_static_reward(Height) +
+	erlang:trunc(calculate_static_reward(Height) +
 		lists:sum(lists:map(fun calculate_tx_reward/1, TXs))).
 
 %% @doc Calculate the static reward received for mining a given block.
@@ -665,6 +665,23 @@ divergence_height_test() ->
 	1 = divergence_height([a, b], [a, b, c, d, e, f]),
 	2 = divergence_height([1,2,3], [1,2,3]),
 	2 = divergence_height([1,2,3, a, b, c], [1,2,3]).
+
+%% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
+mining_reward_test() ->
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Node1 = ar_node:start([], ar_weave:init(), Pub1),
+	mine(Node1),
+	receive after 1000 -> ok end,
+	true = (get_balance(Node1, Pub1) > 0).
+
+%% @doc Check that other nodes accept a new block and associated mining reward.
+multi_node_mining_reward_test() ->
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Node1 = ar_node:start([], B0 = ar_weave:init()),
+	Node2 = ar_node:start([Node1], B0, Pub1),
+	mine(Node2),
+	receive after 1000 -> ok end,
+	true = (get_balance(Node1, Pub1) > 0).
 
 %% @doc Check that blocks can be added (if valid) by external processes.
 add_block_test() ->
