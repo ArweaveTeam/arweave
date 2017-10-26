@@ -3,7 +3,7 @@
 test_all: test test_apps
 
 test: all
-	@erl -noshell -s ar start -s ar test -pa ebin/ -s init stop
+	@erl -noshell -s ar test_coverage -pa ebin/ -s init stop
 
 test_apps: all
 	@erl -noshell -s ar test_apps -pa ebin/ -s init stop

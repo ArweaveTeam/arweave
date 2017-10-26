@@ -1,7 +1,7 @@
 -module(ar_util).
 -export([pick_random/1, pick_random/2]).
 -export([hexify/1, dehexify/1]).
--export([parse_peer/1, parse_port/1, format_peer/1]).
+-export([parse_peer/1, parse_port/1, format_peer/1, unique/1]).
 -include("ar.hrl").
 
 %%% General misc. utility functions. Most of these should probably
@@ -69,3 +69,12 @@ format_peer(Host) when is_list(Host) ->
 	format_peer({Host, ?DEFAULT_HTTP_IFACE_PORT});
 format_peer({Host, Port}) ->
 	lists:flatten(io_lib:format("~s:~w", [Host, Port])).
+
+%% @doc Takes a list and return the unique values in it.
+unique(Xs) -> unique([], Xs).
+unique(Res, []) -> Res;
+unique(Res, [X|Xs]) ->
+	case lists:member(X, Res) of
+		false -> unique([X|Res], Xs);
+		true -> unique(Res, Xs)
+	end.

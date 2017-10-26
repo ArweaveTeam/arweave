@@ -1,6 +1,6 @@
 -module(ar).
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
--export([test/0, test/1, test_apps/0, test_networks/0]).
+-export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0]).
 -export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
@@ -113,6 +113,10 @@ test() ->
 	start(),
 	eunit:test(?CORE_TEST_MODS, [verbose]).
 
+%% @doc Run the TNT test system, printing coverage results.
+test_coverage() ->
+	ar_coverage:analyse(fun test/0).
+
 %% @doc Run the tests for a single module.
 test(Mod) ->
 	eunit:test([Mod], [verbose]).
@@ -144,10 +148,6 @@ report_console(X) ->
 	error_logger:tty(true),
 	error_logger:info_report(X),
 	error_logger:tty(false).
-
-%% @doc Launches test coverage.
-test_cover() ->
-	ar_coverage:analyse(fun ar:test/0).
 
 %% @doc Report a value and return it.
 d(X) ->
