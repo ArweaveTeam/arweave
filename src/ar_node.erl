@@ -408,7 +408,7 @@ integrate_block_from_miner(
 		ar_weave:add(Bs, HashList, WalletList, MinedTXs, Nonce, RewardAddr),
 	case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs)) of
 		false ->
-			ar:report([{miner, self()}, incorrect_nonce]),
+			ar:report_console([{miner, self()}, incorrect_nonce]),
 			server(OldS);
 		true ->
 			{NewGS, _} =
