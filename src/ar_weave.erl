@@ -56,7 +56,7 @@ add(Bs = [B|_], HashList, WalletList, TXs, Nonce, RewardAddr) ->
 generate_hash_list(undefined) -> [];
 generate_hash_list([]) -> [];
 generate_hash_list(Bs = [B|_]) ->
-	lists:reverse(generate_hash_list(Bs, B#block.height + 1)).
+	generate_hash_list(Bs, B#block.height + 1).
 generate_hash_list([], 0) -> [];
 generate_hash_list([B|Bs], N) ->
 	[B#block.indep_hash|generate_hash_list(Bs, N - 1)].
@@ -77,7 +77,7 @@ verify([B|Rest]) ->
 %% @doc Verify a block from a hash list. Hash lists are stored in reverse order
 verify_indep(#block{ height = 0 }, []) -> true;
 verify_indep(B = #block { height = Height }, HashList) ->
-	lists:nth(Height + 1, HashList) == indep_hash(B).
+	lists:nth(Height + 1, lists:reverse(HashList)) == indep_hash(B).
 
 %% @doc Generate a recall block number from a block or a hash and block height.
 calculate_recall_block(B) when is_record(B, block) ->

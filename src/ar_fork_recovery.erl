@@ -63,7 +63,7 @@ server(S = #state { peer = Peer, blocks = Bs = [B|_] }) ->
 	% Get and verify the next block.
 	RecallB = ar_node:get_block(Peer, ar_weave:calculate_recall_block(B)),
 	NextB = ar_node:get_block(Peer, B#block.height + 1),
-	BHL = B#block.hash_list ++ [B#block.indep_hash],
+	BHL = [B#block.indep_hash|B#block.hash_list],
 	case ar_node:validate(
 			BHL,
 			ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),

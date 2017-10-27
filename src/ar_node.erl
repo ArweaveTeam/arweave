@@ -306,8 +306,8 @@ fork_recover(
 					Height,
 					drop_blocks_to(
 						divergence_height(
-							HashList,
-							NewB#block.hash_list
+							lists:reverse(HashList),
+							lists:reverse(NewB#block.hash_list)
 						),
 						Bs
 					)
@@ -369,7 +369,7 @@ integrate_new_block(
 		reset_miner(
 			S#state {
 				block_list = maybe_drop_blocks([NewB|Bs]),
-				hash_list = HashList ++ [NewB#block.indep_hash],
+				hash_list = [NewB#block.indep_hash|HashList],
 				txs = NewTXs
 			}
 		)
@@ -431,8 +431,7 @@ integrate_block_from_miner(
 						gossip = NewGS,
 						block_list = maybe_drop_blocks(NextBs),
 						hash_list =
-							% TODO: Build hashlist in sensible direction
-							HashList ++ [(hd(NextBs))#block.indep_hash],
+							[(hd(NextBs))#block.indep_hash|HashList],
 						txs = NotMinedTXs % TXs not included in the block
 					}
 				)
@@ -522,7 +521,7 @@ validate(
 		RewardAddr,
 		TXs,
 		Height) == NewWalletList) andalso
-	(lists:reverse(tl(lists:reverse(NewHashList))) == OldHashList) andalso
+	(tl(NewHashList) == OldHashList) andalso
 	validate(NewB#block.hash_list, NewB#block.wallet_list, NewB, OldB, RecallB).
 
 %% @doc Update the wallet list of a server with a set of new transactions
