@@ -1,5 +1,10 @@
 %%% A collection of record structures used throughout the ArkChain server.
 
+%% How should nodes on the network identify themselves?
+-define(NETWORK_NAME, "archain").
+%% What is the current version/release number (should be an integer).
+-define(CLIENT_VERSION, 1).
+
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
 -define(HASH_ALG, sha256).

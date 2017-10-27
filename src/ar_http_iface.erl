@@ -27,7 +27,9 @@ handle(Req, _Args) ->
 	handle(Req#req.method, elli_request:path(Req), Req).
 
 handle('GET', [], _Req) ->
-	{200, [], <<"OK">>};
+	return_info();
+handle('GET', [<<"info">>], _Req) ->
+	return_info();
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
@@ -83,6 +85,27 @@ return_block(B) ->
 		list_to_binary(
 			ar_serialize:jsonify(
 				ar_serialize:block_to_json_struct(B)
+			)
+		)
+	}.
+
+%% @doc Generate and return an informative JSON struct regarding
+%% the state of the node.
+return_info() ->
+	Bs = [B|_] = ar_node:get_blocks(whereis(http_entrypoint_node)),
+	Peers = ar_node:get_peers(whereis(http_entrypoint_node)),
+	{200, [],
+		list_to_binary(
+			ar_serialize:jsonify(
+				{struct,
+					[
+						{network, ?NETWORK_NAME},
+						{version, ?CLIENT_VERSION},
+						{height, B#block.height},
+						{blocks, length(Bs)},
+						{peers, length(Peers)}
+					]
+				}
 			)
 		)
 	}.
@@ -150,8 +173,6 @@ handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 handle_block_response({ok, {{_, 404, _}, _, _}}) ->
 	not_found.
 
-
-
 %% @doc Helper function : registers a new node as the entrypoint.
 reregister(Node) ->
 	case erlang:whereis(http_entrypoint_node) of
@@ -161,6 +182,22 @@ reregister(Node) ->
 	erlang:register(http_entrypoint_node, Node).
 
 %%% Tests
+
+%% @doc Ensure that server info can be retreived via the HTTP interface.
+get_info_test() ->
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/info"),
+	{ok, {struct, Struct}} = json2:decode_string(Body),
+	{_, ?NETWORK_NAME} = lists:keyfind("network", 1, Struct),
+	{_, ?CLIENT_VERSION} = lists:keyfind("version", 1, Struct),
+	{_, 1} = lists:keyfind("blocks", 1, Struct),
+	{_, 0} = lists:keyfind("peers", 1, Struct).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->

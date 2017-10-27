@@ -1,6 +1,7 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_balance/2, generate_data_segment/2]).
+-export([get_blocks/1, get_block/2, get_peers/1, get_balance/2]).
+-export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
@@ -80,6 +81,16 @@ get_block(Proc, ID) when is_pid(Proc) ->
 	end;
 get_block(Host, ID) ->
 	ar_http_iface:get_block(Host, ID).
+
+%% @doc Get a list of peers from the node's #gs_state.
+get_peers(Proc) when is_pid(Proc) ->
+	Proc ! {get_peers, self()},
+	receive
+		{peers, Ps} -> Ps
+	after ?NET_TIMEOUT -> no_response
+	end;
+get_peers(Host) ->
+	ar_http_iface:get_peers(Host).
 
 %% @doc Return the current balance associated with a wallet.
 get_balance(Node, PubKey) ->
@@ -198,6 +209,9 @@ server(
 			server(S);
 		{get_block, PID, ID} ->
 			PID ! {block, self(), find_block(ID, Bs)},
+			server(S);
+		{get_peers, PID} ->
+			PID ! {peers, ar_gossip:peers(GS)},
 			server(S);
 		{get_balance, PID, PubKey} ->
 			PID ! {balance, PubKey,
