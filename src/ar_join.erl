@@ -17,6 +17,13 @@
 %% @doc Start a process that will attempt to join a network from the last
 %% sync block.
 start(Node, Peers, Height) ->
+	ar:report(
+		[
+			{node, Node},
+			{peers, Peers},
+			{height, Height}
+		]
+	),
 	spawn(
 		fun() ->
 			server(
@@ -73,7 +80,7 @@ server(
 %% @doc Find the last block with a complete block hash and wallet list.
 calculate_last_sync_block(Height) ->
 	%% TODO: Calcualte this from sync block frequency.
-	Height - 1.
+	Height.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 node_join_test() ->
