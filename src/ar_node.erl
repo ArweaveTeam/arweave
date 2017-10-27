@@ -523,7 +523,7 @@ validate(
 		TXs,
 		Height) == NewWalletList) andalso
 	(lists:reverse(tl(lists:reverse(NewHashList))) == OldHashList) andalso
-	validate(NewB#block.wallet_list, NewB#block.hash_list, NewB, OldB, RecallB).
+	validate(NewB#block.hash_list, NewB#block.wallet_list, NewB, OldB, RecallB).
 
 %% @doc Update the wallet list of a server with a set of new transactions
 apply_txs(S, TXs) when is_record(S, state) ->

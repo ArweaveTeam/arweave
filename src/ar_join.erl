@@ -17,7 +17,6 @@
 %% @doc Start a process that will attempt to join a network from the last
 %% sync block.
 start(Node, Peers, Height) ->
-	ar:d(starting_join_server),
 	spawn(
 		fun() ->
 			server(
@@ -38,37 +37,36 @@ server(S = #state { peers = [Peer|_], blocks = [], target = Height }) ->
 	RecallB = ar_node:get_block(Peer, ar_weave:calculate_recall_block(B)),
 	case ar_node:validate(B, LastB, RecallB) of
 		false ->
-			ar:report_console([couldnt_validate_last_sync_block]),
+			ar:report([couldnt_validate_last_sync_block]),
 			giving_up;
 		true ->
 			server(
 				S#state {
-					blocks =
+					blocks = [B] ++
 						if LastB == RecallB -> [LastB];
-						true -> [RecallB, LastB]
-						end ++ [B]
+						true -> [LastB, RecallB]
+						end
 					}
 			)
 	end;
 server(
 		S = #state {
 			peers = [Peer|_],
-			blocks = Bs,
+			blocks = Bs = [LastB|_],
 			parent = Node,
 			target = Height
 		}) ->
-	case ar:d((hd(lists:reverse(Bs)))#block.height) of
+	case LastB#block.height of
 		Height -> Node ! {fork_recovered, Bs};
 		_ ->
-			LastB = lists:last(Bs),
 			B = ar_node:get_block(Peer, LastB#block.height + 1),
-			RecallB = ar_node:get_block(Peer, ar_weave:calculate_recall_block(B)),
+			RecallB = ar_node:get_block(Peer, ar_weave:calculate_recall_block(LastB)),
 			case ar_node:validate(B, LastB, RecallB) of
 				false ->
 					ar:report_console([couldnt_validate_catchup_block]),
 					giving_up;
 				true ->
-					server(S#state { blocks = Bs ++ [B] })
+					server(S#state { blocks = [B|Bs] })
 			end
 	end.
 
@@ -89,4 +87,4 @@ node_join_test() ->
 	ar_node:mine(Node1),
 	receive after 600 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
-	5 = B#block.height.
+	2 = B#block.height.
