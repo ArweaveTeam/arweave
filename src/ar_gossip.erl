@@ -50,7 +50,7 @@ set_xfer_speed(S, Speed) ->
 send(S, Data) when not is_record(Data, gs_msg) ->
 	send(S,
 		#gs_msg {
-			hash = (crypto:hash(sha256, term_to_binary(Data))),
+			hash = (crypto:hash(?HASH_ALG, term_to_binary(Data))),
 			data = Data
 		}
 	);
