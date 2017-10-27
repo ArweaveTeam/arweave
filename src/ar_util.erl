@@ -3,6 +3,7 @@
 -export([hexify/1, dehexify/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1]).
 -include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %%% General misc. utility functions. Most of these should probably
 %%% have been in the Erlang standard library...
@@ -72,9 +73,22 @@ format_peer({Host, Port}) ->
 
 %% @doc Takes a list and return the unique values in it.
 unique(Xs) -> unique([], Xs).
-unique(Res, []) -> Res;
+unique(Res, []) -> lists:reverse(Res);
 unique(Res, [X|Xs]) ->
 	case lists:member(X, Res) of
 		false -> unique([X|Res], Xs);
 		true -> unique(Res, Xs)
 	end.
+
+%% @doc Test that unique functions correctly.
+basic_unique_test() ->
+	[a, b, c] = unique([a, a, b, b, b, c, c]).
+
+%% @doc Ensure that hosts are formatted as lists correctly.
+basic_peer_format_test() ->
+	"127.0.0.1:9001" = format_peer({127,0,0,1,9001}).
+
+%% @doc Test that values can be hexed and dehexed.
+round_trip_hexify_test() ->
+	Bytes = crypto:strong_rand_bytes(8),
+	Bytes = dehexify(hexify(Bytes)).

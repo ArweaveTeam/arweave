@@ -14,6 +14,7 @@
 -define(
 	CORE_TEST_MODS,
 	[
+		ar_util,
 		ar_meta_db,
 		ar_storage,
 		ar_serialize,
