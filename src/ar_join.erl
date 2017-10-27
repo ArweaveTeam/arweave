@@ -83,7 +83,7 @@ calculate_last_sync_block(Height) ->
 	Height.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
-node_join_test() ->
+basic_node_join_test() ->
 	Node1 = ar_node:start([], _B0 = ar_weave:init()),
 	Node2 = ar_node:start([Node1], undefined),
 	receive after 300 -> ok end,
@@ -95,3 +95,20 @@ node_join_test() ->
 	receive after 600 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
 	2 = B#block.height.
+
+%% @doc Ensure that both nodes can mine after a join.
+node_join_test() ->
+	Node1 = ar_node:start([], _B0 = ar_weave:init()),
+	Node2 = ar_node:start([Node1], undefined),
+	ar_node:add_peers(Node1, Node2),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:add_peers(Node1, Node2),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 600 -> ok end,
+	ar_node:mine(Node2),
+	receive after 600 -> ok end,
+	[B|_] = ar_node:get_blocks(Node1),
+	3 = B#block.height.
