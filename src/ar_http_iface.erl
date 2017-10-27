@@ -26,9 +26,9 @@ start(Port, Node) ->
 handle(Req, _Args) ->
 	handle(Req#req.method, elli_request:path(Req), Req).
 
-handle('GET', [<<"api">>], _Req) ->
+handle('GET', [], _Req) ->
 	{200, [], <<"OK">>};
-handle('POST', [<<"api">>, <<"block">>], Req) ->
+handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
 	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
@@ -49,20 +49,20 @@ handle('POST', [<<"api">>, <<"block">>], Req) ->
 		B#block.height
 	),
 	{200, [], <<"OK">>};
-handle('POST', [<<"api">>, <<"tx">>], Req) ->
+handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
 	%ar:report(TX),
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
-handle('GET', [<<"api">>, <<"block">>, <<"hash">>, Hash], _Req) ->
+handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			ar_util:dehexify(Hash))
 	);
-handle('GET', [<<"api">>, <<"block">>, <<"height">>, Height], _Req) ->
+handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 	%ar:report_console([{resp_getting_block, list_to_integer(binary_to_list(Height))}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
@@ -94,7 +94,7 @@ send_new_tx(Host, TX) ->
 	httpc:request(
 		post,
 		{
-			"http://" ++ ar_util:format_peer(Host) ++ "/api/tx",
+			"http://" ++ ar_util:format_peer(Host) ++ "/tx",
 			[],
 			"application/x-www-form-urlencoded",
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
@@ -107,7 +107,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 	httpc:request(
 		post,
 		{
-			"http://" ++ ar_util:format_peer(Host) ++ "/api/block",
+			"http://" ++ ar_util:format_peer(Host) ++ "/block",
 			[],
 			"application/x-www-form-urlencoded",
 			lists:flatten(
@@ -133,7 +133,7 @@ get_block(Host, Height) when is_integer(Height) ->
 		httpc:request(
 			"http://"
 				++ ar_util:format_peer(Host)
-				++ "/api/block/height/"
+				++ "/block/height/"
 				++ integer_to_list(Height)));
 get_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
@@ -141,7 +141,7 @@ get_block(Host, Hash) when is_binary(Hash) ->
 		httpc:request(
 			"http://"
 				++ ar_util:format_peer(Host)
-				++ "/api/block/hash/"
+				++ "/block/hash/"
 				++ ar_util:hexify(Hash))).
 
 %% @doc Process the response of an /api/block call.
