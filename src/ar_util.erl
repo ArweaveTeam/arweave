@@ -90,5 +90,9 @@ basic_peer_format_test() ->
 
 %% @doc Test that values can be hexed and dehexed.
 round_trip_hexify_test() ->
-	Bytes = crypto:strong_rand_bytes(8),
-	Bytes = dehexify(hexify(Bytes)).
+	Bytes = dehexify(hexify(Bytes = crypto:strong_rand_bytes(32))).
+
+%% @doc Ensure that pick_random's are actually in the starting list.
+pick_random_test() ->
+	List = [a, b, c, d, e],
+	true = lists:member(pick_random(List), List).
