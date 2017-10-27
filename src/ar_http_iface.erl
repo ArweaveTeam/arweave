@@ -58,6 +58,21 @@ handle('POST', [<<"tx">>], Req) ->
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
+handle('GET', [<<"peers">>], _Req) ->
+	{200, [],
+		list_to_binary(
+			ar_serialize:jsonify(
+				{array,
+					[
+						ar_util:format_peer(P)
+					||
+						P <- ar_node:get_peers(whereis(http_entrypoint_node)),
+						not is_pid(P)
+					]
+				}
+			)
+		)
+	};
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	return_block(
@@ -198,6 +213,20 @@ get_info_test() ->
 	{_, ?CLIENT_VERSION} = lists:keyfind("version", 1, Struct),
 	{_, 1} = lists:keyfind("blocks", 1, Struct),
 	{_, 0} = lists:keyfind("peers", 1, Struct).
+
+%% @doc Ensure that server info can be retreived via the HTTP interface.
+get_peers_test() ->
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([{127,0,0,1,1984},{127,0,0,1,1985}], [B0]),
+	reregister(Node1),
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/peers"),
+	{ok, {array, Array}} = json2:decode_string(Body),
+	true = lists:member("127.0.0.1:1984", Array),
+	true = lists:member("127.0.0.1:1985", Array).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
