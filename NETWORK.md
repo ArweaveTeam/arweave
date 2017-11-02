@@ -12,10 +12,12 @@ Inside a node, a gossip-based message passing network between Archain ADT app an
 
 The Archain HTTP interface exposes the following endpoints:
 
-`GET /api/block/hash/[hash_id]`
-`GET /api/block/height/[height]`
-`POST /api/block`
-`POST /api/tx`
+```
+	GET /block/hash/[hash_id]
+	GET /block/height/[height]
+	POST /block
+	POST /api/tx
+```
 
 JSON structures are employed in the bodies of the HTTP requests to represent blocks and transactions in POST requests. Similarly, GET requests return their objects in a JSON encoded format. The JSON object encodings follow the field names (etc.) described in `src/ar.hrl`.
 
