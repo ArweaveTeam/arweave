@@ -4,6 +4,12 @@ Two primary APIs exist for interacting with Archain - Erlang callbacks and
 an HTTP interface. You can find the files that implement these at `adt_simple`
 and `ar_http_iface`.
 
+To get started building Archain ADT applications please clone this repository
+and consider checking out the sample applications found in `src/apps`. These
+sample applications provided a guide through the development of a
+number of simple Archain applications, from a basic monitoring app, to a
+de-centralised microblogging service.
+
 # Via Erlang
 `adt_simple` provides an easy to use abstraction for building Archain apps in
 Erlang. The module provides a simple method (using a callback module) for

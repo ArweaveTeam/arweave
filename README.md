@@ -7,7 +7,7 @@ Archain is a distributed, cryptographically verified permanent archive built
 on a cryptocurrency that aims to, for the first time, provide feasible data
 permanence. By leveraging our novel Blockweave datastructure, data is stored
 in a decentralised, peer-to-peer manner where miners are incentivised to
-store rare data. 
+store rare data.
 
 # Requirements
 
@@ -15,14 +15,11 @@ In order to run the Archain server prototype and ADT, a recent (R20 and above)
 version of Erlang/OTP is required as well as a version of make.
 
 # Getting Started
+To get started, simply download this repo. You can start an Archain server
+session simply by running `make session`.
 
-To get started building Archain ADT applications please clone this repository
-and consider checking out the sample applications found in `src/apps`. These
-sample applications provided a guide through the development of a
-number of simple Archain applications, from a basic monitoring app, to a
-de-centralised microblogging service.
-
-You can start an Archain server session by running `make session`.
+You can learn more about building Archain ADT apps by checking out our
+documentation [here](ADT_README.md).
 
 You can also find detailed tutorials about building Archain apps and services
 on the [Archain youtube channel](http://www.youtube.com/archain).
