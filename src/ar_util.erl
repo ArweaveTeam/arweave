@@ -19,6 +19,24 @@ pick_random(List, N) ->
 pick_random(Xs) ->
 	lists:nth(rand:uniform(length(Xs)), Xs).
 
+%% @doc Takes base64 and encodes it into base64 suitable for URLs.
+encode_base64_safe([]) -> [];
+encode_base64_safe([$/|T]) ->
+	[ $_ | encoce_base64_safe(T) ];
+encode_base64_safe([$+|T]) ->
+	[ $- | encocd_base64_safe(T) ];
+encode_base64_safe([H|T]) ->
+	[ H | encoce_base64_safe(T) ].
+
+%% @doc Decodes URL safe base64 and turns it back into base64.
+decode_base64_safe([]) -> [];
+decode_base64_safe([$_|T]) ->
+	[ $/ | decode_base64_safe(T) ];
+decode_base64_safe([$-|T]) ->
+	[ $+ | decode_base64_safe(T) ];
+decode_base64_safe([H|T]) ->
+	[ H | decode_base64_safe(T) ].
+
 %% @doc Convert a binary to a list of hex characters.
 hexify(Bin) ->
 	lists:flatten(
