@@ -7,7 +7,7 @@
 
 %%% Exposes access to an internal Archain network to external nodes.
 
-%% @doc Start the interface.
+%% @doc Start the archain HTTP API and Returns a process ID.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
 	spawn(
@@ -22,14 +22,27 @@ start(Port, Node) ->
 
 %%% Server side functions.
 
-%% @doc Handle a request to the server.
+%% @doc Main function toandle a request to the server. Requests are HTTP
+%% requests of to an IP. For example a GET request to
+%% http://192.168.0.0/block/height the body of the GET request is the block
+%% height.
+%%
+%% Similarly, you can post POST transactions and use GET requests to to
+%% obtain peers, get a block by its height, hash or simply information about
+%% it. In this way, it is possible to perform many actions on the archain
+%% purely via platform agnostic HTTP.
+%%
+%% NB: Blocks and transactions are transmitted between HTTP nodes in JSON
+%% format.
 handle(Req, _Args) ->
 	handle(Req#req.method, elli_request:path(Req), Req).
 
 handle('GET', [], _Req) ->
 	return_info();
+% Get information about a block in JSON format.
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
+% Add block specified in HTTP body.
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
@@ -51,6 +64,7 @@ handle('POST', [<<"block">>], Req) ->
 		B#block.height
 	),
 	{200, [], <<"OK">>};
+% Add transaction specified in body.
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
@@ -58,6 +72,7 @@ handle('POST', [<<"tx">>], Req) ->
 	Node = whereis(http_entrypoint_node),
 	ar_node:add_tx(Node, TX),
 	{200, [], <<"OK">>};
+% Get peers.
 handle('GET', [<<"peers">>], _Req) ->
 	{200, [],
 		list_to_binary(
@@ -73,27 +88,30 @@ handle('GET', [<<"peers">>], _Req) ->
 			)
 		)
 	};
+% Gets a block by block hash.
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			ar_util:dehexify(Hash))
 	);
+% Gets a block by block height.
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 	%ar:report_console([{resp_getting_block, list_to_integer(binary_to_list(Height))}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
 	);
+%Handles otherwise unhandles HTTP requests and returns 500.
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
 
-%% @doc Handles elli metadata events.
+%% @doc Handles all other elli metadata events.
 handle_event(_Event, _Data, _Args) ->
 	%ar:report([{elli_event, Event}, {data, Data}, {args, Args}]),
 	ok.
 
-%% @doc Return a block via HTTP.
+%% @doc Return a block in JSON via HTTP or 404 if can't be found.
 return_block(unavailable) -> {404, [], <<"Block not found.">>};
 return_block(B) ->
 	{200, [],
@@ -104,7 +122,7 @@ return_block(B) ->
 		)
 	}.
 
-%% @doc Generate and return an informative JSON struct regarding
+%% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
 return_info() ->
 	Bs = [B|_] = ar_node:get_blocks(whereis(http_entrypoint_node)),
@@ -164,7 +182,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 		}, [], []
 	).
 
-%% @doc Retreive a block (by height or hash) from a node.
+%% @doc Retreive a block by height or hash from a node.
 get_block(Host, Height) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_height, Height}]),
 	handle_block_response(
@@ -182,7 +200,7 @@ get_block(Host, Hash) when is_binary(Hash) ->
 				++ "/block/hash/"
 				++ ar_util:hexify(Hash))).
 
-%% @doc Process the response of an /api/block call.
+%% @doc Process the response of an /block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_serialize:json_struct_to_block(Body);
 handle_block_response({ok, {{_, 404, _}, _, _}}) ->
