@@ -27,10 +27,10 @@ start(Port, Node) ->
 %% http://192.168.0.0/block/height where the body of the GET request is the
 %% block height.
 %%
-%% Similarly, you can post POST transactions and use GET requests to to
-%% obtain peers, get a block by its height, hash or simply information about
-%% it. In this way, it is possible to perform many actions on the archain
-%% purely via platform agnostic HTTP.
+%% Similarly, you can use POST or send transactions and blocks to be added
+%% and use GET requests to to obtain peers, get a block by its height, hash or
+%% or simply obtain information about it. In this way, it is possible to
+%% perform many actions on the archain purely via platform agnostic HTTP.
 %%
 %% NB: Blocks and transactions are transmitted between HTTP nodes in JSON
 %% format.
