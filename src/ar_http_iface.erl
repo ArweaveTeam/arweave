@@ -22,10 +22,10 @@ start(Port, Node) ->
 
 %%% Server side functions.
 
-%% @doc Main function toandle a request to the server. Requests are HTTP
-%% requests of to an IP. For example a GET request to
-%% http://192.168.0.0/block/height the body of the GET request is the block
-%% height.
+%% @doc Main function to handle a request to the server.
+%% Requests are HTTP requests to an IP. For example a GET request to
+%% http://192.168.0.0/block/height where the body of the GET request is the
+%% block height.
 %%
 %% Similarly, you can post POST transactions and use GET requests to to
 %% obtain peers, get a block by its height, hash or simply information about
