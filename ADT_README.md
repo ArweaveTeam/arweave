@@ -36,10 +36,10 @@ these functions are defined in the following way:
 Each node in the network runs an HTTP server that can be interacted with via
 HTTP requests. The HTTP API exposes the following endpoints:
 ```
-GET /block/hash/[hash_id]     Returns a block by hash.
-GET /block/height/[height]    Returns a block by block height.
-POST /block                   Adds a block passed in body.
-POST /tx                      Adds a transaction passed in body.
+  GET /block/hash/[hash_id]     Returns a block by hash.
+  GET /block/height/[height]    Returns a block by block height.
+  POST /block                   Adds a block passed in body.
+  POST /tx                      Adds a transaction passed in body.
 ```
 Information (transaction, block) is passed in the body of requests in JSON
 format.
