@@ -88,6 +88,21 @@ handle('GET', [<<"peers">>], _Req) ->
 			)
 		)
 	};
+handle('GET', [<<"balance">>, PubKey], _Req) ->
+	{200, [],
+		list_to_binary(
+			ar_serialize:jsonify(
+				[
+					{balance,
+						ar_node:get_balance(
+							whereis(http_entrypoint_node),
+							ar_util:decode(PubKey)
+						)
+					}
+				]
+			)
+		)
+	};
 % Gets a block by block hash.
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
@@ -245,6 +260,21 @@ get_peers_test() ->
 	{ok, {array, Array}} = json2:decode_string(Body),
 	true = lists:member("127.0.0.1:1984", Array),
 	true = lists:member("127.0.0.1:1985", Array).
+
+%% @doc Check that balances can be retreived over the network.
+get_balance_test() ->
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Bs = ar_weave:init([{Pub1, 10000}]),
+	Node1 = start([], Bs),
+	reregister(Node1),
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/balance/"
+		 		++ ar_util:encode(Pub1)),
+	{ok, {struct, Struct}} = json2:decode_string(Body),
+	{_, 10000} = lists:keyfind("balance", 1, Struct).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
