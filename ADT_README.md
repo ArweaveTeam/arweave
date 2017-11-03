@@ -20,9 +20,9 @@ Unimplemented callbacks will be ignored.
 
 Supported events and callbacks:
 ```
- 	new_transaction             Processes a new transaction that has been
+  new_transaction             Processes a new transaction that has been
                                   submitted to the weave.
- 	confirmed_transaction       Processes new transactions that have been
+  confirmed_transaction       Processes new transactions that have been
                                   accepted onto a block.
  	new_block                   Processes a new block that has been added
                                   to the weave.
@@ -42,13 +42,22 @@ these functions are defined in the following way:
 Each node in the network runs an HTTP server that can be interacted with via
 HTTP requests. The HTTP API exposes the following endpoints:
 ```
-  GET /block/hash/[hash_id]     Returns a block by hash.
+  GET /block/hash/[hash_id]     Returns a block by hash.  
   GET /block/height/[height]    Returns a block by block height.
   POST /block                   Adds a block passed in body.
   POST /tx                      Adds a transaction passed in body.
 ```
-Information (transaction, block) is passed in the body of requests in JSON
-format.
+For example a GET request to http://192.168.0.0/block/height where
+the body of the GET request is the block height will return that block in the
+form of a JSON object.
+
+Similarly, you can use POST to send transactions and blocks to be added
+and use GET requests to to obtain peers, get a block by its height, hash or
+or simply obtain information about it. In this way, it is possible to
+perform many actions on the archain purely via platform agnostic HTTP.
+
+Information (transactions, blocks) is always passed in the body of requests in
+a JSON object format.
 
 # More information
 
