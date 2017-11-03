@@ -1,7 +1,9 @@
 -module(ar_util).
 -export([pick_random/1, pick_random/2]).
 -export([hexify/1, dehexify/1]).
+-export([encode/1, decode/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1]).
+-export([replace/3]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -19,23 +21,57 @@ pick_random(List, N) ->
 pick_random(Xs) ->
 	lists:nth(rand:uniform(length(Xs)), Xs).
 
+%% @doc Encode a binary to URL safe base64.
+encode(Bin) ->
+	encode_base64_safe(base64:encode_to_string(Bin)).
+
+%% @doc Decode a URL safe base64 to binary.
+decode(Bin) when is_binary(Bin) ->
+	decode(bitstring_to_list(Bin));
+decode(Str) ->
+	base64:decode(decode_base64_safe(Str)).
+
 %% @doc Takes base64 and encodes it into base64 suitable for URLs.
 encode_base64_safe([]) -> [];
+encode_base64_safe([$=|T]) ->
+	encode_base64_safe(T);
 encode_base64_safe([$/|T]) ->
-	[ $_ | encoce_base64_safe(T) ];
+	[ $_ | encode_base64_safe(T) ];
 encode_base64_safe([$+|T]) ->
-	[ $- | encocd_base64_safe(T) ];
+	[ $- | encode_base64_safe(T) ];
 encode_base64_safe([H|T]) ->
-	[ H | encoce_base64_safe(T) ].
+	[ H | encode_base64_safe(T) ].
 
 %% @doc Decodes URL safe base64 and turns it back into base64.
-decode_base64_safe([]) -> [];
-decode_base64_safe([$_|T]) ->
-	[ $/ | decode_base64_safe(T) ];
-decode_base64_safe([$-|T]) ->
-	[ $+ | decode_base64_safe(T) ];
-decode_base64_safe([H|T]) ->
-	[ H | decode_base64_safe(T) ].
+decode_base64_safe(Str) ->
+	% TODO: Make this efficient.
+	UnsafeStr = do_decode_base64_safe(Str),
+	lists:flatten(
+		string:pad(
+			UnsafeStr,
+			length(UnsafeStr)
+				% TODO: Make this 100% less terrible.
+				+ case 4 - (length(UnsafeStr) rem 4) of
+					4 -> 0;
+					X -> X
+				end,
+			trailing,
+			$=
+		)
+	).
+
+do_decode_base64_safe([]) -> [];
+do_decode_base64_safe([$_|T]) ->
+	[ $/ | do_decode_base64_safe(T) ];
+do_decode_base64_safe([$-|T]) ->
+	[ $+ | do_decode_base64_safe(T) ];
+do_decode_base64_safe([H|T]) ->
+	[ H | do_decode_base64_safe(T) ].
+
+%% @doc Replace a term in a list with another term.
+replace(_, _, []) -> [];
+replace(X, Y, [X|T]) -> [Y|replace(X, Y, T)];
+replace(X, Y, [H|T]) -> [H|replace(X, Y, T)].
 
 %% @doc Convert a binary to a list of hex characters.
 hexify(Bin) ->
@@ -114,3 +150,14 @@ round_trip_hexify_test() ->
 pick_random_test() ->
 	List = [a, b, c, d, e],
 	true = lists:member(pick_random(List), List).
+
+%% @doc Test that binaries of different lengths can be encoded and decoded
+%% correctly.
+round_trip_encode_test() ->
+	lists:map(
+		fun(Bytes) ->
+			Bin = crypto:strong_rand_bytes(Bytes),
+			Bin = decode(encode(Bin))
+		end,
+		lists:seq(1, 64)
+	).

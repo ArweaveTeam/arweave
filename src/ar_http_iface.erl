@@ -93,7 +93,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
-			ar_util:dehexify(Hash))
+			ar_util:decode(Hash))
 	);
 % Gets a block by block height.
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
@@ -198,7 +198,7 @@ get_block(Host, Hash) when is_binary(Hash) ->
 			"http://"
 				++ ar_util:format_peer(Host)
 				++ "/block/hash/"
-				++ ar_util:hexify(Hash))).
+				++ ar_util:encode(Hash))).
 
 %% @doc Process the response of an /block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
@@ -252,7 +252,7 @@ get_block_by_hash_test() ->
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	receive after 200 -> ok end,
-	B0 = get_block({127, 0, 0, 1}, B0#block.hash).
+	B0 = get_block({127, 0, 0, 1}, B0#block.indep_hash).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->

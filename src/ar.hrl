@@ -10,8 +10,8 @@
 -define(HASH_ALG, sha256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 512).
--define(DEFAULT_DIFF, 8).
--define(TARGET_TIME, 30).
+-define(DEFAULT_DIFF, 20).
+-define(TARGET_TIME, 300).
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).
 
@@ -26,7 +26,7 @@
 %% ENABLE ONLY WHILE TESTING
 -define(DEBUG, true).
 %% Speed to run the network at when simulating.
--define(DEBUG_TIME_SCALAR, 0.1).
+-define(DEBUG_TIME_SCALAR, 1.0).
 
 %% Calculate MS to wait in order to hit target block time.
 -define(DEFAULT_MINING_DELAY,
@@ -44,6 +44,7 @@
 %% A block on the weave.
 -record(block, {
 	nonce = <<>>,
+	previous_block = <<>>,
 	timestamp = ar:timestamp(), % Unix time of block discovery
 	last_retarget = -1, % Unix timestamp of the last defficulty retarget
 	diff = ?DEFAULT_DIFF, % How many zeros need to preceed the next hash?

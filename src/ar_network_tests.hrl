@@ -51,7 +51,8 @@
 			num_miners = 50,
 			client_action_time = 900,
 			num_clients = 10,
-			miner_delay = 0
+			miner_delay = 0,
+			stagger_time = 300
 		}
 	]
 ).

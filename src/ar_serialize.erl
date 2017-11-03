@@ -19,6 +19,7 @@ dejsonify(JSON) ->
 block_to_json_struct(
 	#block {
 		nonce = Nonce,
+		previous_block = PrevHash,
 		timestamp = TimeStamp,
 		last_retarget = LastRetarget,
 		diff = Diff,
@@ -32,16 +33,17 @@ block_to_json_struct(
 	}) ->
 	{struct,
 		[
-			{nonce, base64:encode_to_string(Nonce)},
+			{nonce, ar_util:encode(Nonce)},
+			{previous_block, ar_util:encode(PrevHash)},
 			{timestamp, TimeStamp},
 			{last_retarget, LastRetarget},
 			{diff, Diff},
 			{height, Height},
-			{hash, base64:encode_to_string(Hash)},
-			{indep_hash, base64:encode_to_string(IndepHash)},
+			{hash, ar_util:encode(Hash)},
+			{indep_hash, ar_util:encode(IndepHash)},
 			{txs, {array, lists:map(fun tx_to_json_struct/1, TXs) }},
 			{hash_list,
-				{array, lists:map(fun base64:encode_to_string/1, HashList)}
+				{array, lists:map(fun ar_util:encode/1, HashList)}
 			},
 			{wallet_list,
 				{array,
@@ -49,7 +51,7 @@ block_to_json_struct(
 						fun({Wallet, Qty}) ->
 							{struct,
 								[
-									{wallet, base64:encode_to_string(Wallet)},
+									{wallet, ar_util:encode(Wallet)},
 									{quantity, Qty}
 								]
 							}
@@ -60,7 +62,7 @@ block_to_json_struct(
 			},
 			{reward_addr,
 				if RewardAddr == unclaimed -> "unclaimed";
-				true -> base64:encode_to_string(RewardAddr)
+				true -> ar_util:encode(RewardAddr)
 				end
 			}
 		]
@@ -78,18 +80,20 @@ json_struct_to_block({struct, BlockStruct}) ->
 	{array, WalletList} = find_value("wallet_list", BlockStruct),
 	{array, HashList} = find_value("hash_list", BlockStruct),
 	#block {
-		nonce = base64:decode(find_value("nonce", BlockStruct)),
+		nonce = ar_util:decode(find_value("nonce", BlockStruct)),
+		previous_block =
+			ar_util:decode(find_value("previous_block", BlockStruct)),
 		timestamp = find_value("timestamp", BlockStruct),
 		last_retarget = find_value("last_retarget", BlockStruct),
 		diff = find_value("diff", BlockStruct),
 		height = find_value("height", BlockStruct),
-		hash = base64:decode(find_value("hash", BlockStruct)),
-		indep_hash = base64:decode(find_value("indep_hash", BlockStruct)),
+		hash = ar_util:decode(find_value("hash", BlockStruct)),
+		indep_hash = ar_util:decode(find_value("indep_hash", BlockStruct)),
 		txs = lists:map(fun json_struct_to_tx/1, TXs),
-		hash_list = [ base64:decode(Hash) || Hash <- HashList ],
+		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
 		wallet_list =
 			[
-				{base64:decode(Wallet), Qty}
+				{ar_util:decode(Wallet), Qty}
 			||
 				{struct, [{"wallet", Wallet}, {"quantity", Qty}]}
 					<- WalletList
@@ -97,7 +101,7 @@ json_struct_to_block({struct, BlockStruct}) ->
 		reward_addr =
 			case find_value("reward_addr", BlockStruct) of
 				"unclaimed" -> unclaimed;
-				StrAddr -> base64:decode(StrAddr)
+				StrAddr -> ar_util:decode(StrAddr)
 			end
 	}.
 
@@ -115,14 +119,14 @@ tx_to_json_struct(
 	}) ->
 	{struct,
 		[
-			{id, base64:encode_to_string(ID)},
-			{owner, base64:encode_to_string(Owner)},
+			{id, ar_util:encode(ID)},
+			{owner, ar_util:encode(Owner)},
 			{tags, {array, Tags}},
-			{target, base64:encode_to_string(Target)},
+			{target, ar_util:encode(Target)},
 			{quantity, Quantity},
 			{type, atom_to_list(Type)},
-			{data, base64:encode_to_string(Data)},
-			{signature, base64:encode_to_string(Sig)}
+			{data, ar_util:encode(Data)},
+			{signature, ar_util:encode(Sig)}
 		]
 	}.
 
@@ -135,14 +139,14 @@ json_struct_to_tx(JSONList) when is_list(JSONList) ->
 json_struct_to_tx({struct, TXStruct}) ->
 	{array, Tags} = find_value("tags", TXStruct),
 	#tx {
-		id = base64:decode(find_value("id", TXStruct)),
-		owner = base64:decode(find_value("owner", TXStruct)),
+		id = ar_util:decode(find_value("id", TXStruct)),
+		owner = ar_util:decode(find_value("owner", TXStruct)),
 		tags = Tags,
-		target = base64:decode(find_value("target", TXStruct)),
+		target = ar_util:decode(find_value("target", TXStruct)),
 		quantity = find_value("quantity", TXStruct),
 		type = list_to_existing_atom(find_value("type", TXStruct)),
-		data = base64:decode(find_value("data", TXStruct)),
-		signature = base64:decode(find_value("signature", TXStruct))
+		data = ar_util:decode(find_value("data", TXStruct)),
+		signature = ar_util:decode(find_value("signature", TXStruct))
 	}.
 
 %% @doc Find the value associated with a key in a JSON structure list.

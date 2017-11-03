@@ -28,7 +28,7 @@
 %% Maximum number of blocks to hold at any time.
 %% NOTE: This value should be greater than ?RETARGET_BLOCKS + 1
 %% in order for the TNT test suite to pass.
--define(MAX_BLOCKS, undefined).
+-define(MAX_BLOCKS, ?RETARGET_BLOCKS).
 
 %% Ensure this number of the last blocks are not dropped.
 -define(KEEP_LAST_BLOCKS, 5).
@@ -76,7 +76,10 @@ get_blocks(Node) ->
 get_block(Proc, ID) when is_pid(Proc) ->
 	Proc ! {get_block, self(), ID},
 	receive
-		{block, Proc, B} -> B
+		{block, Proc, B} when is_record(B, block) -> B;
+		{block, Proc, Bs} when is_list(Bs) -> Bs;
+		{block, Proc, Hash} when is_binary(Hash) ->
+			ar_storage:read_block(Hash)
 	after ?NET_TIMEOUT -> no_response
 	end;
 get_block(Host, ID) ->
@@ -378,6 +381,7 @@ integrate_new_block(
 			end,
 			TXs
 		),
+	ar_storage:write_block(hd(Bs)),
 	% Recurse over the new block.
 	server(
 		reset_miner(
@@ -439,6 +443,7 @@ integrate_block_from_miner(
 					{txs, length(MinedTXs)}
 				]
 			),
+			ar_storage:write_block(hd(NextBs)),
 			server(
 				reset_miner(
 					NewS#state {
@@ -453,19 +458,30 @@ integrate_block_from_miner(
 	end.
 
 %% @doc Drop blocks until length of block list = ?MAX_BLOCKS.
-maybe_drop_blocks(Bs) when length(Bs) > ?MAX_BLOCKS ->
-	RecallBs = calculate_prior_recall_blocks(?KEEP_LAST_BLOCKS, Bs),
-	DropB = ar_util:pick_random(lists:nthtail(?KEEP_LAST_BLOCKS, Bs)),
-	case lists:member(DropB, RecallBs) of
-		false -> maybe_drop_blocks(Bs -- [DropB]);
-		true -> maybe_drop_blocks(Bs)
-	end;
-	maybe_drop_blocks(Bs) -> Bs.
+maybe_drop_blocks(Bs) ->
+	case length(BlockRecs = [ B || B <- Bs, is_record(B, block) ]) > ?MAX_BLOCKS of
+		true ->
+			RecallBs = calculate_prior_recall_blocks(?KEEP_LAST_BLOCKS, Bs),
+			DropB =
+				ar_util:pick_random(
+					lists:nthtail(
+						?KEEP_LAST_BLOCKS,
+						BlockRecs
+					)
+				),
+			case lists:member(DropB, RecallBs) of
+				false -> 
+					ar_storage:write_block(DropB),
+					maybe_drop_blocks(ar_util:replace(DropB, DropB#block.indep_hash, Bs));
+				true -> maybe_drop_blocks(Bs)
+			end;
+		false -> Bs
+	end.
 
 %% @doc Calculates Recall blocks to be stored.
 calculate_prior_recall_blocks(0, _) -> [];
 calculate_prior_recall_blocks(N, Bs) ->
-	[ar_weave:calculate_recall_block(Bs) |
+	[ar_weave:calculate_recall_block(hd(Bs)) |
 		calculate_prior_recall_blocks(N-1, tl(Bs))].
 
 %% @doc Update miner and amend server state when encountering a new transaction.
@@ -593,18 +609,20 @@ find_recall_block(Bs) ->
 
 %% @doc Find a block from an ordered block list.
 find_block(Hash, Bs) when is_binary(Hash) ->
-	case lists:keyfind(Hash, #block.hash, Bs) of
-		false -> unavilable;
+	case lists:keyfind(Hash, #block.indep_hash, Bs) of
+		false -> ar_storage:read_block(Hash);
 		B -> B
 	end;
 find_block(Height, Bs) ->
 	case lists:keyfind(Height, #block.height, Bs) of
-		false -> unavailable;
+		false -> ar_storage:read_block(Height);
 		B -> B
 	end.
 
 %% @doc Returns the last block to include both a wallet and hash list.
 find_sync_block([]) -> not_found;
+find_sync_block([Hash|Rest]) when is_binary(Hash) ->
+	find_sync_block([ar_storage:read(Hash)|Rest]);
 find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList }|_])
 		when HashList =/= undefined, WalletList =/= undefined -> B;
 find_sync_block([_|Bs]) -> find_sync_block(Bs).
@@ -683,7 +701,14 @@ start_mining(S = #state { block_list = Bs, txs = TXs }) ->
 
 %% @doc Drop blocks in a block list down to a given height.
 drop_blocks_to(Height, Bs) ->
-	lists:filter(fun(B) -> B#block.height =< Height end, Bs).
+	lists:filter(
+		fun F(B) when is_record(B, block) ->
+			B#block.height =< Height;
+		F(Hash) ->
+			F(ar_storage:read_block(Hash))
+		end,
+		Bs
+	).
 
 %%% Tests
 

@@ -116,4 +116,4 @@ end_test(#state { log = Log, listener = Listener }) ->
 
 %% @doc Count the number of transactions in a list of blocks.
 count_txs(Bs) ->
-	lists:sum([ length(B#block.txs) || B <- Bs ]).
+	lists:sum([ length((ar_storage:read_block(B))#block.txs) || B <- Bs ]).

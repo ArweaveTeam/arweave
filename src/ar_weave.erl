@@ -36,10 +36,20 @@ add(Bs, HashList, TXs, Nonce) ->
 	add(Bs, HashList, [], TXs, Nonce).
 add(Bs, HashList, WalletList, TXs, Nonce) ->
 	add(Bs, HashList, WalletList, TXs, Nonce, unclaimed).
+add([Hash|Bs], HashList, WalletList, TXs, Nonce, RewardAddr) when is_binary(Hash) ->
+	add(
+		[ar_storage:read_block(Hash)|Bs],
+		HashList,
+		WalletList,
+		TXs,
+		Nonce,
+		RewardAddr
+	);
 add(Bs = [B|_], HashList, WalletList, TXs, Nonce, RewardAddr) ->
 	RawNewB =
 		#block {
 			nonce = Nonce,
+			previous_block = B#block.indep_hash,
 			height = B#block.height + 1,
 			hash = hash(B, TXs, Nonce),
 			hash_list = HashList,
@@ -58,8 +68,10 @@ generate_hash_list([]) -> [];
 generate_hash_list(Bs = [B|_]) ->
 	generate_hash_list(Bs, B#block.height + 1).
 generate_hash_list([], 0) -> [];
-generate_hash_list([B|Bs], N) ->
-	[B#block.indep_hash|generate_hash_list(Bs, N - 1)].
+generate_hash_list([B|Bs], N) when is_record(B, block) ->
+	[B#block.indep_hash|generate_hash_list(Bs, N - 1)];
+generate_hash_list([Hash|Bs], N) when is_binary(Hash) ->
+	[Hash|generate_hash_list(Bs, N - 1)].
 
 %% @doc Verify that a list of blocks is valid.
 verify([_GenesisBlock]) -> true;
@@ -80,13 +92,16 @@ verify_indep(B = #block { height = Height }, HashList) ->
 	lists:nth(Height + 1, lists:reverse(HashList)) == indep_hash(B).
 
 %% @doc Generate a recall block number from a block or a hash and block height.
+calculate_recall_block(Hash) when is_binary(Hash) ->
+	calculate_recall_block(ar_storage:read_block(Hash));
 calculate_recall_block(B) when is_record(B, block) ->
 	calculate_recall_block(B#block.indep_hash, B#block.height).
 calculate_recall_block(IndepHash, Height) ->
 	binary:decode_unsigned(IndepHash) rem Height.
 
 %% @doc Return a binary of all of the information stored in the block.
-generate_block_data(B) when is_record(B, block) -> generate_block_data(B#block.txs);
+generate_block_data(B) when is_record(B, block) ->
+	generate_block_data(B#block.txs);
 generate_block_data(TXs) ->
 	<<
 		(
@@ -109,8 +124,8 @@ hash(Hash, TXs, Nonce) ->
 		<< Hash/binary, TXs/binary, Nonce/binary >>
 	).
 
-%% @doc Create an independent hash from a block. Independent hashes verify a block's
-%% contents in isolation and are stored in a node's hash list.
+%% @doc Create an independent hash from a block. Independent hashes
+%% verify a block's contents in isolation and are stored in a node's hash list.
 indep_hash(B) ->
 	crypto:hash(
 		?HASH_ALG,
@@ -134,6 +149,8 @@ mine(B, TXs) ->
 
 %% @doc Return whether or not a transaction is found on a block list.
 is_tx_on_block_list([], _) -> false;
+is_tx_on_block_list([Hash|Bs], TXID) when is_binary(Hash) ->
+	is_tx_on_block_list([ar_storage:read_block(Hash)|Bs], TXID);
 is_tx_on_block_list([#block { txs = TXs }|Bs], TXID) ->
 	case lists:member(TXID, [ T#tx.id || T <- TXs ]) of
 		true -> true;
@@ -163,6 +180,7 @@ init_add_add_forge_add_verify_test() ->
 		[
 			#block {
 				nonce = <<>>,
+				previous_block = (hd(B2))#block.indep_hash,
 				height = 3,
 				hash = crypto:hash(?HASH_ALG, <<"NOT THE CORRECT HASH">>),
 				txs = [],
@@ -179,6 +197,7 @@ init_add_add_forge_add_verify_subtle_test() ->
 		[
 			#block {
 				nonce = <<>>,
+				previous_block = (hd(B2))#block.indep_hash,
 				height = 3,
 				hash = hash(hd(B1), [], <<>>),
 				txs = [],
