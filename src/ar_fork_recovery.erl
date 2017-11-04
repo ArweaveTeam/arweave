@@ -1,3 +1,4 @@
+
 -module(ar_fork_recovery).
 -export([start/4]).
 -include("ar.hrl").
@@ -13,12 +14,11 @@
 	parent,
 	peer,
 	target,
-	hash_list,
-	blocks = []
+	blocks
 }).
 
 %% @doc Start the 'catch up' server.
-start(Parent, Peer, TargetHeight, BHL) ->
+start(Parent, Peer, TargetHeight, BlockList) ->
 	spawn(
 		fun() ->
 			ar:report(
@@ -33,12 +33,7 @@ start(Parent, Peer, TargetHeight, BHL) ->
 					parent = Parent,
 					peer = Peer,
 					target = TargetHeight,
-					hash_list = BHL,
-					blocks =
-						lists:filter(
-							fun(X) -> X =/= unavailable end,
-							lists:map(fun ar_storage:read_block/1, BHL)
-						)
+					blocks = BlockList
 				}
 			)
 		end
@@ -53,15 +48,15 @@ server(
 	}) ->
 	% The fork has been recovered. Return.
 	Parent ! {fork_recovered, Bs};
-server(S = #state { blocks = [], hash_list = BHL, peer = Peer }) ->
+server(S = #state { blocks = [], peer = Peer }) ->
 	% We are starting from scratch -- get the first block, for now.
 	% TODO: Update only from last sync block.
 	server(
 		S#state {
 			blocks =
 				[
-					ar_node:get_block(Peer, ar_util:hash_from_hash_list(1, BHL)),
-					ar_node:get_block(Peer, ar_util:hash_from_hash_list(0, BHL))
+					ar_node:get_block(Peer, 1),
+					ar_node:get_block(Peer, 0)
 				]
 		}
 	);

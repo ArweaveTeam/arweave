@@ -321,6 +321,7 @@ join_weave(S, NewGS, TargetHeight) ->
 %% @doc Recovery from a fork.
 fork_recover(
 	S = #state {
+		block_list = Bs,
 		hash_list = HashList
 	}, Peer, Height, NewB) ->
 	server(
@@ -330,11 +331,12 @@ fork_recover(
 					self(),
 					Peer,
 					Height,
-					lists:reverse(
-						take_until_divergence(
+					drop_blocks_to(
+						divergence_height(
 							lists:reverse(HashList),
 							lists:reverse(NewB#block.hash_list)
-						)
+						),
+						Bs
 					)
 				)
 		}
@@ -343,9 +345,9 @@ fork_recover(S, NewGS, Peer, Height, NewB) ->
 	fork_recover(S#state { gossip = NewGS }, Peer, Height, NewB).
 
 %% @doc Return the sublist of shared starting elements from two lists.
-take_until_divergence([A|Rest1], [A|Rest2]) ->
-	[A|take_until_divergence(Rest1, Rest2)];
-take_until_divergence(_, _) -> [].
+%take_until_divergence([A|Rest1], [A|Rest2]) ->
+%	[A|take_until_divergence(Rest1, Rest2)];
+%take_until_divergence(_, _) -> [].
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
@@ -736,16 +738,16 @@ start_mining(S = #state { block_list = Bs, hash_list = BHL, txs = TXs }) ->
 			S#state { miner = Miner }
 	end.
 
-%% Drop blocks in a block list down to a given height.
-%drop_blocks_to(Height, Bs) ->
-%	lists:filter(
-%		fun F(B) when is_record(B, block) ->
-%			B#block.height =< Height;
-%		F(Hash) ->
-%			F(ar_storage:read_block(Hash))
-%		end,
-%		Bs
-%	).
+%% @doc Drop blocks in a block list down to a given height.
+drop_blocks_to(Height, Bs) ->
+	lists:filter(
+		fun F(B) when is_record(B, block) ->
+			B#block.height =< Height;
+		F(Hash) ->
+			F(ar_storage:read_block(Hash))
+		end,
+		Bs
+	).
 
 %%% Tests
 

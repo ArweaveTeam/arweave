@@ -33,8 +33,8 @@ read_block(ID) ->
 			do_read_block(hd(
 				lists:sort(
 					fun(Filename, Filename2) ->
-						Info = file:read_file_info(Filename, [{time, posix}]),
-						Info2 = file:read_file_info(Filename2, [{time, posix}]),
+						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
+						{ok, Info2} = file:read_file_info(Filename2, [{time, posix}]),
 						Info#file_info.mtime >= Info2#file_info.mtime
 					end,
 					Filenames
