@@ -114,8 +114,8 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 	ar:report_console([{resp_getting_block, list_to_integer(binary_to_list(Height))}]),
 	return_block(
-		ar:d(ar_node:get_block(whereis(http_entrypoint_node),
-			list_to_integer(binary_to_list(Height))))
+		ar_node:get_block(ar:d(whereis(http_entrypoint_node)),
+			list_to_integer(binary_to_list(Height)))
 	);
 %Handles otherwise unhandles HTTP requests and returns 500.
 handle(_, _, _) ->

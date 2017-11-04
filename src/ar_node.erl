@@ -692,7 +692,11 @@ start_mining(S = #state { block_list = Bs, txs = TXs }) ->
 	case find_recall_block(Bs) of
 		unavailable -> S;
 		RecallB ->
-			ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}]),
+			if not is_record(RecallB, block) ->
+				ar:report_console([{erroneous_recall_block, RecallB}]);
+			true ->
+				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
+			end,
 			Miner =
 				ar_mine:start(
 					(hd(Bs))#block.hash,
