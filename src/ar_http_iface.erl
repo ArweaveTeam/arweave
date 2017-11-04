@@ -124,14 +124,6 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	);
 % Gets a block by block height.
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
-	ar:report_console(
-		[
-			{resp_getting_block, list_to_integer(binary_to_list(Height))},
-			{is_node_alive, erlang:is_process_alive(whereis(http_entrypoint_node))},
-			{get_block, ar_node:get_block(whereis(http_entrypoint_node),
-				list_to_integer(binary_to_list(Height)))}
-		]
-	),
 	return_block(
 		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
@@ -266,7 +258,9 @@ add_peers_test() ->
 			""
 		}, [], []
 	),
-	true = lists:member("127.0.0.1:1984", ar_node:get_peers(Node)).
+	receive after 500 -> ok end,
+	%ar:d([{node_peers,ar_node:get_peers(Node)}]),
+	true = lists:member({127,0,0,1,1984}, ar_node:get_peers(Node)).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->

@@ -18,9 +18,8 @@ generate_id() -> crypto:strong_rand_bytes(32).
 
 %% @doc Generate a hashable binary from a #tx object.
 to_binary(T) ->
-	ar:d(T),
 	%% TODO: Sign the owner and target addresses, too!
-	ar:d(<< (T#tx.id)/binary, (T#tx.data)/binary, (T#tx.quantity):64 >>).
+	<< (T#tx.id)/binary, (T#tx.data)/binary, (T#tx.quantity):64 >>.
 
 %% @doc Sign ('claim ownership') of a transaction. After it is signed, it can be
 %% placed onto a block and verified at a later date.
