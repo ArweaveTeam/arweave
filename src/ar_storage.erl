@@ -2,6 +2,7 @@
 -export([write_block/1, read_block/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 
 %%% Reads and writes blocks from disk.
 
@@ -27,7 +28,18 @@ read_block(ID) ->
 	case filelib:wildcard(name(ID)) of
 		[] -> unavailable;
 		[Filename] -> do_read_block(Filename);
-		_Filenames -> throw(multiple_blocks_found)
+		Filenames ->
+			% TODO: There should never be multiple versions of a block on disk.
+			do_read_block(hd(
+				lists:sort(
+					fun(Filename, Filename2) ->
+						Info = file:read_file_info(Filename, [{time, posix}]),
+						Info2 = file:read_file_info(Filename2, [{time, posix}]),
+						Info#file_info.mtime >= Info2#file_info.mtime
+					end,
+					Filenames
+				)
+			))
 	end.
 
 do_read_block(Filename) ->
