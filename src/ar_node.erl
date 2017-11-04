@@ -383,6 +383,12 @@ integrate_new_block(
 		),
 	ar_storage:write_block(hd(Bs)),
 	% Recurse over the new block.
+	ar:report_console(
+		[
+			{accepted_foregin_block, NewB#block.indep_hash},
+			{height, NewB#block.height}
+		]
+	),
 	server(
 		reset_miner(
 			S#state {
