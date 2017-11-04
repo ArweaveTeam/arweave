@@ -6,7 +6,7 @@
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_txs/2, validate/3, validate/4, validate/5, find_recall_block/1]).
+-export([apply_txs/2, validate/3, validate/4, validate/5, find_recall_block/1, find_recall_block/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -435,7 +435,7 @@ integrate_block_from_miner(
 	% Build the block record, verify it, and gossip it to the other nodes.
 	NextBs =
 		ar_weave:add(Bs, HashList, WalletList, MinedTXs, Nonce, RewardAddr),
-	case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs)) of
+	case validate(NewS, hd(NextBs), hd(Bs), find_recall_block(Bs, HashList)) of
 		false ->
 			ar:report_console([{miner, self()}, incorrect_nonce]),
 			server(OldS);
@@ -510,7 +510,7 @@ add_tx_to_server(S, NewGS, TX) ->
 				PID,
 				generate_data_segment(
 					NewTXs,
-					find_recall_block(S#state.block_list)
+					find_recall_block(S#state.block_list, S#block.hash_list)
 				),
 				NewTXs
 			)
@@ -623,6 +623,16 @@ find_recall_block([B0]) -> B0;
 find_recall_block(Bs) ->
 	find_block(ar_weave:calculate_recall_block(hd(Bs)), Bs).
 
+find_recall_block([B0], _) -> B0;
+find_recall_block(Bs, BHL) ->
+	find_block(
+		lists:nth(
+			ar_weave:calculate_recall_block(hd(Bs)) + 1,
+			lists:reverse(BHL)
+		),
+		Bs
+	).
+
 %% @doc Find a block from an ordered block list.
 find_block(Hash, Bs) when is_binary(Hash) ->
 	case lists:keyfind(Hash, #block.indep_hash, Bs) of
@@ -698,8 +708,8 @@ start_mining(S = #state { block_list = undefined }) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	S;
-start_mining(S = #state { block_list = Bs, txs = TXs }) ->
-	case find_recall_block(Bs) of
+start_mining(S = #state { block_list = Bs, hash_list = BHL, txs = TXs }) ->
+	case find_recall_block(Bs, BHL) of
 		unavailable -> S;
 		RecallB ->
 			if not is_record(RecallB, block) ->

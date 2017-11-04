@@ -27,7 +27,7 @@ read_block(ID) ->
 	case filelib:wildcard(name(ID)) of
 		[] -> unavailable;
 		[Filename] -> do_read_block(Filename);
-		Filenames -> lists:map(fun do_read_block/1, Filenames)
+		_Filenames -> throw(multiple_blocks_found)
 	end.
 
 do_read_block(Filename) ->

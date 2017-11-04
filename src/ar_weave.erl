@@ -67,6 +67,9 @@ generate_hash_list(undefined) -> [];
 generate_hash_list([]) -> [];
 generate_hash_list(Bs = [B|_]) ->
 	generate_hash_list(Bs, B#block.height + 1).
+
+generate_hash_list([B = #block { hash_list = BHL }|_], _) when is_list(BHL) ->
+	[B#block.indep_hash|BHL];
 generate_hash_list([], 0) -> [];
 generate_hash_list([B|Bs], N) when is_record(B, block) ->
 	[B#block.indep_hash|generate_hash_list(Bs, N - 1)];
