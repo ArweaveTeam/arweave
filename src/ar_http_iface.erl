@@ -124,7 +124,7 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 	ar:report_console(
 		[
 			{resp_getting_block, list_to_integer(binary_to_list(Height))},
-			{is_node_alive, erlang:is_alive(whereis(http_entrypoint_node))},
+			{is_node_alive, erlang:is_process_alive(whereis(http_entrypoint_node))},
 			{get_block, ar_node:get_block(whereis(http_entrypoint_node),
 				list_to_integer(binary_to_list(Height)))}
 		]
