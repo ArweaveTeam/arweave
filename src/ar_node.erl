@@ -40,6 +40,10 @@ start(Peers, BlockList) -> start(Peers, BlockList, unclaimed).
 start(Peers, BlockList, RewardAddr) ->
 	start(Peers, BlockList, RewardAddr, 0, ar_weave:generate_hash_list(BlockList)).
 start(Peers, BlockList, RewardAddr, MiningDelay, HashList) ->
+	case BlockList of
+		undefined -> do_nothing;
+		Bs -> lists:foreach(fun ar_storage:write_block/1, Bs)
+	end,
 	spawn(
 		fun() ->
 			server(
@@ -74,17 +78,18 @@ get_blocks(Node) ->
 
 %% @doc Return a specific block from a node, if it has it.
 get_block(Proc, ID) when is_pid(Proc) ->
-	Proc ! {get_block, self(), ID},
-	receive
-		{block, Proc, B} when is_record(B, block) -> B;
-		{block, Proc, Bs} when is_list(Bs) -> Bs;
-		{block, Proc, Hash} when is_binary(Hash) ->
-			ar_storage:read_block(Hash);
-		X ->
-			ar:report_console([{unknown_block_response, X}]),
-			X
-	after ?NET_TIMEOUT -> no_response
-	end;
+%	Proc ! {get_block, self(), ID},
+%	receive
+%		{block, Proc, B} when is_record(B, block) -> B;
+%		{block, Proc, Bs} when is_list(Bs) -> Bs;
+%		{block, Proc, Hash} when is_binary(Hash) ->
+%			ar_storage:read_block(Hash);
+%		X ->
+%			ar:report_console([{unknown_block_response, X}]),
+%			X
+%	after ?NET_TIMEOUT -> no_response
+%	end;
+	ar_storage:read_block(ID);
 get_block(Host, ID) ->
 	ar_http_iface:get_block(Host, ID).
 
@@ -275,6 +280,7 @@ server(
 				}
 			);
 		{fork_recovered, NewBs} when Bs == undefined ->
+			lists:foreach(fun ar_storage:write_block/1, NewBs),
 			server(
 				S#state {
 					block_list = maybe_drop_blocks(NewBs),
@@ -284,6 +290,7 @@ server(
 			);
 		{fork_recovered, [TopB|_] = NewBs}
  				when TopB#block.height > (hd(Bs))#block.height ->
+			lists:foreach(fun ar_storage:write_block/1, NewBs),
 			server(
 				reset_miner(
 					S#state {
@@ -388,7 +395,7 @@ integrate_new_block(
 	% Recurse over the new block.
 	ar:report_console(
 		[
-			{accepted_foregin_block, NewB#block.indep_hash},
+			{accepted_foreign_block, NewB#block.indep_hash},
 			{height, NewB#block.height}
 		]
 	),
