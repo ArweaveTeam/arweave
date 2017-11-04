@@ -80,7 +80,7 @@ get_block(Proc, ID) when is_pid(Proc) ->
 		{block, Proc, Bs} when is_list(Bs) -> Bs;
 		{block, Proc, Hash} when is_binary(Hash) ->
 			ar_storage:read_block(Hash);
-		{block, Proc, X} ->
+		X ->
 			ar:report_console([{unknown_block_response, X}]),
 			X
 	after ?NET_TIMEOUT -> no_response

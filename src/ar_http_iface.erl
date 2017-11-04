@@ -88,6 +88,15 @@ handle('GET', [<<"peers">>], _Req) ->
 			)
 		)
 	};
+handle('POST', [<<"peers">>], Req) ->
+	Peer = elli_request:peer(Req),
+	ar_node:add_peers(whereis(http_entrypoint_node), ar_util:parse_peer(Peer)),
+	{200, [], []};
+handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
+	Peer = elli_request:peer(Req),
+	Port = list_to_integer(binary_to_list(RawPort)),
+	ar_node:add_peers(whereis(http_entrypoint_node), ar_util:parse_peer({Peer, Port})),
+	{200, [], []};
 handle('GET', [<<"balance">>, PubKey], _Req) ->
 	{200, [],
 		list_to_binary(
@@ -112,9 +121,16 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	);
 % Gets a block by block height.
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
-	ar:report_console([{resp_getting_block, list_to_integer(binary_to_list(Height))}]),
+	ar:report_console(
+		[
+			{resp_getting_block, list_to_integer(binary_to_list(Height))},
+			{is_node_alive, erlang:is_alive(whereis(http_entrypoint_node))},
+			{get_block, ar_node:get_block(whereis(http_entrypoint_node),
+				list_to_integer(binary_to_list(Height)))}
+		]
+	),
 	return_block(
-		ar_node:get_block(ar:d(whereis(http_entrypoint_node)),
+		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
 	);
 %Handles otherwise unhandles HTTP requests and returns 500.
@@ -219,6 +235,8 @@ get_block(Host, Hash) when is_binary(Hash) ->
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_serialize:json_struct_to_block(Body);
 handle_block_response({ok, {{_, 404, _}, _, _}}) ->
+	not_found;
+handle_block_response({ok, {{_, 500, _}, _, _}}) ->
 	not_found.
 
 %% @doc Helper function : registers a new node as the entrypoint.
