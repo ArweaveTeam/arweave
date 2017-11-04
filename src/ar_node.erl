@@ -79,7 +79,10 @@ get_block(Proc, ID) when is_pid(Proc) ->
 		{block, Proc, B} when is_record(B, block) -> B;
 		{block, Proc, Bs} when is_list(Bs) -> Bs;
 		{block, Proc, Hash} when is_binary(Hash) ->
-			ar_storage:read_block(Hash)
+			ar_storage:read_block(Hash);
+		{block, Proc, X} ->
+			ar:report_console([{unknown_block_response, X}]),
+			X
 	after ?NET_TIMEOUT -> no_response
 	end;
 get_block(Host, ID) ->
