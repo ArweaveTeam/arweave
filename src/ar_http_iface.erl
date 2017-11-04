@@ -249,6 +249,22 @@ reregister(Node) ->
 
 %%% Tests
 
+%% @doc Tests add peer functionality
+add_peers_test() ->
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request(
+			post,
+			{
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/peer",
+				[],
+			}
+		),
+
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	[B0] = ar_weave:init(),
