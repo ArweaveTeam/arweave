@@ -19,6 +19,7 @@
 start(Node, Peers, Height) ->
 	ar:report(
 		[
+			joining_network,
 			{node, Node},
 			{peers, Peers},
 			{height, Height}
