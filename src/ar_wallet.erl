@@ -8,7 +8,7 @@
 
 %% @doc Generate a new wallet public key and private key.
 new() ->
-	{[_, Pub], [_, Pub, Priv|_]} = crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
+	{[_, Pub], [_, Pub, Priv|_]} = {[_, Pub], [_, Pub, Priv|_]} = crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 	{{Priv, Pub}, Pub}.
 
 %% @doc Sign some data with a private key.

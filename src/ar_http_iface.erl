@@ -101,14 +101,17 @@ handle('GET', [<<"balance">>, PubKey], _Req) ->
 	{200, [],
 		list_to_binary(
 			ar_serialize:jsonify(
-				[
-					{balance,
-						ar_node:get_balance(
-							whereis(http_entrypoint_node),
-							ar_util:decode(PubKey)
-						)
-					}
-				]
+				{struct,
+					[
+						{
+							balance,
+							ar_node:get_balance(
+								whereis(http_entrypoint_node),
+								ar_util:decode(PubKey)
+							)
+						}
+					]
+				}
 			)
 		)
 	};
@@ -139,7 +142,7 @@ handle(_, _, _) ->
 
 %% @doc Handles all other elli metadata events.
 handle_event(_Event, _Data, _Args) ->
-	%ar:report([{elli_event, Event}, {data, Data}, {args, Args}]),
+	%ar:report_console([{elli_event, Event}, {data, Data}, {args, Args}]),
 	ok.
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
@@ -299,7 +302,7 @@ get_peers_test() ->
 get_balance_test() ->
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Bs = ar_weave:init([{Pub1, 10000}]),
-	Node1 = start([], Bs),
+	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
 		httpc:request(

@@ -4,6 +4,7 @@
 -export([encode/1, decode/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1]).
 -export([replace/3]).
+-export([block_from_hash_list/2, hash_from_hash_list/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -67,6 +68,13 @@ do_decode_base64_safe([$-|T]) ->
 	[ $+ | do_decode_base64_safe(T) ];
 do_decode_base64_safe([H|T]) ->
 	[ H | do_decode_base64_safe(T) ].
+
+%% @doc Fetch a block hash by number from a block hash list (and disk).
+hash_from_hash_list(Num, BHL) ->
+	lists:nth(Num - 1, lists:reverse(BHL)).
+
+block_from_hash_list(Num, BHL) ->
+	ar_storage:read_block(hash_from_hash_list(Num, BHL)).
 
 %% @doc Replace a term in a list with another term.
 replace(_, _, []) -> [];

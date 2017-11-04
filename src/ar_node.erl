@@ -321,7 +321,6 @@ join_weave(S, NewGS, TargetHeight) ->
 %% @doc Recovery from a fork.
 fork_recover(
 	S = #state {
-		block_list = Bs,
 		hash_list = HashList
 	}, Peer, Height, NewB) ->
 	server(
@@ -331,18 +330,22 @@ fork_recover(
 					self(),
 					Peer,
 					Height,
-					drop_blocks_to(
-						divergence_height(
+					lists:reverse(
+						take_until_divergence(
 							lists:reverse(HashList),
 							lists:reverse(NewB#block.hash_list)
-						),
-						Bs
+						)
 					)
 				)
 		}
 	).
 fork_recover(S, NewGS, Peer, Height, NewB) ->
 	fork_recover(S#state { gossip = NewGS }, Peer, Height, NewB).
+
+%% @doc Return the sublist of shared starting elements from two lists.
+take_until_divergence([A|Rest1], [A|Rest2]) ->
+	[A|take_until_divergence(Rest1, Rest2)];
+take_until_divergence(_, _) -> [].
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
@@ -593,7 +596,8 @@ apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, TXs)).
 
 %% @doc Apply a transaction to a wallet list, updating it.
-apply_tx(WalletList, #tx { type = data }) -> WalletList;
+apply_tx(WalletList, #tx { owner = Pub, quantity = Qty, type = data }) ->
+	alter_wallet(WalletList, Pub, -Qty);
 apply_tx(
 		WalletList,
 		#tx { owner = From, target = To, quantity = Qty, type = transfer }) ->
@@ -603,13 +607,13 @@ apply_tx(
 alter_wallet(WalletList, Target, Adjustment) ->
 	case lists:keyfind(Target, 1, WalletList) of
 		false ->
-			io:format("~p: Could not find pub ~p in ~p~n", [self(), Target, WalletList]),
+			%io:format("~p: Could not find pub ~p in ~p~n", [self(), Target, WalletList]),
 			[{Target, Adjustment}|WalletList];
 		{Target, Balance} ->
-			io:format(
-				"~p: Target: ~p Balance: ~p Adjustment: ~p~n",
-				[self(), Target, Balance, Adjustment]
-			),
+			%io:format(
+			%	"~p: Target: ~p Balance: ~p Adjustment: ~p~n",
+			%	[self(), Target, Balance, Adjustment]
+			%),
 			lists:keyreplace(
 				Target,
 				1,
@@ -680,8 +684,11 @@ calculate_static_reward(Height) ->
 	(0.1 * ?GENESIS_TOKENS * 2 - (Height/105120) * math:log(2))/105120.
 
 %% @doc Given a TX, calculate an appropriate reward.
-calculate_tx_reward(#tx { data = Data }) ->
-	?MIN_TX_REWARD + (byte_size(Data) * ?COST_PER_BYTE).
+calculate_tx_reward(#tx { type = value }) -> ?MIN_TX_REWARD;
+calculate_tx_reward(#tx { type = data, quantity = Qty }) ->
+	% TODO: Verify mining cost is greater than minimum cost.
+	%?MIN_TX_REWARD + (byte_size(Data) * ?COST_PER_BYTE).
+	Qty.
 
 %% @doc Find the block height at which the weaves diverged.
 divergence_height([], []) -> -1;
@@ -729,16 +736,16 @@ start_mining(S = #state { block_list = Bs, hash_list = BHL, txs = TXs }) ->
 			S#state { miner = Miner }
 	end.
 
-%% @doc Drop blocks in a block list down to a given height.
-drop_blocks_to(Height, Bs) ->
-	lists:filter(
-		fun F(B) when is_record(B, block) ->
-			B#block.height =< Height;
-		F(Hash) ->
-			F(ar_storage:read_block(Hash))
-		end,
-		Bs
-	).
+%% Drop blocks in a block list down to a given height.
+%drop_blocks_to(Height, Bs) ->
+%	lists:filter(
+%		fun F(B) when is_record(B, block) ->
+%			B#block.height =< Height;
+%		F(Hash) ->
+%			F(ar_storage:read_block(Hash))
+%		end,
+%		Bs
+%	).
 
 %%% Tests
 
