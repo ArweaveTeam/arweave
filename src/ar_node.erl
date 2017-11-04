@@ -435,7 +435,7 @@ integrate_block_from_miner(
 						find_recall_block(Bs)
 					}
 				),
-			ar:report(
+			ar:report_console(
 				[
 					{node, self()},
 					{accepted_block, (hd(NextBs))#block.height},
