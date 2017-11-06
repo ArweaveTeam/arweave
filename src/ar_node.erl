@@ -86,6 +86,7 @@ get_block(Peers, ID) when is_list(Peers) ->
 			end,
 			ar_util:unique(Blocks)
 		),
+	ar:d(SortedBlocks),
 	ar_storage:read_block(
 		case [ B || B <- SortedBlocks, not is_atom(B) ] of
 			[] -> unavailable;
