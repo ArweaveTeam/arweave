@@ -101,7 +101,7 @@ try_apply_blocks([NextB], BHL, B, RecallBs) ->
 try_apply_blocks([NextB|Rest], BHL, B, RecallBs) ->
 	case try_apply_blocks(NextB, BHL, B, RecallBs) of
 		false -> try_apply_blocks(Rest, BHL, B, RecallBs);
-		true -> B
+		NextB -> NextB
 	end.
 
 %%% Tests
