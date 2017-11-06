@@ -112,8 +112,18 @@ rebuild() ->
 
 %% @doc Run all of the tests associated with the core project.
 test() ->
-	start(),
-	eunit:test(?CORE_TEST_MODS, [verbose]).
+	case ?DEFAULT_DIFF of
+		X when X > 17 ->
+			ar:report_console(
+				[
+					diff_too_high_for_tests,
+					terminating
+				]
+			);
+		_ ->
+			start(),
+			eunit:test(?CORE_TEST_MODS, [verbose])
+	end.
 
 %% @doc Run the TNT test system, printing coverage results.
 test_coverage() ->

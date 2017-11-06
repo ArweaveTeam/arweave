@@ -86,7 +86,8 @@ get_block(Peers, ID) when is_list(Peers) ->
 			end,
 			ar_util:unique(Blocks)
 		),
-	case SortedBlocks of
+	case [ B || B <- SortedBlocks, not is_atom(B) ] of
+		[] -> not_available;
 		[X] -> X;
 		Xs -> Xs
 	end;
