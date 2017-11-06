@@ -40,22 +40,25 @@ start(Node, Peers, Height) ->
 %% @doc Attempt to catch-up and validate the blocks from the last sync block.
 server(S = #state { peers = Peers, blocks = [], target = Height }) ->
 	LastB =
-		ar_node:get_block(Peers, (BNum = calculate_last_sync_block(Height)) - 1),
-	B = ar_node:get_block(Peers, BNum),
-	RecallB = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
-	case ar_node:validate(B, LastB, RecallB) of
+		case ar_node:get_block(Peers, (BNum = calculate_last_sync_block(Height)) - 1) of
+			LastBs when is_list(LastBs) -> hd(LastBs);
+			X -> X
+		end,
+	%% TODO: Ensure that this only hits the peer that started the join process.
+	B = ar_node:get_block(hd(Peers), BNum),
+	RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
+	case
+		ar_fork_recovery:try_apply_blocks(
+			B,
+			get_hash_list(B),
+			LastB,
+			RecallBs
+		)
+	of
 		false ->
 			ar:report([couldnt_validate_last_sync_block]),
 			giving_up;
-		true ->
-			server(
-				S#state {
-					blocks = [B] ++
-						if LastB == RecallB -> [LastB];
-						true -> [LastB, RecallB]
-						end
-					}
-			)
+		B -> server(S#state { blocks = [B, LastB] })
 	end;
 server(
 		S = #state {
@@ -97,6 +100,7 @@ calculate_last_sync_block(Height) ->
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->
+	ar_storage:clear(),
 	Node1 = ar_node:start([], _B0 = ar_weave:init()),
 	Node2 = ar_node:start([Node1], undefined),
 	receive after 300 -> ok end,
@@ -111,6 +115,7 @@ basic_node_join_test() ->
 
 %% @doc Ensure that both nodes can mine after a join.
 node_join_test() ->
+	ar_storage:clear(),
 	Node1 = ar_node:start([], _B0 = ar_weave:init()),
 	Node2 = ar_node:start([Node1], undefined),
 	ar_node:add_peers(Node1, Node2),

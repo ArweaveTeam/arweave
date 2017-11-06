@@ -92,7 +92,10 @@ try_apply_blocks(NextB, BHL, B, RecallBs) when is_record(NextB, block) ->
 			end,
 			RecallBs
 		),
-	lists:member(true, Validations);
+	case lists:member(true, Validations) of
+		false -> false;
+		true -> NextB
+	end;
 try_apply_blocks([NextB], BHL, B, RecallBs) ->
 	try_apply_blocks(NextB, BHL, B, RecallBs);
 try_apply_blocks([NextB|Rest], BHL, B, RecallBs) ->

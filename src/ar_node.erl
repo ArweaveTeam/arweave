@@ -297,6 +297,12 @@ server(
 			);
 		{fork_recovered, NewBs} when Bs == undefined ->
 			lists:foreach(fun ar_storage:write_block/1, NewBs),
+			ar:report_console(
+				[
+					node_joined_successfully,
+					{blocks, length(Bs)}
+				]
+			),
 			server(
 				S#state {
 					block_list = maybe_drop_blocks(NewBs),
@@ -307,6 +313,12 @@ server(
 		{fork_recovered, [TopB|_] = NewBs}
  				when TopB#block.height > (hd(Bs))#block.height ->
 			lists:foreach(fun ar_storage:write_block/1, NewBs),
+			ar:report_console(
+				[
+					fork_recovered_successfully,
+					{blocks, length(NewBs)}
+				]
+			),
 			server(
 				reset_miner(
 					S#state {

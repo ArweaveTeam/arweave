@@ -27,6 +27,7 @@ write_block(B) ->
 	Name.
 
 %% @doc Read a block from disk, given a hash.
+read_block(unavailable) -> unavailable;
 read_block(B) when is_record(B, block) -> B;
 read_block(Bs) when is_list(Bs) ->
 	lists:map(fun read_block/1, Bs);
