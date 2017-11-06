@@ -1,6 +1,6 @@
 
 -module(ar_fork_recovery).
--export([start/4]).
+-export([start/4, try_apply_blocks/4]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -12,26 +12,26 @@
 %% Defines the server state
 -record(state, {
 	parent,
-	peer,
+	peers,
 	target,
 	blocks
 }).
 
 %% @doc Start the 'catch up' server.
-start(Parent, Peer, TargetHeight, BlockList) ->
+start(Parent, Peers, TargetHeight, BlockList) ->
 	spawn(
 		fun() ->
 			ar:report(
 				[
 					{started_fork_recovery_proc, self()},
 					{target_height, TargetHeight},
-					{peer, Peer}
+					{peer, Peers}
 				]
 			),
 			server(
 				#state {
 					parent = Parent,
-					peer = Peer,
+					peers = Peers,
 					target = TargetHeight,
 					blocks = BlockList
 				}
@@ -48,38 +48,60 @@ server(
 	}) ->
 	% The fork has been recovered. Return.
 	Parent ! {fork_recovered, Bs};
-server(S = #state { blocks = [], peer = Peer }) ->
+server(S = #state { blocks = [], peers = Peers }) ->
 	% We are starting from scratch -- get the first block, for now.
 	% TODO: Update only from last sync block.
 	server(
 		S#state {
 			blocks =
 				[
-					ar_node:get_block(Peer, 1),
-					ar_node:get_block(Peer, 0)
+					ar_node:get_block(Peers, 1),
+					ar_node:get_block(Peers, 0)
 				]
 		}
 	);
-server(S = #state { peer = Peer, blocks = Bs = [B|_] }) ->
+server(S = #state { peers = Peers, blocks = Bs = [B|_] }) ->
 	% Get and verify the next block.
-	RecallB = ar_node:get_block(Peer, ar_weave:calculate_recall_block(B)),
-	NextB = ar_node:get_block(Peer, B#block.height + 1),
+	RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
+	NextBs = ar_node:get_block(Peers, B#block.height + 1),
 	BHL = [B#block.indep_hash|B#block.hash_list],
-	case ar_node:validate(
-			BHL,
-			ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
-			NextB, B, RecallB) of
+	case try_apply_blocks(NextBs, BHL, B, RecallBs) of
 		false ->
 			ar:report_console([could_not_validate_recovery_block]),
 			ok;
-		true ->
+		NextB ->
 			server(S#state { blocks = [NextB|Bs] })
+	end.
+
+%% @doc Repeatedly attempt to apply block(s), stopping if one validates.
+try_apply_blocks(unavailable, _, _, _) -> false;
+try_apply_blocks(NextB, BHL, B, RecallBs) when is_record(NextB, block) ->
+	Validations =
+		lists:map(
+			fun(RecallB) ->
+				ar_node:validate(BHL,
+					ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
+					NextB,
+					B,
+					RecallB
+				)
+			end,
+			RecallBs
+		),
+	lists:member(true, Validations);
+try_apply_blocks([NextB], BHL, B, RecallBs) ->
+	try_apply_blocks(NextB, BHL, B, RecallBs);
+try_apply_blocks([NextB|Rest], BHL, B, RecallBs) ->
+	case try_apply_blocks(NextB, BHL, B, RecallBs) of
+		false -> try_apply_blocks(Rest, BHL, B, RecallBs);
+		true -> B
 	end.
 
 %%% Tests
 
 %% @doc Ensure forks that are one block behind will resolve.
 single_block_ahead_recovery_test() ->
+	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
 	B1 = ar_weave:add(ar_weave:init(), []),
@@ -97,6 +119,7 @@ single_block_ahead_recovery_test() ->
 
 %% @doc Ensure that nodes on a fork that is far behind will catchup correctly.
 multiple_blocks_ahead_recovery_test() ->
+	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
 	B1 = ar_weave:add(ar_weave:init(), []),
@@ -120,6 +143,7 @@ multiple_blocks_ahead_recovery_test() ->
 
 %% @doc Ensure that nodes that have diverged by multiple blocks each can reconcile.
 multiple_blocks_since_fork_test() ->
+	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
 	B1 = ar_weave:add(ar_weave:init(), []),

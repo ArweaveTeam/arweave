@@ -38,11 +38,11 @@ start(Node, Peers, Height) ->
 	).
 
 %% @doc Attempt to catch-up and validate the blocks from the last sync block.
-server(S = #state { peers = [Peer|_], blocks = [], target = Height }) ->
+server(S = #state { peers = Peers, blocks = [], target = Height }) ->
 	LastB =
-		ar_node:get_block(Peer, (BNum = calculate_last_sync_block(Height)) - 1),
-	B = ar_node:get_block(Peer, BNum),
-	RecallB = ar_node:get_block(Peer, ar_weave:calculate_recall_block(B)),
+		ar_node:get_block(Peers, (BNum = calculate_last_sync_block(Height)) - 1),
+	B = ar_node:get_block(Peers, BNum),
+	RecallB = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
 	case ar_node:validate(B, LastB, RecallB) of
 		false ->
 			ar:report([couldnt_validate_last_sync_block]),
@@ -59,7 +59,7 @@ server(S = #state { peers = [Peer|_], blocks = [], target = Height }) ->
 	end;
 server(
 		S = #state {
-			peers = [Peer|_],
+			peers = Peers,
 			blocks = Bs = [LastB|_],
 			parent = Node,
 			target = Height
@@ -67,16 +67,28 @@ server(
 	case LastB#block.height of
 		Height -> Node ! {fork_recovered, Bs};
 		_ ->
-			B = ar_node:get_block(Peer, LastB#block.height + 1),
-			RecallB = ar_node:get_block(Peer, ar_weave:calculate_recall_block(LastB)),
-			case ar_node:validate(B, LastB, RecallB) of
+			Bs = ar_node:get_block(Peers, LastB#block.height + 1),
+			RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(LastB)),
+			case
+				ar_fork_recovery:try_apply_blocks(
+					Bs,
+					get_hash_list(Bs),
+					LastB,
+					RecallBs
+				)
+			of
 				false ->
 					ar:report_console([couldnt_validate_catchup_block]),
 					giving_up;
-				true ->
-					server(S#state { blocks = [B|Bs] })
+				NextB ->
+					server(S#state { blocks = [NextB|Bs] })
 			end
 	end.
+
+%% @doc From the return types of get_block, retreive a hash_list
+get_hash_list(unavailable) -> unavailable;
+get_hash_list(B) when is_record(B, block) -> B#block.hash_list;
+get_hash_list([B|_Bs]) -> B#block.hash_list.
 
 %% @doc Find the last block with a complete block hash and wallet list.
 calculate_last_sync_block(Height) ->

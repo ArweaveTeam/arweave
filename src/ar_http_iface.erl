@@ -246,6 +246,7 @@ reregister(Node) ->
 
 %% @doc Tests add peer functionality
 add_peers_test() ->
+	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
@@ -264,6 +265,7 @@ add_peers_test() ->
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
+	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
@@ -280,6 +282,7 @@ get_info_test() ->
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_peers_test() ->
+	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([{127,0,0,1,1984},{127,0,0,1,1985}], [B0]),
 	reregister(Node1),
@@ -294,6 +297,7 @@ get_peers_test() ->
 
 %% @doc Check that balances can be retreived over the network.
 get_balance_test() ->
+	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Bs = ar_weave:init([{Pub1, 10000}]),
 	Node1 = ar_node:start([], Bs),
@@ -309,6 +313,7 @@ get_balance_test() ->
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
+	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
@@ -317,6 +322,7 @@ get_block_by_hash_test() ->
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
+	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
@@ -324,6 +330,7 @@ get_block_by_height_test() ->
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
+	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
@@ -337,6 +344,7 @@ add_external_tx_test() ->
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test() ->
+	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),

@@ -1,5 +1,5 @@
 -module(ar_storage).
--export([write_block/1, read_block/1]).
+-export([write_block/1, read_block/1, clear/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -8,6 +8,10 @@
 
 %% Where should the blocks be stored?
 -define(BLOCK_DIR, "blocks").
+
+%% @doc Clear the cache of saved blocks.
+clear() ->
+	lists:map(fun file:delete/1, filelib:wildcard(?BLOCK_DIR ++ "/*.json")).
 
 %% @doc Write a block (with the hash.json as the filename) to disk.
 write_block(B) ->

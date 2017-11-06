@@ -77,6 +77,19 @@ get_blocks(Node) ->
 	end.
 
 %% @doc Return a specific block from a node, if it has it.
+get_block(Peers, ID) when is_list(Peers) ->
+	Blocks = [ get_block(Peer, ID) || Peer <- Peers ],
+	SortedBlocks =
+		lists:sort(
+			fun(BlockA, BlockB) ->
+				ar_util:count(BlockA, Blocks) == ar_util:count(BlockB, Blocks)
+			end,
+			ar_util:unique(Blocks)
+		),
+	case SortedBlocks of
+		[X] -> X;
+		Xs -> Xs
+	end;
 get_block(Proc, ID) when is_pid(Proc) ->
 %	Proc ! {get_block, self(), ID},
 %	receive
@@ -322,14 +335,15 @@ join_weave(S, NewGS, TargetHeight) ->
 fork_recover(
 	S = #state {
 		block_list = Bs,
-		hash_list = HashList
+		hash_list = HashList,
+		gossip = GS
 	}, Peer, Height, NewB) ->
 	server(
 		S#state {
 			recovery =
 				ar_fork_recovery:start(
 					self(),
-					Peer,
+					ar_util:unique([Peer|ar_gossip:peers(GS)]),
 					Height,
 					drop_blocks_to(
 						divergence_height(
@@ -760,6 +774,7 @@ divergence_height_test() ->
 
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
 mining_reward_test() ->
+	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Node1 = ar_node:start([], ar_weave:init(), Pub1),
 	mine(Node1),
@@ -768,6 +783,7 @@ mining_reward_test() ->
 
 %% @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test() ->
+	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Node1 = ar_node:start([], B0 = ar_weave:init()),
 	Node2 = ar_node:start([Node1], B0, Pub1),
@@ -777,6 +793,7 @@ multi_node_mining_reward_test() ->
 
 %% @doc Check that blocks can be added (if valid) by external processes.
 add_block_test() ->
+	ar_storage:clear(),
 	%% TODO: This test fails because mining blocks outside of a mining node
 	%% does not appropriately call the generate_data_segment function.
 	%% The data segment given to ar_mine:validate is <<>>, while it should
@@ -791,6 +808,7 @@ add_block_test() ->
 
 %% @doc Check that blocks can be added (if valid) by external processes.
 gossip_add_block_test() ->
+	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
 	GS0 = ar_gossip:init([Node1]),
@@ -802,6 +820,7 @@ gossip_add_block_test() ->
 
 %% @doc Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
+	ar_storage:clear(),
 	Node = start(),
 	GS0 = ar_gossip:init([Node]),
 	B1 = ar_weave:add(ar_weave:init(), [ar_tx:new(<<"HELLO WORLD">>)]),
@@ -821,6 +840,7 @@ add_bogus_block_test() ->
 
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto the network.
 add_bogus_block_nonce_test() ->
+	ar_storage:clear(),
 	Node = start(),
 	GS0 = ar_gossip:init([Node]),
 	B1 = ar_weave:add(ar_weave:init(), [ar_tx:new(<<"HELLO WORLD">>)]),
@@ -841,6 +861,7 @@ add_bogus_block_nonce_test() ->
 
 %% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
 add_bogus_hash_list_test() ->
+	ar_storage:clear(),
 	Node = start(),
 	GS0 = ar_gossip:init([Node]),
 	B1 = ar_weave:add(ar_weave:init(), [ar_tx:new(<<"HELLO WORLD">>)]),
@@ -861,6 +882,7 @@ add_bogus_hash_list_test() ->
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_blockweave_with_mining_test() ->
+	ar_storage:clear(),
 	B0 = ar_weave:init(),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
@@ -872,6 +894,7 @@ tiny_blockweave_with_mining_test() ->
 
 %% @doc Ensure that the network add data and have it mined into blocks.
 tiny_blockweave_with_added_data_test() ->
+	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	B0 = ar_weave:init(),
 	Node1 = start([], B0),
@@ -886,6 +909,7 @@ tiny_blockweave_with_added_data_test() ->
 
 %% @doc Test that a slightly larger network is able to receive data and propogate data and blocks.
 large_blockweave_with_data_test() ->
+	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	B0 = ar_weave:init(),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 500) ],
@@ -899,6 +923,7 @@ large_blockweave_with_data_test() ->
 
 %% @doc Test that large networks (500 nodes) with only 1% connectivity still function correctly.
 large_weakly_connected_blockweave_with_data_test() ->
+	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	B0 = ar_weave:init(),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 500) ],
@@ -912,6 +937,7 @@ large_weakly_connected_blockweave_with_data_test() ->
 
 %% @doc Ensure that the network can add multiple peices of data and have it mined into blocks.
 medium_blockweave_mine_multiple_data_test() ->
+	ar_storage:clear(),
 	TestData1 = ar_tx:new(<<"TEST DATA1">>),
 	TestData2 = ar_tx:new(<<"TEST DATA2">>),
 	B0 = ar_weave:init(),
@@ -928,6 +954,7 @@ medium_blockweave_mine_multiple_data_test() ->
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
 medium_blockweave_multi_mine_test() ->
+	ar_storage:clear(),
 	TestData1 = ar_tx:new(<<"TEST DATA1">>),
 	TestData2 = ar_tx:new(<<"TEST DATA2">>),
 	B0 = ar_weave:init(),
@@ -949,6 +976,7 @@ medium_blockweave_multi_mine_test() ->
 %% @doc Setup a network, mine a block, cause one node to forget that block.
 %% Ensure that the 'truncated' node can still verify and accept new blocks.
 tiny_collaborative_blockweave_mining_test() ->
+	ar_storage:clear(),
 	B0 = ar_weave:init(),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
@@ -966,6 +994,7 @@ tiny_collaborative_blockweave_mining_test() ->
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test() ->
+	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, 9000),
@@ -982,6 +1011,7 @@ wallet_transaction_test() ->
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
 wallet_two_transaction_test() ->
+	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),

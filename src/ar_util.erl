@@ -2,7 +2,7 @@
 -export([pick_random/1, pick_random/2]).
 -export([hexify/1, dehexify/1]).
 -export([encode/1, decode/1]).
--export([parse_peer/1, parse_port/1, format_peer/1, unique/1]).
+-export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_hash_list/2, hash_from_hash_list/2]).
 -include("ar.hrl").
@@ -132,6 +132,10 @@ format_peer(Host) when is_list(Host) ->
 	format_peer({Host, ?DEFAULT_HTTP_IFACE_PORT});
 format_peer({Host, Port}) ->
 	lists:flatten(io_lib:format("~s:~w", [Host, Port])).
+
+%% @doc Count occurences of element within list.
+count(A, List) ->
+	length([ B || B <- List, A == B ]).
 
 %% @doc Takes a list and return the unique values in it.
 unique(Xs) -> unique([], Xs).
