@@ -1,7 +1,7 @@
 %%% A collection of record structures used throughout the ArkChain server.
 
 %% How should nodes on the network identify themselves?
--define(NETWORK_NAME, "archain").
+-define(NETWORK_NAME, "archain.BATN.1").
 %% What is the current version/release number (should be an integer).
 -define(CLIENT_VERSION, 1).
 
@@ -11,7 +11,7 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 512).
 %% NOTE: Setting the default difficulty too high will cause TNT to fail!
--define(DEFAULT_DIFF, 8).
+-define(DEFAULT_DIFF, 28).
 -define(TARGET_TIME, 300).
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).
