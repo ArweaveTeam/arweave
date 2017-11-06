@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, handle/2, handle_event/3]).
--export([send_new_block/4, send_new_tx/2, get_block/2]).
+-export([send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -133,8 +133,8 @@ handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
 
 %% @doc Handles all other elli metadata events.
-handle_event(Event, Data, Args) ->
-	ar:report_console([{elli_event, Event}, {data, Data}, {args, Args}]),
+handle_event(_Event, _Data, _Args) ->
+	%ar:report_console([{elli_event, Event}, {data, Data}, {args, Args}]),
 	ok.
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
@@ -208,6 +208,20 @@ send_new_block(Host, Port, NewB, RecallB) ->
 		}, [], []
 	).
 
+%% @doc Add peer (self) to host.
+add_peer(Host) ->
+	httpc:request(
+		post,
+		{
+			"http://"
+				++ ar_util:format_peer(Host)
+				++ "/peers",
+			[],
+			"application/x-www-form-urlencoded",
+			""
+		}, [], []
+	).
+
 %% @doc Retreive a block by height or hash from a node.
 get_block(Host, Height) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_height, Height}]),
@@ -250,15 +264,7 @@ add_peers_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
-	httpc:request(
-		post,
-		{
-			"http://127.0.0.1:1984/peers",
-			[],
-			"application/x-www-form-urlencoded",
-			""
-		}, [], []
-	),
+	add_peer({127,0,0,1,1984}),
 	receive after 500 -> ok end,
 	%ar:d([{node_peers,ar_node:get_peers(Node)}]),
 	true = lists:member({127,0,0,1,1984}, ar_node:get_peers(Node)).

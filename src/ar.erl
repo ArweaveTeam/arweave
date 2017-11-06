@@ -75,6 +75,8 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
 		Peers,
 		if Init -> ar_weave:init(); true -> undefined end
 	),
+	% Add self to all remote nodes.
+	lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
