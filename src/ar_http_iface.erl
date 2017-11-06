@@ -133,8 +133,8 @@ handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
 
 %% @doc Handles all other elli metadata events.
-handle_event(_Event, _Data, _Args) ->
-	%ar:report_console([{elli_event, Event}, {data, Data}, {args, Args}]),
+handle_event(Event, Data, Args) ->
+	ar:report_console([{elli_event, Event}, {data, Data}, {args, Args}]),
 	ok.
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
