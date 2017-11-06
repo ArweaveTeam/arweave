@@ -137,7 +137,7 @@ handle_event(Type, Data, Args)
 		when (Type == request_throw)
 		or (Type == request_error)
 		or (Type == request_exit) ->
-	ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]);
+	ar:report([{elli_event, Type}, {data, Data}, {args, Args}]);
 handle_event(_Event, _Data, _Args) -> ok.
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
@@ -183,7 +183,9 @@ send_new_tx(Host, TX) ->
 			[],
 			"application/x-www-form-urlencoded",
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-		}, [], []
+		},
+		[{timeout, ?NET_TIMEOUT}],
+		[]
 	).
 
 %% @doc Distribute a newly found block to remote nodes.
@@ -208,7 +210,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 					}
 				)
 			)
-		}, [], []
+		}, [{timeout, ?NET_TIMEOUT}], []
 	).
 
 %% @doc Add peer (self) to host.
@@ -222,7 +224,7 @@ add_peer(Host) ->
 			[],
 			"application/x-www-form-urlencoded",
 			""
-		}, [], []
+		}, [{timeout, ?NET_TIMEOUT}], []
 	).
 
 %% @doc Retreive a block by height or hash from a node.
@@ -230,18 +232,32 @@ get_block(Host, Height) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_height, Height}]),
 	handle_block_response(
 		httpc:request(
-			"http://"
-				++ ar_util:format_peer(Host)
-				++ "/block/height/"
-				++ integer_to_list(Height)));
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/block/height/"
+					++ integer_to_list(Height),
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+	 	)
+	);
 get_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	handle_block_response(
 		httpc:request(
-			"http://"
-				++ ar_util:format_peer(Host)
-				++ "/block/hash/"
-				++ ar_util:encode(Hash))).
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/block/hash/"
+					++ ar_util:encode(Hash),
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+	 	)
+	).
 
 %% @doc Process the response of an /block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
