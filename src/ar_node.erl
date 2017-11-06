@@ -438,7 +438,7 @@ integrate_new_block(
 		),
 	ar_storage:write_block(hd(Bs)),
 	% Recurse over the new block.
-	ar:report_console(
+	ar:report(
 		[
 			{accepted_foreign_block, NewB#block.indep_hash},
 			{height, NewB#block.height}
@@ -497,11 +497,11 @@ integrate_block_from_miner(
 						find_recall_block(Bs)
 					}
 				),
-			ar:report_console(
+			ar:report(
 				[
 					{node, self()},
 					{accepted_block, (hd(NextBs))#block.height},
-					{hash, (hd(NextBs))#block.hash},
+					{hash, (hd(NextBs))#block.indep_hash},
 					{txs, length(MinedTXs)}
 				]
 			),

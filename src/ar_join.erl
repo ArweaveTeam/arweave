@@ -46,6 +46,7 @@ server(S = #state { peers = Peers, blocks = [], target = Height }) ->
 		end,
 	%% TODO: Ensure that this only hits the peer that started the join process.
 	B = ar_node:get_block(hd(Peers), BNum),
+	ar:d([{block, B}, {peer, hd(Peers)}]),
 	RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
 	case
 		ar_fork_recovery:try_apply_blocks(
