@@ -124,6 +124,8 @@ parse_port(PortStr) ->
 	Port.
 
 %% @doc Take a remote host ID in various formats, return a HTTP-friendly string.
+format_peer(undefined) ->
+	ar:report([{caught_undefined_host, ok}]);
 format_peer({A, B, C, D}) ->
 	format_peer({A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT});
 format_peer({A, B, C, D, Port}) ->
