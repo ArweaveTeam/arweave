@@ -311,12 +311,14 @@ server(
 				]
 			),
 			server(
-				S#state {
-					block_list = maybe_drop_blocks(NewBs),
-					hash_list = ar_weave:generate_hash_list(NewBs),
-					wallet_list = (find_sync_block(NewBs))#block.wallet_list,
-					height = (hd(NewBs))#block.height
-				}
+				reset_miner(
+					S#state {
+						block_list = maybe_drop_blocks(NewBs),
+						hash_list = ar_weave:generate_hash_list(NewBs),
+						wallet_list = (find_sync_block(NewBs))#block.wallet_list,
+						height = (hd(NewBs))#block.height
+					}
+				)
 			);
 		{fork_recovered, [TopB|_] = NewBs}
  				when TopB#block.height > (hd(Bs))#block.height ->
@@ -511,7 +513,8 @@ integrate_block_from_miner(
 						block_list = maybe_drop_blocks(NextBs),
 						hash_list =
 							[(hd(NextBs))#block.indep_hash|HashList],
-						txs = NotMinedTXs % TXs not included in the block
+						txs = NotMinedTXs, % TXs not included in the block
+						height = (hd(NextBs))#block.height
 					}
 				)
 			)

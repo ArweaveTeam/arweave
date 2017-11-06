@@ -232,7 +232,7 @@ handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 handle_block_response({ok, {{_, 404, _}, _, _}}) ->
 	not_found;
 handle_block_response({ok, {{_, 500, _}, _, _}}) ->
-	throw(get_block_failed).
+	not_found.
 
 %% @doc Helper function : registers a new node as the entrypoint.
 reregister(Node) ->
