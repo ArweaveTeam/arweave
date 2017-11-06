@@ -2,6 +2,7 @@
 -export([pick_random/1, pick_random/2]).
 -export([hexify/1, dehexify/1]).
 -export([encode/1, decode/1]).
+-export([encode_base64_safe/1, decode_base64_safe/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_hash_list/2, hash_from_hash_list/2]).

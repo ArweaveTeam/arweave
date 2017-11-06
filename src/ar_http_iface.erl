@@ -311,6 +311,22 @@ get_balance_test() ->
 	{ok, {struct, Struct}} = json2:decode_string(Body),
 	{_, 10000} = lists:keyfind("balance", 1, Struct).
 
+%% @doc Test that wallets issued in the pre-sale can be viewed.
+get_presale_balance_test() ->
+	ar_storage:clear(),
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Bs = ar_weave:init([{Pub1, 10000}]),
+	Node1 = ar_node:start([], Bs),
+	reregister(Node1),
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/balance/"
+		 		++ ar_util:encode_base64_safe(base64:encode_to_string(Pub1))),
+	{ok, {struct, Struct}} = json2:decode_string(Body),
+	{_, 10000} = lists:keyfind("balance", 1, Struct).
+
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
 	ar_storage:clear(),
