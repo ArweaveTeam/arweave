@@ -191,6 +191,7 @@ send_new_tx(Host, TX) ->
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
+	ar:d([send_new_block, {host, Host}, {port, Port}]),
 	httpc:request(
 		post,
 		{
@@ -215,6 +216,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 
 %% @doc Add peer (self) to host.
 add_peer(Host) ->
+	ar:d({adding_host, Host}),
 	httpc:request(
 		post,
 		{
@@ -230,6 +232,7 @@ add_peer(Host) ->
 %% @doc Retreive a block by height or hash from a node.
 get_block(Host, Height) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_height, Height}]),
+	ar:d([getting_new_block, {host, Host}, {height, Height}]),
 	handle_block_response(
 		httpc:request(
 			get,
@@ -245,6 +248,7 @@ get_block(Host, Height) when is_integer(Height) ->
 	);
 get_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
 	handle_block_response(
 		httpc:request(
 			get,
