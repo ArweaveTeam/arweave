@@ -12,7 +12,7 @@
 
 %% @doc Start a new block list. Optionally takes a list of wallet values
 %% for the genesis block.
-init() -> init([]).
+init() -> init(ar_util:genesis_wallets()).
 init(WalletList) ->
 	B0 =
 		#block{

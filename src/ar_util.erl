@@ -5,6 +5,7 @@
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_hash_list/2, hash_from_hash_list/2]).
+-export([genesis_wallets/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -174,4 +175,18 @@ round_trip_encode_test() ->
 			Bin = decode(encode(Bin))
 		end,
 		lists:seq(1, 64)
+	).
+
+%% @doc Generate a list of GENESIS wallets, from the CSV file.
+genesis_wallets() ->
+	{ok, Bin} = file:read_file("data/genesis_wallets.csv"),
+	lists:map(
+		fun(Line) ->
+			[PubKey, RawQty] = string:tokens(Line, ","),
+			{
+				base64:decode(PubKey),
+				erlang:trunc(math:ceil(list_to_integer(RawQty) * 1.25))
+			}
+		end,
+		string:tokens(binary_to_list(Bin), [10])
 	).
