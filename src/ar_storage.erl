@@ -14,6 +14,7 @@ clear() ->
 	lists:map(fun file:delete/1, filelib:wildcard(?BLOCK_DIR ++ "/*.json")).
 
 %% @doc Write a block (with the hash.json as the filename) to disk.
+write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(B) ->
 	file:write_file(
 		Name = lists:flatten(
@@ -32,7 +33,7 @@ read_block(B) when is_record(B, block) -> B;
 read_block(Bs) when is_list(Bs) ->
 	lists:map(fun read_block/1, Bs);
 read_block(ID) ->
-	case ar:d(filelib:wildcard(name(ID))) of
+	case filelib:wildcard(name(ID)) of
 		[] -> unavailable;
 		[Filename] -> do_read_block(Filename);
 		Filenames ->

@@ -20,6 +20,7 @@
 	txs = [],
 	miner,
 	mining_delay = 0,
+	height = 0,
 	recovery = undefined,
 	automine = false,
 	reward_addr = unclaimed
@@ -57,7 +58,12 @@ start(Peers, BlockList, RewardAddr, MiningDelay, HashList) ->
 							_ -> (find_sync_block(BlockList))#block.wallet_list
 						end,
 					mining_delay = MiningDelay,
-					reward_addr = RewardAddr
+					reward_addr = RewardAddr,
+					height =
+						case BlockList of
+							undefined -> 0;
+							[B|_] -> B#block.height
+						end
 				}
 			)
 		end
@@ -86,10 +92,10 @@ get_block(Peers, ID) when is_list(Peers) ->
 			end,
 			ar_util:unique(Blocks)
 		),
-	ar:d(SortedBlocks),
 	ar_storage:read_block(
 		case [ B || B <- SortedBlocks, not is_atom(B) ] of
 			[] -> unavailable;
+			[unavailable] -> unavailable;
 			[X] -> X;
 			Xs -> Xs
 		end
@@ -301,14 +307,15 @@ server(
 			ar:report_console(
 				[
 					node_joined_successfully,
-					{blocks, length(Bs)}
+					{blocks, length(NewBs)}
 				]
 			),
 			server(
 				S#state {
 					block_list = maybe_drop_blocks(NewBs),
 					hash_list = ar_weave:generate_hash_list(NewBs),
-					wallet_list = (find_sync_block(NewBs))#block.wallet_list
+					wallet_list = (find_sync_block(NewBs))#block.wallet_list,
+					height = (hd(NewBs))#block.height
 				}
 			);
 		{fork_recovered, [TopB|_] = NewBs}
@@ -325,7 +332,8 @@ server(
 					S#state {
 						block_list = maybe_drop_blocks(NewBs),
 						hash_list = ar_weave:generate_hash_list(NewBs),
-						wallet_list = (find_sync_block(NewBs))#block.wallet_list
+						wallet_list = (find_sync_block(NewBs))#block.wallet_list,
+						height = (hd(NewBs))#block.height
 					}
 				)
 			);
@@ -384,7 +392,7 @@ fork_recover(S, NewGS, Peer, Height, NewB) ->
 process_new_block(S, NewGS, NewB, undefined, _, _Peer) ->
 	join_weave(S, NewGS, NewB#block.height);
 process_new_block(RawS1, NewGS, NewB, [OldB|_], RecallB, Peer)
-		when NewB#block.height == OldB#block.height + 1 ->
+		when NewB#block.height == RawS1#state.height + 1 ->
 	% This block is at the correct height.
 	S = RawS1#state { gossip = NewGS },
 	WalletList =
@@ -402,12 +410,12 @@ process_new_block(RawS1, NewGS, NewB, [OldB|_], RecallB, Peer)
 		false ->
 			fork_recover(S, Peer, NewB#block.height, NewB)
 	end;
-process_new_block(S, NewGS, NewB, [OldB|_], _RecallB, _Peer)
-		when NewB#block.height =< OldB#block.height ->
+process_new_block(S, NewGS, NewB, [_OldB|_], _RecallB, _Peer)
+		when NewB#block.height =< S#state.height ->
 	% Block is lower than us, ignore it.
 	server(S#state { gossip = NewGS });
-process_new_block(S, NewGS, NewB, [OldB|_], _, Peer)
-		when NewB#block.height > OldB#block.height + 1 ->
+process_new_block(S, NewGS, NewB, [_OldB|_], _, Peer)
+		when NewB#block.height > S#state.height + 1 ->
 	fork_recover(S, NewGS, Peer, NewB#block.height, NewB).
 
 %% @doc We have received a new valid block. Update the node state accordingly.
@@ -439,7 +447,8 @@ integrate_new_block(
 			S#state {
 				block_list = maybe_drop_blocks([NewB|Bs]),
 				hash_list = [NewB#block.indep_hash|HashList],
-				txs = NewTXs
+				txs = NewTXs,
+				height = NewB#block.height
 			}
 		)
 	).

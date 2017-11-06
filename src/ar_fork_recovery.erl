@@ -62,8 +62,8 @@ server(S = #state { blocks = [], peers = Peers }) ->
 	);
 server(S = #state { peers = Peers, blocks = Bs = [B|_] }) ->
 	% Get and verify the next block.
-	RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
-	NextBs = ar_node:get_block(Peers, B#block.height + 1),
+	RecallBs = ar_node:get_block(Peers, ar:d(ar_weave:calculate_recall_block(B))),
+	NextBs = ar_node:get_block(Peers, ar:d(B#block.height + 1)),
 	BHL = [B#block.indep_hash|B#block.hash_list],
 	case try_apply_blocks(NextBs, BHL, B, RecallBs) of
 		false ->
@@ -114,6 +114,7 @@ single_block_ahead_recovery_test() ->
 	B1 = ar_weave:add(ar_weave:init(), []),
 	B2 = ar_weave:add(B1, []),
 	B3 = ar_weave:add(B2, []),
+	ar_storage:write_block(B3),
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
@@ -132,6 +133,7 @@ multiple_blocks_ahead_recovery_test() ->
 	B1 = ar_weave:add(ar_weave:init(), []),
 	B2 = ar_weave:add(B1, []),
 	B3 = ar_weave:add(B2, []),
+	ar_storage:write_block(B3),
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
@@ -156,6 +158,7 @@ multiple_blocks_since_fork_test() ->
 	B1 = ar_weave:add(ar_weave:init(), []),
 	B2 = ar_weave:add(B1, []),
 	B3 = ar_weave:add(B2, []),
+	ar_storage:write_block(B3),
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
