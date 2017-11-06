@@ -32,7 +32,7 @@ read_block(B) when is_record(B, block) -> B;
 read_block(Bs) when is_list(Bs) ->
 	lists:map(fun read_block/1, Bs);
 read_block(ID) ->
-	case filelib:wildcard(name(ID)) of
+	case ar:d(filelib:wildcard(name(ID))) of
 		[] -> unavailable;
 		[Filename] -> do_read_block(Filename);
 		Filenames ->
