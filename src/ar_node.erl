@@ -88,7 +88,7 @@ get_block(Peers, ID) when is_list(Peers) ->
 		),
 	ar_storage:read_block(
 		case [ B || B <- SortedBlocks, not is_atom(B) ] of
-			[] -> not_available;
+			[] -> unavailable;
 			[X] -> X;
 			Xs -> Xs
 		end
@@ -520,7 +520,7 @@ maybe_drop_blocks(Bs) ->
 					)
 				),
 			case lists:member(DropB, RecallBs) of
-				false -> 
+				false ->
 					ar_storage:write_block(DropB),
 					maybe_drop_blocks(ar_util:replace(DropB, DropB#block.indep_hash, Bs));
 				true -> maybe_drop_blocks(Bs)
