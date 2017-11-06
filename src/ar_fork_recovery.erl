@@ -75,6 +75,10 @@ server(S = #state { peers = Peers, blocks = Bs = [B|_] }) ->
 
 %% @doc Repeatedly attempt to apply block(s), stopping if one validates.
 try_apply_blocks(unavailable, _, _, _) -> false;
+try_apply_blocks(NextB, BHL, B, RecallB)
+		when is_record(NextB, block)
+		and is_record(RecallB, block) ->
+	try_apply_blocks(NextB, BHL, B, [RecallB]);
 try_apply_blocks(NextB, BHL, B, RecallBs) when is_record(NextB, block) ->
 	Validations =
 		lists:map(
