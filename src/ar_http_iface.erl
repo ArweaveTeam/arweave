@@ -133,9 +133,12 @@ handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
 
 %% @doc Handles all other elli metadata events.
-handle_event(_Event, _Data, _Args) ->
-	%ar:report_console([{elli_event, Event}, {data, Data}, {args, Args}]),
-	ok.
+handle_event(Type, Data, Args)
+		when (Type == request_throw)
+		or (Type == request_error)
+		or (Type == request_exit) ->
+	ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]);
+handle_event(_Event, _Data, _Args) -> ok.
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
 return_block(unavailable) -> {404, [], <<"Block not found.">>};
