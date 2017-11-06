@@ -51,7 +51,6 @@ server(S = #state { peers = Peers, blocks = [], target = Height }) ->
 			unavailable -> throw(join_block_not_available_from_any_peers);
 			XB -> XB
 		end,
-	ar:d([{block, B}, {peer, hd(Peers)}]),
 	RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
 	case
 		ar_fork_recovery:try_apply_blocks(
