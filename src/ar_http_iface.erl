@@ -176,7 +176,6 @@ return_info() ->
 
 %% @doc Send a new transaction to an Archain HTTP node.
 send_new_tx(Host, TX) ->
-	ar:d(
 	httpc:request(
 		post,
 		{
@@ -187,65 +186,52 @@ send_new_tx(Host, TX) ->
 		},
 		[{timeout, ?NET_TIMEOUT}],
 		[]
-	)).
+	).
 
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
-	ar:d(
-		[
-			send_new_block,
-			{host, Host},
-			{port, Port},
-			{newb, NewB#block.indep_hash}
-		]
-	),
-	ar:d(
-		httpc:request(
-			post,
-			{
-				"http://" ++ ar_util:format_peer(Host) ++ "/block",
-				[],
-				"application/x-www-form-urlencoded",
-				lists:flatten(
-					ar_serialize:jsonify(
-						{struct,
-							[
-								{new_block,
-									ar_serialize:block_to_json_struct(NewB)},
-								{recall_block,
-									ar_serialize:block_to_json_struct(RecallB)},
-								{port, Port}
-							]
-						}
-					)
+	httpc:request(
+		post,
+		{
+			"http://" ++ ar_util:format_peer(Host) ++ "/block",
+			[],
+			"application/x-www-form-urlencoded",
+			lists:flatten(
+				ar_serialize:jsonify(
+					{struct,
+						[
+							{new_block,
+								ar_serialize:block_to_json_struct(NewB)},
+							{recall_block,
+								ar_serialize:block_to_json_struct(RecallB)},
+							{port, Port}
+						]
+					}
 				)
-			}, [{timeout, ?NET_TIMEOUT}], []
-		)
+			)
+		}, [{timeout, ?NET_TIMEOUT}], []
 	).
 
 %% @doc Add peer (self) to host.
 add_peer(Host) ->
-	ar:d({adding_host, Host}),
-	ar:d(
-		httpc:request(
-			post,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/peers",
-				[],
-				"application/x-www-form-urlencoded",
-				""
-			}, [{timeout, ?NET_TIMEOUT}], []
-		)
+	%ar:d({adding_host, Host}),
+	httpc:request(
+		post,
+		{
+			"http://"
+				++ ar_util:format_peer(Host)
+				++ "/peers",
+			[],
+			"application/x-www-form-urlencoded",
+			""
+		}, [{timeout, ?NET_TIMEOUT}], []
 	).
 
 %% @doc Retreive a block by height or hash from a node.
 get_block(Host, Height) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_height, Height}]),
-	ar:d([getting_new_block, {host, Host}, {height, Height}]),
-	Res =
+	%ar:d([getting_new_block, {host, Host}, {height, Height}]),
 	handle_block_response(
 		httpc:request(
 			get,
@@ -258,15 +244,11 @@ get_block(Host, Height) when is_integer(Height) ->
 			},
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
-	),
-	case Res of
-		Res when is_record(Res, block) -> Res;
-		Res -> ar:d(Res)
-	end;
+	);
 get_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
-	handle_block_response(ar:d(
+	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
+	handle_block_response(
 		httpc:request(
 			get,
 			{
@@ -278,7 +260,7 @@ get_block(Host, Hash) when is_binary(Hash) ->
 			},
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
-	)).
+	).
 
 %% @doc Process the response of an /block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
