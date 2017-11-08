@@ -6,6 +6,7 @@
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_hash_list/2, hash_from_hash_list/2]).
+-export([height_from_hl/1, wl_from_hl/1, bl_from_hl/1]).
 -export([genesis_wallets/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
