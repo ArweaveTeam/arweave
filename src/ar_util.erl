@@ -72,7 +72,7 @@ do_decode_base64_safe([H|T]) ->
 	[ H | do_decode_base64_safe(T) ].
 
 %% @doc Get block height from a hash list.
-height_from_hl(BHL)
+height_from_hl(BHL) ->
 	BlockList = ar_util:bl_from_hl(BHL),
 	case BlockList of
 		undefined -> 0;
@@ -89,7 +89,7 @@ wl_from_hl(BHL) ->
 
 %% @doc Get block list from hash list.
 bl_from_hl(BHL) ->
-	lists.map(ar_storage:read_block/1, BHL).
+	lists:map(ar_storage:read_block/1, BHL).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
 hash_from_hash_list(Num, BHL) ->

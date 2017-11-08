@@ -37,8 +37,9 @@
 %% @doc Start a node, optionally with a list of peers.
 start() -> start([]).
 start(Peers) -> start(Peers, undefined).
-start(Peers, RewardAddr) ->
-	start(Peers, RewardAddr, 0, []).
+start(Peers, RewardAddr) -> start(Peers, RewardAddr, 0).
+start(Peers, RewardAddr, MiningDelay) ->
+	start(Peers, RewardAddr, MiningDelay, []).
 start(Peers, RewardAddr, MiningDelay, HashList) ->
 	case ar_util:bl_from_hl(HashList) of
 		undefined -> do_nothing;
