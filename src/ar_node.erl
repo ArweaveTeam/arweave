@@ -7,6 +7,7 @@
 -export([add_tx/2, add_peers/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2, validate/3, validate/4, validate/5, find_recall_block/1, find_recall_block/2]).
+-export([find_sync_block/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 

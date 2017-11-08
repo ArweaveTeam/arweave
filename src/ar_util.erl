@@ -73,6 +73,7 @@ do_decode_base64_safe([H|T]) ->
 	[ H | do_decode_base64_safe(T) ].
 
 %% @doc Get block height from a hash list.
+height_from_hl([]) -> 0;
 height_from_hl(BHL) ->
 	BlockList = ar_util:bl_from_hl(BHL),
 	case BlockList of
@@ -81,14 +82,17 @@ height_from_hl(BHL) ->
 	end.
 
 %% @doc Get a wallet list from a hash list.
+wl_from_hl([]) -> [];
 wl_from_hl(BHL) ->
 	BlockList = ar_util:bl_from_hl(BHL),
+	ar:report_console(BlockList),
 	case BlockList of
 		undefined -> [];
 		_ -> (ar_node:find_sync_block(BlockList))#block.wallet_list
 	end.
 
 %% @doc Get block list from hash list.
+bl_from_hl([]) -> undefined;
 bl_from_hl(BHL) ->
 	lists:map(fun ar_storage:read_block/1, BHL).
 
