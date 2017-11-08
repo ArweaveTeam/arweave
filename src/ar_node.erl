@@ -37,11 +37,10 @@
 %% @doc Start a node, optionally with a list of peers.
 start() -> start([]).
 start(Peers) -> start(Peers, undefined).
-start(Peers, BlockList) -> start(Peers, BlockList, unclaimed).
-start(Peers, BlockList, RewardAddr) ->
-	start(Peers, BlockList, RewardAddr, 0, ar_weave:generate_hash_list(BlockList)).
-start(Peers, BlockList, RewardAddr, MiningDelay, HashList) ->
-	case BlockList of
+start(Peers, RewardAddr) ->
+	start(Peers, RewardAddr, 0, []).
+start(Peers, RewardAddr, MiningDelay, HashList) ->
+	case ar_util:bl_from_hl(HashList) of
 		undefined -> do_nothing;
 		Bs -> lists:foreach(fun ar_storage:write_block/1, Bs)
 	end,
@@ -50,20 +49,11 @@ start(Peers, BlockList, RewardAddr, MiningDelay, HashList) ->
 			server(
 				#state {
 					gossip = ar_gossip:init(Peers),
-					block_list = BlockList,
 					hash_list = HashList,
-					wallet_list =
-						case BlockList of
-							undefined -> [];
-							_ -> (find_sync_block(BlockList))#block.wallet_list
-						end,
+					wallet_list = wl_from_hl(HashList),
 					mining_delay = MiningDelay,
 					reward_addr = RewardAddr,
-					height =
-						case BlockList of
-							undefined -> 0;
-							[B|_] -> B#block.height
-						end
+					height = height_from_hl(HashList)
 				}
 			)
 		end

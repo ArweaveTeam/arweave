@@ -71,6 +71,26 @@ do_decode_base64_safe([$-|T]) ->
 do_decode_base64_safe([H|T]) ->
 	[ H | do_decode_base64_safe(T) ].
 
+%% @doc Get block height from a hash list.
+height_from_hl(BHL)
+	BlockList = ar_util:bl_from_hl(BHL),
+	case BlockList of
+		undefined -> 0;
+		[B|_] -> B#block.height
+	end.
+
+%% @doc Get a wallet list from a hash list.
+wl_from_hl(BHL) ->
+	BlockList = ar_util:bl_from_hl(BHL),
+	case BlockList of
+		undefined -> [];
+		_ -> (find_sync_block(BlockList))#block.wallet_list
+	end.
+
+%% @doc Get block list from hash list.
+bl_from_hl(BHL) ->
+	lists.map(ar_storage:read_block/1, BHL).
+
 %% @doc Fetch a block hash by number from a block hash list (and disk).
 hash_from_hash_list(Num, BHL) ->
 	lists:nth(Num - 1, lists:reverse(BHL)).
