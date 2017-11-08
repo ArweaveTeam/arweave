@@ -85,12 +85,12 @@ wl_from_hl(BHL) ->
 	BlockList = ar_util:bl_from_hl(BHL),
 	case BlockList of
 		undefined -> [];
-		_ -> (find_sync_block(BlockList))#block.wallet_list
+		_ -> (ar_node:find_sync_block(BlockList))#block.wallet_list
 	end.
 
 %% @doc Get block list from hash list.
 bl_from_hl(BHL) ->
-	lists:map(ar_storage:read_block/1, BHL).
+	lists:map(fun ar_storage:read_block/1, BHL).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
 hash_from_hash_list(Num, BHL) ->

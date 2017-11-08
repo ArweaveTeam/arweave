@@ -1,5 +1,5 @@
 -module(ar_node).
--export([start/0, start/1, start/2, start/3, start/5, stop/1]).
+-export([start/0, start/1, start/2, start/3, stop/1]).
 -export([get_blocks/1, get_block/2, get_peers/1, get_balance/2]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
@@ -51,10 +51,10 @@ start(Peers, RewardAddr, MiningDelay, HashList) ->
 				#state {
 					gossip = ar_gossip:init(Peers),
 					hash_list = HashList,
-					wallet_list = wl_from_hl(HashList),
+					wallet_list = ar_util:wl_from_hl(HashList),
 					mining_delay = MiningDelay,
 					reward_addr = RewardAddr,
-					height = height_from_hl(HashList)
+					height = ar_util:height_from_hl(HashList)
 				}
 			)
 		end

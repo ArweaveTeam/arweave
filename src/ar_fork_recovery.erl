@@ -173,4 +173,3 @@ multiple_blocks_since_fork_test() ->
 	receive after 300 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
 	7 = B#block.height.
-
