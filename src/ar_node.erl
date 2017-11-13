@@ -725,7 +725,7 @@ calculate_reward(Height, TXs) ->
 %% This reward portion depends only on block height, not the number of transactions.
 calculate_static_reward(Height) ->
 	% TODO: Implement sensible reward calculation algorithm.
-	(0.2 * ?GENESIS_TOKENS * math:pow(2,-height/105120) * math:log(2))/105120.
+	(0.2 * ?GENESIS_TOKENS * math:pow(2,-Height/105120) * math:log(2))/105120.
 	%(0.1 * ?GENESIS_TOKENS * 2 - (Height/105120) * math:log(2))/105120.
 
 %% @doc Given a TX, calculate an appropriate reward.
