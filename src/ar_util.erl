@@ -5,8 +5,8 @@
 -export([encode_base64_safe/1, decode_base64_safe/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
--export([block_from_hash_list/2, hash_from_hash_list/2]).
--export([height_from_hl/1, wl_from_hl/1, bl_from_hl/1]).
+-export([block_from_hash_list/2, hash_from_hash_list/2, get_recall_hash/2, get_hash/1]).
+-export([height_from_hl/1, wl_from_hl/1, bl_from_hl/1, get_head_block/1]).
 -export([genesis_wallets/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -72,6 +72,10 @@ do_decode_base64_safe([$-|T]) ->
 do_decode_base64_safe([H|T]) ->
 	[ H | do_decode_base64_safe(T) ].
 
+%% @doc Get a block's hash.
+get_hash(B) when is_record(B, block) ->
+	B#block.indep_hash.
+
 %% @doc Get block height from a hash list.
 height_from_hl([]) -> 0;
 height_from_hl(BHL) ->
@@ -102,6 +106,16 @@ hash_from_hash_list(Num, BHL) ->
 
 block_from_hash_list(Num, BHL) ->
 	ar_storage:read_block(hash_from_hash_list(Num, BHL)).
+
+%% @doc Fetch the head block using BHL.
+get_head_block([]) -> ar:d(undefined);
+get_head_block(BHL) ->
+	ar:d(BHL),
+	ar_storage:read_block(hd(BHL)).
+
+%% @doc find the hash of a recall block.
+get_recall_hash(B, HashList) ->
+	lists:nth(1 + ar_weave:calculate_recall_block(B), lists:reverse(HashList)).
 
 %% @doc Replace a term in a list with another term.
 replace(_, _, []) -> [];

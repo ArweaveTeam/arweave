@@ -14,18 +14,20 @@
 	parent,
 	peers,
 	target,
-	blocks
+	blocks,
+	hash_list
 }).
 
 %% @doc Start the 'catch up' server.
-start(Parent, Peers, TargetHeight, BlockList) ->
+start(Parent, Peers, TargetHeight, HashList) ->
 	spawn(
 		fun() ->
 			ar:report(
 				[
 					{started_fork_recovery_proc, self()},
 					{target_height, TargetHeight},
-					{peer, Peers}
+					{peer, Peers},
+					{hash_list, HashList}
 				]
 			),
 			server(
@@ -33,7 +35,7 @@ start(Parent, Peers, TargetHeight, BlockList) ->
 					parent = Parent,
 					peers = Peers,
 					target = TargetHeight,
-					blocks = BlockList
+					hash_list  = HashList
 				}
 			)
 		end
@@ -55,15 +57,15 @@ server(S = #state { blocks = [], peers = Peers }) ->
 		S#state {
 			blocks =
 				[
-					ar_node:get_block(Peers, 1),
-					ar_node:get_block(Peers, 0)
+					ar_node:get_block(Peers, lists:nth(2, HashList)),
+					ar_node:get_block(Peers, hd(HashList))
 				]
 		}
 	);
 server(S = #state { peers = Peers, blocks = Bs = [B|_] }) ->
 	% Get and verify the next block.
-	RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
-	NextBs = ar_node:get_block(Peers, B#block.height + 1),
+	RecallBs = ar_node:get_block(Peers, get_recall_hash(B, HashList)),
+	NextBs = ar_node:get_block(Peers, B#block.indep_hash),
 	BHL = [B#block.indep_hash|B#block.hash_list],
 	case try_apply_blocks(NextBs, BHL, B, RecallBs) of
 		false ->

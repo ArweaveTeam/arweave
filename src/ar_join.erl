@@ -11,18 +11,19 @@
 	parent,
 	target,
 	blocks = [],
-	peers = []
+	peers = [],
+	hash_list = []
 }).
 
 %% @doc Start a process that will attempt to join a network from the last
 %% sync block.
-start(Node, Peers, Height) ->
+start(Node, Peers, HashList) ->
 	ar:report(
 		[
 			joining_network,
 			{node, Node},
 			{peers, Peers},
-			{height, Height}
+			{hash_list, HashList}
 		]
 	),
 	spawn(
@@ -31,33 +32,37 @@ start(Node, Peers, Height) ->
 				#state {
 					parent = Node,
 					peers = Peers,
-					target = Height
+					blocks = Blocks
 				}
 			)
 		end
 	).
 
 %% @doc Attempt to catch-up and validate the blocks from the last sync block.
-server(S = #state { peers = Peers, blocks = [], target = Height }) ->
+server(S = #state { peers = Peers, blocks = [], hash_list = HashList }) ->
+	Hash = hd(HashList),
+	Hash =
 	LastB =
-		case ar_node:get_block(Peers, (BNum = calculate_last_sync_block(Height)) - 1) of
+		case ar_node:get_block(Peers, Hash) of
 			LastBs when is_list(LastBs) -> hd(LastBs);
 			X -> X
 		end,
 	%% TODO: Ensure that this only hits the peer that started the join process.
 	B =
-		case ar_node:get_block(Peers, BNum) of
+		case ar_node:get_block(Peers, Hash) of
 			[HdB|_] when is_record(HdB, block) -> HdB;
 			unavailable -> throw(join_block_not_available_from_any_peers);
 			XB -> XB
 		end,
-	RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(B)),
+	RecallHash = ar_util:get_recall_hash(B, B#block.hash_list),
+	RecallBs = ar_node:get_block(Peers, RecallHash),
 	case
 		ar_fork_recovery:try_apply_blocks(
 			B,
 			get_hash_list(B),
 			LastB,
-			RecallBs
+			RecallBs,
+			HashList
 		)
 	of
 		false ->
@@ -70,13 +75,13 @@ server(
 			peers = Peers,
 			blocks = Bs = [LastB|_],
 			parent = Node,
-			target = Height
+			hash_list = HashList
 		}) ->
-	case LastB#block.height of
-		Height -> Node ! {fork_recovered, Bs};
+	case LastB#block.height > length(HashList) - 1 of
+		false -> Node ! {fork_recovered, Bs};
 		_ ->
-			Bs = ar_node:get_block(Peers, LastB#block.height + 1),
-			RecallBs = ar_node:get_block(Peers, ar_weave:calculate_recall_block(LastB)),
+			Bs = ar_node:get_block(Peers, hd(HashList)),
+			RecallBs = ar_node:get_block(Peers, ar_util:get_recall_hash(LastB)),
 			case
 				ar_fork_recovery:try_apply_blocks(
 					Bs,
