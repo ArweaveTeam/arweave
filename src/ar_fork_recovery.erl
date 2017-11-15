@@ -50,7 +50,7 @@ server(
 	}) ->
 	% The fork has been recovered. Return.
 	Parent ! {fork_recovered, Bs};
-server(S = #state { blocks = [], peers = Peers }) ->
+server(S = #state { blocks = [], peers = Peers, hash_list = HashList }) ->
 	% We are starting from scratch -- get the first block, for now.
 	% TODO: Update only from last sync block.
 	server(
@@ -62,12 +62,16 @@ server(S = #state { blocks = [], peers = Peers }) ->
 				]
 		}
 	);
-server(S = #state { peers = Peers, blocks = Bs = [B|_] }) ->
+server(S = #state { peers = Peers, blocks = Bs = [B|_], hash_list = HashList }) ->
 	% Get and verify the next block.
-	RecallBs = ar_node:get_block(Peers, get_recall_hash(B, HashList)),
+	HashList = [B#block.indep_hash|B#block.hash_list],
+	RecallBs =
+		ar_node:get_block(
+			Peers,
+			ar_util:get_recall_hash(B, HashList)
+		),
 	NextBs = ar_node:get_block(Peers, B#block.indep_hash),
-	BHL = [B#block.indep_hash|B#block.hash_list],
-	case try_apply_blocks(NextBs, BHL, B, RecallBs) of
+	case try_apply_blocks(NextBs, HashList, B, RecallBs) of
 		false ->
 			ar:report_console([could_not_validate_recovery_block]),
 			ok;

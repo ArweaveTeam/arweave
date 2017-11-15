@@ -29,11 +29,7 @@ start(Node, Peers, HashList) ->
 	spawn(
 		fun() ->
 			server(
-				#state {
-					parent = Node,
-					peers = Peers,
-					blocks = Blocks
-				}
+				#state { parent = Node, peers = Peers } 
 			)
 		end
 	).
