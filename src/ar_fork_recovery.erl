@@ -1,6 +1,6 @@
 
 -module(ar_fork_recovery).
--export([start/4, try_apply_blocks/4]).
+-export([start/5, try_apply_blocks/4]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -20,7 +20,7 @@
 }).
 
 %% @doc Start the 'catch up' server.
-start(Parent, Peers, TargetHeight, HashList) ->
+start(Parent, Peers, TargetHeight, Blocks, HashList) ->
 	spawn(
 		fun() ->
 			ar:report(
@@ -48,7 +48,7 @@ server(
 	#state {
 		parent = Parent,
 		target = Target,
-		blocks = Blocks = [ #block { height Target }|_ ],
+		blocks = Blocks,
 		hash_list = HashList
 	}) when  Target ->
 		% The fork has been recovered. Return.
@@ -70,20 +70,20 @@ server(S = #state { blocks = Blocks = [Block|_], peers = Peers, hash_list = Hash
 	RecallBs =
 		ar_node:get_block(
 			Peers,
-			get_recall_hash(B, HashList)
+			ar_util:get_recall_hash(Block, HashList)
 		),
 		% TODO: NextBs by hash?
 	NextBs =
 		ar_node:get_block(
 			Peers,
-			lists:nth(1 + B#block.block_height, HashList)
+			lists:nth(1 + Block#block.height, HashList)
 		),
-	case try_apply_blocks(NextBs, HashList) of
+	case try_apply_blocks(NextBs, HashList, Block, RecallBs) of
 		false ->
 			ar:report_console([could_not_validate_recovery_block]),
 			ok;
 		NextB ->
-			server(S#state { blocks = [NextB|Bs] })
+			server(S#state { blocks = [NextB|Blocks] })
 	end.
 
 %% @doc Repeatedly attempt to apply block(s), stopping if one validates.
@@ -96,10 +96,10 @@ try_apply_blocks(NextB, HashList, Block, RecallBs) when is_record(NextB, block) 
 	Validations =
 		lists:map(
 			fun(RecallB) ->
-				ar_node:validate(BHL,
-					ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
+				ar_node:validate(HashList,
+					ar_node:apply_txs(Block#block.wallet_list, NextB#block.txs),
 					NextB,
-					B,
+					Block,
 					RecallB
 				)
 			end,
