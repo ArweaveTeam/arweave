@@ -77,23 +77,14 @@ get_hash(B) when is_record(B, block) ->
 	B#block.indep_hash.
 
 %% @doc Get block height from a hash list.
-height_from_hl([]) -> 0;
+height_from_hl(not_joined) -> -1;
 height_from_hl(BHL) ->
-	BlockList = ar_util:bl_from_hl(BHL),
-	case BlockList of
-		undefined -> 0;
-		[B|_] -> B#block.height
-	end.
+	(get_head_block(BHL))#block.height.
 
 %% @doc Get a wallet list from a hash list.
-wl_from_hl([]) -> [];
-wl_from_hl(BHL) ->
-	BlockList = ar_util:bl_from_hl(BHL),
-	ar:report_console(BlockList),
-	case BlockList of
-		undefined -> [];
-		_ -> (ar_node:find_sync_block(BlockList))#block.wallet_list
-	end.
+wl_from_hl(not_joined) -> [];
+wl_from_hl(HashList) ->
+	(get_head_block(HashList))#block.wallet_list.
 
 %% @doc Get block list from hash list.
 bl_from_hl([]) -> undefined;
@@ -108,10 +99,8 @@ block_from_hash_list(Num, BHL) ->
 	ar_storage:read_block(hash_from_hash_list(Num, BHL)).
 
 %% @doc Fetch the head block using BHL.
-get_head_block([]) -> ar:d(undefined);
-get_head_block(BHL) ->
-	ar:d(BHL),
-	ar_storage:read_block(hd(BHL)).
+get_head_block([IndepHash|_]) ->
+	ar_storage:read_block(IndepHash).
 
 %% @doc find the hash of a recall block.
 get_recall_hash(B, HashList) ->

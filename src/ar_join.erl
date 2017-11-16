@@ -29,15 +29,13 @@ start(Node, Peers, HashList) ->
 	spawn(
 		fun() ->
 			server(
-				#state { parent = Node, peers = Peers } 
+				#state { parent = Node, peers = Peers, hash_list = HashList } 
 			)
 		end
 	).
 
 %% @doc Attempt to catch-up and validate the blocks from the last sync block.
-server(S = #state { peers = Peers, blocks = [], hash_list = HashList }) ->
-	Hash = hd(HashList),
-	Hash =
+server(S = #state { peers = Peers, blocks = [], hash_list = HashList = [Hash|_] }) ->
 	LastB =
 		case ar_node:get_block(Peers, Hash) of
 			LastBs when is_list(LastBs) -> hd(LastBs);

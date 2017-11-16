@@ -53,7 +53,7 @@
 	hash = <<>>, % A hash of this block, the previous block and the recall block.
 	indep_hash = [], % A hash of just this block.
 	txs = [], % A list of transaction records associated with this block.
-	hash_list = [], % A list of every indep hash to this point, or undefined.
+	hash_list = undefined, % A list of every indep hash to this point, or undefined.
 	wallet_list = [], % A map of wallet blanaces, or undefined.
 	reward_addr = unclaimed
 }).
