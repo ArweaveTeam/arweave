@@ -7,7 +7,8 @@
 %%% An asynchronous process that asks another node on a different fork
 %%% for all of the blocks required to 'catch up' with the network,
 %%% verifying each in turn. Once the blocks since divergence have been
-%%% verified, the process returns the new state to its parent.
+%%% verified, the process returns the new state to its parent. Target is
+%%% height at which block height ~ought~ to be. Hash lists is forked.
 
 %% Defines the server state
 -record(state, {
@@ -35,6 +36,7 @@ start(Parent, Peers, TargetHeight, HashList) ->
 					parent = Parent,
 					peers = Peers,
 					target = TargetHeight,
+					blocks = Blocks,
 					hash_list  = HashList
 				}
 			)
@@ -46,10 +48,11 @@ server(
 	#state {
 		parent = Parent,
 		target = Target,
-		blocks = Bs = [#block { height = Target }|_]
-	}) ->
-	% The fork has been recovered. Return.
-	Parent ! {fork_recovered, Bs};
+		blocks = Blocks = [ #block { height Target }|_ ],
+		hash_list = HashList
+	}) when  Target ->
+		% The fork has been recovered. Return.
+		Parent ! {fork_recovered, HashList};
 server(S = #state { blocks = [], peers = Peers, hash_list = HashList }) ->
 	% We are starting from scratch -- get the first block, for now.
 	% TODO: Update only from last sync block.
@@ -62,16 +65,20 @@ server(S = #state { blocks = [], peers = Peers, hash_list = HashList }) ->
 				]
 		}
 	);
-server(S = #state { peers = Peers, blocks = Bs = [B|_], hash_list = HashList }) ->
+server(S = #state { blocks = Blocks = [Block|_], peers = Peers, hash_list = HashList }) ->
 	% Get and verify the next block.
-	HashList = [B#block.indep_hash|B#block.hash_list],
 	RecallBs =
 		ar_node:get_block(
 			Peers,
-			ar_util:get_recall_hash(B, HashList)
+			get_recall_hash(B, HashList)
 		),
-	NextBs = ar_node:get_block(Peers, B#block.indep_hash),
-	case try_apply_blocks(NextBs, HashList, B, RecallBs) of
+		% TODO: NextBs by hash?
+	NextBs =
+		ar_node:get_block(
+			Peers,
+			lists:nth(1 + B#block.block_height, HashList)
+		),
+	case try_apply_blocks(NextBs, HashList) of
 		false ->
 			ar:report_console([could_not_validate_recovery_block]),
 			ok;
@@ -81,11 +88,11 @@ server(S = #state { peers = Peers, blocks = Bs = [B|_], hash_list = HashList }) 
 
 %% @doc Repeatedly attempt to apply block(s), stopping if one validates.
 try_apply_blocks(unavailable, _, _, _) -> false;
-try_apply_blocks(NextB, BHL, B, RecallB)
+try_apply_blocks(NextB, HashList, Block, RecallB)
 		when is_record(NextB, block)
 		and is_record(RecallB, block) ->
-	try_apply_blocks(NextB, BHL, B, [RecallB]);
-try_apply_blocks(NextB, BHL, B, RecallBs) when is_record(NextB, block) ->
+	try_apply_blocks(NextB, HashList, Block, [RecallB]);
+try_apply_blocks(NextB, HashList, Block, RecallBs) when is_record(NextB, block) ->
 	Validations =
 		lists:map(
 			fun(RecallB) ->

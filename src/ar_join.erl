@@ -29,7 +29,11 @@ start(Node, Peers, HashList) ->
 	spawn(
 		fun() ->
 			server(
-				#state { parent = Node, peers = Peers, hash_list = HashList } 
+				#state {
+					parent = Node,
+					peers = Peers,
+					hash_list = HashList
+				}
 			)
 		end
 	).
@@ -48,6 +52,7 @@ server(S = #state { peers = Peers, blocks = [], hash_list = HashList = [Hash|_] 
 			unavailable -> throw(join_block_not_available_from_any_peers);
 			XB -> XB
 		end,
+	ar:d({block, B}),
 	RecallHash = ar_util:get_recall_hash(B, B#block.hash_list),
 	RecallBs = ar_node:get_block(Peers, RecallHash),
 	case
