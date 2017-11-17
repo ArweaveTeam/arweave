@@ -154,7 +154,7 @@ return_block(B) ->
 %% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
 return_info() ->
-	Bs = [B|_] = ar_node:get_blocks(whereis(http_entrypoint_node)),
+	Hs = [H|_] = ar_node:get_blocks(whereis(http_entrypoint_node)),
 	Peers = ar_node:get_peers(whereis(http_entrypoint_node)),
 	{200, [],
 		list_to_binary(
@@ -163,8 +163,8 @@ return_info() ->
 					[
 						{network, ?NETWORK_NAME},
 						{version, ?CLIENT_VERSION},
-						{height, B#block.height},
-						{blocks, length(Bs)},
+						{height, (ar_storage:read_block(H))#block.height},
+						{blocks, length(Hs)},
 						{peers, length(Peers)}
 					]
 				}
@@ -283,7 +283,7 @@ reregister(Node) ->
 %% @doc Tests add peer functionality
 add_peers_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init(),
+	[B0] = ar_weave:init([]),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
 	add_peer({127,0,0,1,1984}),
@@ -294,7 +294,7 @@ add_peers_test() ->
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init(),
+	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
@@ -311,7 +311,7 @@ get_info_test() ->
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_peers_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init(),
+	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([{127,0,0,1,1984},{127,0,0,1,1985}], [B0]),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
@@ -358,7 +358,7 @@ get_presale_balance_test() ->
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init(),
+	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	receive after 200 -> ok end,
@@ -367,7 +367,7 @@ get_block_by_hash_test() ->
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init(),
+	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	B0 = get_block({127, 0, 0, 1}, 0).
@@ -375,7 +375,7 @@ get_block_by_height_test() ->
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init(),
+	[B0] = ar_weave:init([]),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA">>)),
@@ -383,19 +383,20 @@ add_external_tx_test() ->
 	ar_node:mine(Node),
 	receive after 1000 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
-	[TX] = B1#block.txs.
+	[TX] = (ar_storage:read_block(B1))#block.txs.
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init(),
+	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	Node2 = ar_node:start([], [B0]),
 	ar_node:mine(Node2),
 	receive after 1000 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node2),
-	send_new_block({127, 0, 0, 1}, ?DEFAULT_HTTP_IFACE_PORT, B1, B0),
+	send_new_block({127, 0, 0, 1}, ?DEFAULT_HTTP_IFACE_PORT, ar_storage:read_block(B1), B0),
 	receive after 500 -> ok end,
-	[B1, B0] = ar_node:get_blocks(Node1).
+	[B1, XB0] = ar_node:get_blocks(Node1),
+	B0 = ar_storage:read_block(XB0).
