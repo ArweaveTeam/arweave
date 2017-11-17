@@ -30,7 +30,7 @@ start(Node, Peers, NewB) ->
 basic_node_join_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start([], _B0 = ar_weave:init()),
-	Node2 = ar_node:start([Node1], undefined),
+	Node2 = ar_node:start([Node1]),
 	receive after 300 -> ok end,
 	ar_node:mine(Node1),
 	receive after 300 -> ok end,
@@ -45,7 +45,7 @@ basic_node_join_test() ->
 node_join_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start([], _B0 = ar_weave:init()),
-	Node2 = ar_node:start([Node1], undefined),
+	Node2 = ar_node:start([Node1]),
 	ar_node:add_peers(Node1, Node2),
 	receive after 300 -> ok end,
 	ar_node:mine(Node1),

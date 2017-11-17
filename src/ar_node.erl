@@ -1,5 +1,5 @@
 -module(ar_node).
--export([start/0, start/1, start/2, start/3, stop/1]).
+-export([start/0, start/1, start/2, start/3, start/4,stop/1]).
 -export([get_blocks/1, get_block/2, get_peers/1, get_balance/2]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
@@ -36,14 +36,14 @@
 
 %% @doc Start a node, optionally with a list of peers.
 start() -> start([]).
-start(Peers) -> start(Peers, undefined).
-start(Peers, RewardAddr) -> start(Peers, RewardAddr, 0).
-start(Peers, RewardAddr, MiningDelay) ->
-	start(Peers, RewardAddr, MiningDelay, not_joined).
-start(Peers, RewardAddr, MiningDelay, Bs = [B|_]) when is_record(B, block) ->
+start(Peers) -> start(Peers, not_joined).
+start(Peers, Bs) -> start(Peers, Bs, 0).
+start(Peers, Bs, MiningDelay) ->
+	start(Peers, Bs, MiningDelay, unclaimed).
+start(Peers, Bs = [B|_], MiningDelay, RewardAddr) when is_record(B, block) ->
 	lists:map(fun ar_storage:write_block/1, Bs),
-	start(Peers, RewardAddr, MiningDelay, B#block.hash_list);
-start(Peers, RewardAddr, MiningDelay, HashList) ->
+	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr);
+start(Peers, HashList, MiningDelay, RewardAddr) ->
 	spawn(
 		fun() ->
 			server(
@@ -75,7 +75,7 @@ get_blocks(Node) ->
 
 %% @doc Return a specific block from a node, if it has it.
 get_block(Peers, ID) when is_list(Peers) ->
-	ar:d([{getting_block, ID}, {peers, Peers}]),
+	%ar:d([{getting_block, ID}, {peers, Peers}]),
 	Blocks = [ get_block(Peer, ID) || Peer <- Peers ],
 	SortedBlocks =
 		lists:sort(
@@ -309,7 +309,7 @@ server(
 			);
 		{fork_recovered, NewHs} when HashList == not_joined ->
 			NewB = ar_storage:read_block(hd(NewHs)),
-			ar:report_console(
+			ar:report(
 				[
 					node_joined_successfully,
 					{height, NewB#block.height}
@@ -327,7 +327,7 @@ server(
 		{fork_recovered, NewHs}
  				when (length(NewHs) - 1) > (length(HashList) - 1) ->
 			NewB = ar_storage:read_block(hd(NewHs)),
-			ar:report_console(
+			ar:report(
 				[
 					fork_recovered_successfully,
 					{height, NewB#block.height}
@@ -429,7 +429,7 @@ integrate_new_block(
 		),
 	ar_storage:write_block(NewB),
 	% Recurse over the new block.
-	ar:report_console(
+	ar:report(
 		[
 			{accepted_foreign_block, NewB#block.indep_hash},
 			{height, NewB#block.height}
@@ -471,7 +471,7 @@ integrate_block_from_miner(
 	% Build the block record, verify it, and gossip it to the other nodes.
 	[NextB|_] =
 		ar_weave:add(HashList, HashList, WalletList, MinedTXs, Nonce, RewardAddr),
-		case validate(NewS, NextB, ar_util:get_head_block(HashList), find_recall_block(HashList)) of
+	case validate(NewS, NextB, ar_util:get_head_block(HashList), find_recall_block(HashList)) of
 		false ->
 			ar:report_console([{miner, self()}, incorrect_nonce]),
 			server(OldS);
@@ -484,10 +484,10 @@ integrate_block_from_miner(
 						self(),
 						NextB#block.height,
 						NextB,
-						find_recall_block(NextB)
+						find_recall_block(HashList)
 					}
 				),
-			ar:report_console(
+			ar:report(
 				[
 					{node, self()},
 					{accepted_block, NextB#block.height},
@@ -755,23 +755,6 @@ start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
 			S#state { miner = Miner }
 	end.
 
-%% @doc Drop blocks in a block list down to a given height.
-drop_blocks_to(Height, Bs) ->
-	lists:filter(
-		fun F(B) when is_record(B, block) ->
-			B#block.height =< Height;
-		F(Hash) ->
-			F(ar_storage:read_block(Hash))
-		end,
-		Bs
-	).
-
-%drop_hashes_to(HashList, N) when length(HashList) - 1 == N ->
-%	HashList;
-%drop_hashes_to(HashList, N) ->
-%	drop_hashes_to(lists:tail(HashList), N - 1).
-
-
 %%% Tests
 
 %% @doc Ensure that divergence heights are appropriately calculated.
@@ -904,7 +887,7 @@ large_blockweave_with_data_test() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	B0 = ar_weave:init([]),
-	Nodes = [ start([], B0) || _ <- lists:seq(1, 500) ],
+	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 100)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
 	receive after 2000 -> ok end,
@@ -918,7 +901,7 @@ large_weakly_connected_blockweave_with_data_test() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	B0 = ar_weave:init([]),
-	Nodes = [ start([], B0) || _ <- lists:seq(1, 500) ],
+	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
 	receive after 2000 -> ok end,
@@ -988,7 +971,7 @@ tiny_collaborative_blockweave_mining_test() ->
 mining_reward_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Node1 = ar_node:start([], ar_weave:init([]), Pub1),
+	Node1 = start([], ar_weave:init([]), 0, Pub1),
 	mine(Node1),
 	receive after 1000 -> ok end,
 	true = (get_balance(Node1, Pub1) > 0).
@@ -997,8 +980,8 @@ mining_reward_test() ->
 multi_node_mining_reward_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Node1 = ar_node:start([], B0 = ar_weave:init([])),
-	Node2 = ar_node:start([Node1], B0, Pub1),
+	Node1 = start([], B0 = ar_weave:init([])),
+	Node2 = start([Node1], B0, 0, Pub1),
 	mine(Node2),
 	receive after 1000 -> ok end,
 	true = (get_balance(Node1, Pub1) > 0).

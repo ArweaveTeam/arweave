@@ -29,6 +29,9 @@
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
+%% Lenght of time to wait before giving up on test(s).
+-define(TEST_TIMEOUT, 5 * 60).
+
 %% Calculate MS to wait in order to hit target block time.
 -define(DEFAULT_MINING_DELAY,
 	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
