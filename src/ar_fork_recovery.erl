@@ -42,7 +42,7 @@ start(Peers, TargetB, HashList) ->
 						drop_until_diverge(
 							lists:reverse(TargetB#block.hash_list),
 							lists:reverse(HashList)
-						)
+						) ++ [TargetB#block.indep_hash]
 				}
 			)
 		end
@@ -50,7 +50,6 @@ start(Peers, TargetB, HashList) ->
 
 %% @doc Take two lists, drop elements until they do not match.
 %% Return the remainder of the _first_ list.
-%% TODO: Verify that this drops to the correct spot!
 drop_until_diverge([X|R1], [X|R2]) -> drop_until_diverge(R1, R2);
 drop_until_diverge(R1, _) -> R1.
 
@@ -66,27 +65,36 @@ server(
 	ar_storage:write_block(Blocks),
 	Parent ! {fork_recovered, [B#block.indep_hash|B#block.hash_list]};
 server(S = #state { blocks = [], peers = Peers, hash_list = [LastH|Rest] }) ->
-	% Get the first block in fork.
-	server(
-		S#state {
-			blocks = [ ar_node:get_block(Peers, LastH) ],
-			hash_list = Rest
-		}
-	);
+	% Verify the first block in fork.
+	% TODO: Can this and the clause below be generalised?
+	NextB = ar_node:get_block(Peers, LastH),
+	B = ar_storage:read_block(NextB#block.previous_block),
+	RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
+	case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
+		false ->
+			ar:d(could_not_validate_first_fork_block);
+		true ->
+			server(
+				S#state {
+					blocks = [ NextB, B ],
+					hash_list = Rest
+				}
+			)
+	end;
 server(S = #state { blocks = Blocks = [B|_], peers = Peers, hash_list = [NextH|HashList] }) ->
 	% Get and verify the next block.
 	NextB = ar_node:get_block(Peers, NextH),
 	RecallB =
 		ar_node:get_block(
 			Peers,
-			ar_util:get_recall_hash(NextB, NextB#block.hash_list)
+			ar_util:get_recall_hash(B, B#block.hash_list)
 		),
-	case try_apply_block(HashList, NextB, B, RecallB) of
+	case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
 		false ->
 			ar:report_console([could_not_validate_recovery_block]),
 			ok;
-		NextB ->
-			server(S#state { blocks = [NextB|Blocks] })
+		true ->
+			server(S#state { blocks = [NextB|Blocks], hash_list = HashList })
 	end.
 
 try_apply_block(HashList, NextB, B, RecallB) ->
@@ -104,26 +112,26 @@ single_block_ahead_recovery_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
-	B1 = ar_weave:add(ar_weave:init(), []),
+	B1 = ar_weave:add(ar_weave:init([]), []),
 	B2 = ar_weave:add(B1, []),
 	B3 = ar_weave:add(B2, []),
 	ar_storage:write_block(B3),
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
-	receive after 2000 -> ok end,
+	receive after 500 -> ok end,
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
 	receive after 2000 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
-	5 = B#block.height.
+	5 = (ar_storage:read_block(B))#block.height.
 
 %% @doc Ensure that nodes on a fork that is far behind will catchup correctly.
 multiple_blocks_ahead_recovery_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
-	B1 = ar_weave:add(ar_weave:init(), []),
+	B1 = ar_weave:add(ar_weave:init([]), []),
 	B2 = ar_weave:add(B1, []),
 	B3 = ar_weave:add(B2, []),
 	ar_storage:write_block(B3),
@@ -141,14 +149,14 @@ multiple_blocks_ahead_recovery_test() ->
 	ar_node:mine(Node1),
 	receive after 300 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
-	8 = B#block.height.
+	8 = (ar_storage:read_block(B))#block.height.
 
 %% @doc Ensure that nodes that have diverged by multiple blocks each can reconcile.
 multiple_blocks_since_fork_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
-	B1 = ar_weave:add(ar_weave:init(), []),
+	B1 = ar_weave:add(ar_weave:init([]), []),
 	B2 = ar_weave:add(B1, []),
 	B3 = ar_weave:add(B2, []),
 	ar_storage:write_block(B3),
@@ -165,4 +173,4 @@ multiple_blocks_since_fork_test() ->
 	ar_node:mine(Node1),
 	receive after 300 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
-	7 = B#block.height.
+	7 = (ar_storage:read_block(B))#block.height.
