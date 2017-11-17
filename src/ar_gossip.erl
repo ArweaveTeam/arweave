@@ -58,7 +58,9 @@ send(S, Msg) ->
 	case already_heard(S, Msg) of
 		false ->
 			lists:foreach(
-				fun(Peer) -> possibly_send(S, Peer, Msg) end,
+				fun(Peer) ->
+					spawn(fun() -> possibly_send(S, Peer, Msg) end)
+				end,
 				S#gs_state.peers
 			),
 			{S#gs_state { heard = [Msg#gs_msg.hash|S#gs_state.heard] }, sent};
