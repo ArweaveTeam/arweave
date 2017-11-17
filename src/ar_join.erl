@@ -1,111 +1,30 @@
 -module(ar_join).
--export([start/3]).
+-export([start/2, start/3]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Represents a process that handles creating an initial, minimal
 %%% block list to be used by a node joining a network already in progress.
 
-%% Process state.
--record(state, {
-	parent,
-	target,
-	blocks = [],
-	peers = [],
-	hash_list = []
-}).
-
 %% @doc Start a process that will attempt to join a network from the last
 %% sync block.
-start(Node, Peers, HashList) ->
+start(Peers, NewB) ->
+	start(self(), Peers, NewB).
+start(Node, Peers, NewB) ->
 	ar:report(
 		[
 			joining_network,
 			{node, Node},
 			{peers, Peers},
-			{hash_list, HashList}
+			{height, NewB#block.height}
 		]
 	),
 	spawn(
 		fun() ->
-			server(
-				#state {
-					parent = Node,
-					peers = Peers,
-					hash_list = HashList
-				}
-			)
+			ar_storage:write_block(NewB),
+			Node ! {fork_recovered, [NewB#block.hash|NewB#block.hash_list]}
 		end
 	).
-
-%% @doc Attempt to catch-up and validate the blocks from the last sync block.
-server(S = #state { peers = Peers, blocks = [], hash_list = HashList = [Hash|_] }) ->
-	LastB =
-		case ar_node:get_block(Peers, Hash) of
-			LastBs when is_list(LastBs) -> hd(LastBs);
-			X -> X
-		end,
-	%% TODO: Ensure that this only hits the peer that started the join process.
-	B =
-		case ar_node:get_block(Peers, Hash) of
-			[HdB|_] when is_record(HdB, block) -> HdB;
-			unavailable -> throw(join_block_not_available_from_any_peers);
-			XB -> XB
-		end,
-	ar:d({block, B}),
-	RecallHash = ar_util:get_recall_hash(B, B#block.hash_list),
-	RecallBs = ar_node:get_block(Peers, RecallHash),
-	case
-		ar_fork_recovery:try_apply_blocks(
-			B,
-			get_hash_list(B),
-			LastB,
-			RecallBs,
-			HashList
-		)
-	of
-		false ->
-			ar:report([couldnt_validate_last_sync_block]),
-			giving_up;
-		B -> server(S#state { blocks = [B, LastB] })
-	end;
-server(
-		S = #state {
-			peers = Peers,
-			blocks = Bs = [LastB|_],
-			parent = Node,
-			hash_list = HashList
-		}) ->
-	case LastB#block.height > length(HashList) - 1 of
-		false -> Node ! {fork_recovered, Bs};
-		_ ->
-			Bs = ar_node:get_block(Peers, hd(HashList)),
-			RecallBs = ar_node:get_block(Peers, ar_util:get_recall_hash(LastB)),
-			case
-				ar_fork_recovery:try_apply_blocks(
-					Bs,
-					get_hash_list(Bs),
-					LastB,
-					RecallBs
-				)
-			of
-				false ->
-					ar:report_console([couldnt_validate_catchup_block]),
-					giving_up;
-				NextB ->
-					server(S#state { blocks = [NextB|Bs] })
-			end
-	end.
-
-%% @doc From the return types of get_block, retreive a hash_list
-get_hash_list(unavailable) -> unavailable;
-get_hash_list(B) when is_record(B, block) -> B#block.hash_list;
-get_hash_list([B|_Bs]) -> B#block.hash_list.
-
-%% @doc Find the last block with a complete block hash and wallet list.
-calculate_last_sync_block(Height) ->
-	%% TODO: Calcualte this from sync block frequency.
-	Height.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->

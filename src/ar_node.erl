@@ -307,38 +307,38 @@ server(
 					mining_delay = Delay
 				}
 			);
-		{fork_recovered, NewBs} when HashList == not_joined ->
-			lists:foreach(fun ar_storage:write_block/1, NewBs),
+		{fork_recovered, NewHs} when HashList == not_joined ->
+			NewB = ar_storage:read_block(hd(NewHs)),
 			ar:report_console(
 				[
 					node_joined_successfully,
-					{blocks, length(NewBs)}
+					{height, NewB#block.height}
 				]
 			),
 			server(
 				reset_miner(
 					S#state {
-						hash_list = ar_weave:generate_hash_list(NewBs),
-						wallet_list = (find_sync_block(NewBs))#block.wallet_list,
-						height = (hd(NewBs))#block.height
+						hash_list = NewHs,
+						wallet_list = NewB#block.wallet_list,
+						height = NewB#block.height
 					}
 				)
 			);
-		{fork_recovered, [TopB|_] = NewBs}
- 				when TopB#block.height > (length(HashList) - 1) ->
-			lists:foreach(fun ar_storage:write_block/1, NewBs),
+		{fork_recovered, NewHs}
+ 				when (length(NewHs) - 1) > (length(HashList) - 1) ->
+			NewB = ar_storage:read_block(hd(NewHs)),
 			ar:report_console(
 				[
 					fork_recovered_successfully,
-					{blocks, length(NewBs)}
+					{height, NewB#block.height}
 				]
 			),
 			server(
 				reset_miner(
 					S#state {
-						hash_list = ar_weave:generate_hash_list(NewBs),
-						wallet_list = (find_sync_block(NewBs))#block.wallet_list,
-						height = (length(HashList) - 1)
+						hash_list = NewHs,
+						wallet_list = NewB#block.wallet_list,
+						height = NewB#block.height
 					}
 				)
 			);
@@ -350,13 +350,12 @@ server(
 
 %%% Abstracted server functionality
 
-%% @doc Catch up to the current height, from 0.
-join_weave(S, NewGS, HashList) ->
+%% @doc Catch up to the current height.
+join_weave(S, NewB) ->
 	server(
 		S#state {
-			gossip = NewGS,
 			recovery =
-				ar_join:start(self(), ar_gossip:peers(NewGS), HashList)
+				ar_join:start(ar_gossip:peers(S#state.gossip), NewB)
 		}
 	).
 
@@ -376,6 +375,7 @@ fork_recover(
 				)
 		}
 	).
+
 %% @doc Return the sublist of shared starting elements from two lists.
 %take_until_divergence([A|Rest1], [A|Rest2]) ->
 %	[A|take_until_divergence(Rest1, Rest2)];
@@ -384,7 +384,7 @@ fork_recover(
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
 process_new_block(S, NewGS, NewB, _, _Peer, not_joined) ->
-	join_weave(S, NewGS, NewB#block.hash_list);
+	join_weave(S#state { gossip = NewGS }, NewB);
 process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 		when NewB#block.height == RawS1#state.height + 1 ->
 		% This block is at the correct height.
