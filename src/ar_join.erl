@@ -22,14 +22,14 @@ start(Node, Peers, NewB) ->
 	spawn(
 		fun() ->
 			ar_storage:write_block(NewB),
-			Node ! {fork_recovered, [NewB#block.hash|NewB#block.hash_list]}
+			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]}
 		end
 	).
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->
 	ar_storage:clear(),
-	Node1 = ar_node:start([], _B0 = ar_weave:init()),
+	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
 	Node2 = ar_node:start([Node1]),
 	receive after 300 -> ok end,
 	ar_node:mine(Node1),
@@ -39,12 +39,12 @@ basic_node_join_test() ->
 	ar_node:mine(Node1),
 	receive after 600 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
-	2 = B#block.height.
+	2 = (ar_storage:read_block(B))#block.height.
 
 %% @doc Ensure that both nodes can mine after a join.
 node_join_test() ->
 	ar_storage:clear(),
-	Node1 = ar_node:start([], _B0 = ar_weave:init()),
+	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
 	Node2 = ar_node:start([Node1]),
 	ar_node:add_peers(Node1, Node2),
 	receive after 300 -> ok end,
@@ -57,4 +57,4 @@ node_join_test() ->
 	ar_node:mine(Node2),
 	receive after 600 -> ok end,
 	[B|_] = ar_node:get_blocks(Node1),
-	3 = B#block.height.
+	3 = (ar_storage:read_block(B))#block.height.
