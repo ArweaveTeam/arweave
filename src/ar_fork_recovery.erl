@@ -1,6 +1,6 @@
 
 -module(ar_fork_recovery).
--export([start/5, try_apply_blocks/4]).
+-export([start/3]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -14,19 +14,20 @@
 -record(state, {
 	parent,
 	peers,
-	target,
+	target_block,
 	blocks,
 	hash_list
 }).
 
 %% @doc Start the 'catch up' server.
-start(Parent, Peers, TargetHeight, Blocks, HashList) ->
+start(Peers, TargetB, HashList) ->
+	Parent = self(),
 	spawn(
 		fun() ->
 			ar:report(
 				[
 					{started_fork_recovery_proc, self()},
-					{target_height, TargetHeight},
+					{target_height, TargetB#block.height},
 					{peer, Peers},
 					{hash_list, HashList}
 				]
@@ -35,50 +36,52 @@ start(Parent, Peers, TargetHeight, Blocks, HashList) ->
 				#state {
 					parent = Parent,
 					peers = Peers,
-					target = TargetHeight,
-					blocks = Blocks,
-					hash_list  = HashList
+					target_block = TargetB,
+					blocks = [],
+					hash_list =
+						drop_until_diverge(
+							lists:reverse(TargetB#block.hash_list),
+							lists:reverse(HashList)
+						)
 				}
 			)
 		end
 	).
 
+%% @doc Take two lists, drop elements until they do not match.
+%% Return the remainder of the _first_ list.
+%% TODO: Verify that this drops to the correct spot!
+drop_until_diverge([X|R1], [X|R2]) -> drop_until_diverge(R1, R2);
+drop_until_diverge(R1, _) -> R1.
+
 %% @doc Main server loop.
 server(
 	#state {
 		parent = Parent,
-		target = Target,
-		blocks = Blocks,
-		hash_list = HashList
-	}) when  Target ->
-		% The fork has been recovered. Return.
-		Parent ! {fork_recovered, HashList};
-server(S = #state { blocks = [], peers = Peers, hash_list = HashList }) ->
-	% We are starting from scratch -- get the first block, for now.
-	% TODO: Update only from last sync block.
+		target_block = TargetB,
+		blocks = Blocks = [B|_]
+	}) when TargetB == B ->
+	% The fork has been recovered write the blocks to disk
+	% and return the new hash list.
+	ar_storage:write_block(Blocks),
+	Parent ! {fork_recovered, [B#block.indep_hash|B#block.hash_list]};
+server(S = #state { blocks = [], peers = Peers, hash_list = [LastH|Rest] }) ->
+	% Get the first block in fork.
 	server(
 		S#state {
-			blocks =
-				[
-					ar_node:get_block(Peers, lists:nth(2, HashList)),
-					ar_node:get_block(Peers, hd(HashList))
-				]
+			blocks = [ ar_node:get_block(Peers, LastH) ],
+			hash_list = Rest
 		}
 	);
-server(S = #state { blocks = Blocks = [Block|_], peers = Peers, hash_list = HashList }) ->
+server(S = #state { blocks = Blocks = [B|_], peers = Peers, hash_list = [NextH|HashList] }) ->
 	% Get and verify the next block.
-	RecallBs =
+	NextB = ar_node:get_block(Peers, NextH),
+	RecallB =
 		ar_node:get_block(
 			Peers,
-			ar_util:get_recall_hash(Block, HashList)
+			ar_util:get_recall_hash(NextB, NextB#block.hash_list)
 		),
-		% TODO: NextBs by hash?
-	NextBs =
-		ar_node:get_block(
-			Peers,
-			lists:nth(1 + Block#block.height, HashList)
-		),
-	case try_apply_blocks(NextBs, HashList, Block, RecallBs) of
+	case try_apply_block(HashList, NextB, B, RecallB) of
 		false ->
 			ar:report_console([could_not_validate_recovery_block]),
 			ok;
@@ -86,36 +89,13 @@ server(S = #state { blocks = Blocks = [Block|_], peers = Peers, hash_list = Hash
 			server(S#state { blocks = [NextB|Blocks] })
 	end.
 
-%% @doc Repeatedly attempt to apply block(s), stopping if one validates.
-try_apply_blocks(unavailable, _, _, _) -> false;
-try_apply_blocks(NextB, HashList, Block, RecallB)
-		when is_record(NextB, block)
-		and is_record(RecallB, block) ->
-	try_apply_blocks(NextB, HashList, Block, [RecallB]);
-try_apply_blocks(NextB, HashList, Block, RecallBs) when is_record(NextB, block) ->
-	Validations =
-		lists:map(
-			fun(RecallB) ->
-				ar_node:validate(HashList,
-					ar_node:apply_txs(Block#block.wallet_list, NextB#block.txs),
-					NextB,
-					Block,
-					RecallB
-				)
-			end,
-			RecallBs
-		),
-	case lists:member(true, Validations) of
-		false -> false;
-		true -> NextB
-	end;
-try_apply_blocks([NextB], BHL, B, RecallBs) ->
-	try_apply_blocks(NextB, BHL, B, RecallBs);
-try_apply_blocks([NextB|Rest], BHL, B, RecallBs) ->
-	case try_apply_blocks(NextB, BHL, B, RecallBs) of
-		false -> try_apply_blocks(Rest, BHL, B, RecallBs);
-		NextB -> NextB
-	end.
+try_apply_block(HashList, NextB, B, RecallB) ->
+	ar_node:validate(HashList,
+		ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
+		NextB,
+		B,
+		RecallB
+	).
 
 %%% Tests
 

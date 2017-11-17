@@ -365,27 +365,17 @@ fork_recover(
 	S = #state {
 		hash_list = HashList,
 		gossip = GS
-	}, Peer, Height, NewB) ->
+	}, Peer, NewB) ->
 	server(
 		S#state {
 			recovery =
 				ar_fork_recovery:start(
-					self(),
 					ar_util:unique([Peer|ar_gossip:peers(GS)]),
-					Height,
-					drop_blocks_to(
-						divergence_height(
-							lists:reverse(HashList),
-							lists:reverse(NewB#block.hash_list)
-						),
-						HashList
-					)
+					NewB,
+					HashList
 				)
 		}
 	).
-fork_recover(S, NewGS, Peer, Height, NewB) ->
-	fork_recover(S#state { gossip = NewGS }, Peer, Height, NewB).
-
 %% @doc Return the sublist of shared starting elements from two lists.
 %take_until_divergence([A|Rest1], [A|Rest2]) ->
 %	[A|take_until_divergence(Rest1, Rest2)];
@@ -412,7 +402,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			% The block is legit. Accept it.
 			integrate_new_block(NewS, NewB);
 		false ->
-			fork_recover(S, Peer, NewB#block.height, NewB)
+			fork_recover(S, Peer, NewB)
 	end;
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< S#state.height ->
@@ -420,7 +410,7 @@ process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 	server(S#state { gossip = NewGS });
 process_new_block(S, NewGS, NewB, _, Peer, _HashList)
 		when NewB#block.height > S#state.height + 1 ->
-	fork_recover(S, NewGS, Peer, NewB#block.height, NewB).
+	fork_recover(S#state { gossip = NewGS }, Peer, NewB).
 
 %% @doc We have received a new valid block. Update the node state accordingly.
 integrate_new_block(
