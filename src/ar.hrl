@@ -9,7 +9,7 @@
 %% with.
 -define(HASH_ALG, sha256).
 -define(SIGN_ALG, rsa).
--define(PRIV_KEY_SZ, 512).
+-define(PRIV_KEY_SZ, 4096).
 %% NOTE: Setting the default difficulty too high will cause TNT to fail!
 -define(DEFAULT_DIFF, 8).
 -define(TARGET_TIME, 300).
