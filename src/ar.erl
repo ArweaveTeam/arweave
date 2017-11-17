@@ -75,6 +75,9 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
 		Peers,
 		if Init -> ar_weave:init(); true -> not_joined end
 	),
+	SearchNode = app_search:start(
+		[Node|Peers]
+	),
 	% Add self to all remote nodes.
 	lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.
@@ -94,7 +97,8 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,
-		Node
+		Node,
+		SearchNode
 	),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end.
 

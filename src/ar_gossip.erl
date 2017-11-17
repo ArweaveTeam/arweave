@@ -12,6 +12,7 @@
 
 %% @doc Create a new gossip node state. Optionally, with peer list.
 init() -> init([]).
+init(PID) when is_pid(PID) -> init([PID]);
 init(Peers) when is_list(Peers) -> #gs_state { peers = Peers };
 init(PacketLossP) when is_float(PacketLossP) ->
 	#gs_state { loss_probability = PacketLossP };

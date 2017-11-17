@@ -1,5 +1,5 @@
 -module(ar_http_iface).
--export([start/0, start/1, start/2, handle/2, handle_event/3]).
+-export([start/0, start/1, start/2, start/3, handle/2, handle_event/3]).
 -export([send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
@@ -17,7 +17,10 @@ start(Port) ->
 		end
 	).
 start(Port, Node) ->
-	reregister(Node),
+	start(Port, Node, undefined).
+start(Port, Node, SearchNode) ->
+	reregister(http_entrypoint_node, Node),
+	reregister(http_search_node, SearchNode),
 	start(Port).
 
 %%% Server side functions.
@@ -42,6 +45,17 @@ handle('GET', [], _Req) ->
 % Get information about a block in JSON format.
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
+% Get a transaction by hash
+handle('GET', [<<"tx">>, Hash], _Req) ->
+	IndepHash = app_search:find_block(whereis(http_search_node),ar_util:decode(Hash)),
+	B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
+	case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
+		false ->
+			{404, [], <<"Not Found.">>};
+		Tx ->
+			return_tx(Tx)
+	end;
+
 % Add block specified in HTTP body.
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
@@ -147,6 +161,16 @@ return_block(B) ->
 		list_to_binary(
 			ar_serialize:jsonify(
 				ar_serialize:block_to_json_struct(B)
+			)
+		)
+	}.
+
+return_tx(unavailable) -> {404, [], <<"TX not found.">>};
+return_tx(T) ->
+	{200, [],
+		list_to_binary(
+			ar_serialize:jsonify(
+				ar_serialize:tx_to_json_struct(T)
 			)
 		)
 	}.
@@ -262,6 +286,23 @@ get_block(Host, Hash) when is_binary(Hash) ->
 	 	)
 	).
 
+get_tx(Host, Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
+	handle_tx_response(
+		httpc:request(
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/tx/"
+					++ ar_util:encode(Hash),
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+	 	)
+	).
+
 %% @doc Process the response of an /block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_serialize:json_struct_to_block(Body);
@@ -270,13 +311,24 @@ handle_block_response({ok, {{_, 404, _}, _, _}}) ->
 handle_block_response({ok, {{_, 500, _}, _, _}}) ->
 	not_found.
 
+%% @doc Process the response of a /tx call.
+handle_tx_response({ok, {{_, 200, _}, _, Body}}) ->
+	ar_serialize:json_struct_to_tx(Body);
+handle_tx_response({ok, {{_, 404, _}, _, _}}) ->
+	not_found;
+handle_tx_response({ok, {{_, 500, _}, _, _}}) ->
+	not_found.
+
 %% @doc Helper function : registers a new node as the entrypoint.
 reregister(Node) ->
-	case erlang:whereis(http_entrypoint_node) of
+	reregister(http_entrypoint_node, Node).
+reregister(_, undefined) -> not_registering;
+reregister(Name, Node) ->
+	case erlang:whereis(Name) of
 		undefined -> do_nothing;
-		_ -> erlang:unregister(http_entrypoint_node)
+		_ -> erlang:unregister(Name)
 	end,
-	erlang:register(http_entrypoint_node, Node).
+	erlang:register(Name, Node).
 
 %%% Tests
 
@@ -384,6 +436,25 @@ add_external_tx_test() ->
 	receive after 1000 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
 	[TX] = (ar_storage:read_block(B1))#block.txs.
+
+%% @doc Test getting transactions
+find_external_tx_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	Ok = send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA">>)),
+	io:format("~p~n", [Ok]),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	%write a get_tx function like get_block
+	FoundTXID = (get_tx({127, 0, 0, 1},TX#tx.id))#tx.id,
+	FoundTXID = TX#tx.id.
+
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
