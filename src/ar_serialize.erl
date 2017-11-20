@@ -123,7 +123,7 @@ tx_to_json_struct(
 			{owner, ar_util:encode(Owner)},
 			{tags, {array, Tags}},
 			{target, ar_util:encode(Target)},
-			{quantity, Quantity},
+			{quantity, integer_to_list(Quantity)},
 			{type, atom_to_list(Type)},
 			{data, ar_util:encode(Data)},
 			{signature, ar_util:encode(Sig)}
@@ -143,7 +143,7 @@ json_struct_to_tx({struct, TXStruct}) ->
 		owner = ar_util:decode(find_value("owner", TXStruct)),
 		tags = Tags,
 		target = ar_util:decode(find_value("target", TXStruct)),
-		quantity = find_value("quantity", TXStruct),
+		quantity = list_to_integer(find_value("quantity", TXStruct)),
 		type = list_to_existing_atom(find_value("type", TXStruct)),
 		data = ar_util:decode(find_value("data", TXStruct)),
 		signature = ar_util:decode(find_value("signature", TXStruct))
