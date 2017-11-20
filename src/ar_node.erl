@@ -572,6 +572,7 @@ validate(
 	%ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
 	ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce) =/= false
 		and ar_weave:verify_indep(RecallB, HashList)
+		and ar_tx:verify_txs(TXs)
 		and ar_retarget:validate(NewB, OldB);
 validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
 	%ar:d(p2),

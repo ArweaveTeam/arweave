@@ -11,7 +11,7 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
 %% NOTE: Setting the default difficulty too high will cause TNT to fail!
--define(DEFAULT_DIFF, 24).
+-define(DEFAULT_DIFF, 8).
 -define(TARGET_TIME, 300).
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).
@@ -25,7 +25,7 @@
 -define(COST_PER_BYTE, 0.001).
 
 %% ENABLE ONLY WHILE TESTING
--define(DEBUG, false).
+-define(DEBUG, true).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
