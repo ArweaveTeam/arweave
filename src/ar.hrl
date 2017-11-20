@@ -25,7 +25,7 @@
 -define(COST_PER_BYTE, 0.001).
 
 %% ENABLE ONLY WHILE TESTING
--define(DEBUG, false).
+-define(DEBUG, true).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
