@@ -3,6 +3,7 @@
 -define(PUBLIC_EXPNT, 17489).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("public_key/include/public_key.hrl").
 
 %%% Utilities for manipulating wallets.
 
@@ -13,26 +14,27 @@ new() ->
 
 %% @doc Sign some data with a private key.
 sign({Priv, Pub}, Data) ->
-	crypto:sign(
-		?SIGN_ALG,
-		?HASH_ALG,
+	rsa_pss:sign(
 		Data,
-		[generate_exponent_binary(), Pub, Priv]
+		sha256,
+		#'RSAPrivateKey'{
+			publicExponent = ?PUBLIC_EXPNT,
+			modulus = binary:decode_unsigned(Pub),
+			privateExponent = binary:decode_unsigned(Priv)
+		}
 	).
 
 %% @doc Verify that a signature is correct.
 verify(Key, Data, Sig) ->
-	crypto:verify(
-		?SIGN_ALG,
-		?HASH_ALG,
+	rsa_pss:verify(
 		Data,
+		sha256,
 		Sig,
-		[generate_exponent_binary(), Key]
+		#'RSAPublicKey'{
+			publicExponent = ?PUBLIC_EXPNT,
+			modulus = binary:decode_unsigned(Key)
+		}
 	).
-
-%% @doc Regenerate the binary encoded public exponent that crypto:generate_key/2
-%% returns.
-generate_exponent_binary() -> binary:encode_unsigned(?PUBLIC_EXPNT).
 
 wallet_sign_verify_test() ->
 	TestData = <<"TEST DATA">>,

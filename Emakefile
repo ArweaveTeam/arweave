@@ -9,3 +9,4 @@
            {i, "lib/elli/include/"},
            {outdir, "ebin"}]}.
 {'lib/yaws/*', [debug_info, {outdir, "ebin"}]}.
+{'lib/pss/*', [debug_info, {outdir, "ebin"}]}.

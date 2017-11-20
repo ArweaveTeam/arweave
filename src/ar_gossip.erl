@@ -12,6 +12,7 @@
 
 %% @doc Create a new gossip node state. Optionally, with peer list.
 init() -> init([]).
+init(PID) when is_pid(PID) -> init([PID]);
 init(Peers) when is_list(Peers) -> #gs_state { peers = Peers };
 init(PacketLossP) when is_float(PacketLossP) ->
 	#gs_state { loss_probability = PacketLossP };
@@ -58,7 +59,9 @@ send(S, Msg) ->
 	case already_heard(S, Msg) of
 		false ->
 			lists:foreach(
-				fun(Peer) -> possibly_send(S, Peer, Msg) end,
+				fun(Peer) ->
+					spawn(fun() -> possibly_send(S, Peer, Msg) end)
+				end,
 				S#gs_state.peers
 			),
 			{S#gs_state { heard = [Msg#gs_msg.hash|S#gs_state.heard] }, sent};

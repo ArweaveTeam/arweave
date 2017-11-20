@@ -73,7 +73,10 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
 	ar_meta_db:put(port, Port),
 	Node = ar_node:start(
 		Peers,
-		if Init -> ar_weave:init(); true -> undefined end
+		if Init -> ar_weave:init(); true -> not_joined end
+	),
+	SearchNode = app_search:start(
+		[Node|Peers]
 	),
 	% Add self to all remote nodes.
 	lists:foreach(fun ar_http_iface:add_peer/1, Peers),
@@ -94,7 +97,8 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,
-		Node
+		Node,
+		SearchNode
 	),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end.
 
@@ -124,7 +128,7 @@ test() ->
 			);
 		_ ->
 			start(),
-			eunit:test(?CORE_TEST_MODS, [verbose])
+			eunit:test({timeout, ?TEST_TIMEOUT, ?CORE_TEST_MODS}, [verbose])
 	end.
 
 %% @doc Run the TNT test system, printing coverage results.
@@ -133,7 +137,7 @@ test_coverage() ->
 
 %% @doc Run the tests for a single module.
 test(Mod) ->
-	eunit:test([Mod], [verbose]).
+	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
 
 %% @doc Run tests on the apps.
 test_apps() ->
