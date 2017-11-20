@@ -142,6 +142,9 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
 	);
+% Get the top, current block.
+handle('GET', [<<"current_block">>], _Req) ->
+	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));
 %Handles otherwise unhandles HTTP requests and returns 500.
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
@@ -152,7 +155,8 @@ handle_event(Type, Data, Args)
 		or (Type == request_error)
 		or (Type == request_exit) ->
 	ar:report([{elli_event, Type}, {data, Data}, {args, Args}]);
-handle_event(_Event, _Data, _Args) -> ok.
+handle_event(_Type, _Data, _Args) -> ok.
+	%ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]).
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
 return_block(unavailable) -> {404, [], <<"Block not found.">>};
@@ -250,6 +254,21 @@ add_peer(Host) ->
 			"application/x-www-form-urlencoded",
 			""
 		}, [{timeout, ?NET_TIMEOUT}], []
+	).
+
+%% @doc Get the current, top block.
+get_current_block(Host) ->
+	handle_block_response(
+		httpc:request(
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/current_block/",
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+		)
 	).
 
 %% @doc Retreive a block by height or hash from a node.
@@ -423,6 +442,13 @@ get_block_by_height_test() ->
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	B0 = get_block({127, 0, 0, 1}, 0).
+
+get_current_block_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	B0 = get_current_block({127, 0, 0, 1}).
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->

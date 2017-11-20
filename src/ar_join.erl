@@ -8,8 +8,12 @@
 
 %% @doc Start a process that will attempt to join a network from the last
 %% sync block.
-start(Peers, NewB) ->
-	start(self(), Peers, NewB).
+start(Peers, NewB) when is_record(NewB, block) ->
+	start(self(), Peers, NewB);
+start(Node, Peers) ->
+	start(Node, Peers, ar_node:get_current_block(Peers)).
+start(_Node, _Peers, B) when is_atom(B) ->
+	do_nothing;
 start(Node, Peers, NewB) ->
 	ar:report(
 		[
@@ -30,13 +34,12 @@ start(Node, Peers, NewB) ->
 basic_node_join_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 600 -> ok end,
 	Node2 = ar_node:start([Node1]),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:add_peers(Node1, Node2),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
 	receive after 600 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
 	2 = (ar_storage:read_block(B))#block.height.
@@ -45,14 +48,12 @@ basic_node_join_test() ->
 node_join_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
 	Node2 = ar_node:start([Node1]),
-	ar_node:add_peers(Node1, Node2),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:add_peers(Node1, Node2),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
 	receive after 600 -> ok end,
 	ar_node:mine(Node2),
 	receive after 600 -> ok end,

@@ -7,7 +7,7 @@
 -export([add_tx/2, add_peers/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2, validate/3, validate/4, validate/5, find_recall_block/1]).
--export([find_sync_block/1]).
+-export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -46,6 +46,11 @@ start(Peers, Bs = [B|_], MiningDelay, RewardAddr) when is_record(B, block) ->
 start(Peers, HashList, MiningDelay, RewardAddr) ->
 	spawn(
 		fun() ->
+			case HashList of
+				not_joined ->
+					ar_join:start(self(), Peers);
+				_ -> do_nothing
+			end,
 			server(
 				#state {
 					gossip = ar_gossip:init(Peers),
@@ -64,6 +69,30 @@ stop(Node) ->
 	Node ! stop,
 	ok.
 
+%% Get the current, top block.
+get_current_block(Peers) when is_list(Peers) ->
+	case sort_blocks_by_count(lists:map(fun get_current_block/1, Peers)) of
+		[] -> unavailable;
+		[B|_] -> B
+	end;
+get_current_block(Peer) ->
+	Peer ! {get_current_block, self()},
+	receive
+		{block, CurrentBlock} -> CurrentBlock
+	after ?NET_TIMEOUT ->
+		no_response
+	end.
+
+%% Sorts blocks by plurality of height.
+sort_blocks_by_count(Blocks) ->
+	SortedBlocks = lists:sort(
+		fun(BlockA, BlockB) ->
+			ar_util:count(BlockA, Blocks) == ar_util:count(BlockB, Blocks)
+		end,
+		ar_util:unique(Blocks)
+	),
+	ar_storage:read_block(SortedBlocks).
+
 %% @doc Return the entire block list from a node.
 get_blocks(Node) ->
 	Node ! {get_blocks, self()},
@@ -76,22 +105,10 @@ get_blocks(Node) ->
 %% @doc Return a specific block from a node, if it has it.
 get_block(Peers, ID) when is_list(Peers) ->
 	%ar:d([{getting_block, ID}, {peers, Peers}]),
-	Blocks = [ get_block(Peer, ID) || Peer <- Peers ],
-	SortedBlocks =
-		lists:sort(
-			fun(BlockA, BlockB) ->
-				ar_util:count(BlockA, Blocks) == ar_util:count(BlockB, Blocks)
-			end,
-			ar_util:unique(Blocks)
-		),
-	ar_storage:read_block(
-		case [ B || B <- SortedBlocks, not is_atom(B) ] of
-			[] -> unavailable;
-			[unavailable] -> unavailable;
-			[X] -> X;
-			Xs -> Xs
-		end
-	);
+	case sort_blocks_by_count([ get_block(Peer, ID) || Peer <- Peers ]) of
+		[] -> unavailable;
+		[B|_] -> B
+	end;
 get_block(Proc, ID) when is_pid(Proc) ->
 %	Proc ! {get_block, self(), ID},
 %	receive
@@ -247,6 +264,9 @@ server(
 					height = B#block.height
 				}
 			);
+		{get_current_block, PID} ->
+			PID ! {block, ar_util:get_head_block(HashList)},
+			server(S);
 		{get_blocks, PID} ->
 			PID ! {blocks, self(), HashList},
 			server(S);
@@ -764,6 +784,12 @@ divergence_height_test() ->
 	1 = divergence_height([a, b], [a, b, c, d, e, f]),
 	2 = divergence_height([1,2,3], [1,2,3]),
 	2 = divergence_height([1,2,3, a, b, c], [1,2,3]).
+
+get_current_block_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	B0 = get_current_block(Node).
 
 %% @doc Check that blocks can be added (if valid) by external processes.
 add_block_test() ->
