@@ -75,13 +75,15 @@ get_current_block(Peers) when is_list(Peers) ->
 		[] -> unavailable;
 		[B|_] -> B
 	end;
-get_current_block(Peer) ->
+get_current_block(Peer) when is_pid(Peer) ->
 	Peer ! {get_current_block, self()},
 	receive
 		{block, CurrentBlock} -> CurrentBlock
 	after ?NET_TIMEOUT ->
 		no_response
-	end.
+	end;
+get_current_block(Peer) ->
+	ar_http_iface:get_current_block(Peer).
 
 %% Sorts blocks by plurality of height.
 sort_blocks_by_count(Blocks) ->
