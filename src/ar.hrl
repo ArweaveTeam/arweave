@@ -24,6 +24,9 @@
 %% The minimum cost/reward for a single TX.
 -define(COST_PER_BYTE, 0.001).
 
+%% The amount of the weave to store. 1.0 = 100%; 0.5 = 50% etc.
+-define(WEAVE_STOR_AMT, 1.0).
+
 %% ENABLE ONLY WHILE TESTING
 -define(DEBUG, true).
 %% Speed to run the network at when simulating.
