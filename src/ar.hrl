@@ -1,7 +1,7 @@
 %%% A collection of record structures used throughout the ArkChain server.
 
 %% How should nodes on the network identify themselves?
--define(NETWORK_NAME, "archain.BATN.1.1").
+-define(NETWORK_NAME, "archain.BATN.2.0").
 %% What is the current version/release number (should be an integer).
 -define(CLIENT_VERSION, 1).
 
