@@ -34,6 +34,9 @@
 %% Ensure this number of the last blocks are not dropped.
 -define(KEEP_LAST_BLOCKS, 5).
 
+%% The time to poll peers for a new current block.
+-define(POLL_TIME, 60*100).
+
 %% @doc Start a node, optionally with a list of peers.
 start() -> start([]).
 start(Peers) -> start(Peers, not_joined).
@@ -397,6 +400,25 @@ fork_recover(
 				)
 		}
 	).
+
+%% @doc Regularly poll peers for a new block.
+poll_for_update(PID, Peers) when is_list(Peers) ->
+	OldB = get_current_block(Peers),
+	receive after ?POLL_TIME -> ok end,
+	case get_current_block(Peers) of
+		OldB -> do_nothing;
+		NewB ->
+			PID ! {
+				new_block,
+				hd(Peers),
+				NewB#block.height,
+				NewB,
+				find_recall_block(NewB#block.hash_list)
+		 }
+	end,
+	poll_for_update(PID, Peers);
+poll_for_update(PID, Peer) ->
+	poll_for_update(PID, [Peer]).
 
 %% @doc Return the sublist of shared starting elements from two lists.
 %take_until_divergence([A|Rest1], [A|Rest2]) ->
