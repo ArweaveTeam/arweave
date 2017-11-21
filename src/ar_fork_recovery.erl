@@ -1,4 +1,3 @@
-
 -module(ar_fork_recovery).
 -export([start/3]).
 -include("ar.hrl").
@@ -28,8 +27,7 @@ start(Peers, TargetB, HashList) ->
 				[
 					{started_fork_recovery_proc, self()},
 					{target_height, TargetB#block.height},
-					{peer, Peers},
-					{hash_list, HashList}
+					{peer, Peers}
 				]
 			),
 			server(
