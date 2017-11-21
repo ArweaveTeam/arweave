@@ -28,7 +28,9 @@ find_block(PID, TXID) ->
 	PID ! {get_tx, self(), TXID},
 	receive
 		{found_block, IndepHash} ->
-			IndepHash
+			IndepHash;
+		{block_not_found} ->
+			block_not_found
 	end.
 
 %% @doc Add the transactions in a newly recieved block to the trasction db
@@ -45,9 +47,14 @@ new_block(S,B) ->
 %% Process_id - id of the process to return the block hash to}
 message(S,{get_tx, Process_id, T}) ->
 	{ok,Ref} = dets:open_file(?TXDATA,[]),
-	[{_, B_Out}] = dets:lookup(Ref, T),
+	case dets:member(Ref, T) of
+		true ->
+			[{_, B_Out}] = dets:lookup(Ref, T),
+			Process_id ! {found_block, B_Out};
+		false ->
+			Process_id ! {block_not_found}
+	end,
 	dets:close(Ref),
-	Process_id ! {found_block, B_Out},
 	S;
 message(S, _) ->
 	S.
@@ -94,11 +101,11 @@ basic_usage_test() ->
 	receive after 1000 -> ok end,
 	{ok,Ref} = dets:open_file(?TXDATA,[]),
 	% recieve a "get transaction" message
-	message([], {get_transaction,self(),TX#tx.id}),
+	message([], {get_tx,self(),TX#tx.id}),
 	% check that newly mined block matches the block the most recent transaction was mined in 
 	receive
-		X ->
-			X = (hd(ar_node:get_blocks(hd(Peers))))#block.indep_hash	
+		{found_block, X} ->
+			X = hd(ar_node:get_blocks(hd(Peers)))
 	end,
 	dets:close(Ref).
 	
