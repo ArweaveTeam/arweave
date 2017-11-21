@@ -1,5 +1,6 @@
 -module(ar_storage).
 -export([write_block/1, read_block/1, clear/0]).
+-export([delete_block/1, blocks_on_disk/0, block_exists/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -12,6 +13,21 @@
 %% @doc Clear the cache of saved blocks.
 clear() ->
 	lists:map(fun file:delete/1, filelib:wildcard(?BLOCK_DIR ++ "/*.json")).
+
+%% @doc Removes a saved block.
+delete_block(Hash) ->
+	file:delete(name(Hash)).
+
+%% @doc Returns the number of blocks stored on disk.
+blocks_on_disk() ->
+	{ok, Files} = file:list_dir(?BLOCK_DIR),
+	length(Files).
+
+block_exists(Hash) ->
+	case filelib:find_file(name(Hash)) of
+		{ok, _} -> true;
+		{error, _} -> false
+	end.
 
 %% @doc Write a block (with the hash.json as the filename) to disk.
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
