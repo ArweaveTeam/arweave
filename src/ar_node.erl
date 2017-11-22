@@ -334,7 +334,7 @@ server(
 			);
 		{fork_recovered, NewHs} when HashList == not_joined ->
 			NewB = ar_storage:read_block(hd(NewHs)),
-			ar:report(
+			ar:report_console(
 				[
 					node_joined_successfully,
 					{height, NewB#block.height}
@@ -352,7 +352,7 @@ server(
 		{fork_recovered, NewHs}
  				when (length(NewHs) - 1) > (length(HashList) - 1) ->
 			NewB = ar_storage:read_block(hd(NewHs)),
-			ar:report(
+			ar:report_console(
 				[
 					fork_recovered_successfully,
 					{height, NewB#block.height}
@@ -454,7 +454,7 @@ integrate_new_block(
 		),
 	ar_storage:write_block(NewB),
 	% Recurse over the new block.
-	ar:report(
+	ar:report_console(
 		[
 			{accepted_foreign_block, NewB#block.indep_hash},
 			{height, NewB#block.height}
@@ -512,7 +512,7 @@ integrate_block_from_miner(
 						find_recall_block(HashList)
 					}
 				),
-			ar:report(
+			ar:report_console(
 				[
 					{node, self()},
 					{accepted_block, NextB#block.height},
