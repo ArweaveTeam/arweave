@@ -49,13 +49,20 @@ handle('GET', [<<"info">>], _Req) ->
 % Get a transaction by hash
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node),ar_util:decode(Hash)),
-	B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
-	case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
-		false ->
+	case IndepHash of
+		not_found -> 
 			{404, [], <<"Not Found.">>};
-		Tx ->
-			return_tx(Tx)
+		_ -> 		
+			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
+			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
+				false ->
+					{404, [], <<"Not Found.">>};
+				Tx ->
+					return_tx(Tx)
+			end
 	end;
+		
+
 
 % Add block specified in HTTP body.
 handle('POST', [<<"block">>], Req) ->
@@ -487,6 +494,21 @@ find_external_tx_test() ->
 	FoundTXID = (get_tx({127, 0, 0, 1},TX#tx.id))#tx.id,
 	FoundTXID = TX#tx.id.
 
+fail_external_tx_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	Ok = send_new_tx({127, 0, 0, 1}, ar_tx:new(<<"DATA">>)),
+	io:format("~p~n", [Ok]),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	BadTX = ar_tx:new(<<"BADDATA">>),
+	not_found = get_tx({127, 0, 0, 1},BadTX#tx.id).
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
