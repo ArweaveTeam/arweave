@@ -82,6 +82,12 @@ build_list() ->
 insert_transactions(Ref, [], _) -> 
 	{ok, Ref};
 insert_transactions(Ref, [T|Txlist], Bhash) ->
+	ar:report_console(
+		[
+			{adding_tx, ar_util:encode(T#tx.id)},
+			{tx_size, byte_size(T#tx.data)}
+		]
+	),
 	dets:insert(Ref, {T#tx.id, Bhash}),
 	insert_transactions(Ref, Txlist, Bhash).
 
