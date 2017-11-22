@@ -96,7 +96,13 @@ sort_blocks_by_count(Blocks) ->
 		fun(BlockA, BlockB) ->
 			ar_util:count(BlockA, Blocks) == ar_util:count(BlockB, Blocks)
 		end,
-		ar_util:unique(Blocks)
+		lists:filter(
+			fun(not_found) -> false;
+			   (unavailable) -> false;
+			   (_) -> true
+			end,
+			ar_util:unique(Blocks)
+		)
 	),
 	ar_storage:read_block(SortedBlocks).
 
