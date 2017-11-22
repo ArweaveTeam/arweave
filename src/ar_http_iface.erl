@@ -85,8 +85,13 @@ handle('POST', [<<"tx">>], Req) ->
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
 	%ar:report(TX),
 	Node = whereis(http_entrypoint_node),
-	ar_node:add_tx(Node, TX),
-	{200, [], <<"OK">>};
+	case ar_tx:verify(TX) of
+		false ->
+			{400, [], <<"Transaction signature not valid.">>};
+		true ->
+			ar_node:add_tx(Node, TX),
+			{200, [], <<"OK">>}
+	end;
 % Get peers.
 handle('GET', [<<"peers">>], _Req) ->
 	{200, [],

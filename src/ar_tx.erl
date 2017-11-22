@@ -18,7 +18,6 @@ generate_id() -> crypto:strong_rand_bytes(32).
 
 %% @doc Generate a hashable binary from a #tx object.
 to_binary(T) ->
-	%% TODO: Add tags to signature
 	<<
 		(T#tx.owner)/binary,
 		(T#tx.target)/binary,
