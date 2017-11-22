@@ -1,5 +1,5 @@
 -module(ar_node).
--export([start/0, start/1, start/2, start/3, start/4,stop/1]).
+-export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
 -export([get_blocks/1, get_block/2, get_peers/1, get_balance/2]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
@@ -47,10 +47,12 @@ start(Peers, Bs = [B|_], MiningDelay, RewardAddr) when is_record(B, block) ->
 	lists:map(fun ar_storage:write_block/1, Bs),
 	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr);
 start(Peers, HashList, MiningDelay, RewardAddr) ->
+	start(Peers, HashList, MiningDelay, RewardAddr, true).
+start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 	spawn(
 		fun() ->
-			case HashList of
-				not_joined ->
+			case {HashList, AutoJoin} of
+				{not_joined, true} ->
 					ar_join:start(self(), Peers);
 				_ -> do_nothing
 			end,

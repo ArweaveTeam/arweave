@@ -42,7 +42,8 @@
 	init = false,
 	mine = false,
 	peers = [],
-	polling = false
+	polling = false,
+	auto_join = true
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -63,20 +64,25 @@ main(["port", Port|Rest], O) ->
 	main(Rest, O#opts { port = list_to_integer(Port) });
 main(["polling"|Rest], O) ->
 	main(Rest, O#opts { polling = true });
+main(["no_auto_join"|Rest], O) ->
+	main(Rest, O#opts { auto_join = false });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
 %% @doc Start an Archain node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#opts { port = Port });
-start(#opts { port = Port, init = Init, peers = Peers, mine = Mine, polling = Polling }) ->
+start(#opts { port = Port, init = Init, peers = Peers, mine = Mine, polling = Polling, auto_join = AutoJoin }) ->
 	% Start apps which we depend on.
 	inets:start(),
 	ar_meta_db:start(),
 	ar_meta_db:put(port, Port),
 	Node = ar_node:start(
 		Peers,
-		if Init -> ar_weave:init(); true -> not_joined end
+		if Init -> ar_weave:init(); true -> not_joined end,
+		0,
+		unclaimed,
+		AutoJoin
 	),
 	SearchNode = app_search:start([Node|Peers]),
 	ar_node:add_peers(Node, SearchNode),
