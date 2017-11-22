@@ -23,7 +23,7 @@
 		ar_wallet,
 		ar_router,
 		ar_gossip,
-		%ar_mine,
+		ar_mine,
 		ar_join,
 		ar_fork_recovery,
 		ar_http_iface,
@@ -78,9 +78,8 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine, polling = Po
 		Peers,
 		if Init -> ar_weave:init(); true -> not_joined end
 	),
-	SearchNode = app_search:start(
-		[Node|Peers]
-	),
+	SearchNode = app_search:start([Node|Peers]),
+	ar_node:add_peers(Node, SearchNode),
 	% Add self to all remote nodes.
 	lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.

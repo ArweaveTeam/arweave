@@ -83,13 +83,7 @@ server(S = #state { gossip = GS }) ->
 					server(apply_callback(NewS, new_block, B))
 			end;
 		stop -> ok;
-		OtherMsg ->
-			server(
-				S#state {
-					gossip =
-						apply_callback(S, message, OtherMsg)
-				}
-			)
+		OtherMsg -> server(apply_callback(S, message, OtherMsg))
 	end.
 
 %%% Utility functions

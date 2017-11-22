@@ -105,7 +105,7 @@ generate() -> crypto:strong_rand_bytes(8).
 basic_test() ->
 	LastHash = crypto:strong_rand_bytes(32),
 	Data = crypto:strong_rand_bytes(32),
-	Diff = 18,
+	Diff = 8,
 	start(LastHash, Diff, Data),
 	receive
 		{work_complete, [], LastHash, _NewHash, Diff, Nonce} ->
@@ -118,7 +118,7 @@ change_data_test() ->
 	LastHash = crypto:strong_rand_bytes(32),
 	Data = crypto:strong_rand_bytes(32),
 	NewData = crypto:strong_rand_bytes(32),
-	Diff = 18,
+	Diff = 8,
 	PID = start(LastHash, Diff, Data),
 	change_data(PID, NewData, []),
 	receive

@@ -1,5 +1,5 @@
 -module(app_search).
--export([start/0, start/1,find_block/2]).
+-export([start/0, start/1, find_block/1, find_block/2]).
 -export([new_block/2, message/2]).
 -export([build_list/0]).
 -include("ar.hrl").
@@ -11,7 +11,7 @@
 %%% For examplary purposes only.
 
 %% txlist DETS file  
--define(TXDATA, "data/txlist.file").
+-define(TXDATA, "data/txdb.dat").
 %% @doc For compatibility. Dets database supercedes state.
 -record(state, {
 	db = [] % Stores the 'database' of links to chirps.
@@ -23,21 +23,26 @@ start() -> start([]).
 start(Peers) ->
 	filelib:ensure_dir(?TXDATA),
 	adt_simple:start(?MODULE, #state{}, Peers).
-	
+
+%% @doc Find the block associated with a transaction.
+find_block(TXID) ->
+	find_block(whereis(http_search_node), TXID).
+find_block(PID, Str) when is_list(Str) ->
+	find_block(PID, ar_util:decode(Str));
 find_block(PID, TXID) ->
 	PID ! {get_tx, self(), TXID},
 	receive
 		{found_block, IndepHash} ->
 			IndepHash;
-		{not_found} ->
+		not_found ->
 			not_found
 	end.
 
 %% @doc Add the transactions in a newly recieved block to the trasction db
 %% S - current state, B - new block
-new_block(S,B) ->
-	{ok,Ref} = dets:open_file(?TXDATA,[]),
-	{ok,Ref} = insert_transactions(Ref, B#block.txs, B#block.indep_hash),
+new_block(S, B) ->
+	{ok, Ref} = dets:open_file(?TXDATA,[]),
+	{ok, Ref} = insert_transactions(Ref, B#block.txs, B#block.indep_hash),
 	dets:close(Ref),
 	S.
 
@@ -45,14 +50,14 @@ new_block(S,B) ->
 %% Back to requesting process.
 %% S - current state, {get_transaction - atom, T - transaction hash,
 %% Process_id - id of the process to return the block hash to}
-message(S,{get_tx, Process_id, T}) ->
-	{ok,Ref} = dets:open_file(?TXDATA,[]),
+message(S, {get_tx, PID, T}) ->
+	{ok, Ref} = dets:open_file(?TXDATA,[]),
 	case dets:member(Ref, T) of
 		true ->
-			[{_, B_Out}] = dets:lookup(Ref, T),
-			Process_id ! {found_block, B_Out};
+			[{_, IndepHash}] = dets:lookup(Ref, T),
+			PID ! {found_block, IndepHash};
 		false ->
-			Process_id ! {not_found}
+			PID ! not_found
 	end,
 	dets:close(Ref),
 	S;
@@ -77,7 +82,7 @@ build_list() ->
 insert_transactions(Ref, [], _) -> 
 	{ok, Ref};
 insert_transactions(Ref, [T|Txlist], Bhash) ->
-	dets:insert(Ref, {T#tx.id,Bhash}),
+	dets:insert(Ref, {T#tx.id, Bhash}),
 	insert_transactions(Ref, Txlist, Bhash).
 
 %% @doc Test that a new tx placed on the network and mined can be searched for
