@@ -14,7 +14,7 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
 %% NOTE: Setting the default difficulty too high will cause TNT to fail!
--define(DEFAULT_DIFF, 17).
+-define(DEFAULT_DIFF, 18).
 -define(TARGET_TIME, 150).
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).

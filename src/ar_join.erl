@@ -26,29 +26,24 @@ start(Node, Peers, NewB) ->
 	),
 	spawn(
 		fun() ->
-			fill_to_capacity(NewB, Peers),
+			ar_storage:write_block(NewB),
+			fill_to_capacity(Peers, NewB),
 			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]}
 		end
 	).
 
 %% @doc Fills node to capacity based on weave storage limit.
-fill_to_capacity(NewB, Peers) ->
+fill_to_capacity(Peers, NewB) ->
 	Height = NewB#block.height,
 	RandBlock = lists:nth(rand:uniform(Height - 1), NewB#block.hash_list),
 	case at_capacity(Height) of
-		true ->
-			ar_storage:delete_block(
-				RandBlock
-			),
-			ar_storage:write_block(NewB);
+		true -> ok;
 		false ->
-			ar_storage:write_block(
-				ar_node:get_block(
-					Peers,
-					RandBlock
-				)
-			),
-			fill_to_capacity(NewB, Peers)
+			case ar_node:get_block(Peers, RandBlock) of
+				unavailable -> ok;
+				B -> ar_storage:write_block(B)
+			end,
+			fill_to_capacity(Peers, NewB)
 		end.
 
 %% @doc Figures out if node is at capacity based on predifined weave storage limit.
