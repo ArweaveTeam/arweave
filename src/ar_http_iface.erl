@@ -50,7 +50,7 @@ handle('GET', [<<"info">>], _Req) ->
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node),ar_util:decode(Hash)),
 	case IndepHash of
-		block_not_found -> 
+		not_found -> 
 			{404, [], <<"Not Found.">>};
 		_ -> 		
 			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
@@ -497,16 +497,12 @@ fail_external_tx_test() ->
 	SearchNode = app_search:start(Node),
 	ar_node:add_peers(Node, SearchNode),
 	reregister(http_search_node, SearchNode),
-	Ok = send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA">>)),
+	Ok = send_new_tx({127, 0, 0, 1}, ar_tx:new(<<"DATA">>)),
 	io:format("~p~n", [Ok]),
 	receive after 1000 -> ok end,
 	ar_node:mine(Node),
 	receive after 1000 -> ok end,
-	%write a get_tx function like get_block
 	BadTX = ar_tx:new(<<"BADDATA">>),
-	%ar:report_console(BadTX#tx.id),
-	%FoundTXID = get_tx({127, 0, 0, 1},BadTX#tx.id),
-	%FoundTXID = TX#tx.id.
 	not_found = get_tx({127, 0, 0, 1},BadTX#tx.id).
 
 %% @doc Ensure that blocks can be added to a network from outside

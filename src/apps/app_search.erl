@@ -29,8 +29,8 @@ find_block(PID, TXID) ->
 	receive
 		{found_block, IndepHash} ->
 			IndepHash;
-		{block_not_found} ->
-			block_not_found
+		{not_found} ->
+			not_found
 	end.
 
 %% @doc Add the transactions in a newly recieved block to the trasction db
@@ -52,7 +52,7 @@ message(S,{get_tx, Process_id, T}) ->
 			[{_, B_Out}] = dets:lookup(Ref, T),
 			Process_id ! {found_block, B_Out};
 		false ->
-			Process_id ! {block_not_found}
+			Process_id ! {not_found}
 	end,
 	dets:close(Ref),
 	S;
