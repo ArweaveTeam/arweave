@@ -319,7 +319,7 @@ get_block(Host, Height) when is_integer(Height) ->
 	);
 get_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_block_response(
 		httpc:request(
 			get,

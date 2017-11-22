@@ -43,11 +43,11 @@ start(Peers) -> start(Peers, not_joined).
 start(Peers, Bs) -> start(Peers, Bs, 0).
 start(Peers, Bs, MiningDelay) ->
 	start(Peers, Bs, MiningDelay, unclaimed).
-start(Peers, Bs = [B|_], MiningDelay, RewardAddr) when is_record(B, block) ->
-	lists:map(fun ar_storage:write_block/1, Bs),
-	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr);
 start(Peers, HashList, MiningDelay, RewardAddr) ->
 	start(Peers, HashList, MiningDelay, RewardAddr, true).
+start(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin) when is_record(B, block) ->
+	lists:map(fun ar_storage:write_block/1, Bs),
+	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr, AutoJoin);
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 	spawn(
 		fun() ->
