@@ -41,7 +41,8 @@
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	init = false,
 	mine = false,
-	peers = []
+	peers = [],
+	polling = false
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -60,13 +61,15 @@ main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
 	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
 main(["port", Port|Rest], O) ->
 	main(Rest, O#opts { port = list_to_integer(Port) });
+main(["polling"|Rest], O) ->
+	main(Rest, O#opts { polling = true });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
 %% @doc Start an Archain node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#opts { port = Port });
-start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
+start(#opts { port = Port, init = Init, peers = Peers, mine = Mine, polling = Polling }) ->
 	% Start apps which we depend on.
 	inets:start(),
 	ar_meta_db:start(),
@@ -91,7 +94,8 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
 			{init_new_blockweave, Init},
 			{automine, Mine},
 			{miner, Node},
-			{peers, Peers}
+			{peers, Peers},
+			{polling, Polling}
 		]
 	),
 	% Start the first node in the gossip network (with HTTP interface)
@@ -100,6 +104,10 @@ start(#opts { port = Port, init = Init, peers = Peers, mine = Mine }) ->
 		Node,
 		SearchNode
 	),
+	case Polling of
+		true -> ar_poller:start(Node, Peers);
+		false -> do_nothing
+	end,
 	if Mine -> ar_node:automine(Node); true -> do_nothing end.
 
 %% @doc Create a name for a session log file.
