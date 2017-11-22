@@ -99,6 +99,7 @@ block_from_hash_list(Num, BHL) ->
 	ar_storage:read_block(hash_from_hash_list(Num, BHL)).
 
 %% @doc Fetch the head block using BHL.
+get_head_block(not_joined) -> unavailable;
 get_head_block([IndepHash|_]) ->
 	ar_storage:read_block(IndepHash).
 
