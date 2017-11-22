@@ -14,6 +14,7 @@ start(Node, Peers) ->
 	start(Node, Peers, ar_node:get_current_block(Peers)).
 start(_Node, _Peers, B) when is_atom(B) ->
 	do_nothing;
+start(_, _, unavailable) -> do_nothing;
 start(Node, Peers, NewB) ->
 	ar:report(
 		[

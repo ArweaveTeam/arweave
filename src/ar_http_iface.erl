@@ -354,10 +354,9 @@ get_tx(Host, Hash) ->
 %% @doc Process the response of an /block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_serialize:json_struct_to_block(Body);
-handle_block_response({ok, {{_, 404, _}, _, _}}) ->
-	not_found;
-handle_block_response({ok, {{_, 500, _}, _, _}}) ->
-	not_found.
+handle_block_response({error, _}) -> unavailable;
+handle_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
+handle_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /tx call.
 handle_tx_response({ok, {{_, 200, _}, _, Body}}) ->
