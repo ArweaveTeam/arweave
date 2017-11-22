@@ -28,8 +28,8 @@ start(Node, Peers, NewB) ->
 	spawn(
 		fun() ->
 			ar_storage:write_block(NewB),
-			fill_to_capacity(Peers, NewB),
-			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]}
+			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
+			fill_to_capacity(Peers, NewB)
 		end
 	).
 
