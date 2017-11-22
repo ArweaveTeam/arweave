@@ -23,7 +23,7 @@
 		ar_wallet,
 		ar_router,
 		ar_gossip,
-		ar_mine,
+		%ar_mine,
 		ar_join,
 		ar_fork_recovery,
 		ar_http_iface,
