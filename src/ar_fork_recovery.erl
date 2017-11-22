@@ -65,7 +65,7 @@ server(
 server(S = #state { blocks = [], peers = Peers, hash_list = [LastH|Rest] }) ->
 	% Verify the first block in fork.
 	% TODO: Can this and the clause below be generalised?
-	NextB = ar_node:get_block(Peers, LastH),
+	NextB = ar_node:get_block({178,62,4,18}, LastH),
 	ar:d({next_block, NextB}),
 	B = ar_node:get_block(Peers, NextB#block.previous_block),
 	RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
