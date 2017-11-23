@@ -31,6 +31,16 @@ Caution: Archain is in active development. Please be aware that the API for the
 Archain ADT will likely be added to such that the current state is a subset
 of its future capabilities.
 
+# Ubuntu/Debian Linux Quickstart
+You can download the Archain codebase, all dependencies and start mining
+straight away by opening a terminal and running:
+
+`curl https://gist.githubusercontent.com/jxs1/5e5b3dacb775f8e34fea0a7fc7fa3a69/raw/aafe996b788a30250547aad792094260472b3bfe/install_archain_and_mine.sh | bash && cd archain && ./archain-server peer XXX.XXX.XXX.XXX mine`
+
+Don’t forget to change xxx.xxx.xxx.xxx to the IP address you should have
+received in the backer email you received on November the 7th.
+
+
 # TNT/NO-VLNS
 TNT (Tiny Network Tests) and NO-VLNS (Never Off Very Large Network Simulator)
 are the two halves of Archain's testing suite.
