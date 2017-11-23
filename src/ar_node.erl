@@ -715,13 +715,16 @@ generate_data_segment(TXs, RecallB) ->
 generate_data_segment(TXs, RecallB, undefined) ->
 	generate_data_segment(TXs, RecallB, <<>>);
 generate_data_segment(TXs, RecallB, RewardAddr) ->
-	<<
+	RawData = <<
 		(ar_weave:generate_block_data(TXs))/binary,
 		(RecallB#block.nonce)/binary,
 		(RecallB#block.hash)/binary,
 		(ar_weave:generate_block_data(RecallB#block.txs))/binary,
 		RewardAddr/binary
-	>>.
+	>>,
+	RawSize = byte_size(RawData),
+	PaddedData = <<RawData/binary, 0:(max(0,((?BLOCK_PAD_SIZE-RawSize)*8)))>>,
+	PaddedData.
 
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 %calculate_reward(B) -> calculate_reward(B#block.height, B#block.txs).
@@ -778,11 +781,12 @@ start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
 				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
 			end,
 			B = ar_storage:read_block(hd(BHL)),
+			Gen = generate_data_segment(TXs, RecallB),
 			Miner =
 				ar_mine:start(
 					B#block.hash,
 					B#block.diff,
-					generate_data_segment(TXs, RecallB),
+					Gen,
 					S#state.mining_delay,
 					TXs
 				),
