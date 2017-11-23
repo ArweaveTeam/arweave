@@ -5,8 +5,9 @@
 -export([encode_base64_safe/1, decode_base64_safe/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
--export([block_from_hash_list/2, hash_from_hash_list/2, get_recall_hash/2, get_hash/1]).
--export([height_from_hl/1, wl_from_hl/1, bl_from_hl/1, get_head_block/1]).
+-export([block_from_hash_list/2, hash_from_hash_list/2, get_recall_hash/2]).
+-export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
+-export([get_hash/1, get_head_block/1]).
 -export([genesis_wallets/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -77,18 +78,18 @@ get_hash(B) when is_record(B, block) ->
 	B#block.indep_hash.
 
 %% @doc Get block height from a hash list.
-height_from_hl(not_joined) -> -1;
-height_from_hl(BHL) ->
+height_from_hashes(not_joined) -> -1;
+height_from_hashes(BHL) ->
 	(get_head_block(BHL))#block.height.
 
 %% @doc Get a wallet list from a hash list.
-wl_from_hl(not_joined) -> [];
-wl_from_hl(HashList) ->
+wallets_from_hashes(not_joined) -> [];
+wallets_from_hashes(HashList) ->
 	(get_head_block(HashList))#block.wallet_list.
 
 %% @doc Get block list from hash list.
-bl_from_hl([]) -> undefined;
-bl_from_hl(BHL) ->
+blocks_from_hashes([]) -> undefined;
+blocks_from_hashes(BHL) ->
 	lists:map(fun ar_storage:read_block/1, BHL).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
