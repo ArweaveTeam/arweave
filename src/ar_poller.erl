@@ -6,7 +6,7 @@
 %%% the current block and returns it if a new one is found.
 
 %% The time to poll peers for a new current block.
--define(POLL_TIME, 60*100).
+-define(POLL_TIME, 10*1000).
 
 %% @doc Starts poll server.
 start(Node, Peers) ->
@@ -28,7 +28,13 @@ server(Node, Peers, LastB) ->
 				hd(Peers),
 				NewB#block.height,
 				NewB,
-				ar_node:find_recall_block(NewB#block.hash_list)
+				ar_node:get_block(
+					Peers,
+					lists:nth(
+						1 + ar_weave:calculate_recall_block(NewB),
+						lists:reverse(NewB#block.hash_list)
+					)
+				)
 			},
 			server(Node, Peers, NewB)
 	end.
