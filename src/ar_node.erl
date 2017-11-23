@@ -60,10 +60,10 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 				#state {
 					gossip = ar_gossip:init(Peers),
 					hash_list = HashList,
-					wallet_list = ar_util:wl_from_hl(HashList),
+					wallet_list = ar_util:wallets_from_hashes(HashList),
 					mining_delay = MiningDelay,
 					reward_addr = RewardAddr,
-					height = ar_util:height_from_hl(HashList)
+					height = ar_util:height_from_hashes(HashList)
 				}
 			)
 		end
