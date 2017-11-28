@@ -1,0 +1,173 @@
+<html>
+    <head>
+        <title>Page not found.</title>
+        <link href="https://fonts.googleapis.com/css?family=Raleway:400,500,600" rel="stylesheet">
+        <style>
+            body {
+                font-family: "Raleway";
+                background: #203038;
+            }
+            .background-hash {
+                opacity: 0;
+                position: absolute;
+                color: rgba(255, 255, 255, 0.1);
+                font-weight: 400;
+            }
+
+            #main-text {
+                font-weight: 500;
+                text-align: center;
+                position: absolute;
+                bottom: 50vh;
+                left: 20vw;
+                right: 20vw;
+            }
+            #main {
+                font-size: 2.5em;
+                color: #03A9F4;
+            }
+            #sub {
+                font-size: 1.8em;
+                color: rgba(255, 255, 255, 1.0);
+            }
+        </style>
+    </head>
+    <body>
+    <div id="main-display">
+        <div id="main-text">
+            <p id="main">Oops! This page cannot be found.</p>
+            <p id="sub">You might have to wait for it to be mined into a block.</p>    
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var number_of_elements = 5;
+            var document_body = document.getElementsByTagName('body')[0];
+
+            for(i = 0; i < number_of_elements; i++) {
+                var div = document.createElement('div');
+                div.setAttribute('class', 'background-hash');
+                document.body.appendChild(div);
+                start_animation(div);
+            }
+        });
+
+        function start_animation(element) {
+
+            var body = document.getElementsByTagName('body')[0];
+            var width = body.getBoundingClientRect().width;
+            var height = body.getBoundingClientRect().height;
+
+            var text = generate_hash();
+            element.innerHTML = text;
+            var maxsize = 20;
+            var minsize = 12;
+            var size = (Math.random() * parseInt(maxsize) + parseInt(minsize));
+            element.style.fontSize = size + 'px';
+            var content_width = element.getBoundingClientRect().width;
+            var content_height = element.getBoundingClientRect().height;
+
+            var xpos = (Math.random() * (width - (content_width* 1.2))).toFixed();
+            var ypos = (Math.random() * (height - (content_height * 1.2))).toFixed();
+            var time = ((Math.random() * 10000) + 1500).toFixed();
+
+            element.style.left = xpos + 'px';
+            element.style.top = ypos + 'px';
+
+            fade_in(element, time).then(function() {
+                fade_out(element, time).then(function() {
+                    start_animation(element);
+                });
+            });
+
+        }
+
+        /**
+        * Fades an element in over a given window of time.
+        * @param {Object} [element] - The DOM element in which the transition applies to.
+        * @param {int} [time] - The amount of time for the transition to occur over in ms.
+        */
+        function fade_in(element, time) {
+            return new Promise((resolve, reject) => {
+                var time_per_increment = time / 100;
+
+                var fade_in = setInterval(function() {
+                    if (!element.style.opacity) {
+                        element.style.opacity = 0;
+                    }
+
+                    if (element.style.opacity > 0.95) {
+                        clearInterval(fade_in)
+                        resolve();
+                    } else {
+                        element.style.opacity = parseFloat(element.style.opacity) + 0.05;
+                    }
+                }, time_per_increment);
+            });
+        }
+
+        /**
+        * Fades an element out over a given window of time.
+        * @param {Object} [element] - The DOM element in which the transition applies to.
+        * @param {int} [time] - The amount of time for the transition to occur over in ms.
+        */
+        function fade_out(element, time) {
+            return new Promise((resolve, reject) => {
+                var time_per_increment = time / 100;
+
+                var fade_out = setInterval(function() {
+                    if (!element.style.opacity) {
+                        element.style.opacity = 1;
+                    }
+
+                    if (element.style.opacity < 0.05) {
+                        clearInterval(fade_out);
+                        resolve();
+                    } else {
+                        element.style.opacity = parseFloat(element.style.opacity) - 0.05;
+                    }
+                }, time_per_increment);
+            });
+        }
+
+        /**
+        * Generates a fake hash string.
+        */
+        function generate_hash() {
+            var array = new Uint8Array(32);
+            window.crypto.getRandomValues(array);
+            var string = String.fromCharCode.apply(null, new Uint8Array(array));
+
+            return base64_url_encode(string);
+        }
+
+        /**
+        * Encodes the input in base64 encoding.
+        * @param {(string|buffer)} [raw_data] - A raw string or buffer of bytes.
+        * @return {string} - Base64 encoded equivalent of the raw_data.
+        */
+        function base64_encode(raw_data) {
+            var encoded_data = btoa(raw_data);
+
+            return encoded_data;
+        }
+
+        /**
+        * Encodes the input in base64url encoding.
+        * @param {(string|buffer)} [raw_data] - A raw string or buffer of bytes.
+        * @return {string} - Base64url encoded equivalent of the raw_data.
+        */
+        function base64_url_encode(raw_data) {
+            var encoded_data = base64_encode(raw_data);
+            var safe_encoded = encoded_data.replace(/\+/g, "-").replace(/\//g, "_").replace(/\=/g, "");
+
+            return safe_encoded
+        }
+
+
+
+    </script>
+
+    </body>
+</html>

@@ -66,11 +66,8 @@ handle('GET', [<<"tx">>, Hash, <<"data">>], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
 	case IndepHash of
 		not_found -> 
-			{
-				404,
-				[],
-				<<"Not found. Your transaction may still be waiting to be mined into a block.">>
-			};
+			{ok, File} = file:read_file("data/not_found.html"),
+			{404, [], File};
 		_ ->
 			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
 			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
