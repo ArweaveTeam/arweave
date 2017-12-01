@@ -604,6 +604,7 @@ validate(
 	%ar:d(p1),
 	%ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
 	ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce) =/= false
+		and validate_wallet_list(WalletList)
 		and ar_weave:verify_indep(RecallB, HashList)
 		and ar_tx:verify_txs(TXs)
 		and ar_retarget:validate(NewB, OldB);
@@ -639,6 +640,12 @@ validate(
 		Height) == NewWalletList) andalso
 	(tl(NewHashList) == OldHashList) andalso
 	validate(NewB#block.hash_list, NewB#block.wallet_list, NewB, OldB, RecallB).
+
+%% @doc Ensure that all wallets in the wallet list have a positive balance.
+%% TODO: We should filter empty wallets, too.
+validate_wallet_list([]) -> true;
+validate_wallet_list([{_, Qty}|_]) when Qty < 0 -> false;
+validate_wallet_list([_|Rest]) -> validate_wallet_list(Rest).
 
 %% @doc Update the wallet list of a server with a set of new transactions
 apply_txs(S, TXs) when is_record(S, state) ->
