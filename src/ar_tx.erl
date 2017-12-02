@@ -1,5 +1,5 @@
 -module(ar_tx).
--export([new/0, new/1, new/2, sign/3, to_binary/1, verify/1, verify_txs/1]).
+-export([new/0, new/1, new/2, sign/2, sign/3, to_binary/1, verify/1, verify_txs/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -28,6 +28,7 @@ to_binary(T) ->
 
 %% @doc Sign ('claim ownership') of a transaction. After it is signed, it can be
 %% placed onto a block and verified at a later date.
+sign(TX, {PrivKey, PubKey}) -> sign(TX, PrivKey, PubKey).
 sign(TX, PrivKey, PubKey) ->
 	NewTX = TX#tx{ owner = PubKey },
 	NewTX#tx {

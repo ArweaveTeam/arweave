@@ -3,7 +3,7 @@
 -export([spawn_and_mine/1]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2]).
 -export([automine/1, automine_staggered/2]).
--export([add_tx/2]).
+-export([add_tx/2, add_peer/2]).
 -include("ar.hrl").
 -compile({no_auto_import, [{spawn,1}]}).
 
@@ -109,3 +109,8 @@ automine_staggered(Net, StaggerTime) ->
 %% @doc Deliver a TX to a randomly selected node in the network.
 add_tx(Net, TX) ->
 	ar_node:add_tx(ar_gossip:pick_random(Net), TX).
+
+%% @doc Add a node to the network. Returns a new valid network.
+add_peer(Net, Peer) ->
+	ar_node:add_peer(ar_gossip:pick_random(Net), Peer),
+	lists:flatten([Peer|Net]).
