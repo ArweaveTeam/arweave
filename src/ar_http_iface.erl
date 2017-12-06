@@ -8,12 +8,22 @@
 
 %%% Exposes access to an internal Archain network to external nodes.
 
+%% The maximum size of a single POST body.
+-define(MAX_BODY_SIZE, 1024 * 1024 * 1024 * 512).
+
 %% @doc Start the archain HTTP API and Returns a process ID.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
 	spawn(
 		fun() ->
-			{ok, PID} = elli:start_link([{callback, ?MODULE}, {port, Port}]),
+			{ok, PID} =
+				elli:start_link(
+					[
+						{callback, ?MODULE},
+						{max_body_size, ?MAX_BODY_SIZE},
+						{port, Port}
+					]
+				),
 			receive stop -> elli:stop(PID) end
 		end
 	).
