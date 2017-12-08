@@ -95,3 +95,10 @@
 	hash,
 	data
 }).
+
+%% Describes a known Archain network service.
+-record(service, {
+	name,
+	host,
+	expires
+}).

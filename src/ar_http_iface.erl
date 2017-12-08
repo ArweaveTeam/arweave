@@ -1,5 +1,5 @@
 -module(ar_http_iface).
--export([start/0, start/1, start/2, start/3, handle/2, handle_event/3]).
+-export([start/0, start/1, start/2, start/3, start/4, handle/2, handle_event/3]).
 -export([send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
 -export([get_current_block/1]).
 -include("ar.hrl").
@@ -30,8 +30,11 @@ start(Port) ->
 start(Port, Node) ->
 	start(Port, Node, undefined).
 start(Port, Node, SearchNode) ->
+	start(Port, Node, SearchNode, undefined).
+start(Port, Node, SearchNode, ServiceNode) ->
 	reregister(http_entrypoint_node, Node),
 	reregister(http_search_node, SearchNode),
+	reregister(http_service_node, ServiceNode),
 	start(Port).
 
 %%% Server side functions.
@@ -181,6 +184,46 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 % Get the top, current block.
 handle('GET', [<<"current_block">>], _Req) ->
 	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));
+% Return a list of known services, when asked.
+handle('GET', [<<"services">>], _Req) ->
+	{200, [],
+		ar_serialize:jsonify(
+			{array,
+				[
+					{struct,
+						[
+							{"name", Name},
+							{"host", ar_util:format_peer(Host)},
+							{"expires", Expires}
+						]
+					}
+				||
+					#service {
+						name = Name,
+						host = Host,
+						expires = Expires
+					} <- ar_services:get(whereis(http_service_node))
+				]
+			}
+		)
+	};
+% Add reports of service locations
+handle('POST', [<<"services">>], Req) ->
+	BodyBin = elli_request:body(Req),	
+	{ok, {struct, ServicesJSON}} = json2:decode_string(binary_to_list(BodyBin)),
+	ar_services:add(
+		whereis(http_services_node),
+		lists:map(
+			fun({struct, Vals}) ->
+				{"name", Name} = lists:keyfind("name", 1, Vals),
+				{"host", Host} = lists:keyfind("host", 1, Vals),
+				{"expires", Expiry} = lists:keyfind("expires", 1, Vals),
+				#service { name = Name, host = Host, expires = Expiry }
+			end,
+			ServicesJSON
+		)
+	),
+	{200, [], "OK"};
 %Handles otherwise unhandles HTTP requests and returns 500.
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.

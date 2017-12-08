@@ -18,6 +18,7 @@
 		ar_meta_db,
 		ar_storage,
 		ar_serialize,
+		ar_services,
 		ar_tx,
 		ar_weave,
 		ar_wallet,
@@ -132,7 +133,7 @@ rebuild() ->
 %% @doc Run all of the tests associated with the core project.
 test() ->
 	case ?DEFAULT_DIFF of
-		X when X > 17 ->
+		X when X > 12 ->
 			ar:report_console(
 				[
 					diff_too_high_for_tests,
