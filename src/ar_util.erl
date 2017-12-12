@@ -135,6 +135,7 @@ dehexify([X,Y|T], Acc) ->
 	dehexify(T, [V | Acc]).
 
 %% @doc Parse a string representing a remote host into our internal format.
+parse_peer("") -> throw(empty_peer_string);
 parse_peer(BitStr) when is_bitstring(BitStr) ->
 	parse_peer(bitstring_to_list(BitStr));
 parse_peer(Str) when is_list(Str) ->

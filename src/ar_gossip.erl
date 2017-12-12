@@ -23,6 +23,7 @@ init(MaxDelayMS) when is_integer(MaxDelayMS) ->
 add_peers(S, []) -> S;
 add_peers(S, [Peer|Peers]) when self() == Peer -> add_peers(S, Peers);
 add_peers(S, [Peer|Peers]) ->
+	ar:report_console([{adding_peer, Peer}, {node, self()}]),
 	case lists:member(Peer, S#gs_state.peers) of
 		false -> add_peers(S#gs_state { peers = [Peer|S#gs_state.peers] }, Peers);
 		true -> add_peers(S, Peers)
