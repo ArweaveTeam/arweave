@@ -234,7 +234,7 @@ handle_event(Type, Data, Args)
 		when (Type == request_throw)
 		or (Type == request_error)
 		or (Type == request_exit) ->
-	ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]);
+	ar:report([{elli_event, Type}, {data, Data}, {args, Args}]);
 handle_event(_Type, _Data, _Args) -> ok.
 	%ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]).
 
@@ -408,11 +408,20 @@ get_tx(Host, Hash) ->
 %% @doc Retreive information from a peer. Optionally, filter the resulting
 %% keyval list for required information.
 get_info(Peer, Type) ->
-	{Type, X} = lists:keyfind(Type, 1, get_info(Peer)),
-	X.
+	case get_info(Peer) of
+		info_unavailable -> info_unavailable;
+		Info ->
+			{Type, X} = lists:keyfind(Type, 1, Info),
+			X
+	end.
 get_info(Peer) ->
-	{ok, {{_, 200, _}, _, Body}} =
-		httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/info"),
+	case httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/info") of
+		{ok, {{_, 200, _}, _, Body}} -> process_get_info(Body);
+		_ -> info_unavailable
+	end.
+
+%% @doc Produce a key value list based on a /info response.
+process_get_info(Body) ->
 	{ok, {struct, Struct}} = json2:decode_string(Body),
 	{_, NetworkName} = lists:keyfind("network", 1, Struct),
 	{_, ClientVersion} = lists:keyfind("version", 1, Struct),

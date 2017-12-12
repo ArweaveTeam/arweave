@@ -16,8 +16,8 @@ start(_Node, _Peers, B) when is_atom(B) ->
 	do_nothing;
 start(_, _, not_found) -> do_nothing;
 start(_, _, unavailable) -> do_nothing;
-start(Node, Peers, NewB) ->
-	verify_peer_network(Peers),
+start(Node, RawPeers, NewB) ->
+	Peers = filter_peer_list(RawPeers),
 	ar:report_console(
 		[
 			joining_network,
@@ -35,14 +35,13 @@ start(Node, Peers, NewB) ->
 	).
 
 %% @doc Verify peer(s) are on the same network as the client.
-verify_peer_network(Peers) when is_list(Peers) ->
-	true =
-		lists:all(
-			fun(Peer) when is_pid(Peer) -> true;
-			   (Peer) -> ar_http_iface:get_info(Peer, name) == ?NETWORK_NAME
-			end,
-		Peers);
-verify_peer_network(Peer) -> verify_peer_network([Peer]).
+filter_peer_list(Peers) when is_list(Peers) ->
+	lists:filter(
+		fun(Peer) when is_pid(Peer) -> true;
+		   (Peer) -> ar_http_iface:get_info(Peer, name) == ?NETWORK_NAME
+		end,
+	Peers);
+filter_peer_list(Peer) -> filter_peer_list([Peer]).
 
 %% @doc Fills node to capacity based on weave storage limit.
 fill_to_capacity(Peers, NewB) ->

@@ -211,6 +211,7 @@ add_block(Host, Peer, NewB, RecallB, _Height) ->
 %% @doc Add peer(s) to a node.
 add_peers(Node, Peer) when not is_list(Peer) -> add_peers(Node, [Peer]);
 add_peers(Node, Peers) ->
+	%ar:d([{node, self()}, {requesting_add_peers, Peers}]),
 	Node ! {add_peers, Peers},
 	ok.
 
@@ -302,6 +303,7 @@ server(
 			% The miner thinks it has found a new block!
 			integrate_block_from_miner(S, MinedTXs, Nonce);
 		{add_peers, Ps} ->
+			%ar:d({adding_peers, Ps}),
 			server(S#state { gossip = ar_gossip:add_peers(GS, Ps) });
 		stop ->
 			case S#state.miner of

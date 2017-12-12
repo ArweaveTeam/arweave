@@ -6,7 +6,7 @@
 -define(CLIENT_VERSION, 3).
 
 %% Should ar:report_console/1 /actually/ report to the console?
-%-define(SILENT, true).
+-define(SILENT, true).
 
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
@@ -14,7 +14,7 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
 %% NOTE: Setting the default difficulty too high will cause TNT to fail!
--define(DEFAULT_DIFF, 14).
+-define(DEFAULT_DIFF, 3).
 -define(TARGET_TIME, 150).
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).
