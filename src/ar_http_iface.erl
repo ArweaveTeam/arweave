@@ -1,6 +1,7 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, handle/2, handle_event/3]).
 -export([send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
+-export([get_info/1, get_info/2]).
 -export([get_current_block/1]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
@@ -401,6 +402,28 @@ get_tx(Host, Hash) ->
 	 	)
 	).
 
+%% @doc Retreive information from a peer. Optionally, filter the resulting
+%% keyval list for required information.
+get_info(Peer, Type) ->
+	{Type, X} = lists:keyfind(Type, 1, get_info(Peer)),
+	X.
+get_info(Peer) ->
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/info"),
+	{ok, {struct, Struct}} = json2:decode_string(Body),
+	{_, NetworkName} = lists:keyfind("network", 1, Struct),
+	{_, ClientVersion} = lists:keyfind("version", 1, Struct),
+	{_, Height} = lists:keyfind("height", 1, Struct),
+	{_, Blocks} = lists:keyfind("blocks", 1, Struct),
+	{_, Peers} = lists:keyfind("peers", 1, Struct),
+	[
+		{name, NetworkName},
+		{version, ClientVersion},
+		{height, Height},
+		{blocks, Blocks},
+		{peers, Peers}
+	].
+
 %% @doc Process the response of an /block call.
 handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_serialize:json_struct_to_block(Body);
@@ -446,16 +469,11 @@ get_info_test() ->
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
-	{ok, {{_, 200, _}, _, Body}} =
-		httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/info"),
-	{ok, {struct, Struct}} = json2:decode_string(Body),
-	{_, ?NETWORK_NAME} = lists:keyfind("network", 1, Struct),
-	{_, ?CLIENT_VERSION} = lists:keyfind("version", 1, Struct),
-	{_, 1} = lists:keyfind("blocks", 1, Struct),
-	{_, 0} = lists:keyfind("peers", 1, Struct).
+	?NETWORK_NAME = get_info({127,0,0,1,1984}, name),
+	?CLIENT_VERSION = get_info({127,0,0,1,1984}, version),
+	0 = get_info({127,0,0,1,1984}, peers),
+	1 = get_info({127,0,0,1,1984}, blocks),
+	0 = get_info({127,0,0,1,1984}, height).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_peers_test() ->
