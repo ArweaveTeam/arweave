@@ -234,7 +234,7 @@ handle_event(Type, Data, Args)
 		when (Type == request_throw)
 		or (Type == request_error)
 		or (Type == request_exit) ->
-	ar:report([{elli_event, Type}, {data, Data}, {args, Args}]);
+	ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]);
 handle_event(_Type, _Data, _Args) -> ok.
 	%ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]).
 
@@ -262,8 +262,6 @@ return_tx(T) ->
 %% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
 return_info() ->
-	Hs = [H|_] = ar_node:get_blocks(whereis(http_entrypoint_node)),
-	Peers = ar_node:get_peers(whereis(http_entrypoint_node)),
 	{200, [],
 		list_to_binary(
 			ar_serialize:jsonify(
@@ -271,9 +269,14 @@ return_info() ->
 					[
 						{network, ?NETWORK_NAME},
 						{version, ?CLIENT_VERSION},
-						{height, (ar_storage:read_block(H))#block.height},
-						{blocks, length(Hs)},
-						{peers, length(Peers)}
+						{height,
+							case ar_node:get_blocks(whereis(http_entrypoint_node)) of
+								[H|_] ->
+									(ar_storage:read_block(H))#block.height;
+								_ -> 0
+							end},
+						{blocks, ar_storage:blocks_on_disk()},
+						{peers, length(ar_node:get_peers(whereis(http_entrypoint_node)))}
 					]
 				}
 			)
@@ -473,6 +476,18 @@ get_info_test() ->
 	?CLIENT_VERSION = get_info({127,0,0,1,1984}, version),
 	0 = get_info({127,0,0,1,1984}, peers),
 	1 = get_info({127,0,0,1,1984}, blocks),
+	0 = get_info({127,0,0,1,1984}, height).
+
+
+%% @doc Ensure that server info can be retreived via the HTTP interface.
+get_unjoined_info_test() ->
+	ar_storage:clear(),
+	Node1 = ar_node:start([]),
+	reregister(Node1),
+	?NETWORK_NAME = get_info({127,0,0,1,1984}, name),
+	?CLIENT_VERSION = get_info({127,0,0,1,1984}, version),
+	0 = get_info({127,0,0,1,1984}, peers),
+	0 = get_info({127,0,0,1,1984}, blocks),
 	0 = get_info({127,0,0,1,1984}, height).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
