@@ -108,16 +108,19 @@ calculate_recall_block(IndepHash, Height) ->
 generate_block_data(B) when is_record(B, block) ->
 	generate_block_data(B#block.txs);
 generate_block_data(TXs) ->
-	<<
-		(
-			binary:list_to_bin(
-				lists:map(
-					fun ar_tx:to_binary/1,
-					lists:sort(TXs)
+	crypto:hash(
+		?HASH_ALG,
+		<<
+			(
+				binary:list_to_bin(
+					lists:map(
+						fun ar_tx:to_binary/1,
+						lists:sort(TXs)
+					)
 				)
-			)
-		)/binary
-	>>.
+			)/binary
+		>>
+	).
 
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TX and data lists.
@@ -126,7 +129,7 @@ hash(B, TXs, Nonce) when is_record(B, block) ->
 hash(Hash, TXs, Nonce) ->
 	crypto:hash(
 		?HASH_ALG,
-		<< Hash/binary, TXs/binary, Nonce/binary >>
+		<< Nonce/binary, Hash/binary, TXs/binary >>
 	).
 
 %% @doc Create an independent hash from a block. Independent hashes

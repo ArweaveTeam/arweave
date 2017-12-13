@@ -110,7 +110,7 @@ basic_test() ->
 	receive
 		{work_complete, [], LastHash, _NewHash, Diff, Nonce} ->
 			<< 0:Diff, _/bitstring >>
-				= crypto:hash(?HASH_ALG, << LastHash/binary, Data/binary, Nonce/binary >>)
+				= crypto:hash(?HASH_ALG, << Nonce/binary, LastHash/binary, Data/binary >>)
 	end.
 
 %% @doc Ensure that we can change the data while mining is in progress.
@@ -124,5 +124,5 @@ change_data_test() ->
 	receive
 		{work_complete, [], LastHash, _NewHash, Diff, Nonce} ->
 			<< 0:Diff, _/bitstring >>
-				= crypto:hash(?HASH_ALG, << LastHash/binary, NewData/binary, Nonce/binary >>)
+				= crypto:hash(?HASH_ALG, << Nonce/binary, LastHash/binary, NewData/binary >>)
 	end.
