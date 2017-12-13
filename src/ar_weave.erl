@@ -1,5 +1,5 @@
 -module(ar_weave).
--export([init/0, init/1, add/1, add/2, add/3, add/4, add/5, add/6]).
+-export([init/0, init/1, init/2, add/1, add/2, add/3, add/4, add/5, add/6]).
 -export([hash/3, indep_hash/1]).
 -export([verify/1, verify_indep/2]).
 -export([calculate_recall_block/1, calculate_recall_block/2]).
@@ -13,7 +13,8 @@
 %% @doc Start a new block list. Optionally takes a list of wallet values
 %% for the genesis block.
 init() -> init(ar_util:genesis_wallets()).
-init(WalletList) ->
+init(WalletList) -> init(WalletList, ?DEFAULT_DIFF).
+init(WalletList, StartingDiff) ->
 	B0 =
 		#block{
 			height = 0,
@@ -21,7 +22,8 @@ init(WalletList) ->
 			nonce = crypto:strong_rand_bytes(32),
 			txs = [],
 			wallet_list = WalletList,
-			hash_list = []
+			hash_list = [],
+			diff = StartingDiff
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].

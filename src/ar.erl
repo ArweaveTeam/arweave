@@ -44,7 +44,8 @@
 	mine = false,
 	peers = [],
 	polling = false,
-	auto_join = true
+	auto_join = true,
+	diff = ?DEFAULT_DIFF
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -63,6 +64,8 @@ main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
 	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
 main(["port", Port|Rest], O) ->
 	main(Rest, O#opts { port = list_to_integer(Port) });
+main(["diff", Diff|Rest], O) ->
+	main(Rest, O#opts { diff = list_to_integer(Diff) });
 main(["polling"|Rest], O) ->
 	main(Rest, O#opts { polling = true });
 main(["no_auto_join"|Rest], O) ->
@@ -73,14 +76,23 @@ main([Arg|_Rest], _O) ->
 %% @doc Start an Archain node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#opts { port = Port });
-start(#opts { port = Port, init = Init, peers = Peers, mine = Mine, polling = Polling, auto_join = AutoJoin }) ->
+start(
+	#opts {
+		port = Port,
+		init = Init,
+		peers = Peers,
+		mine = Mine,
+		polling = Polling,
+		auto_join = AutoJoin,
+		diff = Diff
+	}) ->
 	% Start apps which we depend on.
 	inets:start(),
 	ar_meta_db:start(),
 	ar_meta_db:put(port, Port),
 	Node = ar_node:start(
 		Peers,
-		if Init -> ar_weave:init(); true -> not_joined end,
+		if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
 		0,
 		unclaimed,
 		AutoJoin
@@ -133,7 +145,7 @@ rebuild() ->
 %% @doc Run all of the tests associated with the core project.
 test() ->
 	case ?DEFAULT_DIFF of
-		X when X > 12 ->
+		X when X > 8 ->
 			ar:report_console(
 				[
 					diff_too_high_for_tests,
