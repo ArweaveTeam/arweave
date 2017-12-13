@@ -102,3 +102,7 @@
 	host,
 	expires
 }).
+
+%% Helper macros
+
+-define(IS_BLOCK(X), (is_record(X, block))).

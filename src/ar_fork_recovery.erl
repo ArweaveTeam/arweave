@@ -95,6 +95,11 @@ server(S = #state { blocks = Blocks = [B|_], peers = Peers, hash_list = [NextH|H
 			server(S#state { blocks = [NextB|Blocks], hash_list = HashList })
 	end.
 
+try_apply_block(_, NextB, B, RecallB) when
+		(not ?IS_BLOCK(NextB)) or
+		(not ?IS_BLOCK(B)) or
+		(not ?IS_BLOCK(RecallB)) ->
+	false;
 try_apply_block(HashList, NextB, B, RecallB) ->
 	ar_node:validate(HashList,
 		ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),

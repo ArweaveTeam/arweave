@@ -17,17 +17,17 @@ start(_Node, _Peers, B) when is_atom(B) ->
 start(_, _, not_found) -> do_nothing;
 start(_, _, unavailable) -> do_nothing;
 start(Node, RawPeers, NewB) ->
-	Peers = filter_peer_list(RawPeers),
-	ar:report_console(
-		[
-			joining_network,
-			{node, Node},
-			{peers, Peers},
-			{height, NewB#block.height}
-		]
-	),
 	spawn(
 		fun() ->
+			Peers = filter_peer_list(RawPeers),
+			ar:report_console(
+				[
+					joining_network,
+					{node, Node},
+					{peers, Peers},
+					{height, NewB#block.height}
+				]
+			),
 			ar_storage:write_block(NewB),
 			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 			fill_to_capacity(Peers, NewB)
@@ -44,6 +44,7 @@ filter_peer_list(Peers) when is_list(Peers) ->
 filter_peer_list(Peer) -> filter_peer_list([Peer]).
 
 %% @doc Fills node to capacity based on weave storage limit.
+fill_to_capacity(_, NewB) when NewB#block.height =< 1 -> ok;
 fill_to_capacity(Peers, NewB) ->
 	Height = NewB#block.height,
 	RandBlock = lists:nth(rand:uniform(Height - 1), NewB#block.hash_list),
