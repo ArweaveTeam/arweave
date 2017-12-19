@@ -64,7 +64,7 @@ handle('GET', [<<"info">>], _Req) ->
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
 	case IndepHash of
-		not_found -> 
+		not_found ->
 			{404, [], <<"Not Found.">>};
 		_ ->
 			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
@@ -79,7 +79,7 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 handle('GET', [<<"tx">>, Hash, <<"data">>], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
 	case IndepHash of
-		not_found -> 
+		not_found ->
 			{ok, File} = file:read_file("data/not_found.html"),
 			{404, [], File};
 		_ ->
@@ -169,6 +169,27 @@ handle('GET', [<<"balance">>, PubKey], _Req) ->
 			)
 		)
 	};
+% Get last TX ID hash
+handle('GET', [<<"last_tx">>, Pub], _Req) ->
+	{200, [],
+		list_to_binary(
+			ar_serialize:jsonify(
+				{struct,
+					[
+						{
+							last_tx,
+							ar_util:encode(
+								ar_node:get_last_tx(
+									whereis(http_entrypoint_node),
+									ar_util:decode(Pub)
+								)
+							)
+						}
+					]
+				}
+			)
+		)
+	};
 % Gets a block by block hash.
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
@@ -210,7 +231,7 @@ handle('GET', [<<"services">>], _Req) ->
 	};
 % Add reports of service locations
 handle('POST', [<<"services">>], Req) ->
-	BodyBin = elli_request:body(Req),	
+	BodyBin = elli_request:body(Req),
 	{ok, {struct, ServicesJSON}} = json2:decode_string(binary_to_list(BodyBin)),
 	ar_services:add(
 		whereis(http_services_node),
@@ -545,6 +566,24 @@ get_presale_balance_test() ->
 		 		++ ar_util:encode_base64_safe(base64:encode_to_string(Pub1))),
 	{ok, {struct, Struct}} = json2:decode_string(Body),
 	{_, 10000} = lists:keyfind("balance", 1, Struct).
+
+%% @doc Test that last tx associated with a wallet can be fetched.
+get_last_tx_single_test() ->
+	ar_storage:clear(),
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Bs = ar_weave:init([{Pub1, 10000, <<"TEST_ID">>}]),
+	Node1 = ar_node:start([], Bs),
+	reregister(Node1),
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/last_tx/"
+		 		++ ar_util:encode(Pub1)
+		),
+	{ok, {struct, Struct}} = json2:decode_string(Body),
+	{"last_tx", ID}	= lists:keyfind("last_tx", 1, Struct),
+	<<"TEST_ID">> = ar_util:decode(ID).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
