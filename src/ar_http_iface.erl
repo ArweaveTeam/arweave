@@ -518,7 +518,7 @@ get_peers_test() ->
 get_balance_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{Pub1, 10000}]),
+	Bs = ar_weave:init([{Pub1, 10000, <<>>}]),
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
@@ -534,7 +534,7 @@ get_balance_test() ->
 get_presale_balance_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{Pub1, 10000}]),
+	Bs = ar_weave:init([{Pub1, 10000, <<>>}]),
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =

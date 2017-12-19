@@ -1,6 +1,6 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_peers/1, get_balance/2]).
+-export([get_blocks/1, get_block/2, get_peers/1, get_balance/2, get_last_tx/2]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
@@ -155,6 +155,13 @@ get_balance(Node, PubKey) ->
 		{balance, PubKey, B} -> B
 	end.
 
+%% @doc Return the last tx associated with a wallet.
+get_last_tx(Node, PubKey) ->
+	Node ! {get_last_tx, self(), PubKey},
+	receive
+		{last_tx, PubKey, LastTX} -> LastTX
+	end.
+
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
 	Node ! mine.
@@ -293,7 +300,14 @@ server(
 		{get_balance, PID, PubKey} ->
 			PID ! {balance, PubKey,
 				case lists:keyfind(PubKey, 1, WalletList) of
-					{PubKey, Balance} -> Balance;
+					{PubKey, Balance, _Last} -> Balance;
+					false -> 0
+				end},
+			server(S);
+		{get_last_tx, PID, PubKey} ->
+			PID ! {last_tx, PubKey,
+				case lists:keyfind(PubKey, 1, WalletList) of
+					{PubKey, _Balance, Last} -> Last;
 					false -> 0
 				end},
 			server(S);
@@ -646,7 +660,7 @@ validate(
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 %% TODO: We should filter empty wallets, too.
 validate_wallet_list([]) -> true;
-validate_wallet_list([{_, Qty}|_]) when Qty < 0 -> false;
+validate_wallet_list([{_, Qty, _}|_]) when Qty < 0 -> false;
 validate_wallet_list([_|Rest]) -> validate_wallet_list(Rest).
 
 %% @doc Update the wallet list of a server with a set of new transactions
@@ -672,20 +686,37 @@ apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, TXs)).
 
 %% @doc Apply a transaction to a wallet list, updating it.
-apply_tx(WalletList, #tx { owner = Pub, quantity = Qty, type = data }) ->
-	alter_wallet(WalletList, Pub, -Qty);
+apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, quantity = Qty, type = data }) ->
+	case lists:keyfind(Pub, 1, WalletList) of
+		{Pub, Balance, Last} ->
+			lists:keyreplace(Pub, 1, WalletList, {Pub, Balance - Qty, ID});
+		_ ->
+			ar:report([{ignoring_tx, ID}, data_tx_wallet_not_instantiated]),
+			WalletList
+	end;
 apply_tx(
 		WalletList,
-		#tx { owner = From, target = To, quantity = Qty, type = transfer }) ->
-	alter_wallet(alter_wallet(WalletList, From, -Qty), To, Qty).
+		#tx { id = ID, owner = From, last_tx = Last, target = To, quantity = Qty, type = transfer }) ->
+	case lists:keyfind(From, 1, WalletList) of
+		{From, Balance, Last} ->
+			NewWalletList = lists:keyreplace(From, 1, WalletList, {From, Balance - Qty, ID}),
+			case lists:keyfind(To, 1, NewWalletList) of
+				false -> [{To, Qty, <<>>}|NewWalletList];
+				{To, OldBalance, LastTX} ->
+					lists:keyreplace(To, 1, NewWalletList, {To, OldBalance + Qty, LastTX})
+			end;
+		_ ->
+			ar:report([{ignoring_tx, ID}, starting_wallet_not_instantiated]),
+			WalletList
+	end.
 
 %% @doc Alter a wallet in a wallet list.
 alter_wallet(WalletList, Target, Adjustment) ->
 	case lists:keyfind(Target, 1, WalletList) of
 		false ->
 			%io:format("~p: Could not find pub ~p in ~p~n", [self(), Target, WalletList]),
-			[{Target, Adjustment}|WalletList];
-		{Target, Balance} ->
+			[{Target, Adjustment, <<>>}|WalletList];
+		{Target, Balance, LastTX} ->
 			%io:format(
 			%	"~p: Target: ~p Balance: ~p Adjustment: ~p~n",
 			%	[self(), Target, Balance, Adjustment]
@@ -694,7 +725,7 @@ alter_wallet(WalletList, Target, Adjustment) ->
 				Target,
 				1,
 				WalletList,
-				{Target, Balance + Adjustment}
+				{Target, Balance + Adjustment, LastTX}
 			)
 	end.
 
@@ -1043,9 +1074,9 @@ wallet_transaction_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, 9000),
+	TX = ar_tx:new(Pub2, 9000, <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, 10000}]),
+	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1061,11 +1092,11 @@ wallet_two_transaction_test() ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, 9000),
+	TX = ar_tx:new(Pub2, 9000, <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	TX2 = ar_tx:new(Pub3, 500),
+	TX2 = ar_tx:new(Pub3, 500, <<>>),
 	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
-	B0 = ar_weave:init([{Pub1, 10000}]),
+	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1078,3 +1109,67 @@ wallet_two_transaction_test() ->
 	1000 = get_balance(Node1, Pub1),
 	8500 = get_balance(Node1, Pub2),
 	500 = get_balance(Node1, Pub3).
+
+%% @doc Ensure that TX Id threading functions correctly (in the positive case).
+tx_threading_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, 1000, <<>>),
+	TX2 = ar_tx:new(Pub2, 1000, TX#tx.id),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
+	Node1 = start([], B0),
+	Node2 = start([Node1], B0),
+	add_peers(Node1, Node2),
+	add_tx(Node1, SignedTX),
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	add_tx(Node1, SignedTX2),
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	8000 = get_balance(Node2, Pub1),
+	2000 = get_balance(Node2, Pub2).
+
+%% @doc Ensure that TX Id threading functions correctly (in the negative case).
+bogus_tx_thread_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, 1000, <<>>),
+	TX2 = ar_tx:new(Pub2, 1000, <<"INCORRECT TX ID">>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
+	Node1 = start([], B0),
+	Node2 = start([Node1], B0),
+	add_peers(Node1, Node2),
+	add_tx(Node1, SignedTX),
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	add_tx(Node1, SignedTX2),
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	9000 = get_balance(Node2, Pub1),
+	1000 = get_balance(Node2, Pub2).
+
+%% @doc Ensure that TX replay attack mitigation works.
+replay_attack_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, 1000, <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
+	Node1 = start([], B0),
+	Node2 = start([Node1], B0),
+	add_peers(Node1, Node2),
+	add_tx(Node1, SignedTX),
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	add_tx(Node1, SignedTX),
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	9000 = get_balance(Node2, Pub1),
+	1000 = get_balance(Node2, Pub2).

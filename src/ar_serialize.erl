@@ -48,11 +48,12 @@ block_to_json_struct(
 			{wallet_list,
 				{array,
 					lists:map(
-						fun({Wallet, Qty}) ->
+						fun({Wallet, Qty, Last}) ->
 							{struct,
 								[
 									{wallet, ar_util:encode(Wallet)},
-									{quantity, Qty}
+									{quantity, Qty},
+									{last_tx, ar_util:encode(Last)}
 								]
 							}
 						end,
@@ -93,9 +94,9 @@ json_struct_to_block({struct, BlockStruct}) ->
 		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
 		wallet_list =
 			[
-				{ar_util:decode(Wallet), Qty}
+				{ar_util:decode(Wallet), Qty, ar_util:decode(Last)}
 			||
-				{struct, [{"wallet", Wallet}, {"quantity", Qty}]}
+				{struct, [{"wallet", Wallet}, {"quantity", Qty}, {"last_tx", Last}]}
 					<- WalletList
 			],
 		reward_addr =
@@ -109,6 +110,7 @@ json_struct_to_block({struct, BlockStruct}) ->
 tx_to_json_struct(
 	#tx {
 		id = ID,
+		last_tx = Last,
 		owner = Owner,
 		tags = Tags,
 		target = Target,
@@ -120,6 +122,7 @@ tx_to_json_struct(
 	{struct,
 		[
 			{id, ar_util:encode(ID)},
+			{last_tx, ar_util:encode(Last)},
 			{owner, ar_util:encode(Owner)},
 			{tags, {array, Tags}},
 			{target, ar_util:encode(Target)},
@@ -140,6 +143,7 @@ json_struct_to_tx({struct, TXStruct}) ->
 	{array, Tags} = find_value("tags", TXStruct),
 	#tx {
 		id = ar_util:decode(find_value("id", TXStruct)),
+		last_tx = ar_util:decode(find_value("last_tx", TXStruct)),
 		owner = ar_util:decode(find_value("owner", TXStruct)),
 		tags = Tags,
 		target = ar_util:decode(find_value("target", TXStruct)),

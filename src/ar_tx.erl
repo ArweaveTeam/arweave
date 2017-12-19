@@ -1,5 +1,5 @@
 -module(ar_tx).
--export([new/0, new/1, new/2, sign/2, sign/3, to_binary/1, verify/1, verify_txs/1]).
+-export([new/0, new/1, new/2, new/3, sign/2, sign/3, to_binary/1, verify/1, verify_txs/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -9,9 +9,18 @@
 new() ->
 	#tx { id = generate_id() }.
 new(Data) ->
-	#tx { id = generate_id(), type = data, data = Data }.
-new(Dest, Qty) ->
-	#tx { id = generate_id(), type = transfer, quantity = Qty, target = Dest, data = <<>> }.
+	#tx { id = generate_id(), data = Data }.
+new(Data, Last) ->
+	#tx { id = generate_id(), last_tx = Last, type = data, data = Data }.
+new(Dest, Qty, Last) ->
+	#tx {
+		id = generate_id(),
+		last_tx = Last,
+		type = transfer,
+		quantity = Qty,
+		target = Dest,
+		data = <<>>
+	}.
 
 %% @doc Create an ID for an object on the weave.
 generate_id() -> crypto:strong_rand_bytes(32).

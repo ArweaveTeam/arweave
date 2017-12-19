@@ -6,7 +6,7 @@
 -define(CLIENT_VERSION, 3).
 
 %% Should ar:report_console/1 /actually/ report to the console?
-%-define(SILENT, true).
+-define(SILENT, true).
 
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
@@ -71,6 +71,7 @@
 %% A transaction, as stored in a block.
 -record(tx, {
 	id = <<>>,
+	last_tx = <<>>,
 	owner = <<>>,
 	tags = [],
 	target = <<>>,
