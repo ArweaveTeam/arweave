@@ -1,6 +1,5 @@
 #!/bin/bash
 
-make clean
 mkdir -p ebin logs blocks
 erlc +export_all -o ebin/ src/ar.erl
 erl -pa ebin/ -s ar rebuild -run ar main "$@"

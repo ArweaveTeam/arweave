@@ -45,6 +45,7 @@
 	peers = [],
 	polling = false,
 	auto_join = true,
+	clean = false,
 	diff = ?DEFAULT_DIFF
 }).
 
@@ -68,6 +69,8 @@ main(["diff", Diff|Rest], O) ->
 	main(Rest, O#opts { diff = list_to_integer(Diff) });
 main(["polling"|Rest], O) ->
 	main(Rest, O#opts { polling = true });
+main(["clean"|Rest], O) ->
+	main(Rest, O#opts { clean = true });
 main(["no_auto_join"|Rest], O) ->
 	main(Rest, O#opts { auto_join = false });
 main([Arg|_Rest], _O) ->
@@ -83,9 +86,12 @@ start(
 		peers = Peers,
 		mine = Mine,
 		polling = Polling,
+		clean = Clean,
 		auto_join = AutoJoin,
 		diff = Diff
 	}) ->
+	% Optionally clear the block cache
+	if Clean -> ar_storage:clear(); true -> do_nothing end,
 	% Start apps which we depend on.
 	inets:start(),
 	ar_meta_db:start(),
