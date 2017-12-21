@@ -22,7 +22,7 @@ You can learn more about building Archain ADT apps by checking out our
 documentation [here](ADT_README.md).
 
 You can also find detailed tutorials about building Archain apps and services
-on the [Archain youtube channel](http://www.youtube.com/archain).
+on the [Archain youtube channel](https://www.youtube.com/channel/UCdM3INQ5NAsNjWU8-2y_xjw).
 
 For more information on the Archain project and to read our whitepaper visit
 [Archain.org](https://www.archain.org/).
