@@ -75,7 +75,7 @@ main("") ->
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"init", "Start a new blockweave."},
-			{"diff", "(For use with 'init':) New blockweave starting difficulty."}
+			{"diff init_diff", "(For use with 'init':) New blockweave starting difficulty."}
 		]
 	),
 	erlang:halt();
