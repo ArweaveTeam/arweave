@@ -70,3 +70,6 @@ update: clean
 
 diff:
 	hg extdiff -p meld
+
+todo:
+	grep --color --line-number --recursive TODO "src"
