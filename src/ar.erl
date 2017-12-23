@@ -53,8 +53,32 @@
 main() -> main("").
 main("") ->
 	io:format("Starts an Archain mining server.~n"),
-	io:format("Usage: archain-server [init] [mine] "
-   		"[peer ip_addr_and_port]* [port port_number]~n");
+	io:format("Compatible with network: ~s~n", [?NETWORK_NAME]),
+	io:format("Usage: archain-server [options]~n"),
+	io:format("Options:~n"),
+	lists:foreach(
+		fun({Opt, Desc}) ->
+			io:format("\t~s~s~n",
+				[
+					string:pad(Opt, 30, trailing, $ ),
+					Desc
+				]
+			)
+		end,
+		[
+			{"peer ip:port", "Join a network on a peer (or set of peers)."},
+			{"mine", "Automatically start mining once the netwok has been joined."},
+			{"port", "The local port to use for mining. "
+						"This port must be accessible by remote peers."},
+			{"polling", "Poll peers for new blocks. Useful in environments where "
+			 			"port forwarding is not possible."},
+			{"clean", "Clear the block cache before starting."},
+			{"no_auto_join", "Do not automatically join the network of your peers."},
+			{"init", "Start a new blockweave."},
+			{"diff", "(For use with 'init':) New blockweave starting difficulty."}
+		]
+	),
+	erlang:halt();
 main(Args) -> main(Args, #opts{}).
 main([], O) -> start(O);
 main(["init"|Rest], O) ->
