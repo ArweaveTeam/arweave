@@ -1,5 +1,16 @@
 #!/bin/bash
 
 mkdir -p ebin logs blocks
-erlc +export_all -o ebin/ src/ar.erl
-erl -pa ebin/ -s ar rebuild -run ar main "$@"
+
+while true; do
+	erlc +export_all -o ebin/ src/ar.erl
+	if erl -pa ebin/ -s ar rebuild -run ar main "$@"; then
+		echo "Heartbeat: Server terminated safely."
+		exit 1
+	else
+		echo "Heartbeat: The Archain server has terminated unsafely. It will restart in 15 seconds."
+		echo "Heartbeat: If you would like to avoid this, please press control+C now..."
+		sleep 15
+	fi
+done
+
