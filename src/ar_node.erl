@@ -658,9 +658,8 @@ validate(
 	validate(NewB#block.hash_list, NewB#block.wallet_list, NewB, OldB, RecallB).
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
-%% TODO: We should filter empty wallets, too.
 validate_wallet_list([]) -> true;
-validate_wallet_list([{_, Qty, _}|_]) when Qty < 0 -> false;
+validate_wallet_list([{_, Qty, _}|_]) when Qty =< 0 -> false;
 validate_wallet_list([_|Rest]) -> validate_wallet_list(Rest).
 
 %% @doc Update the wallet list of a server with a set of new transactions
@@ -686,7 +685,11 @@ apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, TXs)).
 
 %% @doc Apply a transaction to a wallet list, updating it.
-apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, quantity = Qty, type = data }) ->
+%% Critically, filter empty wallets from the list after application.
+apply_tx(WalletList, TX) ->
+	filter_empty_wallets(do_apply_tx(WalletList, TX)).
+
+do_apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, quantity = Qty, type = data }) ->
 	case lists:keyfind(Pub, 1, WalletList) of
 		{Pub, Balance, Last} ->
 			lists:keyreplace(Pub, 1, WalletList, {Pub, Balance - Qty, ID});
@@ -694,7 +697,7 @@ apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, quantity = Qty,
 			ar:report([{ignoring_tx, ID}, data_tx_wallet_not_instantiated]),
 			WalletList
 	end;
-apply_tx(
+do_apply_tx(
 		WalletList,
 		#tx { id = ID, owner = From, last_tx = Last, target = To, quantity = Qty, type = transfer }) ->
 	case lists:keyfind(From, 1, WalletList) of
@@ -709,6 +712,11 @@ apply_tx(
 			ar:report([{ignoring_tx, ID}, starting_wallet_not_instantiated]),
 			WalletList
 	end.
+
+%% @doc Remove wallets with zero balance from a wallet list.
+filter_empty_wallets([]) -> [];
+filter_empty_wallets([{_, 0, _}|WalletList]) -> filter_empty_wallets(WalletList);
+filter_empty_wallets([Wallet|Rest]) -> [Wallet|filter_empty_wallets(Rest)].
 
 %% @doc Alter a wallet in a wallet list.
 alter_wallet(WalletList, Target, Adjustment) ->
