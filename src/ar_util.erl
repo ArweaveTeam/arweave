@@ -8,7 +8,7 @@
 -export([block_from_hash_list/2, hash_from_hash_list/2, get_recall_hash/2]).
 -export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
 -export([get_hash/1, get_head_block/1]).
--export([genesis_wallets/0, generate_address/1]).
+-export([genesis_wallets/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -135,10 +135,16 @@ dehexify([X,Y|T], Acc) ->
 	dehexify(T, [V | Acc]).
 
 %% @doc Generate an address for a given wallet or public key.
-generate_address(W = {{_, Pub}, Pub}) when is_tuple(W)->
-	crypto:hash(?ADDRS_ALG, crypto:hash(?HASH_ALG, Pub));
-generate_address(Pub) ->
-	generate_address({unused ,Pub}).
+%generate_address_dep(W = {{_, Pub}, Pub}) when is_tuple(W) ->
+%	crypto:hash(?ADDRS_ALG, crypto:hash(?HASH_ALG, Pub));
+%generate_address_dep(Pub) ->
+%	generate_address_dep({unused ,Pub}).
+
+%% @doc Generate an address using encode for a given wallet or public key.
+%generate_address(W = {{_, Pub}, Pub}) when is_tuple(W)->
+%	ar_util:encode(crypto:hash(?HASH_ALG, Pub));
+%generate_address(Pub) ->
+%	generate_address({unused ,Pub}).
 
 %% @doc Parse a string representing a remote host into our internal format.
 parse_peer("") -> throw(empty_peer_string);

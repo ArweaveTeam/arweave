@@ -679,7 +679,7 @@ apply_txs(WalletList, TXs) ->
 		)
 	).
 
-%% @doc Calculate and apply minging reward quantities to a wallet list.
+%% @doc Calculate and apply mining reward quantities to a wallet list.
 apply_mining_reward(WalletList, unclaimed, _TXs, _Height) -> WalletList;
 apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, TXs)).
@@ -689,20 +689,28 @@ apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
 apply_tx(WalletList, TX) ->
 	filter_empty_wallets(do_apply_tx(WalletList, TX)).
 
-do_apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, quantity = Qty, type = data }) ->
+do_apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, reward = Reward, type = data }) ->
 	case lists:keyfind(Pub, 1, WalletList) of
 		{Pub, Balance, Last} ->
-			lists:keyreplace(Pub, 1, WalletList, {Pub, Balance - Qty, ID});
+			lists:keyreplace(Pub, 1, WalletList, {Pub, Balance - Reward, ID});
 		_ ->
 			ar:report([{ignoring_tx, ID}, data_tx_wallet_not_instantiated]),
 			WalletList
 	end;
 do_apply_tx(
 		WalletList,
-		#tx { id = ID, owner = From, last_tx = Last, target = To, quantity = Qty, type = transfer }) ->
+		#tx {
+			id = ID,
+			owner = From,
+			last_tx = Last,
+			target = To,
+			quantity = Qty,
+			reward = Reward,
+			type = transfer
+		}) ->
 	case lists:keyfind(From, 1, WalletList) of
 		{From, Balance, Last} ->
-			NewWalletList = lists:keyreplace(From, 1, WalletList, {From, Balance - Qty, ID}),
+			NewWalletList = lists:keyreplace(From, 1, WalletList, {From, Balance - (Qty + Reward), ID}),
 			case lists:keyfind(To, 1, NewWalletList) of
 				false -> [{To, Qty, <<>>}|NewWalletList];
 				{To, OldBalance, LastTX} ->
@@ -785,11 +793,8 @@ calculate_static_reward(Height) ->
 	%(0.1 * ?GENESIS_TOKENS * 2 - (Height/105120) * math:log(2))/105120.
 
 %% @doc Given a TX, calculate an appropriate reward.
-calculate_tx_reward(#tx { type = value }) -> ?MIN_TX_REWARD;
-calculate_tx_reward(#tx { type = data, quantity = Qty }) ->
-	% TODO: Verify mining cost is greater than minimum cost.
-	%?MIN_TX_REWARD + (byte_size(Data) * ?COST_PER_BYTE).
-	Qty.
+calculate_tx_reward(#tx { reward = Reward }) ->
+	Reward.
 
 %% @doc Find the block height at which the weaves diverged.
 divergence_height([], []) -> -1;
@@ -1082,17 +1087,17 @@ wallet_transaction_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, 9000, <<>>),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
+	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	1000 = get_balance(Node2, Pub1),
-	9000 = get_balance(Node2, Pub2).
+	?AR(999) = get_balance(Node2, Pub1),
+	?AR(9000) = get_balance(Node2, Pub2).
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
 wallet_two_transaction_test() ->
@@ -1100,11 +1105,11 @@ wallet_two_transaction_test() ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, 9000, <<>>),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	TX2 = ar_tx:new(Pub3, 500, <<>>),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
-	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
+	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1114,20 +1119,20 @@ wallet_two_transaction_test() ->
 	add_tx(Node2, SignedTX2),
 	mine(Node2), % Mine B1
 	receive after 500 -> ok end,
-	1000 = get_balance(Node1, Pub1),
-	8500 = get_balance(Node1, Pub2),
-	500 = get_balance(Node1, Pub3).
+	?AR(999) = get_balance(Node1, Pub1),
+	?AR(8499) = get_balance(Node1, Pub2),
+	?AR(500) = get_balance(Node1, Pub3).
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, 1000, <<>>),
-	TX2 = ar_tx:new(Pub2, 1000, TX#tx.id),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
+	TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), TX#tx.id),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
+	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1137,19 +1142,19 @@ tx_threading_test() ->
 	add_tx(Node1, SignedTX2),
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	8000 = get_balance(Node2, Pub1),
-	2000 = get_balance(Node2, Pub2).
+	?AR(7998) = get_balance(Node2, Pub1),
+	?AR(2000) = get_balance(Node2, Pub2).
 
 %% @doc Ensure that TX Id threading functions correctly (in the negative case).
 bogus_tx_thread_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, 1000, <<>>),
-	TX2 = ar_tx:new(Pub2, 1000, <<"INCORRECT TX ID">>),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
+	TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<"INCORRECT TX ID">>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
+	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1159,17 +1164,17 @@ bogus_tx_thread_test() ->
 	add_tx(Node1, SignedTX2),
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	9000 = get_balance(Node2, Pub1),
-	1000 = get_balance(Node2, Pub2).
+	?AR(8999) = get_balance(Node2, Pub1),
+	?AR(1000) = get_balance(Node2, Pub2).
 
 %% @doc Ensure that TX replay attack mitigation works.
 replay_attack_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, 1000, <<>>),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, 10000, <<>>}]),
+	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1179,5 +1184,5 @@ replay_attack_test() ->
 	add_tx(Node1, SignedTX),
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	9000 = get_balance(Node2, Pub1),
-	1000 = get_balance(Node2, Pub2).
+	?AR(8999) = get_balance(Node2, Pub1),
+	?AR(1000) = get_balance(Node2, Pub2).

@@ -142,6 +142,16 @@ handle('GET', [<<"peers">>], _Req) ->
 			)
 		)
 	};
+handle('GET', [<<"price">>, SizeInBytes], _Req) ->
+	{200, [],
+		integer_to_list(
+			ar_tx:calculate_min_tx_cost(
+				list_to_integer(
+					binary_to_list(SizeInBytes)
+				)
+			)
+		)
+	};
 handle('POST', [<<"peers">>], Req) ->
 	Peer = elli_request:peer(Req),
 	ar_node:add_peers(whereis(http_entrypoint_node), ar_util:parse_peer(Peer)),
@@ -375,6 +385,22 @@ get_current_block(Host) ->
 		)
 	).
 
+%% @doc Calculate transaction reward.
+get_tx_reward(Node, Size) ->
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request(
+			get,
+			{
+				ar:d("http://"
+					++ ar_util:format_peer(Node)
+					++ "/price/"
+					++ integer_to_list(Size)),
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+	 	),
+	list_to_integer(Body).
+
 %% @doc Retreive a block by height or hash from a node.
 get_block(Host, Height) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_height, Height}]),
@@ -508,6 +534,15 @@ get_info_test() ->
 	1 = get_info({127,0,0,1,1984}, blocks),
 	0 = get_info({127,0,0,1,1984}, height).
 
+%% @doc Ensure transaction reward can be retrieved via http iface.
+get_tx_reward_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	% Hand calculated result for 1000 bytes.
+	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000),
+	ExpectedPrice = get_tx_reward({127,0,0,1,1984}, 1000).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->

@@ -24,6 +24,9 @@
 %% The total supply of tokens in the Genesis block,
 -define(GENESIS_TOKENS, 55000000).
 
+%% Winstons per AR.
+-define(WINSTON_PER_AR, 1000000000000).
+
 %% The minimum cost/reward for a single TX.
 -define(MIN_TX_REWARD, 1).
 %% The minimum cost/reward for a single TX.
@@ -71,15 +74,16 @@
 
 %% A transaction, as stored in a block.
 -record(tx, {
-	id = <<>>,
-	last_tx = <<>>,
-	owner = <<>>,
-	tags = [],
-	target = <<>>,
-	quantity = 0,
-	type = transfer,
-	data = <<>>,
-	signature = <<>>
+	id = <<>>, % TX UID.
+	last_tx = <<>>, % Get last TX hash.
+	owner = <<>>, % Transaction owner.
+	tags = [], %
+	target = <<>>, % Target of the tx.
+	quantity = 0, %
+	type = transfer, % Transaction type. Transfer or data.
+	data = <<>>, % Data in transaction (if data transaction).
+	signature = <<>>, % Transaction signature.
+	reward = 0 % Transaction mining reward.
 }).
 
 %% Gossip protocol state. Passed to and from the gossip library functions.
@@ -106,5 +110,6 @@
 }).
 
 %% Helper macros
-
+% Return number of winstons per given AR.
+-define(AR(AR), (?WINSTON_PER_AR * AR)).
 -define(IS_BLOCK(X), (is_record(X, block))).
