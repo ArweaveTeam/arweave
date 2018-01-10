@@ -216,6 +216,7 @@ init_add_add_forge_add_verify_subtle_test() ->
 
 %% @doc Ensure that blocks with an invalid nonce are detect.
 detect_invalid_nonce_test() ->
-	B1 = add(init(), [ar_tx:new(<<"TEST TX">>), ar_tx:new(<<"TEST DATA1">>), ar_tx:new(<<"TESTDATA2">>)]),
+	B1 = add(init([]), [ar_tx:new(<<"TEST TX">>), ar_tx:new(<<"TEST DATA1">>), ar_tx:new(<<"TESTDATA2">>)]),
 	ForgedB2 = add(B1, [ar_tx:new(<<"FILTHY LIES">>)], <<"INCORRECT NONCE">>),
-	false = verify(add(ForgedB2, [ar_tx:new(<<"NEW DATA">>)])).
+	[B|Bs] = add(ForgedB2, [ar_tx:new(<<"NEW DATA">>)]),
+	false = verify([B#block{nonce = <<"INCORRECT NONCE">>}|Bs]).

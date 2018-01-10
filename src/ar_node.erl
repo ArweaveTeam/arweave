@@ -1082,7 +1082,7 @@ multi_node_mining_reward_test() ->
 	true = (get_balance(Node1, Pub1) > 0).
 
 %% @doc Create two new wallets and a blockweave with a wallet balance.
-%% Create and verify execution of a signed exchange of value tx.
+%% Create and verify execution of a signed exchange of value tx. FIX 
 wallet_transaction_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
