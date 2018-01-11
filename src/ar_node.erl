@@ -21,9 +21,9 @@
 	txs = [],
 	miner,
 	mining_delay = 0,
-	recovery = undefined,
 	automine = false,
-	reward_addr = unclaimed
+	reward_addr = unclaimed,
+	recovery_ref = undefined
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -228,6 +228,7 @@ add_peers(Node, Peers) ->
 server(
 	S = #state {
 		gossip = GS,
+		recovery_ref = RecoveryRef,
 		hash_list = HashList,
 		wallet_list = WalletList
 	}) ->
@@ -369,6 +370,7 @@ server(
 			server(
 				reset_miner(
 					S#state {
+						recovery_ref = undefined,
 						hash_list = NewHs,
 						wallet_list = NewB#block.wallet_list,
 						height = NewB#block.height
@@ -387,6 +389,7 @@ server(
 			server(
 				reset_miner(
 					S#state {
+						recovery_ref = undefined,
 						hash_list = NewHs,
 						wallet_list = NewB#block.wallet_list,
 						height = NewB#block.height
@@ -394,6 +397,8 @@ server(
 				)
 			);
 		{fork_recovered, _} -> server(S);
+		{'DOWN', RecoveryRef, _, _, _} ->
+			server(S#state { recovery_ref = undefined });
 		Msg ->
 			ar:report_console([{unknown_msg, Msg}]),
 			server(S)
@@ -405,8 +410,11 @@ server(
 join_weave(S, NewB) ->
 	server(
 		S#state {
-			recovery =
-				ar_join:start(ar_gossip:peers(S#state.gossip), NewB)
+			recovery_ref =
+				erlang:monitor(
+					process,
+					ar_join:start(ar_gossip:peers(S#state.gossip), NewB)
+				)
 		}
 	).
 
@@ -418,11 +426,14 @@ fork_recover(
 	}, Peer, NewB) ->
 	server(
 		S#state {
-			recovery =
-				ar_fork_recovery:start(
-					ar_util:unique([Peer|ar_gossip:peers(GS)]),
-					NewB,
-					HashList
+			recovery_ref =
+				erlang:monitor(
+					process,
+					ar_fork_recovery:start(
+						ar_util:unique([Peer|ar_gossip:peers(GS)]),
+						NewB,
+						HashList
+					)
 				)
 		}
 	).
@@ -460,8 +471,14 @@ process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 	% Block is lower than us, ignore it.
 	server(S#state { gossip = NewGS });
 process_new_block(S, NewGS, NewB, _, Peer, _HashList)
-		when NewB#block.height > S#state.height + 1 ->
-	fork_recover(S#state { gossip = NewGS }, Peer, NewB).
+		when (NewB#block.height > S#state.height + 1)
+		and (S#state.recovery_ref == undefined) ->
+	fork_recover(S#state { gossip = NewGS }, Peer, NewB);
+process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
+		when (NewB#block.height > S#state.height + 1)
+		and (S#state.recovery_ref =/= undefined) ->
+	% Block is lower than us, ignore it.
+	server(S#state { gossip = NewGS }).
 
 %% @doc We have received a new valid block. Update the node state accordingly.
 integrate_new_block(
