@@ -161,7 +161,7 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	Port = list_to_integer(binary_to_list(RawPort)),
 	ar_node:add_peers(whereis(http_entrypoint_node), ar_util:parse_peer({Peer, Port})),
 	{200, [], []};
-handle('GET', [<<"balance">>, Addr], _Req) ->
+handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	{200, [],
 		list_to_binary(
 			ar_serialize:jsonify(
@@ -180,7 +180,7 @@ handle('GET', [<<"balance">>, Addr], _Req) ->
 		)
 	};
 % Get last TX ID hash
-handle('GET', [<<"last_tx">>, Addr], _Req) ->
+handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	{200, [],
 		list_to_binary(
 			ar_serialize:jsonify(
@@ -581,8 +581,9 @@ get_balance_test() ->
 		httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/balance/"
-		 		++ ar_util:encode(Pub1)),
+				++ "/wallet/"
+		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
+				++ "/balance"),
 	{ok, {struct, Struct}} = json2:decode_string(Body),
 	{_, 10000} = lists:keyfind("balance", 1, Struct).
 
@@ -597,8 +598,9 @@ get_presale_balance_test() ->
 		httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/balance/"
-		 		++ ar_util:encode_base64_safe(base64:encode_to_string(Pub1))),
+				++ "/wallet/"
+		 		++ ar_util:encode_base64_safe(base64:encode_to_string(ar_wallet:to_address(Pub1)))
+				++ "/balance"),
 	{ok, {struct, Struct}} = json2:decode_string(Body),
 	{_, 10000} = lists:keyfind("balance", 1, Struct).
 
@@ -613,9 +615,9 @@ get_last_tx_single_test() ->
 		httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/last_tx/"
+				++ "/wallet/"
 		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
-		),
+				++ "/last_tx"),
 	{ok, {struct, Struct}} = json2:decode_string(Body),
 	{"last_tx", ID}	= lists:keyfind("last_tx", 1, Struct),
 	<<"TEST_ID">> = ar_util:decode(ID).
