@@ -161,7 +161,7 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	Port = list_to_integer(binary_to_list(RawPort)),
 	ar_node:add_peers(whereis(http_entrypoint_node), ar_util:parse_peer({Peer, Port})),
 	{200, [], []};
-handle('GET', [<<"balance">>, PubKey], _Req) ->
+handle('GET', [<<"balance">>, Addr], _Req) ->
 	{200, [],
 		list_to_binary(
 			ar_serialize:jsonify(
@@ -171,7 +171,7 @@ handle('GET', [<<"balance">>, PubKey], _Req) ->
 							balance,
 							ar_node:get_balance(
 								whereis(http_entrypoint_node),
-								ar_util:decode(PubKey)
+								ar_util:decode(Addr)
 							)
 						}
 					]
@@ -180,7 +180,7 @@ handle('GET', [<<"balance">>, PubKey], _Req) ->
 		)
 	};
 % Get last TX ID hash
-handle('GET', [<<"last_tx">>, Pub], _Req) ->
+handle('GET', [<<"last_tx">>, Addr], _Req) ->
 	{200, [],
 		list_to_binary(
 			ar_serialize:jsonify(
@@ -191,7 +191,7 @@ handle('GET', [<<"last_tx">>, Pub], _Req) ->
 							ar_util:encode(
 								ar_node:get_last_tx(
 									whereis(http_entrypoint_node),
-									ar_util:decode(Pub)
+									ar_util:decode(Addr)
 								)
 							)
 						}
@@ -574,7 +574,7 @@ get_peers_test() ->
 get_balance_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{Pub1, 10000, <<>>}]),
+	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
@@ -590,7 +590,7 @@ get_balance_test() ->
 get_presale_balance_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{Pub1, 10000, <<>>}]),
+	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
@@ -606,7 +606,7 @@ get_presale_balance_test() ->
 get_last_tx_single_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{Pub1, 10000, <<"TEST_ID">>}]),
+	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<"TEST_ID">>}]),
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
@@ -614,7 +614,7 @@ get_last_tx_single_test() ->
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
 				++ "/last_tx/"
-		 		++ ar_util:encode(Pub1)
+		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
 		),
 	{ok, {struct, Struct}} = json2:decode_string(Body),
 	{"last_tx", ID}	= lists:keyfind("last_tx", 1, Struct),

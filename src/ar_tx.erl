@@ -15,7 +15,7 @@ new(Data, Reward) ->
 	#tx { id = generate_id(), data = Data, reward = Reward }.
 new(Data, Reward, Last) ->
 	#tx { id = generate_id(), last_tx = Last, type = data, data = Data, reward = Reward }.
-new(Dest, Reward, Qty, Last) ->
+new(Dest, Reward, Qty, Last) when bit_size(Dest) == ?HASH_SZ ->
 	#tx {
 		id = generate_id(),
 		last_tx = Last,
@@ -24,7 +24,10 @@ new(Dest, Reward, Qty, Last) ->
 		target = Dest,
 		data = <<>>,
 		reward = Reward
-	}.
+	};
+new(Dest, Reward, Qty, Last) ->
+	% Convert wallets to addresses before building transactions.
+	new(ar_wallet:to_address(Dest), Reward, Qty, Last).
 
 %% @doc Create an ID for an object on the weave.
 generate_id() -> crypto:strong_rand_bytes(32).

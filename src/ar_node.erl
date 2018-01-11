@@ -149,11 +149,13 @@ get_peers(Host) ->
 	ar_http_iface:get_peers(Host).
 
 %% @doc Return the current balance associated with a wallet.
-get_balance(Node, PubKey) ->
-	Node ! {get_balance, self(), PubKey},
+get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
+	Node ! {get_balance, self(), Addr},
 	receive
-		{balance, PubKey, B} -> B
-	end.
+		{balance, Addr, B} -> B
+	end;
+get_balance(Node, PubKey) ->
+	get_balance(Node, ar_wallet:to_address(PubKey)).
 
 %% @doc Return the last tx associated with a wallet.
 get_last_tx(Node, PubKey) ->
@@ -690,9 +692,10 @@ apply_tx(WalletList, TX) ->
 	filter_empty_wallets(do_apply_tx(WalletList, TX)).
 
 do_apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, reward = Reward, type = data }) ->
-	case lists:keyfind(Pub, 1, WalletList) of
-		{Pub, Balance, Last} ->
-			lists:keyreplace(Pub, 1, WalletList, {Pub, Balance - Reward, ID});
+	Addr = ar_wallet:to_address(Pub),
+	case lists:keyfind(Addr, 1, WalletList) of
+		{Addr, Balance, Last} ->
+			lists:keyreplace(Addr, 1, WalletList, {Addr, Balance - Reward, ID});
 		_ ->
 			ar:report([{ignoring_tx, ID}, data_tx_wallet_not_instantiated]),
 			WalletList
@@ -708,9 +711,10 @@ do_apply_tx(
 			reward = Reward,
 			type = transfer
 		}) ->
-	case lists:keyfind(From, 1, WalletList) of
-		{From, Balance, Last} ->
-			NewWalletList = lists:keyreplace(From, 1, WalletList, {From, Balance - (Qty + Reward), ID}),
+	Addr = ar_wallet:to_address(From),
+	case lists:keyfind(Addr, 1, WalletList) of
+		{Addr, Balance, Last} ->
+			NewWalletList = lists:keyreplace(Addr, 1, WalletList, {Addr, Balance - (Qty + Reward), ID}),
 			case lists:keyfind(To, 1, NewWalletList) of
 				false -> [{To, Qty, <<>>}|NewWalletList];
 				{To, OldBalance, LastTX} ->
@@ -1066,7 +1070,7 @@ tiny_collaborative_blockweave_mining_test() ->
 mining_reward_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Node1 = start([], ar_weave:init([]), 0, Pub1),
+	Node1 = start([], ar_weave:init([]), 0, ar_wallet:to_address(Pub1)),
 	mine(Node1),
 	receive after 1000 -> ok end,
 	true = (get_balance(Node1, Pub1) > 0).
@@ -1076,7 +1080,7 @@ multi_node_mining_reward_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Node1 = start([], B0 = ar_weave:init([])),
-	Node2 = start([Node1], B0, 0, Pub1),
+	Node2 = start([Node1], B0, 0, ar_wallet:to_address(Pub1)),
 	mine(Node2),
 	receive after 1000 -> ok end,
 	true = (get_balance(Node1, Pub1) > 0).
@@ -1089,7 +1093,7 @@ wallet_transaction_test() ->
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1109,7 +1113,7 @@ wallet_two_transaction_test() ->
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
-	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1132,7 +1136,7 @@ tx_threading_test() ->
 	TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), TX#tx.id),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1154,7 +1158,7 @@ bogus_tx_thread_test() ->
 	TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<"INCORRECT TX ID">>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
@@ -1174,7 +1178,7 @@ replay_attack_test() ->
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	B0 = ar_weave:init([{Pub1, ?AR(10000), <<>>}]),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),

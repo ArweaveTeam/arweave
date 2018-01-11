@@ -1,5 +1,5 @@
 -module(ar_wallet).
--export([new/0, sign/2, verify/3]).
+-export([new/0, sign/2, verify/3, to_address/1]).
 -define(PUBLIC_EXPNT, 17489).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -35,6 +35,12 @@ verify(Key, Data, Sig) ->
 			modulus = binary:decode_unsigned(Key)
 		}
 	).
+
+%% @doc Generate an address from a public key.
+to_address({{_, Pub}, Pub}) -> to_address(Pub);
+to_address({_, Pub}) -> to_address(Pub);
+to_address(PubKey) ->
+	crypto:hash(?HASH_ALG, PubKey).
 
 wallet_sign_verify_test() ->
 	TestData = <<"TEST DATA">>,

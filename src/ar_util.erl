@@ -134,18 +134,6 @@ dehexify([X,Y|T], Acc) ->
 	{ok, [V], []} = io_lib:fread("~16u", [X,Y]),
 	dehexify(T, [V | Acc]).
 
-%% @doc Generate an address for a given wallet or public key.
-%generate_address_dep(W = {{_, Pub}, Pub}) when is_tuple(W) ->
-%	crypto:hash(?ADDRS_ALG, crypto:hash(?HASH_ALG, Pub));
-%generate_address_dep(Pub) ->
-%	generate_address_dep({unused ,Pub}).
-
-%% @doc Generate an address using encode for a given wallet or public key.
-%generate_address(W = {{_, Pub}, Pub}) when is_tuple(W)->
-%	ar_util:encode(crypto:hash(?HASH_ALG, Pub));
-%generate_address(Pub) ->
-%	generate_address({unused ,Pub}).
-
 %% @doc Parse a string representing a remote host into our internal format.
 parse_peer("") -> throw(empty_peer_string);
 parse_peer(BitStr) when is_bitstring(BitStr) ->
@@ -228,7 +216,7 @@ genesis_wallets() ->
 		fun(Line) ->
 			[PubKey, RawQty] = string:tokens(Line, ","),
 			{
-				ar_util:decode(PubKey),
+				ar_wallet:to_address(ar_util:decode(PubKey)),
 				erlang:trunc(math:ceil(list_to_integer(RawQty))),
 				<<>>
 			}

@@ -6,14 +6,14 @@
 -define(CLIENT_VERSION, 3).
 
 %% Should ar:report_console/1 /actually/ report to the console?
-%-define(SILENT, true).
+-define(SILENT, true).
 
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
 -define(HASH_ALG, sha256).
+-define(HASH_SZ, 256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
--define(ADDRS_ALG, ripemd160).
 %% NOTE: Setting the default difficulty too high will cause TNT to fail!
 -define(DEFAULT_DIFF, 4).
 -define(TARGET_TIME, 150).
@@ -76,10 +76,10 @@
 -record(tx, {
 	id = <<>>, % TX UID.
 	last_tx = <<>>, % Get last TX hash.
-	owner = <<>>, % Transaction owner.
-	tags = [], %
-	target = <<>>, % Target of the tx.
-	quantity = 0, %
+	owner = <<>>, % Public key of transaction owner.
+	tags = [], % Indexable TX category identifiers.
+	target = <<>>, % Address of target of the tx.
+	quantity = 0, % Amount to send
 	type = transfer, % Transaction type. Transfer or data.
 	data = <<>>, % Data in transaction (if data transaction).
 	signature = <<>>, % Transaction signature.
@@ -113,3 +113,4 @@
 % Return number of winstons per given AR.
 -define(AR(AR), (?WINSTON_PER_AR * AR)).
 -define(IS_BLOCK(X), (is_record(X, block))).
+-define(IS_ADDR(Addr), (is_binary(Addr) and (bit_size(Addr) == ?HASH_SZ))).
