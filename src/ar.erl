@@ -46,7 +46,8 @@
 	polling = false,
 	auto_join = true,
 	clean = false,
-	diff = ?DEFAULT_DIFF
+	diff = ?DEFAULT_DIFF,
+	mining_addr = unclaimed
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -75,7 +76,8 @@ main("") ->
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"init", "Start a new blockweave."},
-			{"diff init_diff", "(For use with 'init':) New blockweave starting difficulty."}
+			{"diff init_diff", "(For use with 'init':) New blockweave starting difficulty."},
+			{"mining_addr addr", "The address that mining rewards should be credited to."}
 		]
 	),
 	erlang:halt();
@@ -97,6 +99,8 @@ main(["clean"|Rest], O) ->
 	main(Rest, O#opts { clean = true });
 main(["no_auto_join"|Rest], O) ->
 	main(Rest, O#opts { auto_join = false });
+main(["mining_addr", Addr|Rest], O) ->
+	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });	
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -112,7 +116,8 @@ start(
 		polling = Polling,
 		clean = Clean,
 		auto_join = AutoJoin,
-		diff = Diff
+		diff = Diff,
+		mining_addr = Addr 
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -124,7 +129,7 @@ start(
 		Peers,
 		if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
 		0,
-		unclaimed,
+		Addr,
 		AutoJoin
 	),
 	SearchNode = app_search:start([Node|Peers]),
