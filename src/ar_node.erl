@@ -606,7 +606,7 @@ integrate_block_from_miner(
 
 %% @doc Update miner and amend server state when encountering a new transaction.
 add_tx_to_server(S, NewGS, TX) ->
-	NewTXs = [TX|S#state.txs],
+	NewTXs = S#state.txs ++ [TX],
 	case S#state.miner of
 		undefined -> do_nothing;
 		PID ->
@@ -1103,7 +1103,7 @@ multi_node_mining_reward_test() ->
 	true = (get_balance(Node1, Pub1) > 0).
 
 %% @doc Create two new wallets and a blockweave with a wallet balance.
-%% Create and verify execution of a signed exchange of value tx. FIX 
+%% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
@@ -1143,6 +1143,57 @@ wallet_two_transaction_test() ->
 	?AR(999) = get_balance(Node1, Pub1),
 	?AR(8499) = get_balance(Node1, Pub2),
 	?AR(500) = get_balance(Node1, Pub3).
+
+%% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
+single_wallet_double_tx_before_mine_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(5000), <<>>),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), TX#tx.id),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node1 = start([], B0),
+	Node2 = start([Node1], B0),
+	add_peers(Node1, Node2),
+	add_tx(Node1, SignedTX),
+	receive after 200 -> ok end,
+	add_tx(Node1, SignedTX2),
+	receive after 200 -> ok end,
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	?AR(998) = get_balance(Node2, Pub1),
+	?AR(5000) = get_balance(Node2, Pub2),
+	?AR(4000) = get_balance(Node2, Pub3).
+
+%% @doc Verify the behaviour of out of order TX submission.
+%% NOTE: The current behaviour (out of order TXs get dropped)
+%% is not necessarily the behaviour we want, but we should keep
+%% track of it.
+single_wallet_double_tx_wrong_order_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(5000), <<>>),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), TX#tx.id),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node1 = start([], B0),
+	Node2 = start([Node1], B0),
+	add_peers(Node1, Node2),
+	add_tx(Node1, SignedTX2),
+	receive after 200 -> ok end,
+	add_tx(Node1, SignedTX),
+	receive after 200 -> ok end,
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	?AR(4999) = get_balance(Node2, Pub1),
+	?AR(5000) = get_balance(Node2, Pub2),
+	?AR(0) = get_balance(Node2, Pub3).
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test() ->

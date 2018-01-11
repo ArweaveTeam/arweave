@@ -117,7 +117,6 @@ handle('POST', [<<"block">>], Req) ->
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
-	%ar:report(TX),
 	Node = whereis(http_entrypoint_node),
 	case ar_tx:verify(TX) of
 		false ->
