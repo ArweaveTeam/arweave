@@ -217,7 +217,7 @@ genesis_wallets() ->
 			[PubKey, RawQty] = string:tokens(Line, ","),
 			{
 				ar_wallet:to_address(ar_util:decode(PubKey)),
-				erlang:trunc(math:ceil(list_to_integer(RawQty))),
+				erlang:trunc(math:ceil(list_to_integer(RawQty))) * ?WINSTON_PER_AR,
 				<<>>
 			}
 		end,
