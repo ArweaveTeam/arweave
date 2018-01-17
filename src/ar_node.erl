@@ -311,7 +311,7 @@ server(
 			PID ! {last_tx, PubKey,
 				case lists:keyfind(PubKey, 1, WalletList) of
 					{PubKey, _Balance, Last} -> Last;
-					false -> 0
+					false -> <<>>
 				end},
 			server(S);
 		mine -> server(start_mining(S));
