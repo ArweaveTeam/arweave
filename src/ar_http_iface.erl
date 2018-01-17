@@ -163,18 +163,11 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	{200, [],
 		list_to_binary(
-			ar_serialize:jsonify(
-				{struct,
-					[
-						{
-							balance,
-							ar_node:get_balance(
-								whereis(http_entrypoint_node),
-								ar_util:decode(Addr)
-							)
-						}
-					]
-				}
+			integer_to_list(
+				ar_node:get_balance(
+					whereis(http_entrypoint_node),
+					ar_util:decode(Addr)
+				)
 			)
 		)
 	};
@@ -583,8 +576,7 @@ get_balance_test() ->
 				++ "/wallet/"
 		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
 				++ "/balance"),
-	{ok, {struct, Struct}} = json2:decode_string(Body),
-	{_, 10000} = lists:keyfind("balance", 1, Struct).
+	10000 = list_to_integer(Body).
 
 %% @doc Test that wallets issued in the pre-sale can be viewed.
 get_presale_balance_test() ->
@@ -600,8 +592,7 @@ get_presale_balance_test() ->
 				++ "/wallet/"
 		 		++ ar_util:encode_base64_safe(base64:encode_to_string(ar_wallet:to_address(Pub1)))
 				++ "/balance"),
-	{ok, {struct, Struct}} = json2:decode_string(Body),
-	{_, 10000} = lists:keyfind("balance", 1, Struct).
+	10000 = list_to_integer(Body).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
 get_last_tx_single_test() ->
