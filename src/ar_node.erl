@@ -1108,7 +1108,7 @@ wallet_transaction_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
+	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
