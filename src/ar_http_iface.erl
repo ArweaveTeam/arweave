@@ -175,20 +175,11 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	{200, [],
 		list_to_binary(
-			ar_serialize:jsonify(
-				{struct,
-					[
-						{
-							last_tx,
-							ar_util:encode(
-								ar_node:get_last_tx(
-									whereis(http_entrypoint_node),
-									ar_util:decode(Addr)
-								)
-							)
-						}
-					]
-				}
+			ar_util:encode(
+				ar_node:get_last_tx(
+					whereis(http_entrypoint_node),
+					ar_util:decode(Addr)
+				)
 			)
 		)
 	};
@@ -608,9 +599,7 @@ get_last_tx_single_test() ->
 				++ "/wallet/"
 		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
 				++ "/last_tx"),
-	{ok, {struct, Struct}} = json2:decode_string(Body),
-	{"last_tx", ID}	= lists:keyfind("last_tx", 1, Struct),
-	<<"TEST_ID">> = ar_util:decode(ID).
+	<<"TEST_ID">> = ar_util:decode(Body).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
