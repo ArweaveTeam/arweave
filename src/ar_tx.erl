@@ -39,7 +39,8 @@ to_binary(T) ->
 		(T#tx.target)/binary,
 		(T#tx.id)/binary,
 		(T#tx.data)/binary,
-		(list_to_binary(integer_to_list(T#tx.quantity)))/binary
+		(list_to_binary(integer_to_list(T#tx.quantity)))/binary,
+		(list_to_binary(integer_to_list(T#tx.reward)))/binary
 	>>.
 
 %% @doc Sign ('claim ownership') of a transaction. After it is signed, it can be
