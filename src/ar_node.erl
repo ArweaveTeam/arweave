@@ -154,8 +154,8 @@ get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 	receive
 		{balance, Addr, B} -> B
 	end;
-get_balance(Node, PubKey) ->
-	get_balance(Node, ar_wallet:to_address(PubKey)).
+get_balance(Node, WalletID) ->
+	get_balance(Node, ar_wallet:to_address(WalletID)).
 
 %% @doc Return the last tx associated with a wallet.
 get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
@@ -163,8 +163,8 @@ get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	receive
 		{last_tx, Addr, LastTX} -> LastTX
 	end;
-get_last_tx(Node, PubKey) ->
-	get_last_tx(Node, ar_wallet:to_address(PubKey)).
+get_last_tx(Node, WalletID) ->
+	get_last_tx(Node, ar_wallet:to_address(WalletID)).
 
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
@@ -302,17 +302,17 @@ server(
 		{get_peers, PID} ->
 			PID ! {peers, ar_gossip:peers(GS)},
 			server(S);
-		{get_balance, PID, PubKey} ->
-			PID ! {balance, PubKey,
-				case lists:keyfind(PubKey, 1, WalletList) of
-					{PubKey, Balance, _Last} -> Balance;
+		{get_balance, PID, WalletID} ->
+			PID ! {balance, WalletID,
+				case lists:keyfind(WalletID, 1, WalletList) of
+					{WalletID, Balance, _Last} -> Balance;
 					false -> 0
 				end},
 			server(S);
-		{get_last_tx, PID, PubKey} ->
-			PID ! {last_tx, PubKey,
-				case lists:keyfind(PubKey, 1, WalletList) of
-					{PubKey, _Balance, Last} -> Last;
+		{get_last_tx, PID, WalletID} ->
+			PID ! {last_tx, WalletID,
+				case lists:keyfind(WalletID, 1, WalletList) of
+					{WalletID, _Balance, Last} -> Last;
 					false -> <<>>
 				end},
 			server(S);
@@ -716,7 +716,7 @@ do_apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, reward = Rew
 		{Addr, Balance, Last} ->
 			lists:keyreplace(Addr, 1, WalletList, {Addr, Balance - Reward, ID});
 		_ ->
-			ar:report([{ignoring_tx, ID}, data_tx_wallet_not_instantiated]),
+			ar:report([{ignoring_tx, ID}, matching_wallet_not_found]),
 			WalletList
 	end;
 do_apply_tx(
