@@ -9,7 +9,8 @@
 
 %% @doc Generate a new wallet public key and private key.
 new() ->
-	{[_, Pub], [_, Pub, Priv|_]} = {[_, Pub], [_, Pub, Priv|_]} = crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
+	{[_, Pub], [_, Pub, Priv|_]} = {[_, Pub], [_, Pub, Priv|_]}
+		= crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 	{{Priv, Pub}, Pub}.
 
 %% @doc Sign some data with a private key.
@@ -37,6 +38,7 @@ verify(Key, Data, Sig) ->
 	).
 
 %% @doc Generate an address from a public key.
+to_address(Addr) when ?IS_ADDR(Addr) -> Addr;
 to_address({{_, Pub}, Pub}) -> to_address(Pub);
 to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
@@ -53,3 +55,11 @@ invalid_signature_test() ->
 	{Priv, Pub} = new(),
 	<< _:32, Signature/binary >> = sign(Priv, TestData),
 	false = verify(Pub, TestData, << 0:32, Signature/binary >>).
+
+%% @doc Ensure that to_address'ing twice does not result in double hashing.
+address_double_encode_test() ->
+	{_, Pub} = new(),
+	Addr = to_address(Pub),
+	Addr = to_address(Addr).
+
+
