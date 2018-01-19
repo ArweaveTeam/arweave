@@ -374,10 +374,10 @@ get_tx_reward(Node, Size) ->
 		httpc:request(
 			get,
 			{
-				ar:d("http://"
+					"http://"
 					++ ar_util:format_peer(Node)
 					++ "/price/"
-					++ integer_to_list(Size)),
+					++ integer_to_list(Size),
 				[]
 			},
 			[{timeout, ?NET_TIMEOUT}], []
@@ -685,3 +685,26 @@ add_external_block_test() ->
 	receive after 500 -> ok end,
 	[B1, XB0] = ar_node:get_blocks(Node1),
 	B0 = ar_storage:read_block(XB0).
+
+%% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
+add_tx_and_get_last_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX#tx{ id = <<"TEST">> }, Priv1, Pub1),
+	send_new_tx({127, 0, 0, 1}, SignedTX),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	{ok, {{_, 200, _}, _, Body}} =
+		httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/wallet/"
+		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
+				++ "/last_tx"),
+	<<"TEST">> = ar_util:decode(Body).
