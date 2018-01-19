@@ -158,11 +158,13 @@ get_balance(Node, PubKey) ->
 	get_balance(Node, ar_wallet:to_address(PubKey)).
 
 %% @doc Return the last tx associated with a wallet.
-get_last_tx(Node, PubKey) ->
-	Node ! {get_last_tx, self(), PubKey},
+get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
+	Node ! {get_last_tx, self(), Addr},
 	receive
-		{last_tx, PubKey, LastTX} -> LastTX
-	end.
+		{last_tx, Addr, LastTX} -> LastTX
+	end;
+get_last_tx(Node, PubKey) ->
+	get_last_tx(Node, ar_wallet:to_address(PubKey)).
 
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
@@ -1258,3 +1260,20 @@ replay_attack_test() ->
 	receive after 500 -> ok end,
 	?AR(8999) = get_balance(Node2, Pub1),
 	?AR(1000) = get_balance(Node2, Pub2).
+
+%% @doc Ensure last_tx functions after block mine.
+last_tx_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	RawTX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
+	TX = RawTX#tx{ id = <<"TEST">> },
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node1 = start([], B0),
+	Node2 = start([Node1], B0),
+	add_peers(Node1, Node2),
+	add_tx(Node1, SignedTX),
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	<<"TEST">> = get_last_tx(Node2, Pub1).
