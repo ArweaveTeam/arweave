@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, handle/2, handle_event/3]).
--export([send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
+-export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
 -export([get_info/1, get_info/2]).
 -export([get_current_block/1]).
 -include("ar.hrl").
@@ -314,6 +314,8 @@ send_new_tx(Host, TX) ->
 	).
 
 %% @doc Distribute a newly found block to remote nodes.
+send_new_block({A,B,C,D,Port}, NewB, RecallB) ->
+	send_new_block({A,B,C,D}, Port, NewB, RecallB).
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
 	httpc:request(
