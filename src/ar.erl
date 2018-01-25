@@ -151,10 +151,12 @@ start(
 			{polling, Polling}
 		]
 	),
+	% Start a bridge, add it to the node's peer list.
+	Bridge = ar_bridge:start(Peers, [Node]),
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,
-		Node,
+		Bridge,
 		SearchNode
 	),
 	case Polling of

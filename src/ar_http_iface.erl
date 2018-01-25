@@ -101,7 +101,7 @@ handle('POST', [<<"block">>], Req) ->
 	B = ar_serialize:json_struct_to_block(JSONB),
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
 	%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-	ar_node:add_block(
+	ar_bridge:add_block(
 		whereis(http_entrypoint_node),
 		ar_util:parse_peer(
 			bitstring_to_list(elli_request:peer(Req))
@@ -109,8 +109,7 @@ handle('POST', [<<"block">>], Req) ->
 			++ integer_to_list(Port)
 		),
 		B,
-		RecallB,
-		B#block.height
+		RecallB
 	),
 	{200, [], <<"OK">>};
 % Add transaction specified in body.

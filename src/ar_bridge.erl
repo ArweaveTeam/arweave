@@ -29,6 +29,7 @@ start(ExtPeers, IntPeers) ->
 	).
 
 %% Notify the bridge of a new external block.
+%% TODO: Add peer sending to bridge implementation.
 add_block(PID, Block, RecallBlock) ->
 	PID ! {add_block, Block, RecallBlock}.
 
