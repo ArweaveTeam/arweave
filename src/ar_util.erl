@@ -9,6 +9,7 @@
 -export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
 -export([get_hash/1, get_head_block/1]).
 -export([genesis_wallets/0]).
+-export([pmap/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -207,6 +208,20 @@ round_trip_encode_test() ->
 			Bin = decode(encode(Bin))
 		end,
 		lists:seq(1, 64)
+	).
+
+%% Run a map in paralell.
+%% TODO: Make this efficient for large lists.
+%% NOTE: Does not maintain list stability.
+pmap(Fun, List) ->
+	Master = self(),
+	lists:map(
+		fun() ->
+			receive
+				{pmap_work, X} -> X
+			end
+		end,
+		lists:map(fun(Elem) -> Master ! {pmap_work, Fun(Elem)} end, List)
 	).
 
 %% @doc Generate a list of GENESIS wallets, from the CSV file.

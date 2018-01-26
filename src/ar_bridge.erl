@@ -24,17 +24,20 @@ start() -> start([]).
 start(ExtPeers) -> start(ExtPeers, []).
 start(ExtPeers, IntPeers) -> start(ExtPeers, IntPeers, ?DEFAULT_HTTP_IFACE_PORT).
 start(ExtPeers, IntPeers, Port) ->
-    spawn(
-		fun() ->
-			server(
-				#state {
-					gossip = ar_gossip:init(IntPeers),
-					external_peers = ExtPeers,
-					port = Port
-				}
-			)
-		end
-	).
+    PID =
+		spawn(
+			fun() ->
+				server(
+					#state {
+						gossip = ar_gossip:init(IntPeers),
+						external_peers = ExtPeers,
+						port = Port
+					}
+				)
+			end
+		),
+	reset_timer(PID, get_more_peers),
+	PID.
 
 %% Get a list of remote peers
 get_remote_peers(PID) ->
@@ -65,6 +68,10 @@ add_local_peer(PID, Node) ->
 ignore_id(PID, ID) ->
 	PID ! {ignore_id, ID}.
 
+%% Schedule a message timer.
+reset_timer(PID, get_more_peers) ->
+	erlang:send_after(?GET_MORE_PEERS_TIME, PID, get_more_peers).
+
 %%% INTERNAL FUNCTIONS
 
 %% Main server loop.
@@ -86,7 +93,10 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			Peer ! {remote_peers, S#state.external_peers},
 			server(S);
 		Msg when is_record(Msg, gs_msg) ->
-			server(do_send_to_external(S, ar_gossip:recv(GS0, Msg)))
+			server(do_send_to_external(S, ar_gossip:recv(GS0, Msg)));
+		get_more_peers ->
+			reset_timer(self(), get_more_peers),
+			server(S#state { external_peers = ar_manage_peers:update(ExtPeers) })
 	end.
 
 %% Potentially send a message to internal processes.

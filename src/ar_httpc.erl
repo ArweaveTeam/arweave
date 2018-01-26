@@ -38,7 +38,11 @@ store_data_time(Request, Bytes, MicroSecs) ->
 	).
 
 %% Return the performance object for a node.
-get_performance(IP) -> ar_meta_db:get({peer, IP}).
+get_performance(IP) ->
+	case ar_meta_db:get({peer, IP}) of
+		not_found -> #performance{};
+		P -> P
+	end.
 
 %% Extract an IP address from a httpc request() term.
 get_ip({URL, _}) -> get_ip(URL);

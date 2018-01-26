@@ -1,7 +1,7 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
--export([get_info/1, get_info/2]).
+-export([get_info/1, get_info/2, get_peers/1]).
 -export([get_current_block/1]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
@@ -457,6 +457,18 @@ get_info(Peer) ->
 		_ -> info_unavailable
 	end.
 
+%% @doc Return a list of parsed peer IPs for a remote server.
+get_peers(Peer) ->
+	try
+		begin
+			{ok, {{_, 200, _}, _, Body}} =
+				ar_httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/peers"),
+			{ok, {array, PeerArray}} = json2:decode_string(Body),
+			lists:map(fun ar_util:parse_peer/1, PeerArray)
+		end
+	catch _:_ -> []
+	end.
+
 %% @doc Produce a key value list based on a /info response.
 process_get_info(Body) ->
 	{ok, {struct, Struct}} = json2:decode_string(Body),
@@ -550,14 +562,9 @@ get_peers_test() ->
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([{127,0,0,1,1984},{127,0,0,1,1985}], [B0]),
 	reregister(Node1),
-	{ok, {{_, 200, _}, _, Body}} =
-		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/peers"),
-	{ok, {array, Array}} = json2:decode_string(Body),
-	true = lists:member("127.0.0.1:1984", Array),
-	true = lists:member("127.0.0.1:1985", Array).
+	Array = get_peers({127,0,0,1,1984}),
+	true = lists:member({127,0,0,1,1984}, Array),
+	true = lists:member({127,0,0,1,1985}, Array).
 
 %% @doc Check that balances can be retreived over the network.
 get_balance_test() ->

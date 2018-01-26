@@ -49,6 +49,12 @@
 
 %% Default timeout value for network requests.
 -define(NET_TIMEOUT, 10000).
+%% Time between attempts to find(/optimise) peers.
+-define(GET_MORE_PEERS_TIME, 5 * 60 * 1000).
+%% Number of transfers for which not to score (and potentially drop) new peers.
+-define(PEER_GRACE_PERIOD, 50).
+%% Never drop to lower than this number of peers.
+-define(MINIMUM_PEERS, 2).
 
 %% Log output directory
 -define(LOG_DIR, "logs").
