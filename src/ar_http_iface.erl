@@ -34,7 +34,7 @@ start(Port, Node, SearchNode) ->
 	start(Port, Node, SearchNode, undefined).
 start(Port, Node, SearchNode, ServiceNode) ->
 	start(Port, Node, SearchNode, ServiceNode, undefined).
-start(Port, Node, SearchNode, ServiceNode, BridgeNode)
+start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 	reregister(http_entrypoint_node, Node),
 	reregister(http_search_node, SearchNode),
 	reregister(http_service_node, ServiceNode),
