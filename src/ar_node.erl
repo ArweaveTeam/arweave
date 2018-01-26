@@ -204,7 +204,7 @@ add_tx(Node, TX) when is_pid(Node) ->
 add_tx(Host, TX) ->
 	ar_http_iface:send_new_tx(Host, TX).
 
-%% @doc Add a transaction to the current block.
+%% @doc Add a new block to the server.
 add_block(Conn, NewB, RecallB) ->
 	add_block(Conn, NewB, RecallB, NewB#block.height).
 add_block(Conn, NewB, RecallB, Height) ->

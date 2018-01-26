@@ -104,27 +104,28 @@ handle('POST', [<<"block">>], Req) ->
 	B = ar_serialize:json_struct_to_block(JSONB),
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
 	%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-	ar_bridge:add_block(
-		whereis(http_bridge_node),
+	ar_node:add_block(
+		whereis(http_entrypoint_node),
 		ar_util:parse_peer(
 			bitstring_to_list(elli_request:peer(Req))
 			++ ":"
 			++ integer_to_list(Port)
 		),
 		B,
-		RecallB
+		RecallB,
+		B#block.height
 	),
 	{200, [], <<"OK">>};
 % Add transaction specified in body.
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
-	Node = whereis(http_bridge_node),
+	Node = whereis(http_entrypoint_node),
 	case ar_tx:verify(TX) of
 		false ->
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
-			ar_bridge:add_tx(Node, TX),
+			ar_node:add_tx(Node, TX),
 			{200, [], <<"OK">>}
 	end;
 % Get peers.
@@ -155,12 +156,12 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	};
 handle('POST', [<<"peers">>], Req) ->
 	Peer = elli_request:peer(Req),
-	ar_bridge:add_peers(whereis(http_bridge_node), ar_util:parse_peer(Peer)),
+	ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(Peer)),
 	{200, [], []};
 handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	Peer = elli_request:peer(Req),
 	Port = list_to_integer(binary_to_list(RawPort)),
-	ar_bridge:add_peers(whereis(http_bridge_node), ar_util:parse_peer({Peer, Port})),
+	ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer({Peer, Port})),
 	{200, [], []};
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	{200, [],
@@ -501,13 +502,12 @@ reregister(Name, Node) ->
 %% @doc Tests add peer functionality
 add_peers_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node = ar_node:start([], [B0]),
-	reregister(Node),
+	Bridge = ar_bridge:start([], []),
+	reregister(http_bridge_node, Bridge),
 	add_peer({127,0,0,1,1984}),
 	receive after 500 -> ok end,
 	%ar:d([{node_peers,ar_node:get_peers(Node)}]),
-	true = lists:member({127,0,0,1,1984}, ar_node:get_peers(Node)).
+	true = lists:member({127,0,0,1,1984}, ar_bridge:get_remote_peers(Bridge)).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
@@ -634,6 +634,7 @@ add_external_tx_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	Node = ar_node:start([], [B0]),
+	Bridge = ar_bridge:start([],[]),
 	reregister(Node),
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA">>)),
 	receive after 1000 -> ok end,

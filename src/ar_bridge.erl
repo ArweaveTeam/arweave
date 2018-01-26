@@ -2,6 +2,7 @@
 -export([start/0, start/1, start/2]).
 -export([add_tx/2, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
+-export([get_remote_peers/1]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -30,6 +31,14 @@ start(ExtPeers, IntPeers) ->
 			)
 		end
 	).
+
+
+get_remote_peers(PID) ->
+	PID ! {get_peers, remote, self()},
+	receive
+		{remote_peers, ExternalPeers} ->
+			ExternalPeers
+	end.
 
 %% Notify the bridge of a new external block.
 %% TODO: Add peer sending to bridge implementation.
@@ -62,6 +71,9 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			server(S#state { external_peers = [Peer|ExtPeers]});
 		{add_peer, local, Peer} ->
 			server(S#state { gossip = ar_gossip:add_peers(GS0, Peer)});
+		{get_peers, remote, Peer} ->
+			Peer ! {remote_peers, S#state.external_peers},
+			server(S);
 		Msg when is_record(Msg, gs_msg) ->
 			server(do_send_to_external(S, ar_gossip:recv(GS0, Msg)))
 	end.
