@@ -90,12 +90,6 @@ forge_test() ->
 	{Priv, Pub} = ar_wallet:new(),
 	false = verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }).
 
-calculate_min_tx_cost_test() ->
-	TestTX = new(<<"TEST DATA">>, ?AR(10)),
-	Size = byte_size(to_binary(TestTX)),
-	% Result hand calculated.
-	40054322 = calculate_min_tx_cost(Size).
-
 tx_cost_above_min_test() ->
 	TestTX = new(<<"TEST DATA">>, ?AR(10)),
 	true = tx_cost_above_min(TestTX).
