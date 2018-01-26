@@ -32,7 +32,7 @@ start(ExtPeers, IntPeers) ->
 		end
 	).
 
-
+%% Get a list of remote peers
 get_remote_peers(PID) ->
 	PID ! {get_peers, remote, self()},
 	receive
@@ -123,8 +123,10 @@ add_processed({add_tx, TX}, Procd) ->
 add_processed({new_block, _OriginPeer, _, B, _}, Procd) ->
 	add_processed(block, B, Procd).
 add_processed(tx, #tx { id = ID }, Procd) -> [ID|Procd];
-add_processed(block, {_OriginPeer, #block { indep_hash = Hash }, _}, Procd) ->
-	[Hash|Procd].
+add_processed(block, #block { indep_hash = Hash }, Procd) ->
+	[Hash|Procd];
+add_processed(block, {_, B, _}, Procd) ->
+	add_processed(block, B, Procd).
 
 %% Find the ID of a 'data', from type.
 get_id(tx, #tx { id = ID}) -> ID;
