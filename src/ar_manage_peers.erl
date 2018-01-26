@@ -38,6 +38,7 @@ rank_peers(ScoredPeers) ->
 
 %% Probabalistically drop peers.
 maybe_drop_peers(Peers) -> maybe_drop_peers(1, length(Peers), Peers).
+maybe_drop_peers(_, _, []) -> [];
 maybe_drop_peers(Rank, NumPeers, [Peer|Peers]) when Rank =< ?MINIMUM_PEERS ->
 	[Peer|maybe_drop_peers(Rank + 1, NumPeers, Peers)];
 maybe_drop_peers(Rank, NumPeers, [Peer|Peers]) ->
