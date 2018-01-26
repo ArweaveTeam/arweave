@@ -21,12 +21,14 @@ start() -> start([]).
 start(ExtPeers) -> start(ExtPeers, []).
 start(ExtPeers, IntPeers) ->
     spawn(
-		server(
-			#state {
-				gossip = ar_gossip:init(IntPeers),
-				external_peers = ExtPeers
-			}
-		)
+		fun() ->
+			server(
+				#state {
+					gossip = ar_gossip:init(IntPeers),
+					external_peers = ExtPeers
+				}
+			)
+		end
 	).
 
 %% Notify the bridge of a new external block.
