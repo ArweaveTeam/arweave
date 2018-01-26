@@ -1,7 +1,11 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2]).
+<<<<<<< HEAD
 -export([add_tx/2, add_block/3]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
+=======
+-export([add_tx/2, add_block/4]). % Called from ar_http_iface
+>>>>>>> 677a75a9cfc1bb617c5809ec9665f04142067922
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -31,8 +35,8 @@ start(ExtPeers, IntPeers) ->
 
 %% Notify the bridge of a new external block.
 %% TODO: Add peer sending to bridge implementation.
-add_block(PID, Block, RecallBlock) ->
-	PID ! {add_block, Block, RecallBlock}.
+add_block(PID, OriginPeer, Block, RecallBlock) ->
+	PID ! {add_block, OriginPeer, Block, RecallBlock}.
 
 %% Notify the bridge of a new external block.
 add_tx(PID, TX) ->
@@ -54,12 +58,17 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 		% TODO: Propagate external to external nodes.
 		{add_tx, TX} ->
 			server(maybe_send_to_internal(S, tx, TX));
+<<<<<<< HEAD
 		{add_block, Block, RecallBlock} ->
 			server(maybe_send_to_internal(S, block, {Block, RecallBlock}));
 		{add_peer, remote, Peer} ->
 			server(S#state { external_peers = [Peer|ExtPeers]});
 		{add_peer, local, Peer} ->
 			server(S#state { gossip = ar_gossip:add_peers(GS0, Peer)});
+=======
+		{add_block, OriginPeer, Block, RecallBlock} ->
+			server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}));
+>>>>>>> 677a75a9cfc1bb617c5809ec9665f04142067922
 		Msg when is_record(Msg, gs_msg) ->
 			server(do_send_to_external(S, ar_gossip:recv(GS0, Msg)))
 	end.
@@ -88,9 +97,9 @@ maybe_send_to_internal(
 					Msg = case Type of
 						tx -> {add_tx, Data};
 						block ->
-							{NewB, RecallB} = Data,
+							{OriginPeer, NewB, RecallB} = Data,
 							{new_block,
-								external_host,
+								OriginPeer,
 								NewB#block.height,
 								NewB,
 								RecallB
@@ -106,15 +115,15 @@ maybe_send_to_internal(
 %% Add the ID of a new TX/block to a processed list.
 add_processed({add_tx, TX}, Procd) ->
 	add_processed(tx, TX, Procd);
-add_processed({new_block, _, _, B, _}, Procd) ->
+add_processed({new_block, _OriginPeer, _, B, _}, Procd) ->
 	add_processed(block, B, Procd).
 add_processed(tx, #tx { id = ID }, Procd) -> [ID|Procd];
-add_processed(block, {#block { indep_hash = Hash }, _}, Procd) ->
+add_processed(block, {_OriginPeer, #block { indep_hash = Hash }, _}, Procd) ->
 	[Hash|Procd].
 
 %% Find the ID of a 'data', from type.
 get_id(tx, #tx { id = ID}) -> ID;
-get_id(block, {#block { indep_hash = Hash}, _}) -> Hash.
+get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% Send an internal message externally
 send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->

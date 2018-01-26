@@ -1,5 +1,5 @@
 -module(ar_http_iface).
--export([start/0, start/1, start/2, start/3, start/4, handle/2, handle_event/3]).
+-export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
 -export([get_info/1, get_info/2]).
 -export([get_current_block/1]).
@@ -33,9 +33,12 @@ start(Port, Node) ->
 start(Port, Node, SearchNode) ->
 	start(Port, Node, SearchNode, undefined).
 start(Port, Node, SearchNode, ServiceNode) ->
+	start(Port, Node, SearchNode, ServiceNode, undefined).
+start(Port, Node, SearchNode, ServiceNode, BridgeNode)
 	reregister(http_entrypoint_node, Node),
 	reregister(http_search_node, SearchNode),
 	reregister(http_service_node, ServiceNode),
+	reregister(http_bridge_node, BridgeNode),
 	start(Port).
 
 %%% Server side functions.
@@ -102,7 +105,7 @@ handle('POST', [<<"block">>], Req) ->
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
 	%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
 	ar_bridge:add_block(
-		whereis(http_entrypoint_node),
+		whereis(http_bridge_node),
 		ar_util:parse_peer(
 			bitstring_to_list(elli_request:peer(Req))
 			++ ":"
@@ -116,12 +119,12 @@ handle('POST', [<<"block">>], Req) ->
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
-	Node = whereis(http_entrypoint_node),
+	Node = whereis(http_bridge_node),
 	case ar_tx:verify(TX) of
 		false ->
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
-			ar_node:add_tx(Node, TX),
+			ar_bridge:add_tx(Node, TX),
 			{200, [], <<"OK">>}
 	end;
 % Get peers.
