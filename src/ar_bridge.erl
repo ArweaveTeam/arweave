@@ -3,6 +3,7 @@
 -export([add_tx/2, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1]).
+-export([ignore_id/2]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -60,12 +61,18 @@ add_remote_peer(PID, Node) ->
 add_local_peer(PID, Node) ->
 	PID ! {add_peer, local, Node}.
 
+%% Ignore messages matching the given ID.
+ignore_id(PID, ID) ->
+	PID ! {ignore_id, ID}.
+
 %%% INTERNAL FUNCTIONS
 
 %% Main server loop.
 server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 	receive
 		% TODO: Propagate external to external nodes.
+		{ignore_id, ID} ->
+			server(S#state {processed = [ID|S#state.processed]});
 		{add_tx, TX} ->
 			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, OriginPeer, Block, RecallBlock} ->
@@ -92,7 +99,7 @@ maybe_send_to_internal(
 		Type,
 		Data) ->
 	case
-		already_processed(Procd, Type, Data) andalso
+		(not already_processed(Procd, Type, Data)) andalso
 		ar_firewall:scan(FW, Data)
 	of
 		false ->
@@ -134,6 +141,7 @@ add_processed(block, {_, B, _}, Procd) ->
 
 %% Find the ID of a 'data', from type.
 get_id(tx, #tx { id = ID}) -> ID;
+get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
 get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% Send an internal message externally
@@ -143,7 +151,7 @@ send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 		fun(Peer) ->
 			ar_http_iface:send_new_tx(Peer, TX)
 		end,
-		Peers
+		[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX, IP) ]
 	),
 	S;
 send_to_external(
@@ -153,7 +161,7 @@ send_to_external(
 		fun(Peer) ->
 			ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
 		end,
-		Peers
+		[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
 	),
 	S;
 send_to_external(S, {NewGS, Msg}) ->
@@ -167,4 +175,7 @@ do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
 
 %% Check whether a message has already been seen.
 already_processed(Procd, Type, Data) ->
-	not lists:member(get_id(Type, Data), Procd).
+	already_processed(Procd, Type, Data, undefined).
+already_processed(Procd, Type, Data, IP) ->
+	lists:member(get_id(Type, Data), Procd)
+	or (lists:member({get_id(Type, Data), IP}, Procd)).

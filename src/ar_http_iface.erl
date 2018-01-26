@@ -103,14 +103,17 @@ handle('POST', [<<"block">>], Req) ->
 	{"port", Port} = lists:keyfind("port", 1, Struct),
 	B = ar_serialize:json_struct_to_block(JSONB),
 	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
-	%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-	ar_node:add_block(
-		whereis(http_entrypoint_node),
+	OrigPeer =
 		ar_util:parse_peer(
 			bitstring_to_list(elli_request:peer(Req))
 			++ ":"
 			++ integer_to_list(Port)
-		),
+			),
+	ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
+	%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
+	ar_node:add_block(
+		whereis(http_entrypoint_node),
+		OrigPeer,
 		B,
 		RecallB,
 		B#block.height
@@ -633,7 +636,6 @@ add_external_tx_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	Node = ar_node:start([], [B0]),
-	Bridge = ar_bridge:start([],[]),
 	reregister(Node),
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA">>)),
 	receive after 1000 -> ok end,
