@@ -182,6 +182,36 @@ unique(Res, [X|Xs]) ->
 		true -> unique(Res, Xs)
 	end.
 
+%% Run a map in paralell.
+%% TODO: Make this efficient for large lists.
+%% NOTE: Does not maintain list stability.
+pmap(Fun, List) ->
+	Master = self(),
+	lists:map(
+		fun(_) ->
+			receive
+				{pmap_work, X} -> X
+			end
+		end,
+		lists:map(fun(Elem) -> Master ! {pmap_work, Fun(Elem)} end, List)
+	).
+	
+%% @doc Generate a list of GENESIS wallets, from the CSV file.
+genesis_wallets() ->
+	{ok, Bin} = file:read_file("data/genesis_wallets.csv"),
+	lists:map(
+		fun(Line) ->
+			[PubKey, RawQty] = string:tokens(Line, ","),
+			{
+				ar_wallet:to_address(ar_util:decode(PubKey)),
+				erlang:trunc(math:ceil(list_to_integer(RawQty))) * ?WINSTON_PER_AR,
+				<<>>
+			}
+		end,
+		string:tokens(binary_to_list(Bin), [10])
+	).
+	
+
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->
 	[a, b, c] = unique([a, a, b, b, b, c, c]).
@@ -210,31 +240,9 @@ round_trip_encode_test() ->
 		lists:seq(1, 64)
 	).
 
-%% Run a map in paralell.
-%% TODO: Make this efficient for large lists.
-%% NOTE: Does not maintain list stability.
-pmap(Fun, List) ->
-	Master = self(),
-	lists:map(
-		fun() ->
-			receive
-				{pmap_work, X} -> X
-			end
-		end,
-		lists:map(fun(Elem) -> Master ! {pmap_work, Fun(Elem)} end, List)
-	).
-
-%% @doc Generate a list of GENESIS wallets, from the CSV file.
-genesis_wallets() ->
-	{ok, Bin} = file:read_file("data/genesis_wallets.csv"),
-	lists:map(
-		fun(Line) ->
-			[PubKey, RawQty] = string:tokens(Line, ","),
-			{
-				ar_wallet:to_address(ar_util:decode(PubKey)),
-				erlang:trunc(math:ceil(list_to_integer(RawQty))) * ?WINSTON_PER_AR,
-				<<>>
-			}
-		end,
-		string:tokens(binary_to_list(Bin), [10])
-	).
+%% Test the paralell mapping functionality.
+pmap_test() ->
+	Res = pmap(fun(X) -> receive after 500 -> X * 2 end end, [1, 5, 10]),
+	true = lists:member(2, Res),
+	true = lists:member(10, Res),
+	true = lists:member(20, Res).
