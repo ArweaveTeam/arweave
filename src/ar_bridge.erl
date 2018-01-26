@@ -1,6 +1,7 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2]).
 -export([add_tx/2, add_block/3]). % Called from ar_http_iface
+-export([add_remote_peer/2, add_local_peer/2]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -37,16 +38,28 @@ add_block(PID, Block, RecallBlock) ->
 add_tx(PID, TX) ->
 	PID ! {add_tx, TX}.
 
+%% Add a remote HTTP peer.
+add_remote_peer(PID, Node) ->
+	PID ! {add_peer, remote, Node}.
+
+%% Add a local gossip peer.
+add_local_peer(PID, Node) ->
+	PID ! {add_peer, local, Node}.
+
 %%% INTERNAL FUNCTIONS
 
 %% Main server loop.
-server(S = #state { gossip = GS0 }) ->
+server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 	receive
 		% TODO: Propagate external to external nodes.
 		{add_tx, TX} ->
 			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, Block, RecallBlock} ->
 			server(maybe_send_to_internal(S, block, {Block, RecallBlock}));
+		{add_peer, remote, Peer} ->
+			server(S#state { external_peers = [Peer|ExtPeers]});
+		{add_peer, local, Peer} ->
+			server(S#state { gossip = ar_gossip:add_peers(GS0, Peer)});
 		Msg when is_record(Msg, gs_msg) ->
 			server(do_send_to_external(S, ar_gossip:recv(GS0, Msg)))
 	end.

@@ -156,7 +156,7 @@ start(
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,
-		Bridge,
+		Node,
 		SearchNode
 	),
 	case Polling of

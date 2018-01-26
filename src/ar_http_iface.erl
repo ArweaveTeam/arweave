@@ -152,12 +152,12 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	};
 handle('POST', [<<"peers">>], Req) ->
 	Peer = elli_request:peer(Req),
-	ar_node:add_peers(whereis(http_entrypoint_node), ar_util:parse_peer(Peer)),
+	ar_bridge:add_peers(whereis(http_bridge_node), ar_util:parse_peer(Peer)),
 	{200, [], []};
 handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	Peer = elli_request:peer(Req),
 	Port = list_to_integer(binary_to_list(RawPort)),
-	ar_node:add_peers(whereis(http_entrypoint_node), ar_util:parse_peer({Peer, Port})),
+	ar_bridge:add_peers(whereis(http_bridge_node), ar_util:parse_peer({Peer, Port})),
 	{200, [], []};
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	{200, [],
