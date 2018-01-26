@@ -1,5 +1,5 @@
 -module(ar_bridge).
--export([start/0, start/1, start/2]).
+-export([start/0, start/1, start/2, start/3]).
 -export([add_tx/2, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1]).
@@ -14,19 +14,22 @@
 	gossip, % Gossip state
 	external_peers, % Peers to send message to.
 	processed = [], % IDs to ignore.
-	firewall = ar_firewall:start()
+	firewall = ar_firewall:start(),
+	port
 }).
 
 %% Launch a bridge node.
 start() -> start([]).
 start(ExtPeers) -> start(ExtPeers, []).
-start(ExtPeers, IntPeers) ->
+start(ExtPeers, IntPeers) -> start(ExtPeers, IntPeers, ?DEFAULT_HTTP_IFACE_PORT).
+start(ExtPeers, IntPeers, Port) ->
     spawn(
 		fun() ->
 			server(
 				#state {
 					gossip = ar_gossip:init(IntPeers),
-					external_peers = ExtPeers
+					external_peers = ExtPeers,
+					port = Port
 				}
 			)
 		end
@@ -68,6 +71,7 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 		{add_block, OriginPeer, Block, RecallBlock} ->
 			server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}));
 		{add_peer, remote, Peer} ->
+			ar:report_console({adding_remote_peer, Peer}),
 			server(S#state { external_peers = [Peer|ExtPeers]});
 		{add_peer, local, Peer} ->
 			server(S#state { gossip = ar_gossip:add_peers(GS0, Peer)});
@@ -133,6 +137,7 @@ get_id(tx, #tx { id = ID}) -> ID;
 get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% Send an internal message externally
+%% TODO: add Peer functionality in the same way that blocks do
 send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 	lists:foreach(
 		fun(Peer) ->
@@ -142,11 +147,11 @@ send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 	),
 	S;
 send_to_external(
-		S = #state {external_peers = Peers},
+		S = #state {external_peers = Peers, port = Port},
 		{new_block, _Peer, _Height, NewB, RecallB}) ->
 	lists:foreach(
 		fun(Peer) ->
-			ar_http_iface:send_new_block(Peer, NewB, RecallB)
+			ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
 		end,
 		Peers
 	),

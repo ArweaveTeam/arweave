@@ -135,7 +135,7 @@ start(
 	SearchNode = app_search:start([Node|Peers]),
 	ar_node:add_peers(Node, SearchNode),
 	% Start a bridge, add it to the node's peer list.
-	Bridge = ar_bridge:start(Peers, [Node]),
+	Bridge = ar_bridge:start(Peers, [Node], Port),
 	ar_node:add_peers(Node, Bridge),
 	% Add self to all remote nodes.
 	lists:foreach(fun ar_http_iface:add_peer/1, Peers),

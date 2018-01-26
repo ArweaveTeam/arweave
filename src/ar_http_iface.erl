@@ -245,7 +245,6 @@ handle('POST', [<<"services">>], Req) ->
 %Handles otherwise unhandles HTTP requests and returns 500.
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
-
 %% @doc Handles all other elli metadata events.
 handle_event(Type, Data, Args)
 		when (Type == request_throw)
@@ -317,8 +316,8 @@ send_new_tx(Host, TX) ->
 	).
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block({A,B,C,D,Port}, NewB, RecallB) ->
-	send_new_block({A,B,C,D}, Port, NewB, RecallB).
+send_new_block(IP, NewB, RecallB) ->
+	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
 	httpc:request(
