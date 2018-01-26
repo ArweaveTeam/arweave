@@ -7,7 +7,8 @@
 %% Return a new peer list, from an old one.
 update(Peers) ->
 	{Rankable, Newbies} = partition_newbies(score(get_more_peers(Peers))),
-	maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ]) ++ Newbies.
+	maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ])
+		++ [ Peer || {Peer, newbie} <- Newbies ].
 
 %% Return a new list, with the peers and their peers.
 get_more_peers(Peers) ->
