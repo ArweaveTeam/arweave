@@ -109,6 +109,13 @@
 	expires
 }).
 
+% HTTP Performance results for a given node.
+-record(performance, {
+	bytes = 0,
+	time = 0,
+	transfers = 0
+}).
+
 %% Helper macros
 % Return number of winstons per given AR.
 -define(AR(AR), (?WINSTON_PER_AR * AR)).

@@ -306,7 +306,7 @@ return_info() ->
 
 %% @doc Send a new transaction to an Archain HTTP node.
 send_new_tx(Host, TX) ->
-	httpc:request(
+	ar_httpc:request(
 		post,
 		{
 			"http://" ++ ar_util:format_peer(Host) ++ "/tx",
@@ -323,7 +323,7 @@ send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
-	httpc:request(
+	ar_httpc:request(
 		post,
 		{
 			"http://" ++ ar_util:format_peer(Host) ++ "/block",
@@ -348,7 +348,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 %% @doc Add peer (self) to host.
 add_peer(Host) ->
 	%ar:d({adding_host, Host}),
-	httpc:request(
+	ar_httpc:request(
 		post,
 		{
 			"http://"
@@ -363,7 +363,7 @@ add_peer(Host) ->
 %% @doc Get the current, top block.
 get_current_block(Host) ->
 	handle_block_response(
-		httpc:request(
+		ar_httpc:request(
 			get,
 			{
 				"http://"
@@ -378,7 +378,7 @@ get_current_block(Host) ->
 %% @doc Calculate transaction reward.
 get_tx_reward(Node, Size) ->
 	{ok, {{_, 200, _}, _, Body}} =
-		httpc:request(
+		ar_httpc:request(
 			get,
 			{
 					"http://"
@@ -396,7 +396,7 @@ get_block(Host, Height) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_height, Height}]),
 	%ar:d([getting_new_block, {host, Host}, {height, Height}]),
 	handle_block_response(
-		httpc:request(
+		ar_httpc:request(
 			get,
 			{
 				"http://"
@@ -412,7 +412,7 @@ get_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_block_response(
-		httpc:request(
+		ar_httpc:request(
 			get,
 			{
 				"http://"
@@ -429,7 +429,7 @@ get_tx(Host, Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
 	handle_tx_response(
-		httpc:request(
+		ar_httpc:request(
 			get,
 			{
 				"http://"
@@ -452,7 +452,7 @@ get_info(Peer, Type) ->
 			X
 	end.
 get_info(Peer) ->
-	case httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/info") of
+	case ar_httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/info") of
 		{ok, {{_, 200, _}, _, Body}} -> process_get_info(Body);
 		_ -> info_unavailable
 	end.
@@ -551,7 +551,7 @@ get_peers_test() ->
 	Node1 = ar_node:start([{127,0,0,1,1984},{127,0,0,1,1985}], [B0]),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
-		httpc:request(
+		ar_httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
 				++ "/peers"),
@@ -567,7 +567,7 @@ get_balance_test() ->
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
-		httpc:request(
+		ar_httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
 				++ "/wallet/"
@@ -583,7 +583,7 @@ get_presale_balance_test() ->
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
-		httpc:request(
+		ar_httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
 				++ "/wallet/"
@@ -599,7 +599,7 @@ get_last_tx_single_test() ->
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
 	{ok, {{_, 200, _}, _, Body}} =
-		httpc:request(
+		ar_httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
 				++ "/wallet/"
@@ -707,7 +707,7 @@ add_tx_and_get_last_test() ->
 	ar_node:mine(Node),
 	receive after 1000 -> ok end,
 	{ok, {{_, 200, _}, _, Body}} =
-		httpc:request(
+		ar_httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
 				++ "/wallet/"
