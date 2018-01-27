@@ -157,21 +157,29 @@ get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
 %% Send an internal message externally
 %% TODO: add Peer functionality in the same way that blocks do
 send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
-	lists:foreach(
-		fun(Peer) ->
-			ar_http_iface:send_new_tx(Peer, TX)
-		end,
-		[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX, IP) ]
+	spawn(
+		fun() ->
+			lists:foreach(
+				fun(Peer) ->
+					ar_http_iface:send_new_tx(Peer, TX)
+				end,
+				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX, IP) ]
+			)
+		end
 	),
 	S;
 send_to_external(
 		S = #state {external_peers = Peers, port = Port},
 		{new_block, _Peer, _Height, NewB, RecallB}) ->
-	lists:foreach(
-		fun(Peer) ->
-			ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
-		end,
-		[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
+	spawn(
+		fun() ->
+			lists:foreach(
+				fun(Peer) ->
+					ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
+				end,
+				[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
+			)
+		end
 	),
 	S;
 send_to_external(S, {NewGS, Msg}) ->
