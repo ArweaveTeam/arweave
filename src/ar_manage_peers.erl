@@ -13,14 +13,14 @@ stats() ->
 	io:format("Other known peers:~n"),
 	stats(All).
 stats(Peers) ->
-	lists:map(
+	lists:foreach(
 		fun(Peer) -> format_stats(Peer, ar_httpc:get_performance(Peer)) end,
 		Peers
 	).
 
 %% Pretty(ish) print stats about a node.
 format_stats(Peer, Perf) ->
-	io:format("\tPeer ~p: ~.2f kbs (~p transfers)~n",
+	io:format("\tPeer ~p: ~.2f kb/s (~p transfers)~n",
 		[
 			Peer,
 			(Perf#performance.bytes / 1024) / (Perf#performance.time / 1000000),
