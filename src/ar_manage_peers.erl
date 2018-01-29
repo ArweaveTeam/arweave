@@ -59,7 +59,7 @@ partition_newbies(ScoredPeers) ->
 
 %% Return a ranked list of peers.
 rank_peers(ScoredPeers) ->
-	lists:sort(fun({_, S1}, {_, S2}) -> S1 =< S2 end, ScoredPeers).
+	lists:sort(fun({_, S1}, {_, S2}) -> S1 >= S2 end, ScoredPeers).
 
 %% Probabalistically drop peers.
 maybe_drop_peers(Peers) -> maybe_drop_peers(1, length(Peers), Peers).
