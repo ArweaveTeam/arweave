@@ -79,7 +79,7 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 			end
 	end;
 % Get a transaction by hash and return the associated data.
-handle('GET', [<<"tx">>, Hash, <<"data">>], _Req) ->
+handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
 	case IndepHash of
 		not_found ->
@@ -228,6 +228,25 @@ handle('GET', [<<"services">>], _Req) ->
 			}
 		)
 	};
+%% TODO: Add case for
+handle('GET', [<<"tx">>, Hash, Field], _Req) ->
+	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
+	case IndepHash of
+		not_found ->
+			{ok, File} = file:read_file("data/not_found.html"),
+			{404, [], File};
+		_ ->
+			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
+			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
+				false ->
+					{404, [], <<"Not Found.">>};
+				T ->
+					{struct, TXJSON} = ar_serialize:tx_to_json_struct(T),
+					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, TXJSON),
+					{200, [], Res}
+			end
+	end;
+
 % Add reports of service locations
 handle('POST', [<<"services">>], Req) ->
 	BodyBin = elli_request:body(Req),
@@ -721,3 +740,26 @@ add_tx_and_get_last_test() ->
 		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
 				++ "/last_tx"),
 	<<"TEST">> = ar_util:decode(Body).
+
+get_subfields_of_tx_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA">>)),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	%write a get_tx function like get_block
+	{ok, {{_, 200, _}, _, Body}} =
+		ar_httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/tx/"
+		 		++ ar_util:encode(TX#tx.id)
+				++ "/data"),
+	Orig = TX#tx.data,
+	Orig = ar_util:decode(Body).
