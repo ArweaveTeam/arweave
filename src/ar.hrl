@@ -1,12 +1,12 @@
 %%% A collection of record structures used throughout the ArkChain server.
 
 %% How should nodes on the network identify themselves?
--define(NETWORK_NAME, "archain.BATN.3").
+-define(NETWORK_NAME, "archain.BATN.4").
 %% What is the current version/release number (should be an integer).
--define(CLIENT_VERSION, 3).
+-define(CLIENT_VERSION, 4).
 
 %% Should ar:report_console/1 /actually/ report to the console?
--define(SILENT, true).
+%-define(SILENT, true).
 
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
