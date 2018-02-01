@@ -6,7 +6,7 @@
 -define(CLIENT_VERSION, 3).
 
 %% Should ar:report_console/1 /actually/ report to the console?
-%-define(SILENT, true).
+-define(SILENT, true).
 
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
@@ -26,17 +26,18 @@
 
 %% Winstons per AR.
 -define(WINSTON_PER_AR, 1000000000000).
-
-%% The minimum cost/reward for a single TX.
--define(MIN_TX_REWARD, 1).
-%% The minimum cost/reward for a single TX.
--define(COST_PER_BYTE, 0.001).
+%% The base cost of a byte in AR
+-define(BASE_BYTES_PER_AR, 1000000).
+%% The minimum cost per byte for a single TX.
+-define(COST_PER_BYTE, (?WINSTON_PER_AR div ?BASE_BYTES_PER_AR)).
+%% The difficulty "center" at which 1 byte costs ?BASE_BYTES_PER_AR
+-define(DIFF_CENTER, 25).
 
 %% The amount of the weave to store. 1.0 = 100%; 0.5 = 50% etc.
 -define(WEAVE_STOR_AMT, 1.0).
 
 %% ENABLE ONLY WHILE TESTING
--define(DEBUG, true).
+-define(DEBUG, false).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 

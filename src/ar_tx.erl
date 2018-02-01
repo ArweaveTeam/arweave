@@ -1,6 +1,6 @@
 -module(ar_tx).
--export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, to_binary/1, verify/1, verify_txs/1]).
--export([calculate_min_tx_cost/1, tx_cost_above_min/1]).
+-export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, to_binary/1, verify/2, verify_txs/2]).
+-export([calculate_min_tx_cost/2, tx_cost_above_min/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -56,40 +56,44 @@ sign(TX, PrivKey, PubKey) ->
 %% @doc Ensure that a transaction's signature is valid.
 %% TODO: Ensure that DEBUG is false in production releases(!!!)
 -ifdef(DEBUG).
-verify(#tx { signature = <<>> }) -> true;
-verify(TX) ->
-	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and tx_cost_above_min(TX).
+verify(#tx { signature = <<>> }, _) -> true;
+verify(TX, Diff) ->
+	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and tx_cost_above_min(TX, Diff).
 -else.
-verify(TX) ->
-	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and tx_cost_above_min(TX).
+verify(TX, Diff) ->
+	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and tx_cost_above_min(TX, Diff).
 -endif.
 
-verify_txs(TXs) ->
-	false = lists:any(fun(T) -> not verify(T) end, TXs).
+verify_txs(TXs, Diff) ->
+	false = lists:any(fun(T) -> not verify(T, Diff) end, TXs).
 
 %% @doc Transaction cost above proscribed minimum.
-tx_cost_above_min(TX) ->
-	TX#tx.reward >= calculate_min_tx_cost(byte_size(to_binary(TX))).
+tx_cost_above_min(TX, Diff) ->
+	TX#tx.reward >= calculate_min_tx_cost(byte_size(TX#tx.data), Diff).
 
-%% @doc Calculate the minimum cost for this transaction. (Size in Bytes)
-calculate_min_tx_cost(Size) ->
-	% 1 AR per mb + 1 winston (in winstons).
-	1 + erlang:trunc((Size / (1024 * 1024)) * ?WINSTON_PER_AR).
+calculate_min_tx_cost(Size, Diff) ->
+	(Size * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff.
 
 %% @doc Ensure that all TXs in a list verify correctly.
 
+
 %%% TESTS %%%
+%% TODO: Write a more stringent reject_tx_below_min test
 
 sign_tx_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),
-	true = verify(sign(NewTX, Priv, Pub)).
+	true = verify(sign(NewTX, Priv, Pub), 1).
 
 forge_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),
-	false = verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }).
+	false = verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }, 1).
 
 tx_cost_above_min_test() ->
 	TestTX = new(<<"TEST DATA">>, ?AR(10)),
-	true = tx_cost_above_min(TestTX).
+	true = tx_cost_above_min(TestTX, 1).
+
+reject_tx_below_min_test() ->
+	TestTX = new(<<"TEST DATA">>, 1),
+	false = tx_cost_above_min(TestTX, 10).

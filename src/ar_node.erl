@@ -166,6 +166,8 @@ get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
 
+
+
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
 	Node ! mine.
@@ -643,7 +645,7 @@ validate(
 	ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce) =/= false
 		and validate_wallet_list(WalletList)
 		and ar_weave:verify_indep(RecallB, HashList)
-		and ar_tx:verify_txs(TXs)
+		and ar_tx:verify_txs(TXs, Diff)
 		and ar_retarget:validate(NewB, OldB);
 validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
 	%ar:d(p2),

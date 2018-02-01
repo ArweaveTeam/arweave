@@ -60,7 +60,7 @@ handle(Req, _Args) ->
 
 handle('GET', [], _Req) ->
 	return_info();
-% Get information about a block in JSON format.
+% Get information about the network from node in JSON format.
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
 % Get a transaction by hash
@@ -124,7 +124,8 @@ handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
 	Node = whereis(http_entrypoint_node),
-	case ar_tx:verify(TX) of
+	B = ar_node:get_current_block(Node),
+	case ar_tx:verify(TX, B#block.diff) of
 		false ->
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
@@ -148,12 +149,16 @@ handle('GET', [<<"peers">>], _Req) ->
 		)
 	};
 handle('GET', [<<"price">>, SizeInBytes], _Req) ->
+	Node = whereis(http_entrypoint_node),
+	B = ar_node:get_current_block(Node),
 	{200, [],
+
 		integer_to_list(
 			ar_tx:calculate_min_tx_cost(
 				list_to_integer(
 					binary_to_list(SizeInBytes)
-				)
+				),
+				B#block.diff
 			)
 		)
 	};
@@ -561,7 +566,7 @@ get_tx_reward_test() ->
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	% Hand calculated result for 1000 bytes.
-	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000),
+	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff),
 	ExpectedPrice = get_tx_reward({127,0,0,1,1984}, 1000).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
