@@ -561,7 +561,7 @@ Post a transaction to the network.
     "owner": "",		// base64url encoded public exponent of wallet making transaction
     "target": "",		// base64url encoded SHA256 hash of recipients public exponent
     "quantity": "",		// string representing the amount of sent AR in winston
-    "type": "",			// string stating type of transaction 'data' or 'financial'
+    "type": "",			// string stating type of transaction 'data' or 'transfer'
     "data": "",			// base64url encoded data being archived in transaction
     "reward": "",		// string representing the mining reward AR in winston
     "signature": ""		// base64url encoded signature of transaction
