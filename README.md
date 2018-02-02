@@ -52,6 +52,9 @@ More information on [TNT](https://medium.com/@archain/tnt-exploding-edge-case-bu
 # App Developer Toolkit (ADT)
 You can find separate documentation for the App Developer Toolkit [here](ADT_README.md).
 
+# HTTP API
+You can find documentation regarding our HTTP interface here [here](http_iface_docs.md).
+
 # Contact
 If you have questions or comments on the Archain you can get in touch by
 finding us on [Twitter](https://twitter.com/ArchainTeam/), [Reddit](https://www.reddit.com/r/archain), [Discord](https://discord.gg/2ZpV8nM) or by
