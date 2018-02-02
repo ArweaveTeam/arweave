@@ -142,7 +142,10 @@ json_struct_to_tx(JSONList) when is_list(JSONList) ->
 		{_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
 	end;
 json_struct_to_tx({struct, TXStruct}) ->
-	{array, Tags} = find_value("tags", TXStruct),
+	Tags = case find_value("tags", TXStruct) of
+		undefined -> [];
+		{array, Xs} -> Xs
+	end,
 	#tx {
 		id = ar_util:decode(find_value("id", TXStruct)),
 		last_tx = ar_util:decode(find_value("last_tx", TXStruct)),
