@@ -129,7 +129,7 @@ A string containing the requested field.
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
-var path = '/tx/VvNF3aLS28MXD_o4Lv0lF9_WcxMibFOp166qDqC1Hlw/last_tx
+var path = '/tx/VvNF3aLS28MXD_o4Lv0lF9_WcxMibFOp166qDqC1Hlw/last_tx';
 var url = node + path;
 var xhr = new XMLHttpRequest();
 
