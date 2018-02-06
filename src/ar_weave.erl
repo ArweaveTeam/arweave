@@ -123,7 +123,7 @@ generate_block_data(TXs) ->
 	).
 
 %% @doc Create the hash of the next block in the list, given a previous block,
-%% and the TX and data lists.
+%% and the TXs and the nonce.
 hash(B, TXs, Nonce) when is_record(B, block) ->
 	hash(B#block.hash, generate_block_data(TXs), Nonce);
 hash(Hash, TXs, Nonce) ->

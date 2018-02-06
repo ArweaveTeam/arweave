@@ -319,7 +319,7 @@ return_info() ->
 								_ -> 0
 							end},
 						{blocks, ar_storage:blocks_on_disk()},
-						{peers, length(ar_node:get_peers(whereis(http_entrypoint_node)))}
+						{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))}
 					]
 				}
 			)
