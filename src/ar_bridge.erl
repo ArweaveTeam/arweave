@@ -70,7 +70,9 @@ ignore_id(PID, ID) ->
 
 %% Schedule a message timer.
 reset_timer(PID, get_more_peers) ->
-	erlang:send_after(?GET_MORE_PEERS_TIME, PID, get_more_peers).
+	erlang:send_after(?GET_MORE_PEERS_TIME, PID, {get_more_peers, PID}).
+
+
 
 %%% INTERNAL FUNCTIONS
 
@@ -92,13 +94,20 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 		{get_peers, remote, Peer} ->
 			Peer ! {remote_peers, S#state.external_peers},
 			server(S);
+		{update_peers, remote, Peers} ->
+			server(S#state {external_peers = Peers});
 		Msg when is_record(Msg, gs_msg) ->
 			server(do_send_to_external(S, ar_gossip:recv(GS0, Msg)));
-		get_more_peers ->
-			reset_timer(self(), get_more_peers),
-			server(S#state { external_peers = ar_manage_peers:update(ExtPeers) })
+		{get_more_peers, PID} ->
+			spawn(
+				fun() ->
+					Peers = ar_manage_peers:update(S#state.external_peers),
+					PID ! {update_peers, remote, Peers},
+					reset_timer(PID, get_more_peers)
+				end
+			),
+			server(S)
 	end.
-
 %% Potentially send a message to internal processes.
 maybe_send_to_internal(
 		S = #state {

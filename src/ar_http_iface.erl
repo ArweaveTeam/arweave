@@ -133,7 +133,7 @@ handle('POST', [<<"tx">>], Req) ->
 			{200, [], <<"OK">>}
 	end;
 % Get peers.
-handle('GET', [<<"peers">>], _Req) ->
+handle('GET', [<<"peers">>], Req) ->
 	{200, [],
 		list_to_binary(
 			ar_serialize:jsonify(
@@ -141,8 +141,8 @@ handle('GET', [<<"peers">>], _Req) ->
 					[
 						ar_util:format_peer(P)
 					||
-						P <- ar_node:get_peers(whereis(http_entrypoint_node)),
-						not is_pid(P)
+						P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+						P /= ar_util:parse_peer(elli_request:peer(Req))
 					]
 				}
 			)
@@ -579,16 +579,6 @@ get_unjoined_info_test() ->
 	0 = get_info({127,0,0,1,1984}, peers),
 	0 = get_info({127,0,0,1,1984}, blocks),
 	0 = get_info({127,0,0,1,1984}, height).
-
-%% @doc Ensure that server info can be retreived via the HTTP interface.
-get_peers_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([{127,0,0,1,1984},{127,0,0,1,1985}], [B0]),
-	reregister(Node1),
-	Array = get_peers({127,0,0,1,1984}),
-	true = lists:member({127,0,0,1,1984}, Array),
-	true = lists:member({127,0,0,1,1985}, Array).
 
 %% @doc Check that balances can be retreived over the network.
 get_balance_test() ->
