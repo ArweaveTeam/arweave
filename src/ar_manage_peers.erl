@@ -38,7 +38,8 @@ update(Peers) ->
 get_more_peers(Peers) ->
 	ar_util:unique(
 		lists:flatten(
-			ar_util:pmap(fun ar_http_iface:get_peers/1, Peers)
+			ar_util:pmap(fun ar_http_iface:get_peers/1, Peers),
+			Peers
 		)
 	).
 

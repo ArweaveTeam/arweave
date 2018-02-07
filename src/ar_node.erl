@@ -404,7 +404,7 @@ server(
 		{'DOWN', RecoveryRef, _, _, _} ->
 			server(S#state { recovery_ref = undefined });
 		Msg ->
-			ar:report([{unknown_msg, Msg}]),
+			ar:report_console([{unknown_msg, Msg}]),
 			server(S)
 	end.
 
