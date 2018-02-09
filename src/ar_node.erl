@@ -422,6 +422,13 @@ join_weave(S, NewB) ->
 		}
 	).
 
+%% @doc Get remote peers from bridge, return the empty set if bridge does not exist
+get_remote_peers() ->
+	case whereis(http_bridge_node) of
+		undefined -> [];
+		Bridge -> ar_bridge:get_remote_peers(Bridge)
+	end.
+
 %% @doc Recovery from a fork.
 fork_recover(
 	S = #state {
@@ -434,7 +441,7 @@ fork_recover(
 				erlang:monitor(
 					process,
 					ar_fork_recovery:start(
-						ar_util:unique([Peer|ar_gossip:peers(GS)]),
+						ar_util:unique(get_remote_peers() ++ [Peer|ar_gossip:peers(GS)]),
 						NewB,
 						HashList
 					)

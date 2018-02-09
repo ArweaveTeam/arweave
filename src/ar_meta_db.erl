@@ -68,6 +68,7 @@ basic_storage_test() ->
 	put(test_key, 1),
 	1 = get(test_key).
 
+%% @doc Data older than ?PEER_TIMEOUT is removed, newer data is not
 purge_old_peers_test() ->
 		Time = os:system_time(),
 		P1 = #performance{timestamp = Time - (?PEER_TIMEOUT + 1)},
