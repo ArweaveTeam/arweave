@@ -33,7 +33,8 @@ store_data_time(Request, Bytes, MicroSecs) ->
 		P#performance {
 			transfers = P#performance.transfers + 1,
 			time = P#performance.time + MicroSecs,
-			bytes = P#performance.bytes + Bytes
+			bytes = P#performance.bytes + Bytes,
+			timestamp = os:system_time()
 		}
 	).
 

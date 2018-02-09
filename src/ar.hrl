@@ -6,7 +6,7 @@
 -define(CLIENT_VERSION, 4).
 
 %% Should ar:report_console/1 /actually/ report to the console?
--define(SILENT, true).
+%-define(SILENT, true).
 
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
@@ -56,6 +56,9 @@
 -define(PEER_GRACE_PERIOD, 50).
 %% Never drop to lower than this number of peers.
 -define(MINIMUM_PEERS, 2).
+
+%% Length of time to wait (nanoseconds) before dropping after last activity
+-define(PEER_TIMEOUT, 300000000000).
 
 %% Log output directory
 -define(LOG_DIR, "logs").
@@ -120,7 +123,8 @@
 -record(performance, {
 	bytes = 0,
 	time = 0,
-	transfers = 0
+	transfers = 0,
+	timestamp = 0
 }).
 
 %% Helper macros

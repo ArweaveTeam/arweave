@@ -162,9 +162,15 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 			)
 		)
 	};
+% TODO: Return remaining timeout on a failed request
+% TODO: Optionally, allow adding self on a non-default port
 handle('POST', [<<"peers">>], Req) ->
 	Peer = elli_request:peer(Req),
-	ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(Peer)),
+	case ar_meta_db:get({peer, ar_util:parse_peer(Peer)}) of
+		not_found ->
+			ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(Peer));
+		X -> X
+	end,
 	{200, [], []};
 handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	Peer = elli_request:peer(Req),

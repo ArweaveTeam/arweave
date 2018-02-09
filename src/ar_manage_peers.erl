@@ -30,6 +30,7 @@ format_stats(Peer, Perf) ->
 
 %% Return a new peer list, from an old one.
 update(Peers) ->
+	ar_meta_db:clear_old_peers(os:system_time()),
 	{Rankable, Newbies} = partition_newbies(score(get_more_peers(Peers))),
 	maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ])
 		++ [ Peer || {Peer, newbie} <- Newbies ].

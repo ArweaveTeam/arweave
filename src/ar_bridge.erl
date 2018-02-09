@@ -102,6 +102,7 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			spawn(
 				fun() ->
 					Peers = ar_manage_peers:update(S#state.external_peers),
+					lists:map(fun ar_http_iface:add_peer/1, Peers),
 					PID ! {update_peers, remote, Peers},
 					reset_timer(PID, get_more_peers)
 				end

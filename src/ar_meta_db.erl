@@ -1,8 +1,8 @@
 -module(ar_meta_db).
--export([start/0, get/1, put/2, keys/0]).
+-export([start/0, get/1, put/2, keys/0, remove_old/1,remove_old/2]).
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
-
+-include("ar.hrl").
 %%% Defines a small in-memory metadata table for Archain nodes.
 %%% Typically used to store small peices of globally useful information
 %%% (for example: the port number used by the node).
@@ -31,6 +31,34 @@ get(Key) ->
 		[{Key, Obj}] -> Obj;
 		[] -> not_found
 	end.
+%% @doc Remove entries from the performance database older than
+%% ?PEER_TMEOUT
+remove_old(Time) ->
+	case ets:first(?MODULE) of
+		'$end_of_table' -> done;
+		Key ->
+			[{_, P}] = ets:lookup(?MODULE, Key),
+			if
+				(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
+				remove_old(Time, Key),
+				ets:delete(?MODULE, Key);
+			true ->
+				remove_old(Time, Key)
+			end
+	end.
+remove_old(Time, H) ->
+	case ets:next(?MODULE, H) of
+		'$end_of_table' -> done;
+		Key ->
+			[{_, P}] = ets:lookup(?MODULE, Key),
+			if
+				(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
+				remove_old(Time, Key),
+				ets:delete(?MODULE, Key);
+			true ->
+				remove_old(Time, Key)
+			end
+	end.
 
 %% @doc Return all of the keys available in the database.
 keys() -> ets:foldl(fun({X, _}, Acc) -> Acc ++ [X] end, [], ?MODULE).
@@ -39,3 +67,13 @@ keys() -> ets:foldl(fun({X, _}, Acc) -> Acc ++ [X] end, [], ?MODULE).
 basic_storage_test() ->
 	put(test_key, 1),
 	1 = get(test_key).
+
+purge_old_peers_test() ->
+		Time = os:system_time(),
+		P1 = #performance{timestamp = Time - (?PEER_TIMEOUT + 1)},
+		P2 = #performance{timestamp = Time - 1},
+		put({peer, {127,0,0,1,1984}}, P1),
+		put({peer, {127,0,0,1,1985}}, P2),
+		remove_old(Time),
+		not_found = get({peer, {127,0,0,1,1984}}),
+		P2 = get({peer, {127,0,0,1,1985}}).
