@@ -5,6 +5,7 @@
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
+-export([calculate_reward/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2, validate/3, validate/4, validate/5, find_recall_block/1]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).

@@ -1,5 +1,5 @@
 -module(ar_wallet).
--export([new/0, sign/2, verify/3, to_address/1]).
+-export([new/0, sign/2, verify/3, to_address/1, new_keyfile/0, load_keyfile/1]).
 -define(PUBLIC_EXPNT, 17489).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -13,6 +13,44 @@ new() ->
 		= crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 	{{Priv, Pub}, Pub}.
 
+
+%% @doc Generates a new wallet public and private key, with a corresponding keyfile
+new_keyfile() ->
+	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
+		crypto:generate_key(rsa, {4096, 17489}),
+		Key = lists:flatten(
+			json2:encode(
+				{struct,
+					[
+						{kty, "RSA"},
+						{ext, true},
+						{e, ar_util:encode(Expnt)},
+						{n, ar_util:encode(Pub)},
+						{d, ar_util:encode(Priv)},
+						{p, ar_util:encode(P1)},
+						{q, ar_util:encode(P2)},
+						{dp, ar_util:encode(E1)},
+						{dq, ar_util:encode(E2)},
+						{qi, ar_util:encode(C)}
+					]
+				}
+			)
+		),
+		FileName = "wallets/archain_TESTNET_key" ++ ar_util:encode(to_address(Pub)) ++ ".json",
+		filelib:ensure_dir(FileName),
+		file:write_file(FileName, Key),
+	{{Priv, Pub}, Pub}.
+
+%% @doc Extrats the public and private key from a keyfile
+load_keyfile(File) ->
+	{ok, Body} = file:read_file(File),
+	{ok, {struct, Key}} = json2:decode_string(binary_to_list(Body)),
+	{"n", PubEncoded} = lists:keyfind("n", 1, Key),
+	Pub = ar_util:decode(PubEncoded),
+	{"d", PrivEncoded} = lists:keyfind("d", 1, Key),
+	Priv = ar_util:decode(PrivEncoded),
+	{{Priv, Pub}, Pub}.
+
 %% @doc Sign some data with a private key.
 sign({Priv, Pub}, Data) ->
 	rsa_pss:sign(
@@ -24,6 +62,7 @@ sign({Priv, Pub}, Data) ->
 			privateExponent = binary:decode_unsigned(Priv)
 		}
 	).
+
 
 %% @doc Verify that a signature is correct.
 verify(Key, Data, Sig) ->
@@ -62,4 +101,19 @@ address_double_encode_test() ->
 	Addr = to_address(Pub),
 	Addr = to_address(Addr).
 
+%%doc Check generated keyfiles can be retrieved
+generate_keyfile_test() ->
+	{Priv, Pub} = new_keyfile(),
+	FileName = "wallets/archain_TESTNET_key" ++ ar_util:encode(to_address(Pub)) ++ ".json",
+	{Priv, Pub} = load_keyfile(FileName).
 
+%% @doc Check keyfile generation
+assign_wallet_test() ->
+	{_, Pub} = new_keyfile(),
+	Address = to_address(Pub),
+	B0 = ar_weave:init([{Address, ?AR(0), <<>>}]),
+	Node1 = ar_node:start([], B0, 0, Address),
+	ar_node:mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	Reward = erlang:trunc(ar_node:calculate_reward(1,[])),
+	Reward = ar_node:get_balance(Node1, Pub).

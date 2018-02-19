@@ -47,7 +47,9 @@
 	auto_join = true,
 	clean = false,
 	diff = ?DEFAULT_DIFF,
-	mining_addr = unclaimed
+	mining_addr = unclaimed,
+	new_key = false,
+	load_key = unclaimed
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -77,7 +79,9 @@ main("") ->
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"init", "Start a new blockweave."},
 			{"diff init_diff", "(For use with 'init':) New blockweave starting difficulty."},
-			{"mining_addr addr", "The address that mining rewards should be credited to."}
+			{"mining_addr addr", "The address that mining rewards should be credited to."},
+			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
+			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"}
 		]
 	),
 	erlang:halt();
@@ -100,7 +104,11 @@ main(["clean"|Rest], O) ->
 main(["no_auto_join"|Rest], O) ->
 	main(Rest, O#opts { auto_join = false });
 main(["mining_addr", Addr|Rest], O) ->
-	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });	
+	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
+main(["new_mining_key"|Rest], O)->
+	main(Rest, O#opts { new_key = true });
+main(["load_mining_key", File|Rest], O)->
+	main(Rest, O#opts { load_key = File });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -117,7 +125,9 @@ start(
 		clean = Clean,
 		auto_join = AutoJoin,
 		diff = Diff,
-		mining_addr = Addr 
+		mining_addr = Addr,
+		new_key = NewKey,
+		load_key = LoadKey
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -125,11 +135,42 @@ start(
 	inets:start(),
 	ar_meta_db:start(),
 	ar_meta_db:put(port, Port),
+	% Determine mining address
+	case {Addr, LoadKey, NewKey} of
+		{unclaimed, unclaimed, false} ->
+			ar:report_console(
+				[
+					mining_address_unclaimed,
+					{address, Addr},
+					{new_key, NewKey},
+					{load_key, LoadKey}
+				]
+			),
+			MiningAddress = unclaimed;
+		{unclaimed, unclaimed, true} ->
+			{_, Pub} = ar_wallet:new_keyfile(),
+			MiningAddress = ar_util:encode(ar_wallet:to_address(Pub));
+		{unclaimed, Load, false} ->
+			{_, Pub} = ar_wallet:load_keyfile(Load),
+			MiningAddress = ar_util:encode(ar_wallet:to_address(Pub));
+		{Address, unclaimed, false} ->
+			MiningAddress = Address;
+		_ ->
+			ar:report_console(
+				[
+					mining_address_error,
+					{address, Addr},
+					{new_key, NewKey},
+					{load_key, LoadKey}
+				]
+			),
+			MiningAddress = unclaimed
+	end,
 	Node = ar_node:start(
 		Peers,
 		if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
 		0,
-		Addr,
+		MiningAddress,
 		AutoJoin
 	),
 	SearchNode = app_search:start([Node|Peers]),
