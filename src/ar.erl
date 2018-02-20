@@ -91,7 +91,9 @@ main(["init"|Rest], O) ->
 	main(Rest, O#opts { init = true });
 main(["mine"|Rest], O) ->
 	main(Rest, O#opts { mine = true });
-main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
+main(["peer", Peer|Rest], O = #opts { peers = default }) ->
+	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)] });
+main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->	
 	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
 main(["port", Port|Rest], O) ->
 	main(Rest, O#opts { port = list_to_integer(Port) });
