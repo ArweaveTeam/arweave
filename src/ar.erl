@@ -42,7 +42,7 @@
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	init = false,
 	mine = false,
-	peers = [],
+	peers = ?DEFAULT_PEER_LIST,
 	polling = false,
 	auto_join = true,
 	clean = false,
@@ -149,12 +149,30 @@ start(
 			MiningAddress = unclaimed;
 		{unclaimed, unclaimed, true} ->
 			{_, Pub} = ar_wallet:new_keyfile(),
-			MiningAddress = ar_util:encode(ar_wallet:to_address(Pub));
+			MiningAddress = ar_util:encode(ar_wallet:to_address(Pub)),
+			ar:report_console(
+				[
+					mining_address,
+					{address, MiningAddress}
+				]
+			);
 		{unclaimed, Load, false} ->
 			{_, Pub} = ar_wallet:load_keyfile(Load),
-			MiningAddress = ar_util:encode(ar_wallet:to_address(Pub));
+			MiningAddress = ar_util:encode(ar_wallet:to_address(Pub)),
+			ar:report_console(
+				[
+					mining_address,
+					{address, MiningAddress}
+				]
+			);
 		{Address, unclaimed, false} ->
-			MiningAddress = Address;
+			MiningAddress = Address,
+			ar:report_console(
+				[
+					mining_address,
+					{address, MiningAddress}
+				]
+			);
 		_ ->
 			ar:report_console(
 				[
@@ -234,7 +252,7 @@ test() ->
 				]
 			);
 		_ ->
-			start(),
+			start(#opts { peers = [] }),
 			eunit:test({timeout, ?TEST_TIMEOUT, ?CORE_TEST_MODS}, [verbose])
 	end.
 

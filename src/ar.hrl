@@ -56,7 +56,18 @@
 -define(PEER_GRACE_PERIOD, 50).
 %% Never drop to lower than this number of peers.
 -define(MINIMUM_PEERS, 2).
-
+%% Default list of peers if no others are specified
+-define(DEFAULT_PEER_LIST,
+	[
+		{104,236,121,142,1984},
+		{107,170,220,199,1984},
+		{188,226,184,142,1984},
+		{128,199,168,25,1984},
+		{178,62,4,18,1984},
+		{207,154,238,1,1984},
+		{165,227,40,8,1984},
+		{139,59,81,47,1984}
+	]).
 %% Length of time to wait (nanoseconds) before dropping after last activity
 -define(PEER_TIMEOUT, 300000000000).
 
