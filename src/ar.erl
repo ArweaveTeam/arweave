@@ -42,7 +42,7 @@
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	init = false,
 	mine = false,
-	peers = ?DEFAULT_PEER_LIST,
+	peers = default,
 	polling = false,
 	auto_join = true,
 	clean = false,
@@ -119,7 +119,7 @@ start(
 	#opts {
 		port = Port,
 		init = Init,
-		peers = Peers,
+		peers = RawPeers,
 		mine = Mine,
 		polling = Polling,
 		clean = Clean,
@@ -135,6 +135,11 @@ start(
 	inets:start(),
 	ar_meta_db:start(),
 	ar_meta_db:put(port, Port),
+	Peers =
+		case RawPeers of
+			default -> ?DEFAULT_PEER_LIST;
+			_ -> RawPeers
+		end,
 	% Determine mining address
 	case {Addr, LoadKey, NewKey} of
 		{unclaimed, unclaimed, false} ->
