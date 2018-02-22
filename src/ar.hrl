@@ -1,9 +1,9 @@
-%%% A collection of record structures used throughout the ArkChain server.
+%%% A collection of record structures used throughout the Arweave server.
 
 %% How should nodes on the network identify themselves?
--define(NETWORK_NAME, "archain.BATN.4").
+-define(NETWORK_NAME, "arweave.ATN.1").
 %% What is the current version/release number (should be an integer).
--define(CLIENT_VERSION, 4).
+-define(CLIENT_VERSION, 1).
 
 %% Should ar:report_console/1 /actually/ report to the console?
 %-define(SILENT, true).
