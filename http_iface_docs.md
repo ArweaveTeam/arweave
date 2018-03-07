@@ -1,4 +1,4 @@
-# Archain HTTP Interface Documentation
+# Arweave HTTP Interface Documentation
 
 
 
@@ -608,9 +608,9 @@ xhr.send(post);
 
 # Contact
 
-If you have questions or comments on the Archain HTTP interface you can get in touch by
-finding us on [Twitter](https://twitter.com/ArchainTeam/), [Reddit](https://www.reddit.com/r/archain), [Discord](https://discord.gg/2ZpV8nM) or by emailing us at team@archain.org.
+If you have questions or comments on the Arweave HTTP interface you can get in touch by
+finding us on [Twitter](https://twitter.com/ArweaveTeam/), [Reddit](https://www.reddit.com/r/arweave), [Discord](https://discord.gg/2ZpV8nM) or by emailing us at team@arweave.org.
 
 # License
-The Archain project is released under GNU General Public License v2.0.
+The Arweave project is released under GNU General Public License v2.0.
 See [LICENSE](LICENSE.md) for full license conditions.
