@@ -58,6 +58,8 @@ The data for the signature is comprised of previous data from the rest of the tr
 
 The data to be signed is a concatentation of the raw (entirely unencoded) owner, target, id, data, quantity, reward and last_tx in that order.
 
+The signature scheme is RSA-PSS with both a data hash and Mask Generation Function (MGF) hash of SHA-256. 
+
 The psuedocode below shows this. 
 
 ```psuedo
@@ -78,7 +80,7 @@ signature <- sign(sig_data, key)
 return signature
 ```
 
-Once returned the signature is base64url encoded and added to the transactions JSON struct.
+Once returned the RSA-PSS signature is base64url encoded and added to the transactions JSON struct.
 
 The transaction is now complete and ready to be submitted to the network via a POST request on the '/tx' endpoint.
 
