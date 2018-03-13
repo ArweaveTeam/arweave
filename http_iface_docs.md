@@ -252,18 +252,18 @@ A JSON array detailing the block.
 
 ```javascript
 {
-	"nonce": "c7V-8dLmmqo",
-	"previous_block": "yeCiFpWcguWtWRJnJ_XOKhQXw6xtiOHh-rAw-RjX0YE",
-	"timestamp": 1517563547,
-	"last_retarget": 1517563547,
-	"diff": 8,
-	"height": 30,
-	"hash": "-3-oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs",
-	"indep_hash": "oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs",
-	"txs": [...],
-	"hash_list": [...],
-	"wallet_list": [...],
-	"reward_addr": "unclaimed"
+  "nonce": "c7V-8dLmmqo",
+  "previous_block": "yeCiFpWcguWtWRJnJ_XOKhQXw6xtiOHh-rAw-RjX0YE",
+  "timestamp": 1517563547,
+  "last_retarget": 1517563547,
+  "diff": 8,
+  "height": 30,
+  "hash": "-3-oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs",
+  "indep_hash": "oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs",
+  "txs": [...],
+  "hash_list": [...],
+  "wallet_list": [...],
+  "reward_addr": "unclaimed"
 }
 ```
 
@@ -309,18 +309,18 @@ A JSON array detailing the block.
 
 ```javascript
 {
-	"nonce": "c7V-8dLmmqo",
-	"previous_block": "yeCiFpWcguWtWRJnJ_XOKhQXw6xtiOHh-rAw-RjX0YE",
-	"timestamp": 1517563547,
-	"last_retarget": 1517563547,
-	"diff": 8,
-	"height": 30,
-	"hash": "-3-oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs",
-	"indep_hash": "oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs",
-	"txs": [...],
-	"hash_list": [...],
-	"wallet_list": [...],
-	"reward_addr": "unclaimed"
+  "nonce": "c7V-8dLmmqo",
+  "previous_block": "yeCiFpWcguWtWRJnJ_XOKhQXw6xtiOHh-rAw-RjX0YE",
+  "timestamp": 1517563547,
+  "last_retarget": 1517563547,
+  "diff": 8,
+  "height": 30,
+  "hash": "-3-oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs",
+  "indep_hash": "oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs",
+  "txs": [...],
+  "hash_list": [...],
+  "wallet_list": [...],
+  "reward_addr": "unclaimed"
 }
 ```
 
@@ -365,18 +365,18 @@ A JSON array detailing the block.
 
 ```javascript
 {
-	"nonce": "rihlezm7XAc",
-	"previous_block": "pc-0MvV6lQOWt0O2L3VcSheOfIdymntOBVcloERVbQQ",
-	"timestamp": 1517564276,
-	"last_retarget": 1517564044,
-	"diff": 24,
-	"height": 166,
-	"hash": "mGe34a3DcT8HLE0BfaME38XUelENSjPQA-vcYJG6PGs",
-	"indep_hash": "ntoWN8DMFSuxPsdF8CelZqP03Gr4GahMBXX8ZkyPA3U",
-	"txs": [...],
-	"hash_list": [...],
-	"wallet_list": [...],
-	"reward_addr": "unclaimed"
+  "nonce": "rihlezm7XAc",
+  "previous_block": "pc-0MvV6lQOWt0O2L3VcSheOfIdymntOBVcloERVbQQ",
+  "timestamp": 1517564276,
+  "last_retarget": 1517564044,
+  "diff": 24,
+  "height": 166,
+  "hash": "mGe34a3DcT8HLE0BfaME38XUelENSjPQA-vcYJG6PGs",
+  "indep_hash": "ntoWN8DMFSuxPsdF8CelZqP03Gr4GahMBXX8ZkyPA3U",
+  "txs": [...],
+  "hash_list": [...],
+  "wallet_list": [...],
+  "reward_addr": "unclaimed"
 }
 ```
 
@@ -414,7 +414,7 @@ The returned amount is in winston (the smallest division of AR, 1 AR = 100000000
 - **Method**
   GET
 - **URL Parameters**
-  [wallet_address] : A base64url encoded SHA256 hash of the raw RSA public exponent. 
+  [wallet_address] : A base64url encoded SHA256 hash of the raw RSA modulus. 
 
 
 #### Example Response
@@ -459,7 +459,7 @@ Retrieve the ID of the last transaction made by the given address.
 - **Method**
   GET
 - **URL Parameters**
-  [wallet_address] : A base64url encoded SHA256 hash of the RSA public exponent. 
+  [wallet_address] : A base64url encoded SHA256 hash of the RSA modulus. 
 
 
 #### Example Response
@@ -475,7 +475,7 @@ A string containing the ID of the last transaction made by the given address.
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
-var path = '/wallet/VukPk7P3qXAS2Q76ejTwC6Y_U_bMl_z6mgLvgSUJIzE/balance';
+var path = '/wallet/VukPk7P3qXAS2Q76ejTwC6Y_U_bMl_z6mgLvgSUJIzE/last_tx';
 var url = node + path;
 var xhr = new XMLHttpRequest();
 
@@ -511,8 +511,8 @@ A list containing the IP addresses of all of the nodes peers.
 
 ```javascript
 [
-	"127.0.0.1:1985",
-	"127.0.0.1.:1986"
+  "127.0.0.1:1985",
+  "127.0.0.1.:1986"
 ]
 ```
 
@@ -556,15 +556,15 @@ Post a transaction to the network.
 
 ```javascript
 {
-    "id": "",			// base64url encoded random string of 32-bytes 
-    "last_tx": "",		// base64url encoded ID of last transaction made by address
-    "owner": "",		// base64url encoded public exponent of wallet making transaction
-    "target": "",		// base64url encoded SHA256 hash of recipients public exponent
-    "quantity": "",		// string representing the amount of sent AR in winston
-    "type": "",			// string stating type of transaction 'data' or 'transfer'
-    "data": "",			// base64url encoded data being archived in transaction
-    "reward": "",		// string representing the mining reward AR in winston
-    "signature": ""		// base64url encoded signature of transaction
+    "id": "",     // base64url encoded random string of 32-bytes 
+    "last_tx": "",    // base64url encoded ID of last transaction made by address
+    "owner": "",    // base64url encoded modulus of wallet making transaction
+    "target": "",   // base64url encoded SHA256 hash of recipients modulus
+    "quantity": "",   // string representing the amount of sent AR in winston
+    "type": "",     // string stating type of transaction 'data' or 'transfer'
+    "data": "",     // base64url encoded data being archived in transaction
+    "reward": "",   // string representing the mining reward AR in winston
+    "signature": ""   // base64url encoded signature of transaction
 }
 ```
 
@@ -587,7 +587,7 @@ var post =
       "data": "3DduMPkwLkE0LjIxM9o",
       "reward": "1966476441",
       "signature": "RwBICn...Rxqi54"
-	};
+  };
 
 xhr.open('POST', url);
 xhr.onreadystatechange = function() {
