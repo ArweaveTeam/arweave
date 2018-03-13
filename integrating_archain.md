@@ -30,12 +30,12 @@ A randomly selected 32-byte identifier base64url encoded.
 The ID of the last transaction made from the same address base64url encoded. If no previous transactions have been made from the address this field is set to an empty string.
 
 **[owner]**
-The public exponent of the RSA key pair for the wallet making the transaction base64url encoded.
+The modulus of the RSA key pair for the wallet making the transaction base64url encoded.
 
 **[target]**
 If making a financial transaction this field contains the wallet address of the recipient base64url encoded. If the transaction is not a financial this field is set to an empty string. 
 
-A wallet address is a SHA256 hash of the raw unencoded RSA public exponent.
+A wallet address is a SHA256 hash of the raw unencoded RSA modulus.
 
 **[quantity]**
 If making a financial transaction this field contains the amount in Winston to be sent to the receiving wallet. If the transaction is not financial this field is set to the string "0".
