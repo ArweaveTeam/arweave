@@ -6,7 +6,7 @@
 -define(CLIENT_VERSION, 1).
 
 %% Should ar:report_console/1 /actually/ report to the console?
-%-define(SILENT, true).
+-define(SILENT, true).
 
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
@@ -35,7 +35,8 @@
 
 %% The amount of the weave to store. 1.0 = 100%; 0.5 = 50% etc.
 -define(WEAVE_STOR_AMT, 1.0).
-
+%% The number of blocks behind the most recent block to store.
+-define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 %% ENABLE ONLY WHILE TESTING
 -define(DEBUG, false).
 %% Speed to run the network at when simulating.
