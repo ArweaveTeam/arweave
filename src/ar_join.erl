@@ -48,12 +48,14 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
 get_block_and_trail(_, unavailible, _, _) -> ok;
-get_block_and_trail(_, NewB, _, _) when NewB#block.height =< 1 -> ok;
+get_block_and_trail(_, NewB, _, _) when NewB#block.height =< 1 ->
+	ar_storage:write_block(NewB);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	RecallBlock = ar_util:get_recall_hash(NewB, HashList),
 	case {NewB, ar_node:get_block(Peers, RecallBlock)} of
-		{_, unavailible} -> ok;
+		{B, unavailible} ->
+			ar_storage:write_block(B);
 		{B, R} ->
 			ar_storage:write_block(B),
 			ar_storage:write_block(R)
