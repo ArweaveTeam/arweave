@@ -46,7 +46,7 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks
 get_block_and_trail(Peers, NewB, HashList) ->
-	get_block_and_trail(Peers, NewB, HashList, ?STORE_BLOCKS_BEHIND_CURRENT).
+	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
 get_block_and_trail(_, unavailible, _, _) -> ok;
 get_block_and_trail(_, NewB, _, _) when NewB#block.height =< 1 -> ok;
 get_block_and_trail(_, _, 0, _) -> ok;
