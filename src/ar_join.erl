@@ -28,7 +28,7 @@ start(Node, RawPeers, NewB) ->
 					{height, NewB#block.height}
 				]
 			),
-			get_block_and_trail(Peers, NewB),
+			get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 			fill_to_capacity(Peers, NewB)
 		end
@@ -45,21 +45,21 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks
-get_block_and_trail(Peers, NewB) ->
-	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT).
-get_block_and_trail(_, NewB, _) when NewB#block.height =< 1 -> ok;
-get_block_and_trail(_, _, 0) -> ok;
-get_block_and_trail(_, unavailible, _) -> ok;
-get_block_and_trail(Peers, NewB, BehindCurrent) ->
-	RecallBlock = ar_util:get_recall_hash(NewB, NewB#block.hash_list),
+get_block_and_trail(Peers, NewB, HashList) ->
+	get_block_and_trail(Peers, NewB, HashList, ?STORE_BLOCKS_BEHIND_CURRENT).
+get_block_and_trail(_, unavailible, _, _) -> ok;
+get_block_and_trail(_, NewB, _, _) when NewB#block.height =< 1 -> ok;
+get_block_and_trail(_, _, 0, _) -> ok;
+get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
+	RecallBlock = ar_util:get_recall_hash(NewB, HashList),
 	case {NewB, ar_node:get_block(Peers, RecallBlock)} of
-		{_, unavailible} -> ar:d(ok);
+		{_, unavailible} -> ok;
 		{B, R} ->
 			ar_storage:write_block(B),
 			ar_storage:write_block(R)
 	end,
-	PreviousBlock = ar_node:get_block(Peers, ar_util:get_previous_block_hash(NewB, NewB#block.hash_list)),
-	get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1).
+	PreviousBlock = ar_node:get_block(Peers, ar_util:get_previous_block_hash(NewB, HashList)),
+	get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList).
 
 %% @doc Fills node to capacity based on weave storage limit.
 fill_to_capacity(_, NewB) when NewB#block.height =< 1 -> ok;

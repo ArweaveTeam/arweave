@@ -70,9 +70,6 @@ server(S = #state { blocks = [], peers = Peers, hash_list = [LastH|Rest] }) ->
 	RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
 	case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
 		false ->
-			ar:d({fork_next_block, NextB}),
-			ar:d({fork_current_block, B}),
-			ar:d({fork_recall_block, RecallB}),
 			ar:d(could_not_validate_first_fork_block);
 		true ->
 			server(
@@ -92,9 +89,6 @@ server(S = #state { blocks = Blocks = [B|_], peers = Peers, hash_list = [NextH|H
 		),
 	case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
 		false ->
-			ar:d({fork_next_block, NextB#block.height}),
-			ar:d({fork_current_block, B#block.height}),
-			ar:d({fork_recall_block, RecallB#block.height}),
 			ar:report_console([could_not_validate_recovery_block]),
 			ok;
 		true ->
