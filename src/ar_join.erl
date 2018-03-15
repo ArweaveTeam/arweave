@@ -60,7 +60,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 			ar_storage:write_block(B),
 			ar_storage:write_block(R)
 	end,
-	PreviousBlock = ar_node:get_block(Peers, ar_util:get_previous_block_hash(NewB, HashList)),
+	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block),
 	get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList).
 
 %% @doc Fills node to capacity based on weave storage limit.
