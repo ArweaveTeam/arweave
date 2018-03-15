@@ -57,6 +57,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 		{B, unavailible} ->
 			ar_storage:write_block(B);
 		{B, R} ->
+			ar:d(R),
 			ar_storage:write_block(B),
 			ar_storage:write_block(R)
 	end,
