@@ -8,7 +8,7 @@ while true; do
 		echo "Heartbeat: Server terminated safely."
 		exit 1
 	else
-		echo "Heartbeat: The Archain server has terminated unsafely. It will restart in 15 seconds."
+		echo "Heartbeat: The Arweave server has terminated unsafely. It will restart in 15 seconds."
 		echo "Heartbeat: If you would like to avoid this, please press control+C now..."
 		sleep 15
 	fi
