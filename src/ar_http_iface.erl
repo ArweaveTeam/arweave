@@ -1,7 +1,7 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
--export([get_info/1, get_info/2, get_peers/1]).
+-export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
@@ -63,12 +63,28 @@ handle('GET', [], _Req) ->
 % Get information about the network from node in JSON format.
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
+% Get all pending transactions
+handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
+	{200, [],
+		list_to_binary(
+			ar_serialize:jsonify(
+				{array,
+					ar_node:get_pending_txs(whereis(http_entrypoint_node))
+				}
+			)
+		)
+	};
 % Get a transaction by hash
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
 	case IndepHash of
 		not_found ->
-			{404, [], <<"Not Found.">>};
+			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+				true ->
+					{200, [], <<"Pending">>};
+				false ->
+					{404, [], <<"Not Found.">>}
+			end;
 		_ ->
 			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
 			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
@@ -83,8 +99,13 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
 	case IndepHash of
 		not_found ->
-			{ok, File} = file:read_file("data/not_found.html"),
-			{404, [], File};
+			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+				true ->
+					{200, [], <<"Pending">>};
+				false ->
+					{ok, File} = file:read_file("data/not_found.html"),
+					{404, [], File}
+			end;
 		_ ->
 			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
 			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
@@ -149,6 +170,7 @@ handle('GET', [<<"peers">>], Req) ->
 			)
 		)
 	};
+% Get price of adding data of SizeInByes
 handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	Node = whereis(http_entrypoint_node),
 	B = ar_node:get_current_block(Node),
@@ -240,13 +262,18 @@ handle('GET', [<<"services">>], _Req) ->
 			}
 		)
 	};
-%% TODO: Add case for
+%% Return a subfield of the tx with the given hash
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
 	case IndepHash of
 		not_found ->
-			{ok, File} = file:read_file("data/not_found.html"),
-			{404, [], File};
+			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+				true ->
+					{200, [], <<"Pending">>};
+				false ->
+					{ok, File} = file:read_file("data/not_found.html"),
+					{404, [], File}
+			end;
 		_ ->
 			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
 			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
@@ -472,6 +499,17 @@ get_tx(Host, Hash) ->
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
 	).
+
+get_pending_txs(Peer) ->
+	try
+		begin
+			{ok, {{_, 200, _}, _, Body}} =
+				ar_httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/tx/pending"),
+			{ok, {array, PendingTxs}} = json2:decode_string(Body),
+			[list_to_binary(P) || P <- PendingTxs]
+		end
+	catch _:_ -> []
+	end.
 
 %% @doc Retreive information from a peer. Optionally, filter the resulting
 %% keyval list for required information.
@@ -747,6 +785,7 @@ add_tx_and_get_last_test() ->
 				++ "/last_tx"),
 	<<"TEST">> = ar_util:decode(Body).
 
+%% @doc Post a tx to the network and ensure that its subfields can be gathered
 get_subfields_of_tx_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init(),
@@ -769,3 +808,67 @@ get_subfields_of_tx_test() ->
 				++ "/data"),
 	Orig = TX#tx.data,
 	Orig = ar_util:decode(Body).
+
+%% @doc Correctly check the status of pending is returned for a pending transaction
+get_pending_tx_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
+	receive after 1000 -> ok end,
+	%write a get_tx function like get_block
+	{ok, {{_, 200, _}, _, Body}} =
+		ar_httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/tx/"
+				++ ar_util:encode(TX#tx.id)),
+	Body == "Pending".
+
+%% @doc Correctly check the status of pending is returned for a pending transaction
+get_pending_subfield_tx_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
+	receive after 1000 -> ok end,
+	%write a get_tx function like get_block
+	{ok, {{_, 200, _}, _, Body}} =
+		ar_httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/tx/"
+				++ ar_util:encode(TX#tx.id)
+				++ "/data"),
+	Body == "Pending".
+
+%% @doc Find all pending transactions in the network
+get_multiple_pending_txs_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	send_new_tx({127, 0, 0, 1}, TX1 = ar_tx:new(<<"DATA1">>)),
+	receive after 1000 -> ok end,
+	send_new_tx({127, 0, 0, 1}, TX2 = ar_tx:new(<<"DATA2">>)),
+	receive after 1000 -> ok end,
+	%write a get_tx function like get_block
+	{ok, {{_, 200, _}, _, Body}} =
+		ar_httpc:request(
+			"http://127.0.0.1:"
+				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+				++ "/tx/"
+				++ "pending"),
+	{ok, {array, PendingTxs}} = json2:decode_string(Body),
+	[TX1#tx.id, TX2#tx.id] == [list_to_binary(P) || P <- PendingTxs].

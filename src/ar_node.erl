@@ -1,6 +1,6 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_peers/1, get_balance/2, get_last_tx/2]).
+-export([get_blocks/1, get_block/2, get_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
@@ -168,7 +168,13 @@ get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
 
 
-
+%% @doc Return all pending transactions
+get_pending_txs(Node) ->
+	Node ! {get_txs, self()},
+	receive
+		{all_txs, Txs} -> [T#tx.id || T <- Txs]
+		after 1000 -> []
+	end.
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
 	Node ! mine.
@@ -318,6 +324,9 @@ server(
 					{WalletID, _Balance, Last} -> Last;
 					false -> <<>>
 				end},
+			server(S);
+		{get_txs, PID} ->
+			PID ! {all_txs, S#state.txs},
 			server(S);
 		mine -> server(start_mining(S));
 		automine -> server(start_mining(S#state { automine = true }));
@@ -886,6 +895,7 @@ divergence_height_test() ->
 	2 = divergence_height([1,2,3], [1,2,3]),
 	2 = divergence_height([1,2,3, a, b, c], [1,2,3]).
 
+%% @doc Check the current block can be retrieved
 get_current_block_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init(),
