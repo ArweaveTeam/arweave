@@ -503,7 +503,7 @@ process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when (NewB#block.height > S#state.height + 2)
 		and (S#state.recovery_ref =/= undefined) ->
 	% Fork recovery is already running
-	S#state.recovery_ref ! {update_target_block, NewB},
+	ar:d(S#state.recovery_ref),
 	server(S#state { gossip = NewGS }).
 
 %% @doc We have received a new valid block. Update the node state accordingly.
