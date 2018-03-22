@@ -14,28 +14,28 @@
 	parent,
 	peers,
 	target_block,
-	blocks,
+	block_list,
 	hash_list
 }).
 
 %% @doc Start the 'catch up' server.
 start(Peers, TargetB, HashList) ->
 	Parent = self(),
+	ar:report(
+		[
+			{started_fork_recovery_proc, self()},
+			{target_height, TargetB#block.height},
+			{peer, Peers}
+		]
+	),
+	PID =
 	spawn(
 		fun() ->
-			ar:report(
-				[
-					{started_fork_recovery_proc, self()},
-					{target_height, TargetB#block.height},
-					{peer, Peers}
-				]
-			),
 			server(
 				#state {
 					parent = Parent,
 					peers = Peers,
-					target_block = TargetB,
-					blocks = [],
+					block_list = HashList,
 					hash_list =
 						drop_until_diverge(
 							lists:reverse(TargetB#block.hash_list),
@@ -44,55 +44,43 @@ start(Peers, TargetB, HashList) ->
 				}
 			)
 		end
-	).
+	),
+	PID ! {apply_next_block},
+	PID.
 
 %% @doc Take two lists, drop elements until they do not match.
 %% Return the remainder of the _first_ list.
 drop_until_diverge([X|R1], [X|R2]) -> drop_until_diverge(R1, R2);
 drop_until_diverge(R1, _) -> R1.
 
-%% @doc Main server loop.
-server(
-	#state {
-		parent = Parent,
-		target_block = TargetB,
-		blocks = Blocks = [B|_]
-	}) when TargetB == B ->
-	% The fork has been recovered write the blocks to disk
-	% and return the new hash list.
-	ar_storage:write_block(Blocks),
-	Parent ! {fork_recovered, [B#block.indep_hash|B#block.hash_list]};
-server(S = #state { blocks = [], peers = Peers, hash_list = [LastH|Rest] }) ->
-	% Verify the first block in fork.
-	% TODO: Can this and the clause below be generalised?
-	NextB = ar_node:get_block(Peers, LastH),
-	B = ar_storage:read_block(NextB#block.previous_block),
-	RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
-	case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
-		false ->
-			ar:d(could_not_validate_first_fork_block);
-		true ->
-			server(
-				S#state {
-					blocks = [ NextB, B ],
-					hash_list = Rest
-				}
-			)
-	end;
-server(S = #state { blocks = Blocks = [B|_], peers = Peers, hash_list = [NextH|HashList] }) ->
-	% Get and verify the next block.
-	NextB = ar_node:get_block(Peers, NextH),
-	RecallB =
-		ar_node:get_block(
-			Peers,
-			ar_util:get_recall_hash(B, B#block.hash_list)
-		),
-	case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
-		false ->
-			ar:report_console([could_not_validate_recovery_block]),
-			ok;
-		true ->
-			server(S#state { blocks = [NextB|Blocks], hash_list = HashList })
+
+server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
+	Parent ! {fork_recovered, BlockList};
+
+server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList] }) ->
+	receive
+	{update_target_block, Block} ->
+		true;
+	{apply_next_block} ->
+		ar:d({applying_block, NextH}),
+		NextB = ar_node:get_block(Peers, NextH),
+		B = ar_storage:read_block(NextB#block.previous_block),
+		RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
+		case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
+			false ->
+				ar:d(could_not_validate_fork_block);
+			true ->
+				self() ! {apply_next_block},
+				ar_storage:write_block(NextB),
+				ar_storage:write_block(RecallB),
+				server(
+					S#state {
+						block_list = [NextH|BlockList],
+						hash_list = HashList
+					}
+				)
+		end;
+	_ -> server(S)
 	end.
 
 try_apply_block(_, NextB, B, RecallB) when

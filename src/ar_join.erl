@@ -52,7 +52,7 @@ get_block_and_trail(_, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(NewB);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	RecallBlock = ar_util:get_recall_hash(NewB, HashList),
+	RecallBlock = ar_util:get_recall_hash(NewB#block.previous_block, HashList),
 	case {NewB, ar_node:get_block(Peers, RecallBlock)} of
 		{B, unavailable} ->
 			ar_storage:write_block(B);
