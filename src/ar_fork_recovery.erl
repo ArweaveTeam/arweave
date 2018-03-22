@@ -80,21 +80,24 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 	{apply_next_block} ->
 		ar:d({applying_block, NextH}),
 		NextB = ar_node:get_block(Peers, NextH),
-		ar:d(whereis(http_entrypoint_node)),
-		B = ar_storage:read_block(NextB#block.previous_block),
-		ar:d(whereis(http_entrypoint_node)),
-		RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
-		ar:d(whereis(http_entrypoint_node)),
+		case ?IS_BLOCK(NextB) of
+			false ->
+				B = unavailable,
+				RecallB = unavailable;
+			true ->
+				B = ar_storage:read_block(NextB#block.previous_block),
+				case ?IS_BLOCK(B) of
+					false -> RecallB = unavailable;
+					true -> RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
+				end
+		end,
 		case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
 			false ->
 				ar:d(could_not_validate_fork_block);
 			true ->
 				self() ! {apply_next_block},
-				ar:d(whereis(http_entrypoint_node)),
 				ar_storage:write_block(NextB),
-				ar:d(whereis(http_entrypoint_node)),
 				ar_storage:write_block(RecallB),
-				ar:d(whereis(http_entrypoint_node)),
 				server(
 					S#state {
 						block_list = [NextH|BlockList],
