@@ -63,6 +63,7 @@ setminus(_, _) -> [].
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList] }) ->
+	ar:d(whereis(http_entrypoint_node)),
 	receive
 	{update_target_block, Block} ->
 		ar:d({updating_target_block, Block#block.indep_hash}),
@@ -78,9 +79,9 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		);
 	{apply_next_block} ->
 		ar:d({applying_block, NextH}),
-		NextB = ar_node:get_block(Peers, NextH),
-		B = ar_storage:read_block(NextB#block.previous_block),
-		RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
+		NextB = ar:d(ar_node:get_block(Peers, NextH)),
+		B = ar:d(ar_storage:read_block(NextB#block.previous_block)),
+		RecallB = ar:d(ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))),
 		case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
 			false ->
 				ar:d(could_not_validate_fork_block);

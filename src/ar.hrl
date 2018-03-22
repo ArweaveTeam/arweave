@@ -51,6 +51,8 @@
 
 %% Default timeout value for network requests.
 -define(NET_TIMEOUT, 10000).
+%% Default time to wait after a failed join to retry
+-define(REJOIN_TIMEOUT, 10000).
 %% Time between attempts to find(/optimise) peers.
 -define(GET_MORE_PEERS_TIME, 2 * 60 * 1000).
 %% Number of transfers for which not to score (and potentially drop) new peers.

@@ -11,9 +11,16 @@
 start(Peers, NewB) when is_record(NewB, block) ->
 	start(self(), Peers, NewB);
 start(Node, Peers) ->
+	ar:d(finding_block),
 	start(Node, Peers, ar_node:get_current_block(Peers)).
-start(_Node, _Peers, B) when is_atom(B) ->
-	do_nothing;
+start(Node, Peers, B) when is_atom(B) ->
+	ar:report_console(
+		[
+			could_not_retrieve_current_block,
+			{trying_again_in, ?REJOIN_TIMEOUT, seconds}
+		]
+	),
+	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
 start(_, _, not_found) -> do_nothing;
 start(_, _, unavailable) -> do_nothing;
 start(Node, RawPeers, NewB) ->
@@ -49,7 +56,7 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
 get_block_and_trail(_, unavailable, _, _) -> ok;
-get_block_and_trail(_, NewB, _, _) when NewB#block.height =< 1 ->
+get_block_and_trail(_, NewB, _, _) when NewB#block.height =< 2 ->
 	ar_storage:write_block(NewB);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
