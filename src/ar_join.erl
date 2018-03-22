@@ -45,6 +45,7 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks
+%% TODO: Add more intelligent behavior when blocks cant be found
 get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
 get_block_and_trail(_, unavailable, _, _) -> ok;
@@ -52,7 +53,8 @@ get_block_and_trail(_, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(NewB);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	RecallBlock = ar_util:get_recall_hash(NewB#block.previous_block, HashList),
+	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block),
+	RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
 	case {NewB, ar_node:get_block(Peers, RecallBlock)} of
 		{B, unavailable} ->
 			ar_storage:write_block(B);
@@ -60,7 +62,6 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 			ar_storage:write_block(B),
 			ar_storage:write_block(R)
 	end,
-	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block),
 	get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList).
 
 %% @doc Fills node to capacity based on weave storage limit.
