@@ -23,8 +23,7 @@
 	miner,
 	mining_delay = 0,
 	automine = false,
-	reward_addr = unclaimed,
-	recovery_ref = undefined
+	reward_addr = unclaimed
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -243,7 +242,6 @@ add_peers(Node, Peers) ->
 server(
 	S = #state {
 		gossip = GS,
-		recovery_ref = RecoveryRef,
 		hash_list = HashList,
 		wallet_list = WalletList
 	}) ->
@@ -385,10 +383,13 @@ server(
 					{height, NewB#block.height}
 				]
 			),
+			case whereis(fork_recovery_server) of
+				undefined -> ok;
+				_ -> erlang:unregister(fork_recovery_server)
+			end,
 			server(
 				reset_miner(
 					S#state {
-						recovery_ref = undefined,
 						hash_list = NewHs,
 						wallet_list = NewB#block.wallet_list,
 						height = NewB#block.height
@@ -407,7 +408,6 @@ server(
 			server(
 				reset_miner(
 					S#state {
-						recovery_ref = undefined,
 						hash_list = NewHs,
 						wallet_list = NewB#block.wallet_list,
 						height = NewB#block.height
@@ -415,8 +415,8 @@ server(
 				)
 			);
 		{fork_recovered, _} -> server(S);
-		{'DOWN', RecoveryRef, _, _, _} ->
-			server(S#state { recovery_ref = undefined });
+		{'DOWN', _, _, _, _} ->
+			server(S);
 		Msg ->
 			ar:report_console([{unknown_msg, Msg}]),
 			server(S)
@@ -426,15 +426,12 @@ server(
 
 %% @doc Catch up to the current height.
 join_weave(S, NewB) ->
-	server(
-		S#state {
-			recovery_ref =
-				erlang:monitor(
+		erlang:monitor(
 					process,
-					ar_join:start(ar_gossip:peers(S#state.gossip), NewB)
-				)
-		}
-	).
+					PID = ar_join:start(ar_gossip:peers(S#state.gossip), NewB)
+				),
+	erlang:register(ar_fork_recovery, PID),
+	server(S).
 
 %% @doc Get remote peers from bridge, return the empty set if bridge does not exist
 get_remote_peers() ->
@@ -449,20 +446,21 @@ fork_recover(
 		hash_list = HashList,
 		gossip = GS
 	}, Peer, NewB) ->
-
-	erlang:monitor(
-		process,
-		PID = ar_fork_recovery:start(
-			ar_util:unique(get_remote_peers() ++ [Peer|ar_gossip:peers(GS)]),
-			NewB,
-			HashList
-		)
-	),
-	server(
-		S#state {
-			recovery_ref = PID
-		}
-	).
+	case whereis(fork_recovery_server) of
+		undefined ->
+			erlang:monitor(
+				process,
+				PID = ar_fork_recovery:start(
+					ar_util:unique(get_remote_peers() ++ [Peer|ar_gossip:peers(GS)]),
+					NewB,
+					HashList
+				)
+			),
+			erlang:register(fork_recovery_server, PID);
+		_ ->
+		whereis(fork_recovery_server) ! {update_target_block, NewB, Peer}
+	end,
+	server(S).
 
 %% @doc Return the sublist of shared starting elements from two lists.
 %take_until_divergence([A|Rest1], [A|Rest2]) ->
@@ -501,15 +499,8 @@ process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
 	% Block is lower than fork recovery height, ignore it.
 	server(S#state { gossip = NewGS });
 process_new_block(S, NewGS, NewB, _, Peer, _HashList)
-		when (NewB#block.height > S#state.height + 2)
-		and (S#state.recovery_ref == undefined) ->
-	fork_recover(S#state { gossip = NewGS }, Peer, NewB);
-process_new_block(S, NewGS, NewB, _RecallB, Peer, _HashList)
-		when (NewB#block.height > S#state.height + 2)
-		and (S#state.recovery_ref =/= undefined) ->
-	% Fork recovery is already running
-	S#state.recovery_ref ! {update_target_block, NewB, Peer},
-	server(S#state { gossip = NewGS }).
+		when (NewB#block.height > S#state.height + 2) ->
+	fork_recover(S#state { gossip = NewGS }, Peer, NewB).
 
 %% @doc We have received a new valid block. Update the node state accordingly.
 integrate_new_block(

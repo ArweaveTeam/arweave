@@ -23,7 +23,7 @@ start(Peers, TargetB, HashList) ->
 	Parent = self(),
 	ar:report(
 		[
-			{started_fork_recovery_proc, self()},
+			{started_fork_recovery_proc, Parent},
 			{target_height, TargetB#block.height},
 			{peer, Peers}
 		]
@@ -60,6 +60,7 @@ setminus(R1, []) -> R1;
 setminus(_, _) -> [].
 
 %% @doc Main server loop
+%% TODO: Runs into trouble when recovering from the genesis block
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList] }) ->
