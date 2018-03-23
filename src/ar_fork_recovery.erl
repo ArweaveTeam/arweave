@@ -63,7 +63,6 @@ setminus(_, _) -> [].
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList] }) ->
-	ar:d(whereis(http_entrypoint_node)),
 	receive
 	{update_target_block, Block, Peer} ->
 		ar:d({updating_target_block, Block#block.indep_hash}),
@@ -74,6 +73,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		case HashListExtra of
 		[] -> server(S);
 		H ->
+			ar:d({addenum, H}),
+			ar:d({current, [NextH|HashList]}),
 			server(
 				S#state {
 					hash_list = [NextH|HashList] ++ H,
@@ -82,7 +83,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 			)
 		end;
 	{apply_next_block} ->
-		ar:d({applying_block, NextH}),
+		%ar:d({applying_block, NextH}),
 		NextB = ar_node:get_block(Peers, NextH),
 		case ?IS_BLOCK(NextB) of
 			false ->
