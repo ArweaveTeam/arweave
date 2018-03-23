@@ -445,17 +445,21 @@ fork_recover(
 		hash_list = HashList,
 		gossip = GS
 	}, Peer, NewB) ->
+
+	PID =
+	spawn(
+		fun() ->
+			ar_fork_recovery:start(
+				ar_util:unique(get_remote_peers() ++ [Peer|ar_gossip:peers(GS)]),
+				NewB,
+				HashList
+			)
+		end
+	),
+	erlang:monitor(process, PID),
 	server(
 		S#state {
-			recovery_ref =
-				erlang:monitor(
-					process,
-					ar_fork_recovery:start(
-						ar_util:unique(get_remote_peers() ++ [Peer|ar_gossip:peers(GS)]),
-						NewB,
-						HashList
-					)
-				)
+			recovery_ref = PID
 		}
 	).
 
@@ -499,11 +503,11 @@ process_new_block(S, NewGS, NewB, _, Peer, _HashList)
 		when (NewB#block.height > S#state.height + 2)
 		and (S#state.recovery_ref == undefined) ->
 	fork_recover(S#state { gossip = NewGS }, Peer, NewB);
-process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
+process_new_block(S, NewGS, NewB, _RecallB, Peer, _HashList)
 		when (NewB#block.height > S#state.height + 2)
 		and (S#state.recovery_ref =/= undefined) ->
 	% Fork recovery is already running
-	ar:d(S#state.recovery_ref),
+	S#state.recovery_ref ! {update_target_block, NewB, Peer},
 	server(S#state { gossip = NewGS }).
 
 %% @doc We have received a new valid block. Update the node state accordingly.
