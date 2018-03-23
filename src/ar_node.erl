@@ -119,9 +119,13 @@ get_blocks(Node) ->
 %% @doc Return a specific block from a node, if it has it.
 get_block(Peers, ID) when is_list(Peers) ->
 	%ar:d([{getting_block, ID}, {peers, Peers}]),
-	case sort_blocks_by_count([ get_block(Peer, ID) || Peer <- Peers ]) of
-		[] -> unavailable;
-		[B|_] -> B
+	case ar_storage:read_block(ID) of
+		unavailable ->
+			case sort_blocks_by_count([ get_block(Peer, ID) || Peer <- Peers ]) of
+				[] -> unavailable;
+				[B|_] -> B
+			end;
+		Block -> Block
 	end;
 get_block(Proc, ID) when is_pid(Proc) ->
 %	Proc ! {get_block, self(), ID},
@@ -446,17 +450,14 @@ fork_recover(
 		gossip = GS
 	}, Peer, NewB) ->
 
-	PID =
-	spawn(
-		fun() ->
-			ar_fork_recovery:start(
-				ar_util:unique(get_remote_peers() ++ [Peer|ar_gossip:peers(GS)]),
-				NewB,
-				HashList
-			)
-		end
+	erlang:monitor(
+		process,
+		PID = ar_fork_recovery:start(
+			ar_util:unique(get_remote_peers() ++ [Peer|ar_gossip:peers(GS)]),
+			NewB,
+			HashList
+		)
 	),
-	erlang:monitor(process, PID),
 	server(
 		S#state {
 			recovery_ref = PID
@@ -497,7 +498,7 @@ process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 	server(S#state { gossip = NewGS });
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
 		when (NewB#block.height == S#state.height + 2) ->
-	% Block is lower than us, ignore it.
+	% Block is lower than fork recovery height, ignore it.
 	server(S#state { gossip = NewGS });
 process_new_block(S, NewGS, NewB, _, Peer, _HashList)
 		when (NewB#block.height > S#state.height + 2)

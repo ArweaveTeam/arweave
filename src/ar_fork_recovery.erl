@@ -73,8 +73,6 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		case HashListExtra of
 		[] -> server(S);
 		H ->
-			ar:d({addenum, H}),
-			ar:d({current, [NextH|HashList]}),
 			server(
 				S#state {
 					hash_list = [NextH|HashList] ++ H,
@@ -83,20 +81,25 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 			)
 		end;
 	{apply_next_block} ->
-		%ar:d({applying_block, NextH}),
+		ar:d({applying_block, NextH}),
 		NextB = ar_node:get_block(Peers, NextH),
 		case ?IS_BLOCK(NextB) of
 			false ->
+				BHashList = unavailable,
 				B = unavailable,
 				RecallB = unavailable;
 			true ->
-				B = ar_storage:read_block(NextB#block.previous_block),
+				B = ar_node:get_block(Peers, NextB#block.previous_block),
 				case ?IS_BLOCK(B) of
-					false -> RecallB = unavailable;
-					true -> RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
+					false ->
+						BHashList = unavailable,
+						RecallB = unavailable;
+					true ->
+						BHashList = [B#block.indep_hash|B#block.hash_list],
+						RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
 				end
 		end,
-		case try_apply_block([B#block.indep_hash|B#block.hash_list], NextB, B, RecallB) of
+		case try_apply_block(BHashList, NextB, B, RecallB) of
 			false ->
 				ar:d(could_not_validate_fork_block),
 				ar:report(
