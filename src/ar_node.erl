@@ -656,7 +656,7 @@ validate(
 			},
 		OldB = #block { hash = Hash, diff = Diff },
 		RecallB) ->
-	%ar:d(p1),
+	ar:d(p1),
 	%ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
 	Mine = ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce),
 	Wallet = validate_wallet_list(WalletList),
@@ -676,13 +676,13 @@ validate(
 		and Txs
 		and Retarget;
 validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
-	%ar:d(p2),
+	ar:d(p2),
 	validate(undefined, WL, NewB, OldB, RecallB);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
-	%ar:d(p3),
+	ar:d(p3),
 	validate(HL, undefined, NewB, OldB, RecallB);
 validate(_HL, _WL, _NewB, _OldB, _RecallB) ->
-	%ar:d(p4),
+	ar:d(p4),
 	false.
 
 %% @doc Validate a block, given a node state and the dependencies.

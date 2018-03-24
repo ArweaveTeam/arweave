@@ -67,8 +67,6 @@ server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
 	receive
 	{update_target_block, Block, Peer} ->
-		ar:d({current_target, TargetB#block.height}),
-		ar:d({updating_target_block, Block#block.height}),
 		HashListExtra = setminus(
 			lists:reverse([Block#block.indep_hash|Block#block.hash_list]),
 			[NextH|HashList] ++ lists:reverse(BlockList)
@@ -76,6 +74,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		case HashListExtra of
 		[] -> server(S);
 		H ->
+			ar:d({current_target, TargetB#block.height}),
+			ar:d({updating_target_block, Block#block.height}),
 			server(
 				S#state {
 					hash_list = [NextH|HashList] ++ H,
