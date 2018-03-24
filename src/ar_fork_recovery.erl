@@ -40,7 +40,8 @@ start(Peers, TargetB, HashList) ->
 						drop_until_diverge(
 							lists:reverse(TargetB#block.hash_list),
 							lists:reverse(HashList)
-						) ++ [TargetB#block.indep_hash]
+						) ++ [TargetB#block.indep_hash],
+					target_block = TargetB
 				}
 			)
 		end
