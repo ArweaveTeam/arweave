@@ -488,7 +488,8 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			% The block is legit. Accept it.
 			integrate_new_block(NewS, NewB);
 		false ->
-			ar:d({could_not_validate_new_block, NewB#block.indep_hash})
+			ar:d({could_not_validate_new_block, NewB#block.indep_hash}),
+			server(S)
 			%fork_recover(S, Peer, NewB)
 	end;
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
