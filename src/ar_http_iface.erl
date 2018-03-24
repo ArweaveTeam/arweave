@@ -224,12 +224,20 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 		)
 	};
 % Gets a block by block hash.
+% TODO: Currently doesn't return blocks not on the hashlist, this should be a lower
+% level responsibility
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
-	return_block(
-		ar_node:get_block(whereis(http_entrypoint_node),
-			ar_util:decode(Hash))
-	);
+	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	HashList = CurrentBlock#block.hash_list,
+	case lists:member(ar_util:decode(Hash), HashList) of
+		true ->
+			return_block(
+				ar_node:get_block(whereis(http_entrypoint_node),
+					ar_util:decode(Hash))
+			);
+		false -> return_block(unavailable)
+	end;
 % Gets a block by block height.
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 	return_block(

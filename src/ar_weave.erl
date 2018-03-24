@@ -102,8 +102,6 @@ calculate_recall_block(Hash) when is_binary(Hash) ->
 calculate_recall_block(B) when is_record(B, block) ->
 	calculate_recall_block(B#block.indep_hash, B#block.height).
 calculate_recall_block(IndepHash, Height) ->
-	ar:d({indep_decode, binary:decode_unsigned(IndepHash)}),
-	ar:d({height, Height}),
 	ar:d(binary:decode_unsigned(IndepHash) rem Height).
 
 
