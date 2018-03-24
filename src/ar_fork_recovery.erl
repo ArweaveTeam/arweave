@@ -107,16 +107,20 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		case try_apply_block(BHashList, NextB, B, RecallB) of
 			false ->
 				ar:report(
-					could_not_validate_fork_block,
-					{next_block, ?IS_BLOCK(NextB)},
-					{block, ?IS_BLOCK(B)},
-					{recall_block, ?IS_BLOCK(RecallB)}
+					[
+						could_not_validate_fork_block,
+						{next_block, ?IS_BLOCK(NextB)},
+						{block, ?IS_BLOCK(B)},
+						{recall_block, ?IS_BLOCK(RecallB)}
+					]
 				);
 			true ->
 				self() ! {apply_next_block},
 				ar:report(
-					{block_applied, NextH},
-					{height, NextB#block.height}
+					[
+						{block_applied, NextH},
+						{height, NextB#block.height}
+					]
 				),
 				ar_storage:write_block(NextB),
 				ar_storage:write_block(RecallB),
