@@ -111,6 +111,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 				ar:d({recall_block, ?IS_BLOCK(RecallB)});
 			true ->
 				self() ! {apply_next_block},
+				ar:d({block_applied, NextH}),
+				ar:d({height, NextB#block.height}),
 				ar_storage:write_block(NextB),
 				ar_storage:write_block(RecallB),
 				server(

@@ -644,12 +644,6 @@ add_tx_to_server(S, NewGS, TX) ->
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
 validate(_, _, _, _, unavailable) -> false;
-validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
-	ar:d(p2),
-	validate(undefined, WL, NewB, OldB, RecallB);
-validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
-	ar:d(p3),
-	validate(HL, undefined, NewB, OldB, RecallB);
 validate(
 		HashList,
 		WalletList,
@@ -681,7 +675,12 @@ validate(
 		and Indep
 		and Txs
 		and Retarget;
-
+validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
+	ar:d(p2),
+	validate(undefined, WL, NewB, OldB, RecallB);
+validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
+	ar:d(p3),
+	validate(HL, undefined, NewB, OldB, RecallB);
 validate(HL, WL, NewB, _OldB, _RecallB) ->
 	ar:d(WL == NewB#block.hash_list),
 	ar:d(HL == NewB#block.wallet_list),
