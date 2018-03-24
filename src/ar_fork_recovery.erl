@@ -76,11 +76,12 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		H ->
 			ar:d({current_target, TargetB#block.height}),
 			ar:d({updating_target_block, Block#block.height}),
+			ar:d(H),
 			server(
 				S#state {
-					hash_list = [NextH|HashList] ++ H,
-					peers = ar_util:unique(Peer ++ Peers),
-					target_block = Block
+					hash_list = [NextH|HashList]% ++ H,
+					%peers = ar_util:unique(Peer ++ Peers),
+					%target_block = Block
 				}
 			)
 		end;
