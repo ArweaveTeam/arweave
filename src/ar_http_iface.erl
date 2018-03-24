@@ -150,6 +150,7 @@ handle('POST', [<<"tx">>], Req) ->
 		false ->
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
+			ar:d(recieved_tx, TX#tx.id),
 			ar_bridge:ignore_id(whereis(http_bridge_node), TX#tx.id),
 			ar_node:add_tx(Node, TX),
 			{200, [], <<"OK">>}
@@ -175,7 +176,6 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	Node = whereis(http_entrypoint_node),
 	B = ar_node:get_current_block(Node),
 	{200, [],
-
 		integer_to_list(
 			ar_tx:calculate_min_tx_cost(
 				list_to_integer(

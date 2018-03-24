@@ -1,5 +1,5 @@
 -module(ar_sim_client).
--export([start/1, start/2, start/3, start/4, stop/1]).
+-export([start/0, start/1, start/2, start/3, start/4, stop/1]).
 -export([gen_test_wallet/0]).
 -export([shadowplay/0]).
 -include("ar.hrl").
@@ -31,6 +31,8 @@
 
 %% @doc Spawns a simulated client, when given a list
 %% of peers to connect to.
+start() ->
+start(ar_bridge:get_remote_peers(whereis(http_bridge_node))).
 start(Peers) -> start(Peers, ?DEFAULT_ACTION_TIME).
 start(Peers, ActionTime) -> start(Peers, ActionTime, ?DEFAULT_MAX_TX_LEN).
 start(Peers, ActionTime, MaxTXLen) ->
@@ -139,8 +141,6 @@ read_key_list(File, {ok, Line}, Keys) ->
 	Priv = ar_util:decode(lists:nth(1, Array)),
 	Pub = ar_util:decode(string:trim(lists:nth(2, Array), trailing, "\n")),
 	read_key_list(File, file:read_line(File), [{{Priv, Pub}, Pub}|Keys]).
-
-
 
 shadowplay() ->
 	ar_storage:clear(),
