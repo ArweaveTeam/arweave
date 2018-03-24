@@ -454,7 +454,8 @@ fork_recover(
 			),
 			erlang:register(fork_recovery_server, PID);
 		_ ->
-		whereis(fork_recovery_server) ! {update_target_block, NewB, Peer}
+			ok
+		%whereis(fork_recovery_server) ! {update_target_block, NewB, Peer}
 	end,
 	server(S).
 
