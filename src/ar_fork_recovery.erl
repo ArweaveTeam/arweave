@@ -63,10 +63,11 @@ setminus(_, _) -> [].
 %% TODO: Runs into trouble when recovering from the genesis block
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 	Parent ! {fork_recovered, BlockList};
-server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList] }) ->
+server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
 	receive
 	{update_target_block, Block, Peer} ->
-		ar:d({updating_target_block, Block#block.indep_hash}),
+		ar:d({current_target, TargetB#block.height}),
+		ar:d({updating_target_block, Block#block.height}),
 		HashListExtra = setminus(
 			lists:reverse([Block#block.indep_hash|Block#block.hash_list]),
 			[NextH|HashList] ++ lists:reverse(BlockList)
@@ -77,7 +78,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 			server(
 				S#state {
 					hash_list = [NextH|HashList] ++ H,
-					peers = ar_util:unique(Peer ++ Peers)
+					peers = ar_util:unique(Peer ++ Peers),
+					target_block = Block
 				}
 			)
 		end;
@@ -103,13 +105,9 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		case try_apply_block(BHashList, NextB, B, RecallB) of
 			false ->
 				ar:d(could_not_validate_fork_block),
-				ar:report(
-					[
-						{next_block, ?IS_BLOCK(NextB)},
-						{block, ?IS_BLOCK(B)},
-						{recall_block, ?IS_BLOCK(RecallB)}
-					]
-				);
+				ar:d({next_block, ?IS_BLOCK(NextB)}),
+				ar:d({block, ?IS_BLOCK(B)}),
+				ar:d({recall_block, ?IS_BLOCK(RecallB)});
 			true ->
 				self() ! {apply_next_block},
 				ar_storage:write_block(NextB),
