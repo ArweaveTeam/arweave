@@ -1,5 +1,9 @@
 -module(ar_sim_client).
 -export([start/1, start/2, start/3, start/4, stop/1]).
+-export([gen_test_wallet/0]).
+-export([shadowplay/0]).
+-include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %%% Represents a simulated Archain user client.
 %%% Currently implemented behaviours:
@@ -10,16 +14,19 @@
 -define(DEFAULT_NUM_CONNECTIONS, 3).
 %% The maximum time to wait between actions.
 %% The average case wait time will be 50% of this value.
--define(DEFAULT_ACTION_TIME, 600).
+-define(DEFAULT_ACTION_TIME, 5000).
 %% Maximum length of data segment of transaction.
--define(DEFAULT_MAX_TX_LEN, 1024 * 1024).
+%% 1024 * 1024
+-define(DEFAULT_MAX_TX_LEN, 10).
+
+-define(WALLETLIST, "wallets/keys.csv").
 
 -record(state, {
-	private_key,
-	public_key,
-	gossip,
+	key_file,
+	peers,
 	action_time,
-	max_tx_len
+	max_tx_len,
+	gossip
 }).
 
 %% @doc Spawns a simulated client, when given a list
@@ -29,22 +36,15 @@ start(Peers, ActionTime) -> start(Peers, ActionTime, ?DEFAULT_MAX_TX_LEN).
 start(Peers, ActionTime, MaxTXLen) ->
 	start(Peers, ActionTime, MaxTXLen, ?DEFAULT_NUM_CONNECTIONS).
 start(Peers, ActionTime, MaxTXLen, NumConnections) ->
-	{Priv, Pub} = ar_wallet:new(),
+	KeyList = get_key_list(),
 	spawn(
 		fun() ->
 			server(
 				#state {
-					private_key = Priv,
-					public_key = Pub,
+					key_file = KeyList,
 					action_time = ActionTime,
 					max_tx_len = MaxTXLen,
-					gossip =
-						ar_gossip:init(
-							ar_util:pick_random(
-								Peers,
-								NumConnections
-							)
-						)
+					peers = Peers
 				}
 			)
 		end
@@ -55,24 +55,99 @@ stop(PID) ->
 	PID ! stop,
 	ok.
 
+get_key_list() ->
+	{ok, File} = file:open(?WALLETLIST, read),
+	KeyList = read_key_list(File, file:read_line(File), []),
+	file:close(?WALLETLIST),
+	KeyList.
+
+gen_test_wallet() ->
+	Qty = 1000,
+	{ok, File} = file:open("genesis_wallets.csv", write),
+	filelib:ensure_dir(?WALLETLIST),
+	{ok, File2} = file:open(?WALLETLIST, write),
+	lists:foreach(
+		fun(_) ->
+			{{Priv, Pub}, Pub} = ar_wallet:new_keyfile(),
+			Addr = ar_wallet:to_address(Pub),
+			file:write(File, [ar_util:encode(Addr) ++ "," ++ integer_to_list(Qty) ++ "\n"]),
+			file:write(File2, [ar_util:encode(Priv) ++ "," ++ ar_util:encode(Pub) ++ "\n"])
+		end,
+		lists:seq(1,10)
+	),
+	file:close(File),
+	file:close(File2).
+
 %% @doc Main client server loop.
 server(
 	S = #state {
-		private_key = Priv,
-		public_key = Pub,
-		gossip = GS,
+		key_file = KeyList,
 		max_tx_len = MaxTXLen,
-		action_time = ActionTime
+		action_time = ActionTime,
+		peers = Peers
 	}) ->
 	receive
 		stop -> ok
-	after ar:scale_time(rand:uniform(ActionTime * 1000)) ->
-		% Choose a random behaviour
-		case rand:uniform(1) of
-			1 ->
-				% Generate and dispatch a new data transaction.
-				TX = ar_tx:new(<< 0:(rand:uniform(MaxTXLen) * 8) >>),
-				SignedTX = ar_tx:sign(TX, Priv, Pub),
-				server(S#state { gossip = ar_node:add_tx(GS, SignedTX) })
-		end
-	end.
+	after rand:uniform(?DEFAULT_ACTION_TIME) ->
+		TX = create_random_fin_tx(KeyList, MaxTXLen),
+		lists:foreach(
+			fun(Peer) ->
+				ar:report(
+					[
+						{sending_tx, TX#tx.id},
+						{peer, Peer}
+					]
+				),
+				ar_node:add_tx(Peer, TX)
+			end,
+			Peers
+		),
+		server(S)
+	end;
+server(S) ->
+	ar:d(failed),
+	S.
+
+
+create_random_data_tx(KeyList, MaxTxLen) ->
+	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+	% Generate and dispatch a new data transaction.
+	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
+	Reward = ar_tx:calculate_min_tx_cost(byte_size(Data), Block#block.diff),
+	TX = ar_tx:new(Data, Reward + 100000),
+	SignedTX = ar_tx:sign(TX, Priv, Pub).
+
+create_random_fin_tx(KeyList, MaxAmount) ->
+	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
+	% Generate and dispatch a new data transaction.
+	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	Data = <<>>,
+	Reward = ar_tx:calculate_min_tx_cost(byte_size(Data), Block#block.diff),
+	Qty = rand:uniform(MaxAmount),
+	TX = ar_tx:new(Dest, Reward + 100000, Qty, LastTx),
+	SignedTX = ar_tx:sign(TX, Priv, Pub).
+
+read_key_list(_File, eof, Keys) ->
+	Keys;
+
+read_key_list(File, {ok, Line}, Keys) ->
+	Array = string:split(Line, ","),
+	Priv = ar_util:decode(lists:nth(1, Array)),
+	Pub = ar_util:decode(string:trim(lists:nth(2, Array), trailing, "\n")),
+	read_key_list(File, file:read_line(File), [{{Priv, Pub}, Pub}|Keys]).
+
+
+
+shadowplay() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init([]),
+	Nodes = [ start([], B0) || _ <- lists:seq(1, 20) ],
+	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 10)) || Node <- Nodes ],
+	start(Nodes),
+	ar_node:mine(ar_util:pick_random(Nodes)),
+	receive after 1000 -> ok end.
+
