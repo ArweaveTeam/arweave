@@ -150,7 +150,6 @@ handle('POST', [<<"tx">>], Req) ->
 		false ->
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
-			ar:d(recieved_tx, TX#tx.id),
 			ar_bridge:ignore_id(whereis(http_bridge_node), TX#tx.id),
 			ar_node:add_tx(Node, TX),
 			{200, [], <<"OK">>}

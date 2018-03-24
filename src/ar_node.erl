@@ -627,6 +627,7 @@ integrate_block_from_miner(
 %% @doc Update miner and amend server state when encountering a new transaction.
 add_tx_to_server(S, NewGS, TX) ->
 	NewTXs = S#state.txs ++ [TX],
+	ar:d({added_tx, TX#tx.id}),
 	case S#state.miner of
 		undefined -> do_nothing;
 		PID ->
