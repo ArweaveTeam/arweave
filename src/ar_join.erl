@@ -23,22 +23,27 @@ start(Node, Peers, B) when is_atom(B) ->
 start(_, _, not_found) -> do_nothing;
 start(_, _, unavailable) -> do_nothing;
 start(Node, RawPeers, NewB) ->
-	spawn(
-		fun() ->
-			Peers = filter_peer_list(RawPeers),
-			ar:report_console(
-				[
-					joining_network,
-					{node, Node},
-					{peers, Peers},
-					{height, NewB#block.height}
-				]
+	case whereis(join_server) of
+		undefined ->
+			PID = spawn(
+				fun() ->
+					Peers = filter_peer_list(RawPeers),
+					ar:report_console(
+						[
+							joining_network,
+							{node, Node},
+							{peers, Peers},
+							{height, NewB#block.height}
+						]
+					),
+					get_block_and_trail(Peers, NewB, NewB#block.hash_list),
+					Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
+					fill_to_capacity(Peers, NewB)
+				end
 			),
-			get_block_and_trail(Peers, NewB, NewB#block.hash_list),
-			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
-			fill_to_capacity(Peers, NewB)
-		end
-	).
+			erlang:register(join_server, PID);
+		_ -> already_running
+	end.
 
 %% @doc Verify peer(s) are on the same network as the client.
 filter_peer_list(Peers) when is_list(Peers) ->

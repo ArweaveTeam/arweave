@@ -426,11 +426,7 @@ server(
 
 %% @doc Catch up to the current height.
 join_weave(S, NewB) ->
-		erlang:monitor(
-					process,
-					PID = ar_join:start(ar_gossip:peers(S#state.gossip), NewB)
-				),
-	erlang:register(ar_fork_recovery, PID),
+	ar_join:start(ar_gossip:peers(S#state.gossip), NewB),
 	server(S).
 
 %% @doc Get remote peers from bridge, return the empty set if bridge does not exist
