@@ -662,11 +662,23 @@ validate(
 		RecallB) ->
 	%ar:d(p1),
 	%ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
-	ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce) =/= false
-		and validate_wallet_list(WalletList)
-		and ar_weave:verify_indep(RecallB, HashList)
-		and ar_tx:verify_txs(TXs, Diff)
-		and ar_retarget:validate(NewB, OldB);
+	Mine = ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce),
+	Wallet = validate_wallet_list(WalletList),
+	Indep = ar_weave:verify_indep(RecallB, HashList),
+	Txs = ar_tx:verify_txs(TXs, Diff),
+	Retarget = ar_retarget:validate(NewB, OldB),
+
+	case Mine of false -> ar:d(invalid_nonce); _ -> ok end,
+	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok  end,
+	case Indep of false -> ar:d(invalid_recall_indep_hash); _ -> ok  end,
+	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
+	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
+
+	Mine =/= false
+		and Wallet
+		and Indep
+		and Txs
+		and Retarget;
 validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
 	%ar:d(p2),
 	validate(undefined, WL, NewB, OldB, RecallB);
