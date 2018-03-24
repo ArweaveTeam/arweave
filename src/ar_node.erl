@@ -681,7 +681,11 @@ validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
 	ar:d(p3),
 	validate(HL, undefined, NewB, OldB, RecallB);
-validate(_HL, _WL, _NewB, _OldB, _RecallB) ->
+validate(HL, _WL, NewB, OldB, RecallB) ->
+	ar:d(HL),
+	case ?IS_BLOCK(NewB) of true -> ar:d(NewB#block.indep_hash); false -> ar:d(invalid_new_block) end,
+	case ?IS_BLOCK(OldB) of true -> ar:d(OldB#block.indep_hash); false -> ar:d(invalid_old_block) end,
+	case ?IS_BLOCK(RecallB) of true -> ar:d(RecallB#block.indep_hash); false -> ar:d(invalid_recall_block) end,	
 	ar:d(p4),
 	false.
 
