@@ -229,7 +229,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	HashList = CurrentBlock#block.hash_list,
-	case lists:member(ar_util:decode(Hash), HashList) of
+	case lists:member(ar_util:decode(Hash), [CurrentBlock#block.indep_hash|HashList]) of
 		true ->
 			return_block(
 				ar_node:get_block(whereis(http_entrypoint_node),

@@ -14,11 +14,11 @@
 -define(DEFAULT_NUM_CONNECTIONS, 3).
 %% The maximum time to wait between actions.
 %% The average case wait time will be 50% of this value.
--define(DEFAULT_ACTION_TIME, 5000).
+-define(DEFAULT_ACTION_TIME, 15000).
 %% Maximum length of data segment of transaction.
 %% 1024 * 1024
 -define(DEFAULT_MAX_TX_LEN, 10).
-
+%% Location of test public/private keys
 -define(WALLETLIST, "wallets/keys.csv").
 
 -record(state, {
@@ -57,12 +57,15 @@ stop(PID) ->
 	PID ! stop,
 	ok.
 
+%% @doc Generate a list of allowed keys from keyfile
 get_key_list() ->
 	{ok, File} = file:open(?WALLETLIST, read),
 	KeyList = read_key_list(File, file:read_line(File), []),
 	file:close(?WALLETLIST),
 	KeyList.
 
+%% @doc Generate a genesis wallet and associated list of keys
+%% write them to files
 gen_test_wallet() ->
 	Qty = 1000,
 	{ok, File} = file:open("genesis_wallets.csv", write),
@@ -75,7 +78,7 @@ gen_test_wallet() ->
 			file:write(File, [ar_util:encode(Addr) ++ "," ++ integer_to_list(Qty) ++ "\n"]),
 			file:write(File2, [ar_util:encode(Priv) ++ "," ++ ar_util:encode(Pub) ++ "\n"])
 		end,
-		lists:seq(1,10)
+		lists:seq(1,1000)
 	),
 	file:close(File),
 	file:close(File2).
@@ -110,7 +113,7 @@ server(S) ->
 	ar:d(failed),
 	S.
 
-
+%% @doc Create a random data TX with max length MaxTxLen
 create_random_data_tx(KeyList, MaxTxLen) ->
 	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
 	% Generate and dispatch a new data transaction.
@@ -121,6 +124,7 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 	TX = ar_tx:new(Data, Reward + 100000),
 	SignedTX = ar_tx:sign(TX, Priv, Pub).
 
+%% @doc Create a random financial TX between two wallets of amount MaxAmount 
 create_random_fin_tx(KeyList, MaxAmount) ->
 	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
 	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
@@ -133,15 +137,16 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 	TX = ar_tx:new(Dest, Reward + 100000, Qty, LastTx),
 	SignedTX = ar_tx:sign(TX, Priv, Pub).
 
+%% @doc Read a list of public/private keys from a file
 read_key_list(_File, eof, Keys) ->
 	Keys;
-
 read_key_list(File, {ok, Line}, Keys) ->
 	Array = string:split(Line, ","),
 	Priv = ar_util:decode(lists:nth(1, Array)),
 	Pub = ar_util:decode(string:trim(lists:nth(2, Array), trailing, "\n")),
 	read_key_list(File, file:read_line(File), [{{Priv, Pub}, Pub}|Keys]).
 
+%% @doc a simulation of the shadowplay system
 shadowplay() ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([]),
