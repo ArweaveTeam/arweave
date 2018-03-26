@@ -24,6 +24,7 @@ start(Peers, TargetB, HashList) ->
 	ar:report(
 		[
 			{started_fork_recovery_proc, Parent},
+			{block, ar_util:encode(TargetB#block.indep_hash)},
 			{target_height, TargetB#block.height},
 			{peer, Peers}
 		]
