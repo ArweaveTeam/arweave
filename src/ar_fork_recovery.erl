@@ -80,14 +80,13 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 			ar:d(H),
 			server(
 				S#state {
-					hash_list = [NextH|HashList]% ++ H,
-					%peers = ar_util:unique(Peer ++ Peers),
-					%target_block = Block
+					hash_list = [NextH|HashList] ++ H,
+					peers = ar_util:unique(Peer ++ Peers),
+					target_block = Block
 				}
 			)
 		end;
 	{apply_next_block} ->
-		ar:d({applying_block, NextH}),
 		NextB = ar_node:get_block(Peers, NextH),
 		case ?IS_BLOCK(NextB) of
 			false ->
@@ -116,13 +115,13 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 					]
 				);
 			true ->
-				self() ! {apply_next_block},
 				ar:report(
 					[
-						{block_applied, NextH},
-						{height, NextB#block.height}
+						{applying_block, ar_util:encode(NextH)},
+						{block_height, NextB#block.height}
 					]
 				),
+				self() ! {apply_next_block},
 				ar_storage:write_block(NextB),
 				ar_storage:write_block(RecallB),
 				server(

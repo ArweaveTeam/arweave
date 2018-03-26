@@ -482,12 +482,17 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 	case validate(NewS, NewB, ar_util:get_head_block(HashList), RecallB) of
 		true ->
 			% The block is legit. Accept it.
-			integrate_new_block(NewS, NewB);
+			case whereis(fork_recovery_server) of
+				undefined -> integrate_new_block(NewS, NewB);
+				_ -> fork_recover(S#state { gossip = NewGS }, Peer, NewB)
+			end;
 		false ->
 			ar:d({could_not_validate_new_block, NewB#block.indep_hash}),
 			server(S)
 			%fork_recover(S, Peer, NewB)
 	end;
+
+
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< S#state.height ->
 	% Block is lower than us, ignore it.
@@ -657,7 +662,6 @@ validate(
 			},
 		OldB = #block { hash = Hash, diff = Diff },
 		RecallB) ->
-	ar:d(p1),
 	%ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
 	Mine = ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce),
 	Wallet = validate_wallet_list(WalletList),
@@ -677,15 +681,11 @@ validate(
 		and Txs
 		and Retarget;
 validate(_HL, WL, NewB = #block { hash_list = undefined }, OldB, RecallB) ->
-	ar:d(p2),
 	validate(undefined, WL, NewB, OldB, RecallB);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, OldB, RecallB) ->
-	ar:d(p3),
 	validate(HL, undefined, NewB, OldB, RecallB);
-validate(HL, WL, NewB, _OldB, _RecallB) ->
-	ar:d(WL == NewB#block.hash_list),
-	ar:d(HL == NewB#block.wallet_list),
-	ar:d(p4),
+validate(_HL, _WL, _NewB, _OldB, _RecallB) ->
+	ar:d(block_not_accepted),
 	false.
 
 %% @doc Validate a block, given a node state and the dependencies.
