@@ -387,6 +387,7 @@ server(
 				undefined -> ok;
 				_ -> erlang:unregister(fork_recovery_server)
 			end,
+			ar_cleanup:remove_invalid_blocks(NewHs),
 			server(
 				reset_miner(
 					S#state {
@@ -405,6 +406,7 @@ server(
 					{height, NewB#block.height}
 				]
 			),
+			ar_cleanup:remove_invalid_blocks(NewHs),
 			server(
 				reset_miner(
 					S#state {

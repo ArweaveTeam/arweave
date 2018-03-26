@@ -78,7 +78,6 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		H ->
 			ar:d({current_target, TargetB#block.height}),
 			ar:d({updating_target_block, Block#block.height}),
-			ar:d(H),
 			server(
 				S#state {
 					hash_list = [NextH|HashList] ++ H,
