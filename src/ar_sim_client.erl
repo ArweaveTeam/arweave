@@ -1,6 +1,7 @@
 -module(ar_sim_client).
 -export([start/0, start/1, start/2, start/3, start/4, stop/1]).
 -export([gen_test_wallet/0]).
+-export([send_random_fin_tx/0]).
 -export([shadowplay/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -114,6 +115,24 @@ server(S) ->
 	S.
 
 %% @doc Create a random data TX with max length MaxTxLen
+send_random_fin_tx() ->
+	KeyList = get_key_list(),
+	MaxAmount = 100,
+	TX = create_random_fin_tx(KeyList, MaxAmount),
+	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	lists:foreach(
+			fun(Peer) ->
+				ar:report(
+					[
+						{sending_tx, TX#tx.id},
+						{peer, Peer}
+					]
+				),
+				ar_node:add_tx(Peer, TX)
+			end,
+			Peers
+	).
+
 create_random_data_tx(KeyList, MaxTxLen) ->
 	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
 	% Generate and dispatch a new data transaction.

@@ -449,7 +449,7 @@ fork_recover(
 			erlang:monitor(
 				process,
 				PID = ar_fork_recovery:start(
-					ar_util:unique(get_remote_peers() ++ [Peer|ar_gossip:peers(GS)]),
+					ar_util:unique(Peer),
 					NewB,
 					HashList
 				)
