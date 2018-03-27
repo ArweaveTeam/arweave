@@ -174,6 +174,8 @@ count(A, List) ->
 	length([ B || B <- List, A == B ]).
 
 %% @doc Takes a list and return the unique values in it.
+unique(Xs) when not is_list(Xs) ->
+[Xs];
 unique(Xs) -> unique([], Xs).
 unique(Res, []) -> lists:reverse(Res);
 unique(Res, [X|Xs]) ->
