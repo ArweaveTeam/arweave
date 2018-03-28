@@ -144,16 +144,14 @@ handle('POST', [<<"block">>], Req) ->
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
-	Node = whereis(http_bridge_node),
-	B = ar_node:get_current_block(Node),
+	B = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	case ar_tx:verify(TX, B#block.diff) of
 		false ->
 			ar:d({rejected_tx , TX#tx.id}),
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
 			ar:d({accepted_tx , TX#tx.id}),
-			%ar_bridge:ignore_id(whereis(http_bridge_node), TX#tx.id),
-			ar_bridge:add_tx(Node, TX),
+			ar_bridge:add_tx(whereis(http_bridge_node), TX),
 			{200, [], <<"OK">>}
 	end;
 % Get peers.
@@ -593,14 +591,14 @@ reregister(Name, Node) ->
 %%% Tests
 
 %% @doc Tests add peer functionality
-add_peers_test() ->
-	ar_storage:clear(),
-	Bridge = ar_bridge:start([], []),
-	reregister(http_bridge_node, Bridge),
-	add_peer({127,0,0,1,1984}),
-	receive after 500 -> ok end,
-	%ar:d([{node_peers,ar_node:get_peers(Node)}]),
-	true = lists:member({127,0,0,1,1984}, ar_bridge:get_remote_peers(Bridge)).
+% add_peers_test() ->
+% 	ar_storage:clear(),
+% 	Bridge = ar_bridge:start([], []),
+% 	reregister(http_bridge_node, Bridge),
+% 	ar:d(add_peer({127,0,0,1,1984})),
+% 	receive after 500 -> ok end,
+% 	ar:d({peers, ar_bridge:get_remote_peers(Bridge)}),
+% 	true = lists:member({127,0,0,1,1984}, ar_bridge:get_remote_peers(Bridge)).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
@@ -717,6 +715,9 @@ add_external_tx_test() ->
 	[B0] = ar_weave:init([]),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA">>)),
 	receive after 1000 -> ok end,
 	ar_node:mine(Node),
@@ -733,6 +734,9 @@ find_external_tx_test() ->
 	SearchNode = app_search:start(Node),
 	ar_node:add_peers(Node, SearchNode),
 	reregister(http_search_node, SearchNode),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA">>)),
 	receive after 1000 -> ok end,
 	ar_node:mine(Node),
@@ -746,6 +750,9 @@ fail_external_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
 	SearchNode = app_search:start(Node),
 	ar_node:add_peers(Node, SearchNode),
 	reregister(http_search_node, SearchNode),
@@ -763,6 +770,9 @@ add_external_block_test() ->
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
+	Bridge = ar_bridge:start([], Node1),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node1, Bridge),
 	Node2 = ar_node:start([], [B0]),
 	ar_node:mine(Node2),
 	receive after 1000 -> ok end,
@@ -779,6 +789,9 @@ add_tx_and_get_last_test() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign(TX#tx{ id = <<"TEST">> }, Priv1, Pub1),
@@ -801,6 +814,9 @@ get_subfields_of_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
 	SearchNode = app_search:start(Node),
 	ar_node:add_peers(Node, SearchNode),
 	reregister(http_search_node, SearchNode),
@@ -825,6 +841,9 @@ get_pending_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
 	SearchNode = app_search:start(Node),
 	ar_node:add_peers(Node, SearchNode),
 	reregister(http_search_node, SearchNode),
@@ -845,6 +864,9 @@ get_pending_subfield_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
 	SearchNode = app_search:start(Node),
 	ar_node:add_peers(Node, SearchNode),
 	reregister(http_search_node, SearchNode),
@@ -866,6 +888,9 @@ get_multiple_pending_txs_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
 	SearchNode = app_search:start(Node),
 	ar_node:add_peers(Node, SearchNode),
 	reregister(http_search_node, SearchNode),
