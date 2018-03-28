@@ -71,7 +71,7 @@ verify_txs(TXs, Diff) ->
 
 %% @doc Transaction cost above proscribed minimum.
 tx_cost_above_min(TX, Diff) ->
-	TX#tx.reward >= calculate_min_tx_cost(byte_size(TX#tx.data), Diff).
+	TX#tx.reward >= calculate_min_tx_cost(byte_size(TX), Diff).
 
 calculate_min_tx_cost(Size, Diff) ->
 	(Size * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff.

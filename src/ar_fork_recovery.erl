@@ -88,6 +88,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		end;
 	{apply_next_block} ->
 		NextB = ar_node:get_block(Peers, NextH),
+		ar:d({applying_fork_recovery, ar_util:encode(NextH)}),
 		case ?IS_BLOCK(NextB) of
 			false ->
 				BHashList = unavailable,

@@ -226,11 +226,13 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 % TODO: Currently doesn't return blocks not on the hashlist, this should be a lower
 % level responsibility
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
+	ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	HashList = CurrentBlock#block.hash_list,
 	case lists:member(ar_util:decode(Hash), [CurrentBlock#block.indep_hash|HashList]) of
 		true ->
+			ar:d({returning_block, Hash}),
 			return_block(
 				ar_node:get_block(whereis(http_entrypoint_node),
 					ar_util:decode(Hash))

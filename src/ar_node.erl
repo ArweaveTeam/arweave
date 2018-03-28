@@ -117,7 +117,7 @@ get_blocks(Node) ->
 
 %% @doc Return a specific block from a node, if it has it.
 get_block(Peers, ID) when is_list(Peers) ->
-	%ar:d([{getting_block, ID}, {peers, Peers}]),
+	ar:d([{getting_block, ID}, {peers, Peers}]),
 	case ar_storage:read_block(ID) of
 		unavailable ->
 			case sort_blocks_by_count([ get_block(Peer, ID) || Peer <- Peers ]) of
@@ -525,7 +525,7 @@ integrate_new_block(
 	% Recurse over the new block.
 	ar:report_console(
 		[
-			{accepted_foreign_block, NewB#block.indep_hash},
+			{accepted_foreign_block, ar_util:encode(NewB#block.indep_hash)},
 			{height, NewB#block.height}
 		]
 	),
@@ -585,7 +585,7 @@ integrate_block_from_miner(
 				[
 					{node, self()},
 					{accepted_block, NextB#block.height},
-					{hash, NextB#block.indep_hash},
+					{hash, ar_util:encode(NextB#block.indep_hash)},
 					{txs, length(MinedTXs)}
 				]
 			),

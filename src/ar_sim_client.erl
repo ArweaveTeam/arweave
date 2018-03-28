@@ -139,9 +139,10 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
-	Reward = ar_tx:calculate_min_tx_cost(byte_size(Data), Block#block.diff),
-	TX = ar_tx:new(Data, Reward + 100000),
-	SignedTX = ar_tx:sign(TX, Priv, Pub).
+	TX = ar_tx:new(Data, 0, LastTx),
+	Cost = ar_tx:calculate_min_tx_cost(byte_size(TX), Block#block.diff),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(Cost), Block#block.diff),
+	SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 %% @doc Create a random financial TX between two wallets of amount MaxAmount 
 create_random_fin_tx(KeyList, MaxAmount) ->
@@ -150,11 +151,11 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	Data = <<>>,
-	Reward = ar_tx:calculate_min_tx_cost(byte_size(Data), Block#block.diff),
 	Qty = rand:uniform(MaxAmount),
-	TX = ar_tx:new(Dest, Reward + 100000, Qty, LastTx),
-	SignedTX = ar_tx:sign(TX, Priv, Pub).
+	TX = ar_tx:new(Dest, 0, Qty, LastTx),
+	Cost = ar_tx:calculate_min_tx_cost(byte_size(TX), Block#block.diff),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(Cost), Block#block.diff),
+	SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 %% @doc Read a list of public/private keys from a file
 read_key_list(_File, eof, Keys) ->

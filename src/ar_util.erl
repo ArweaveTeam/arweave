@@ -248,3 +248,16 @@ pmap_test() ->
 	true = lists:member(2, Res),
 	true = lists:member(10, Res),
 	true = lists:member(20, Res).
+
+recall_block_test() ->
+	ar_storage:clear(),
+	Node = ar_node:start(),
+	B1 = ar_weave:init([]),
+	%ar:d(B1#block.hash_list),
+	Node ! {replace_block_list, B1},
+	B2 = ar_node:get_current_block(Node),
+	ar:d(B2#block.hash_list),
+	ar_node:mine(Node),
+	receive after 300 -> ok end,
+	B3 = ar_node:get_current_block(Node),
+	B3#block.hash_list.
