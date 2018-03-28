@@ -103,7 +103,12 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 		{update_peers, remote, Peers} ->
 			server(S#state {external_peers = Peers});
 		Msg when is_record(Msg, gs_msg) ->
-			server(do_send_to_external(S, ar_gossip:recv(GS0, Msg)));
+			case ar_gossip:recv(GS0, Msg) of
+				{_, ignore} ->
+					server(S);
+				Gossip -> 
+					server(do_send_to_external(S, Gossip))
+			end;
 		{get_more_peers, PID} ->
 			spawn(
 				fun() ->
@@ -158,12 +163,26 @@ maybe_send_to_internal(
 add_processed({add_tx, TX}, Procd) ->
 	add_processed(tx, TX, Procd);
 add_processed({new_block, _OriginPeer, _, B, _}, Procd) ->
-	add_processed(block, B, Procd).
+	add_processed(block, B, Procd);
+add_processed(X, Procd) ->
+	ar:report(
+		[
+			{could_not_ignore, X},
+			{record, X}
+		]),
+	Procd.
 add_processed(tx, #tx { id = ID }, Procd) -> [ID|Procd];
 add_processed(block, #block { indep_hash = Hash }, Procd) ->
 	[Hash|Procd];
 add_processed(block, {_, B, _}, Procd) ->
-	add_processed(block, B, Procd).
+	add_processed(block, B, Procd);
+add_processed(X, Y, Procd) ->
+	ar:report(
+		[
+			{could_not_ignore, X},
+			{record, Y}
+		]),
+	Procd.
 
 %% Find the ID of a 'data', from type.
 get_id(tx, #tx { id = ID}) -> ID;
