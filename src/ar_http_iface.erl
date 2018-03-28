@@ -144,7 +144,7 @@ handle('POST', [<<"block">>], Req) ->
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
-	Node = whereis(http_entrypoint_node),
+	Node = whereis(http_bridge_node),
 	B = ar_node:get_current_block(Node),
 	case ar_tx:verify(TX, B#block.diff) of
 		false ->
@@ -152,8 +152,8 @@ handle('POST', [<<"tx">>], Req) ->
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
 			ar:d({accepted_tx , TX#tx.id}),
-			ar_bridge:ignore_id(whereis(http_bridge_node), TX#tx.id),
-			ar_node:add_tx(Node, TX),
+			%ar_bridge:ignore_id(whereis(http_bridge_node), TX#tx.id),
+			ar_bridge:add_tx(Node, TX),
 			{200, [], <<"OK">>}
 	end;
 % Get peers.
@@ -228,13 +228,12 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 % TODO: Currently doesn't return blocks not on the hashlist, this should be a lower
 % level responsibility
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
-	ar:d({resp_block_hash, Hash}),
+	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	HashList = CurrentBlock#block.hash_list,
 	case lists:member(ar_util:decode(Hash), [CurrentBlock#block.indep_hash|HashList]) of
 		true ->
-			ar:d({returning_block, Hash}),
 			return_block(
 				ar_node:get_block(whereis(http_entrypoint_node),
 					ar_util:decode(Hash))
