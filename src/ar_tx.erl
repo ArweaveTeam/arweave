@@ -58,12 +58,13 @@ sign(TX, PrivKey, PubKey) ->
 -ifdef(DEBUG).
 verify(#tx { signature = <<>> }, _) -> true;
 verify(TX, Diff) ->
-	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and tx_cost_above_min(TX, Diff).
+	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and ar:d(tx_cost_above_min(TX, Diff)).
 -else.
 verify(TX, Diff) ->
 	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and tx_cost_above_min(TX, Diff).
 -endif.
 
+%% @doc Ensure that all TXs in a list verify correctly.
 verify_txs([], _) ->
 	true;
 verify_txs(TXs, Diff) ->
@@ -76,7 +77,6 @@ tx_cost_above_min(TX, Diff) ->
 calculate_min_tx_cost(Size, Diff) ->
 	(Size * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff.
 
-%% @doc Ensure that all TXs in a list verify correctly.
 
 
 %%% TESTS %%%
