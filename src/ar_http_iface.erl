@@ -148,8 +148,10 @@ handle('POST', [<<"tx">>], Req) ->
 	B = ar_node:get_current_block(Node),
 	case ar_tx:verify(TX, B#block.diff) of
 		false ->
+			ar:d({rejected_tx , TX#tx.id}),
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
+			ar:d({accepted_tx , TX#tx.id}),
 			ar_bridge:ignore_id(whereis(http_bridge_node), TX#tx.id),
 			ar_node:add_tx(Node, TX),
 			{200, [], <<"OK">>}

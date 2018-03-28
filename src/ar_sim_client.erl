@@ -1,7 +1,7 @@
 -module(ar_sim_client).
 -export([start/0, start/1, start/2, start/3, start/4, stop/1]).
 -export([gen_test_wallet/0]).
--export([send_random_fin_tx/0]).
+-export([send_random_fin_tx/0,send_random_data_tx/0]).
 -export([shadowplay/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -153,28 +153,28 @@ send_random_data_tx() ->
 
 %% @doc Create a random data TX with max length MaxTxLen
 create_random_data_tx(KeyList, MaxTxLen) ->
-	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(1000), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
-	Cost = ar_tx:calculate_min_tx_cost(byte_size(ar_tx:to_binary(TX)), Block#block.diff),
+	Cost = ar_tx:calculate_min_tx_cost(byte_size(ar_tx:to_binary(TX)+550), Block#block.diff),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(<<Cost>>), Block#block.diff),
-	SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
+	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 %% @doc Create a random financial TX between two wallets of amount MaxAmount 
 create_random_fin_tx(KeyList, MaxAmount) ->
-	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
-	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(1000), KeyList),
+	{_, Dest} = lists:nth(rand:uniform(1000), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Qty = rand:uniform(MaxAmount),
 	TX = ar_tx:new(Dest, 0, Qty, LastTx),
-	Cost = ar_tx:calculate_min_tx_cost(byte_size(ar_tx:to_binary(TX)), Block#block.diff),
-	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(<<Cost>>), Block#block.diff),
-	SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
+	Cost = ar_tx:calculate_min_tx_cost(byte_size(ar_tx:to_binary(TX))+550, Block#block.diff),
+	Reward = Cost + ar_tx:calculate_min_tx_cost((byte_size(<<Cost>>)), Block#block.diff),
+	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 %% @doc Read a list of public/private keys from a file
 read_key_list(_File, eof, Keys) ->
@@ -194,4 +194,3 @@ shadowplay() ->
 	start(Nodes),
 	ar_node:mine(ar_util:pick_random(Nodes)),
 	receive after 1000 -> ok end.
-
