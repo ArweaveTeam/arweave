@@ -114,7 +114,7 @@ server(S) ->
 	ar:d(failed),
 	S.
 
-%% @doc Create a random data TX with max length MaxTxLen
+%% @doc Send a randomly created financial tx to all peers
 send_random_fin_tx() ->
 	KeyList = get_key_list(),
 	MaxAmount = 100,
@@ -132,7 +132,26 @@ send_random_fin_tx() ->
 			end,
 			Peers
 	).
+%% @doc Send a randomly created data tx to all peers
+send_random_data_tx() ->
+	KeyList = get_key_list(),
+	MaxAmount = 100,
+	TX = create_random_fin_tx(KeyList, MaxAmount),
+	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	lists:foreach(
+			fun(Peer) ->
+				ar:report(
+					[
+						{sending_tx, TX#tx.id},
+						{peer, Peer}
+					]
+				),
+				ar_node:add_tx(Peer, TX)
+			end,
+			Peers
+	).
 
+%% @doc Create a random data TX with max length MaxTxLen
 create_random_data_tx(KeyList, MaxTxLen) ->
 	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
 	% Generate and dispatch a new data transaction.
@@ -140,8 +159,8 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
-	Cost = ar_tx:calculate_min_tx_cost(byte_size(TX), Block#block.diff),
-	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(Cost), Block#block.diff),
+	Cost = ar_tx:calculate_min_tx_cost(byte_size(ar_tx:to_binary(TX)), Block#block.diff),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(<<Cost>>), Block#block.diff),
 	SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 %% @doc Create a random financial TX between two wallets of amount MaxAmount 
@@ -153,8 +172,8 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Qty = rand:uniform(MaxAmount),
 	TX = ar_tx:new(Dest, 0, Qty, LastTx),
-	Cost = ar_tx:calculate_min_tx_cost(byte_size(TX), Block#block.diff),
-	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(Cost), Block#block.diff),
+	Cost = ar_tx:calculate_min_tx_cost(byte_size(ar_tx:to_binary(TX)), Block#block.diff),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(<<Cost>>), Block#block.diff),
 	SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 %% @doc Read a list of public/private keys from a file
