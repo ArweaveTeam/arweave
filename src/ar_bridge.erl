@@ -88,8 +88,12 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			% TODO: Call from HTTP iface
 			server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}));
 		{add_peer, remote, Peer} ->
-			ar:report_console({adding_remote_peer, Peer}),
-			server(S#state { external_peers = [Peer|ExtPeers]});
+			case(ar_http_iface:get_info(Peer, name) == ?NETWORK_NAME) of
+				false -> not_added;
+				true ->
+					ar:report_console({adding_remote_peer, Peer}),
+					server(S#state { external_peers = [Peer|ExtPeers]})
+			end;
 		{add_peer, local, Peer} ->
 			server(S#state { gossip = ar_gossip:add_peers(GS0, Peer)});
 		{get_peers, remote, Peer} ->
