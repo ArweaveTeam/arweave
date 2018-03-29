@@ -1,6 +1,6 @@
-# Integrating with the Archain
+# Integrating with the Arweave
 
-Each node on the Archain network hosts a simple lightweight REST API. This allows developers to communicate with the network via HTTP requests. 
+Each node on the Arweave network hosts a simple lightweight REST API. This allows developers to communicate with the network via HTTP requests. 
 
 Most programming languages provide 'out of the box' functionality for making web calls and as such can simply communicate using this method.
 
@@ -30,17 +30,17 @@ A randomly selected 32-byte identifier base64url encoded.
 The ID of the last transaction made from the same address base64url encoded. If no previous transactions have been made from the address this field is set to an empty string.
 
 **[owner]**
-The modulus of the RSA key pair for the wallet making the transaction base64url encoded.
+The modulus of the RSA key pair corresponding to the wallet making the transaction, base64url encoded.
 
 **[target]**
 If making a financial transaction this field contains the wallet address of the recipient base64url encoded. If the transaction is not a financial this field is set to an empty string. 
 
-A wallet address is a SHA256 hash of the raw unencoded RSA modulus.
+A wallet address is a base64url encoded SHA256 hash of the raw unencoded RSA modulus.
 
 **[quantity]**
 If making a financial transaction this field contains the amount in Winston to be sent to the receiving wallet. If the transaction is not financial this field is set to the string "0".
 
-(1 AR = 1000000000000 Winston).
+(1 AR = 1000000000000 (1e+12) Winston).
 
 **[type]**
 This field specifies the type of transaction, transactions can either be 'data' or 'transfer'.
@@ -51,7 +51,7 @@ If making an archiving transaction this field contains the data to be archived b
 **[reward]**
 This field contains the mining reward for the transaction in Winston.
 
-(1 AR = 1000000000000 Winston).
+(1 AR = 1000000000000 (1e+12) Winston).
 
 **[signature]**
 The data for the signature is comprised of previous data from the rest of the transaction.
@@ -63,8 +63,8 @@ The signature scheme is RSA-PSS with both a data hash and Mask Generation Functi
 The psuedocode below shows this. 
 
 ```psuedo
-unencode  <- Takes input X and returns the completely unencoded form
-sign      <- Takes data D and key K returns a signature of D signed with K
+function unencode(X) 	<- Takes input X and returns the completely unencoded form
+function sign(D, K)  	<- Takes data D and key K returns a signature of D signed with K
 
 owner     <- unencode(owner)
 target    <- unencode(target)
@@ -74,8 +74,8 @@ quantity  <- unencode(quantity)
 reward    <- unencode(reward)
 last_tx   <- unencode(last_tx)
 
-sig_data <- owner + target + id + data + quantity + reward + last_tx
-signature <- sign(sig_data, key)
+signatureData <- owner + target + id + data + quantity + reward + last_tx
+signature <- sign(signatureData, key)
 
 return signature
 ```
@@ -125,4 +125,9 @@ The transaction is now complete and ready to be submitted to the network via a P
 
 
 > Transactions are required to contain the ID of the last transaction made by the same wallet, this value can be retrieved via hitting the '/wallet/[wallet_address]/last_tx' endpoint of any node on the network. More details regarding this endpoint can be found here in the node HTTP interface docs.
+
+
+
+
+> Multiple variants of base64url encoding exist and within the Arweave network we use a specific form. The standard base64 characters '+' and '/' are replaced with '-' and  '\_' respectively, and all padding characters, '=', are stripped from the end of the encoded string.
 
