@@ -81,7 +81,7 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 		not_found ->
 			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
 				true ->
-					{200, [], <<"Pending">>};
+					{202, [], <<"Pending">>};
 				false ->
 					{404, [], <<"Not Found.">>}
 			end;
