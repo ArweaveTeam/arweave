@@ -40,6 +40,19 @@ straight away by opening a terminal and running:
 Don’t forget to change xxx.xxx.xxx.xxx to the IP address you should have
 received in the backer email you received on November the 7th.
 
+# Windows Quickstart
+1) Install Erlang and dependancies - http://erlang.org/doc/installation_guide/INSTALL-WIN32.html
+2) If not added by default, add Erlang to your PATH
+	2.0) WARNING: Changing your PATH variable can be dangerous. Backup your PATH before any changes and proceed carefully.
+	2.1) In Search, search for and then select: System (Control Panel)
+	2.2) Click the Advanced system settings link.
+	2.3) Click Environment Variables. In the section System Variables, find the PATH environment variable and select it. Click Edit. If the PATH environment variable does not exist, click New.
+	2.4) Add erl.exe to the PATH
+3) Download the most recent version of Arweave from https://github.com/ArweaveTeam/arweave/archive/master.zip
+4) Unzip Arweave to a location of your choice
+5) Run cmd.exe and navigate to the location that you unzipped arweave to.
+6) Run arweave-server.cmd with the parameters of your choice
+6.1) A starting command that will have you join the main network and start mining with a freshly generated wallet is "arweave-server.cmd mine"
 
 # TNT/NO-VLNS
 TNT (Tiny Network Tests) and NO-VLNS (Never Off Very Large Network Simulator)
