@@ -196,18 +196,42 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 % TODO: Return remaining timeout on a failed request
 % TODO: Optionally, allow adding self on a non-default port
 handle('POST', [<<"peers">>], Req) ->
-	Peer = elli_request:peer(Req),
-	case ar_meta_db:get({peer, ar_util:parse_peer(Peer)}) of
-		not_found ->
-			ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(Peer));
-		X -> X
-	end,
-	{200, [], []};
+	BlockJSON = elli_request:body(Req),
+	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
+	case lists:keyfind("network", 1, Struct) of
+		{"network", NetworkName} ->
+			case(NetworkName == ?NETWORK_NAME) of
+				false ->
+					{400, [], <<"Wrong network.">>};
+				true ->
+					Peer = elli_request:peer(Req),
+					case ar_meta_db:get({peer, ar_util:parse_peer(Peer)}) of
+						not_found ->
+							ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(Peer));
+						X -> X
+					end,
+					{200, [], []}
+			end;
+		_ -> {400, [], "Wrong network"}
+	end;
 handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
-	Peer = elli_request:peer(Req),
-	Port = list_to_integer(binary_to_list(RawPort)),
-	ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer({Peer, Port})),
-	{200, [], []};
+	BlockJSON = elli_request:body(Req),
+	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
+	case lists:keyfind("network", 1, Struct) of
+		{"network", NetworkName} ->
+			case(NetworkName == ?NETWORK_NAME) of
+				false ->
+					{400, [], <<"Wrong network.">>};
+				true ->
+					Peer = elli_request:peer(Req),
+					Port = list_to_integer(binary_to_list(RawPort)),
+					ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer({Peer, Port})),
+					{200, [], []}
+			end;
+		_ -> {400, [], "Wrong network"}
+	end;
+
+
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	{200, [],
 		list_to_binary(
@@ -438,7 +462,15 @@ add_peer(Host) ->
 				++ "/peers",
 			[],
 			"application/x-www-form-urlencoded",
-			""
+			lists:flatten(
+				ar_serialize:jsonify(
+					{struct,
+						[
+							{network, ?NETWORK_NAME}
+						]
+					}
+				)
+			)
 		}, [{timeout, ?NET_TIMEOUT}], []
 	).
 
