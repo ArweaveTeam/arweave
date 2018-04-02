@@ -68,10 +68,13 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
 	case {NewB, ar_node:get_block(Peers, RecallBlock)} of
 		{B, unavailable} ->
-			ar_storage:write_block(B);
+			ar_storage:write_block(B),
+			ar_storage:write_tx(ar_node:get_tx(Peers, B#block.txs));
 		{B, R} ->
 			ar_storage:write_block(B),
-			ar_storage:write_block(R)
+			ar_storage:write_tx(ar_node:get_tx(Peers, B#block.txs)),
+			ar_storage:write_block(R),
+			ar_storage:write_tx(ar_node:get_tx(Peers, R#block.txs))
 	end,
 	get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList).
 
@@ -85,7 +88,9 @@ fill_to_capacity(Peers, NewB) ->
 		false ->
 			case ar_node:get_block(Peers, RandBlock) of
 				unavailable -> ok;
-				B -> ar_storage:write_block(B)
+				B ->
+					ar_storage:write_block(B),
+					ar_storage:write_tx(ar_node:get_tx(Peers, B#block.txs))
 			end,
 			fill_to_capacity(Peers, NewB)
 		end.

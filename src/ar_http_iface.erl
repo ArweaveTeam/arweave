@@ -106,41 +106,57 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
-	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
-	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
-	{"port", Port} = lists:keyfind("port", 1, Struct),
-	B = ar_serialize:json_struct_to_block(JSONB),
-	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
-	OrigPeer =
-		ar_util:parse_peer(
-			bitstring_to_list(elli_request:peer(Req))
-			++ ":"
-			++ integer_to_list(Port)
-			),
-	ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
-	%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-	ar_node:add_block(
-		whereis(http_entrypoint_node),
-		OrigPeer,
-		B,
-		RecallB,
-		B#block.height
-	),
-	{200, [], <<"OK">>};
-% Add transaction specified in body.
-handle('POST', [<<"tx">>], Req) ->
-	TXJSON = elli_request:body(Req),
-	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
-	B = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case ar_tx:verify(TX, B#block.diff) of
+	{"network", NetworkName} = lists:keyfind("network", 1, Struct),
+	case(NetworkName == ?NETWORK_NAME) of
 		false ->
-			ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
-			{400, [], <<"Transaction signature not valid.">>};
+			{400, [], <<"Wrong network.">>};
 		true ->
-			ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-			ar_bridge:add_tx(whereis(http_bridge_node), TX),
+			{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
+			{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
+			{"port", Port} = lists:keyfind("port", 1, Struct),
+			B = ar_serialize:json_struct_to_block(JSONB),
+			RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
+			OrigPeer =
+				ar_util:parse_peer(
+					bitstring_to_list(elli_request:peer(Req))
+					++ ":"
+					++ integer_to_list(Port)
+					),
+			ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
+			%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
+			ar_node:add_block(
+				whereis(http_entrypoint_node),
+				OrigPeer,
+				B,
+				RecallB,
+				B#block.height
+			),
 			{200, [], <<"OK">>}
 	end;
+
+% Add transaction specified in body.
+handle('POST', [<<"tx">>], Req) ->
+	BlockJSON = elli_request:body(Req),
+	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
+	{"network", NetworkName} = lists:keyfind("network", 1, Struct),
+	case(NetworkName == ?NETWORK_NAME) of
+		false ->
+			{400, [], <<"Wrong network.">>};
+		true ->
+			{"new_tx", TXJSON} = lists:keyfind("new_tx", 1, Struct),
+			TX = ar_serialize:json_struct_to_tx(TXJSON),
+			B = ar_node:get_current_block(whereis(http_entrypoint_node)),
+			case ar_tx:verify(TX, B#block.diff) of
+				false ->
+					ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+					{400, [], <<"Transaction signature not valid.">>};
+				true ->
+					ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+					ar_bridge:add_tx(whereis(http_bridge_node), TX),
+					{200, [], <<"OK">>}
+			end
+	end;
+
 % Get peers.
 handle('GET', [<<"peers">>], Req) ->
 	{200, [],
@@ -358,7 +374,16 @@ send_new_tx(Host, TX) ->
 			"http://" ++ ar_util:format_peer(Host) ++ "/tx",
 			[],
 			"application/x-www-form-urlencoded",
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+			lists:flatten(
+				ar_serialize:jsonify(
+					{struct,
+						[
+							{new_tx, ar_serialize:tx_to_json_struct(TX)},
+							{network, ?NETWORK_NAME}
+						]
+					}
+				)
+			)
 		},
 		[{timeout, ?NET_TIMEOUT}],
 		[]
@@ -383,7 +408,8 @@ send_new_block(Host, Port, NewB, RecallB) ->
 								ar_serialize:block_to_json_struct(NewB)},
 							{recall_block,
 								ar_serialize:block_to_json_struct(RecallB)},
-							{port, Port}
+							{port, Port},
+							{network, ?NETWORK_NAME}
 						]
 					}
 				)
