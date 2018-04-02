@@ -84,11 +84,10 @@ insert_transactions(Ref, [], _) ->
 insert_transactions(Ref, [T|Txlist], Bhash) ->
 	ar:report_console(
 		[
-			{adding_tx, ar_util:encode(T#tx.id)},
-			{tx_size, byte_size(T#tx.data)}
+			{adding_tx, ar_util:encode(T)}
 		]
 	),
-	dets:insert(Ref, {T#tx.id, Bhash}),
+	dets:insert(Ref, {T, Bhash}),
 	insert_transactions(Ref, Txlist, Bhash).
 
 %% @doc Test that a new tx placed on the network and mined can be searched for

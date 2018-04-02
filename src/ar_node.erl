@@ -610,7 +610,7 @@ integrate_block_from_miner(
 	% Build the block record, verify it, and gossip it to the other nodes.
 	[NextB|_] =
 		ar_weave:add(HashList, HashList, WalletList, MinedTXs, Nonce, RewardAddr),
-	case validate(NewS, NextB, TXs, ar_util:get_head_block(HashList), find_recall_block(HashList)) of
+	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), find_recall_block(HashList)) of
 		false ->
 			ar:report_console([{miner, self()}, incorrect_nonce]),
 			server(OldS);
@@ -769,7 +769,6 @@ apply_txs(S, TXs) when is_record(S, state) ->
 		wallet_list = apply_txs(S#state.wallet_list, TXs)
 	};
 apply_txs(WalletList, TXs) ->
-	ar:d({txs, TXs}),
 	%% TODO: Sorting here probably isn't sufficient...
 	lists:sort(
 		lists:foldl(
@@ -788,6 +787,8 @@ apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
 
 %% @doc Apply a transaction to a wallet list, updating it.
 %% Critically, filter empty wallets from the list after application.
+apply_tx(WalletList, unavailable) ->
+	WalletList;
 apply_tx(WalletList, TX) ->
 	filter_empty_wallets(do_apply_tx(WalletList, TX)).
 

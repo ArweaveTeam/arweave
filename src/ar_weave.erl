@@ -108,7 +108,17 @@ calculate_recall_block(IndepHash, Height) ->
 
 %% @doc Return a binary of all of the information stored in the block.
 generate_block_data(B) when is_record(B, block) ->
-	generate_block_data(ar_storage:read_tx(B#block.txs));
+	generate_block_data(
+		lists:filter(
+			fun(T) ->
+				case T of
+					unavailable -> false;
+					_ -> true
+				end
+			end,
+			ar_storage:read_tx(B#block.txs)
+		)
+	);
 generate_block_data(TXs) ->
 	crypto:hash(
 		?HASH_ALG,
@@ -255,3 +265,12 @@ detect_invalid_nonce_test() ->
 	ForgedB2 = add(B1, [TX4], <<"INCORRECT NONCE">>),
 	[B|Bs] = add(ForgedB2, [TX5]),
 	false = verify([B#block{nonce = <<"INCORRECT NONCE">>}|Bs]).
+
+no_tx_fail_verify_test() ->
+	ar_storage:clear(),
+	TX1 = ar_tx:new(<<"TEST TX0">>),
+	TX2 = ar_tx:new(<<"TEST DATA0">>),
+	B1 = add(init(), [TX1, TX2]),
+	ar_storage:clear(),
+	false = verify(B1).
+
