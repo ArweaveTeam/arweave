@@ -93,19 +93,22 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 			false ->
 				BHashList = unavailable,
 				B = unavailable,
-				RecallB = unavailable;
+				RecallB = unavailable,
+				TXs = [];
 			true ->
 				B = ar_node:get_block(Peers, NextB#block.previous_block),
 				case ?IS_BLOCK(B) of
 					false ->
 						BHashList = unavailable,
-						RecallB = unavailable;
+						RecallB = unavailable,
+						TXs = [];
 					true ->
 						BHashList = [B#block.indep_hash|B#block.hash_list],
-						RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
+						RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
+						TXs = ar_node:get_tx(Peers, B#block.txs)
 				end
 		end,
-		case try_apply_block(BHashList, NextB, B, RecallB) of
+		case try_apply_block(BHashList, NextB, TXs, B, RecallB) of
 			false ->
 				ar:report(
 					[
@@ -136,15 +139,16 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 	end.
 
 %% @doc Try and apply a block
-try_apply_block(_, NextB, B, RecallB) when
+try_apply_block(_, NextB, _TXs, B, RecallB) when
 		(not ?IS_BLOCK(NextB)) or
 		(not ?IS_BLOCK(B)) or
 		(not ?IS_BLOCK(RecallB)) ->
 	false;
-try_apply_block(HashList, NextB, B, RecallB) ->
+try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 	ar_node:validate(HashList,
 		ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
 		NextB,
+		TXs,
 		B,
 		RecallB
 	).

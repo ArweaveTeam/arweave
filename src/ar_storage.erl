@@ -1,6 +1,8 @@
 -module(ar_storage).
 -export([write_block/1, read_block/1, clear/0]).
 -export([delete_block/1, blocks_on_disk/0, block_exists/1]).
+-export([write_tx/1, read_tx/1]).
+-export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -115,7 +117,10 @@ write_tx(Tx) ->
 
 %% @doc Read a block from disk, given a hash.
 read_tx(unavailable) -> unavailable;
-read_tx(Tx) when is_record(Tx, tx) -> Tx;
+read_tx([]) -> 
+[];
+read_tx(Tx) when is_record(Tx, tx) -> 
+Tx;
 read_tx(Txs) when is_list(Txs) ->
 	lists:map(fun read_tx/1, Txs);
 read_tx(ID) ->
@@ -124,7 +129,7 @@ read_tx(ID) ->
 		[Filename] -> do_read_tx(Filename);
 		Filenames ->
 			% TODO: There should never be multiple versions of a block on disk.
-			do_read_block(hd(
+			do_read_tx(hd(
 				lists:sort(
 					fun(Filename, Filename2) ->
 						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),

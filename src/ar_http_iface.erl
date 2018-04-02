@@ -76,44 +76,31 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 	};
 % Get a transaction by hash
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
-	case IndepHash of
-		not_found ->
+	TX = ar_storage:read_tx(ar_util:decode(Hash)),
+	case TX of
+		unavailable ->
 			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
 					{404, [], <<"Not Found.">>}
 			end;
-		_ ->
-			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
-			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
-				false ->
-					{404, [], <<"Not Found.">>};
-				Tx ->
-					return_tx(Tx)
-			end
+		T -> return_tx(T)
 	end;
 % Get a transaction by hash and return the associated data.
 handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
-	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
-	case IndepHash of
-		not_found ->
+	TX = ar_storage:read_tx(ar_util:decode(Hash)),
+	case TX of
+		unavailable ->
 			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
 				true ->
-					{200, [], <<"Pending">>};
+					{202, [], <<"Pending">>};
 				false ->
 					{ok, File} = file:read_file("data/not_found.html"),
 					{404, [], File}
 			end;
-		_ ->
-			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
-			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
-				false ->
-					{404, [], <<"Not Found.">>};
-				T ->
-					{200, [], T#tx.data}
-			end
+		T ->
+				{200, [], T#tx.data}
 	end;
 % Add block specified in HTTP body.
 handle('POST', [<<"block">>], Req) ->
@@ -272,26 +259,19 @@ handle('GET', [<<"services">>], _Req) ->
 	};
 %% Return a subfield of the tx with the given hash
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
-	IndepHash = app_search:find_block(whereis(http_search_node), ar_util:decode(Hash)),
-	case IndepHash of
-		not_found ->
+	TX = ar_storage:read_tx(ar_util:decode(Hash)),
+	case TX of
+		unavailable ->
 			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
 				true ->
-					{200, [], <<"Pending">>};
+					{202, [], <<"Pending">>};
 				false ->
-					{ok, File} = file:read_file("data/not_found.html"),
-					{404, [], File}
+					{404, [], <<"Not Found.">>}
 			end;
-		_ ->
-			B = ar_node:get_block(whereis(http_entrypoint_node), IndepHash),
-			case lists:keyfind(ar_util:decode(Hash), #tx.id, B#block.txs) of
-				false ->
-					{404, [], <<"Not Found.">>};
-				T ->
-					{struct, TXJSON} = ar_serialize:tx_to_json_struct(T),
-					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, TXJSON),
-					{200, [], Res}
-			end
+		T ->
+			{struct, TXJSON} = ar_serialize:tx_to_json_struct(T),
+			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, TXJSON),
+			{200, [], Res}
 	end;
 
 % Add reports of service locations
@@ -723,7 +703,8 @@ add_external_tx_test() ->
 	ar_node:mine(Node),
 	receive after 1000 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
-	[TX] = (ar_storage:read_block(B1))#block.txs.
+	TXID = TX#tx.id,
+	[TXID] = (ar_storage:read_block(B1))#block.txs.
 
 %% @doc Test getting transactions
 find_external_tx_test() ->
@@ -873,7 +854,7 @@ get_pending_subfield_tx_test() ->
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
 	receive after 1000 -> ok end,
 	%write a get_tx function like get_block
-	{ok, {{_, 200, _}, _, Body}} =
+	{ok, {{_, 202, _}, _, Body}} =
 		ar_httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)

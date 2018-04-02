@@ -41,7 +41,7 @@ block_to_json_struct(
 			{height, Height},
 			{hash, ar_util:encode(Hash)},
 			{indep_hash, ar_util:encode(IndepHash)},
-			{txs, {array, lists:map(fun tx_to_json_struct/1, TXs) }},
+			{txs, {array, lists:map(fun ar_util:encode/1, TXs) }},
 			{hash_list,
 				{array, lists:map(fun ar_util:encode/1, HashList)}
 			},
@@ -90,7 +90,7 @@ json_struct_to_block({struct, BlockStruct}) ->
 		height = find_value("height", BlockStruct),
 		hash = ar_util:decode(find_value("hash", BlockStruct)),
 		indep_hash = ar_util:decode(find_value("indep_hash", BlockStruct)),
-		txs = lists:map(fun json_struct_to_tx/1, TXs),
+		txs = lists:map(fun ar_util:decode/1, TXs),
 		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
 		wallet_list =
 			[

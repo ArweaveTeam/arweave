@@ -47,13 +47,14 @@ add([Hash|Bs], HashList, WalletList, TXs, Nonce, RewardAddr) when is_binary(Hash
 		Nonce,
 		RewardAddr
 	);
-add(Bs = [B|_], HashList, WalletList, TXs, Nonce, RewardAddr) ->
+add(Bs = [B|_], HashList, WalletList, RawTXs, Nonce, RewardAddr) ->
+	TXs = [T#tx.id || T <- RawTXs],
 	RawNewB =
 		#block {
 			nonce = Nonce,
 			previous_block = B#block.indep_hash,
 			height = B#block.height + 1,
-			hash = hash(B, TXs, Nonce),
+			hash = hash(B, RawTXs, Nonce),
 			hash_list = HashList,
 			wallet_list = WalletList,
 			txs = TXs,
@@ -107,7 +108,7 @@ calculate_recall_block(IndepHash, Height) ->
 
 %% @doc Return a binary of all of the information stored in the block.
 generate_block_data(B) when is_record(B, block) ->
-	generate_block_data(B#block.txs);
+	generate_block_data(ar_storage:read_tx(B#block.txs));
 generate_block_data(TXs) ->
 	crypto:hash(
 		?HASH_ALG,
@@ -161,7 +162,7 @@ is_tx_on_block_list([], _) -> false;
 is_tx_on_block_list([Hash|Bs], TXID) when is_binary(Hash) ->
 	is_tx_on_block_list([ar_storage:read_block(Hash)|Bs], TXID);
 is_tx_on_block_list([#block { txs = TXs }|Bs], TXID) ->
-	case lists:member(TXID, [ T#tx.id || T <- TXs ]) of
+	case lists:member(TXID, TXs) of
 		true -> true;
 		false -> is_tx_on_block_list(Bs, TXID)
 	end.
@@ -180,11 +181,22 @@ init_addempty_verify_test() ->
 
 %% @doc Test verification of blocks with data and transactions attached.
 init_add_verify_test() ->
-	true = verify(add(init(), [ar_tx:new(<<"TEST TX">>), ar_tx:new(<<"TEST DATA1">>), ar_tx:new(<<"TESTDATA2">>)])).
+	ar_storage:clear(),
+	ar_storage:write_tx([TX1 = ar_tx:new(<<"TEST TX">>),TX2 = ar_tx:new(<<"TEST DATA1">>),TX3 = ar_tx:new(<<"TESTDATA2">>)]),
+	true = verify(add(init(), [TX1, TX2, TX3])).
 
 %% @doc Ensure the detection of forged blocks.
 init_add_add_forge_add_verify_test() ->
-	B2 = add(add(init(), []), [ar_tx:new(<<"TEST TX">>), ar_tx:new(<<"TEST DATA1">>), ar_tx:new(<<"TEST DATA2">>)]),
+	ar_storage:clear(),
+	ar_storage:write_tx(
+		[
+			TX1 = ar_tx:new(<<"TEST TX">>),
+			TX2 = ar_tx:new(<<"TEST DATA1">>),
+			TX3 = ar_tx:new(<<"TESTDATA2">>),
+			TX4 = ar_tx:new(<<"TESTDATA3">>)
+		]
+	),
+	B2 = add(add(init(), []), [TX1, TX2, TX3]),
 	ForgedB3 =
 		[
 			#block {
@@ -196,12 +208,24 @@ init_add_add_forge_add_verify_test() ->
 				last_retarget = ar:timestamp()
 			}
 		|B2],
-	false = verify(add(ForgedB3, [ar_tx:new(<<"TEST TX2">>), ar_tx:new(<<"TEST DATA3">>)])).
+	false = verify(add(ForgedB3, [TX3, TX4])).
 
 %% @doc A more 'subtle' version of above. Re-heahes the previous block, but with data removed.
 init_add_add_forge_add_verify_subtle_test() ->
-	B1 = add(init(), [ar_tx:new(<<"TEST TX0">>), ar_tx:new(<<"TEST DATA0">>)]),
-	B2 = add(B1, [ar_tx:new(<<"TEST TX1">>), ar_tx:new(<<"TEST DATA1">>), ar_tx:new(<<"TEST DATA2">>)]),
+	ar_storage:clear(),
+	ar_storage:write_tx(
+		[
+			TX1 = ar_tx:new(<<"TEST TX0">>),
+			TX2 = ar_tx:new(<<"TEST DATA0">>),
+			TX3 = ar_tx:new(<<"TEST TX1">>),
+			TX4 = ar_tx:new(<<"TEST DATA1">>),
+			TX5 = ar_tx:new(<<"TEST DATA2">>),
+			TX6 = ar_tx:new(<<"TEST TX2">>),
+			TX7 = ar_tx:new(<<"TEST DATA3">>)
+		]
+	),
+	B1 = add(init(), [TX1, TX2]),
+	B2 = add(B1, [TX3, TX4, TX5]),
 	ForgedB3 =
 		[
 			#block {
@@ -213,11 +237,21 @@ init_add_add_forge_add_verify_subtle_test() ->
 				last_retarget = ar:timestamp()
 			}
 		|B2],
-	false = verify(add(ForgedB3, [ar_tx:new(<<"TEST TX2">>), ar_tx:new(<<"TEST DATA3">>)])).
+	false = verify(add(ForgedB3, [TX6, TX7])).
 
 %% @doc Ensure that blocks with an invalid nonce are detect.
 detect_invalid_nonce_test() ->
-	B1 = add(init([]), [ar_tx:new(<<"TEST TX">>), ar_tx:new(<<"TEST DATA1">>), ar_tx:new(<<"TESTDATA2">>)]),
-	ForgedB2 = add(B1, [ar_tx:new(<<"FILTHY LIES">>)], <<"INCORRECT NONCE">>),
-	[B|Bs] = add(ForgedB2, [ar_tx:new(<<"NEW DATA">>)]),
+	ar_storage:clear(),
+	ar_storage:write_tx(
+		[
+			TX1 = ar_tx:new(<<"TEST TX">>),
+			TX2 = ar_tx:new(<<"TEST DATA1">>),
+			TX3 = ar_tx:new(<<"TESTDATA2">>),
+			TX4 = ar_tx:new(<<"FILTHY LIES">>),
+			TX5 = ar_tx:new(<<"NEW DATA">>)
+		]
+	),
+	B1 = add(init([]), [TX1, TX2, TX3]),
+	ForgedB2 = add(B1, [TX4], <<"INCORRECT NONCE">>),
+	[B|Bs] = add(ForgedB2, [TX5]),
 	false = verify([B#block{nonce = <<"INCORRECT NONCE">>}|Bs]).
