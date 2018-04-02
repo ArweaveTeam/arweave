@@ -850,7 +850,7 @@ get_pending_tx_test() ->
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
 	receive after 1000 -> ok end,
 	%write a get_tx function like get_block
-	{ok, {{_, 200, _}, _, Body}} =
+	{ok, {{_, 202, _}, _, Body}} =
 		ar_httpc:request(
 			"http://127.0.0.1:"
 				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
