@@ -1,6 +1,6 @@
 #!/bin/bash
 
-mkdir -p ebin logs blocks
+mkdir -p ebin logs blocks wallets txs
 
 while true; do
 	erlc +export_all -o ebin/ src/ar.erl

@@ -54,7 +54,9 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
-				_ -> do_nothing
+				_ ->
+					ar_cleanup:remove_invalid_blocks(HashList),
+					do_nothing
 			end,
 			server(
 				#state {
