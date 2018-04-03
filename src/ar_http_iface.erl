@@ -138,11 +138,12 @@ handle('POST', [<<"block">>], Req) ->
 	end;
 
 % Add transaction specified in body.
+% TODO: Case statement made tidier
 handle('POST', [<<"tx">>], Req) ->
 	BlockJSON = elli_request:body(Req),
-	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
-	case lists:keyfind("network", 1, Struct) of
-		{"network", NetworkName} ->
+	case json2:decode_string(binary_to_list(BlockJSON)) of
+		{ok, {struct, Struct}} ->
+			{"network", NetworkName} = lists:keyfind("network", 1, Struct),
 			case(NetworkName == ?NETWORK_NAME) of
 				false ->
 					{400, [], <<"Wrong network.">>};
@@ -197,9 +198,9 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 % TODO: Optionally, allow adding self on a non-default port
 handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
-	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
-	case lists:keyfind("network", 1, Struct) of
-		{"network", NetworkName} ->
+	case json2:decode_string(binary_to_list(BlockJSON)) of
+		{ok, {struct, Struct}} ->
+			{"network", NetworkName} = lists:keyfind("network", 1, Struct),
 			case(NetworkName == ?NETWORK_NAME) of
 				false ->
 					{400, [], <<"Wrong network.">>};
