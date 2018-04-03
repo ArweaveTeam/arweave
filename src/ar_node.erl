@@ -1,11 +1,12 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_tx/2, get_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
+-export([get_blocks/1, get_block/2, get_tx/2, get_peers/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
 -export([calculate_reward/2]).
+-export([rejoin/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2, validate/4, validate/5, validate/6, find_recall_block/1]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
@@ -23,7 +24,8 @@
 	miner,
 	mining_delay = 0,
 	automine = false,
-	reward_addr = unclaimed
+	reward_addr = unclaimed,
+	trusted_peers = []
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -65,7 +67,8 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 					wallet_list = ar_util:wallets_from_hashes(HashList),
 					mining_delay = MiningDelay,
 					reward_addr = RewardAddr,
-					height = ar_util:height_from_hashes(HashList)
+					height = ar_util:height_from_hashes(HashList),
+					trusted_peers = Peers
 				}
 			)
 		end
@@ -185,7 +188,17 @@ get_tx(Proc, ID) when is_pid(Proc) ->
 get_tx(Host, ID) ->
 	ar_http_iface:get_tx(Host, ID).
 
+get_trusted_peers(Proc) when is_pid(Proc) ->
+	Proc ! {get_trusted_peers, self()},
+	receive
+		{peers, Ps} -> Ps
+	after ?NET_TIMEOUT -> no_response
+	end;
+get_trusted_peers(_) ->
+	unavailable.
 
+rejoin(Proc, Peers) ->
+	Proc ! {rejoin, Peers}.
 
 %% @doc Get a list of peers from the node's #gs_state.
 get_peers(Proc) when is_pid(Proc) ->
@@ -358,6 +371,9 @@ server(
 		{get_peers, PID} ->
 			PID ! {peers, ar_gossip:peers(GS)},
 			server(S);
+		{get_trusted_peers, PID} ->
+			PID ! {peers, S#state.trusted_peers},
+			server(S);
 		{get_balance, PID, WalletID} ->
 			PID ! {balance, WalletID,
 				case lists:keyfind(WalletID, 1, WalletList) of
@@ -418,6 +434,19 @@ server(
 			server(
 				S#state {
 					mining_delay = Delay
+				}
+			);
+		{rejoin, Peers} ->			
+			ar_join:start(self(), S#state.trusted_peers),
+			case S#state.miner of
+				undefined -> do_nothing;
+				PID -> PID ! stop
+			end,
+			server(S#state {
+				gossip = ar_gossip:init(Peers),
+				hash_list = not_joined,
+				wallet_list = ar_util:wallets_from_hashes(HashList),
+				height = 0
 				}
 			);
 		{fork_recovered, NewHs} when HashList == not_joined ->
@@ -1386,3 +1415,17 @@ last_tx_test() ->
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
 	<<"TEST">> = get_last_tx(Node2, Pub1).
+
+%% @doc Ensure that rejoining functionality works
+rejoin_test() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init(),
+	Node1 = start([], B0),
+	Node2 = start([Node1], B0),
+	mine(Node2), % Mine B1
+	receive after 500 -> ok end,
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	rejoin(Node2, []),
+	timer:sleep(500),
+	get_blocks(Node1) == get_blocks(Node2).

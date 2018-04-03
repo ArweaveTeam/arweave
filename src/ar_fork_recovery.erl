@@ -64,6 +64,8 @@ setminus(_, _) -> [].
 %% @doc Main server loop
 %% TODO: Runs into trouble when recovering from diverged genesis blocks
 %% Though, it shouldn't ever get into the situation where it needs to
+server(#state{peers = Peers, parent = Parent}, rejoin) ->
+	Parent ! {rejoin, Peers}.
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
@@ -96,21 +98,50 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 				RecallB = unavailable,
 				TXs = [];
 			true ->
-				B = ar_node:get_block(Peers, NextB#block.previous_block),
-				case ?IS_BLOCK(B) of
-					false ->
+				case {NextB#block.height, ((TargetB#block.height - NextB#block.height) > ?STORE_BLOCKS_BEHIND_CURRENT)} of 
+					{0, _} ->
+						ar:report(
+							[
+								{fork_recovery_failed},
+								{recovery_block_is_genesis_block},
+								{rejoining_on_trusted_peers}
+							]
+						),
 						BHashList = unavailable,
+						B = unavailable,
 						RecallB = unavailable,
-						TXs = [];
-					true ->
-						BHashList = [B#block.indep_hash|B#block.hash_list],
-						RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
-						TXs = ar_node:get_tx(Peers, B#block.txs)
+						TXs = [],	
+						server(S, rejoin);
+					{_, true} ->
+						ar:report(
+							[
+								{fork_recovery_failed},
+								{recovery_block_is_too_far_ahead},
+								{rejoining_on_trusted_peers}
+							]
+						),
+						BHashList = unavailable,
+						B = unavailable,
+						RecallB = unavailable,
+						TXs = [],	
+						server(S, rejoin);
+					{_X, _Y} ->
+						B = ar_node:get_block(Peers, NextB#block.previous_block),
+						case ?IS_BLOCK(B) of
+							false ->
+								BHashList = unavailable,
+								RecallB = unavailable,
+								TXs = [];
+							true ->
+								BHashList = [B#block.indep_hash|B#block.hash_list],
+								RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
+								TXs = ar_node:get_tx(Peers, B#block.txs)
+						end
 				end
 		end,
 		case try_apply_block(BHashList, NextB, TXs, B, RecallB) of
 			false ->
-				ar:report(
+				ar:report_console(
 					[
 						could_not_validate_fork_block,
 						{next_block, ?IS_BLOCK(NextB)},
@@ -119,7 +150,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 					]
 				);
 			true ->
-				ar:report(
+				ar:report_console(
 					[
 						{applying_block, ar_util:encode(NextH)},
 						{block_height, NextB#block.height}
@@ -260,3 +291,38 @@ setminus_test() ->
 		),
 	LengthLong = 2,
 	LengthShort = 0.
+
+fork_rejoin_test() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init(),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:mine(Node2), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 300 -> ok end,
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	timer:sleep(500),
+	ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2).
