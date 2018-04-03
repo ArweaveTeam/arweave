@@ -395,7 +395,10 @@ server(
 		automine -> server(start_mining(S#state { automine = true }));
 		{work_complete, MinedTXs, _Hash, _NewHash, _Diff, Nonce} ->
 			% The miner thinks it has found a new block!
-			integrate_block_from_miner(S, MinedTXs, Nonce);
+			case S#state.hash_list of
+				not_joined -> do_nothing;
+				_ -> integrate_block_from_miner(S, MinedTXs, Nonce)
+			end;
 		{add_peers, Ps} ->
 			%ar:d({adding_peers, Ps}),
 			server(S#state { gossip = ar_gossip:add_peers(GS, Ps) });
