@@ -28,6 +28,7 @@
          , peer/1
          , method/1
          , body/1
+         , upload_start_timestamp/1
          , get_range/1
          , to_proplist/1
          , is_request/1
@@ -44,6 +45,7 @@ raw_path(#req{raw_path = Path})  -> Path.
 headers(#req{headers = Headers}) -> Headers.
 method(#req{method = Method})    -> Method.
 body(#req{body = Body})          -> Body.
+upload_start_timestamp(#req{upload_start_timestamp = UploadTimeStamp}) -> UploadTimeStamp.
 
 peer(#req{socket = Socket} = Req) ->
     case get_header(<<"X-Forwarded-For">>, Req, undefined) of

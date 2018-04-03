@@ -56,6 +56,7 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 %% NB: Blocks and transactions are transmitted between HTTP nodes in JSON
 %% format.
 handle(Req, _Args) ->
+	update_performance_list(Req),
 	handle(Req#req.method, elli_request:path(Req), Req).
 
 handle('GET', [], _Req) ->
@@ -636,6 +637,40 @@ reregister(Name, Node) ->
 		_ -> erlang:unregister(Name)
 	end,
 	erlang:register(Name, Node).
+
+%% @doc If a post request, update the peer performance DB
+%% For a get request, ar_httpc is doing this for us
+update_performance_list(Req) ->
+	case Req#req.method of
+		'POST' ->
+			MicroSecs = ar_util:time_difference(
+				os:timestamp(),
+				elli_request:upload_start_timestamp(Req)
+				),
+			Peer = ar_util:parse_peer(elli_request:peer(Req)),
+			Bytes = byte_size(elli_request:body(Req)),
+			store_data_time(Peer, Bytes, MicroSecs),
+			ok;
+		_ -> ok
+	end.
+
+
+%% @doc Store the request data on the peer performance DB
+store_data_time(Peer, Bytes, MicroSecs) ->
+	P =
+		case ar_meta_db:get({peer, Peer}) of
+			not_found -> #performance{};
+			X -> X
+		end,
+	ar_meta_db:put({peer, Peer},
+		P#performance {
+			transfers = P#performance.transfers + 1,
+			time = P#performance.time + MicroSecs,
+			bytes = P#performance.bytes + Bytes,
+			timestamp = os:system_time()
+		}
+	).
+
 
 %%% Tests
 

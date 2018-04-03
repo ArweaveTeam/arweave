@@ -10,6 +10,7 @@
 -export([get_hash/1, get_head_block/1]).
 -export([genesis_wallets/0]).
 -export([pmap/2]).
+-export([time_difference/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -213,6 +214,11 @@ genesis_wallets() ->
 		string:tokens(binary_to_list(Bin), [10])
 	).
 	
+%% @doc Generates the difference in microseconds between two erlang time tuples
+time_difference({M1, S1, U1}, {M2, S2, U2}) ->
+	((M1-M2) * 1000000000000) + ((S1-S2) * 1000000) + (U1 - U2);
+time_difference(_,_) ->
+	bad_time_format.
 
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->

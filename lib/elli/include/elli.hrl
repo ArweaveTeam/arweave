@@ -33,6 +33,7 @@
                       invalid_return.
 
 -record(req, {
+          upload_start_timestamp = os:timestamp(),
           method :: http_method(),
           path :: [binary()],
           args :: [{binary(), any()}],
