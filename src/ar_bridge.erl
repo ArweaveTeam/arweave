@@ -96,7 +96,7 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			Peer ! {remote_peers, S#state.external_peers},
 			server(S);
 		{update_peers, remote, Peers} ->
-			ar:d(updating_peers, Peers),
+			ar:d({updating_peers, Peers}),
 			server(S#state {external_peers = Peers});
 		Msg when is_record(Msg, gs_msg) ->
 			case ar_gossip:recv(GS0, Msg) of
