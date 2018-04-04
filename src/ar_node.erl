@@ -447,7 +447,7 @@ server(
 				PID -> PID ! stop
 			end,
 			server(S#state {
-				gossip = ar_gossip:init(Peers),
+				gossip = ar_gossip:init(S#state.trusted_peers),
 				hash_list = not_joined,
 				wallet_list = ar_util:wallets_from_hashes(HashList),
 				height = 0
