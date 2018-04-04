@@ -180,7 +180,7 @@ try_apply_block(_, NextB, _TXs, B, RecallB) when
 	false;
 try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 	ar_node:validate(HashList,
-		ar_node:apply_txs(B#block.wallet_list, NextB#block.txs),
+		ar_node:apply_txs(B#block.wallet_list, TXs),
 		NextB,
 		TXs,
 		B,
