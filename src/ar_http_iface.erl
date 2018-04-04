@@ -124,14 +124,13 @@ handle('POST', [<<"block">>], Req) ->
 							++ ":"
 							++ integer_to_list(Port)
 							),
-					ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
+					%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
 					%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-					ar_node:add_block(
-						whereis(http_entrypoint_node),
+					ar_bridge:add_block(
+						whereis(http_bridge_node),
 						OrigPeer,
 						B,
-						RecallB,
-						B#block.height
+						RecallB
 					),
 					{200, [], <<"OK">>}
 			end;

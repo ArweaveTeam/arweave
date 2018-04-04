@@ -172,6 +172,7 @@ get_tx(Peers, ID) when is_list(Peers) ->
 			end;
 		TX -> TX
 	end;
+
 get_tx(Proc, ID) when is_pid(Proc) ->
 %	Proc ! {get_block, self(), ID},
 %	receive
@@ -227,7 +228,6 @@ get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
-
 
 %% @doc Return all pending transactions
 get_pending_txs(Node) ->
@@ -439,9 +439,13 @@ server(
 					mining_delay = Delay
 				}
 			);
-		{rejoin, Peers} ->
-			B = get_current_block(S#state.trusted_peers),
-			ar_join:start(self(), S#state.trusted_peers, B),
+		{rejoin, _Peers} ->
+			spawn(
+				fun() ->
+					B = get_current_block(S#state.trusted_peers),
+					ar_join:start(self(), S#state.trusted_peers, B)
+				end
+			),
 			case S#state.miner of
 				undefined -> do_nothing;
 				PID -> PID ! stop
