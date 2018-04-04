@@ -101,7 +101,10 @@ verify_indep(B = #block { height = Height }, HashList) ->
 calculate_recall_block(Hash) when is_binary(Hash) ->
 	calculate_recall_block(ar_storage:read_block(Hash));
 calculate_recall_block(B) when is_record(B, block) ->
-	calculate_recall_block(B#block.indep_hash, B#block.height).
+	case B#block.height of
+		0 -> 0;
+		_ -> calculate_recall_block(B#block.indep_hash, B#block.height)
+	end.
 calculate_recall_block(IndepHash, Height) ->
 	%ar:d({recall_indep_hash, binary:decode_unsigned(IndepHash)}),
 	%ar:d({recall_height, Height}),

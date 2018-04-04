@@ -204,7 +204,13 @@ send_to_external(
 		fun() ->
 			lists:foreach(
 				fun(Peer) ->
-					ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
+					ar_http_iface:send_new_block(Peer, Port, NewB, RecallB),
+					lists:foreach(
+						fun(T) ->
+							ar_http_iface:send_new_tx(Peer, T)
+						end,
+						RecallB#block.txs
+					)
 				end,
 				[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
 			)

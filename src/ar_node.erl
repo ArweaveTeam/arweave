@@ -647,9 +647,10 @@ integrate_block_from_miner(
 		),
 	NewS = OldS#state { wallet_list = WalletList },
 	% Build the block record, verify it, and gossip it to the other nodes.
+			ar:d({hashlist, HashList}),
 	[NextB|_] =
 		ar_weave:add(HashList, HashList, WalletList, MinedTXs, Nonce, RewardAddr),
-	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), find_recall_block(HashList)) of
+	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
 		false ->
 			ar:report_console([{miner, self()}, incorrect_nonce]),
 			server(OldS);
@@ -672,6 +673,8 @@ integrate_block_from_miner(
 					{node, self()},
 					{accepted_block, NextB#block.height},
 					{hash, ar_util:encode(NextB#block.indep_hash)},
+					{recall_block, RecallB#block.height},
+					{recall_hash, RecallB#block.indep_hash},
 					{txs, length(MinedTXs)}
 				]
 			),
