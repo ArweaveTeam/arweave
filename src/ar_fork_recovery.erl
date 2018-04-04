@@ -134,7 +134,10 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 								TXs = [];
 							true ->
 								BHashList = [B#block.indep_hash|B#block.hash_list],
-								RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list)),
+								case B#block.height of
+									0 -> RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list));
+									_ -> RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
+								end,
 								TXs = ar_node:get_tx(Peers, B#block.txs)
 						end
 				end
@@ -264,6 +267,21 @@ multiple_blocks_since_fork_test() ->
 	[B|_] = ar_node:get_blocks(Node2),
 	9 = (ar_storage:read_block(B))#block.height.
 
+%% @doc Ensure that nodes that nodes recovering from the first block can reconcile
+fork_from_first_test() ->
+	ar_storage:clear(),
+	B1 = ar_weave:init([]),
+	Node1 = ar_node:start([], B1),
+	Node2 = ar_node:start(Node1, B1),
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2).
+
 %% @doc Check the logic of setminus will correctly update to a new fork
 setminus_test() ->
 	ar_storage:clear(),
@@ -292,6 +310,7 @@ setminus_test() ->
 	LengthLong = 2,
 	LengthShort = 0.
 
+%% @doc Ensure that fork rejoining behavior works
 fork_rejoin_test() ->
 	ar_storage:clear(),
 	B0 = ar_weave:init(),

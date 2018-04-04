@@ -122,7 +122,7 @@ get_blocks(Node) ->
 
 %% @doc Return a specific block from a node, if it has it.
 get_block(Peers, ID) when is_list(Peers) ->
-	ar:d([{getting_block, ID}, {peers, Peers}]),
+	%ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
 	case ar_storage:read_block(ID) of
 		unavailable ->
 			case sort_blocks_by_count([ get_block(Peer, ID) || Peer <- Peers ]) of
@@ -162,6 +162,9 @@ sort_txs_by_count(TXs) ->
 	),
 	ar_storage:read_tx(SortedTXs).
 
+%% @doc Return a specific tx from a node, if it has it.
+get_tx(_, []) ->
+[];
 get_tx(Peers, ID) when is_list(Peers) ->
 	ar:d([{getting_tx, ID}, {peers, Peers}]),
 	case ar_storage:read_tx(ID) of
@@ -172,19 +175,7 @@ get_tx(Peers, ID) when is_list(Peers) ->
 			end;
 		TX -> TX
 	end;
-
 get_tx(Proc, ID) when is_pid(Proc) ->
-%	Proc ! {get_block, self(), ID},
-%	receive
-%		{block, Proc, B} when is_record(B, block) -> B;
-%		{block, Proc, Bs} when is_list(Bs) -> Bs;
-%		{block, Proc, Hash} when is_binary(Hash) ->
-%			ar_storage:read_block(Hash);
-%		X ->
-%			ar:report_console([{unknown_block_response, X}]),
-%			X
-%	after ?NET_TIMEOUT -> no_response
-%	end;
 	ar_storage:read_tx(ID);
 get_tx(Host, ID) ->
 	ar_http_iface:get_tx(Host, ID).
@@ -647,7 +638,6 @@ integrate_block_from_miner(
 		),
 	NewS = OldS#state { wallet_list = WalletList },
 	% Build the block record, verify it, and gossip it to the other nodes.
-			ar:d({hashlist, HashList}),
 	[NextB|_] =
 		ar_weave:add(HashList, HashList, WalletList, MinedTXs, Nonce, RewardAddr),
 	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
