@@ -22,6 +22,7 @@ start(Node, Peers, B) when is_atom(B) ->
 	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
 start(_, _, not_found) -> do_nothing;
 start(_, _, unavailable) -> do_nothing;
+start(_, _, no_response) -> do_nothing;
 start(Node, RawPeers, NewB) ->
 	case whereis(join_server) of
 		undefined ->

@@ -439,8 +439,9 @@ server(
 					mining_delay = Delay
 				}
 			);
-		{rejoin, Peers} ->			
-			ar_join:start(self(), S#state.trusted_peers),
+		{rejoin, Peers} ->
+			B = get_current_block(S#state.trusted_peers),
+			ar_join:start(self(), S#state.trusted_peers, B),
 			case S#state.miner of
 				undefined -> do_nothing;
 				PID -> PID ! stop
