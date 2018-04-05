@@ -356,8 +356,6 @@ server(
 					server(S#state { gossip = NewGS })
 			end;
 		{add_tx, TX} ->
-			% We have a new TX. Distribute it to the
-			% gossip network.
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			add_tx_to_server(S, NewGS, TX);
 		{new_block, Peer, Height, NewB, RecallB} ->
@@ -552,6 +550,7 @@ fork_recover(
 				)
 			),
 			erlang:register(fork_recovery_server, PID);
+		{undefined, _} -> ok;
 		_ ->
 		whereis(fork_recovery_server) ! {update_target_block, NewB, Peer}
 	end,
