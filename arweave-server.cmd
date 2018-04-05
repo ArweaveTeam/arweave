@@ -1,4 +1,4 @@
-mkdir ebin logs blocks
+mkdir ebin logs blocks wallets txs
 
 :mine
 	erlc +export_all -o ebin/ src/ar.erl
