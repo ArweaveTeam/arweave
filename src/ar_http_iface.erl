@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
+-export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, get_full_block/2, add_peer/1]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
@@ -277,6 +277,26 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 				false -> return_block(unavailable)
 			end
 	end;
+% Get a full block by hash
+handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
+	ar:d({resp_block_hash, Hash}),
+	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
+	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	case CurrentBlock of
+		unavailable -> return_block(unavailable);
+		_ ->
+			HashList = [CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list],
+			case lists:member(ar_util:decode(Hash), [CurrentBlock#block.indep_hash|HashList]) of
+				true ->
+					FullBlock =
+						ar_node:get_full_block(
+							whereis(http_entrypoint_node),
+							ar_util:decode(Hash)
+						),
+					return_full_block(FullBlock);
+				false -> return_block(unavailable)
+			end
+	end;
 		% Gets a block by block height.
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 	return_block(
@@ -365,7 +385,17 @@ return_block(B) ->
 			)
 		)
 	}.
-
+%% @doc Return a full block in JSON via HTTP or 404 if can't be found.
+return_full_block(unavailable) -> {404, [], <<"Block not found.">>};
+return_full_block(B) ->
+	{200, [],
+		list_to_binary(
+			ar_serialize:jsonify(
+				ar_serialize:full_block_to_json_struct(B)
+			)
+		)
+	}.
+%% @doc Return a tx in JSON via HTTP or 404 if can't be found.
 return_tx(unavailable) -> {404, [], <<"TX not found.">>};
 return_tx(T) ->
 	{200, [],
@@ -540,7 +570,26 @@ get_block(Host, Hash) when is_binary(Hash) ->
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
 	).
+%% @doc Retreive a full block by hash from a node.
+get_full_block(Host, Hash) when is_binary(Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+	handle_full_block_response(
+		ar_httpc:request(
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/block/hash/"
+					++ ar_util:encode(Hash)
+					++ "/all/",
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+		)
+	).
 
+%% @doc Retreive a tx by hash from a node.
 get_tx(Host, Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
@@ -558,6 +607,7 @@ get_tx(Host, Hash) ->
 	 	)
 	).
 
+%% @doc Retreive all pending txs from a node.
 get_pending_txs(Peer) ->
 	try
 		begin
@@ -618,6 +668,12 @@ handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
 handle_block_response({error, _}) -> unavailable;
 handle_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
 handle_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+
+handle_full_block_response({ok, {{_, 200, _}, _, Body}}) ->
+	ar_serialize:json_struct_to_full_block(Body);
+handle_full_block_response({error, _}) -> unavailable;
+handle_full_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
+handle_full_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /tx call.
 handle_tx_response({ok, {{_, 200, _}, _, Body}}) ->
@@ -777,6 +833,27 @@ get_block_by_hash_test() ->
 	reregister(Node1),
 	receive after 200 -> ok end,
 	B0 = get_block({127, 0, 0, 1}, B0#block.indep_hash).
+
+%% @doc Ensure that full blocks can be received via a hash.
+get_full_block_by_hash_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	receive after 200 -> ok end,
+	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
+	send_new_tx({127, 0, 0, 1}, TX1 = ar_tx:new(<<"DATA2">>)),
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	[B1|_] = ar_node:get_blocks(Node),
+	B2 = get_block({127, 0, 0, 1}, B1),
+	B3 = get_full_block({127, 0, 0, 1}, B1),
+	ar:d(B2),
+	ar:d(B3),
+	B3 = B2#block {txs = [TX, TX1]}.
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->

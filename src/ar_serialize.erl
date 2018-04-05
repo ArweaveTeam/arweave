@@ -1,5 +1,5 @@
 -module(ar_serialize).
--export([block_to_json_struct/1, json_struct_to_block/1, tx_to_json_struct/1, json_struct_to_tx/1]).
+-export([full_block_to_json_struct/1, block_to_json_struct/1, json_struct_to_block/1, json_struct_to_full_block/1, tx_to_json_struct/1, json_struct_to_tx/1]).
 -export([jsonify/1, dejsonify/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -68,6 +68,59 @@ block_to_json_struct(
 			}
 		]
 	}.
+%% @doc Translate a full block into JSON struct.
+full_block_to_json_struct(
+	#block {
+		nonce = Nonce,
+		previous_block = PrevHash,
+		timestamp = TimeStamp,
+		last_retarget = LastRetarget,
+		diff = Diff,
+		height = Height,
+		hash = Hash,
+		indep_hash = IndepHash,
+		txs = TXs,
+		hash_list = HashList,
+		wallet_list = WalletList,
+		reward_addr = RewardAddr
+	}) ->
+	{struct,
+		[
+			{nonce, ar_util:encode(Nonce)},
+			{previous_block, ar_util:encode(PrevHash)},
+			{timestamp, TimeStamp},
+			{last_retarget, LastRetarget},
+			{diff, Diff},
+			{height, Height},
+			{hash, ar_util:encode(Hash)},
+			{indep_hash, ar_util:encode(IndepHash)},
+			{txs, {array, lists:map(fun tx_to_json_struct/1, TXs) }},
+			{hash_list,
+				{array, lists:map(fun ar_util:encode/1, HashList)}
+			},
+			{wallet_list,
+				{array,
+					lists:map(
+						fun({Wallet, Qty, Last}) ->
+							{struct,
+								[
+									{wallet, ar_util:encode(Wallet)},
+									{quantity, Qty},
+									{last_tx, ar_util:encode(Last)}
+								]
+							}
+						end,
+						WalletList
+					)
+				}
+			},
+			{reward_addr,
+				if RewardAddr == unclaimed -> "unclaimed";
+				true -> ar_util:encode(RewardAddr)
+				end
+			}
+		]
+	}.
 
 %% @doc Translate fields parsed json from HTTP request into a block.
 json_struct_to_block(JSONList) when is_list(JSONList) ->
@@ -91,6 +144,42 @@ json_struct_to_block({struct, BlockStruct}) ->
 		hash = ar_util:decode(find_value("hash", BlockStruct)),
 		indep_hash = ar_util:decode(find_value("indep_hash", BlockStruct)),
 		txs = lists:map(fun ar_util:decode/1, TXs),
+		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
+		wallet_list =
+			[
+				{ar_util:decode(Wallet), Qty, ar_util:decode(Last)}
+			||
+				{struct, [{"wallet", Wallet}, {"quantity", Qty}, {"last_tx", Last}]}
+					<- WalletList
+			],
+		reward_addr =
+			case find_value("reward_addr", BlockStruct) of
+				"unclaimed" -> unclaimed;
+				StrAddr -> ar_util:decode(StrAddr)
+			end
+	}.
+%% @doc Translate fields parsed json from HTTP request into a full block.
+json_struct_to_full_block(JSONList) when is_list(JSONList) ->
+	case dejsonify(JSONList) of
+		{ok, Block} -> json_struct_to_full_block(Block);
+		{_, {error, Reason}, _} ->
+			ar:report([{json_error, Reason}])
+	end;
+json_struct_to_full_block({struct, BlockStruct}) ->
+	{array, TXs} = find_value("txs", BlockStruct),
+	{array, WalletList} = find_value("wallet_list", BlockStruct),
+	{array, HashList} = find_value("hash_list", BlockStruct),
+	#block {
+		nonce = ar_util:decode(find_value("nonce", BlockStruct)),
+		previous_block =
+			ar_util:decode(find_value("previous_block", BlockStruct)),
+		timestamp = find_value("timestamp", BlockStruct),
+		last_retarget = find_value("last_retarget", BlockStruct),
+		diff = find_value("diff", BlockStruct),
+		height = find_value("height", BlockStruct),
+		hash = ar_util:decode(find_value("hash", BlockStruct)),
+		indep_hash = ar_util:decode(find_value("indep_hash", BlockStruct)),
+		txs = lists:map(fun json_struct_to_tx/1, TXs),
 		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
 		wallet_list =
 			[

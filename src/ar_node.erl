@@ -1,6 +1,6 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_tx/2, get_peers/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
+-export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
@@ -153,20 +153,34 @@ get_block(Peers, ID) when is_list(Peers) ->
 		Block -> Block
 	end;
 get_block(Proc, ID) when is_pid(Proc) ->
-%	Proc ! {get_block, self(), ID},
-%	receive
-%		{block, Proc, B} when is_record(B, block) -> B;
-%		{block, Proc, Bs} when is_list(Bs) -> Bs;
-%		{block, Proc, Hash} when is_binary(Hash) ->
-%			ar_storage:read_block(Hash);
-%		X ->
-%			ar:report_console([{unknown_block_response, X}]),
-%			X
-%	after ?NET_TIMEOUT -> no_response
-%	end;
 	ar_storage:read_block(ID);
 get_block(Host, ID) ->
 	ar_http_iface:get_block(Host, ID).
+
+%% @doc Return a specific full block from a node, if it has it.
+get_full_block(Peers, ID) when is_list(Peers) ->
+	case ar_storage:read_block(ID) of
+		unavailable ->
+			case sort_blocks_by_count([ get_full_block(Peer, ID) || Peer <- Peers ]) of
+				[] -> unavailable;
+				[B|_] -> B
+			end;
+		Block -> Block
+	end;
+get_full_block(Proc, ID) when is_pid(Proc) ->
+	make_full_block(ID);
+get_full_block(Host, ID) ->
+	ar_http_iface:get_full_block(Host, ID).
+
+%% @doc convert a block header into a full block
+make_full_block(ID) ->
+	BlockHeader = ar_storage:read_block(ID),
+	BlockTransactions =
+		ar_node:get_tx(
+			whereis(http_entrypoint_node),
+			BlockHeader#block.txs
+		),
+	BlockHeader#block{ txs = BlockTransactions }.
 
 sort_txs_by_count(TXs) ->
 	SortedTXs = lists:sort(
@@ -457,17 +471,7 @@ server(
 					ar_join:start(self(), S#state.trusted_peers, B)
 				end
 			),
-			case S#state.miner of
-				undefined -> do_nothing;
-				PID -> PID ! stop
-			end,
-			server(S#state {
-				gossip = ar_gossip:init(S#state.trusted_peers),
-				hash_list = not_joined,
-				wallet_list = ar_util:wallets_from_hashes(HashList),
-				height = 0
-				}
-			);
+			server(S);
 		{fork_recovered, NewHs} when HashList == not_joined ->
 			NewB = ar_storage:read_block(hd(NewHs)),
 			ar:report_console(
@@ -537,8 +541,8 @@ fork_recover(
 		hash_list = HashList,
 		gossip = GS
 	}, Peer, NewB) ->
-	case whereis(fork_recovery_server) of
-		undefined ->
+	case {whereis(fork_recovery_server), whereis(join_server)} of
+		{undefined, undefined} ->
 			erlang:monitor(
 				process,
 				PID = ar_fork_recovery:start(
@@ -906,10 +910,12 @@ alter_wallet(WalletList, Target, Adjustment) ->
 find_recall_block([H]) -> ar_storage:read_block(H);
 find_recall_block(HashList) ->
 	B = ar_storage:read_block(hd(HashList)),
-	RecallHash =
-		lists:nth(1 + ar_weave:calculate_recall_block(B), lists:reverse(HashList)),
+	RecallHash = find_recall_hash(B, HashList),
 	ar_storage:read_block(RecallHash).
 
+%% @doc Return the hash of the next recall block.
+find_recall_hash(B, HashList) ->
+	lists:nth(1 + ar_weave:calculate_recall_block(B), lists:reverse(HashList)).
 %% @doc Find a block from an ordered block list.
 find_block(Hash) when is_binary(Hash) ->
 	ar_storage:read_block(Hash).
@@ -975,13 +981,22 @@ reset_miner(S = #state { miner = PID, automine = true }) ->
 	start_mining(S#state { miner = undefined }).
 
 %% @doc Force a node to start mining, update state.
+%% TODO: If recall block cant be retrieved, schedule a retry
 start_mining(S = #state { hash_list = not_joined }) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	S;
 start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
 	case find_recall_block(BHL) of
-		unavailable -> S;
+		unavailable -> 
+			B = ar_storage:read_block(hd(BHL)),
+			RecallHash = find_recall_hash(B, BHL),
+			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+			FullBlock = ar_node:get_full_block(Peers, RecallHash),
+			Block = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+			ar_storage:write_tx(FullBlock#block.txs),
+			ar_storage:write_block(Block),
+			S;
 		RecallB ->
 			if not is_record(RecallB, block) ->
 				ar:report_console([{erroneous_recall_block, RecallB}]);
