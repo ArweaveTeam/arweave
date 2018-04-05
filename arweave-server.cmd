@@ -1,8 +1,9 @@
+set arg1=%*
 mkdir ebin logs blocks wallets txs
 
 :mine
 	erlc +export_all -o ebin/ src/ar.erl
-	erl -pa ebin/ -s ar rebuild -run ar main mine	
+	erl -pa ebin/ -s ar rebuild -run ar main %arg1%	
 	if %ERRORLEVEL%==0 (
 		echo "Heartbeat: Server terminated safely."
 		pause

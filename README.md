@@ -50,7 +50,9 @@ received in the backer email you received on November the 7th.
 	2.4) Add erl.exe to the PATH
 3) Download the most recent version of Arweave from https://github.com/ArweaveTeam/arweave/archive/master.zip
 4) Unzip Arweave to a location of your choice
-4) Run arweave-server.cmd
+5) Run cmd.exe and navigate to the location that you unzipped arweave to.
+6) Run arweave-server.cmd with the parameters of your choice
+6.1) A starting command that will have you join the main network and start mining with a freshly generated wallet is "arweave-server.cmd mine"
 
 # TNT/NO-VLNS
 TNT (Tiny Network Tests) and NO-VLNS (Never Off Very Large Network Simulator)
