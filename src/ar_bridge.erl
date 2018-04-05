@@ -3,6 +3,7 @@
 -export([add_tx/2, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1]).
+-export([start_link/0,start_link/1,start_link/2,start_link/3]).
 -export([ignore_id/2]).
 -include("ar.hrl").
 
@@ -18,6 +19,15 @@
 	firewall = ar_firewall:start(),
 	port
 }).
+
+%%@doc Start a node, linking to a supervisor process
+start_link() -> start_link([]).
+start_link(ExtPeers) -> start_link(ExtPeers, []).
+start_link(ExtPeers, IntPeers) -> start_link(ExtPeers, IntPeers, ?DEFAULT_HTTP_IFACE_PORT).
+start_link(ExtPeers, IntPeers, Port) ->
+	PID = start(ExtPeers, IntPeers, Port),
+	ar_http_iface:reregister(http_bridge_node, PID),
+	{ok, PID}.
 
 %% Launch a bridge node.
 start() -> start([]).
@@ -206,13 +216,14 @@ send_to_external(
 		fun() ->
 			lists:foreach(
 				fun(Peer) ->
-					ar_http_iface:send_new_block(Peer, Port, NewB, RecallB),
 					lists:foreach(
 						fun(T) ->
 							ar_http_iface:send_new_tx(Peer, T)
 						end,
 						RecallB#block.txs
-					)
+					),
+					ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
+
 				end,
 				[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
 			)

@@ -4,6 +4,7 @@
 -export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
+-export([start_link/0, start_link/1, init/1]).
 -include("ar.hrl").
 
 %%% Archain server entrypoint and basic utilities.
@@ -49,7 +50,8 @@
 	diff = ?DEFAULT_DIFF,
 	mining_addr = unclaimed,
 	new_key = false,
-	load_key = unclaimed
+	load_key = unclaimed,
+	pause = true
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -129,7 +131,8 @@ start(
 		diff = Diff,
 		mining_addr = Addr,
 		new_key = NewKey,
-		load_key = LoadKey
+		load_key = LoadKey,
+		pause = Pause
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -191,17 +194,41 @@ start(
 			),
 			MiningAddress = unclaimed
 	end,
-	Node = ar_node:start(
-		Peers,
-		if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
-		0,
-		MiningAddress,
-		AutoJoin
+	{ok, Supervisor} = start_link(
+		[
+			Peers,
+			if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
+			0,
+			MiningAddress,
+			AutoJoin
+		]
 	),
-	SearchNode = app_search:start([Node|Peers]),
+	Node = whereis(http_entrypoint_node),
+	{ok, SearchNode} = supervisor:start_child(
+		Supervisor,
+		{
+			app_search,
+			{app_search, start_link, [[Node|Peers]]},
+			permanent,
+			brutal_kill,
+			worker,
+			[app_search]
+		}
+	),
+	%SearchNode = app_search:start([Node|Peers]),
 	ar_node:add_peers(Node, SearchNode),
 	% Start a bridge, add it to the node's peer list.
-	Bridge = ar_bridge:start(Peers, [Node], Port),
+	{ok, Bridge} = supervisor:start_child(
+		Supervisor,
+		{
+			ar_bridge,
+			{ar_bridge, start_link, [Peers, [Node], Port]},
+			permanent,
+			brutal_kill,
+			worker,
+			[ar_bridge]
+		}
+	),
 	ar_node:add_peers(Node, Bridge),
 	% Add self to all remote nodes.
 	lists:foreach(fun ar_http_iface:add_peer/1, Peers),
@@ -232,8 +259,11 @@ start(
 		true -> ar_poller:start(Node, Peers);
 		false -> do_nothing
 	end,
-	if Mine -> ar_node:automine(Node); true -> do_nothing end.
-
+	if Mine -> ar_node:automine(Node); true -> do_nothing end,
+	case Pause of
+		false -> ok;
+		_ -> receive after infinity -> ok end
+	end.
 %% @doc Create a name for a session log file.
 generate_logfile_name() ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
@@ -248,6 +278,28 @@ generate_logfile_name() ->
 rebuild() ->
 	make:all([load]).
 
+%% @doc passthrough to supervisor start_link
+start_link() ->
+    supervisor:start_link(?MODULE, []).
+start_link(Args) ->
+    supervisor:start_link(?MODULE, Args).
+
+%% @doc init function for supervisor
+init(Args) ->
+    SupFlags = {one_for_one, 5, 30},
+    ChildSpecs = 
+		[
+			{
+				ar_node,
+				{ar_node, start_link, Args},
+				permanent,
+				brutal_kill,
+				worker,
+				[ar_node]
+			}
+		],
+    {ok, {SupFlags, ChildSpecs}}.
+
 %% @doc Run all of the tests associated with the core project.
 test() ->
 	case ?DEFAULT_DIFF of
@@ -259,7 +311,7 @@ test() ->
 				]
 			);
 		_ ->
-			start(#opts { peers = [] }),
+			start(#opts { peers = [], pause = false}),
 			eunit:test({timeout, ?TEST_TIMEOUT, ?CORE_TEST_MODS}, [verbose])
 	end.
 

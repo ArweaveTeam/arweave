@@ -3,6 +3,7 @@
 -export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, add_peer/1]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
+-export([reregister/1, reregister/2]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").

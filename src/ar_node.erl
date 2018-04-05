@@ -10,6 +10,7 @@
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2, validate/4, validate/5, validate/6, find_recall_block/1]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
+-export([start_link/0,start_link/1,start_link/2,start_link/3,start_link/4,start_link/5]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -39,6 +40,21 @@
 %% The time to poll peers for a new current block.
 -define(POLL_TIME, 60*100).
 
+%%@doc Start a node, linking to a supervisor process
+%% TODO: Clean up to an apply function
+start_link() -> start_link([]).
+start_link(Peers) -> start_link(Peers, not_joined).
+start_link(Peers, Bs) -> start_link(Peers, Bs, 0).
+start_link(Peers, Bs, MiningDelay) ->
+	start_link(Peers, Bs, MiningDelay, unclaimed).
+start_link(Peers, HashList, MiningDelay, RewardAddr) ->
+	start_link(Peers, HashList, MiningDelay, RewardAddr, true).
+start_link(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin) when is_record(B, block) ->
+	lists:map(fun ar_storage:write_block/1, Bs),
+	start_link(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr, AutoJoin);
+start_link(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
+	PID = start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin),
+	{ok, PID}.
 %% @doc Start a node, optionally with a list of peers.
 start() -> start([]).
 start(Peers) -> start(Peers, not_joined).
@@ -51,7 +67,7 @@ start(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin) when is_record(B, bl
 	lists:map(fun ar_storage:write_block/1, Bs),
 	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr, AutoJoin);
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
-	spawn(
+	PID = spawn(
 		fun() ->
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
@@ -60,19 +76,24 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 					ar_cleanup:remove_invalid_blocks(HashList),
 					do_nothing
 			end,
+			Gossip = ar_gossip:init(Peers),
+			Hashes = ar_util:wallets_from_hashes(HashList),
+			Height = ar_util:height_from_hashes(HashList),
 			server(
 				#state {
-					gossip = ar_gossip:init(Peers),
+					gossip = Gossip,
 					hash_list = HashList,
-					wallet_list = ar_util:wallets_from_hashes(HashList),
+					wallet_list = Hashes,
 					mining_delay = MiningDelay,
 					reward_addr = RewardAddr,
-					height = ar_util:height_from_hashes(HashList),
+					height = Height,
 					trusted_peers = Peers
 				}
 			)
 		end
-	).
+	),
+	ar_http_iface:reregister(http_entrypoint_node, PID),
+	PID.
 
 %% @doc Stop a node (and its miner)
 stop(Node) ->
@@ -163,8 +184,7 @@ sort_txs_by_count(TXs) ->
 	ar_storage:read_tx(SortedTXs).
 
 %% @doc Return a specific tx from a node, if it has it.
-get_tx(_, []) ->
-[];
+get_tx(_, []) -> [];
 get_tx(Peers, ID) when is_list(Peers) ->
 	ar:d([{getting_tx, ID}, {peers, Peers}]),
 	case ar_storage:read_tx(ID) of
