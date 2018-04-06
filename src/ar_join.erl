@@ -57,7 +57,7 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks
-get_block_and_trail(_Peers, NewB, []) ->
+get_block_and_trail(_Peers, NewB, []) -> 
 	ar_storage:write_block(NewB);
 get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
@@ -73,12 +73,18 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	case {NewB, ar_node:get_block(Peers, RecallBlock)} of
 		{B, unavailable} ->
 			ar_storage:write_block(B),
-			ar_storage:write_tx(ar_node:get_tx(Peers, B#block.txs));
+			ar_storage:write_tx(
+				ar_node:get_tx(Peers, B#block.txs)
+				);
 		{B, R} ->
 			ar_storage:write_block(B),
-			ar_storage:write_tx(ar_node:get_tx(Peers, B#block.txs)),
+			ar_storage:write_tx(
+				ar_node:get_tx(Peers, B#block.txs)
+				),
 			ar_storage:write_block(R),
-			ar_storage:write_tx(ar_node:get_tx(Peers, R#block.txs))
+			ar_storage:write_tx(
+				ar_node:get_tx(Peers, R#block.txs)
+				)
 	end,
 	get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList).
 
@@ -94,7 +100,9 @@ fill_to_capacity(Peers, NewB) ->
 				unavailable -> ok;
 				B ->
 					ar_storage:write_block(B),
-					ar_storage:write_tx(ar_node:get_tx(Peers, B#block.txs))
+					ar_storage:write_tx(
+						ar_node:get_tx(Peers, B#block.txs)
+						)
 			end,
 			fill_to_capacity(Peers, NewB)
 		end.

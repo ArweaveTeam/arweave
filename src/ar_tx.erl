@@ -61,7 +61,7 @@ verify(TX, Diff) ->
 	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and ar:d(tx_cost_above_min(TX, Diff)).
 -else.
 verify(TX, Diff) ->
-	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and tx_cost_above_min(TX, Diff).
+	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and ar:d(tx_cost_above_min(TX, Diff)).
 -endif.
 
 %% @doc Ensure that all TXs in a list verify correctly.

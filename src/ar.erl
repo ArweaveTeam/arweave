@@ -217,7 +217,6 @@ start(
 			[app_search]
 		}
 	),
-	%SearchNode = app_search:start([Node|Peers]),
 	ar_node:add_peers(Node, SearchNode),
 	% Start a bridge, add it to the node's peer list.
 	{ok, Bridge} = supervisor:start_child(

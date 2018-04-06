@@ -448,11 +448,12 @@ server(
 				}
 			);
 		{rejoin, Peers} ->
-			UntrustedPeers = lists:filter(
+			UntrustedPeers =
+				lists:filter(
 					fun(Peer) ->
 						not lists:member(Peer, S#state.trusted_peers)
 					end,
-					Peers
+					ar_util:unique(Peers)
 				),
 			lists:foreach(
 				fun(Peer) ->
@@ -581,7 +582,8 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 		when NewB#block.height == RawS1#state.height + 1 ->
 		% This block is at the correct height.
 	S = RawS1#state { gossip = NewGS },
-	TXs = ar_storage:read_tx(NewB#block.txs),
+	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	TXs = ar_node:get_tx(Peers, NewB#block.txs),
 	WalletList =
 		apply_mining_reward(
 			apply_txs(S#state.wallet_list, TXs),

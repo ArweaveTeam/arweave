@@ -159,8 +159,14 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
-	Cost = ar_tx:calculate_min_tx_cost(byte_size(ar_tx:to_binary(TX)+550), Block#block.diff),
-	Reward = Cost + ar_tx:calculate_min_tx_cost(byte_size(<<Cost>>), Block#block.diff),
+	Cost = ar_tx:calculate_min_tx_cost(
+		byte_size(ar_tx:to_binary(TX)+550),
+		Block#block.diff
+		),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(
+		byte_size(<<Cost>>),
+		Block#block.diff
+		),
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 %% @doc Create a random financial TX between two wallets of amount MaxAmount 
@@ -172,8 +178,14 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Qty = rand:uniform(MaxAmount),
 	TX = ar_tx:new(Dest, 0, Qty, LastTx),
-	Cost = ar_tx:calculate_min_tx_cost(byte_size(ar_tx:to_binary(TX))+550, Block#block.diff),
-	Reward = Cost + ar_tx:calculate_min_tx_cost((byte_size(<<Cost>>)), Block#block.diff),
+	Cost = ar_tx:calculate_min_tx_cost(
+		byte_size(ar_tx:to_binary(TX))+550,
+		Block#block.diff
+		),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(
+		(byte_size(<<Cost>>)),
+		Block#block.diff
+		),
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 %% @doc Read a list of public/private keys from a file
