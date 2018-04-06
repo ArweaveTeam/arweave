@@ -448,7 +448,6 @@ server(
 				}
 			);
 		{rejoin, Peers} ->
-			%untrust_node(Peers, S#state.trusted_peers),
 			UntrustedPeers = lists:filter(
 					fun(Peer) ->
 						not lists:member(Peer, S#state.trusted_peers)
@@ -457,7 +456,7 @@ server(
 				),
 			lists:foreach(
 				fun(Peer) ->
-					ar_bridge:ignore_peer(Peer)
+					ar_bridge:ignore_peer(whereis(http_bridge_node), Peer)
 				end,
 				UntrustedPeers
 			),
