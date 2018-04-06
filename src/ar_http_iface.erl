@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, get_full_block/2, add_peer/1]).
+-export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, add_peer/1]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
@@ -108,61 +108,44 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
-	case lists:keyfind("network", 1, Struct) of
-		{"network", NetworkName} ->
-			case(NetworkName == ?NETWORK_NAME) of
-				false ->
-					{400, [], <<"Wrong network.">>};
-				true ->
-					{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
-					{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
-					{"port", Port} = lists:keyfind("port", 1, Struct),
-					B = ar_serialize:json_struct_to_block(JSONB),
-					RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
-					OrigPeer =
-						ar_util:parse_peer(
-							bitstring_to_list(elli_request:peer(Req))
-							++ ":"
-							++ integer_to_list(Port)
-							),
-					%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
-					%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-					ar_bridge:add_block(
-						whereis(http_bridge_node),
-						OrigPeer,
-						B,
-						RecallB
-					),
-					{200, [], <<"OK">>}
-			end;
-		_ -> {400, [], <<"Wrong network.">>}
-	end;
+	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
+	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
+	{"port", Port} = lists:keyfind("port", 1, Struct),
+	B = ar_serialize:json_struct_to_block(JSONB),
+	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
+	OrigPeer =
+		ar_util:parse_peer(
+			bitstring_to_list(elli_request:peer(Req))
+			++ ":"
+			++ integer_to_list(Port)
+			),
+	%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
+	%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
+	ar_bridge:add_block(
+		whereis(http_bridge_node),
+		OrigPeer,
+		B,
+		RecallB
+	),
+	{200, [], <<"OK">>};
+
+
 
 % Add transaction specified in body.
 handle('POST', [<<"tx">>], Req) ->
-	BlockJSON = elli_request:body(Req),
-	case json2:decode_string(binary_to_list(BlockJSON)) of
-		{ok, {struct, Struct}} ->
-			{"network", NetworkName} = lists:keyfind("network", 1, Struct),
-			case(NetworkName == ?NETWORK_NAME) of
-				false ->
-					{400, [], <<"Wrong network.">>};
-				true ->
-					{"new_tx", TXJSON} = lists:keyfind("new_tx", 1, Struct),
-					TX = ar_serialize:json_struct_to_tx(TXJSON),
-					B = ar_node:get_current_block(whereis(http_entrypoint_node)),
-					case ar_tx:verify(TX, B#block.diff) of
-						false ->
-							ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
-							{400, [], <<"Transaction signature not valid.">>};
-						true ->
-							ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-							ar_bridge:add_tx(whereis(http_bridge_node), TX),
-							{200, [], <<"OK">>}
-					end
-			end;
-		_ -> {400, [], <<"Wrong network.">>}
+	TXJSON = elli_request:body(Req),
+	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
+	B = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	case ar_tx:verify(TX, B#block.diff) of
+		false ->
+			ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+			{400, [], <<"Transaction signature not valid.">>};
+		true ->
+			ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+			ar_bridge:add_tx(whereis(http_bridge_node), TX),
+			{200, [], <<"OK">>}
 	end;
+
 
 % Get peers.
 handle('GET', [<<"peers">>], Req) ->
@@ -442,16 +425,7 @@ send_new_tx(Host, TX) ->
 			"http://" ++ ar_util:format_peer(Host) ++ "/tx",
 			[],
 			"application/x-www-form-urlencoded",
-			lists:flatten(
-				ar_serialize:jsonify(
-					{struct,
-						[
-							{new_tx, ar_serialize:tx_to_json_struct(TX)},
-							{network, ?NETWORK_NAME}
-						]
-					}
-				)
-			)
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 		},
 		[{timeout, ?NET_TIMEOUT}],
 		[]
@@ -476,8 +450,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 								ar_serialize:block_to_json_struct(NewB)},
 							{recall_block,
 								ar_serialize:block_to_json_struct(RecallB)},
-							{port, Port},
-							{network, ?NETWORK_NAME}
+							{port, Port}
 						]
 					}
 				)
