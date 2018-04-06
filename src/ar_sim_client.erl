@@ -68,7 +68,7 @@ get_key_list() ->
 %% @doc Generate a genesis wallet and associated list of keys
 %% write them to files
 gen_test_wallet() ->
-	Qty = 1000,
+	Qty = 1000000,
 	{ok, File} = file:open("genesis_wallets.csv", write),
 	filelib:ensure_dir(?WALLETLIST),
 	{ok, File2} = file:open(?WALLETLIST, write),
