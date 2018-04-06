@@ -62,8 +62,8 @@ setminus(R1, []) -> R1;
 setminus(_, _) -> [].
 
 %% @doc Main server loop
-server(#state{peers = Peers, parent = Parent}, rejoin) ->
-	Parent ! {rejoin, Peers}.
+server(#state{peers = Peers, parent = Parent, target_block = TargetB}, rejoin) ->
+	Parent ! {rejoin, Peers, TargetB}.
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->

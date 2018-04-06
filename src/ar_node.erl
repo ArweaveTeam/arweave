@@ -447,7 +447,7 @@ server(
 					mining_delay = Delay
 				}
 			);
-		{rejoin, Peers} ->
+		{rejoin, Peers, Block} ->
 			UntrustedPeers =
 				lists:filter(
 					fun(Peer) ->
@@ -461,12 +461,7 @@ server(
 				end,
 				UntrustedPeers
 			),
-			spawn(
-				fun() ->
-					B = get_current_block(S#state.trusted_peers),
-					ar_join:start(self(), S#state.trusted_peers, B)
-				end
-			),
+			ar_join:start(self(), S#state.trusted_peers, Block),
 			server(S);
 		{fork_recovered, NewHs} when HashList == not_joined ->
 			NewB = ar_storage:read_block(hd(NewHs)),
