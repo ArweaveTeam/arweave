@@ -2,7 +2,7 @@
 -export([start/0, start/1, find_block/1, find_block/2]).
 -export([new_block/2, message/2]).
 -export([build_list/0]).
--export([start_link/0,start_link/1]).
+-export([start_link/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -19,12 +19,9 @@
 }).
 
 %%@doc Start a search node, linking to a supervisor process
-start_link() -> start_link([]).
-start_link(Peers) ->
-	PID = start(Peers),
-	ar_http_iface:reregister(http_search_node, PID),
+start_link(Args) ->
+	PID = erlang:apply(app_search, start, Args),
 	{ok, PID}.
-
 
 %% @doc Start a search node.
 start() -> start([]).

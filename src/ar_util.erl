@@ -57,7 +57,7 @@ decode_base64_safe(Str) ->
 		string:pad(
 			UnsafeStr,
 			length(UnsafeStr)
-				% TODO: Make this 100% less terrible.
+				% TODO: Improve this code
 				+ case 4 - (length(UnsafeStr) rem 4) of
 					4 -> 0;
 					X -> X

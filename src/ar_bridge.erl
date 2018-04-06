@@ -3,8 +3,9 @@
 -export([add_tx/2, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1]).
--export([start_link/0,start_link/1,start_link/2,start_link/3]).
+-export([start_link/1]).
 -export([ignore_id/2]).
+-export([ignore_peer/2]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -17,16 +18,13 @@
 	external_peers, % Peers to send message to.
 	processed = [], % IDs to ignore.
 	firewall = ar_firewall:start(),
-	port
+	port,
+	ignored_peers = []
 }).
 
 %%@doc Start a node, linking to a supervisor process
-start_link() -> start_link([]).
-start_link(ExtPeers) -> start_link(ExtPeers, []).
-start_link(ExtPeers, IntPeers) -> start_link(ExtPeers, IntPeers, ?DEFAULT_HTTP_IFACE_PORT).
-start_link(ExtPeers, IntPeers, Port) ->
-	PID = start(ExtPeers, IntPeers, Port),
-	ar_http_iface:reregister(http_bridge_node, PID),
+start_link(Args) ->
+	PID = erlang:apply(ar_bridge, start, Args),
 	{ok, PID}.
 
 %% Launch a bridge node.
@@ -82,21 +80,32 @@ ignore_id(PID, ID) ->
 reset_timer(PID, get_more_peers) ->
 	erlang:send_after(?GET_MORE_PEERS_TIME, PID, {get_more_peers, PID}).
 
+ignore_peer(PID, Peer) ->
+	PID ! {ignore_peer, Peer}.
 
 
 %%% INTERNAL FUNCTIONS
 
 %% Main server loop.
 server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
-	receive
+	try (receive
 		% TODO: Propagate external to external nodes.
+		{ignore_peer, Peer} ->
+			%timer:send_after(?IGNORE_PEERS_TIME, {unignore_peer, Peer}),
+			%server(S#state { ignored_peers = [Peer|S#state.ignored_peers] });
+			server(S);
+		{unignore_peer, Peer} ->
+			server(S#state { ignored_peers = lists:delete(Peer, S#state.ignored_peers) });
 		{ignore_id, ID} ->
 			server(S#state {processed = [ID|S#state.processed]});
 		{add_tx, TX} ->
 			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, OriginPeer, Block, RecallBlock} ->
 			% TODO: Call from HTTP iface
-			server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}));
+			case lists:member(OriginPeer, S#state.ignored_peers) of
+				true -> server(S);
+				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}))
+			end;
 		{add_peer, remote, Peer} ->
 			ar:d(adding_peer, Peer),
 			server(S#state { external_peers = [Peer|ExtPeers]});
@@ -123,6 +132,28 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 					PID ! {update_peers, remote, Peers},
 					reset_timer(PID, get_more_peers)
 				end
+			),
+			server(S)
+	end)
+	catch
+		throw:Term ->
+			ar:report(
+				[
+					{'EXCEPTION', {Term}}
+				]
+			),
+			server(S);
+		exit:Term ->
+			ar:report(
+				[
+					{'EXIT', Term}
+				]
+			);
+		error:Term ->
+			ar:report(
+				[
+					{'EXIT', {Term, erlang:get_stacktrace()}}
+				]
 			),
 			server(S)
 	end.

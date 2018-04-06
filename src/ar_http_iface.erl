@@ -139,7 +139,6 @@ handle('POST', [<<"block">>], Req) ->
 	end;
 
 % Add transaction specified in body.
-% TODO: Case statement made tidier
 handle('POST', [<<"tx">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	case json2:decode_string(binary_to_list(BlockJSON)) of
@@ -303,6 +302,9 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 		ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height)))
 	);
+% Get the top, current block.
+handle('GET', [<<"block">>, <<"current">>], _Req) ->
+	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));
 % Get the top, current block.
 handle('GET', [<<"current_block">>], _Req) ->
 	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));

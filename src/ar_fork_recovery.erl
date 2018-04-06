@@ -62,8 +62,6 @@ setminus(R1, []) -> R1;
 setminus(_, _) -> [].
 
 %% @doc Main server loop
-%% TODO: Runs into trouble when recovering from diverged genesis blocks
-%% Though, it shouldn't ever get into the situation where it needs to
 server(#state{peers = Peers, parent = Parent}, rejoin) ->
 	Parent ! {rejoin, Peers}.
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->

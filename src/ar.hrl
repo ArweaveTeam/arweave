@@ -37,7 +37,7 @@
 %% The number of blocks behind the most recent block to store.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 %% ENABLE ONLY WHILE TESTING
--define(DEBUG, false).
+%-define(DEBUG, false).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
@@ -54,6 +54,8 @@
 -define(REJOIN_TIMEOUT, 10000).
 %% Time between attempts to find(/optimise) peers.
 -define(GET_MORE_PEERS_TIME, 2 * 60 * 1000).
+%% Time to wait before not ignoring bad peers
+-define(IGNORE_PEERS_TIME, 5 * 60 * 1000).
 %% Number of transfers for which not to score (and potentially drop) new peers.
 -define(PEER_GRACE_PERIOD, 50).
 %% Never drop to lower than this number of peers.

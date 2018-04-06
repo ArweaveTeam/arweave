@@ -79,7 +79,7 @@ gen_test_wallet() ->
 			file:write(File, [ar_util:encode(Addr) ++ "," ++ integer_to_list(Qty) ++ "\n"]),
 			file:write(File2, [ar_util:encode(Priv) ++ "," ++ ar_util:encode(Pub) ++ "\n"])
 		end,
-		lists:seq(1,1000)
+		lists:seq(1,10)
 	),
 	file:close(File),
 	file:close(File2).
@@ -153,7 +153,7 @@ send_random_data_tx() ->
 
 %% @doc Create a random data TX with max length MaxTxLen
 create_random_data_tx(KeyList, MaxTxLen) ->
-	{Priv, Pub} = lists:nth(rand:uniform(1000), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
@@ -165,8 +165,8 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 
 %% @doc Create a random financial TX between two wallets of amount MaxAmount 
 create_random_fin_tx(KeyList, MaxAmount) ->
-	{Priv, Pub} = lists:nth(rand:uniform(1000), KeyList),
-	{_, Dest} = lists:nth(rand:uniform(1000), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),

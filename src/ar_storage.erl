@@ -115,7 +115,7 @@ write_tx(Tx) ->
 	),
 	Name.
 
-%% @doc Read a block from disk, given a hash.
+%% @doc Read a tx from disk, given a hash.
 read_tx(unavailable) -> unavailable;
 read_tx([]) ->
 [];
@@ -128,7 +128,7 @@ read_tx(ID) ->
 		[] -> unavailable;
 		[Filename] -> do_read_tx(Filename);
 		Filenames ->
-			% TODO: There should never be multiple versions of a block on disk.
+			% TODO: There should never be multiple versions of a tx on disk.
 			do_read_tx(hd(
 				lists:sort(
 					fun(Filename, Filename2) ->

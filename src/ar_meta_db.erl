@@ -18,7 +18,6 @@ start() ->
 	),
 	% Add a short wait to ensure that the table has been created
 	% before returning.
-	% TODO: Make this less gross.
 	receive after 250 -> ok end.
 
 %% @doc Put an Erlang term into the meta DB. Typically these are

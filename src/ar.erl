@@ -196,11 +196,13 @@ start(
 	end,
 	{ok, Supervisor} = start_link(
 		[
-			Peers,
-			if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
-			0,
-			MiningAddress,
-			AutoJoin
+			[
+				Peers,
+				if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
+				0,
+				MiningAddress,
+				AutoJoin
+			]
 		]
 	),
 	Node = whereis(http_entrypoint_node),
@@ -208,7 +210,7 @@ start(
 		Supervisor,
 		{
 			app_search,
-			{app_search, start_link, [[Node|Peers]]},
+			{app_search, start_link, [[[Node|Peers]]]},
 			permanent,
 			brutal_kill,
 			worker,
@@ -222,7 +224,7 @@ start(
 		Supervisor,
 		{
 			ar_bridge,
-			{ar_bridge, start_link, [Peers, [Node], Port]},
+			{ar_bridge, start_link, [[Peers, [Node], Port]]},
 			permanent,
 			brutal_kill,
 			worker,

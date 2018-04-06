@@ -10,7 +10,7 @@
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_txs/2, validate/4, validate/5, validate/6, find_recall_block/1]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
--export([start_link/0,start_link/1,start_link/2,start_link/3,start_link/4,start_link/5]).
+-export([start_link/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -42,18 +42,10 @@
 
 %%@doc Start a node, linking to a supervisor process
 %% TODO: Clean up to an apply function
-start_link() -> start_link([]).
-start_link(Peers) -> start_link(Peers, not_joined).
-start_link(Peers, Bs) -> start_link(Peers, Bs, 0).
-start_link(Peers, Bs, MiningDelay) ->
-	start_link(Peers, Bs, MiningDelay, unclaimed).
-start_link(Peers, HashList, MiningDelay, RewardAddr) ->
-	start_link(Peers, HashList, MiningDelay, RewardAddr, true).
-start_link(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin) when is_record(B, block) ->
-	lists:map(fun ar_storage:write_block/1, Bs),
-	start_link(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr, AutoJoin);
-start_link(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
-	PID = start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin),
+
+
+start_link(Args) ->
+	PID = erlang:apply(ar_node, start, Args),
 	{ok, PID}.
 %% @doc Start a node, optionally with a list of peers.
 start() -> start([]).
@@ -328,7 +320,7 @@ server(
 		hash_list = HashList,
 		wallet_list = WalletList
 	}) ->
-	receive
+	try (receive
 		Msg when is_record(Msg, gs_msg) ->
 			% We have received a gossip mesage. Use the library to process it.
 			case ar_gossip:recv(GS, Msg) of
@@ -431,13 +423,6 @@ server(
 				PID -> ar_mine:stop(PID)
 			end,
 			ok;
-		%% TESTING FUNCTIONALITY
-		truncate ->
-			% TODO: Forget all bar the last block.
-			server(S);
-		{forget, _BlockNum} ->
-			% TODO: Actually forget blocks.
-			server(S);
 		{set_loss_probability, Prob} ->
 			server(
 				S#state {
@@ -462,7 +447,20 @@ server(
 					mining_delay = Delay
 				}
 			);
-		{rejoin, _Peers} ->
+		{rejoin, Peers} ->
+			%untrust_node(Peers, S#state.trusted_peers),
+			UntrustedPeers = lists:filter(
+					fun(Peer) ->
+						not lists:member(Peer, S#state.trusted_peers)
+					end,
+					Peers
+				),
+			lists:foreach(
+				fun(Peer) ->
+					ar_bridge:ignore_peer(Peer)
+				end,
+				UntrustedPeers
+			),
 			spawn(
 				fun() ->
 					B = get_current_block(S#state.trusted_peers),
@@ -517,6 +515,28 @@ server(
 		Msg ->
 			ar:report_console([{unknown_msg, Msg}]),
 			server(S)
+	end)
+	catch 
+		throw:Term ->
+			ar:report(
+				[
+					{'EXCEPTION', {Term}}
+				]
+			),
+			server(S);
+		exit:Term ->
+			ar:report(
+				[
+					{'EXIT', Term}
+				]
+			);
+		error:Term ->
+			ar:report(
+				[
+					{'EXIT', {Term, erlang:get_stacktrace()}}
+				]
+			),
+			server(S)
 	end.
 
 %%% Abstracted server functionality
@@ -526,18 +546,11 @@ join_weave(S, NewB) ->
 	ar_join:start(ar_gossip:peers(S#state.gossip), NewB),
 	server(S).
 
-%% @doc Get remote peers from bridge, return the empty set if bridge does not exist
-get_remote_peers() ->
-	case whereis(http_bridge_node) of
-		undefined -> [];
-		Bridge -> ar_bridge:get_remote_peers(Bridge)
-	end.
-
 %% @doc Recovery from a fork.
 fork_recover(
 	S = #state {
 		hash_list = HashList,
-		gossip = GS
+		gossip = _GS
 	}, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
@@ -951,9 +964,7 @@ calculate_reward(Height, TXs) ->
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
 calculate_static_reward(Height) ->
-	% TODO: Implement sensible reward calculation algorithm.
 	(0.2 * ?GENESIS_TOKENS * math:pow(2,-Height/105120) * math:log(2))/105120.
-	%(0.1 * ?GENESIS_TOKENS * 2 - (Height/105120) * math:log(2))/105120.
 
 %% @doc Given a TX, calculate an appropriate reward.
 calculate_tx_reward(#tx { reward = Reward }) ->
