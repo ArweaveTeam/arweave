@@ -80,6 +80,7 @@ ignore_id(PID, ID) ->
 reset_timer(PID, get_more_peers) ->
 	erlang:send_after(?GET_MORE_PEERS_TIME, PID, {get_more_peers, PID}).
 
+ignore_peer(_PID, []) -> ok;
 ignore_peer(PID, Peer) ->
 	PID ! {ignore_peer, Peer}.
 
@@ -91,9 +92,8 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 	try (receive
 		% TODO: Propagate external to external nodes.
 		{ignore_peer, Peer} ->
-			%timer:send_after(?IGNORE_PEERS_TIME, {unignore_peer, Peer}),
-			%server(S#state { ignored_peers = [Peer|S#state.ignored_peers] });
-			server(S);
+			timer:send_after(?IGNORE_PEERS_TIME, {unignore_peer, Peer}),
+			server(S#state { ignored_peers = [Peer|S#state.ignored_peers] });
 		{unignore_peer, Peer} ->
 			server(S#state { ignored_peers = lists:delete(Peer, S#state.ignored_peers) });
 		{ignore_id, ID} ->
@@ -107,7 +107,6 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}))
 			end;
 		{add_peer, remote, Peer} ->
-			ar:d(adding_peer, Peer),
 			server(S#state { external_peers = [Peer|ExtPeers]});
 		{add_peer, local, Peer} ->
 			server(S#state { gossip = ar_gossip:add_peers(GS0, Peer)});
@@ -115,7 +114,6 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			Peer ! {remote_peers, S#state.external_peers},
 			server(S);
 		{update_peers, remote, Peers} ->
-			ar:d({updating_peers, Peers}),
 			server(S#state {external_peers = Peers});
 		Msg when is_record(Msg, gs_msg) ->
 			case ar_gossip:recv(GS0, Msg) of

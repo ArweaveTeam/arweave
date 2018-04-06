@@ -94,15 +94,17 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
 	case TX of
 		unavailable ->
-			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+			case lists:member(
+					ar_util:decode(Hash),
+					ar_node:get_pending_txs(whereis(http_entrypoint_node))
+				) of
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
 					{ok, File} = file:read_file("data/not_found.html"),
 					{404, [], File}
 			end;
-		T ->
-				{200, [], T#tx.data}
+		T -> {200, [], T#tx.data}
 	end;
 % Add block specified in HTTP body.
 handle('POST', [<<"block">>], Req) ->
@@ -184,6 +186,7 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	};
 % TODO: Return remaining timeout on a failed request
 % TODO: Optionally, allow adding self on a non-default port
+% TODO: Nicer way of segregating different networks
 handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	case json2:decode_string(binary_to_list(BlockJSON)) of
@@ -214,7 +217,10 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 				true ->
 					Peer = elli_request:peer(Req),
 					Port = list_to_integer(binary_to_list(RawPort)),
-					ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer({Peer, Port})),
+					ar_bridge:add_remote_peer(
+						whereis(http_bridge_node),
+						ar_util:parse_peer({Peer, Port})
+						),
 					{200, [], []}
 			end;
 		_ -> {400, [], "Wrong network"}

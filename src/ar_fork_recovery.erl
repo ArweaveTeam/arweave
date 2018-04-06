@@ -30,23 +30,23 @@ start(Peers, TargetB, HashList) ->
 		]
 	),
 	PID =
-	spawn(
-		fun() ->
-			server(
-				#state {
-					parent = Parent,
-					peers = Peers,
-					block_list = HashList,
-					hash_list =
-						drop_until_diverge(
-							lists:reverse(TargetB#block.hash_list),
-							lists:reverse(HashList)
-						) ++ [TargetB#block.indep_hash],
-					target_block = TargetB
-				}
-			)
-		end
-	),
+		spawn(
+			fun() ->
+				server(
+					#state {
+						parent = Parent,
+						peers = Peers,
+						block_list = HashList,
+						hash_list =
+							drop_until_diverge(
+								lists:reverse(TargetB#block.hash_list),
+								lists:reverse(HashList)
+							) ++ [TargetB#block.indep_hash],
+						target_block = TargetB
+					}
+				)
+			end
+		),
 	PID ! {apply_next_block},
 	PID.
 
@@ -69,10 +69,11 @@ server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
 	receive
 	{update_target_block, Block, Peer} ->
-		HashListExtra = setminus(
-			lists:reverse([Block#block.indep_hash|Block#block.hash_list]),
-			[NextH|HashList] ++ lists:reverse(BlockList)
-		),
+		HashListExtra = 
+			setminus(
+				lists:reverse([Block#block.indep_hash|Block#block.hash_list]),
+				[NextH|HashList] ++ lists:reverse(BlockList)
+			),
 		case HashListExtra of
 		[] -> server(S);
 		H ->
