@@ -199,7 +199,7 @@ handle('GET', [<<"hash_list">>], _Req) ->
 handle('GET', [<<"wallet_list">>], _Req) ->
     Node = whereis(http_entrypoint_node),
     WalletList = ar_node:get_wallet_list(Node),
-    ar:d(list_to_binary(ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)))),
+    %ar:d(list_to_binary(ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)))),
     {200, [], 
         list_to_binary(
             ar_serialize:jsonify(
@@ -364,6 +364,31 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 			{struct, TXJSON} = ar_serialize:tx_to_json_struct(T),
 			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, TXJSON),
 			{200, [], Res}
+	end;
+
+handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
+	Block = ar_storage:read_block(ar_util:decode(Hash)),
+	case Block of
+		unavailable ->
+				{404, [], <<"Not Found.">>};
+		B ->
+			{struct, BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+			Result = block_field_to_string(Field, Res),
+			{200, [], Result}
+	end;
+
+handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
+	Block = ar_node:get_block(whereis(http_entrypoint_node),
+			list_to_integer(binary_to_list(Height))),
+	case Block of
+		unavailable ->
+				{404, [], <<"Not Found.">>};
+		B ->
+			{struct, BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+			Result = block_field_to_string(Field, Res),
+			{200, [], Result}
 	end;
 
 % Add reports of service locations
@@ -755,6 +780,19 @@ calculate_delay(Bytes) -> (Bytes * 40) div 1000.
 % 	ar:d({peers, ar_bridge:get_remote_peers(Bridge)}),
 % 	true = lists:member({127,0,0,1,1984}, ar_bridge:get_remote_peers(Bridge)).
 
+block_field_to_string(<<"nonce">>, Res) -> Res;
+block_field_to_string(<<"previous_block">>, Res) -> Res;
+block_field_to_string(<<"timestamp">>, Res) -> integer_to_list(Res);
+block_field_to_string(<<"last_retarget">>, Res) -> integer_to_list(Res);
+block_field_to_string(<<"diff">>, Res) -> integer_to_list(Res);
+block_field_to_string(<<"height">>, Res) -> integer_to_list(Res);
+block_field_to_string(<<"hash">>, Res) -> Res;
+block_field_to_string(<<"indep_hash">>, Res) -> Res;
+block_field_to_string(<<"txs">>, {array, Res}) -> list_to_binary(ar_serialize:jsonify({array, Res}));
+block_field_to_string(<<"hash_list">>, {array, Res}) -> list_to_binary(ar_serialize:jsonify({array, Res}));
+block_field_to_string(<<"wallet_list">>, {array, Res}) -> list_to_binary(ar_serialize:jsonify({array, Res}));
+block_field_to_string(<<"reward_addr">>, Res) -> Res.
+
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	ar_storage:clear(),
@@ -868,8 +906,6 @@ get_full_block_by_hash_test() ->
 	[B1|_] = ar_node:get_blocks(Node),
 	B2 = get_block({127, 0, 0, 1}, B1),
 	B3 = get_full_block({127, 0, 0, 1}, B1),
-	ar:d(B2),
-	ar:d(B3),
 	B3 = B2#block {txs = [TX, TX1]}.
 
 %% @doc Ensure that blocks can be received via a height.
