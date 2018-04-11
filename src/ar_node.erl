@@ -1,6 +1,6 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
+-export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
@@ -228,6 +228,20 @@ get_peers(Proc) when is_pid(Proc) ->
 get_peers(Host) ->
 	ar_http_iface:get_peers(Host).
 
+%% @doc Get the list of wallets from the node
+get_wallet_list(Node) ->
+    Node ! {get_walletlist, self()},
+    receive
+		{walletlist, WalletList} -> WalletList
+	end.
+
+%% @doc Get the hash list from the node
+get_hash_list(Node) -> 
+    Node ! {get_hashlist, self()},
+    receive
+		{hashlist, HashList} -> HashList
+	end.
+
 %% @doc Return the current balance associated with a wallet.
 get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_balance, self(), Addr},
@@ -389,6 +403,12 @@ server(
 		{get_trusted_peers, PID} ->
 			PID ! {peers, S#state.trusted_peers},
 			server(S);
+        {get_walletlist, PID} ->
+            PID ! {walletlist, S#state.wallet_list},
+            server(S);
+        {get_hashlist, PID} ->
+            PID ! {hashlist, S#state.hash_list},
+            server(S);
 		{get_balance, PID, WalletID} ->
 			PID ! {balance, WalletID,
 				case lists:keyfind(WalletID, 1, WalletList) of
@@ -998,7 +1018,7 @@ start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
 			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-			FullBlock = ar_node:get_full_block(Peers, RecallHash),
+            FullBlock = ar_node:get_full_block(Peers, RecallHash),
 			Block = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
 			ar_storage:write_tx(FullBlock#block.txs),
 			ar_storage:write_block(Block),

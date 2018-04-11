@@ -184,6 +184,30 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 			)
 		)
 	};
+% Get hashlist.
+handle('GET', [<<"hash_list">>], _Req) ->
+	Node = whereis(http_entrypoint_node),
+    HashList = ar_node:get_hash_list(Node),
+    {200, [], 
+        list_to_binary(
+            ar_serialize:jsonify(
+                ar_serialize:hash_list_to_json_struct(HashList)
+            )
+        )
+    };
+% Get walletlist.
+handle('GET', [<<"wallet_list">>], _Req) ->
+    Node = whereis(http_entrypoint_node),
+    WalletList = ar_node:get_wallet_list(Node),
+    ar:d(list_to_binary(ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)))),
+    {200, [], 
+        list_to_binary(
+            ar_serialize:jsonify(
+                ar_serialize:wallet_list_to_json_struct(WalletList)
+            )
+        )
+    };
+
 % TODO: Return remaining timeout on a failed request
 % TODO: Optionally, allow adding self on a non-default port
 % TODO: Nicer way of segregating different networks

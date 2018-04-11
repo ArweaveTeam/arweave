@@ -1,5 +1,6 @@
 -module(ar_serialize).
 -export([full_block_to_json_struct/1, block_to_json_struct/1, json_struct_to_block/1, json_struct_to_full_block/1, tx_to_json_struct/1, json_struct_to_tx/1]).
+-export([wallet_list_to_json_struct/1, hash_list_to_json_struct/1, json_struct_to_hash_list/1, json_struct_to_wallet_list/1]).
 -export([jsonify/1, dejsonify/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -248,6 +249,59 @@ json_struct_to_tx({struct, TXStruct}) ->
 		signature = ar_util:decode(find_value("signature", TXStruct))
 	}.
 
+%% @doc Translate a wallet list into JSON.
+wallet_list_to_json_struct([]) -> [];
+wallet_list_to_json_struct([Wallet|WalletList]) ->
+    EncWallet = wallet_to_json_struct(Wallet),
+    [EncWallet | wallet_list_to_json_struct(WalletList)].
+wallet_to_json_struct({Address, Balance, Last}) ->
+    {struct,
+        [
+            {address, ar_util:encode(Address)},
+            {balance, integer_to_list(Balance)},
+            {last_tx, ar_util:encode(Last)}
+        ]
+    }.
+
+%% @doc Translate parsed JSON from fields into a valid wallet list.
+json_struct_to_wallet_list(JSONList) when is_list(JSONList) ->
+	case dejsonify(JSONList) of
+        {ok, []} -> [];
+        {ok, WalletsStruct} -> json_struct_to_wallet_list(WalletsStruct);
+		{_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
+	end;
+json_struct_to_wallet_list({array, WalletsStruct}) ->
+    lists:foldr(
+        fun(X, Acc) -> [json_struct_to_wallet(X) | Acc] end,
+        [],
+        WalletsStruct
+    ).
+json_struct_to_wallet({struct, Wallet}) ->
+    Address = ar_util:decode(find_value("address", Wallet)),
+    Balance = list_to_integer(find_value("balance", Wallet)),
+    Last = ar_util:decode(find_value("last_tx", Wallet)),
+    {Address, Balance, Last}.
+
+%% @doc Translate a hash list into JSON.
+hash_list_to_json_struct([]) -> [];
+hash_list_to_json_struct([Hash|HashList]) ->
+    EncHash = ar_util:encode(binary_to_list(Hash)),
+    [EncHash | hash_list_to_json_struct(HashList)].
+
+%% @doc Translate parsed JSON from fields into a valid hash list.
+json_struct_to_hash_list(JSONList) when is_list(JSONList) ->
+    case dejsonify(JSONList) of
+        {ok, []} -> [];
+        {ok, HashesStruct} -> json_struct_to_hash_list(HashesStruct);
+        {_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
+    end; 
+json_struct_to_hash_list({array, HashesStruct}) ->
+    lists:foldr(
+        fun(X, Acc) -> [ar_util:decode(X)|Acc] end,
+        [],
+        HashesStruct
+    ).    
+
 %% @doc Find the value associated with a key in a JSON structure list.
 find_value(Key, List) ->
 	case lists:keyfind(Key, 1, List) of
@@ -268,3 +322,15 @@ tx_roundtrip_test() ->
 	JsonTX = jsonify(tx_to_json_struct(TX)),
 	TX1 = json_struct_to_tx(JsonTX),
 	TX = TX1.
+
+walletlist_roundtrip_test() ->
+    _Node = ar_node:start([], [B] = ar_weave:init()),
+    WL = B#block.wallet_list,
+    JsonWL = jsonify(wallet_list_to_json_struct(WL)),
+    WL = json_struct_to_wallet_list(JsonWL).
+
+hashlist_roundtrip_test() ->
+    _Node = ar_node:start([], [B] = ar_weave:init()),
+    HL = B#block.hash_list,
+    JsonHL = jsonify(hash_list_to_json_struct(HL)),
+    HL = json_struct_to_hash_list(JsonHL).
