@@ -596,30 +596,47 @@ process_new_block(S, NewGS, NewB, _, _Peer, not_joined) ->
 process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 		when NewB#block.height == RawS1#state.height + 1 ->
 		% This block is at the correct height.
-	S = RawS1#state { gossip = NewGS },
-	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-	TXs = ar_node:get_tx(Peers, NewB#block.txs),
-	WalletList =
-		apply_mining_reward(
-			apply_txs(S#state.wallet_list, TXs),
-			NewB#block.reward_addr,
-			TXs,
-			NewB#block.height
-		),
-	NewS = S#state { wallet_list = WalletList },
-	case validate(NewS, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
-		true ->
-			% The block is legit. Accept it.
-			case whereis(fork_recovery_server) of
-				undefined -> integrate_new_block(NewS, NewB);
-				_ -> fork_recover(S#state { gossip = NewGS }, Peer, NewB)
-			end;
-		false ->
-			ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
-			server(S)
-			%fork_recover(S, Peer, NewB)
+	case RecallB of
+		unavailable ->
+			RecallHash = find_recall_hash(NewB, HashList),
+            FullBlock = ar_node:get_full_block(
+				ar_bridge:get_remote_peers(whereis(http_bridge_node)), 
+				RecallHash
+			),
+			RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+			ar_storage:write_tx(FullBlock#block.txs),
+			ar_storage:write_block(RecallFull),		
+			S = RawS1#state { gossip = NewGS },
+			case S#state.miner of
+				undefined -> do_nothing;
+				PID -> ar_mine:stop(PID)
+			end,
+			server(S);
+		_ ->
+			S = RawS1#state { gossip = NewGS },
+			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+			TXs = ar_node:get_tx(Peers, NewB#block.txs),
+			WalletList =
+				apply_mining_reward(
+					apply_txs(S#state.wallet_list, TXs),
+					NewB#block.reward_addr,
+					TXs,
+					NewB#block.height
+				),
+			NewS = S#state { wallet_list = WalletList },
+			case validate(NewS, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
+				true ->
+					% The block is legit. Accept it.
+					case whereis(fork_recovery_server) of
+						undefined -> integrate_new_block(NewS, NewB);
+						_ -> fork_recover(S#state { gossip = NewGS }, Peer, NewB)
+					end;
+				false ->
+					ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
+					server(S)
+					%fork_recover(S, Peer, NewB)
+			end
 	end;
-
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< S#state.height ->
 	% Block is lower than us, ignore it.
@@ -816,6 +833,15 @@ validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB) -
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB) ->
 	validate(HL, undefined, NewB, TXs, OldB, RecallB);
 validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB) ->
+	ar:d({val_hashlist, _NewB#block.hash_list}),
+	ar:d({val_wallet_list, _NewB#block.wallet_list}),
+	ar:d({val_nonce, _NewB#block.nonce}),	
+	ar:d({val_hash, _OldB#block.hash}),
+	ar:d({val_diff, _OldB#block.diff}),
+	ar:d({hashlist, _HL}),
+	ar:d({wallet_list, _WL}),
+	ar:d({txs, _TXs}),	
+	ar:d({recall, _RecallB}),
 	ar:d(block_not_accepted),
 	false.
 
@@ -1017,11 +1043,13 @@ start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
 		unavailable -> 
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-            FullBlock = ar_node:get_full_block(Peers, RecallHash),
-			Block = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+            FullBlock = ar_node:get_full_block(
+				ar_bridge:get_remote_peers(whereis(http_bridge_node)), 
+				RecallHash
+			),
+			RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
 			ar_storage:write_tx(FullBlock#block.txs),
-			ar_storage:write_block(Block),
+			ar_storage:write_block(RecallFull),
 			S;
 		RecallB ->
 			if not is_record(RecallB, block) ->

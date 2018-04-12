@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, add_peer/1]).
+-export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, get_block_subfield/3, add_peer/1]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
@@ -113,8 +113,21 @@ handle('POST', [<<"block">>], Req) ->
 	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
 	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
 	{"port", Port} = lists:keyfind("port", 1, Struct),
-	B = ar_serialize:json_struct_to_block(JSONB),
-	RecallB = ar_serialize:json_struct_to_block(JSONRecallB),
+	BShadow = ar_serialize:json_struct_to_block(JSONB),
+	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	B = BShadow#block { 
+		wallet_list = ar_node:apply_txs(
+			CurrentBlock#block.wallet_list, 
+			ar_storage:read_tx(BShadow#block.txs)
+		),
+		hash_list = 
+			[
+				CurrentBlock#block.indep_hash
+				|
+				CurrentBlock#block.hash_list
+			]
+		},
+	RecallB = ar_storage:read_block(ar_util:decode(JSONRecallB)),
 	OrigPeer =
 		ar_util:parse_peer(
 			bitstring_to_list(elli_request:peer(Req))
@@ -496,6 +509,9 @@ send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
+	
+	NewBShadow = NewB#block { wallet_list= [], hash_list = []},
+	RecallBHash = RecallB#block.indep_hash,
 	ar_httpc:request(
 		post,
 		{
@@ -507,9 +523,9 @@ send_new_block(Host, Port, NewB, RecallB) ->
 					{struct,
 						[
 							{new_block,
-								ar_serialize:block_to_json_struct(NewB)},
+								ar_serialize:block_to_json_struct(NewBShadow)},
 							{recall_block,
-								ar_serialize:block_to_json_struct(RecallB)},
+								ar_util:encode(RecallBHash)},
 							{port, Port}
 						]
 					}
@@ -605,6 +621,45 @@ get_block(Host, Hash) when is_binary(Hash) ->
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
 	).
+
+get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host,[] Host}, {hash, Hash}]),
+	handle_block_field_response(
+		ar_httpc:request(
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/block/hash/"
+					++ ar_util:encode(Hash)
+					++ "/"
+					++ Subfield,
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+	 	)
+	);
+
+get_block_subfield(Host, Height, Subfield) when is_integer(Height) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+	handle_block_field_response(
+		ar_httpc:request(
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/block/height/"
+					++ integer_to_list(Height)
+					++ "/"
+					++ Subfield,
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+	 	)
+	).
+
 %% @doc Retreive a full block by hash from a node.
 get_full_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
@@ -704,19 +759,38 @@ handle_block_response({error, _}) -> unavailable;
 handle_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
 handle_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
 
+%% @doc todo
 handle_full_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_serialize:json_struct_to_full_block(Body);
 handle_full_block_response({error, _}) -> unavailable;
 handle_full_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
 handle_full_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
 
+%% @doc Process the response of a /block/[{Height}|{Hash}]/{Subfield} call.
+handle_block_field_response({"timestamp", {ok, {{_, 200, _}, _, Body}}}) ->
+	list_to_integer(Body);
+handle_block_field_response({"last_retarget", {ok, {{_, 200, _}, _, Body}}}) ->
+	list_to_integer(Body);
+handle_block_field_response({"diff", {ok, {{_, 200, _}, _, Body}}}) ->
+	list_to_integer(Body);
+handle_block_field_response({"height", {ok, {{_, 200, _}, _, Body}}}) ->
+	list_to_integer(Body);
+handle_block_field_response({"txs", {ok, {{_, 200, _}, _, Body}}}) ->
+	ar_serialize:json_struct_to_tx(Body);
+handle_block_field_response({"hash_list", {ok, {{_, 200, _}, _, Body}}}) ->
+	ar_serialize:json_struct_to_hash_list(Body);
+handle_block_field_response({"wallet_list", {ok, {{_, 200, _}, _, Body}}}) ->
+	ar_serialize:json_struct_to_wallet_list(Body);
+handle_block_field_response({_Subfield, {ok, {{_, 200, _}, _, Body}}}) -> Body;
+handle_block_field_response({error, _}) -> unavailable;
+handle_block_field_response({ok, {{_, 404, _}, _, _}}) -> not_found;
+handle_block_field_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+
 %% @doc Process the response of a /tx call.
 handle_tx_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_serialize:json_struct_to_tx(Body);
-handle_tx_response({ok, {{_, 404, _}, _, _}}) ->
-	not_found;
-handle_tx_response({ok, {{_, 500, _}, _, _}}) ->
-	not_found.
+handle_tx_response({ok, {{_, 404, _}, _, _}}) -> not_found;
+handle_tx_response({ok, {{_, 500, _}, _, _}}) -> not_found.
 
 %% @doc Helper function : registers a new node as the entrypoint.
 reregister(Node) ->
@@ -992,6 +1066,7 @@ add_external_block_test() ->
 	ar_node:mine(Node2),
 	receive after 1000 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node2),
+	reregister(Node1),
 	send_new_block({127, 0, 0, 1}, ?DEFAULT_HTTP_IFACE_PORT, ar_storage:read_block(B1), B0),
 	receive after 500 -> ok end,
 	[B1, XB0] = ar_node:get_blocks(Node1),
