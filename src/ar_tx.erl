@@ -58,10 +58,14 @@ sign(TX, PrivKey, PubKey) ->
 -ifdef(DEBUG).
 verify(#tx { signature = <<>> }, _) -> true;
 verify(TX, Diff) ->
-	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and ar:d(tx_cost_above_min(TX, Diff)).
+	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and
+	ar:d(tx_cost_above_min(TX, Diff)) and
+	ar:d(tx_field_size_limit(TX)).
 -else.
 verify(TX, Diff) ->
-	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and ar:d(tx_cost_above_min(TX, Diff)).
+	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and
+	ar:d(tx_cost_above_min(TX, Diff)) and
+	ar:d(tx_field_size_limit(TX)).
 -endif.
 
 %% @doc Ensure that all TXs in a list verify correctly.
@@ -72,11 +76,22 @@ verify_txs(TXs, Diff) ->
 
 %% @doc Transaction cost above proscribed minimum.
 tx_cost_above_min(TX, Diff) ->
-	TX#tx.reward >= calculate_min_tx_cost(byte_size(to_binary(TX)), Diff).
+	TX#tx.reward >= calculate_min_tx_cost(byte_size(TX#tx.data), Diff).
 
+%Calculate the minimum transaction cost for a TX with data size Size
+%the constant 3208 is the max byte size of each of the other fields
 calculate_min_tx_cost(Size, Diff) ->
-	(Size * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff.
+	((Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff.
 
+tx_field_size_limit(TX) ->
+	(byte_size(TX#tx.id) =< 32) and
+	(byte_size(TX#tx.last_tx) =< 32) and
+	(byte_size(TX#tx.owner) =< 512) and
+	(byte_size(list_to_binary(TX#tx.tags)) =< 2048) and
+	(byte_size(TX#tx.target) =< 32) and
+	(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
+	(byte_size(TX#tx.signature) =< 512) and
+	(byte_size(integer_to_binary(TX#tx.reward)) =< 21).
 
 
 %%% TESTS %%%
