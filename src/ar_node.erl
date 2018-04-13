@@ -611,7 +611,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 				undefined -> do_nothing;
 				PID -> ar_mine:stop(PID)
 			end,
-			server(S);
+			server(S#state {miner = undefined} );
 		_ ->
 			S = RawS1#state { gossip = NewGS },
 			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
