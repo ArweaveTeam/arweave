@@ -915,15 +915,6 @@ apply_tx(WalletList, unavailable) ->
 apply_tx(WalletList, TX) ->
 	filter_empty_wallets(do_apply_tx(WalletList, TX)).
 
-do_apply_tx(WalletList, #tx { id = ID, owner = Pub, last_tx = Last, reward = Reward }) ->
-	Addr = ar_wallet:to_address(Pub),
-	case lists:keyfind(Addr, 1, WalletList) of
-		{Addr, Balance, Last} ->
-			lists:keyreplace(Addr, 1, WalletList, {Addr, Balance - Reward, ID});
-		_ ->
-			ar:report([{ignoring_tx, ID}, matching_wallet_not_found]),
-			WalletList
-	end;
 do_apply_tx(
 		WalletList,
 		#tx {
