@@ -19,17 +19,17 @@
 }).
 
 %% @doc Start the 'catch up' server.
-start(Peers, TargetB, HashList) ->
+start(Peers, TargetBShadow, HashList) ->
 	Parent = self(),
 	ar:report(
 		[
 			{started_fork_recovery_proc, Parent},
-			{block, ar_util:encode(TargetB#block.indep_hash)},
-			{target_height, TargetB#block.height},
+			{block, ar_util:encode(TargetBShadow#block.indep_hash)},
+			{target_height, TargetBShadow#block.height},
 			{peer, Peers}
 		]
 	),
-	TargetBlockComplete = ar_http_iface:get_block(TargetB#block.indep_hash),
+	TargetB = ar_node:get_block(Peers, TargetBShadow#block.indep_hash),
 	PID =
 		spawn(
 			fun() ->
@@ -43,7 +43,7 @@ start(Peers, TargetB, HashList) ->
 								lists:reverse(TargetB#block.hash_list),
 								lists:reverse(HashList)
 							) ++ [TargetB#block.indep_hash],
-						target_block = TargetBlockComplete
+						target_block = TargetB
 					}
 				)
 			end
