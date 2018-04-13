@@ -29,6 +29,7 @@ start(Peers, TargetB, HashList) ->
 			{peer, Peers}
 		]
 	),
+	TargetBlockComplete = ar_http_iface:get_block(TargetB#block.indep_hash),
 	PID =
 		spawn(
 			fun() ->
@@ -42,7 +43,7 @@ start(Peers, TargetB, HashList) ->
 								lists:reverse(TargetB#block.hash_list),
 								lists:reverse(HashList)
 							) ++ [TargetB#block.indep_hash],
-						target_block = TargetB
+						target_block = TargetBlockComplete
 					}
 				)
 			end

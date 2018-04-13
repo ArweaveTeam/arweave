@@ -787,7 +787,7 @@ add_tx_to_server(S, NewGS, TX) ->
         1, 
         memsup:get_system_memory_data()
     ),
-    case byte_size(ar_tx:to_binary(TX)) > (Mem div 4) of
+    case (Mem div 4) > byte_size(ar_tx:to_binary(TX))  of
         true -> 
             NewTXs = S#state.txs ++ [TX],
 	        ar:d({added_tx, TX#tx.id}),
