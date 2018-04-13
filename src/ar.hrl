@@ -94,7 +94,8 @@
 	txs = [], % A list of transaction records associated with this block.
 	hash_list = undefined, % A list of every indep hash to this point, or undefined.
 	wallet_list = [], % A map of wallet blanaces, or undefined.
-	reward_addr = unclaimed
+    reward_addr = unclaimed,
+    tags = []
 }).
 
 %% A transaction, as stored in a block.

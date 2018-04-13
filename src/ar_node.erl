@@ -660,7 +660,9 @@ integrate_new_block(
 	NewTXs =
 		lists:filter(
 			fun(T) ->
-				not ar_weave:is_tx_on_block_list([NewB], T#tx.id)
+                (not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
+                and 
+                (ar_tx:verify(T, NewB#block.diff))
 			end,
 			TXs
 		),
@@ -779,21 +781,32 @@ integrate_block_from_miner(
 
 %% @doc Update miner and amend server state when encountering a new transaction.
 add_tx_to_server(S, NewGS, TX) ->
-	NewTXs = S#state.txs ++ [TX],
-	ar:d({added_tx, TX#tx.id}),
-	case S#state.miner of
-		undefined -> do_nothing;
-		PID ->
-			ar_mine:change_data(
-				PID,
-				generate_data_segment(
-					NewTXs,
-					find_recall_block(S#state.hash_list)
-				),
-				NewTXs
-			)
-	end,
-	server(S#state { txs = NewTXs, gossip = NewGS }).
+    memsup:start_link(),
+    {_, Mem} = lists:keyfind(
+        system_total_memory, 
+        1, 
+        memsup:get_system_memory_data()
+    ),
+    case byte_size(ar_tx:to_binary(TX)) > (Mem div 4) of
+        true -> 
+            NewTXs = S#state.txs ++ [TX],
+	        ar:d({added_tx, TX#tx.id}),
+	        case S#state.miner of
+		        undefined -> do_nothing;
+		        PID ->
+			        ar_mine:change_data(
+				        PID,
+				        generate_data_segment(
+					        NewTXs,
+					        find_recall_block(S#state.hash_list)
+				        ),
+				        NewTXs
+			        )
+	        end,
+	        server(S#state { txs = NewTXs, gossip = NewGS });
+        false ->
+            server(S#state { gossip = NewGS })
+    end.
 
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
@@ -810,7 +823,7 @@ validate(
 		TXs,
 		OldB = #block { hash = Hash, diff = Diff },
 		RecallB) ->
-	%ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
+    % ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
 	Mine = ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce),
 	Wallet = validate_wallet_list(WalletList),
 	Indep = ar_weave:verify_indep(RecallB, HashList),
@@ -1014,8 +1027,8 @@ calculate_tx_reward(#tx { reward = Reward }) ->
 
 %% @doc Find the block height at which the weaves diverged.
 divergence_height([], []) -> -1;
-divergence_height([], _) -> -1;
-divergence_height(_, []) -> -1;
+divergence_height([], _)  -> -1;
+divergence_height(_, [])  -> -1;
 divergence_height([Hash|HL1], [Hash|HL2]) ->
 	1 + divergence_height(HL1, HL2);
 divergence_height([_Hash1|_HL1], [_Hash2|_HL2]) ->
