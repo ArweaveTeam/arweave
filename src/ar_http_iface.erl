@@ -125,8 +125,6 @@ handle('POST', [<<"block">>], Req) ->
 			B = ar_http_iface:get_block(OrigPeer, BShadow#block.indep_hash),
 			RecallB = unavailable;
 		CurrentBlock ->
-			ar:d({cur_block, ?IS_BLOCK(CurrentBlock)}),
-			ar:d({sha_block, ?IS_BLOCK(BShadow)}),
 			B = BShadow#block {
 				wallet_list = ar_node:apply_txs(
 					CurrentBlock#block.wallet_list,
