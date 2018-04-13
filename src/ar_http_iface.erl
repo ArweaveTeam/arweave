@@ -125,12 +125,12 @@ handle('POST', [<<"block">>], Req) ->
 			B = ar_http_iface:get_block(OrigPeer, BShadow#block.indep_hash),
 			RecallB = unavailable;
 		CurrentBlock ->
-			B = BShadow#block { 
+			B = BShadow#block {
 				wallet_list = ar_node:apply_txs(
-					CurrentBlock#block.wallet_list, 
+					CurrentBlock#block.wallet_list,
 					ar_storage:read_tx(BShadow#block.txs)
 				),
-				hash_list = 
+				hash_list =
 					[
 						CurrentBlock#block.indep_hash
 						|
@@ -516,7 +516,11 @@ send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
 	
 	NewBShadow = NewB#block { wallet_list= [], hash_list = []},
-	RecallBHash = RecallB#block.indep_hash,
+	RecallBHash = 
+		case ?IS_BLOCK(RecallB) of
+			true ->  RecallB#block.indep_hash;
+			false -> unavailable
+		end,
 	ar_httpc:request(
 		post,
 		{

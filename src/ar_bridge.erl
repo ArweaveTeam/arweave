@@ -220,6 +220,7 @@ add_processed(X, Y, Procd) ->
 	Procd.
 
 %% Find the ID of a 'data', from type.
+get_id(_, unavailable) -> unavailable;
 get_id(tx, #tx { id = ID}) -> ID;
 get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
 get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
