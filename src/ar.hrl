@@ -37,7 +37,7 @@
 %% The number of blocks behind the most recent block to store.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 %% ENABLE ONLY WHILE TESTING
-%-define(DEBUG, false).
+-define(DEBUG, false).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
@@ -94,7 +94,8 @@
 	txs = [], % A list of transaction records associated with this block.
 	hash_list = undefined, % A list of every indep hash to this point, or undefined.
 	wallet_list = [], % A map of wallet blanaces, or undefined.
-	reward_addr = unclaimed
+    reward_addr = unclaimed,
+    tags = []
 }).
 
 %% A transaction, as stored in a block.

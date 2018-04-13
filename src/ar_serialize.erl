@@ -30,7 +30,8 @@ block_to_json_struct(
 		txs = TXs,
 		hash_list = HashList,
 		wallet_list = WalletList,
-		reward_addr = RewardAddr
+        reward_addr = RewardAddr,
+        tags = Tags
 	}) ->
 	{struct,
 		[
@@ -66,9 +67,11 @@ block_to_json_struct(
 				if RewardAddr == unclaimed -> "unclaimed";
 				true -> ar_util:encode(RewardAddr)
 				end
-			}
+            },
+            {tags, {array, Tags}}
 		]
 	}.
+
 %% @doc Translate a full block into JSON struct.
 full_block_to_json_struct(
 	#block {
@@ -83,7 +86,8 @@ full_block_to_json_struct(
 		txs = TXs,
 		hash_list = HashList,
 		wallet_list = WalletList,
-		reward_addr = RewardAddr
+        reward_addr = RewardAddr,
+        tags = Tags
 	}) ->
 	{struct,
 		[
@@ -119,7 +123,8 @@ full_block_to_json_struct(
 				if RewardAddr == unclaimed -> "unclaimed";
 				true -> ar_util:encode(RewardAddr)
 				end
-			}
+            },
+            {tags, {array, Tags}}
 		]
 	}.
 
@@ -133,7 +138,8 @@ json_struct_to_block(JSONList) when is_list(JSONList) ->
 json_struct_to_block({struct, BlockStruct}) ->
 	{array, TXs} = find_value("txs", BlockStruct),
 	{array, WalletList} = find_value("wallet_list", BlockStruct),
-	{array, HashList} = find_value("hash_list", BlockStruct),
+    {array, HashList} = find_value("hash_list", BlockStruct),
+    {array, Tags} = find_value("tags", BlockStruct),
 	#block {
 		nonce = ar_util:decode(find_value("nonce", BlockStruct)),
 		previous_block =
@@ -157,7 +163,8 @@ json_struct_to_block({struct, BlockStruct}) ->
 			case find_value("reward_addr", BlockStruct) of
 				"unclaimed" -> unclaimed;
 				StrAddr -> ar_util:decode(StrAddr)
-			end
+            end,
+        tags = Tags
 	}.
 %% @doc Translate fields parsed json from HTTP request into a full block.
 json_struct_to_full_block(JSONList) when is_list(JSONList) ->
@@ -169,7 +176,8 @@ json_struct_to_full_block(JSONList) when is_list(JSONList) ->
 json_struct_to_full_block({struct, BlockStruct}) ->
 	{array, TXs} = find_value("txs", BlockStruct),
 	{array, WalletList} = find_value("wallet_list", BlockStruct),
-	{array, HashList} = find_value("hash_list", BlockStruct),
+    {array, HashList} = find_value("hash_list", BlockStruct),
+    {array, Tags} = find_value("tags", BlockStruct),
 	#block {
 		nonce = ar_util:decode(find_value("nonce", BlockStruct)),
 		previous_block =
@@ -193,7 +201,8 @@ json_struct_to_full_block({struct, BlockStruct}) ->
 			case find_value("reward_addr", BlockStruct) of
 				"unclaimed" -> unclaimed;
 				StrAddr -> ar_util:decode(StrAddr)
-			end
+            end,
+        tags = Tags
 	}.
 
 %% @doc Translate a transaction into JSON.
@@ -311,26 +320,25 @@ find_value(Key, List) ->
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->
-	[B] = ar_weave:init(),
-	JsonB = jsonify(block_to_json_struct(B)),
-	B1 = json_struct_to_block(JsonB),
-	B = B1.
+    [B] = ar_weave:init(),
+    BTags = B#block { tags = ["hello", "world", "example"] },
+	JsonB = jsonify(block_to_json_struct(BTags)),
+	BTags = json_struct_to_block(JsonB).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
 tx_roundtrip_test() ->
-	TX = ar_tx:new(<<"TEST">>),
+	TX = ar_tx:new(<<"test">>),
 	JsonTX = jsonify(tx_to_json_struct(TX)),
-	TX1 = json_struct_to_tx(JsonTX),
-	TX = TX1.
+	TX = json_struct_to_tx(JsonTX).
 
-walletlist_roundtrip_test() ->
-    _Node = ar_node:start([], [B] = ar_weave:init()),
+wallet_list_roundtrip_test() ->
+    ar_node:start([], [B] = ar_weave:init()),
     WL = B#block.wallet_list,
     JsonWL = jsonify(wallet_list_to_json_struct(WL)),
     WL = json_struct_to_wallet_list(JsonWL).
 
-hashlist_roundtrip_test() ->
-    _Node = ar_node:start([], [B] = ar_weave:init()),
+hash_list_roundtrip_test() ->
+    ar_node:start([], [B] = ar_weave:init()),
     HL = B#block.hash_list,
     JsonHL = jsonify(hash_list_to_json_struct(HL)),
     HL = json_struct_to_hash_list(JsonHL).
