@@ -220,7 +220,6 @@ add_processed(X, Y, Procd) ->
 	Procd.
 
 %% Find the ID of a 'data', from type.
-get_id(_, unavailable) -> unavailable;
 get_id(tx, #tx { id = ID}) -> ID;
 get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
 get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
@@ -263,6 +262,14 @@ do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
 	}.
 
 %% Check whether a message has already been seen.
+already_processed(Procd, _, {_, not_found, _}) ->
+	Procd;
+already_processed(Procd, _, {_, _, not_found}) ->
+	Procd;
+already_processed(Procd, _, {_, unavailable, _}) ->
+	Procd;
+already_processed(Procd, _, {_, _, unavailable}) ->
+	Procd;
 already_processed(Procd, Type, Data) ->
 	already_processed(Procd, Type, Data, undefined).
 already_processed(Procd, Type, Data, IP) ->

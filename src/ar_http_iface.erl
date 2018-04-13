@@ -519,7 +519,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 	RecallBHash = 
 		case ?IS_BLOCK(RecallB) of
 			true ->  RecallB#block.indep_hash;
-			false -> unavailable
+			false -> <<>>
 		end,
 	ar_httpc:request(
 		post,
