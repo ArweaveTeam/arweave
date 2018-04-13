@@ -214,7 +214,6 @@ tx_to_json_struct(
 		tags = Tags,
 		target = Target,
 		quantity = Quantity,
-		type = Type,
 		data = Data,
 		reward = Reward,
 		signature = Sig
@@ -227,7 +226,6 @@ tx_to_json_struct(
 			{tags, {array, Tags}},
 			{target, ar_util:encode(Target)},
 			{quantity, integer_to_list(Quantity)},
-			{type, atom_to_list(Type)},
 			{data, ar_util:encode(Data)},
 			{reward, integer_to_list(Reward)},
 			{signature, ar_util:encode(Sig)}
@@ -252,7 +250,6 @@ json_struct_to_tx({struct, TXStruct}) ->
 		tags = Tags,
 		target = ar_util:decode(find_value("target", TXStruct)),
 		quantity = list_to_integer(find_value("quantity", TXStruct)),
-		type = list_to_existing_atom(find_value("type", TXStruct)),
 		data = ar_util:decode(find_value("data", TXStruct)),
 		reward = list_to_integer(find_value("reward", TXStruct)),
 		signature = ar_util:decode(find_value("signature", TXStruct))

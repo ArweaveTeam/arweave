@@ -135,8 +135,8 @@ send_random_fin_tx() ->
 %% @doc Send a randomly created data tx to all peers
 send_random_data_tx() ->
 	KeyList = get_key_list(),
-	MaxAmount = 100,
-	TX = create_random_fin_tx(KeyList, MaxAmount),
+	MaxTxLen = 100,
+	TX = create_random_data_tx(KeyList, MaxTxLen),
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 	lists:foreach(
 			fun(Peer) ->
@@ -160,7 +160,7 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX)+550),
+		byte_size(ar_tx:to_binary(TX)) + 550,
 		Block#block.diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(
