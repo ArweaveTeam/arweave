@@ -14,12 +14,11 @@ new(Data) ->
 new(Data, Reward) ->
 	#tx { id = generate_id(), data = Data, reward = Reward }.
 new(Data, Reward, Last) ->
-	#tx { id = generate_id(), last_tx = Last, type = data, data = Data, reward = Reward }.
+	#tx { id = generate_id(), last_tx = Last, data = Data, reward = Reward }.
 new(Dest, Reward, Qty, Last) when bit_size(Dest) == ?HASH_SZ ->
 	#tx {
 		id = generate_id(),
 		last_tx = Last,
-		type = transfer,
 		quantity = Qty,
 		target = Dest,
 		data = <<>>,

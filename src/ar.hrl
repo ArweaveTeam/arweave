@@ -106,7 +106,6 @@
 	tags = [], % Indexable TX category identifiers.
 	target = <<>>, % Address of target of the tx.
 	quantity = 0, % Amount to send
-	type = transfer, % Transaction type. Transfer or data.
 	data = <<>>, % Data in transaction (if data transaction).
 	signature = <<>>, % Transaction signature.
 	reward = 0 % Transaction mining reward.
