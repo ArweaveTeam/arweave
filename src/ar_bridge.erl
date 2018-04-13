@@ -262,14 +262,10 @@ do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
 	}.
 
 %% Check whether a message has already been seen.
-already_processed(Procd, _, {_, not_found, _}) ->
-	Procd;
-already_processed(Procd, _, {_, _, not_found}) ->
-	Procd;
-already_processed(Procd, _, {_, unavailable, _}) ->
-	Procd;
-already_processed(Procd, _, {_, _, unavailable}) ->
-	Procd;
+already_processed(_Procd, _Type, {_, not_found, _}) ->
+	true;
+already_processed(_Procd, _Type, {_, unavailable, _}) ->
+	true;
 already_processed(Procd, Type, Data) ->
 	already_processed(Procd, Type, Data, undefined).
 already_processed(Procd, Type, Data, IP) ->
