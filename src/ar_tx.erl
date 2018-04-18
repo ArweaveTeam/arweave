@@ -1,6 +1,7 @@
 -module(ar_tx).
 -export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, to_binary/1, verify/2, verify_txs/2]).
 -export([calculate_min_tx_cost/2, tx_cost_above_min/2]).
+-export([tags_to_binary/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -59,12 +60,14 @@ verify(#tx { signature = <<>> }, _) -> true;
 verify(TX, Diff) ->
 	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and
 	ar:d(tx_cost_above_min(TX, Diff)) and
-	ar:d(tx_field_size_limit(TX)).
+	ar:d(tx_field_size_limit(TX)) and
+	ar:d(tag_field_legal(TX)).
 -else.
 verify(TX, Diff) ->
 	ar:d(ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)) and
 	ar:d(tx_cost_above_min(TX, Diff)) and
-	ar:d(tx_field_size_limit(TX)).
+	ar:d(tx_field_size_limit(TX)) and
+	ar:d(tag_field_legal(TX)).
 -endif.
 
 %% @doc Ensure that all TXs in a list verify correctly.
@@ -83,15 +86,40 @@ calculate_min_tx_cost(Size, Diff) ->
 	((Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff.
 
 tx_field_size_limit(TX) ->
-	(byte_size(TX#tx.id) =< 32) and
-	(byte_size(TX#tx.last_tx) =< 32) and
-	(byte_size(TX#tx.owner) =< 512) and
-	(byte_size(list_to_binary(TX#tx.tags)) =< 2048) and
-	(byte_size(TX#tx.target) =< 32) and
-	(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
-	(byte_size(TX#tx.signature) =< 512) and
-	(byte_size(integer_to_binary(TX#tx.reward)) =< 21).
+	case tag_field_legal(TX) of
+		true ->
+			(byte_size(TX#tx.id) =< 32) and
+			(byte_size(TX#tx.last_tx) =< 32) and
+			(byte_size(TX#tx.owner) =< 512) and
+			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
+			(byte_size(TX#tx.target) =< 32) and
+			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
+			(byte_size(TX#tx.signature) =< 512) and
+			(byte_size(integer_to_binary(TX#tx.reward)) =< 21);
+		false -> false
+	end.
 
+tag_field_legal(TX) ->
+	lists:all(
+		fun(X) ->
+			case X of
+				{_,_} -> true;
+				_ -> false
+			end
+		end,
+		TX#tx.tags
+	).
+
+tags_to_binary(Tags) ->
+	list_to_binary(
+		lists:foldr(
+			fun({Name, Value}, Acc) ->
+				[Name, Value | Acc]
+			end,
+			[],
+			Tags
+		)
+	).
 
 %%% TESTS %%%
 %% TODO: Write a more stringent reject_tx_below_min test

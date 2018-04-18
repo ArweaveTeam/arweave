@@ -223,7 +223,21 @@ tx_to_json_struct(
 			{id, ar_util:encode(ID)},
 			{last_tx, ar_util:encode(Last)},
 			{owner, ar_util:encode(Owner)},
-			{tags, {array, Tags}},
+			{tags,
+				{array,
+					lists:map(
+						fun({Name, Value}) ->
+							{struct,
+								[
+									{name, ar_util:encode(Name)},
+									{value, ar_util:encode(Value)}
+								]
+							}
+						end,
+						Tags
+					)
+				}
+			},
 			{target, ar_util:encode(Target)},
 			{quantity, integer_to_list(Quantity)},
 			{data, ar_util:encode(Data)},
@@ -247,7 +261,13 @@ json_struct_to_tx({struct, TXStruct}) ->
 		id = ar_util:decode(find_value("id", TXStruct)),
 		last_tx = ar_util:decode(find_value("last_tx", TXStruct)),
 		owner = ar_util:decode(find_value("owner", TXStruct)),
-		tags = Tags,
+		tags =
+			[
+				{ar_util:decode(Name), ar_util:decode(Value)}
+			||
+				{struct, [{"name", Name}, {"value", Value}]}
+					<- Tags
+			],
 		target = ar_util:decode(find_value("target", TXStruct)),
 		quantity = list_to_integer(find_value("quantity", TXStruct)),
 		data = ar_util:decode(find_value("data", TXStruct)),
@@ -324,7 +344,8 @@ block_roundtrip_test() ->
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
 tx_roundtrip_test() ->
-	TX = ar_tx:new(<<"test">>),
+	TXBase = ar_tx:new(<<"test">>),
+	TX = TXBase#tx{ tags = [{<<"Name1">>, <<"Value1">>}] },
 	JsonTX = jsonify(tx_to_json_struct(TX)),
 	TX = json_struct_to_tx(JsonTX).
 

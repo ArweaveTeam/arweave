@@ -676,6 +676,7 @@ integrate_new_block(
 		]
 	),
 	%ar:d({new_hash_list, [NewB#block.indep_hash|HashList]}),
+	app_search:update_tag_table(NewB),
 	server(
 		reset_miner(
 			S#state {
@@ -718,6 +719,7 @@ integrate_block_from_miner(
 		true ->
 			ar_storage:write_block(NextB),
 			ar_storage:write_tx(MinedTXs),
+			app_search:update_tag_table(NextB),
 			{NewGS, _} =
 				ar_gossip:send(
 					GS,
