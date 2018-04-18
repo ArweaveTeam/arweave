@@ -29,27 +29,38 @@ start(Peers, TargetBShadow, HashList) ->
 			{peer, Peers}
 		]
 	),
-	TargetB = ar_node:get_block(Peers, TargetBShadow#block.indep_hash),
-	PID =
-		spawn(
-			fun() ->
-				server(
-					#state {
-						parent = Parent,
-						peers = Peers,
-						block_list = HashList,
-						hash_list =
-							drop_until_diverge(
-								lists:reverse(TargetB#block.hash_list),
-								lists:reverse(HashList)
-							) ++ [TargetB#block.indep_hash],
-						target_block = TargetB
-					}
-				)
-			end
-		),
-	PID ! {apply_next_block},
-	PID.
+	TargetB = ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 3),
+	case ?IS_BLOCK(TargetB) of
+		true ->
+			PID =
+				spawn(
+					fun() ->
+						server(
+							#state {
+								parent = Parent,
+								peers = Peers,
+								block_list = HashList,
+								hash_list =
+									drop_until_diverge(
+										lists:reverse(TargetB#block.hash_list),
+										lists:reverse(HashList)
+									) ++ [TargetB#block.indep_hash],
+								target_block = TargetB
+							}
+						)
+					end
+				),
+			PID ! {apply_next_block},
+			PID;
+		false ->
+			ar:report(
+				[
+					{could_not_start_fork_recovery},
+					{could_not_retrieve_target_block}
+				]
+			),
+			undefined
+	end.
 
 %% @doc Take two lists, drop elements until they do not match.
 %% Return the remainder of the _first_ list.

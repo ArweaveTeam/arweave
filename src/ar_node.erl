@@ -11,6 +11,7 @@
 -export([apply_txs/2, validate/4, validate/5, validate/6, find_recall_block/1]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
 -export([start_link/1]).
+-export([retry_block/4, retry_full_block/4]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -149,6 +150,18 @@ get_block(Proc, ID) when is_pid(Proc) ->
 get_block(Host, ID) ->
 	ar_http_iface:get_block(Host, ID).
 
+retry_block(_, _, Response, 0) ->
+	Response;
+retry_block(Host, ID, _, Count) ->
+	case get_block(Host, ID) of
+		not_found ->
+			timer:sleep(1000),
+			retry_block(Host, ID, not_found, Count-1);
+		unavailable ->
+			timer:sleep(1000),
+			retry_block(Host, ID, unavailable, Count-1);
+		B -> B
+	end.
 %% @doc Return a specific full block from a node, if it has it.
 get_full_block(Peers, ID) when is_list(Peers) ->
 	case ar_storage:read_block(ID) of
@@ -163,6 +176,19 @@ get_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
 get_full_block(Host, ID) ->
 	ar_http_iface:get_full_block(Host, ID).
+
+retry_full_block(_, _, Response, 0) ->
+	Response;
+retry_full_block(Host, ID, _, Count) ->
+	case get_full_block(Host, ID) of
+		not_found ->
+			timer:sleep(1000),
+			retry_full_block(Host, ID, not_found, Count-1);
+		unavailable ->
+			timer:sleep(1000),
+			retry_full_block(Host, ID, unavailable, Count-1);
+		B -> B
+	end.
 
 %% @doc convert a block header into a full block
 make_full_block(ID) ->
@@ -1048,13 +1074,26 @@ start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
 		unavailable -> 
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-            FullBlock = ar_node:get_full_block(
+            FullBlock = ar_node:retry_full_block(
 				ar_bridge:get_remote_peers(whereis(http_bridge_node)), 
-				RecallHash
+				RecallHash,
+				not_found,
+				3
 			),
-			RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
-			ar_storage:write_tx(FullBlock#block.txs),
-			ar_storage:write_block(RecallFull),
+			case ?IS_BLOCK(FullBlock) of
+				true ->
+					RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+					ar_storage:write_tx(FullBlock#block.txs),
+					ar_storage:write_block(RecallFull);
+				false ->
+					ar:report(
+						[
+							{could_not_start_mining},
+							{could_not_retrieve_recall_block}
+						]
+					),
+					ok
+			end,
 			S;
 		RecallB ->
 			if not is_record(RecallB, block) ->
