@@ -167,12 +167,7 @@ handle('POST', [<<"tx">>], Req) ->
 			{400, [], <<"Transaction signature not valid.">>};
 		true ->
 			ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-			timer:apply_after(
-				calculate_delay(byte_size(ar_tx:to_binary(TX))),
-				ar_bridge,
-				add_tx,
-				[whereis(http_bridge_node), TX]
-				),
+			ar_bridge:add_tx(whereis(http_bridge_node), TX),
 			{200, [], <<"OK">>}
 	end;
 
@@ -895,8 +890,7 @@ store_data_time(Peer, Bytes, MicroSecs) ->
 %% Currently based on 40s for 95% of peers in the bitcoin network to recieve a
 %% 1mb block
 
-calculate_delay(0) -> 0;
-calculate_delay(Bytes) -> (Bytes * 40) div 1000.
+
 %%% Tests
 
 %% @doc Tests add peer functionality

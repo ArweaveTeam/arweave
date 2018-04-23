@@ -1,6 +1,6 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
+-export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1,get_full_pending_txs/1]).
 -export([generate_data_segment/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
@@ -27,7 +27,8 @@
 	mining_delay = 0,
 	automine = false,
 	reward_addr = unclaimed,
-	trusted_peers = []
+	trusted_peers = [],
+	waiting_txs = []
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -219,13 +220,19 @@ sort_txs_by_count(TXs) ->
 get_tx(_, []) -> [];
 get_tx(Peers, ID) when is_list(Peers) ->
 	ar:d([{getting_tx, ID}, {peers, Peers}]),
-	case ar_storage:read_tx(ID) of
-		unavailable ->
+	case
+		{
+			ar_storage:read_tx(ID),
+			lists:keyfind(ID, 2, get_full_pending_txs(whereis(http_entrypoint_node)))
+		} of
+		{unavailable, false} ->
 			case sort_txs_by_count([ get_tx(Peer, ID) || Peer <- Peers ]) of
 				[] -> unavailable;
 				[T|_] -> T
 			end;
-		TX -> TX
+		{TX, false} -> TX;
+		{unavailable, TX} -> TX;
+		{TX, _} -> TX
 	end;
 get_tx(Proc, ID) when is_pid(Proc) ->
 	ar_storage:read_tx(ID);
@@ -291,6 +298,13 @@ get_pending_txs(Node) ->
 	Node ! {get_txs, self()},
 	receive
 		{all_txs, Txs} -> [T#tx.id || T <- Txs]
+		after 1000 -> []
+	end.
+
+get_full_pending_txs(Node) ->
+	Node ! {get_txs, self()},
+	receive
+		{all_txs, Txs} -> Txs
 		after 1000 -> []
 	end.
 %% @doc Trigger a node to start mining a block.
@@ -388,6 +402,12 @@ server(
 					server(S#state { gossip = NewGS })
 			end;
 		{add_tx, TX} ->
+			timer:send_after(
+				calculate_delay(byte_size(ar_tx:to_binary(TX))),
+				{apply_tx, TX}
+				),
+			server(S#state { waiting_txs = [TX|S#state.waiting_txs] });
+		{apply_tx, TX} ->
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			add_tx_to_server(S, NewGS, TX);
 		{new_block, Peer, Height, NewB, RecallB} ->
@@ -450,7 +470,7 @@ server(
 				end},
 			server(S);
 		{get_txs, PID} ->
-			PID ! {all_txs, S#state.txs},
+			PID ! {all_txs, S#state.txs ++ S#state.waiting_txs},
 			server(S);
 		mine -> server(start_mining(S));
 		automine -> server(start_mining(S#state { automine = true }));
@@ -1118,6 +1138,9 @@ start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
 			S#state { miner = Miner }
 	end.
 
+calculate_delay(0) -> 0;
+calculate_delay(Bytes) -> (Bytes * 40) div 1000.
+
 %%% Tests
 
 %% @doc Ensure that divergence heights are appropriately calculated.
@@ -1279,9 +1302,9 @@ large_blockweave_with_data_test() ->
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 100)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 2000 -> ok end,
+	receive after 1000 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 2000 -> ok end,
+	receive after 1000 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
@@ -1294,9 +1317,9 @@ large_weakly_connected_blockweave_with_data_test() ->
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 2000 -> ok end,
+	receive after 1000 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 2000 -> ok end,
+	receive after 1000 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
@@ -1392,8 +1415,9 @@ wallet_transaction_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	receive after 300 -> ok end,
 	mine(Node1), % Mine B1
-	receive after 500 -> ok end,
+	receive after 300 -> ok end,
 	?AR(999) = get_balance(Node2, Pub1),
 	?AR(9000) = get_balance(Node2, Pub2).
 
@@ -1412,9 +1436,11 @@ wallet_two_transaction_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	receive after 500 -> ok end,
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
 	add_tx(Node2, SignedTX2),
+	receive after 1000 -> ok end,
 	mine(Node2), % Mine B1
 	receive after 500 -> ok end,
 	?AR(999) = get_balance(Node1, Pub1),
@@ -1486,11 +1512,13 @@ tx_threading_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	receive after 300 -> ok end,
 	mine(Node1), % Mine B1
-	receive after 500 -> ok end,
+	receive after 300 -> ok end,
 	add_tx(Node1, SignedTX2),
+	receive after 300 -> ok end,
 	mine(Node1), % Mine B1
-	receive after 500 -> ok end,
+	receive after 300 -> ok end,
 	?AR(7998) = get_balance(Node2, Pub1),
 	?AR(2000) = get_balance(Node2, Pub2).
 
@@ -1549,6 +1577,7 @@ last_tx_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	receive after 500 -> ok end,
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
 	<<"TEST">> = get_last_tx(Node2, Pub1).
