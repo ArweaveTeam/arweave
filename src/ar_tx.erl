@@ -82,8 +82,12 @@ tx_cost_above_min(TX, Diff) ->
 
 %Calculate the minimum transaction cost for a TX with data size Size
 %the constant 3208 is the max byte size of each of the other fields
-calculate_min_tx_cost(Size, Diff) ->
-	((Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff.
+%Cost per byte is static unless size is bigger than 10mb, at which
+%point cost per byte starts increasing linearly.
+calculate_min_tx_cost(Size, Diff) when Size < 10*1024*2014 ->
+	((Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div (Diff);
+calculate_min_tx_cost(Size, Diff)  ->
+	(Size*(Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div (Diff*1024*1024*10).
 
 tx_field_size_limit(TX) ->
 	case tag_field_legal(TX) of

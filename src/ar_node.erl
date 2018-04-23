@@ -155,10 +155,10 @@ retry_block(_, _, Response, 0) ->
 retry_block(Host, ID, _, Count) ->
 	case get_block(Host, ID) of
 		not_found ->
-			timer:sleep(1000),
+			timer:sleep(3000),
 			retry_block(Host, ID, not_found, Count-1);
 		unavailable ->
-			timer:sleep(1000),
+			timer:sleep(3000),
 			retry_block(Host, ID, unavailable, Count-1);
 		B -> B
 	end.
@@ -182,10 +182,10 @@ retry_full_block(_, _, Response, 0) ->
 retry_full_block(Host, ID, _, Count) ->
 	case get_full_block(Host, ID) of
 		not_found ->
-			timer:sleep(1000),
+			timer:sleep(3000),
 			retry_full_block(Host, ID, not_found, Count-1);
 		unavailable ->
-			timer:sleep(1000),
+			timer:sleep(3000),
 			retry_full_block(Host, ID, unavailable, Count-1);
 		B -> B
 	end.
@@ -603,7 +603,10 @@ fork_recover(
 					HashList
 				)
 			),
-			erlang:register(fork_recovery_server, PID);
+			case PID of
+				undefined -> ok;
+				_ -> erlang:register(fork_recovery_server, PID)
+			end;
 		{undefined, _} -> ok;
 		_ ->
 		whereis(fork_recovery_server) ! {update_target_block, NewB, Peer}

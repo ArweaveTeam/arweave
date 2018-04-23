@@ -29,7 +29,7 @@ start(Peers, TargetBShadow, HashList) ->
 			{peer, Peers}
 		]
 	),
-	TargetB = ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 3),
+	TargetB = ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 5),
 	case ?IS_BLOCK(TargetB) of
 		true ->
 			PID =
@@ -114,8 +114,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						ar:report(
 							[
 								{fork_recovery_failed},
-								{recovery_block_is_genesis_block},
-								{rejoining_on_trusted_peers}
+								{recovery_block_is_genesis_block}
+								%{rejoining_on_trusted_peers}
 							]
 						),
 						BHashList = unavailable,
@@ -127,8 +127,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						ar:report(
 							[
 								{fork_recovery_failed},
-								{recovery_block_is_too_far_ahead},
-								{rejoining_on_trusted_peers}
+								{recovery_block_is_too_far_ahead}
+								%{rejoining_on_trusted_peers}
 							]
 						),
 						BHashList = unavailable,

@@ -68,26 +68,45 @@ get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block),
-	RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-	case {NewB, ar_node:get_block(Peers, RecallBlock)} of
-		{B, unavailable} ->
-			ar_storage:write_block(B),
-			ar_storage:write_tx(
-				ar_node:get_tx(Peers, B#block.txs)
-				);
-		{B, R} ->
-			ar_storage:write_block(B),
-			ar_storage:write_tx(
-				ar_node:get_tx(Peers, B#block.txs)
-				),
-			ar_storage:write_block(R),
-			ar_storage:write_tx(
-				ar_node:get_tx(Peers, R#block.txs)
-				)
-	end,
-	get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList).
-
+	PreviousBlock = ar_node:retry_block(Peers, NewB#block.previous_block, not_found, 5),
+	case ?IS_BLOCK(PreviousBlock) of
+		true ->
+			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
+			case {NewB, ar_node:get_block(Peers, RecallBlock)} of
+				{B, unavailable} ->
+					ar_storage:write_block(B),
+					ar_storage:write_tx(
+						ar_node:get_tx(Peers, B#block.txs)
+						),
+					ar:report(
+						[
+							{could_not_retrieve_joining_recall_block},
+							{retrying}
+						]
+					),
+					timer:sleep(3000),
+					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
+				{B, R} ->
+					ar_storage:write_block(B),
+					ar_storage:write_tx(
+						ar_node:get_tx(Peers, B#block.txs)
+						),
+					ar_storage:write_block(R),
+					ar_storage:write_tx(
+						ar_node:get_tx(Peers, R#block.txs)
+					),
+					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
+			end;
+		false ->
+			ar:report(
+				[
+					{could_not_retrieve_joining_block},
+					{retrying}
+				]
+			),
+			timer:sleep(3000),
+			get_block_and_trail(Peers, NewB, BehindCurrent, HashList)
+	end.
 %% @doc Fills node to capacity based on weave storage limit.
 fill_to_capacity(_, NewB) when NewB#block.height =< 1 -> ok;
 fill_to_capacity(Peers, NewB) ->

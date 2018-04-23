@@ -71,11 +71,16 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 		list_to_binary(
 			ar_serialize:jsonify(
 				{array,
-					ar_node:get_pending_txs(whereis(http_entrypoint_node))
+					%% Should encode
+						lists:map(
+							fun ar_util:encode/1,
+							ar_node:get_pending_txs(whereis(http_entrypoint_node))
+						)
 				}
 			)
 		)
 	};
+
 % Get a transaction by hash
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
