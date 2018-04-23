@@ -372,6 +372,43 @@ handle('GET', [<<"services">>], _Req) ->
 		)
 	};
 %% Return a subfield of the tx with the given hash
+handle('GET', [<<"tx">>, <<"tags">>, Query], _Req) ->
+	Queries = string:split(ar_util:decode(Query), "&", all),
+	TXs = 	lists:foldl(
+		fun(Q, Acc) ->
+			case string:split(Q,"=") of
+				[N, V] ->
+					[
+						sets:from_list(app_search:search_by_exact_tag(N, V))
+						|
+						Acc
+					];
+				_ -> Acc
+			end
+		end,
+		[],
+		Queries
+	),
+	case TXs of
+		[] -> {200, [], []};
+		Set ->
+			{
+				200,
+				[],
+				list_to_binary(
+					ar_serialize:jsonify(
+							{
+								array,
+								lists:map(
+									fun ar_util:encode/1,
+									sets:to_list(sets:intersection(Set))
+								)
+							}
+						)
+				)
+			}
+	end;
+
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
 	case TX of
@@ -1210,3 +1247,36 @@ get_multiple_pending_txs_test() ->
 				++ "pending"),
 	{ok, {array, PendingTxs}} = json2:decode_string(Body),
 	[TX1#tx.id, TX2#tx.id] == [list_to_binary(P) || P <- PendingTxs].
+
+get_tx_by_tag_test() ->
+	% Spawn a network with two nodes and a chirper server
+	ar_storage:clear(),
+	SearchServer = app_search:start(),
+	Peers = ar_network:start(10, 10),
+	ar_node:add_peers(hd(Peers), SearchServer),
+	% Generate the transaction.
+	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	% Add tx to network
+	ar_node:add_tx(hd(Peers), TX),
+	% Begin mining
+	receive after 250 -> ok end,
+	ar_node:mine(hd(Peers)),
+	receive after 1000 -> ok end,
+	% recieve a "get transaction" message
+	% check that newly mined block matches the block the most recent transaction was mined in
+	{ok, {{_, 200, _}, _, Body}} =
+			ar_httpc:request(
+				"http://127.0.0.1:"
+					++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+					++ "/tx"
+					++ "/tags/"
+					++ ar_util:encode(<<"TestName=TestVal">>)),
+	{ok, {array, TXs}} = json2:decode_string(Body),
+	true =
+		lists:member(
+			TX#tx.id,
+			lists:map(
+				fun ar_util:decode/1,
+				TXs
+			)
+		).
