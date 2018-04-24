@@ -3,6 +3,8 @@
 -export([delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
+-export([enough_space/1]).
+-export([calculate_disk_space/0, calculate_used_space/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -32,9 +34,14 @@ block_exists(Hash) ->
 		{error, _} -> false
 	end.
 
+
 %% @doc Write a block (with the hash.json as the filename) to disk.
+%% When debug is set, does not consider disk space. This is currently
+%% necessary because of test timings
+-ifdef(DEBUG).
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(B) ->
+	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	file:write_file(
 		Name = lists:flatten(
 			io_lib:format(
@@ -42,9 +49,36 @@ write_block(B) ->
 				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
-		ar_serialize:jsonify(ar_serialize:block_to_json_struct(B))
+		BlockToWrite
 	),
 	Name.
+-else.
+write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
+write_block(B) ->
+	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
+	case enough_space(byte_size(list_to_binary(BlockToWrite))) of
+		true ->
+			file:write_file(
+				Name = lists:flatten(
+					io_lib:format(
+						"~s/~w_~s.json",
+						[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+					)
+				),
+				BlockToWrite
+			),
+			ar_meta_db:put(used_space, calculate_used_space()),
+			Name;
+		false ->
+			ar:report(
+				[
+					{not_enough_space_to_write_block},
+					{block_not_written}
+				]
+			),
+			{error, enospc}
+	end.
+-endif.
 
 %% @doc Read a block from disk, given a hash.
 read_block(unavailable) -> unavailable;
@@ -101,7 +135,10 @@ tx_exists(Hash) ->
 		{error, _} -> false
 	end.
 
-%% @doc Write a block (with the hash.json as the filename) to disk.
+%% @doc Write a tx (with the txid.json as the filename) to disk.
+%% When debug is set, does not consider disk space. This is currently
+%% necessary because of test timings
+-ifdef(DEBUG).
 write_tx(Txs) when is_list(Txs) -> lists:foreach(fun write_tx/1, Txs);
 write_tx(Tx) ->
 	file:write_file(
@@ -114,6 +151,38 @@ write_tx(Tx) ->
 		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(Tx))
 	),
 	Name.
+-else.
+write_tx(Txs) when is_list(Txs) -> lists:foreach(fun write_tx/1, Txs);
+write_tx(Tx) ->
+	TxToWrite = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(Tx)),
+	case enough_space(byte_size(list_to_binary(TxToWrite))) of
+		true ->
+			file:write_file(
+				Name = lists:flatten(
+					io_lib:format(
+						"~s/~s.json",
+						[?TX_DIR, ar_util:encode(Tx#tx.id)]
+					)
+				),
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(Tx))
+			),
+			rpc:async_call(
+				node(),
+				ar_meta_db,
+				increase,
+				[used_space, byte_size(list_to_binary(TxToWrite))]
+			),
+			Name;
+		false ->
+			ar:report(
+				[
+					{not_enough_space_to_write_tx},
+					{tx_not_written}
+				]
+			),
+			{error, enospc}
+	end.
+-endif.
 
 %% @doc Read a tx from disk, given a hash.
 read_tx(unavailable) -> unavailable;
@@ -153,6 +222,64 @@ name_tx(Tx) when is_record(Tx, tx) ->
 name_tx(BinHash) when is_binary(BinHash) ->
 	?TX_DIR ++ "/" ++ ar_util:encode(BinHash) ++ ".json".
 
+% @doc Check that there is enough space to write Bytes bytes of data
+enough_space(Bytes) ->
+	(ar_meta_db:get(disk_space)) >= (Bytes + ar_meta_db:get(used_space)).
+
+
+calculate_used_space() ->
+	{ok, CWD} = file:get_cwd(),
+	(
+		filelib:fold_files(
+			CWD,
+			"/*",
+			true,
+			fun(F, Acc) -> Acc + filelib:file_size(F) end,
+			0
+		)
+	).
+
+calculate_disk_space() ->
+	application:start(sasl),
+	application:start(os_mon),
+	{ok, CWD} = file:get_cwd(),
+	[{_,Size,_}|_] = select_drive(disksup:get_disk_data(), CWD),
+	Size*1000.
+
+% Calculate the root drive in which the Arweave server resides
+select_drive(Disks, []) ->
+	CWD = "/",
+	case
+		Drives = lists:filter(
+			fun({Name, _, _}) ->
+				case Name == CWD of
+					false -> false;
+					true -> true
+				end
+			end,
+			Disks
+		)
+	of
+		[] -> false;
+		Drives ->
+			ar:d({drives, Drives}),
+			Drives
+	end;
+select_drive(Disks, CWD) ->
+	case
+		Drives = lists:filter(
+			fun({Name, _, _}) ->
+				case string:find(Name, CWD) of
+					nomatch -> false;
+					_ -> true
+				end
+			end,
+			Disks
+		)
+	of
+		[] -> select_drive(Disks, hd(string:split(CWD, "/", trailing)));
+		Drives -> Drives
+	end.
 
 %% @doc Test block storage.
 store_and_retrieve_block_test() ->
@@ -167,3 +294,31 @@ store_and_retrieve_tx_test() ->
 	Tx0 = read_tx(Tx0),
 	Tx0 = read_tx(Tx0#tx.id),
 	file:delete(name_tx(Tx0)).
+
+not_enough_space_test() ->
+	Disk = ar_meta_db:get(disk_space),
+	ar_meta_db:put(disk_space, 0),
+	[B0] = ar_weave:init(),
+	Tx0 = ar_tx:new(<<"DATA1">>),
+	{error, enospc} = write_block(B0),
+	{error, enospc} = write_tx(Tx0),
+	ar_meta_db:put(disk_space, Disk).
+
+	% Test that select_drive selects the correct drive on the unix architecture
+select_drive_unix_test() ->
+	CWD = "/home/usr/dev/arweave",
+	Disks =
+		[
+			{"/dev",8126148,0},
+			{"/run",1630656,1},
+			{"/",300812640,8},
+			{"/dev/shm",8153276,3},
+			{"/boot/efi",98304,55}
+		],
+	[{"/",300812640,8}] = select_drive(Disks, CWD).
+
+% Test that select_drive selects the correct drive on the unix architecture
+select_drive_windows_test() ->
+	CWD = "C:/dev/arweave",
+	Disks = [{"C:\\",1000000000,10},{"D:\\",2000000000,20}],
+	[{"C:\\",1000000000,10}] = select_drive(Disks, CWD).

@@ -140,7 +140,7 @@ basic_node_join_test() ->
 	ar_node:mine(Node1),
 	receive after 600 -> ok end,
 	Node2 = ar_node:start([Node1]),
-	receive after 600 -> ok end,
+	receive after 1500 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
 	2 = (ar_storage:read_block(B))#block.height.
 
@@ -156,6 +156,6 @@ node_join_test() ->
 	Node2 = ar_node:start([Node1]),
 	receive after 600 -> ok end,
 	ar_node:mine(Node2),
-	receive after 600 -> ok end,
+	receive after 1500 -> ok end,
 	[B|_] = ar_node:get_blocks(Node1),
 	3 = (ar_storage:read_block(B))#block.height.

@@ -11,7 +11,6 @@
 -export([genesis_wallets/0]).
 -export([pmap/2]).
 -export([time_difference/2]).
--export([calculate_disk_space/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -222,47 +221,6 @@ time_difference(_,_) ->
 	bad_time_format.
 
 % Calculate the amount of disk space free
-calculate_disk_space() ->
-	application:start(sasl),
-	application:start(os_mon),
-	{ok, CWD} = file:get_cwd(),
-	[{_,Size,_}|_] = select_drive(disksup:get_disk_data(), CWD),
-	Size.
-
-% Calculate the root drive in which the Arweave server resides
-select_drive(Disks, []) ->
-	CWD = "/",
-	case
-		Drives = lists:filter(
-			fun({Name, _, _}) ->
-				case Name == CWD of
-					false -> false;
-					true -> true
-				end
-			end,
-			Disks
-		)
-	of
-		[] -> false;
-		Drives ->
-			ar:d({drives, Drives}),
-			Drives
-	end;
-select_drive(Disks, CWD) ->
-	case
-		Drives = lists:filter(
-			fun({Name, _, _}) ->
-				case string:find(Name, CWD) of
-					nomatch -> false;
-					_ -> true
-				end
-			end,
-			Disks
-		)
-	of
-		[] -> select_drive(Disks, hd(string:split(CWD, "/", trailing)));
-		Drives -> Drives
-	end.
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->
 	[a, b, c] = unique([a, a, b, b, b, c, c]).
@@ -310,21 +268,3 @@ recall_block_test() ->
 	receive after 300 -> ok end,
 	B3 = ar_node:get_current_block(Node),
 	B3#block.wallet_list.
-
-% Test that select_drive selects the correct drive on the unix architecture
-select_drive_unix_test() ->
-	CWD = "/home/usr/dev/arweave",
-	Disks =
-		[
-			{"/dev",8126148,0},
-			{"/run",1630656,1},
-			{"/",300812640,8},
-			{"/dev/shm",8153276,3},
-			{"/boot/efi",98304,55}
-		],
-	[{"/",300812640,8}] = select_drive(Disks, CWD).
-% Test that select_drive selects the correct drive on the unix architecture
-select_drive_windows_test() ->
-	CWD = "C:/dev/arweave",
-	Disks = [{"C:\\",1000000000,10},{"D:\\",2000000000,20}],
-	[{"C:\\",1000000000,10}] = select_drive(Disks, CWD).

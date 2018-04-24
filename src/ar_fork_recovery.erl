@@ -246,7 +246,7 @@ multiple_blocks_ahead_recovery_test() ->
 	receive after 300 -> ok end,
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
-	receive after 300 -> ok end,
+	receive after 1500 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
 	9 = (ar_storage:read_block(B))#block.height.
 
@@ -274,7 +274,7 @@ multiple_blocks_since_fork_test() ->
 	receive after 300 -> ok end,
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
-	receive after 300 -> ok end,
+	receive after 1500 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
 	9 = (ar_storage:read_block(B))#block.height.
 

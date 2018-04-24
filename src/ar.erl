@@ -52,7 +52,8 @@
 	new_key = false,
 	load_key = unclaimed,
 	pause = true,
-	disk_space = ar_util:calculate_disk_space()
+	disk_space = ar_storage:calculate_disk_space(),
+	used_space = ar_storage:calculate_used_space()
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -136,7 +137,8 @@ start(
 		new_key = NewKey,
 		load_key = LoadKey,
 		pause = Pause,
-		disk_space = DiskSpace
+		disk_space = DiskSpace,
+		used_space = UsedSpace
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -145,6 +147,7 @@ start(
 	ar_meta_db:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
+	ar_meta_db:put(used_space, UsedSpace),
 	Peers =
 		case RawPeers of
 			default -> ?DEFAULT_PEER_LIST;

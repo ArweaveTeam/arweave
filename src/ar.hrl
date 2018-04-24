@@ -37,7 +37,7 @@
 %% The number of blocks behind the most recent block to store.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 %% ENABLE ONLY WHILE TESTING
--define(DEBUG, false).
+%-define(DEBUG, false).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
