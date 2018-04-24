@@ -886,7 +886,6 @@ validate(
 	case Indep of false -> ar:d(invalid_recall_indep_hash); _ -> ok  end,
 	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
 	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
-
 	Mine =/= false
 		and Wallet
 		and Indep
@@ -900,7 +899,7 @@ validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB) ->
 	ar:d({val_hashlist, _NewB#block.hash_list}),
 	ar:d({val_wallet_list, _NewB#block.wallet_list}),
 	ar:d({val_nonce, _NewB#block.nonce}),	
-	ar:d({val_hash, _OldB#block.hash}),
+	ar:d({val_hash, _OldB#block.hash_list}),
 	ar:d({val_diff, _OldB#block.diff}),
 	ar:d({hashlist, _HL}),
 	ar:d({wallet_list, _WL}),
