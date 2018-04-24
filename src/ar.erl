@@ -51,7 +51,8 @@
 	mining_addr = unclaimed,
 	new_key = false,
 	load_key = unclaimed,
-	pause = true
+	pause = true,
+	disk_space = ar_util:calculate_disk_space()
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -113,6 +114,8 @@ main(["new_mining_key"|Rest], O)->
 	main(Rest, O#opts { new_key = true });
 main(["load_mining_key", File|Rest], O)->
 	main(Rest, O#opts { load_key = File });
+main(["disk_space", Size|Rest], O)->
+	main(Rest, O#opts { disk_space = Size });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -132,7 +135,8 @@ start(
 		mining_addr = Addr,
 		new_key = NewKey,
 		load_key = LoadKey,
-		pause = Pause
+		pause = Pause,
+		disk_space = DiskSpace
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -140,6 +144,7 @@ start(
 	inets:start(),
 	ar_meta_db:start(),
 	ar_meta_db:put(port, Port),
+	ar_meta_db:put(disk_space, DiskSpace),
 	Peers =
 		case RawPeers of
 			default -> ?DEFAULT_PEER_LIST;
