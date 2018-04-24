@@ -244,7 +244,7 @@ calculate_disk_space() ->
 	application:start(os_mon),
 	{ok, CWD} = file:get_cwd(),
 	[{_,Size,_}|_] = select_drive(disksup:get_disk_data(), CWD),
-	Size*1000.
+	Size*1024.
 
 % Calculate the root drive in which the Arweave server resides
 select_drive(Disks, []) ->
@@ -262,7 +262,6 @@ select_drive(Disks, []) ->
 	of
 		[] -> false;
 		Drives ->
-			ar:d({drives, Drives}),
 			Drives
 	end;
 select_drive(Disks, CWD) ->

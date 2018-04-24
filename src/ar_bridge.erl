@@ -166,7 +166,7 @@ maybe_send_to_internal(
 		Data) ->
 	case
 		(not already_processed(Procd, Type, Data)) andalso
-		ar_firewall:scan(FW, Data)
+		ar_firewall:scan(FW, Type, Data)
 	of
 		false ->
 			% If the data does not pass the scan, ignore the message.

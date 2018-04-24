@@ -24,6 +24,7 @@
 		ar_weave,
 		ar_wallet,
 		ar_router,
+		ar_firewall,
 		ar_gossip,
 		ar_mine,
 		ar_join,
@@ -85,7 +86,8 @@ main("") ->
 			{"diff init_diff", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr addr", "The address that mining rewards should be credited to."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
-			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"}
+			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"},
+			{"disk_space space", "Max size (in GB) for Arweave to take up on disk"}
 		]
 	),
 	erlang:halt();
@@ -116,7 +118,7 @@ main(["new_mining_key"|Rest], O)->
 main(["load_mining_key", File|Rest], O)->
 	main(Rest, O#opts { load_key = File });
 main(["disk_space", Size|Rest], O)->
-	main(Rest, O#opts { disk_space = Size });
+	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
