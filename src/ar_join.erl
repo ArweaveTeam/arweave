@@ -39,7 +39,7 @@ start(Node, RawPeers, NewB) ->
 					),
 					get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 					Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
-					fill_to_capacity(Peers, NewB)
+					fill_to_capacity(Peers, [], NewB#block.hash_list)
 				end
 			),
 			erlang:register(join_server, PID);
@@ -108,27 +108,20 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 			get_block_and_trail(Peers, NewB, BehindCurrent, HashList)
 	end.
 %% @doc Fills node to capacity based on weave storage limit.
-fill_to_capacity(_, NewB) when NewB#block.height =< 1 -> ok;
-fill_to_capacity(Peers, NewB) ->
-	Height = NewB#block.height,
-	RandBlock = lists:nth(rand:uniform(Height - 1), NewB#block.hash_list),
-	case at_capacity(Height) of
-		true -> ok;
-		false ->
-			case ar_node:get_block(Peers, RandBlock) of
-				unavailable -> ok;
-				B ->
-					ar_storage:write_block(B),
-					ar_storage:write_tx(
-						ar_node:get_tx(Peers, B#block.txs)
-						)
-			end,
-			fill_to_capacity(Peers, NewB)
-		end.
-
-%% @doc Figures out if node is at capacity based on predifined weave storage limit.
-at_capacity(Height) ->
-	(ar_storage:blocks_on_disk() / Height) > ?WEAVE_STOR_AMT.
+fill_to_capacity(_, [], _) -> ok;
+fill_to_capacity(Peers, Written, ToWrite) ->
+	RandBlock = lists:nth(rand:uniform(length(ToWrite)-1), ToWrite),
+	case ar_node:retry_full_block(Peers, RandBlock, not_found, 5) of
+		unavailable -> fill_to_capacity(Peers, Written, ToWrite);
+		B ->
+			ar_storage:write_block( B#block {txs = [TX#tx.id || TX <- B#block.txs] }),
+			ar_storage:write_tx(B#block.txs),
+			fill_to_capacity(
+				Peers,
+				[RandBlock|Written],
+				lists:delete(RandBlock, ToWrite)
+			)
+	end.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->
