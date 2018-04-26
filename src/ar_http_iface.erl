@@ -125,27 +125,16 @@ handle('POST', [<<"block">>], Req) ->
 			++ ":"
 			++ integer_to_list(Port)
 			),
-	case ar_node:get_current_block(whereis(http_entrypoint_node)) of
-		unavailable ->
-			B = ar_http_iface:get_block(OrigPeer, BShadow#block.indep_hash),
-			RecallB = unavailable;
-		CurrentBlock ->
-			B = BShadow#block {
-				wallet_list = ar_node:apply_txs(
-					CurrentBlock#block.wallet_list,
-					ar_storage:read_tx(BShadow#block.txs)
-				),
-				hash_list =
-					[
-						CurrentBlock#block.indep_hash
-						|
-						CurrentBlock#block.hash_list
-					]
-				},
-			RecallB = ar_storage:read_block(ar_util:decode(JSONRecallB))
+	B = BShadow#block {
+		wallet_list = ar_node:apply_txs(
+			ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+			ar_storage:read_tx(BShadow#block.txs)
+		),
+		hash_list = ar_node:get_hash_list(whereis(http_entrypoint_node))
+		},
+	RecallB = ar_storage:read_block(ar_util:decode(JSONRecallB)),
 			%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
 			%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-	end,
 	ar_bridge:add_block(
 		whereis(http_bridge_node),
 		OrigPeer,
