@@ -168,7 +168,6 @@ retry_block(Host, ID, _, Count) ->
 			retry_block(Host, ID, unavailable, Count-1);
 		B -> B
 	end.
-
 %% @doc Return a specific full block from a node, if it has it.
 get_full_block(Peers, ID) when is_list(Peers) ->
 	case ar_storage:read_block(ID) of
@@ -1633,7 +1632,7 @@ tx_threading_test() ->
 	ar_storage:write_tx([SignedTX,SignedTX2]),
 	receive after 500 -> ok end,
 	mine(Node1), % Mine B1
-	receive after 500 -> ok end,
+	receive after 300 -> ok end,
 	add_tx(Node1, SignedTX2),
 	receive after 500 -> ok end,
 	mine(Node1), % Mine B1

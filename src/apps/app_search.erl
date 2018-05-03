@@ -126,4 +126,3 @@ basic_usage_test() ->
 		receive
 			TXIDs -> lists:member(TX#tx.id, TXIDs)
 		end.
-	

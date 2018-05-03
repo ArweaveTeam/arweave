@@ -220,6 +220,7 @@ time_difference({M1, S1, U1}, {M2, S2, U2}) ->
 time_difference(_,_) ->
 	bad_time_format.
 
+% Calculate the amount of disk space free
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->
 	[a, b, c] = unique([a, a, b, b, b, c, c]).

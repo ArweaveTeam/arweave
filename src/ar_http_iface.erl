@@ -80,6 +80,7 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 			)
 		)
 	};
+
 % Get a transaction by hash
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
@@ -400,6 +401,43 @@ handle('GET', [<<"tx">>, <<"tags">>, Query], _Req) ->
 	end;
 
 %% Return a subfield of the tx with the given hash
+handle('GET', [<<"tx">>, <<"tags">>, Query], _Req) ->
+	Queries = string:split(ar_util:decode(Query), "&", all),
+	TXs = 	lists:foldl(
+		fun(Q, Acc) ->
+			case string:split(Q,"=") of
+				[N, V] ->
+					[
+						sets:from_list(app_search:search_by_exact_tag(N, V))
+						|
+						Acc
+					];
+				_ -> Acc
+			end
+		end,
+		[],
+		Queries
+	),
+	case TXs of
+		[] -> {200, [], []};
+		Set ->
+			{
+				200,
+				[],
+				list_to_binary(
+					ar_serialize:jsonify(
+							{
+								array,
+								lists:map(
+									fun ar_util:encode/1,
+									sets:to_list(sets:intersection(Set))
+								)
+							}
+						)
+				)
+			}
+	end;
+
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
 	case TX of
