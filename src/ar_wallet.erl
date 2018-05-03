@@ -1,5 +1,5 @@
 -module(ar_wallet).
--export([new/0, sign/2, verify/3, to_address/1, new_keyfile/0, load_keyfile/1]).
+-export([new/0, sign/2, verify/3, to_address/1, new_keyfile/0, load_keyfile/1, to_binary/1]).
 -define(PUBLIC_EXPNT, 17489).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -81,7 +81,15 @@ to_address(Addr) when ?IS_ADDR(Addr) -> Addr;
 to_address({{_, Pub}, Pub}) -> to_address(Pub);
 to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
-	crypto:hash(?HASH_ALG, PubKey).
+    crypto:hash(?HASH_ALG, PubKey).
+    
+to_binary({Addr, Quantity, LastTx}) -> 
+    <<
+        (Addr)/binary,
+        (integer_to_binary(Quantity))/binary,
+        (LastTx)/binary
+    >>.
+
 
 wallet_sign_verify_test() ->
 	TestData = <<"TEST DATA">>,

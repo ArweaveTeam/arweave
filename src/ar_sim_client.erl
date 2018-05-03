@@ -153,9 +153,10 @@ send_random_data_tx() ->
 
 %% @doc Create a random data TX with max length MaxTxLen
 create_random_data_tx(KeyList, MaxTxLen) ->
-	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(1), KeyList),
 	% Generate and dispatch a new data transaction.
-	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	LastTx = ar_node:get_last_tx_from_floating(whereis(http_entrypoint_node), Pub),
+	ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
@@ -174,7 +175,8 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
 	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
 	% Generate and dispatch a new data transaction.
-	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	LastTx = ar_node:get_last_tx_from_floating(whereis(http_entrypoint_node), Pub),
+	ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
 	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Qty = rand:uniform(MaxAmount),
 	TX = ar_tx:new(Dest, 0, Qty, LastTx),

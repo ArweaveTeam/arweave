@@ -39,7 +39,7 @@ start(Node, RawPeers, NewB) ->
 					),
 					get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 					Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
-					fill_to_capacity(Peers, NewB)
+					fill_to_capacity(Peers, [], NewB#block.hash_list)
 				end
 			),
 			erlang:register(join_server, PID);
@@ -68,48 +68,60 @@ get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block),
-	RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-	case {NewB, ar_node:get_block(Peers, RecallBlock)} of
-		{B, unavailable} ->
-			ar_storage:write_block(B),
-			ar_storage:write_tx(
-				ar_node:get_tx(Peers, B#block.txs)
-				);
-		{B, R} ->
-			ar_storage:write_block(B),
-			ar_storage:write_tx(
-				ar_node:get_tx(Peers, B#block.txs)
-				),
-			ar_storage:write_block(R),
-			ar_storage:write_tx(
-				ar_node:get_tx(Peers, R#block.txs)
-				)
-	end,
-	get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList).
-
-%% @doc Fills node to capacity based on weave storage limit.
-fill_to_capacity(_, NewB) when NewB#block.height =< 1 -> ok;
-fill_to_capacity(Peers, NewB) ->
-	Height = NewB#block.height,
-	RandBlock = lists:nth(rand:uniform(Height - 1), NewB#block.hash_list),
-	case at_capacity(Height) of
-		true -> ok;
-		false ->
-			case ar_node:get_block(Peers, RandBlock) of
-				unavailable -> ok;
-				B ->
+	PreviousBlock = ar_node:retry_block(Peers, NewB#block.previous_block, not_found, 5),
+	case ?IS_BLOCK(PreviousBlock) of
+		true ->
+			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
+			case {NewB, ar_node:get_block(Peers, RecallBlock)} of
+				{B, unavailable} ->
 					ar_storage:write_block(B),
 					ar_storage:write_tx(
 						ar_node:get_tx(Peers, B#block.txs)
-						)
-			end,
-			fill_to_capacity(Peers, NewB)
-		end.
-
-%% @doc Figures out if node is at capacity based on predifined weave storage limit.
-at_capacity(Height) ->
-	(ar_storage:blocks_on_disk() / Height) > ?WEAVE_STOR_AMT.
+						),
+					ar:report(
+						[
+							{could_not_retrieve_joining_recall_block},
+							{retrying}
+						]
+					),
+					timer:sleep(3000),
+					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
+				{B, R} ->
+					ar_storage:write_block(B),
+					ar_storage:write_tx(
+						ar_node:get_tx(Peers, B#block.txs)
+						),
+					ar_storage:write_block(R),
+					ar_storage:write_tx(
+						ar_node:get_tx(Peers, R#block.txs)
+					),
+					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
+			end;
+		false ->
+			ar:report(
+				[
+					{could_not_retrieve_joining_block},
+					{retrying}
+				]
+			),
+			timer:sleep(3000),
+			get_block_and_trail(Peers, NewB, BehindCurrent, HashList)
+	end.
+%% @doc Fills node to capacity based on weave storage limit.
+fill_to_capacity(_, [], _) -> ok;
+fill_to_capacity(Peers, Written, ToWrite) ->
+	RandBlock = lists:nth(rand:uniform(length(ToWrite)-1), ToWrite),
+	case ar_node:retry_full_block(Peers, RandBlock, not_found, 5) of
+		unavailable -> fill_to_capacity(Peers, Written, ToWrite);
+		B ->
+			ar_storage:write_block( B#block {txs = [TX#tx.id || TX <- B#block.txs] }),
+			ar_storage:write_tx(B#block.txs),
+			fill_to_capacity(
+				Peers,
+				[RandBlock|Written],
+				lists:delete(RandBlock, ToWrite)
+			)
+	end.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->
@@ -121,7 +133,7 @@ basic_node_join_test() ->
 	ar_node:mine(Node1),
 	receive after 600 -> ok end,
 	Node2 = ar_node:start([Node1]),
-	receive after 600 -> ok end,
+	receive after 1500 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
 	2 = (ar_storage:read_block(B))#block.height.
 
@@ -137,6 +149,6 @@ node_join_test() ->
 	Node2 = ar_node:start([Node1]),
 	receive after 600 -> ok end,
 	ar_node:mine(Node2),
-	receive after 600 -> ok end,
+	receive after 1500 -> ok end,
 	[B|_] = ar_node:get_blocks(Node1),
 	3 = (ar_storage:read_block(B))#block.height.

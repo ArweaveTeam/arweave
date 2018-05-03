@@ -1,9 +1,9 @@
 %%% A collection of record structures used throughout the Arweave server.
 
 %% How should nodes on the network identify themselves?
--define(NETWORK_NAME, "arweave.TN.1").
+-define(NETWORK_NAME, "arweave.TN.2").
 %% What is the current version/release number (should be an integer).
--define(CLIENT_VERSION, 1).
+-define(CLIENT_VERSION, 2).
 
 %% Should ar:report_console/1 /actually/ report to the console?
 -define(SILENT, true).

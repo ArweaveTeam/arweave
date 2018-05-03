@@ -24,6 +24,7 @@
 		ar_weave,
 		ar_wallet,
 		ar_router,
+		ar_firewall,
 		ar_gossip,
 		ar_mine,
 		ar_join,
@@ -51,7 +52,9 @@
 	mining_addr = unclaimed,
 	new_key = false,
 	load_key = unclaimed,
-	pause = true
+	pause = true,
+	disk_space = ar_storage:calculate_disk_space(),
+	used_space = ar_storage:calculate_used_space()
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -83,7 +86,8 @@ main("") ->
 			{"diff init_diff", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr addr", "The address that mining rewards should be credited to."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
-			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"}
+			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"},
+			{"disk_space space", "Max size (in GB) for Arweave to take up on disk"}
 		]
 	),
 	erlang:halt();
@@ -111,8 +115,10 @@ main(["mining_addr", Addr|Rest], O) ->
 	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
 main(["new_mining_key"|Rest], O)->
 	main(Rest, O#opts { new_key = true });
+main(["disk_space", Size|Rest], O) ->
+	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 main(["load_mining_key", File|Rest], O)->
-	main(Rest, O#opts { load_key = File });
+	main(Rest, O#opts { load_key = File });	
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -132,7 +138,9 @@ start(
 		mining_addr = Addr,
 		new_key = NewKey,
 		load_key = LoadKey,
-		pause = Pause
+		pause = Pause,
+		disk_space = DiskSpace,
+		used_space = UsedSpace
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -140,6 +148,8 @@ start(
 	inets:start(),
 	ar_meta_db:start(),
 	ar_meta_db:put(port, Port),
+	ar_meta_db:put(disk_space, DiskSpace),
+	ar_meta_db:put(used_space, UsedSpace),
 	Peers =
 		case RawPeers of
 			default -> ?DEFAULT_PEER_LIST;
@@ -194,6 +204,13 @@ start(
 			),
 			MiningAddress = unclaimed
 	end,
+	ar_node:start(
+		Peers,
+		if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
+		0,
+		MiningAddress,
+		AutoJoin
+	),
 	{ok, Supervisor} = start_link(
 		[
 			[
@@ -204,7 +221,7 @@ start(
 				AutoJoin
 			]
 		]
-	),
+    ),
 	Node = whereis(http_entrypoint_node),
 	{ok, SearchNode} = supervisor:start_child(
 		Supervisor,
@@ -216,8 +233,8 @@ start(
 			worker,
 			[app_search]
 		}
-	),
-	ar_node:add_peers(Node, SearchNode),
+    ),
+    ar_node:add_peers(Node, SearchNode),
 	% Start a bridge, add it to the node's peer list.
 	{ok, Bridge} = supervisor:start_child(
 		Supervisor,
@@ -229,10 +246,10 @@ start(
 			worker,
 			[ar_bridge]
 		}
-	),
+    ),
 	ar_node:add_peers(Node, Bridge),
 	% Add self to all remote nodes.
-	lists:foreach(fun ar_http_iface:add_peer/1, Peers),
+    lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
@@ -247,7 +264,7 @@ start(
 			{peers, Peers},
 			{polling, Polling}
 		]
-	),
+    ),
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,

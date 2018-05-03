@@ -29,27 +29,38 @@ start(Peers, TargetBShadow, HashList) ->
 			{peer, Peers}
 		]
 	),
-	TargetB = ar_node:get_block(Peers, TargetBShadow#block.indep_hash),
-	PID =
-		spawn(
-			fun() ->
-				server(
-					#state {
-						parent = Parent,
-						peers = Peers,
-						block_list = HashList,
-						hash_list =
-							drop_until_diverge(
-								lists:reverse(TargetB#block.hash_list),
-								lists:reverse(HashList)
-							) ++ [TargetB#block.indep_hash],
-						target_block = TargetB
-					}
-				)
-			end
-		),
-	PID ! {apply_next_block},
-	PID.
+	TargetB = ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 5),
+	case ?IS_BLOCK(TargetB) of
+		true ->
+			PID =
+				spawn(
+					fun() ->
+						server(
+							#state {
+								parent = Parent,
+								peers = Peers,
+								block_list = HashList,
+								hash_list =
+									drop_until_diverge(
+										lists:reverse(TargetB#block.hash_list),
+										lists:reverse(HashList)
+									) ++ [TargetB#block.indep_hash],
+								target_block = TargetB
+							}
+						)
+					end
+				),
+			PID ! {apply_next_block},
+			PID;
+		false ->
+			ar:report(
+				[
+					{could_not_start_fork_recovery},
+					{could_not_retrieve_target_block}
+				]
+			),
+			undefined
+	end.
 
 %% @doc Take two lists, drop elements until they do not match.
 %% Return the remainder of the _first_ list.
@@ -63,8 +74,8 @@ setminus(R1, []) -> R1;
 setminus(_, _) -> [].
 
 %% @doc Main server loop
-server(#state{peers = Peers, parent = Parent, target_block = TargetB}, rejoin) ->
-	Parent ! {rejoin, Peers, TargetB}.
+server(#state{peers = _Peers, parent = _Parent, target_block = _TargetB}, rejoin) ->
+	ok.
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
@@ -103,8 +114,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						ar:report(
 							[
 								{fork_recovery_failed},
-								{recovery_block_is_genesis_block},
-								{rejoining_on_trusted_peers}
+								{recovery_block_is_genesis_block}
+								% {rejoining_on_trusted_peers}
 							]
 						),
 						BHashList = unavailable,
@@ -116,8 +127,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						ar:report(
 							[
 								{fork_recovery_failed},
-								{recovery_block_is_too_far_ahead},
-								{rejoining_on_trusted_peers}
+								{recovery_block_is_too_far_ahead}
+								% {rejoining_on_trusted_peers}
 							]
 						),
 						BHashList = unavailable,
@@ -184,9 +195,10 @@ try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 		NextB,
 		TXs,
 		B,
-		RecallB
+		RecallB,
+		NextB#block.reward_addr,
+		NextB#block.tags
 	).
-
 %%% Tests
 
 %% @doc Ensure forks that are one block behind will resolve.
@@ -194,13 +206,18 @@ three_block_ahead_recovery_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
-	B1 = ar_weave:add(ar_weave:init([]), []),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
 	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
 	B3 = ar_weave:add(B2, []),
-	ar_storage:write_block(B3),
+	ar_storage:write_block(hd(B3)),
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
+	ar:d(break1),
 	receive after 500 -> ok end,
 	ar_node:mine(Node1),
 	receive after 500 -> ok end,
@@ -217,10 +234,14 @@ multiple_blocks_ahead_recovery_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
-	B1 = ar_weave:add(ar_weave:init([]), []),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
 	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
 	B3 = ar_weave:add(B2, []),
-	ar_storage:write_block(B3),
+	ar_storage:write_block(hd(B3)),
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
@@ -244,10 +265,14 @@ multiple_blocks_since_fork_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
-	B1 = ar_weave:add(ar_weave:init([]), []),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
 	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
 	B3 = ar_weave:add(B2, []),
-	ar_storage:write_block(B3),
+	ar_storage:write_block(hd(B3)),
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
@@ -268,29 +293,33 @@ multiple_blocks_since_fork_test() ->
 	9 = (ar_storage:read_block(B))#block.height.
 
 %% @doc Ensure that nodes that nodes recovering from the first block can reconcile
-fork_from_first_test() ->
-	ar_storage:clear(),
-	B1 = ar_weave:init([]),
-	Node1 = ar_node:start([], B1),
-	Node2 = ar_node:start(Node1, B1),
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:add_peers(Node1, Node2),
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2).
+% fork_from_first_test() ->
+% 	ar_storage:clear(),
+% 	B1 = ar_weave:init([]),
+% 	Node1 = ar_node:start([], B1),
+% 	Node2 = ar_node:start(Node1, B1),
+% 	ar_node:mine(Node1),
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1),
+% 	receive after 300 -> ok end,
+% 	ar_node:add_peers(Node1, Node2),
+% 	ar_node:mine(Node1),
+% 	receive after 300 -> ok end,
+% 	true = (ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2)).
 
 %% @doc Check the logic of setminus will correctly update to a new fork
 setminus_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start(),
 	Node2 = ar_node:start(),
-	B1 = ar_weave:add(ar_weave:init([]), []),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
 	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
 	B3 = ar_weave:add(B2, []),
-	ar_storage:write_block(B3),
+	ar_storage:write_block(hd(B3)),
 	Node1 ! Node2 ! {replace_block_list, B3},
 	ar_node:mine(Node1),
 	receive after 300 -> ok end,
@@ -311,37 +340,38 @@ setminus_test() ->
 	LengthShort = 0.
 
 %% @doc Ensure that fork rejoining behavior works
-fork_rejoin_test() ->
-	ar_storage:clear(),
-	B0 = ar_weave:init(),
-	Node1 = ar_node:start([], B0),
-	Node2 = ar_node:start([Node1], B0),
-	ar_node:mine(Node2), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 300 -> ok end,
-	ar_node:add_peers(Node1, Node2),
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	timer:sleep(500),
-	ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2).
+% fork_rejoin_test() ->
+% 	ar_storage:clear(),
+% 	B0 = ar_weave:init(),
+% 	ar_storage:write_block(B0),
+% 	Node1 = ar_node:start([], B0),
+% 	Node2 = ar_node:start([Node1], B0),
+% 	ar_node:mine(Node2), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:mine(Node1), % Mine B1
+% 	receive after 300 -> ok end,
+% 	ar_node:add_peers(Node1, Node2),
+% 	ar_node:mine(Node1),
+% 	receive after 300 -> ok end,
+% 	timer:sleep(500),
+% 	true = (ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2)).

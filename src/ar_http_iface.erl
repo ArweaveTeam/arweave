@@ -71,7 +71,11 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 		list_to_binary(
 			ar_serialize:jsonify(
 				{array,
-					ar_node:get_pending_txs(whereis(http_entrypoint_node))
+					%% Should encode
+						lists:map(
+							fun ar_util:encode/1,
+							ar_node:get_pending_txs(whereis(http_entrypoint_node))
+						)
 				}
 			)
 		)
@@ -120,27 +124,16 @@ handle('POST', [<<"block">>], Req) ->
 			++ ":"
 			++ integer_to_list(Port)
 			),
-	case ar_node:get_current_block(whereis(http_entrypoint_node)) of
-		unavailable ->
-			B = ar_http_iface:get_block(OrigPeer, BShadow#block.indep_hash),
-			RecallB = unavailable;
-		CurrentBlock ->
-			B = BShadow#block {
-				wallet_list = ar_node:apply_txs(
-					CurrentBlock#block.wallet_list,
-					ar_storage:read_tx(BShadow#block.txs)
-				),
-				hash_list =
-					[
-						CurrentBlock#block.indep_hash
-						|
-						CurrentBlock#block.hash_list
-					]
-				},
-			RecallB = ar_storage:read_block(ar_util:decode(JSONRecallB))
+		B = BShadow#block {
+			wallet_list = ar_node:apply_txs(
+				ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+				ar_storage:read_tx(BShadow#block.txs)
+			),
+			hash_list = ar_node:get_hash_list(whereis(http_entrypoint_node))
+			},
+		RecallB = ar_storage:read_block(ar_util:decode(JSONRecallB)),
 			%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
 			%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-	end,
 	ar_bridge:add_block(
 		whereis(http_bridge_node),
 		OrigPeer,
@@ -155,19 +148,15 @@ handle('POST', [<<"block">>], Req) ->
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
-	B = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case ar_tx:verify(TX, B#block.diff) of
+	Diff = ar_node:get_current_diff(whereis(http_entrypoint_node)),
+	FloatingWalletList = ar_node:get_floating_wallet_list(whereis(http_entrypoint_node)),
+	case ar_tx:verify(TX, Diff, FloatingWalletList) of
 		false ->
 			ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
-			{400, [], <<"Transaction signature not valid.">>};
+			{400, [], <<"Transaction verification failed.">>};
 		true ->
 			ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-			timer:apply_after(
-				calculate_delay(byte_size(ar_tx:to_binary(TX))),
-				ar_bridge,
-				add_tx,
-				[whereis(http_bridge_node), TX]
-				),
+			ar_bridge:add_tx(whereis(http_bridge_node), TX),
 			{200, [], <<"OK">>}
 	end;
 
@@ -229,7 +218,7 @@ handle('GET', [<<"wallet_list">>], _Req) ->
 % TODO: Return remaining timeout on a failed request
 % TODO: Optionally, allow adding self on a non-default port
 % TODO: Nicer way of segregating different networks
-handle('POST', [<<"peers">>], Req) ->
+handle('POST', [<<"peers">>], Req) ->    
 	BlockJSON = elli_request:body(Req),
 	case json2:decode_string(binary_to_list(BlockJSON)) of
 		{ok, {struct, Struct}} ->
@@ -371,6 +360,45 @@ handle('GET', [<<"services">>], _Req) ->
 			}
 		)
 	};
+
+% Find all txs whose tags match the given set of key value pairs.
+handle('GET', [<<"tx">>, <<"tags">>, Query], _Req) ->
+	Queries = string:split(ar_util:decode(Query), "&", all),
+	TXs = 	lists:foldl(
+		fun(Q, Acc) ->
+			case string:split(Q,"=") of
+				[N, V] ->
+					[
+						sets:from_list(app_search:search_by_exact_tag(N, V))
+						|
+						Acc
+					];
+				_ -> Acc
+			end
+		end,
+		[],
+		Queries
+	),
+	case TXs of
+		[] -> {200, [], []};
+		Set ->
+			{
+				200,
+				[],
+				list_to_binary(
+					ar_serialize:jsonify(
+							{
+								array,
+								lists:map(
+									fun ar_util:encode/1,
+									sets:to_list(sets:intersection(Set))
+								)
+							}
+						)
+				)
+			}
+	end;
+
 %% Return a subfield of the tx with the given hash
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
@@ -549,7 +577,6 @@ send_new_block(Host, Port, NewB, RecallB) ->
 
 %% @doc Add peer (self) to host.
 add_peer(Host) ->
-	%ar:d({adding_host, Host}),
 	ar_httpc:request(
 		post,
 		{
@@ -853,8 +880,6 @@ store_data_time(Peer, Bytes, MicroSecs) ->
 %% Currently based on 40s for 95% of peers in the bitcoin network to recieve a
 %% 1mb block
 
-calculate_delay(0) -> 0;
-calculate_delay(Bytes) -> (Bytes * 40) div 1000.
 %%% Tests
 
 %% @doc Tests add peer functionality
@@ -989,10 +1014,13 @@ get_full_block_by_hash_test() ->
 	send_new_tx({127, 0, 0, 1}, TX1 = ar_tx:new(<<"DATA2">>)),
 	receive after 200 -> ok end,
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
+	receive after 200 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
+	ar:d({blocks, ar_node:get_blocks(Node)}),
 	B2 = get_block({127, 0, 0, 1}, B1),
+	ar:d({b2txs, B2#block.txs}),
 	B3 = get_full_block({127, 0, 0, 1}, B1),
+	ar:d({b3txs, B3#block.txs}),
 	B3 = B2#block {txs = [TX, TX1]}.
 
 %% @doc Ensure that blocks can be received via a height.
@@ -1099,9 +1127,9 @@ add_tx_and_get_last_test() ->
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign(TX#tx{ id = <<"TEST">> }, Priv1, Pub1),
 	send_new_tx({127, 0, 0, 1}, SignedTX),
-	receive after 1000 -> ok end,
+	receive after 500 -> ok end,
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
+	receive after 500 -> ok end,
 	{ok, {{_, 200, _}, _, Body}} =
 		ar_httpc:request(
 			"http://127.0.0.1:"
@@ -1210,3 +1238,36 @@ get_multiple_pending_txs_test() ->
 				++ "pending"),
 	{ok, {array, PendingTxs}} = json2:decode_string(Body),
 	[TX1#tx.id, TX2#tx.id] == [list_to_binary(P) || P <- PendingTxs].
+
+get_tx_by_tag_test() ->
+	% Spawn a network with two nodes and a chirper server
+	ar_storage:clear(),
+	SearchServer = app_search:start(),
+	Peers = ar_network:start(10, 10),
+	ar_node:add_peers(hd(Peers), SearchServer),
+	% Generate the transaction.
+	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	% Add tx to network
+	ar_node:add_tx(hd(Peers), TX),
+	% Begin mining
+	receive after 250 -> ok end,
+	ar_node:mine(hd(Peers)),
+	receive after 1000 -> ok end,
+	% recieve a "get transaction" message
+	% check that newly mined block matches the block the most recent transaction was mined in
+	{ok, {{_, 200, _}, _, Body}} =
+			ar_httpc:request(
+				"http://127.0.0.1:"
+					++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+					++ "/tx"
+					++ "/tags/"
+					++ ar_util:encode(<<"TestName=TestVal">>)),
+	{ok, {array, TXs}} = json2:decode_string(Body),
+	true =
+		lists:member(
+			TX#tx.id,
+			lists:map(
+				fun ar_util:decode/1,
+				TXs
+			)
+		).

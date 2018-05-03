@@ -1,16 +1,18 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_pending_txs/1]).
--export([generate_data_segment/2]).
+-export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1,get_full_pending_txs/1]).
+-export([get_current_diff/1, get_floating_wallet_list/1]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
 -export([calculate_reward/2]).
 -export([rejoin/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_txs/2, validate/4, validate/5, validate/6, find_recall_block/1]).
+-export([apply_txs/2, apply_mining_reward/4, validate/4, validate/5, validate/8, find_recall_block/1]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
 -export([start_link/1]).
+-export([retry_block/4, retry_full_block/4]).
+-export([wallet_two_transaction_test_slow/0, single_wallet_double_tx_before_mine_test_slow/0, single_wallet_double_tx_wrong_order_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -19,6 +21,7 @@
 -record(state, {
 	hash_list = not_joined,
 	wallet_list = [],
+	floating_wallet_list = [],
 	height = 0,
 	gossip,
 	txs = [],
@@ -26,7 +29,9 @@
 	mining_delay = 0,
 	automine = false,
 	reward_addr = unclaimed,
-	trusted_peers = []
+	trusted_peers = [],
+	waiting_txs = [],
+    tags = []
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -64,7 +69,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
-				_ ->
+				_ ->                                        
 					ar_cleanup:remove_invalid_blocks(HashList),
 					do_nothing
 			end,
@@ -76,6 +81,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 					gossip = Gossip,
 					hash_list = HashList,
 					wallet_list = Hashes,
+					floating_wallet_list = Hashes,
 					mining_delay = MiningDelay,
 					reward_addr = RewardAddr,
 					height = Height,
@@ -83,7 +89,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 				}
 			)
 		end
-	),
+    ),
 	ar_http_iface:reregister(http_entrypoint_node, PID),
 	PID.
 
@@ -149,6 +155,20 @@ get_block(Proc, ID) when is_pid(Proc) ->
 get_block(Host, ID) ->
 	ar_http_iface:get_block(Host, ID).
 
+%% @doc Reattempts to find a block from a node retrying up to Count times.
+retry_block(_, _, Response, 0) ->
+	Response;
+retry_block(Host, ID, _, Count) ->
+	case get_block(Host, ID) of
+		not_found ->
+			timer:sleep(3000),
+			retry_block(Host, ID, not_found, Count-1);
+		unavailable ->
+			timer:sleep(3000),
+			retry_block(Host, ID, unavailable, Count-1);
+		B -> B
+	end.
+
 %% @doc Return a specific full block from a node, if it has it.
 get_full_block(Peers, ID) when is_list(Peers) ->
 	case ar_storage:read_block(ID) of
@@ -163,6 +183,20 @@ get_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
 get_full_block(Host, ID) ->
 	ar_http_iface:get_full_block(Host, ID).
+
+%% @doc Reattempts to find a full block from a node retrying up to Count times.
+retry_full_block(_, _, Response, 0) ->
+	Response;
+retry_full_block(Host, ID, _, Count) ->
+	case get_full_block(Host, ID) of
+		not_found ->
+			timer:sleep(3000),
+			retry_full_block(Host, ID, not_found, Count-1);
+		unavailable ->
+			timer:sleep(3000),
+			retry_full_block(Host, ID, unavailable, Count-1);
+		B -> B
+	end.
 
 %% @doc convert a block header into a full block
 make_full_block(ID) ->
@@ -193,16 +227,24 @@ sort_txs_by_count(TXs) ->
 get_tx(_, []) -> [];
 get_tx(Peers, ID) when is_list(Peers) ->
 	ar:d([{getting_tx, ID}, {peers, Peers}]),
-	case ar_storage:read_tx(ID) of
-		unavailable ->
+	case
+		{
+			ar_storage:read_tx(ID),
+			lists:keyfind(ID, 2, get_full_pending_txs(whereis(http_entrypoint_node)))
+		} of
+		{unavailable, false} ->
 			case sort_txs_by_count([ get_tx(Peer, ID) || Peer <- Peers ]) of
 				[] -> unavailable;
 				[T|_] -> T
 			end;
-		TX -> TX
+		{TX, false} -> TX;
+		{unavailable, TX} -> TX;
+		{TX, _} -> TX
 	end;
 get_tx(Proc, ID) when is_pid(Proc) ->
+	%ar:d({pending, get_full_pending_txs(whereis(http_entrypoint_node))}),
 	ar_storage:read_tx(ID);
+
 get_tx(Host, ID) ->
 	ar_http_iface:get_tx(Host, ID).
 
@@ -260,6 +302,16 @@ get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
 
+%% @doc Return the last tx from the floating wallet list associated with a wallet.
+get_last_tx_from_floating(Node, Addr) when ?IS_ADDR(Addr) ->
+	Node ! {get_last_tx_from_floating, self(), Addr},
+	receive
+		{last_tx_from_floating, Addr, LastTX} -> LastTX
+	end;
+get_last_tx_from_floating(Node, WalletID) ->
+	ar:d({damon, 1}),
+	get_last_tx_from_floating(Node, ar_wallet:to_address(WalletID)).
+
 %% @doc Return all pending transactions
 get_pending_txs(Node) ->
 	Node ! {get_txs, self()},
@@ -267,6 +319,25 @@ get_pending_txs(Node) ->
 		{all_txs, Txs} -> [T#tx.id || T <- Txs]
 		after 1000 -> []
 	end.
+get_full_pending_txs(Node) ->
+	Node ! {get_txs, self()},
+	receive
+		{all_txs, Txs} -> Txs
+		after 1000 -> []
+	end.
+
+get_floating_wallet_list(Node) ->
+    Node ! {get_floatingwalletlist, self()},
+    receive
+		{floatingwalletlist, WalletList} -> WalletList
+	end.
+
+get_current_diff(Node) ->
+    Node ! {get_current_diff, self()},
+    receive
+		{current_diff, Diff} -> Diff
+	end.
+
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
 	Node ! mine.
@@ -332,7 +403,8 @@ server(
 	S = #state {
 		gossip = GS,
 		hash_list = HashList,
-		wallet_list = WalletList
+		wallet_list = WalletList,
+		floating_wallet_list = FloatingWalletList
 	}) ->
 	try (receive
 		Msg when is_record(Msg, gs_msg) ->
@@ -362,6 +434,12 @@ server(
 					server(S#state { gossip = NewGS })
 			end;
 		{add_tx, TX} ->
+			timer:send_after(
+				calculate_delay(byte_size(ar_tx:to_binary(TX))),
+				{apply_tx, TX}
+				),
+			server(S#state { waiting_txs = [TX|S#state.waiting_txs] });
+		{apply_tx, TX} ->
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			add_tx_to_server(S, NewGS, TX);
 		{new_block, Peer, Height, NewB, RecallB} ->
@@ -380,7 +458,8 @@ server(
 			);
 		{replace_block_list, NewBL = [B|_]} ->
 			% Replace the entire stored block list, regenerating the hash list.
-			lists:map(fun ar_storage:write_block/1, NewBL),
+			%lists:map(fun ar_storage:write_block/1, NewBL),
+			%ar:d({replaced, [B#block.indep_hash|B#block.hash_list]}),
 			server(
 				S#state {
 					hash_list = [B#block.indep_hash|B#block.hash_list],
@@ -416,23 +495,45 @@ server(
 					false -> 0
 				end},
 			server(S);
-		{get_last_tx, PID, WalletID} ->
-			PID ! {last_tx, WalletID,
-				case lists:keyfind(WalletID, 1, WalletList) of
-					{WalletID, _Balance, Last} -> Last;
+		{get_last_tx, PID, Addr} ->
+			PID ! {last_tx, Addr,
+				case lists:keyfind(Addr, 1, WalletList) of
+					{Addr, _Balance, Last} -> Last;
 					false -> <<>>
 				end},
 			server(S);
-		{get_txs, PID} ->
-			PID ! {all_txs, S#state.txs},
+		{get_last_tx_from_floating, PID, Addr} ->
+			PID ! {last_tx_from_floating, Addr,
+			case lists:keyfind(Addr, 1, FloatingWalletList) of
+				{Addr, _Balance, Last} -> Last;
+				false -> <<>>
+			end},
 			server(S);
-		mine -> server(start_mining(S));
+		{get_txs, PID} ->
+			PID ! {all_txs, S#state.txs ++ S#state.waiting_txs},
+			server(S);
+		{get_floatingwalletlist, PID} ->
+			PID ! {floatingwalletlist, S#state.floating_wallet_list},
+			server(S);
+		{get_current_diff, PID} ->	
+			CurrentB = ar_util:get_head_block(HashList),
+			PID ! {
+					current_diff, 
+					ar_retarget:calculate_difficulty(
+						CurrentB#block.diff,
+						os:system_time(seconds),
+						CurrentB#block.last_retarget
+					)
+			},
+			server(S);
+		mine ->
+			server(start_mining(S));
 		automine -> server(start_mining(S#state { automine = true }));
-		{work_complete, MinedTXs, _Hash, _NewHash, _Diff, Nonce} ->
-			% The miner thinks it has found a new block!
+		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+			% The miner thinks it has found a new block
 			case S#state.hash_list of
 				not_joined -> do_nothing;
-				_ -> integrate_block_from_miner(S, MinedTXs, Nonce)
+				_ -> integrate_block_from_miner(S, MinedTXs, Diff, Nonce, Timestamp)
 			end;
 		{add_peers, Ps} ->
 			%ar:d({adding_peers, Ps}),
@@ -528,7 +629,7 @@ server(
 		{'DOWN', _, _, _, _} ->
 			server(S);
 		Msg ->
-			ar:report_console([{unknown_msg, Msg}]),
+			ar:report_console([{unknown_msg_node, Msg}]),
 			server(S)
 	end)
 	catch 
@@ -577,7 +678,10 @@ fork_recover(
 					HashList
 				)
 			),
-			erlang:register(fork_recovery_server, PID);
+			case PID of
+				undefined -> ok;
+				_ -> erlang:register(fork_recovery_server, PID)
+			end;
 		{undefined, _} -> ok;
 		_ ->
 		whereis(fork_recovery_server) ! {update_target_block, NewB, Peer}
@@ -653,7 +757,8 @@ process_new_block(S, NewGS, NewB, _, Peer, _HashList)
 integrate_new_block(
 		S = #state {
 			txs = TXs,
-			hash_list = HashList
+			hash_list = HashList,
+			wallet_list = WalletList
 		},
 		NewB) ->
 	% Filter completed TXs from the pending list.
@@ -662,7 +767,7 @@ integrate_new_block(
 			fun(T) ->
                 (not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
                 and 
-                (ar_tx:verify(T, NewB#block.diff))
+                (ar_tx:verify(T, NewB#block.diff, WalletList))
 			end,
 			TXs
 		),
@@ -676,12 +781,14 @@ integrate_new_block(
 		]
 	),
 	%ar:d({new_hash_list, [NewB#block.indep_hash|HashList]}),
+	app_search:update_tag_table(NewB),
 	server(
 		reset_miner(
 			S#state {
 				hash_list = [NewB#block.indep_hash|HashList],
 				txs = NewTXs,
-				height = NewB#block.height
+				height = NewB#block.height,
+				floating_wallet_list = apply_txs(WalletList, TXs)
 			}
 		)
 	).
@@ -693,12 +800,10 @@ integrate_block_from_miner(
 			wallet_list = RawWalletList,
 			txs = TXs,
 			gossip = GS,
-			reward_addr = RewardAddr
+            reward_addr = RewardAddr,
+            tags = Tags
 		},
-		MinedTXs, Nonce) ->
-	% Store the transactions that we know about, but were not mined in
-	% this block.
-	NotMinedTXs = TXs -- MinedTXs,
+		MinedTXs, Diff, Nonce, Timestamp) ->
 	% Calculate the new wallet list (applying TXs and mining rewards).
 	WalletList =
 		apply_mining_reward(
@@ -707,17 +812,31 @@ integrate_block_from_miner(
 			MinedTXs,
 			length(HashList) - 1
 		),
-	NewS = OldS#state { wallet_list = WalletList },
-	% Build the block record, verify it, and gossip it to the other nodes.
+	% Store the transactions that we know about, but were not mined in
+	% this block.
+	NotMinedTXs = 	
+		lists:filter(
+			fun(T) ->
+				(ar_tx:verify(T, Diff, WalletList))
+			end,
+			TXs -- MinedTXs
+		),
+    NewS = OldS#state { wallet_list = WalletList },
+    % Build the block record, verify it, and gossip it to the other nodes.
+    RecallB = ar_node:find_recall_block(HashList),
 	[NextB|_] =
-		ar_weave:add(HashList, HashList, WalletList, MinedTXs, Nonce, RewardAddr),
+        ar_weave:add(HashList, MinedTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
+		ar:d({validate,validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList))}),
 	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
 		false ->
 			ar:report_console([{miner, self()}, incorrect_nonce]),
-			server(OldS);
+			server(
+                reset_miner(OldS)
+            );
 		true ->
 			ar_storage:write_block(NextB),
 			ar_storage:write_tx(MinedTXs),
+			app_search:update_tag_table(NextB),
 			{NewGS, _} =
 				ar_gossip:send(
 					GS,
@@ -733,7 +852,7 @@ integrate_block_from_miner(
 				[
 					{node, self()},
 					{accepted_block, NextB#block.height},
-					{hash, ar_util:encode(NextB#block.indep_hash)},
+					{indep_hash, ar_util:encode(NextB#block.indep_hash)},
 					{recall_block, RecallB#block.height},
 					{recall_hash, RecallB#block.indep_hash},
 					{txs, length(MinedTXs)}
@@ -746,7 +865,8 @@ integrate_block_from_miner(
 						hash_list =
 							[NextB#block.indep_hash|HashList],
 						txs = NotMinedTXs, % TXs not included in the block
-						height = NextB#block.height
+						height = NextB#block.height,
+						floating_wallet_list = apply_txs(WalletList, NotMinedTXs)
 					}
 				)
 			)
@@ -787,7 +907,7 @@ add_tx_to_server(S, NewGS, TX) ->
         1, 
         memsup:get_system_memory_data()
     ),
-    case (Mem div 4) > byte_size(ar_tx:to_binary(TX))  of
+    case (Mem div 4) > byte_size(ar_tx:to_binary(TX)) of
         true -> 
             NewTXs = S#state.txs ++ [TX],
 	        ar:d({added_tx, TX#tx.id}),
@@ -796,21 +916,17 @@ add_tx_to_server(S, NewGS, TX) ->
 		        PID ->
 			        ar_mine:change_data(
 				        PID,
-				        generate_data_segment(
-					        NewTXs,
-					        find_recall_block(S#state.hash_list)
-				        ),
 				        NewTXs
 			        )
 	        end,
-	        server(S#state { txs = NewTXs, gossip = NewGS });
+	        server(S#state { txs = NewTXs, floating_wallet_list = apply_tx(S#state.floating_wallet_list, TX), gossip = NewGS });
         false ->
             server(S#state { gossip = NewGS })
     end.
 
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
-validate(_, _, _, _, _, unavailable) -> false;
+validate(_, _, _, _, _, unavailable, _, _) -> false;
 validate(
 		HashList,
 		WalletList,
@@ -818,38 +934,66 @@ validate(
 			#block {
 				hash_list = HashList,
 				wallet_list = WalletList,
-				nonce = Nonce
+                nonce = Nonce,
+				diff = Diff,
+				timestamp = Timestamp
 			},
 		TXs,
-		OldB = #block { hash = Hash, diff = Diff },
-		RecallB) ->
+		OldB,
+        RecallB,
+        RewardAddr,
+        Tags) ->
+
     % ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
-	Mine = ar_mine:validate(Hash, Diff, generate_data_segment(TXs, RecallB), Nonce),
-	Wallet = validate_wallet_list(WalletList),
-	Indep = ar_weave:verify_indep(RecallB, HashList),
-	Txs = ar_tx:verify_txs(TXs, Diff),
-	Retarget = ar_retarget:validate(NewB, OldB),
+    Mine = ar_mine:validate(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce, Diff),
+    Wallet = validate_wallet_list(WalletList),
+    Indep = ar_weave:verify_indep(RecallB, HashList),
+    Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
+    Retarget = ar_retarget:validate(NewB, OldB),
+    IndepHash = ar_block:verify_indep_hash(NewB),
+    Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
+	Size = ar_block:block_field_size_limit(NewB),
+	
+	ar:report(
+		[
+			{validate_block, ar_util:encode(NewB#block.indep_hash)},
+			{block_mine_validate, Mine},
+			{block_wallet_validate, Wallet},
+			{block_indep_validate, Indep},
+			{block_txs_validate, Txs},
+			{block_diff_validate, Retarget},
+			{block_indep, IndepHash},
+			{block_hash, Hash},
+			{block_size, Size}
+		]
+	),
 
 	case Mine of false -> ar:d(invalid_nonce); _ -> ok end,
 	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok  end,
 	case Indep of false -> ar:d(invalid_recall_indep_hash); _ -> ok  end,
 	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
-	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
+    case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
+    case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
+    case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
+    case Size of false -> ar:d(invalid_size); _ -> ok  end,
 
-	Mine =/= false
+	(Mine =/= false)
 		and Wallet
 		and Indep
 		and Txs
-		and Retarget;
-validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB) ->
-	validate(undefined, WL, NewB, TXs, OldB, RecallB);
-validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB) ->
-	validate(HL, undefined, NewB, TXs, OldB, RecallB);
-validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB) ->
+		and Retarget
+        and IndepHash
+        and Hash
+        and Size;
+validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB, _, _) ->
+	validate(undefined, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
+validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
+	validate(HL, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
+validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:d({val_hashlist, _NewB#block.hash_list}),
 	ar:d({val_wallet_list, _NewB#block.wallet_list}),
 	ar:d({val_nonce, _NewB#block.nonce}),	
-	ar:d({val_hash, _OldB#block.hash}),
+	ar:d({val_hash, _OldB#block.hash_list}),
 	ar:d({val_diff, _OldB#block.diff}),
 	ar:d({hashlist, _HL}),
 	ar:d({wallet_list, _WL}),
@@ -860,7 +1004,7 @@ validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB) ->
 
 %% @doc Validate a block, given a node state and the dependencies.
 validate(#state { hash_list = HashList, wallet_list = WalletList }, B, TXs, OldB, RecallB) ->
-	validate(HashList, WalletList, B, TXs, OldB, RecallB).
+	validate(HashList, WalletList, B, TXs, OldB, RecallB, B#block.reward_addr, B#block.tags).
 
 %% @doc Validate block, given the previous block and recall block.
 validate(
@@ -883,7 +1027,8 @@ validate(
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 validate_wallet_list([]) -> true;
-validate_wallet_list([{_, Qty, _}|_]) when Qty =< 0 -> false;
+validate_wallet_list([{_, 0, Last}|_]) when byte_size(Last) == 0 -> false; 
+validate_wallet_list([{_, Qty, _}|_]) when Qty < 0 -> false;
 validate_wallet_list([_|Rest]) -> validate_wallet_list(Rest).
 
 %% @doc Update the wallet list of a server with a set of new transactions
@@ -906,6 +1051,10 @@ apply_txs(WalletList, TXs) ->
 %% @doc Calculate and apply mining reward quantities to a wallet list.
 apply_mining_reward(WalletList, unclaimed, _TXs, _Height) -> WalletList;
 apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
+    % ar:d({WalletList}),
+    % ar:d({RewardAddr}),
+    % ar:d({TXs}),
+    % ar:d({Height}),
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, TXs)).
 
 %% @doc Apply a transaction to a wallet list, updating it.
@@ -985,21 +1134,6 @@ find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList }|_
 		when HashList =/= undefined, WalletList =/= undefined -> B;
 find_sync_block([_|Xs]) -> find_sync_block(Xs).
 
-%% @doc Given a recall block and a list of new transactions, generate a data segment to mine on.
-generate_data_segment(TXs, RecallB) ->
-	generate_data_segment(TXs, RecallB, <<>>).
-generate_data_segment(TXs, RecallB, undefined) ->
-	generate_data_segment(TXs, RecallB, <<>>);
-generate_data_segment(TXs, RecallB, RewardAddr) ->
-	RecallTXs = ar_storage:read_tx(RecallB#block.txs),
-	<<
-		(ar_weave:generate_block_data(TXs))/binary,
-		(RecallB#block.nonce)/binary,
-		(RecallB#block.hash)/binary,
-		(ar_weave:generate_block_data(RecallTXs))/binary,
-		RewardAddr/binary
-	>>.
-
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 %calculate_reward(B) -> calculate_reward(B#block.height, B#block.txs).
 calculate_reward(Height, TXs) ->
@@ -1041,18 +1175,31 @@ start_mining(S = #state { hash_list = not_joined }) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	S;
-start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
+start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, tags = Tags }) ->
 	case find_recall_block(BHL) of
 		unavailable -> 
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-            FullBlock = ar_node:get_full_block(
+            FullBlock = ar_node:retry_full_block(
 				ar_bridge:get_remote_peers(whereis(http_bridge_node)), 
-				RecallHash
+				RecallHash,
+				not_found,
+				3
 			),
-			RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
-			ar_storage:write_tx(FullBlock#block.txs),
-			ar_storage:write_block(RecallFull),
+			case ?IS_BLOCK(FullBlock) of
+				true -> 
+					RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+					ar_storage:write_tx(FullBlock#block.txs),
+					ar_storage:write_block(RecallFull);
+				false ->
+					ar:report(
+						[
+							{could_not_start_mining},
+							{could_not_retrieve_recall_block}
+						]
+					),
+					ok
+			end,
 			S;
 		RecallB ->
 			if not is_record(RecallB, block) ->
@@ -1061,18 +1208,21 @@ start_mining(S = #state { hash_list = BHL, txs = TXs }) ->
 				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
 			end,
 			B = ar_storage:read_block(hd(BHL)),
-			Gen = generate_data_segment(TXs, RecallB),
 			Miner =
 				ar_mine:start(
-					B#block.hash,
-					B#block.diff,
-					Gen,
-					S#state.mining_delay,
-					TXs
+                    B,
+                    RecallB,
+                    TXs,
+                    RewardAddr,
+                    Tags
 				),
-			ar:report([{node, self()}, {started_miner, Miner}]),
+            ar:report([{node, self()}, {started_miner, Miner}]),
 			S#state { miner = Miner }
 	end.
+
+	calculate_delay(0) -> 0;
+	calculate_delay(Bytes) -> (Bytes * 40) div 1000.
+
 
 %%% Tests
 
@@ -1094,16 +1244,15 @@ get_current_block_test() ->
 add_block_test() ->
 	ar_storage:clear(),
 	%% TODO: This test fails because mining blocks outside of a mining node
-	%% does not appropriately call the generate_data_segment function.
 	%% The data segment given to ar_mine:validate is <<>>, while it should
 	%% be ~100 bytes long.
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
-	[B1|_] = ar_weave:add([B0]),
+    [B1|_] = ar_weave:add([B0]),
 	add_block(Node1, B1, B0),
-	receive after 500 -> ok end,
-	todo.
-	%[B1, B0] = get_blocks(Node1).
+    receive after 500 -> ok end,
+    Blocks = lists:map(fun(B) -> B#block.indep_hash end, [B1, B0]),
+    Blocks = get_blocks(Node1).
 
 %% @doc Check that blocks can be added (if valid) by external processes.
 gossip_add_block_test() ->
@@ -1119,46 +1268,58 @@ gossip_add_block_test() ->
 
 %% @doc Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"HELLO WORLD">>),
-			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-		]
-	),
-	Node = start(),
-	GS0 = ar_gossip:init([Node]),
-	[LastB|_] = B1 = ar_weave:add(ar_weave:init([]), [TX1]),
-	Node ! {replace_block_list, B1},
-	B2 = ar_weave:add(B1, [TX2]),
-	ar_gossip:send(GS0,
-		{
-			new_block,
-			self(),
-			(hd(B2))#block.height,
-			(hd(B2))#block { hash = <<"INCORRECT">> },
-			find_recall_block(B2)
-		}),
-	receive after 500 -> ok end,
-	Node ! {get_blocks, self()},
-	receive {blocks, Node, [RecvdB|_]} ->
-		LastB = ar_storage:read_block(RecvdB)
-	end.
+    ar_storage:clear(),
+    ar_storage:write_tx(
+        [
+            TX1 = ar_tx:new(<<"HELLO WORLD">>),
+            TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
+        ]
+    ),
+    Node = ar_node:start(),
+    GS0 = ar_gossip:init([Node]),
+    B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1 = ar_weave:add(B0, [TX1]),
+    LastB = hd(B1),
+    ar_storage:write_block(hd(B1)),
+    BL = [hd(B1), hd(B0)],
+    Node ! {replace_block_list, BL},
+    B2 = ar_weave:add(B1, [TX2]),
+    ar_storage:write_block(hd(B2)),
+    ar_gossip:send(GS0,
+        {
+            new_block,
+            self(),
+            (hd(B2))#block.height,
+            (hd(B2))#block { hash = <<"INCORRECT">> },
+            find_recall_block(B2)
+        }),
+    receive after 500 -> ok end,
+    Node ! {get_blocks, self()},
+    receive 
+        {blocks, Node, [RecvdB|_]} -> LastB = ar_storage:read_block(RecvdB)
+    end.
 
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto the network.
 add_bogus_block_nonce_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"HELLO WORLD">>),
-			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-		]
-	),
-	Node = start(),
-	GS0 = ar_gossip:init([Node]),
-	[LastB|_] = B1 = ar_weave:add(ar_weave:init([]), [TX1]),
-	Node ! {replace_block_list, B1},
+    ar_storage:clear(),
+    ar_storage:write_tx(
+        [
+            TX1 = ar_tx:new(<<"HELLO WORLD">>),
+            TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
+        ]
+    ),
+    Node = ar_node:start(),
+    GS0 = ar_gossip:init([Node]),
+    B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1 = ar_weave:add(B0, [TX1]),
+    LastB = hd(B1),
+    ar_storage:write_block(hd(B1)),
+    BL = [hd(B1), hd(B0)],
+    Node ! {replace_block_list, BL},
 	B2 = ar_weave:add(B1, [TX2]),
+    ar_storage:write_block(hd(B2)),
 	ar_gossip:send(GS0,
 		{new_block,
 			self(),
@@ -1174,18 +1335,24 @@ add_bogus_block_nonce_test() ->
 
 %% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
 add_bogus_hash_list_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"HELLO WORLD">>),
-			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-		]
-	),
-	Node = start(),
-	GS0 = ar_gossip:init([Node]),
-	[LastB|_] = B1 = ar_weave:add(ar_weave:init([]), [TX1]),
-	Node ! {replace_block_list, B1},
+    ar_storage:clear(),
+    ar_storage:write_tx(
+        [
+            TX1 = ar_tx:new(<<"HELLO WORLD">>),
+            TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
+        ]
+    ),
+    Node = ar_node:start(),
+    GS0 = ar_gossip:init([Node]),
+    B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1 = ar_weave:add(B0, [TX1]),
+    LastB = hd(B1),
+    ar_storage:write_block(hd(B1)),
+    BL = [hd(B1), hd(B0)],
+    Node ! {replace_block_list, BL},
 	B2 = ar_weave:add(B1, [TX2]),
+    ar_storage:write_block(hd(B2)),
 	ar_gossip:send(GS0,
 		{new_block,
 			self(),
@@ -1197,13 +1364,14 @@ add_bogus_hash_list_test() ->
 		}),
 	receive after 500 -> ok end,
 	Node ! {get_blocks, self()},
-	receive {blocks, Node, RecvdB} -> LastB = ar_storage:read_block(hd(RecvdB)) end.
+	receive {blocks, Node, [RecvdB|_]} -> LastB = ar_storage:read_block(RecvdB) end.
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_blockweave_with_mining_test() ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([]),
 	Node1 = start([], B0),
+    ar_storage:write_block(B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	mine(Node1),
@@ -1215,12 +1383,14 @@ tiny_blockweave_with_mining_test() ->
 tiny_blockweave_with_added_data_test() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
+	ar_storage:write_tx(TestData),
 	B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node2, TestData),
-	receive after 100 -> ok end,
+	receive after 1000 -> ok end,
 	mine(Node1),
 	receive after 1000 -> ok end,
 	B1 = get_blocks(Node2),
@@ -1231,13 +1401,14 @@ tiny_blockweave_with_added_data_test() ->
 large_blockweave_with_data_test() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
+	ar_storage:write_tx(TestData),
 	B0 = ar_weave:init([]),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 100)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 2000 -> ok end,
+	receive after 1000 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 2000 -> ok end,
+	receive after 1000 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
@@ -1246,13 +1417,14 @@ large_blockweave_with_data_test() ->
 large_weakly_connected_blockweave_with_data_test() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
+	ar_storage:write_tx(TestData),
 	B0 = ar_weave:init([]),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 2000 -> ok end,
+	receive after 1000 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 2000 -> ok end,
+	receive after 1000 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
@@ -1261,7 +1433,9 @@ large_weakly_connected_blockweave_with_data_test() ->
 medium_blockweave_mine_multiple_data_test() ->
 	ar_storage:clear(),
 	TestData1 = ar_tx:new(<<"TEST DATA1">>),
+	ar_storage:write_tx(TestData1),
 	TestData2 = ar_tx:new(<<"TEST DATA2">>),
+	ar_storage:write_tx(TestData2),
 	B0 = ar_weave:init([]),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 50) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
@@ -1278,7 +1452,9 @@ medium_blockweave_mine_multiple_data_test() ->
 medium_blockweave_multi_mine_test() ->
 	ar_storage:clear(),
 	TestData1 = ar_tx:new(<<"TEST DATA1">>),
+	ar_storage:write_tx(TestData1),
 	TestData2 = ar_tx:new(<<"TEST DATA2">>),
+	ar_storage:write_tx(TestData2),
 	B0 = ar_weave:init([]),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 50) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
@@ -1348,13 +1524,15 @@ wallet_transaction_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	receive after 300 -> ok end,
+	ar_storage:write_tx(SignedTX),
 	mine(Node1), % Mine B1
-	receive after 500 -> ok end,
+	receive after 300 -> ok end,
 	?AR(999) = get_balance(Node2, Pub1),
 	?AR(9000) = get_balance(Node2, Pub2).
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
-wallet_two_transaction_test() ->
+wallet_two_transaction_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
@@ -1363,27 +1541,32 @@ wallet_two_transaction_test() ->
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
-	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	ar_storage:write_tx([SignedTX]),
+	receive after 1000 -> ok end,
 	mine(Node1), % Mine B1
-	receive after 500 -> ok end,
-	add_tx(Node2, SignedTX2),
-	mine(Node2), % Mine B1
-	receive after 500 -> ok end,
+	receive after 300 -> ok end,
+    add_tx(Node2, SignedTX2),
+    ar_storage:write_tx([SignedTX2]),
+	receive after 1000 -> ok end,
+	mine(Node2), % Mine B2
+    receive after 300 -> ok end,
+    ar:d({get_balance(Node1, Pub1), get_balance(Node1, Pub2), get_balance(Node1, Pub3)}),
 	?AR(999) = get_balance(Node1, Pub1),
 	?AR(8499) = get_balance(Node1, Pub2),
 	?AR(500) = get_balance(Node1, Pub3).
 
 %% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
-single_wallet_double_tx_before_mine_test() ->
+single_wallet_double_tx_before_mine_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, ?AR(1), ?AR(5000), <<>>),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(7500), <<>>),
 	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), TX#tx.id),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
@@ -1392,11 +1575,12 @@ single_wallet_double_tx_before_mine_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
-	receive after 200 -> ok end,
-	add_tx(Node1, SignedTX2),
-	receive after 200 -> ok end,
-	mine(Node1), % Mine B1
+	ar_storage:write_tx([SignedTX,SignedTX2]),
 	receive after 500 -> ok end,
+	add_tx(Node1, SignedTX2),
+	receive after 500 -> ok end,
+	mine(Node1), % Mine B1
+	receive after 300 -> ok end,
 	?AR(998) = get_balance(Node2, Pub1),
 	?AR(5000) = get_balance(Node2, Pub2),
 	?AR(4000) = get_balance(Node2, Pub3).
@@ -1405,7 +1589,7 @@ single_wallet_double_tx_before_mine_test() ->
 %% NOTE: The current behaviour (out of order TXs get dropped)
 %% is not necessarily the behaviour we want, but we should keep
 %% track of it.
-single_wallet_double_tx_wrong_order_test() ->
+single_wallet_double_tx_wrong_order_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -1419,14 +1603,18 @@ single_wallet_double_tx_wrong_order_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX2),
-	receive after 200 -> ok end,
-	add_tx(Node1, SignedTX),
-	receive after 200 -> ok end,
-	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
+	add_tx(Node1, SignedTX),
+	ar_storage:write_tx([SignedTX]),
+	receive after 500 -> ok end,
+	mine(Node1), % Mine B1
+	receive after 200 -> ok end,
 	?AR(4999) = get_balance(Node2, Pub1),
 	?AR(5000) = get_balance(Node2, Pub2),
-	?AR(0) = get_balance(Node2, Pub3).
+    ?AR(0) = get_balance(Node2, Pub3),
+    CurrentB = get_current_block(whereis(http_entrypoint_node)),
+    length(CurrentB#block.txs) == 1.
+
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test() ->
@@ -1442,11 +1630,14 @@ tx_threading_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	ar_storage:write_tx([SignedTX,SignedTX2]),
+	receive after 500 -> ok end,
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
 	add_tx(Node1, SignedTX2),
-	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
+	mine(Node1), % Mine B1
+	receive after 1000 -> ok end,
 	?AR(7998) = get_balance(Node2, Pub1),
 	?AR(2000) = get_balance(Node2, Pub2).
 
@@ -1464,6 +1655,7 @@ bogus_tx_thread_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	ar_storage:write_tx([SignedTX,SignedTX2]),
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
 	add_tx(Node1, SignedTX2),
@@ -1484,6 +1676,7 @@ replay_attack_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	ar_storage:write_tx(SignedTX),
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
 	add_tx(Node1, SignedTX),
@@ -1505,6 +1698,8 @@ last_tx_test() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
+	ar_storage:write_tx(SignedTX),
+	receive after 500 -> ok end,
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
 	<<"TEST">> = get_last_tx(Node2, Pub1).

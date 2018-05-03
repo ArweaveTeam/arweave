@@ -1,9 +1,9 @@
 -module(ar_weave).
--export([init/0, init/1, init/2, add/1, add/2, add/3, add/4, add/5, add/6]).
--export([hash/3, indep_hash/1]).
--export([verify/1, verify_indep/2]).
+-export([init/0, init/1, init/2, add/1, add/2, add/3, add/4, add/5, add/6, add/10]).
+-export([hash/2, indep_hash/1]).
+-export([verify_indep/2]).
 -export([calculate_recall_block/1, calculate_recall_block/2]).
--export([generate_block_data/1, generate_hash_list/1]).
+-export([generate_hash_list/1]).
 -export([is_data_on_block_list/2, is_tx_on_block_list/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -24,45 +24,102 @@ init(WalletList, StartingDiff) ->
 			wallet_list = WalletList,
 			hash_list = [],
 			diff = StartingDiff
-		},
-	B1 = B0#block { last_retarget = B0#block.timestamp },
-	[B1#block { indep_hash = indep_hash(B1) }].
+        },
+    B1 = B0#block { last_retarget = B0#block.timestamp },
+    [B1#block { indep_hash = indep_hash(B1) }].
 
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
-add(Bs) -> add(Bs, []).
+add(Bs) -> 
+    add(Bs, []).
 add(Bs, TXs) ->
-	add(Bs, TXs, mine(hd(Bs), TXs)).
-add(Bs, TXs, Nonce) ->
-	add(Bs, generate_hash_list(Bs), TXs, Nonce).
-add(Bs, HashList, TXs, Nonce) ->
-	add(Bs, HashList, [], TXs, Nonce).
-add(Bs, HashList, WalletList, TXs, Nonce) ->
-	add(Bs, HashList, WalletList, TXs, Nonce, unclaimed).
-add([Hash|Bs], HashList, WalletList, TXs, Nonce, RewardAddr) when is_binary(Hash) ->
-	add(
-		[ar_storage:read_block(Hash)|Bs],
-		HashList,
-		WalletList,
-		TXs,
-		Nonce,
-		RewardAddr
-	);
-add(Bs = [B|_], HashList, WalletList, RawTXs, Nonce, RewardAddr) ->
-	TXs = [T#tx.id || T <- RawTXs],
-	RawNewB =
+    add(Bs, TXs, generate_hash_list(Bs)).
+add(Bs, TXs, HashList) ->
+    add(Bs, TXs, HashList, <<>>).
+add(Bs, TXs, HashList, unclaimed) ->
+    add(Bs, TXs, HashList, <<>>);
+add([B|Bs], TXs, HashList, RewardAddr) ->
+    WalletList = ar_node:apply_mining_reward(
+        ar_node:apply_txs(B#block.wallet_list, TXs),
+        RewardAddr,
+        TXs,
+        length(HashList) - 1
+    ),
+    add([B|Bs], TXs, HashList, RewardAddr, WalletList).
+add(Bs, TXs, HashList, RewardAddr, WalletList) ->
+    add(Bs, TXs, HashList, RewardAddr, WalletList, []).
+add([Hash|Bs], TXs, HashList, RewardAddr, WalletList, Tags) when is_binary(Hash) ->
+    add(
+        [ar_storage:read_block(Hash)|Bs],
+        TXs,
+        HashList,
+        RewardAddr,
+        WalletList,
+        Tags
+    );
+add(Bs, TXs, HashList, RewardAddr, WalletList, Tags) ->
+    RecallHash = ar_util:get_recall_hash(hd(Bs), HashList),
+    RecallB = ar_storage:read_block(RecallHash),
+    {Nonce, Timestamp, Diff} = mine(hd(Bs), RecallB, TXs, RewardAddr, Tags), 
+    add(
+        Bs,
+        TXs,
+        HashList,
+        RewardAddr,
+        WalletList,
+        Tags,
+        RecallB,
+        Diff,
+        Nonce,
+        Timestamp
+    ).
+add([Hash|Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) when is_binary(Hash) ->
+    add(
+        [ar_storage:read_block(Hash)|Bs],
+        RawTXs,
+        HashList,
+        RewardAddr,
+        WalletList,
+        Tags,
+        RecallB,
+        Diff,
+        Nonce,
+        Timestamp  
+    );
+add([B|_Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
+    % ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
+    RecallB = ar_node:find_recall_block(HashList),
+    TXs = [T#tx.id || T <- RawTXs],
+	NewB =
 		#block {
 			nonce = Nonce,
 			previous_block = B#block.indep_hash,
-			height = B#block.height + 1,
-			hash = hash(B, RawTXs, Nonce),
+            timestamp = Timestamp,
+            last_retarget =
+                case ar_retarget:is_retarget_height(B#block.height + 1) of
+                    true -> Timestamp;
+                    false -> B#block.last_retarget
+                end,
+            diff = Diff,
+            height = B#block.height + 1,
+            hash = hash(
+                ar_block:generate_block_data_segment(
+                    B,
+                    RecallB,
+                    RawTXs,
+                    RewardAddr,
+                    Timestamp,
+                    Tags
+                ), 
+                Nonce
+            ),
+            % indep hash
+            txs = TXs,
 			hash_list = HashList,
 			wallet_list = WalletList,
-			txs = TXs,
-			diff = B#block.diff,
-			reward_addr = RewardAddr
-		},
-	NewB = ar_retarget:maybe_retarget(RawNewB, B),
-	[NewB#block { indep_hash = indep_hash(NewB) }|Bs].
+            reward_addr = RewardAddr,
+            tags = Tags
+        },
+	[NewB#block { indep_hash = indep_hash(NewB) }|HashList].
 
 %% @doc Take a complete block list and return a list of block hashes.
 %% Throws an error if the block list is not complete.
@@ -79,18 +136,24 @@ generate_hash_list([B|Bs], N) when is_record(B, block) ->
 generate_hash_list([Hash|Bs], N) when is_binary(Hash) ->
 	[Hash|generate_hash_list(Bs, N - 1)].
 
-%% @doc Verify that a list of blocks is valid.
-verify([_GenesisBlock]) -> true;
-verify([B|Rest]) ->
-	(
-		B#block.hash =:=
-			ar_mine:validate(
-				(hd(Rest))#block.hash,
-				B#block.diff,
-				generate_block_data(B),
-				B#block.nonce
-			)
-	) andalso verify(Rest).
+%% @doc Verify that a new block is valid.
+% verify([_GenesisBlock]) -> true;
+% verify([B|_]) ->
+% 	(
+% 		B#block.hash =:=
+%             ar_mine:validate(
+%                 ar_block:generate_block_data_segment(
+%                     % Technically last block (current head)
+%                     % Recall block related to new block
+%                     % TXs mined into new block
+%                     B#block.reward_addr,
+%                     B#block.tags
+%                 ),
+%                 B#block.nonce,
+%                 B#block.diff,
+%                 B#block.timestamp
+%             )
+% 	).
 
 %% @doc Verify a block from a hash list. Hash lists are stored in reverse order
 verify_indep(#block{ height = 0 }, []) -> true;
@@ -110,43 +173,13 @@ calculate_recall_block(IndepHash, Height) ->
 	%ar:d({recall_height, Height}),
 	binary:decode_unsigned(IndepHash) rem Height.
 
-
-%% @doc Return a binary of all of the information stored in the block.
-generate_block_data(B) when is_record(B, block) ->
-	generate_block_data(
-		lists:filter(
-			fun(T) ->
-				case T of
-					unavailable -> false;
-					_ -> true
-				end
-			end,
-			ar_storage:read_tx(B#block.txs)
-		)
-	);
-generate_block_data(TXs) ->
-	crypto:hash(
-		?HASH_ALG,
-		<<
-			(
-				binary:list_to_bin(
-					lists:map(
-						fun ar_tx:to_binary/1,
-						lists:sort(TXs)
-					)
-				)
-			)/binary
-		>>
-	).
-
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TXs and the nonce.
-hash(B, TXs, Nonce) when is_record(B, block) ->
-	hash(B#block.hash, generate_block_data(TXs), Nonce);
-hash(Hash, TXs, Nonce) ->
+hash(DataSegment, Nonce) ->
+    % ar:d({hash, {data, DataSegment}, {nonce, Nonce}, {timestamp, Timestamp}}),
 	crypto:hash(
 		?HASH_ALG,
-		<< Nonce/binary, Hash/binary, TXs/binary >>
+		<< Nonce/binary, DataSegment/binary >>
 	).
 
 %% @doc Create an independent hash from a block. Independent hashes
@@ -166,11 +199,12 @@ indep_hash(B) ->
 
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.
-mine(B, TXs) ->
-	ar_mine:start(B#block.hash, B#block.diff, generate_block_data(TXs)),
+mine(B, RecallB, TXs, RewardAddr, Tags) ->
+    ar:d({weave_mine, {block, B}, {recall, RecallB}, {tx, TXs}, {reward, RewardAddr}, {tags, Tags}}),
+    ar_mine:start(B, RecallB, TXs, RewardAddr, Tags),
 	receive
-		{work_complete, _TXs, _Hash, _NewHash, _Diff, Nonce} ->
-			Nonce
+        {work_complete, TXs, _Hash, Diff, Nonce, Timestamp} ->
+			{Nonce, Timestamp, Diff}
 	end.
 
 %% @doc Return whether or not a transaction is found on a block list.
@@ -185,98 +219,100 @@ is_tx_on_block_list([#block { txs = TXs }|Bs], TXID) ->
 
 is_data_on_block_list(_, _) -> false.
 
+
 %%% Block list validity tests.
 
 %% @doc Test validation of newly initiated block list.
-init_verify_test() ->
-	true = verify(init()).
+% init_verify_test() ->
+% 	true = verify(init()).
 
-%% @doc Ensure the verification of block lists with a single empty block+genesis.
-init_addempty_verify_test() ->
-	true = verify(add(init(), [])).
+% %% @doc Ensure the verification of block lists with a single empty block+genesis.
+% init_addempty_verify_test() ->
+%     ar_node:start([], [B0] = init()),
+% 	true = verify(add([B0], [])).
 
-%% @doc Test verification of blocks with data and transactions attached.
-init_add_verify_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx([TX1 = ar_tx:new(<<"TEST TX">>),TX2 = ar_tx:new(<<"TEST DATA1">>),TX3 = ar_tx:new(<<"TESTDATA2">>)]),
-	true = verify(add(init(), [TX1, TX2, TX3])).
+% %% @doc Test verification of blocks with data and transactions attached.
+% init_add_verify_test() ->
+% 	ar_storage:clear(),
+% 	ar_storage:write_tx([TX1 = ar_tx:new(<<"TEST TX">>),TX2 = ar_tx:new(<<"TEST DATA1">>),TX3 = ar_tx:new(<<"TESTDATA2">>)]),
+% 	true = verify(add(init(), [TX1, TX2, TX3])).
 
-%% @doc Ensure the detection of forged blocks.
-init_add_add_forge_add_verify_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"TEST TX">>),
-			TX2 = ar_tx:new(<<"TEST DATA1">>),
-			TX3 = ar_tx:new(<<"TESTDATA2">>),
-			TX4 = ar_tx:new(<<"TESTDATA3">>)
-		]
-	),
-	B2 = add(add(init(), []), [TX1, TX2, TX3]),
-	ForgedB3 =
-		[
-			#block {
-				nonce = <<>>,
-				previous_block = (hd(B2))#block.indep_hash,
-				height = 3,
-				hash = crypto:hash(?HASH_ALG, <<"NOT THE CORRECT HASH">>),
-				txs = [],
-				last_retarget = ar:timestamp()
-			}
-		|B2],
-	false = verify(add(ForgedB3, [TX3, TX4])).
+% %% @doc Ensure the detection of forged blocks.
+% init_add_forge_add_verify_test() ->
+% 	ar_storage:clear(),
+% 	ar_storage:write_tx(
+% 		[
+% 			TX1 = ar_tx:new(<<"TEST TX">>),
+% 			TX2 = ar_tx:new(<<"TEST DATA1">>),
+% 			TX3 = ar_tx:new(<<"TESTDATA2">>),
+% 			TX4 = ar_tx:new(<<"TESTDATA3">>)
+% 		]
+% 	),
+% 	B2 = add(add(init(), []), [TX1, TX2, TX3]),
+% 	ForgedB3 =
+% 		[
+% 			#block {
+% 				nonce = <<>>,
+% 				previous_block = (hd(B2))#block.indep_hash,
+% 				height = 3,
+% 				hash = crypto:hash(?HASH_ALG, <<"NOT THE CORRECT HASH">>),
+% 				txs = [],
+% 				last_retarget = ar:timestamp()
+% 			}
+% 		|B2],
+% 	false = verify(add(ForgedB3, [TX3, TX4])).
 
-%% @doc A more 'subtle' version of above. Re-heahes the previous block, but with data removed.
-init_add_add_forge_add_verify_subtle_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"TEST TX0">>),
-			TX2 = ar_tx:new(<<"TEST DATA0">>),
-			TX3 = ar_tx:new(<<"TEST TX1">>),
-			TX4 = ar_tx:new(<<"TEST DATA1">>),
-			TX5 = ar_tx:new(<<"TEST DATA2">>),
-			TX6 = ar_tx:new(<<"TEST TX2">>),
-			TX7 = ar_tx:new(<<"TEST DATA3">>)
-		]
-	),
-	B1 = add(init(), [TX1, TX2]),
-	B2 = add(B1, [TX3, TX4, TX5]),
-	ForgedB3 =
-		[
-			#block {
-				nonce = <<>>,
-				previous_block = (hd(B2))#block.indep_hash,
-				height = 3,
-				hash = hash(hd(B1), [], <<>>),
-				txs = [],
-				last_retarget = ar:timestamp()
-			}
-		|B2],
-	false = verify(add(ForgedB3, [TX6, TX7])).
+% %% @doc A more 'subtle' version of above. Re-heahes the previous block, but with data removed.
+% init_add_add_forge_add_verify_subtle_test() ->
+% 	ar_storage:clear(),
+% 	ar_storage:write_tx(
+% 		[
+% 			TX1 = ar_tx:new(<<"TEST TX0">>),
+% 			TX2 = ar_tx:new(<<"TEST DATA0">>),
+% 			TX3 = ar_tx:new(<<"TEST TX1">>),
+% 			TX4 = ar_tx:new(<<"TEST DATA1">>),
+% 			TX5 = ar_tx:new(<<"TEST DATA2">>),
+% 			TX6 = ar_tx:new(<<"TEST TX2">>),
+% 			TX7 = ar_tx:new(<<"TEST DATA3">>)
+% 		]
+% 	),
+% 	B1 = add(init(), [TX1, TX2]),
+% 	B2 = add(B1, [TX3, TX4, TX5]),
+% 	ForgedB3 =
+% 		[
+% 			#block {
+% 				nonce = <<>>,
+% 				previous_block = (hd(B2))#block.indep_hash,
+% 				height = 3,
+% 				hash = hash(hd(B1), [], <<>>),
+% 				txs = [],
+% 				last_retarget = ar:timestamp()
+% 			}
+% 		|B2],
+% 	false = verify(add(ForgedB3, [TX6, TX7])).
 
-%% @doc Ensure that blocks with an invalid nonce are detect.
-detect_invalid_nonce_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"TEST TX">>),
-			TX2 = ar_tx:new(<<"TEST DATA1">>),
-			TX3 = ar_tx:new(<<"TESTDATA2">>),
-			TX4 = ar_tx:new(<<"FILTHY LIES">>),
-			TX5 = ar_tx:new(<<"NEW DATA">>)
-		]
-	),
-	B1 = add(init([]), [TX1, TX2, TX3]),
-	ForgedB2 = add(B1, [TX4], <<"INCORRECT NONCE">>),
-	[B|Bs] = add(ForgedB2, [TX5]),
-	false = verify([B#block{nonce = <<"INCORRECT NONCE">>}|Bs]).
+% %% @doc Ensure that blocks with an invalid nonce are detect.
+% detect_invalid_nonce_test() ->
+% 	ar_storage:clear(),
+% 	ar_storage:write_tx(
+% 		[
+% 			TX1 = ar_tx:new(<<"TEST TX">>),
+% 			TX2 = ar_tx:new(<<"TEST DATA1">>),
+% 			TX3 = ar_tx:new(<<"TESTDATA2">>),
+% 			TX4 = ar_tx:new(<<"FILTHY LIES">>),
+% 			TX5 = ar_tx:new(<<"NEW DATA">>)
+% 		]
+% 	),
+% 	B1 = add(init([]), [TX1, TX2, TX3]),
+% 	ForgedB2 = add(B1, [TX4], <<"INCORRECT NONCE">>),
+% 	[B|Bs] = add(ForgedB2, [TX5]),
+% 	false = verify([B#block{nonce = <<"INCORRECT NONCE">>}|Bs]).
 
-no_tx_fail_verify_test() ->
-	ar_storage:clear(),
-	TX1 = ar_tx:new(<<"TEST TX0">>),
-	TX2 = ar_tx:new(<<"TEST DATA0">>),
-	B1 = add(init(), [TX1, TX2]),
-	ar_storage:clear(),
-	false = verify(B1).
+% no_tx_fail_verify_test() ->
+% 	ar_storage:clear(),
+% 	TX1 = ar_tx:new(<<"TEST TX0">>),
+% 	TX2 = ar_tx:new(<<"TEST DATA0">>),
+% 	B1 = add(init(), [TX1, TX2]),
+% 	ar_storage:clear(),
+% 	false = verify(B1).
 

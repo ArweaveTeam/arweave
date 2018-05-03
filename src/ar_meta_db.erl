@@ -1,5 +1,5 @@
 -module(ar_meta_db).
--export([start/0, get/1, put/2, keys/0, remove_old/1,remove_old/2]).
+-export([start/0, get/1, put/2, keys/0, remove_old/1,remove_old/2, increase/2]).
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
@@ -30,6 +30,11 @@ get(Key) ->
 		[{Key, Obj}] -> Obj;
 		[] -> not_found
 	end.
+
+%% @doc Increase the value associated by a key by Val
+increase(Key, Val) ->
+	put(Key, get(Key) + Val).
+
 %% @doc Remove entries from the performance database older than
 %% ?PEER_TMEOUT
 remove_old(Time) ->

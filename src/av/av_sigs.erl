@@ -1,6 +1,7 @@
 -module(av_sigs).
 -export([quick/0, deep/0, all/0, load/1]).
 -include("av_recs.hrl").
+-include("ar.hrl").
 
 %%% Loads signature definition files from the sigs/ directory.
 %%% Supports multiple definition types, returning a #sig record
@@ -9,8 +10,7 @@
 
 %% Defines the default directory in which the signature files are
 %% normally located.
--define(SIG_DB_LOC, "sigs").
-
+-define(SIG_DB_LOC, "src/av/sigs").
 %% Define all of the supported file formats.
 -define(SUPPORTED_FORMATS, [".ndb", ".hdb", ".hsb", ".fp"]).
 
@@ -83,11 +83,7 @@ do_load(File) ->
 		fun(Row) ->
 			try
 				S = Fun(Row),
-				% Filter sigs that don't have Unix of Linux in the name
-				case {string:str(S#sig.name, "Unix"), string:str(S#sig.name, "Linux")} of
-					{0, 0} -> false;
-					_ -> {true, S}
-				end
+				{true, S}
 			catch _:_ ->
 				%sv:log(warning, "Unable to process row.", []),
 				false
