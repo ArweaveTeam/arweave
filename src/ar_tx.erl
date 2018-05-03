@@ -96,7 +96,14 @@ verify(TX, Diff, WalletList) ->
 verify_txs([], _, _) ->
 	true;
 verify_txs(TXs, Diff, WalletList) ->
-	lists:any(fun(T) -> verify(T, Diff, WalletList) end, TXs).
+	do_verify_txs(TXs, Diff, WalletList).
+do_verify_txs([], _, _) ->
+	true;
+do_verify_txs([T|TXs], Diff, WalletList) ->
+	case verify(T, Diff, WalletList) of
+		true -> do_verify_txs(TXs, Diff, ar_node:apply_tx(WalletList, T));
+		false -> false
+	end.
 
 %% @doc Transaction cost above proscribed minimum.
 tx_cost_above_min(TX, Diff) ->
@@ -146,6 +153,18 @@ tags_to_binary(Tags) ->
 			Tags
 		)
 	).
+
+-ifdef(DEBUG).
+check_last_tx([], _) ->
+	true;
+check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> -> true;
+check_last_tx(WalletList, TX) ->
+	Address = ar_wallet:to_address(TX#tx.owner),
+	case lists:keyfind(Address, 1, WalletList) of
+		{Address, _Quantity, Last} -> Last == TX#tx.last_tx;
+		_ -> false
+	end.
+-else.
 check_last_tx([], _) ->
 	true;
 check_last_tx(WalletList, TX) ->
@@ -154,6 +173,7 @@ check_last_tx(WalletList, TX) ->
 		{Address, _Quantity, Last} -> Last == TX#tx.last_tx; 
 		_ -> false
 	end.
+-endif.
 % check_last_tx(WalletList, TX) ->
 % 	ar:d({walletlist, WalletList}),
 % 	ar:d({tx, TX#tx.last_tx, ar_util:encode(TX#tx.last_tx)}),

@@ -1,14 +1,14 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
 -export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1,get_full_pending_txs/1]).
--export([get_current_diff/1, get_floating_wallet_list/1]).
+-export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
 -export([calculate_reward/2]).
 -export([rejoin/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_txs/2, apply_mining_reward/4, validate/4, validate/5, validate/8, find_recall_block/1]).
+-export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/4, validate/5, validate/8, find_recall_block/1]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
 -export([start_link/1]).
 -export([retry_block/4, retry_full_block/4]).
@@ -761,7 +761,7 @@ integrate_new_block(
 		},
 		NewB) ->
 	% Filter completed TXs from the pending list.
-	NewTXs =
+	NotMinedTXs =
 		lists:filter(
 			fun(T) ->
                 (not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
@@ -770,8 +770,10 @@ integrate_new_block(
 			end,
 			TXs
 		),
+	BlockTXs = TXs -- NotMinedTXs,
+	% Write new block and included TXs to local storage.
 	ar_storage:write_block(NewB),
-	ar_storage:write_tx(NewTXs),
+	ar_storage:write_tx(BlockTXs),
 	% Recurse over the new block.
 	ar:report_console(
 		[
@@ -785,7 +787,7 @@ integrate_new_block(
 		reset_miner(
 			S#state {
 				hash_list = [NewB#block.indep_hash|HashList],
-				txs = NewTXs,
+				txs = NotMinedTXs,
 				height = NewB#block.height,
 				floating_wallet_list = apply_txs(WalletList, TXs)
 			}
@@ -1089,7 +1091,7 @@ do_apply_tx(
 
 %% @doc Remove wallets with zero balance from a wallet list.
 filter_empty_wallets([]) -> [];
-filter_empty_wallets([{_, 0, _}|WalletList]) -> filter_empty_wallets(WalletList);
+filter_empty_wallets([{_, 0, <<>>}|WalletList]) -> filter_empty_wallets(WalletList);
 filter_empty_wallets([Wallet|Rest]) -> [Wallet|filter_empty_wallets(Rest)].
 
 %% @doc Alter a wallet in a wallet list.
@@ -1222,6 +1224,37 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 	calculate_delay(0) -> 0;
 	calculate_delay(Bytes) -> (Bytes * 40) div 1000.
 
+generate_floating_wallet_list(WalletList, []) ->
+	WalletList;
+generate_floating_wallet_list(WalletList, [T|TXs]) ->
+	case ar_tx:check_last_tx(WalletList, T) of
+		true -> 
+			UpdatedWalletList = apply_tx(WalletList, T),
+			generate_floating_wallet_list(UpdatedWalletList, TXs);
+		false -> false
+	end.
+
+	% lists:foldr(
+	% 	fun(T, Acc) ->
+	% 		case ar_tx:check_last_tx(Acc, T) of
+	% 			true -> apply_tx(Acc, T);
+	% 			false -> Acc
+	% 		end 
+	% 	end,
+	% 	CurWalletList,
+	% 	TXs
+	% ).
+
+filter_out_of_order_txs(WalletList, [], OutTXs) ->
+	OutTXs;
+filter_out_of_order_txs(WalletList, [T|RawTXs], OutTXs) ->
+	case ar_tx:check_last_tx(WalletList, T) of
+		true -> 
+			UpdatedWalletList = apply_tx(WalletList, T),
+			filter_out_of_order_txs(UpdatedWalletList, RawTXs, [T|OutTXs]);
+		false -> 
+			filter_out_of_order_txs(WalletList, RawTXs, OutTXs)
+	end.
 
 %%% Tests
 
@@ -1283,8 +1316,11 @@ add_bogus_block_test() ->
     ar_storage:write_block(hd(B1)),
     BL = [hd(B1), hd(B0)],
     Node ! {replace_block_list, BL},
+	ar:d(started_waiting1),
     B2 = ar_weave:add(B1, [TX2]),
+	ar:d(started_waiting2),
     ar_storage:write_block(hd(B2)),
+	ar:d(started_waiting3),
     ar_gossip:send(GS0,
         {
             new_block,
@@ -1293,10 +1329,14 @@ add_bogus_block_test() ->
             (hd(B2))#block { hash = <<"INCORRECT">> },
             find_recall_block(B2)
         }),
+	ar:d(started_waiting4),
     receive after 500 -> ok end,
+	ar:d(started_waiting5),
     Node ! {get_blocks, self()},
     receive 
-        {blocks, Node, [RecvdB|_]} -> LastB = ar_storage:read_block(RecvdB)
+        {blocks, Node, [RecvdB|_]} -> 
+			ar:d(done_waiting),
+			LastB = ar_storage:read_block(RecvdB)
     end.
 
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto the network.
@@ -1560,13 +1600,16 @@ wallet_two_transaction_test_slow() ->
 	?AR(500) = get_balance(Node1, Pub3).
 
 %% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
+%% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
 single_wallet_double_tx_before_mine_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, ?AR(1), ?AR(7500), <<>>),
-	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), TX#tx.id),
+	OrphanedTX = ar_tx:new(Pub2, ?AR(1), ?AR(5000), <<>>),
+	OrphanedTX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), <<>>),
+	TX = OrphanedTX#tx { owner = Pub1 },
+	TX2 = OrphanedTX2#tx { owner = Pub1, last_tx = TX#tx.id },
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
@@ -1574,12 +1617,13 @@ single_wallet_double_tx_before_mine_test_slow() ->
 	Node2 = start([Node1], B0),
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
-	ar_storage:write_tx([SignedTX,SignedTX2]),
+	ar_storage:write_tx([SignedTX]),
 	receive after 500 -> ok end,
 	add_tx(Node1, SignedTX2),
+	ar_storage:write_tx([SignedTX2]),
 	receive after 500 -> ok end,
 	mine(Node1), % Mine B1
-	receive after 300 -> ok end,
+	receive after 500 -> ok end,
 	?AR(998) = get_balance(Node2, Pub1),
 	?AR(5000) = get_balance(Node2, Pub2),
 	?AR(4000) = get_balance(Node2, Pub3).
