@@ -23,12 +23,13 @@ start(Node, Peers, B) when is_atom(B) ->
 start(_, _, not_found) -> do_nothing;
 start(_, _, unavailable) -> do_nothing;
 start(_, _, no_response) -> do_nothing;
-start(Node, RawPeers, NewB) ->
+start(Node, RawPeers, RawNewB) ->
 	case whereis(join_server) of
 		undefined ->
 			PID = spawn(
 				fun() ->
 					Peers = filter_peer_list(RawPeers),
+					NewB = ar_node:retry_block(Peers, RawNewB#block.indep_hash, not_found, 5),
 					ar:report_console(
 						[
 							joining_network,
@@ -69,7 +70,6 @@ get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	PreviousBlock = ar_node:retry_block(Peers, NewB#block.previous_block, not_found, 5),
-	ar:d({hashlist, HashList}),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
