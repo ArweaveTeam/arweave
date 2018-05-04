@@ -69,6 +69,7 @@ get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	PreviousBlock = ar_node:retry_block(Peers, NewB#block.previous_block, not_found, 5),
+	ar:d({hashlist, HashList}),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
