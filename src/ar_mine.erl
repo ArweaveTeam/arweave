@@ -25,44 +25,39 @@
 start(CurrentB, RecallB, TXs, unclaimed, Tags) ->
     start(CurrentB, RecallB, TXs, <<>>, Tags);
 %% @doc Returns the PID of a new mining worker process.
-start(CurrentB, RecallB, TXs, RewardAddr, Tags) ->
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
     Parent = self(),
     Timestamp = os:system_time(seconds),
     Diff = next_diff(CurrentB),
-    case ar_node:generate_floating_wallet_list(
-        CurrentB#block.wallet_list,
-        TXs
-    ) of
-        false -> undefined;
-        _ -> 
-            PID = spawn(
-                fun() ->
-                    server(
-                        #state {
-                            parent = Parent,
-                            current_block = CurrentB,
-                            recall_block = RecallB,
-                            txs = TXs,
-                            timestamp = Timestamp,
-                            data_segment = 
-                                ar_block:generate_block_data_segment(
-                                    CurrentB, 
-                                    RecallB, 
-                                    TXs, 
-                                    RewardAddr, 
-                                    Timestamp,
-                                    Tags
-                                ),
-                            reward_addr = RewardAddr,
-                            tags = Tags,
-                            diff = Diff
-                        }
-                    )
-                end
-            ),
-            PID ! mine,
-            PID
-    end.
+    TXs = ar_node:filter_all_out_of_order_txs(CurrentB#block.wallet_list, RawTXs),
+    PID = spawn(
+        fun() ->
+            server(
+                #state {
+                    parent = Parent,
+                    current_block = CurrentB,
+                    recall_block = RecallB,
+                    txs = TXs,
+                    timestamp = Timestamp,
+                    data_segment = 
+                        ar_block:generate_block_data_segment(
+                            CurrentB, 
+                            RecallB, 
+                            TXs, 
+                            RewardAddr, 
+                            Timestamp,
+                            Tags
+                        ),
+                    reward_addr = RewardAddr,
+                    tags = Tags,
+                    diff = Diff
+                }
+            )
+        end
+    ),
+    PID ! mine,
+    PID.
+
 
 %% @doc Stop a running mining server.
 stop(PID) ->
@@ -94,46 +89,41 @@ server(
                 Miners
             ), 
             ok;
-		{new_data, NewTXs} ->
+		{new_data, RawTXs} ->
             % Kill all active workers
-            case ar_node:generate_floating_wallet_list(
-                CurrentB#block.wallet_list,
-                TXs
-            ) of
-                false -> server(S);
-                _ ->
-                    lists:foreach(
-                        fun(Miner) -> Miner ! stop end, 
-                        Miners
-                    ), 
-                    % Send mine message to self
-                    self() ! mine,
-                    % Continue server loop with new block_data_segment
-                    NewTimestamp = os:system_time(seconds),
-                    Diff = next_diff(CurrentB),
-                    WalletList = CurrentB#block.wallet_list,
-                    server(
-                        S#state {
-                            parent = Parent,
-                            current_block = CurrentB,
-                            recall_block = RecallB,
-                            txs = NewTXs,
-                            timestamp = NewTimestamp,
-                            reward_addr = RewardAddr,
-                            data_segment = 
-                                ar_block:generate_block_data_segment(
-                                    CurrentB, 
-                                    RecallB, 
-                                    NewTXs, 
-                                    RewardAddr, 
-                                    NewTimestamp,
-                                    Tags
-                                ),
-                            tags = Tags,
-                            diff = Diff
-                        }
-                    )
-            end;
+            lists:foreach(
+                fun(Miner) -> Miner ! stop end,
+                Miners
+            ),
+            %ar:d({updating_txs, RawTXs}),
+            % Send mine message to self
+            self() ! mine,
+            % Continue server loop with new block_data_segment
+            NewTimestamp = os:system_time(seconds),
+            Diff = next_diff(CurrentB),
+            WalletList = CurrentB#block.wallet_list,
+            NewTXs = ar_node:filter_all_out_of_order_txs(WalletList, RawTXs),
+            server(
+                S#state {
+                    parent = Parent,
+                    current_block = CurrentB,
+                    recall_block = RecallB,
+                    txs = NewTXs,
+                    timestamp = NewTimestamp,
+                    reward_addr = RewardAddr,
+                    data_segment =
+                        ar_block:generate_block_data_segment(
+                            CurrentB,
+                            RecallB,
+                            NewTXs,
+                            RewardAddr,
+                            NewTimestamp,
+                            Tags
+                        ),
+                    tags = Tags,
+                    diff = Diff
+                }
+            );
 		mine ->
             % Spawn the list of worker processes
             Workers = 
@@ -143,7 +133,7 @@ server(
                 ),
             % Tell each worker to start hashing
             lists:foreach(
-                fun(Worker) -> Worker ! hash end, 
+                fun(Worker) -> Worker ! hash end,
                 Workers
             ),
             % Continue server loop
@@ -158,7 +148,9 @@ server(
                 fun(Miner) -> Miner ! stop end,
                 Miners
             ),
+            %ar:d({miner_txs, TXs}),
             % Send work complete data back to parent for verification
+            %ar:d({miner, Hash, Nonce, Diff}),
             Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
     end.
 

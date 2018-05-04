@@ -72,8 +72,7 @@ generate_block_data_segment(CurrentB, RecallB, [unavailable], RewardAddr, Timest
     generate_block_data_segment(CurrentB, RecallB, [], RewardAddr, Timestamp, Tags);
 generate_block_data_segment(CurrentB, RecallB, TXs, unclaimed, Timestamp, Tags) -> 
     generate_block_data_segment(CurrentB, RecallB, TXs, <<>>, Timestamp, Tags);
-generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags) -> 
-    % ar:d({{currentB, CurrentB},{recallB, RecallB}, {txs, TXs}, {reward, RewardAddr}, {tags, Tags}}),
+generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags) ->
     Retarget = case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
         true -> Timestamp;
         false -> CurrentB#block.last_retarget

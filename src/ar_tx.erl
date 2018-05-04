@@ -161,7 +161,8 @@ check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> -> true;
 check_last_tx(WalletList, TX) ->
 	Address = ar_wallet:to_address(TX#tx.owner),
 	case lists:keyfind(Address, 1, WalletList) of
-		{Address, _Quantity, Last} -> Last == TX#tx.last_tx;
+		{Address, _Quantity, Last} ->
+			Last == TX#tx.last_tx;
 		_ -> false
 	end.
 -else.

@@ -1054,11 +1054,8 @@ get_full_block_by_hash_test() ->
 	ar_node:mine(Node),
 	receive after 200 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
-	ar:d({blocks, ar_node:get_blocks(Node)}),
 	B2 = get_block({127, 0, 0, 1}, B1),
-	ar:d({b2txs, B2#block.txs}),
 	B3 = get_full_block({127, 0, 0, 1}, B1),
-	ar:d({b3txs, B3#block.txs}),
 	B3 = B2#block {txs = [TX, TX1]}.
 
 %% @doc Ensure that blocks can be received via a height.

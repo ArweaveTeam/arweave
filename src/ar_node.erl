@@ -7,12 +7,15 @@
 -export([add_tx/2, add_peers/2]).
 -export([calculate_reward/2]).
 -export([rejoin/2]).
+-export([filter_all_out_of_order_txs/2, filter_out_of_order_txs/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/4, validate/5, validate/8, find_recall_block/1]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
 -export([start_link/1]).
 -export([retry_block/4, retry_full_block/4]).
+-export([filter_all_out_of_order_txs_large_test_slow/0,filter_out_of_order_txs_large_test_slow/0]).
 -export([wallet_two_transaction_test_slow/0, single_wallet_double_tx_before_mine_test_slow/0, single_wallet_double_tx_wrong_order_test_slow/0]).
+-export([tx_threading_test_slow/0, bogus_tx_thread_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -308,7 +311,6 @@ get_last_tx_from_floating(Node, Addr) when ?IS_ADDR(Addr) ->
 		{last_tx_from_floating, Addr, LastTX} -> LastTX
 	end;
 get_last_tx_from_floating(Node, WalletID) ->
-	ar:d({damon, 1}),
 	get_last_tx_from_floating(Node, ar_wallet:to_address(WalletID)).
 
 %% @doc Return all pending transactions
@@ -761,15 +763,14 @@ integrate_new_block(
 		},
 		NewB) ->
 	% Filter completed TXs from the pending list.
-	NotMinedTXs =
+	RawNotMinedTXs =
 		lists:filter(
 			fun(T) ->
                 (not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
-                and 
-                (ar_tx:verify(T, NewB#block.diff, WalletList))
 			end,
 			TXs
 		),
+	NotMinedTXs = filter_all_out_of_order_txs(NewB#block.wallet_list, RawNotMinedTXs),
 	BlockTXs = TXs -- NotMinedTXs,
 	% Write new block and included TXs to local storage.
 	ar_storage:write_block(NewB),
@@ -815,19 +816,13 @@ integrate_block_from_miner(
 		),
 	% Store the transactions that we know about, but were not mined in
 	% this block.
-	NotMinedTXs = 	
-		lists:filter(
-			fun(T) ->
-				(ar_tx:verify(T, Diff, WalletList))
-			end,
-			TXs -- MinedTXs
-		),
+	NotMinedTXs = filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs),
     NewS = OldS#state { wallet_list = WalletList },
     % Build the block record, verify it, and gossip it to the other nodes.
     RecallB = ar_node:find_recall_block(HashList),
 	[NextB|_] =
         ar_weave:add(HashList, MinedTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
-		ar:d({validate,validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList))}),
+		%ar:d({validate,validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList))}),
 	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
 		false ->
 			ar:report_console([{miner, self()}, incorrect_nonce]),
@@ -946,6 +941,7 @@ validate(
         Tags) ->
 
     % ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
+	%ar:d({node, ar_weave:hash(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce), Nonce, Diff}),
     Mine = ar_mine:validate(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce, Diff),
     Wallet = validate_wallet_list(WalletList),
     Indep = ar_weave:verify_indep(RecallB, HashList),
@@ -954,7 +950,6 @@ validate(
     IndepHash = ar_block:verify_indep_hash(NewB),
     Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
-	
 	ar:report(
 		[
 			{validate_block, ar_util:encode(NewB#block.indep_hash)},
@@ -1245,9 +1240,28 @@ generate_floating_wallet_list(WalletList, [T|TXs]) ->
 	% 	TXs
 	% ).
 
+filter_all_out_of_order_txs(WalletList, InTXs) ->
+	filter_all_out_of_order_txs(WalletList, InTXs, []).
+filter_all_out_of_order_txs(_WalletList, [], OutTXs) ->
+	lists:reverse(OutTXs);
+filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
+	{FloatingWalletList, PassedTXs} = filter_out_of_order_txs(WalletList, InTXs, OutTXs),
+	RemainingInTXs = InTXs -- PassedTXs,
+	case PassedTXs of
+		[] -> lists:reverse(OutTXs);
+		OutTXs -> lists:reverse(OutTXs);
+		_ -> filter_all_out_of_order_txs(FloatingWalletList, RemainingInTXs, PassedTXs)
+	end.
+
+filter_out_of_order_txs(WalletList, InTXs) ->
+	filter_out_of_order_txs(WalletList, InTXs, []).
 filter_out_of_order_txs(WalletList, [], OutTXs) ->
-	OutTXs;
+	{WalletList, OutTXs};
 filter_out_of_order_txs(WalletList, [T|RawTXs], OutTXs) ->
+	% ar:d({walletlist, WalletList}),
+	% ar:d({tx, T#tx.id}),
+	% ar:d({tx_owner, T#tx.owner}),
+	% ar:d({check_tx, ar_tx:check_last_tx(WalletList, T)}),
 	case ar_tx:check_last_tx(WalletList, T) of
 		true -> 
 			UpdatedWalletList = apply_tx(WalletList, T),
@@ -1257,6 +1271,91 @@ filter_out_of_order_txs(WalletList, [T|RawTXs], OutTXs) ->
 	end.
 
 %%% Tests
+
+filter_out_of_order_txs_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	RawTX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
+	RawTX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), RawTX#tx.id),
+	TX = RawTX#tx {owner = Pub1},
+	TX2 = RawTX2#tx {owner = Pub1},
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	WalletList =
+		[
+			{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
+			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
+			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
+		],
+	{_, [SignedTX2, SignedTX1]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX2]),
+	{_, [SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX2, SignedTX]).
+
+filter_out_of_order_txs_large_test_slow() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
+	TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), TX2#tx.id),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	SignedTX3 = ar_tx:sign(TX3, Priv1, Pub1),
+	WalletList =
+		[
+			{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
+			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
+			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
+		],
+	{_, [SignedTX3, SignedTX2, SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX2, SignedTX3]),
+	{_, [SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX3, SignedTX2, SignedTX]),
+	{_, [SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX2, SignedTX3, SignedTX]),
+	{_, [SignedTX2, SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX3, SignedTX2]).
+
+filter_all_out_of_order_txs_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	WalletList =
+		[
+			{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
+			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
+			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
+		],
+	[SignedTX1, SignedTX2] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX2]),
+	[SignedTX1, SignedTX2] = filter_all_out_of_order_txs(WalletList, [SignedTX2, SignedTX]).
+
+filter_all_out_of_order_txs_large_test_slow() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
+	TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), TX2#tx.id),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	SignedTX3 = ar_tx:sign(TX3, Priv1, Pub1),
+	WalletList =
+		[
+			{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
+			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
+			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
+		],
+	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX2, SignedTX3]),
+	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX3, SignedTX2]),
+	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX2, SignedTX, SignedTX3]),
+	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX2, SignedTX3, SignedTX]),
+	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX3, SignedTX, SignedTX2]),
+	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX3, SignedTX2, SignedTX]),
+	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX, SignedTX3]).
 
 %% @doc Ensure that divergence heights are appropriately calculated.
 divergence_height_test() ->
@@ -1316,11 +1415,8 @@ add_bogus_block_test() ->
     ar_storage:write_block(hd(B1)),
     BL = [hd(B1), hd(B0)],
     Node ! {replace_block_list, BL},
-	ar:d(started_waiting1),
     B2 = ar_weave:add(B1, [TX2]),
-	ar:d(started_waiting2),
     ar_storage:write_block(hd(B2)),
-	ar:d(started_waiting3),
     ar_gossip:send(GS0,
         {
             new_block,
@@ -1329,13 +1425,10 @@ add_bogus_block_test() ->
             (hd(B2))#block { hash = <<"INCORRECT">> },
             find_recall_block(B2)
         }),
-	ar:d(started_waiting4),
     receive after 500 -> ok end,
-	ar:d(started_waiting5),
     Node ! {get_blocks, self()},
     receive 
         {blocks, Node, [RecvdB|_]} -> 
-			ar:d(done_waiting),
 			LastB = ar_storage:read_block(RecvdB)
     end.
 
@@ -1586,15 +1679,14 @@ wallet_two_transaction_test_slow() ->
 	add_peers(Node1, Node2),
 	add_tx(Node1, SignedTX),
 	ar_storage:write_tx([SignedTX]),
-	receive after 1000 -> ok end,
-	mine(Node1), % Mine B1
 	receive after 300 -> ok end,
+	mine(Node1), % Mine B1
+	receive after 1000 -> ok end,
     add_tx(Node2, SignedTX2),
     ar_storage:write_tx([SignedTX2]),
 	receive after 1000 -> ok end,
 	mine(Node2), % Mine B2
     receive after 300 -> ok end,
-    ar:d({get_balance(Node1, Pub1), get_balance(Node1, Pub2), get_balance(Node1, Pub3)}),
 	?AR(999) = get_balance(Node1, Pub1),
 	?AR(8499) = get_balance(Node1, Pub2),
 	?AR(500) = get_balance(Node1, Pub3).
@@ -1660,7 +1752,7 @@ single_wallet_double_tx_wrong_order_test_slow() ->
 
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
-tx_threading_test() ->
+tx_threading_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -1685,7 +1777,7 @@ tx_threading_test() ->
 	?AR(2000) = get_balance(Node2, Pub2).
 
 %% @doc Ensure that TX Id threading functions correctly (in the negative case).
-bogus_tx_thread_test() ->
+bogus_tx_thread_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
