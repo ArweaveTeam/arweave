@@ -222,23 +222,25 @@ basic_test() ->
 change_data_test() ->
     B = ar_block:new(),
     RecallB = ar_block:new(),
-    TXs = [],
-    NewTXs = [ar_tx:new()], 
+    TXs = [ar_tx:new()],
+    NewTXs = TXs ++ [ar_tx:new(), ar_tx:new()], 
     PID = start(B, RecallB, TXs, unclaimed, []),
     change_data(PID, NewTXs),
     receive after 500 -> ok end,
 	receive
-		{work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
             DataSegment = ar_block:generate_block_data_segment(
                 B,
                 RecallB, 
-                NewTXs, 
+                MinedTXs, 
                 <<>>, 
                 Timestamp,
                 []
             ),
 			<< 0:Diff, _/bitstring >>
-				= crypto:hash(?HASH_ALG, << Nonce/binary, DataSegment/binary >>)
+                = crypto:hash(?HASH_ALG, << Nonce/binary, DataSegment/binary >>),
+            MinedTXs == NewTXs
+            
     end.
 
 %% @doc Ensure that an active miner process can be killed.
