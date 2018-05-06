@@ -198,7 +198,7 @@ pmap(Fun, List) ->
 		end,
 		lists:map(fun(Elem) -> Master ! {pmap_work, Fun(Elem)} end, List)
 	).
-	
+
 %% @doc Generate a list of GENESIS wallets, from the CSV file.
 genesis_wallets() ->
 	{ok, Bin} = file:read_file("data/genesis_wallets.csv"),
@@ -213,7 +213,7 @@ genesis_wallets() ->
 		end,
 		string:tokens(binary_to_list(Bin), [10])
 	).
-	
+
 %% @doc Generates the difference in microseconds between two erlang time tuples
 time_difference({M1, S1, U1}, {M2, S2, U2}) ->
 	((M1-M2) * 1000000000000) + ((S1-S2) * 1000000) + (U1 - U2);

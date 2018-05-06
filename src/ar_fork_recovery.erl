@@ -81,7 +81,7 @@ server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
 	receive
 	{update_target_block, Block, Peer} ->
-		HashListExtra = 
+		HashListExtra =
 			setminus(
 				lists:reverse([Block#block.indep_hash|Block#block.hash_list]),
 				[NextH|HashList] ++ lists:reverse(BlockList)
@@ -109,7 +109,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 				RecallB = unavailable,
 				TXs = [];
 			true ->
-				case {NextB#block.height, ((TargetB#block.height - NextB#block.height) > ?STORE_BLOCKS_BEHIND_CURRENT)} of 
+				case {NextB#block.height, ((TargetB#block.height - NextB#block.height) > ?STORE_BLOCKS_BEHIND_CURRENT)} of
 					{0, _} ->
 						ar:report(
 							[
@@ -121,7 +121,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						BHashList = unavailable,
 						B = unavailable,
 						RecallB = unavailable,
-						TXs = [],	
+						TXs = [],
 						server(S, rejoin);
 					{_, true} ->
 						ar:report(
@@ -134,7 +134,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						BHashList = unavailable,
 						B = unavailable,
 						RecallB = unavailable,
-						TXs = [],	
+						TXs = [],
 						server(S, rejoin);
 					{_X, _Y} ->
 						B = ar_node:get_block(Peers, NextB#block.previous_block),

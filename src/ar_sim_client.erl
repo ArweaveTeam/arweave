@@ -170,7 +170,7 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 		),
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
-%% @doc Create a random financial TX between two wallets of amount MaxAmount 
+%% @doc Create a random financial TX between two wallets of amount MaxAmount
 create_random_fin_tx(KeyList, MaxAmount) ->
 	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
 	{_, Dest} = lists:nth(rand:uniform(10), KeyList),

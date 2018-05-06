@@ -29,7 +29,7 @@ init(WalletList, StartingDiff) ->
     [B1#block { indep_hash = indep_hash(B1) }].
 
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
-add(Bs) -> 
+add(Bs) ->
     add(Bs, []).
 add(Bs, TXs) ->
     add(Bs, TXs, generate_hash_list(Bs)).
@@ -59,7 +59,7 @@ add([Hash|Bs], TXs, HashList, RewardAddr, WalletList, Tags) when is_binary(Hash)
 add(Bs, TXs, HashList, RewardAddr, WalletList, Tags) ->
     RecallHash = ar_util:get_recall_hash(hd(Bs), HashList),
     RecallB = ar_storage:read_block(RecallHash),
-    {Nonce, Timestamp, Diff} = mine(hd(Bs), RecallB, TXs, RewardAddr, Tags), 
+    {Nonce, Timestamp, Diff} = mine(hd(Bs), RecallB, TXs, RewardAddr, Tags),
     add(
         Bs,
         TXs,
@@ -83,7 +83,7 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, No
         RecallB,
         Diff,
         Nonce,
-        Timestamp  
+        Timestamp
     );
 add([B|_Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
     % ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
@@ -109,7 +109,7 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonc
                     RewardAddr,
                     Timestamp,
                     Tags
-                ), 
+                ),
                 Nonce
             ),
             % indep hash
@@ -315,4 +315,3 @@ is_data_on_block_list(_, _) -> false.
 % 	B1 = add(init(), [TX1, TX2]),
 % 	ar_storage:clear(),
 % 	false = verify(B1).
-

@@ -6,9 +6,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 new() ->
-	#block { 
-        nonce = crypto:strong_rand_bytes(8), 
-        hash = crypto:strong_rand_bytes(32), 
+	#block {
+        nonce = crypto:strong_rand_bytes(8),
+        hash = crypto:strong_rand_bytes(32),
         indep_hash = crypto:strong_rand_bytes(32),
         hash_list = []
     }.
@@ -43,7 +43,7 @@ block_to_binary(B) ->
             )
         )/binary,
         (
-            case is_atom(B#block.reward_addr) of 
+            case is_atom(B#block.reward_addr) of
                 true -> <<>>;
                 false -> B#block.reward_addr
             end
@@ -67,10 +67,10 @@ block_field_size_limit(B) ->
     (byte_size(list_to_binary(B#block.tags)) =< 2048).
 
 %% @docs Generate a hashable data segment for a block from the current
-%% block, recall block, TXs to be mined, reward address and tags. 
-generate_block_data_segment(CurrentB, RecallB, [unavailable], RewardAddr, Timestamp, Tags) -> 
+%% block, recall block, TXs to be mined, reward address and tags.
+generate_block_data_segment(CurrentB, RecallB, [unavailable], RewardAddr, Timestamp, Tags) ->
     generate_block_data_segment(CurrentB, RecallB, [], RewardAddr, Timestamp, Tags);
-generate_block_data_segment(CurrentB, RecallB, TXs, unclaimed, Timestamp, Tags) -> 
+generate_block_data_segment(CurrentB, RecallB, TXs, unclaimed, Timestamp, Tags) ->
     generate_block_data_segment(CurrentB, RecallB, TXs, <<>>, Timestamp, Tags);
 generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags) ->
     Retarget = case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
@@ -78,7 +78,7 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
         false -> CurrentB#block.last_retarget
     end,
     case RewardAddr == undefined of
-        true ->     
+        true ->
             NewWalletList =
                 ar_node:apply_mining_reward(
                     ar_node:apply_txs(CurrentB#block.wallet_list, TXs),
@@ -86,8 +86,8 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
                     TXs,
                     length(CurrentB#block.hash_list) - 1
                     );
-        false -> 
-            NewWalletList = 
+        false ->
+            NewWalletList =
                 ar_node:apply_txs(CurrentB#block.wallet_list, TXs)
     end,
     % ar:d({indep, CurrentB#block.indep_hash}),

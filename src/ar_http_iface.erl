@@ -196,7 +196,7 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 handle('GET', [<<"hash_list">>], _Req) ->
 	Node = whereis(http_entrypoint_node),
     HashList = ar_node:get_hash_list(Node),
-    {200, [], 
+    {200, [],
         list_to_binary(
             ar_serialize:jsonify(
                 ar_serialize:hash_list_to_json_struct(HashList)
@@ -208,7 +208,7 @@ handle('GET', [<<"wallet_list">>], _Req) ->
     Node = whereis(http_entrypoint_node),
     WalletList = ar_node:get_wallet_list(Node),
     %ar:d(list_to_binary(ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)))),
-    {200, [], 
+    {200, [],
         list_to_binary(
             ar_serialize:jsonify(
                 ar_serialize:wallet_list_to_json_struct(WalletList)
@@ -219,7 +219,7 @@ handle('GET', [<<"wallet_list">>], _Req) ->
 % TODO: Return remaining timeout on a failed request
 % TODO: Optionally, allow adding self on a non-default port
 % TODO: Nicer way of segregating different networks
-handle('POST', [<<"peers">>], Req) ->    
+handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	case json2:decode_string(binary_to_list(BlockJSON)) of
 		{ok, {struct, Struct}} ->
@@ -293,7 +293,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 		unavailable -> return_block(unavailable);
 		_ ->
 			case lists:member(
-					ar_util:decode(Hash), 
+					ar_util:decode(Hash),
 					[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
 				) of
 				true ->
@@ -313,7 +313,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 		unavailable -> return_block(unavailable);
 		_ ->
 			case lists:member(
-					ar_util:decode(Hash), 
+					ar_util:decode(Hash),
 					[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
 				) of
 				true ->
@@ -584,9 +584,9 @@ send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
-	
+
 	NewBShadow = NewB#block { wallet_list= [], hash_list = []},
-	RecallBHash = 
+	RecallBHash =
 		case ?IS_BLOCK(RecallB) of
 			true ->  RecallB#block.indep_hash;
 			false -> <<>>
