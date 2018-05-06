@@ -5,7 +5,7 @@
 
 ## GET network information
 
-Retrieve the current network information from a specific node. 
+Retrieve the current network information from a specific node.
 
 - **URL**
   `/info`
@@ -149,7 +149,7 @@ xhr.send();
 
 ## GET transaction body as HTML via ID
 
-Retrieve the data segment of the transaction body decoded from base64url encoding. 
+Retrieve the data segment of the transaction body decoded from base64url encoding.
 If the transaction was an archived website then the result will be browser rendererable HTML.
 
 - **URL**
@@ -192,7 +192,7 @@ xhr.send();
 
 ## GET estimated transaction price
 
-Returns an estimated cost for a transaction of the given size. 
+Returns an estimated cost for a transaction of the given size.
 The returned amount is in winston (the smallest division of AR, 1 AR = 1000000000000 winston).
 
 - **URL**
@@ -349,7 +349,7 @@ xhr.send();
 
 
 
-## GET current block 
+## GET current block
 
 Retrieve a JSON array representing the contents of the current block, the network head.
 
@@ -406,7 +406,7 @@ xhr.send();
 
 ## GET wallet balance via address
 
-Retrieve the balance of the wallet specified via the address. 
+Retrieve the balance of the wallet specified via the address.
 The returned amount is in winston (the smallest division of AR, 1 AR = 1000000000000 winston).
 
 - **URL**
@@ -414,7 +414,7 @@ The returned amount is in winston (the smallest division of AR, 1 AR = 100000000
 - **Method**
   GET
 - **URL Parameters**
-  [wallet_address] : A base64url encoded SHA256 hash of the raw RSA modulus. 
+  [wallet_address] : A base64url encoded SHA256 hash of the raw RSA modulus.
 
 
 #### Example Response
@@ -452,14 +452,14 @@ xhr.send();
 
 ## GET last transaction via address
 
-Retrieve the ID of the last transaction made by the given address. 
+Retrieve the ID of the last transaction made by the given address.
 
 - **URL**
   `/wallet/[wallet_address]/last_tx`
 - **Method**
   GET
 - **URL Parameters**
-  [wallet_address] : A base64url encoded SHA256 hash of the RSA modulus. 
+  [wallet_address] : A base64url encoded SHA256 hash of the RSA modulus.
 
 
 #### Example Response
@@ -556,7 +556,7 @@ Post a transaction to the network.
 
 ```javascript
 {
-    "id": "",     // base64url encoded random string of 32-bytes 
+    "id": "",     // base64url encoded random string of 32-bytes
     "last_tx": "",    // base64url encoded ID of last transaction made by address
     "owner": "",    // base64url encoded modulus of wallet making transaction
     "target": "",   // base64url encoded SHA256 hash of recipients modulus
@@ -575,7 +575,7 @@ var node = 'http://127.0.0.1:1984';
 var path = '/tx';
 var url = node + path;
 var xhr = new XMLHttpRequest();
-var post = 
+var post =
     {
       "id": "VvNF3aLS28MXD_o4Lv0lF9_WcxMibFOp166qDqC1Hlw",
       "last_tx": "bUfaJN-KKS1LRh_DlJv4ff1gmdbHP4io-J9x7cLY5is",

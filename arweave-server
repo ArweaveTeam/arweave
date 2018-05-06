@@ -13,4 +13,3 @@ while true; do
 		sleep 15
 	fi
 done
-

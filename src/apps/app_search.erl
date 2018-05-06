@@ -12,7 +12,7 @@
 %%% block containing the transaction.
 %%% For examplary purposes only.
 
-%% txlist DETS file  
+%% txlist DETS file
 -define(TXDATA, "data/txdb.dat").
 %% @doc For compatibility. Dets database supercedes state.
 -record(state, {
@@ -121,7 +121,7 @@ basic_usage_test() ->
 	receive after 1000 -> ok end,
 	% recieve a "get transaction" message
 	message([], {get_tx,self(),<<"TestName">>, <<"TestVal">>}),
-	% check that newly mined block matches the block the most recent transaction was mined in 
+	% check that newly mined block matches the block the most recent transaction was mined in
 	true =
 		receive
 			TXIDs -> lists:member(TX#tx.id, TXIDs)

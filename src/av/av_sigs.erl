@@ -19,7 +19,7 @@ quick() -> quick(all()).
 quick(Sigs) ->
 	[ S || S <- Sigs, S#sig.type == hash ].
 
-%% Return the full set of 'deep' probes. Runs impossibly slowly for 
+%% Return the full set of 'deep' probes. Runs impossibly slowly for
 %% any 'real' use.
 deep() -> deep(all()).
 deep(Sigs) ->
@@ -72,7 +72,7 @@ filter_dbs(DBs) ->
 %% Load the signatures from a specified file, throwing away signatures
 %% that we are not able to process.
 do_load(File) ->
-	Fun = 
+	Fun =
 		case filename:extension(File) of
 			".ndb" -> fun create_binary_sig/1;
 			".hdb" -> fun create_hash_sig/1;
