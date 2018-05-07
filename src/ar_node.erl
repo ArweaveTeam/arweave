@@ -1644,7 +1644,7 @@ multi_node_mining_reward_test() ->
 
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
-wallet_transaction_test() ->
+wallet_transaction_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),

@@ -14,12 +14,17 @@ new() ->
         hash_list = []
     }.
 
-encrypt_block(B, R) ->
-    Recall = block_to_binary(R),
+encrypt_block(R, B) ->
+    Recall =
+        list_to_binary(
+            ar_serialize:jsonify(
+                ar_serialize:block_to_json_struct(R)
+            )
+        ),
     Hash = B#block.hash,
     Nonce = binary:part(Hash, 0, 16),
     Key = crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
-    PlainText = pad_to_length(block_to_binary(R)),
+    PlainText = pad_to_length(Recall),
     %% block to binary
     %% pad binary to multiple of block
     CiperText = 
@@ -32,25 +37,29 @@ encrypt_block(B, R) ->
     {Key, CiperText}.
 decrypt_block(B, CipherText, Key) ->
     Nonce = binary:part(B#block.hash, 0, 16),
-    PlainText = 
+    PaddedPlainText =
         crypto:block_decrypt(
             aes_cbc,
             Key,
             Nonce,
             CipherText
-        ).
+        ),
+    PlainText = unpad_binary(PaddedPlainText),
+    {ok, RJSON} = ar_serialize:dejsonify(binary_to_list(PlainText)),
+    ar_serialize:json_struct_to_block(RJSON).
+
 
 %% @doc Generate a hashable binary from a #block object.
 pad_to_length(Binary) ->
-    Pad = (32 - ((bit_size(Binary)+1) rem 32)),
+    Pad = (32 - ((byte_size(Binary)+1) rem 32)),
     <<Binary/binary, 1, 0:(Pad*8)>>.
 
 unpad_binary(Binary) ->
     ar_util:rev_bin(do_unpad_binary(ar_util:rev_bin(Binary))).
 do_unpad_binary(Binary) ->
     case Binary of
-        <<0, Rest/bitstring >> -> do_unpad_binary(Rest);
-        <<1, Rest/bitstring >> -> Rest
+        <<0, Rest/binary >> -> do_unpad_binary(Rest);
+        <<1, Rest/binary >> -> Rest
     end.
 
 block_to_binary(B) ->
@@ -194,4 +203,5 @@ encrypt_decrypt_block_test() ->
     B0 = ar_weave:init([]),
     ar_storage:write_block(B0),
     B1 = ar_weave:add(B0, []),
-    {Key, CiperText, Pad} = encrypt_block(hd(B1), hd(B0)).
+    {Key, CiperText} = encrypt_block(hd(B0), hd(B1)),
+    B0 = [decrypt_block(hd(B1), CiperText, Key)].
