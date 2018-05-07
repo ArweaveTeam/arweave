@@ -14,5 +14,4 @@ mkdir ebin logs blocks wallets txs
 		timeout 15
 	goto mine
 	)
-
 pause

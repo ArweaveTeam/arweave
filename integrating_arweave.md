@@ -128,5 +128,4 @@ The transaction is now complete and ready to be submitted to the network via a P
 
 
 
-
 > Multiple variants of base64url encoding exist and within the Arweave network we use a specific form. The standard base64 characters '+' and '/' are replaced with '-' and  '\_' respectively, and all padding characters, '=', are stripped from the end of the encoded string.

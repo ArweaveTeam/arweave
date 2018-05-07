@@ -12,7 +12,6 @@ Retrieve the current network information from a specific node.
 - **Method**
   GET
 
-
 #### Example Response
 
 A JSON array containing the network information for the current node.
