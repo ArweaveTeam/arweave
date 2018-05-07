@@ -39,12 +39,12 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
                     recall_block = RecallB,
                     txs = TXs,
                     timestamp = Timestamp,
-                    data_segment = 
+                    data_segment =
                         ar_block:generate_block_data_segment(
-                            CurrentB, 
-                            RecallB, 
-                            TXs, 
-                            RewardAddr, 
+                            CurrentB,
+                            RecallB,
+                            TXs,
+                            RewardAddr,
                             Timestamp,
                             Tags
                         ),
@@ -82,12 +82,12 @@ server(
         max_miners = Max
 	}) ->
 	receive
-		stop -> 
+		stop ->
             % Kill all active workers
             lists:foreach(
-                fun(Miner) -> Miner ! stop end, 
+                fun(Miner) -> Miner ! stop end,
                 Miners
-            ), 
+            ),
             ok;
 		{new_data, RawTXs} ->
             % Kill all active workers
@@ -126,9 +126,9 @@ server(
             );
 		mine ->
             % Spawn the list of worker processes
-            Workers = 
+            Workers =
                 lists:map(
-                    fun(_) -> spawn(?MODULE, miner, [S, self()]) end, 
+                    fun(_) -> spawn(?MODULE, miner, [S, self()]) end,
                     lists:seq(1, Max)
                 ),
             % Tell each worker to start hashing
@@ -139,7 +139,7 @@ server(
             % Continue server loop
             server(
                 S#state {
-                    miners = Workers 
+                    miners = Workers
                 }
             );
         {solution, Hash, Nonce} ->
@@ -157,7 +157,7 @@ server(
 miner(S = #state { data_segment = DataSegment, diff = Diff }, Supervisor) ->
     receive
         stop -> ok;
-        hash -> 
+        hash ->
             schedule_hash(S),
             case validate(DataSegment, Nonce = generate_nonce(), Diff) of
                 false -> miner(S, Supervisor);
@@ -177,9 +177,9 @@ next_diff(CurrentB) ->
     Timestamp = os:system_time(seconds),
     case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
         true -> ar_retarget:maybe_retarget(
-                CurrentB#block.height + 1, 
-                CurrentB#block.diff, 
-                Timestamp, 
+                CurrentB#block.height + 1,
+                CurrentB#block.diff,
+                Timestamp,
                 CurrentB#block.last_retarget
             );
         false -> CurrentB#block.diff
@@ -208,8 +208,8 @@ basic_test() ->
         {work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
             DataSegment = ar_block:generate_block_data_segment(
                 B,
-                RecallB, 
-                [], 
+                RecallB,
+                [],
                 <<>>,
                 Timestamp,
                 []
@@ -223,7 +223,7 @@ change_data_test() ->
     B = ar_block:new(),
     RecallB = ar_block:new(),
     TXs = [ar_tx:new()],
-    NewTXs = TXs ++ [ar_tx:new(), ar_tx:new()], 
+    NewTXs = TXs ++ [ar_tx:new(), ar_tx:new()],
     PID = start(B, RecallB, TXs, unclaimed, []),
     change_data(PID, NewTXs),
     receive after 500 -> ok end,
@@ -231,20 +231,20 @@ change_data_test() ->
 		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
             DataSegment = ar_block:generate_block_data_segment(
                 B,
-                RecallB, 
-                MinedTXs, 
-                <<>>, 
+                RecallB,
+                MinedTXs,
+                <<>>,
                 Timestamp,
                 []
             ),
 			<< 0:Diff, _/bitstring >>
                 = crypto:hash(?HASH_ALG, << Nonce/binary, DataSegment/binary >>),
             MinedTXs == NewTXs
-            
+
     end.
 
 %% @doc Ensure that an active miner process can be killed.
-kill_miner_test() -> 
+kill_miner_test() ->
     B = ar_block:new(),
     RecallB = ar_block:new(),
     PID = start(B, RecallB, [], unclaimed, []),
@@ -252,6 +252,5 @@ kill_miner_test() ->
     PID ! stop,
     receive
         {'DOWN', _Ref, process, PID, normal} -> ok
-        after 1000 -> erlang:error(no_match)  
+        after 1000 -> erlang:error(no_match)
     end.
-

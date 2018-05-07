@@ -24,7 +24,7 @@ calculate_size({_URL, _Headers, _ContentType, Body}) when is_binary(Body) ->
 
 %% Update the database with new timing data.
 store_data_time(Request, Bytes, MicroSecs) ->
-	P = 
+	P =
 		case ar_meta_db:get({peer, IP = get_ip(Request)}) of
 			not_found -> #performance{};
 			X -> X

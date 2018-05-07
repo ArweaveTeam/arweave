@@ -135,12 +135,12 @@ tx_field_size_limit(TX) ->
 tag_field_legal(TX) ->
 	lists:all(
 		fun(X) ->
-			case X of 
+			case X of
 				{_, _} -> true;
 				_ -> false
 			end
 		end,
-		TX#tx.tags	
+		TX#tx.tags
 	).
 
 tags_to_binary(Tags) ->
@@ -149,7 +149,7 @@ tags_to_binary(Tags) ->
 			fun({Name, Value}, Acc) ->
 				[Name, Value | Acc]
 			end,
-			[], 
+			[],
 			Tags
 		)
 	).
@@ -171,7 +171,7 @@ check_last_tx([], _) ->
 check_last_tx(WalletList, TX) ->
 	Address = ar_wallet:to_address(TX#tx.owner),
 	case lists:keyfind(Address, 1, WalletList) of
-		{Address, _Quantity, Last} -> Last == TX#tx.last_tx; 
+		{Address, _Quantity, Last} -> Last == TX#tx.last_tx;
 		_ -> false
 	end.
 -endif.
@@ -220,11 +220,10 @@ check_last_tx_test() ->
 	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
 	% SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	% SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-	WalletList = 
+	WalletList =
 		[
 			{ar_wallet:to_address(Pub1), 1000, <<>>},
 			{ar_wallet:to_address(Pub2), 2000, TX#tx.id},
 			{ar_wallet:to_address(Pub3), 3000, <<>>}
 		],
 	check_last_tx(WalletList, TX2).
-

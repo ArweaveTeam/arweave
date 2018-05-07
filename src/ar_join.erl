@@ -58,7 +58,7 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks
-get_block_and_trail(_Peers, NewB, []) -> 
+get_block_and_trail(_Peers, NewB, []) ->
 	ar_storage:write_block(NewB);
 get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).

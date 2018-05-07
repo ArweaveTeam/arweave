@@ -82,8 +82,8 @@ to_address({{_, Pub}, Pub}) -> to_address(Pub);
 to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
     crypto:hash(?HASH_ALG, PubKey).
-    
-to_binary({Addr, Quantity, LastTx}) -> 
+
+to_binary({Addr, Quantity, LastTx}) ->
     <<
         (Addr)/binary,
         (integer_to_binary(Quantity))/binary,

@@ -39,7 +39,7 @@ maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
 		last_retarget = B#block.timestamp
 	};
 maybe_retarget(B, OldB) ->
-	B#block { 
+	B#block {
         last_retarget = OldB#block.last_retarget,
         diff = OldB#block.diff
     }.
@@ -51,12 +51,12 @@ calculate_difficulty(OldDiff, TS, Last) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeError = abs(ActualTime - TargetTime),
-	if 
-        TimeError < (TargetTime * ?RETARGET_TOLERANCE) -> 
+	if
+        TimeError < (TargetTime * ?RETARGET_TOLERANCE) ->
             OldDiff;
-	    TargetTime > ActualTime -> 
+	    TargetTime > ActualTime ->
             OldDiff + 1;
-	    true -> 
+	    true ->
             OldDiff - 1
 	end.
 

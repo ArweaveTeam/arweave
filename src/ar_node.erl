@@ -72,7 +72,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
-				_ ->                                        
+				_ ->
 					ar_cleanup:remove_invalid_blocks(HashList),
 					do_nothing
 			end,
@@ -280,7 +280,7 @@ get_wallet_list(Node) ->
 	end.
 
 %% @doc Get the hash list from the node
-get_hash_list(Node) -> 
+get_hash_list(Node) ->
     Node ! {get_hashlist, self()},
     receive
 		{hashlist, HashList} -> HashList
@@ -516,10 +516,10 @@ server(
 		{get_floatingwalletlist, PID} ->
 			PID ! {floatingwalletlist, S#state.floating_wallet_list},
 			server(S);
-		{get_current_diff, PID} ->	
+		{get_current_diff, PID} ->
 			CurrentB = ar_util:get_head_block(HashList),
 			PID ! {
-					current_diff, 
+					current_diff,
 					ar_retarget:calculate_difficulty(
 						CurrentB#block.diff,
 						os:system_time(seconds),
@@ -633,7 +633,7 @@ server(
 			ar:report_console([{unknown_msg_node, Msg}]),
 			server(S)
 	end)
-	catch 
+	catch
 		throw:Term ->
 			ar:report(
 				[
@@ -705,12 +705,12 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 		unavailable ->
 			RecallHash = find_recall_hash(NewB, HashList),
             FullBlock = ar_node:get_full_block(
-				ar_bridge:get_remote_peers(whereis(http_bridge_node)), 
+				ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 				RecallHash
 			),
 			RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
 			ar_storage:write_tx(FullBlock#block.txs),
-			ar_storage:write_block(RecallFull),		
+			ar_storage:write_block(RecallFull),
 			S = RawS1#state { gossip = NewGS },
 			case S#state.miner of
 				undefined -> do_nothing;
@@ -899,12 +899,12 @@ integrate_block_from_miner(
 add_tx_to_server(S, NewGS, TX) ->
     memsup:start_link(),
     {_, Mem} = lists:keyfind(
-        system_total_memory, 
-        1, 
+        system_total_memory,
+        1,
         memsup:get_system_memory_data()
     ),
     case (Mem div 4) > byte_size(ar_tx:to_binary(TX)) of
-        true -> 
+        true ->
             NewTXs = S#state.txs ++ [TX],
 	        ar:d({added_tx, TX#tx.id}),
 	        case S#state.miner of
@@ -988,12 +988,12 @@ validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, 
 validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:d({val_hashlist, _NewB#block.hash_list}),
 	ar:d({val_wallet_list, _NewB#block.wallet_list}),
-	ar:d({val_nonce, _NewB#block.nonce}),	
+	ar:d({val_nonce, _NewB#block.nonce}),
 	ar:d({val_hash, _OldB#block.hash_list}),
 	ar:d({val_diff, _OldB#block.diff}),
 	ar:d({hashlist, _HL}),
 	ar:d({wallet_list, _WL}),
-	ar:d({txs, _TXs}),	
+	ar:d({txs, _TXs}),
 	ar:d({recall, _RecallB}),
 	ar:d(block_not_accepted),
 	false.
@@ -1023,7 +1023,7 @@ validate(
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 validate_wallet_list([]) -> true;
-validate_wallet_list([{_, 0, Last}|_]) when byte_size(Last) == 0 -> false; 
+validate_wallet_list([{_, 0, Last}|_]) when byte_size(Last) == 0 -> false;
 validate_wallet_list([{_, Qty, _}|_]) when Qty < 0 -> false;
 validate_wallet_list([_|Rest]) -> validate_wallet_list(Rest).
 
@@ -1173,17 +1173,17 @@ start_mining(S = #state { hash_list = not_joined }) ->
 	S;
 start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, tags = Tags }) ->
 	case find_recall_block(BHL) of
-		unavailable -> 
+		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
             FullBlock = ar_node:retry_full_block(
-				ar_bridge:get_remote_peers(whereis(http_bridge_node)), 
+				ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 				RecallHash,
 				not_found,
 				3
 			),
 			case ?IS_BLOCK(FullBlock) of
-				true -> 
+				true ->
 					RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
 					ar_storage:write_tx(FullBlock#block.txs),
 					ar_storage:write_block(RecallFull);
@@ -1223,7 +1223,7 @@ generate_floating_wallet_list(WalletList, []) ->
 	WalletList;
 generate_floating_wallet_list(WalletList, [T|TXs]) ->
 	case ar_tx:check_last_tx(WalletList, T) of
-		true -> 
+		true ->
 			UpdatedWalletList = apply_tx(WalletList, T),
 			generate_floating_wallet_list(UpdatedWalletList, TXs);
 		false -> false
@@ -1234,7 +1234,7 @@ generate_floating_wallet_list(WalletList, [T|TXs]) ->
 	% 		case ar_tx:check_last_tx(Acc, T) of
 	% 			true -> apply_tx(Acc, T);
 	% 			false -> Acc
-	% 		end 
+	% 		end
 	% 	end,
 	% 	CurWalletList,
 	% 	TXs
@@ -1263,10 +1263,10 @@ filter_out_of_order_txs(WalletList, [T|RawTXs], OutTXs) ->
 	% ar:d({tx_owner, T#tx.owner}),
 	% ar:d({check_tx, ar_tx:check_last_tx(WalletList, T)}),
 	case ar_tx:check_last_tx(WalletList, T) of
-		true -> 
+		true ->
 			UpdatedWalletList = apply_tx(WalletList, T),
 			filter_out_of_order_txs(UpdatedWalletList, RawTXs, [T|OutTXs]);
-		false -> 
+		false ->
 			filter_out_of_order_txs(WalletList, RawTXs, OutTXs)
 	end.
 
@@ -1427,8 +1427,8 @@ add_bogus_block_test() ->
         }),
     receive after 500 -> ok end,
     Node ! {get_blocks, self()},
-    receive 
-        {blocks, Node, [RecvdB|_]} -> 
+    receive
+        {blocks, Node, [RecvdB|_]} ->
 			LastB = ar_storage:read_block(RecvdB)
     end.
 

@@ -119,7 +119,7 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			case ar_gossip:recv(GS0, Msg) of
 				{_, ignore} ->
 					server(S);
-				Gossip -> 
+				Gossip ->
 					server(do_send_to_external(S, Gossip))
 			end;
 		{get_more_peers, PID} ->

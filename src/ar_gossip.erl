@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %%% The ArkChain gossip protocol implementation.
-%%% Can be plugged into processes by receiving 
+%%% Can be plugged into processes by receiving
 %%% #gs_msg records and running them through the recv function.
 %%% The state object is changed and returned as the first element
 %%% of a two element tuple for every library call.
@@ -13,7 +13,7 @@
 %% @doc Create a new gossip node state. Optionally, with peer list.
 init() -> init([]).
 init(PID) when is_pid(PID) -> init([PID]);
-init(Peers) when is_list(Peers) -> 
+init(Peers) when is_list(Peers) ->
     #gs_state { peers = Peers };
 init(PacketLossP) when is_float(PacketLossP) ->
 	#gs_state { loss_probability = PacketLossP };

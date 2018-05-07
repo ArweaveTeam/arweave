@@ -17,7 +17,7 @@
 %% from the server.
 -define(PRUNE_TIMEOUT, 60 * 1000).
 
-start() -> start(whereis(http_entypoint_node)).
+start() -> start(whereis(http_entrypoint_node)).
 start(Node) -> spawn(fun() -> server(#state { miner = Node }) end).
 
 %% Add a list of services to the system.

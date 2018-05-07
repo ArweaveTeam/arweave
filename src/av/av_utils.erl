@@ -23,8 +23,8 @@ hex_to_binary([X,Y|T], Acc) ->
 
 %% Calculate the MD5 sum for a file, returning it in binary format.
 %% We should improve this later to only load 1mb chunks at a time.
-%% We could even spawn 2 processes, one to read from the HD, and 
-%% the other to do the hashing. That might be much more efficient 
+%% We could even spawn 2 processes, one to read from the HD, and
+%% the other to do the hashing. That might be much more efficient
 %% for large files.
 md5sum(FileName) when is_list(FileName) ->
 	{ok, Bin} = file:read_file(FileName),

@@ -99,7 +99,7 @@ main(["mine"|Rest], O) ->
 	main(Rest, O#opts { mine = true });
 main(["peer", Peer|Rest], O = #opts { peers = default }) ->
 	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)] });
-main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->	
+main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
 	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
 main(["port", Port|Rest], O) ->
 	main(Rest, O#opts { port = list_to_integer(Port) });
@@ -118,7 +118,7 @@ main(["new_mining_key"|Rest], O)->
 main(["disk_space", Size|Rest], O) ->
 	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 main(["load_mining_key", File|Rest], O)->
-	main(Rest, O#opts { load_key = File });	
+	main(Rest, O#opts { load_key = File });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -305,7 +305,7 @@ start_link(Args) ->
 %% @doc init function for supervisor
 init(Args) ->
     SupFlags = {one_for_one, 5, 30},
-    ChildSpecs = 
+    ChildSpecs =
 		[
 			{
 				ar_node,

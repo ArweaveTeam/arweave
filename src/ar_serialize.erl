@@ -319,13 +319,13 @@ json_struct_to_hash_list(JSONList) when is_list(JSONList) ->
         {ok, []} -> [];
         {ok, HashesStruct} -> json_struct_to_hash_list(HashesStruct);
         {_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
-    end; 
+    end;
 json_struct_to_hash_list({array, HashesStruct}) ->
     lists:foldr(
         fun(X, Acc) -> [ar_util:decode(X)|Acc] end,
         [],
         HashesStruct
-    ).    
+    ).
 
 %% @doc Find the value associated with a key in a JSON structure list.
 find_value(Key, List) ->
