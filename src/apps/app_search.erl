@@ -91,12 +91,20 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 			lists:foreach(
 				fun(Tag) ->
 					case Tag of
+						{<<"from">>, _ } -> ok;
+						{<<"to">>, _} -> ok;
+						{<<"quantity">>, _} -> ok;
+						{<<"reward">>, _} -> ok;
 						{Name, Value} -> storeDB(Name, Value, TX#tx.id);
 						_ -> ok
 					end
 				end,
-			TX#tx.tags
-			)
+				TX#tx.tags
+			),
+			storeDB(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
+			storeDB(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
+			storeDB(<<"quantity">>, TX#tx.quantity, TX#tx.id),
+			storeDB(<<"reward">>, TX#tx.reward, TX#tx.id)
 		end,
 		ar_storage:read_tx(B#block.txs)
 	);

@@ -2,6 +2,7 @@
 -export([full_block_to_json_struct/1, block_to_json_struct/1, json_struct_to_block/1, json_struct_to_full_block/1, tx_to_json_struct/1, json_struct_to_tx/1]).
 -export([wallet_list_to_json_struct/1, hash_list_to_json_struct/1, json_struct_to_hash_list/1, json_struct_to_wallet_list/1]).
 -export([jsonify/1, dejsonify/1]).
+-export([query_to_json_struct/1, json_struct_to_query/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -333,6 +334,34 @@ find_value(Key, List) ->
 		false -> undefined
 	end.
 
+query_to_json_struct({Op, Expr1, Expr2}) ->
+	{struct,
+		[	
+			{op, atom_to_list(Op)},
+			{expr1, query_to_json_struct(Expr1)},
+			{expr2, query_to_json_struct(Expr2)}
+		]
+	};
+query_to_json_struct(Expr) ->
+	ar_util:encode(Expr).
+
+json_struct_to_query(QueryJSON) ->
+	case dejsonify (QueryJSON) of
+        {ok, []} -> [];
+        {ok, Query} -> do_json_struct_to_hash_list(Query);
+        {_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
+    end.
+
+do_json_struct_to_hash_list({struct, Query}) ->
+	{
+		list_to_existing_atom(find_value("op", Query)),
+		do_json_struct_to_hash_list(find_value("expr1", Query)),
+		do_json_struct_to_hash_list(find_value("expr2", Query))
+	};
+do_json_struct_to_hash_list(Query) ->
+	ar_util:decode(Query).
+
+
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->
     [B] = ar_weave:init(),
@@ -358,3 +387,12 @@ hash_list_roundtrip_test() ->
     HL = B#block.hash_list,
     JsonHL = jsonify(hash_list_to_json_struct(HL)),
     HL = json_struct_to_hash_list(JsonHL).
+
+query_roundtrip_test() ->
+	Query = {'equals', <<"TestName">>, <<"TestVal">>},
+	QueryJSON = ar_serialize:jsonify(
+		ar_serialize:query_to_json_struct(
+			Query
+			)
+		),
+	Query = ar_serialize:json_struct_to_query(QueryJSON).
