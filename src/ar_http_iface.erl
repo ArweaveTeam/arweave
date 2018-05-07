@@ -4,6 +4,7 @@
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
+-export([get_txs_by_send_recv_test_slow/0]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -88,6 +89,26 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 					{404, [], <<"Not Found.">>}
 			end;
 		T -> return_tx(T)
+	end;
+% Handle an ARQL request
+handle('POST', [<<"arql">>], Req) ->
+	QueryJson = elli_request:body(Req),
+	Query = ar_serialize:json_struct_to_query(
+		binary_to_list(QueryJson)
+	),
+	TXs = ar_util:unique(ar_parser:eval(Query)),
+	case TXs of
+		[] -> {200, [], []};
+		Set ->
+			{
+				200,
+				[],
+				list_to_binary(
+					ar_serialize:jsonify(
+						ar_serialize:hash_list_to_json_struct(Set)
+					)
+				)
+			}
 	end;
 % Get a transaction by hash and return the associated data.
 handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
@@ -1062,3 +1083,103 @@ get_multiple_pending_txs_test() ->
 				++ "pending"),
 	{ok, {array, PendingTxs}} = json2:decode_string(Body),
 	[TX1#tx.id, TX2#tx.id] == [list_to_binary(P) || P <- PendingTxs].
+
+get_tx_by_tag_test() ->
+	% Spawn a network with two nodes and a chirper server
+	ar_storage:clear(),
+	SearchServer = app_search:start(),
+	Peers = ar_network:start(10, 10),
+	ar_node:add_peers(hd(Peers), SearchServer),
+	% Generate the transaction.
+	TX = (ar_tx:new())#tx {tags = [{"TestName", "TestVal"}]},
+	% Add tx to network
+	ar_node:add_tx(hd(Peers), TX),
+	% Begin mining
+	receive after 250 -> ok end,
+	ar_node:mine(hd(Peers)),
+	receive after 1000 -> ok end,
+	QueryJSON = ar_serialize:jsonify(
+		ar_serialize:query_to_json_struct(
+			{'equals', "TestName", "TestVal"}
+			)
+		),
+	%Query = ar_serialize:json_struct_to_query(QueryJSON),
+	{ok, {_, _, Stuff}} = ar_httpc:request(
+		post,
+		{
+			"http://127.0.0.1:1984" ++ "/arql",
+			[],
+			"application/x-www-form-urlencoded",
+			lists:flatten(
+				QueryJSON
+			)
+		}, [{timeout, ?NET_TIMEOUT}], []
+	),
+	ar:d(Stuff),
+	{ok, {array, TXs}} = ar_serialize:dejsonify(Stuff),
+	true =
+		lists:member(
+			TX#tx.id,
+			lists:map(
+				fun ar_util:decode/1,
+				TXs
+			)
+		).
+
+get_txs_by_send_recv_test_slow() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
+	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
+	ar_storage:write_tx([SignedTX]),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 1000 -> ok end,
+    ar_node:add_tx(Node2, SignedTX2),
+    ar_storage:write_tx([SignedTX2]),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node2), % Mine B2
+    receive after 1000 -> ok end,
+	QueryJSON = ar_serialize:jsonify(
+		ar_serialize:query_to_json_struct(
+				{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
+			)
+		),
+	ar:d(QueryJSON),
+	{ok, {_, _, Res}} = ar_httpc:request(
+		post,
+		{
+			"http://127.0.0.1:1984" ++ "/arql",
+			[],
+			"application/x-www-form-urlencoded",
+			lists:flatten(
+				QueryJSON
+			)
+		}, [{timeout, ?NET_TIMEOUT}], []
+	),
+	{ok, {array, TXs}} = ar_serialize:dejsonify(Res),
+	true =
+		lists:member(
+			TX#tx.id,
+			lists:map(
+				fun ar_util:decode/1,
+				TXs
+			)
+		),
+	true =
+		lists:member(
+			TX2#tx.id,
+			lists:map(
+				fun ar_util:decode/1,
+				TXs
+			)
+		).

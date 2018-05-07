@@ -629,6 +629,7 @@ integrate_new_block(
 		),
 	ar_storage:write_block(NewB),
 	ar_storage:write_tx(NewTXs),
+	app_search:update_tag_table(NewB),
 	% Recurse over the new block.
 	ar:report_console(
 		[
@@ -679,6 +680,7 @@ integrate_block_from_miner(
 		true ->
 			ar_storage:write_block(NextB),
 			ar_storage:write_tx(MinedTXs),
+			app_search:update_tag_table(NextB),
 			{NewGS, _} =
 				ar_gossip:send(
 					GS,

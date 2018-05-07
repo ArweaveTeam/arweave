@@ -1,6 +1,8 @@
 -module(ar_serialize).
 -export([full_block_to_json_struct/1, block_to_json_struct/1, json_struct_to_block/1, json_struct_to_full_block/1, tx_to_json_struct/1, json_struct_to_tx/1]).
 -export([jsonify/1, dejsonify/1]).
+-export([wallet_list_to_json_struct/1, hash_list_to_json_struct/1, json_struct_to_hash_list/1, json_struct_to_wallet_list/1]).
+-export([query_to_json_struct/1, json_struct_to_query/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -204,7 +206,6 @@ tx_to_json_struct(
 		tags = Tags,
 		target = Target,
 		quantity = Quantity,
-		type = Type,
 		data = Data,
 		reward = Reward,
 		signature = Sig
@@ -214,16 +215,30 @@ tx_to_json_struct(
 			{id, ar_util:encode(ID)},
 			{last_tx, ar_util:encode(Last)},
 			{owner, ar_util:encode(Owner)},
-			{tags, {array, Tags}},
+			{tags,
+				{array,
+					lists:map(
+						fun({Name, Value}) ->
+							{struct,
+								[
+									{name, ar_util:encode(Name)},
+									{value, ar_util:encode(Value)}
+								]
+							}
+						end,
+						Tags
+					)
+				}
+			},
 			{target, ar_util:encode(Target)},
 			{quantity, integer_to_list(Quantity)},
-			{type, atom_to_list(Type)},
 			{data, ar_util:encode(Data)},
 			{reward, integer_to_list(Reward)},
 			{signature, ar_util:encode(Sig)}
 		]
 	}.
 
+%% @doc Translate parsed JSON from fields to a transaction.
 %% @doc Translate parsed JSON from fields to a transaction.
 json_struct_to_tx(JSONList) when is_list(JSONList) ->
 	case dejsonify(JSONList) of
@@ -239,21 +254,105 @@ json_struct_to_tx({struct, TXStruct}) ->
 		id = ar_util:decode(find_value("id", TXStruct)),
 		last_tx = ar_util:decode(find_value("last_tx", TXStruct)),
 		owner = ar_util:decode(find_value("owner", TXStruct)),
-		tags = Tags,
+		tags =
+			[
+					{ar_util:decode(Name), ar_util:decode(Value)}
+				||
+					{struct, [{"name", Name}, {"value", Value}]} <- Tags
+			],
 		target = ar_util:decode(find_value("target", TXStruct)),
 		quantity = list_to_integer(find_value("quantity", TXStruct)),
-		type = list_to_existing_atom(find_value("type", TXStruct)),
 		data = ar_util:decode(find_value("data", TXStruct)),
 		reward = list_to_integer(find_value("reward", TXStruct)),
 		signature = ar_util:decode(find_value("signature", TXStruct))
 	}.
 
+
+%% @doc Translate a wallet list into JSON.
+wallet_list_to_json_struct([]) -> [];
+wallet_list_to_json_struct([Wallet|WalletList]) ->
+    EncWallet = wallet_to_json_struct(Wallet),
+    [EncWallet | wallet_list_to_json_struct(WalletList)].
+wallet_to_json_struct({Address, Balance, Last}) ->
+    {struct,
+        [
+            {address, ar_util:encode(Address)},
+            {balance, integer_to_list(Balance)},
+            {last_tx, ar_util:encode(Last)}
+        ]
+    }.
+
+%% @doc Translate parsed JSON from fields into a valid wallet list.
+json_struct_to_wallet_list(JSONList) when is_list(JSONList) ->
+	case dejsonify(JSONList) of
+        {ok, []} -> [];
+        {ok, WalletsStruct} -> json_struct_to_wallet_list(WalletsStruct);
+		{_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
+	end;
+json_struct_to_wallet_list({array, WalletsStruct}) ->
+    lists:foldr(
+        fun(X, Acc) -> [json_struct_to_wallet(X) | Acc] end,
+        [],
+        WalletsStruct
+    ).
+json_struct_to_wallet({struct, Wallet}) ->
+    Address = ar_util:decode(find_value("address", Wallet)),
+    Balance = list_to_integer(find_value("balance", Wallet)),
+    Last = ar_util:decode(find_value("last_tx", Wallet)),
+    {Address, Balance, Last}.
+
+%% @doc Translate a hash list into JSON.
+hash_list_to_json_struct([]) -> [];
+hash_list_to_json_struct([Hash|HashList]) ->
+    EncHash = ar_util:encode(binary_to_list(Hash)),
+    [EncHash | hash_list_to_json_struct(HashList)].
+
+%% @doc Translate parsed JSON from fields into a valid hash list.
+json_struct_to_hash_list(JSONList) when is_list(JSONList) ->
+    case dejsonify(JSONList) of
+        {ok, []} -> [];
+        {ok, HashesStruct} -> json_struct_to_hash_list(HashesStruct);
+        {_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
+    end;
+json_struct_to_hash_list({array, HashesStruct}) ->
+    lists:foldr(
+        fun(X, Acc) -> [ar_util:decode(X)|Acc] end,
+        [],
+        HashesStruct
+    ).
 %% @doc Find the value associated with a key in a JSON structure list.
 find_value(Key, List) ->
 	case lists:keyfind(Key, 1, List) of
 		{Key, Val} -> Val;
 		false -> undefined
 	end.
+%% @doc Convery the a query into a JSON struct
+query_to_json_struct({Op, Expr1, Expr2}) ->
+	{struct,
+		[	
+			{op, atom_to_list(Op)},
+			{expr1, query_to_json_struct(Expr1)},
+			{expr2, query_to_json_struct(Expr2)}
+		]
+	};
+query_to_json_struct(Expr) ->
+	ar_util:encode(Expr).
+
+%% @doc convert a json struct into a query
+json_struct_to_query(QueryJSON) ->
+	case dejsonify (QueryJSON) of
+        {ok, []} -> [];
+        {ok, Query} -> do_json_struct_to_hash_list(Query);
+        {_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
+    end.
+do_json_struct_to_hash_list({struct, Query}) ->
+	{
+		list_to_existing_atom(find_value("op", Query)),
+		do_json_struct_to_hash_list(find_value("expr1", Query)),
+		do_json_struct_to_hash_list(find_value("expr2", Query))
+	};
+do_json_struct_to_hash_list(Query) ->
+	ar_util:decode(Query).
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->
@@ -268,3 +367,13 @@ tx_roundtrip_test() ->
 	JsonTX = jsonify(tx_to_json_struct(TX)),
 	TX1 = json_struct_to_tx(JsonTX),
 	TX = TX1.
+
+%% @doc Convery a query into JSON and back, ensure the result is the same.
+query_roundtrip_test() ->
+	Query = {'equals', <<"TestName">>, <<"TestVal">>},
+	QueryJSON = ar_serialize:jsonify(
+		ar_serialize:query_to_json_struct(
+			Query
+			)
+		),
+	Query = ar_serialize:json_struct_to_query(QueryJSON).
