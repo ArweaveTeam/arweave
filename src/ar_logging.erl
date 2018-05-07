@@ -40,7 +40,6 @@ format_logs(Logs) ->
 		"",
 		Logs
 	).
-
 %% @doc Format an individual log for printing or storage.
 format_log([{B, TXs, _}]) ->
 	io_lib:format(

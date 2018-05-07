@@ -21,7 +21,6 @@
 	miner_xfer_speed = 512 * 1024,
 	miner_delay = calculate
 }).
-
 %% Representation of live tests.
 -record(test_run, {
 	name,

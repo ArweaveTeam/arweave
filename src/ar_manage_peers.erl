@@ -45,7 +45,6 @@ get_more_peers(Peers) ->
 			]
 		)
 	).
-
 %% Calculate a score for any given peer or list of peers.
 score(Peers) when is_list(Peers) ->
 	lists:map(fun(Peer) -> {Peer, score(Peer)} end, Peers);

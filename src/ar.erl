@@ -155,7 +155,7 @@ start(
 			default -> ?DEFAULT_PEER_LIST;
 			_ -> RawPeers
 		end,
-	% Determine mining address. Currently this code section is set up for debugging
+	% Determine mining address.
 	case {Addr, LoadKey, NewKey} of
 		{unclaimed, unclaimed, false} ->
 			ar:report_console(

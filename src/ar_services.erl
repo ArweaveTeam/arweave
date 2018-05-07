@@ -39,7 +39,6 @@ server(RawS) ->
 		{get, PID} ->
 			PID ! {services, S#state.services},
 			server(S);
-		% For testing purposes!!
 		prune -> server(S)
 	after ?PRUNE_TIMEOUT -> server(S)
 	end.

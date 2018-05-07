@@ -30,5 +30,4 @@ md5sum(FileName) when is_list(FileName) ->
 	{ok, Bin} = file:read_file(FileName),
 	md5sum(Bin);
 md5sum(Bin) ->
-	%sv:log(info, "MD5 hashing file '~s'.", [FileName]),
 	erlang:md5(Bin).

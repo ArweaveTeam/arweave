@@ -44,7 +44,6 @@ get_performance(IP) ->
 		not_found -> #performance{};
 		P -> P
 	end.
-
 %% Extract an IP address from a httpc request() term.
 get_ip({URL, _}) -> get_ip(URL);
 get_ip({URL, _, _, _}) -> get_ip(URL);

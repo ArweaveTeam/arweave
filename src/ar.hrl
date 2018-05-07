@@ -145,5 +145,6 @@
 %% Helper macros
 % Return number of winstons per given AR.
 -define(AR(AR), (?WINSTON_PER_AR * AR)).
+% Return whether an object is a block
 -define(IS_BLOCK(X), (is_record(X, block))).
 -define(IS_ADDR(Addr), (is_binary(Addr) and (bit_size(Addr) == ?HASH_SZ))).

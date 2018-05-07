@@ -7,7 +7,6 @@
 
 %% The time to poll peers for a new current block.
 -define(POLL_TIME, 10*1000).
-
 %% @doc Starts poll server.
 start(Node, Peers) ->
 	spawn(

@@ -11,6 +11,7 @@
 -export([genesis_wallets/0]).
 -export([pmap/2]).
 -export([time_difference/2]).
+-export([rev_bin/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -66,6 +67,12 @@ decode_base64_safe(Str) ->
 			$=
 		)
 	).
+
+rev_bin(Bin) ->
+    rev_bin(Bin, <<>>).
+rev_bin(<<>>, Acc) -> Acc;
+rev_bin(<<H:1/binary, Rest/binary>>, Acc) ->
+    rev_bin(Rest, <<H/binary, Acc/binary>>).
 
 do_decode_base64_safe([]) -> [];
 do_decode_base64_safe([$_|T]) ->

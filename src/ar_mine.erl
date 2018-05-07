@@ -172,7 +172,6 @@ schedule_hash(S = #state { delay = Delay }) ->
     Parent = self(),
     spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
     S.
-
 next_diff(CurrentB) ->
     Timestamp = os:system_time(seconds),
     case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of

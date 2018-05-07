@@ -136,25 +136,6 @@ generate_hash_list([B|Bs], N) when is_record(B, block) ->
 generate_hash_list([Hash|Bs], N) when is_binary(Hash) ->
 	[Hash|generate_hash_list(Bs, N - 1)].
 
-%% @doc Verify that a new block is valid.
-% verify([_GenesisBlock]) -> true;
-% verify([B|_]) ->
-% 	(
-% 		B#block.hash =:=
-%             ar_mine:validate(
-%                 ar_block:generate_block_data_segment(
-%                     % Technically last block (current head)
-%                     % Recall block related to new block
-%                     % TXs mined into new block
-%                     B#block.reward_addr,
-%                     B#block.tags
-%                 ),
-%                 B#block.nonce,
-%                 B#block.diff,
-%                 B#block.timestamp
-%             )
-% 	).
-
 %% @doc Verify a block from a hash list. Hash lists are stored in reverse order
 verify_indep(#block{ height = 0 }, []) -> true;
 verify_indep(B = #block { height = Height }, HashList) ->

@@ -7,7 +7,6 @@
 %% Is this a retargeting block?
 -define(IS_RETARGET_BLOCK(X),
 	(((X#block.height rem ?RETARGET_BLOCKS) == 0) and (X#block.height =/= 0))).
-
 %% Is this a retargeting height?
 -define(IS_RETARGET_HEIGHT(Height),
     (((Height rem ?RETARGET_BLOCKS) == 0) and (Height =/= 0))).

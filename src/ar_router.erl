@@ -59,7 +59,6 @@ find(pid, PID, DB) ->
 		false -> not_found;
 		{ID, PID} -> ID
 	end.
-
 %% @doc Add a process identifier to the register, returning the new ID and database.
 add_pid(DB, PID) ->
 	case find(pid, PID, DB) of

@@ -34,7 +34,6 @@ block_exists(Hash) ->
 		{error, _} -> false
 	end.
 
-
 %% @doc Write a block (with the hash.json as the filename) to disk.
 %% When debug is set, does not consider disk space. This is currently
 %% necessary because of test timings

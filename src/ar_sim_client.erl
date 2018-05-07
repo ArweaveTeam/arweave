@@ -132,6 +132,7 @@ send_random_fin_tx() ->
 			end,
 			Peers
 	).
+	
 %% @doc Send a randomly created data tx to all peers
 send_random_data_tx() ->
 	KeyList = get_key_list(),

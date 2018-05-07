@@ -24,14 +24,6 @@ try_read(FileName) ->
 	catch _:_ -> error
 	end.
 
-%% Actually perform the check.
-% do_is_infected(FileName, Bin, {CPs, Sigs}) ->
-% 	case quick_check(CPs, Bin, Hash = av_utils:md5sum(Bin)) of
-% 		false -> false;
-% 		true ->
-% 			full_check(Bin, filelib:file_size(FileName), Hash, Sigs)
-% 	end.
-
 do_is_infected(Bin, Sigs) ->
 	full_check(Bin, byte_size(Bin), av_utils:md5sum(Bin), Sigs).
 %% Perform a quick check. This only tells us whether there is probably an

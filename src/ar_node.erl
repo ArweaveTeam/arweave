@@ -1431,7 +1431,6 @@ add_bogus_block_test() ->
         {blocks, Node, [RecvdB|_]} ->
 			LastB = ar_storage:read_block(RecvdB)
     end.
-
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto the network.
 add_bogus_block_nonce_test() ->
     ar_storage:clear(),

@@ -41,7 +41,6 @@ start(Size, Connections, LossProb, MaxDelay, XferSpeed, MiningDelay) ->
 		Nodes
 	),
 	Nodes.
-
 %% @doc Create a template network.
 spawn(realistic) -> spawn({realistic, ?DEFAULT_SIZE});
 spawn({realistic, Size}) ->

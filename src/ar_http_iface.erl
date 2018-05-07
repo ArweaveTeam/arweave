@@ -257,8 +257,6 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 			end;
 		_ -> {400, [], "Wrong network"}
 	end;
-
-
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	{200, [],
 		list_to_binary(

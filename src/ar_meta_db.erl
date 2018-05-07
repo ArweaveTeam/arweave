@@ -23,7 +23,6 @@ start() ->
 %% @doc Put an Erlang term into the meta DB. Typically these are
 %% write-once values.
 put(Key, Val) -> ets:insert(?MODULE, {Key, Val}).
-
 %% @doc Retreive a term from the meta db.
 get(Key) ->
 	case ets:lookup(?MODULE, Key) of

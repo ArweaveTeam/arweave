@@ -75,7 +75,6 @@ search_by_exact_tag(Name, Value) ->
 
 %% @doc Add the transactions in a newly recieved block to the trasction db
 %% S - current state, B - new block
-
 %% @doc Listen for get_transaction requests, send independant block hash
 %% Back to requesting process.
 %% S - current state, {get_transaction - atom, T - transaction hash,
@@ -100,7 +99,9 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 			)
 		end,
 		ar_storage:read_tx(B#block.txs)
-	).
+	);
+update_tag_table(B) ->
+	not_updated.
 
 %% @doc Add to the dets database all transactions from currently held blocks
 

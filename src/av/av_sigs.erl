@@ -11,6 +11,7 @@
 %% Defines the default directory in which the signature files are
 %% normally located.
 -define(SIG_DB_LOC, "src/av/sigs").
+
 %% Define all of the supported file formats.
 -define(SUPPORTED_FORMATS, [".ndb", ".hdb", ".hsb", ".fp"]).
 

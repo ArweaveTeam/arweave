@@ -71,7 +71,6 @@ block_to_json_struct(
             {tags, {array, Tags}}
 		]
 	}.
-
 %% @doc Translate a full block into JSON struct.
 full_block_to_json_struct(
 	#block {

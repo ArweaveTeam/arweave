@@ -2,6 +2,7 @@
 -export([new/0]).
 -export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
 -export([verify_dep_hash/4, verify_indep_hash/1]).
+-export([encrypt_block/2,decrypt_block/3]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -13,9 +14,46 @@ new() ->
         hash_list = []
     }.
 
+encrypt_block(B, R) ->
+    Recall = block_to_binary(R),
+    Hash = B#block.hash,
+    Nonce = binary:part(Hash, 0, 16),
+    Key = crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
+    PlainText = pad_to_length(block_to_binary(R)),
+    %% block to binary
+    %% pad binary to multiple of block
+    CiperText = 
+        crypto:block_encrypt(
+            aes_cbc,
+            Key,
+            Nonce,
+            PlainText
+        ),
+    {Key, CiperText}.
+decrypt_block(B, CipherText, Key) ->
+    Nonce = binary:part(B#block.hash, 0, 16),
+    PlainText = 
+        crypto:block_decrypt(
+            aes_cbc,
+            Key,
+            Nonce,
+            CipherText
+        ).
+
 %% @doc Generate a hashable binary from a #block object.
+pad_to_length(Binary) ->
+    Pad = (32 - ((bit_size(Binary)+1) rem 32)),
+    <<Binary/binary, 1, 0:(Pad*8)>>.
+
+unpad_binary(Binary) ->
+    ar_util:rev_bin(do_unpad_binary(ar_util:rev_bin(Binary))).
+do_unpad_binary(Binary) ->
+    case Binary of
+        <<0, Rest/bitstring >> -> do_unpad_binary(Rest);
+        <<1, Rest/bitstring >> -> Rest
+    end.
+
 block_to_binary(B) ->
-    % ar:d({block_to_bin, B}),
 	<<
 		(B#block.nonce)/binary,
         (B#block.previous_block)/binary,
@@ -147,3 +185,13 @@ verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
             ),
             NewB#block.nonce
         ).
+
+pad_unpad_roundtrip_test() ->
+    Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
+    UnPad = unpad_binary(Pad).
+
+encrypt_decrypt_block_test() ->
+    B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1 = ar_weave:add(B0, []),
+    {Key, CiperText, Pad} = encrypt_block(hd(B1), hd(B0)).

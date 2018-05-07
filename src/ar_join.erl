@@ -46,7 +46,6 @@ start(Node, RawPeers, RawNewB) ->
 			erlang:register(join_server, PID);
 		_ -> already_running
 	end.
-
 %% @doc Verify peer(s) are on the same network as the client.
 filter_peer_list(Peers) when is_list(Peers) ->
 	lists:filter(

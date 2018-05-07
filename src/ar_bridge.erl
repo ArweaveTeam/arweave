@@ -252,6 +252,7 @@ send_to_external(
 		end
 	),
 	S;
+
 send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
 

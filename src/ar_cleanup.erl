@@ -31,6 +31,7 @@ remove_invalid_blocks(HashList) ->
                 Files
             )
     ).
+    
 %% @doc Remove all TXs from the TX directory that are "too cheap"
 remove_invalid_txs(Diff) ->
     ok.
