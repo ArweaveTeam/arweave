@@ -1,7 +1,7 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
 -export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1,get_full_pending_txs/1]).
--export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2]).
+-export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
@@ -1116,6 +1116,8 @@ find_recall_block(HashList) ->
 	ar_storage:read_block(RecallHash).
 
 %% @doc Return the hash of the next recall block.
+find_recall_hash(B, []) ->
+	[B#block.hash];
 find_recall_hash(B, HashList) ->
 	lists:nth(1 + ar_weave:calculate_recall_block(B), lists:reverse(HashList)).
 %% @doc Find a block from an ordered block list.
@@ -1644,7 +1646,7 @@ multi_node_mining_reward_test() ->
 
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
-wallet_transaction_test() ->
+wallet_transaction_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),

@@ -94,6 +94,28 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 			end;
 		T -> return_tx(T)
 	end;
+
+% Find all txs whose tags match the given set of key value pairs.
+handle('POST', [<<"arql">>], Req) ->
+	QueryJson = elli_request:body(Req),
+	Query = ar_serialize:json_struct_to_query(
+		binary_to_list(QueryJson)
+	),
+	TXs = ar_util:unique(ar_parser:eval(Query)),
+	case TXs of
+		[] -> {200, [], []};
+		Set ->
+			{
+				200,
+				[],
+				list_to_binary(
+					ar_serialize:jsonify(
+						ar_serialize:hash_list_to_json_struct(Set)
+					)
+				)
+			}
+	end;
+
 % Get a transaction by hash and return the associated data.
 handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
@@ -287,19 +309,25 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case CurrentBlock of
-		unavailable -> return_block(unavailable);
-		_ ->
-			case lists:member(
-					ar_util:decode(Hash),
-					[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
-				) of
-				true ->
-					return_block(
-						ar_node:get_block(whereis(http_entrypoint_node),
-							ar_util:decode(Hash))
-					);
-				false -> return_block(unavailable)
+	case (ar_util:decode(Hash) == 
+		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
+	of
+		true -> return_block(unavailable);
+		false ->
+			case CurrentBlock of
+				unavailable -> return_block(unavailable);
+				_ ->
+					case lists:member(
+							ar_util:decode(Hash),
+							[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
+						) of
+						true ->
+							return_block(
+								ar_node:get_block(whereis(http_entrypoint_node),
+									ar_util:decode(Hash))
+							);
+						false -> return_block(unavailable)
+					end
 			end
 	end;
 % Get a full block by hash
@@ -307,29 +335,42 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 	ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case CurrentBlock of
-		unavailable -> return_block(unavailable);
-		_ ->
-			case lists:member(
-					ar_util:decode(Hash),
-					[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
-				) of
-				true ->
-					FullBlock =
-						ar_node:get_full_block(
-							whereis(http_entrypoint_node),
-							ar_util:decode(Hash)
-						),
-					return_full_block(FullBlock);
-				false -> return_block(unavailable)
+	case (ar_util:decode(Hash) == 
+		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
+	of
+		true -> return_block(unavailable);
+		false ->
+			case CurrentBlock of
+				unavailable -> return_block(unavailable);
+				_ ->
+					case lists:member(
+							ar_util:decode(Hash),
+							[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
+						) of
+						true ->
+							FullBlock =
+								ar_node:get_full_block(
+									whereis(http_entrypoint_node),
+									ar_util:decode(Hash)
+								),
+							return_full_block(FullBlock);
+						false -> return_block(unavailable)
+					end
 			end
 	end;
 		% Gets a block by block height.
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
-	return_block(
-		ar_node:get_block(whereis(http_entrypoint_node),
-			list_to_integer(binary_to_list(Height)))
-	);
+	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	Block = ar_node:get_block(
+		whereis(http_entrypoint_node),
+		list_to_integer(binary_to_list(Height))
+		),
+	case (ar_util:decode(Block#block.hash) == 
+		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
+	of
+		true -> return_block(unavailable);
+		false -> return_block(Block)
+	end;
 % Get the top, current block.
 handle('GET', [<<"block">>, <<"current">>], _Req) ->
 	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));
@@ -360,46 +401,8 @@ handle('GET', [<<"services">>], _Req) ->
 		)
 	};
 
-% Find all txs whose tags match the given set of key value pairs.
-handle('GET', [<<"tx">>, <<"tags">>, Query], _Req) ->
-	Queries = string:split(ar_util:decode(Query), "&", all),
-	TXs = 	lists:foldl(
-		fun(Q, Acc) ->
-			case string:split(Q,"=") of
-				[N, V] ->
-					[
-						sets:from_list(app_search:search_by_exact_tag(N, V))
-						|
-						Acc
-					];
-				_ -> Acc
-			end
-		end,
-		[],
-		Queries
-	),
-	case TXs of
-		[] -> {200, [], []};
-		Set ->
-			{
-				200,
-				[],
-				list_to_binary(
-					ar_serialize:jsonify(
-							{
-								array,
-								lists:map(
-									fun ar_util:encode/1,
-									sets:to_list(sets:intersection(Set))
-								)
-							}
-						)
-				)
-			}
-	end;
-
 %% Return a subfield of the tx with the given hash
-handle('GET', [<<"tx">>, <<"tags">>, Query], _Req) ->
+handle('POST', [<<"tx">>, <<"tags">>, Query], _Req) ->
 	Queries = string:split(ar_util:decode(Query), "&", all),
 	TXs = 	lists:foldl(
 		fun(Q, Acc) ->
@@ -1035,6 +1038,17 @@ get_block_by_hash_test() ->
 	receive after 200 -> ok end,
 	B0 = get_block({127, 0, 0, 1}, B0#block.indep_hash).
 
+get_recall_block_by_hash_test() ->
+	ar_storage:clear(),
+    [B0] = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    [B1|_] = ar_weave:add([B0], []),
+	ar_storage:write_block(B1),
+	Node1 = ar_node:start([], [B1, B0]),
+	reregister(Node1),
+	receive after 200 -> ok end,
+	not_found = get_block({127, 0, 0, 1}, B0#block.indep_hash).
+
 %% @doc Ensure that full blocks can be received via a hash.
 get_full_block_by_hash_test() ->
 	ar_storage:clear(),
@@ -1286,19 +1300,84 @@ get_tx_by_tag_test() ->
 	receive after 250 -> ok end,
 	ar_node:mine(hd(Peers)),
 	receive after 1000 -> ok end,
-	% recieve a "get transaction" message
-	% check that newly mined block matches the block the most recent transaction was mined in
-	{ok, {{_, 200, _}, _, Body}} =
-			ar_httpc:request(
-				"http://127.0.0.1:"
-					++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-					++ "/tx"
-					++ "/tags/"
-					++ ar_util:encode(<<"TestName=TestVal">>)),
-	{ok, {array, TXs}} = json2:decode_string(Body),
+	QueryJSON = ar_serialize:jsonify(
+		ar_serialize:query_to_json_struct(
+			{'equals', <<"TestName">>, <<"TestVal">>}
+			)
+		),
+	%Query = ar_serialize:json_struct_to_query(QueryJSON),
+	{ok, {_, _, Stuff}} = ar_httpc:request(
+		post,
+		{
+			"http://127.0.0.1:1984" ++ "/arql",
+			[],
+			"application/x-www-form-urlencoded",
+			lists:flatten(
+				QueryJSON
+			)
+		}, [{timeout, ?NET_TIMEOUT}], []
+	),
+	{ok, {array, TXs}} = ar_serialize:dejsonify(Stuff),
 	true =
 		lists:member(
 			TX#tx.id,
+			lists:map(
+				fun ar_util:decode/1,
+				TXs
+			)
+		).
+
+get_txs_by_send_recv_test() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
+	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
+	ar_storage:write_tx([SignedTX]),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1), % Mine B1
+	receive after 1000 -> ok end,
+    ar_node:add_tx(Node2, SignedTX2),
+    ar_storage:write_tx([SignedTX2]),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node2), % Mine B2
+    receive after 1000 -> ok end,
+	QueryJSON = ar_serialize:jsonify(
+		ar_serialize:query_to_json_struct(
+				{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
+			)
+		),
+	{ok, {_, _, Res}} = ar_httpc:request(
+		post,
+		{
+			"http://127.0.0.1:1984" ++ "/arql",
+			[],
+			"application/x-www-form-urlencoded",
+			lists:flatten(
+				QueryJSON
+			)
+		}, [{timeout, ?NET_TIMEOUT}], []
+	),
+	{ok, {array, TXs}} = ar_serialize:dejsonify(Res),
+	true =
+		lists:member(
+			TX#tx.id,
+			lists:map(
+				fun ar_util:decode/1,
+				TXs
+			)
+		),
+	true =
+		lists:member(
+			TX2#tx.id,
 			lists:map(
 				fun ar_util:decode/1,
 				TXs

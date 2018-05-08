@@ -32,7 +32,8 @@
 		ar_http_iface,
 		ar_node,
 		ar_simple_reporter,
-		ar_retarget
+		ar_retarget,
+		ar_block
 	]
 ).
 
