@@ -2,7 +2,7 @@
 -export([new/0]).
 -export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
 -export([verify_dep_hash/4, verify_indep_hash/1]).
--export([encrypt_block/2,decrypt_block/3]).
+-export([encrypt_block/2, decrypt_block/3, encrypt_full_block/2, decrypt_full_block/3, generate_block_key/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -27,14 +27,14 @@ encrypt_block(R, B) ->
     PlainText = pad_to_length(Recall),
     %% block to binary
     %% pad binary to multiple of block
-    CiperText = 
+    CipherText =
         crypto:block_encrypt(
             aes_cbc,
             Key,
             Nonce,
             PlainText
         ),
-    {Key, CiperText}.
+    {Key, CipherText}.
 decrypt_block(B, CipherText, Key) ->
     Nonce = binary:part(B#block.hash, 0, 16),
     PaddedPlainText =
@@ -48,8 +48,50 @@ decrypt_block(B, CipherText, Key) ->
     {ok, RJSON} = ar_serialize:dejsonify(binary_to_list(PlainText)),
     ar_serialize:json_struct_to_block(RJSON).
 
+encrypt_full_block(R, B) ->
+    Recall =
+        list_to_binary(
+            ar_serialize:jsonify(
+                ar_serialize:full_block_to_json_struct(R)
+            )
+        ),
+    Hash = B#block.hash,
+    Nonce = binary:part(Hash, 0, 16),
+    Key = crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
+    PlainText = pad_to_length(Recall),
+    %% block to binary
+    %% pad binary to multiple of block
+    CipherText =
+        crypto:block_encrypt(
+            aes_cbc,
+            Key,
+            Nonce,
+            PlainText
+        ),
+    {Key, CipherText}.
+decrypt_full_block(B, CipherText, Key) ->
+    Nonce = binary:part(B#block.hash, 0, 16),
+    PaddedPlainText =
+        crypto:block_decrypt(
+            aes_cbc,
+            Key,
+            Nonce,
+            CipherText
+        ),
+    PlainText = unpad_binary(PaddedPlainText),
+    {ok, RJSON} = ar_serialize:dejsonify(binary_to_list(PlainText)),
+    ar_serialize:json_struct_to_full_block(RJSON).
 
-%% @doc Generate a hashable binary from a #block object.
+generate_block_key(R, B) ->
+    Recall =
+        list_to_binary(
+            ar_serialize:jsonify(
+                ar_serialize:block_to_json_struct(R)
+            )
+        ),
+    Hash = B#block.hash,
+    crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>).
+
 pad_to_length(Binary) ->
     Pad = (32 - ((byte_size(Binary)+1) rem 32)),
     <<Binary/binary, 1, 0:(Pad*8)>>.
@@ -62,6 +104,7 @@ do_unpad_binary(Binary) ->
         <<1, Rest/binary >> -> Rest
     end.
 
+%% @doc Generate a hashable binary from a #block object.
 block_to_binary(B) ->
 	<<
 		(B#block.nonce)/binary,
@@ -203,5 +246,17 @@ encrypt_decrypt_block_test() ->
     B0 = ar_weave:init([]),
     ar_storage:write_block(B0),
     B1 = ar_weave:add(B0, []),
-    {Key, CiperText} = encrypt_block(hd(B0), hd(B1)),
-    B0 = [decrypt_block(hd(B1), CiperText, Key)].
+    {Key, CipherText} = encrypt_block(hd(B0), hd(B1)),
+    B0 = [decrypt_block(hd(B1), CipherText, Key)].
+
+encrypt_decrypt_full_block_test() ->
+    ar_storage:clear(),
+    B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1 = ar_weave:add(B0, []),
+	TX = ar_tx:new(<<"DATA1">>),
+	TX1 = ar_tx:new(<<"DATA2">>),
+	ar_storage:write_tx([TX, TX1]),
+    B0Full = (hd(B0))#block{ txs = [TX, TX1] },
+    {Key, CipherText} = encrypt_full_block(B0Full, hd(B1)),
+    B0Full = decrypt_full_block(hd(B1), CipherText, Key).

@@ -186,6 +186,36 @@ get_full_block(Proc, ID) when is_pid(Proc) ->
 get_full_block(Host, ID) ->
 	ar_http_iface:get_full_block(Host, ID).
 
+get_encrypted_block(Peers, ID) when is_list(Peers) ->
+	%ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
+	case ar_storage:read_block(ID) of
+		unavailable ->
+			case sort_blocks_by_count([ get_encrypted_block(Peer, ID) || Peer <- Peers ]) of
+				[] -> unavailable;
+				[B|_] -> B
+			end;
+		Block -> Block
+	end;
+get_encrypted_block(Proc, ID) when is_pid(Proc) ->
+	ar_storage:read_block(ID);
+get_encrypted_block(Host, ID) ->
+	ar_http_iface:get_encrypted_block(Host, ID).
+
+%% @doc Return a specific full block from a node, if it has it.
+get_encrypted_full_block(Peers, ID) when is_list(Peers) ->
+	case ar_storage:read_block(ID) of
+		unavailable ->
+			case sort_blocks_by_count([ get_encrypted_full_block(Peer, ID) || Peer <- Peers ]) of
+				[] -> unavailable;
+				[B|_] -> B
+			end;
+		Block -> Block
+	end;
+get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
+	make_full_block(ID);
+get_encrypted_full_block(Host, ID) ->
+	ar_http_iface:get_encrypted_full_block(Host, ID).
+
 %% @doc Reattempts to find a full block from a node retrying up to Count times.
 retry_full_block(_, _, Response, 0) ->
 	Response;
@@ -704,9 +734,11 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 	case RecallB of
 		unavailable ->
 			RecallHash = find_recall_hash(NewB, HashList),
-            FullBlock = ar_node:get_full_block(
+            FullBlock = ar_node:retry_full_block(
 				ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-				RecallHash
+				RecallHash,
+				unavailable,
+				5
 			),
 			RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
 			ar_storage:write_tx(FullBlock#block.txs),
@@ -1117,7 +1149,7 @@ find_recall_block(HashList) ->
 
 %% @doc Return the hash of the next recall block.
 find_recall_hash(B, []) ->
-	[B#block.hash];
+	B#block.indep_hash;
 find_recall_hash(B, HashList) ->
 	lists:nth(1 + ar_weave:calculate_recall_block(B), lists:reverse(HashList)).
 %% @doc Find a block from an ordered block list.
@@ -1178,26 +1210,17 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-            FullBlock = ar_node:retry_full_block(
+            FullBlock = get_encrypted_full_block(
 				ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-				RecallHash,
-				not_found,
-				3
+				RecallHash
 			),
-			case ?IS_BLOCK(FullBlock) of
-				true ->
-					RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
-					ar_storage:write_tx(FullBlock#block.txs),
-					ar_storage:write_block(RecallFull);
-				false ->
-					ar:report(
-						[
-							{could_not_start_mining},
-							{could_not_retrieve_recall_block}
-						]
-					),
-					ok
-			end,
+			ar_storage:write_encrypted_block(RecallHash, FullBlock),
+			ar:report(
+				[
+					{could_not_start_mining},
+					{could_not_retrieve_recall_block}
+				]
+			),
 			S;
 		RecallB ->
 			if not is_record(RecallB, block) ->

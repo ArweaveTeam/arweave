@@ -1,6 +1,6 @@
 #!/bin/bash
 
-mkdir -p ebin logs blocks wallets txs
+mkdir -p ebin logs blocks wallets txs blocks/enc
 while true; do
 	erlc +export_all -o ebin/ src/ar.erl
 	if erl -pa ebin/ -s ar rebuild -run ar main "$@"; then

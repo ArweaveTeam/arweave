@@ -1,5 +1,6 @@
 -module(ar_storage).
 -export([write_block/1, read_block/1, clear/0]).
+-export([write_encrypted_block/2, read_encrypted_block/1]).
 -export([delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
@@ -13,6 +14,7 @@
 
 %% Where should the blocks be stored?
 -define(BLOCK_DIR, "blocks").
+-define(BLOCK_ENC_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
 
 %% @doc Clear the cache of saved blocks.
@@ -25,7 +27,17 @@ delete_block(Hash) ->
 
 %% @doc Returns the number of blocks stored on disk.
 blocks_on_disk() ->
-	{ok, Files} = file:list_dir(?BLOCK_DIR),
+	{ok, RawFiles} = file:list_dir(?BLOCK_DIR),
+    Files = 
+        lists:filter(
+            fun(X) -> 
+                case X of 
+                    "enc" -> false;
+                    _ -> true
+                end    
+            end,
+            RawFiles
+        ),	
 	length(Files).
 
 block_exists(Hash) ->
@@ -79,6 +91,46 @@ write_block(B) ->
 	end.
 -endif.
 
+-ifdef(DEBUG).
+write_encrypted_block(Hash, B) ->
+	BlockToWrite = ar_util:encode(B),
+	file:write_file(
+		Name = lists:flatten(
+			io_lib:format(
+				"~s/~s_~s.json",
+				[?BLOCK_ENC_DIR, "encrypted" , ar_util:encode(Hash)]
+			)
+		),
+		BlockToWrite
+	),
+	Name.
+-else.
+write_encrypted_block(Hash, B) ->
+	BlockToWrite = ar_util:encode(B),
+	case enough_space(byte_size(list_to_binary(BlockToWrite))) of
+		true ->
+			file:write_file(
+				Name = lists:flatten(
+					io_lib:format(
+						"~s/~s_~s.json",
+						[?BLOCK_ENC_DIR, "encrypted" , ar_util:encode(Hash)]
+					)
+				),
+				BlockToWrite
+			),
+			ar_meta_db:put(used_space, calculate_used_space()),
+			Name;
+		false ->
+			ar:report(
+				[
+					{not_enough_space_to_write_block},
+					{block_not_written}
+				]
+			),
+			{error, enospc}
+	end.
+-endif.
+
 %% @doc Read a block from disk, given a hash.
 read_block(unavailable) -> unavailable;
 read_block(B) when is_record(B, block) -> B;
@@ -101,10 +153,32 @@ read_block(ID) ->
 				)
 			))
 	end.
-
 do_read_block(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	ar_serialize:json_struct_to_block(binary_to_list(Binary)).
+
+read_encrypted_block(unavailable) -> unavailable;
+read_encrypted_block(ID) ->
+	case filelib:wildcard(name_enc_block(ID)) of
+		[] -> unavailable;
+		[Filename] -> do_read_encrypted_block(Filename);
+		Filenames ->
+			% TODO: There should never be multiple versions of a block on disk.
+			do_read_encrypted_block(hd(
+				lists:sort(
+					fun(Filename, Filename2) ->
+						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
+						{ok, Info2} = file:read_file_info(Filename2, [{time, posix}]),
+						Info#file_info.mtime >= Info2#file_info.mtime
+					end,
+					Filenames
+				)
+			))
+	end.
+do_read_encrypted_block(Filename) ->
+	{ok, Binary} = file:read_file(Filename),
+	ar_util:decode(Binary).
+
 
 %% @doc Generate a wildcard search string for a block,
 %% given a block, binary hash, or list.
@@ -119,6 +193,9 @@ name_block(B) when is_record(B, block) ->
 		++ ".json";
 name_block(BinHash) when is_binary(BinHash) ->
 	?BLOCK_DIR ++ "/*_" ++ ar_util:encode(BinHash) ++ ".json".
+
+name_enc_block(BinHash) when is_binary(BinHash) ->
+	?BLOCK_ENC_DIR ++ "/*_" ++ ar_util:encode(BinHash) ++ ".json".
 
 delete_tx(Hash) ->
 	file:delete(name_tx(Hash)).
@@ -292,6 +369,16 @@ store_and_retrieve_tx_test() ->
 	Tx0 = read_tx(Tx0),
 	Tx0 = read_tx(Tx0#tx.id),
 	file:delete(name_tx(Tx0)).
+
+store_and_retrieve_encrypted_block_test() ->
+    B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1 = ar_weave:add(B0, []),
+    {Key, CipherText} = ar_block:encrypt_block(hd(B0), hd(B1)),
+    write_encrypted_block((hd(B0))#block.hash, CipherText),
+	read_encrypted_block((hd(B0))#block.hash),
+	Block0 = hd(B0),
+	Block0 = ar_block:decrypt_block(hd(B1), CipherText, Key).
 
 % not_enough_space_test() ->
 % 	Disk = ar_meta_db:get(disk_space),

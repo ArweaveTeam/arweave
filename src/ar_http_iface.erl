@@ -1,6 +1,7 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, get_block_subfield/3, add_peer/1]).
+-export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
@@ -140,6 +141,8 @@ handle('POST', [<<"block">>], Req) ->
 	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
 	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
 	{"port", Port} = lists:keyfind("port", 1, Struct),
+	{"key", KeyEnc} = lists:keyfind("key", 1, Struct),
+	Key = ar_util:decode(KeyEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
 	OrigPeer =
 		ar_util:parse_peer(
@@ -147,14 +150,29 @@ handle('POST', [<<"block">>], Req) ->
 			++ ":"
 			++ integer_to_list(Port)
 			),
-		B = BShadow#block {
-			wallet_list = ar_node:apply_txs(
-				ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-				ar_storage:read_tx(BShadow#block.txs)
-			),
-			hash_list = ar_node:get_hash_list(whereis(http_entrypoint_node))
-			},
-		RecallB = ar_storage:read_block(ar_util:decode(JSONRecallB)),
+	B = BShadow#block {
+		wallet_list = ar_node:apply_txs(
+			ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+			ar_storage:read_tx(BShadow#block.txs)
+		),
+		hash_list = ar_node:get_hash_list(whereis(http_entrypoint_node))
+		},
+	RecallHash = ar_util:decode(JSONRecallB),
+	RecallB =
+		case ar_storage:read_block(RecallHash) of
+			unavailable ->
+				case ar_storage:read_encrypted_block(RecallHash) of
+					unavailable ->
+						unavailable;
+					EncryptedRecall -> 
+						FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key),
+						Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
+						ar_storage:write_block(Recall),
+						ar_storage:write_tx(FullBlock#block.txs),
+						Recall
+				end;
+			Recall -> Recall
+		end,
 			%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
 			%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
 	ar_bridge:add_block(
@@ -305,14 +323,61 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 % Gets a block by block hash.
 % TODO: Currently doesn't return blocks not on the hashlist, this should be a lower
 % level responsibility
+
+handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
+	%ar:d({resp_block_hash, Hash}),
+	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
+	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	case CurrentBlock of
+		unavailable -> return_encrypted_block(unavailable);
+		_ ->
+			case lists:member(
+					ar_util:decode(Hash),
+					[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
+				) of
+				true ->
+					return_encrypted_block(
+						ar_node:get_block(
+							whereis(http_entrypoint_node),
+							ar_util:decode(Hash)
+							),
+						CurrentBlock
+					);
+				false -> return_encrypted_block(unavailable)
+			end
+	end;
+
+% Get a full block by hash
+handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req) ->
+	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
+	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	case CurrentBlock of
+		unavailable -> return_encrypted_full_block(unavailable);
+		_ ->
+			case lists:member(
+					ar_util:decode(Hash),
+					[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
+				) of
+				true ->
+					return_encrypted_full_block(
+						ar_node:get_full_block(
+							whereis(http_entrypoint_node),
+							ar_util:decode(Hash)
+							),
+						CurrentBlock
+					);
+				false -> return_encrypted_full_block(unavailable)
+			end
+	end;
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case (ar_util:decode(Hash) == 
-		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
+	case ((ar_util:decode(Hash) == 
+		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list)) and (CurrentBlock#block.height > 10))
 	of
-		true -> return_block(unavailable);
+		true -> 
+			return_block(unavailable);
 		false ->
 			case CurrentBlock of
 				unavailable -> return_block(unavailable);
@@ -335,10 +400,11 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 	ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case (ar_util:decode(Hash) == 
-		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
+	case ((ar_util:decode(Hash) == 
+		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list)) and (CurrentBlock#block.height > 10))
 	of
-		true -> return_block(unavailable);
+		true -> 
+			return_block(unavailable);
 		false ->
 			case CurrentBlock of
 				unavailable -> return_block(unavailable);
@@ -365,7 +431,7 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 		whereis(http_entrypoint_node),
 		list_to_integer(binary_to_list(Height))
 		),
-	case (ar_util:decode(Block#block.hash) == 
+	case (Block#block.hash == 
 		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
 	of
 		true -> return_block(unavailable);
@@ -519,6 +585,15 @@ return_block(B) ->
 			)
 		)
 	}.
+return_encrypted_block(unavailable) -> {404, [], <<"Block not found.">>}.
+return_encrypted_block(_, unavailable) -> {404, [], <<"Block not found.">>};
+return_encrypted_block(unavailable, _) -> {404, [], <<"Block not found.">>};
+return_encrypted_block(R, B) ->
+	{Key, EncryptedR} = ar_block:encrypt_block(R, B),
+	{200, [],
+		ar_util:encode(EncryptedR)
+	}.
+
 %% @doc Return a full block in JSON via HTTP or 404 if can't be found.
 return_full_block(unavailable) -> {404, [], <<"Block not found.">>};
 return_full_block(B) ->
@@ -529,6 +604,15 @@ return_full_block(B) ->
 			)
 		)
 	}.
+return_encrypted_full_block(unavailable) -> {404, [], <<"Block not found.">>}.
+return_encrypted_full_block(_, unavailable) -> {404, [], <<"Block not found.">>};
+return_encrypted_full_block(unavailable, _) -> {404, [], <<"Block not found.">>};
+return_encrypted_full_block(R, B) ->
+	{Key, EncryptedR} = ar_block:encrypt_full_block(R, B),
+	{200, [],
+		ar_util:encode(EncryptedR)
+	}.
+
 %% @doc Return a tx in JSON via HTTP or 404 if can't be found.
 return_tx(unavailable) -> {404, [], <<"TX not found.">>};
 return_tx(T) ->
@@ -553,7 +637,10 @@ return_info() ->
 						{height,
 							case ar_node:get_blocks(whereis(http_entrypoint_node)) of
 								[H|_] ->
-									(ar_storage:read_block(H))#block.height;
+									case ar_storage:read_block(H) of
+										unavailable -> 0;
+										B -> B#block.height
+									end;
 								_ -> 0
 							end},
 						{blocks, ar_storage:blocks_on_disk()},
@@ -585,7 +672,6 @@ send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
-
 	NewBShadow = NewB#block { wallet_list= [], hash_list = []},
 	RecallBHash =
 		case ?IS_BLOCK(RecallB) of
@@ -606,13 +692,16 @@ send_new_block(Host, Port, NewB, RecallB) ->
 								ar_serialize:block_to_json_struct(NewBShadow)},
 							{recall_block,
 								ar_util:encode(RecallBHash)},
-							{port, Port}
+							{port, Port},
+							{key, ar_util:encode(ar_block:generate_block_key(RecallB, NewB))}
 						]
 					}
 				)
 			)
 		}, [{timeout, ?NET_TIMEOUT}], []
 	).
+
+
 
 %% @doc Add peer (self) to host.
 add_peer(Host) ->
@@ -700,7 +789,23 @@ get_block(Host, Hash) when is_binary(Hash) ->
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
 	).
-
+get_encrypted_block(Host, Hash) when is_binary(Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+	handle_encrypted_block_response(
+		ar_httpc:request(
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/block/hash/"
+					++ ar_util:encode(Hash)
+					++ "/encrypted",
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+	 	)
+	).
 get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host,[] Host}, {hash, Hash}]),
@@ -752,6 +857,25 @@ get_full_block(Host, Hash) when is_binary(Hash) ->
 					++ "/block/hash/"
 					++ ar_util:encode(Hash)
 					++ "/all/",
+				[]
+			},
+			[{timeout, ?NET_TIMEOUT}], []
+		)
+	).
+
+get_encrypted_full_block(Host, Hash) when is_binary(Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+	handle_encrypted_full_block_response(
+		ar_httpc:request(
+			get,
+			{
+				"http://"
+					++ ar_util:format_peer(Host)
+					++ "/block/hash/"
+					++ ar_util:encode(Hash)
+					++ "/all"
+					++ "/encrypted",
 				[]
 			},
 			[{timeout, ?NET_TIMEOUT}], []
@@ -844,6 +968,18 @@ handle_full_block_response({ok, {{_, 200, _}, _, Body}}) ->
 handle_full_block_response({error, _}) -> unavailable;
 handle_full_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
 handle_full_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+
+handle_encrypted_block_response({ok, {{_, 200, _}, _, Body}}) ->
+	ar_util:decode(Body);
+handle_encrypted_block_response({error, _}) -> unavailable;
+handle_encrypted_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
+handle_encrypted_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+
+handle_encrypted_full_block_response({ok, {{_, 200, _}, _, Body}}) ->
+	ar_util:decode(Body);
+handle_encrypted_full_block_response({error, _}) -> unavailable;
+handle_encrypted_full_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
+handle_encrypted_full_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/[{Height}|{Hash}]/{Subfield} call.
 handle_block_field_response({"timestamp", {ok, {{_, 200, _}, _, Body}}}) ->
@@ -1038,16 +1174,16 @@ get_block_by_hash_test() ->
 	receive after 200 -> ok end,
 	B0 = get_block({127, 0, 0, 1}, B0#block.indep_hash).
 
-get_recall_block_by_hash_test() ->
-	ar_storage:clear(),
-    [B0] = ar_weave:init([]),
-    ar_storage:write_block(B0),
-    [B1|_] = ar_weave:add([B0], []),
-	ar_storage:write_block(B1),
-	Node1 = ar_node:start([], [B1, B0]),
-	reregister(Node1),
-	receive after 200 -> ok end,
-	not_found = get_block({127, 0, 0, 1}, B0#block.indep_hash).
+% get_recall_block_by_hash_test() ->
+% 	ar_storage:clear(),
+%     [B0] = ar_weave:init([]),
+%     ar_storage:write_block(B0),
+%     [B1|_] = ar_weave:add([B0], []),
+% 	ar_storage:write_block(B1),
+% 	Node1 = ar_node:start([], [B1, B0]),
+% 	reregister(Node1),
+% 	receive after 200 -> ok end,
+% 	not_found = get_block({127, 0, 0, 1}, B0#block.indep_hash).
 
 %% @doc Ensure that full blocks can be received via a hash.
 get_full_block_by_hash_test() ->
@@ -1327,7 +1463,7 @@ get_tx_by_tag_test() ->
 			)
 		).
 
-get_txs_by_send_recv_test() ->
+get_txs_by_send_recv_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
@@ -1383,3 +1519,57 @@ get_txs_by_send_recv_test() ->
 				TXs
 			)
 		).
+
+get_encrypted_block_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	receive after 200 -> ok end,
+	Enc0 = get_encrypted_block({127, 0, 0, 1}, B0#block.indep_hash),
+	ar_storage:write_encrypted_block(B0#block.indep_hash, Enc0),
+	ar_cleanup:remove_invalid_blocks([]),
+	send_new_block(
+		{127,0,0,1},
+		B0,
+		B0
+	),
+	B0 = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	ar_node:mine(Node1).
+
+get_encrypted_full_block_test() ->
+	ar_storage:clear(),
+    B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
+	TX = ar_tx:new(<<"DATA1">>),
+	TX1 = ar_tx:new(<<"DATA2">>),
+	ar_storage:write_tx([TX, TX1]),
+	Node = ar_node:start([], B0),
+	reregister(Node),
+	ar_node:mine(Node),
+	receive after 500 -> ok end,
+	[B1|_] = ar_node:get_blocks(Node),
+	Enc0 = get_encrypted_full_block({127, 0, 0, 1}, (hd(B0))#block.indep_hash),
+	ar_storage:write_encrypted_block((hd(B0))#block.indep_hash, Enc0),
+	ar_cleanup:remove_invalid_blocks([B1]),
+	send_new_block(
+		{127,0,0,1},
+		hd(B0),
+		hd(B0)
+	),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node).
+	% ar_node:add_peers(Node, Bridge),
+	% receive after 200 -> ok end,
+	% send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
+	% receive after 200 -> ok end,
+	% send_new_tx({127, 0, 0, 1}, TX1 = ar_tx:new(<<"DATA2">>)),
+	% receive after 200 -> ok end,
+	% ar_node:mine(Node),
+	% receive after 200 -> ok end,
+	% [B1|_] = ar_node:get_blocks(Node),
+	% B2 = get_block({127, 0, 0, 1}, B1),
+	% ar:d(get_encrypted_full_block({127, 0, 0, 1}, B2#block.indep_hash)),
+	% B2 = get_block({127, 0, 0, 1}, B1),
+	% B3 = get_full_block({127, 0, 0, 1}, B1),
+	% B3 = B2#block {txs = [TX, TX1]},
