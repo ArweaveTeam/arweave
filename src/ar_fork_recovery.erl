@@ -32,6 +32,10 @@ start(Peers, TargetBShadow, HashList) ->
 	TargetB = ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 5),
 	case ?IS_BLOCK(TargetB) of
 		true ->
+			DivergedHashes = drop_until_diverge(
+					lists:reverse(TargetB#block.hash_list),
+					lists:reverse(HashList)
+				) ++ [TargetB#block.indep_hash],
 			PID =
 				spawn(
 					fun() ->
@@ -39,12 +43,8 @@ start(Peers, TargetBShadow, HashList) ->
 							#state {
 								parent = Parent,
 								peers = Peers,
-								block_list = HashList,
-								hash_list =
-									drop_until_diverge(
-										lists:reverse(TargetB#block.hash_list),
-										lists:reverse(HashList)
-									) ++ [TargetB#block.indep_hash],
+								block_list = (TargetB#block.hash_list -- DivergedHashes),
+								hash_list = DivergedHashes,
 								target_block = TargetB
 							}
 						)
@@ -77,6 +77,12 @@ setminus(_, _) -> [].
 server(#state{peers = _Peers, parent = _Parent, target_block = _TargetB}, rejoin) ->
 	ok.
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
+	lists:foreach(
+		fun(B) ->
+			ar:d({blocklist_block, ar_util:encode(B)})
+		end,
+		BlockList
+	),
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
 	receive
