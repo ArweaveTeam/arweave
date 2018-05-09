@@ -1,5 +1,5 @@
 -module(ar_weave).
--export([init/0, init/1, init/2, add/1, add/2, add/3, add/4, add/5, add/6, add/10]).
+-export([init/0, init/1, init/2, add/1, add/2, add/3, add/4, add/6, add/7, add/11, add/11]).
 -export([hash/2, indep_hash/1]).
 -export([verify_indep/2]).
 -export([calculate_recall_block/1, calculate_recall_block/2]).
@@ -38,25 +38,27 @@ add(Bs, TXs, HashList) ->
 add(Bs, TXs, HashList, unclaimed) ->
     add(Bs, TXs, HashList, <<>>);
 add([B|Bs], TXs, HashList, RewardAddr) ->
+    {FinderReward, RewardPool} = ar_node:calculate_reward_pool(B#block.reward_pool, TXs),
     WalletList = ar_node:apply_mining_reward(
         ar_node:apply_txs(B#block.wallet_list, TXs),
         RewardAddr,
-        TXs,
+        FinderReward,
         length(HashList) - 1
     ),
-    add([B|Bs], TXs, HashList, RewardAddr, WalletList).
-add(Bs, TXs, HashList, RewardAddr, WalletList) ->
-    add(Bs, TXs, HashList, RewardAddr, WalletList, []).
-add([Hash|Bs], TXs, HashList, RewardAddr, WalletList, Tags) when is_binary(Hash) ->
+    add([B|Bs], TXs, HashList, RewardAddr, RewardPool, WalletList).
+add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList) ->
+    add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList, []).
+add([Hash|Bs], TXs, HashList, RewardAddr, RewardPool, WalletList, Tags) when is_binary(Hash) ->
     add(
         [ar_storage:read_block(Hash)|Bs],
         TXs,
         HashList,
         RewardAddr,
+        RewardPool,
         WalletList,
         Tags
     );
-add(Bs, TXs, HashList, RewardAddr, WalletList, Tags) ->
+add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList, Tags) ->
     RecallHash = ar_util:get_recall_hash(hd(Bs), HashList),
     RecallB = ar_storage:read_block(RecallHash),
     {Nonce, Timestamp, Diff} = mine(hd(Bs), RecallB, TXs, RewardAddr, Tags),
@@ -65,6 +67,7 @@ add(Bs, TXs, HashList, RewardAddr, WalletList, Tags) ->
         TXs,
         HashList,
         RewardAddr,
+        RewardPool,
         WalletList,
         Tags,
         RecallB,
@@ -72,12 +75,13 @@ add(Bs, TXs, HashList, RewardAddr, WalletList, Tags) ->
         Nonce,
         Timestamp
     ).
-add([Hash|Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) when is_binary(Hash) ->
+add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) when is_binary(Hash) ->
     add(
         [ar_storage:read_block(Hash)|Bs],
         RawTXs,
         HashList,
         RewardAddr,
+        RewardPool,
         WalletList,
         Tags,
         RecallB,
@@ -85,7 +89,7 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, No
         Nonce,
         Timestamp
     );
-add([B|_Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
+add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
     % ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
     RecallB = ar_node:find_recall_block(HashList),
     TXs = [T#tx.id || T <- RawTXs],
@@ -117,7 +121,8 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonc
 			hash_list = HashList,
 			wallet_list = WalletList,
             reward_addr = RewardAddr,
-            tags = Tags
+            tags = Tags,
+            reward_pool = RewardPool
         },
 	[NewB#block { indep_hash = indep_hash(NewB) }|HashList].
 

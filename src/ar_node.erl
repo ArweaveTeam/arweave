@@ -9,7 +9,7 @@
 -export([rejoin/2]).
 -export([filter_all_out_of_order_txs/2, filter_out_of_order_txs/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/4, validate/5, validate/8, find_recall_block/1]).
+-export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/5, validate/8, find_recall_block/1, calculate_reward_pool/2]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
 -export([start_link/1]).
 -export([retry_block/4, retry_full_block/4]).
@@ -34,7 +34,8 @@
 	reward_addr = unclaimed,
 	trusted_peers = [],
 	waiting_txs = [],
-    tags = []
+    tags = [],
+	reward_pool = 0
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -753,11 +754,12 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			S = RawS1#state { gossip = NewGS },
 			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 			TXs = ar_node:get_tx(Peers, NewB#block.txs),
+			{FinderPool, _} = calculate_reward_pool(S#state.reward_pool, TXs),
 			WalletList =
 				apply_mining_reward(
 					apply_txs(S#state.wallet_list, TXs),
 					NewB#block.reward_addr,
-					TXs,
+					FinderPool,
 					NewB#block.height
 				),
 			NewS = S#state { wallet_list = WalletList },
@@ -835,15 +837,17 @@ integrate_block_from_miner(
 			txs = TXs,
 			gossip = GS,
             reward_addr = RewardAddr,
-            tags = Tags
+            tags = Tags,
+			reward_pool = OldPool
 		},
 		MinedTXs, Diff, Nonce, Timestamp) ->
 	% Calculate the new wallet list (applying TXs and mining rewards).
+	{FinderReward, RewardPool} = calculate_reward_pool(OldPool, MinedTXs),
 	WalletList =
 		apply_mining_reward(
 			apply_txs(RawWalletList, MinedTXs),
 			RewardAddr,
-			MinedTXs,
+			FinderReward,
 			length(HashList) - 1
 		),
 	% Store the transactions that we know about, but were not mined in
@@ -853,7 +857,7 @@ integrate_block_from_miner(
     % Build the block record, verify it, and gossip it to the other nodes.
     RecallB = ar_node:find_recall_block(HashList),
 	[NextB|_] =
-        ar_weave:add(HashList, MinedTXs, HashList, RewardAddr, WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
+        ar_weave:add(HashList, MinedTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
 		%ar:d({validate,validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList))}),
 	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
 		false ->
@@ -1038,25 +1042,6 @@ validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
 validate(#state { hash_list = HashList, wallet_list = WalletList }, B, TXs, OldB, RecallB) ->
 	validate(HashList, WalletList, B, TXs, OldB, RecallB, B#block.reward_addr, B#block.tags).
 
-%% @doc Validate block, given the previous block and recall block.
-validate(
-		NewB = #block {
-			wallet_list = NewWalletList,
-			hash_list = NewHashList,
-			reward_addr = RewardAddr,
-			height = Height
-		},
-		TXs,
-		OldB = #block { wallet_list = OldWalletList, hash_list = OldHashList },
-		RecallB) ->
-	(apply_mining_reward(
-		apply_txs(OldWalletList, TXs),
-		RewardAddr,
-		TXs,
-		Height) == NewWalletList) andalso
-	(tl(NewHashList) == OldHashList) andalso
-	validate(NewB#block.hash_list, NewB#block.wallet_list, NewB, OldB, RecallB).
-
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 validate_wallet_list([]) -> true;
 validate_wallet_list([{_, 0, Last}|_]) when byte_size(Last) == 0 -> false;
@@ -1080,14 +1065,25 @@ apply_txs(WalletList, TXs) ->
 		)
 	).
 
+calculate_reward_pool(OldPool, TXs) ->
+	Pool = OldPool + lists:sum(
+		lists:map(
+			fun calculate_tx_reward/1,
+			TXs
+		)
+	),
+	FinderReward = (Pool div 10),
+	RemainingPool = Pool - FinderReward,
+	{FinderReward, RemainingPool}.
+
 %% @doc Calculate and apply mining reward quantities to a wallet list.
-apply_mining_reward(WalletList, unclaimed, _TXs, _Height) -> WalletList;
-apply_mining_reward(WalletList, RewardAddr, TXs, Height) ->
+apply_mining_reward(WalletList, unclaimed, _Quantity, _Height) -> WalletList;
+apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
     % ar:d({WalletList}),
     % ar:d({RewardAddr}),
     % ar:d({TXs}),
     % ar:d({Height}),
-	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, TXs)).
+	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, Quantity)).
 
 %% @doc Apply a transaction to a wallet list, updating it.
 %% Critically, filter empty wallets from the list after application.
@@ -1170,9 +1166,10 @@ find_sync_block([_|Xs]) -> find_sync_block(Xs).
 
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 %calculate_reward(B) -> calculate_reward(B#block.height, B#block.txs).
-calculate_reward(Height, TXs) ->
-	erlang:trunc(calculate_static_reward(Height) +
-		lists:sum(lists:map(fun calculate_tx_reward/1, TXs))).
+calculate_reward(Height, Quantity) ->
+	ar:d({height, Height}),
+	ar:d({quantity, Quantity}),
+	erlang:trunc(calculate_static_reward(Height) + Quantity).
 
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
