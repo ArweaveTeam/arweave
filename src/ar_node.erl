@@ -982,6 +982,7 @@ validate(
     IndepHash = ar_block:verify_indep_hash(NewB),
     Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
+	Time = ar_block:verify_timestamp(Timestamp),
 	ar:report(
 		[
 			{validate_block, ar_util:encode(NewB#block.indep_hash)},
@@ -992,7 +993,8 @@ validate(
 			{block_diff_validate, Retarget},
 			{block_indep, IndepHash},
 			{block_hash, Hash},
-			{block_size, Size}
+			{block_size, Size},
+			{block_timestamp, Time}
 		]
 	),
 
@@ -1004,6 +1006,7 @@ validate(
     case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
     case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
     case Size of false -> ar:d(invalid_size); _ -> ok  end,
+	case Time of false -> ar:d(invalid_timestamp); _ -> ok  end,
 
 	(Mine =/= false)
 		and Wallet
@@ -1012,7 +1015,8 @@ validate(
 		and Retarget
         and IndepHash
         and Hash
-        and Size;
+        and Size
+		and Time;
 validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB, _, _) ->
 	validate(undefined, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->

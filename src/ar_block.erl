@@ -1,7 +1,7 @@
 -module(ar_block).
 -export([new/0]).
 -export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
--export([verify_dep_hash/4, verify_indep_hash/1]).
+-export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/1]).
 -export([encrypt_block/2, decrypt_block/3, encrypt_full_block/2, decrypt_full_block/3, generate_block_key/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -237,6 +237,9 @@ verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
             ),
             NewB#block.nonce
         ).
+
+verify_timestamp(Time) ->
+    (os:system_time(seconds) - Time) =< 600.
 
 pad_unpad_roundtrip_test() ->
     Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
