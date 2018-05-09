@@ -50,8 +50,10 @@
 
 %% Default timeout value for network requests.
 -define(NET_TIMEOUT, 10000).
-%% Default time to wait after a failed join to retry
+%% Default time to wait after a failed join to retry.
 -define(REJOIN_TIMEOUT, 10000).
+%% Default time to refresh the data segment being mined on.
+-define(REFRESH_MINE_DATA_TIMER, 60000).
 %% Time between attempts to find(/optimise) peers.
 -define(GET_MORE_PEERS_TIME, 2 * 60 * 1000).
 %% Time to wait before not ignoring bad peers

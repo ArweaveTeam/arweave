@@ -56,6 +56,7 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
         end
     ),
     PID ! mine,
+    refresh_data_timer(PID),
     PID.
 
 
@@ -65,7 +66,11 @@ stop(PID) ->
 
 %% @doc Change the data attachment that the miner is using.
 change_data(PID, NewTXs) ->
-	PID ! {new_data, NewTXs}.
+    PID ! {new_data, NewTXs}.
+
+%% Schedule a timer to refresh data segment.
+refresh_data_timer(PID) ->
+	erlang:send_after(?REFRESH_MINE_DATA_TIMER, PID, {refresh_data, PID}).
 
 %% @doc The main mining server.
 server(
@@ -124,6 +129,15 @@ server(
                     diff = Diff
                 }
             );
+        {refresh_data, PID} ->
+            ar:d({miner_data_refreshed}),
+            spawn(
+                fun() ->
+                    PID ! {new_data, TXs},
+                    refresh_data_timer(PID)
+                end
+            ),
+            server(S);
 		mine ->
             % Spawn the list of worker processes
             Workers =
