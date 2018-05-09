@@ -1308,7 +1308,8 @@ add_tx_and_get_last_test() ->
 	ar_node:add_peers(Node, Bridge),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-	SignedTX = ar_tx:sign(TX#tx{ id = <<"TEST">> }, Priv1, Pub1),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	ID = SignedTX#tx.id,
 	send_new_tx({127, 0, 0, 1}, SignedTX),
 	receive after 500 -> ok end,
 	ar_node:mine(Node),
@@ -1320,7 +1321,7 @@ add_tx_and_get_last_test() ->
 				++ "/wallet/"
 		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
 				++ "/last_tx"),
-	<<"TEST">> = ar_util:decode(Body).
+	ID = ar_util:decode(Body).
 
 %% @doc Post a tx to the network and ensure that its subfields can be gathered
 get_subfields_of_tx_test() ->

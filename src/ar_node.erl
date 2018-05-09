@@ -15,7 +15,7 @@
 -export([retry_block/4, retry_full_block/4]).
 -export([filter_all_out_of_order_txs_large_test_slow/0,filter_out_of_order_txs_large_test_slow/0]).
 -export([wallet_two_transaction_test_slow/0, single_wallet_double_tx_before_mine_test_slow/0, single_wallet_double_tx_wrong_order_test_slow/0]).
--export([tx_threading_test_slow/0, bogus_tx_thread_test_slow/0]).
+-export([tx_threading_test_slow/0, bogus_tx_thread_test_slow/0, filter_out_of_order_txs_test_slow/0,filter_all_out_of_order_txs_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -1297,16 +1297,16 @@ filter_out_of_order_txs(WalletList, [T|RawTXs], OutTXs) ->
 
 %%% Tests
 
-filter_out_of_order_txs_test() ->
+filter_out_of_order_txs_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
 	RawTX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-	RawTX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), RawTX#tx.id),
 	TX = RawTX#tx {owner = Pub1},
-	TX2 = RawTX2#tx {owner = Pub1},
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	RawTX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
+	TX2 = RawTX2#tx {owner = Pub1},
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	WalletList =
 		[
@@ -1323,10 +1323,10 @@ filter_out_of_order_txs_large_test_slow() ->
 	{_Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
-	TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), TX2#tx.id),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), SignedTX2#tx.id),
 	SignedTX3 = ar_tx:sign(TX3, Priv1, Pub1),
 	WalletList =
 		[
@@ -1339,14 +1339,14 @@ filter_out_of_order_txs_large_test_slow() ->
 	{_, [SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX2, SignedTX3, SignedTX]),
 	{_, [SignedTX2, SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX3, SignedTX2]).
 
-filter_all_out_of_order_txs_test() ->
+filter_all_out_of_order_txs_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	WalletList =
 		[
@@ -1363,10 +1363,10 @@ filter_all_out_of_order_txs_large_test_slow() ->
 	{_Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
-	TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), TX2#tx.id),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+	TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), SignedTX2#tx.id),
 	SignedTX3 = ar_tx:sign(TX3, Priv1, Pub1),
 	WalletList =
 		[
@@ -1725,8 +1725,8 @@ single_wallet_double_tx_before_mine_test_slow() ->
 	OrphanedTX = ar_tx:new(Pub2, ?AR(1), ?AR(5000), <<>>),
 	OrphanedTX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), <<>>),
 	TX = OrphanedTX#tx { owner = Pub1 },
-	TX2 = OrphanedTX2#tx { owner = Pub1, last_tx = TX#tx.id },
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = OrphanedTX2#tx { owner = Pub1, last_tx = SignedTX#tx.id },
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
@@ -1781,8 +1781,8 @@ tx_threading_test_slow() ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
-	TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), TX#tx.id),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), SignedTX#tx.id),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
@@ -1849,9 +1849,9 @@ last_tx_test() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
-	RawTX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-	TX = RawTX#tx{ id = <<"TEST">> },
+	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	ID = SignedTX#tx.id,
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = start([], B0),
 	Node2 = start([Node1], B0),
@@ -1861,7 +1861,7 @@ last_tx_test() ->
 	receive after 500 -> ok end,
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	<<"TEST">> = get_last_tx(Node2, Pub1).
+	ID = get_last_tx(Node2, Pub1).
 
 %% @doc Ensure that rejoining functionality works
 rejoin_test() ->

@@ -37,7 +37,6 @@ to_binary(T) ->
 	<<
 		(T#tx.owner)/binary,
 		(T#tx.target)/binary,
-		(T#tx.id)/binary,
 		(T#tx.data)/binary,
 		(list_to_binary(integer_to_list(T#tx.quantity)))/binary,
 		(list_to_binary(integer_to_list(T#tx.reward)))/binary,
@@ -49,8 +48,11 @@ to_binary(T) ->
 sign(TX, {PrivKey, PubKey}) -> sign(TX, PrivKey, PubKey).
 sign(TX, PrivKey, PubKey) ->
 	NewTX = TX#tx{ owner = PubKey },
+	Sig = ar_wallet:sign(PrivKey, to_binary(NewTX)),
+	ar:d(Sig),
+	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx {
-		signature = ar_wallet:sign(PrivKey, to_binary(NewTX))
+		signature = Sig, id = ID
 	}.
 
 %% @doc Ensure that a transaction's signature is valid.
@@ -65,14 +67,16 @@ verify(TX, Diff, WalletList) ->
 			{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
 			{tx_field_size_verify, tx_field_size_limit(TX)},
 			{tx_tag_field_legal, tag_field_legal(TX)},
-			{tx_last_tx_legal, check_last_tx(WalletList, TX)}
+			{tx_last_tx_legal, check_last_tx(WalletList, TX)},
+			{tx_verify_hash, tx_verify_hash(TX)}
 		]
 	),
 	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and
 	tx_cost_above_min(TX, Diff) and
 	tx_field_size_limit(TX) and
 	tag_field_legal(TX) and
-	check_last_tx(WalletList, TX).
+	check_last_tx(WalletList, TX) and
+	tx_verify_hash(TX).
 -else.
 verify(TX, Diff, WalletList) ->
 	ar:report(
@@ -82,14 +86,16 @@ verify(TX, Diff, WalletList) ->
 			{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
 			{tx_field_size_verify, tx_field_size_limit(TX)},
 			{tx_tag_field_legal, tag_field_legal(TX)},
-			{tx_lasttx_legal, check_last_tx(WalletList, TX)}
+			{tx_lasttx_legal, check_last_tx(WalletList, TX)},
+			{tx_verify_hash, tx_verify_hash(TX)}
 		]
 	),
 	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and
 	tx_cost_above_min(TX, Diff) and
 	tx_field_size_limit(TX) and
 	tag_field_legal(TX) and
-	check_last_tx(WalletList, TX).
+	check_last_tx(WalletList, TX) and
+	tx_verify_hash(TX).
 -endif.
 
 %% @doc Ensure that all TXs in a list verify correctly.
@@ -131,6 +137,12 @@ tx_field_size_limit(TX) ->
 			(byte_size(integer_to_binary(TX#tx.reward)) =< 21);
 		false -> false
 	end.
+
+tx_verify_hash(#tx {signature = Sig, id = ID}) ->
+	ID == crypto:hash(
+		?HASH_ALG,
+		<<Sig/binary>>
+	).
 
 tag_field_legal(TX) ->
 	lists:all(
