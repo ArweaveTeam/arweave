@@ -147,7 +147,9 @@ server(
                 ),
             % Tell each worker to start hashing
             lists:foreach(
-                fun(Worker) -> Worker ! hash end,
+                fun(Worker) ->
+                    Worker ! hash
+                end,
                 Workers
             ),
             % Continue server loop
@@ -253,7 +255,6 @@ change_data_test() ->
 			<< 0:Diff, _/bitstring >>
                 = crypto:hash(?HASH_ALG, << Nonce/binary, DataSegment/binary >>),
             MinedTXs == NewTXs
-
     end.
 
 %% @doc Ensure that an active miner process can be killed.
