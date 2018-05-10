@@ -978,6 +978,7 @@ validate(
 
     % ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
 	%ar:d({node, ar_weave:hash(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce), Nonce, Diff}),
+	% TODO: Fix names
     Mine = ar_mine:validate(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce, Diff),
     Wallet = validate_wallet_list(WalletList),
     Indep = ar_weave:verify_indep(RecallB, HashList),
@@ -986,7 +987,13 @@ validate(
     IndepHash = ar_block:verify_indep_hash(NewB),
     Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
-	Time = ar_block:verify_timestamp(Timestamp),
+	Time = ar_block:verify_timestamp(NewB),
+	HeightCheck = ar_block:verify_height(NewB, OldB),
+	RetargetCheck = ar_block:verify_last_retarget(NewB),
+	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
+	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
+	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, TXs),
+
 	ar:report(
 		[
 			{validate_block, ar_util:encode(NewB#block.indep_hash)},
@@ -998,7 +1005,12 @@ validate(
 			{block_indep, IndepHash},
 			{block_hash, Hash},
 			{block_size, Size},
-			{block_timestamp, Time}
+			{block_timestamp, Time},
+			{block_height, HeightCheck},
+			{block_retarget_time, RetargetCheck},
+			{block_previous_check, PreviousBCheck},
+			{block_hash_list, HashlistCheck},
+			{block_wallet_list ,WalletListCheck}
 		]
 	),
 
@@ -1011,6 +1023,11 @@ validate(
     case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
     case Size of false -> ar:d(invalid_size); _ -> ok  end,
 	case Time of false -> ar:d(invalid_timestamp); _ -> ok  end,
+	case HeightCheck of false -> ar:d(invalid_height); _ -> ok  end,
+	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok  end,
+	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
+	case HashlistCheck of false -> ar:d(invalid_hash_list); _ -> ok  end,
+	case WalletListCheck of false -> ar:d(invalid_wallet_list); _ -> ok  end,
 
 	(Mine =/= false)
 		and Wallet
@@ -1020,7 +1037,12 @@ validate(
         and IndepHash
         and Hash
         and Size
-		and Time;
+		and Time
+		and HeightCheck
+		and RetargetCheck
+		and PreviousBCheck
+		and HashlistCheck
+		and WalletListCheck;
 validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB, _, _) ->
 	validate(undefined, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->

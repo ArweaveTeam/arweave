@@ -1,7 +1,7 @@
 -module(ar_block).
 -export([new/0]).
 -export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
--export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/1]).
+-export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/1, verify_height/2, verify_last_retarget/1, verify_previous_block/2, verify_block_hash_list/2, verify_wallet_list/3]).
 -export([encrypt_block/2, decrypt_block/3, encrypt_full_block/2, decrypt_full_block/3, generate_block_key/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -238,8 +238,34 @@ verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
             NewB#block.nonce
         ).
 
-verify_timestamp(Time) ->
-    (os:system_time(seconds) - Time) =< 600.
+verify_timestamp(NewB) ->
+    (os:system_time(seconds) - NewB#block.timestamp) =< 600.
+
+verify_height(NewB, OldB) ->
+    NewB#block.height == (OldB#block.height + 1).
+
+verify_last_retarget(NewB) ->
+    (NewB#block.timestamp - NewB#block.last_retarget) >= 0.
+
+verify_previous_block(NewB, OldB) ->
+    OldB#block.indep_hash == NewB#block.previous_block.
+
+verify_block_hash_list(NewB, OldB) ->
+    NewB#block.hash_list == ([OldB#block.indep_hash|OldB#block.hash_list]).
+
+verify_wallet_list(NewB, OldB, NewTXs) ->
+    {FinderReward, RewardPool} = ar_node:calculate_reward_pool(OldB#block.reward_pool, NewTXs),
+    (NewB#block.reward_pool == RewardPool) and
+	(NewB#block.wallet_list ==
+        ar_node:apply_mining_reward(
+			ar_node:apply_txs(OldB#block.wallet_list, NewTXs),
+			NewB#block.reward_addr,
+			FinderReward,
+			length(OldB#block.hash_list) - 1
+		)).
+
+
+%% Tests
 
 pad_unpad_roundtrip_test() ->
     Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
