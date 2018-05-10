@@ -167,19 +167,14 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
         true -> Timestamp;
         false -> CurrentB#block.last_retarget
     end,
-    case RewardAddr == undefined of
-        true ->
-            NewWalletList =
-                ar_node:apply_mining_reward(
-                    ar_node:apply_txs(CurrentB#block.wallet_list, TXs),
-                    RewardAddr,
-                    TXs,
-                    length(CurrentB#block.hash_list) - 1
-                    );
-        false ->
-            NewWalletList =
-                ar_node:apply_txs(CurrentB#block.wallet_list, TXs)
-    end,
+    {FinderReward, RewardPool} = ar_node:calculate_reward_pool(CurrentB#block.reward_pool, TXs, RewardAddr),
+    NewWalletList =
+        ar_node:apply_mining_reward(
+            ar_node:apply_txs(CurrentB#block.wallet_list, TXs),
+            RewardAddr,
+            FinderReward,
+            length(CurrentB#block.hash_list) - 1
+        ),
     % ar:d({indep, CurrentB#block.indep_hash}),
     % ar:d({retarget, integer_to_binary(Retarget)}),
     % ar:d({height, integer_to_binary(CurrentB#block.height + 1)}),
@@ -188,38 +183,42 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
     % ar:d({tags, list_to_binary(Tags)}),
     % ar:d({recall, block_to_binary(RecallB)}),
     % ar:d({txs, binary:list_to_bin(lists:map(fun ar_tx:to_binary/1, TXs))}),
-    <<
-        (CurrentB#block.indep_hash)/binary,
-        (CurrentB#block.hash)/binary,
-        (integer_to_binary(Timestamp))/binary,
-        (integer_to_binary(Retarget))/binary,
-        (integer_to_binary(CurrentB#block.height + 1))/binary,
-        (list_to_binary([CurrentB#block.indep_hash | CurrentB#block.hash_list]))/binary,
-        (
-            binary:list_to_bin(
-                lists:map(
-                    fun ar_wallet:to_binary/1,
-                    NewWalletList
+    crypto:hash(
+        ?HASH_ALG,
+        <<
+            (CurrentB#block.indep_hash)/binary,
+            (CurrentB#block.hash)/binary,
+            (integer_to_binary(Timestamp))/binary,
+            (integer_to_binary(Retarget))/binary,
+            (integer_to_binary(CurrentB#block.height + 1))/binary,
+            (list_to_binary([CurrentB#block.indep_hash | CurrentB#block.hash_list]))/binary,
+            (
+                binary:list_to_bin(
+                    lists:map(
+                        fun ar_wallet:to_binary/1,
+                        NewWalletList
+                    )
                 )
-            )
-        )/binary,
-        (
-            case is_atom(RewardAddr) of
-                true -> <<>>;
-                false -> RewardAddr
-            end
-        )/binary,
-        (list_to_binary(Tags))/binary,
-        (block_to_binary(RecallB))/binary,
-        (
-            binary:list_to_bin(
-                lists:map(
-                    fun ar_tx:to_binary/1,
-                    TXs
+            )/binary,
+            (
+                case is_atom(RewardAddr) of
+                    true -> <<>>;
+                    false -> RewardAddr
+                end
+            )/binary,
+            (list_to_binary(Tags))/binary,
+            (integer_to_binary(RewardPool))/binary,
+            (block_to_binary(RecallB))/binary,
+            (
+                binary:list_to_bin(
+                    lists:map(
+                        fun ar_tx:to_binary/1,
+                        TXs
+                    )
                 )
-            )
-        )/binary
-    >>.
+            )/binary
+        >>
+    ).
 
 verify_indep_hash(Block = #block { indep_hash = Indep }) ->
     Indep == ar_weave:indep_hash(Block).
@@ -253,8 +252,9 @@ verify_previous_block(NewB, OldB) ->
 verify_block_hash_list(NewB, OldB) ->
     NewB#block.hash_list == ([OldB#block.indep_hash|OldB#block.hash_list]).
 
+% TODO: Check hashlist length in apply mining reward call
 verify_wallet_list(NewB, OldB, NewTXs) ->
-    {FinderReward, RewardPool} = ar_node:calculate_reward_pool(OldB#block.reward_pool, NewTXs),
+    {FinderReward, RewardPool} = ar_node:calculate_reward_pool(OldB#block.reward_pool, NewTXs, NewB#block.reward_addr),
     (NewB#block.reward_pool == RewardPool) and
 	(NewB#block.wallet_list ==
         ar_node:apply_mining_reward(

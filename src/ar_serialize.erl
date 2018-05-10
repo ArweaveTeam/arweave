@@ -32,7 +32,8 @@ block_to_json_struct(
 		hash_list = HashList,
 		wallet_list = WalletList,
         reward_addr = RewardAddr,
-        tags = Tags
+		tags = Tags,
+		reward_pool = RewardPool
 	}) ->
 	{struct,
 		[
@@ -69,7 +70,8 @@ block_to_json_struct(
 				true -> ar_util:encode(RewardAddr)
 				end
             },
-            {tags, {array, Tags}}
+			{tags, {array, Tags}},
+			{reward_pool, RewardPool}
 		]
 	}.
 %% @doc Translate a full block into JSON struct.
@@ -87,7 +89,8 @@ full_block_to_json_struct(
 		hash_list = HashList,
 		wallet_list = WalletList,
         reward_addr = RewardAddr,
-        tags = Tags
+		tags = Tags,
+		reward_pool = RewardPool
 	}) ->
 	{struct,
 		[
@@ -124,7 +127,8 @@ full_block_to_json_struct(
 				true -> ar_util:encode(RewardAddr)
 				end
             },
-            {tags, {array, Tags}}
+			{tags, {array, Tags}},
+			{reward_pool, RewardPool}
 		]
 	}.
 
@@ -164,7 +168,8 @@ json_struct_to_block({struct, BlockStruct}) ->
 				"unclaimed" -> unclaimed;
 				StrAddr -> ar_util:decode(StrAddr)
             end,
-        tags = Tags
+		tags = Tags,
+		reward_pool = find_value("reward_pool", BlockStruct)
 	}.
 %% @doc Translate fields parsed json from HTTP request into a full block.
 json_struct_to_full_block(JSONList) when is_list(JSONList) ->
@@ -202,7 +207,8 @@ json_struct_to_full_block({struct, BlockStruct}) ->
 				"unclaimed" -> unclaimed;
 				StrAddr -> ar_util:decode(StrAddr)
             end,
-        tags = Tags
+		tags = Tags,
+		reward_pool = find_value("reward_pool", BlockStruct)
 	}.
 
 %% @doc Translate a transaction into JSON.

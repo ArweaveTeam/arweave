@@ -38,7 +38,7 @@ add(Bs, TXs, HashList) ->
 add(Bs, TXs, HashList, unclaimed) ->
     add(Bs, TXs, HashList, <<>>);
 add([B|Bs], TXs, HashList, RewardAddr) ->
-    {FinderReward, RewardPool} = ar_node:calculate_reward_pool(B#block.reward_pool, TXs),
+    {FinderReward, RewardPool} = ar_node:calculate_reward_pool(B#block.reward_pool, TXs, RewardAddr),
     WalletList = ar_node:apply_mining_reward(
         ar_node:apply_txs(B#block.wallet_list, TXs),
         RewardAddr,

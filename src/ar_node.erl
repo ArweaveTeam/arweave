@@ -9,7 +9,7 @@
 -export([rejoin/2]).
 -export([filter_all_out_of_order_txs/2, filter_out_of_order_txs/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/5, validate/8, find_recall_block/1, calculate_reward_pool/2]).
+-export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/5, validate/8, find_recall_block/1, calculate_reward_pool/3]).
 -export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
 -export([start_link/1]).
 -export([retry_block/4, retry_full_block/4]).
@@ -754,7 +754,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			S = RawS1#state { gossip = NewGS },
 			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 			TXs = ar_node:get_tx(Peers, NewB#block.txs),
-			{FinderPool, _} = calculate_reward_pool(S#state.reward_pool, TXs),
+			{FinderPool, _} = calculate_reward_pool(S#state.reward_pool, TXs, NewB#block.reward_addr),
 			WalletList =
 				apply_mining_reward(
 					apply_txs(S#state.wallet_list, TXs),
@@ -824,7 +824,8 @@ integrate_new_block(
 				hash_list = [NewB#block.indep_hash|HashList],
 				txs = NotMinedTXs,
 				height = NewB#block.height,
-				floating_wallet_list = apply_txs(WalletList, TXs)
+				floating_wallet_list = apply_txs(WalletList, TXs),
+				reward_pool = NewB#block.reward_pool
 			}
 		)
 	).
@@ -842,7 +843,7 @@ integrate_block_from_miner(
 		},
 		MinedTXs, Diff, Nonce, Timestamp) ->
 	% Calculate the new wallet list (applying TXs and mining rewards).
-	{FinderReward, RewardPool} = calculate_reward_pool(OldPool, MinedTXs),
+	{FinderReward, RewardPool} = calculate_reward_pool(OldPool, MinedTXs, RewardAddr),
 	WalletList =
 		apply_mining_reward(
 			apply_txs(RawWalletList, MinedTXs),
@@ -861,7 +862,7 @@ integrate_block_from_miner(
 		%ar:d({validate,validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList))}),
 	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
 		false ->
-			ar:report_console([{miner, self()}, incorrect_nonce]),
+			ar:report_console([{miner, self()}, invalid_block]),
 			server(
                 reset_miner(OldS)
             );
@@ -898,38 +899,12 @@ integrate_block_from_miner(
 							[NextB#block.indep_hash|HashList],
 						txs = NotMinedTXs, % TXs not included in the block
 						height = NextB#block.height,
-						floating_wallet_list = apply_txs(WalletList, NotMinedTXs)
+						floating_wallet_list = apply_txs(WalletList, NotMinedTXs),
+						reward_pool = RewardPool
 					}
 				)
 			)
 	end.
-
-%% @doc Drop blocks until length of block list = ?MAX_BLOCKS.
-%maybe_drop_blocks(Bs) ->
-%	case length(BlockRecs = [ B || B <- Bs, is_record(B, block) ]) > ?MAX_BLOCKS of
-%		true ->
-%			RecallBs = calculate_prior_recall_blocks(?KEEP_LAST_BLOCKS, Bs),
-%			DropB =
-%				ar_util:pick_random(
-%					lists:nthtail(
-%						?KEEP_LAST_BLOCKS,
-%						BlockRecs
-%					)
-%				),
-%			case lists:member(DropB, RecallBs) of
-%				false ->
-%					ar_storage:write_block(DropB),
-%					maybe_drop_blocks(ar_util:replace(DropB, DropB#block.indep_hash, Bs));
-%				true -> maybe_drop_blocks(Bs)
-%			end;
-%		false -> Bs
-%	end.
-
-%% @doc Calculates Recall blocks to be stored.
-%calculate_prior_recall_blocks(0, _) -> [];
-%calculate_prior_recall_blocks(N, Bs) ->
-%	[ar_weave:calculate_recall_block(hd(Bs)) |
-%		calculate_prior_recall_blocks(N-1, tl(Bs))].
 
 %% @doc Update miner and amend server state when encountering a new transaction.
 add_tx_to_server(S, NewGS, TX) ->
@@ -1087,7 +1062,15 @@ apply_txs(WalletList, TXs) ->
 		)
 	).
 
-calculate_reward_pool(OldPool, TXs) ->
+calculate_reward_pool(OldPool, TXs, unclaimed) ->
+	Pool = OldPool + lists:sum(
+		lists:map(
+			fun calculate_tx_reward/1,
+			TXs
+		)
+	),
+	{0, Pool};
+calculate_reward_pool(OldPool, TXs, _RewardAddr) ->
 	Pool = OldPool + lists:sum(
 		lists:map(
 			fun calculate_tx_reward/1,
@@ -1189,8 +1172,6 @@ find_sync_block([_|Xs]) -> find_sync_block(Xs).
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 %calculate_reward(B) -> calculate_reward(B#block.height, B#block.txs).
 calculate_reward(Height, Quantity) ->
-	ar:d({height, Height}),
-	ar:d({quantity, Quantity}),
 	erlang:trunc(calculate_static_reward(Height) + Quantity).
 
 %% @doc Calculate the static reward received for mining a given block.

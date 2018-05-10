@@ -52,13 +52,11 @@ encode_base64_safe([H|T]) ->
 
 %% @doc Decodes URL safe base64 and turns it back into base64.
 decode_base64_safe(Str) ->
-	% TODO: Make this efficient.
 	UnsafeStr = do_decode_base64_safe(Str),
 	lists:flatten(
 		string:pad(
 			UnsafeStr,
 			length(UnsafeStr)
-				% TODO: Improve this code
 				+ case 4 - (length(UnsafeStr) rem 4) of
 					4 -> 0;
 					X -> X
@@ -193,7 +191,7 @@ unique(Res, [X|Xs]) ->
 	end.
 
 %% Run a map in paralell.
-%% TODO: Make this efficient for large lists.
+%% NOTE: Make this efficient for large lists.
 %% NOTE: Does not maintain list stability.
 pmap(Fun, List) ->
 	Master = self(),
