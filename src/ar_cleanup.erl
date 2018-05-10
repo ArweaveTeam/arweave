@@ -1,5 +1,5 @@
 -module(ar_cleanup).
--export([remove_invalid_blocks/1, remove_invalid_txs/1]).
+-export([remove_invalid_blocks/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -13,14 +13,10 @@
 %% @doc Remove all blocks from blocks directory not in HashList
 remove_invalid_blocks(HashList) ->
     {ok, RawFiles} = file:list_dir(?BLOCK_DIR),
-    % TODO: make less awful
     Files =
         lists:filter(
             fun(X) ->
-                case X of
-                    "enc" -> false;
-                    _ -> true
-                end
+                not filelib:is_dir(X)
             end,
             RawFiles
         ),
@@ -51,13 +47,12 @@ remove_invalid_blocks(HashList) ->
     ).
     
 %% @doc Remove all TXs from the TX directory that are "too cheap"
-remove_invalid_txs(Diff) ->
-    ok.
-
-%% @doc test that blocks are correctly removed
-remove_invalid_blocks_test() ->
-    ok.
-
-%% @doc test that txs are correctly removed
-remove_invalid_txs_test() ->
-    ok.
+remove_block_keep_directory_test() ->
+    ar_storage:clear(),
+    B0 = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1 = ar_weave:add(B0, []),
+    ar_storage:write_block(hd(B1)),
+    remove_invalid_blocks([]),
+    {ok, Files} = (file:list_dir(?BLOCK_DIR)),
+    1 = length(Files).

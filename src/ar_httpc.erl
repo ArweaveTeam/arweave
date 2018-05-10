@@ -15,7 +15,6 @@ request(Method, Request, HTTPOpts, Opts) ->
 	Res.
 
 %% Return a number of bytes (after headers) of the size of a HTTP request.
-%% TODO: Support chunkify and accumulators?
 calculate_size({_URL, _Headers}) -> 0;
 calculate_size({_URL, _Headers, _ContentType, Body}) when is_list(Body) ->
 	byte_size(unicode:characters_to_binary(Body));

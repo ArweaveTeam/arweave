@@ -256,9 +256,7 @@ handle('GET', [<<"wallet_list">>], _Req) ->
         )
     };
 
-% TODO: Return remaining timeout on a failed request
-% TODO: Optionally, allow adding self on a non-default port
-% TODO: Nicer way of segregating different networks
+% NOTE: Consider returning remaining timeout on a failed request
 handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	case json2:decode_string(binary_to_list(BlockJSON)) of
@@ -320,10 +318,8 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 			)
 		)
 	};
-% Gets a block by block hash.
-% TODO: Currently doesn't return blocks not on the hashlist, this should be a lower
-% level responsibility
 
+% Gets a block by block hash.
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),

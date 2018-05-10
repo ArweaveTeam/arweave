@@ -170,7 +170,6 @@ hash(DataSegment, Nonce) ->
 
 %% @doc Create an independent hash from a block. Independent hashes
 %% verify a block's contents in isolation and are stored in a node's hash list.
-%% TODO: Check logic
 indep_hash(B) ->
 	crypto:hash(
 		?HASH_ALG,

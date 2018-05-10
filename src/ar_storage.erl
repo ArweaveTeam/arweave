@@ -141,7 +141,6 @@ read_block(ID) ->
 		[] -> unavailable;
 		[Filename] -> do_read_block(Filename);
 		Filenames ->
-			% TODO: There should never be multiple versions of a block on disk.
 			do_read_block(hd(
 				lists:sort(
 					fun(Filename, Filename2) ->
@@ -163,7 +162,6 @@ read_encrypted_block(ID) ->
 		[] -> unavailable;
 		[Filename] -> do_read_encrypted_block(Filename);
 		Filenames ->
-			% TODO: There should never be multiple versions of a block on disk.
 			do_read_encrypted_block(hd(
 				lists:sort(
 					fun(Filename, Filename2) ->
@@ -273,7 +271,6 @@ read_tx(ID) ->
 		[] -> unavailable;
 		[Filename] -> do_read_tx(Filename);
 		Filenames ->
-			% TODO: There should never be multiple versions of a tx on disk.
 			do_read_tx(hd(
 				lists:sort(
 					fun(Filename, Filename2) ->

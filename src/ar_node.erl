@@ -50,12 +50,10 @@
 -define(POLL_TIME, 60*100).
 
 %%@doc Start a node, linking to a supervisor process
-%% TODO: Clean up to an apply function
-
-
 start_link(Args) ->
 	PID = erlang:apply(ar_node, start, Args),
 	{ok, PID}.
+
 %% @doc Start a node, optionally with a list of peers.
 start() -> start([]).
 start(Peers) -> start(Peers, not_joined).
@@ -849,7 +847,7 @@ integrate_block_from_miner(
 			apply_txs(RawWalletList, MinedTXs),
 			RewardAddr,
 			FinderReward,
-			length(HashList) - 1
+			length(HashList) + 1
 		),
 	% Store the transactions that we know about, but were not mined in
 	% this block.
@@ -1051,7 +1049,6 @@ apply_txs(S, TXs) when is_record(S, state) ->
 		wallet_list = apply_txs(S#state.wallet_list, TXs)
 	};
 apply_txs(WalletList, TXs) ->
-	%% TODO: Sorting here probably isn't sufficient...
 	lists:sort(
 		lists:foldl(
 			fun(TX, CurrWalletList) ->
@@ -1183,15 +1180,6 @@ calculate_static_reward(Height) ->
 calculate_tx_reward(#tx { reward = Reward }) ->
 	Reward.
 
-%% @doc Find the block height at which the weaves diverged.
-divergence_height([], []) -> -1;
-divergence_height([], _)  -> -1;
-divergence_height(_, [])  -> -1;
-divergence_height([Hash|HL1], [Hash|HL2]) ->
-	1 + divergence_height(HL1, HL2);
-divergence_height([_Hash1|_HL1], [_Hash2|_HL2]) ->
-	-1.
-
 %% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
 reset_miner(S = #state { miner = undefined, automine = false }) -> S;
 reset_miner(S = #state { miner = undefined, automine = true }) ->
@@ -1204,7 +1192,6 @@ reset_miner(S = #state { miner = PID, automine = true }) ->
 	start_mining(S#state { miner = undefined }).
 
 %% @doc Force a node to start mining, update state.
-%% TODO: If recall block cant be retrieved, schedule a retry
 start_mining(S = #state { hash_list = not_joined }) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
@@ -1386,13 +1373,6 @@ filter_all_out_of_order_txs_large_test_slow() ->
 	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX3, SignedTX2, SignedTX]),
 	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX, SignedTX3]).
 
-%% @doc Ensure that divergence heights are appropriately calculated.
-divergence_height_test() ->
-	2 = divergence_height([a, b, c], [a, b, c, d, e, f]),
-	1 = divergence_height([a, b], [a, b, c, d, e, f]),
-	2 = divergence_height([1,2,3], [1,2,3]),
-	2 = divergence_height([1,2,3, a, b, c], [1,2,3]).
-
 %% @doc Check the current block can be retrieved
 get_current_block_test() ->
 	ar_storage:clear(),
@@ -1403,9 +1383,6 @@ get_current_block_test() ->
 %% @doc Check that blocks can be added (if valid) by external processes.
 add_block_test() ->
 	ar_storage:clear(),
-	%% TODO: This test fails because mining blocks outside of a mining node
-	%% The data segment given to ar_mine:validate is <<>>, while it should
-	%% be ~100 bytes long.
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
     [B1|_] = ar_weave:add([B0]),
@@ -1413,18 +1390,6 @@ add_block_test() ->
     receive after 500 -> ok end,
     Blocks = lists:map(fun(B) -> B#block.indep_hash end, [B1, B0]),
     Blocks = get_blocks(Node1).
-
-%% @doc Check that blocks can be added (if valid) by external processes.
-gossip_add_block_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init(),
-	Node1 = ar_node:start([], [B0]),
-	GS0 = ar_gossip:init([Node1]),
-	[B1|_] = ar_weave:add([B0]),
-	add_block(GS0, B1, B0),
-	receive after 500 -> ok end,
-	todo.
-	%[B1, B0] = get_blocks(Node1).
 
 %% @doc Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
@@ -1460,6 +1425,7 @@ add_bogus_block_test() ->
         {blocks, Node, [RecvdB|_]} ->
 			LastB = ar_storage:read_block(RecvdB)
     end.
+
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto the network.
 add_bogus_block_nonce_test() ->
     ar_storage:clear(),

@@ -49,14 +49,12 @@ sign(TX, {PrivKey, PubKey}) -> sign(TX, PrivKey, PubKey).
 sign(TX, PrivKey, PubKey) ->
 	NewTX = TX#tx{ owner = PubKey },
 	Sig = ar_wallet:sign(PrivKey, to_binary(NewTX)),
-	ar:d(Sig),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx {
 		signature = Sig, id = ID
 	}.
 
 %% @doc Ensure that a transaction's signature is valid.
-%% TODO: Ensure that DEBUG is false in production releases(!!!)
 -ifdef(DEBUG).
 verify(#tx { signature = <<>> }, _, _) -> true;
 verify(TX, Diff, WalletList) ->
@@ -203,8 +201,6 @@ check_last_tx(WalletList, TX) ->
 
 
 %%% Tests
-%% TODO: Write a more stringent reject_tx_below_min test
-
 sign_tx_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),

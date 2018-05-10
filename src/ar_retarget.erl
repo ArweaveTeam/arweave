@@ -46,17 +46,13 @@ maybe_retarget(B, OldB) ->
 %% @doc Calculate a new difficulty, given an old difficulty and the retarget
 %% period it produced.
 calculate_difficulty(OldDiff, TS, Last) ->
-	%% TODO: Improve the stability of this mechanism.
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeError = abs(ActualTime - TargetTime),
 	if
-        TimeError < (TargetTime * ?RETARGET_TOLERANCE) ->
-            OldDiff;
-	    TargetTime > ActualTime ->
-            OldDiff + 1;
-	    true ->
-            OldDiff - 1
+        TimeError < (TargetTime * ?RETARGET_TOLERANCE) -> OldDiff;
+	    TargetTime > ActualTime -> OldDiff + 1;
+	    true -> OldDiff - 1
 	end.
 
 %% @doc Validate that a new block has an appropriate difficulty.

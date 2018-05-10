@@ -4,7 +4,6 @@
 -include("av/av_recs.hrl").
 -include_lib("eunit/include/eunit.hrl").
 %%% Archain firewall implementation.
-%%% TODO: Call out to av_* functions.
 
 %% State definition. Should store compiled
 %% binary scan objects.

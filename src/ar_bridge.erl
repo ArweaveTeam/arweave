@@ -56,7 +56,6 @@ get_remote_peers(PID) ->
 	end.
 
 %% Notify the bridge of a new external block.
-%% TODO: Add peer sending to bridge implementation.
 add_block(PID, OriginPeer, Block, RecallBlock) ->
 	PID ! {add_block, OriginPeer, Block, RecallBlock}.
 
@@ -90,7 +89,6 @@ ignore_peer(PID, Peer) ->
 %% Main server loop.
 server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 	try (receive
-		% TODO: Propagate external to external nodes.
 		{ignore_peer, Peer} ->
 			timer:send_after(?IGNORE_PEERS_TIME, {unignore_peer, Peer}),
 			server(S#state { ignored_peers = [Peer|S#state.ignored_peers] });
@@ -101,7 +99,6 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 		{add_tx, TX} ->
 			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, OriginPeer, Block, RecallBlock} ->
-			% TODO: Call from HTTP iface
 			case lists:member(OriginPeer, S#state.ignored_peers) of
 				true -> server(S);
 				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}))
@@ -225,7 +222,6 @@ get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
 get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% Send an internal message externally
-%% TODO: add Peer functionality in the same way that blocks do
 send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 	spawn(
 		fun() ->

@@ -252,7 +252,7 @@ verify_previous_block(NewB, OldB) ->
 verify_block_hash_list(NewB, OldB) ->
     NewB#block.hash_list == ([OldB#block.indep_hash|OldB#block.hash_list]).
 
-% TODO: Check hashlist length in apply mining reward call
+
 verify_wallet_list(NewB, OldB, NewTXs) ->
     {FinderReward, RewardPool} = ar_node:calculate_reward_pool(OldB#block.reward_pool, NewTXs, NewB#block.reward_addr),
     (NewB#block.reward_pool == RewardPool) and
@@ -261,7 +261,7 @@ verify_wallet_list(NewB, OldB, NewTXs) ->
 			ar_node:apply_txs(OldB#block.wallet_list, NewTXs),
 			NewB#block.reward_addr,
 			FinderReward,
-			length(OldB#block.hash_list) - 1
+			NewB#block.height
 		)).
 
 
