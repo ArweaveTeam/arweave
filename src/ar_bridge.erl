@@ -237,16 +237,20 @@ send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 send_to_external(
 		S = #state {external_peers = Peers, port = Port},
 		{new_block, _Peer, _Height, NewB, RecallB}) ->
-	spawn(
-		fun() ->
-			lists:foreach(
-				fun(Peer) ->
-					ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
-				end,
-				[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
+	case RecallB of
+		unavailable -> ok;
+		_ ->
+			spawn(
+				fun() ->
+					lists:foreach(
+						fun(Peer) ->
+							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
+						end,
+						[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
+					)
+				end
 			)
-		end
-	),
+	end,
 	S;
 
 send_to_external(S, {NewGS, Msg}) ->
