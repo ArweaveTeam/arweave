@@ -431,11 +431,15 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 		whereis(http_entrypoint_node),
 		list_to_integer(binary_to_list(Height))
 		),
-	case (Block#block.hash == 
-		ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
-	of
-		true -> return_block(unavailable);
-		false -> return_block(Block)
+	case ?IS_BLOCK(Block) of
+		true ->
+			case (Block#block.hash == 
+				ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
+			of
+				true -> return_block(unavailable);
+				false -> return_block(Block)
+			end;
+		false -> return_block(unavailable)
 	end;
 % Get the top, current block.
 handle('GET', [<<"block">>, <<"current">>], _Req) ->
