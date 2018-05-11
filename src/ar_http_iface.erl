@@ -717,7 +717,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 
 
 
-%% @doc Add peer (self) to host.
+%% @doc Add peer (self) to a remote host.
 add_peer(Host) ->
 	ar_httpc:request(
 		post,
@@ -739,7 +739,7 @@ add_peer(Host) ->
 		}, [{timeout, ?NET_TIMEOUT}], []
 	).
 
-%% @doc Get the current, top block.
+%% @doc Get a peers current, top block.
 get_current_block(Host) ->
 	handle_block_response(
 		ar_httpc:request(
@@ -754,7 +754,8 @@ get_current_block(Host) ->
 		)
 	).
 
-%% @doc Calculate transaction reward.
+%% @doc Get the minimum cost that a remote peer would charge for
+%% A transaction of data size Size
 get_tx_reward(Node, Size) ->
 	{ok, {{_, 200, _}, _, Body}} =
 		ar_httpc:request(
@@ -770,7 +771,7 @@ get_tx_reward(Node, Size) ->
 	 	),
 	list_to_integer(Body).
 
-%% @doc Retreive a block by height or hash from a node.
+%% @doc Retreive a block by height or hash from a remote peer.
 get_block(Host, Height) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_height, Height}]),
 	%ar:d([getting_new_block, {host, Host}, {height, Height}]),
@@ -803,6 +804,8 @@ get_block(Host, Hash) when is_binary(Hash) ->
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
 	).
+
+%% @doc Get a block in encrypted format from a remote peer.
 get_encrypted_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
@@ -820,6 +823,9 @@ get_encrypted_block(Host, Hash) when is_binary(Hash) ->
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
 	).
+
+%% @doc Get a specified subfield from the block with the given hash
+%% or height from a remote peer
 get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host,[] Host}, {hash, Hash}]),
@@ -838,7 +844,6 @@ get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
 			[{timeout, ?NET_TIMEOUT}], []
 	 	)
 	);
-
 get_block_subfield(Host, Height, Subfield) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
@@ -858,7 +863,7 @@ get_block_subfield(Host, Height, Subfield) when is_integer(Height) ->
 	 	)
 	).
 
-%% @doc Retreive a full block by hash from a node.
+%% @doc Retreive a full block by hash from a remote peer.
 get_full_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
@@ -877,6 +882,7 @@ get_full_block(Host, Hash) when is_binary(Hash) ->
 		)
 	).
 
+%% @doc Retrieve a full block in encrypted format from a remote peer
 get_encrypted_full_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
@@ -896,7 +902,7 @@ get_encrypted_full_block(Host, Hash) when is_binary(Hash) ->
 		)
 	).
 
-%% @doc Retreive a tx by hash from a node.
+%% @doc Retreive a tx by hash from a remote peer
 get_tx(Host, Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
@@ -914,7 +920,8 @@ get_tx(Host, Hash) ->
 	 	)
 	).
 
-%% @doc Retreive all pending txs from a node.
+%% @doc Retreive all transactions held that have not yet been mined into
+%% a block from a remote peer.
 get_pending_txs(Peer) ->
 	try
 		begin
@@ -976,19 +983,21 @@ handle_block_response({error, _}) -> unavailable;
 handle_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
 handle_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
 
-%% @doc todo
+%% @doc Process the response of a /block/.../all call.
 handle_full_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_serialize:json_struct_to_full_block(Body);
 handle_full_block_response({error, _}) -> unavailable;
 handle_full_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
 handle_full_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
 
+%% @doc Process the response of a /block/.../encrypted call.
 handle_encrypted_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_util:decode(Body);
 handle_encrypted_block_response({error, _}) -> unavailable;
 handle_encrypted_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
 handle_encrypted_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
 
+%% @doc Process the response of a /block/.../all/encrypted call.
 handle_encrypted_full_block_response({ok, {{_, 200, _}, _, Body}}) ->
 	ar_util:decode(Body);
 handle_encrypted_full_block_response({error, _}) -> unavailable;
@@ -1064,22 +1073,7 @@ store_data_time(Peer, Bytes, MicroSecs) ->
 		}
 	).
 
-%% @doc Calculate the delay before a transaction should be released to the network
-%% Currently based on 40s for 95% of peers in the bitcoin network to recieve a
-%% 1mb block
-
-%%% Tests
-
-%% @doc Tests add peer functionality
-% add_peers_test() ->
-% 	ar_storage:clear(),
-% 	Bridge = ar_bridge:start([], []),
-% 	reregister(http_bridge_node, Bridge),
-% 	ar:d(add_peer({127,0,0,1,1984})),
-% 	receive after 500 -> ok end,
-% 	ar:d({peers, ar_bridge:get_remote_peers(Bridge)}),
-% 	true = lists:member({127,0,0,1,1984}, ar_bridge:get_remote_peers(Bridge)).
-
+%% @doc Convert a blocks field with the given label into a string
 block_field_to_string(<<"nonce">>, Res) -> Res;
 block_field_to_string(<<"previous_block">>, Res) -> Res;
 block_field_to_string(<<"timestamp">>, Res) -> integer_to_list(Res);
@@ -1092,6 +1086,18 @@ block_field_to_string(<<"txs">>, {array, Res}) -> list_to_binary(ar_serialize:js
 block_field_to_string(<<"hash_list">>, {array, Res}) -> list_to_binary(ar_serialize:jsonify({array, Res}));
 block_field_to_string(<<"wallet_list">>, {array, Res}) -> list_to_binary(ar_serialize:jsonify({array, Res}));
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
+
+%%% Tests
+
+%% @doc Tests add peer functionality
+% add_peers_test() ->
+% 	ar_storage:clear(),
+% 	Bridge = ar_bridge:start([], []),
+% 	reregister(http_bridge_node, Bridge),
+% 	ar:d(add_peer({127,0,0,1,1984})),
+% 	receive after 500 -> ok end,
+% 	ar:d({peers, ar_bridge:get_remote_peers(Bridge)}),
+% 	true = lists:member({127,0,0,1,1984}, ar_bridge:get_remote_peers(Bridge)).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->

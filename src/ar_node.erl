@@ -755,7 +755,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			TXs = lists:foldr(
 				fun(T, Acc) ->
 					%state contains it
-					case [TX || TX <- S#state.txs, TX#tx.id == T] of
+					case [TX || TX <- (S#state.txs ++ S#state.waiting_txs), TX#tx.id == T] of
 						[] ->
 							case ar_storage:read_tx(T) of
 								unavailable -> 
@@ -1036,15 +1036,15 @@ validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB, _
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
 	validate(HL, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
-	ar:d({val_hashlist, _NewB#block.hash_list}),
-	ar:d({val_wallet_list, _NewB#block.wallet_list}),
-	ar:d({val_nonce, _NewB#block.nonce}),
-	ar:d({val_hash, _OldB#block.hash_list}),
-	ar:d({val_diff, _OldB#block.diff}),
-	ar:d({hashlist, _HL}),
-	ar:d({wallet_list, _WL}),
-	ar:d({txs, _TXs}),
-	ar:d({recall, _RecallB}),
+	% ar:d({val_hashlist, _NewB#block.hash_list}),
+	% ar:d({val_wallet_list, _NewB#block.wallet_list}),
+	% ar:d({val_nonce, _NewB#block.nonce}),
+	% ar:d({val_hash, _OldB#block.hash_list}),
+	% ar:d({val_diff, _OldB#block.diff}),
+	% ar:d({hashlist, _HL}),
+	% ar:d({wallet_list, _WL}),
+	% ar:d({txs, _TXs}),
+	% ar:d({recall, _RecallB}),
 	ar:d(block_not_accepted),
 	false.
 
@@ -1248,7 +1248,7 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 	end.
 
 	calculate_delay(0) -> 0;
-	calculate_delay(Bytes) -> (Bytes * 40) div 1000.
+	calculate_delay(Bytes) -> (Bytes * 100) div 1000.
 
 generate_floating_wallet_list(WalletList, []) ->
 	WalletList;
