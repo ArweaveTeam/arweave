@@ -73,7 +73,8 @@ setminus([X|R1], [X|R2]) -> setminus(R1, R2);
 setminus(R1, []) -> R1;
 setminus(_, _) -> [].
 
-%% @doc Main server loop
+%% @doc Start the fork recovery server loop. Attempt to catch up to the target block
+%% by applying each block between the current block and the target block in turn
 server(#state{peers = _Peers, parent = _Parent, target_block = _TargetB}, rejoin) ->
 	ok.
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->

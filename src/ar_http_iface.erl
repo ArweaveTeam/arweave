@@ -45,28 +45,26 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 
 %%% Server side functions.
 
-%% @doc Main function to handle a request to the server.
-%% Requests are HTTP requests to an IP. For example a GET request to
-%% http://192.168.0.0/block/height where the body of the GET request is the
-%% block height.
+%% @doc Main function to handle a request to the nodes HTTP server.
 %%
-%% Similarly, you can use POST or send transactions and blocks to be added
-%% and use GET requests to to obtain peers, get a block by its height, hash or
-%% or simply obtain information about it. In this way, it is possible to
-%% perform many actions on the archain purely via platform agnostic HTTP.
+%% TODO: Add list detailing all available endpoints
 %%
-%% NB: Blocks and transactions are transmitted between HTTP nodes in JSON
-%% format.
+%% NB: Blocks and transactions are transmitted between HTTP nodes in JSON format.
+
 handle(Req, _Args) ->
 	update_performance_list(Req),
 	handle(Req#req.method, elli_request:path(Req), Req).
 
+%% @doc Return network information from a given node.
+%% GET request to endpoint /info
+%% GET request to endpoint /
 handle('GET', [], _Req) ->
 	return_info();
-% Get information about the network from node in JSON format.
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
-% Get all pending transactions
+
+%% @doc Return all transactions from node that are waiting to be mined into a block.
+%% GET request to endpoint /tx/pending
 handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 	{200, [],
 		list_to_binary(
@@ -82,7 +80,7 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 		)
 	};
 
-% Get a transaction by hash
+%% @doc Return a transaction specified 
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
 	case TX of
@@ -201,7 +199,6 @@ handle('POST', [<<"tx">>], Req) ->
 			{200, [], <<"OK">>}
 	end;
 
-
 % Get peers.
 handle('GET', [<<"peers">>], Req) ->
 	{200, [],
@@ -218,6 +215,7 @@ handle('GET', [<<"peers">>], Req) ->
 			)
 		)
 	};
+
 % Get price of adding data of SizeInByes
 handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	Node = whereis(http_entrypoint_node),
@@ -232,7 +230,8 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 			)
 		)
 	};
-% Get hashlist.
+
+% Get the nodes current hashlist.
 handle('GET', [<<"hash_list">>], _Req) ->
 	Node = whereis(http_entrypoint_node),
     HashList = ar_node:get_hash_list(Node),
@@ -243,11 +242,11 @@ handle('GET', [<<"hash_list">>], _Req) ->
             )
         )
     };
-% Get walletlist.
+
+% Get the nodes current walletlist.
 handle('GET', [<<"wallet_list">>], _Req) ->
     Node = whereis(http_entrypoint_node),
     WalletList = ar_node:get_wallet_list(Node),
-    %ar:d(list_to_binary(ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)))),
     {200, [],
         list_to_binary(
             ar_serialize:jsonify(
@@ -257,6 +256,7 @@ handle('GET', [<<"wallet_list">>], _Req) ->
     };
 
 % NOTE: Consider returning remaining timeout on a failed request
+% Add yourself as a peer to the given peer
 handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	case json2:decode_string(binary_to_list(BlockJSON)) of
@@ -276,6 +276,8 @@ handle('POST', [<<"peers">>], Req) ->
 			end;
 		_ -> {400, [], "Wrong network"}
 	end;
+
+% Add yourself as a peer to the given peer on the specified port
 handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
@@ -295,6 +297,9 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 			end;
 		_ -> {400, [], "Wrong network"}
 	end;
+
+%% @doc Return the balance of the wallet specified via wallet_address.
+%% GET request to endpoint /wallet/{wallet_address}/balance
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	{200, [],
 		list_to_binary(
@@ -306,7 +311,9 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 			)
 		)
 	};
-% Get last TX ID hash
+
+%% @doc Return the last transaction ID (hash) for the wallet specified via wallet_address.
+%% GET request to endpoint /wallet/{wallet_address}/last_tx
 handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	{200, [],
 		list_to_binary(
@@ -319,7 +326,8 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 		)
 	};
 
-% Gets a block by block hash.
+%% @doc Return the encrypted blockshadow corresponding to the indep_hash.
+%% GET request to endpoint /block/hash/{indep_hash}/encrypted
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
@@ -343,7 +351,8 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 			end
 	end;
 
-% Get a full block by hash
+%% @doc Return the full encrypted block corresponding to the indep_hash.
+%% GET request to endpoint /block/hash/{indep_hash}/all/encrypted
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
@@ -365,9 +374,10 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req)
 				false -> return_encrypted_full_block(unavailable)
 			end
 	end;
+
+%% @doc Return the blockshadow corresponding to the indep_hash.
+%% GET request to endpoint /block/hash/{indep_hash}
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
-	%ar:d({resp_block_hash, Hash}),
-	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	case CurrentBlock of
 		unavailable -> return_block(unavailable);
@@ -390,9 +400,10 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 					end
 			end
 	end;
-% Get a full block by hash
+
+%% @doc Return the full block corresponding to the indep_hash.
+%% GET request to endpoint /block/hash/{indep_hash}/all
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
-	ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	case CurrentBlock of
@@ -418,7 +429,9 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 					end
 			end
 	end;
-		% Gets a block by block height.
+
+%% @doc Return the block at the given height.
+%% GET request to endpoint /block/height/{height}
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	Block = ar_node:get_block(
@@ -435,13 +448,17 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 			end;
 		false -> return_block(unavailable)
 	end;
-% Get the top, current block.
+
+%% @doc Return the current block.
+%% GET request to endpoint /current_block
+%% GET request to endpoint /block/current
 handle('GET', [<<"block">>, <<"current">>], _Req) ->
 	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));
-% Get the top, current block.
 handle('GET', [<<"current_block">>], _Req) ->
 	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));
-% Return a list of known services, when asked.
+
+%% @doc Return a list of known services. 
+%% GET request to endpoint /services
 handle('GET', [<<"services">>], _Req) ->
 	{200, [],
 		ar_serialize:jsonify(

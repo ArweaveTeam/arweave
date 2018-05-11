@@ -11,7 +11,7 @@
 	sigs = []
 }).
 
-%% Start a firewall node.
+%% @doc Start a firewall node.
 start() ->
 	spawn(
 		fun() ->
@@ -21,7 +21,7 @@ start() ->
 		end
 	).
 
-%% Check that a received object does not match
+%% @doc Check that a received object does not match
 %% the firewall rules.
 scan(PID, Type, Data) ->
 	PID ! {scan, self(), Type, Data},
@@ -29,6 +29,7 @@ scan(PID, Type, Data) ->
 		{scanned, Obj, Response} -> Response
 	end.
 
+%% @doc Main server loop
 server() -> server(#state{}).
 server(S = #state{ sigs = Sigs}) ->
 	receive
@@ -42,8 +43,11 @@ server(S = #state{ sigs = Sigs}) ->
 			server(S)
 	end.
 
+%% @doc Compare a transaction against known bad signatures
+%% return true if matched, return false otherwise
 scan_transaction(TX, Sigs) ->
 	av_detect:is_infected(TX#tx.data, Sigs).
+
 
 blacklist_transaction_test() ->
 Sigs = #sig{

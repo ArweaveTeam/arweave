@@ -185,7 +185,7 @@ indep_hash(B) ->
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.
 mine(B, RecallB, TXs, RewardAddr, Tags) ->
-    ar:d({weave_mine, {block, B}, {recall, RecallB}, {tx, TXs}, {reward, RewardAddr}, {tags, Tags}}),
+    %ar:d({weave_mine, {block, B}, {recall, RecallB}, {tx, TXs}, {reward, RewardAddr}, {tags, Tags}}),
     ar_mine:start(B, RecallB, TXs, RewardAddr, Tags),
 	receive
         {work_complete, TXs, _Hash, Diff, Nonce, Timestamp} ->

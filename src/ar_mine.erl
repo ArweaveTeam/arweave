@@ -216,8 +216,11 @@ generate_nonce() -> crypto:strong_rand_bytes(8).
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->
-    B = ar_block:new(),
-    RecallB = ar_block:new(),
+    B0 = ar_weave:init(),
+	ar_node:start([], B0),
+    B1 = ar_weave:add(B0, []),
+    B = hd(B1),
+    RecallB = hd(B0),
     start(B, RecallB, [], unclaimed, []),
 	receive
         {work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
@@ -235,8 +238,11 @@ basic_test() ->
 
 %% @doc Ensure that we can change the data while mining is in progress.
 change_data_test() ->
-    B = ar_block:new(),
-    RecallB = ar_block:new(),
+    B0 = ar_weave:init(),
+	ar_node:start([], B0),
+    B1 = ar_weave:add(B0, []),
+    B = hd(B1),
+    RecallB = hd(B0),
     TXs = [ar_tx:new()],
     NewTXs = TXs ++ [ar_tx:new(), ar_tx:new()],
     PID = start(B, RecallB, TXs, unclaimed, []),
@@ -259,8 +265,11 @@ change_data_test() ->
 
 %% @doc Ensure that an active miner process can be killed.
 kill_miner_test() ->
-    B = ar_block:new(),
-    RecallB = ar_block:new(),
+    B0 = ar_weave:init(),
+	ar_node:start([], B0),
+    B1 = ar_weave:add(B0, []),
+    B = hd(B1),
+    RecallB = hd(B0),
     PID = start(B, RecallB, [], unclaimed, []),
     erlang:monitor(process, PID),
     PID ! stop,

@@ -85,6 +85,8 @@ message(S, {get_tx, PID, Name, Value}) ->
 message(S, _) ->
 	S.
 
+%% @doc Updates the table of stored tranasaction data with all of the
+%% transactions in the given block
 update_tag_table(B) when ?IS_BLOCK(B) ->
 	lists:foreach(
 		fun(TX) ->
@@ -111,8 +113,6 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 update_tag_table(B) ->
 	not_updated.
 
-%% @doc Add to the dets database all transactions from currently held blocks
-
 %% @doc Test that a new tx placed on the network and mined can be searched for
 basic_usage_test() ->
 	% Spawn a network with two nodes and a chirper server
@@ -121,7 +121,8 @@ basic_usage_test() ->
 	Peers = ar_network:start(10, 10),
 	ar_node:add_peers(hd(Peers), SearchServer),
 	% Generate the transaction.
-	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	RawTX = ar_tx:new(),
+	TX = RawTX#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
 	% Add tx to network
 	ar_node:add_tx(hd(Peers), TX),
 	% Begin mining

@@ -750,8 +750,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			server(S#state {miner = undefined} );
 		_ ->
 			S = RawS1#state { gossip = NewGS },
-			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-			TXs = ar_node:get_tx(Peers, NewB#block.txs),
+			TXs = ar_storage:read_tx(NewB#block.txs),
 			{FinderPool, _} = calculate_reward_pool(S#state.reward_pool, TXs, NewB#block.reward_addr),
 			WalletList =
 				apply_mining_reward(
