@@ -41,12 +41,15 @@ remove_old(Time) ->
 		'$end_of_table' -> done;
 		Key ->
 			[{_, P}] = ets:lookup(?MODULE, Key),
-			if
-				(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
-				remove_old(Time, Key),
-				ets:delete(?MODULE, Key);
+			if (P#performance.timestamp == 0) ->
+				remove_old(Time, Key);
 			true ->
-				remove_old(Time, Key)
+				if (Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
+					remove_old(Time, Key),
+					ets:delete(?MODULE, Key);
+				true ->
+					remove_old(Time, Key)
+				end
 			end
 	end.
 remove_old(Time, H) ->
@@ -54,12 +57,16 @@ remove_old(Time, H) ->
 		'$end_of_table' -> done;
 		Key ->
 			[{_, P}] = ets:lookup(?MODULE, Key),
-			if
-				(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
-				remove_old(Time, Key),
-				ets:delete(?MODULE, Key);
+			if (P#performance.timestamp == 0) ->
+				remove_old(Time, Key);
 			true ->
-				remove_old(Time, Key)
+				if
+					(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
+					remove_old(Time, Key),
+					ets:delete(?MODULE, Key);
+				true ->
+					remove_old(Time, Key)
+				end
 			end
 	end.
 

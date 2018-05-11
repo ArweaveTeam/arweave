@@ -80,7 +80,8 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 		)
 	};
 
-%% @doc Return a transaction specified 
+%% @doc Return a transaction specified via the the transaction id (hash)
+%% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
 	case TX of
@@ -94,7 +95,16 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 		T -> return_tx(T)
 	end;
 
-% Find all txs whose tags match the given set of key value pairs.
+%% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
+%% POST request to endpoint /arql with body of request being a logical expression valid in ar_parser.
+%%
+%% Example logical expression.
+%% 	{
+%% 		op: 	{ and | or | equals }
+%% 		expr1: 	{ string | logical expression }
+%% 		expr2: 	{ string | logical expression }
+%% 	}
+%%
 handle('POST', [<<"arql">>], Req) ->
 	QueryJson = elli_request:body(Req),
 	Query = ar_serialize:json_struct_to_query(
@@ -115,7 +125,8 @@ handle('POST', [<<"arql">>], Req) ->
 			}
 	end;
 
-% Get a transaction by hash and return the associated data.
+%% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
+%% GET request to endpoint /tx/{hash}/data.html
 handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
 	case TX of
@@ -132,7 +143,9 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 			end;
 		T -> {200, [], T#tx.data}
 	end;
-% Add block specified in HTTP body.
+
+%% @doc Share a new block to a peer.
+%% POST request to endpoint /block with the body of the request being a JSON encoded block as specified in ar_serialize.
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
@@ -171,8 +184,8 @@ handle('POST', [<<"block">>], Req) ->
 				end;
 			Recall -> Recall
 		end,
-			%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
-			%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
+		%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
+		%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
 	ar_bridge:add_block(
 		whereis(http_bridge_node),
 		OrigPeer,
@@ -181,9 +194,8 @@ handle('POST', [<<"block">>], Req) ->
 	),
 	{200, [], <<"OK">>};
 
-
-
-% Add transaction specified in body.
+%% @doc Share a new transaction with a peer.
+%% POST request to endpoint /tx with the body of the request being a JSON encoded tx as specified in ar_serialize.
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
@@ -198,8 +210,9 @@ handle('POST', [<<"tx">>], Req) ->
 			ar_bridge:add_tx(whereis(http_bridge_node), TX),
 			{200, [], <<"OK">>}
 	end;
-
-% Get peers.
+ 
+%% @doc Return the list of peers held by the node.
+%% GET request to endpoint /peers
 handle('GET', [<<"peers">>], Req) ->
 	{200, [],
 		list_to_binary(
@@ -216,7 +229,8 @@ handle('GET', [<<"peers">>], Req) ->
 		)
 	};
 
-% Get price of adding data of SizeInByes
+%% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
+%% GET request to endpoint /price/{bytes}
 handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	Node = whereis(http_entrypoint_node),
 	B = ar_node:get_current_block(Node),
@@ -231,7 +245,8 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 		)
 	};
 
-% Get the nodes current hashlist.
+%% @doc Return the current hash list held by the node.
+%% GET request to endpoint /hash_list
 handle('GET', [<<"hash_list">>], _Req) ->
 	Node = whereis(http_entrypoint_node),
     HashList = ar_node:get_hash_list(Node),
@@ -243,7 +258,8 @@ handle('GET', [<<"hash_list">>], _Req) ->
         )
     };
 
-% Get the nodes current walletlist.
+%% @doc Return the current wallet list held by the node.
+%% GET request to endpoint /wallet_list
 handle('GET', [<<"wallet_list">>], _Req) ->
     Node = whereis(http_entrypoint_node),
     WalletList = ar_node:get_wallet_list(Node),
@@ -255,8 +271,10 @@ handle('GET', [<<"wallet_list">>], _Req) ->
         )
     };
 
+%% @doc Share your nodes IP with another peer.
+%% POST request to endpoint /peers with the body of the request being your
+%% nodes network information JSON encoded as specified in ar_serialize.
 % NOTE: Consider returning remaining timeout on a failed request
-% Add yourself as a peer to the given peer
 handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	case json2:decode_string(binary_to_list(BlockJSON)) of
@@ -276,8 +294,6 @@ handle('POST', [<<"peers">>], Req) ->
 			end;
 		_ -> {400, [], "Wrong network"}
 	end;
-
-% Add yourself as a peer to the given peer on the specified port
 handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
@@ -482,44 +498,11 @@ handle('GET', [<<"services">>], _Req) ->
 		)
 	};
 
-%% Return a subfield of the tx with the given hash
-handle('POST', [<<"tx">>, <<"tags">>, Query], _Req) ->
-	Queries = string:split(ar_util:decode(Query), "&", all),
-	TXs = 	lists:foldl(
-		fun(Q, Acc) ->
-			case string:split(Q,"=") of
-				[N, V] ->
-					[
-						sets:from_list(app_search:search_by_exact_tag(N, V))
-						|
-						Acc
-					];
-				_ -> Acc
-			end
-		end,
-		[],
-		Queries
-	),
-	case TXs of
-		[] -> {200, [], []};
-		Set ->
-			{
-				200,
-				[],
-				list_to_binary(
-					ar_serialize:jsonify(
-							{
-								array,
-								lists:map(
-									fun ar_util:encode/1,
-									sets:to_list(sets:intersection(Set))
-								)
-							}
-						)
-				)
-			}
-	end;
-
+%% @doc Return a given field of the transaction specified by the transaction ID (hash).
+%% GET request to endpoint /tx/{hash}/{field} 
+%%  
+%% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
+%% 
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
 	case TX of
@@ -536,6 +519,12 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 			{200, [], Res}
 	end;
 
+%% @doc Return a given field of the blockshadow corresponding to the indep_hash.
+%% GET request to endpoint /block/hash/{indep_hash}/{field}
+%%
+%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
+%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%
 handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
 	Block = ar_storage:read_block(ar_util:decode(Hash)),
 	case Block of
@@ -548,6 +537,12 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
 			{200, [], Result}
 	end;
 
+%% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
+%% GET request to endpoint /block/hash/{height}/{field}
+%%
+%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
+%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%
 handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 	Block = ar_node:get_block(whereis(http_entrypoint_node),
 			list_to_integer(binary_to_list(Height))),
@@ -561,7 +556,9 @@ handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 			{200, [], Result}
 	end;
 
-% Add reports of service locations
+%% @doc Share the location of a given service with a peer.
+%% POST request to endpoint /services where the body of the request is a JSON encoded serivce as
+%% specified in ar_serialize.
 handle('POST', [<<"services">>], Req) ->
 	BodyBin = elli_request:body(Req),
 	{ok, {struct, ServicesJSON}} = json2:decode_string(binary_to_list(BodyBin)),
@@ -578,7 +575,9 @@ handle('POST', [<<"services">>], Req) ->
 		)
 	),
 	{200, [], "OK"};
-%Handles otherwise unhandles HTTP requests and returns 500.
+
+%% @doc Catch case for requests made to unknown endpoints. 
+%% Returns error code 500 - Request type not found.
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
 %% @doc Handles all other elli metadata events.
@@ -1061,8 +1060,7 @@ store_data_time(Peer, Bytes, MicroSecs) ->
 		P#performance {
 			transfers = P#performance.transfers + 1,
 			time = P#performance.time + MicroSecs,
-			bytes = P#performance.bytes + Bytes,
-			timestamp = os:system_time()
+			bytes = P#performance.bytes + Bytes
 		}
 	).
 

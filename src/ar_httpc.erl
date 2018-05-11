@@ -1,5 +1,5 @@
 -module(ar_httpc).
--export([request/1, request/4, get_performance/1]).
+-export([request/1, request/4, get_performance/1, update_timer/1]).
 -include("ar.hrl").
 
 %%% A wrapper library for httpc.
@@ -32,8 +32,7 @@ store_data_time(Request, Bytes, MicroSecs) ->
 		P#performance {
 			transfers = P#performance.transfers + 1,
 			time = P#performance.time + MicroSecs,
-			bytes = P#performance.bytes + Bytes,
-			timestamp = os:system_time()
+			bytes = P#performance.bytes + Bytes
 		}
 	).
 
@@ -43,6 +42,21 @@ get_performance(IP) ->
 		not_found -> #performance{};
 		P -> P
 	end.
+
+update_timer(IP) ->
+	case ar_meta_db:get({peer, IP}) of
+		not_found -> #performance{};
+		P -> 
+			ar_meta_db:put({peer, IP},
+				P#performance {
+					transfers = P#performance.transfers,
+					time = P#performance.time ,
+					bytes = P#performance.bytes,
+					timestamp = os:systemtime()
+				}
+			)
+	end.
+
 %% Extract an IP address from a httpc request() term.
 get_ip({URL, _}) -> get_ip(URL);
 get_ip({URL, _, _, _}) -> get_ip(URL);

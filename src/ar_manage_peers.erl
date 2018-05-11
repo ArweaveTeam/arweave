@@ -32,8 +32,18 @@ format_stats(Peer, Perf) ->
 update(Peers) ->
 	ar_meta_db:remove_old(os:system_time()),
 	{Rankable, Newbies} = partition_newbies(score(get_more_peers(Peers))),
-	maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ])
-		++ [ Peer || {Peer, newbie} <- Newbies ].
+	NewPeers = (maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ])
+		++ [ Peer || {Peer, newbie} <- Newbies ]),
+	lists:foreach(
+		fun(P) ->
+			case lists:member(P, NewPeers) of
+				false -> ar_httpc:update_timer(P);
+				_ -> ok
+			end
+		end,
+		Peers	
+	),
+	NewPeers.
 
 %% Return a new list, with the peers and their peers.
 get_more_peers(Peers) ->

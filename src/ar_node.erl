@@ -752,13 +752,14 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			S = RawS1#state { gossip = NewGS },
 			% If transaction not found in state or storage, txlist built will be incomplete
 			% and will fail in validate
-			TXs = lists:foldl(
+			TXs = lists:foldr(
 				fun(T, Acc) ->
 					%state contains it
 					case [TX || TX <- S#state.txs, TX#tx.id == T] of
 						[] ->
 							case ar_storage:read_tx(T) of
-								unavailable -> Acc;
+								unavailable -> 
+									Acc;
 								TX -> [TX|Acc]
 							end;
 						[TX|_] -> [TX|Acc]
@@ -963,7 +964,6 @@ validate(
         RecallB,
         RewardAddr,
         Tags) ->
-
     % ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
 	%ar:d({node, ar_weave:hash(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce), Nonce, Diff}),
 	% TODO: Fix names
