@@ -15,7 +15,7 @@
 -define(DEFAULT_NUM_CONNECTIONS, 3).
 %% The maximum time to wait between actions.
 %% The average case wait time will be 50% of this value.
--define(DEFAULT_ACTION_TIME, 10000).
+-define(DEFAULT_ACTION_TIME, 60000).
 %% Maximum length of data segment of transaction.
 %% 1024 * 1024
 -define(DEFAULT_MAX_TX_LEN, 10).
@@ -83,7 +83,7 @@ gen_test_wallet() ->
 			file:write(File, [ar_util:encode(Addr) ++ "," ++ integer_to_list(Qty) ++ "\n"]),
 			file:write(File2, [ar_util:encode(Priv) ++ "," ++ ar_util:encode(Pub) ++ "\n"])
 		end,
-		lists:seq(1,10)
+		lists:seq(1,200)
 	),
 	file:close(File),
 	file:close(File2).
@@ -99,8 +99,8 @@ server(
 	}) ->
 	receive
 		stop -> ok
-	after rand:uniform(?DEFAULT_ACTION_TIME) div 10 ->
-		{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+	after rand:uniform(?DEFAULT_ACTION_TIME)->
+		{Priv, Pub} = lists:nth(rand:uniform(200), KeyList),
 		TXList =
 			lists:foldl(
 				fun(X, Acc) ->
@@ -111,7 +111,7 @@ server(
 					[TX|Acc]
 				end,
 				[create_random_data_tx({Priv, Pub}, MaxDataLen)],
-				lists:seq(1,rand:uniform(5))
+				lists:seq(1,rand:uniform(2))
 			),
 		lists:foreach(
 			fun(Peer) ->
