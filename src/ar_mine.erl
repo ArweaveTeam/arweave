@@ -105,7 +105,7 @@ server(
             self() ! mine,
             % Continue server loop with new block_data_segment
             NewTimestamp = os:system_time(seconds),
-            Diff = next_diff(CurrentB),
+            NewDiff = next_diff(CurrentB),
             WalletList = CurrentB#block.wallet_list,
             NewTXs = ar_node:filter_all_out_of_order_txs(WalletList, RawTXs),
             server(
@@ -126,7 +126,7 @@ server(
                             Tags
                         ),
                     tags = Tags,
-                    diff = Diff
+                    diff = NewDiff
                 }
             );
         {refresh_data, PID} ->

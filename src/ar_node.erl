@@ -750,7 +750,23 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			server(S#state {miner = undefined} );
 		_ ->
 			S = RawS1#state { gossip = NewGS },
-			TXs = ar_storage:read_tx(NewB#block.txs),
+			% If transaction not found in state or storage, txlist built will be incomplete
+			% and will fail in validate
+			TXs = lists:foldl(
+				fun(T, Acc) ->
+					%state contains it
+					case [TX || TX <- S#state.txs, TX#tx.id == T] of
+						[] ->
+							case ar_storage:read_tx(T) of
+								unavailable -> Acc;
+								TX -> [TX|Acc]
+							end;
+						[TX|_] -> [TX|Acc]
+					end
+				end,
+				[],
+				NewB#block.txs
+			),
 			{FinderPool, _} = calculate_reward_pool(S#state.reward_pool, TXs, NewB#block.reward_addr),
 			WalletList =
 				apply_mining_reward(
