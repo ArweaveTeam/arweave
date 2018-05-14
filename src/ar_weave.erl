@@ -144,10 +144,7 @@ generate_block_data(TXs) ->
 hash(B, TXs, Nonce) when is_record(B, block) ->
 	hash(B#block.hash, generate_block_data(TXs), Nonce);
 hash(Hash, TXs, Nonce) ->
-	crypto:hash(
-		?HASH_ALG,
-		<< Nonce/binary, Hash/binary, TXs/binary >>
-	).
+	crypto:hash(?HASH_ALG, erlang:iolist_to_iovec([Nonce, Hash, TXs])).
 
 %% @doc Create an independent hash from a block. Independent hashes
 %% verify a block's contents in isolation and are stored in a node's hash list.

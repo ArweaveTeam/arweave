@@ -73,3 +73,14 @@ diff:
 
 todo:
 	grep --color --line-number --recursive TODO "src"
+
+docker-image:
+	docker build -t arweave .
+
+testnet-docker: docker-image
+	cat peers.testnet | sed 's/^/peer /' \
+		| xargs docker run --name=arweave-testnet arweave
+
+dev-chain-docker: docker-image
+	docker run --cpus=0.5 --rm --name arweave-dev-chain --publish 1984:1984 arweave \
+		no_auto_join init mine peer 127.0.0.1:9

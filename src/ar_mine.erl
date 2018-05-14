@@ -13,7 +13,8 @@
 	diff,
 	data,
 	delay,
-	txs
+	txs,
+	nonces
 }).
 
 %% @doc Returns the PID of a new mining worker process.
@@ -33,7 +34,8 @@ start(Hash, Diff, Data, Delay, TXs) ->
 						diff = Diff,
 						data = Data,
 						delay = Delay,
-						txs = TXs
+						txs = TXs,
+						nonces = []
 					}
 				)
 			)
@@ -55,7 +57,8 @@ server(
 		hash = Hash,
 		diff = Diff,
 		data = Data,
-		txs = TXs
+		txs = TXs,
+		nonces = Nonces
 	}) ->
 	receive
 		stop ->
@@ -70,11 +73,15 @@ server(
 			);
 		hash ->
 			schedule_hash(S),
-			case validate(Hash, Diff, Data, Nonce = generate()) of
-				false -> server(S);
+			case validate(Hash, Diff, Data, Nonces) of
+				false ->
+					case (length(Nonces) > 256) and coinflip() of
+						false -> server(S#state { nonces = [bool_to_binary(coinflip())|Nonces] });
+						true -> server(S#state { nonces = [] })
+					end;
 				NextHash ->
 					%ar:report_console([{miner, self()}, {found_block, Nonce}]),
-					Parent ! {work_complete, TXs, Hash, NextHash, Diff, Nonce},
+					Parent ! {work_complete, TXs, Hash, NextHash, Diff, iolist_to_binary(Nonces)},
 					ok
 			end
 	end.
@@ -96,8 +103,14 @@ schedule_hash(S = #state { delay = Delay }) ->
 	spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
 	S.
 
-%% @doc Generate a random nonce, to be added to the previous hash.
-generate() -> crypto:strong_rand_bytes(8).
+bool_to_binary(true) -> <<1>>;
+bool_to_binary(false) -> <<0>>.
+
+coinflip() ->
+	case rand:uniform(2) of
+		1 -> true;
+		2 -> false
+	end.
 
 %%% Tests
 

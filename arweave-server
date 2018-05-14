@@ -1,16 +1,14 @@
-#!/bin/bash
+#!/bin/sh
+
+set -o errexit
 
 mkdir -p ebin logs blocks wallets txs
 
-while true; do
-	erlc +export_all -o ebin/ src/ar.erl
-	if erl -pa ebin/ -s ar rebuild -run ar main "$@"; then
-		echo "Heartbeat: Server terminated safely."
-		exit 1
-	else
-		echo "Heartbeat: The Arweave server has terminated unsafely. It will restart in 15 seconds."
-		echo "Heartbeat: If you would like to avoid this, please press control+C now..."
-		sleep 15
-	fi
-done
+if [ -t 1 ]; then
+	SHELL_OPTS=
+else
+	SHELL_OPTS=-noinput
+fi
 
+erlc +export_all -o ebin/ src/ar.erl
+exec erl $SHELL_OPTS -pa ebin/ -s ar rebuild -run ar main "$@"
