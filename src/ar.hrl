@@ -37,7 +37,7 @@
 %% The number of blocks behind the most recent block to store.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 %% WARNING: ENABLE ONLY WHILE TESTING
-%-define(DEBUG, false).
+-define(DEBUG, false).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
@@ -50,18 +50,18 @@
 
 %% Default timeout value for network requests.
 -define(NET_TIMEOUT, 10000).
-%% Default time to wait after a failed join to retry.
+%% Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 10000).
-%% Default time to refresh the data segment being mined on.
+%% Time between attempts to find(/optimise) peers.
 -define(REFRESH_MINE_DATA_TIMER, 60000).
 %% Time between attempts to find(/optimise) peers.
--define(GET_MORE_PEERS_TIME, 2 * 60 * 1000).
+-define(GET_MORE_PEERS_TIME,  90 * 1000).
 %% Time to wait before not ignoring bad peers
 -define(IGNORE_PEERS_TIME, 5 * 60 * 1000).
 %% Number of transfers for which not to score (and potentially drop) new peers.
--define(PEER_GRACE_PERIOD, 50).
+-define(PEER_GRACE_PERIOD, 100).
 %% Never drop to lower than this number of peers.
--define(MINIMUM_PEERS, 2).
+-define(MINIMUM_PEERS, 4).
 %% Default list of peers if no others are specified
 -define(DEFAULT_PEER_LIST,
 	[
@@ -74,8 +74,8 @@
 		{165,227,40,8,1984},
 		{139,59,81,47,1984}
 	]).
-%% Length of time to wait (nanoseconds) before dropping after last activity
--define(PEER_TIMEOUT, 300000000000).
+%% Length of time to wait (seconds) before dropping after last activity
+-define(PEER_TIMEOUT, 90).
 
 %% Log output directory
 -define(LOG_DIR, "logs").

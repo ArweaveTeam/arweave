@@ -87,5 +87,9 @@ maybe_drop_peers(Rank, NumPeers, [Peer|Peers]) ->
 
 %% Generate a boolean 'drop or not' value from a rank and the number of peers.
 roll(Rank, NumPeers) ->
-	(rand:uniform(NumPeers - ?MINIMUM_PEERS) - 1)
-		> ((Rank - ?MINIMUM_PEERS)/2).
+	case Rank =< ?MINIMUM_PEERS of
+		true -> true;
+		false -> 
+			(2 * rand:uniform(NumPeers - ?MINIMUM_PEERS)) >=
+				(Rank - ?MINIMUM_PEERS)
+	end.
