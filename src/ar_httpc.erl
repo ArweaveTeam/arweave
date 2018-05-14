@@ -52,7 +52,7 @@ update_timer(IP) ->
 					transfers = P#performance.transfers,
 					time = P#performance.time ,
 					bytes = P#performance.bytes,
-					timestamp = os:systemtime()
+					timestamp = os:system_time(seconds)
 				}
 			)
 	end.

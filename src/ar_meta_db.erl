@@ -80,7 +80,7 @@ basic_storage_test() ->
 
 %% @doc Data older than ?PEER_TIMEOUT is removed, newer data is not
 purge_old_peers_test() ->
-		Time = os:system_time(),
+		Time = os:system_time(seconds),
 		P1 = #performance{timestamp = Time - (?PEER_TIMEOUT + 1)},
 		P2 = #performance{timestamp = Time - 1},
 		put({peer, {127,0,0,1,1984}}, P1),
