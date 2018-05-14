@@ -34,6 +34,7 @@
 	reward_addr = unclaimed,
 	trusted_peers = [],
 	waiting_txs = [],
+	potential_txs = [],
     tags = [],
 	reward_pool = 0
 }).
@@ -464,11 +465,23 @@ server(
 					server(S#state { gossip = NewGS })
 			end;
 		{add_tx, TX} ->
-			timer:send_after(
-				calculate_delay(byte_size(ar_tx:to_binary(TX))),
-				{apply_tx, TX}
-				),
-			server(S#state { waiting_txs = [TX|S#state.waiting_txs] });
+			ConflictingTXs =
+				[
+					T
+				||
+					T <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
+					T#tx.last_tx == TX#tx.last_tx,
+					T#tx.owner == TX#tx.owner
+				],
+			case ConflictingTXs of
+				[] ->
+					timer:send_after(
+						calculate_delay(byte_size(ar_tx:to_binary(TX))),
+						{apply_tx, TX}
+					),
+					server(S#state { waiting_txs = [TX|S#state.waiting_txs] });
+				_ -> server(S#state { potential_txs = [TX|S#state.potential_txs] })
+			end;
 		{apply_tx, TX} ->
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			add_tx_to_server(S, NewGS, TX);
@@ -755,7 +768,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			TXs = lists:foldr(
 				fun(T, Acc) ->
 					%state contains it
-					case [TX || TX <- (S#state.txs ++ S#state.waiting_txs), TX#tx.id == T] of
+					case [TX || TX <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs), TX#tx.id == T] of
 						[] ->
 							case ar_storage:read_tx(T) of
 								unavailable -> 
@@ -839,7 +852,8 @@ integrate_new_block(
 				txs = NotMinedTXs,
 				height = NewB#block.height,
 				floating_wallet_list = apply_txs(WalletList, TXs),
-				reward_pool = NewB#block.reward_pool
+				reward_pool = NewB#block.reward_pool,
+				potential_txs = []
 			}
 		)
 	).
@@ -914,7 +928,8 @@ integrate_block_from_miner(
 						txs = NotMinedTXs, % TXs not included in the block
 						height = NextB#block.height,
 						floating_wallet_list = apply_txs(WalletList, NotMinedTXs),
-						reward_pool = RewardPool
+						reward_pool = RewardPool,
+						potential_txs = []
 					}
 				)
 			)
@@ -1247,8 +1262,13 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 			S#state { miner = Miner }
 	end.
 
-	calculate_delay(0) -> 0;
-	calculate_delay(Bytes) -> (Bytes * 100) div 1000.
+-ifdef(DEBUG).
+calculate_delay(0) -> 0;
+calculate_delay(Bytes) -> ((Bytes * 100) div 1000).
+-else.
+calculate_delay(0) -> 0;
+calculate_delay(Bytes) -> 5000 + ((Bytes * 100) div 1000).
+-endif.
 
 generate_floating_wallet_list(WalletList, []) ->
 	WalletList;
