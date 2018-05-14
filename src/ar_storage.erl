@@ -78,7 +78,12 @@ write_block(B) ->
 				),
 				BlockToWrite
 			),
-			ar_meta_db:put(used_space, calculate_used_space()),
+			rpc:async_call(
+				node(),
+				ar_meta_db,
+				increase,
+				[used_space, byte_size(list_to_binary(BlockToWrite))]
+			),
 			Name;
 		false ->
 			ar:report(
@@ -118,7 +123,12 @@ write_encrypted_block(Hash, B) ->
 				),
 				BlockToWrite
 			),
-			ar_meta_db:put(used_space, calculate_used_space()),
+			rpc:async_call(
+				node(),
+				ar_meta_db,
+				increase,
+				[used_space, byte_size(list_to_binary(BlockToWrite))]
+			),
 			Name;
 		false ->
 			ar:report(

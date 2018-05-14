@@ -906,7 +906,7 @@ integrate_block_from_miner(
 						self(),
 						NextB#block.height,
 						NextB,
-						find_recall_block(HashList)
+						RecallB
 					}
 				),
 			ar:report_console(
