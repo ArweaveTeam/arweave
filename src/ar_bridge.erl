@@ -1,6 +1,6 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2, start/3]).
--export([add_tx/2, add_block/4]). % Called from ar_http_iface
+-export([add_tx/3, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1]).
 -export([start_link/1]).
@@ -60,8 +60,8 @@ add_block(PID, OriginPeer, Block, RecallBlock) ->
 	PID ! {add_block, OriginPeer, Block, RecallBlock}.
 
 %% @doc Notify the bridge of a new external block.
-add_tx(PID, TX) ->
-	PID ! {add_tx, TX}.
+add_tx(PID, TX, OriginPeer) ->
+	PID ! {add_tx, TX, OriginPeer}.
 
 %% @doc Add a remote HTTP peer.
 add_remote_peer(PID, Node) ->
@@ -96,8 +96,8 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			server(S#state { ignored_peers = lists:delete(Peer, S#state.ignored_peers) });
 		{ignore_id, ID} ->
 			server(S#state {processed = [ID|S#state.processed]});
-		{add_tx, TX} ->
-			server(maybe_send_to_internal(S, tx, TX));
+		{add_tx, TX, OriginPeer} ->
+			server(maybe_send_to_internal(S, tx, {OriginPeer, TX}));
 		{add_block, OriginPeer, Block, RecallBlock} ->
 			case lists:member(OriginPeer, S#state.ignored_peers) of
 				true -> server(S);
@@ -174,7 +174,9 @@ maybe_send_to_internal(
 				ar_gossip:send(
 					GS,
 					Msg = case Type of
-						tx -> {add_tx, Data};
+						tx ->
+							{_, TX} = Data,
+							{add_tx, TX};
 						block ->
 							{OriginPeer, NewB, RecallB} = Data,
 							{new_block,
@@ -194,8 +196,8 @@ maybe_send_to_internal(
 %% @doc Add the ID of a new TX/block to a processed list.
 add_processed({add_tx, TX}, Procd) ->
 	add_processed(tx, TX, Procd);
-add_processed({new_block, _OriginPeer, _, B, _}, Procd) ->
-	add_processed(block, B, Procd);
+add_processed({new_block, OriginPeer, _, B, _}, Procd) ->
+	add_processed(block, {OriginPeer, B}, Procd);
 add_processed(X, Procd) ->
 	ar:report(
 		[
@@ -203,11 +205,11 @@ add_processed(X, Procd) ->
 			{record, X}
 		]),
 	Procd.
-add_processed(tx, #tx { id = ID }, Procd) -> [ID|Procd];
-add_processed(block, #block { indep_hash = Hash }, Procd) ->
-	[Hash|Procd];
-add_processed(block, {_, B, _}, Procd) ->
-	add_processed(block, B, Procd);
+add_processed(tx, {OriginPeer, #tx { id = ID }}, Procd) -> [{OriginPeer, ID}|Procd];
+add_processed(block, {OriginPeer, #block { indep_hash = Hash }}, Procd) ->
+	[{OriginPeer,Hash}|Procd];
+add_processed(block, {OriginPeer, B, _}, Procd) ->
+	add_processed(block, {OriginPeer, B}, Procd);
 add_processed(X, Y, Procd) ->
 	ar:report(
 		[
@@ -217,9 +219,9 @@ add_processed(X, Y, Procd) ->
 	Procd.
 
 %% @doc Find the ID of a 'data', from type.
-get_id(tx, #tx { id = ID}) -> ID;
-get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
-get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
+get_id(tx, {OriginPeer, #tx { id = ID}}) -> {OriginPeer, ID};
+get_id(block, {OriginPeer, B}) when ?IS_BLOCK(B) -> {OriginPeer, B#block.indep_hash};
+get_id(block, {OriginPeer, #block { indep_hash = Hash}, _}) -> {OriginPeer, Hash}.
 
 %% @doc Send an internal message externally
 send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
@@ -229,7 +231,7 @@ send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 				fun(Peer) ->
 					ar_http_iface:send_new_tx(Peer, TX)
 				end,
-				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX, IP) ]
+				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, {IP, TX}) ]
 			)
 		end
 	),
@@ -246,7 +248,7 @@ send_to_external(
 						fun(Peer) ->
 							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
 						end,
-						[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
+						[ IP || IP <- Peers, not already_processed(S#state.processed, block, {IP, NewB}) ]
 					)
 				end
 			)

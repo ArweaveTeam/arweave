@@ -36,7 +36,9 @@ server(S = #state{ sigs = Sigs}) ->
 		{scan, PID, Type, Data} ->
 			Pass = case Type of
 				block -> true;
-				tx -> (not scan_transaction(Data, Sigs));
+				tx ->
+					{Peer, TX} = Data,
+					(not scan_transaction(TX, Sigs));
 				_ -> false
 			end,
 			PID ! {scanned, Data, Pass},
