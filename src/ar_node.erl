@@ -1,6 +1,6 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1,get_full_pending_txs/1]).
+-export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1, get_full_pending_txs/1, get_reward_pool/1]).
 -export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
@@ -15,7 +15,7 @@
 -export([retry_block/4, retry_full_block/4]).
 -export([filter_all_out_of_order_txs_large_test_slow/0,filter_out_of_order_txs_large_test_slow/0]).
 -export([wallet_two_transaction_test_slow/0, single_wallet_double_tx_before_mine_test_slow/0, single_wallet_double_tx_wrong_order_test_slow/0]).
--export([tx_threading_test_slow/0, bogus_tx_thread_test_slow/0, filter_out_of_order_txs_test_slow/0,filter_all_out_of_order_txs_test_slow/0]).
+-export([tx_threading_test_slow/0, bogus_tx_thread_test_slow/0, filter_out_of_order_txs_test_slow/0,filter_all_out_of_order_txs_test_slow/0, wallet_transaction_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -369,6 +369,12 @@ get_current_diff(Node) ->
 		{current_diff, Diff} -> Diff
 	end.
 
+get_reward_pool(Node) ->
+	Node ! {get_reward_pool, self()},
+	receive
+		{reward_pool, RewardPool} -> RewardPool
+	end.
+
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
 	Node ! mine.
@@ -568,6 +574,9 @@ server(
 						CurrentB#block.last_retarget
 					)
 			},
+			server(S);
+		{get_reward_pool, PID} ->
+			PID ! {reward_pool, S#state.reward_pool},
 			server(S);
 		mine ->
 			server(start_mining(S));

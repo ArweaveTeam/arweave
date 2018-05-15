@@ -5,6 +5,7 @@
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
+-export([get_txs_by_send_recv_test_slow/0]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -161,13 +162,22 @@ handle('POST', [<<"block">>], Req) ->
 			++ ":"
 			++ integer_to_list(Port)
 			),
-	B = BShadow#block {
-		wallet_list = ar_node:apply_txs(
-			ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-			ar_storage:read_tx(BShadow#block.txs)
+	TXs = ar_storage:read_tx(BShadow#block.txs),
+	{FinderPool, _} = ar_node:calculate_reward_pool(
+		ar_node:get_reward_pool(whereis(http_entrypoint_node)),
+		TXs,
+		BShadow#block.reward_addr
 		),
-		hash_list = ar_node:get_hash_list(whereis(http_entrypoint_node))
-		},
+	HashList =
+		ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	WalletList =
+		ar_node:apply_mining_reward(
+			ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
+			BShadow#block.reward_addr,
+			FinderPool,
+			BShadow#block.height
+		),
+	B = BShadow#block { wallet_list = WalletList, hash_list = HashList },
 	RecallHash = ar_util:decode(JSONRecallB),
 	RecallB =
 		case ar_storage:read_block(RecallHash) of
@@ -1529,9 +1539,11 @@ get_txs_by_send_recv_test_slow() ->
 		}, [{timeout, ?NET_TIMEOUT}], []
 	),
 	{ok, {array, TXs}} = ar_serialize:dejsonify(Res),
+	ar:d({id, TX#tx.id}),
+	ar:d({txs, TXs}),
 	true =
 		lists:member(
-			TX#tx.id,
+			SignedTX#tx.id,
 			lists:map(
 				fun ar_util:decode/1,
 				TXs
@@ -1539,7 +1551,7 @@ get_txs_by_send_recv_test_slow() ->
 		),
 	true =
 		lists:member(
-			TX2#tx.id,
+			SignedTX2#tx.id,
 			lists:map(
 				fun ar_util:decode/1,
 				TXs
