@@ -58,17 +58,17 @@ sign(TX, PrivKey, PubKey) ->
 -ifdef(DEBUG).
 verify(#tx { signature = <<>> }, _, _) -> true;
 verify(TX, Diff, WalletList) ->
-	ar:report(
-		[
-			{validate_tx, ar_util:encode(TX#tx.id)},
-			{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)},
-			{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
-			{tx_field_size_verify, tx_field_size_limit(TX)},
-			{tx_tag_field_legal, tag_field_legal(TX)},
-			{tx_last_tx_legal, check_last_tx(WalletList, TX)},
-			{tx_verify_hash, tx_verify_hash(TX)}
-		]
-	),
+	% ar:report(
+	% 	[
+	% 		{validate_tx, ar_util:encode(TX#tx.id)},
+	% 		{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)},
+	% 		{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
+	% 		{tx_field_size_verify, tx_field_size_limit(TX)},
+	% 		{tx_tag_field_legal, tag_field_legal(TX)},
+	% 		{tx_last_tx_legal, check_last_tx(WalletList, TX)},
+	% 		{tx_verify_hash, tx_verify_hash(TX)}
+	% 	]
+	% ),
 	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and
 	tx_cost_above_min(TX, Diff) and
 	tx_field_size_limit(TX) and
@@ -77,17 +77,17 @@ verify(TX, Diff, WalletList) ->
 	tx_verify_hash(TX).
 -else.
 verify(TX, Diff, WalletList) ->
-	ar:report(
-		[
-			{validate_tx, ar_util:encode(ar_wallet:to_address(TX#tx.owner))},
-			{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)},
-			{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
-			{tx_field_size_verify, tx_field_size_limit(TX)},
-			{tx_tag_field_legal, tag_field_legal(TX)},
-			{tx_lasttx_legal, check_last_tx(WalletList, TX)},
-			{tx_verify_hash, tx_verify_hash(TX)}
-		]
-	),
+	% ar:report(
+	% 	[
+	% 		{validate_tx, ar_util:encode(ar_wallet:to_address(TX#tx.owner))},
+	% 		{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)},
+	% 		{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
+	% 		{tx_field_size_verify, tx_field_size_limit(TX)},
+	% 		{tx_tag_field_legal, tag_field_legal(TX)},
+	% 		{tx_lasttx_legal, check_last_tx(WalletList, TX)},
+	% 		{tx_verify_hash, tx_verify_hash(TX)}
+	% 	]
+	% ),
 	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and
 	tx_cost_above_min(TX, Diff) and
 	tx_field_size_limit(TX) and

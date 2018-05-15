@@ -107,12 +107,12 @@ server(
 		end,
 		lists:foreach(
 			fun(Peer) ->
-				ar:report(
-					[
-						{sending_tx, TX#tx.id},
-						{peer, Peer}
-					]
-				),
+				% ar:report(
+				% 	[
+				% 		{sending_tx, TX#tx.id},
+				% 		{peer, Peer}
+				% 	]
+				% ),
 				ar_node:add_tx(Peer, TX)
 		end,
 			Peers

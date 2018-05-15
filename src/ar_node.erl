@@ -1000,7 +1000,7 @@ validate(
     IndepHash = ar_block:verify_indep_hash(NewB),
     Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
-	Time = ar_block:verify_timestamp(NewB),
+	Time = ar_block:verify_timestamp(OldB, NewB),
 	HeightCheck = ar_block:verify_height(NewB, OldB),
 	RetargetCheck = ar_block:verify_last_retarget(NewB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),

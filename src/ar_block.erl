@@ -1,6 +1,6 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
--export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/1, verify_height/2, verify_last_retarget/1, verify_previous_block/2, verify_block_hash_list/2, verify_wallet_list/3]).
+-export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2, verify_height/2, verify_last_retarget/1, verify_previous_block/2, verify_block_hash_list/2, verify_wallet_list/3]).
 -export([encrypt_block/2, decrypt_block/3, encrypt_full_block/2, decrypt_full_block/3, generate_block_key/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -241,8 +241,8 @@ verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
         ).
 
 %% @doc Verify that the block was created within the last ten minutes
-verify_timestamp(NewB) ->
-    (os:system_time(seconds) - NewB#block.timestamp) =< 600.
+verify_timestamp(OldB, NewB) ->
+    (NewB#block.timestamp - OldB#block.timestamp) =< 600.
 
 %% @doc Verify the height of the new block is the one higher than the current height.
 verify_height(NewB, OldB) ->
