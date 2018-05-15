@@ -179,7 +179,7 @@ get_full_block(Peers, ID) when is_list(Peers) ->
 				[] -> unavailable;
 				[B|_] -> B
 			end;
-		Block -> Block
+		_ -> make_full_block(ID)
 	end;
 get_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
@@ -209,7 +209,7 @@ get_encrypted_full_block(Peers, ID) when is_list(Peers) ->
 				[] -> unavailable;
 				[B|_] -> B
 			end;
-		Block -> Block
+		Block -> make_full_block(ID)
 	end;
 get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
