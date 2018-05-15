@@ -789,6 +789,14 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 					FinderPool,
 					NewB#block.height
 				),
+			% {FinderReward, RewardPool} = calculate_reward_pool(OldPool, MinedTXs, RewardAddr),
+			% WalletList =
+			% 	apply_mining_reward(
+			% 		apply_txs(RawWalletList, MinedTXs),
+			% 		RewardAddr,
+			% 		FinderReward,
+			% 		length(HashList) + 1
+			% 	),
 			NewS = S#state { wallet_list = WalletList },
 			case validate(NewS, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
 				true ->
