@@ -175,8 +175,7 @@ maybe_send_to_internal(
 					GS,
 					Msg = case Type of
 						tx ->
-							{_, TX} = Data,
-							{add_tx, TX};
+							{add_tx, Data};
 						block ->
 							{OriginPeer, NewB, RecallB} = Data,
 							{new_block,
