@@ -162,7 +162,22 @@ handle('POST', [<<"block">>], Req) ->
 			++ ":"
 			++ integer_to_list(Port)
 			),
-	TXs = ar_storage:read_tx(BShadow#block.txs),
+	TXs = lists:foldr(
+		fun(T, Acc) ->
+			%state contains it
+			case [TX || TX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node)), TX#tx.id == T] of
+				[] ->
+					case ar_storage:read_tx(T) of
+						unavailable ->
+							Acc;
+						TX -> [TX|Acc]
+					end;
+				[TX|_] -> [TX|Acc]
+			end
+		end,
+		[],
+		BShadow#block.txs
+	),
 	{FinderPool, _} = ar_node:calculate_reward_pool(
 		ar_node:get_reward_pool(whereis(http_entrypoint_node)),
 		TXs,

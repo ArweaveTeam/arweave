@@ -1,6 +1,6 @@
 -module(ar).
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
--export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0]).
+-export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
@@ -351,6 +351,19 @@ test_apps() ->
 test_networks() ->
 	error_logger:tty(false),
 	ar_test_sup:start().
+
+test_slow() ->
+	ar_node:filter_out_of_order_txs_test_slow(),
+	ar_node:filter_out_of_order_txs_large_test_slow(),
+	ar_node:filter_all_out_of_order_txs_test_slow(),
+	ar_node:filter_all_out_of_order_txs_large_test_slow(),
+	ar_node:wallet_transaction_test_slow(),
+	ar_node:wallet_two_transaction_test_slow(),
+	ar_node:single_wallet_double_tx_before_mine_test_slow(),
+	ar_node:single_wallet_double_tx_wrong_order_test_slow(),
+	ar_node:tx_threading_test_slow(),
+	ar_node:bogus_tx_thread_test_slow(),
+	ar_http_iface:get_txs_by_send_recv_test_slow().
 
 %% @doc Generate the project documentation.
 docs() ->

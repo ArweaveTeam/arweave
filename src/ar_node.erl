@@ -1,7 +1,7 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
 -export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1, get_full_pending_txs/1, get_reward_pool/1]).
--export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2]).
+-export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2, get_all_known_txs/1]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
@@ -289,6 +289,13 @@ get_trusted_peers(Proc) when is_pid(Proc) ->
 get_trusted_peers(_) ->
 	unavailable.
 
+get_all_known_txs(Node) ->
+	Node ! {get_all_known_txs, self()},
+	receive
+		{all_known_txs, TXs} -> TXs
+	after ?NET_TIMEOUT -> no_response
+	end.
+
 rejoin(Proc, Peers) ->
 	Proc ! {rejoin, Peers}.
 
@@ -560,6 +567,9 @@ server(
 			server(S);
 		{get_txs, PID} ->
 			PID ! {all_txs, S#state.txs ++ S#state.waiting_txs},
+			server(S);
+		{get_all_known_txs, PID} ->
+			PID ! {all_known_txs, S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs},
 			server(S);
 		{get_floatingwalletlist, PID} ->
 			PID ! {floatingwalletlist, S#state.floating_wallet_list},
