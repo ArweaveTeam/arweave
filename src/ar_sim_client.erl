@@ -180,7 +180,7 @@ create_random_data_tx({Priv, Pub}, MaxTxLen) ->
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub);
 
 create_random_data_tx(KeyList, MaxTxLen) ->
-	{Priv, Pub} = lists:nth(rand:uniform(1), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(200), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
@@ -215,8 +215,8 @@ create_random_data_tx({Priv, Pub}, MaxTxLen, OldTX) ->
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 %% @doc Create a random financial TX between two wallets of amount MaxAmount
 create_random_fin_tx(KeyList, MaxAmount) ->
-	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
-	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(200), KeyList),
+	{_, Dest} = lists:nth(rand:uniform(200), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),

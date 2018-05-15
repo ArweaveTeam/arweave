@@ -96,8 +96,8 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			server(S#state { ignored_peers = lists:delete(Peer, S#state.ignored_peers) });
 		{ignore_id, ID} ->
 			server(S#state {processed = [ID|S#state.processed]});
-		{add_tx, TX, OriginPeer} ->
-			server(maybe_send_to_internal(S, tx, {OriginPeer, TX}));
+		{add_tx, TX, _OriginPeer} ->
+			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, OriginPeer, Block, RecallBlock} ->
 			case lists:member(OriginPeer, S#state.ignored_peers) of
 				true -> server(S);
@@ -196,8 +196,8 @@ maybe_send_to_internal(
 %% @doc Add the ID of a new TX/block to a processed list.
 add_processed({add_tx, TX}, Procd) ->
 	add_processed(tx, TX, Procd);
-add_processed({new_block, OriginPeer, _, B, _}, Procd) ->
-	add_processed(block, {OriginPeer, B}, Procd);
+add_processed({new_block, _, _, B, _}, Procd) ->
+	add_processed(block, B, Procd);
 add_processed(X, Procd) ->
 	ar:report(
 		[
@@ -205,11 +205,11 @@ add_processed(X, Procd) ->
 			{record, X}
 		]),
 	Procd.
-add_processed(tx, {OriginPeer, #tx { id = ID }}, Procd) -> [{OriginPeer, ID}|Procd];
-add_processed(block, {OriginPeer, #block { indep_hash = Hash }}, Procd) ->
-	[{OriginPeer,Hash}|Procd];
-add_processed(block, {OriginPeer, B, _}, Procd) ->
-	add_processed(block, {OriginPeer, B}, Procd);
+add_processed(tx, #tx { id = ID }, Procd) -> [ID|Procd];
+add_processed(block, #block { indep_hash = Hash }, Procd) ->
+	[Hash|Procd];
+add_processed(block, {_, B, _}, Procd) ->
+	add_processed(block, B, Procd);
 add_processed(X, Y, Procd) ->
 	ar:report(
 		[
@@ -219,9 +219,9 @@ add_processed(X, Y, Procd) ->
 	Procd.
 
 %% @doc Find the ID of a 'data', from type.
-get_id(tx, {OriginPeer, #tx { id = ID}}) -> {OriginPeer, ID};
-get_id(block, {OriginPeer, B}) when ?IS_BLOCK(B) -> {OriginPeer, B#block.indep_hash};
-get_id(block, {OriginPeer, #block { indep_hash = Hash}, _}) -> {OriginPeer, Hash}.
+get_id(tx, #tx { id = ID}) -> ID;
+get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
+get_id(block, {_, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% @doc Send an internal message externally
 send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
@@ -231,7 +231,7 @@ send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 				fun(Peer) ->
 					ar_http_iface:send_new_tx(Peer, TX)
 				end,
-				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, {IP, TX}) ]
+				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX) ]
 			)
 		end
 	),
@@ -248,7 +248,7 @@ send_to_external(
 						fun(Peer) ->
 							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
 						end,
-						[ IP || IP <- Peers, not already_processed(S#state.processed, block, {IP, NewB}) ]
+						[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB) ]
 					)
 				end
 			)
