@@ -363,7 +363,8 @@ test_slow() ->
 	ar_node:single_wallet_double_tx_wrong_order_test_slow(),
 	ar_node:tx_threading_test_slow(),
 	ar_node:bogus_tx_thread_test_slow(),
-	ar_http_iface:get_txs_by_send_recv_test_slow().
+	ar_http_iface:get_txs_by_send_recv_test_slow(),
+	ar_fork_recovery:multiple_blocks_ahead_with_transaction_recovery_test_slow().
 
 %% @doc Generate the project documentation.
 docs() ->

@@ -1,5 +1,6 @@
 -module(ar_fork_recovery).
 -export([start/3]).
+-export([multiple_blocks_ahead_with_transaction_recovery_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -197,8 +198,17 @@ try_apply_block(_, NextB, _TXs, B, RecallB) when
 		(not ?IS_BLOCK(RecallB)) ->
 	false;
 try_apply_block(HashList, NextB, TXs, B, RecallB) ->
-	ar_node:validate(HashList,
-		ar_node:apply_txs(B#block.wallet_list, TXs),
+	{FinderReward, _} = ar_node:calculate_reward_pool(B#block.reward_pool, TXs, NextB#block.reward_addr),
+	WalletList =
+		ar_node:apply_mining_reward(
+			ar_node:apply_txs(B#block.wallet_list, TXs),
+			NextB#block.reward_addr,
+			FinderReward,
+			NextB#block.height
+		),
+	ar_node:validate(
+		HashList,
+		WalletList,
 		NextB,
 		TXs,
 		B,
@@ -253,6 +263,41 @@ multiple_blocks_ahead_recovery_test() ->
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
 	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:mine(Node1),
+	receive after 300 -> ok end,
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1),
+	receive after 1500 -> ok end,
+	[B|_] = ar_node:get_blocks(Node2),
+	9 = (ar_storage:read_block(B))#block.height.
+
+multiple_blocks_ahead_with_transaction_recovery_test_slow() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	Node1 = ar_node:start(),
+	Node2 = ar_node:start(),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
+	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
+	B3 = ar_weave:add(B2, []),
+	ar_storage:write_block(hd(B3)),
+	Node1 ! Node2 ! {replace_block_list, B3},
+	ar_node:mine(Node1),
+	ar_node:mine(Node2),
+	receive after 300 -> ok end,
+	ar_node:add_tx(Node1, SignedTX),
 	ar_node:mine(Node1),
 	receive after 300 -> ok end,
 	ar_node:mine(Node1),

@@ -1,7 +1,7 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
--export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1, get_full_pending_txs/1, get_reward_pool/1]).
--export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2, get_all_known_txs/1]).
+-export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1,get_full_pending_txs/1]).
+-export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2, get_all_known_txs/1, get_reward_pool/1]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
@@ -800,22 +800,14 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 				[],
 				NewB#block.txs
 			),
-			{FinderPool, _} = calculate_reward_pool(S#state.reward_pool, TXs, NewB#block.reward_addr),
+			{FinderReward, _} = calculate_reward_pool(S#state.reward_pool, TXs, NewB#block.reward_addr),
 			WalletList =
 				apply_mining_reward(
 					apply_txs(S#state.wallet_list, TXs),
 					NewB#block.reward_addr,
-					FinderPool,
+					FinderReward,
 					NewB#block.height
 				),
-			% {FinderReward, RewardPool} = calculate_reward_pool(OldPool, MinedTXs, RewardAddr),
-			% WalletList =
-			% 	apply_mining_reward(
-			% 		apply_txs(RawWalletList, MinedTXs),
-			% 		RewardAddr,
-			% 		FinderReward,
-			% 		length(HashList) + 1
-			% 	),
 			NewS = S#state { wallet_list = WalletList },
 			case validate(NewS, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
 				true ->
@@ -1610,9 +1602,9 @@ large_weakly_connected_blockweave_with_data_test() ->
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 1000 -> ok end,
+	receive after 1500 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 1000 -> ok end,
+	receive after 1500 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
