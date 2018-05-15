@@ -157,7 +157,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 									0 -> RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list));
 									_ -> RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
 								end,
-								TXs = ar_node:get_tx(Peers, B#block.txs)
+								TXs = ar_node:get_tx(Peers, NextB#block.txs)
 						end
 				end
 		end,
