@@ -293,7 +293,6 @@ get_all_known_txs(Node) ->
 	Node ! {get_all_known_txs, self()},
 	receive
 		{all_known_txs, TXs} -> TXs
-	after ?NET_TIMEOUT -> no_response
 	end.
 
 rejoin(Proc, Peers) ->
@@ -966,14 +965,6 @@ add_tx_to_server(S, NewGS, TX) ->
         true ->
             NewTXs = S#state.txs ++ [TX],
 	        ar:d({added_tx, TX#tx.id}),
-	        case S#state.miner of
-		        undefined -> do_nothing;
-		        PID ->
-			        ar_mine:change_data(
-				        PID,
-				        NewTXs
-			        )
-	        end,
 	        server(S#state { txs = NewTXs, floating_wallet_list = apply_tx(S#state.floating_wallet_list, TX), gossip = NewGS });
         false ->
             server(S#state { gossip = NewGS })

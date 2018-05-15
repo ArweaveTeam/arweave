@@ -108,7 +108,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 			)
 		end;
 	{apply_next_block} ->
-		NextB = ar_node:get_block(Peers, NextH),
+		NextB = ar_node:get_full_block(Peers, NextH),
 		ar:d({applying_fork_recovery, ar_util:encode(NextH)}),
 		case ?IS_BLOCK(NextB) of
 			false ->
@@ -145,7 +145,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						TXs = [],
 						server(S, rejoin);
 					{_X, _Y} ->
-						B = ar_node:get_block(Peers, NextB#block.previous_block),
+						B = ar_node:get_full_block(Peers, NextB#block.previous_block),
 						case ?IS_BLOCK(B) of
 							false ->
 								BHashList = unavailable,
@@ -154,14 +154,22 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 							true ->
 								BHashList = [B#block.indep_hash|B#block.hash_list],
 								case B#block.height of
-									0 -> RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list));
-									_ -> RecallB = ar_node:get_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
+									0 -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list));
+									_ -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
 								end,
-								TXs = ar_node:get_tx(Peers, NextB#block.txs)
+								%%TODO: Rewrite validate so it also takes recall block txs
+								ar_storage:write_tx(RecallB#block.txs),
+								TXs = NextB#block.txs
 						end
 				end
 		end,
-		case try_apply_block(BHashList, NextB, TXs, B, RecallB) of
+		case try_apply_block(
+				BHashList,
+				NextB#block {txs = [T#tx.id||T <- NextB#block.txs]},
+				TXs,
+				B#block {txs = [T#tx.id||T <- B#block.txs]},
+				RecallB#block {txs = [T#tx.id||T <- RecallB#block.txs]})
+		of
 			false ->
 				ar:report_console(
 					[
