@@ -234,10 +234,10 @@ handle('POST', [<<"tx">>], Req) ->
 			),
 	case ar_tx:verify(TX, Diff, FloatingWalletList) of
 		false ->
-			ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+			%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 			{400, [], <<"Transaction verification failed.">>};
 		true ->
-			ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+			%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
 			ar_bridge:add_tx(whereis(http_bridge_node), TX, OrigPeer),
 			{200, [], <<"OK">>}
 	end;

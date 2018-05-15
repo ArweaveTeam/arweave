@@ -30,16 +30,16 @@ start(Peers, TargetBShadow, HashList) ->
 			{peer, Peers}
 		]
 	),
-	TargetB = ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 5),
-	case ?IS_BLOCK(TargetB) of
+	case ?IS_BLOCK(TargetBShadow) of
 		true ->
-			DivergedHashes = drop_until_diverge(
-					lists:reverse(TargetB#block.hash_list),
-					lists:reverse(HashList)
-				) ++ [TargetB#block.indep_hash],
 			PID =
 				spawn(
 					fun() ->
+						TargetB = ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 5),
+						DivergedHashes = drop_until_diverge(
+							lists:reverse(TargetB#block.hash_list),
+							lists:reverse(HashList)
+						) ++ [TargetB#block.indep_hash],
 						server(
 							#state {
 								parent = Parent,
