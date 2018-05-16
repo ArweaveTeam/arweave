@@ -68,16 +68,14 @@ get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	PreviousBlock = ar_node:retry_block(Peers, NewB#block.previous_block, not_found, 5),
+	PreviousBlock = ar_node:retry_full_block(Peers, NewB#block.previous_block, not_found, 5),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-			case {NewB, ar_node:get_block(Peers, RecallBlock)} of
+			case {NewB, ar_node:retry_full_block(Peers, RecallBlock, not_found, 5)} of
 				{B, unavailable} ->
-					ar_storage:write_block(B),
-					ar_storage:write_tx(
-						ar_node:get_tx(Peers, B#block.txs)
-						),
+					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
+					ar_storage:write_tx(B#block.txs),
 					ar:report(
 						[
 							{could_not_retrieve_joining_recall_block},
@@ -87,14 +85,10 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 					timer:sleep(3000),
 					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
 				{B, R} ->
-					ar_storage:write_block(B),
-					ar_storage:write_tx(
-						ar_node:get_tx(Peers, B#block.txs)
-						),
-					ar_storage:write_block(R),
-					ar_storage:write_tx(
-						ar_node:get_tx(Peers, R#block.txs)
-					),
+					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
+					ar_storage:write_tx(B#block.txs),
+					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
+					ar_storage:write_tx(R#block.txs),
 					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
 			end;
 		false ->

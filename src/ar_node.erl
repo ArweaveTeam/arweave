@@ -230,6 +230,19 @@ retry_full_block(Host, ID, _, Count) ->
 		B -> B
 	end.
 
+retry_encrypted_full_block(_, _, Response, 0) ->
+	Response;
+retry_encrypted_full_block(Host, ID, _, Count) ->
+	case get_full_block(Host, ID) of
+		not_found ->
+			timer:sleep(3000),
+			retry_encrypted_full_block(Host, ID, not_found, Count-1);
+		unavailable ->
+			timer:sleep(3000),
+			retry_encrypted_full_block(Host, ID, unavailable, Count-1);
+		B -> B
+	end.
+
 %% @doc convert a block header into a full block
 make_full_block(ID) ->
 	BlockHeader = ar_storage:read_block(ID),
@@ -1241,17 +1254,33 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-            FullBlock = get_encrypted_full_block(
-				ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-				RecallHash
-			),
-			ar_storage:write_encrypted_block(RecallHash, FullBlock),
-			ar:report(
-				[
-					{could_not_start_mining},
-					{could_not_retrieve_recall_block}
-				]
-			),
+			FullBlock = retry_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, unavailable, 5),
+			case FullBlock of
+				unavailable ->
+					ar:report(
+						[
+							{could_not_start_mining},
+							{could_not_retrieve_recall_block},
+							{could_not_retrieve_encrypted_recall_block}
+						]
+					);
+				not_found ->
+					ar:report(
+						[
+							{could_not_start_mining},
+							{could_not_retrieve_recall_block},
+							{could_not_retrieve_encrypted_recall_block}
+						]
+					);
+				_ ->
+					ar_storage:write_encrypted_block(RecallHash, FullBlock),
+					ar:report(
+						[
+							{could_not_start_mining},
+							{could_not_retrieve_recall_block}
+						]
+					)
+			end,
 			S;
 		RecallB ->
 			if not is_record(RecallB, block) ->
