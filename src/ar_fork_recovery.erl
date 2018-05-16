@@ -95,7 +95,9 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 				[NextH|HashList] ++ lists:reverse(BlockList)
 			),
 		case HashListExtra of
-		[] -> server(S);
+		[] ->
+			ar:d(failed_to_update_target_block), 
+			server(S);
 		H ->
 			ar:d({current_target, TargetB#block.height}),
 			ar:d({updating_target_block, Block#block.height}),

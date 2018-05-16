@@ -987,7 +987,7 @@ add_tx_to_server(S, NewGS, TX) ->
     case (Mem div 4) > byte_size(ar_tx:to_binary(TX)) of
         true ->
             NewTXs = S#state.txs ++ [TX],
-	        ar:d({added_tx, TX#tx.id}),
+	        %ar:d({added_tx, TX#tx.id}),
 	        server(S#state { txs = NewTXs, floating_wallet_list = apply_tx(S#state.floating_wallet_list, TX), gossip = NewGS });
         false ->
             server(S#state { gossip = NewGS })
@@ -1177,7 +1177,7 @@ do_apply_tx(
 					lists:keyreplace(To, 1, NewWalletList, {To, OldBalance + Qty, LastTX})
 			end;
 		_ ->
-			ar:report([{ignoring_tx, ID}, starting_wallet_not_instantiated]),
+			%ar:report([{ignoring_tx, ID}, starting_wallet_not_instantiated]),
 			WalletList
 	end.
 
