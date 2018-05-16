@@ -477,7 +477,22 @@ server(
 						HashList
 					);
 				{NewGS, {add_tx, TX}} ->
-					add_tx_to_server(S, NewGS, TX);
+					ConflictingTXs =
+						[
+							T
+						||
+							T <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
+							((T#tx.last_tx == TX#tx.last_tx) and (T#tx.owner == TX#tx.owner))
+						],
+					case ConflictingTXs of
+						[] ->
+							timer:send_after(
+								calculate_delay(byte_size(ar_tx:to_binary(TX))),
+								{apply_tx, TX}
+							),
+							server(S#state { waiting_txs = ar_util:unique([TX|S#state.waiting_txs]), gossip = NewGS });
+						_ -> server(S#state { potential_txs = ar_util:unique([TX|S#state.potential_txs]), gossip = NewGS })
+					end;
 				{NewGS, ignore} ->
 					server(S#state { gossip = NewGS });
 				{NewGS, X} ->
@@ -495,8 +510,7 @@ server(
 					T
 				||
 					T <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
-					T#tx.last_tx == TX#tx.last_tx,
-					T#tx.owner == TX#tx.owner
+					((T#tx.last_tx == TX#tx.last_tx) and (T#tx.owner == TX#tx.owner))
 				],
 			case ConflictingTXs of
 				[] ->
@@ -504,8 +518,8 @@ server(
 						calculate_delay(byte_size(ar_tx:to_binary(TX))),
 						{apply_tx, TX}
 					),
-					server(S#state { waiting_txs = [TX|S#state.waiting_txs] });
-				_ -> server(S#state { potential_txs = [TX|S#state.potential_txs] })
+					server(S#state { waiting_txs = ar_util:unique([TX|S#state.waiting_txs]) });
+				_ -> server(S#state { potential_txs = ar_util:unique([TX|S#state.potential_txs]) })
 			end;
 		{apply_tx, TX} ->
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
@@ -858,7 +872,7 @@ integrate_new_block(
 		NewB) ->
 	% Filter completed TXs from the pending list.
 
-	RawNotMinedTXs =
+	RawKeepNotMinedTXs =
 		lists:filter(
 			fun(T) ->
                 (not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
@@ -872,7 +886,7 @@ integrate_new_block(
 			end,
 			TXs ++ WaitingTXs ++ PotentialTXs
 		),
-	%NotMinedTXs = filter_all_out_of_order_txs(NewB#block.wallet_list, RawNotMinedTXs),
+	KeepNotMinedTXs = filter_all_out_of_order_txs(NewB#block.wallet_list, RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
 	% Write new block and included TXs to local storage.
 	ar_storage:write_block(NewB),
@@ -890,7 +904,7 @@ integrate_new_block(
 		reset_miner(
 			S#state {
 				hash_list = [NewB#block.indep_hash|HashList],
-				txs = RawNotMinedTXs,
+				txs = KeepNotMinedTXs,
 				height = NewB#block.height,
 				floating_wallet_list = apply_txs(WalletList, TXs),
 				reward_pool = NewB#block.reward_pool,
@@ -988,7 +1002,11 @@ add_tx_to_server(S, NewGS, TX) ->
         true ->
             NewTXs = S#state.txs ++ [TX],
 	        %ar:d({added_tx, TX#tx.id}),
-	        server(S#state { txs = NewTXs, floating_wallet_list = apply_tx(S#state.floating_wallet_list, TX), gossip = NewGS });
+	        server(S#state {
+				txs = NewTXs,
+				floating_wallet_list = apply_tx(S#state.floating_wallet_list, TX),
+				gossip = NewGS,
+				waiting_txs = (S#state.waiting_txs -- [TX]) });
         false ->
             server(S#state { gossip = NewGS })
     end.
@@ -1616,9 +1634,9 @@ large_blockweave_with_data_test() ->
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 100)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 1000 -> ok end,
+	receive after 1500 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 1000 -> ok end,
+	receive after 1500 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
@@ -1632,7 +1650,7 @@ large_weakly_connected_blockweave_with_data_test() ->
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 1500 -> ok end,
+	receive after 2000 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
 	receive after 1500 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
@@ -1641,22 +1659,24 @@ large_weakly_connected_blockweave_with_data_test() ->
 
 %% @doc Ensure that the network can add multiple peices of data and have it mined into blocks.
 medium_blockweave_mine_multiple_data_test() ->
-	ar_storage:clear(),
-	TestData1 = ar_tx:new(<<"TEST DATA1">>),
-	ar_storage:write_tx(TestData1),
-	TestData2 = ar_tx:new(<<"TEST DATA2">>),
-	ar_storage:write_tx(TestData2),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
+	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
 	B0 = ar_weave:init([]),
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 50) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
-	add_tx(ar_util:pick_random(Nodes), TestData1),
-	add_tx(ar_util:pick_random(Nodes), TestData2),
-	receive after 1000 -> ok end,
+	add_tx(ar_util:pick_random(Nodes), SignedTX),
+	add_tx(ar_util:pick_random(Nodes), SignedTX2),
+	receive after 1500 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 1000 -> ok end,
+	receive after 1250 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
-	true = lists:member(TestData1#tx.id, (hd(ar_storage:read_block(B1)))#block.txs),
-	true = lists:member(TestData2#tx.id, (hd(ar_storage:read_block(B1)))#block.txs).
+	true = lists:member(SignedTX#tx.id, (hd(ar_storage:read_block(B1)))#block.txs),
+	true = lists:member(SignedTX2#tx.id, (hd(ar_storage:read_block(B1)))#block.txs).
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
 medium_blockweave_multi_mine_test() ->

@@ -1237,7 +1237,15 @@ get_block_by_hash_test() ->
 
 %% @doc Ensure that full blocks can be received via a hash.
 get_full_block_by_hash_test() ->
+
 	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{Priv2, Pub2} = ar_wallet:new(),
+	{_Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
+	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
 	[B0] = ar_weave:init([]),
 	Node = ar_node:start([], [B0]),
 	reregister(Node),
@@ -1245,16 +1253,16 @@ get_full_block_by_hash_test() ->
 	reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	receive after 200 -> ok end,
-	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
+	send_new_tx({127, 0, 0, 1}, SignedTX),
 	receive after 200 -> ok end,
-	send_new_tx({127, 0, 0, 1}, TX1 = ar_tx:new(<<"DATA2">>)),
+	send_new_tx({127, 0, 0, 1}, SignedTX2),
 	receive after 200 -> ok end,
 	ar_node:mine(Node),
 	receive after 200 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
 	B2 = get_block({127, 0, 0, 1}, B1),
 	B3 = get_full_block({127, 0, 0, 1}, B1),
-	B3 = B2#block {txs = [TX, TX1]}.
+	B3 = B2#block {txs = [SignedTX, SignedTX2]}.
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
