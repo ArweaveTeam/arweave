@@ -851,10 +851,13 @@ integrate_new_block(
 		S = #state {
 			txs = TXs,
 			hash_list = HashList,
-			wallet_list = WalletList
+			wallet_list = WalletList,
+			waiting_txs = WaitingTXs,
+			potential_txs = PotentialTXs
 		},
 		NewB) ->
 	% Filter completed TXs from the pending list.
+
 	RawNotMinedTXs =
 		lists:filter(
 			fun(T) ->
@@ -862,8 +865,15 @@ integrate_new_block(
 			end,
 			TXs
 		),
-	NotMinedTXs = filter_all_out_of_order_txs(NewB#block.wallet_list, RawNotMinedTXs),
-	BlockTXs = TXs -- NotMinedTXs,
+	NotMinedTXs =
+		lists:filter(
+			fun(T) ->
+                (not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
+			end,
+			TXs ++ WaitingTXs ++ PotentialTXs
+		),
+	%NotMinedTXs = filter_all_out_of_order_txs(NewB#block.wallet_list, RawNotMinedTXs),
+	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
 	% Write new block and included TXs to local storage.
 	ar_storage:write_block(NewB),
 	ar_storage:write_tx(BlockTXs),
@@ -880,7 +890,7 @@ integrate_new_block(
 		reset_miner(
 			S#state {
 				hash_list = [NewB#block.indep_hash|HashList],
-				txs = NotMinedTXs,
+				txs = RawNotMinedTXs,
 				height = NewB#block.height,
 				floating_wallet_list = apply_txs(WalletList, TXs),
 				reward_pool = NewB#block.reward_pool,
