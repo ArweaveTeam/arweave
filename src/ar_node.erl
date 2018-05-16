@@ -889,8 +889,8 @@ integrate_new_block(
 	KeepNotMinedTXs = filter_all_out_of_order_txs(NewB#block.wallet_list, RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
 	% Write new block and included TXs to local storage.
-	ar_storage:write_block(NewB),
 	ar_storage:write_tx(BlockTXs),
+	ar_storage:write_block(NewB),
 	% Recurse over the new block.
 	ar:report_console(
 		[
@@ -950,8 +950,8 @@ integrate_block_from_miner(
                 reset_miner(OldS)
             );
 		true ->
-			ar_storage:write_block(NextB),
 			ar_storage:write_tx(MinedTXs),
+			ar_storage:write_block(NextB),
 			app_search:update_tag_table(NextB),
 			{NewGS, _} =
 				ar_gossip:send(

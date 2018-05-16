@@ -47,6 +47,8 @@ start(Node, RawPeers, RawNewB) ->
 		_ -> already_running
 	end.
 %% @doc Verify peer(s) are on the same network as the client.
+
+-ifdef(DEBUG).
 filter_peer_list(Peers) when is_list(Peers) ->
 	lists:filter(
 		fun(Peer) when is_pid(Peer) -> true;
@@ -54,7 +56,15 @@ filter_peer_list(Peers) when is_list(Peers) ->
 		end,
 	Peers);
 filter_peer_list(Peer) -> filter_peer_list([Peer]).
-
+-else.
+filter_peer_list(Peers) when is_list(Peers) ->
+	lists:filter(
+		fun(Peer) when is_pid(Peer) -> false;
+		   (Peer) -> ar_http_iface:get_info(Peer, name) == ?NETWORK_NAME
+		end,
+	Peers);
+filter_peer_list(Peer) -> filter_peer_list([Peer]).
+-endif.
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks
 get_block_and_trail(_Peers, NewB, []) ->
@@ -74,8 +84,8 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
 			case {NewB, ar_node:retry_full_block(Peers, RecallBlock, not_found, 5)} of
 				{B, unavailable} ->
-					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
 					ar_storage:write_tx(B#block.txs),
+					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
 					ar:report(
 						[
 							{could_not_retrieve_joining_recall_block},
@@ -85,10 +95,10 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 					timer:sleep(3000),
 					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
 				{B, R} ->
-					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
 					ar_storage:write_tx(B#block.txs),
-					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
+					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
 					ar_storage:write_tx(R#block.txs),
+					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
 					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
 			end;
 		false ->
