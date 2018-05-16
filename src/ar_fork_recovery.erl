@@ -92,7 +92,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		HashListExtra =
 			setminus(
 				lists:reverse([Block#block.indep_hash|Block#block.hash_list]),
-				[NextH|HashList] ++ lists:reverse(BlockList)
+				lists:reverse(BlockList) ++ [NextH|HashList]
 			),
 		case HashListExtra of
 		[] ->
