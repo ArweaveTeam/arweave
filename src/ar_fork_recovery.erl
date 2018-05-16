@@ -110,7 +110,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 			)
 		end;
 	{apply_next_block} ->
-		NextB = ar_node:get_full_block(Peers, NextH),
+		NextB = ar_http_iface:get_full_block(Peers, NextH),
 		ar:d({applying_fork_recovery, ar_util:encode(NextH)}),
 		case ?IS_BLOCK(NextB) of
 			false ->
@@ -147,7 +147,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						TXs = [],
 						server(S, rejoin);
 					{_X, _Y} ->
-						B = ar_node:get_block(Peers, NextB#block.previous_block),
+						B = ar_http_iface:get_block(Peers, NextB#block.previous_block),
 						case ?IS_BLOCK(B) of
 							false ->
 								BHashList = unavailable,
@@ -156,8 +156,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 							true ->
 								BHashList = [B#block.indep_hash|B#block.hash_list],
 								case B#block.height of
-									0 -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list));
-									_ -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
+									0 -> RecallB = ar_http_iface:get_full_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list));
+									_ -> RecallB = ar_http_iface:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
 								end,
 								%%TODO: Rewrite validate so it also takes recall block txs
 								ar:d({old_block, B#block.indep_hash}),
