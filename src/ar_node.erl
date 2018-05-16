@@ -602,14 +602,18 @@ server(
 			server(S);
 		{get_current_diff, PID} ->
 			CurrentB = ar_util:get_head_block(HashList),
-			PID ! {
-					current_diff,
-					ar_retarget:calculate_difficulty(
-						CurrentB#block.diff,
-						os:system_time(seconds),
-						CurrentB#block.last_retarget
-					)
-			},
+			case ?IS_BLOCK(CurrentB) of
+				true ->
+					PID ! {
+							current_diff,
+							ar_retarget:calculate_difficulty(
+								CurrentB#block.diff,
+								os:system_time(seconds),
+								CurrentB#block.last_retarget
+							)
+					};
+				false -> PID ! {current_diff, unavailable}
+			end,
 			server(S);
 		{get_reward_pool, PID} ->
 			PID ! {reward_pool, S#state.reward_pool},

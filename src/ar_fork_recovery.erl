@@ -160,12 +160,12 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 									_ -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
 								end,
 								%%TODO: Rewrite validate so it also takes recall block txs
-								ar:d({old_block, B#block.indep_hash}),
-								ar:d({new_block, NextB#block.indep_hash}),
-								ar:d({recall_block, RecallB#block.indep_hash}),
-								ar:d({old_block_txs, B#block.txs}),
-								ar:d({new_block_txs, NextB#block.txs}),
-								ar:d({recall_block_txs, RecallB#block.txs}),
+								% ar:d({old_block, B#block.indep_hash}),
+								% ar:d({new_block, NextB#block.indep_hash}),
+								% ar:d({recall_block, RecallB#block.indep_hash}),
+								% ar:d({old_block_txs, B#block.txs}),
+								% ar:d({new_block_txs, NextB#block.txs}),
+								% ar:d({recall_block_txs, RecallB#block.txs}),
 								ar_storage:write_tx(RecallB#block.txs),
 								TXs = NextB#block.txs
 						end
