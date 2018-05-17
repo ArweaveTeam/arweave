@@ -446,26 +446,25 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req)
 %% @doc Return the blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
-	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case ?IS_BLOCK(CurrentBlock) of
-		false -> return_block(unavailable);
+	%CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	[Head|HashList] = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	case
+		((ar_util:decode(Hash) == ar_util:get_recall_hash(Head, (length(HashList) + 1), HashList)) and
+		((length(HashList) + 1) > ?STORE_BLOCKS_BEHIND_CURRENT))
+	of
 		true ->
-			case ((ar_util:decode(Hash) == 
-					ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list)) and (CurrentBlock#block.height > 10))
-			of
-				true -> return_block(unavailable);
-				false ->
-					case lists:member(
-							ar_util:decode(Hash),
-							[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
-						) of
-						true ->
-							return_block(
-								ar_node:get_block(whereis(http_entrypoint_node),
-									ar_util:decode(Hash))
-							);
-						false -> return_block(unavailable)
-					end
+			return_block(unavailable);
+		false ->
+			case lists:member(
+					ar_util:decode(Hash),
+					[Head|HashList]
+				) of
+				true ->
+					return_block(
+						ar_node:get_block(whereis(http_entrypoint_node),
+							ar_util:decode(Hash))
+					);
+				false -> return_block(unavailable)
 			end
 	end;
 
@@ -473,28 +472,25 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 %% GET request to endpoint /block/hash/{indep_hash}/all
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
-	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case ?IS_BLOCK(CurrentBlock) of
-		false -> return_block(unavailable);
-		true ->
-			case ((ar_util:decode(Hash) == 
-				ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list)) and (CurrentBlock#block.height > 10))
-			of
-				true -> return_block(unavailable);
-				false ->
-					case lists:member(
-							ar_util:decode(Hash),
-							[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
-						) of
-						true ->
-							FullBlock =
-								ar_node:get_full_block(
-									whereis(http_entrypoint_node),
-									ar_util:decode(Hash)
-								),
-							return_full_block(FullBlock);
-						false -> return_block(unavailable)
-					end
+	[Head|HashList] = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	case
+		((ar_util:decode(Hash) == ar_util:get_recall_hash(Head, (length(HashList) + 1), HashList)) and
+		((length(HashList) + 1) > ?STORE_BLOCKS_BEHIND_CURRENT))
+	of
+		true -> return_block(unavailable);
+		false ->
+			case lists:member(
+					ar_util:decode(Hash),
+					[Head|HashList]
+				) of
+				true ->
+					FullBlock =
+						ar_node:get_full_block(
+							whereis(http_entrypoint_node),
+							ar_util:decode(Hash)
+						),
+					return_full_block(FullBlock);
+				false -> return_block(unavailable)
 			end
 	end;
 
