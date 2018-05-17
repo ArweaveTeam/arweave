@@ -186,9 +186,13 @@ handle('POST', [<<"block">>], Req) ->
 	HashList =
 		lists:foldr(
 			fun(H, Acc) ->
-				case hd(Acc) == H of
-					true -> Acc;
-					false -> [H|Acc]
+				case Acc of
+					[] -> [H|Acc];
+					_ ->
+						case hd(Acc) == H of
+							true -> Acc;
+							false -> [H|Acc]
+						end
 				end
 			end,
 			ar_node:get_hash_list(whereis(http_entrypoint_node)),
