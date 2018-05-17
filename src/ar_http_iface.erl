@@ -283,6 +283,7 @@ handle('GET', [<<"peers">>], Req) ->
 
 %% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
 %% GET request to endpoint /price/{bytes}
+%% TODO: Change so current block does not need to be pulled to calculate cost
 handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	Node = whereis(http_entrypoint_node),
 	B = ar_node:get_current_block(Node),
@@ -508,21 +509,37 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 
 %% @doc Return the block at the given height.
 %% GET request to endpoint /block/height/{height}
+%% TODO: Add handle for negative block numbers
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
-	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	Block = ar_node:get_block(
-		whereis(http_entrypoint_node),
-		list_to_integer(binary_to_list(Height))
-		),
-	case (?IS_BLOCK(Block) and ?IS_BLOCK(CurrentBlock)) of
-		true ->
-			case (Block#block.hash == 
-				ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list) )
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[Head|HashList] ->
+			case list_to_integer(binary_to_list(Height))+1 > length([Head|HashList]) of
+				false ->
+					case
+						(Hash = lists:nth( list_to_integer(binary_to_list(Height))+1,lists:reverse([Head|HashList]))) ==
+						ar_util:get_recall_hash(Head, (length(HashList) + 1), HashList)
 			of
 				true -> return_block(unavailable);
-				false -> return_block(Block)
+						false ->
+							case lists:member(
+									Hash,
+									[Head|HashList]
+								) of
+								true ->
+									return_block(
+										ar_node:get_block(whereis(http_entrypoint_node),
+											Hash)
+									);
+								false -> return_block(unavailable)
+							end
+					end;
+				true -> return_block(unavailable)
 			end;
-		false -> return_block(unavailable)
+		_ ->
+			return_block(
+				ar_node:get_block(whereis(http_entrypoint_node),
+					0)
+			)
 	end;
 
 %% @doc Return the current block.
@@ -709,13 +726,9 @@ return_info() ->
 						{network, ?NETWORK_NAME},
 						{version, ?CLIENT_VERSION},
 						{height,
-							case ar_node:get_blocks(whereis(http_entrypoint_node)) of
-								[H|_] ->
-									case ar_storage:read_block(H) of
-										unavailable -> 0;
-										B -> B#block.height
-									end;
-								_ -> 0
+							case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+								[] -> 0;
+								Hashes -> (length(Hashes) - 1)
 							end},
 						{blocks, ar_storage:blocks_on_disk()},
 						{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))}
@@ -1180,8 +1193,8 @@ get_tx_reward_test() ->
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	% Hand calculated result for 1000 bytes.
-	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff),
-	ExpectedPrice = get_tx_reward({127,0,0,1,1984}, 1000).
+	ExpectedPrice = ar:d(ar_tx:calculate_min_tx_cost(1000, B0#block.diff)),
+	ExpectedPrice = ar:d(get_tx_reward({127,0,0,1,1984}, 1000)).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->
