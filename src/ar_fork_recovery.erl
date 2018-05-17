@@ -22,16 +22,16 @@
 %% @doc Start the 'catch up' server.
 start(Peers, TargetBShadow, HashList) ->
 	Parent = self(),
-	ar:report(
-		[
-			{started_fork_recovery_proc, Parent},
-			{block, ar_util:encode(TargetBShadow#block.indep_hash)},
-			{target_height, TargetBShadow#block.height},
-			{peer, Peers}
-		]
-	),
 	case ?IS_BLOCK(TargetBShadow) of
 		true ->
+			ar:report(
+				[
+					{started_fork_recovery_proc, Parent},
+					{block, ar_util:encode(TargetBShadow#block.indep_hash)},
+					{target_height, TargetBShadow#block.height},
+					{peer, Peers}
+				]
+			),
 			PID =
 				spawn(
 					fun() ->
@@ -91,8 +91,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 	{update_target_block, Block, Peer} ->
 		HashListExtra =
 			setminus(
-				ar:d(lists:reverse([Block#block.indep_hash|Block#block.hash_list])),
-				ar:d(lists:reverse(BlockList) ++ [NextH|HashList])
+				lists:reverse([Block#block.indep_hash|Block#block.hash_list]),
+				lists:reverse(BlockList) ++ [NextH|HashList]
 			),
 		case HashListExtra of
 		[] ->

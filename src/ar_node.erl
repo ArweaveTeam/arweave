@@ -16,6 +16,7 @@
 -export([filter_all_out_of_order_txs_large_test_slow/0,filter_out_of_order_txs_large_test_slow/0]).
 -export([wallet_two_transaction_test_slow/0, single_wallet_double_tx_before_mine_test_slow/0, single_wallet_double_tx_wrong_order_test_slow/0]).
 -export([tx_threading_test_slow/0, bogus_tx_thread_test_slow/0, filter_out_of_order_txs_test_slow/0,filter_all_out_of_order_txs_test_slow/0, wallet_transaction_test_slow/0]).
+-export([large_weakly_connected_blockweave_with_data_test_slow/0,large_blockweave_with_data_test_slow/0,medium_blockweave_mine_multiple_data_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -1632,7 +1633,7 @@ tiny_blockweave_with_added_data_test() ->
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
 %% @doc Test that a slightly larger network is able to receive data and propogate data and blocks.
-large_blockweave_with_data_test() ->
+large_blockweave_with_data_test_slow() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	ar_storage:write_tx(TestData),
@@ -1640,15 +1641,15 @@ large_blockweave_with_data_test() ->
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 100)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 1500 -> ok end,
+	receive after 2500 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 1500 -> ok end,
+	receive after 2500 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
 %% @doc Test that large networks (500 nodes) with only 1% connectivity still function correctly.
-large_weakly_connected_blockweave_with_data_test() ->
+large_weakly_connected_blockweave_with_data_test_slow() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	ar_storage:write_tx(TestData),
@@ -1656,15 +1657,15 @@ large_weakly_connected_blockweave_with_data_test() ->
 	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
 	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 	add_tx(ar_util:pick_random(Nodes), TestData),
-	receive after 2000 -> ok end,
+	receive after 2500 -> ok end,
 	mine(ar_util:pick_random(Nodes)),
-	receive after 1500 -> ok end,
+	receive after 2500 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
 %% @doc Ensure that the network can add multiple peices of data and have it mined into blocks.
-medium_blockweave_mine_multiple_data_test() ->
+medium_blockweave_mine_multiple_data_test_slow() ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),

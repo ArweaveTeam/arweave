@@ -184,20 +184,10 @@ handle('POST', [<<"block">>], Req) ->
 		BShadow#block.reward_addr
 		),
 	HashList =
-		lists:foldr(
-			fun(H, Acc) ->
-				case Acc of
-					[] -> [H|Acc];
-					_ ->
-						case hd(Acc) == H of
-							true -> Acc;
-							false -> [H|Acc]
-						end
-				end
-			end,
-			ar_node:get_hash_list(whereis(http_entrypoint_node)),
-			BShadow#block.hash_list
-		),
+		BShadow#block.hash_list	++
+		(ar_node:get_hash_list(whereis(http_entrypoint_node)) --
+		BShadow#block.hash_list),
+	%ar:d({hashlist, HashList}),
 	WalletList =
 		ar_node:apply_mining_reward(
 			ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
@@ -1253,7 +1243,6 @@ get_block_by_hash_test() ->
 
 %% @doc Ensure that full blocks can be received via a hash.
 get_full_block_by_hash_test() ->
-
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
