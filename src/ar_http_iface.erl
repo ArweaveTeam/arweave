@@ -246,19 +246,19 @@ handle('POST', [<<"tx">>], Req) ->
 		unavailable -> {400, [], <<"Transaction verification failed.">>};
 		Diff ->
 			FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-			OrigPeer =
-				ar_util:parse_peer(
-					bitstring_to_list(elli_request:peer(Req))
-					++ ":"
-					++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-					),
+			% OrigPeer =
+			% 	ar_util:parse_peer(
+			% 		bitstring_to_list(elli_request:peer(Req))
+			% 		++ ":"
+			% 		++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
+			% 		),
 			case ar_tx:verify(TX, Diff, FloatingWalletList) of
 				false ->
 					%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 					{400, [], <<"Transaction verification failed.">>};
 				true ->
 					%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-					ar_bridge:add_tx(whereis(http_bridge_node), TX, OrigPeer),
+					ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
 					{200, [], <<"OK">>}
 			end
 	end;

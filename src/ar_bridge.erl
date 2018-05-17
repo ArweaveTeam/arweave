@@ -1,6 +1,6 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2, start/3]).
--export([add_tx/3, add_block/4]). % Called from ar_http_iface
+-export([add_tx/2, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1]).
 -export([start_link/1]).
@@ -60,8 +60,8 @@ add_block(PID, OriginPeer, Block, RecallBlock) ->
 	PID ! {add_block, OriginPeer, Block, RecallBlock}.
 
 %% @doc Notify the bridge of a new external block.
-add_tx(PID, TX, OriginPeer) ->
-	PID ! {add_tx, TX, OriginPeer}.
+add_tx(PID, TX) ->%, OriginPeer) ->
+	PID ! {add_tx, TX}.%, OriginPeer}.
 
 %% @doc Add a remote HTTP peer.
 add_remote_peer(PID, Node) ->
@@ -96,7 +96,7 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			server(S#state { ignored_peers = lists:delete(Peer, S#state.ignored_peers) });
 		{ignore_id, ID} ->
 			server(S#state {processed = [ID|S#state.processed]});
-		{add_tx, TX, _OriginPeer} ->
+		{add_tx, TX} -> %, _OriginPeer} ->
 			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, OriginPeer, Block, RecallBlock} ->
 			case lists:member(OriginPeer, S#state.ignored_peers) of
