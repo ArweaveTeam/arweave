@@ -69,13 +69,14 @@ start(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin) when is_record(B, bl
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 	PID = spawn(
 		fun() ->
+			ar:d(HashList),
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
 				_ ->
 					ar_cleanup:remove_invalid_blocks(HashList),
 					do_nothing
-			end,
+			end,			
 			Gossip = ar_gossip:init(Peers),
 			Hashes = ar_util:wallets_from_hashes(HashList),
 			Height = ar_util:height_from_hashes(HashList),
@@ -332,6 +333,7 @@ get_wallet_list(Node) ->
 get_hash_list(Node) ->
     Node ! {get_hashlist, self()},
     receive
+		{hashlist, not_joined} -> [];
 		{hashlist, HashList} -> HashList
 	end.
 
