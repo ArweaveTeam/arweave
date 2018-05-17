@@ -184,18 +184,24 @@ handle('POST', [<<"block">>], Req) ->
 		BShadow#block.reward_addr
 		),
 	HashList =
-		BShadow#block.hash_list	++
-		tl(
-			lists:dropwhile(
-				fun(X) ->
-					case BShadow#block.hash_list of
-						[] -> false;
-						_ -> not (X == lists:last(BShadow#block.hash_list))
-						end
-				end,
-				ar_node:get_hash_list(whereis(http_entrypoint_node))
-			)
-		),
+		case {BShadow#block.hash_list, ar_node:get_hash_list(whereis(http_entrypoint_node))} of
+			{[], []} -> [];
+			{[], N} -> N;
+			{S, []} -> S;
+			{S, N} ->
+				S ++
+				tl(
+					lists:dropwhile(
+						fun(X) ->
+							case S of
+								[] -> false;
+								_ -> not (X == lists:last(S))
+								end
+						end,
+						N
+					)
+				)
+		end,
 	%ar:d({hashlist, HashList}),
 	WalletList =
 		ar_node:apply_mining_reward(
