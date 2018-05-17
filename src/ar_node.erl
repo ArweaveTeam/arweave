@@ -1,7 +1,7 @@
 -module(ar_node).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
 -export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1,get_full_pending_txs/1]).
--export([get_current_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2, get_all_known_txs/1, get_reward_pool/1]).
+-export([get_current_diff/1, get_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2, get_all_known_txs/1, get_reward_pool/1]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
@@ -37,7 +37,9 @@
 	waiting_txs = [],
 	potential_txs = [],
     tags = [],
-	reward_pool = 0
+	reward_pool = 0,
+	diff = 0,
+	last_retarget
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -70,12 +72,16 @@ start(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin) when is_record(B, bl
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 	PID = spawn(
 		fun() ->
-			ar:d(HashList),
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
-					ar_join:start(self(), Peers);
+					ar_join:start(self(), Peers),
+					Diff = 0,
+					LastRetarget = 0;
 				_ ->
 					ar_cleanup:remove_invalid_blocks(HashList),
+					Block = ar_storage:read_block(hd(HashList)),
+					Diff = Block#block.diff,
+					LastRetarget = Block#block.last_retarget,
 					do_nothing
 			end,			
 			Gossip = ar_gossip:init(Peers),
@@ -90,7 +96,10 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 					mining_delay = MiningDelay,
 					reward_addr = RewardAddr,
 					height = Height,
-					trusted_peers = Peers
+					trusted_peers = Peers,
+					diff = Diff,
+					last_retarget = LastRetarget
+
 				}
 			)
 		end
@@ -391,6 +400,12 @@ get_current_diff(Node) ->
 		{current_diff, Diff} -> Diff
 	end.
 
+get_diff(Node) ->
+	Node ! {get_diff, self()},
+	receive
+		{diff, Diff} -> Diff
+	end.
+
 get_reward_pool(Node) ->
 	Node ! {get_reward_pool, self()},
 	receive
@@ -604,19 +619,21 @@ server(
 			PID ! {floatingwalletlist, S#state.floating_wallet_list},
 			server(S);
 		{get_current_diff, PID} ->
-			CurrentB = ar_util:get_head_block(HashList),
-			case ?IS_BLOCK(CurrentB) of
-				true ->
-					PID ! {
-							current_diff,
-							ar_retarget:calculate_difficulty(
-								CurrentB#block.diff,
-								os:system_time(seconds),
-								CurrentB#block.last_retarget
-							)
-					};
-				false -> PID ! {current_diff, unavailable}
-			end,
+		    PID ! {
+				current_diff,
+				case ar_retarget:is_retarget_height(S#state.height + 1) of
+					true -> ar_retarget:maybe_retarget(
+							S#state.height + 1,
+							S#state.diff,
+							os:system_time(seconds),
+							S#state.last_retarget
+						);
+					false -> S#state.diff
+				end
+			},
+			server(S);
+		{get_diff, PID} ->
+			PID ! {diff, S#state.diff},
 			server(S);
 		{get_reward_pool, PID} ->
 			PID ! {reward_pool, S#state.reward_pool},
@@ -697,7 +714,13 @@ server(
 					S#state {
 						hash_list = NewHs,
 						wallet_list = NewB#block.wallet_list,
-						height = NewB#block.height
+						height = NewB#block.height,
+						reward_pool = NewB#block.reward_pool,
+						floating_wallet_list = NewB#block.wallet_list,
+						txs = [],
+						potential_txs = S#state.txs,
+						diff = NewB#block.diff,
+						last_retarget = NewB#block.last_retarget
 					}
 				)
 			);
@@ -716,7 +739,13 @@ server(
 					S#state {
 						hash_list = NewHs,
 						wallet_list = NewB#block.wallet_list,
-						height = NewB#block.height
+						height = NewB#block.height,
+						reward_pool = NewB#block.reward_pool,
+						floating_wallet_list = NewB#block.wallet_list,
+						txs = [],
+						potential_txs = S#state.txs,
+						diff = NewB#block.diff,
+						last_retarget = NewB#block.last_retarget
 					}
 				)
 			);
@@ -915,7 +944,9 @@ integrate_new_block(
 				height = NewB#block.height,
 				floating_wallet_list = apply_txs(WalletList, TXs),
 				reward_pool = NewB#block.reward_pool,
-				potential_txs = []
+				potential_txs = [],
+				diff = NewB#block.diff,
+				last_retarget = NewB#block.last_retarget
 			}
 		)
 	).
@@ -991,7 +1022,9 @@ integrate_block_from_miner(
 						height = NextB#block.height,
 						floating_wallet_list = apply_txs(WalletList, NotMinedTXs),
 						reward_pool = RewardPool,
-						potential_txs = []
+						potential_txs = [],
+						diff = NextB#block.diff,
+						last_retarget = NextB#block.last_retarget
 					}
 				)
 			)

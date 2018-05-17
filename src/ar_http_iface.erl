@@ -285,15 +285,13 @@ handle('GET', [<<"peers">>], Req) ->
 %% GET request to endpoint /price/{bytes}
 %% TODO: Change so current block does not need to be pulled to calculate cost
 handle('GET', [<<"price">>, SizeInBytes], _Req) ->
-	Node = whereis(http_entrypoint_node),
-	B = ar_node:get_current_block(Node),
 	{200, [],
 		integer_to_list(
 			ar_tx:calculate_min_tx_cost(
 				list_to_integer(
 					binary_to_list(SizeInBytes)
 				),
-				B#block.diff
+				ar_node:get_current_diff(whereis(http_entrypoint_node))
 			)
 		)
 	};
