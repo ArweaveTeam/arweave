@@ -447,9 +447,8 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req)
 %% GET request to endpoint /block/hash/{indep_hash}
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	%CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	[Head|HashList] = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-	case ((length(HashList) + 1) > ?STORE_BLOCKS_BEHIND_CURRENT) of
-		true ->
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[Head|HashList] ->
 			case
 				(ar_util:decode(Hash) == ar_util:get_recall_hash(Head, (length(HashList) + 1), HashList)) of
 				true ->
@@ -467,7 +466,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 						false -> return_block(unavailable)
 					end
 			end;
-		false ->
+		_ ->
 			return_block(
 				ar_node:get_block(whereis(http_entrypoint_node),
 					ar_util:decode(Hash))
@@ -477,9 +476,8 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 %% GET request to endpoint /block/hash/{indep_hash}/all
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
-	[Head|HashList] = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-	case ((length(HashList) + 1) > ?STORE_BLOCKS_BEHIND_CURRENT) of
-		true ->
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[Head|HashList] ->
 			case
 				(ar_util:decode(Hash) == ar_util:get_recall_hash(Head, (length(HashList) + 1), HashList)) of
 				true ->
@@ -497,8 +495,9 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 								),
 							return_full_block(FullBlock);
 						false -> return_block(unavailable)
+					end
 			end;
-		false ->
+		_ ->
 			FullBlock =
 				ar_node:get_full_block(
 					whereis(http_entrypoint_node),
