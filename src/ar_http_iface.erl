@@ -185,8 +185,17 @@ handle('POST', [<<"block">>], Req) ->
 		),
 	HashList =
 		BShadow#block.hash_list	++
-		(ar_node:get_hash_list(whereis(http_entrypoint_node)) --
-		BShadow#block.hash_list),
+		tl(
+			lists:dropwhile(
+				fun(X) ->
+					case BShadow#block.hash_list of
+						[] -> false;
+						_ -> not (X == lists:last(BShadow#block.hash_list))
+						end
+				end,
+				ar_node:get_hash_list(whereis(http_entrypoint_node))
+			)
+		),
 	%ar:d({hashlist, HashList}),
 	WalletList =
 		ar_node:apply_mining_reward(
@@ -1600,6 +1609,7 @@ get_encrypted_block_test() ->
 		B0,
 		B0
 	),
+	receive after 500 -> ok end,
 	B0 = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	ar_node:mine(Node1).
 
