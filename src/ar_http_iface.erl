@@ -400,9 +400,9 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case CurrentBlock of
-		unavailable -> return_encrypted_block(unavailable);
-		_ ->
+	case ?IS_BLOCK(CurrentBlock) of
+		false -> return_encrypted_block(unavailable);
+		true ->
 			case lists:member(
 					ar_util:decode(Hash),
 					[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
@@ -424,9 +424,9 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case CurrentBlock of
-		unavailable -> return_encrypted_full_block(unavailable);
-		_ ->
+	case ?IS_BLOCK(CurrentBlock) of
+		false -> return_encrypted_full_block(unavailable);
+		true ->
 			case lists:member(
 					ar_util:decode(Hash),
 					[CurrentBlock#block.indep_hash|CurrentBlock#block.hash_list]
@@ -447,9 +447,9 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req)
 %% GET request to endpoint /block/hash/{indep_hash}
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case CurrentBlock of
-		unavailable -> return_block(unavailable);
-		_ ->
+	case ?IS_BLOCK(CurrentBlock) of
+		false -> return_block(unavailable);
+		true ->
 			case ((ar_util:decode(Hash) == 
 					ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list)) and (CurrentBlock#block.height > 10))
 			of
@@ -474,9 +474,9 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case CurrentBlock of
-		unavailable -> return_block(unavailable);
-		_ ->
+	case ?IS_BLOCK(CurrentBlock) of
+		false -> return_block(unavailable);
+		true ->
 			case ((ar_util:decode(Hash) == 
 				ar_node:find_recall_hash(CurrentBlock, CurrentBlock#block.hash_list)) and (CurrentBlock#block.height > 10))
 			of
