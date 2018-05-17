@@ -779,7 +779,7 @@ fork_recover(
 			end;
 		{undefined, _} -> ok;
 		_ ->
-		whereis(fork_recovery_server) ! {update_target_block, NewB, Peer}
+		whereis(fork_recovery_server) ! {update_target_block, NewB, ar_util:unique(Peer)}
 	end,
 	server(S).
 
