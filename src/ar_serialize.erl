@@ -387,7 +387,7 @@ full_block_roundtrip_test() ->
 full_block_unavailable_roundtrip_test() ->
     [B] = ar_weave:init(),
 	TXBase = ar_tx:new(<<"test">>),
-    BTags = B#block {txs = [TXBase, unavailable], tags = ["hello", "world", "example"] },
+    BTags = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
 	JsonB = jsonify(full_block_to_json_struct(BTags)),
 	BTags = json_struct_to_full_block(JsonB),
 	(json_struct_to_full_block(JsonB))#block.txs.

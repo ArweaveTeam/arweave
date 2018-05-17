@@ -184,7 +184,16 @@ handle('POST', [<<"block">>], Req) ->
 		BShadow#block.reward_addr
 		),
 	HashList =
-		ar_node:get_hash_list(whereis(http_entrypoint_node)),
+		lists:foldr(
+			fun(H, Acc) ->
+				case hd(Acc) == H of
+					true -> Acc;
+					false -> [H|Acc]
+				end
+			end,
+			ar_node:get_hash_list(whereis(http_entrypoint_node)),
+			BShadow#block.hash_list
+		),
 	WalletList =
 		ar_node:apply_mining_reward(
 			ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
@@ -720,7 +729,7 @@ send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Host, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
-	NewBShadow = NewB#block { wallet_list= [], hash_list = []},
+	NewBShadow = NewB#block { wallet_list= [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
 	RecallBHash =
 		case ?IS_BLOCK(RecallB) of
 			true ->  RecallB#block.indep_hash;
