@@ -257,12 +257,16 @@ retry_encrypted_full_block(Host, ID, _, Count) ->
 %% @doc convert a block header into a full block
 make_full_block(ID) ->
 	BlockHeader = ar_storage:read_block(ID),
-	BlockTransactions =
-		ar_node:get_tx(
-			whereis(http_entrypoint_node),
-			BlockHeader#block.txs
-		),
-	BlockHeader#block{ txs = BlockTransactions }.
+	case ar_storage:read_block(ID) of
+		unavailable -> unavailable;
+		BlockHeader ->
+			BlockHeader#block{ txs = 
+				ar_node:get_tx(
+					whereis(http_entrypoint_node),
+					BlockHeader#block.txs
+				)		
+			}
+	end.
 
 sort_txs_by_count(TXs) ->
 	SortedTXs = lists:sort(
