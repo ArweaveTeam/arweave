@@ -451,7 +451,9 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
 		[Head|HashList] ->
 			case
-				(ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList) + 1), Head, HashList)) of
+				(ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList) + 1), Head, HashList)) and
+				(length(HashList) + 1) > 10
+			of
 				true ->
 					return_block(unavailable);
 				false ->
@@ -480,7 +482,9 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
 		[Head|HashList] ->
 			case
-				(ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList) + 1), Head, HashList)) of
+				(ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList) + 1), Head, HashList)) and
+				(length(HashList) + 1) > 10
+			of
 				true ->
 					return_block(unavailable);
 				false ->
