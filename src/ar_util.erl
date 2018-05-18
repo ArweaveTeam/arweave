@@ -116,7 +116,7 @@ get_recall_hash(B, HashList) ->
 	lists:nth(1 + ar_weave:calculate_recall_block(B), lists:reverse(HashList)).
 
 get_recall_hash(_Height, Hash, []) -> Hash;
-get_recall_hash(0, Hash, []) -> Hash;
+get_recall_hash(0, Hash, _HastList) -> Hash;
 get_recall_hash(Height, Hash, HashList) ->
 	lists:nth(1 + ar_weave:calculate_recall_block(Height, Hash), lists:reverse(HashList)).
 %% @doc Replace a term in a list with another term.
