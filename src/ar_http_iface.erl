@@ -452,7 +452,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 		[Head|HashList] ->
 			case
 				(ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList) + 1), Head, HashList)) and
-				(length(HashList) + 1) > 10
+				((length(HashList) + 1) > 10)
 			of
 				true ->
 					return_block(unavailable);
@@ -483,7 +483,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 		[Head|HashList] ->
 			case
 				(ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList) + 1), Head, HashList)) and
-				(length(HashList) + 1) > 10
+				((length(HashList) + 1) > 10)
 			of
 				true ->
 					return_block(unavailable);
@@ -517,13 +517,14 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
 		[Head|HashList] ->
-			case list_to_integer(binary_to_list(Height))+1 > length([Head|HashList]) of
+			case (list_to_integer(binary_to_list(Height))+1) > length([Head|HashList]) of
 				false ->
 					case
-						(Hash = lists:nth( list_to_integer(binary_to_list(Height))+1,lists:reverse([Head|HashList]))) ==
-						ar_util:get_recall_hash(Head, (length(HashList) + 1), HashList)
-			of
-				true -> return_block(unavailable);
+						((Hash = lists:nth( list_to_integer(binary_to_list(Height))+1,lists:reverse([Head|HashList]))) ==
+						ar_util:get_recall_hash((length(HashList) + 1), Head, HashList)) and
+						((length(HashList) + 1) > 10)
+					of
+						true -> return_block(unavailable);
 						false ->
 							case lists:member(
 									Hash,
