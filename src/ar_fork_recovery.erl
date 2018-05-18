@@ -79,12 +79,12 @@ setminus(_, _) -> [].
 server(#state{peers = _Peers, parent = _Parent, target_block = _TargetB}, rejoin) ->
 	ok.
 server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
-	lists:foreach(
-		fun(B) ->
-			ar:d({blocklist_block, ar_util:encode(B)})
-		end,
-		BlockList
-	),
+	% lists:foreach(
+	% 	fun(B) ->
+	% 		ar:d({blocklist_block, ar_util:encode(B)})
+	% 	end,
+	% 	BlockList
+	% ),
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
 	receive
@@ -171,39 +171,47 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 						end
 				end
 		end,
-		case try_apply_block(
-				BHashList,
-				NextB#block {txs = [T#tx.id||T <- NextB#block.txs]},
-				TXs,
-				B,
-				RecallB#block {txs = [T#tx.id||T <- RecallB#block.txs]})
+		case
+			(not ?IS_BLOCK(NextB)) or
+			(not ?IS_BLOCK(B)) or
+			(not ?IS_BLOCK(RecallB))
 		of
 			false ->
-				ar:report_console(
-					[
-						could_not_validate_fork_block,
-						{next_block, ?IS_BLOCK(NextB)},
-						{block, ?IS_BLOCK(B)},
-						{recall_block, ?IS_BLOCK(RecallB)}
-					]
-				);
-			true ->
-				ar:report_console(
-					[
-						{applying_block, ar_util:encode(NextH)},
-						{block_height, NextB#block.height}
-					]
-				),
-				self() ! {apply_next_block},
-				ar_storage:write_tx(NextB#block.txs),
-				ar_storage:write_block(NextB#block {txs = [T#tx.id||T <- NextB#block.txs]}),
-				ar_storage:write_block(RecallB#block {txs = [T#tx.id||T <- RecallB#block.txs]}),
-				server(
-					S#state {
-						block_list = [NextH|BlockList],
-						hash_list = HashList
-					}
-				)
+				case try_apply_block(
+						BHashList,
+						NextB#block {txs = [T#tx.id||T <- NextB#block.txs]},
+						TXs,
+						B,
+						RecallB#block {txs = [T#tx.id||T <- RecallB#block.txs]})
+				of
+					false ->
+						ar:report_console(
+							[
+								could_not_validate_fork_block,
+								{next_block, ?IS_BLOCK(NextB)},
+								{block, ?IS_BLOCK(B)},
+								{recall_block, ?IS_BLOCK(RecallB)}
+							]
+						);
+					true ->
+						ar:report_console(
+							[
+								{applying_block, ar_util:encode(NextH)},
+								{block_height, NextB#block.height}
+							]
+						),
+						self() ! {apply_next_block},
+						ar_storage:write_tx(NextB#block.txs),
+						ar_storage:write_block(NextB#block {txs = [T#tx.id||T <- NextB#block.txs]}),
+						ar_storage:write_block(RecallB#block {txs = [T#tx.id||T <- RecallB#block.txs]}),
+						server(
+							S#state {
+								block_list = [NextH|BlockList],
+								hash_list = HashList
+							}
+						)
+				end;
+			true -> server(S#state {hash_list = []} )
 		end;
 	_ -> server(S)
 	end.

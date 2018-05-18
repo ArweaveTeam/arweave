@@ -29,7 +29,7 @@ start(Node, RawPeers, RawNewB) ->
 			PID = spawn(
 				fun() ->
 					Peers = filter_peer_list(RawPeers),
-					NewB = ar_node:retry_block(Peers, RawNewB#block.indep_hash, not_found, 5),
+					NewB = ar_node:retry_full_block(Peers, RawNewB#block.indep_hash, not_found, 5),
 					ar:report_console(
 						[
 							joining_network,

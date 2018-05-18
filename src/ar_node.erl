@@ -729,7 +729,7 @@ server(
 				)
 			);
 		{fork_recovered, NewHs}
- 				when (length(NewHs) - 1) > (length(HashList) - 1) ->
+				when (length(NewHs)) > (length(HashList)) ->
 			NewB = ar_storage:read_block(hd(NewHs)),
 			ar:report_console(
 				[
