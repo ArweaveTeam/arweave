@@ -1,6 +1,6 @@
 -module(ar_mine).
 -export([start/5]).
--export([change_data/2, stop/1, validate/3, schedule_hash/1, miner/2]).
+-export([change_data/2, stop/1, validate/3, schedule_hash/1, miner/3]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -27,6 +27,7 @@
 start(CurrentB, RecallB, TXs, unclaimed, Tags) ->
     start(CurrentB, RecallB, TXs, <<>>, Tags);
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
+    crypto:rand_seed(),
     Parent = self(),
     Timestamp = os:system_time(seconds),
     Diff = next_diff(CurrentB),
@@ -143,7 +144,7 @@ server(
             % Spawn the list of worker processes
             Workers =
                 lists:map(
-                    fun(_) -> spawn(?MODULE, miner, [S, self()]) end,
+                    fun(_) -> spawn(?MODULE, miner, [S, self(), crypto:rand_seed()]) end,
                     lists:seq(1, Max)
                 ),
             % Tell each worker to start hashing
@@ -170,16 +171,24 @@ server(
     end.
 
 %% @doc Spawn a single worker process to hash the data segment
-miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Supervisor) ->
+miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Supervisor, RNGState) ->
     receive
         stop -> ok;
         hash ->
             schedule_hash(S),
             case validate(DataSegment, iolist_to_binary(Nonces), Diff) of
                 false -> 
-                    case(length(Nonces) > 256) and coinflip() of
-                        false -> miner(S#state { nonces = [bool_to_binary(coinflip())|Nonces] }, Supervisor);
-                        true -> miner(S#state { nonces = [] }, Supervisor)
+                    case(length(Nonces) > 256) of
+                        true -> 
+                            case coinflip(RNGState) of
+                                {false, NewRNGState} -> 
+                                    {Flip, NewNewRNGState} = coinflip(NewRNGState),
+                                    miner(S#state { nonces = [bool_to_binary(Flip)|Nonces] }, Supervisor, NewNewRNGState);
+                                {true, NewRNGState} -> miner(S#state { nonces = [] }, Supervisor, NewRNGState)
+                            end;
+                        false -> 
+                            {Flip, NewNewRNGState} = coinflip(RNGState),
+                            miner(S#state { nonces = [bool_to_binary(Flip)|Nonces] }, Supervisor, NewNewRNGState)
                     end;
                 Hash -> Supervisor ! {solution, Hash, iolist_to_binary(Nonces)}
             end
@@ -188,10 +197,10 @@ miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Su
 bool_to_binary(true) -> <<1>>;
 bool_to_binary(false) -> <<0>>.
 
-coinflip() ->
-    case rand:uniform(2) of
-        1 -> true;
-        2 -> false
+coinflip(RNGState) ->
+    case rand:uniform_s(2,RNGState) of
+        {1, NewRNGState} -> {true, NewRNGState};
+        {2, NewRNGState} -> {false, NewRNGState}
     end.
 
 %% @doc Schedule a hashing attempt
@@ -224,10 +233,6 @@ validate(DataSegment, Nonce, NewDiff) ->
         << 0:NewDiff, _/bitstring >> -> NewHash;
         _ -> false
     end.
-
-%% @doc Generate a random nonce, to be added to the previous hash.
-generate_nonce() -> crypto:strong_rand_bytes(8).
-
 
 %%% Tests
 

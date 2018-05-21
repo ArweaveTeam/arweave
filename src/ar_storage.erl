@@ -78,8 +78,7 @@ write_block(B) ->
 				),
 				BlockToWrite
 			),
-			rpc:async_call(
-				node(),
+			spawn(
 				ar_meta_db,
 				increase,
 				[used_space, byte_size(list_to_binary(BlockToWrite))]
@@ -126,8 +125,7 @@ write_encrypted_block(Hash, B) ->
 				),
 				BlockToWrite
 			),
-			rpc:async_call(
-				node(),
+			spawn(
 				ar_meta_db,
 				increase,
 				[used_space, byte_size(list_to_binary(BlockToWrite))]
