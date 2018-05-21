@@ -24,7 +24,6 @@
 		ar_tx,
 		ar_weave,
 		ar_wallet,
-		ar_router,
 		ar_firewall,
 		ar_gossip,
 		ar_mine,

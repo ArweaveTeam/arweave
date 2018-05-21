@@ -89,11 +89,18 @@ server(#state {block_list = BlockList, hash_list = [], parent = Parent}) ->
 server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|HashList], target_block = TargetB }) ->
 	receive
 	{update_target_block, Block, Peer} ->
-		HashListExtra =
-			setminus(
-				lists:reverse([Block#block.indep_hash|Block#block.hash_list]),
-				lists:reverse(BlockList) ++ [NextH|HashList]
-			),
+		NewBHashlist = [Block#block.indep_hash|Block#block.hash_list],
+		% If the new retarget blocks hashlist contains the hash of the last retarget
+		% should be recovering to the same fork.
+		case lists:member(TargetB#block.indep_hash, NewBHashlist) of
+			true ->
+				HashListExtra =
+					setminus(
+						lists:reverse([NewBHashlist]),
+						lists:reverse(BlockList) ++ [NextH|HashList]
+					);
+			false -> HashListExtra = []
+		end,
 		case HashListExtra of
 		[] ->
 			ar:d(failed_to_update_target_block), 
