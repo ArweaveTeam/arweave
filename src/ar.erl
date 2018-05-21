@@ -24,7 +24,6 @@
 		ar_tx,
 		ar_weave,
 		ar_wallet,
-		ar_router,
 		ar_firewall,
 		ar_gossip,
 		ar_mine,
@@ -211,7 +210,9 @@ start(
 		if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
 		0,
 		MiningAddress,
-		AutoJoin
+		AutoJoin,
+		Diff,
+		os:system_time(seconds)
 	),
 	{ok, Supervisor} = start_link(
 		[

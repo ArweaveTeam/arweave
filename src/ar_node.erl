@@ -1,5 +1,5 @@
 -module(ar_node).
--export([start/0, start/1, start/2, start/3, start/4, start/5, stop/1]).
+-export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7, stop/1]).
 -export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1,get_full_pending_txs/1]).
 -export([get_current_diff/1, get_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2, get_all_known_txs/1, get_reward_pool/1]).
 -export([mine/1, automine/1, truncate/1]).
@@ -70,18 +70,16 @@ start(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin) when is_record(B, bl
 	lists:map(fun ar_storage:write_block/1, Bs),
 	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr, AutoJoin);
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
+	start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, ?DEFAULT_DIFF).
+start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
+	start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, os:system_time(seconds)).
+start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	PID = spawn(
 		fun() ->
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
-					ar_join:start(self(), Peers),
-					Diff = 8,
-					LastRetarget = 0;
+					ar_join:start(self(), Peers);
 				_ ->
-					ar_cleanup:remove_invalid_blocks(HashList),
-					Block = ar_storage:read_block(hd(HashList)),
-					Diff = Block#block.diff,
-					LastRetarget = Block#block.last_retarget,
 					do_nothing
 			end,			
 			Gossip = ar_gossip:init(Peers),

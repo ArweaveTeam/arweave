@@ -673,6 +673,7 @@ handle_event(_Type, _Data, _Args) -> ok.
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
 return_block(unavailable) -> {404, [], <<"Block not found.">>};
+return_block(not_found) -> {404, [], <<"Block not found.">>};
 return_block(B) ->
 	{200, [],
 		list_to_binary(
