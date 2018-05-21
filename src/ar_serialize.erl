@@ -340,6 +340,7 @@ find_value(Key, List) ->
 		false -> undefined
 	end.
 
+%% @doc Convert a ARQL query into a JSON struct
 query_to_json_struct({Op, Expr1, Expr2}) ->
 	{struct,
 		[	
@@ -351,20 +352,20 @@ query_to_json_struct({Op, Expr1, Expr2}) ->
 query_to_json_struct(Expr) ->
 	ar_util:encode(Expr).
 
+%% @doc Convert a JSON struct to an ARQL query
 json_struct_to_query(QueryJSON) ->
 	case dejsonify (QueryJSON) of
         {ok, []} -> [];
-        {ok, Query} -> do_json_struct_to_hash_list(Query);
+        {ok, Query} -> do_json_struct_to_query(Query);
         {_, {error, Reason}, _} -> ar:report([{json_error, Reason}])
     end.
-
-do_json_struct_to_hash_list({struct, Query}) ->
+do_json_struct_to_query({struct, Query}) ->
 	{
 		list_to_existing_atom(find_value("op", Query)),
-		do_json_struct_to_hash_list(find_value("expr1", Query)),
-		do_json_struct_to_hash_list(find_value("expr2", Query))
+		do_json_struct_to_query(find_value("expr1", Query)),
+		do_json_struct_to_query(find_value("expr2", Query))
 	};
-do_json_struct_to_hash_list(Query) ->
+do_json_struct_to_query(Query) ->
 	ar_util:decode(Query).
 
 

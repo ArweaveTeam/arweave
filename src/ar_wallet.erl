@@ -41,7 +41,7 @@ new_keyfile() ->
 		file:write_file(FileName, Key),
 	{{Priv, Pub}, Pub}.
 
-%% @doc Extrats the public and private key from a keyfile
+%% @doc Extracts the public and private key from a keyfile
 load_keyfile(File) ->
 	{ok, Body} = file:read_file(File),
 	{ok, {struct, Key}} = json2:decode_string(binary_to_list(Body)),

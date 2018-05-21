@@ -43,7 +43,7 @@ to_binary(T) ->
 		(T#tx.last_tx)/binary
 	>>.
 
-%% @doc Sign ('claim ownership') of a transaction. After it is signed, it can be
+%% @doc Cryptographicvally sign ('claim ownership') of a transaction. After it is signed, it can be
 %% placed onto a block and verified at a later date.
 sign(TX, {PrivKey, PubKey}) -> sign(TX, PrivKey, PubKey).
 sign(TX, PrivKey, PubKey) ->
@@ -54,7 +54,7 @@ sign(TX, PrivKey, PubKey) ->
 		signature = Sig, id = ID
 	}.
 
-%% @doc Ensure that a transaction's signature is valid.
+%% @doc Ensure that a transaction is valid
 -ifdef(DEBUG).
 verify(#tx { signature = <<>> }, _, _) -> true;
 verify(TX, Diff, WalletList) ->
@@ -113,15 +113,17 @@ do_verify_txs([T|TXs], Diff, WalletList) ->
 tx_cost_above_min(TX, Diff) ->
 	TX#tx.reward >= calculate_min_tx_cost(byte_size(TX#tx.data), Diff).
 
-%Calculate the minimum transaction cost for a TX with data size Size
-%the constant 3208 is the max byte size of each of the other fields
-%Cost per byte is static unless size is bigger than 10mb, at which
-%point cost per byte starts increasing linearly.
+%% @doc Calculate the minimum transaction cost for a TX with data size Size
+%% the constant 3208 is the max byte size of each of the other fields
+%% Cost per byte is static unless size is bigger than 10mb, at which
+%% point cost per byte starts increasing linearly.
 calculate_min_tx_cost(Size, Diff) when Size < 10*1024*1024 ->
 	((Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff;
 calculate_min_tx_cost(Size, Diff) ->
 	(Size*(Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div (Diff*10*1024*1024).
 
+%% @doc Check whether each field in a transaction is within the given
+%% byte size limits
 tx_field_size_limit(TX) ->
 	case tag_field_legal(TX) of
 		true ->
@@ -136,12 +138,14 @@ tx_field_size_limit(TX) ->
 		false -> false
 	end.
 
+%% @doc Verify that the transactions ID is a hash of its signature
 tx_verify_hash(#tx {signature = Sig, id = ID}) ->
 	ID == crypto:hash(
 		?HASH_ALG,
 		<<Sig/binary>>
 	).
 
+%% @doc Check of the tag field of the TX is structured in a legal way
 tag_field_legal(TX) ->
 	lists:all(
 		fun(X) ->
@@ -153,6 +157,7 @@ tag_field_legal(TX) ->
 		TX#tx.tags
 	).
 
+%% @doc Convert a transactions tags to binary format
 tags_to_binary(Tags) ->
 	list_to_binary(
 		lists:foldr(
@@ -164,6 +169,7 @@ tags_to_binary(Tags) ->
 		)
 	).
 
+%% @doc Check if the transactions last TX and owner match the wallet list
 -ifdef(DEBUG).
 check_last_tx([], _) ->
 	true;
@@ -185,19 +191,6 @@ check_last_tx(WalletList, TX) ->
 		_ -> false
 	end.
 -endif.
-% check_last_tx(WalletList, TX) ->
-% 	ar:d({walletlist, WalletList}),
-% 	ar:d({tx, TX#tx.last_tx, ar_util:encode(TX#tx.last_tx)}),
-% 	ar:d(lists:keymember(
-% 		TX#tx.last_tx,
-% 		3,
-% 		WalletList
-% 	)),
-% 	lists:keymember(
-% 		TX#tx.last_tx,
-% 		3,
-% 		WalletList
-% 	).
 
 
 %%% Tests

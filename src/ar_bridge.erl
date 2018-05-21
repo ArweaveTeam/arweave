@@ -228,7 +228,10 @@ send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 		fun() ->
 			lists:foreach(
 				fun(Peer) ->
-					ar_http_iface:send_new_tx(Peer, TX)
+					case (rand:uniform(3)) of
+						3 -> ar_http_iface:send_new_tx(Peer, TX);
+						_ -> ok
+					end
 				end,
 				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX) ]
 			)

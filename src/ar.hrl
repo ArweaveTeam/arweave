@@ -76,13 +76,15 @@
 	]).
 %% Length of time to wait (seconds) before dropping after last activity
 -define(PEER_TIMEOUT, 90).
-
 %% Log output directory
 -define(LOG_DIR, "logs").
-
 %% Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).
-
+%% Number of mining processes to spawn
+%% For best use set this to be greater than or equal to the number of cores available.
+-define(NUM_MINING_PROCESSES, 8).
+%% Target number of blocks per year
+-define(BLOCK_PER_YEAR, 525600/(?TARGET_TIME/60) ).
 %% A block on the weave.
 -record(block, {
 	nonce = <<>>,
@@ -130,7 +132,7 @@
 	data
 }).
 
-%% Describes a known Archain network service.
+%% Describes a known Arweave network service.
 -record(service, {
 	name,
 	host,

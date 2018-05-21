@@ -46,8 +46,9 @@ start(Node, RawPeers, RawNewB) ->
 			erlang:register(join_server, PID);
 		_ -> already_running
 	end.
-%% @doc Verify peer(s) are on the same network as the client.
 
+%% @doc Verify peer(s) are on the same network as the client. Remove any that
+%% are not.
 -ifdef(DEBUG).
 filter_peer_list(Peers) when is_list(Peers) ->
 	lists:filter(
@@ -65,8 +66,10 @@ filter_peer_list(Peers) when is_list(Peers) ->
 	Peers);
 filter_peer_list(Peer) -> filter_peer_list([Peer]).
 -endif.
+
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
-%% blocks and recall blocks
+%% blocks and recall blocks. Alternatively, if the blocklist is shorter than
+%% ?STORE_BLOCKS_BEHIND_CURRENT, simply get all existing blocks and recall blocks
 get_block_and_trail(_Peers, NewB, []) ->
 	ar_storage:write_block(NewB);
 get_block_and_trail(Peers, NewB, HashList) ->
@@ -111,6 +114,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 			timer:sleep(3000),
 			get_block_and_trail(Peers, NewB, BehindCurrent, HashList)
 	end.
+
 %% @doc Fills node to capacity based on weave storage limit.
 fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, Written, ToWrite) ->

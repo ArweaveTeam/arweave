@@ -941,7 +941,8 @@ get_block_subfield(Host, Height, Subfield) when is_integer(Height) ->
 	 	)
 	).
 
-%% @doc Retreive a full block by hash from a remote peer.
+%% @doc Retreive a full block (full transactions included in body)
+%% by hash from a remote peer.
 get_full_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
@@ -960,7 +961,8 @@ get_full_block(Host, Hash) when is_binary(Hash) ->
 		)
 	).
 
-%% @doc Retrieve a full block in encrypted format from a remote peer
+%% @doc Retreive a full block (full transactions included in body)
+%% by hash from a remote peer in an encrypted form
 get_encrypted_full_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
@@ -998,7 +1000,7 @@ get_tx(Host, Hash) ->
 	 	)
 	).
 
-%% @doc Retreive all transactions held that have not yet been mined into
+%% @doc Retreive all valid transactions held that have not yet been mined into
 %% a block from a remote peer.
 get_pending_txs(Peer) ->
 	try
@@ -1166,16 +1168,6 @@ block_field_to_string(<<"wallet_list">>, {array, Res}) -> list_to_binary(ar_seri
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
 %%% Tests
-
-%% @doc Tests add peer functionality
-% add_peers_test() ->
-% 	ar_storage:clear(),
-% 	Bridge = ar_bridge:start([], []),
-% 	reregister(http_bridge_node, Bridge),
-% 	ar:d(add_peer({127,0,0,1,1984})),
-% 	receive after 500 -> ok end,
-% 	ar:d({peers, ar_bridge:get_remote_peers(Bridge)}),
-% 	true = lists:member({127,0,0,1,1984}, ar_bridge:get_remote_peers(Bridge)).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->

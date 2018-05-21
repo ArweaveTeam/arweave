@@ -6,7 +6,7 @@
 %%% Performs HTTP calls and stores the peer and time-per-byte
 %%% in the meta db.
 
-%% Perform a HTTP call with the httpc library, store the time required.
+%% @doc Perform a HTTP call with the httpc library, store the time required.
 request(URL) -> httpc:request(get, {URL, []}, [], []).
 request(Method, Request, HTTPOpts, Opts) ->
 	{MicroSecs, Res} =
@@ -14,14 +14,14 @@ request(Method, Request, HTTPOpts, Opts) ->
 	store_data_time(Request, calculate_size(Request), MicroSecs),
 	Res.
 
-%% Return a number of bytes (after headers) of the size of a HTTP request.
+%% @doc Return a number of bytes (after headers) of the size of a HTTP request.
 calculate_size({_URL, _Headers}) -> 0;
 calculate_size({_URL, _Headers, _ContentType, Body}) when is_list(Body) ->
 	byte_size(unicode:characters_to_binary(Body));
 calculate_size({_URL, _Headers, _ContentType, Body}) when is_binary(Body) ->
 	byte_size(Body).
 
-%% Update the database with new timing data.
+%% @doc Update the database with new timing data.
 store_data_time(Request, Bytes, MicroSecs) ->
 	P =
 		case ar_meta_db:get({peer, IP = get_ip(Request)}) of
@@ -36,13 +36,14 @@ store_data_time(Request, Bytes, MicroSecs) ->
 		}
 	).
 
-%% Return the performance object for a node.
+%% @doc Return the performance object for a node.
 get_performance(IP) ->
 	case ar_meta_db:get({peer, IP}) of
 		not_found -> #performance{};
 		P -> P
 	end.
 
+%% @doc Update the "last on list" timestamp of a given peer
 update_timer(IP) ->
 	case ar_meta_db:get({peer, IP}) of
 		not_found -> #performance{};
@@ -57,7 +58,7 @@ update_timer(IP) ->
 			)
 	end.
 
-%% Extract an IP address from a httpc request() term.
+%% @doc Extract an IP address from a httpc request() term.
 get_ip({URL, _}) -> get_ip(URL);
 get_ip({URL, _, _, _}) -> get_ip(URL);
 get_ip("https://" ++ URL) -> get_ip(URL);

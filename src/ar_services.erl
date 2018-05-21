@@ -20,17 +20,17 @@
 start() -> start(whereis(http_entrypoint_node)).
 start(Node) -> spawn(fun() -> server(#state { miner = Node }) end).
 
-%% Add a list of services to the system.
+%% @doc Add a list of services to the system.
 add(PID, Services) ->
 	PID ! {add, Services},
 	ok.
 
-%% Get the current list of known services
+%% @doc Get the current list of known services
 get(PID) ->
 	PID ! {get, self()},
 	receive {services, Services} -> Services end.
 
-%% Main server loop.
+%% @doc Main server loop.
 server(RawS) ->
 	S = prune(RawS),
 	receive
@@ -43,7 +43,7 @@ server(RawS) ->
 	after ?PRUNE_TIMEOUT -> server(S)
 	end.
 
-%% Merge new service reports into the server state.
+%% @doc Merge new service reports into the server state.
 add_services(S, NewServices) ->
 	S#state {
 		services =
@@ -61,7 +61,7 @@ add_services(S, NewServices) ->
 			)
 	}.
 
-%% Remove services that have expired.
+%% @dpc Remove services that have expired.
 prune(S) ->
 	S#state {
 		services =

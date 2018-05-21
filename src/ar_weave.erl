@@ -132,7 +132,6 @@ generate_hash_list(undefined) -> [];
 generate_hash_list([]) -> [];
 generate_hash_list(Bs = [B|_]) ->
 	generate_hash_list(Bs, B#block.height + 1).
-
 generate_hash_list([B = #block { hash_list = BHL }|_], _) when is_list(BHL) ->
 	[B#block.indep_hash|BHL];
 generate_hash_list([], 0) -> [];
@@ -204,99 +203,3 @@ is_tx_on_block_list([#block { txs = TXs }|Bs], TXID) ->
 
 is_data_on_block_list(_, _) -> false.
 
-
-%%% Block list validity tests.
-
-%% @doc Test validation of newly initiated block list.
-% init_verify_test() ->
-% 	true = verify(init()).
-
-% %% @doc Ensure the verification of block lists with a single empty block+genesis.
-% init_addempty_verify_test() ->
-%     ar_node:start([], [B0] = init()),
-% 	true = verify(add([B0], [])).
-
-% %% @doc Test verification of blocks with data and transactions attached.
-% init_add_verify_test() ->
-% 	ar_storage:clear(),
-% 	ar_storage:write_tx([TX1 = ar_tx:new(<<"TEST TX">>),TX2 = ar_tx:new(<<"TEST DATA1">>),TX3 = ar_tx:new(<<"TESTDATA2">>)]),
-% 	true = verify(add(init(), [TX1, TX2, TX3])).
-
-% %% @doc Ensure the detection of forged blocks.
-% init_add_forge_add_verify_test() ->
-% 	ar_storage:clear(),
-% 	ar_storage:write_tx(
-% 		[
-% 			TX1 = ar_tx:new(<<"TEST TX">>),
-% 			TX2 = ar_tx:new(<<"TEST DATA1">>),
-% 			TX3 = ar_tx:new(<<"TESTDATA2">>),
-% 			TX4 = ar_tx:new(<<"TESTDATA3">>)
-% 		]
-% 	),
-% 	B2 = add(add(init(), []), [TX1, TX2, TX3]),
-% 	ForgedB3 =
-% 		[
-% 			#block {
-% 				nonce = <<>>,
-% 				previous_block = (hd(B2))#block.indep_hash,
-% 				height = 3,
-% 				hash = crypto:hash(?HASH_ALG, <<"NOT THE CORRECT HASH">>),
-% 				txs = [],
-% 				last_retarget = ar:timestamp()
-% 			}
-% 		|B2],
-% 	false = verify(add(ForgedB3, [TX3, TX4])).
-
-% %% @doc A more 'subtle' version of above. Re-heahes the previous block, but with data removed.
-% init_add_add_forge_add_verify_subtle_test() ->
-% 	ar_storage:clear(),
-% 	ar_storage:write_tx(
-% 		[
-% 			TX1 = ar_tx:new(<<"TEST TX0">>),
-% 			TX2 = ar_tx:new(<<"TEST DATA0">>),
-% 			TX3 = ar_tx:new(<<"TEST TX1">>),
-% 			TX4 = ar_tx:new(<<"TEST DATA1">>),
-% 			TX5 = ar_tx:new(<<"TEST DATA2">>),
-% 			TX6 = ar_tx:new(<<"TEST TX2">>),
-% 			TX7 = ar_tx:new(<<"TEST DATA3">>)
-% 		]
-% 	),
-% 	B1 = add(init(), [TX1, TX2]),
-% 	B2 = add(B1, [TX3, TX4, TX5]),
-% 	ForgedB3 =
-% 		[
-% 			#block {
-% 				nonce = <<>>,
-% 				previous_block = (hd(B2))#block.indep_hash,
-% 				height = 3,
-% 				hash = hash(hd(B1), [], <<>>),
-% 				txs = [],
-% 				last_retarget = ar:timestamp()
-% 			}
-% 		|B2],
-% 	false = verify(add(ForgedB3, [TX6, TX7])).
-
-% %% @doc Ensure that blocks with an invalid nonce are detect.
-% detect_invalid_nonce_test() ->
-% 	ar_storage:clear(),
-% 	ar_storage:write_tx(
-% 		[
-% 			TX1 = ar_tx:new(<<"TEST TX">>),
-% 			TX2 = ar_tx:new(<<"TEST DATA1">>),
-% 			TX3 = ar_tx:new(<<"TESTDATA2">>),
-% 			TX4 = ar_tx:new(<<"FILTHY LIES">>),
-% 			TX5 = ar_tx:new(<<"NEW DATA">>)
-% 		]
-% 	),
-% 	B1 = add(init([]), [TX1, TX2, TX3]),
-% 	ForgedB2 = add(B1, [TX4], <<"INCORRECT NONCE">>),
-% 	[B|Bs] = add(ForgedB2, [TX5]),
-% 	false = verify([B#block{nonce = <<"INCORRECT NONCE">>}|Bs]).
-
-% no_tx_fail_verify_test() ->
-% 	ar_storage:clear(),
-% 	TX1 = ar_tx:new(<<"TEST TX0">>),
-% 	TX2 = ar_tx:new(<<"TEST DATA0">>),
-% 	B1 = add(init(), [TX1, TX2]),
-% 	ar_storage:clear(),
-% 	false = verify(B1).

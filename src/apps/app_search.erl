@@ -12,8 +12,7 @@
 %%% block containing the transaction.
 %%% For examplary purposes only.
 
-%% txlist DETS file
--define(TXDATA, "data/txdb.dat").
+
 %% @doc For compatibility. Dets database supercedes state.
 -record(state, {
 	db = [] % Stores the 'database' of links to chirps.
@@ -32,9 +31,7 @@ start(Peers) ->
 	initDB(),
 	adt_simple:start(?MODULE, #state{}, Peers).
 
-%% @doc Find the block associated with a transaction.
-
-%% Initialise the mnesia database
+%% @doc Initialise the mnesia database
 initDB() ->
 	application:set_env(mnesia, dir, "data/mnesia"),
 	mnesia:create_schema([node()]),
@@ -53,14 +50,15 @@ initDB() ->
 			)
 	end.
 
+%% @doc Delete the entire ARQL mnesia database
 deleteDB() ->
 	mnesia:delete_table(arql_tag).
 
-%% Store a transaction/tag pair in the database
+%% @doc Store a transaction/tag pair in the database
 storeDB(Name, Value, TXid) ->
 	mnesia:dirty_write(#arql_tag { name = Name, value = Value, tx = TXid}).
 
-%% Search for a list of transactions that match the given tag
+%% @doc Search for a list of transactions that match the given tag
 search_by_exact_tag(Name, Value) ->
 	mnesia:dirty_select(
 		arql_tag,
@@ -73,12 +71,7 @@ search_by_exact_tag(Name, Value) ->
 		]
 	).
 
-%% @doc Add the transactions in a newly recieved block to the trasction db
-%% S - current state, B - new block
-%% @doc Listen for get_transaction requests, send independant block hash
-%% Back to requesting process.
-%% S - current state, {get_transaction - atom, T - transaction hash,
-%% Process_id - id of the process to return the block hash to}
+%% @doc Listen for get_tx requests
 message(S, {get_tx, PID, Name, Value}) ->
 	PID ! search_by_exact_tag(Name, Value),
 	S;

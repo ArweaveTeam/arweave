@@ -96,6 +96,9 @@ write_block(B) ->
 	end.
 -endif.
 
+%% @doc Write an encrypted  block (with the hash.json as the filename) to disk.
+%% When debug is set, does not consider disk space. This is currently
+%% necessary because of test timings
 -ifdef(DEBUG).
 write_encrypted_block(Hash, B) ->
 	BlockToWrite = ar_util:encode(B),
@@ -166,6 +169,7 @@ do_read_block(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	ar_serialize:json_struct_to_block(binary_to_list(Binary)).
 
+%% @doc Read an encrypted block from disk, given a hash.
 read_encrypted_block(unavailable) -> unavailable;
 read_encrypted_block(ID) ->
 	case filelib:wildcard(name_enc_block(ID)) of
@@ -202,9 +206,12 @@ name_block(B) when is_record(B, block) ->
 name_block(BinHash) when is_binary(BinHash) ->
 	?BLOCK_DIR ++ "/*_" ++ ar_util:encode(BinHash) ++ ".json".
 
+%% @doc Generate a wildcard search string for an encrypted block,
+%% given a block, binary hash, or list.
 name_enc_block(BinHash) when is_binary(BinHash) ->
 	?BLOCK_ENC_DIR ++ "/*_" ++ ar_util:encode(BinHash) ++ ".json".
 
+%% @doc Delete the tx with the given hash from disk.
 delete_tx(Hash) ->
 	file:delete(name_tx(Hash)).
 
@@ -213,6 +220,7 @@ txs_on_disk() ->
 	{ok, Files} = file:list_dir(?TX_DIR),
 	length(Files).
 
+%% @doc Returns whether the TX with the given hash is stored on disk.
 tx_exists(Hash) ->
 	case filelib:find_file(name_tx(Hash)) of
 		{ok, _} -> true;
@@ -297,6 +305,7 @@ do_read_tx(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	ar_serialize:json_struct_to_tx(binary_to_list(Binary)).
 
+%% @doc Returns the file name for a TX with the given hash
 name_tx(Tx) when is_record(Tx, tx) ->
 	?TX_DIR
 		++ "/"
@@ -309,7 +318,7 @@ name_tx(BinHash) when is_binary(BinHash) ->
 enough_space(Bytes) ->
 	(ar_meta_db:get(disk_space)) >= (Bytes + ar_meta_db:get(used_space)).
 
-
+%% @doc Calculate the amount of file space used by the Arweave client
 calculate_used_space() ->
 	{ok, CWD} = file:get_cwd(),
 	(
@@ -322,6 +331,7 @@ calculate_used_space() ->
 		)
 	).
 
+%% @doc Calculate the total amount of disk space available
 calculate_disk_space() ->
 	application:start(sasl),
 	application:start(os_mon),

@@ -18,13 +18,13 @@
     tags,
     diff,
     delay = 0,
-    max_miners = 4,
+    max_miners = ?NUM_MINING_PROCESSES,
     miners = []
 }).
 
+%% @doc Spawns a new mining process and returns its PID.
 start(CurrentB, RecallB, TXs, unclaimed, Tags) ->
     start(CurrentB, RecallB, TXs, <<>>, Tags);
-%% @doc Returns the PID of a new mining worker process.
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
     Parent = self(),
     Timestamp = os:system_time(seconds),
@@ -64,11 +64,11 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
 stop(PID) ->
 	PID ! stop.
 
-%% @doc Change the data attachment that the miner is using.
+%% @doc Update the set of TXs that the miner is mining on.
 change_data(PID, NewTXs) ->
     PID ! {new_data, NewTXs}.
 
-%% Schedule a timer to refresh data segment.
+%% @doc Schedule a timer to refresh data segment.
 refresh_data_timer(PID) ->
 	erlang:send_after(?REFRESH_MINE_DATA_TIMER, PID, {refresh_data, PID}).
 
@@ -100,7 +100,6 @@ server(
                 fun(Miner) -> Miner ! stop end,
                 Miners
             ),
-            %ar:d({updating_txs, RawTXs}),
             % Send mine message to self
             self() ! mine,
             % Continue server loop with new block_data_segment
@@ -164,12 +163,11 @@ server(
                 fun(Miner) -> Miner ! stop end,
                 Miners
             ),
-            %ar:d({miner_txs, TXs}),
             % Send work complete data back to parent for verification
-            %ar:d({miner, Hash, Nonce, Diff}),
             Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
     end.
 
+%% @doc Spawn a single worker process to hash the data segment
 miner(S = #state { data_segment = DataSegment, diff = Diff }, Supervisor) ->
     receive
         stop -> ok;
@@ -181,6 +179,7 @@ miner(S = #state { data_segment = DataSegment, diff = Diff }, Supervisor) ->
             end
     end.
 
+%% @doc Schedule a hashing attempt
 schedule_hash(S = #state { delay = 0 }) ->
     self() ! hash,
     S;
@@ -188,6 +187,9 @@ schedule_hash(S = #state { delay = Delay }) ->
     Parent = self(),
     spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
     S.
+
+%% @doc Given a block, calculate what the difficulty for the next block should
+%% be, given the current system time
 next_diff(CurrentB) ->
     Timestamp = os:system_time(seconds),
     case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of

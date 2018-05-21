@@ -18,6 +18,8 @@
 is_retarget_height(Height) ->
     ((Height rem ?RETARGET_BLOCKS) == 0) and (Height =/= 0).
 
+%% @doc Maybe set a new difficulty and last retarget, if the block is at
+%% an appropriate retarget height, else returns the current diff
 maybe_retarget(Height, CurDiff, TS, Last) when ?IS_RETARGET_HEIGHT(Height) ->
     calculate_difficulty(
         CurDiff,
@@ -26,7 +28,6 @@ maybe_retarget(Height, CurDiff, TS, Last) when ?IS_RETARGET_HEIGHT(Height) ->
     );
 maybe_retarget(_Height, CurDiff, _TS, _Last) ->
     CurDiff.
-
 maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
 	B#block {
 		diff =
@@ -65,9 +66,6 @@ validate(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
 	);
 	% and (NewB#block.timestamp == NewB#block.last_retarget);
 validate(NewB, OldB) ->
-    % ar:d({new, NewB#block.last_retarget}),
-    % ar:d({old, OldB#block.last_retarget}),
-    % ar:d({retarget, {new, NewB#block.last_retarget}, {old, OldB#block.last_retarget}}),
 	NewB#block.last_retarget == OldB#block.last_retarget.
 
 %%% Tests

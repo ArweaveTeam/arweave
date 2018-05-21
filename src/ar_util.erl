@@ -1,6 +1,5 @@
 -module(ar_util).
 -export([pick_random/1, pick_random/2]).
--export([hexify/1, dehexify/1]).
 -export([encode/1, decode/1]).
 -export([encode_base64_safe/1, decode_base64_safe/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
@@ -65,13 +64,6 @@ decode_base64_safe(Str) ->
 			$=
 		)
 	).
-
-rev_bin(Bin) ->
-    rev_bin(Bin, <<>>).
-rev_bin(<<>>, Acc) -> Acc;
-rev_bin(<<H:1/binary, Rest/binary>>, Acc) ->
-    rev_bin(Rest, <<H/binary, Acc/binary>>).
-
 do_decode_base64_safe([]) -> [];
 do_decode_base64_safe([$_|T]) ->
 	[ $/ | do_decode_base64_safe(T) ];
@@ -79,6 +71,14 @@ do_decode_base64_safe([$-|T]) ->
 	[ $+ | do_decode_base64_safe(T) ];
 do_decode_base64_safe([H|T]) ->
 	[ H | do_decode_base64_safe(T) ].
+
+
+%% @doc Reverse a binary
+rev_bin(Bin) ->
+    rev_bin(Bin, <<>>).
+rev_bin(<<>>, Acc) -> Acc;
+rev_bin(<<H:1/binary, Rest/binary>>, Acc) ->
+    rev_bin(Rest, <<H/binary, Acc/binary>>).
 
 %% @doc Get a block's hash.
 get_hash(B) when is_record(B, block) ->
@@ -103,6 +103,7 @@ blocks_from_hashes(BHL) ->
 hash_from_hash_list(Num, BHL) ->
 	lists:nth(Num - 1, lists:reverse(BHL)).
 
+%% @doc Read a block at the given height from the hash list
 block_from_hash_list(Num, BHL) ->
 	ar_storage:read_block(hash_from_hash_list(Num, BHL)).
 
@@ -124,27 +125,6 @@ get_recall_hash(Height, Hash, HashList) ->
 replace(_, _, []) -> [];
 replace(X, Y, [X|T]) -> [Y|replace(X, Y, T)];
 replace(X, Y, [H|T]) -> [H|replace(X, Y, T)].
-
-%% @doc Convert a binary to a list of hex characters.
-hexify(Bin) ->
-	lists:flatten(
-		[
-			io_lib:format("~2.16.0B", [X])
-		||
-    		X <- binary_to_list(Bin)
-		]
-	).
-
-%% @doc Turn a list of hex characters into a binary.
-dehexify(Bin) when is_binary(Bin) ->
-	dehexify(binary_to_list(Bin));
-dehexify(S) ->
-	dehexify(S, []).
-dehexify([], Acc) ->
-	list_to_binary(lists:reverse(Acc));
-dehexify([X,Y|T], Acc) ->
-	{ok, [V], []} = io_lib:fread("~16u", [X,Y]),
-	dehexify(T, [V | Acc]).
 
 %% @doc Parse a string representing a remote host into our internal format.
 parse_peer("") -> throw(empty_peer_string);
@@ -195,7 +175,7 @@ unique(Res, [X|Xs]) ->
 		true -> unique(Res, Xs)
 	end.
 
-%% Run a map in paralell.
+%% @doc Run a map in parallel.
 %% NOTE: Make this efficient for large lists.
 %% NOTE: Does not maintain list stability.
 pmap(Fun, List) ->
@@ -230,7 +210,6 @@ time_difference({M1, S1, U1}, {M2, S2, U2}) ->
 time_difference(_,_) ->
 	bad_time_format.
 
-% Calculate the amount of disk space free
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->
 	[a, b, c] = unique([a, a, b, b, b, c, c]).
@@ -238,10 +217,6 @@ basic_unique_test() ->
 %% @doc Ensure that hosts are formatted as lists correctly.
 basic_peer_format_test() ->
 	"127.0.0.1:9001" = format_peer({127,0,0,1,9001}).
-
-%% @doc Test that values can be hexed and dehexed.
-round_trip_hexify_test() ->
-	Bytes = dehexify(hexify(Bytes = crypto:strong_rand_bytes(32))).
 
 %% @doc Ensure that pick_random's are actually in the starting list.
 pick_random_test() ->

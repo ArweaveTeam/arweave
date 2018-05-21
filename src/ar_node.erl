@@ -20,7 +20,7 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Blockweave maintaining nodes in the Archain system.
+%%% Blockweave maintaining nodes in the Arweave system.
 
 -record(state, {
 	hash_list = not_joined,
@@ -75,7 +75,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers),
-					Diff = 0,
+					Diff = 8,
 					LastRetarget = 0;
 				_ ->
 					ar_cleanup:remove_invalid_blocks(HashList),
@@ -244,7 +244,7 @@ retry_full_block(Host, ID, _, Count) ->
 retry_encrypted_full_block(_, _, Response, 0) ->
 	Response;
 retry_encrypted_full_block(Host, ID, _, Count) ->
-	case get_full_block(Host, ID) of
+	case get_encrypted_full_block(Host, ID) of
 		not_found ->
 			timer:sleep(3000),
 			retry_encrypted_full_block(Host, ID, not_found, Count-1);
@@ -1299,7 +1299,7 @@ calculate_reward(Height, Quantity) ->
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
 calculate_static_reward(Height) ->
-	(0.2 * ?GENESIS_TOKENS * math:pow(2,-Height/105120) * math:log(2))/105120.
+	(0.2 * ?GENESIS_TOKENS * math:pow(2,-Height/?BLOCK_PER_YEAR) * math:log(2))/?BLOCK_PER_YEAR.
 
 %% @doc Given a TX, calculate an appropriate reward.
 calculate_tx_reward(#tx { reward = Reward }) ->
