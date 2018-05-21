@@ -81,8 +81,9 @@
 %% Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).
 %% Number of mining processes to spawn
-%% For best use set this to be greater than or equal to the number of cores available.
--define(NUM_MINING_PROCESSES, 32).
+%% For best mining, this is set to the number of available processers minus 1. More mining can be performed
+%% With every core utilised, but at significant cost to node performance
+-define(NUM_MINING_PROCESSES, max(1, (erlang:system_info(schedulers_online) - 1))).
 %% Target number of blocks per year
 -define(BLOCK_PER_YEAR, 525600/(?TARGET_TIME/60) ).
 %% A block on the weave.
