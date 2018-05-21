@@ -146,7 +146,7 @@ block_to_binary(B) ->
 block_field_size_limit(B = #block { reward_addr = unclaimed }) ->
     block_field_size_limit(B#block { reward_addr = <<>> });
 block_field_size_limit(B) ->
-	(byte_size(B#block.nonce) =< 8) and
+	(byte_size(B#block.nonce) =< 256) and
     (byte_size(B#block.previous_block) =< 32) and
 	(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
     (byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and

@@ -19,7 +19,8 @@
     diff,
     delay = 0,
     max_miners = ?NUM_MINING_PROCESSES,
-    miners = []
+    miners = [],
+    nonces
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
@@ -50,7 +51,8 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
                         ),
                     reward_addr = RewardAddr,
                     tags = Tags,
-                    diff = Diff
+                    diff = Diff,
+                    nonces = []
                 }
             )
         end
@@ -168,15 +170,28 @@ server(
     end.
 
 %% @doc Spawn a single worker process to hash the data segment
-miner(S = #state { data_segment = DataSegment, diff = Diff }, Supervisor) ->
+miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Supervisor) ->
     receive
         stop -> ok;
         hash ->
             schedule_hash(S),
-            case validate(DataSegment, Nonce = generate_nonce(), Diff) of
-                false -> miner(S, Supervisor);
-                Hash -> Supervisor ! {solution, Hash, Nonce}
+            case validate(DataSegment, iolist_to_binary(Nonces), Diff) of
+                false -> 
+                    case(length(Nonces) > 256) and coinflip() of
+                        false -> miner(S#state { nonces = [bool_to_binary(coinflip())|Nonces] }, Supervisor);
+                        true -> miner(S#state { nonces = [] }, Supervisor)
+                    end;
+                Hash -> Supervisor ! {solution, Hash, iolist_to_binary(Nonces)}
             end
+    end.
+
+bool_to_binary(true) -> <<1>>;
+bool_to_binary(false) -> <<0>>.
+
+coinflip() ->
+    case rand:uniform(2) of
+        1 -> true;
+        2 -> false
     end.
 
 %% @doc Schedule a hashing attempt
