@@ -339,7 +339,7 @@ calculate_disk_space() ->
 	[{_,Size,_}|_] = select_drive(disksup:get_disk_data(), CWD),
 	Size*1024.
 
-% Calculate the root drive in which the Arweave server resides
+%% @doc Calculate the root drive in which the Arweave server resides
 select_drive(Disks, []) ->
 	CWD = "/",
 	case

@@ -73,6 +73,9 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 	start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, ?DEFAULT_DIFF).
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
 	start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, os:system_time(seconds)).
+start(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when is_record(B, block) ->
+	lists:map(fun ar_storage:write_block/1, Bs),
+	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	PID = spawn(
 		fun() ->

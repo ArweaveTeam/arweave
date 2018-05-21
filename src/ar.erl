@@ -205,15 +205,6 @@ start(
 			),
 			MiningAddress = unclaimed
 	end,
-	ar_node:start(
-		Peers,
-		if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
-		0,
-		MiningAddress,
-		AutoJoin,
-		Diff,
-		os:system_time(seconds)
-	),
 	{ok, Supervisor} = start_link(
 		[
 			[
@@ -221,7 +212,9 @@ start(
 				if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
 				0,
 				MiningAddress,
-				AutoJoin
+				AutoJoin,
+				Diff,
+				os:system_time(seconds)
 			]
 		]
     ),

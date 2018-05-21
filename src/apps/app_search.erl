@@ -4,7 +4,7 @@
 -export([start_link/1]).
 -export([update_tag_table/1]).
 -export([initDB/0, deleteDB/0, storeDB/3, search_by_exact_tag/2]).
--include("ar.hrl").
+-include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% A search node for the Archain network. Given a transaction hash,
