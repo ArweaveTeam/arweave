@@ -124,7 +124,7 @@ get_current_block(Peer) when is_pid(Peer) ->
 	receive
 		{block, CurrentBlock} -> CurrentBlock
 	after ?NET_TIMEOUT ->
-		no_response
+		not_found
 	end;
 get_current_block(Peer) ->
 	ar_http_iface:get_current_block(Peer).
@@ -151,7 +151,7 @@ get_blocks(Node) ->
 	receive
 		{blocks, Node, Bs} -> Bs
 	after ?NET_TIMEOUT ->
-		no_response
+		not_found
 	end.
 
 %% @doc Return a specific block from a node, if it has it.
@@ -313,7 +313,7 @@ get_trusted_peers(Proc) when is_pid(Proc) ->
 	Proc ! {get_trusted_peers, self()},
 	receive
 		{peers, Ps} -> Ps
-	after ?NET_TIMEOUT -> no_response
+	after ?NET_TIMEOUT -> not_found
 	end;
 get_trusted_peers(_) ->
 	unavailable.
@@ -332,7 +332,7 @@ get_peers(Proc) when is_pid(Proc) ->
 	Proc ! {get_peers, self()},
 	receive
 		{peers, Ps} -> Ps
-	after ?NET_TIMEOUT -> no_response
+	after ?NET_TIMEOUT -> not_found
 	end;
 get_peers(Host) ->
 	ar_http_iface:get_peers(Host).

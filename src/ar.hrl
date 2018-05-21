@@ -49,7 +49,7 @@
 	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 
 %% Default timeout value for network requests.
--define(NET_TIMEOUT, 10000).
+-define(NET_TIMEOUT, 60000).
 %% Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 10000).
 %% Time between attempts to find(/optimise) peers.
@@ -82,7 +82,7 @@
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).
 %% Number of mining processes to spawn
 %% For best use set this to be greater than or equal to the number of cores available.
--define(NUM_MINING_PROCESSES, 8).
+-define(NUM_MINING_PROCESSES, 32).
 %% Target number of blocks per year
 -define(BLOCK_PER_YEAR, 525600/(?TARGET_TIME/60) ).
 %% A block on the weave.
