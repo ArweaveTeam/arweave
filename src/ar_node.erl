@@ -892,12 +892,12 @@ process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< S#state.height ->
 	% Block is lower than us, ignore it.
 	server(S#state { gossip = NewGS });
-process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
-		when (NewB#block.height == S#state.height + 2) ->
+% process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
+% 		when (NewB#block.height == S#state.height + 1) ->
 	% Block is lower than fork recovery height, ignore it.
-	server(S#state { gossip = NewGS });
+	% server(S#state { gossip = NewGS });
 process_new_block(S, NewGS, NewB, _, Peer, _HashList)
-		when (NewB#block.height > S#state.height + 2) ->
+		when (NewB#block.height > S#state.height + 1) ->
 	fork_recover(S#state { gossip = NewGS }, Peer, NewB).
 
 %% @doc We have received a new valid block. Update the node state accordingly.

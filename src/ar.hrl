@@ -15,7 +15,7 @@
 -define(PRIV_KEY_SZ, 4096).
 %% NOTE: Setting the default difficulty too high will cause TNT to fail!
 -define(DEFAULT_DIFF, 8).
--define(TARGET_TIME, 30).
+-define(TARGET_TIME, 60).
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
