@@ -12,9 +12,6 @@
 
 %%% Exposes access to an internal Archain network to external nodes.
 
-%% The maximum size of a single POST body.
--define(MAX_BODY_SIZE, 1024 * 1024 * 1024 * 512).
-
 %% @doc Start the archain HTTP API and Returns a process ID.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
@@ -25,6 +22,8 @@ start(Port) ->
 					[
 						{callback, ?MODULE},
 						{max_body_size, ?MAX_BODY_SIZE},
+						%{request_timeout, ?NET_TIMEOUT},
+						%{accept_timeout, ?CONNECT_TIMEOUT},
 						{port, Port}
 					]
 				),
@@ -761,7 +760,7 @@ send_new_tx(Host, TX) ->
 			"application/x-www-form-urlencoded",
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 		},
-		[{timeout, ?NET_TIMEOUT}],
+		[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}],
 		[]
 	).
 
@@ -796,7 +795,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 					}
 				)
 			)
-		}, [{timeout, ?NET_TIMEOUT}], []
+		}, 	[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	).
 
 
@@ -820,7 +819,7 @@ add_peer(Host) ->
 					}
 				)
 			)
-		}, [{timeout, ?NET_TIMEOUT}], []
+		}, [{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	).
 
 %% @doc Get a peers current, top block.
@@ -834,7 +833,7 @@ get_current_block(Host) ->
 					++ "/current_block/",
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 		)
 	).
 
@@ -851,7 +850,7 @@ get_tx_reward(Node, Size) ->
 					++ integer_to_list(Size),
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	 	),
 	list_to_integer(Body).
 
@@ -869,7 +868,7 @@ get_block(Host, Height) when is_integer(Height) ->
 					++ integer_to_list(Height),
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	 	)
 	);
 get_block(Host, Hash) when is_binary(Hash) ->
@@ -885,7 +884,7 @@ get_block(Host, Hash) when is_binary(Hash) ->
 					++ ar_util:encode(Hash),
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	 	)
 	).
 
@@ -904,7 +903,7 @@ get_encrypted_block(Host, Hash) when is_binary(Hash) ->
 					++ "/encrypted",
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	 	)
 	).
 
@@ -925,7 +924,7 @@ get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
 					++ Subfield,
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	 	)
 	);
 get_block_subfield(Host, Height, Subfield) when is_integer(Height) ->
@@ -943,7 +942,7 @@ get_block_subfield(Host, Height, Subfield) when is_integer(Height) ->
 					++ Subfield,
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	 	)
 	).
 
@@ -963,7 +962,7 @@ get_full_block(Host, Hash) when is_binary(Hash) ->
 					++ "/all/",
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 		)
 	).
 
@@ -984,7 +983,7 @@ get_encrypted_full_block(Host, Hash) when is_binary(Hash) ->
 					++ "/encrypted",
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 		)
 	).
 
@@ -1002,7 +1001,7 @@ get_tx(Host, Hash) ->
 					++ ar_util:encode(Hash),
 				[]
 			},
-			[{timeout, ?NET_TIMEOUT}], []
+			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	 	)
 	).
 
@@ -1554,7 +1553,7 @@ get_tx_by_tag_test() ->
 			lists:flatten(
 				QueryJSON
 			)
-		}, [{timeout, ?NET_TIMEOUT}], []
+		}, [{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	),
 	{ok, {array, TXs}} = ar_serialize:dejsonify(Stuff),
 	true =
@@ -1603,7 +1602,7 @@ get_txs_by_send_recv_test_slow() ->
 			lists:flatten(
 				QueryJSON
 			)
-		}, [{timeout, ?NET_TIMEOUT}], []
+		}, [{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	),
 	{ok, {array, TXs}} = ar_serialize:dejsonify(Res),
 	ar:d({id, TX#tx.id}),

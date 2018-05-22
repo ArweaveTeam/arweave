@@ -20,7 +20,7 @@
 %% 1024 * 1024
 -define(DEFAULT_MAX_TX_LEN, 1000).
 %% Maximum data block size
--define(DEFAULT_MAX_DATA_LEN, 10000).
+-define(DEFAULT_MAX_DATA_LEN, 10*1000*1000).
 %% Location of test public/private keys
 -define(WALLETLIST, "wallets/keys.csv").
 
@@ -139,7 +139,7 @@ send_random_fin_tx() ->
 %% @doc Send a randomly created data tx to all peers
 send_random_data_tx() ->
 	KeyList = get_key_list(),
-	MaxTxLen = 100,
+	MaxTxLen = ?DEFAULT_MAX_DATA_LEN,
 	TX = create_random_data_tx(KeyList, MaxTxLen),
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 	lists:foreach(
@@ -179,7 +179,7 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
 	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
-	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
+	Data = << 0:(MaxTxLen * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
 		byte_size(ar_tx:to_binary(TX)) + 550,

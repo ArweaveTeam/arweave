@@ -47,9 +47,12 @@
 %% Calculate MS to wait in order to hit target block time.
 -define(DEFAULT_MINING_DELAY,
 	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
-
+%% The maximum size of a single POST body.
+-define(MAX_BODY_SIZE, 1024 * 1024 * 1024 * 512).
 %% Default timeout value for network requests.
--define(NET_TIMEOUT, 60000).
+-define(NET_TIMEOUT, 2000 * 1000).
+%% Default timeout for initial request
+-define(CONNECT_TIMEOUT, 10 * 1000).
 %% Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 10000).
 %% Time between attempts to find(/optimise) peers.
