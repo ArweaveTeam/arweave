@@ -1086,7 +1086,7 @@ validate(
     IndepHash = ar_block:verify_indep_hash(NewB),
     Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
-	Time = ar_block:verify_timestamp(OldB, NewB),
+	%Time = ar_block:verify_timestamp(OldB, NewB),
 	HeightCheck = ar_block:verify_height(NewB, OldB),
 	RetargetCheck = ar_block:verify_last_retarget(NewB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
@@ -1104,7 +1104,7 @@ validate(
 			{block_indep, IndepHash},
 			{block_hash, Hash},
 			{block_size, Size},
-			{block_timestamp, Time},
+			%{block_timestamp, Time},
 			{block_height, HeightCheck},
 			{block_retarget_time, RetargetCheck},
 			{block_previous_check, PreviousBCheck},
@@ -1121,7 +1121,7 @@ validate(
     case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
     case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
     case Size of false -> ar:d(invalid_size); _ -> ok  end,
-	case Time of false -> ar:d(invalid_timestamp); _ -> ok  end,
+	%case Time of false -> ar:d(invalid_timestamp); _ -> ok  end,
 	case HeightCheck of false -> ar:d(invalid_height); _ -> ok  end,
 	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok  end,
 	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
@@ -1136,7 +1136,7 @@ validate(
         and IndepHash
         and Hash
         and Size
-		and Time
+		%and Time
 		and HeightCheck
 		and RetargetCheck
 		and PreviousBCheck

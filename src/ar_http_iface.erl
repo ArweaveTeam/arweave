@@ -156,88 +156,93 @@ handle('POST', [<<"block">>], Req) ->
 	{"key", KeyEnc} = lists:keyfind("key", 1, Struct),
 	Key = ar_util:decode(KeyEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
-	OrigPeer =
-		ar_util:parse_peer(
-			bitstring_to_list(elli_request:peer(Req))
-			++ ":"
-			++ integer_to_list(Port)
+	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
+		true ->
+			OrigPeer =
+				ar_util:parse_peer(
+					bitstring_to_list(elli_request:peer(Req))
+					++ ":"
+					++ integer_to_list(Port)
+					),
+			TXs = lists:foldr(
+				fun(T, Acc) ->
+					%state contains it
+					case [TX || TX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node)), TX#tx.id == T] of
+						[] ->
+							case ar_storage:read_tx(T) of
+								unavailable ->
+									Acc;
+								TX -> [TX|Acc]
+							end;
+						[TX|_] -> [TX|Acc]
+					end
+				end,
+				[],
+				BShadow#block.txs
 			),
-	TXs = lists:foldr(
-		fun(T, Acc) ->
-			%state contains it
-			case [TX || TX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node)), TX#tx.id == T] of
-				[] ->
-					case ar_storage:read_tx(T) of
-						unavailable ->
-							Acc;
-						TX -> [TX|Acc]
-					end;
-				[TX|_] -> [TX|Acc]
-			end
-		end,
-		[],
-		BShadow#block.txs
-	),
-	{FinderPool, _} = ar_node:calculate_reward_pool(
-		ar_node:get_reward_pool(whereis(http_entrypoint_node)),
-		TXs,
-		BShadow#block.reward_addr
-		),
-	HashList =
-		case {BShadow#block.hash_list, ar_node:get_hash_list(whereis(http_entrypoint_node))} of
-			{[], []} -> [];
-			{[], N} -> N;
-			{S, []} -> S;
-			{S, N} ->
-				S ++
-				case lists:dropwhile(
-						fun(X) ->
-							case S of
-								[] -> false;
-								_ -> not (X == lists:last(S))
-								end
-						end,
-						N
-					)
-				of
-					[] -> S ++ N;
-					List -> tl(List)
-				end
-		end,
-	%ar:d({hashlist, HashList}),
-	WalletList =
-		ar_node:apply_mining_reward(
-			ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
-			BShadow#block.reward_addr,
-			FinderPool,
-			BShadow#block.height
-		),
-	B = BShadow#block { wallet_list = WalletList, hash_list = HashList },
-	RecallHash = ar_util:decode(JSONRecallB),
-	RecallB =
-		case ar_storage:read_block(RecallHash) of
-			unavailable ->
-				case ar_storage:read_encrypted_block(RecallHash) of
+			{FinderPool, _} = ar_node:calculate_reward_pool(
+				ar_node:get_reward_pool(whereis(http_entrypoint_node)),
+				TXs,
+				BShadow#block.reward_addr
+				),
+			HashList =
+				case {BShadow#block.hash_list, ar_node:get_hash_list(whereis(http_entrypoint_node))} of
+					{[], []} -> [];
+					{[], N} -> N;
+					{S, []} -> S;
+					{S, N} ->
+						S ++
+						case lists:dropwhile(
+								fun(X) ->
+									case S of
+										[] -> false;
+										_ -> not (X == lists:last(S))
+										end
+								end,
+								N
+							)
+						of
+							[] -> S ++ N;
+							List -> tl(List)
+						end
+				end,
+			%ar:d({hashlist, HashList}),
+			WalletList =
+				ar_node:apply_mining_reward(
+					ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
+					BShadow#block.reward_addr,
+					FinderPool,
+					BShadow#block.height
+				),
+			B = BShadow#block { wallet_list = WalletList, hash_list = HashList },
+			RecallHash = ar_util:decode(JSONRecallB),
+			RecallB =
+				case ar_storage:read_block(RecallHash) of
 					unavailable ->
-						unavailable;
-					EncryptedRecall -> 
-						FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key),
-						Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
-						ar_storage:write_tx(FullBlock#block.txs),
-						ar_storage:write_block(Recall),
-						Recall
-				end;
-			Recall -> Recall
-		end,
-		%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
-		%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-	ar_bridge:add_block(
-		whereis(http_bridge_node),
-		OrigPeer,
-		B,
-		RecallB
-	),
-	{200, [], <<"OK">>};
+						case ar_storage:read_encrypted_block(RecallHash) of
+							unavailable ->
+								unavailable;
+							EncryptedRecall ->
+								FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key),
+								Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
+								ar_storage:write_tx(FullBlock#block.txs),
+								ar_storage:write_block(Recall),
+								Recall
+						end;
+					Recall -> Recall
+				end,
+				%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
+				%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
+			ar_bridge:add_block(
+				whereis(http_bridge_node),
+				OrigPeer,
+				B,
+				RecallB
+			),
+			{200, [], <<"OK">>};
+		false ->
+			{404, [], <<"Invalid Block">>}
+	end;
 
 %% @doc Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as specified in ar_serialize.

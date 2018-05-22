@@ -256,8 +256,7 @@ write_tx(Tx) ->
 				),
 				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(Tx))
 			),
-			rpc:async_call(
-				node(),
+			spawn(
 				ar_meta_db,
 				increase,
 				[used_space, byte_size(list_to_binary(TxToWrite))]

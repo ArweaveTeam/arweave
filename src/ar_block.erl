@@ -241,8 +241,8 @@ verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
         ).
 
 %% @doc Verify that the block was created within the last ten minutes
-verify_timestamp(OldB, NewB) ->
-    (NewB#block.timestamp - OldB#block.timestamp) =< 600.
+verify_timestamp(Timestamp, NewB) ->
+    (NewB#block.timestamp - Timestamp) =< 600.
 
 %% @doc Verify the height of the new block is the one higher than the current height.
 verify_height(NewB, OldB) ->

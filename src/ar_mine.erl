@@ -170,8 +170,7 @@ server(
             Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
     end.
 
-%% @doc Spawn a single worker process to hash the data segment
-%% @doc Spawn a single worker process to hash the data segment
+%% @doc A worker process to hash the data segment searching for a solution for the given diff.
 miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Supervisor) ->
     receive
         stop -> ok;
