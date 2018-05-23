@@ -753,15 +753,10 @@ return_info() ->
 %% @doc Send a new transaction to an Archain HTTP node.
 send_new_tx(Host, TX) ->
 	ar_httpc:request(
-		post,
-		{
-			"http://" ++ ar_util:format_peer(Host) ++ "/tx",
-			[],
-			"application/x-www-form-urlencoded",
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-		},
-		[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}],
-		[]
+		<<"POST">>,
+		"http://" ++ ar_util:format_peer(Host),
+		"/tx",
+		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 	).
 
 %% @doc Distribute a newly found block to remote nodes.
@@ -776,12 +771,10 @@ send_new_block(Host, Port, NewB, RecallB) ->
 			false -> <<>>
 		end,
 	ar_httpc:request(
-		post,
-		{
-			"http://" ++ ar_util:format_peer(Host) ++ "/block",
-			[],
-			"application/x-www-form-urlencoded",
-			lists:flatten(
+		<<"POST">>,
+		"http://" ++ ar_util:format_peer(Host),
+		"/block",
+		lists:flatten(
 				ar_serialize:jsonify(
 					{struct,
 						[
@@ -795,7 +788,6 @@ send_new_block(Host, Port, NewB, RecallB) ->
 					}
 				)
 			)
-		}, 	[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
 	).
 
 
@@ -803,56 +795,42 @@ send_new_block(Host, Port, NewB, RecallB) ->
 %% @doc Add peer (self) to a remote host.
 add_peer(Host) ->
 	ar_httpc:request(
-		post,
-		{
-			"http://"
-				++ ar_util:format_peer(Host)
-				++ "/peers",
-			[],
-			"application/x-www-form-urlencoded",
-			lists:flatten(
-				ar_serialize:jsonify(
-					{struct,
-						[
-							{network, ?NETWORK_NAME}
-						]
-					}
-				)
+		<<"POST">>,
+		"http://" ++ ar_util:format_peer(Host),
+		"/peers",
+		lists:flatten(
+			ar_serialize:jsonify(
+				{struct,
+					[
+						{network, ?NETWORK_NAME}
+					]
+				}
 			)
-		}, [{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
+		)
 	).
 
 %% @doc Get a peers current, top block.
 get_current_block(Host) ->
 	handle_block_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/current_block/",
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/current_block",
+			[]
 		)
 	).
 
 %% @doc Get the minimum cost that a remote peer would charge for
 %% A transaction of data size Size
-get_tx_reward(Node, Size) ->
-	{ok, {{_, 200, _}, _, Body}} =
+get_tx_reward(Host, Size) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			get,
-			{
-					"http://"
-					++ ar_util:format_peer(Node)
-					++ "/price/"
-					++ integer_to_list(Size),
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
-	 	),
-	list_to_integer(Body).
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/price/" ++ integer_to_list(Size),
+			[]
+		),
+	list_to_integer(binary_to_list(Body)).
 
 %% @doc Retreive a block by height or hash from a remote peer.
 get_block(Host, Height) when is_integer(Height) ->
@@ -860,15 +838,10 @@ get_block(Host, Height) when is_integer(Height) ->
 	%ar:d([getting_new_block, {host, Host}, {height, Height}]),
 	handle_block_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/block/height/"
-					++ integer_to_list(Height),
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block/height/" ++ integer_to_list(Height),
+			[]
 	 	)
 	);
 get_block(Host, Hash) when is_binary(Hash) ->
@@ -876,15 +849,10 @@ get_block(Host, Hash) when is_binary(Hash) ->
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_block_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/block/hash/"
-					++ ar_util:encode(Hash),
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block/hash/" ++ ar_util:encode(Hash),
+			[]
 	 	)
 	).
 
@@ -894,17 +862,11 @@ get_encrypted_block(Host, Hash) when is_binary(Hash) ->
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_encrypted_block_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/block/hash/"
-					++ ar_util:encode(Hash)
-					++ "/encrypted",
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
-	 	)
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block/hash/" ++ ar_util:encode(Hash) ++ "/encrypted",
+			[]
+		)
 	).
 
 %% @doc Get a specified subfield from the block with the given hash
@@ -914,35 +876,21 @@ get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
 	%ar:d([getting_block, {host,[] Host}, {hash, Hash}]),
 	handle_block_field_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/block/hash/"
-					++ ar_util:encode(Hash)
-					++ "/"
-					++ Subfield,
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
-	 	)
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block/hash/" ++ ar_util:encode(Hash) ++ "/" ++ Subfield,
+			[]
+		)
 	);
 get_block_subfield(Host, Height, Subfield) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_block_field_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/block/height/"
-					++ integer_to_list(Height)
-					++ "/"
-					++ Subfield,
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block/height/" ++integer_to_list(Height) ++ "/" ++ Subfield,
+			[]
 	 	)
 	).
 
@@ -953,16 +901,10 @@ get_full_block(Host, Hash) when is_binary(Hash) ->
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_full_block_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/block/hash/"
-					++ ar_util:encode(Hash)
-					++ "/all/",
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block/hash/" ++ ar_util:encode(Hash) ++ "/all",
+			[]
 		)
 	).
 
@@ -973,17 +915,10 @@ get_encrypted_full_block(Host, Hash) when is_binary(Hash) ->
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_encrypted_full_block_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/block/hash/"
-					++ ar_util:encode(Hash)
-					++ "/all"
-					++ "/encrypted",
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block/hash/" ++ ar_util:encode(Hash) ++ "/all/encrypted",
+			[]
 		)
 	).
 
@@ -993,15 +928,10 @@ get_tx(Host, Hash) ->
 	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
 	handle_tx_response(
 		ar_httpc:request(
-			get,
-			{
-				"http://"
-					++ ar_util:format_peer(Host)
-					++ "/tx/"
-					++ ar_util:encode(Hash),
-				[]
-			},
-			[{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/tx/" ++ ar_util:encode(Hash),
+			[]
 	 	)
 	).
 
@@ -1010,8 +940,13 @@ get_tx(Host, Hash) ->
 get_pending_txs(Peer) ->
 	try
 		begin
-			{ok, {{_, 200, _}, _, Body}} =
-				ar_httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/tx/pending"),
+			{ok, {{200, _}, _, Body}} =
+				ar_httpc:request(
+					<<"GET">>,
+					"http://" ++ ar_util:format_peer(Peer),
+					"/tx/pending",
+					[]
+				),
 			{ok, {array, PendingTxs}} = json2:decode_string(Body),
 			[list_to_binary(P) || P <- PendingTxs]
 		end
@@ -1028,8 +963,15 @@ get_info(Peer, Type) ->
 			X
 	end.
 get_info(Peer) ->
-	case ar_httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/info") of
-		{ok, {{_, 200, _}, _, Body}} -> process_get_info(Body);
+	case 
+		ar_httpc:request(
+			<<"GET">>,
+			"http://" ++ ar_util:format_peer(Peer),
+			"/info",
+			[]
+		)
+	of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(binary_to_list(Body));
 		_ -> info_unavailable
 	end.
 
@@ -1037,8 +979,13 @@ get_info(Peer) ->
 get_peers(Peer) ->
 	try
 		begin
-			{ok, {{_, 200, _}, _, Body}} =
-				ar_httpc:request("http://" ++ ar_util:format_peer(Peer) ++ "/peers"),
+			{ok, {{200, _}, _, Body}} =
+				ar_httpc:request(
+				<<"GET">>,	
+				"http://" ++ ar_util:format_peer(Peer),
+				"/peers",
+				[]
+				),
 			{ok, {array, PeerArray}} = json2:decode_string(Body),
 			lists:map(fun ar_util:parse_peer/1, PeerArray)
 		end
@@ -1062,58 +1009,58 @@ process_get_info(Body) ->
 	].
 
 %% @doc Process the response of an /block call.
-handle_block_response({ok, {{_, 200, _}, _, Body}}) ->
-	ar_serialize:json_struct_to_block(Body);
+handle_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_serialize:json_struct_to_block(binary_to_list(Body));
 handle_block_response({error, _}) -> unavailable;
-handle_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
-handle_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+handle_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/.../all call.
-handle_full_block_response({ok, {{_, 200, _}, _, Body}}) ->
-	ar_serialize:json_struct_to_full_block(Body);
+handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_serialize:json_struct_to_full_block(binary_to_list(Body));
 handle_full_block_response({error, _}) -> unavailable;
-handle_full_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
-handle_full_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+handle_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/.../encrypted call.
-handle_encrypted_block_response({ok, {{_, 200, _}, _, Body}}) ->
-	ar_util:decode(Body);
+handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_util:decode(binary_to_list(Body));
 handle_encrypted_block_response({error, _}) -> unavailable;
-handle_encrypted_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
-handle_encrypted_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+handle_encrypted_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_encrypted_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/.../all/encrypted call.
-handle_encrypted_full_block_response({ok, {{_, 200, _}, _, Body}}) ->
-	ar_util:decode(Body);
+handle_encrypted_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_util:decode(binary_to_list(Body));
 handle_encrypted_full_block_response({error, _}) -> unavailable;
-handle_encrypted_full_block_response({ok, {{_, 404, _}, _, _}}) -> not_found;
-handle_encrypted_full_block_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+handle_encrypted_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_encrypted_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/[{Height}|{Hash}]/{Subfield} call.
-handle_block_field_response({"timestamp", {ok, {{_, 200, _}, _, Body}}}) ->
-	list_to_integer(Body);
-handle_block_field_response({"last_retarget", {ok, {{_, 200, _}, _, Body}}}) ->
-	list_to_integer(Body);
-handle_block_field_response({"diff", {ok, {{_, 200, _}, _, Body}}}) ->
-	list_to_integer(Body);
-handle_block_field_response({"height", {ok, {{_, 200, _}, _, Body}}}) ->
-	list_to_integer(Body);
-handle_block_field_response({"txs", {ok, {{_, 200, _}, _, Body}}}) ->
-	ar_serialize:json_struct_to_tx(Body);
-handle_block_field_response({"hash_list", {ok, {{_, 200, _}, _, Body}}}) ->
-	ar_serialize:json_struct_to_hash_list(Body);
-handle_block_field_response({"wallet_list", {ok, {{_, 200, _}, _, Body}}}) ->
-	ar_serialize:json_struct_to_wallet_list(Body);
-handle_block_field_response({_Subfield, {ok, {{_, 200, _}, _, Body}}}) -> Body;
+handle_block_field_response({"timestamp", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	list_to_integer(binary_to_list(Body));
+handle_block_field_response({"last_retarget", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	list_to_integer(binary_to_list(Body));
+handle_block_field_response({"diff", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	list_to_integer(binary_to_list(Body));
+handle_block_field_response({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	list_to_integer(binary_to_list(Body));
+handle_block_field_response({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	ar_serialize:json_struct_to_tx(binary_to_list(Body));
+handle_block_field_response({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	ar_serialize:json_struct_to_hash_list(binary_to_list(Body));
+handle_block_field_response({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	ar_serialize:json_struct_to_wallet_list(binary_to_list(Body));
+handle_block_field_response({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> binary_to_list(Body);
 handle_block_field_response({error, _}) -> unavailable;
-handle_block_field_response({ok, {{_, 404, _}, _, _}}) -> not_found;
-handle_block_field_response({ok, {{_, 500, _}, _, _}}) -> unavailable.
+handle_block_field_response({ok, {{<<"404">>, _}, _, _}}) -> not_found;
+handle_block_field_response({ok, {{<<"500">>, _}, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /tx call.
-handle_tx_response({ok, {{_, 200, _}, _, Body}}) ->
-	ar_serialize:json_struct_to_tx(Body);
-handle_tx_response({ok, {{_, 404, _}, _, _}}) -> not_found;
-handle_tx_response({ok, {{_, 500, _}, _, _}}) -> not_found.
+handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_serialize:json_struct_to_tx(binary_to_list(Body));
+handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found.
 
 %% @doc Helper function : registers a new node as the entrypoint.
 reregister(Node) ->
@@ -1218,14 +1165,14 @@ get_balance_test() ->
 	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
-	{ok, {{_, 200, _}, _, Body}} =
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/wallet/"
-		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
-				++ "/balance"),
-	10000 = list_to_integer(Body).
+			<<"GET">>,
+			"http://127.0.0.1:1984",
+			"/wallet/"++ ar_util:encode(ar_wallet:to_address(Pub1)) ++ "/balance",
+			[]
+		),
+	10000 = list_to_integer(binary_to_list(Body)).
 
 %% @doc Test that wallets issued in the pre-sale can be viewed.
 get_presale_balance_test() ->
@@ -1234,14 +1181,14 @@ get_presale_balance_test() ->
 	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
-	{ok, {{_, 200, _}, _, Body}} =
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/wallet/"
-		 		++ ar_util:encode_base64_safe(base64:encode_to_string(ar_wallet:to_address(Pub1)))
-				++ "/balance"),
-	10000 = list_to_integer(Body).
+			<<"GET">>,
+			"http://127.0.0.1:1984",
+			"/wallet/" ++ ar_util:encode_base64_safe(base64:encode_to_string(ar_wallet:to_address(Pub1))) ++ "/balance",
+			[]
+		),
+	10000 = list_to_integer(binary_to_list(Body)).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
 get_last_tx_single_test() ->
@@ -1250,13 +1197,13 @@ get_last_tx_single_test() ->
 	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<"TEST_ID">>}]),
 	Node1 = ar_node:start([], Bs),
 	reregister(Node1),
-	{ok, {{_, 200, _}, _, Body}} =
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/wallet/"
-		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
-				++ "/last_tx"),
+			<<"GET">>,
+			"http://127.0.0.1:1984",
+			"/wallet/" ++ ar_util:encode(ar_wallet:to_address(Pub1)) ++ "/last_tx",
+			[]
+		),
 	<<"TEST_ID">> = ar_util:decode(Body).
 
 %% @doc Ensure that blocks can be received via a hash.
@@ -1415,13 +1362,13 @@ add_tx_and_get_last_test() ->
 	receive after 500 -> ok end,
 	ar_node:mine(Node),
 	receive after 500 -> ok end,
-	{ok, {{_, 200, _}, _, Body}} =
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/wallet/"
-		 		++ ar_util:encode(ar_wallet:to_address(Pub1))
-				++ "/last_tx"),
+			<<"GET">>,
+			"http://127.0.0.1:1984",
+			"/wallet/" ++ ar_util:encode(ar_wallet:to_address(Pub1)) ++ "/last_tx",
+			[]
+		),
 	ID = ar_util:decode(Body).
 
 %% @doc Post a tx to the network and ensure that its subfields can be gathered
@@ -1441,13 +1388,13 @@ get_subfields_of_tx_test() ->
 	ar_node:mine(Node),
 	receive after 1000 -> ok end,
 	%write a get_tx function like get_block
-	{ok, {{_, 200, _}, _, Body}} =
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/tx/"
-		 		++ ar_util:encode(TX#tx.id)
-				++ "/data"),
+			<<"GET">>,
+			"http://127.0.0.1:1984",
+			"/tx/" ++ ar_util:encode(TX#tx.id) ++ "/data",
+			[]
+		),
 	Orig = TX#tx.data,
 	Orig = ar_util:decode(Body).
 
@@ -1466,12 +1413,13 @@ get_pending_tx_test() ->
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
 	receive after 1000 -> ok end,
 	%write a get_tx function like get_block
-	{ok, {{_, 202, _}, _, Body}} =
+	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/tx/"
-				++ ar_util:encode(TX#tx.id)),
+			<<"GET">>,
+			"http://127.0.0.1:1984",
+			"/tx/" ++ ar_util:encode(TX#tx.id),
+			[]
+		),
 	Body == "Pending".
 
 %% @doc Correctly check the status of pending is returned for a pending transaction
@@ -1489,13 +1437,13 @@ get_pending_subfield_tx_test() ->
 	send_new_tx({127, 0, 0, 1}, TX = ar_tx:new(<<"DATA1">>)),
 	receive after 1000 -> ok end,
 	%write a get_tx function like get_block
-	{ok, {{_, 202, _}, _, Body}} =
+	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/tx/"
-				++ ar_util:encode(TX#tx.id)
-				++ "/data"),
+			<<"GET">>,
+			"http://127.0.0.1:1984",
+			"/tx/" ++ ar_util:encode(TX#tx.id) ++ "/data",
+			[]
+		),
 	Body == "Pending".
 
 %% @doc Find all pending transactions in the network
@@ -1515,13 +1463,14 @@ get_multiple_pending_txs_test() ->
 	send_new_tx({127, 0, 0, 1}, TX2 = ar_tx:new(<<"DATA2">>)),
 	receive after 1000 -> ok end,
 	%write a get_tx function like get_block
-	{ok, {{_, 200, _}, _, Body}} =
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
-			"http://127.0.0.1:"
-				++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-				++ "/tx/"
-				++ "pending"),
-	{ok, {array, PendingTxs}} = json2:decode_string(Body),
+			<<"GET">>,
+			"http://127.0.0.1:1984",
+			"/tx/" ++ "pending",
+			[]
+		),
+	{ok, {array, PendingTxs}} = json2:decode_string(binary_to_list(Body)),
 	[TX1#tx.id, TX2#tx.id] == [list_to_binary(P) || P <- PendingTxs].
 
 get_tx_by_tag_test() ->
@@ -1544,18 +1493,16 @@ get_tx_by_tag_test() ->
 			)
 		),
 	%Query = ar_serialize:json_struct_to_query(QueryJSON),
-	{ok, {_, _, Stuff}} = ar_httpc:request(
-		post,
-		{
-			"http://127.0.0.1:1984" ++ "/arql",
-			[],
-			"application/x-www-form-urlencoded",
+	{ok, {_, _, Body, _, _}} = 
+		ar_httpc:request(
+			<<"POST">>,
+			"http://127.0.0.1:1984",
+			"/arql",
 			lists:flatten(
 				QueryJSON
 			)
-		}, [{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
-	),
-	{ok, {array, TXs}} = ar_serialize:dejsonify(Stuff),
+		),
+	{ok, {array, TXs}} = ar_serialize:dejsonify(binary_to_list(Body)),
 	true =
 		lists:member(
 			TX#tx.id,
@@ -1593,18 +1540,16 @@ get_txs_by_send_recv_test_slow() ->
 				{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
 			)
 		),
-	{ok, {_, _, Res}} = ar_httpc:request(
-		post,
-		{
-			"http://127.0.0.1:1984" ++ "/arql",
-			[],
-			"application/x-www-form-urlencoded",
+	{ok, {_, _, Res, _, _}} = 
+		ar_httpc:request(
+			<<"POST">>,
+			"http://127.0.0.1:1984",
+			"/arql",
 			lists:flatten(
 				QueryJSON
 			)
-		}, [{timeout, ?NET_TIMEOUT}, {connect_timeout, ?CONNECT_TIMEOUT}], []
-	),
-	{ok, {array, TXs}} = ar_serialize:dejsonify(Res),
+		),
+	{ok, {array, TXs}} = ar_serialize:dejsonify(binary_to_list(Res)),
 	ar:d({id, TX#tx.id}),
 	ar:d({txs, TXs}),
 	true =

@@ -7,12 +7,16 @@
 %%% in the meta db.
 
 %% @doc Perform a HTTP call with the httpc library, store the time required.
-request(URL) -> httpc:request(get, {URL, []}, [], []).
-request(Method, Request, HTTPOpts, Opts) ->
-	{MicroSecs, Res} =
-		timer:tc(fun() -> httpc:request(Method, Request, HTTPOpts, Opts) end),
-	store_data_time(Request, calculate_size(Request), MicroSecs),
-	Res.
+request(URL) -> 
+	{ok, Client} = fusco:start(URL, []),
+	{ok, Request} = fusco:request(Client, <<"/">> , <<"GET">>, [], [], 1, ?CONNECT_TIMEOUT),
+	ok = fusco:disconnect(Client),
+	Request.
+request(Method, Host, Path, Body) ->
+	{ok, Client} = fusco:start(Host, []),
+	Result = fusco:request(Client, list_to_binary(Path), Method, [], list_to_binary(Body), 1, ?CONNECT_TIMEOUT),
+	ok = fusco:disconnect(Client),
+	Result.
 
 %% @doc Return a number of bytes (after headers) of the size of a HTTP request.
 calculate_size({_URL, _Headers}) -> 0;
