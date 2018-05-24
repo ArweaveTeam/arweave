@@ -323,7 +323,7 @@ handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	case ar_serialize:dejsonify(BlockJSON) of
 		{Struct} ->
-			{"network", NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
+			{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
 			case(NetworkName == ?NETWORK_NAME) of
 				false ->
 					{400, [], <<"Wrong network.">>};
@@ -342,7 +342,7 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
 	case lists:keyfind(<<"network">>, 1, Struct) of
-		{"network", NetworkName} ->
+		{<<"network">>, NetworkName} ->
 			case(NetworkName == ?NETWORK_NAME) of
 				false ->
 					{400, [], <<"Wrong network.">>};
