@@ -770,14 +770,12 @@ add_peer(Host) ->
 		<<"POST">>,
 		"http://" ++ ar_util:format_peer(Host),
 		"/peers",
-		lists:flatten(
-			ar_serialize:jsonify(
-				{
-					[
-						{network, ?NETWORK_NAME}
-					]
-				}
-			)
+		ar_serialize:jsonify(
+			{
+				[
+					{network, ?NETWORK_NAME}
+				]
+			}
 		)
 	).
 
