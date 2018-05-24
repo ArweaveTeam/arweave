@@ -268,14 +268,12 @@ handle('POST', [<<"tx">>], Req) ->
 handle('GET', [<<"peers">>], Req) ->
 	{200, [],
 		ar_serialize:jsonify(
-			{
-				[
-					ar_util:format_peer(P)
-				||
-					P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-					P /= ar_util:parse_peer(elli_request:peer(Req))
-				]
-			}
+			[
+				ar_util:format_peer(P)
+			||
+				P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+				P /= ar_util:parse_peer(elli_request:peer(Req))
+			]
 		)
 	};
 
@@ -953,14 +951,14 @@ get_info(Peer) ->
 get_peers(Peer) ->
 	try
 		begin
-			{ok, {{200, _}, _, Body}} =
+			{ok, {{<<"200">>, _}, _, Body, _, _}} =
 				ar_httpc:request(
 				<<"GET">>,	
 				"http://" ++ ar_util:format_peer(Peer),
 				"/peers",
 				[]
 				),
-			{ok, {array, PeerArray}} = json2:decode_string(Body),
+			PeerArray = ar_serialize:dejsonify(Body),
 			lists:map(fun ar_util:parse_peer/1, PeerArray)
 		end
 	catch _:_ -> []
