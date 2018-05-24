@@ -8,13 +8,13 @@
 
 %% @doc Perform a HTTP call with the httpc library, store the time required.
 request(URL) -> 
-	{ok, Client} = fusco:start(URL, []),
-	{ok, Request} = fusco:request(Client, <<"/">> , <<"GET">>, [], [], 1, ?CONNECT_TIMEOUT),
+	{ok, Client} = fusco:start(URL, [{connect_timeout, ?CONNECT_TIMEOUT}]),
+	{ok, Request} = fusco:request(Client, <<"/">> , <<"GET">>, [], [], 1, ?NET_TIMEOUT),
 	ok = fusco:disconnect(Client),
 	Request.
 request(Method, Host, Path, Body) ->
-	{ok, Client} = fusco:start(Host, []),
-	Result = fusco:request(Client, list_to_binary(Path), Method, [], Body, 1, ?CONNECT_TIMEOUT),
+	{ok, Client} = fusco:start(Host, [{connect_timeout, ?CONNECT_TIMEOUT}]),
+	Result = fusco:request(Client, list_to_binary(Path), Method, [], Body, 1, ?NET_TIMEOUT),
 	ok = fusco:disconnect(Client),
 	Result.
 

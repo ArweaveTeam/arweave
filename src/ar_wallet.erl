@@ -18,9 +18,9 @@ new() ->
 new_keyfile() ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {4096, 17489}),
-		Key = lists:flatten(
-			json2:encode(
-				{struct,
+		Key = 
+			ar_serialize:jsonify(
+				{
 					[
 						{kty, "RSA"},
 						{ext, true},
@@ -34,8 +34,7 @@ new_keyfile() ->
 						{qi, ar_util:encode(C)}
 					]
 				}
-			)
-		),
+			),
 		FileName = "wallets/archain_TESTNET_key" ++ binary_to_list(ar_util:encode(to_address(Pub))) ++ ".json",
 		filelib:ensure_dir(FileName),
 		file:write_file(FileName, Key),
@@ -44,10 +43,10 @@ new_keyfile() ->
 %% @doc Extracts the public and private key from a keyfile
 load_keyfile(File) ->
 	{ok, Body} = file:read_file(File),
-	{ok, {struct, Key}} = json2:decode_string(binary_to_list(Body)),
-	{"n", PubEncoded} = lists:keyfind("n", 1, Key),
+	{Key} = ar_serialize:dejsonify(Body),
+	{<<"n">>, PubEncoded} = lists:keyfind(<<"n">>, 1, Key),
 	Pub = ar_util:decode(PubEncoded),
-	{"d", PrivEncoded} = lists:keyfind("d", 1, Key),
+	{<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
 	Priv = ar_util:decode(PrivEncoded),
 	{{Priv, Pub}, Pub}.
 

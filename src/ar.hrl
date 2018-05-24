@@ -50,7 +50,7 @@
 %% The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 1024 * 1024 * 1024 * 512).
 %% Default timeout value for network requests.
--define(NET_TIMEOUT, 2000 * 1000).
+-define(NET_TIMEOUT, 900 * 1000).
 %% Default timeout for initial request
 -define(CONNECT_TIMEOUT, 10 * 1000).
 %% Default time to wait after a failed join to retry

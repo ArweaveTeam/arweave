@@ -269,7 +269,7 @@ handle('GET', [<<"peers">>], Req) ->
 	{200, [],
 		ar_serialize:jsonify(
 			[
-				ar_util:format_peer(P)
+				list_to_binary(ar_util:format_peer(P))
 			||
 				P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 				P /= ar_util:parse_peer(elli_request:peer(Req))
@@ -547,9 +547,9 @@ handle('GET', [<<"current_block">>], _Req) ->
 handle('GET', [<<"services">>], _Req) ->
 	{200, [],
 		ar_serialize:jsonify(
-			{array,
+			{
 				[
-					{struct,
+					{
 						[
 							{"name", Name},
 							{"host", ar_util:format_peer(Host)},
@@ -600,7 +600,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
 		unavailable ->
 				{404, [], <<"Not Found.">>};
 		B ->
-			{struct, BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+			{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
 			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
 			Result = block_field_to_string(Field, Res),
 			{200, [], Result}
@@ -619,7 +619,7 @@ handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 		unavailable ->
 				{404, [], <<"Not Found.">>};
 		B ->
-			{struct, BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+			{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
 			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
 			Result = block_field_to_string(Field, Res),
 			{200, [], Result}
@@ -630,14 +630,14 @@ handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 %% specified in ar_serialize.
 handle('POST', [<<"services">>], Req) ->
 	BodyBin = elli_request:body(Req),
-	{ok, {struct, ServicesJSON}} = json2:decode_string(binary_to_list(BodyBin)),
+	{ServicesJSON} = ar_serialize:jsonify(BodyBin),
 	ar_services:add(
 		whereis(http_services_node),
 		lists:map(
-			fun({struct, Vals}) ->
-				{"name", Name} = lists:keyfind("name", 1, Vals),
-				{"host", Host} = lists:keyfind("host", 1, Vals),
-				{"expires", Expiry} = lists:keyfind("expires", 1, Vals),
+			fun({Vals}) ->
+				{<<"name">>, Name} = lists:keyfind(<<"name">>, 1, Vals),
+				{<<"host">>, Host} = lists:keyfind(<<"host">>, 1, Vals),
+				{<<"expires">>, Expiry} = lists:keyfind(<<"expires">>, 1, Vals),
 				#service { name = Name, host = Host, expires = Expiry }
 			end,
 			ServicesJSON
@@ -709,7 +709,7 @@ return_info() ->
 		ar_serialize:jsonify(
 			{
 				[
-					{network, ?NETWORK_NAME},
+					{network, list_to_binary(?NETWORK_NAME)},
 					{version, ?CLIENT_VERSION},
 					{height,
 						case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
@@ -910,14 +910,14 @@ get_tx(Host, Hash) ->
 get_pending_txs(Peer) ->
 	try
 		begin
-			{ok, {{200, _}, _, Body}} =
+			{ok, {{200, _}, _, Body, _, _}} =
 				ar_httpc:request(
 					<<"GET">>,
 					"http://" ++ ar_util:format_peer(Peer),
 					"/tx/pending",
 					[]
 				),
-			{ok, {array, PendingTxs}} = json2:decode_string(Body),
+			PendingTxs = ar_serialize:dejsonify(Body),
 			[list_to_binary(P) || P <- PendingTxs]
 		end
 	catch _:_ -> []
@@ -1099,7 +1099,7 @@ get_info_test() ->
 	reregister(Node1),
 	BridgeNode = ar_bridge:start([]),
 	reregister(http_bridge_node, BridgeNode),
-	?NETWORK_NAME = get_info({127,0,0,1,1984}, name),
+	<<?NETWORK_NAME>> = get_info({127,0,0,1,1984}, name),
 	?CLIENT_VERSION = get_info({127,0,0,1,1984}, version),
 	0 = get_info({127,0,0,1,1984}, peers),
 	1 = get_info({127,0,0,1,1984}, blocks),
@@ -1122,7 +1122,7 @@ get_unjoined_info_test() ->
 	reregister(Node1),
 	BridgeNode = ar_bridge:start([]),
 	reregister(http_bridge_node, BridgeNode),
-	?NETWORK_NAME = get_info({127,0,0,1,1984}, name),
+	<<?NETWORK_NAME>> = get_info({127,0,0,1,1984}, name),
 	?CLIENT_VERSION = get_info({127,0,0,1,1984}, version),
 	0 = get_info({127,0,0,1,1984}, peers),
 	0 = get_info({127,0,0,1,1984}, blocks),
@@ -1442,7 +1442,6 @@ get_multiple_pending_txs_test() ->
 			[]
 		),
 	PendingTXs = ar_serialize:dejsonify(Body),
-	% {ok, {array, PendingTxs}} = json2:decode_string(binary_to_list(Body)),
 	[TX1#tx.id, TX2#tx.id] == [P || P <- PendingTXs].
 
 get_tx_by_tag_test() ->
@@ -1464,7 +1463,6 @@ get_tx_by_tag_test() ->
 			{'equals', <<"TestName">>, <<"TestVal">>}
 			)
 		),
-	%Query = ar_serialize:json_struct_to_query(QueryJSON),
 	{ok, {_, _, Body, _, _}} = 
 		ar_httpc:request(
 			<<"POST">>,
