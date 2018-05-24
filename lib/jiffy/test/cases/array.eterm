@@ -1,0 +1,16 @@
+[
+    <<"foo">>,
+    <<"bar">>,
+    <<"baz">>,
+    true,
+    false,
+    null,
+    {[{<<"key">>, <<"value">>}]},
+    [
+        null,
+        null,
+        null,
+        []
+    ],
+    <<"\n\r\\">>
+].

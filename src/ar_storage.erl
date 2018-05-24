@@ -165,7 +165,7 @@ read_block(ID) ->
 	end.
 do_read_block(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
-	ar_serialize:json_struct_to_block(binary_to_list(Binary)).
+	ar_serialize:json_struct_to_block(Binary).
 
 %% @doc Read an encrypted block from disk, given a hash.
 read_encrypted_block(unavailable) -> unavailable;
@@ -199,15 +199,15 @@ name_block(B) when is_record(B, block) ->
 		++ "/"
 		++ integer_to_list(B#block.height)
 		++ "_"
-		++ ar_util:encode(B#block.indep_hash)
+		++ binary_to_list(ar_util:encode(B#block.indep_hash))
 		++ ".json";
 name_block(BinHash) when is_binary(BinHash) ->
-	?BLOCK_DIR ++ "/*_" ++ ar_util:encode(BinHash) ++ ".json".
+	?BLOCK_DIR ++ "/*_" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
 
 %% @doc Generate a wildcard search string for an encrypted block,
 %% given a block, binary hash, or list.
 name_enc_block(BinHash) when is_binary(BinHash) ->
-	?BLOCK_ENC_DIR ++ "/*_" ++ ar_util:encode(BinHash) ++ ".json".
+	?BLOCK_ENC_DIR ++ "/*_" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
 
 %% @doc Delete the tx with the given hash from disk.
 delete_tx(Hash) ->
@@ -300,16 +300,16 @@ read_tx(ID) ->
 
 do_read_tx(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
-	ar_serialize:json_struct_to_tx(binary_to_list(Binary)).
+	ar_serialize:json_struct_to_tx(Binary).
 
 %% @doc Returns the file name for a TX with the given hash
 name_tx(Tx) when is_record(Tx, tx) ->
 	?TX_DIR
 		++ "/"
-		++ ar_util:encode(Tx#tx.id)
+		++ binary_to_list(ar_util:encode(Tx#tx.id))
 		++ ".json";
 name_tx(BinHash) when is_binary(BinHash) ->
-	?TX_DIR ++ "/" ++ ar_util:encode(BinHash) ++ ".json".
+	?TX_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
 
 % @doc Check that there is enough space to write Bytes bytes of data
 enough_space(Bytes) ->

@@ -14,7 +14,7 @@ request(URL) ->
 	Request.
 request(Method, Host, Path, Body) ->
 	{ok, Client} = fusco:start(Host, []),
-	Result = fusco:request(Client, list_to_binary(Path), Method, [], list_to_binary(Body), 1, ?CONNECT_TIMEOUT),
+	Result = fusco:request(Client, list_to_binary(Path), Method, [], Body, 1, ?CONNECT_TIMEOUT),
 	ok = fusco:disconnect(Client),
 	Result.
 

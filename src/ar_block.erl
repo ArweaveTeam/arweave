@@ -10,10 +10,8 @@
 %% the contents of the recall block and the hash of the current block
 encrypt_block(R, B) ->
     Recall =
-        list_to_binary(
-            ar_serialize:jsonify(
-                ar_serialize:block_to_json_struct(R)
-            )
+        ar_serialize:jsonify(
+            ar_serialize:block_to_json_struct(R)
         ),
     Hash = B#block.hash,
     Nonce = binary:part(Hash, 0, 16),
@@ -39,17 +37,15 @@ decrypt_block(B, CipherText, Key) ->
             CipherText
         ),
     PlainText = unpad_binary(PaddedPlainText),
-    {ok, RJSON} = ar_serialize:dejsonify(binary_to_list(PlainText)),
+    RJSON = ar_serialize:dejsonify(binary_to_list(PlainText)),
     ar_serialize:json_struct_to_block(RJSON).
 
 %% @doc Encrypt a recall block. Encryption key is derived from
 %% the contents of the recall block and the hash of the current block
 encrypt_full_block(R, B) ->
     Recall =
-        list_to_binary(
-            ar_serialize:jsonify(
-                ar_serialize:full_block_to_json_struct(R)
-            )
+        ar_serialize:jsonify(
+            ar_serialize:full_block_to_json_struct(R)
         ),
     Hash = B#block.hash,
     Nonce = binary:part(Hash, 0, 16),
@@ -75,17 +71,15 @@ decrypt_full_block(B, CipherText, Key) ->
             CipherText
         ),
     PlainText = unpad_binary(PaddedPlainText),
-    {ok, RJSON} = ar_serialize:dejsonify(binary_to_list(PlainText)),
+    RJSON = ar_serialize:dejsonify(PlainText),
     ar_serialize:json_struct_to_full_block(RJSON).
 
 %% @doc derive the key for a given recall block, given the
 %% recall block and current block
 generate_block_key(R, B) ->
     Recall =
-        list_to_binary(
-            ar_serialize:jsonify(
-                ar_serialize:block_to_json_struct(R)
-            )
+        ar_serialize:jsonify(
+            ar_serialize:block_to_json_struct(R)
         ),
     Hash = B#block.hash,
     crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>).

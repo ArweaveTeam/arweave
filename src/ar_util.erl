@@ -1,7 +1,6 @@
 -module(ar_util).
 -export([pick_random/1, pick_random/2]).
 -export([encode/1, decode/1]).
--export([encode_base64_safe/1, decode_base64_safe/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_hash_list/2, hash_from_hash_list/2, get_recall_hash/2, get_recall_hash/3]).
@@ -30,47 +29,15 @@ pick_random(Xs) ->
 
 %% @doc Encode a binary to URL safe base64.
 encode(Bin) ->
-	encode_base64_safe(base64:encode_to_string(Bin)).
+	base64url:encode(Bin).
 
 %% @doc Decode a URL safe base64 to binary.
+decode([]) -> [];
+decode(Bin) when is_list(Bin) ->
+	decode(list_to_binary(Bin));
 decode(Bin) when is_binary(Bin) ->
-	decode(bitstring_to_list(Bin));
-decode(Str) ->
-	base64:decode(decode_base64_safe(Str)).
+	base64url:decode(Bin).
 
-%% @doc Takes base64 and encodes it into base64 suitable for URLs.
-encode_base64_safe([]) -> [];
-encode_base64_safe([$=|T]) ->
-	encode_base64_safe(T);
-encode_base64_safe([$/|T]) ->
-	[ $_ | encode_base64_safe(T) ];
-encode_base64_safe([$+|T]) ->
-	[ $- | encode_base64_safe(T) ];
-encode_base64_safe([H|T]) ->
-	[ H | encode_base64_safe(T) ].
-
-%% @doc Decodes URL safe base64 and turns it back into base64.
-decode_base64_safe(Str) ->
-	UnsafeStr = do_decode_base64_safe(Str),
-	lists:flatten(
-		string:pad(
-			UnsafeStr,
-			length(UnsafeStr)
-				+ case 4 - (length(UnsafeStr) rem 4) of
-					4 -> 0;
-					X -> X
-				end,
-			trailing,
-			$=
-		)
-	).
-do_decode_base64_safe([]) -> [];
-do_decode_base64_safe([$_|T]) ->
-	[ $/ | do_decode_base64_safe(T) ];
-do_decode_base64_safe([$-|T]) ->
-	[ $+ | do_decode_base64_safe(T) ];
-do_decode_base64_safe([H|T]) ->
-	[ H | do_decode_base64_safe(T) ].
 
 
 %% @doc Reverse a binary

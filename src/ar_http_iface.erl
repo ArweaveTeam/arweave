@@ -67,17 +67,13 @@ handle('GET', [<<"info">>], _Req) ->
 %% GET request to endpoint /tx/pending
 handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 	{200, [],
-		list_to_binary(
 			ar_serialize:jsonify(
-				{array,
-					%% Should encode
-						lists:map(
-							fun ar_util:encode/1,
-							ar_node:get_pending_txs(whereis(http_entrypoint_node))
-						)
-				}
+				%% Should encode
+				lists:map(
+					fun ar_util:encode/1,
+					ar_node:get_pending_txs(whereis(http_entrypoint_node))
+				)
 			)
-		)
 	};
 
 %% @doc Return a transaction specified via the the transaction id (hash)
@@ -117,10 +113,8 @@ handle('POST', [<<"arql">>], Req) ->
 			{
 				200,
 				[],
-				list_to_binary(
-					ar_serialize:jsonify(
-						ar_serialize:hash_list_to_json_struct(Set)
-					)
+				ar_serialize:jsonify(
+					ar_serialize:hash_list_to_json_struct(Set)
 				)
 			}
 	end;
@@ -148,11 +142,11 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 %% POST request to endpoint /block with the body of the request being a JSON encoded block as specified in ar_serialize.
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
-	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
-	{"recall_block", JSONRecallB} = lists:keyfind("recall_block", 1, Struct),
-	{"new_block", JSONB} = lists:keyfind("new_block", 1, Struct),
-	{"port", Port} = lists:keyfind("port", 1, Struct),
-	{"key", KeyEnc} = lists:keyfind("key", 1, Struct),
+	{Struct} = ar_serialize:dejsonify(BlockJSON),
+	{<<"recall_block">>, JSONRecallB} = lists:keyfind(<<"recall_block">>, 1, Struct),
+	{<<"new_block">>, JSONB} = lists:keyfind(<<"new_block">>, 1, Struct),
+	{<<"port">>, Port} = lists:keyfind(<<"port">>, 1, Struct),
+	{<<"key">>, KeyEnc} = lists:keyfind(<<"key">>, 1, Struct),
 	Key = ar_util:decode(KeyEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
@@ -247,7 +241,7 @@ handle('POST', [<<"block">>], Req) ->
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as specified in ar_serialize.
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
-	TX = ar_serialize:json_struct_to_tx(binary_to_list(TXJSON)),
+	TX = ar_serialize:json_struct_to_tx(TXJSON),
 	case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
 		unavailable -> {400, [], <<"Transaction verification failed.">>};
 		Diff ->
@@ -273,17 +267,15 @@ handle('POST', [<<"tx">>], Req) ->
 %% GET request to endpoint /peers
 handle('GET', [<<"peers">>], Req) ->
 	{200, [],
-		list_to_binary(
-			ar_serialize:jsonify(
-				{array,
-					[
-						ar_util:format_peer(P)
-					||
-						P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-						P /= ar_util:parse_peer(elli_request:peer(Req))
-					]
-				}
-			)
+		ar_serialize:jsonify(
+			{
+				[
+					ar_util:format_peer(P)
+				||
+					P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+					P /= ar_util:parse_peer(elli_request:peer(Req))
+				]
+			}
 		)
 	};
 
@@ -292,7 +284,7 @@ handle('GET', [<<"peers">>], Req) ->
 %% TODO: Change so current block does not need to be pulled to calculate cost
 handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	{200, [],
-		integer_to_list(
+		integer_to_binary(
 			ar_tx:calculate_min_tx_cost(
 				list_to_integer(
 					binary_to_list(SizeInBytes)
@@ -308,11 +300,10 @@ handle('GET', [<<"hash_list">>], _Req) ->
 	Node = whereis(http_entrypoint_node),
     HashList = ar_node:get_hash_list(Node),
     {200, [],
-        list_to_binary(
-            ar_serialize:jsonify(
-                ar_serialize:hash_list_to_json_struct(HashList)
-            )
-        )
+		ar_serialize:jsonify(
+		ar_serialize:hash_list_to_json_struct(HashList)
+		)
+
     };
 
 %% @doc Return the current wallet list held by the node.
@@ -321,10 +312,8 @@ handle('GET', [<<"wallet_list">>], _Req) ->
     Node = whereis(http_entrypoint_node),
     WalletList = ar_node:get_wallet_list(Node),
     {200, [],
-        list_to_binary(
-            ar_serialize:jsonify(
-                ar_serialize:wallet_list_to_json_struct(WalletList)
-            )
+		ar_serialize:jsonify(
+		ar_serialize:wallet_list_to_json_struct(WalletList)
         )
     };
 
@@ -334,8 +323,8 @@ handle('GET', [<<"wallet_list">>], _Req) ->
 % NOTE: Consider returning remaining timeout on a failed request
 handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
-	case json2:decode_string(binary_to_list(BlockJSON)) of
-		{ok, {struct, Struct}} ->
+	case ar_serialize:dejsonify(BlockJSON) of
+		{Struct} ->
 			{"network", NetworkName} = lists:keyfind("network", 1, Struct),
 			case(NetworkName == ?NETWORK_NAME) of
 				false ->
@@ -353,7 +342,7 @@ handle('POST', [<<"peers">>], Req) ->
 	end;
 handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	BlockJSON = elli_request:body(Req),
-	{ok, {struct, Struct}} = json2:decode_string(binary_to_list(BlockJSON)),
+	{Struct} = ar_serialize:dejsonify(BlockJSON),
 	case lists:keyfind("network", 1, Struct) of
 		{"network", NetworkName} ->
 			case(NetworkName == ?NETWORK_NAME) of
@@ -375,12 +364,10 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 %% GET request to endpoint /wallet/{wallet_address}/balance
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	{200, [],
-		list_to_binary(
-			integer_to_list(
-				ar_node:get_balance(
-					whereis(http_entrypoint_node),
-					ar_util:decode(Addr)
-				)
+		integer_to_binary(
+			ar_node:get_balance(
+				whereis(http_entrypoint_node),
+				ar_util:decode(Addr)
 			)
 		)
 	};
@@ -389,12 +376,10 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 %% GET request to endpoint /wallet/{wallet_address}/last_tx
 handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	{200, [],
-		list_to_binary(
-			ar_util:encode(
-				ar_node:get_last_tx(
-					whereis(http_entrypoint_node),
-					ar_util:decode(Addr)
-				)
+		ar_util:encode(
+			ar_node:get_last_tx(
+				whereis(http_entrypoint_node),
+				ar_util:decode(Addr)
 			)
 		)
 	};
@@ -600,7 +585,7 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 					{404, [], <<"Not Found.">>}
 			end;
 		T ->
-			{struct, TXJSON} = ar_serialize:tx_to_json_struct(T),
+			{TXJSON} = ar_serialize:tx_to_json_struct(T),
 			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, TXJSON),
 			{200, [], Res}
 	end;
@@ -680,10 +665,8 @@ return_block(unavailable) -> {404, [], <<"Block not found.">>};
 return_block(not_found) -> {404, [], <<"Block not found.">>};
 return_block(B) ->
 	{200, [],
-		list_to_binary(
-			ar_serialize:jsonify(
-				ar_serialize:block_to_json_struct(B)
-			)
+		ar_serialize:jsonify(
+			ar_serialize:block_to_json_struct(B)
 		)
 	}.
 return_encrypted_block(unavailable) -> {404, [], <<"Block not found.">>}.
@@ -699,10 +682,8 @@ return_encrypted_block(R, B) ->
 return_full_block(unavailable) -> {404, [], <<"Block not found.">>};
 return_full_block(B) ->
 	{200, [],
-		list_to_binary(
-			ar_serialize:jsonify(
-				ar_serialize:full_block_to_json_struct(B)
-			)
+		ar_serialize:jsonify(
+			ar_serialize:full_block_to_json_struct(B)
 		)
 	}.
 return_encrypted_full_block(unavailable) -> {404, [], <<"Block not found.">>}.
@@ -718,10 +699,8 @@ return_encrypted_full_block(R, B) ->
 return_tx(unavailable) -> {404, [], <<"TX not found.">>};
 return_tx(T) ->
 	{200, [],
-		list_to_binary(
-			ar_serialize:jsonify(
-				ar_serialize:tx_to_json_struct(T)
-			)
+		ar_serialize:jsonify(
+			ar_serialize:tx_to_json_struct(T)
 		)
 	}.
 
@@ -729,22 +708,20 @@ return_tx(T) ->
 %% the state of the node.
 return_info() ->
 	{200, [],
-		list_to_binary(
-			ar_serialize:jsonify(
-				{struct,
-					[
-						{network, ?NETWORK_NAME},
-						{version, ?CLIENT_VERSION},
-						{height,
-							case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
-								[] -> 0;
-								Hashes -> (length(Hashes) - 1)
-							end},
-						{blocks, ar_storage:blocks_on_disk()},
-						{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))}
-					]
-				}
-			)
+		ar_serialize:jsonify(
+			{
+				[
+					{network, ?NETWORK_NAME},
+					{version, ?CLIENT_VERSION},
+					{height,
+						case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+							[] -> 0;
+							Hashes -> (length(Hashes) - 1)
+						end},
+					{blocks, ar_storage:blocks_on_disk()},
+					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))}
+				]
+			}
 		)
 	}.
 
@@ -774,20 +751,17 @@ send_new_block(Host, Port, NewB, RecallB) ->
 		<<"POST">>,
 		"http://" ++ ar_util:format_peer(Host),
 		"/block",
-		lists:flatten(
-				ar_serialize:jsonify(
-					{struct,
-						[
-							{new_block,
-								ar_serialize:block_to_json_struct(NewBShadow)},
-							{recall_block,
-								ar_util:encode(RecallBHash)},
-							{port, Port},
-							{key, ar_util:encode(ar_block:generate_block_key(RecallB, NewB))}
-						]
-					}
-				)
-			)
+		ar_serialize:jsonify(
+			{
+				[
+					{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+					{<<"recall_block">>, ar_util:encode(RecallBHash)},
+					{<<"port">>, Port},
+					{<<"key">>, ar_util:encode(ar_block:generate_block_key(RecallB, NewB))}
+				]
+			}
+		)
+
 	).
 
 
@@ -800,7 +774,7 @@ add_peer(Host) ->
 		"/peers",
 		lists:flatten(
 			ar_serialize:jsonify(
-				{struct,
+				{
 					[
 						{network, ?NETWORK_NAME}
 					]
@@ -851,7 +825,7 @@ get_block(Host, Hash) when is_binary(Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://" ++ ar_util:format_peer(Host),
-			"/block/hash/" ++ ar_util:encode(Hash),
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
 			[]
 	 	)
 	).
@@ -864,7 +838,7 @@ get_encrypted_block(Host, Hash) when is_binary(Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://" ++ ar_util:format_peer(Host),
-			"/block/hash/" ++ ar_util:encode(Hash) ++ "/encrypted",
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/encrypted",
 			[]
 		)
 	).
@@ -878,7 +852,7 @@ get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://" ++ ar_util:format_peer(Host),
-			"/block/hash/" ++ ar_util:encode(Hash) ++ "/" ++ Subfield,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/" ++ Subfield,
 			[]
 		)
 	);
@@ -903,7 +877,7 @@ get_full_block(Host, Hash) when is_binary(Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://" ++ ar_util:format_peer(Host),
-			"/block/hash/" ++ ar_util:encode(Hash) ++ "/all",
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/all",
 			[]
 		)
 	).
@@ -917,7 +891,7 @@ get_encrypted_full_block(Host, Hash) when is_binary(Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://" ++ ar_util:format_peer(Host),
-			"/block/hash/" ++ ar_util:encode(Hash) ++ "/all/encrypted",
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/all/encrypted",
 			[]
 		)
 	).
@@ -930,7 +904,7 @@ get_tx(Host, Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://" ++ ar_util:format_peer(Host),
-			"/tx/" ++ ar_util:encode(Hash),
+			"/tx/" ++ binary_to_list(ar_util:encode(Hash)),
 			[]
 	 	)
 	).
@@ -971,7 +945,7 @@ get_info(Peer) ->
 			[]
 		)
 	of
-		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(binary_to_list(Body));
+		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(Body);
 		_ -> info_unavailable
 	end.
 
@@ -994,12 +968,12 @@ get_peers(Peer) ->
 
 %% @doc Produce a key value list based on a /info response.
 process_get_info(Body) ->
-	{ok, {struct, Struct}} = json2:decode_string(Body),
-	{_, NetworkName} = lists:keyfind("network", 1, Struct),
-	{_, ClientVersion} = lists:keyfind("version", 1, Struct),
-	{_, Height} = lists:keyfind("height", 1, Struct),
-	{_, Blocks} = lists:keyfind("blocks", 1, Struct),
-	{_, Peers} = lists:keyfind("peers", 1, Struct),
+	{Struct} = ar_serialize:dejsonify(Body),
+	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
+	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Struct),
+	{_, Height} = lists:keyfind(<<"height">>, 1, Struct),
+	{_, Blocks} = lists:keyfind(<<"blocks">>, 1, Struct),
+	{_, Peers} = lists:keyfind(<<"peers">>, 1, Struct),
 	[
 		{name, NetworkName},
 		{version, ClientVersion},
@@ -1010,28 +984,28 @@ process_get_info(Body) ->
 
 %% @doc Process the response of an /block call.
 handle_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_block(binary_to_list(Body));
+	ar_serialize:json_struct_to_block(Body);
 handle_block_response({error, _}) -> unavailable;
 handle_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/.../all call.
 handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_full_block(binary_to_list(Body));
+	ar_serialize:json_struct_to_full_block(Body);
 handle_full_block_response({error, _}) -> unavailable;
 handle_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/.../encrypted call.
 handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_util:decode(binary_to_list(Body));
+	ar_util:decode(Body);
 handle_encrypted_block_response({error, _}) -> unavailable;
 handle_encrypted_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_encrypted_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/.../all/encrypted call.
 handle_encrypted_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_util:decode(binary_to_list(Body));
+	ar_util:decode(Body);
 handle_encrypted_full_block_response({error, _}) -> unavailable;
 handle_encrypted_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_encrypted_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
@@ -1046,19 +1020,19 @@ handle_block_field_response({"diff", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 handle_block_field_response({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	list_to_integer(binary_to_list(Body));
 handle_block_field_response({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_tx(binary_to_list(Body));
+	ar_serialize:json_struct_to_tx(Body);
 handle_block_field_response({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_hash_list(binary_to_list(Body));
+	ar_serialize:json_struct_to_hash_list(Body);
 handle_block_field_response({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_wallet_list(binary_to_list(Body));
-handle_block_field_response({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> binary_to_list(Body);
+	ar_serialize:json_struct_to_wallet_list(Body);
+handle_block_field_response({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> Body;
 handle_block_field_response({error, _}) -> unavailable;
 handle_block_field_response({ok, {{<<"404">>, _}, _, _}}) -> not_found;
 handle_block_field_response({ok, {{<<"500">>, _}, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /tx call.
 handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_tx(binary_to_list(Body));
+	ar_serialize:json_struct_to_tx(Body);
 handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found.
 
@@ -1114,9 +1088,9 @@ block_field_to_string(<<"diff">>, Res) -> integer_to_list(Res);
 block_field_to_string(<<"height">>, Res) -> integer_to_list(Res);
 block_field_to_string(<<"hash">>, Res) -> Res;
 block_field_to_string(<<"indep_hash">>, Res) -> Res;
-block_field_to_string(<<"txs">>, {array, Res}) -> list_to_binary(ar_serialize:jsonify({array, Res}));
-block_field_to_string(<<"hash_list">>, {array, Res}) -> list_to_binary(ar_serialize:jsonify({array, Res}));
-block_field_to_string(<<"wallet_list">>, {array, Res}) -> list_to_binary(ar_serialize:jsonify({array, Res}));
+block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
+block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
+block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
 %%% Tests
@@ -1169,7 +1143,7 @@ get_balance_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://127.0.0.1:1984",
-			"/wallet/"++ ar_util:encode(ar_wallet:to_address(Pub1)) ++ "/balance",
+			"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
 			[]
 		),
 	10000 = list_to_integer(binary_to_list(Body)).
@@ -1185,7 +1159,7 @@ get_presale_balance_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://127.0.0.1:1984",
-			"/wallet/" ++ ar_util:encode_base64_safe(base64:encode_to_string(ar_wallet:to_address(Pub1))) ++ "/balance",
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
 			[]
 		),
 	10000 = list_to_integer(binary_to_list(Body)).
@@ -1201,7 +1175,7 @@ get_last_tx_single_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://127.0.0.1:1984",
-			"/wallet/" ++ ar_util:encode(ar_wallet:to_address(Pub1)) ++ "/last_tx",
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx",
 			[]
 		),
 	<<"TEST_ID">> = ar_util:decode(Body).
@@ -1366,7 +1340,7 @@ add_tx_and_get_last_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://127.0.0.1:1984",
-			"/wallet/" ++ ar_util:encode(ar_wallet:to_address(Pub1)) ++ "/last_tx",
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx",
 			[]
 		),
 	ID = ar_util:decode(Body).
@@ -1392,7 +1366,7 @@ get_subfields_of_tx_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://127.0.0.1:1984",
-			"/tx/" ++ ar_util:encode(TX#tx.id) ++ "/data",
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
 			[]
 		),
 	Orig = TX#tx.data,
@@ -1417,7 +1391,7 @@ get_pending_tx_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://127.0.0.1:1984",
-			"/tx/" ++ ar_util:encode(TX#tx.id),
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)),
 			[]
 		),
 	Body == "Pending".
@@ -1441,12 +1415,13 @@ get_pending_subfield_tx_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			"http://127.0.0.1:1984",
-			"/tx/" ++ ar_util:encode(TX#tx.id) ++ "/data",
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
 			[]
 		),
 	Body == "Pending".
 
 %% @doc Find all pending transactions in the network
+%% TODO: Fix test to send txs from different wallets
 get_multiple_pending_txs_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init(),
@@ -1470,8 +1445,9 @@ get_multiple_pending_txs_test() ->
 			"/tx/" ++ "pending",
 			[]
 		),
-	{ok, {array, PendingTxs}} = json2:decode_string(binary_to_list(Body)),
-	[TX1#tx.id, TX2#tx.id] == [list_to_binary(P) || P <- PendingTxs].
+	PendingTXs = ar_serialize:dejsonify(Body),
+	% {ok, {array, PendingTxs}} = json2:decode_string(binary_to_list(Body)),
+	[TX1#tx.id, TX2#tx.id] == [P || P <- PendingTXs].
 
 get_tx_by_tag_test() ->
 	% Spawn a network with two nodes and a chirper server
@@ -1497,12 +1473,10 @@ get_tx_by_tag_test() ->
 		ar_httpc:request(
 			<<"POST">>,
 			"http://127.0.0.1:1984",
-			"/arql",
-			lists:flatten(
-				QueryJSON
-			)
+			"/arql",		
+			QueryJSON		
 		),
-	{ok, {array, TXs}} = ar_serialize:dejsonify(binary_to_list(Body)),
+	TXs = ar_serialize:dejsonify(Body),
 	true =
 		lists:member(
 			TX#tx.id,
@@ -1545,13 +1519,9 @@ get_txs_by_send_recv_test_slow() ->
 			<<"POST">>,
 			"http://127.0.0.1:1984",
 			"/arql",
-			lists:flatten(
-				QueryJSON
-			)
+			QueryJSON
 		),
-	{ok, {array, TXs}} = ar_serialize:dejsonify(binary_to_list(Res)),
-	ar:d({id, TX#tx.id}),
-	ar:d({txs, TXs}),
+	TXs = ar_serialize:dejsonify(Res),
 	true =
 		lists:member(
 			SignedTX#tx.id,

@@ -27,7 +27,7 @@ remove_invalid_blocks(HashList) ->
         lists:filter(
             fun(Y) ->
                 case lists:foldl(
-                    fun(Z, Sum) -> Sum + string:str(Y, ar_util:encode(Z)) end,
+                    fun(Z, Sum) -> Sum + string:str(Y, binary_to_list(ar_util:encode(Z))) end,
                     0,
                     HashList
                 ) of

@@ -172,13 +172,11 @@ hash(DataSegment, Nonce) ->
 indep_hash(B) ->
 	crypto:hash(
 		?HASH_ALG,
-		list_to_binary(
-			ar_serialize:jsonify(
-				ar_serialize:block_to_json_struct(
-					B#block { indep_hash = <<>> }
-				)
-			)
-		)
+        ar_serialize:jsonify(
+            ar_serialize:block_to_json_struct(
+                B#block { indep_hash = <<>> }
+            )
+        )
 	).
 
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.

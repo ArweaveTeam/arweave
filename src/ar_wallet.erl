@@ -36,7 +36,7 @@ new_keyfile() ->
 				}
 			)
 		),
-		FileName = "wallets/archain_TESTNET_key" ++ ar_util:encode(to_address(Pub)) ++ ".json",
+		FileName = "wallets/archain_TESTNET_key" ++ binary_to_list(ar_util:encode(to_address(Pub))) ++ ".json",
 		filelib:ensure_dir(FileName),
 		file:write_file(FileName, Key),
 	{{Priv, Pub}, Pub}.
@@ -112,7 +112,7 @@ address_double_encode_test() ->
 %%doc Check generated keyfiles can be retrieved
 generate_keyfile_test() ->
 	{Priv, Pub} = new_keyfile(),
-	FileName = "wallets/archain_TESTNET_key" ++ ar_util:encode(to_address(Pub)) ++ ".json",
+	FileName = "wallets/archain_TESTNET_key" ++ binary_to_list(ar_util:encode(to_address(Pub))) ++ ".json",
 	{Priv, Pub} = load_keyfile(FileName).
 
 %% @doc Check keyfile generation
