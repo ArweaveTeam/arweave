@@ -25,6 +25,8 @@ catlog:
 	cat logs/`ls -t logs | head -n 1`
 
 all: ebin logs blocks
+	rm -rf priv
+	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
 	erlc +export_all -o ebin/ src/ar.erl
 	erl -noshell -s ar rebuild -pa ebin/ -s init stop
 
