@@ -22,8 +22,8 @@ start(Port) ->
 					[
 						{callback, ?MODULE},
 						{max_body_size, ?MAX_BODY_SIZE},
-						%{request_timeout, ?NET_TIMEOUT},
-						%{accept_timeout, ?CONNECT_TIMEOUT},
+						{request_timeout, ?NET_TIMEOUT},
+						{accept_timeout, ?CONNECT_TIMEOUT},
 						{port, Port}
 					]
 				),
