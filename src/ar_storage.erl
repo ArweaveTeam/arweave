@@ -114,7 +114,7 @@ write_encrypted_block(Hash, B) ->
 -else.
 write_encrypted_block(Hash, B) ->
 	BlockToWrite = ar_util:encode(B),
-	case enough_space(byte_size(list_to_binary(BlockToWrite))) of
+	case enough_space(byte_size(BlockToWrite)) of
 		true ->
 			file:write_file(
 				Name = lists:flatten(
@@ -128,7 +128,7 @@ write_encrypted_block(Hash, B) ->
 			spawn(
 				ar_meta_db,
 				increase,
-				[used_space, byte_size(list_to_binary(BlockToWrite))]
+				[used_space, byte_size(BlockToWrite)]
 			),
 			Name;
 		false ->

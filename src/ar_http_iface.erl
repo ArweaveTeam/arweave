@@ -729,12 +729,43 @@ return_info() ->
 
 %% @doc Send a new transaction to an Archain HTTP node.
 send_new_tx(Host, TX) ->
-	ar_httpc:request(
-		<<"POST">>,
-		"http://" ++ ar_util:format_peer(Host),
-		"/tx",
-		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-	).
+	if 
+		(byte_size(TX#tx.data) < 50000) ->
+			ar_httpc:request(
+				<<"POST">>,
+				"http://" ++ ar_util:format_peer(Host),
+				"/tx",
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+			);
+		true ->
+			case has_tx(Host, TX#tx.id) of
+				false ->
+					ar_httpc:request(
+						<<"POST">>,
+						"http://" ++ ar_util:format_peer(Host),
+						"/tx",
+						ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+					);
+				true -> ar:d(not_sent)
+			end
+	end.
+
+
+%% @doc Check whether a peer has a given transaction
+has_tx(Host, ID) ->
+	case 
+		ar_httpc:request(
+				<<"GET">>,
+				"http://" ++ ar_util:format_peer(Host),
+				"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
+				[]
+		)
+	of
+		{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
+		{ok, {{<<"202">>, _}, _, _, _, _}} -> true;
+		_ -> false
+	end.
+
 
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(IP, NewB, RecallB) ->
