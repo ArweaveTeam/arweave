@@ -25,6 +25,8 @@ catlog:
 	cat logs/`ls -t logs | head -n 1`
 
 all: ebin logs blocks
+	rm -rf priv
+	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
 	erlc +export_all -o ebin/ src/ar.erl
 	erl -noshell -s ar rebuild -pa ebin/ -s init stop
 
@@ -51,7 +53,7 @@ sim_hard: all
 	erl -pa ebin/ -s ar_network spawn_and_mine hard
 
 clean:
-	rm -rf ebin docs blocks logs
+	rm -rf ebin docs blocks logs txs priv
 	rm -f erl_crash.dump
 
 status: clean

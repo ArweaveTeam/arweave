@@ -1,16 +1,15 @@
 -module(ar_util).
 -export([pick_random/1, pick_random/2]).
--export([hexify/1, dehexify/1]).
 -export([encode/1, decode/1]).
--export([encode_base64_safe/1, decode_base64_safe/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
--export([block_from_hash_list/2, hash_from_hash_list/2, get_recall_hash/2]).
+-export([block_from_hash_list/2, hash_from_hash_list/2, get_recall_hash/2, get_recall_hash/3]).
 -export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
 -export([get_hash/1, get_head_block/1]).
 -export([genesis_wallets/0]).
 -export([pmap/2]).
 -export([time_difference/2]).
+-export([rev_bin/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -30,50 +29,23 @@ pick_random(Xs) ->
 
 %% @doc Encode a binary to URL safe base64.
 encode(Bin) ->
-	encode_base64_safe(base64:encode_to_string(Bin)).
+	base64url:encode(Bin).
 
 %% @doc Decode a URL safe base64 to binary.
+decode([]) -> [];
+decode(Bin) when is_list(Bin) ->
+	decode(list_to_binary(Bin));
 decode(Bin) when is_binary(Bin) ->
-	decode(bitstring_to_list(Bin));
-decode(Str) ->
-	base64:decode(decode_base64_safe(Str)).
+	base64url:decode(Bin).
 
-%% @doc Takes base64 and encodes it into base64 suitable for URLs.
-encode_base64_safe([]) -> [];
-encode_base64_safe([$=|T]) ->
-	encode_base64_safe(T);
-encode_base64_safe([$/|T]) ->
-	[ $_ | encode_base64_safe(T) ];
-encode_base64_safe([$+|T]) ->
-	[ $- | encode_base64_safe(T) ];
-encode_base64_safe([H|T]) ->
-	[ H | encode_base64_safe(T) ].
 
-%% @doc Decodes URL safe base64 and turns it back into base64.
-decode_base64_safe(Str) ->
-	% TODO: Make this efficient.
-	UnsafeStr = do_decode_base64_safe(Str),
-	lists:flatten(
-		string:pad(
-			UnsafeStr,
-			length(UnsafeStr)
-				% TODO: Improve this code
-				+ case 4 - (length(UnsafeStr) rem 4) of
-					4 -> 0;
-					X -> X
-				end,
-			trailing,
-			$=
-		)
-	).
 
-do_decode_base64_safe([]) -> [];
-do_decode_base64_safe([$_|T]) ->
-	[ $/ | do_decode_base64_safe(T) ];
-do_decode_base64_safe([$-|T]) ->
-	[ $+ | do_decode_base64_safe(T) ];
-do_decode_base64_safe([H|T]) ->
-	[ H | do_decode_base64_safe(T) ].
+%% @doc Reverse a binary
+rev_bin(Bin) ->
+    rev_bin(Bin, <<>>).
+rev_bin(<<>>, Acc) -> Acc;
+rev_bin(<<H:1/binary, Rest/binary>>, Acc) ->
+    rev_bin(Rest, <<H/binary, Acc/binary>>).
 
 %% @doc Get a block's hash.
 get_hash(B) when is_record(B, block) ->
@@ -98,6 +70,7 @@ blocks_from_hashes(BHL) ->
 hash_from_hash_list(Num, BHL) ->
 	lists:nth(Num - 1, lists:reverse(BHL)).
 
+%% @doc Read a block at the given height from the hash list
 block_from_hash_list(Num, BHL) ->
 	ar_storage:read_block(hash_from_hash_list(Num, BHL)).
 
@@ -110,31 +83,15 @@ get_head_block([IndepHash|_]) ->
 get_recall_hash(B, HashList) ->
 	lists:nth(1 + ar_weave:calculate_recall_block(B), lists:reverse(HashList)).
 
+get_recall_hash(_Height, Hash, []) -> Hash;
+get_recall_hash(0, Hash, _HastList) -> Hash;
+get_recall_hash(Height, Hash, HashList) ->
+	lists:nth(1 + ar_weave:calculate_recall_block(Hash, Height-1), lists:reverse(HashList)).
+
 %% @doc Replace a term in a list with another term.
 replace(_, _, []) -> [];
 replace(X, Y, [X|T]) -> [Y|replace(X, Y, T)];
 replace(X, Y, [H|T]) -> [H|replace(X, Y, T)].
-
-%% @doc Convert a binary to a list of hex characters.
-hexify(Bin) ->
-	lists:flatten(
-		[
-			io_lib:format("~2.16.0B", [X])
-		||
-    		X <- binary_to_list(Bin)
-		]
-	).
-
-%% @doc Turn a list of hex characters into a binary.
-dehexify(Bin) when is_binary(Bin) ->
-	dehexify(binary_to_list(Bin));
-dehexify(S) ->
-	dehexify(S, []).
-dehexify([], Acc) ->
-	list_to_binary(lists:reverse(Acc));
-dehexify([X,Y|T], Acc) ->
-	{ok, [V], []} = io_lib:fread("~16u", [X,Y]),
-	dehexify(T, [V | Acc]).
 
 %% @doc Parse a string representing a remote host into our internal format.
 parse_peer("") -> throw(empty_peer_string);
@@ -185,8 +142,8 @@ unique(Res, [X|Xs]) ->
 		true -> unique(Res, Xs)
 	end.
 
-%% Run a map in paralell.
-%% TODO: Make this efficient for large lists.
+%% @doc Run a map in parallel.
+%% NOTE: Make this efficient for large lists.
 %% NOTE: Does not maintain list stability.
 pmap(Fun, List) ->
 	Master = self(),
@@ -198,7 +155,7 @@ pmap(Fun, List) ->
 		end,
 		lists:map(fun(Elem) -> Master ! {pmap_work, Fun(Elem)} end, List)
 	).
-	
+
 %% @doc Generate a list of GENESIS wallets, from the CSV file.
 genesis_wallets() ->
 	{ok, Bin} = file:read_file("data/genesis_wallets.csv"),
@@ -213,7 +170,7 @@ genesis_wallets() ->
 		end,
 		string:tokens(binary_to_list(Bin), [10])
 	).
-	
+
 %% @doc Generates the difference in microseconds between two erlang time tuples
 time_difference({M1, S1, U1}, {M2, S2, U2}) ->
 	((M1-M2) * 1000000000000) + ((S1-S2) * 1000000) + (U1 - U2);
@@ -227,10 +184,6 @@ basic_unique_test() ->
 %% @doc Ensure that hosts are formatted as lists correctly.
 basic_peer_format_test() ->
 	"127.0.0.1:9001" = format_peer({127,0,0,1,9001}).
-
-%% @doc Test that values can be hexed and dehexed.
-round_trip_hexify_test() ->
-	Bytes = dehexify(hexify(Bytes = crypto:strong_rand_bytes(32))).
 
 %% @doc Ensure that pick_random's are actually in the starting list.
 pick_random_test() ->
@@ -258,11 +211,11 @@ pmap_test() ->
 recall_block_test() ->
 	ar_storage:clear(),
 	Node = ar_node:start(),
-	B1 = ar_weave:init([]),
-	%ar:d(B1#block.hash_list),
-	Node ! {replace_block_list, B1},
-	B2 = ar_node:get_current_block(Node),
-	ar:d(B2#block.hash_list),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	Node ! {replace_block_list, B0},
+	receive after 300 -> ok end,
+	B1 = ar_node:get_current_block(Node),
 	ar_node:mine(Node),
 	receive after 300 -> ok end,
 	B3 = ar_node:get_current_block(Node),

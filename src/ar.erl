@@ -1,6 +1,6 @@
 -module(ar).
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
--export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0]).
+-export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
@@ -16,6 +16,7 @@
 	CORE_TEST_MODS,
 	[
 		ar_util,
+		ar_cleanup,
 		ar_meta_db,
 		ar_storage,
 		ar_serialize,
@@ -23,7 +24,7 @@
 		ar_tx,
 		ar_weave,
 		ar_wallet,
-		ar_router,
+		ar_firewall,
 		ar_gossip,
 		ar_mine,
 		ar_join,
@@ -31,7 +32,8 @@
 		ar_http_iface,
 		ar_node,
 		ar_simple_reporter,
-		ar_retarget
+		ar_retarget,
+		ar_block
 	]
 ).
 
@@ -51,7 +53,9 @@
 	mining_addr = unclaimed,
 	new_key = false,
 	load_key = unclaimed,
-	pause = true
+	pause = true,
+	disk_space = ar_storage:calculate_disk_space(),
+	used_space = ar_storage:calculate_used_space()
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -83,7 +87,8 @@ main("") ->
 			{"diff init_diff", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr addr", "The address that mining rewards should be credited to."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
-			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"}
+			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"},
+			{"disk_space space", "Max size (in GB) for Arweave to take up on disk"}
 		]
 	),
 	erlang:halt();
@@ -95,7 +100,7 @@ main(["mine"|Rest], O) ->
 	main(Rest, O#opts { mine = true });
 main(["peer", Peer|Rest], O = #opts { peers = default }) ->
 	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)] });
-main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->	
+main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
 	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
 main(["port", Port|Rest], O) ->
 	main(Rest, O#opts { port = list_to_integer(Port) });
@@ -111,6 +116,8 @@ main(["mining_addr", Addr|Rest], O) ->
 	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
 main(["new_mining_key"|Rest], O)->
 	main(Rest, O#opts { new_key = true });
+main(["disk_space", Size|Rest], O) ->
+	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 main(["load_mining_key", File|Rest], O)->
 	main(Rest, O#opts { load_key = File });
 main([Arg|_Rest], _O) ->
@@ -132,7 +139,9 @@ start(
 		mining_addr = Addr,
 		new_key = NewKey,
 		load_key = LoadKey,
-		pause = Pause
+		pause = Pause,
+		disk_space = DiskSpace,
+		used_space = UsedSpace
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -140,12 +149,14 @@ start(
 	inets:start(),
 	ar_meta_db:start(),
 	ar_meta_db:put(port, Port),
+	ar_meta_db:put(disk_space, DiskSpace),
+	ar_meta_db:put(used_space, UsedSpace),
 	Peers =
 		case RawPeers of
 			default -> ?DEFAULT_PEER_LIST;
 			_ -> RawPeers
 		end,
-	% Determine mining address. Currently this code section is set up for debugging
+	% Determine mining address.
 	case {Addr, LoadKey, NewKey} of
 		{unclaimed, unclaimed, false} ->
 			ar:report_console(
@@ -201,10 +212,12 @@ start(
 				if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
 				0,
 				MiningAddress,
-				AutoJoin
+				AutoJoin,
+				Diff,
+				os:system_time(seconds)
 			]
 		]
-	),
+    ),
 	Node = whereis(http_entrypoint_node),
 	{ok, SearchNode} = supervisor:start_child(
 		Supervisor,
@@ -216,8 +229,8 @@ start(
 			worker,
 			[app_search]
 		}
-	),
-	ar_node:add_peers(Node, SearchNode),
+    ),
+    ar_node:add_peers(Node, SearchNode),
 	% Start a bridge, add it to the node's peer list.
 	{ok, Bridge} = supervisor:start_child(
 		Supervisor,
@@ -229,10 +242,10 @@ start(
 			worker,
 			[ar_bridge]
 		}
-	),
+    ),
 	ar_node:add_peers(Node, Bridge),
 	% Add self to all remote nodes.
-	lists:foreach(fun ar_http_iface:add_peer/1, Peers),
+    %lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
@@ -247,7 +260,7 @@ start(
 			{peers, Peers},
 			{polling, Polling}
 		]
-	),
+    ),
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,
@@ -288,7 +301,7 @@ start_link(Args) ->
 %% @doc init function for supervisor
 init(Args) ->
     SupFlags = {one_for_one, 5, 30},
-    ChildSpecs = 
+    ChildSpecs =
 		[
 			{
 				ar_node,
@@ -332,6 +345,24 @@ test_apps() ->
 test_networks() ->
 	error_logger:tty(false),
 	ar_test_sup:start().
+
+test_slow() ->
+	ar_node:filter_out_of_order_txs_test_slow(),
+	ar_node:filter_out_of_order_txs_large_test_slow(),
+	ar_node:filter_all_out_of_order_txs_test_slow(),
+	ar_node:filter_all_out_of_order_txs_large_test_slow(),
+	ar_node:wallet_transaction_test_slow(),
+	ar_node:wallet_two_transaction_test_slow(),
+	ar_node:single_wallet_double_tx_before_mine_test_slow(),
+	ar_node:single_wallet_double_tx_wrong_order_test_slow(),
+	ar_node:tx_threading_test_slow(),
+	ar_node:bogus_tx_thread_test_slow(),
+	ar_node:large_weakly_connected_blockweave_with_data_test_slow(),
+	ar_node:large_blockweave_with_data_test_slow(),
+	ar_node:medium_blockweave_mine_multiple_data_test_slow(),
+	ar_http_iface:get_txs_by_send_recv_test_slow(),
+	ar_http_iface:get_full_block_by_hash_test_slow(),
+	ar_fork_recovery:multiple_blocks_ahead_with_transaction_recovery_test_slow().
 
 %% @doc Generate the project documentation.
 docs() ->

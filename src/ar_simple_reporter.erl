@@ -77,10 +77,20 @@ simple_test() ->
 %% @doc Test that multiple block notifications are received correctly.
 multiple_test() ->
 	% Create weave iterations.
-	B0 = ar_weave:init(),
-	B1 = ar_weave:add(B0, [ar_tx:new(<<"HELLO WORLD">>)]),
-	B2 = ar_weave:add(B1, [ar_tx:new(<<"NEXT MESSAGE">>)]),
-	B3 = ar_weave:add(B2, [ar_tx:new(<<"ANOTHER MESSAGE">>)]),
+    B0 = ar_weave:init(),
+    ar_storage:write_block(B0),
+    T1 = ar_tx:new(<<"HELLO WORLD">>),
+    B1 = ar_weave:add(B0, [T1]),
+    ar_storage:write_block(hd(B1)),
+    ar_storage:write_tx(T1),
+    T2 = ar_tx:new(<<"NEXT MESSAGE">>),
+    B2 = ar_weave:add(B1, [T2]),
+    ar_storage:write_block(hd(B2)),
+    ar_storage:write_tx(T2),
+    T3 = ar_tx:new(<<"ANOTHER MESSAGE">>),
+    B3 = ar_weave:add(B2, [T3]),
+    ar_storage:write_block(hd(B3)),
+    ar_storage:write_tx(T3),
 	% Start the blockweave node and gossip protocol.
 	Node1 = start(self()),
 	Node2 = ar_node:start([Node1], B0),

@@ -4,7 +4,7 @@
 -export([start_link/1]).
 -export([update_tag_table/1]).
 -export([initDB/0, deleteDB/0, storeDB/3, search_by_exact_tag/2]).
--include("ar.hrl").
+-include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% A search node for the Archain network. Given a transaction hash,
@@ -12,8 +12,6 @@
 %%% block containing the transaction.
 %%% For examplary purposes only.
 
-%% txlist DETS file
--define(TXDATA, "data/txdb.dat").
 %% @doc For compatibility. Dets database supercedes state.
 -record(state, {
 	db = [] % Stores the 'database' of links to chirps.
@@ -32,9 +30,7 @@ start(Peers) ->
 	initDB(),
 	adt_simple:start(?MODULE, #state{}, Peers).
 
-%% @doc Find the block associated with a transaction.
-
-%% Initialise the mnesia database
+%% @doc Initialise the mnesia database
 initDB() ->
 	application:set_env(mnesia, dir, "data/mnesia"),
 	mnesia:create_schema([node()]),
@@ -53,14 +49,15 @@ initDB() ->
 			)
 	end.
 
+%% @doc Delete the entire ARQL mnesia database
 deleteDB() ->
 	mnesia:delete_table(arql_tag).
 
-%% Store a transaction/tag pair in the database
+%% @doc Store a transaction/tag pair in the database
 storeDB(Name, Value, TXid) ->
 	mnesia:dirty_write(#arql_tag { name = Name, value = Value, tx = TXid}).
 
-%% Search for a list of transactions that match the given tag
+%% @doc Search for a list of transactions that match the given tag
 search_by_exact_tag(Name, Value) ->
 	mnesia:dirty_select(
 		arql_tag,
@@ -73,18 +70,15 @@ search_by_exact_tag(Name, Value) ->
 		]
 	).
 
-%% @doc Add the transactions in a newly recieved block to the trasction db
-%% S - current state, B - new block
-%% @doc Listen for get_transaction requests, send independant block hash
-%% Back to requesting process.
-%% S - current state, {get_transaction - atom, T - transaction hash,
-%% Process_id - id of the process to return the block hash to}
+%% @doc Listen for get_tx requests
 message(S, {get_tx, PID, Name, Value}) ->
 	PID ! search_by_exact_tag(Name, Value),
 	S;
 message(S, _) ->
 	S.
 
+%% @doc Updates the table of stored tranasaction data with all of the
+%% transactions in the given block
 update_tag_table(B) when ?IS_BLOCK(B) ->
 	lists:foreach(
 		fun(TX) ->
@@ -111,8 +105,6 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 update_tag_table(B) ->
 	not_updated.
 
-%% @doc Add to the dets database all transactions from currently held blocks
-
 %% @doc Test that a new tx placed on the network and mined can be searched for
 basic_usage_test() ->
 	% Spawn a network with two nodes and a chirper server
@@ -121,7 +113,8 @@ basic_usage_test() ->
 	Peers = ar_network:start(10, 10),
 	ar_node:add_peers(hd(Peers), SearchServer),
 	% Generate the transaction.
-	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	RawTX = ar_tx:new(),
+	TX = RawTX#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
 	% Add tx to network
 	ar_node:add_tx(hd(Peers), TX),
 	% Begin mining

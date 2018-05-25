@@ -15,10 +15,12 @@
 -define(DEFAULT_NUM_CONNECTIONS, 3).
 %% The maximum time to wait between actions.
 %% The average case wait time will be 50% of this value.
--define(DEFAULT_ACTION_TIME, 15000).
+-define(DEFAULT_ACTION_TIME, 2000).
 %% Maximum length of data segment of transaction.
 %% 1024 * 1024
--define(DEFAULT_MAX_TX_LEN, 10).
+-define(DEFAULT_MAX_TX_LEN, 1000).
+%% Maximum data block size
+-define(DEFAULT_MAX_DATA_LEN, 100000).
 %% Location of test public/private keys
 -define(WALLETLIST, "wallets/keys.csv").
 
@@ -27,6 +29,7 @@
 	peers,
 	action_time,
 	max_tx_len,
+	max_data_len,
 	gossip
 }).
 
@@ -37,8 +40,8 @@ start(ar_bridge:get_remote_peers(whereis(http_bridge_node))).
 start(Peers) -> start(Peers, ?DEFAULT_ACTION_TIME).
 start(Peers, ActionTime) -> start(Peers, ActionTime, ?DEFAULT_MAX_TX_LEN).
 start(Peers, ActionTime, MaxTXLen) ->
-	start(Peers, ActionTime, MaxTXLen, ?DEFAULT_NUM_CONNECTIONS).
-start(Peers, ActionTime, MaxTXLen, NumConnections) ->
+	start(Peers, ActionTime, MaxTXLen, ?DEFAULT_MAX_DATA_LEN).
+start(Peers, ActionTime, MaxTXLen, MaxDataLen) ->
 	KeyList = get_key_list(),
 	spawn(
 		fun() ->
@@ -47,6 +50,7 @@ start(Peers, ActionTime, MaxTXLen, NumConnections) ->
 					key_file = KeyList,
 					action_time = ActionTime,
 					max_tx_len = MaxTXLen,
+					max_data_len = MaxDataLen,
 					peers = Peers
 				}
 			)
@@ -79,7 +83,7 @@ gen_test_wallet() ->
 			file:write(File, [ar_util:encode(Addr) ++ "," ++ integer_to_list(Qty) ++ "\n"]),
 			file:write(File2, [ar_util:encode(Priv) ++ "," ++ ar_util:encode(Pub) ++ "\n"])
 		end,
-		lists:seq(1,10)
+		lists:seq(1,200)
 	),
 	file:close(File),
 	file:close(File2).
@@ -89,23 +93,23 @@ server(
 	S = #state {
 		key_file = KeyList,
 		max_tx_len = MaxTXLen,
+		max_data_len = MaxDataLen,
 		action_time = ActionTime,
 		peers = Peers
 	}) ->
 	receive
 		stop -> ok
-	after rand:uniform(?DEFAULT_ACTION_TIME) ->
-		TX = create_random_fin_tx(KeyList, MaxTXLen),
+	after rand:uniform(?DEFAULT_ACTION_TIME)->
+		{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+		TX = case rand:uniform(2) of
+			1 -> create_random_fin_tx({Priv, Pub}, KeyList, MaxTXLen);
+			2 -> create_random_data_tx({Priv, Pub}, MaxDataLen)
+		end,
 		lists:foreach(
 			fun(Peer) ->
-				ar:report(
-					[
-						{sending_tx, TX#tx.id},
-						{peer, Peer}
-					]
-				),
+				ar:d({sending_tx, TX#tx.id}),
 				ar_node:add_tx(Peer, TX)
-			end,
+		end,
 			Peers
 		),
 		server(S)
@@ -132,11 +136,12 @@ send_random_fin_tx() ->
 			end,
 			Peers
 	).
+
 %% @doc Send a randomly created data tx to all peers
 send_random_data_tx() ->
 	KeyList = get_key_list(),
-	MaxAmount = 100,
-	TX = create_random_fin_tx(KeyList, MaxAmount),
+	MaxTxLen = ?DEFAULT_MAX_DATA_LEN,
+	TX = create_random_data_tx(KeyList, MaxTxLen),
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 	lists:foreach(
 			fun(Peer) ->
@@ -152,42 +157,94 @@ send_random_data_tx() ->
 	).
 
 %% @doc Create a random data TX with max length MaxTxLen
-create_random_data_tx(KeyList, MaxTxLen) ->
-	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+create_random_data_tx({Priv, Pub}, MaxTxLen) ->
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
-	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
+	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX)+550),
-		Block#block.diff
+		byte_size(ar_tx:to_binary(TX)) + 550,
+		Diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(
 		byte_size(<<Cost>>),
-		Block#block.diff
+		Diff
+		),
+	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub);
+
+create_random_data_tx(KeyList, MaxTxLen) ->
+	{Priv, Pub} = lists:nth(rand:uniform(1), KeyList),
+	% Generate and dispatch a new data transaction.
+	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
+	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
+	Data = << 0:(MaxTxLen * 8) >>,
+	TX = ar_tx:new(Data, 0, LastTx),
+	Cost = ar_tx:calculate_min_tx_cost(
+		byte_size(ar_tx:to_binary(TX)) + 550,
+		Diff
+		),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(
+		byte_size(<<Cost>>),
+		Diff
 		),
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
-%% @doc Create a random financial TX between two wallets of amount MaxAmount 
+create_random_data_tx({Priv, Pub}, MaxTxLen, OldTX) ->
+	% Generate and dispatch a new data transaction.
+	LastTx = OldTX#tx.id,
+	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
+	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
+	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
+	TX = ar_tx:new(Data, 0, LastTx),
+	Cost = ar_tx:calculate_min_tx_cost(
+		byte_size(ar_tx:to_binary(TX)) + 550,
+		Diff
+		),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(
+		byte_size(<<Cost>>),
+		Diff
+		),
+	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
+%% @doc Create a random financial TX between two wallets of amount MaxAmount
 create_random_fin_tx(KeyList, MaxAmount) ->
 	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
 	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
-	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	%ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
+	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
 	Qty = rand:uniform(MaxAmount),
 	TX = ar_tx:new(Dest, 0, Qty, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
 		byte_size(ar_tx:to_binary(TX))+550,
-		Block#block.diff
+		Diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(
 		(byte_size(<<Cost>>)),
-		Block#block.diff
+		Diff
 		),
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
+create_random_fin_tx({Priv, Pub}, KeyList, MaxAmount) ->
+	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
+	% Generate and dispatch a new data transaction.
+	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	%ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
+	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
+	Qty = rand:uniform(MaxAmount),
+	TX = ar_tx:new(Dest, 0, Qty, LastTx),
+	Cost = ar_tx:calculate_min_tx_cost(
+		byte_size(ar_tx:to_binary(TX))+550,
+		Diff
+		),
+	Reward = Cost + ar_tx:calculate_min_tx_cost(
+		(byte_size(<<Cost>>)),
+		Diff
+		),
+	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 %% @doc Read a list of public/private keys from a file
 read_key_list(_File, eof, Keys) ->
 	Keys;

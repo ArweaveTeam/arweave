@@ -1,12 +1,12 @@
 # Integrating with the Arweave
 
-Each node on the Arweave network hosts a simple lightweight REST API. This allows developers to communicate with the network via HTTP requests. 
+Each node on the Arweave network hosts a simple lightweight REST API. This allows developers to communicate with the network via HTTP requests.
 
 Most programming languages provide 'out of the box' functionality for making web calls and as such can simply communicate using this method.
 
 ## Transaction format
 
-Transactions are submitted to the network via this HTTP interface and structured as JSON. 
+Transactions are submitted to the network via this HTTP interface and structured as JSON.
 
 An example of the transaction format is below:
 
@@ -23,17 +23,17 @@ An example of the transaction format is below:
 	"signature": ""
 }
 ```
-**[id]** 
+**[id]**
 A randomly selected 32-byte identifier base64url encoded.
 
-**[last_tx]** 
+**[last_tx]**
 The ID of the last transaction made from the same address base64url encoded. If no previous transactions have been made from the address this field is set to an empty string.
 
 **[owner]**
 The modulus of the RSA key pair corresponding to the wallet making the transaction, base64url encoded.
 
 **[target]**
-If making a financial transaction this field contains the wallet address of the recipient base64url encoded. If the transaction is not a financial this field is set to an empty string. 
+If making a financial transaction this field contains the wallet address of the recipient base64url encoded. If the transaction is not a financial this field is set to an empty string.
 
 A wallet address is a base64url encoded SHA256 hash of the raw unencoded RSA modulus.
 
@@ -58,9 +58,9 @@ The data for the signature is comprised of previous data from the rest of the tr
 
 The data to be signed is a concatentation of the raw (entirely unencoded) owner, target, id, data, quantity, reward and last_tx in that order.
 
-The signature scheme is RSA-PSS with both a data hash and Mask Generation Function (MGF) hash of SHA-256. 
+The signature scheme is RSA-PSS with both a data hash and Mask Generation Function (MGF) hash of SHA-256.
 
-The psuedocode below shows this. 
+The psuedocode below shows this.
 
 ```psuedo
 function unencode(X) 	<- Takes input X and returns the completely unencoded form
@@ -96,7 +96,7 @@ The transaction is now complete and ready to be submitted to the network via a P
 	"type": "data",
 	"data": "",
 	"reward": "2343181818",
-	"signature": "Bgb65...7cBR4" 					// Partially omitted due to length 
+	"signature": "Bgb65...7cBR4" 					// Partially omitted due to length
 }
 ```
 
@@ -112,7 +112,7 @@ The transaction is now complete and ready to be submitted to the network via a P
 	"type": "transfer",
 	"data": "",
 	"reward": "1907348633",
-	"signature": "Hg02G...cdNk8" 					// Partially omitted due to length 
+	"signature": "Hg02G...cdNk8" 					// Partially omitted due to length
 }
 ```
 
@@ -128,6 +128,4 @@ The transaction is now complete and ready to be submitted to the network via a P
 
 
 
-
 > Multiple variants of base64url encoding exist and within the Arweave network we use a specific form. The standard base64 characters '+' and '/' are replaced with '-' and  '\_' respectively, and all padding characters, '=', are stripped from the end of the encoded string.
-

@@ -22,12 +22,12 @@
 	ignored_peers = []
 }).
 
-%%@doc Start a node, linking to a supervisor process
+%% @doc Start a node, linking to a supervisor process
 start_link(Args) ->
 	PID = erlang:apply(ar_bridge, start, Args),
 	{ok, PID}.
 
-%% Launch a bridge node.
+%% @doc Launch a bridge node.
 start() -> start([]).
 start(ExtPeers) -> start(ExtPeers, []).
 start(ExtPeers, IntPeers) -> start(ExtPeers, IntPeers, ?DEFAULT_HTTP_IFACE_PORT).
@@ -47,7 +47,7 @@ start(ExtPeers, IntPeers, Port) ->
 	reset_timer(PID, get_more_peers),
 	PID.
 
-%% Get a list of remote peers
+%% @doc Get a list of remote peers
 get_remote_peers(PID) ->
 	PID ! {get_peers, remote, self()},
 	receive
@@ -55,28 +55,27 @@ get_remote_peers(PID) ->
 			ExternalPeers
 	end.
 
-%% Notify the bridge of a new external block.
-%% TODO: Add peer sending to bridge implementation.
+%% @doc Notify the bridge of a new external block.
 add_block(PID, OriginPeer, Block, RecallBlock) ->
 	PID ! {add_block, OriginPeer, Block, RecallBlock}.
 
-%% Notify the bridge of a new external block.
-add_tx(PID, TX) ->
-	PID ! {add_tx, TX}.
+%% @doc Notify the bridge of a new external block.
+add_tx(PID, TX) ->%, OriginPeer) ->
+	PID ! {add_tx, TX}.%, OriginPeer}.
 
-%% Add a remote HTTP peer.
+%% @doc Add a remote HTTP peer.
 add_remote_peer(PID, Node) ->
 	PID ! {add_peer, remote, Node}.
 
-%% Add a local gossip peer.
+%% @doc Add a local gossip peer.
 add_local_peer(PID, Node) ->
 	PID ! {add_peer, local, Node}.
 
-%% Ignore messages matching the given ID.
+%% @doc Ignore messages matching the given ID.
 ignore_id(PID, ID) ->
 	PID ! {ignore_id, ID}.
 
-%% Schedule a message timer.
+%% @doc Schedule a message timer.
 reset_timer(PID, get_more_peers) ->
 	erlang:send_after(?GET_MORE_PEERS_TIME, PID, {get_more_peers, PID}).
 
@@ -87,10 +86,9 @@ ignore_peer(PID, Peer) ->
 
 %%% INTERNAL FUNCTIONS
 
-%% Main server loop.
+%% @doc Main server loop.
 server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 	try (receive
-		% TODO: Propagate external to external nodes.
 		{ignore_peer, Peer} ->
 			timer:send_after(?IGNORE_PEERS_TIME, {unignore_peer, Peer}),
 			server(S#state { ignored_peers = [Peer|S#state.ignored_peers] });
@@ -98,10 +96,9 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			server(S#state { ignored_peers = lists:delete(Peer, S#state.ignored_peers) });
 		{ignore_id, ID} ->
 			server(S#state {processed = [ID|S#state.processed]});
-		{add_tx, TX} ->
+		{add_tx, TX} -> %, _OriginPeer} ->
 			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, OriginPeer, Block, RecallBlock} ->
-			% TODO: Call from HTTP iface
 			case lists:member(OriginPeer, S#state.ignored_peers) of
 				true -> server(S);
 				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}))
@@ -119,7 +116,7 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			case ar_gossip:recv(GS0, Msg) of
 				{_, ignore} ->
 					server(S);
-				Gossip -> 
+				Gossip ->
 					server(do_send_to_external(S, Gossip))
 			end;
 		{get_more_peers, PID} ->
@@ -155,7 +152,7 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			),
 			server(S)
 	end.
-%% Potentially send a message to internal processes.
+%% @doc Potentially send a message to internal processes.
 maybe_send_to_internal(
 		S = #state {
 			gossip = GS,
@@ -166,7 +163,7 @@ maybe_send_to_internal(
 		Data) ->
 	case
 		(not already_processed(Procd, Type, Data)) andalso
-		ar_firewall:scan(FW, Data)
+		ar_firewall:scan(FW, Type, Data)
 	of
 		false ->
 			% If the data does not pass the scan, ignore the message.
@@ -177,7 +174,8 @@ maybe_send_to_internal(
 				ar_gossip:send(
 					GS,
 					Msg = case Type of
-						tx -> {add_tx, Data};
+						tx ->
+							{add_tx, Data};
 						block ->
 							{OriginPeer, NewB, RecallB} = Data,
 							{new_block,
@@ -194,10 +192,10 @@ maybe_send_to_internal(
 			}
 	end.
 
-%% Add the ID of a new TX/block to a processed list.
+%% @doc Add the ID of a new TX/block to a processed list.
 add_processed({add_tx, TX}, Procd) ->
 	add_processed(tx, TX, Procd);
-add_processed({new_block, _OriginPeer, _, B, _}, Procd) ->
+add_processed({new_block, _, _, B, _}, Procd) ->
 	add_processed(block, B, Procd);
 add_processed(X, Procd) ->
 	ar:report(
@@ -219,21 +217,23 @@ add_processed(X, Y, Procd) ->
 		]),
 	Procd.
 
-%% Find the ID of a 'data', from type.
+%% @doc Find the ID of a 'data', from type.
 get_id(tx, #tx { id = ID}) -> ID;
 get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
-get_id(block, {_OriginPeer, #block { indep_hash = Hash}, _}) -> Hash.
+get_id(block, {_, #block { indep_hash = Hash}, _}) -> Hash.
 
-%% Send an internal message externally
-%% TODO: add Peer functionality in the same way that blocks do
+%% @doc Send an internal message externally
 send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 	spawn(
 		fun() ->
 			lists:foreach(
 				fun(Peer) ->
-					ar_http_iface:send_new_tx(Peer, TX)
+					case (rand:uniform(3)) of
+						3 -> ar_http_iface:send_new_tx(Peer, TX);
+						_ -> ok
+					end
 				end,
-				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX, IP) ]
+				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX) ]
 			)
 		end
 	),
@@ -241,27 +241,36 @@ send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
 send_to_external(
 		S = #state {external_peers = Peers, port = Port},
 		{new_block, _Peer, _Height, NewB, RecallB}) ->
-	spawn(
-		fun() ->
-			lists:foreach(
-				fun(Peer) ->
-					ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
-				end,
-				[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB, IP) ]
+	case RecallB of
+		unavailable -> ok;
+		_ ->
+			spawn(
+				fun() ->
+					lists:foreach(
+						fun(Peer) ->
+							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
+						end,
+						[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB) ]
+					)
+				end
 			)
-		end
-	),
+	end,
 	S;
+
 send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
 
-%% Possibly send a new message to external peers.
+%% @doc Possibly send a new message to external peers.
 do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
 	(send_to_external(S#state { gossip = NewGS }, Msg))#state {
 		processed = add_processed(Msg, Procd)
 	}.
 
-%% Check whether a message has already been seen.
+%% @doc Check whether a message has already been seen.
+already_processed(_Procd, _Type, {_, not_found, _}) ->
+	true;
+already_processed(_Procd, _Type, {_, unavailable, _}) ->
+	true;
 already_processed(Procd, Type, Data) ->
 	already_processed(Procd, Type, Data, undefined).
 already_processed(Procd, Type, Data, IP) ->

@@ -3,7 +3,7 @@ mkdir ebin logs blocks wallets txs
 
 :mine
 	erlc +export_all -o ebin/ src/ar.erl
-	erl -pa ebin/ -s ar rebuild -run ar main %arg1%	
+	erl -pa ebin/ -s ar rebuild -run ar main %arg1%
 	if %ERRORLEVEL%==0 (
 		echo "Heartbeat: Server terminated safely."
 		pause
@@ -14,5 +14,4 @@ mkdir ebin logs blocks wallets txs
 		timeout 15
 	goto mine
 	)
-
 pause

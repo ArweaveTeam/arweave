@@ -1,5 +1,5 @@
 -module(ar_meta_db).
--export([start/0, get/1, put/2, keys/0, remove_old/1,remove_old/2]).
+-export([start/0, get/1, put/2, keys/0, remove_old/1,remove_old/2, increase/2]).
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
@@ -23,13 +23,17 @@ start() ->
 %% @doc Put an Erlang term into the meta DB. Typically these are
 %% write-once values.
 put(Key, Val) -> ets:insert(?MODULE, {Key, Val}).
-
 %% @doc Retreive a term from the meta db.
 get(Key) ->
 	case ets:lookup(?MODULE, Key) of
 		[{Key, Obj}] -> Obj;
 		[] -> not_found
 	end.
+
+%% @doc Increase the value associated by a key by Val
+increase(Key, Val) ->
+	put(Key, get(Key) + Val).
+
 %% @doc Remove entries from the performance database older than
 %% ?PEER_TMEOUT
 remove_old(Time) ->
@@ -37,12 +41,15 @@ remove_old(Time) ->
 		'$end_of_table' -> done;
 		Key ->
 			[{_, P}] = ets:lookup(?MODULE, Key),
-			if
-				(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
-				remove_old(Time, Key),
-				ets:delete(?MODULE, Key);
+			if (P#performance.timestamp == 0) ->
+				remove_old(Time, Key);
 			true ->
-				remove_old(Time, Key)
+				if (Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
+					remove_old(Time, Key),
+					ets:delete(?MODULE, Key);
+				true ->
+					remove_old(Time, Key)
+				end
 			end
 	end.
 remove_old(Time, H) ->
@@ -50,12 +57,16 @@ remove_old(Time, H) ->
 		'$end_of_table' -> done;
 		Key ->
 			[{_, P}] = ets:lookup(?MODULE, Key),
-			if
-				(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
-				remove_old(Time, Key),
-				ets:delete(?MODULE, Key);
+			if (P#performance.timestamp == 0) ->
+				remove_old(Time, Key);
 			true ->
-				remove_old(Time, Key)
+				if
+					(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
+					remove_old(Time, Key),
+					ets:delete(?MODULE, Key);
+				true ->
+					remove_old(Time, Key)
+				end
 			end
 	end.
 
@@ -69,7 +80,7 @@ basic_storage_test() ->
 
 %% @doc Data older than ?PEER_TIMEOUT is removed, newer data is not
 purge_old_peers_test() ->
-		Time = os:system_time(),
+		Time = os:system_time(seconds),
 		P1 = #performance{timestamp = Time - (?PEER_TIMEOUT + 1)},
 		P2 = #performance{timestamp = Time - 1},
 		put({peer, {127,0,0,1,1984}}, P1),

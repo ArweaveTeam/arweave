@@ -1,21 +1,23 @@
 %%% A collection of record structures used throughout the Arweave server.
 
 %% How should nodes on the network identify themselves?
--define(NETWORK_NAME, "arweave.TN.1").
+-define(NETWORK_NAME, "arweave.TN.3").
 %% What is the current version/release number (should be an integer).
--define(CLIENT_VERSION, 1).
+-define(CLIENT_VERSION, 3).
 
 %% Should ar:report_console/1 /actually/ report to the console?
-%-define(SILENT, false).
+-define(SILENT, true).
+%% The hashing algorithm used to calculate wallet addresses
+-define(HASH_ALG, sha256).
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
--define(HASH_ALG, sha256).
+-define(MINING_HASH_ALG, sha384).
 -define(HASH_SZ, 256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
 %% NOTE: Setting the default difficulty too high will cause TNT to fail!
 -define(DEFAULT_DIFF, 8).
--define(TARGET_TIME, 150).
+-define(TARGET_TIME, 60).
 -define(RETARGET_BLOCKS, 10).
 -define(RETARGET_TOLERANCE, 0.1).
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
@@ -35,9 +37,9 @@
 %% The amount of the weave to store. 1.0 = 100%; 0.5 = 50% etc.
 -define(WEAVE_STOR_AMT, 1.0).
 %% The number of blocks behind the most recent block to store.
--define(STORE_BLOCKS_BEHIND_CURRENT, 10).
-%% ENABLE ONLY WHILE TESTING
--define(DEBUG, false).
+-define(STORE_BLOCKS_BEHIND_CURRENT, 100).
+%% WARNING: ENABLE ONLY WHILE TESTING
+%-define(DEBUG, debug).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
@@ -47,19 +49,26 @@
 %% Calculate MS to wait in order to hit target block time.
 -define(DEFAULT_MINING_DELAY,
 	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
-
+%% The maximum size of a single POST body.
+-define(MAX_BODY_SIZE, 1024 * 1024 * 1024 * 512).
 %% Default timeout value for network requests.
--define(NET_TIMEOUT, 10000).
+-define(NET_TIMEOUT, 1800 * 1000).
+%% Default timeout value for local requests
+-define(LOCAL_NET_TIMEOUT, 1000).
+%% Default timeout for initial request
+-define(CONNECT_TIMEOUT, 30 * 1000).
 %% Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 10000).
 %% Time between attempts to find(/optimise) peers.
--define(GET_MORE_PEERS_TIME, 2 * 60 * 1000).
+-define(REFRESH_MINE_DATA_TIMER, 60000).
+%% Time between attempts to find(/optimise) peers.
+-define(GET_MORE_PEERS_TIME,  90 * 1000).
 %% Time to wait before not ignoring bad peers
 -define(IGNORE_PEERS_TIME, 5 * 60 * 1000).
 %% Number of transfers for which not to score (and potentially drop) new peers.
--define(PEER_GRACE_PERIOD, 50).
+-define(PEER_GRACE_PERIOD, 100).
 %% Never drop to lower than this number of peers.
--define(MINIMUM_PEERS, 2).
+-define(MINIMUM_PEERS, 4).
 %% Default list of peers if no others are specified
 -define(DEFAULT_PEER_LIST,
 	[
@@ -72,15 +81,18 @@
 		{165,227,40,8,1984},
 		{139,59,81,47,1984}
 	]).
-%% Length of time to wait (nanoseconds) before dropping after last activity
--define(PEER_TIMEOUT, 300000000000).
-
+%% Length of time to wait (seconds) before dropping after last activity
+-define(PEER_TIMEOUT, 90).
 %% Log output directory
 -define(LOG_DIR, "logs").
-
 %% Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).
-
+%% Number of mining processes to spawn
+%% For best mining, this is set to the number of available processers minus 1. More mining can be performed
+%% With every core utilised, but at significant cost to node performance
+-define(NUM_MINING_PROCESSES, max(1, (erlang:system_info(schedulers_online) - 1))).
+%% Target number of blocks per year
+-define(BLOCK_PER_YEAR, 525600/(?TARGET_TIME/60) ).
 %% A block on the weave.
 -record(block, {
 	nonce = <<>>,
@@ -94,7 +106,10 @@
 	txs = [], % A list of transaction records associated with this block.
 	hash_list = undefined, % A list of every indep hash to this point, or undefined.
 	wallet_list = [], % A map of wallet blanaces, or undefined.
-	reward_addr = unclaimed
+    reward_addr = unclaimed, % Address to credit mining reward to
+    tags = [], % Miner specified tags
+	reward_pool = 0, % Current pool of mining reward (10% issued to block finder)
+	weave_size = 0 % The current size of the weave in bytes (data only)
 }).
 
 %% A transaction, as stored in a block.
@@ -105,7 +120,6 @@
 	tags = [], % Indexable TX category identifiers.
 	target = <<>>, % Address of target of the tx.
 	quantity = 0, % Amount to send
-	type = transfer, % Transaction type. Transfer or data.
 	data = <<>>, % Data in transaction (if data transaction).
 	signature = <<>>, % Transaction signature.
 	reward = 0 % Transaction mining reward.
@@ -127,7 +141,7 @@
 	data
 }).
 
-%% Describes a known Archain network service.
+%% Describes a known Arweave network service.
 -record(service, {
 	name,
 	host,
@@ -145,5 +159,6 @@
 %% Helper macros
 % Return number of winstons per given AR.
 -define(AR(AR), (?WINSTON_PER_AR * AR)).
+% Return whether an object is a block
 -define(IS_BLOCK(X), (is_record(X, block))).
 -define(IS_ADDR(Addr), (is_binary(Addr) and (bit_size(Addr) == ?HASH_SZ))).

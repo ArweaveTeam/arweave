@@ -9,11 +9,14 @@
 %% is infected. If not, return false, if it is, return true and
 %% the matching sigs.
 %% Only files can be infected, return false for directories.
-is_infected(FileName, Sigs) ->
-	case try_read(FileName) of
-		error -> pass;
-		Bin -> do_is_infected(FileName, Bin, Sigs)
-	end.
+% is_infected(FileName, Sigs) ->
+% 	case try_read(FileName) of
+% 		error -> pass;
+% 		Bin -> do_is_infected(FileName, Bin, Sigs)
+% 	end.
+
+is_infected(Obj, Sigs) ->
+	do_is_infected(Obj, Sigs).
 
 %% Try to read the file. If this fails, ignore it.
 try_read(FileName) ->
@@ -21,14 +24,8 @@ try_read(FileName) ->
 	catch _:_ -> error
 	end.
 
-%% Actually perform the check.
-do_is_infected(FileName, Bin, {CPs, Sigs}) ->
-	case quick_check(CPs, Bin, Hash = av_utils:md5sum(Bin)) of
-		false -> false;
-		true ->
-			full_check(Bin, filelib:file_size(FileName), Hash, Sigs)
-	end.
-
+do_is_infected(Bin, Sigs) ->
+	full_check(Bin, byte_size(Bin), av_utils:md5sum(Bin), Sigs).
 %% Perform a quick check. This only tells us whether there is probably an
 %% infection, not what that infection is, if there is one. Has a very low
 %% false-positive rate.

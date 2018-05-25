@@ -1,0 +1,18 @@
+% This file is part of Jiffy released under the MIT license.
+% See the LICENSE file for more information.
+%
+% Only run the EQC checks when EQC is present.
+
+HaveEQC = code:which(eqc) =/= non_existing,
+
+ErlOpts = if not HaveEQC -> []; true ->
+    [{d, 'HAVE_EQC'}]
+end,
+
+case lists:keyfind(erl_opts, 1, CONFIG) of
+    {erl_opts, Opts} ->
+        NewOpts = {erl_opts, Opts ++ ErlOpts},
+        lists:keyreplace(erl_opts, 1, CONFIG, NewOpts);
+    false ->
+        CONFIG ++ [{erl_opts, ErlOpts}]
+end.
