@@ -67,7 +67,7 @@ write_block(B) ->
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(B) ->
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-	case enough_space(byte_size(list_to_binary(BlockToWrite))) of
+	case enough_space(byte_size(BlockToWrite)) of
 		true ->
 			file:write_file(
 				Name = lists:flatten(
@@ -81,7 +81,7 @@ write_block(B) ->
 			spawn(
 				ar_meta_db,
 				increase,
-				[used_space, byte_size(list_to_binary(BlockToWrite))]
+				[used_space, byte_size(BlockToWrite)]
 			),
 			Name;
 		false ->
@@ -245,7 +245,7 @@ write_tx(Tx) ->
 write_tx(Txs) when is_list(Txs) -> lists:foreach(fun write_tx/1, Txs);
 write_tx(Tx) ->
 	TxToWrite = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(Tx)),
-	case enough_space(byte_size(list_to_binary(TxToWrite))) of
+	case enough_space(byte_size(TxToWrite)) of
 		true ->
 			file:write_file(
 				Name = lists:flatten(
@@ -259,7 +259,7 @@ write_tx(Tx) ->
 			spawn(
 				ar_meta_db,
 				increase,
-				[used_space, byte_size(list_to_binary(TxToWrite))]
+				[used_space, byte_size(TxToWrite)]
 			),
 			Name;
 		false ->
