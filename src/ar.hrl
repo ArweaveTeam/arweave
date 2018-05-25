@@ -7,9 +7,11 @@
 
 %% Should ar:report_console/1 /actually/ report to the console?
 -define(SILENT, true).
+%% The hashing algorithm used to calculate wallet addresses
+-define(HASH_ALG, sha256).
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
--define(HASH_ALG, sha256).
+-define(MINING_HASH_ALG, sha384).
 -define(HASH_SZ, 256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
@@ -37,7 +39,7 @@
 %% The number of blocks behind the most recent block to store.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 100).
 %% WARNING: ENABLE ONLY WHILE TESTING
-%-define(DEBUG, debug).
+-define(DEBUG, debug).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
@@ -106,7 +108,8 @@
 	wallet_list = [], % A map of wallet blanaces, or undefined.
     reward_addr = unclaimed, % Address to credit mining reward to
     tags = [], % Miner specified tags
-	reward_pool = 0 % Current pool of mining reward (10% issued to block finder)
+	reward_pool = 0, % Current pool of mining reward (10% issued to block finder)
+	weave_size = 0 % The current size of the weave in bytes (data only)
 }).
 
 %% A transaction, as stored in a block.

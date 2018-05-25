@@ -5,7 +5,7 @@
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
--export([get_txs_by_send_recv_test_slow/0]).
+-export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -1230,7 +1230,7 @@ get_block_by_hash_test() ->
 % 	not_found = get_block({127, 0, 0, 1}, B0#block.indep_hash).
 
 %% @doc Ensure that full blocks can be received via a hash.
-get_full_block_by_hash_test() ->
+get_full_block_by_hash_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
