@@ -133,24 +133,25 @@ block_to_binary(B) ->
                 false -> B#block.reward_addr
             end
         )/binary,
-        (list_to_binary(B#block.tags))/binary
+        (list_to_binary(B#block.tags))/binary,
+        (list_to_binary(integer_to_list(B#block.weave_size)))/binary
 	>>.
 
 %% @doc Given a block checks that the lengths conform to the specified limits.
 block_field_size_limit(B = #block { reward_addr = unclaimed }) ->
     block_field_size_limit(B#block { reward_addr = <<>> });
 block_field_size_limit(B) ->
-	ar:d(byte_size(B#block.nonce) =< 256) and
-    ar:d(byte_size(B#block.previous_block) =< 48) and
-	ar:d(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
-    ar:d(byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
-    ar:d(byte_size(integer_to_binary(B#block.diff)) =< 10) and
-    ar:d(byte_size(integer_to_binary(B#block.height)) =< 20) and
-    ar:d(byte_size(B#block.hash) =< 48) and
-    ar:d(byte_size(B#block.indep_hash) =< 48) and
-    ar:d(byte_size(B#block.reward_addr) =< 32) and
-    ar:d(byte_size(list_to_binary(B#block.tags)) =< 2048) and
-    ar:d(byte_size(integer_to_binary(B#block.weave_size)) =< 64).
+	(byte_size(B#block.nonce) =< 256) and
+    (byte_size(B#block.previous_block) =< 48) and
+	(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
+    (byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
+    (byte_size(integer_to_binary(B#block.diff)) =< 10) and
+    (byte_size(integer_to_binary(B#block.height)) =< 20) and
+    (byte_size(B#block.hash) =< 48) and
+    (byte_size(B#block.indep_hash) =< 48) and
+    (byte_size(B#block.reward_addr) =< 32) and
+    (byte_size(list_to_binary(B#block.tags)) =< 2048) and
+    (byte_size(integer_to_binary(B#block.weave_size)) =< 64).
 
 %% @docs Generate a hashable data segment for a block from the current
 %% block, recall block, TXs to be mined, reward address and tags.
