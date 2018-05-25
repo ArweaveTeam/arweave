@@ -20,11 +20,7 @@
 %% 1024 * 1024
 -define(DEFAULT_MAX_TX_LEN, 1000).
 %% Maximum data block size
-<<<<<<< HEAD
 -define(DEFAULT_MAX_DATA_LEN, 100000).
-=======
--define(DEFAULT_MAX_DATA_LEN, 5000).
->>>>>>> 7c4709bf5fccb13383088b58790c40a9bc837165
 %% Location of test public/private keys
 -define(WALLETLIST, "wallets/keys.csv").
 
