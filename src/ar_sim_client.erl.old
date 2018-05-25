@@ -1,8 +1,8 @@
 -module(ar_sim_client).
 -export([start/0, start/1, start/2, start/3, start/4, stop/1]).
 -export([gen_test_wallet/0]).
--export([send_random_fin_tx/0,send_random_data_tx/0, send_specified_data_tx/1]).
--export([observe/0]).
+-export([send_random_fin_tx/0,send_random_data_tx/0]).
+-export([shadowplay/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -15,12 +15,12 @@
 -define(DEFAULT_NUM_CONNECTIONS, 3).
 %% The maximum time to wait between actions.
 %% The average case wait time will be 50% of this value.
--define(DEFAULT_ACTION_TIME, 60000).
+-define(DEFAULT_ACTION_TIME, 24*10000).
 %% Maximum length of data segment of transaction.
 %% 1024 * 1024
 -define(DEFAULT_MAX_TX_LEN, 1000).
 %% Maximum data block size
--define(DEFAULT_MAX_DATA_LEN, 10000).
+-define(DEFAULT_MAX_DATA_LEN, 2*1000*1000).
 %% Location of test public/private keys
 -define(WALLETLIST, "wallets/keys.csv").
 
@@ -97,74 +97,20 @@ server(
 		action_time = ActionTime,
 		peers = Peers
 	}) ->
-	observer:start(),
 	receive
 		stop -> ok
-	after rand:uniform(?DEFAULT_ACTION_TIME) ->
+	after rand:uniform(?DEFAULT_ACTION_TIME)->
 		{Priv, Pub} = lists:nth(rand:uniform(200), KeyList),
-		Roll = rand:uniform(100),
-		% if
-		% 	Roll < 30 ->
-		% 		ar:d({sending_10kb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/100kb");
-		% 	Roll < 50 ->
-		% 		ar:d({sending_1mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/1mb");
-		% 	Roll < 70 ->
-		% 		ar:d({sending_2mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/2.5mb");
-		% 	Roll < 80 ->
-		% 		ar:d({sending_5mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/5mb");
-		% 	Roll < 85 ->
-		% 			ar:d({sending_10mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/10mb");
-		% 	Roll < 90 ->
-		% 			ar:d({sending_15mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/15mb");
-		% 	Roll < 93 ->
-		% 		ar:d({sending_20mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/20mb");
-		% 	Roll < 96 ->
-		% 		ar:d({sending_25mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/25mb");
-		% 	Roll < 99 ->
-		% 		ar:d({sending_30mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/30mb");
-		% 	Roll =< 100 ->
-		% 		ar:d({sending_50mb_TX}),
-		% 		{ok, Data} = file:read_file("dummy_data/50mb");
-		% 	true ->
-		% 		ar:d({sending_empty_TX}), 
-		% 		Data = <<>>
-		% end,
-		if
-			Roll < 40 ->
-				ar:d({sending_1mb_TX}),
-				{ok, Data} = file:read_file("dummy_data/1mb");
-			Roll < 60 ->
-				ar:d({sending_5mb_TX}),
-				{ok, Data} = file:read_file("dummy_data/5mb");
-			Roll < 80 ->
-				ar:d({sending_10mb_TX}),
-				{ok, Data} = file:read_file("dummy_data/10mb");
-			Roll =< 100 ->
-				ar:d({sending_20mb_TX}),
-				{ok, Data} = file:read_file("dummy_data/20mb");
-			true ->
-				Data = <<>>
+		TX = case rand:uniform(2) of
+			1 -> create_random_fin_tx({Priv, Pub}, KeyList, MaxTXLen);
+			2 -> create_random_data_tx({Priv, Pub}, MaxDataLen)
 		end,
-		TX = create_data_tx({Priv, Pub}, Data),
-		% lists:foreach(
-		% 	fun(Peer) ->
-		% 		case (rand:uniform(3)) of
-		% 			3 -> ar_node:add_tx(Peer, TX);
-		% 			_ -> ok
-		% 		end
-		% 	end,
-		% 	Peers
-		% ),
-		ar_http_iface:send_new_tx(hd(Peers), TX),
+		lists:foreach(
+			fun(Peer) ->
+				ar_node:add_tx(Peer, TX)
+		end,
+			Peers
+		),
 		server(S)
 	end;
 server(S) ->
@@ -193,7 +139,7 @@ send_random_fin_tx() ->
 %% @doc Send a randomly created data tx to all peers
 send_random_data_tx() ->
 	KeyList = get_key_list(),
-	MaxTxLen = 100,
+	MaxTxLen = ?DEFAULT_MAX_DATA_LEN,
 	TX = create_random_data_tx(KeyList, MaxTxLen),
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 	lists:foreach(
@@ -208,42 +154,6 @@ send_random_data_tx() ->
 			end,
 			Peers
 	).
-
-%% @doc Send a randomly created data tx to all peers
-send_specified_data_tx(Filepath) ->
-	KeyList = get_key_list(),
-	{ok, Data} = file:read_file(Filepath),
-	TX = create_data_tx(KeyList, Data),
-	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-	lists:foreach(
-			fun(Peer) ->
-				ar:report(
-					[
-						{sending_tx, TX#tx.id},
-						{peer, Peer}
-					]
-				),
-				ar_node:add_tx(Peer, TX)
-			end,
-			Peers
-	).
-
-create_data_tx({Priv, Pub}, Data) ->
-	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
-	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
-	TX = ar_tx:new(Data, 0, LastTx),
-	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX)) + 550,
-		Diff
-		),
-	Reward = Cost + ar_tx:calculate_min_tx_cost(
-		byte_size(<<Cost>>),
-		Diff
-		),
-	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub);
-create_data_tx(KeyList, Data) ->
-	{Priv, Pub} = lists:nth(rand:uniform(1), KeyList),
-	create_data_tx({Priv, Pub}, Data).
 
 %% @doc Create a random data TX with max length MaxTxLen
 create_random_data_tx({Priv, Pub}, MaxTxLen) ->
@@ -269,7 +179,7 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
 	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
-	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
+	Data = << 0:(MaxTxLen * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
 		byte_size(ar_tx:to_binary(TX)) + 550,
@@ -344,5 +254,11 @@ read_key_list(File, {ok, Line}, Keys) ->
 	read_key_list(File, file:read_line(File), [{{Priv, Pub}, Pub}|Keys]).
 
 %% @doc a simulation of the shadowplay system
-observe() ->
-	observer:start().
+shadowplay() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init([]),
+	Nodes = [ start([], B0) || _ <- lists:seq(1, 20) ],
+	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 10)) || Node <- Nodes ],
+	start(Nodes),
+	ar_node:mine(ar_util:pick_random(Nodes)),
+	receive after 1000 -> ok end.

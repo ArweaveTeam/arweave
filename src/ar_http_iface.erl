@@ -21,6 +21,8 @@ start(Port) ->
 				elli:start_link(
 					[
 						{callback, ?MODULE},
+						{body_timeout, ?NET_TIMEOUT},
+						{header_timeout, ?NET_TIMEOUT},
 						{max_body_size, ?MAX_BODY_SIZE},
 						{request_timeout, ?NET_TIMEOUT},
 						{accept_timeout, ?CONNECT_TIMEOUT},
@@ -240,6 +242,7 @@ handle('POST', [<<"block">>], Req) ->
 %% @doc Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as specified in ar_serialize.
 handle('POST', [<<"tx">>], Req) ->
+	ar:d(recieved_tx),
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
 	case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
@@ -254,10 +257,10 @@ handle('POST', [<<"tx">>], Req) ->
 			% 		),
 			case ar_tx:verify(TX, Diff, FloatingWalletList) of
 				false ->
-					%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+					ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 					{400, [], <<"Transaction verification failed.">>};
 				true ->
-					%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+					ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
 					ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
 					{200, [], <<"OK">>}
 			end
