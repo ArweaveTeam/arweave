@@ -1,6 +1,6 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
--export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2, verify_height/2, verify_last_retarget/1, verify_previous_block/2, verify_block_hash_list/2, verify_wallet_list/3]).
+-export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2, verify_height/2, verify_last_retarget/1, verify_previous_block/2, verify_block_hash_list/2, verify_wallet_list/3, verify_weave_size/3]).
 -export([encrypt_block/2, decrypt_block/3, encrypt_full_block/2, decrypt_full_block/3, generate_block_key/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -140,16 +140,17 @@ block_to_binary(B) ->
 block_field_size_limit(B = #block { reward_addr = unclaimed }) ->
     block_field_size_limit(B#block { reward_addr = <<>> });
 block_field_size_limit(B) ->
-	(byte_size(B#block.nonce) =< 256) and
-    (byte_size(B#block.previous_block) =< 48) and
-	(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
-    (byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
-    (byte_size(integer_to_binary(B#block.diff)) =< 10) and
-    (byte_size(integer_to_binary(B#block.height)) =< 20) and
-    (byte_size(B#block.hash) =< 48) and
-    (byte_size(B#block.indep_hash) =< 48) and
-    (byte_size(B#block.reward_addr) =< 32) and
-    (byte_size(list_to_binary(B#block.tags)) =< 2048).
+	ar:d(byte_size(B#block.nonce) =< 256) and
+    ar:d(byte_size(B#block.previous_block) =< 48) and
+	ar:d(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
+    ar:d(byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
+    ar:d(byte_size(integer_to_binary(B#block.diff)) =< 10) and
+    ar:d(byte_size(integer_to_binary(B#block.height)) =< 20) and
+    ar:d(byte_size(B#block.hash) =< 48) and
+    ar:d(byte_size(B#block.indep_hash) =< 48) and
+    ar:d(byte_size(B#block.reward_addr) =< 32) and
+    ar:d(byte_size(list_to_binary(B#block.tags)) =< 2048) and
+    ar:d(byte_size(integer_to_binary(B#block.weave_size)) =< 64).
 
 %% @docs Generate a hashable data segment for a block from the current
 %% block, recall block, TXs to be mined, reward address and tags.
@@ -266,6 +267,15 @@ verify_wallet_list(NewB, OldB, NewTXs) ->
 			FinderReward,
             NewB#block.height
 		)).
+
+verify_weave_size(NewB, OldB, TXs) ->
+    NewB#block.weave_size == lists:foldl(
+        fun(TX, Acc) ->
+            Acc + byte_size(TX#tx.data)
+        end,
+        OldB#block.weave_size,
+        TXs
+    ).
 
 
 %% Tests

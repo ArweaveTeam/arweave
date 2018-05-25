@@ -36,7 +36,8 @@ block_to_json_struct(
 		wallet_list = WalletList,
         reward_addr = RewardAddr,
 		tags = Tags,
-		reward_pool = RewardPool
+		reward_pool = RewardPool,
+		weave_size = WeaveSize
 	}) ->
 	{
 		[
@@ -70,7 +71,8 @@ block_to_json_struct(
 				end
             },
 			{tags, Tags},
-			{reward_pool, RewardPool}
+			{reward_pool, RewardPool},
+			{weave_size, WeaveSize}
 		]
 	}.
 %% @doc Translate a full block into JSON struct.
@@ -89,7 +91,8 @@ full_block_to_json_struct(
 		wallet_list = WalletList,
         reward_addr = RewardAddr,
 		tags = Tags,
-		reward_pool = RewardPool
+		reward_pool = RewardPool,
+		weave_size = WeaveSize
 	}) ->
 	{
 		[
@@ -123,7 +126,8 @@ full_block_to_json_struct(
 				end
             },
 			{tags, Tags},
-			{reward_pool, RewardPool}
+			{reward_pool, RewardPool},
+			{weave_size, WeaveSize}
 		]
 	}.
 
@@ -163,7 +167,8 @@ json_struct_to_block(JSONBlock) ->
 				StrAddr -> ar_util:decode(StrAddr)
             end,
 		tags = Tags,
-		reward_pool = find_value(<<"reward_pool">>, BlockStruct)
+		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
+		weave_size = find_value(<<"weave_size">>, BlockStruct)
 	}.
 %% @doc Translate fields parsed json from HTTP request into a full block.
 json_struct_to_full_block(JSONBlock) when is_binary(JSONBlock) ->
@@ -201,7 +206,8 @@ json_struct_to_full_block(JSONBlock) ->
 				StrAddr -> ar_util:decode(StrAddr)
             end,
 		tags = Tags,
-		reward_pool = find_value(<<"reward_pool">>, BlockStruct)
+		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
+		weave_size = find_value(<<"weave_size">>, BlockStruct)
 	}.
 
 %% @doc Translate a transaction into JSON.

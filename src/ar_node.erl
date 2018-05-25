@@ -987,7 +987,7 @@ integrate_block_from_miner(
     % Build the block record, verify it, and gossip it to the other nodes.
     RecallB = ar_node:find_recall_block(HashList),
 	[NextB|_] =
-        ar_weave:add(HashList, MinedTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
+		ar_weave:add(HashList, MinedTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
 		%ar:d({validate,validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList))}),
 	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
 		false ->
@@ -1087,7 +1087,8 @@ validate(
     Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
     Retarget = ar_retarget:validate(NewB, OldB),
     IndepHash = ar_block:verify_indep_hash(NewB),
-    Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
+	Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
+	WeaveSize = ar_block:verify_weave_size(NewB, OldB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
 	%Time = ar_block:verify_timestamp(OldB, NewB),
 	HeightCheck = ar_block:verify_height(NewB, OldB),
@@ -1095,6 +1096,7 @@ validate(
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, TXs),
+
 
 	ar:report(
 		[
@@ -1106,6 +1108,7 @@ validate(
 			{block_diff_validate, Retarget},
 			{block_indep, IndepHash},
 			{block_hash, Hash},
+			{weave_size, WeaveSize},
 			{block_size, Size},
 			%{block_timestamp, Time},
 			{block_height, HeightCheck},
@@ -1122,7 +1125,8 @@ validate(
 	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
     case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
     case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
-    case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
+	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
+	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok  end,
     case Size of false -> ar:d(invalid_size); _ -> ok  end,
 	%case Time of false -> ar:d(invalid_timestamp); _ -> ok  end,
 	case HeightCheck of false -> ar:d(invalid_height); _ -> ok  end,
@@ -1138,6 +1142,7 @@ validate(
 		and Retarget
         and IndepHash
         and Hash
+		and WeaveSize
         and Size
 		%and Time
 		and HeightCheck
