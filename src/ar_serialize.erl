@@ -66,7 +66,7 @@ block_to_json_struct(
 				)
 			},
 			{reward_addr,
-				if RewardAddr == unclaimed -> "unclaimed";
+				if RewardAddr == unclaimed -> list_to_binary("unclaimed");
 				true -> ar_util:encode(RewardAddr)
 				end
             },
@@ -121,7 +121,7 @@ full_block_to_json_struct(
 				)
 			},
 			{reward_addr,
-				if RewardAddr == unclaimed -> "unclaimed";
+				if RewardAddr == unclaimed -> list_to_binary("unclaimed");
 				true -> ar_util:encode(RewardAddr)
 				end
             },
@@ -163,7 +163,7 @@ json_struct_to_block(JSONBlock) ->
 			],
 		reward_addr =
 			case find_value(<<"reward_addr">>, BlockStruct) of
-				"unclaimed" -> unclaimed;
+				<<"unclaimed">> -> unclaimed;
 				StrAddr -> ar_util:decode(StrAddr)
             end,
 		tags = Tags,
@@ -202,7 +202,7 @@ json_struct_to_full_block(JSONBlock) ->
 			],
 		reward_addr =
 			case find_value(<<"reward_addr">>, BlockStruct) of
-				"unclaimed" -> unclaimed;
+				<<"unclaimed">> -> unclaimed;
 				StrAddr -> ar_util:decode(StrAddr)
             end,
 		tags = Tags,
