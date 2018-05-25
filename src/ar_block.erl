@@ -141,13 +141,13 @@ block_field_size_limit(B = #block { reward_addr = unclaimed }) ->
     block_field_size_limit(B#block { reward_addr = <<>> });
 block_field_size_limit(B) ->
 	(byte_size(B#block.nonce) =< 256) and
-    (byte_size(B#block.previous_block) =< 32) and
+    (byte_size(B#block.previous_block) =< 48) and
 	(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
     (byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
     (byte_size(integer_to_binary(B#block.diff)) =< 10) and
     (byte_size(integer_to_binary(B#block.height)) =< 20) and
-    (byte_size(B#block.hash) =< 32) and
-    (byte_size(B#block.indep_hash) =< 32) and
+    (byte_size(B#block.hash) =< 48) and
+    (byte_size(B#block.indep_hash) =< 48) and
     (byte_size(B#block.reward_addr) =< 32) and
     (byte_size(list_to_binary(B#block.tags)) =< 2048).
 
@@ -179,7 +179,7 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
     % ar:d({recall, block_to_binary(RecallB)}),
     % ar:d({txs, binary:list_to_bin(lists:map(fun ar_tx:to_binary/1, TXs))}),
     crypto:hash(
-        ?HASH_ALG,
+        ?MINING_HASH_ALG,
         <<
             (CurrentB#block.indep_hash)/binary,
             (CurrentB#block.hash)/binary,

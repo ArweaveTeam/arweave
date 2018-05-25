@@ -7,9 +7,11 @@
 
 %% Should ar:report_console/1 /actually/ report to the console?
 -define(SILENT, true).
+%% The hashing algorithm used to calculate wallet addresses
+-define(HASH_ALG, sha256).
 %% The hashing algorithm used to verify that the weave has not been tampered
 %% with.
--define(HASH_ALG, sha256).
+-define(MINING_HASH_ALG, sha384).
 -define(HASH_SZ, 256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).

@@ -16,9 +16,7 @@ request(Method, Host, Path, Body) ->
 	{ok, Client} = fusco:start(Host, [{connect_timeout, ?CONNECT_TIMEOUT}]),
 	Result = fusco:request(Client, list_to_binary(Path), Method, [], Body, 1, ?NET_TIMEOUT),
 	ok = fusco:disconnect(Client),
-	ar:d(Method),
-	ar:d(Path),
-	ar:d(Result).
+	Result.
 
 %% @doc Return a number of bytes (after headers) of the size of a HTTP request.
 calculate_size({_URL, _Headers}) -> 0;

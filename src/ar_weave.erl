@@ -163,7 +163,7 @@ calculate_recall_block(IndepHash, Height) ->
 hash(DataSegment, Nonce) ->
     % ar:d({hash, {data, DataSegment}, {nonce, Nonce}, {timestamp, Timestamp}}),
 	crypto:hash(
-		?HASH_ALG,
+		?MINING_HASH_ALG,
 		<< Nonce/binary, DataSegment/binary >>
 	).
 
@@ -171,7 +171,7 @@ hash(DataSegment, Nonce) ->
 %% verify a block's contents in isolation and are stored in a node's hash list.
 indep_hash(B) ->
 	crypto:hash(
-		?HASH_ALG,
+		?MINING_HASH_ALG,
         ar_serialize:jsonify(
             ar_serialize:block_to_json_struct(
                 B#block { indep_hash = <<>> }

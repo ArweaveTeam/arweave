@@ -247,7 +247,7 @@ basic_test() ->
                 []
             ),
             << 0:Diff, _/bitstring >>
-                = crypto:hash(?HASH_ALG, << Nonce/binary, DataSegment/binary >>)
+                = crypto:hash(?MINING_HASH_ALG, << Nonce/binary, DataSegment/binary >>)
 	end.
 
 %% @doc Ensure that we can change the data while mining is in progress.
@@ -273,7 +273,7 @@ change_data_test() ->
                 []
             ),
 			<< 0:Diff, _/bitstring >>
-                = crypto:hash(?HASH_ALG, << Nonce/binary, DataSegment/binary >>),
+                = crypto:hash(?MINING_HASH_ALG, << Nonce/binary, DataSegment/binary >>),
             MinedTXs == NewTXs
     end.
 
