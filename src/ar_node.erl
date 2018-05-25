@@ -123,7 +123,7 @@ get_current_block(Peer) when is_pid(Peer) ->
 	Peer ! {get_current_block, self()},
 	receive
 		{block, CurrentBlock} -> CurrentBlock
-	after ?NET_TIMEOUT ->
+	after ?LOCAL_NET_TIMEOUT ->
 		not_found
 	end;
 get_current_block(Peer) ->
@@ -150,7 +150,7 @@ get_blocks(Node) ->
 	Node ! {get_blocks, self()},
 	receive
 		{blocks, Node, Bs} -> Bs
-	after ?NET_TIMEOUT ->
+	after ?LOCAL_NET_TIMEOUT ->
 		not_found
 	end.
 
@@ -313,7 +313,7 @@ get_trusted_peers(Proc) when is_pid(Proc) ->
 	Proc ! {get_trusted_peers, self()},
 	receive
 		{peers, Ps} -> Ps
-	after ?NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end;
 get_trusted_peers(_) ->
 	unavailable.
@@ -322,6 +322,7 @@ get_all_known_txs(Node) ->
 	Node ! {get_all_known_txs, self()},
 	receive
 		{all_known_txs, TXs} -> TXs
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end.
 
 rejoin(Proc, Peers) ->
@@ -332,7 +333,7 @@ get_peers(Proc) when is_pid(Proc) ->
 	Proc ! {get_peers, self()},
 	receive
 		{peers, Ps} -> Ps
-	after ?NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end;
 get_peers(Host) ->
 	ar_http_iface:get_peers(Host).
@@ -342,6 +343,7 @@ get_wallet_list(Node) ->
     Node ! {get_walletlist, self()},
     receive
 		{walletlist, WalletList} -> WalletList
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end.
 
 %% @doc Get the hash list from the node
@@ -350,6 +352,7 @@ get_hash_list(Node) ->
     receive
 		{hashlist, not_joined} -> [];
 		{hashlist, HashList} -> HashList
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end.
 
 %% @doc Return the current balance associated with a wallet.

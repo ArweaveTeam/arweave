@@ -53,7 +53,7 @@ sim_hard: all
 	erl -pa ebin/ -s ar_network spawn_and_mine hard
 
 clean:
-	rm -rf ebin docs blocks logs txs
+	rm -rf ebin docs blocks logs txs priv
 	rm -f erl_crash.dump
 
 status: clean

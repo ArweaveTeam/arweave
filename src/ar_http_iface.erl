@@ -22,7 +22,7 @@ start(Port) ->
 					[
 						{callback, ?MODULE},
 						{body_timeout, ?NET_TIMEOUT},
-						{header_timeout, ?NET_TIMEOUT},
+						{header_timeout, ?CONNECT_TIMEOUT},
 						{max_body_size, ?MAX_BODY_SIZE},
 						{request_timeout, ?NET_TIMEOUT},
 						{accept_timeout, ?CONNECT_TIMEOUT},
@@ -327,7 +327,7 @@ handle('POST', [<<"peers">>], Req) ->
 	case ar_serialize:dejsonify(BlockJSON) of
 		{Struct} ->
 			{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-			case(NetworkName == ?NETWORK_NAME) of
+			case(NetworkName == <<?NETWORK_NAME>>) of
 				false ->
 					{400, [], <<"Wrong network.">>};
 				true ->
@@ -346,7 +346,7 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
 	case lists:keyfind(<<"network">>, 1, Struct) of
 		{<<"network">>, NetworkName} ->
-			case(NetworkName == ?NETWORK_NAME) of
+			case(NetworkName == <<?NETWORK_NAME>>) of
 				false ->
 					{400, [], <<"Wrong network.">>};
 				true ->
@@ -776,7 +776,7 @@ add_peer(Host) ->
 		ar_serialize:jsonify(
 			{
 				[
-					{network, ?NETWORK_NAME}
+					{network, list_to_binary(?NETWORK_NAME)}
 				]
 			}
 		)

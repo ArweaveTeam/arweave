@@ -37,7 +37,7 @@
 %% The number of blocks behind the most recent block to store.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 100).
 %% WARNING: ENABLE ONLY WHILE TESTING
--define(DEBUG, debug).
+%-define(DEBUG, debug).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
@@ -50,9 +50,11 @@
 %% The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 1024 * 1024 * 1024 * 512).
 %% Default timeout value for network requests.
--define(NET_TIMEOUT, 900 * 1000).
+-define(NET_TIMEOUT, 1800 * 1000).
+%% Default timeout value for local requests
+-define(LOCAL_NET_TIMEOUT, 1000).
 %% Default timeout for initial request
--define(CONNECT_TIMEOUT, 10 * 1000).
+-define(CONNECT_TIMEOUT, 30 * 1000).
 %% Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 10000).
 %% Time between attempts to find(/optimise) peers.

@@ -11,8 +11,9 @@
 start(Peers, NewB) when is_record(NewB, block) ->
 	start(self(), Peers, NewB);
 start(Node, Peers) ->
+	ar:d(Peers),
 	start(Node, Peers, ar_node:get_current_block(Peers)).
-start(Node, Peers, B) when is_atom(B) ->
+start(Node, Peers, B) when is_atom(B) -> 
 	ar:report_console(
 		[
 			could_not_retrieve_current_block,
@@ -53,7 +54,7 @@ start(Node, RawPeers, RawNewB) ->
 filter_peer_list(Peers) when is_list(Peers) ->
 	lists:filter(
 		fun(Peer) when is_pid(Peer) -> true;
-		   (Peer) -> ar_http_iface:get_info(Peer, name) == ?NETWORK_NAME
+		   (Peer) -> ar_http_iface:get_info(Peer, name) == <<?NETWORK_NAME>>
 		end,
 	Peers);
 filter_peer_list(Peer) -> filter_peer_list([Peer]).
@@ -61,7 +62,7 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 filter_peer_list(Peers) when is_list(Peers) ->
 	lists:filter(
 		fun(Peer) when is_pid(Peer) -> false;
-		   (Peer) -> ar_http_iface:get_info(Peer, name) == ?NETWORK_NAME
+		   (Peer) -> ar_http_iface:get_info(Peer, name) == <<?NETWORK_NAME>>
 		end,
 	Peers);
 filter_peer_list(Peer) -> filter_peer_list([Peer]).
