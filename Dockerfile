@@ -13,6 +13,10 @@ RUN make all
 
 FROM erlang:20-alpine
 
+# install coreutils in order to support diskmon's shell command: /bin/df -lk
+# since BusyBox's df does not support that option
+RUN apk update && apk add coreutils
+
 RUN mkdir /arweave
 WORKDIR /arweave
 
