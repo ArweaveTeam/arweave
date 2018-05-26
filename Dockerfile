@@ -15,13 +15,14 @@ FROM erlang:20-alpine
 
 # install coreutils in order to support diskmon's shell command: /bin/df -lk
 # since BusyBox's df does not support that option
-RUN apk update && apk add coreutils
+RUN apk update && apk add coreutils libstdc++
 
 RUN mkdir /arweave
 WORKDIR /arweave
 
 COPY arweave-server .
 COPY data data
+COPY --from=builder /arweave/priv priv
 COPY --from=builder /arweave/ebin ebin
 
 EXPOSE 1984
