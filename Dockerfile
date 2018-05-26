@@ -1,6 +1,6 @@
 FROM erlang:20-alpine
 
-RUN apk update && apk add make
+RUN apk update && apk add make g++
 
 RUN mkdir /arweave
 WORKDIR /arweave
