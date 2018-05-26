@@ -1,4 +1,4 @@
-FROM erlang:20-alpine
+FROM erlang:20-alpine as builder
 
 RUN apk update && apk add make g++
 
@@ -7,12 +7,18 @@ WORKDIR /arweave
 
 COPY Makefile .
 COPY Emakefile .
-COPY arweave-server .
-ADD data data
 ADD lib lib
 ADD src src
 RUN make all
 
-EXPOSE 1984
+FROM erlang:20-alpine
 
+RUN mkdir /arweave
+WORKDIR /arweave
+
+COPY arweave-server .
+COPY data data
+COPY --from=builder /arweave/ebin ebin
+
+EXPOSE 1984
 ENTRYPOINT ["./arweave-server"]
