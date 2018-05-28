@@ -216,7 +216,7 @@ reject_tx_below_min_test() ->
 
 check_last_tx_test() ->
 	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),

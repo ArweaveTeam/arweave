@@ -242,9 +242,9 @@ tx_to_json_struct(
 				)
 			},
 			{target, ar_util:encode(Target)},
-			{quantity, integer_to_list(Quantity)},
+			{quantity, integer_to_binary(Quantity)},
 			{data, ar_util:encode(Data)},
-			{reward, integer_to_list(Reward)},
+			{reward, integer_to_binary(Reward)},
 			{signature, ar_util:encode(Sig)}
 		]
 	}.
@@ -272,9 +272,9 @@ json_struct_to_tx(JSONTX) ->
 					{[{<<"name">>, Name}, {<<"value">>, Value}]} <- Tags
 			],
 		target = ar_util:decode(find_value(<<"target">>, TXStruct)),
-		quantity = list_to_integer(find_value(<<"quantity">>, TXStruct)),
+		quantity = binary_to_integer(find_value(<<"quantity">>, TXStruct)),
 		data = ar_util:decode(find_value(<<"data">>, TXStruct)),
-		reward = list_to_integer(find_value(<<"reward">>, TXStruct)),
+		reward = binary_to_integer(find_value(<<"reward">>, TXStruct)),
 		signature = ar_util:decode(find_value(<<"signature">>, TXStruct))
 	}.
 

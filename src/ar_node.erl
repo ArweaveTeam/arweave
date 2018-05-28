@@ -221,7 +221,7 @@ get_encrypted_full_block(Peers, ID) when is_list(Peers) ->
 				[] -> unavailable;
 				[B|_] -> B
 			end;
-		Block -> make_full_block(ID)
+		_Block -> make_full_block(ID)
 	end;
 get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
@@ -564,7 +564,7 @@ server(
 				Peer,
 				HashList
 			);
-		{replace_block_list, NewBL = [B|_]} ->
+		{replace_block_list, _NewBL = [B|_]} ->
 			% Replace the entire stored block list, regenerating the hash list.
 			%lists:map(fun ar_storage:write_block/1, NewBL),
 			%ar:d({replaced, [B#block.indep_hash|B#block.hash_list]}),
@@ -1460,7 +1460,7 @@ filter_out_of_order_txs_test_slow() ->
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
 		],
-	{_, [SignedTX2, SignedTX1]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX2]),
+	{_, [SignedTX2, SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX2]),
 	{_, [SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX2, SignedTX]).
 
 filter_out_of_order_txs_large_test_slow() ->
