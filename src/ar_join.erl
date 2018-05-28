@@ -11,7 +11,6 @@
 start(Peers, NewB) when is_record(NewB, block) ->
 	start(self(), Peers, NewB);
 start(Node, Peers) ->
-	ar:d(Peers),
 	start(Node, Peers, ar_node:get_current_block(Peers)).
 start(Node, Peers, B) when is_atom(B) -> 
 	ar:report_console(
