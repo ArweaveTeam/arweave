@@ -15,7 +15,7 @@
 -define(DEFAULT_NUM_CONNECTIONS, 3).
 %% The maximum time to wait between actions.
 %% The average case wait time will be 50% of this value.
--define(DEFAULT_ACTION_TIME, 2000).
+-define(DEFAULT_ACTION_TIME, 1000).
 %% Maximum length of data segment of transaction.
 %% 1024 * 1024
 -define(DEFAULT_MAX_TX_LEN, 1000).

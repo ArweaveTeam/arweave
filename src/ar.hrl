@@ -69,6 +69,8 @@
 -define(PEER_GRACE_PERIOD, 100).
 %% Never drop to lower than this number of peers.
 -define(MINIMUM_PEERS, 4).
+%% Never have more than this number of peers (new peers excluded).
+-define(MAXIMUM_PEERS, 20).
 %% Default list of peers if no others are specified
 -define(DEFAULT_PEER_LIST,
 	[
