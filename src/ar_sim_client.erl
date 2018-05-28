@@ -15,7 +15,7 @@
 -define(DEFAULT_NUM_CONNECTIONS, 3).
 %% The maximum time to wait between actions.
 %% The average case wait time will be 50% of this value.
--define(DEFAULT_ACTION_TIME, 1000).
+-define(DEFAULT_ACTION_TIME, 2*54*1000).
 %% Maximum length of data segment of transaction.
 %% 1024 * 1024
 -define(DEFAULT_MAX_TX_LEN, 1000).
@@ -100,7 +100,7 @@ server(
 	receive
 		stop -> ok
 	after rand:uniform(?DEFAULT_ACTION_TIME)->
-		{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
+		{Priv, Pub} = lists:nth(rand:uniform(200), KeyList),
 		TX = case rand:uniform(2) of
 			1 -> create_random_fin_tx({Priv, Pub}, KeyList, MaxTXLen);
 			2 -> create_random_data_tx({Priv, Pub}, MaxDataLen)
@@ -175,7 +175,7 @@ create_random_data_tx({Priv, Pub}, MaxTxLen) ->
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub);
 
 create_random_data_tx(KeyList, MaxTxLen) ->
-	{Priv, Pub} = lists:nth(rand:uniform(1), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(200), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
@@ -210,8 +210,8 @@ create_random_data_tx({Priv, Pub}, MaxTxLen, OldTX) ->
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 %% @doc Create a random financial TX between two wallets of amount MaxAmount
 create_random_fin_tx(KeyList, MaxAmount) ->
-	{Priv, Pub} = lists:nth(rand:uniform(10), KeyList),
-	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(200), KeyList),
+	{_, Dest} = lists:nth(rand:uniform(200), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
@@ -229,7 +229,7 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
 create_random_fin_tx({Priv, Pub}, KeyList, MaxAmount) ->
-	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
+	{_, Dest} = lists:nth(rand:uniform(200), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
