@@ -54,7 +54,7 @@
 %% Default timeout value for network requests.
 -define(NET_TIMEOUT, 1800 * 1000).
 %% Default timeout value for local requests
--define(LOCAL_NET_TIMEOUT, 1000).
+-define(LOCAL_NET_TIMEOUT, 10000).
 %% Default timeout for initial request
 -define(CONNECT_TIMEOUT, 30 * 1000).
 %% Default time to wait after a failed join to retry

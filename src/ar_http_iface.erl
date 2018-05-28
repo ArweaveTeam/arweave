@@ -746,7 +746,7 @@ send_new_tx(Host, TX) ->
 						"/tx",
 						ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 					);
-				true -> ar:d(not_sent)
+				true -> not_sent
 			end
 	end.
 

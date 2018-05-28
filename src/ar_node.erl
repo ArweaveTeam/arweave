@@ -313,7 +313,7 @@ get_trusted_peers(Proc) when is_pid(Proc) ->
 	Proc ! {get_trusted_peers, self()},
 	receive
 		{peers, Ps} -> Ps
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> []
 	end;
 get_trusted_peers(_) ->
 	unavailable.
@@ -322,7 +322,7 @@ get_all_known_txs(Node) ->
 	Node ! {get_all_known_txs, self()},
 	receive
 		{all_known_txs, TXs} -> TXs
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 rejoin(Proc, Peers) ->
@@ -333,7 +333,7 @@ get_peers(Proc) when is_pid(Proc) ->
 	Proc ! {get_peers, self()},
 	receive
 		{peers, Ps} -> Ps
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> []
 	end;
 get_peers(Host) ->
 	ar_http_iface:get_peers(Host).
@@ -360,6 +360,7 @@ get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_balance, self(), Addr},
 	receive
 		{balance, Addr, B} -> B
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end;
 get_balance(Node, WalletID) ->
 	get_balance(Node, ar_wallet:to_address(WalletID)).
@@ -369,6 +370,7 @@ get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx, self(), Addr},
 	receive
 		{last_tx, Addr, LastTX} -> LastTX
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
@@ -378,6 +380,7 @@ get_last_tx_from_floating(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx_from_floating, self(), Addr},
 	receive
 		{last_tx_from_floating, Addr, LastTX} -> LastTX
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end;
 get_last_tx_from_floating(Node, WalletID) ->
 	get_last_tx_from_floating(Node, ar_wallet:to_address(WalletID)).
@@ -387,37 +390,41 @@ get_pending_txs(Node) ->
 	Node ! {get_txs, self()},
 	receive
 		{all_txs, Txs} -> [T#tx.id || T <- Txs]
-		after 1000 -> []
+	after ?LOCAL_NET_TIMEOUT -> []
 	end.
 get_full_pending_txs(Node) ->
 	Node ! {get_txs, self()},
 	receive
 		{all_txs, Txs} -> Txs
-		after 1000 -> []
+	after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 get_floating_wallet_list(Node) ->
     Node ! {get_floatingwalletlist, self()},
     receive
 		{floatingwalletlist, WalletList} -> WalletList
+	after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 get_current_diff(Node) ->
     Node ! {get_current_diff, self()},
     receive
 		{current_diff, Diff} -> Diff
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end.
 
 get_diff(Node) ->
 	Node ! {get_diff, self()},
 	receive
 		{diff, Diff} -> Diff
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end.
 
 get_reward_pool(Node) ->
 	Node ! {get_reward_pool, self()},
 	receive
 		{reward_pool, RewardPool} -> RewardPool
+	after ?LOCAL_NET_TIMEOUT -> not_found
 	end.
 
 %% @doc Trigger a node to start mining a block.

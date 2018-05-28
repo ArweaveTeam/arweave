@@ -53,6 +53,7 @@ get_remote_peers(PID) ->
 	receive
 		{remote_peers, ExternalPeers} ->
 			ExternalPeers
+	after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 %% @doc Notify the bridge of a new external block.

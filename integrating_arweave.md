@@ -6,31 +6,45 @@ Most programming languages provide 'out of the box' functionality for making web
 
 ## Transaction format
 
-Transactions are submitted to the network via this HTTP interface and structured as JSON.
+Transactions are submitted to the network via this HTTP interface and structured as JSON. Note that currently, transactions are limited to one transaction from each given wallet per block.
 
 An example of the transaction format is below:
-
+%% A transaction, as stored in a block.
+-record(tx, {
+	id = <<>>, % TX UID.
+	last_tx = <<>>, % Get last TX hash.
+	owner = <<>>, % Public key of transaction owner.
+	tags = [], % Indexable TX category identifiers.
+	target = <<>>, % Address of target of the tx.
+	quantity = 0, % Amount to send
+	data = <<>>, % Data in transaction (if data transaction).
+	signature = <<>>, % Transaction signature.
+	reward = 0 % Transaction mining reward.
+}).
 ```javascript
 {
 	"id": "",
 	"last_tx": "",
 	"owner": "",
+	"tags": "",
 	"target": "",
 	"quantity": "",
-	"type": "",
 	"data": "",
 	"reward": "",
 	"signature": ""
 }
 ```
 **[id]**
-A randomly selected 32-byte identifier base64url encoded.
+A SHA2-256 hash of the signature, based 64 URL encoded. 
 
 **[last_tx]**
 The ID of the last transaction made from the same address base64url encoded. If no previous transactions have been made from the address this field is set to an empty string.
 
 **[owner]**
 The modulus of the RSA key pair corresponding to the wallet making the transaction, base64url encoded.
+
+**[tags]**
+A field that allows the sender to provide further information about the transaction. Formatted as a key-value pair. Certain tag names are reserved and will be ignored if added, currently: "from", "to", "quantity" and "reward".
 
 **[target]**
 If making a financial transaction this field contains the wallet address of the recipient base64url encoded. If the transaction is not a financial this field is set to an empty string.
@@ -41,9 +55,6 @@ A wallet address is a base64url encoded SHA256 hash of the raw unencoded RSA mod
 If making a financial transaction this field contains the amount in Winston to be sent to the receiving wallet. If the transaction is not financial this field is set to the string "0".
 
 (1 AR = 1000000000000 (1e+12) Winston).
-
-**[type]**
-This field specifies the type of transaction, transactions can either be 'data' or 'transfer'.
 
 **[data]**
 If making an archiving transaction this field contains the data to be archived base64url encoded. If the transaction is not archival this field is set to an empty string.
@@ -84,6 +95,26 @@ Once returned the RSA-PSS signature is base64url encoded and added to the transa
 
 The transaction is now complete and ready to be submitted to the network via a POST request on the '/tx' endpoint.
 
+## Field Size limits
+
+Transactions must conform to certain size limits in each field. These size limits are as follows:
+
+```javascript
+{
+	"id": "32 Bytes"
+	"last_tx": "32 Bytes",
+	"owner": "512 Bytes",
+	"tags": "2048 Bytes",
+	"target": "32 Bytes",
+	"quantity": "21 Bytes",
+	"data": "Not limited",
+	"reward": "21 Bytes",
+	"signature": "512 Bytes"
+}
+```
+
+Furthermore, at least briefly in Arweaves life cycle (and at the time of writing), the max possible total transaction size (unencoded, including all fields) is limited to 50mb.
+
 ## Example Archiving Transaction
 
 ```javascript
@@ -91,9 +122,9 @@ The transaction is now complete and ready to be submitted to the network via a P
  	"id": "eDhZfOhEmVZV72h0Xm_AX1MEuPnqvGeeXstBbLY3Sdk",
 	"last_tx": "eC8pO0aKOxkQHLLGmfLKvBQnnRlTk1uq10H8fQAATAA",
 	"owner": "1Q7Rf...2x0xC",						// Partially omitted due to length
+	"tags": []
 	"target": "",
 	"quantity": "0",
-	"type": "data",
 	"data": "",
 	"reward": "2343181818",
 	"signature": "Bgb65...7cBR4" 					// Partially omitted due to length
@@ -107,9 +138,9 @@ The transaction is now complete and ready to be submitted to the network via a P
   	"id": "iwUl8_2Bc07vOCjE9Q5_VQ8KrvHZu0Rk-eq3c8bF6X8",
 	"last_tx": "eDhZfOhEmVZV72h0Xm_AX1MEuPnqvGeeXstBbLY3Sdk",
 	"owner": "1Q7Rf...2x0xC",						// Partially omitted due to length
+	"tags":[{"Application", "app_election"},{"Source","Automated"}]
 	"target": "f1FHKWEauF3bJYfn6i0mM5zrUfIxn8lUQHlWKUmP04M",
 	"quantity": "25550000000000",
-	"type": "transfer",
 	"data": "",
 	"reward": "1907348633",
 	"signature": "Hg02G...cdNk8" 					// Partially omitted due to length
