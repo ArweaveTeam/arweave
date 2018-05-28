@@ -94,7 +94,7 @@ server(
 		key_file = KeyList,
 		max_tx_len = MaxTXLen,
 		max_data_len = MaxDataLen,
-		action_time = ActionTime,
+		action_time = _ActionTime,
 		peers = Peers
 	}) ->
 	receive

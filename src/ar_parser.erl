@@ -3,7 +3,7 @@
 -include("ar.hrl").
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
--compile(export_all).
+-export([eval/1]).
 
 
 %%% Functions for parsing logical expressions

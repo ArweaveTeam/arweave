@@ -1,5 +1,5 @@
 -module(ar_weave).
--export([init/0, init/1, init/2, add/1, add/2, add/3, add/4, add/6, add/7, add/11, add/11]).
+-export([init/0, init/1, init/2, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
 -export([hash/2, indep_hash/1]).
 -export([verify_indep/2]).
 -export([calculate_recall_block/1, calculate_recall_block/2]).
