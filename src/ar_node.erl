@@ -410,14 +410,14 @@ get_current_diff(Node) ->
     Node ! {get_current_diff, self()},
     receive
 		{current_diff, Diff} -> Diff
-	after ?LOCAL_NET_TIMEOUT -> 0
+	after ?LOCAL_NET_TIMEOUT -> 1
 	end.
 
 get_diff(Node) ->
 	Node ! {get_diff, self()},
 	receive
 		{diff, Diff} -> Diff
-	after ?LOCAL_NET_TIMEOUT -> 0
+	after ?LOCAL_NET_TIMEOUT -> 1
 	end.
 
 get_reward_pool(Node) ->
