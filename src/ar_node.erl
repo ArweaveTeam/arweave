@@ -343,7 +343,7 @@ get_wallet_list(Node) ->
     Node ! {get_walletlist, self()},
     receive
 		{walletlist, WalletList} -> WalletList
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 %% @doc Get the hash list from the node
@@ -352,7 +352,7 @@ get_hash_list(Node) ->
     receive
 		{hashlist, not_joined} -> [];
 		{hashlist, HashList} -> HashList
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 %% @doc Return the current balance associated with a wallet.
@@ -360,7 +360,7 @@ get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_balance, self(), Addr},
 	receive
 		{balance, Addr, B} -> B
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> 0
 	end;
 get_balance(Node, WalletID) ->
 	get_balance(Node, ar_wallet:to_address(WalletID)).
@@ -370,7 +370,7 @@ get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx, self(), Addr},
 	receive
 		{last_tx, Addr, LastTX} -> LastTX
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> unavailable
 	end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
@@ -380,7 +380,7 @@ get_last_tx_from_floating(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx_from_floating, self(), Addr},
 	receive
 		{last_tx_from_floating, Addr, LastTX} -> LastTX
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> unavailable
 	end;
 get_last_tx_from_floating(Node, WalletID) ->
 	get_last_tx_from_floating(Node, ar_wallet:to_address(WalletID)).
@@ -410,21 +410,21 @@ get_current_diff(Node) ->
     Node ! {get_current_diff, self()},
     receive
 		{current_diff, Diff} -> Diff
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
 get_diff(Node) ->
 	Node ! {get_diff, self()},
 	receive
 		{diff, Diff} -> Diff
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
 get_reward_pool(Node) ->
 	Node ! {get_reward_pool, self()},
 	receive
 		{reward_pool, RewardPool} -> RewardPool
-	after ?LOCAL_NET_TIMEOUT -> not_found
+	after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
 %% @doc Trigger a node to start mining a block.
