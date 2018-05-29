@@ -752,7 +752,7 @@ server(
 			server(
 				reset_miner(
 					S#state {
-						hash_list = NewHs,
+						hash_list = [NewB#block.indep_hash|NewB#block.hash_list],
 						wallet_list = NewB#block.wallet_list,
 						height = NewB#block.height,
 						reward_pool = NewB#block.reward_pool,

@@ -62,7 +62,7 @@
 %% Time between attempts to find(/optimise) peers.
 -define(REFRESH_MINE_DATA_TIMER, 60000).
 %% Time between attempts to find(/optimise) peers.
--define(GET_MORE_PEERS_TIME,  90 * 1000).
+-define(GET_MORE_PEERS_TIME,  240 * 1000).
 %% Time to wait before not ignoring bad peers
 -define(IGNORE_PEERS_TIME, 5 * 60 * 1000).
 %% Number of transfers for which not to score (and potentially drop) new peers.

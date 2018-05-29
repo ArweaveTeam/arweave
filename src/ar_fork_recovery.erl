@@ -32,27 +32,38 @@ start(Peers, TargetBShadow, HashList) ->
 					{peer, Peers}
 				]
 			),
-			PID =
-				spawn(
-					fun() ->
-						TargetB = TargetBShadow,%ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 5),
-						DivergedHashes = drop_until_diverge(
-							lists:reverse(TargetB#block.hash_list),
-							lists:reverse(HashList)
-						) ++ [TargetB#block.indep_hash],
-						server(
-							#state {
-								parent = Parent,
-								peers = Peers,
-								block_list = (TargetB#block.hash_list -- DivergedHashes),
-								hash_list = DivergedHashes,
-								target_block = TargetB
-							}
-						)
-					end
+			case TargetBShadow#block.height == length(TargetBShadow#block.hash_list) of
+				true ->
+					PID =
+						spawn(
+							fun() ->
+								TargetB = TargetBShadow,%ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 5),
+								DivergedHashes = drop_until_diverge(
+									lists:reverse(TargetB#block.hash_list),
+									lists:reverse(HashList)
+								) ++ [TargetB#block.indep_hash],
+								server(
+									#state {
+										parent = Parent,
+										peers = Peers,
+										block_list = (TargetB#block.hash_list -- DivergedHashes),
+										hash_list = DivergedHashes,
+										target_block = TargetB
+									}
+								)
+							end
+						),
+					PID ! {apply_next_block},
+					PID;
+				false ->
+					ar:report(
+					[
+						{could_not_start_fork_recovery},
+						{target_block_hash_list_incorrect}
+					]
 				),
-			PID ! {apply_next_block},
-			PID;
+				undefined
+			end;
 		false ->
 			ar:report(
 				[
