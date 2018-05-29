@@ -197,7 +197,7 @@ create_data_tx({Priv, Pub}, Data) ->
 	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX)) + 550,
+		byte_size(ar_tx:tx_to_binary(TX)) + 550,
 		Diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(
@@ -218,7 +218,7 @@ create_random_data_tx({Priv, Pub}, MaxTxLen) ->
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX)) + 550,
+		byte_size(ar_tx:tx_to_binary(TX)) + 550,
 		Diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(
@@ -236,7 +236,7 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX)) + 550,
+		byte_size(ar_tx:tx_to_binary(TX)) + 550,
 		Diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(
@@ -253,7 +253,7 @@ create_random_data_tx({Priv, Pub}, MaxTxLen, OldTX) ->
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX)) + 550,
+		byte_size(ar_tx:tx_to_binary(TX)) + 550,
 		Diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(
@@ -272,7 +272,7 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 	Qty = rand:uniform(MaxAmount),
 	TX = ar_tx:new(Dest, 0, Qty, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX))+550,
+		byte_size(ar_tx:tx_to_binary(TX))+550,
 		Diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(
@@ -290,7 +290,7 @@ create_random_fin_tx({Priv, Pub}, KeyList, MaxAmount) ->
 	Qty = rand:uniform(MaxAmount),
 	TX = ar_tx:new(Dest, 0, Qty, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:to_binary(TX))+550,
+		byte_size(ar_tx:tx_to_binary(TX))+550,
 		Diff
 		),
 	Reward = Cost + ar_tx:calculate_min_tx_cost(

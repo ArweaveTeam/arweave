@@ -520,7 +520,7 @@ server(
 					case ConflictingTXs of
 						[] ->
 							timer:send_after(
-								calculate_delay(byte_size(ar_tx:to_binary(TX))),
+								calculate_delay(byte_size(TX#tx.data)),
 								{apply_tx, TX}
 							),
 							server(S#state { waiting_txs = ar_util:unique([TX|S#state.waiting_txs]), gossip = NewGS });
@@ -548,7 +548,7 @@ server(
 			case ConflictingTXs of
 				[] ->
 					timer:send_after(
-						calculate_delay(byte_size(ar_tx:to_binary(TX))),
+						calculate_delay(byte_size(TX#tx.data)),
 						{apply_tx, TX}
 					),
 					server(S#state { waiting_txs = ar_util:unique([TX|S#state.waiting_txs]) });
@@ -1053,7 +1053,7 @@ add_tx_to_server(S, NewGS, TX) ->
         1,
         memsup:get_system_memory_data()
     ),
-    case (Mem div 4) > byte_size(ar_tx:to_binary(TX)) of
+    case (Mem div 4) > byte_size(TX#tx.data) of
         true ->
             NewTXs = S#state.txs ++ [TX],
 	        %ar:d({added_tx, TX#tx.id}),

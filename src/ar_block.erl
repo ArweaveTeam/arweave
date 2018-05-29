@@ -113,7 +113,7 @@ block_to_binary(B) ->
         (
             binary:list_to_bin(
                 lists:map(
-                    fun ar_tx:to_binary/1,
+                    fun ar_tx:tx_to_binary/1,
                     lists:sort(ar_storage:read_tx(B#block.txs))
                 )
             )
@@ -141,7 +141,7 @@ block_to_binary(B) ->
 block_field_size_limit(B = #block { reward_addr = unclaimed }) ->
     block_field_size_limit(B#block { reward_addr = <<>> });
 block_field_size_limit(B) ->
-	(byte_size(B#block.nonce) =< 256) and
+	(byte_size(B#block.nonce) =< 512) and
     (byte_size(B#block.previous_block) =< 48) and
 	(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
     (byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
@@ -179,7 +179,7 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
     % ar:d({reward, case is_atom(RewardAddr) of true -> <<>>; false -> RewardAddr end}),
     % ar:d({tags, list_to_binary(Tags)}),
     % ar:d({recall, block_to_binary(RecallB)}),
-    % ar:d({txs, binary:list_to_bin(lists:map(fun ar_tx:to_binary/1, TXs))}),
+    % ar:d({txs, binary:list_to_bin(lists:map(fun ar_tx:tx_to_binary/1, TXs))}),
     crypto:hash(
         ?MINING_HASH_ALG,
         <<
@@ -209,7 +209,7 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
             (
                 binary:list_to_bin(
                     lists:map(
-                        fun ar_tx:to_binary/1,
+                        fun ar_tx:tx_to_binary/1,
                         TXs
                     )
                 )

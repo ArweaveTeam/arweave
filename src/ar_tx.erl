@@ -1,5 +1,5 @@
 -module(ar_tx).
--export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, to_binary/1, verify/3, verify_txs/3]).
+-export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, tx_to_binary/1, verify/3, verify_txs/3, signature_data_segment/1]).
 -export([calculate_min_tx_cost/2, tx_cost_above_min/2, check_last_tx/2]).
 -export([tags_to_binary/1]).
 -include("ar.hrl").
@@ -33,7 +33,21 @@ new(Dest, Reward, Qty, Last) ->
 generate_id() -> crypto:strong_rand_bytes(32).
 
 %% @doc Generate a hashable binary from a #tx object.
-to_binary(T) ->
+tx_to_binary(T) ->
+	<<
+		(T#tx.id)/binary,
+		(T#tx.last_tx)/binary,
+		(T#tx.owner)/binary,
+		(tags_to_binary(T#tx.tags))/binary,
+		(T#tx.target)/binary,
+		(list_to_binary(integer_to_list(T#tx.quantity)))/binary,
+		(T#tx.data)/binary,
+		(T#tx.signature)/binary,
+		(list_to_binary(integer_to_list(T#tx.reward)))/binary
+	>>.
+
+%% @doc Generate the data segment to be signed for a given TX.
+signature_data_segment(T) ->
 	<<
 		(T#tx.owner)/binary,
 		(T#tx.target)/binary,
@@ -48,7 +62,7 @@ to_binary(T) ->
 sign(TX, {PrivKey, PubKey}) -> sign(TX, PrivKey, PubKey).
 sign(TX, PrivKey, PubKey) ->
 	NewTX = TX#tx{ owner = PubKey },
-	Sig = ar_wallet:sign(PrivKey, to_binary(NewTX)),
+	Sig = ar_wallet:sign(PrivKey, signature_data_segment(NewTX)),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx {
 		signature = Sig, id = ID
@@ -61,7 +75,7 @@ verify(TX, Diff, WalletList) ->
 	% ar:report(
 	% 	[
 	% 		{validate_tx, ar_util:encode(TX#tx.id)},
-	% 		{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)},
+	% 		{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
 	% 		{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
 	% 		{tx_field_size_verify, tx_field_size_limit(TX)},
 	% 		{tx_tag_field_legal, tag_field_legal(TX)},
@@ -69,7 +83,7 @@ verify(TX, Diff, WalletList) ->
 	% 		{tx_verify_hash, tx_verify_hash(TX)}
 	% 	]
 	% ),
-	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and
+	ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature) and
 	tx_cost_above_min(TX, Diff) and
 	tx_field_size_limit(TX) and
 	tag_field_legal(TX) and
@@ -80,7 +94,7 @@ verify(TX, Diff, WalletList) ->
 	% ar:report(
 	% 	[
 	% 		{validate_tx, ar_util:encode(ar_wallet:to_address(TX#tx.owner))},
-	% 		{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature)},
+	% 		{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
 	% 		{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
 	% 		{tx_field_size_verify, tx_field_size_limit(TX)},
 	% 		{tx_tag_field_legal, tag_field_legal(TX)},
@@ -88,7 +102,7 @@ verify(TX, Diff, WalletList) ->
 	% 		{tx_verify_hash, tx_verify_hash(TX)}
 	% 	]
 	% ),
-	ar_wallet:verify(TX#tx.owner, to_binary(TX), TX#tx.signature) and
+	ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature) and
 	tx_cost_above_min(TX, Diff) and
 	tx_field_size_limit(TX) and
 	tag_field_legal(TX) and
