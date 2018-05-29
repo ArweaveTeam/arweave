@@ -149,9 +149,7 @@ server(
                 ),
             % Tell each worker to start hashing
             lists:foreach(
-                fun(Worker) ->
-                    Worker ! hash
-                end,
+                fun(Worker) -> Worker ! hash end,
                 Workers
             ),
             % Continue server loop
@@ -171,6 +169,7 @@ server(
     end.
 
 %% @doc A worker process to hash the data segment searching for a solution for the given diff.
+%% TODO: Change byte string for nonces to bitstring
 miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Supervisor) ->
     receive
         stop -> ok;
@@ -178,7 +177,7 @@ miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Su
             schedule_hash(S),
             case validate(DataSegment, iolist_to_binary(Nonces), Diff) of
                 false -> 
-                    case(length(Nonces) > 256) and coinflip() of
+                    case(length(Nonces) > 512) and coinflip() of
                         false -> miner(S#state { nonces = [bool_to_binary(coinflip())|Nonces] }, Supervisor);
                         true -> miner(S#state { nonces = [] }, Supervisor)
                     end;
