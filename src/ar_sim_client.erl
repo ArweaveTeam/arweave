@@ -113,7 +113,7 @@ server(
 							"dummy_data/20mb",
 							"dummy_data/25mb",
 							"dummy_data/30mb",
-							"dumy_data/35mb",
+							"dummy_data/35mb",
 							"dummy_data/40mb",
 							"dummy_data/45mb",
 							"dummy_data/50mb"
