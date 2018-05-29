@@ -59,7 +59,7 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
         end
     ),
     PID ! mine,
-    refresh_data_timer(PID),
+    %refresh_data_timer(PID),
     PID.
 
 

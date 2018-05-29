@@ -84,7 +84,7 @@
 		{139,59,81,47,1984}
 	]).
 %% Length of time to wait (seconds) before dropping after last activity
--define(PEER_TIMEOUT, 240).
+-define(PEER_TIMEOUT, 480).
 %% Log output directory
 -define(LOG_DIR, "logs").
 %% Port to use for cross-machine message transfer.
