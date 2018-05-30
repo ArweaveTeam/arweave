@@ -100,32 +100,27 @@ server(
 	receive
 		stop -> ok
 	after rand:uniform(?DEFAULT_ACTION_TIME) ->
-		{Priv, Pub} = lists:nth(rand:uniform(1000), KeyList),
 		case rand:uniform(10) of
 			10 ->
 				case rand:uniform(10) of
 					10 ->
+						ar:d({sim_client_large_data_tx}),
+						{Priv, Pub} = lists:nth(rand:uniform(50) + 950, KeyList),
 						DataOpts = [
 							"dummy_data/5mb",
 							"dummy_data/7\.5mb",
-							"dummy_data/10mb",
-							"dummy_data/15mb",
-							"dummy_data/20mb",
-							"dummy_data/25mb",
-							"dummy_data/30mb",
-							"dummy_data/35mb",
-							"dummy_data/40mb",
-							"dummy_data/45mb",
-							"dummy_data/50mb"
+							"dummy_data/10mb"
 						],
 						{ok, Data} = file:read_file(
 							lists:nth(rand:uniform(length(DataOpts)), DataOpts)
 							),
 						TX = create_data_tx({Priv, Pub}, Data);
 					_ ->
+						{Priv, Pub} = lists:nth(rand:uniform(950), KeyList),
 						TX = create_random_data_tx({Priv, Pub}, 2000)
 				end;
 			_ ->
+				{Priv, Pub} = lists:nth(rand:uniform(950), KeyList),
 				TX = create_random_fin_tx({Priv, Pub}, KeyList, MaxTXLen)
 		end,
 		ar_http_iface:send_new_tx(hd(Peers), TX),
