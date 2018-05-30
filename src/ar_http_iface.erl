@@ -2,7 +2,7 @@
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
--export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
+-export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
 -export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).

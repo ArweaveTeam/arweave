@@ -1394,7 +1394,7 @@ calculate_delay(0) -> 0;
 calculate_delay(Bytes) -> ((Bytes * 100) div 1000).
 -else.
 calculate_delay(0) -> 0;
-calculate_delay(Bytes) -> 5000 + ((Bytes * 100) div 1000).
+calculate_delay(Bytes) -> 10000 + ((Bytes * 200) div 1000).
 -endif.
 
 generate_floating_wallet_list(WalletList, []) ->

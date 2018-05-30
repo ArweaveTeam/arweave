@@ -224,16 +224,20 @@ get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
 get_id(block, {_, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% @doc Send an internal message externally
-send_to_external(S = #state {external_peers = Peers}, {add_tx, TX}) ->
+send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
+	Peers = [Y||{_,Y} <- lists:sort([ {rand:uniform(), N} || N <- OrderedPeers])],
 	spawn(
 		fun() ->
-			lists:foreach(
-				fun(Peer) ->
-					case (rand:uniform(3)) of
-						3 -> ar_http_iface:send_new_tx(Peer, TX);
-						_ -> ok
+			lists:foldl(
+				fun(Peer, Acc) ->				
+					case (not (ar_http_iface:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
+						true -> 
+							ar_http_iface:send_new_tx(Peer, TX),
+							Acc + 1;
+						_ -> Acc
 					end
 				end,
+				0,
 				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX) ]
 			)
 		end
