@@ -6,7 +6,7 @@
 -module(elli_http).
 -include("elli.hrl").
 -include("elli_util.hrl").
-
+-inclide("../../src/ar.hrl").
 
 %% API
 -export([start_link/4]).
@@ -32,8 +32,13 @@ start_link(Server, ListenSocket, Options, Callback) ->
 accept(Server, ListenSocket, Options, Callback) ->
     case catch elli_tcp:accept(ListenSocket, Server, accept_timeout(Options)) of
         {ok, Socket} ->
+            {ok, {Peer, _}} = elli_tcp:peername(Socket),
             t(accepted),
-            ?MODULE:keepalive_loop(Socket, Options, Callback);
+            ar_meta_db:increment_ip(Peer),
+            case ar_meta_db:is_blacklisted(Peer) of
+                true -> ok;
+                false -> ?MODULE:keepalive_loop(Socket, Options, Callback)
+            end;
         {error, timeout} ->
             ?MODULE:accept(Server, ListenSocket, Options, Callback);
         {error, econnaborted} ->
@@ -45,7 +50,6 @@ accept(Server, ListenSocket, Options, Callback) ->
         {error, Other} ->
             exit({error, Other})
     end.
-
 
 %% @doc: Handle multiple requests on the same connection, ie. "keep
 %% alive".

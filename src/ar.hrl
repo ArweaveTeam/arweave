@@ -37,7 +37,7 @@
 %% The amount of the weave to store. 1.0 = 100%; 0.5 = 50% etc.
 -define(WEAVE_STOR_AMT, 1.0).
 %% The number of blocks behind the most recent block to store.
--define(STORE_BLOCKS_BEHIND_CURRENT, 100).
+-define(STORE_BLOCKS_BEHIND_CURRENT, 10).
 %% WARNING: ENABLE ONLY WHILE TESTING
 %-define(DEBUG, debug).
 %% Speed to run the network at when simulating.
@@ -50,9 +50,9 @@
 -define(DEFAULT_MINING_DELAY,
 	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 %% The maximum size of a single POST body.
--define(MAX_BODY_SIZE, 1024 * 1024 * 1024 * 512).
+-define(MAX_BODY_SIZE, 5 * 1024 * 1024).
 %% Default timeout value for network requests.
--define(NET_TIMEOUT, 1800 * 1000).
+-define(NET_TIMEOUT, 300 * 1000).
 %% Default timeout value for local requests
 -define(LOCAL_NET_TIMEOUT, 10000).
 %% Default timeout for initial request
@@ -71,6 +71,8 @@
 -define(MINIMUM_PEERS, 4).
 %% Never have more than this number of peers (new peers excluded).
 -define(MAXIMUM_PEERS, 20).
+%% Maximum nunber of requests allowed by an IP in any 5 second period.
+-define(MAX_REQUESTS, 50).
 %% Default list of peers if no others are specified
 -define(DEFAULT_PEER_LIST,
 	[
@@ -113,7 +115,6 @@
 	reward_pool = 0, % Current pool of mining reward (10% issued to block finder)
 	weave_size = 0 % The current size of the weave in bytes (data only)
 }).
-
 %% A transaction, as stored in a block.
 -record(tx, {
 	id = <<>>, % TX UID.

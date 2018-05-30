@@ -1,6 +1,7 @@
 -module(ar_tx).
 -export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, tx_to_binary/1, verify/3, verify_txs/3, signature_data_segment/1]).
 -export([calculate_min_tx_cost/2, tx_cost_above_min/2, check_last_tx/2]).
+-export([check_last_tx_test_slow/0]).
 -export([tags_to_binary/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -228,7 +229,7 @@ reject_tx_below_min_test() ->
 	TestTX = new(<<"TEST DATA">>, 1),
 	false = tx_cost_above_min(TestTX, 10).
 
-check_last_tx_test() ->
+check_last_tx_test_slow() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
