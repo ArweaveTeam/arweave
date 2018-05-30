@@ -24,6 +24,7 @@ COPY arweave-server .
 COPY data data
 COPY --from=builder /arweave/priv priv
 COPY --from=builder /arweave/ebin ebin
+COPY --from=builder /arweave/src/av/sigs src/av/sigs
 
 EXPOSE 1984
 ENTRYPOINT ["./arweave-server"]
