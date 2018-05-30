@@ -116,7 +116,7 @@ server(
 						TX = create_data_tx({Priv, Pub}, Data);
 					_ ->
 						{Priv, Pub} = lists:nth(rand:uniform(50) + 950, KeyList),
-						TX = create_random_data_tx({Priv, Pub}, 5000)
+						TX = create_random_data_tx({Priv, Pub}, 5000000)
 				end;
 			_ ->
 				{Priv, Pub} = lists:nth(rand:uniform(950), KeyList),
