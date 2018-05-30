@@ -733,7 +733,7 @@ server(
 						reward_pool = NewB#block.reward_pool,
 						floating_wallet_list = NewB#block.wallet_list,
 						txs = [],
-						potential_txs = S#state.txs,
+						potential_txs = S#state.txs ++ S#state.potential_txs,
 						diff = NewB#block.diff,
 						last_retarget = NewB#block.last_retarget
 					}
