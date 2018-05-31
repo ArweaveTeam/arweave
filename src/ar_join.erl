@@ -77,7 +77,7 @@ join_peers(Peers) when is_list(Peers) ->
 		Peers
 	);
 join_peers(Peer) when is_pid(Peer) -> ok;
-join_peers(Peer) -> ar_http_iface:add_peer(ar_util:format_peer(Peer)).
+join_peers(Peer) -> ar_http_iface:add_peer(Peer).
 
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks. Alternatively, if the blocklist is shorter than
