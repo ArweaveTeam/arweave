@@ -33,7 +33,8 @@
 		ar_node,
 		ar_simple_reporter,
 		ar_retarget,
-		ar_block
+		ar_block,
+		ar_tx_db
 	]
 ).
 
@@ -148,6 +149,8 @@ start(
 	% Start apps which we depend on.
 	inets:start(),
 	ar_meta_db:start(),
+	ar_tx_db:start(),
+	ar_blacklist:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),

@@ -1,6 +1,5 @@
 -module(ar_meta_db).
 -export([start/0, get/1, put/2, keys/0, remove_old/1,remove_old/2, increase/2]).
--export([increment_ip/1, is_blacklisted/1, maybe_blacklist_ip/1, unblacklist_ip/1]).
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
@@ -35,56 +34,6 @@ get(Key) ->
 %% @doc Increase the value associated by a key by Val
 increase(Key, Val) ->
 	put(Key, get(Key) + Val).
-
-increment_ip(Peer) ->
-	case ets:lookup(?MODULE, Peer) of
-		[{Peer, Counter}] -> ets:insert(?MODULE, {Peer, Counter+1});
-		[] -> 
-			ets:insert(?MODULE, {Peer, 1}),
-			timer:apply_after(5000, ?MODULE, maybe_blacklist_ip, [Peer])
-	end.
-
-maybe_blacklist_ip(Peer) ->
-	case ets:lookup(?MODULE, Peer) of
-		[{Peer, Counter}] ->
-			if 
-				(Counter > ?MAX_REQUESTS) ->
-					ets:delete(?MODULE, Peer),
-					blacklist_ip(Peer);
-				true -> ets:delete(?MODULE, Peer)
-			end;
-		_ -> ok
-	end.
-
-blacklist_ip(Peer) ->
-	case ets:lookup(blacklist, Peer) of
-		[{Peer, 0}] -> ok;
-		_ ->
-			ar:report(
-				[
-					{blacklisting_peer, Peer},
-					{too_many_requests}
-				]
-			),
-			ets:insert(blacklist, {Peer, 0}),
-			timer:apply_after(30000, ?MODULE, unblacklist_ip, [Peer])
-	end.
-
-unblacklist_ip(Peer) ->
-	ar:report(
-		[
-			{unblacklisting_peer, Peer},
-			{timeout_complete}
-		]
-	),
-	ets:delete(?MODULE, Peer),
-	ets:delete(blacklist, Peer).
-
-is_blacklisted(Peer) ->
-	case ets:lookup(blacklist, Peer) of
-		[{Peer, 0}] -> true;
-		_ -> false
-	end.
 
 %% @doc Remove entries from the performance database older than
 %% ?PEER_TMEOUT

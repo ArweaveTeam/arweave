@@ -84,12 +84,39 @@ verify(TX, Diff, WalletList) ->
 	% 		{tx_verify_hash, tx_verify_hash(TX)}
 	% 	]
 	% ),
-	ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature) and
-	tx_cost_above_min(TX, Diff) and
-	tx_field_size_limit(TX) and
-	tag_field_legal(TX) and
-	check_last_tx(WalletList, TX) and
-	tx_verify_hash(TX).
+	case 
+		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature) and
+		tx_cost_above_min(TX, Diff) and
+		tx_field_size_limit(TX) and
+		tag_field_legal(TX) and
+		check_last_tx(WalletList, TX) and
+		tx_verify_hash(TX)
+	of
+		true -> true;
+		false ->
+			Reason = 
+				lists:map(
+					fun({A, _}) -> A end,
+					lists:filter(
+						fun({_, TF}) ->
+							case TF of
+								true -> true;
+								false -> false
+							end
+						end,
+						[
+							{"tx_signature_not_valid ", ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
+							{"tx_too_cheap ", tx_cost_above_min(TX, Diff)},
+							{"tx_fields_too_large ", tx_field_size_limit(TX)},
+							{"tag_field_illegally_specified ", tag_field_legal(TX)},
+							{"last_tx_not_valid ", check_last_tx(WalletList, TX)},
+							{"tx_id_not_valid ", tx_verify_hash(TX)}
+						]
+					)
+				),
+			ar_tx_db:put(TX#tx.id, Reason),		
+			false
+	end.
 -else.
 verify(TX, Diff, WalletList) ->
 	% ar:report(
@@ -103,12 +130,39 @@ verify(TX, Diff, WalletList) ->
 	% 		{tx_verify_hash, tx_verify_hash(TX)}
 	% 	]
 	% ),
-	ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature) and
-	tx_cost_above_min(TX, Diff) and
-	tx_field_size_limit(TX) and
-	tag_field_legal(TX) and
-	check_last_tx(WalletList, TX) and
-	tx_verify_hash(TX).
+	case 
+		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature) and
+		tx_cost_above_min(TX, Diff) and
+		tx_field_size_limit(TX) and
+		tag_field_legal(TX) and
+		check_last_tx(WalletList, TX) and
+		tx_verify_hash(TX)
+	of
+		true -> true;
+		false ->
+			Reason = 
+				lists:map(
+					fun({A, _}) -> A end,
+					lists:filter(
+						fun({_, TF}) ->
+							case TF of
+								true -> true;
+								false -> false
+							end
+						end,
+						[
+							{"tx_signature_not_valid ", ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
+							{"tx_too_cheap ", tx_cost_above_min(TX, Diff)},
+							{"tx_fields_too_large ", tx_field_size_limit(TX)},
+							{"tag_field_illegally_specified ", tag_field_legal(TX)},
+							{"last_tx_not_valid ", check_last_tx(WalletList, TX)},
+							{"tx_id_not_valid ", tx_verify_hash(TX)}
+						]
+					)
+				),
+			ar_tx_db:put(TX#tx.id, Reason),		
+			false
+	end.
 -endif.
 
 %% @doc Ensure that all TXs in a list verify correctly.

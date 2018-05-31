@@ -587,7 +587,9 @@ server(
 						{apply_tx, TX}
 					),
 					server(S#state { waiting_txs = ar_util:unique([TX|S#state.waiting_txs]) });
-				_ -> server(S#state { potential_txs = ar_util:unique([TX|S#state.potential_txs]) })
+				_ ->
+					ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
+					server(S#state { potential_txs = ar_util:unique([TX|S#state.potential_txs]) })
 			end;
 		{apply_tx, TX} ->
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
@@ -987,6 +989,12 @@ integrate_new_block(
 	),
 	%ar:d({new_hash_list, [NewB#block.indep_hash|HashList]}),
 	app_search:update_tag_table(NewB),
+	lists:foreach(
+		fun(T) ->
+			ar_tx_db:maybe_add(T#tx.id)
+		end,
+		PotentialTXs
+	),
 	server(
 		reset_miner(
 			S#state {
@@ -1066,6 +1074,12 @@ integrate_block_from_miner(
 					{recall_hash, RecallB#block.indep_hash},
 					{txs, length(MinedTXs)}
 				]
+			),
+			lists:foreach(
+				fun(T) ->
+					ar_tx_db:maybe_add(T#tx.id)
+				end,
+				OldS#state.potential_txs
 			),
 			server(
 				reset_miner(
