@@ -1089,13 +1089,13 @@ update_performance_list(Req) ->
 			Bytes = byte_size(elli_request:body(Req)),
 			store_data_time(Peer, Bytes, MicroSecs),
 			case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
-				not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), elli_request:peer(Req));
+				not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
 				X -> X
 			end,
 			ok;
 		'GET' -> 
 			case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
-				not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), elli_request:peer(Req));
+				not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
 				X -> X
 			end,
 			ok;
