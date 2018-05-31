@@ -29,7 +29,7 @@ start(Node, RawPeers, RawNewB) ->
 			PID = spawn(
 				fun() ->
 					Peers = filter_peer_list(RawPeers),
-					NewB = ar_node:retry_full_block(Peers, RawNewB#block.indep_hash, not_found, 5),
+					NewB = ar_node:get_full_block(Peers, RawNewB#block.indep_hash),
 					ar:report_console(
 						[
 							joining_network,
@@ -38,6 +38,7 @@ start(Node, RawPeers, RawNewB) ->
 							{height, NewB#block.height}
 						]
 					),
+					ar:d(join_started),
 					get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 					Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 					fill_to_capacity(Peers, [], NewB#block.hash_list)
@@ -81,11 +82,11 @@ get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	PreviousBlock = ar_node:retry_full_block(Peers, NewB#block.previous_block, not_found, 5),
+	PreviousBlock = ar_node:get_full_block(Peers, NewB#block.previous_block),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-			case {NewB, ar_node:retry_full_block(Peers, RecallBlock, not_found, 5)} of
+			case {NewB, ar_node:get_full_block(Peers, RecallBlock)} of
 				{B, unavailable} ->
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
@@ -106,7 +107,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 						[
 							{writing_block, B#block.height},
 							{writing_recall_block, R#block.height},
-							{blocks_written, (100 - ( BehindCurrent -1 ))},
+							{blocks_written, (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
 							{blocks_to_write, (BehindCurrent-1)}
 						]
 					),	
