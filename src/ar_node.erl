@@ -922,11 +922,12 @@ integrate_new_block(
 		},
 		NewB) ->
 	% Filter completed TXs from the pending list.
-
+	Diff = ar_mine:next_diff(NewB),
 	RawKeepNotMinedTXs =
 		lists:filter(
 			fun(T) ->
-                (not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
+                (not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
+				ar_tx:verify(T, Diff, WalletList)
 			end,
 			TXs
 		),
@@ -989,7 +990,11 @@ integrate_block_from_miner(
 		),
 	% Store the transactions that we know about, but were not mined in
 	% this block.
-	NotMinedTXs = filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs),
+	NotMinedTXs =
+		lists:filter(
+			fun(T) -> ar_tx:verify(T, Diff, WalletList) end,
+			filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs)
+		),
     NewS = OldS#state { wallet_list = WalletList },
     % Build the block record, verify it, and gossip it to the other nodes.
     RecallB = ar_node:find_recall_block(HashList),
@@ -1394,7 +1399,7 @@ calculate_delay(0) -> 0;
 calculate_delay(Bytes) -> ((Bytes * 100) div 1000).
 -else.
 calculate_delay(0) -> 0;
-calculate_delay(Bytes) -> 10000 + ((Bytes * 200) div 1000).
+calculate_delay(Bytes) -> 10000 + ((Bytes * 300) div 1000).
 -endif.
 
 generate_floating_wallet_list(WalletList, []) ->
@@ -1874,9 +1879,9 @@ single_wallet_double_tx_before_mine_test_slow() ->
 	receive after 500 -> ok end,
 	mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	?AR(998) = get_balance(Node2, Pub1),
+	?AR(4999) = get_balance(Node2, Pub1),
 	?AR(5000) = get_balance(Node2, Pub2),
-	?AR(4000) = get_balance(Node2, Pub3).
+	?AR(0) = get_balance(Node2, Pub3).
 
 %% @doc Verify the behaviour of out of order TX submission.
 %% NOTE: The current behaviour (out of order TXs get dropped)
