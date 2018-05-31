@@ -1088,12 +1088,17 @@ update_performance_list(Req) ->
 			Peer = ar_util:parse_peer(elli_request:peer(Req)),
 			Bytes = byte_size(elli_request:body(Req)),
 			store_data_time(Peer, Bytes, MicroSecs),
+			case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
+				not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), elli_request:peer(Req));
+				X -> X
+			end,
 			ok;
 		'GET' -> 
 			case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
-				not_found -> #performance{};
+				not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), elli_request:peer(Req));
 				X -> X
-			end;
+			end,
+			ok;
 		_ -> ok
 	end.
 
@@ -1139,7 +1144,7 @@ get_info_test() ->
 	reregister(http_bridge_node, BridgeNode),
 	<<?NETWORK_NAME>> = get_info({127,0,0,1,1984}, name),
 	?CLIENT_VERSION = get_info({127,0,0,1,1984}, version),
-	0 = get_info({127,0,0,1,1984}, peers),
+	1 = get_info({127,0,0,1,1984}, peers),
 	1 = get_info({127,0,0,1,1984}, blocks),
 	0 = get_info({127,0,0,1,1984}, height).
 
