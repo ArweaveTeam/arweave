@@ -100,7 +100,7 @@ server(
 	receive
 		stop -> ok
 	after rand:uniform(?DEFAULT_ACTION_TIME) ->
-		case rand:uniform(100) of
+		case rand:uniform(240) of
 			240 ->
 				case rand:uniform(20) of
 					20 ->
