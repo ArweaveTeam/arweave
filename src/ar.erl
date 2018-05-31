@@ -50,9 +50,9 @@
 	auto_join = true,
 	clean = false,
 	diff = ?DEFAULT_DIFF,
-	mining_addr = unclaimed,
+	mining_addr = false,
 	new_key = false,
-	load_key = unclaimed,
+	load_key = false,
 	pause = true,
 	disk_space = ar_storage:calculate_disk_space(),
 	used_space = ar_storage:calculate_used_space()
@@ -158,7 +158,7 @@ start(
 		end,
 	% Determine mining address.
 	case {Addr, LoadKey, NewKey} of
-		{unclaimed, unclaimed, false} ->
+		{false, false, false} ->
 			ar:report_console(
 				[
 					mining_address_unclaimed,
@@ -168,25 +168,25 @@ start(
 				]
 			),
 			MiningAddress = unclaimed;
-		{unclaimed, unclaimed, true} ->
+		{false, false, true} ->
 			{_, Pub} = ar_wallet:new_keyfile(),
-			MiningAddress = ar_util:encode(ar_wallet:to_address(Pub)),
+			MiningAddress = ar_wallet:to_address(Pub),
 			ar:report_console(
 				[
 					mining_address,
 					{address, MiningAddress}
 				]
 			);
-		{unclaimed, Load, false} ->
+		{false, Load, false} ->
 			{_, Pub} = ar_wallet:load_keyfile(Load),
-			MiningAddress = ar_util:encode(ar_wallet:to_address(Pub)),
+			MiningAddress = ar_wallet:to_address(Pub),
 			ar:report_console(
 				[
 					mining_address,
 					{address, MiningAddress}
 				]
 			);
-		{Address, unclaimed, false} ->
+		{Address, false, false} ->
 			MiningAddress = Address,
 			ar:report_console(
 				[
@@ -197,7 +197,7 @@ start(
 		_ ->
 			ar:report_console(
 				[
-					mining_address_error,
+					mining_address_unclaimed,
 					{address, Addr},
 					{new_key, NewKey},
 					{load_key, LoadKey}
@@ -249,6 +249,10 @@ start(
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
+	PrintMiningAddress = case MiningAddress of
+			unclaimed -> "unclaimed";
+			_ -> binary_to_list(ar_util:encode(MiningAddress))
+		end,
 	ar:report_console(
 		[
 			starting_server,
@@ -257,6 +261,7 @@ start(
 			{init_new_blockweave, Init},
 			{automine, Mine},
 			{miner, Node},
+			{mining_address, PrintMiningAddress},
 			{peers, Peers},
 			{polling, Polling}
 		]
