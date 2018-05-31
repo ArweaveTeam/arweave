@@ -370,7 +370,7 @@ get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx, self(), Addr},
 	receive
 		{last_tx, Addr, LastTX} -> LastTX
-	after ?LOCAL_NET_TIMEOUT -> unavailable
+	after ?LOCAL_NET_TIMEOUT -> <<>>
 	end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
@@ -380,7 +380,7 @@ get_last_tx_from_floating(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx_from_floating, self(), Addr},
 	receive
 		{last_tx_from_floating, Addr, LastTX} -> LastTX
-	after ?LOCAL_NET_TIMEOUT -> unavailable
+	after ?LOCAL_NET_TIMEOUT -> <<>>
 	end;
 get_last_tx_from_floating(Node, WalletID) ->
 	get_last_tx_from_floating(Node, ar_wallet:to_address(WalletID)).
