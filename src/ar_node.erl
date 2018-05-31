@@ -10,7 +10,7 @@
 -export([filter_all_out_of_order_txs/2, filter_out_of_order_txs/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 -export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/5, validate/8, find_recall_block/1, calculate_reward_pool/3]).
--export([find_sync_block/1, sort_blocks_by_count/1, get_current_block/1]).
+-export([find_sync_block/1, get_current_block/1]).
 -export([start_link/1]).
 -export([retry_block/4, retry_full_block/4]).
 -export([filter_all_out_of_order_txs_large_test_slow/0,filter_out_of_order_txs_large_test_slow/0]).
@@ -115,10 +115,21 @@ stop(Node) ->
 
 %% Get the current, top block.
 get_current_block(Peers) when is_list(Peers) ->
-	case sort_blocks_by_count(lists:map(fun get_current_block/1, Peers)) of
-		[] -> unavailable;
-		[B|_] -> B
-	end;
+	lists:foldl(
+		fun(Peer, Acc) ->
+			case is_atom(Acc) of
+				false -> Acc;
+				true ->
+					B = get_current_block(Peer),
+					case is_atom(B) of
+						true -> Acc;
+						false -> B
+					end
+			end
+		end,
+		unavailable,
+		Peers
+	);
 get_current_block(Peer) when is_pid(Peer) ->
 	Peer ! {get_current_block, self()},
 	receive
@@ -128,22 +139,6 @@ get_current_block(Peer) when is_pid(Peer) ->
 	end;
 get_current_block(Peer) ->
 	ar_http_iface:get_current_block(Peer).
-
-%% Sorts blocks by plurality of height.
-sort_blocks_by_count(Blocks) ->
-	SortedBlocks = lists:sort(
-		fun(BlockA, BlockB) ->
-			ar_util:count(BlockA, Blocks) == ar_util:count(BlockB, Blocks)
-		end,
-		lists:filter(
-			fun(not_found) -> false;
-			   (unavailable) -> false;
-			   (_) -> true
-			end,
-			ar_util:unique(Blocks)
-		)
-	),
-	ar_storage:read_block(SortedBlocks).
 
 %% @doc Return the entire block list from a node.
 get_blocks(Node) ->
@@ -159,10 +154,21 @@ get_block(Peers, ID) when is_list(Peers) ->
 	%ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
 	case ar_storage:read_block(ID) of
 		unavailable ->
-			case sort_blocks_by_count([ get_block(Peer, ID) || Peer <- Peers ]) of
-				[] -> unavailable;
-				[B|_] -> B
-			end;
+			lists:foldl(
+				fun(Peer, Acc) ->
+					case is_atom(Acc) of
+						false -> Acc;
+						true ->
+							B = get_block(Peer, ID),
+							case is_atom(B) of
+								true -> Acc;
+								false -> B
+							end
+					end
+				end,
+				unavailable,
+				Peers
+			);
 		Block -> Block
 	end;
 get_block(Proc, ID) when is_pid(Proc) ->
@@ -187,10 +193,21 @@ retry_block(Host, ID, _, Count) ->
 get_full_block(Peers, ID) when is_list(Peers) ->
 	case ar_storage:read_block(ID) of
 		unavailable ->
-			case sort_blocks_by_count([ get_full_block(Peer, ID) || Peer <- Peers ]) of
-				[] -> unavailable;
-				[B|_] -> B
-			end;
+			lists:foldl(
+				fun(Peer, Acc) ->
+					case is_atom(Acc) of
+						false -> Acc;
+						true ->
+							Full = get_full_block(Peer, ID),
+							case is_atom(Full) of
+								true -> Acc;
+								false -> Full
+							end
+					end
+				end,
+				unavailable,
+				Peers
+			);
 		_ -> make_full_block(ID)
 	end;
 get_full_block(Proc, ID) when is_pid(Proc) ->
@@ -202,10 +219,21 @@ get_encrypted_block(Peers, ID) when is_list(Peers) ->
 	%ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
 	case ar_storage:read_block(ID) of
 		unavailable ->
-			case sort_blocks_by_count([ get_encrypted_block(Peer, ID) || Peer <- Peers ]) of
-				[] -> unavailable;
-				[B|_] -> B
-			end;
+			lists:foldl(
+				fun(Peer, Acc) ->
+					case is_atom(Acc) of
+						false -> Acc;
+						true ->
+							B = get_encrypted_block(Peer, ID),
+							case is_atom(B) of
+								true -> Acc;
+								false -> B
+							end
+					end
+				end,
+				unavailable,
+				Peers
+			);
 		Block -> Block
 	end;
 get_encrypted_block(Proc, ID) when is_pid(Proc) ->
@@ -217,10 +245,21 @@ get_encrypted_block(Host, ID) ->
 get_encrypted_full_block(Peers, ID) when is_list(Peers) ->
 	case ar_storage:read_block(ID) of
 		unavailable ->
-			case sort_blocks_by_count([ get_encrypted_full_block(Peer, ID) || Peer <- Peers ]) of
-				[] -> unavailable;
-				[B|_] -> B
-			end;
+			lists:foldl(
+				fun(Peer, Acc) ->
+					case is_atom(Acc) of
+						false -> Acc;
+						true ->
+							Full = get_encrypted_full_block(Peer, ID),
+							case is_atom(Full) of
+								true -> Acc;
+								false -> Full
+							end
+					end
+				end,
+				unavailable,
+				Peers
+			);
 		_Block -> make_full_block(ID)
 	end;
 get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
@@ -269,21 +308,6 @@ make_full_block(ID) ->
 			}
 	end.
 
-sort_txs_by_count(TXs) ->
-	SortedTXs = lists:sort(
-		fun(TXA, TXB) ->
-			ar_util:count(TXA, TXs) == ar_util:count(TXB, TXs)
-		end,
-		lists:filter(
-			fun(not_found) -> false;
-			   (unavailable) -> false;
-			   (_) -> true
-			end,
-			ar_util:unique(TXs)
-		)
-	),
-	ar_storage:read_tx(SortedTXs).
-
 %% @doc Return a specific tx from a node, if it has it.
 get_tx(_, []) -> [];
 get_tx(Peers, ID) when is_list(Peers) ->
@@ -294,10 +318,21 @@ get_tx(Peers, ID) when is_list(Peers) ->
 			lists:keyfind(ID, 2, get_full_pending_txs(whereis(http_entrypoint_node)))
 		} of
 		{unavailable, false} ->
-			case sort_txs_by_count([ get_tx(Peer, ID) || Peer <- Peers ]) of
-				[] -> unavailable;
-				[T|_] -> T
-			end;
+			lists:foldl(
+				fun(Peer, Acc) ->
+					case is_atom(Acc) of
+						false -> Acc;
+						true ->
+							T = get_tx(Peer, ID),
+							case is_atom(T) of
+								true -> Acc;
+								false -> T
+							end
+					end
+				end,
+				unavailable,
+				Peers
+			);
 		{TX, false} -> TX;
 		{unavailable, TX} -> TX;
 		{TX, _} -> TX
