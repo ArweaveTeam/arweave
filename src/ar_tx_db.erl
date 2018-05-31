@@ -1,5 +1,5 @@
 -module(ar_tx_db).
--export([start/0, get/1, put/2, maybe_add/1]).
+-export([start/0, get/1, put/2, maybe_add/1, remove/1]).
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
@@ -24,7 +24,7 @@ start() ->
 %% write-once values.
 put(Key, Val) -> 
     ets:insert(?MODULE, {Key, Val}),
-    timer:apply_after(1800000, ?MODULE, remove, [Key]).
+    timer:apply_after(1000, ?MODULE, remove, [Key]).
 %% @doc Retreive a term from the meta db.
 get(Key) ->
 	case ets:lookup(?MODULE, Key) of
