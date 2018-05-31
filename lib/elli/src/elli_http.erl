@@ -34,8 +34,8 @@ accept(Server, ListenSocket, Options, Callback) ->
         {ok, Socket} ->
             {ok, {Peer, _}} = elli_tcp:peername(Socket),
             t(accepted),
-            ar_meta_db:increment_ip(Peer),
-            case ar_meta_db:is_blacklisted(Peer) of
+            ar_blacklist:increment_ip(Peer),
+            case ar_blacklist:is_blacklisted(Peer) of
                 true -> ok;
                 false -> ?MODULE:keepalive_loop(Socket, Options, Callback)
             end;
