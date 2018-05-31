@@ -100,8 +100,8 @@ server(
 	receive
 		stop -> ok
 	after rand:uniform(?DEFAULT_ACTION_TIME) ->
-		case rand:uniform(100) of
-			100 ->
+		case rand:uniform(120) of
+			120 ->
 				case rand:uniform(20) of
 					20 ->
 						ar:d({sim_client_large_data_tx}),

@@ -71,6 +71,8 @@
 -define(MINIMUM_PEERS, 4).
 %% Never have more than this number of peers (new peers excluded).
 -define(MAXIMUM_PEERS, 20).
+%% Amount of peers without a given transaction to send a new transaction to
+-define(NUM_REGOSSIP_TX, 4).
 %% Maximum nunber of requests allowed by an IP in any 5 second period.
 -define(MAX_REQUESTS, 50).
 %% Default list of peers if no others are specified

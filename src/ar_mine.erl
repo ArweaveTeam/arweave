@@ -1,6 +1,6 @@
 -module(ar_mine).
 -export([start/5]).
--export([change_data/2, stop/1, validate/3, schedule_hash/1, miner/2]).
+-export([change_data/2, stop/1, validate/3, schedule_hash/1, miner/2, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -31,7 +31,11 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
     Parent = self(),
     Timestamp = os:system_time(seconds),
     Diff = next_diff(CurrentB),
-    TXs = ar_node:filter_all_out_of_order_txs(CurrentB#block.wallet_list, RawTXs),
+    TXs =
+        lists:filter(
+            fun(T) -> ar_tx:verify(T, Diff, CurrentB#block.wallet_list) end,
+            ar_node:filter_all_out_of_order_txs(CurrentB#block.wallet_list, RawTXs)
+        ),
     PID = spawn(
         fun() ->
             server(
@@ -108,8 +112,11 @@ server(
             % Continue server loop with new block_data_segment
             NewTimestamp = os:system_time(seconds),
             NewDiff = next_diff(CurrentB),
-            WalletList = CurrentB#block.wallet_list,
-            NewTXs = ar_node:filter_all_out_of_order_txs(WalletList, RawTXs),
+            NewTXs =
+                lists:filter(
+                    fun(T) -> ar_tx:verify(T, Diff, CurrentB#block.wallet_list) end,
+                    ar_node:filter_all_out_of_order_txs(CurrentB#block.wallet_list, RawTXs)
+                ),
             server(
                 S#state {
                     parent = Parent,

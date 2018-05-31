@@ -10,5 +10,4 @@ else
 	SHELL_OPTS=-noinput
 fi
 
-erlc +export_all -o ebin/ src/ar.erl
 exec erl $SHELL_OPTS -pa ebin/ -s ar rebuild -run ar main "$@"
