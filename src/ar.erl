@@ -159,15 +159,14 @@ start(
 	% Determine mining address.
 	case {Addr, LoadKey, NewKey} of
 		{false, false, false} ->
+			{_, Pub} = ar_wallet:new_keyfile(),
+			MiningAddress = ar_wallet:to_address(Pub),
 			ar:report_console(
 				[
-					mining_address_unclaimed,
-					{address, Addr},
-					{new_key, NewKey},
-					{load_key, LoadKey}
+					mining_address_generated,
+					{address, MiningAddress}
 				]
-			),
-			MiningAddress = unclaimed;
+			);
 		{false, false, true} ->
 			{_, Pub} = ar_wallet:new_keyfile(),
 			MiningAddress = ar_wallet:to_address(Pub),
@@ -195,15 +194,14 @@ start(
 				]
 			);
 		_ ->
+			{_, Pub} = ar_wallet:new_keyfile(),
+			MiningAddress = ar_wallet:to_address(Pub),
 			ar:report_console(
 				[
-					mining_address_unclaimed,
-					{address, Addr},
-					{new_key, NewKey},
-					{load_key, LoadKey}
+					mining_address_generated,
+					{address, MiningAddress}
 				]
-			),
-			MiningAddress = unclaimed
+			)
 	end,
 	{ok, Supervisor} = start_link(
 		[
