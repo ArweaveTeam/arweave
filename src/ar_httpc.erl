@@ -16,19 +16,23 @@ request(Method, Host, Path, Body) ->
 	{ok, Client} = fusco:start(Host, [{connect_timeout, ?CONNECT_TIMEOUT}]),
 	Result = fusco:request(Client, list_to_binary(Path), Method, [], Body, 1, ?NET_TIMEOUT),
 	ok = fusco:disconnect(Client),
+	case Result of
+		{ok, {{_, _}, _, _, Start, End}} ->
+			[_|RawIP] = string:split(Host, "//"),
+			[IP|_Port] = string:split(RawIP, ":"),
+			case Body of
+				[] -> store_data_time(ar_util:parse_peer(IP), 0, End-Start);
+				_ -> store_data_time(ar_util:parse_peer(IP), byte_size(Body), End-Start)
+			end;
+		_ -> ok
+		end,
 	Result.
 
-%% @doc Return a number of bytes (after headers) of the size of a HTTP request.
-calculate_size({_URL, _Headers}) -> 0;
-calculate_size({_URL, _Headers, _ContentType, Body}) when is_list(Body) ->
-	byte_size(unicode:characters_to_binary(Body));
-calculate_size({_URL, _Headers, _ContentType, Body}) when is_binary(Body) ->
-	byte_size(Body).
 
 %% @doc Update the database with new timing data.
-store_data_time(Request, Bytes, MicroSecs) ->
+store_data_time(IP, Bytes, MicroSecs) ->
 	P =
-		case ar_meta_db:get({peer, IP = get_ip(Request)}) of
+		case ar_meta_db:get({peer, IP}) of
 			not_found -> #performance{};
 			X -> X
 		end,
@@ -61,10 +65,3 @@ update_timer(IP) ->
 				}
 			)
 	end.
-
-%% @doc Extract an IP address from a httpc request() term.
-get_ip({URL, _}) -> get_ip(URL);
-get_ip({URL, _, _, _}) -> get_ip(URL);
-get_ip("https://" ++ URL) -> get_ip(URL);
-get_ip("http://" ++ URL) -> get_ip(URL);
-get_ip(URL) -> ar_util:parse_peer(hd(string:tokens(URL, "/"))).

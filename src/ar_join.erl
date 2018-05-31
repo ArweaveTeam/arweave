@@ -30,6 +30,7 @@ start(Node, RawPeers, RawNewB) ->
 				fun() ->
 					Peers = filter_peer_list(RawPeers),
 					NewB = ar_node:get_full_block(Peers, RawNewB#block.indep_hash),
+					join_peers(Peers),
 					ar:report_console(
 						[
 							joining_network,
@@ -38,7 +39,6 @@ start(Node, RawPeers, RawNewB) ->
 							{height, NewB#block.height}
 						]
 					),
-					ar:d(join_started),
 					get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 					Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 					fill_to_capacity(Peers, [], NewB#block.hash_list)
@@ -67,6 +67,17 @@ filter_peer_list(Peers) when is_list(Peers) ->
 	Peers);
 filter_peer_list(Peer) -> filter_peer_list([Peer]).
 -endif.
+
+
+join_peers(Peers) when is_list(Peers) ->
+	lists:foreach(
+		fun(P) ->
+			join_peers(P)
+		end,
+		Peers
+	);
+join_peers(Peer) when is_pid(Peer) -> ok;
+join_peers(Peer) when is_pid(Peer) -> ar_http_iface:add_peer(ar_util:format_peer(Peer)).
 
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks. Alternatively, if the blocklist is shorter than

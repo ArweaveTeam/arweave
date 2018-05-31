@@ -88,10 +88,7 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
-					case ar_tx_db:get(ar_util:decode(Hash)) of
-						not_found -> {404, [], <<"Not Found.">>};
-						Err -> {410, [], list_to_binary(Err)}
-					end
+					{404, [], <<"Not Found.">>}
 			end;
 		T -> return_tx(T)
 	end;
@@ -1092,6 +1089,11 @@ update_performance_list(Req) ->
 			Bytes = byte_size(elli_request:body(Req)),
 			store_data_time(Peer, Bytes, MicroSecs),
 			ok;
+		'GET' -> 
+			case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
+				not_found -> #performance{};
+				X -> X
+			end;
 		_ -> ok
 	end.
 
