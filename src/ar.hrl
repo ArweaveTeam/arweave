@@ -30,8 +30,14 @@
 %% @doc NB: Setting the default difficulty high will cause TNT to fail.
 -define(DEFAULT_DIFF, 8).
 
+-ifndef(TARGET_TIME).
 -define(TARGET_TIME, 120).
+-endif.
+
+-ifndef(RETARGET_BLOCKS).
 -define(RETARGET_BLOCKS, 10).
+-endif.
+
 -define(RETARGET_TOLERANCE, 0.1).
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
 

@@ -42,8 +42,9 @@ all: ebin logs blocks
 	(cd lib/prometheus && ./rebar3 compile)
 	(cd lib/accept && ./rebar3 compile)
 	(cd lib/prometheus_process_collector && ./rebar3 compile && cp _build/default/lib/prometheus_process_collector/priv/*.so ../../priv)
-	erlc +export_all -o ebin/ src/ar.erl
+	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
+
 
 ebin:
 	mkdir -p ebin
