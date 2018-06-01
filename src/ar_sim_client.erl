@@ -15,7 +15,7 @@
 -define(DEFAULT_NUM_CONNECTIONS, 3).
 %% The maximum time to wait between actions.
 %% The average case wait time will be 50% of this value.
--define(DEFAULT_ACTION_TIME, 2 * 54 * 1000).
+-define(DEFAULT_ACTION_TIME, 20 * 54 * 1000).
 %% Maximum length of data segment of transaction.
 %% 1024 * 1024
 -define(DEFAULT_MAX_TX_LEN, 1000).
@@ -100,10 +100,10 @@ server(
 	receive
 		stop -> ok
 	after rand:uniform(?DEFAULT_ACTION_TIME) ->
-		case rand:uniform(120) of
-			120 ->
-				case rand:uniform(10) of
-					10 ->
+		case rand:uniform(240) of
+			240 ->
+				case rand:uniform(20) of
+					20 ->
 						ar:d({sim_client_large_data_tx}),
 						{Priv, Pub} = lists:nth(rand:uniform(50) + 950, KeyList),
 						DataOpts = [
