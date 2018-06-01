@@ -88,7 +88,10 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
-					{404, [], <<"Not Found.">>}
+					case ar_tx_db:get(ar_util:decode(Hash)) of
+						not_found -> {404, [], <<"Not Found.">>};
+						Err -> {410, [], list_to_binary(Err)}
+					end
 			end;
 		T -> return_tx(T)
 	end;
