@@ -216,7 +216,10 @@ handle('POST', [<<"block">>], Req) ->
 					unavailable ->
 						case ar_storage:read_encrypted_block(RecallHash) of
 							unavailable ->
-								ar_http_iface:get_block(OrigPeer, RecallHash);
+								case ?IS_BLOCK(Recall = ar_http_iface:get_block(OrigPeer, RecallHash)) of
+									true -> Recall;
+									false -> unavailable
+								end;
 							EncryptedRecall ->
 								try
 									FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key),
