@@ -100,10 +100,10 @@ server(
 	receive
 		stop -> ok
 	after rand:uniform(?DEFAULT_ACTION_TIME) ->
-		case rand:uniform(240) of
-			240 ->
-				case rand:uniform(20) of
-					20 ->
+		case rand:uniform(120) of
+			120 ->
+				case rand:uniform(10) of
+					10 ->
 						ar:d({sim_client_large_data_tx}),
 						{Priv, Pub} = lists:nth(rand:uniform(50) + 950, KeyList),
 						DataOpts = [
