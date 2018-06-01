@@ -112,7 +112,7 @@
     {35,237,0,182,1984},
     {35,230,35,112,1984},
     {35,233,220,70,1984},
-    {35,203,150,79,1984},
+    {35,203,150,79,1984}
 ]).
 %% Length of time to wait (seconds) before dropping after last activity
 -define(PEER_TIMEOUT, 480).
