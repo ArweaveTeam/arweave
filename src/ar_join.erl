@@ -31,17 +31,21 @@ start(Node, RawPeers, RawNewB) ->
 					Peers = filter_peer_list(RawPeers),
 					NewB = ar_node:get_full_block(Peers, RawNewB#block.indep_hash),
 					join_peers(Peers),
-					ar:report_console(
-						[
-							joining_network,
-							{node, Node},
-							{peers, Peers},
-							{height, NewB#block.height}
-						]
-					),
-					get_block_and_trail(Peers, NewB, NewB#block.hash_list),
-					Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
-					fill_to_capacity(Peers, [], NewB#block.hash_list)
+					case ?IS_BLOCK(NewB) of
+						true ->
+							ar:report_console(
+								[
+									joining_network,
+									{node, Node},
+									{peers, Peers},
+									{height, NewB#block.height}
+								]
+							),
+							get_block_and_trail(Peers, NewB, NewB#block.hash_list),
+							Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
+							fill_to_capacity(Peers, [], NewB#block.hash_list);
+						false -> ok
+					end
 				end
 			),
 			erlang:register(join_server, PID);

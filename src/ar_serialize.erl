@@ -339,7 +339,7 @@ find_value(Key, List) ->
 query_to_json_struct({Op, Expr1, Expr2}) ->
 	{
 		[	
-			{op, atom_to_list(Op)},
+			{op, list_to_binary(atom_to_list(Op))},
 			{expr1, query_to_json_struct(Expr1)},
 			{expr2, query_to_json_struct(Expr2)}
 		]
@@ -355,7 +355,7 @@ json_struct_to_query(QueryJSON) ->
     end.
 do_json_struct_to_query({Query}) ->
 	{
-		list_to_existing_atom(find_value(<<"op">>, Query)),
+		list_to_existing_atom(binary_to_list(find_value(<<"op">>, Query))),
 		do_json_struct_to_query(find_value(<<"expr1">>, Query)),
 		do_json_struct_to_query(find_value(<<"expr2">>, Query))
 	};
@@ -408,9 +408,9 @@ hash_list_roundtrip_test() ->
 
 query_roundtrip_test() ->
 	Query = {'equals', <<"TestName">>, <<"TestVal">>},
-	QueryJSON = ar_serialize:jsonify(
+	ar:d(QueryJSON = ar_serialize:jsonify(
 		ar_serialize:query_to_json_struct(
 			Query
 			)
-		),
+		)),
 	Query = ar_serialize:json_struct_to_query(QueryJSON).
