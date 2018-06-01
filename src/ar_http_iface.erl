@@ -218,11 +218,14 @@ handle('POST', [<<"block">>], Req) ->
 							unavailable ->
 								unavailable;
 							EncryptedRecall ->
-								FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key),
-								Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
-								ar_storage:write_tx(FullBlock#block.txs),
-								ar_storage:write_block(Recall),
-								Recall
+								try
+									FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key),
+									Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
+									ar_storage:write_tx(FullBlock#block.txs),
+									ar_storage:write_block(Recall),
+									Recall
+								catch _:_ -> unavailable
+								end
 						end;
 					Recall -> Recall
 				end,

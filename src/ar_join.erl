@@ -138,17 +138,40 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 %% @doc Fills node to capacity based on weave storage limit.
 fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, Written, ToWrite) ->
-	RandBlock = lists:nth(rand:uniform(length(ToWrite)-1), ToWrite),
-	case ar_node:retry_full_block(Peers, RandBlock, not_found, 5) of
-		unavailable -> fill_to_capacity(Peers, Written, ToWrite);
-		B ->
-			ar_storage:write_block( B#block {txs = [TX#tx.id || TX <- B#block.txs] }),
-			ar_storage:write_tx(B#block.txs),
-			fill_to_capacity(
-				Peers,
-				[RandBlock|Written],
-				lists:delete(RandBlock, ToWrite)
-			)
+	try
+		RandBlock = lists:nth(rand:uniform(length(ToWrite)-1), ToWrite),
+		case ar_node:get_full_block(Peers, RandBlock) of
+			unavailable -> fill_to_capacity(Peers, Written, ToWrite);
+			B ->
+				ar_storage:write_block( B#block {txs = [TX#tx.id || TX <- B#block.txs] }),
+				ar_storage:write_tx(B#block.txs),
+				fill_to_capacity(
+					Peers,
+					[RandBlock|Written],
+					lists:delete(RandBlock, ToWrite)
+				)
+		end
+	catch
+	throw:Term ->
+		ar:report(
+			[
+				{'EXCEPTION', {Term}}
+			]
+		),
+		fill_to_capacity(Peers, Written, ToWrite);
+	exit:Term ->
+		ar:report(
+			[
+				{'EXIT', Term}
+			]
+		);
+	error:Term ->
+		ar:report(
+			[
+				{'EXIT', {Term, erlang:get_stacktrace()}}
+			]
+		),
+		fill_to_capacity(Peers, Written, ToWrite)
 	end.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
