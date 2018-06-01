@@ -27,6 +27,7 @@ catlog:
 all: ebin logs blocks
 	rm -rf priv
 	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
+	ulimit -n 10000
 	erlc +export_all -o ebin/ src/ar.erl
 	erl -noshell -s ar rebuild -pa ebin/ -s init stop
 
