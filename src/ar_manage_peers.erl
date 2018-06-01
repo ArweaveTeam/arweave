@@ -34,7 +34,17 @@ format_stats(Peer, Perf) ->
 %% New, unknown peers are given 100 blocks of grace.
 update(Peers) ->
 	ar_meta_db:remove_old(os:system_time(seconds)),
-	{Rankable, Newbies} = partition_newbies(score(get_more_peers(Peers))),
+	{Rankable, Newbies} = 
+		partition_newbies(
+			score(
+				lists:filter(
+					fun(P) ->
+						not lists:member(P, ?PEER_PERMANENT_BLACKLIST)
+					end,
+					get_more_peers(Peers)
+				)
+			)
+		),
 	NewPeers = (lists:sublist(maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ]), ?MAXIMUM_PEERS)
 		++ [ Peer || {Peer, newbie} <- Newbies ]),
 	lists:foreach(

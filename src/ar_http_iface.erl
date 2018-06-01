@@ -216,7 +216,7 @@ handle('POST', [<<"block">>], Req) ->
 					unavailable ->
 						case ar_storage:read_encrypted_block(RecallHash) of
 							unavailable ->
-								unavailable;
+								ar_http_iface:get_block(OrigPeer, RecallHash);
 							EncryptedRecall ->
 								try
 									FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key),
@@ -259,10 +259,10 @@ handle('POST', [<<"tx">>], Req) ->
 			% 		),
 			case ar_tx:verify(TX, Diff, FloatingWalletList) of
 				false ->
-					%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+					ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 					{400, [], <<"Transaction verification failed.">>};
 				true ->
-					%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+					ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
 					ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
 					{200, [], <<"OK">>}
 			end
@@ -1117,7 +1117,8 @@ store_data_time(Peer, Bytes, MicroSecs) ->
 		P#performance {
 			transfers = P#performance.transfers + 1,
 			time = P#performance.time + MicroSecs,
-			bytes = P#performance.bytes + Bytes
+			bytes = P#performance.bytes + Bytes,
+			timeout = os:system_time(seconds)
 		}
 	).
 

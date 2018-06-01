@@ -85,7 +85,13 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				_ ->
 					do_nothing
 			end,			
-			Gossip = ar_gossip:init(Peers),
+			Gossip =
+				ar_gossip:init(
+					lists:filter(
+						fun is_pid/1,
+						Peers
+					)
+				),
 			Hashes = ar_util:wallets_from_hashes(HashList),
 			Height = ar_util:height_from_hashes(HashList),
 			server(
@@ -778,6 +784,10 @@ server(
 			);
 		{fork_recovered, NewHs}
 				when (length(NewHs)) > (length(HashList)) ->
+			case whereis(fork_recovery_server) of
+				undefined -> ok;
+				_ -> erlang:unregister(fork_recovery_server)
+			end,
 			NewB = ar_storage:read_block(hd(NewHs)),
 			ar:report_console(
 				[

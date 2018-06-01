@@ -105,7 +105,10 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}))
 			end;
 		{add_peer, remote, Peer} ->
-			server(S#state { external_peers = ar_util:unique([Peer|ExtPeers])});
+			case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
+				true -> server(S);
+				false -> server(S#state { external_peers = ar_util:unique([Peer|ExtPeers])})
+			end;
 		{add_peer, local, Peer} ->
 			server(S#state { gossip = ar_gossip:add_peers(GS0, Peer)});
 		{get_peers, remote, Peer} ->

@@ -42,10 +42,10 @@ remove_old(Time) ->
 		'$end_of_table' -> done;
 		Key ->
 			[{_, P}] = ets:lookup(?MODULE, Key),
-			if (P#performance.timestamp == 0) ->
+			if (P#performance.timeout == 0) ->
 				remove_old(Time, Key);
 			true ->
-				if (Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
+				if (Time - P#performance.timeout) >= ?PEER_TIMEOUT ->
 					remove_old(Time, Key),
 					ets:delete(?MODULE, Key);
 				true ->
@@ -58,11 +58,11 @@ remove_old(Time, H) ->
 		'$end_of_table' -> done;
 		Key ->
 			[{_, P}] = ets:lookup(?MODULE, Key),
-			if (P#performance.timestamp == 0) ->
+			if (P#performance.timeout == 0) ->
 				remove_old(Time, Key);
 			true ->
 				if
-					(Time - P#performance.timestamp) >= ?PEER_TIMEOUT ->
+					(Time - P#performance.timeout) >= ?PEER_TIMEOUT ->
 					remove_old(Time, Key),
 					ets:delete(?MODULE, Key);
 				true ->
@@ -82,8 +82,8 @@ basic_storage_test() ->
 %% @doc Data older than ?PEER_TIMEOUT is removed, newer data is not
 purge_old_peers_test() ->
 		Time = os:system_time(seconds),
-		P1 = #performance{timestamp = Time - (?PEER_TIMEOUT + 1)},
-		P2 = #performance{timestamp = Time - 1},
+		P1 = #performance{timeout = Time - (?PEER_TIMEOUT + 1)},
+		P2 = #performance{timeout = Time - 1},
 		put({peer, {127,0,0,1,1984}}, P1),
 		put({peer, {127,0,0,1,1985}}, P2),
 		remove_old(Time),
