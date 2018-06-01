@@ -199,7 +199,7 @@ tx_field_size_limit(TX) ->
 			(byte_size(TX#tx.id) =< 32) and
 			(byte_size(TX#tx.last_tx) =< 32) and
 			(byte_size(TX#tx.owner) =< 512) and
-			(byte_size(list_to_binary(TX#tx.tags)) =< 2048) and
+			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
 			(byte_size(TX#tx.target) =< 32) and
 			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
 			% 65mb initial limit on TX data size, plans to be removed in future releases.
