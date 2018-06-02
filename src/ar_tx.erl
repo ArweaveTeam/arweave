@@ -55,7 +55,8 @@ signature_data_segment(T) ->
 		(T#tx.data)/binary,
 		(list_to_binary(integer_to_list(T#tx.quantity)))/binary,
 		(list_to_binary(integer_to_list(T#tx.reward)))/binary,
-		(T#tx.last_tx)/binary
+		(T#tx.last_tx)/binary,
+		(tags_to_binary(T#tx.tags))/binary
 	>>.
 
 %% @doc Cryptographicvally sign ('claim ownership') of a transaction. After it is signed, it can be

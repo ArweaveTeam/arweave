@@ -37,9 +37,9 @@
 %% The amount of the weave to store. 1.0 = 100%; 0.5 = 50% etc.
 -define(WEAVE_STOR_AMT, 1.0).
 %% The number of blocks behind the most recent block to store.
--define(STORE_BLOCKS_BEHIND_CURRENT, 10).
+-define(STORE_BLOCKS_BEHIND_CURRENT, 25).
 %% WARNING: ENABLE ONLY WHILE TESTING
--define(DEBUG, debug).
+%-define(DEBUG, debug).
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
@@ -72,7 +72,7 @@
 %% Never have more than this number of peers (new peers excluded).
 -define(MAXIMUM_PEERS, 20).
 %% Amount of peers without a given transaction to send a new transaction to
--define(NUM_REGOSSIP_TX, 4).
+-define(NUM_REGOSSIP_TX, 6).
 %% Maximum nunber of requests allowed by an IP in any 5 second period.
 -define(MAX_REQUESTS, 50).
 %% Default list of peers if no others are specified

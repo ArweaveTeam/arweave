@@ -5,7 +5,7 @@
 -export([write_tx/1, read_tx/1]).
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
 -export([enough_space/1]).
--export([calculate_disk_space/0, calculate_used_space/0]).
+-export([calculate_disk_space/0, calculate_used_space/0, update_directory_size/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -16,7 +16,7 @@
 -define(BLOCK_DIR, "blocks").
 -define(BLOCK_ENC_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
-
+-define(DIRECTORY_SIZE_TIMER, 300000).
 %% @doc Clear the cache of saved blocks.
 clear() ->
 	lists:map(fun file:delete/1, filelib:wildcard(?BLOCK_DIR ++ "/*.json")).
@@ -189,6 +189,15 @@ do_read_encrypted_block(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	ar_util:decode(Binary).
 
+
+%% @doc Accurately recalculate the current cumulative size of the Arweave directory
+update_directory_size() ->
+	spawn(
+		fun() ->
+			ar_meta_db:put(used_space, calculate_used_space())
+		end
+	),
+	timer:apply_after(?DIRECTORY_SIZE_TIMER, ar_storage, update_directory_size, []).
 
 %% @doc Generate a wildcard search string for a block,
 %% given a block, binary hash, or list.
