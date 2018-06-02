@@ -153,7 +153,7 @@ start(
 	ar_blacklist:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
-	ar_meta_db:put(used_space, UsedSpace),
+	ar_storage:update_directory_size(),
 	Peers =
 		case RawPeers of
 			default -> ?DEFAULT_PEER_LIST;
