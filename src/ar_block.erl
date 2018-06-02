@@ -261,7 +261,7 @@ verify_block_hash_list(NewB, OldB) ->
 verify_wallet_list(NewB, OldB, NewTXs) ->
     {FinderReward, RewardPool} = ar_node:calculate_reward_pool(OldB#block.reward_pool, NewTXs, NewB#block.reward_addr),
     (NewB#block.reward_pool == RewardPool) and
-	(NewB#block.wallet_list ==
+	((NewB#block.wallet_list) ==
         ar_node:apply_mining_reward(
 			ar_node:apply_txs(OldB#block.wallet_list, NewTXs),
 			NewB#block.reward_addr,

@@ -768,12 +768,7 @@ server(
 			end,
 			ar_cleanup:remove_invalid_blocks(NewHs),
 			TXPool = S#state.txs ++ S#state.potential_txs,
-			TXs = lists:filter(
-				fun(T) ->
-					ar_tx:validate(T, NewB#block.diff, NewB#block.wallet_list)
-				end,
-				TXPool
-			),
+			TXs = filter_all_out_of_order_txs(NewB#block.wallet_list, TXPool),
 			PotentialTXs = TXPool -- TXs,
 			server(
 				reset_miner(
@@ -805,12 +800,7 @@ server(
 			),
 			ar_cleanup:remove_invalid_blocks(NewHs),
 			TXPool = S#state.txs ++ S#state.potential_txs,
-			TXs = lists:filter(
-				fun(T) ->
-					ar_tx:validate(T, NewB#block.diff, NewB#block.wallet_list)
-				end,
-				TXPool
-			),
+			TXs = filter_all_out_of_order_txs(NewB#block.wallet_list, TXPool),
 			PotentialTXs = TXPool -- TXs,
 			server(
 				reset_miner(
@@ -1055,7 +1045,7 @@ integrate_block_from_miner(
 			apply_txs(RawWalletList, MinedTXs),
 			RewardAddr,
 			FinderReward,
-			length(HashList) + 1
+			length(HashList)
 		),
 	% Store the transactions that we know about, but were not mined in
 	% this block.
@@ -1220,7 +1210,7 @@ validate(
 	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok  end,
 	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
 	case HashlistCheck of false -> ar:d(invalid_hash_list); _ -> ok  end,
-	case WalletListCheck of false -> ar:d(invalid_wallet_list); _ -> ok  end,
+	case WalletListCheck of false -> ar:d(invalid_wallet_list_rewards); _ -> ok  end,
 
 	(Mine =/= false)
 		and Wallet
@@ -1390,7 +1380,7 @@ find_sync_block([_|Xs]) -> find_sync_block(Xs).
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 %calculate_reward(B) -> calculate_reward(B#block.height, B#block.txs).
 calculate_reward(Height, Quantity) ->
-	erlang:trunc(calculate_static_reward(Height)) + Quantity.
+	erlang:trunc(calculate_static_reward(Height) + Quantity).
 
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
