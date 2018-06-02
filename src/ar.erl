@@ -344,7 +344,19 @@ generate_logfile_name() ->
 
 %% @doc Run the erlang make system on the project.
 rebuild() ->
-	make:all([load, {d, 'TARGET_TIME', ?TARGET_TIME}, {d, 'RETARGET_BLOCKS', ?RETARGET_BLOCKS}]).
+	make:all(
+		[
+			load,
+			{d, 'TARGET_TIME', ?TARGET_TIME},
+			{d, 'RETARGET_BLOCKS', ?RETARGET_BLOCKS}
+		] ++ fixed_diff_option()
+	).
+
+-ifdef(FIXED_DIFF).
+fixed_diff_option() -> [{d, 'FIXED_DIFF', ?FIXED_DIFF}].
+-else.
+fixed_diff_option() -> [].
+-endif.
 
 %% @doc passthrough to supervisor start_link
 start_link() ->

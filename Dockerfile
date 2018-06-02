@@ -10,8 +10,9 @@ COPY Emakefile .
 ADD lib lib
 ADD src src
 
-# Eg. "-DTARGET_TIME=5 -DRETARGET_BLOCKS=5"
+# E.g. "-DTARGET_TIME=5 -DRETARGET_BLOCKS=10" or "-DFIXED_DIFF=2"
 ARG ERLC_OPTS
+
 RUN make all
 
 FROM erlang:20-alpine
