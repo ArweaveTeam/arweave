@@ -43,7 +43,7 @@ add([B|Bs], TXs, HashList, RewardAddr) ->
         ar_node:apply_txs(B#block.wallet_list, TXs),
         RewardAddr,
         FinderReward,
-        length(HashList) - 1
+        length(HashList)
     ),
     add([B|Bs], TXs, HashList, RewardAddr, RewardPool, WalletList).
 add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList) ->
