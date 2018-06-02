@@ -24,7 +24,7 @@ start() ->
 %% write-once values.
 put(Key, Val) -> 
     ets:insert(?MODULE, {Key, Val}),
-    timer:apply_after(1000, ?MODULE, remove, [Key]).
+    timer:apply_after(1800*1000, ?MODULE, remove, [Key]).
 %% @doc Retreive a term from the meta db.
 get(Key) ->
 	case ets:lookup(?MODULE, Key) of

@@ -767,6 +767,14 @@ server(
 				_ -> erlang:unregister(fork_recovery_server)
 			end,
 			ar_cleanup:remove_invalid_blocks(NewHs),
+			TXPool = S#state.txs ++ S#state.potential_txs,
+			TXs = lists:filter(
+				fun(T) ->
+					ar_tx:validate(T, NewB#block.diff, NewB#block.wallet_list)
+				end,
+				TXPool
+			),
+			PotentialTXs = TXPool -- TXs,
 			server(
 				reset_miner(
 					S#state {
@@ -775,8 +783,8 @@ server(
 						height = NewB#block.height,
 						reward_pool = NewB#block.reward_pool,
 						floating_wallet_list = NewB#block.wallet_list,
-						txs = [],
-						potential_txs = S#state.txs ++ S#state.potential_txs,
+						txs = TXs,
+						potential_txs = PotentialTXs,
 						diff = NewB#block.diff,
 						last_retarget = NewB#block.last_retarget
 					}
@@ -796,6 +804,14 @@ server(
 				]
 			),
 			ar_cleanup:remove_invalid_blocks(NewHs),
+			TXPool = S#state.txs ++ S#state.potential_txs,
+			TXs = lists:filter(
+				fun(T) ->
+					ar_tx:validate(T, NewB#block.diff, NewB#block.wallet_list)
+				end,
+				TXPool
+			),
+			PotentialTXs = TXPool -- TXs,
 			server(
 				reset_miner(
 					S#state {
@@ -804,8 +820,8 @@ server(
 						height = NewB#block.height,
 						reward_pool = NewB#block.reward_pool,
 						floating_wallet_list = NewB#block.wallet_list,
-						txs = [],
-						potential_txs = S#state.txs ++ S#state.potential_txs,
+						txs = TXs,
+						potential_txs = PotentialTXs,
 						diff = NewB#block.diff,
 						last_retarget = NewB#block.last_retarget
 					}
@@ -1374,12 +1390,12 @@ find_sync_block([_|Xs]) -> find_sync_block(Xs).
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 %calculate_reward(B) -> calculate_reward(B#block.height, B#block.txs).
 calculate_reward(Height, Quantity) ->
-	erlang:trunc(calculate_static_reward(Height) + Quantity).
+	erlang:trunc(calculate_static_reward(Height)) + Quantity.
 
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
 calculate_static_reward(Height) ->
-	(0.2 * ?GENESIS_TOKENS * math:pow(2,-Height/?BLOCK_PER_YEAR) * math:log(2))/?BLOCK_PER_YEAR.
+	?AR((0.2 * ?GENESIS_TOKENS * math:pow(2,-Height/?BLOCK_PER_YEAR) * math:log(2))/?BLOCK_PER_YEAR).
 
 %% @doc Given a TX, calculate an appropriate reward.
 calculate_tx_reward(#tx { reward = Reward }) ->
