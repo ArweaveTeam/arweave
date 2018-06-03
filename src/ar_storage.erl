@@ -367,9 +367,12 @@ select_drive(Disks, CWD) ->
 	case
 		Drives = lists:filter(
 			fun({Name, _, _}) ->
-				case string:find(Name, CWD) of
-					nomatch -> false;
-					_ -> true
+				try
+					case string:find(Name, CWD) of
+						nomatch -> false;
+						_ -> true
+					end
+				catch _:_ -> false
 				end
 			end,
 			Disks

@@ -895,21 +895,20 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 	case RecallB of
 		unavailable ->
 			RecallHash = find_recall_hash(NewB, HashList),
-            FullBlock = ar_node:retry_full_block(
-				ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-				RecallHash,
-				unavailable,
-				5
+            FullBlock = ar_node:get_full_block(
+				Peer,
+				RecallHash
 			),
-			RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
-			ar_storage:write_tx(FullBlock#block.txs),
-			ar_storage:write_block(RecallFull),
-			S = RawS1#state { gossip = NewGS },
-			case S#state.miner of
-				undefined -> do_nothing;
-				PID -> ar_mine:stop(PID)
-			end,
-			server(S#state {miner = undefined} );
+			case ?IS_BLOCK(FullBlock) of
+				true ->
+					RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+					ar_storage:write_tx(FullBlock#block.txs),
+					ar_storage:write_block(RecallFull),
+					S = RawS1#state { gossip = NewGS },
+					process_new_block(S, NewGS, NewB, RecallFull, Peer, HashList);
+				false ->					
+					server(RawS1)
+			end;
 		_ ->
 			S = RawS1#state { gossip = NewGS },
 			% If transaction not found in state or storage, txlist built will be incomplete
