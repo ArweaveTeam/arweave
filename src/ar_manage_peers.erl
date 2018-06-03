@@ -79,7 +79,7 @@ score(Peer) ->
 	case ar_httpc:get_performance(Peer) of
 		P when P#performance.transfers < ?PEER_GRACE_PERIOD ->
 			newbie;
-		P -> P#performance.bytes / P#performance.time
+		P -> P#performance.bytes / (P#performance.time + 1)
 	end.
 
 %% @doc Given a set of peers, returns a tuple containing peers that
