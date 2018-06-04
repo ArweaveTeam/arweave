@@ -402,11 +402,13 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	case ?IS_BLOCK(CurrentBlock) and 
-	?IS_BLOCK(Block = ar_node:get_block(
-			whereis(http_entrypoint_node),
-				ar_util:decode(Hash)
-			))
-		of
+		?IS_BLOCK(Block = 
+					ar_node:get_block(
+					whereis(http_entrypoint_node),
+					ar_util:decode(Hash)
+				)
+			)
+	of
 		false -> return_encrypted_block(unavailable);
 		true ->
 			case lists:member(
@@ -427,7 +429,14 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case ?IS_BLOCK(CurrentBlock) of
+	case ?IS_BLOCK(CurrentBlock) and
+		?IS_BLOCK(Block = 
+					ar_node:get_full_block(
+					whereis(http_entrypoint_node),
+					ar_util:decode(Hash)
+				)
+			)
+	of
 		false -> return_encrypted_full_block(unavailable);
 		true ->
 			case lists:member(
@@ -436,10 +445,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req)
 				) of
 				true ->
 					return_encrypted_full_block(
-						ar_node:get_full_block(
-							whereis(http_entrypoint_node),
-							ar_util:decode(Hash)
-							),
+						Block,
 						CurrentBlock
 					);
 				false -> return_encrypted_full_block(unavailable)
