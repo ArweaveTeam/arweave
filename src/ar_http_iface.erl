@@ -814,7 +814,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 				}
 			)
 
-		);
+		)
 	end.
 
 
