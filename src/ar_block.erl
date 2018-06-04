@@ -62,6 +62,8 @@ encrypt_full_block(R, B) ->
             Nonce,
             PlainText
         ),
+    ar:d({key, Key}),
+    ar:d({nonce, Nonce}),
     {Key, CipherText}.
 
 %% @doc Decrypt a recall block
@@ -74,6 +76,8 @@ decrypt_full_block(B, CipherText, Key) ->
             Nonce,
             CipherText
         ),
+    ar:d({key, Key}),
+    ar:d({nonce, Nonce}),
     PlainText = unpad_binary(PaddedPlainText),
     RJSON = ar_serialize:dejsonify(PlainText),
     ar_serialize:json_struct_to_full_block(RJSON).

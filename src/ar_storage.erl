@@ -100,7 +100,7 @@ write_block(B) ->
 %% necessary because of test timings
 -ifdef(DEBUG).
 write_encrypted_block(Hash, B) ->
-	BlockToWrite = ar_util:encode(B),
+	BlockToWrite = B,
 	file:write_file(
 		Name = lists:flatten(
 			io_lib:format(
@@ -113,7 +113,7 @@ write_encrypted_block(Hash, B) ->
 	Name.
 -else.
 write_encrypted_block(Hash, B) ->
-	BlockToWrite = ar_util:encode(B),
+	BlockToWrite = B,
 	case enough_space(byte_size(BlockToWrite)) of
 		true ->
 			file:write_file(
@@ -187,7 +187,7 @@ read_encrypted_block(ID) ->
 	end.
 do_read_encrypted_block(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
-	ar_util:decode(Binary).
+	Binary.
 
 
 %% @doc Accurately recalculate the current cumulative size of the Arweave directory
