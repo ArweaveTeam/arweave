@@ -1411,7 +1411,7 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-			FullBlock = retry_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, unavailable, 5),
+			FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			case FullBlock of
 				unavailable ->
 					ar:report(
