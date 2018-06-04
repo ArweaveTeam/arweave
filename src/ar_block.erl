@@ -8,12 +8,12 @@
 
 %% @doc Encrypt a recall block. Encryption key is derived from
 %% the contents of the recall block and the hash of the current block
-encrypt_block(R, B) ->
+encrypt_block(R, B) when ?IS_BLOCK(B) -> encrypt_block(R, B#block.indep_hash);
+encrypt_block(R, Hash) ->
     Recall =
         ar_serialize:jsonify(
             ar_serialize:block_to_json_struct(R)
         ),
-    Hash = B#block.hash,
     Nonce = binary:part(Hash, 0, 16),
     Key = crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
     PlainText = pad_to_length(Recall),
@@ -24,13 +24,16 @@ encrypt_block(R, B) ->
             Nonce,
             PlainText
         ),
-    ar:d({key, Key}),
-    ar:d({nonce, Nonce}),
+    ar:d({key2, Key}),
+    ar:d({nonce2, Nonce}),
+    ar:d({recallHash2, Recall#block.indep_hash}),
+    ar:d({blockHash2, Hash}),
     {Key, CipherText}.
 
 %% @doc Decrypt a recall block
-decrypt_block(B, CipherText, Key) ->
-    Nonce = binary:part(B#block.hash, 0, 16),
+decrypt_block(B, CipherText, Key) when ?IS_BLOCK(B)-> decrypt_block(B#block.indep_hash, CipherText, Key);
+decrypt_block(Hash, CipherText, Key) ->
+    Nonce = binary:part(Hash, 0, 16),
     PaddedPlainText =
         crypto:block_decrypt(
             aes_cbc,
@@ -38,20 +41,21 @@ decrypt_block(B, CipherText, Key) ->
             Nonce,
             CipherText
         ),
-    ar:d({key, Key}),
-    ar:d({nonce, Nonce}),
+    ar:d({key3, Key}),
+    ar:d({nonce3, Nonce}),
+    ar:d({blockHash3, Hash}),
     PlainText = unpad_binary(PaddedPlainText),
     RJSON = ar_serialize:dejsonify(binary_to_list(PlainText)),
     ar_serialize:json_struct_to_block(RJSON).
 
 %% @doc Encrypt a recall block. Encryption key is derived from
 %% the contents of the recall block and the hash of the current block
-encrypt_full_block(R, B) ->
+encrypt_full_block(R, B) when ?IS_BLOCK(B) -> encrypt_full_block(R, B#block.indep_hash);
+encrypt_full_block(R, Hash) ->
     Recall =
         ar_serialize:jsonify(
             ar_serialize:full_block_to_json_struct(R)
         ),
-    Hash = B#block.hash,
     Nonce = binary:part(Hash, 0, 16),
     Key = crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
     PlainText = pad_to_length(Recall),
@@ -62,13 +66,16 @@ encrypt_full_block(R, B) ->
             Nonce,
             PlainText
         ),
-    ar:d({key, Key}),
-    ar:d({nonce, Nonce}),
+    ar:d({key2, Key}),
+    ar:d({nonce2, Nonce}),
+    ar:d({recallHash2, Recall#block.indep_hash}),
+    ar:d({blockHash2, Hash}),
     {Key, CipherText}.
 
 %% @doc Decrypt a recall block
-decrypt_full_block(B, CipherText, Key) ->
-    Nonce = binary:part(B#block.hash, 0, 16),
+decrypt_full_block(B, CipherText, Key) when ?IS_BLOCK(B)-> decrypt_full_block(B#block.indep_hash, CipherText, Key);
+decrypt_full_block(Hash, CipherText, Key) ->
+    Nonce = binary:part(Hash, 0, 16),
     PaddedPlainText =
         crypto:block_decrypt(
             aes_cbc,
@@ -76,20 +83,21 @@ decrypt_full_block(B, CipherText, Key) ->
             Nonce,
             CipherText
         ),
-    ar:d({key, Key}),
-    ar:d({nonce, Nonce}),
+    ar:d({key3, Key}),
+    ar:d({nonce3, Nonce}),
+    ar:d({blockHash3, Hash}),
     PlainText = unpad_binary(PaddedPlainText),
     RJSON = ar_serialize:dejsonify(PlainText),
     ar_serialize:json_struct_to_full_block(RJSON).
 
 %% @doc derive the key for a given recall block, given the
 %% recall block and current block
-generate_block_key(R, B) ->
+generate_block_key(R, B) when ?IS_BLOCK(B) -> generate_block_key(R, B#block.indep_hash);
+generate_block_key(R, Hash) ->
     Recall =
         ar_serialize:jsonify(
             ar_serialize:block_to_json_struct(R)
         ),
-    Hash = B#block.hash,
     crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>).
 
 %% @doc Pad a binary to the nearest mutliple of the block 

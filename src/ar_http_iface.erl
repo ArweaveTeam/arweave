@@ -267,7 +267,7 @@ handle('POST', [<<"tx">>], Req) ->
 			% 		),
 			case ar_tx:verify(TX, Diff, FloatingWalletList) of
 				false ->
-					ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+					%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 					{400, [], <<"Transaction verification failed.">>};
 				true ->
 					%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
@@ -401,7 +401,12 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case ?IS_BLOCK(CurrentBlock) of
+	case ?IS_BLOCK(CurrentBlock) and 
+	?IS_BLOCK(Block = ar_node:get_block(
+			whereis(http_entrypoint_node),
+				ar_util:decode(Hash)
+			))
+		of
 		false -> return_encrypted_block(unavailable);
 		true ->
 			case lists:member(
@@ -410,10 +415,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 				) of
 				true ->
 					return_encrypted_block(
-						ar_node:get_block(
-							whereis(http_entrypoint_node),
-							ar_util:decode(Hash)
-							),
+						Block,
 						CurrentBlock
 					);
 				false -> return_encrypted_block(unavailable)
@@ -789,6 +791,8 @@ send_new_block(Host, Port, NewB, RecallB) ->
 			true ->  RecallB#block.indep_hash;
 			false -> <<>>
 		end,
+	ar:d({hash1, RecallBHash}),
+	ar:d({recallhash1, NewB#block.previous_block}),
 	ar_httpc:request(
 		<<"POST">>,
 		"http://" ++ ar_util:format_peer(Host),
@@ -799,7 +803,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 					{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
 					{<<"recall_block">>, ar_util:encode(RecallBHash)},
 					{<<"port">>, Port},
-					{<<"key">>, ar_util:encode(ar_block:generate_block_key(RecallB, NewB))}
+					{<<"key">>, ar_util:encode(ar_block:generate_block_key(RecallB, NewB#block.previous_block))}
 				]
 			}
 		)
