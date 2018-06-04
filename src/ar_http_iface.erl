@@ -796,7 +796,25 @@ send_new_block(Host, Port, NewB, RecallB) ->
 				)
 
 			);
-		not_found -> ar:d(sending_block_failed)
+		%TODO: 
+		not_found ->
+			ar_httpc:request(
+			<<"POST">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block",
+			ar_serialize:jsonify(
+				{
+					[
+						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+						{<<"recall_block">>, ar_util:encode(RecallBHash)},
+						{<<"port">>, Port},
+						{<<"key">>, <<>>},
+						{<<"nonce">>, <<>>}
+					]
+				}
+			)
+
+		);
 	end.
 
 
