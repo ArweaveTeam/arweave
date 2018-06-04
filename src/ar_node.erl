@@ -1010,6 +1010,20 @@ integrate_new_block(
 		end,
 		PotentialTXs
 	),
+	RecallB = 
+		ar_node:get_full_block(
+			whereis(http_entrypoint_node),
+			find_recall_hash(NewB, [NewB#block.indep_hash|HashList])
+		),
+	ar_key_db:put(
+		RecallB#block.indep_hash,
+		[
+			{
+				ar_block:generate_block_key(RecallB, NewB#block.indep_hash),
+				binary:part(NewB#block.indep_hash, 0, 16)
+			}
+		]
+	),
 	server(
 		reset_miner(
 			S#state {
@@ -1066,6 +1080,18 @@ integrate_block_from_miner(
                 reset_miner(OldS)
             );
 		true ->
+			RecallBFull = make_full_block(
+				RecallB#block.indep_hash
+			),
+			ar_key_db:put(
+				RecallB#block.indep_hash,
+				[
+					{
+						ar_block:generate_block_key(RecallBFull, NextB#block.indep_hash),
+						binary:part(NextB#block.indep_hash, 0, 16)
+					}
+				]
+			),
 			ar_storage:write_tx(MinedTXs),
 			ar_storage:write_block(NextB),
 			app_search:update_tag_table(NextB),

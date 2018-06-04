@@ -1,7 +1,7 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
 -export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2, verify_height/2, verify_last_retarget/1, verify_previous_block/2, verify_block_hash_list/2, verify_wallet_list/3, verify_weave_size/3]).
--export([encrypt_block/2, decrypt_block/3, encrypt_full_block/2, decrypt_full_block/3, generate_block_key/2]).
+-export([encrypt_block/2, encrypt_block/3, decrypt_block/3, encrypt_full_block/2, encrypt_full_block/3, decrypt_full_block/3, generate_block_key/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -14,8 +14,20 @@ encrypt_block(R, Hash) ->
         ar_serialize:jsonify(
             ar_serialize:block_to_json_struct(R)
         ),
-    Nonce = binary:part(Hash, 0, 16),
-    Key = crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
+    encrypt_block(
+        Recall,
+        crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
+        Nonce = binary:part(Hash, 0, 16)
+    ).
+encrypt_block(R, Key, Nonce) when ?IS_BLOCK(R) ->
+    encrypt_block(
+        ar_serialize:jsonify(
+            ar_serialize:block_to_json_struct(R)
+        ),
+        Key,
+        Nonce
+    );
+encrypt_block(Recall, Key, Nonce) ->
     PlainText = pad_to_length(Recall),
     CipherText =
         crypto:block_encrypt(
@@ -24,11 +36,7 @@ encrypt_block(R, Hash) ->
             Nonce,
             PlainText
         ),
-    ar:d({key2, Key}),
-    ar:d({nonce2, Nonce}),
-    ar:d({recallHash2, Recall#block.indep_hash}),
-    ar:d({blockHash2, Hash}),
-    {Key, CipherText}.
+    CipherText.
 
 %% @doc Decrypt a recall block
 decrypt_block(B, CipherText, Key) when ?IS_BLOCK(B)-> decrypt_block(B#block.indep_hash, CipherText, Key);
@@ -41,9 +49,6 @@ decrypt_block(Hash, CipherText, Key) ->
             Nonce,
             CipherText
         ),
-    ar:d({key3, Key}),
-    ar:d({nonce3, Nonce}),
-    ar:d({blockHash3, Hash}),
     PlainText = unpad_binary(PaddedPlainText),
     RJSON = ar_serialize:dejsonify(binary_to_list(PlainText)),
     ar_serialize:json_struct_to_block(RJSON).
@@ -56,8 +61,20 @@ encrypt_full_block(R, Hash) ->
         ar_serialize:jsonify(
             ar_serialize:full_block_to_json_struct(R)
         ),
-    Nonce = binary:part(Hash, 0, 16),
-    Key = crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
+    encrypt_full_block(
+        Recall,
+        crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
+        Nonce = binary:part(Hash, 0, 16)
+    ).
+encrypt_full_block(R, Key, Nonce) when ?IS_BLOCK(R) ->
+    encrypt_full_block(
+        ar_serialize:jsonify(
+            ar_serialize:full_block_to_json_struct(R)
+        ),
+        Key,
+        Nonce
+    );
+encrypt_full_block(Recall, Key, Nonce) ->
     PlainText = pad_to_length(Recall),
     CipherText =
         crypto:block_encrypt(
@@ -66,11 +83,7 @@ encrypt_full_block(R, Hash) ->
             Nonce,
             PlainText
         ),
-    ar:d({key2, Key}),
-    ar:d({nonce2, Nonce}),
-    ar:d({recallHash2, Recall#block.indep_hash}),
-    ar:d({blockHash2, Hash}),
-    {Key, CipherText}.
+    CipherText.
 
 %% @doc Decrypt a recall block
 decrypt_full_block(B, CipherText, Key) when ?IS_BLOCK(B)-> decrypt_full_block(B#block.indep_hash, CipherText, Key);
@@ -96,7 +109,7 @@ generate_block_key(R, B) when ?IS_BLOCK(B) -> generate_block_key(R, B#block.inde
 generate_block_key(R, Hash) ->
     Recall =
         ar_serialize:jsonify(
-            ar_serialize:block_to_json_struct(R)
+            ar_serialize:full_block_to_json_struct(R)
         ),
     crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>).
 
@@ -305,7 +318,7 @@ encrypt_decrypt_block_test() ->
     B0 = ar_weave:init([]),
     ar_storage:write_block(B0),
     B1 = ar_weave:add(B0, []),
-    {Key, CipherText} = encrypt_block(hd(B0), hd(B1)),
+    CipherText = encrypt_block(hd(B0), hd(B1)),
     Key = generate_block_key(hd(B0), hd(B1)),
     B0 = [decrypt_block(hd(B1), CipherText, Key)].
 
@@ -318,5 +331,6 @@ encrypt_decrypt_full_block_test() ->
 	TX1 = ar_tx:new(<<"DATA2">>),
 	ar_storage:write_tx([TX, TX1]),
     B0Full = (hd(B0))#block{ txs = [TX, TX1] },
-    {Key, CipherText} = encrypt_full_block(B0Full, hd(B1)),
+    CipherText = encrypt_full_block(B0Full, hd(B1)),
+    Key = generate_block_key(B0Full, hd(B1)),
     B0Full = decrypt_full_block(hd(B1), CipherText, Key).
