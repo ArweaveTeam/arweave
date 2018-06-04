@@ -24,6 +24,8 @@ encrypt_block(R, B) ->
             Nonce,
             PlainText
         ),
+    ar:d({key, Key}),
+    ar:d({nonce, Nonce}),
     {Key, CipherText}.
 
 %% @doc Decrypt a recall block
@@ -36,6 +38,8 @@ decrypt_block(B, CipherText, Key) ->
             Nonce,
             CipherText
         ),
+    ar:d({key, Key}),
+    ar:d({nonce, Nonce}),
     PlainText = unpad_binary(PaddedPlainText),
     RJSON = ar_serialize:dejsonify(binary_to_list(PlainText)),
     ar_serialize:json_struct_to_block(RJSON).
@@ -290,6 +294,7 @@ encrypt_decrypt_block_test() ->
     ar_storage:write_block(B0),
     B1 = ar_weave:add(B0, []),
     {Key, CipherText} = encrypt_block(hd(B0), hd(B1)),
+    Key = generate_block_key(hd(B0), hd(B1)),
     B0 = [decrypt_block(hd(B1), CipherText, Key)].
 
 encrypt_decrypt_full_block_test() ->
