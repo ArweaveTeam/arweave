@@ -999,7 +999,8 @@ get_info(Peer) ->
 			<<"GET">>,
 			"http://" ++ ar_util:format_peer(Peer),
 			"/info",
-			[]
+			[],
+			3000
 		)
 	of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(Body);
