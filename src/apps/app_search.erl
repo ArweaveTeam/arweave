@@ -108,28 +108,49 @@ search_by_exact_tag(Name, Value) ->
 %% @doc Updates the table of stored tranasaction data with all of the
 %% transactions in the given block
 update_tag_table(B) when ?IS_BLOCK(B) ->
-	lists:foreach(
-		fun(TX) ->
-			lists:foreach(
-				fun(Tag) ->
-					case Tag of
-						{<<"from">>, _ } -> ok;
-						{<<"to">>, _} -> ok;
-						{<<"quantity">>, _} -> ok;
-						{<<"reward">>, _} -> ok;
-						{Name, Value} -> storeDB(Name, Value, TX#tx.id);
-						_ -> ok
-					end
-				end,
-				TX#tx.tags
-			),
-			storeDB(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
-			storeDB(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
-			storeDB(<<"quantity">>, TX#tx.quantity, TX#tx.id),
-			storeDB(<<"reward">>, TX#tx.reward, TX#tx.id)
-		end,
-		ar_storage:read_tx(B#block.txs)
-	);
+	try
+		lists:foreach(
+			fun(TX) ->
+				lists:foreach(
+					fun(Tag) ->
+						case Tag of
+							{<<"from">>, _ } -> ok;
+							{<<"to">>, _} -> ok;
+							{<<"quantity">>, _} -> ok;
+							{<<"reward">>, _} -> ok;
+							{Name, Value} -> storeDB(Name, Value, TX#tx.id);
+							_ -> ok
+						end
+					end,
+					TX#tx.tags
+				),
+				storeDB(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
+				storeDB(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
+				storeDB(<<"quantity">>, TX#tx.quantity, TX#tx.id),
+				storeDB(<<"reward">>, TX#tx.reward, TX#tx.id)
+			end,
+			ar_storage:read_tx(B#block.txs)
+		)
+	catch
+		throw:Term ->
+			ar:report(
+				[
+					{'MnesiaEXCEPTION', {Term}}
+				]
+			);
+		exit:Term ->
+			ar:report(
+				[
+					{'MnesiaEXIT', Term}
+				]
+			);
+		error:Term ->
+			ar:report(
+				[
+					{'MnesiaEXIT', {Term, erlang:get_stacktrace()}}
+				]
+			)
+	end;
 update_tag_table(B) ->
 	not_updated.
 

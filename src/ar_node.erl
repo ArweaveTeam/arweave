@@ -835,13 +835,13 @@ server(
 		exit:Term ->
 			ar:report(
 				[
-					{'EXIT', Term}
+					{'NodeEXIT', Term}
 				]
 			);
 		error:Term ->
 			ar:report(
 				[
-					{'EXIT', {Term, erlang:get_stacktrace()}}
+					{'Error', {Term, erlang:get_stacktrace()}}
 				]
 			),
 			server(S)
