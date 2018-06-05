@@ -906,7 +906,8 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 					ar_storage:write_block(RecallFull),
 					S = RawS1#state { gossip = NewGS },
 					process_new_block(S, NewGS, NewB, RecallFull, Peer, HashList);
-				false ->					
+				false ->
+					ar:d(failed_to_get_recall_block),
 					server(RawS1)
 			end;
 		_ ->

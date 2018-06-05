@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_block/4, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, get_block_subfield/3, add_peer/1]).
+-export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
 -export([get_current_block/1]).
@@ -249,7 +249,9 @@ handle('POST', [<<"block">>], Req) ->
 				whereis(http_bridge_node),
 				OrigPeer,
 				B,
-				RecallB
+				RecallB,
+				Key,
+				Nonce
 			),
 			{200, [], <<"OK">>};
 		false ->
@@ -822,8 +824,30 @@ send_new_block(Host, Port, NewB, RecallB) ->
 
 		)
 	end.
+send_new_block(Host, Port, NewB, RecallB, Key, Nonce) ->
+	NewBShadow = NewB#block { wallet_list= [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
+	RecallBHash =
+		case ?IS_BLOCK(RecallB) of
+			true ->  RecallB#block.indep_hash;
+			false -> <<>>
+		end,
+		ar_httpc:request(
+			<<"POST">>,
+			"http://" ++ ar_util:format_peer(Host),
+			"/block",
+			ar_serialize:jsonify(
+				{
+					[
+						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+						{<<"recall_block">>, ar_util:encode(RecallBHash)},
+						{<<"port">>, Port},
+						{<<"key">>, ar_util:encode(Key)},
+						{<<"nonce">>, ar_util:encode(Nonce)}
+					]
+				}
+			)
 
-
+		).
 
 %% @doc Add peer (self) to a remote host.
 add_peer(Host) ->
