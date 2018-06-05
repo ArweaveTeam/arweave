@@ -95,7 +95,6 @@ encrypt_full_block(Recall, Key, Nonce) ->
 %% @doc Decrypt a recall block
 decrypt_full_block(B, CipherText, Key, Nonce) when ?IS_BLOCK(B)-> decrypt_full_block(B#block.indep_hash, CipherText, Key, Nonce);
 decrypt_full_block(Hash, CipherText, Key, Nonce) ->
-    Nonce = binary:part(Hash, 0, 16),
     if
         (Key == <<>>) or (Nonce == <<>>) -> unavailable;
         true ->

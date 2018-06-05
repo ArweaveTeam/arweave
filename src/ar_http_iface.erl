@@ -805,7 +805,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 
 			);
 		%TODO: 
-		not_found ->
+		_ ->
 			ar_httpc:request(
 			<<"POST">>,
 			"http://" ++ ar_util:format_peer(Host),
