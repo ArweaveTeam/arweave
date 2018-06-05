@@ -92,7 +92,8 @@ get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
 get_block_and_trail(_, unavailable, _, _) -> ok;
 get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
-	ar_storage:write_block(NewB),
+	ar_storage:write_block(NewB#block { txs = [T#tx.id || T <- NewB#block.txs] }),
+	ar_storage:write_tx(NewB#block.txs),
 	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block),
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;

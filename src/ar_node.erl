@@ -1015,15 +1015,19 @@ integrate_new_block(
 			whereis(http_entrypoint_node),
 			find_recall_hash(NewB, [NewB#block.indep_hash|HashList])
 		),
-	ar_key_db:put(
-		RecallB#block.indep_hash,
-		[
-			{
-				ar_block:generate_block_key(RecallB, NewB#block.indep_hash),
-				binary:part(NewB#block.indep_hash, 0, 16)
-			}
-		]
-	),
+	case ?IS_BLOCK(RecallB) of
+		true ->
+			ar_key_db:put(
+				RecallB#block.indep_hash,
+				[
+					{
+						ar_block:generate_block_key(RecallB, NewB#block.indep_hash),
+						binary:part(NewB#block.indep_hash, 0, 16)
+					}
+				]
+			);
+		false -> ok
+	end,
 	server(
 		reset_miner(
 			S#state {

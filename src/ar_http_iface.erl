@@ -152,7 +152,9 @@ handle('POST', [<<"block">>], Req) ->
 	{<<"new_block">>, JSONB} = lists:keyfind(<<"new_block">>, 1, Struct),
 	{<<"port">>, Port} = lists:keyfind(<<"port">>, 1, Struct),
 	{<<"key">>, KeyEnc} = lists:keyfind(<<"key">>, 1, Struct),
+	{<<"nonce">>, NonceEnc} = lists:keyfind(<<"nonce">>, 1, Struct),
 	Key = ar_util:decode(KeyEnc),
+	Nonce = ar_util:decode(NonceEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		true ->
@@ -229,11 +231,15 @@ handle('POST', [<<"block">>], Req) ->
 									false -> unavailable
 								end;
 							EncryptedRecall ->
-								FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key),
-								Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
-								ar_storage:write_tx(FullBlock#block.txs),
-								ar_storage:write_block(Recall),
-								Recall
+								FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce),
+								case ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce) of 
+									FullBlock ->
+										Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
+										ar_storage:write_tx(FullBlock#block.txs),
+										ar_storage:write_block(Recall),
+										Recall;
+									unavailable -> unavailable
+								end
 						end;
 					Recall -> Recall
 				end,
@@ -458,7 +464,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 								ar_node:get_block(whereis(http_entrypoint_node),
 									ar_util:decode(Hash))
 							);
-						false -> return_block(not_found)
+						false -> return_block(unavailable)
 					end
 			end;
 		_ ->
@@ -491,7 +497,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 									ar_util:decode(Hash)
 								),
 							return_full_block(FullBlock);
-						false -> return_block(not_found)
+						false -> return_block(unavailable)
 					end
 			end;
 		_ ->
@@ -527,10 +533,10 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 										ar_node:get_block(whereis(http_entrypoint_node),
 											Hash)
 									);
-								false -> return_block(not_found)
+								false -> return_block(unavailable)
 							end
 					end;
-				true -> return_block(not_found)
+				true -> return_block(unavailable)
 			end;
 		_ ->
 			return_block(
