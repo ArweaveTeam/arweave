@@ -95,7 +95,7 @@ encrypt_full_block(Recall, Key, Nonce) ->
 %% @doc Decrypt a recall block
 decrypt_full_block(B, CipherText, Key, Nonce) when ?IS_BLOCK(B)-> decrypt_full_block(B#block.indep_hash, CipherText, Key, Nonce);
 decrypt_full_block(Hash, CipherText, Key, Nonce) ->
-    % Nonce = binary:part(Hash, 0, 16),
+    Nonce = binary:part(Hash, 0, 16),
     if
         (Key == <<>>) or (Nonce == <<>>) -> unavailable;
         true ->
@@ -106,9 +106,6 @@ decrypt_full_block(Hash, CipherText, Key, Nonce) ->
                     Nonce,
                     CipherText
                 ),
-            % ar:d({key3, Key}),
-            % ar:d({nonce3, Nonce}),
-            % ar:d({blockHash3, Hash}),
             PlainText = binary_to_list(unpad_binary(PaddedPlainText)),
             RJSON = ar_serialize:dejsonify(PlainText),
             ar_serialize:json_struct_to_full_block(RJSON)

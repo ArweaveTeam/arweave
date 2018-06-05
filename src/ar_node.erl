@@ -1022,7 +1022,7 @@ integrate_new_block(
 				RecallB#block.indep_hash,
 				[
 					{
-						ar_block:generate_block_key(RecallB, NewB#block.indep_hash),
+						ar_block:generate_block_key(RecallB, NewB#block.previous_block),
 						binary:part(NewB#block.indep_hash, 0, 16)
 					}
 				]
@@ -1085,18 +1085,6 @@ integrate_block_from_miner(
                 reset_miner(OldS)
             );
 		true ->
-			RecallBFull = make_full_block(
-				RecallB#block.indep_hash
-			),
-			ar_key_db:put(
-				RecallB#block.indep_hash,
-				[
-					{
-						ar_block:generate_block_key(RecallBFull, NextB#block.indep_hash),
-						binary:part(NextB#block.indep_hash, 0, 16)
-					}
-				]
-			),
 			ar_storage:write_tx(MinedTXs),
 			ar_storage:write_block(NextB),
 			app_search:update_tag_table(NextB),
@@ -1476,6 +1464,18 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 			true ->
 				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
 			end,
+			RecallBFull = make_full_block(
+				RecallB#block.indep_hash
+			),
+			ar_key_db:put(
+				RecallB#block.indep_hash,
+				[
+					{
+						ar_block:generate_block_key(RecallBFull, hd(BHL)),
+						binary:part(hd(BHL), 0, 16)
+					}
+				]
+			),
 			B = ar_storage:read_block(hd(BHL)),
 			Miner =
 				ar_mine:start(

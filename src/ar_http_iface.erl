@@ -231,8 +231,8 @@ handle('POST', [<<"block">>], Req) ->
 									false -> unavailable
 								end;
 							EncryptedRecall ->
-								FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce),
-								case ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce) of
+								FBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce),
+								case FBlock of
 									unavailable -> unavailable;
 									FullBlock ->
 										Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
