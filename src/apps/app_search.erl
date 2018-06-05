@@ -37,32 +37,42 @@ server(S = #state { gossip = _GS }) ->
 	%% Recurse through the message box, updating one's state each time.
 	try
 		receive
-			{get_tx, PID, Name, Value} -> PID ! search_by_exact_tag(Name, Value);
+			{get_tx, PID, Name, Value} -> 
+				PID ! search_by_exact_tag(Name, Value),
+				server(S);
 			stop -> ok;
+			{add_tx, Name, Value, ID} ->
+				storeDB(Name, Value, ID),
+				server(S);
 			_OtherMsg -> server(S)
 		end
 	catch
 		throw:Term ->
 			ar:report(
 				[
-					{'EXCEPTION', {Term}}
+					{'SearchEXCEPTION', {Term}}
 				]
 			),
 			server(S);
 		exit:Term ->
 			ar:report(
 				[
-					{'EXIT', Term}
+					{'SearchEXIT', Term}
 				]
-			);
+			),
+			server(S);
 		error:Term ->
 			ar:report(
 				[
-					{'EXIT', {Term, erlang:get_stacktrace()}}
+					{'SearchERROR', {Term, erlang:get_stacktrace()}}
 				]
 			),
 			server(S)
 	end.
+
+add_entry(Name, Value, ID) -> add_entry(whereis(http_search_node), Name, Value, ID).
+add_entry(PID, Name, Value, ID) ->
+	PID ! {add_tx, Name, Value, ID}.
 
 %% @doc Initialise the mnesia database
 initDB() ->
@@ -108,53 +118,45 @@ search_by_exact_tag(Name, Value) ->
 %% @doc Updates the table of stored tranasaction data with all of the
 %% transactions in the given block
 update_tag_table(B) when ?IS_BLOCK(B) ->
-	try
-		lists:foreach(
-			fun(TX) ->
-				lists:foreach(
-					fun(Tag) ->
-						case Tag of
-							{<<"from">>, _ } -> ok;
-							{<<"to">>, _} -> ok;
-							{<<"quantity">>, _} -> ok;
-							{<<"reward">>, _} -> ok;
-							{Name, Value} -> storeDB(Name, Value, TX#tx.id);
-							_ -> ok
-						end
-					end,
-					TX#tx.tags
-				),
-				storeDB(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
-				storeDB(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
-				storeDB(<<"quantity">>, TX#tx.quantity, TX#tx.id),
-				storeDB(<<"reward">>, TX#tx.reward, TX#tx.id)
-			end,
-			ar_storage:read_tx(B#block.txs)
-		)
-	catch
-		throw:Term ->
-			ar:report(
-				[
-					{'MnesiaEXCEPTION', {Term}}
-				]
-			);
-		exit:Term ->
-			ar:report(
-				[
-					{'MnesiaEXIT', Term}
-				]
-			);
-		error:Term ->
-			ar:report(
-				[
-					{'MnesiaEXIT', {Term, erlang:get_stacktrace()}}
-				]
-			)
-	end;
+	lists:foreach(
+		fun(TX) ->
+			lists:foreach(
+				fun(Tag) ->
+					case Tag of
+						{<<"from">>, _ } -> ok;
+						{<<"to">>, _} -> ok;
+						{<<"quantity">>, _} -> ok;
+						{<<"reward">>, _} -> ok;
+						
+						{Name, Value} -> add_entry(Name, Value, TX#tx.id);
+						_ -> ok
+					end
+				end,
+				TX#tx.tags
+			),
+			add_entry(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
+			add_entry(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
+			add_entry(<<"quantity">>, TX#tx.quantity, TX#tx.id),
+			add_entry(<<"reward">>, TX#tx.reward, TX#tx.id)
+		end,
+		ar_storage:read_tx(B#block.txs)
+	);
 update_tag_table(B) ->
 	not_updated.
 
 %% @doc Test that a new tx placed on the network and mined can be searched for
+dirty_write_test() ->
+	SearchServer = start(),
+	storeDB("A", "B", "C"),
+	storeDB("A1", "B2", "C"),
+	storeDB("A2", "B3", "C"),
+	storeDB("A2", "B4", "C"),
+	storeDB("A3", "B5", "C"),
+	storeDB("A4", "B6", "C"),
+	storeDB("A5", "B", "C"),
+	storeDB("A6", "B7", "C"),
+	storeDB("A7", "B", "C").
+
 basic_usage_test() ->
 	% Spawn a network with two nodes and a chirper server
 	ar_storage:clear(),
