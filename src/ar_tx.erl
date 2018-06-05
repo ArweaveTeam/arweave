@@ -49,6 +49,13 @@ tx_to_binary(T) ->
 
 %% @doc Generate the data segment to be signed for a given TX.
 signature_data_segment(T) ->
+	% ar:d({owner, T#tx.owner}),
+	% ar:d({target, T#tx.target}),
+	% ar:d({data, T#tx.data}),
+	% ar:d({quantity, T#tx.quantity}),
+	% ar:d({reward, T#tx.reward}),
+	% ar:d({last, T#tx.last_tx}),
+	% ar:d({tags, T#tx.tags}),
 	<<
 		(T#tx.owner)/binary,
 		(T#tx.target)/binary,

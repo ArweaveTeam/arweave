@@ -871,7 +871,8 @@ get_current_block(Host) ->
 			<<"GET">>,
 			"http://" ++ ar_util:format_peer(Host),
 			"/current_block",
-			[]
+			[],
+			10000
 		)
 	).
 
@@ -1549,8 +1550,10 @@ get_tx_by_tag_test() ->
 	ar_node:add_peers(hd(Peers), SearchServer),
 	% Generate the transaction.
 	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	{Priv1, Pub1} = ar_wallet:new(),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	% Add tx to network
-	ar_node:add_tx(hd(Peers), TX),
+	ar_node:add_tx(hd(Peers), SignedTX),
 	% Begin mining
 	receive after 250 -> ok end,
 	ar_node:mine(hd(Peers)),
@@ -1567,6 +1570,7 @@ get_tx_by_tag_test() ->
 			"/arql",		
 			QueryJSON		
 		),
+	ar:d(Body),
 	TXs = ar_serialize:dejsonify(Body),
 	true =
 		lists:member(

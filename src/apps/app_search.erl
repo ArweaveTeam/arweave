@@ -1,6 +1,5 @@
 -module(app_search).
 -export([start/0, start/1]).
--export([message/2]).
 -export([start_link/1]).
 -export([update_tag_table/1]).
 -export([initDB/0, deleteDB/0, storeDB/3, search_by_exact_tag/2]).
@@ -13,11 +12,10 @@
 %%% For examplary purposes only.
 
 %% @doc For compatibility. Dets database supercedes state.
--record(state, {
-	db = [] % Stores the 'database' of links to chirps.
-}).
 -record(arql_tag, {name, value, tx}).
-
+-record(state,{
+	gossip % State of the gossip protocol.
+}).
 
 %%@doc Start a search node, linking to a supervisor process
 start_link(Args) ->
@@ -28,7 +26,39 @@ start_link(Args) ->
 start() -> start([]).
 start(Peers) ->
 	initDB(),
-	adt_simple:start(?MODULE, #state{}, Peers).
+	server(#state{gossip = ar_gossip:init(Peers)}).
+
+server(S = #state { gossip = _GS }) ->
+	%% Listen for gossip and normal messages.
+	%% Recurse through the message box, updating one's state each time.
+	try
+		receive
+			{get_tx, PID, Name, Value} -> PID ! search_by_exact_tag(Name, Value);
+			stop -> ok;
+			_OtherMsg -> server(S)
+		end
+	catch
+		throw:Term ->
+			ar:report(
+				[
+					{'EXCEPTION', {Term}}
+				]
+			),
+			server(S);
+		exit:Term ->
+			ar:report(
+				[
+					{'EXIT', Term}
+				]
+			);
+		error:Term ->
+			ar:report(
+				[
+					{'EXIT', {Term, erlang:get_stacktrace()}}
+				]
+			),
+			server(S)
+	end.
 
 %% @doc Initialise the mnesia database
 initDB() ->
@@ -70,12 +100,6 @@ search_by_exact_tag(Name, Value) ->
 		]
 	).
 
-%% @doc Listen for get_tx requests
-message(S, {get_tx, PID, Name, Value}) ->
-	PID ! search_by_exact_tag(Name, Value),
-	S;
-message(S, _) ->
-	S.
 
 %% @doc Updates the table of stored tranasaction data with all of the
 %% transactions in the given block
@@ -122,7 +146,7 @@ basic_usage_test() ->
 	ar_node:mine(hd(Peers)),
 	receive after 1000 -> ok end,
 	% recieve a "get transaction" message
-	message([], {get_tx,self(),<<"TestName">>, <<"TestVal">>}),
+	whereis(http_search_node) ! {get_tx,self(),<<"TestName">>, <<"TestVal">>},
 	% check that newly mined block matches the block the most recent transaction was mined in
 	true =
 		receive

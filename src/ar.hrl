@@ -58,7 +58,7 @@
 %% Default timeout for initial request
 -define(CONNECT_TIMEOUT, 10 * 1000).
 %% Default time to wait after a failed join to retry
--define(REJOIN_TIMEOUT, 10000).
+-define(REJOIN_TIMEOUT, 3000).
 %% Time between attempts to find(/optimise) peers.
 -define(REFRESH_MINE_DATA_TIMER, 60000).
 %% Time between attempts to find(/optimise) peers.
