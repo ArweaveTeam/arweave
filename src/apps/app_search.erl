@@ -26,7 +26,11 @@ start_link(Args) ->
 start() -> start([]).
 start(Peers) ->
 	initDB(),
-	server(#state{gossip = ar_gossip:init(Peers)}).
+	spawn(
+		fun() ->
+			server(#state{gossip = ar_gossip:init(Peers)})
+		end
+	).
 
 server(S = #state { gossip = _GS }) ->
 	%% Listen for gossip and normal messages.
