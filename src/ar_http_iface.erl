@@ -232,13 +232,13 @@ handle('POST', [<<"block">>], Req) ->
 								end;
 							EncryptedRecall ->
 								FullBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce),
-								case ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce) of 
+								case ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce) of
+									unavailable -> unavailable;
 									FullBlock ->
 										Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
 										ar_storage:write_tx(FullBlock#block.txs),
 										ar_storage:write_block(Recall),
-										Recall;
-									unavailable -> unavailable
+										Recall							
 								end
 						end;
 					Recall -> Recall
@@ -670,7 +670,7 @@ handle_event(_Type, _Data, _Args) -> ok.
 	%ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]).
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
-return_block(unavailable) -> {404, [], <<"Block Unavailable.">>};
+return_block(unavailable) -> {404, [], <<"Block not found.">>};
 return_block(not_found) -> {404, [], <<"Block not found.">>};
 return_block(B) ->
 	{200, [],
