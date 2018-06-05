@@ -1,5 +1,5 @@
 -module(ar_httpc).
--export([request/1, request/4, get_performance/1, update_timer/1]).
+-export([request/1, request/4, request/5, get_performance/1, update_timer/1]).
 -include("ar.hrl").
 
 %%% A wrapper library for httpc.
@@ -27,7 +27,21 @@ request(Method, Host, Path, Body) ->
 		_ -> ok
 		end,
 	Result.
-
+request(Method, Host, Path, Body, Timeout) ->
+	{ok, Client} = fusco:start(Host, [{connect_timeout, ?CONNECT_TIMEOUT}]),
+	Result = fusco:request(Client, list_to_binary(Path), Method, [], Body, 1, Timeout),
+	ok = fusco:disconnect(Client),
+	case Result of
+		{ok, {{_, _}, _, _, Start, End}} ->
+			[_|RawIP] = string:split(Host, "//"),
+			[IP|_Port] = string:split(RawIP, ":"),
+			case Body of
+				[] -> store_data_time(ar_util:parse_peer(IP), 0, End-Start);
+				_ -> store_data_time(ar_util:parse_peer(IP), byte_size(Body), End-Start)
+			end;
+		_ -> ok
+		end,
+	Result.
 
 %% @doc Update the database with new timing data.
 store_data_time(IP, Bytes, MicroSecs) ->

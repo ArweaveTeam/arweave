@@ -273,7 +273,7 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 		(byte_size(<<Cost>>)),
 		Diff
 		),
-	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
+	ar_tx:sign(TX#tx{reward = Reward, tags = [{"3123123Key", "123141515Value"}]}, Priv, Pub).
 
 create_random_fin_tx({Priv, Pub}, KeyList, MaxAmount) ->
 	{_, Dest} = lists:nth(rand:uniform(10), KeyList),

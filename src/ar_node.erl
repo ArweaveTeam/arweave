@@ -835,13 +835,13 @@ server(
 		exit:Term ->
 			ar:report(
 				[
-					{'EXIT', Term}
+					{'NodeEXIT', Term}
 				]
 			);
 		error:Term ->
 			ar:report(
 				[
-					{'EXIT', {Term, erlang:get_stacktrace()}}
+					{'Error', {Term, erlang:get_stacktrace()}}
 				]
 			),
 			server(S)
@@ -906,7 +906,8 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 					ar_storage:write_block(RecallFull),
 					S = RawS1#state { gossip = NewGS },
 					process_new_block(S, NewGS, NewB, RecallFull, Peer, HashList);
-				false ->					
+				false ->
+					ar:d(failed_to_get_recall_block),
 					server(RawS1)
 			end;
 		_ ->
@@ -1010,6 +1011,24 @@ integrate_new_block(
 		end,
 		PotentialTXs
 	),
+	RecallB = 
+		ar_node:get_full_block(
+			whereis(http_entrypoint_node),
+			find_recall_hash(NewB, [NewB#block.indep_hash|HashList])
+		),
+	case ?IS_BLOCK(RecallB) of
+		true ->
+			ar_key_db:put(
+				RecallB#block.indep_hash,
+				[
+					{
+						ar_block:generate_block_key(RecallB, NewB#block.previous_block),
+						binary:part(NewB#block.indep_hash, 0, 16)
+					}
+				]
+			);
+		false -> ok
+	end,
 	server(
 		reset_miner(
 			S#state {
@@ -1411,7 +1430,7 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-			FullBlock = retry_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, unavailable, 5),
+			FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			case FullBlock of
 				unavailable ->
 					ar:report(
@@ -1445,6 +1464,18 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 			true ->
 				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
 			end,
+			RecallBFull = make_full_block(
+				RecallB#block.indep_hash
+			),
+			ar_key_db:put(
+				RecallB#block.indep_hash,
+				[
+					{
+						ar_block:generate_block_key(RecallBFull, hd(BHL)),
+						binary:part(hd(BHL), 0, 16)
+					}
+				]
+			),
 			B = ar_storage:read_block(hd(BHL)),
 			Miner =
 				ar_mine:start(

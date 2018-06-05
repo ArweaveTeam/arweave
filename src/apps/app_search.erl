@@ -1,6 +1,5 @@
 -module(app_search).
 -export([start/0, start/1]).
--export([message/2]).
 -export([start_link/1]).
 -export([update_tag_table/1]).
 -export([initDB/0, deleteDB/0, storeDB/3, search_by_exact_tag/2]).
@@ -13,11 +12,10 @@
 %%% For examplary purposes only.
 
 %% @doc For compatibility. Dets database supercedes state.
--record(state, {
-	db = [] % Stores the 'database' of links to chirps.
-}).
 -record(arql_tag, {name, value, tx}).
-
+-record(state,{
+	gossip % State of the gossip protocol.
+}).
 
 %%@doc Start a search node, linking to a supervisor process
 start_link(Args) ->
@@ -28,7 +26,53 @@ start_link(Args) ->
 start() -> start([]).
 start(Peers) ->
 	initDB(),
-	adt_simple:start(?MODULE, #state{}, Peers).
+	spawn(
+		fun() ->
+			server(#state{gossip = ar_gossip:init(Peers)})
+		end
+	).
+
+server(S = #state { gossip = _GS }) ->
+	%% Listen for gossip and normal messages.
+	%% Recurse through the message box, updating one's state each time.
+	try
+		receive
+			{get_tx, PID, Name, Value} -> 
+				PID ! search_by_exact_tag(Name, Value),
+				server(S);
+			stop -> ok;
+			{add_tx, Name, Value, ID} ->
+				storeDB(Name, Value, ID),
+				server(S);
+			_OtherMsg -> server(S)
+		end
+	catch
+		throw:Term ->
+			ar:report(
+				[
+					{'SearchEXCEPTION', {Term}}
+				]
+			),
+			server(S);
+		exit:Term ->
+			ar:report(
+				[
+					{'SearchEXIT', Term}
+				]
+			),
+			server(S);
+		error:Term ->
+			ar:report(
+				[
+					{'SearchERROR', {Term, erlang:get_stacktrace()}}
+				]
+			),
+			server(S)
+	end.
+
+add_entry(Name, Value, ID) -> add_entry(whereis(http_search_node), Name, Value, ID).
+add_entry(PID, Name, Value, ID) ->
+	PID ! {add_tx, Name, Value, ID}.
 
 %% @doc Initialise the mnesia database
 initDB() ->
@@ -70,12 +114,6 @@ search_by_exact_tag(Name, Value) ->
 		]
 	).
 
-%% @doc Listen for get_tx requests
-message(S, {get_tx, PID, Name, Value}) ->
-	PID ! search_by_exact_tag(Name, Value),
-	S;
-message(S, _) ->
-	S.
 
 %% @doc Updates the table of stored tranasaction data with all of the
 %% transactions in the given block
@@ -89,16 +127,17 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 						{<<"to">>, _} -> ok;
 						{<<"quantity">>, _} -> ok;
 						{<<"reward">>, _} -> ok;
-						{Name, Value} -> storeDB(Name, Value, TX#tx.id);
+						
+						{Name, Value} -> add_entry(Name, Value, TX#tx.id);
 						_ -> ok
 					end
 				end,
 				TX#tx.tags
 			),
-			storeDB(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
-			storeDB(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
-			storeDB(<<"quantity">>, TX#tx.quantity, TX#tx.id),
-			storeDB(<<"reward">>, TX#tx.reward, TX#tx.id)
+			add_entry(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
+			add_entry(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
+			add_entry(<<"quantity">>, TX#tx.quantity, TX#tx.id),
+			add_entry(<<"reward">>, TX#tx.reward, TX#tx.id)
 		end,
 		ar_storage:read_tx(B#block.txs)
 	);
@@ -106,6 +145,18 @@ update_tag_table(B) ->
 	not_updated.
 
 %% @doc Test that a new tx placed on the network and mined can be searched for
+dirty_write_test() ->
+	SearchServer = start(),
+	storeDB("A", "B", "C"),
+	storeDB("A1", "B2", "C"),
+	storeDB("A2", "B3", "C"),
+	storeDB("A2", "B4", "C"),
+	storeDB("A3", "B5", "C"),
+	storeDB("A4", "B6", "C"),
+	storeDB("A5", "B", "C"),
+	storeDB("A6", "B7", "C"),
+	storeDB("A7", "B", "C").
+
 basic_usage_test() ->
 	% Spawn a network with two nodes and a chirper server
 	ar_storage:clear(),
@@ -122,7 +173,7 @@ basic_usage_test() ->
 	ar_node:mine(hd(Peers)),
 	receive after 1000 -> ok end,
 	% recieve a "get transaction" message
-	message([], {get_tx,self(),<<"TestName">>, <<"TestVal">>}),
+	whereis(http_search_node) ! {get_tx,self(),<<"TestName">>, <<"TestVal">>},
 	% check that newly mined block matches the block the most recent transaction was mined in
 	true =
 		receive

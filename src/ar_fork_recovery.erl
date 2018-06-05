@@ -37,7 +37,7 @@ start(Peers, TargetBShadow, HashList) ->
 					PID =
 						spawn(
 							fun() ->
-								TargetB = TargetBShadow,%ar_node:retry_block(Peers, TargetBShadow#block.indep_hash, not_found, 5),
+								TargetB = TargetBShadow,
 								DivergedHashes = drop_until_diverge(
 									lists:reverse(TargetB#block.hash_list),
 									lists:reverse(HashList)

@@ -1,6 +1,6 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2, start/3]).
--export([add_tx/2, add_block/4]). % Called from ar_http_iface
+-export([add_tx/2, add_block/4, add_block/6]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1]).
 -export([start_link/1]).
@@ -59,6 +59,8 @@ get_remote_peers(PID) ->
 %% @doc Notify the bridge of a new external block.
 add_block(PID, OriginPeer, Block, RecallBlock) ->
 	PID ! {add_block, OriginPeer, Block, RecallBlock}.
+add_block(PID, OriginPeer, Block, RecallBlock, Key, Nonce) ->
+	PID ! {add_block, OriginPeer, Block, RecallBlock, Key, Nonce}.
 
 %% @doc Notify the bridge of a new external block.
 add_tx(PID, TX) ->%, OriginPeer) ->
@@ -103,6 +105,11 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			case lists:member(OriginPeer, S#state.ignored_peers) of
 				true -> server(S);
 				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}))
+			end;
+		{add_block, OriginPeer, Block, RecallBlock, Key, Nonce} ->
+			case lists:member(OriginPeer, S#state.ignored_peers) of
+				true -> server(S);
+				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}, Key, Nonce))
 			end;
 		{add_peer, remote, Peer} ->
 			case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
@@ -195,6 +202,46 @@ maybe_send_to_internal(
 				processed = add_processed(Type, Data, Procd)
 			}
 	end.
+maybe_send_to_internal(
+		S = #state {
+			gossip = GS,
+			firewall = FW,
+			processed = Procd
+		},
+		Type,
+		Data,
+		Key,
+		Nonce) ->
+	case
+		(not already_processed(Procd, Type, Data)) andalso
+		ar_firewall:scan(FW, Type, Data)
+	of
+		false ->
+			% If the data does not pass the scan, ignore the message.
+			S;
+		true ->
+			% The message is at least valid, distribute it.
+			{NewGS, _} =
+				ar_gossip:send(
+					GS,
+					Msg = case Type of
+						tx ->
+							{add_tx, Data};
+						block ->
+							{OriginPeer, NewB, RecallB} = Data,
+							{new_block,
+								OriginPeer,
+								NewB#block.height,
+								NewB,
+								RecallB
+							}
+					end),
+			send_to_external(S, Msg, Key, Nonce),
+			S#state {
+				gossip = NewGS,
+				processed = add_processed(Type, Data, Procd)
+			}
+	end.
 
 %% @doc Add the ID of a new TX/block to a processed list.
 add_processed({add_tx, TX}, Procd) ->
@@ -264,9 +311,29 @@ send_to_external(
 			)
 	end,
 	S;
-
 send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
+
+send_to_external(
+		S = #state {external_peers = Peers, port = Port},
+		{new_block, _Peer, _Height, NewB, RecallB},
+		Key,
+		Nonce) ->
+	case RecallB of
+		unavailable -> ok;
+		_ ->
+			spawn(
+				fun() ->
+					lists:foreach(
+						fun(Peer) ->
+							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
+						end,
+						[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB) ]
+					)
+				end
+			)
+	end,
+	S.
 
 %% @doc Possibly send a new message to external peers.
 do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
