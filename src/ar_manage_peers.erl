@@ -23,7 +23,7 @@ format_stats(Peer, Perf) ->
 	io:format("\t~s ~.2f kb/s (~p transfers)~n",
 		[
 			string:pad(ar_util:format_peer(Peer), 20, trailing, $ ),
-			(Perf#performance.bytes / 1024) / (Perf#performance.time / 1000000),
+			(Perf#performance.bytes / 1024) / (Perf#performance.time + 1 / 1000000),
 			Perf#performance.transfers
 		]
 	).

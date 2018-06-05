@@ -238,7 +238,7 @@ handle('POST', [<<"block">>], Req) ->
 										Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
 										ar_storage:write_tx(FullBlock#block.txs),
 										ar_storage:write_block(Recall),
-										Recall							
+										Recall
 								end
 						end;
 					Recall -> Recall
