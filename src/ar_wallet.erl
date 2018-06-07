@@ -1,6 +1,6 @@
 -module(ar_wallet).
 -export([new/0, sign/2, verify/3, to_address/1, new_keyfile/0, load_keyfile/1, to_binary/1]).
--define(PUBLIC_EXPNT, 17489).
+-define(PUBLIC_EXPNT, 65537).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("public_key/include/public_key.hrl").
@@ -17,7 +17,7 @@ new() ->
 %% @doc Generates a new wallet public and private key, with a corresponding keyfile
 new_keyfile() ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
-		crypto:generate_key(rsa, {4096, 17489}),
+		crypto:generate_key(rsa, {4096, ?PUBLIC_EXPNT}),
 		Key = 
 			ar_serialize:jsonify(
 				{
