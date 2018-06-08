@@ -47,17 +47,12 @@ method(#req{method = Method})    -> Method.
 body(#req{body = Body})          -> Body.
 upload_start_timestamp(#req{upload_start_timestamp = UploadTimeStamp}) -> UploadTimeStamp.
 
-peer(#req{socket = Socket} = Req) ->
-    case get_header(<<"X-Forwarded-For">>, Req, undefined) of
-        undefined ->
-            case elli_tcp:peername(Socket) of
-                {ok, {Address, _}} ->
-                    list_to_binary(inet_parse:ntoa(Address));
-                {error, _} ->
-                    undefined
-            end;
-        Ip ->
-            Ip
+peer(#req{socket = Socket} = _Req) ->
+    case elli_tcp:peername(Socket) of
+        {ok, {Address, _}} ->
+            list_to_binary(inet_parse:ntoa(Address));
+        {error, _} ->
+            undefined
     end.
 
 

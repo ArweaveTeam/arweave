@@ -2,7 +2,8 @@
 -export([start/0, start/1]).
 -export([start_link/1]).
 -export([update_tag_table/1]).
--export([initDB/0, deleteDB/0, storeDB/3, search_by_exact_tag/2]).
+-export([initDB/0, deleteDB/0, storeDB/3]).
+-export([add_entry/3, add_entry/4, get_entries/2, get_entries/3]).
 -include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -14,7 +15,8 @@
 %% @doc For compatibility. Dets database supercedes state.
 -record(arql_tag, {name, value, tx}).
 -record(state,{
-	gossip % State of the gossip protocol.
+	gossip,
+	towrite = []% State of the gossip protocol.
 }).
 
 %%@doc Start a search node, linking to a supervisor process
@@ -32,16 +34,54 @@ start(Peers) ->
 		end
 	).
 
+add_entry(Name, Value, ID) -> add_entry(whereis(http_search_node), Name, Value, ID).
+add_entry(PID, Name, Value, ID) ->
+	PID ! {add_tx, Name, Value, ID}.
+
+get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
+get_entries(PID, Name, Value) ->
+	PID ! {get_tx, Name, Value, self()}.
+
+%% @doc Updates the table of stored tranasaction data with all of the
+%% transactions in the given block
+update_tag_table(B) when ?IS_BLOCK(B) ->
+	lists:foreach(
+		fun(TX) ->
+			lists:foreach(
+				fun(Tag) ->
+					case Tag of
+						{<<"from">>, _ } -> ok;
+						{<<"to">>, _} -> ok;
+						{<<"quantity">>, _} -> ok;
+						{<<"reward">>, _} -> ok;
+						{Name, Value} -> add_entry(Name, Value, TX#tx.id);
+						_ -> ok
+					end
+				end,
+				TX#tx.tags
+			),
+			add_entry(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
+			add_entry(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
+			add_entry(<<"quantity">>, TX#tx.quantity, TX#tx.id),
+			add_entry(<<"reward">>, TX#tx.reward, TX#tx.id)
+		end,
+		ar_storage:read_tx(B#block.txs)
+	);
+update_tag_table(B) ->
+	not_updated.
+
 server(S = #state { gossip = _GS }) ->
 	%% Listen for gossip and normal messages.
 	%% Recurse through the message box, updating one's state each time.
 	try
 		receive
-			{get_tx, PID, Name, Value} -> 
+			{get_tx, Name, Value, PID} ->
+				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
 				PID ! search_by_exact_tag(Name, Value),
 				server(S);
 			stop -> ok;
 			{add_tx, Name, Value, ID} ->
+				% ar:d({adding_tags, Name, Value, ID}),
 				storeDB(Name, Value, ID),
 				server(S);
 			_OtherMsg -> server(S)
@@ -70,10 +110,6 @@ server(S = #state { gossip = _GS }) ->
 			server(S)
 	end.
 
-add_entry(Name, Value, ID) -> add_entry(whereis(http_search_node), Name, Value, ID).
-add_entry(PID, Name, Value, ID) ->
-	PID ! {add_tx, Name, Value, ID}.
-
 %% @doc Initialise the mnesia database
 initDB() ->
 	application:set_env(mnesia, dir, "data/mnesia"),
@@ -88,7 +124,7 @@ initDB() ->
 				[
 					{attributes, record_info(fields, arql_tag)},
 					{type, bag},
-					{disc_copies, [node()]}
+					{disc_only_copies, [node()]}
 				]
 			)
 	end.
@@ -113,49 +149,6 @@ search_by_exact_tag(Name, Value) ->
 			}
 		]
 	).
-
-
-%% @doc Updates the table of stored tranasaction data with all of the
-%% transactions in the given block
-update_tag_table(B) when ?IS_BLOCK(B) ->
-	lists:foreach(
-		fun(TX) ->
-			lists:foreach(
-				fun(Tag) ->
-					case Tag of
-						{<<"from">>, _ } -> ok;
-						{<<"to">>, _} -> ok;
-						{<<"quantity">>, _} -> ok;
-						{<<"reward">>, _} -> ok;
-						
-						{Name, Value} -> add_entry(Name, Value, TX#tx.id);
-						_ -> ok
-					end
-				end,
-				TX#tx.tags
-			),
-			add_entry(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
-			add_entry(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
-			add_entry(<<"quantity">>, TX#tx.quantity, TX#tx.id),
-			add_entry(<<"reward">>, TX#tx.reward, TX#tx.id)
-		end,
-		ar_storage:read_tx(B#block.txs)
-	);
-update_tag_table(B) ->
-	not_updated.
-
-%% @doc Test that a new tx placed on the network and mined can be searched for
-dirty_write_test() ->
-	SearchServer = start(),
-	storeDB("A", "B", "C"),
-	storeDB("A1", "B2", "C"),
-	storeDB("A2", "B3", "C"),
-	storeDB("A2", "B4", "C"),
-	storeDB("A3", "B5", "C"),
-	storeDB("A4", "B6", "C"),
-	storeDB("A5", "B", "C"),
-	storeDB("A6", "B7", "C"),
-	storeDB("A7", "B", "C").
 
 basic_usage_test() ->
 	% Spawn a network with two nodes and a chirper server

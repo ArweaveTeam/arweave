@@ -5,12 +5,12 @@
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2, add_peers/2]).
--export([calculate_reward/2]).
+-export([calculate_reward/2, calculate_static_reward/1]).
 -export([rejoin/2]).
 -export([filter_all_out_of_order_txs/2, filter_out_of_order_txs/2]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/5, validate/8, find_recall_block/1, calculate_reward_pool/3]).
--export([find_sync_block/1, get_current_block/1]).
+-export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/5, validate/8, find_recall_block/1, validate_wallet_list/1, calculate_reward_pool/4, calculate_proportion/3]).
+-export([find_sync_block/1, get_current_block/1, get_reward_addr/1, print_reward_addr/0, set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0]).
 -export([start_link/1]).
 -export([retry_block/4, retry_full_block/4]).
 -export([filter_all_out_of_order_txs_large_test_slow/0,filter_out_of_order_txs_large_test_slow/0]).
@@ -39,7 +39,8 @@
     tags = [],
 	reward_pool = 0,
 	diff = 0,
-	last_retarget
+	last_retarget,
+	weave_size = 0
 }).
 
 %% Maximum number of blocks to hold at any time.
@@ -84,7 +85,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					ar_join:start(self(), Peers);
 				_ ->
 					do_nothing
-			end,			
+			end,
 			Gossip =
 				ar_gossip:init(
 					lists:filter(
@@ -468,6 +469,37 @@ get_reward_pool(Node) ->
 	after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
+get_reward_addr(Node) ->
+	Node ! {get_reward_addr, self()},
+	receive
+		{reward_addr, Addr} -> Addr
+	after ?LOCAL_NET_TIMEOUT -> 0
+	end.
+
+set_reward_addr(Node, Addr) ->
+	Node ! {set_reward_addr, Addr}.
+
+set_reward_addr_from_file(Filepath) ->
+	{_Priv, Pub} = ar_wallet:load(Filepath),
+	set_reward_addr(whereis(http_entrypoint_node), ar_wallet:to_address(Pub)),
+	ar:report(
+		[
+			{new_reward_address, ar_wallet:to_address(Pub)}
+		]
+	).
+
+generate_and_set_reward_addr() ->
+	{_Priv, Pub} = ar_wallet:new(),
+	set_reward_addr(whereis(http_entrypoint_node), ar_wallet:to_address(Pub)),
+	ar:report(
+		[
+			{new_reward_address, ar_wallet:to_address(Pub)}
+		]
+	).
+
+print_reward_addr() ->
+	ar_util:encode(get_reward_addr(whereis(http_entrypoint_node))).
+
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
 	Node ! mine.
@@ -696,6 +728,11 @@ server(
 		{get_reward_pool, PID} ->
 			PID ! {reward_pool, S#state.reward_pool},
 			server(S);
+		{get_reward_addr, PID} ->
+			PID ! {reward_addr, S#state.reward_addr},
+			server(S);
+		{set_reward_addr, Addr} ->
+			server(S#state{reward_addr = Addr});
 		mine ->
 			server(start_mining(S));
 		automine -> server(start_mining(S#state { automine = true }));
@@ -766,7 +803,7 @@ server(
 				undefined -> ok;
 				_ -> erlang:unregister(fork_recovery_server)
 			end,
-			ar_cleanup:remove_invalid_blocks(NewHs),
+			%ar_cleanup:remove_invalid_blocks(NewHs),
 			TXPool = S#state.txs ++ S#state.potential_txs,
 			TXs = filter_all_out_of_order_txs(NewB#block.wallet_list, TXPool),
 			PotentialTXs = TXPool -- TXs,
@@ -798,7 +835,7 @@ server(
 					{height, NewB#block.height}
 				]
 			),
-			ar_cleanup:remove_invalid_blocks(NewHs),
+			%ar_cleanup:remove_invalid_blocks(NewHs),
 			TXPool = S#state.txs ++ S#state.potential_txs,
 			TXs = filter_all_out_of_order_txs(NewB#block.wallet_list, TXPool),
 			PotentialTXs = TXPool -- TXs,
@@ -828,7 +865,7 @@ server(
 		throw:Term ->
 			ar:report(
 				[
-					{'EXCEPTION', {Term}}
+					{'NodeEXCEPTION', {Term}}
 				]
 			),
 			server(S);
@@ -836,12 +873,13 @@ server(
 			ar:report(
 				[
 					{'NodeEXIT', Term}
-				]
+				],
+			server(S)
 			);
 		error:Term ->
 			ar:report(
 				[
-					{'Error', {Term, erlang:get_stacktrace()}}
+					{'NodeERROR', {Term, erlang:get_stacktrace()}}
 				]
 			),
 			server(S)
@@ -930,7 +968,17 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 				[],
 				NewB#block.txs
 			),
-			{FinderReward, _} = calculate_reward_pool(S#state.reward_pool, TXs, NewB#block.reward_addr),
+			{FinderReward, _} = 
+				calculate_reward_pool(
+					S#state.reward_pool,
+					TXs,
+					NewB#block.reward_addr,
+					calculate_proportion(
+						RecallB#block.block_size,
+						NewB#block.weave_size,
+						NewB#block.height
+					)
+				),
 			WalletList =
 				apply_mining_reward(
 					apply_txs(S#state.wallet_list, TXs),
@@ -1033,13 +1081,14 @@ integrate_new_block(
 		reset_miner(
 			S#state {
 				hash_list = [NewB#block.indep_hash|HashList],
-				txs = KeepNotMinedTXs,
+				txs = ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
 				height = NewB#block.height,
 				floating_wallet_list = apply_txs(WalletList, TXs),
 				reward_pool = NewB#block.reward_pool,
 				potential_txs = [],
 				diff = NewB#block.diff,
-				last_retarget = NewB#block.last_retarget
+				last_retarget = NewB#block.last_retarget,
+				weave_size = NewB#block.weave_size
 			}
 		)
 	).
@@ -1053,11 +1102,31 @@ integrate_block_from_miner(
 			gossip = GS,
             reward_addr = RewardAddr,
             tags = Tags,
-			reward_pool = OldPool
+			reward_pool = OldPool,
+			weave_size = OldWeaveSize
 		},
 		MinedTXs, Diff, Nonce, Timestamp) ->
 	% Calculate the new wallet list (applying TXs and mining rewards).
-	{FinderReward, RewardPool} = calculate_reward_pool(OldPool, MinedTXs, RewardAddr),
+    RecallB = ar_node:find_recall_block(HashList),
+    WeaveSize = OldWeaveSize +
+        lists:foldl(
+            fun(TX, Acc) ->
+                Acc + byte_size(TX#tx.data)
+            end,
+            0,
+            TXs
+        ),
+	{FinderReward, RewardPool} = 
+		calculate_reward_pool(
+			OldPool,
+			MinedTXs,
+			RewardAddr,
+			calculate_proportion(
+				RecallB#block.block_size,
+				WeaveSize,
+				length(HashList)
+			)
+		),
 	WalletList =
 		apply_mining_reward(
 			apply_txs(RawWalletList, MinedTXs),
@@ -1074,7 +1143,6 @@ integrate_block_from_miner(
 		),
     NewS = OldS#state { wallet_list = WalletList },
     % Build the block record, verify it, and gossip it to the other nodes.
-    RecallB = ar_node:find_recall_block(HashList),
 	[NextB|_] =
 		ar_weave:add(HashList, MinedTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
 		%ar:d({validate,validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList))}),
@@ -1106,7 +1174,11 @@ integrate_block_from_miner(
 					{indep_hash, ar_util:encode(NextB#block.indep_hash)},
 					{recall_block, RecallB#block.height},
 					{recall_hash, RecallB#block.indep_hash},
-					{txs, length(MinedTXs)}
+					{txs, length(MinedTXs)},
+					case is_atom(RewardAddr) of
+						true -> {reward_address, unclaimed};
+						false -> {reward_address, ar_util:encode(RewardAddr)}
+					end
 				]
 			),
 			lists:foreach(
@@ -1121,13 +1193,14 @@ integrate_block_from_miner(
 						gossip = NewGS,
 						hash_list =
 							[NextB#block.indep_hash|HashList],
-						txs = NotMinedTXs, % TXs not included in the block
+						txs = ar_track_tx_db:remove_bad_txs(NotMinedTXs), % TXs not included in the block
 						height = NextB#block.height,
 						floating_wallet_list = apply_txs(WalletList, NotMinedTXs),
 						reward_pool = RewardPool,
 						potential_txs = [],
 						diff = NextB#block.diff,
-						last_retarget = NextB#block.last_retarget
+						last_retarget = NextB#block.last_retarget,
+						weave_size = NextB#block.weave_size
 					}
 				)
 			)
@@ -1151,7 +1224,7 @@ add_tx_to_server(S, NewGS, TX) ->
 				gossip = NewGS,
 				waiting_txs = (S#state.waiting_txs -- [TX]) });
         false ->
-            server(S#state { gossip = NewGS })
+            server(S#state { gossip = NewGS , waiting_txs = (S#state.waiting_txs -- [TX]) })
     end.
 
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
@@ -1190,7 +1263,7 @@ validate(
 	RetargetCheck = ar_block:verify_last_retarget(NewB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
-	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, TXs),
+	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
 
 
 	ar:report(
@@ -1288,7 +1361,7 @@ apply_txs(WalletList, TXs) ->
 		)
 	).
 
-calculate_reward_pool(OldPool, TXs, unclaimed) ->
+calculate_reward_pool(OldPool, TXs, unclaimed, _Proportion) ->
 	Pool = OldPool + lists:sum(
 		lists:map(
 			fun calculate_tx_reward/1,
@@ -1296,16 +1369,16 @@ calculate_reward_pool(OldPool, TXs, unclaimed) ->
 		)
 	),
 	{0, Pool};
-calculate_reward_pool(OldPool, TXs, _RewardAddr) ->
-	Pool = OldPool + lists:sum(
+calculate_reward_pool(OldPool, TXs, _RewardAddr, Proportion) ->
+	Pool = lists:sum(
 		lists:map(
 			fun calculate_tx_reward/1,
 			TXs
 		)
 	),
-	FinderReward = (Pool div 10),
+	FinderReward = erlang:trunc(Pool * Proportion),
 	RemainingPool = Pool - FinderReward,
-	{FinderReward, RemainingPool}.
+	{FinderReward, OldPool + RemainingPool}.
 
 %% @doc Calculate and apply mining reward quantities to a wallet list.
 apply_mining_reward(WalletList, unclaimed, _Quantity, _Height) -> WalletList;
@@ -1402,9 +1475,9 @@ calculate_reward(Height, Quantity) ->
 
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
+calculate_static_reward(Height) when Height =< ?REWARD_DELAY-> 1;
 calculate_static_reward(Height) ->
-	?AR((0.2 * ?GENESIS_TOKENS * math:pow(2,-Height/?BLOCK_PER_YEAR) * math:log(2))/?BLOCK_PER_YEAR).
-
+	?AR((0.2 * ?GENESIS_TOKENS * math:pow(2,-(Height-?REWARD_DELAY)/?BLOCK_PER_YEAR) * math:log(2))/?BLOCK_PER_YEAR).
 %% @doc Given a TX, calculate an appropriate reward.
 calculate_tx_reward(#tx { reward = Reward }) ->
 	Reward.
@@ -1491,11 +1564,25 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 
 -ifdef(DEBUG).
 calculate_delay(0) -> 0;
-calculate_delay(Bytes) -> ((Bytes * 100) div 1000).
+calculate_delay(Bytes) -> 0.
 -else.
-calculate_delay(0) -> 0;
+calculate_delay(0) -> 30000;
 calculate_delay(Bytes) -> 30000 + ((Bytes * 300) div 1000).
 -endif.
+
+calculate_proportion(RecallSize, WeaveSize, Length) when (Length == 0)->
+	calculate_proportion(RecallSize, WeaveSize, 1);
+calculate_proportion(RecallSize, WeaveSize, Length) when (WeaveSize == 0)->
+	calculate_proportion(RecallSize, 1, Length);
+calculate_proportion(RecallSize, WeaveSize, Length) when RecallSize >= (WeaveSize/Length) ->
+	XRaw = ((Length * RecallSize)/WeaveSize) -1,
+	X = min(XRaw, 1023),
+	max(0.1, (math:pow(2, X)/(math:pow(2, X) + 2)));
+calculate_proportion(RecallSize, WeaveSize, Length) when RecallSize == 0 -> calculate_proportion(1, WeaveSize, Length);
+calculate_proportion(RecallSize, WeaveSize, Length) ->
+	XRaw = -(((Length * WeaveSize)/RecallSize) -1),
+	X = min(XRaw, 1023),
+	max(0.1, (math:pow(2, X)/(math:pow(2, X) + 2))).
 
 generate_floating_wallet_list(WalletList, []) ->
 	WalletList;
@@ -1517,6 +1604,8 @@ generate_floating_wallet_list(WalletList, [T|TXs]) ->
 	% 	CurWalletList,
 	% 	TXs
 	% ).
+
+%% @doc Start TX tracking database
 
 filter_all_out_of_order_txs(WalletList, InTXs) ->
 	filter_all_out_of_order_txs(WalletList, InTXs, []).

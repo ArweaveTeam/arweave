@@ -241,7 +241,17 @@ try_apply_block(_, NextB, _TXs, B, RecallB) when
 		(not ?IS_BLOCK(RecallB)) ->
 	false;
 try_apply_block(HashList, NextB, TXs, B, RecallB) ->
-	{FinderReward, _} = ar_node:calculate_reward_pool(B#block.reward_pool, TXs, NextB#block.reward_addr),
+	{FinderReward, _} = 
+		ar_node:calculate_reward_pool(
+			B#block.reward_pool,
+			TXs,
+			NextB#block.reward_addr,
+			ar_node:calculate_proportion(
+				RecallB#block.block_size,
+				NextB#block.weave_size,
+				NextB#block.height
+			)
+		),
 	WalletList =
 		ar_node:apply_mining_reward(
 			ar_node:apply_txs(B#block.wallet_list, TXs),

@@ -56,6 +56,7 @@ signature_data_segment(T) ->
 	% ar:d({reward, T#tx.reward}),
 	% ar:d({last, T#tx.last_tx}),
 	% ar:d({tags, T#tx.tags}),
+	% ar:d({timestamp, T#tx.timestamp})
 	<<
 		(T#tx.owner)/binary,
 		(T#tx.target)/binary,
@@ -98,7 +99,8 @@ verify(TX, Diff, WalletList) ->
 		tx_field_size_limit(TX) and
 		tag_field_legal(TX) and
 		check_last_tx(WalletList, TX) and
-		tx_verify_hash(TX)
+		tx_verify_hash(TX) and
+		ar_node:validate_wallet_list(ar_node:apply_txs(WalletList, [TX]))
 	of
 		true -> true;
 		false ->
@@ -144,7 +146,8 @@ verify(TX, Diff, WalletList) ->
 		tx_field_size_limit(TX) and
 		tag_field_legal(TX) and
 		check_last_tx(WalletList, TX) and
-		tx_verify_hash(TX)
+		tx_verify_hash(TX) and
+		ar_node:validate_wallet_list(ar_node:apply_txs(WalletList, [TX]))
 	of
 		true -> true;
 		false ->
@@ -194,11 +197,21 @@ tx_cost_above_min(TX, Diff) ->
 %% the constant 3208 is the max byte size of each of the other fields
 %% Cost per byte is static unless size is bigger than 10mb, at which
 %% point cost per byte starts increasing linearly.
-calculate_min_tx_cost(Size, Diff) when Size < 10*1024*1024 ->
-	((Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff;
-calculate_min_tx_cost(Size, Diff) ->
-	(Size*(Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div (Diff*10*1024*1024).
+% calculate_min_tx_cost(Size, Diff) when Size < 10*1024*1024 ->
+% 	((Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div Diff;
+% calculate_min_tx_cost(Size, Diff) ->
+% 	(Size*(Size+3208) * ?COST_PER_BYTE * ?DIFF_CENTER) div (Diff*10*1024*1024).
 
+calculate_min_tx_cost(DataSize, Diff) when Diff >= ?DIFF_CENTER ->
+	Size = 3210 + DataSize,
+	CurveSteepness = 2,
+	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (Diff - (?DIFF_CENTER - CurveSteepness)),
+	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024)));
+calculate_min_tx_cost(DataSize, _Diff) ->
+	Size = 3210 + DataSize,
+	CurveSteepness = 2,
+	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (?DIFF_CENTER - (?DIFF_CENTER - CurveSteepness)),
+	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024))).
 %% @doc Check whether each field in a transaction is within the given
 %% byte size limits
 tx_field_size_limit(TX) ->
@@ -210,8 +223,7 @@ tx_field_size_limit(TX) ->
 			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
 			(byte_size(TX#tx.target) =< 32) and
 			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
-			% 65mb initial limit on TX data size, plans to be removed in future releases.
-			(byte_size(TX#tx.data) =< 65000000) and
+			(byte_size(TX#tx.data) =< 6000000) and
 			(byte_size(TX#tx.signature) =< 512) and
 			(byte_size(integer_to_binary(TX#tx.reward)) =< 21);
 		false -> false

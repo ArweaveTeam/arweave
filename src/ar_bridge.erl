@@ -102,15 +102,9 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 		{add_tx, TX} -> %, _OriginPeer} ->
 			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, OriginPeer, Block, RecallBlock} ->
-			case lists:member(OriginPeer, S#state.ignored_peers) of
-				true -> server(S);
-				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}))
-			end;
+			server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}));
 		{add_block, OriginPeer, Block, RecallBlock, Key, Nonce} ->
-			case lists:member(OriginPeer, S#state.ignored_peers) of
-				true -> server(S);
-				false -> server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}, Key, Nonce))
-			end;
+			server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}, Key, Nonce));
 		{add_peer, remote, Peer} ->
 			case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
 				true -> server(S);
@@ -153,7 +147,8 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			ar:report(
 				[
 					{'EXIT', Term}
-				]
+				],
+				server(S)
 			);
 		error:Term ->
 			ar:report(

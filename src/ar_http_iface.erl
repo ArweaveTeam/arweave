@@ -150,6 +150,7 @@ handle('POST', [<<"block">>], Req) ->
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
 	{<<"recall_block">>, JSONRecallB} = lists:keyfind(<<"recall_block">>, 1, Struct),
 	{<<"new_block">>, JSONB} = lists:keyfind(<<"new_block">>, 1, Struct),
+	{<<"recall_size">>, RecallSize} = lists:keyfind(<<"recall_size">>, 1, Struct),
 	{<<"port">>, Port} = lists:keyfind(<<"port">>, 1, Struct),
 	{<<"key">>, KeyEnc} = lists:keyfind(<<"key">>, 1, Struct),
 	{<<"nonce">>, NonceEnc} = lists:keyfind(<<"nonce">>, 1, Struct),
@@ -183,7 +184,12 @@ handle('POST', [<<"block">>], Req) ->
 			{FinderPool, _} = ar_node:calculate_reward_pool(
 				ar_node:get_reward_pool(whereis(http_entrypoint_node)),
 				TXs,
-				BShadow#block.reward_addr
+				BShadow#block.reward_addr,
+				ar_node:calculate_proportion(
+					RecallSize,
+					BShadow#block.weave_size,
+					BShadow#block.height
+				)
 				),
 			HashList =
 				case {BShadow#block.hash_list, ar_node:get_hash_list(whereis(http_entrypoint_node))} of
@@ -264,7 +270,7 @@ handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
 	case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
-		unavailable -> {400, [], <<"Transaction verification failed.">>};
+		unavailable -> {503, [], <<"Transaction verification failed.">>};
 		Diff ->
 			FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
 			% OrigPeer =
@@ -794,6 +800,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 						[
 							{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
 							{<<"recall_block">>, ar_util:encode(RecallBHash)},
+							{<<"recall_size">>, RecallB#block.block_size},
 							{<<"port">>, Port},
 							{<<"key">>, ar_util:encode(Key)},
 							{<<"nonce">>, ar_util:encode(Nonce)}
@@ -813,6 +820,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 					[
 						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
 						{<<"recall_block">>, ar_util:encode(RecallBHash)},
+						{<<"recall_size">>, RecallB#block.block_size},
 						{<<"port">>, Port},
 						{<<"key">>, <<>>},
 						{<<"nonce">>, <<>>}
@@ -838,6 +846,7 @@ send_new_block(Host, Port, NewB, RecallB, Key, Nonce) ->
 					[
 						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
 						{<<"recall_block">>, ar_util:encode(RecallBHash)},
+						{<<"recall_size">>, RecallB#block.block_size},
 						{<<"port">>, Port},
 						{<<"key">>, ar_util:encode(Key)},
 						{<<"nonce">>, ar_util:encode(Nonce)}
@@ -1114,7 +1123,9 @@ handle_block_field_response({ok, {{<<"500">>, _}, _, _}}) -> unavailable.
 %% @doc Process the response of a /tx call.
 handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_serialize:json_struct_to_tx(Body);
+handle_tx_response({ok, {{<<"202">>, _}, _, _, _, _}}) -> pending;
 handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_tx_response({ok, {{<<"410">>, _}, _, _, _, _}}) -> gone;
 handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found.
 
 %% @doc Helper function : registers a new node as the entrypoint.
@@ -1548,10 +1559,8 @@ get_tx_by_tag_test() ->
 	ar_node:add_peers(hd(Peers), SearchServer),
 	% Generate the transaction.
 	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
-	{Priv1, Pub1} = ar_wallet:new(),
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	% Add tx to network
-	ar_node:add_tx(hd(Peers), SignedTX),
+	ar_node:add_tx(hd(Peers), TX),
 	% Begin mining
 	receive after 250 -> ok end,
 	ar_node:mine(hd(Peers)),
@@ -1568,7 +1577,6 @@ get_tx_by_tag_test() ->
 			"/arql",		
 			QueryJSON		
 		),
-	ar:d(Body),
 	TXs = ar_serialize:dejsonify(Body),
 	true =
 		lists:member(

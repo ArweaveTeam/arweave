@@ -38,7 +38,8 @@ block_to_json_struct(
         reward_addr = RewardAddr,
 		tags = Tags,
 		reward_pool = RewardPool,
-		weave_size = WeaveSize
+		weave_size = WeaveSize,
+		block_size = BlockSize
 	}) ->
 	{
 		[
@@ -73,7 +74,8 @@ block_to_json_struct(
             },
 			{tags, Tags},
 			{reward_pool, RewardPool},
-			{weave_size, WeaveSize}
+			{weave_size, WeaveSize},
+			{block_size, BlockSize}
 		]
 	}.
 %% @doc Translate a full block into JSON struct.
@@ -93,7 +95,8 @@ full_block_to_json_struct(
         reward_addr = RewardAddr,
 		tags = Tags,
 		reward_pool = RewardPool,
-		weave_size = WeaveSize
+		weave_size = WeaveSize,
+		block_size = BlockSize
 	}) ->
 	{
 		[
@@ -128,7 +131,8 @@ full_block_to_json_struct(
             },
 			{tags, Tags},
 			{reward_pool, RewardPool},
-			{weave_size, WeaveSize}
+			{weave_size, WeaveSize},
+			{block_size, BlockSize}
 		]
 	}.
 
@@ -169,7 +173,8 @@ json_struct_to_block(JSONBlock) ->
             end,
 		tags = Tags,
 		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
-		weave_size = find_value(<<"weave_size">>, BlockStruct)
+		weave_size = find_value(<<"weave_size">>, BlockStruct),
+		block_size = find_value(<<"block_size">>, BlockStruct)
 	}.
 %% @doc Translate fields parsed json from HTTP request into a full block.
 json_struct_to_full_block(JSONBlock) when is_binary(JSONBlock) ->
@@ -208,7 +213,8 @@ json_struct_to_full_block(JSONBlock) ->
             end,
 		tags = Tags,
 		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
-		weave_size = find_value(<<"weave_size">>, BlockStruct)
+		weave_size = find_value(<<"weave_size">>, BlockStruct),
+		block_size = find_value(<<"block_size">>, BlockStruct)
 	}.
 
 %% @doc Translate a transaction into JSON.

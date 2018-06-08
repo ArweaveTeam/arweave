@@ -80,10 +80,10 @@ gen_test_wallet() ->
 		fun(_) ->
 			{{Priv, Pub}, Pub} = ar_wallet:new_keyfile(),
 			Addr = ar_wallet:to_address(Pub),
-			file:write(File, [ar_util:encode(Addr) ++ "," ++ integer_to_list(Qty) ++ "\n"]),
-			file:write(File2, [ar_util:encode(Priv) ++ "," ++ ar_util:encode(Pub) ++ "\n"])
+			file:write(File, [binary_to_list(ar_util:encode(Addr)) ++ "," ++ integer_to_list(Qty) ++ "\n"]),
+			file:write(File2, [binary_to_list(ar_util:encode(Priv)) ++ "," ++ binary_to_list(ar_util:encode(Pub)) ++ "\n"])
 		end,
-		lists:seq(1,200)
+		lists:seq(1,50)
 	),
 	file:close(File),
 	file:close(File2).
@@ -105,7 +105,7 @@ server(
 				case rand:uniform(20) of
 					20 ->
 						ar:d({sim_client_large_data_tx}),
-						{Priv, Pub} = lists:nth(rand:uniform(50) + 950, KeyList),
+						{Priv, Pub} = lists:nth(rand:uniform(10) + 40, KeyList),
 						DataOpts = [
 							"dummy_data/7\.5mb",
 							"dummy_data/10mb"
@@ -115,11 +115,11 @@ server(
 							),
 						TX = create_data_tx({Priv, Pub}, Data);
 					_ ->
-						{Priv, Pub} = lists:nth(rand:uniform(50) + 950, KeyList),
+						{Priv, Pub} = lists:nth(rand:uniform(10) + 40, KeyList),
 						TX = create_random_data_tx({Priv, Pub}, 2000000)
 				end;
 			_ ->
-				{Priv, Pub} = lists:nth(rand:uniform(950), KeyList),
+				{Priv, Pub} = lists:nth(rand:uniform(40), KeyList),
 				TX = create_random_fin_tx({Priv, Pub}, KeyList, MaxTXLen)
 		end,
 		ar_http_iface:send_new_tx(hd(Peers), TX),
@@ -222,7 +222,7 @@ create_random_data_tx({Priv, Pub}, MaxTxLen) ->
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub);
 
 create_random_data_tx(KeyList, MaxTxLen) ->
-	{Priv, Pub} = lists:nth(rand:uniform(1000), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(50), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
@@ -257,8 +257,8 @@ create_random_data_tx({Priv, Pub}, MaxTxLen, OldTX) ->
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 %% @doc Create a random financial TX between two wallets of amount MaxAmount
 create_random_fin_tx(KeyList, MaxAmount) ->
-	{Priv, Pub} = lists:nth(rand:uniform(1000), KeyList),
-	{_, Dest} = lists:nth(rand:uniform(1000), KeyList),
+	{Priv, Pub} = lists:nth(rand:uniform(50), KeyList),
+	{_, Dest} = lists:nth(rand:uniform(50), KeyList),
 	% Generate and dispatch a new data transaction.
 	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),

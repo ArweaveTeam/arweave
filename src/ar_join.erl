@@ -87,7 +87,7 @@ join_peers(Peer) -> ar_http_iface:add_peer(Peer).
 %% blocks and recall blocks. Alternatively, if the blocklist is shorter than
 %% ?STORE_BLOCKS_BEHIND_CURRENT, simply get all existing blocks and recall blocks
 get_block_and_trail(_Peers, NewB, []) ->
-	ar_storage:write_block(NewB);
+	ar_storage:write_block(NewB#block { txs = [T#tx.id || T <- NewB#block.txs] });
 get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
 get_block_and_trail(_, unavailable, _, _) -> ok;
@@ -143,10 +143,13 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 %% @doc Fills node to capacity based on weave storage limit.
 fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, Written, ToWrite) ->
+	timer:sleep(10000),
 	try
 		RandBlock = lists:nth(rand:uniform(length(ToWrite)-1), ToWrite),
 		case ar_node:get_full_block(Peers, RandBlock) of
-			unavailable -> fill_to_capacity(Peers, Written, ToWrite);
+			unavailable -> 
+				timer:sleep(3000),
+				fill_to_capacity(Peers, Written, ToWrite);
 			B ->
 				ar_storage:write_block( B#block {txs = [TX#tx.id || TX <- B#block.txs] }),
 				ar_storage:write_tx(B#block.txs),
@@ -183,11 +186,11 @@ fill_to_capacity(Peers, Written, ToWrite) ->
 basic_node_join_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
-	receive after 300 -> ok end,
+	receive after 1000 -> ok end,
 	ar_node:mine(Node1),
-	receive after 300 -> ok end,
+	receive after 1000 -> ok end,
 	ar_node:mine(Node1),
-	receive after 600 -> ok end,
+	receive after 1000 -> ok end,
 	Node2 = ar_node:start([Node1]),
 	receive after 1500 -> ok end,
 	[B|_] = ar_node:get_blocks(Node2),
@@ -197,14 +200,14 @@ basic_node_join_test() ->
 node_join_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
-	receive after 300 -> ok end,
+	receive after 1000 -> ok end,
 	ar_node:mine(Node1),
-	receive after 300 -> ok end,
+	receive after 1000 -> ok end,
 	ar_node:mine(Node1),
-	receive after 300 -> ok end,
+	receive after 1000 -> ok end,
 	Node2 = ar_node:start([Node1]),
 	receive after 600 -> ok end,
 	ar_node:mine(Node2),
-	receive after 1500 -> ok end,
+	receive after 1000 -> ok end,
 	[B|_] = ar_node:get_blocks(Node1),
 	3 = (ar_storage:read_block(B))#block.height.

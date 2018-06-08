@@ -4,7 +4,7 @@
 -export([delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
--export([enough_space/1]).
+-export([enough_space/1, select_drive/2]).
 -export([calculate_disk_space/0, calculate_used_space/0, update_directory_size/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -364,22 +364,25 @@ select_drive(Disks, []) ->
 			Drives
 	end;
 select_drive(Disks, CWD) ->
-	case
-		Drives = lists:filter(
-			fun({Name, _, _}) ->
-				try
-					case string:find(Name, CWD) of
-						nomatch -> false;
-						_ -> true
+	try
+		case
+			Drives = lists:filter(
+				fun({Name, _, _}) ->
+					try
+						case string:find(Name, CWD) of
+							nomatch -> false;
+							_ -> true
+						end
+					catch _:_ -> false
 					end
-				catch _:_ -> false
-				end
-			end,
-			Disks
-		)
-	of
-		[] -> select_drive(Disks, hd(string:split(CWD, "/", trailing)));
-		Drives -> Drives
+				end,
+				Disks
+			)
+		of
+			[] -> select_drive(Disks, hd(string:split(CWD, "/", trailing)));
+			Drives -> Drives
+		end
+	catch _:_ -> select_drive(Disks, [])
 	end.
 
 %% @doc Test block storage.

@@ -5,6 +5,7 @@
 -export([calculate_recall_block/1, calculate_recall_block/2]).
 -export([generate_hash_list/1]).
 -export([is_data_on_block_list/2, is_tx_on_block_list/2]).
+-export([create_genesis_txs/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -15,15 +16,19 @@
 init() -> init(ar_util:genesis_wallets()).
 init(WalletList) -> init(WalletList, ?DEFAULT_DIFF).
 init(WalletList, StartingDiff) ->
+	% Generate and dispatch a new data transaction.
+    TXs = read_genesis_txs(),
 	B0 =
 		#block{
 			height = 0,
 			hash = crypto:strong_rand_bytes(32),
 			nonce = crypto:strong_rand_bytes(32),
-			txs = [],
+			txs = TXs,
 			wallet_list = WalletList,
 			hash_list = [],
-			diff = StartingDiff
+            diff = StartingDiff,
+            weave_size = 0,
+            block_size = 0
         },
     B1 = B0#block { last_retarget = B0#block.timestamp },
     [B1#block { indep_hash = indep_hash(B1) }].
@@ -38,7 +43,19 @@ add(Bs, TXs, HashList) ->
 add(Bs, TXs, HashList, unclaimed) ->
     add(Bs, TXs, HashList, <<>>);
 add([B|Bs], TXs, HashList, RewardAddr) ->
-    {FinderReward, RewardPool} = ar_node:calculate_reward_pool(B#block.reward_pool, TXs, RewardAddr),
+    RecallHash = ar_util:get_recall_hash(hd([B|Bs]), HashList),
+    RecallB = ar_storage:read_block(RecallHash),
+    {FinderReward, RewardPool} = 
+        ar_node:calculate_reward_pool(
+            B#block.reward_pool,
+            TXs,
+            RewardAddr,
+            ar_node:calculate_proportion(
+                RecallB#block.block_size,
+                B#block.weave_size,
+                B#block.height
+            )
+        ),
     WalletList = ar_node:apply_mining_reward(
         ar_node:apply_txs(B#block.wallet_list, TXs),
         RewardAddr,
@@ -93,11 +110,11 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
     % ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
     RecallB = ar_node:find_recall_block(HashList),
     TXs = [T#tx.id || T <- RawTXs],
-    WeaveSize = lists:foldl(
+    BlockSize = lists:foldl(
             fun(TX, Acc) ->
                 Acc + byte_size(TX#tx.data)
             end,
-            B#block.weave_size,
+            0,
             RawTXs
         ),
 	NewB =
@@ -130,7 +147,9 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
             reward_addr = RewardAddr,
             tags = Tags,
             reward_pool = RewardPool,
-            weave_size = WeaveSize
+            weave_size = B#block.weave_size + BlockSize,
+            block_size = BlockSize
+        
         },
 	[NewB#block { indep_hash = indep_hash(NewB) }|HashList].
 
@@ -209,3 +228,30 @@ is_tx_on_block_list([#block { txs = TXs }|Bs], TXID) ->
 
 is_data_on_block_list(_, _) -> false.
 
+read_genesis_txs() ->
+    {ok, Files} = file:list_dir("data/genesis_txs"),
+    lists:foldl(
+        fun(F, Acc) ->
+            file:copy("data/genesis_txs/" ++ F, "txs/" ++ F),
+            [ar_util:decode(hd(string:split(F, ".")))|Acc]
+        end,
+        [],
+        Files
+    ).
+
+create_genesis_txs() ->
+    TXs = lists:map(
+        fun({M}) ->
+            {Priv, Pub} = ar_wallet:new(),
+            LastTx = <<>>,
+            Data = unicode:characters_to_binary(M),
+            TX = ar_tx:new(Data, 0, LastTx),
+            Reward = 0,
+            SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub),
+            ar_storage:write_tx(SignedTX),
+            SignedTX
+        end,
+        ?GENESIS_BLOCK_MESSAGES
+    ),
+    file:write_file("genesis_wallets.csv", lists:map(fun(T) -> binary_to_list(ar_util:encode(T#tx.id)) ++ "," end, TXs)),
+    [T#tx.id || T <- TXs].
