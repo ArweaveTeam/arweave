@@ -94,6 +94,7 @@ verify(TX, Diff, WalletList) ->
 	% 	]
 	% ),
 	case
+		TX#tx.quantity > 0 andalso
 		tx_cost_above_min(TX, Diff) andalso
 		tx_field_size_limit(TX) andalso
 		tag_field_legal(TX) andalso
@@ -140,7 +141,8 @@ verify(TX, Diff, WalletList) ->
 	% 		{tx_verify_hash, tx_verify_hash(TX)}
 	% 	]
 	% ),
-	case 
+	case
+		TX#tx.quantity > 0 andalso
 		(ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target) andalso
 		tx_cost_above_min(TX, Diff) andalso
 		tx_field_size_limit(TX) andalso
