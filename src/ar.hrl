@@ -1,7 +1,7 @@
 %%% A collection of record structures used throughout the Arweave server.
 
 %% How should nodes on the network identify themselves?
--define(NETWORK_NAME, "arweave.TN.3").
+-define(NETWORK_NAME, "arweave.N.1").
 %% What is the current version/release number (should be an integer).
 -define(CLIENT_VERSION, 3).
 
@@ -50,7 +50,7 @@
 -define(DEFAULT_MINING_DELAY,
 	((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 %% The maximum size of a single POST body.
--define(MAX_BODY_SIZE, 5 * 1024 * 1024).
+-define(MAX_BODY_SIZE, 3 * 1024 * 1024).
 %% Default timeout value for network requests.
 -define(NET_TIMEOUT, 300 * 1000).
 %% Default timeout value for local requests
@@ -77,75 +77,10 @@
 -define(MAX_REQUESTS, 3000).
 %% Delay before mining rewards manifest
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
-%% Default list of peers if no others are specified
--define(DEFAULT_PEER_LIST,
-	[
-		{104,236,121,142,1984},
-		{107,170,220,199,1984},
-		{188,226,184,142,1984},
-		{128,199,168,25,1984},
-		{178,62,4,18,1984},
-		{207,154,238,1,1984},
-		{165,227,40,8,1984},
-		{139,59,81,47,1984}
-	]).
--define(PEER_PERMANENT_BLACKLIST,
-[
-    {52,56,88,132,1984},
-    {18,228,44,243,1984},
-    {54,191,202,164,1984},
-    {13,124,23,69,1984},
-    {18,221,54,143,1984},
-    {204,48,27,249,1984},
-    {204,48,27,8,1984},
-    {204,48,25,210,1984},
-    {159,89,225,231,1984},
-    {204,48,27,27,1984},
-    {204,48,27,17,1984},
-    {209,97,142,167,1984},
-    {209,97,142,68,1984},
-    {209,97,134,129,1984},
-    {209,97,128,161,1984},
-    {206,189,121,5,1984},
-    {209,97,142,170,1984},
-    {209,97,142,169,1984},
-    {209,97,142,143,1984},
-    {167,99,249,72,1984},
-    {167,99,241,245,1984},
-    {167,99,241,234,1984},
-    {167,99,246,120,1984},
-    {167,99,135,122,1984},
-    {167,99,249,43,1984},
-    {206,189,164,166,1984},
-    {167,99,99,34,1984},
-    {165,227,10,14,1984},
-    {165,227,4,33,1984},
-    {206,189,170,147,1984},
-    {167,99,98,48,1984},
-    {206,189,146,219,1984},
-    {206,189,86,98,1984},
-    {209,97,175,74,1984},
-    {206,189,157,247,1984},
-    {209,97,160,239,1984},
-    {209,97,160,159,1984},
-    {206,189,5,4,1984},
-    {206,189,5,3,1984},
-    {206,189,13,16,1984},
-    {206,189,5,230,1984},
-    {206,189,5,178,1984},
-    {206,189,5,91,1984},
-    {138,197,135,169,1984},
-    {159,203,60,21,1984},
-    {159,203,33,159,1984},
-    {138,197,168,215,1984},
-    {138,197,160,5,1984},
-    {138,197,131,159,1984},
-    {159,65,156,138,1984},
-    {159,89,174,32,1984},
-    {159,65,146,30,1984},
-    {159,65,146,28,1984},
-    {159,65,156,214,1984}
-]).
+%% List of default peers to connect
+-define(DEFAULT_PEER_LIST, []).
+%% Peers to never add to peer list
+-define(PEER_PERMANENT_BLACKLIST,[]).
 %% Length of time to wait (seconds) before dropping after last activity
 -define(PEER_TIMEOUT, 480).
 %% Log output directory

@@ -13,6 +13,26 @@
 
 %% @doc Start a new block list. Optionally takes a list of wallet values
 %% for the genesis block.
+-ifdef(DEBUG).
+init() -> init(ar_util:genesis_wallets()).
+init(WalletList) -> init(WalletList, ?DEFAULT_DIFF).
+init(WalletList, StartingDiff) ->
+	% Generate and dispatch a new data transaction
+	B0 =
+		#block{
+			height = 0,
+			hash = crypto:strong_rand_bytes(32),
+			nonce = crypto:strong_rand_bytes(32),
+			txs = [],
+			wallet_list = WalletList,
+			hash_list = [],
+            diff = StartingDiff,
+            weave_size = 0,
+            block_size = 0
+        },
+    B1 = B0#block { last_retarget = B0#block.timestamp },
+    [B1#block { indep_hash = indep_hash(B1) }].
+-else.
 init() -> init(ar_util:genesis_wallets()).
 init(WalletList) -> init(WalletList, ?DEFAULT_DIFF).
 init(WalletList, StartingDiff) ->
@@ -32,7 +52,7 @@ init(WalletList, StartingDiff) ->
         },
     B1 = B0#block { last_retarget = B0#block.timestamp },
     [B1#block { indep_hash = indep_hash(B1) }].
-
+-endif.
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
 add(Bs) ->
     add(Bs, []).

@@ -1149,9 +1149,21 @@ integrate_block_from_miner(
 	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
 		false ->
 			ar:report_console([{miner, self()}, invalid_block]),
-			server(
-                reset_miner(OldS)
-            );
+			case rand:uniform(5) of
+				1 -> 
+					server(
+						reset_miner(
+							OldS#state {
+								gossip = NewS,
+								txs = [], % TXs not included in the block
+								potential_txs = []
+							}
+						)
+					);
+				_ -> server(
+					reset_miner(OldS)
+				)
+			end;
 		true ->
 			ar_storage:write_tx(MinedTXs),
 			ar_storage:write_block(NextB),
@@ -1278,7 +1290,6 @@ validate(
 			{block_hash, Hash},
 			{weave_size, WeaveSize},
 			{block_size, Size},
-			%{block_timestamp, Time},
 			{block_height, HeightCheck},
 			{block_retarget_time, RetargetCheck},
 			{block_previous_check, PreviousBCheck},
@@ -1296,28 +1307,26 @@ validate(
 	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
 	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok  end,
     case Size of false -> ar:d(invalid_size); _ -> ok  end,
-	%case Time of false -> ar:d(invalid_timestamp); _ -> ok  end,
-	case HeightCheck of false -> ar:d(invalid_height); _ -> ok  end,
+ 	case HeightCheck of false -> ar:d(invalid_height); _ -> ok  end,
 	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok  end,
 	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
 	case HashlistCheck of false -> ar:d(invalid_hash_list); _ -> ok  end,
 	case WalletListCheck of false -> ar:d(invalid_wallet_list_rewards); _ -> ok  end,
 
 	(Mine =/= false)
-		and Wallet
-		and Indep
-		and Txs
-		and Retarget
-        and IndepHash
-        and Hash
-		and WeaveSize
-        and Size
-		%and Time
-		and HeightCheck
-		and RetargetCheck
-		and PreviousBCheck
-		and HashlistCheck
-		and WalletListCheck;
+		andalso Wallet
+		andalso Indep
+		andalso Txs
+		andalso Retarget
+        andalso IndepHash
+        andalso Hash
+		andalso WeaveSize
+        andalso Size
+		andalso HeightCheck
+		andalso RetargetCheck
+		andalso PreviousBCheck
+		andalso HashlistCheck
+		andalso WalletListCheck;
 validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB, _, _) ->
 	validate(undefined, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->

@@ -93,14 +93,14 @@ verify(TX, Diff, WalletList) ->
 	% 		{tx_verify_hash, tx_verify_hash(TX)}
 	% 	]
 	% ),
-	case 
-		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature) and
-		tx_cost_above_min(TX, Diff) and
-		tx_field_size_limit(TX) and
-		tag_field_legal(TX) and
-		check_last_tx(WalletList, TX) and
-		tx_verify_hash(TX) and
-		ar_node:validate_wallet_list(ar_node:apply_txs(WalletList, [TX]))
+	case
+		tx_cost_above_min(TX, Diff) andalso
+		tx_field_size_limit(TX) andalso
+		tag_field_legal(TX) andalso
+		check_last_tx(WalletList, TX) andalso
+		tx_verify_hash(TX) andalso
+		ar_node:validate_wallet_list(ar_node:apply_txs(WalletList, [TX])) andalso
+		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
 	of
 		true -> true;
 		false ->
@@ -141,13 +141,14 @@ verify(TX, Diff, WalletList) ->
 	% 	]
 	% ),
 	case 
-		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature) and
-		tx_cost_above_min(TX, Diff) and
-		tx_field_size_limit(TX) and
-		tag_field_legal(TX) and
-		check_last_tx(WalletList, TX) and
-		tx_verify_hash(TX) and
-		ar_node:validate_wallet_list(ar_node:apply_txs(WalletList, [TX]))
+		(ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target) andalso
+		tx_cost_above_min(TX, Diff) andalso
+		tx_field_size_limit(TX) andalso
+		tag_field_legal(TX) andalso
+		check_last_tx(WalletList, TX) andalso
+		tx_verify_hash(TX) andalso
+		ar_node:validate_wallet_list(ar_node:apply_txs(WalletList, [TX])) andalso
+		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
 	of
 		true -> true;
 		false ->
