@@ -1154,7 +1154,7 @@ integrate_block_from_miner(
 					server(
 						reset_miner(
 							OldS#state {
-								gossip = NewS,
+								gossip = NewS#state.gossip,
 								txs = [], % TXs not included in the block
 								potential_txs = []
 							}
