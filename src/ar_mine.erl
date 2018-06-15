@@ -1,6 +1,5 @@
 -module(ar_mine).
--export([start/5]).
--export([change_data/2, stop/1, validate/3, schedule_hash/1, miner/2, next_diff/1]).
+-export([start/5, change_data/2, stop/1, validate/3, schedule_hash/1, miner/2, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -235,7 +234,8 @@ validate(DataSegment, Nonce, NewDiff) ->
         _ -> false
     end.
 
-%%% Tests
+
+%%% Tests: ar_mine
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->
