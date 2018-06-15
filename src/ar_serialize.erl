@@ -1,27 +1,24 @@
 -module(ar_serialize).
--export([full_block_to_json_struct/1, block_to_json_struct/1, json_struct_to_block/1, json_struct_to_full_block/1, tx_to_json_struct/1, json_struct_to_tx/1]).
+-export([full_block_to_json_struct/1, block_to_json_struct/1, json_struct_to_block/1, json_struct_to_full_block/1]).
+-export([tx_to_json_struct/1, json_struct_to_tx/1]).
 -export([wallet_list_to_json_struct/1, hash_list_to_json_struct/1, json_struct_to_hash_list/1, json_struct_to_wallet_list/1]).
 -export([jsonify/1, dejsonify/1]).
 -export([query_to_json_struct/1, json_struct_to_query/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Module containing serialisation/deserialisation utility functions
-%%% for use in HTTP server.
+%%% Module containing serialisation/deserialisation utility functions for use in HTTP server.
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->
-	%lists:flatten(JSONStruct).
 	jiffy:encode(JSONStruct).	
-	%json2:encode(JSONStruct)).
 
-%% @doc Decode JSON string into JSON struct.
+%% @doc Decode JSON string into a JSON struct.
 dejsonify(<<>>) -> <<>>;
 dejsonify(JSON) ->
 	jiffy:decode(JSON).
-%   json2:decode_string(JSON).
 
-%% @doc Translate a block into JSON struct.
+%% @doc Convert a block record into a JSON struct.
 block_to_json_struct(
 	#block {
 		nonce = Nonce,
@@ -78,7 +75,8 @@ block_to_json_struct(
 			{block_size, BlockSize}
 		]
 	}.
-%% @doc Translate a full block into JSON struct.
+
+%% @doc Convert a full block record into a JSON struct.
 full_block_to_json_struct(
 	#block {
 		nonce = Nonce,
@@ -136,7 +134,7 @@ full_block_to_json_struct(
 		]
 	}.
 
-%% @doc Translate fields parsed json from HTTP request into a block.
+%% @doc Convert parsed JSON blocks fields from a HTTP request into a block record.
 json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	case dejsonify(JSONBlock) of
 		{error, Error} -> ar:report([{error, Error}]);
@@ -176,7 +174,8 @@ json_struct_to_block(JSONBlock) ->
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
 		block_size = find_value(<<"block_size">>, BlockStruct)
 	}.
-%% @doc Translate fields parsed json from HTTP request into a full block.
+
+%% @doc Convert parsed JSON blocks fields from a HTTP request into a full block record.
 json_struct_to_full_block(JSONBlock) when is_binary(JSONBlock) ->
 	case dejsonify(JSONBlock) of
 		{error, Error} -> ar:report([{error, Error}]);
@@ -217,7 +216,7 @@ json_struct_to_full_block(JSONBlock) ->
 		block_size = find_value(<<"block_size">>, BlockStruct)
 	}.
 
-%% @doc Translate a transaction into JSON.
+%% @doc Convert a transaction record into a JSON struct.
 tx_to_json_struct(
 	#tx {
 		id = ID,
@@ -256,7 +255,7 @@ tx_to_json_struct(
 		]
 	}.
 
-%% @doc Translate parsed JSON from fields to a transaction.
+%% @doc Convert parsed JSON tx fields from a HTTP request into a transaction record.
 json_struct_to_tx(JSONTX) when is_binary(JSONTX) ->
 	case dejsonify(JSONTX) of
 		{error, Error} -> ar:report([{error, Error}]);
@@ -285,7 +284,7 @@ json_struct_to_tx(JSONTX) ->
 		signature = ar_util:decode(find_value(<<"signature">>, TXStruct))
 	}.
 
-%% @doc Translate a wallet list into JSON.
+%% @doc Convert a wallet list into a JSON struct.
 wallet_list_to_json_struct([]) -> [];
 wallet_list_to_json_struct([Wallet|WalletList]) ->
     EncWallet = wallet_to_json_struct(Wallet),
@@ -299,7 +298,7 @@ wallet_to_json_struct({Address, Balance, Last}) ->
         ]
     }.
 
-%% @doc Translate parsed JSON from fields into a valid wallet list.
+%% @doc Convert parsed JSON from fields into a valid wallet list.
 json_struct_to_wallet_list(JSONList) when is_binary(JSONList) ->
 	case dejsonify(JSONList) of
 		{error, Error} -> ar:report([{error, Error}]);
@@ -317,13 +316,13 @@ json_struct_to_wallet({Wallet}) ->
     Last = ar_util:decode(find_value(<<"last_tx">>, Wallet)),
     {Address, Balance, Last}.
 
-%% @doc Translate a hash list into JSON.
+%% @doc Convert a hash list into a JSON struct.
 hash_list_to_json_struct([]) -> [];
 hash_list_to_json_struct([Hash|HashList]) ->
     EncHash = ar_util:encode(binary_to_list(Hash)),
     [EncHash | hash_list_to_json_struct(HashList)].
 
-%% @doc Translate parsed JSON from fields into a valid hash list.
+%% @doc Convert parsed JSON from fields into a valid hash list.
 json_struct_to_hash_list(JSONList) when is_binary(JSONList) ->
 	case dejsonify(JSONList) of
 		{error, Error} -> ar:report([{error, Error}]);
@@ -335,14 +334,15 @@ json_struct_to_hash_list(HashesStruct) ->
         [],
         HashesStruct
     ).
-%% @doc Find the value associated with a key in a JSON structure list.
+
+%% @doc Find the value associated with a key in parsed a JSON structure list.
 find_value(Key, List) ->
 	case lists:keyfind(Key, 1, List) of
 		{Key, Val} -> Val;
 		false -> undefined
 	end.
 
-%% @doc Convert a ARQL query into a JSON struct
+%% @doc Convert an ARQL query into a JSON struct
 query_to_json_struct({Op, Expr1, Expr2}) ->
 	{
 		[	
@@ -354,7 +354,7 @@ query_to_json_struct({Op, Expr1, Expr2}) ->
 query_to_json_struct(Expr) ->
 	ar_util:encode(Expr).
 
-%% @doc Convert a JSON struct to an ARQL query
+%% @doc Convert parsed JSON from fields into an internal ARQL query.
 json_struct_to_query(QueryJSON) ->
 	case dejsonify (QueryJSON) of
         {error, Error} -> {error, Error};
@@ -369,6 +369,8 @@ do_json_struct_to_query({Query}) ->
 do_json_struct_to_query(Query) ->
 	ar_util:decode(Query).
 
+
+%%% Tests: ar_serialize
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->
