@@ -4,7 +4,7 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% A module for managing mining of blocks on the weave.
+%%% A module for managing mining of blocks on the weave,
 
 %% State record for miners
 -record(state,{
@@ -18,7 +18,7 @@
     tags,
     diff,
     delay = 0,
-    max_miners = ?NUM_MINING_PROCESSES,
+    max_miners = ?NUM_MINING_PROCESSES, % number of mining process to start (ar.hrl)
     miners = [],
     nonces
 }).
@@ -31,6 +31,7 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
     Parent = self(),
     Timestamp = os:system_time(seconds),
     Diff = next_diff(CurrentB),
+    % Ensure that the txs in which the mining process is passed validate and can be serialized.
     TXs =
         lists:filter(
             fun(T) -> ar_tx:verify(T, Diff, CurrentB#block.wallet_list) end,
@@ -63,7 +64,6 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
         end
     ),
     PID ! mine,
-    %refresh_data_timer(PID),
     PID.
 
 
@@ -94,22 +94,22 @@ server(
         max_miners = Max
 	}) ->
 	receive
+        %% @doc Stop the mining process killing all the workers.
 		stop ->
-            % Kill all active workers
             lists:foreach(
                 fun(Miner) -> Miner ! stop end,
                 Miners
             ),
             ok;
+        %% @doc Update the miner to mine on a new set of data.
 		{new_data, RawTXs} ->
-            % Kill all active workers
             lists:foreach(
                 fun(Miner) -> Miner ! stop end,
                 Miners
             ),
-            % Send mine message to self
+            % Restart mining with new TXs.
             self() ! mine,
-            % Continue server loop with new block_data_segment
+            % Update mine loop to mine on the newly provided data.
             NewTimestamp = os:system_time(seconds),
             NewDiff = next_diff(CurrentB),
             NewTXs =
@@ -138,6 +138,7 @@ server(
                     diff = NewDiff
                 }
             );
+        %% @doc Refresh the mining data in case of diff change.
         {refresh_data, PID} ->
             ar:d({miner_data_refreshed}),
             spawn(
@@ -147,31 +148,29 @@ server(
                 end
             ),
             server(S);
+        %% @doc Spawn the hashing worker processes and begin to mine.
 		mine ->
-            % Spawn the list of worker processes
             Workers =
                 lists:map(
                     fun(_) -> spawn(?MODULE, miner, [S, self()]) end,
                     lists:seq(1, Max)
                 ),
-            % Tell each worker to start hashing
             lists:foreach(
                 fun(Worker) -> Worker ! hash end,
                 Workers
             ),
-            % Continue server loop
             server(
                 S#state {
                     miners = Workers
                 }
             );
+        %% @doc Handle a potential solution for the mining puzzle.
+        %% Returns the solution back to the node to verify and ends the process.
         {solution, Hash, Nonce} ->
-            % Kill all active workers
             lists:foreach(
                 fun(Miner) -> Miner ! stop end,
                 Miners
             ),
-            % Send work complete data back to parent for verification
             Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
     end.
 
@@ -192,16 +191,19 @@ miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Su
             end
     end.
 
+%% @doc Converts a boolean value to a binary of 0 or 1.
 bool_to_binary(true) -> <<1>>;
 bool_to_binary(false) -> <<0>>.
 
+%% @doc A simple boolean coinflip.
 coinflip() ->
     case rand:uniform(2) of
         1 -> true;
         2 -> false
 end.
 
-%% @doc Schedule a hashing attempt
+%% @doc Schedule a hashing attempt.
+%% Hashing attempts can be delayed for testing purposes.
 schedule_hash(S = #state { delay = 0 }) ->
     self() ! hash,
     S;
@@ -210,8 +212,9 @@ schedule_hash(S = #state { delay = Delay }) ->
     spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
     S.
 
-%% @doc Given a block, calculate what the difficulty for the next block should
-%% be, given the current system time
+%% @doc Given a block calculate what the difficulty to mine on for the next block.
+%% Difficulty is retargeted at each ?RETARGET_BlOCKS blocks specified in ar.hrl.
+%% This is done in attempt to maintain on average a fixed block time.
 next_diff(CurrentB) ->
     Timestamp = os:system_time(seconds),
     case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
@@ -224,9 +227,9 @@ next_diff(CurrentB) ->
         false -> CurrentB#block.diff
     end.
 
-%% @doc Validate that a hash and a nonce satisfy the difficulty.
+%% @doc Validate that a given hash and a nonce satisfy the difficulty requirement.
 validate(DataSegment, Nonce, NewDiff) ->
-    % ar:d({mine_validate, {data, DataSegment}, {nonce, Nonce}, {diff, NewDiff}, {ts, Timestamp}}),
+    % ar:d({ar_mine_validate, {data, DataSegment}, {nonce, Nonce}, {diff, NewDiff}}),
     case NewHash = ar_weave:hash(DataSegment, Nonce) of
         << 0:NewDiff, _/bitstring >> -> NewHash;
         _ -> false
