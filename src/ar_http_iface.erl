@@ -10,9 +10,9 @@
 -include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Exposes access to an internal Archain network to external nodes.
+%%% Exposes access to an internal Arweave client to external nodes on the network.
 
-%% @doc Start the archain HTTP API and Returns a process ID.
+%% @doc Start the Arweave HTTP API and returns a process ID.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
 	spawn(
@@ -49,9 +49,37 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 
 %% @doc Main function to handle a request to the nodes HTTP server.
 %%
-%% TODO: Add list detailing all available endpoints
+%% Available endpoints (more information can be found at the respective functions)
+%% GET /info
+%% GET /tx/pending
+%% GET /tx/{id}
+%% GET /tx/{id}/data.html
+%% GET /tx/{id}/{field}
+%% POST /tx
+%% GET /block/hash/{indep_hash}
+%% GET /block/hash/{indep_hash}/{field}
+%% GET /block/hash/{indep_hash}/encrypted
+%% GET /block/hash/{indep_hash}/all
+%% GET /block/hash/{indep_hash}/all/encrypted
+%% GET /block/hash/{indep_hash}/all
+%% GET /block/height/{height}
+%% GET /block/height/{height}/{field}
+%% GET /block/current
+%% GET /current_block
+%% POST /block
+%% GET /services
+%% POST /services
+%% GET /peers
+%% POST /peers
+%% POST /peers/port/{port}
+%% GET /hash_list
+%% GET /wallet_list
+%% GET /wallet/{address}/balance
+%% GET /wallet/{address}/last_tx
+%% GET /price/{bytes}
 %%
-%% NB: Blocks and transactions are transmitted between HTTP nodes in JSON format.
+%% NB: Blocks and transactions are transmitted between HTTP nodes in a JSON encoded format.
+%% To find the specifics regarding this look at ar_serialize module.
 
 handle(Req, _Args) ->
 	update_performance_list(Req),
@@ -59,7 +87,6 @@ handle(Req, _Args) ->
 
 %% @doc Return network information from a given node.
 %% GET request to endpoint /info
-%% GET request to endpoint /
 handle('GET', [], _Req) ->
 	return_info();
 handle('GET', [<<"info">>], _Req) ->
@@ -167,7 +194,7 @@ handle('POST', [<<"block">>], Req) ->
 					),
 			TXs = lists:foldr(
 				fun(T, Acc) ->
-					%state contains it
+					% Check if the node state contains the referenced TX.
 					case [TX || TX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node)), TX#tx.id == T] of
 						[] ->
 							case ar_storage:read_tx(T) of
@@ -212,7 +239,6 @@ handle('POST', [<<"block">>], Req) ->
 							List -> tl(List)
 						end
 				end,
-			%ar:d({hashlist, HashList}),
 			WalletList =
 				ar_node:apply_mining_reward(
 					ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
@@ -485,6 +511,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
 		[Head|HashList] ->
+			% If the full block being requested is the recall block do not return.
 			case
 				(ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList)), Head, HashList)) and
 				((length(HashList) + 1) > 10)
@@ -809,7 +836,7 @@ send_new_block(Host, Port, NewB, RecallB) ->
 				)
 
 			);
-		%TODO: 
+		% TODO: Clean up function, duplication of code unneccessary.
 		_ ->
 			ar_httpc:request(
 			<<"POST">>,
@@ -856,7 +883,7 @@ send_new_block(Host, Port, NewB, RecallB, Key, Nonce) ->
 
 		).
 
-%% @doc Add peer (self) to a remote host.
+%% @doc Request to be added as a peer to a remote host.
 add_peer(Host) ->
 	ar_httpc:request(
 		<<"POST">>,
@@ -884,7 +911,7 @@ get_current_block(Host) ->
 	).
 
 %% @doc Get the minimum cost that a remote peer would charge for
-%% A transaction of data size Size
+%% a transaction of the given data size in bytes.
 get_tx_reward(Host, Size) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
@@ -897,8 +924,6 @@ get_tx_reward(Host, Size) ->
 
 %% @doc Retreive a block by height or hash from a remote peer.
 get_block(Host, Height) when is_integer(Height) ->
-	%ar:report_console([{req_getting_block_by_height, Height}]),
-	%ar:d([getting_new_block, {host, Host}, {height, Height}]),
 	handle_block_response(
 		ar_httpc:request(
 			<<"GET">>,
@@ -908,8 +933,6 @@ get_block(Host, Height) when is_integer(Height) ->
 	 	)
 	);
 get_block(Host, Hash) when is_binary(Hash) ->
-	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_block_response(
 		ar_httpc:request(
 			<<"GET">>,
@@ -919,7 +942,8 @@ get_block(Host, Hash) when is_binary(Hash) ->
 	 	)
 	).
 
-%% @doc Get a block in encrypted format from a remote peer.
+%% @doc Get an encrypted block from a remote peer.
+%% Used when the next block is the recall block.
 get_encrypted_block(Host, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
@@ -933,7 +957,6 @@ get_encrypted_block(Host, Hash) when is_binary(Hash) ->
 	).
 
 %% @doc Get a specified subfield from the block with the given hash
-%% or height from a remote peer
 get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host,[] Host}, {hash, Hash}]),
@@ -945,6 +968,7 @@ get_block_subfield(Host, Hash, Subfield) when is_binary(Hash) ->
 			[]
 		)
 	);
+%% @doc Get a specified subfield from the block with the given height
 get_block_subfield(Host, Height, Subfield) when is_integer(Height) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
