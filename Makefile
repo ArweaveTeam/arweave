@@ -1,5 +1,8 @@
 .DEFAULT_GOAL = test_all
 
+DIALYZER = dialyzer
+PLT_APPS = erts kernel stdlib sasl inets ssl public_key crypto compiler  mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
+
 test_all: test test_apps
 
 test: all
@@ -88,3 +91,12 @@ testnet-docker: docker-image
 dev-chain-docker: docker-image
 	docker run --cpus=0.5 --rm --name arweave-dev-chain --publish 1984:1984 arweave \
 		no_auto_join init mine peer 127.0.0.1:9
+
+build-plt:
+	$(DIALYZER) --build_plt --output_plt .arweave.plt \
+	--apps $(PLT_APPS)
+
+dialyzer:
+	$(DIALYZER) --fullpath  --src -r ./src -r ./lib/*/src ./lib/pss \
+	-I ./lib/*/include  --plt .arweave.plt --no_native \
+	-Werror_handling -Wrace_conditions
