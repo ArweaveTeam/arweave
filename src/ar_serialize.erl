@@ -293,7 +293,7 @@ wallet_to_json_struct({Address, Balance, Last}) ->
     {
         [
             {address, ar_util:encode(Address)},
-            {balance, integer_to_list(Balance)},
+            {balance, list_to_binary(integer_to_list(Balance))},
             {last_tx, ar_util:encode(Last)}
         ]
     }.
