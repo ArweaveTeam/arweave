@@ -6,6 +6,7 @@
 -export([start_link/1]).
 -export([ignore_id/2]).
 -export([ignore_peer/2]).
+-export([is_id_ignored/2]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -86,6 +87,12 @@ ignore_peer(_PID, []) -> ok;
 ignore_peer(PID, Peer) ->
 	PID ! {ignore_peer, Peer}.
 
+is_id_ignored(PID , ID) ->
+	PID ! {is_id_ignored, ID, self()},
+	receive
+		{ignored_indeed, X} -> X
+	after ?LOCAL_NET_TIMEOUT -> false
+	end.
 
 %%% INTERNAL FUNCTIONS
 
@@ -117,6 +124,8 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			server(S);
 		{update_peers, remote, Peers} ->
 			server(S#state {external_peers = Peers});
+		{is_id_ignored, ID, Sender} ->
+			Sender ! {ignored_indeed,  lists:member(ID, S#state.processed)};
 		Msg when is_record(Msg, gs_msg) ->
 			case ar_gossip:recv(GS0, Msg) of
 				{_, ignore} ->

@@ -185,109 +185,20 @@ handle('POST', [<<"block">>], Req) ->
 	Nonce = ar_util:decode(NonceEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
-		true ->
-			OrigPeer =
-				ar_util:parse_peer(
-					bitstring_to_list(elli_request:peer(Req))
-					++ ":"
-					++ integer_to_list(Port)
-					),
-			TXs = lists:foldr(
-				fun(T, Acc) ->
-					% Check if the node state contains the referenced TX.
-					case [TX || TX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node)), TX#tx.id == T] of
-						[] ->
-							case ar_storage:read_tx(T) of
-								unavailable ->
-									Acc;
-								TX -> [TX|Acc]
-							end;
-						[TX|_] -> [TX|Acc]
-					end
-				end,
-				[],
-				BShadow#block.txs
-			),
-			{FinderPool, _} = ar_node:calculate_reward_pool(
-				ar_node:get_reward_pool(whereis(http_entrypoint_node)),
-				TXs,
-				BShadow#block.reward_addr,
-				ar_node:calculate_proportion(
-					RecallSize,
-					BShadow#block.weave_size,
-					BShadow#block.height
-				)
-				),
-			HashList =
-				case {BShadow#block.hash_list, ar_node:get_hash_list(whereis(http_entrypoint_node))} of
-					{[], []} -> [];
-					{[], N} -> N;
-					{S, []} -> S;
-					{S, N} ->
-						S ++
-						case lists:dropwhile(
-								fun(X) ->
-									case S of
-										[] -> false;
-										_ -> not (X == lists:last(S))
-										end
-								end,
-								N
-							)
-						of
-							[] -> S ++ N;
-							List -> tl(List)
-						end
-				end,
-			WalletList =
-				ar_node:apply_mining_reward(
-					ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
-					BShadow#block.reward_addr,
-					FinderPool,
-					BShadow#block.height
-				),
-			B = BShadow#block { wallet_list = WalletList, hash_list = HashList },
-			RecallHash = ar_util:decode(JSONRecallB),
-			RecallB =
-				case ar_storage:read_block(RecallHash) of
-					unavailable ->
-						case ar_storage:read_encrypted_block(RecallHash) of
-							unavailable ->
-								FullBlock = ar_http_iface:get_full_block(OrigPeer, RecallHash),					
-								case ?IS_BLOCK(FullBlock)  of
-									true ->
-										Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
-										ar_storage:write_tx(FullBlock#block.txs),
-										ar_storage:write_block(Recall),
-										Recall;
-									false -> unavailable
-								end;
-							EncryptedRecall ->
-								FBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce),
-								case FBlock of
-									unavailable -> unavailable;
-									FullBlock ->
-										Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
-										ar_storage:write_tx(FullBlock#block.txs),
-										ar_storage:write_block(Recall),
-										Recall
-								end
-						end;
-					Recall -> Recall
-				end,
+		false -> {404, [], <<"Invalid Block">>};
+		true  -> case ar_bridge:is_id_ignored(whereis(ar_bridge), BShadow#block.indep_hash) of
+			true -> {409, <<"Block already processed.">>};
+			false ->
+				B= ar_block:generate_block_from_shadow(BShadow,RecallSize),
+				RecallHash = ar_util:decode(JSONRecallB),
+				OrigPeer =ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
+					++ ":" ++ integer_to_list(Port)),
+				RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
 				%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
 				%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-			ar_bridge:add_block(
-				whereis(http_bridge_node),
-				OrigPeer,
-				B,
-				RecallB,
-				Key,
-				Nonce
-			),
-			{200, [], <<"OK">>};
-		false ->
-			{404, [], <<"Invalid Block">>}
+				ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce),
+				{200, [], <<"OK">>}
+		end
 	end;
 
 %% @doc Share a new transaction with a peer.
@@ -1219,6 +1130,7 @@ block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
+
 
 %%% Tests
 

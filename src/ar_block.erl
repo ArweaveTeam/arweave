@@ -2,6 +2,7 @@
 -export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
 -export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2, verify_height/2, verify_last_retarget/1, verify_previous_block/2, verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([encrypt_block/2, encrypt_block/3, decrypt_block/4, encrypt_full_block/2, encrypt_full_block/3, decrypt_full_block/4, generate_block_key/2]).
+-export([generate_block_from_shadow/2, get_recall_block/5]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -343,6 +344,86 @@ verify_weave_size(NewB, OldB, TXs) ->
         OldB#block.weave_size,
         TXs
     ).
+
+% Block shadow functions
+
+generate_block_from_shadow(BShadow,RecallSize) ->
+    TXs =     lists:foldr(fun(T, Acc) ->
+        % Check if the node state contains the referenced TX.
+        case [TX || TX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node)), TX#tx.id == T] of
+            [] ->
+                case ar_storage:read_tx(T) of
+                    unavailable ->
+                        Acc;
+                    TX -> [TX|Acc]
+                end;
+            [TX|_] -> [TX|Acc]
+        end
+    end, [], BShadow#block.txs),
+    {FinderPool, _} = ar_node:calculate_reward_pool(
+        ar_node:get_reward_pool(whereis(http_entrypoint_node)),
+        TXs,
+        BShadow#block.reward_addr,
+        ar_node:calculate_proportion(
+            RecallSize,
+            BShadow#block.weave_size,
+            BShadow#block.height
+        )
+    ),
+    HashList =
+        case {BShadow#block.hash_list, ar_node:get_hash_list(whereis(http_entrypoint_node))} of
+            {[], []} -> [];
+            {[], N} -> N;
+            {S, []} -> S;
+            {S, N} ->
+                S ++
+                case lists:dropwhile(
+                        fun(X) ->
+                            case S of
+                                [] -> false;
+                                _ -> not (X == lists:last(S))
+                            end
+                        end, N) of
+                    [] -> S ++ N;
+                    List -> tl(List)
+                end
+        end,
+    WalletList = ar_node:apply_mining_reward(
+        ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
+        BShadow#block.reward_addr,
+        FinderPool,
+        BShadow#block.height
+    ),
+    BShadow#block { wallet_list = WalletList, hash_list = HashList }.
+
+
+get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
+    case ar_storage:read_block(RecallHash) of
+        unavailable ->
+            case ar_storage:read_encrypted_block(RecallHash) of
+                unavailable ->
+                    FullBlock = ar_http_iface:get_full_block(OrigPeer, RecallHash),
+                    case ?IS_BLOCK(FullBlock)  of
+                        true ->
+                            Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
+                            ar_storage:write_tx(FullBlock#block.txs),
+                            ar_storage:write_block(Recall),
+                            Recall;
+                        false -> unavailable
+                    end;
+                EncryptedRecall ->
+                    FBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce),
+                    case FBlock of
+                        unavailable -> unavailable;
+                        FullBlock ->
+                            Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
+                            ar_storage:write_tx(FullBlock#block.txs),
+                            ar_storage:write_block(Recall),
+                            Recall
+                    end
+            end;
+        Recall -> Recall
+    end.
 
 
 %% Tests
