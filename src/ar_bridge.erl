@@ -125,7 +125,8 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 		{update_peers, remote, Peers} ->
 			server(S#state {external_peers = Peers});
 		{is_id_ignored, ID, Sender} ->
-			Sender ! {ignored_indeed,  lists:member(ID, S#state.processed)};
+			Sender ! {ignored_indeed,  lists:member(ID, S#state.processed)},
+			server(S);
 		Msg when is_record(Msg, gs_msg) ->
 			case ar_gossip:recv(GS0, Msg) of
 				{_, ignore} ->

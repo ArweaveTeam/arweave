@@ -186,7 +186,7 @@ handle('POST', [<<"block">>], Req) ->
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false -> {404, [], <<"Invalid Block">>};
-		true  -> case ar_bridge:is_id_ignored(whereis(ar_bridge), BShadow#block.indep_hash) of
+		true  -> case ar_bridge:is_id_ignored(whereis(http_bridge_node), BShadow#block.indep_hash) of
 			true -> {409, <<"Block already processed.">>};
 			false ->
 				B= ar_block:generate_block_from_shadow(BShadow,RecallSize),
