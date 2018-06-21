@@ -5,12 +5,18 @@
 -include_lib("kernel/include/file.hrl").
 
 -export([normalize_range/2
-         , encode_range/2
-         , file_size/1
+        , encode_range/2
+        , file_size/1
         ]).
 
--spec normalize_range(RangeOrSet::any(), Size::integer()) ->
-                             range() | undefined | invalid_range.
+-export_type([range/0]).
+
+-type range() :: {Offset::non_neg_integer(), Length::non_neg_integer()}.
+
+-spec normalize_range(RangeOrSet, Size) -> Normalized when
+      RangeOrSet :: any(),
+      Size       :: integer(),
+      Normalized :: range() | undefined | invalid_range.
 %% @doc: If a valid byte-range, or byte-range-set of size 1
 %% is supplied, returns a normalized range in the format
 %% {Offset, Length}. Returns undefined when an empty byte-range-set
@@ -33,7 +39,7 @@ normalize_range({Offset, Length}, Size)
 normalize_range([ByteRange], Size) ->
     normalize_range(ByteRange, Size);
 normalize_range([], _Size) -> undefined;
-normalize_range(_, _Size) -> invalid_range.
+normalize_range(_, _Size)  -> invalid_range.
 
 
 -spec encode_range(Range::range() | invalid_range,
@@ -41,19 +47,23 @@ normalize_range(_, _Size) -> invalid_range.
 %% @doc: Encode Range to a Content-Range value.
 encode_range(Range, Size) ->
     [<<"bytes ">>, encode_range_bytes(Range),
-     <<"/">>, ?i2l(Size)].
+     <<"/">>, ?I2L(Size)].
 
 encode_range_bytes({Offset, Length}) ->
-    [?i2l(Offset), <<"-">>, ?i2l(Offset + Length - 1)];
+    [?I2L(Offset), <<"-">>, ?I2L(Offset + Length - 1)];
 encode_range_bytes(invalid_range) -> <<"*">>.
 
 
--spec file_size(Filename::file:name()) ->
-                       non_neg_integer() | {error, Reason}
-                           when Reason :: badarg | file:posix().
+-spec file_size(Filename) -> Size | {error, Reason} when
+      Filename :: file:name_all(),
+      Size     :: non_neg_integer(),
+      Reason   :: file:posix() | badarg | invalid_file.
 %% @doc: Get the size in bytes of the file.
 file_size(Filename) ->
     case file:read_file_info(Filename) of
-        {ok, #file_info{size = Size}} -> Size;
-        {error, Reason}               -> {error, Reason}
+        {ok, #file_info{type = regular, access = Perm, size = Size}}
+          when Perm =:= read orelse Perm =:= read_write ->
+            Size;
+        {error, Reason} -> {error, Reason};
+        _               -> {error, invalid_file}
     end.

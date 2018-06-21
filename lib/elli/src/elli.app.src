@@ -1,16 +1,33 @@
 {application, elli,
  [
-  {description, "Fast and robust web server for building high-throughput, low-latency apps"},
-  {vsn, "1.0.5"},
+  {description, "Erlang web server for HTTP APIs"},
+  {vsn, "3.1.0"},
+  {modules, [
+             elli,
+             elli_example_callback,
+             elli_example_callback_handover,
+             elli_example_middleware,
+             elli_handler,
+             elli_http,
+             elli_middleware,
+             elli_middleware_compress,
+             elli_request,
+             elli_tcp,
+             elli_test,
+             elli_util
+            ]},
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib,
-                  inets
+                  stdlib
                  ]},
   {env, []},
 
-  {maintainers,["Knut Nesheim"]},
-  {licenses,["MIT"]},
-  {links,[{"Github","https://github.com/knutin/elli"}]}
+  {maintainers, ["Eric Bailey", "Knut Nesheim", "Tristan Sloughter"]},
+  {licenses, ["MIT"]},
+  {links,
+   [
+    {"GitHub", "https://github.com/elli-lib/elli"},
+    {"Changelog", "https://github.com/elli-lib/elli/blob/develop/CHANGELOG.md"}
+   ]}
  ]}.

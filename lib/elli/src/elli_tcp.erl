@@ -1,8 +1,9 @@
-%% @doc: Wrapper for plain and SSL sockets. Based on
-%% mochiweb_socket.erl
+%%% @doc Wrapper for plain and SSL sockets.
+%%% Based on `mochiweb_socket.erl'.
 
 -module(elli_tcp).
--export([listen/3, accept/3, recv/3, send/2, close/1, setopts/2, sendfile/5, peername/1]).
+-export([listen/3, accept/3, recv/3, send/2, close/1,
+         setopts/2, sendfile/5, peername/1]).
 
 -export_type([socket/0]).
 
@@ -72,8 +73,8 @@ setopts({ssl, Socket}, Opts) ->
 
 sendfile(Fd, {plain, Socket}, Offset, Length, Opts) ->
     file:sendfile(Fd, Socket, Offset, Length, Opts);
-sendfile(_Fd, {ssl, _}, _Offset, _Length, _Opts) ->
-    throw(ssl_sendfile_not_supported).
+sendfile(Fd, {ssl, Socket}, Offset, Length, Opts) ->
+    elli_sendfile:sendfile(Fd, Socket, Offset, Length, Opts).
 
 peername({plain, Socket}) ->
     inet:peername(Socket);

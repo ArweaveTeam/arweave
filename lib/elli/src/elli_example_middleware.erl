@@ -1,3 +1,4 @@
+%% @hidden
 -module(elli_example_middleware).
 -export([handle/2, handle_event/3]).
 -behaviour(elli_handler).
@@ -8,13 +9,12 @@
 %%
 
 handle(Req, _Args) ->
-    case elli_request:path(Req) of
-        [<<"middleware">>, <<"short-circuit">>] ->
-            {200, [], <<"short circuit!">>};
-        _ ->
-            ignore
-    end.
+    do_handle(elli_request:path(Req)).
 
+do_handle([<<"middleware">>, <<"short-circuit">>]) ->
+    {200, [], <<"short circuit!">>};
+do_handle(_) ->
+    ignore.
 
 
 %%
