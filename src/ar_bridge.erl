@@ -33,7 +33,13 @@ start() -> start([]).
 start(ExtPeers) -> start(ExtPeers, []).
 start(ExtPeers, IntPeers) -> start(ExtPeers, IntPeers, ?DEFAULT_HTTP_IFACE_PORT).
 start(ExtPeers, IntPeers, Port) ->
-	ets:new(ignored_ids, [set, public, named_table]),
+	spawn(
+		fun() ->
+			ar:report([starting_blacklist_db]),
+			ets:new(ignored_ids, [set, public, named_table]),
+			receive stop -> ok end
+		end
+	),
 	receive after 250 -> ok end,
     PID =
 		spawn(
