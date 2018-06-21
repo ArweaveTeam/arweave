@@ -4,9 +4,9 @@
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1]).
 -export([start_link/1]).
--export([ignore_id/2]).
+-export([ignore_id/1]).
 -export([ignore_peer/2]).
--export([is_id_ignored/2]).
+-export([is_id_ignored/1]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -33,6 +33,8 @@ start() -> start([]).
 start(ExtPeers) -> start(ExtPeers, []).
 start(ExtPeers, IntPeers) -> start(ExtPeers, IntPeers, ?DEFAULT_HTTP_IFACE_PORT).
 start(ExtPeers, IntPeers, Port) ->
+	ets:new(ignored_ids, [set, public, named_table]),
+	receive after 250 -> ok end,
     PID =
 		spawn(
 			fun() ->
@@ -76,8 +78,8 @@ add_local_peer(PID, Node) ->
 	PID ! {add_peer, local, Node}.
 
 %% @doc Ignore messages matching the given ID.
-ignore_id(PID, ID) ->
-	PID ! {ignore_id, ID}.
+ignore_id(ID) ->
+	ets:insert(ignored_ids, {ID, ignored}).
 
 %% @doc Schedule a message timer.
 reset_timer(PID, get_more_peers) ->
@@ -87,11 +89,10 @@ ignore_peer(_PID, []) -> ok;
 ignore_peer(PID, Peer) ->
 	PID ! {ignore_peer, Peer}.
 
-is_id_ignored(PID , ID) ->
-	PID ! {is_id_ignored, ID, self()},
-	receive
-		{ignored_indeed, X} -> X
-	after ?LOCAL_NET_TIMEOUT -> undefined
+is_id_ignored(ID) ->
+	case ets:lookup(ignored_ids, ID) of
+		[{ID, ignored}] -> true;
+		[] -> false
 	end.
 
 %%% INTERNAL FUNCTIONS
@@ -104,8 +105,6 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			server(S#state { ignored_peers = [Peer|S#state.ignored_peers] });
 		{unignore_peer, Peer} ->
 			server(S#state { ignored_peers = lists:delete(Peer, S#state.ignored_peers) });
-		{ignore_id, ID} ->
-			server(S#state {processed = [ID|S#state.processed]});
 		{add_tx, TX} -> %, _OriginPeer} ->
 			server(maybe_send_to_internal(S, tx, TX));
 		{add_block, OriginPeer, Block, RecallBlock} ->
@@ -124,9 +123,6 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 			server(S);
 		{update_peers, remote, Peers} ->
 			server(S#state {external_peers = Peers});
-		{is_id_ignored, ID, Sender} ->
-			Sender ! {ignored_indeed,  lists:member(ID, S#state.processed)},
-			server(S);
 		Msg when is_record(Msg, gs_msg) ->
 			case ar_gossip:recv(GS0, Msg) of
 				{_, ignore} ->
@@ -202,10 +198,8 @@ maybe_send_to_internal(
 							}
 					end),
 			send_to_external(S, Msg),
-			S#state {
-				gossip = NewGS,
-				processed = add_processed(Type, Data, Procd)
-			}
+			add_processed(Type, Data, Procd),
+			S#state { gossip = NewGS }
 	end.
 maybe_send_to_internal(
 		S = #state {
@@ -244,9 +238,9 @@ maybe_send_to_internal(
 							}
 					end),
 			send_to_external(S, Msg, Key, Nonce),
+			add_processed(Type, Data, Procd),
 			S#state {
-				gossip = NewGS,
-				processed = add_processed(Type, Data, Procd)
+				gossip = NewGS
 			}
 	end.
 
@@ -261,10 +255,11 @@ add_processed(X, Procd) ->
 			{could_not_ignore, X},
 			{record, X}
 		]),
-	Procd.
-add_processed(tx, #tx { id = ID }, Procd) -> [ID|Procd];
+	ok.
+add_processed(tx, #tx { id = ID }, Procd) -> 
+	ignore_id(ID);
 add_processed(block, #block { indep_hash = Hash }, Procd) ->
-	[Hash|Procd];
+	ignore_id(Hash);
 add_processed(block, {_, B, _}, Procd) ->
 	add_processed(block, B, Procd);
 add_processed(X, Y, Procd) ->
@@ -273,7 +268,7 @@ add_processed(X, Y, Procd) ->
 			{could_not_ignore, X},
 			{record, Y}
 		]),
-	Procd.
+	ok.
 
 %% @doc Find the ID of a 'data', from type.
 get_id(tx, #tx { id = ID}) -> ID;
@@ -344,9 +339,9 @@ send_to_external(
 
 %% @doc Possibly send a new message to external peers.
 do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
-	(send_to_external(S#state { gossip = NewGS }, Msg))#state {
-		processed = add_processed(Msg, Procd)
-	}.
+	NewS = (send_to_external(S#state { gossip = NewGS }, Msg)),
+	add_processed(Msg, Procd),
+	NewS.
 
 %% @doc Check whether a message has already been seen.
 already_processed(_Procd, _Type, {_, not_found, _}) ->
@@ -356,5 +351,4 @@ already_processed(_Procd, _Type, {_, unavailable, _}) ->
 already_processed(Procd, Type, Data) ->
 	already_processed(Procd, Type, Data, undefined).
 already_processed(Procd, Type, Data, IP) ->
-	lists:member(get_id(Type, Data), Procd)
-	or (lists:member({get_id(Type, Data), IP}, Procd)).
+	is_ignored(get_id(Type, Data)).

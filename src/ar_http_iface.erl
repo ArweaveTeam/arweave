@@ -186,21 +186,20 @@ handle('POST', [<<"block">>], Req) ->
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false -> {404, [], <<"Invalid Block">>};
-		true  -> case ar_bridge:is_id_ignored(whereis(http_bridge_node), BShadow#block.indep_hash) of
-			undefined -> {429, <<"Too Many Requests">>};
-			true -> {409, <<"Block already processed.">>};
-			false ->
-				ar_bridge:ignore_id(whereis(http_bridge_node), BShadow#block.indep_hash),
-				B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
-				RecallHash = ar_util:decode(JSONRecallB),
-				OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
-					++ ":" ++ integer_to_list(Port)),
-				RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
-				%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
-				%ar:report_console([{recvd_block, B#block.height}, {port, Port}]),
-				ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce),
-				{200, [], <<"OK">>}
-		end
+		true  ->
+			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
+				undefined -> {429, <<"Too Many Requests">>};
+				true -> {409, <<"Block already processed.">>};
+				false ->
+					ar_bridge:ignore_id(BShadow#block.indep_hash),
+					B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
+					RecallHash = ar_util:decode(JSONRecallB),
+					OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
+						++ ":" ++ integer_to_list(Port)),
+					RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
+					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce),
+					{200, [], <<"OK">>}
+			end
 	end;
 
 %% @doc Share a new transaction with a peer.
@@ -670,7 +669,10 @@ return_info() ->
 							Hashes -> (length(Hashes) - 1)
 						end},
 					{blocks, ar_storage:blocks_on_disk()},
-					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))}
+					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
+					{queue_length,
+						erlang:process_info(whereis(http_entrypoint_node), message_queue_len)
+					}
 				]
 			}
 		)

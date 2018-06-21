@@ -94,7 +94,8 @@ encrypt_full_block(Recall, Key, Nonce) ->
     CipherText.
 
 %% @doc Decrypt a recall block
-decrypt_full_block(B, CipherText, Key, Nonce) when ?IS_BLOCK(B)-> decrypt_full_block(B#block.indep_hash, CipherText, Key, Nonce);
+decrypt_full_block(B, CipherText, Key, Nonce) when ?IS_BLOCK(B)->
+    decrypt_full_block(B#block.indep_hash, CipherText, Key, Nonce);
 decrypt_full_block(Hash, CipherText, Key, Nonce) ->
     if
         (Key == <<>>) or (Nonce == <<>>) -> unavailable;
@@ -348,8 +349,9 @@ verify_weave_size(NewB, OldB, TXs) ->
 % Block shadow functions
 
 generate_block_from_shadow(BShadow,RecallSize) ->
-    TXs =     lists:foldr(fun(T, Acc) ->
+    TXs =
         % Check if the node state contains the referenced TX.
+        lists:foldr(fun(T, Acc) ->
         case [TX || TX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node)), TX#tx.id == T] of
             [] ->
                 case ar_storage:read_tx(T) of
