@@ -1519,7 +1519,7 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 					ar:report(
 						[
 							could_not_start_mining,
-							could_not_retrieve_recall_block,
+							could_not_retrieve_recall_block
 						]
 					);
 				_ ->

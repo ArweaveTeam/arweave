@@ -473,7 +473,8 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 						true -> return_block(unavailable);
 						false ->
 							case lists:member(
-									Hash,
+									%Hash,
+									Hash = lists:nth(list_to_integer(binary_to_list(Height))+1,lists:reverse([Head|HashList])),
 									[Head|HashList]
 								) of
 								true ->
