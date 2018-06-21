@@ -187,6 +187,7 @@ handle('POST', [<<"block">>], Req) ->
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false -> {404, [], <<"Invalid Block">>};
 		true  -> case ar_bridge:is_id_ignored(whereis(http_bridge_node), BShadow#block.indep_hash) of
+			undefined -> {429, <<"Too Many Requests">>};
 			true -> {409, <<"Block already processed.">>};
 			false ->
 				B= ar_block:generate_block_from_shadow(BShadow,RecallSize),

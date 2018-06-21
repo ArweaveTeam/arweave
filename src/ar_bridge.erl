@@ -91,7 +91,7 @@ is_id_ignored(PID , ID) ->
 	PID ! {is_id_ignored, ID, self()},
 	receive
 		{ignored_indeed, X} -> X
-	after ?LOCAL_NET_TIMEOUT -> false
+	after ?LOCAL_NET_TIMEOUT -> undefined
 	end.
 
 %%% INTERNAL FUNCTIONS
