@@ -1512,30 +1512,22 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-			FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
+			%FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
+			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			case FullBlock of
-				unavailable ->
+				X when (X == unavailable) or (X == not_found) ->
 					ar:report(
 						[
-							{could_not_start_mining},
-							{could_not_retrieve_recall_block},
-							{could_not_retrieve_encrypted_recall_block}
-						]
-					);
-				not_found ->
-					ar:report(
-						[
-							{could_not_start_mining},
-							{could_not_retrieve_recall_block},
-							{could_not_retrieve_encrypted_recall_block}
+							could_not_start_mining,
+							could_not_retrieve_recall_block,
 						]
 					);
 				_ ->
-					ar_storage:write_encrypted_block(RecallHash, FullBlock),
+					ar_storage:write_block(FullBlock),
 					ar:report(
 						[
-							{could_not_start_mining},
-							{could_not_retrieve_recall_block}
+							could_not_start_mining,
+							stored_recall_block_for_foreign_verification
 						]
 					)
 			end,

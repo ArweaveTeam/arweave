@@ -134,8 +134,8 @@ unpad_binary(Binary) ->
     ar_util:rev_bin(do_unpad_binary(ar_util:rev_bin(Binary))).
 do_unpad_binary(Binary) ->
     case Binary of
-        <<0, Rest/binary >> -> do_unpad_binary(Rest);
-        <<1, Rest/binary >> -> Rest
+        << 0:8, Rest/binary >> -> do_unpad_binary(Rest);
+        << 1:8, Rest/binary >> -> Rest
     end.
 
 %% @doc Generate a hashable binary from a #block object.
