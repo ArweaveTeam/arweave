@@ -1,0 +1,6 @@
+[submodule "lib/prometheus"]
+	path = lib/prometheus
+	url = https://github.com/deadtrickster/prometheus.erl.git
+[submodule "lib/accept"]
+	path = lib/accept
+	url = https://github.com/deadtrickster/accept.git

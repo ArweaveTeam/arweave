@@ -3,23 +3,25 @@
 DIALYZER = dialyzer
 PLT_APPS = erts kernel stdlib sasl inets ssl public_key crypto compiler  mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
 
+ERL_OPTS= -pa ebin/ -pa lib/prometheus/_build/default/lib/prometheus/ebin -pa lib/accept/_build/default/lib/accept/ebin -s prometheus
+
 test_all: test test_apps
 
 test: all
-	@erl -noshell -s ar test_coverage -pa ebin/ -s init stop
+	@erl $(ERL_OPTS) -noshell -s ar test_coverage -s init stop
 
 test_apps: all
-	@erl -noshell -s ar test_apps -pa ebin/ -s init stop
+	@erl $(ERL_OPTS) -noshell -s ar test_apps -s init stop
 
 test_networks: all
-	@erl -s ar start -s ar test_networks -pa ebin/
+	@erl $(ERL_OPTS) -s ar start -s ar test_networks -s init stop
 
 tnt: test
 
 no-vlns: test_networks
 
 realistic: all
-	@erl -noshell -s ar start -s ar_test_sup start realistic -pa ebin/
+	@erl $(ERL_OPTS) -noshell -s ar start -s ar_test_sup start realistic
 
 log:
 	tail -f logs/`ls -t logs |  head -n 1`
@@ -31,8 +33,12 @@ all: ebin logs blocks
 	rm -rf priv
 	rm -rf data/mnesia
 	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
+	git submodule init
+	git submodule update
+	(cd lib/prometheus && ./rebar3 compile)
+	(cd lib/accept && ./rebar3 compile)
 	erlc +export_all -o ebin/ src/ar.erl
-	erl -noshell -s ar rebuild -pa ebin/ -s init stop
+	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
 ebin:
 	mkdir -p ebin
@@ -48,13 +54,13 @@ docs: all
 	(cd docs && erl -noshell -s ar docs -pa ../ebin -s init stop)
 
 session: all
-	erl -s ar start -pa ebin/
+	erl $(ERL_OPTS) -s ar start -pa ebin/
 
 sim_realistic: all
-	erl -pa ebin/ -s ar_network spawn_and_mine realistic
+	erl $(ERL_OPTS) -s ar_network spawn_and_mine realistic
 
 sim_hard: all
-	erl -pa ebin/ -s ar_network spawn_and_mine hard
+	erl $(ERL_OPTS) -s ar_network spawn_and_mine hard
 
 clean:
 	rm -rf data/mnesia
@@ -98,5 +104,5 @@ build-plt:
 
 dialyzer:
 	$(DIALYZER) --fullpath  --src -r ./src -r ./lib/*/src ./lib/pss \
-	-I ./lib/*/include  --plt .arweave.plt --no_native \
+	-I ./lib/*/include --plt .arweave.plt --no_native \
 	-Werror_handling -Wrace_conditions

@@ -1,6 +1,7 @@
 {'src/*', [debug_info,
            {i, "src"},
            {i, "lib/elli/include/"},
+           {i, "lib/prometheus/include/"},
            {outdir, "ebin"}]}.
 {'src/apps/*', [debug_info,
            {i, "src/"},

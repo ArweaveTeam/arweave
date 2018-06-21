@@ -10,4 +10,7 @@ else
 	SHELL_OPTS=-noinput
 fi
 
-exec erl $SHELL_OPTS -pa ebin/ -s ar rebuild -run ar main "$@"
+exec erl $SHELL_OPTS -pa ebin/ \
+	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
+	-pa lib/accept/_build/default/lib/accept/ebin \
+	-s ar rebuild -s prometheus  -run ar main "$@"
