@@ -190,9 +190,10 @@ handle('POST', [<<"block">>], Req) ->
 			undefined -> {429, <<"Too Many Requests">>};
 			true -> {409, <<"Block already processed.">>};
 			false ->
-				B= ar_block:generate_block_from_shadow(BShadow,RecallSize),
+				ar_bridge:ignore_id(whereis(http_bridge_node), BShadow#block.indep_hash),
+				B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 				RecallHash = ar_util:decode(JSONRecallB),
-				OrigPeer =ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
+				OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
 					++ ":" ++ integer_to_list(Port)),
 				RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
 				%ar_bridge:ignore_id(whereis(http_bridge_node), {B#block.indep_hash, OrigPeer}),
