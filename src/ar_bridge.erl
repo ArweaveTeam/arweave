@@ -2,7 +2,7 @@
 -export([start/0, start/1, start/2, start/3]).
 -export([add_tx/2, add_block/4, add_block/6]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
--export([get_remote_peers/1]).
+-export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
 -export([ignore_id/1]).
 -export([ignore_peer/2]).
@@ -64,6 +64,10 @@ get_remote_peers(PID) ->
 			ExternalPeers
 	after ?LOCAL_NET_TIMEOUT -> []
 	end.
+
+%% @doc Reset the remote peers list to a specific set.
+set_remote_peers(PID, Peers) ->
+	PID ! {set_peers, Peers}.
 
 %% @doc Notify the bridge of a new external block.
 add_block(PID, OriginPeer, Block, RecallBlock) ->
@@ -127,6 +131,8 @@ server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
 		{get_peers, remote, Peer} ->
 			Peer ! {remote_peers, S#state.external_peers},
 			server(S);
+		{set_peers, Peers} ->
+			server(S#state { external_peers = Peers });
 		{update_peers, remote, Peers} ->
 			server(S#state {external_peers = Peers});
 		Msg when is_record(Msg, gs_msg) ->

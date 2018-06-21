@@ -191,6 +191,7 @@ handle('POST', [<<"block">>], Req) ->
 				undefined -> {429, <<"Too Many Requests">>};
 				true -> {409, <<"Block already processed.">>};
 				false ->
+					ar:report([{sending_external_block_to_bridge, BShadow#block.indep_hash}])
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
 					B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 					RecallHash = ar_util:decode(JSONRecallB),
