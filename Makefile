@@ -58,7 +58,7 @@ sim_hard: all
 
 clean:
 	rm -rf data/mnesia
-	rm -rf ebin docs blocks logs txs priv
+	rm -rf ebin docs logs priv
 	rm -f erl_crash.dump
 
 status: clean

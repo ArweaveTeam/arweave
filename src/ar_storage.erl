@@ -91,7 +91,7 @@ write_block(B) ->
 					{block_not_written}
 				]
 			),
-			{error, enospc}
+			{error, not_enough_space}
 	end.
 -endif.
 

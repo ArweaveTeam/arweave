@@ -671,7 +671,10 @@ return_info() ->
 					{blocks, ar_storage:blocks_on_disk()},
 					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
 					{queue_length,
-						erlang:process_info(whereis(http_entrypoint_node), message_queue_len)
+						element(
+							2,
+							erlang:process_info(whereis(http_entrypoint_node), message_queue_len)
+						)
 					}
 				]
 			}
