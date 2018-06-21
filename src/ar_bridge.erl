@@ -186,7 +186,9 @@ maybe_send_to_internal(
 		Type,
 		Data) ->
 	case
-		(not already_processed(Procd, Type, Data)) andalso
+		% TODO: Is it always appropriate not to check whether the block has 
+		% already been processed?
+		% (not already_processed(Procd, Type, Data)) andalso
 		ar_firewall:scan(FW, Type, Data)
 	of
 		false ->
