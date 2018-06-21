@@ -351,4 +351,4 @@ already_processed(_Procd, _Type, {_, unavailable, _}) ->
 already_processed(Procd, Type, Data) ->
 	already_processed(Procd, Type, Data, undefined).
 already_processed(Procd, Type, Data, IP) ->
-	is_ignored(get_id(Type, Data)).
+	is_id_ignored(get_id(Type, Data)).
