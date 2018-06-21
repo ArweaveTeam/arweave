@@ -1,5 +1,5 @@
 -module(ar_manage_peers).
--export([update/1, stats/0]).
+-export([update/1, stats/0, reset/0]).
 -include("ar.hrl").
 
 %%% Manage and update peer lists.
@@ -7,7 +7,7 @@
 %% @doc Print statistics about the current peers.
 stats() ->
 	Connected = ar_bridge:get_remote_peers(http_bridge_node),
-	All = [ Peer || {peer, Peer} <- ar_meta_db:keys() ],
+	All = all_peers(),
 	io:format("Connected peers, in preference order:~n"),
 	stats(Connected),
 	io:format("Other known peers:~n"),
@@ -17,6 +17,15 @@ stats(Peers) ->
 		fun(Peer) -> format_stats(Peer, ar_httpc:get_performance(Peer)) end,
 		Peers
 	).
+
+%% @doc Reset all performance counters and connections.
+reset() ->
+	lists:map(fun ar_httpc:reset_peer/1, All = all_peers()),
+	ar_bridge:set_remote_peers(whereis(http_bridge_node), All).
+
+%% @doc Return all known peers.
+all_peers() ->
+	[ Peer || {peer, Peer} <- ar_meta_db:keys() ].
 
 %% @doc Pretty print stats about a node.
 format_stats(Peer, Perf) ->

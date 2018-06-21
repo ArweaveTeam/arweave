@@ -1,5 +1,6 @@
 -module(ar_httpc).
 -export([request/1, request/4, request/5, get_performance/1, update_timer/1]).
+-export([reset_peer/1]).
 -include("ar.hrl").
 
 %%% A wrapper library for httpc.
@@ -64,6 +65,10 @@ get_performance(IP) ->
 		not_found -> #performance{};
 		P -> P
 	end.
+
+%% @doc Reset the performance data for a given peer.
+reset_peer(IP) ->
+	ar_meta_db:put({peer, IP}, #performance{}).
 
 %% @doc Update the "last on list" timestamp of a given peer
 update_timer(IP) ->
