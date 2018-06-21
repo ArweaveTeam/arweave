@@ -6,4 +6,4 @@ blocks/*
 ebin/*
 logs/*
 .arweave.plt
-
+priv/*.so
