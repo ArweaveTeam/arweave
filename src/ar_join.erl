@@ -43,7 +43,7 @@ start(Node, RawPeers, RawNewB) ->
 							),
 							get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 							Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
-							fill_to_capacity(Peers, NewB#block.hash_list);
+							spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end);
 						false -> ok
 					end
 				end
