@@ -7,7 +7,7 @@
 -export([reregister/1, reregister/2]).
 -export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
 -include("ar.hrl").
--include("../lib/elli/include/elli.hrl").
+-include_lib("lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Exposes access to an internal Arweave client to external nodes on the network.
@@ -17,10 +17,11 @@ start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
 	spawn(
 		fun() ->
+			Config = [{mods, [{ar_metrics, []},{?MODULE, []}]}],
 			{ok, PID} =
 				elli:start_link(
 					[
-						{callback, ?MODULE},
+						{callback, elli_middleware}, {callback_args, Config},
 						{body_timeout, ?NET_TIMEOUT},
 						{header_timeout, ?CONNECT_TIMEOUT},
 						{max_body_size, ?MAX_BODY_SIZE},
@@ -82,7 +83,11 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 %% To find the specifics regarding this look at ar_serialize module.
 
 handle(Req, _Args) ->
-	update_performance_list(Req),
+	%inform ar_bridge about new peer, performance rec will be updated  from ar_metrics (this is leftover from update_performance_list)
+	case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
+		not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
+		X -> X
+	end,
 	handle(Req#req.method, elli_request:path(Req), Req).
 
 %% @doc Return network information from a given node.
@@ -610,13 +615,17 @@ handle('POST', [<<"services">>], Req) ->
 handle(_, _, _) ->
 	{500, [], <<"Request type not found.">>}.
 %% @doc Handles all other elli metadata events.
-handle_event(Type, Data, Args)
+handle_event(elli_startup, Args, Config) -> ok;
+handle_event(Type, Args, Config)
 		when (Type == request_throw)
 		or (Type == request_error)
 		or (Type == request_exit) ->
-	ar:report([{elli_event, Type}, {data, Data}, {args, Args}]);
-handle_event(_Type, _Data, _Args) -> ok.
-	%ar:report_console([{elli_event, Type}, {data, Data}, {args, Args}]).
+	ar:report([{elli_event, Type}, {args, Args}, {config, Config}]),
+	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
+	ok;
+handle_event(Type, Args, Config) ->
+	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
+	ok.
 
 %% @doc Return a block in JSON via HTTP or 404 if can't be found.
 return_block(unavailable) -> {404, [], <<"Block not found.">>};
@@ -1084,49 +1093,6 @@ reregister(Name, Node) ->
 		_ -> erlang:unregister(Name)
 	end,
 	erlang:register(Name, Node).
-
-%% @doc If a post request, update the peer performance DB
-%% For a get request, ar_httpc is doing this for us
-update_performance_list(Req) ->
-	case Req#req.method of
-		'POST' ->
-			MicroSecs = ar_util:time_difference(
-				os:timestamp(),
-				elli_request:upload_start_timestamp(Req)
-				),
-			Peer = ar_util:parse_peer(elli_request:peer(Req)),
-			Bytes = byte_size(elli_request:body(Req)),
-			store_data_time(Peer, Bytes, MicroSecs),
-			case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
-				not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
-				X -> X
-			end,
-			ok;
-		'GET' -> 
-			case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
-				not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
-				X -> X
-			end,
-			ok;
-		_ -> ok
-	end.
-
-
-%% @doc Store the request data on the peer performance DB
-store_data_time(Peer, Bytes, MicroSecs) ->
-	P =
-		case ar_meta_db:get({peer, Peer}) of
-			not_found -> #performance{};
-			X -> X
-		end,
-	ar_meta_db:put({peer, Peer},
-		P#performance {
-			transfers = P#performance.transfers + 1,
-			time = P#performance.time + MicroSecs,
-			bytes = P#performance.bytes + Bytes,
-			timeout = os:system_time(seconds)
-		}
-	).
 
 %% @doc Convert a blocks field with the given label into a string
 block_field_to_string(<<"nonce">>, Res) -> Res;
