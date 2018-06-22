@@ -145,19 +145,18 @@ fill_to_capacity(_, []) -> ok;
 fill_to_capacity(Peers, ToWrite) ->
 	timer:sleep(1000),
 	try
-		RandBlock = lists:nth(rand:uniform(length(ToWrite)-1), ToWrite),
-		case ar_node:get_full_block(Peers, RandBlock) of
+		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
+		case ar_node:get_full_block(Peers, RandHash) of
 			unavailable -> 
 				timer:sleep(3000),
 				fill_to_capacity(Peers, ToWrite);
 			B ->
-				case ar_storage:write_block( B#block {txs = [TX#tx.id || TX <- B#block.txs] }) of
+				case ar_storage:write_full_block(B) of
 					{error, _} -> disk_full;
 					_ ->
-						ar_storage:write_tx(B#block.txs),
 						fill_to_capacity(
 							Peers,
-							lists:delete(RandBlock, ToWrite)
+							lists:delete(RandHash, ToWrite)
 						)
 				end
 		end
