@@ -294,6 +294,12 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 	Peers = [Y||{_,Y} <- lists:sort([ {rand:uniform(), N} || N <- OrderedPeers])],
 	spawn(
 		fun() ->
+			ar:report(
+				[
+					{sending_tx_to_external_peers, ar_util:encode(TX#tx.id)},
+					{peers, length(Peers)}
+				]
+			),
 			lists:foldl(
 				fun(Peer, Acc) ->				
 					case (not (ar_http_iface:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
@@ -304,7 +310,7 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 					end
 				end,
 				0,
-				[ IP || IP <- Peers, not already_processed(S#state.processed, tx, TX) ]
+				Peers
 			)
 		end
 	),
@@ -317,11 +323,17 @@ send_to_external(
 		_ ->
 			spawn(
 				fun() ->
+					ar:report(
+						[
+							{sending_block_to_external_peers, ar_util:encode(NewB#block.indep_hash)},
+							{peers, length(Peers)}
+						]
+					),
 					lists:foreach(
 						fun(Peer) ->
 							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
 						end,
-						[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB) ]
+						Peers
 					)
 				end
 			)
@@ -340,11 +352,17 @@ send_to_external(
 		_ ->
 			spawn(
 				fun() ->
+					ar:report(
+						[
+							{sending_block_to_external_peers, ar_util:encode(NewB#block.indep_hash)},
+							{peers, length(Peers)}
+						]
+					),
 					lists:foreach(
 						fun(Peer) ->
 							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
 						end,
-						[ IP || IP <- Peers, not already_processed(S#state.processed, block, NewB) ]
+						Peers
 					)
 				end
 			)

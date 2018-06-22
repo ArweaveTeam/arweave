@@ -1003,6 +1003,13 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< S#state.height ->
 	% Block is lower than us, ignore it.
+	ar:report(
+		[
+			{ignoring_block_below_current, ar_util:encode(NewB#block.indep_hash)},
+			{current_height, S#state.height},
+			{proposed_block_height, NewB#block.height}
+		]
+	),
 	server(S#state { gossip = NewGS });
 % process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
 % 		when (NewB#block.height == S#state.height + 1) ->
