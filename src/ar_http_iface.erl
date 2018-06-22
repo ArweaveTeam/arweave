@@ -687,7 +687,7 @@ return_info() ->
 							[] -> 0;
 							Hashes -> (length(Hashes) - 1)
 						end},
-					{current, case HL of [] -> "not_joined"; [C|_] -> C end},
+					{current, case HL of [] -> "not_joined"; [C|_] -> ar_util:encode(C) end},
 					{blocks, ar_storage:blocks_on_disk()},
 					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
 					{queue_length,
