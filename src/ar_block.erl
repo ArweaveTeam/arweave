@@ -375,20 +375,15 @@ generate_block_from_shadow(BShadow,RecallSize) ->
     HashList =
         case {BShadow#block.hash_list, ar_node:get_hash_list(whereis(http_entrypoint_node))} of
             {[], []} -> [];
-            {[], N} -> N;
-            {S, []} -> S;
-            {S, N} ->
-                S ++
-                case lists:dropwhile(
-                        fun(X) ->
-                            case S of
-                                [] -> false;
-                                _ -> not (X == lists:last(S))
-                            end
-                        end, N) of
-                    [] -> S ++ N;
-                    List -> tl(List)
-                end
+            {[], OldHashList} -> OldHashList;
+            {ShadowHashList, []} -> ShadowHashList;
+            {ShadowHashList, OldHashList} ->
+                NewL = lists:dropwhile(fun(X) -> X =/= lists:last(ShadowHashList) end, OldHashList),
+                ShadowHashList ++
+                    case NewL of
+                        [] -> ShadowHashList ++ OldHashList;
+                        List -> tl(List)
+                    end
         end,
     WalletList = ar_node:apply_mining_reward(
         ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
