@@ -1,5 +1,5 @@
 -module(ar_storage).
--export([write_block/1, read_block/1, clear/0]).
+-export([write_block/1, write_full_block/1, read_block/1, clear/0]).
 -export([write_encrypted_block/2, read_encrypted_block/1]).
 -export([delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
@@ -94,6 +94,13 @@ write_block(B) ->
 			{error, not_enough_space}
 	end.
 -endif.
+
+%% Write a full block to disk, including writing TXs and modifying the
+%% TX list.
+write_full_block(B) ->
+	BShadow = B#block { txs = [T#tx.id || T <- B#block.txs] },
+	ar_storage:write_tx(B#block.txs),
+	ar_storage:write_block(BShadow).
 
 %% @doc Write an encrypted  block (with the hash.json as the filename) to disk.
 %% When debug is set, does not consider disk space. This is currently

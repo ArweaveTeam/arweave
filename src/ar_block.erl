@@ -381,8 +381,8 @@ generate_block_from_shadow(BShadow,RecallSize) ->
                 NewL = lists:dropwhile(fun(X) -> X =/= lists:last(ShadowHashList) end, OldHashList),
                 ShadowHashList ++
                     case NewL of
-                        [] -> ShadowHashList ++ OldHashList;
-                        List -> tl(List)
+                        [] -> OldHashList;
+                        NewL -> tl(NewL)
                     end
         end,
     WalletList = ar_node:apply_mining_reward(

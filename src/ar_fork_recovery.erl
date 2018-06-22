@@ -214,7 +214,7 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 					true ->
 						ar:report_console(
 							[
-								{applying_block, ar_util:encode(NextH)},
+								{applied_fork_recovery_block, ar_util:encode(NextH)},
 								{block_height, NextB#block.height}
 							]
 						),

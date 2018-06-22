@@ -939,11 +939,11 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			),
 			case ?IS_BLOCK(FullBlock) of
 				true ->
-					RecallFull = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
-					ar_storage:write_tx(FullBlock#block.txs),
-					ar_storage:write_block(RecallFull),
+					% TODO: Cleanup full block -> shadow generation.
+					RecallShadow = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+					ar_storage:write_full_block(FullBlock),
 					S = RawS1#state { gossip = NewGS },
-					process_new_block(S, NewGS, NewB, RecallFull, Peer, HashList);
+					process_new_block(S, NewGS, NewB, RecallShadow, Peer, HashList);
 				false ->
 					ar:d(failed_to_get_recall_block),
 					server(RawS1)
@@ -1523,7 +1523,7 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 						]
 					);
 				_ ->
-					ar_storage:write_block(FullBlock),
+					ar_storage:write_full_block(FullBlock),
 					ar:report(
 						[
 							could_not_start_mining,
