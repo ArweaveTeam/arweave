@@ -671,6 +671,7 @@ return_tx(T) ->
 %% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
 return_info() ->
+	HL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	{200, [],
 		ar_serialize:jsonify(
 			{
@@ -678,10 +679,11 @@ return_info() ->
 					{network, list_to_binary(?NETWORK_NAME)},
 					{version, ?CLIENT_VERSION},
 					{height,
-						case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+						case HL of
 							[] -> 0;
 							Hashes -> (length(Hashes) - 1)
 						end},
+					{current, case HL of [] -> "not_joined"; [C|_] -> C end},
 					{blocks, ar_storage:blocks_on_disk()},
 					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
 					{queue_length,
