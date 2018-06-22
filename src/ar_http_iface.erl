@@ -17,7 +17,7 @@ start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
 	spawn(
 		fun() ->
-			Config = [{mods, [{ar_metrics, []},{?MODULE, []}]}],
+			Config = [{mods, [{ar_blacklist, []},{ar_metrics, []},{?MODULE, []}]}],
 			{ok, PID} =
 				elli:start_link(
 					[

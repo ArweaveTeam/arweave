@@ -68,7 +68,7 @@
 %% @doc Amount of peers without a given transaction to send a new transaction to.
 -define(NUM_REGOSSIP_TX, 20).
 %% Maximum nunber of requests allowed by an IP in any 30 second period.
--define(MAX_REQUESTS, 3000).
+-define(MAX_REQUESTS, 450).
 %% @doc Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
 %% @doc List of default peers to connect

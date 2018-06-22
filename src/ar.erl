@@ -154,7 +154,6 @@ start(
 	inets:start(),
 	ar_meta_db:start(),
 	ar_tx_db:start(),
-	ar_blacklist:start(),
 	ar_key_db:start(),
 	ar_track_tx_db:start(),
 	ar_meta_db:put(port, Port),

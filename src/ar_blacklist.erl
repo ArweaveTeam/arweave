@@ -1,72 +1,54 @@
 -module(ar_blacklist).
--export([start/0]).
--export([increment_ip/1, is_blacklisted/1, maybe_blacklist_ip/1, unblacklist_ip/1]).
--include_lib("eunit/include/eunit.hrl").
--include("ar.hrl").
-%%% Defines a small in-memory metadata table for Archain nodes.
-%%% Typically used to store small peices of globally useful information
-%%% (for example: the port number used by the node).
+-behaviour(elli_handler).
 
-%% @doc Initialise the metadata storage service.
-start() ->
-	spawn(
-		fun() ->
-			ar:report([starting_blacklist_db]),
-			ets:new(?MODULE, [set, public, named_table]),
-			ets:new(list, [set, public, named_table]),
-			receive stop -> ok end
-		end
-	),
-	% Add a short wait to ensure that the table has been created
-	% before returning.
-	receive after 250 -> ok end.
+%% elli_handler callbacks
+-export([handle/2, handle_event/3]).
+-export([reset_counters/0, reset_counter/1]).
+
+-include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
+
+-define(THROTTLE_TABLE, http_throttle_list).
+-define(THROTTLE_PERIOD, 30000).
+
+handle(Req, _Config) ->
+	Peer = elli_request:peer(Req),
+	Ret= case increment_ip(Peer) of
+		true -> blacklisted(Req);
+		false -> ignore
+	end,
+%	ar:report([{?MODULE, handle},{Peer,Ret}]),
+	Ret.
+
+handle_event(elli_startup, [], Config) ->
+	ar:report([{?MODULE,starting},{handle_event, elli_startup}]),
+	ets:new(?THROTTLE_TABLE, [set, public, named_table]),
+%	{ok,_} = timer:apply_interval(?THROTTLE_PERIOD,?MODULE, reset_counters, []),
+	ok;
+handle_event(_, _, _) ->
+	ok.
+
+%private functions
+blacklisted(Req) ->
+	Body    = <<"Too Many Requests">>,
+	Size    = list_to_binary(integer_to_list(size(Body))),
+	Headers = [{"Connection", "close"}, {"Content-Length", Size}],
+	{429,  Headers, Body}.
+
+reset_counters() ->
+%	ar:report([{?MODULE, reset_counters}]),
+	true = ets:delete_all_objects(?THROTTLE_TABLE),
+	ok.
+
+reset_counter(Peer) ->
+	ar:report([{reset_counter, Peer}]),
+	ets:delete(?THROTTLE_TABLE, Peer),
+	ok.
 
 increment_ip(Peer) ->
-	case ets:lookup(?MODULE, Peer) of
-		[{Peer, Counter}] -> ets:insert(?MODULE, {Peer, Counter+1});
-		[] -> 
-			ets:insert(?MODULE, {Peer, 1}),
-			timer:apply_after(5000, ?MODULE, maybe_blacklist_ip, [Peer])
-	end.
-
-maybe_blacklist_ip(Peer) ->
-	case ets:lookup(?MODULE, Peer) of
-		[{Peer, Counter}] ->
-			if 
-				(Counter > ?MAX_REQUESTS) ->
-					ets:delete(?MODULE, Peer),
-					blacklist_ip(Peer);
-				true -> ets:delete(?MODULE, Peer)
-			end;
+	Count=ets:update_counter(?THROTTLE_TABLE, Peer, {2,1}, {Peer,0}),
+	case Count of
+		1 -> timer:apply_after(?THROTTLE_PERIOD,?MODULE, reset_counter, [Peer]);
 		_ -> ok
-	end.
-
-blacklist_ip(Peer) ->
-	case ets:lookup(list, Peer) of
-		[{Peer, 0}] -> ok;
-		_ ->
-			ar:report(
-				[
-					{blacklisting_peer, Peer},
-					{too_many_requests}
-				]
-			),
-			ets:insert(list, {Peer, 0}),
-			timer:apply_after(30000, ?MODULE, unblacklist_ip, [Peer])
-	end.
-
-unblacklist_ip(Peer) ->
-	ar:report(
-		[
-			{unblacklisting_peer, Peer},
-			{timeout_complete}
-		]
-	),
-	ets:delete(?MODULE, Peer),
-	ets:delete(list, Peer).
-
-is_blacklisted(Peer) ->
-	case ets:lookup(list, Peer) of
-		[{Peer, 0}] -> true;
-		_ -> false
-	end.
+	end,
+	Count > ?MAX_REQUESTS. % yup, just logical expr that evaulates true of false.
