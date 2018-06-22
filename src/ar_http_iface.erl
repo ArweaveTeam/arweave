@@ -162,16 +162,8 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 	TX = ar_storage:read_tx(ar_util:decode(Hash)),
 	case TX of
 		unavailable ->
-			case lists:member(
-					ar_util:decode(Hash),
-					ar_node:get_pending_txs(whereis(http_entrypoint_node))
-				) of
-				true ->
-					{202, [], <<"Pending">>};
-				false ->
-					{ok, File} = file:read_file("data/not_found.html"),
-					{404, [], File}
-			end;
+			{ok, File} = file:read_file("data/not_found.html"),
+			{404, [], File};
 		T -> {200, [], T#tx.data}
 	end;
 
