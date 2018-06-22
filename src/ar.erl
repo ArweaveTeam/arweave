@@ -146,6 +146,10 @@ start(
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
+	%register prometheus stats collector,
+	%prometheus collector app is started at cmdline
+	application:ensure_started(prometheus),
+	prometheus_registry:register_collector(prometheus_process_collector),
 	% Start apps which we depend on.
 	inets:start(),
 	ar_meta_db:start(),

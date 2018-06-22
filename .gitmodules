@@ -4,3 +4,6 @@
 [submodule "lib/accept"]
 	path = lib/accept
 	url = https://github.com/deadtrickster/accept.git
+[submodule "lib/prometheus_process_collector"]
+	path = lib/prometheus_process_collector
+	url = https://github.com/deadtrickster/prometheus_process_collector.git

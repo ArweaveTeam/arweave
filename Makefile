@@ -3,7 +3,11 @@
 DIALYZER = dialyzer
 PLT_APPS = erts kernel stdlib sasl inets ssl public_key crypto compiler  mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
 
-ERL_OPTS= -pa ebin/ -pa lib/prometheus/_build/default/lib/prometheus/ebin -pa lib/accept/_build/default/lib/accept/ebin -s prometheus
+ERL_OPTS= -pa ebin/ \
+	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
+	-pa lib/accept/_build/default/lib/accept/ebin \
+	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
+	-s prometheus
 
 test_all: test test_apps
 
@@ -37,6 +41,7 @@ all: ebin logs blocks
 	git submodule update
 	(cd lib/prometheus && ./rebar3 compile)
 	(cd lib/accept && ./rebar3 compile)
+	(cd lib/prometheus_process_collector && ./rebar3 compile && cp _build/default/lib/prometheus_process_collector/priv/*.so ../../priv)
 	erlc +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
