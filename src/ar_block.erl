@@ -325,7 +325,7 @@ verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
             ar_node:calculate_proportion(
                 RecallB#block.block_size,
                 NewB#block.weave_size,
-                NewB#block.height 
+                length(NewB#block.hash_list)
             )
         ),
     (NewB#block.reward_pool == RewardPool) and
