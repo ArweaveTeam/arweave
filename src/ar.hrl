@@ -32,7 +32,7 @@
 %% @doc The amount of the weave to store. 1.0 = 100%; 0.5 = 50% etc.
 -define(WEAVE_STORE_AMT, 1.0).
 %% @doc The number of blocks behind the most recent block to store.
--define(STORE_BLOCKS_BEHIND_CURRENT, 25).
+-define(STORE_BLOCKS_BEHIND_CURRENT, 50).
 %% @doc Specifies whether the software should be run in debug mode (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
 % -define(DEBUG, debug).
