@@ -41,7 +41,7 @@ reset_counters() ->
 	ok.
 
 reset_counter(Peer) ->
-	ar:report([{reset_counter, Peer}]),
+	%ar:report([{reset_counter, Peer}]),
 	ets:delete(?THROTTLE_TABLE, Peer),
 	ok.
 
