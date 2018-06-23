@@ -1,5 +1,5 @@
 -module(ar_weave).
--export([init/0, init/1, init/2, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
+-export([init/0, init/1, init/2, init/3, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
 -export([hash/2, indep_hash/1]).
 -export([verify_indep/2]).
 -export([calculate_recall_block/1, calculate_recall_block/2]).
@@ -15,8 +15,9 @@
 %% for the genesis block.
 -ifdef(DEBUG).
 init() -> init(ar_util:genesis_wallets()).
-init(WalletList) -> init(WalletList, ?DEFAULT_DIFF).
-init(WalletList, StartingDiff) ->
+init(WalletList) -> init(WalletList, ?DEFAULT_DIFF, 0).
+init(WalletList, Diff) -> init(WalletList, Diff, 0).
+init(WalletList, StartingDiff, RewardPool) ->
 	% Generate and dispatch a new data transaction
 	B0 =
 		#block{
@@ -28,14 +29,16 @@ init(WalletList, StartingDiff) ->
 			hash_list = [],
             diff = StartingDiff,
             weave_size = 0,
-            block_size = 0
+            block_size = 0,
+            reward_pool = RewardPool
         },
     B1 = B0#block { last_retarget = B0#block.timestamp },
     [B1#block { indep_hash = indep_hash(B1) }].
 -else.
 init() -> init(ar_util:genesis_wallets()).
 init(WalletList) -> init(WalletList, ?DEFAULT_DIFF).
-init(WalletList, StartingDiff) ->
+init(WalletList, Diff) -> init(WalletList, Diff, 0).
+init(WalletList, StartingDiff, RewardPool) ->
 	% Generate and dispatch a new data transaction.
     TXs = read_genesis_txs(),
 	B0 =
@@ -48,7 +51,8 @@ init(WalletList, StartingDiff) ->
 			hash_list = [],
             diff = StartingDiff,
             weave_size = 0,
-            block_size = 0
+            block_size = 0,
+            reward_pool = RewardPool
         },
     B1 = B0#block { last_retarget = B0#block.timestamp },
     [B1#block { indep_hash = indep_hash(B1) }].

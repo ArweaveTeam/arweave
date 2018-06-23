@@ -95,6 +95,11 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				),
 			Hashes = ar_util:wallets_from_hashes(HashList),
 			Height = ar_util:height_from_hashes(HashList),
+			RewardPool =
+				case HashList of
+					not_joined -> 0;
+					[H|_] -> (ar_storage:read_block(H))#block.reward_pool
+				end,
 			server(
 				#state {
 					gossip = Gossip,
@@ -103,6 +108,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					floating_wallet_list = Hashes,
 					mining_delay = MiningDelay,
 					reward_addr = RewardAddr,
+					reward_pool = RewardPool,
 					height = Height,
 					trusted_peers = Peers,
 					diff = Diff,
@@ -1122,7 +1128,7 @@ integrate_block_from_miner(
             end,
             0,
             TXs
-        ),
+		),
 	{FinderReward, RewardPool} = 
 		calculate_reward_pool(
 			OldPool,
@@ -1134,6 +1140,19 @@ integrate_block_from_miner(
 				length(HashList)
 			)
 		),
+	ar:report(
+		[
+			calculated_reward_for_mined_block,
+			{finder_reward, FinderReward},
+			{new_reward_pool, RewardPool},
+			{reward_address, RewardAddr},
+			{old_reward_pool, OldPool},
+			{txs, length(MinedTXs)},
+			{recall_block_size, RecallB#block.block_size},
+			{weave_size, WeaveSize},
+			{length, length(HashList)}
+		]
+	),
 	WalletList =
 		apply_mining_reward(
 			apply_txs(RawWalletList, MinedTXs),
@@ -1645,6 +1664,23 @@ filter_out_of_order_txs(WalletList, [T|RawTXs], OutTXs) ->
 	end.
 
 %%% Tests
+
+%% @doc Run a small, non-auto-mining blockweave. Mine blocks.
+tiny_network_with_reward_pool_test() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
+	Node1 = start([], B0),
+	ar_storage:write_block(B0),
+	Node2 = start([Node1], B0),
+	ar_node:set_reward_addr(Node1, << 0:256 >>),
+	receive after 500 -> ok end,
+	add_peers(Node1, Node2),
+	mine(Node1),
+	receive after 1000 -> ok end,
+	mine(Node1),
+	receive after 1000 -> ok end,
+	B2 = get_blocks(Node2),
+	2 = (hd(ar_storage:read_block(B2)))#block.height.
 
 filter_out_of_order_txs_test_slow() ->
 	ar_storage:clear(),

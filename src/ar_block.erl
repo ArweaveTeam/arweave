@@ -328,6 +328,19 @@ verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
                 length(NewB#block.hash_list)
             )
         ),
+    ar:report(
+        [
+            verifying_finder_reward,
+            {finder_reward, FinderReward},
+            {new_reward_pool, RewardPool},
+            {reward_address, OldB#block.reward_addr},
+            {old_reward_pool, OldB#block.reward_pool},
+            {txs, length(NewTXs)},
+            {recall_block_size, RecallB#block.block_size},
+            {weave_size, NewB#block.weave_size},
+            {length, length(NewB#block.hash_list)}
+        ]
+    ),
     (NewB#block.reward_pool == RewardPool) and
 	((NewB#block.wallet_list) ==
         ar_node:apply_mining_reward(
