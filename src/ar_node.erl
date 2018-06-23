@@ -1386,15 +1386,14 @@ calculate_reward_pool(OldPool, TXs, unclaimed, _Proportion) ->
 	),
 	{0, Pool};
 calculate_reward_pool(OldPool, TXs, _RewardAddr, Proportion) ->
-	Pool = lists:sum(
+	Pool = OldPool + lists:sum(
 		lists:map(
 			fun calculate_tx_reward/1,
 			TXs
 		)
 	),
 	FinderReward = erlang:trunc(Pool * Proportion),
-	RemainingPool = Pool - FinderReward,
-	{FinderReward, OldPool + RemainingPool}.
+	{FinderReward, Pool - FinderReward}.
 
 %% @doc Calculate and apply mining reward quantities to a wallet list.
 apply_mining_reward(WalletList, unclaimed, _Quantity, _Height) -> WalletList;
