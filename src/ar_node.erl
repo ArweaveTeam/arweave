@@ -100,6 +100,11 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					not_joined -> 0;
 					[H|_] -> (ar_storage:read_block(H))#block.reward_pool
 				end,
+			WeaveSize =
+					case HashList of
+						not_joined -> 0;
+						[H|_] -> (ar_storage:read_block(H))#block.weave_size
+					end,
 			server(
 				#state {
 					gossip = Gossip,
@@ -112,8 +117,8 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					height = Height,
 					trusted_peers = Peers,
 					diff = Diff,
-					last_retarget = LastRetarget
-
+					last_retarget = LastRetarget,
+					weave_size = WeaveSize
 				}
 			)
 		end
@@ -824,7 +829,8 @@ server(
 						txs = TXs,
 						potential_txs = PotentialTXs,
 						diff = NewB#block.diff,
-						last_retarget = NewB#block.last_retarget
+						last_retarget = NewB#block.last_retarget,
+						weave_size = NewB#block.weave_size
 					}
 				)
 			);
@@ -856,7 +862,8 @@ server(
 						txs = TXs,
 						potential_txs = PotentialTXs,
 						diff = NewB#block.diff,
-						last_retarget = NewB#block.last_retarget
+						last_retarget = NewB#block.last_retarget,
+						weave_size = NewB#block.weave_size
 					}
 				)
 			);
