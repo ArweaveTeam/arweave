@@ -103,7 +103,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			WeaveSize =
 					case HashList of
 						not_joined -> 0;
-						[H|_] -> (ar_storage:read_block(H))#block.weave_size
+						[H2|_] -> (ar_storage:read_block(H2))#block.weave_size
 					end,
 			server(
 				#state {
