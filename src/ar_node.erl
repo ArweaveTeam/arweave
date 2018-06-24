@@ -1296,7 +1296,7 @@ validate(
 	% TODO: Fix names
     Mine = ar_mine:validate(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce, Diff),
     Wallet = validate_wallet_list(WalletList),
-    Indep = ar_weave:verify_indep(RecallB, HashList),
+    IndepRecall = ar_weave:verify_indep(RecallB, HashList),
     Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
     Retarget = ar_retarget:validate(NewB, OldB),
     IndepHash = ar_block:verify_indep_hash(NewB),
@@ -1314,9 +1314,10 @@ validate(
 	ar:report(
 		[
 			{validate_block, ar_util:encode(NewB#block.indep_hash)},
+			{height, NewB#block.height},
 			{block_mine_validate, Mine},
 			{block_wallet_validate, Wallet},
-			{block_indep_validate, Indep},
+			{block_indep_validate, IndepRecall},
 			{block_txs_validate, Txs},
 			{block_diff_validate, Retarget},
 			{block_indep, IndepHash},
@@ -1331,9 +1332,21 @@ validate(
 		]
 	),
 
+	case IndepRecall of
+		false ->
+			ar:d(
+				[
+					{encountered_invalid_recall_block, ar_util:encode(RecallB#block.indep_hash)},
+					moving_to_invalid_block_directory
+				]
+			),
+			ar_storage:invalidate_block(RecallB);
+		_ ->
+			ok
+	end,
+
 	case Mine of false -> ar:d(invalid_nonce); _ -> ok end,
 	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok  end,
-	case Indep of false -> ar:d(invalid_recall_indep_hash); _ -> ok  end,
 	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
     case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
     case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
@@ -1348,7 +1361,7 @@ validate(
 
 	(Mine =/= false)
 		andalso Wallet
-		andalso Indep
+		andalso IndepRecall
 		andalso Txs
 		andalso Retarget
         andalso IndepHash
@@ -1555,13 +1568,23 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 						]
 					);
 				_ ->
-					ar_storage:write_full_block(FullBlock),
-					ar:report(
-						[
-							could_not_start_mining,
-							stored_recall_block_for_foreign_verification
-						]
-					)
+					case ar_weave:verify_indep(FullBlock, BHL) of
+						true ->
+							ar_storage:write_full_block(FullBlock),
+							ar:report(
+								[
+									could_not_start_mining,
+									stored_recall_block_for_foreign_verification
+								]
+							);
+						false ->
+								ar:report(
+									[
+										could_not_start_mining,
+										{received_invalid_recall_block, FullBlock#block.indep_hash}
+									]
+								)
+					end
 			end,
 			S;
 		RecallB ->

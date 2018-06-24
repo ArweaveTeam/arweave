@@ -1,6 +1,6 @@
 -module(ar_storage).
 -export([write_block/1, write_full_block/1, read_block/1, clear/0]).
--export([write_encrypted_block/2, read_encrypted_block/1]).
+-export([write_encrypted_block/2, read_encrypted_block/1, invalidate_block/1]).
 -export([delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
@@ -45,6 +45,26 @@ block_exists(Hash) ->
 		{ok, _} -> true;
 		{error, _} -> false
 	end.
+
+%% @doc Move a block into the 'invalid' block directory.
+invalidate_block(B) ->
+	TargetFile =
+		lists:flatten(
+			io_lib:format(
+				"~s/invalid/~w_~s.json",
+				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+			)
+		),
+	filelib:ensure_dir(TargetFile),
+	file:rename(
+		lists:flatten(
+			io_lib:format(
+				"~s/~w_~s.json",
+				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+			)
+		),
+		TargetFile
+	).
 
 %% @doc Write a block (with the hash.json as the filename) to disk.
 %% When debug is set, does not consider disk space. This is currently
@@ -423,7 +443,7 @@ store_and_retrieve_tx_test() ->
 % 	{error, enospc} = write_tx(Tx0),
 % 	ar_meta_db:put(disk_space, Disk).
 
-	% Test that select_drive selects the correct drive on the unix architecture
+% Test that select_drive selects the correct drive on the unix architecture
 select_drive_unix_test() ->
 	CWD = "/home/usr/dev/arweave",
 	Disks =
@@ -441,3 +461,22 @@ select_drive_windows_test() ->
 	CWD = "C:/dev/arweave",
 	Disks = [{"C:\\",1000000000,10},{"D:\\",2000000000,20}],
 	[{"C:\\",1000000000,10}] = select_drive(Disks, CWD).
+
+%% @doc Ensure blocks can be written to disk, then moved into the 'invalid'
+%% block directory.
+invalidate_block_test() ->
+	[B] = ar_weave:init(),
+	write_full_block(B),
+	invalidate_block(B),
+	ar:d({block, ar_util:encode(B#block.indep_hash)}),
+	receive after 500 -> ok end,
+	unavailable = read_block(B#block.indep_hash),
+	TargetFile =
+		lists:flatten(
+			io_lib:format(
+				"~s/invalid/~w_~s.json",
+				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+			)
+		),
+	{ok, Binary} = file:read_file(TargetFile),
+	B = ar_serialize:json_struct_to_block(Binary).
