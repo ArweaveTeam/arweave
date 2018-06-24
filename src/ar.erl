@@ -56,7 +56,8 @@
 	load_key = false,
 	pause = true,
 	disk_space = ar_storage:calculate_disk_space(),
-	used_space = ar_storage:calculate_used_space()
+	used_space = ar_storage:calculate_used_space(),
+	start_block = undefined
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -77,6 +78,7 @@ main("") ->
 		end,
 		[
 			{"peer ip:port", "Join a network on a peer (or set of peers)."},
+			{"start_block", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -121,6 +123,8 @@ main(["disk_space", Size|Rest], O) ->
 	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 main(["load_mining_key", File|Rest], O)->
 	main(Rest, O#opts { load_key = File });
+main(["start_block", IndepHash|Rest], O)->
+	main(Rest, O#opts { start_block = ar_util:decode(IndepHash) });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -142,7 +146,8 @@ start(
 		load_key = LoadKey,
 		pause = Pause,
 		disk_space = DiskSpace,
-		used_space = UsedSpace
+		used_space = UsedSpace,
+		start_block = IndepHash
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -215,7 +220,14 @@ start(
 		[
 			[
 				Peers,
-				if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff); true -> not_joined end,
+				case IndepHash of
+					undefined ->
+						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
+						true -> not_joined
+						end;
+					_ ->
+						ar_storage:read_block(IndepHash)
+				end,
 				0,
 				MiningAddress,
 				AutoJoin,
