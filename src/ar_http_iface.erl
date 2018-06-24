@@ -560,7 +560,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
 	Block = ar_storage:read_block(ar_util:decode(Hash)),
 	case Block of
 		unavailable ->
-				{404, [], <<"Not Found.">>};
+			{404, [], <<"Not Found.">>};
 		B ->
 			{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
 			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
@@ -580,6 +580,24 @@ handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 	case Block of
 		unavailable ->
 				{404, [], <<"Not Found.">>};
+		B ->
+			{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+			Result = block_field_to_string(Field, Res),
+			{200, [], Result}
+	end;
+
+%% @doc Return a given field for the the blockshadow corresponding to the current block.
+%% GET request to endpoint /block/current/{field}
+%%
+%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
+%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%
+handle('GET', [<<"block">>, <<"current">>, Field], _Req) ->
+	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	case Block of
+		unavailable ->
+			{404, [], <<"Not Found.">>};
 		B ->
 			{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
 			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
