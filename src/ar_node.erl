@@ -226,7 +226,13 @@ get_full_block(Peers, ID) when is_list(Peers) ->
 				unavailable,
 				Peers
 			);
-		_ -> make_full_block(ID)
+		B ->
+			case make_full_block(ID) of
+				unavailable ->
+					ar_storage:invalidate_block(B),
+					get_full_block(Peers, ID);
+				FinalB -> FinalB
+			end
 	end;
 get_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
@@ -312,18 +318,23 @@ retry_encrypted_full_block(Host, ID, _, Count) ->
 		B -> B
 	end.
 
-%% @doc convert a block header into a full block
+%% @doc Convert a block header into a full block.
 make_full_block(ID) ->
-	BlockHeader = ar_storage:read_block(ID),
 	case ar_storage:read_block(ID) of
 		unavailable -> unavailable;
 		BlockHeader ->
-			BlockHeader#block{ txs = 
-				ar_node:get_tx(
-					whereis(http_entrypoint_node),
-					BlockHeader#block.txs
-				)		
-			}
+			FullB =
+				BlockHeader#block{
+					txs = 
+						ar_node:get_tx(
+							whereis(http_entrypoint_node),
+							BlockHeader#block.txs
+						)
+				},
+			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
+				[] -> FullB;
+				_ -> unavailable
+			end
 	end.
 
 %% @doc Return a specific tx from a node, if it has it.
