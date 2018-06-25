@@ -234,7 +234,7 @@ handle('POST', [<<"tx">>], Req) ->
 							{200, [], <<"OK">>}
 					end
 			end
-	end.
+	end;
 		
 %% @doc Return the list of peers held by the node.
 %% GET request to endpoint /peers

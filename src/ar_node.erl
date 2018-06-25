@@ -1192,7 +1192,7 @@ integrate_block_from_miner(
 		%ar:d({validate,validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList))}),
 	case validate(NewS, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
 		false ->
-			ar:report_console([{miner, self()}, invalid_block]),
+			ar:report_console(miner_produced_invalid_block),
 			case rand:uniform(5) of
 				1 -> 
 					server(
@@ -1236,6 +1236,14 @@ integrate_block_from_miner(
 						false -> {reward_address, ar_util:encode(RewardAddr)}
 					end
 				]
+			),
+			lists:foreach(
+				fun(MinedTX) ->
+					ar:report(
+						{successfully_mined_tx_into_block, ar_util:encode(MinedTX#tx.id)}
+					)
+				end,
+				MinedTXs
 			),
 			lists:foreach(
 				fun(T) ->

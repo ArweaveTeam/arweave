@@ -132,6 +132,11 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 		ar:d({applying_fork_recovery, ar_util:encode(NextH)}),
 		case ?IS_BLOCK(NextB) of
 			false ->
+				ar:d(
+					[
+						{fork_recovery_block_retreival_failed, NextB}
+					]
+				),
 				BHashList = unavailable,
 				B = unavailable,
 				RecallB = unavailable,
@@ -141,8 +146,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 					{0, _} ->
 						ar:report(
 							[
-								{fork_recovery_failed},
-								{recovery_block_is_genesis_block}
+								fork_recovery_failed,
+								recovery_block_is_genesis_block
 								% {rejoining_on_trusted_peers}
 							]
 						),
@@ -154,8 +159,8 @@ server(S = #state {block_list = BlockList, peers = Peers, hash_list = [NextH|Has
 					{_, true} ->
 						ar:report(
 							[
-								{fork_recovery_failed},
-								{recovery_block_is_too_far_ahead}
+								fork_recovery_failed,
+								recovery_block_is_too_far_ahead
 								% {rejoining_on_trusted_peers}
 							]
 						),
