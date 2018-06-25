@@ -226,7 +226,7 @@ start(
 						true -> not_joined
 						end;
 					_ ->
-						ar_storage:read_block(IndepHash)
+						(ar_storage:read_block(IndepHash))#block.hash_list
 				end,
 				0,
 				MiningAddress,
