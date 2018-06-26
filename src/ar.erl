@@ -155,6 +155,7 @@ start(
 	%prometheus collector app is started at cmdline
 	application:ensure_started(prometheus),
 	prometheus_registry:register_collector(prometheus_process_collector),
+	prometheus_registry:register_collector(ar_metrics_collector),
 	% Start apps which we depend on.
 	inets:start(),
 	ar_meta_db:start(),
