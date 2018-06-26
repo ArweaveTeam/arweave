@@ -3,12 +3,13 @@
 -include("ar.hrl").
 -include("av/av_recs.hrl").
 -include_lib("eunit/include/eunit.hrl").
-%%% Archain firewall implementation.
 
-%% State definition. Should store compiled
-%% binary scan objects.
+%%% Arweave firewall implementation.
+
+%% State definition.
+%% Should store compiled binary scan objects.
 -record(state, {
-	sigs = []
+	sigs = [] % the set of known signatures to filter against
 }).
 
 %% @doc Start a firewall node.
@@ -21,17 +22,18 @@ start() ->
 		end
 	).
 
-%% @doc Check that a received object does not match
-%% the firewall rules.
+%% @doc Check that a received object does not match the firewall rules.
 scan(PID, Type, Data) ->
 	PID ! {scan, self(), Type, Data},
 	receive
 		{scanned, Obj, Response} -> Response
 	end.
 
-%% @doc Main server loop
-server() -> server(#state{}).
-server(S = #state{ sigs = Sigs}) ->
+%% @doc Main firewall server loop.
+%% Receives scan requests and returns whether the given contents matches
+%% the set of known 'harmful'/'ignored' signatures.
+server() -> server(#state {} ).
+server(S = #state { sigs = Sigs } ) ->
 	receive
 		{scan, PID, Type, Data} ->
 			Pass = case Type of
@@ -44,10 +46,12 @@ server(S = #state{ sigs = Sigs}) ->
 	end.
 
 %% @doc Compare a transaction against known bad signatures
-%% return true if matched, return false otherwise
+%% return true if matched, otherwise return false.
 scan_transaction(TX, Sigs) ->
 	av_detect:is_infected(TX#tx.data, Sigs).
 
+
+%% Tests: ar_firewall
 
 blacklist_transaction_test() ->
 Sigs = #sig{

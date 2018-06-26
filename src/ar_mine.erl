@@ -1,5 +1,6 @@
 -module(ar_mine).
--export([start/5, change_data/2, stop/1, validate/3, schedule_hash/1, miner/2, next_diff/1]).
+-export([start/5, change_data/2, stop/1, miner/2, schedule_hash/1]).
+-export([validate/3, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -7,19 +8,19 @@
 
 %% State record for miners
 -record(state,{
-    parent, % parent process
-    current_block,
-    recall_block,
-    txs,
-    timestamp,
-    data_segment = <<>>,
-    reward_addr,
-    tags,
-    diff,
-    delay = 0,
-    max_miners = ?NUM_MINING_PROCESSES, % number of mining process to start (ar.hrl)
-    miners = [],
-    nonces
+    parent, % miners parent process (initiator)
+    current_block, % current block held by node
+    recall_block, % recall block related to current
+    txs, % the set of txs to be mined
+    timestamp, % the current timestamp of the miner
+    data_segment = <<>>, % the data segment generated for mining
+    reward_addr, % the nodes reward address
+    tags, % the nodes block tags
+    diff, % the current network difficulty
+    delay = 0, % hashing delay used for testing
+    max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
+    miners = [], % miner worker processes
+    nonces % nonce builder to ensure entropy
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
@@ -30,11 +31,16 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
     Parent = self(),
     Timestamp = os:system_time(seconds),
     Diff = next_diff(CurrentB),
-    % Ensure that the txs in which the mining process is passed validate and can be serialized.
+    % Ensure that the txs in which the mining process is passed
+    % validate and can be serialized.
     TXs =
         lists:filter(
-            fun(T) -> ar_tx:verify(T, Diff, CurrentB#block.wallet_list) end,
-            ar_node:filter_all_out_of_order_txs(CurrentB#block.wallet_list, RawTXs)
+            fun(T) ->
+                ar_tx:verify(T, Diff, CurrentB#block.wallet_list)
+            end,
+            ar_node:filter_all_out_of_order_txs(
+                CurrentB#block.wallet_list, RawTXs
+            )
         ),
     PID = spawn(
         fun() ->
@@ -65,7 +71,6 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
     PID ! mine,
     PID.
 
-
 %% @doc Stop a running mining server.
 stop(PID) ->
 	PID ! stop.
@@ -93,28 +98,31 @@ server(
         max_miners = Max
 	}) ->
 	receive
-        %% @doc Stop the mining process killing all the workers.
+        % Stop the mining process killing all the workers.
 		stop ->
             lists:foreach(
                 fun(Miner) -> Miner ! stop end,
                 Miners
             ),
             ok;
-        %% @doc Update the miner to mine on a new set of data.
+        % Update the miner to mine on a new set of data.
 		{new_data, RawTXs} ->
             lists:foreach(
                 fun(Miner) -> Miner ! stop end,
                 Miners
             ),
-            % Restart mining with new TXs.
             self() ! mine,
             % Update mine loop to mine on the newly provided data.
             NewTimestamp = os:system_time(seconds),
             NewDiff = next_diff(CurrentB),
             NewTXs =
                 lists:filter(
-                    fun(T) -> ar_tx:verify(T, Diff, CurrentB#block.wallet_list) end,
-                    ar_node:filter_all_out_of_order_txs(CurrentB#block.wallet_list, RawTXs)
+                    fun(T) ->
+                        ar_tx:verify(T, Diff, CurrentB#block.wallet_list)
+                    end,
+                    ar_node:filter_all_out_of_order_txs(
+                        CurrentB#block.wallet_list, RawTXs
+                    )
                 ),
             server(
                 S#state {
@@ -137,7 +145,7 @@ server(
                     diff = NewDiff
                 }
             );
-        %% @doc Refresh the mining data in case of diff change.
+        % Refresh the mining data in case of diff change.
         {refresh_data, PID} ->
             ar:d({miner_data_refreshed}),
             spawn(
@@ -147,7 +155,7 @@ server(
                 end
             ),
             server(S);
-        %% @doc Spawn the hashing worker processes and begin to mine.
+        % Spawn the hashing worker processes and begin to mine.
 		mine ->
             Workers =
                 lists:map(
@@ -163,8 +171,8 @@ server(
                     miners = Workers
                 }
             );
-        %% @doc Handle a potential solution for the mining puzzle.
-        %% Returns the solution back to the node to verify and ends the process.
+        % Handle a potential solution for the mining puzzle.
+        % Returns the solution back to the node to verify and ends the process.
         {solution, Hash, Nonce} ->
             lists:foreach(
                 fun(Miner) -> Miner ! stop end,
@@ -173,9 +181,16 @@ server(
             Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
     end.
 
-%% @doc A worker process to hash the data segment searching for a solution for the given diff.
+%% @doc A worker process to hash the data segment searching for a solution
+%% for the given diff.
 %% TODO: Change byte string for nonces to bitstring
-miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Supervisor) ->
+miner(
+    S = #state {
+        data_segment = DataSegment,
+        diff = Diff,
+        nonces = Nonces
+    },
+    Supervisor) ->
     receive
         stop -> ok;
         hash ->
@@ -183,8 +198,21 @@ miner(S = #state { data_segment = DataSegment, diff = Diff, nonces = Nonces}, Su
             case validate(DataSegment, iolist_to_binary(Nonces), Diff) of
                 false -> 
                     case(length(Nonces) > 512) and coinflip() of
-                        false -> miner(S#state { nonces = [bool_to_binary(coinflip())|Nonces] }, Supervisor);
-                        true -> miner(S#state { nonces = [] }, Supervisor)
+                        false ->
+                            miner(
+                                S#state {
+                                    nonces =
+                                        [bool_to_binary(coinflip()) | Nonces]
+                                },
+                                Supervisor
+                            );
+                        true ->
+                            miner(
+                                S#state {
+                                    nonces = []
+                                },
+                                Supervisor
+                            )
                     end;
                 Hash -> Supervisor ! {solution, Hash, iolist_to_binary(Nonces)}
             end
@@ -211,8 +239,8 @@ schedule_hash(S = #state { delay = Delay }) ->
     spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
     S.
 
-%% @doc Given a block calculate what the difficulty to mine on for the next block.
-%% Difficulty is retargeted at each ?RETARGET_BlOCKS blocks specified in ar.hrl.
+%% @doc Given a block calculate the difficulty to mine on for the next block.
+%% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
 %% This is done in attempt to maintain on average a fixed block time.
 next_diff(CurrentB) ->
     Timestamp = os:system_time(seconds),
@@ -226,9 +254,9 @@ next_diff(CurrentB) ->
         false -> CurrentB#block.diff
     end.
 
-%% @doc Validate that a given hash and a nonce satisfy the difficulty requirement.
+%% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(DataSegment, Nonce, NewDiff) ->
-    % ar:d({ar_mine_validate, {data, DataSegment}, {nonce, Nonce}, {diff, NewDiff}}),
+    % ar:d({mine_val, {data, DataSegment}, {nonce, Nonce}, {diff, NewDiff}}),
     case NewHash = ar_weave:hash(DataSegment, Nonce) of
         << 0:NewDiff, _/bitstring >> -> NewHash;
         _ -> false
@@ -255,8 +283,11 @@ basic_test() ->
                 Timestamp,
                 []
             ),
-            << 0:Diff, _/bitstring >>
-                = crypto:hash(?MINING_HASH_ALG, << Nonce/binary, DataSegment/binary >>)
+            Res = crypto:hash(
+                ?MINING_HASH_ALG,
+                << Nonce/binary, DataSegment/binary >>
+            ),
+            << 0:Diff, _/bitstring >> = Res
 	end.
 
 %% @doc Ensure that we can change the data while mining is in progress.
@@ -281,8 +312,11 @@ change_data_test() ->
                 Timestamp,
                 []
             ),
-			<< 0:Diff, _/bitstring >>
-                = crypto:hash(?MINING_HASH_ALG, << Nonce/binary, DataSegment/binary >>),
+            Res = crypto:hash(
+                ?MINING_HASH_ALG,
+                << Nonce/binary, DataSegment/binary >>
+            ),
+			<< 0:Diff, _/bitstring >> = Res,
             MinedTXs == NewTXs
     end.
 
