@@ -424,7 +424,7 @@ get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_balance, self(), Addr},
 	receive
 		{balance, Addr, B} -> B
-	after ?LOCAL_NET_TIMEOUT -> 0
+	after ?LOCAL_NET_TIMEOUT -> node_unavailable
 	end;
 get_balance(Node, WalletID) ->
 	get_balance(Node, ar_wallet:to_address(WalletID)).
