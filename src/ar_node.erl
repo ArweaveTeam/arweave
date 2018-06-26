@@ -1,22 +1,54 @@
 -module(ar_node).
--export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7, stop/1]).
--export([get_blocks/1, get_block/2, get_full_block/2, get_tx/2, get_peers/1, get_wallet_list/1, get_hash_list/1, get_trusted_peers/1, get_balance/2, get_last_tx/2, get_last_tx_from_floating/2, get_pending_txs/1,get_full_pending_txs/1]).
--export([get_current_diff/1, get_diff/1, get_floating_wallet_list/1, generate_floating_wallet_list/2, find_recall_hash/2, get_all_known_txs/1, get_reward_pool/1]).
+-export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7]).
+-export([stop/1]).
+-export([get_blocks/1, get_block/2, get_full_block/2]).
+-export([get_tx/2]).
+-export([get_peers/1]).
+-export([get_wallet_list/1]).
+-export([get_hash_list/1]).
+-export([get_trusted_peers/1]).
+-export([get_balance/2]).
+-export([get_last_tx/2, get_last_tx_from_floating/2]).
+-export([get_pending_txs/1, get_full_pending_txs/1]).
+-export([get_current_diff/1, get_diff/1]).
+-export([get_floating_wallet_list/1, generate_floating_wallet_list/2]).
+-export([get_all_known_txs/1]).
+-export([get_current_block/1]).
+-export([get_reward_addr/1]).
+-export([get_reward_pool/1]).
+-export([find_recall_hash/2]).
+-export([find_recall_block/1]).
+-export([find_sync_block/1]).
 -export([mine/1, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
--export([add_tx/2, add_peers/2]).
+-export([add_tx/2]).
+-export([add_peers/2]).
 -export([calculate_reward/2, calculate_static_reward/1]).
 -export([rejoin/2]).
 -export([filter_all_out_of_order_txs/2, filter_out_of_order_txs/2]).
--export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
--export([apply_tx/2, apply_txs/2, apply_mining_reward/4, validate/5, validate/8, find_recall_block/1, validate_wallet_list/1, calculate_reward_pool/4, calculate_proportion/3]).
--export([find_sync_block/1, get_current_block/1, get_reward_addr/1, print_reward_addr/0, set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0]).
--export([start_link/1]).
+-export([apply_tx/2, apply_txs/2]).
+-export([apply_mining_reward/4]).
+-export([validate/5, validate/8, validate_wallet_list/1]).
+-export([calculate_reward_pool/4, calculate_proportion/3]).
+-export([print_reward_addr/0]).
+-export([set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0]).
 -export([retry_block/4, retry_full_block/4]).
--export([filter_all_out_of_order_txs_large_test_slow/0,filter_out_of_order_txs_large_test_slow/0]).
--export([wallet_two_transaction_test_slow/0, single_wallet_double_tx_before_mine_test_slow/0, single_wallet_double_tx_wrong_order_test_slow/0]).
--export([tx_threading_test_slow/0, bogus_tx_thread_test_slow/0, filter_out_of_order_txs_test_slow/0,filter_all_out_of_order_txs_test_slow/0, wallet_transaction_test_slow/0]).
--export([large_weakly_connected_blockweave_with_data_test_slow/0,large_blockweave_with_data_test_slow/0,medium_blockweave_mine_multiple_data_test_slow/0]).
+-export([start_link/1]).
+-export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
+
+-export([wallet_two_transaction_test_slow/0]).
+-export([single_wallet_double_tx_before_mine_test_slow/0]).
+-export([single_wallet_double_tx_wrong_order_test_slow/0]).
+-export([tx_threading_test_slow/0]).
+-export([bogus_tx_thread_test_slow/0]).
+-export([wallet_transaction_test_slow/0]).
+-export([filter_out_of_order_txs_test_slow/0]).
+-export([filter_all_out_of_order_txs_test_slow/0]).
+-export([filter_all_out_of_order_txs_large_test_slow/0]).
+-export([filter_out_of_order_txs_large_test_slow/0]).
+-export([large_weakly_connected_blockweave_with_data_test_slow/0]).
+-export([large_blockweave_with_data_test_slow/0]).
+-export([medium_blockweave_mine_multiple_data_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
