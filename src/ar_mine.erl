@@ -8,7 +8,7 @@
 
 %% State record for miners
 -record(state,{
-    parent, % miners parent process
+    parent, % miners parent process (initiator)
     current_block, % current block held by node
     recall_block, % recall block related to current
     txs, % the set of txs to be mined
