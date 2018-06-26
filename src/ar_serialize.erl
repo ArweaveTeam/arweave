@@ -1,13 +1,16 @@
 -module(ar_serialize).
--export([full_block_to_json_struct/1, block_to_json_struct/1, json_struct_to_block/1, json_struct_to_full_block/1]).
+-export([full_block_to_json_struct/1, json_struct_to_full_block/1]).
+-export([json_struct_to_block/1, block_to_json_struct/1]).
 -export([tx_to_json_struct/1, json_struct_to_tx/1]).
--export([wallet_list_to_json_struct/1, hash_list_to_json_struct/1, json_struct_to_hash_list/1, json_struct_to_wallet_list/1]).
+-export([wallet_list_to_json_struct/1, json_struct_to_wallet_list/1]).
+-export([hash_list_to_json_struct/1, json_struct_to_hash_list/1]).
 -export([jsonify/1, dejsonify/1]).
 -export([query_to_json_struct/1, json_struct_to_query/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Module containing serialisation/deserialisation utility functions for use in HTTP server.
+%%% Module containing serialisation/deserialisation utility functions
+%%% for use in HTTP server.
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->
@@ -134,7 +137,7 @@ full_block_to_json_struct(
 		]
 	}.
 
-%% @doc Convert parsed JSON blocks fields from a HTTP request into a block record.
+%% @doc Convert parsed JSON blocks fields from a HTTP request into a block.
 json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	case dejsonify(JSONBlock) of
 		{error, Error} -> ar:report([{error, Error}]);
@@ -148,7 +151,10 @@ json_struct_to_block(JSONBlock) ->
     Tags = find_value(<<"tags">>, BlockStruct),
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
-		previous_block = ar_util:decode(find_value(<<"previous_block">>, BlockStruct)),
+		previous_block =
+            ar_util:decode(
+                find_value(<<"previous_block">>, BlockStruct)
+            ),
 		timestamp = find_value(<<"timestamp">>, BlockStruct),
 		last_retarget = find_value(<<"last_retarget">>, BlockStruct),
 		diff = find_value(<<"diff">>, BlockStruct),
@@ -159,10 +165,20 @@ json_struct_to_block(JSONBlock) ->
 		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
 		wallet_list =
 			[
-				{ar_util:decode(Wallet), Qty, ar_util:decode(Last)}
+				{
+                    ar_util:decode(Wallet),
+                    Qty,
+                    ar_util:decode(Last)
+                }
 			||
-				{[{<<"wallet">>, Wallet}, {<<"quantity">>, Qty}, {<<"last_tx">>, Last}]}
-					<- WalletList
+				{
+                    [
+                        {<<"wallet">>, Wallet},
+                        {<<"quantity">>, Qty},
+                        {<<"last_tx">>, Last}
+                    ]
+                }
+				<- WalletList
 			],
 		reward_addr =
 			case find_value(<<"reward_addr">>, BlockStruct) of
@@ -175,7 +191,8 @@ json_struct_to_block(JSONBlock) ->
 		block_size = find_value(<<"block_size">>, BlockStruct)
 	}.
 
-%% @doc Convert parsed JSON blocks fields from a HTTP request into a full block record.
+%% @doc Convert parsed JSON blocks fields from a HTTP request into a
+%% full block record.
 json_struct_to_full_block(JSONBlock) when is_binary(JSONBlock) ->
 	case dejsonify(JSONBlock) of
 		{error, Error} -> ar:report([{error, Error}]);
@@ -189,7 +206,10 @@ json_struct_to_full_block(JSONBlock) ->
     Tags = find_value(<<"tags">>, BlockStruct),
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
-		previous_block = ar_util:decode(find_value(<<"previous_block">>, BlockStruct)),
+		previous_block =
+            ar_util:decode(
+                find_value(<<"previous_block">>, BlockStruct)
+            ),
 		timestamp = find_value(<<"timestamp">>, BlockStruct),
 		last_retarget = find_value(<<"last_retarget">>, BlockStruct),
 		diff = find_value(<<"diff">>, BlockStruct),
@@ -200,10 +220,20 @@ json_struct_to_full_block(JSONBlock) ->
 		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
 		wallet_list =
 			[
-				{ar_util:decode(Wallet), Qty, ar_util:decode(Last)}
+                {
+                    ar_util:decode(Wallet),
+                    Qty,
+                    ar_util:decode(Last)
+                }
 			||
-				{[{<<"wallet">>, Wallet}, {<<"quantity">>, Qty}, {<<"last_tx">>, Last}]}
-					<- WalletList
+				{
+                    [
+                        {<<"wallet">>, Wallet},
+                        {<<"quantity">>, Qty},
+                        {<<"last_tx">>, Last}
+                    ]
+                }
+				<- WalletList
 			],
 		reward_addr =
 			case find_value(<<"reward_addr">>, BlockStruct) of
@@ -255,7 +285,8 @@ tx_to_json_struct(
 		]
 	}.
 
-%% @doc Convert parsed JSON tx fields from a HTTP request into a transaction record.
+%% @doc Convert parsed JSON tx fields from a HTTP request into a
+%% transaction record.
 json_struct_to_tx(JSONTX) when is_binary(JSONTX) ->
 	case dejsonify(JSONTX) of
 		{error, Error} -> ar:report([{error, Error}]);
@@ -286,7 +317,7 @@ json_struct_to_tx(JSONTX) ->
 
 %% @doc Convert a wallet list into a JSON struct.
 wallet_list_to_json_struct([]) -> [];
-wallet_list_to_json_struct([Wallet|WalletList]) ->
+wallet_list_to_json_struct([Wallet | WalletList]) ->
     EncWallet = wallet_to_json_struct(Wallet),
     [EncWallet | wallet_list_to_json_struct(WalletList)].
 wallet_to_json_struct({Address, Balance, Last}) ->
@@ -318,7 +349,7 @@ json_struct_to_wallet({Wallet}) ->
 
 %% @doc Convert a hash list into a JSON struct.
 hash_list_to_json_struct([]) -> [];
-hash_list_to_json_struct([Hash|HashList]) ->
+hash_list_to_json_struct([Hash | HashList]) ->
     EncHash = ar_util:encode(binary_to_list(Hash)),
     [EncHash | hash_list_to_json_struct(HashList)].
 
@@ -330,7 +361,7 @@ json_struct_to_hash_list(JSONList) when is_binary(JSONList) ->
 	end;
 json_struct_to_hash_list(HashesStruct) ->
     lists:foldr(
-        fun(X, Acc) -> [ar_util:decode(X)|Acc] end,
+        fun(X, Acc) -> [ar_util:decode(X) | Acc] end,
         [],
         HashesStruct
     ).
