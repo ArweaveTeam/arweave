@@ -3,7 +3,8 @@
 -export([encode/1, decode/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
--export([block_from_hash_list/2, hash_from_hash_list/2, get_recall_hash/2, get_recall_hash/3]).
+-export([block_from_hash_list/2, hash_from_hash_list/2]).
+-export([get_recall_hash/2, get_recall_hash/3]).
 -export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
 -export([get_hash/1, get_head_block/1]).
 -export([genesis_wallets/0]).
@@ -37,8 +38,6 @@ decode(Bin) when is_list(Bin) ->
 	decode(list_to_binary(Bin));
 decode(Bin) when is_binary(Bin) ->
 	base64url:decode(Bin).
-
-
 
 %% @doc Reverse a binary
 rev_bin(Bin) ->
@@ -81,12 +80,17 @@ get_head_block([IndepHash|_]) ->
 
 %% @doc find the hash of a recall block.
 get_recall_hash(B, HashList) ->
-	lists:nth(1 + ar_weave:calculate_recall_block(B), lists:reverse(HashList)).
-
+	lists:nth(
+        1 + ar_weave:calculate_recall_block(B),
+        lists:reverse(HashList)
+    ).
 get_recall_hash(_Height, Hash, []) -> Hash;
 get_recall_hash(0, Hash, _HastList) -> Hash;
 get_recall_hash(Height, Hash, HashList) ->
-	lists:nth(1 + ar_weave:calculate_recall_block(Hash, Height), lists:reverse(HashList)).
+	lists:nth(
+        1 + ar_weave:calculate_recall_block(Hash, Height),
+        lists:reverse(HashList)
+    ).
 
 %% @doc Replace a term in a list with another term.
 replace(_, _, []) -> [];
