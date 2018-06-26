@@ -199,7 +199,7 @@ The returned amount is in winston (the smallest division of AR, 1 AR = 100000000
 - **Method**
   GET
 - **URL Parameters**
-  [byte_size] : The transaction size in bytes
+  [byte_size] : The size of the transaction's data field in bytes. For financial transactions without associated data, this should be zero.
 
 
 #### Example Response
