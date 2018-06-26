@@ -632,9 +632,9 @@ handle('POST', [<<"services">>], Req) ->
 	{200, [], "OK"};
 
 %% @doc Catch case for requests made to unknown endpoints. 
-%% Returns error code 500 - Request type not found.
+%% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
-	{500, [], <<"Request type not found.">>}.
+	{400, [], <<"Request type not found.">>}.
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, Args, Config) -> ok;
 handle_event(Type, Args, Config)
