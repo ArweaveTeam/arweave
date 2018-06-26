@@ -1,8 +1,14 @@
 -module(ar_block).
--export([block_to_binary/1, block_field_size_limit/1, generate_block_data_segment/6]).
--export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2, verify_height/2, verify_last_retarget/1, verify_previous_block/2, verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
--export([encrypt_block/2, encrypt_block/3, decrypt_block/4, encrypt_full_block/2, encrypt_full_block/3, decrypt_full_block/4, generate_block_key/2]).
--export([generate_block_from_shadow/2, get_recall_block/5]).
+-export([block_to_binary/1, block_field_size_limit/1, get_recall_block/5]).
+-export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2]).
+-export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
+-export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
+-export([encrypt_block/2, encrypt_block/3]).
+-export([encrypt_full_block/2, encrypt_full_block/3]).
+-export([decrypt_block/4]).
+-export([decrypt_full_block/4]).
+-export([generate_block_key/2]).
+-export([generate_block_from_shadow/2, generate_block_data_segment/6]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -18,7 +24,7 @@ encrypt_block(R, Hash) ->
     encrypt_block(
         Recall,
         crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
-        Nonce = binary:part(Hash, 0, 16)
+        _Nonce = binary:part(Hash, 0, 16)
     ).
 encrypt_block(R, Key, Nonce) when ?IS_BLOCK(R) ->
     encrypt_block(
@@ -40,9 +46,10 @@ encrypt_block(Recall, Key, Nonce) ->
     CipherText.
 
 %% @doc Decrypt a recall block
-decrypt_block(B, CipherText, Key, Nonce) when ?IS_BLOCK(B)-> decrypt_block(B#block.indep_hash, CipherText, Key, Nonce);
-decrypt_block(Hash, CipherText, Key, Nonce) ->
-    % Nonce = binary:part(Hash, 0, 16),
+decrypt_block(B, CipherText, Key, Nonce)
+        when ?IS_BLOCK(B)->
+    decrypt_block(B#block.indep_hash, CipherText, Key, Nonce);
+decrypt_block(_Hash, CipherText, Key, Nonce) ->
     if
         (Key == <<>>) or (Nonce == <<>>) -> unavailable;
         true ->
@@ -53,9 +60,6 @@ decrypt_block(Hash, CipherText, Key, Nonce) ->
                     Nonce,
                     CipherText
                 ),
-            % ar:d({key3, Key}),
-            % ar:d({nonce3, Nonce}),
-            % ar:d({blockHash3, Hash}),
             PlainText = binary_to_list(unpad_binary(PaddedPlainText)),
             RJSON = ar_serialize:dejsonify(PlainText),
             ar_serialize:json_struct_to_block(RJSON)
@@ -63,7 +67,8 @@ decrypt_block(Hash, CipherText, Key, Nonce) ->
 
 %% @doc Encrypt a recall block. Encryption key is derived from
 %% the contents of the recall block and the hash of the current block
-encrypt_full_block(R, B) when ?IS_BLOCK(B) -> encrypt_full_block(R, B#block.indep_hash);
+encrypt_full_block(R, B) when ?IS_BLOCK(B) ->
+    encrypt_full_block(R, B#block.indep_hash);
 encrypt_full_block(R, Hash) ->
     Recall =
         ar_serialize:jsonify(
@@ -72,7 +77,7 @@ encrypt_full_block(R, Hash) ->
     encrypt_full_block(
         Recall,
         crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
-        Nonce = binary:part(Hash, 0, 16)
+        _Nonce = binary:part(Hash, 0, 16)
     ).
 encrypt_full_block(R, Key, Nonce) when ?IS_BLOCK(R) ->
     encrypt_full_block(
@@ -96,7 +101,7 @@ encrypt_full_block(Recall, Key, Nonce) ->
 %% @doc Decrypt a recall block
 decrypt_full_block(B, CipherText, Key, Nonce) when ?IS_BLOCK(B)->
     decrypt_full_block(B#block.indep_hash, CipherText, Key, Nonce);
-decrypt_full_block(Hash, CipherText, Key, Nonce) ->
+decrypt_full_block(_Hash, CipherText, Key, Nonce) ->
     if
         (Key == <<>>) or (Nonce == <<>>) -> unavailable;
         true ->
@@ -115,7 +120,8 @@ decrypt_full_block(Hash, CipherText, Key, Nonce) ->
 
 %% @doc derive the key for a given recall block, given the
 %% recall block and current block
-generate_block_key(R, B) when ?IS_BLOCK(B) -> generate_block_key(R, B#block.indep_hash);
+generate_block_key(R, B) when ?IS_BLOCK(B) ->
+    generate_block_key(R, B#block.indep_hash);
 generate_block_key(R, Hash) ->
     Recall =
         ar_serialize:jsonify(
@@ -195,13 +201,29 @@ block_field_size_limit(B) ->
 
 %% @docs Generate a hashable data segment for a block from the current
 %% block, recall block, TXs to be mined, reward address and tags.
-generate_block_data_segment(CurrentB, RecallB, [unavailable], RewardAddr, Timestamp, Tags) ->
-    generate_block_data_segment(CurrentB, RecallB, [], RewardAddr, Timestamp, Tags);
-generate_block_data_segment(CurrentB, RecallB, TXs, unclaimed, Timestamp, Tags) ->
-    generate_block_data_segment(CurrentB, RecallB, TXs, <<>>, Timestamp, Tags);
-generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags) ->
-    Retarget = case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
-        true -> Timestamp;
+generate_block_data_segment(CurrentB, RecallB, [unavailable], RewardAddr, Time, Tags) ->
+    generate_block_data_segment(
+        CurrentB,
+        RecallB,
+        [],
+        RewardAddr,
+        Time,
+        Tags
+    );
+generate_block_data_segment(CurrentB, RecallB, TXs, unclaimed, Time, Tags) ->
+    generate_block_data_segment(
+        CurrentB,
+        RecallB,
+        TXs,
+        <<>>,
+        Time,
+        Tags
+    );
+generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
+    Retarget = case
+        ar_retarget:is_retarget_height(CurrentB#block.height + 1)
+    of
+        true -> Time;
         false -> CurrentB#block.last_retarget
     end,
     WeaveSize = CurrentB#block.weave_size +
@@ -233,8 +255,17 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
     % ar:d({indep, CurrentB#block.indep_hash}),
     % ar:d({retarget, integer_to_binary(Retarget)}),
     % ar:d({height, integer_to_binary(CurrentB#block.height + 1)}),
-    % ar:d({wallets, binary:list_to_bin(lists:map(fun ar_wallet:to_binary/1, NewWalletList))}),
-    % ar:d({reward, case is_atom(RewardAddr) of true -> <<>>; false -> RewardAddr end}),
+    % ar:d({wallets,
+    %     binary:list_to_bin(
+    %         lists:map(fun ar_wallet:to_binary/1, NewWalletList)
+    %     )
+    % }),
+    % ar:d({reward,
+    %     case is_atom(RewardAddr) of
+    %         true -> <<>>;
+    %         false -> RewardAddr
+    %     end
+    % }),
     % ar:d({tags, list_to_binary(Tags)}),
     % ar:d({recall, byte_size(block_to_binary(RecallB))}),
     % ar:d({txs, binary:list_to_bin(lists:map(fun ar_tx:tx_to_binary/1, TXs))}),
@@ -243,10 +274,14 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Timestamp, Tags)
         <<
             (CurrentB#block.indep_hash)/binary,
             (CurrentB#block.hash)/binary,
-            (integer_to_binary(Timestamp))/binary,
+            (integer_to_binary(Time))/binary,
             (integer_to_binary(Retarget))/binary,
             (integer_to_binary(CurrentB#block.height + 1))/binary,
-            (list_to_binary([CurrentB#block.indep_hash | CurrentB#block.hash_list]))/binary,
+            (
+                list_to_binary(
+                    [CurrentB#block.indep_hash | CurrentB#block.hash_list]
+                )
+            )/binary,
             (
                 binary:list_to_bin(
                     lists:map(
@@ -298,24 +333,29 @@ verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
 verify_timestamp(Timestamp, NewB) ->
     (NewB#block.timestamp - Timestamp) =< 600.
 
-%% @doc Verify the height of the new block is the one higher than the current height.
+%% @doc Verify the height of the new block is the one higher than the
+%% current height.
 verify_height(NewB, OldB) ->
     NewB#block.height == (OldB#block.height + 1).
 
-%% @doc Verify that the last retarget timestamp is older or as old as the blocks timestamp.
+%% @doc Verify that the last retarget timestamp is older or as old as the
+%%  blocks timestamp.
 verify_last_retarget(NewB) ->
     (NewB#block.timestamp - NewB#block.last_retarget) >= 0.
 
-%% @doc Verify that the previous_block hash of the new block is the indep_hash of the current block.
+%% @doc Verify that the previous_block hash of the new block is the indep_hash
+%% of the current block.
 verify_previous_block(NewB, OldB) ->
     OldB#block.indep_hash == NewB#block.previous_block.
 
-%% @doc Verify that the new blocks hash_list is the current blocks hash_list + indep_hash. 
+%% @doc Verify that the new blocks hash_list is the current blocks
+%% hash_list + indep_hash.
 verify_block_hash_list(NewB, OldB) ->
-    NewB#block.hash_list == ([OldB#block.indep_hash|OldB#block.hash_list]).
+    NewB#block.hash_list == ([OldB#block.indep_hash | OldB#block.hash_list]).
 
-%% @doc Verify that the new blocks wallet_list and reward_pool matches that generated by applying,
-%% the block miner reward and mined TXs to the current blocks wallet_list and reward pool.
+%% @doc Verify that the new blocks wallet_list and reward_pool matches that
+%% generated by applying, the block miner reward and mined TXs to the current
+%% (old) blocks wallet_list and reward pool.
 verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
     {FinderReward, RewardPool} = 
         ar_node:calculate_reward_pool(
@@ -365,14 +405,21 @@ generate_block_from_shadow(BShadow,RecallSize) ->
     TXs =
         % Check if the node state contains the referenced TX.
         lists:foldr(fun(T, Acc) ->
-        case [TX || TX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node)), TX#tx.id == T] of
+        case
+            [
+                TX || TX <- ar_node:get_all_known_txs(
+                    whereis(http_entrypoint_node)
+                ),
+                TX#tx.id == T
+            ]
+        of
             [] ->
                 case ar_storage:read_tx(T) of
                     unavailable ->
                         Acc;
-                    TX -> [TX|Acc]
+                    TX -> [TX | Acc]
                 end;
-            [TX|_] -> [TX|Acc]
+            [TX | _] -> [TX | Acc]
         end
     end, [], BShadow#block.txs),
     {FinderPool, _} = ar_node:calculate_reward_pool(
@@ -386,12 +433,21 @@ generate_block_from_shadow(BShadow,RecallSize) ->
         )
     ),
     HashList =
-        case {BShadow#block.hash_list, ar_node:get_hash_list(whereis(http_entrypoint_node))} of
+        case
+            {
+                BShadow#block.hash_list,
+                ar_node:get_hash_list(whereis(http_entrypoint_node))
+            }
+        of
             {[], []} -> [];
             {[], OldHashList} -> OldHashList;
             {ShadowHashList, []} -> ShadowHashList;
             {ShadowHashList, OldHashList} ->
-                NewL = lists:dropwhile(fun(X) -> X =/= lists:last(ShadowHashList) end, OldHashList),
+                NewL =
+                    lists:dropwhile(
+                        fun(X) -> X =/= lists:last(ShadowHashList) end,
+                        OldHashList
+                    ),
                 ShadowHashList ++
                     case NewL of
                         [] -> OldHashList;
@@ -399,7 +455,10 @@ generate_block_from_shadow(BShadow,RecallSize) ->
                     end
         end,
     WalletList = ar_node:apply_mining_reward(
-        ar_node:apply_txs(ar_node:get_wallet_list(whereis(http_entrypoint_node)), TXs),
+        ar_node:apply_txs(
+            ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+            TXs
+        ),
         BShadow#block.reward_addr,
         FinderPool,
         BShadow#block.height
@@ -412,21 +471,32 @@ get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
         unavailable ->
             case ar_storage:read_encrypted_block(RecallHash) of
                 unavailable ->
-                    FullBlock = ar_http_iface:get_full_block(OrigPeer, RecallHash),
+                    FullBlock =
+                        ar_http_iface:get_full_block(OrigPeer, RecallHash),
                     case ?IS_BLOCK(FullBlock)  of
                         true ->
-                            Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
+                            Recall = FullBlock#block {
+                                txs = [ T#tx.id || T <- FullBlock#block.txs]
+                            },
                             ar_storage:write_tx(FullBlock#block.txs),
                             ar_storage:write_block(Recall),
                             Recall;
                         false -> unavailable
                     end;
                 EncryptedRecall ->
-                    FBlock = ar_block:decrypt_full_block(B, EncryptedRecall, Key, Nonce),
+                    FBlock =
+                        ar_block:decrypt_full_block(
+                            B,
+                            EncryptedRecall,
+                            Key,
+                            Nonce
+                        ),
                     case FBlock of
                         unavailable -> unavailable;
                         FullBlock ->
-                            Recall = FullBlock#block {txs = [ T#tx.id || T <- FullBlock#block.txs] },
+                            Recall = FullBlock#block {
+                                txs = [ T#tx.id || T <- FullBlock#block.txs]
+                            },
                             ar_storage:write_tx(FullBlock#block.txs),
                             ar_storage:write_block(Recall),
                             Recall
@@ -436,11 +506,12 @@ get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
     end.
 
 
-%% Tests
+%% Tests: ar_block
 
 pad_unpad_roundtrip_test() ->
     Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
-    UnPad = unpad_binary(Pad).
+    UnPad = unpad_binary(Pad),
+    Pad == UnPad.
 
 % encrypt_decrypt_block_test() ->
 %     B0 = ar_weave:init([]),
