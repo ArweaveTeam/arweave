@@ -426,7 +426,7 @@ make_full_block(ID) ->
 		BlockHeader ->
 			FullB =
 				BlockHeader#block{
-					txs = 
+					txs =
 						ar_node:get_tx(
 							whereis(http_entrypoint_node),
 							BlockHeader#block.txs
@@ -1248,7 +1248,7 @@ integrate_block_from_miner(
             0,
             TXs
 		),
-	{FinderReward, RewardPool} = 
+	{FinderReward, RewardPool} =
 		calculate_reward_pool(
 			OldPool,
 			MinedTXs,
@@ -1860,8 +1860,16 @@ filter_out_of_order_txs_test_slow() ->
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
 		],
-	{_, [SignedTX2, SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX2]),
-	{_, [SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX2, SignedTX]).
+    {_, [SignedTX2, SignedTX]} =
+        filter_out_of_order_txs(
+                WalletList,
+                [SignedTX, SignedTX2]
+            ),
+    {_, [SignedTX]} =
+        filter_out_of_order_txs(
+                WalletList,
+                [SignedTX2, SignedTX]
+            ).
 
 filter_out_of_order_txs_large_test_slow() ->
 	ar_storage:clear(),
@@ -1880,10 +1888,26 @@ filter_out_of_order_txs_large_test_slow() ->
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
 		],
-	{_, [SignedTX3, SignedTX2, SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX2, SignedTX3]),
-	{_, [SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX3, SignedTX2, SignedTX]),
-	{_, [SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX2, SignedTX3, SignedTX]),
-	{_, [SignedTX2, SignedTX]} = filter_out_of_order_txs(WalletList, [SignedTX, SignedTX3, SignedTX2]).
+    {_, [SignedTX3, SignedTX2, SignedTX]} =
+        filter_out_of_order_txs(
+                WalletList,
+                [SignedTX, SignedTX2, SignedTX3]
+            ),
+    {_, [SignedTX]} =
+        filter_out_of_order_txs(
+                WalletList,
+                [SignedTX3, SignedTX2, SignedTX]
+            ),
+    {_, [SignedTX]} =
+        filter_out_of_order_txs(
+                WalletList,
+                [SignedTX2, SignedTX3, SignedTX]
+            ),
+    {_, [SignedTX2, SignedTX]} =
+        filter_out_of_order_txs(
+                WalletList,
+                [SignedTX, SignedTX3, SignedTX2]
+            ).
 
 filter_all_out_of_order_txs_test_slow() ->
 	ar_storage:clear(),
@@ -1900,8 +1924,16 @@ filter_all_out_of_order_txs_test_slow() ->
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
 		],
-	[SignedTX1, SignedTX2] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX2]),
-	[SignedTX1, SignedTX2] = filter_all_out_of_order_txs(WalletList, [SignedTX2, SignedTX]).
+    [SignedTX1, SignedTX2] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX, SignedTX2]
+            ),
+    [SignedTX1, SignedTX2] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX2, SignedTX]
+            ).
 
 filter_all_out_of_order_txs_large_test_slow() ->
 	ar_storage:clear(),
@@ -1920,13 +1952,41 @@ filter_all_out_of_order_txs_large_test_slow() ->
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
 		],
-	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX2, SignedTX3]),
-	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX3, SignedTX2]),
-	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX2, SignedTX, SignedTX3]),
-	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX2, SignedTX3, SignedTX]),
-	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX3, SignedTX, SignedTX2]),
-	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX3, SignedTX2, SignedTX]),
-	[SignedTX, SignedTX2, SignedTX3] = filter_all_out_of_order_txs(WalletList, [SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX, SignedTX3]).
+    [SignedTX, SignedTX2, SignedTX3] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX, SignedTX2, SignedTX3]
+            ),
+    [SignedTX, SignedTX2, SignedTX3] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX, SignedTX3, SignedTX2]
+            ),
+    [SignedTX, SignedTX2, SignedTX3] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX2, SignedTX, SignedTX3]
+            ),
+    [SignedTX, SignedTX2, SignedTX3] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX2, SignedTX3, SignedTX]
+            ),
+    [SignedTX, SignedTX2, SignedTX3] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX3, SignedTX, SignedTX2]
+            ),
+    [SignedTX, SignedTX2, SignedTX3] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX3, SignedTX2, SignedTX]
+            ),
+    [SignedTX, SignedTX2, SignedTX3] =
+        filter_all_out_of_order_txs(
+                WalletList,
+                [SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX, SignedTX3]
+            ).
 
 %% @doc Check the current block can be retrieved
 get_current_block_test() ->
@@ -1981,7 +2041,8 @@ add_bogus_block_test() ->
 			LastB = ar_storage:read_block(RecvdB)
     end.
 
-%% @doc Ensure that blocks with incorrect nonces are not accepted onto the network.
+%% @doc Ensure that blocks with incorrect nonces are not accepted onto
+%% the network.
 add_bogus_block_nonce_test() ->
     ar_storage:clear(),
     ar_storage:write_tx(
@@ -2011,7 +2072,9 @@ add_bogus_block_nonce_test() ->
 	),
 	receive after 500 -> ok end,
 	Node ! {get_blocks, self()},
-	receive {blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB) end.
+	receive
+        {blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
+    end.
 
 
 %% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
@@ -2039,13 +2102,16 @@ add_bogus_hash_list_test() ->
 			self(),
 			(hd(B2))#block.height,
 			(hd(B2))#block {
-				hash_list = [<<"INCORRECT HASH">> | tl((hd(B2))#block.hash_list)]
+				hash_list =
+                    [<<"INCORRECT HASH">> | tl((hd(B2))#block.hash_list)]
 			},
 			find_recall_block(B2)
 		}),
 	receive after 500 -> ok end,
 	Node ! {get_blocks, self()},
-	receive {blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB) end.
+	receive
+        {blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
+    end.
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_blockweave_with_mining_test() ->
@@ -2078,7 +2144,8 @@ tiny_blockweave_with_added_data_test() ->
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
-%% @doc Test that a slightly larger network is able to receive data and propogate data and blocks.
+%% @doc Test that a slightly larger network is able to receive data and
+%% propogate data and blocks.
 large_blockweave_with_data_test_slow() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
@@ -2094,7 +2161,8 @@ large_blockweave_with_data_test_slow() ->
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
-%% @doc Test that large networks (500 nodes) with only 1% connectivity still function correctly.
+%% @doc Test that large networks (500 nodes) with only 1% connectivity
+%% still function correctly.
 large_weakly_connected_blockweave_with_data_test_slow() ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
@@ -2110,7 +2178,8 @@ large_weakly_connected_blockweave_with_data_test_slow() ->
 	TestDataID  = TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
-%% @doc Ensure that the network can add multiple peices of data and have it mined into blocks.
+%% @doc Ensure that the network can add multiple peices of data and have
+%% it mined into blocks.
 medium_blockweave_mine_multiple_data_test_slow() ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
@@ -2128,8 +2197,16 @@ medium_blockweave_mine_multiple_data_test_slow() ->
 	mine(ar_util:pick_random(Nodes)),
 	receive after 1250 -> ok end,
 	B1 = get_blocks(ar_util:pick_random(Nodes)),
-	true = lists:member(SignedTX#tx.id, (hd(ar_storage:read_block(B1)))#block.txs),
-	true = lists:member(SignedTX2#tx.id, (hd(ar_storage:read_block(B1)))#block.txs).
+	true =
+        lists:member(
+            SignedTX#tx.id,
+            (hd(ar_storage:read_block(B1)))#block.txs
+        ),
+	true =
+        lists:member(
+            SignedTX2#tx.id,
+            (hd(ar_storage:read_block(B1)))#block.txs
+        ).
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
 medium_blockweave_multi_mine_test() ->
