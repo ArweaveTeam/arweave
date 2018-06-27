@@ -1784,36 +1784,60 @@ generate_floating_wallet_list(WalletList, [T|TXs]) ->
 %% @doc Start TX tracking database
 
 filter_all_out_of_order_txs(WalletList, InTXs) ->
-	filter_all_out_of_order_txs(WalletList, InTXs, []).
+	filter_all_out_of_order_txs(
+        WalletList,
+        InTXs,[]
+    ).
 filter_all_out_of_order_txs(_WalletList, [], OutTXs) ->
 	lists:reverse(OutTXs);
 filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
-	{FloatingWalletList, PassedTXs} = filter_out_of_order_txs(WalletList, InTXs, OutTXs),
+    {FloatingWalletList, PassedTXs} =
+        filter_out_of_order_txs(
+            WalletList,
+            InTXs,
+            OutTXs
+        ),
 	RemainingInTXs = InTXs -- PassedTXs,
 	case PassedTXs of
-		[] -> lists:reverse(OutTXs);
-		OutTXs -> lists:reverse(OutTXs);
-		_ -> filter_all_out_of_order_txs(FloatingWalletList, RemainingInTXs, PassedTXs)
+		[] ->
+            lists:reverse(OutTXs);
+		OutTXs ->
+            lists:reverse(OutTXs);
+		_ ->
+            filter_all_out_of_order_txs
+                (FloatingWalletList,
+                RemainingInTXs,
+                PassedTXs
+            )
 	end.
 
 filter_out_of_order_txs(WalletList, InTXs) ->
-	filter_out_of_order_txs(WalletList, InTXs, []).
+	filter_out_of_order_txs(
+        WalletList,
+        InTXs,
+        []
+    ).
 filter_out_of_order_txs(WalletList, [], OutTXs) ->
 	{WalletList, OutTXs};
 filter_out_of_order_txs(WalletList, [T|RawTXs], OutTXs) ->
-	% ar:d({walletlist, WalletList}),
-	% ar:d({tx, T#tx.id}),
-	% ar:d({tx_owner, T#tx.owner}),
-	% ar:d({check_tx, ar_tx:check_last_tx(WalletList, T)}),
 	case ar_tx:check_last_tx(WalletList, T) of
 		true ->
 			UpdatedWalletList = apply_tx(WalletList, T),
-			filter_out_of_order_txs(UpdatedWalletList, RawTXs, [T|OutTXs]);
+			filter_out_of_order_txs(
+                UpdatedWalletList,
+                RawTXs,
+                [T | OutTXs]
+            );
 		false ->
-			filter_out_of_order_txs(WalletList, RawTXs, OutTXs)
+			filter_out_of_order_txs(
+                WalletList,
+                RawTXs,
+                OutTXs
+            )
 	end.
 
-%%% Tests
+
+%%% Tests: ar_node
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_network_with_reward_pool_test() ->
