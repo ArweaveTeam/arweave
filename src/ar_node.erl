@@ -83,40 +83,97 @@
 	weave_size = 0 % current size of the weave in bytes (only inc. data tx size)
 }).
 
-%% Maximum number of blocks to hold at any time.
+%% @doc Maximum number of blocks to hold at any time.
 %% NOTE: This value should be greater than ?RETARGET_BLOCKS + 1
 %% in order for the TNT test suite to pass.
 -define(MAX_BLOCKS, ?RETARGET_BLOCKS).
 
-%% Ensure this number of the last blocks are not dropped.
+%% @doc Ensure this number of the last blocks are not dropped.
 -define(KEEP_LAST_BLOCKS, 5).
 
-%% The time to poll peers for a new current block.
+%% @doc The time to poll peers for a new current block.
 -define(POLL_TIME, 60*100).
 
-%%@doc Start a node, linking to a supervisor process
+%% @doc Start a node, linking to a supervisor process
 start_link(Args) ->
 	PID = erlang:apply(ar_node, start, Args),
 	{ok, PID}.
 
 %% @doc Start a node, optionally with a list of peers.
-start() -> start([]).
-start(Peers) -> start(Peers, not_joined).
-start(Peers, Bs) -> start(Peers, Bs, 0).
+start() ->
+    start([]).
+start(Peers) ->
+    start(
+        Peers,
+        not_joined
+    ).
+start(Peers, Bs) ->
+    start(
+        Peers,
+        Bs,
+        0
+    ).
 start(Peers, Bs, MiningDelay) ->
-	start(Peers, Bs, MiningDelay, unclaimed).
+    start(
+        Peers,
+        Bs,
+        MiningDelay,
+        unclaimed
+    ).
 start(Peers, HashList, MiningDelay, RewardAddr) ->
-	start(Peers, HashList, MiningDelay, RewardAddr, true).
-start(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin) when is_record(B, block) ->
-	lists:map(fun ar_storage:write_block/1, Bs),
-	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr, AutoJoin);
+	start(
+        Peers,
+        HashList,
+        MiningDelay,
+        RewardAddr,
+        true
+    ).
+start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin)
+        when is_record(B, block) ->
+	lists:map(
+        fun ar_storage:write_block/1,
+        Bs
+    ),
+    start(
+        Peers,
+        [B#block.indep_hash | B#block.hash_list],
+        MiningDelay,
+        RewardAddr,AutoJoin
+    );
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
-	start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, ?DEFAULT_DIFF).
+	start(
+        Peers,
+        HashList,
+        MiningDelay,
+        RewardAddr,
+        AutoJoin,
+        ?DEFAULT_DIFF
+    ).
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
-	start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, os:system_time(seconds)).
-start(Peers, Bs = [B|_], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when is_record(B, block) ->
-	lists:map(fun ar_storage:write_block/1, Bs),
-	start(Peers, [B#block.indep_hash|B#block.hash_list], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
+	start(
+        Peers,
+        HashList,
+        MiningDelay,
+        RewardAddr,
+        AutoJoin,
+        Diff,
+        os:system_time(seconds)
+    ).
+start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget)
+        when is_record(B, block) ->
+	lists:map(
+        fun ar_storage:write_block/1,
+        Bs
+    ),
+	start(
+        Peers,
+        [B#block.indep_hash | B#block.hash_list],
+        MiningDelay,
+        RewardAddr,
+        AutoJoin,
+        Diff,
+        LastRetarget
+    );
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	PID = spawn(
 		fun() ->
@@ -138,12 +195,12 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			RewardPool =
 				case HashList of
 					not_joined -> 0;
-					[H|_] -> (ar_storage:read_block(H))#block.reward_pool
+					[H | _] -> (ar_storage:read_block(H))#block.reward_pool
 				end,
 			WeaveSize =
 					case HashList of
 						not_joined -> 0;
-						[H2|_] -> (ar_storage:read_block(H2))#block.weave_size
+						[H2 | _] -> (ar_storage:read_block(H2))#block.weave_size
 					end,
 			server(
 				#state {
