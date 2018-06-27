@@ -32,7 +32,7 @@
 -export([calculate_reward_pool/4, calculate_proportion/3]).
 -export([print_reward_addr/0]).
 -export([set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0]).
--export([retry_block/4, retry_full_block/4]).
+-export([retry_block/4, retry_full_block/4]). % DEPRECATED (27/06/2018)
 -export([start_link/1]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 
@@ -291,6 +291,7 @@ get_block(Proc, ID) when is_pid(Proc) ->
 get_block(Host, ID) ->
 	ar_http_iface:get_block(Host, ID).
 
+% DEPRECATED (27/06/2018)
 %% @doc Reattempts to find a block from a node retrying up to Count times.
 retry_block(_, _, Response, 0) ->
 	Response;
@@ -303,7 +304,8 @@ retry_block(Host, ID, _, Count) ->
 			timer:sleep(3000),
 			retry_block(Host, ID, unavailable, Count-1);
 		B -> B
-	end.
+    end.
+
 %% @doc Return a specific full block from a node, if it has it.
 get_full_block(Peers, ID) when is_list(Peers) ->
 	case ar_storage:read_block(ID) of
@@ -388,6 +390,7 @@ get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
 get_encrypted_full_block(Host, ID) ->
 	ar_http_iface:get_encrypted_full_block(Host, ID).
 
+% DEPRECATED (27/06/2018)
 %% @doc Reattempts to find a full block from a node retrying up to Count times.
 retry_full_block(_, _, Response, 0) ->
 	Response;
@@ -402,6 +405,7 @@ retry_full_block(Host, ID, _, Count) ->
 		B -> B
 	end.
 
+% DEPRECATED (27/06/2018)
 retry_encrypted_full_block(_, _, Response, 0) ->
 	Response;
 retry_encrypted_full_block(Host, ID, _, Count) ->
