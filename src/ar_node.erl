@@ -1747,18 +1747,37 @@ calculate_delay(Bytes) -> 30000 + ((Bytes * 300) div 1000).
 -endif.
 
 calculate_proportion(RecallSize, WeaveSize, Length) when (Length == 0)->
-	calculate_proportion(RecallSize, WeaveSize, 1);
+	calculate_proportion(
+        RecallSize,
+        WeaveSize,
+        1
+    );
 calculate_proportion(RecallSize, WeaveSize, Length) when (WeaveSize == 0)->
-	calculate_proportion(RecallSize, 1, Length);
+	calculate_proportion(
+        RecallSize,
+        1,
+        Length
+    );
 calculate_proportion(RecallSize, WeaveSize, Length) when RecallSize >= (WeaveSize/Length) ->
-	XRaw = ((Length * RecallSize)/WeaveSize) -1,
+	XRaw = ((Length * RecallSize) / WeaveSize) -1,
 	X = min(XRaw, 1023),
-	max(0.1, (math:pow(2, X)/(math:pow(2, X) + 2)));
-calculate_proportion(RecallSize, WeaveSize, Length) when RecallSize == 0 -> calculate_proportion(1, WeaveSize, Length);
+	max(
+        0.1,
+        (math:pow(2, X) / (math:pow(2, X) + 2))
+    );
+calculate_proportion(RecallSize, WeaveSize, Length) when RecallSize == 0 ->
+    calculate_proportion(
+        1,
+        WeaveSize,
+        Length
+    );
 calculate_proportion(RecallSize, WeaveSize, Length) ->
 	XRaw = -(((Length * WeaveSize)/RecallSize) -1),
 	X = min(XRaw, 1023),
-	max(0.1, (math:pow(2, X)/(math:pow(2, X) + 2))).
+	max(
+        0.1,
+        (math:pow(2, X)/(math:pow(2, X) + 2))
+    ).
 
 generate_floating_wallet_list(WalletList, []) ->
 	WalletList;
