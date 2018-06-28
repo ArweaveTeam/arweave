@@ -1738,6 +1738,10 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 			S#state { miner = Miner }
 	end.
 
+%% @doc Calculate the time a tx must wait after being received to be mined.
+%% Wait time is a fixed interval combined with a wait dependent on tx data size.
+%% This wait helps ensure that a tx has propogated around the network.
+%% NB: If debug is defined no wait is applied.
 -ifdef(DEBUG).
 calculate_delay(0) -> 0;
 calculate_delay(Bytes) -> 0.
@@ -1792,7 +1796,6 @@ generate_floating_wallet_list(WalletList, [T | TXs]) ->
 		false -> false
 	end.
 
-
 %% @doc Takes a wallet list and a set of txs and checks to ensure that the
 %% txs can be applied in a given order. The output is the set of all txs
 %% that could be applied.
@@ -1823,7 +1826,8 @@ filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
                 RemainingInTXs,
                 PassedTXs
             )
-	end.
+    end.
+
 %% @doc Takes a wallet list and a set of txs and checks to ensure that the
 %% txs can be iteratively applied. When a tx is encountered that cannot be
 %% applied it is disregarded. The return is a tuple containing the output
