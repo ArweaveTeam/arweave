@@ -1746,37 +1746,52 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 calculate_delay(0) -> 0;
 calculate_delay(Bytes) -> 0.
 -else.
-calculate_delay(0) -> 30000;
-calculate_delay(Bytes) -> 30000 + ((Bytes * 300) div 1000).
+calculate_delay(0) ->
+    30000;
+calculate_delay(Bytes) ->
+    30000 + ((Bytes * 300) div 1000).
 -endif.
 
-calculate_proportion(RecallSize, WeaveSize, Length) when (Length == 0)->
+%% @doc Calculates the portion of the rewardpool that the miner is entitled
+%% to for mining a block with a given Recall.
+%% The proportion is based on the size of the recall block and the average data
+%% stored within the weave.
+calculate_proportion(RecallSize, WeaveSize, Height)
+        when (Height == 0)->
+    % Genesis block
 	calculate_proportion(
         RecallSize,
         WeaveSize,
         1
     );
-calculate_proportion(RecallSize, WeaveSize, Length) when (WeaveSize == 0)->
+calculate_proportion(RecallSize, WeaveSize, Height)
+        when (WeaveSize == 0)->
+    % No data stored in the weave
 	calculate_proportion(
         RecallSize,
         1,
-        Length
+        Height
     );
-calculate_proportion(RecallSize, WeaveSize, Length) when RecallSize >= (WeaveSize/Length) ->
-	XRaw = ((Length * RecallSize) / WeaveSize) -1,
+calculate_proportion(RecallSize, WeaveSize, Height)
+        when RecallSize >= (WeaveSize/Height) ->
+    % Recall size is larger than the average data stored per block
+	XRaw = ((Height * RecallSize) / WeaveSize) - 1,
 	X = min(XRaw, 1023),
 	max(
         0.1,
         (math:pow(2, X) / (math:pow(2, X) + 2))
     );
-calculate_proportion(RecallSize, WeaveSize, Length) when RecallSize == 0 ->
+calculate_proportion(RecallSize, WeaveSize, Height)
+        when RecallSize == 0 ->
+    % Recall block has no data txs, hence size of zero
     calculate_proportion(
         1,
         WeaveSize,
-        Length
+        Height
     );
-calculate_proportion(RecallSize, WeaveSize, Length) ->
-	XRaw = -(((Length * WeaveSize)/RecallSize) -1),
+calculate_proportion(RecallSize, WeaveSize, Height) ->
+    % Standard recall block, 0 < Recall size < Average block
+	XRaw = -(((Height * WeaveSize) / RecallSize) -1),
 	X = min(XRaw, 1023),
 	max(
         0.1,
