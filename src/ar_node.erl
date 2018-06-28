@@ -310,21 +310,6 @@ get_block(Host, ID) ->
     % handle external peer request
 	ar_http_iface:get_block(Host, ID).
 
-% DEPRECATED (27/06/2018)
-%% @doc Reattempts to find a block from a node retrying up to Count times.
-retry_block(_, _, Response, 0) ->
-	Response;
-retry_block(Host, ID, _, Count) ->
-	case get_block(Host, ID) of
-		not_found ->
-			timer:sleep(3000),
-			retry_block(Host, ID, not_found, Count-1);
-		unavailable ->
-			timer:sleep(3000),
-			retry_block(Host, ID, unavailable, Count-1);
-		B -> B
-    end.
-
 %% @doc Get a specific full block (a block containing full txs) via
 %% blocks indep_hash.
 get_full_block(Peers, ID) when is_list(Peers) ->
@@ -424,7 +409,42 @@ get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
 get_encrypted_full_block(Host, ID) ->
     % handle external peer request
-	ar_http_iface:get_encrypted_full_block(Host, ID).
+    ar_http_iface:get_encrypted_full_block(Host, ID).
+
+%% @doc Convert a block with tx references into a full block, that is a block
+%% containing the entirety of all its referenced txs.
+make_full_block(ID) ->
+	case ar_storage:read_block(ID) of
+		unavailable -> unavailable;
+		BlockHeader ->
+			FullB =
+				BlockHeader#block{
+					txs =
+						ar_node:get_tx(
+							whereis(http_entrypoint_node),
+							BlockHeader#block.txs
+						)
+				},
+			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
+				[] -> FullB;
+				_ -> unavailable
+			end
+    end.
+
+% DEPRECATED (27/06/2018)
+%% @doc Reattempts to find a block from a node retrying up to Count times.
+retry_block(_, _, Response, 0) ->
+	Response;
+retry_block(Host, ID, _, Count) ->
+	case get_block(Host, ID) of
+		not_found ->
+			timer:sleep(3000),
+			retry_block(Host, ID, not_found, Count-1);
+		unavailable ->
+			timer:sleep(3000),
+			retry_block(Host, ID, unavailable, Count-1);
+		B -> B
+    end.
 
 % DEPRECATED (27/06/2018)
 %% @doc Reattempts to find a full block from a node retrying up to Count times.
@@ -455,26 +475,6 @@ retry_encrypted_full_block(Host, ID, _, Count) ->
 			timer:sleep(3000),
 			retry_encrypted_full_block(Host, ID, unavailable, Count-1);
 		B -> B
-	end.
-
-%% @doc Convert a block with tx references into a full block, that is a block
-%% containing the entirety of all its referenced txs.
-make_full_block(ID) ->
-	case ar_storage:read_block(ID) of
-		unavailable -> unavailable;
-		BlockHeader ->
-			FullB =
-				BlockHeader#block{
-					txs =
-						ar_node:get_tx(
-							whereis(http_entrypoint_node),
-							BlockHeader#block.txs
-						)
-				},
-			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
-				[] -> FullB;
-				_ -> unavailable
-			end
 	end.
 
 %% @doc Return a specific tx from a node, if it has it.
