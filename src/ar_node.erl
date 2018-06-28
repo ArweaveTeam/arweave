@@ -619,20 +619,23 @@ get_pending_txs(Node) ->
 	Node ! {get_txs, self()},
 	receive
 		{all_txs, Txs} -> [T#tx.id || T <- Txs]
-	after ?LOCAL_NET_TIMEOUT -> []
+	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 get_full_pending_txs(Node) ->
 	Node ! {get_txs, self()},
 	receive
 		{all_txs, Txs} -> Txs
-	after ?LOCAL_NET_TIMEOUT -> []
+	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
+%% @doc Returns the floating wallet list held by the node.
+%% The floating wallet list is the current wallet list with the txs being
+%% mined on applied to it.
 get_floating_wallet_list(Node) ->
     Node ! {get_floatingwalletlist, self()},
     receive
 		{floatingwalletlist, WalletList} -> WalletList
-	after ?LOCAL_NET_TIMEOUT -> []
+	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 get_current_diff(Node) ->
