@@ -517,7 +517,16 @@ get_tx(Host, ID) ->
     % handle external peer request
 	ar_http_iface:get_tx(Host, ID).
 
-% DEPRECATED (28/06/2018)
+%% @doc Gets the set of all known txs from the node.
+%% This set includes those on timeout waiting to distribute around the
+%% network, the potentially valid txs as well as those being mined on.
+get_all_known_txs(Node) ->
+	Node ! {get_all_known_txs, self()},
+	receive
+		{all_known_txs, TXs} -> TXs
+	    after ?LOCAL_NET_TIMEOUT -> []
+	end.
+
 %% @doc Get the set of trusted peers.
 %% The set of trusted peers is that in whcih where joined on.
 get_trusted_peers(Proc) when is_pid(Proc) ->
@@ -529,16 +538,8 @@ get_trusted_peers(Proc) when is_pid(Proc) ->
 get_trusted_peers(_) ->
 	unavailable.
 
-%% @doc Gets the set of all known txs from the node.
-%% This set includes those on timeout waiting to distribute around the
-%% network, the potentially valid txs as well as those being mined on.
-get_all_known_txs(Node) ->
-	Node ! {get_all_known_txs, self()},
-	receive
-		{all_known_txs, TXs} -> TXs
-	    after ?LOCAL_NET_TIMEOUT -> []
-	end.
-
+%% @doc Sends a message to the node server instructing a rejoin on the list
+%% of trusted peers. Trusted peers are those that were initially joined on.
 rejoin(Proc, Peers) ->
 	Proc ! {rejoin, Peers}.
 
