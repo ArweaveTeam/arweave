@@ -543,12 +543,14 @@ get_trusted_peers(_) ->
 rejoin(Proc, Peers) ->
 	Proc ! {rejoin, Peers}.
 
-%% @doc Get a list of peers from the node's #gs_state.
+%% @doc Get the list of peers from the nodes gossip state.
+%% This is the list of peers that node will request blocks/txs from and will
+%% distribute its mined blocks to.
 get_peers(Proc) when is_pid(Proc) ->
 	Proc ! {get_peers, self()},
 	receive
 		{peers, Ps} -> Ps
-	after ?LOCAL_NET_TIMEOUT -> []
+	    after ?LOCAL_NET_TIMEOUT -> []
 	end;
 get_peers(Host) ->
 	ar_http_iface:get_peers(Host).
