@@ -665,6 +665,9 @@ get_reward_pool(Node) ->
 	    after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
+%% @Doc Get the reward address attributed to the node.
+%% This is the wallet address that should the node successfully mine a block
+%% the reward will be credited to.
 get_reward_addr(Node) ->
 	Node ! {get_reward_addr, self()},
 	receive
