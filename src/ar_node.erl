@@ -657,11 +657,12 @@ get_diff(Node) ->
 	    after ?LOCAL_NET_TIMEOUT -> 1
 	end.
 
+%% @doc Get the current rewardpool from the node.
 get_reward_pool(Node) ->
 	Node ! {get_reward_pool, self()},
 	receive
 		{reward_pool, RewardPool} -> RewardPool
-	after ?LOCAL_NET_TIMEOUT -> 0
+	    after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
 get_reward_addr(Node) ->
