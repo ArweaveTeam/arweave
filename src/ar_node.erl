@@ -99,7 +99,14 @@ start_link(Args) ->
 	PID = erlang:apply(ar_node, start, Args),
 	{ok, PID}.
 
-%% @doc Start a node, optionally with a list of peers.
+%% @doc Start a node server loop with a set of optional parameters.
+% Peers: the set of PID/IP that the node communicates with
+% Blocks: the initial blocks to spawn with, if none, not_joined atom
+% MiningDelay: delay in mining, used primarily for network simulation
+% RewardAddr: the address in which mining rewards will be attributed with
+% AutoJoin: boolean stating if a node should automatically attempt to join
+% Diff: starting diff of the network (?DEFAULT_DIFF)
+% LastRetarget: timestamp (seconds) stating when difficulty was last changed
 start() ->
     start([]).
 start(Peers) ->
@@ -175,8 +182,10 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
         LastRetarget
     );
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
+    % spawns the node server process
 	PID = spawn(
 		fun() ->
+            % join the node to the network
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
