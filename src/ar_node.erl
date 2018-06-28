@@ -736,10 +736,15 @@ set_mining_delay(Node, Delay) ->
 	Node ! {set_mining_delay, Delay}.
 
 %% @doc Set the number of bytes the node can transfer in a second.
+%% Used primarily for testing, simulating node connection strengths.
 set_xfer_speed(Node, Speed) ->
 	Node ! {set_xfer_speed, Speed}.
 
-%% @doc Add a transaction to the current block.
+%% @doc Add a transaction to the node.
+%% If accepted the tx will enter the waiting pool before being mined into the
+%% the next block.
+%% If the tx contradicts another in the tx mining pool it will be moved to
+%% the list of potential txs for potential foreign block verification.
 add_tx(GS, TX) when is_record(GS, gs_state) ->
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	NewGS;
