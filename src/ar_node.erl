@@ -271,6 +271,7 @@ get_current_block(Peer) ->
 
 %% @doc Return the entire hashlist from a node.
 % TODO: Change references to hashlist, not blocklist.
+% Code duplication against get_hashlist function.
 get_blocks(Node) ->
 	Node ! {get_blocks, self()},
 	receive
