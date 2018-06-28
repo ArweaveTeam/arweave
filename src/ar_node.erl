@@ -442,6 +442,8 @@ retry_full_block(Host, ID, _, Count) ->
 	end.
 
 % DEPRECATED (27/06/2018)
+%% @doc Reattempts to find an encrypted full block from a node retrying
+%% up to Count times.
 retry_encrypted_full_block(_, _, Response, 0) ->
 	Response;
 retry_encrypted_full_block(Host, ID, _, Count) ->
