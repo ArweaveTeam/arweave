@@ -638,18 +638,23 @@ get_floating_wallet_list(Node) ->
 	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
+%% @doc Returns the new difficulty of next mined block.
+% TODO: Function name is confusing, returns the new difficulty being mined on,
+% not the 'current' diff (that of the latest block)
 get_current_diff(Node) ->
     Node ! {get_current_diff, self()},
     receive
 		{current_diff, Diff} -> Diff
-	after ?LOCAL_NET_TIMEOUT -> 1
+	    after ?LOCAL_NET_TIMEOUT -> 1
 	end.
 
+%% @doc Returns the difficulty of the last successfully mined block.
+%% Returns the difficulty of the current block (not of that being mined).
 get_diff(Node) ->
 	Node ! {get_diff, self()},
 	receive
 		{diff, Diff} -> Diff
-	after ?LOCAL_NET_TIMEOUT -> 1
+	    after ?LOCAL_NET_TIMEOUT -> 1
 	end.
 
 get_reward_pool(Node) ->
