@@ -25,7 +25,7 @@
 -export([add_peers/2]).
 -export([calculate_reward/2, calculate_static_reward/1]).
 -export([rejoin/2]).
--export([filter_all_out_of_order_txs/2, filter_out_of_order_txs/2]).
+-export([filter_all_out_of_order_txs/2]).
 -export([apply_tx/2, apply_txs/2]).
 -export([apply_mining_reward/4]).
 -export([validate/5, validate/8, validate_wallet_list/1]).
@@ -1770,10 +1770,15 @@ generate_floating_wallet_list(WalletList, [T | TXs]) ->
 		false -> false
 	end.
 
+
+%% @doc Takes a wallet list and a set of txs and checks to ensure that the
+%% txs can be applied in a given order. The output is the set of all txs
+%% that could be applied.
 filter_all_out_of_order_txs(WalletList, InTXs) ->
 	filter_all_out_of_order_txs(
         WalletList,
-        InTXs,[]
+        InTXs,
+        []
     ).
 filter_all_out_of_order_txs(_WalletList, [], OutTXs) ->
 	lists:reverse(OutTXs);
@@ -1791,13 +1796,17 @@ filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
 		OutTXs ->
             lists:reverse(OutTXs);
 		_ ->
-            filter_all_out_of_order_txs
-                (FloatingWalletList,
+            filter_all_out_of_order_txs(
+                FloatingWalletList,
                 RemainingInTXs,
                 PassedTXs
             )
 	end.
-
+%% @doc Takes a wallet list and a set of txs and checks to ensure that the
+%% txs can be iteratively applied. When a tx is encountered that cannot be
+%% applied it is disregarded. The return is a tuple containing the output
+%% wallet list and the set of applied transactions.
+%% Helper function for 'filter_all_out_of_order_txs'.
 filter_out_of_order_txs(WalletList, InTXs) ->
 	filter_out_of_order_txs(
         WalletList,
@@ -1843,6 +1852,8 @@ tiny_network_with_reward_pool_test() ->
 	B2 = get_blocks(Node2),
 	2 = (hd(ar_storage:read_block(B2)))#block.height.
 
+%% @doc Ensure that a set of txs can be checked for serialization, those that
+%% don't serialize disregarded.
 filter_out_of_order_txs_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
@@ -1859,18 +1870,22 @@ filter_out_of_order_txs_test_slow() ->
 			{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
-		],
+        ],
+    % TX1 applied, TX2 applied
     {_, [SignedTX2, SignedTX]} =
         filter_out_of_order_txs(
                 WalletList,
                 [SignedTX, SignedTX2]
             ),
+    % TX2 disregarded, TX1 applied
     {_, [SignedTX]} =
         filter_out_of_order_txs(
                 WalletList,
                 [SignedTX2, SignedTX]
             ).
 
+%% @doc Ensure that a large set of txs can be checked for serialization,
+%% those that don't serialize disregarded.
 filter_out_of_order_txs_large_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
@@ -1887,28 +1902,27 @@ filter_out_of_order_txs_large_test_slow() ->
 			{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
-		],
+        ],
+    % TX1 applied, TX2 applied, TX3 applied
     {_, [SignedTX3, SignedTX2, SignedTX]} =
         filter_out_of_order_txs(
                 WalletList,
                 [SignedTX, SignedTX2, SignedTX3]
             ),
-    {_, [SignedTX]} =
-        filter_out_of_order_txs(
-                WalletList,
-                [SignedTX3, SignedTX2, SignedTX]
-            ),
+    % TX2 disregarded, TX3 disregarded, TX1 applied
     {_, [SignedTX]} =
         filter_out_of_order_txs(
                 WalletList,
                 [SignedTX2, SignedTX3, SignedTX]
             ),
+    % TX1 applied, TX3 disregarded, TX2 applied.
     {_, [SignedTX2, SignedTX]} =
         filter_out_of_order_txs(
                 WalletList,
                 [SignedTX, SignedTX3, SignedTX2]
             ).
 
+%% @doc Ensure that a set of txs can be serialized in the best possible order.
 filter_all_out_of_order_txs_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
@@ -1923,69 +1937,84 @@ filter_all_out_of_order_txs_test_slow() ->
 			{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
-		],
-    [SignedTX1, SignedTX2] =
+        ],
+    % TX1 applied, TX2 applied
+    [SignedTX, SignedTX2] =
         filter_all_out_of_order_txs(
                 WalletList,
                 [SignedTX, SignedTX2]
             ),
-    [SignedTX1, SignedTX2] =
+    % TX2 applied, TX1 applied
+    [SignedTX, SignedTX2] =
         filter_all_out_of_order_txs(
                 WalletList,
                 [SignedTX2, SignedTX]
             ).
 
+%% @doc Ensure that a large set of txs can be serialized in the best
+%% possible order.
 filter_all_out_of_order_txs_large_test_slow() ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
-	{_Priv2, Pub2} = ar_wallet:new(),
+	{Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), SignedTX2#tx.id),
-	SignedTX3 = ar_tx:sign(TX3, Priv1, Pub1),
+    SignedTX3 = ar_tx:sign(TX3, Priv1, Pub1),
+    TX4 = ar_tx:new(Pub1, ?AR(1), ?AR(25), <<>>),
+    SignedTX4 = ar_tx:sign(TX4, Priv2, Pub2),
 	WalletList =
 		[
 			{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
 			{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
 			{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
-		],
+        ],
+    % TX1 applied, TX2 applied, TX3 applied
     [SignedTX, SignedTX2, SignedTX3] =
         filter_all_out_of_order_txs(
                 WalletList,
                 [SignedTX, SignedTX2, SignedTX3]
             ),
+    % TX1 applied, TX3 applied, TX2 applied
     [SignedTX, SignedTX2, SignedTX3] =
         filter_all_out_of_order_txs(
                 WalletList,
                 [SignedTX, SignedTX3, SignedTX2]
             ),
+    % TX2 applied, TX1 applied, TX3 applied
     [SignedTX, SignedTX2, SignedTX3] =
         filter_all_out_of_order_txs(
                 WalletList,
                 [SignedTX2, SignedTX, SignedTX3]
             ),
+    % TX2 applied, TX3 applied, TX1 applied
     [SignedTX, SignedTX2, SignedTX3] =
         filter_all_out_of_order_txs(
                 WalletList,
                 [SignedTX2, SignedTX3, SignedTX]
             ),
+    % TX3 applied, TX1 applied, TX2 applied
     [SignedTX, SignedTX2, SignedTX3] =
         filter_all_out_of_order_txs(
                 WalletList,
                 [SignedTX3, SignedTX, SignedTX2]
             ),
+    % TX3 applied, TX2 applied, TX1 applied
     [SignedTX, SignedTX2, SignedTX3] =
         filter_all_out_of_order_txs(
                 WalletList,
                 [SignedTX3, SignedTX2, SignedTX]
             ),
-    [SignedTX, SignedTX2, SignedTX3] =
+    % TX1 applied, TX1 duplicate, TX1 duplicate, TX2 applied, TX4 applied
+    % TX1 duplicate, TX3 applied
+    % NB: Consider moving into separate test.
+    [SignedTX, SignedTX2, SignedTX4, SignedTX3] =
         filter_all_out_of_order_txs(
                 WalletList,
-                [SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX, SignedTX3]
+                [SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX4, SignedTX, SignedTX3]
             ).
 
 %% @doc Check the current block can be retrieved
