@@ -325,8 +325,10 @@ retry_block(Host, ID, _, Count) ->
 		B -> B
     end.
 
-%% @doc Return a specific full block from a node, if it has it.
+%% @doc Get a specific full block (a blok containing full txs) via
+%% blocks indep_hash.
 get_full_block(Peers, ID) when is_list(Peers) ->
+    % check locally first, if not found ask list of external peers for block
 	case ar_storage:read_block(ID) of
 		unavailable ->
 			lists:foldl(
@@ -353,8 +355,10 @@ get_full_block(Peers, ID) when is_list(Peers) ->
 			end
 	end;
 get_full_block(Proc, ID) when is_pid(Proc) ->
+    % attempt to get block from local storage and add transactions
 	make_full_block(ID);
 get_full_block(Host, ID) ->
+    % handle external peer request
 	ar_http_iface:get_full_block(Host, ID).
 
 get_encrypted_block(Peers, ID) when is_list(Peers) ->
