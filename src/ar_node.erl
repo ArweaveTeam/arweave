@@ -575,12 +575,13 @@ get_hash_list(Node) ->
 	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
-%% @doc Return the current balance associated with a wallet.
+%% @doc Get the current balanace of a given wallet address.
+%% The balance returned is in relation to the nodes current wallet list.
 get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_balance, self(), Addr},
 	receive
 		{balance, Addr, B} -> B
-	after ?LOCAL_NET_TIMEOUT -> node_unavailable
+	    after ?LOCAL_NET_TIMEOUT -> node_unavailable
 	end;
 get_balance(Node, WalletID) ->
 	get_balance(Node, ar_wallet:to_address(WalletID)).
