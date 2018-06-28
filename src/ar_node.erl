@@ -784,8 +784,9 @@ add_block(Host, Peer, NewB, RecallB, _Height) ->
 	ar_http_iface:send_new_block(Host, Peer, NewB, RecallB),
 	ok.
 
-%% @doc Add peer(s) to a node.
-add_peers(Node, Peer) when not is_list(Peer) -> add_peers(Node, [Peer]);
+%% @doc Request to add a list of peers to the node server loop.
+add_peers(Node, Peer) when not is_list(Peer) ->
+    add_peers(Node, [Peer]);
 add_peers(Node, Peers) ->
 	%ar:d([{node, self()}, {requesting_add_peers, Peers}]),
 	Node ! {add_peers, Peers},
