@@ -740,7 +740,7 @@ set_mining_delay(Node, Delay) ->
 set_xfer_speed(Node, Speed) ->
 	Node ! {set_xfer_speed, Speed}.
 
-%% @doc Add a transaction to the node.
+%% @doc Add a transaction to the node server loop.
 %% If accepted the tx will enter the waiting pool before being mined into the
 %% the next block.
 %% If the tx contradicts another in the tx mining pool it will be moved to
@@ -754,13 +754,28 @@ add_tx(Node, TX) when is_pid(Node) ->
 add_tx(Host, TX) ->
 	ar_http_iface:send_new_tx(Host, TX).
 
-%% @doc Add a new block to the server.
+%% @doc Add a new block to the node server loop.
+%% If accepted the nodes state will change.
 add_block(Conn, NewB, RecallB) ->
-	add_block(Conn, NewB, RecallB, NewB#block.height).
+	add_block(
+        Conn,
+        NewB,
+        RecallB,
+        NewB#block.height
+    ).
 add_block(Conn, NewB, RecallB, Height) ->
-	add_block(Conn, undefined, NewB, RecallB, Height).
+	add_block(
+        Conn,
+        undefined,
+        NewB,
+        RecallB,
+        Height
+    ).
 add_block(GS, Peer, NewB, RecallB, Height) when is_record(GS, gs_state) ->
-	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
+    {NewGS, _} =
+        ar_gossip:send(
+            GS, {new_block, Peer, Height, NewB, RecallB}
+        ),
 	NewGS;
 add_block(Node, Peer, NewB, RecallB, Height) when is_pid(Node) ->
 	Node ! {new_block, Peer, Height, NewB, RecallB},
