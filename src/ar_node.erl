@@ -555,12 +555,13 @@ get_peers(Proc) when is_pid(Proc) ->
 get_peers(Host) ->
 	ar_http_iface:get_peers(Host).
 
-%% @doc Get the list of wallets from the node
+%% @doc Get the current wallet list from the node.
+%% This wallet list is up to date to the latest block held.
 get_wallet_list(Node) ->
     Node ! {get_walletlist, self()},
     receive
 		{walletlist, WalletList} -> WalletList
-	after ?LOCAL_NET_TIMEOUT -> []
+	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 %% @doc Get the hash list from the node
