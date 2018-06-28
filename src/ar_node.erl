@@ -1779,6 +1779,9 @@ calculate_proportion(RecallSize, WeaveSize, Length) ->
         (math:pow(2, X)/(math:pow(2, X) + 2))
     ).
 
+%% @doc Given a wallet list and set of txs will try to apply the txs
+%% iteratively to the wallet list and return the result.
+%% Txs that cannot be applied are disregarded.
 generate_floating_wallet_list(WalletList, []) ->
 	WalletList;
 generate_floating_wallet_list(WalletList, [T | TXs]) ->
