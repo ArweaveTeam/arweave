@@ -232,13 +232,16 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	ar_http_iface:reregister(http_entrypoint_node, PID),
 	PID.
 
-%% @doc Stop a node (and its miner)
+%% @doc Stop a node server loop and its subprocesses.
 stop(Node) ->
 	Node ! stop,
 	ok.
 
-%% Get the current, top block.
+%% @doc Get the current top block.
+%% If found the result will be a block with tx references, not a full block.
+% TODO: standardize return, unavailable | not_found.
 get_current_block(Peers) when is_list(Peers) ->
+    % ask list of external peers for block
 	lists:foldl(
 		fun(Peer, Acc) ->
 			case is_atom(Acc) of
@@ -255,6 +258,7 @@ get_current_block(Peers) when is_list(Peers) ->
 		Peers
 	);
 get_current_block(Peer) when is_pid(Peer) ->
+    % ask own node server for block
 	Peer ! {get_current_block, self()},
 	receive
 		{block, CurrentBlock} -> CurrentBlock
@@ -262,9 +266,11 @@ get_current_block(Peer) when is_pid(Peer) ->
 		not_found
 	end;
 get_current_block(Peer) ->
+    % handle external peer request
 	ar_http_iface:get_current_block(Peer).
 
-%% @doc Return the entire block list from a node.
+%% @doc Return the entire hashlist from a node.
+% TODO: Change references to hashlist, not blocklist.
 get_blocks(Node) ->
 	Node ! {get_blocks, self()},
 	receive
@@ -273,9 +279,11 @@ get_blocks(Node) ->
 		not_found
 	end.
 
-%% @doc Return a specific block from a node, if it has it.
+%% @doc Get a specific block via blocks indep_hash.
+%% If found the result will be a block with tx references, not a full block.
 get_block(Peers, ID) when is_list(Peers) ->
-	%ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
+    % ask list of external peers for block
+	% ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
 	case ar_storage:read_block(ID) of
 		unavailable ->
 			lists:foldl(
@@ -296,8 +304,10 @@ get_block(Peers, ID) when is_list(Peers) ->
 		Block -> Block
 	end;
 get_block(Proc, ID) when is_pid(Proc) ->
+    % attempt to get block from nodes local storage
 	ar_storage:read_block(ID);
 get_block(Host, ID) ->
+    % handle external peer request
 	ar_http_iface:get_block(Host, ID).
 
 % DEPRECATED (27/06/2018)
