@@ -1243,78 +1243,77 @@ fork_recover(
 %% dropping or starting a fork recoverer as appropriate.
 process_new_block(S, NewGS, NewB, _, _Peer, not_joined) ->
 	join_weave(S#state { gossip = NewGS }, NewB);
+process_new_block(RawS1, NewGS, NewB, unavailable, Peer, HashList)
+		when NewB#block.height == RawS1#state.height + 1 ->
+		% This block is at the correct height.
+	RecallHash = find_recall_hash(NewB, HashList),
+	FullBlock = ar_node:get_full_block(
+		Peer,
+		RecallHash
+	),
+	case ?IS_BLOCK(FullBlock) of
+		true ->
+			% TODO: Cleanup full block -> shadow generation.
+			RecallShadow = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+			ar_storage:write_full_block(FullBlock),
+			S = RawS1#state { gossip = NewGS },
+			process_new_block(S, NewGS, NewB, RecallShadow, Peer, HashList);
+		false ->
+			ar:d(failed_to_get_recall_block),
+			server(RawS1)
+	end;
 process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 		when NewB#block.height == RawS1#state.height + 1 ->
 		% This block is at the correct height.
-	case RecallB of
-		unavailable ->
-			RecallHash = find_recall_hash(NewB, HashList),
-            FullBlock = ar_node:get_full_block(
-				Peer,
-				RecallHash
-			),
-			case ?IS_BLOCK(FullBlock) of
-				true ->
-					% TODO: Cleanup full block -> shadow generation.
-					RecallShadow = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
-					ar_storage:write_full_block(FullBlock),
-					S = RawS1#state { gossip = NewGS },
-					process_new_block(S, NewGS, NewB, RecallShadow, Peer, HashList);
-				false ->
-					ar:d(failed_to_get_recall_block),
-					server(RawS1)
-			end;
-		_ ->
-			S = RawS1#state { gossip = NewGS },
-			% If transaction not found in state or storage, txlist built will be incomplete
-			% and will fail in validate
-			TXs = lists:foldr(
-				fun(T, Acc) ->
-					%state contains it
-					case [TX || TX <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs), TX#tx.id == T] of
-						[] ->
-							case ar_storage:read_tx(T) of
-								unavailable ->
-									Acc;
-								TX -> [TX | Acc]
-							end;
-						[TX | _] -> [TX | Acc]
-					end
-				end,
-				[],
-				NewB#block.txs
-			),
-			{FinderReward, _} =
-				calculate_reward_pool(
-					S#state.reward_pool,
-					TXs,
-					NewB#block.reward_addr,
-					calculate_proportion(
-						RecallB#block.block_size,
-						NewB#block.weave_size,
-						NewB#block.height
-					)
-				),
-			WalletList =
-				apply_mining_reward(
-					apply_txs(S#state.wallet_list, TXs),
-					NewB#block.reward_addr,
-					FinderReward,
-					NewB#block.height
-				),
-			NewS = S#state { wallet_list = WalletList },
-			case validate(NewS, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
-				true ->
-					% The block is legit. Accept it.
-					case whereis(fork_recovery_server) of
-						undefined -> integrate_new_block(NewS, NewB);
-						_ -> fork_recover(S#state { gossip = NewGS }, Peer, NewB)
+	S = RawS1#state { gossip = NewGS },
+	% If transaction not found in state or storage, txlist built will be incomplete
+	% and will fail in validate
+	TXs = lists:foldr(
+		fun(T, Acc) ->
+			%state contains it
+			case [TX || TX <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs), TX#tx.id == T] of
+				[] ->
+					case ar_storage:read_tx(T) of
+						unavailable ->
+							Acc;
+						TX -> [TX | Acc]
 					end;
-				false ->
-					ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
-					server(S)
-					%fork_recover(S, Peer, NewB)
+				[TX | _] -> [TX | Acc]
 			end
+		end,
+		[],
+		NewB#block.txs
+	),
+	{FinderReward, _} =
+		calculate_reward_pool(
+			S#state.reward_pool,
+			TXs,
+			NewB#block.reward_addr,
+			calculate_proportion(
+				RecallB#block.block_size,
+				NewB#block.weave_size,
+				NewB#block.height
+			)
+		),
+	WalletList =
+		apply_mining_reward(
+			apply_txs(S#state.wallet_list, TXs),
+			NewB#block.reward_addr,
+			FinderReward,
+			NewB#block.height
+		),
+	NewS = S#state { wallet_list = WalletList },
+	case validate(NewS, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
+		true ->
+			% The block is legit. Accept it.
+			case whereis(fork_recovery_server) of
+				undefined -> integrate_new_block(NewS, NewB);
+				_ -> fork_recover(S#state { gossip = NewGS }, Peer, NewB)
+			end;
+		false ->
+			ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
+			server(S)
+			%fork_recover(S, Peer, NewB)
 	end;
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< S#state.height ->
