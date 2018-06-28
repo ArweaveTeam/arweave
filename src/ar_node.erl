@@ -703,6 +703,7 @@ generate_and_set_reward_addr() ->
 		]
 	).
 
+%% @doc Pretty print the reward address of the node.
 print_reward_addr() ->
 	ar_util:encode(get_reward_addr(whereis(http_entrypoint_node))).
 
