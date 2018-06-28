@@ -517,11 +517,14 @@ get_tx(Host, ID) ->
     % handle external peer request
 	ar_http_iface:get_tx(Host, ID).
 
+% DEPRECATED (28/06/2018)
+%% @doc get the set of trusted peers.
+%% The set of trusted peers is that in whcih where joined on.
 get_trusted_peers(Proc) when is_pid(Proc) ->
 	Proc ! {get_trusted_peers, self()},
 	receive
 		{peers, Ps} -> Ps
-	after ?LOCAL_NET_TIMEOUT -> []
+	    after ?LOCAL_NET_TIMEOUT -> []
 	end;
 get_trusted_peers(_) ->
 	unavailable.
