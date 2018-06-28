@@ -457,7 +457,8 @@ retry_encrypted_full_block(Host, ID, _, Count) ->
 		B -> B
 	end.
 
-%% @doc Convert a block header into a full block.
+%% @doc Convert a block with tx references into a full block, that is a block
+%% containing the entirety of all its referenced txs.
 make_full_block(ID) ->
 	case ar_storage:read_block(ID) of
 		unavailable -> unavailable;
