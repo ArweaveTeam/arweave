@@ -800,301 +800,383 @@ server(
 		wallet_list = WalletList,
 		floating_wallet_list = FloatingWalletList
 	}) ->
-	try (receive
-		Msg when is_record(Msg, gs_msg) ->
-			% We have received a gossip mesage. Use the library to process it.
-			case ar_gossip:recv(GS, Msg) of
-				{NewGS, {new_block, Peer, _Height, NewB, RecallB}} ->
-					%ar:d([{block, NewB}, {hash_list, HashList}]),
-					process_new_block(
-						S,
-						NewGS,
-						NewB,
-						RecallB,
-						Peer,
-						HashList
-					);
-				{NewGS, {add_tx, TX}} ->
-					ConflictingTXs =
-						[
-							T
-						||
-							T <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
-							((T#tx.last_tx == TX#tx.last_tx) and (T#tx.owner == TX#tx.owner))
-						],
-					case ConflictingTXs of
-						[] ->
-							timer:send_after(
-								calculate_delay(byte_size(TX#tx.data)),
-								{apply_tx, TX}
-							),
-							server(S#state { waiting_txs = ar_util:unique([TX | S#state.waiting_txs]), gossip = NewGS });
-						_ -> server(S#state { potential_txs = ar_util:unique([TX | S#state.potential_txs]), gossip = NewGS })
-					end;
-				{NewGS, ignore} ->
-					server(S#state { gossip = NewGS });
-				{NewGS, X} ->
-					ar:report(
-						[
-							{node, self()},
-							{unhandeled_gossip_msg, X}
-						]
-					),
-					server(S#state { gossip = NewGS })
-			end;
-		{add_tx, TX} ->
-			ConflictingTXs =
-				[
-					T
-				||
-					T <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
-					((T#tx.last_tx == TX#tx.last_tx) and (T#tx.owner == TX#tx.owner))
-				],
-			case ConflictingTXs of
-				[] ->
-					timer:send_after(
-						calculate_delay(byte_size(TX#tx.data)),
-						{apply_tx, TX}
-					),
-					server(S#state { waiting_txs = ar_util:unique([TX | S#state.waiting_txs]) });
-				_ ->
-					ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
-					server(S#state { potential_txs = ar_util:unique([TX | S#state.potential_txs]) })
-			end;
-		{apply_tx, TX} ->
-			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-			add_tx_to_server(S, NewGS, TX);
-		{new_block, Peer, Height, NewB, RecallB} ->
-			% We have a new block. Distribute it to the
-			% gossip network.
-			{NewGS, _} =
-				ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
-			%ar:d([{block, NewB}, {hash_list, HashList}]),
-			process_new_block(
-				S,
-				NewGS,
-				NewB,
-				RecallB,
-				Peer,
-				HashList
-			);
-		{replace_block_list, _NewBL = [B | _]} ->
-			% Replace the entire stored block list, regenerating the hash list.
-			%lists:map(fun ar_storage:write_block/1, NewBL),
-			%ar:d({replaced, [B#block.indep_hash | B#block.hash_list]}),
-			server(
-				S#state {
-					hash_list = [B#block.indep_hash | B#block.hash_list],
-					wallet_list = B#block.wallet_list,
-					height = B#block.height
-				}
-			);
-		{get_current_block, PID} ->
-			PID ! {block, ar_util:get_head_block(HashList)},
-			server(S);
-		{get_blocks, PID} ->
-			PID ! {blocks, self(), HashList},
-			server(S);
-		{get_block, PID} ->
-			PID ! {block, self(), find_block(HashList)},
-			server(S);
-		{get_peers, PID} ->
-			PID ! {peers, ar_gossip:peers(GS)},
-			server(S);
-		{get_trusted_peers, PID} ->
-			PID ! {peers, S#state.trusted_peers},
-			server(S);
-        {get_walletlist, PID} ->
-            PID ! {walletlist, S#state.wallet_list},
-            server(S);
-        {get_hashlist, PID} ->
-            PID ! {hashlist, S#state.hash_list},
-            server(S);
-		{get_balance, PID, WalletID} ->
-			PID ! {balance, WalletID,
-				case lists:keyfind(WalletID, 1, WalletList) of
-					{WalletID, Balance, _Last} -> Balance;
-					false -> 0
-				end},
-			server(S);
-		{get_last_tx, PID, Addr} ->
-			PID ! {last_tx, Addr,
-				case lists:keyfind(Addr, 1, WalletList) of
-					{Addr, _Balance, Last} -> Last;
-					false -> <<>>
-				end},
-			server(S);
-		{get_last_tx_from_floating, PID, Addr} ->
-			PID ! {last_tx_from_floating, Addr,
-			case lists:keyfind(Addr, 1, FloatingWalletList) of
-				{Addr, _Balance, Last} -> Last;
-				false -> <<>>
-			end},
-			server(S);
-		{get_txs, PID} ->
-			PID ! {all_txs, S#state.txs ++ S#state.waiting_txs},
-			server(S);
-		{get_all_known_txs, PID} ->
-			PID ! {all_known_txs, S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs},
-			server(S);
-		{get_floatingwalletlist, PID} ->
-			PID ! {floatingwalletlist, S#state.floating_wallet_list},
-			server(S);
-		{get_current_diff, PID} ->
-		    PID ! {
-				current_diff,
-				case ar_retarget:is_retarget_height(S#state.height + 1) of
-					true -> ar_retarget:maybe_retarget(
-							S#state.height + 1,
-							S#state.diff,
-							os:system_time(seconds),
-							S#state.last_retarget
-						);
-					false -> S#state.diff
-				end
-			},
-			server(S);
-		{get_diff, PID} ->
-			PID ! {diff, S#state.diff},
-			server(S);
-		{get_reward_pool, PID} ->
-			PID ! {reward_pool, S#state.reward_pool},
-			server(S);
-		{get_reward_addr, PID} ->
-			PID ! {reward_addr, S#state.reward_addr},
-			server(S);
-		{set_reward_addr, Addr} ->
-			server(S#state{reward_addr = Addr});
-		mine ->
-			server(start_mining(S));
-		automine -> server(start_mining(S#state { automine = true }));
-		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
-			% The miner thinks it has found a new block
-			case S#state.hash_list of
-				not_joined -> do_nothing;
-				_ -> integrate_block_from_miner(S, MinedTXs, Diff, Nonce, Timestamp)
-			end;
-		{add_peers, Ps} ->
-			%ar:d({adding_peers, Ps}),
-			server(S#state { gossip = ar_gossip:add_peers(GS, Ps) });
-		stop ->
-			case S#state.miner of
-				undefined -> do_nothing;
-				PID -> ar_mine:stop(PID)
-			end,
-			ok;
-		{set_loss_probability, Prob} ->
-			server(
-				S#state {
-					gossip = ar_gossip:set_loss_probability(S#state.gossip, Prob)
-				}
-			);
-		{set_delay, MaxDelay} ->
-			server(
-				S#state {
-					gossip = ar_gossip:set_delay(S#state.gossip, MaxDelay)
-				}
-			);
-		{set_xfer_speed, Speed} ->
-			server(
-				S#state {
-					gossip = ar_gossip:set_xfer_speed(S#state.gossip, Speed)
-				}
-			);
-		{set_mining_delay, Delay} ->
-			server(
-				S#state {
-					mining_delay = Delay
-				}
-			);
-		{rejoin, Peers, Block} ->
-			UntrustedPeers =
-				lists:filter(
-					fun(Peer) ->
-						not lists:member(Peer, S#state.trusted_peers)
-					end,
-					ar_util:unique(Peers)
-				),
-			lists:foreach(
-				fun(Peer) ->
-					ar_bridge:ignore_peer(whereis(http_bridge_node), Peer)
-				end,
-				UntrustedPeers
-			),
-			ar_join:start(self(), S#state.trusted_peers, Block),
-			server(S);
-		{fork_recovered, NewHs} when HashList == not_joined ->
-			NewB = ar_storage:read_block(hd(NewHs)),
-			ar:report_console(
-				[
-					node_joined_successfully,
-					{height, NewB#block.height}
-				]
-			),
-			case whereis(fork_recovery_server) of
-				undefined -> ok;
-				_ -> erlang:unregister(fork_recovery_server)
-			end,
-			%ar_cleanup:remove_invalid_blocks(NewHs),
-			TXPool = S#state.txs ++ S#state.potential_txs,
-			TXs = filter_all_out_of_order_txs(NewB#block.wallet_list, TXPool),
-			PotentialTXs = TXPool -- TXs,
-			server(
-				reset_miner(
-					S#state {
-						hash_list = NewHs,
-						wallet_list = NewB#block.wallet_list,
-						height = NewB#block.height,
-						reward_pool = NewB#block.reward_pool,
-						floating_wallet_list = NewB#block.wallet_list,
-						txs = TXs,
-						potential_txs = PotentialTXs,
-						diff = NewB#block.diff,
-						last_retarget = NewB#block.last_retarget,
-						weave_size = NewB#block.weave_size
-					}
-				)
-			);
-		{fork_recovered, NewHs}
-				when (length(NewHs)) > (length(HashList)) ->
-			case whereis(fork_recovery_server) of
-				undefined -> ok;
-				_ -> erlang:unregister(fork_recovery_server)
-			end,
-			NewB = ar_storage:read_block(hd(NewHs)),
-			ar:report_console(
-				[
-					fork_recovered_successfully,
-					{height, NewB#block.height}
-				]
-			),
-			%ar_cleanup:remove_invalid_blocks(NewHs),
-			TXPool = S#state.txs ++ S#state.potential_txs,
-			TXs = filter_all_out_of_order_txs(NewB#block.wallet_list, TXPool),
-			PotentialTXs = TXPool -- TXs,
-			server(
-				reset_miner(
-					S#state {
-						hash_list = [NewB#block.indep_hash | NewB#block.hash_list],
-						wallet_list = NewB#block.wallet_list,
-						height = NewB#block.height,
-						reward_pool = NewB#block.reward_pool,
-						floating_wallet_list = NewB#block.wallet_list,
-						txs = TXs,
-						potential_txs = PotentialTXs,
-						diff = NewB#block.diff,
-						last_retarget = NewB#block.last_retarget,
-						weave_size = NewB#block.weave_size
-					}
-				)
-			);
-		{fork_recovered, _} -> server(S);
-		{'DOWN', _, _, _, _} ->
-			server(S);
-		Msg ->
-			ar:report_console([{unknown_msg_node, Msg}]),
-			server(S)
-	end)
+	try (
+        receive
+            Msg when is_record(Msg, gs_msg) ->
+                % We have received a gossip mesage. Use the library to process it.
+                case ar_gossip:recv(GS, Msg) of
+                    {NewGS, {new_block, Peer, _Height, NewB, RecallB}} ->
+                        %ar:d([{block, NewB}, {hash_list, HashList}]),
+                        process_new_block(
+                            S,
+                            NewGS,
+                            NewB,
+                            RecallB,
+                            Peer,
+                            HashList
+                        );
+                    {NewGS, {add_tx, TX}} ->
+                        ConflictingTXs =
+                            [
+                                T
+                            ||
+                                T <-
+                                    (
+                                        S#state.txs ++
+                                        S#state.waiting_txs ++
+                                        S#state.potential_txs
+                                    ),
+                                (
+                                    (T#tx.last_tx == TX#tx.last_tx) and
+                                    (T#tx.owner == TX#tx.owner)
+                                )
+                            ],
+                        case ConflictingTXs of
+                            [] ->
+                                timer:send_after(
+                                    calculate_delay(byte_size(TX#tx.data)),
+                                    {apply_tx, TX}
+                                ),
+                                server(
+                                    S#state {
+                                        waiting_txs =
+                                            ar_util:unique(
+                                                [TX | S#state.waiting_txs]
+                                            ),
+                                        gossip = NewGS
+                                    }
+                                );
+                            _ ->
+                                server(
+                                    S#state {
+                                        potential_txs =
+                                            ar_util:unique(
+                                                [TX | S#state.potential_txs]
+                                            ),
+                                        gossip = NewGS
+                                    }
+                                    )
+                        end;
+                    {NewGS, ignore} ->
+                        server(S#state { gossip = NewGS });
+                    {NewGS, X} ->
+                        ar:report(
+                            [
+                                {node, self()},
+                                {unhandeled_gossip_msg, X}
+                            ]
+                        ),
+                        server(S#state { gossip = NewGS })
+                end;
+            {add_tx, TX} ->
+                ConflictingTXs =
+                    [
+                        T
+                    ||
+                        T <-
+                            (
+                                S#state.txs ++
+                                S#state.waiting_txs ++
+                                S#state.potential_txs
+                            ),
+                        (
+                            (T#tx.last_tx == TX#tx.last_tx) and
+                            (T#tx.owner == TX#tx.owner)
+                        )
+                    ],
+                case ConflictingTXs of
+                    [] ->
+                        timer:send_after(
+                            calculate_delay(byte_size(TX#tx.data)),
+                            {apply_tx, TX}
+                        ),
+                        server(
+                            S#state {
+                                waiting_txs =
+                                    ar_util:unique(
+                                        [TX | S#state.waiting_txs]
+                                    )
+                            }
+                        );
+                    _ ->
+                        ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
+                        server(
+                            S#state {
+                                potential_txs =
+                                    ar_util:unique(
+                                        [TX | S#state.potential_txs]
+                                    )
+                            }
+                        )
+                end;
+            {apply_tx, TX} ->
+                {NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
+                add_tx_to_server(S, NewGS, TX);
+            {new_block, Peer, Height, NewB, RecallB} ->
+                % We have a new block. Distribute it to the
+                % gossip network.
+                {NewGS, _} =
+                    ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
+                %ar:d([{block, NewB}, {hash_list, HashList}]),
+                process_new_block(
+                    S,
+                    NewGS,
+                    NewB,
+                    RecallB,
+                    Peer,
+                    HashList
+                );
+            {replace_block_list, _NewBL = [B | _]} ->
+                % Replace the entire stored block list, regenerating the hash list.
+                %lists:map(fun ar_storage:write_block/1, NewBL),
+                %ar:d({replaced, [B#block.indep_hash | B#block.hash_list]}),
+                server(
+                    S#state {
+                        hash_list = [B#block.indep_hash | B#block.hash_list],
+                        wallet_list = B#block.wallet_list,
+                        height = B#block.height
+                    }
+                );
+            {get_current_block, PID} ->
+                PID ! {block, ar_util:get_head_block(HashList)},
+                server(S);
+            {get_blocks, PID} ->
+                PID ! {blocks, self(), HashList},
+                server(S);
+            {get_block, PID} ->
+                PID ! {block, self(), find_block(HashList)},
+                server(S);
+            {get_peers, PID} ->
+                PID ! {peers, ar_gossip:peers(GS)},
+                server(S);
+            {get_trusted_peers, PID} ->
+                PID ! {peers, S#state.trusted_peers},
+                server(S);
+            {get_walletlist, PID} ->
+                PID ! {walletlist, S#state.wallet_list},
+                server(S);
+            {get_hashlist, PID} ->
+                PID ! {hashlist, S#state.hash_list},
+                server(S);
+            {get_balance, PID, WalletID} ->
+                PID ! {balance, WalletID,
+                    case lists:keyfind(WalletID, 1, WalletList) of
+                        {WalletID, Balance, _Last} -> Balance;
+                        false -> 0
+                    end},
+                server(S);
+            {get_last_tx, PID, Addr} ->
+                PID ! {last_tx, Addr,
+                    case lists:keyfind(Addr, 1, WalletList) of
+                        {Addr, _Balance, Last} -> Last;
+                        false -> <<>>
+                    end},
+                server(S);
+            {get_last_tx_from_floating, PID, Addr} ->
+                PID ! {last_tx_from_floating, Addr,
+                case lists:keyfind(Addr, 1, FloatingWalletList) of
+                    {Addr, _Balance, Last} -> Last;
+                    false -> <<>>
+                end},
+                server(S);
+            {get_txs, PID} ->
+                PID ! {all_txs, S#state.txs ++ S#state.waiting_txs},
+                server(S);
+            {get_all_known_txs, PID} ->
+                AllTX =
+                    S#state.txs ++
+                    S#state.waiting_txs ++
+                    S#state.potential_txs,
+                PID ! {all_known_txs, AllTX},
+                server(S);
+            {get_floatingwalletlist, PID} ->
+                PID ! {floatingwalletlist, S#state.floating_wallet_list},
+                server(S);
+            {get_current_diff, PID} ->
+                PID ! {
+                    current_diff,
+                    case ar_retarget:is_retarget_height(S#state.height + 1) of
+                        true ->
+                                ar_retarget:maybe_retarget(
+                                S#state.height + 1,
+                                S#state.diff,
+                                os:system_time(seconds),
+                                S#state.last_retarget
+                            );
+                        false -> S#state.diff
+                    end
+                },
+                server(S);
+            {get_diff, PID} ->
+                PID ! {diff, S#state.diff},
+                server(S);
+            {get_reward_pool, PID} ->
+                PID ! {reward_pool, S#state.reward_pool},
+                server(S);
+            {get_reward_addr, PID} ->
+                PID ! {reward_addr, S#state.reward_addr},
+                server(S);
+            {set_reward_addr, Addr} ->
+                server(S#state{reward_addr = Addr});
+            mine ->
+                server(start_mining(S));
+            automine -> server(start_mining(S#state { automine = true }));
+            {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+                % The miner thinks it has found a new block
+                case S#state.hash_list of
+                    not_joined ->
+                        do_nothing;
+                    _ ->
+                        integrate_block_from_miner(
+                            S,
+                            MinedTXs,
+                            Diff,
+                            Nonce,
+                            Timestamp
+                        )
+                end;
+            {add_peers, Ps} ->
+                %ar:d({adding_peers, Ps}),
+                server(S#state { gossip = ar_gossip:add_peers(GS, Ps) });
+            stop ->
+                case S#state.miner of
+                    undefined -> do_nothing;
+                    PID -> ar_mine:stop(PID)
+                end,
+                ok;
+            {set_loss_probability, Prob} ->
+                server(
+                    S#state {
+                        gossip =
+                            ar_gossip:set_loss_probability(
+                                S#state.gossip,
+                                Prob
+                            )
+                    }
+                );
+            {set_delay, MaxDelay} ->
+                server(
+                    S#state {
+                        gossip =
+                            ar_gossip:set_delay(
+                                S#state.gossip,
+                                MaxDelay
+                            )
+                    }
+                );
+            {set_xfer_speed, Speed} ->
+                server(
+                    S#state {
+                        gossip =
+                            ar_gossip:set_xfer_speed(
+                                S#state.gossip,
+                                Speed
+                            )
+                    }
+                );
+            {set_mining_delay, Delay} ->
+                server(
+                    S#state {
+                        mining_delay = Delay
+                    }
+                );
+            {rejoin, Peers, Block} ->
+                UntrustedPeers =
+                    lists:filter(
+                        fun(Peer) ->
+                            not lists:member(Peer, S#state.trusted_peers)
+                        end,
+                        ar_util:unique(Peers)
+                    ),
+                lists:foreach(
+                    fun(Peer) ->
+                        ar_bridge:ignore_peer(whereis(http_bridge_node), Peer)
+                    end,
+                    UntrustedPeers
+                ),
+                ar_join:start(self(), S#state.trusted_peers, Block),
+                server(S);
+            {fork_recovered, NewHs} when HashList == not_joined ->
+                NewB = ar_storage:read_block(hd(NewHs)),
+                ar:report_console(
+                    [
+                        node_joined_successfully,
+                        {height, NewB#block.height}
+                    ]
+                ),
+                case whereis(fork_recovery_server) of
+                    undefined -> ok;
+                    _ -> erlang:unregister(fork_recovery_server)
+                end,
+                %ar_cleanup:remove_invalid_blocks(NewHs),
+                TXPool = S#state.txs ++ S#state.potential_txs,
+                TXs =
+                    filter_all_out_of_order_txs(
+                        NewB#block.wallet_list,
+                        TXPool
+                    ),
+                PotentialTXs = TXPool -- TXs,
+                server(
+                    reset_miner(
+                        S#state {
+                            hash_list = NewHs,
+                            wallet_list = NewB#block.wallet_list,
+                            height = NewB#block.height,
+                            reward_pool = NewB#block.reward_pool,
+                            floating_wallet_list = NewB#block.wallet_list,
+                            txs = TXs,
+                            potential_txs = PotentialTXs,
+                            diff = NewB#block.diff,
+                            last_retarget = NewB#block.last_retarget,
+                            weave_size = NewB#block.weave_size
+                        }
+                    )
+                );
+            {fork_recovered, NewHs}
+                    when (length(NewHs)) > (length(HashList)) ->
+                case whereis(fork_recovery_server) of
+                    undefined -> ok;
+                    _ -> erlang:unregister(fork_recovery_server)
+                end,
+                NewB = ar_storage:read_block(hd(NewHs)),
+                ar:report_console(
+                    [
+                        fork_recovered_successfully,
+                        {height, NewB#block.height}
+                    ]
+                ),
+                %ar_cleanup:remove_invalid_blocks(NewHs),
+                TXPool = S#state.txs ++ S#state.potential_txs,
+                TXs =
+                    filter_all_out_of_order_txs(
+                        NewB#block.wallet_list,
+                        TXPool
+                    ),
+                PotentialTXs = TXPool -- TXs,
+                server(
+                    reset_miner(
+                        S#state {
+                            hash_list =
+                                [NewB#block.indep_hash | NewB#block.hash_list],
+                            wallet_list = NewB#block.wallet_list,
+                            height = NewB#block.height,
+                            reward_pool = NewB#block.reward_pool,
+                            floating_wallet_list = NewB#block.wallet_list,
+                            txs = TXs,
+                            potential_txs = PotentialTXs,
+                            diff = NewB#block.diff,
+                            last_retarget = NewB#block.last_retarget,
+                            weave_size = NewB#block.weave_size
+                        }
+                    )
+                );
+            {fork_recovered, _} -> server(S);
+            {'DOWN', _, _, _, _} ->
+                server(S);
+            Msg ->
+                ar:report_console([{unknown_msg_node, Msg}]),
+                server(S)
+        end)
 	catch
 		throw:Term ->
 			ar:report(
