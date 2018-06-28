@@ -716,18 +716,22 @@ automine(Node) ->
 	Node ! automine.
 
 %% @doc Cause a node to forget all but the latest block.
+%% Used primarily for testing, simulating newly joined node.
 truncate(Node) ->
 	Node ! truncate.
 
 %% @doc Set the likelihood that a message will be dropped in transmission.
+%% Used primarily for testing, simulating packet loss.
 set_loss_probability(Node, Prob) ->
 	Node ! {set_loss_probability, Prob}.
 
 %% @doc Set the max network latency delay for a node.
+%% Used primarily for testing, simulating transmission delays.
 set_delay(Node, MaxDelay) ->
 	Node ! {set_delay, MaxDelay}.
 
 %% @doc Set the number of milliseconds to wait between hashes.
+%% Used primarily for testing, simulating lower hasing power machine.
 set_mining_delay(Node, Delay) ->
 	Node ! {set_mining_delay, Delay}.
 
