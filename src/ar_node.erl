@@ -575,7 +575,7 @@ get_hash_list(Node) ->
 	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
-%% @doc Get the current balanace of a given wallet address.
+%% @doc Get the current balance of a given wallet address.
 %% The balance returned is in relation to the nodes current wallet list.
 get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_balance, self(), Addr},
@@ -586,12 +586,14 @@ get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 get_balance(Node, WalletID) ->
 	get_balance(Node, ar_wallet:to_address(WalletID)).
 
-%% @doc Return the last tx associated with a wallet.
+%% @doc Get the last tx id associated with a given wallet address.
+%% Should the wallet not have made a tx the empty binary will be returned.
+%% TODO: Timeout returns an empty binary, this is also a valid last tx.
 get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx, self(), Addr},
 	receive
 		{last_tx, Addr, LastTX} -> LastTX
-	after ?LOCAL_NET_TIMEOUT -> <<>>
+	    after ?LOCAL_NET_TIMEOUT -> <<>>
 	end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
