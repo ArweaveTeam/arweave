@@ -665,7 +665,7 @@ get_reward_pool(Node) ->
 	    after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
-%% @Doc Get the reward address attributed to the node.
+%% @doc Get the reward address attributed to the node.
 %% This is the wallet address that should the node successfully mine a block
 %% the reward will be credited to.
 get_reward_addr(Node) ->
@@ -675,9 +675,13 @@ get_reward_addr(Node) ->
 	after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
+%% @doc Set the reward address of the node.
+%% This is the address mining rewards will be credited to.
 set_reward_addr(Node, Addr) ->
 	Node ! {set_reward_addr, Addr}.
 
+%% @doc Set the reward address of the node from an Arweave keyfile.
+%% This is the address mining rewards will be credited to.
 set_reward_addr_from_file(Filepath) ->
 	{_Priv, Pub} = ar_wallet:load(Filepath),
 	set_reward_addr(whereis(http_entrypoint_node), ar_wallet:to_address(Pub)),
@@ -687,6 +691,9 @@ set_reward_addr_from_file(Filepath) ->
 		]
 	).
 
+%% @doc Generate a new keyfile and set the reward address of the node to the
+%% wallets address.
+%% This is the address mining rewards wiwll be credited to.
 generate_and_set_reward_addr() ->
 	{_Priv, Pub} = ar_wallet:new(),
 	set_reward_addr(whereis(http_entrypoint_node), ar_wallet:to_address(Pub)),
