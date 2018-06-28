@@ -325,7 +325,7 @@ retry_block(Host, ID, _, Count) ->
 		B -> B
     end.
 
-%% @doc Get a specific full block (a blok containing full txs) via
+%% @doc Get a specific full block (a block containing full txs) via
 %% blocks indep_hash.
 get_full_block(Peers, ID) when is_list(Peers) ->
     % check locally first, if not found ask list of external peers for block
@@ -361,8 +361,11 @@ get_full_block(Host, ID) ->
     % handle external peer request
 	ar_http_iface:get_full_block(Host, ID).
 
+%% @doc Get a specific encrypted block via the blocks indep_hash.
+%% If the block is found locally an unencrypted block will be returned.
 get_encrypted_block(Peers, ID) when is_list(Peers) ->
-	%ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
+    % check locally first, if not found ask list of external peers for
+    % encrypted block
 	case ar_storage:read_block(ID) of
 		unavailable ->
 			lists:foldl(
@@ -383,12 +386,19 @@ get_encrypted_block(Peers, ID) when is_list(Peers) ->
 		Block -> Block
 	end;
 get_encrypted_block(Proc, ID) when is_pid(Proc) ->
+    % attempt to get block from local storage
+    % NB: if found block returned will not be encrypted
 	ar_storage:read_block(ID);
 get_encrypted_block(Host, ID) ->
+    % handle external peer request
 	ar_http_iface:get_encrypted_block(Host, ID).
 
-%% @doc Return a specific full block from a node, if it has it.
+%% @doc Get a specific encrypted full block (a block containing full txs) via
+%% the blocks indep_hash.
+%% If the block is found locally an unencrypted block will be returned.
 get_encrypted_full_block(Peers, ID) when is_list(Peers) ->
+    % check locally first, if not found ask list of external peers for
+    % encrypted block
 	case ar_storage:read_block(ID) of
 		unavailable ->
 			lists:foldl(
@@ -409,8 +419,11 @@ get_encrypted_full_block(Peers, ID) when is_list(Peers) ->
 		_Block -> make_full_block(ID)
 	end;
 get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
+    % attempt to get block from local storage and make full
+    % NB: if found block returned will not be encrypted
 	make_full_block(ID);
 get_encrypted_full_block(Host, ID) ->
+    % handle external peer request
 	ar_http_iface:get_encrypted_full_block(Host, ID).
 
 % DEPRECATED (27/06/2018)
