@@ -564,13 +564,14 @@ get_wallet_list(Node) ->
 	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
-%% @doc Get the hash list from the node
+%% @doc Get the current hash list held by the node.
+%% This hash list is up to date to the latest block held.
 get_hash_list(Node) ->
     Node ! {get_hashlist, self()},
     receive
 		{hashlist, not_joined} -> [];
 		{hashlist, HashList} -> HashList
-	after ?LOCAL_NET_TIMEOUT -> []
+	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 %% @doc Return the current balance associated with a wallet.
