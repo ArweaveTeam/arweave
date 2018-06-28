@@ -612,7 +612,9 @@ get_last_tx_from_floating(Node, Addr) when ?IS_ADDR(Addr) ->
 get_last_tx_from_floating(Node, WalletID) ->
 	get_last_tx_from_floating(Node, ar_wallet:to_address(WalletID)).
 
-%% @doc Return all pending transactions
+%% @doc Returns a list of pending transactions.
+%% Pending transactions are those that are valid, but not currently actively
+%% being mined as they are waiting to be distributed around the network.
 get_pending_txs(Node) ->
 	Node ! {get_txs, self()},
 	receive
