@@ -44,7 +44,7 @@
 -define(DEFAULT_FORMAT, auto).
 -define(DEFAULT_DURATION_BUCKETS, [10, 100, 1000, 10000, 100000, 300000, 500000,
                                    750000, 1000000, 1500000, 2000000, 3000000]).
--define(DEFAULT_LABELS, [method, handler, status_class]).
+-define(DEFAULT_LABELS, [method, path, status_class, handler]).
 -define(DEFAULT_CONFIG, [{path, ?DEFAULT_PATH},
                          {format, ?DEFAULT_FORMAT},
                          {duration_buckets, ?DEFAULT_DURATION_BUCKETS},
@@ -353,8 +353,9 @@ labels(Req, StatusCode) ->
   Labels = labels(),
   [label(Label, Req, StatusCode) || Label <- Labels].
 
+label(handler, _, _) -> "server";
 label(method,  Req, _) -> elli_request:method(Req);
-label(handler, Req, _) ->
+label(path, Req, _) ->
   case elli_request:path(Req) of
     [H|_] -> H;
     []    -> ""
