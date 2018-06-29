@@ -28,16 +28,17 @@ delete_block(Hash) ->
 %% @doc Returns the number of blocks stored on disk.
 blocks_on_disk() ->
 	{ok, RawFiles} = file:list_dir(?BLOCK_DIR),
-    Files = 
+    Files =
         lists:filter(
             fun(X) -> 
                 case X of 
                     "enc" -> false;
+                    "invalid" -> false; %see invalidate_block
                     _ -> true
-                end    
+                end
             end,
             RawFiles
-        ),	
+        ),
 	length(Files).
 
 block_exists(Hash) ->
