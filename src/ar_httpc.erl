@@ -8,12 +8,16 @@
 %%% in the meta db.
 
 %% @doc Perform a HTTP call with the httpc library, store the time required.
-request(URL) -> 
-	{ok, Client} = fusco:start(URL, [{connect_timeout, ?CONNECT_TIMEOUT}]),
+request(Peer) -> 
+	%ar:report([{ar_httpc_request,Peer}]),
+	Host="http://" ++ ar_util:format_peer(Peer),
+	{ok, Client} = fusco:start(Host, [{connect_timeout, ?CONNECT_TIMEOUT}]),
 	{ok, Request} = fusco:request(Client, <<"/">> , <<"GET">>, [], [], 1, ?NET_TIMEOUT),
 	ok = fusco:disconnect(Client),
 	Request.
-request(Method, Host, Path, Body) ->
+request(Method, Peer, Path, Body) ->
+	%ar:report([{ar_httpc_request,Peer},{method,Method}, {path,Path}]),
+	Host="http://" ++ ar_util:format_peer(Peer),
 	{ok, Client} = fusco:start(Host, [{connect_timeout, ?CONNECT_TIMEOUT}]),
 	Result = fusco:request(Client, list_to_binary(Path), Method, [], Body, 1, ?NET_TIMEOUT),
 	ok = fusco:disconnect(Client),
@@ -28,7 +32,9 @@ request(Method, Host, Path, Body) ->
 		_ -> ok
 		end,
 	Result.
-request(Method, Host, Path, Body, Timeout) ->
+request(Method, Peer, Path, Body, Timeout) ->
+	%ar:report([{ar_httpc_request,Peer},{method,Method}, {path,Path}]),
+	Host="http://" ++ ar_util:format_peer(Peer),
 	{ok, Client} = fusco:start(Host, [{connect_timeout, ?CONNECT_TIMEOUT}]),
 	Result = fusco:request(Client, list_to_binary(Path), Method, [], Body, 1, Timeout),
 	ok = fusco:disconnect(Client),
