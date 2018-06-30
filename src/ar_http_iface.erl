@@ -662,6 +662,7 @@ handle_event(Type, Args, Config)
 	ar:report([{elli_event, Type}, {args, Args}, {config, Config}]),
 	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
 	ok;
+%% Uncomment to show unhandeled message types.
 handle_event(Type, Args, Config) ->
 	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
 	ok.
