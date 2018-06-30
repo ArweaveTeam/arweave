@@ -41,6 +41,9 @@
 %% The base cost of a byte in AR
 -define(BASE_BYTES_PER_AR, 10000000).
 
+%% Base wallet generation fee
+-define(WALLET_GEN_FEE, 250000000000).
+
 %% @doc The minimum cost per byte for a single TX.
 -define(COST_PER_BYTE, (?WINSTON_PER_AR div ?BASE_BYTES_PER_AR)).
 

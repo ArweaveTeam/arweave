@@ -1,7 +1,7 @@
 -module(ar_tx).
 -export([new/0, new/1, new/2, new/3, new/4]).
 -export([sign/2, sign/3, verify/3, verify_txs/3, signature_data_segment/1]).
--export([tx_to_binary/1, tags_to_binary/1, calculate_min_tx_cost/2, tx_cost_above_min/2, check_last_tx/2]).
+-export([tx_to_binary/1, tags_to_binary/1, calculate_min_tx_cost/2, calculate_min_tx_cost/4, tx_cost_above_min/2, tx_cost_above_min/4, check_last_tx/2]).
 -export([check_last_tx_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -92,7 +92,7 @@ verify(TX, Diff, WalletList) ->
 	% ),
 	case
 		TX#tx.quantity >= 0 andalso
-		tx_cost_above_min(TX, Diff) andalso
+		tx_cost_above_min(TX, Diff, WalletList, TX#tx.target) andalso
 		tx_field_size_limit(TX) andalso
 		tag_field_legal(TX) andalso
 		check_last_tx(WalletList, TX) andalso
@@ -114,7 +114,7 @@ verify(TX, Diff, WalletList) ->
 						end,
 						[
 							{"tx_signature_not_valid ", ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
-							{"tx_too_cheap ", tx_cost_above_min(TX, Diff)},
+							{"tx_too_cheap ", tx_cost_above_min(TX, Diff, WalletList, TX#tx.target)},
 							{"tx_fields_too_large ", tx_field_size_limit(TX)},
 							{"tag_field_illegally_specified ", tag_field_legal(TX)},
 							{"last_tx_not_valid ", check_last_tx(WalletList, TX)},
@@ -141,7 +141,7 @@ verify(TX, Diff, WalletList) ->
 	case
 		TX#tx.quantity >= 0 andalso
 		(ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target) andalso
-		tx_cost_above_min(TX, Diff) andalso
+		tx_cost_above_min(TX, Diff, WalletList, TX#tx.target) andalso
 		tx_field_size_limit(TX) andalso
 		tag_field_legal(TX) andalso
 		check_last_tx(WalletList, TX) andalso
@@ -163,7 +163,7 @@ verify(TX, Diff, WalletList) ->
 						end,
 						[
 							{"tx_signature_not_valid ", ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
-							{"tx_too_cheap ", tx_cost_above_min(TX, Diff)},
+							{"tx_too_cheap ", tx_cost_above_min(TX, Diff, WalletList, TX#tx.target)},
 							{"tx_fields_too_large ", tx_field_size_limit(TX)},
 							{"tag_field_illegally_specified ", tag_field_legal(TX)},
 							{"last_tx_not_valid ", check_last_tx(WalletList, TX)},
@@ -192,7 +192,10 @@ do_verify_txs([T|TXs], Diff, WalletList) ->
 
 %% @doc Ensure that transaction cost above proscribed minimum.
 tx_cost_above_min(TX, Diff) ->
-	TX#tx.reward >= calculate_min_tx_cost(byte_size(TX#tx.data), Diff).
+	TX#tx.reward >= (calculate_min_tx_cost(byte_size(TX#tx.data), Diff) + ?WALLET_GEN_FEE).
+tx_cost_above_min(TX, Diff, WalletList, Addr) ->
+	TX#tx.reward >=
+		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, WalletList, Addr).
 
 %% @doc Calculate the minimum transaction cost for a TX with the given data size.
 %% The constant 3210 is the max byte size of each of the other fields.
@@ -208,6 +211,14 @@ calculate_min_tx_cost(DataSize, _Diff) ->
 	CurveSteepness = 2,
 	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (?DIFF_CENTER - (?DIFF_CENTER - CurveSteepness)),
 	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024))).
+calculate_min_tx_cost(DataSize, Diff, _, undefined) ->
+	calculate_min_tx_cost(DataSize, Diff);
+calculate_min_tx_cost(DataSize, Diff, WalletList, Addr) ->
+	Addrs = [ X || {X, _, _} <- WalletList ],
+	(case lists:member(Addr, Addrs) of
+		true -> 0;
+		false -> ?WALLET_GEN_FEE
+	end) + calculate_min_tx_cost(DataSize, Diff).
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
 tx_field_size_limit(TX) ->

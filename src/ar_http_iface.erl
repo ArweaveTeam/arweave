@@ -78,6 +78,7 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 %% GET /wallet/{address}/balance
 %% GET /wallet/{address}/last_tx
 %% GET /price/{bytes}
+%% GET /price/{bytes}/{addr}
 %%
 %% NB: Blocks and transactions are transmitted between HTTP nodes in a JSON encoded format.
 %% To find the specifics regarding this look at ar_serialize module.
@@ -261,6 +262,23 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 					binary_to_list(SizeInBytes)
 				),
 				ar_node:get_current_diff(whereis(http_entrypoint_node))
+			)
+		)
+	};
+
+%% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
+%% GET request to endpoint /price/{bytes}/{address}
+%% TODO: Change so current block does not need to be pulled to calculate cost
+handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
+	{200, [],
+		integer_to_binary(
+			ar_tx:calculate_min_tx_cost(
+				list_to_integer(
+					binary_to_list(SizeInBytes)
+				),
+				ar_node:get_current_diff(whereis(http_entrypoint_node)),
+				ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+				ar_util:decode(Addr)
 			)
 		)
 	};
