@@ -210,6 +210,8 @@ handle('POST', [<<"block">>], Req) ->
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
+	% Check whether the TX is already ignored, ignore it if it is not
+	% (and then pass to processing steps).
 	case ar_bridge:is_id_ignored(TX#tx.id) of
 		undefined -> {429, <<"Too Many Requests">>};
 		true -> {409, <<"Transaction already processed.">>};
@@ -218,22 +220,40 @@ handle('POST', [<<"tx">>], Req) ->
 			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
 				unavailable -> {503, [], <<"Transaction verification failed.">>};
 				Diff ->
+					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
 					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-					% OrigPeer =
-					% 	ar_util:parse_peer(
-					% 		bitstring_to_list(elli_request:peer(Req))
-					% 		++ ":"
-					% 		++ integer_to_list(?DEFAULT_HTTP_IFACE_PORT)
-					% 		),
-					case ar_tx:verify(TX, Diff, FloatingWalletList) of
-						false ->
-							%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
-							{400, [], <<"Transaction verification failed.">>};
-						true ->
-							%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-							ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
-							{200, [], <<"OK">>}
-					end
+					WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
+					OwnerAddr = ar_wallet:to_address(TX#tx.owner),
+					WinstonInQueue =
+						lists:sum(
+							[
+								T#tx.quantity + T#tx.reward
+							||
+								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
+							]
+						),
+					case [ Balance || {Addr, Balance, _} <- OwnerAddr == Addr ] of
+						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
+							ar:report(
+								[
+									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
+									{balance, B},
+									{in_queue, WinstonInQueue},
+									{cost, TX#tx.reward + TX#tx.quantity}
+								]
+							),
+							{400, [], <<"Waiting TXs exceed balance for wallet.">>};
+						_ ->
+							% Finally, validate the veracity of the TX.
+							case ar_tx:verify(TX, Diff, FloatingWalletList) of
+								false ->
+									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+									{400, [], <<"Transaction verification failed.">>};
+								true ->
+									%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
+									{200, [], <<"OK">>}
+							end
 			end
 	end;
 		
