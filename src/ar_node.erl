@@ -12,7 +12,7 @@
 -export([get_pending_txs/1, get_full_pending_txs/1]).
 -export([get_current_diff/1, get_diff/1]).
 -export([get_floating_wallet_list/1, generate_floating_wallet_list/2]).
--export([get_all_known_txs/1]).
+-export([get_waiting_txs/1, get_all_known_txs/1]).
 -export([get_current_block/1]).
 -export([get_reward_addr/1]).
 -export([get_reward_pool/1]).
@@ -565,6 +565,14 @@ get_wallet_list(Node) ->
 	    after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
+%% @doc Get the current waiting tx list from a node.
+get_waiting_txs(Node) ->
+	Node ! {get_waiting_txs, self()},
+	receive
+		{waiting_txs, Waiting} -> Waiting
+		after ?LOCAL_NET_TIMEOUT -> error(could_not_get_waiting_txs)
+	end.
+
 %% @doc Get the current hash list held by the node.
 %% This hash list is up to date to the latest block held.
 get_hash_list(Node) ->
@@ -982,6 +990,9 @@ server(
             {get_txs, PID} ->
                 PID ! {all_txs, S#state.txs ++ S#state.waiting_txs},
                 server(S);
+			{get_waiting_txs, PID} ->
+				PID ! {waiting_txs, S#state.waiting_txs},
+				server(S);
             {get_all_known_txs, PID} ->
                 AllTX =
                     S#state.txs ++
