@@ -37,8 +37,6 @@ all: ebin logs blocks
 	rm -rf priv
 	rm -rf data/mnesia
 	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
-	git submodule init
-	git submodule update
 	(cd lib/prometheus && ./rebar3 compile)
 	(cd lib/accept && ./rebar3 compile)
 	(cd lib/prometheus_process_collector && ./rebar3 compile && cp _build/default/lib/prometheus_process_collector/priv/*.so ../../priv)
