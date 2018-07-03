@@ -232,7 +232,7 @@ handle('POST', [<<"tx">>], Req) ->
 								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
 							]
 						),
-					case [ Balance || {Addr, Balance, _} <- OwnerAddr == Addr ] of
+					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
 						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
 							ar:report(
 								[
@@ -254,6 +254,7 @@ handle('POST', [<<"tx">>], Req) ->
 									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
 									{200, [], <<"OK">>}
 							end
+					end
 			end
 	end;
 		
