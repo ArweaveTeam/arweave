@@ -213,6 +213,8 @@ calculate_min_tx_cost(DataSize, _Diff) ->
 	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024))).
 calculate_min_tx_cost(DataSize, Diff, _, undefined) ->
 	calculate_min_tx_cost(DataSize, Diff);
+calculate_min_tx_cost(DataSize, Diff, _, <<>>) ->
+	calculate_min_tx_cost(DataSize, Diff);
 calculate_min_tx_cost(DataSize, Diff, WalletList, Addr) ->
 	Addrs = [ X || {X, _, _} <- WalletList ],
 	(case lists:member(Addr, Addrs) of
