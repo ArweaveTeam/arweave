@@ -43,6 +43,7 @@
 
 %% Start options
 -record(opts, {
+	benchmark = false,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	init = false,
 	mine = false,
@@ -92,6 +93,8 @@ main("") ->
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"},
 			{"disk_space space", "Max size (in GB) for Arweave to take up on disk"}
+			{"disk_space space", "Max size (in GB) for Arweave to take up on disk"},
+			{"benchmark", "Run a mining performance benchmark."}
 		]
 	),
 	erlang:halt();
@@ -125,12 +128,16 @@ main(["load_mining_key", File|Rest], O)->
 	main(Rest, O#opts { load_key = File });
 main(["start_block", IndepHash|Rest], O)->
 	main(Rest, O#opts { start_block = ar_util:decode(IndepHash) });
+main(["benchmark"|Rest], O)->
+	main(Rest, O#opts { benchmark = true });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
 %% @doc Start an Archain node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#opts { port = Port });
+start(#opts { benchmark = true }) ->
+	ar_benchmark:run();
 start(
 	#opts {
 		port = Port,
