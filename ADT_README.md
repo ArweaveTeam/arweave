@@ -1,19 +1,19 @@
-# Archain App Developer Toolkit API
-This file provides an introduction to building applications on top of Archain.
-Two primary APIs exist for interacting with Archain - Erlang callbacks and
+# Arweave App Developer Toolkit API
+This file provides an introduction to building applications on top of Arweave.
+Two primary APIs exist for interacting with Arweave - Erlang callbacks and
 an HTTP interface. You can find the files that implement these at `adt_simple`
 and `ar_http_iface`.
 
-To get started building Archain ADT applications please clone this repository
+To get started building Arweave ADT applications please clone this repository
 and consider checking out the sample applications found in `src/apps`. These
 sample applications provided a guide through the development of a
-number of simple Archain applications, from a basic monitoring app, to a
+number of simple Arweave applications, from a basic monitoring app, to a
 de-centralised microblogging service.
 
 # Via Erlang
-`adt_simple` provides an easy to use abstraction for building Archain apps in
+`adt_simple` provides an easy to use abstraction for building Arweave apps in
 Erlang. The module provides a simple method (using a callback module) for
-interacting with the Archain.
+interacting with the Arweave.
 
 All callback functions in the modules that use this system are optional.
 Unimplemented callbacks will be ignored.
@@ -54,26 +54,7 @@ form of a JSON object.
 Similarly, you can use POST to send transactions and blocks to be added
 and use GET requests to to obtain peers, get a block by its height, hash or
 or simply obtain information about it. In this way, it is possible to
-perform many actions on the archain purely via platform agnostic HTTP.
+perform many actions on the Arweave purely via platform agnostic HTTP.
 
 Information (transactions, blocks) is always passed in the body of requests in
 a JSON object format.
-
-# More information
-
-Visit `adt_simple` and `ar_http_iface` for implementation details and for
-comprehensive function documentation.
-
-You can also find detailed tutorials about building Archain apps and services
-on the [Archain youtube channel](http://www.youtube.com/archain).
-
-For more information on the Archain project and to read our whitepaper visit
-[Archain.org](https://www.archain.org/).
-
-# Disclaimer
-
-As of Monday November 6th 2017 **Archain is in Alpha**.
-
-_Archain is currently in alpha and is in constant, active development.
-Please be aware that the API for the Archain ADT will likely be added to such
-that its current state is a subset of its future capabilities._

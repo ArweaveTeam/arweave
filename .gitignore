@@ -2,8 +2,4 @@
 *.log
 *.dat
 *.json
-blocks/*
-ebin/*
-logs/*
 .arweave.plt
-priv/*.so

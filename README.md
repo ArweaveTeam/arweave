@@ -21,38 +21,16 @@ session simply by running `make session`.
 You can learn more about building Arweave ADT apps by checking out our
 documentation [here](ADT_README.md).
 
-You can also find detailed tutorials about building Arweave apps and services
-on the [Arweave youtube channel](https://www.youtube.com/channel/UCdM3INQ5NAsNjWU8-2y_xjw).
-
-For more information on the Arweave project and to read our whitepaper visit
+For more information on the Arweave project and to read our lightpaper visit
 [arweave.org](https://www.arweave.org/).
-
-Caution: Arweave is in active development. Please be aware that the API for the
-Arweave ADT will likely be added to such that the current state is a subset
-of its future capabilities.
 
 # Ubuntu/Debian Linux Quickstart
 You can download the Arweave codebase, all dependencies and start mining
 straight away by opening a terminal and running:
 
-`curl https://gist.githubusercontent.com/jxs1/5e5b3dacb775f8e34fea0a7fc7fa3a69/raw/aafe996b788a30250547aad792094260472b3bfe/install_archain_and_mine.sh | bash && cd archain && ./archain-server peer XXX.XXX.XXX.XXX mine`
+`curl https://gist.githubusercontent.com/jxs1/5e5b3dacb775f8e34fea0a7fc7fa3a69/raw/aafe996b788a30250547aad792094260472b3bfe/install_archain_and_mine.sh | bash && cd archain && ./archain-server mine peer xxx.xxx.xxx.xxx peer yyy.yyy.yyy.yyy`
 
-Don’t forget to change xxx.xxx.xxx.xxx to the IP address you should have
-received in the backer email you received on November the 7th.
-
-# Windows Quickstart
-1) Install Erlang and dependancies - http://erlang.org/doc/installation_guide/INSTALL-WIN32.html
-2) If not added by default, add Erlang to your PATH
-	2.0) WARNING: Changing your PATH variable can be dangerous. Backup your PATH before any changes and proceed carefully.
-	2.1) In Search, search for and then select: System (Control Panel)
-	2.2) Click the Advanced system settings link.
-	2.3) Click Environment Variables. In the section System Variables, find the PATH environment variable and select it. Click Edit. If the PATH environment variable does not exist, click New.
-	2.4) Add erl.exe to the PATH
-3) Download the most recent version of Arweave from https://github.com/ArweaveTeam/arweave/archive/master.zip
-4) Unzip Arweave to a location of your choice
-5) Run cmd.exe and navigate to the location that you unzipped arweave to.
-6) Run arweave-server.cmd with the parameters of your choice
-6.1) A starting command that will have you join the main network and start mining with a freshly generated wallet is "arweave-server.cmd mine"
+Don’t forget to change xxx.xxx.xxx.xxx, yyy.yyy.yyy.yyy, etc to the IP addresses you want to peer with.
 
 # TNT/NO-VLNS
 TNT (Tiny Network Tests) and NO-VLNS (Never Off Very Large Network Simulator)
