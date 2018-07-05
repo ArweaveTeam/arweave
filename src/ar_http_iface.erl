@@ -278,7 +278,7 @@ handle('GET', [<<"peers">>], Req) ->
 handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	{200, [],
 		integer_to_binary(
-			?WALLET_GEN_FEE + ar_tx:calculate_min_tx_cost(
+			ar_tx:calculate_min_tx_cost(
 				list_to_integer(
 					binary_to_list(SizeInBytes)
 				),
