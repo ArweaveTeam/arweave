@@ -28,7 +28,7 @@ For more information on the Arweave project and to read our lightpaper visit
 You can download the Arweave codebase, all dependencies and start mining
 straight away by opening a terminal and running:
 
-`curl https://gist.githubusercontent.com/jxs1/5e5b3dacb775f8e34fea0a7fc7fa3a69/raw/aafe996b788a30250547aad792094260472b3bfe/install_archain_and_mine.sh | bash && cd archain && ./archain-server mine peer xxx.xxx.xxx.xxx peer yyy.yyy.yyy.yyy`
+`curl https://raw.githubusercontent.com/ArweaveTeam/arweave/master/install.sh | bash && cd arweave && ./arweave-server mine peer xxx.xxx.xxx.xxx peer yyy.yyy.yyy.yyy`
 
 Don’t forget to change xxx.xxx.xxx.xxx, yyy.yyy.yyy.yyy, etc to the IP addresses you want to peer with.
 
