@@ -92,7 +92,6 @@ main("") ->
 			{"mining_addr addr", "The address that mining rewards should be credited to."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"},
-			{"disk_space space", "Max size (in GB) for Arweave to take up on disk"}
 			{"disk_space space", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."}
 		]
