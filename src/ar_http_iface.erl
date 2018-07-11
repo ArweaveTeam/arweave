@@ -114,19 +114,20 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 %% @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	TX = ar_storage:read_tx(ar_util:decode(Hash)),
-	case TX of
+	Id=ar_util:decode(Hash),
+	F=ar_storage:lookup_tx_filename(Id),
+	case F of
 		unavailable ->
-			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+			case lists:member(Id, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
-					case ar_tx_db:get(ar_util:decode(Hash)) of
+					case ar_tx_db:get(Id) of
 						not_found -> {404, [], <<"Not Found.">>};
 						Err -> {410, [], list_to_binary(Err)}
 					end
 			end;
-		T -> return_tx(T)
+		Filename -> {ok, [], {file, Filename}}
 	end;
 
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
@@ -160,12 +161,13 @@ handle('POST', [<<"arql">>], Req) ->
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
-	TX = ar_storage:read_tx(ar_util:decode(Hash)),
-	case TX of
-		unavailable ->
-			{ok, File} = file:read_file("data/not_found.html"),
-			{404, [], File};
-		T -> {200, [], T#tx.data}
+	Id=ar_util:decode(Hash),
+	F=ar_storage:lookup_tx_filename(Id),
+	case F of
+		unavailable -> {404, [], {file, "data/not_found.html"}};
+		Filename ->
+			T=ar_storage:do_read_tx(Filename),
+			{200, [], T#tx.data}
 	end;
 
 %% @doc Share a new block to a peer.
@@ -436,35 +438,13 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req)
 %% @doc Return the blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}
 handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
-	%CurrentBlock = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
-		[Head|HashList] ->
-			case
-				% (ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList)), Head, HashList)) and
-				% ((length(HashList) + 1) > 10)
-				false
-			of
-				true ->
-					return_block(unavailable);
-				false ->
-					case lists:member(
-							ar_util:decode(Hash),
-							[Head|HashList]
-						) of
-						true ->
-							return_block(
-								ar_node:get_block(whereis(http_entrypoint_node),
-									ar_util:decode(Hash))
-							);
-						false -> return_block(unavailable)
-					end
-			end;
-		_ ->
-			return_block(
-				ar_node:get_block(whereis(http_entrypoint_node),
-					ar_util:decode(Hash))
-			)
+	case ar_storage:lookup_block_filename(ar_util:decode(Hash)) of
+		unavailable ->
+			{404, [], <<"Block not found.">>};
+		Filename  ->
+			{ok, [], {file, Filename}}
 	end;
+
 %% @doc Return the full block corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/all
 handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
@@ -507,47 +487,40 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
 %% GET request to endpoint /block/height/{height}
 %% TODO: Add handle for negative block numbers
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
-	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
-		[Head|HashList] ->
-			case (list_to_integer(binary_to_list(Height))+1) > length([Head|HashList]) of
-				false ->
-					case
-						% ((Hash = lists:nth( list_to_integer(binary_to_list(Height))+1,lists:reverse([Head|HashList]))) ==
-						% ar_util:get_recall_hash((length(HashList)), Head, HashList)) and
-						% ((length(HashList) + 1) > 10)
-						false
-					of
-						true -> return_block(unavailable);
-						false ->
-							case lists:member(
-									%Hash,
-									Hash = lists:nth(list_to_integer(binary_to_list(Height))+1,lists:reverse([Head|HashList])),
-									[Head|HashList]
-								) of
-								true ->
-									return_block(
-										ar_node:get_block(whereis(http_entrypoint_node),
-											Hash)
-									);
-								false -> return_block(unavailable)
-							end
-					end;
-				true -> return_block(unavailable)
-			end;
-		_ ->
-			return_block(
-				ar_node:get_block(whereis(http_entrypoint_node),
-					0)
-			)
+	F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
+	case F of
+		unavailable ->
+			{404, [], <<"Block not found.">>};
+		Filename  ->
+			{ok, [], {file, Filename}}
 	end;
 
 %% @doc Return the current block.
 %% GET request to endpoint /current_block
 %% GET request to endpoint /block/current
 handle('GET', [<<"block">>, <<"current">>], _Req) ->
-	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));
+	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
+		0 -> {404, [], <<"Block not found.">>};
+		Height ->
+			F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
+			case F of
+				unavailable -> {404, [], <<"Block not found.">>};
+				Filename  ->
+					{ok, [], {file, Filename}}
+			end
+	end;
+
 handle('GET', [<<"current_block">>], _Req) ->
-	return_block(ar_node:get_current_block(whereis(http_entrypoint_node)));
+	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
+		0 -> {404, [], <<"Block not found.">>};
+		Height ->
+			F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
+			case F of
+				unavailable -> {404, [], <<"Block not found.">>};
+				Filename  ->
+					{ok, [], {file, Filename}}
+			end
+	end;
 
 %% @doc Return a list of known services. 
 %% GET request to endpoint /services
@@ -580,18 +553,20 @@ handle('GET', [<<"services">>], _Req) ->
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 %% 
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
-	TX = ar_storage:read_tx(ar_util:decode(Hash)),
-	case TX of
+	Id=ar_util:decode(Hash),
+	F=ar_storage:lookup_tx_filename(Id),
+	case F of
 		unavailable ->
-			case lists:member(ar_util:decode(Hash), ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+			case lists:member(Id, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
 					{404, [], <<"Not Found.">>}
 			end;
-		T ->
-			{TXJSON} = ar_serialize:tx_to_json_struct(T),
-			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, TXJSON),
+		Filename ->
+			{ok, JSONBlock} = file:read_file(Filename),
+			{TXJSON} = ar_serialize:dejsonify(JSONBlock),
+			{_, Res} = lists:keyfind(Field, 1, TXJSON),
 			{200, [], Res}
 	end;
 
@@ -602,13 +577,14 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 %% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
-	Block = ar_storage:read_block(ar_util:decode(Hash)),
-	case Block of
+	F=ar_storage:lookup_block_filename(ar_util:decode(Hash)),
+	case F of
 		unavailable ->
-			{404, [], <<"Not Found.">>};
-		B ->
-			{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
-			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+			{404, [], <<"Block not found.">>};
+		Filename  ->
+			{ok, JSONBlock} = file:read_file(Filename),
+			{BLOCKJSON} = ar_serialize:dejsonify(JSONBlock),
+			{_, Res} = lists:keyfind(Field, 1, BLOCKJSON),
 			Result = block_field_to_string(Field, Res),
 			{200, [], Result}
 	end;
@@ -620,14 +596,14 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
 %% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
-	Block = ar_node:get_block(whereis(http_entrypoint_node),
-			list_to_integer(binary_to_list(Height))),
-	case Block of
+	F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
+	case F of
 		unavailable ->
-				{404, [], <<"Not Found.">>};
-		B ->
-			{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
-			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+			{404, [], <<"Block not found.">>};
+		Filename  ->
+			{ok, JSONBlock} = file:read_file(Filename),
+			{BLOCKJSON} = ar_serialize:dejsonify(JSONBlock),
+			{_, Res} = lists:keyfind(Field, 1, BLOCKJSON),
 			Result = block_field_to_string(Field, Res),
 			{200, [], Result}
 	end;
@@ -639,15 +615,19 @@ handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 %% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 handle('GET', [<<"block">>, <<"current">>, Field], _Req) ->
-	Block = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case Block of
-		unavailable ->
-			{404, [], <<"Not Found.">>};
-		B ->
-			{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
-			{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
-			Result = block_field_to_string(Field, Res),
-			{200, [], Result}
+	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
+		0 -> {404, [], <<"Block not found.">>};
+		Height ->
+			F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
+			case F of
+				unavailable -> {404, [], <<"Block not found.">>};
+				Filename  ->
+					{ok, JSONBlock} = file:read_file(Filename),
+					{BLOCKJSON} = ar_serialize:dejsonify(JSONBlock),
+					{_, Res} = lists:keyfind(Field, 1, BLOCKJSON),
+					Result = block_field_to_string(Field, Res),
+					{200, [], Result}
+			end
 	end;
 
 %% @doc Share the location of a given service with a peer.

@@ -6,6 +6,8 @@
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
 -export([enough_space/1, select_drive/2]).
 -export([calculate_disk_space/0, calculate_used_space/0, update_directory_size/0]).
+-export([lookup_block_filename/1,lookup_tx_filename/1]).
+-export([do_read_block/1,do_read_tx/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -170,6 +172,8 @@ write_encrypted_block(Hash, B) ->
 	end.
 -endif.
 
+
+
 %% @doc Read a block from disk, given a hash.
 read_block(unavailable) -> unavailable;
 read_block(B) when is_record(B, block) -> B;
@@ -194,6 +198,7 @@ read_block(ID) ->
 do_read_block(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	ar_serialize:json_struct_to_block(Binary).
+
 
 %% @doc Read an encrypted block from disk, given a hash.
 read_encrypted_block(unavailable) -> unavailable;
@@ -226,6 +231,22 @@ update_directory_size() ->
 		end
 	),
 	timer:apply_after(?DIRECTORY_SIZE_TIMER, ar_storage, update_directory_size, []).
+
+lookup_block_filename(ID) ->
+	case filelib:wildcard(name_block(ID)) of
+		[] -> unavailable;
+		[Filename] -> Filename;
+		Filenames ->
+			hd(lists:sort(
+					fun(Filename, Filename2) ->
+						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
+						{ok, Info2} = file:read_file_info(Filename2, [{time, posix}]),
+						Info#file_info.mtime >= Info2#file_info.mtime
+					end,
+					Filenames
+				)
+			)
+	end.
 
 %% @doc Generate a wildcard search string for a block,
 %% given a block, binary hash, or list.
@@ -336,6 +357,23 @@ read_tx(ID) ->
 do_read_tx(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	ar_serialize:json_struct_to_tx(Binary).
+
+
+lookup_tx_filename(ID) ->
+	case filelib:wildcard(name_tx(ID)) of
+		[] -> unavailable;
+		[Filename] -> Filename;
+		Filenames ->
+			hd(lists:sort(
+					fun(Filename, Filename2) ->
+						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
+						{ok, Info2} = file:read_file_info(Filename2, [{time, posix}]),
+						Info#file_info.mtime >= Info2#file_info.mtime
+					end,
+					Filenames
+				)
+			)
+	end.
 
 %% @doc Returns the file name for a TX with the given hash
 name_tx(Tx) when is_record(Tx, tx) ->
