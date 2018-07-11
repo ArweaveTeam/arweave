@@ -2,9 +2,9 @@
 -export([start/1, start/2, start/3, stop/1]).
 -include("ar.hrl").
 
-%%% A simple abstraction for building Archain apps.
+%%% A simple abstraction for building Arweave apps.
 %%% Provides a simple method (using a callback module) for interacting with
-%%% the Archain.
+%%% the Arweave in real time.
 %%%
 %%% All callback functions in the modules that use this system are optional.
 %%% Unimplemented callbacks will be ignored.
@@ -32,10 +32,12 @@
 	app_state = undefined % The state variable associated with the app.
 }).
 
-%% @doc Start a new adt_simple app. Takes the module that implements our callbacks,
-%% and an optional peer list.
-start(CallbackMod) -> start(CallbackMod, []).
-start(CallbackMod, AppState) -> start(CallbackMod, AppState, []).
+%% @doc Start a new adt_simple app. Takes the module that implements our
+%% callbacks, an optional state of the app and an optional peer list.
+start(CallbackMod) ->
+    start(CallbackMod, []).
+start(CallbackMod, AppState) ->
+    start(CallbackMod, AppState, []).
 start(CallbackMod, AppState, Peers) ->
 	spawn(
 		fun() ->
@@ -61,8 +63,10 @@ server(S = #state { gossip = GS }) ->
 		Msg when is_record(Msg, gs_msg) ->
 			% We have received a gossip mesage. Use the library to process it.
 			case ar_gossip:recv(GS, Msg) of
+                % Ignore gossip message.
 				{NewGS, ignore} ->
 					server(S#state { gossip = NewGS });
+                % New tx received.
 				{NewGS, {add_tx, TX}} ->
 					server(
 						apply_callback(
@@ -71,19 +75,35 @@ server(S = #state { gossip = GS }) ->
 							TX
 						)
 					);
+                % New block and confirmed txs callback.
 				{NewGS, {new_block, _, _, B, _}} ->
+                    FullTXs =
+                        lists:map(
+                            fun(T) -> ar_storage:read_tx(T) end,
+                            B#block.txs
+                        ),
 					NewS =
 						lists:foldl(
 							fun(TX, NextS) ->
-								apply_callback(NextS, confirmed_transaction, TX)
+								apply_callback(
+                                    NextS,
+                                    confirmed_transaction,
+                                    TX
+                                )
 							end,
 							S#state { gossip = NewGS },
-							B#block.txs
+							FullTXs
 						),
-					server(apply_callback(NewS, new_block, B))
+					server(
+                        apply_callback(
+                            NewS,
+                            new_block,
+                            B#block { txs = FullTXs })
+                        )
 			end;
 		stop -> ok;
-		OtherMsg -> server(apply_callback(S, message, OtherMsg))
+		OtherMsg ->
+            server(apply_callback(S, message, OtherMsg))
 	end.
 
 %%% Utility functions
@@ -103,4 +123,4 @@ apply_callback(S = #state { mod = Mod }, GS, AppS, Fun, Val) ->
 			Mod:Fun(Val),
 			S;
 		false -> S
-	end.
+    end.
