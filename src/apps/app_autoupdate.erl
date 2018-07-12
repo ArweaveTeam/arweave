@@ -99,7 +99,7 @@ process_update(TX) ->
 
 %% @doc Pull the latest changes from the Arweave git repository.
 update() ->
-	Res = os:cmd("git pull"),
+	Res = os:cmd("git fetch; git -c advice.detachedHead=false checkout stable"),
 	io:format(
 		"Executed update. Result: ~n~s~n"
 		"====================~n",
