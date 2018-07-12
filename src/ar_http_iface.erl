@@ -114,15 +114,15 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 %% @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	Id=ar_util:decode(Hash),
-	F=ar_storage:lookup_tx_filename(Id),
+	ID = ar_util:decode(Hash),
+	F = ar_storage:lookup_tx_filename(ID),
 	case F of
 		unavailable ->
-			case lists:member(Id, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+			case lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
-					case ar_tx_db:get(Id) of
+					case ar_tx_db:get(ID) of
 						not_found -> {404, [], <<"Not Found.">>};
 						Err -> {410, [], list_to_binary(Err)}
 					end
@@ -161,12 +161,12 @@ handle('POST', [<<"arql">>], Req) ->
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
-	Id=ar_util:decode(Hash),
-	F=ar_storage:lookup_tx_filename(Id),
+	ID = ar_util:decode(Hash),
+	F = ar_storage:lookup_tx_filename(ID),
 	case F of
 		unavailable -> {404, [], {file, "data/not_found.html"}};
 		Filename ->
-			T=ar_storage:do_read_tx(Filename),
+			T = ar_storage:do_read_tx(Filename),
 			{200, [], T#tx.data}
 	end;
 
@@ -191,12 +191,12 @@ handle('POST', [<<"block">>], Req) ->
 				undefined -> {429, <<"Too Many Requests">>};
 				true -> {409, <<"Block already processed.">>};
 				false ->
+					ar_bridge:ignore_id(BShadow#block.indep_hash),
 					ar:report(
 						[
 							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
 						]
 					),
-					ar_bridge:ignore_id(BShadow#block.indep_hash),
 					B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 					RecallHash = ar_util:decode(JSONRecallB),
 					OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
@@ -313,9 +313,8 @@ handle('GET', [<<"hash_list">>], _Req) ->
     HashList = ar_node:get_hash_list(Node),
     {200, [],
 		ar_serialize:jsonify(
-		ar_serialize:hash_list_to_json_struct(HashList)
+			ar_serialize:hash_list_to_json_struct(HashList)
 		)
-
     };
 
 %% @doc Return the current wallet list held by the node.
@@ -325,7 +324,7 @@ handle('GET', [<<"wallet_list">>], _Req) ->
     WalletList = ar_node:get_wallet_list(Node),
     {200, [],
 		ar_serialize:jsonify(
-		ar_serialize:wallet_list_to_json_struct(WalletList)
+			ar_serialize:wallet_list_to_json_struct(WalletList)
         )
     };
 
@@ -338,7 +337,7 @@ handle('POST', [<<"peers">>], Req) ->
 	case ar_serialize:dejsonify(BlockJSON) of
 		{Struct} ->
 			{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-			case(NetworkName == <<?NETWORK_NAME>>) of
+			case (NetworkName == <<?NETWORK_NAME>>) of
 				false ->
 					{400, [], <<"Wrong network.">>};
 				true ->
@@ -357,7 +356,7 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
 	case lists:keyfind(<<"network">>, 1, Struct) of
 		{<<"network">>, NetworkName} ->
-			case(NetworkName == <<?NETWORK_NAME>>) of
+			case (NetworkName == <<?NETWORK_NAME>>) of
 				false ->
 					{400, [], <<"Wrong network.">>};
 				true ->
@@ -398,42 +397,23 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
-handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
+%handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
-	case ar_key_db:get(ar_util:decode(Hash)) of
-		[{Key, Nonce}] ->
-			return_encrypted_block(
-				ar_node:get_block(
-					whereis(http_entrypoint_node),
-					ar_util:decode(Hash)
-				),
-				Key,
-				Nonce
-			);
-		not_found ->
-			ar:d(not_found_block),
-			return_encrypted_block(unavailable)
-	end;
-
-%% @doc Return the full encrypted block corresponding to the indep_hash.
-%% GET request to endpoint /block/hash/{indep_hash}/all/encrypted
-handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>, <<"encrypted">>], _Req) ->
-	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
-	case ar_key_db:get(ar_util:decode(Hash)) of
-		[{Key, Nonce}] ->
-			return_encrypted_full_block(
-				ar_node:get_full_block(
-					whereis(http_entrypoint_node),
-					ar_util:decode(Hash)
-				),
-				Key,
-				Nonce
-			);
-		not_found ->
-			ar:d(not_found_block),
-			return_encrypted_full_block(unavailable)
-	end;
+	%case ar_key_db:get(ar_util:decode(Hash)) of
+	% 	[{Key, Nonce}] ->
+	% 		return_encrypted_block(
+	% 			ar_node:get_block(
+	% 				whereis(http_entrypoint_node),
+	% 				ar_util:decode(Hash)
+	% 			),
+	% 			Key,
+	% 			Nonce
+	% 		);
+	% 	not_found ->
+	% 		ar:d(not_found_block),
+	% 		return_encrypted_block(unavailable)
+	% end;
 
 %% @doc Return the blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}
@@ -445,49 +425,11 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 			{ok, [], {file, Filename}}
 	end;
 
-%% @doc Return the full block corresponding to the indep_hash.
-%% GET request to endpoint /block/hash/{indep_hash}/all
-handle('GET', [<<"block">>, <<"hash">>, Hash, <<"all">>], _Req) ->
-	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
-	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
-		[Head|HashList] ->
-			% If the full block being requested is the recall block do not return.
-			case
-				%(ar_util:decode(Hash) == ar_util:get_recall_hash((length(HashList)), Head, HashList)) and
-				%((length(HashList) + 1) > 10)
-				false
-			of
-				true ->
-					return_block(unavailable);
-				false ->
-					case lists:member(
-							ar_util:decode(Hash),
-							[Head|HashList]
-						) of
-						true ->
-							FullBlock =
-								ar_node:get_full_block(
-									whereis(http_entrypoint_node),
-									ar_util:decode(Hash)
-								),
-							return_full_block(FullBlock);
-						false -> return_block(unavailable)
-					end
-			end;
-		_ ->
-			FullBlock =
-				ar_node:get_full_block(
-					whereis(http_entrypoint_node),
-					ar_util:decode(Hash)
-				),
-			return_full_block(FullBlock)
-	end;
-
 %% @doc Return the block at the given height.
 %% GET request to endpoint /block/height/{height}
 %% TODO: Add handle for negative block numbers
 handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
-	F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
+	F = ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))),
 	case F of
 		unavailable ->
 			{404, [], <<"Block not found.">>};
@@ -502,7 +444,7 @@ handle('GET', [<<"block">>, <<"current">>], _Req) ->
 	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
 		0 -> {404, [], <<"Block not found.">>};
 		Height ->
-			F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
+			F = ar_storage:lookup_block_filename(Height - 1),
 			case F of
 				unavailable -> {404, [], <<"Block not found.">>};
 				Filename  ->
@@ -510,11 +452,12 @@ handle('GET', [<<"block">>, <<"current">>], _Req) ->
 			end
 	end;
 
+%% DEPRECATED (12/07/2018)
 handle('GET', [<<"current_block">>], _Req) ->
 	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
 		0 -> {404, [], <<"Block not found.">>};
 		Height ->
-			F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
+			F = ar_storage:lookup_block_filename(Height - 1),
 			case F of
 				unavailable -> {404, [], <<"Block not found.">>};
 				Filename  ->
@@ -570,66 +513,6 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 			{200, [], Res}
 	end;
 
-%% @doc Return a given field of the blockshadow corresponding to the indep_hash.
-%% GET request to endpoint /block/hash/{indep_hash}/{field}
-%%
-%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
-%%
-handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
-	F=ar_storage:lookup_block_filename(ar_util:decode(Hash)),
-	case F of
-		unavailable ->
-			{404, [], <<"Block not found.">>};
-		Filename  ->
-			{ok, JSONBlock} = file:read_file(Filename),
-			{BLOCKJSON} = ar_serialize:dejsonify(JSONBlock),
-			{_, Res} = lists:keyfind(Field, 1, BLOCKJSON),
-			Result = block_field_to_string(Field, Res),
-			{200, [], Result}
-	end;
-
-%% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
-%% GET request to endpoint /block/hash/{height}/{field}
-%%
-%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
-%%
-handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
-	F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
-	case F of
-		unavailable ->
-			{404, [], <<"Block not found.">>};
-		Filename  ->
-			{ok, JSONBlock} = file:read_file(Filename),
-			{BLOCKJSON} = ar_serialize:dejsonify(JSONBlock),
-			{_, Res} = lists:keyfind(Field, 1, BLOCKJSON),
-			Result = block_field_to_string(Field, Res),
-			{200, [], Result}
-	end;
-
-%% @doc Return a given field for the the blockshadow corresponding to the current block.
-%% GET request to endpoint /block/current/{field}
-%%
-%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
-%%
-handle('GET', [<<"block">>, <<"current">>, Field], _Req) ->
-	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
-		0 -> {404, [], <<"Block not found.">>};
-		Height ->
-			F=ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))-1),
-			case F of
-				unavailable -> {404, [], <<"Block not found.">>};
-				Filename  ->
-					{ok, JSONBlock} = file:read_file(Filename),
-					{BLOCKJSON} = ar_serialize:dejsonify(JSONBlock),
-					{_, Res} = lists:keyfind(Field, 1, BLOCKJSON),
-					Result = block_field_to_string(Field, Res),
-					{200, [], Result}
-			end
-	end;
-
 %% @doc Share the location of a given service with a peer.
 %% POST request to endpoint /services where the body of the request is a JSON encoded serivce as
 %% specified in ar_serialize.
@@ -654,6 +537,7 @@ handle('POST', [<<"services">>], Req) ->
 %% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
+
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, Args, Config) -> ok;
 handle_event(Type, Args, Config)
@@ -960,14 +844,23 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 get_full_block(Peer, Hash) when is_binary(Hash) ->
 	%ar:report_console([{req_getting_block_by_hash, Hash}]),
 	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
-	handle_full_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/all",
-			[]
-		)
-	).
+	B =
+		handle_block_response(
+			ar_httpc:request(
+				<<"GET">>,
+				Peer,
+				"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
+				[]
+			)
+		),
+	FullB =
+		B#block {
+			txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ]
+		},
+	case [ X || X <- FullB#block.txs, is_atom(X) ] of
+		[] -> FullB;
+		_ -> unavailable
+	end.	
 
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer in an encrypted form
@@ -1457,30 +1350,6 @@ get_pending_tx_test() ->
 		),
 	?assertEqual("Pending", Body).
 
-%% @doc Correctly check the status of pending is returned for a pending transaction
-get_pending_subfield_tx_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init(),
-	Node = ar_node:start([], [B0]),
-	reregister(Node),
-	Bridge = ar_bridge:start([], Node),
-	reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
-	SearchNode = app_search:start(Node),
-	ar_node:add_peers(Node, SearchNode),
-	reregister(http_search_node, SearchNode),
-	send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
-	receive after 1000 -> ok end,
-	%write a get_tx function like get_block
-	{ok, {{<<"202">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
-			[]
-		),
-	?assertEqual("Pending", Body).
-
 %% @doc Find all pending transactions in the network
 %% TODO: Fix test to send txs from different wallets
 get_multiple_pending_txs_test() ->
@@ -1503,11 +1372,17 @@ get_multiple_pending_txs_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/tx/" ++ "pending",
+			"/tx/pending",
 			[]
 		),
 	PendingTXs = ar_serialize:dejsonify(Body),
-	?assertEqual([TX1#tx.id, TX2#tx.id], [P || P <- PendingTXs]).
+	?assertEqual(
+		[
+			ar_util:encode(TX1#tx.id),
+			ar_util:encode(TX2#tx.id)
+		],
+		PendingTXs
+	).
 
 get_tx_by_tag_test() ->
 	% Spawn a network with two nodes and a chirper server
