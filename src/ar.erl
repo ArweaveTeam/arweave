@@ -58,15 +58,16 @@
 	pause = true,
 	disk_space = ar_storage:calculate_disk_space(),
 	used_space = ar_storage:calculate_used_space(),
-	start_block = undefined
+	start_block = undefined,
+	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR)
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
 main() -> main("").
 main("") ->
-	io:format("Starts an Archain mining server.~n"),
+	io:format("Starts an Arweave mining server.~n"),
 	io:format("Compatible with network: ~s~n", [?NETWORK_NAME]),
-	io:format("Usage: archain-server [options]~n"),
+	io:format("Usage: arweave-server [options]~n"),
 	io:format("Options:~n"),
 	lists:foreach(
 		fun({Opt, Desc}) ->
@@ -78,7 +79,7 @@ main("") ->
 			)
 		end,
 		[
-			{"peer ip:port", "Join a network on a peer (or set of peers)."},
+			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
 			{"start_block", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
@@ -88,12 +89,13 @@ main("") ->
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"init", "Start a new blockweave."},
-			{"diff init_diff", "(For use with 'init':) New blockweave starting difficulty."},
-			{"mining_addr addr", "The address that mining rewards should be credited to."},
+			{"diff (init_diff)", "(For use with 'init':) New blockweave starting difficulty."},
+			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
-			{"load_mining_key file", "Load the address that mining rewards should be credited to from file"},
-			{"disk_space space", "Max size (in GB) for Arweave to take up on disk"},
-			{"benchmark", "Run a mining performance benchmark."}
+			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
+			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
+			{"benchmark", "Run a mining performance benchmark."},
+			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."}
 		]
 	),
 	erlang:halt();
@@ -129,6 +131,10 @@ main(["start_block", IndepHash|Rest], O)->
 	main(Rest, O#opts { start_block = ar_util:decode(IndepHash) });
 main(["benchmark"|Rest], O)->
 	main(Rest, O#opts { benchmark = true });
+main(["auto_update", "false" | Rest], O) ->
+	main(Rest, O#opts { auto_update = false });
+main(["auto_update", Addr | Rest], O) ->
+	main(Rest, O#opts { auto_update = ar_util:decode(Addr) });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -153,7 +159,8 @@ start(
 		pause = Pause,
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
-		start_block = IndepHash
+		start_block = IndepHash,
+		auto_update = AutoUpdate
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -242,7 +249,7 @@ start(
 				os:system_time(seconds)
 			]
 		]
-    ),
+	),
 	Node = whereis(http_entrypoint_node),
 	{ok, SearchNode} = supervisor:start_child(
 		Supervisor,
@@ -254,8 +261,8 @@ start(
 			worker,
 			[app_search]
 		}
-    ),
-    ar_node:add_peers(Node, SearchNode),
+	),
+	ar_node:add_peers(Node, SearchNode),
 	% Start a bridge, add it to the node's peer list.
 	{ok, Bridge} = supervisor:start_child(
 		Supervisor,
@@ -267,10 +274,18 @@ start(
 			worker,
 			[ar_bridge]
 		}
-    ),
+	),
 	ar_node:add_peers(Node, Bridge),
+	% Initialise the auto-updater, if enabled
+	case AutoUpdate of
+		false ->
+			do_nothing;
+		AutoUpdateAddr ->
+			AutoUpdateNode = app_autoupdate:start(AutoUpdateAddr),
+			ar_node:add_peers(Node, AutoUpdateNode)
+	end,
 	% Add self to all remote nodes.
-    %lists:foreach(fun ar_http_iface:add_peer/1, Peers),
+	%lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
@@ -290,7 +305,7 @@ start(
 			{peers, Peers},
 			{polling, Polling}
 		]
-    ),
+	),
 	% Start the first node in the gossip network (with HTTP interface)
 	ar_http_iface:start(
 		Port,
@@ -324,14 +339,14 @@ rebuild() ->
 
 %% @doc passthrough to supervisor start_link
 start_link() ->
-    supervisor:start_link(?MODULE, []).
+	supervisor:start_link(?MODULE, []).
 start_link(Args) ->
-    supervisor:start_link(?MODULE, Args).
+	supervisor:start_link(?MODULE, Args).
 
 %% @doc init function for supervisor
 init(Args) ->
-    SupFlags = {one_for_one, 5, 30},
-    ChildSpecs =
+	SupFlags = {one_for_one, 5, 30},
+	ChildSpecs =
 		[
 			{
 				ar_node,
@@ -342,7 +357,7 @@ init(Args) ->
 				[ar_node]
 			}
 		],
-    {ok, {SupFlags, ChildSpecs}}.
+	{ok, {SupFlags, ChildSpecs}}.
 
 %% @doc Run all of the tests associated with the core project.
 test() ->
