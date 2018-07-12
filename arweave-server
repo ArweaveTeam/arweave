@@ -1,4 +1,4 @@
-#!/bin/sh
+# !/bin/sh
 
 set -o errexit
 
@@ -10,8 +10,19 @@ else
 	SHELL_OPTS=-noinput
 fi
 
-exec erl $SHELL_OPTS -pa ebin/ \
-	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
-	-pa lib/accept/_build/default/lib/accept/ebin \
-	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
-	-s ar rebuild -s prometheus  -run ar main "$@"
+while true; do
+	if
+        erl $SHELL_OPTS -pa ebin/ \
+        	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
+        	-pa lib/accept/_build/default/lib/accept/ebin \
+        	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
+        	-s ar rebuild -s prometheus  -run ar main "$@";
+    then
+		echo "Arweave Heartbeat: Server terminated safely."
+		exit 1
+	else
+		echo "Arweave Heartbeat: The Arweave server has terminated. It will restart in 15 seconds."
+		echo "Arweave Heartbeat: If you would like to avoid this, press control+c to kill the server."
+		sleep 15
+	fi
+done

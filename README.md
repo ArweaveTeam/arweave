@@ -1,6 +1,6 @@
 # Arweave Server
 
-This repository holds the Arweave server prototype, as well as the App Developer
+This repository holds the Arweave server, as well as the App Developer
 Toolkit (ADT) and the Arweave testing framework, TNT/NO-VLNS.
 
 Arweave is a distributed, cryptographically verified permanent archive built
