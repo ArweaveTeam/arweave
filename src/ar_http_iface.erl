@@ -189,7 +189,7 @@ handle('POST', [<<"block">>], Req) ->
 		true  ->
 			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 				undefined -> {429, <<"Too Many Requests">>};
-				true -> {409, <<"Block already processed.">>};
+				true -> {208, <<"Block already processed.">>};
 				false ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
 					ar:report(
@@ -216,7 +216,7 @@ handle('POST', [<<"tx">>], Req) ->
 	% (and then pass to processing steps).
 	case ar_bridge:is_id_ignored(TX#tx.id) of
 		undefined -> {429, <<"Too Many Requests">>};
-		true -> {409, <<"Transaction already processed.">>};
+		true -> {208, <<"Transaction already processed.">>};
 		false ->
 			ar_bridge:ignore_id(TX#tx.id),
 			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
@@ -435,6 +435,53 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 			{404, [], <<"Block not found.">>};
 		Filename  ->
 			{ok, [], {file, Filename}}
+	end;
+
+%% @doc Return a given field of the blockshadow corresponding to the indep_hash.
+%% GET request to endpoint /block/hash/{indep_hash}/{field}
+%%
+%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
+%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%
+handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
+	case ar_meta_db:get(subfield_queries) of
+		true ->
+			Block = ar_storage:read_block(ar_util:decode(Hash)),
+			case Block of
+				unavailable ->
+					{404, [], <<"Not Found.">>};
+				B ->
+					{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+					Result = block_field_to_string(Field, Res),
+					{200, [], Result}
+			end;
+		_ ->
+			{421, [], <<"Subfield block querying is disabled on this node.">>}
+	end;
+
+%% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
+%% GET request to endpoint /block/hash/{height}/{field}
+%%
+%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
+%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%
+handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
+	case ar_meta_db:get(subfield_queries) of
+		true ->
+			Block = ar_node:get_block(whereis(http_entrypoint_node),
+					list_to_integer(binary_to_list(Height))),
+			case Block of
+				unavailable ->
+						{404, [], <<"Not Found.">>};
+				B ->
+					{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+					Result = block_field_to_string(Field, Res),
+					{200, [], Result}
+			end;
+		_ -> 
+			{421, [], <<"Subfield block querying is disabled on this node.">>}
 	end;
 
 %% @doc Return the current block.

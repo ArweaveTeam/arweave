@@ -59,7 +59,8 @@
 	disk_space = ar_storage:calculate_disk_space(),
 	used_space = ar_storage:calculate_used_space(),
 	start_block = undefined,
-	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR)
+	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
+	enable = []
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -95,7 +96,8 @@ main("") ->
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
-			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."}
+			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
+			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."}
 		]
 	),
 	erlang:halt();
@@ -135,6 +137,8 @@ main(["auto_update", "false" | Rest], O) ->
 	main(Rest, O#opts { auto_update = false });
 main(["auto_update", Addr | Rest], O) ->
 	main(Rest, O#opts { auto_update = ar_util:decode(Addr) });
+main(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
+	main(Rest, O#opts { enable = [ list_to_atom(Feature) |Enabled] });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -160,7 +164,8 @@ start(
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
 		start_block = IndepHash,
-		auto_update = AutoUpdate
+		auto_update = AutoUpdate,
+		enable = Enable
 	}) ->
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -284,6 +289,8 @@ start(
 			AutoUpdateNode = app_autoupdate:start(AutoUpdateAddr),
 			ar_node:add_peers(Node, AutoUpdateNode)
 	end,
+	% Store enabled features
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	% Add self to all remote nodes.
 	%lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.
