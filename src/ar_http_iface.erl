@@ -1005,7 +1005,7 @@ process_get_info(Body) ->
 	{Struct} = ar_serialize:dejsonify(Body),
 	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
 	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Struct),
-	{_, ReleaseNumber} = 
+	ReleaseNumber = 
 		case lists:keyfind(<<"release">>, 1, Struct) of
 			false -> 0;
 			R -> R
