@@ -902,17 +902,17 @@ get_full_block(Peer, Hash) when is_binary(Hash) ->
 				[]
 			)
 		),
-	FullB =
-		B#block {
-			txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ]
-		},
-	case ?IS_BLOCK(FullB) of
+	case ?IS_BLOCK(B) of
 		true ->
+			FullB =
+				B#block {
+					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ]
+				},
 			case [ X || X <- FullB#block.txs, is_atom(X) ] of
 				[] -> FullB;
 				_ -> unavailable
 			end;
-		false -> FullB
+		false -> B
 	end.	
 
 %% @doc Retreive a full block (full transactions included in body)
