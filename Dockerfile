@@ -13,7 +13,7 @@ ADD src src
 # E.g. "-DTARGET_TIME=5 -DRETARGET_BLOCKS=10" or "-DFIXED_DIFF=2"
 ARG ERLC_OPTS
 
-RUN make all
+RUN make build
 
 FROM erlang:20-alpine
 
@@ -37,4 +37,4 @@ COPY --from=builder /arweave/lib/prometheus_process_collector/_build/default/lib
             lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin
 
 EXPOSE 1984
-ENTRYPOINT ["./arweave-server"]
+ENTRYPOINT ["./docker-arweave-server"]

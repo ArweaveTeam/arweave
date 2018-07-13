@@ -33,7 +33,12 @@ log:
 catlog:
 	cat logs/`ls -t logs | head -n 1`
 
-all: ebin logs blocks
+all: gitmodules build
+
+gitmodules:
+	git submodule update --init
+
+build: ebin logs blocks
 	rm -rf priv
 	rm -rf data/mnesia
 	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
