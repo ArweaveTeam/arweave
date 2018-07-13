@@ -649,11 +649,13 @@ return_info() ->
 				[
 					{network, list_to_binary(?NETWORK_NAME)},
 					{version, ?CLIENT_VERSION},
+					{release, ?RELEASE_NUMBER},
 					{height,
 						case HL of
 							[] -> 0;
 							Hashes -> (length(Hashes) - 1)
-						end},
+						end
+					},
 					{current, case HL of [] -> <<"not_joined">>; [C|_] -> ar_util:encode(C) end},
 					{blocks, ar_storage:blocks_on_disk()},
 					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
@@ -904,9 +906,13 @@ get_full_block(Peer, Hash) when is_binary(Hash) ->
 		B#block {
 			txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ]
 		},
-	case [ X || X <- FullB#block.txs, is_atom(X) ] of
-		[] -> FullB;
-		_ -> unavailable
+	case ?IS_BLOCK(FullB) of
+		true ->
+			case [ X || X <- FullB#block.txs, is_atom(X) ] of
+				[] -> FullB;
+				_ -> unavailable
+			end;
+		false -> FullB
 	end.	
 
 %% @doc Retreive a full block (full transactions included in body)
@@ -999,6 +1005,7 @@ process_get_info(Body) ->
 	{Struct} = ar_serialize:dejsonify(Body),
 	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
 	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Struct),
+	{_, ReleaseNumber} = lists:keyfind(<<"release">>, 1, Struct),
 	{_, Height} = lists:keyfind(<<"height">>, 1, Struct),
 	{_, Blocks} = lists:keyfind(<<"blocks">>, 1, Struct),
 	{_, Peers} = lists:keyfind(<<"peers">>, 1, Struct),
@@ -1007,7 +1014,8 @@ process_get_info(Body) ->
 		{version, ClientVersion},
 		{height, Height},
 		{blocks, Blocks},
-		{peers, Peers}
+		{peers, Peers},
+		{release, ReleaseNumber}
 	].
 
 %% @doc Process the response of an /block call.
@@ -1103,6 +1111,7 @@ get_info_test() ->
 	BridgeNode = ar_bridge:start([]),
 	reregister(http_bridge_node, BridgeNode),
 	?assertEqual(<<?NETWORK_NAME>>, get_info({127, 0, 0, 1, 1984}, name)),
+	?assertEqual(?RELEASE_NUMBER, get_info({127, 0, 0, 1, 1984}, release)),
 	?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
 	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, peers)),
 	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, blocks)),

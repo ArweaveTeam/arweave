@@ -6,6 +6,9 @@
 %% @doc Current release number of the arweave client software.
 -define(CLIENT_VERSION, 3).
 
+%% @doc The current build number -- incremented for every release.
+-define(RELEASE_NUMBER, 6).
+
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
@@ -85,7 +88,7 @@
 -define(LOCAL_NET_TIMEOUT, 10000).
 
 %% @doc Default timeout for initial request
--define(CONNECT_TIMEOUT, 10 * 1000).
+-define(CONNECT_TIMEOUT, 25 * 1000).
 
 %% @doc Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 3000).
