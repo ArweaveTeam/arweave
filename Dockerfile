@@ -24,7 +24,7 @@ RUN apk update && apk add coreutils libstdc++
 RUN mkdir /arweave
 WORKDIR /arweave
 
-COPY arweave-server .
+COPY docker-arweave-server .
 COPY data data
 COPY --from=builder /arweave/priv priv
 COPY --from=builder /arweave/ebin ebin
