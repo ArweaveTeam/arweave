@@ -310,7 +310,9 @@ start(
 			{miner, Node},
 			{mining_address, PrintMiningAddress},
 			{peers, Peers},
-			{polling, Polling}
+			{polling, Polling},
+			{target_time, ?TARGET_TIME},
+			{retarget_blocks, ?RETARGET_BLOCKS}
 		]
 	),
 	% Start the first node in the gossip network (with HTTP interface)
@@ -342,7 +344,25 @@ generate_logfile_name() ->
 
 %% @doc Run the erlang make system on the project.
 rebuild() ->
-	make:all([load]).
+	make:all(
+		[
+			load,
+			{d, 'TARGET_TIME', ?TARGET_TIME},
+			{d, 'RETARGET_BLOCKS', ?RETARGET_BLOCKS}
+		] ++ fixed_diff_option() ++ fixed_delay_option()
+	).
+
+-ifdef(FIXED_DIFF).
+fixed_diff_option() -> [{d, 'FIXED_DIFF', ?FIXED_DIFF}].
+-else.
+fixed_diff_option() -> [].
+-endif.
+
+-ifdef(FIXED_DELAY).
+fixed_delay_option() -> [{d, 'FIXED_DELAY', ?FIXED_DELAY}].
+-else.
+fixed_delay_option() -> [].
+-endif.
 
 %% @doc passthrough to supervisor start_link
 start_link() ->

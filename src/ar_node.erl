@@ -1944,8 +1944,12 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 %% This wait helps ensure that a tx has propogated around the network.
 %% NB: If debug is defined no wait is applied.
 -ifdef(DEBUG).
-calculate_delay(0) -> 0;
-calculate_delay(Bytes) -> 0.
+-define(FIXED_DELAY, 0).
+-endif.
+
+-ifdef(FIXED_DELAY).
+calculate_delay(0) -> ?FIXED_DELAY;
+calculate_delay(Bytes) -> ?FIXED_DELAY.
 -else.
 calculate_delay(0) ->
     30000;
