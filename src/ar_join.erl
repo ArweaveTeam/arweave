@@ -44,7 +44,15 @@ start(Node, RawPeers, RawNewB) ->
 							get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 							Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 							spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end);
-						false -> ok
+						false ->
+							ar:report_console(
+								[
+									node_not_joining,
+									{reason, cannot_get_full_block_from_peer},
+									{received_instead, NewB}
+								]
+							),
+							ok
 					end
 				end
 			),
