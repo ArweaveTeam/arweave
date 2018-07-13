@@ -75,6 +75,7 @@ invalidate_block(B) ->
 -ifdef(DEBUG).
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(B) ->
+	ar:report([{writing_block_to_disk, ar_util:encode(B#block.indep_hash)}]),
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	file:write_file(
 		Name = lists:flatten(
@@ -89,6 +90,7 @@ write_block(B) ->
 -else.
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(B) ->
+	ar:report([{writing_block_to_disk, ar_util:encode(B#block.indep_hash)}]),
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	case enough_space(byte_size(BlockToWrite)) of
 		true ->

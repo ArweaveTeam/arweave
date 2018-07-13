@@ -11,6 +11,7 @@ else
 fi
 
 while true; do
+	make all
 	if
         erl $SHELL_OPTS -pa ebin/ \
         	-pa lib/prometheus/_build/default/lib/prometheus/ebin \

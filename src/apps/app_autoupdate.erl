@@ -46,12 +46,14 @@ process_update(TX) ->
 	% Wait a random amount of time before the restarting the updated node.
 	Wait = uniform_wait(2, hours),
 	receive after Wait -> ok end,
+	ar:report([restarting_node, {reason, autoupdate}]),
 	% End with error code 1 to allow heartbeat to restart the server
 	erlang:halt(1).
 
 %% @doc Pull the latest changes from the Arweave git repository.
 update() ->
 	Res = os:cmd("git fetch; git -c advice.detachedHead=false checkout stable"),
+	ar:report([auto_update_finished, {response, Res}]),
 	io:format(
 		"Executed update. Result: ~n~s~n"
 		"====================~n",

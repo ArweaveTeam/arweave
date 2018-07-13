@@ -344,13 +344,16 @@ generate_logfile_name() ->
 
 %% @doc Run the erlang make system on the project.
 rebuild() ->
+	io:format("Rebuilding Arweave...~n"),
+	receive after 3000 -> ok end,
 	make:all(
 		[
 			load,
 			{d, 'TARGET_TIME', ?TARGET_TIME},
 			{d, 'RETARGET_BLOCKS', ?RETARGET_BLOCKS}
 		] ++ fixed_diff_option() ++ fixed_delay_option()
-	).
+	),
+	io:format("~nBuild complete!~n").
 
 -ifdef(FIXED_DIFF).
 fixed_diff_option() -> [{d, 'FIXED_DIFF', ?FIXED_DIFF}].

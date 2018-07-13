@@ -117,8 +117,6 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 				{B, R} ->				
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
-					ar_storage:write_tx(R#block.txs),
-					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
 					ar:report(
 						[
 							{writing_block, B#block.height},
@@ -132,8 +130,8 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 		false ->
 			ar:report(
 				[
-					{could_not_retrieve_joining_block},
-					{retrying}
+					could_not_retrieve_joining_block,
+					retrying
 				]
 			),
 			timer:sleep(3000),
@@ -143,11 +141,11 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 %% @doc Fills node to capacity based on weave storage limit.
 fill_to_capacity(_, []) -> ok;
 fill_to_capacity(Peers, ToWrite) ->
-	timer:sleep(1000),
+	timer:sleep(20 * 1000),
 	try
 		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
 		case ar_node:get_full_block(Peers, RandHash) of
-			unavailable -> 
+			unavailable ->
 				timer:sleep(3000),
 				fill_to_capacity(Peers, ToWrite);
 			B ->
