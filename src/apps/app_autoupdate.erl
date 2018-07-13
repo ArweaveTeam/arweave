@@ -52,7 +52,7 @@ process_update(TX) ->
 
 %% @doc Pull the latest changes from the Arweave git repository.
 update() ->
-	Res = os:cmd("git fetch; git -c advice.detachedHead=false checkout stable"),
+	Res = os:cmd("git fetch --tags; git -c advice.detachedHead=false checkout stable"),
 	ar:report([auto_update_finished, {response, Res}]),
 	io:format(
 		"Executed update. Result: ~n~s~n"

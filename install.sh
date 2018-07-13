@@ -14,6 +14,6 @@ echo "-----INSTALLED ERLANG SUCCESFULLY-----"
 cd ../
 sudo apt-get install -y git
 echo "-----CLONING ARWEAVE REPO-----"
-git clone https://github.com/ArweaveTeam/arweave.git arweave && cd arweave && git -c advice.detachedHead=false checkout N.1.1.0
+git clone https://github.com/ArweaveTeam/arweave.git arweave && cd arweave && git -c advice.detachedHead=false checkout stable
 make all
 echo "-----FINISHED INSTALLATION-----"

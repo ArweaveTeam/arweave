@@ -7,7 +7,7 @@
 -define(CLIENT_VERSION, 3).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 6).
+-define(RELEASE_NUMBER, 7).
 
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).
