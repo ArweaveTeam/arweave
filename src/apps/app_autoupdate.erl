@@ -44,7 +44,7 @@ process_update(TX) ->
 	),
 	update(),
 	% Wait a random amount of time before the restarting the updated node.
-	Wait = uniform_wait(2, minutes),
+	Wait = uniform_wait(2, hours),
 	receive after Wait -> ok end,
 	ar:report([restarting_node, {reason, auto_update}]),
 	% End with error code 1 to allow heartbeat to restart the server
