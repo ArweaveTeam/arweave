@@ -1,5 +1,5 @@
 -module(app_autoupdate).
--export([start/1, new_tx/2, uniform_wait/2]).
+-export([start/1, new_transaction/2, uniform_wait/2]).
 -export([update_tx_test_dangerous/0]).
 -export([nonupdate_tx_test_dangerous/0]).
 -export([mixed_tx_test_dangerous/0]).
@@ -24,7 +24,7 @@ start(Address) ->
 
 %% @doc New block callback function. Checks whether the block contains
 %% any txs relevant to set autoupdate wallet.
-new_tx(Addr, T) ->
+new_transaction(Addr, T) ->
 	case ar_wallet:to_address(T#tx.owner) of
 		Addr ->
 			process_update(T);
