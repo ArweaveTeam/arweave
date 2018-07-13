@@ -1,5 +1,5 @@
 -module(app_autoupdate).
--export([start/1, new_block/2, uniform_wait/2]).
+-export([start/1, new_tx/2, uniform_wait/2]).
 -export([update_tx_test_dangerous/0]).
 -export([nonupdate_tx_test_dangerous/0]).
 -export([mixed_tx_test_dangerous/0]).
@@ -24,62 +24,15 @@ start(Address) ->
 
 %% @doc New block callback function. Checks whether the block contains
 %% any txs relevant to set autoupdate wallet.
--ifdef(DEBUG).
-new_block(Addr, B) ->
-	io:format("Block number: ~p ~n", [B#block.height]),
-	io:format("Address: ~p ~n", [ar_util:encode(Addr)]),
-	io:format("Block tx count: ~p ~n", [length(B#block.txs)]),
-	RelTXs =
-		[
-			TX
-		||
-			TX <- B#block.txs,
-			ar_wallet:to_address(TX#tx.owner) == Addr
-		],
-	io:format("Block update tx count: ~p ~n", [length(RelTXs)]),
-	case RelTXs of
-		[] ->
-			Addr;
-		[Update | _] ->
-			process_update(Update),
-			Addr
-	end.
--else.
-new_block(Addr, B) ->
-	RelTXs =
-		[
-			TX
-		||
-			TX <- B#block.txs,
-			ar_wallet:to_address(TX#tx.owner) == Addr
-		],
-	case RelTXs of
-		[] ->
-			Addr;
-		[Update | _] ->
-			process_update(Update),
-			Addr
-	end.
--endif.
+new_tx(Addr, T) ->
+	case ar_wallet:to_address(T#tx.owner) of
+		Addr ->
+			process_update(T);
+		_ -> do_nothing
+	end,
+	Addr.
 
 %% @doc Handle receiving an update TX.
--ifdef(DEBUG).
-process_update(TX) ->
-	io:format(
-		"~n"
-		"====================~n"
-		"AUTO-UPDATE Transaction received:~n"
-		"~s~n"
-		"====================~n",
-		[TX#tx.data]
-	),
-	update(),
-	% Wait a random amount of time before the restarting the updated node.
-	Wait = uniform_wait(5, seconds),
-	receive after Wait -> ok end,
-	% End with error code 1 to allow heartbeat to restart the server
-	erlang:halt(1).
--else.
 process_update(TX) ->
 	io:format(
 		"~n"
@@ -95,7 +48,6 @@ process_update(TX) ->
 	receive after Wait -> ok end,
 	% End with error code 1 to allow heartbeat to restart the server
 	erlang:halt(1).
--endif.
 
 %% @doc Pull the latest changes from the Arweave git repository.
 update() ->
