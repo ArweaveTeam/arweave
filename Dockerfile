@@ -1,31 +1,49 @@
-FROM erlang:20-alpine as builder
+# -----
+# Stage 1: Build the Arweave Server
+# -----
 
-RUN apk update && apk add make g++
+FROM debian:stretch as builder
+
+RUN apt-get update
+RUN apt-get install --no-install-recommends --no-install-suggests -y \
+			apt-utils \
+			make \
+			g++ \
+			ca-certificates \
+			git \
+			curl \
+			erlang
+RUN rm -rf /var/lib/apt/lists/*
 
 RUN mkdir /arweave
 WORKDIR /arweave
 
-COPY Makefile .
-COPY Emakefile .
-ADD lib lib
-ADD src src
+RUN git clone https://github.com/ArweaveTeam/arweave.git . \
+		&& git -c advice.detachedHead=false checkout stable \
+		&& git submodule update --init
 
 # E.g. "-DTARGET_TIME=5 -DRETARGET_BLOCKS=10" or "-DFIXED_DIFF=2"
 ARG ERLC_OPTS
 
 RUN make build
 
-FROM erlang:20-alpine
+# -----
+# Stage 2: Arweave Server Runtime
+# -----
 
-# install coreutils in order to support diskmon's shell command: /bin/df -lk
-# since BusyBox's df does not support that option
-RUN apk update && apk add coreutils libstdc++
+FROM debian:stretch
+
+RUN apt-get update
+RUN apt-get install --no-install-recommends --no-install-suggests -y \
+			apt-utils \
+			coreutils
+RUN rm -rf /var/lib/apt/lists/*
 
 RUN mkdir /arweave
 WORKDIR /arweave
 
-COPY docker-arweave-server .
-COPY data data
+COPY --from=builder /arweave/docker-arweave-server .
+COPY --from=builder /arweave/data data
 COPY --from=builder /arweave/priv priv
 COPY --from=builder /arweave/ebin ebin
 COPY --from=builder /arweave/src/av/sigs src/av/sigs
@@ -35,6 +53,9 @@ COPY --from=builder /arweave/lib/accept/_build/default/lib/accept/ebin \
             lib/accept/_build/default/lib/accept/ebin
 COPY --from=builder /arweave/lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
             lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin
+COPY --from=builder /arweave/lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/priv \
+			lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/priv
 
+EXPOSE 80
 EXPOSE 1984
 ENTRYPOINT ["./docker-arweave-server"]
