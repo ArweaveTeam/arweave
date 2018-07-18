@@ -36,7 +36,8 @@ FROM debian:stretch
 RUN apt-get update
 RUN apt-get install --no-install-recommends --no-install-suggests -y \
 			apt-utils \
-			coreutils
+			coreutils \
+			erlang
 RUN rm -rf /var/lib/apt/lists/*
 
 RUN mkdir /arweave

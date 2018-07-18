@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-#
+# -----
 # Arweave - Build Docker Container
-#
+# -----
 
 BINDIR=$(dirname "$0")
 BASEDIR=$BINDIR/..
 
 docker build -t arweave $BASEDIR
 
-#
+# -----
 # EOF
-#
+# -----
+
