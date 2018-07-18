@@ -59,3 +59,8 @@ COPY --from=builder /arweave/lib/prometheus_process_collector/_build/default/lib
 EXPOSE 80
 EXPOSE 1984
 ENTRYPOINT ["./docker-arweave-server"]
+
+# -----
+# EOF
+# -----
+
