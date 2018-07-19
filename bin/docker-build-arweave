@@ -6,7 +6,7 @@
 BINDIR=$(dirname "$0")
 BASEDIR=$BINDIR/..
 
-docker build -t arweave $BASEDIR
+sudo docker build -t arweave $BASEDIR
 
 # -----
 # EOF
