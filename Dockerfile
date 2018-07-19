@@ -2,7 +2,7 @@
 # Stage 1: Build the Arweave Server
 # -----
 
-FROM debian:stretch as builder
+FROM ubuntu:18.04 as builder
 
 RUN apt-get update
 RUN apt-get install --no-install-recommends --no-install-suggests -y \
@@ -31,7 +31,7 @@ RUN make build
 # Stage 2: Arweave Server Runtime
 # -----
 
-FROM debian:stretch
+FROM ubuntu:18.04
 
 RUN apt-get update
 RUN apt-get install --no-install-recommends --no-install-suggests -y \
@@ -57,7 +57,6 @@ COPY --from=builder /arweave/lib/prometheus_process_collector/_build/default/lib
 COPY --from=builder /arweave/lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/priv \
 		lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/priv
 
-EXPOSE 80
 EXPOSE 1984
 ENTRYPOINT ["./docker-arweave-server"]
 
