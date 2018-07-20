@@ -1,18 +1,14 @@
-# Arweave code style
+# Arweave Code Styleguide
 
-The main development language of the Arweave client is Erlang, and as the number of developers of the project continues to grow this stlye guide will act as a means of keeping the codebase clean and comprehensible. 
-
-
+The main development language of the **Arweave** client is Erlang, and as the number of developers of the project continues to grow this stlye guide will act as a means of keeping the codebase clean and comprehensible. 
 
 ## Code comprehensibility
-
-
 
 ### Module header comments
 
 Each module should have a simplistic comment at the top that encompasses and describes the set of functions that can be found within it.
 
-Module description comments should be prixed with '%%%' .
+Module description comments should be prefixed with '%%%' .
 
 ```erlang
 %% Example: head of ar_serialize.
@@ -29,8 +25,6 @@ Module description comments should be prixed with '%%%' .
 %%% Module containing serialisation/deserialisation utility functions for use in the HTTP server.
 ```
 
-
-
 ### Function clause comments should be placed above the header
 
 All functions should have a detailed description of their purpose above the header. This description should not include implementation details unless absolutely required, the code itself should be the main conveyor of the specific implementation.
@@ -44,8 +38,6 @@ Function description comments should be prefixed with  '%% @doc'.
 count_unavailable_txs(TXList) ->
     length([TX || TX <- TXList, TX == not_found]).
 ```
-
-
 
 ### Sparing use of comments inside function bodies
 
@@ -72,8 +64,6 @@ sign_verify_test({Priv, Pub}) ->
 	verify(Pub, SignedData).
 ```
 
-
-
 ### Use the minimal descriptive words for function names
 
 Function names should be descriptive enough to explain the high-level purpose of the function whilst remaining short enough as to not hinder the code readability. 
@@ -92,8 +82,6 @@ ar_block:generate_block_from_shadow(BShadow).
 ar_serialize:block_to_json_struct(Block).
 ```
 
-
-
 ### Tests should be defined at the tail of the module
 
 Tests should be defined as the last thing present within a module and should be prefixed with the following comment. 
@@ -102,15 +90,11 @@ Tests should be defined as the last thing present within a module and should be 
 % Tests: {module name}
 ```
 
-
-
 ### Maximum of eighty characters per line
 
 A maximum of eighty characters should be present on any singular line. 
 
 To help enforce this styling consider using a ruler, most extensible editors will have this functionality by default or a simple plugin should be available to help.
-
-
 
 ### Try to avoid deeply nested code
 
@@ -143,8 +127,6 @@ contains_data_tx(_) ->
 	error_not_tx.
 ```
 
-
-
 ### Deconstruct arguments in the function header
 
 The maximum number of variables should be deconstructed within the function clause header and not the clause body. 
@@ -167,8 +149,6 @@ server(State#state {
 	...
 ```
 
-
-
 ### Atoms should be lowercase and separated by underscores
 
 For easy recognisability the Arweave codebase uses descriptive lowercase atoms where multiple words are separated by the underscore character. 
@@ -182,8 +162,6 @@ For easy recognisability the Arweave codebase uses descriptive lowercase atoms w
 unavailable
 block_not_found
 ```
-
-
 
 ### Record definitions should include descriptions of fields
 
@@ -203,15 +181,11 @@ When a new record is defined the information regarding the purpose of each field
 }).
 ```
 
-
-
 ### Redundant or deprecated code should be removed
 
 Should existing code be made redundant with the implementation of new developments, this old code should be removed. It should not be left cluttering the code base as either code or comment. 
 
 If reference to these old implementation details is still required they will remain present in the project repositories version control.
-
-
 
 ### Modules should export the minimal number of functions
 
@@ -227,8 +201,6 @@ This helps show the interface that the module exposes. Via looking at the export
 -export([sign/2, verify/3]).
 -export([to_address/1]).
 ```
-
-
 
 ### Variable names should be descriptive of the data they contain
 
@@ -248,9 +220,7 @@ sign_data(Keypair, Data) ->
     sign(Priv, Data).
 ```
 
- 
-
- ### Use ar:report to present information to the end user
+### Use ar:report to present information to the end user
 
 Presenting information to the user from the Arweave client is done via a live view of the log. Variables can be printed to the screen via the report function in the ar.erl module.
 
@@ -265,8 +235,6 @@ ar:report(
 ),
 ```
 
-
-
 ### Tuple construction/deconstruction
 
 When constructing or deconstructing tuples ensure a space between each comma separated element.
@@ -279,11 +247,10 @@ When constructing or deconstructing tuples ensure a space between each comma sep
 {one, two, three, A, B, C}
 ```
 
-
-
 ### List deconstruction
 
 When deconstructing a list into head and tail ensure that a space is placed either side of the '|' separation character.
+
 
 ```erlang
 %% Bad
@@ -292,8 +259,6 @@ When deconstructing a list into head and tail ensure that a space is placed eith
 %% Good
 [Head | Tail]
 ```
-
-
 
 ### Record construction/deconstruction
 
@@ -306,8 +271,6 @@ State#state {first="hello", second="world"}
 %% Good
 State#state { first = "hello", second = "world" },
 ```
-
-
 
 ### Function arguments on new lines
 
@@ -328,61 +291,3 @@ example() ->
 	),
 	...
 ```
-
-
-
-
-
-## Version control
-
-The Arweave client codebase is hosted on Github, the below standards define the criteria for committed code. We aim to adhere to these standards as to make it as easy possible for new contributors to get involved.
-
-
-
-### All committed code must be commented
-
-All committed code should be fully commented and should aim to fit the styling as detailed in this document. Committing uncommented code is unhelpful to all those maintaining or exploring the project.
-
-
-
-### Code pushed to master must work
-
-All code committed to the master branch of the Arweave project should be fully functioning.
-
-This is a **strict** requirement as this is the prime location of where end users will be obtaining the software to join and participate in the network.
-
-
-
-### Commits should aim to be as atomic as possible
-
-Code commits should aim to be a single logical change or addition to the codebase, though if not possible all logical alterations should be explained in the commit message, each separated by a comma.
-
-```
-- Added generic protocol implementation.
-- Removed ar_deprecated.
-- Added block shadows, refactored HTTP iface.
-```
-
-
-
-### Commit message syntax
-
-To keep the repository clean a set structure for commit messages has been decided.
-
-- The message should be preceeded with the dash character followed by a space.
-- The first character should be capitalized. 
-- The message should be terminated with a full stop.
-- The message should be succinct.
-- Actions taken should be written in past tense.
-- Multiple actions should be comma separated.
-
-```
-- Added arweave style guide, removed inconsistent styling.
-```
-
-
-
-
-
-
-
