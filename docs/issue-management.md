@@ -6,7 +6,7 @@ Like the **Arweave** code base is hosted on Github we also manage all issues usi
 
 ## Process
 
-### Entering
+### Reporting
 
 New entered issues should focus on ideas, problems, and solutions. They should match following criteria:
 
