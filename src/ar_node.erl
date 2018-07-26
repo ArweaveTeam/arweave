@@ -1223,14 +1223,20 @@ join_weave(S, NewB) ->
 fork_recover(
 	S = #state {
 		hash_list = HashList,
-		gossip = _GS
+		gossip = GS
 	}, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
+			PrioritisedPeers = ar_util:unique(Peer) ++
+				case whereis(http_bridge_node) of
+					undefined -> [];
+					BridgePID ->
+						ar_bridge:get_remote_peers(BridgePID)
+				end,
 			erlang:monitor(
 				process,
 				PID = ar_fork_recovery:start(
-					ar_util:unique(Peer),
+					PrioritisedPeers,
 					NewB,
 					HashList
 				)
