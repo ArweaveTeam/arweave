@@ -1227,7 +1227,12 @@ fork_recover(
 	}, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
-			PrioritisedPeers = ar_util:unique(Peer) ++ ar_gossip:peers(GS),
+			PrioritisedPeers = ar_util:unique(Peer) ++
+				case whereis(http_bridge_node) of
+					undefined -> [];
+					BridgePID ->
+						ar_bridge:get_remote_peers(BridgePID)
+				end,
 			erlang:monitor(
 				process,
 				PID = ar_fork_recovery:start(
