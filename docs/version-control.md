@@ -8,7 +8,7 @@ The **Arweave** client codebase is hosted on Github, the below standards define 
 
 ### Workflow
 
-The **Arweave** version control workflow follows the idea of the [Forking Workflow](https://www.atlassian.com/git/tutorials/comparing-workflows/forking-workflow). The branches inside the own fork are named by their type, the issue number, and a descriptive name. Prefixes are
+The **Arweave** version control workflow follows the idea of the [Forking Workflow](https://www.atlassian.com/git/tutorials/comparing-workflows/forking-workflow). The branches inside the own fork are named by their type and a descriptive name. Prefixes are
 
 - `bug` for bugfixes
 - `enhancement` for new features
@@ -17,9 +17,9 @@ The **Arweave** version control workflow follows the idea of the [Forking Workfl
 
 #### Examples
 
-- `enhancement/1234/transaction-rate-api` implements issue 1234, a new transaction rate API feature
-- `maintenance/2345/improve-block-verification` implements issue 2345, an improvement of the block verification
-- `bug/3456/tx-rate-api-memleak` implements issue 3456, it fixes a memory leak added with the new API of issue 1234 above
+- `enhancement/transaction-rate-api` implements a new transaction rate API feature
+- `maintenance/improve-block-verification` implements an improvement of the block verification
+- `bug/tx-rate-api-memleak` fixes a memory leak added with the new transaction rate API of the branch above
 
 ### Pull Request
 
