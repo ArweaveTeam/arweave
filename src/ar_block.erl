@@ -1,6 +1,7 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1, get_recall_block/5]).
--export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2]).
+-export([verify_dep_hash/4, verify_indep_hash/1]).
+-export([verify_timestamp/1, verify_timestamp_diff/2]).
 -export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([encrypt_block/2, encrypt_block/3]).
@@ -329,9 +330,24 @@ verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
             NewB#block.nonce
         ).
 
-%% @doc Verify that the block was created within the last ten minutes
-verify_timestamp(Timestamp, NewB) ->
-    (NewB#block.timestamp - Timestamp) =< 600.
+%% @doc Verify new block timestamp relative to current system time.
+verify_timestamp(NewB) ->
+	T = os:system_time(seconds),
+	verify_timestamp_diff(T, NewB#block.timestamp).
+
+%% @doc Verify timestamp difference between new and old block.
+verify_timestamp_diff(NewB, OldB) when is_record(NewB, block) ->
+	T = NewB#block.timestamp,
+	case T > (os:system_time(seconds) - ?TIMESTAMP_DIFF_TOLERANCE) of
+		true ->
+			false;
+		false ->
+			verify_timestamp_diff(T, OldB#block.timestamp)
+	end;
+
+%% @doc Verify difference between new and old timestamp.
+verify_timestamp_diff(NewT, OldT) when is_integer(NewT) ->
+	NewT >= (OldT + ?TIMESTAMP_DIFF_TOLERANCE).
 
 %% @doc Verify the height of the new block is the one higher than the
 %% current height.
@@ -509,9 +525,18 @@ get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
 %% Tests: ar_block
 
 pad_unpad_roundtrip_test() ->
-    Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
-    UnPad = unpad_binary(Pad),
-    Pad == UnPad.
+	Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
+	UnPad = unpad_binary(Pad),
+	Pad == UnPad.
+
+verify_timestamp_diff_test() ->
+	T1 = 123456000,
+	T2 = 123456700, %% after T1, ok
+	T3 = 123455941, %% before T1 but within tolerance, ok
+	T4 = 123456000, %% bafore T1 and outside tolerance, bad
+	true =:= verify_timestamp_diff(T2,T1),
+	true =:= verify_timestamp_diff(T3,T1),
+	false =:= verify_timestamp_diff(T4,T1).
 
 % encrypt_decrypt_block_test() ->
 %     B0 = ar_weave:init([]),

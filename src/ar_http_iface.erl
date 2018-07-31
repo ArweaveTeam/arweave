@@ -184,7 +184,7 @@ handle('POST', [<<"block">>], Req) ->
 	Key = ar_util:decode(KeyEnc),
 	Nonce = ar_util:decode(NonceEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
-	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
+	case ar_block:verify_timestamp(BShadow) of
 		false -> {404, [], <<"Invalid Block">>};
 		true  ->
 			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
