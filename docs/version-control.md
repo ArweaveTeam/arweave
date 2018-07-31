@@ -8,7 +8,7 @@ The **Arweave** client codebase is hosted on Github, the below standards define 
 
 ### Workflow
 
-The **Arweave** version control workflow follows the idea of the [Forking Workflow](https://www.atlassian.com/git/tutorials/comparing-workflows/forking-workflow). The branches inside the own fork are named by their type and a descriptive name. Prefixes are
+The **Arweave** version control workflow follows the idea of the [Gitflow Workflow](https://www.atlassian.com/git/tutorials/comparing-workflows/gitflow-workflow). The branches are named by their type and a descriptive name. Prefixes are
 
 - `bug` for bugfixes
 - `enhancement` for new features
