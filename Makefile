@@ -9,9 +9,6 @@ ERL_OPTS= -pa ebin/ \
 	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
 	-s prometheus
 
-shell: all
-	@erl $(ERL_OPTS)
-
 test_all: test test_apps
 
 test: all
