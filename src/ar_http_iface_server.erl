@@ -185,12 +185,12 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	{<<"recall_block">>, JSONRecallB} = lists:keyfind(<<"recall_block">>, 1, Struct),
-	{<<"new_block">>, JSONB} = lists:keyfind(<<"new_block">>, 1, Struct),
-	{<<"recall_size">>, RecallSize} = lists:keyfind(<<"recall_size">>, 1, Struct),
-	{<<"port">>, Port} = lists:keyfind(<<"port">>, 1, Struct),
-	{<<"key">>, KeyEnc} = lists:keyfind(<<"key">>, 1, Struct),
-	{<<"nonce">>, NonceEnc} = lists:keyfind(<<"nonce">>, 1, Struct),
+	JSONRecallB = lkf1(<<"recall_block">>, Struct),
+	JSONB = lkf1(<<"new_block">>, Struct),
+	RecallSize = lkf1(<<"recall_size">>, Struct),
+	Port = lkf1(<<"port">>, Struct),
+	KeyEnc = lkf1(<<"key">>, Struct),
+	NonceEnc = lkf1(<<"nonce">>, Struct),
 	Key = ar_util:decode(KeyEnc),
 	Nonce = ar_util:decode(NonceEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
@@ -201,19 +201,24 @@ handle('POST', [<<"block">>], Req) ->
 				undefined -> {429, <<"Too Many Requests">>};
 				true -> {208, <<"Block already processed.">>};
 				false ->
-					ar_bridge:ignore_id(BShadow#block.indep_hash),
-					ar:report([{
-							sending_external_block_to_bridge,
-							ar_util:encode(BShadow#block.indep_hash)
-					}]),
-					B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
-					RecallHash = ar_util:decode(JSONRecallB),
-					OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
-						++ ":" ++ integer_to_list(Port)),
-					RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B,
-										RecallB, Key, Nonce),
-					{200, [], <<"OK">>}
+					case new_block_difficulty_ok(BShadow) of
+						false ->
+							{404, [], <<"Invalid Block Difficulty">>};
+						true ->
+							ar_bridge:ignore_id(BShadow#block.indep_hash),
+							ar:report([{
+									sending_external_block_to_bridge,
+									ar_util:encode(BShadow#block.indep_hash)
+							}]),
+							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
+							RecallHash = ar_util:decode(JSONRecallB),
+							OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
+								++ ":" ++ integer_to_list(Port)),
+							RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
+							ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B,
+												RecallB, Key, Nonce),
+							{200, [], <<"OK">>}
+					end
 			end
 	end;
 
@@ -596,6 +601,15 @@ handle('POST', [<<"services">>], Req) ->
 %% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
+
+new_block_difficulty_ok(B) ->
+	B#block.diff =:= ar_node:get_current_diff(whereis(http_entrypoint_node)).
+
+%% @doc convenience function for lists:keyfind(Key, 1, List).
+%% returns Value not {Key, Value}.
+lkf1(K, L) ->
+	{K, V} = lists:keyfind(K, 1, L),
+	V.
 
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, Args, Config) -> ok;
