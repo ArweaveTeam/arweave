@@ -488,7 +488,7 @@ get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
             case ar_storage:read_encrypted_block(RecallHash) of
                 unavailable ->
                     FullBlock =
-                        ar_http_iface:get_full_block(OrigPeer, RecallHash),
+                        ar_http_iface_client:get_full_block(OrigPeer, RecallHash),
                     case ?IS_BLOCK(FullBlock)  of
                         true ->
                             Recall = FullBlock#block {

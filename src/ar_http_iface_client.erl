@@ -1,0 +1,420 @@
+-module(ar_http_iface_client).
+-export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2,
+	get_block/2, get_tx/2, get_tx_reward/2, get_full_block/2, get_block_subfield/3,
+	add_peer/1]).
+-export([get_encrypted_block/2, get_encrypted_full_block/2]).
+-export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
+-export([get_current_block/1]).
+-include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
+
+%%% Exposes access to an internal Arweave client to external nodes on the network.
+
+%% @doc Send a new transaction to an Archain HTTP node.
+send_new_tx(Peer, TX) ->
+	if 
+		(byte_size(TX#tx.data) < 50000) ->
+			ar_httpc:request(
+				<<"POST">>,
+				Peer,
+				"/tx",
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+			);
+		true ->
+			case has_tx(Peer, TX#tx.id) of
+				false ->
+					ar_httpc:request(
+						<<"POST">>,
+						Peer,
+						"/tx",
+						ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+					);
+				true -> not_sent
+			end
+	end.
+
+
+%% @doc Check whether a peer has a given transaction
+has_tx(Peer, ID) ->
+	case 
+		ar_httpc:request(
+				<<"GET">>,
+				Peer,
+				"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
+				[]
+		)
+	of
+		{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
+		{ok, {{<<"202">>, _}, _, _, _, _}} -> true;
+		_ -> false
+	end.
+
+
+%% @doc Distribute a newly found block to remote nodes.
+send_new_block(IP, NewB, RecallB) ->
+	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
+send_new_block(Peer, Port, NewB, RecallB) ->
+	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
+	NewBShadow = NewB#block { wallet_list= [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
+	RecallBHash =
+		case ?IS_BLOCK(RecallB) of
+			true ->  RecallB#block.indep_hash;
+			false -> <<>>
+		end,
+	case ar_key_db:get(RecallBHash) of
+		[{Key, Nonce}] ->
+			ar_httpc:request(
+				<<"POST">>,
+				Peer,
+				"/block",
+				ar_serialize:jsonify(
+					{
+						[
+							{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+							{<<"recall_block">>, ar_util:encode(RecallBHash)},
+							{<<"recall_size">>, RecallB#block.block_size},
+							{<<"port">>, Port},
+							{<<"key">>, ar_util:encode(Key)},
+							{<<"nonce">>, ar_util:encode(Nonce)}
+						]
+					}
+				)
+
+			);
+		% TODO: Clean up function, duplication of code unneccessary.  %% iau: ???
+		_ ->
+			ar_httpc:request(
+			<<"POST">>,
+			Peer,
+			"/block",
+			ar_serialize:jsonify(
+				{
+					[
+						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+						{<<"recall_block">>, ar_util:encode(RecallBHash)},
+						{<<"recall_size">>, RecallB#block.block_size},
+						{<<"port">>, Port},
+						{<<"key">>, <<>>},
+						{<<"nonce">>, <<>>}
+					]
+				}
+			)
+
+		)
+	end.
+send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
+	NewBShadow = NewB#block { wallet_list= [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
+	RecallBHash =
+		case ?IS_BLOCK(RecallB) of
+			true ->  RecallB#block.indep_hash;
+			false -> <<>>
+		end,
+		ar_httpc:request(
+			<<"POST">>,
+			Peer,
+			"/block",
+			ar_serialize:jsonify(
+				{
+					[
+						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+						{<<"recall_block">>, ar_util:encode(RecallBHash)},
+						{<<"recall_size">>, RecallB#block.block_size},
+						{<<"port">>, Port},
+						{<<"key">>, ar_util:encode(Key)},
+						{<<"nonce">>, ar_util:encode(Nonce)}
+					]
+				}
+			)
+
+		).
+
+%% @doc Request to be added as a peer to a remote host.
+add_peer(Peer) ->
+	ar_httpc:request(
+		<<"POST">>,
+		Peer,
+		"/peers",
+		ar_serialize:jsonify(
+			{
+				[
+					{network, list_to_binary(?NETWORK_NAME)}
+				]
+			}
+		)
+	).
+
+%% @doc Get a peers current, top block.
+get_current_block(Peer) ->
+	handle_block_response(
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/current_block",
+			[],
+			10000
+		)
+	).
+
+%% @doc Get the minimum cost that a remote peer would charge for
+%% a transaction of the given data size in bytes.
+get_tx_reward(Peer, Size) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/price/" ++ integer_to_list(Size),
+			[]
+		),
+	list_to_integer(binary_to_list(Body)).
+
+%% @doc Retreive a block by height or hash from a remote peer.
+get_block(Peer, Height) when is_integer(Height) ->
+	handle_block_response(
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/height/" ++ integer_to_list(Height),
+			[]
+	 	)
+	);
+get_block(Peer, Hash) when is_binary(Hash) ->
+	handle_block_response(
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
+			[]
+	 	)
+	).
+
+%% @doc Get an encrypted block from a remote peer.
+%% Used when the next block is the recall block.
+get_encrypted_block(Peer, Hash) when is_binary(Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+	handle_encrypted_block_response(
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/encrypted",
+			[]
+		)
+	).
+
+%% @doc Get a specified subfield from the block with the given hash
+get_block_subfield(Peer, Hash, Subfield) when is_binary(Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host,[] Host}, {hash, Hash}]),
+	handle_block_field_response(
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/" ++ Subfield,
+			[]
+		)
+	);
+%% @doc Get a specified subfield from the block with the given height
+get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+	handle_block_field_response(
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/height/" ++integer_to_list(Height) ++ "/" ++ Subfield,
+			[]
+	 	)
+	).
+
+%% @doc Retreive a full block (full transactions included in body)
+%% by hash from a remote peer.
+get_full_block(Peer, Hash) when is_binary(Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+	B =
+		handle_block_response(
+			ar_httpc:request(
+				<<"GET">>,
+				Peer,
+				"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
+				[]
+			)
+		),
+	case ?IS_BLOCK(B) of
+		true ->
+			FullB =
+				B#block {
+					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ]
+				},
+			case [ X || X <- FullB#block.txs, is_atom(X) ] of
+				[] -> FullB;
+				_ -> unavailable
+			end;
+		false -> B
+	end.	
+
+%% @doc Retreive a full block (full transactions included in body)
+%% by hash from a remote peer in an encrypted form
+get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+	handle_encrypted_full_block_response(
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/all/encrypted",
+			[]
+		)
+	).
+
+%% @doc Retreive a tx by hash from a remote peer
+get_tx(Peer, Hash) ->
+	%ar:report_console([{req_getting_block_by_hash, Hash}]),
+	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
+	handle_tx_response(
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/tx/" ++ binary_to_list(ar_util:encode(Hash)),
+			[]
+	 	)
+	).
+
+%% @doc Retreive all valid transactions held that have not yet been mined into
+%% a block from a remote peer.
+get_pending_txs(Peer) ->
+	try
+		begin
+			{ok, {{200, _}, _, Body, _, _}} =
+				ar_httpc:request(
+					<<"GET">>,
+					Peer,
+					"/tx/pending",
+					[]
+				),
+			PendingTxs = ar_serialize:dejsonify(Body),
+			[list_to_binary(P) || P <- PendingTxs]
+		end
+	catch _:_ -> []
+	end.
+
+%% @doc Retreive information from a peer. Optionally, filter the resulting
+%% keyval list for required information.
+get_info(Peer, Type) ->
+	case get_info(Peer) of
+		info_unavailable -> info_unavailable;
+		Info ->
+			{Type, X} = lists:keyfind(Type, 1, Info),
+			X
+	end.
+get_info(Peer) ->
+	case 
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/info",
+			[],
+			3000
+		)
+	of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(Body);
+		_ -> info_unavailable
+	end.
+
+%% @doc Return a list of parsed peer IPs for a remote server.
+get_peers(Peer) ->
+	try
+		begin
+			{ok, {{<<"200">>, _}, _, Body, _, _}} =
+				ar_httpc:request(
+				<<"GET">>,	
+				Peer,
+				"/peers",
+				[]
+				),
+			PeerArray = ar_serialize:dejsonify(Body),
+			lists:map(fun ar_util:parse_peer/1, PeerArray)
+		end
+	catch _:_ -> []
+	end.
+
+%%% private functions
+
+%% @doc Produce a key value list based on a /info response.
+process_get_info(Body) ->
+	{Struct} = ar_serialize:dejsonify(Body),
+	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
+	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Struct),
+	ReleaseNumber = 
+		case lists:keyfind(<<"release">>, 1, Struct) of
+			false -> 0;
+			R -> R
+		end,
+	{_, Height} = lists:keyfind(<<"height">>, 1, Struct),
+	{_, Blocks} = lists:keyfind(<<"blocks">>, 1, Struct),
+	{_, Peers} = lists:keyfind(<<"peers">>, 1, Struct),
+	[
+		{name, NetworkName},
+		{version, ClientVersion},
+		{height, Height},
+		{blocks, Blocks},
+		{peers, Peers},
+		{release, ReleaseNumber}
+	].
+
+%% @doc Process the response of an /block call.
+handle_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_serialize:json_struct_to_block(Body);
+handle_block_response({error, _}) -> unavailable;
+handle_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+
+%% @doc Process the response of a /block/.../all call.
+handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_serialize:json_struct_to_full_block(Body);
+handle_full_block_response({error, _}) -> unavailable;
+handle_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+
+%% @doc Process the response of a /block/.../encrypted call.
+handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_util:decode(Body);
+handle_encrypted_block_response({error, _}) -> unavailable;
+handle_encrypted_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_encrypted_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+
+%% @doc Process the response of a /block/.../all/encrypted call.
+handle_encrypted_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_util:decode(Body);
+handle_encrypted_full_block_response({error, _}) -> unavailable;
+handle_encrypted_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_encrypted_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+
+%% @doc Process the response of a /block/[{Height}|{Hash}]/{Subfield} call.
+handle_block_field_response({"timestamp", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	list_to_integer(binary_to_list(Body));
+handle_block_field_response({"last_retarget", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	list_to_integer(binary_to_list(Body));
+handle_block_field_response({"diff", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	list_to_integer(binary_to_list(Body));
+handle_block_field_response({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	list_to_integer(binary_to_list(Body));
+handle_block_field_response({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	ar_serialize:json_struct_to_tx(Body);
+handle_block_field_response({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	ar_serialize:json_struct_to_hash_list(Body);
+handle_block_field_response({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+	ar_serialize:json_struct_to_wallet_list(Body);
+handle_block_field_response({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> Body;
+handle_block_field_response({error, _}) -> unavailable;
+handle_block_field_response({ok, {{<<"404">>, _}, _, _}}) -> not_found;
+handle_block_field_response({ok, {{<<"500">>, _}, _, _}}) -> unavailable.
+
+%% @doc Process the response of a /tx call.
+handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_serialize:json_struct_to_tx(Body);
+handle_tx_response({ok, {{<<"202">>, _}, _, _, _, _}}) -> pending;
+handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
+handle_tx_response({ok, {{<<"410">>, _}, _, _, _, _}}) -> gone;
+handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found.
+

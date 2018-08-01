@@ -122,7 +122,7 @@ server(
 				{Priv, Pub} = lists:nth(rand:uniform(40), KeyList),
 				TX = create_random_fin_tx({Priv, Pub}, KeyList, MaxTXLen)
 		end,
-		ar_http_iface:send_new_tx(hd(Peers), TX),
+		ar_http_iface_client:send_new_tx(hd(Peers), TX),
 		server(S)
 	end;
 server(S) ->

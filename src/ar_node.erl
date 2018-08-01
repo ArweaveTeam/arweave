@@ -229,7 +229,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			)
 		end
     ),
-	ar_http_iface:reregister(http_entrypoint_node, PID),
+	ar_http_iface_server:reregister(http_entrypoint_node, PID),
 	PID.
 
 %% @doc Stop a node server loop and its subprocesses.
@@ -267,7 +267,7 @@ get_current_block(Peer) when is_pid(Peer) ->
 	end;
 get_current_block(Peer) ->
     % handle external peer request
-	ar_http_iface:get_current_block(Peer).
+	ar_http_iface_client:get_current_block(Peer).
 
 %% @doc Return the entire hashlist from a node.
 % TODO: Change references to hashlist, not blocklist.
@@ -309,7 +309,7 @@ get_block(Proc, ID) when is_pid(Proc) ->
 	ar_storage:read_block(ID);
 get_block(Host, ID) ->
     % handle external peer request
-	ar_http_iface:get_block(Host, ID).
+	ar_http_iface_client:get_block(Host, ID).
 
 %% @doc Get a specific full block (a block containing full txs) via
 %% blocks indep_hash.
@@ -345,7 +345,7 @@ get_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
 get_full_block(Host, ID) ->
     % handle external peer request
-	ar_http_iface:get_full_block(Host, ID).
+	ar_http_iface_client:get_full_block(Host, ID).
 
 %% @doc Get a specific encrypted block via the blocks indep_hash.
 %% If the block is found locally an unencrypted block will be returned.
@@ -377,7 +377,7 @@ get_encrypted_block(Proc, ID) when is_pid(Proc) ->
 	ar_storage:read_block(ID);
 get_encrypted_block(Host, ID) ->
     % handle external peer request
-	ar_http_iface:get_encrypted_block(Host, ID).
+	ar_http_iface_client:get_encrypted_block(Host, ID).
 
 %% @doc Get a specific encrypted full block (a block containing full txs) via
 %% the blocks indep_hash.
@@ -410,7 +410,7 @@ get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
 	make_full_block(ID);
 get_encrypted_full_block(Host, ID) ->
     % handle external peer request
-    ar_http_iface:get_encrypted_full_block(Host, ID).
+    ar_http_iface_client:get_encrypted_full_block(Host, ID).
 
 %% @doc Convert a block with tx references into a full block, that is a block
 %% containing the entirety of all its referenced txs.
@@ -516,7 +516,7 @@ get_tx(Proc, ID) when is_pid(Proc) ->
 	ar_storage:read_tx(ID);
 get_tx(Host, ID) ->
     % handle external peer request
-	ar_http_iface:get_tx(Host, ID).
+	ar_http_iface_client:get_tx(Host, ID).
 
 %% @doc Gets the set of all known txs from the node.
 %% This set includes those on timeout waiting to distribute around the
@@ -554,7 +554,7 @@ get_peers(Proc) when is_pid(Proc) ->
 	    after ?LOCAL_NET_TIMEOUT -> []
 	end;
 get_peers(Host) ->
-	ar_http_iface:get_peers(Host).
+	ar_http_iface_client:get_peers(Host).
 
 %% @doc Get the current wallet list from the node.
 %% This wallet list is up to date to the latest block held.
@@ -760,7 +760,7 @@ add_tx(Node, TX) when is_pid(Node) ->
 	Node ! {add_tx, TX},
 	ok;
 add_tx(Host, TX) ->
-	ar_http_iface:send_new_tx(Host, TX).
+	ar_http_iface_client:send_new_tx(Host, TX).
 
 %% @doc Add a new block to the node server loop.
 %% If accepted the nodes state will change.
@@ -789,7 +789,7 @@ add_block(Node, Peer, NewB, RecallB, Height) when is_pid(Node) ->
 	Node ! {new_block, Peer, Height, NewB, RecallB},
 	ok;
 add_block(Host, Peer, NewB, RecallB, _Height) ->
-	ar_http_iface:send_new_block(Host, Peer, NewB, RecallB),
+	ar_http_iface_client:send_new_block(Host, Peer, NewB, RecallB),
 	ok.
 
 %% @doc Request to add a list of peers to the node server loop.
