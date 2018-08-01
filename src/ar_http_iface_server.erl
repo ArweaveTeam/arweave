@@ -185,14 +185,7 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	JSONRecallB = lkf1(<<"recall_block">>, Struct),
 	JSONB = lkf1(<<"new_block">>, Struct),
-	RecallSize = lkf1(<<"recall_size">>, Struct),
-	Port = lkf1(<<"port">>, Struct),
-	KeyEnc = lkf1(<<"key">>, Struct),
-	NonceEnc = lkf1(<<"nonce">>, Struct),
-	Key = ar_util:decode(KeyEnc),
-	Nonce = ar_util:decode(NonceEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
 	case ar_block:verify_timestamp(BShadow) of
 		false -> {404, [], <<"Invalid Block">>};
@@ -205,18 +198,9 @@ handle('POST', [<<"block">>], Req) ->
 						false ->
 							{404, [], <<"Invalid Block Difficulty">>};
 						true ->
-							ar_bridge:ignore_id(BShadow#block.indep_hash),
-							ar:report([{
-									sending_external_block_to_bridge,
-									ar_util:encode(BShadow#block.indep_hash)
-							}]),
-							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
-							RecallHash = ar_util:decode(JSONRecallB),
-							OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
-								++ ":" ++ integer_to_list(Port)),
-							RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
-							ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B,
-												RecallB, Key, Nonce),
+							Port = lkf1(<<"port">>, Struct),
+							OrigPeer = make_peer_address(elli_request:peer(Req), Port),
+							regossip_block(BShadow, Struct, OrigPeer),
 							{200, [], <<"OK">>}
 					end
 			end
@@ -602,15 +586,6 @@ handle('POST', [<<"services">>], Req) ->
 handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
 
-new_block_difficulty_ok(B) ->
-	B#block.diff =:= ar_node:get_current_diff(whereis(http_entrypoint_node)).
-
-%% @doc convenience function for lists:keyfind(Key, 1, List).
-%% returns Value not {Key, Value}.
-lkf1(K, L) ->
-	{K, V} = lists:keyfind(K, 1, L),
-	V.
-
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, Args, Config) -> ok;
 handle_event(Type, Args, Config)
@@ -709,7 +684,7 @@ reregister(Name, Node) ->
 
 %%% private functions
 
-%% @doc Convert a blocks field with the given label into a string
+%% @doc Convert a blocks field with the given label into a string.
 block_field_to_string(<<"nonce">>, Res) -> Res;
 block_field_to_string(<<"previous_block">>, Res) -> Res;
 block_field_to_string(<<"timestamp">>, Res) -> integer_to_list(Res);
@@ -722,4 +697,37 @@ block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
+
+%% @doc Convenience function for lists:keyfind(Key, 1, List).
+%% returns Value not {Key, Value}.
+lkf1(K, L) ->
+	{K, V} = lists:keyfind(K, 1, L),
+	V.
+
+%% @doc Converts peer string and port number to parsed address.
+make_peer_address(Peer, Port) ->
+	ar_util:parse_peer(bitstring_to_list(Peer) ++ ":" ++ integer_to_list(Port)).
+
+%% @doc Validates the difficulty of an incoming block.
+new_block_difficulty_ok(B) ->
+	B#block.diff =:= ar_node:get_current_diff(whereis(http_entrypoint_node)).
+
+%% @doc Forwards the block to this node's peers.
+%% This is the processing content of POST /block.
+regossip_block(BShadow, Struct, OrigPeer) ->
+	JSONRecallB = lkf1(<<"recall_block">>, Struct),
+	RecallSize = lkf1(<<"recall_size">>, Struct),
+	KeyEnc = lkf1(<<"key">>, Struct),
+	NonceEnc = lkf1(<<"nonce">>, Struct),
+	Key = ar_util:decode(KeyEnc),
+	Nonce = ar_util:decode(NonceEnc),
+	ar_bridge:ignore_id(BShadow#block.indep_hash),
+	ar:report([{
+				sending_external_block_to_bridge,
+				ar_util:encode(BShadow#block.indep_hash)
+	}]),
+	B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
+	RecallHash = ar_util:decode(JSONRecallB),
+	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
+	ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B,	RecallB, Key, Nonce).
 
