@@ -187,23 +187,14 @@ handle('POST', [<<"block">>], Req) ->
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
 	JSONB = val_for_key(<<"new_block">>, Struct),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
-	case ar_block:verify_timestamp(BShadow) of
-		false -> {404, [], <<"Invalid Block">>};
-		true  ->
-			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
-				undefined -> {429, <<"Too Many Requests">>};
-				true -> {208, <<"Block already processed.">>};
-				false ->
-					case new_block_difficulty_ok(BShadow) of
-						false ->
-							{404, [], <<"Invalid Block Difficulty">>};
-						true ->
-							Port = val_for_key(<<"port">>, Struct),
-							OrigPeer = make_peer_address(elli_request:peer(Req), Port),
-							regossip_block(BShadow, Struct, OrigPeer),
-							{200, [], <<"OK">>}
-					end
-			end
+	case verify_all_the_things(BShadow, [id_ignored, timestamp, difficulty, work]) of
+		{error, Reply} ->
+			Reply;
+		ok ->
+			Port = val_for_key(<<"port">>, Struct),
+			OrigPeer = make_peer_address(elli_request:peer(Req), Port),
+			regossip_block(BShadow, Struct, OrigPeer),
+			{200, [], <<"OK">>}
 	end;
 
 %% @doc Share a new transaction with a peer.
@@ -730,4 +721,33 @@ regossip_block(BShadow, Struct, OrigPeer) ->
 	RecallHash = ar_util:decode(JSONRecallB),
 	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
 	ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B,	RecallB, Key, Nonce).
+
+verify_all_the_things(_, []) ->
+	ok;
+verify_all_the_things(BShadow, [H|T]) ->
+	case verify_one_thing(BShadow, H) of
+		{error, Reply} -> {error, Reply};
+		ok             -> verify_all_the_things(BShadow, T)
+	end.
+
+verify_one_thing(BShadow, id_ignored) ->
+	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
+		undefined -> {error, {429, <<"Too Many Requests">>}};
+		true      -> {error, {208, <<"Block already processed.">>}};
+		false     -> ok
+	end;
+verify_one_thing(BShadow, timestamp) ->
+	case ar_block:verify_timestamp(BShadow) of
+		false -> {error, {404, [], <<"Invalid Block">>}};
+		true  -> ok
+	end;
+verify_one_thing(BShadow, difficulty) ->
+	case new_block_difficulty_ok(BShadow) of
+		false -> {error, {404, [], <<"Invalid Block Difficulty">>}};
+		true  -> ok
+	end;
+verify_one_thing(BShadow, work) ->
+	ok;  %% {error, {500, <<"">>}};
+verify_one_thing(_, _) ->
+	{error, {500, <<"">>}}.
 
