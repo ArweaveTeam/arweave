@@ -185,7 +185,7 @@ handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	JSONB = lkf1(<<"new_block">>, Struct),
+	JSONB = val_for_key(<<"new_block">>, Struct),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
 	case ar_block:verify_timestamp(BShadow) of
 		false -> {404, [], <<"Invalid Block">>};
@@ -198,7 +198,7 @@ handle('POST', [<<"block">>], Req) ->
 						false ->
 							{404, [], <<"Invalid Block Difficulty">>};
 						true ->
-							Port = lkf1(<<"port">>, Struct),
+							Port = val_for_key(<<"port">>, Struct),
 							OrigPeer = make_peer_address(elli_request:peer(Req), Port),
 							regossip_block(BShadow, Struct, OrigPeer),
 							{200, [], <<"OK">>}
@@ -700,7 +700,7 @@ block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
 %% @doc Convenience function for lists:keyfind(Key, 1, List).
 %% returns Value not {Key, Value}.
-lkf1(K, L) ->
+val_for_key(K, L) ->
 	{K, V} = lists:keyfind(K, 1, L),
 	V.
 
@@ -715,10 +715,10 @@ new_block_difficulty_ok(B) ->
 %% @doc Forwards the block to this node's peers.
 %% This is the processing content of POST /block.
 regossip_block(BShadow, Struct, OrigPeer) ->
-	JSONRecallB = lkf1(<<"recall_block">>, Struct),
-	RecallSize = lkf1(<<"recall_size">>, Struct),
-	KeyEnc = lkf1(<<"key">>, Struct),
-	NonceEnc = lkf1(<<"nonce">>, Struct),
+	JSONRecallB = val_for_key(<<"recall_block">>, Struct),
+	RecallSize = val_for_key(<<"recall_size">>, Struct),
+	KeyEnc = val_for_key(<<"key">>, Struct),
+	NonceEnc = val_for_key(<<"nonce">>, Struct),
 	Key = ar_util:decode(KeyEnc),
 	Nonce = ar_util:decode(NonceEnc),
 	ar_bridge:ignore_id(BShadow#block.indep_hash),
