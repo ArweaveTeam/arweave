@@ -728,22 +728,22 @@ regossip_block_if_pow_valid(BShadow, Struct, OrigPeer) ->
 
 verify_all_the_things(_, []) ->
 	ok;
-verify_all_the_things(BShadow, [H|T]) ->
-	case verify_one_thing(BShadow, H) of
+verify_all_the_things(X, [H|T]) ->
+	case verify_one_thing(X, H) of
 		{error, Reply} -> {error, Reply};
-		ok             -> verify_all_the_things(BShadow, T)
+		ok             -> verify_all_the_things(X, T)
 	end.
 
 verify_one_thing(B, {work, Nonce, RecallB}) ->
 	Difficulty = B#block.diff,
-	RewardAddr = todo,
-	Tags = todo
-	Time = todo,
+	RewardAddr = B#block.reward_addr,
+	Tags = B#block.tags,
+	Time = B#block.timestamp,
 	TXs = B#block.txs,
 	DataSegment = ar_block:generate_block_data_segment(B, RecallB, TXs, 
 													   RewardAddr, Time, Tags),
 	case ar_mine:validate(DataSegment, Nonce, Difficulty) of
-		false -> {error, {404, [] <<"Invalid Block Work">>}};
+		false -> {error, {404, [], <<"Invalid Block Work">>}};
 		_     -> ok
 	end;
 verify_one_thing(BShadow, id_ignored) ->
