@@ -187,14 +187,13 @@ handle('POST', [<<"block">>], Req) ->
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
 	JSONB = val_for_key(<<"new_block">>, Struct),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
-	case verify_all_the_things(BShadow, [id_ignored, timestamp, difficulty, work]) of
+	case verify_all_the_things(BShadow, [id_ignored, timestamp, difficulty]) of
 		{error, Reply} ->
 			Reply;
 		ok ->
 			Port = val_for_key(<<"port">>, Struct),
 			OrigPeer = make_peer_address(elli_request:peer(Req), Port),
-			regossip_block(BShadow, Struct, OrigPeer),
-			{200, [], <<"OK">>}
+			regossip_block_if_pow_valid(BShadow, Struct, OrigPeer)
 	end;
 
 %% @doc Share a new transaction with a peer.
@@ -705,22 +704,27 @@ new_block_difficulty_ok(B) ->
 
 %% @doc Forwards the block to this node's peers.
 %% This is the processing content of POST /block.
-regossip_block(BShadow, Struct, OrigPeer) ->
+regossip_block_if_pow_valid(BShadow, Struct, OrigPeer) ->
 	JSONRecallB = val_for_key(<<"recall_block">>, Struct),
 	RecallSize = val_for_key(<<"recall_size">>, Struct),
 	KeyEnc = val_for_key(<<"key">>, Struct),
 	NonceEnc = val_for_key(<<"nonce">>, Struct),
 	Key = ar_util:decode(KeyEnc),
 	Nonce = ar_util:decode(NonceEnc),
-	ar_bridge:ignore_id(BShadow#block.indep_hash),
-	ar:report([{
-				sending_external_block_to_bridge,
-				ar_util:encode(BShadow#block.indep_hash)
-	}]),
 	B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 	RecallHash = ar_util:decode(JSONRecallB),
 	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
-	ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B,	RecallB, Key, Nonce).
+	case verify_one_thing(B, {work, Nonce, RecallB}) of
+		{error, Message} -> Message;
+		ok ->
+			ar:report([{
+						sending_external_block_to_bridge,
+						ar_util:encode(BShadow#block.indep_hash)
+			}]),
+			ar_bridge:ignore_id(BShadow#block.indep_hash),
+			ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B,	RecallB, Key, Nonce),
+			{200, [], <<"OK">>}
+	end.
 
 verify_all_the_things(_, []) ->
 	ok;
@@ -730,6 +734,18 @@ verify_all_the_things(BShadow, [H|T]) ->
 		ok             -> verify_all_the_things(BShadow, T)
 	end.
 
+verify_one_thing(B, {work, Nonce, RecallB}) ->
+	Difficulty = B#block.diff,
+	RewardAddr = todo,
+	Tags = todo
+	Time = todo,
+	TXs = B#block.txs,
+	DataSegment = ar_block:generate_block_data_segment(B, RecallB, TXs, 
+													   RewardAddr, Time, Tags),
+	case ar_mine:validate(DataSegment, Nonce, Difficulty) of
+		false -> {error, {404, [] <<"Invalid Block Work">>}};
+		_     -> ok
+	end;
 verify_one_thing(BShadow, id_ignored) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		undefined -> {error, {429, <<"Too Many Requests">>}};
@@ -746,8 +762,6 @@ verify_one_thing(BShadow, difficulty) ->
 		false -> {error, {404, [], <<"Invalid Block Difficulty">>}};
 		true  -> ok
 	end;
-verify_one_thing(BShadow, work) ->
-	ok;  %% {error, {500, <<"">>}};
 verify_one_thing(_, _) ->
 	{error, {500, <<"">>}}.
 
