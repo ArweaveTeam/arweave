@@ -714,7 +714,7 @@ regossip_block_if_pow_valid(BShadow, Struct, OrigPeer) ->
 	B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 	RecallHash = ar_util:decode(JSONRecallB),
 	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
-	case verify_one_thing(B, {work, Nonce, RecallB}) of
+	case verify_one(B, {work, Nonce, RecallB}) of
 		{error, Message} -> Message;
 		ok ->
 			ar:report([{
