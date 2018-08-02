@@ -187,7 +187,7 @@ handle('POST', [<<"block">>], Req) ->
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
 	JSONB = val_for_key(<<"new_block">>, Struct),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
-	case verify_all_the_things(BShadow, [id_ignored, timestamp, difficulty]) of
+	case verify_all(BShadow, [id_ignored, timestamp, difficulty]) of
 		{error, Reply} ->
 			Reply;
 		ok ->
@@ -702,7 +702,7 @@ make_peer_address(Peer, Port) ->
 new_block_difficulty_ok(B) ->
 	B#block.diff =:= ar_node:get_current_diff(whereis(http_entrypoint_node)).
 
-%% @doc Forwards the block to this node's peers.
+%% @doc Checks block POW and if valid forwards the block to this node's peers.
 %% This is the processing content of POST /block.
 regossip_block_if_pow_valid(BShadow, Struct, OrigPeer) ->
 	JSONRecallB = val_for_key(<<"recall_block">>, Struct),
@@ -726,15 +726,20 @@ regossip_block_if_pow_valid(BShadow, Struct, OrigPeer) ->
 			{200, [], <<"OK">>}
 	end.
 
-verify_all_the_things(_, []) ->
+%% @doc Executes a series of verifications.
+%% Takes a block/blockshadow and a proplist of verification task labels.
+verify_all(_, []) ->
 	ok;
-verify_all_the_things(X, [H|T]) ->
-	case verify_one_thing(X, H) of
+verify_all(X, [H|T]) ->
+	case verify_one(X, H) of
 		{error, Reply} -> {error, Reply};
-		ok             -> verify_all_the_things(X, T)
+		ok             -> verify_all(X, T)
 	end.
 
-verify_one_thing(B, {work, Nonce, RecallB}) ->
+%% @doc Run a single verification on a block(shadow).
+%% first argument id the block(shadow), second argument is verification task name,
+%% with any extra required variables.
+verify_one(B, {work, Nonce, RecallB}) ->
 	Difficulty = B#block.diff,
 	RewardAddr = B#block.reward_addr,
 	Tags = B#block.tags,
@@ -746,22 +751,20 @@ verify_one_thing(B, {work, Nonce, RecallB}) ->
 		false -> {error, {404, [], <<"Invalid Block Work">>}};
 		_     -> ok
 	end;
-verify_one_thing(BShadow, id_ignored) ->
+verify_one(BShadow, id_ignored) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		undefined -> {error, {429, <<"Too Many Requests">>}};
 		true      -> {error, {208, <<"Block already processed.">>}};
 		false     -> ok
 	end;
-verify_one_thing(BShadow, timestamp) ->
+verify_one(BShadow, timestamp) ->
 	case ar_block:verify_timestamp(BShadow) of
 		false -> {error, {404, [], <<"Invalid Block">>}};
 		true  -> ok
 	end;
-verify_one_thing(BShadow, difficulty) ->
+verify_one(BShadow, difficulty) ->
 	case new_block_difficulty_ok(BShadow) of
 		false -> {error, {404, [], <<"Invalid Block Difficulty">>}};
 		true  -> ok
-	end;
-verify_one_thing(_, _) ->
-	{error, {500, <<"">>}}.
+	end.
 
