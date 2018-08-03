@@ -714,7 +714,7 @@ regossip_block_if_pow_valid(BShadow, Struct, OrigPeer) ->
 	B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 	RecallHash = ar_util:decode(JSONRecallB),
 	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
-	case verify_one(B, {work, Nonce, RecallB}) of
+	case verify_one(B, {work, [Nonce, RecallB]}) of
 		{error, Message} -> Message;
 		ok ->
 			ar:report([{
@@ -727,7 +727,12 @@ regossip_block_if_pow_valid(BShadow, Struct, OrigPeer) ->
 	end.
 
 %% @doc Executes a series of verifications.
-%% Takes a block/blockshadow and a proplist of verification task labels.
+%% Takes a thing and a proplist of verification task labels.
+-type task() :: atom() | {atom(), list()}.
+-type http_response_tuple() ::
+	{non_neg_integer(), list(), binary()} |
+	{non_neg_integer(), binary()}.
+-spec verify_all(any(), list(task())) -> ok | {error, http_response_tuple()}.
 verify_all(_, []) ->
 	ok;
 verify_all(X, [H|T]) ->
@@ -736,17 +741,25 @@ verify_all(X, [H|T]) ->
 		ok             -> verify_all(X, T)
 	end.
 
-%% @doc Run a single verification on a block(shadow).
-%% first argument id the block(shadow), second argument is verification task name,
+%% @doc Run a single verification on a thing.
+%% first argument is the thing, second argument is verification task name,
 %% with any extra required variables.
-verify_one(B, {work, Nonce, RecallB}) ->
-	Difficulty = B#block.diff,
-	RewardAddr = B#block.reward_addr,
-	Tags = B#block.tags,
-	Time = B#block.timestamp,
-	TXs = B#block.txs,
-	DataSegment = ar_block:generate_block_data_segment(B, RecallB, TXs, 
-													   RewardAddr, Time, Tags),
+-spec verify_one(any(), task()) -> ok | {error, http_response_tuple()}.
+verify_one(NewB, {work, [Nonce, RecallB]}) ->
+	Difficulty = NewB#block.diff,
+	RewardAddr = NewB#block.reward_addr,
+	Tags = NewB#block.tags,
+	Time = NewB#block.timestamp,
+	TXs = NewB#block.txs,
+	LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	DataSegment = ar_block:generate_block_data_segment(
+		LastB,
+		RecallB,
+		TXs,
+		RewardAddr,
+		Time,
+		Tags
+	),
 	case ar_mine:validate(DataSegment, Nonce, Difficulty) of
 		false -> {error, {404, [], <<"Invalid Block Work">>}};
 		_     -> ok
