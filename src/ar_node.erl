@@ -1618,89 +1618,90 @@ validate(
         RecallB,
         RewardAddr,
         Tags) ->
-    % ar:d([{hl, HashList}, {wl, WalletList}, {newb, NewB}, {oldb, OldB}, {recallb, RecallB}]),
-	%ar:d({node, ar_weave:hash(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce), Nonce, Diff}),
-	% TODO: Fix names
-    Mine = ar_mine:validate(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce, Diff),
-    Wallet = validate_wallet_list(WalletList),
-    IndepRecall = ar_weave:verify_indep(RecallB, HashList),
-    Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
-    Retarget = ar_retarget:validate(NewB, OldB),
-    IndepHash = ar_block:verify_indep_hash(NewB),
-	Hash = ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs),
-	WeaveSize = ar_block:verify_weave_size(NewB, OldB, TXs),
-	Size = ar_block:block_field_size_limit(NewB),
-	TimeCheck = ar_block:verify_timestamp_diff(NewB, OldB),
-	HeightCheck = ar_block:verify_height(NewB, OldB),
-	RetargetCheck = ar_block:verify_last_retarget(NewB),
-	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
-	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
-	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
 
+	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
 
-	ar:report(
-		[
-			{validate_block, ar_util:encode(NewB#block.indep_hash)},
-			{height, NewB#block.height},
-			{block_mine_validate, Mine},
-			{block_wallet_validate, Wallet},
-			{block_indep_validate, IndepRecall},
-			{block_txs_validate, Txs},
-			{block_diff_validate, Retarget},
-			{block_indep, IndepHash},
-			{block_hash, Hash},
-			{weave_size, WeaveSize},
-			{block_size, Size},
-			{block_height, HeightCheck},
-			{block_retarget_time, RetargetCheck},
-			{block_previous_check, PreviousBCheck},
-			{block_hash_list, HashlistCheck},
-			{block_wallet_list ,WalletListCheck}
-		]
+    %% iau: start new
+	Checks =
+		[%% {Label, ErrorMessage, Verification}, %% old variable name
+			{block_hash, invalid_dependent_hash,
+				ar_block:verify_dep_hash(NewB, OldB, RecallB, TXs)
+				}, %% Hash
+			{block_hash_list, invalid_hash_list,
+				ar_block:verify_block_hash_list(NewB, OldB)
+				}, %% HashlistCheck
+			{block_height, invalid_height,
+				ar_block:verify_height(NewB, OldB)
+				}, %% HeightCheck
+			{block_indep, invalid_indep_hash,
+				ar_block:verify_indep_hash(NewB)
+				}, %% IndepHash
+			{block_indep_validate, invalid_indep_recall, IndepRecall},
+			{block, invalid_nonce,
+				ar_mine:validate(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce, Diff)
+				}, %% Mine
+			{block_previous_check, invalid_previous_block,
+				ar_block:verify_previous_block(NewB, OldB)
+				}, %% PreviousBCheck
+			{block_diff_validate, invalid_difficulty,
+				ar_retarget:validate(NewB, OldB)
+				}, %% Retarget
+			{block_retarget_time, invalid_retarget,
+				ar_block:verify_last_retarget(NewB)
+				}, %% RetargetCheck
+			{block_size, invalid_size,
+				ar_block:block_field_size_limit(NewB)
+				}, %% Size
+			{block_timestamp, invalid_timestamp_diff,
+				ar_block:verify_timestamp_diff(NewB, OldB)
+				}, %% TimeCheck !!! missing from ar:report
+			{block_txs_validate, invalid_txs,
+				ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list)
+				}, %% Txs
+			{block_wallet_validate, invalid_wallet_list,
+				validate_wallet_list(WalletList)
+				}, %% Wallet
+			{block_wallet_list , invalid_wallet_list_rewards,
+				ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs)
+				}, %% WalletListCheck
+			{weave_size, invalid_total_weave_size,
+				ar_block:verify_weave_size(NewB, OldB, TXs)
+				} %% WeaveSize
+		],
+
+	{FinalBool, ReportList} = lists:foldl(
+		fun  %% ({Label, ErrorMessage, Value}, Acc = {Bool, Reports})
+			({Label, ErrorMessage, false}, {_, Reports}) ->
+				ar:d(ErrorMessage),
+				{false, [{Label, false} | Reports]};
+			({Label, _, Value}, {Bool, Reports}) ->
+				{Bool, [{Label, Value} | Reports]}
+		end,
+		{true,
+			[
+				{height, NewB#block.height},
+				{validate_block, ar_util:encode(NewB#block.indep_hash)}
+			]
+		},
+		Checks
 	),
+	ar:report(lists:reverse(ReportList)),
+	%% iau: end new
 
+	%% iau: kept from old
 	case IndepRecall of
 		false ->
-			ar:d(
-				[
-					{encountered_invalid_recall_block, ar_util:encode(RecallB#block.indep_hash)},
-					moving_to_invalid_block_directory
-				]
-			),
+			ar:d([
+				{encountered_invalid_recall_block, ar_util:encode(RecallB#block.indep_hash)},
+				moving_to_invalid_block_directory
+			]),
 			ar_storage:invalidate_block(RecallB);
 		_ ->
 			ok
 	end,
+	%% iau: end kept
 
-	case Mine of false -> ar:d(invalid_nonce); _ -> ok end,
-	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok  end,
-	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
-	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
-	case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
-	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
-	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok  end,
-	case Size of false -> ar:d(invalid_size); _ -> ok  end,
-	case TimeCheck of false -> ar:d(invalid_timestamp_diff); _ -> ok  end,
-	case HeightCheck of false -> ar:d(invalid_height); _ -> ok  end,
-	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok  end,
-	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
-	case HashlistCheck of false -> ar:d(invalid_hash_list); _ -> ok  end,
-	case WalletListCheck of false -> ar:d(invalid_wallet_list_rewards); _ -> ok  end,
-
-	(Mine =/= false)
-		andalso Wallet
-		andalso IndepRecall
-		andalso Txs
-		andalso Retarget
-        andalso IndepHash
-        andalso Hash
-		andalso WeaveSize
-        andalso Size
-		andalso HeightCheck
-		andalso RetargetCheck
-		andalso PreviousBCheck
-		andalso HashlistCheck
-		andalso WalletListCheck;
+	FinalBool;
 validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB, _, _) ->
 	validate(undefined, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
