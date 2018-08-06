@@ -2104,7 +2104,9 @@ tiny_network_with_reward_pool_test() ->
 	mine(Node1),
 	receive after 1000 -> ok end,
 	B2 = get_blocks(Node2),
-	2 = (hd(ar_storage:read_block(B2)))#block.height.
+	Expected = 2,
+	Actual = (hd(ar_storage:read_block(B2)))#block.height,
+	?assertEqual(Expected, Actual).
 
 %% @doc Ensure that a set of txs can be checked for serialization, those that
 %% don't serialize disregarded.
@@ -2283,11 +2285,12 @@ add_block_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
-    [B1 | _] = ar_weave:add([B0]),
+	[B1 | _] = ar_weave:add([B0]),
 	add_block(Node1, B1, B0),
-    receive after 500 -> ok end,
-    Blocks = lists:map(fun(B) -> B#block.indep_hash end, [B1, B0]),
-    Blocks = get_blocks(Node1).
+	receive after 500 -> ok end,
+	Expected = lists:map(fun(B) -> B#block.indep_hash end, [B1, B0]),
+	Actual= get_blocks(Node1),
+	?assertEqual(Expected, Actual).
 
 %% @doc Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
@@ -2407,7 +2410,9 @@ tiny_blockweave_with_mining_test() ->
 	mine(Node1),
 	receive after 1000 -> ok end,
 	B1 = get_blocks(Node2),
-	1 = (hd(ar_storage:read_block(B1)))#block.height.
+	Expected = 1,
+	Actual = (hd(ar_storage:read_block(B1)))#block.height,
+	?assertEqual(Expected, Actual).
 
 %% @doc Ensure that the network add data and have it mined into blocks.
 tiny_blockweave_with_added_data_test() ->
@@ -2424,8 +2429,9 @@ tiny_blockweave_with_added_data_test() ->
 	mine(Node1),
 	receive after 1000 -> ok end,
 	B1 = get_blocks(Node2),
-	TestDataID  = TestData#tx.id,
-	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
+	Expected= TestData#tx.id,
+	[Actual] = (hd(ar_storage:read_block(B1)))#block.txs,
+	?assertEqual(Expected, Actual).
 
 %% @doc Test that a slightly larger network is able to receive data and
 %% propogate data and blocks.
