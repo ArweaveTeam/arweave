@@ -331,23 +331,29 @@ verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
         ).
 
 %% @doc Verify new block timestamp relative to current system time.
-verify_timestamp(NewB) ->
-	T = os:system_time(seconds),
-	verify_timestamp_diff(T, NewB#block.timestamp).
+verify_timestamp(B) ->
+	verify_timestamp_diff(os:system_time(seconds), B#block.timestamp).
 
 %% @doc Verify timestamp difference between new and old block.
-verify_timestamp_diff(NewB, OldB) when is_record(NewB, block) ->
-	T = NewB#block.timestamp,
-	case T > (os:system_time(seconds) - ?TIMESTAMP_DIFF_TOLERANCE) of
-		true ->
-			false;
-		false ->
-			verify_timestamp_diff(T, OldB#block.timestamp)
-	end;
+verify_timestamp_diff(NewB, OldB) when
+		is_record(NewB, block),
+		is_record(OldB, block) ->
+	verify_timestamp_diff(NewB#block.timestamp, OldB#block.timestamp);
 
 %% @doc Verify difference between new and old timestamp.
-verify_timestamp_diff(NewT, OldT) when is_integer(NewT) ->
-	NewT >= (OldT + ?TIMESTAMP_DIFF_TOLERANCE).
+%% NewT must be > OldT, & difference must be less than tolerance
+%% if diff. between OldT & NewT < Tolerance, times are effectively the same
+%% "too far in the future" must be twice the tolerance
+verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT),
+		NewT < (OldT - ?TIMESTAMP_DIFF_TOLERANCE) ->
+	false; % NewT is too far in the past
+verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT),
+		NewT > (OldT + (2 * ?TIMESTAMP_DIFF_TOLERANCE)) ->
+	false; % NewT is too far in the future
+verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT) ->
+	true;
+verify_timestamp_diff(_, _) ->
+	false.
 
 %% @doc Verify the height of the new block is the one higher than the
 %% current height.
