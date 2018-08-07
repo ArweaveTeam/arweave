@@ -1638,7 +1638,14 @@ validate(
 				}, %% IndepHash
 			{block_indep_validate, invalid_indep_recall, IndepRecall},
 			{block, invalid_nonce,
-				ar_mine:validate(ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags), Nonce, Diff)
+				ar_mine:validate(ar_block:generate_block_data_segment(
+						OldB,
+						RecallB,
+						TXs,
+						RewardAddr,
+						Timestamp,
+						Tags
+					), Nonce, Diff)
 				}, %% Mine
 			{block_previous_check, invalid_previous_block,
 				ar_block:verify_previous_block(NewB, OldB)
@@ -1654,7 +1661,7 @@ validate(
 				}, %% Size
 			{block_timestamp, invalid_timestamp_diff,
 				ar_block:verify_timestamp_diff(NewB, OldB)
-				}, %% TimeCheck !!! missing from ar:report
+				}, %% TimeCheck
 			{block_txs_validate, invalid_txs,
 				ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list)
 				}, %% Txs
@@ -1692,7 +1699,8 @@ validate(
 	case IndepRecall of
 		false ->
 			ar:d([
-				{encountered_invalid_recall_block, ar_util:encode(RecallB#block.indep_hash)},
+				{encountered_invalid_recall_block,
+					ar_util:encode(RecallB#block.indep_hash)},
 				moving_to_invalid_block_directory
 			]),
 			ar_storage:invalidate_block(RecallB);
