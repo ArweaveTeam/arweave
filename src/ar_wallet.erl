@@ -122,5 +122,6 @@ assign_wallet_test() ->
 	Node1 = ar_node:start([], B0, 0, Address),
 	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	Reward = erlang:trunc(ar_node:calculate_reward(1, 0)),
-	Reward = ar_node:get_balance(Node1, Pub).
+	Expected = erlang:trunc(ar_node:calculate_reward(1, 0)),
+	Actual = ar_node:get_balance(Node1, Pub),
+	?assertEqual(Expected, Actual).
