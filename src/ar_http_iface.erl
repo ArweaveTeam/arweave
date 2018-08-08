@@ -134,11 +134,11 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 %% POST request to endpoint /arql with body of request being a logical expression valid in ar_parser.
 %%
 %% Example logical expression.
-%% 	{
-%% 		op: 	{ and | or | equals }
-%% 		expr1: 	{ string | logical expression }
-%% 		expr2: 	{ string | logical expression }
-%% 	}
+%%	{
+%%		op:		{ and | or | equals }
+%%		expr1:	{ string | logical expression }
+%%		expr2:	{ string | logical expression }
+%%	}
 %%
 handle('POST', [<<"arql">>], Req) ->
 	QueryJson = elli_request:body(Req),
@@ -203,14 +203,16 @@ handle('POST', [<<"block">>], Req) ->
 						++ ":" ++ integer_to_list(Port)),
 					RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
 					CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-					case (not is_atom(CurrentB)) andalso
-						 (B#block.height < (CurrentB#block.height + 50)) andalso
-						 (B#block.height > (CurrentB#block.height - 50)) of
-						true ->
-							ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
-						_ ->
-							ok
-					end,
+					% mue: keep block distance for later tests
+					% case (not is_atom(CurrentB)) andalso
+					%	 (B#block.height < (CurrentB#block.height + 50)) andalso
+					%	 (B#block.height > (CurrentB#block.height - 50)) of
+					%	true ->
+					%		ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
+					%	_ ->
+					%		ok
+					% end,
+					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce),
 					{200, [], <<"OK">>}
 			end
 	end;
@@ -318,23 +320,23 @@ handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
 %% GET request to endpoint /hash_list
 handle('GET', [<<"hash_list">>], _Req) ->
 	Node = whereis(http_entrypoint_node),
-    HashList = ar_node:get_hash_list(Node),
-    {200, [],
+	HashList = ar_node:get_hash_list(Node),
+	{200, [],
 		ar_serialize:jsonify(
 			ar_serialize:hash_list_to_json_struct(HashList)
 		)
-    };
+	};
 
 %% @doc Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list
 handle('GET', [<<"wallet_list">>], _Req) ->
-    Node = whereis(http_entrypoint_node),
-    WalletList = ar_node:get_wallet_list(Node),
-    {200, [],
+	Node = whereis(http_entrypoint_node),
+	WalletList = ar_node:get_wallet_list(Node),
+	{200, [],
 		ar_serialize:jsonify(
 			ar_serialize:wallet_list_to_json_struct(WalletList)
-        )
-    };
+		)
+	};
 
 %% @doc Share your nodes IP with another peer.
 %% POST request to endpoint /peers with the body of the request being your
@@ -409,18 +411,18 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	%case ar_key_db:get(ar_util:decode(Hash)) of
-	% 	[{Key, Nonce}] ->
-	% 		return_encrypted_block(
-	% 			ar_node:get_block(
-	% 				whereis(http_entrypoint_node),
-	% 				ar_util:decode(Hash)
-	% 			),
-	% 			Key,
-	% 			Nonce
-	% 		);
-	% 	not_found ->
-	% 		ar:d(not_found_block),
-	% 		return_encrypted_block(unavailable)
+	%	[{Key, Nonce}] ->
+	%		return_encrypted_block(
+	%			ar_node:get_block(
+	%				whereis(http_entrypoint_node),
+	%				ar_util:decode(Hash)
+	%			),
+	%			Key,
+	%			Nonce
+	%		);
+	%	not_found ->
+	%		ar:d(not_found_block),
+	%		return_encrypted_block(unavailable)
 	% end;
 
 %% @doc Return the blockshadow corresponding to the indep_hash.
@@ -449,7 +451,7 @@ handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
 %% GET request to endpoint /block/hash/{indep_hash}/{field}
 %%
 %% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
 	case ar_meta_db:get(subfield_queries) of
@@ -472,7 +474,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
 %% GET request to endpoint /block/hash/{height}/{field}
 %%
 %% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%% 				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 	case ar_meta_db:get(subfield_queries) of
@@ -844,7 +846,7 @@ get_block(Peer, Height) when is_integer(Height) ->
 			Peer,
 			"/block/height/" ++ integer_to_list(Height),
 			[]
-	 	)
+		)
 	);
 get_block(Peer, Hash) when is_binary(Hash) ->
 	handle_block_response(
@@ -853,7 +855,7 @@ get_block(Peer, Hash) when is_binary(Hash) ->
 			Peer,
 			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
 			[]
-	 	)
+		)
 	).
 
 %% @doc Get an encrypted block from a remote peer.
@@ -892,7 +894,7 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 			Peer,
 			"/block/height/" ++integer_to_list(Height) ++ "/" ++ Subfield,
 			[]
-	 	)
+		)
 	).
 
 %% @doc Retreive a full block (full transactions included in body)
@@ -946,7 +948,7 @@ get_tx(Peer, Hash) ->
 			Peer,
 			"/tx/" ++ binary_to_list(ar_util:encode(Hash)),
 			[]
-	 	)
+		)
 	).
 
 %% @doc Retreive all valid transactions held that have not yet been mined into
@@ -1208,15 +1210,15 @@ get_block_by_hash_test() ->
 	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash)).
 
 % get_recall_block_by_hash_test() ->
-% 	ar_storage:clear(),
-%     [B0] = ar_weave:init([]),
-%     ar_storage:write_block(B0),
-%     [B1|_] = ar_weave:add([B0], []),
-% 	ar_storage:write_block(B1),
-% 	Node1 = ar_node:start([], [B1, B0]),
-% 	reregister(Node1),
-% 	receive after 200 -> ok end,
-% 	not_found = get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash).
+%	ar_storage:clear(),
+%	  [B0] = ar_weave:init([]),
+%	  ar_storage:write_block(B0),
+%	  [B1|_] = ar_weave:add([B0], []),
+%	ar_storage:write_block(B1),
+%	Node1 = ar_node:start([], [B1, B0]),
+%	reregister(Node1),
+%	receive after 200 -> ok end,
+%	not_found = get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash).
 
 %% @doc Ensure that full blocks can be received via a hash.
 get_full_block_by_hash_test_slow() ->
@@ -1503,11 +1505,11 @@ get_txs_by_send_recv_test_slow() ->
 	receive after 300 -> ok end,
 	ar_node:mine(Node1), % Mine B1
 	receive after 1000 -> ok end,
-    ar_node:add_tx(Node2, SignedTX2),
-    ar_storage:write_tx([SignedTX2]),
+	ar_node:add_tx(Node2, SignedTX2),
+	ar_storage:write_tx([SignedTX2]),
 	receive after 1000 -> ok end,
 	ar_node:mine(Node2), % Mine B2
-    receive after 1000 -> ok end,
+	receive after 1000 -> ok end,
 	QueryJSON = ar_serialize:jsonify(
 		ar_serialize:query_to_json_struct(
 				{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
@@ -1539,45 +1541,45 @@ get_txs_by_send_recv_test_slow() ->
 		)).
 
 % get_encrypted_block_test() ->
-% 	ar_storage:clear(),
-% 	[B0] = ar_weave:init([]),
-% 	Node1 = ar_node:start([], [B0]),
-% 	reregister(Node1),
-% 	receive after 200 -> ok end,
-% 	Enc0 = get_encrypted_block({127, 0, 0, 1, 1984}, B0#block.indep_hash),
-% 	ar_storage:write_encrypted_block(B0#block.indep_hash, Enc0),
-% 	ar_cleanup:remove_invalid_blocks([]),
-% 	send_new_block(
-% 		{127, 0, 0, 1, 1984},
-% 		B0,
-% 		B0
-% 	),
-% 	receive after 500 -> ok end,
-% 	B0 = ar_node:get_current_block(whereis(http_entrypoint_node)),
-% 	ar_node:mine(Node1).
+%	ar_storage:clear(),
+%	[B0] = ar_weave:init([]),
+%	Node1 = ar_node:start([], [B0]),
+%	reregister(Node1),
+%	receive after 200 -> ok end,
+%	Enc0 = get_encrypted_block({127, 0, 0, 1, 1984}, B0#block.indep_hash),
+%	ar_storage:write_encrypted_block(B0#block.indep_hash, Enc0),
+%	ar_cleanup:remove_invalid_blocks([]),
+%	send_new_block(
+%		{127, 0, 0, 1, 1984},
+%		B0,
+%		B0
+%	),
+%	receive after 500 -> ok end,
+%	B0 = ar_node:get_current_block(whereis(http_entrypoint_node)),
+%	ar_node:mine(Node1).
 
 % get_encrypted_full_block_test() ->
-% 	ar_storage:clear(),
-%     B0 = ar_weave:init([]),
-%     ar_storage:write_block(B0),
-% 	TX = ar_tx:new(<<"DATA1">>),
-% 	TX1 = ar_tx:new(<<"DATA2">>),
-% 	ar_storage:write_tx([TX, TX1]),
-% 	Node = ar_node:start([], B0),
-% 	reregister(Node),
-% 	ar_node:mine(Node),
-% 	receive after 500 -> ok end,
-% 	[B1|_] = ar_node:get_blocks(Node),
-% 	Enc0 = get_encrypted_full_block({127, 0, 0, 1, 1984}, (hd(B0))#block.indep_hash),
-% 	ar_storage:write_encrypted_block((hd(B0))#block.indep_hash, Enc0),
-% 	ar_cleanup:remove_invalid_blocks([B1]),
-% 	send_new_block(
-% 		{127, 0, 0, 1, 1984},
-% 		hd(B0),
-% 		hd(B0)
-% 	),
-% 	receive after 1000 -> ok end,
-% 	ar_node:mine(Node).
+%	ar_storage:clear(),
+%	  B0 = ar_weave:init([]),
+%	  ar_storage:write_block(B0),
+%	TX = ar_tx:new(<<"DATA1">>),
+%	TX1 = ar_tx:new(<<"DATA2">>),
+%	ar_storage:write_tx([TX, TX1]),
+%	Node = ar_node:start([], B0),
+%	reregister(Node),
+%	ar_node:mine(Node),
+%	receive after 500 -> ok end,
+%	[B1|_] = ar_node:get_blocks(Node),
+%	Enc0 = get_encrypted_full_block({127, 0, 0, 1, 1984}, (hd(B0))#block.indep_hash),
+%	ar_storage:write_encrypted_block((hd(B0))#block.indep_hash, Enc0),
+%	ar_cleanup:remove_invalid_blocks([B1]),
+%	send_new_block(
+%		{127, 0, 0, 1, 1984},
+%		hd(B0),
+%		hd(B0)
+%	),
+%	receive after 1000 -> ok end,
+%	ar_node:mine(Node).
 	% ar_node:add_peers(Node, Bridge),
 	% receive after 200 -> ok end,
 	% send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),

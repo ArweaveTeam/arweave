@@ -85,7 +85,7 @@
 -define(NET_TIMEOUT, 300 * 1000).
 
 %% @doc Default timeout value for local requests
--define(LOCAL_NET_TIMEOUT, 10000).
+-define(LOCAL_NET_TIMEOUT, 30000).
 
 %% @doc Default timeout for initial request
 -define(CONNECT_TIMEOUT, 25 * 1000).
@@ -226,7 +226,7 @@
 [
 	{"The line dividing good and evil cuts through the heart of every human being."},
 	{"Jon, there are no words."},
-	{	
+	{
 		"Jon, you were a part of all my best adventures. The memories and joy of all of these thousands of moments is intertwined with you, who you are to me, and how special you are as a person. You were like a brother to me, a best friend too, and I miss you dearly every day. Every future adventure I have, every time I fall in love with a new album, film, book or recipe, I wish I could share it with you. Your friendship changed my life, and so has your passing. I’m so pleased and thankful to have known you and so devastated to have lost you so quickly. \n
 		\n
 		You were truly unique, you were always such stimulating company, always making me laugh and think in equal measure. Whenever I spoke to you I learnt something new. You always wanted to share and create knowledge together, and I much admired you for this reason among countless others. Just as you are totally irreplaceable, you’re totally unforgettable, and in this way you will always be with those of us who love you.\n
@@ -264,7 +264,7 @@
 	},
 	{
 		"Jon was a part of all my best adventures. The memories and joy of all of these thousands of moments is intertwined with Jon, who he was to me, and how special he was as a person. Jon was like a brother to me, a best friend too, and I miss him dearly every day. Every future adventure I have, every time I fall in love with a new album, film, book or recipe, I wish I could share it with Jon. Jon’s friendship changed my life, and so has his passing. I’m so pleased and thankful to have known him and devastated to have lost him so quickly.\n
- 
+
 		Jon was truly unique, he was always stimulating company, always making you laugh and think in equal measure. Whenever I spoke to Jon I learnt something new. Jon always wanted to share knowledge and create together, and I much admired him for this reason among countless others. Just as Jon is totally irreplaceable, he is totally unforgettable, and in this way he will always be with those of us who loved him.\n
 
 		I miss you Jon, and I wish I could give you just one last big hug. \n
