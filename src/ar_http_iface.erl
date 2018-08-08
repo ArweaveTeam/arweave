@@ -202,7 +202,15 @@ handle('POST', [<<"block">>], Req) ->
 					OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
 						++ ":" ++ integer_to_list(Port)),
 					RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce),
+					CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+					case (not is_atom(CurrentB)) andalso
+						 (B#block.height < (CurrentB#block.height + 50)) andalso
+						 (B#block.height > (CurrentB#block.height - 50)) of
+						true ->
+							ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
+						_ ->
+							ok
+					end,
 					{200, [], <<"OK">>}
 			end
 	end;
@@ -259,7 +267,7 @@ handle('POST', [<<"tx">>], Req) ->
 					end
 			end
 	end;
-		
+
 %% @doc Return the list of peers held by the node.
 %% GET request to endpoint /peers
 handle('GET', [<<"peers">>], Req) ->
@@ -480,7 +488,7 @@ handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 					Result = block_field_to_string(Field, Res),
 					{200, [], Result}
 			end;
-		_ -> 
+		_ ->
 			{421, [], <<"Subfield block querying is disabled on this node.">>}
 	end;
 
@@ -512,7 +520,7 @@ handle('GET', [<<"current_block">>], _Req) ->
 			end
 	end;
 
-%% @doc Return a list of known services. 
+%% @doc Return a list of known services.
 %% GET request to endpoint /services
 handle('GET', [<<"services">>], _Req) ->
 	{200, [],
@@ -538,10 +546,10 @@ handle('GET', [<<"services">>], _Req) ->
 	};
 
 %% @doc Return a given field of the transaction specified by the transaction ID (hash).
-%% GET request to endpoint /tx/{hash}/{field} 
-%%  
+%% GET request to endpoint /tx/{hash}/{field}
+%%
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
-%% 
+%%
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	Id=ar_util:decode(Hash),
 	F=ar_storage:lookup_tx_filename(Id),
@@ -580,7 +588,7 @@ handle('POST', [<<"services">>], Req) ->
 	),
 	{200, [], "OK"};
 
-%% @doc Catch case for requests made to unknown endpoints. 
+%% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
@@ -674,7 +682,7 @@ return_info() ->
 
 %% @doc Send a new transaction to an Archain HTTP node.
 send_new_tx(Peer, TX) ->
-	if 
+	if
 		(byte_size(TX#tx.data) < 50000) ->
 			ar_httpc:request(
 				<<"POST">>,
@@ -698,7 +706,7 @@ send_new_tx(Peer, TX) ->
 
 %% @doc Check whether a peer has a given transaction
 has_tx(Peer, ID) ->
-	case 
+	case
 		ar_httpc:request(
 				<<"GET">>,
 				Peer,
@@ -913,7 +921,7 @@ get_full_block(Peer, Hash) when is_binary(Hash) ->
 				_ -> unavailable
 			end;
 		false -> B
-	end.	
+	end.
 
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer in an encrypted form
@@ -970,7 +978,7 @@ get_info(Peer, Type) ->
 			X
 	end.
 get_info(Peer) ->
-	case 
+	case
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
@@ -989,7 +997,7 @@ get_peers(Peer) ->
 		begin
 			{ok, {{<<"200">>, _}, _, Body, _, _}} =
 				ar_httpc:request(
-				<<"GET">>,	
+				<<"GET">>,
 				Peer,
 				"/peers",
 				[]
@@ -1005,7 +1013,7 @@ process_get_info(Body) ->
 	{Struct} = ar_serialize:dejsonify(Body),
 	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
 	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Struct),
-	ReleaseNumber = 
+	ReleaseNumber =
 		case lists:keyfind(<<"release">>, 1, Struct) of
 			false -> 0;
 			R -> R
@@ -1463,7 +1471,7 @@ get_tx_by_tag_test() ->
 			{'equals', <<"TestName">>, <<"TestVal">>}
 			)
 		),
-	{ok, {_, _, Body, _, _}} = 
+	{ok, {_, _, Body, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
 			{127, 0, 0, 1, 1984},
@@ -1507,7 +1515,7 @@ get_txs_by_send_recv_test_slow() ->
 				{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
 			)
 		),
-	{ok, {_, _, Res, _, _}} = 
+	{ok, {_, _, Res, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
 			{127, 0, 0, 1, 1984},
