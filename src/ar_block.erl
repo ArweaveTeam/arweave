@@ -206,16 +206,16 @@ block_field_size_limit(B) ->
 					invalid_block_field_size,
 					{nonce, byte_size(B#block.nonce)},
 					{previous_block, byte_size(B#block.previous_block)},
-					{timestamp, byte_size(B#block.timestamp)},
-					{last_retarget, byte_size(B#block.last_retarget)},
-					{diff, byte_size(B#block.diff)},
-					{height, byte_size(B#block.height)},
+					{timestamp, byte_size(integer_to_binary(B#block.timestamp))},
+					{last_retarget, byte_size(integer_to_binary(B#block.last_retarget))},
+					{diff, byte_size(integer_to_binary(B#block.diff))},
+					{height, byte_size(integer_to_binary(B#block.height))},
 					{hash, byte_size(B#block.hash)},
 					{indep_hash, byte_size(B#block.indep_hash)},
 					{reward_addr, byte_size(B#block.reward_addr)},
-					{tags, byte_size(B#block.tags)},
-					{weave_size, byte_size(B#block.weave_size)},
-					{block_size, byte_size(B#block.block_size)}
+					{tags, byte_size(list_to_binary(B#block.tags))},
+					{weave_size, byte_size(integer_to_binary(B#block.weave_size))},
+					{block_size, byte_size(integer_to_binary(B#block.block_size))}
 				]
 			);
 		_ ->
