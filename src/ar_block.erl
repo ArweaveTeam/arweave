@@ -217,7 +217,9 @@ block_field_size_limit(B) ->
 					{weave_size, byte_size(B#block.weave_size)},
 					{block_size, byte_size(B#block.block_size)}
 				]
-			)
+			);
+		_ ->
+			ok
 	end,
 	Check.
 
