@@ -63,6 +63,7 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
                     reward_addr = RewardAddr,
                     tags = Tags,
                     diff = Diff,
+					max_miners = ar_meta_db:get(max_miners),
                     nonces = []
                 }
             )
@@ -95,7 +96,7 @@ server(
         tags = Tags,
         diff = Diff,
         miners = Miners,
-        max_miners = Max
+        max_miners = MaxMiners
 	}) ->
 	receive
         % Stop the mining process killing all the workers.
@@ -160,7 +161,7 @@ server(
             Workers =
                 lists:map(
                     fun(_) -> spawn(?MODULE, miner, [S, self()]) end,
-                    lists:seq(1, Max)
+                    lists:seq(1, MaxMiners)
                 ),
             lists:foreach(
                 fun(Worker) -> Worker ! hash end,
@@ -196,7 +197,7 @@ miner(
         hash ->
             schedule_hash(S),
             case validate(DataSegment, iolist_to_binary(Nonces), Diff) of
-                false -> 
+                false ->
                     case(length(Nonces) > 512) and coinflip() of
                         false ->
                             miner(

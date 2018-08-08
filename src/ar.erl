@@ -53,6 +53,7 @@
 	clean = false,
 	diff = ?DEFAULT_DIFF,
 	mining_addr = false,
+	max_miners = ?NUM_MINING_PROCESSES,
 	new_key = false,
 	load_key = false,
 	pause = true,
@@ -86,12 +87,13 @@ main("") ->
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
 			{"polling", "Poll peers for new blocks. Useful in environments where "
-			 			"port forwarding is not possible."},
+						"port forwarding is not possible."},
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"init", "Start a new blockweave."},
 			{"diff (init_diff)", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
+			{"max_miners (num)", "The maximum number of mining processes."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
@@ -123,6 +125,8 @@ main(["no_auto_join"|Rest], O) ->
 	main(Rest, O#opts { auto_join = false });
 main(["mining_addr", Addr|Rest], O) ->
 	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
+main(["max_miners", Num|Rest], O) ->
+	main(Rest, O#opts { max_miners = list_to_integer(Num) });
 main(["new_mining_key"|Rest], O)->
 	main(Rest, O#opts { new_key = true });
 main(["disk_space", Size|Rest], O) ->
@@ -158,6 +162,7 @@ start(
 		auto_join = AutoJoin,
 		diff = Diff,
 		mining_addr = Addr,
+		max_miners = MaxMiners,
 		new_key = NewKey,
 		load_key = LoadKey,
 		pause = Pause,
@@ -182,6 +187,7 @@ start(
 	ar_track_tx_db:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
+	ar_meta_db:put(max_miners, MaxMiners),
 	ar_storage:update_directory_size(),
 	Peers =
 		case RawPeers of

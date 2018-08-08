@@ -820,8 +820,7 @@ get_current_block(Peer) ->
 			<<"GET">>,
 			Peer,
 			"/current_block",
-			[],
-			10000
+			[]
 		)
 	).
 
@@ -983,8 +982,7 @@ get_info(Peer) ->
 			<<"GET">>,
 			Peer,
 			"/info",
-			[],
-			3000
+			[]
 		)
 	of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(Body);
