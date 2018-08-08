@@ -12,7 +12,7 @@ start(Peers, NewB) when is_record(NewB, block) ->
 	start(self(), Peers, NewB);
 start(Node, Peers) ->
 	start(Node, Peers, ar_node:get_current_block(Peers)).
-start(Node, Peers, B) when is_atom(B) -> 
+start(Node, Peers, B) when is_atom(B) ->
 	ar:report_console(
 		[
 			could_not_retrieve_current_block,
@@ -120,9 +120,9 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 							{retrying}
 						]
 					),
-					timer:sleep(3000),
+					% mue: timer:sleep(3000),
 					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
-				{B, R} ->				
+				{B, R} ->
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
 					ar:report(
@@ -132,7 +132,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 							{blocks_written, (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
 							{blocks_to_write, (BehindCurrent-1)}
 						]
-					),	
+					),
 					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
 			end;
 		false ->
