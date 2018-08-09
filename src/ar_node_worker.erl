@@ -1,5 +1,7 @@
 -module(ar_node_worker).
--export([start/0, cast/3]).
+-export([start/0, cast/3, server/0]).
+-export([add_tx/2, add_tx/3, process_new_block/6]).
+-include("ar.hrl").
 
 %% @doc Server to queue ar_node state-changing tasks.
 %% Usage:
@@ -35,13 +37,13 @@ cast(Pid, Task, From) ->
 server() ->
 	receive
 		{{add_tx, S, TX}, From} ->
-			NewS = add_tx(S, TX),
+			NewS = ar_node_worker:add_tx(S, TX),
 			From ! {finished, add_tx, NewS};
 		{{add_tx, S, TX, NewGS}, From} ->
-			NewS = add_tx(S, TX, NewGS),
+			NewS = ar_node_worker:add_tx(S, TX, NewGS),
 			From ! {finished, add_tx, NewS};
 		{{process_new_block, S, NewGS, NewB, RecallB, Peer, HashList}, From} ->
-			NewS = process_new_block(S, NewGS, NewB, RecallB, Peer, HashList),
+			NewS = ar_node_worker:process_new_block(S, NewGS, NewB, RecallB, Peer, HashList),
 			From ! {finished, process_new_block, NewS}
 	end,
 	server().
@@ -55,7 +57,7 @@ add_tx(S, TX) ->
 	case get_conflicting_txs(S, TX) of
 		[] ->
 			timer:send_after(
-				calculate_delay(byte_size(TX#tx.data)),
+				ar_node:calculate_delay(byte_size(TX#tx.data)),
 				{apply_tx, TX}
 			),
 			S#state {
@@ -72,7 +74,7 @@ add_tx(S, TX, NewGS) ->
 	case get_conflicting_txs(S, TX) of
 		[] ->
 			timer:send_after(
-				calculate_delay(byte_size(TX#tx.data)),
+				ar_node:calculate_delay(byte_size(TX#tx.data)),
 				{apply_tx, TX}
 			),
 			S#state {
@@ -145,7 +147,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			S#state.reward_pool,
 			TXs,
 			NewB#block.reward_addr,
-			calculate_proportion(
+			ar_node:calculate_proportion(
 				RecallB#block.block_size,
 				NewB#block.weave_size,
 				NewB#block.height
@@ -153,7 +155,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 		),
 	WalletList =
 		ar_node:apply_mining_reward(
-			apply_txs(S#state.wallet_list, TXs),
+			ar_node:apply_txs(S#state.wallet_list, TXs),
 			NewB#block.reward_addr,
 			FinderReward,
 			NewB#block.height
@@ -270,7 +272,7 @@ integrate_new_block(
 			end,
 			TXs ++ WaitingTXs ++ PotentialTXs
 		),
-	KeepNotMinedTXs = filter_all_out_of_order_txs(
+	KeepNotMinedTXs = ar_node:filter_all_out_of_order_txs(
 							NewB#block.wallet_list,
 							RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
@@ -312,7 +314,7 @@ integrate_new_block(
 			);
 		false -> ok
 	end,
-	reset_miner(
+	ar_node:reset_miner(
 		S#state {
 			hash_list = [NewB#block.indep_hash | HashList],
 			txs = ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
