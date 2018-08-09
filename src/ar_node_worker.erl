@@ -1,5 +1,5 @@
 -module(ar_node_worker).
--export([start/0, call/3]).
+-export([start/0, cast/3]).
 
 %% @doc Server to queue ar_node state-changing tasks.
 %% Usage:
@@ -24,7 +24,7 @@ start() ->
 	Pid = spawn(ar_node_worker, server, []),
 	{ok, Pid}.
 
-call(Pid, Task, From) ->
+cast(Pid, Task, From) ->
 	Pid ! {Task, From}.
 
 
