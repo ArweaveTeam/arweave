@@ -1,6 +1,33 @@
 -module(ar_node_worker).
 
--export([process_new_block/6]).
+-export([add_tx/3, process_new_block/6]).
+
+%% @doc Add new transaction to a server state, return new server state.
+add_tx(S, TX, NewGS) ->
+	ConflictingTXs =
+		[T ||
+			T <-
+				(S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
+				(
+					(T#tx.last_tx == TX#tx.last_tx) and
+					(T#tx.owner == TX#tx.owner))
+		],
+	case ConflictingTXs of
+		[] ->
+			timer:send_after(
+				calculate_delay(byte_size(TX#tx.data)),
+				{apply_tx, TX}
+			),
+			S#state {
+				waiting_txs = ar_util:unique([TX | S#state.waiting_txs]),
+				gossip = NewGS
+			};
+		_ ->
+			S#state {
+				potential_txs = ar_util:unique([TX | S#state.potential_txs]),
+				gossip = NewGS
+			}
+	end;
 
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
@@ -163,7 +190,7 @@ integrate_new_block(
 	RawKeepNotMinedTXs =
 		lists:filter(
 			fun(T) ->
-                (not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
+				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
 				ar_tx:verify(T, Diff, WalletList)
 			end,
 			TXs
@@ -171,7 +198,7 @@ integrate_new_block(
 	NotMinedTXs =
 		lists:filter(
 			fun(T) ->
-                (not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
+				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
 			end,
 			TXs ++ WaitingTXs ++ PotentialTXs
 		),
