@@ -17,7 +17,10 @@ process_new_block(RawS1, NewGS, NewB, unavailable, Peer, HashList)
 	case ?IS_BLOCK(FullBlock) of
 		true ->
 			% TODO: Cleanup full block -> shadow generation.
-			RecallShadow = FullBlock#block { txs = [T#tx.id || T <- FullBlock#block.txs] },
+			RecallShadow = FullBlock#block { txs = [
+													T#tx.id
+													||
+													T <- FullBlock#block.txs] },
 			ar_storage:write_full_block(FullBlock),
 			S = RawS1#state { gossip = NewGS },
 			process_new_block(S, NewGS, NewB, RecallShadow, Peer, HashList);
@@ -34,7 +37,13 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 	TXs = lists:foldr(
 		fun(T, Acc) ->
 			%state contains it
-			case [TX || TX <- (S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs), TX#tx.id == T] of
+			case [
+					TX
+					||
+					TX <-
+						(S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
+						TX#tx.id == T ]
+			of
 				[] ->
 					case ar_storage:read_tx(T) of
 						unavailable ->
@@ -66,7 +75,12 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			NewB#block.height
 		),
 	NewS = S#state { wallet_list = WalletList },
-	case ar_node:validate(NewS, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
+	case ar_node:validate(
+			NewS,
+			NewB,
+			TXs,
+			ar_util:get_head_block(HashList), RecallB
+	) of
 		true ->
 			% The block is legit. Accept it.
 			case whereis(fork_recovery_server) of
@@ -126,9 +140,11 @@ fork_recover(
 				undefined -> ok;
 				_ -> erlang:register(fork_recovery_server, PID)
 			end;
-		{undefined, _} -> ok;
+		{undefined, _} ->
+			ok;
 		_ ->
-		whereis(fork_recovery_server) ! {update_target_block, NewB, ar_util:unique(Peer)}
+			whereis(fork_recovery_server)
+				! {update_target_block, NewB, ar_util:unique(Peer)}
 	end,
 	S.
 
@@ -159,7 +175,9 @@ integrate_new_block(
 			end,
 			TXs ++ WaitingTXs ++ PotentialTXs
 		),
-	KeepNotMinedTXs = filter_all_out_of_order_txs(NewB#block.wallet_list, RawKeepNotMinedTXs),
+	KeepNotMinedTXs = filter_all_out_of_order_txs(
+							NewB#block.wallet_list,
+							RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
 	% Write new block and included TXs to local storage.
 	ar_storage:write_tx(BlockTXs),
@@ -190,7 +208,9 @@ integrate_new_block(
 				RecallB#block.indep_hash,
 				[
 					{
-						ar_block:generate_block_key(RecallB, NewB#block.previous_block),
+						ar_block:generate_block_key(
+							RecallB,
+							NewB#block.previous_block),
 						binary:part(NewB#block.indep_hash, 0, 16)
 					}
 				]
