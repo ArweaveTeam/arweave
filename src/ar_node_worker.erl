@@ -2,6 +2,7 @@
 -export([start/0, cast/3, server/0]).
 -export([add_tx/2, add_tx/3, process_new_block/6]).
 -include("ar.hrl").
+-include("ar_node.hrl").
 
 %% @doc Server to queue ar_node state-changing tasks.
 %% Usage:
@@ -202,10 +203,7 @@ process_new_block(S, NewGS, NewB, _, Peer, _HashList)
 
 %% @doc Recovery from a fork.
 fork_recover(
-	S = #state {
-		hash_list = HashList,
-		gossip = GS
-	}, Peer, NewB) ->
+	S = #state{hash_list = HashList}, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
 			PrioritisedPeers = ar_util:unique(Peer) ++
@@ -319,7 +317,7 @@ integrate_new_block(
 			hash_list = [NewB#block.indep_hash | HashList],
 			txs = ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
 			height = NewB#block.height,
-			floating_wallet_list = apply_txs(WalletList, TXs),
+			floating_wallet_list = ar_node:apply_txs(WalletList, TXs),
 			reward_pool = NewB#block.reward_pool,
 			potential_txs = [],
 			diff = NewB#block.diff,
