@@ -1,12 +1,58 @@
 -module(ar_node_worker).
--export([add_tx/2, add_tx/3, process_new_block/6]).
+-export([start/0, call/3]).
+
+%% @doc Server to queue ar_node state-changing tasks.
+%% Usage:
+%% > {ok, Pid} = ar_node_worker:server().
+%% > Pid ! {{add_tx, State1, TX}, self()}.
+%% > State2 =
+%% >     receive
+%% >         {finished, add_tx, NewS} ->
+%% >             NewS
+%% >     end.
+%%
+%% > ar_node_worker:call(Pid, {add_tx, State2, TX2}, self()).
+%% > State3 =
+%% >     receive
+%% >         {finished, add_tx, NewS2} ->
+%% >             NewS2
+%% >     end.
+%%
+%%
+
+start() ->
+	Pid = spawn(ar_node_worker, server, []),
+	{ok, Pid}.
+
+call(Pid, Task, From) ->
+	Pid ! {Task, From}.
 
 
+%%%
+%%% the server loop
+%%%
+
+server() ->
+	receive
+		{{add_tx, S, TX}, From} ->
+			NewS = add_tx(S, TX),
+			From ! {finished, add_tx, NewS};
+		{{add_tx, S, TX, NewGS}, From} ->
+			NewS = add_tx(S, TX, NewGS),
+            From ! {finished, add_tx, NewS};
+		{{process_new_block, S, NewGS, NewB, RecallB, Peer, HashList}, From} ->
+			NewS = process_new_block(S, NewGS, NewB, RecallB, Peer, HashList),
+			From ! {finished, process_new_block, NewS}
+	end,
+	server().
+
+%%%
+%%% API functions
+%%%
 
 %% @doc Add new transaction to a server state, return new server state.
 add_tx(S, TX) ->
-	ConflictingTXs = get_conflicting_txs(S, TX),
-	case ConflictingTXs of
+	case get_conflicting_txs(S, TX) of
 		[] ->
 			timer:send_after(
 				calculate_delay(byte_size(TX#tx.data)),
@@ -23,8 +69,7 @@ add_tx(S, TX) ->
 	end.
 
 add_tx(S, TX, NewGS) ->
-	ConflictingTXs = get_conflicting_txs(S, TX),
-	case ConflictingTXs of
+	case get_conflicting_txs(S, TX) of
 		[] ->
 			timer:send_after(
 				calculate_delay(byte_size(TX#tx.data)),
@@ -40,15 +85,6 @@ add_tx(S, TX, NewGS) ->
 				gossip = NewGS
 			}
 	end.
-
-get_conflicting_txs(S, TX) ->
-	[T ||
-		T <-
-			(S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
-			(
-				(T#tx.last_tx == TX#tx.last_tx) and
-				(T#tx.owner == TX#tx.owner))
-	].
 
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
@@ -196,6 +232,17 @@ fork_recover(
 	end,
 	S.
 
+
+get_conflicting_txs(S, TX) ->
+	[T ||
+		T <-
+			(S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
+			(
+				(T#tx.last_tx == TX#tx.last_tx) and
+				(T#tx.owner == TX#tx.owner))
+	].
+
+
 %% @doc We have received a new valid block. Update the node state accordingly.
 integrate_new_block(
 		S = #state {
@@ -278,6 +325,7 @@ integrate_new_block(
 			weave_size = NewB#block.weave_size
 		}
 	).
+
 
 %% @doc Catch up to the current height.
 join_weave(S, NewB) ->
