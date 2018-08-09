@@ -3,7 +3,7 @@
 
 %% @doc Server to queue ar_node state-changing tasks.
 %% Usage:
-%% > {ok, Pid} = ar_node_worker:server().
+%% > {ok, Pid} = ar_node_worker:start().
 %% > Pid ! {{add_tx, State1, TX}, self()}.
 %% > State2 =
 %% >     receive
