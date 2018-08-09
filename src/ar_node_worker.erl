@@ -1,17 +1,29 @@
 -module(ar_node_worker).
+-export([add_tx/2, add_tx/3, process_new_block/6]).
 
--export([add_tx/3, process_new_block/6]).
+
 
 %% @doc Add new transaction to a server state, return new server state.
+add_tx(S, TX) ->
+	ConflictingTXs = get_conflicting_txs(S, TX),
+	case ConflictingTXs of
+		[] ->
+			timer:send_after(
+				calculate_delay(byte_size(TX#tx.data)),
+				{apply_tx, TX}
+			),
+			S#state {
+				waiting_txs = ar_util:unique([TX | S#state.waiting_txs])
+			};
+		_ ->
+			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
+			S#state {
+				potential_txs = ar_util:unique([TX | S#state.potential_txs])
+			}
+	end.
+
 add_tx(S, TX, NewGS) ->
-	ConflictingTXs =
-		[T ||
-			T <-
-				(S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
-				(
-					(T#tx.last_tx == TX#tx.last_tx) and
-					(T#tx.owner == TX#tx.owner))
-		],
+	ConflictingTXs = get_conflicting_txs(S, TX),
 	case ConflictingTXs of
 		[] ->
 			timer:send_after(
@@ -27,7 +39,16 @@ add_tx(S, TX, NewGS) ->
 				potential_txs = ar_util:unique([TX | S#state.potential_txs]),
 				gossip = NewGS
 			}
-	end;
+	end.
+
+get_conflicting_txs(S, TX) ->
+	[T ||
+		T <-
+			(S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
+			(
+				(T#tx.last_tx == TX#tx.last_tx) and
+				(T#tx.owner == TX#tx.owner))
+	].
 
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
