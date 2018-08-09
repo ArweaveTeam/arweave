@@ -39,7 +39,7 @@ server() ->
 			From ! {finished, add_tx, NewS};
 		{{add_tx, S, TX, NewGS}, From} ->
 			NewS = add_tx(S, TX, NewGS),
-            From ! {finished, add_tx, NewS};
+			From ! {finished, add_tx, NewS};
 		{{process_new_block, S, NewGS, NewB, RecallB, Peer, HashList}, From} ->
 			NewS = process_new_block(S, NewGS, NewB, RecallB, Peer, HashList),
 			From ! {finished, process_new_block, NewS}
