@@ -77,7 +77,6 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 			ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
 			fork_recover(S#state { gossip = NewGS }, Peer, NewB)
 	end;
-%%%% iau done up to here
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< S#state.height ->
 	% Block is lower than us, ignore it.
@@ -88,7 +87,7 @@ process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 			{proposed_block_height, NewB#block.height}
 		]
 	),
-	server(S#state { gossip = NewGS });
+	S#state { gossip = NewGS };
 % process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
 % 		when (NewB#block.height == S#state.height + 1) ->
 	% Block is lower than fork recovery height, ignore it.
@@ -131,8 +130,7 @@ fork_recover(
 		_ ->
 		whereis(fork_recovery_server) ! {update_target_block, NewB, ar_util:unique(Peer)}
 	end,
-	server(S).
-
+	S.
 
 %% @doc We have received a new valid block. Update the node state accordingly.
 integrate_new_block(
@@ -184,7 +182,7 @@ integrate_new_block(
 	RecallB =
 		ar_node:get_full_block(
 			whereis(http_entrypoint_node),
-			find_recall_hash(NewB, [NewB#block.indep_hash | HashList])
+			ar_node:find_recall_hash(NewB, [NewB#block.indep_hash | HashList])
 		),
 	case ?IS_BLOCK(RecallB) of
 		true ->
@@ -199,23 +197,20 @@ integrate_new_block(
 			);
 		false -> ok
 	end,
-	server(
-		reset_miner(
-			S#state {
-				hash_list = [NewB#block.indep_hash | HashList],
-				txs = ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
-				height = NewB#block.height,
-				floating_wallet_list = apply_txs(WalletList, TXs),
-				reward_pool = NewB#block.reward_pool,
-				potential_txs = [],
-				diff = NewB#block.diff,
-				last_retarget = NewB#block.last_retarget,
-				weave_size = NewB#block.weave_size
-			}
-		)
+	reset_miner(
+		S#state {
+			hash_list = [NewB#block.indep_hash | HashList],
+			txs = ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
+			height = NewB#block.height,
+			floating_wallet_list = apply_txs(WalletList, TXs),
+			reward_pool = NewB#block.reward_pool,
+			potential_txs = [],
+			diff = NewB#block.diff,
+			last_retarget = NewB#block.last_retarget,
+			weave_size = NewB#block.weave_size
+		}
 	).
 
 %% @doc Catch up to the current height.
 join_weave(S, NewB) ->
 	ar_join:start(ar_gossip:peers(S#state.gossip), NewB).
-
