@@ -1,64 +1,92 @@
 -module(ar_node_worker).
--export([start/0, cast/3, server/0]).
--export([add_tx/2, add_tx/3, process_new_block/6]).
+
+-export([start/0, cast/2, call/2, call/3, server/0]).
+
 -include("ar.hrl").
 -include("ar_node.hrl").
 
 %% @doc Server to queue ar_node state-changing tasks.
-%% Usage:
-%% > {ok, Pid} = ar_node_worker:start().
-%% > Pid ! {{add_tx, State1, TX}, self()}.
-%% > State2 =
-%% >     receive
-%% >         {finished, add_tx, NewS} ->
-%% >             NewS
-%% >     end.
-%%
-%% > ar_node_worker:call(Pid, {add_tx, State2, TX2}, self()).
-%% > State3 =
-%% >     receive
-%% >         {finished, add_tx, NewS2} ->
-%% >             NewS2
-%% >     end.
-%%
-%%
 
+%% @doc Start the node worker.
 start() ->
 	Pid = spawn(ar_node_worker, server, []),
 	{ok, Pid}.
 
-cast(Pid, Task, From) ->
-	Pid ! {Task, From}.
+%% @doc Send an asynchronous task to a node worker. The answer
+%% will be sent to the caller.
+cast(Pid, Task) ->
+	Pid ! {Task, self()},
+	ok.
 
+%% @doc Send a synchronous task to a node worker. The timeout
+%% can be passed, default is 5000 ms.
+call(Pid, Task) ->
+	call(Pid, Task, 5000).
+
+call(Pid, Task, Timeout) ->
+	cast(Pid, Task),
+	receive
+		Reply ->
+			Reply
+	after
+		Timeout ->
+			{error, timeout}
+	end.
 
 %%%
-%%% the server loop
+%%% Server functions.
 %%%
 
+%% @doc Main server loop.
 server() ->
 	receive
-		{{add_tx, S, TX}, From} ->
-			NewS = ar_node_worker:add_tx(S, TX),
-			From ! {finished, add_tx, NewS};
-		{{add_tx, S, TX, NewGS}, From} ->
-			NewS = ar_node_worker:add_tx(S, TX, NewGS),
-			From ! {finished, add_tx, NewS};
-		{{process_new_block, S, NewGS, NewB, RecallB, Peer, HashList}, From} ->
-			NewS = ar_node_worker:process_new_block(S, NewGS, NewB, RecallB, Peer, HashList),
-			From ! {finished, process_new_block, NewS}
-	end,
-	server().
+		{Task, Sender} ->
+			try handle(Task, Sender) of
+				{reply, Reply} ->
+					Sender ! {finished, Reply},
+					server();
+				{error, Error} ->
+					Sender ! {error, Error},
+					server()
+			catch
+				throw:Term ->
+					ar:report( [ {'NodeWorkerEXCEPTION', {Term} } ]),
+					server();
+				exit:Term ->
+					ar:report( [ {'NodeWorkerEXIT', Term} ] ),
+					server();
+				error:Term ->
+					ar:report( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
+					server()
+			end
+	end.
+
+%% @doc Handle the server tasks. Returns {reply, Reply} or {error, Error}. Simple
+%% ones can be done directy, more complex ones with dependencies from arguments are
+%% handled as private API functions.
+handle({add_tx, S, TX}, Sender) ->
+	NewS = add_tx(S, TX, Sender),
+	{reply, {add_tx, NewS}};
+handle({add_tx, S, TX, NewGS}, Sender) ->
+	NewS = add_tx(S, TX, NewGS, Sender),
+	{reply, {add_tx, NewS}};
+handle({process_new_block, S, NewGS, NewB, RecallB, Peer, HashList}, Sender) ->
+	NewS = ar_node_worker:process_new_block(S, NewGS, NewB, RecallB, Peer, HashList),
+	{reply, {process_new_block, NewS}};
+handle(Msg, _Sender) ->
+	{error, {unknown_node_worker_message, Msg}}.
 
 %%%
-%%% API functions
+%%% Private API functions.
 %%%
 
 %% @doc Add new transaction to a server state, return new server state.
-add_tx(S, TX) ->
+add_tx(S, TX, Sender) ->
 	case get_conflicting_txs(S, TX) of
 		[] ->
 			timer:send_after(
 				ar_node:calculate_delay(byte_size(TX#tx.data)),
+				Sender,
 				{apply_tx, TX}
 			),
 			S#state {
@@ -71,11 +99,12 @@ add_tx(S, TX) ->
 			}
 	end.
 
-add_tx(S, TX, NewGS) ->
+add_tx(S, TX, NewGS, Sender) ->
 	case get_conflicting_txs(S, TX) of
 		[] ->
 			timer:send_after(
 				ar_node:calculate_delay(byte_size(TX#tx.data)),
+				Sender,
 				{apply_tx, TX}
 			),
 			S#state {
@@ -89,10 +118,8 @@ add_tx(S, TX, NewGS) ->
 			}
 	end.
 
-
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
-%% Return a new server state
 process_new_block(S, NewGS, NewB, _, _Peer, not_joined) ->
 	join_weave(S#state { gossip = NewGS }, NewB),
 	S;
@@ -190,7 +217,7 @@ process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 	),
 	S#state { gossip = NewGS };
 % process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
-% 		when (NewB#block.height == S#state.height + 1) ->
+%		when (NewB#block.height == S#state.height + 1) ->
 	% Block is lower than fork recovery height, ignore it.
 	% server(S#state { gossip = NewGS });
 process_new_block(S, NewGS, NewB, _, Peer, _HashList)
@@ -198,7 +225,7 @@ process_new_block(S, NewGS, NewB, _, Peer, _HashList)
 	fork_recover(S#state { gossip = NewGS }, Peer, NewB).
 
 %%%
-%%% private
+%%% Private functions.
 %%%
 
 %% @doc Recovery from a fork.
