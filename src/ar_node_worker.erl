@@ -1,16 +1,20 @@
+%% @doc Server to queue ar_node state-changing tasks.
 -module(ar_node_worker).
 
--export([start/0, cast/2, call/2, call/3, server/0]).
+-export([start/1, stop/1, cast/2, call/2, call/3]).
 
 -include("ar.hrl").
 -include("ar_node.hrl").
 
-%% @doc Server to queue ar_node state-changing tasks.
-
-%% @doc Start the node worker.
-start() ->
-	Pid = spawn(ar_node_worker, server, []),
+%% @doc Start a node worker.
+start(SPid) ->
+	Pid = spawn(fun() -> server(SPid) end),
 	{ok, Pid}.
+
+%% @doc Stop a node worker.
+stop(Pid) ->
+	Pid ! stop,
+	ok.
 
 %% @doc Send an asynchronous task to a node worker. The answer
 %% will be sent to the caller.
@@ -38,84 +42,87 @@ call(Pid, Task, Timeout) ->
 %%%
 
 %% @doc Main server loop.
-server() ->
+server(SPid) ->
 	receive
 		{Task, Sender} ->
-			try handle(Task, Sender) of
-				{reply, Reply} ->
-					Sender ! {finished, Reply},
-					server();
-				{error, Error} ->
-					Sender ! {error, Error},
-					server()
+			try handle(SPid, Task, Sender) of
+				Reply ->
+					Sender ! Reply,
+					server(SPid)
 			catch
 				throw:Term ->
 					ar:report( [ {'NodeWorkerEXCEPTION', {Term} } ]),
-					server();
+					server(SPid);
 				exit:Term ->
 					ar:report( [ {'NodeWorkerEXIT', Term} ] ),
-					server();
+					server(SPid);
 				error:Term ->
 					ar:report( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
-					server()
-			end
+					server(SPid)
+			end;
+		stop ->
+			ok
 	end.
 
-%% @doc Handle the server tasks. Returns {reply, Reply} or {error, Error}. Simple
-%% ones can be done directy, more complex ones with dependencies from arguments are
-%% handled as private API functions.
-handle({add_tx, S, TX}, Sender) ->
-	NewS = add_tx(S, TX, Sender),
-	{reply, {add_tx, NewS}};
-handle({add_tx, S, TX, NewGS}, Sender) ->
-	NewS = add_tx(S, TX, NewGS, Sender),
-	{reply, {add_tx, NewS}};
-handle({process_new_block, S, NewGS, NewB, RecallB, Peer, HashList}, Sender) ->
-	NewS = ar_node_worker:process_new_block(S, NewGS, NewB, RecallB, Peer, HashList),
-	{reply, {process_new_block, NewS}};
-handle(Msg, _Sender) ->
+%% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks
+%% can be done directy, more complex ones with dependencies from arguments are
+%% handled as private API functions. SPid allows to access the state server,
+%% inserts have to be atomic.
+handle(SPid, {add_tx, TX}, Sender) ->
+	add_tx(SPid, TX, Sender),
+	{ok, add_tx};
+handle(SPid, {add_tx, TX, NewGS}, Sender) ->
+	add_tx(SPid, TX, NewGS, Sender),
+	{ok, add_tx};
+handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}, _Sender) ->
+	ar_node_worker:process_new_block(SPid, NewGS, NewB, RecallB, Peer, HashList),
+	{ok, process_new_block};
+handle(_SPid, Msg, _Sender) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
 %%%
 %%% Private API functions.
 %%%
 
-%% @doc Add new transaction to a server state, return new server state.
-add_tx(S, TX, Sender) ->
-	case get_conflicting_txs(S, TX) of
+%% @doc Add new transaction to a server state.
+add_tx(SPid, TX, Sender) ->
+	{ok, [TXs, WaitingTXs, PotentialTXs]} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
+	case get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
 		[] ->
 			timer:send_after(
 				ar_node:calculate_delay(byte_size(TX#tx.data)),
 				Sender,
 				{apply_tx, TX}
 			),
-			S#state {
-				waiting_txs = ar_util:unique([TX | S#state.waiting_txs])
-			};
+			ar_node_state:insert(SPid, [
+				{waiting_txs, ar_util:unique([TX | WaitingTXs])}
+			]);
 		_ ->
+			% TODO mue: Space in string atom correct?
 			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
-			S#state {
-				potential_txs = ar_util:unique([TX | S#state.potential_txs])
-			}
+			ar_node_state:insert(SPid, [
+				{potential_txs, ar_util:unique([TX | PotentialTXs])}
+			])
 	end.
 
-add_tx(S, TX, NewGS, Sender) ->
-	case get_conflicting_txs(S, TX) of
+add_tx(SPid, TX, NewGS, Sender) ->
+	{ok, [TXs, WaitingTXs, PotentialTXs]} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
+	case get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
 		[] ->
 			timer:send_after(
 				ar_node:calculate_delay(byte_size(TX#tx.data)),
 				Sender,
 				{apply_tx, TX}
 			),
-			S#state {
-				waiting_txs = ar_util:unique([TX | S#state.waiting_txs]),
-				gossip = NewGS
-			};
+			ar_node_state:insert(SPid, [
+				{waiting_txs, ar_util:unique([TX | WaitingTXs])},
+				{gossip, NewGS}
+			]);
 		_ ->
-			S#state {
-				potential_txs = ar_util:unique([TX | S#state.potential_txs]),
-				gossip = NewGS
-			}
+			ar_node_state:insert(SPid, [
+				{potential_txs, ar_util:unique([TX | PotentialTXs])},
+				{gossip, NewGS}
+		])
 	end.
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
@@ -228,6 +235,19 @@ process_new_block(S, NewGS, NewB, _, Peer, _HashList)
 %%% Private functions.
 %%%
 
+%% @doc Get the conflicting transaction between state and passed ones.
+get_conflicting_txs(STXs, TX) ->
+	[
+		T
+	||
+		T <-
+			STXs,
+			(
+				(T#tx.last_tx == TX#tx.last_tx) and
+				(T#tx.owner == TX#tx.owner)
+			)
+	].
+
 %% @doc Recovery from a fork.
 fork_recover(
 	S = #state{hash_list = HashList}, Peer, NewB) ->
@@ -258,17 +278,6 @@ fork_recover(
 				! {update_target_block, NewB, ar_util:unique(Peer)}
 	end,
 	S.
-
-
-get_conflicting_txs(S, TX) ->
-	[T ||
-		T <-
-			(S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
-			(
-				(T#tx.last_tx == TX#tx.last_tx) and
-				(T#tx.owner == TX#tx.owner))
-	].
-
 
 %% @doc We have received a new valid block. Update the node state accordingly.
 integrate_new_block(
