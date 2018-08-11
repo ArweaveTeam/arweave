@@ -360,7 +360,7 @@ send_to_external(
 					),
 					lists:foreach(
 						fun(Peer) ->
-							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
+							spawn(fun() -> ar_http_iface:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) end)
 						end,
 						Peers
 					)
