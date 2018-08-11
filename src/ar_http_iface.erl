@@ -192,11 +192,6 @@ handle('POST', [<<"block">>], Req) ->
 				true -> {208, <<"Block already processed.">>};
 				false ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
-					ar:report(
-						[
-							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
-						]
-					),
 					B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 					RecallHash = ar_util:decode(JSONRecallB),
 					OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
@@ -205,8 +200,14 @@ handle('POST', [<<"block">>], Req) ->
 					CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 					% mue: keep block distance for later tests
 					case (not is_atom(CurrentB)) andalso
-						(B#block.height >= CurrentB#block.height) of
+						(B#block.height >= CurrentB#block.height) andalso 
+						(B#block.height =< (CurrentB#block.height + 50)) of
 						true ->
+							ar:report(
+								[
+									{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
+								]
+							),
 							ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
 						_ ->
 							ok
