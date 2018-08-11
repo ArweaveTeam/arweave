@@ -1150,7 +1150,7 @@ server(
                     )
                 );
             {fork_recovered, NewHs}
-                    when (length(NewHs)) > (length(HashList)) ->
+                    when (length(NewHs)) >= (length(HashList)) ->
                 case whereis(fork_recovery_server) of
                     undefined -> ok;
                     _ -> erlang:unregister(fork_recovery_server)
@@ -1159,7 +1159,8 @@ server(
                 ar:report_console(
                     [
                         fork_recovered_successfully,
-                        {height, NewB#block.height}
+                        {height, NewB#block.height},
+		    	{old_height, S#state.height}
                     ]
                 ),
                 %ar_cleanup:remove_invalid_blocks(NewHs),
@@ -1187,7 +1188,9 @@ server(
                         }
                     )
                 );
-            {fork_recovered, _} -> server(S);
+            {fork_recovered, _} ->
+		ar:report([discarding_fork_recovery, {reason, block_below_current}]),
+		server(S);
             {'DOWN', _, _, _, _} ->
                 server(S);
             Msg ->
@@ -1334,9 +1337,15 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 				_ -> fork_recover(S#state { gossip = NewGS }, Peer, NewB)
 			end;
 		false ->
-			ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
-			server(S)
-			%fork_recover(S, Peer, NewB)
+			ar:report(
+				[
+					{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)},
+					{height, NewB#block.height},
+					attempting_fork_recovery
+				]
+			),
+			%server(S)
+			fork_recover(S, Peer, NewB)
 	end;
 process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< S#state.height ->
