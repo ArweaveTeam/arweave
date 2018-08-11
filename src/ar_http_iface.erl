@@ -184,6 +184,8 @@ handle('POST', [<<"block">>], Req) ->
 	Key = ar_util:decode(KeyEnc),
 	Nonce = ar_util:decode(NonceEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
+	OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
+		++ ":" ++ integer_to_list(Port)),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false -> {404, [], <<"Invalid Block">>};
 		true  ->
@@ -196,8 +198,6 @@ handle('POST', [<<"block">>], Req) ->
 					      fun() ->
 							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 							RecallHash = ar_util:decode(JSONRecallB),
-							OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
-								++ ":" ++ integer_to_list(Port)),
 							RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
 							CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 							% mue: keep block distance for later tests
