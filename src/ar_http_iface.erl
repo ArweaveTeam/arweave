@@ -201,7 +201,8 @@ handle('POST', [<<"block">>], Req) ->
 					% mue: keep block distance for later tests
 					case (not is_atom(CurrentB)) andalso
 						(B#block.height >= CurrentB#block.height) andalso 
-						(B#block.height =< (CurrentB#block.height + 50)) of
+						(B#block.height =< (CurrentB#block.height + 50)) andalso
+						(B#block.diff >= ?MIN_DIFF) of
 						true ->
 							ar:report(
 								[
