@@ -19,7 +19,7 @@
 -export([find_recall_hash/2]).
 -export([find_recall_block/1]).
 -export([find_sync_block/1]).
--export([mine/1, automine/1, truncate/1]).
+-export([mine/1, mine_at_diff/2, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2]).
 -export([add_peers/2]).
@@ -719,6 +719,10 @@ print_reward_addr() ->
 mine(Node) ->
 	Node ! mine.
 
+%% @doc Trigger a node to start mining a block at a certain difficulty.
+mine_at_diff(Node, Diff) ->
+	Node ! {mine_at_diff, Diff}.
+
 %% @doc Trigger a node to mine continually.
 automine(Node) ->
 	Node ! automine.
@@ -1031,6 +1035,8 @@ server(
                 server(S#state{reward_addr = Addr});
             mine ->
                 server(start_mining(S));
+            {mine_at_diff, Diff} ->
+                server(start_mining(S, Diff));
             automine -> server(start_mining(S#state { automine = true }));
             {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
                 % The miner thinks it has found a new block
@@ -1875,11 +1881,12 @@ reset_miner(S = #state { miner = PID, automine = true }) ->
 	start_mining(S#state { miner = undefined }).
 
 %% @doc Force a node to start mining, update state.
-start_mining(S = #state { hash_list = not_joined }) ->
+start_mining(S) -> start_mining(S, unforced).
+start_mining(S = #state { hash_list = not_joined }, _) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	S;
-start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, tags = Tags }) ->
+start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, tags = Tags }, ForceDiff) ->
 	case find_recall_block(BHL) of
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
@@ -1933,16 +1940,29 @@ start_mining(S = #state { hash_list = BHL, txs = TXs, reward_addr = RewardAddr, 
 				]
 			),
 			B = ar_storage:read_block(hd(BHL)),
-			Miner =
-				ar_mine:start(
-                    B,
-                    RecallB,
-                    TXs,
-                    RewardAddr,
-                    Tags
-				),
-            ar:report([{node, self()}, {started_miner, Miner}]),
-			S#state { miner = Miner }
+			case ForceDiff of
+				unforced ->
+					Miner = ar_mine:start(
+						B,
+						RecallB,
+						TXs,
+						RewardAddr,
+						Tags
+					),
+					ar:report([{node, self()}, {started_miner, Miner}]),
+					S#state { miner = Miner };
+				ForceDiff ->
+					Miner = ar_mine:start(
+						B,
+						RecallB,
+						TXs,
+						RewardAddr,
+						Tags,
+						ForceDiff
+					),
+					ar:report([{node, self()}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
+					S#state { miner = Miner, diff = ForceDiff }
+			end
 	end.
 
 %% @doc Calculate the time a tx must wait after being received to be mined.
@@ -2532,6 +2552,26 @@ tiny_collaborative_blockweave_mining_test() ->
 	B3 = get_blocks(Node1),
 	3 = (hd(ar_storage:read_block(B3)))#block.height.
 
+
+%% @doc Setup a network, mine a block, change the diff, then mine another.
+change_difficulty_test() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init([]),
+	Node1 = start([], B0),
+	Node2 = start([Node1], B0),
+	add_peers(Node1, Node2),
+	mine(Node1), % Mine B1
+	receive after 500 -> ok end,
+	B1 = get_current_block(Node1),
+	mine_at_diff(Node1, NewDiff = (B1#block.diff + 1)),
+	receive after 1000 -> ok end,
+	B2 = get_current_block(Node1),
+	2 = B2#block.height,
+	NewDiff = B2#block.diff,
+	mine(Node2), % Mine B1
+	receive after 1000 -> ok end,
+	B3 = get_current_block(Node1),
+	NewDiff = B3#block.diff.
 
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
 mining_reward_test() ->

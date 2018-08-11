@@ -79,14 +79,15 @@ calculate_difficulty(OldDiff, TS, Last) ->
 
 %% @doc Validate that a new block has an appropriate difficulty.
 validate(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
-	(NewB#block.diff ==
+	(NewB#block.diff >=
 		calculate_difficulty(
 			OldB#block.diff,
 			NewB#block.timestamp,
 			OldB#block.last_retarget)
 	);
 validate(NewB, OldB) ->
-	NewB#block.last_retarget == OldB#block.last_retarget.
+	(NewB#block.diff >= OldB#block.diff) and
+		(NewB#block.last_retarget == OldB#block.last_retarget).
 
 
 %%% Tests: ar_retarget

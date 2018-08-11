@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/5, change_data/2, stop/1, miner/2, schedule_hash/1]).
+-export([start/5, start/6, change_data/2, stop/1, miner/2, schedule_hash/1]).
 -export([validate/3, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -27,10 +27,11 @@
 start(CurrentB, RecallB, TXs, unclaimed, Tags) ->
     start(CurrentB, RecallB, TXs, <<>>, Tags);
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
+    start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, next_diff(CurrentB)).
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff) ->
     crypto:rand_seed(),
     Parent = self(),
     Timestamp = os:system_time(seconds),
-    Diff = next_diff(CurrentB),
     % Ensure that the txs in which the mining process is passed
     % validate and can be serialized.
     TXs =
@@ -256,13 +257,21 @@ next_diff(CurrentB) ->
     end.
 
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
-validate(DataSegment, Nonce, NewDiff) ->
-    % ar:d({mine_val, {data, DataSegment}, {nonce, Nonce}, {diff, NewDiff}}),
+-ifdef(DEBUG).
+validate(DataSegment, Nonce, Diff) ->
+    NewDiff = Diff,
     case NewHash = ar_weave:hash(DataSegment, Nonce) of
         << 0:NewDiff, _/bitstring >> -> NewHash;
         _ -> false
     end.
-
+-else.
+validate(DataSegment, Nonce, Diff) ->
+    NewDiff = erlang:max(Diff, ?MIN_DIFF),
+    case NewHash = ar_weave:hash(DataSegment, Nonce) of
+        << 0:NewDiff, _/bitstring >> -> NewHash;
+        _ -> false
+    end.
+-endif.
 
 %%% Tests: ar_mine
 
