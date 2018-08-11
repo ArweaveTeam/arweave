@@ -204,15 +204,13 @@ handle('POST', [<<"block">>], Req) ->
 					RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
 					CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 					% mue: keep block distance for later tests
-					% case (not is_atom(CurrentB)) andalso
-					%	 (B#block.height < (CurrentB#block.height + 50)) andalso
-					%	 (B#block.height > (CurrentB#block.height - 50)) of
-					%	true ->
-					%		ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
-					%	_ ->
-					%		ok
-					% end,
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce),
+					case (not is_atom(CurrentB)) andalso
+						(B#block.height >= CurrentB#block.height) of
+						true ->
+							ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
+						_ ->
+							ok
+					end,
 					{200, [], <<"OK">>}
 			end
 	end;
