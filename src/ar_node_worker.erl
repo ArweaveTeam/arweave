@@ -102,6 +102,14 @@ handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}, _Sender)
 			ok
 	end,
 	{ok, process_new_block};
+handle(SPid, {replace_block_list, NewBL}, _Sender) ->
+	case replace_block_list(NewBL) of
+		{ok, StateOut} ->
+			ar_node_state:insert(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, replace_block_list};
 handle(_SPid, Msg, _Sender) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
@@ -260,6 +268,14 @@ process_new_block(# {height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, _RecallB, Peer, _HashList)
 		when (NewB#block.height > Height + 1) ->
 	fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB).
+
+%% @doc Replace the entire stored block list, regenerating the hash list.
+replace_block_list([Block | _]) ->
+	{ok, [
+		{hash_list, [Block#block.indep_hash | Block#block.hash_list]},
+		{wallet_list, Block#block.wallet_list},
+		{height, Block#block.height}
+	 ]}.
 
 %%%
 %%% Private functions.
