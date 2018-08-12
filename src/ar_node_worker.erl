@@ -1,10 +1,16 @@
-%% @doc Server to queue ar_node state-changing tasks.
+%%%
+%%% @doc Server to queue ar_node state-changing tasks.
+%%%
+
 -module(ar_node_worker).
 
 -export([start/1, stop/1, cast/2, call/2, call/3]).
 
 -include("ar.hrl").
--include("ar_node.hrl").
+
+%%%
+%%% Public API.
+%%%
 
 %% @doc Start a node worker.
 start(SPid) ->
@@ -69,13 +75,32 @@ server(SPid) ->
 %% handled as private API functions. SPid allows to access the state server,
 %% inserts have to be atomic.
 handle(SPid, {add_tx, TX}, Sender) ->
-	add_tx(SPid, TX, Sender),
+	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
+	case add_tx(StateIn, TX, Sender) of
+		{ok, StateOut} ->
+			ar_node_state:insert(SPid, StateOut);
+		none ->
+			ok
+	end,
 	{ok, add_tx};
 handle(SPid, {add_tx, TX, NewGS}, Sender) ->
-	add_tx(SPid, TX, NewGS, Sender),
+	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
+	case add_tx(StateIn, TX, NewGS, Sender) of
+		{ok, StateOut} ->
+			ar_node_state:insert(SPid, StateOut);
+		none ->
+			ok
+	end,
 	{ok, add_tx};
 handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}, _Sender) ->
-	ar_node_worker:process_new_block(SPid, NewGS, NewB, RecallB, Peer, HashList),
+	% TODO mue: Reduce to only needed values later, but seem to be pretty much here.
+	{ok, StateIn} = ar_node_state:all(SPid),
+	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
+		{ok, StateOut} ->
+			ar_node_state:insert(SPid, StateOut);
+		none ->
+			ok
+	end,
 	{ok, process_new_block};
 handle(_SPid, Msg, _Sender) ->
 	{error, {unknown_node_worker_message, Msg}}.
@@ -85,8 +110,8 @@ handle(_SPid, Msg, _Sender) ->
 %%%
 
 %% @doc Add new transaction to a server state.
-add_tx(SPid, TX, Sender) ->
-	{ok, [TXs, WaitingTXs, PotentialTXs]} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
+add_tx(StateIn, TX, Sender) ->
+	#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
 	case get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
 		[] ->
 			timer:send_after(
@@ -94,19 +119,19 @@ add_tx(SPid, TX, Sender) ->
 				Sender,
 				{apply_tx, TX}
 			),
-			ar_node_state:insert(SPid, [
+			{ok , [
 				{waiting_txs, ar_util:unique([TX | WaitingTXs])}
-			]);
+			]};
 		_ ->
 			% TODO mue: Space in string atom correct?
 			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
-			ar_node_state:insert(SPid, [
+			{ok, [
 				{potential_txs, ar_util:unique([TX | PotentialTXs])}
-			])
+			]}
 	end.
 
-add_tx(SPid, TX, NewGS, Sender) ->
-	{ok, [TXs, WaitingTXs, PotentialTXs]} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
+add_tx(StateIn, TX, NewGS, Sender) ->
+	#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
 	case get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
 		[] ->
 			timer:send_after(
@@ -114,25 +139,25 @@ add_tx(SPid, TX, NewGS, Sender) ->
 				Sender,
 				{apply_tx, TX}
 			),
-			ar_node_state:insert(SPid, [
+			{ok, [
 				{waiting_txs, ar_util:unique([TX | WaitingTXs])},
 				{gossip, NewGS}
-			]);
+			]};
 		_ ->
-			ar_node_state:insert(SPid, [
+			{ok, [
 				{potential_txs, ar_util:unique([TX | PotentialTXs])},
 				{gossip, NewGS}
-		])
+			]}
 	end.
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
-process_new_block(S, NewGS, NewB, _, _Peer, not_joined) ->
-	join_weave(S#state { gossip = NewGS }, NewB),
-	S;
-process_new_block(RawS1, NewGS, NewB, unavailable, Peer, HashList)
-		when NewB#block.height == RawS1#state.height + 1 ->
-		% This block is at the correct height.
+process_new_block(_StateIn, NewGS, NewB, _, _Peer, not_joined) ->
+	ar_join:start(ar_gossip:peers(NewGS, NewB)),
+	none;
+process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Peer, HashList)
+		when NewB#block.height == Height + 1 ->
+	% This block is at the correct height.
 	RecallHash = ar_node:find_recall_hash(NewB, HashList),
 	FullBlock = ar_node:get_full_block(Peer, RecallHash),
 	case ?IS_BLOCK(FullBlock) of
@@ -143,35 +168,36 @@ process_new_block(RawS1, NewGS, NewB, unavailable, Peer, HashList)
 													||
 													T <- FullBlock#block.txs] },
 			ar_storage:write_full_block(FullBlock),
-			S = RawS1#state { gossip = NewGS },
-			process_new_block(S, NewGS, NewB, RecallShadow, Peer, HashList);
+			StateNext = StateIn#{ gossip => NewGS },
+			process_new_block(StateNext, NewGS, NewB, RecallShadow, Peer, HashList);
 		false ->
 			ar:d(failed_to_get_recall_block),
-			RawS1
+			none
 	end;
-process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
-		when NewB#block.height == RawS1#state.height + 1 ->
-		% This block is at the correct height.
-	S = RawS1#state { gossip = NewGS },
+process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, HashList)
+		when NewB#block.height == Height + 1 ->
+	% This block is at the correct height.
+	StateNext = StateIn#{ gossip => NewGS },
+	#{
+		txs := TXs,
+		waiting_txs := WaitingTXs,
+		potential_txs := PotentialTXs,
+		rewart_pool := RewardPool,
+		wallet_list := WalletList
+	} = StateNext,
 	% If transaction not found in state or storage, txlist built will be
 	% incomplete and will fail in validate
 	TXs = lists:foldr(
 		fun(T, Acc) ->
 			%state contains it
-			case [
-					TX
-					||
-					TX <-
-						(S#state.txs ++ S#state.waiting_txs ++ S#state.potential_txs),
-						TX#tx.id == T ]
-			of
+			case [ TX || TX <- (TXs ++ WaitingTXs ++ PotentialTXs), TX#tx.id == T ] of
 				[] ->
 					case ar_storage:read_tx(T) of
-						unavailable ->
-							Acc;
-						TX -> [TX | Acc]
+						unavailable -> Acc;
+						TX          -> [TX | Acc]
 					end;
-				[TX | _] -> [TX | Acc]
+				[TX | _] ->
+					[TX | Acc]
 			end
 		end,
 		[],
@@ -179,7 +205,7 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 	),
 	{FinderReward, _} =
 		ar_node:calculate_reward_pool(
-			S#state.reward_pool,
+			RewardPool,
 			TXs,
 			NewB#block.reward_addr,
 			ar_node:calculate_proportion(
@@ -188,16 +214,20 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 				NewB#block.height
 			)
 		),
-	WalletList =
+	NewWalletList =
 		ar_node:apply_mining_reward(
-			ar_node:apply_txs(S#state.wallet_list, TXs),
+			ar_node:apply_txs(WalletList, TXs),
 			NewB#block.reward_addr,
 			FinderReward,
 			NewB#block.height
 		),
-	NewS = S#state { wallet_list = WalletList },
+	StateNew = StateNext#{ wallet_list => NewWalletList },
+	% TODO mue: ar_node:validate() has to be moved to ar_node_worker. Also
+	% check what values of state are needed. Also setting the state gossip
+	% for fork_recover/3 has to be checked. The gossip is already set to
+	% NewGS in first function statement. Compare to pre-refactoring.
 	case ar_node:validate(
-			NewS,
+			StateNew,
 			NewB,
 			TXs,
 			ar_util:get_head_block(HashList), RecallB
@@ -205,31 +235,31 @@ process_new_block(RawS1, NewGS, NewB, RecallB, Peer, HashList)
 		true ->
 			% The block is legit. Accept it.
 			case whereis(fork_recovery_server) of
-				undefined -> integrate_new_block(NewS, NewB);
-				_ -> fork_recover(S#state { gossip = NewGS }, Peer, NewB)
+				undefined -> integrate_new_block(StateNew, NewB);
+				_         -> fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
 		false ->
 			ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
-			fork_recover(S#state { gossip = NewGS }, Peer, NewB)
+			fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 	end;
-process_new_block(S, NewGS, NewB, _RecallB, _Peer, _HashList)
-		when NewB#block.height =< S#state.height ->
+process_new_block(# {height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
+		when NewB#block.height =< Height ->
 	% Block is lower than us, ignore it.
 	ar:report(
 		[
 			{ignoring_block_below_current, ar_util:encode(NewB#block.indep_hash)},
-			{current_height, S#state.height},
+			{current_height, Height},
 			{proposed_block_height, NewB#block.height}
 		]
 	),
-	S#state { gossip = NewGS };
+	{ok, [{gossip, NewGS}]};
 % process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
 %		when (NewB#block.height == S#state.height + 1) ->
 	% Block is lower than fork recovery height, ignore it.
 	% server(S#state { gossip = NewGS });
-process_new_block(S, NewGS, NewB, _, Peer, _HashList)
-		when (NewB#block.height > S#state.height + 1) ->
-	fork_recover(S#state { gossip = NewGS }, Peer, NewB).
+process_new_block(#{ height := Height } = StateIn, NewGS, NewB, _RecallB, Peer, _HashList)
+		when (NewB#block.height > Height + 1) ->
+	fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB).
 
 %%%
 %%% Private functions.
@@ -249,15 +279,13 @@ get_conflicting_txs(STXs, TX) ->
 	].
 
 %% @doc Recovery from a fork.
-fork_recover(
-	S = #state{hash_list = HashList}, Peer, NewB) ->
+fork_recover(#{ hash_list := HashList } = StateIn, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
 			PrioritisedPeers = ar_util:unique(Peer) ++
 				case whereis(http_bridge_node) of
 					undefined -> [];
-					BridgePID ->
-						ar_bridge:get_remote_peers(BridgePID)
+					BridgePID -> ar_bridge:get_remote_peers(BridgePID)
 				end,
 			erlang:monitor(
 				process,
@@ -269,25 +297,26 @@ fork_recover(
 			),
 			case PID of
 				undefined -> ok;
-				_ -> erlang:register(fork_recovery_server, PID)
+				_         -> erlang:register(fork_recovery_server, PID)
 			end;
 		{undefined, _} ->
 			ok;
 		_ ->
-			whereis(fork_recovery_server)
-				! {update_target_block, NewB, ar_util:unique(Peer)}
+			whereis(fork_recovery_server) ! {update_target_block, NewB, ar_util:unique(Peer)}
 	end,
-	S.
+	% TODO mue: Check how an unchanged state has to be returned in
+	% program flow.
+	StateIn.
 
 %% @doc We have received a new valid block. Update the node state accordingly.
 integrate_new_block(
-		S = #state {
-			txs = TXs,
-			hash_list = HashList,
-			wallet_list = WalletList,
-			waiting_txs = WaitingTXs,
-			potential_txs = PotentialTXs
-		},
+		#{
+			txs := TXs,
+			hash_list := HashList,
+			wallet_list := WalletList,
+			waiting_txs := WaitingTXs,
+			potential_txs := PotentialTXs
+		} = StateIn,
 		NewB) ->
 	% Filter completed TXs from the pending list.
 	Diff = ar_mine:next_diff(NewB),
@@ -306,6 +335,7 @@ integrate_new_block(
 			end,
 			TXs ++ WaitingTXs ++ PotentialTXs
 		),
+	% TODO mue: KeepNotMinedTXs is unused.
 	KeepNotMinedTXs = ar_node:filter_all_out_of_order_txs(
 							NewB#block.wallet_list,
 							RawKeepNotMinedTXs),
@@ -320,7 +350,7 @@ integrate_new_block(
 			{height, NewB#block.height}
 		]
 	),
-	%ar:d({new_hash_list, [NewB#block.indep_hash | HashList]}),
+	% ar:d({new_hash_list, [NewB#block.indep_hash | HashList]}),
 	app_search:update_tag_table(NewB),
 	lists:foreach(
 		fun(T) ->
@@ -348,21 +378,102 @@ integrate_new_block(
 			);
 		false -> ok
 	end,
-	ar_node:reset_miner(
-		S#state {
-			hash_list = [NewB#block.indep_hash | HashList],
-			txs = ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
-			height = NewB#block.height,
-			floating_wallet_list = ar_node:apply_txs(WalletList, TXs),
-			reward_pool = NewB#block.reward_pool,
-			potential_txs = [],
-			diff = NewB#block.diff,
-			last_retarget = NewB#block.last_retarget,
-			weave_size = NewB#block.weave_size
-		}
-	).
+	ar_node:reset_miner(StateIn#{
+		hash_list            => [NewB#block.indep_hash | HashList],
+		txs                  => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
+		height               => NewB#block.height,
+		floating_wallet_list => ar_node:apply_txs(WalletList, TXs),
+		reward_pool          => NewB#block.reward_pool,
+		potential_txs        => [],
+		diff                 => NewB#block.diff,
+		last_retarget        => NewB#block.last_retarget,
+		weave_size           => NewB#block.weave_size
+	}).
 
+%% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
+reset_miner(#{ miner := undefined, automine := false } = StateIn) ->
+	StateIn;
+reset_miner(#{ miner := undefined, automine := true } = StateIn) ->
+	start_mining(StateIn);
+reset_miner(#{ miner := Pid, automine := false } = StateIn) ->
+	ar_mine:stop(Pid),
+	StateIn#{ miner => undefined };
+reset_miner(#{ miner := Pid, automine := true } = StateIn) ->
+	ar_mine:stop(Pid),
+	start_mining(StateIn#{ miner => undefined }).
 
-%% @doc Catch up to the current height.
-join_weave(S, NewB) ->
-	ar_join:start(ar_gossip:peers(S#state.gossip), NewB).
+%% @doc Force a node to start mining, update state.
+start_mining(#{hash_list := not_joined} = StateIn) ->
+	% We don't have a block list. Wait until we have one before
+	% starting to mine.
+	StateIn;
+start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn) ->
+	case find_recall_block(BHL) of
+		unavailable ->
+			B = ar_storage:read_block(hd(BHL)),
+			RecallHash = find_recall_hash(B, BHL),
+			%FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
+			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
+			case FullBlock of
+				X when (X == unavailable) or (X == not_found) ->
+					ar:report(
+						[
+							could_not_start_mining,
+							could_not_retrieve_recall_block
+						]
+					);
+				_ ->
+					case ar_weave:verify_indep(FullBlock, BHL) of
+						true ->
+							ar_storage:write_full_block(FullBlock),
+							ar:report(
+								[
+									could_not_start_mining,
+									stored_recall_block_for_foreign_verification
+								]
+							);
+						false ->
+								ar:report(
+									[
+										could_not_start_mining,
+										{received_invalid_recall_block, FullBlock#block.indep_hash}
+									]
+								)
+					end
+			end,
+			StateIn;
+		RecallB ->
+			if not is_record(RecallB, block) ->
+				ar:report_console([{erroneous_recall_block, RecallB}]);
+			true ->
+				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
+			end,
+			RecallBFull = make_full_block(
+				RecallB#block.indep_hash
+			),
+			ar_key_db:put(
+				RecallB#block.indep_hash,
+				[
+					{
+						ar_block:generate_block_key(RecallBFull, hd(BHL)),
+						binary:part(hd(BHL), 0, 16)
+					}
+				]
+			),
+			B = ar_storage:read_block(hd(BHL)),
+			Miner =
+				ar_mine:start(
+					B,
+					RecallB,
+					TXs,
+					RewardAddr,
+					Tags
+				),
+			ar:report([{node, self()}, {started_miner, Miner}]),
+			StateIn#{ miner => Miner }
+	end.
+
+%%%
+%%% EOF
+%%%
+

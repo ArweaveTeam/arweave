@@ -1,4 +1,5 @@
 -module(ar_node).
+
 -export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7]).
 -export([stop/1]).
 -export([get_blocks/1, get_block/2, get_full_block/2]).
