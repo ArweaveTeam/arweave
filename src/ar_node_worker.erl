@@ -158,8 +158,8 @@ process_new_block(_StateIn, NewGS, NewB, _, _Peer, not_joined) ->
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Peer, HashList)
 		when NewB#block.height == Height + 1 ->
 	% This block is at the correct height.
-	RecallHash = ar_node:find_recall_hash(NewB, HashList),
-	FullBlock = ar_node:get_full_block(Peer, RecallHash),
+	RecallHash = find_recall_hash(NewB, HashList),
+	FullBlock = get_full_block(Peer, RecallHash),
 	case ?IS_BLOCK(FullBlock) of
 		true ->
 			% TODO: Cleanup full block -> shadow generation.
@@ -361,7 +361,7 @@ integrate_new_block(
 	RecallB =
 		ar_node:get_full_block(
 			whereis(http_entrypoint_node),
-			ar_node:find_recall_hash(NewB, [NewB#block.indep_hash | HashList])
+			find_recall_hash(NewB, [NewB#block.indep_hash | HashList])
 		),
 	case ?IS_BLOCK(RecallB) of
 		true ->
@@ -378,7 +378,7 @@ integrate_new_block(
 			);
 		false -> ok
 	end,
-	ar_node:reset_miner(StateIn#{
+	reset_miner(StateIn#{
 		hash_list            => [NewB#block.indep_hash | HashList],
 		txs                  => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
 		height               => NewB#block.height,
@@ -471,6 +471,82 @@ start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags :=
 				),
 			ar:report([{node, self()}, {started_miner, Miner}]),
 			StateIn#{ miner => Miner }
+	end.
+
+%% @doc Search a block list for the next recall block.
+find_recall_block([Hash]) ->
+	ar_storage:read_block(Hash);
+find_recall_block(HashList) ->
+	Block = ar_storage:read_block(hd(HashList)),
+	RecallHash = find_recall_hash(Block, HashList),
+	ar_storage:read_block(RecallHash).
+
+%% @doc Return the hash of the next recall block.
+find_recall_hash(Block, []) ->
+	Block#block.indep_hash;
+find_recall_hash(Block, HashList) ->
+	lists:nth(1 + ar_weave:calculate_recall_block(Block), lists:reverse(HashList)).
+
+%% @doc Find a block from an ordered block list.
+find_block(Hash) when is_binary(Hash) ->
+	ar_storage:read_block(Hash).
+
+%% @doc Get a specific full block (a block containing full txs) via
+%% blocks indep_hash.
+get_full_block(Peers, ID) when is_list(Peers) ->
+	% check locally first, if not found ask list of external peers for block
+	case ar_storage:read_block(ID) of
+		unavailable ->
+			lists:foldl(
+				fun(Peer, Acc) ->
+					case is_atom(Acc) of
+						false ->
+							Acc;
+						true ->
+							Full = get_full_block(Peer, ID),
+							case is_atom(Full) of
+								true  -> Acc;
+								false -> Full
+							end
+					end
+				end,
+				unavailable,
+				Peers
+			);
+		Block ->
+			case make_full_block(ID) of
+				unavailable ->
+					ar_storage:invalidate_block(Block),
+					get_full_block(Peers, ID);
+				FinalB -> FinalB
+			end
+	end;
+get_full_block(Pid, ID) when is_pid(Pid) ->
+	% Attempt to get block from local storage and add transactions.
+	make_full_block(ID);
+get_full_block(Host, ID) ->
+	% Handle external peer request.
+	ar_http_iface:get_full_block(Host, ID).
+
+%% @doc Convert a block with tx references into a full block, that is a block
+%% containing the entirety of all its referenced txs.
+make_full_block(ID) ->
+	case ar_storage:read_block(ID) of
+		unavailable ->
+			unavailable;
+		BlockHeader ->
+			FullB =
+				BlockHeader#block{
+					txs =
+						ar_node:get_tx(
+							whereis(http_entrypoint_node),
+							BlockHeader#block.txs
+						)
+				},
+			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
+				[] -> FullB;
+				_  -> unavailable
+			end
 	end.
 
 %%%
