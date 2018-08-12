@@ -110,6 +110,15 @@ handle(SPid, {replace_block_list, NewBL}, _Sender) ->
 			ok
 	end,
 	{ok, replace_block_list};
+handle(SPid, {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp}, _Sender) ->
+	{ok, StateIn} = ar_node_state:all(SPid),
+	case integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) of
+		{ok, StateOut} ->
+			ar_node_state:insert(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, work_complete};
 handle(_SPid, Msg, _Sender) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
@@ -202,7 +211,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 				[] ->
 					case ar_storage:read_tx(T) of
 						unavailable -> Acc;
-						TX          -> [TX | Acc]
+						TX			-> [TX | Acc]
 					end;
 				[TX | _] ->
 					[TX | Acc]
@@ -212,11 +221,11 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 		NewB#block.txs
 	),
 	{FinderReward, _} =
-		ar_node:calculate_reward_pool(
+		calculate_reward_pool(
 			RewardPool,
 			TXs,
 			NewB#block.reward_addr,
-			ar_node:calculate_proportion(
+			calculate_proportion(
 				RecallB#block.block_size,
 				NewB#block.weave_size,
 				NewB#block.height
@@ -224,7 +233,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 		),
 	NewWalletList =
 		ar_node:apply_mining_reward(
-			ar_node:apply_txs(WalletList, TXs),
+			apply_txs(WalletList, TXs),
 			NewB#block.reward_addr,
 			FinderReward,
 			NewB#block.height
@@ -244,7 +253,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 			% The block is legit. Accept it.
 			case whereis(fork_recovery_server) of
 				undefined -> integrate_new_block(StateNew, NewB);
-				_         -> fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
+				_		  -> fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
 		false ->
 			ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
@@ -275,7 +284,148 @@ replace_block_list([Block | _]) ->
 		{hash_list, [Block#block.indep_hash | Block#block.hash_list]},
 		{wallet_list, Block#block.wallet_list},
 		{height, Block#block.height}
-	 ]}.
+	]}.
+
+%% @doc Verify a new block found by a miner, integrate it.
+integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp) ->
+	none;
+integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
+	#{
+		hash_list     := HashList,
+		wallet_list   := RawWalletList,
+		txs           := TXs,
+		gossip        := GS,
+		reward_addr   := RewardAddr,
+		tags          := Tags,
+		reward_pool   := OldPool,
+		weave_size    := OldWeaveSize,
+		potential_txs := PotentialTXs
+	} = StateIn,
+	% Calculate the new wallet list (applying TXs and mining rewards).
+	RecallB = find_recall_block(HashList),
+	WeaveSize = OldWeaveSize +
+		lists:foldl(
+			fun(TX, Acc) ->
+				Acc + byte_size(TX#tx.data)
+			end,
+			0,
+			TXs
+		),
+	{FinderReward, RewardPool} =
+		calculate_reward_pool(
+			OldPool,
+			MinedTXs,
+			RewardAddr,
+			calculate_proportion(
+				RecallB#block.block_size,
+				WeaveSize,
+				length(HashList)
+			)
+		),
+	ar:report(
+		[
+			calculated_reward_for_mined_block,
+			{finder_reward, FinderReward},
+			{new_reward_pool, RewardPool},
+			{reward_address, RewardAddr},
+			{old_reward_pool, OldPool},
+			{txs, length(MinedTXs)},
+			{recall_block_size, RecallB#block.block_size},
+			{weave_size, WeaveSize},
+			{length, length(HashList)}
+		]
+	),
+	WalletList =
+		apply_mining_reward(
+			apply_txs(RawWalletList, MinedTXs),
+			RewardAddr,
+			FinderReward,
+			length(HashList)
+		),
+	% Store the transactions that we know about, but were not mined in
+	% this block.
+	NotMinedTXs =
+		lists:filter(
+			fun(T) -> ar_tx:verify(T, Diff, WalletList) end,
+			filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs)
+		),
+	StateNew = StateIn#{ wallet_list => WalletList },
+	% Build the block record, verify it, and gossip it to the other nodes.
+	[NextB | _] = ar_weave:add(
+		HashList, MinedTXs, HashList, RewardAddr, RewardPool,
+		WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
+	case validate(StateNew, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
+		false ->
+			ar:report_console(miner_produced_invalid_block),
+			case rand:uniform(5) of
+				1 ->
+					#{ gossip := StateInGS } = StateIn,
+					reset_miner(StateIn#{
+						gossip		  => StateInGS,
+						txs			  => [], % TXs not included in the block
+						potential_txs => []
+					});
+				_ ->
+					reset_miner(StateIn)
+			end;
+		true ->
+			ar_storage:write_tx(MinedTXs),
+			ar_storage:write_block(NextB),
+			app_search:update_tag_table(NextB),
+			{NewGS, _} =
+				ar_gossip:send(
+					GS,
+					{
+						new_block,
+						self(),
+						NextB#block.height,
+						NextB,
+						RecallB
+					}
+				),
+			ar:report_console(
+				[
+					{node, self()},
+					{accepted_block, NextB#block.height},
+					{indep_hash, ar_util:encode(NextB#block.indep_hash)},
+					{recall_block, RecallB#block.height},
+					{recall_hash, RecallB#block.indep_hash},
+					{txs, length(MinedTXs)},
+					case is_atom(RewardAddr) of
+						true -> {reward_address, unclaimed};
+						false -> {reward_address, ar_util:encode(RewardAddr)}
+					end
+				]
+			),
+			lists:foreach(
+				fun(MinedTX) ->
+					ar:report(
+						{successfully_mined_tx_into_block, ar_util:encode(MinedTX#tx.id)}
+					)
+				end,
+				MinedTXs
+			),
+			lists:foreach(
+				fun(T) ->
+					ar_tx_db:maybe_add(T#tx.id)
+				end,
+				PotentialTXs
+			),
+			reset_miner(
+				StateNew#{
+					gossip => NewGS,
+					hash_list => [NextB#block.indep_hash | HashList],
+					txs => ar_track_tx_db:remove_bad_txs(NotMinedTXs), % TXs not included in the block
+					height => NextB#block.height,
+					floating_wallet_list => apply_txs(WalletList, NotMinedTXs),
+					reward_pool => RewardPool,
+					potential_txs => [],
+					diff => NextB#block.diff,
+					last_retarget => NextB#block.last_retarget,
+					weave_size => NextB#block.weave_size
+				}
+			)
+	end.
 
 %%%
 %%% Private functions.
@@ -313,7 +463,7 @@ fork_recover(#{ hash_list := HashList } = StateIn, Peer, NewB) ->
 			),
 			case PID of
 				undefined -> ok;
-				_         -> erlang:register(fork_recovery_server, PID)
+				_		  -> erlang:register(fork_recovery_server, PID)
 			end;
 		{undefined, _} ->
 			ok;
@@ -395,15 +545,15 @@ integrate_new_block(
 		false -> ok
 	end,
 	reset_miner(StateIn#{
-		hash_list            => [NewB#block.indep_hash | HashList],
-		txs                  => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
-		height               => NewB#block.height,
+		hash_list			 => [NewB#block.indep_hash | HashList],
+		txs					 => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
+		height				 => NewB#block.height,
 		floating_wallet_list => ar_node:apply_txs(WalletList, TXs),
-		reward_pool          => NewB#block.reward_pool,
-		potential_txs        => [],
-		diff                 => NewB#block.diff,
-		last_retarget        => NewB#block.last_retarget,
-		weave_size           => NewB#block.weave_size
+		reward_pool			 => NewB#block.reward_pool,
+		potential_txs		 => [],
+		diff				 => NewB#block.diff,
+		last_retarget		 => NewB#block.last_retarget,
+		weave_size			 => NewB#block.weave_size
 	}).
 
 %% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
@@ -564,6 +714,203 @@ make_full_block(ID) ->
 				_  -> unavailable
 			end
 	end.
+
+%% @doc Update a wallet list with a set of new transactions.
+apply_txs(WalletList, TXs) ->
+	lists:sort(
+		lists:foldl(
+			fun(TX, CurrWalletList) ->
+				apply_tx(CurrWalletList, TX)
+			end,
+			WalletList,
+			TXs
+		)
+	).
+
+%% @doc Apply a transaction to a wallet list, updating it.
+%% Critically, filter empty wallets from the list after application.
+apply_tx(WalletList, unavailable) ->
+	WalletList;
+apply_tx(WalletList, TX) ->
+	filter_empty_wallets(do_apply_tx(WalletList, TX)).
+
+%% @doc Perform the concrete application of a transaction to
+%% a prefiltered wallet list.
+do_apply_tx(
+		WalletList,
+		#tx {
+			id = ID,
+			owner = From,
+			last_tx = Last,
+			target = To,
+			quantity = Qty,
+			reward = Reward
+		}) ->
+	Addr = ar_wallet:to_address(From),
+	case lists:keyfind(Addr, 1, WalletList) of
+		{Addr, Balance, Last} ->
+			NewWalletList = lists:keyreplace(Addr, 1, WalletList, {Addr, Balance - (Qty + Reward), ID}),
+			case lists:keyfind(To, 1, NewWalletList) of
+				false ->
+					[{To, Qty, <<>>} | NewWalletList];
+				{To, OldBalance, LastTX} ->
+					lists:keyreplace(To, 1, NewWalletList, {To, OldBalance + Qty, LastTX})
+			end;
+		_ ->
+			WalletList
+	end.
+
+%% @doc Takes a wallet list and a set of txs and checks to ensure that the
+%% txs can be applied in a given order. The output is the set of all txs
+%% that could be applied.
+filter_all_out_of_order_txs(WalletList, InTXs) ->
+	filter_all_out_of_order_txs(
+		WalletList,
+		InTXs,
+		[]
+	).
+filter_all_out_of_order_txs(_WalletList, [], OutTXs) ->
+	lists:reverse(OutTXs);
+filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
+	{FloatingWalletList, PassedTXs} =
+		filter_out_of_order_txs(
+			WalletList,
+			InTXs,
+			OutTXs
+		),
+	RemainingInTXs = InTXs -- PassedTXs,
+	case PassedTXs of
+		[] ->
+			lists:reverse(OutTXs);
+		OutTXs ->
+			lists:reverse(OutTXs);
+		_ ->
+			filter_all_out_of_order_txs(
+				FloatingWalletList,
+				RemainingInTXs,
+				PassedTXs
+			)
+	end.
+
+%% @doc Takes a wallet list and a set of txs and checks to ensure that the
+%% txs can be iteratively applied. When a tx is encountered that cannot be
+%% applied it is disregarded. The return is a tuple containing the output
+%% wallet list and the set of applied transactions.
+%% Helper function for 'filter_all_out_of_order_txs'.
+filter_out_of_order_txs(WalletList, InTXs) ->
+	filter_out_of_order_txs(
+		WalletList,
+		InTXs,
+		[]
+	).
+filter_out_of_order_txs(WalletList, [], OutTXs) ->
+	{WalletList, OutTXs};
+filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
+	case ar_tx:check_last_tx(WalletList, T) of
+		true ->
+			UpdatedWalletList = apply_tx(WalletList, T),
+			filter_out_of_order_txs(
+				UpdatedWalletList,
+				RawTXs,
+				[T | OutTXs]
+			);
+		false ->
+			filter_out_of_order_txs(
+				WalletList,
+				RawTXs,
+				OutTXs
+			)
+	end.
+
+%% @doc Remove wallets with zero balance from a wallet list.
+filter_empty_wallets([]) ->
+	[];
+filter_empty_wallets([{_, 0, <<>>} | WalletList]) ->
+	filter_empty_wallets(WalletList);
+filter_empty_wallets([Wallet | Rest]) ->
+	[Wallet | filter_empty_wallets(Rest)].
+
+%% @doc Calculate the total mining reward for the a block and it's associated TXs.
+calculate_reward(Height, Quantity) ->
+	erlang:trunc(calculate_static_reward(Height) + Quantity).
+
+%% @doc Calculate the static reward received for mining a given block.
+%% This reward portion depends only on block height, not the number of transactions.
+calculate_static_reward(Height) when Height =< ?REWARD_DELAY->
+	1;
+calculate_static_reward(Height) ->
+	?AR((0.2 * ?GENESIS_TOKENS * math:pow(2,-(Height-?REWARD_DELAY)/?BLOCK_PER_YEAR) * math:log(2))/?BLOCK_PER_YEAR).
+
+%% @doc Calculate the reward.
+calculate_reward_pool(OldPool, TXs, unclaimed, _Proportion) ->
+	Pool = OldPool + lists:sum(
+		lists:map(
+			fun calculate_tx_reward/1,
+			TXs
+		)
+	),
+	{0, Pool};
+calculate_reward_pool(OldPool, TXs, _RewardAddr, Proportion) ->
+	Pool = OldPool + lists:sum(
+		lists:map(
+			fun calculate_tx_reward/1,
+			TXs
+		)
+	),
+	FinderReward = erlang:trunc(Pool * Proportion),
+	{FinderReward, Pool - FinderReward}.
+
+%% @doc Given a TX, calculate an appropriate reward.
+calculate_tx_reward(#tx { reward = Reward }) ->
+	% TDOD mue: Calculation is not calculated, only returned.
+	Reward.
+
+%% @doc Calculates the portion of the rewardpool that the miner is entitled
+%% to for mining a block with a given recall. The proportion is based on the
+%% size of the recall block and the average data stored within the weave.
+calculate_proportion(RecallSize, WeaveSize, Height) when (Height == 0)->
+	% Genesis block.
+	calculate_proportion(
+		RecallSize,
+		WeaveSize,
+		1
+	);
+calculate_proportion(RecallSize, WeaveSize, Height) when (WeaveSize == 0)->
+	% No data stored in the weave.
+	calculate_proportion(
+		RecallSize,
+		1,
+		Height
+	);
+calculate_proportion(RecallSize, WeaveSize, Height) when RecallSize >= (WeaveSize/Height) ->
+	% Recall size is larger than the average data stored per block.
+	XRaw = ((Height * RecallSize) / WeaveSize) - 1,
+	X = min(XRaw, 1023),
+	max(
+		0.1,
+		(math:pow(2, X) / (math:pow(2, X) + 2))
+	);
+calculate_proportion(RecallSize, WeaveSize, Height) when RecallSize == 0 ->
+	% Recall block has no data txs, hence size of zero.
+	calculate_proportion(
+		1,
+		WeaveSize,
+		Height
+	);
+calculate_proportion(RecallSize, WeaveSize, Height) ->
+	% Standard recall block, 0 < Recall size < Average block.
+	XRaw = -(((Height * WeaveSize) / RecallSize) -1),
+	X = min(XRaw, 1023),
+	max(
+		0.1,
+		(math:pow(2, X)/(math:pow(2, X) + 2))
+	).
+
+%% @doc Calculate and apply mining reward quantities to a wallet list.
+apply_mining_reward(WalletList, unclaimed, _Quantity, _Height) ->
+	WalletList;
+apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
+	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, Quantity)).
 
 %%%
 %%% EOF
