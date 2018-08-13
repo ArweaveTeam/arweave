@@ -70,15 +70,13 @@ server(SPid) ->
 			ok
 	end.
 
-%% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks
-%% can be done directy, more complex ones with dependencies from arguments are
-%% handled as private API functions. SPid allows to access the state server,
-%% inserts have to be atomic.
+%% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks like
+%% setter can be done directy, more complex ones are handled as private API functions.
 handle(SPid, {add_tx, TX}, Sender) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
 	case add_tx(StateIn, TX, Sender) of
 		{ok, StateOut} ->
-			ar_node_state:insert(SPid, StateOut);
+			ar_node_state:update(SPid, StateOut);
 		none ->
 			ok
 	end,
@@ -87,38 +85,79 @@ handle(SPid, {add_tx, TX, NewGS}, Sender) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
 	case add_tx(StateIn, TX, NewGS, Sender) of
 		{ok, StateOut} ->
-			ar_node_state:insert(SPid, StateOut);
+			ar_node_state:update(SPid, StateOut);
 		none ->
 			ok
 	end,
 	{ok, add_tx};
 handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}, _Sender) ->
-	% TODO mue: Reduce to only needed values later, but seem to be pretty much here.
 	{ok, StateIn} = ar_node_state:all(SPid),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
-			ar_node_state:insert(SPid, StateOut);
+			ar_node_state:update(SPid, StateOut);
 		none ->
 			ok
 	end,
 	{ok, process_new_block};
-handle(SPid, {replace_block_list, NewBL}, _Sender) ->
-	case replace_block_list(NewBL) of
-		{ok, StateOut} ->
-			ar_node_state:insert(SPid, StateOut);
-		none ->
-			ok
-	end,
-	{ok, replace_block_list};
 handle(SPid, {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp}, _Sender) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	case integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) of
 		{ok, StateOut} ->
-			ar_node_state:insert(SPid, StateOut);
+			ar_node_state:update(SPid, StateOut);
 		none ->
 			ok
 	end,
 	{ok, work_complete};
+handle(SPid, {fork_recovered, NewHs}, _Sender) ->
+	{ok, StateIn} = ar_node_state:all(SPid),
+	case recovered_from_fork(StateIn, NewHs) of
+		{ok, StateOut} ->
+			ar_node_state:update(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, fork_recovered};
+handle(SPid, {replace_block_list, [Block | _]}, _Sender) ->
+	ar_node_state:update(SPid, [
+		{hash_list, [Block#block.indep_hash | Block#block.hash_list]},
+		{wallet_list, Block#block.wallet_list},
+		{height, Block#block.height}
+	]),
+	{ok, replace_block_list};
+handle(SPid, {set_reward_addr, Addr}, _Send) ->
+	ar_node_state:update(SPid, [
+		{reward_addr, Addr}
+	]),
+	{ok, set_reward_addr};
+handle(SPid, {add_peers, Peers}, _Sender) ->
+	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+	ar_node_state:update(SPid, [
+		{gossip, ar_gossip:add_peers(Gossip, Peers)}
+	]),
+	{ok, add_peers};
+handle(SPid, {set_loss_probability, Prob}, _Sender) ->
+	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+	ar_node_state:update(SPid, [
+		{gossip, ar_gossip:set_loss_probability(Gossip, Prob)}
+	]),
+	{ok, set_loss_probability};
+handle(SPid, {set_delay, MaxDelay}, _Sender) ->
+	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+	ar_node_state:update(SPid, [
+		{gossip, ar_gossip:set_delay(Gossip, MaxDelay)}
+	]),
+	{ok, set_delay};
+handle(SPid, {set_xfer_speed, Speed}, _Sender) ->
+	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+	ar_node_state:update(SPid, [
+		{gossip, ar_gossip:set_xfer_speed(Gossip, Speed)}
+	]),
+	{ok, set_xfer_speed};
+handle(SPid, {set_mining_delay, Delay}, _Sender) ->
+	ar_node_state:update(SPid, [
+		{mining_delay, Delay}
+	]),
+	{ok, set_mining_delay};
 handle(_SPid, Msg, _Sender) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
@@ -278,14 +317,6 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, _RecallB, Peer, 
 		when (NewB#block.height > Height + 1) ->
 	ar_node_utils:fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB).
 
-%% @doc Replace the entire stored block list, regenerating the hash list.
-replace_block_list([Block | _]) ->
-	{ok, [
-		{hash_list, [Block#block.indep_hash | Block#block.hash_list]},
-		{wallet_list, Block#block.wallet_list},
-		{height, Block#block.height}
-	]}.
-
 %% @doc Verify a new block found by a miner, integrate it.
 integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp) ->
 	none;
@@ -431,6 +462,79 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				}
 			)
 	end.
+
+%% @doc Handle executed fork recovery.
+recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when HashList == not_joined ->
+	NewB = ar_storage:read_block(hd(NewHs)),
+	ar:report_console(
+		[
+			node_joined_successfully,
+			{height, NewB#block.height}
+		]
+	),
+	case whereis(fork_recovery_server) of
+		undefined -> ok;
+		_		  -> erlang:unregister(fork_recovery_server)
+	end,
+	% ar_cleanup:remove_invalid_blocks(NewHs),
+	TXPool = maps:get(txs, StateIn) ++ maps:get(potential_txs, StateIn),
+	TXs =
+		ar_node_utils:filter_all_out_of_order_txs(
+			NewB#block.wallet_list,
+			TXPool
+		),
+	PotentialTXs = TXPool -- TXs,
+	ar_node_utils:reset_miner(
+		StateIn#{
+			hash_list            => NewHs,
+			wallet_list          => NewB#block.wallet_list,
+			height               => NewB#block.height,
+			reward_pool          => NewB#block.reward_pool,
+			floating_wallet_list => NewB#block.wallet_list,
+			txs                  => TXs,
+			potential_txs        => PotentialTXs,
+			diff                 => NewB#block.diff,
+			last_retarget        => NewB#block.last_retarget,
+			weave_size           => NewB#block.weave_size
+		}
+	);
+recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when (length(NewHs)) > (length(HashList)) ->
+	% TODO mue: Comparing lengths of lists might get quite expensive.
+	case whereis(fork_recovery_server) of
+		undefined -> ok;
+		_		  -> erlang:unregister(fork_recovery_server)
+	end,
+	NewB = ar_storage:read_block(hd(NewHs)),
+	ar:report_console(
+		[
+			fork_recovered_successfully,
+			{height, NewB#block.height}
+		]
+	),
+	% ar_cleanup:remove_invalid_blocks(NewHs),
+	TXPool = maps:get(txs, StateIn) ++ maps:get(potential_txs, StateIn),
+	TXs =
+		ar_node_utils:filter_all_out_of_order_txs(
+			NewB#block.wallet_list,
+			TXPool
+		),
+	PotentialTXs = TXPool -- TXs,
+	ar_node_utils:reset_miner(
+		StateIn#{
+			hash_list            => [NewB#block.indep_hash | NewB#block.hash_list],
+			wallet_list          => NewB#block.wallet_list,
+			height               => NewB#block.height,
+			reward_pool          => NewB#block.reward_pool,
+			floating_wallet_list => NewB#block.wallet_list,
+			txs                  => TXs,
+			potential_txs        => PotentialTXs,
+			diff                 => NewB#block.diff,
+			last_retarget        => NewB#block.last_retarget,
+			weave_size           => NewB#block.weave_size
+		}
+	);
+recovered_from_fork(_StateIn, _) ->
+	none.
 
 %%%
 %%% EOF
