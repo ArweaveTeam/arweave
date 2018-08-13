@@ -51,10 +51,9 @@ update_success(_Config) ->
 %% @doc Successful updates and access of all.
 update_and_all_success(_Config) ->
 	{ok, Pid} = ar_node_state:start(),
-	ok = ar_node_state:update(Pid, [{a, 1}, {b, 2}, {c, 3}]),
-	ok = ar_node_state:update(Pid, {f, [1, 2, 3, 4, 5]}),
 	{ok, All} = ar_node_state:all(Pid),
-	#{a := 1, b := 2, c := 3, f := [1, 2, 3, 4, 5]} = All,
+	% 18 reflect number of standard node state fields.
+	18 = maps:size(All),
 	ok = ar_node_state:stop(Pid).
 
 %% @doc Successful updates and lookups.

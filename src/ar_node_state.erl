@@ -1,6 +1,14 @@
 %%%
 %%% @doc Server to maintain a node state.
 %%%
+%%% NB: The potential_txs field stores the set of txs that contradict those
+%%% already stored within the txs field. That is those that have the same last
+%%% tx reference as one already held in txs.
+%%%
+%%% These txs are not dropped as when a block is a mined blockshadows do not
+%%% redistribute the set mined on, only their IDs. As such they may be required
+%%% to validate newly distributed blocks from other nodes in the network.
+%%%
 
 -module(ar_node_state).
 
@@ -15,6 +23,27 @@ start() ->
 	Pid = spawn(fun() ->
 		server(ets:new(ar_node_state, [set, private, {keypos, 1}]))
 	end),
+	% Set initial state values.
+	update(Pid, [
+		{hash_list, not_joined},    % current full hashlist
+		{wallet_list, []},          % current up to date walletlist
+		{floating_wallet_list, []}, % up to date walletlist with new txs applied
+		{height, 0},                % current height of the blockweave
+		{gossip, undefined},        % Gossip protcol state
+		{txs, []},                  % set of new txs to be mined into the next block
+		{miner, undefined},         % PID of the mining process
+		{mining_delay, 0},          % delay on mining, used for netework simulation
+		{automine, false},          % boolean dictating if a node should automine
+		{reward_addr, unclaimed},   % reward address for mining a new block
+		{trusted_peers, []},        % set of trusted peers used to join on
+		{waiting_txs, []},          % set of txs on timeout whilst network distribution occurs
+		{potential_txs, []},        % set of valid but contradictory txs
+		{tags, []},                 % nodes tags to apply to a block when mining
+		{reward_pool, 0},           % current mining rewardpool of the weave
+		{diff, 0},                  % current mining difficulty of the weave (no. of preceeding zero)
+		{last_retarget, undefined}, % timestamp at which the last difficulty retarget occurred
+		{weave_size, 0}             % current size of the weave in bytes (only inc. data tx size)
+	]),
 	{ok, Pid}.
 
 %% @doc Stop a node worker.

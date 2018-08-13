@@ -25,7 +25,7 @@ stop(Pid) ->
 %% @doc Send an asynchronous task to a node worker. The answer
 %% will be sent to the caller.
 cast(Pid, Task) ->
-	Pid ! {Task, self()},
+	Pid ! {task, Task, self()},
 	ok.
 
 %% @doc Send a synchronous task to a node worker. The timeout
@@ -36,7 +36,7 @@ call(Pid, Task) ->
 call(Pid, Task, Timeout) ->
 	cast(Pid, Task),
 	receive
-		Reply ->
+		{worker, Reply} ->
 			Reply
 	after
 		Timeout ->
@@ -50,10 +50,10 @@ call(Pid, Task, Timeout) ->
 %% @doc Main server loop.
 server(SPid) ->
 	receive
-		{Task, Sender} ->
+		{task, Task, Sender} ->
 			try handle(SPid, Task, Sender) of
 				Reply ->
-					Sender ! Reply,
+					Sender ! {worker, Reply},
 					server(SPid)
 			catch
 				throw:Term ->

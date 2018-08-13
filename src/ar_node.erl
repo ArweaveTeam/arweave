@@ -1,7 +1,12 @@
+%%%
+%%% @doc Blockweave maintaining nodes in the Arweave system.
+%%%
+
 -module(ar_node).
 
 -export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7]).
 -export([stop/1]).
+
 -export([get_blocks/1, get_block/2, get_full_block/2]).
 -export([get_tx/2]).
 -export([get_peers/1]).
@@ -50,20 +55,13 @@
 -export([large_weakly_connected_blockweave_with_data_test_slow/0]).
 -export([large_blockweave_with_data_test_slow/0]).
 -export([medium_blockweave_mine_multiple_data_test_slow/0]).
+
 -include("ar.hrl").
--include("ar_node.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Blockweave maintaining nodes in the Arweave system.
-
-% NB: The potential_txs field stores the set of txs that contradict those
-% already stored within the txs field. That is those that have the same last
-% tx reference as one already held in txs.
-%
-% These txs are not dropped as when a block is a mined blockshadows do not
-% redistribute the set mined on, only their IDs. As such they may be required
-% to validate newly distributed blocks from other nodes in the network.
-%
+%%%
+%%% Macros.
+%%%
 
 %% @doc Maximum number of blocks to hold at any time.
 %% NOTE: This value should be greater than ?RETARGET_BLOCKS + 1
@@ -75,6 +73,10 @@
 
 %% @doc The time to poll peers for a new current block.
 -define(POLL_TIME, 60*100).
+
+%%%
+%%% Public API.
+%%%
 
 %% @doc Start a node, linking to a supervisor process
 start_link(Args) ->
@@ -148,8 +150,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
 		Diff,
 		os:system_time(seconds)
 	).
-start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget)
-		when is_record(B, block) ->
+start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when is_record(B, block) ->
 	lists:map(
 		fun ar_storage:write_block/1,
 		Bs
@@ -164,10 +165,10 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 		LastRetarget
 	);
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
-	% spawns the node server process
+	% Spawns the node server process.
 	PID = spawn(
 		fun() ->
-			% join the node to the network
+			% Join the node to the network.
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
@@ -193,22 +194,27 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 						not_joined -> 0;
 						[H2 | _] -> (ar_storage:read_block(H2))#block.weave_size
 					end,
-			server(
-				#state {
-					gossip = Gossip,
-					hash_list = HashList,
-					wallet_list = Hashes,
-					floating_wallet_list = Hashes,
-					mining_delay = MiningDelay,
-					reward_addr = RewardAddr,
-					reward_pool = RewardPool,
-					height = Height,
-					trusted_peers = Peers,
-					diff = Diff,
-					last_retarget = LastRetarget,
-					weave_size = WeaveSize
-				}
-			)
+
+			% Start processes, init state, and start server.
+			{ok, SPid} = ar_node_state:start(),
+			{ok, WPid} = ar_node_worker:start(SPid),
+
+			ar_node_state:update(SPid, [
+				{gossip, Gossip},
+				{hash_list, HashList},
+				{wallet_list, Hashes},
+				{floating_wallet_list, Hashes},
+				{mining_delay, MiningDelay},
+				{reward_addr, RewardAddr},
+				{reward_pool, RewardPool},
+				{height, Height},
+				{trusted_peers, Peers},
+				{diff, Diff},
+				{last_retarget, LastRetarget},
+				{weave_size, WeaveSize}
+			]),
+
+			server(SPid, WPid, queue:new())
 		end
 	),
 	ar_http_iface:reregister(http_entrypoint_node, PID),
@@ -787,82 +793,95 @@ add_peers(Node, Peers) ->
 %%%
 
 %% @doc Main server loop.
-server(S) ->
+server(SPid, WPid, TaskQueue) ->
 	receive
+		stop ->
+			% Stop the node server. First handle all open tasks
+			% in the queue synchronously.
+			% TODO mue: Possible race condition if worker is
+			% currently processing one task!
+			lists:all(fun(Task) ->
+				ar_node_worker:call(WPid, Task)
+			end, queue:to_list(TaskQueue)),
+			ar_node_worker:stop(WPid),
+			ar_node_state:stop(SPid),
+			ok;
+		{worker, {ok, _Task}} ->
+			% Worker finished a task w/o errors.
+			case queue:out(TaskQueue) of
+				{empty, TaskQueue} ->
+					% Empty queue, nothing to cast.
+					server(SPid, WPid, TaskQueue);
+				{{value, Task}, NewTaskQueue} ->
+					% At least one task in queue, cast it to worker.
+					ar_node_worker:cast(WPid, Task),
+					server(SPid, WPid, NewTaskQueue)
+			end;
+		{worker, {error, Error}} ->
+			% Worker finished task with error.
+			ar:d([{node_worker_error, {error, Error}}]),
+			case queue:out(TaskQueue) of
+				{empty, TaskQueue} ->
+					% Empty queue, nothing to cast.
+					server(SPid, WPid, TaskQueue);
+				{{value, Task}, NewTaskQueue} ->
+					% Task is in queue, cast to worker.
+					ar_node_worker:cast(WPid, Task),
+					server(SPid, WPid, NewTaskQueue)
+			end;
 		Msg ->
-			try handle(S, Msg) of
-				NewS ->
-					server(NewS)
+			try handle(SPid, Msg) of
+				{task, Task} ->
+					% Handler returns worker task to do.
+					case queue:is_empty(TaskQueue) of
+						true ->
+							% Queue is empty, directly cast task to worker.
+							ar_node_worker:cast(WPid, Task),
+							server(SPid, WPid, TaskQueue);
+						false ->
+							% Queue contains tasks, so add it.
+							NewTaskQueue = queue:in(Task, TaskQueue),
+							server(SPid, WPid, NewTaskQueue)
+					end;
+				ok ->
+					% Handler is fine.
+					server(SPid, WPid, TaskQueue)
 			catch
 				throw:Term ->
-					ar:report( [ {'NodeEXCEPTION', {Term} } ]),
-					server(S);
+					ar:report([ {'NodeEXCEPTION', {Term}} ]),
+					server(SPid, WPid, TaskQueue);
 				exit:Term ->
-					ar:report( [ {'NodeEXIT', Term} ] ),
-					server(S);
+					ar:report([ {'NodeEXIT', Term} ]),
+					server(SPid, WPid, TaskQueue);
 				error:Term ->
-					ar:report( [ {'NodeERROR', {Term, erlang:get_stacktrace()} } ]),
-					server(S)
+					ar:report([ {'NodeERROR', {Term, erlang:get_stacktrace()}} ]),
+					server(SPid, WPid, TaskQueue)
 			end
 	end.
 
-%% @doc Handle the server messages. Returns modified state S.
-handle(S, Msg) when is_record(Msg, gs_msg) ->
+%% @doc Handle the server messages. Returns {task, Task} or ok.
+handle(SPid, Msg) when is_record(Msg, gs_msg) ->
 	% We have received a gossip mesage. Use the library to process it
 	% and handle the result in handle_gossip/1.
-	handle_gossip(S, ar_gossip:recv(S#state.gossip, Msg));
-handle(S, {add_tx, TX}) ->
-	ConflictingTXs =
-		[
-			T
-		||
-			T <-
-				(
-					S#state.txs ++
-					S#state.waiting_txs ++
-					S#state.potential_txs
-				),
-				(
-					(T#tx.last_tx == TX#tx.last_tx) and
-					(T#tx.owner == TX#tx.owner)
-				)
-		],
-	case ConflictingTXs of
-		[] ->
-			timer:send_after(calculate_delay(byte_size(TX#tx.data)), {apply_tx, TX}),
-			S#state {
-				waiting_txs = ar_util:unique([TX | S#state.waiting_txs])
-			};
-		_ ->
-			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
-			S#state {
-				potential_txs = ar_util:unique([TX | S#state.potential_txs])
-			}
-	end;
-handle(S, {apply_tx, TX}) ->
+	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+	handle_gossip(SPid, ar_gossip:recv(Gossip, Msg));
+handle(_SPid, {add_tx, TX}) ->
+	{task, {add_tx, TX}};
+handle(SPid, {apply_tx, TX}) ->
+	% TODO mue: Not yet changed!
 	{NewGS, _} = ar_gossip:send(S#state.gossip, {add_tx, TX}),
 	add_tx_to_server(S, NewGS, TX);
-handle(S, {new_block, Peer, Height, NewB, RecallB}) ->
+handle(SPid, {new_block, Peer, Height, NewB, RecallB}) ->
 	% We have a new block. Distribute it to the gossip network.
-	{NewGS, _} = ar_gossip:send(S#state.gossip, {new_block, Peer, Height, NewB, RecallB}),
-	% ar:d([{block, NewB}, {hash_list, HashList}]),
-	process_new_block(
-		S,
-		NewGS,
-		NewB,
-		RecallB,
-		Peer,
-		S#state.hash_list
-	);
-handle(S, {replace_block_list, _NewBL = [B | _]}) ->
+	{ok, #{ gossip := GS, hash_list := HashList }} = ar_node_state:lookup(SPid, [gossip, hash_list]),
+	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
+	{task, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}};
+handle(_SPid, {replace_block_list, NewBL}) ->
 	% Replace the entire stored block list, regenerating the hash list.
-	% lists:map(fun ar_storage:write_block/1, NewBL),
-	% ar:d({replaced, [B#block.indep_hash | B#block.hash_list]}),
-	S#state {
-		hash_list = [B#block.indep_hash | B#block.hash_list],
-		wallet_list = B#block.wallet_list,
-		height = B#block.height
-	};
+	{task, {replace_block_list, NewBL}};
+
+% TODO mue: Not yet changed below!
+
 handle(S, {get_current_block, PID}) ->
 	PID ! {block, ar_util:get_head_block(S#state.hash_list)},
 	S;
@@ -2684,3 +2703,7 @@ rejoin_test() ->
 	rejoin(Node2, []),
 	timer:sleep(500),
 	get_blocks(Node1) == get_blocks(Node2).
+
+%%%
+%%% EOF
+%%%
