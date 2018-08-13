@@ -354,7 +354,12 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 	[NextB | _] = ar_weave:add(
 		HashList, MinedTXs, HashList, RewardAddr, RewardPool,
 		WalletList, Tags, RecallB, Diff, Nonce, Timestamp),
-	case validate(StateNew, NextB, MinedTXs, ar_util:get_head_block(HashList), RecallB = find_recall_block(HashList)) of
+	case ar_node_utils:validate(
+			StateNew,
+			NextB,
+			MinedTXs,
+			ar_util:get_head_block(HashList),
+			RecallB = ar_node_utils:find_recall_block(HashList)) of
 		false ->
 			ar:report_console(miner_produced_invalid_block),
 			case rand:uniform(5) of
