@@ -117,6 +117,16 @@ handle(SPid, {fork_recovered, NewHs}, _Sender) ->
 			ok
 	end,
 	{ok, fork_recovered};
+handle(SPid, mine, _Sender) ->
+	{ok, StateIn} = ar_node_state:all(SPid),
+	StateOut = ar_node_util:start_mining(StateIn),
+	ar_node_state:update(SPid, StateOut),
+	{ok, mine};
+handle(SPid, automine, _Sender) ->
+	{ok, StateIn} = ar_node_state:all(SPid),
+	StateOut = ar_node_util:start_mining(StateIn#{ automine => true }),
+	ar_node_state:update(SPid, StateOut),
+	{ok, automine};
 handle(SPid, {replace_block_list, [Block | _]}, _Sender) ->
 	ar_node_state:update(SPid, [
 		{hash_list, [Block#block.indep_hash | Block#block.hash_list]},

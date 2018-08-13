@@ -8,7 +8,7 @@
 -export([find_recall_hash/2, find_recall_block/1]).
 -export([calculate_reward_pool/4, calculate_proportion/3]).
 -export([apply_mining_reward/4, apply_txs/2]).
--export([reset_miner/1]).
+-export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/2]).
 -export([fork_recover/3]).
 -export([filter_all_out_of_order_txs/2]).
@@ -161,6 +161,77 @@ apply_txs(WalletList, TXs) ->
 			TXs
 		)
 	).
+
+%% @doc Force a node to start mining, update state.
+start_mining(#{hash_list := not_joined} = StateIn) ->
+	% We don't have a block list. Wait until we have one before
+	% starting to mine.
+	StateIn;
+start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn) ->
+	case find_recall_block(BHL) of
+		unavailable ->
+			B = ar_storage:read_block(hd(BHL)),
+			RecallHash = find_recall_hash(B, BHL),
+			%FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
+			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
+			case FullBlock of
+				X when (X == unavailable) or (X == not_found) ->
+					ar:report(
+						[
+							could_not_start_mining,
+							could_not_retrieve_recall_block
+						]
+					);
+				_ ->
+					case ar_weave:verify_indep(FullBlock, BHL) of
+						true ->
+							ar_storage:write_full_block(FullBlock),
+							ar:report(
+								[
+									could_not_start_mining,
+									stored_recall_block_for_foreign_verification
+								]
+							);
+						false ->
+								ar:report(
+									[
+										could_not_start_mining,
+										{received_invalid_recall_block, FullBlock#block.indep_hash}
+									]
+								)
+					end
+			end,
+			StateIn;
+		RecallB ->
+			if not is_record(RecallB, block) ->
+				ar:report_console([{erroneous_recall_block, RecallB}]);
+			true ->
+				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
+			end,
+			RecallBFull = make_full_block(
+				RecallB#block.indep_hash
+			),
+			ar_key_db:put(
+				RecallB#block.indep_hash,
+				[
+					{
+						ar_block:generate_block_key(RecallBFull, hd(BHL)),
+						binary:part(hd(BHL), 0, 16)
+					}
+				]
+			),
+			B = ar_storage:read_block(hd(BHL)),
+			Miner =
+				ar_mine:start(
+					B,
+					RecallB,
+					TXs,
+					RewardAddr,
+					Tags
+				),
+			ar:report([{node, self()}, {started_miner, Miner}]),
+			StateIn#{ miner => Miner }
+	end.
 
 %% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
 reset_miner(#{ miner := undefined, automine := false } = StateIn) ->
@@ -433,81 +504,6 @@ validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
 %%% Private functions.
 %%%
 
-%% @doc Force a node to start mining, update state.
-start_mining(#{hash_list := not_joined} = StateIn) ->
-	% We don't have a block list. Wait until we have one before
-	% starting to mine.
-	StateIn;
-start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn) ->
-	case find_recall_block(BHL) of
-		unavailable ->
-			B = ar_storage:read_block(hd(BHL)),
-			RecallHash = find_recall_hash(B, BHL),
-			%FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
-			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
-			case FullBlock of
-				X when (X == unavailable) or (X == not_found) ->
-					ar:report(
-						[
-							could_not_start_mining,
-							could_not_retrieve_recall_block
-						]
-					);
-				_ ->
-					case ar_weave:verify_indep(FullBlock, BHL) of
-						true ->
-							ar_storage:write_full_block(FullBlock),
-							ar:report(
-								[
-									could_not_start_mining,
-									stored_recall_block_for_foreign_verification
-								]
-							);
-						false ->
-								ar:report(
-									[
-										could_not_start_mining,
-										{received_invalid_recall_block, FullBlock#block.indep_hash}
-									]
-								)
-					end
-			end,
-			StateIn;
-		RecallB ->
-			if not is_record(RecallB, block) ->
-				ar:report_console([{erroneous_recall_block, RecallB}]);
-			true ->
-				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
-			end,
-			RecallBFull = make_full_block(
-				RecallB#block.indep_hash
-			),
-			ar_key_db:put(
-				RecallB#block.indep_hash,
-				[
-					{
-						ar_block:generate_block_key(RecallBFull, hd(BHL)),
-						binary:part(hd(BHL), 0, 16)
-					}
-				]
-			),
-			B = ar_storage:read_block(hd(BHL)),
-			Miner =
-				ar_mine:start(
-					B,
-					RecallB,
-					TXs,
-					RewardAddr,
-					Tags
-				),
-			ar:report([{node, self()}, {started_miner, Miner}]),
-			StateIn#{ miner => Miner }
-	end.
-
-%% @doc Find a block from an ordered block list.
-find_block(Hash) when is_binary(Hash) ->
-	ar_storage:read_block(Hash).
-
 %% @doc Convert a block with tx references into a full block, that is a block
 %% containing the entirety of all its referenced txs.
 make_full_block(ID) ->
@@ -568,11 +564,8 @@ do_apply_tx(
 %% wallet list and the set of applied transactions.
 %% Helper function for 'filter_all_out_of_order_txs'.
 filter_out_of_order_txs(WalletList, InTXs) ->
-	filter_out_of_order_txs(
-		WalletList,
-		InTXs,
-		[]
-	).
+	filter_out_of_order_txs(WalletList, InTXs, []).
+
 filter_out_of_order_txs(WalletList, [], OutTXs) ->
 	{WalletList, OutTXs};
 filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
