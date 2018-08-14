@@ -50,10 +50,10 @@ call(Pid, Task, Timeout) ->
 %% @doc Main server loop.
 server(SPid) ->
 	receive
-		{task, Task, Sender} ->
-			try handle(SPid, Task, Sender) of
+		{task, Task, From} ->
+			try handle(SPid, Task, From) of
 				Reply ->
-					Sender ! {worker, Reply},
+					From ! {worker, Reply},
 					server(SPid)
 			catch
 				throw:Term ->
@@ -72,25 +72,25 @@ server(SPid) ->
 
 %% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks like
 %% setter can be done directy, more complex ones are handled as private API functions.
-handle(SPid, {add_tx, TX}, Sender) ->
+handle(SPid, {add_tx, TX}, From) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
-	case add_tx(StateIn, TX, Sender) of
+	case add_tx(StateIn, TX, From) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
 			ok
 	end,
 	{ok, add_tx};
-handle(SPid, {add_tx, TX, NewGS}, Sender) ->
+handle(SPid, {add_tx, TX, NewGS}, From) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
-	case add_tx(StateIn, TX, NewGS, Sender) of
+	case add_tx(StateIn, TX, NewGS, From) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
 			ok
 	end,
 	{ok, add_tx};
-handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}, _Sender) ->
+handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
@@ -99,7 +99,7 @@ handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}, _Sender)
 			ok
 	end,
 	{ok, process_new_block};
-handle(SPid, {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp}, _Sender) ->
+handle(SPid, {work_complete, MinedTXs, Diff, Nonce, Timestamp}, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	case integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) of
 		{ok, StateOut} ->
@@ -108,7 +108,7 @@ handle(SPid, {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp}, _Sender) 
 			ok
 	end,
 	{ok, work_complete};
-handle(SPid, {fork_recovered, NewHs}, _Sender) ->
+handle(SPid, {fork_recovered, NewHs}, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	case recovered_from_fork(StateIn, NewHs) of
 		{ok, StateOut} ->
@@ -117,17 +117,17 @@ handle(SPid, {fork_recovered, NewHs}, _Sender) ->
 			ok
 	end,
 	{ok, fork_recovered};
-handle(SPid, mine, _Sender) ->
+handle(SPid, mine, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	StateOut = ar_node_util:start_mining(StateIn),
 	ar_node_state:update(SPid, StateOut),
 	{ok, mine};
-handle(SPid, automine, _Sender) ->
+handle(SPid, automine, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	StateOut = ar_node_util:start_mining(StateIn#{ automine => true }),
 	ar_node_state:update(SPid, StateOut),
 	{ok, automine};
-handle(SPid, {replace_block_list, [Block | _]}, _Sender) ->
+handle(SPid, {replace_block_list, [Block | _]}, _From) ->
 	ar_node_state:update(SPid, [
 		{hash_list, [Block#block.indep_hash | Block#block.hash_list]},
 		{wallet_list, Block#block.wallet_list},
@@ -139,36 +139,36 @@ handle(SPid, {set_reward_addr, Addr}, _Send) ->
 		{reward_addr, Addr}
 	]),
 	{ok, set_reward_addr};
-handle(SPid, {add_peers, Peers}, _Sender) ->
-	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+handle(SPid, {add_peers, Peers}, _From) ->
+	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	ar_node_state:update(SPid, [
-		{gossip, ar_gossip:add_peers(Gossip, Peers)}
+		{gossip, ar_gossip:add_peers(GS, Peers)}
 	]),
 	{ok, add_peers};
-handle(SPid, {set_loss_probability, Prob}, _Sender) ->
-	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+handle(SPid, {set_loss_probability, Prob}, _From) ->
+	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	ar_node_state:update(SPid, [
-		{gossip, ar_gossip:set_loss_probability(Gossip, Prob)}
+		{gossip, ar_gossip:set_loss_probability(GS, Prob)}
 	]),
 	{ok, set_loss_probability};
-handle(SPid, {set_delay, MaxDelay}, _Sender) ->
-	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+handle(SPid, {set_delay, MaxDelay}, _From) ->
+	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	ar_node_state:update(SPid, [
-		{gossip, ar_gossip:set_delay(Gossip, MaxDelay)}
+		{gossip, ar_gossip:set_delay(GS, MaxDelay)}
 	]),
 	{ok, set_delay};
-handle(SPid, {set_xfer_speed, Speed}, _Sender) ->
-	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+handle(SPid, {set_xfer_speed, Speed}, _From) ->
+	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	ar_node_state:update(SPid, [
-		{gossip, ar_gossip:set_xfer_speed(Gossip, Speed)}
+		{gossip, ar_gossip:set_xfer_speed(GS, Speed)}
 	]),
 	{ok, set_xfer_speed};
-handle(SPid, {set_mining_delay, Delay}, _Sender) ->
+handle(SPid, {set_mining_delay, Delay}, _From) ->
 	ar_node_state:update(SPid, [
 		{mining_delay, Delay}
 	]),
 	{ok, set_mining_delay};
-handle(_SPid, Msg, _Sender) ->
+handle(_SPid, Msg, _From) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
 %%%
@@ -176,13 +176,13 @@ handle(_SPid, Msg, _Sender) ->
 %%%
 
 %% @doc Add new transaction to a server state.
-add_tx(StateIn, TX, Sender) ->
+add_tx(StateIn, TX, From) ->
 	#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
 	case ar_node_utils:get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
 		[] ->
 			timer:send_after(
 				ar_node:calculate_delay(byte_size(TX#tx.data)),
-				Sender,
+				From,
 				{apply_tx, TX}
 			),
 			{ok , [
@@ -196,13 +196,13 @@ add_tx(StateIn, TX, Sender) ->
 			]}
 	end.
 
-add_tx(StateIn, TX, NewGS, Sender) ->
+add_tx(StateIn, TX, NewGS, From) ->
 	#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
 	case ar_node_utils:get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
 		[] ->
 			timer:send_after(
 				ar_node:calculate_delay(byte_size(TX#tx.data)),
-				Sender,
+				From,
 				{apply_tx, TX}
 			),
 			{ok, [

@@ -64,9 +64,9 @@ update_and_lookup_success(_Config) ->
 	#{a := 1, c := 3} = V1,
 	ok = ar_node_state:update(Pid, {f, [1, 2, 3, 4, 5]}),
 	{ok, V2} = ar_node_state:lookup(Pid, f),
-	#{f := [1, 2, 3, 4, 5]} = V2,
+	[1, 2, 3, 4, 5] = V2,
 	{ok, V3} = ar_node_state:lookup(Pid, zz),
-	#{zz := undefined} = V3,
+	undefined = V3,
 	{ok, V4} = ar_node_state:lookup(Pid, [c, a, zz, f]),
 	#{a := 1, c := 3, f := [1, 2, 3, 4, 5], zz := undefined} = V4,
 	ok = ar_node_state:stop(Pid).
@@ -83,7 +83,7 @@ update_fail(_Config) ->
 %% @doc Failing lookups.
 lookup_fail(_Config) ->
 	{ok, Pid} = ar_node_state:start(),
-	{error, {invalid_node_state_keys, [1]}} =
+	{error, {invalid_node_state_command, {lookup, 1}}} =
 		ar_node_state:lookup(Pid, 1),
 	{error, {invalid_node_state_keys, [a, b, {invalid}]}} =
 		ar_node_state:lookup(Pid, [a, b, {invalid}]),

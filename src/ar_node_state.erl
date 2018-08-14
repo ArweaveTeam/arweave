@@ -66,17 +66,16 @@ all(Pid) ->
 			{error, timeout}
 	end.
 
-%% @doc Get one or more values from state, the return is a map of the
-%% keys and values. Non-existant keys will return 'undefined' as value.
-%% The operation is atomic, all needed values must be retrieved with
-%% one call. Between calls the state may change.
+%% @doc Get one or more values from state. In case of a single key
+%% it will be returned as {ok, Value}, a non-existant key will return
+%% {ok, undefined}. A list of keys will be returned as a map of
+%% keys and values. The operation is atomic, all needed values must
+%% be retrieved with one call. Between calls the state may change.
 lookup(Pid, Keys) ->
 	Pid ! {lookup, Keys, self()},
 	receive
-		{ok, Values} ->
-			{ok, Values};
-		{error, Error} ->
-			{error, Error}
+		Reply ->
+			Reply
 	after
 		5000 ->
 			{error, timeout}
@@ -88,10 +87,8 @@ lookup(Pid, Keys) ->
 update(Pid, KeyValues) ->
 	Pid ! {update, KeyValues, self()},
 	receive
-		ok ->
-			ok;
-		{error, Error} ->
-			{error, Error}
+		Reply ->
+			Reply
 	after
 		5000 ->
 			{error, timeout}
@@ -104,10 +101,10 @@ update(Pid, KeyValues) ->
 %% @doc Main server loop.
 server(Tid) ->
 	receive
-		{Command, KeyValues, Sender} ->
+		{Command, KeyValues, From} ->
 			try handle(Tid, Command, KeyValues) of
 				Result ->
-					Sender ! Result,
+					From ! Result,
 					server(Tid)
 			catch
 				throw:Term ->
@@ -142,8 +139,11 @@ handle(Tid, lookup, Keys) when is_list(Keys) ->
 		_ ->
 			{error, {invalid_node_state_keys, Keys}}
 	end;
-handle(Tid, lookup, Key) ->
-	handle(Tid, lookup, [Key]);
+handle(Tid, lookup, Key) when is_atom(Key) ->
+	case ets:lookup(Tid, Key) of
+		[{Key, Value}] -> {ok, Value};
+		[]             -> {ok, undefined}
+	end;
 handle(_Tid, update, []) ->
 	ok;
 handle(Tid, update, KeyValues) when is_list(KeyValues) ->
@@ -160,8 +160,8 @@ handle(Tid, update, KeyValues) when is_map(KeyValues) ->
 	handle(Tid, update, maps:to_list(KeyValues));
 handle(_Tid, update, Any) ->
 	{error, {invalid_node_state_values, Any}};
-handle(_Tid, Command, _KeyValues) ->
-	{error, {invalid_node_state_command, Command}}.
+handle(_Tid, Command, Args) ->
+	{error, {invalid_node_state_command, {Command, Args}}}.
 
 %%%
 %%% EOF
