@@ -176,7 +176,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			{ok, SPid} = ar_node_state:start(),
 			{ok, WPid} = ar_node_worker:start(SPid),
 
-			ar_node_state:update(SPid, [
+			ok = ar_node_state:update(SPid, [
 				{gossip, Gossip},
 				{hash_list, HashList},
 				{wallet_list, Hashes},

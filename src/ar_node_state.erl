@@ -149,7 +149,7 @@ handle(_Tid, update, []) ->
 handle(Tid, update, KeyValues) when is_list(KeyValues) ->
 	case lists:all(fun({Key, _Value}) -> is_atom(Key) end, KeyValues) of
 		true ->
-			ets:insert_new(Tid, KeyValues),
+			ets:insert(Tid, KeyValues),
 			ok;
 		_ ->
 			{error, {invalid_node_state_keys, KeyValues}}

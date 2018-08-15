@@ -23,7 +23,17 @@ all() ->
 groups() ->
 	[
 		{old, [sequence], [
-			tiny_network_with_reward_pool_test
+			tiny_network_with_reward_pool_test,
+			filter_out_of_order_txs_test_slow,
+			filter_out_of_order_txs_large_test_slow,
+			filter_all_out_of_order_txs_test_slow,
+			filter_all_out_of_order_txs_large_test_slow,
+			get_current_block_test,
+			add_block_test,
+			add_bogus_block_test,
+			add_bogus_block_nonce_test,
+			add_bogus_hash_list_test,
+			tiny_blockweave_with_mining_test
 		]}
 	].
 
@@ -69,16 +79,16 @@ filter_out_of_order_txs_test_slow() ->
 		],
 	% TX1 applied, TX2 applied
 	{_, [SignedTX2, SignedTX]} =
-		filter_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX2]
-			),
+		ar_node_utils:filter_out_of_order_txs(
+			WalletList,
+			[SignedTX, SignedTX2]
+		),
 	% TX2 disregarded, TX1 applied
 	{_, [SignedTX]} =
-		filter_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX]
-			).
+		ar_node_utils:filter_out_of_order_txs(
+			WalletList,
+			[SignedTX2, SignedTX]
+		).
 
 %% @doc Ensure that a large set of txs can be checked for serialization,
 %% those that don't serialize disregarded.
@@ -101,22 +111,22 @@ filter_out_of_order_txs_large_test_slow() ->
 		],
 	% TX1 applied, TX2 applied, TX3 applied
 	{_, [SignedTX3, SignedTX2, SignedTX]} =
-		filter_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX2, SignedTX3]
-			),
+		ar_node_utils:filter_out_of_order_txs(
+			WalletList,
+			[SignedTX, SignedTX2, SignedTX3]
+		),
 	% TX2 disregarded, TX3 disregarded, TX1 applied
 	{_, [SignedTX]} =
-		filter_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX3, SignedTX]
-			),
+		ar_node_utils:filter_out_of_order_txs(
+			WalletList,
+			[SignedTX2, SignedTX3, SignedTX]
+		),
 	% TX1 applied, TX3 disregarded, TX2 applied.
 	{_, [SignedTX2, SignedTX]} =
-		filter_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX3, SignedTX2]
-			).
+		ar_node_utils:filter_out_of_order_txs(
+			WalletList,
+			[SignedTX, SignedTX3, SignedTX2]
+		).
 
 %% @doc Ensure that a set of txs can be serialized in the best possible order.
 filter_all_out_of_order_txs_test_slow() ->
@@ -136,16 +146,16 @@ filter_all_out_of_order_txs_test_slow() ->
 		],
 	% TX1 applied, TX2 applied
 	[SignedTX, SignedTX2] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX2]
-			),
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX, SignedTX2]
+		),
 	% TX2 applied, TX1 applied
 	[SignedTX, SignedTX2] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX]
-			).
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX2, SignedTX]
+		).
 
 %% @doc Ensure that a large set of txs can be serialized in the best
 %% possible order.
@@ -170,55 +180,55 @@ filter_all_out_of_order_txs_large_test_slow() ->
 		],
 	% TX1 applied, TX2 applied, TX3 applied
 	[SignedTX, SignedTX2, SignedTX3] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX2, SignedTX3]
-			),
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX, SignedTX2, SignedTX3]
+		),
 	% TX1 applied, TX3 applied, TX2 applied
 	[SignedTX, SignedTX2, SignedTX3] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX3, SignedTX2]
-			),
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX, SignedTX3, SignedTX2]
+		),
 	% TX2 applied, TX1 applied, TX3 applied
 	[SignedTX, SignedTX2, SignedTX3] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX, SignedTX3]
-			),
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX2, SignedTX, SignedTX3]
+		),
 	% TX2 applied, TX3 applied, TX1 applied
 	[SignedTX, SignedTX2, SignedTX3] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX3, SignedTX]
-			),
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX2, SignedTX3, SignedTX]
+		),
 	% TX3 applied, TX1 applied, TX2 applied
 	[SignedTX, SignedTX2, SignedTX3] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX3, SignedTX, SignedTX2]
-			),
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX3, SignedTX, SignedTX2]
+		),
 	% TX3 applied, TX2 applied, TX1 applied
 	[SignedTX, SignedTX2, SignedTX3] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX3, SignedTX2, SignedTX]
-			),
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX3, SignedTX2, SignedTX]
+		),
 	% TX1 applied, TX1 duplicate, TX1 duplicate, TX2 applied, TX4 applied
 	% TX1 duplicate, TX3 applied
 	% NB: Consider moving into separate test.
 	[SignedTX, SignedTX2, SignedTX4, SignedTX3] =
-		filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX4, SignedTX, SignedTX3]
-			).
+		ar_node_utils:filter_all_out_of_order_txs(
+			WalletList,
+			[SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX4, SignedTX, SignedTX3]
+		).
 
 %% @doc Check the current block can be retrieved
 get_current_block_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
-	B0 = get_current_block(Node).
+	B0 = ar_node:get_current_block(Node).
 
 %% @doc Check that blocks can be added (if valid) by external processes.
 add_block_test() ->
@@ -226,10 +236,10 @@ add_block_test() ->
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
 	[B1 | _] = ar_weave:add([B0]),
-	add_block(Node1, B1, B0),
+	ar_node:add_block(Node1, B1, B0),
 	receive after 500 -> ok end,
 	Blocks = lists:map(fun(B) -> B#block.indep_hash end, [B1, B0]),
-	Blocks = get_blocks(Node1).
+	Blocks = ar_node:get_blocks(Node1).
 
 %% @doc Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
@@ -257,7 +267,7 @@ add_bogus_block_test() ->
 			self(),
 			(hd(B2))#block.height,
 			(hd(B2))#block { hash = <<"INCORRECT">> },
-			find_recall_block(B2)
+			ar_node_utils:find_recall_block(B2)
 		}),
 	receive after 500 -> ok end,
 	Node ! {get_blocks, self()},
@@ -292,7 +302,7 @@ add_bogus_block_nonce_test() ->
 			self(),
 			(hd(B2))#block.height,
 			(hd(B2))#block { nonce = <<"INCORRECT">> },
-			find_recall_block(B2)
+			ar_node_utils:find_recall_block(B2)
 		}
 	),
 	receive after 500 -> ok end,
@@ -300,7 +310,6 @@ add_bogus_block_nonce_test() ->
 	receive
 		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
 	end.
-
 
 %% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
 add_bogus_hash_list_test() ->
@@ -330,7 +339,7 @@ add_bogus_hash_list_test() ->
 				hash_list =
 					[<<"INCORRECT HASH">> | tl((hd(B2))#block.hash_list)]
 			},
-			find_recall_block(B2)
+			ar_node_utils:find_recall_block(B2)
 		}),
 	receive after 500 -> ok end,
 	Node ! {get_blocks, self()},
@@ -342,13 +351,13 @@ add_bogus_hash_list_test() ->
 tiny_blockweave_with_mining_test() ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([]),
-	Node1 = start([], B0),
+	Node1 = ar_node:start([], B0),
 	ar_storage:write_block(B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	mine(Node1),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1),
 	receive after 1000 -> ok end,
-	B1 = get_blocks(Node2),
+	B1 = ar_nodes:et_blocks(Node2),
 	1 = (hd(ar_storage:read_block(B1)))#block.height.
 
 %% @doc Ensure that the network add data and have it mined into blocks.

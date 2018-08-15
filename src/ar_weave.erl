@@ -132,7 +132,7 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, Recal
     );
 add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
     % ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
-    RecallB = ar_node:find_recall_block(HashList),
+    RecallB = ar_node_utils:find_recall_block(HashList),
     TXs = [T#tx.id || T <- RawTXs],
     BlockSize = lists:foldl(
             fun(TX, Acc) ->
