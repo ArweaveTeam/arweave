@@ -59,7 +59,7 @@ groups() ->
 %%%
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
-tiny_network_with_reward_pool_test() ->
+tiny_network_with_reward_pool_test(_Config) ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
 	Node1 = ar_node:start([], B0),
@@ -77,7 +77,7 @@ tiny_network_with_reward_pool_test() ->
 
 %% @doc Ensure that a set of txs can be checked for serialization, those that
 %% don't serialize disregarded.
-filter_out_of_order_txs_test_slow() ->
+filter_out_of_order_txs_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -109,7 +109,7 @@ filter_out_of_order_txs_test_slow() ->
 
 %% @doc Ensure that a large set of txs can be checked for serialization,
 %% those that don't serialize disregarded.
-filter_out_of_order_txs_large_test_slow() ->
+filter_out_of_order_txs_large_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -146,7 +146,7 @@ filter_out_of_order_txs_large_test_slow() ->
 		).
 
 %% @doc Ensure that a set of txs can be serialized in the best possible order.
-filter_all_out_of_order_txs_test_slow() ->
+filter_all_out_of_order_txs_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -176,7 +176,7 @@ filter_all_out_of_order_txs_test_slow() ->
 
 %% @doc Ensure that a large set of txs can be serialized in the best
 %% possible order.
-filter_all_out_of_order_txs_large_test_slow() ->
+filter_all_out_of_order_txs_large_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
@@ -241,14 +241,14 @@ filter_all_out_of_order_txs_large_test_slow() ->
 		).
 
 %% @doc Check the current block can be retrieved
-get_current_block_test() ->
+get_current_block_test(_Config) ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	B0 = ar_node:get_current_block(Node).
 
 %% @doc Check that blocks can be added (if valid) by external processes.
-add_block_test() ->
+add_block_test(_Config) ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	Node1 = ar_node:start([], [B0]),
@@ -259,7 +259,7 @@ add_block_test() ->
 	Blocks = ar_node:get_blocks(Node1).
 
 %% @doc Ensure that bogus blocks are not accepted onto the network.
-add_bogus_block_test() ->
+add_bogus_block_test(_Config) ->
 	ar_storage:clear(),
 	ar_storage:write_tx(
 		[
@@ -295,7 +295,7 @@ add_bogus_block_test() ->
 
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto
 %% the network.
-add_bogus_block_nonce_test() ->
+add_bogus_block_nonce_test(_Config) ->
 	ar_storage:clear(),
 	ar_storage:write_tx(
 		[
@@ -329,7 +329,7 @@ add_bogus_block_nonce_test() ->
 	end.
 
 %% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
-add_bogus_hash_list_test() ->
+add_bogus_hash_list_test(_Config) ->
 	ar_storage:clear(),
 	ar_storage:write_tx(
 		[
@@ -365,7 +365,7 @@ add_bogus_hash_list_test() ->
 	end.
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
-tiny_blockweave_with_mining_test() ->
+tiny_blockweave_with_mining_test(_Config) ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([]),
 	Node1 = ar_node:start([], B0),
@@ -378,7 +378,7 @@ tiny_blockweave_with_mining_test() ->
 	1 = (hd(ar_storage:read_block(B1)))#block.height.
 
 %% @doc Ensure that the network add data and have it mined into blocks.
-tiny_blockweave_with_added_data_test() ->
+tiny_blockweave_with_added_data_test(_Config) ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	ar_storage:write_tx(TestData),
@@ -397,7 +397,7 @@ tiny_blockweave_with_added_data_test() ->
 
 %% @doc Test that a slightly larger network is able to receive data and
 %% propogate data and blocks.
-large_blockweave_with_data_test_slow() ->
+large_blockweave_with_data_test_slow(_Config) ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	ar_storage:write_tx(TestData),
@@ -414,7 +414,7 @@ large_blockweave_with_data_test_slow() ->
 
 %% @doc Test that large networks (500 nodes) with only 1% connectivity
 %% still function correctly.
-large_weakly_connected_blockweave_with_data_test_slow() ->
+large_weakly_connected_blockweave_with_data_test_slow(_Config) ->
 	ar_storage:clear(),
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	ar_storage:write_tx(TestData),
@@ -431,7 +431,7 @@ large_weakly_connected_blockweave_with_data_test_slow() ->
 
 %% @doc Ensure that the network can add multiple peices of data and have
 %% it mined into blocks.
-medium_blockweave_mine_multiple_data_test_slow() ->
+medium_blockweave_mine_multiple_data_test_slow(_Config) ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
 	{_Priv3, Pub3} = ar_wallet:new(),
@@ -460,7 +460,7 @@ medium_blockweave_mine_multiple_data_test_slow() ->
 		).
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
-medium_blockweave_multi_mine_test() ->
+medium_blockweave_multi_mine_test(_Config) ->
 	ar_storage:clear(),
 	TestData1 = ar_tx:new(<<"TEST DATA1">>),
 	ar_storage:write_tx(TestData1),
@@ -486,7 +486,7 @@ medium_blockweave_multi_mine_test() ->
 
 %% @doc Setup a network, mine a block, cause one node to forget that block.
 %% Ensure that the 'truncated' node can still verify and accept new blocks.
-tiny_collaborative_blockweave_mining_test() ->
+tiny_collaborative_blockweave_mining_test(_Config) ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([]),
 	Node1 = ar_node:start([], B0),
@@ -503,7 +503,7 @@ tiny_collaborative_blockweave_mining_test() ->
 	3 = (hd(ar_storage:read_block(B3)))#block.height.
 
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
-mining_reward_test() ->
+mining_reward_test(_Config) ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Node1 = ar_node:start([], ar_weave:init([]), 0, ar_wallet:to_address(Pub1)),
@@ -512,7 +512,7 @@ mining_reward_test() ->
 	true = (ar_node:get_balance(Node1, Pub1) > 0).
 
 %% @doc Check that other nodes accept a new block and associated mining reward.
-multi_node_mining_reward_test() ->
+multi_node_mining_reward_test(_Config) ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Node1 = ar_node:start([], B0 = ar_weave:init([])),
@@ -523,7 +523,7 @@ multi_node_mining_reward_test() ->
 
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
-wallet_transaction_test_slow() ->
+wallet_transaction_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -542,7 +542,7 @@ wallet_transaction_test_slow() ->
 	?AR(9000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
-wallet_two_transaction_test_slow() ->
+wallet_two_transaction_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
@@ -571,7 +571,7 @@ wallet_two_transaction_test_slow() ->
 
 %% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
 %% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
-single_wallet_double_tx_before_mine_test_slow() ->
+single_wallet_double_tx_before_mine_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -602,7 +602,7 @@ single_wallet_double_tx_before_mine_test_slow() ->
 %% NOTE: The current behaviour (out of order TXs get dropped)
 %% is not necessarily the behaviour we want, but we should keep
 %% track of it.
-single_wallet_double_tx_wrong_order_test_slow() ->
+single_wallet_double_tx_wrong_order_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -629,7 +629,7 @@ single_wallet_double_tx_wrong_order_test_slow() ->
 	length(CurrentB#block.txs) == 1.
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
-tx_threading_test_slow() ->
+tx_threading_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -654,7 +654,7 @@ tx_threading_test_slow() ->
 	?AR(2000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Ensure that TX Id threading functions correctly (in the negative case).
-bogus_tx_thread_test_slow() ->
+bogus_tx_thread_test_slow(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -677,7 +677,7 @@ bogus_tx_thread_test_slow() ->
 	?AR(1000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Ensure that TX replay attack mitigation works.
-replay_attack_test() ->
+replay_attack_test(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -698,7 +698,7 @@ replay_attack_test() ->
 	?AR(1000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Ensure last_tx functions after block mine.
-last_tx_test() ->
+last_tx_test(_Config) ->
 	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -717,7 +717,7 @@ last_tx_test() ->
 	ID = ar_node:get_last_tx(Node2, Pub1).
 
 %% @doc Ensure that rejoining functionality works
-rejoin_test() ->
+rejoin_test(_Config) ->
 	ar_storage:clear(),
 	B0 = ar_weave:init(),
 	Node1 = ar_node:start([], B0),
