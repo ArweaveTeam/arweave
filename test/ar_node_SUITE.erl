@@ -33,7 +33,24 @@ groups() ->
 			add_bogus_block_test,
 			add_bogus_block_nonce_test,
 			add_bogus_hash_list_test,
-			tiny_blockweave_with_mining_test
+			tiny_blockweave_with_mining_test,
+			tiny_blockweave_with_added_data_test,
+			large_blockweave_with_data_test_slow,
+			large_weakly_connected_blockweave_with_data_test_slow,
+			medium_blockweave_mine_multiple_data_test_slow,
+			medium_blockweave_multi_mine_test,
+			tiny_collaborative_blockweave_mining_test,
+			mining_reward_test,
+			multi_node_mining_reward_test,
+			wallet_transaction_test_slow,
+			wallet_two_transaction_test_slow,
+			single_wallet_double_tx_before_mine_test_slow,
+			single_wallet_double_tx_wrong_order_test_slow,
+			tx_threading_test_slow,
+			bogus_tx_thread_test_slow,
+			replay_attack_test,
+			last_tx_test,
+			rejoin_test
 		]}
 	].
 
@@ -367,14 +384,14 @@ tiny_blockweave_with_added_data_test() ->
 	ar_storage:write_tx(TestData),
 	B0 = ar_weave:init([]),
 	ar_storage:write_block(B0),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node2, TestData),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node2, TestData),
 	receive after 1000 -> ok end,
-	mine(Node1),
+	ar_node:mine(Node1),
 	receive after 1000 -> ok end,
-	B1 = get_blocks(Node2),
+	B1 = ar_node:get_blocks(Node2),
 	TestDataID	= TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
@@ -385,13 +402,13 @@ large_blockweave_with_data_test_slow() ->
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	ar_storage:write_tx(TestData),
 	B0 = ar_weave:init([]),
-	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
-	[ add_peers(Node, ar_util:pick_random(Nodes, 100)) || Node <- Nodes ],
-	add_tx(ar_util:pick_random(Nodes), TestData),
+	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 200) ],
+	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 100)) || Node <- Nodes ],
+	ar_node:add_tx(ar_util:pick_random(Nodes), TestData),
 	receive after 2500 -> ok end,
-	mine(ar_util:pick_random(Nodes)),
+	ar_node:mine(ar_util:pick_random(Nodes)),
 	receive after 2500 -> ok end,
-	B1 = get_blocks(ar_util:pick_random(Nodes)),
+	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID	= TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
@@ -402,13 +419,13 @@ large_weakly_connected_blockweave_with_data_test_slow() ->
 	TestData = ar_tx:new(<<"TEST DATA">>),
 	ar_storage:write_tx(TestData),
 	B0 = ar_weave:init([]),
-	Nodes = [ start([], B0) || _ <- lists:seq(1, 200) ],
-	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
-	add_tx(ar_util:pick_random(Nodes), TestData),
+	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 200) ],
+	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+	ar_node:add_tx(ar_util:pick_random(Nodes), TestData),
 	receive after 2500 -> ok end,
-	mine(ar_util:pick_random(Nodes)),
+	ar_node:mine(ar_util:pick_random(Nodes)),
 	receive after 2500 -> ok end,
-	B1 = get_blocks(ar_util:pick_random(Nodes)),
+	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID	= TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
@@ -423,14 +440,14 @@ medium_blockweave_mine_multiple_data_test_slow() ->
 	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
 	B0 = ar_weave:init([]),
-	Nodes = [ start([], B0) || _ <- lists:seq(1, 50) ],
-	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
-	add_tx(ar_util:pick_random(Nodes), SignedTX),
-	add_tx(ar_util:pick_random(Nodes), SignedTX2),
+	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
+	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+	ar_node:add_tx(ar_util:pick_random(Nodes), SignedTX),
+	ar_node:add_tx(ar_util:pick_random(Nodes), SignedTX2),
 	receive after 1500 -> ok end,
-	mine(ar_util:pick_random(Nodes)),
+	ar_node:mine(ar_util:pick_random(Nodes)),
 	receive after 1250 -> ok end,
-	B1 = get_blocks(ar_util:pick_random(Nodes)),
+	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 	true =
 		lists:member(
 			SignedTX#tx.id,
@@ -450,18 +467,18 @@ medium_blockweave_multi_mine_test() ->
 	TestData2 = ar_tx:new(<<"TEST DATA2">>),
 	ar_storage:write_tx(TestData2),
 	B0 = ar_weave:init([]),
-	Nodes = [ start([], B0) || _ <- lists:seq(1, 50) ],
-	[ add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
-	add_tx(ar_util:pick_random(Nodes), TestData1),
+	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
+	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+	ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
 	receive after 1000 -> ok end,
-	mine(ar_util:pick_random(Nodes)),
+	ar_node:mine(ar_util:pick_random(Nodes)),
 	receive after 1000 -> ok end,
-	B1 = get_blocks(ar_util:pick_random(Nodes)),
-	add_tx(ar_util:pick_random(Nodes), TestData2),
+	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+	ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
 	receive after 1000 -> ok end,
-	mine(ar_util:pick_random(Nodes)),
+	ar_node:mine(ar_util:pick_random(Nodes)),
 	receive after 1000 -> ok end,
-	B2 = get_blocks(ar_util:pick_random(Nodes)),
+	B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID1 = TestData1#tx.id,
 	TestDataID2 = TestData2#tx.id,
 	[TestDataID1] = (hd(ar_storage:read_block(B1)))#block.txs,
@@ -472,38 +489,37 @@ medium_blockweave_multi_mine_test() ->
 tiny_collaborative_blockweave_mining_test() ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([]),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	mine(Node1), % Mine B1
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	mine(Node1), % Mine B2
+	ar_node:mine(Node1), % Mine B2
 	receive after 500 -> ok end,
-	truncate(Node1),
-	mine(Node2), % Mine B3
+	ar_node:truncate(Node1),
+	ar_node:mine(Node2), % Mine B3
 	receive after 500 -> ok end,
-	B3 = get_blocks(Node1),
+	B3 = ar_node:get_blocks(Node1),
 	3 = (hd(ar_storage:read_block(B3)))#block.height.
-
 
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
 mining_reward_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Node1 = start([], ar_weave:init([]), 0, ar_wallet:to_address(Pub1)),
-	mine(Node1),
+	Node1 = ar_node:start([], ar_weave:init([]), 0, ar_wallet:to_address(Pub1)),
+	ar_node:mine(Node1),
 	receive after 1000 -> ok end,
-	true = (get_balance(Node1, Pub1) > 0).
+	true = (ar_node:get_balance(Node1, Pub1) > 0).
 
 %% @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test() ->
 	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Node1 = start([], B0 = ar_weave:init([])),
-	Node2 = start([Node1], B0, 0, ar_wallet:to_address(Pub1)),
-	mine(Node2),
+	Node1 = ar_node:start([], B0 = ar_weave:init([])),
+	Node2 = ar_node:start([Node1], B0, 0, ar_wallet:to_address(Pub1)),
+	ar_node:mine(Node2),
 	receive after 1000 -> ok end,
-	true = (get_balance(Node1, Pub1) > 0).
+	true = (ar_node:get_balance(Node1, Pub1) > 0).
 
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
@@ -514,16 +530,16 @@ wallet_transaction_test_slow() ->
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node1, SignedTX),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
 	receive after 300 -> ok end,
 	ar_storage:write_tx(SignedTX),
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 300 -> ok end,
-	?AR(999) = get_balance(Node2, Pub1),
-	?AR(9000) = get_balance(Node2, Pub2).
+	?AR(999) = ar_node:get_balance(Node2, Pub1),
+	?AR(9000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
 wallet_two_transaction_test_slow() ->
@@ -536,22 +552,22 @@ wallet_two_transaction_test_slow() ->
 	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node1, SignedTX),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
 	ar_storage:write_tx([SignedTX]),
 	receive after 300 -> ok end,
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 1000 -> ok end,
-	add_tx(Node2, SignedTX2),
+	ar_node:add_tx(Node2, SignedTX2),
 	ar_storage:write_tx([SignedTX2]),
 	receive after 1000 -> ok end,
-	mine(Node2), % Mine B2
+	ar_node:mine(Node2), % Mine B2
 	receive after 300 -> ok end,
-	?AR(999) = get_balance(Node1, Pub1),
-	?AR(8499) = get_balance(Node1, Pub2),
-	?AR(500) = get_balance(Node1, Pub3).
+	?AR(999) = ar_node:get_balance(Node1, Pub1),
+	?AR(8499) = ar_node:get_balance(Node1, Pub2),
+	?AR(500) = ar_node:get_balance(Node1, Pub3).
 
 %% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
 %% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
@@ -567,20 +583,20 @@ single_wallet_double_tx_before_mine_test_slow() ->
 	TX2 = OrphanedTX2#tx { owner = Pub1, last_tx = SignedTX#tx.id },
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node1, SignedTX),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
 	ar_storage:write_tx([SignedTX]),
 	receive after 500 -> ok end,
-	add_tx(Node1, SignedTX2),
+	ar_node:add_tx(Node1, SignedTX2),
 	ar_storage:write_tx([SignedTX2]),
 	receive after 500 -> ok end,
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	?AR(4999) = get_balance(Node2, Pub1),
-	?AR(5000) = get_balance(Node2, Pub2),
-	?AR(0) = get_balance(Node2, Pub3).
+	?AR(4999) = ar_node:get_balance(Node2, Pub1),
+	?AR(5000) = ar_node:get_balance(Node2, Pub2),
+	?AR(0) = ar_node:get_balance(Node2, Pub3).
 
 %% @doc Verify the behaviour of out of order TX submission.
 %% NOTE: The current behaviour (out of order TXs get dropped)
@@ -596,22 +612,21 @@ single_wallet_double_tx_wrong_order_test_slow() ->
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node1, SignedTX2),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX2),
 	receive after 500 -> ok end,
-	add_tx(Node1, SignedTX),
+	ar_node:add_tx(Node1, SignedTX),
 	ar_storage:write_tx([SignedTX]),
 	receive after 500 -> ok end,
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 200 -> ok end,
-	?AR(4999) = get_balance(Node2, Pub1),
-	?AR(5000) = get_balance(Node2, Pub2),
-	?AR(0) = get_balance(Node2, Pub3),
-	CurrentB = get_current_block(whereis(http_entrypoint_node)),
+	?AR(4999) = ar_node:get_balance(Node2, Pub1),
+	?AR(5000) = ar_node:get_balance(Node2, Pub2),
+	?AR(0) = ar_node:get_balance(Node2, Pub3),
+	CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	length(CurrentB#block.txs) == 1.
-
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test_slow() ->
@@ -623,20 +638,20 @@ tx_threading_test_slow() ->
 	TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), SignedTX#tx.id),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node1, SignedTX),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
 	ar_storage:write_tx([SignedTX,SignedTX2]),
 	receive after 500 -> ok end,
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 300 -> ok end,
-	add_tx(Node1, SignedTX2),
+	ar_node:add_tx(Node1, SignedTX2),
 	receive after 500 -> ok end,
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 1000 -> ok end,
-	?AR(7998) = get_balance(Node2, Pub1),
-	?AR(2000) = get_balance(Node2, Pub2).
+	?AR(7998) = ar_node:get_balance(Node2, Pub1),
+	?AR(2000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Ensure that TX Id threading functions correctly (in the negative case).
 bogus_tx_thread_test_slow() ->
@@ -648,18 +663,18 @@ bogus_tx_thread_test_slow() ->
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node1, SignedTX),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
 	ar_storage:write_tx([SignedTX,SignedTX2]),
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	add_tx(Node1, SignedTX2),
-	mine(Node1), % Mine B1
+	ar_node:add_tx(Node1, SignedTX2),
+	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	?AR(8999) = get_balance(Node2, Pub1),
-	?AR(1000) = get_balance(Node2, Pub2).
+	?AR(8999) = ar_node:get_balance(Node2, Pub1),
+	?AR(1000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Ensure that TX replay attack mitigation works.
 replay_attack_test() ->
@@ -669,18 +684,18 @@ replay_attack_test() ->
 	TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node1, SignedTX),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
 	ar_storage:write_tx(SignedTX),
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	add_tx(Node1, SignedTX),
-	mine(Node1), % Mine B1
+	ar_node:add_tx(Node1, SignedTX),
+	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	?AR(8999) = get_balance(Node2, Pub1),
-	?AR(1000) = get_balance(Node2, Pub2).
+	?AR(8999) = ar_node:get_balance(Node2, Pub1),
+	?AR(1000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Ensure last_tx functions after block mine.
 last_tx_test() ->
@@ -691,29 +706,29 @@ last_tx_test() ->
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	ID = SignedTX#tx.id,
 	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	add_peers(Node1, Node2),
-	add_tx(Node1, SignedTX),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
 	ar_storage:write_tx(SignedTX),
 	receive after 500 -> ok end,
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	ID = get_last_tx(Node2, Pub1).
+	ID = ar_node:get_last_tx(Node2, Pub1).
 
 %% @doc Ensure that rejoining functionality works
 rejoin_test() ->
 	ar_storage:clear(),
 	B0 = ar_weave:init(),
-	Node1 = start([], B0),
-	Node2 = start([Node1], B0),
-	mine(Node2), % Mine B1
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:mine(Node2), % Mine B1
 	receive after 500 -> ok end,
-	mine(Node1), % Mine B1
+	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	rejoin(Node2, []),
+	ar_node:rejoin(Node2, []),
 	timer:sleep(500),
-	get_blocks(Node1) == get_blocks(Node2).
+	ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2).
 
 %%%
 %%% EOF
