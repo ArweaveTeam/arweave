@@ -38,7 +38,7 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
             fun(T) ->
                 ar_tx:verify(T, Diff, CurrentB#block.wallet_list)
             end,
-            ar_node:filter_all_out_of_order_txs(
+            ar_node_utils:filter_all_out_of_order_txs(
                 CurrentB#block.wallet_list, RawTXs
             )
         ),
@@ -121,7 +121,7 @@ server(
                     fun(T) ->
                         ar_tx:verify(T, Diff, CurrentB#block.wallet_list)
                     end,
-                    ar_node:filter_all_out_of_order_txs(
+                    ar_node_utils:filter_all_out_of_order_txs(
                         CurrentB#block.wallet_list, RawTXs
                     )
                 ),

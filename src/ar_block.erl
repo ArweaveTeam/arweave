@@ -259,19 +259,19 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
             TXs
         ),
     {FinderReward, RewardPool} =
-        ar_node:calculate_reward_pool(
+        ar_node_utils:calculate_reward_pool(
             CurrentB#block.reward_pool,
             TXs,
             RewardAddr,
-            ar_node:calculate_proportion(
+            ar_node_utils:calculate_proportion(
                 RecallB#block.block_size,
                 WeaveSize,
                 CurrentB#block.height + 1
             )
         ),
     NewWalletList =
-        ar_node:apply_mining_reward(
-            ar_node:apply_txs(CurrentB#block.wallet_list, TXs),
+        ar_node_utils:apply_mining_reward(
+            ar_node_utils:apply_txs(CurrentB#block.wallet_list, TXs),
             RewardAddr,
             FinderReward,
             length(CurrentB#block.hash_list) - 1
@@ -382,11 +382,11 @@ verify_block_hash_list(NewB, OldB) ->
 %% (old) blocks wallet_list and reward pool.
 verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
     {FinderReward, RewardPool} =
-        ar_node:calculate_reward_pool(
+        ar_node_utils:calculate_reward_pool(
             OldB#block.reward_pool,
             NewTXs,
             NewB#block.reward_addr,
-            ar_node:calculate_proportion(
+            ar_node_utils:calculate_proportion(
                 RecallB#block.block_size,
                 NewB#block.weave_size,
                 length(NewB#block.hash_list)
@@ -407,8 +407,8 @@ verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
     ),
     (NewB#block.reward_pool == RewardPool) and
 	((NewB#block.wallet_list) ==
-        ar_node:apply_mining_reward(
-			ar_node:apply_txs(OldB#block.wallet_list, NewTXs),
+        ar_node_utils:apply_mining_reward(
+			ar_node_utils:apply_txs(OldB#block.wallet_list, NewTXs),
 			NewB#block.reward_addr,
 			FinderReward,
             NewB#block.height
@@ -446,11 +446,11 @@ generate_block_from_shadow(BShadow,RecallSize) ->
             [TX | _] -> [TX | Acc]
         end
     end, [], BShadow#block.txs),
-    {FinderPool, _} = ar_node:calculate_reward_pool(
+    {FinderPool, _} = ar_node_utils:calculate_reward_pool(
         ar_node:get_reward_pool(whereis(http_entrypoint_node)),
         TXs,
         BShadow#block.reward_addr,
-        ar_node:calculate_proportion(
+        ar_node_utils:calculate_proportion(
             RecallSize,
             BShadow#block.weave_size,
             BShadow#block.height
@@ -478,8 +478,8 @@ generate_block_from_shadow(BShadow,RecallSize) ->
                         NewL -> tl(NewL)
                     end
         end,
-    WalletList = ar_node:apply_mining_reward(
-        ar_node:apply_txs(
+    WalletList = ar_node_utils:apply_mining_reward(
+        ar_node_utils:apply_txs(
             ar_node:get_wallet_list(whereis(http_entrypoint_node)),
             TXs
         ),

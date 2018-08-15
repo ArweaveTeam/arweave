@@ -69,19 +69,19 @@ add(Bs, TXs, HashList, unclaimed) ->
 add([B|Bs], TXs, HashList, RewardAddr) ->
     RecallHash = ar_util:get_recall_hash(hd([B|Bs]), HashList),
     RecallB = ar_storage:read_block(RecallHash),
-    {FinderReward, RewardPool} = 
-        ar_node:calculate_reward_pool(
+    {FinderReward, RewardPool} =
+        ar_node_utils:calculate_reward_pool(
             B#block.reward_pool,
             TXs,
             RewardAddr,
-            ar_node:calculate_proportion(
+            ar_node_utils:calculate_proportion(
                 RecallB#block.block_size,
                 B#block.weave_size,
                 B#block.height
             )
         ),
-    WalletList = ar_node:apply_mining_reward(
-        ar_node:apply_txs(B#block.wallet_list, TXs),
+    WalletList = ar_node_utils:apply_mining_reward(
+        ar_node_utils:apply_txs(B#block.wallet_list, TXs),
         RewardAddr,
         FinderReward,
         length(HashList)
@@ -173,7 +173,6 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
             reward_pool = RewardPool,
             weave_size = B#block.weave_size + BlockSize,
             block_size = BlockSize
-        
         },
 	[NewB#block { indep_hash = indep_hash(NewB) }|HashList].
 

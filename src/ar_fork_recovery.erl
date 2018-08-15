@@ -24,8 +24,8 @@
 
 %% @doc Start the fork recovery 'catch up' server.
 start(Peers, TargetBShadow, HashList) ->
-    % TODO: At this stage the target block is not a shadow, it is either
-    % a valid block or a block with a malformed hashlist (Outside FR range).
+	% TODO: At this stage the target block is not a shadow, it is either
+	% a valid block or a block with a malformed hashlist (Outside FR range).
 	Parent = self(),
 	case ?IS_BLOCK(TargetBShadow) of
 		true ->
@@ -36,12 +36,12 @@ start(Peers, TargetBShadow, HashList) ->
 					{target_height, TargetBShadow#block.height},
 					{peer, Peers}
 				]
-            ),
-            % Ensures that the block is within the recovery range and is has
-            % been validly rebuilt from a block shadow.
+			),
+			% Ensures that the block is within the recovery range and is has
+			% been validly rebuilt from a block shadow.
 			case
-                TargetBShadow#block.height == length(TargetBShadow#block.hash_list)
-            of
+				TargetBShadow#block.height == length(TargetBShadow#block.hash_list)
+			of
 				true ->
 					PID =
 						spawn(
@@ -56,7 +56,7 @@ start(Peers, TargetBShadow, HashList) ->
 										parent = Parent,
 										peers = Peers,
 										block_list =
-                                            (TargetB#block.hash_list -- DivergedHashes),
+											(TargetB#block.hash_list -- DivergedHashes),
 										hash_list = DivergedHashes,
 										target_block = TargetB
 									}
@@ -65,7 +65,7 @@ start(Peers, TargetBShadow, HashList) ->
 						),
 					PID ! {apply_next_block},
 					PID;
-                % target block has invalid hash list
+				% target block has invalid hash list
 				false ->
 					ar:report(
 					[
@@ -74,7 +74,7 @@ start(Peers, TargetBShadow, HashList) ->
 					]
 				),
 				undefined
-            end;
+			end;
 		false ->
 			ar:report(
 				[
@@ -100,22 +100,22 @@ setminus(_, _) -> [].
 %% target block by applying each block between the current block and the
 %% target block in turn.
 server(#state {
-        peers = _Peers,
-        parent = _Parent,
-        target_block = _TargetB
-    }, rejoin) -> ok.
+		peers = _Peers,
+		parent = _Parent,
+		target_block = _TargetB
+	}, rejoin) -> ok.
 server(#state {
-        block_list = BlockList,
-        hash_list = [],
-        parent = Parent
-    }) ->
+		block_list = BlockList,
+		hash_list = [],
+		parent = Parent
+	}) ->
 	Parent ! {fork_recovered, BlockList};
 server(S = #state {
-        block_list = BlockList,
-        peers = Peers,
-        hash_list = [NextH | HashList],
-        target_block = TargetB
-    }) ->
+		block_list = BlockList,
+		peers = Peers,
+		hash_list = [NextH | HashList],
+		target_block = TargetB
+	}) ->
 	receive
 	{update_target_block, Block, Peer} ->
 		NewBHashlist = [Block#block.indep_hash | Block#block.hash_list],
@@ -132,7 +132,7 @@ server(S = #state {
 		end,
 		case HashListExtra of
 		[] ->
-			ar:d(failed_to_update_target_block), 
+			ar:d(failed_to_update_target_block),
 			server(S);
 		H ->
 			ar:d({current_target, TargetB#block.height}),
@@ -149,7 +149,7 @@ server(S = #state {
 		NextB = ar_node:get_full_block(Peers, NextH),
 		ar:d({applying_fork_recovery, ar_util:encode(NextH)}),
 		case ?IS_BLOCK(NextB) of
-            % could not retrieve the next block to be applied
+			% could not retrieve the next block to be applied
 			false ->
 				ar:report(
 					[
@@ -160,21 +160,21 @@ server(S = #state {
 				B = unavailable,
 				RecallB = unavailable,
 				TXs = [];
-            % next block retrieved, applying block
+			% next block retrieved, applying block
 			true ->
-                % Ensure that block being applied is not the genesis block and
-                % is within the range of fork recovery.
-                %%
-                % TODO: Duplication of check, target block height is checked
-                % when fork recovery process starts.
+				% Ensure that block being applied is not the genesis block and
+				% is within the range of fork recovery.
+				%%
+				% TODO: Duplication of check, target block height is checked
+				% when fork recovery process starts.
 				case
-                    {
-                        NextB#block.height,
-                        ((TargetB#block.height - NextB#block.height) >
-                            ?STORE_BLOCKS_BEHIND_CURRENT)
-                    }
-                of
-                    % Recovering to genesis block
+					{
+						NextB#block.height,
+						((TargetB#block.height - NextB#block.height) >
+							?STORE_BLOCKS_BEHIND_CURRENT)
+					}
+				of
+					% Recovering to genesis block
 					{0, _} ->
 						ar:report(
 							[
@@ -186,8 +186,8 @@ server(S = #state {
 						B = unavailable,
 						RecallB = unavailable,
 						TXs = [],
-                        server(S, rejoin);
-                    % Target block is too far ahead and cannot be recovered.
+						server(S, rejoin);
+					% Target block is too far ahead and cannot be recovered.
 					{_, true} ->
 						ar:report(
 							[
@@ -199,9 +199,9 @@ server(S = #state {
 						B = unavailable,
 						RecallB = unavailable,
 						TXs = [],
-                        server(S, rejoin);
-                    % Target block is within range and isi attempted to be
-                    % recovered to.
+						server(S, rejoin);
+					% Target block is within range and isi attempted to be
+					% recovered to.
 					{_X, _Y} ->
 						B = ar_node:get_block(Peers, NextB#block.previous_block),
 						case ?IS_BLOCK(B) of
@@ -226,9 +226,9 @@ server(S = #state {
 								TXs = NextB#block.txs
 						end
 				end
-        end,
-        % Ensure next block (NextB) is a block, the previous block (B) is a
-        % block and that the nexts blocks recall block (RecallB) is a block.
+		end,
+		% Ensure next block (NextB) is a block, the previous block (B) is a
+		% block and that the nexts blocks recall block (RecallB) is a block.
 		case
 			(not ?IS_BLOCK(NextB)) or
 			(not ?IS_BLOCK(B)) or
@@ -236,13 +236,13 @@ server(S = #state {
 		of
 			false ->
 				case
-                    try_apply_block(
+					try_apply_block(
 						BHashList,
 						NextB#block {txs = [T#tx.id || T <- NextB#block.txs]},
 						TXs,
 						B,
 						RecallB#block {txs = [T#tx.id || T <- RecallB#block.txs]}
-                    )
+					)
 				of
 					false ->
 						ar:report_console(
@@ -277,27 +277,27 @@ server(S = #state {
 	end.
 
 %% @doc Try and apply a new block (NextB) to the current block (B).
-%% Returns  true if the block can be applied, otherwise false.
+%% Returns	true if the block can be applied, otherwise false.
 try_apply_block(_, NextB, _TXs, B, RecallB) when
 		(not ?IS_BLOCK(NextB)) or
 		(not ?IS_BLOCK(B)) or
 		(not ?IS_BLOCK(RecallB)) ->
 	false;
 try_apply_block(HashList, NextB, TXs, B, RecallB) ->
-	{FinderReward, _} = 
-		ar_node:calculate_reward_pool(
+	{FinderReward, _} =
+		ar_node_utils:calculate_reward_pool(
 			B#block.reward_pool,
 			TXs,
 			NextB#block.reward_addr,
-			ar_node:calculate_proportion(
+			ar_node_utils:calculate_proportion(
 				RecallB#block.block_size,
 				NextB#block.weave_size,
 				NextB#block.height
 			)
 		),
 	WalletList =
-		ar_node:apply_mining_reward(
-			ar_node:apply_txs(B#block.wallet_list, TXs),
+		ar_node_utils:apply_mining_reward(
+			ar_node_utils:apply_txs(B#block.wallet_list, TXs),
 			NextB#block.reward_addr,
 			FinderReward,
 			NextB#block.height
@@ -313,8 +313,9 @@ try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 		NextB#block.tags
 	).
 
-
+%%%
 %%% Tests: ar_fork_recovery
+%%%
 
 %% @doc Ensure forks that are one block behind will resolve.
 three_block_ahead_recovery_test() ->
@@ -448,18 +449,18 @@ multiple_blocks_since_fork_test() ->
 %% @doc Ensure that nodes that nodes recovering from the first block can
 %% reconcile.
 % fork_from_first_test() ->
-% 	ar_storage:clear(),
-% 	B1 = ar_weave:init([]),
-% 	Node1 = ar_node:start([], B1),
-% 	Node2 = ar_node:start(Node1, B1),
-% 	ar_node:mine(Node1),
-% 	receive after 300 -> ok end,
-% 	ar_node:mine(Node1),
-% 	receive after 300 -> ok end,
-% 	ar_node:add_peers(Node1, Node2),
-% 	ar_node:mine(Node1),
-% 	receive after 300 -> ok end,
-% 	true = (ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2)).
+%	ar_storage:clear(),
+%	B1 = ar_weave:init([]),
+%	Node1 = ar_node:start([], B1),
+%	Node2 = ar_node:start(Node1, B1),
+%	ar_node:mine(Node1),
+%	receive after 300 -> ok end,
+%	ar_node:mine(Node1),
+%	receive after 300 -> ok end,
+%	ar_node:add_peers(Node1, Node2),
+%	ar_node:mine(Node1),
+%	receive after 300 -> ok end,
+%	true = (ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2)).
 
 %% @doc Check the logic of setminus will correctly update to a new fork
 setminus_test() ->

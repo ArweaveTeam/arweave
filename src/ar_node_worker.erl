@@ -90,6 +90,15 @@ handle(SPid, {add_tx, TX, NewGS}, From) ->
 			ok
 	end,
 	{ok, add_tx};
+handle(SPid, {encounter_new_tx, TX, NewGS}, _From) ->
+	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, floating_wallet_list]),
+	case encounter_new_tx(StateIn, TX, NewGS) of
+		{ok, StateOut} ->
+			ar_node_state:update(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, encounter_new_tx};
 handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
@@ -134,6 +143,11 @@ handle(SPid, {replace_block_list, [Block | _]}, _From) ->
 		{height, Block#block.height}
 	]),
 	{ok, replace_block_list};
+handle(SPid, {ignore, NewGS}, _Send) ->
+	ar_node_state:update(SPid, [
+		{gossip, NewGS}
+	]),
+	{ok, set_reward_addr};
 handle(SPid, {set_reward_addr, Addr}, _Send) ->
 	ar_node_state:update(SPid, [
 		{reward_addr, Addr}
@@ -181,7 +195,7 @@ add_tx(StateIn, TX, From) ->
 	case ar_node_utils:get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
 		[] ->
 			timer:send_after(
-				ar_node:calculate_delay(byte_size(TX#tx.data)),
+				calculate_delay(byte_size(TX#tx.data)),
 				From,
 				{apply_tx, TX}
 			),
@@ -201,7 +215,7 @@ add_tx(StateIn, TX, NewGS, From) ->
 	case ar_node_utils:get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
 		[] ->
 			timer:send_after(
-				ar_node:calculate_delay(byte_size(TX#tx.data)),
+				calculate_delay(byte_size(TX#tx.data)),
 				From,
 				{apply_tx, TX}
 			),
@@ -213,6 +227,27 @@ add_tx(StateIn, TX, NewGS, From) ->
 			{ok, [
 				{potential_txs, ar_util:unique([TX | PotentialTXs])},
 				{gossip, NewGS}
+			]}
+	end.
+
+%% @doc Update miner and amend server state when encountering a new transaction.
+encounter_new_tx(StateIn, TX, NewGS) ->
+	#{txs := TXs, waiting_txs := WaitingTXs, floating_wallet_list := FloatingWalletList} = StateIn,
+	memsup:start_link(),
+	{_, Mem} = lists:keyfind(system_total_memory, 1, memsup:get_system_memory_data()),
+	case (Mem div 4) > byte_size(TX#tx.data) of
+		true ->
+			NewTXs = TXs ++ [TX],
+			{ok, [
+				{txs, NewTXs},
+				{floating_wallet_list, ar_node_utils:apply_tx(FloatingWalletList, TX)},
+				{gossip, NewGS},
+				{waiting_txs, WaitingTXs -- [TX]}
+			]};
+		false ->
+			{ok, [
+				{gossip, NewGS},
+				{waiting_txs, WaitingTXs -- [TX]}
 			]}
 	end.
 
@@ -288,11 +323,10 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 			NewB#block.height
 		),
 	StateNew = StateNext#{ wallet_list => NewWalletList },
-	% TODO mue: ar_node:validate() has to be moved to ar_node_worker. Also
-	% check what values of state are needed. Also setting the state gossip
-	% for fork_recover/3 has to be checked. The gossip is already set to
-	% NewGS in first function statement. Compare to pre-refactoring.
-	case ar_node:validate(
+	% TODO mue: Setting the state gossip for fork_recover/3 has to be
+	% checked. The gossip is already set to NewGS in first function
+	% statement. Compare to pre-refactoring.
+	case ar_node_utils:validate(
 			StateNew,
 			NewB,
 			TXs,
@@ -319,10 +353,6 @@ process_new_block(# {height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList
 		]
 	),
 	{ok, [{gossip, NewGS}]};
-% process_new_block(S, NewGS, NewB, _RecallB, _Peer, _Hashlist)
-%		when (NewB#block.height == S#state.height + 1) ->
-	% Block is lower than fork recovery height, ignore it.
-	% server(S#state { gossip = NewGS });
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, _RecallB, Peer, _HashList)
 		when (NewB#block.height > Height + 1) ->
 	ar_node_utils:fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB).
@@ -473,6 +503,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			)
 	end.
 
+
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when HashList == not_joined ->
 	NewB = ar_storage:read_block(hd(NewHs)),
@@ -545,6 +576,26 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when (length(Ne
 	);
 recovered_from_fork(_StateIn, _) ->
 	none.
+
+%% @doc Calculate the time a tx must wait after being received to be mined.
+%% Wait time is a fixed interval combined with a wait dependent on tx data size.
+%% This wait helps ensure that a tx has propogated around the network.
+%% NB: If debug is defined no wait is applied.
+-ifdef(DEBUG).
+-define(FIXED_DELAY, 0).
+-endif.
+
+-ifdef(FIXED_DELAY).
+calculate_delay(0) ->
+	?FIXED_DELAY;
+calculate_delay(Bytes) ->
+	?FIXED_DELAY.
+-else.
+calculate_delay(0) ->
+	30000;
+calculate_delay(Bytes) ->
+	30000 + ((Bytes * 300) div 1000).
+-endif.
 
 %%%
 %%% EOF

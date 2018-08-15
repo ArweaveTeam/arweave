@@ -5,9 +5,9 @@
 -module(ar_node_utils).
 
 -export([get_conflicting_txs/2, get_full_block/2]).
--export([find_recall_hash/2, find_recall_block/1]).
+-export([find_recall_hash/2, find_recall_block/1, find_block/1]).
 -export([calculate_reward_pool/4, calculate_proportion/3]).
--export([apply_mining_reward/4, apply_txs/2]).
+-export([apply_mining_reward/4, apply_tx/2, apply_txs/2]).
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/2]).
 -export([fork_recover/3]).
@@ -21,15 +21,15 @@
 %%%
 
 %% @doc Get the conflicting transaction between state and passed ones.
-get_conflicting_txs(STXs, TX) ->
+get_conflicting_txs(StateTXs, TX) ->
 	[
-		T
+		TXOut
 	||
-		T <-
-			STXs,
+		TXOut <-
+			StateTXs,
 			(
-				(T#tx.last_tx == TX#tx.last_tx) and
-				(T#tx.owner == TX#tx.owner)
+				(TXOut#tx.last_tx == TX#tx.last_tx) and
+				(TXOut#tx.owner == TX#tx.owner)
 			)
 	].
 
@@ -83,6 +83,10 @@ find_recall_block(HashList) ->
 	Block = ar_storage:read_block(hd(HashList)),
 	RecallHash = find_recall_hash(Block, HashList),
 	ar_storage:read_block(RecallHash).
+
+%% @doc Find a block from an ordered block list.
+find_block(Hash) when is_binary(Hash) ->
+	ar_storage:read_block(Hash).
 
 %% @doc Calculate the reward.
 calculate_reward_pool(OldPool, TXs, unclaimed, _Proportion) ->
@@ -149,6 +153,13 @@ apply_mining_reward(WalletList, unclaimed, _Quantity, _Height) ->
 	WalletList;
 apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, Quantity)).
+
+%% @doc Apply a transaction to a wallet list, updating it.
+%% Critically, filter empty wallets from the list after application.
+apply_tx(WalletList, unavailable) ->
+	WalletList;
+apply_tx(WalletList, TX) ->
+	filter_empty_wallets(do_apply_tx(WalletList, TX)).
 
 %% @doc Update a wallet list with a set of new transactions.
 apply_txs(WalletList, TXs) ->
@@ -525,13 +536,6 @@ make_full_block(ID) ->
 			end
 	end.
 
-%% @doc Apply a transaction to a wallet list, updating it.
-%% Critically, filter empty wallets from the list after application.
-apply_tx(WalletList, unavailable) ->
-	WalletList;
-apply_tx(WalletList, TX) ->
-	filter_empty_wallets(do_apply_tx(WalletList, TX)).
-
 %% @doc Perform the concrete application of a transaction to
 %% a prefiltered wallet list.
 do_apply_tx(
@@ -558,6 +562,17 @@ do_apply_tx(
 			WalletList
 	end.
 
+%% @doc Return the last block to include both a wallet and hash list.
+find_sync_block([]) ->
+	not_found;
+find_sync_block([Hash | Rest]) when is_binary(Hash) ->
+	find_sync_block([ar_storage:read_block(Hash) | Rest]);
+find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList } | _])
+		when HashList =/= undefined, WalletList =/= undefined ->
+	B;
+find_sync_block([_ | Xs]) ->
+	find_sync_block(Xs).
+
 %% @doc Takes a wallet list and a set of txs and checks to ensure that the
 %% txs can be iteratively applied. When a tx is encountered that cannot be
 %% applied it is disregarded. The return is a tuple containing the output
@@ -583,6 +598,19 @@ filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
 				RawTXs,
 				OutTXs
 			)
+	end.
+
+%% @doc Given a wallet list and set of txs will try to apply the txs
+%% iteratively to the wallet list and return the result.
+%% Txs that cannot be applied are disregarded.
+generate_floating_wallet_list(WalletList, []) ->
+	WalletList;
+generate_floating_wallet_list(WalletList, [T | TXs]) ->
+	case ar_tx:check_last_tx(WalletList, T) of
+		true ->
+			UpdatedWalletList = apply_tx(WalletList, T),
+			generate_floating_wallet_list(UpdatedWalletList, TXs);
+		false -> false
 	end.
 
 %% @doc Remove wallets with zero balance from a wallet list.

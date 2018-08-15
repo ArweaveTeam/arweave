@@ -428,6 +428,7 @@ test_networks() ->
 	ar_test_sup:start().
 
 test_slow() ->
+	% TODO mue: Tests from ar_node still need to be moved.
 	ar_node:filter_out_of_order_txs_test_slow(),
 	ar_node:filter_out_of_order_txs_large_test_slow(),
 	ar_node:filter_all_out_of_order_txs_test_slow(),

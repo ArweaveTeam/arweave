@@ -97,12 +97,12 @@ verify(TX, Diff, WalletList) ->
 		tag_field_legal(TX) andalso
 		check_last_tx(WalletList, TX) andalso
 		tx_verify_hash(TX) andalso
-		ar_node:validate_wallet_list(ar_node:apply_txs(WalletList, [TX])) andalso
+		ar_node:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
 		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
 	of
 		true -> true;
 		false ->
-			Reason = 
+			Reason =
 				lists:map(
 					fun({A, _}) -> A end,
 					lists:filter(
@@ -122,7 +122,7 @@ verify(TX, Diff, WalletList) ->
 						]
 					)
 				),
-			ar_tx_db:put(TX#tx.id, Reason),		
+			ar_tx_db:put(TX#tx.id, Reason),
 			false
 	end.
 -else.
@@ -146,12 +146,12 @@ verify(TX, Diff, WalletList) ->
 		tag_field_legal(TX) andalso
 		check_last_tx(WalletList, TX) andalso
 		tx_verify_hash(TX) andalso
-		ar_node:validate_wallet_list(ar_node:apply_txs(WalletList, [TX])) andalso
+		ar_node:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
 		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
 	of
 		true -> true;
 		false ->
-			Reason = 
+			Reason =
 				lists:map(
 					fun({A, _}) -> A end,
 					lists:filter(
@@ -171,7 +171,7 @@ verify(TX, Diff, WalletList) ->
 						]
 					)
 				),
-			ar_tx_db:put(TX#tx.id, Reason),		
+			ar_tx_db:put(TX#tx.id, Reason),
 			false
 	end.
 -endif.
@@ -186,7 +186,7 @@ do_verify_txs([], _, _) ->
 	true;
 do_verify_txs([T|TXs], Diff, WalletList) ->
 	case verify(T, Diff, WalletList) of
-		true -> do_verify_txs(TXs, Diff, ar_node:apply_tx(WalletList, T));
+		true -> do_verify_txs(TXs, Diff, ar_node_utils:apply_tx(WalletList, T));
 		false -> false
 	end.
 

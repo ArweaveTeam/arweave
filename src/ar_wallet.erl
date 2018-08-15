@@ -18,7 +18,7 @@ new() ->
 new_keyfile() ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
-		Key = 
+		Key =
 			ar_serialize:jsonify(
 				{
 					[
@@ -80,14 +80,14 @@ to_address(Addr) when ?IS_ADDR(Addr) -> Addr;
 to_address({{_, Pub}, Pub}) -> to_address(Pub);
 to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
-    crypto:hash(?HASH_ALG, PubKey).
+	crypto:hash(?HASH_ALG, PubKey).
 
 to_binary({Addr, Quantity, LastTx}) ->
-    <<
-        (Addr)/binary,
-        (integer_to_binary(Quantity))/binary,
-        (LastTx)/binary
-    >>.
+	<<
+		(Addr)/binary,
+		(integer_to_binary(Quantity))/binary,
+		(LastTx)/binary
+	>>.
 
 
 wallet_sign_verify_test() ->
@@ -122,5 +122,5 @@ assign_wallet_test() ->
 	Node1 = ar_node:start([], B0, 0, Address),
 	ar_node:mine(Node1), % Mine B1
 	receive after 500 -> ok end,
-	Reward = erlang:trunc(ar_node:calculate_reward(1, 0)),
+	Reward = erlang:trunc(ar_node_utils:calculate_reward(1, 0)),
 	Reward = ar_node:get_balance(Node1, Pub).
