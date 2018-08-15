@@ -11,6 +11,7 @@
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/2]).
 -export([fork_recover/3]).
+-export([filter_out_of_order_txs/2, filter_out_of_order_txs/3]).
 -export([filter_all_out_of_order_txs/2]).
 -export([validate/5, validate/8]).
 
@@ -369,6 +370,33 @@ fork_recover(#{ hash_list := HashList } = StateIn, Peer, NewB) ->
 	StateIn.
 
 %% @doc Takes a wallet list and a set of txs and checks to ensure that the
+%% txs can be iteratively applied. When a tx is encountered that cannot be
+%% applied it is disregarded. The return is a tuple containing the output
+%% wallet list and the set of applied transactions.
+%% Helper function for 'filter_all_out_of_order_txs'.
+filter_out_of_order_txs(WalletList, InTXs) ->
+	filter_out_of_order_txs(WalletList, InTXs, []).
+
+filter_out_of_order_txs(WalletList, [], OutTXs) ->
+	{WalletList, OutTXs};
+filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
+	case ar_tx:check_last_tx(WalletList, T) of
+		true ->
+			UpdatedWalletList = apply_tx(WalletList, T),
+			filter_out_of_order_txs(
+				UpdatedWalletList,
+				RawTXs,
+				[T | OutTXs]
+			);
+		false ->
+			filter_out_of_order_txs(
+				WalletList,
+				RawTXs,
+				OutTXs
+			)
+	end.
+
+%% @doc Takes a wallet list and a set of txs and checks to ensure that the
 %% txs can be applied in a given order. The output is the set of all txs
 %% that could be applied.
 filter_all_out_of_order_txs(WalletList, InTXs) ->
@@ -562,57 +590,6 @@ do_apply_tx(
 			WalletList
 	end.
 
-%% @doc Return the last block to include both a wallet and hash list.
-find_sync_block([]) ->
-	not_found;
-find_sync_block([Hash | Rest]) when is_binary(Hash) ->
-	find_sync_block([ar_storage:read_block(Hash) | Rest]);
-find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList } | _])
-		when HashList =/= undefined, WalletList =/= undefined ->
-	B;
-find_sync_block([_ | Xs]) ->
-	find_sync_block(Xs).
-
-%% @doc Takes a wallet list and a set of txs and checks to ensure that the
-%% txs can be iteratively applied. When a tx is encountered that cannot be
-%% applied it is disregarded. The return is a tuple containing the output
-%% wallet list and the set of applied transactions.
-%% Helper function for 'filter_all_out_of_order_txs'.
-filter_out_of_order_txs(WalletList, InTXs) ->
-	filter_out_of_order_txs(WalletList, InTXs, []).
-
-filter_out_of_order_txs(WalletList, [], OutTXs) ->
-	{WalletList, OutTXs};
-filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
-	case ar_tx:check_last_tx(WalletList, T) of
-		true ->
-			UpdatedWalletList = apply_tx(WalletList, T),
-			filter_out_of_order_txs(
-				UpdatedWalletList,
-				RawTXs,
-				[T | OutTXs]
-			);
-		false ->
-			filter_out_of_order_txs(
-				WalletList,
-				RawTXs,
-				OutTXs
-			)
-	end.
-
-%% @doc Given a wallet list and set of txs will try to apply the txs
-%% iteratively to the wallet list and return the result.
-%% Txs that cannot be applied are disregarded.
-generate_floating_wallet_list(WalletList, []) ->
-	WalletList;
-generate_floating_wallet_list(WalletList, [T | TXs]) ->
-	case ar_tx:check_last_tx(WalletList, T) of
-		true ->
-			UpdatedWalletList = apply_tx(WalletList, T),
-			generate_floating_wallet_list(UpdatedWalletList, TXs);
-		false -> false
-	end.
-
 %% @doc Remove wallets with zero balance from a wallet list.
 filter_empty_wallets([]) ->
 	[];
@@ -660,6 +637,34 @@ validate_wallet_list([{_, Qty, _} | _]) when Qty < 0 ->
 	false;
 validate_wallet_list([_ | Rest]) ->
 	validate_wallet_list(Rest).
+
+%%%
+%%% Unreferenced!
+%%%
+
+%% @doc Return the last block to include both a wallet and hash list.
+find_sync_block([]) ->
+	not_found;
+find_sync_block([Hash | Rest]) when is_binary(Hash) ->
+	find_sync_block([ar_storage:read_block(Hash) | Rest]);
+find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList } | _])
+		when HashList =/= undefined, WalletList =/= undefined ->
+	B;
+find_sync_block([_ | Xs]) ->
+	find_sync_block(Xs).
+
+%% @doc Given a wallet list and set of txs will try to apply the txs
+%% iteratively to the wallet list and return the result.
+%% Txs that cannot be applied are disregarded.
+generate_floating_wallet_list(WalletList, []) ->
+	WalletList;
+generate_floating_wallet_list(WalletList, [T | TXs]) ->
+	case ar_tx:check_last_tx(WalletList, T) of
+		true ->
+			UpdatedWalletList = apply_tx(WalletList, T),
+			generate_floating_wallet_list(UpdatedWalletList, TXs);
+		false -> false
+	end.
 
 %%%
 %%% EOF
