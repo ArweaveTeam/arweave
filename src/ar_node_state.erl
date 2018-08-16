@@ -55,16 +55,7 @@ stop(Pid) ->
 %% and values. The operation is atomic, all needed values must be
 %% retrieved with one call. Between calls the state may change.
 all(Pid) ->
-	Pid ! {all, all, self()},
-	receive
-		{ok, Values} ->
-			{ok, Values};
-		{error, Error} ->
-			{error, Error}
-	after
-		5000 ->
-			{error, timeout}
-	end.
+	send(Pid, all).
 
 %% @doc Get one or more values from state. In case of a single key
 %% it will be returned as {ok, Value}, a non-existant key will return
@@ -72,39 +63,36 @@ all(Pid) ->
 %% keys and values. The operation is atomic, all needed values must
 %% be retrieved with one call. Between calls the state may change.
 lookup(Pid, Keys) ->
-	Pid ! {lookup, Keys, self()},
-	receive
-		Reply ->
-			Reply
-	after
-		5000 ->
-			{error, timeout}
-	end.
+	send(Pid, {lookup, Keys}).
 
 %% @doc Set one or more values from state, input is a list of {Key, Value}
 %% or a map. The operation is atomic, all needed values must be setted with
 %% one call. Between calls the state may change.
 update(Pid, KeyValues) ->
-	Pid ! {update, KeyValues, self()},
+	send(Pid, {update, KeyValues}).
+
+%%%
+%%% Server functions.
+%%%
+
+%% @doc Send a message to the server and wait for the result.
+send(Pid, Msg) ->
+	Pid ! {?MODULE, Msg, self()},
 	receive
-		Reply ->
+		{?MODULE, Reply} ->
 			Reply
 	after
 		5000 ->
 			{error, timeout}
 	end.
 
-%%%
-%%% Server functions.
-%%%
-
 %% @doc Main server loop.
 server(Tid) ->
 	receive
-		{Command, KeyValues, From} ->
-			try handle(Tid, Command, KeyValues) of
-				Result ->
-					From ! Result,
+		{Module, Msg, From} ->
+			try handle(Tid, Msg) of
+				Reply ->
+					From ! {Module, Reply},
 					server(Tid)
 			catch
 				throw:Term ->
@@ -124,10 +112,10 @@ server(Tid) ->
 %% @doc Handle the individual server commands. Starving ets table has to be
 %% avoided by any means. Only atoms are allowed as keys and changes have
 %% to be done atomically.
-handle(Tid, all, all) ->
+handle(Tid, all) ->
 	All = ets:match_object(Tid, '$1'),
 	{ok, maps:from_list(All)};
-handle(Tid, lookup, Keys) when is_list(Keys) ->
+handle(Tid, {lookup, Keys}) when is_list(Keys) ->
 	case lists:all(fun is_atom/1, Keys) of
 		true ->
 			{ok, maps:from_list(lists:map(fun(Key) ->
@@ -139,14 +127,14 @@ handle(Tid, lookup, Keys) when is_list(Keys) ->
 		_ ->
 			{error, {invalid_node_state_keys, Keys}}
 	end;
-handle(Tid, lookup, Key) when is_atom(Key) ->
+handle(Tid, {lookup, Key}) when is_atom(Key) ->
 	case ets:lookup(Tid, Key) of
 		[{Key, Value}] -> {ok, Value};
 		[]             -> {ok, undefined}
 	end;
-handle(_Tid, update, []) ->
+handle(_Tid, {update, []}) ->
 	ok;
-handle(Tid, update, KeyValues) when is_list(KeyValues) ->
+handle(Tid, {update, KeyValues}) when is_list(KeyValues) ->
 	case lists:all(fun({Key, _Value}) -> is_atom(Key) end, KeyValues) of
 		true ->
 			ets:insert(Tid, KeyValues),
@@ -154,13 +142,13 @@ handle(Tid, update, KeyValues) when is_list(KeyValues) ->
 		_ ->
 			{error, {invalid_node_state_keys, KeyValues}}
 	end;
-handle(Tid, update, {Key, Value}) ->
-	handle(Tid, update, [{Key, Value}]);
-handle(Tid, update, KeyValues) when is_map(KeyValues) ->
-	handle(Tid, update, maps:to_list(KeyValues));
-handle(_Tid, update, Any) ->
+handle(Tid, {update, KeyValues}) when is_map(KeyValues) ->
+	handle(Tid, {update, maps:to_list(KeyValues)});
+handle(Tid, {update, {Key, Value}}) ->
+	handle(Tid, {update, [{Key, Value}]});
+handle(_Tid, {update, Any}) ->
 	{error, {invalid_node_state_values, Any}};
-handle(_Tid, Command, Args) ->
+handle(_Tid, {Command, Args}) ->
 	{error, {invalid_node_state_command, {Command, Args}}}.
 
 %%%

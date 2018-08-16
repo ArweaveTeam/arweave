@@ -691,7 +691,7 @@ server(SPid, WPid, TaskQueue) ->
 			end;
 		{worker, {error, Error}} ->
 			% Worker finished task with error.
-			ar:d([{node_worker_error, {error, Error}}]),
+			ar:report([{node_worker_error, {error, Error}}]),
 			case queue:out(TaskQueue) of
 				{empty, TaskQueue} ->
 					% Empty queue, nothing to cast.
