@@ -678,7 +678,7 @@ server(SPid, WPid, TaskQueue) ->
 			ar_node_worker:stop(WPid),
 			ar_node_state:stop(SPid),
 			ok;
-		{worker, {ok, _Task}} ->
+		{worker, {ok, Task}} ->
 			% Worker finished a task w/o errors.
 			case queue:out(TaskQueue) of
 				{empty, TaskQueue} ->
