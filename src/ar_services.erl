@@ -92,15 +92,17 @@ add_service_test() ->
 
 %% Ensure that services are removed at the appropriate moment.
 drop_service_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	PID = start(Node1),
-	add(PID, [#service { name = "test", host = {127,0,0,1,1984}, expires = 1 }]),
-	[_Serv] = get(PID),
-	ar_node:mine(Node1),
-	receive after 1000 -> ok end,
-	ar_node:mine(Node1),
-	receive after 1000 -> ok end,
-	PID ! prune,
-	[] = get(PID).
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[B0] = ar_weave:init([]),
+		Node1 = ar_node:start([], [B0]),
+		PID = start(Node1),
+		add(PID, [#service { name = "test", host = {127,0,0,1,1984}, expires = 1 }]),
+		[_Serv] = get(PID),
+		ar_node:mine(Node1),
+		timer:sleep(1000),
+		ar_node:mine(Node1),
+		timer:sleep(1000),
+		PID ! prune,
+		[] = get(PID)
+	end}.

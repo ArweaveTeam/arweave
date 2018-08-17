@@ -116,11 +116,13 @@ generate_keyfile_test() ->
 
 %% @doc Check keyfile generation
 assign_wallet_test() ->
-	{_, Pub} = new_keyfile(),
-	Address = to_address(Pub),
-	B0 = ar_weave:init([{Address, ?AR(0), <<>>}]),
-	Node1 = ar_node:start([], B0, 0, Address),
-	ar_node:mine(Node1), % Mine B1
-	receive after 500 -> ok end,
-	Reward = erlang:trunc(ar_node_utils:calculate_reward(1, 0)),
-	Reward = ar_node:get_balance(Node1, Pub).
+	{timeout, 60, fun() ->
+		{_, Pub} = new_keyfile(),
+		Address = to_address(Pub),
+		B0 = ar_weave:init([{Address, ?AR(0), <<>>}]),
+		Node1 = ar_node:start([], B0, 0, Address),
+		ar_node:mine(Node1), % Mine B1
+		timer:sleep(500),
+		Reward = erlang:trunc(ar_node_utils:calculate_reward(1, 0)),
+		Reward = ar_node:get_balance(Node1, Pub)
+	end}.

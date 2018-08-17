@@ -294,15 +294,19 @@ check_last_tx(WalletList, TX) ->
 
 %% @doc Ensure that a public and private key pair can be used to sign and verify data.
 sign_tx_test() ->
-	NewTX = new(<<"TEST DATA">>, ?AR(10)),
-	{Priv, Pub} = ar_wallet:new(),
-	true = verify(sign(NewTX, Priv, Pub), 1, []).
+	{timeout, 60, fun() ->
+		NewTX = new(<<"TEST DATA">>, ?AR(10)),
+		{Priv, Pub} = ar_wallet:new(),
+		true = verify(sign(NewTX, Priv, Pub), 1, [])
+	end}.
 
 %% @doc Ensure that a forged transaction does not pass verification.
 forge_test() ->
-	NewTX = new(<<"TEST DATA">>, ?AR(10)),
-	{Priv, Pub} = ar_wallet:new(),
-	false = verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }, 1, []).
+	{timeout, 60, fun() ->
+		NewTX = new(<<"TEST DATA">>, ?AR(10)),
+		{Priv, Pub} = ar_wallet:new(),
+		false = verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }, 1, [])
+	end}.
 
 %% @doc Ensure that a transaction above the minimum tx cost are accepted.
 tx_cost_above_min_test() ->

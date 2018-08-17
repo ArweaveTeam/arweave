@@ -93,13 +93,15 @@ validate(NewB, OldB) ->
 
 %% @doc Ensure that after a series of very fast mines, the diff increases.
 simple_retarget_test() ->
-	Node = ar_node:start([], ar_weave:init([])),
-	lists:foreach(
-		fun(_) ->
-			ar_node:mine(Node),
-			receive after 250 -> ok end
-		end,
-		lists:seq(1, ?RETARGET_BLOCKS + 1)
-	),
-	[B|_] = ar_node:get_blocks(Node),
-	true = ((ar_storage:read_block(B))#block.diff > ?DEFAULT_DIFF).
+	{timeout, 60, fun() ->
+		Node = ar_node:start([], ar_weave:init([])),
+		lists:foreach(
+			fun(_) ->
+				ar_node:mine(Node),
+				timer:sleep(250)
+			end,
+			lists:seq(1, ?RETARGET_BLOCKS + 1)
+		),
+		[B|_] = ar_node:get_blocks(Node),
+		true = ((ar_storage:read_block(B))#block.diff > ?DEFAULT_DIFF)
+	end}.

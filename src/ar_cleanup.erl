@@ -45,14 +45,16 @@ remove_invalid_blocks(HashList) ->
         end,
         FilesEnc
     ).
-    
+
 %% @doc Remove all TXs from the TX directory that are "too cheap"
 remove_block_keep_directory_test() ->
-    ar_storage:clear(),
-    B0 = ar_weave:init([]),
-    ar_storage:write_block(B0),
-    B1 = ar_weave:add(B0, []),
-    ar_storage:write_block(hd(B1)),
-    remove_invalid_blocks([]),
-    {ok, Files} = (file:list_dir(?BLOCK_DIR)),
-    1 = length(Files).
+	{timeout, 60, fun() ->
+	    ar_storage:clear(),
+	    B0 = ar_weave:init([]),
+	    ar_storage:write_block(B0),
+	    B1 = ar_weave:add(B0, []),
+	    ar_storage:write_block(hd(B1)),
+	    remove_invalid_blocks([]),
+	    {ok, Files} = (file:list_dir(?BLOCK_DIR)),
+	    1 = length(Files)
+	end}.

@@ -30,17 +30,17 @@ delete_block(Hash) ->
 %% @doc Returns the number of blocks stored on disk.
 blocks_on_disk() ->
 	{ok, RawFiles} = file:list_dir(?BLOCK_DIR),
-    Files =
-        lists:filter(
-            fun(X) -> 
-                case X of 
-                    "enc" -> false;
-                    "invalid" -> false; %see invalidate_block
-                    _ -> true
-                end
-            end,
-            RawFiles
-        ),
+	Files =
+		lists:filter(
+			fun(X) ->
+				case X of
+					"enc" -> false;
+					"invalid" -> false; %see invalidate_block
+					_ -> true
+				end
+			end,
+			RawFiles
+		),
 	length(Files).
 
 block_exists(Hash) ->
@@ -127,7 +127,7 @@ write_full_block(B) ->
 	ar_storage:write_tx(B#block.txs),
 	ar_storage:write_block(BShadow).
 
-%% @doc Write an encrypted  block (with the hash.json as the filename) to disk.
+%% @doc Write an encrypted	block (with the hash.json as the filename) to disk.
 %% When debug is set, does not consider disk space. This is currently
 %% necessary because of test timings
 -ifdef(DEBUG).
@@ -466,23 +466,23 @@ store_and_retrieve_tx_test() ->
 	file:delete(name_tx(Tx0)).
 
 % store_and_retrieve_encrypted_block_test() ->
-%     B0 = ar_weave:init([]),
-%     ar_storage:write_block(B0),
-%     B1 = ar_weave:add(B0, []),
-%     CipherText = ar_block:encrypt_block(hd(B0), hd(B1)),
-%     write_encrypted_block((hd(B0))#block.hash, CipherText),
-% 	read_encrypted_block((hd(B0))#block.hash),
-% 	Block0 = hd(B0),
-% 	Block0 = ar_block:decrypt_full_block(hd(B1), CipherText, Key).
+%	  B0 = ar_weave:init([]),
+%	  ar_storage:write_block(B0),
+%	  B1 = ar_weave:add(B0, []),
+%	  CipherText = ar_block:encrypt_block(hd(B0), hd(B1)),
+%	  write_encrypted_block((hd(B0))#block.hash, CipherText),
+%	read_encrypted_block((hd(B0))#block.hash),
+%	Block0 = hd(B0),
+%	Block0 = ar_block:decrypt_full_block(hd(B1), CipherText, Key).
 
 % not_enough_space_test() ->
-% 	Disk = ar_meta_db:get(disk_space),
-% 	ar_meta_db:put(disk_space, 0),
-% 	[B0] = ar_weave:init(),
-% 	Tx0 = ar_tx:new(<<"DATA1">>),
-% 	{error, enospc} = write_block(B0),
-% 	{error, enospc} = write_tx(Tx0),
-% 	ar_meta_db:put(disk_space, Disk).
+%	Disk = ar_meta_db:get(disk_space),
+%	ar_meta_db:put(disk_space, 0),
+%	[B0] = ar_weave:init(),
+%	Tx0 = ar_tx:new(<<"DATA1">>),
+%	{error, enospc} = write_block(B0),
+%	{error, enospc} = write_tx(Tx0),
+%	ar_meta_db:put(disk_space, Disk).
 
 % Test that select_drive selects the correct drive on the unix architecture
 select_drive_unix_test() ->
@@ -506,18 +506,21 @@ select_drive_windows_test() ->
 %% @doc Ensure blocks can be written to disk, then moved into the 'invalid'
 %% block directory.
 invalidate_block_test() ->
-	[B] = ar_weave:init(),
-	write_full_block(B),
-	invalidate_block(B),
-	ar:d({block, ar_util:encode(B#block.indep_hash)}),
-	receive after 500 -> ok end,
-	unavailable = read_block(B#block.indep_hash),
-	TargetFile =
-		lists:flatten(
-			io_lib:format(
-				"~s/invalid/~w_~s.json",
-				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
-			)
-		),
-	{ok, Binary} = file:read_file(TargetFile),
-	B = ar_serialize:json_struct_to_block(Binary).
+	{timeout, 60, fun() ->
+		[B] = ar_weave:init(),
+		write_full_block(B),
+		invalidate_block(B),
+		ar:d({block, ar_util:encode(B#block.indep_hash)}),
+		timer:sleep(500),
+		unavailable = read_block(B#block.indep_hash),
+		TargetFile =
+			lists:flatten(
+				io_lib:format(
+					"~s/invalid/~w_~s.json",
+					[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+				)
+			),
+		{ok, Binary} = file:read_file(TargetFile),
+		B = ar_serialize:json_struct_to_block(Binary)
+	end}.
+
