@@ -1,6 +1,6 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2, start/3]).
--export([add_tx/2, add_block/4, add_block/6]). % Called from ar_http_iface
+-export([add_tx/2, add_block/4, add_block/6]). % Called from ar_http_iface_server
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
@@ -108,74 +108,67 @@ is_id_ignored(ID) ->
 %%% INTERNAL FUNCTIONS
 
 %% @doc Main server loop.
-server(S = #state { gossip = GS0, external_peers = ExtPeers }) ->
-	try (receive
-		{ignore_peer, Peer} ->
-			timer:send_after(?IGNORE_PEERS_TIME, {unignore_peer, Peer}),
-			server(S#state { ignored_peers = [Peer|S#state.ignored_peers] });
-		{unignore_peer, Peer} ->
-			server(S#state { ignored_peers = lists:delete(Peer, S#state.ignored_peers) });
-		{add_tx, TX} -> %, _OriginPeer} ->
-			server(maybe_send_to_internal(S, tx, TX));
-		{add_block, OriginPeer, Block, RecallBlock} ->
-			server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}));
-		{add_block, OriginPeer, Block, RecallBlock, Key, Nonce} ->
-			server(maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}, Key, Nonce));
-		{add_peer, remote, Peer} ->
-			case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
-				true -> server(S);
-				false -> server(S#state { external_peers = ar_util:unique([Peer|ExtPeers])})
-			end;
-		{add_peer, local, Peer} ->
-			server(S#state { gossip = ar_gossip:add_peers(GS0, Peer)});
-		{get_peers, remote, Peer} ->
-			Peer ! {remote_peers, S#state.external_peers},
-			server(S);
-		{set_peers, Peers} ->
-			server(S#state { external_peers = Peers });
-		{update_peers, remote, Peers} ->
-			server(S#state {external_peers = Peers});
-		Msg when is_record(Msg, gs_msg) ->
-			case ar_gossip:recv(GS0, Msg) of
-				{_, ignore} ->
+server(S) ->
+	receive
+		Msg ->
+			try handle(S, Msg) of
+				NewS ->
+					server(NewS)
+			catch
+				throw:Term ->
+					ar:report( [ {'EXCEPTION', {Term}} ]),
 					server(S);
-				Gossip ->
-					server(do_send_to_external(S, Gossip))
-			end;
-		{get_more_peers, PID} ->
-			spawn(
-				fun() ->
-					Peers = ar_manage_peers:update(S#state.external_peers),
-					lists:map(fun ar_http_iface:add_peer/1, Peers),
-					PID ! {update_peers, remote, Peers},
-					reset_timer(PID, get_more_peers)
-				end
-			),
-			server(S)
-	end)
-	catch
-		throw:Term ->
-			ar:report(
-				[
-					{'EXCEPTION', {Term}}
-				]
-			),
-			server(S);
-		exit:Term ->
-			ar:report(
-				[
-					{'EXIT', Term}
-				],
-				server(S)
-			);
-		error:Term ->
-			ar:report(
-				[
-					{'EXIT', {Term, erlang:get_stacktrace()}}
-				]
-			),
-			server(S)
+				exit:Term ->
+					ar:report( [ {'EXIT', Term} ]),
+					server(S);
+				error:Term ->
+					ar:report( [ {'EXIT', {Term, erlang:get_stacktrace()}} ]),
+					server(S)
+			end
 	end.
+
+%% @doc Handle the server messages.
+handle(S, {ignore_peer, Peer}) ->
+	timer:send_after(?IGNORE_PEERS_TIME, {unignore_peer, Peer}),
+	S#state{ ignored_peers = [Peer|S#state.ignored_peers] };
+handle(S, {unignore_peer, Peer}) ->
+	S#state{ ignored_peers = lists:delete(Peer, S#state.ignored_peers) };
+handle(S, {add_tx, TX}) ->
+	maybe_send_to_internal(S, tx, TX);
+handle(S, {add_block, OriginPeer, Block, RecallBlock}) ->
+	maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock});
+handle(S, {add_block, OriginPeer, Block, RecallBlock, Key, Nonce}) ->
+	maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}, Key, Nonce);
+handle(S = #state{ external_peers = ExtPeers }, {add_peer, remote, Peer}) ->
+	case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
+		true  -> S;
+		false -> S#state{ external_peers = ar_util:unique([Peer|ExtPeers]) }
+	end;
+handle(S = #state{ gossip = GS0 }, {add_peer, local, Peer}) ->
+	S#state{ gossip = ar_gossip:add_peers(GS0, Peer)};
+handle(S, {get_peers, remote, Peer}) ->
+	Peer ! {remote_peers, S#state.external_peers},
+	S;
+handle(S, {set_peers, Peers}) ->
+	S#state{ external_peers = Peers };
+handle(S, {update_peers, remote, Peers}) ->
+	S#state{ external_peers = Peers };
+handle(S = #state{ gossip = GS0 }, Msg) when is_record(Msg, gs_msg) ->
+	case ar_gossip:recv(GS0, Msg) of
+		{_, ignore} -> S;
+		Gossip      -> do_send_to_external(S, Gossip)
+	end;
+handle(S, {get_more_peers, PID}) ->
+	spawn(
+		fun() ->
+			Peers = ar_manage_peers:update(S#state.external_peers),
+			lists:map(fun ar_http_iface_client:add_peer/1, Peers),
+			PID ! {update_peers, remote, Peers},
+			reset_timer(PID, get_more_peers)
+		end
+	),
+	S.
+
 %% @doc Potentially send a message to internal processes.
 maybe_send_to_internal(
 		S = #state {
@@ -186,7 +179,7 @@ maybe_send_to_internal(
 		Type,
 		Data) ->
 	case
-		% TODO: Is it always appropriate not to check whether the block has 
+		% TODO: Is it always appropriate not to check whether the block has
 		% already been processed?
 		% (not already_processed(Procd, Type, Data)) andalso
 		ar_firewall:scan(FW, Type, Data)
@@ -226,7 +219,7 @@ maybe_send_to_internal(
 		Key,
 		Nonce) ->
 	case
-		% TODO: Is it always appropriate not to check whether the block has 
+		% TODO: Is it always appropriate not to check whether the block has
 		% already been processed?
 		%(not already_processed(Procd, Type, Data)) andalso
 		ar_firewall:scan(FW, Type, Data)
@@ -270,7 +263,7 @@ add_processed(X, Procd) ->
 			{record, X}
 		]),
 	ok.
-add_processed(tx, #tx { id = ID }, Procd) -> 
+add_processed(tx, #tx { id = ID }, Procd) ->
 	ignore_id(ID);
 add_processed(block, #block { indep_hash = Hash }, Procd) ->
 	ignore_id(Hash);
@@ -301,10 +294,10 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 				]
 			),
 			lists:foldl(
-				fun(Peer, Acc) ->				
-					case (not (ar_http_iface:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
-						true -> 
-							ar_http_iface:send_new_tx(Peer, TX),
+				fun(Peer, Acc) ->
+					case (not (ar_http_iface_client:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
+						true ->
+							ar_http_iface_client:send_new_tx(Peer, TX),
 							Acc + 1;
 						_ -> Acc
 					end
@@ -331,7 +324,7 @@ send_to_external(
 					),
 					lists:foreach(
 						fun(Peer) ->
-							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
+							ar_http_iface_client:send_new_block(Peer, Port, NewB, RecallB)
 						end,
 						Peers
 					)
@@ -360,7 +353,7 @@ send_to_external(
 					),
 					lists:foreach(
 						fun(Peer) ->
-							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
+							ar_http_iface_client:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
 						end,
 						Peers
 					)
