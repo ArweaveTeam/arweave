@@ -24,7 +24,7 @@
 -export([get_reward_addr/1]).
 -export([get_reward_pool/1]).
 
--export([mine/1, automine/1, truncate/1]).
+-export([mine/1, mine_at_diff/2, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2]).
 -export([add_peers/2]).
@@ -574,6 +574,10 @@ print_reward_addr() ->
 mine(Node) ->
 	Node ! mine.
 
+%% @doc Trigger a node to start mining a block at a certain difficulty.
+mine_at_diff(Node, Diff) ->
+	Node ! {mine_at_diff, Diff}.
+
 %% @doc Trigger a node to mine continually.
 automine(Node) ->
 	Node ! automine.
@@ -668,7 +672,7 @@ server(SPid, WPid, TaskQueue) ->
 			% TODO mue: Possible race condition if worker is
 			% currently processing one task! Also check order.
 			{ok, Miner} = ar_node_state:lookup(SPid, miner),
-			lists:all(fun(Task) ->
+			lists:foreach(fun(Task) ->
 				ar_node_worker:call(WPid, Task)
 			end, queue:to_list(TaskQueue)),
 			case Miner of
@@ -783,6 +787,8 @@ handle(_SPid, {fork_recovered, NewHs}) ->
 	{task, {fork_recovered, NewHs}};
 handle(_SPid, mine) ->
 	{task, mine};
+handle(_SPid, {mine_at_diff, Diff}) ->
+	{task, {mine_at_diff, Diff}};
 handle(_SPid, automine) ->
 	{task, automine};
 %% ----- Getters and non-state-changing actions. -----

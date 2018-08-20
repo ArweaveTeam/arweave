@@ -184,6 +184,8 @@ handle('POST', [<<"block">>], Req) ->
 	Key = ar_util:decode(KeyEnc),
 	Nonce = ar_util:decode(NonceEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
+	OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
+		++ ":" ++ integer_to_list(Port)),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false -> {404, [], <<"Invalid Block">>};
 		true  ->
@@ -192,27 +194,29 @@ handle('POST', [<<"block">>], Req) ->
 				true -> {208, <<"Block already processed.">>};
 				false ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
-					ar:report(
-						[
-							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
-						]
+					spawn(
+					      fun() ->
+							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
+							RecallHash = ar_util:decode(JSONRecallB),
+							RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
+							CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+							% mue: keep block distance for later tests
+							case (not is_atom(CurrentB)) andalso
+								(B#block.height > CurrentB#block.height) andalso 
+								(B#block.height =< (CurrentB#block.height + 50)) andalso
+								(B#block.diff >= ?MIN_DIFF) of
+								true ->
+									ar:report(
+										[
+											{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
+										]
+									),
+									ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
+								_ ->
+									ok
+							end
+						end
 					),
-					B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
-					RecallHash = ar_util:decode(JSONRecallB),
-					OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
-						++ ":" ++ integer_to_list(Port)),
-					RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
-					CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-					% mue: keep block distance for later tests
-					% case (not is_atom(CurrentB)) andalso
-					%	 (B#block.height < (CurrentB#block.height + 50)) andalso
-					%	 (B#block.height > (CurrentB#block.height - 50)) of
-					%	true ->
-					%		ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
-					%	_ ->
-					%		ok
-					% end,
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce),
 					{200, [], <<"OK">>}
 			end
 	end;

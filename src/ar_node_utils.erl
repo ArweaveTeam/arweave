@@ -175,16 +175,20 @@ apply_txs(WalletList, TXs) ->
 	).
 
 %% @doc Force a node to start mining, update state.
-start_mining(#{hash_list := not_joined} = StateIn) ->
+start_mining(StateIn) ->
+	start_mining(StateIn, unforced).
+
+start_mining(#{hash_list := not_joined} = StateIn, _) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	StateIn;
-start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn) ->
+start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn, ForceDiff) ->
 	case find_recall_block(BHL) of
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
 			RecallHash = find_recall_hash(B, BHL),
-			%FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
+			% TODO mue: Cleanup.
+			% FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			case FullBlock of
 				X when (X == unavailable) or (X == not_found) ->
@@ -233,16 +237,29 @@ start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags :=
 				]
 			),
 			B = ar_storage:read_block(hd(BHL)),
-			Miner =
-				ar_mine:start(
-					B,
-					RecallB,
-					TXs,
-					RewardAddr,
-					Tags
-				),
-			ar:report([{node, self()}, {started_miner, Miner}]),
-			StateIn#{ miner => Miner }
+			case ForceDiff of
+				unforced ->
+					Miner = ar_mine:start(
+						B,
+						RecallB,
+						TXs,
+						RewardAddr,
+						Tags
+					),
+					ar:report([{node, self()}, {started_miner, Miner}]),
+					StateIn#{ miner => Miner };
+				ForceDiff ->
+					Miner = ar_mine:start(
+						B,
+						RecallB,
+						TXs,
+						RewardAddr,
+						Tags,
+						ForceDiff
+					),
+					ar:report([{node, self()}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
+					StateIn#{ miner => Miner, diff => ForceDiff }
+			end
 	end.
 
 %% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.

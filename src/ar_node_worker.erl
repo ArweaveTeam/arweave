@@ -131,6 +131,11 @@ handle(SPid, mine, _From) ->
 	StateOut = ar_node_util:start_mining(StateIn),
 	ar_node_state:update(SPid, StateOut),
 	{ok, mine};
+handle(SPid, {mine_at_diff, Diff}, _From) ->
+	{ok, StateIn} = ar_node_state:all(SPid),
+	StateOut = ar_node_util:start_mining(StateIn, Diff),
+	ar_node_state:update(SPid, StateOut),
+	{ok, mine};
 handle(SPid, automine, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	StateOut = ar_node_util:start_mining(StateIn#{ automine => true }),
