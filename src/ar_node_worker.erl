@@ -128,17 +128,17 @@ handle(SPid, {fork_recovered, NewHs}, _From) ->
 	{ok, fork_recovered};
 handle(SPid, mine, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	StateOut = ar_node_util:start_mining(StateIn),
+	StateOut = ar_node_utils:start_mining(StateIn),
 	ar_node_state:update(SPid, StateOut),
 	{ok, mine};
 handle(SPid, {mine_at_diff, Diff}, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	StateOut = ar_node_util:start_mining(StateIn, Diff),
+	StateOut = ar_node_utils:start_mining(StateIn, Diff),
 	ar_node_state:update(SPid, StateOut),
 	{ok, mine};
 handle(SPid, automine, _From) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	StateOut = ar_node_util:start_mining(StateIn#{ automine => true }),
+	StateOut = ar_node_utils:start_mining(StateIn#{ automine => true }),
 	ar_node_state:update(SPid, StateOut),
 	{ok, automine};
 handle(SPid, {replace_block_list, [Block | _]}, _From) ->
