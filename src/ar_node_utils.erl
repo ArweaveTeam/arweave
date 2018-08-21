@@ -342,7 +342,8 @@ integrate_new_block(
 					}
 				]
 			);
-		false -> ok
+		false ->
+			ok
 	end,
 	reset_miner(StateIn#{
 		hash_list			 => [NewB#block.indep_hash | HashList],

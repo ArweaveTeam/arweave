@@ -177,7 +177,7 @@ tiny_blockweave_with_mining_test() ->
 		ar_node:add_peers(Node1, Node2),
 		ar_node:mine(Node1),
 		timer:sleep(1000),
-		B1 = ar_nodes:et_blocks(Node2),
+		B1 = ar_nodes:get_blocks(Node2),
 		1 = (hd(ar_storage:read_block(B1)))#block.height
 	end}.
 

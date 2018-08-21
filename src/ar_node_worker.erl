@@ -331,7 +331,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 	% TODO mue: Setting the state gossip for fork_recover/3 has to be
 	% checked. The gossip is already set to NewGS in first function
 	% statement. Compare to pre-refactoring.
-	case ar_node_utils:validate(
+	StateOut = case ar_node_utils:validate(
 			StateNew,
 			NewB,
 			TXs,
@@ -346,7 +346,8 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 		false ->
 			ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
 			ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
-	end;
+	end,
+	{ok, StateOut};
 process_new_block(# {height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< Height ->
 	% Block is lower than us, ignore it.
@@ -360,7 +361,8 @@ process_new_block(# {height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList
 	{ok, [{gossip, NewGS}]};
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, _RecallB, Peer, _HashList)
 		when (NewB#block.height > Height + 1) ->
-	ar_node_utils:fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB).
+	StateOut = ar_node_utils:fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB),
+	{ok, StateOut}.
 
 %% @doc Verify a new block found by a miner, integrate it.
 integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp) ->
