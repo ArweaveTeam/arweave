@@ -302,7 +302,7 @@ try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 			FinderReward,
 			NextB#block.height
 		),
-	ar_node:validate(
+	ar_node_utils:validate(
 		HashList,
 		WalletList,
 		NextB,
