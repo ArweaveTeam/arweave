@@ -530,7 +530,7 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when HashList =
 			TXPool
 		),
 	PotentialTXs = TXPool -- TXs,
-	ar_node_utils:reset_miner(
+	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			hash_list            => NewHs,
 			wallet_list          => NewB#block.wallet_list,
@@ -543,7 +543,7 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when HashList =
 			last_retarget        => NewB#block.last_retarget,
 			weave_size           => NewB#block.weave_size
 		}
-	);
+	)};
 recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when (length(NewHs)) > (length(HashList)) ->
 	% TODO mue: Comparing lengths of lists might get quite expensive.
 	case whereis(fork_recovery_server) of
@@ -565,7 +565,7 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when (length(Ne
 			TXPool
 		),
 	PotentialTXs = TXPool -- TXs,
-	ar_node_utils:reset_miner(
+	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			hash_list            => [NewB#block.indep_hash | NewB#block.hash_list],
 			wallet_list          => NewB#block.wallet_list,
@@ -578,7 +578,7 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when (length(Ne
 			last_retarget        => NewB#block.last_retarget,
 			weave_size           => NewB#block.weave_size
 		}
-	);
+	)};
 recovered_from_fork(_StateIn, _) ->
 	none.
 
