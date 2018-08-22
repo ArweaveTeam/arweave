@@ -9,9 +9,17 @@
 -export([decrypt_full_block/4]).
 -export([generate_block_key/2]).
 -export([generate_block_from_shadow/2, generate_block_data_segment/6]).
+-export([generate_hash_list_for_block/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% @doc Find the appropriate block hash list for a block/indep. hash, from a
+%% block hash list further down the weave.
+generate_hash_list_for_block(B, BHL) when ?IS_BLOCK(B) ->
+    generate_hash_list_for_block(B#block.indep_hash, BHL);
+generate_hash_list_for_block(IndepHash, [IndepHash|BHL]) -> BHL;
+generate_hash_list_for_block(IndepHash, [_|Rest]) ->
+    generate_hash_list_for_block(IndepHash, Rest).
 
 %% @doc Encrypt a recall block. Encryption key is derived from
 %% the contents of the recall block and the hash of the current block
@@ -531,6 +539,20 @@ get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
 
 
 %% Tests: ar_block
+
+hash_list_gen_test() ->
+    ar_storage:clear(),
+    B0s = [B0] = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1s = [B1|_] = ar_weave:add(B0s, []),
+    ar_storage:write_block(B1),
+    B2s = [B2|_] = ar_weave:add(B1s, []),
+    ar_storage:write_block(B2),
+    [B3|_] = ar_weave:add(B2s, []),
+    BHL1 = B1#block.hash_list,
+    BHL2 = B2#block.hash_list,
+    BHL1 = generate_hash_list_for_block(B1, B3#block.hash_list),
+    BHL2 = generate_hash_list_for_block(B2#block.indep_hash, B3#block.hash_list).
 
 pad_unpad_roundtrip_test() ->
     Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
