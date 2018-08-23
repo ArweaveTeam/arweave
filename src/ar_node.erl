@@ -751,7 +751,7 @@ handle(_SPid, {add_peers, Peers}) ->
 handle(SPid, {apply_tx, TX}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-	{task, {encounter_nex_tx, TX, NewGS}};
+	{task, {encounter_new_tx, TX, NewGS}};
 handle(SPid, {new_block, Peer, Height, NewB, RecallB}) ->
 	% We have a new block. Distribute it to the gossip network.
 	{ok, #{ gossip := GS, hash_list := HashList }} = ar_node_state:lookup(SPid, [gossip, hash_list]),

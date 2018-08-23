@@ -97,7 +97,7 @@ verify(TX, Diff, WalletList) ->
 		tag_field_legal(TX) andalso
 		check_last_tx(WalletList, TX) andalso
 		tx_verify_hash(TX) andalso
-		ar_node:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
+		ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
 		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
 	of
 		true -> true;
@@ -146,7 +146,7 @@ verify(TX, Diff, WalletList) ->
 		tag_field_legal(TX) andalso
 		check_last_tx(WalletList, TX) andalso
 		tx_verify_hash(TX) andalso
-		ar_node:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
+		ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
 		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
 	of
 		true -> true;

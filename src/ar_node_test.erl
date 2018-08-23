@@ -166,7 +166,7 @@ tiny_blockweave_with_mining_test() ->
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
 	timer:sleep(2000),
-	B1 = ar_nodes:get_blocks(Node2),
+	B1 = ar_node:get_blocks(Node2),
 	1 = (hd(ar_storage:read_block(B1)))#block.height.
 
 %% @doc Ensure that the network add data and have it mined into blocks.
@@ -179,10 +179,11 @@ tiny_blockweave_with_added_data_test() ->
 	Node1 = ar_node:start([], B0),
 	Node2 = ar_node:start([Node1], B0),
 	ar_node:add_peers(Node1, Node2),
+	timer:sleep(500),
 	ar_node:add_tx(Node2, TestData),
 	timer:sleep(1000),
 	ar_node:mine(Node1),
-	timer:sleep(1000),
+	timer:sleep(3000),
 	B1 = ar_node:get_blocks(Node2),
 	TestDataID	= TestData#tx.id,
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
@@ -198,9 +199,7 @@ medium_blockweave_multi_mine_test() ->
 	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
 	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 	ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
-	timer:sleep(1000),
 	ar_node:mine(ar_util:pick_random(Nodes)),
-	timer:sleep(1000),
 	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 	ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
 	timer:sleep(1000),
@@ -282,11 +281,15 @@ last_tx_test() ->
 	Node1 = ar_node:start([], B0),
 	Node2 = ar_node:start([Node1], B0),
 	ar_node:add_peers(Node1, Node2),
+	timer:sleep(500),
 	ar_node:add_tx(Node1, SignedTX),
+	timer:sleep(500),
 	ar_storage:write_tx(SignedTX),
 	timer:sleep(500),
 	ar_node:mine(Node1), % Mine B1
 	timer:sleep(500),
+	?debugVal(ID),
+	?debugVal(ar:node_get_last_tx(Node2, Pub1)),
 	ID = ar_node:get_last_tx(Node2, Pub1).
 
 %% @doc Ensure that rejoining functionality works

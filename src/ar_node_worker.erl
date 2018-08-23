@@ -200,8 +200,8 @@ handle(_SPid, Msg) ->
 
 %% @doc Add new transaction to a server state.
 add_tx(StateIn, TX) ->
-	#{node := Node, txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
-	case ar_node_utils:get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
+	#{node := Node, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
+	case ar_node_utils:get_conflicting_txs(aggregate_txs(StateIn), TX) of
 		[] ->
 			timer:send_after(
 				calculate_delay(byte_size(TX#tx.data)),
@@ -220,8 +220,8 @@ add_tx(StateIn, TX) ->
 	end.
 
 add_tx(StateIn, TX, NewGS) ->
-	#{node := Node, txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
-	case ar_node_utils:get_conflicting_txs(TXs ++ WaitingTXs ++ PotentialTXs, TX) of
+	#{node := Node, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
+	case ar_node_utils:get_conflicting_txs(aggregate_txs(StateIn), TX) of
 		[] ->
 			timer:send_after(
 				calculate_delay(byte_size(TX#tx.data)),
@@ -289,9 +289,6 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 	% This block is at the correct height.
 	StateNext = StateIn#{ gossip => NewGS },
 	#{
-		txs := TXs,
-		waiting_txs := WaitingTXs,
-		potential_txs := PotentialTXs,
 		reward_pool := RewardPool,
 		wallet_list := WalletList
 	} = StateNext,
@@ -299,8 +296,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 	% incomplete and will fail in validate
 	TXs = lists:foldr(
 		fun(T, Acc) ->
-			%state contains it
-			case [ TX || TX <- (TXs ++ WaitingTXs ++ PotentialTXs), TX#tx.id == T ] of
+			case [ TX || TX <- aggregate_txs(StateNext), TX#tx.id == T ] of
 				[] ->
 					case ar_storage:read_tx(T) of
 						unavailable -> Acc;
@@ -335,12 +331,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 	% TODO mue: Setting the state gossip for fork_recover/3 has to be
 	% checked. The gossip is already set to NewGS in first function
 	% statement. Compare to pre-refactoring.
-	StateOut = case ar_node_utils:validate(
-			StateNew,
-			NewB,
-			TXs,
-			ar_util:get_head_block(HashList), RecallB
-	) of
+	StateOut = case ar_node_utils:validate(StateNew, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
 		true ->
 			% The block is legit. Accept it.
 			case whereis(fork_recovery_server) of
@@ -352,7 +343,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 			ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 	end,
 	{ok, StateOut};
-process_new_block(# {height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
+process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< Height ->
 	% Block is lower than us, ignore it.
 	ar:report(
@@ -448,16 +439,15 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			case rand:uniform(5) of
 				1 ->
 					#{ gossip := StateInGS } = StateIn,
-					ar_node_utils:reset_miner(
+					{ok, ar_node_utils:reset_miner(
 						StateIn#{
 							gossip		  => StateInGS,
 							txs			  => [], % TXs not included in the block
 							potential_txs => []
-						},
-						Node
-					);
+						}
+					)};
 				_ ->
-					ar_node_utils:reset_miner(StateIn, Node)
+					{ok, ar_node_utils:reset_miner(StateIn)}
 			end;
 		true ->
 			ar_storage:write_tx(MinedTXs),
@@ -502,7 +492,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				end,
 				PotentialTXs
 			),
-			ar_node_utils:reset_miner(
+			{ok, ar_node_utils:reset_miner(
 				StateNew#{
 					gossip               => NewGS,
 					hash_list            => [NextB#block.indep_hash | HashList],
@@ -514,9 +504,8 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 					diff                 => NextB#block.diff,
 					last_retarget        => NextB#block.last_retarget,
 					weave_size           => NextB#block.weave_size
-				},
-				Node
-			)
+				}
+			)}
 	end.
 
 
@@ -592,6 +581,10 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when (length(Ne
 	)};
 recovered_from_fork(_StateIn, _) ->
 	none.
+
+%% @doc Aggregates the transactions of a state to one list.
+aggregate_txs(#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs}) ->
+	TXs ++ WaitingTXs ++ PotentialTXs.
 
 %% @doc Calculate the time a tx must wait after being received to be mined.
 %% Wait time is a fixed interval combined with a wait dependent on tx data size.

@@ -13,7 +13,7 @@
 -export([fork_recover/3]).
 -export([filter_out_of_order_txs/2, filter_out_of_order_txs/3]).
 -export([filter_all_out_of_order_txs/2]).
--export([validate/5, validate/8]).
+-export([validate/5, validate/8, validate_wallet_list/1]).
 
 -include("ar.hrl").
 
@@ -558,6 +558,16 @@ validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:d(block_not_accepted),
 	false.
 
+%% @doc Ensure that all wallets in the wallet list have a positive balance.
+validate_wallet_list([]) ->
+	true;
+validate_wallet_list([{_, 0, Last} | _]) when byte_size(Last) == 0 ->
+	false;
+validate_wallet_list([{_, Qty, _} | _]) when Qty < 0 ->
+	false;
+validate_wallet_list([_ | Rest]) ->
+	validate_wallet_list(Rest).
+
 %%%
 %%% Private functions.
 %%%
@@ -646,16 +656,6 @@ calculate_static_reward(Height) ->
 calculate_tx_reward(#tx { reward = Reward }) ->
 	% TDOD mue: Calculation is not calculated, only returned.
 	Reward.
-
-%% @doc Ensure that all wallets in the wallet list have a positive balance.
-validate_wallet_list([]) ->
-	true;
-validate_wallet_list([{_, 0, Last} | _]) when byte_size(Last) == 0 ->
-	false;
-validate_wallet_list([{_, Qty, _} | _]) when Qty < 0 ->
-	false;
-validate_wallet_list([_ | Rest]) ->
-	validate_wallet_list(Rest).
 
 %%%
 %%% Unreferenced!
