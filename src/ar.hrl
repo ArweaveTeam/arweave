@@ -12,7 +12,7 @@
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
-%-define(DEBUG, debug).
+-define(DEBUG, debug).
 
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").

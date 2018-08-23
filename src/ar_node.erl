@@ -173,10 +173,12 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					end,
 
 			% Start processes, init state, and start server.
+			NPid = self(),
 			{ok, SPid} = ar_node_state:start(),
-			{ok, WPid} = ar_node_worker:start(SPid),
+			{ok, WPid} = ar_node_worker:start(NPid, SPid),
 
 			ok = ar_node_state:update(SPid, [
+				{node, NPid},
 				{gossip, Gossip},
 				{hash_list, HashList},
 				{wallet_list, Hashes},

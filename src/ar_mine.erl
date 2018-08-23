@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/5, start/6, change_data/2, stop/1, miner/2, schedule_hash/1]).
+-export([start/6, start/7, change_data/2, stop/1, miner/2, schedule_hash/1]).
 -export([validate/3, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -24,13 +24,12 @@
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
-start(CurrentB, RecallB, TXs, unclaimed, Tags) ->
-	start(CurrentB, RecallB, TXs, <<>>, Tags);
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags) ->
-	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, next_diff(CurrentB)).
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff) ->
+start(CurrentB, RecallB, TXs, unclaimed, Tags, Parent) ->
+	start(CurrentB, RecallB, TXs, <<>>, Tags, Parent);
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent) ->
+	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, next_diff(CurrentB), Parent).
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 	crypto:rand_seed(),
-	Parent = self(),
 	Timestamp = os:system_time(seconds),
 	% Ensure that the txs in which the mining process is passed
 	% validate and can be serialized.
@@ -216,7 +215,8 @@ miner(
 								Supervisor
 							)
 					end;
-				Hash -> Supervisor ! {solution, Hash, iolist_to_binary(Nonces)}
+				Hash ->
+					Supervisor ! {solution, Hash, iolist_to_binary(Nonces)}
 			end
 	end.
 
@@ -277,76 +277,70 @@ validate(DataSegment, Nonce, Diff) ->
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->
-	{timeout, 60, fun() ->
-		B0 = ar_weave:init(),
-		ar_node:start([], B0),
-		B1 = ar_weave:add(B0, []),
-		B = hd(B1),
-		RecallB = hd(B0),
-		start(B, RecallB, [], unclaimed, []),
-		receive
-			{work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
-				DataSegment = ar_block:generate_block_data_segment(
-					B,
-					RecallB,
-					[],
-					<<>>,
-					Timestamp,
-					[]
-				),
-				Res = crypto:hash(
-					?MINING_HASH_ALG,
-					<< Nonce/binary, DataSegment/binary >>
-				),
-				<< 0:Diff, _/bitstring >> = Res
-		end
-	end}.
+	B0 = ar_weave:init(),
+	ar_node:start([], B0),
+	B1 = ar_weave:add(B0, []),
+	B = hd(B1),
+	RecallB = hd(B0),
+	start(B, RecallB, [], unclaimed, [], self()),
+	receive
+		{work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+			DataSegment = ar_block:generate_block_data_segment(
+				B,
+				RecallB,
+				[],
+				<<>>,
+				Timestamp,
+				[]
+			),
+			Res = crypto:hash(
+				?MINING_HASH_ALG,
+				<< Nonce/binary, DataSegment/binary >>
+			),
+			<< 0:Diff, _/bitstring >> = Res
+	end.
 
 %% @doc Ensure that we can change the data while mining is in progress.
 change_data_test() ->
-	{timeout, 60, fun() ->
-		B0 = ar_weave:init(),
-		ar_node:start([], B0),
-		B1 = ar_weave:add(B0, []),
-		B = hd(B1),
-		RecallB = hd(B0),
-		TXs = [ar_tx:new()],
-		NewTXs = TXs ++ [ar_tx:new(), ar_tx:new()],
-		PID = start(B, RecallB, TXs, unclaimed, []),
-		change_data(PID, NewTXs),
-		timer:sleep(500),
-		receive
-			{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
-				DataSegment = ar_block:generate_block_data_segment(
-					B,
-					RecallB,
-					MinedTXs,
-					<<>>,
-					Timestamp,
-					[]
-				),
-				Res = crypto:hash(
-					?MINING_HASH_ALG,
-					<< Nonce/binary, DataSegment/binary >>
-				),
-				<< 0:Diff, _/bitstring >> = Res,
-				MinedTXs == NewTXs
-		end
-	end}.
+	B0 = ar_weave:init(),
+	ar_node:start([], B0),
+	B1 = ar_weave:add(B0, []),
+	B = hd(B1),
+	RecallB = hd(B0),
+	TXs = [ar_tx:new()],
+	NewTXs = TXs ++ [ar_tx:new(), ar_tx:new()],
+	PID = start(B, RecallB, TXs, unclaimed, [], self()),
+	change_data(PID, NewTXs),
+	timer:sleep(500),
+	receive
+		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+			DataSegment = ar_block:generate_block_data_segment(
+				B,
+				RecallB,
+				MinedTXs,
+				<<>>,
+				Timestamp,
+				[]
+			),
+			Res = crypto:hash(
+				?MINING_HASH_ALG,
+				<< Nonce/binary, DataSegment/binary >>
+			),
+			<< 0:Diff, _/bitstring >> = Res,
+			MinedTXs == NewTXs
+	end.
 
 %% @doc Ensure that an active miner process can be killed.
 kill_miner_test() ->
-	{timeout, 60, fun() ->
-		B0 = ar_weave:init(),
-		ar_node:start([], B0),
-		B1 = ar_weave:add(B0, []),
-		B = hd(B1),
-		RecallB = hd(B0),
-		PID = start(B, RecallB, [], unclaimed, []),
-		erlang:monitor(process, PID),
-		PID ! stop,
-		receive
-			{'DOWN', _Ref, process, PID, normal} -> ok
-			after 1000 -> erlang:error(no_match)
-		end
-	end}.
+	B0 = ar_weave:init(),
+	ar_node:start([], B0),
+	B1 = ar_weave:add(B0, []),
+	B = hd(B1),
+	RecallB = hd(B0),
+	PID = start(B, RecallB, [], unclaimed, [], self()),
+	erlang:monitor(process, PID),
+	PID ! stop,
+	receive
+		{'DOWN', _Ref, process, PID, normal} -> ok
+		after 1000 -> erlang:error(no_match)
+	end.

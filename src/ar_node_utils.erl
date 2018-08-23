@@ -182,7 +182,7 @@ start_mining(#{hash_list := not_joined} = StateIn, _) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	StateIn;
-start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn, ForceDiff) ->
+start_mining(#{ node := Node, hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn, ForceDiff) ->
 	case find_recall_block(BHL) of
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
@@ -222,7 +222,7 @@ start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags :=
 			if not is_record(RecallB, block) ->
 				ar:report_console([{erroneous_recall_block, RecallB}]);
 			true ->
-				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
+				ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
 			end,
 			RecallBFull = make_full_block(
 				RecallB#block.indep_hash
@@ -244,9 +244,10 @@ start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags :=
 						RecallB,
 						TXs,
 						RewardAddr,
-						Tags
+						Tags,
+						Node
 					),
-					ar:report([{node, self()}, {started_miner, Miner}]),
+					ar:report([{node, Node}, {started_miner, Miner}]),
 					StateIn#{ miner => Miner };
 				ForceDiff ->
 					Miner = ar_mine:start(
@@ -255,9 +256,10 @@ start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags :=
 						TXs,
 						RewardAddr,
 						Tags,
-						ForceDiff
+						ForceDiff,
+						Node
 					),
-					ar:report([{node, self()}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
+					ar:report([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
 					StateIn#{ miner => Miner, diff => ForceDiff }
 			end
 	end.
@@ -301,8 +303,7 @@ integrate_new_block(
 			end,
 			TXs ++ WaitingTXs ++ PotentialTXs
 		),
-	% TODO mue: KeepNotMinedTXs is unused.
-	KeepNotMinedTXs = ar_node:filter_all_out_of_order_txs(
+	KeepNotMinedTXs = filter_all_out_of_order_txs(
 							NewB#block.wallet_list,
 							RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
@@ -349,7 +350,7 @@ integrate_new_block(
 		hash_list			 => [NewB#block.indep_hash | HashList],
 		txs					 => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
 		height				 => NewB#block.height,
-		floating_wallet_list => ar_node:apply_txs(WalletList, TXs),
+		floating_wallet_list => apply_txs(WalletList, TXs),
 		reward_pool			 => NewB#block.reward_pool,
 		potential_txs		 => [],
 		diff				 => NewB#block.diff,

@@ -15,22 +15,20 @@
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_network_with_reward_pool_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
-		Node1 = ar_node:start([], B0),
-		ar_storage:write_block(B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:set_reward_addr(Node1, << 0:256 >>),
-		timer:sleep(500),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:mine(Node1),
-		timer:sleep(1000),
-		ar_node:mine(Node1),
-		timer:sleep(1000),
-		B2 = ar_node:get_blocks(Node2),
-		2 = (hd(ar_storage:read_block(B2)))#block.height
-	end}.
+	ar_storage:clear(),
+	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
+	Node1 = ar_node:start([], B0),
+	ar_storage:write_block(B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:set_reward_addr(Node1, << 0:256 >>),
+	ar_node:add_peers(Node1, Node2),
+	timer:sleep(1000),
+	ar_node:mine(Node1),
+	timer:sleep(1000),
+	ar_node:mine(Node1),
+	timer:sleep(1000),
+	Bs2 = ar_node:get_blocks(Node2),
+	2 = (hd(ar_storage:read_block(Bs2)))#block.height.
 
 %% @doc Check the current block can be retrieved
 get_current_block_test() ->
@@ -43,315 +41,267 @@ get_current_block_test() ->
 
 %% @doc Check that blocks can be added (if valid) by external processes.
 add_block_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init(),
-		Node1 = ar_node:start([], [B0]),
-		[B1 | _] = ar_weave:add([B0]),
-		ar_node:add_block(Node1, B1, B0),
-		Blocks = lists:map(fun(B) -> B#block.indep_hash end, [B1, B0]),
-		timer:sleep(5000),
-		Blocks = ar_node:get_blocks(Node1)
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node1 = ar_node:start([], [B0]),
+	[B1 | _] = ar_weave:add([B0]),
+	ar_node:add_block(Node1, B1, B0),
+	Blocks = lists:map(fun(B) -> B#block.indep_hash end, [B1, B0]),
+	timer:sleep(1000),
+	Blocks = ar_node:get_blocks(Node1).
 
 %% @doc Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		ar_storage:write_tx(
-			[
-				TX1 = ar_tx:new(<<"HELLO WORLD">>),
-				TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-			]
-		),
-		Node = ar_node:start(),
-		GS0 = ar_gossip:init([Node]),
-		B0 = ar_weave:init([]),
-		ar_storage:write_block(B0),
-		B1 = ar_weave:add(B0, [TX1]),
-		LastB = hd(B1),
-		ar_storage:write_block(hd(B1)),
-		BL = [hd(B1), hd(B0)],
-		Node ! {replace_block_list, BL},
-		B2 = ar_weave:add(B1, [TX2]),
-		ar_storage:write_block(hd(B2)),
-		ar_gossip:send(GS0,
-			{
-				new_block,
-				self(),
-				(hd(B2))#block.height,
-				(hd(B2))#block { hash = <<"INCORRECT">> },
-				ar_node_utils:find_recall_block(B2)
-			}),
-		timer:sleep(500),
-		Node ! {get_blocks, self()},
-		receive
-			{blocks, Node, [RecvdB | _]} ->
-				LastB = ar_storage:read_block(RecvdB)
-		end
-	end}.
+	ar_storage:clear(),
+	ar_storage:write_tx(
+		[
+			TX1 = ar_tx:new(<<"HELLO WORLD">>),
+			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
+		]
+	),
+	Node = ar_node:start(),
+	GS0 = ar_gossip:init([Node]),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	B1 = ar_weave:add(B0, [TX1]),
+	LastB = hd(B1),
+	ar_storage:write_block(hd(B1)),
+	BL = [hd(B1), hd(B0)],
+	Node ! {replace_block_list, BL},
+	B2 = ar_weave:add(B1, [TX2]),
+	ar_storage:write_block(hd(B2)),
+	ar_gossip:send(GS0,
+		{
+			new_block,
+			self(),
+			(hd(B2))#block.height,
+			(hd(B2))#block { hash = <<"INCORRECT">> },
+			ar_node_utils:find_recall_block(B2)
+		}),
+	timer:sleep(500),
+	Node ! {get_blocks, self()},
+	receive
+		{blocks, Node, [RecvdB | _]} ->
+			LastB = ar_storage:read_block(RecvdB)
+	end.
 
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto
 %% the network.
 add_bogus_block_nonce_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		ar_storage:write_tx(
-			[
-				TX1 = ar_tx:new(<<"HELLO WORLD">>),
-				TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-			]
-		),
-		Node = ar_node:start(),
-		GS0 = ar_gossip:init([Node]),
-		B0 = ar_weave:init([]),
-		ar_storage:write_block(B0),
-		B1 = ar_weave:add(B0, [TX1]),
-		LastB = hd(B1),
-		ar_storage:write_block(hd(B1)),
-		BL = [hd(B1), hd(B0)],
-		Node ! {replace_block_list, BL},
-		B2 = ar_weave:add(B1, [TX2]),
-		ar_storage:write_block(hd(B2)),
-		ar_gossip:send(GS0,
-			{new_block,
-				self(),
-				(hd(B2))#block.height,
-				(hd(B2))#block { nonce = <<"INCORRECT">> },
-				ar_node_utils:find_recall_block(B2)
-			}
-		),
-		timer:sleep(500),
-		Node ! {get_blocks, self()},
-		receive
-			{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
-		end
-	end}.
+	ar_storage:clear(),
+	ar_storage:write_tx(
+		[
+			TX1 = ar_tx:new(<<"HELLO WORLD">>),
+			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
+		]
+	),
+	Node = ar_node:start(),
+	GS0 = ar_gossip:init([Node]),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	B1 = ar_weave:add(B0, [TX1]),
+	LastB = hd(B1),
+	ar_storage:write_block(hd(B1)),
+	BL = [hd(B1), hd(B0)],
+	Node ! {replace_block_list, BL},
+	B2 = ar_weave:add(B1, [TX2]),
+	ar_storage:write_block(hd(B2)),
+	ar_gossip:send(GS0,
+		{new_block,
+			self(),
+			(hd(B2))#block.height,
+			(hd(B2))#block { nonce = <<"INCORRECT">> },
+			ar_node_utils:find_recall_block(B2)
+		}
+	),
+	timer:sleep(500),
+	Node ! {get_blocks, self()},
+	receive
+		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
+	end.
 
 %% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
 add_bogus_hash_list_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		ar_storage:write_tx(
-			[
-				TX1 = ar_tx:new(<<"HELLO WORLD">>),
-				TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-			]
-		),
-		Node = ar_node:start(),
-		GS0 = ar_gossip:init([Node]),
-		B0 = ar_weave:init([]),
-		ar_storage:write_block(B0),
-		B1 = ar_weave:add(B0, [TX1]),
-		LastB = hd(B1),
-		ar_storage:write_block(hd(B1)),
-		BL = [hd(B1), hd(B0)],
-		Node ! {replace_block_list, BL},
-		B2 = ar_weave:add(B1, [TX2]),
-		ar_storage:write_block(hd(B2)),
-		ar_gossip:send(GS0,
-			{new_block,
-				self(),
-				(hd(B2))#block.height,
-				(hd(B2))#block {
-					hash_list =
-						[<<"INCORRECT HASH">> | tl((hd(B2))#block.hash_list)]
-				},
-				ar_node_utils:find_recall_block(B2)
-			}),
-		timer:sleep(500),
-		Node ! {get_blocks, self()},
-		receive
-			{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
-		end
-	end}.
+	ar_storage:clear(),
+	ar_storage:write_tx(
+		[
+			TX1 = ar_tx:new(<<"HELLO WORLD">>),
+			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
+		]
+	),
+	Node = ar_node:start(),
+	GS0 = ar_gossip:init([Node]),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	B1 = ar_weave:add(B0, [TX1]),
+	LastB = hd(B1),
+	ar_storage:write_block(hd(B1)),
+	BL = [hd(B1), hd(B0)],
+	Node ! {replace_block_list, BL},
+	B2 = ar_weave:add(B1, [TX2]),
+	ar_storage:write_block(hd(B2)),
+	ar_gossip:send(GS0,
+		{new_block,
+			self(),
+			(hd(B2))#block.height,
+			(hd(B2))#block {
+				hash_list =
+					[<<"INCORRECT HASH">> | tl((hd(B2))#block.hash_list)]
+			},
+			ar_node_utils:find_recall_block(B2)
+		}),
+	timer:sleep(500),
+	Node ! {get_blocks, self()},
+	receive
+		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
+	end.
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_blockweave_with_mining_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		B0 = ar_weave:init([]),
-		Node1 = ar_node:start([], B0),
-		ar_storage:write_block(B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:mine(Node1),
-		timer:sleep(1000),
-		B1 = ar_nodes:get_blocks(Node2),
-		1 = (hd(ar_storage:read_block(B1)))#block.height
-	end}.
+	ar_storage:clear(),
+	B0 = ar_weave:init([]),
+	Node1 = ar_node:start([], B0),
+	ar_storage:write_block(B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1),
+	timer:sleep(2000),
+	B1 = ar_nodes:get_blocks(Node2),
+	1 = (hd(ar_storage:read_block(B1)))#block.height.
 
 %% @doc Ensure that the network add data and have it mined into blocks.
 tiny_blockweave_with_added_data_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		TestData = ar_tx:new(<<"TEST DATA">>),
-		ar_storage:write_tx(TestData),
-		B0 = ar_weave:init([]),
-		ar_storage:write_block(B0),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:add_tx(Node2, TestData),
-		timer:sleep(1000),
-		ar_node:mine(Node1),
-		timer:sleep(1000),
-		B1 = ar_node:get_blocks(Node2),
-		TestDataID	= TestData#tx.id,
-		[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs
-	end}.
+	ar_storage:clear(),
+	TestData = ar_tx:new(<<"TEST DATA">>),
+	ar_storage:write_tx(TestData),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node2, TestData),
+	timer:sleep(1000),
+	ar_node:mine(Node1),
+	timer:sleep(1000),
+	B1 = ar_node:get_blocks(Node2),
+	TestDataID	= TestData#tx.id,
+	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
 medium_blockweave_multi_mine_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		TestData1 = ar_tx:new(<<"TEST DATA1">>),
-		ar_storage:write_tx(TestData1),
-		TestData2 = ar_tx:new(<<"TEST DATA2">>),
-		ar_storage:write_tx(TestData2),
-		B0 = ar_weave:init([]),
-		Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
-		[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
-		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
-		timer:sleep(1000),
-		ar_node:mine(ar_util:pick_random(Nodes)),
-		timer:sleep(1000),
-		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
-		timer:sleep(1000),
-		ar_node:mine(ar_util:pick_random(Nodes)),
-		timer:sleep(1000),
-		B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-		TestDataID1 = TestData1#tx.id,
-		TestDataID2 = TestData2#tx.id,
-		[TestDataID1] = (hd(ar_storage:read_block(B1)))#block.txs,
-		[TestDataID2] = (hd(ar_storage:read_block(B2)))#block.txs
-	end}.
+	ar_storage:clear(),
+	TestData1 = ar_tx:new(<<"TEST DATA1">>),
+	ar_storage:write_tx(TestData1),
+	TestData2 = ar_tx:new(<<"TEST DATA2">>),
+	ar_storage:write_tx(TestData2),
+	B0 = ar_weave:init([]),
+	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
+	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+	ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
+	timer:sleep(1000),
+	ar_node:mine(ar_util:pick_random(Nodes)),
+	timer:sleep(1000),
+	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+	ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
+	timer:sleep(1000),
+	ar_node:mine(ar_util:pick_random(Nodes)),
+	timer:sleep(1000),
+	B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+	TestDataID1 = TestData1#tx.id,
+	TestDataID2 = TestData2#tx.id,
+	[TestDataID1] = (hd(ar_storage:read_block(B1)))#block.txs,
+	[TestDataID2] = (hd(ar_storage:read_block(B2)))#block.txs.
 
 %% @doc Setup a network, mine a block, cause one node to forget that block.
 %% Ensure that the 'truncated' node can still verify and accept new blocks.
 tiny_collaborative_blockweave_mining_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		B0 = ar_weave:init([]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B2
-		timer:sleep(500),
-		ar_node:truncate(Node1),
-		ar_node:mine(Node2), % Mine B3
-		timer:sleep(500),
-		B3 = ar_node:get_blocks(Node1),
-		3 = (hd(ar_storage:read_block(B3)))#block.height
-	end}.
+	ar_storage:clear(),
+	B0 = ar_weave:init([]),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1), % Mine B1
+	timer:sleep(500),
+	ar_node:mine(Node1), % Mine B2
+	timer:sleep(500),
+	ar_node:truncate(Node1),
+	ar_node:mine(Node2), % Mine B3
+	timer:sleep(500),
+	B3 = ar_node:get_blocks(Node1),
+	3 = (hd(ar_storage:read_block(B3)))#block.height.
 
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
 mining_reward_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{_Priv1, Pub1} = ar_wallet:new(),
-		Node1 = ar_node:start([], ar_weave:init([]), 0, ar_wallet:to_address(Pub1)),
-		ar_node:mine(Node1),
-		timer:sleep(1000),
-		true = (ar_node:get_balance(Node1, Pub1) > 0)
-	end}.
+	ar_storage:clear(),
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Node1 = ar_node:start([], ar_weave:init([]), 0, ar_wallet:to_address(Pub1)),
+	ar_node:mine(Node1),
+	timer:sleep(2000),
+	true = (ar_node:get_balance(Node1, Pub1) > 0).
 
 %% @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{_Priv1, Pub1} = ar_wallet:new(),
-		Node1 = ar_node:start([], B0 = ar_weave:init([])),
-		Node2 = ar_node:start([Node1], B0, 0, ar_wallet:to_address(Pub1)),
-		ar_node:mine(Node2),
-		timer:sleep(1000),
-		true = (ar_node:get_balance(Node1, Pub1) > 0)
-	end}.
-
-%% @doc Create two new wallets and a blockweave with a wallet balance.
-%% Create and verify execution of a signed exchange of value tx.
-wallet_transaction_test_slow() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:add_tx(Node1, SignedTX),
-		timer:sleep(300),
-		ar_storage:write_tx(SignedTX),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(300),
-		?AR(999) = ar_node:get_balance(Node2, Pub1),
-		?AR(9000) = ar_node:get_balance(Node2, Pub2)
-	end}.
+	ar_storage:clear(),
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Node1 = ar_node:start([], B0 = ar_weave:init([])),
+	Node2 = ar_node:start([Node1], B0, 0, ar_wallet:to_address(Pub1)),
+	ar_node:mine(Node2),
+	timer:sleep(2000),
+	true = (ar_node:get_balance(Node1, Pub1) > 0).
 
 %% @doc Ensure that TX replay attack mitigation works.
 replay_attack_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx(SignedTX),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
-		ar_node:add_tx(Node1, SignedTX),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
-		?AR(8999) = ar_node:get_balance(Node2, Pub1),
-		?AR(1000) = ar_node:get_balance(Node2, Pub2)
-	end}.
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
+	ar_storage:write_tx(SignedTX),
+	ar_node:mine(Node1), % Mine B1
+	timer:sleep(500),
+	ar_node:add_tx(Node1, SignedTX),
+	ar_node:mine(Node1), % Mine B1
+	timer:sleep(500),
+	?AR(8999) = ar_node:get_balance(Node2, Pub1),
+	?AR(1000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Ensure last_tx functions after block mine.
 last_tx_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		ID = SignedTX#tx.id,
-		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx(SignedTX),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
-		ID = ar_node:get_last_tx(Node2, Pub1)
-	end}.
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	ID = SignedTX#tx.id,
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
+	ar_storage:write_tx(SignedTX),
+	timer:sleep(500),
+	ar_node:mine(Node1), % Mine B1
+	timer:sleep(500),
+	ID = ar_node:get_last_tx(Node2, Pub1).
 
 %% @doc Ensure that rejoining functionality works
 rejoin_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		B0 = ar_weave:init(),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:mine(Node2), % Mine B1
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
-		ar_node:rejoin(Node2, []),
-		timer:sleep(500),
-		ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2)
-	end}.
+	ar_storage:clear(),
+	B0 = ar_weave:init(),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:mine(Node2), % Mine B1
+	timer:sleep(500),
+	ar_node:mine(Node1), % Mine B1
+	timer:sleep(500),
+	ar_node:rejoin(Node2, []),
+	timer:sleep(500),
+	ar_node:get_blocks(Node1) == ar_node:get_blocks(Node2).
 
 %%%
 %%% Embedded tests.
@@ -521,6 +471,26 @@ filter_all_out_of_order_txs_large_test_slow() ->
 			WalletList,
 			[SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX4, SignedTX, SignedTX3]
 		).
+
+%% @doc Create two new wallets and a blockweave with a wallet balance.
+%% Create and verify execution of a signed exchange of value tx.
+wallet_transaction_test_slow() ->
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node1 = ar_node:start([], B0),
+	Node2 = ar_node:start([Node1], B0),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:add_tx(Node1, SignedTX),
+	timer:sleep(300),
+	ar_storage:write_tx(SignedTX),
+	ar_node:mine(Node1), % Mine B1
+	timer:sleep(300),
+	?AR(999) = ar_node:get_balance(Node2, Pub1),
+	?AR(9000) = ar_node:get_balance(Node2, Pub2).
 
 %% @doc Test that a slightly larger network is able to receive data and
 %% propogate data and blocks.
