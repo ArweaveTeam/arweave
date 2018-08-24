@@ -2,7 +2,7 @@
 %%% @doc Unit tests of the node process.
 %%%
 
--module(ar_node_test).
+-module(ar_node_tests).
 
 -compile(export_all).
 
@@ -189,27 +189,36 @@ tiny_blockweave_with_added_data_test() ->
 	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
-medium_blockweave_multi_mine_test() ->
-	ar_storage:clear(),
-	TestData1 = ar_tx:new(<<"TEST DATA1">>),
-	ar_storage:write_tx(TestData1),
-	TestData2 = ar_tx:new(<<"TEST DATA2">>),
-	ar_storage:write_tx(TestData2),
-	B0 = ar_weave:init([]),
-	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
-	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
-	ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
-	ar_node:mine(ar_util:pick_random(Nodes)),
-	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-	ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
-	timer:sleep(1000),
-	ar_node:mine(ar_util:pick_random(Nodes)),
-	timer:sleep(1000),
-	B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-	TestDataID1 = TestData1#tx.id,
-	TestDataID2 = TestData2#tx.id,
-	[TestDataID1] = (hd(ar_storage:read_block(B1)))#block.txs,
-	[TestDataID2] = (hd(ar_storage:read_block(B2)))#block.txs.
+medium_blockweave_multi_mine_test_() ->
+	% TODO mue: Especially this test only works only due to sleeping
+	% session and is very timing dependant. We need a kind of event
+	% bus injection to make the system active wait until wanted
+	% situations happened.
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		TestData1 = ar_tx:new(<<"TEST DATA1">>),
+		ar_storage:write_tx(TestData1),
+		TestData2 = ar_tx:new(<<"TEST DATA2">>),
+		ar_storage:write_tx(TestData2),
+		B0 = ar_weave:init([]),
+		Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
+		[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
+		timer:sleep(1000),
+		ar_node:mine(ar_util:pick_random(Nodes)),
+		timer:sleep(2000),
+		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+		timer:sleep(1000),
+		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
+		timer:sleep(1000),
+		ar_node:mine(ar_util:pick_random(Nodes)),
+		timer:sleep(2000),
+		B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+		TestDataID1 = TestData1#tx.id,
+		TestDataID2 = TestData2#tx.id,
+		[TestDataID1] = (hd(ar_storage:read_block(B1)))#block.txs,
+		[TestDataID2] = (hd(ar_storage:read_block(B2)))#block.txs
+	end}.
 
 %% @doc Setup a network, mine a block, cause one node to forget that block.
 %% Ensure that the 'truncated' node can still verify and accept new blocks.
@@ -288,8 +297,6 @@ last_tx_test() ->
 	timer:sleep(500),
 	ar_node:mine(Node1), % Mine B1
 	timer:sleep(500),
-	?debugVal(ID),
-	?debugVal(ar:node_get_last_tx(Node2, Pub1)),
 	ID = ar_node:get_last_tx(Node2, Pub1).
 
 %% @doc Ensure that rejoining functionality works
