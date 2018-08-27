@@ -325,11 +325,8 @@ integrate_new_block(
 		end,
 		PotentialTXs
 	),
-	RecallB =
-		ar_node:get_full_block(
-			whereis(http_entrypoint_node),
-			find_recall_hash(NewB, [NewB#block.indep_hash | HashList])
-		),
+	RecallHash = find_recall_hash(NewB, [NewB#block.indep_hash | HashList]),
+	RecallB = ar_node:get_full_block(whereis(http_entrypoint_node), RecallHash),
 	case ?IS_BLOCK(RecallB) of
 		true ->
 			ar_key_db:put(
@@ -359,7 +356,7 @@ integrate_new_block(
 	}).
 
 %% @doc Recovery from a fork.
-fork_recover(#{ hash_list := HashList } = StateIn, Peer, NewB) ->
+fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
 			PrioritisedPeers = ar_util:unique(Peer) ++
@@ -372,7 +369,8 @@ fork_recover(#{ hash_list := HashList } = StateIn, Peer, NewB) ->
 				PID = ar_fork_recovery:start(
 					PrioritisedPeers,
 					NewB,
-					HashList
+					HashList,
+					Node
 				)
 			),
 			case PID of

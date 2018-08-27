@@ -1,5 +1,5 @@
 -module(ar_fork_recovery).
--export([start/3]).
+-export([start/4]).
 -export([multiple_blocks_ahead_with_transaction_recovery_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -23,10 +23,9 @@
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
-start(Peers, TargetBShadow, HashList) ->
+start(Peers, TargetBShadow, HashList, Parent) ->
 	% TODO: At this stage the target block is not a shadow, it is either
 	% a valid block or a block with a malformed hashlist (Outside FR range).
-	Parent = self(),
 	case ?IS_BLOCK(TargetBShadow) of
 		true ->
 			ar:report(
@@ -331,17 +330,19 @@ three_block_ahead_recovery_test() ->
 	B3 = ar_weave:add(B2, []),
 	ar_storage:write_block(hd(B3)),
 	Node1 ! Node2 ! {replace_block_list, B3},
+	timer:sleep(500),
 	ar_node:mine(Node1),
+	timer:sleep(500),
 	ar_node:mine(Node2),
-	ar:d(break1),
 	timer:sleep(500),
 	ar_node:mine(Node1),
 	timer:sleep(500),
 	ar_node:mine(Node1),
 	timer:sleep(500),
 	ar_node:add_peers(Node1, Node2),
+	timer:sleep(500),
 	ar_node:mine(Node1),
-	timer:sleep(2000),
+	timer:sleep(1000),
 	[B | _] = ar_node:get_blocks(Node2),
 	7 = (ar_storage:read_block(B))#block.height.
 

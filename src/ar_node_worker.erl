@@ -456,13 +456,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			{NewGS, _} =
 				ar_gossip:send(
 					GS,
-					{
-						new_block,
-						self(),
-						NextB#block.height,
-						NextB,
-						RecallB
-					}
+					{new_block, self(), NextB#block.height, NextB, RecallB}
 				),
 			ar:report_console(
 				[

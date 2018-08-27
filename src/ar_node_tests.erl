@@ -78,7 +78,7 @@ add_bogus_block_test() ->
 			(hd(B2))#block { hash = <<"INCORRECT">> },
 			ar_node_utils:find_recall_block(B2)
 		}),
-	timer:sleep(500),
+	timer:sleep(1000),
 	Node ! {get_blocks, self()},
 	receive
 		{blocks, Node, [RecvdB | _]} ->
@@ -228,6 +228,7 @@ tiny_collaborative_blockweave_mining_test() ->
 	Node1 = ar_node:start([], B0),
 	Node2 = ar_node:start([Node1], B0),
 	ar_node:add_peers(Node1, Node2),
+	timer:sleep(500),
 	ar_node:mine(Node1), % Mine B1
 	timer:sleep(500),
 	ar_node:mine(Node1), % Mine B2
@@ -244,7 +245,7 @@ mining_reward_test() ->
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Node1 = ar_node:start([], ar_weave:init([]), 0, ar_wallet:to_address(Pub1)),
 	ar_node:mine(Node1),
-	timer:sleep(2000),
+	timer:sleep(1000),
 	true = (ar_node:get_balance(Node1, Pub1) > 0).
 
 %% @doc Check that other nodes accept a new block and associated mining reward.

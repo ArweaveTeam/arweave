@@ -197,12 +197,7 @@ maybe_send_to_internal(
 							{add_tx, Data};
 						block ->
 							{OriginPeer, NewB, RecallB} = Data,
-							{new_block,
-								OriginPeer,
-								NewB#block.height,
-								NewB,
-								RecallB
-							}
+							{new_block, OriginPeer, NewB#block.height, NewB, RecallB}
 					end),
 			send_to_external(S, Msg),
 			add_processed(Type, Data, Procd),
@@ -237,12 +232,7 @@ maybe_send_to_internal(
 							{add_tx, Data};
 						block ->
 							{OriginPeer, NewB, RecallB} = Data,
-							{new_block,
-								OriginPeer,
-								NewB#block.height,
-								NewB,
-								RecallB
-							}
+							{new_block, OriginPeer, NewB#block.height, NewB, RecallB}
 					end),
 			send_to_external(S, Msg, Key, Nonce),
 			add_processed(Type, Data, Procd),
