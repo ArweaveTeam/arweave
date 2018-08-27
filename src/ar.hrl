@@ -7,12 +7,17 @@
 -define(CLIENT_VERSION, 3).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 7).
+-define(RELEASE_NUMBER, 8).
+
+-define(DEFAULT_REQUEST_HEADERS,
+	[
+		{<<"X-Version">>, list_to_binary(integer_to_list(?RELEASE_NUMBER))}
+	]).
 
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
-%-define(DEBUG, debug).
+-define(DEBUG, debug).
 
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").
@@ -134,6 +139,11 @@
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
+
+%% @doc Backup block hash list storage directory.
+-define(HASH_LIST_DIR, "hash_lists").
+%% @doc Directory for storing unique wallet lists.
+-define(WALLET_LIST_DIR, "wallet_lists").
 
 %% @doc Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).

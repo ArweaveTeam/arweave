@@ -68,7 +68,7 @@ add(Bs, TXs, HashList, unclaimed) ->
     add(Bs, TXs, HashList, <<>>);
 add([B|Bs], TXs, HashList, RewardAddr) ->
     RecallHash = ar_util:get_recall_hash(hd([B|Bs]), HashList),
-    RecallB = ar_storage:read_block(RecallHash),
+    RecallB = ar_storage:read_block(RecallHash, HashList),
     {FinderReward, RewardPool} =
         ar_node_utils:calculate_reward_pool(
             B#block.reward_pool,
@@ -219,13 +219,64 @@ hash(DataSegment, Nonce) ->
 
 %% @doc Create an independent hash from a block. Independent hashes
 %% verify a block's contents in isolation and are stored in a node's hash list.
-indep_hash(B) ->
+indep_hash(#block {
+		nonce = Nonce,
+		previous_block = PrevHash,
+		timestamp = TimeStamp,
+		last_retarget = LastRetarget,
+		diff = Diff,
+		height = Height,
+		hash = Hash,
+        hash_list = HashList,
+		indep_hash = IndepHash,
+		txs = TXs,
+		wallet_list = WalletList,
+        reward_addr = RewardAddr,
+		tags = Tags,
+		reward_pool = RewardPool,
+		weave_size = WeaveSize,
+		block_size = BlockSize
+    }) ->
 	crypto:hash(
 		?MINING_HASH_ALG,
         ar_serialize:jsonify(
-            ar_serialize:block_to_json_struct(
-                B#block { indep_hash = <<>> }
-            )
+            {
+                [
+                    {nonce, ar_util:encode(Nonce)},
+                    {previous_block, ar_util:encode(PrevHash)},
+                    {timestamp, TimeStamp},
+                    {last_retarget, LastRetarget},
+                    {diff, Diff},
+                    {height, Height},
+                    {hash, ar_util:encode(Hash)},
+                    {hash_list, lists:map(fun ar_util:encode/1, HashList)},
+                    {indep_hash, ar_util:encode(IndepHash)},
+                    {txs, lists:map(fun ar_util:encode/1, TXs)},
+                    {wallet_list,
+                        lists:map(
+                            fun({Wallet, Qty, Last}) ->
+                                {
+                                    [
+                                        {wallet, ar_util:encode(Wallet)},
+                                        {quantity, Qty},
+                                        {last_tx, ar_util:encode(Last)}
+                                    ]
+                                }
+                            end,
+                            WalletList
+                        )
+                    },
+                    {reward_addr,
+                        if RewardAddr == unclaimed -> list_to_binary("unclaimed");
+                        true -> ar_util:encode(RewardAddr)
+                        end
+                    },
+                    {tags, Tags},
+                    {reward_pool, RewardPool},
+                    {weave_size, WeaveSize},
+                    {block_size, BlockSize}
+                ]
+            }
         )
 	).
 

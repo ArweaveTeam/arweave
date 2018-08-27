@@ -1,8 +1,10 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, get_block_subfield/3, add_peer/1]).
+-export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/2]).
+-export([get_tx/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
+-export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
 -export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
@@ -323,8 +325,7 @@ handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
 %% @doc Return the current hash list held by the node.
 %% GET request to endpoint /hash_list
 handle('GET', [<<"hash_list">>], _Req) ->
-	Node = whereis(http_entrypoint_node),
-	HashList = ar_node:get_hash_list(Node),
+	HashList = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	{200, [],
 		ar_serialize:jsonify(
 			ar_serialize:hash_list_to_json_struct(HashList)
@@ -430,61 +431,111 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	% end;
 
 %% @doc Return the blockshadow corresponding to the indep_hash.
-%% GET request to endpoint /block/hash/{indep_hash}
-handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
-	case ar_storage:lookup_block_filename(ar_util:decode(Hash)) of
+%% GET request to endpoint /block/{height|hash}/{indep_hash}
+handle('GET', [<<"block">>, Type, ID], Req) ->
+	Filename =
+		case Type of
+			<<"hash">> ->
+				ar_storage:lookup_block_filename(ar_util:decode(ID));
+			<<"height">> ->
+				ar_storage:lookup_block_filename(list_to_integer(binary_to_list(ID)))
+		end,
+	case Filename of
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		Filename  ->
-			{ok, [], {file, Filename}}
+			case elli_request:get_header(<<"X-Version">>, Req, 7) of
+				7 ->
+					B =
+						ar_storage:do_read_block(
+							Filename,
+							ar_node:get_hash_list(whereis(http_entrypoint_node))
+						),
+					{JSONStruct} = ar_serialize:full_block_to_json_struct(B),
+					{200, [],
+						ar_serialize:jsonify(
+							{
+								[
+									{
+										<<"hash_list">>,
+										ar_serialize:hash_list_to_json_struct(B#block.hash_list)
+									}
+								|
+									JSONStruct
+								]
+							}
+						)
+					};
+				8 ->
+					{ok, [], {file, Filename}}
+			end
 	end;
 
-%% @doc Return the block at the given height.
-%% GET request to endpoint /block/height/{height}
-%% TODO: Add handle for negative block numbers
-handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
-	F = ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))),
-	case F of
-		unavailable ->
-			{404, [], <<"Block not found.">>};
-		Filename  ->
-			{ok, [], {file, Filename}}
-	end;
-
-%% @doc Return a given field of the blockshadow corresponding to the indep_hash.
-%% GET request to endpoint /block/hash/{indep_hash}/{field}
-%%
-%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
-%%
-handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
-	case ar_meta_db:get(subfield_queries) of
+%% @doc Return the block hash list associated with a block.
+handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
+	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	Hash =
+		case Type of
+			<<"height">> ->
+				B = 
+					ar_node:get_block(whereis(http_entrypoint_node),
+						list_to_integer(binary_to_list(ID))),
+				B#block.indep_hash;
+			<<"hash">> -> ar_util:decode(ID)
+		end,
+	case lists:member(Hash, CurrentBHL) of
 		true ->
-			Block = ar_storage:read_block(ar_util:decode(Hash)),
-			case Block of
-				unavailable ->
-					{404, [], <<"Not Found.">>};
-				B ->
-					{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
-					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
-					Result = block_field_to_string(Field, Res),
-					{200, [], Result}
-			end;
-		_ ->
-			{421, [], <<"Subfield block querying is disabled on this node.">>}
+			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
+			{200, [],
+				ar_serialize:jsonify(
+					ar_serialize:hash_list_to_json_struct(
+						BlockBHL
+					)
+				)
+			};
+		false ->
+			{404, [], <<"Block not found.">>}
+	end;
+
+%% @doc Return the wallet list associated with a block.
+handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
+	B =
+		case Type of
+			<<"height">> ->
+				ar_node:get_block(whereis(http_entrypoint_node),
+					list_to_integer(binary_to_list(ID)));
+			<<"hash">> -> ar_storage:read_block(ar_util:decode(ID))
+		end,
+	case ?IS_BLOCK(B) of
+		true ->
+			{200, [],
+				ar_serialize:jsonify(
+					ar_serialize:wallet_list_to_json_struct(
+						B#block.wallet_list
+					)
+				)
+			};
+		false ->
+			{404, [], <<"Block not found.">>}
 	end;
 
 %% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
-%% GET request to endpoint /block/hash/{height}/{field}
+%% GET request to endpoint /block/hash/{hash|height}/{field}
 %%
 %% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
 %%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
-handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
+handle('GET', [<<"block">>, Type, ID, Field], _Req) ->
 	case ar_meta_db:get(subfield_queries) of
 		true ->
-			Block = ar_node:get_block(whereis(http_entrypoint_node),
-					list_to_integer(binary_to_list(Height))),
+			Block =
+				case Type of
+					<<"height">> ->
+						ar_node:get_block(whereis(http_entrypoint_node),
+							list_to_integer(binary_to_list(ID)));
+					<<"hash">> ->
+						ar_storage:read_block(ar_util:decode(ID))
+				end,
 			case Block of
 				unavailable ->
 						{404, [], <<"Not Found.">>};
@@ -502,29 +553,15 @@ handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 %% GET request to endpoint /current_block
 %% GET request to endpoint /block/current
 handle('GET', [<<"block">>, <<"current">>], _Req) ->
-	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
-		0 -> {404, [], <<"Block not found.">>};
-		Height ->
-			F = ar_storage:lookup_block_filename(Height - 1),
-			case F of
-				unavailable -> {404, [], <<"Block not found.">>};
-				Filename  ->
-					{ok, [], {file, Filename}}
-			end
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[] -> {404, [], <<"Block not found.">>};
+		[IndepHash|_] ->
+			handle('GET', [<<"block">>, <<"hash">>, IndepHash])
 	end;
 
 %% DEPRECATED (12/07/2018)
-handle('GET', [<<"current_block">>], _Req) ->
-	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
-		0 -> {404, [], <<"Block not found.">>};
-		Height ->
-			F = ar_storage:lookup_block_filename(Height - 1),
-			case F of
-				unavailable -> {404, [], <<"Block not found.">>};
-				Filename  ->
-					{ok, [], {file, Filename}}
-			end
-	end;
+handle('GET', [<<"current_block">>], Req) ->
+	handle('GET', [<<"block">>, <<"current">>], Req);
 
 %% @doc Return a list of known services.
 %% GET request to endpoint /services
@@ -731,12 +768,17 @@ send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Peer, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
-	NewBShadow = NewB#block { wallet_list= [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
+	NewBShadow = NewB#block { wallet_list = [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
 	RecallBHash =
 		case ?IS_BLOCK(RecallB) of
 			true ->  RecallB#block.indep_hash;
 			false -> <<>>
 		end,
+	{TempJSONStruct} = ar_serialize:block_to_json_struct(NewBShadow),
+	JSONStruct =
+		{
+			[{<<"hash_list">>, NewBShadow#block.hash_list }|TempJSONStruct]
+		},
 	case ar_key_db:get(RecallBHash) of
 		[{Key, Nonce}] ->
 			ar_httpc:request(
@@ -746,7 +788,7 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 				ar_serialize:jsonify(
 					{
 						[
-							{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+							{<<"new_block">>, JSONStruct},
 							{<<"recall_block">>, ar_util:encode(RecallBHash)},
 							{<<"recall_size">>, RecallB#block.block_size},
 							{<<"port">>, Port},
@@ -766,7 +808,7 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 			ar_serialize:jsonify(
 				{
 					[
-						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+						{<<"new_block">>, JSONStruct},
 						{<<"recall_block">>, ar_util:encode(RecallBHash)},
 						{<<"recall_size">>, RecallB#block.block_size},
 						{<<"port">>, Port},
@@ -903,9 +945,7 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer.
-get_full_block(Peer, Hash) when is_binary(Hash) ->
-	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+get_full_block(Peer, Hash, BHL) when is_binary(Hash) ->
 	B =
 		handle_block_response(
 			ar_httpc:request(
@@ -917,15 +957,73 @@ get_full_block(Peer, Hash) when is_binary(Hash) ->
 		),
 	case ?IS_BLOCK(B) of
 		true ->
+			WalletList =
+				case is_binary(B#block.wallet_list) of
+					ID ->
+						case ar_storage:read_wallet_list(ID) of
+							{error, _} ->
+								get_wallet_list(Peer, ID);
+							WL -> WL
+						end;
+					WL -> WL
+				end,
+			HashList =
+				case B#block.hash_list of
+					undefined ->
+						ar_block:generate_hash_list_for_block(B, BHL);
+					HL -> HL
+				end,
 			FullB =
 				B#block {
-					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ]
+					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
+					hash_list = HashList,
+					wallet_list = WalletList
 				},
-			case [ X || X <- FullB#block.txs, is_atom(X) ] of
-				[] -> FullB;
-				_ -> unavailable
+			case lists:any(fun erlang:is_atom/1, FullB#block.txs) of
+				false -> FullB;
+				true -> unavailable
 			end;
 		false -> B
+	end.
+
+%% @doc Get a wallet list (by its hash) from the external peer.
+get_wallet_list(Peer, Hash) ->
+	Response =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/wallet_list",
+			[]
+		),
+	case Response of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			ar_serialize:dejsonify(ar_serialize:json_struct_to_wallet_list(Body));
+		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
+	end.
+
+
+%% @doc Get a block hash list (by its hash) from the external peer.
+get_hash_list(Peer) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/hash_list",
+			[]
+		),
+	ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body)).
+get_hash_list(Peer, Hash) ->
+	Response =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/hash_list",
+			[]
+		),
+	case Response of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body));
+		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
 	end.
 
 %% @doc Retreive a full block (full transactions included in body)
@@ -1074,7 +1172,7 @@ handle_block_field_response({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) -
 handle_block_field_response({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_tx(Body);
 handle_block_field_response({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_hash_list(Body);
+	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Body));
 handle_block_field_response({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_wallet_list(Body);
 handle_block_field_response({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> Body;

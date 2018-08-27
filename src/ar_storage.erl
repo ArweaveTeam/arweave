@@ -1,13 +1,15 @@
 -module(ar_storage).
--export([write_block/1, write_full_block/1, read_block/1, clear/0]).
+-export([write_block/1, write_full_block/1, read_block/2, clear/0]).
 -export([write_encrypted_block/2, read_encrypted_block/1, invalidate_block/1]).
 -export([delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
+-export([write_wallet_list/1, read_wallet_list/1]).
+-export([write_block_hash_list/2, read_block_hash_list/1]).
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
 -export([enough_space/1, select_drive/2]).
 -export([calculate_disk_space/0, calculate_used_space/0, update_directory_size/0]).
 -export([lookup_block_filename/1,lookup_tx_filename/1]).
--export([do_read_block/1,do_read_tx/1]).
+-export([do_read_block/2, do_read_tx/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -19,6 +21,7 @@
 -define(BLOCK_ENC_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
 -define(DIRECTORY_SIZE_TIMER, 300000).
+
 %% @doc Clear the cache of saved blocks.
 clear() ->
 	lists:map(fun file:delete/1, filelib:wildcard(?BLOCK_DIR ++ "/*.json")).
@@ -74,8 +77,10 @@ invalidate_block(B) ->
 %% necessary because of test timings
 -ifdef(DEBUG).
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
-write_block(B) ->
-	ar:report([{writing_block_to_disk, ar_util:encode(B#block.indep_hash)}]),
+write_block(RawB) ->
+	ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]),
+	WalletID = write_wallet_list(RawB#block.wallet_list),
+	B = RawB#block { wallet_list = WalletID },
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	file:write_file(
 		Name = lists:flatten(
@@ -89,8 +94,10 @@ write_block(B) ->
 	Name.
 -else.
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
-write_block(B) ->
-	ar:report([{writing_block_to_disk, ar_util:encode(B#block.indep_hash)}]),
+write_block(RawB) ->
+	ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]),
+	WalletID = write_wallet_list(RawB#block.wallet_list),
+	B = RawB#block { wallet_list = ar_util:encode(WalletID) },
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	case enough_space(byte_size(BlockToWrite)) of
 		true ->
@@ -177,14 +184,14 @@ write_encrypted_block(Hash, B) ->
 
 
 %% @doc Read a block from disk, given a hash.
-read_block(unavailable) -> unavailable;
-read_block(B) when is_record(B, block) -> B;
-read_block(Bs) when is_list(Bs) ->
-	lists:map(fun read_block/1, Bs);
-read_block(ID) ->
+read_block(unavailable, _BHL) -> unavailable;
+read_block(B, _BHL) when is_record(B, block) -> B;
+read_block(Bs, BHL) when is_list(Bs) ->
+	lists:map(fun(B) -> read_block(B, BHL) end, Bs);
+read_block(ID, BHL) ->
 	case filelib:wildcard(name_block(ID)) of
 		[] -> unavailable;
-		[Filename] -> do_read_block(Filename);
+		[Filename] -> do_read_block(Filename, BHL);
 		Filenames ->
 			do_read_block(hd(
 				lists:sort(
@@ -195,12 +202,33 @@ read_block(ID) ->
 					end,
 					Filenames
 				)
-			))
+			), BHL)
 	end.
-do_read_block(Filename) ->
+do_read_block(Filename, BHL) ->
 	{ok, Binary} = file:read_file(Filename),
-	ar_serialize:json_struct_to_block(Binary).
-
+	B = ar_serialize:json_struct_to_block(Binary),
+	WL = B#block.wallet_list,
+	B#block {
+		hash_list = ar_block:generate_hash_list_for_block(B, BHL),
+		wallet_list =
+			if is_binary(WL) ->
+				case read_wallet_list(ar_util:decode(WL)) of
+					{error, Type} ->
+						ar:report(
+							[
+								{
+									error_reading_wallet_list_from_disk, 
+									ar_util:encode(B#block.indep_hash)
+								},
+								{type, Type}
+							]
+						),
+						not_found;
+					ReadWL -> ReadWL
+				end;
+			true -> WL
+			end
+	}.
 
 %% @doc Read an encrypted block from disk, given a hash.
 read_encrypted_block(unavailable) -> unavailable;
@@ -223,7 +251,6 @@ read_encrypted_block(ID) ->
 do_read_encrypted_block(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	Binary.
-
 
 %% @doc Accurately recalculate the current cumulative size of the Arweave directory
 update_directory_size() ->
@@ -360,6 +387,41 @@ do_read_tx(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	ar_serialize:json_struct_to_tx(Binary).
 
+%% Write a block hash list to disk for retreival later (in emergencies).
+write_block_hash_list(BinID, BHL) ->
+	ar:report([{writing_block_hash_list_to_disk, ID = ar_util:encode(BinID)}]),
+	JSON = ar_serialize:jsonify(ar_serialize:hash_list_to_json_struct(BHL)),
+	file:write_file(
+		?HASH_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinID)) ++ ".json",
+		JSON
+	),
+	ID.
+
+%% Write a block hash list to disk for retreival later (in emergencies).
+write_wallet_list(WalletList) ->
+	ID = ar_block:hash_wallet_list(WalletList),
+	ar:report([{writing_wallet_list_to_disk, ar_util:encode(ID)}]),
+	JSON = ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)),
+	file:write_file(
+		?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(ID)) ++ ".json",
+		JSON
+	),
+	ID.
+
+%% @doc Read a list of block hashes from the disk.
+read_block_hash_list(BinID) ->
+	FileName = ?HASH_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinID)) ++ ".json",
+	{ok, Binary} = file:read_file(FileName),
+	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Binary)).
+
+%% @doc Read a given wallet list (by hash) from the disk.
+read_wallet_list(ID) ->
+	FileName = ?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(ID)) ++ ".json",
+	case file:read_file(FileName) of
+		{ok, Binary} ->
+			ar_serialize:json_struct_to_wallet_list(ar_serialize:dejsonify(Binary));
+		Err -> Err
+	end.
 
 lookup_tx_filename(ID) ->
 	case filelib:wildcard(name_tx(ID)) of
@@ -453,9 +515,15 @@ select_drive(Disks, CWD) ->
 
 %% @doc Test block storage.
 store_and_retrieve_block_test() ->
-	[B0] = ar_weave:init(),
-	write_block(B0),
-	B0 = read_block(B0),
+    ar_storage:clear(),
+    B0s = [B0] = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1s = [B1|_] = ar_weave:add(B0s, []),
+    ar_storage:write_block(B1),
+    [B2|_] = ar_weave:add(B1s, []),
+    ar_storage:write_block(B2),
+	write_block(B1),
+	B0 = read_block(B1, B2),
 	file:delete(name_block(B0)).
 
 store_and_retrieve_tx_test() ->
@@ -484,25 +552,6 @@ store_and_retrieve_tx_test() ->
 %	{error, enospc} = write_tx(Tx0),
 %	ar_meta_db:put(disk_space, Disk).
 
-% Test that select_drive selects the correct drive on the unix architecture
-select_drive_unix_test() ->
-	CWD = "/home/usr/dev/arweave",
-	Disks =
-		[
-			{"/dev",8126148,0},
-			{"/run",1630656,1},
-			{"/",300812640,8},
-			{"/dev/shm",8153276,3},
-			{"/boot/efi",98304,55}
-		],
-	[{"/",300812640,8}] = select_drive(Disks, CWD).
-
-% Test that select_drive selects the correct drive on the unix architecture
-select_drive_windows_test() ->
-	CWD = "C:/dev/arweave",
-	Disks = [{"C:\\",1000000000,10},{"D:\\",2000000000,20}],
-	[{"C:\\",1000000000,10}] = select_drive(Disks, CWD).
-
 %% @doc Ensure blocks can be written to disk, then moved into the 'invalid'
 %% block directory.
 invalidate_block_test() ->
@@ -512,7 +561,7 @@ invalidate_block_test() ->
 		invalidate_block(B),
 		ar:d({block, ar_util:encode(B#block.indep_hash)}),
 		timer:sleep(500),
-		unavailable = read_block(B#block.indep_hash),
+		unavailable = read_block(B#block.indep_hash, []),
 		TargetFile =
 			lists:flatten(
 				io_lib:format(
@@ -524,3 +573,18 @@ invalidate_block_test() ->
 		B = ar_serialize:json_struct_to_block(Binary)
 	end}.
 
+store_and_retreive_block_hash_list_test() ->
+	ID = crypto:strong_rand_bytes(32),
+    B0s = ar_weave:init([]),
+    B1s = ar_weave:add(B0s, []),
+    [B2|_] = ar_weave:add(B1s, []),
+	write_block_hash_list(ID, B2#block.hash_list),
+	receive after 500 -> ok end,
+	BHL = read_block_hash_list(ID),
+	BHL = B2#block.hash_list.
+
+store_and_retreive_wallet_list_test() ->
+    [B0] = ar_weave:init(),
+	write_wallet_list(WL = B0#block.wallet_list),
+	receive after 500 -> ok end,
+	WL = read_wallet_list(ar_block:hash_wallet_list(WL)).

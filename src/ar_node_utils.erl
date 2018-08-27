@@ -489,7 +489,7 @@ validate(
 
 	ar:report(
 		[
-			{validate_block, ar_util:encode(NewB#block.indep_hash)},
+			{block_validation_results, ar_util:encode(NewB#block.indep_hash)},
 			{height, NewB#block.height},
 			{block_mine_validate, Mine},
 			{block_wallet_validate, Wallet},
@@ -504,7 +504,7 @@ validate(
 			{block_retarget_time, RetargetCheck},
 			{block_previous_check, PreviousBCheck},
 			{block_hash_list, HashlistCheck},
-			{block_wallet_list ,WalletListCheck}
+			{block_wallet_list, WalletListCheck}
 		]
 	),
 

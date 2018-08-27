@@ -23,7 +23,7 @@ start(Node, Peers, B) when is_atom(B) ->
 start(_, _, not_found) -> do_nothing;
 start(_, _, unavailable) -> do_nothing;
 start(_, _, no_response) -> do_nothing;
-start(Node, RawPeers, RawNewB) ->
+start(Node, RawPeers, BHL, RawNewB) ->
 	case whereis(join_server) of
 		undefined ->
 			PID = spawn(

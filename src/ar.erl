@@ -7,7 +7,7 @@
 -export([start_link/0, start_link/1, init/1]).
 -include("ar.hrl").
 
-%%% Archain server entrypoint and basic utilities.
+%%% Arweave server entrypoint and basic utilities.
 
 %% A list of the modules to test.
 %% At some point we might want to make this just test all mods starting with

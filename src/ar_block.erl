@@ -3,6 +3,7 @@
 -export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2]).
 -export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
+-export([hash_wallet_list/1]).
 -export([encrypt_block/2, encrypt_block/3]).
 -export([encrypt_full_block/2, encrypt_full_block/3]).
 -export([decrypt_block/4]).
@@ -13,8 +14,20 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% @doc Generate a re-producible hash from a wallet list.
+hash_wallet_list(WalletList) ->
+    Bin =
+        <<
+            << Addr/binary, (binary:encode_unsigned(Balance))/binary, LastTX/binary >>
+        ||
+            {Addr, Balance, LastTX} <- WalletList
+        >>,
+    crypto:hash(?HASH_ALG, Bin).
+
 %% @doc Find the appropriate block hash list for a block/indep. hash, from a
 %% block hash list further down the weave.
+generate_hash_list_for_block(B, CurrentB) when ?IS_BLOCK(CurrentB) ->
+    generate_hash_list_for_block(B, CurrentB#block.indep_hash);
 generate_hash_list_for_block(B, BHL) when ?IS_BLOCK(B) ->
     generate_hash_list_for_block(B#block.indep_hash, BHL);
 generate_hash_list_for_block(IndepHash, [IndepHash|BHL]) -> BHL;
@@ -433,7 +446,7 @@ verify_weave_size(NewB, OldB, TXs) ->
 
 % Block shadow functions
 
-generate_block_from_shadow(BShadow,RecallSize) ->
+generate_block_from_shadow(BShadow, RecallSize) ->
     TXs =
         % Check if the node state contains the referenced TX.
         lists:foldr(fun(T, Acc) ->
