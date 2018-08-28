@@ -114,20 +114,24 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 %% @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	ID = ar_util:decode(Hash),
-	F = ar_storage:lookup_tx_filename(ID),
-	case F of
-		unavailable ->
-			case lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
-				true ->
-					{202, [], <<"Pending">>};
-				false ->
-					case ar_tx_db:get(ID) of
-						not_found -> {404, [], <<"Not Found.">>};
-						Err -> {410, [], list_to_binary(Err)}
-					end
+	case safe_decode(Hash) of
+		{ok, ID} ->
+			F = ar_storage:lookup_tx_filename(ID),
+			case F of
+				unavailable ->
+					case lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+						true ->
+							{202, [], <<"Pending">>};
+						false ->
+							case ar_tx_db:get(ID) of
+								not_found -> {404, [], <<"Not Found.">>};
+								Err -> {410, [], list_to_binary(Err)}
+							end
+					end;
+				Filename -> {ok, [], {file, Filename}}
 			end;
-		Filename -> {ok, [], {file, Filename}}
+		{error, invalid} ->
+			{400, [], <<"invalid hash">>}
 	end;
 
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
@@ -1115,6 +1119,14 @@ block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
+safe_decode(X) ->
+	try
+		D = ar_util:decode(X),
+		{ok, D}
+	catch
+		_:_ ->
+			{error, invalid}
+	end.
 
 %%% Tests
 
