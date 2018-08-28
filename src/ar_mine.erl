@@ -246,7 +246,8 @@ schedule_hash(S = #state { delay = Delay }) ->
 %% This is done in attempt to maintain on average a fixed block time.
 next_diff(CurrentB) ->
 	Timestamp = os:system_time(seconds),
-	case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
+	IsRetargetHeight = ar_retarget:is_retarget_height(CurrentB#block.height + 1),
+	case IsRetargetHeight of
 		true -> ar_retarget:maybe_retarget(
 				CurrentB#block.height + 1,
 				CurrentB#block.diff,
