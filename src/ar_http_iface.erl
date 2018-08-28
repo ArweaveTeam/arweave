@@ -114,25 +114,23 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 %% @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	case safe_decode(Hash) of
-		{ok, ID} ->
-			F = ar_storage:lookup_tx_filename(ID),
-			case F of
-				unavailable ->
-					case lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
-						true ->
-							{202, [], <<"Pending">>};
-						false ->
-							case ar_tx_db:get(ID) of
-								not_found -> {404, [], <<"Not Found.">>};
-								Err -> {410, [], list_to_binary(Err)}
-							end
-					end;
-				Filename -> {ok, [], {file, Filename}}
-			end;
+	case hash_to_maybe_filename(Hash) of
 		{error, invalid} ->
-			{400, [], <<"invalid hash">>}
+			{400, [], <<"invalid hash">>};
+		{error, unavailable} ->
+			case is_a_pending_tx(ID) of
+				true ->
+					{202, [], <<"Pending">>};
+				false ->
+					case ar_tx_db:get(ID) of
+						not_found -> {404, [], <<"Not Found.">>};
+						Err       -> {410, [], list_to_binary(Err)}
+					end
+			end;
+		{ok, Filename} ->
+			{ok, [], {file, Filename}}
 	end;
+
 
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
 %% POST request to endpoint /arql with body of request being a logical expression valid in ar_parser.
@@ -1118,6 +1116,22 @@ block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
+
+hash_to_maybe_filename(Hash) ->
+	case safe_decode(Hash) of
+		{error, invalid} ->
+			{error, invalid};
+		{ok, ID} ->
+			F = ar_storage:lookup_tx_filename(ID),
+			case F of
+				unavailable ->
+					{error, unavailable}
+				Filename ->
+					{ok, Filename}
+	end.	
+
+is_a_pending_tx(ID) ->
+	lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))).
 
 safe_decode(X) ->
 	try
