@@ -446,7 +446,7 @@ handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
 		{error, invalid} ->
 			{400, [], <<"invalid hash">>};
 		{error, _, unavailable} ->
-			{404, [], {file, "block not found"}};
+			{404, [], <<"block not found">>};
 		{ok, Filename} ->
 			{ok, [], {file, Filename}}
 	end;
