@@ -238,7 +238,7 @@ handle_full_response(Type, [Req, Code, _Hs, _B, {Timings, Sizes}], _Config) ->
 					timeout = os:system_time(seconds)
 					}),
 				ok
-		end,
+		end
 	end.
 
 count_failed_request(Reason) ->
