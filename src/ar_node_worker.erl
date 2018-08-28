@@ -369,6 +369,7 @@ integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonc
 	none;
 integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 	#{
+		id            := BinID,
 		hash_list     := HashList,
 		wallet_list   := RawWalletList,
 		txs           := TXs,
@@ -494,10 +495,12 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				end,
 				PotentialTXs
 			),
+			NewHL = [NextB#block.indep_hash | HashList],
+			ar_storage:write_block_hash_list(BinID, NewHL),
 			ar_node_utils:reset_miner(
 				StateNew#{
 					gossip => NewGS,
-					hash_list => [NextB#block.indep_hash | HashList],
+					hash_list => NewHL,
 					txs => ar_track_tx_db:remove_bad_txs(NotMinedTXs), % TXs not included in the block
 					height => NextB#block.height,
 					floating_wallet_list => ar_node_utils:apply_txs(WalletList, NotMinedTXs),
@@ -512,7 +515,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 
 
 %% @doc Handle executed fork recovery.
-recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when HashList == not_joined ->
+recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs) when HashList == not_joined ->
 	NewB = ar_storage:read_block(hd(NewHs)),
 	ar:report_console(
 		[
@@ -532,6 +535,7 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when HashList =
 			TXPool
 		),
 	PotentialTXs = TXPool -- TXs,
+	ar_storage:write_block_hash_list(BinID, NewHs),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			hash_list            => NewHs,
@@ -546,7 +550,7 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when HashList =
 			weave_size           => NewB#block.weave_size
 		}
 	)};
-recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when (length(NewHs)) > (length(HashList)) ->
+recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs) when (length(NewHs)) > (length(HashList)) ->
 	% TODO mue: Comparing lengths of lists might get quite expensive.
 	case whereis(fork_recovery_server) of
 		undefined -> ok;
@@ -567,9 +571,11 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) when (length(Ne
 			TXPool
 		),
 	PotentialTXs = TXPool -- TXs,
+	NewHS = [NewB#block.indep_hash | NewB#block.hash_list],
+	ar_storage:write_block_hash_list(BinID, NewHS),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
-			hash_list            => [NewB#block.indep_hash | NewB#block.hash_list],
+			hash_list            => NewHS,
 			wallet_list          => NewB#block.wallet_list,
 			height               => NewB#block.height,
 			reward_pool          => NewB#block.reward_pool,

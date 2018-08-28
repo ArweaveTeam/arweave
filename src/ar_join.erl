@@ -11,7 +11,7 @@
 start(Peers, NewB) when is_record(NewB, block) ->
 	start(self(), Peers, NewB);
 start(Node, Peers) ->
-	start(Node, Peers, ar_node:get_current_block(Peers)).
+	start(Node, Peers, find_current_block(Peers)).
 start(Node, Peers, B) when is_atom(B) ->
 	ar:report_console(
 		[
@@ -23,7 +23,7 @@ start(Node, Peers, B) when is_atom(B) ->
 start(_, _, not_found) -> do_nothing;
 start(_, _, unavailable) -> do_nothing;
 start(_, _, no_response) -> do_nothing;
-start(Node, RawPeers, BHL, RawNewB) ->
+start(Node, RawPeers, RawNewB) ->
 	case whereis(join_server) of
 		undefined ->
 			PID = spawn(
@@ -59,6 +59,11 @@ start(Node, RawPeers, BHL, RawNewB) ->
 			erlang:register(join_server, PID);
 		_ -> already_running
 	end.
+
+%% @doc Return the current block from a list of peers.
+find_current_block([Peer|_]) ->
+	BHL = [Hash|_] = ar_http_iface:get_hash_list(Peer),
+	ar_http_iface:get_full_block(Peer, Hash, BHL).
 
 %% @doc Verify peer(s) are on the same network as the client. Remove any that
 %% are not.
