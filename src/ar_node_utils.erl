@@ -75,15 +75,15 @@ get_full_block(Host, ID, BHL) ->
 find_recall_hash(Block, []) ->
 	Block#block.indep_hash;
 find_recall_hash(Block, HashList) ->
-	lists:nth(1 + ar_weave:calculate_recall_block(Block), lists:reverse(HashList)).
+	lists:nth(1 + ar_weave:calculate_recall_block(Block, HashList), lists:reverse(HashList)).
 
 %% @doc Search a block list for the next recall block.
-find_recall_block([Hash]) ->
-	ar_storage:read_block(Hash);
+find_recall_block(BHL = [Hash]) ->
+	ar_storage:read_block(Hash, BHL);
 find_recall_block(HashList) ->
-	Block = ar_storage:read_block(hd(HashList)),
+	Block = ar_storage:read_block(hd(HashList), HashList),
 	RecallHash = find_recall_hash(Block, HashList),
-	ar_storage:read_block(RecallHash).
+	ar_storage:read_block(RecallHash, HashList).
 
 %% @doc Find a block from an ordered block list.
 find_block(Hash) when is_binary(Hash) ->
@@ -185,7 +185,7 @@ start_mining(#{hash_list := not_joined} = StateIn, _) ->
 start_mining(#{ node := Node, hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn, ForceDiff) ->
 	case find_recall_block(BHL) of
 		unavailable ->
-			B = ar_storage:read_block(hd(BHL)),
+			B = ar_storage:read_block(hd(BHL), BHL),
 			RecallHash = find_recall_hash(B, BHL),
 			% TODO mue: Cleanup.
 			% FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
@@ -237,7 +237,7 @@ start_mining(#{ node := Node, hash_list := BHL, txs := TXs, reward_addr := Rewar
 					}
 				]
 			),
-			B = ar_storage:read_block(hd(BHL)),
+			B = ar_storage:read_block(hd(BHL), BHL),
 			case ForceDiff of
 				unforced ->
 					Miner = ar_mine:start(
@@ -660,16 +660,17 @@ calculate_tx_reward(#tx { reward = Reward }) ->
 %%% Unreferenced!
 %%%
 
-%% @doc Return the last block to include both a wallet and hash list.
-find_sync_block([]) ->
-	not_found;
-find_sync_block([Hash | Rest]) when is_binary(Hash) ->
-	find_sync_block([ar_storage:read_block(Hash) | Rest]);
-find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList } | _])
-		when HashList =/= undefined, WalletList =/= undefined ->
-	B;
-find_sync_block([_ | Xs]) ->
-	find_sync_block(Xs).
+% @doc Return the last block to include both a wallet and hash list.
+% NOTE: For now, all blocks are sync blocks.
+%find_sync_block([]) ->
+%	not_found;
+%find_sync_block([Hash | Rest]) when is_binary(Hash) ->
+%	find_sync_block([ar_storage:read_block(Hash) | Rest]);
+%find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList } | _])
+%		when HashList =/= undefined, WalletList =/= undefined ->
+%	B;
+%find_sync_block([_ | Xs]) ->
+%	find_sync_block(Xs).
 
 %% @doc Given a wallet list and set of txs will try to apply the txs
 %% iteratively to the wallet list and return the result.

@@ -2,7 +2,7 @@
 -export([init/0, init/1, init/2, init/3, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
 -export([hash/2, indep_hash/1]).
 -export([verify_indep/2]).
--export([calculate_recall_block/1, calculate_recall_block/2]).
+-export([calculate_recall_block/2, calculate_recall_block/3]).
 -export([generate_hash_list/1]).
 -export([is_data_on_block_list/2, is_tx_on_block_list/2]).
 -export([create_genesis_txs/0]).
@@ -91,7 +91,7 @@ add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList) ->
     add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList, []).
 add([Hash|Bs], TXs, HashList, RewardAddr, RewardPool, WalletList, Tags) when is_binary(Hash) ->
     add(
-        [ar_storage:read_block(Hash)|Bs],
+        [ar_storage:read_block(Hash, HashList)|Bs],
         TXs,
         HashList,
         RewardAddr,
@@ -101,7 +101,7 @@ add([Hash|Bs], TXs, HashList, RewardAddr, RewardPool, WalletList, Tags) when is_
     );
 add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList, Tags) ->
     RecallHash = ar_util:get_recall_hash(hd(Bs), HashList),
-    RecallB = ar_storage:read_block(RecallHash),
+    RecallB = ar_storage:read_block(RecallHash, HashList),
     {Nonce, Timestamp, Diff} = mine(hd(Bs), RecallB, TXs, RewardAddr, Tags),
     add(
         Bs,
@@ -118,7 +118,7 @@ add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList, Tags) ->
     ).
 add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) when is_binary(Hash) ->
     add(
-        [ar_storage:read_block(Hash)|Bs],
+        [ar_storage:read_block(Hash, HashList)|Bs],
         RawTXs,
         HashList,
         RewardAddr,
@@ -196,14 +196,14 @@ verify_indep(B = #block { height = Height }, HashList) ->
 	lists:nth(Height + 1, lists:reverse(HashList)) == indep_hash(B).
 
 %% @doc Generate a recall block number from a block or a hash and block height.
-calculate_recall_block(Hash) when is_binary(Hash) ->
-	calculate_recall_block(ar_storage:read_block(Hash));
-calculate_recall_block(B) when is_record(B, block) ->
+calculate_recall_block(Hash, HashList) when is_binary(Hash) ->
+	calculate_recall_block(ar_storage:read_block(Hash, HashList), HashList);
+calculate_recall_block(B, HashList) when is_record(B, block) ->
 	case B#block.height of
 		0 -> 0;
-		_ -> calculate_recall_block(B#block.indep_hash, B#block.height)
+		_ -> calculate_recall_block(B#block.indep_hash, B#block.height, HashList)
 	end.
-calculate_recall_block(IndepHash, Height) ->
+calculate_recall_block(IndepHash, Height, _HashList) ->
 	%ar:d({recall_indep_hash, binary:decode_unsigned(IndepHash)}),
 	%ar:d({recall_height, Height}),
 	binary:decode_unsigned(IndepHash) rem Height.
@@ -292,8 +292,8 @@ mine(B, RecallB, TXs, RewardAddr, Tags) ->
 
 %% @doc Return whether or not a transaction is found on a block list.
 is_tx_on_block_list([], _) -> false;
-is_tx_on_block_list([Hash|Bs], TXID) when is_binary(Hash) ->
-	is_tx_on_block_list([ar_storage:read_block(Hash)|Bs], TXID);
+is_tx_on_block_list([BHL = Hash|Bs], TXID) when is_binary(Hash) ->
+	is_tx_on_block_list([ar_storage:read_block(Hash, BHL)|Bs], TXID);
 is_tx_on_block_list([#block { txs = TXs }|Bs], TXID) ->
 	case lists:member(TXID, TXs) of
 		true -> true;

@@ -523,7 +523,7 @@ store_and_retrieve_block_test() ->
     [B2|_] = ar_weave:add(B1s, []),
     ar_storage:write_block(B2),
 	write_block(B1),
-	B0 = read_block(B1, B2),
+	B0 = read_block(B1, B2#block.hash_list),
 	file:delete(name_block(B0)).
 
 store_and_retrieve_tx_test() ->
@@ -560,7 +560,7 @@ invalidate_block_test() ->
 	invalidate_block(B),
 	ar:d({block, ar_util:encode(B#block.indep_hash)}),
 	timer:sleep(500),
-	unavailable = read_block(B#block.indep_hash),
+	unavailable = read_block(B#block.indep_hash, B#block.hash_list),
 	TargetFile =
 		lists:flatten(
 			io_lib:format(

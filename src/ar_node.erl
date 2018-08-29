@@ -8,7 +8,7 @@
 -export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7]).
 -export([stop/1]).
 
--export([get_blocks/1, get_block/2, get_full_block/3]).
+-export([get_blocks/1, get_block/3, get_full_block/3]).
 -export([get_tx/2]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
@@ -164,12 +164,12 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			RewardPool =
 				case HashList of
 					not_joined -> 0;
-					[H | _] -> (ar_storage:read_block(H))#block.reward_pool
+					[H | _] -> (ar_storage:read_block(H, HashList))#block.reward_pool
 				end,
 			WeaveSize =
 					case HashList of
 						not_joined -> 0;
-						[H2 | _] -> (ar_storage:read_block(H2))#block.weave_size
+						[H2 | _] -> (ar_storage:read_block(H2, HashList))#block.weave_size
 					end,
 
 			% Start processes, init state, and start server.
@@ -249,17 +249,17 @@ get_blocks(Node) ->
 
 %% @doc Get a specific block via blocks indep_hash.
 %% If found the result will be a block with tx references, not a full block.
-get_block(Peers, ID) when is_list(Peers) ->
+get_block(Peers, ID, BHL) when is_list(Peers) ->
 	% ask list of external peers for block
 	% ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
-	case ar_storage:read_block(ID) of
+	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
 			lists:foldl(
 				fun(Peer, Acc) ->
 					case is_atom(Acc) of
 						false -> Acc;
 						true ->
-							B = get_block(Peer, ID),
+							B = get_block(Peer, ID, BHL),
 							case is_atom(B) of
 								true -> Acc;
 								false -> B
@@ -271,18 +271,18 @@ get_block(Peers, ID) when is_list(Peers) ->
 			);
 		Block -> Block
 	end;
-get_block(Proc, ID) when is_pid(Proc) ->
+get_block(Proc, ID, BHL) when is_pid(Proc) ->
 	% attempt to get block from nodes local storage
-	ar_storage:read_block(ID);
-get_block(Host, ID) ->
+	ar_storage:read_block(ID, BHL);
+get_block(Host, ID, BHL) ->
 	% handle external peer request
-	ar_http_iface:get_block(Host, ID).
+	ar_http_iface:get_block(Host, ID, BHL).
 
 %% @doc Get a specific full block (a block containing full txs) via
 %% blocks indep_hash.
 get_full_block(Peers, ID, BHL) when is_list(Peers) ->
 	% check locally first, if not found ask list of external peers for block
-	case ar_storage:read_block(ID) of
+	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
 			lists:foldl(
 				fun(Peer, Acc) ->
@@ -947,17 +947,17 @@ handle_gossip(_SPid, {NewGS, UnhandledMsg}) ->
 
 %% @doc Get a specific encrypted block via the blocks indep_hash.
 %% If the block is found locally an unencrypted block will be returned.
-get_encrypted_block(Peers, ID) when is_list(Peers) ->
+get_encrypted_block(Peers, ID, BHL) when is_list(Peers) ->
 	% check locally first, if not found ask list of external peers for
 	% encrypted block
-	case ar_storage:read_block(ID) of
+	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
 			lists:foldl(
 				fun(Peer, Acc) ->
 					case is_atom(Acc) of
 						false -> Acc;
 						true ->
-							B = get_encrypted_block(Peer, ID),
+							B = get_encrypted_block(Peer, ID, BHL),
 							case is_atom(B) of
 								true -> Acc;
 								false -> B
@@ -969,28 +969,28 @@ get_encrypted_block(Peers, ID) when is_list(Peers) ->
 			);
 		Block -> Block
 	end;
-get_encrypted_block(Proc, ID) when is_pid(Proc) ->
+get_encrypted_block(Proc, ID, BHL) when is_pid(Proc) ->
 	% attempt to get block from local storage
 	% NB: if found block returned will not be encrypted
-	ar_storage:read_block(ID);
-get_encrypted_block(Host, ID) ->
+	ar_storage:read_block(ID, BHL);
+get_encrypted_block(Host, ID, BHL) ->
 	% handle external peer request
-	ar_http_iface:get_encrypted_block(Host, ID).
+	ar_http_iface:get_encrypted_block(Host, ID, BHL).
 
 %% @doc Get a specific encrypted full block (a block containing full txs) via
 %% the blocks indep_hash.
 %% If the block is found locally an unencrypted block will be returned.
-get_encrypted_full_block(Peers, ID) when is_list(Peers) ->
+get_encrypted_full_block(Peers, ID, BHL) when is_list(Peers) ->
 	% check locally first, if not found ask list of external peers for
 	% encrypted block
-	case ar_storage:read_block(ID) of
+	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
 			lists:foldl(
 				fun(Peer, Acc) ->
 					case is_atom(Acc) of
 						false -> Acc;
 						true ->
-							Full = get_encrypted_full_block(Peer, ID),
+							Full = get_encrypted_full_block(Peer, ID, BHL),
 							case is_atom(Full) of
 								true -> Acc;
 								false -> Full
@@ -1004,28 +1004,27 @@ get_encrypted_full_block(Peers, ID) when is_list(Peers) ->
 			% make_full_block(ID, BHL)
 			error(block_hash_list_required_in_context)
 	end;
-get_encrypted_full_block(Proc, ID) when is_pid(Proc) ->
+get_encrypted_full_block(Proc, ID, BHL) when is_pid(Proc) ->
 	% attempt to get block from local storage and make full
 	% NB: if found block returned will not be encrypted
-	% make_full_block(ID);
-	error(block_hash_list_required_in_context);
-get_encrypted_full_block(Host, ID) ->
+	make_full_block(ID, BHL);
+get_encrypted_full_block(Host, ID, BHL) ->
 	% handle external peer request
-	ar_http_iface:get_encrypted_full_block(Host, ID).
+	ar_http_iface:get_encrypted_full_block(Host, ID, BHL).
 
 %% @doc Reattempts to find a block from a node retrying up to Count times.
-retry_block(_, _, Response, 0) ->
-	Response;
-retry_block(Host, ID, _, Count) ->
-	case get_block(Host, ID) of
-		not_found ->
-			timer:sleep(3000),
-			retry_block(Host, ID, not_found, Count-1);
-		unavailable ->
-			timer:sleep(3000),
-			retry_block(Host, ID, unavailable, Count-1);
-		B -> B
-	end.
+%retry_block(_, _, Response, 0) ->
+%	Response;
+%retry_block(Host, ID, _, Count) ->
+%	case get_block(Host, ID) of
+%		not_found ->
+%			timer:sleep(3000),
+%			retry_block(Host, ID, not_found, Count-1);
+%		unavailable ->
+%			timer:sleep(3000),
+%			retry_block(Host, ID, unavailable, Count-1);
+%		B -> B
+%	end.
 
 %% @doc Reattempts to find a full block from a node retrying up to Count times.
 retry_full_block(_, _, Response, 0, _) ->

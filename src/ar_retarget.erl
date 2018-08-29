@@ -112,7 +112,7 @@ simple_retarget_test_() ->
 		Wait = fun
 			(W, Diff) when Diff =< ?DEFAULT_DIFF ->
 				[BH|_] = ar_node:get_blocks(Node),
-				B = ar_storage:read_block(BH),
+				B = ar_storage:read_block(BH, ar_node:get_hash_list(Node)),
 				ar:d([themue, ar_retarget, test,
 					{diff_in, Diff}, {diff_out, B#block.diff}, {height, B#block.height}]),
 				timer:sleep(1000),

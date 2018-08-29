@@ -208,7 +208,7 @@ basic_node_join_test() ->
 	Node2 = ar_node:start([Node1]),
 	timer:sleep(1500),
 	[B|_] = ar_node:get_blocks(Node2),
-	2 = (ar_storage:read_block(B))#block.height.
+	2 = (ar_storage:read_block(B, ar_node:get_hash_list(Node1)))#block.height.
 
 %% @doc Ensure that both nodes can mine after a join.
 node_join_test() ->
@@ -224,5 +224,5 @@ node_join_test() ->
 	ar_node:mine(Node2),
 	timer:sleep(1500),
 	[B|_] = ar_node:get_blocks(Node1),
-	3 = (ar_storage:read_block(B))#block.height.
+	3 = (ar_storage:read_block(B, ar_node:get_hash_list(Node1)))#block.height.
 

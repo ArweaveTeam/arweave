@@ -63,7 +63,7 @@ wallets_from_hashes(HashList) ->
 %% @doc Get block list from hash list.
 blocks_from_hashes([]) -> undefined;
 blocks_from_hashes(BHL) ->
-	lists:map(fun ar_storage:read_block/1, BHL).
+	lists:map(fun(BH) -> ar_storage:read_block(BH, BHL) end, BHL).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
 hash_from_hash_list(Num, BHL) ->
@@ -71,24 +71,24 @@ hash_from_hash_list(Num, BHL) ->
 
 %% @doc Read a block at the given height from the hash list
 block_from_hash_list(Num, BHL) ->
-	ar_storage:read_block(hash_from_hash_list(Num, BHL)).
+	ar_storage:read_block(hash_from_hash_list(Num, BHL), BHL).
 
 %% @doc Fetch the head block using BHL.
 get_head_block(not_joined) -> unavailable;
-get_head_block([IndepHash|_]) ->
-	ar_storage:read_block(IndepHash).
+get_head_block(BHL = [IndepHash|_]) ->
+	ar_storage:read_block(IndepHash, BHL).
 
 %% @doc find the hash of a recall block.
 get_recall_hash(B, HashList) ->
 	lists:nth(
-        1 + ar_weave:calculate_recall_block(B),
+        1 + ar_weave:calculate_recall_block(B, HashList),
         lists:reverse(HashList)
     ).
 get_recall_hash(_Height, Hash, []) -> Hash;
 get_recall_hash(0, Hash, _HastList) -> Hash;
 get_recall_hash(Height, Hash, HashList) ->
 	lists:nth(
-        1 + ar_weave:calculate_recall_block(Hash, Height),
+        1 + ar_weave:calculate_recall_block(Hash, Height, HashList),
         lists:reverse(HashList)
     ).
 

@@ -202,7 +202,7 @@ server(S = #state {
 					% Target block is within range and isi attempted to be
 					% recovered to.
 					{_X, _Y} ->
-						B = ar_node:get_block(Peers, NextB#block.previous_block),
+						B = ar_node:get_block(Peers, NextB#block.previous_block, NextB#block.hash_list),
 						case ?IS_BLOCK(B) of
 							false ->
 								BHashList = unavailable,
@@ -344,7 +344,7 @@ three_block_ahead_recovery_test() ->
 	ar_node:mine(Node1),
 	timer:sleep(1000),
 	[B | _] = ar_node:get_blocks(Node2),
-	7 = (ar_storage:read_block(B))#block.height.
+	7 = (ar_storage:read_block(B, B3#block.hash_list))#block.height.
 
 %% @doc Ensure that nodes on a fork that is far behind will catchup correctly.
 multiple_blocks_ahead_recovery_test() ->
@@ -375,7 +375,7 @@ multiple_blocks_ahead_recovery_test() ->
 	ar_node:mine(Node1),
 	timer:sleep(1500),
 	[B | _] = ar_node:get_blocks(Node2),
-	9 = (ar_storage:read_block(B))#block.height.
+	9 = (ar_storage:read_block(B, B3#block.hash_list))#block.height.
 
 %% @doc Ensure that nodes on a fork that is far behind blocks that contain
 %% transactions will catchup correctly.
@@ -412,7 +412,7 @@ multiple_blocks_ahead_with_transaction_recovery_test_slow() ->
 	ar_node:mine(Node1),
 	receive after 1500 -> ok end,
 	[B | _] = ar_node:get_blocks(Node2),
-	9 = (ar_storage:read_block(B))#block.height.
+	9 = (ar_storage:read_block(B, B3#block.hash_list))#block.height.
 
 %% @doc Ensure that nodes that have diverged by multiple blocks each can
 %% reconcile.
@@ -445,7 +445,7 @@ multiple_blocks_since_fork_test() ->
 	ar_node:mine(Node1),
 	timer:sleep(1500),
 	[B | _] = ar_node:get_blocks(Node2),
-	9 = (ar_storage:read_block(B))#block.height.
+	9 = (ar_storage:read_block(B, B3#block.hash_list))#block.height.
 
 %% @doc Ensure that nodes that nodes recovering from the first block can
 %% reconcile.

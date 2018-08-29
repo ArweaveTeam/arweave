@@ -512,7 +512,7 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 
 
 get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
-    case ar_storage:read_block(RecallHash) of
+    case ar_storage:read_block(RecallHash, B#block.hash_list) of
         unavailable ->
             case ar_storage:read_encrypted_block(RecallHash) of
                 unavailable ->

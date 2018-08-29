@@ -1,6 +1,6 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/2]).
+-export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
 -export([get_tx/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
@@ -479,7 +479,8 @@ handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
 			<<"height">> ->
 				B = 
 					ar_node:get_block(whereis(http_entrypoint_node),
-						list_to_integer(binary_to_list(ID))),
+						list_to_integer(binary_to_list(ID)),
+						CurrentBHL),
 				B#block.indep_hash;
 			<<"hash">> -> ar_util:decode(ID)
 		end,
@@ -502,9 +503,11 @@ handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
 	B =
 		case Type of
 			<<"height">> ->
+				CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 				ar_node:get_block(whereis(http_entrypoint_node),
-					list_to_integer(binary_to_list(ID)));
-			<<"hash">> -> ar_storage:read_block(ar_util:decode(ID))
+					list_to_integer(binary_to_list(ID)),
+					CurrentBHL);
+			<<"hash">> -> ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
 		end,
 	case ?IS_BLOCK(B) of
 		true ->
@@ -531,10 +534,12 @@ handle('GET', [<<"block">>, Type, ID, Field], _Req) ->
 			Block =
 				case Type of
 					<<"height">> ->
+						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 						ar_node:get_block(whereis(http_entrypoint_node),
-							list_to_integer(binary_to_list(ID)));
+							list_to_integer(binary_to_list(ID)),
+							CurrentBHL);
 					<<"hash">> ->
-						ar_storage:read_block(ar_util:decode(ID))
+						ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
 				end,
 			case Block of
 				unavailable ->
@@ -885,24 +890,8 @@ get_tx_reward(Peer, Size) ->
 	list_to_integer(binary_to_list(Body)).
 
 %% @doc Retreive a block by height or hash from a remote peer.
-get_block(Peer, Height) when is_integer(Height) ->
-	handle_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/height/" ++ integer_to_list(Height),
-			[]
-		)
-	);
-get_block(Peer, Hash) when is_binary(Hash) ->
-	handle_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
-			[]
-		)
-	).
+get_block(Peer, ID, BHL) ->
+	get_full_block(Peer, ID, BHL).
 
 %% @doc Get an encrypted block from a remote peer.
 %% Used when the next block is the recall block.
@@ -1309,7 +1298,7 @@ get_block_by_hash_test() ->
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	receive after 200 -> ok end,
-	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash)).
+	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash, B0#block.hash_list)).
 
 % get_recall_block_by_hash_test() ->
 %	ar_storage:clear(),
@@ -1346,7 +1335,7 @@ get_full_block_by_hash_test_slow() ->
 	ar_node:mine(Node),
 	receive after 200 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
-	B2 = get_block({127, 0, 0, 1, 1984}, B1),
+	B2 = get_block({127, 0, 0, 1, 1984}, B1, B0#block.hash_list),
 	B3 = get_full_block({127, 0, 0, 1, 1984}, B1, B2#block.hash_list),
 	?assertEqual(B3, B2#block {txs = [SignedTX, SignedTX2]}).
 
@@ -1356,7 +1345,7 @@ get_block_by_height_test() ->
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
-	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, 0)).
+	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, 0, B0#block.hash_list)).
 
 get_current_block_test() ->
 	ar_storage:clear(),
@@ -1380,7 +1369,7 @@ add_external_tx_test() ->
 	receive after 1000 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
 	TXID = TX#tx.id,
-	?assertEqual([TXID], (ar_storage:read_block(B1))#block.txs).
+	?assertEqual([TXID], (ar_storage:read_block(B1, ar_node:get_hash_list(Node)))#block.txs).
 
 %% @doc Test getting transactions
 find_external_tx_test() ->
@@ -1435,10 +1424,10 @@ add_external_block_test() ->
 	timer:sleep(1000),
 	[B1|_] = ar_node:get_blocks(Node2),
 	reregister(Node1),
-	send_new_block({127, 0, 0, 1, 1984}, ?DEFAULT_HTTP_IFACE_PORT, ar_storage:read_block(B1), B0),
+	send_new_block({127, 0, 0, 1, 1984}, ?DEFAULT_HTTP_IFACE_PORT, ar_storage:read_block(B1, ar_node:get_hash_list(Node1)), B0),
 	timer:sleep(500),
 	[B1, XB0] = ar_node:get_blocks(Node1),
-	?assertEqual(B0, ar_storage:read_block(XB0)).
+	?assertEqual(B0, ar_storage:read_block(XB0, ar_node:get_hash_list(Node1))).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
