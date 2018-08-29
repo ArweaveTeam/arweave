@@ -1357,7 +1357,7 @@ get_full_block_by_hash_test_slow() ->
 	receive after 200 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
 	B2 = get_block({127, 0, 0, 1, 1984}, B1),
-	B3 = get_full_block({127, 0, 0, 1, 1984}, B1),
+	B3 = get_full_block({127, 0, 0, 1, 1984}, B1, B2#block.hash_list),
 	?assertEqual(B3, B2#block {txs = [SignedTX, SignedTX2]}).
 
 %% @doc Ensure that blocks can be received via a height.

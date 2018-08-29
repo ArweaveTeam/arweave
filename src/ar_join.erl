@@ -29,7 +29,7 @@ start(Node, RawPeers, RawNewB) ->
 			PID = spawn(
 				fun() ->
 					Peers = filter_peer_list(RawPeers),
-					NewB = ar_node:get_full_block(Peers, RawNewB#block.indep_hash),
+					NewB = ar_node:get_full_block(Peers, RawNewB#block.indep_hash, RawNewB#block.hash_list),
 					join_peers(Peers),
 					case ?IS_BLOCK(NewB) of
 						true ->
@@ -111,11 +111,11 @@ get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	PreviousBlock = ar_node:get_full_block(Peers, NewB#block.previous_block),
+	PreviousBlock = ar_node:get_full_block(Peers, NewB#block.previous_block, NewB#block.hash_list),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-			case {NewB, ar_node:get_full_block(Peers, RecallBlock)} of
+			case {NewB, ar_node:get_full_block(Peers, RecallBlock, NewB#block.hash_list)} of
 				{B, unavailable} ->
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
@@ -152,22 +152,24 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	end.
 
 %% @doc Fills node to capacity based on weave storage limit.
-fill_to_capacity(_, []) -> ok;
-fill_to_capacity(Peers, ToWrite) ->
+fill_to_capacity(Peers, ToWrite) -> fill_to_capacity(Peers, ToWrite, ToWrite).
+fill_to_capacity(_, [], _) -> ok;
+fill_to_capacity(Peers, ToWrite, BHL) ->
 	timer:sleep(30 * 1000),
 	try
 		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
-		case ar_node:get_full_block(Peers, RandHash) of
+		case ar_node:get_full_block(Peers, RandHash, BHL) of
 			unavailable ->
 				timer:sleep(3000),
-				fill_to_capacity(Peers, ToWrite);
+				fill_to_capacity(Peers, ToWrite, BHL);
 			B ->
 				case ar_storage:write_full_block(B) of
 					{error, _} -> disk_full;
 					_ ->
 						fill_to_capacity(
 							Peers,
-							lists:delete(RandHash, ToWrite)
+							lists:delete(RandHash, ToWrite),
+							BHL
 						)
 				end
 		end
@@ -191,7 +193,7 @@ fill_to_capacity(Peers, ToWrite) ->
 				{'EXIT', {Term, erlang:get_stacktrace()}}
 			]
 		),
-		fill_to_capacity(Peers, ToWrite)
+		fill_to_capacity(Peers, ToWrite, BHL)
 	end.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
