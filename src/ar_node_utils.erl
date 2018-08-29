@@ -4,7 +4,7 @@
 
 -module(ar_node_utils).
 
--export([get_conflicting_txs/2, get_full_block/2]).
+-export([get_conflicting_txs/2, get_full_block/3]).
 -export([find_recall_hash/2, find_recall_block/1, find_block/1]).
 -export([calculate_reward_pool/4, calculate_proportion/3]).
 -export([apply_mining_reward/4, apply_tx/2, apply_txs/2]).
@@ -36,9 +36,9 @@ get_conflicting_txs(StateTXs, TX) ->
 
 %% @doc Get a specific full block (a block containing full txs) via
 %% blocks indep_hash.
-get_full_block(Peers, ID) when is_list(Peers) ->
+get_full_block(Peers, ID, BHL) when is_list(Peers) ->
 	% check locally first, if not found ask list of external peers for block
-	case ar_storage:read_block(ID) of
+	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
 			lists:foldl(
 				fun(Peer, Acc) ->
@@ -46,7 +46,7 @@ get_full_block(Peers, ID) when is_list(Peers) ->
 						false ->
 							Acc;
 						true ->
-							Full = get_full_block(Peer, ID),
+							Full = get_full_block(Peer, ID, BHL),
 							case is_atom(Full) of
 								true  -> Acc;
 								false -> Full
@@ -57,19 +57,19 @@ get_full_block(Peers, ID) when is_list(Peers) ->
 				Peers
 			);
 		Block ->
-			case make_full_block(ID) of
+			case make_full_block(ID, BHL) of
 				unavailable ->
 					ar_storage:invalidate_block(Block),
-					get_full_block(Peers, ID);
+					get_full_block(Peers, ID, BHL);
 				FinalB -> FinalB
 			end
 	end;
-get_full_block(Pid, ID) when is_pid(Pid) ->
+get_full_block(Pid, ID, BHL) when is_pid(Pid) ->
 	% Attempt to get block from local storage and add transactions.
-	make_full_block(ID);
-get_full_block(Host, ID) ->
+	make_full_block(ID, BHL);
+get_full_block(Host, ID, BHL) ->
 	% Handle external peer request.
-	ar_http_iface:get_full_block(Host, ID).
+	ar_http_iface:get_full_block(Host, ID, BHL).
 
 %% @doc Return the hash of the next recall block.
 find_recall_hash(Block, []) ->
@@ -189,7 +189,7 @@ start_mining(#{ node := Node, hash_list := BHL, txs := TXs, reward_addr := Rewar
 			RecallHash = find_recall_hash(B, BHL),
 			% TODO mue: Cleanup.
 			% FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
-			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
+			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BHL),
 			case FullBlock of
 				X when (X == unavailable) or (X == not_found) ->
 					ar:report(
@@ -225,7 +225,8 @@ start_mining(#{ node := Node, hash_list := BHL, txs := TXs, reward_addr := Rewar
 				ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
 			end,
 			RecallBFull = make_full_block(
-				RecallB#block.indep_hash
+				RecallB#block.indep_hash,
+				BHL
 			),
 			ar_key_db:put(
 				RecallB#block.indep_hash,
@@ -572,8 +573,8 @@ validate_wallet_list([_ | Rest]) ->
 
 %% @doc Convert a block with tx references into a full block, that is a block
 %% containing the entirety of all its referenced txs.
-make_full_block(ID) ->
-	case ar_storage:read_block(ID) of
+make_full_block(ID, BHL) ->
+	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
 			unavailable;
 		BlockHeader ->

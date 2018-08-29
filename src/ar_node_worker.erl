@@ -269,7 +269,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Pee
 		when NewB#block.height == Height + 1 ->
 	% This block is at the correct height.
 	RecallHash = ar_node_utils:find_recall_hash(NewB, HashList),
-	FullBlock = ar_node_utils:get_full_block(Peer, RecallHash),
+	FullBlock = ar_node_utils:get_full_block(Peer, RecallHash, HashList),
 	case ?IS_BLOCK(FullBlock) of
 		true ->
 			% TODO: Cleanup full block -> shadow generation.
