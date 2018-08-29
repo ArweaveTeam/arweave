@@ -204,7 +204,7 @@ handle('POST', [<<"block">>], Req) ->
 							CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 							% mue: keep block distance for later tests
 							case (not is_atom(CurrentB)) andalso
-								(B#block.height > CurrentB#block.height) andalso 
+								(B#block.height > CurrentB#block.height) andalso
 								(B#block.height =< (CurrentB#block.height + 50)) andalso
 								(B#block.diff >= ?MIN_DIFF) of
 								true ->
@@ -1218,83 +1218,73 @@ block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init([]),
-		Node1 = ar_node:start([], [B0]),
-		reregister(Node1),
-		BridgeNode = ar_bridge:start([]),
-		reregister(http_bridge_node, BridgeNode),
-		?assertEqual(<<?NETWORK_NAME>>, get_info({127, 0, 0, 1, 1984}, name)),
-		?assertEqual(?RELEASE_NUMBER, get_info({127, 0, 0, 1, 1984}, release)),
-		?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
-		?assertEqual(1, get_info({127, 0, 0, 1, 1984}, peers)),
-		?assertEqual(1, get_info({127, 0, 0, 1, 1984}, blocks)),
-		?assertEqual(0, get_info({127, 0, 0, 1, 1984}, height))
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	BridgeNode = ar_bridge:start([]),
+	reregister(http_bridge_node, BridgeNode),
+	?assertEqual(<<?NETWORK_NAME>>, get_info({127, 0, 0, 1, 1984}, name)),
+	?assertEqual(?RELEASE_NUMBER, get_info({127, 0, 0, 1, 1984}, release)),
+	?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
+	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, peers)),
+	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, blocks)),
+	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, height)).
 
 %% @doc Ensure transaction reward can be retrieved via http iface.
 get_tx_reward_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init([]),
-		Node1 = ar_node:start([], [B0]),
-		reregister(Node1),
-		% Hand calculated result for 1000 bytes.
-		ExpectedPrice = ar:d(ar_tx:calculate_min_tx_cost(1000, B0#block.diff)),
-		ExpectedPrice = ar:d(get_tx_reward({127, 0, 0, 1, 1984}, 1000))
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	% Hand calculated result for 1000 bytes.
+	ExpectedPrice = ar:d(ar_tx:calculate_min_tx_cost(1000, B0#block.diff)),
+	ExpectedPrice = ar:d(get_tx_reward({127, 0, 0, 1, 1984}, 1000)).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		Node1 = ar_node:start([]),
-		reregister(Node1),
-		BridgeNode = ar_bridge:start([]),
-		reregister(http_bridge_node, BridgeNode),
-		?assertEqual(<<?NETWORK_NAME>>, get_info({127, 0, 0, 1, 1984}, name)),
-		?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
-		?assertEqual(0, get_info({127, 0, 0, 1, 1984}, peers)),
-		?assertEqual(0, get_info({127, 0, 0, 1, 1984}, blocks)),
-		?assertEqual(0, get_info({127, 0, 0, 1, 1984}, height))
-	end}.
+	ar_storage:clear(),
+	Node1 = ar_node:start([]),
+	reregister(Node1),
+	BridgeNode = ar_bridge:start([]),
+	reregister(http_bridge_node, BridgeNode),
+	?assertEqual(<<?NETWORK_NAME>>, get_info({127, 0, 0, 1, 1984}, name)),
+	?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
+	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, peers)),
+	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, blocks)),
+	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, height)).
 
 %% @doc Check that balances can be retreived over the network.
 get_balance_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{_Priv1, Pub1} = ar_wallet:new(),
-		Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
-		Node1 = ar_node:start([], Bs),
-		reregister(Node1),
-		{ok, {{<<"200">>, _}, _, Body, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
-				[]
-			),
-		?assertEqual(10000, list_to_integer(binary_to_list(Body)))
-	end}.
+	ar_storage:clear(),
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
+	Node1 = ar_node:start([], Bs),
+	reregister(Node1),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
+			[]
+		),
+	?assertEqual(10000, list_to_integer(binary_to_list(Body))).
 
 %% @doc Test that wallets issued in the pre-sale can be viewed.
 get_presale_balance_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{_Priv1, Pub1} = ar_wallet:new(),
-		Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
-		Node1 = ar_node:start([], Bs),
-		reregister(Node1),
-		{ok, {{<<"200">>, _}, _, Body, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
-				[]
-			),
-		?assertEqual(10000, list_to_integer(binary_to_list(Body)))
-	end}.
+	ar_storage:clear(),
+	{_Priv1, Pub1} = ar_wallet:new(),
+	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
+	Node1 = ar_node:start([], Bs),
+	reregister(Node1),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
+			[]
+		),
+	?assertEqual(10000, list_to_integer(binary_to_list(Body))).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
 get_last_tx_single_test() ->
@@ -1377,245 +1367,227 @@ get_current_block_test() ->
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init([]),
-		Node = ar_node:start([], [B0]),
-		reregister(Node),
-		Bridge = ar_bridge:start([], Node),
-		reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
-		send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-		receive after 1000 -> ok end,
-		ar_node:mine(Node),
-		receive after 1000 -> ok end,
-		[B1|_] = ar_node:get_blocks(Node),
-		TXID = TX#tx.id,
-		?assertEqual([TXID], (ar_storage:read_block(B1))#block.txs)
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	[B1|_] = ar_node:get_blocks(Node),
+	TXID = TX#tx.id,
+	?assertEqual([TXID], (ar_storage:read_block(B1))#block.txs).
 
 %% @doc Test getting transactions
 find_external_tx_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init(),
-		Node = ar_node:start([], [B0]),
-		reregister(Node),
-		SearchNode = app_search:start(Node),
-		ar_node:add_peers(Node, SearchNode),
-		reregister(http_search_node, SearchNode),
-		Bridge = ar_bridge:start([], Node),
-		reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
-		send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-		timer:sleep(1000),
-		ar_node:mine(Node),
-		timer:sleep(1000),
-		% write a get_tx function like get_block
-		FoundTXID = (get_tx({127, 0, 0, 1, 1984}, TX#tx.id))#tx.id,
-		?assertEqual(FoundTXID, TX#tx.id)
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
+	timer:sleep(1000),
+	ar_node:mine(Node),
+	timer:sleep(1000),
+	% write a get_tx function like get_block
+	FoundTXID = (get_tx({127, 0, 0, 1, 1984}, TX#tx.id))#tx.id,
+	?assertEqual(FoundTXID, TX#tx.id).
 
 fail_external_tx_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init(),
-		Node = ar_node:start([], [B0]),
-		reregister(Node),
-		Bridge = ar_bridge:start([], Node),
-		reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
-		SearchNode = app_search:start(Node),
-		ar_node:add_peers(Node, SearchNode),
-		reregister(http_search_node, SearchNode),
-		send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)),
-		timer:sleep(1000),
-		ar_node:mine(Node),
-		timer:sleep(1000),
-		BadTX = ar_tx:new(<<"BADDATA">>),
-		?assertEqual(not_found, get_tx({127, 0, 0, 1, 1984}, BadTX#tx.id))
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)),
+	timer:sleep(1000),
+	ar_node:mine(Node),
+	timer:sleep(1000),
+	BadTX = ar_tx:new(<<"BADDATA">>),
+	?assertEqual(not_found, get_tx({127, 0, 0, 1, 1984}, BadTX#tx.id)).
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init([]),
-		Node1 = ar_node:start([], [B0]),
-		reregister(Node1),
-		Bridge = ar_bridge:start([], Node1),
-		reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node1, Bridge),
-		Node2 = ar_node:start([], [B0]),
-		ar_node:mine(Node2),
-		timer:sleep(1000),
-		[B1|_] = ar_node:get_blocks(Node2),
-		reregister(Node1),
-		send_new_block({127, 0, 0, 1, 1984}, ?DEFAULT_HTTP_IFACE_PORT, ar_storage:read_block(B1), B0),
-		timer:sleep(500),
-		[B1, XB0] = ar_node:get_blocks(Node1),
-		?assertEqual(B0, ar_storage:read_block(XB0))
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	Bridge = ar_bridge:start([], Node1),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node1, Bridge),
+	Node2 = ar_node:start([], [B0]),
+	ar_node:mine(Node2),
+	timer:sleep(1000),
+	[B1|_] = ar_node:get_blocks(Node2),
+	reregister(Node1),
+	send_new_block({127, 0, 0, 1, 1984}, ?DEFAULT_HTTP_IFACE_PORT, ar_storage:read_block(B1), B0),
+	timer:sleep(500),
+	[B1, XB0] = ar_node:get_blocks(Node1),
+	?assertEqual(B0, ar_storage:read_block(XB0)).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		Node = ar_node:start([], [B0]),
-		reregister(Node),
-		Bridge = ar_bridge:start([], Node),
-		reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		ID = SignedTX#tx.id,
-		send_new_tx({127, 0, 0, 1, 1984}, SignedTX),
-		timer:sleep(500),
-		ar_node:mine(Node),
-		timer:sleep(500),
-		{ok, {{<<"200">>, _}, _, Body, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx",
-				[]
-			),
-		?assertEqual(ID, ar_util:decode(Body))
-	end}.
+	ar_storage:clear(),
+	{Priv1, Pub1} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	{_Priv2, Pub2} = ar_wallet:new(),
+	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
+	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+	ID = SignedTX#tx.id,
+	send_new_tx({127, 0, 0, 1, 1984}, SignedTX),
+	timer:sleep(500),
+	ar_node:mine(Node),
+	timer:sleep(500),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx",
+			[]
+		),
+	?assertEqual(ID, ar_util:decode(Body)).
 
 %% @doc Post a tx to the network and ensure that its subfields can be gathered
 get_subfields_of_tx_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init(),
-		Node = ar_node:start([], [B0]),
-		reregister(Node),
-		Bridge = ar_bridge:start([], Node),
-		reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
-		SearchNode = app_search:start(Node),
-		ar_node:add_peers(Node, SearchNode),
-		reregister(http_search_node, SearchNode),
-		send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-		timer:sleep(1000),
-		ar_node:mine(Node),
-		timer:sleep(1000),
-		%write a get_tx function like get_block
-		{ok, {{<<"200">>, _}, _, Body, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
-				[]
-			),
-		Orig = TX#tx.data,
-		?assertEqual(Orig, ar_util:decode(Body))
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
+	timer:sleep(1000),
+	ar_node:mine(Node),
+	timer:sleep(1000),
+	%write a get_tx function like get_block
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
+			[]
+		),
+	Orig = TX#tx.data,
+	?assertEqual(Orig, ar_util:decode(Body)).
 
 %% @doc Correctly check the status of pending is returned for a pending transaction
 get_pending_tx_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init(),
-		Node = ar_node:start([], [B0]),
-		reregister(Node),
-		Bridge = ar_bridge:start([], Node),
-		reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
-		SearchNode = app_search:start(Node),
-		ar_node:add_peers(Node, SearchNode),
-		reregister(http_search_node, SearchNode),
-		io:format("~p\n",[
-			send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>))
-			]),
-		timer:sleep(1000),
-		%write a get_tx function like get_block
-		{ok, {{<<"202">>, _}, _, Body, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)),
-				[]
-			),
-		?assertEqual("Pending", Body)
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	io:format("~p\n",[
+		send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>))
+		]),
+	timer:sleep(1000),
+	%write a get_tx function like get_block
+	{ok, {{<<"202">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)),
+			[]
+		),
+	?assertEqual("Pending", Body).
 
 %% @doc Find all pending transactions in the network
 %% TODO: Fix test to send txs from different wallets
 get_multiple_pending_txs_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init(),
-		Node = ar_node:start([], [B0]),
-		reregister(Node),
-		Bridge = ar_bridge:start([], Node),
-		reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
-		SearchNode = app_search:start(Node),
-		ar_node:add_peers(Node, SearchNode),
-		reregister(http_search_node, SearchNode),
-		send_new_tx({127, 0, 0, 1,1984}, TX1 = ar_tx:new(<<"DATA1">>)),
-		timer:sleep(1000),
-		send_new_tx({127, 0, 0, 1,1984}, TX2 = ar_tx:new(<<"DATA2">>)),
-		timer:sleep(1000),
-		% write a get_tx function like get_block
-		{ok, {{<<"200">>, _}, _, Body, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/tx/pending",
-				[]
-			),
-		PendingTXs = ar_serialize:dejsonify(Body),
-		?assertEqual(
-			[
-				ar_util:encode(TX1#tx.id),
-				ar_util:encode(TX2#tx.id)
-			],
-			PendingTXs
-		)
-	end}.
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	reregister(http_search_node, SearchNode),
+	send_new_tx({127, 0, 0, 1,1984}, TX1 = ar_tx:new(<<"DATA1">>)),
+	timer:sleep(1000),
+	send_new_tx({127, 0, 0, 1,1984}, TX2 = ar_tx:new(<<"DATA2">>)),
+	timer:sleep(1000),
+	% write a get_tx function like get_block
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/pending",
+			[]
+		),
+	PendingTXs = ar_serialize:dejsonify(Body),
+	?assertEqual(
+		[
+			ar_util:encode(TX1#tx.id),
+			ar_util:encode(TX2#tx.id)
+		],
+		PendingTXs
+	).
 
 %% @doc Spawn a network with two nodes and a chirper server.
 get_tx_by_tag_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		SearchServer = app_search:start(),
-		Peers = ar_network:start(10, 10),
-		ar_node:add_peers(hd(Peers), SearchServer),
-		% Generate the transaction.
-		TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
-		% Add tx to network
-		ar_node:add_tx(hd(Peers), TX),
-		% Begin mining
-		receive after 250 -> ok end,
-		ar_node:mine(hd(Peers)),
-		receive after 1000 -> ok end,
-		QueryJSON = ar_serialize:jsonify(
-			ar_serialize:query_to_json_struct(
-				{'equals', <<"TestName">>, <<"TestVal">>}
-				)
-			),
-		{ok, {_, _, Body, _, _}} =
-			ar_httpc:request(
-				<<"POST">>,
-				{127, 0, 0, 1, 1984},
-				"/arql",
-				QueryJSON
-			),
-		TXs = ar_serialize:dejsonify(Body),
-		?assertEqual(true, lists:member(
-				TX#tx.id,
-				lists:map(
-					fun ar_util:decode/1,
-					TXs
-				)
-		))
-	end}.
+	ar_storage:clear(),
+	SearchServer = app_search:start(),
+	Peers = ar_network:start(10, 10),
+	ar_node:add_peers(hd(Peers), SearchServer),
+	% Generate the transaction.
+	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	% Add tx to network
+	ar_node:add_tx(hd(Peers), TX),
+	% Begin mining
+	receive after 250 -> ok end,
+	ar_node:mine(hd(Peers)),
+	receive after 1000 -> ok end,
+	QueryJSON = ar_serialize:jsonify(
+		ar_serialize:query_to_json_struct(
+			{'equals', <<"TestName">>, <<"TestVal">>}
+			)
+		),
+	{ok, {_, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/arql",
+			QueryJSON
+		),
+	TXs = ar_serialize:dejsonify(Body),
+	?assertEqual(true, lists:member(
+			TX#tx.id,
+			lists:map(
+				fun ar_util:decode/1,
+				TXs
+			)
+	)).
 
 get_txs_by_send_recv_test_slow() ->
 	ar_storage:clear(),

@@ -97,7 +97,7 @@ verify(TX, Diff, WalletList) ->
 		tag_field_legal(TX) andalso
 		check_last_tx(WalletList, TX) andalso
 		tx_verify_hash(TX) andalso
-		ar_node:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
+		ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
 		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
 	of
 		true -> true;
@@ -146,7 +146,7 @@ verify(TX, Diff, WalletList) ->
 		tag_field_legal(TX) andalso
 		check_last_tx(WalletList, TX) andalso
 		tx_verify_hash(TX) andalso
-		ar_node:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
+		ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
 		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
 	of
 		true -> true;
@@ -294,19 +294,15 @@ check_last_tx(WalletList, TX) ->
 
 %% @doc Ensure that a public and private key pair can be used to sign and verify data.
 sign_tx_test() ->
-	{timeout, 60, fun() ->
-		NewTX = new(<<"TEST DATA">>, ?AR(10)),
-		{Priv, Pub} = ar_wallet:new(),
-		true = verify(sign(NewTX, Priv, Pub), 1, [])
-	end}.
+	NewTX = new(<<"TEST DATA">>, ?AR(10)),
+	{Priv, Pub} = ar_wallet:new(),
+	true = verify(sign(NewTX, Priv, Pub), 1, []).
 
 %% @doc Ensure that a forged transaction does not pass verification.
 forge_test() ->
-	{timeout, 60, fun() ->
-		NewTX = new(<<"TEST DATA">>, ?AR(10)),
-		{Priv, Pub} = ar_wallet:new(),
-		false = verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }, 1, [])
-	end}.
+	NewTX = new(<<"TEST DATA">>, ?AR(10)),
+	{Priv, Pub} = ar_wallet:new(),
+	false = verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }, 1, []).
 
 %% @doc Ensure that a transaction above the minimum tx cost are accepted.
 tx_cost_above_min_test() ->

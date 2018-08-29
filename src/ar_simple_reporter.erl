@@ -59,51 +59,47 @@ server(S = #state { gossip = GS, report = ReportPID }) ->
 %% @doc Start an Archain network with a simple monitor.
 %% Ensure that new block notifications are received.
 simple_test() ->
-	{timeout, 60, fun() ->
-		% Create genesis block.
-		B0 = ar_weave:init(),
-		% Start an observer.
-		Node1 = start(self()),
-		% Start an Archain node with the new blockweave.
-		Node2 = ar_node:start([Node1], B0),
-		% Add the testing process to the gossip network.
-		GS0 = ar_gossip:init([Node2]),
-		% Create a new block in the weave.
-		B1 = ar_weave:add(B0, [ar_tx:new(<<"HELLO WORLD">>)]),
-		% Send the new block to the gossip node, which should inform our monitor.
-		ar_gossip:send(GS0, {new_block, self(), (hd(B1))#block.height, hd(B1)}),
-		% Receive the 'new block found; message for the first block.
-		receive {new_block, 1} -> ok end
-	end}.
+	% Create genesis block.
+	B0 = ar_weave:init(),
+	% Start an observer.
+	Node1 = start(self()),
+	% Start an Archain node with the new blockweave.
+	Node2 = ar_node:start([Node1], B0),
+	% Add the testing process to the gossip network.
+	GS0 = ar_gossip:init([Node2]),
+	% Create a new block in the weave.
+	B1 = ar_weave:add(B0, [ar_tx:new(<<"HELLO WORLD">>)]),
+	% Send the new block to the gossip node, which should inform our monitor.
+	ar_gossip:send(GS0, {new_block, self(), (hd(B1))#block.height, hd(B1)}),
+	% Receive the 'new block found; message for the first block.
+	receive {new_block, 1} -> ok end.
 
 %% @doc Test that multiple block notifications are received correctly.
 multiple_test() ->
-	{timeout, 60, fun() ->
-		% Create weave iterations.
-	    B0 = ar_weave:init(),
-	    ar_storage:write_block(B0),
-	    T1 = ar_tx:new(<<"HELLO WORLD">>),
-	    B1 = ar_weave:add(B0, [T1]),
-	    ar_storage:write_block(hd(B1)),
-	    ar_storage:write_tx(T1),
-	    T2 = ar_tx:new(<<"NEXT MESSAGE">>),
-	    B2 = ar_weave:add(B1, [T2]),
-	    ar_storage:write_block(hd(B2)),
-	    ar_storage:write_tx(T2),
-	    T3 = ar_tx:new(<<"ANOTHER MESSAGE">>),
-	    B3 = ar_weave:add(B2, [T3]),
-	    ar_storage:write_block(hd(B3)),
-	    ar_storage:write_tx(T3),
-		% Start the blockweave node and gossip protocol.
-		Node1 = start(self()),
-		Node2 = ar_node:start([Node1], B0),
-		GS0 = ar_gossip:init([Node2]),
-		% Send new block messages to the the gossip network.
-		{GS1, _} = ar_gossip:send(GS0, {new_block, self(), (hd(B1))#block.height, hd(B1)}),
-		{GS2, _} = ar_gossip:send(GS1, {new_block, self(), (hd(B2))#block.height, hd(B2)}),
-		ar_gossip:send(GS2, {new_block, self(), (hd(B3))#block.height, hd(B3)}),
-		% Receive the new block notifications for all three gossiped blocks.
-		receive {new_block, 1} -> ok end,
-		receive {new_block, 2} -> ok end,
-		receive {new_block, 3} -> ok end
-	end}.
+	% Create weave iterations.
+	B0 = ar_weave:init(),
+	ar_storage:write_block(B0),
+	T1 = ar_tx:new(<<"HELLO WORLD">>),
+	B1 = ar_weave:add(B0, [T1]),
+	ar_storage:write_block(hd(B1)),
+	ar_storage:write_tx(T1),
+	T2 = ar_tx:new(<<"NEXT MESSAGE">>),
+	B2 = ar_weave:add(B1, [T2]),
+	ar_storage:write_block(hd(B2)),
+	ar_storage:write_tx(T2),
+	T3 = ar_tx:new(<<"ANOTHER MESSAGE">>),
+	B3 = ar_weave:add(B2, [T3]),
+	ar_storage:write_block(hd(B3)),
+	ar_storage:write_tx(T3),
+	% Start the blockweave node and gossip protocol.
+	Node1 = start(self()),
+	Node2 = ar_node:start([Node1], B0),
+	GS0 = ar_gossip:init([Node2]),
+	% Send new block messages to the the gossip network.
+	{GS1, _} = ar_gossip:send(GS0, {new_block, self(), (hd(B1))#block.height, hd(B1)}),
+	{GS2, _} = ar_gossip:send(GS1, {new_block, self(), (hd(B2))#block.height, hd(B2)}),
+	ar_gossip:send(GS2, {new_block, self(), (hd(B3))#block.height, hd(B3)}),
+	% Receive the new block notifications for all three gossiped blocks.
+	receive {new_block, 1} -> ok end,
+	receive {new_block, 2} -> ok end,
+	receive {new_block, 3} -> ok end.

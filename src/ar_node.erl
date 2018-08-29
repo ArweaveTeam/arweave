@@ -173,10 +173,12 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					end,
 
 			% Start processes, init state, and start server.
+			NPid = self(),
 			{ok, SPid} = ar_node_state:start(),
-			{ok, WPid} = ar_node_worker:start(SPid),
+			{ok, WPid} = ar_node_worker:start(NPid, SPid),
 
 			ok = ar_node_state:update(SPid, [
+				{node, NPid},
 				{gossip, Gossip},
 				{hash_list, HashList},
 				{wallet_list, Hashes},
@@ -749,7 +751,7 @@ handle(_SPid, {add_peers, Peers}) ->
 handle(SPid, {apply_tx, TX}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-	{task, {encounter_nex_tx, TX, NewGS}};
+	{task, {encounter_new_tx, TX, NewGS}};
 handle(SPid, {new_block, Peer, Height, NewB, RecallB}) ->
 	% We have a new block. Distribute it to the gossip network.
 	{ok, #{ gossip := GS, hash_list := HashList }} = ar_node_state:lookup(SPid, [gossip, hash_list]),

@@ -555,23 +555,21 @@ store_and_retrieve_tx_test() ->
 %% @doc Ensure blocks can be written to disk, then moved into the 'invalid'
 %% block directory.
 invalidate_block_test() ->
-	{timeout, 60, fun() ->
-		[B] = ar_weave:init(),
-		write_full_block(B),
-		invalidate_block(B),
-		ar:d({block, ar_util:encode(B#block.indep_hash)}),
-		timer:sleep(500),
-		unavailable = read_block(B#block.indep_hash, []),
-		TargetFile =
-			lists:flatten(
-				io_lib:format(
-					"~s/invalid/~w_~s.json",
-					[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
-				)
-			),
-		{ok, Binary} = file:read_file(TargetFile),
-		B = ar_serialize:json_struct_to_block(Binary)
-	end}.
+	[B] = ar_weave:init(),
+	write_full_block(B),
+	invalidate_block(B),
+	ar:d({block, ar_util:encode(B#block.indep_hash)}),
+	timer:sleep(500),
+	unavailable = read_block(B#block.indep_hash),
+	TargetFile =
+		lists:flatten(
+			io_lib:format(
+				"~s/invalid/~w_~s.json",
+				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+			)
+		),
+	{ok, Binary} = file:read_file(TargetFile),
+	B = ar_serialize:json_struct_to_block(Binary).
 
 store_and_retreive_block_hash_list_test() ->
 	ID = crypto:strong_rand_bytes(32),

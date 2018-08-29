@@ -284,7 +284,7 @@ indep_hash(#block {
 %% Returns the nonce to use to add the block to the list.
 mine(B, RecallB, TXs, RewardAddr, Tags) ->
     %ar:d({weave_mine, {block, B}, {recall, RecallB}, {tx, TXs}, {reward, RewardAddr}, {tags, Tags}}),
-    ar_mine:start(B, RecallB, TXs, RewardAddr, Tags),
+    ar_mine:start(B, RecallB, TXs, RewardAddr, Tags, self()),
 	receive
         {work_complete, TXs, _Hash, Diff, Nonce, Timestamp} ->
 			{Nonce, Timestamp, Diff}

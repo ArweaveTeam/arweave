@@ -13,7 +13,7 @@
 -export([fork_recover/3]).
 -export([filter_out_of_order_txs/2, filter_out_of_order_txs/3]).
 -export([filter_all_out_of_order_txs/2]).
--export([validate/5, validate/8]).
+-export([validate/5, validate/8, validate_wallet_list/1]).
 
 -include("ar.hrl").
 
@@ -182,7 +182,7 @@ start_mining(#{hash_list := not_joined} = StateIn, _) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	StateIn;
-start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn, ForceDiff) ->
+start_mining(#{ node := Node, hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn, ForceDiff) ->
 	case find_recall_block(BHL) of
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL)),
@@ -222,7 +222,7 @@ start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags :=
 			if not is_record(RecallB, block) ->
 				ar:report_console([{erroneous_recall_block, RecallB}]);
 			true ->
-				ar:report([{node_starting_miner, self()}, {recall_block, RecallB#block.height}])
+				ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
 			end,
 			RecallBFull = make_full_block(
 				RecallB#block.indep_hash
@@ -244,9 +244,10 @@ start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags :=
 						RecallB,
 						TXs,
 						RewardAddr,
-						Tags
+						Tags,
+						Node
 					),
-					ar:report([{node, self()}, {started_miner, Miner}]),
+					ar:report([{node, Node}, {started_miner, Miner}]),
 					StateIn#{ miner => Miner };
 				ForceDiff ->
 					Miner = ar_mine:start(
@@ -255,9 +256,10 @@ start_mining(#{ hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags :=
 						TXs,
 						RewardAddr,
 						Tags,
-						ForceDiff
+						ForceDiff,
+						Node
 					),
-					ar:report([{node, self()}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
+					ar:report([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
 					StateIn#{ miner => Miner, diff => ForceDiff }
 			end
 	end.
@@ -301,8 +303,7 @@ integrate_new_block(
 			end,
 			TXs ++ WaitingTXs ++ PotentialTXs
 		),
-	% TODO mue: KeepNotMinedTXs is unused.
-	KeepNotMinedTXs = ar_node:filter_all_out_of_order_txs(
+	KeepNotMinedTXs = filter_all_out_of_order_txs(
 							NewB#block.wallet_list,
 							RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
@@ -324,11 +325,8 @@ integrate_new_block(
 		end,
 		PotentialTXs
 	),
-	RecallB =
-		ar_node:get_full_block(
-			whereis(http_entrypoint_node),
-			find_recall_hash(NewB, [NewB#block.indep_hash | HashList])
-		),
+	RecallHash = find_recall_hash(NewB, [NewB#block.indep_hash | HashList]),
+	RecallB = ar_node:get_full_block(whereis(http_entrypoint_node), RecallHash),
 	case ?IS_BLOCK(RecallB) of
 		true ->
 			ar_key_db:put(
@@ -349,7 +347,7 @@ integrate_new_block(
 		hash_list			 => [NewB#block.indep_hash | HashList],
 		txs					 => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
 		height				 => NewB#block.height,
-		floating_wallet_list => ar_node:apply_txs(WalletList, TXs),
+		floating_wallet_list => apply_txs(WalletList, TXs),
 		reward_pool			 => NewB#block.reward_pool,
 		potential_txs		 => [],
 		diff				 => NewB#block.diff,
@@ -358,7 +356,7 @@ integrate_new_block(
 	}).
 
 %% @doc Recovery from a fork.
-fork_recover(#{ hash_list := HashList } = StateIn, Peer, NewB) ->
+fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
 			PrioritisedPeers = ar_util:unique(Peer) ++
@@ -371,7 +369,8 @@ fork_recover(#{ hash_list := HashList } = StateIn, Peer, NewB) ->
 				PID = ar_fork_recovery:start(
 					PrioritisedPeers,
 					NewB,
-					HashList
+					HashList,
+					Node
 				)
 			),
 			case PID of
@@ -557,6 +556,16 @@ validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:d(block_not_accepted),
 	false.
 
+%% @doc Ensure that all wallets in the wallet list have a positive balance.
+validate_wallet_list([]) ->
+	true;
+validate_wallet_list([{_, 0, Last} | _]) when byte_size(Last) == 0 ->
+	false;
+validate_wallet_list([{_, Qty, _} | _]) when Qty < 0 ->
+	false;
+validate_wallet_list([_ | Rest]) ->
+	validate_wallet_list(Rest).
+
 %%%
 %%% Private functions.
 %%%
@@ -645,16 +654,6 @@ calculate_static_reward(Height) ->
 calculate_tx_reward(#tx { reward = Reward }) ->
 	% TDOD mue: Calculation is not calculated, only returned.
 	Reward.
-
-%% @doc Ensure that all wallets in the wallet list have a positive balance.
-validate_wallet_list([]) ->
-	true;
-validate_wallet_list([{_, 0, Last} | _]) when byte_size(Last) == 0 ->
-	false;
-validate_wallet_list([{_, Qty, _} | _]) when Qty < 0 ->
-	false;
-validate_wallet_list([_ | Rest]) ->
-	validate_wallet_list(Rest).
 
 %%%
 %%% Unreferenced!

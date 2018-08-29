@@ -198,34 +198,31 @@ fill_to_capacity(Peers, ToWrite, BHL) ->
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		Node1 = ar_node:start([], _B0 = ar_weave:init([])),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(600),
-		Node2 = ar_node:start([Node1]),
-		timer:sleep(1500),
-		[B|_] = ar_node:get_blocks(Node2),
-		2 = (ar_storage:read_block(B))#block.height
-	end}.
+	ar_storage:clear(),
+	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(600),
+	Node2 = ar_node:start([Node1]),
+	timer:sleep(1500),
+	[B|_] = ar_node:get_blocks(Node2),
+	2 = (ar_storage:read_block(B))#block.height.
 
 %% @doc Ensure that both nodes can mine after a join.
 node_join_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		Node1 = ar_node:start([], _B0 = ar_weave:init([])),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		Node2 = ar_node:start([Node1]),
-		timer:sleep(600),
-		ar_node:mine(Node2),
-		timer:sleep(1500),
-		[B|_] = ar_node:get_blocks(Node1),
-		3 = (ar_storage:read_block(B))#block.height
-	end}.
+	ar_storage:clear(),
+	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	Node2 = ar_node:start([Node1]),
+	timer:sleep(600),
+	ar_node:mine(Node2),
+	timer:sleep(1500),
+	[B|_] = ar_node:get_blocks(Node1),
+	3 = (ar_storage:read_block(B))#block.height.
+

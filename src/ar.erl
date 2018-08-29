@@ -15,7 +15,7 @@
 -define(
 	CORE_TEST_MODS,
 	[
-		ar_node_test,
+		ar_node_tests,
 		ar_util,
 		ar_cleanup,
 		ar_meta_db,

@@ -1,5 +1,5 @@
 -module(ar_fork_recovery).
--export([start/3]).
+-export([start/4]).
 -export([multiple_blocks_ahead_with_transaction_recovery_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -23,10 +23,9 @@
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
-start(Peers, TargetBShadow, HashList) ->
+start(Peers, TargetBShadow, HashList, Parent) ->
 	% TODO: At this stage the target block is not a shadow, it is either
 	% a valid block or a block with a malformed hashlist (Outside FR range).
-	Parent = self(),
 	case ?IS_BLOCK(TargetBShadow) of
 		true ->
 			ar:report(
@@ -319,66 +318,64 @@ try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 
 %% @doc Ensure forks that are one block behind will resolve.
 three_block_ahead_recovery_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		Node1 = ar_node:start(),
-		Node2 = ar_node:start(),
-		B0 = ar_weave:init([]),
-		ar_storage:write_block(hd(B0)),
-		B1 = ar_weave:add(B0, []),
-		ar_storage:write_block(hd(B1)),
-		B2 = ar_weave:add(B1, []),
-		ar_storage:write_block(hd(B2)),
-		B3 = ar_weave:add(B2, []),
-		ar_storage:write_block(hd(B3)),
-		Node1 ! Node2 ! {replace_block_list, B3},
-		ar_node:mine(Node1),
-		ar_node:mine(Node2),
-		ar:d(break1),
-		timer:sleep(500),
-		ar_node:mine(Node1),
-		timer:sleep(500),
-		ar_node:mine(Node1),
-		timer:sleep(500),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:mine(Node1),
-		timer:sleep(2000),
-		[B | _] = ar_node:get_blocks(Node2),
-		7 = (ar_storage:read_block(B))#block.height
-	end}.
+	ar_storage:clear(),
+	Node1 = ar_node:start(),
+	Node2 = ar_node:start(),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
+	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
+	B3 = ar_weave:add(B2, []),
+	ar_storage:write_block(hd(B3)),
+	Node1 ! Node2 ! {replace_block_list, B3},
+	timer:sleep(500),
+	ar_node:mine(Node1),
+	timer:sleep(500),
+	ar_node:mine(Node2),
+	timer:sleep(500),
+	ar_node:mine(Node1),
+	timer:sleep(500),
+	ar_node:mine(Node1),
+	timer:sleep(500),
+	ar_node:add_peers(Node1, Node2),
+	timer:sleep(500),
+	ar_node:mine(Node1),
+	timer:sleep(1000),
+	[B | _] = ar_node:get_blocks(Node2),
+	7 = (ar_storage:read_block(B))#block.height.
 
 %% @doc Ensure that nodes on a fork that is far behind will catchup correctly.
 multiple_blocks_ahead_recovery_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		Node1 = ar_node:start(),
-		Node2 = ar_node:start(),
-		B0 = ar_weave:init([]),
-		ar_storage:write_block(hd(B0)),
-		B1 = ar_weave:add(B0, []),
-		ar_storage:write_block(hd(B1)),
-		B2 = ar_weave:add(B1, []),
-		ar_storage:write_block(hd(B2)),
-		B3 = ar_weave:add(B2, []),
-		ar_storage:write_block(hd(B3)),
-		Node1 ! Node2 ! {replace_block_list, B3},
-		ar_node:mine(Node1),
-		ar_node:mine(Node2),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:mine(Node1),
-		timer:sleep(1500),
-		[B | _] = ar_node:get_blocks(Node2),
-		9 = (ar_storage:read_block(B))#block.height
-	end}.
+	ar_storage:clear(),
+	Node1 = ar_node:start(),
+	Node2 = ar_node:start(),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
+	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
+	B3 = ar_weave:add(B2, []),
+	ar_storage:write_block(hd(B3)),
+	Node1 ! Node2 ! {replace_block_list, B3},
+	ar_node:mine(Node1),
+	ar_node:mine(Node2),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1),
+	timer:sleep(1500),
+	[B | _] = ar_node:get_blocks(Node2),
+	9 = (ar_storage:read_block(B))#block.height.
 
 %% @doc Ensure that nodes on a fork that is far behind blocks that contain
 %% transactions will catchup correctly.
@@ -420,37 +417,35 @@ multiple_blocks_ahead_with_transaction_recovery_test_slow() ->
 %% @doc Ensure that nodes that have diverged by multiple blocks each can
 %% reconcile.
 multiple_blocks_since_fork_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		Node1 = ar_node:start(),
-		Node2 = ar_node:start(),
-		B0 = ar_weave:init([]),
-		ar_storage:write_block(hd(B0)),
-		B1 = ar_weave:add(B0, []),
-		ar_storage:write_block(hd(B1)),
-		B2 = ar_weave:add(B1, []),
-		ar_storage:write_block(hd(B2)),
-		B3 = ar_weave:add(B2, []),
-		ar_storage:write_block(hd(B3)),
-		Node1 ! Node2 ! {replace_block_list, B3},
-		ar_node:mine(Node1),
-		ar_node:mine(Node2),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		ar_node:mine(Node2),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:mine(Node1),
-		timer:sleep(1500),
-		[B | _] = ar_node:get_blocks(Node2),
-		9 = (ar_storage:read_block(B))#block.height
-	end}.
+	ar_storage:clear(),
+	Node1 = ar_node:start(),
+	Node2 = ar_node:start(),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
+	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
+	B3 = ar_weave:add(B2, []),
+	ar_storage:write_block(hd(B3)),
+	Node1 ! Node2 ! {replace_block_list, B3},
+	ar_node:mine(Node1),
+	ar_node:mine(Node2),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	ar_node:mine(Node2),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:add_peers(Node1, Node2),
+	ar_node:mine(Node1),
+	timer:sleep(1500),
+	[B | _] = ar_node:get_blocks(Node2),
+	9 = (ar_storage:read_block(B))#block.height.
 
 %% @doc Ensure that nodes that nodes recovering from the first block can
 %% reconcile.
@@ -470,34 +465,32 @@ multiple_blocks_since_fork_test() ->
 
 %% @doc Check the logic of setminus will correctly update to a new fork
 setminus_test() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		Node1 = ar_node:start(),
-		Node2 = ar_node:start(),
-		B0 = ar_weave:init([]),
-		ar_storage:write_block(hd(B0)),
-		B1 = ar_weave:add(B0, []),
-		ar_storage:write_block(hd(B1)),
-		B2 = ar_weave:add(B1, []),
-		ar_storage:write_block(hd(B2)),
-		B3 = ar_weave:add(B2, []),
-		ar_storage:write_block(hd(B3)),
-		Node1 ! Node2 ! {replace_block_list, B3},
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		LengthLong = length(
-			setminus(lists:reverse(ar_node:get_blocks(Node1)),
-			lists:reverse(ar_node:get_blocks(Node2)))
+	ar_storage:clear(),
+	Node1 = ar_node:start(),
+	Node2 = ar_node:start(),
+	B0 = ar_weave:init([]),
+	ar_storage:write_block(hd(B0)),
+	B1 = ar_weave:add(B0, []),
+	ar_storage:write_block(hd(B1)),
+	B2 = ar_weave:add(B1, []),
+	ar_storage:write_block(hd(B2)),
+	B3 = ar_weave:add(B2, []),
+	ar_storage:write_block(hd(B3)),
+	Node1 ! Node2 ! {replace_block_list, B3},
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	ar_node:mine(Node1),
+	timer:sleep(300),
+	LengthLong = length(
+		setminus(lists:reverse(ar_node:get_blocks(Node1)),
+		lists:reverse(ar_node:get_blocks(Node2)))
+	),
+	ar_node:mine(Node1),
+	ar_node:mine(Node2),
+	timer:sleep(300),
+	LengthShort = length(
+		setminus(lists:reverse(ar_node:get_blocks(Node1)),
+		lists:reverse(ar_node:get_blocks(Node2)))
 		),
-		ar_node:mine(Node1),
-		ar_node:mine(Node2),
-		timer:sleep(300),
-		LengthShort = length(
-			setminus(lists:reverse(ar_node:get_blocks(Node1)),
-			lists:reverse(ar_node:get_blocks(Node2)))
-			),
-		LengthLong = 2,
-		LengthShort = 0
-	end}.
+	LengthLong = 2,
+	LengthShort = 0.
