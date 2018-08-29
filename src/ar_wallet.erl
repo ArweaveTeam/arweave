@@ -1,11 +1,16 @@
+%%%
+%%% @doc Utilities for manipulating wallets.
+%%%
+
 -module(ar_wallet).
+
 -export([new/0, sign/2, verify/3, to_address/1, new_keyfile/0, load_keyfile/1, to_binary/1]).
--define(PUBLIC_EXPNT, 65537).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
-%%% Utilities for manipulating wallets.
+-define(PUBLIC_EXPNT, 65537).
 
 %% @doc Generate a new wallet public key and private key.
 new() ->
@@ -89,6 +94,9 @@ to_binary({Addr, Quantity, LastTx}) ->
 		(LastTx)/binary
 	>>.
 
+%%%
+%%% Tests.
+%%%
 
 wallet_sign_verify_test() ->
 	TestData = <<"TEST DATA">>,
@@ -121,6 +129,16 @@ assign_wallet_test() ->
 	B0 = ar_weave:init([{Address, ?AR(0), <<>>}]),
 	Node1 = ar_node:start([], B0, 0, Address),
 	ar_node:mine(Node1), % Mine B1
-	timer:sleep(500),
-	Reward = erlang:trunc(ar_node_utils:calculate_reward(1, 0)),
-	Reward = ar_node:get_balance(Node1, Pub).
+	ar_util:do_until(
+		fun() ->
+			R1 = erlang:trunc(ar_node_utils:calculate_reward(1, 0)),
+			R2 = ar_node:get_balance(Node1, Pub),
+			R1 == R2
+		end,
+		500,
+		4000
+	).
+
+%%%
+%%% EOF
+%%%

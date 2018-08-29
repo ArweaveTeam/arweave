@@ -32,7 +32,11 @@
 
 %% @doc NB: Setting the default difficulty high will cause TNT to fail.
 -define(DEFAULT_DIFF, 8).
+-ifdef(DEBUG).
+-define(MIN_DIFF, 15).
+-else.
 -define(MIN_DIFF, 31).
+-endif.
 
 -ifndef(TARGET_TIME).
 -define(TARGET_TIME, 120).

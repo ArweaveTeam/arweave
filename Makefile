@@ -60,6 +60,7 @@ logs:
 
 blocks:
 	mkdir -p blocks
+	nkdir -p blocks/enc
 
 docs: all
 	mkdir -p docs

@@ -6,7 +6,7 @@
 
 -export([get_conflicting_txs/2, get_full_block/2]).
 -export([find_recall_hash/2, find_recall_block/1, find_block/1]).
--export([calculate_reward_pool/4, calculate_proportion/3]).
+-export([calculate_reward/2, calculate_reward_pool/4, calculate_proportion/3]).
 -export([apply_mining_reward/4, apply_tx/2, apply_txs/2]).
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/2]).
