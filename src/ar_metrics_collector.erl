@@ -7,7 +7,7 @@
 -import(prometheus_model_helpers, [create_mf/4]).
 
 
--include_lib("prometheus.hrl").
+-include_lib("prometheus/include/prometheus.hrl").
 -define(METRIC_NAME_PREFIX, "arweave_").
 %% ===================================================================
 %% API
