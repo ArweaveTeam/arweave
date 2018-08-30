@@ -28,7 +28,7 @@ tiny_network_with_reward_pool_test() ->
 	ar_node:mine(Node1),
 	timer:sleep(1000),
 	Bs2 = ar_node:get_blocks(Node2),
-	2 = (hd(ar_storage:read_block(Bs2)))#block.height.
+	2 = (hd(ar_storage:read_block(Bs2, Bs2)))#block.height.
 
 %% @doc Check the current block can be retrieved
 get_current_block_test() ->
@@ -82,7 +82,7 @@ add_bogus_block_test() ->
 	Node ! {get_blocks, self()},
 	receive
 		{blocks, Node, [RecvdB | _]} ->
-			LastB = ar_storage:read_block(RecvdB)
+			LastB = ar_storage:read_block(RecvdB, B2#block.hash_list)
 	end.
 
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto
@@ -117,7 +117,7 @@ add_bogus_block_nonce_test() ->
 	timer:sleep(500),
 	Node ! {get_blocks, self()},
 	receive
-		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
+		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB, B2#block.hash_list)
 	end.
 
 %% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
@@ -153,7 +153,7 @@ add_bogus_hash_list_test() ->
 	timer:sleep(500),
 	Node ! {get_blocks, self()},
 	receive
-		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB)
+		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB, B2#block.hash_list)
 	end.
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
@@ -166,8 +166,8 @@ tiny_blockweave_with_mining_test() ->
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
 	timer:sleep(2000),
-	B1 = ar_node:get_blocks(Node2),
-	1 = (hd(ar_storage:read_block(B1)))#block.height.
+	Bs = ar_node:get_blocks(Node2),
+	1 = (hd(ar_storage:read_block(Bs, Bs)))#block.height.
 
 %% @doc Ensure that the network add data and have it mined into blocks.
 tiny_blockweave_with_added_data_test() ->
@@ -184,9 +184,9 @@ tiny_blockweave_with_added_data_test() ->
 	timer:sleep(1000),
 	ar_node:mine(Node1),
 	timer:sleep(3000),
-	B1 = ar_node:get_blocks(Node2),
+	Bs = ar_node:get_blocks(Node2),
 	TestDataID	= TestData#tx.id,
-	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
+	[TestDataID] = (hd(ar_storage:read_block(Bs, Bs)))#block.txs.
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
 medium_blockweave_multi_mine_test_() ->
@@ -213,11 +213,11 @@ medium_blockweave_multi_mine_test_() ->
 		timer:sleep(1000),
 		ar_node:mine(ar_util:pick_random(Nodes)),
 		timer:sleep(2000),
-		B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+		Bs = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 		TestDataID1 = TestData1#tx.id,
 		TestDataID2 = TestData2#tx.id,
-		[TestDataID1] = (hd(ar_storage:read_block(B1)))#block.txs,
-		[TestDataID2] = (hd(ar_storage:read_block(B2)))#block.txs
+		[TestDataID1] = (hd(ar_storage:read_block(B1, Bs)))#block.txs,
+		[TestDataID2] = (hd(ar_storage:read_block(Bs, Bs)))#block.txs
 	end}.
 
 %% @doc Setup a network, mine a block, cause one node to forget that block.
@@ -237,7 +237,7 @@ tiny_collaborative_blockweave_mining_test() ->
 	ar_node:mine(Node2), % Mine B3
 	timer:sleep(500),
 	B3 = ar_node:get_blocks(Node1),
-	3 = (hd(ar_storage:read_block(B3)))#block.height.
+	3 = (hd(ar_storage:read_block(B3, B3)))#block.height.
 
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
 mining_reward_test() ->
@@ -518,7 +518,7 @@ large_blockweave_with_data_test_slow() ->
 	receive after 2500 -> ok end,
 	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID	= TestData#tx.id,
-	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
+	[TestDataID] = (hd(ar_storage:read_block(B1, B1)))#block.txs.
 
 %% @doc Test that large networks (500 nodes) with only 1% connectivity
 %% still function correctly.
@@ -535,7 +535,7 @@ large_weakly_connected_blockweave_with_data_test_slow() ->
 	receive after 2500 -> ok end,
 	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 	TestDataID	= TestData#tx.id,
-	[TestDataID] = (hd(ar_storage:read_block(B1)))#block.txs.
+	[TestDataID] = (hd(ar_storage:read_block(B1, B1)))#block.txs.
 
 %% @doc Ensure that the network can add multiple peices of data and have
 %% it mined into blocks.
@@ -559,12 +559,12 @@ medium_blockweave_mine_multiple_data_test_slow() ->
 	true =
 		lists:member(
 			SignedTX#tx.id,
-			(hd(ar_storage:read_block(B1)))#block.txs
+			(hd(ar_storage:read_block(B1, B1)))#block.txs
 		),
 	true =
 		lists:member(
 			SignedTX2#tx.id,
-			(hd(ar_storage:read_block(B1)))#block.txs
+			(hd(ar_storage:read_block(B1, B1)))#block.txs
 		).
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
