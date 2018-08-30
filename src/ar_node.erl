@@ -1043,18 +1043,18 @@ retry_full_block(Host, ID, _, Count, BHL) ->
 %% @doc Reattempts to find an encrypted full block from a node retrying
 %% up to Count times.
 %% TODO: Nowhere used anymore.
-retry_encrypted_full_block(_, _, Response, 0) ->
-	Response;
-retry_encrypted_full_block(Host, ID, _, Count) ->
-	case get_encrypted_full_block(Host, ID) of
-		not_found ->
-			timer:sleep(3000),
-			retry_encrypted_full_block(Host, ID, not_found, Count-1);
-		unavailable ->
-			timer:sleep(3000),
-			retry_encrypted_full_block(Host, ID, unavailable, Count-1);
-		B -> B
-	end.
+%retry_encrypted_full_block(_, _, Response, 0) ->
+%	Response;
+%retry_encrypted_full_block(Host, ID, _, Count) ->
+%	case get_encrypted_full_block(Host, ID) of
+%		not_found ->
+%			timer:sleep(3000),
+%			retry_encrypted_full_block(Host, ID, not_found, Count-1);
+%		unavailable ->
+%			timer:sleep(3000),
+%			retry_encrypted_full_block(Host, ID, unavailable, Count-1);
+%		B -> B
+%	end.
 
 %%%
 %%% EOF
