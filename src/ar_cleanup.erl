@@ -57,10 +57,8 @@ remove_invalid_blocks(HashList) ->
 remove_block_keep_directory_test() ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([]),
-	ar:d([themue, cleanup, {block, 0, B0}]),
 	ar_storage:write_block(B0),
 	B1 = ar_weave:add(B0, []),
-	ar:d([themue, cleanup, {block, 1, B1}]),
 	ar_storage:write_block(hd(B1)),
 	remove_invalid_blocks([]),
 	{ok, Files} = (file:list_dir(?BLOCK_DIR)),
