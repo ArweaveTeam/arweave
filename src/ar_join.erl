@@ -61,6 +61,8 @@ start(Node, RawPeers, RawNewB) ->
 	end.
 
 %% @doc Return the current block from a list of peers.
+find_current_block([]) ->
+	unavailable;
 find_current_block([Peer|_]) ->
 	BHL = [Hash|_] = ar_http_iface:get_hash_list(Peer),
 	ar_http_iface:get_full_block(Peer, Hash, BHL).
