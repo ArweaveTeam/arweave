@@ -26,13 +26,17 @@ hash_wallet_list(WalletList) ->
 
 %% @doc Find the appropriate block hash list for a block/indep. hash, from a
 %% block hash list further down the weave.
+generate_hash_list_for_block(_Block1IndepHash, []) -> [];
 generate_hash_list_for_block(B, CurrentB) when ?IS_BLOCK(CurrentB) ->
     generate_hash_list_for_block(B, CurrentB#block.indep_hash);
 generate_hash_list_for_block(B, BHL) when ?IS_BLOCK(B) ->
     generate_hash_list_for_block(B#block.indep_hash, BHL);
-generate_hash_list_for_block(IndepHash, [IndepHash|BHL]) -> BHL;
-generate_hash_list_for_block(IndepHash, [_|Rest]) ->
-    generate_hash_list_for_block(IndepHash, Rest).
+generate_hash_list_for_block(IndepHash, BHL) ->
+    do_generate_hash_list_for_block(IndepHash, BHL).
+
+do_generate_hash_list_for_block(IndepHash, [IndepHash|BHL]) -> BHL;
+do_generate_hash_list_for_block(IndepHash, [_|Rest]) ->
+    do_generate_hash_list_for_block(IndepHash, Rest).
 
 %% @doc Encrypt a recall block. Encryption key is derived from
 %% the contents of the recall block and the hash of the current block
