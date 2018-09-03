@@ -212,7 +212,7 @@ do_read_block(Filename, BHL) ->
 		hash_list = ar_block:generate_hash_list_for_block(B, BHL),
 		wallet_list =
 			if is_binary(WL) ->
-				case read_wallet_list(ar_util:decode(WL)) of
+				case read_wallet_list(WL) of
 					{error, Type} ->
 						ar:report(
 							[
