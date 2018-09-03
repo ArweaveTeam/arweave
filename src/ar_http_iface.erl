@@ -698,7 +698,8 @@ return_tx(T) ->
 %% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
 return_info() ->
-	HL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	{Time, HL} =
+		timer:tc(fun() -> ar_node:get_hash_list(whereis(http_entrypoint_node)) end),
 	{200, [],
 		ar_serialize:jsonify(
 			{
@@ -720,7 +721,8 @@ return_info() ->
 							2,
 							erlang:process_info(whereis(http_entrypoint_node), message_queue_len)
 						)
-					}
+					},
+					{node_state_latency, Time}
 				]
 			}
 		)
