@@ -557,11 +557,11 @@ handle('GET', [<<"block">>, Type, ID, Field], _Req) ->
 %% @doc Return the current block.
 %% GET request to endpoint /current_block
 %% GET request to endpoint /block/current
-handle('GET', [<<"block">>, <<"current">>], _Req) ->
+handle('GET', [<<"block">>, <<"current">>], Req) ->
 	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
 		[] -> {404, [], <<"Block not found.">>};
 		[IndepHash|_] ->
-			handle('GET', [<<"block">>, <<"hash">>, IndepHash])
+			handle('GET', [<<"block">>, <<"hash">>, ar_util:encode(IndepHash)], Req)
 	end;
 
 %% DEPRECATED (12/07/2018)
@@ -934,29 +934,35 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 		)
 	).
 
+%% @doc Generate an appropriate URL for a block by its identifier.
+prepare_block_id(ID) when is_binary(ID) ->
+	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
+prepare_block_id(ID) when is_integer(ID) ->
+	"/block/height/" ++ integer_to_list(ID).
+
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer.
-get_full_block(Peer, Hash, BHL) when is_binary(Hash) ->
+get_full_block(Peer, ID, BHL) ->
 	B =
 		handle_block_response(
 			ar_httpc:request(
 				<<"GET">>,
 				Peer,
-				"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
+				prepare_block_id(ID),
 				[]
 			)
 		),
 	case ?IS_BLOCK(B) of
 		true ->
 			WalletList =
-				case is_binary(B#block.wallet_list) of
-					ID ->
-						case ar_storage:read_wallet_list(ID) of
+				case is_binary(WL = B#block.wallet_list) of
+					true ->
+						case ar_storage:read_wallet_list(WL) of
 							{error, _} ->
-								get_wallet_list(Peer, ID);
-							WL -> WL
+								get_wallet_list(Peer, WL);
+							ReadWL -> ReadWL
 						end;
-					WL -> WL
+					false -> WL
 				end,
 			HashList =
 				case B#block.hash_list of
@@ -1298,6 +1304,7 @@ get_last_tx_single_test() ->
 get_block_by_hash_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	receive after 200 -> ok end,
@@ -1346,6 +1353,7 @@ get_full_block_by_hash_test_slow() ->
 get_block_by_height_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, 0, B0#block.hash_list)).
@@ -1353,8 +1361,14 @@ get_block_by_height_test() ->
 get_current_block_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
+	ar_util:do_until(
+		fun() -> B0 == ar_node:get_current_block(Node1) end,
+		100,
+		2000
+	),
 	?assertEqual(B0, get_current_block({127, 0, 0, 1, 1984})).
 
 %% @doc Test adding transactions to a block.
