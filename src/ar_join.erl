@@ -12,6 +12,13 @@ start(Peers, NewB) when is_record(NewB, block) ->
 	start(self(), Peers, NewB);
 start(Node, Peers) ->
 	start(Node, Peers, find_current_block(Peers)).
+start(_, [], _) ->
+	ar:report_console(
+		[
+			not_joining,
+			{reason, no_peers}
+		]
+	);
 start(Node, Peers, B) when is_atom(B) ->
 	ar:report_console(
 		[
