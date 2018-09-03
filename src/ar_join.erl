@@ -13,12 +13,7 @@ start(Peers, NewB) when is_record(NewB, block) ->
 start(Node, Peers) ->
 	start(Node, Peers, find_current_block(Peers)).
 start(_, [], _) ->
-	ar:report_console(
-		[
-			not_joining,
-			{reason, no_peers}
-		]
-	);
+	ar:report_console([not_joining, {reason, no_peers}]);
 start(Node, Peers, B) when is_atom(B) ->
 	ar:report_console(
 		[
@@ -27,16 +22,12 @@ start(Node, Peers, B) when is_atom(B) ->
 		]
 	),
 	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
-start(_, _, not_found) -> do_nothing;
-start(_, _, unavailable) -> do_nothing;
-start(_, _, no_response) -> do_nothing;
-start(Node, RawPeers, RawNewB) ->
+start(Node, RawPeers, NewB) ->
 	case whereis(join_server) of
 		undefined ->
 			PID = spawn(
 				fun() ->
 					Peers = filter_peer_list(RawPeers),
-					NewB = ar_node:get_full_block(Peers, RawNewB#block.indep_hash, RawNewB#block.hash_list),
 					join_peers(Peers),
 					case ?IS_BLOCK(NewB) of
 						true ->
@@ -71,8 +62,8 @@ start(Node, RawPeers, RawNewB) ->
 find_current_block([]) ->
 	unavailable;
 find_current_block([Peer|_]) ->
-	BHL = [Hash|_] = ar_http_iface:get_hash_list(Peer),
-	ar_http_iface:get_full_block(Peer, Hash, BHL).
+	BHL = [Hash|_] = ar_node:get_hash_list(Peer),
+	ar_node:get_full_block(Peer, Hash, BHL).
 
 %% @doc Verify peer(s) are on the same network as the client. Remove any that
 %% are not.
@@ -116,7 +107,7 @@ get_block_and_trail(_, unavailable, _, _) -> ok;
 get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(NewB#block { txs = [T#tx.id || T <- NewB#block.txs] }),
 	ar_storage:write_tx(NewB#block.txs),
-	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block),
+	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block, NewB#block.hash_list),
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->

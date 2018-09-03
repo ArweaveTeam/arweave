@@ -429,6 +429,8 @@ get_waiting_txs(Node) ->
 
 %% @doc Get the current hash list held by the node.
 %% This hash list is up to date to the latest block held.
+get_hash_list(IP) when not is_pid(IP) ->
+	ar_http_iface:get_hash_list(IP);
 get_hash_list(Node) ->
 	Node ! {get_hashlist, self()},
 	receive
