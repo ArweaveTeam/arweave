@@ -326,8 +326,8 @@ integrate_new_block(
 		end,
 		PotentialTXs
 	),
-	RecallHash = find_recall_hash(NewB, [NewB#block.indep_hash | HashList]),
-	RecallB = ar_node:get_full_block(whereis(http_entrypoint_node), RecallHash),
+	RecallHash = find_recall_hash(NewB, BHL = [NewB#block.indep_hash | HashList]),
+	RecallB = ar_storage:read_block(RecallHash, BHL),
 	case ?IS_BLOCK(RecallB) of
 		true ->
 			ar_key_db:put(

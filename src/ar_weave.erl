@@ -228,7 +228,6 @@ indep_hash(#block {
 		height = Height,
 		hash = Hash,
         hash_list = HashList,
-		indep_hash = IndepHash,
 		txs = TXs,
 		wallet_list = WalletList,
         reward_addr = RewardAddr,
@@ -250,7 +249,7 @@ indep_hash(#block {
                     {height, Height},
                     {hash, ar_util:encode(Hash)},
                     {hash_list, lists:map(fun ar_util:encode/1, HashList)},
-                    {indep_hash, ar_util:encode(IndepHash)},
+                    {indep_hash, ar_util:encode(<<>>)},
                     {txs, lists:map(fun ar_util:encode/1, TXs)},
                     {wallet_list,
                         lists:map(

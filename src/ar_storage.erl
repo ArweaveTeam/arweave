@@ -362,7 +362,6 @@ write_tx(Tx) ->
 
 %% @doc Read a tx from disk, given a hash.
 read_tx(unavailable) -> unavailable;
-read_tx([]) -> [];
 read_tx(Tx) when is_record(Tx, tx) -> Tx;
 read_tx(Txs) when is_list(Txs) ->
 	lists:map(fun read_tx/1, Txs);

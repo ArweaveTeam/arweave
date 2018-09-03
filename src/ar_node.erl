@@ -323,10 +323,7 @@ make_full_block(ID, BHL) ->
 			FullB =
 				BlockHeader#block{
 					txs =
-						ar_node:get_tx(
-							whereis(http_entrypoint_node),
-							BlockHeader#block.txs
-						)
+						ar_storage:read_tx(BlockHeader#block.txs)
 				},
 			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
 				[] -> FullB;
