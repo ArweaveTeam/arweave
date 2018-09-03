@@ -41,13 +41,16 @@ remove_invalid_blocks(HashList) ->
 			Files
 		)
 	),
-	{ok, FilesEnc} = file:list_dir(?BLOCK_ENC_DIR),
-	lists:foreach(
-		fun(X) ->
-			file:delete(?BLOCK_ENC_DIR ++ X)
-		end,
-		FilesEnc
-	).
+	case file:list_dir(?BLOCK_ENC_DIR) of
+		{ok, FilesEnc} ->
+			lists:foreach(
+				fun(X) ->
+					file:delete(?BLOCK_ENC_DIR ++ X)
+				end,
+				FilesEnc
+			);
+		_ -> do_nothing
+	end.
 
 %%%
 %%% Tests.

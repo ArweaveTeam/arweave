@@ -522,8 +522,7 @@ store_and_retrieve_block_test() ->
     [B2|_] = ar_weave:add(B1s, []),
     ar_storage:write_block(B2),
 	write_block(B1),
-	B0 = read_block(B1, B2#block.hash_list),
-	file:delete(name_block(B0)).
+	B1 = read_block(B1#block.indep_hash, B2#block.hash_list).
 
 store_and_retrieve_tx_test() ->
 	Tx0 = ar_tx:new(<<"DATA1">>),
@@ -557,7 +556,6 @@ invalidate_block_test() ->
 	[B] = ar_weave:init(),
 	write_full_block(B),
 	invalidate_block(B),
-	ar:d({block, ar_util:encode(B#block.indep_hash)}),
 	timer:sleep(500),
 	unavailable = read_block(B#block.indep_hash, B#block.hash_list),
 	TargetFile =
@@ -567,13 +565,14 @@ invalidate_block_test() ->
 				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
-	{ok, Binary} = file:read_file(TargetFile),
-	B = ar_serialize:json_struct_to_block(Binary).
+	?assert(B == do_read_block(TargetFile, B#block.hash_list)).
 
 store_and_retreive_block_hash_list_test() ->
 	ID = crypto:strong_rand_bytes(32),
     B0s = ar_weave:init([]),
+	write_block(hd(B0s)),
     B1s = ar_weave:add(B0s, []),
+	write_block(hd(B1s)),
     [B2|_] = ar_weave:add(B1s, []),
 	write_block_hash_list(ID, B2#block.hash_list),
 	receive after 500 -> ok end,
