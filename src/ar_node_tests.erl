@@ -210,34 +210,36 @@ medium_blockweave_multi_mine_test_() ->
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
 		timer:sleep(1000),
 		ar_node:mine(ar_util:pick_random(Nodes)),
-		TestNode = ar_util:pick_random(Nodes),
-		?assert(
-			ar_util:do_until(
-				fun() ->
-					[BH|_] = ar_node:get_blocks(TestNode),
-					TestB = ar_storage:read_block(BH, (hd(B0))#block.hash_list),
-					[TestDataID1] == TestB#block.txs
-				end,
-				500,
-				5000
-			)
+		{ok, B1} = ar_util:do_until(
+			fun() ->
+				Bs = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+				if
+					length(Bs) == 2 -> {ok, Bs};
+					true            -> false
+				end
+			end,
+			1000,
+			45000
 		),
-		BLast = ar_storage:read_block(ar_node:get_blocks(TestNode), (hd(B0))#block.hash_list),
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
 		timer:sleep(1000),
 		ar_node:mine(ar_util:pick_random(Nodes)),
 		{ok, B2} = ar_util:do_until(
 			fun() ->
-				Bs2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-				[TestDataID2] == (hd(ar_storage:read_block(Bs2, BLast)))#block.txs
+				Bs = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+				if
+					length(Bs) == 3 -> {ok, Bs};
+					true            -> false
+				end
 			end,
 			1000,
 			45000
 		),
 		TestDataID1 = TestData1#tx.id,
 		TestDataID2 = TestData2#tx.id,
-		?assertEqual([TestDataID1], (hd(ar_storage:read_block(B1)))#block.txs),
-		?assertEqual([TestDataID2], (hd(ar_storage:read_block(B2)))#block.txs)
+		BHL = ar_node:get_hash_list(ar_util:pick_random(Nodes)),
+		?assertEqual([TestDataID1], (hd(ar_storage:read_block(B1, BHL)))#block.txs),
+		?assertEqual([TestDataID2], (hd(ar_storage:read_block(B2, BHL)))#block.txs)
 	end}.
 
 %% @doc Setup a network, mine a block, cause one node to forget that block.
@@ -259,7 +261,7 @@ tiny_collaborative_blockweave_mining_test_() ->
 		?assert(ar_util:do_until(
 			fun() ->
 				B3 = ar_node:get_blocks(Node1),
-				RB3 = ar_storage:read_block(B3),
+				RB3 = ar_storage:read_block(B3, B3),
 				HdRB3 = hd(RB3),
 				HdRB3#block.height == 3
 			end,
