@@ -28,7 +28,6 @@
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2]).
 -export([add_peers/2]).
--export([rejoin/2]).
 -export([print_reward_addr/0]).
 
 -export([set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0]).
@@ -392,11 +391,6 @@ get_trusted_peers(Proc) when is_pid(Proc) ->
 	end;
 get_trusted_peers(_) ->
 	unavailable.
-
-%% @doc Sends a message to the node server instructing a rejoin on the list
-%% of trusted peers. Trusted peers are those that were initially joined on.
-rejoin(Proc, Peers) ->
-	Proc ! {rejoin, Peers}.
 
 %% @doc Get the list of peers from the nodes gossip state.
 %% This is the list of peers that node will request blocks/txs from and will
@@ -897,23 +891,6 @@ handle(SPid, {get_reward_pool, From}) ->
 handle(SPid, {get_reward_addr, From}) ->
 	{ok, RewardAddr} = ar_node_state:lookup(SPid, reward_addr),
 	From ! {reward_addr,RewardAddr},
-	ok;
-handle(SPid, {rejoin, Peers, Block}) ->
-	{ok, TrustedPeers} = ar_node_state:lookup(SPid, trusted_peers),
-	UntrustedPeers =
-		lists:filter(
-			fun(Peer) ->
-				not lists:member(Peer, TrustedPeers)
-			end,
-			ar_util:unique(Peers)
-		),
-	lists:foreach(
-		fun(Peer) ->
-			ar_bridge:ignore_peer(whereis(http_bridge_node), Peer)
-		end,
-		UntrustedPeers
-	),
-	ar_join:start(self(), TrustedPeers, Block),
 	ok;
 %% ----- Server handling. -----
 handle(_SPid, {'DOWN', _, _, _, _}) ->
