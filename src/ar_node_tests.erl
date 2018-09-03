@@ -68,20 +68,20 @@ add_bogus_block_test() ->
 	ar_storage:write_block(hd(B1)),
 	BL = [hd(B1), hd(B0)],
 	Node ! {replace_block_list, BL},
-	B2 = ar_weave:add(B1, [TX2]),
-	ar_storage:write_block(hd(B2)),
+	Bs = [B2|_] = ar_weave:add(B1, [TX2]),
+	ar_storage:write_block(B2),
 	ar_gossip:send(GS0,
 		{
 			new_block,
 			self(),
-			(hd(B2))#block.height,
-			(hd(B2))#block { hash = <<"INCORRECT">> },
-			ar_node_utils:find_recall_block(B2)
+			B2#block.height,
+			B2#block { hash = <<"INCORRECT">> },
+			ar_node_utils:find_recall_block(Bs)
 		}),
 	ar_util:do_until(
 		fun() ->
 			[RecvdB | _] = ar_node:get_blocks(Node),
-			LastB = ar_storage:read_block(RecvdB, B2#block.hash_list)
+			LastB == ar_storage:read_block(RecvdB, B2#block.hash_list)
 		end,
 		500,
 		4000
@@ -119,7 +119,7 @@ add_bogus_block_nonce_test() ->
 	ar_util:do_until(
 		fun() ->
 			[RecvdB | _] = ar_node:get_blocks(Node),
-			LastB == ar_storage:read_block(RecvdB, B2#block.hash_list)
+			LastB == ar_storage:read_block(RecvdB, (hd(B2))#block.hash_list)
 		end,
 		500,
 		4000
@@ -158,7 +158,7 @@ add_bogus_hash_list_test() ->
 	ar_util:do_until(
 		fun() ->
 			[RecvdB | _] = ar_node:get_blocks(Node),
-			LastB == ar_storage:read_block(RecvdB, B2#block.hash_list)
+			LastB == ar_storage:read_block(RecvdB, (hd(B2))#block.hash_list)
 		end,
 		500,
 		4000
@@ -216,15 +216,19 @@ medium_blockweave_multi_mine_test_() ->
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
 		ar_node:mine(ar_util:pick_random(Nodes)),
 		TestNode = ar_util:pick_random(Nodes),
-		ar_util:do_until(
-			fun() ->
-				BHs = ar_node:get_blocks(TestNode),
-				[TestDataID1] == (hd(ar_storage:read_block(BHs, B0#block.hash_list)))#block.txs
-			end,
-			500,
-			5000
+		?assert(
+			ar_util:do_until(
+				fun() ->
+					[BH|_] = ar_node:get_blocks(TestNode),
+					TestB = ar_storage:read_block(BH, (hd(B0))#block.hash_list),
+					ar:d(TestB),
+					[TestDataID1] == TestB#block.txs
+				end,
+				500,
+				5000
+			)
 		),
-		BLast = ar_storage:read_block(ar_node:get_blocks(TestNode), B0#block.hash_list),
+		BLast = ar_storage:read_block(ar_node:get_blocks(TestNode), (hd(B0))#block.hash_list),
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
 		ar_node:mine(ar_util:pick_random(Nodes)),
 		ar_util:do_until(
