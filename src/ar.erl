@@ -350,7 +350,6 @@ generate_logfile_name() ->
 %% @doc Run the erlang make system on the project.
 rebuild() ->
 	io:format("Rebuilding Arweave...~n"),
-	receive after 3000 -> ok end,
 	make:all(
 		[
 			load,
