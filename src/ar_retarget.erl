@@ -95,8 +95,9 @@ validate(NewB, OldB) ->
 	(NewB#block.diff >= OldB#block.diff) and
 		(NewB#block.last_retarget == OldB#block.last_retarget).
 
-
+%%%
 %%% Tests: ar_retarget
+%%%
 
 %% @doc Ensure that after a series of very fast mines, the diff increases.
 simple_retarget_test_() ->
@@ -109,16 +110,17 @@ simple_retarget_test_() ->
 			end,
 			lists:seq(1, ?RETARGET_BLOCKS + 1)
 		),
-		Wait = fun
-			(W, Diff) when Diff =< ?DEFAULT_DIFF ->
+		true = ar_util:do_until(
+			fun() ->
 				[BH|_] = ar_node:get_blocks(Node),
 				B = ar_storage:read_block(BH, ar_node:get_hash_list(Node)),
-				ar:d([themue, ar_retarget, test,
-					{diff_in, Diff}, {diff_out, B#block.diff}, {height, B#block.height}]),
-				timer:sleep(1000),
-				W(W, B#block.diff);
-			(_, Diff) ->
-				Diff
-		end,
-		?assert(Wait(Wait, 0) > ?DEFAULT_DIFF)
+				B#block.diff > ?DEFAULT_DIFF
+			end,
+			1000,
+			5 * 60 * 1000
+		)
 	end}.
+
+%%%
+%%% EOF
+%%%

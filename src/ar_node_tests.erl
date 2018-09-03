@@ -78,12 +78,14 @@ add_bogus_block_test() ->
 			(hd(B2))#block { hash = <<"INCORRECT">> },
 			ar_node_utils:find_recall_block(B2)
 		}),
-	timer:sleep(1000),
-	Node ! {get_blocks, self()},
-	receive
-		{blocks, Node, [RecvdB | _]} ->
+	ar_util:do_until(
+		fun() ->
+			[RecvdB | _] = ar_node:get_blocks(Node),
 			LastB = ar_storage:read_block(RecvdB, B2#block.hash_list)
-	end.
+		end,
+		500,
+		4000
+	).
 
 %% @doc Ensure that blocks with incorrect nonces are not accepted onto
 %% the network.
@@ -114,11 +116,14 @@ add_bogus_block_nonce_test() ->
 			ar_node_utils:find_recall_block(B2)
 		}
 	),
-	timer:sleep(500),
-	Node ! {get_blocks, self()},
-	receive
-		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB, B2#block.hash_list)
-	end.
+	ar_util:do_until(
+		fun() ->
+			[RecvdB | _] = ar_node:get_blocks(Node),
+			LastB == ar_storage:read_block(RecvdB, B2#block.hash_list)
+		end,
+		500,
+		4000
+	).
 
 %% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
 add_bogus_hash_list_test() ->
@@ -150,11 +155,14 @@ add_bogus_hash_list_test() ->
 			},
 			ar_node_utils:find_recall_block(B2)
 		}),
-	timer:sleep(500),
-	Node ! {get_blocks, self()},
-	receive
-		{blocks, Node, [RecvdB | _]} -> LastB = ar_storage:read_block(RecvdB, B2#block.hash_list)
-	end.
+	ar_util:do_until(
+		fun() ->
+			[RecvdB | _] = ar_node:get_blocks(Node),
+			LastB == ar_storage:read_block(RecvdB, B2#block.hash_list)
+		end,
+		500,
+		4000
+	).
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_blockweave_with_mining_test() ->
@@ -197,27 +205,36 @@ medium_blockweave_multi_mine_test_() ->
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
 		TestData1 = ar_tx:new(<<"TEST DATA1">>),
+		TestDataID1 = TestData1#tx.id,
 		ar_storage:write_tx(TestData1),
 		TestData2 = ar_tx:new(<<"TEST DATA2">>),
+		TestDataID2 = TestData2#tx.id,
 		ar_storage:write_tx(TestData2),
 		B0 = ar_weave:init([]),
 		Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
 		[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
-		timer:sleep(1000),
 		ar_node:mine(ar_util:pick_random(Nodes)),
-		timer:sleep(2000),
-		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-		timer:sleep(1000),
+		TestNode = ar_util:pick_random(Nodes),
+		ar_util:do_until(
+			fun() ->
+				BHs = ar_node:get_blocks(TestNode),
+				[TestDataID1] == (hd(ar_storage:read_block(BHs, B0#block.hash_list)))#block.txs
+			end,
+			500,
+			5000
+		),
+		BLast = ar_storage:read_block(ar_node:get_blocks(TestNode), B0#block.hash_list),
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
-		timer:sleep(1000),
 		ar_node:mine(ar_util:pick_random(Nodes)),
-		timer:sleep(2000),
-		Bs = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-		TestDataID1 = TestData1#tx.id,
-		TestDataID2 = TestData2#tx.id,
-		[TestDataID1] = (hd(ar_storage:read_block(B1, Bs)))#block.txs,
-		[TestDataID2] = (hd(ar_storage:read_block(Bs, Bs)))#block.txs
+		ar_util:do_until(
+			fun() ->
+				Bs2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+				[TestDataID2] == (hd(ar_storage:read_block(Bs2, BLast)))#block.txs
+			end,
+			500,
+			5000
+		)
 	end}.
 
 %% @doc Setup a network, mine a block, cause one node to forget that block.

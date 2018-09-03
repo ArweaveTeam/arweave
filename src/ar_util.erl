@@ -1,4 +1,9 @@
+%%%
+%%% @doc Useful helpers for the work in Arweave.
+%%%
+
 -module(ar_util).
+
 -export([pick_random/1, pick_random/2]).
 -export([encode/1, decode/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
@@ -11,6 +16,8 @@
 -export([pmap/2]).
 -export([time_difference/2]).
 -export([rev_bin/1]).
+-export([do_until/3]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -181,6 +188,32 @@ time_difference({M1, S1, U1}, {M2, S2, U2}) ->
 time_difference(_,_) ->
 	bad_time_format.
 
+%% @doc Perform a function until it returns {ok, Value} | ok | true | {error, Error}.
+%% That term will be returned, others will be ignored. Interval and timeout have to
+%% be passed in milliseconds.
+do_until(_DoFun, _Interval, Timeout) when Timeout =< 0 ->
+	{error, timeout};
+do_until(DoFun, Interval, Timeout) ->
+	Start = erlang:system_time(millisecond),
+	case DoFun() of
+		{ok, Value} ->
+			{ok, Value};
+		ok ->
+			ok;
+		true ->
+			true;
+		{error, Error} ->
+			{error, Error};
+		_ ->
+			timer:sleep(Interval),
+			Now = erlang:system_time(millisecond),
+			do_until(DoFun, Interval, Timeout - (Now - Start))
+	end.
+
+%%%
+%%% Tests.
+%%%
+
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->
 	[a, b, c] = unique([a, a, b, b, b, c, c]).
@@ -224,3 +257,7 @@ recall_block_test() ->
 	receive after 300 -> ok end,
 	B3 = ar_node:get_current_block(Node),
 	B3#block.wallet_list.
+
+%%%
+%%% EOF
+%%%
