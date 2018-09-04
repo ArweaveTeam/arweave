@@ -116,21 +116,23 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 %% @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	ID = ar_util:decode(Hash),
-	F = ar_storage:lookup_tx_filename(ID),
-	case F of
-		unavailable ->
-			case lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+	case hash_to_maybe_filename(tx, Hash) of
+		{error, invalid} ->
+			{400, [], <<"invalid hash">>};
+		{error, ID, unavailable} ->
+			case is_a_pending_tx(ID) of
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
 					case ar_tx_db:get(ID) of
 						not_found -> {404, [], <<"Not Found.">>};
-						Err -> {410, [], list_to_binary(Err)}
+						Err       -> {410, [], list_to_binary(Err)}
 					end
 			end;
-		Filename -> {ok, [], {file, Filename}}
+		{ok, Filename} ->
+			{ok, [], {file, Filename}}
 	end;
+
 
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
 %% POST request to endpoint /arql with body of request being a logical expression valid in ar_parser.
@@ -163,11 +165,12 @@ handle('POST', [<<"arql">>], Req) ->
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
-	ID = ar_util:decode(Hash),
-	F = ar_storage:lookup_tx_filename(ID),
-	case F of
-		unavailable -> {404, [], {file, "data/not_found.html"}};
-		Filename ->
+	case hash_to_maybe_filename(tx, Hash) of
+		{error, invalid} ->
+			{400, [], <<"invalid hash">>};
+		{error, _, unavailable} ->
+			{404, [], {file, "data/not_found.html"}};
+		{ok, Filename} ->
 			T = ar_storage:do_read_tx(Filename),
 			{200, [], T#tx.data}
 	end;
@@ -309,18 +312,21 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 %% GET request to endpoint /price/{bytes}/{address}
 %% TODO: Change so current block does not need to be pulled to calculate cost
 handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
-	{200, [],
-		integer_to_binary(
-			ar_tx:calculate_min_tx_cost(
-				list_to_integer(
-					binary_to_list(SizeInBytes)
-				),
-				ar_node:get_current_diff(whereis(http_entrypoint_node)),
-				ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-				ar_util:decode(Addr)
-			)
-		)
-	};
+	case safe_decode(Addr) of
+		{error, invalid} ->
+			{400, [], <<"invalid address">>};
+		{ok, AddrOK} ->
+			{200, [],
+				integer_to_binary(
+					ar_tx:calculate_min_tx_cost(
+						binary_to_integer(SizeInBytes),
+						ar_node:get_current_diff(whereis(http_entrypoint_node)),
+						ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+						AddrOK
+					)
+				)
+			}
+	end;
 
 %% @doc Return the current hash list held by the node.
 %% GET request to endpoint /hash_list
@@ -389,26 +395,30 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
-	{200, [],
-		integer_to_binary(
-			ar_node:get_balance(
-				whereis(http_entrypoint_node),
-				ar_util:decode(Addr)
-			)
-		)
-	};
+	case safe_decode(Addr) of
+		{error, invalid} ->
+			{400, [], <<"invalid address">>};
+		{ok, AddrOK} ->
+			{200, [],
+				integer_to_binary(
+					ar_node:get_balance(whereis(http_entrypoint_node), AddrOK)
+				)
+			}
+	end;
 
 %% @doc Return the last transaction ID (hash) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/last_tx
 handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
-	{200, [],
-		ar_util:encode(
-			ar_node:get_last_tx(
-				whereis(http_entrypoint_node),
-				ar_util:decode(Addr)
-			)
-		)
-	};
+	case safe_decode(Addr) of
+		{error, invalid} ->
+			{400, [], <<"invalid address">>};
+		{ok, AddrOK} ->
+			{200, [],
+				ar_util:encode(
+					ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK)
+				)
+			}
+	end;
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
@@ -430,15 +440,15 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	%		return_encrypted_block(unavailable)
 	% end;
 
-%% @doc Return the blockshadow corresponding to the indep_hash.
-%% GET request to endpoint /block/{height|hash}/{indep_hash}
+%% @doc Return the blockshadow corresponding to the indep_hash / height.
+%% GET request to endpoint /block/{height|hash}/{indep_hash|height}
 handle('GET', [<<"block">>, Type, ID], Req) ->
 	Filename =
 		case Type of
 			<<"hash">> ->
 				ar_storage:lookup_block_filename(ar_util:decode(ID));
 			<<"height">> ->
-				ar_storage:lookup_block_filename(list_to_integer(binary_to_list(ID)))
+				ar_storage:lookup_block_filename(binary_to_integer(ID))
 		end,
 	case Filename of
 		unavailable ->
@@ -477,7 +487,7 @@ handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
 	Hash =
 		case Type of
 			<<"height">> ->
-				B = 
+				B =
 					ar_node:get_block(whereis(http_entrypoint_node),
 						list_to_integer(binary_to_list(ID)),
 						CurrentBHL),
@@ -500,14 +510,17 @@ handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
 
 %% @doc Return the wallet list associated with a block.
 handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
+    HTTPEntryPointPid = whereis(http_entrypoint_node),
 	B =
 		case Type of
 			<<"height">> ->
-				CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-				ar_node:get_block(whereis(http_entrypoint_node),
+				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
+				ar_node:get_block(
+                    HTTPEntryPointPid,
 					list_to_integer(binary_to_list(ID)),
 					CurrentBHL);
-			<<"hash">> -> ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
+			<<"hash">> ->
+                ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
 		end,
 	case ?IS_BLOCK(B) of
 		true ->
@@ -599,20 +612,20 @@ handle('GET', [<<"services">>], _Req) ->
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 %%
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
-	Id=ar_util:decode(Hash),
-	F=ar_storage:lookup_tx_filename(Id),
-	case F of
-		unavailable ->
-			case lists:member(Id, ar_node:get_pending_txs(whereis(http_entrypoint_node))) of
+	case hash_to_maybe_filename(tx, Hash) of
+		{error, invalid} ->
+			{400, [], <<"invalid hash">>};
+		{error, ID, unavailable} ->
+			case is_a_pending_tx(ID) of
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
 					{404, [], <<"Not Found.">>}
 			end;
-		Filename ->
+		{ok, Filename} ->
 			{ok, JSONBlock} = file:read_file(Filename),
 			{TXJSON} = ar_serialize:dejsonify(JSONBlock),
-			{_, Res} = lists:keyfind(Field, 1, TXJSON),
+			Res = val_for_key(Field, TXJSON),
 			{200, [], Res}
 	end;
 
@@ -642,7 +655,7 @@ handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
 
 %% @doc Handles all other elli metadata events.
-handle_event(elli_startup, Args, Config) -> ok;
+handle_event(elli_startup, _Args, _Config) -> ok;
 handle_event(Type, Args, Config)
 		when (Type == request_throw)
 		or (Type == request_error)
@@ -651,7 +664,7 @@ handle_event(Type, Args, Config)
 	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
 	ok;
 %% Uncomment to show unhandeled message types.
-handle_event(Type, Args, Config) ->
+handle_event(_Type, _Args, _Config) ->
 	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
 	ok.
 
@@ -1209,6 +1222,52 @@ block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
+
+%% @doc stdlib function composition.
+binary_to_existing_atom(B) ->
+	list_to_existing_atom(binary_to_list(B)).
+
+%% @doc checks if hash is valid & if so returns filename.
+hash_to_maybe_filename(Type, Hash) ->
+	case safe_decode(Hash) of
+		{error, invalid} ->
+			{error, invalid};
+		{ok, ID} ->
+			{Mod, Fun} = type_to_mf({Type, lookup_filename}),
+			F = apply(Mod, Fun, [ID]),
+			case F of
+				unavailable ->
+					{error, ID, unavailable};
+				Filename ->
+					{ok, Filename}
+			end
+	end.
+
+%% @doc Return true if ID is a pending tx.
+is_a_pending_tx(ID) ->
+	lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))).
+
+%% @doc wrapper aound util:decode catching exceptions for invalid base64url encoding.
+safe_decode(X) ->
+	try
+		D = ar_util:decode(X),
+		{ok, D}
+	catch
+		_:_ ->
+			{error, invalid}
+	end.
+
+%% @doc converts a tuple of atoms to a {Module, Function} tuple.
+type_to_mf({tx, lookup_filename}) ->
+	{ar_storage, lookup_tx_filename};
+type_to_mf({block, lookup_filename}) ->
+	{ar_storage, lookup_block_filename}.
+
+%% @doc Convenience function for lists:keyfind(Key, 1, List).
+%% returns Value not {Key, Value}.
+val_for_key(K, L) ->
+	{K, V} = lists:keyfind(K, 1, L),
+	V.
 
 %%%
 %%% Tests.
