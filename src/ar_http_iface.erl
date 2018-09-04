@@ -465,8 +465,8 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		Filename  ->
-			case elli_request:get_header(<<"X-Version">>, Req, 7) of
-				7 ->
+			case elli_request:get_header(<<"X-Version">>, Req, <<"7">>) of
+				<<"7">> ->
 					B =
 						ar_storage:do_read_block(
 							Filename,
@@ -487,7 +487,7 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 							}
 						)
 					};
-				8 ->
+				<<"8">> ->
 					{ok, [], {file, Filename}}
 			end
 	end;
