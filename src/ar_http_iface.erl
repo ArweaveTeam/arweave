@@ -1177,7 +1177,9 @@ val_for_key(K, L) ->
 	{K, V} = lists:keyfind(K, 1, L),
 	V.
 
-%%% Tests
+%%%
+%%% Tests.
+%%%
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
