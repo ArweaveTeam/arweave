@@ -480,6 +480,57 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 			end
 	end;
 
+%% @doc Return the block hash list associated with a block.
+handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
+	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	Hash =
+		case Type of
+			<<"height">> ->
+				B =
+					ar_node:get_block(whereis(http_entrypoint_node),
+						list_to_integer(binary_to_list(ID)),
+						CurrentBHL),
+				B#block.indep_hash;
+			<<"hash">> -> ar_util:decode(ID)
+		end,
+	case lists:member(Hash, CurrentBHL) of
+		true ->
+			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
+			{200, [],
+				ar_serialize:jsonify(
+					ar_serialize:hash_list_to_json_struct(
+						BlockBHL
+					)
+				)
+			};
+		false ->
+			{404, [], <<"Block not found.">>}
+	end;
+
+%% @doc Return the wallet list associated with a block.
+handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
+	B =
+		case Type of
+			<<"height">> ->
+				CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+				ar_node:get_block(whereis(http_entrypoint_node),
+					list_to_integer(binary_to_list(ID)),
+					CurrentBHL);
+			<<"hash">> -> ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
+		end,
+	case ?IS_BLOCK(B) of
+		true ->
+			{200, [],
+				ar_serialize:jsonify(
+					ar_serialize:wallet_list_to_json_struct(
+						B#block.wallet_list
+					)
+				)
+			};
+		false ->
+			{404, [], <<"Block not found.">>}
+	end;
+
 %% @doc Return a given field of the blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/{field}
 %%
