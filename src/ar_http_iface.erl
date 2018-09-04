@@ -91,7 +91,8 @@ handle(Req, _Args) ->
 		not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
 		X -> X
 	end,
-	handle(Req#req.method, elli_request:path(Req), Req).
+	{Status, Hdrs, Body} = handle(Req#req.method, elli_request:path(Req), Req),
+	{Status, ?DEFAULT_RESPONSE_HEADERS ++ Hdrs, Body}.
 
 %% @doc Return network information from a given node.
 %% GET request to endpoint /info
@@ -99,6 +100,16 @@ handle('GET', [], _Req) ->
 	return_info();
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
+
+%% @doc Return permissive CORS headers for all endpoints
+handle('OPTIONS', [<<"block">>], _) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+handle('OPTIONS', [<<"tx">>], _) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+handle('OPTIONS', [<<"peer">>|_], _) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+handle('OPTIONS', _, _Req) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
 
 %% @doc Return all transactions from node that are waiting to be mined into a block.
 %% GET request to endpoint /tx/pending
@@ -118,7 +129,7 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	case hash_to_maybe_filename(tx, Hash) of
 		{error, invalid} ->
-			{400, [], <<"invalid hash">>};
+			{400, [], <<"Invalid hash.">>};
 		{error, ID, unavailable} ->
 			case is_a_pending_tx(ID) of
 				true ->
@@ -167,7 +178,7 @@ handle('POST', [<<"arql">>], Req) ->
 handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
 	case hash_to_maybe_filename(tx, Hash) of
 		{error, invalid} ->
-			{400, [], <<"invalid hash">>};
+			{400, [], <<"Invalid hash.">>};
 		{error, _, unavailable} ->
 			{404, [], {file, "data/not_found.html"}};
 		{ok, Filename} ->
@@ -192,10 +203,10 @@ handle('POST', [<<"block">>], Req) ->
 	OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
 		++ ":" ++ integer_to_list(Port)),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
-		false -> {404, [], <<"Invalid Block">>};
+		false -> {404, [], <<"Invalid block.">>};
 		true  ->
 			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
-				undefined -> {429, <<"Too Many Requests">>};
+				undefined -> {429, <<"Too many requests.">>};
 				true -> {208, <<"Block already processed.">>};
 				false ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
@@ -314,7 +325,7 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
-			{400, [], <<"invalid address">>};
+			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
 			{200, [],
 				integer_to_binary(
@@ -397,7 +408,7 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
-			{400, [], <<"invalid address">>};
+			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
 			{200, [],
 				integer_to_binary(
@@ -411,7 +422,7 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
-			{400, [], <<"invalid address">>};
+			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
 			{200, [],
 				ar_util:encode(
@@ -614,7 +625,7 @@ handle('GET', [<<"services">>], _Req) ->
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	case hash_to_maybe_filename(tx, Hash) of
 		{error, invalid} ->
-			{400, [], <<"invalid hash">>};
+			{400, [], <<"Invalid hash.">>};
 		{error, ID, unavailable} ->
 			case is_a_pending_tx(ID) of
 				true ->
