@@ -439,28 +439,45 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	%		return_encrypted_block(unavailable)
 	% end;
 
-%% @doc Return the blockshadow corresponding to the indep_hash.
-%% GET request to endpoint /block/hash/{indep_hash}
-handle('GET', [<<"block">>, <<"hash">>, Hash], _Req) ->
-	case hash_to_maybe_filename(block, Hash) of
-		{error, invalid} ->
-			{400, [], <<"invalid hash">>};
-		{error, _, unavailable} ->
-			{404, [], <<"block not found">>};
-		{ok, Filename} ->
-			{ok, [], {file, Filename}}
-	end;
-
-%% @doc Return the block at the given height.
-%% GET request to endpoint /block/height/{height}
-%% TODO: Add handle for negative block numbers
-handle('GET', [<<"block">>, <<"height">>, Height], _Req) ->
-	F = ar_storage:lookup_block_filename(list_to_integer(binary_to_list(Height))),
-	case F of
+%% @doc Return the blockshadow corresponding to the indep_hash / height.
+%% GET request to endpoint /block/{height|hash}/{indep_hash|height}
+handle('GET', [<<"block">>, Type, ID], Req) ->
+	Filename =
+		case Type of
+			<<"hash">> ->
+				ar_storage:lookup_block_filename(ar_util:decode(ID));
+			<<"height">> ->
+				ar_storage:lookup_block_filename(binary_to_integer(ID))
+		end,
+	case Filename of
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		Filename  ->
-			{ok, [], {file, Filename}}
+			case elli_request:get_header(<<"X-Version">>, Req, 7) of
+				7 ->
+					B =
+						ar_storage:do_read_block(
+							Filename,
+							ar_node:get_hash_list(whereis(http_entrypoint_node))
+						),
+					{JSONStruct} = ar_serialize:full_block_to_json_struct(B),
+					{200, [],
+						ar_serialize:jsonify(
+							{
+								[
+									{
+										<<"hash_list">>,
+										ar_serialize:hash_list_to_json_struct(B#block.hash_list)
+									}
+								|
+									JSONStruct
+								]
+							}
+						)
+					};
+				8 ->
+					{ok, [], {file, Filename}}
+			end
 	end;
 
 %% @doc Return a given field of the blockshadow corresponding to the indep_hash.
