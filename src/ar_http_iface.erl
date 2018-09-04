@@ -1325,6 +1325,26 @@ single_resgossip_test() ->
 		),
 	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]).
 
+%% @doc Test that nodes sending too many requests are temporarily blocked.
+node_blacklisting_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	TX = ar_tx:new(<<"TEST DATA">>),
+	Responses =
+		ar_util:pmap(
+			fun(_) ->
+				send_new_tx({127, 0, 0, 1, 1984}, TX)
+			end,
+			lists:seq(1, ?MAX_REQUESTS + 50)
+		),
+	ar_blacklist:reset_counters(),
+	?assert(
+		length([ blocked || {ok, {{<<"429">>, _}, _, _, _, _}} <- Responses ])
+			> 0
+	).
+
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->
 	ar_storage:clear(),
