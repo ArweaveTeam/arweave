@@ -1488,6 +1488,7 @@ fail_external_tx_test() ->
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test_() ->
+	%% TODO: faulty test: fails as Genesis block is used as recall block
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
 		[BGen] = ar_weave:init([]),
@@ -1617,6 +1618,8 @@ get_pending_tx_test() ->
 %% @doc Find all pending transactions in the network
 %% TODO: Fix test to send txs from different wallets
 get_multiple_pending_txs_test_() ->
+	%% TODO: faulty test: having multiple txs against a single wallet
+	%% in a single block is problematic.
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
 		[B0] = ar_weave:init(),
