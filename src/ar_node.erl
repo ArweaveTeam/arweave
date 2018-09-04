@@ -732,11 +732,10 @@ server(SPid, WPid, TaskQueue) ->
 
 %% @doc Handle the server messages. Returns {task, Task} or ok. First block
 %% countains the state changing handler, second block the reading handlers.
-handle(SPid, Msg) when is_record(Msg, gs_msg) ->
-	% We have received a gossip mesage. Use the library to process it
-	% and handle the result in handle_gossip/1.
-	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
-	handle_gossip(SPid, ar_gossip:recv(Gossip, Msg));
+handle(_SPid, Msg) when is_record(Msg, gs_msg) ->
+	% We have received a gossip mesage. Gossip state manipulation
+	% is always a worker task.
+	{task, {gossip_msg, Msg}};
 handle(_SPid, {add_tx, TX}) ->
 	{task, {add_tx, TX}};
 handle(_SPid, {add_peers, Peers}) ->
@@ -745,11 +744,8 @@ handle(SPid, {apply_tx, TX}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	{task, {encounter_new_tx, TX, NewGS}};
-handle(SPid, {new_block, Peer, Height, NewB, RecallB}) ->
-	% We have a new block. Distribute it to the gossip network.
-	{ok, #{ gossip := GS, hash_list := HashList }} = ar_node_state:lookup(SPid, [gossip, hash_list]),
-	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
-	{task, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}};
+handle(_SPid, {new_block, Peer, Height, NewB, RecallB}) ->
+	{task, {process_new_block, Peer, Height, NewB, RecallB}};
 handle(_SPid, {replace_block_list, NewBL}) ->
 	% Replace the entire stored block list, regenerating the hash list.
 	{task, {replace_block_list, NewBL}};
@@ -899,23 +895,6 @@ handle(_SPid, {'DOWN', _, _, _, _}) ->
 handle(_SPid, UnhandledMsg) ->
 	ar:report_console([{unknown_msg_node, UnhandledMsg}]),
 	ok.
-
-%% @doc Handle the gossip receive results. Returns modified state S.
-handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, RecallB}}) ->
-	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	{task, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}};
-handle_gossip(_SPid, {NewGS, {add_tx, TX}}) ->
-	{task, {add_tx, TX, NewGS}};
-handle_gossip(_SPid, {NewGS, ignore}) ->
-	{task, {ignore, NewGS}};
-handle_gossip(_SPid, {NewGS, UnhandledMsg}) ->
-	ar:report(
-		[
-			{node, self()},
-			{unhandeled_gossip_msg, UnhandledMsg}
-		]
-	),
-	{task, {ignore, NewGS}}.
 
 %%%
 %%% Deprecated or unused.

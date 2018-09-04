@@ -74,18 +74,12 @@ server(NPid, SPid) ->
 
 %% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks like
 %% setter can be done directy, more complex ones are handled as private API functions.
+handle(SPid, {gossip_msg, Msg}) ->
+	{ok, #{ gossip := Gossip }} = ar_node_state:lookup(SPid, [gossip]),
+	handle_gossip(SPid, ar_gossip:recv(Gossip, Msg));
 handle(SPid, {add_tx, TX}) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, potential_txs]),
 	case add_tx(StateIn, TX) of
-		{ok, StateOut} ->
-			ar_node_state:update(SPid, StateOut);
-		none ->
-			ok
-	end,
-	{ok, add_tx};
-handle(SPid, {add_tx, TX, NewGS}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, potential_txs]),
-	case add_tx(StateIn, TX, NewGS) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
@@ -101,8 +95,13 @@ handle(SPid, {encounter_new_tx, TX, NewGS}) ->
 			ok
 	end,
 	{ok, encounter_new_tx};
-handle(SPid, {process_new_block, NewGS, NewB, RecallB, Peer, HashList}) ->
+handle(SPid, {process_new_block, Peer, Height, NewB, RecallB}) ->
+	% We have a new block. Distribute it to the gossip network.
 	{ok, StateIn} = ar_node_state:all(SPid),
+	GS = maps:get(gossip, StateIn),
+	HashList = maps:get(hash_list, StateIn),
+	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
+	ar_node_state:update(SPid, [{gossip, NewGS}]),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -151,11 +150,6 @@ handle(SPid, {replace_block_list, [Block | _]}) ->
 		{height, Block#block.height}
 	]),
 	{ok, replace_block_list};
-handle(SPid, {ignore, NewGS}) ->
-	ar_node_state:update(SPid, [
-		{gossip, NewGS}
-	]),
-	{ok, set_reward_addr};
 handle(SPid, {set_reward_addr, Addr}) ->
 	ar_node_state:update(SPid, [
 		{reward_addr, Addr}
@@ -193,6 +187,44 @@ handle(SPid, {set_mining_delay, Delay}) ->
 	{ok, set_mining_delay};
 handle(_SPid, Msg) ->
 	{error, {unknown_node_worker_message, Msg}}.
+
+%% @doc Handle the gossip receive results.
+handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, RecallB}}) ->
+	{ok, StateIn} = ar_node_state:all(SPid),
+	HashList = maps:get(hash_list, StateIn),
+	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
+		{ok, StateOut} ->
+			ar_node_state:update(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, process_new_block};
+handle_gossip(SPid, {NewGS, {add_tx, TX}}) ->
+	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, potential_txs]),
+	case add_tx(StateIn, TX, NewGS) of
+		{ok, StateOut} ->
+			ar_node_state:update(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, add_tx};
+handle_gossip(SPid, {NewGS, ignore}) ->
+	ar_node_state:update(SPid, [
+		{gossip, NewGS}
+	]),
+	{ok, ignore};
+handle_gossip(SPid, {NewGS, UnhandledMsg}) ->
+	{ok, NPid} = ar_node_state:lookup(SPid, node),
+	ar:report(
+		[
+			{node, NPid},
+			{unhandeled_gossip_msg, UnhandledMsg}
+		]
+	),
+	ar_node_state:update(SPid, [
+		{gossip, NewGS}
+	]),
+	{ok, ignore}.
 
 %%%
 %%% Private API functions.
