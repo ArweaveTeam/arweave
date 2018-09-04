@@ -3,15 +3,40 @@
 -export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2]).
 -export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
+-export([hash_wallet_list/1]).
 -export([encrypt_block/2, encrypt_block/3]).
 -export([encrypt_full_block/2, encrypt_full_block/3]).
 -export([decrypt_block/4]).
 -export([decrypt_full_block/4]).
 -export([generate_block_key/2]).
 -export([generate_block_from_shadow/2, generate_block_data_segment/6]).
+-export([generate_hash_list_for_block/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% @doc Generate a re-producible hash from a wallet list.
+hash_wallet_list(WalletList) ->
+    Bin =
+        <<
+            << Addr/binary, (binary:encode_unsigned(Balance))/binary, LastTX/binary >>
+        ||
+            {Addr, Balance, LastTX} <- WalletList
+        >>,
+    crypto:hash(?HASH_ALG, Bin).
+
+%% @doc Find the appropriate block hash list for a block/indep. hash, from a
+%% block hash list further down the weave.
+generate_hash_list_for_block(_Block1IndepHash, []) -> [];
+generate_hash_list_for_block(B, CurrentB) when ?IS_BLOCK(CurrentB) ->
+    generate_hash_list_for_block(B, CurrentB#block.indep_hash);
+generate_hash_list_for_block(B, BHL) when ?IS_BLOCK(B) ->
+    generate_hash_list_for_block(B#block.indep_hash, BHL);
+generate_hash_list_for_block(IndepHash, BHL) ->
+    do_generate_hash_list_for_block(IndepHash, BHL).
+
+do_generate_hash_list_for_block(IndepHash, [IndepHash|BHL]) -> BHL;
+do_generate_hash_list_for_block(IndepHash, [_|Rest]) ->
+    do_generate_hash_list_for_block(IndepHash, Rest).
 
 %% @doc Encrypt a recall block. Encryption key is derived from
 %% the contents of the recall block and the hash of the current block
@@ -425,7 +450,7 @@ verify_weave_size(NewB, OldB, TXs) ->
 
 % Block shadow functions
 
-generate_block_from_shadow(BShadow,RecallSize) ->
+generate_block_from_shadow(BShadow, RecallSize) ->
     TXs =
         % Check if the node state contains the referenced TX.
         lists:foldr(fun(T, Acc) ->
@@ -491,12 +516,12 @@ generate_block_from_shadow(BShadow,RecallSize) ->
 
 
 get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
-    case ar_storage:read_block(RecallHash) of
+    case ar_storage:read_block(RecallHash, B#block.hash_list) of
         unavailable ->
             case ar_storage:read_encrypted_block(RecallHash) of
                 unavailable ->
                     FullBlock =
-                        ar_http_iface:get_full_block(OrigPeer, RecallHash),
+                        ar_http_iface:get_full_block(OrigPeer, RecallHash, B#block.hash_list),
                     case ?IS_BLOCK(FullBlock)  of
                         true ->
                             Recall = FullBlock#block {
@@ -531,6 +556,20 @@ get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
 
 
 %% Tests: ar_block
+
+hash_list_gen_test() ->
+    ar_storage:clear(),
+    B0s = [B0] = ar_weave:init([]),
+    ar_storage:write_block(B0),
+    B1s = [B1|_] = ar_weave:add(B0s, []),
+    ar_storage:write_block(B1),
+    B2s = [B2|_] = ar_weave:add(B1s, []),
+    ar_storage:write_block(B2),
+    [B3|_] = ar_weave:add(B2s, []),
+    BHL1 = B1#block.hash_list,
+    BHL2 = B2#block.hash_list,
+    BHL1 = generate_hash_list_for_block(B1, B3#block.hash_list),
+    BHL2 = generate_hash_list_for_block(B2#block.indep_hash, B3#block.hash_list).
 
 pad_unpad_roundtrip_test() ->
     Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),

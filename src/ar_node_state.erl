@@ -25,6 +25,7 @@ start() ->
 	end),
 	% Set initial state values.
 	update(Pid, [
+		{id, crypto:strong_rand_bytes(32)}, % unique id of the ar_node
 		{hash_list, not_joined},    % current full hashlist
 		{wallet_list, []},          % current up to date walletlist
 		{floating_wallet_list, []}, % up to date walletlist with new txs applied

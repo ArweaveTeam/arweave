@@ -1,8 +1,10 @@
 -module(ar_http_iface).
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/2, get_tx/2, get_full_block/2, get_block_subfield/3, add_peer/1]).
+-export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
+-export([get_tx/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
+-export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
 -export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
@@ -198,7 +200,7 @@ handle('POST', [<<"block">>], Req) ->
 				false ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
 					spawn(
-					      fun() ->
+						fun() ->
 							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 							RecallHash = ar_util:decode(JSONRecallB),
 							RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
@@ -329,8 +331,7 @@ handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
 %% @doc Return the current hash list held by the node.
 %% GET request to endpoint /hash_list
 handle('GET', [<<"hash_list">>], _Req) ->
-	Node = whereis(http_entrypoint_node),
-	HashList = ar_node:get_hash_list(Node),
+	HashList = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	{200, [],
 		ar_serialize:jsonify(
 			ar_serialize:hash_list_to_json_struct(HashList)
@@ -509,14 +510,17 @@ handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
 
 %% @doc Return the wallet list associated with a block.
 handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
+    HTTPEntryPointPid = whereis(http_entrypoint_node),
 	B =
 		case Type of
 			<<"height">> ->
-				CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-				ar_node:get_block(whereis(http_entrypoint_node),
+				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
+				ar_node:get_block(
+                    HTTPEntryPointPid,
 					list_to_integer(binary_to_list(ID)),
 					CurrentBHL);
-			<<"hash">> -> ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
+			<<"hash">> ->
+                ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
 		end,
 	case ?IS_BLOCK(B) of
 		true ->
@@ -531,44 +535,25 @@ handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
 			{404, [], <<"Block not found.">>}
 	end;
 
-%% @doc Return a given field of the blockshadow corresponding to the indep_hash.
-%% GET request to endpoint /block/hash/{indep_hash}/{field}
-%%
-%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
-%%
-handle('GET', [<<"block">>, <<"hash">>, Hash, Field], _Req) ->
-	case ar_meta_db:get(subfield_queries) of
-		true ->
-			case safe_decode(Hash) of
-				{error, invalid} ->
-					{400, [], <<"invalid hash">>};
-				{ok, HashOK} ->
-					case ar_storage:read_block(HashOK) of
-						unavailable ->
-							{404, [], <<"Not Found.">>};
-						B ->
-							{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
-							Res = val_for_key(binary_to_existing_atom(Field), BLOCKJSON),
-							Result = block_field_to_string(Field, Res),
-							{200, [], Result}
-					end
-			end;
-		_ ->
-			{421, [], <<"Subfield block querying is disabled on this node.">>}
-	end;
-
 %% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
-%% GET request to endpoint /block/hash/{height}/{field}
+%% GET request to endpoint /block/hash/{hash|height}/{field}
 %%
 %% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
 %%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
-handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
+handle('GET', [<<"block">>, Type, ID, Field], _Req) ->
 	case ar_meta_db:get(subfield_queries) of
 		true ->
-			Block = ar_node:get_block(whereis(http_entrypoint_node),
-					list_to_integer(binary_to_list(Height))),
+			Block =
+				case Type of
+					<<"height">> ->
+						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+						ar_node:get_block(whereis(http_entrypoint_node),
+							list_to_integer(binary_to_list(ID)),
+							CurrentBHL);
+					<<"hash">> ->
+						ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
+				end,
 			case Block of
 				unavailable ->
 						{404, [], <<"Not Found.">>};
@@ -585,30 +570,16 @@ handle('GET', [<<"block">>, <<"height">>, Height, Field], _Req) ->
 %% @doc Return the current block.
 %% GET request to endpoint /current_block
 %% GET request to endpoint /block/current
-handle('GET', [<<"block">>, <<"current">>], _Req) ->
-	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
-		0 -> {404, [], <<"Block not found.">>};
-		Height ->
-			F = ar_storage:lookup_block_filename(Height - 1),
-			case F of
-				unavailable -> {404, [], <<"Block not found.">>};
-				Filename  ->
-					{ok, [], {file, Filename}}
-			end
+handle('GET', [<<"block">>, <<"current">>], Req) ->
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[] -> {404, [], <<"Block not found.">>};
+		[IndepHash|_] ->
+			handle('GET', [<<"block">>, <<"hash">>, ar_util:encode(IndepHash)], Req)
 	end;
 
 %% DEPRECATED (12/07/2018)
-handle('GET', [<<"current_block">>], _Req) ->
-	case length(ar_node:get_hash_list(whereis(http_entrypoint_node))) of
-		0 -> {404, [], <<"Block not found.">>};
-		Height ->
-			F = ar_storage:lookup_block_filename(Height - 1),
-			case F of
-				unavailable -> {404, [], <<"Block not found.">>};
-				Filename  ->
-					{ok, [], {file, Filename}}
-			end
-	end;
+handle('GET', [<<"current_block">>], Req) ->
+	handle('GET', [<<"block">>, <<"current">>], Req);
 
 %% @doc Return a list of known services.
 %% GET request to endpoint /services
@@ -740,7 +711,8 @@ return_tx(T) ->
 %% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
 return_info() ->
-	HL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	{Time, HL} =
+		timer:tc(fun() -> ar_node:get_hash_list(whereis(http_entrypoint_node)) end),
 	{200, [],
 		ar_serialize:jsonify(
 			{
@@ -762,7 +734,8 @@ return_info() ->
 							2,
 							erlang:process_info(whereis(http_entrypoint_node), message_queue_len)
 						)
-					}
+					},
+					{node_state_latency, Time}
 				]
 			}
 		)
@@ -815,12 +788,17 @@ send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Peer, Port, NewB, RecallB) ->
 	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
-	NewBShadow = NewB#block { wallet_list= [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
+	NewBShadow = NewB#block { wallet_list = [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
 	RecallBHash =
 		case ?IS_BLOCK(RecallB) of
 			true ->  RecallB#block.indep_hash;
 			false -> <<>>
 		end,
+	{TempJSONStruct} = ar_serialize:block_to_json_struct(NewBShadow),
+	JSONStruct =
+		{
+			[{<<"hash_list">>, NewBShadow#block.hash_list }|TempJSONStruct]
+		},
 	case ar_key_db:get(RecallBHash) of
 		[{Key, Nonce}] ->
 			ar_httpc:request(
@@ -830,7 +808,7 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 				ar_serialize:jsonify(
 					{
 						[
-							{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+							{<<"new_block">>, JSONStruct},
 							{<<"recall_block">>, ar_util:encode(RecallBHash)},
 							{<<"recall_size">>, RecallB#block.block_size},
 							{<<"port">>, Port},
@@ -850,7 +828,7 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 			ar_serialize:jsonify(
 				{
 					[
-						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
+						{<<"new_block">>, JSONStruct},
 						{<<"recall_block">>, ar_util:encode(RecallBHash)},
 						{<<"recall_size">>, RecallB#block.block_size},
 						{<<"port">>, Port},
@@ -927,24 +905,8 @@ get_tx_reward(Peer, Size) ->
 	list_to_integer(binary_to_list(Body)).
 
 %% @doc Retreive a block by height or hash from a remote peer.
-get_block(Peer, Height) when is_integer(Height) ->
-	handle_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/height/" ++ integer_to_list(Height),
-			[]
-		)
-	);
-get_block(Peer, Hash) when is_binary(Hash) ->
-	handle_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
-			[]
-		)
-	).
+get_block(Peer, ID, BHL) ->
+	get_full_block(Peer, ID, BHL).
 
 %% @doc Get an encrypted block from a remote peer.
 %% Used when the next block is the recall block.
@@ -985,31 +947,93 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 		)
 	).
 
+%% @doc Generate an appropriate URL for a block by its identifier.
+prepare_block_id(ID) when is_binary(ID) ->
+	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
+prepare_block_id(ID) when is_integer(ID) ->
+	"/block/height/" ++ integer_to_list(ID).
+
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer.
-get_full_block(Peer, Hash) when is_binary(Hash) ->
-	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
+get_full_block(Peer, ID, BHL) ->
 	B =
 		handle_block_response(
 			ar_httpc:request(
 				<<"GET">>,
 				Peer,
-				"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)),
+				prepare_block_id(ID),
 				[]
 			)
 		),
 	case ?IS_BLOCK(B) of
 		true ->
+			WalletList =
+				case is_binary(WL = B#block.wallet_list) of
+					true ->
+						case ar_storage:read_wallet_list(WL) of
+							{error, _} ->
+								get_wallet_list(Peer, WL);
+							ReadWL -> ReadWL
+						end;
+					false -> WL
+				end,
+			HashList =
+				case B#block.hash_list of
+					undefined ->
+						ar_block:generate_hash_list_for_block(B, BHL);
+					HL -> HL
+				end,
 			FullB =
 				B#block {
-					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ]
+					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
+					hash_list = HashList,
+					wallet_list = WalletList
 				},
-			case [ X || X <- FullB#block.txs, is_atom(X) ] of
-				[] -> FullB;
-				_ -> unavailable
+			case lists:any(fun erlang:is_atom/1, FullB#block.txs) of
+				false -> FullB;
+				true -> unavailable
 			end;
 		false -> B
+	end.
+
+%% @doc Get a wallet list (by its hash) from the external peer.
+get_wallet_list(Peer, Hash) ->
+	Response =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/wallet_list",
+			[]
+		),
+	case Response of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			ar_serialize:dejsonify(ar_serialize:json_struct_to_wallet_list(Body));
+		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
+	end.
+
+
+%% @doc Get a block hash list (by its hash) from the external peer.
+get_hash_list(Peer) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/hash_list",
+			[]
+		),
+	ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body)).
+get_hash_list(Peer, Hash) ->
+	Response =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/hash_list",
+			[]
+		),
+	case Response of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body));
+		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
 	end.
 
 %% @doc Retreive a full block (full transactions included in body)
@@ -1158,7 +1182,7 @@ handle_block_field_response({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) -
 handle_block_field_response({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_tx(Body);
 handle_block_field_response({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_hash_list(Body);
+	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Body));
 handle_block_field_response({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_wallet_list(Body);
 handle_block_field_response({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> Body;
@@ -1258,7 +1282,7 @@ get_info_test() ->
 	BridgeNode = ar_bridge:start([]),
 	reregister(http_bridge_node, BridgeNode),
 	?assertEqual(<<?NETWORK_NAME>>, get_info({127, 0, 0, 1, 1984}, name)),
-	?assertEqual(?RELEASE_NUMBER, get_info({127, 0, 0, 1, 1984}, release)),
+	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, get_info({127, 0, 0, 1, 1984}, release)),
 	?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
 	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, peers)),
 	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, blocks)),
@@ -1339,10 +1363,11 @@ get_last_tx_single_test() ->
 get_block_by_hash_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	receive after 200 -> ok end,
-	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash)).
+	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash, B0#block.hash_list)).
 
 % get_recall_block_by_hash_test() ->
 %	ar_storage:clear(),
@@ -1379,23 +1404,30 @@ get_full_block_by_hash_test_slow() ->
 	ar_node:mine(Node),
 	receive after 200 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
-	B2 = get_block({127, 0, 0, 1, 1984}, B1),
-	B3 = get_full_block({127, 0, 0, 1, 1984}, B1),
+	B2 = get_block({127, 0, 0, 1, 1984}, B1, B0#block.hash_list),
+	B3 = get_full_block({127, 0, 0, 1, 1984}, B1, B2#block.hash_list),
 	?assertEqual(B3, B2#block {txs = [SignedTX, SignedTX2]}).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
-	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, 0)).
+	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, 0, B0#block.hash_list)).
 
 get_current_block_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
+	ar_util:do_until(
+		fun() -> B0 == ar_node:get_current_block(Node1) end,
+		100,
+		2000
+	),
 	?assertEqual(B0, get_current_block({127, 0, 0, 1, 1984})).
 
 %% @doc Test adding transactions to a block.
@@ -1413,7 +1445,7 @@ add_external_tx_test() ->
 	receive after 1000 -> ok end,
 	[B1|_] = ar_node:get_blocks(Node),
 	TXID = TX#tx.id,
-	?assertEqual([TXID], (ar_storage:read_block(B1))#block.txs).
+	?assertEqual([TXID], (ar_storage:read_block(B1, ar_node:get_hash_list(Node)))#block.txs).
 
 %% @doc Test getting transactions
 find_external_tx_test() ->
@@ -1455,23 +1487,52 @@ fail_external_tx_test() ->
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
-add_external_block_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	reregister(Node1),
-	Bridge = ar_bridge:start([], Node1),
-	reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node1, Bridge),
-	Node2 = ar_node:start([], [B0]),
-	ar_node:mine(Node2),
-	timer:sleep(1000),
-	[B1|_] = ar_node:get_blocks(Node2),
-	reregister(Node1),
-	send_new_block({127, 0, 0, 1, 1984}, ?DEFAULT_HTTP_IFACE_PORT, ar_storage:read_block(B1), B0),
-	timer:sleep(500),
-	[B1, XB0] = ar_node:get_blocks(Node1),
-	?assertEqual(B0, ar_storage:read_block(XB0)).
+add_external_block_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
+		reregister(Node1),
+		Bridge = ar_bridge:start([], Node1),
+		reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		Node2 = ar_node:start([], [BGen]),
+		% Generate enough blocks to rise difference.
+		lists:foreach(
+			fun(_) ->
+				ar_node:mine(Node2),
+				timer:sleep(500)
+			end,
+			lists:seq(1, ?RETARGET_BLOCKS + 1)
+		),
+		ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node2)) > (?RETARGET_BLOCKS + 1)
+			end,
+			1000,
+			10 * 1000
+		),
+		[BTest|_] = ar_node:get_blocks(Node2),
+		reregister(Node1),
+		send_new_block(
+			{127, 0, 0, 1, 1984},
+			?DEFAULT_HTTP_IFACE_PORT,
+			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
+			BGen
+		),
+		% Wait for test block and assert.
+		?assert(ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node1)) > 1
+			end,
+			1000,
+			10 * 1000
+		)),
+		[HB | TBs] = ar_node:get_blocks(Node1),
+		?assertEqual(HB, BTest),
+		LB = lists:last(TBs),
+		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
+	end}.
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
@@ -1551,41 +1612,51 @@ get_pending_tx_test() ->
 			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)),
 			[]
 		),
-	?assertEqual("Pending", Body).
+	?assertEqual(<<"Pending">>, Body).
 
 %% @doc Find all pending transactions in the network
 %% TODO: Fix test to send txs from different wallets
-get_multiple_pending_txs_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init(),
-	Node = ar_node:start([], [B0]),
-	reregister(Node),
-	Bridge = ar_bridge:start([], Node),
-	reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
-	SearchNode = app_search:start(Node),
-	ar_node:add_peers(Node, SearchNode),
-	reregister(http_search_node, SearchNode),
-	send_new_tx({127, 0, 0, 1,1984}, TX1 = ar_tx:new(<<"DATA1">>)),
-	timer:sleep(1000),
-	send_new_tx({127, 0, 0, 1,1984}, TX2 = ar_tx:new(<<"DATA2">>)),
-	timer:sleep(1000),
-	% write a get_tx function like get_block
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/tx/pending",
-			[]
+get_multiple_pending_txs_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[B0] = ar_weave:init(),
+		Node = ar_node:start([], [B0]),
+		reregister(Node),
+		Bridge = ar_bridge:start([], Node),
+		reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node, Bridge),
+		SearchNode = app_search:start(Node),
+		ar_node:add_peers(Node, SearchNode),
+		reregister(http_search_node, SearchNode),
+		send_new_tx({127, 0, 0, 1,1984}, TX1 = ar_tx:new(<<"DATA1">>)),
+		send_new_tx({127, 0, 0, 1,1984}, TX2 = ar_tx:new(<<"DATA2">>)),
+		% Wait for pending blocks.
+		{ok, PendingTXs} = ar_util:do_until(
+			fun() ->
+				{ok, {{<<"200">>, _}, _, Body, _, _}} =
+					ar_httpc:request(
+						<<"GET">>,
+						{127, 0, 0, 1, 1984},
+						"/tx/pending",
+						[]
+					),
+				PendingTXs = ar_serialize:dejsonify(Body),
+				case length(PendingTXs) of
+					2 -> {ok, PendingTXs};
+					_ -> false
+				end
+			end,
+			1000,
+			30000
 		),
-	PendingTXs = ar_serialize:dejsonify(Body),
-	?assertEqual(
-		[
-			ar_util:encode(TX1#tx.id),
-			ar_util:encode(TX2#tx.id)
-		],
-		PendingTXs
-	).
+		?assertEqual(
+			[
+				ar_util:encode(TX1#tx.id),
+				ar_util:encode(TX2#tx.id)
+			],
+			PendingTXs
+		)
+	end}.
 
 %% @doc Spawn a network with two nodes and a chirper server.
 get_tx_by_tag_test() ->
@@ -1729,3 +1800,7 @@ get_txs_by_send_recv_test_slow() ->
 	% B2 = get_block({127, 0, 0, 1, 1984}, B1),
 	% B3 = get_full_block({127, 0, 0, 1, 1984}, B1),
 	% B3 = B2#block {txs = [TX, TX1]},
+
+%%%
+%%% EOF
+%%%

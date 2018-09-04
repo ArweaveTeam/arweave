@@ -33,7 +33,6 @@ block_to_json_struct(
 		hash = Hash,
 		indep_hash = IndepHash,
 		txs = TXs,
-		hash_list = HashList,
 		wallet_list = WalletList,
         reward_addr = RewardAddr,
 		tags = Tags,
@@ -52,20 +51,23 @@ block_to_json_struct(
 			{hash, ar_util:encode(Hash)},
 			{indep_hash, ar_util:encode(IndepHash)},
 			{txs, lists:map(fun ar_util:encode/1, TXs)},
-			{hash_list, lists:map(fun ar_util:encode/1, HashList)},
 			{wallet_list,
-				lists:map(
-					fun({Wallet, Qty, Last}) ->
-						{
-							[
-								{wallet, ar_util:encode(Wallet)},
-								{quantity, Qty},
-								{last_tx, ar_util:encode(Last)}
-							]
-						}
-					end,
-					WalletList
-				)
+				case is_binary(WalletList) of
+					true -> ar_util:encode(WalletList);
+					false ->
+						lists:map(
+							fun({Wallet, Qty, Last}) ->
+								{
+									[
+										{wallet, ar_util:encode(Wallet)},
+										{quantity, Qty},
+										{last_tx, ar_util:encode(Last)}
+									]
+								}
+							end,
+							WalletList
+						)
+				end
 			},
 			{reward_addr,
 				if RewardAddr == unclaimed -> list_to_binary("unclaimed");
@@ -91,7 +93,6 @@ full_block_to_json_struct(
 		hash = Hash,
 		indep_hash = IndepHash,
 		txs = TXs,
-		hash_list = HashList,
 		wallet_list = WalletList,
         reward_addr = RewardAddr,
 		tags = Tags,
@@ -110,20 +111,23 @@ full_block_to_json_struct(
 			{hash, ar_util:encode(Hash)},
 			{indep_hash, ar_util:encode(IndepHash)},
 			{txs, lists:map(fun tx_to_json_struct/1, TXs)},
-			{hash_list, lists:map(fun ar_util:encode/1, HashList)},
 			{wallet_list,
-				lists:map(
-					fun({Wallet, Qty, Last}) ->
-						{
-							[
-								{wallet, ar_util:encode(Wallet)},
-								{quantity, Qty},
-								{last_tx, ar_util:encode(Last)}
-							]
-						}
-					end,
-					WalletList
-				)
+				case is_binary(WalletList) of
+					true -> ar_util:encode(WalletList);
+					false ->
+						lists:map(
+							fun({Wallet, Qty, Last}) ->
+								{
+									[
+										{wallet, ar_util:encode(Wallet)},
+										{quantity, Qty},
+										{last_tx, ar_util:encode(Last)}
+									]
+								}
+							end,
+							WalletList
+						)
+				end
 			},
 			{reward_addr,
 				if RewardAddr == unclaimed -> list_to_binary("unclaimed");
@@ -162,24 +166,32 @@ json_struct_to_block(JSONBlock) ->
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
 		txs = lists:map(fun ar_util:decode/1, TXs),
-		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
+		hash_list =
+			case HashList of
+				undefined -> undefined;
+				_ -> [ ar_util:decode(Hash) || Hash <- HashList ]
+			end,
 		wallet_list =
-			[
-				{
-                    ar_util:decode(Wallet),
-                    Qty,
-                    ar_util:decode(Last)
-                }
-			||
-				{
-                    [
-                        {<<"wallet">>, Wallet},
-                        {<<"quantity">>, Qty},
-                        {<<"last_tx">>, Last}
-                    ]
-                }
-				<- WalletList
-			],
+			case is_binary(WalletList) of
+				false ->
+					[
+						{
+							ar_util:decode(Wallet),
+							Qty,
+							ar_util:decode(Last)
+						}
+					||
+						{
+							[
+								{<<"wallet">>, Wallet},
+								{<<"quantity">>, Qty},
+								{<<"last_tx">>, Last}
+							]
+						}
+						<- WalletList
+					];
+				true -> ar_util:decode(WalletList)
+			end,
 		reward_addr =
 			case find_value(<<"reward_addr">>, BlockStruct) of
 				<<"unclaimed">> -> unclaimed;
@@ -217,24 +229,32 @@ json_struct_to_full_block(JSONBlock) ->
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
 		txs = lists:map(fun json_struct_to_tx/1, TXs),
-		hash_list = [ ar_util:decode(Hash) || Hash <- HashList ],
+		hash_list =
+			case HashList of
+				undefined -> undefined;
+				_ -> [ ar_util:decode(Hash) || Hash <- HashList ]
+			end,
 		wallet_list =
-			[
-                {
-                    ar_util:decode(Wallet),
-                    Qty,
-                    ar_util:decode(Last)
-                }
-			||
-				{
-                    [
-                        {<<"wallet">>, Wallet},
-                        {<<"quantity">>, Qty},
-                        {<<"last_tx">>, Last}
-                    ]
-                }
-				<- WalletList
-			],
+			case is_binary(WalletList) of
+				false ->
+					[
+						{
+							ar_util:decode(Wallet),
+							Qty,
+							ar_util:decode(Last)
+						}
+					||
+						{
+							[
+								{<<"wallet">>, Wallet},
+								{<<"quantity">>, Qty},
+								{<<"last_tx">>, Last}
+							]
+						}
+						<- WalletList
+					];
+				true -> ar_util:decode(WalletList)
+			end,
 		reward_addr =
 			case find_value(<<"reward_addr">>, BlockStruct) of
 				<<"unclaimed">> -> unclaimed;
@@ -336,35 +356,12 @@ json_struct_to_wallet_list(JSONList) when is_binary(JSONList) ->
 		ListStruct -> json_struct_to_wallet_list(ListStruct)
 	end;
 json_struct_to_wallet_list(WalletsStruct) ->
-    lists:foldr(
-        fun(X, Acc) -> [json_struct_to_wallet(X) | Acc] end,
-        [],
-        WalletsStruct
-    ).
+	lists:map(fun json_struct_to_wallet/1, WalletsStruct).
 json_struct_to_wallet({Wallet}) ->
     Address = ar_util:decode(find_value(<<"address">>, Wallet)),
     Balance = list_to_integer(binary_to_list(find_value(<<"balance">>, Wallet))),
     Last = ar_util:decode(find_value(<<"last_tx">>, Wallet)),
     {Address, Balance, Last}.
-
-%% @doc Convert a hash list into a JSON struct.
-hash_list_to_json_struct([]) -> [];
-hash_list_to_json_struct([Hash | HashList]) ->
-    EncHash = ar_util:encode(binary_to_list(Hash)),
-    [EncHash | hash_list_to_json_struct(HashList)].
-
-%% @doc Convert parsed JSON from fields into a valid hash list.
-json_struct_to_hash_list(JSONList) when is_binary(JSONList) ->
-	case dejsonify(JSONList) of
-		{error, Error} -> ar:report([{error, Error}]);
-		ListStruct -> json_struct_to_hash_list(ListStruct)
-	end;
-json_struct_to_hash_list(HashesStruct) ->
-    lists:foldr(
-        fun(X, Acc) -> [ar_util:decode(X) | Acc] end,
-        [],
-        HashesStruct
-    ).
 
 %% @doc Find the value associated with a key in parsed a JSON structure list.
 find_value(Key, List) ->
@@ -400,32 +397,31 @@ do_json_struct_to_query({Query}) ->
 do_json_struct_to_query(Query) ->
 	ar_util:decode(Query).
 
+%% @doc Generate a JSON structure representing a block hash list.
+hash_list_to_json_struct(BHL) ->
+    lists:map(fun ar_util:encode/1, BHL).
+
+%% @doc Convert a JSON structure into a block hash list.
+json_struct_to_hash_list(JSONStruct) ->
+	lists:map(fun ar_util:decode/1, JSONStruct).
 
 %%% Tests: ar_serialize
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->
     [B] = ar_weave:init(),
-    BTags = B#block { tags = [<<"hello">>, "world", 1] },
-	JsonB = jsonify(block_to_json_struct(BTags)),
-	BTags = json_struct_to_block(JsonB).
+	JSONStruct = jsonify(block_to_json_struct(B)),
+	BRes = json_struct_to_block(JSONStruct),
+	B = BRes#block { hash_list = B#block.hash_list }.
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 full_block_roundtrip_test() ->
     [B] = ar_weave:init(),
 	TXBase = ar_tx:new(<<"test">>),
-    BTags = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
-	JsonB = jsonify(full_block_to_json_struct(BTags)),
-	BTags = json_struct_to_full_block(JsonB),
-	(json_struct_to_full_block(JsonB))#block.txs.
-
-full_block_unavailable_roundtrip_test() ->
-    [B] = ar_weave:init(),
-	TXBase = ar_tx:new(<<"test">>),
-    BTags = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
-	JsonB = jsonify(full_block_to_json_struct(BTags)),
-	BTags = json_struct_to_full_block(JsonB),
-	(json_struct_to_full_block(JsonB))#block.txs.
+    B2 = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
+	JsonB = jsonify(full_block_to_json_struct(B2)),
+	BRes = json_struct_to_full_block(JsonB),
+	B2 = BRes#block { hash_list = B#block.hash_list }.
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
 tx_roundtrip_test() ->
@@ -444,7 +440,7 @@ hash_list_roundtrip_test() ->
     [B] = ar_weave:init(),
     HL = [B#block.indep_hash, B#block.indep_hash],
     JsonHL = jsonify(hash_list_to_json_struct(HL)),
-    HL = json_struct_to_hash_list(JsonHL).
+    HL = json_struct_to_hash_list(dejsonify(JsonHL)).
 
 query_roundtrip_test() ->
 	Query = {'equals', <<"TestName">>, <<"TestVal">>},

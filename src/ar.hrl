@@ -7,7 +7,12 @@
 -define(CLIENT_VERSION, 3).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 7).
+-define(RELEASE_NUMBER, 8).
+
+-define(DEFAULT_REQUEST_HEADERS,
+	[
+		{<<"X-Version">>, list_to_binary(integer_to_list(?RELEASE_NUMBER))}
+	]).
 
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).
@@ -32,7 +37,11 @@
 
 %% @doc NB: Setting the default difficulty high will cause TNT to fail.
 -define(DEFAULT_DIFF, 8).
+-ifdef(DEBUG).
+-define(MIN_DIFF, 15).
+-else.
 -define(MIN_DIFF, 31).
+-endif.
 
 -ifndef(TARGET_TIME).
 -define(TARGET_TIME, 120).
@@ -134,6 +143,11 @@
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
+
+%% @doc Backup block hash list storage directory.
+-define(HASH_LIST_DIR, "hash_lists").
+%% @doc Directory for storing unique wallet lists.
+-define(WALLET_LIST_DIR, "wallet_lists").
 
 %% @doc Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).

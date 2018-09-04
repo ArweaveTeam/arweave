@@ -15,11 +15,12 @@
 
 %% Defines the server state
 -record(state, {
-	parent, % fork recoveries parent process (initiator)
-	peers, % lists of the nodes peers to try retrieve blocks
-	target_block, % the target block being recovered too.
-	block_list, % list of block hashes shared between current and target block
-	hash_list % list of block hashes needing to be applied
+	parent, % Fork recoveries parent process (initiator)
+	peers, % Lists of the nodes peers to try retrieve blocks
+	target_block, % The target block being recovered too
+	recovery_hash_list, % Complete hash list for this fork
+	block_list, % List of block hashes shared between current and target block
+	hash_list % List of block hashes needing to be applied
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
@@ -57,12 +58,14 @@ start(Peers, TargetBShadow, HashList, Parent) ->
 										block_list =
 											(TargetB#block.hash_list -- DivergedHashes),
 										hash_list = DivergedHashes,
-										target_block = TargetB
+										target_block = TargetB,
+										recovery_hash_list =
+											[TargetB#block.indep_hash|TargetB#block.hash_list]
 									}
 								)
 							end
 						),
-					PID ! {apply_next_block},
+					PID ! apply_next_block,
 					PID;
 				% target block has invalid hash list
 				false ->
@@ -113,7 +116,8 @@ server(S = #state {
 		block_list = BlockList,
 		peers = Peers,
 		hash_list = [NextH | HashList],
-		target_block = TargetB
+		target_block = TargetB,
+		recovery_hash_list = BHL
 	}) ->
 	receive
 	{update_target_block, Block, Peer} ->
@@ -130,29 +134,30 @@ server(S = #state {
 			false -> HashListExtra = []
 		end,
 		case HashListExtra of
-		[] ->
-			ar:d(failed_to_update_target_block),
-			server(S);
-		H ->
-			ar:d({current_target, TargetB#block.height}),
-			ar:d({updating_target_block, Block#block.height}),
-			server(
-				S#state {
-					hash_list = [NextH | HashList] ++ H,
-					peers = ar_util:unique(Peer ++ Peers),
-					target_block = Block
-				}
-			)
+			[] ->
+				ar:d(failed_to_update_target_block),
+				server(S);
+			H ->
+				ar:d({current_target, TargetB#block.height}),
+				ar:d({updating_target_block, Block#block.height}),
+				server(
+					S#state {
+						hash_list = [NextH | HashList] ++ H,
+						peers = ar_util:unique(Peer ++ Peers),
+						target_block = Block
+					}
+				)
 		end;
-	{apply_next_block} ->
-		NextB = ar_node:get_full_block(Peers, NextH),
+	apply_next_block ->
+		NextB = ar_node:get_full_block(Peers, NextH, BHL),
 		ar:d({applying_fork_recovery, ar_util:encode(NextH)}),
 		case ?IS_BLOCK(NextB) of
 			% could not retrieve the next block to be applied
 			false ->
 				ar:report(
 					[
-						{fork_recovery_block_retreival_failed, NextB}
+						{fork_recovery_block_retreival_failed, ar_util:encode(NextH)},
+						{received_instead, NextB}
 					]
 				),
 				BHashList = unavailable,
@@ -202,7 +207,7 @@ server(S = #state {
 					% Target block is within range and isi attempted to be
 					% recovered to.
 					{_X, _Y} ->
-						B = ar_node:get_block(Peers, NextB#block.previous_block),
+						B = ar_node:get_block(Peers, NextB#block.previous_block, BHL),
 						case ?IS_BLOCK(B) of
 							false ->
 								BHashList = unavailable,
@@ -211,8 +216,8 @@ server(S = #state {
 							true ->
 								BHashList = [B#block.indep_hash|B#block.hash_list],
 								case B#block.height of
-									0 -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list));
-									_ -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list))
+									0 -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list), BHL);
+									_ -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list), BHL)
 								end,
 								%% TODO: Rewrite validate so it also takes recall block txs
 								% ar:d({old_block, B#block.indep_hash}),
@@ -259,7 +264,7 @@ server(S = #state {
 								{block_height, NextB#block.height}
 							]
 						),
-						self() ! {apply_next_block},
+						self() ! apply_next_block,
 						ar_storage:write_tx(NextB#block.txs),
 						ar_storage:write_block(NextB#block {txs = [T#tx.id || T <- NextB#block.txs]}),
 						ar_storage:write_block(RecallB#block {txs = [T#tx.id || T <- RecallB#block.txs]}),
@@ -344,7 +349,7 @@ three_block_ahead_recovery_test() ->
 	ar_node:mine(Node1),
 	timer:sleep(1000),
 	[B | _] = ar_node:get_blocks(Node2),
-	7 = (ar_storage:read_block(B))#block.height.
+	7 = (ar_storage:read_block(B, ar_node:get_hash_list(Node2)))#block.height.
 
 %% @doc Ensure that nodes on a fork that is far behind will catchup correctly.
 multiple_blocks_ahead_recovery_test() ->
@@ -375,7 +380,7 @@ multiple_blocks_ahead_recovery_test() ->
 	ar_node:mine(Node1),
 	timer:sleep(1500),
 	[B | _] = ar_node:get_blocks(Node2),
-	9 = (ar_storage:read_block(B))#block.height.
+	9 = (ar_storage:read_block(B, ar_node:get_hash_list(Node2)))#block.height.
 
 %% @doc Ensure that nodes on a fork that is far behind blocks that contain
 %% transactions will catchup correctly.
@@ -412,7 +417,7 @@ multiple_blocks_ahead_with_transaction_recovery_test_slow() ->
 	ar_node:mine(Node1),
 	receive after 1500 -> ok end,
 	[B | _] = ar_node:get_blocks(Node2),
-	9 = (ar_storage:read_block(B))#block.height.
+	9 = (ar_storage:read_block(B, ar_node:get_hash_list(Node2)))#block.height.
 
 %% @doc Ensure that nodes that have diverged by multiple blocks each can
 %% reconcile.
@@ -445,7 +450,7 @@ multiple_blocks_since_fork_test() ->
 	ar_node:mine(Node1),
 	timer:sleep(1500),
 	[B | _] = ar_node:get_blocks(Node2),
-	9 = (ar_storage:read_block(B))#block.height.
+	9 = (ar_storage:read_block(B, ar_node:get_hash_list(Node2)))#block.height.
 
 %% @doc Ensure that nodes that nodes recovering from the first block can
 %% reconcile.

@@ -7,7 +7,7 @@
 -export([start_link/0, start_link/1, init/1]).
 -include("ar.hrl").
 
-%%% Archain server entrypoint and basic utilities.
+%%% Arweave server entrypoint and basic utilities.
 
 %% A list of the modules to test.
 %% At some point we might want to make this just test all mods starting with
@@ -59,7 +59,7 @@
 	pause = true,
 	disk_space = ar_storage:calculate_disk_space(),
 	used_space = ar_storage:calculate_used_space(),
-	start_block = undefined,
+	start_hash_list = undefined,
 	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
 	enable = []
 }).
@@ -82,7 +82,7 @@ main("") ->
 		end,
 		[
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_block", "Start the node from a given block."},
+			{"start_hash_list", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -133,8 +133,8 @@ main(["disk_space", Size|Rest], O) ->
 	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 main(["load_mining_key", File|Rest], O)->
 	main(Rest, O#opts { load_key = File });
-main(["start_block", IndepHash|Rest], O)->
-	main(Rest, O#opts { start_block = ar_util:decode(IndepHash) });
+main(["start_hash_list", IndepHash|Rest], O)->
+	main(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
 main(["benchmark"|Rest], O)->
 	main(Rest, O#opts { benchmark = true });
 main(["auto_update", "false" | Rest], O) ->
@@ -168,7 +168,7 @@ start(
 		pause = Pause,
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
-		start_block = IndepHash,
+		start_hash_list = BHL,
 		auto_update = AutoUpdate,
 		enable = Enable
 	}) ->
@@ -245,13 +245,12 @@ start(
 		[
 			[
 				Peers,
-				case IndepHash of
+				case BHL of
 					undefined ->
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
-					_ ->
-						(ar_storage:read_block(IndepHash))#block.hash_list
+					_ -> ar_storage:read_hash_list(ar_util:decode(BHL))
 				end,
 				0,
 				MiningAddress,
@@ -351,7 +350,6 @@ generate_logfile_name() ->
 %% @doc Run the erlang make system on the project.
 rebuild() ->
 	io:format("Rebuilding Arweave...~n"),
-	receive after 3000 -> ok end,
 	make:all(
 		[
 			load,

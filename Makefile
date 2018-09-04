@@ -41,7 +41,7 @@ all: gitmodules build
 gitmodules:
 	git submodule update --init
 
-build: ebin logs blocks
+build: ebin logs blocks hash_lists wallet_lists
 	rm -rf priv
 	rm -rf data/mnesia
 	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
@@ -60,6 +60,13 @@ logs:
 
 blocks:
 	mkdir -p blocks
+	nkdir -p blocks/enc
+
+hash_lists:
+	mkdir -p hash_lists
+
+wallet_lists:
+	mkdir -p wallet_lists
 
 docs: all
 	mkdir -p docs
@@ -78,23 +85,6 @@ clean:
 	rm -rf data/mnesia
 	rm -rf ebin docs logs priv
 	rm -f erl_crash.dump
-
-status: clean
-	hg status
-
-history:
-	hg history | tac
-
-commit:
-	EDITOR=vim hg commit
-	hg push
-
-update: clean
-	hg pull
-	hg update
-
-diff:
-	hg extdiff -p meld
 
 todo:
 	grep --color --line-number --recursive TODO "src"

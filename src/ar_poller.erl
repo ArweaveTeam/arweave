@@ -31,9 +31,10 @@ server(Node, Peers, LastB) ->
 				ar_node:get_block(
 					Peers,
 					lists:nth(
-						1 + ar_weave:calculate_recall_block(NewB),
+						1 + ar_weave:calculate_recall_block(NewB, NewB#block.hash_list),
 						lists:reverse(NewB#block.hash_list)
-					)
+					),
+					NewB#block.hash_list
 				)
 			},
 			server(Node, Peers, NewB)
