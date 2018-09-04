@@ -91,8 +91,12 @@ handle(Req, _Args) ->
 		not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
 		X -> X
 	end,
-	{Status, Hdrs, Body} = handle(Req#req.method, elli_request:path(Req), Req),
-	{Status, ?DEFAULT_RESPONSE_HEADERS ++ Hdrs, Body}.
+	case handle(Req#req.method, elli_request:path(Req), Req) of
+		{Status, Hdrs, Body} ->
+			{Status, ?DEFAULT_RESPONSE_HEADERS ++ Hdrs, Body};
+		{Status, Body} ->
+			{Status, ?DEFAULT_RESPONSE_HEADERS, Body}
+	end.
 
 %% @doc Return network information from a given node.
 %% GET request to endpoint /info
@@ -754,29 +758,25 @@ return_info() ->
 
 %%% Client functions
 
-%% @doc Send a new transaction to an Archain HTTP node.
+%% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
 	if
-		(byte_size(TX#tx.data) < 50000) ->
-			ar_httpc:request(
-				<<"POST">>,
-				Peer,
-				"/tx",
-				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-			);
+		byte_size(TX#tx.data < 50000) ->
+			do_send_new_tx(Peer, TX);
 		true ->
 			case has_tx(Peer, TX#tx.id) of
-				false ->
-					ar_httpc:request(
-						<<"POST">>,
-						Peer,
-						"/tx",
-						ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-					);
+				false -> do_send_new_tx(Peer, TX);
 				true -> not_sent
 			end
 	end.
 
+do_send_new_tx(Peer, TX) ->
+	ar_httpc:request(
+		<<"POST">>,
+		Peer,
+		"/tx",
+		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+	).
 
 %% @doc Check whether a peer has a given transaction
 has_tx(Peer, ID) ->
@@ -1308,6 +1308,22 @@ get_tx_reward_test() ->
 	% Hand calculated result for 1000 bytes.
 	ExpectedPrice = ar:d(ar_tx:calculate_min_tx_cost(1000, B0#block.diff)),
 	ExpectedPrice = ar:d(get_tx_reward({127, 0, 0, 1, 1984}, 1000)).
+
+%% @doc Ensurte that objects are only re-gossiped once.
+single_resgossip_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	TX = ar_tx:new(<<"TEST DATA">>),
+	Responses =
+		ar_util:pmap(
+			fun(_) ->
+				send_new_tx({127, 0, 0, 1, 1984}, TX)
+			end,
+			lists:seq(1, 100)
+		),
+	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->
