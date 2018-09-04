@@ -175,7 +175,7 @@ handle('POST', [<<"arql">>], Req) ->
 
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
-handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
+handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 	case hash_to_maybe_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, [], <<"Invalid hash.">>};
