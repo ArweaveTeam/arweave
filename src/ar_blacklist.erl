@@ -13,11 +13,12 @@
 
 handle(Req, _Config) ->
 	Peer = elli_request:peer(Req),
-	Ret= case increment_ip(Peer) of
-		true -> blacklisted(Req);
-		false -> ignore
-	end,
-%	ar:report([{?MODULE, handle},{Peer,Ret}]),
+	Ret =
+		case increment_ip(Peer) of
+			true -> blacklisted(Req);
+			false -> ignore
+		end,
+	% ar:report([{?MODULE, handle}, {Peer, Ret}]),
 	Ret.
 
 handle_event(elli_startup, [], Config) ->

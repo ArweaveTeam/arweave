@@ -1330,19 +1330,15 @@ node_blacklisting_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
-	reregister(Node1),
-	TX = ar_tx:new(<<"TEST DATA">>),
+	reregister(http_entrypoint_node, Node1),
 	Responses =
 		ar_util:pmap(
-			fun(_) ->
-				send_new_tx({127, 0, 0, 1, 1984}, TX)
-			end,
-			lists:seq(1, ?MAX_REQUESTS + 50)
+			fun(_) -> get_info({127, 0, 0, 1, 1984}) end,
+			lists:seq(1, ?MAX_REQUESTS + 1)
 		),
 	ar_blacklist:reset_counters(),
 	?assert(
-		length([ blocked || {ok, {{<<"429">>, _}, _, _, _, _}} <- Responses ])
-			> 0
+		length([ blocked || info_unavailable <- Responses ]) == 1
 	).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
