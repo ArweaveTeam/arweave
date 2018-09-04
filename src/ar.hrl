@@ -14,6 +14,11 @@
 		{<<"X-Version">>, list_to_binary(integer_to_list(?RELEASE_NUMBER))}
 	]).
 
+-define(DEFAULT_RESPONSE_HEADERS,
+	[
+		{<<"Access-Control-Allow-Origin">>, <<"*">>}
+	]).
+
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.

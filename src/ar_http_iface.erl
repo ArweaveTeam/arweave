@@ -91,7 +91,12 @@ handle(Req, _Args) ->
 		not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
 		X -> X
 	end,
-	handle(Req#req.method, elli_request:path(Req), Req).
+	case handle(Req#req.method, elli_request:path(Req), Req) of
+		{Status, Hdrs, Body} ->
+			{Status, ?DEFAULT_RESPONSE_HEADERS ++ Hdrs, Body};
+		{Status, Body} ->
+			{Status, ?DEFAULT_RESPONSE_HEADERS, Body}
+	end.
 
 %% @doc Return network information from a given node.
 %% GET request to endpoint /info
@@ -99,6 +104,16 @@ handle('GET', [], _Req) ->
 	return_info();
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
+
+%% @doc Return permissive CORS headers for all endpoints
+handle('OPTIONS', [<<"block">>], _) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+handle('OPTIONS', [<<"tx">>], _) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+handle('OPTIONS', [<<"peer">>|_], _) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+handle('OPTIONS', _, _Req) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
 
 %% @doc Return all transactions from node that are waiting to be mined into a block.
 %% GET request to endpoint /tx/pending
@@ -118,7 +133,7 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 handle('GET', [<<"tx">>, Hash], _Req) ->
 	case hash_to_maybe_filename(tx, Hash) of
 		{error, invalid} ->
-			{400, [], <<"invalid hash">>};
+			{400, [], <<"Invalid hash.">>};
 		{error, ID, unavailable} ->
 			case is_a_pending_tx(ID) of
 				true ->
@@ -164,10 +179,10 @@ handle('POST', [<<"arql">>], Req) ->
 
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
-handle('GET', [<<"tx">>, Hash, <<"data.html">>], _Req) ->
+handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 	case hash_to_maybe_filename(tx, Hash) of
 		{error, invalid} ->
-			{400, [], <<"invalid hash">>};
+			{400, [], <<"Invalid hash.">>};
 		{error, _, unavailable} ->
 			{404, [], {file, "data/not_found.html"}};
 		{ok, Filename} ->
@@ -192,10 +207,10 @@ handle('POST', [<<"block">>], Req) ->
 	OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
 		++ ":" ++ integer_to_list(Port)),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
-		false -> {404, [], <<"Invalid Block">>};
+		false -> {404, [], <<"Invalid block.">>};
 		true  ->
 			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
-				undefined -> {429, <<"Too Many Requests">>};
+				undefined -> {429, <<"Too many requests.">>};
 				true -> {208, <<"Block already processed.">>};
 				false ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
@@ -314,7 +329,7 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
-			{400, [], <<"invalid address">>};
+			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
 			{200, [],
 				integer_to_binary(
@@ -397,7 +412,7 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
-			{400, [], <<"invalid address">>};
+			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
 			{200, [],
 				integer_to_binary(
@@ -411,7 +426,7 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
-			{400, [], <<"invalid address">>};
+			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
 			{200, [],
 				ar_util:encode(
@@ -454,8 +469,8 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		Filename  ->
-			case elli_request:get_header(<<"X-Version">>, Req, 7) of
-				7 ->
+			case elli_request:get_header(<<"X-Version">>, Req, <<"7">>) of
+				<<"7">> ->
 					B =
 						ar_storage:do_read_block(
 							Filename,
@@ -476,7 +491,7 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 							}
 						)
 					};
-				8 ->
+				<<"8">> ->
 					{ok, [], {file, Filename}}
 			end
 	end;
@@ -614,7 +629,7 @@ handle('GET', [<<"services">>], _Req) ->
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	case hash_to_maybe_filename(tx, Hash) of
 		{error, invalid} ->
-			{400, [], <<"invalid hash">>};
+			{400, [], <<"Invalid hash.">>};
 		{error, ID, unavailable} ->
 			case is_a_pending_tx(ID) of
 				true ->
@@ -743,29 +758,25 @@ return_info() ->
 
 %%% Client functions
 
-%% @doc Send a new transaction to an Archain HTTP node.
+%% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
 	if
-		(byte_size(TX#tx.data) < 50000) ->
-			ar_httpc:request(
-				<<"POST">>,
-				Peer,
-				"/tx",
-				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-			);
+		byte_size(TX#tx.data < 50000) ->
+			do_send_new_tx(Peer, TX);
 		true ->
 			case has_tx(Peer, TX#tx.id) of
-				false ->
-					ar_httpc:request(
-						<<"POST">>,
-						Peer,
-						"/tx",
-						ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-					);
+				false -> do_send_new_tx(Peer, TX);
 				true -> not_sent
 			end
 	end.
 
+do_send_new_tx(Peer, TX) ->
+	ar_httpc:request(
+		<<"POST">>,
+		Peer,
+		"/tx",
+		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+	).
 
 %% @doc Check whether a peer has a given transaction
 has_tx(Peer, ID) ->
@@ -1297,6 +1308,38 @@ get_tx_reward_test() ->
 	% Hand calculated result for 1000 bytes.
 	ExpectedPrice = ar:d(ar_tx:calculate_min_tx_cost(1000, B0#block.diff)),
 	ExpectedPrice = ar:d(get_tx_reward({127, 0, 0, 1, 1984}, 1000)).
+
+%% @doc Ensurte that objects are only re-gossiped once.
+single_resgossip_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	TX = ar_tx:new(<<"TEST DATA">>),
+	Responses =
+		ar_util:pmap(
+			fun(_) ->
+				send_new_tx({127, 0, 0, 1, 1984}, TX)
+			end,
+			lists:seq(1, 100)
+		),
+	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]).
+
+%% @doc Test that nodes sending too many requests are temporarily blocked.
+node_blacklisting_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	reregister(http_entrypoint_node, Node1),
+	Responses =
+		ar_util:pmap(
+			fun(_) -> get_info({127, 0, 0, 1, 1984}) end,
+			lists:seq(1, ?MAX_REQUESTS + 1)
+		),
+	ar_blacklist:reset_counters(),
+	?assert(
+		length([ blocked || info_unavailable <- Responses ]) == 1
+	).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->

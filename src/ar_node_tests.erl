@@ -13,6 +13,29 @@
 %%% Tests.
 %%%
 
+%% @doc Ensure that nodes will not re-gossip txs more than once.
+single_tx_regossip_test() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
+	Node1 = ar_node:start([self()], B0),
+	InitGS = ar_gossip:init([Node1]),
+	TX = ar_tx:new(<<"TEST DATA">>),
+	ar_gossip:send(InitGS, {add_tx, TX}),
+	receive Msg when is_record(Msg, gs_msg) ->
+		{_NewGS, {add_tx, TX}} = ar_gossip:recv(InitGS, Msg)
+	end,
+	ar_gossip:send(InitGS, {add_tx, TX}),
+	receive
+		Msg2 when is_record(Msg2, gs_msg) ->
+		case ar_gossip:recv(InitGS, Msg2) of
+			{_NewGS2, {add_tx, TX}} ->
+				error(tx_regossiped_by_test_node_twice);
+			_ -> ok
+		end
+	after 1000 ->
+		ok
+	end.
+
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_network_with_reward_pool_test() ->
 	ar_storage:clear(),

@@ -81,7 +81,11 @@ add_tx(PID, TX) ->%, OriginPeer) ->
 
 %% @doc Add a remote HTTP peer.
 add_remote_peer(PID, Node) ->
-	PID ! {add_peer, remote, Node}.
+	case is_loopback_ip(Node) of
+		true -> do_nothing;
+		false ->
+			PID ! {add_peer, remote, Node}
+	end.
 
 %% @doc Add a local gossip peer.
 add_local_peer(PID, Node) ->
@@ -104,6 +108,14 @@ is_id_ignored(ID) ->
 		[{ID, ignored}] -> true;
 		[] -> false
 	end.
+
+%% @doc Is the IP address in question a loopback ('us') address?
+is_loopback_ip({A, B, C, D, _Port}) -> is_loopback_ip({A, B, C, D});
+is_loopback_ip({127, _, _, _}) -> true;
+is_loopback_ip({0, _, _, _}) -> true;
+is_loopback_ip({169, 254, _, _}) -> true;
+is_loopback_ip({255, 255, 255, 255}) -> true;
+is_loopback_ip(_) -> false.
 
 %%% INTERNAL FUNCTIONS
 

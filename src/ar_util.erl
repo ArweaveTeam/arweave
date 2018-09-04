@@ -158,13 +158,14 @@ unique(Res, [X|Xs]) ->
 %% NOTE: Does not maintain list stability.
 pmap(Fun, List) ->
 	Master = self(),
+	Ref = make_ref(),
 	lists:map(
 		fun(_) ->
 			receive
-				{pmap_work, X} -> X
+				{pmap_work, Ref, X} -> X
 			end
 		end,
-		lists:map(fun(Elem) -> Master ! {pmap_work, Fun(Elem)} end, List)
+		lists:map(fun(Elem) -> Master ! {pmap_work, Ref, Fun(Elem)} end, List)
 	).
 
 %% @doc Generate a list of GENESIS wallets, from the CSV file.
