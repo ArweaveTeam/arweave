@@ -8,6 +8,7 @@
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
 -export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
+-export([node_blacklisting_test/2]).
 -include("ar.hrl").
 -include_lib("lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -1327,19 +1328,34 @@ single_resgossip_test() ->
 
 %% @doc Test that nodes sending too many requests are temporarily blocked.
 node_blacklisting_test() ->
+	node_blacklisting_test(get_info, ?MAX_REQUESTS + 1).
+
+node_blacklisting_test(X, N) ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(http_entrypoint_node, Node1),
+	{Fun, Want} = nbt_get_pair(X),
+	Overflow = N - ?MAX_REQUESTS,
 	Responses =
 		ar_util:pmap(
-			fun(_) -> get_info({127, 0, 0, 1, 1984}) end,
-			lists:seq(1, ?MAX_REQUESTS + 1)
+			Fun,
+			%fun(_) -> get_info({127, 0, 0, 1, 1984}) end,
+			lists:seq(1, N)
 		),
 	ar_blacklist:reset_counters(),
-	?assert(
-		length([ blocked || info_unavailable <- Responses ]) == 1
-	).
+	L = length(lists:filter(fun(X) -> X== Want end, Responses)),
+	ar:d(Responses),
+	ar:d(lists:member(Want, Responses)),
+	ar:d(L),
+	?assert(L == Overflow).
+
+nbt_get_pair(get_info) ->
+	{ fun(_) -> get_info({127, 0, 0, 1, 1984}) end
+	, info_unavailable};
+nbt_get_pair(send_new_tx) ->
+	{ fun(_) -> send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)) end
+	, {<<"429">>, <<"Too many requests.">>}}.
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->
