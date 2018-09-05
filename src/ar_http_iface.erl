@@ -196,13 +196,17 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 handle('POST', [<<"block">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	{<<"recall_block">>, JSONRecallB} = lists:keyfind(<<"recall_block">>, 1, Struct),
-	{<<"new_block">>, JSONB} = lists:keyfind(<<"new_block">>, 1, Struct),
-	{<<"recall_size">>, RecallSize} = lists:keyfind(<<"recall_size">>, 1, Struct),
-	{<<"port">>, Port} = lists:keyfind(<<"port">>, 1, Struct),
-	{<<"key">>, KeyEnc} = lists:keyfind(<<"key">>, 1, Struct),
-	{<<"nonce">>, NonceEnc} = lists:keyfind(<<"nonce">>, 1, Struct),
+	JSONRecallB = val_for_key(<<"recall_block">>, Struct),
+	JSONB = val_for_key(<<"new_block">>, Struct),
+	RecallSize = val_for_key(<<"recall_size">>, Struct),
+	Port = val_for_key(<<"port">>, Struct),
+	KeyEnc = val_for_key(<<"key">>, Struct),
+	NonceEnc = val_for_key(<<"nonce">>, Struct),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
+	case ar_node:is_joined(whereis(http_entrypoint_node)) of
+		false ->
+			{503, [], <<"Not joined.">>};
+		true ->
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false -> {404, [], <<"Invalid block.">>};
 		true  ->
@@ -240,6 +244,7 @@ handle('POST', [<<"block">>], Req) ->
 					),
 					{200, [], <<"OK">>}
 			end
+	end
 	end;
 
 %% @doc Share a new transaction with a peer.

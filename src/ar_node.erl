@@ -23,6 +23,7 @@
 -export([get_current_block/1]).
 -export([get_reward_addr/1]).
 -export([get_reward_pool/1]).
+-export([is_joined/1]).
 
 -export([mine/1, mine_at_diff/2, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
@@ -431,6 +432,15 @@ get_hash_list(Node) ->
 		{hashlist, not_joined} -> [];
 		{hashlist, HashList} -> HashList
 		after ?LOCAL_NET_TIMEOUT -> []
+	end.
+
+%% @doc Check whether self node has joined the weave.
+%% Uses hashlist value not_joined as witness.
+is_joined(Node) ->
+	Node ! {get_hashlist, self()},
+	receive
+		{hashlist, not_joined} -> false;
+		{hashlist, _} -> true
 	end.
 
 %% @doc Get the current balance of a given wallet address.
