@@ -203,13 +203,18 @@ handle('POST', [<<"block">>], Req) ->
 	KeyEnc = val_for_key(<<"key">>, Struct),
 	NonceEnc = val_for_key(<<"nonce">>, Struct),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
-	case ar_node:is_joined(whereis(http_entrypoint_node)) of
-		false ->
-			{503, [], <<"Not joined.">>};
-		true ->
-	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
-		false -> {404, [], <<"Invalid block.">>};
-		true  ->
+
+	CheckMFAs = [
+		{{ar_node, is_joined, [whereis(http_entrypoint_node)]},
+			{503, [], <<"Not joined.">>}},
+		{{ar_block, verify_timestamp, [os:system_time(seconds), BShadow]},
+			{404, [], <<"Invalid block.">>}}
+	],
+
+	case verify_all(CheckMFAs) of
+		{error, Response} ->
+			Response;
+		ok ->
 			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 				undefined -> {429, <<"Too many requests.">>};
 				true -> {208, <<"Block already processed.">>};
@@ -244,7 +249,6 @@ handle('POST', [<<"block">>], Req) ->
 					),
 					{200, [], <<"OK">>}
 			end
-	end
 	end;
 
 %% @doc Share a new transaction with a peer.
@@ -1285,6 +1289,23 @@ type_to_mf({block, lookup_filename}) ->
 val_for_key(K, L) ->
 	{K, V} = lists:keyfind(K, 1, L),
 	V.
+
+%% @doc lazily runs a list of bool-returning MFAs; returns after first error.
+verify_all([H|T]) ->
+	case verify_one(H) of
+		{error, Response} -> {error, Response};
+		ok                -> verify_all(T)
+	end.
+
+%% @doc runs a bool-returning MFA
+-type mfa() :: {module(), atom(), list()}.
+-type httptup() :: tuple().
+-spec verify_one(mfa(), httptup()) -> ok | {error, httptup()}.
+verify_one({{M,F,As}, ErrorResponse}) ->
+	case erlang:apply(M, F, As) of
+		true  -> ok;
+		false -> {error, ErrorResponse}
+	end.
 
 %%%
 %%% Tests.
