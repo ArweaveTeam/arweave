@@ -1298,9 +1298,9 @@ verify_all([H|T]) ->
 	end.
 
 %% @doc runs a bool-returning MFA
--type mfa() :: {module(), atom(), list()}.
+-type mfargs() :: {module(), atom(), list()}.
 -type httptup() :: tuple().
--spec verify_one(mfa(), httptup()) -> ok | {error, httptup()}.
+-spec verify_one({mfargs(), httptup()}) -> ok | {error, httptup()}.
 verify_one({{M,F,As}, ErrorResponse}) ->
 	case erlang:apply(M, F, As) of
 		true  -> ok;
@@ -1370,7 +1370,7 @@ node_blacklisting_test(X, N) ->
 			lists:seq(1, N)
 		),
 	ar_blacklist:reset_counters(),
-	L = length(lists:filter(fun(X) -> X== Want end, Responses)),
+	L = length(lists:filter(fun(X) -> X == Want end, Responses)),
 	ar:d(Responses),
 	ar:d(lists:member(Want, Responses)),
 	ar:d(L),
@@ -1453,6 +1453,26 @@ get_block_by_hash_test() ->
 	reregister(Node1),
 	receive after 200 -> ok end,
 	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash, B0#block.hash_list)).
+
+%% @doc Ensure that blocks can be received via a hash.
+post_block_to_unjoined_node_test() ->
+	[B0] = ar_weave:init([]),
+	JB = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B0)),
+	% todo: make fake post with these fields
+	%JSONRecallB = val_for_key(<<"recall_block">>, Struct),
+	%JSONB = val_for_key(<<"new_block">>, Struct),
+	%RecallSize = val_for_key(<<"recall_size">>, Struct),
+	%Port = val_for_key(<<"port">>, Struct),
+	%KeyEnc = val_for_key(<<"key">>, Struct),
+	%NonceEnc = val_for_key(<<"nonce">>, Struct),
+	{ok, {RespTup, _, _, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/block/",
+			JB
+		),
+	?assertEqual({<<"503">>, [], <<"Not joined.">>}, RespTup).
 
 % get_recall_block_by_hash_test() ->
 %	ar_storage:clear(),
