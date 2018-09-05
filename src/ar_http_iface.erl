@@ -202,11 +202,7 @@ handle('POST', [<<"block">>], Req) ->
 	{<<"port">>, Port} = lists:keyfind(<<"port">>, 1, Struct),
 	{<<"key">>, KeyEnc} = lists:keyfind(<<"key">>, 1, Struct),
 	{<<"nonce">>, NonceEnc} = lists:keyfind(<<"nonce">>, 1, Struct),
-	Key = ar_util:decode(KeyEnc),
-	Nonce = ar_util:decode(NonceEnc),
 	BShadow = ar_serialize:json_struct_to_block(JSONB),
-	OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
-		++ ":" ++ integer_to_list(Port)),
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false -> {404, [], <<"Invalid block.">>};
 		true  ->
@@ -217,6 +213,10 @@ handle('POST', [<<"block">>], Req) ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
 					spawn(
 						fun() ->
+							OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
+								++ ":" ++ integer_to_list(Port)),
+							Key = ar_util:decode(KeyEnc),
+							Nonce = ar_util:decode(NonceEnc),
 							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 							RecallHash = ar_util:decode(JSONRecallB),
 							RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
@@ -1310,7 +1310,7 @@ get_tx_reward_test() ->
 	ExpectedPrice = ar:d(ar_tx:calculate_min_tx_cost(1000, B0#block.diff)),
 	ExpectedPrice = ar:d(get_tx_reward({127, 0, 0, 1, 1984}, 1000)).
 
-%% @doc Ensurte that objects are only re-gossiped once.
+%% @doc Ensure that objects are only re-gossiped once.
 single_resgossip_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
