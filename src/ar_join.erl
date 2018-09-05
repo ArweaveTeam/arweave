@@ -61,9 +61,15 @@ start(Node, RawPeers, NewB) ->
 %% @doc Return the current block from a list of peers.
 find_current_block([]) ->
 	unavailable;
-find_current_block([Peer|_]) ->
-	BHL = [Hash|_] = ar_node:get_hash_list(Peer),
-	ar_node:get_full_block(Peer, Hash, BHL).
+find_current_block([Peer|Tail]) ->
+	try ar_node:get_hash_list(Peer) of
+		BHL ->
+			Hash = hd(BHL),
+			ar_node:get_full_block(Peer, Hash, BHL)
+	catch
+		_:_ ->
+			find_current_block(Tail)
+	end.
 
 %% @doc Verify peer(s) are on the same network as the client. Remove any that
 %% are not.
