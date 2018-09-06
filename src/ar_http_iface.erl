@@ -961,7 +961,7 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 
 %% @doc Generate an appropriate URL for a block by its identifier.
 prepare_block_id(ID) when is_binary(ID) ->
-	"/block/hash/" ++ binary_to_list(ID);
+	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
 prepare_block_id(ID) when is_integer(ID) ->
 	"/block/height/" ++ integer_to_list(ID).
 
@@ -1033,8 +1033,8 @@ get_hash_list(Peer) ->
 			"/hash_list",
 			[]
 		),
-	% ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body)).
-	ar_serialize:dejsonify(Body).
+	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Body)).
+
 get_hash_list(Peer, Hash) ->
 	Response =
 		ar_httpc:request(
@@ -1159,6 +1159,7 @@ process_get_info(Body) ->
 handle_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_serialize:json_struct_to_block(Body);
 handle_block_response({error, _}) -> unavailable;
+handle_block_response({ok, {{<<"400">>, _}, _, _, _, _}}) -> unavailable;
 handle_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
