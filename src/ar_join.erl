@@ -28,7 +28,6 @@ start(Node, RawPeers, NewB) ->
 			PID = spawn(
 				fun() ->
 					Peers = filter_peer_list(RawPeers),
-					join_peers(Peers),
 					case ?IS_BLOCK(NewB) of
 						true ->
 							ar:report_console(
@@ -41,6 +40,7 @@ start(Node, RawPeers, NewB) ->
 							),
 							get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 							Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
+							join_peers(Peers),
 							spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end);
 						false ->
 							ar:report_console(
