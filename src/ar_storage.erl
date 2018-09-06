@@ -10,6 +10,7 @@
 -export([calculate_disk_space/0, calculate_used_space/0, update_directory_size/0]).
 -export([lookup_block_filename/1,lookup_tx_filename/1]).
 -export([do_read_block/2, do_read_tx/1]).
+-export([ensure_directories/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -21,6 +22,15 @@
 -define(BLOCK_ENC_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
 -define(DIRECTORY_SIZE_TIMER, 300000).
+
+%% @doc Ensure that all of the relevant storage directories exist.
+ensure_directories() ->
+	filelib:ensure_dir(?TX_DIR),
+	filelib:ensure_dir(?BLOCK_DIR),
+	filelib:ensure_dir(?BLOCK_ENC_DIR),
+	filelib:ensure_dir(?WALLET_LIST_DIR),
+	filelib:ensure_dir(?HASH_LIST_DIR),
+	filelib:ensure_dir(?LOG_DIR).
 
 %% @doc Clear the cache of saved blocks.
 clear() ->

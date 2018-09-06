@@ -172,6 +172,7 @@ start(
 		auto_update = AutoUpdate,
 		enable = Enable
 	}) ->
+	ar_storage:ensure_directories(),
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
 	%register prometheus stats collector,
@@ -337,6 +338,7 @@ start(
 		false -> ok;
 		_ -> receive after infinity -> ok end
 	end.
+
 %% @doc Create a name for a session log file.
 generate_logfile_name() ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
@@ -395,6 +397,7 @@ init(Args) ->
 
 %% @doc Run all of the tests associated with the core project.
 test() ->
+	ar_storage:ensure_directories(),
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(
@@ -414,6 +417,7 @@ test_coverage() ->
 
 %% @doc Run the tests for a single module.
 test(Mod) ->
+	ar_storage:ensure_directories(),
 	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
 
 %% @doc Run tests on the apps.
