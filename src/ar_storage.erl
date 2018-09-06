@@ -107,7 +107,7 @@ write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(RawB) ->
 	ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]),
 	WalletID = write_wallet_list(RawB#block.wallet_list),
-	B = RawB#block { wallet_list = ar_util:encode(WalletID) },
+	B = RawB#block { wallet_list = WalletID },
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	case enough_space(byte_size(BlockToWrite)) of
 		true ->
