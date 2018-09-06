@@ -218,27 +218,32 @@ do_read_block(Filename, BHL) ->
 	{ok, Binary} = file:read_file(Filename),
 	B = ar_serialize:json_struct_to_block(Binary),
 	WL = B#block.wallet_list,
-	B#block {
-		hash_list = ar_block:generate_hash_list_for_block(B, BHL),
-		wallet_list =
-			if is_binary(WL) ->
-				case read_wallet_list(WL) of
-					{error, Type} ->
-						ar:report(
-							[
-								{
-									error_reading_wallet_list_from_disk, 
-									ar_util:encode(B#block.indep_hash)
-								},
-								{type, Type}
-							]
-						),
-						not_found;
-					ReadWL -> ReadWL
-				end;
-			true -> WL
-			end
-	}.
+	FinalB =
+		B#block {
+			hash_list = ar_block:generate_hash_list_for_block(B, BHL),
+			wallet_list =
+				if is_binary(WL) ->
+					case read_wallet_list(WL) of
+						{error, Type} ->
+							ar:report(
+								[
+									{
+										error_reading_wallet_list_from_disk, 
+										ar_util:encode(B#block.indep_hash)
+									},
+									{type, Type}
+								]
+							),
+							not_found;
+						ReadWL -> ReadWL
+					end;
+				true -> WL
+				end
+		},
+	case FinalB#block.wallet_list of
+		not_found -> unavailable;
+		_ -> FinalB
+	end.
 
 %% @doc Read an encrypted block from disk, given a hash.
 read_encrypted_block(unavailable) -> unavailable;
