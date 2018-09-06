@@ -61,7 +61,8 @@ get_full_block(Peers, ID, BHL) when is_list(Peers) ->
 				unavailable ->
 					ar_storage:invalidate_block(Block),
 					get_full_block(Peers, ID, BHL);
-				FinalB -> FinalB
+				FinalB ->
+					FinalB
 			end
 	end;
 get_full_block(Pid, ID, BHL) when is_pid(Pid) ->

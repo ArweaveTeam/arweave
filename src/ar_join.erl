@@ -63,9 +63,11 @@ find_current_block([]) ->
 	unavailable;
 find_current_block([Peer|Tail]) ->
 	try ar_node:get_hash_list(Peer) of
+		[] ->
+			find_current_block(Tail);
 		BHL ->
 			Hash = hd(BHL),
-			ar_node:get_full_block(Peer, Hash, BHL)
+			ar_node_utils:get_full_block(Peer, Hash, BHL)
 	catch
 		_:_ ->
 			find_current_block(Tail)
@@ -117,11 +119,11 @@ get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	PreviousBlock = ar_node:get_full_block(Peers, NewB#block.previous_block, NewB#block.hash_list),
+	PreviousBlock = ar_node_utils:get_full_block(Peers, NewB#block.previous_block, NewB#block.hash_list),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-			case {NewB, ar_node:get_full_block(Peers, RecallBlock, NewB#block.hash_list)} of
+			case {NewB, ar_node_utils:get_full_block(Peers, RecallBlock, NewB#block.hash_list)} of
 				{B, unavailable} ->
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
@@ -131,7 +133,6 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 							{retrying}
 						]
 					),
-					% mue: timer:sleep(3000),
 					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
 				{B, R} ->
 					ar_storage:write_tx(B#block.txs),
@@ -164,7 +165,7 @@ fill_to_capacity(Peers, ToWrite, BHL) ->
 	timer:sleep(30 * 1000),
 	try
 		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
-		case ar_node:get_full_block(Peers, RandHash, BHL) of
+		case ar_node_utils:get_full_block(Peers, RandHash, BHL) of
 			unavailable ->
 				timer:sleep(3000),
 				fill_to_capacity(Peers, ToWrite, BHL);

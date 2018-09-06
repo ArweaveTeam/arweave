@@ -149,7 +149,7 @@ server(S = #state {
 				)
 		end;
 	apply_next_block ->
-		NextB = ar_node:get_full_block(Peers, NextH, BHL),
+		NextB = ar_node_utils:get_full_block(Peers, NextH, BHL),
 		ar:d({applying_fork_recovery, ar_util:encode(NextH)}),
 		case ?IS_BLOCK(NextB) of
 			% could not retrieve the next block to be applied
@@ -216,8 +216,8 @@ server(S = #state {
 							true ->
 								BHashList = [B#block.indep_hash|B#block.hash_list],
 								case B#block.height of
-									0 -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list), BHL);
-									_ -> RecallB = ar_node:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list), BHL)
+									0 -> RecallB = ar_node_utils:get_full_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list), BHL);
+									_ -> RecallB = ar_node_utils:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list), BHL)
 								end,
 								%% TODO: Rewrite validate so it also takes recall block txs
 								% ar:d({old_block, B#block.indep_hash}),

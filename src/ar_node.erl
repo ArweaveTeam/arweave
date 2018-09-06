@@ -8,7 +8,7 @@
 -export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7]).
 -export([stop/1]).
 
--export([get_blocks/1, get_block/3, get_full_block/3]).
+-export([get_blocks/1, get_block/3]).
 -export([get_tx/2]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
@@ -276,42 +276,6 @@ get_block(Proc, ID, BHL) when is_pid(Proc) ->
 get_block(Host, ID, BHL) ->
 	% handle external peer request
 	ar_http_iface:get_block(Host, ID, BHL).
-
-%% @doc Get a specific full block (a block containing full txs) via
-%% blocks indep_hash.
-get_full_block(Peers, ID, BHL) when is_list(Peers) ->
-	% check locally first, if not found ask list of external peers for block
-	case ar_storage:read_block(ID, BHL) of
-		unavailable ->
-			lists:foldl(
-				fun(Peer, Acc) ->
-					case is_atom(Acc) of
-						false -> Acc;
-						true ->
-							Full = get_full_block(Peer, ID, BHL),
-							case is_atom(Full) of
-								true -> Acc;
-								false -> Full
-							end
-					end
-				end,
-				unavailable,
-				Peers
-			);
-		B ->
-			case make_full_block(ID, BHL) of
-				unavailable ->
-					ar_storage:invalidate_block(B),
-					get_full_block(Peers, ID, BHL);
-				FinalB -> FinalB
-			end
-	end;
-get_full_block(Proc, ID, BHL) when is_pid(Proc) ->
-	% attempt to get block from local storage and add transactions
-	make_full_block(ID, BHL);
-get_full_block(Host, ID, BHL) ->
-	% handle external peer request
-	ar_http_iface:get_full_block(Host, ID, BHL).
 
 %% @doc Convert a block with tx references into a full block, that is a block
 %% containing the entirety of all its referenced txs.
@@ -985,7 +949,7 @@ get_encrypted_full_block(Host, ID, BHL) ->
 retry_full_block(_, _, Response, 0, _) ->
 	Response;
 retry_full_block(Host, ID, _, Count, BHL) ->
-	case get_full_block(Host, ID, BHL) of
+	case ar_node_utils:get_full_block(Host, ID, BHL) of
 		not_found ->
 			timer:sleep(3000),
 			retry_full_block(Host, ID, not_found, Count - 1, BHL);

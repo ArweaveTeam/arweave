@@ -523,7 +523,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			ar_storage:write_block_hash_list(BinID, NewHL),
 			{ok, ar_node_utils:reset_miner(
 				StateNew#{
-					hash_list => NewHL,
+					hash_list            => NewHL,
 					gossip               => NewGS,
 					txs                  => ar_track_tx_db:remove_bad_txs(NotMinedTXs), % TXs not included in the block
 					height               => NextB#block.height,

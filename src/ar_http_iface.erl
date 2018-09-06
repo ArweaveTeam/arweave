@@ -142,7 +142,7 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 				false ->
 					case ar_tx_db:get(ID) of
 						not_found -> {404, [], <<"Not Found.">>};
-						Err       -> {410, [], list_to_binary(Err)}
+						Err		  -> {410, [], list_to_binary(Err)}
 					end
 			end;
 		{ok, Filename} ->
@@ -526,17 +526,17 @@ handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
 
 %% @doc Return the wallet list associated with a block.
 handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
-    HTTPEntryPointPid = whereis(http_entrypoint_node),
+	HTTPEntryPointPid = whereis(http_entrypoint_node),
 	B =
 		case Type of
 			<<"height">> ->
 				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
 				ar_node:get_block(
-                    HTTPEntryPointPid,
+					HTTPEntryPointPid,
 					list_to_integer(binary_to_list(ID)),
 					CurrentBHL);
 			<<"hash">> ->
-                ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
+				ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
 		end,
 	case ?IS_BLOCK(B) of
 		true ->
@@ -961,7 +961,7 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 
 %% @doc Generate an appropriate URL for a block by its identifier.
 prepare_block_id(ID) when is_binary(ID) ->
-	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
+	"/block/hash/" ++ binary_to_list(ID);
 prepare_block_id(ID) when is_integer(ID) ->
 	"/block/height/" ++ integer_to_list(ID).
 
@@ -1033,7 +1033,8 @@ get_hash_list(Peer) ->
 			"/hash_list",
 			[]
 		),
-	ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body)).
+	% ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body)).
+	ar_serialize:dejsonify(Body).
 get_hash_list(Peer, Hash) ->
 	Response =
 		ar_httpc:request(
