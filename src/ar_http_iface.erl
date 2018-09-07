@@ -807,10 +807,12 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 			false -> <<>>
 		end,
 	{TempJSONStruct} = ar_serialize:block_to_json_struct(NewBShadow),
+	HashList = lists:map(fun ar_util:encode/1, NewBShadow#block.hash_list),
 	JSONStruct =
 		{
-			[{<<"hash_list">>, NewBShadow#block.hash_list }|TempJSONStruct]
+			[{<<"hash_list">>, HashList }|TempJSONStruct]
 		},
+	ar:d([themue, jsonstruct, JSONStruct]),
 	case ar_key_db:get(RecallBHash) of
 		[{Key, Nonce}] ->
 			ar_httpc:request(
@@ -1298,7 +1300,7 @@ get_info_test() ->
 	?assertEqual(<<?NETWORK_NAME>>, get_info({127, 0, 0, 1, 1984}, name)),
 	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, get_info({127, 0, 0, 1, 1984}, release)),
 	?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
-	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, peers)),
+	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, peers)),
 	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, blocks)),
 	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, height)).
 
@@ -1313,7 +1315,8 @@ get_tx_reward_test() ->
 	ExpectedPrice = ar:d(get_tx_reward({127, 0, 0, 1, 1984}, 1000)).
 
 %% @doc Ensurte that objects are only re-gossiped once.
-single_resgossip_test() ->
+single_regossip_test_() ->
+	{ timeout, 60, fun() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
@@ -1326,7 +1329,8 @@ single_resgossip_test() ->
 			end,
 			lists:seq(1, 100)
 		),
-	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]).
+	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ])
+	end}.
 
 %% @doc Test that nodes sending too many requests are temporarily blocked.
 node_blacklisting_test() ->
