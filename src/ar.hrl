@@ -175,7 +175,7 @@
 	diff = ?DEFAULT_DIFF, % Puzzle difficulty, number of preceeding zeroes.
 	height = -1, % How many blocks have passed since the Genesis block?
 	hash = <<>>, % A hash of this block, the previous block and the recall block.
-	indep_hash = [], % A hash of this block JSON encoded.
+	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
 	txs = [], % A list of transaction records associated with this block.
 	hash_list = undefined, % A list of all previous indepp hashes.
 	wallet_list = [], % A map of wallet balances, or undefined.

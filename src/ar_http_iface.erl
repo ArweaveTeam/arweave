@@ -142,7 +142,7 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 				false ->
 					case ar_tx_db:get(ID) of
 						not_found -> {404, [], <<"Not Found.">>};
-						Err       -> {410, [], list_to_binary(Err)}
+						Err		  -> {410, [], list_to_binary(Err)}
 					end
 			end;
 		{ok, Filename} ->
@@ -535,17 +535,17 @@ handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
 
 %% @doc Return the wallet list associated with a block.
 handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
-    HTTPEntryPointPid = whereis(http_entrypoint_node),
+	HTTPEntryPointPid = whereis(http_entrypoint_node),
 	B =
 		case Type of
 			<<"height">> ->
 				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
 				ar_node:get_block(
-                    HTTPEntryPointPid,
+					HTTPEntryPointPid,
 					list_to_integer(binary_to_list(ID)),
 					CurrentBHL);
 			<<"hash">> ->
-                ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
+				ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
 		end,
 	case ?IS_BLOCK(B) of
 		true ->
@@ -816,10 +816,12 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 			false -> <<>>
 		end,
 	{TempJSONStruct} = ar_serialize:block_to_json_struct(NewBShadow),
+	HashList = lists:map(fun ar_util:encode/1, NewBShadow#block.hash_list),
 	JSONStruct =
 		{
-			[{<<"hash_list">>, NewBShadow#block.hash_list }|TempJSONStruct]
+			[{<<"hash_list">>, HashList }|TempJSONStruct]
 		},
+	ar:d([themue, jsonstruct, JSONStruct]),
 	case ar_key_db:get(RecallBHash) of
 		[{Key, Nonce}] ->
 			ar_httpc:request(
@@ -1042,7 +1044,8 @@ get_hash_list(Peer) ->
 			"/hash_list",
 			[]
 		),
-	ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body)).
+	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Body)).
+
 get_hash_list(Peer, Hash) ->
 	Response =
 		ar_httpc:request(
@@ -1167,6 +1170,7 @@ process_get_info(Body) ->
 handle_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_serialize:json_struct_to_block(Body);
 handle_block_response({error, _}) -> unavailable;
+handle_block_response({ok, {{<<"400">>, _}, _, _, _, _}}) -> unavailable;
 handle_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
@@ -1322,7 +1326,7 @@ get_info_test() ->
 	?assertEqual(<<?NETWORK_NAME>>, get_info({127, 0, 0, 1, 1984}, name)),
 	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, get_info({127, 0, 0, 1, 1984}, release)),
 	?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
-	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, peers)),
+	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, peers)),
 	?assertEqual(1, get_info({127, 0, 0, 1, 1984}, blocks)),
 	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, height)).
 
@@ -1337,7 +1341,8 @@ get_tx_reward_test() ->
 	ExpectedPrice = ar:d(get_tx_reward({127, 0, 0, 1, 1984}, 1000)).
 
 %% @doc Ensure that objects are only re-gossiped once.
-single_resgossip_test() ->
+single_regossip_test_() ->
+	{ timeout, 60, fun() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
@@ -1350,7 +1355,8 @@ single_resgossip_test() ->
 			end,
 			lists:seq(1, 100)
 		),
-	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]).
+	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ])
+	end}.
 
 %% @doc Test that nodes sending too many requests are temporarily blocked.
 node_blacklisting_test() ->

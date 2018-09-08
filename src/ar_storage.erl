@@ -10,6 +10,7 @@
 -export([calculate_disk_space/0, calculate_used_space/0, update_directory_size/0]).
 -export([lookup_block_filename/1,lookup_tx_filename/1]).
 -export([do_read_block/2, do_read_tx/1]).
+-export([ensure_directories/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -21,6 +22,15 @@
 -define(BLOCK_ENC_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
 -define(DIRECTORY_SIZE_TIMER, 300000).
+
+%% @doc Ensure that all of the relevant storage directories exist.
+ensure_directories() ->
+	filelib:ensure_dir(?TX_DIR),
+	filelib:ensure_dir(?BLOCK_DIR),
+	filelib:ensure_dir(?BLOCK_ENC_DIR),
+	filelib:ensure_dir(?WALLET_LIST_DIR),
+	filelib:ensure_dir(?HASH_LIST_DIR),
+	filelib:ensure_dir(?LOG_DIR).
 
 %% @doc Clear the cache of saved blocks.
 clear() ->
@@ -97,7 +107,7 @@ write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(RawB) ->
 	ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]),
 	WalletID = write_wallet_list(RawB#block.wallet_list),
-	B = RawB#block { wallet_list = ar_util:encode(WalletID) },
+	B = RawB#block { wallet_list = WalletID },
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	case enough_space(byte_size(BlockToWrite)) of
 		true ->
@@ -208,27 +218,32 @@ do_read_block(Filename, BHL) ->
 	{ok, Binary} = file:read_file(Filename),
 	B = ar_serialize:json_struct_to_block(Binary),
 	WL = B#block.wallet_list,
-	B#block {
-		hash_list = ar_block:generate_hash_list_for_block(B, BHL),
-		wallet_list =
-			if is_binary(WL) ->
-				case read_wallet_list(WL) of
-					{error, Type} ->
-						ar:report(
-							[
-								{
-									error_reading_wallet_list_from_disk, 
-									ar_util:encode(B#block.indep_hash)
-								},
-								{type, Type}
-							]
-						),
-						not_found;
-					ReadWL -> ReadWL
-				end;
-			true -> WL
-			end
-	}.
+	FinalB =
+		B#block {
+			hash_list = ar_block:generate_hash_list_for_block(B, BHL),
+			wallet_list =
+				if is_binary(WL) ->
+					case read_wallet_list(WL) of
+						{error, Type} ->
+							ar:report(
+								[
+									{
+										error_reading_wallet_list_from_disk, 
+										ar_util:encode(B#block.indep_hash)
+									},
+									{type, Type}
+								]
+							),
+							not_found;
+						ReadWL -> ReadWL
+					end;
+				true -> WL
+				end
+		},
+	case FinalB#block.wallet_list of
+		not_found -> unavailable;
+		_ -> FinalB
+	end.
 
 %% @doc Read an encrypted block from disk, given a hash.
 read_encrypted_block(unavailable) -> unavailable;
