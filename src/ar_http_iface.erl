@@ -8,7 +8,6 @@
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
 -export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
--export([node_blacklisting_test/2]).
 -include("ar.hrl").
 -include_lib("lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -1358,36 +1357,48 @@ single_regossip_test_() ->
 	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ])
 	end}.
 
-%% @doc Test that nodes sending too many requests are temporarily blocked.
-node_blacklisting_test() ->
-	node_blacklisting_test(get_info, ?MAX_REQUESTS + 1).
+%% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
+-spec node_blacklisting_get_spammer_test() -> ok.
+node_blacklisting_get_spammer_test() ->
+	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
+	node_blacklisting_test_frame(RequestFun, ErrorResponse, ?MAX_REQUESTS + 1).
 
-node_blacklisting_test(X, N) ->
+%% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
+-spec node_blacklisting_post_spammer_test() -> ok.
+node_blacklisting_post_spammer_test() ->
+	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
+	node_blacklisting_test_frame(RequestFun, ErrorResponse, ?MAX_REQUESTS + 1).
+
+%% @doc Given a label, return a fun and a message.
+-spec get_fun_msg_pair(atom()) -> {fun(), any()}.
+get_fun_msg_pair(get_info) ->
+	{ fun(_) -> get_info({127, 0, 0, 1, 1984}) end
+	, info_unavailable};
+get_fun_msg_pair(send_new_tx) ->
+	{ fun(_) ->
+			case send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)) of
+				{ok,
+					{{<<"429">>, <<"Too Many Requests">>}, _,
+						<<"Too Many Requests">>, _, _}} ->
+					too_many_requests;
+				_ -> ok
+			end
+		end
+	, too_many_requests}.
+
+%% @doc Frame to test spamming an endpoint.
+-spec node_blacklisting_test_frame(fun(), any(), non_neg_integer()) -> ok.
+node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests) ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	reregister(http_entrypoint_node, Node1),
-	{Fun, Want} = nbt_get_pair(X),
-	Overflow = N - ?MAX_REQUESTS,
-	Responses =
-		ar_util:pmap(
-			Fun,
-			%fun(_) -> get_info({127, 0, 0, 1, 1984}) end,
-			lists:seq(1, N)
-		),
+	Responses =	ar_util:pmap(RequestFun, lists:seq(1, NRequests)),
+	?assertEqual(length(Responses), NRequests),
 	ar_blacklist:reset_counters(),
-	L = length(lists:filter(fun(X) -> X == Want end, Responses)),
-	ar:d(Responses),
-	ar:d(lists:member(Want, Responses)),
-	ar:d(L),
-	?assert(L == Overflow).
-
-nbt_get_pair(get_info) ->
-	{ fun(_) -> get_info({127, 0, 0, 1, 1984}) end
-	, info_unavailable};
-nbt_get_pair(send_new_tx) ->
-	{ fun(_) -> send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)) end
-	, {<<"429">>, <<"Too many requests.">>}}.
+	ExpectedErrors = lists:max([NRequests - ?MAX_REQUESTS, 0]),
+	ActualErrors = length(lists:filter(fun(X) -> X == ErrorResponse end, Responses)),
+	?assertEqual(ExpectedErrors, ActualErrors).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->
