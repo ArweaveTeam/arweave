@@ -699,7 +699,7 @@ server(SPid, WPid, TaskQueue) ->
 handle(_SPid, Msg) when is_record(Msg, gs_msg) ->
 	% We have received a gossip mesage. Gossip state manipulation
 	% is always a worker task.
-	{task, {gossip_msg, Msg}};
+	{task, {gossip_message, Msg}};
 handle(_SPid, {add_tx, TX}) ->
 	{task, {add_tx, TX}};
 handle(_SPid, {add_peers, Peers}) ->

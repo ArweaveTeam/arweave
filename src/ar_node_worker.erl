@@ -74,9 +74,9 @@ server(NPid, SPid) ->
 
 %% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks like
 %% setter can be done directy, more complex ones are handled as private API functions.
-handle(SPid, {gossip_msg, Msg}) ->
-	{ok, Gossip} = ar_node_state:lookup(SPid, gossip),
-	handle_gossip(SPid, ar_gossip:recv(Gossip, Msg));
+handle(SPid, {gossip_message, Msg}) ->
+	{ok, GS} = ar_node_state:lookup(SPid, gossip),
+	handle_gossip(SPid, ar_gossip:recv(GS, Msg));
 handle(SPid, {add_tx, TX}) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, potential_txs]),
 	case add_tx(StateIn, TX) of
@@ -88,7 +88,7 @@ handle(SPid, {add_tx, TX}) ->
 	{ok, add_tx};
 handle(SPid, {encounter_new_tx, TX}) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [gossip, txs, waiting_txs, floating_wallet_list]),
-	NewGS = ar_gossip:send(maps:get(gossip, StateIn), {add_tx, TX}),
+	{NewGS, _} = ar_gossip:send(maps:get(gossip, StateIn), {add_tx, TX}),
 	case encounter_new_tx(StateIn, TX, NewGS) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -398,7 +398,6 @@ integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonc
 integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 	#{
 		id            := BinID,
-		node          := Node,
 		hash_list     := HashList,
 		wallet_list   := RawWalletList,
 		txs           := TXs,

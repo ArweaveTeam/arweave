@@ -812,7 +812,6 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 		{
 			[{<<"hash_list">>, HashList }|TempJSONStruct]
 		},
-	ar:d([themue, jsonstruct, JSONStruct]),
 	case ar_key_db:get(RecallBHash) of
 		[{Key, Nonce}] ->
 			ar_httpc:request(
@@ -1354,7 +1353,7 @@ node_blacklisting_test(X, N) ->
 	ar:d(Responses),
 	ar:d(lists:member(Want, Responses)),
 	ar:d(L),
-	?assert(L == Overflow).
+	?assertEqual(L, Overflow).
 
 nbt_get_pair(get_info) ->
 	{ fun(_) -> get_info({127, 0, 0, 1, 1984}) end
@@ -1715,7 +1714,7 @@ get_multiple_pending_txs_test_() ->
 				end
 			end,
 			1000,
-			30000
+			45000
 		),
 		?assertEqual(
 			[

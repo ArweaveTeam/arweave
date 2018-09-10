@@ -203,22 +203,32 @@ tiny_blockweave_with_mining_test() ->
 
 %% @doc Ensure that the network add data and have it mined into blocks.
 tiny_blockweave_with_added_data_test() ->
-	ar_storage:clear(),
-	TestData = ar_tx:new(<<"TEST DATA">>),
-	ar_storage:write_tx(TestData),
-	B0 = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	Node1 = ar_node:start([], B0),
-	Node2 = ar_node:start([Node1], B0),
-	ar_node:add_peers(Node1, Node2),
-	timer:sleep(500),
-	ar_node:add_tx(Node2, TestData),
-	timer:sleep(1000),
-	ar_node:mine(Node1),
-	timer:sleep(3000),
-	Bs = ar_node:get_blocks(Node2),
-	TestDataID	= TestData#tx.id,
-	[TestDataID] = (hd(ar_storage:read_block(Bs, Bs)))#block.txs.
+	{timeout, 120, fun() ->
+		ar_storage:clear(),
+		TestData = ar_tx:new(<<"TEST DATA">>),
+		ar_storage:write_tx(TestData),
+		B0 = ar_weave:init([]),
+		ar_storage:write_block(B0),
+		Node1 = ar_node:start([], B0),
+		Node2 = ar_node:start([Node1], B0),
+		ar_node:add_peers(Node1, Node2),
+		timer:sleep(500),
+		ar_node:add_tx(Node2, TestData),
+		timer:sleep(1000),
+		ar_node:mine(Node1),
+		ar_util:do_until(
+			fun() ->
+				BHL = ar_node:get_blocks(Node2),
+				BL = ar_storage:read_block(BHL, BHL),
+				BHead = hd(BL),
+				TXs = BHead#block.txs,
+				TestDataID = TestData#tx.id,
+				[TestDataID] == TXs
+			end,
+			1000,
+			60000
+		)
+	end}.
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
 medium_blockweave_multi_mine_test_() ->
@@ -232,9 +242,9 @@ medium_blockweave_multi_mine_test_() ->
 		Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
 		[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 		% Test data 1.
-		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
-		timer:sleep(1000),
-		ar_node:mine(ar_util:pick_random(Nodes)),
+		MNode1 = ar_util:pick_random(Nodes),
+		ar_node:add_tx(MNode1, TestData1),
+		ar_node:mine(MNode1),
 		BNode = ar_util:pick_random(Nodes),
 		{ok, B1} = ar_util:do_until(
 			fun() ->
@@ -244,13 +254,13 @@ medium_blockweave_multi_mine_test_() ->
 					true            -> false
 				end
 			end,
-			500,
+			1000,
 			30000
 		),
 		% Test data 2.
-		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
-		timer:sleep(1000),
-		ar_node:mine(ar_util:pick_random(Nodes)),
+		MNode2 = ar_util:pick_random(Nodes),
+		ar_node:add_tx(MNode2, TestData2),
+		ar_node:mine(MNode2),
 		{ok, B2} = ar_util:do_until(
 			fun() ->
 				Bs = ar_node:get_blocks(BNode),
@@ -259,15 +269,19 @@ medium_blockweave_multi_mine_test_() ->
 					true            -> false
 				end
 			end,
-			500,
+			1000,
 			30000
 		),
 		TestDataID1 = TestData1#tx.id,
 		TestDataID2 = TestData2#tx.id,
-		% BHL = ar_node:get_hash_list(ar_util:pick_random(Nodes)),
 		BHL = ar_node:get_hash_list(BNode),
-		?assertEqual([TestDataID1], (hd(ar_storage:read_block(B1, BHL)))#block.txs),
-		?assertEqual([TestDataID2], (hd(ar_storage:read_block(B2, BHL)))#block.txs)
+		?debugFmt("BHL = ~w", [BHL]),
+		HdB1 = hd(ar_storage:read_block(B1, BHL)),
+		?debugFmt("Head B1 = ~w", [HdB1]),
+		HdB2 = hd(ar_storage:read_block(B2, BHL)),
+		?debugFmt("Head B2 = ~w", [HdB2]),
+		?assertEqual([TestDataID1], HdB1#block.txs),
+		?assertEqual([TestDataID2], HdB2#block.txs)
 	end}.
 
 %% @doc Setup a network, mine a block, cause one node to forget that block.
