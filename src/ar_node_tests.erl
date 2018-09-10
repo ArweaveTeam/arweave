@@ -24,14 +24,14 @@ single_tx_regossip_test() ->
 	ar_gossip:send(InitGS, {add_tx, TX}),
 	receive
 		Msg1 when is_record(Msg1, gs_msg) ->
-			{_NewGS1, {add_tx, TX1}} = ar_gossip:recv(InitGS, Msg1),
+			{add_tx, TX1} = Msg1#gs_msg.data,
 			?assertEqual(TX, TX1)
 	end,
 	% Send transaction second time.
 	ar_gossip:send(InitGS, {add_tx, TX}),
 	receive
 		Msg2 when is_record(Msg2, gs_msg) ->
-			{_NewGS2, {add_tx, TX2}} = ar_gossip:recv(InitGS, Msg2),
+			{add_tx, TX2} = Msg2#gs_msg.data,
 			?assertNotEqual(TX, TX2)
 	after 1000 ->
 		ok

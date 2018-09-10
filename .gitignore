@@ -4,3 +4,7 @@
 *.json
 .arweave.plt
 testlog
+
+priv/jiffy\.so
+
+priv/prometheus_process_collector\.so
