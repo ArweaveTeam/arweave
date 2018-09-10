@@ -43,7 +43,7 @@
 %% @doc NB: Setting the default difficulty high will cause TNT to fail.
 -define(DEFAULT_DIFF, 8).
 -ifdef(DEBUG).
--define(MIN_DIFF, 15).
+-define(MIN_DIFF, ?DEFAULT_DIFF).
 -else.
 -define(MIN_DIFF, 31).
 -endif.
