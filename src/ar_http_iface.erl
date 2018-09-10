@@ -1557,22 +1557,64 @@ add_external_block_test_() ->
 		ar_storage:clear(),
 		[BGen] = ar_weave:init([]),
 		Node1 = ar_node:start([], [BGen]),
+		reregister(http_entrypoint_node, Node1),
+		timer:sleep(500),
+		Bridge = ar_bridge:start([], Node1),
+		reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		Node2 = ar_node:start([], [BGen]),
+		ar_node:mine(Node2),
+		ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node2)) == 2
+			end,
+			100,
+			10 * 1000
+		),
+		[BTest|_] = ar_node:get_blocks(Node2),
+		reregister(Node1),
+		send_new_block(
+			{127, 0, 0, 1, 1984},
+			?DEFAULT_HTTP_IFACE_PORT,
+			ar:d(ar_storage:read_block(BTest, ar_node:get_hash_list(Node2))),
+			BGen
+		),
+		% Wait for test block and assert.
+		?assert(ar_util:do_until(
+			fun() ->
+				length(ar:d(ar_node:get_blocks(Node1))) > 1
+			end,
+			1000,
+			10 * 1000
+		)),
+		[HB | TBs] = ar_node:get_blocks(Node1),
+		?assertEqual(HB, BTest),
+		LB = lists:last(TBs),
+		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
+	end}.
+
+%% @doc Ensure that blocks can be added to a network from outside
+%% a single node.
+fork_recover_by_http_test_() ->
+	%% TODO: faulty test: fails as Genesis block is used as recall block
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
 		reregister(Node1),
 		Bridge = ar_bridge:start([], Node1),
 		reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node1, Bridge),
 		Node2 = ar_node:start([], [BGen]),
-		% Generate enough blocks to rise difference.
-		lists:foreach(
-			fun(_) ->
-				ar_node:mine(Node2),
-				timer:sleep(500)
-			end,
-			lists:seq(1, ?RETARGET_BLOCKS + 1)
-		),
+		ar_node:mine(Node2),
+		timer:sleep(500),
+		ar_node:mine(Node2),
+		timer:sleep(500),
+		ar_node:mine(Node2),
+		timer:sleep(500),
 		ar_util:do_until(
 			fun() ->
-				length(ar_node:get_blocks(Node2)) > (?RETARGET_BLOCKS + 1)
+				length(ar_node:get_blocks(Node2)) > 5
 			end,
 			1000,
 			10 * 1000
