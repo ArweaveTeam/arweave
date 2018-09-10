@@ -819,7 +819,6 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 		{
 			[{<<"hash_list">>, HashList }|TempJSONStruct]
 		},
-	ar:d([themue, jsonstruct, JSONStruct]),
 	case ar_key_db:get(RecallBHash) of
 		[{Key, Nonce}] ->
 			ar_httpc:request(
@@ -1377,6 +1376,14 @@ single_regossip_test_() ->
 	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ])
 	end}.
 
+%% @doc Unjoined nodes should not accept blocks
+post_block_to_unjoined_node_test() ->
+	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
+	{ok, {RespTup, _, Body, _, _}} =
+		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", JB),
+	?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
+	?assertEqual(<<"Not joined.">>, Body).
+
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
 -spec node_blacklisting_get_spammer_test() -> ok.
 node_blacklisting_get_spammer_test() ->
@@ -1392,10 +1399,14 @@ node_blacklisting_post_spammer_test() ->
 %% @doc Given a label, return a fun and a message.
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
 get_fun_msg_pair(get_info) ->
-	{ fun(_) -> get_info({127, 0, 0, 1, 1984}) end
+	{ fun(_) ->
+			timer:sleep(50),
+			ar:d(get_info({127, 0, 0, 1, 1984}))
+		end
 	, info_unavailable};
 get_fun_msg_pair(send_new_tx) ->
 	{ fun(_) ->
+			timer:sleep(50),
 			case send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)) of
 				{ok,
 					{{<<"429">>, <<"Too Many Requests">>}, _,
@@ -1409,10 +1420,6 @@ get_fun_msg_pair(send_new_tx) ->
 %% @doc Frame to test spamming an endpoint.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests) ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	reregister(http_entrypoint_node, Node1),
 	Responses =	ar_util:pmap(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
 	ar_blacklist:reset_counters(),
@@ -1490,14 +1497,6 @@ get_block_by_hash_test() ->
 	reregister(Node1),
 	receive after 200 -> ok end,
 	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash, B0#block.hash_list)).
-
-%% @doc Unjoined nodes should not accept blocks
-post_block_to_unjoined_node_test() ->
-	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
-	{ok, {RespTup, _, Body, _, _}} =
-		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", JB),
-	?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
-	?assertEqual(<<"Not joined.">>, Body).
 
 % get_recall_block_by_hash_test() ->
 %	ar_storage:clear(),
@@ -1623,22 +1622,64 @@ add_external_block_test_() ->
 		ar_storage:clear(),
 		[BGen] = ar_weave:init([]),
 		Node1 = ar_node:start([], [BGen]),
+		reregister(http_entrypoint_node, Node1),
+		timer:sleep(500),
+		Bridge = ar_bridge:start([], Node1),
+		reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		Node2 = ar_node:start([], [BGen]),
+		ar_node:mine(Node2),
+		ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node2)) == 2
+			end,
+			100,
+			10 * 1000
+		),
+		[BTest|_] = ar_node:get_blocks(Node2),
+		reregister(Node1),
+		send_new_block(
+			{127, 0, 0, 1, 1984},
+			?DEFAULT_HTTP_IFACE_PORT,
+			ar:d(ar_storage:read_block(BTest, ar_node:get_hash_list(Node2))),
+			BGen
+		),
+		% Wait for test block and assert.
+		?assert(ar_util:do_until(
+			fun() ->
+				length(ar:d(ar_node:get_blocks(Node1))) > 1
+			end,
+			1000,
+			10 * 1000
+		)),
+		[HB | TBs] = ar_node:get_blocks(Node1),
+		?assertEqual(HB, BTest),
+		LB = lists:last(TBs),
+		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
+	end}.
+
+%% @doc Ensure that blocks can be added to a network from outside
+%% a single node.
+fork_recover_by_http_test_() ->
+	%% TODO: faulty test: fails as Genesis block is used as recall block
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
 		reregister(Node1),
 		Bridge = ar_bridge:start([], Node1),
 		reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node1, Bridge),
 		Node2 = ar_node:start([], [BGen]),
-		% Generate enough blocks to rise difference.
-		lists:foreach(
-			fun(_) ->
-				ar_node:mine(Node2),
-				timer:sleep(500)
-			end,
-			lists:seq(1, ?RETARGET_BLOCKS + 1)
-		),
+		ar_node:mine(Node2),
+		timer:sleep(500),
+		ar_node:mine(Node2),
+		timer:sleep(500),
+		ar_node:mine(Node2),
+		timer:sleep(500),
 		ar_util:do_until(
 			fun() ->
-				length(ar_node:get_blocks(Node2)) > (?RETARGET_BLOCKS + 1)
+				length(ar_node:get_blocks(Node2)) > 5
 			end,
 			1000,
 			10 * 1000
@@ -1780,7 +1821,7 @@ get_multiple_pending_txs_test_() ->
 				end
 			end,
 			1000,
-			30000
+			45000
 		),
 		?assertEqual(
 			[
