@@ -704,10 +704,8 @@ handle(_SPid, {add_tx, TX}) ->
 	{task, {add_tx, TX}};
 handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
-handle(SPid, {apply_tx, TX}) ->
-	{ok, GS} = ar_node_state:lookup(SPid, gossip),
-	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-	{task, {encounter_new_tx, TX, NewGS}};
+handle(_SPid, {apply_tx, TX}) ->
+	{task, {encounter_new_tx, TX}};
 handle(_SPid, {new_block, Peer, Height, NewB, RecallB}) ->
 	{task, {process_new_block, Peer, Height, NewB, RecallB}};
 handle(_SPid, {replace_block_list, NewBL}) ->
