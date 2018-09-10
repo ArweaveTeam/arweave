@@ -8,6 +8,7 @@
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
 -export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
+-export([verify_request_to_blockshadow/1]). %% exported for verifier
 -include("ar.hrl").
 -include_lib("lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -193,27 +194,20 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 %% @doc Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block as specified in ar_serialize.
 handle('POST', [<<"block">>], Req) ->
-	BlockJSON = elli_request:body(Req),
-	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	JSONRecallB = val_for_key(<<"recall_block">>, Struct),
-	JSONB = val_for_key(<<"new_block">>, Struct),
-	RecallSize = val_for_key(<<"recall_size">>, Struct),
-	Port = val_for_key(<<"port">>, Struct),
-	KeyEnc = val_for_key(<<"key">>, Struct),
-	NonceEnc = val_for_key(<<"nonce">>, Struct),
-	BShadow = ar_serialize:json_struct_to_block(JSONB),
-
+	Context = [Req],
 	CheckMFAs = [
-		{{ar_node, is_joined, [whereis(http_entrypoint_node)]},
+		{{ar_node, is_joined, [whereis(http_entrypoint_node)], no_context},
 			{503, [], <<"Not joined.">>}},
-		{{ar_block, verify_timestamp, [os:system_time(seconds), BShadow]},
+		{{ar_http_iface, verify_request_to_blockshadow, []},
+			{400, [], <<"Invalid block.">>}},
+		{{ar_block, verify_timestamp, [os:system_time(seconds)]},
 			{404, [], <<"Invalid block.">>}}
 	],
 
-	case verify_all(CheckMFAs) of
+	case verify_all(CheckMFAs, Context) of
 		{error, Response} ->
 			Response;
-		ok ->
+		{ok, [Struct, BShadow]} ->
 			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 				undefined -> {429, <<"Too many requests.">>};
 				true -> {208, <<"Block already processed.">>};
@@ -221,6 +215,11 @@ handle('POST', [<<"block">>], Req) ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
 					spawn(
 						fun() ->
+							JSONRecallB = val_for_key(<<"recall_block">>, Struct),
+							RecallSize = val_for_key(<<"recall_size">>, Struct),
+							Port = val_for_key(<<"port">>, Struct),
+							KeyEnc = val_for_key(<<"key">>, Struct),
+							NonceEnc = val_for_key(<<"nonce">>, Struct),
 							OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
 								++ ":" ++ integer_to_list(Port)),
 							Key = ar_util:decode(KeyEnc),
@@ -1271,6 +1270,14 @@ hash_to_maybe_filename(Type, Hash) ->
 is_a_pending_tx(ID) ->
 	lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))).
 
+%% @doc Given a request, returns a blockshadow.
+request_to_struct_with_blockshadow(Req) ->
+	BlockJSON = elli_request:body(Req),
+	{Struct} = ar_serialize:dejsonify(BlockJSON),
+	JSONB = val_for_key(<<"new_block">>, Struct),
+	BShadow = ar_serialize:json_struct_to_block(JSONB),
+	{Struct, BShadow}.
+
 %% @doc wrapper aound util:decode catching exceptions for invalid base64url encoding.
 safe_decode(X) ->
 	try
@@ -1294,20 +1301,33 @@ val_for_key(K, L) ->
 	V.
 
 %% @doc lazily runs a list of bool-returning MFAs; returns after first error.
-verify_all([H|T]) ->
-	case verify_one(H) of
+%% Context is list of arguments required by multiple verifiers.
+verify_all([H|T], Context) ->
+	case verify_one(H, Context) of
 		{error, Response} -> {error, Response};
-		ok                -> verify_all(T)
+		{ok, []}          -> verify_all(T, Context);
+		{ok, Values}      -> verify_all(T, Values)
 	end.
 
-%% @doc runs a bool-returning MFA
+%% @doc runs a bool-returning MFA. Returns {ok, NewContext} or {error, Response}.
 -type mfargs() :: {module(), atom(), list()}.
 -type httptup() :: tuple().
--spec verify_one({mfargs(), httptup()}) -> ok | {error, httptup()}.
-verify_one({{M,F,As}, ErrorResponse}) ->
-	case erlang:apply(M, F, As) of
-		true  -> ok;
-		false -> {error, ErrorResponse}
+-spec verify_one({mfargs(), httptup()}, list()) -> ok | {error, httptup()}.
+verify_one({{M,F,As, no_context}, ErrorResponse}, _) ->
+	verify_one({{M,F,As}, ErrorResponse}, []);
+verify_one({{M,F,As}, ErrorResponse}, Context) ->
+	case erlang:apply(M, F, As ++ Context) of
+		true         -> {ok, []};
+		{ok, Values} -> {ok, Values};
+		false        -> {error, ErrorResponse};
+		_            -> {error, {<<"500">>, [], <<"Unhandled error.">>}}
+	end.
+
+verify_request_to_blockshadow(Req) ->
+	try request_to_struct_with_blockshadow(Req) of
+		{Struct, BShadow} -> {ok, [BShadow, Struct, BShadow]}
+	catch
+		_:_ -> false
 	end.
 
 %%%
@@ -1471,25 +1491,13 @@ get_block_by_hash_test() ->
 	receive after 200 -> ok end,
 	?assertEqual(B0, get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash, B0#block.hash_list)).
 
-%% @doc Ensure that blocks can be received via a hash.
+%% @doc Unjoined nodes should not accept blocks
 post_block_to_unjoined_node_test() ->
-	[B0] = ar_weave:init([]),
-	JB = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B0)),
-	% todo: make fake post with these fields
-	%JSONRecallB = val_for_key(<<"recall_block">>, Struct),
-	%JSONB = val_for_key(<<"new_block">>, Struct),
-	%RecallSize = val_for_key(<<"recall_size">>, Struct),
-	%Port = val_for_key(<<"port">>, Struct),
-	%KeyEnc = val_for_key(<<"key">>, Struct),
-	%NonceEnc = val_for_key(<<"nonce">>, Struct),
-	{ok, {RespTup, _, _, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/block/",
-			JB
-		),
-	?assertEqual({<<"503">>, [], <<"Not joined.">>}, RespTup).
+	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
+	{ok, {RespTup, _, Body, _, _}} =
+		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", JB),
+	?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
+	?assertEqual(<<"Not joined.">>, Body).
 
 % get_recall_block_by_hash_test() ->
 %	ar_storage:clear(),
