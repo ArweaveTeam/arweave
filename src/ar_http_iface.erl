@@ -220,15 +220,6 @@ handle('POST', [<<"block">>], Req) ->
 							CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 							RecallHash = ar_util:decode(JSONRecallB),
-							RecallB =
-								ar_block:get_recall_block(
-									OrigPeer,
-									RecallHash,
-									B,
-									Key,
-									Nonce,
-									CurrentB#block.hash_list
-								),
 							% mue: keep block distance for later tests
 							case (not is_atom(CurrentB)) andalso
 								(B#block.height > CurrentB#block.height) andalso
@@ -240,6 +231,15 @@ handle('POST', [<<"block">>], Req) ->
 											{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
 										]
 									),
+									RecallB =
+										ar_block:get_recall_block(
+											OrigPeer,
+											RecallHash,
+											B,
+											Key,
+											Nonce,
+											CurrentB#block.hash_list
+										),
 									ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
 								_ ->
 									ok
