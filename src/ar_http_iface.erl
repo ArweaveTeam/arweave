@@ -195,16 +195,18 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 %% POST request to endpoint /block with the body of the request being a JSON encoded block as specified in ar_serialize.
 handle('POST', [<<"block">>], Req) ->
 	Context = [Req],
-	CheckMFAs = [
+	Checks = [
 		{{ar_node, is_joined, [whereis(http_entrypoint_node)], no_context},
 			{503, [], <<"Not joined.">>}},
 		{{ar_http_iface, verify_request_to_blockshadow, []},
 			{400, [], <<"Invalid block.">>}},
-		{{ar_block, verify_timestamp, [os:system_time(seconds)]},
+		{fun(_, BShadow) ->
+				ar_block:verify_timestamp(os:system_time(seconds), BShadow)
+			end,
 			{404, [], <<"Invalid block.">>}}
 	],
 
-	case verify_all(CheckMFAs, Context) of
+	case verify_all(Checks, Context) of
 		{error, Response} ->
 			Response;
 		{ok, [Struct, BShadow]} ->
@@ -1301,6 +1303,7 @@ val_for_key(K, L) ->
 
 %% @doc lazily runs a list of bool-returning MFAs; returns after first error.
 %% Context is list of arguments required by multiple verifiers.
+verify_all([], Context) -> {ok, Context};
 verify_all([H|T], Context) ->
 	case verify_one(H, Context) of
 		{error, Response} -> {error, Response};
@@ -1315,16 +1318,18 @@ verify_all([H|T], Context) ->
 verify_one({{M,F,As, no_context}, ErrorResponse}, _) ->
 	verify_one({{M,F,As}, ErrorResponse}, []);
 verify_one({{M,F,As}, ErrorResponse}, Context) ->
-	case erlang:apply(M, F, As ++ Context) of
-		true         -> {ok, []};
-		{ok, Values} -> {ok, Values};
-		false        -> {error, ErrorResponse};
-		_            -> {error, {<<"500">>, [], <<"Unhandled error.">>}}
-	end.
+	verified(erlang:apply(M, F, As ++ Context), ErrorResponse);
+verify_one({Fun, ErrorResponse}, Context) ->
+	verified(erlang:apply(Fun, Context), ErrorResponse).
+
+verified(true, _)              -> {ok, []};
+verified({ok, Values}, _)      -> {ok, Values};
+verified(false, ErrorResponse) -> {error, ErrorResponse};
+verified(_, _)                 -> {error, {<<"500">>, [], <<"Unhandled error.">>}}.
 
 verify_request_to_blockshadow(Req) ->
 	try request_to_struct_with_blockshadow(Req) of
-		{Struct, BShadow} -> {ok, [BShadow, Struct, BShadow]}
+		{Struct, BShadow} -> {ok, [Struct, BShadow]}
 	catch
 		_:_ -> false
 	end.
@@ -1388,13 +1393,16 @@ post_block_to_unjoined_node_test() ->
 -spec node_blacklisting_get_spammer_test() -> ok.
 node_blacklisting_get_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
-	node_blacklisting_test_frame(RequestFun, ErrorResponse, ?MAX_REQUESTS + 1).
+	node_blacklisting_test_frame(RequestFun, ErrorResponse, ?MAX_REQUESTS + 1, 1).
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 -spec node_blacklisting_post_spammer_test() -> ok.
 node_blacklisting_post_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
-	node_blacklisting_test_frame(RequestFun, ErrorResponse, ?MAX_REQUESTS + 1).
+	%% send_new_tx sends two requests
+	NReqs = ?MAX_REQUESTS + 1,
+	NErrs = NReqs - (?MAX_REQUESTS div 2),
+	node_blacklisting_test_frame(RequestFun, ErrorResponse, NReqs, NErrs).
 
 %% @doc Given a label, return a fun and a message.
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
@@ -1416,12 +1424,11 @@ get_fun_msg_pair(send_new_tx) ->
 	, too_many_requests}.
 
 %% @doc Frame to test spamming an endpoint.
--spec node_blacklisting_test_frame(fun(), any(), non_neg_integer()) -> ok.
-node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests) ->
+-spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
+node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	Responses =	ar_util:pmap(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
 	ar_blacklist:reset_counters(),
-	ExpectedErrors = lists:max([NRequests - ?MAX_REQUESTS, 0]),
 	ActualErrors = length(lists:filter(fun(X) -> X == ErrorResponse end, Responses)),
 	?assertEqual(ExpectedErrors, ActualErrors).
 
