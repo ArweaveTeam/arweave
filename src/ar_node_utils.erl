@@ -328,7 +328,11 @@ integrate_new_block(
 		PotentialTXs
 	),
 	RecallHash = find_recall_hash(NewB, BHL = [NewB#block.indep_hash | HashList]),
-	RecallB = ar_storage:read_block(RecallHash, BHL),
+	RawRecallB = ar_storage:read_block(RecallHash, BHL),
+	RecallB =
+		RawRecallB#block {
+			txs = lists:map(fun ar_storage:read_tx/1, RawRecallB#block.txs)
+		},
 	case ?IS_BLOCK(RecallB) of
 		true ->
 			ar_key_db:put(
