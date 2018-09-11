@@ -1629,7 +1629,6 @@ fail_external_tx_test() ->
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test_() ->
-	%% TODO: faulty test: fails as Genesis block is used as recall block
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
 		[BGen] = ar_weave:init([]),
@@ -1673,7 +1672,6 @@ add_external_block_test_() ->
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 fork_recover_by_http_test_() ->
-	%% TODO: faulty test: fails as Genesis block is used as recall block
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
 		[BGen] = ar_weave:init([]),
