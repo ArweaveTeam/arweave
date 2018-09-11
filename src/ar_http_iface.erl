@@ -217,10 +217,18 @@ handle('POST', [<<"block">>], Req) ->
 					ar_bridge:ignore_id(BShadow#block.indep_hash),
 					spawn(
 						fun() ->
+							CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
 							RecallHash = ar_util:decode(JSONRecallB),
-							RecallB = ar_block:get_recall_block(OrigPeer,RecallHash,B,Key,Nonce),
-							CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+							RecallB =
+								ar_block:get_recall_block(
+									OrigPeer,
+									RecallHash,
+									B,
+									Key,
+									Nonce,
+									CurrentB#block.hash_list
+								),
 							% mue: keep block distance for later tests
 							case (not is_atom(CurrentB)) andalso
 								(B#block.height > CurrentB#block.height) andalso
