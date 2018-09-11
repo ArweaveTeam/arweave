@@ -1400,13 +1400,11 @@ node_blacklisting_post_spammer_test() ->
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
 get_fun_msg_pair(get_info) ->
 	{ fun(_) ->
-			timer:sleep(50),
 			ar:d(get_info({127, 0, 0, 1, 1984}))
 		end
 	, info_unavailable};
 get_fun_msg_pair(send_new_tx) ->
 	{ fun(_) ->
-			timer:sleep(50),
 			case send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)) of
 				{ok,
 					{{<<"429">>, <<"Too Many Requests">>}, _,
