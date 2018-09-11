@@ -1426,10 +1426,11 @@ get_fun_msg_pair(send_new_tx) ->
 %% @doc Frame to test spamming an endpoint.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
+	ar_blacklist:reset_counters(),
 	Responses =	ar_util:pmap(RequestFun, lists:seq(1, NRequests)),
-	?assertEqual(length(Responses), NRequests),
 	ar_blacklist:reset_counters(),
 	ActualErrors = length(lists:filter(fun(X) -> X == ErrorResponse end, Responses)),
+	?assertEqual(length(Responses), NRequests),
 	?assertEqual(ExpectedErrors, ActualErrors).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
