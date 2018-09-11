@@ -248,9 +248,9 @@ indep_hash(#block {
                     {diff, Diff},
                     {height, Height},
                     {hash, ar_util:encode(Hash)},
-                    {hash_list, lists:map(fun ar_util:encode/1, HashList)},
                     {indep_hash, ar_util:encode(<<>>)},
                     {txs, lists:map(fun ar_util:encode/1, TXs)},
+                    {hash_list, lists:map(fun ar_util:encode/1, HashList)},
                     {wallet_list,
                         lists:map(
                             fun({Wallet, Qty, Last}) ->
