@@ -1386,8 +1386,14 @@ post_block_to_unjoined_node_test() ->
 	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
 	{ok, {RespTup, _, Body, _, _}} =
 		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", JB),
-	?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
-	?assertEqual(<<"Not joined.">>, Body).
+	case ar_node:is_joined(whereis(http_entrypoint_node)) of
+		false ->
+			?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
+			?assertEqual(<<"Not joined.">>, Body);
+		true ->
+			?assertEqual({<<"400">>,<<"Bad Request">>}, RespTup),
+			?assertEqual(<<"Invalid block.">>, Body)
+	end.
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
 -spec node_blacklisting_get_spammer_test() -> ok.
