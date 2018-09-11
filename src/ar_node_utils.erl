@@ -329,12 +329,12 @@ integrate_new_block(
 	),
 	RecallHash = find_recall_hash(NewB, BHL = [NewB#block.indep_hash | HashList]),
 	RawRecallB = ar_storage:read_block(RecallHash, BHL),
-	RecallB =
-		RawRecallB#block {
-			txs = lists:map(fun ar_storage:read_tx/1, RawRecallB#block.txs)
-		},
-	case ?IS_BLOCK(RecallB) of
+	case ?IS_BLOCK(RawRecallB) of
 		true ->
+			RecallB =
+				RawRecallB#block {
+					txs = lists:map(fun ar_storage:read_tx/1, RawRecallB#block.txs)
+				},
 			ar_key_db:put(
 				RecallB#block.indep_hash,
 				[
