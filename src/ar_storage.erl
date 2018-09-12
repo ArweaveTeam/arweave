@@ -414,7 +414,6 @@ write_block_hash_list(BinID, BHL) ->
 %% Write a block hash list to disk for retreival later (in emergencies).
 write_wallet_list(WalletList) ->
 	ID = ar_block:hash_wallet_list(WalletList),
-	ar:report([{writing_wallet_list_to_disk, ar_util:encode(ID)}]),
 	JSON = ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)),
 	file:write_file(
 		?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(ID)) ++ ".json",
