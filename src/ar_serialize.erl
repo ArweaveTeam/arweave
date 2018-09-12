@@ -110,7 +110,7 @@ full_block_to_json_struct(
 			{height, Height},
 			{hash, ar_util:encode(Hash)},
 			{indep_hash, ar_util:encode(IndepHash)},
-			{txs, lists:map(fun tx_to_json_struct/1, TXs)},
+			{txs, lists:map(fun tx_safely_to_json_struct/1, TXs)},
 			{wallet_list,
 				case is_binary(WalletList) of
 					true -> ar_util:encode(WalletList);
@@ -265,6 +265,11 @@ json_struct_to_full_block(JSONBlock) ->
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
 		block_size = find_value(<<"block_size">>, BlockStruct)
 	}.
+
+tx_safely_to_json_struct(TX) when is_record(TX, tx) ->
+	tx_to_json_struct(TX);
+tx_safely_to_json_struct(TX) when is_binary(TX) ->
+	ar_storage:read_tx(TX).
 
 %% @doc Convert a transaction record into a JSON struct.
 tx_to_json_struct(
@@ -450,3 +455,4 @@ query_roundtrip_test() ->
 			)
 		)),
 	Query = ar_serialize:json_struct_to_query(QueryJSON).
+
