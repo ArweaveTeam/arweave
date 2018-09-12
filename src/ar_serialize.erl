@@ -269,7 +269,7 @@ json_struct_to_full_block(JSONBlock) ->
 tx_safely_to_json_struct(TX) when is_record(TX, tx) ->
 	tx_to_json_struct(TX);
 tx_safely_to_json_struct(TX) when is_binary(TX) ->
-	ar_storage:read_tx(TX).
+	tx_to_json_struct(ar_storage:read_tx(TX)).
 
 %% @doc Convert a transaction record into a JSON struct.
 tx_to_json_struct(
