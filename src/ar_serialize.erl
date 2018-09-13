@@ -14,7 +14,7 @@
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->
-	jiffy:encode(JSONStruct).	
+	jiffy:encode(JSONStruct).
 
 %% @doc Decode JSON string into a JSON struct.
 dejsonify(<<>>) -> <<>>;
@@ -168,8 +168,8 @@ json_struct_to_block(JSONBlock) ->
 		txs = lists:map(fun ar_util:decode/1, TXs),
 		hash_list =
 			case HashList of
-				undefined -> undefined;
-				_ -> [ ar_util:decode(Hash) || Hash <- HashList ]
+				undefined -> [];
+				_         -> [ ar_util:decode(Hash) || Hash <- HashList ]
 			end,
 		wallet_list =
 			case is_binary(WalletList) of
@@ -231,8 +231,8 @@ json_struct_to_full_block(JSONBlock) ->
 		txs = lists:map(fun json_struct_to_tx/1, TXs),
 		hash_list =
 			case HashList of
-				undefined -> undefined;
-				_ -> [ ar_util:decode(Hash) || Hash <- HashList ]
+				undefined -> [];
+				_         -> [ ar_util:decode(Hash) || Hash <- HashList ]
 			end,
 		wallet_list =
 			case is_binary(WalletList) of
@@ -293,11 +293,11 @@ tx_to_json_struct(
 				lists:map(
 					fun({Name, Value}) ->
 						{
-							[	
+							[
 								{name, ar_util:encode(Name)},
 								{value, ar_util:encode(Value)}
 							]
-						}					
+						}
 					end,
 					Tags
 				)
@@ -378,7 +378,7 @@ find_value(Key, List) ->
 %% @doc Convert an ARQL query into a JSON struct
 query_to_json_struct({Op, Expr1, Expr2}) ->
 	{
-		[	
+		[
 			{op, list_to_binary(atom_to_list(Op))},
 			{expr1, query_to_json_struct(Expr1)},
 			{expr2, query_to_json_struct(Expr2)}
