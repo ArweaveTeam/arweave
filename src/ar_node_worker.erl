@@ -485,12 +485,9 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 		true ->
 			ar_storage:write_tx(MinedTXs),
 			ar_storage:write_block(NextB),
+			NewHL = [NextB#block.indep_hash | HashList],
+			ar_storage:write_block_hash_list(BinID, NewHL),
 			app_search:update_tag_table(NextB),
-			{NewGS, _} =
-				ar_gossip:send(
-					GS,
-					{new_block, self(), NextB#block.height, NextB, RecallB}
-				),
 			ar:report_console(
 				[
 					{node, self()},
@@ -519,8 +516,11 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				end,
 				PotentialTXs
 			),
-			NewHL = [NextB#block.indep_hash | HashList],
-			ar_storage:write_block_hash_list(BinID, NewHL),
+			{NewGS, _} =
+				ar_gossip:send(
+					GS,
+					{new_block, self(), NextB#block.height, NextB, RecallB}
+				),
 			{ok, ar_node_utils:reset_miner(
 				StateNew#{
 					hash_list            => NewHL,
