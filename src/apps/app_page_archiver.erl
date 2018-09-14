@@ -1,6 +1,7 @@
 -module(app_page_archiver).
 -export([start/3, start/4, stop/1]).
 -include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %%% An example Arweave repeated page archiver.
 %%% This utility archives a given URL every given number of seconds.
@@ -40,16 +41,18 @@ start(Node, Wallet, BaseURL, Interval) ->
 stop(PID) -> PID ! stop.
 
 server(S) ->
-    case httpc:get(URL = S#state.url) of
-        {ok, {{<<"200">>, _}, _, Body, _, _}} ->
+    case httpc:request(URL = S#state.url) of
+        {ok, {{_, 200, _}, _, Body}} ->
             archive_page(S, Body);
         _ ->
-            ar:report_console([{could_not_get_base_page, URL}])
+            ar:report_console([{could_not_get_url, URL}])
     end,
     receive stop -> stopping
     after (S#state.interval * 1000) -> server(S)
     end.
 
+archive_page(S, Body) when is_list(Body) ->
+    archive_page(S, list_to_binary(Body));
 archive_page(S = #state { node = Node }, Body) ->
     Price =
         ar_tx:calculate_min_tx_cost(
@@ -75,6 +78,7 @@ archive_page(S = #state { node = Node }, Body) ->
             [
                 {app, ?MODULE},
                 {archiving_page, S#state.url},
+                {cost, Price / ?AR(1)},
                 {submitted_tx, ar_util:encode(SignedTX#tx.id)},
                 {size, Sz}
             ]
@@ -88,3 +92,36 @@ archive_page(S = #state { node = Node }, Body) ->
             ]
         )
     end.
+
+%% @doc Test archiving of data.
+archive_data_test() ->
+	ar_storage:clear(),
+	Wallet = {_Priv1, Pub1} = ar_wallet:new(),
+	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node1 = ar_node:start([], Bs),
+    archive_page(#state { node = Node1, wallet = Wallet }, Dat = <<"TEST">>),
+    receive after 1000 -> ok end,
+    ar_node:mine(Node1),
+    receive after 1000 -> ok end,
+    B = ar_node:get_current_block(Node1),
+    Dat = (ar_storage:read_tx(hd(ar:d(B#block.txs))))#tx.data.
+
+%% @doc Test full operation.
+archive_multiple_test() ->
+	ar_storage:clear(),
+	Wallet = {_Priv1, Pub1} = ar_wallet:new(),
+	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+	Node1 = ar_node:start([], Bs),
+    Archiver = start(Node1, Wallet, "http://127.0.0.1:1984/info", 1),
+    receive after 500 -> ok end,
+    ar_node:mine(Node1),
+    receive after 1500 -> ok end,
+    B1 = ar_node:get_current_block(Node1),
+    ar_node:mine(Node1),
+    receive after 1000 -> ok end,
+    B2 = ar_node:get_current_block(Node1),
+    stop(Archiver),
+    1 = ar:d(B1#block.height),
+    2 = B2#block.height,
+    [_|_] = B1#block.txs,
+    [_|_] = B2#block.txs.
