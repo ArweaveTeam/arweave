@@ -1677,6 +1677,52 @@ add_external_block_test_() ->
 		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
 	end}.
 
+%% @doc Ensure that blocks with tx can be added to a network from outside
+%% a single node.
+add_external_block_with_tx_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
+		reregister(http_entrypoint_node, Node1),
+		timer:sleep(500),
+		Bridge = ar_bridge:start([], Node1),
+		reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		Node2 = ar_node:start([], [BGen]),
+		TX = ar_tx:new(<<"TEST DATA">>),
+		ar_node:add_tx(Node2, TX),
+		timer:sleep(500),
+		ar_node:mine(Node2),
+		ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node2)) == 2
+			end,
+			100,
+			10 * 1000
+		),
+		[BTest|_] = ar_node:get_blocks(Node2),
+		reregister(Node1),
+		send_new_block(
+			{127, 0, 0, 1, 1984},
+			?DEFAULT_HTTP_IFACE_PORT,
+			ar:d(ar_storage:read_block(BTest, ar_node:get_hash_list(Node2))),
+			BGen
+		),
+		% Wait for test block and assert.
+		?assert(ar_util:do_until(
+			fun() ->
+				length(ar:d(ar_node:get_blocks(Node1))) > 1
+			end,
+			1000,
+			10 * 1000
+		)),
+		[HB | TBs] = ar_node:get_blocks(Node1),
+		?assertEqual(HB, BTest),
+		LB = lists:last(TBs),
+		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
+	end}.
+
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 fork_recover_by_http_test_() ->
@@ -1937,6 +1983,37 @@ get_txs_by_send_recv_test_slow() ->
 				TXs
 			)
 		)).
+
+%	Node = ar_node:start([], B0),
+%	reregister(Node),
+%	ar_node:mine(Node),
+%	receive after 500 -> ok end,
+%	[B1|_] = ar_node:get_blocks(Node),
+%	Enc0 = get_encrypted_full_block({127, 0, 0, 1, 1984}, (hd(B0))#block.indep_hash),
+%	ar_storage:write_encrypted_block((hd(B0))#block.indep_hash, Enc0),
+%	ar_cleanup:remove_invalid_blocks([B1]),
+%	send_new_block(
+%		{127, 0, 0, 1, 1984},
+%		hd(B0),
+%		hd(B0)
+%	),
+%	receive after 1000 -> ok end,
+%	ar_node:mine(Node).
+	% ar_node:add_peers(Node, Bridge),
+	% receive after 200 -> ok end,
+	% send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
+	% receive after 200 -> ok end,
+	% send_new_tx({127, 0, 0, 1, 1984}, TX1 = ar_tx:new(<<"DATA2">>)),
+	% receive after 200 -> ok end,
+	% ar_node:mine(Node),
+	% receive after 200 -> ok end,
+	% [B1|_] = ar_node:get_blocks(Node),
+	% B2 = get_block({127, 0, 0, 1, 1984}, B1),
+	% ar:d(get_encrypted_full_block({127, 0, 0, 1, 1984}, B2#block.indep_hash)),
+	% B2 = get_block({127, 0, 0, 1, 1984}, B1),
+	% B3 = get_full_block({127, 0, 0, 1, 1984}, B1),
+	% B3 = B2#block {txs = [TX, TX1]},
+
 
 % get_encrypted_block_test() ->
 %	ar_storage:clear(),
