@@ -205,11 +205,13 @@ handle('POST', [<<"block">>], Req) ->
 			end,
 			{404, [], <<"Invalid block.">>}}
 	],
-
 	case verify_all(Checks, Context) of
 		{error, Response} ->
 			Response;
 		{ok, [Struct, BShadow]} ->
+			Port = val_for_key(<<"port">>, Struct),
+			OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
+				++ ":" ++ integer_to_list(Port)),
 			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 				undefined -> {429, <<"Too many requests.">>};
 				true -> {208, <<"Block already processed.">>};
@@ -219,11 +221,8 @@ handle('POST', [<<"block">>], Req) ->
 						fun() ->
 							JSONRecallB = val_for_key(<<"recall_block">>, Struct),
 							RecallSize = val_for_key(<<"recall_size">>, Struct),
-							Port = val_for_key(<<"port">>, Struct),
 							KeyEnc = val_for_key(<<"key">>, Struct),
 							NonceEnc = val_for_key(<<"nonce">>, Struct),
-							OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
-								++ ":" ++ integer_to_list(Port)),
 							Key = ar_util:decode(KeyEnc),
 							Nonce = ar_util:decode(NonceEnc),
 							CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
