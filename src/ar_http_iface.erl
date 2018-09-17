@@ -1655,12 +1655,12 @@ add_external_block_test_() ->
 			100,
 			10 * 1000
 		),
-		[BTest|_] = ar_node:get_blocks(Node2),
+		[BH2 | _] = ar_node:get_blocks(Node2),
 		reregister(Node1),
 		send_new_block(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
-			ar:d(ar_storage:read_block(BTest, ar_node:get_hash_list(Node2))),
+			ar:d(ar_storage:read_block(BH2, ar_node:get_hash_list(Node2))),
 			BGen
 		),
 		% Wait for test block and assert.
@@ -1671,10 +1671,8 @@ add_external_block_test_() ->
 			1000,
 			10 * 1000
 		)),
-		[HB | TBs] = ar_node:get_blocks(Node1),
-		?assertEqual(HB, BTest),
-		LB = lists:last(TBs),
-		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
+		[BH1 | _] = ar_node:get_blocks(Node1),
+		?assertEqual(BH1, BH2)
 	end}.
 
 %% @doc Ensure that blocks with tx can be added to a network from outside
@@ -1697,9 +1695,9 @@ add_external_block_with_tx_test_() ->
 		ar_node:mine(Node2),
 		ar_util:do_until(
 			fun() ->
-				[HB | _] = ar_node:get_blocks(Node2),
-				FullHB = ar_storage:read_block(HB, ar_node:get_hash_list(Node2)),
-				lists:member(TX#tx.id, FullHB#block.txs)
+				[BH | _] = ar_node:get_blocks(Node2),
+				B = ar_storage:read_block(BH, ar_node:get_hash_list(Node2)),
+				lists:member(TX#tx.id, B#block.txs)
 			end,
 			500,
 			10 * 1000
@@ -1720,9 +1718,9 @@ add_external_block_with_tx_test_() ->
 			500,
 			10 * 1000
 		)),
-		[HB | _] = ar_node:get_blocks(Node1),
-		FullHB = ar_storage:read_block(HB, ar_node:get_hash_list(Node1)),
-		?assert(lists:member(TX#tx.id, FullHB#block.txs))
+		[BH | _] = ar_node:get_blocks(Node1),
+		B = ar_storage:read_block(BH, ar_node:get_hash_list(Node1)),
+		?assert(lists:member(TX#tx.id, B#block.txs))
 	end}.
 
 %% @doc Ensure that blocks can be added to a network from outside
