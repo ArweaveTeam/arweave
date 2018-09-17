@@ -1271,6 +1271,7 @@ handle_post_block({is_ignored, ReqStruct, BShadow, OrigPeer}) ->
 		true ->
 			{208, <<"Block already processed.">>};
 		false ->
+			ar_bridge:ignore_id(BShadow#block.indep_hash),
 			handle_post_block({is_joined, ReqStruct, BShadow, OrigPeer})
 	end;
 handle_post_block({is_joined, ReqStruct, BShadow, OrigPeer}) ->
@@ -1291,7 +1292,6 @@ handle_post_block({verify_timestamp, ReqStruct, BShadow, OrigPeer}) ->
 	end;
 handle_post_block({ReqStruct, BShadow, OrigPeer}) ->
 	% Everything fine, post block.
-	ar_bridge:ignore_id(BShadow#block.indep_hash),
 	spawn(
 		fun() ->
 			JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
