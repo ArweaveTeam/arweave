@@ -194,69 +194,7 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 %% @doc Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block as specified in ar_serialize.
 handle('POST', [<<"block">>], Req) ->
-	Context = [Req],
-	Checks = [
-		{{ar_node, is_joined, [whereis(http_entrypoint_node)], no_context},
-			{503, [], <<"Not joined.">>}},
-		{{ar_http_iface, verify_request_to_blockshadow, []},
-			{400, [], <<"Invalid block.">>}},
-		{fun(_, BShadow) ->
-				ar_block:verify_timestamp(os:system_time(seconds), BShadow)
-			end,
-			{404, [], <<"Invalid block.">>}}
-	],
-	case verify_all(Checks, Context) of
-		{error, Response} ->
-			Response;
-		{ok, [Struct, BShadow]} ->
-			Port = val_for_key(<<"port">>, Struct),
-			OrigPeer = ar_util:parse_peer(bitstring_to_list(elli_request:peer(Req))
-				++ ":" ++ integer_to_list(Port)),
-			case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
-				undefined -> {429, <<"Too many requests.">>};
-				true -> {208, <<"Block already processed.">>};
-				false ->
-					ar_bridge:ignore_id(BShadow#block.indep_hash),
-					spawn(
-						fun() ->
-							JSONRecallB = val_for_key(<<"recall_block">>, Struct),
-							RecallSize = val_for_key(<<"recall_size">>, Struct),
-							KeyEnc = val_for_key(<<"key">>, Struct),
-							NonceEnc = val_for_key(<<"nonce">>, Struct),
-							Key = ar_util:decode(KeyEnc),
-							Nonce = ar_util:decode(NonceEnc),
-							CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-							B = ar_block:generate_block_from_shadow(BShadow,RecallSize),
-							RecallHash = ar_util:decode(JSONRecallB),
-							% mue: keep block distance for later tests
-							case (not is_atom(CurrentB)) andalso
-								(B#block.height > CurrentB#block.height) andalso
-								(B#block.height =< (CurrentB#block.height + 50)) andalso
-								(B#block.diff >= ?MIN_DIFF) of
-								true ->
-									ar:report(
-										[
-											{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
-										]
-									),
-									RecallB =
-										ar_block:get_recall_block(
-											OrigPeer,
-											RecallHash,
-											B,
-											Key,
-											Nonce,
-											CurrentB#block.hash_list
-										),
-									ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
-								_ ->
-									ok
-							end
-						end
-					),
-					{200, [], <<"OK">>}
-			end
-	end;
+	handle_post_block({request, Req});
 
 %% @doc Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as specified in ar_serialize.
@@ -1280,11 +1218,16 @@ is_a_pending_tx(ID) ->
 
 %% @doc Given a request, returns a blockshadow.
 request_to_struct_with_blockshadow(Req) ->
-	BlockJSON = elli_request:body(Req),
-	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	JSONB = val_for_key(<<"new_block">>, Struct),
-	BShadow = ar_serialize:json_struct_to_block(JSONB),
-	{Struct, BShadow}.
+	try
+		BlockJSON = elli_request:body(Req),
+		{Struct} = ar_serialize:dejsonify(BlockJSON),
+		JSONB = val_for_key(<<"new_block">>, Struct),
+		BShadow = ar_serialize:json_struct_to_block(JSONB),
+		{ok, {Struct, BShadow}}
+	catch
+		Exception:Reason ->
+			{error, {Exception, Reason}}
+	end.
 
 %% @doc wrapper aound util:decode catching exceptions for invalid base64url encoding.
 safe_decode(X) ->
@@ -1308,32 +1251,86 @@ val_for_key(K, L) ->
 	{K, V} = lists:keyfind(K, 1, L),
 	V.
 
-%% @doc lazily runs a list of bool-returning MFAs; returns after first error.
-%% Context is list of arguments required by multiple verifiers.
-verify_all([], Context) -> {ok, Context};
-verify_all([H|T], Context) ->
-	case verify_one(H, Context) of
-		{error, Response} -> {error, Response};
-		{ok, []}          -> verify_all(T, Context);
-		{ok, Values}      -> verify_all(T, Values)
-	end.
+%% @doc Handle multiple steps of POST /block.
+handle_post_block({request, Req}) ->
+	% Convert request to struct and block shadow.
+	case request_to_struct_with_blockshadow(Req) of
+		{error, {_, _}} ->
+			{400, [], <<"Invalid block.">>};
+		{ok, {ReqStruct, BShadow}} ->
+			Port = val_for_key(<<"port">>, ReqStruct),
+			Peer = bitstring_to_list(elli_request:peer(Req)) ++ ":" ++ integer_to_list(Port),
+			OrigPeer = ar_util:parse_peer(Peer),
+			handle_post_block({is_ignored, ReqStruct, BShadow, OrigPeer})
+	end;
+handle_post_block({is_ignored, ReqStruct, BShadow, OrigPeer}) ->
+	% Check if block is already known.
+	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
+		undefined ->
+			{429, <<"Too many requests.">>};
+		true ->
+			{208, <<"Block already processed.">>};
+		false ->
+			handle_post_block({is_joined, ReqStruct, BShadow, OrigPeer})
+	end;
+handle_post_block({is_joined, ReqStruct, BShadow, OrigPeer}) ->
+	% Check if node is joined.
+	case ar_node:is_joined(whereis(http_entrypoint_node)) of
+		false ->
+			{503, [], <<"Not joined.">>};
+		true ->
+			handle_post_block({verify_timestamp, ReqStruct, BShadow, OrigPeer})
+	end;
+handle_post_block({verify_timestamp, ReqStruct, BShadow, OrigPeer}) ->
+	% Verify the timestamp of the block shadow.
+	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
+		false ->
+			{404, [], <<"Invalid block.">>};
+		true ->
+			handle_post_block({ReqStruct, BShadow, OrigPeer})
+	end;
+handle_post_block({ReqStruct, BShadow, OrigPeer}) ->
+	% Everything fine, post block.
+	ar_bridge:ignore_id(BShadow#block.indep_hash),
+	spawn(
+		fun() ->
+			JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
+			RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
+			KeyEnc = val_for_key(<<"key">>, ReqStruct),
+			NonceEnc = val_for_key(<<"nonce">>, ReqStruct),
+			Key = ar_util:decode(KeyEnc),
+			Nonce = ar_util:decode(NonceEnc),
+			CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+			B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
+			RecallHash = ar_util:decode(JSONRecallB),
+			case (not is_atom(CurrentB)) andalso
+				(B#block.height > CurrentB#block.height) andalso
+				(B#block.height =< (CurrentB#block.height + 50)) andalso
+				(B#block.diff >= ?MIN_DIFF) of
+				true ->
+					ar:report(
+						[
+							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
+						]
+					),
+					RecallB =
+						ar_block:get_recall_block(
+							OrigPeer,
+							RecallHash,
+							B,
+							Key,
+							Nonce,
+							CurrentB#block.hash_list
+						),
+					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
+				_ ->
+					ok
+			end
+		end
+	),
+	{200, [], <<"OK">>}.
 
-%% @doc runs a bool-returning MFA. Returns {ok, NewContext} or {error, Response}.
--type mfargs() :: {module(), atom(), list()}.
--type httptup() :: tuple().
--spec verify_one({mfargs(), httptup()}, list()) -> ok | {error, httptup()}.
-verify_one({{M,F,As, no_context}, ErrorResponse}, _) ->
-	verify_one({{M,F,As}, ErrorResponse}, []);
-verify_one({{M,F,As}, ErrorResponse}, Context) ->
-	verified(erlang:apply(M, F, As ++ Context), ErrorResponse);
-verify_one({Fun, ErrorResponse}, Context) ->
-	verified(erlang:apply(Fun, Context), ErrorResponse).
-
-verified(true, _)              -> {ok, []};
-verified({ok, Values}, _)      -> {ok, Values};
-verified(false, ErrorResponse) -> {error, ErrorResponse};
-verified(_, _)                 -> {error, {<<"500">>, [], <<"Unhandled error.">>}}.
-
+%% @doc Get struct and block shadow out of a request.
 verify_request_to_blockshadow(Req) ->
 	try request_to_struct_with_blockshadow(Req) of
 		{Struct, BShadow} -> {ok, [Struct, BShadow]}
