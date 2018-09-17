@@ -1689,6 +1689,7 @@ add_external_block_with_tx_test_() ->
 		Bridge = ar_bridge:start([], Node1),
 		reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node1, Bridge),
+		% Start node 2, add transaction, and wait until mined.
 		Node2 = ar_node:start([], [BGen]),
 		TX = ar_tx:new(<<"TEST DATA">>),
 		ar_node:add_tx(Node2, TX),
@@ -1696,9 +1697,11 @@ add_external_block_with_tx_test_() ->
 		ar_node:mine(Node2),
 		ar_util:do_until(
 			fun() ->
-				length(ar_node:get_blocks(Node2)) == 2
+				[HB | _] = ar_node:get_blocks(Node2),
+				FullHB = ar_storage:read_block(HB, ar_node:get_hash_list(Node2)),
+				lists:member(TX#tx.id, FullHB#block.txs)
 			end,
-			100,
+			500,
 			10 * 1000
 		),
 		[BTest|_] = ar_node:get_blocks(Node2),
@@ -1709,18 +1712,17 @@ add_external_block_with_tx_test_() ->
 			ar:d(ar_storage:read_block(BTest, ar_node:get_hash_list(Node2))),
 			BGen
 		),
-		% Wait for test block and assert.
+		% Wait for test block and assert that it contains transaction.
 		?assert(ar_util:do_until(
 			fun() ->
 				length(ar:d(ar_node:get_blocks(Node1))) > 1
 			end,
-			1000,
+			500,
 			10 * 1000
 		)),
-		[HB | TBs] = ar_node:get_blocks(Node1),
-		?assertEqual(HB, BTest),
-		LB = lists:last(TBs),
-		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
+		[HB | _] = ar_node:get_blocks(Node1),
+		FullHB = ar_storage:read_block(HB, ar_node:get_hash_list(Node1)),
+		?assert(lists:member(TX#tx.id, FullHB#block.txs))
 	end}.
 
 %% @doc Ensure that blocks can be added to a network from outside
