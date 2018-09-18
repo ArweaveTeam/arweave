@@ -9,7 +9,6 @@
 -export([stop/1]).
 
 -export([get_blocks/1, get_block/3]).
--export([get_tx/2]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
 -export([get_hash_list/1]).
@@ -294,47 +293,6 @@ make_full_block(ID, BHL) ->
 				_ -> unavailable
 			end
 	end.
-
-%% @doc Return a specific tx from a node, if it has it.
-%% TODO: Should catch case return empty list or not_found atom.
-get_tx(_, []) ->
-	[];
-get_tx(Peers, ID) when is_list(Peers) ->
-	% check locally first, if not found in storage nor nodes state ask
-	% list of external peers for tx
-	ar:d([{getting_tx, ID}, {peers, Peers}]),
-	case
-		{
-			ar_storage:read_tx(ID),
-			lists:keyfind(ID, 2, get_full_pending_txs(whereis(http_entrypoint_node)))
-		} of
-		{unavailable, false} ->
-			lists:foldl(
-				fun(Peer, Acc) ->
-					case is_atom(Acc) of
-						false -> Acc;
-						true ->
-							T = get_tx(Peer, ID),
-							case is_atom(T) of
-								true -> Acc;
-								false -> T
-							end
-					end
-				end,
-				unavailable,
-				Peers
-			);
-		{TX, false} -> TX;
-		{unavailable, TX} -> TX;
-		{TX, _} -> TX
-	end;
-get_tx(Proc, ID) when is_pid(Proc) ->
-	% attempt to get tx from local storage
-	%ar:d({pending, get_full_pending_txs(whereis(http_entrypoint_node))}),
-	ar_storage:read_tx(ID);
-get_tx(Host, ID) ->
-	% handle external peer request
-	ar_http_iface:get_tx(Host, ID).
 
 %% @doc Gets the set of all known txs from the node.
 %% This set includes those on timeout waiting to distribute around the

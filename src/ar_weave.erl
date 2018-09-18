@@ -236,6 +236,10 @@ indep_hash(#block {
 		weave_size = WeaveSize,
 		block_size = BlockSize
 	}) ->
+	EncodeTX = fun
+		(TXID) when is_binary(TXID)   -> ar_util:encode(TXID);
+		(TX)   when is_record(TX, tx) -> ar_util:encode(TX#tx.id)
+	end,
 	crypto:hash(
 		?MINING_HASH_ALG,
 		ar_serialize:jsonify(
@@ -249,7 +253,7 @@ indep_hash(#block {
 					{height, Height},
 					{hash, ar_util:encode(Hash)},
 					{indep_hash, ar_util:encode(<<>>)},
-					{txs, lists:map(fun ar_util:encode/1, TXs)},
+					{txs, lists:map(EncodeTX, TXs)},
 					{hash_list, lists:map(fun ar_util:encode/1, HashList)},
 					{wallet_list,
 						lists:map(
