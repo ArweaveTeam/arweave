@@ -194,7 +194,7 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 %% @doc Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block as specified in ar_serialize.
 handle('POST', [<<"block">>], Req) ->
-	handle_post_block({request, Req});
+	post_block(request, Req);
 
 %% @doc Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as specified in ar_serialize.
@@ -1251,8 +1251,9 @@ val_for_key(K, L) ->
 	{K, V} = lists:keyfind(K, 1, L),
 	V.
 
-%% @doc Handle multiple steps of POST /block.
-handle_post_block({request, Req}) ->
+%% @doc Handle multiple steps of POST /block. First argument is a subcommand,
+%% second the argument for that subcommand.
+post_block(request, Req) ->
 	% Convert request to struct and block shadow.
 	case request_to_struct_with_blockshadow(Req) of
 		{error, {_, _}} ->
@@ -1261,9 +1262,9 @@ handle_post_block({request, Req}) ->
 			Port = val_for_key(<<"port">>, ReqStruct),
 			Peer = bitstring_to_list(elli_request:peer(Req)) ++ ":" ++ integer_to_list(Port),
 			OrigPeer = ar_util:parse_peer(Peer),
-			handle_post_block({is_ignored, ReqStruct, BShadow, OrigPeer})
+			post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer})
 	end;
-handle_post_block({is_ignored, ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer}) ->
 	% Check if block is already known.
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		undefined ->
@@ -1272,25 +1273,25 @@ handle_post_block({is_ignored, ReqStruct, BShadow, OrigPeer}) ->
 			{208, <<"Block already processed.">>};
 		false ->
 			ar_bridge:ignore_id(BShadow#block.indep_hash),
-			handle_post_block({is_joined, ReqStruct, BShadow, OrigPeer})
+			post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer})
 	end;
-handle_post_block({is_joined, ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer}) ->
 	% Check if node is joined.
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			{503, [], <<"Not joined.">>};
 		true ->
-			handle_post_block({verify_timestamp, ReqStruct, BShadow, OrigPeer})
+			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer})
 	end;
-handle_post_block({verify_timestamp, ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer}) ->
 	% Verify the timestamp of the block shadow.
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false ->
 			{404, [], <<"Invalid block.">>};
 		true ->
-			handle_post_block({ReqStruct, BShadow, OrigPeer})
+			post_block(post_block, {ReqStruct, BShadow, OrigPeer})
 	end;
-handle_post_block({ReqStruct, BShadow, OrigPeer}) ->
+post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 	% Everything fine, post block.
 	spawn(
 		fun() ->
