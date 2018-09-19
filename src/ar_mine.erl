@@ -229,7 +229,7 @@ coinflip() ->
 	case rand:uniform(2) of
 		1 -> true;
 		2 -> false
-end.
+	end.
 
 %% @doc Schedule a hashing attempt.
 %% Hashing attempts can be delayed for testing purposes.
