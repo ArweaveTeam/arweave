@@ -1840,17 +1840,26 @@ get_multiple_pending_txs_test_() ->
 	%% in a single block is problematic.
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
-		[B0] = ar_weave:init(),
+		W1 = ar_wallet:new(),
+		W2 = ar_wallet:new(),
+		TX1 = ar_tx:new(<<"DATA1">>, ?AR(999)),
+		TX2 = ar_tx:new(<<"DATA2">>, ?AR(999)),
+		SignedTX1 = ar_tx:sign(TX1, W1),
+		SignedTX2 = ar_tx:sign(TX2, W2),
+		[B0] =
+			ar_weave:init(
+				[
+					{ar_wallet:to_address(W1), ?AR(1000), <<>>},
+					{ar_wallet:to_address(W2), ?AR(1000), <<>>}
+				]
+			),
 		Node = ar_node:start([], [B0]),
 		reregister(Node),
-		Bridge = ar_bridge:start([], Node),
+		Bridge = ar_bridge:start([], [Node]),
 		reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node, Bridge),
-		SearchNode = app_search:start(Node),
-		ar_node:add_peers(Node, SearchNode),
-		reregister(http_search_node, SearchNode),
-		send_new_tx({127, 0, 0, 1,1984}, TX1 = ar_tx:new(<<"DATA1">>)),
-		send_new_tx({127, 0, 0, 1,1984}, TX2 = ar_tx:new(<<"DATA2">>)),
+		send_new_tx({127, 0, 0, 1,1984}, SignedTX1),
+		send_new_tx({127, 0, 0, 1,1984}, SignedTX2),
 		% Wait for pending blocks.
 		{ok, PendingTXs} = ar_util:do_until(
 			fun() ->
@@ -1870,13 +1879,7 @@ get_multiple_pending_txs_test_() ->
 			1000,
 			45000
 		),
-		?assertEqual(
-			[
-				ar_util:encode(TX1#tx.id),
-				ar_util:encode(TX2#tx.id)
-			],
-			PendingTXs
-		)
+		2 = length(PendingTXs)
 	end}.
 
 %% @doc Spawn a network with two nodes and a chirper server.
