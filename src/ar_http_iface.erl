@@ -753,85 +753,71 @@ has_tx(Peer, ID) ->
 send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Peer, Port, NewB, RecallB) ->
-	%ar:report_console([{sending_new_block, NewB#block.height}, {stack, erlang:get_stacktrace()}]),
-	NewBShadow = NewB#block { wallet_list = [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
 	RecallBHash =
 		case ?IS_BLOCK(RecallB) of
 			true ->  RecallB#block.indep_hash;
 			false -> <<>>
 		end,
-	{TempJSONStruct} = ar_serialize:block_to_json_struct(NewBShadow),
-	HashList = lists:map(fun ar_util:encode/1, NewBShadow#block.hash_list),
-	JSONStruct =
+	case ar_key_db:get(RecallBHash) of
+		[{Key, Nonce}] ->
+			send_new_block(
+				Peer,
+				Port,
+				NewB,
+				RecallB,
+				Key,
+				Nonce
+			);
+		_ ->
+			send_new_block(
+				Peer,
+				Port,
+				NewB,
+				RecallB,
+				<<>>,
+				<<>>
+			)
+	end.
+send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
+	RecallBHash =
+		case ?IS_BLOCK(RecallB) of
+			true ->  RecallB#block.indep_hash;
+			false -> <<>>
+		end,
+	HashList =
+		lists:map(
+			fun ar_util:encode/1,
+			lists:sublist(
+				NewB#block.hash_list,
+				1,
+				?STORE_BLOCKS_BEHIND_CURRENT
+			)
+		),
+	{TempJSONStruct} =
+		ar_serialize:block_to_json_struct(
+			NewB#block { wallet_list = [] }
+		),
+	BlockJSON =
 		{
 			[{<<"hash_list">>, HashList }|TempJSONStruct]
 		},
-	case ar_key_db:get(RecallBHash) of
-		[{Key, Nonce}] ->
-			ar_httpc:request(
-				<<"POST">>,
-				Peer,
-				"/block",
-				ar_serialize:jsonify(
-					{
-						[
-							{<<"new_block">>, JSONStruct},
-							{<<"recall_block">>, ar_util:encode(RecallBHash)},
-							{<<"recall_size">>, RecallB#block.block_size},
-							{<<"port">>, Port},
-							{<<"key">>, ar_util:encode(Key)},
-							{<<"nonce">>, ar_util:encode(Nonce)}
-						]
-					}
-				)
-
-			);
-		% TODO: Clean up function, duplication of code unneccessary.
-		_ ->
-			ar_httpc:request(
-			<<"POST">>,
-			Peer,
-			"/block",
-			ar_serialize:jsonify(
-				{
-					[
-						{<<"new_block">>, JSONStruct},
-						{<<"recall_block">>, ar_util:encode(RecallBHash)},
-						{<<"recall_size">>, RecallB#block.block_size},
-						{<<"port">>, Port},
-						{<<"key">>, <<>>},
-						{<<"nonce">>, <<>>}
-					]
-				}
-			)
-
+	ar_httpc:request(
+		<<"POST">>,
+		Peer,
+		"/block",
+		ar_serialize:jsonify(
+			{
+				[
+					{<<"new_block">>, BlockJSON},
+					{<<"recall_block">>, ar_util:encode(RecallBHash)},
+					{<<"recall_size">>, RecallB#block.block_size},
+					{<<"port">>, Port},
+					{<<"key">>, ar_util:encode(Key)},
+					{<<"nonce">>, ar_util:encode(Nonce)}
+				]
+			}
 		)
-	end.
-send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
-	NewBShadow = NewB#block { wallet_list= [], hash_list = lists:sublist(NewB#block.hash_list,1,?STORE_BLOCKS_BEHIND_CURRENT)},
-	RecallBHash =
-		case ?IS_BLOCK(RecallB) of
-			true ->  RecallB#block.indep_hash;
-			false -> <<>>
-		end,
-		ar_httpc:request(
-			<<"POST">>,
-			Peer,
-			"/block",
-			ar_serialize:jsonify(
-				{
-					[
-						{<<"new_block">>, ar_serialize:block_to_json_struct(NewBShadow)},
-						{<<"recall_block">>, ar_util:encode(RecallBHash)},
-						{<<"recall_size">>, RecallB#block.block_size},
-						{<<"port">>, Port},
-						{<<"key">>, ar_util:encode(Key)},
-						{<<"nonce">>, ar_util:encode(Nonce)}
-					]
-				}
-			)
-
-		).
+	).
 
 %% @doc Request to be added as a peer to a remote host.
 add_peer(Peer) ->
