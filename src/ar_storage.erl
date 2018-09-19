@@ -228,7 +228,7 @@ do_read_block(Filename, BHL) ->
 							ar:report(
 								[
 									{
-										error_reading_wallet_list_from_disk, 
+										error_reading_wallet_list_from_disk,
 										ar_util:encode(B#block.indep_hash)
 									},
 									{type, Type}

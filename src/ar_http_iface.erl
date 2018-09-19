@@ -1,4 +1,5 @@
 -module(ar_http_iface).
+
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
 -export([get_tx/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
@@ -9,9 +10,12 @@
 -export([reregister/1, reregister/2]).
 -export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
 -export([verify_request_to_blockshadow/1]). %% exported for verifier
+
 -include("ar.hrl").
 -include_lib("lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-define(BLOCK_DIR, "blocks").
 
 %%% Exposes access to an internal Arweave client to external nodes on the network.
 
@@ -413,24 +417,32 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 %% @doc Return the blockshadow corresponding to the indep_hash / height.
 %% GET request to endpoint /block/{height|hash}/{indep_hash|height}
 handle('GET', [<<"block">>, Type, ID], Req) ->
-	Filename =
+	Lookup =
 		case Type of
 			<<"hash">> ->
 				ar_storage:lookup_block_filename(ar_util:decode(ID));
 			<<"height">> ->
 				ar_storage:lookup_block_filename(binary_to_integer(ID))
 		end,
-	case Filename of
-		unavailable ->
+	{Filename, IndepHash} =
+		case Lookup of
+			unavailable ->
+				{unavailable, unavailable};
+			_ ->
+				{match, [RawHash]} = re:run(Lookup, ?BLOCK_DIR ++ "/\\d+_(.*)\\.json", [{capture, [1], list}]),
+				{Lookup, ar_util:decode(RawHash)}
+		end,
+	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	Contains = lists:member(IndepHash, BHL),
+	case {Filename, Contains} of
+		{unavailable, _} ->
 			{404, [], <<"Block not found.">>};
-		Filename  ->
+		{_, false} ->
+			{404, [], <<"Block not found.">>};
+		{Filename, true}  ->
 			case elli_request:get_header(<<"X-Version">>, Req, <<"7">>) of
 				<<"7">> ->
-					B =
-						ar_storage:do_read_block(
-							Filename,
-							ar_node:get_hash_list(whereis(http_entrypoint_node))
-						),
+					B = ar_storage:do_read_block(Filename, BHL),
 					{JSONStruct} = ar_serialize:full_block_to_json_struct(B),
 					{200, [],
 						ar_serialize:jsonify(
