@@ -168,7 +168,7 @@ json_struct_to_block(JSONBlock) ->
 		txs = lists:map(fun ar_util:decode/1, TXs),
 		hash_list =
 			case HashList of
-				undefined -> [];
+				undefined -> unset;
 				_         -> [ ar_util:decode(Hash) || Hash <- HashList ]
 			end,
 		wallet_list =
@@ -231,7 +231,7 @@ json_struct_to_full_block(JSONBlock) ->
 		txs = lists:map(fun json_struct_to_tx/1, TXs),
 		hash_list =
 			case HashList of
-				undefined -> [];
+				undefined -> unset;
 				_         -> [ ar_util:decode(Hash) || Hash <- HashList ]
 			end,
 		wallet_list =

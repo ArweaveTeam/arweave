@@ -35,6 +35,8 @@ generate_hash_list_for_block(B, BHL) when ?IS_BLOCK(B) ->
 generate_hash_list_for_block(IndepHash, BHL) ->
 	do_generate_hash_list_for_block(IndepHash, BHL).
 
+do_generate_hash_list_for_block(_, []) ->
+	error(cannot_generate_block_hash_list);
 do_generate_hash_list_for_block(IndepHash, [IndepHash|BHL]) -> BHL;
 do_generate_hash_list_for_block(IndepHash, [_|Rest]) ->
 	do_generate_hash_list_for_block(IndepHash, Rest).

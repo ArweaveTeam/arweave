@@ -15,7 +15,6 @@
 -include_lib("lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(BLOCK_DIR, "blocks").
 
 %%% Exposes access to an internal Arweave client to external nodes on the network.
 
@@ -417,49 +416,43 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 %% @doc Return the blockshadow corresponding to the indep_hash / height.
 %% GET request to endpoint /block/{height|hash}/{indep_hash|height}
 handle('GET', [<<"block">>, Type, ID], Req) ->
-	Lookup =
+	Filename =
 		case Type of
 			<<"hash">> ->
 				ar_storage:lookup_block_filename(ar_util:decode(ID));
 			<<"height">> ->
 				ar_storage:lookup_block_filename(binary_to_integer(ID))
 		end,
-	{Filename, IndepHash} =
-		case Lookup of
-			unavailable ->
-				{unavailable, unavailable};
-			_ ->
-				{match, [RawHash]} = re:run(Lookup, ?BLOCK_DIR ++ "/\\d+_(.*)\\.json", [{capture, [1], list}]),
-				{Lookup, ar_util:decode(RawHash)}
-		end,
-	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-	Contains = lists:member(IndepHash, BHL),
-	case {Filename, Contains} of
-		{unavailable, _} ->
+	case Filename of
+		unavailable ->
 			{404, [], <<"Block not found.">>};
-		{_, false} ->
-			{404, [], <<"Block not found.">>};
-		{Filename, true}  ->
+		_  ->
 			case elli_request:get_header(<<"X-Version">>, Req, <<"7">>) of
-				<<"7">> ->
-					B = ar_storage:do_read_block(Filename, BHL),
-					{JSONStruct} = ar_serialize:full_block_to_json_struct(B),
-					{200, [],
-						ar_serialize:jsonify(
-							{
-								[
-									{
-										<<"hash_list">>,
-										ar_serialize:hash_list_to_json_struct(B#block.hash_list)
-									}
-								|
-									JSONStruct
-								]
-							}
-						)
-					};
 				<<"8">> ->
-					{ok, [], {file, Filename}}
+					{ok, [], {file, Filename}};
+				<<"7">> ->
+					% Supprt for legacy nodes (pre-1.5).
+					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+					try ar_storage:do_read_block(Filename, BHL) of
+						B ->
+							{JSONStruct} = ar_serialize:full_block_to_json_struct(B),
+							{200, [],
+								ar_serialize:jsonify(
+									{
+										[
+											{
+												<<"hash_list">>,
+												ar_serialize:hash_list_to_json_struct(B#block.hash_list)
+											}
+										|
+											JSONStruct
+										]
+									}
+								)
+							}
+					catch error:cannot_generate_block_hash_list ->
+						{404, [], <<"Requested block not found on block hash list.">>}
+					end
 			end
 	end;
 

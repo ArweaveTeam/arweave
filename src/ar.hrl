@@ -148,6 +148,9 @@
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
+-define(BLOCK_DIR, "blocks").
+-define(BLOCK_ENC_DIR, "blocks/enc").
+-define(TX_DIR, "txs").
 
 %% @doc Backup block hash list storage directory.
 -define(HASH_LIST_DIR, "hash_lists").
@@ -177,7 +180,7 @@
 	hash = <<>>, % A hash of this block, the previous block and the recall block.
 	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
 	txs = [], % A list of transaction records associated with this block.
-	hash_list = [], % A list of all previous indepp hashes.
+	hash_list = unset, % A list of all previous indep hashes.
 	wallet_list = [], % A map of wallet balances, or undefined.
     reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
     tags = [], % Miner specified tags to store with the block.
