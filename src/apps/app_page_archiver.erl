@@ -20,7 +20,7 @@
 %% Takes a wallet, a URL and an interval time, starting a service to archive the
 %% page.
 start(Wallet, URL, Interval) ->
-    start(whereis(http_entypoint_node), Wallet, URL, Interval).
+    start(whereis(http_entrypoint_node), Wallet, URL, Interval).
 start(Node, Wallet, URL, Interval) when not is_tuple(Wallet) ->
     start(Node, ar_wallet:load_keyfile(Wallet), URL, Interval);
 start(Node, Wallet, BaseURL, Interval) ->
