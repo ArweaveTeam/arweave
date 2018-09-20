@@ -1,7 +1,7 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1]).
 -export([get_recall_block/5, get_recall_block/6]).
--export([verify_dep_hash/4, verify_indep_hash/1, verify_timestamp/2]).
+-export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/2]).
 -export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([hash_wallet_list/1]).
@@ -367,19 +367,8 @@ verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 	Indep == ar_weave:indep_hash(Block).
 
 %% @doc Verify the dependent hash of a given block is valid
-verify_dep_hash(NewB, OldB, RecallB, MinedTXs) ->
-	NewB#block.hash ==
-		ar_weave:hash(
-			ar_block:generate_block_data_segment(
-				OldB,
-				RecallB,
-				MinedTXs,
-				NewB#block.reward_addr,
-				NewB#block.timestamp,
-				NewB#block.tags
-			),
-			NewB#block.nonce
-		).
+verify_dep_hash(NewB, BlockDataSegment) ->
+	NewB#block.hash == ar_weave:hash(BlockDataSegment, NewB#block.nonce).
 
 %% @doc Verify that the block was created within the last ten minutes
 verify_timestamp(Timestamp, NewB) ->
