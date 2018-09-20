@@ -42,14 +42,19 @@ start(Node, Wallet, BaseURL, Interval) ->
 stop(PID) -> PID ! stop.
 
 server(S) ->
+    get_pages(S),
+    receive stop -> stopping
+    after (S#state.interval * 1000) -> server(S)
+    end.
+
+get_pages(S = #state { url = URLs }) when is_list(hd(URLs)) ->
+    lists:foreach(fun(URL) -> get_pages(S#state { url = URL}) end, URLs);
+get_pages(S) ->
     case httpc:request(URL = S#state.url) of
         {ok, {{_, 200, _}, _, Body}} ->
             archive_page(S, Body);
         _ ->
             ar:report_console([{could_not_get_url, URL}])
-    end,
-    receive stop -> stopping
-    after (S#state.interval * 1000) -> server(S)
     end.
 
 archive_page(S, Body) when is_list(Body) ->
@@ -84,13 +89,31 @@ archive_data_test() ->
     Dat = (ar_storage:read_tx(hd(ar:d(B#block.txs))))#tx.data.
 
 %% @doc Test full operation.
-archive_multiple_test() ->
+archive_multiple_times_test() ->
     {timeout, 60, fun() ->
         ar_storage:clear(),
         Wallet = {_Priv1, Pub1} = ar_wallet:new(),
         Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
         Node1 = ar_node:start([], Bs),
         Archiver = start(Node1, Wallet, "http://127.0.0.1:1984/info", 1),
+        Res = lists:map(
+            fun(_) ->
+                ar_node:mine(Node1),
+                receive after 500 -> ok end
+            end,
+            lists:seq(1, 15)
+        ),
+        ?assert(length(lists:flatten(Res)) >= 2)
+    end}.
+
+%% @doc Test operation with multiple URLs.
+archive_multiple_urls_at_once_test() ->
+    {timeout, 60, fun() ->
+        ar_storage:clear(),
+        Wallet = {_Priv1, Pub1} = ar_wallet:new(),
+        Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+        Node1 = ar_node:start([], Bs),
+        Archiver = start(Node1, Wallet, ["http://127.0.0.1:1984/info", "http://127.0.0.1:1984/info"], 100),
         Res = lists:map(
             fun(_) ->
                 ar_node:mine(Node1),
