@@ -10,9 +10,6 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(BLOCK_DIR, "blocks/").
--define(BLOCK_ENC_DIR, "blocks/enc").
-
 %% @doc Remove all blocks from blocks directory not in HashList
 remove_invalid_blocks(HashList) ->
 	{ok, RawFiles} = file:list_dir(?BLOCK_DIR),
