@@ -364,7 +364,7 @@ json_struct_to_wallet_list(WalletsStruct) ->
 	lists:map(fun json_struct_to_wallet/1, WalletsStruct).
 json_struct_to_wallet({Wallet}) ->
     Address = ar_util:decode(find_value(<<"address">>, Wallet)),
-    Balance = list_to_integer(binary_to_list(find_value(<<"balance">>, Wallet))),
+    Balance = binary_to_integer(find_value(<<"balance">>, Wallet)),
     Last = ar_util:decode(find_value(<<"last_tx">>, Wallet)),
     {Address, Balance, Last}.
 

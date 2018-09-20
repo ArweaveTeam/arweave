@@ -273,9 +273,7 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	{200, [],
 		integer_to_binary(
 			ar_tx:calculate_min_tx_cost(
-				list_to_integer(
-					binary_to_list(SizeInBytes)
-				),
+				binary_to_integer(SizeInBytes),
 				ar_node:get_current_diff(whereis(http_entrypoint_node))
 			)
 		)
@@ -355,7 +353,7 @@ handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
 					{400, [], <<"Wrong network.">>};
 				true ->
 					Peer = elli_request:peer(Req),
-					Port = list_to_integer(binary_to_list(RawPort)),
+					Port = binary_to_integer(RawPort),
 					ar_bridge:add_remote_peer(
 						whereis(http_bridge_node),
 						ar_util:parse_peer({Peer, Port})
@@ -464,7 +462,7 @@ handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
 			<<"height">> ->
 				B =
 					ar_node:get_block(whereis(http_entrypoint_node),
-						list_to_integer(binary_to_list(ID)),
+						binary_to_integer(ID),
 						CurrentBHL),
 				B#block.indep_hash;
 			<<"hash">> -> ar_util:decode(ID)
@@ -492,7 +490,7 @@ handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
 				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
 				ar_node:get_block(
 					HTTPEntryPointPid,
-					list_to_integer(binary_to_list(ID)),
+					binary_to_integer(ID),
 					CurrentBHL);
 			<<"hash">> ->
 				ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
@@ -524,7 +522,7 @@ handle('GET', [<<"block">>, Type, ID, Field], _Req) ->
 					<<"height">> ->
 						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 						ar_node:get_block(whereis(http_entrypoint_node),
-							list_to_integer(binary_to_list(ID)),
+							binary_to_integer(ID),
 							CurrentBHL);
 					<<"hash">> ->
 						ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
@@ -860,7 +858,7 @@ get_tx_reward(Peer, Size) ->
 			"/price/" ++ integer_to_list(Size),
 			[]
 		),
-	list_to_integer(binary_to_list(Body)).
+	binary_to_integer(Body).
 
 %% @doc Retreive a block by height or hash from a remote peer.
 get_block(Peer, ID, BHL) ->
@@ -1132,13 +1130,13 @@ handle_encrypted_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unav
 
 %% @doc Process the response of a /block/[{Height}|{Hash}]/{Subfield} call.
 handle_block_field_response({"timestamp", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	list_to_integer(binary_to_list(Body));
+	binary_to_integer(Body);
 handle_block_field_response({"last_retarget", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	list_to_integer(binary_to_list(Body));
+	binary_to_integer(Body);
 handle_block_field_response({"diff", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	list_to_integer(binary_to_list(Body));
+	binary_to_integer(Body);
 handle_block_field_response({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	list_to_integer(binary_to_list(Body));
+	binary_to_integer(Body);
 handle_block_field_response({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_tx(Body);
 handle_block_field_response({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
@@ -1462,7 +1460,7 @@ get_balance_test() ->
 			"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
 			[]
 		),
-	?assertEqual(10000, list_to_integer(binary_to_list(Body))).
+	?assertEqual(10000, binary_to_integer(Body)).
 
 %% @doc Test that wallets issued in the pre-sale can be viewed.
 get_presale_balance_test() ->
@@ -1478,7 +1476,7 @@ get_presale_balance_test() ->
 			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
 			[]
 		),
-	?assertEqual(10000, list_to_integer(binary_to_list(Body))).
+	?assertEqual(10000, binary_to_integer(Body)).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
 get_last_tx_single_test() ->
