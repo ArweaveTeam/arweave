@@ -554,8 +554,8 @@ validate(
 		andalso PreviousBCheck
 		andalso HashlistCheck
 		andalso WalletListCheck;
-validate(_HL, WL, NewB = #block { hash_list = undefined }, TXs, OldB, RecallB, _, _) ->
-	validate(undefined, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
+validate(_HL, WL, NewB = #block { hash_list = [] }, TXs, OldB, RecallB, _, _) ->
+	validate([], WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
 	validate(HL, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
