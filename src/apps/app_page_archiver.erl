@@ -9,7 +9,7 @@
 %%% right to access and copy.
 
 -record(state, {
-    node,
+    queue,
     wallet,
     url,
     interval, % time between archives, in seconds
@@ -26,9 +26,10 @@ start(Node, Wallet, URL, Interval) when not is_tuple(Wallet) ->
 start(Node, Wallet, BaseURL, Interval) ->
     spawn(
         fun() ->
+            Queue = app_queue:start(Node, Wallet),
             server(
                 #state {
-                    node = Node,
+                    queue = Queue,
                     wallet = Wallet,
                     url = BaseURL,
                     interval = Interval
@@ -53,45 +54,20 @@ server(S) ->
 
 archive_page(S, Body) when is_list(Body) ->
     archive_page(S, list_to_binary(Body));
-archive_page(S = #state { node = Node }, Body) ->
-    Price =
-        ar_tx:calculate_min_tx_cost(
-            Sz = byte_size(Body),
-            ar_node:get_current_diff(Node)
+archive_page(S = #state { queue = Queue }, Body) ->
+    UnsignedTX =
+        ar_tx:new(
+            Body,
+            0,
+            <<>>
         ),
-    Addr = ar_wallet:to_address(S#state.wallet),
-    Balance = ar_node:get_balance(Node, Addr),
-    if Balance > Price ->
-        UnsignedTX =
-            ar_tx:new(
-                Body,
-                Price,
-                ar_node:get_last_tx(Node, Addr)
-            ),
-        SignedTX =
-            ar_tx:sign(
-                UnsignedTX,
-                S#state.wallet
-            ),
-        ar_node:add_tx(Node, SignedTX),
-        ar:report(
-            [
-                {app, ?MODULE},
-                {archiving_page, S#state.url},
-                {cost, Price / ?AR(1)},
-                {submitted_tx, ar_util:encode(SignedTX#tx.id)},
-                {size, Sz}
-            ]
-        );
-    true ->
-        ar:report(
-            [
-                {app, ?MODULE},
-                {archiving_page, S#state.url},
-                {problem, insufficient_of_funds}
-            ]
-        )
-    end.
+    app_queue:add(Queue, UnsignedTX),
+    ar:report(
+        [
+            {app, ?MODULE},
+            {archiving_page, S#state.url}
+        ]
+    ).
 
 %% @doc Test archiving of data.
 archive_data_test() ->
@@ -99,7 +75,8 @@ archive_data_test() ->
 	Wallet = {_Priv1, Pub1} = ar_wallet:new(),
 	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node1 = ar_node:start([], Bs),
-    archive_page(#state { node = Node1, wallet = Wallet }, Dat = <<"TEST">>),
+    Queue = app_queue:start(Node1, Wallet),
+    archive_page(#state { queue = Queue }, Dat = <<"TEST">>),
     receive after 1000 -> ok end,
     ar_node:mine(Node1),
     receive after 1000 -> ok end,
@@ -108,20 +85,18 @@ archive_data_test() ->
 
 %% @doc Test full operation.
 archive_multiple_test() ->
-	ar_storage:clear(),
-	Wallet = {_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = ar_node:start([], Bs),
-    Archiver = start(Node1, Wallet, "http://127.0.0.1:1984/info", 1),
-    receive after 500 -> ok end,
-    ar_node:mine(Node1),
-    receive after 1500 -> ok end,
-    B1 = ar_node:get_current_block(Node1),
-    ar_node:mine(Node1),
-    receive after 1000 -> ok end,
-    B2 = ar_node:get_current_block(Node1),
-    stop(Archiver),
-    1 = ar:d(B1#block.height),
-    2 = B2#block.height,
-    [_|_] = B1#block.txs,
-    [_|_] = B2#block.txs.
+    {timeout, 60, fun() ->
+        ar_storage:clear(),
+        Wallet = {_Priv1, Pub1} = ar_wallet:new(),
+        Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+        Node1 = ar_node:start([], Bs),
+        Archiver = start(Node1, Wallet, "http://127.0.0.1:1984/info", 1),
+        Res = lists:map(
+            fun(_) ->
+                ar_node:mine(Node1),
+                receive after 500 -> ok end
+            end,
+            lists:seq(1, 15)
+        ),
+        ?assert(length(lists:flatten(Res)) >= 2)
+    end}.
