@@ -74,8 +74,7 @@ prune(S) ->
 			)
 	}.
 prune(CurrHeight, Services) ->
-	ar:d([{height, CurrHeight}, {services, Services}]),
-	ar:d(lists:filter(fun(S) -> S#service.expires >= CurrHeight end, Services)).
+	lists:filter(fun(S) -> S#service.expires >= CurrHeight end, Services).
 
 %% Ensure that services can be added.
 add_service_test() ->

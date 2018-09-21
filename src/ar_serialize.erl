@@ -449,10 +449,10 @@ hash_list_roundtrip_test() ->
 
 query_roundtrip_test() ->
 	Query = {'equals', <<"TestName">>, <<"TestVal">>},
-	ar:d(QueryJSON = ar_serialize:jsonify(
+	QueryJSON = ar_serialize:jsonify(
 		ar_serialize:query_to_json_struct(
 			Query
 			)
-		)),
+		),
 	Query = ar_serialize:json_struct_to_query(QueryJSON).
 

@@ -518,7 +518,7 @@ validate(
 
 	case IndepRecall of
 		false ->
-			ar:d(
+			ar:report(
 				[
 					{encountered_invalid_recall_block, ar_util:encode(RecallB#block.indep_hash)},
 					moving_to_invalid_block_directory
@@ -561,8 +561,8 @@ validate(_HL, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _)
 	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
 	validate(HL, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
-validate(_HL, _WL, _NewB, _TXs, _OldB, _RecallB, _, _) ->
-	ar:d(block_not_accepted),
+validate(_HL, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
+	ar:report([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
 	false.
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
@@ -607,7 +607,7 @@ get_tx(_, []) ->
 get_tx(Peers, ID) when is_list(Peers) ->
 	% check locally first, if not found in storage nor nodes state ask
 	% list of external peers for tx
-	ar:d([{getting_tx, ID}, {peers, Peers}]),
+	ar:report([{getting_tx, ID}, {peers, Peers}]),
 	case
 		{
 			ar_storage:read_tx(ID),

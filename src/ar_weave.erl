@@ -306,7 +306,6 @@ is_tx_on_block_list([#block { txs = TXs }|Bs], TXID) ->
 is_data_on_block_list(_, _) -> false.
 
 read_genesis_txs() ->
-	ar:d([file:get_cwd()]),
 	{ok, Files} = file:list_dir("data/genesis_txs"),
 	lists:foldl(
 		fun(F, Acc) ->

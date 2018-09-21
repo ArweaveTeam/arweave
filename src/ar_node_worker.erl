@@ -144,7 +144,6 @@ handle(SPid, automine) ->
 	ar_node_state:update(SPid, StateOut),
 	{ok, automine};
 handle(SPid, {replace_block_list, [Block | _]}) ->
-	ar:d({replaced, [Block#block.indep_hash | Block#block.hash_list]}),
 	ar_node_state:update(SPid, [
 		{hash_list, [Block#block.indep_hash | Block#block.hash_list]},
 		{wallet_list, Block#block.wallet_list},
@@ -314,7 +313,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Pee
 			StateNext = StateIn#{ gossip => NewGS },
 			process_new_block(StateNext, NewGS, NewB, RecallShadow, Peer, HashList);
 		false ->
-			ar:d(failed_to_get_recall_block),
+			ar:report(failed_to_get_recall_block),
 			none
 	end;
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, HashList)
@@ -372,7 +371,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
 		false ->
-			ar:d({could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}),
+			ar:report([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
 			ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 	end,
 	{ok, StateOut};

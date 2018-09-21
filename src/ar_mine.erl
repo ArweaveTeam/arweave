@@ -148,7 +148,7 @@ server(
 			);
 		% Refresh the mining data in case of diff change.
 		{refresh_data, PID} ->
-			ar:d({miner_data_refreshed}),
+			ar:report([miner_data_refreshed]),
 			spawn(
 				fun() ->
 					PID ! {new_data, TXs},

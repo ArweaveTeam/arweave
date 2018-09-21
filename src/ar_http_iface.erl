@@ -1354,8 +1354,8 @@ get_tx_reward_test() ->
 	Node1 = ar_node:start([], [B0]),
 	reregister(Node1),
 	% Hand calculated result for 1000 bytes.
-	ExpectedPrice = ar:d(ar_tx:calculate_min_tx_cost(1000, B0#block.diff)),
-	ExpectedPrice = ar:d(get_tx_reward({127, 0, 0, 1, 1984}, 1000)).
+	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff),
+	ExpectedPrice = get_tx_reward({127, 0, 0, 1, 1984}, 1000).
 
 %% @doc Ensure that objects are only re-gossiped once.
 single_regossip_test_() ->
@@ -1408,7 +1408,7 @@ node_blacklisting_post_spammer_test() ->
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
 get_fun_msg_pair(get_info) ->
 	{ fun(_) ->
-			ar:d(get_info({127, 0, 0, 1, 1984}))
+			get_info({127, 0, 0, 1, 1984})
 		end
 	, info_unavailable};
 get_fun_msg_pair(send_new_tx) ->
@@ -1646,13 +1646,13 @@ add_external_block_test_() ->
 		send_new_block(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
-			ar:d(ar_storage:read_block(BH2, ar_node:get_hash_list(Node2))),
+			ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
 			BGen
 		),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
 			fun() ->
-				length(ar:d(ar_node:get_blocks(Node1))) > 1
+				length(ar_node:get_blocks(Node1)) > 1
 			end,
 			1000,
 			10 * 1000
@@ -1693,13 +1693,13 @@ add_external_block_with_tx_test_() ->
 		send_new_block(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
-			ar:d(ar_storage:read_block(BTest, ar_node:get_hash_list(Node2))),
+			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
 			BGen
 		),
 		% Wait for test block and assert that it contains transaction.
 		?assert(ar_util:do_until(
 			fun() ->
-				length(ar:d(ar_node:get_blocks(Node1))) > 1
+				length(ar_node:get_blocks(Node1)) > 1
 			end,
 			500,
 			10 * 1000

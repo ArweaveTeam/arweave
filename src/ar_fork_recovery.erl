@@ -135,11 +135,15 @@ server(S = #state {
 		end,
 		case HashListExtra of
 			[] ->
-				ar:d(failed_to_update_target_block),
+				ar:report(failed_to_update_target_block),
 				server(S);
 			H ->
-				ar:d({current_target, TargetB#block.height}),
-				ar:d({updating_target_block, Block#block.height}),
+				ar:report(
+					[
+						{current_target, TargetB#block.height},
+						{updating_target_block, Block#block.height}
+					]
+				),
 				server(
 					S#state {
 						hash_list = [NextH | HashList] ++ H,
@@ -150,7 +154,11 @@ server(S = #state {
 		end;
 	apply_next_block ->
 		NextB = ar_node_utils:get_full_block(Peers, NextH, BHL),
-		ar:d({applying_fork_recovery, ar_util:encode(NextH)}),
+		ar:report(
+			[
+				{applying_fork_recovery, ar_util:encode(NextH)}
+			]
+		),
 		case ?IS_BLOCK(NextB) of
 			% could not retrieve the next block to be applied
 			false ->
