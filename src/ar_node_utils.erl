@@ -476,14 +476,16 @@ validate(
 		RewardAddr,
 		Tags) ->
 	% TODO: Fix names.
-	BDS = ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
-	Mine = ar_mine:validate(BDS, Nonce, Diff),
+	BDSHash = ar_weave:hash(
+		ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
+		Nonce),
+	Mine = ar_mine:validate_by_hash(BDSHash, Diff),
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
 	Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
 	Retarget = ar_retarget:validate(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
-	Hash = ar_block:verify_dep_hash(NewB, BDS),
+	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
 	WeaveSize = ar_block:verify_weave_size(NewB, OldB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
 	%Time = ar_block:verify_timestamp(OldB, NewB),
