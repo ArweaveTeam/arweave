@@ -1,3 +1,7 @@
+%%%
+%%% @doc Exposes access to an internal Arweave client to external nodes on the network.
+%%%
+
 -module(ar_http_iface).
 
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
@@ -15,8 +19,9 @@
 -include_lib("lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-
-%%% Exposes access to an internal Arweave client to external nodes on the network.
+%%%
+%%% Public API.
+%%%
 
 %% @doc Start the Arweave HTTP API and returns a process ID.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
@@ -52,7 +57,9 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 	reregister(http_bridge_node, BridgeNode),
 	start(Port).
 
+%%%
 %%% Server side functions.
+%%%
 
 %% @doc Main function to handle a request to the nodes HTTP server.
 %%
@@ -88,12 +95,14 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 %%
 %% NB: Blocks and transactions are transmitted between HTTP nodes in a JSON encoded format.
 %% To find the specifics regarding this look at ar_serialize module.
-
 handle(Req, _Args) ->
-	%inform ar_bridge about new peer, performance rec will be updated  from ar_metrics (this is leftover from update_performance_list)
+	% Inform ar_bridge about new peer, performance rec will be updated  from ar_metrics
+	% (this is leftover from update_performance_list)
 	case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
-		not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
-		X -> X
+		not_found ->
+			ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
+		X ->
+			X
 	end,
 	case handle(Req#req.method, elli_request:path(Req), Req) of
 		{Status, Hdrs, Body} ->
@@ -152,7 +161,6 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 			{ok, [], {file, Filename}}
 	end;
 
-
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
 %% POST request to endpoint /arql with body of request being a logical expression valid in ar_parser.
 %%
@@ -195,12 +203,14 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 	end;
 
 %% @doc Share a new block to a peer.
-%% POST request to endpoint /block with the body of the request being a JSON encoded block as specified in ar_serialize.
+%% POST request to endpoint /block with the body of the request being a JSON encoded block
+%% as specified in ar_serialize.
 handle('POST', [<<"block">>], Req) ->
 	post_block(request, Req);
 
 %% @doc Share a new transaction with a peer.
-%% POST request to endpoint /tx with the body of the request being a JSON encoded tx as specified in ar_serialize.
+%% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
+%% specified in ar_serialize.
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
@@ -417,11 +427,24 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 	Filename =
 		case Type of
 			<<"hash">> ->
-				ar_storage:lookup_block_filename(ar_util:decode(ID));
+				case hash_to_maybe_filename(block, ID) of
+					{error, invalid}        -> invalid_hash;
+					{error, _, unavailable} -> unavailable;
+					{ok, Fn}                -> Fn
+				end;
 			<<"height">> ->
-				ar_storage:lookup_block_filename(binary_to_integer(ID))
+				try binary_to_integer(ID) of
+					Int ->
+						ar_storage:lookup_block_filename(Int)
+				catch _:_ ->
+					invalid_height
+				end
 		end,
 	case Filename of
+		invalid_hash ->
+			{400, [], <<"Invalid height.">>};
+		invalid_height ->
+			{400, [], <<"Invalid hash.">>};
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		_  ->
@@ -454,90 +477,13 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 			end
 	end;
 
-%% @doc Return the block hash list associated with a block.
-handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
-	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-	Hash =
-		case Type of
-			<<"height">> ->
-				B =
-					ar_node:get_block(whereis(http_entrypoint_node),
-						binary_to_integer(ID),
-						CurrentBHL),
-				B#block.indep_hash;
-			<<"hash">> -> ar_util:decode(ID)
-		end,
-	case lists:member(Hash, CurrentBHL) of
-		true ->
-			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
-			{200, [],
-				ar_serialize:jsonify(
-					ar_serialize:hash_list_to_json_struct(
-						BlockBHL
-					)
-				)
-			};
-		false ->
-			{404, [], <<"Block not found.">>}
-	end;
-
-%% @doc Return the wallet list associated with a block.
-handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
-	HTTPEntryPointPid = whereis(http_entrypoint_node),
-	B =
-		case Type of
-			<<"height">> ->
-				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
-				ar_node:get_block(
-					HTTPEntryPointPid,
-					binary_to_integer(ID),
-					CurrentBHL);
-			<<"hash">> ->
-				ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
-		end,
-	case ?IS_BLOCK(B) of
-		true ->
-			{200, [],
-				ar_serialize:jsonify(
-					ar_serialize:wallet_list_to_json_struct(
-						B#block.wallet_list
-					)
-				)
-			};
-		false ->
-			{404, [], <<"Block not found.">>}
-	end;
-
-%% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
-%% GET request to endpoint /block/hash/{hash|height}/{field}
-%%
-%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
-%%
-handle('GET', [<<"block">>, Type, ID, Field], _Req) ->
-	case ar_meta_db:get(subfield_queries) of
-		true ->
-			Block =
-				case Type of
-					<<"height">> ->
-						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-						ar_node:get_block(whereis(http_entrypoint_node),
-							binary_to_integer(ID),
-							CurrentBHL);
-					<<"hash">> ->
-						ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
-				end,
-			case Block of
-				unavailable ->
-						{404, [], <<"Not Found.">>};
-				B ->
-					{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
-					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
-					Result = block_field_to_string(Field, Res),
-					{200, [], Result}
-			end;
-		_ ->
-			{421, [], <<"Subfield block querying is disabled on this node.">>}
+%% @doc Return block or block field.
+handle('GET', [<<"block">>, Type, IDBin, Field], _Req) ->
+	case validate_get_block_type_id(Type, IDBin) of
+		{error, Response} ->
+			Response;
+		{ok, ID} ->
+			process_request(get_block, [Type, ID, Field])
 	end;
 
 %% @doc Return the current block.
@@ -714,7 +660,9 @@ return_info() ->
 		)
 	}.
 
-%%% Client functions
+%%%
+%%% Client functions.
+%%%
 
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
@@ -966,7 +914,6 @@ get_wallet_list(Peer, Hash) ->
 			ar_serialize:dejsonify(ar_serialize:json_struct_to_wallet_list(Body));
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
 	end.
-
 
 %% @doc Get a block hash list (by its hash) from the external peer.
 get_hash_list(Peer) ->
@@ -1319,6 +1266,102 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 		end
 	),
 	{200, [], <<"OK">>}.
+
+%% @doc Return the block hash list associated with a block.
+process_request(get_block, [Type, ID, <<"hash_list">>]) ->
+	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	Hash =
+		case Type of
+			<<"height">> ->
+				B =
+					ar_node:get_block(whereis(http_entrypoint_node),
+					ID,
+					CurrentBHL),
+				B#block.indep_hash;
+			<<"hash">> -> ID
+		end,
+	case lists:member(Hash, CurrentBHL) of
+		true ->
+			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
+			{200, [],
+				ar_serialize:jsonify(
+					ar_serialize:hash_list_to_json_struct(
+						BlockBHL
+					)
+				)
+			};
+		false ->
+			{404, [], <<"Block not found.">>}
+	end;
+%% @doc Return the wallet list associated with a block.
+process_request(get_block, [Type, ID, <<"wallet_list">>]) ->
+	HTTPEntryPointPid = whereis(http_entrypoint_node),
+	B =
+		case Type of
+			<<"height">> ->
+				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
+				ar_node:get_block(
+					HTTPEntryPointPid,
+					ID,
+					CurrentBHL);
+			<<"hash">> ->
+				ar_storage:read_block(ID, ar_node:get_hash_list(HTTPEntryPointPid))
+		end,
+	case ?IS_BLOCK(B) of
+		true ->
+			{200, [],
+				ar_serialize:jsonify(
+					ar_serialize:wallet_list_to_json_struct(
+						B#block.wallet_list
+					)
+				)
+			};
+		false ->
+			{404, [], <<"Block not found.">>}
+	end;
+%% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
+%% GET request to endpoint /block/hash/{hash|height}/{field}
+%%
+%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
+%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%
+process_request(get_block, [Type, ID, Field]) ->
+	case ar_meta_db:get(subfield_queries) of
+		true ->
+			Block =
+				case Type of
+					<<"height">> ->
+						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+						ar_node:get_block(whereis(http_entrypoint_node),
+							ID,
+							CurrentBHL);
+					<<"hash">> ->
+						ar_storage:read_block(ID, ar_node:get_hash_list(whereis(http_entrypoint_node)))
+				end,
+			case Block of
+				unavailable ->
+						{404, [], <<"Not Found.">>};
+				B ->
+					{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+					Result = block_field_to_string(Field, Res),
+					{200, [], Result}
+			end;
+		_ ->
+			{421, [], <<"Subfield block querying is disabled on this node.">>}
+	end.
+
+validate_get_block_type_id(<<"height">>, ID) ->
+	try binary_to_integer(ID) of
+		Int -> {ok, Int}
+	catch _:_ ->
+		{error, {400, [], <<"Invalid height.">>}}
+	end;
+validate_get_block_type_id(<<"hash">>, ID) ->
+	case safe_decode(ID) of
+		{ok, Hash} -> {ok, Hash};
+		invalid    -> {error, {400, [], <<"Invalid hash.">>}}
+	end.
 
 %% @doc Get struct and block shadow out of a request.
 verify_request_to_blockshadow(Req) ->
