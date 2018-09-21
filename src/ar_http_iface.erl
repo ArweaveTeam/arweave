@@ -417,11 +417,24 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 	Filename =
 		case Type of
 			<<"hash">> ->
-				ar_storage:lookup_block_filename(ar_util:decode(ID));
+				case hash_to_maybe_filename(block, ID) of
+					{error, invalid}        -> invalid_hash;
+					{error, _, unavailable} -> unavailable;
+					{ok, Fn}                -> Fn
+				end;
 			<<"height">> ->
-				ar_storage:lookup_block_filename(binary_to_integer(ID))
+				try binary_to_integer(ID) of
+					Int ->
+						ar_storage:lookup_block_filename(Int)
+				catch _:_ ->
+					invalid_height
+				end
 		end,
 	case Filename of
+		invalid_hash ->
+			{400, [], <<"Invalid height.">>};
+		invalid_height ->
+			{400, [], <<"Invalid hash.">>};
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		_  ->
@@ -454,90 +467,13 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 			end
 	end;
 
-%% @doc Return the block hash list associated with a block.
-handle('GET', [<<"block">>, Type, ID, <<"hash_list">>], _Req) ->
-	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-	Hash =
-		case Type of
-			<<"height">> ->
-				B =
-					ar_node:get_block(whereis(http_entrypoint_node),
-						binary_to_integer(ID),
-						CurrentBHL),
-				B#block.indep_hash;
-			<<"hash">> -> ar_util:decode(ID)
-		end,
-	case lists:member(Hash, CurrentBHL) of
-		true ->
-			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
-			{200, [],
-				ar_serialize:jsonify(
-					ar_serialize:hash_list_to_json_struct(
-						BlockBHL
-					)
-				)
-			};
-		false ->
-			{404, [], <<"Block not found.">>}
-	end;
-
-%% @doc Return the wallet list associated with a block.
-handle('GET', [<<"block">>, Type, ID, <<"wallet_list">>], _Req) ->
-	HTTPEntryPointPid = whereis(http_entrypoint_node),
-	B =
-		case Type of
-			<<"height">> ->
-				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
-				ar_node:get_block(
-					HTTPEntryPointPid,
-					binary_to_integer(ID),
-					CurrentBHL);
-			<<"hash">> ->
-				ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(HTTPEntryPointPid))
-		end,
-	case ?IS_BLOCK(B) of
-		true ->
-			{200, [],
-				ar_serialize:jsonify(
-					ar_serialize:wallet_list_to_json_struct(
-						B#block.wallet_list
-					)
-				)
-			};
-		false ->
-			{404, [], <<"Block not found.">>}
-	end;
-
-%% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
-%% GET request to endpoint /block/hash/{hash|height}/{field}
-%%
-%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
-%%
-handle('GET', [<<"block">>, Type, ID, Field], _Req) ->
-	case ar_meta_db:get(subfield_queries) of
-		true ->
-			Block =
-				case Type of
-					<<"height">> ->
-						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-						ar_node:get_block(whereis(http_entrypoint_node),
-							binary_to_integer(ID),
-							CurrentBHL);
-					<<"hash">> ->
-						ar_storage:read_block(ar_util:decode(ID), ar_node:get_hash_list(whereis(http_entrypoint_node)))
-				end,
-			case Block of
-				unavailable ->
-						{404, [], <<"Not Found.">>};
-				B ->
-					{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
-					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
-					Result = block_field_to_string(Field, Res),
-					{200, [], Result}
-			end;
-		_ ->
-			{421, [], <<"Subfield block querying is disabled on this node.">>}
+%% @doc Return block or block field.
+handle('GET', [<<"block">>, Type, IDBin, Field], _Req) ->
+	case validate_get_block_type_id(Type, IDBin) of
+		{error, Response} ->
+			Response;
+		{ok, ID} ->
+			process_request(get_block, [Type, ID, Field])
 	end;
 
 %% @doc Return the current block.
@@ -1319,6 +1255,102 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 		end
 	),
 	{200, [], <<"OK">>}.
+
+%% @doc Return the block hash list associated with a block.
+process_request(get_block, [Type, ID, <<"hash_list">>]) ->
+	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	Hash =
+		case Type of
+			<<"height">> ->
+				B =
+					ar_node:get_block(whereis(http_entrypoint_node),
+					ID,
+					CurrentBHL),
+				B#block.indep_hash;
+			<<"hash">> -> ID
+		end,
+	case lists:member(Hash, CurrentBHL) of
+		true ->
+			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
+			{200, [],
+				ar_serialize:jsonify(
+					ar_serialize:hash_list_to_json_struct(
+						BlockBHL
+					)
+				)
+			};
+		false ->
+			{404, [], <<"Block not found.">>}
+	end;
+%% @doc Return the wallet list associated with a block.
+process_request(get_block, [Type, ID, <<"wallet_list">>]) ->
+	HTTPEntryPointPid = whereis(http_entrypoint_node),
+	B =
+		case Type of
+			<<"height">> ->
+				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
+				ar_node:get_block(
+					HTTPEntryPointPid,
+					ID,
+					CurrentBHL);
+			<<"hash">> ->
+				ar_storage:read_block(ID, ar_node:get_hash_list(HTTPEntryPointPid))
+		end,
+	case ?IS_BLOCK(B) of
+		true ->
+			{200, [],
+				ar_serialize:jsonify(
+					ar_serialize:wallet_list_to_json_struct(
+						B#block.wallet_list
+					)
+				)
+			};
+		false ->
+			{404, [], <<"Block not found.">>}
+	end;
+%% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
+%% GET request to endpoint /block/hash/{hash|height}/{field}
+%%
+%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
+%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%
+process_request(get_block, [Type, ID, Field]) ->
+	case ar_meta_db:get(subfield_queries) of
+		true ->
+			Block =
+				case Type of
+					<<"height">> ->
+						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+						ar_node:get_block(whereis(http_entrypoint_node),
+							ID,
+							CurrentBHL);
+					<<"hash">> ->
+						ar_storage:read_block(ID, ar_node:get_hash_list(whereis(http_entrypoint_node)))
+				end,
+			case Block of
+				unavailable ->
+						{404, [], <<"Not Found.">>};
+				B ->
+					{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
+					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
+					Result = block_field_to_string(Field, Res),
+					{200, [], Result}
+			end;
+		_ ->
+			{421, [], <<"Subfield block querying is disabled on this node.">>}
+	end.
+
+validate_get_block_type_id(<<"height">>, ID) ->
+	try binary_to_integer(ID) of
+		Int -> {ok, Int}
+	catch _:_ ->
+		{error, {400, [], <<"Invalid height.">>}}
+	end;
+validate_get_block_type_id(<<"hash">>, ID) ->
+	case safe_decode(ID) of
+		{ok, Hash} -> {ok, Hash};
+		invalid    -> {error, {400, [], <<"Invalid hash.">>}}
+	end.
 
 %% @doc Get struct and block shadow out of a request.
 verify_request_to_blockshadow(Req) ->
