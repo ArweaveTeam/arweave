@@ -238,7 +238,9 @@ do_read_block(Filename, BHL) ->
 				end
 		},
 	case FinalB#block.wallet_list of
-		not_found -> unavailable;
+		not_found ->
+			invalidate_block(B),
+			unavailable;
 		_ -> FinalB
 	end.
 
