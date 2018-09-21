@@ -37,6 +37,76 @@ single_tx_regossip_test() ->
 		ok
 	end.
 
+%% @doc Cancel a pending tx.
+%% Sends two TXs, from two different wallets, cancels one, then checks that
+%% the other progressed correctly.
+cancel_tx_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		{Priv1, Pub1} = ar_wallet:new(),
+		{Priv2, Pub2} = ar_wallet:new(),
+		AllowedTarget = crypto:strong_rand_bytes(32),
+		CancelTarget = crypto:strong_rand_bytes(32),
+		AllowedTX = ar_tx:new(AllowedTarget, ?AR(1), ?AR(1000), <<>>),
+		CancelTX = ar_tx:new(CancelTarget, ?AR(1), ?AR(9000), <<>>),
+		% 1000 AR from Wallet1 -> AllowedTarget, 1 AR fee.
+		SignedAllowedTX = ar_tx:sign(AllowedTX, Priv1, Pub1),
+		% 9000 AR from Wallet2 -> CANCELLED.
+		SignedCancelTX = ar_tx:sign(CancelTX, Priv2, Pub2),
+		B0 =
+			ar_weave:init(
+				[
+					{ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
+					{ar_wallet:to_address(Pub2), ?AR(10000), <<>>}
+				]
+			),
+		Node1 = ar_node:start([], B0),
+		ar_node:add_tx(Node1, SignedAllowedTX),
+		ar_node:add_tx(Node1, SignedCancelTX),
+		timer:sleep(300),
+		ar_storage:write_tx(SignedAllowedTX),
+		ar_storage:write_tx(SignedCancelTX),
+		timer:sleep(300),
+		Sig = ar_wallet:sign(Priv2, SignedCancelTX#tx.id),
+		ar_node:cancel_tx(Node1, SignedCancelTX#tx.id, Sig),
+		timer:sleep(300),
+		ar_node:mine(Node1), % Mine B1
+		timer:sleep(300),
+		?AR(8999) = ar_node:get_balance(Node1, Pub1),
+		?AR(10000) = ar_node:get_balance(Node1, ar_wallet:to_address(Pub2)),
+		?AR(1000) = ar_node:get_balance(Node1, AllowedTarget),
+		?AR(0) = ar_node:get_balance(Node1, CancelTarget)
+	end}.
+
+
+%% @doc Ensure bogus TX cancellation requests are ignored.
+bogus_cancel_tx_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		{Priv1, Pub1} = ar_wallet:new(),
+		AllowedTarget = crypto:strong_rand_bytes(32),
+		AllowedTX = ar_tx:new(AllowedTarget, ?AR(1), ?AR(1000), <<>>),
+		% 1000 AR from Wallet1 -> AllowedTarget, 1 AR fee.
+		SignedAllowedTX = ar_tx:sign(AllowedTX, Priv1, Pub1),
+		B0 =
+			ar_weave:init(
+				[
+					{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}
+				]
+			),
+		Node1 = ar_node:start([], B0),
+		ar_node:add_tx(Node1, SignedAllowedTX),
+		timer:sleep(300),
+		ar_storage:write_tx(SignedAllowedTX),
+		timer:sleep(300),
+		ar_node:cancel_tx(Node1, SignedAllowedTX#tx.id, crypto:strong_rand_bytes(512)),
+		timer:sleep(300),
+		ar_node:mine(Node1), % Mine B1
+		timer:sleep(300),
+		?AR(8999) = ar_node:get_balance(Node1, ar_wallet:to_address(Pub1)),
+		?AR(1000) = ar_node:get_balance(Node1, AllowedTarget)
+	end}.
+
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_network_with_reward_pool_test() ->
 	ar_storage:clear(),

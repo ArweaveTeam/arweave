@@ -27,6 +27,7 @@
 -export([mine/1, mine_at_diff/2, automine/1, truncate/1]).
 -export([add_block/3, add_block/4, add_block/5]).
 -export([add_tx/2]).
+-export([cancel_tx/3]).
 -export([add_peers/2]).
 -export([print_reward_addr/0]).
 
@@ -548,6 +549,10 @@ add_tx(Node, TX) when is_pid(Node) ->
 add_tx(Host, TX) ->
 	ar_http_iface:send_new_tx(Host, TX).
 
+%% @doc remove a TX from the waiting queues, with permission from the owner.
+cancel_tx(Node, TXID, Sig) ->
+	Node ! {cancel_tx, TXID, Sig}.
+
 %% @doc Add a new block to the node server loop.
 %% If accepted the nodes state will change.
 add_block(Conn, NewB, RecallB) ->
@@ -670,6 +675,8 @@ handle(_SPid, Msg) when is_record(Msg, gs_msg) ->
 	{task, {gossip_message, Msg}};
 handle(_SPid, {add_tx, TX}) ->
 	{task, {add_tx, TX}};
+handle(_SPid, {cancel_tx, TXID, Sig}) ->
+	{task, {cancel_tx, TXID, Sig}};
 handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
 handle(_SPid, {apply_tx, TX}) ->

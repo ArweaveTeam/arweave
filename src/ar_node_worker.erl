@@ -96,6 +96,11 @@ handle(SPid, {encounter_new_tx, TX}) ->
 			ok
 	end,
 	{ok, encounter_new_tx};
+handle(SPid, {cancel_tx, TXID, Sig}) ->
+	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
+	{ok, StateOut} = cancel_tx(StateIn, TXID, Sig),
+	ar_node_state:update(SPid, StateOut),
+	{ok, cancel_tx};
 handle(SPid, {process_new_block, Peer, Height, NewB, RecallB}) ->
 	% We have a new block. Distribute it to the gossip network.
 	{ok, StateIn} = ar_node_state:all(SPid),
@@ -291,6 +296,45 @@ encounter_new_tx(StateIn, TX, NewGS) ->
 				{waiting_txs, WaitingTXs -- [TX]}
 			]}
 	end.
+
+%% @doc Remove a TX from the pools if the signature is valid.
+cancel_tx(StateIn, TXID, Sig) ->
+	#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs } = StateIn,
+	{
+		ok,
+		[
+			{txs, maybe_remove_tx(TXs, TXID, Sig)},
+			{waiting_txs, maybe_remove_tx(WaitingTXs, TXID, Sig)},
+			{potential_txs, maybe_remove_tx(PotentialTXs, TXID, Sig)}
+		]
+	}.
+
+%% @doc Find and remove TXs from the state if the given TXID and signature are valid.
+maybe_remove_tx(TXs, TXID, Sig) ->
+	lists:filter(
+		fun(TX) ->
+			if TX#tx.id == TXID ->
+				% Return false (meaning filter it from the list)
+				% for the TX if the sig /does/ verify correctly.
+				case ar:d(ar_wallet:verify(TX#tx.owner, TXID, Sig)) of
+					true ->
+						ar:report(
+							[
+								{cancelling_tx, ar_util:encode(TXID)},
+								{
+									on_behalf_of,
+									ar_util:encode(ar_wallet:to_address(TX#tx.owner))
+								}
+							]
+						),
+						false;
+					false -> true
+				end;
+			true -> true
+			end
+		end,
+		TXs
+	).
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
@@ -504,7 +548,10 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			lists:foreach(
 				fun(MinedTX) ->
 					ar:report(
-						{successfully_mined_tx_into_block, ar_util:encode(MinedTX#tx.id)}
+						[
+							{successfully_mined_tx_into_block, ar_util:encode(MinedTX#tx.id)},
+							{size, byte_size(MinedTX#tx.data)}
+						]
 					)
 				end,
 				MinedTXs
