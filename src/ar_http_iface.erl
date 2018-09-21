@@ -1,3 +1,7 @@
+%%%
+%%% @doc Exposes access to an internal Arweave client to external nodes on the network.
+%%%
+
 -module(ar_http_iface).
 
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
@@ -15,8 +19,9 @@
 -include_lib("lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-
-%%% Exposes access to an internal Arweave client to external nodes on the network.
+%%%
+%%% Public API.
+%%%
 
 %% @doc Start the Arweave HTTP API and returns a process ID.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
@@ -52,7 +57,9 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 	reregister(http_bridge_node, BridgeNode),
 	start(Port).
 
+%%%
 %%% Server side functions.
+%%%
 
 %% @doc Main function to handle a request to the nodes HTTP server.
 %%
@@ -88,12 +95,14 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 %%
 %% NB: Blocks and transactions are transmitted between HTTP nodes in a JSON encoded format.
 %% To find the specifics regarding this look at ar_serialize module.
-
 handle(Req, _Args) ->
-	%inform ar_bridge about new peer, performance rec will be updated  from ar_metrics (this is leftover from update_performance_list)
+	% Inform ar_bridge about new peer, performance rec will be updated  from ar_metrics
+	% (this is leftover from update_performance_list)
 	case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
-		not_found -> ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
-		X -> X
+		not_found ->
+			ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
+		X ->
+			X
 	end,
 	case handle(Req#req.method, elli_request:path(Req), Req) of
 		{Status, Hdrs, Body} ->
@@ -152,7 +161,6 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 			{ok, [], {file, Filename}}
 	end;
 
-
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
 %% POST request to endpoint /arql with body of request being a logical expression valid in ar_parser.
 %%
@@ -195,12 +203,14 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 	end;
 
 %% @doc Share a new block to a peer.
-%% POST request to endpoint /block with the body of the request being a JSON encoded block as specified in ar_serialize.
+%% POST request to endpoint /block with the body of the request being a JSON encoded block
+%% as specified in ar_serialize.
 handle('POST', [<<"block">>], Req) ->
 	post_block(request, Req);
 
 %% @doc Share a new transaction with a peer.
-%% POST request to endpoint /tx with the body of the request being a JSON encoded tx as specified in ar_serialize.
+%% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
+%% specified in ar_serialize.
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
@@ -650,7 +660,9 @@ return_info() ->
 		)
 	}.
 
-%%% Client functions
+%%%
+%%% Client functions.
+%%%
 
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
@@ -902,7 +914,6 @@ get_wallet_list(Peer, Hash) ->
 			ar_serialize:dejsonify(ar_serialize:json_struct_to_wallet_list(Body));
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
 	end.
-
 
 %% @doc Get a block hash list (by its hash) from the external peer.
 get_hash_list(Peer) ->

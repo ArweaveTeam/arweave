@@ -538,7 +538,8 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 
 
 %% @doc Handle executed fork recovery.
-recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs) when HashList == not_joined ->
+recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
+		when HashList == not_joined ->
 	NewB = ar_storage:read_block(hd(NewHs), NewHs),
 	ar:report_console(
 		[
@@ -573,7 +574,8 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs) wh
 			weave_size           => NewB#block.weave_size
 		}
 	)};
-recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs) when (length(NewHs)) > (length(HashList)) ->
+recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
+		when (length(NewHs)) > (length(HashList)) ->
 	% TODO mue: Comparing lengths of lists might get quite expensive.
 	case whereis(fork_recovery_server) of
 		undefined -> ok;

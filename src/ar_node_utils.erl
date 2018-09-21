@@ -183,7 +183,12 @@ start_mining(#{hash_list := not_joined} = StateIn, _) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	StateIn;
-start_mining(#{ node := Node, hash_list := BHL, txs := TXs, reward_addr := RewardAddr, tags := Tags } = StateIn, ForceDiff) ->
+start_mining(#{ 
+		node := Node,
+		hash_list := BHL,
+		txs := TXs,
+		reward_addr := RewardAddr, 
+		tags := Tags } = StateIn, ForceDiff) ->
 	case find_recall_block(BHL) of
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL), BHL),
