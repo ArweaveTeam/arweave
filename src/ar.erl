@@ -1,13 +1,17 @@
+%%%
+%%% @doc Arweave server entrypoint and basic utilities.
+%%%
+
 -module(ar).
+
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
 -export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
--include("ar.hrl").
 
-%%% Arweave server entrypoint and basic utilities.
+-include("ar.hrl").
 
 %% A list of the modules to test.
 %% At some point we might want to make this just test all mods starting with
@@ -41,7 +45,7 @@
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
 
-%% Start options
+%% Start options with default values.
 -record(opts, {
 	benchmark = false,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
@@ -188,6 +192,7 @@ start(
 	ar_track_tx_db:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
+	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_storage:update_directory_size(),
 	Peers =
@@ -486,3 +491,7 @@ scale_time(Time) -> Time.
 timestamp() ->
 	{MegaSec, Sec, _MilliSec} = os:timestamp(),
 	(MegaSec * 1000000) + Sec.
+
+%%%
+%%% EOF
+%%%
