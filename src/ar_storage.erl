@@ -45,7 +45,8 @@ blocks_on_disk() ->
 			fun(X) ->
 				case X of
 					"enc" -> false;
-					"invalid" -> false; %see invalidate_block
+					"invalid" -> false;
+					".gitignore" -> false;
 					_ -> true
 				end
 			end,
