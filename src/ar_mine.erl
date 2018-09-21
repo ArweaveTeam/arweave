@@ -1,6 +1,6 @@
 -module(ar_mine).
 -export([start/6, start/7, change_data/2, stop/1, miner/2, schedule_hash/1]).
--export([validate/3, next_diff/1]).
+-export([validate/3, validate_by_hash/2, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -270,6 +270,23 @@ validate(DataSegment, Nonce, Diff) ->
 	NewDiff = erlang:max(Diff, ?MIN_DIFF),
 	case NewHash = ar_weave:hash(DataSegment, Nonce) of
 		<< 0:NewDiff, _/bitstring >> -> NewHash;
+		_ -> false
+	end.
+-endif.
+
+%% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
+-ifdef(DEBUG).
+validate_by_hash(DataSegmentHash, Diff) ->
+	NewDiff = Diff,
+	case DataSegmentHash of
+		<< 0:NewDiff, _/bitstring >> -> DataSegmentHash;
+		_ -> false
+	end.
+-else.
+validate_by_hash(DataSegmentHash, Diff) ->
+	NewDiff = erlang:max(Diff, ?MIN_DIFF),
+	case DataSegmentHash of
+		<< 0:NewDiff, _/bitstring >> -> DataSegmentHash;
 		_ -> false
 	end.
 -endif.
