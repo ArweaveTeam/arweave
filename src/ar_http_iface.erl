@@ -12,7 +12,6 @@
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
--export([get_txs_by_send_recv_test_slow/0, get_full_block_by_hash_test_slow/0]).
 -export([verify_request_to_blockshadow/1]). %% exported for verifier
 
 -include("ar.hrl").
@@ -1558,34 +1557,6 @@ get_block_by_hash_test() ->
 %	receive after 200 -> ok end,
 %	not_found = get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash).
 
-%% @doc Ensure that full blocks can be received via a hash.
-get_full_block_by_hash_test_slow() ->
-	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
-	{Priv2, Pub2} = ar_wallet:new(),
-	{_Priv3, Pub3} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
-	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
-	[B0] = ar_weave:init([]),
-	Node = ar_node:start([], [B0]),
-	reregister(Node),
-	Bridge = ar_bridge:start([], Node),
-	reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
-	receive after 200 -> ok end,
-	send_new_tx({127, 0, 0, 1, 1984}, SignedTX),
-	receive after 200 -> ok end,
-	send_new_tx({127, 0, 0, 1, 1984}, SignedTX2),
-	receive after 200 -> ok end,
-	ar_node:mine(Node),
-	receive after 200 -> ok end,
-	[B1|_] = ar_node:get_blocks(Node),
-	B2 = get_block({127, 0, 0, 1, 1984}, B1, B0#block.hash_list),
-	B3 = get_full_block({127, 0, 0, 1, 1984}, B1, B2#block.hash_list),
-	?assertEqual(B3, B2#block {txs = [SignedTX, SignedTX2]}).
-
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
 	ar_storage:clear(),
@@ -1963,58 +1934,60 @@ get_tx_by_tag_test() ->
 			)
 	)).
 
-get_txs_by_send_recv_test_slow() ->
-	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
-	{Priv2, Pub2} = ar_wallet:new(),
-	{_Priv3, Pub3} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
-	SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
-	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
-	Node1 = ar_node:start([], B0),
-	Node2 = ar_node:start([Node1], B0),
-	ar_node:add_peers(Node1, Node2),
-	ar_node:add_tx(Node1, SignedTX),
-	ar_storage:write_tx([SignedTX]),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1), % Mine B1
-	receive after 1000 -> ok end,
-	ar_node:add_tx(Node2, SignedTX2),
-	ar_storage:write_tx([SignedTX2]),
-	receive after 1000 -> ok end,
-	ar_node:mine(Node2), % Mine B2
-	receive after 1000 -> ok end,
-	QueryJSON = ar_serialize:jsonify(
-		ar_serialize:query_to_json_struct(
-				{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
-			)
-		),
-	{ok, {_, _, Res, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/arql",
-			QueryJSON
-		),
-	TXs = ar_serialize:dejsonify(Res),
-	?assertEqual(true,
-		lists:member(
-			SignedTX#tx.id,
-			lists:map(
-				fun ar_util:decode/1,
-				TXs
-			)
-		)),
-	?assertEqual(true,
-		lists:member(
-			SignedTX2#tx.id,
-			lists:map(
-				fun ar_util:decode/1,
-				TXs
-			)
-		)).
+get_txs_by_send_recv_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		{Priv1, Pub1} = ar_wallet:new(),
+		{Priv2, Pub2} = ar_wallet:new(),
+		{_Priv3, Pub3} = ar_wallet:new(),
+		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
+		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
+		SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
+		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
+		Node1 = ar_node:start([], B0),
+		Node2 = ar_node:start([Node1], B0),
+		ar_node:add_peers(Node1, Node2),
+		ar_node:add_tx(Node1, SignedTX),
+		ar_storage:write_tx([SignedTX]),
+		receive after 300 -> ok end,
+		ar_node:mine(Node1), % Mine B1
+		receive after 1000 -> ok end,
+		ar_node:add_tx(Node2, SignedTX2),
+		ar_storage:write_tx([SignedTX2]),
+		receive after 1000 -> ok end,
+		ar_node:mine(Node2), % Mine B2
+		receive after 1000 -> ok end,
+		QueryJSON = ar_serialize:jsonify(
+			ar_serialize:query_to_json_struct(
+					{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
+				)
+			),
+		{ok, {_, _, Res, _, _}} =
+			ar_httpc:request(
+				<<"POST">>,
+				{127, 0, 0, 1, 1984},
+				"/arql",
+				QueryJSON
+			),
+		TXs = ar_serialize:dejsonify(Res),
+		?assertEqual(true,
+			lists:member(
+				SignedTX#tx.id,
+				lists:map(
+					fun ar_util:decode/1,
+					TXs
+				)
+			)),
+		?assertEqual(true,
+			lists:member(
+				SignedTX2#tx.id,
+				lists:map(
+					fun ar_util:decode/1,
+					TXs
+				)
+			))
+	end}.
 
 %	Node = ar_node:start([], B0),
 %	reregister(Node),

@@ -128,13 +128,13 @@ server(S) ->
 					server(NewS)
 			catch
 				throw:Term ->
-					ar:report( [ {'EXCEPTION', {Term}} ]),
+					ar:report( [ {'BridgeEXCEPTION', Term} ]),
 					server(S);
 				exit:Term ->
-					ar:report( [ {'EXIT', Term} ]),
+					ar:report( [ {'BridgeEXIT', Term} ]),
 					server(S);
 				error:Term ->
-					ar:report( [ {'EXIT', {Term, erlang:get_stacktrace()}} ]),
+					ar:report( [ {'BridgeEXIT', {Term, erlang:get_stacktrace()}} ]),
 					server(S)
 			end
 	end.

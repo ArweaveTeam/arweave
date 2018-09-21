@@ -2,7 +2,6 @@
 -export([new/0, new/1, new/2, new/3, new/4]).
 -export([sign/2, sign/3, verify/3, verify_txs/3, signature_data_segment/1]).
 -export([tx_to_binary/1, tags_to_binary/1, calculate_min_tx_cost/2, calculate_min_tx_cost/4, tx_cost_above_min/2, tx_cost_above_min/4, check_last_tx/2]).
--export([check_last_tx_test_slow/0]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -316,21 +315,23 @@ reject_tx_below_min_test() ->
 
 %% @doc Ensure that the check_last_tx function only validates transactions in which
 %% last tx field matches that expected within the wallet list.
-check_last_tx_test_slow() ->
-	ar_storage:clear(),
-	{_Priv1, Pub1} = ar_wallet:new(),
-	{Priv2, Pub2} = ar_wallet:new(),
-	{Priv3, Pub3} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
-	TX3 = ar_tx:new(Pub1, ?AR(1), ?AR(300), TX#tx.id),
-	SignedTX2 = sign(TX2, Priv2, Pub2),
-	SignedTX3 = sign(TX3, Priv3, Pub3),
-	WalletList =
-		[
-			{ar_wallet:to_address(Pub1), 1000, <<>>},
-			{ar_wallet:to_address(Pub2), 2000, TX#tx.id},
-			{ar_wallet:to_address(Pub3), 3000, <<>>}
-		],
-	false = check_last_tx(WalletList, SignedTX3),
-	true = check_last_tx(WalletList, SignedTX2).
+check_last_tx_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		{_Priv1, Pub1} = ar_wallet:new(),
+		{Priv2, Pub2} = ar_wallet:new(),
+		{Priv3, Pub3} = ar_wallet:new(),
+		TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
+		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
+		TX3 = ar_tx:new(Pub1, ?AR(1), ?AR(300), TX#tx.id),
+		SignedTX2 = sign(TX2, Priv2, Pub2),
+		SignedTX3 = sign(TX3, Priv3, Pub3),
+		WalletList =
+			[
+				{ar_wallet:to_address(Pub1), 1000, <<>>},
+				{ar_wallet:to_address(Pub2), 2000, TX#tx.id},
+				{ar_wallet:to_address(Pub3), 3000, <<>>}
+			],
+		false = check_last_tx(WalletList, SignedTX3),
+		true = check_last_tx(WalletList, SignedTX2)
+	end}.

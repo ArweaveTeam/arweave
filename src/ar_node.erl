@@ -656,7 +656,7 @@ server(SPid, WPid, TaskQueue) ->
 					server(SPid, WPid, TaskQueue)
 			catch
 				throw:Term ->
-					ar:report([ {'NodeEXCEPTION', {Term}} ]),
+					ar:report([ {'NodeEXCEPTION', Term} ]),
 					server(SPid, WPid, TaskQueue);
 				exit:Term ->
 					ar:report([ {'NodeEXIT', Term} ]),

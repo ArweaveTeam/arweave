@@ -129,8 +129,8 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
 					ar:report(
 						[
-							{could_not_retrieve_joining_recall_block},
-							{retrying}
+							could_not_retrieve_joining_recall_block,
+							retrying
 						]
 					),
 					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
@@ -184,20 +184,20 @@ fill_to_capacity(Peers, ToWrite, BHL) ->
 	throw:Term ->
 		ar:report(
 			[
-				{'EXCEPTION', {Term}}
+				{'JoinEXCEPTION', Term}
 			]
 		),
 		fill_to_capacity(Peers, ToWrite);
 	exit:Term ->
 		ar:report(
 			[
-				{'EXIT', Term}
+				{'JoinEXIT', Term}
 			]
 		);
 	error:Term ->
 		ar:report(
 			[
-				{'EXIT', {Term, erlang:get_stacktrace()}}
+				{'JoinEXIT', {Term, erlang:get_stacktrace()}}
 			]
 		),
 		fill_to_capacity(Peers, ToWrite, BHL)

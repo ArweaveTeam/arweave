@@ -93,7 +93,7 @@ server(S = #state { gossip = _GS }) ->
 		throw:Term ->
 			ar:report(
 				[
-					{'SearchEXCEPTION', {Term}}
+					{'SearchEXCEPTION', Term}
 				]
 			),
 			server(S);

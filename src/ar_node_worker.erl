@@ -59,7 +59,7 @@ server(NPid, SPid) ->
 					server(NPid, SPid)
 			catch
 				throw:Term ->
-					ar:report( [ {'NodeWorkerEXCEPTION', {Term} } ]),
+					ar:report( [ {'NodeWorkerEXCEPTION', Term } ]),
 					server(NPid, SPid);
 				exit:Term ->
 					ar:report( [ {'NodeWorkerEXIT', Term} ] ),

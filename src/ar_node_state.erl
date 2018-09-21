@@ -97,7 +97,7 @@ server(Tid) ->
 					server(Tid)
 			catch
 				throw:Term ->
-					ar:report( [ {'NodeStateEXCEPTION', {Term} } ]),
+					ar:report( [ {'NodeStateEXCEPTION', Term } ]),
 					server(Tid);
 				exit:Term ->
 					ar:report( [ {'NodeStateEXIT', Term} ] ),
