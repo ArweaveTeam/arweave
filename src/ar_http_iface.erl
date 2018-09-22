@@ -1596,6 +1596,34 @@ add_external_tx_test() ->
 	TXID = TX#tx.id,
 	?assertEqual([TXID], (ar_storage:read_block(B1, ar_node:get_hash_list(Node)))#block.txs).
 
+%% @doc Test adding transactions to a block.
+add_external_tx_with_tags_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	TX = ar_tx:new(<<"DATA">>),
+	TaggedTX =
+		TX#tx {
+			tags =
+				[
+					{<<"TEST_TAG1">>, <<"TEST_VAL1">>},
+					{<<"TEST_TAG2">>, <<"TEST_VAL2">>}
+				]
+		},
+	send_new_tx({127, 0, 0, 1, 1984}, TaggedTX),
+	receive after 1000 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	[B1Hash|_] = ar_node:get_blocks(Node),
+	B1 = ar_storage:read_block(B1Hash, ar_node:get_hash_list(Node)),
+	TXID = TaggedTX#tx.id,
+	?assertEqual([TXID], B1#block.txs),
+	?assertEqual(TaggedTX, ar_storage:read_tx(hd(B1#block.txs))).
+
 %% @doc Test getting transactions
 find_external_tx_test() ->
 	ar_storage:clear(),
