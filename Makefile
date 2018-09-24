@@ -60,7 +60,7 @@ logs:
 
 blocks:
 	mkdir -p blocks
-	nkdir -p blocks/enc
+	mkdir -p blocks/enc
 
 hash_lists:
 	mkdir -p hash_lists
