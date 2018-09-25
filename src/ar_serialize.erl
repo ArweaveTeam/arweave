@@ -150,6 +150,13 @@ json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 json_struct_to_block(JSONBlock) ->
 	{BlockStruct} = JSONBlock,
 	TXs = find_value(<<"txs">>, BlockStruct),
+	PostProcessTX = fun
+		(TX) when is_binary(TX) ->
+			ar_util:decode(TX);
+		(TX) ->
+			Temp = tx_safely_to_json_struct(TX),
+			Temp#tx.id
+	end,
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
     HashList = find_value(<<"hash_list">>, BlockStruct),
     Tags = find_value(<<"tags">>, BlockStruct),
@@ -165,7 +172,7 @@ json_struct_to_block(JSONBlock) ->
 		height = find_value(<<"height">>, BlockStruct),
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
-		txs = lists:map(fun ar_util:decode/1, TXs),
+		txs = lists:map(PostProcessTX, TXs),
 		hash_list =
 			case HashList of
 				undefined -> unset;
