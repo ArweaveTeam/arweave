@@ -154,7 +154,7 @@ json_struct_to_block(JSONBlock) ->
 		(TX) when is_binary(TX) ->
 			ar_util:decode(TX);
 		(TX) ->
-			Temp = tx_safely_to_json_struct(TX),
+			Temp = json_struct_to_tx(TX),
 			Temp#tx.id
 	end,
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
@@ -425,6 +425,17 @@ block_roundtrip_test() ->
 	JSONStruct = jsonify(block_to_json_struct(B)),
 	BRes = json_struct_to_block(JSONStruct),
 	B = BRes#block { hash_list = B#block.hash_list }.
+
+%% @doc Convert a new block into JSON and back, ensure the result is the same.
+%% Input contains transaction, output only transaction IDs.
+block_tx_roundtrip_test() ->
+    [B] = ar_weave:init(),
+	TXBase = ar_tx:new(<<"test">>),
+    B2 = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
+	JsonB = jsonify(full_block_to_json_struct(B2)),
+	BRes = json_struct_to_block(JsonB),
+	?assertEqual(TXBase#tx.id, hd(BRes#block.txs)),
+	?assertEqual(B2#block.hash, BRes#block.hash).
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 full_block_roundtrip_test() ->
