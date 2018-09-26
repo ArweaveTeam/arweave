@@ -1,4 +1,4 @@
-FROM erlang:20-alpine as builder
+FROM erlang:21-alpine as builder
 
 RUN apk update && apk add make g++
 
@@ -15,7 +15,7 @@ ARG ERLC_OPTS
 
 RUN make build
 
-FROM erlang:20-alpine
+FROM erlang:21-alpine
 
 # install coreutils in order to support diskmon's shell command: /bin/df -lk
 # since BusyBox's df does not support that option
