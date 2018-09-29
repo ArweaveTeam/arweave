@@ -455,7 +455,12 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 					try ar_storage:do_read_block(Filename, BHL) of
 						B ->
-							{JSONStruct} = ar_serialize:full_block_to_json_struct(B),
+							{JSONStruct} =
+								ar_serialize:full_block_to_json_struct(
+									B#block {
+										txs = [ TX#tx.id || TX <- B#block.txs ]
+									}
+								),
 							{200, [],
 								ar_serialize:jsonify(
 									{
