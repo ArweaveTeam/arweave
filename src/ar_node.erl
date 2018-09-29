@@ -322,7 +322,7 @@ get_full_block(Peers, ID) when is_list(Peers) ->
 					case is_atom(Acc) of
 						false -> Acc;
 						true ->
-							Full = get_full_block(Peer, ID),
+							Full = try get_full_block(Peer, ID) catch _:_ -> unavailable end,
 							case is_atom(Full) of
 								true -> Acc;
 								false -> Full
