@@ -456,7 +456,7 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 					try ar_storage:do_read_block(Filename, BHL) of
 						B ->
 							{JSONStruct} =
-								ar_serialize:full_block_to_json_struct(
+								ar_serialize:block_to_json_struct(
 									B#block {
 										txs =
 											[
