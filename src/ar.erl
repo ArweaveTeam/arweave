@@ -187,6 +187,7 @@ start(
 	ar_track_tx_db:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
+	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_storage:update_directory_size(),
 	Peers =
