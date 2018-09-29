@@ -458,7 +458,12 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 							{JSONStruct} =
 								ar_serialize:full_block_to_json_struct(
 									B#block {
-										txs = [ TX#tx.id || TX <- B#block.txs ]
+										txs =
+											[
+												if is_binary(TX) -> TX; true -> TX#tx.id end
+											||
+												TX <- B#block.txs
+											]
 									}
 								),
 							{200, [],
