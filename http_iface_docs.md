@@ -1,13 +1,18 @@
-# Arweave HTTP Interface
+# Arweave HTTP Interface Documentation
+
+
+
 
 ## GET network information
 
 Retrieve the current network information from a specific node.
 
-- **URL** `/info`
-- **Method** GET
+- **URL**
+  `/info`
+- **Method**
+  GET
 
-### Example Response
+#### Example Response
 
 A JSON array containing the network information for the current node.
 
@@ -21,7 +26,7 @@ A JSON array containing the network information for the current node.
 }
 ```
 
-### JavaScript Example Request
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -31,23 +36,30 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
+
+
+
+
 
 ## GET full transaction via ID
 
 Retrieve a JSON transaction record via the specified ID.
 
-- **URL** `/tx/[transaction_id]`
-- **Method** GET
+- **URL**
+  `/tx/[transaction_id]`
+- **Method**
+  GET
 - **URL Parameters**
-  - `transaction_id` Base64url encoded ID associated with the transaction
+  [transaction_id] : base64url encoded ID associated with the transaction
 
-### Example Response
+
+#### Example Response
 
 A JSON transaction record.
 
@@ -66,7 +78,8 @@ A JSON transaction record.
 }
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -76,32 +89,31 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
+
+
+
+
 
 ## GET specific transaction fields via ID
 
 Retrieve a string of the requested field for a given transaction.
 
-- **URL** `/tx/[transaction_id]/[field]`
-- **Method** GET
+- **URL**
+  `/tx/[transaction_id]/[field]`
+- **Method**
+  GET
 - **URL Parameters**
-  - `transaction_id` Base64url encoded ID associated with the transaction
-  - `field` A string containing the name of the data field being requested
+  [transaction_id] : Base64url encoded ID associated with the transaction
+  [field] : A string containing the name of the data field being requested
 - **Fields**
-  - `id`
-  - `last_tx`
-  - `owner`
-  - `target`
-  - `quantity`
-  - `type`
-  - `data`
-  - `reward`
-  - `signature`
+  id | last_tx | owner | target | quantity | type | data | reward | signature
+
 
 #### Example Response
 
@@ -110,6 +122,7 @@ A string containing the requested field.
 ```javascript
 "bUfaJN-KKS1LRh_DlJv4ff1gmdbHP4io-J9x7cLY5is"
 ```
+
 
 #### JavaScript Example Request
 
@@ -121,24 +134,32 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
 
+
+
+
+
+
 ## GET transaction body as HTML via ID
 
 Retrieve the data segment of the transaction body decoded from base64url encoding.
-If the transaction was an archived website then the result will be browser renderable HTML.
+If the transaction was an archived website then the result will be browser rendererable HTML.
 
-- **URL** `/tx/[transaction_id]/data.html`
-- **Method** GET
+- **URL**
+  `/tx/[transaction_id]/data.html`
+- **Method**
+  GET
 - **URL Parameters**
-  - `transaction_id` Base64url encoded ID associated with the transaction
+  [transaction_id] : Base64url encoded ID associated with the transaction
 
-### Example Response
+
+#### Example Response
 
 A string containing the requested field.
 
@@ -146,7 +167,8 @@ A string containing the requested field.
 "Hello World"
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -156,23 +178,31 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
 
+
+
+
+
 ## GET estimated transaction price
 
-Returns an estimated cost for a transaction of the given size. The returned amount is in winston (the smallest division of AR, 1 AR = 1000000000000 winston).
+Returns an estimated cost for a transaction of the given size.
+The returned amount is in winston (the smallest division of AR, 1 AR = 1000000000000 winston).
 
-- **URL** `/price/[byte_size]`
-- **Method** GET
+- **URL**
+  `/price/[byte_size]`
+- **Method**
+  GET
 - **URL Parameters**
-  - `byte_size` The size of the transaction's data field in bytes. For financial transactions without associated data, this should be zero.
+  [byte_size] : The size of the transaction's data field in bytes. For financial transactions without associated data, this should be zero.
 
-### Example Response
+
+#### Example Response
 
 A string containing the estimated cost of the transaction in Winston.
 
@@ -180,7 +210,8 @@ A string containing the estimated cost of the transaction in Winston.
 "1896296296"
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -190,23 +221,31 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
+
+
+
+
+
 
 ## GET block via ID
 
 Retrieve a JSON array representing the contents of the block specified via the ID.
 
-- **URL** `/block/hash/[block_id]`
-- **Method** GET
+- **URL**
+  `/block/hash/[block_id]`
+- **Method**
+  GET
 - **URL Parameters**
-  - `block_id` Base64url encoded ID associated with the block
+  [block_id] : Base64url encoded ID associated with the block
 
-### Example Response
+
+#### Example Response
 
 A JSON array detailing the block.
 
@@ -227,7 +266,8 @@ A JSON array detailing the block.
 }
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -237,23 +277,32 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
+
+
+
+
+
+
 
 ## GET block via height
 
 Retrieve a JSON array representing the contents of the block specified via the block height.
 
-- **URL** `/block/height/[block_height]
-- **Method** GET
+- **URL**
+  `/block/height/[block_height]
+- **Method**
+  GET
 - **URL Parameters**
-  - `block_height` The height at which the block is being requested for
+  [block_height] : The height at which the block is being requested for
 
-### Example Response
+
+#### Example Response
 
 A JSON array detailing the block.
 
@@ -274,7 +323,8 @@ A JSON array detailing the block.
 }
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -284,21 +334,31 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
+
+
+
+
+
+
+
 
 ## GET current block
 
 Retrieve a JSON array representing the contents of the current block, the network head.
 
-- **URL** `/current_block`
-- **Method** GET
+- **URL**
+  `/current_block`
+- **Method**
+  GET
 
-### Example Response
+
+#### Example Response
 
 A JSON array detailing the block.
 
@@ -319,7 +379,8 @@ A JSON array detailing the block.
 }
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -329,23 +390,33 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-      // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
 
+
+
+
+
+
+
 ## GET wallet balance via address
 
-Retrieve the balance of the wallet specified via the address. The returned amount is in winston (the smallest division of AR, 1 AR = 1000000000000 winston).
+Retrieve the balance of the wallet specified via the address.
+The returned amount is in winston (the smallest division of AR, 1 AR = 1000000000000 winston).
 
-- **URL** `/wallet/[wallet_address]/balance`
-- **Method** GET
+- **URL**
+  `/wallet/[wallet_address]/balance`
+- **Method**
+  GET
 - **URL Parameters**
-  - `wallet_address` A base64url encoded SHA256 hash of the raw RSA modulus.
+  [wallet_address] : A base64url encoded SHA256 hash of the raw RSA modulus.
 
-### Example Response
+
+#### Example Response
 
 A string containing the balance of the wallet.
 
@@ -353,7 +424,8 @@ A string containing the balance of the wallet.
 "1249611338095239"
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -363,23 +435,33 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
+
+
+
+
+
+
+
 
 ## GET last transaction via address
 
 Retrieve the ID of the last transaction made by the given address.
 
-- **URL** `/wallet/[wallet_address]/last_tx`
-- **Method** GET
+- **URL**
+  `/wallet/[wallet_address]/last_tx`
+- **Method**
+  GET
 - **URL Parameters**
-  - `wallet_address` A base64url encoded SHA256 hash of the RSA modulus
+  [wallet_address] : A base64url encoded SHA256 hash of the RSA modulus.
 
-### Example Response
+
+#### Example Response
 
 A string containing the ID of the last transaction made by the given address.
 
@@ -387,7 +469,8 @@ A string containing the ID of the last transaction made by the given address.
 "bUfaJN-KKS1LRh_DlJv4ff1gmdbHP4io-J9x7cLY5is"
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -397,21 +480,31 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
+
+
+
+
+
+
+
 
 ## GET nodes peer list  
 
 Retrieve the list of peers held by the contacted node.
 
-- **URL** `/peers`
-- **Method** GET
+- **URL**
+  `/peers`
+- **Method**
+  GET
 
-### Example Response
+
+#### Example Response
 
 A list containing the IP addresses of all of the nodes peers.
 
@@ -422,7 +515,8 @@ A list containing the IP addresses of all of the nodes peers.
 ]
 ```
 
-### JavaScript Example Request
+
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -432,37 +526,48 @@ var xhr = new XMLHttpRequest();
 
 xhr.open('GET', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send();
 ```
+
+
+
+
+
+
+
 
 ## POST transaction to network
 
 Post a transaction to the network.
 
-- **URL** `/tx`
-- **Method** POST
+- **URL**
+  `/tx`
 
-### Data Parameter (Post body)
+- **Method**
+  POST
+
+
+#### Data Parameter (Post body)
 
 ```javascript
 {
-    "id": "",        // base64url encoded random string of 32-bytes
-    "last_tx": "",   // base64url encoded ID of last transaction made by address
-    "owner": "",     // base64url encoded modulus of wallet making transaction
-    "target": "",    // base64url encoded SHA256 hash of recipients modulus
-    "quantity": "",  // string representing the amount of sent AR in winston
-    "type": "",      // string stating type of transaction 'data' or 'transfer'
-    "data": "",      // base64url encoded data being archived in transaction
-    "reward": "",    // string representing the mining reward AR in winston
-    "signature": ""  // base64url encoded signature of transaction
+    "id": "",     // base64url encoded random string of 32-bytes
+    "last_tx": "",    // base64url encoded ID of last transaction made by address
+    "owner": "",    // base64url encoded modulus of wallet making transaction
+    "target": "",   // base64url encoded SHA256 hash of recipients modulus
+    "quantity": "",   // string representing the amount of sent AR in winston
+    "type": "",     // string stating type of transaction 'data' or 'transfer'
+    "data": "",     // base64url encoded data being archived in transaction
+    "reward": "",   // string representing the mining reward AR in winston
+    "signature": ""   // base64url encoded signature of transaction
 }
 ```
 
-### JavaScript Example Request
+#### JavaScript Example Request
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
@@ -471,35 +576,40 @@ var url = node + path;
 var xhr = new XMLHttpRequest();
 var post =
     {
-        "id": "VvNF3aLS28MXD_o4Lv0lF9_WcxMibFOp166qDqC1Hlw",
-        "last_tx": "bUfaJN-KKS1LRh_DlJv4ff1gmdbHP4io-J9x7cLY5is",
-        "owner": "1Q7RfP...J2x0xc",
-        "tags": [],
-        "target": "",
-        "quantity": "0",
-        "type": "data",
-        "data": "3DduMPkwLkE0LjIxM9o",
-        "reward": "1966476441",
-        "signature": "RwBICn...Rxqi54"
+      "id": "VvNF3aLS28MXD_o4Lv0lF9_WcxMibFOp166qDqC1Hlw",
+      "last_tx": "bUfaJN-KKS1LRh_DlJv4ff1gmdbHP4io-J9x7cLY5is",
+      "owner": "1Q7RfP...J2x0xc",
+      "tags": [],
+      "target": "",
+      "quantity": "0",
+      "type": "data",
+      "data": "3DduMPkwLkE0LjIxM9o",
+      "reward": "1966476441",
+      "signature": "RwBICn...Rxqi54"
   };
 
 xhr.open('POST', url);
 xhr.onreadystatechange = function() {
-    if(xhr.readystate == 4 && xhr.status == 200) {
-        // Do something.
-    }
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
 };
 xhr.send(post);
 ```
 
+
+
 > Please note that in the JSON transaction records all winston value fields (quantity and reward) are strings. This is to allow for interoperability between environments that do not accommodate arbitrary-precision arithmetic. JavaScript for instance stores all numbers as double precision floating point values and as such cannot natively express the integer number of winston. Providing these values as strings allows them to be directly loaded into most 'bignum' libraries.
+
+
+
+
 
 # Contact
 
-If you have questions or comments on the **Arweave** HTTP interface you can get in touch by
+If you have questions or comments on the Arweave HTTP interface you can get in touch by
 finding us on [Twitter](https://twitter.com/ArweaveTeam/), [Reddit](https://www.reddit.com/r/arweave), [Discord](https://discord.gg/2ZpV8nM) or by emailing us at team@arweave.org.
 
 # License
-
 The Arweave project is released under GNU General Public License v2.0.
-See [LICENSE](../LICENSE.md) for full license conditions.
+See [LICENSE](LICENSE.md) for full license conditions.
