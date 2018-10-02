@@ -1,13 +1,17 @@
+%%%
+%%% @doc Arweave server entrypoint and basic utilities.
+%%%
+
 -module(ar).
+
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
 -export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
--include("ar.hrl").
 
-%%% Archain server entrypoint and basic utilities.
+-include("ar.hrl").
 
 %% A list of the modules to test.
 %% At some point we might want to make this just test all mods starting with
@@ -15,6 +19,7 @@
 -define(
 	CORE_TEST_MODS,
 	[
+		ar_node_tests,
 		ar_util,
 		ar_cleanup,
 		ar_meta_db,
@@ -29,9 +34,7 @@
 		ar_mine,
 		ar_join,
 		ar_fork_recovery,
-		ar_http_iface_client,
-		ar_http_iface_server,
-		ar_node,
+		ar_http_iface,
 		ar_simple_reporter,
 		ar_retarget,
 		ar_block,
@@ -42,7 +45,7 @@
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
 
-%% Start options
+%% Start options with default values.
 -record(opts, {
 	benchmark = false,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
@@ -54,12 +57,13 @@
 	clean = false,
 	diff = ?DEFAULT_DIFF,
 	mining_addr = false,
+	max_miners = ?NUM_MINING_PROCESSES,
 	new_key = false,
 	load_key = false,
 	pause = true,
 	disk_space = ar_storage:calculate_disk_space(),
 	used_space = ar_storage:calculate_used_space(),
-	start_block = undefined,
+	start_hash_list = undefined,
 	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
 	enable = []
 }).
@@ -82,17 +86,18 @@ main("") ->
 		end,
 		[
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_block", "Start the node from a given block."},
+			{"start_hash_list", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
 			{"polling", "Poll peers for new blocks. Useful in environments where "
-			 			"port forwarding is not possible."},
+						"port forwarding is not possible."},
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"init", "Start a new blockweave."},
 			{"diff (init_diff)", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
+			{"max_miners (num)", "The maximum number of mining processes."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
@@ -124,14 +129,16 @@ main(["no_auto_join"|Rest], O) ->
 	main(Rest, O#opts { auto_join = false });
 main(["mining_addr", Addr|Rest], O) ->
 	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
+main(["max_miners", Num|Rest], O) ->
+	main(Rest, O#opts { max_miners = list_to_integer(Num) });
 main(["new_mining_key"|Rest], O)->
 	main(Rest, O#opts { new_key = true });
 main(["disk_space", Size|Rest], O) ->
 	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 main(["load_mining_key", File|Rest], O)->
 	main(Rest, O#opts { load_key = File });
-main(["start_block", IndepHash|Rest], O)->
-	main(Rest, O#opts { start_block = ar_util:decode(IndepHash) });
+main(["start_hash_list", IndepHash|Rest], O)->
+	main(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
 main(["benchmark"|Rest], O)->
 	main(Rest, O#opts { benchmark = true });
 main(["auto_update", "false" | Rest], O) ->
@@ -159,15 +166,17 @@ start(
 		auto_join = AutoJoin,
 		diff = Diff,
 		mining_addr = Addr,
+		max_miners = MaxMiners,
 		new_key = NewKey,
 		load_key = LoadKey,
 		pause = Pause,
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
-		start_block = IndepHash,
+		start_hash_list = BHL,
 		auto_update = AutoUpdate,
 		enable = Enable
 	}) ->
+	ar_storage:ensure_directories(),
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
 	%register prometheus stats collector,
@@ -183,6 +192,8 @@ start(
 	ar_track_tx_db:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
+	ar_meta_db:put(used_space, UsedSpace),
+	ar_meta_db:put(max_miners, MaxMiners),
 	ar_storage:update_directory_size(),
 	Peers =
 		case RawPeers of
@@ -240,13 +251,12 @@ start(
 		[
 			[
 				Peers,
-				case IndepHash of
+				case BHL of
 					undefined ->
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
-					_ ->
-						(ar_storage:read_block(IndepHash))#block.hash_list
+					_ -> ar_storage:read_hash_list(ar_util:decode(BHL))
 				end,
 				0,
 				MiningAddress,
@@ -293,7 +303,7 @@ start(
 	% Store enabled features
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	% Add self to all remote nodes.
-	%lists:foreach(fun ar_http_iface_client:add_peer/1, Peers),
+	%lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
@@ -317,7 +327,7 @@ start(
 		]
 	),
 	% Start the first node in the gossip network (with HTTP interface)
-	ar_http_iface_server:start(
+	ar_http_iface:start(
 		Port,
 		Node,
 		SearchNode,
@@ -333,6 +343,7 @@ start(
 		false -> ok;
 		_ -> receive after infinity -> ok end
 	end.
+
 %% @doc Create a name for a session log file.
 generate_logfile_name() ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
@@ -346,7 +357,6 @@ generate_logfile_name() ->
 %% @doc Run the erlang make system on the project.
 rebuild() ->
 	io:format("Rebuilding Arweave...~n"),
-	receive after 3000 -> ok end,
 	make:all(
 		[
 			load,
@@ -392,6 +402,7 @@ init(Args) ->
 
 %% @doc Run all of the tests associated with the core project.
 test() ->
+	ar_storage:ensure_directories(),
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(
@@ -411,6 +422,7 @@ test_coverage() ->
 
 %% @doc Run the tests for a single module.
 test(Mod) ->
+	ar_storage:ensure_directories(),
 	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
 
 %% @doc Run tests on the apps.
@@ -423,21 +435,21 @@ test_networks() ->
 	ar_test_sup:start().
 
 test_slow() ->
-	ar_node:filter_out_of_order_txs_test_slow(),
-	ar_node:filter_out_of_order_txs_large_test_slow(),
-	ar_node:filter_all_out_of_order_txs_test_slow(),
-	ar_node:filter_all_out_of_order_txs_large_test_slow(),
-	ar_node:wallet_transaction_test_slow(),
-	ar_node:wallet_two_transaction_test_slow(),
-	ar_node:single_wallet_double_tx_before_mine_test_slow(),
-	ar_node:single_wallet_double_tx_wrong_order_test_slow(),
-	ar_node:tx_threading_test_slow(),
-	ar_node:bogus_tx_thread_test_slow(),
-	ar_node:large_weakly_connected_blockweave_with_data_test_slow(),
-	ar_node:large_blockweave_with_data_test_slow(),
-	ar_node:medium_blockweave_mine_multiple_data_test_slow(),
-	ar_http_iface_client_tests:get_txs_by_send_recv_test_slow(),
-	ar_http_iface_client_tests:get_full_block_by_hash_test_slow(),
+	ar_node_test:filter_out_of_order_txs_test_slow(),
+	ar_node_test:filter_out_of_order_txs_large_test_slow(),
+	ar_node_test:filter_all_out_of_order_txs_test_slow(),
+	ar_node_test:filter_all_out_of_order_txs_large_test_slow(),
+	ar_node_test:wallet_transaction_test_slow(),
+	ar_node_test:wallet_two_transaction_test_slow(),
+	ar_node_test:single_wallet_double_tx_before_mine_test_slow(),
+	ar_node_test:single_wallet_double_tx_wrong_order_test_slow(),
+	ar_node_test:tx_threading_test_slow(),
+	ar_node_test:bogus_tx_thread_test_slow(),
+	ar_node_test:large_weakly_connected_blockweave_with_data_test_slow(),
+	ar_node_test:large_blockweave_with_data_test_slow(),
+	ar_node_test:medium_blockweave_mine_multiple_data_test_slow(),
+	ar_http_iface:get_txs_by_send_recv_test_slow(),
+	ar_http_iface:get_full_block_by_hash_test_slow(),
 	ar_fork_recovery:multiple_blocks_ahead_with_transaction_recovery_test_slow(),
 	ar_tx:check_last_tx_test_slow().
 
@@ -479,3 +491,7 @@ scale_time(Time) -> Time.
 timestamp() ->
 	{MegaSec, Sec, _MilliSec} = os:timestamp(),
 	(MegaSec * 1000000) + Sec.
+
+%%%
+%%% EOF
+%%%

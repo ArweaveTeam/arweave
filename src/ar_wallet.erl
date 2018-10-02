@@ -1,11 +1,16 @@
+%%%
+%%% @doc Utilities for manipulating wallets.
+%%%
+
 -module(ar_wallet).
+
 -export([new/0, sign/2, verify/3, to_address/1, new_keyfile/0, load_keyfile/1, to_binary/1]).
--define(PUBLIC_EXPNT, 65537).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
-%%% Utilities for manipulating wallets.
+-define(PUBLIC_EXPNT, 65537).
 
 %% @doc Generate a new wallet public key and private key.
 new() ->
@@ -18,7 +23,7 @@ new() ->
 new_keyfile() ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
-		Key = 
+		Key =
 			ar_serialize:jsonify(
 				{
 					[
@@ -80,15 +85,18 @@ to_address(Addr) when ?IS_ADDR(Addr) -> Addr;
 to_address({{_, Pub}, Pub}) -> to_address(Pub);
 to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
-    crypto:hash(?HASH_ALG, PubKey).
+	crypto:hash(?HASH_ALG, PubKey).
 
 to_binary({Addr, Quantity, LastTx}) ->
-    <<
-        (Addr)/binary,
-        (integer_to_binary(Quantity))/binary,
-        (LastTx)/binary
-    >>.
+	<<
+		(Addr)/binary,
+		(integer_to_binary(Quantity))/binary,
+		(LastTx)/binary
+	>>.
 
+%%%
+%%% Tests.
+%%%
 
 wallet_sign_verify_test() ->
 	TestData = <<"TEST DATA">>,
@@ -121,7 +129,16 @@ assign_wallet_test() ->
 	B0 = ar_weave:init([{Address, ?AR(0), <<>>}]),
 	Node1 = ar_node:start([], B0, 0, Address),
 	ar_node:mine(Node1), % Mine B1
-	receive after 500 -> ok end,
-	Expected = erlang:trunc(ar_node:calculate_reward(1, 0)),
-	Actual = ar_node:get_balance(Node1, Pub),
-	?assertEqual(Expected, Actual).
+	ar_util:do_until(
+		fun() ->
+			R1 = erlang:trunc(ar_node_utils:calculate_reward(1, 0)),
+			R2 = ar_node:get_balance(Node1, Pub),
+			R1 == R2
+		end,
+		500,
+		4000
+	).
+
+%%%
+%%% EOF
+%%%

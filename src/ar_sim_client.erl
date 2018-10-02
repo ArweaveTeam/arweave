@@ -104,7 +104,6 @@ server(
 			240 ->
 				case rand:uniform(20) of
 					20 ->
-						ar:d({sim_client_large_data_tx}),
 						{Priv, Pub} = lists:nth(rand:uniform(10) + 40, KeyList),
 						DataOpts = [
 							"dummy_data/7\.5mb",
@@ -122,11 +121,11 @@ server(
 				{Priv, Pub} = lists:nth(rand:uniform(40), KeyList),
 				TX = create_random_fin_tx({Priv, Pub}, KeyList, MaxTXLen)
 		end,
-		ar_http_iface_client:send_new_tx(hd(Peers), TX),
+		ar_http_iface:send_new_tx(hd(Peers), TX),
 		server(S)
 	end;
 server(S) ->
-	ar:d(failed),
+	ar:report(sim_client_failed),
 	S.
 
 %% @doc Send a randomly created financial tx to all peers

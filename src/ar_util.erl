@@ -1,4 +1,9 @@
+%%%
+%%% @doc Useful helpers for the work in Arweave.
+%%%
+
 -module(ar_util).
+
 -export([pick_random/1, pick_random/2]).
 -export([encode/1, decode/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
@@ -11,6 +16,8 @@
 -export([pmap/2]).
 -export([time_difference/2]).
 -export([rev_bin/1]).
+-export([do_until/3]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -63,7 +70,7 @@ wallets_from_hashes(HashList) ->
 %% @doc Get block list from hash list.
 blocks_from_hashes([]) -> undefined;
 blocks_from_hashes(BHL) ->
-	lists:map(fun ar_storage:read_block/1, BHL).
+	lists:map(fun(BH) -> ar_storage:read_block(BH, BHL) end, BHL).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
 hash_from_hash_list(Num, BHL) ->
@@ -71,24 +78,24 @@ hash_from_hash_list(Num, BHL) ->
 
 %% @doc Read a block at the given height from the hash list
 block_from_hash_list(Num, BHL) ->
-	ar_storage:read_block(hash_from_hash_list(Num, BHL)).
+	ar_storage:read_block(hash_from_hash_list(Num, BHL), BHL).
 
 %% @doc Fetch the head block using BHL.
 get_head_block(not_joined) -> unavailable;
-get_head_block([IndepHash|_]) ->
-	ar_storage:read_block(IndepHash).
+get_head_block(BHL = [IndepHash|_]) ->
+	ar_storage:read_block(IndepHash, BHL).
 
 %% @doc find the hash of a recall block.
 get_recall_hash(B, HashList) ->
 	lists:nth(
-        1 + ar_weave:calculate_recall_block(B),
+        1 + ar_weave:calculate_recall_block(B, HashList),
         lists:reverse(HashList)
     ).
 get_recall_hash(_Height, Hash, []) -> Hash;
 get_recall_hash(0, Hash, _HastList) -> Hash;
 get_recall_hash(Height, Hash, HashList) ->
 	lists:nth(
-        1 + ar_weave:calculate_recall_block(Hash, Height),
+        1 + ar_weave:calculate_recall_block(Hash, Height, HashList),
         lists:reverse(HashList)
     ).
 
@@ -151,13 +158,14 @@ unique(Res, [X|Xs]) ->
 %% NOTE: Does not maintain list stability.
 pmap(Fun, List) ->
 	Master = self(),
+	Ref = make_ref(),
 	lists:map(
 		fun(_) ->
 			receive
-				{pmap_work, X} -> X
+				{pmap_work, Ref, X} -> X
 			end
 		end,
-		lists:map(fun(Elem) -> Master ! {pmap_work, Fun(Elem)} end, List)
+		lists:map(fun(Elem) -> Master ! {pmap_work, Ref, Fun(Elem)} end, List)
 	).
 
 %% @doc Generate a list of GENESIS wallets, from the CSV file.
@@ -180,6 +188,32 @@ time_difference({M1, S1, U1}, {M2, S2, U2}) ->
 	((M1-M2) * 1000000000000) + ((S1-S2) * 1000000) + (U1 - U2);
 time_difference(_,_) ->
 	bad_time_format.
+
+%% @doc Perform a function until it returns {ok, Value} | ok | true | {error, Error}.
+%% That term will be returned, others will be ignored. Interval and timeout have to
+%% be passed in milliseconds.
+do_until(_DoFun, _Interval, Timeout) when Timeout =< 0 ->
+	{error, timeout};
+do_until(DoFun, Interval, Timeout) ->
+	Start = erlang:system_time(millisecond),
+	case DoFun() of
+		{ok, Value} ->
+			{ok, Value};
+		ok ->
+			ok;
+		true ->
+			true;
+		{error, Error} ->
+			{error, Error};
+		_ ->
+			timer:sleep(Interval),
+			Now = erlang:system_time(millisecond),
+			do_until(DoFun, Interval, Timeout - (Now - Start))
+	end.
+
+%%%
+%%% Tests.
+%%%
 
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->
@@ -224,3 +258,7 @@ recall_block_test() ->
 	receive after 300 -> ok end,
 	B3 = ar_node:get_current_block(Node),
 	B3#block.wallet_list.
+
+%%%
+%%% EOF
+%%%

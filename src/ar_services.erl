@@ -74,8 +74,7 @@ prune(S) ->
 			)
 	}.
 prune(CurrHeight, Services) ->
-	ar:d([{height, CurrHeight}, {services, Services}]),
-	ar:d(lists:filter(fun(S) -> S#service.expires >= CurrHeight end, Services)).
+	lists:filter(fun(S) -> S#service.expires >= CurrHeight end, Services).
 
 %% Ensure that services can be added.
 add_service_test() ->
@@ -99,8 +98,8 @@ drop_service_test() ->
 	add(PID, [#service { name = "test", host = {127,0,0,1,1984}, expires = 1 }]),
 	[_Serv] = get(PID),
 	ar_node:mine(Node1),
-	receive after 1000 -> ok end,
+	timer:sleep(1000),
 	ar_node:mine(Node1),
-	receive after 1000 -> ok end,
+	timer:sleep(1000),
 	PID ! prune,
 	[] = get(PID).

@@ -1,6 +1,6 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2, start/3]).
--export([add_tx/2, add_block/4, add_block/6]). % Called from ar_http_iface_server
+-export([add_tx/2, add_block/4, add_block/6]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
@@ -81,7 +81,11 @@ add_tx(PID, TX) ->%, OriginPeer) ->
 
 %% @doc Add a remote HTTP peer.
 add_remote_peer(PID, Node) ->
-	PID ! {add_peer, remote, Node}.
+	case is_loopback_ip(Node) of
+		true -> do_nothing;
+		false ->
+			PID ! {add_peer, remote, Node}
+	end.
 
 %% @doc Add a local gossip peer.
 add_local_peer(PID, Node) ->
@@ -105,6 +109,14 @@ is_id_ignored(ID) ->
 		[] -> false
 	end.
 
+%% @doc Is the IP address in question a loopback ('us') address?
+is_loopback_ip({A, B, C, D, _Port}) -> is_loopback_ip({A, B, C, D});
+is_loopback_ip({127, _, _, _}) -> true;
+is_loopback_ip({0, _, _, _}) -> true;
+is_loopback_ip({169, 254, _, _}) -> true;
+is_loopback_ip({255, 255, 255, 255}) -> true;
+is_loopback_ip(_) -> false.
+
 %%% INTERNAL FUNCTIONS
 
 %% @doc Main server loop.
@@ -116,13 +128,13 @@ server(S) ->
 					server(NewS)
 			catch
 				throw:Term ->
-					ar:report( [ {'EXCEPTION', {Term}} ]),
+					ar:report( [ {'BridgeEXCEPTION', Term} ]),
 					server(S);
 				exit:Term ->
-					ar:report( [ {'EXIT', Term} ]),
+					ar:report( [ {'BridgeEXIT', Term} ]),
 					server(S);
 				error:Term ->
-					ar:report( [ {'EXIT', {Term, erlang:get_stacktrace()}} ]),
+					ar:report( [ {'BridgeEXIT', {Term, erlang:get_stacktrace()}} ]),
 					server(S)
 			end
 	end.
@@ -162,7 +174,7 @@ handle(S, {get_more_peers, PID}) ->
 	spawn(
 		fun() ->
 			Peers = ar_manage_peers:update(S#state.external_peers),
-			lists:map(fun ar_http_iface_client:add_peer/1, Peers),
+			lists:map(fun ar_http_iface:add_peer/1, Peers),
 			PID ! {update_peers, remote, Peers},
 			reset_timer(PID, get_more_peers)
 		end
@@ -197,12 +209,7 @@ maybe_send_to_internal(
 							{add_tx, Data};
 						block ->
 							{OriginPeer, NewB, RecallB} = Data,
-							{new_block,
-								OriginPeer,
-								NewB#block.height,
-								NewB,
-								RecallB
-							}
+							{new_block, OriginPeer, NewB#block.height, NewB, RecallB}
 					end),
 			send_to_external(S, Msg),
 			add_processed(Type, Data, Procd),
@@ -237,12 +244,7 @@ maybe_send_to_internal(
 							{add_tx, Data};
 						block ->
 							{OriginPeer, NewB, RecallB} = Data,
-							{new_block,
-								OriginPeer,
-								NewB#block.height,
-								NewB,
-								RecallB
-							}
+							{new_block, OriginPeer, NewB#block.height, NewB, RecallB}
 					end),
 			send_to_external(S, Msg, Key, Nonce),
 			add_processed(Type, Data, Procd),
@@ -295,9 +297,9 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 			),
 			lists:foldl(
 				fun(Peer, Acc) ->
-					case (not (ar_http_iface_client:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
+					case (not (ar_http_iface:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
 						true ->
-							ar_http_iface_client:send_new_tx(Peer, TX),
+							ar_http_iface:send_new_tx(Peer, TX),
 							Acc + 1;
 						_ -> Acc
 					end
@@ -324,7 +326,7 @@ send_to_external(
 					),
 					lists:foreach(
 						fun(Peer) ->
-							ar_http_iface_client:send_new_block(Peer, Port, NewB, RecallB)
+							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
 						end,
 						Peers
 					)
@@ -353,7 +355,7 @@ send_to_external(
 					),
 					lists:foreach(
 						fun(Peer) ->
-							ar_http_iface_client:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
+							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
 						end,
 						Peers
 					)

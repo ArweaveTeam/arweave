@@ -13,15 +13,16 @@
 
 handle(Req, _Config) ->
 	Peer = elli_request:peer(Req),
-	Ret= case increment_ip(Peer) of
-		true -> blacklisted(Req);
-		false -> ignore
-	end,
-%	ar:report([{?MODULE, handle},{Peer,Ret}]),
+	Ret =
+		case increment_ip(Peer) of
+			true -> blacklisted(Req);
+			false -> ignore
+		end,
+	% ar:report([{?MODULE, handle}, {Peer, Ret}]),
 	Ret.
 
 handle_event(elli_startup, [], Config) ->
-	ar:report([{?MODULE,starting},{handle_event, elli_startup}]),
+	ar:report([{?MODULE, starting}, {handle_event, elli_startup}]),
 	ets:new(?THROTTLE_TABLE, [set, public, named_table]),
 %	{ok,_} = timer:apply_interval(?THROTTLE_PERIOD,?MODULE, reset_counters, []),
 	ok;
@@ -36,7 +37,6 @@ blacklisted(Req) ->
 	{429,  Headers, Body}.
 
 reset_counters() ->
-%	ar:report([{?MODULE, reset_counters}]),
 	true = ets:delete_all_objects(?THROTTLE_TABLE),
 	ok.
 
@@ -46,9 +46,9 @@ reset_counter(Peer) ->
 	ok.
 
 increment_ip(Peer) ->
-	Count=ets:update_counter(?THROTTLE_TABLE, Peer, {2,1}, {Peer,0}),
+	Count = ets:update_counter(?THROTTLE_TABLE, Peer, {2,1}, {Peer,0}),
 	case Count of
-		1 -> timer:apply_after(?THROTTLE_PERIOD,?MODULE, reset_counter, [Peer]);
+		1 -> timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_counter, [Peer]);
 		_ -> ok
 	end,
 	Count > ?MAX_REQUESTS. % yup, just logical expr that evaulates true of false.

@@ -72,14 +72,14 @@ get_more_peers(Peers) ->
 	ar_util:unique(
 		lists:flatten(
 			[
-				ar_util:pmap(fun ar_http_iface_client:get_peers/1, Peers),
+				ar_util:pmap(fun ar_http_iface:get_peers/1, Peers),
 				Peers
 			]
 		)
 	).
 
 responds(Peer) ->
-	not (is_atom(ar_http_iface_client:get_info(Peer))).
+	not (is_atom(ar_http_iface:get_info(Peer))).
 
 %% @doc Calculate a rank order for any given peer or list of peers.
 score(Peers) when is_list(Peers) ->
