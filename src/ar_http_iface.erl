@@ -334,43 +334,9 @@ handle('GET', [<<"wallet_list">>], _Req) ->
 %% nodes network information JSON encoded as specified in ar_serialize.
 % NOTE: Consider returning remaining timeout on a failed request
 handle('POST', [<<"peers">>], Req) ->
-	BlockJSON = elli_request:body(Req),
-	case ar_serialize:dejsonify(BlockJSON) of
-		{Struct} ->
-			{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-			case (NetworkName == <<?NETWORK_NAME>>) of
-				false ->
-					{400, [], <<"Wrong network.">>};
-				true ->
-					Peer = elli_request:peer(Req),
-					case ar_meta_db:get({peer, ar_util:parse_peer(Peer)}) of
-						not_found ->
-							ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(Peer));
-						X -> X
-					end,
-					{200, [], []}
-			end;
-		_ -> {400, [], "Wrong network"}
-	end;
+	add_remote_peer(Req);
 handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
-	BlockJSON = elli_request:body(Req),
-	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	case lists:keyfind(<<"network">>, 1, Struct) of
-		{<<"network">>, NetworkName} ->
-			case (NetworkName == <<?NETWORK_NAME>>) of
-				false ->
-					{400, [], <<"Wrong network.">>};
-				true ->
-					Peer = elli_request:peer(Req),
-					Port = binary_to_integer(RawPort),
-					ar_bridge:add_remote_peer(
-						whereis(http_bridge_node),
-						ar_util:parse_peer({Peer, Port})
-						),
-					{200, [], []}
-			end;
-		_ -> {400, [], "Wrong network"}
-	end;
+	add_remote_peer(Req, RawPort);
 
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
@@ -1123,6 +1089,36 @@ reregister(Name, Node) ->
 	end,
 	erlang:register(Name, Node).
 
+%%%
+%%% Private functions.
+%%%
+
+%% @doc Add a requesting peer if its network and time are valid.
+add_remote_peer(Req) ->
+	add_remote_peer(Req, ?DEFAULT_HTTP_IFACE_PORT).
+
+add_remote_peer(Req, Port) when is_integer(Port) ->
+	BlockJSON = elli_request:body(Req),
+	{Struct} = ar_serialize:dejsonify(BlockJSON),
+	Network = lists:keyfind(<<"network">>, 1, Struct),
+	add_remote_peer(Req, Port, Network);
+add_remote_peer(Req, RawPort) ->
+	Port = list_to_integer(binary_to_list(RawPort)),
+	add_remote_peer(Req, Port).
+
+add_remote_peer(Req, Port, {<<"network">>, NetworkName}) when NetworkName == <<?NETWORK_NAME>> ->
+	NetPeer = elli_request:peer(Req),
+	Peer = ar_util:parse_peer({NetPeer, Port}),
+	case is_valid_peer_time(Peer) of
+		true ->
+			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer),
+			{200, [], []};
+		false ->
+			{400, [], "Invalid peer time."}
+	end;
+add_remote_peer(_Req, _Port, _) ->
+	{400, [], "Wrong network."}.
+
 %% @doc Convert a blocks field with the given label into a string
 block_field_to_string(<<"nonce">>, Res) -> Res;
 block_field_to_string(<<"previous_block">>, Res) -> Res;
@@ -1160,6 +1156,24 @@ hash_to_maybe_filename(Type, Hash) ->
 %% @doc Return true if ID is a pending tx.
 is_a_pending_tx(ID) ->
 	lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))).
+
+%% @doc Retrieve the system time from a peer and compare to
+%% local time.
+is_valid_peer_time({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	% Peer has API endpoint. Check time.
+	PeerT = list_to_integer(binary_to_list(Body)),
+	LocalT = os:system_time(second),
+	LocalT >= (PeerT + ?NODE_TIME_DIFF_TOLERANCE);
+is_valid_peer_time({ok, {{<<"400">>, _}, _, <<"Request type not found.">>, _, _}}) ->
+	% Peer is not yet updated. Be tolerant.
+	true;
+is_valid_peer_time(Peer) ->
+	try
+		is_valid_peer_time(ar_httpc:request(<<"GET">>, Peer, "/time", []))
+	catch
+		_:_ ->
+			false
+	end.
 
 %% @doc Given a request, returns a blockshadow.
 request_to_struct_with_blockshadow(Req) ->

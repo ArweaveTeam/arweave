@@ -1,7 +1,8 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1]).
 -export([get_recall_block/5, get_recall_block/6]).
--export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/2]).
+-export([verify_dep_hash/2, verify_indep_hash/1]).
+-export([verify_timestamp/1, verify_timestamp_diff/2]).
 -export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([hash_wallet_list/1]).
@@ -370,9 +371,35 @@ verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 verify_dep_hash(NewB, BlockDataSegmentHash) ->
 	NewB#block.hash == BlockDataSegmentHash.
 
-%% @doc Verify that the block was created within the last ten minutes
-verify_timestamp(Timestamp, NewB) ->
-	(NewB#block.timestamp - Timestamp) =< 600.
+%% @doc Verify new block timestamp relative to current system time.
+verify_timestamp(B) ->
+	verify_timestamp_diff(os:system_time(seconds), B#block.timestamp).
+
+%% @doc Verify timestamp difference between new and old block.
+verify_timestamp_diff(NewB, OldB) when
+		is_record(NewB, block),
+		is_record(OldB, block) ->
+	verify_timestamp_diff(NewB#block.timestamp, OldB#block.timestamp);
+
+%% @doc Verify difference between new and old timestamp.
+%% NewT must be > OldT, & difference must be less than tolerance
+%% if diff. between OldT & NewT < Tolerance, times are effectively the same
+%% "too far in the future" must be twice the tolerance
+verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT),
+		NewT < (OldT - ?BLOCK_TIME_DIFF_TOLERANCE) ->
+	false; % NewT is too far in the past
+verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT),
+		NewT > (OldT + (2 * ?BLOCK_TIME_DIFF_TOLERANCE)) ->
+	false; % NewT is too far in the future
+verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT) ->
+	true;
+verify_timestamp_diff(_, _) ->
+	false.
+
+
+
+
+
 
 %% @doc Verify the height of the new block is the one higher than the
 %% current height.

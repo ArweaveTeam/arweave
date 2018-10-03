@@ -493,7 +493,7 @@ validate(
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
 	WeaveSize = ar_block:verify_weave_size(NewB, OldB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
-	%Time = ar_block:verify_timestamp(OldB, NewB),
+	TimeCheck = ar_block:verify_timestamp_diff(NewB, OldB),
 	HeightCheck = ar_block:verify_height(NewB, OldB),
 	RetargetCheck = ar_block:verify_last_retarget(NewB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
@@ -513,6 +513,7 @@ validate(
 			{block_hash, Hash},
 			{weave_size, WeaveSize},
 			{block_size, Size},
+			{block_timestamp_diff, TimeCheck},
 			{block_height, HeightCheck},
 			{block_retarget_time, RetargetCheck},
 			{block_previous_check, PreviousBCheck},
@@ -542,6 +543,7 @@ validate(
 	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
 	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok	end,
 	case Size of false -> ar:d(invalid_size); _ -> ok  end,
+	case TimeCheck of false -> ar:d(invalid_timestamp_diff); _ -> ok  end,
 	case HeightCheck of false -> ar:d(invalid_height); _ -> ok	end,
 	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok	end,
 	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
@@ -557,6 +559,7 @@ validate(
 		andalso Hash
 		andalso WeaveSize
 		andalso Size
+		andalso TimeCheck
 		andalso HeightCheck
 		andalso RetargetCheck
 		andalso PreviousBCheck
