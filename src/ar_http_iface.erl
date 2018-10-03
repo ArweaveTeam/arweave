@@ -1175,6 +1175,10 @@ is_valid_peer_time(Peer) ->
 			false
 	end.
 
+%% @doc Validates the difficulty of an incoming block.
+new_block_difficulty_ok(B) ->
+	B#block.diff =:= ar_node:get_current_diff(whereis(http_entrypoint_node)).
+
 %% @doc Given a request, returns a blockshadow.
 request_to_struct_with_blockshadow(Req) ->
 	try
@@ -1248,41 +1252,60 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer}) ->
 		false ->
 			{404, [], <<"Invalid block.">>};
 		true ->
-			post_block(post_block, {ReqStruct, BShadow, OrigPeer})
+			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer})
 	end;
-post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer}) ->
+    % Verify the difficulty of the block shadow.
+	case new_block_difficulty_ok(BShadow) of
+		false -> {404, [], <<"Invalid Block Difficulty">>};
+		true  -> post_block(check_pow, {ReqStruct, BShadow, OrigPeer})
+	end;
+post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
+    % Verify the difficulty of the block shadow.
+	JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
+	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
+	KeyEnc = val_for_key(<<"key">>, ReqStruct),
+	NonceEnc = val_for_key(<<"nonce">>, ReqStruct),
+	Key = ar_util:decode(KeyEnc),
+	Nonce = ar_util:decode(NonceEnc),
+	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
+	RecallHash = ar_util:decode(JSONRecallB),
+	LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce, LastB#block.hash_list),
+
+	Difficulty = B#block.diff,
+	RewardAddr = B#block.reward_addr,
+	Tags = B#block.tags,
+	Time = B#block.timestamp,
+	TXs = B#block.txs,
+	DataSegment = ar_block:generate_block_data_segment(
+		LastB,
+		RecallB,
+		TXs,
+		RewardAddr,
+		Time,
+		Tags
+	),
+
+    case ar_mine:validate(DataSegment, Nonce, Difficulty) of
+        false -> {404, [], <<"Invalid Block Work">>};
+        true  -> post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})
+    end;
+post_block(post_block, {NewB, CurrentB, RecallB, OrigPeer, Key, Nonce}) ->
 	% Everything fine, post block.
 	spawn(
 		fun() ->
-			JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
-			RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
-			KeyEnc = val_for_key(<<"key">>, ReqStruct),
-			NonceEnc = val_for_key(<<"nonce">>, ReqStruct),
-			Key = ar_util:decode(KeyEnc),
-			Nonce = ar_util:decode(NonceEnc),
-			CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-			B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
-			RecallHash = ar_util:decode(JSONRecallB),
 			case (not is_atom(CurrentB)) andalso
-				(B#block.height > CurrentB#block.height) andalso
-				(B#block.height =< (CurrentB#block.height + 50)) andalso
-				(B#block.diff >= ?MIN_DIFF) of
+					(NewB#block.height > CurrentB#block.height) andalso
+					(NewB#block.height =< (CurrentB#block.height + 50)) andalso
+					(NewB#block.diff >= ?MIN_DIFF) of
 				true ->
 					ar:report(
 						[
-							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
+							{sending_external_block_to_bridge, ar_util:encode(NewB#block.indep_hash)}
 						]
 					),
-					RecallB =
-						ar_block:get_recall_block(
-							OrigPeer,
-							RecallHash,
-							B,
-							Key,
-							Nonce,
-							CurrentB#block.hash_list
-						),
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
+					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, NewB, RecallB, Key, Nonce);
 				_ ->
 					ok
 			end
