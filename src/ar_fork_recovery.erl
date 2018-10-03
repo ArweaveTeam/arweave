@@ -313,13 +313,10 @@ try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 			FinderReward,
 			NextB#block.height
 		),
-	% Validate with synchronized block timestamps to avoid
-	% failing when it's out of tolerance here. Rest of the
-	% validation is the same as usual.
 	ar_node_utils:validate(
 		HashList,
 		WalletList,
-		NextB#block{ timestamp = B#block.timestamp },
+		NextB,
 		TXs,
 		B,
 		RecallB,

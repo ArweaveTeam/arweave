@@ -396,11 +396,6 @@ verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT) ->
 verify_timestamp_diff(_, _) ->
 	false.
 
-
-
-
-
-
 %% @doc Verify the height of the new block is the one higher than the
 %% current height.
 verify_height(NewB, OldB) ->
