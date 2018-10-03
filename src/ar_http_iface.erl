@@ -1258,10 +1258,21 @@ post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer}) ->
     % Verify the difficulty of the block shadow.
 	case new_block_difficulty_ok(BShadow) of
 		false -> {404, [], <<"Invalid Block Difficulty">>};
-		true  -> post_block(check_pow, {ReqStruct, BShadow, OrigPeer})
+		true  ->
+			JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
+			RecallHash = ar_util:decode(JSONRecallB),
+			KeyEnc = val_for_key(<<"key">>, ReqStruct),
+			NonceEnc = val_for_key(<<"nonce">>, ReqStruct),
+			Key = ar_util:decode(KeyEnc),
+			Nonce = ar_util:decode(NonceEnc),
+			RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
+			B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
+			LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+			RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
+			post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})
 	end;
 post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
-    % Verify the difficulty of the block shadow.
+    % Verify the pow of the block shadow.
 	JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
 	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
 	KeyEnc = val_for_key(<<"key">>, ReqStruct),
@@ -1271,7 +1282,7 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
 	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
 	RecallHash = ar_util:decode(JSONRecallB),
 	LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce, LastB#block.hash_list),
+	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
 
 	Difficulty = B#block.diff,
 	RewardAddr = B#block.reward_addr,
@@ -1279,7 +1290,7 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
 	Time = B#block.timestamp,
 	TXs = B#block.txs,
 	DataSegment = ar_block:generate_block_data_segment(
-		LastB,
+		B,
 		RecallB,
 		TXs,
 		RewardAddr,
@@ -1288,7 +1299,7 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
 	),
 
     case ar_mine:validate(DataSegment, Nonce, Difficulty) of
-        false -> {404, [], <<"Invalid Block Work">>};
+        false -> {400, [], <<"Invalid Block Work">>};
         true  -> post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})
     end;
 post_block(post_block, {NewB, CurrentB, RecallB, OrigPeer, Key, Nonce}) ->
