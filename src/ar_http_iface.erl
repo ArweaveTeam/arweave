@@ -203,7 +203,7 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 				[
 					{
 						<<"Content-Type">>,
-						proplists:get_value("Content-Type", T#tx.tags, "text/html")
+						proplists:get_value(<<"Content-Type">>, T#tx.tags, "text/html")
 					}
 				],
 				T#tx.data
