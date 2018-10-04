@@ -560,10 +560,28 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 					{404, [], <<"Not Found.">>}
 			end;
 		{ok, Filename} ->
-			{ok, JSONBlock} = file:read_file(Filename),
-			{TXJSON} = ar_serialize:dejsonify(JSONBlock),
-			Res = val_for_key(Field, TXJSON),
-			{200, [], Res}
+			case Field of
+				<<"tags">> ->
+					TX = ar_storage:do_read_tx(Filename),
+					{200, [], ar_serialize:jsonify(
+						lists:map(
+							fun({Name, Value}) ->
+								{
+									[
+										{name, ar_util:encode(Name)},
+										{value, ar_util:encode(Value)}
+									]
+								}
+							end,
+							TX#tx.tags
+						)
+					)};
+				_ ->
+					{ok, JSONBlock} = file:read_file(Filename),
+					{TXJSON} = ar_serialize:dejsonify(JSONBlock),
+					Res = val_for_key(Field, TXJSON),
+					{200, [], Res}
+			end
 	end;
 
 %% @doc Share the location of a given service with a peer.
