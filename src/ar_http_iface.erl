@@ -130,6 +130,13 @@ handle('GET', [], _Req) ->
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
 
+%% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node 
+%% is alive. Appease them.
+handle('HEAD', [], _Req) ->
+	{200, [], <<>>};
+handle('HEAD', [<<"info">>], _Req) ->
+	{200, [], <<>>};
+
 %% @doc Return permissive CORS headers for all endpoints
 handle('OPTIONS', [<<"block">>], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
