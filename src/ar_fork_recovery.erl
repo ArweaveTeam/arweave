@@ -196,8 +196,7 @@ server(S = #state {
 						BHashList = unavailable,
 						B = unavailable,
 						RecallB = unavailable,
-						TXs = [],
-						server(S, rejoin);
+						TXs = [];
 					% Target block is too far ahead and cannot be recovered.
 					{_, true} ->
 						ar:report(
@@ -209,9 +208,8 @@ server(S = #state {
 						BHashList = unavailable,
 						B = unavailable,
 						RecallB = unavailable,
-						TXs = [],
-						server(S, rejoin);
-					% Target block is within range and isi attempted to be
+						TXs = [];
+					% Target block is within range and is attempted to be
 					% recovered to.
 					{_X, _Y} ->
 						B = ar_node:get_block(Peers, NextB#block.previous_block, BHL),
@@ -222,30 +220,26 @@ server(S = #state {
 								TXs = [];
 							true ->
 								BHashList = [B#block.indep_hash|B#block.hash_list],
-								case B#block.height of
-									0 -> RecallB = ar_node_utils:get_full_block(Peers, ar_util:get_recall_hash(B, NextB#block.hash_list), BHL);
-									_ -> RecallB = ar_node_utils:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list), BHL)
-								end,
+								HLtoUse =
+									case B#block.height of
+										0 -> NextB#block.hash_list;
+										_ -> B#block.hash_list
+									end,
+								RecallB = ar_node_utils:get_full_block(
+									Peers,
+									ar_util:get_recall_hash(B, HLtoUse), BHL),
 								%% TODO: Rewrite validate so it also takes recall block txs
-								% ar:d({old_block, B#block.indep_hash}),
-								% ar:d({new_block, NextB#block.indep_hash}),
-								% ar:d({recall_block, RecallB#block.indep_hash}),
-								% ar:d({old_block_txs, B#block.txs}),
-								% ar:d({new_block_txs, NextB#block.txs}),
-								% ar:d({recall_block_txs, RecallB#block.txs}),
 								ar_storage:write_tx(RecallB#block.txs),
 								TXs = NextB#block.txs
 						end
 				end
 		end,
-		% Ensure next block (NextB) is a block, the previous block (B) is a
-		% block and that the nexts blocks recall block (RecallB) is a block.
+		% Ensure the next block (NextB) is a block, the previous block (B)
+		% is a block, and the next block's recall block (RecallB) is a block.
 		case
-			(not ?IS_BLOCK(NextB)) or
-			(not ?IS_BLOCK(B)) or
-			(not ?IS_BLOCK(RecallB))
+			?IS_BLOCK(NextB) andalso ?IS_BLOCK(B) andalso ?IS_BLOCK(RecallB)
 		of
-			false ->
+			true ->
 				case
 					try_apply_block(
 						BHashList,
@@ -282,7 +276,7 @@ server(S = #state {
 							}
 						)
 				end;
-			true -> server(S#state { hash_list = [] } )
+			false -> server(S#state { hash_list = [] } )
 		end;
 	_ -> server(S)
 	end.
