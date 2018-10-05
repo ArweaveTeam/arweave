@@ -65,7 +65,8 @@
 	used_space = ar_storage:calculate_used_space(),
 	start_hash_list = undefined,
 	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
-	enable = []
+	enable = [],
+	disable = []
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -103,7 +104,8 @@ main("") ->
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
-			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."}
+			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
+			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."}
 		]
 	),
 	erlang:halt();
@@ -146,7 +148,9 @@ main(["auto_update", "false" | Rest], O) ->
 main(["auto_update", Addr | Rest], O) ->
 	main(Rest, O#opts { auto_update = ar_util:decode(Addr) });
 main(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
-	main(Rest, O#opts { enable = [ list_to_atom(Feature) |Enabled] });
+	main(Rest, O#opts { enable = [ list_to_atom(Feature) | Enabled ] });
+main(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
+	main(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
 main([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
@@ -174,7 +178,8 @@ start(
 		used_space = UsedSpace,
 		start_hash_list = BHL,
 		auto_update = AutoUpdate,
-		enable = Enable
+		enable = Enable,
+		disable = Disable
 	}) ->
 	ar_storage:ensure_directories(),
 	% Optionally clear the block cache
@@ -302,6 +307,7 @@ start(
 	end,
 	% Store enabled features
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	% Add self to all remote nodes.
 	%lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.

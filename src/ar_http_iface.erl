@@ -456,10 +456,12 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		_  ->
-			case elli_request:get_header(<<"X-Version">>, Req, <<"7">>) of
-				<<"8">> ->
+			case {ar_meta_db:get(api_compat), elli_request:get_header(<<"X-Version">>, Req, <<"7">>)} of
+				{_, <<"8">>} ->
 					{ok, [], {file, Filename}};
-				<<"7">> ->
+				{false, <<"7">>} ->
+					{426, [], <<"Client version incompatible.">>};
+				{_, <<"7">>} ->
 					% Supprt for legacy nodes (pre-1.5).
 					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 					try ar_storage:do_read_block(Filename, BHL) of
