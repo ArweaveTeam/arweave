@@ -12,7 +12,7 @@ start() ->
 	spawn(
 		fun() ->
 			ar:report([starting_meta_db]),
-			ets:new(?MODULE, [set, public, named_table]),
+			ets:new(?MODULE, [set, public, named_table, {read_concurrency, true}]),
 			ets:new(blacklist, [set, public, named_table]),
 			receive stop -> ok end
 		end
