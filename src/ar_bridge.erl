@@ -174,7 +174,7 @@ handle(S, {get_more_peers, PID}) ->
 	spawn(
 		fun() ->
 			Peers = ar_manage_peers:update(S#state.external_peers),
-			lists:map(fun ar_http_iface:add_peer/1, Peers),
+			lists:map(fun ar_http_iface_client:add_peer/1, Peers),
 			PID ! {update_peers, remote, Peers},
 			reset_timer(PID, get_more_peers)
 		end
@@ -297,9 +297,9 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 			),
 			lists:foldl(
 				fun(Peer, Acc) ->
-					case (not (ar_http_iface:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
+					case (not (ar_http_iface_client:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
 						true ->
-							ar_http_iface:send_new_tx(Peer, TX),
+							ar_http_iface_client:send_new_tx(Peer, TX),
 							Acc + 1;
 						_ -> Acc
 					end
@@ -326,7 +326,7 @@ send_to_external(
 					),
 					lists:foreach(
 						fun(Peer) ->
-							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
+							ar_http_iface_client:send_new_block(Peer, Port, NewB, RecallB)
 						end,
 						Peers
 					)
@@ -355,7 +355,7 @@ send_to_external(
 					),
 					lists:foreach(
 						fun(Peer) ->
-							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
+							ar_http_iface_client:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
 						end,
 						Peers
 					)

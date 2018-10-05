@@ -14,7 +14,7 @@ get_all_nodes() ->
 get_all_nodes(Done, []) -> Done;
 get_all_nodes(Done, [Next|Peers]) ->
     io:format("Getting peers from ~s... ", [ar_util:format_peer(Next)]),
-    NewPeers = ar_http_iface:get_peers(Next),
+    NewPeers = ar_http_iface_client:get_peers(Next),
     io:format(" got ~w!~n", [length(NewPeers)]),
     get_all_nodes(
         [Next|Done],
