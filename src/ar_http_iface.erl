@@ -530,7 +530,7 @@ handle('POST', [<<"services">>], Req) ->
 	BodyBin = elli_request:body(Req),
 	{ServicesJSON} = ar_serialize:jsonify(BodyBin),
 	ar_services:add(
-		whereis(http_services_node),
+		whereis(http_service_node),
 		lists:map(
 			fun({Vals}) ->
 				{<<"name">>, Name} = lists:keyfind(<<"name">>, 1, Vals),
@@ -1103,7 +1103,7 @@ add_remote_peer(Req, Port) when is_integer(Port) ->
 	Network = lists:keyfind(<<"network">>, 1, Struct),
 	add_remote_peer(Req, Port, Network);
 add_remote_peer(Req, RawPort) ->
-	Port = list_to_integer(binary_to_list(RawPort)),
+	Port = binary_to_integer(RawPort),
 	add_remote_peer(Req, Port).
 
 add_remote_peer(Req, Port, {<<"network">>, NetworkName}) when NetworkName == <<?NETWORK_NAME>> ->
@@ -1161,7 +1161,7 @@ is_a_pending_tx(ID) ->
 %% local time.
 is_valid_peer_time({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	% Peer has API endpoint. Check time.
-	PeerT = list_to_integer(binary_to_list(Body)),
+	PeerT = binary_to_integer(Body),
 	LocalT = os:system_time(second),
 	LocalT >= (PeerT + ?NODE_TIME_DIFF_TOLERANCE);
 is_valid_peer_time({ok, {{<<"400">>, _}, _, <<"Request type not found.">>, _, _}}) ->
