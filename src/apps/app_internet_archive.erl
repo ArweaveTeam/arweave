@@ -1,6 +1,7 @@
 -module(app_internet_archive).
 -export([store/2]).
--export([generate_items/0]).
+-export([id_to_item/1]).
+-export([generate_items/0, generate_items/1, generate_items/2]).
 -include("ar.hrl").
 
 %%% An application that archives hashes and (optionally) torrents from the
@@ -24,6 +25,7 @@ store(Node, WalletLoc, Items) when not is_tuple(WalletLoc) ->
 store(Node, Wallet, Items) ->
     ssl:start(),
     Queue = app_queue:start(Node, Wallet),
+    ar:report([{storing_ia_items, length(Items)}]),
     lists:foreach(
         fun(I) -> app_queue:add(Queue, item_to_tx(I)) end,
         Items
@@ -39,29 +41,8 @@ item_to_tx(I) ->
                 {"id", I#item.id},
                 {"Content-Type", "application/x-bittorrent"}
             ] ++ I#item.meta_data,
-        data =
-            case I#item.torrent of
-                undefined -> <<>>;
-                URL ->
-                    case httpc:request(URL) of
-                        {ok, {{_, 200, _}, _, Body}} ->
-                            list_to_binary(Body);
-                        _ ->
-                            ar:report_console(
-                                [
-                                    {could_not_get_torrent, I#item.id},
-                                    {url, URL}
-                                ]
-                            )
-                    end
-            end
+        data = I#item.torrent
     }.
-
-%% @doc Get all items from a collection.
-%get_collection(CollectionID) when is_binary(CollectionID) ->
-%    get_collection(binary_to_list(CollectionID));
-%get_collection(CollectionID) ->
-%    proplists:get_value(<<"">>, get_url(a)).
 
 %% @doc When given an ID, build an item from it using the API.
 id_to_item(ItemID)  when is_binary(ItemID) -> id_to_item(binary_to_list(ItemID));
@@ -100,6 +81,7 @@ is_torrent_file({File}) ->
 
 %% @doc Get a page, assuming 200 response (crashing if not).
 get_url(URL) ->
+    ar:report([{getting_url, URL}]),
     {ok, {{_, 200, _}, _, Body}} = httpc:request(URL),
     Body.
 
@@ -107,20 +89,24 @@ get_url(URL) ->
 %% For the moment, this is static test data, until we have a way to dynamically
 %% extract it.
 %% TODO: Generate this list from an index.
-generate_items() ->
-    [
-        #item {
-            id = "NineteenEightyFour1984ByGeorgeOrwell",
-            torrent =
-                "https://archive.org/download"
-                    "/NineteenEightyFour1984ByGeorgeOrwell"
-                    "/NineteenEightyFour1984ByGeorgeOrwell_archive.torrent",
-            meta_data =
-                [
-                    {"Identifier-ark", "ark:/13960/t4jm8s98h"},
-                    {"Ocr", "ABBYY FineReader 11.0 (Extended OCR)"},
-                    {"Ppi", "300"},
-                    {"Scanner", "Internet Archive HTML5 Uploader 1.6.3"}
-                ]
-        }
-    ].
+generate_items() -> generate_items(1000).
+generate_items(Count) -> generate_items(Count, <<>>).
+generate_items(Count, Cursor) ->
+    {JSON} = 
+        ar_serialize:dejsonify(
+            get_url(
+                "https://archive.org/services/search/v1/scrape?q=bittorrent"
+                    ++ "&sorts=downloads"
+                    ++ "&count=" ++ integer_to_list(Count)
+                    ++ if Cursor == <<>> -> ""; true -> "&cursor=" ++ binary_to_list(Cursor) end
+            )
+        ),
+    {
+        proplists:get_value(<<"cursor">>, JSON),
+        lists:filtermap(
+            fun({[{<<"identifier">>, ID}]}) ->
+                try {true, id_to_item(ID)} catch _:_ -> false end
+            end,
+            ar:d(proplists:get_value(<<"items">>, JSON))
+        )
+    }.
