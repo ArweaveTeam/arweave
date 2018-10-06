@@ -41,9 +41,8 @@ all: gitmodules build
 gitmodules:
 	git submodule update --init
 
-build: ebin logs blocks hash_lists wallet_lists
+build: ebin data logs blocks hash_lists wallet_lists
 	rm -rf priv
-	rm -rf data/mnesia
 	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
 	(cd lib/prometheus && ./rebar3 compile)
 	(cd lib/accept && ./rebar3 compile)
@@ -68,6 +67,9 @@ hash_lists:
 wallet_lists:
 	mkdir -p wallet_lists
 
+data:
+	mkdir -p data/mnesia
+
 docs: all
 	mkdir -p docs
 	(cd docs && erl -noshell -s ar docs -pa ../ebin -s init stop)
@@ -82,7 +84,6 @@ sim_hard: all
 	erl $(ERL_OPTS) -s ar_network spawn_and_mine hard
 
 clean:
-	rm -rf data/mnesia
 	rm -rf ebin docs logs priv
 	rm -f erl_crash.dump
 
