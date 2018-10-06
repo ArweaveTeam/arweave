@@ -1,0 +1,74 @@
+<html>
+    <head>
+        <title>
+            Internet Archive Decentralised Torrent Index
+        </title>
+        <script>
+            // If debugging, use a known Arweave node.
+            // For production, use an empty string.
+            var node = "";
+
+            function addItem(id) {
+                var cont = document.createElement("div");
+
+                var tag_req = new XMLHttpRequest();
+                tag_req.open("GET", node + "/tx/" + id + "/tags");
+
+                tag_req.onload = function(ev) {
+                    if(tag_req.status == 200) {
+                        var tags = eval(tag_req.responseText);
+
+                        tags.map(function(tag) {
+                            var node = document.createElement("div");
+                            node.innerHTML = "<b>" + atob(tag.name) + "</b>: " + atob(tag.value);
+                            cont.appendChild(node);
+                        });
+
+                        var link = document.createElement("a");
+                        link.href = node + "/tx/" + id + "/data.torrent";
+                        link.innerText = "Download Torrent";
+                        cont.appendChild(link);
+                        var index = document.getElementById("index");
+                        index.appendChild(cont);
+                        var br1 = document.createElement("br");
+                        var br2 = document.createElement("br");
+
+                        index.appendChild(br1);
+                        index.appendChild(br2);
+                    }
+                }
+
+                tag_req.send();
+            }
+
+            var req = new XMLHttpRequest();
+            req.open("POST", node + "/arql", true);
+
+            req.onload = function(e) {
+                if(req.status == 200) {
+                    var txs = eval(req.responseText);
+
+                    txs.map(function(tx) {
+                        addItem(tx);
+                    });
+                }
+            }
+
+            req.send('{"op": "equals", "expr1": "app_name", "expr2": "InternetArchive"}');
+        </script>
+    </head>
+    <body>
+        <h1>Internet Archive Decentralised Torrent Index</h1>
+        <h2>Universal access to information</h2>
+        <p>This is an index of torrent files relating to data stored on the 
+            Internet Archive. It is possible to access the page you are viewing
+            in an entirely decentralised manner using the Arweave web extension.
+        </p>
+        <p>
+            The archived torrents and their metadata should show below shortly:
+        </p>
+        <div id="index">
+
+        </div>
+    </body>
+</html>
