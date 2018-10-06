@@ -409,7 +409,7 @@ do_json_struct_to_query({Query}) ->
 		do_json_struct_to_query(find_value(<<"expr2">>, Query))
 	};
 do_json_struct_to_query(Query) ->
-	ar_util:decode(Query).
+	Query.
 
 %% @doc Generate a JSON structure representing a block hash list.
 hash_list_to_json_struct(BHL) ->
