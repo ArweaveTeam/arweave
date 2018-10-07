@@ -111,7 +111,31 @@ server(#state {
 		parent = Parent
 	}) ->
 	Parent ! {fork_recovered, BlockList};
-server(S = #state {
+server(S = #state { target_block = TargetB }) ->
+	receive
+		{parent_accepted_block, B} ->
+			if B#block.height > TargetB ->
+				ar:report(
+					[
+						stopping_fork_recovery,
+						{reason, parent_accepted_higher_block_than_target}
+					]
+				),
+				ok;
+			true ->
+				ar:report(
+					[
+						continuing_fork_recovery,
+						{reason, parent_accepted_lower_block_than_target}
+					]
+				),
+				server(S)
+			end
+	after 0 ->
+		do_fork_recover(S)
+	end.
+
+do_fork_recover(S = #state {
 		block_list = BlockList,
 		peers = Peers,
 		hash_list = [NextH | HashList],
@@ -120,18 +144,19 @@ server(S = #state {
 	}) ->
 	receive
 	{update_target_block, Block, Peer} ->
-		NewBHashlist = [Block#block.indep_hash | Block#block.hash_list],
+		NewBHL = [Block#block.indep_hash | Block#block.hash_list],
 		% If the new retarget blocks hashlist contains the hash of the last
 		% retarget should be recovering to the same fork.
-		case lists:member(TargetB#block.indep_hash, NewBHashlist) of
-			true ->
-				HashListExtra =
+		HashListExtra =
+			case lists:member(TargetB#block.indep_hash, NewBHL) of
+				true ->
+					ar:report([encountered_block_on_same_fork_as_recovery_process]),
 					setminus(
-						lists:reverse([NewBHashlist]),
+						lists:reverse(NewBHL),
 						lists:reverse(BlockList) ++ [NextH | HashList]
 					);
-			false -> HashListExtra = []
-		end,
+				false -> []
+			end,
 		case HashListExtra of
 			[] ->
 				ar:report(failed_to_update_target_block),

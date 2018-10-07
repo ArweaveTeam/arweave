@@ -324,6 +324,11 @@ integrate_new_block(
 			{height, NewB#block.height}
 		]
 	),
+	case whereis(fork_recovery_server) of
+		undefined -> do_nothing;
+		PID ->
+			PID ! {parent_accepted_block, NewB}
+	end,
 	% ar:d({new_hash_list, [NewB#block.indep_hash | HashList]}),
 	app_search:update_tag_table(NewB),
 	lists:foreach(
