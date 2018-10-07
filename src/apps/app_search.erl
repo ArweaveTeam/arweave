@@ -63,8 +63,8 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 				end,
 				TX#tx.tags
 			),
-			add_entry(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
-			add_entry(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
+			add_entry(<<"from">>, ar_util:encode(ar_wallet:to_address(TX#tx.owner)), TX#tx.id),
+			add_entry(<<"to">>, ar_util:encode(ar_wallet:to_address(TX#tx.target)), TX#tx.id),
 			add_entry(<<"quantity">>, TX#tx.quantity, TX#tx.id),
 			add_entry(<<"reward">>, TX#tx.reward, TX#tx.id)
 		end,

@@ -2047,7 +2047,14 @@ get_txs_by_send_recv_test_() ->
 		receive after 1000 -> ok end,
 		QueryJSON = ar_serialize:jsonify(
 			ar_serialize:query_to_json_struct(
-					{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
+					{'or',
+						{'equals',
+							<<"to">>,
+							ar_util:encode(TX#tx.target)},
+						{'equals',
+							<<"from">>,
+							ar_util:encode(TX#tx.target)}
+					}
 				)
 			),
 		{ok, {_, _, Res, _, _}} =
