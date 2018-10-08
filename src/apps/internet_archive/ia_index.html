@@ -1,0 +1,168 @@
+<html>
+    <head>
+        <title>
+            Internet Archive Decentralised Torrent Index
+        </title>
+        <script src="https://cdn.jsdelivr.net/webtorrent/latest/webtorrent.min.js"></script>
+        <script>
+            // If debugging, use a known Arweave node.
+            // For production, use an empty string.
+            var node = "http://34.216.88.202:1984";
+            var client = new WebTorrent();
+            var byte_count = 0;
+
+            function addItem(id) {
+                var cont = document.createElement("tr");
+                var tx_req = new XMLHttpRequest();
+                tx_req.open("GET", node + "/tx/" + id + "/tags");
+
+                tx_req.onload = function(ev) {
+                    if(tx_req.status == 200) {
+                        // Print details
+                        var tags = JSON.parse(tx_req.responseText);
+                        var td = document.createElement("td");
+                        var item_name = document.createElement("div");
+                        var item_tags = document.createElement("div");
+                        item_tags.className = "tags";
+                        td.appendChild(item_name);
+                        td.appendChild(item_tags);
+                        cont.appendChild(td);
+
+                        tags.map(function(tag) {
+
+                            if(atob(tag.name) == "title") {
+                                item_name.innerHTML = "<b>" + atob(tag.value) + "</b>";
+                                cont.title = atob(tag.value);
+                            }
+                            else {
+                                var tag_div = document.createElement("div");
+                                tag_div.innerHTML = atob(tag.name) + ": " + atob(tag.value);
+                                item_tags.appendChild(tag_div);
+                            }
+                        });
+                        var download_cell = document.createElement("td");
+                        var torrent_link = document.createElement("a");
+                        torrent_link.href = node + "/tx/" + id + "/data.torrent";
+                        torrent_link.innerHTML = "<b>📁 Download<b>";
+                        download_cell.appendChild(torrent_link);
+                        cont.appendChild(download_cell);
+                        var index = document.getElementById("index");
+                        index.appendChild(cont);
+
+                        // Add the torrent
+                        client.add(node + "/tx/" + id +"/data.torrent", function (t) {
+                            var bytes = 0;
+                            for(j = 0; j < t.files.length; j++) {
+                                var file = t.files[j];
+                                bytes += t.files[j].length;
+                                file.getBlobURL(function (err, url) {
+                                    if (err) return log(err.message)
+                                    var file_link = document.createElement("a");
+                                    file_link.href = url;
+                                    file_link.innerHTML = file.name;
+                                    download_cell.appendChild(file_link);
+                                });
+                            }
+                            increment_counter(bytes);
+                        });
+                    }
+                }
+
+                tx_req.send();
+            }
+
+            function search() {
+                var index = document.getElementById("index");
+                var rows = index.children;
+                var search = document.getElementById("search").value;
+                search = search.toUpperCase();
+
+                for(i = 0; i < rows.length; i++) {
+                    var row = rows[i];
+                    var title = row.getAttribute("title");
+                    title = title.toUpperCase();
+
+                    if((search == "") || (title.search(search) != -1)) {
+                        row.style.display = '';
+                    }
+                    else {
+                        row.style.display = 'none';
+                    }
+                }
+            }
+
+            function increment_counter(n) {
+                byte_count += n;
+                var counter = document.getElementById("counter");
+                counter.innerText = byte_count.toString();
+            }
+
+            var req = new XMLHttpRequest();
+            req.open("POST", node + "/arql", true);
+
+            req.onload = function(e) {
+                if(req.status == 200) {
+                    var txs = eval(req.responseText);
+
+                    txs.map(function(tx) {
+                        addItem(tx);
+                    });
+                }
+            }
+
+            req.send('{"op": "equals", "expr1": "app_name", "expr2": "InternetArchive"}');
+        </script>
+        <style>
+            tr {
+                margin-bottom: 2em;
+            }
+
+            .tags {
+                font-size: 0.8em;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Internet Archive Decentralised Torrent Index</h1>
+        <h2>Universal access to information</h2>
+        <p>This is an index of torrent files relating to data stored on the 
+            Internet Archive. It is possible to access the page you are viewing
+            in an entirely decentralised manner using the Arweave web extension.
+        </p>
+        <p>
+            The archived torrents and their metadata should show below shortly:
+        </p>
+        <div>
+            <table>
+                <thead>
+                    <tr class="heading">
+                        <td colspan="1">
+                            Arweave Decentralised Internet Archive Portal
+                        </td>
+                        <td colspan="1">
+                            Bytes tracked:
+                            <span id="counter">
+                                0
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Name</td>
+                        <td>Torrent</td>
+                    </tr>
+                    <tr>
+                        <td colspan="2">
+                            <input
+                                id="search"
+                                placeholder="Filter torrents..."
+                                oninput="search()" />
+                        </td>
+                    </tr>
+                </thead>
+                <tbody id="index">
+
+                </tbody>
+            </table>
+        </div>
+    </body>
+</html>
