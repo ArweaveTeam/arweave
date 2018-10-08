@@ -114,7 +114,7 @@ server(#state {
 server(S = #state { target_block = TargetB }) ->
 	receive
 		{parent_accepted_block, B} ->
-			if B#block.height > TargetB ->
+			if B#block.height > TargetB#block.height ->
 				ar:report(
 					[
 						stopping_fork_recovery,
