@@ -1,6 +1,6 @@
 -module(ar_cleanup).
 -export([remove_invalid_blocks/1]).
--export([rewrite/0, rewrite/1]).
+-export([all/0, rewrite/0, rewrite/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -9,6 +9,15 @@
 %%% @doc Functions to clean up blocks not on the list of valid blocks
 %%% and invalid transactions that are no longer valid for some reason.
 %%%
+
+%% @doc Run all cleanup operations.
+all() ->
+	io:format("Rewriting all blocks (this may take a very long time...)~n"),	
+	rewrite(),
+	io:format("Removing all orphan/invalid blocks...~n"),
+	remove_invalid_blocks(ar_node:get_hash_list(whereis(http_entrypoint_node))),
+	io:format("Done!~n").	
+
 
 %% @doc Remove all blocks from blocks directory not in HashList
 remove_invalid_blocks(HashList) ->
