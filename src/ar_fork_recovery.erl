@@ -187,7 +187,13 @@ do_fork_recover(S = #state {
 					}
 				);
 			false ->
-				ar:report(not_updating_target_block),
+				ar:report(
+					[
+						not_updating_target_block,
+						{ignored_block, ar_util:encode(Block#block.indep_hash)},
+						{height, Block#block.height}
+					]
+				),
 				server(S)
 		end;
 	apply_next_block ->

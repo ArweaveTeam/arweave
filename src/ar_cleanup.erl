@@ -53,18 +53,18 @@ remove_invalid_blocks(HashList) ->
 %% In the case of upgrading a node from 1.1 to 1.5, this dramatically reduces
 %% the size of the weave on disk (and on the wire).
 rewrite() ->
-	rewrite(ar_node:get_hash_list(whereis(http_entrypoint_node))).
+	rewrite(lists:reverse(ar_node:get_hash_list(whereis(http_entrypoint_node)))).
 rewrite(BHL) -> rewrite(BHL, BHL).
 rewrite([], _BHL) -> [];
 rewrite([H|Rest], BHL) ->
 	try ar_storage:read_block(H, BHL) of
 		B when ?IS_BLOCK(B) ->
 			ar_storage:write_block(B),
-			ar:report([{compacted_block, ar_util:encode(H)}]);
+			ar:report([{rewrote_block, ar_util:encode(H)}]);
 		unavailable ->
 			do_nothing
 	catch _:_ ->
-		ar:report([{error_compacting_block, ar_util:encode(H)}])
+		ar:report([{error_rewriting_block, ar_util:encode(H)}])
 	end,
 	rewrite(Rest, BHL).
 
