@@ -803,18 +803,31 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
 	Tags = B#block.tags,
 	Time = B#block.timestamp,
 	TXs = B#block.txs,
+	
+	RealTXs = 
+		lists:map(
+			fun
+				(TXrc) when is_record(TXrc, tx) -> TXrc;
+				(TXid) -> ar_tx_db:get(TXid)
+			end,
+			TXs),
+
+	ar:d(post_block_info),
+	ar:d({nonce, Nonce}),
+	ar:d({block_nonce, B#block.nonce}),
+	ar:d({block_txs, TXs}),
+	ar:d({real_txs, RealTXs}),
+	ar:d({block_height, B#block.height}),
+	ar:d({last_block_height, LastB#block.height}),
+
 	DataSegment = ar_block:generate_block_data_segment(
 		LastB,
 		RecallB,
-		TXs,
+		RealTXs,
 		RewardAddr,
 		Time,
 		Tags
 	),
-
-	ar:d(post_block_nonces),
-	ar:d({nonce, Nonce}),
-	ar:d({block_nonce, B#block.nonce}),
 
     % case ar_mine:validate(DataSegment, Nonce, Difficulty) of % fail
     case ar_mine:validate(DataSegment, B#block.nonce, Difficulty) of

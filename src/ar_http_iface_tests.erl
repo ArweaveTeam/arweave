@@ -330,12 +330,12 @@ add_external_block_test_() ->
 		),
 		[BH2 | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		ar_http_iface_client:send_new_block(
+		ar:d(ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
 			BGen
-		),
+		)),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
 			fun() ->
