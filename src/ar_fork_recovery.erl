@@ -18,8 +18,8 @@
 	peers, % Lists of the nodes peers to try retrieve blocks
 	target_block, % The target block being recovered too
 	recovery_hash_list, % Complete hash list for this fork
-	block_list, % List of block hashes shared between current and target block
-	hash_list % List of block hashes needing to be applied
+	block_list, % List of hashes of verified blocks
+	hash_list % List of block hashes needing to be verified and applied (lowest to highest)
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
@@ -147,34 +147,48 @@ do_fork_recover(S = #state {
 		NewBHL = [Block#block.indep_hash | Block#block.hash_list],
 		% If the new retarget blocks hashlist contains the hash of the last
 		% retarget should be recovering to the same fork.
-		HashListExtra =
+		NewToVerify =
 			case lists:member(TargetB#block.indep_hash, NewBHL) of
 				true ->
 					ar:report([encountered_block_on_same_fork_as_recovery_process]),
-					setminus(
+					drop_until_diverge(
 						lists:reverse(NewBHL),
-						lists:reverse(BlockList) ++ [NextH | HashList]
+						lists:reverse(BlockList)
 					);
-				false -> []
+				false ->
+					ar:report([encountered_block_on_different_fork_to_recovery_process]),
+					[]
 			end,
-		case HashListExtra of
-			[] ->
-				ar:report(failed_to_update_target_block),
-				server(S);
-			H ->
+		case NewToVerify =/= [] of
+			true ->
 				ar:report(
 					[
-						{current_target, TargetB#block.height},
-						{updating_target_block, Block#block.height}
+						updating_fork_recovery_target,
+						{current_target_height, TargetB#block.height},
+						{current_target_hash, ar_util:encode(TargetB#block.indep_hash)},
+						{new_target_height, Block#block.height},
+						{new_target_hash, ar_util:encode(Block#block.indep_hash)},
+						{still_to_verify, length(NewToVerify)}
 					]
 				),
+				NewPeers =
+					ar_util:unique(
+						Peers ++
+						if is_list(Peer) -> Peer;
+						true -> [Peer]
+						end
+					),
 				server(
 					S#state {
-						hash_list = [NextH | HashList] ++ H,
-						peers = ar_util:unique(Peer ++ Peers),
-						target_block = Block
+						hash_list = NewToVerify,
+						peers = NewPeers,
+						target_block = Block,
+						recovery_hash_list = NewBHL
 					}
-				)
+				);
+			false ->
+				ar:report(not_updating_target_block),
+				server(S)
 		end;
 	apply_next_block ->
 		NextB = ar_node_utils:get_full_block(Peers, NextH, BHL),
@@ -528,8 +542,9 @@ setminus_test() ->
 	ar_node:mine(Node2),
 	timer:sleep(300),
 	LengthShort = length(
-		setminus(lists:reverse(ar_node:get_blocks(Node1)),
-		lists:reverse(ar_node:get_blocks(Node2)))
+		setminus(
+			lists:reverse(ar_node:get_blocks(Node1)),
+			lists:reverse(ar_node:get_blocks(Node2)))
 		),
 	LengthLong = 2,
 	LengthShort = 0.
