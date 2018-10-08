@@ -23,68 +23,51 @@
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
+start(_, TargetBShadow, _, _) when not ?IS_BLOCK(TargetBShadow) ->
+	ar:report(
+		[
+			could_not_start_fork_recovery,
+			{reason, could_not_retrieve_target_block}
+		]
+	),
+	undefined;
+start(_, TargetBShadow, _, _)
+		when TargetBShadow#block.height /= length(TargetBShadow#block.hash_list) ->
+	% Ensures that the block is within the recovery range and is has
+	% been validly rebuilt from a block shadow.
+	ar:report(
+		[
+			could_not_start_fork_recovery,
+			{reason, target_block_hash_list_incorrect}
+		]
+	),
+	undefined;
 start(Peers, TargetBShadow, HashList, Parent) ->
 	% TODO: At this stage the target block is not a shadow, it is either
 	% a valid block or a block with a malformed hashlist (Outside FR range).
-	case ?IS_BLOCK(TargetBShadow) of
-		true ->
-			ar:report(
-				[
-					{started_fork_recovery_proc, Parent},
-					{block, ar_util:encode(TargetBShadow#block.indep_hash)},
-					{target_height, TargetBShadow#block.height},
-					{peer, Peers}
-				]
-			),
-			% Ensures that the block is within the recovery range and is has
-			% been validly rebuilt from a block shadow.
-			case
-				TargetBShadow#block.height == length(TargetBShadow#block.hash_list)
-			of
-				true ->
-					PID =
-						spawn(
-							fun() ->
-								TargetB = TargetBShadow,
-								DivergedHashes = drop_until_diverge(
-									lists:reverse(TargetB#block.hash_list),
-									lists:reverse(HashList)
-								) ++ [TargetB#block.indep_hash],
-								server(
-									#state {
-										parent = Parent,
-										peers = Peers,
-										block_list =
-											(TargetB#block.hash_list -- DivergedHashes),
-										hash_list = DivergedHashes,
-										target_block = TargetB,
-										recovery_hash_list =
-											[TargetB#block.indep_hash|TargetB#block.hash_list]
-									}
-								)
-							end
-						),
-					PID ! apply_next_block,
-					PID;
-				% target block has invalid hash list
-				false ->
-					ar:report(
-						[
-							could_not_start_fork_recovery,
-							{reason, target_block_hash_list_incorrect}
-						]
-				),
-				undefined
-			end;
-		false ->
-			ar:report(
-				[
-					could_not_start_fork_recovery,
-					{reason, could_not_retrieve_target_block}
-				]
-			),
-			undefined
-	end.
+	PID =
+		spawn(
+			fun() ->
+				TBHL = TargetBShadow#block.hash_list,
+				TBIH = TargetBShadow#block.indep_hash,
+				DivergedHashes = drop_until_diverge(
+					lists:reverse(TBHL),
+					lists:reverse(HashList)
+					) ++ [TBIH],
+				server(
+					#state {
+						parent = Parent,
+						peers = Peers,
+						block_list = (TBHL -- DivergedHashes),
+						hash_list = DivergedHashes,
+						target_block = TargetBShadow,
+						recovery_hash_list = [TBIH | TBHL]
+					}
+				)
+			end
+		),
+	PID ! apply_next_block,
+	PID.
 
 %% @doc Take two lists, drop elements until they do not match.
 %% Return the remainder of the _first_ list.
@@ -100,11 +83,6 @@ setminus(_, _) -> [].
 %% @doc Start the fork recovery server loop. Attempt to catch up to the
 %% target block by applying each block between the current block and the
 %% target block in turn.
-server(#state {
-		peers = _Peers,
-		parent = _Parent,
-		target_block = _TargetB
-	}, rejoin) -> ok.
 server(#state {
 		block_list = BlockList,
 		hash_list = [],
@@ -196,7 +174,8 @@ server(S = #state {
 						BHashList = unavailable,
 						B = unavailable,
 						RecallB = unavailable,
-						TXs = [];
+						TXs = [],
+						ok;
 					% Target block is too far ahead and cannot be recovered.
 					{_, true} ->
 						ar:report(
@@ -208,7 +187,8 @@ server(S = #state {
 						BHashList = unavailable,
 						B = unavailable,
 						RecallB = unavailable,
-						TXs = [];
+						TXs = [],
+						ok;
 					% Target block is within range and is attempted to be
 					% recovered to.
 					{_X, _Y} ->
