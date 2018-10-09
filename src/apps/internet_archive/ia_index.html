@@ -1,14 +1,14 @@
 <html>
     <head>
         <title>
-            Internet Archive Decentralised Torrent Index
+            Censorship Resistant Internet Archive Gateway
         </title>
         <!-- Download WebTorrent.js from the Arweave -->
         <script src="/tx/SDZnef9VSR4B0iz8xmo3qkt672WtdlhP4KUjcgjCQTU/data.js"></script>
         <script>
             // If debugging, use a known Arweave node.
             // For production, use an empty string.
-            var node = "";
+            var node = "http://" + window.location.hostname;
             var client = new WebTorrent();
             var byte_count = 0;
 
@@ -113,8 +113,8 @@
             req.send('{"op": "equals", "expr1": "app_name", "expr2": "InternetArchive"}');
         </script>
         <style>
-            tr {
-                margin-bottom: 2em;
+            body {
+                font-family: sans-serif;
             }
 
             .tags {
@@ -123,27 +123,18 @@
         </style>
     </head>
     <body>
-        <h1>Internet Archive Decentralised Torrent Index</h1>
-        <h2>Universal access to information</h2>
-        <p>This is an index of torrent files relating to data stored on the 
-            Internet Archive. It is possible to access the page you are viewing
-            in an entirely decentralised manner using the Arweave web extension.
+        <h1>Censorship Resistant Internet Archive Gateway (CRIAG)</h1>
+        <h2>Verifiable, Dependable Universal Access to Information</h2>
+        <p>This is a permanent and decentralised index of torrent files relating to data stored on the 
+            Internet Archive.
         </p>
         <p>
-            The archived torrents and their metadata should show below shortly:
+            You will always have a decentralised way to access these files and to validate that
+            data from The Internet Archive has not been modified.
         </p>
         <div>
             <table>
                 <thead>
-                    <tr class="heading">
-                        <td colspan="2">
-                            Arweave Decentralised Internet Archive Portal
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>Name</td>
-                        <td>Torrent</td>
-                    </tr>
                     <tr>
                         <td colspan="2">
                             <input
