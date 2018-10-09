@@ -721,6 +721,17 @@ type_to_mf({tx, lookup_filename}) ->
 type_to_mf({block, lookup_filename}) ->
 	{ar_storage, lookup_block_filename}.
 
+%% @doc Converts a list to tx ids to tx records retrieved from local db.
+%% If any of the txs can't be retrieved, return the atom not_found
+txids_maybe_to_txs(TXIDs) -> txids_maybe_to_txs(ok, TXIDs).
+txids_maybe_to_txs(ok, []) -> [];
+txids_maybe_to_txs(ok, [ID|T]) ->
+	case ar_tx_db:get(ID) of
+		not_found -> txids_maybe_to_txs(error, not_found);
+		TX        -> [TX | txids_maybe_to_txs(ok, T)]
+	end;
+txids_maybe_to_txs(error, Reason) -> Reason.
+
 %% @doc Convenience function for lists:keyfind(Key, 1, List).
 %% returns Value not {Key, Value}.
 val_for_key(K, L) ->
@@ -763,29 +774,38 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer}) ->
 	% Verify the timestamp of the block shadow.
 	case ar_block:verify_timestamp(BShadow) of
 		false ->
-			{404, [], <<"Invalid block.">>};
+			{400, [], <<"Invalid block.">>};
 		true ->
 			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer})
 	end;
 post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer}) ->
     % Verify the difficulty of the block shadow.
 	case new_block_difficulty_ok(BShadow) of
-		false -> {404, [], <<"Invalid Block Difficulty">>};
+		false -> {400, [], <<"Invalid Block Difficulty.">>};
 		true  ->
-			post_block(check_pow, {ReqStruct, BShadow, OrigPeer})
-			%JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
-			%RecallHash = ar_util:decode(JSONRecallB),
-			%KeyEnc = val_for_key(<<"key">>, ReqStruct),
-			%NonceEnc = val_for_key(<<"nonce">>, ReqStruct),
-			%Key = ar_util:decode(KeyEnc),
-			%Nonce = ar_util:decode(NonceEnc),
-			%RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
-			%B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
-			%LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-			%RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
-			%post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})
+			post_block(check_txs, {ReqStruct, BShadow, OrigPeer})
 	end;
-post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_height, {ReqStruct, BShadow, OrigPeer}) ->
+	NewBHeight = BShadow#block.height,
+	LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	MyHeight = LastB#block.height,
+	HDiff = NewBHeight - MyHeight,
+	case {HDiff, HDiff > 1} of
+		{1,_}     -> % just right
+			post_block(check_txs, {ReqStruct, BShadow, OrigPeer});
+		{_, false} -> % too low
+			{400, [], <<"Invalid block height.">>};
+		{_,true}  -> % too high
+			fork_recover % iau: todo
+	end;
+post_block(check_txs, {ReqStruct, BShadow, OrigPeer}) ->
+	TXids = BShadow#block.txs,
+	case txids_maybe_to_txs(TXids) of
+		not_found -> {400, [], <<"Cannot verify transactions.">>};
+		TXs  ->
+			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs})
+	end;
+post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs}) ->
     % Verify the pow of the block shadow.
 	JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
 	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
@@ -802,34 +822,16 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
 	RewardAddr = B#block.reward_addr,
 	Tags = B#block.tags,
 	Time = B#block.timestamp,
-	TXs = B#block.txs,
-	
-	RealTXs = 
-		lists:map(
-			fun
-				(TXrc) when is_record(TXrc, tx) -> TXrc;
-				(TXid) -> ar_tx_db:get(TXid)
-			end,
-			TXs),
-
-	ar:d(post_block_info),
-	ar:d({nonce, Nonce}),
-	ar:d({block_nonce, B#block.nonce}),
-	ar:d({block_txs, TXs}),
-	ar:d({real_txs, RealTXs}),
-	ar:d({block_height, B#block.height}),
-	ar:d({last_block_height, LastB#block.height}),
 
 	DataSegment = ar_block:generate_block_data_segment(
 		LastB,
 		RecallB,
-		RealTXs,
+		TXs,
 		RewardAddr,
 		Time,
 		Tags
 	),
 
-    % case ar_mine:validate(DataSegment, Nonce, Difficulty) of % fail
     case ar_mine:validate(DataSegment, B#block.nonce, Difficulty) of
         false -> {400, [], <<"Invalid Block Work">>};
         _  -> post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})

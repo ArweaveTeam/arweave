@@ -350,7 +350,7 @@ add_external_block_test_() ->
 
 %% @doc Ensure that blocks with tx can be added to a network from outside
 %% a single node.
-add_external_block_with_tx_test_() ->
+add_external_block_with_good_tx_test_() ->
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
 		[BGen] = ar_weave:init([]),
@@ -377,6 +377,7 @@ add_external_block_with_tx_test_() ->
 		),
 		[BTest|_] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
+		ar_node:add_tx(Node1, TX),
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
@@ -394,6 +395,44 @@ add_external_block_with_tx_test_() ->
 		[BH | _] = ar_node:get_blocks(Node1),
 		B = ar_storage:read_block(BH, ar_node:get_hash_list(Node1)),
 		?assert(lists:member(TX#tx.id, B#block.txs))
+	end}.
+
+%% @doc If a node doesn't have a submitted tx, it should reject the block.
+add_external_block_with_bad_tx_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
+		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
+		timer:sleep(500),
+		Bridge = ar_bridge:start([], Node1),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		% Start node 2, add transaction, and wait until mined.
+		Node2 = ar_node:start([], [BGen]),
+		TX = ar_tx:new(<<"TEST DATA">>),
+		ar_node:add_tx(Node2, TX),
+		timer:sleep(500),
+		ar_node:mine(Node2),
+		ar_util:do_until(
+			fun() ->
+				[BH | _] = ar_node:get_blocks(Node2),
+				B = ar_storage:read_block(BH, ar_node:get_hash_list(Node2)),
+				lists:member(TX#tx.id, B#block.txs)
+			end,
+			500,
+			10 * 1000
+		),
+		[BTest|_] = ar_node:get_blocks(Node2),
+		ar_http_iface_server:reregister(Node1),
+		{ok,{{<<"400">>,<<"Bad Request">>},
+		_, <<"Cannot verify transactions.">>,
+		_,_}} = ar_http_iface_client:send_new_block(
+			{127, 0, 0, 1, 1984},
+			?DEFAULT_HTTP_IFACE_PORT,
+			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
+			BGen
+		)
 	end}.
 
 %% @doc Ensure that blocks can be added to a network from outside

@@ -105,7 +105,7 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 		{
 			[{<<"hash_list">>, HashList }|TempJSONStruct]
 		},
-	ar:d(ar_httpc:request(
+	ar_httpc:request(
 		<<"POST">>,
 		Peer,
 		"/block",
@@ -121,7 +121,7 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 				]
 			}
 		)
-	)).
+	).
 
 %% @doc Request to be added as a peer to a remote host.
 add_peer(Peer) ->
