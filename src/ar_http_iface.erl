@@ -97,6 +97,7 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 handle(Req, _Args) ->
 	% Inform ar_bridge about new peer, performance rec will be updated  from ar_metrics
 	% (this is leftover from update_performance_list)
+	Peer = ar_util:parse_peer(elli_request:peer(Req)),
 	case ar_meta_db:get(http_logging) of
 		true ->
 			ar:report(
@@ -104,17 +105,16 @@ handle(Req, _Args) ->
 					http_request,
 					{method, Req#req.method},
 					{path, elli_request:path(Req)},
-					{peer, ar_util:parse_peer(elli_request:peer(Req))}
+					{peer, Peer}
 				]
 			);
 		_ ->
 			do_nothing
 	end,
-	case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
+	case ar_meta_db:get({peer, Peer}) of
 		not_found ->
-			ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
-		X ->
-			X
+			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
+		X -> do_nothing
 	end,
 	case handle(Req#req.method, elli_request:path(Req), Req) of
 		{Status, Hdrs, Body} ->
