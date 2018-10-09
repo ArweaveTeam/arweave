@@ -3,13 +3,38 @@
         <title>
             Internet Archive Decentralised Torrent Index
         </title>
-        <script src="https://cdn.jsdelivr.net/webtorrent/latest/webtorrent.min.js"></script>
+        <!-- Download WebTorrent.js from the Arweave -->
+        <script src="/tx/SDZnef9VSR4B0iz8xmo3qkt672WtdlhP4KUjcgjCQTU/data.html"></script>
         <script>
             // If debugging, use a known Arweave node.
             // For production, use an empty string.
-            var node = "http://34.216.88.202:1984";
+            var node = "";
             var client = new WebTorrent();
             var byte_count = 0;
+
+            function getTorrentInfo(id, cell) {
+                var torrent_url = node + "/tx/" + id +"/data.torrent";
+                var link = document.createElement("a");
+                link.innerHTML = "Download files";
+                link.href = torrent_url;
+                cell.appendChild(link);
+                var br = document.createElement("br");
+                cell.appendChild(br);
+
+                client.add(torrent_url, function (t) {
+                    var bytes = 0;
+                    for(j = 0; j < t.files.length; j++) {
+                        var file = t.files[j];
+                        var div = document.createElement("div");
+                        div.innerText = file.name;
+                        cell.appendChild(div);
+                        bytes += file.length;
+                    }
+                    var size_div = document.createElement("div");
+                    size_div.innerHTML = "<b>Total size: </b> " + bytes.toString() + " bytes";
+                    cell.appendChild(size_div);
+                });
+            }
 
             function addItem(id) {
                 var cont = document.createElement("tr");
@@ -29,42 +54,23 @@
                         cont.appendChild(td);
 
                         tags.map(function(tag) {
-
                             if(atob(tag.name) == "title") {
                                 item_name.innerHTML = "<b>" + atob(tag.value) + "</b>";
                                 cont.title = atob(tag.value);
                             }
-                            else {
-                                var tag_div = document.createElement("div");
-                                tag_div.innerHTML = atob(tag.name) + ": " + atob(tag.value);
-                                item_tags.appendChild(tag_div);
-                            }
                         });
-                        var download_cell = document.createElement("td");
-                        var torrent_link = document.createElement("a");
-                        torrent_link.href = node + "/tx/" + id + "/data.torrent";
-                        torrent_link.innerHTML = "<b>📁 Download<b>";
-                        download_cell.appendChild(torrent_link);
-                        cont.appendChild(download_cell);
+                        var get_info_cell = document.createElement("td");
+                        var torrent_button = document.createElement("button");
+                        torrent_button.innerHTML = "Get Info";
+                        torrent_button.onclick =
+                            function() {
+                                torrent_button.style.display = 'none';
+                                getTorrentInfo(id, item_tags);
+                            };
+                        get_info_cell.appendChild(torrent_button);
+                        cont.appendChild(get_info_cell);
                         var index = document.getElementById("index");
                         index.appendChild(cont);
-
-                        // Add the torrent
-                        client.add(node + "/tx/" + id +"/data.torrent", function (t) {
-                            var bytes = 0;
-                            for(j = 0; j < t.files.length; j++) {
-                                var file = t.files[j];
-                                bytes += t.files[j].length;
-                                file.getBlobURL(function (err, url) {
-                                    if (err) return log(err.message)
-                                    var file_link = document.createElement("a");
-                                    file_link.href = url;
-                                    file_link.innerHTML = file.name;
-                                    download_cell.appendChild(file_link);
-                                });
-                            }
-                            increment_counter(bytes);
-                        });
                     }
                 }
 
@@ -89,12 +95,6 @@
                         row.style.display = 'none';
                     }
                 }
-            }
-
-            function increment_counter(n) {
-                byte_count += n;
-                var counter = document.getElementById("counter");
-                counter.innerText = byte_count.toString();
             }
 
             var req = new XMLHttpRequest();
@@ -136,14 +136,8 @@
             <table>
                 <thead>
                     <tr class="heading">
-                        <td colspan="1">
+                        <td colspan="2">
                             Arweave Decentralised Internet Archive Portal
-                        </td>
-                        <td colspan="1">
-                            Bytes tracked:
-                            <span id="counter">
-                                0
-                            </span>
                         </td>
                     </tr>
                     <tr>
