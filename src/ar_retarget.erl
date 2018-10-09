@@ -30,10 +30,9 @@
 	).
 
 %% @doc Checks if the given height is a retarget height.
-%% Reteurns true if so, otherwise returns false.
+%% Returns true if so, otherwise returns false.
 is_retarget_height(Height) ->
-	((Height rem ?RETARGET_BLOCKS) == 0) and
-	(Height =/= 0).
+	?IS_RETARGET_HEIGHT(Height).
 
 %% @doc Maybe set a new difficulty and last retarget, if the block is at
 %% an appropriate retarget height, else returns the current diff.
@@ -47,21 +46,21 @@ maybe_retarget(_Height, CurDiff, _TS, _Last) ->
 %% "Optionally re-calculate the difficulty of the next block, if
 %% a retarget block height has been reached."
 %% Returns a block.
-maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
-	B#block {
-		diff =
-			calculate_difficulty(
-				B#block.diff,
-				B#block.timestamp,
-				Last
-			),
-		last_retarget = B#block.timestamp
-	};
-maybe_retarget(B, OldB) ->
-	B#block {
-		last_retarget = OldB#block.last_retarget,
-		diff = OldB#block.diff
-	}.
+% maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
+%	B#block {
+%		diff =
+%			calculate_difficulty(
+%				B#block.diff,
+%				B#block.timestamp,
+%				Last
+%			),
+%		last_retarget = B#block.timestamp
+%	};
+% maybe_retarget(B, OldB) ->
+%	B#block {
+%		last_retarget = OldB#block.last_retarget,
+%		diff = OldB#block.diff
+%	}.
 
 %% @doc Calculate a new difficulty, given an old difficulty and the period
 %% since the last retarget occcurred.
