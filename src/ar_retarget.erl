@@ -72,15 +72,14 @@ calculate_difficulty(OldDiff, TS, Last) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeError = abs(ActualTime - TargetTime),
-	Diff = erlang:max(
+	erlang:max(
 		if
 			TimeError < (TargetTime * ?RETARGET_TOLERANCE) -> OldDiff;
 			TargetTime > ActualTime                        -> OldDiff + 1;
 			true                                           -> OldDiff - 1
 		end,
 		?MIN_DIFF
-	),
-	Diff.
+	).
 -endif.
 
 %% @doc Validate that a new block has an appropriate difficulty.
