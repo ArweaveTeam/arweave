@@ -42,6 +42,13 @@
 	]
 ).
 
+%% Supported feature flags (default behaviour)
+% http_logging (false)
+% disk_logging (false)
+% subfield_queries (false)
+% partial_fork_recovery (false)
+% blacklist (true)
+
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
 
