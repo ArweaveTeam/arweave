@@ -29,23 +29,24 @@
 		)
 	).
 
-%% @doc Checls if the given height is a retarget height.
+%% @doc Checks if the given height is a retarget height.
 %% Reteurns true if so, otherwise returns false.
 is_retarget_height(Height) ->
 	((Height rem ?RETARGET_BLOCKS) == 0) and
 	(Height =/= 0).
 
 %% @doc Maybe set a new difficulty and last retarget, if the block is at
-%% an appropriate retarget height, else returns the current diff
+%% an appropriate retarget height, else returns the current diff.
 maybe_retarget(Height, CurDiff, TS, Last) when ?IS_RETARGET_HEIGHT(Height) ->
-	calculate_difficulty(
-		CurDiff,
-		TS,
-		Last
-	);
+	calculate_difficulty(CurDiff, TS, Last);
 maybe_retarget(_Height, CurDiff, _TS, _Last) ->
 	CurDiff.
 
+%% @doc iau todo: this function is never used.
+%% Sam's original doc comment (1cc4d4c, 2017/10/04):
+%% "Optionally re-calculate the difficulty of the next block, if
+%% a retarget block height has been reached."
+%% Returns a block.
 maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
 	B#block {
 		diff =
@@ -120,7 +121,3 @@ simple_retarget_test_() ->
 			5 * 60 * 1000
 		)
 	end}.
-
-%%%
-%%% EOF
-%%%
