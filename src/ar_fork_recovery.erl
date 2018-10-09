@@ -140,7 +140,8 @@ do_fork_recover(S = #state {
 		peers = Peers,
 		hash_list = [NextH | HashList],
 		target_block = TargetB,
-		recovery_hash_list = BHL
+		recovery_hash_list = BHL,
+		parent = Parent
 	}) ->
 	receive
 	{update_target_block, Block, Peer} ->
@@ -316,6 +317,17 @@ do_fork_recover(S = #state {
 								{block_height, NextB#block.height}
 							]
 						),
+						case ar_meta_db:get(partial_fork_recovery) of
+							true ->
+								ar:report(
+									[
+										reported_partial_fork_recovery,
+										{height, NextB#block.height}
+									]
+								),	
+								Parent ! {fork_recovered, [NextH | BlockList]};
+							_ -> do_nothing
+						end,
 						self() ! apply_next_block,
 						ar_storage:write_tx(NextB#block.txs),
 						ar_storage:write_block(NextB#block {txs = [T#tx.id || T <- NextB#block.txs]}),

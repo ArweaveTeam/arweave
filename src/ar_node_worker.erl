@@ -623,7 +623,6 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 	)};
 recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 		when (length(NewHs)) > (length(HashList)) ->
-	% TODO mue: Comparing lengths of lists might get quite expensive.
 	case whereis(fork_recovery_server) of
 		undefined -> ok;
 		_		  -> erlang:unregister(fork_recovery_server)
