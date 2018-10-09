@@ -305,23 +305,6 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
 			FinderReward,
 			length(CurrentB#block.hash_list) - 1
 		),
-	% ar:d({indep, CurrentB#block.indep_hash}),
-	% ar:d({retarget, integer_to_binary(Retarget)}),
-	% ar:d({height, integer_to_binary(CurrentB#block.height + 1)}),
-	% ar:d({wallets,
-	%	  binary:list_to_bin(
-	%		  lists:map(fun ar_wallet:to_binary/1, NewWalletList)
-	%	  )
-	% }),
-	% ar:d({reward,
-	%	  case is_atom(RewardAddr) of
-	%		  true -> <<>>;
-	%		  false -> RewardAddr
-	%	  end
-	% }),
-	% ar:d({tags, list_to_binary(Tags)}),
-	% ar:d({recall, byte_size(block_to_binary(RecallB))}),
-	% ar:d({txs, binary:list_to_bin(lists:map(fun ar_tx:tx_to_binary/1, TXs))}),
 	crypto:hash(
 		?MINING_HASH_ALG,
 		<<
@@ -384,7 +367,7 @@ verify_timestamp_diff(NewB, OldB) when
 %% @doc Verify difference between new and old timestamp.
 %% NewT must be > OldT, & difference must be less than tolerance
 %% if diff. between OldT & NewT < Tolerance, times are effectively the same
-%% "too far in the future" must be twice the tolerance
+%% "too far in the future" must be twice the tolerance.
 verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT),
 		NewT < (OldT - ?BLOCK_TIME_DIFF_TOLERANCE) ->
 	false; % NewT is too far in the past
@@ -396,13 +379,13 @@ verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT) ->
 verify_timestamp_diff(_, _) ->
 	false.
 
-%% @doc Verify the height of the new block is the one higher than the
+%% @doc Verify the height of the new block is one higher than the
 %% current height.
 verify_height(NewB, OldB) ->
 	NewB#block.height == (OldB#block.height + 1).
 
 %% @doc Verify that the last retarget timestamp is older or as old as the
-%%	blocks timestamp.
+%% block's timestamp.
 verify_last_retarget(NewB) ->
 	(NewB#block.timestamp - NewB#block.last_retarget) >= 0.
 

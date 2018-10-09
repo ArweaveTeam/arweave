@@ -799,20 +799,8 @@ handle(SPid, {get_current_diff, From}) ->
 		diff          := Diff,
 		last_retarget := LastRetarget
 	}} = ar_node_state:lookup(SPid, [height, diff, last_retarget]),
-	From ! {
-		current_diff,
-		case ar_retarget:is_retarget_height(Height + 1) of
-			true ->
-				ar_retarget:maybe_retarget(
-					Height + 1,
-					Diff,
-					os:system_time(seconds),
-					LastRetarget
-				);
-			false ->
-				Diff
-		end},
-		ok;
+	From ! {current_diff, ar_mine:next_diff(Height, Diff, LastRetarget)},
+	ok;
 handle(SPid, {get_diff, From}) ->
 	{ok, Diff} = ar_node_state:lookup(SPid, diff),
 	From ! {diff, Diff},

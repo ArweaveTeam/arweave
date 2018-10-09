@@ -1,6 +1,7 @@
 -module(ar_retarget).
 -export([is_retarget_height/1]).
--export([maybe_retarget/2, maybe_retarget/4]).
+-export([maybe_retarget/4]).
+% -export([maybe_retarget/2]).
 -export([calculate_difficulty/3]).
 -export([validate/2]).
 -include_lib("eunit/include/eunit.hrl").

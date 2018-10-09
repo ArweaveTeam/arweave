@@ -1,6 +1,6 @@
 -module(ar_mine).
 -export([start/6, start/7, change_data/2, stop/1, miner/2, schedule_hash/1]).
--export([validate/3, validate_by_hash/2, next_diff/1]).
+-export([validate/3, validate_by_hash/2, next_diff/1, next_diff/3]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -245,16 +245,17 @@ schedule_hash(S = #state { delay = Delay }) ->
 %% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
 %% This is done in attempt to maintain on average a fixed block time.
 next_diff(CurrentB) ->
-	Timestamp = os:system_time(seconds),
-	IsRetargetHeight = ar_retarget:is_retarget_height(CurrentB#block.height + 1),
-	case IsRetargetHeight of
+	next_diff(CurrentB#block.height, CurrentB#block.diff, CurrentB#block.last_retarget).
+
+next_diff(Height, Diff, LastRetarget) ->
+	case ar_retarget:is_retarget_height(Height + 1) of
 		true -> ar_retarget:maybe_retarget(
-				CurrentB#block.height + 1,
-				CurrentB#block.diff,
-				Timestamp,
-				CurrentB#block.last_retarget
+				Height + 1,
+				Diff,
+				os:system_time(seconds),
+				LastRetarget
 			);
-		false -> CurrentB#block.diff
+		false -> Diff
 	end.
 
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
