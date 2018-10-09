@@ -4,20 +4,25 @@
             Censorship Resistant Internet Archive Gateway
         </title>
         <!-- Download WebTorrent.js from the Arweave -->
+        <!-- <script src="http://35.178.129.36:1984/tx/SDZnef9VSR4B0iz8xmo3qkt672WtdlhP4KUjcgjCQTU/data.js"></script> -->
         <script src="/tx/SDZnef9VSR4B0iz8xmo3qkt672WtdlhP4KUjcgjCQTU/data.js"></script>
         <script>
             // If debugging, use a known Arweave node.
-            // For production, use an empty string.
             var node = "http://" + window.location.hostname + ":1984";
+            //var node = "http://35.178.129.36:1984";
             var client = new WebTorrent();
             var byte_count = 0;
 
             function getTorrentInfo(id, cell) {
                 var torrent_url = node + "/tx/" + id +"/data.torrent";
                 var link = document.createElement("a");
+                var downloads = document.createElement("div");
+                var info = document.createElement("div");
                 link.innerHTML = "Download files";
                 link.href = torrent_url;
                 cell.appendChild(link);
+                cell.appendChild(info);
+                cell.appendChild(downloads);
                 var br = document.createElement("br");
                 cell.appendChild(br);
 
@@ -27,12 +32,27 @@
                         var file = t.files[j];
                         var div = document.createElement("div");
                         div.innerText = file.name;
-                        cell.appendChild(div);
+                        info.appendChild(div);
                         bytes += file.length;
                     }
                     var size_div = document.createElement("div");
                     size_div.innerHTML = "<b>Total size: </b> " + bytes.toString() + " bytes";
-                    cell.appendChild(size_div);
+                    info.appendChild(size_div);
+
+                    t.on('done', function(e) {
+                        info.style.display = "none";
+                        for(j = 0; j < t.files.length; j++) {
+                            var file = t.files[j];
+                            file.getBlobURL(function(err, url){
+                                var file_link = document.createElement("a");
+                                file_link.innerText = file.name + " direct download";
+                                file_link.href = url;
+                                downloads.appendChild(file_link);
+                                var br = document.createElement("br");
+                                downloads.appendChild(br);
+                            });
+                        }
+                    });
                 });
             }
 
