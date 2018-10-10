@@ -100,7 +100,8 @@
             },
             methods: {
                 apiPath(endpoint){
-                    const base = `${this.node.protocol}://${this.node.host}:${this.node.port}`;
+                    //const base = `${this.node.protocol}://${this.node.host}:${this.node.port}`;
+                    const base = "http://" + window.location.hostname + ":1984";
                     return typeof endpoint == 'undefined' ? base : `${base}/${endpoint}`;
                 },
                 request(method, endpoint, data){
