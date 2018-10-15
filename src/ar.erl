@@ -7,7 +7,7 @@
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
 -export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
--export([report/1, report_console/1, d/1]).
+-export([report/1, report_console/1, report_miner/2, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
 
@@ -45,6 +45,7 @@
 %% Supported feature flags (default behaviour)
 % http_logging (false)
 % disk_logging (false)
+% miner_logging (true)
 % subfield_queries (false)
 % partial_fork_recovery (false)
 % blacklist (true)
@@ -491,6 +492,41 @@ report_console(X) ->
 d(X) ->
 	report_console(X),
 	X.
+
+%% @doc Logs mining related output onto the Erlang console, if the 
+%% miner_logging flag is enabled.
+report_miner(Event, IndepHash) ->
+	ar:report([{event, Event}, {indep_hash, IndepHash}]),
+	case ar_meta_db:get(miner_logging) of
+		false -> do_nothing;
+		_ ->
+			{Date, {Hour, Minute, Second}} =
+				calendar:now_to_datetime(os:timestamp()),
+			io:format(
+				"~s, ~2..0w:~2..0w:~2..0w: ~s ~s.~n",
+				[
+					day(Date),
+					Hour, Minute, Second,
+					case Event of
+						accepted_block -> "Accepted foreign block";
+						mined_block -> "You mined block"
+					end,
+					ar_util:encode(IndepHash)
+				]
+			)
+	end.
+
+%% @doc Return a printable day name from a date.
+day({Year, Month, Day}) ->
+	case calendar:day_of_the_week(Year, Month, Day) of
+		1 -> "Monday";
+		2 -> "Tuesday";
+		3 -> "Wednesday";
+		4 -> "Thursday";
+		5 -> "Friday";
+		6 -> "Saturday";
+		7 -> "Sunday"
+	end.
 
 %% @doc A multiplier applied to all simulated time elements in the system.
 -ifdef(DEBUG).
