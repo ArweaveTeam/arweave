@@ -531,7 +531,10 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			NewHL = [NextB#block.indep_hash | HashList],
 			ar_storage:write_block_hash_list(BinID, NewHL),
 			app_search:update_tag_table(NextB),
-			ar:report_miner(mined_block, NextB#block.indep_hash),
+			ar:report_miner(
+				"You mined block ~s!",
+				[ar_util:encode(NextB#block.indep_hash)]
+			),
 			ar:report_console(
 				[
 					{node, self()},

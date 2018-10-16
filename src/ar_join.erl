@@ -62,9 +62,11 @@ do_join(Node, RawPeers, NewB) ->
 					{height, NewB#block.height}
 				]
 			),
+			ar:report_miner("Joining the Arweave network..."),
 			get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 			join_peers(Peers),
+			ar:report_miner("Joined the Arweave network successfully."),
 			spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end)
 	end.
 
@@ -168,8 +170,8 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 						[
 							{writing_block, B#block.height},
 							{writing_recall_block, R#block.height},
-							{blocks_written, (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
-							{blocks_to_write, (BehindCurrent-1)}
+							{blocks_written, 2 * (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
+							{blocks_to_write, 2 * (BehindCurrent-1)}
 						]
 					),
 					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
@@ -189,7 +191,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 fill_to_capacity(Peers, ToWrite) -> fill_to_capacity(Peers, ToWrite, ToWrite).
 fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, ToWrite, BHL) ->
-	timer:sleep(30 * 1000),
+	timer:sleep(5 * 1000),
 	try
 		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
 		case ar_node_utils:get_full_block(Peers, RandHash, BHL) of
