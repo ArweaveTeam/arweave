@@ -723,14 +723,21 @@ type_to_mf({block, lookup_filename}) ->
 
 %% @doc Converts a list to tx ids to tx records retrieved from local db.
 %% If any of the txs can't be retrieved, return the atom not_found
-txids_maybe_to_txs(TXIDs) -> txids_maybe_to_txs(ok, TXIDs).
-txids_maybe_to_txs(ok, []) -> [];
-txids_maybe_to_txs(ok, [ID|T]) ->
-	case ar_tx_db:get(ID) of
-		not_found -> txids_maybe_to_txs(error, not_found);
-		TX        -> [TX | txids_maybe_to_txs(ok, T)]
-	end;
-txids_maybe_to_txs(error, Reason) -> Reason.
+txids_maybe_to_txs(TXIDs) ->
+	MyTXIDs = [MyTX#tx.id
+				|| MyTX <- ar_node:get_all_known_txs(whereis(http_entrypoint_node))],
+	M = txids_maybe_to_txs(TXIDs, MyTXIDs),
+	case lists:member(not_found, M) of
+		true  -> not_found;
+		false -> M
+	end.
+txids_maybe_to_txs([_|_], []) -> [not_found];
+txids_maybe_to_txs([], _)     -> [];
+txids_maybe_to_txs([H|T], MyTXIDs) ->
+	case lists:member(H, MyTXIDs) of
+		false -> [not_found];
+		true  -> [ar_storage:read_tx(H) | txids_maybe_to_txs(T, MyTXIDs)]
+	end.
 
 %% @doc Convenience function for lists:keyfind(Key, 1, List).
 %% returns Value not {Key, Value}.

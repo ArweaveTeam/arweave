@@ -377,7 +377,10 @@ add_external_block_with_good_tx_test_() ->
 		),
 		[BTest|_] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		ar_node:add_tx(Node1, TX),
+
+		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+		timer:sleep(1500),
+
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
