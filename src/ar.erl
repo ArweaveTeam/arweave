@@ -7,7 +7,7 @@
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
 -export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
--export([report/1, report_console/1, report_miner/2, d/1]).
+-export([report/1, report_console/1, report_miner/1, report_miner/2, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
 
@@ -75,7 +75,8 @@
 	start_hash_list = undefined,
 	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
 	enable = [],
-	disable = []
+	disable = [],
+	content_policies = []
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -110,6 +111,7 @@ main("") ->
 			{"max_miners (num)", "The maximum number of mining processes."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
+			{"content_policy (file)", "Load a content policy file for the node."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
@@ -126,8 +128,8 @@ main(["mine"|Rest], O) ->
 	main(Rest, O#opts { mine = true });
 main(["peer", Peer|Rest], O = #opts { peers = default }) ->
 	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)] });
-main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
-	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
+main(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
+	main(Rest, O#opts { content_policies = [F|Fs] });
 main(["port", Port|Rest], O) ->
 	main(Rest, O#opts { port = list_to_integer(Port) });
 main(["diff", Diff|Rest], O) ->
@@ -188,7 +190,8 @@ start(
 		start_hash_list = BHL,
 		auto_update = AutoUpdate,
 		enable = Enable,
-		disable = Disable
+		disable = Disable,
+		content_policies = Policies
 	}) ->
 	ar_storage:ensure_directories(),
 	% Optionally clear the block cache
@@ -208,6 +211,7 @@ start(
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
+	ar_meta_db:put(content_policies, Policies),
 	ar_storage:update_directory_size(),
 	Peers =
 		case RawPeers of
@@ -496,23 +500,20 @@ d(X) ->
 
 %% @doc Logs mining related output onto the Erlang console, if the 
 %% miner_logging flag is enabled.
-report_miner(Event, IndepHash) ->
-	ar:report([{event, Event}, {indep_hash, IndepHash}]),
+report_miner(FormatStr, Args) ->
+	report_miner(lists:flatten(io_lib:format(FormatStr, Args))).
+report_miner(Str) ->
 	case ar_meta_db:get(miner_logging) of
 		false -> do_nothing;
 		_ ->
 			{Date, {Hour, Minute, Second}} =
 				calendar:now_to_datetime(os:timestamp()),
 			io:format(
-				"~s, ~2..0w:~2..0w:~2..0w: ~s ~s.~n",
+				"~s, ~2..0w:~2..0w:~2..0w: ~s~n",
 				[
 					day(Date),
 					Hour, Minute, Second,
-					case Event of
-						accepted_block -> "Accepted foreign block";
-						mined_block -> "You mined block"
-					end,
-					ar_util:encode(IndepHash)
+					Str
 				]
 			)
 	end.

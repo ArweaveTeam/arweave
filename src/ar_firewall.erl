@@ -26,13 +26,12 @@ start() ->
 scan(PID, Type, Data) ->
 	PID ! {scan, self(), Type, Data},
 	receive
-		{scanned, Obj, Response} -> Response
+		{scanned, _Obj, Response} -> Response
 	end.
 
 %% @doc Main firewall server loop.
 %% Receives scan requests and returns whether the given contents matches
 %% the set of known 'harmful'/'ignored' signatures.
-server() -> server(#state {} ).
 server(S = #state { sigs = Sigs } ) ->
 	receive
 		{scan, PID, Type, Data} ->
@@ -54,14 +53,30 @@ scan_transaction(TX, Sigs) ->
 %% Tests: ar_firewall
 
 blacklist_transaction_test() ->
-Sigs = #sig{
-	name = "Test",
-	type = binary,
-	data = #binary_sig{
-		target_type = "0",
-		offset = any,
-		binary = <<"badstuff">>
-	}
-},
-{true, _} = scan_transaction(ar_tx:new(<<"badstuff">>), [Sigs]),
-false = scan_transaction(ar_tx:new(<<"goodstuff">>), [Sigs]).
+	Sigs = #sig{
+		name = "Test",
+		type = binary,
+		data = #binary_sig{
+			target_type = "0",
+			offset = any,
+			binary = <<"badstuff">>
+		}
+	},
+	{true, _} = scan_transaction(ar_tx:new(<<"badstuff">>), [Sigs]),
+	false = scan_transaction(ar_tx:new(<<"goodstuff">>), [Sigs]).
+
+load_blacklist_test() ->
+	ExpectedSig =
+		#sig {
+			name = "Test signature",
+			type = binary,
+			data =
+				#binary_sig {
+					target_type = "0",
+					offset = any,
+					binary = <<"BADCONTENT">>
+				}
+		},
+	ar_meta_db:put(content_policies, ["test/test_sig.ndb"]),
+	Sigs = av_sigs:all(),
+	?assertEqual([ExpectedSig], Sigs).
