@@ -591,6 +591,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 		when HashList == not_joined ->
+	timer:sleep(15 * 1000),
 	NewB = ar_storage:read_block(hd(NewHs), NewHs),
 	ar:report_console(
 		[
