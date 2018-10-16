@@ -25,37 +25,64 @@ start(Node, Peers, B) when is_atom(B) ->
 start(Node, RawPeers, NewB) ->
 	case whereis(join_server) of
 		undefined ->
-			PID = spawn(
-				fun() ->
-					Peers = filter_peer_list(RawPeers),
-					case ?IS_BLOCK(NewB) of
-						true ->
-							ar:report_console(
-								[
-									joining_network,
-									{node, Node},
-									{peers, Peers},
-									{height, NewB#block.height}
-								]
-							),
-							get_block_and_trail(Peers, NewB, NewB#block.hash_list),
-							Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
-							join_peers(Peers),
-							spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end);
-						false ->
-							ar:report_console(
-								[
-									node_not_joining,
-									{reason, cannot_get_full_block_from_peer},
-									{received_instead, NewB}
-								]
-							),
-							ok
-					end
-				end
-			),
+			PID = spawn(fun() -> do_join(Node, RawPeers, NewB) end),
 			erlang:register(join_server, PID);
 		_ -> already_running
+	end.
+
+%% @doc Perform the joining process.
+do_join(_Node, _RawPeers, NewB) when not ?IS_BLOCK(NewB) ->
+	ar:report_console(
+		[
+			node_not_joining,
+			{reason, cannot_get_full_block_from_peer},
+			{received_instead, NewB}
+		]
+	);
+do_join(Node, RawPeers, NewB) ->
+	case verify_time_sync(RawPeers) of
+		false ->
+			ar:report(
+				[
+					node_not_joining,
+					{reason, clock_time_in_sync_with_join_peers},
+					{
+						recommendation,
+						"Ensure that your machine's time is up-to-date."
+					}
+				]
+			);
+		true ->
+			Peers = filter_peer_list(RawPeers),
+			ar:report_console(
+				[
+					joining_network,
+					{node, Node},
+					{peers, Peers},
+					{height, NewB#block.height}
+				]
+			),
+			get_block_and_trail(Peers, NewB, NewB#block.hash_list),
+			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
+			join_peers(Peers),
+			spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end)
+	end.
+
+%% @doc Verify timestamps of peers.
+verify_time_sync(Peers) ->
+	% Ignore this check if time syncing is disable.
+	case ar_meta_db:get(time_syncing) of
+		false -> true;
+		_ ->
+			lists:all(
+				fun(Peer) ->
+					LocalT = os:system_time(second),
+					RemoteT = ar_http_iface:get_time(Peer),
+					(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
+					(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
+				end,
+				[ P || P <- Peers, not is_pid(P) ]
+			)
 	end.
 
 %% @doc Return the current block from a list of peers.

@@ -57,6 +57,9 @@
 -endif.
 
 -define(RETARGET_TOLERANCE, 0.1).
+-define(BLOCK_TIME_DIFF_TOLERANCE, 90).
+-define(NODE_TIME_SYNC_TOLERANCE, 15).
+
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
 
 %% @doc The total supply of tokens in the Genesis block,

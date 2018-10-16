@@ -49,6 +49,7 @@
 % subfield_queries (false)
 % partial_fork_recovery (false)
 % blacklist (true)
+% time_syncing (true)
 
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
