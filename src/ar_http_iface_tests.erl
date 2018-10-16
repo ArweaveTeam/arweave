@@ -86,10 +86,7 @@ node_blacklisting_get_spammer_test() ->
 -spec node_blacklisting_post_spammer_test() -> ok.
 node_blacklisting_post_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
-	%% send_new_tx sends two requests
-	NReqs = ?MAX_REQUESTS + 1,
-	NErrs = NReqs - (?MAX_REQUESTS div 2),
-	node_blacklisting_test_frame(RequestFun, ErrorResponse, NReqs, NErrs).
+	node_blacklisting_test_frame(RequestFun, ErrorResponse, ?MAX_REQUESTS + 1, 1).
 
 %% @doc Given a label, return a fun and a message.
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
@@ -117,7 +114,7 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 	Responses =	ar_util:pmap(RequestFun, lists:seq(1, NRequests)),
 	ar_blacklist:reset_counters(),
 	ActualErrors = length(lists:filter(fun(X) -> X == ErrorResponse end, Responses)),
-	?assertEqual(length(Responses), NRequests),
+	?assertEqual(NRequests, length(Responses)),
 	?assertEqual(ExpectedErrors, ActualErrors).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
