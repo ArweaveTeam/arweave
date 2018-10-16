@@ -6,7 +6,7 @@
 
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
--export([get_tx/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
+-export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
 -export([get_time/1]).
@@ -631,6 +631,17 @@ handle('POST', [<<"services">>], Req) ->
 	),
 	{200, [], "OK"};
 
+%% @doc If we are given a hash with no specifier (block, tx, etc), assume that
+%% the user is requesting the data from the TX associated with that hash.
+%% Optionally allow a file extension.
+handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
+	Ext =
+		case MaybeExt of
+			<< ".", Part/binary >> -> Part;
+			<<>> -> <<"html">>
+		end,
+	handle('GET', [<<"tx">>, Hash, <<"data.", Ext/binary>>], Req);
+
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
@@ -1029,6 +1040,17 @@ get_tx(Peer, Hash) ->
 			[]
 		)
 	).
+
+%% @doc Retreive only the data associated with a transaction.
+get_tx_data(Peer, Hash) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/" ++ binary_to_list(ar_util:encode(Hash)),
+			[]
+		),
+	Body.
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
 get_time(Peer) ->
@@ -2034,6 +2056,26 @@ get_tx_by_tag_test() ->
 				TXs
 			)
 	)).
+
+
+%% @doc Mine a transaction into a block and retrieve it's binary body via HTTP.
+get_tx_body_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	TX = ar_tx:new(<<"TEST DATA">>),
+	ar:d(byte_size(ar_util:encode(TX#tx.id))),
+	% Add tx to network
+	ar_node:add_tx(Node, TX),
+	% Begin mining
+	receive after 250 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	?assertEqual(<<"TEST DATA">>, get_tx_data({127,0,0,1,1984}, TX#tx.id)).
 
 get_txs_by_send_recv_test_() ->
 	{timeout, 60, fun() ->
