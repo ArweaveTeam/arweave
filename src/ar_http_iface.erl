@@ -9,6 +9,7 @@
 -export([get_tx/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
+-export([get_time/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1]).
 -export([reregister/1, reregister/2]).
@@ -146,6 +147,10 @@ handle('OPTIONS', [<<"peer">>|_], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
 handle('OPTIONS', _, _Req) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
+
+%% @doc Return the current universal time in seconds.
+handle('GET', [<<"time">>], _Req) ->
+	{200, [], integer_to_binary(os:system_time(second))};
 
 %% @doc Return all transactions from node that are waiting to be mined into a block.
 %% GET request to endpoint /tx/pending
@@ -1025,6 +1030,11 @@ get_tx(Peer, Hash) ->
 		)
 	).
 
+%% @doc Retreive the current universal time as claimed by a foreign node.
+get_time(Peer) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_httpc:request(<<"GET">>, Peer, "/time", []),
+	binary_to_integer(Body).
+
 %% @doc Retreive all valid transactions held that have not yet been mined into
 %% a block from a remote peer.
 get_pending_txs(Peer) ->
@@ -1594,6 +1604,10 @@ get_last_tx_single_test() ->
 			[]
 		),
 	?assertEqual(<<"TEST_ID">>, ar_util:decode(Body)).
+
+%% @doc Check that we can qickly get the local time from the peer.
+get_time_test() ->
+	?assertEqual(os:system_time(second), get_time({127, 0, 0, 1, 1984})).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
