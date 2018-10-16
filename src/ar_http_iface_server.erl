@@ -792,25 +792,25 @@ post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer}) ->
 		true  ->
 			post_block(check_txs, {ReqStruct, BShadow, OrigPeer})
 	end;
-post_block(check_height, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_txs, {ReqStruct, BShadow, OrigPeer}) ->
+	TXids = BShadow#block.txs,
+	case txids_maybe_to_txs(TXids) of
+		not_found -> {400, [], <<"Cannot verify transactions.">>};
+		TXs  ->
+			post_block(check_height, {ReqStruct, BShadow, OrigPeer, TXs})
+	end;
+post_block(check_height, {ReqStruct, BShadow, OrigPeer, TXs}) ->
 	NewBHeight = BShadow#block.height,
 	LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	MyHeight = LastB#block.height,
 	HDiff = NewBHeight - MyHeight,
 	case {HDiff, HDiff > 1} of
 		{1,_}     -> % just right
-			post_block(check_txs, {ReqStruct, BShadow, OrigPeer});
-		{_, false} -> % too low
+			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs});
+		{_,false} -> % too low
 			{400, [], <<"Invalid block height.">>};
 		{_,true}  -> % too high
-			fork_recover % iau: todo
-	end;
-post_block(check_txs, {ReqStruct, BShadow, OrigPeer}) ->
-	TXids = BShadow#block.txs,
-	case txids_maybe_to_txs(TXids) of
-		not_found -> {400, [], <<"Cannot verify transactions.">>};
-		TXs  ->
-			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs})
+			{500, [], <<"Need to fork recover.">>} % iau TODO
 	end;
 post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs}) ->
     % Verify the pow of the block shadow.
