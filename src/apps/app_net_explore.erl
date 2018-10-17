@@ -20,7 +20,7 @@ graph(Nodes) ->
     ar:d(Map),
     io:format("Generating dot file...~n"),
     {{Year, Month, Day}, {Hour, Minute, Second}} =
-        calendar:now_to_datetime(erlang:now()),
+        calendar:now_to_datetime(erlang:timestamp()),
     StrTime =
         lists:flatten(
             io_lib:format(
