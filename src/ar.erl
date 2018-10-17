@@ -60,7 +60,7 @@
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	init = false,
 	mine = false,
-	peers = default,
+	peers = [],
 	polling = false,
 	auto_join = true,
 	clean = false,
@@ -126,8 +126,8 @@ main(["init"|Rest], O) ->
 	main(Rest, O#opts { init = true });
 main(["mine"|Rest], O) ->
 	main(Rest, O#opts { mine = true });
-main(["peer", Peer|Rest], O = #opts { peers = default }) ->
-	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)] });
+main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
+	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
 main(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
 	main(Rest, O#opts { content_policies = [F|Fs] });
 main(["port", Port|Rest], O) ->
@@ -174,7 +174,7 @@ start(
 	#opts {
 		port = Port,
 		init = Init,
-		peers = RawPeers,
+		peers = Peers,
 		mine = Mine,
 		polling = Polling,
 		clean = Clean,
@@ -213,11 +213,6 @@ start(
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(content_policies, Policies),
 	ar_storage:update_directory_size(),
-	Peers =
-		case RawPeers of
-			default -> ?DEFAULT_PEER_LIST;
-			_ -> RawPeers
-		end,
 	% Determine mining address.
 	case {Addr, LoadKey, NewKey} of
 		{false, false, false} ->
