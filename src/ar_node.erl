@@ -949,7 +949,3 @@ retry_full_block(Host, ID, _, Count, BHL) ->
 %			retry_encrypted_full_block(Host, ID, unavailable, Count-1);
 %		B -> B
 %	end.
-
-%%%
-%%% EOF
-%%%

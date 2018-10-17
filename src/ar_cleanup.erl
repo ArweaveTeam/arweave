@@ -91,7 +91,3 @@ remove_block_keep_directory_test() ->
 	remove_invalid_blocks([]),
 	{ok, Files} = (file:list_dir(?BLOCK_DIR)),
 	0 = length(lists:filter(fun filelib:is_file/1, Files -- [".gitignore"])).
-
-%%%
-%%% EOF
-%%%

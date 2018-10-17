@@ -151,8 +151,3 @@ handle(_Tid, {update, Any}) ->
 	{error, {invalid_node_state_values, Any}};
 handle(_Tid, {Command, Args}) ->
 	{error, {invalid_node_state_command, {Command, Args}}}.
-
-%%%
-%%% EOF
-%%%
-

@@ -120,7 +120,3 @@ simple_retarget_test_() ->
 			5 * 60 * 1000
 		)
 	end}.
-
-%%%
-%%% EOF
-%%%

@@ -88,8 +88,3 @@ lookup_fail(_Config) ->
 	{error, {invalid_node_state_keys, [a, b, {invalid}]}} =
 		ar_node_state:lookup(Pid, [a, b, {invalid}]),
 	ok = ar_node_state:stop(Pid).
-
-%%%
-%%% EOF
-%%%
-

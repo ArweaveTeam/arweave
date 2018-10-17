@@ -689,7 +689,3 @@ calculate_delay(0) ->
 calculate_delay(Bytes) ->
 	30000 + ((Bytes * 300) div 1000).
 -endif.
-
-%%%
-%%% EOF
-%%%

@@ -258,7 +258,3 @@ recall_block_test() ->
 	receive after 300 -> ok end,
 	B3 = ar_node:get_current_block(Node),
 	B3#block.wallet_list.
-
-%%%
-%%% EOF
-%%%

@@ -2224,7 +2224,3 @@ get_txs_by_send_recv_test_() ->
 	% B2 = get_block({127, 0, 0, 1, 1984}, B1),
 	% B3 = get_full_block({127, 0, 0, 1, 1984}, B1),
 	% B3 = B2#block {txs = [TX, TX1]},
-
-%%%
-%%% EOF
-%%%

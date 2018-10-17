@@ -537,7 +537,3 @@ scale_time(Time) -> Time.
 timestamp() ->
 	{MegaSec, Sec, _MilliSec} = os:timestamp(),
 	(MegaSec * 1000000) + Sec.
-
-%%%
-%%% EOF
-%%%

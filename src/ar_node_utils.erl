@@ -747,8 +747,3 @@ generate_floating_wallet_list(WalletList, [T | TXs]) ->
 			generate_floating_wallet_list(UpdatedWalletList, TXs);
 		false -> false
 	end.
-
-%%%
-%%% EOF
-%%%
-

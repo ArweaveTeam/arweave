@@ -848,8 +848,3 @@ bogus_tx_thread_test_() ->
 		?AR(8999) = ar_node:get_balance(Node2, Pub1),
 		?AR(1000) = ar_node:get_balance(Node2, Pub2)
 	end}.
-
-%%%
-%%% EOF
-%%%
-
