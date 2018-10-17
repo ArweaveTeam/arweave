@@ -140,9 +140,6 @@
 %% @doc Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
 
-%% @doc List of default peers to connect
--define(DEFAULT_PEER_LIST, []).
-
 %% @doc Peers to never add to peer list
 -define(PEER_PERMANENT_BLACKLIST,[]).
 
