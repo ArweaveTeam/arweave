@@ -5,13 +5,15 @@
 -module(ar).
 
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
--export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
+-export([tests/0, tests/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([report/1, report_console/1, report_miner/1, report_miner/2, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
+-export([parse/1]).
 
 -include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %% A list of the modules to test.
 %% At some point we might want to make this just test all mods starting with
@@ -19,6 +21,7 @@
 -define(
 	CORE_TEST_MODS,
 	[
+		ar,
 		ar_node_tests,
 		ar_util,
 		ar_cleanup,
@@ -97,7 +100,7 @@ main("") ->
 		end,
 		[
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_hash_list", "Start the node from a given block."},
+			{"start_hash_list (file)", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -120,49 +123,52 @@ main("") ->
 		]
 	),
 	erlang:halt();
-main(Args) -> main(Args, #opts{}).
-main([], O) -> start(O);
-main(["init"|Rest], O) ->
-	main(Rest, O#opts { init = true });
-main(["mine"|Rest], O) ->
-	main(Rest, O#opts { mine = true });
-main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
-	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
-main(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
-	main(Rest, O#opts { content_policies = [F|Fs] });
-main(["port", Port|Rest], O) ->
-	main(Rest, O#opts { port = list_to_integer(Port) });
-main(["diff", Diff|Rest], O) ->
-	main(Rest, O#opts { diff = list_to_integer(Diff) });
-main(["polling"|Rest], O) ->
-	main(Rest, O#opts { polling = true });
-main(["clean"|Rest], O) ->
-	main(Rest, O#opts { clean = true });
-main(["no_auto_join"|Rest], O) ->
-	main(Rest, O#opts { auto_join = false });
-main(["mining_addr", Addr|Rest], O) ->
-	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
-main(["max_miners", Num|Rest], O) ->
-	main(Rest, O#opts { max_miners = list_to_integer(Num) });
-main(["new_mining_key"|Rest], O)->
-	main(Rest, O#opts { new_key = true });
-main(["disk_space", Size|Rest], O) ->
-	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
-main(["load_mining_key", File|Rest], O)->
-	main(Rest, O#opts { load_key = File });
-main(["start_hash_list", IndepHash|Rest], O)->
-	main(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
-main(["benchmark"|Rest], O)->
-	main(Rest, O#opts { benchmark = true });
-main(["auto_update", "false" | Rest], O) ->
-	main(Rest, O#opts { auto_update = false });
-main(["auto_update", Addr | Rest], O) ->
-	main(Rest, O#opts { auto_update = ar_util:decode(Addr) });
-main(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
-	main(Rest, O#opts { enable = [ list_to_atom(Feature) | Enabled ] });
-main(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
-	main(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
-main([Arg|_Rest], _O) ->
+main(Args) ->
+	start(parse(Args)).
+
+parse(Args) -> parse(Args, #opts{}).
+parse([], O) -> O;
+parse(["init"|Rest], O) ->
+	parse(Rest, O#opts { init = true });
+parse(["mine"|Rest], O) ->
+	parse(Rest, O#opts { mine = true });
+parse(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
+	parse(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
+parse(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
+	parse(Rest, O#opts { content_policies = [F|Fs] });
+parse(["port", Port|Rest], O) ->
+	parse(Rest, O#opts { port = list_to_integer(Port) });
+parse(["diff", Diff|Rest], O) ->
+	parse(Rest, O#opts { diff = list_to_integer(Diff) });
+parse(["polling"|Rest], O) ->
+	parse(Rest, O#opts { polling = true });
+parse(["clean"|Rest], O) ->
+	parse(Rest, O#opts { clean = true });
+parse(["no_auto_join"|Rest], O) ->
+	parse(Rest, O#opts { auto_join = false });
+parse(["mining_addr", Addr|Rest], O) ->
+	parse(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
+parse(["max_miners", Num|Rest], O) ->
+	parse(Rest, O#opts { max_miners = list_to_integer(Num) });
+parse(["new_mining_key"|Rest], O)->
+	parse(Rest, O#opts { new_key = true });
+parse(["disk_space", Size|Rest], O) ->
+	parse(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
+parse(["load_mining_key", File|Rest], O)->
+	parse(Rest, O#opts { load_key = File });
+parse(["start_hash_list", IndepHash|Rest], O)->
+	parse(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
+parse(["benchmark"|Rest], O)->
+	parse(Rest, O#opts { benchmark = true });
+parse(["auto_update", "false" | Rest], O) ->
+	parse(Rest, O#opts { auto_update = false });
+parse(["auto_update", Addr | Rest], O) ->
+	parse(Rest, O#opts { auto_update = ar_util:decode(Addr) });
+parse(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
+	parse(Rest, O#opts { enable = [ list_to_atom(Feature) | Enabled ] });
+parse(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
+	parse(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
+parse([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
 %% @doc Start an Archain node on this BEAM.
@@ -415,7 +421,7 @@ init(Args) ->
 	{ok, {SupFlags, ChildSpecs}}.
 
 %% @doc Run all of the tests associated with the core project.
-test() ->
+tests() ->
 	ar_storage:ensure_directories(),
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
@@ -432,10 +438,10 @@ test() ->
 
 %% @doc Run the TNT test system, printing coverage results.
 test_coverage() ->
-	ar_coverage:analyse(fun test/0).
+	ar_coverage:analyse(fun tests/0).
 
 %% @doc Run the tests for a single module.
-test(Mod) ->
+tests(Mod) ->
 	ar_storage:ensure_directories(),
 	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
 
@@ -537,3 +543,23 @@ scale_time(Time) -> Time.
 timestamp() ->
 	{MegaSec, Sec, _MilliSec} = os:timestamp(),
 	(MegaSec * 1000000) + Sec.
+
+%% @doc Ensure that parsing of core command line options functions correctly.
+commandline_parser_test() ->
+	Addr = crypto:strong_rand_bytes(32),
+	Tests =
+		[
+			{"peer 1.2.3.4 peer 5.6.7.8:9", #opts.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
+			{"mine", #opts.mine, true},
+			{"port 22", #opts.port, 22},
+			{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #opts.mining_addr, Addr}
+		],
+	X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
+	ar:d({x, X}),
+	O = parse(X),
+	lists:foreach(
+		fun({_, Index, Value}) ->
+			?assertEqual(element(Index, O), Value)
+		end,
+		Tests
+	).
