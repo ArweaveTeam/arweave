@@ -24,9 +24,12 @@ start() ->
 
 %% @doc Check that a received object does not match the firewall rules.
 scan(PID, Type, Data) ->
+	ar:report([{scanning_object_of_type, Type}]),
 	PID ! {scan, self(), Type, Data},
 	receive
-		{scanned, _Obj, Response} -> Response
+		{scanned, _Obj, Response} ->
+			ar:report([{scanned_object_of_type, Type}, {response, Response}]),
+			Response
 	end.
 
 %% @doc Main firewall server loop.

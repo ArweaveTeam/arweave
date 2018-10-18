@@ -338,7 +338,7 @@ maybe_remove_tx(TXs, TXID, Sig) ->
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
-process_new_block(_StateIn, NewGS, NewB, _, _Peer, not_joined) ->
+process_new_block(_StateIn, NewGS, _NewB, _, _Peer, not_joined) ->
 	ar_join:start(ar_gossip:peers(NewGS)),
 	none;
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Peer, HashList)
