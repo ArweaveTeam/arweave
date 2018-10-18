@@ -57,7 +57,7 @@ get_full_block(Peers, ID, BHL) when is_list(Peers) ->
 				Peers
 			);
 		Block ->
-			case make_full_block(ID, BHL) of
+			case make_full_block(Block) of
 				unavailable ->
 					ar_storage:invalidate_block(Block),
 					get_full_block(Peers, ID, BHL);
@@ -596,22 +596,20 @@ validate_wallet_list([_ | Rest]) ->
 %% @doc Convert a block with tx references into a full block, that is a block
 %% containing the entirety of all its referenced txs.
 make_full_block(ID, BHL) ->
-	case ar_storage:read_block(ID, BHL) of
-		unavailable ->
-			unavailable;
-		BlockHeader ->
-			FullB =
-				BlockHeader#block{
-					txs =
-						get_tx(
-							whereis(http_entrypoint_node),
-							BlockHeader#block.txs
-						)
-				},
-			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
-				[] -> FullB;
-				_  -> unavailable
-			end
+	make_full_block(ar_storage:read_block(ID, BHL)).
+make_full_block(unavailable) -> unavailable;
+make_full_block(BlockHeader) ->
+	FullB =
+		BlockHeader#block{
+			txs =
+				get_tx(
+					whereis(http_entrypoint_node),
+					BlockHeader#block.txs
+				)
+		},
+	case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
+		[] -> FullB;
+		_  -> unavailable
 	end.
 
 %% @doc Return a specific tx from a node, if it has it.
