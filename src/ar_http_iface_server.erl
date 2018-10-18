@@ -203,54 +203,11 @@ handle('POST', [<<"block">>], Req) ->
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
 handle('POST', [<<"tx">>], Req) ->
-	TXJSON = elli_request:body(Req),
-	TX = ar_serialize:json_struct_to_tx(TXJSON),
-	% Check whether the TX is already ignored, ignore it if it is not
-	% (and then pass to processing steps).
-	case ar_bridge:is_id_ignored(TX#tx.id) of
-		undefined -> {429, <<"Too Many Requests">>};
-		true -> {208, <<"Transaction already processed.">>};
-		false ->
-			ar_bridge:ignore_id(TX#tx.id),
-			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
-				unavailable -> {503, [], <<"Transaction verification failed.">>};
-				Diff ->
-					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
-					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-					WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
-					OwnerAddr = ar_wallet:to_address(TX#tx.owner),
-					WinstonInQueue =
-						lists:sum(
-							[
-								T#tx.quantity + T#tx.reward
-							||
-								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
-							]
-						),
-					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
-						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
-							ar:report(
-								[
-									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
-									{balance, B},
-									{in_queue, WinstonInQueue},
-									{cost, TX#tx.reward + TX#tx.quantity}
-								]
-							),
-							{400, [], <<"Waiting TXs exceed balance for wallet.">>};
-						_ ->
-							% Finally, validate the veracity of the TX.
-							case ar_tx:verify(TX, Diff, FloatingWalletList) of
-								false ->
-									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
-									{400, [], <<"Transaction verification failed.">>};
-								true ->
-									%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
-									{200, [], <<"OK">>}
-							end
-					end
-			end
+	case validate_post_tx(Req) of
+		{error, Response} ->
+			Response;
+		{ok, TX} ->
+			process_request(post_tx, TX)
 	end;
 
 %% @doc Return the list of peers held by the node.
@@ -551,6 +508,21 @@ block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
+%% @doc http validator wrapper around ar_bridge:is_id_ignored/1
+check_is_id_ignored(Type, ID) ->
+	case ar_bridge:is_id_ignored(ID) of
+		undefined ->
+			{error, {429, <<"Too many requests.">>}};
+		true ->
+			Msg = case Type of
+				block -> <<"Block already processed.">>;
+				tx    -> <<"Transaction already processed.">>
+			end,
+			{error, {208, Msg}};
+		false ->
+			ok
+	end.
+
 %% @doc Returns block bits for POST /block.
 get_block_bits(ReqStruct, BShadow, OrigPeer) ->
 	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
@@ -618,6 +590,17 @@ request_to_struct_with_blockshadow(Req) ->
 	catch
 		Exception:Reason ->
 			{error, {Exception, Reason}}
+	end.
+
+%% @doc Given a request, returns a tx (or http error).
+request_to_tx(Req) ->
+	try
+		TXJSON = elli_request:body(Req),
+		TX = ar_serialize:json_struct_to_tx(TXJSON),
+		{ok, TX}
+	catch
+		_:_ ->
+			{error, {400, <<"Invalid request body.">>}}
 	end.
 
 %% @doc Helper function : registers a new node as the entrypoint.
@@ -719,12 +702,10 @@ post_block(request, Req) ->
 	end;
 post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer}) ->
 	% Check if block is already known.
-	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
-		undefined ->
-			{429, <<"Too many requests.">>};
-		true ->
-			{208, <<"Block already processed.">>};
-		false ->
+	case check_is_id_ignored(block, BShadow#block.indep_hash) of
+		{error, Response} ->
+			Response;
+		ok ->
 			ar_bridge:ignore_id(BShadow#block.indep_hash),
 			post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer})
 	end;
@@ -943,7 +924,11 @@ process_request(get_block, [Type, ID, Field]) ->
 			end;
 		_ ->
 			{421, [], <<"Subfield block querying is disabled on this node.">>}
-	end.
+	end;
+process_request(post_tx, TX) ->
+	ar_bridge:ignore_id(TX#tx.id),
+	ar_bridge:add_tx(whereis(http_bridge_node), TX),
+	{200, [], <<"OK">>}.
 
 validate_get_block_type_id(<<"height">>, ID) ->
 	try binary_to_integer(ID) of
@@ -955,4 +940,52 @@ validate_get_block_type_id(<<"hash">>, ID) ->
 	case safe_decode(ID) of
 		{ok, Hash} -> {ok, Hash};
 		invalid    -> {error, {400, [], <<"Invalid hash.">>}}
+	end.
+
+validate_post_tx(Req) ->
+	case request_to_tx(Req) of
+		{error, Response} -> Response;
+		{ok,TX} ->
+			case check_is_id_ignored(tx, TX#tx.id) of
+				{error, Response} -> Response;
+				ok ->
+					case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
+						unavailable -> {503, <<"Transaction verification failed.">>};
+						Diff ->
+							FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+							case validate_txs_by_wallet(TX, FloatingWalletList) of
+								{error, Response} -> Response;
+								ok ->
+									case ar_tx:verify(TX, Diff, FloatingWalletList) of
+										false ->
+											{400, <<"Transaction verification failed.">>};
+										true ->
+											{ok, TX}
+									end
+							end
+					end
+			end
+	end.
+
+validate_txs_by_wallet(TX, FloatingWalletList) ->
+	WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
+	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
+	WinstonInQueue =
+		lists:sum(
+			[
+				T#tx.quantity + T#tx.reward
+			||
+				T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
+			]
+		),
+	case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
+		[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
+			ar:report([
+				{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
+				{balance, B},
+				{in_queue, WinstonInQueue},
+				{cost, TX#tx.reward + TX#tx.quantity}
+			]),
+			{error, {400, <<"Waiting TXs exceed balance for wallet.">>}};
+		_ -> ok
 	end.
