@@ -370,11 +370,7 @@ integrate_new_block(
 fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
-			PrioritisedPeers = ar_util:unique(Peer) ++
-				case whereis(http_bridge_node) of
-					undefined -> [];
-					BridgePID -> ar_bridge:get_remote_peers(BridgePID)
-				end,
+			PrioritisedPeers = ar_util:unique(Peer),
 			erlang:monitor(
 				process,
 				PID = ar_fork_recovery:start(
