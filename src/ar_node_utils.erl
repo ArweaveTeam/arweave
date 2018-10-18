@@ -703,14 +703,7 @@ alter_wallet(WalletList, Target, Adjustment) ->
 
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 calculate_reward(Height, Quantity) ->
-	erlang:trunc(calculate_static_reward(Height) + Quantity).
-
-%% @doc Calculate the static reward received for mining a given block.
-%% This reward portion depends only on block height, not the number of transactions.
-calculate_static_reward(Height) when Height =< ?REWARD_DELAY->
-	1;
-calculate_static_reward(Height) ->
-	?AR((0.2 * ?GENESIS_TOKENS * math:pow(2,-(Height-?REWARD_DELAY)/?BLOCK_PER_YEAR) * math:log(2))/?BLOCK_PER_YEAR).
+	erlang:trunc(ar_inflation:calculate(Height) + Quantity).
 
 %% @doc Given a TX, calculate an appropriate reward.
 calculate_tx_reward(#tx { reward = Reward }) ->

@@ -22,6 +22,7 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_inflation,
 		ar_node_tests,
 		ar_util,
 		ar_cleanup,
