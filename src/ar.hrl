@@ -7,7 +7,7 @@
 -define(CLIENT_VERSION, 3).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 10).
+-define(RELEASE_NUMBER, 11).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
@@ -167,7 +167,7 @@
 -define(NUM_MINING_PROCESSES, max(1, (erlang:system_info(schedulers_online) - 1))).
 
 %% @doc Target number of blocks per year.
--define(BLOCK_PER_YEAR, 525600/(?TARGET_TIME/60) ).
+-define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME/60)) ).
 
 %% @doc A block on the weave.
 -record(block, {
