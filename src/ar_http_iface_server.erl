@@ -822,9 +822,10 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer, TXs}) ->
 		{_,false} -> % too low
 			{400, [], <<"Invalid block height.">>};
 		{_,true}  -> % too high
-			{B, LastB, RecallB, Key, Nonce} = get_block_bits(ReqStruct, BShadow, OrigPeer),
-			post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})
-			% {500, [], <<"Need to fork recover.">>} % iau TODO
+			{500, [], <<"Too high. Need fork recovery.">>}
+			% iau TODO failing pending feedback
+			%{B, LastB, RecallB, Key, Nonce} = get_block_bits(ReqStruct, BShadow, OrigPeer),
+			%post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})
 	end;
 post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs}) ->
     % Verify the pow of the block shadow.
