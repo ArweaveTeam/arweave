@@ -337,11 +337,12 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 		{error, invalid} ->
 			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
-			{200, [],
-				integer_to_binary(
-					ar_node:get_balance(whereis(http_entrypoint_node), AddrOK)
-				)
-			}
+			case ar_node:get_balance(whereis(http_entrypoint_node), AddrOK) of
+				node_unavailable ->
+					{504, [], <<"Temporary timeout.">>};
+				Balance ->
+					{200, [], integer_to_binary(Balance)}
+			end
 	end;
 
 %% @doc Return the last transaction ID (hash) for the wallet specified via wallet_address.
