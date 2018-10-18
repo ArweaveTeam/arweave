@@ -551,7 +551,7 @@ block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
-%% @doc return block bits for POST /block.
+%% @doc Returns block bits for POST /block.
 get_block_bits(ReqStruct, BShadow, OrigPeer) ->
 	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
 	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
@@ -563,20 +563,22 @@ get_block_bits(ReqStruct, BShadow, OrigPeer) ->
 	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
 	{B, LastB, RecallB, Key, Nonce}.
 
-%% @doc checks if hash is valid & if so returns filename.
+%% @doc Checks if hash is valid & if so returns filename.
 hash_to_maybe_filename(Type, Hash) ->
 	case safe_decode(Hash) of
 		{error, invalid} ->
 			{error, invalid};
 		{ok, ID} ->
-			{Mod, Fun} = type_to_mf({Type, lookup_filename}),
-			F = apply(Mod, Fun, [ID]),
-			case F of
-				unavailable ->
-					{error, ID, unavailable};
-				Filename ->
-					{ok, Filename}
-			end
+			id_to_filename(Type, ID)
+	end.
+
+%% @doc Returns filename for ID.
+id_to_filename(Type, ID) ->
+	{Mod, Fun} = type_to_mf({Type, lookup_filename}),
+	F = apply(Mod, Fun, [ID]),
+	case F of
+		unavailable -> {error, ID, unavailable};
+		Filename    -> {ok, Filename}
 	end.
 
 %% @doc Return true if ID is a pending tx.
@@ -812,7 +814,7 @@ post_block(post_block, {NewB, CurrentB, RecallB, OrigPeer, Key, Nonce}) ->
 
 %% @doc Return block or not found
 process_request(get_block, [<<"hash">>, ID], XVersion) ->
-	case hash_to_maybe_filename(block, ID) of
+	case id_to_filename(block, ID) of
 		{error, _, unavailable} ->
 			{404, [], <<"Block not found.">>};
 		{ok, Filename} ->

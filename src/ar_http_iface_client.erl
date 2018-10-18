@@ -144,7 +144,7 @@ get_current_block(Peer) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/current_block",
+			"/block/current",
 			[]
 		)
 	).
