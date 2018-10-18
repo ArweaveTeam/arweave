@@ -19,30 +19,11 @@ graph(Nodes) ->
     Map = generate_map(Nodes),
     ar:d(Map),
     io:format("Generating dot file...~n"),
-    {{Year, Month, Day}, {Hour, Minute, Second}} =
-        calendar:now_to_datetime(erlang:timestamp()),
-    StrTime =
-        lists:flatten(
-            io_lib:format(
-                "~4..0w-~2..0w-~2..0wT~2..0w:~2..0w:~2..0w",
-                [Year, Month, Day, Hour, Minute, Second]
-            )
-        ),
-    DotFile =
-        lists:flatten(
-            io_lib:format(
-                "~s/~s.~s",
-                [?MAP_DIR, StrTime, "dot"]
-            )
-        ),
-    PngFile =
-        lists:flatten(
-            io_lib:format(
-                "~s/~s.~s",
-                [?MAP_DIR, StrTime, "png"]
-            )
-        ),
+    Timestamp = erlang:timestamp(),
+    DotFile = filename(Timestamp, "graph", "dot"),
     ok = filelib:ensure_dir(DotFile),
+    PngFile = filename(Timestamp, "graph", "png"),
+    ok = filelib:ensure_dir(PngFile),
     ok = generate_dot_file(DotFile, Map),
     io:format("Generating PNG image...~n"),
     os:cmd("dot -Tpng " ++ DotFile ++ " -o " ++ PngFile),
@@ -97,6 +78,23 @@ generate_map(Peers) ->
             }
         end,
         Peers
+    ).
+
+filename(Timestamp, Type, Extension) ->
+    {{Year, Month, Day}, {Hour, Minute, Second}} =
+        calendar:now_to_datetime(Timestamp),
+    StrTime =
+        lists:flatten(
+            io_lib:format(
+                "~4..0w-~2..0w-~2..0wT~2..0w:~2..0w:~2..0w",
+                [Year, Month, Day, Hour, Minute, Second]
+            )
+        ),
+    lists:flatten(
+        io_lib:format(
+            "~s/~s-~s.~s",
+            [?MAP_DIR, Type, StrTime, Extension]
+        )
     ).
 
 %% @doc Generate a dot file that can be rendered into a PNG.
