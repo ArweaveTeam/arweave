@@ -577,7 +577,10 @@ is_valid_peer_time(Peer) ->
 
 %% @doc Validates the difficulty of an incoming block.
 new_block_difficulty_ok(B) ->
-	B#block.diff =:= ar_node:get_current_diff(whereis(http_entrypoint_node)).
+	case verify_difficulty() of
+		{ok, Diff} -> B#block.diff =:= Diff
+		error      -> false
+	end.
 
 %% @doc Given a request, returns a blockshadow.
 request_to_struct_with_blockshadow(Req) ->
@@ -949,14 +952,14 @@ validate_post_tx(Req) ->
 			case check_is_id_ignored(tx, TX#tx.id) of
 				{error, Response} -> Response;
 				ok ->
-					case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
-						unavailable -> {503, <<"Transaction verification failed.">>};
-						Diff ->
-							FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-							case validate_txs_by_wallet(TX, FloatingWalletList) of
+					case verify_difficulty() of
+						error -> {503, <<"Transaction verification failed.">>};
+						{ok, Diff} ->
+							WalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+							case validate_txs_by_wallet(TX, WalletList) of
 								{error, Response} -> Response;
 								ok ->
-									case ar_tx:verify(TX, Diff, FloatingWalletList) of
+									case ar_tx:verify(TX, Diff, WalletList) of
 										false ->
 											{400, <<"Transaction verification failed.">>};
 										true ->
@@ -964,6 +967,22 @@ validate_post_tx(Req) ->
 									end
 							end
 					end
+			end
+	end.
+
+f([], Result, _Context) ->
+	{ok, Result};
+f([{M, F, ErrorResponse, Update}|T], Result, Context) ->
+	case erlang:apply(M, F, Context) of
+		{error, Response} -> Response;
+		error -> ErrorResponse;
+		false -> ErrorResponse;
+		true -> f(T, Result, Context);
+		ok -> f(T, Result, Context);
+		{ok, Value} ->
+			case Update of
+				result  -> f(T, Value, Context);
+				context -> f(T, Result, Value)
 			end
 	end.
 
@@ -988,4 +1007,10 @@ validate_txs_by_wallet(TX, FloatingWalletList) ->
 			]),
 			{error, {400, <<"Waiting TXs exceed balance for wallet.">>}};
 		_ -> ok
+	end.
+
+verify_difficulty() ->
+	case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
+		unavailable -> error;
+		Diff -> {ok, Diff}
 	end.
