@@ -6,7 +6,6 @@
 
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([reregister/1, reregister/2]).
--export([verify_request_to_blockshadow/1]). %% exported for verifier
 
 -include("ar.hrl").
 -include_lib("lib/elli/include/elli.hrl").
@@ -388,68 +387,13 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 
 %% @doc Return the blockshadow corresponding to the indep_hash / height.
 %% GET request to endpoint /block/{height|hash}/{indep_hash|height}
-handle('GET', [<<"block">>, Type, ID], Req) ->
-	Filename =
-		case Type of
-			<<"hash">> ->
-				case hash_to_maybe_filename(block, ID) of
-					{error, invalid}        -> invalid_hash;
-					{error, _, unavailable} -> unavailable;
-					{ok, Fn}                -> Fn
-				end;
-			<<"height">> ->
-				try binary_to_integer(ID) of
-					Int ->
-						ar_storage:lookup_block_filename(Int)
-				catch _:_ ->
-					invalid_height
-				end
-		end,
-	case Filename of
-		invalid_hash ->
-			{400, [], <<"Invalid height.">>};
-		invalid_height ->
-			{400, [], <<"Invalid hash.">>};
-		unavailable ->
-			{404, [], <<"Block not found.">>};
-		_  ->
-			case elli_request:get_header(<<"X-Version">>, Req, <<"7">>) of
-				<<"8">> ->
-					{ok, [], {file, Filename}};
-				<<"7">> ->
-					% Supprt for legacy nodes (pre-1.5).
-					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-					try ar_storage:do_read_block(Filename, BHL) of
-						B ->
-							{JSONStruct} =
-								ar_serialize:block_to_json_struct(
-									B#block {
-										txs =
-											[
-												if is_binary(TX) -> TX; true -> TX#tx.id end
-											||
-												TX <- B#block.txs
-											]
-									}
-								),
-							{200, [],
-								ar_serialize:jsonify(
-									{
-										[
-											{
-												<<"hash_list">>,
-												ar_serialize:hash_list_to_json_struct(B#block.hash_list)
-											}
-										|
-											JSONStruct
-										]
-									}
-								)
-							}
-					catch error:cannot_generate_block_hash_list ->
-						{404, [], <<"Requested block not found on block hash list.">>}
-					end
-			end
+handle('GET', [<<"block">>, Type, IDBin], Req) ->
+	case validate_get_block_type_id(Type, IDBin) of
+		{error, Response} ->
+			Response;
+		{ok, ID} ->
+			XVersion = elli_request:get_header(<<"X-Version">>, Req, <<"7">>),
+			process_request(get_block, [Type, ID], XVersion)
 	end;
 
 %% @doc Return block or block field.
@@ -865,6 +809,55 @@ post_block(post_block, {NewB, CurrentB, RecallB, OrigPeer, Key, Nonce}) ->
 	),
 	{200, [], <<"OK">>}.
 
+%% @doc Return block or not found
+process_request(get_block, [<<"hash">>, ID], XVersion) ->
+	case hash_to_maybe_filename(block, ID) of
+		{error, _, unavailable} ->
+			{404, [], <<"Block not found.">>};
+		{ok, Filename} ->
+			get_block_by_filename(Filename, XVersion)
+	end;
+process_request(get_block, [<<"height">>, ID], XVersion) ->
+	Filename = ar_storage:lookup_block_filename(ID),
+	get_block_by_filename(Filename, XVersion).
+
+get_block_by_filename(Filename, <<"8">>) ->
+	{ok, [], {file, Filename}};
+get_block_by_filename(Filename, <<"7">>) ->
+	% Support for legacy nodes (pre-1.5).
+	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	try ar_storage:do_read_block(Filename, BHL) of
+		B ->
+			{JSONStruct} =
+				ar_serialize:block_to_json_struct(
+					B#block {
+						txs =
+							[
+								if is_binary(TX) -> TX; true -> TX#tx.id end
+							||
+								TX <- B#block.txs
+							]
+					}
+				),
+			{200, [],
+				ar_serialize:jsonify(
+					{
+						[
+							{
+								<<"hash_list">>,
+								ar_serialize:hash_list_to_json_struct(B#block.hash_list)
+							}
+						|
+							JSONStruct
+						]
+					}
+				)
+			}
+	catch error:cannot_generate_block_hash_list ->
+		{404, [], <<"Requested block not found on block hash list.">>}
+	end.
+
+
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>]) ->
 	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
@@ -960,12 +953,3 @@ validate_get_block_type_id(<<"hash">>, ID) ->
 		{ok, Hash} -> {ok, Hash};
 		invalid    -> {error, {400, [], <<"Invalid hash.">>}}
 	end.
-
-%% @doc Get struct and block shadow out of a request.
-verify_request_to_blockshadow(Req) ->
-	try request_to_struct_with_blockshadow(Req) of
-		{Struct, BShadow} -> {ok, [Struct, BShadow]}
-	catch
-		_:_ -> false
-	end.
-
