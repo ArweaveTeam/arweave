@@ -70,7 +70,7 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 		end,
 		ar_storage:read_tx(B#block.txs)
 	);
-update_tag_table(B) ->
+update_tag_table(_B) ->
 	not_updated.
 
 server(S = #state { gossip = _GS }) ->

@@ -26,7 +26,7 @@ start() ->
 scan(PID, Type, Data) ->
 	PID ! {scan, self(), Type, Data},
 	receive
-		{scanned, Obj, Response} -> Response
+		{scanned, _Obj, Response} -> Response
 	end.
 
 %% @doc Main firewall server loop.

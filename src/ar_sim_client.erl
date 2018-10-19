@@ -93,8 +93,6 @@ server(
 	S = #state {
 		key_file = KeyList,
 		max_tx_len = MaxTXLen,
-		max_data_len = MaxDataLen,
-		action_time = ActionTime,
 		peers = Peers
 	}) ->
 	receive

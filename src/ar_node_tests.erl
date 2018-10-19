@@ -1,10 +1,4 @@
-%%%
-%%% @doc Unit tests of the node process.
-%%%
-
 -module(ar_node_tests).
-
--compile(export_all).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -848,8 +842,3 @@ bogus_tx_thread_test_() ->
 		?AR(8999) = ar_node:get_balance(Node2, Pub1),
 		?AR(1000) = ar_node:get_balance(Node2, Pub2)
 	end}.
-
-%%%
-%%% EOF
-%%%
-

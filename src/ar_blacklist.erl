@@ -21,7 +21,7 @@ handle(Req, _Config) ->
 	% ar:report([{?MODULE, handle}, {Peer, Ret}]),
 	Ret.
 
-handle_event(elli_startup, [], Config) ->
+handle_event(elli_startup, [], _Config) ->
 	ar:report([{?MODULE, starting}, {handle_event, elli_startup}]),
 	ets:new(?THROTTLE_TABLE, [set, public, named_table]),
 %	{ok,_} = timer:apply_interval(?THROTTLE_PERIOD,?MODULE, reset_counters, []),
@@ -30,7 +30,7 @@ handle_event(_, _, _) ->
 	ok.
 
 %private functions
-blacklisted(Req) ->
+blacklisted(_Req) ->
 	Body    = <<"Too Many Requests">>,
 	Size    = list_to_binary(integer_to_list(size(Body))),
 	Headers = [{"Connection", "close"}, {"Content-Length", Size}],

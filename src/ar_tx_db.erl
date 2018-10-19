@@ -34,7 +34,7 @@ get(Key) ->
 
 maybe_add(Key) ->
     case ets:lookup(?MODULE, Key) of
-        [{Key, Value}] -> ok;
+        [{Key, _Value}] -> ok;
         _ -> put(Key, ["unknown_error "])
     end.
 

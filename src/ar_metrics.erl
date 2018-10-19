@@ -105,7 +105,7 @@ handle_event(client_timeout, [RequestPart], _) ->
 handle_event(bad_request, [{Reason, _}], _) ->
   prometheus_counter:inc(?BAD_REQUEST_TOTAL, [Reason]),
   count_failed_request(bad_request);
-handle_event(elli_startup, Args, Config) ->
+handle_event(elli_startup, _Args, _Config) ->
   Labels        = labels(),
   Buckets       = duration_buckets(),
   UP            = [{name, ?UP},
