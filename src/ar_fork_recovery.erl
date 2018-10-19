@@ -74,8 +74,8 @@ start(Peers, TargetBShadow, HashList, Parent) ->
 drop_until_diverge([X | R1], [X | R2]) -> drop_until_diverge(R1, R2);
 drop_until_diverge(R1, _) -> R1.
 
-%% @doc Subtract the second list from the first. If the first list
-%% is not a superset of the second, return the empty list
+%% @doc If the second list is a prefix of the first, return the suffix,
+%% otherwise return the empty list.
 setminus([X | R1], [X | R2]) -> setminus(R1, R2);
 setminus(R1, []) -> R1;
 setminus(_, _) -> [].
@@ -470,15 +470,17 @@ setminus_test() ->
 	ar_node:mine(Node1),
 	timer:sleep(300),
 	LengthLong = length(
-		setminus(lists:reverse(ar_node:get_blocks(Node1)),
-		lists:reverse(ar_node:get_blocks(Node2)))
+		setminus(
+			lists:reverse(ar_node:get_blocks(Node1)),
+			lists:reverse(ar_node:get_blocks(Node2)))
 	),
 	ar_node:mine(Node1),
 	ar_node:mine(Node2),
 	timer:sleep(300),
 	LengthShort = length(
-		setminus(lists:reverse(ar_node:get_blocks(Node1)),
-		lists:reverse(ar_node:get_blocks(Node2)))
-		),
+		setminus(
+			lists:reverse(ar_node:get_blocks(Node1)),
+			lists:reverse(ar_node:get_blocks(Node2)))
+	),
 	LengthLong = 2,
 	LengthShort = 0.
