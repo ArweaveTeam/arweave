@@ -50,5 +50,5 @@ tx_db_test() ->
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	ar_tx:verify(TX, 8, B0#block.wallet_list),
 	timer:sleep(500),
-    ["tx_too_cheap ","tx_fields_too_large ","tag_field_illegally_specified ","last_tx_not_valid "] = get(TX#tx.id),
+	["tx_signature_not_valid ", "tx_id_not_valid "] = ar:d(get(TX#tx.id)),
     ar_tx:verify(SignedTX, 8, B0#block.wallet_list).
