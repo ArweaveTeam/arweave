@@ -464,8 +464,10 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 		{ok, Filename} ->
 			{ok, JSONBlock} = file:read_file(Filename),
 			{TXJSON} = ar_serialize:dejsonify(JSONBlock),
-			Res = val_for_key(Field, TXJSON),
-			{200, [], Res}
+			case safe_val_for_key(Field, TXJSON) of
+				{ok, Res} -> {200, Res};
+				error     -> {404, <<"Not Found.">>}
+			end
 	end;
 
 %% @doc Share the location of a given service with a peer.
@@ -699,10 +701,19 @@ txids_maybe_to_txs([H|T], MyTXIDs) ->
 	end.
 
 %% @doc Convenience function for lists:keyfind(Key, 1, List).
-%% returns Value not {Key, Value}.
+%% Returns Value not {Key, Value}.
 val_for_key(K, L) ->
 	{K, V} = lists:keyfind(K, 1, L),
 	V.
+
+%% @doc safe version of val_for_key/2.
+%% Returns {ok, Value} | error.
+safe_val_for_key(K, L) ->
+	case lists:keyfind(K, 1, L) of
+		{K, V} -> {ok, V};
+		false  -> error
+	end.
+
 
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
