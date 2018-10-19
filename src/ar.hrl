@@ -7,7 +7,7 @@
 -define(CLIENT_VERSION, 3).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 8).
+-define(RELEASE_NUMBER, 11).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
@@ -57,8 +57,8 @@
 -endif.
 
 -define(RETARGET_TOLERANCE, 0.1).
--define(BLOCK_TIME_DIFF_TOLERANCE, 30).
--define(NODE_TIME_DIFF_TOLERANCE, 30).
+-define(BLOCK_TIME_DIFF_TOLERANCE, 90).
+-define(NODE_TIME_SYNC_TOLERANCE, 15).
 
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
 
@@ -140,9 +140,6 @@
 %% @doc Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
 
-%% @doc List of default peers to connect
--define(DEFAULT_PEER_LIST, []).
-
 %% @doc Peers to never add to peer list
 -define(PEER_PERMANENT_BLACKLIST,[]).
 
@@ -170,7 +167,7 @@
 -define(NUM_MINING_PROCESSES, max(1, (erlang:system_info(schedulers_online) - 1))).
 
 %% @doc Target number of blocks per year.
--define(BLOCK_PER_YEAR, 525600/(?TARGET_TIME/60) ).
+-define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME/60)) ).
 
 %% @doc A block on the weave.
 -record(block, {

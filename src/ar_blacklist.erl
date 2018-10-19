@@ -13,15 +13,16 @@
 
 handle(Req, _Config) ->
 	Peer = elli_request:peer(Req),
-	Ret =
-		case increment_ip(Peer) of
-			true -> blacklisted(Req);
-			false -> ignore
-		end,
-	% ar:report([{?MODULE, handle}, {Peer, Ret}]),
-	Ret.
+	case ar_meta_db:get(blacklist) of
+		false -> ignore;
+		_ ->
+			case increment_ip(Peer) of
+				true -> blacklisted(Req);
+				false -> ignore
+			end
+	end.
 
-handle_event(elli_startup, [], _Config) ->
+handle_event(elli_startup, [], Config) ->
 	ar:report([{?MODULE, starting}, {handle_event, elli_startup}]),
 	ets:new(?THROTTLE_TABLE, [set, public, named_table]),
 %	{ok,_} = timer:apply_interval(?THROTTLE_PERIOD,?MODULE, reset_counters, []),

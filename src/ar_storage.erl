@@ -86,7 +86,12 @@ invalidate_block(B) ->
 -ifdef(DEBUG).
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(RawB) ->
-	ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]),
+	case ar_meta_db:get(disk_logging) of
+		true ->
+			ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]);
+		_ ->
+			do_nothing
+	end,
 	WalletID = write_wallet_list(RawB#block.wallet_list),
 	B = RawB#block { wallet_list = WalletID },
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
@@ -103,7 +108,12 @@ write_block(RawB) ->
 -else.
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(RawB) ->
-	ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]),
+	case ar_meta_db:get(disk_logging) of
+		true ->
+			ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]);
+		_ ->
+			do_nothing
+	end,
 	WalletID = write_wallet_list(RawB#block.wallet_list),
 	B = RawB#block { wallet_list = WalletID },
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
