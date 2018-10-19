@@ -109,10 +109,9 @@ verify(TX, Diff, WalletList) ->
 			end,
 			{NewResult, NewReport, NewReason}
 		end,
-		{true, [], []},
+		{true, [{validate_tx, ar_util:encode(TX#tx.id)}], []},
 		Checks),
-	% ar:report(Report),
-	ar:d(Result),
+	% ar:report(lists:reverse(Report)),
 	maybe_store_reason(TX#tx.id, Result, Reason),
 	Result.
 -else.
@@ -150,9 +149,9 @@ verify(TX, Diff, WalletList) ->
 			end,
 			{NewResult, NewReport, NewReason}
 		end,
-		{false, [], []},
+		{true, [{validate_tx, ar_util:encode(TX#tx.id)}], []},
 		Checks),
-	% ar:report(Report),
+	% ar:report(lists:reverse(Report)),
 	maybe_store_reason(TX#tx.id, Result, Reason),
 	Result.
 -endif.
