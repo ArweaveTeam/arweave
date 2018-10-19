@@ -102,11 +102,11 @@ generate_map(Peers) ->
 %% @doc Generate a dot file that can be rendered into a PNG.
 generate_dot_file(File, Map) ->
     case file:open(File, [write]) of
-        {ok, FileRef} ->
-            io:fwrite(FileRef, "digraph network_map { ~n", []),
-            io:fwrite(FileRef,
+        {ok, IoDevice} ->
+            io:fwrite(IoDevice, "digraph network_map { ~n", []),
+            io:fwrite(IoDevice,
                       "    init [style=filled,color=\".7 .3 .9\"];~n", []),
-            do_generate_dot_file(Map, FileRef),
+            do_generate_dot_file(Map, IoDevice),
             ok;
         _ ->
             io:format("Failed to open file for writing.~n"),
