@@ -38,14 +38,14 @@ get_live_nodes() ->
 %% @doc Return a list of all nodes that are claimed to be in the network.
 get_all_nodes() ->
     get_all_nodes([], ar_bridge:get_remote_peers(whereis(http_bridge_node))).
-get_all_nodes(Done, []) -> Done;
-get_all_nodes(Done, [Next|Peers]) ->
-    io:format("Getting peers from ~s... ", [ar_util:format_peer(Next)]),
-    NewPeers = ar_http_iface:get_peers(Next),
-    io:format(" got ~w!~n", [length(NewPeers)]),
+get_all_nodes(Acc, []) -> Acc;
+get_all_nodes(Acc, [Peer|Peers]) ->
+    io:format("Getting peers from ~s... ", [ar_util:format_peer(Peer)]),
+    MorePeers = ar_http_iface:get_peers(Peer),
+    io:format(" got ~w!~n", [length(MorePeers)]),
     get_all_nodes(
-        [Next|Done],
-        (ar_util:unique(Peers ++ NewPeers)) -- [Next|Done]
+        [Peer|Acc],
+        (ar_util:unique(Peers ++ MorePeers)) -- [Peer|Acc]
     ).
 
 %% @doc Remove offline nodes from a list of peers.
