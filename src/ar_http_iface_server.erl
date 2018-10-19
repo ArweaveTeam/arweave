@@ -580,7 +580,7 @@ is_valid_peer_time(Peer) ->
 %% @doc Validates the difficulty of an incoming block.
 new_block_difficulty_ok(B) ->
 	case verify_difficulty() of
-		{ok, Diff} -> B#block.diff =:= Diff
+		{ok, Diff} -> B#block.diff =:= Diff;
 		error      -> false
 	end.
 
@@ -958,42 +958,26 @@ validate_get_block_type_id(<<"hash">>, ID) ->
 
 validate_post_tx(Req) ->
 	case request_to_tx(Req) of
-		{error, Response} -> Response;
+		{error, Response} -> {error, Response};
 		{ok,TX} ->
 			case check_is_id_ignored(tx, TX#tx.id) of
-				{error, Response} -> Response;
+				{error, Response} -> {error, Response};
 				ok ->
 					case verify_difficulty() of
-						error -> {503, <<"Transaction verification failed.">>};
+						error -> {error, {503, <<"Transaction verification failed.">>}};
 						{ok, Diff} ->
 							WalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
 							case validate_txs_by_wallet(TX, WalletList) of
-								{error, Response} -> Response;
+								{error, Response} -> {error, Response};
 								ok ->
 									case ar_tx:verify(TX, Diff, WalletList) of
 										false ->
-											{400, <<"Transaction verification failed.">>};
+											{error, {400, <<"Transaction verification failed.">>}};
 										true ->
 											{ok, TX}
 									end
 							end
 					end
-			end
-	end.
-
-f([], Result, _Context) ->
-	{ok, Result};
-f([{M, F, ErrorResponse, Update}|T], Result, Context) ->
-	case erlang:apply(M, F, Context) of
-		{error, Response} -> Response;
-		error -> ErrorResponse;
-		false -> ErrorResponse;
-		true -> f(T, Result, Context);
-		ok -> f(T, Result, Context);
-		{ok, Value} ->
-			case Update of
-				result  -> f(T, Value, Context);
-				context -> f(T, Result, Value)
 			end
 	end.
 
