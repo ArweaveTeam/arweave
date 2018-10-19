@@ -536,6 +536,31 @@ get_subfields_of_tx_test() ->
 	Orig = TX#tx.data,
 	?assertEqual(Orig, ar_util:decode(Body)).
 
+%% @doc Post a tx to the network and ensure that its subfields can be gathered
+get_bad_subfield_of_tx_404_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	ar_http_iface_server:reregister(Node),
+	Bridge = ar_bridge:start([], Node),
+	ar_http_iface_server:reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	SearchNode = app_search:start(Node),
+	ar_node:add_peers(Node, SearchNode),
+	ar_http_iface_server:reregister(http_search_node, SearchNode),
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
+	timer:sleep(1000),
+	ar_node:mine(Node),
+	timer:sleep(1000),
+	%write a get_tx function like get_block
+	{ok, {{<<"404">>, _}, _, <<"Not Found.">>, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/qweasd.css",
+			[]
+		).
+
 %% @doc Correctly check the status of pending is returned for a pending transaction
 get_pending_tx_test() ->
 	ar_storage:clear(),
