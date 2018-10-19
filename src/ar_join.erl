@@ -25,37 +25,66 @@ start(Node, Peers, B) when is_atom(B) ->
 start(Node, RawPeers, NewB) ->
 	case whereis(join_server) of
 		undefined ->
-			PID = spawn(
-				fun() ->
-					Peers = filter_peer_list(RawPeers),
-					case ?IS_BLOCK(NewB) of
-						true ->
-							ar:report_console(
-								[
-									joining_network,
-									{node, Node},
-									{peers, Peers},
-									{height, NewB#block.height}
-								]
-							),
-							get_block_and_trail(Peers, NewB, NewB#block.hash_list),
-							Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
-							join_peers(Peers),
-							spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end);
-						false ->
-							ar:report_console(
-								[
-									node_not_joining,
-									{reason, cannot_get_full_block_from_peer},
-									{received_instead, NewB}
-								]
-							),
-							ok
-					end
-				end
-			),
+			PID = spawn(fun() -> do_join(Node, RawPeers, NewB) end),
 			erlang:register(join_server, PID);
 		_ -> already_running
+	end.
+
+%% @doc Perform the joining process.
+do_join(_Node, _RawPeers, NewB) when not ?IS_BLOCK(NewB) ->
+	ar:report_console(
+		[
+			node_not_joining,
+			{reason, cannot_get_full_block_from_peer},
+			{received_instead, NewB}
+		]
+	);
+do_join(Node, RawPeers, NewB) ->
+	case verify_time_sync(RawPeers) of
+		false ->
+			ar:report(
+				[
+					node_not_joining,
+					{reason, clock_time_in_sync_with_join_peers},
+					{
+						recommendation,
+						"Ensure that your machine's time is up-to-date."
+					}
+				]
+			);
+		true ->
+			Peers = filter_peer_list(RawPeers),
+			ar:report_console(
+				[
+					joining_network,
+					{node, Node},
+					{peers, Peers},
+					{height, NewB#block.height}
+				]
+			),
+			ar:report_miner("Joining the Arweave network..."),
+			get_block_and_trail(Peers, NewB, NewB#block.hash_list),
+			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
+			join_peers(Peers),
+			ar:report_miner("Joined the Arweave network successfully."),
+			spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end)
+	end.
+
+%% @doc Verify timestamps of peers.
+verify_time_sync(Peers) ->
+	% Ignore this check if time syncing is disable.
+	case ar_meta_db:get(time_syncing) of
+		false -> true;
+		_ ->
+			lists:all(
+				fun(Peer) ->
+					LocalT = os:system_time(second),
+					RemoteT = ar_http_iface_client:get_time(Peer),
+					(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
+					(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
+				end,
+				[ P || P <- Peers, not is_pid(P) ]
+			)
 	end.
 
 %% @doc Return the current block from a list of peers.
@@ -141,8 +170,8 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 						[
 							{writing_block, B#block.height},
 							{writing_recall_block, R#block.height},
-							{blocks_written, (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
-							{blocks_to_write, (BehindCurrent-1)}
+							{blocks_written, 2 * (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
+							{blocks_to_write, 2 * (BehindCurrent-1)}
 						]
 					),
 					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
@@ -162,7 +191,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 fill_to_capacity(Peers, ToWrite) -> fill_to_capacity(Peers, ToWrite, ToWrite).
 fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, ToWrite, BHL) ->
-	timer:sleep(30 * 1000),
+	timer:sleep(5 * 1000),
 	try
 		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
 		case ar_node_utils:get_full_block(Peers, RandHash, BHL) of

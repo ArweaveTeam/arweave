@@ -141,6 +141,8 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 		Diff,
 		LastRetarget
 	);
+start(Peers, B, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when ?IS_BLOCK(B) ->
+	start(Peers, B#block.hash_list, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	% Spawns the node server process.
 	PID = spawn(
@@ -159,7 +161,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 						Peers
 					)
 				),
-			Hashes = ar_util:wallets_from_hashes(HashList),
+			Wallets = ar_util:wallets_from_hashes(HashList),
 			Height = ar_util:height_from_hashes(HashList),
 			RewardPool =
 				case HashList of
@@ -181,8 +183,8 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{node, NPid},
 				{gossip, Gossip},
 				{hash_list, HashList},
-				{wallet_list, Hashes},
-				{floating_wallet_list, Hashes},
+				{wallet_list, Wallets},
+				{floating_wallet_list, Wallets},
 				{mining_delay, MiningDelay},
 				{reward_addr, RewardAddr},
 				{reward_pool, RewardPool},
@@ -935,7 +937,3 @@ retry_full_block(Host, ID, _, Count, BHL) ->
 %			retry_encrypted_full_block(Host, ID, unavailable, Count-1);
 %		B -> B
 %	end.
-
-%%%
-%%% EOF
-%%%
