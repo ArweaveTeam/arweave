@@ -8,10 +8,6 @@
 %%% for each signature in the database. These uniform sig objects
 %%% can then be passed to av_detect.
 
-%% Defines the default directory in which the signature files are
-%% normally located.
--define(SIG_DB_LOC, "src/av/sigs").
-
 %% Define all of the supported file formats.
 -define(SUPPORTED_FORMATS, [".ndb", ".hdb", ".hsb", ".fp"]).
 
@@ -58,17 +54,10 @@ all() ->
 		lists:append(
 	  		lists:map(
 				fun do_load/1,
-				[ ?SIG_DB_LOC ++ "/" ++ File ||
-					File <- filter_dbs(file:list_dir(?SIG_DB_LOC))]
+				ar_meta_db:get(content_policies)
 			)
 		)
 	).
-
-%% Ignore files that we cannot read.
-filter_dbs({ok, DBs}) -> filter_dbs(DBs);
-filter_dbs(DBs) ->
-	[ DB || DB <- DBs,
-		lists:member(filename:extension(DB), ?SUPPORTED_FORMATS) ].
 
 %% Load the signatures from a specified file, throwing away signatures
 %% that we are not able to process.

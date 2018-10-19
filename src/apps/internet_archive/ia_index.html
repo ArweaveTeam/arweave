@@ -1,0 +1,373 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <!-- Vue.js v2.5.17 -->
+    <script src="/tx/kjicRH_pBBMFbl0Cl0t7B2PTZMUxvNYC0zggg0_oibk/data.js"></script>
+    <!-- WebTorrent v0.102.4 -->
+    <script src="/tx/SDZnef9VSR4B0iz8xmo3qkt672WtdlhP4KUjcgjCQTU/data.js"></script>
+    <title>Censorship Resistant Internet Archive Gateway</title>
+</head>
+<body>
+    <div id="app">
+        <div id="about" class="flex">
+            <div class="about__content">
+                <h1 class="heading">Censorship Resistant Internet Archive Gateway (CRIAG)</h1>
+
+                <h2 class="subheading">Verifiable, Dependable Universal Access to Information</h2>
+    
+                <h3>This is a permanent and decentralised index of torrent files relating to data stored on the Internet Archive.</h3>
+    
+                <h3>You will always have a decentralised way to access these files and to validate that data from The Internet Archive has not been modified.</h3>
+            </div>
+        </div>
+        <div id="sidebar">
+            <div id="search">
+                <input type="text" placeholder="Filter torrents" v-model="search.value">
+                <span class="results">{{Object.keys(transactions).length}} results</span>
+            </div>
+            <transition name="fade-in">
+            <div id="results" v-if="!loading">
+                <ul class="result-list">
+                    <li
+                        class="result-item"
+                        v-for="transaction in filtered"
+                        :key="transaction.id"
+                        @click="selectTx(transaction.id)"
+                    >
+                    {{transaction.tags.title}}
+                        <transition name="fade-in">
+                                <div class="more-info" v-if="transaction.id == selected">
+                                    <div class="files">
+                                        <div class="field">Files in torrent:</div>
+                                        <ul v-if="transaction.files">
+                                            <li
+                                                v-for="file in transaction.files">
+                                                {{file.path}}
+                                            </li>
+                                        </ul>
+                                        <a :href="apiPath(`tx/${transaction.id}/data.torrent`)" class="download">Download Torrent</a>
+                                    </div>
+                                    <div class="info">
+                                        <div class="field">Added: <span class="field-value">{{transaction.tags.addeddate}}</span></div>
+                                    </div>
+                                </div>
+                        </transition>
+                    </li>
+                </ul>
+            </div>
+            </transition>
+        </div>
+    </div>
+    <script>
+        window.app = new Vue({
+            el: '#app',
+            data: function(){
+                return {
+                    node: {
+                        host: window.location.hostname,
+                        protocol: window.location.protocol,
+                        port: window.location.port
+                    },
+                    transactions: {},
+                    search: {
+                        value: ''
+                    },
+                    selected: '',
+                    loading: true,
+                };
+            },
+            mounted: function(){
+                this.fetchTxs();
+            },
+            computed: {
+                filtered: function(){
+                    const transactions = Object.values(this.transactions);
+
+                    const pattern = `.*${this.search.value}.*`;
+
+                    const regex = new RegExp(pattern);
+
+                    return transactions.filter((transaction) => {
+
+                        return transaction.tags && transaction.tags.title && regex.test(transaction.tags.title);
+                    });
+                }
+            },
+            methods: {
+                apiPath(endpoint){
+                    //const base = `${this.node.protocol}://${this.node.host}:${this.node.port}`;
+                    const base = "http://" + window.location.hostname + ":1984";
+                    return typeof endpoint == 'undefined' ? base : `${base}/${endpoint}`;
+                },
+                request(method, endpoint, data){
+                    return new Promise((resolve, reject) =>{
+
+                        const req = new XMLHttpRequest();
+
+                        req.open(method, this.apiPath(endpoint), true);
+
+                        req.onload = function(e) {
+                            if(req.status == 200) {
+                                resolve(JSON.parse(req.responseText));
+                            }
+                        }
+
+                        req.send(JSON.stringify(data));
+                    });
+                },
+                fetchTxs(){
+                    this.request('POST', 'arql', {
+                        op: 'equals', 
+                        expr1: 'app_name',
+                        expr2: 'InternetArchive'
+                    })
+                    .then((transactions) => {
+                        for (let index = 0; index < transactions.length; index++) {
+
+                            const transactionId = transactions[index];
+
+                            const transaction = {
+                                id: transactionId,
+                                tags: {}
+                            };
+
+                            Vue.set(this.transactions, transactionId, transaction);
+
+                            this
+                                .fetchTags(transactionId)
+                                .then(tags => {
+                                    transaction.tags = tags
+                                });
+                        }
+                        this.loading = false;
+                    });
+                },
+                fetchTags(transactionId){
+                    return new Promise((resolve, reject) => {
+                        this
+                        .request('GET', `tx/${transactionId}/tags`)
+                        .then((tags) => {
+                            let formattedTags = tags.reduce((allTags, tag) => {
+                                try {
+                                    allTags[atob(tag.name)] = atob(tag.value);
+                                } catch (error) {
+                                    console.error(error);
+                                } finally {
+                                    return allTags;
+                                }
+                            }, {})
+
+                            resolve(formattedTags);
+                        });
+                    });
+                },
+                selectTx(transactionId){
+                    this.selected = transactionId;
+                    this
+                        .getTorrentInfo(transactionId)
+                        .then(torrent => {
+                            Vue.set(this.transactions[transactionId], 'files', torrent.files);
+                        });
+                },
+
+                getTorrentInfo(transactionId) {
+                    return new Promise((resolve, reject) => {
+                        var client = new WebTorrent();
+
+                        var torrentUrl = this.apiPath(`tx/${transactionId}/data.torrent`);
+
+                        client.add(torrentUrl, function (torrent) {
+                            resolve(torrent);
+                        });
+                    });
+                }
+
+            }
+        });
+    </script>
+    <style lang="css">
+        html, body{
+            /*font-family: 'Roboto', sans-serif;*/
+            font-family: sans-serif;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+            position: relative;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            font-weight: 300;
+            background: #3d3c46;
+        }
+
+        *{
+            box-sizing: border-box;
+        }
+
+        .flex{
+            display: flex;
+            align-content: center;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+        }
+
+        #app{
+            height: 100%;
+        }
+
+        #about{
+            font-size: 0.9rem;
+            color: #333;
+            text-align: center;
+            min-height: 1000px;
+            height: 50vh;
+        }
+
+        #about .about__content{
+            padding: 20px;
+        }
+
+        #about h1,
+        #about h2{
+            /*font-family: 'Roboto Slab', serif;*/
+            color: #fff;
+        }
+
+        #about h1{
+            font-size: 2rem;
+            margin: 1.5rem;
+        }
+
+
+        #about h2{
+            font-size: 1.5rem;
+            margin: 2rem 2rem 3rem 2rem;
+        }
+
+        #about h3{
+            color: #ccc;
+            font-weight: 400;
+        }
+
+        #sidebar{
+            width: 70%;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        #sidebar #search{
+            margin-bottom: 2rem;
+            background: #fff;
+            padding: 1rem;
+        }
+
+        #sidebar input{
+            width: 100%;
+            border: none;
+            padding: 15px 5px;
+            border-bottom: 1px solid #ddd;
+            background: transparent;
+            font-size: 1.2rem;
+            outline: none;
+            color: #666;
+        }
+
+        #sidebar input::placeholder{
+            color: #999;
+        }
+
+        #sidebar #search .results{
+            color: #999;
+            display: inline-block;
+            margin: 10px 5px;
+        }
+
+        #sidebar .result-list{
+            padding: 0;
+            margin: 0;
+            background: #fff;
+            padding: 0 20px;
+        }
+
+        #sidebar .result-item{
+            /* font-family: 'Roboto Slab', serif; */
+            font-family: sans-serif;
+            list-style: none;
+            color: #3d3c46;
+            padding: 30px 10px;
+            border-bottom: 1px solid #e6e6e6;
+            font-weight: 400;
+            cursor: pointer;
+        }
+
+        #sidebar .result-item .more-info{
+            /* font-family: 'Roboto', sans-serif; */
+            font-family: sans-serif;
+            border-top: 1px solid #e6e6e6;
+            margin: 10px 0;
+            padding: 10px 0;
+            transition: all .5s ease;
+            overflow: hidden;
+            max-height:500px;
+        }
+
+        #sidebar .result-item .more-info .info,
+        #sidebar .result-item .more-info .files{
+            display: inline-block;
+            width: 48%;
+            vertical-align: top;
+        }
+
+        #sidebar .result-item .more-info .files ul{
+            padding: 0;
+            margin: 20px 0
+        }
+
+        .files li{
+            /*font-family: 'Roboto Slab', serif;*/
+            font-weight: 300;
+            list-style: none;
+            margin: 5px 0;
+        }
+
+        #sidebar .result-item .more-info .field-value{
+            font-weight: 300;
+        }
+
+        #sidebar .result-item .more-info .download{
+            text-decoration: none;
+            background: #5c5973;
+            color: #fff;
+            border-radius: 50px;
+            padding: 10px 20px;
+            display: inline-block;
+            margin: 10px 0;
+        }
+
+
+        .fade-in-enter-active,
+        .fade-in-leave-active {
+            transition: opacity .2s;
+        }
+
+        .fade-in-enter,
+        .fade-in-leave-to
+        {
+            opacity: 0;
+            max-height: 0px !important;
+        }
+
+        .fade-in-enter-to{
+            opacity: 1;
+        }
+
+
+
+    </style>
+</body>
+</html>
