@@ -80,8 +80,12 @@ verify_time_sync(Peers) ->
 				fun(Peer) ->
 					LocalT = os:system_time(second),
 					RemoteT = ar_http_iface:get_time(Peer),
-					(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
-					(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
+					case RemoteT of
+						unknown -> true;
+						_ ->
+							(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
+							(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
+					end
 				end,
 				[ P || P <- Peers, not is_pid(P) ]
 			)
