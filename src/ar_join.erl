@@ -191,7 +191,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 fill_to_capacity(Peers, ToWrite) -> fill_to_capacity(Peers, ToWrite, ToWrite).
 fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, ToWrite, BHL) ->
-	timer:sleep(5 * 1000),
+	timer:sleep(1 * 1000),
 	try
 		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
 		case ar_node_utils:get_full_block(Peers, RandHash, BHL) of
