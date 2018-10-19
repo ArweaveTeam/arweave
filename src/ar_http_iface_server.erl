@@ -944,6 +944,9 @@ process_request(post_tx, TX) ->
 	ar_bridge:add_tx(whereis(http_bridge_node), TX),
 	{200, [], <<"OK">>}.
 
+%% @doc validators return {ok, DataForCall} | {error, HttpResponse}.
+
+%% @doc for GET /block/Type/ID; returns hash or height.
 validate_get_block_type_id(<<"height">>, ID) ->
 	try binary_to_integer(ID) of
 		Int -> {ok, Int}
@@ -956,6 +959,7 @@ validate_get_block_type_id(<<"hash">>, ID) ->
 		invalid    -> {error, {400, [], <<"Invalid hash.">>}}
 	end.
 
+%% @doc for POST /tx.  Validates tx in json & returns it.
 validate_post_tx(Req) ->
 	case request_to_tx(Req) of
 		{error, Response} -> {error, Response};
@@ -981,6 +985,7 @@ validate_post_tx(Req) ->
 			end
 	end.
 
+%% @doc Checks wallet(s) have enough Winstons for tx(s).
 validate_txs_by_wallet(TX, FloatingWalletList) ->
 	WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
 	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
@@ -1004,6 +1009,7 @@ validate_txs_by_wallet(TX, FloatingWalletList) ->
 		_ -> ok
 	end.
 
+%% @doc Safely retrieves current difficulty.
 verify_difficulty() ->
 	case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
 		unavailable -> error;
