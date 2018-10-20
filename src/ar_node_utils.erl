@@ -40,22 +40,7 @@ get_full_block(Peers, ID, BHL) when is_list(Peers) ->
 	% check locally first, if not found ask list of external peers for block
 	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
-			lists:foldl(
-				fun(Peer, Acc) ->
-					case is_atom(Acc) of
-						false ->
-							Acc;
-						true ->
-							Full = get_full_block(Peer, ID, BHL),
-							case is_atom(Full) of
-								true  -> Acc;
-								false -> Full
-							end
-					end
-				end,
-				unavailable,
-				Peers
-			);
+			get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BHL);
 		Block ->
 			case make_full_block(Block) of
 				unavailable ->
@@ -71,6 +56,17 @@ get_full_block(Pid, ID, BHL) when is_pid(Pid) ->
 get_full_block(Host, ID, BHL) ->
 	% Handle external peer request.
 	ar_http_iface:get_full_block(Host, ID, BHL).
+
+%% @doc Attempt to get a full block from a HTTP peer, picking the node to query
+%% randomly until the block is retreived.
+get_full_block_from_remote_peers([], _ID, _BHL) -> unavailable;
+get_full_block_from_remote_peers(Peers, ID, BHL) ->
+	Peer = ar_util:pick_random(Peers),
+	case ?IS_BLOCK(B = get_full_block(Peer, ID, BHL)) of
+		true -> B;
+		false ->
+			get_full_block_from_remote_peers(Peers -- [Peer], ID, BHL)
+	end.
 
 %% @doc Return the hash of the next recall block.
 find_recall_hash(Block, []) ->

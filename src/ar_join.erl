@@ -67,7 +67,7 @@ do_join(Node, RawPeers, NewB) ->
 			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 			join_peers(Peers),
 			ar:report_miner("Joined the Arweave network successfully."),
-			spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end)
+			spawn(fun() -> fill_to_capacity(ar_manage_peers:get_more_peers(Peers), NewB#block.hash_list) end)
 	end.
 
 %% @doc Verify timestamps of peers.
