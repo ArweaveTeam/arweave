@@ -59,11 +59,25 @@ get_full_block(Host, ID, BHL) ->
 
 %% @doc Attempt to get a full block from a HTTP peer, picking the node to query
 %% randomly until the block is retreived.
-get_full_block_from_remote_peers([], _ID, _BHL) -> unavailable;
+get_full_block_from_remote_peers([], _ID, _BHL) ->
+	unavailable;
 get_full_block_from_remote_peers(Peers, ID, BHL) ->
 	Peer = ar_util:pick_random(Peers),
-	case ?IS_BLOCK(B = get_full_block(Peer, ID, BHL)) of
-		true -> B;
+	{Time, B} = timer:tc(fun() -> get_full_block(Peer, ID, BHL) end),
+	case ?IS_BLOCK(B) of
+		true ->
+			case ar_meta_db:get(http_logging) of
+				true ->
+					ar:report(
+						[
+							{got_block, ar_util:encode(ID)},
+							{peer, Peer},
+							{time, Time}
+						]
+					);
+				false -> do_nothing
+			end,
+			B;
 		false ->
 			get_full_block_from_remote_peers(Peers -- [Peer], ID, BHL)
 	end.
