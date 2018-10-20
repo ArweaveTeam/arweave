@@ -170,6 +170,8 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 				{B, R} ->
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
+					ar_storage:write_tx(R#block.txs),
+					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
 					ar:report(
 						[
 							{writing_block, B#block.height},
