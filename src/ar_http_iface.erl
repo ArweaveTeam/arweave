@@ -1054,8 +1054,11 @@ get_tx_data(Peer, Hash) ->
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
 get_time(Peer) ->
-	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_httpc:request(<<"GET">>, Peer, "/time", []),
-	binary_to_integer(Body).
+	case ar_httpc:request(<<"GET">>, Peer, "/time", []) of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			binary_to_integer(Body);
+		_ -> unknown
+	end.
 
 %% @doc Retreive all valid transactions held that have not yet been mined into
 %% a block from a remote peer.
