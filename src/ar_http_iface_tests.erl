@@ -368,15 +368,14 @@ add_external_block_with_bad_bds_test_() ->
 		[BH2 | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
 		NewB = ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
-		TXs = lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
 		BlockDataSegment = <<"badbadbad">>,
 		{ok,{{<<"400">>,_},_,<<"Invalid Block Work">>,_,_}} =
 			ar_http_iface_client:send_new_block_with_bds(
 				{127, 0, 0, 1, 1984},
 				?DEFAULT_HTTP_IFACE_PORT,
 				NewB,
-				BlockDataSegment,
-				BGen
+				BGen,
+				BlockDataSegment
 			)
 	end}.
 
@@ -403,21 +402,11 @@ add_external_block_with_bds_test_() ->
 		[BH2 | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
 		NewB = ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
-		TXs = lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
-		BlockDataSegment = ar_block:generate_block_data_segment(
-			BGen,
-			BGen,
-			TXs,
-			NewB#block.reward_addr,
-			NewB#block.timestamp,
-			NewB#block.tags
-		),
 		{ok,{{<<"200">>,_},_,_,_,_}} =
 			ar_http_iface_client:send_new_block_with_bds(
 				{127, 0, 0, 1, 1984},
 				?DEFAULT_HTTP_IFACE_PORT,
 				NewB,
-				BlockDataSegment,
 				BGen
 			),
 		% Wait for test block and assert.
