@@ -724,39 +724,34 @@ post_block(check_txs, {ReqStruct, BShadow, OrigPeer}) ->
 	TXids = BShadow#block.txs,
 	case txids_maybe_to_txs(TXids) of
 		not_found -> {400, [], <<"Cannot verify transactions.">>};
-		TXs  ->
-			post_block(check_height, {ReqStruct, BShadow, OrigPeer, TXs})
+		_TXs  ->
+			post_block(check_height, {ReqStruct, BShadow, OrigPeer})
 	end;
-post_block(check_height, {ReqStruct, BShadow, OrigPeer, TXs}) ->
+post_block(check_height, {ReqStruct, BShadow, OrigPeer}) ->
 	NewBHeight = BShadow#block.height,
 	LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	MyHeight = LastB#block.height,
 	HDiff = NewBHeight - MyHeight,
 	if
 		HDiff =:= 1 -> % just right
-			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs});
+			post_block(check_pow, {ReqStruct, BShadow, OrigPeer});
 		HDiff < 1 ->   % too low
 			{400, [], <<"Invalid block height.">>};
 		HDiff > 50 ->  % too high
 			{400, [], <<"Invalid block height.">>};
 		true ->        % fork recovery
-			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs})
+			post_block(check_pow, {ReqStruct, BShadow, OrigPeer})
 	end;
-post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs}) ->
-    % Verify the pow of the block shadow.
+post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
 	{NewB, PrevB, RecallB, Key, Nonce} = get_block_bits(ReqStruct, BShadow, OrigPeer),
-	DataSegment = ar_block:generate_block_data_segment(
-		PrevB,
-		RecallB,
-		TXs,
-		NewB#block.reward_addr,
-		NewB#block.timestamp,
-		NewB#block.tags
-	),
-
-    case ar_mine:validate(DataSegment, NewB#block.nonce, NewB#block.diff) of
-        false -> {400, [], <<"Invalid Block Work">>};
-        _  -> post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
+	case safe_val_for_key(<<"block_data_segment">>, ReqStruct) of
+		{ok, DataSegment} ->
+		    case ar_mine:validate(ar_util:decode(DataSegment), NewB#block.nonce, NewB#block.diff) of
+				false -> {400, [], <<"Invalid Block Work">>};
+				_  -> post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
+			end;
+		error -> % skip pow check until internal validation
+			post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
     end;
 post_block(post_block, {NewB, CurrentB, RecallB, OrigPeer, Key, Nonce}) ->
 	% Everything fine, post block.

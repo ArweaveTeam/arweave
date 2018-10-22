@@ -5,6 +5,7 @@
 -module(ar_http_iface_client).
 
 -export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
+-export([send_new_block_with_bds/5]).
 -export([get_tx/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
@@ -112,6 +113,53 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 		ar_serialize:jsonify(
 			{
 				[
+					{<<"new_block">>, BlockJSON},
+					{<<"recall_block">>, ar_util:encode(RecallBHash)},
+					{<<"recall_size">>, RecallB#block.block_size},
+					{<<"port">>, Port},
+					{<<"key">>, ar_util:encode(Key)},
+					{<<"nonce">>, ar_util:encode(Nonce)}
+				]
+			}
+		)
+	).
+
+%% @doc As send_new_block but with block_data_segment in POST json.
+send_new_block_with_bds(Peer, Port, NewB, NewBDS, RecallB) ->
+	RecallBHash =
+		case ?IS_BLOCK(RecallB) of
+			true ->  RecallB#block.indep_hash;
+			false -> <<>>
+		end,
+	{Key, Nonce} = case ar_key_db:get(RecallBHash) of
+		[{K, N}] -> {K, N};
+		_        -> {<<>>, <<>>}
+	end,
+	HashList =
+		lists:map(
+			fun ar_util:encode/1,
+			lists:sublist(
+				NewB#block.hash_list,
+				1,
+				?STORE_BLOCKS_BEHIND_CURRENT
+			)
+		),
+	{TempJSONStruct} =
+		ar_serialize:block_to_json_struct(
+			NewB#block { wallet_list = [] }
+		),
+	BlockJSON =
+		{
+			[{<<"hash_list">>, HashList }|TempJSONStruct]
+		},
+	ar_httpc:request(
+		<<"POST">>,
+		Peer,
+		"/block",
+		ar_serialize:jsonify(
+			{
+				[
+					{<<"block_data_segment">>, ar_util:encode(NewBDS)},
 					{<<"new_block">>, BlockJSON},
 					{<<"recall_block">>, ar_util:encode(RecallBHash)},
 					{<<"recall_size">>, RecallB#block.block_size},

@@ -327,12 +327,12 @@ add_external_block_test_() ->
 		),
 		[BH2 | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		ar:d(ar_http_iface_client:send_new_block(
+		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
 			BGen
-		)),
+		),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
 			fun() ->
@@ -345,6 +345,92 @@ add_external_block_test_() ->
 		?assertEqual(BH1, BH2)
 	end}.
 
+%% @doc POST block with bad "block_data_segment" field in json
+add_external_block_with_bad_bds_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
+		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
+		timer:sleep(500),
+		Bridge = ar_bridge:start([], Node1),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		Node2 = ar_node:start([], [BGen]),
+		ar_node:mine(Node2),
+		ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node2)) == 2
+			end,
+			100,
+			10 * 1000
+		),
+		[BH2 | _] = ar_node:get_blocks(Node2),
+		ar_http_iface_server:reregister(Node1),
+		NewB = ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
+		TXs = lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
+		BlockDataSegment = <<"badbadbad">>,
+		{ok,{{<<"400">>,_},_,<<"Invalid Block Work">>,_,_}} =
+			ar_http_iface_client:send_new_block_with_bds(
+				{127, 0, 0, 1, 1984},
+				?DEFAULT_HTTP_IFACE_PORT,
+				NewB,
+				BlockDataSegment,
+				BGen
+			)
+	end}.
+
+%% @doc POST block with "block_data_segment" field in json
+add_external_block_with_bds_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
+		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
+		timer:sleep(500),
+		Bridge = ar_bridge:start([], Node1),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		Node2 = ar_node:start([], [BGen]),
+		ar_node:mine(Node2),
+		ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node2)) == 2
+			end,
+			100,
+			10 * 1000
+		),
+		[BH2 | _] = ar_node:get_blocks(Node2),
+		ar_http_iface_server:reregister(Node1),
+		NewB = ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
+		TXs = lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
+		BlockDataSegment = ar_block:generate_block_data_segment(
+			BGen,
+			BGen,
+			TXs,
+			NewB#block.reward_addr,
+			NewB#block.timestamp,
+			NewB#block.tags
+		),
+		{ok,{{<<"200">>,_},_,_,_,_}} =
+			ar_http_iface_client:send_new_block_with_bds(
+				{127, 0, 0, 1, 1984},
+				?DEFAULT_HTTP_IFACE_PORT,
+				NewB,
+				BlockDataSegment,
+				BGen
+			),
+		% Wait for test block and assert.
+		?assert(ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node1)) > 1
+			end,
+			1000,
+			10 * 1000
+		)),
+		[BH1 | _] = ar_node:get_blocks(Node1),
+		?assertEqual(BH1, BH2)
+	end}.
 %% @doc Ensure that blocks with tx can be added to a network from outside
 %% a single node.
 add_external_block_with_good_tx_test_() ->
