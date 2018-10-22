@@ -403,7 +403,7 @@ add_external_block_with_bds_test_() ->
 		ar_http_iface_server:reregister(Node1),
 		NewB = ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
 		{ok,{{<<"200">>,_},_,_,_,_}} =
-			ar_http_iface_client:send_new_block_with_bds(
+			ar_http_iface_client:send_new_block(
 				{127, 0, 0, 1, 1984},
 				?DEFAULT_HTTP_IFACE_PORT,
 				NewB,
@@ -537,11 +537,21 @@ fork_recover_by_http_test_() ->
 		),
 		[BTest|_] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		{ok,{{<<"200">>,_},_,_,_,_}} = ar_http_iface_client:send_new_block(
+		NewB = ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
+		BDS = ar_block:generate_block_data_segment(
+			BGen,
+			BGen,
+			lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
+			NewB#block.reward_addr,
+			NewB#block.timestamp,
+			NewB#block.tags
+		),
+		{ok,{{<<"200">>,_},_,_,_,_}} = ar_http_iface_client:send_new_block_with_bds(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
-			BGen
+			BGen,
+			BDS
 		),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
