@@ -503,13 +503,13 @@ check_is_id_ignored(Type, ID) ->
 get_block_bits(ReqStruct, BShadow, OrigPeer) ->
 	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
 	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
-	LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	PrevB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
 	RecallHash = ar_util:decode(JSONRecallB),
 	Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
 	Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
 	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
-	{B, LastB, RecallB, Key, Nonce}.
+	{B, PrevB, RecallB, Key, Nonce}.
 
 %% @doc Checks if hash is valid & if so returns filename.
 hash_to_maybe_filename(Type, Hash) ->
@@ -732,32 +732,31 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer, TXs}) ->
 	LastB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	MyHeight = LastB#block.height,
 	HDiff = NewBHeight - MyHeight,
-	case {HDiff, HDiff > 1} of
-		{1,_}     -> % just right
+	if
+		HDiff =:= 1 -> % just right
 			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs});
-		{_,false} -> % too low
+		HDiff < 1 ->   % too low
 			{400, [], <<"Invalid block height.">>};
-		{_,true}  -> % too high
-			{500, [], <<"Too high. Need fork recovery.">>}
-			% iau TODO failing pending feedback
-			%{B, LastB, RecallB, Key, Nonce} = get_block_bits(ReqStruct, BShadow, OrigPeer),
-			%post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})
+		HDiff > 50 ->  % too high
+			{400, [], <<"Invalid block height.">>};
+		true ->        % fork recovery
+			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs})
 	end;
 post_block(check_pow, {ReqStruct, BShadow, OrigPeer, TXs}) ->
     % Verify the pow of the block shadow.
-	{B, LastB, RecallB, Key, Nonce} = get_block_bits(ReqStruct, BShadow, OrigPeer),
+	{NewB, PrevB, RecallB, Key, Nonce} = get_block_bits(ReqStruct, BShadow, OrigPeer),
 	DataSegment = ar_block:generate_block_data_segment(
-		LastB,
+		PrevB,
 		RecallB,
 		TXs,
-		B#block.reward_addr,
-		B#block.timestamp,
-		B#block.tags
+		NewB#block.reward_addr,
+		NewB#block.timestamp,
+		NewB#block.tags
 	),
 
-    case ar_mine:validate(DataSegment, B#block.nonce, B#block.diff) of
+    case ar_mine:validate(DataSegment, NewB#block.nonce, NewB#block.diff) of
         false -> {400, [], <<"Invalid Block Work">>};
-        _  -> post_block(post_block, {B, LastB, RecallB, OrigPeer, Key, Nonce})
+        _  -> post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
     end;
 post_block(post_block, {NewB, CurrentB, RecallB, OrigPeer, Key, Nonce}) ->
 	% Everything fine, post block.
