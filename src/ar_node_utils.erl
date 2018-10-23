@@ -389,7 +389,7 @@ fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 		_ ->
 			whereis(fork_recovery_server) ! {update_target_block, NewB, ar_util:unique(Peer)}
 	end,
-	% TODO mue: Check how an unchanged state has to be returned in
+	% TODO: Check how an unchanged state has to be returned in
 	% program flow.
 	StateIn.
 
@@ -533,21 +533,6 @@ validate(
 		_ ->
 			ok
 	end,
-
-	case Mine of false -> ar:d(invalid_nonce); _ -> ok end,
-	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok	end,
-	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
-	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
-	case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
-	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
-	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok	end,
-	case Size of false -> ar:d(invalid_size); _ -> ok  end,
-	case TimeCheck of false -> ar:d(invalid_timestamp_diff); _ -> ok  end,
-	case HeightCheck of false -> ar:d(invalid_height); _ -> ok	end,
-	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok	end,
-	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
-	case HashlistCheck of false -> ar:d(invalid_hash_list); _ -> ok  end,
-	case WalletListCheck of false -> ar:d(invalid_wallet_list_rewards); _ -> ok  end,
 
 	(Mine =/= false)
 		andalso Wallet

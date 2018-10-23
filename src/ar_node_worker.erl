@@ -406,7 +406,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 			NewB#block.height
 		),
 	StateNew = StateNext#{ wallet_list => NewWalletList },
-	% TODO mue: Setting the state gossip for fork_recover/3 has to be
+	% TODO: Setting the state gossip for fork_recover/3 has to be
 	% checked. The gossip is already set to NewGS in first function
 	% statement. Compare to pre-refactoring.
 	StateOut = case ar_node_utils:validate(StateNew, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
