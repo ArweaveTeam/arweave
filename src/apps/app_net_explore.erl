@@ -2,6 +2,7 @@
 -export([graph/0, graph/1]).
 -export([get_all_nodes/0, get_live_nodes/0]).
 -export([filter_offline_nodes/1]).
+-export([get_nodes_connectivity/0]).
 
 %%% Tools for building a map of connected peers.
 %%% Requires graphviz for visualisation.
@@ -19,7 +20,7 @@ graph(Nodes) ->
     ar:d(Map),
     io:format("Generating dot file...~n"),
     {{Year, Month, Day}, {Hour, Minute, Second}} =
-        calendar:now_to_datetime(erlang:now()),
+        calendar:now_to_datetime(erlang:timestamp()),
     StrTime =
         lists:flatten(
             io_lib:format(
@@ -74,6 +75,11 @@ filter_offline_nodes(Peers) ->
         Peers
     ).
 
+%% @doc Return a three-tuple with every live host in the network, it's average
+%% position by peers connected to it, the number of peers connected to it.
+get_nodes_connectivity() ->
+  nodes_connectivity(generate_map(get_live_nodes())).
+
 %% @doc Return a map of every peers connections.
 %% Returns a list of tuples with arity 2. The first element is the local peer,
 %% the second element is the list of remote peers it talks to.
@@ -88,7 +94,7 @@ generate_map(Peers) ->
                     end,
                     ar_http_iface:get_peers(Peer)
                 )
-            } 
+            }
         end,
         Peers
     ).
@@ -98,7 +104,7 @@ generate_dot_file(File, Map) ->
     case file:open(File, [write]) of
         {ok, FileRef} ->
             io:fwrite(FileRef, "digraph network_map { ~n", []),
-            io:fwrite(FileRef, 
+            io:fwrite(FileRef,
                       "    init [style=filled,color=\".7 .3 .9\"];~n", []),
             do_generate_dot_file(Map, FileRef),
             ok;
@@ -122,3 +128,55 @@ do_generate_dot_file([Host|Rest], File) ->
         Peers
     ),
     do_generate_dot_file(Rest, File).
+
+%% @doc Takes a host-to-connections map and returns a three-tuple with every
+%% live host in the network, it's average position by peers connected to it, the
+%% number of peers connected to it.
+nodes_connectivity(ConnectionMap) ->
+    WithoutScore = [{Host, empty_score} || {Host, _} <- ConnectionMap],
+    WithoutScoreMap = maps:from_list(WithoutScore),
+    WithScoreMap = avg_connectivity_score(add_connectivity_score(WithoutScoreMap,
+                                                                 ConnectionMap)),
+    WithScore = [{Host, SumPos, Count} || {Host, {SumPos, Count}}
+                                          <- maps:to_list(WithScoreMap)],
+    lists:keysort(2, WithScore).
+
+%% @doc Updates the connectivity intermediate scores according the connection
+%% map.
+add_connectivity_score(ScoreMap, []) ->
+    ScoreMap;
+add_connectivity_score(ScoreMap, [{_, Connections} | ConnectionMap]) ->
+    NewScoreMap = add_connectivity_score1(ScoreMap, add_list_position(Connections)),
+    add_connectivity_score(NewScoreMap, ConnectionMap).
+
+%% @doc Updates the connectivity scores according the connection map.
+add_connectivity_score1(ScoreMap, []) ->
+    ScoreMap;
+add_connectivity_score1(ScoreMap, [{Host, Position} | Connections]) ->
+    Updater = fun
+        (empty_score) ->
+            {Position, 1};
+        ({PositionSum, Count}) ->
+            {PositionSum + Position, Count + 1}
+    end,
+    NewScoreMap = maps:update_with(Host, Updater, ScoreMap),
+    add_connectivity_score1(NewScoreMap, Connections).
+
+%% @doc Wraps each element in the list in a two-tuple where the second element
+%% is the element's position in the list.
+add_list_position(List) ->
+    add_list_position(List, 1, []).
+
+add_list_position([], _, Acc) ->
+    lists:reverse(Acc);
+add_list_position([Item | List], Position, Acc) ->
+    NewAcc = [{Item, Position} | Acc],
+    add_list_position(List, Position + 1, NewAcc).
+
+%% @doc Replace the intermediate score (the sum of all positions and the number
+%% of connections) with the average position and the number of connections.
+avg_connectivity_score(Hosts) ->
+    Mapper = fun (_, {PositionSum, Count}) ->
+        {PositionSum / Count, Count}
+    end,
+    maps:map(Mapper, Hosts).
