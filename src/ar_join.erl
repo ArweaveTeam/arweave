@@ -80,8 +80,12 @@ verify_time_sync(Peers) ->
 				fun(Peer) ->
 					LocalT = os:system_time(second),
 					RemoteT = ar_http_iface_client:get_time(Peer),
-					(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
-					(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
+					case RemoteT of
+						unknown -> true;
+						_ ->
+							(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
+							(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
+					end
 				end,
 				[ P || P <- Peers, not is_pid(P) ]
 			)
@@ -191,7 +195,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 fill_to_capacity(Peers, ToWrite) -> fill_to_capacity(Peers, ToWrite, ToWrite).
 fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, ToWrite, BHL) ->
-	timer:sleep(5 * 1000),
+	timer:sleep(1 * 1000),
 	try
 		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
 		case ar_node_utils:get_full_block(Peers, RandHash, BHL) of
