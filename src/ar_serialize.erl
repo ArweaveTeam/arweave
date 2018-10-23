@@ -38,7 +38,8 @@ block_to_json_struct(
 		tags = Tags,
 		reward_pool = RewardPool,
 		weave_size = WeaveSize,
-		block_size = BlockSize
+		block_size = BlockSize,
+		cumulative_diff = CDiff
 	}) ->
 	{
 		[
@@ -77,7 +78,8 @@ block_to_json_struct(
 			{tags, Tags},
 			{reward_pool, RewardPool},
 			{weave_size, WeaveSize},
-			{block_size, BlockSize}
+			{block_size, BlockSize},
+			{cumulative_diff, integer_to_binary(CDiff)}
 		]
 	}.
 
@@ -104,6 +106,7 @@ json_struct_to_block(JSONBlock) ->
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
 	HashList = find_value(<<"hash_list">>, BlockStruct),
 	Tags = find_value(<<"tags">>, BlockStruct),
+	CDiff = find_value(<<"cumulative_diff">>, BlockStruct),
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
 		previous_block =
@@ -160,7 +163,12 @@ json_struct_to_block(JSONBlock) ->
 		tags = Tags,
 		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
-		block_size = find_value(<<"block_size">>, BlockStruct)
+		block_size = find_value(<<"block_size">>, BlockStruct),
+		cumulative_diff =
+			case CDiff of
+				undefined -> 0;
+				_ -> CDiff
+			end
 	}.
 
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a

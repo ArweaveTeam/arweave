@@ -44,7 +44,8 @@ start() ->
 		{reward_pool, 0},                   % current mining rewardpool of the weave
 		{diff, 0},                          % current mining difficulty of the weave (no. of preceeding zero)
 		{last_retarget, undefined},         % timestamp at which the last difficulty retarget occurred
-		{weave_size, 0}                     % current size of the weave in bytes (only inc. data tx size)
+		{weave_size, 0},                    % current size of the weave in bytes (only inc. data tx size)
+		{cumulative_diff, 0}                % Sum of the difficulty squared along the current weave
 	]),
 	{ok, Pid}.
 
