@@ -111,7 +111,7 @@ verify(TX, Diff, WalletList) ->
 		end,
 		{true, [{validate_tx, ar_util:encode(TX#tx.id)}], []},
 		Checks),
-	% ar:report(lists:reverse(Report)),
+	ar:report(lists:reverse(Report)),
 	maybe_store_reason(TX#tx.id, Result, Reason),
 	Result.
 -else.

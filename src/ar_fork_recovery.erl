@@ -148,7 +148,7 @@ do_fork_recover(S = #state {
 					]
 				),
 				server(S);
-			H ->
+			_ ->
 				ar:report(
 					[
 						updating_fork_recovery_target,

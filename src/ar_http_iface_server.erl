@@ -106,7 +106,7 @@ handle(Req, _Args) ->
 	case ar_meta_db:get({peer, Peer}) of
 		not_found ->
 			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
-		X -> do_nothing
+		_ -> do_nothing
 	end,
 	case handle(Req#req.method, elli_request:path(Req), Req) of
 		{Status, Hdrs, Body} ->
@@ -882,7 +882,7 @@ process_request(get_block, [<<"height">>, ID], XVersion) ->
 
 get_block_by_filename(Filename, <<"8">>, _) ->
 	{ok, [], {file, Filename}};
-get_block_by_filename(Filename, <<"7">>, false) ->
+get_block_by_filename(_, <<"7">>, false) ->
 	{426, [], <<"Client version incompatible.">>};
 get_block_by_filename(Filename, <<"7">>, _) ->
 	% Support for legacy nodes (pre-1.5).

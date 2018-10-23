@@ -22,7 +22,7 @@ handle(Req, _Config) ->
 			end
 	end.
 
-handle_event(elli_startup, [], Config) ->
+handle_event(elli_startup, [], _Config) ->
 	ar:report([{?MODULE, starting}, {handle_event, elli_startup}]),
 	ets:new(?THROTTLE_TABLE, [set, public, named_table]),
 %	{ok,_} = timer:apply_interval(?THROTTLE_PERIOD,?MODULE, reset_counters, []),
