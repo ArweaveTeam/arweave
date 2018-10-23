@@ -57,7 +57,7 @@ get_full_block(Peers, ID, BHL) when is_list(Peers) ->
 				Peers
 			);
 		Block ->
-			case make_full_block(ID, BHL) of
+			case make_full_block(Block) of
 				unavailable ->
 					ar_storage:invalidate_block(Block),
 					get_full_block(Peers, ID, BHL);
@@ -318,12 +318,20 @@ integrate_new_block(
 	ar_storage:write_tx(BlockTXs),
 	ar_storage:write_block(NewB),
 	% Recurse over the new block.
+	ar:report_miner(
+		"Accepted foreign block ~s.",
+		[ar_util:encode(NewB#block.indep_hash)]
+	),
 	ar:report_console(
 		[
 			{accepted_foreign_block, ar_util:encode(NewB#block.indep_hash)},
 			{height, NewB#block.height}
 		]
 	),
+	case whereis(fork_recovery_server) of
+		undefined -> do_nothing;
+		PID       -> PID ! {parent_accepted_block, NewB}
+	end,
 	% ar:d({new_hash_list, [NewB#block.indep_hash | HashList]}),
 	app_search:update_tag_table(NewB),
 	lists:foreach(
@@ -586,22 +594,20 @@ validate_wallet_list([_ | Rest]) ->
 %% @doc Convert a block with tx references into a full block, that is a block
 %% containing the entirety of all its referenced txs.
 make_full_block(ID, BHL) ->
-	case ar_storage:read_block(ID, BHL) of
-		unavailable ->
-			unavailable;
-		BlockHeader ->
-			FullB =
-				BlockHeader#block{
-					txs =
-						get_tx(
-							whereis(http_entrypoint_node),
-							BlockHeader#block.txs
-						)
-				},
-			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
-				[] -> FullB;
-				_  -> unavailable
-			end
+	make_full_block(ar_storage:read_block(ID, BHL)).
+make_full_block(unavailable) -> unavailable;
+make_full_block(BlockHeader) ->
+	FullB =
+		BlockHeader#block{
+			txs =
+				get_tx(
+					whereis(http_entrypoint_node),
+					BlockHeader#block.txs
+				)
+		},
+	case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
+		[] -> FullB;
+		_  -> unavailable
 	end.
 
 %% @doc Return a specific tx from a node, if it has it.
@@ -695,14 +701,7 @@ alter_wallet(WalletList, Target, Adjustment) ->
 
 %% @doc Calculate the total mining reward for the a block and it's associated TXs.
 calculate_reward(Height, Quantity) ->
-	erlang:trunc(calculate_static_reward(Height) + Quantity).
-
-%% @doc Calculate the static reward received for mining a given block.
-%% This reward portion depends only on block height, not the number of transactions.
-calculate_static_reward(Height) when Height =< ?REWARD_DELAY->
-	1;
-calculate_static_reward(Height) ->
-	?AR((0.2 * ?GENESIS_TOKENS * math:pow(2,-(Height-?REWARD_DELAY)/?BLOCK_PER_YEAR) * math:log(2))/?BLOCK_PER_YEAR).
+	erlang:trunc(ar_inflation:calculate(Height) + Quantity).
 
 %% @doc Given a TX, calculate an appropriate reward.
 calculate_tx_reward(#tx { reward = Reward }) ->
@@ -737,8 +736,3 @@ generate_floating_wallet_list(WalletList, [T | TXs]) ->
 			generate_floating_wallet_list(UpdatedWalletList, TXs);
 		false -> false
 	end.
-
-%%%
-%%% EOF
-%%%
-
