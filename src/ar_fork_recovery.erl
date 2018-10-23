@@ -18,8 +18,8 @@
 	peers, % Lists of the nodes peers to try retrieve blocks
 	target_block, % The target block being recovered too
 	recovery_hash_list, % Complete hash list for this fork
-	block_list, % List of block hashes shared between current and target block
-	hash_list % List of block hashes needing to be applied
+	block_list, % List of hashes of verified blocks
+	hash_list % List of block hashes needing to be verified and applied (lowest to highest)
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
@@ -89,43 +89,89 @@ server(#state {
 		parent = Parent
 	}) ->
 	Parent ! {fork_recovered, BlockList};
-server(S = #state {
+server(S = #state { target_block = TargetB }) ->
+	receive
+		{parent_accepted_block, B} ->
+			if B#block.height > TargetB#block.height ->
+				ar:report(
+					[
+						stopping_fork_recovery,
+						{reason, parent_accepted_higher_block_than_target}
+					]
+				),
+				ok;
+			true ->
+				ar:report(
+					[
+						continuing_fork_recovery,
+						{reason, parent_accepted_lower_block_than_target}
+					]
+				),
+				server(S)
+			end
+	after 0 ->
+		do_fork_recover(S)
+	end.
+
+do_fork_recover(S = #state {
 		block_list = BlockList,
 		peers = Peers,
 		hash_list = [NextH | HashList],
 		target_block = TargetB,
-		recovery_hash_list = BHL
+		recovery_hash_list = BHL,
+		parent = Parent
 	}) ->
 	receive
 	{update_target_block, Block, Peer} ->
-		NewBHashlist = [Block#block.indep_hash | Block#block.hash_list],
+		NewBHL = [Block#block.indep_hash | Block#block.hash_list],
 		% If the new retarget blocks hashlist contains the hash of the last
 		% retarget should be recovering to the same fork.
-		case lists:member(TargetB#block.indep_hash, NewBHashlist) of
-			true ->
-				HashListExtra =
-					setminus(
-						lists:reverse([NewBHashlist]),
-						lists:reverse(BlockList) ++ [NextH | HashList]
+		NewToVerify =
+			case lists:member(TargetB#block.indep_hash, NewBHL) of
+				true ->
+					ar:report([encountered_block_on_same_fork_as_recovery_process]),
+					drop_until_diverge(
+						lists:reverse(NewBHL),
+						lists:reverse(BlockList)
 					);
-			false -> HashListExtra = []
-		end,
-		case HashListExtra of
+				false ->
+					ar:report([encountered_block_on_different_fork_to_recovery_process]),
+					[]
+			end,
+		case NewToVerify of
 			[] ->
-				ar:report(failed_to_update_target_block),
+				ar:report(
+					[
+						not_updating_target_block,
+						{ignored_block, ar_util:encode(Block#block.indep_hash)},
+						{height, Block#block.height}
+					]
+				),
 				server(S);
 			H ->
 				ar:report(
 					[
-						{current_target, TargetB#block.height},
-						{updating_target_block, Block#block.height}
+						updating_fork_recovery_target,
+						{current_target_height, TargetB#block.height},
+						{current_target_hash, ar_util:encode(TargetB#block.indep_hash)},
+						{new_target_height, Block#block.height},
+						{new_target_hash, ar_util:encode(Block#block.indep_hash)},
+						{still_to_verify, length(NewToVerify)}
 					]
 				),
+				NewPeers =
+					ar_util:unique(
+						Peers ++
+						if is_list(Peer) -> Peer;
+						true -> [Peer]
+						end
+					),
 				server(
 					S#state {
-						hash_list = [NextH | HashList] ++ H,
-						peers = ar_util:unique(Peer ++ Peers),
-						target_block = Block
+						hash_list = NewToVerify,
+						peers = NewPeers,
+						target_block = Block,
+						recovery_hash_list = NewBHL
 					}
 				)
 		end;
@@ -245,6 +291,17 @@ server(S = #state {
 								{block_height, NextB#block.height}
 							]
 						),
+						case ar_meta_db:get(partial_fork_recovery) of
+							true ->
+								ar:report(
+									[
+										reported_partial_fork_recovery,
+										{height, NextB#block.height}
+									]
+								),
+								Parent ! {fork_recovered, [NextH | BlockList]};
+							_ -> do_nothing
+						end,
 						self() ! apply_next_block,
 						ar_storage:write_tx(NextB#block.txs),
 						ar_storage:write_block(NextB#block {txs = [T#tx.id || T <- NextB#block.txs]}),
