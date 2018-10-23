@@ -70,7 +70,7 @@ get_full_block_from_remote_peers(Peers, ID, BHL) ->
 				true ->
 					ar:report(
 						[
-							{got_block, ar_util:encode(ID)},
+							{downloaded_block, ar_util:encode(ID)},
 							{peer, Peer},
 							{time, Time}
 						]

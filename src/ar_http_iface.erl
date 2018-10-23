@@ -967,7 +967,7 @@ get_full_block(Peer, ID, BHL) ->
 					hash_list = HashList,
 					wallet_list = WalletList
 				},
-			case lists:any(fun erlang:is_atom/1, FullB#block.txs) of
+			case lists:any(fun erlang:is_atom/1, FullB#block.txs) or is_atom(WalletList) of
 				false -> FullB;
 				true -> unavailable
 			end;
@@ -986,7 +986,8 @@ get_wallet_list(Peer, Hash) ->
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			ar_serialize:dejsonify(ar_serialize:json_struct_to_wallet_list(Body));
-		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
+		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found;
+		_ -> unavailable
 	end.
 
 %% @doc Get a block hash list (by its hash) from the external peer.
