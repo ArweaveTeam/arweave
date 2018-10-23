@@ -1563,10 +1563,12 @@ get_fun_msg_pair(send_new_tx) ->
 	, too_many_requests}.
 
 %% @doc Frame to test spamming an endpoint.
+%% TODO: Perform the requests in parallel. Just changing the lists:map/2 call
+%% to an ar_util:pmap/2 call fails the tests currently.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_blacklist:reset_counters(),
-	Responses =	ar_util:pmap(RequestFun, lists:seq(1, NRequests)),
+	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
 	ar_blacklist:reset_counters(),
 	ByResponseType = count_by_response_type(ErrorResponse, Responses),
