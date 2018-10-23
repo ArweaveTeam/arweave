@@ -88,7 +88,7 @@ generate_map(Peers) ->
                     end,
                     ar_http_iface:get_peers(Peer)
                 )
-            } 
+            }
         end,
         Peers
     ).
@@ -98,7 +98,7 @@ generate_dot_file(File, Map) ->
     case file:open(File, [write]) of
         {ok, FileRef} ->
             io:fwrite(FileRef, "digraph network_map { ~n", []),
-            io:fwrite(FileRef, 
+            io:fwrite(FileRef,
                       "    init [style=filled,color=\".7 .3 .9\"];~n", []),
             do_generate_dot_file(Map, FileRef),
             ok;
