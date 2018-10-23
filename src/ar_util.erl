@@ -155,22 +155,21 @@ unique(Res, [X|Xs]) ->
 
 %% @doc Run a map in parallel.
 %% NOTE: Make this efficient for large lists.
-%% NOTE: Does not maintain list stability.
 pmap(Mapper, List) ->
 	Master = self(),
-	Ref = make_ref(),
-	lists:foreach(fun(Elem) ->
+	ListWithRefs = [{Elem, make_ref()} || Elem <- List],
+	lists:foreach(fun({Elem, Ref}) ->
 		spawn_link(fun() ->
 			Master ! {pmap_work, Ref, Mapper(Elem)}
 		end)
-	end, List),
+	end, ListWithRefs),
 	lists:map(
-		fun(_) ->
+		fun({_, Ref}) ->
 			receive
 				{pmap_work, Ref, Mapped} -> Mapped
 			end
 		end,
-		List
+		ListWithRefs
 	).
 
 %% @doc Generate a list of GENESIS wallets, from the CSV file.
@@ -246,10 +245,11 @@ round_trip_encode_test() ->
 
 %% Test the paralell mapping functionality.
 pmap_test() ->
-	Res = pmap(fun(X) -> receive after 500 -> X * 2 end end, [1, 5, 10]),
-	true = lists:member(2, Res),
-	true = lists:member(10, Res),
-	true = lists:member(20, Res).
+	Mapper = fun(X) ->
+		timer:sleep(100 * X),
+		X * 2
+	end,
+	?assertEqual([6, 2, 4], pmap(Mapper, [3, 1, 2])).
 
 recall_block_test() ->
 	ar_storage:clear(),
