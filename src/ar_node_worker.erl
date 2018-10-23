@@ -366,7 +366,9 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 	StateNext = StateIn#{ gossip => NewGS },
 	#{
 		reward_pool := RewardPool,
-		wallet_list := WalletList
+		wallet_list := WalletList,
+		cumulative_diff := CDiff,
+		hash_list := BHL
 	} = StateNext,
 	% If transaction not found in state or storage, txlist built will be
 	% incomplete and will fail in validate
@@ -416,7 +418,11 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 			end;
 		false ->
 			ar:report([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
-			ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
+			case is_state_preferable(NewB, CDiff, BHL) of
+				false -> [];
+				true ->
+					ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
+			end
 	end,
 	{ok, StateOut};
 process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
@@ -430,10 +436,14 @@ process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList
 		]
 	),
 	{ok, [{gossip, NewGS}]};
-process_new_block(#{ height := Height } = StateIn, NewGS, NewB, _RecallB, Peer, _HashList)
+process_new_block(#{ height := Height, cumulative_diff := CDiff } = StateIn, NewGS, NewB, _RecallB, Peer, HashList)
 		when (NewB#block.height > Height + 1) ->
-	StateOut = ar_node_utils:fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB),
-	{ok, StateOut}.
+	case is_state_preferable(NewB, CDiff, HashList) of
+		true ->
+			{ok, ar_node_utils:fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB)};
+		false ->
+			none
+	end.
 
 %% @doc Verify a new block found by a miner, integrate it.
 integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp) ->
@@ -587,8 +597,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 
 
 %% @doc Handle executed fork recovery.
-recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
-		when HashList == not_joined ->
+recovered_from_fork(#{ id := BinID, hash_list := not_joined} = StateIn, NewHs) ->
 	timer:sleep(15 * 1000),
 	NewB = ar_storage:read_block(hd(NewHs), NewHs),
 	ar:report_console(
@@ -625,13 +634,23 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 			weave_size           => NewB#block.weave_size
 		}
 	)};
-recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
-		when (length(NewHs)) > (length(HashList)) ->
+recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs) ->
 	case whereis(fork_recovery_server) of
 		undefined -> ok;
 		_		  -> erlang:unregister(fork_recovery_server)
 	end,
 	NewB = ar_storage:read_block(hd(NewHs), NewHs),
+	case is_state_preferable(NewB, maps:get(cumulative_diff), HashList) of
+		true ->
+			do_recovered_from_fork(StateIn, NewB);
+		false ->
+			none
+	end;
+recovered_from_fork(_StateIn, _) ->
+	none.
+
+do_recovered_from_fork(StateIn, NewB) ->
+	#{ id := BinID, hash_list := HashList } = StateIn,
 	ar:report_console(
 		[
 			fork_recovered_successfully,
@@ -639,6 +658,7 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 		]
 	),
 	ar_miner_log:fork_recovered(NewB#block.indep_hash),
+	NextBHL = [NewB#block.indep_hash | NewB#block.hash_list],
 	% ar_cleanup:remove_invalid_blocks(NewHs),
 	TXPool = maps:get(txs, StateIn) ++ maps:get(potential_txs, StateIn),
 	TXs =
@@ -647,11 +667,10 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 			TXPool
 		),
 	PotentialTXs = TXPool -- TXs,
-	NewHS = [NewB#block.indep_hash | NewB#block.hash_list],
-	ar_storage:write_block_hash_list(BinID, NewHS),
+	ar_storage:write_block_hash_list(BinID, NextBHL),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
-			hash_list            => NewHS,
+			hash_list            => NextBHL,
 			current              => NewB#block.indep_hash,
 			wallet_list          => NewB#block.wallet_list,
 			height               => NewB#block.height,
@@ -661,11 +680,19 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 			potential_txs        => PotentialTXs,
 			diff                 => NewB#block.diff,
 			last_retarget        => NewB#block.last_retarget,
-			weave_size           => NewB#block.weave_size
+			weave_size           => NewB#block.weave_size,
+			cumulative_diff      => NewB#block.cumulative_diff
 		}
-	)};
-recovered_from_fork(_StateIn, _) ->
-	none.
+	)}.
+
+%% @doc Test whether a new state is 'preferable' to the current one.
+%% If we have not joined, any state is an improvement. Otherwise, the
+%% cumulative difficulty must increase.
+is_state_preferable(NewB, _CDiff, OldBHL) when NewB#block.height < ?FORK_1_6 ->
+	(length(NewB#block.hash_list) + 1) > (length(OldBHL));
+is_state_preferable(_NewB, _CDiff, not_joined) -> true;
+is_state_preferable(NewB, OldCDiff, _OldBHL) ->
+	NewB#block.cumulative_diff > OldCDiff.
 
 %% @doc Aggregates the transactions of a state to one list.
 aggregate_txs(#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs}) ->
