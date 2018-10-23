@@ -156,16 +156,21 @@ unique(Res, [X|Xs]) ->
 %% @doc Run a map in parallel.
 %% NOTE: Make this efficient for large lists.
 %% NOTE: Does not maintain list stability.
-pmap(Fun, List) ->
+pmap(Mapper, List) ->
 	Master = self(),
 	Ref = make_ref(),
+	lists:foreach(fun(Elem) ->
+		spawn_link(fun() ->
+			Master ! {pmap_work, Ref, Mapper(Elem)}
+		end)
+	end, List),
 	lists:map(
 		fun(_) ->
 			receive
-				{pmap_work, Ref, X} -> X
+				{pmap_work, Ref, Mapped} -> Mapped
 			end
 		end,
-		lists:map(fun(Elem) -> Master ! {pmap_work, Ref, Fun(Elem)} end, List)
+		List
 	).
 
 %% @doc Generate a list of GENESIS wallets, from the CSV file.
