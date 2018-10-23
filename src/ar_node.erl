@@ -163,17 +163,14 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				),
 			Wallets = ar_util:wallets_from_hashes(HashList),
 			Height = ar_util:height_from_hashes(HashList),
-			RewardPool =
+			{RewardPool, WeaveSize} =
 				case HashList of
-					not_joined -> 0;
-					[H | _] -> (ar_storage:read_block(H, HashList))#block.reward_pool
+					not_joined ->
+						{0,0};
+					[H | _] ->
+						B = ar_storage:read_block(H, HashList),
+						{B#block.reward_pool, B#block.weave_size}
 				end,
-			WeaveSize =
-					case HashList of
-						not_joined -> 0;
-						[H2 | _] -> (ar_storage:read_block(H2, HashList))#block.weave_size
-					end,
-
 			% Start processes, init state, and start server.
 			NPid = self(),
 			{ok, SPid} = ar_node_state:start(),

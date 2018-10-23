@@ -261,4 +261,3 @@ node_join_test() ->
 	timer:sleep(1500),
 	[B|_] = ar_node:get_blocks(Node1),
 	3 = (ar_storage:read_block(B, ar_node:get_hash_list(Node1)))#block.height.
-

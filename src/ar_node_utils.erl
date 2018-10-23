@@ -390,7 +390,7 @@ fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 			),
 			case PID of
 				undefined -> ok;
-				_		  -> erlang:register(fork_recovery_server, PID)
+				_         -> erlang:register(fork_recovery_server, PID)
 			end;
 		{undefined, _} ->
 			ok;
