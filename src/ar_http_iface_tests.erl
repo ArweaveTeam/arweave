@@ -539,7 +539,7 @@ fork_recover_by_http_test_() ->
 		ar_http_iface_server:reregister(Node1),
 		NewB = ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
 		BDS = ar_block:generate_block_data_segment(
-			BGen,
+			ar_storage:read_block(NewB#block.previous_block, ar_node:get_hash_list(Node2)),
 			BGen,
 			lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
 			NewB#block.reward_addr,
