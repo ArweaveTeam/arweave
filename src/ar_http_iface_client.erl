@@ -195,6 +195,18 @@ get_current_block(Peer) ->
 		)
 	).
 
+%% @doc Get the minimum cost that a remote peer would charge for
+%% a transaction of the given data size in bytes.
+get_tx_reward(Peer, Size) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/price/" ++ integer_to_list(Size),
+			[]
+		),
+	binary_to_integer(Body).
+
 %% @doc Retreive a block by height or hash from a remote peer.
 get_block(Peer, ID, BHL) ->
 	get_full_block(Peer, ID, BHL).
@@ -354,6 +366,22 @@ get_tx(Peer, Hash) ->
 		)
 	).
 
+%% @doc Retreive only the data associated with a transaction.
+get_tx_data(Peer, Hash) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/" ++ binary_to_list(ar_util:encode(Hash)),
+			[]
+		),
+	Body.
+
+%% @doc Retreive the current universal time as claimed by a foreign node.
+get_time(Peer) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_httpc:request(<<"GET">>, Peer, "/time", []),
+	binary_to_integer(Body).
+
 %% @doc Retreive all valid transactions held that have not yet been mined into
 %% a block from a remote peer.
 get_pending_txs(Peer) ->
@@ -489,7 +517,3 @@ handle_tx_response({ok, {{<<"202">>, _}, _, _, _, _}}) -> pending;
 handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_tx_response({ok, {{<<"410">>, _}, _, _, _, _}}) -> gone;
 handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found.
-
-%%%
-%%% EOF
-%%%

@@ -89,11 +89,24 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 handle(Req, _Args) ->
 	% Inform ar_bridge about new peer, performance rec will be updated  from ar_metrics
 	% (this is leftover from update_performance_list)
-	case ar_meta_db:get({peer, ar_util:parse_peer(elli_request:peer(Req))}) of
+	Peer = ar_util:parse_peer(elli_request:peer(Req)),
+	case ar_meta_db:get(http_logging) of
+		true ->
+			ar:report(
+				[
+					http_request,
+					{method, Req#req.method},
+					{path, elli_request:path(Req)},
+					{peer, Peer}
+				]
+			);
+		_ ->
+			do_nothing
+	end,
+	case ar_meta_db:get({peer, Peer}) of
 		not_found ->
-			ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(elli_request:peer(Req)));
-		X ->
-			X
+			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
+		X -> do_nothing
 	end,
 	case handle(Req#req.method, elli_request:path(Req), Req) of
 		{Status, Hdrs, Body} ->
@@ -109,6 +122,13 @@ handle('GET', [], _Req) ->
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
 
+%% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node
+%% is alive. Appease them.
+handle('HEAD', [], _Req) ->
+	{200, [], <<>>};
+handle('HEAD', [<<"info">>], _Req) ->
+	{200, [], <<>>};
+
 %% @doc Return permissive CORS headers for all endpoints
 handle('OPTIONS', [<<"block">>], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
@@ -118,6 +138,10 @@ handle('OPTIONS', [<<"peer">>|_], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
 handle('OPTIONS', _, _Req) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
+
+%% @doc Return the current universal time in seconds.
+handle('GET', [<<"time">>], _Req) ->
+	{200, [], integer_to_binary(os:system_time(second))};
 
 %% @doc Return all transactions from node that are waiting to be mined into a block.
 %% GET request to endpoint /tx/pending
@@ -190,7 +214,16 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 			{404, [], {file, "data/not_found.html"}};
 		{ok, Filename} ->
 			T = ar_storage:do_read_tx(Filename),
-			{200, [], T#tx.data}
+			{
+				200,
+				[
+					{
+						<<"Content-Type">>,
+						proplists:get_value(<<"Content-Type">>, T#tx.tags, "text/html")
+					}
+				],
+				T#tx.data
+			}
 	end;
 
 %% @doc Share a new block to a peer.
@@ -342,7 +375,6 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 %		ar_util:encode(ar_block:encrypt_block(B, Key, Nonce))
 %	}.
 
-
 %% @doc Return the blockshadow corresponding to the indep_hash / height.
 %% GET request to endpoint /block/{height|hash}/{indep_hash|height}
 handle('GET', [<<"block">>, Type, IDBin], Req) ->
@@ -419,11 +451,29 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 					{404, [], <<"Not Found.">>}
 			end;
 		{ok, Filename} ->
-			{ok, JSONBlock} = file:read_file(Filename),
-			{TXJSON} = ar_serialize:dejsonify(JSONBlock),
-			case safe_val_for_key(Field, TXJSON) of
-				{ok, Res} -> {200, Res};
-				error     -> {404, <<"Not Found.">>}
+			case Field of
+				<<"tags">> ->
+					TX = ar_storage:do_read_tx(Filename),
+					{200, [], ar_serialize:jsonify(
+						lists:map(
+							fun({Name, Value}) ->
+								{
+									[
+										{name, ar_util:encode(Name)},
+										{value, ar_util:encode(Value)}
+									]
+								}
+							end,
+							TX#tx.tags
+						)
+					)};
+				_ ->
+					{ok, JSONBlock} = file:read_file(Filename),
+					{TXJSON} = ar_serialize:dejsonify(JSONBlock),
+					case safe_val_for_key(Field, TXJSON) of
+						{ok, Res} -> {200, Res};
+						error     -> {404, <<"Not Found.">>}
+					end
 			end
 	end;
 
@@ -446,6 +496,17 @@ handle('POST', [<<"services">>], Req) ->
 		)
 	),
 	{200, [], "OK"};
+
+%% @doc If we are given a hash with no specifier (block, tx, etc), assume that
+%% the user is requesting the data from the TX associated with that hash.
+%% Optionally allow a file extension.
+handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
+	Ext =
+		case MaybeExt of
+			<< ".", Part/binary >> -> Part;
+			<<>> -> <<"html">>
+		end,
+	handle('GET', [<<"tx">>, Hash, <<"data.", Ext/binary>>], Req);
 
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
@@ -795,7 +856,11 @@ post_peers(Req, Port, <<?NETWORK_NAME>>) ->
 	Peer = ar_util:parse_peer({NetPeer, Port}),
 	case is_valid_peer_time(Peer) of
 		true ->
-			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer),
+			case ar_meta_db:get({peer, Peer}) of
+				not_found ->
+					ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
+				X -> X
+			end,
 			{200, [], []};
 		false ->
 			{400, [], "Invalid peer time."}
@@ -809,15 +874,17 @@ process_request(get_block, [<<"hash">>, ID], XVersion) ->
 		{error, _, unavailable} ->
 			{404, [], <<"Block not found.">>};
 		{ok, Filename} ->
-			get_block_by_filename(Filename, XVersion)
+			get_block_by_filename(Filename, XVersion, ar_meta_db:get(api_compat))
 	end;
 process_request(get_block, [<<"height">>, ID], XVersion) ->
 	Filename = ar_storage:lookup_block_filename(ID),
-	get_block_by_filename(Filename, XVersion).
+	get_block_by_filename(Filename, XVersion, ar_meta_db:get(api_compat)).
 
-get_block_by_filename(Filename, <<"8">>) ->
+get_block_by_filename(Filename, <<"8">>, _) ->
 	{ok, [], {file, Filename}};
-get_block_by_filename(Filename, <<"7">>) ->
+get_block_by_filename(Filename, <<"7">>, false) ->
+	{426, [], <<"Client version incompatible.">>};
+get_block_by_filename(Filename, <<"7">>, _) ->
 	% Support for legacy nodes (pre-1.5).
 	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	try ar_storage:do_read_block(Filename, BHL) of
