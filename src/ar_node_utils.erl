@@ -517,6 +517,7 @@ validate(
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
+	CumulativeDiffCheck = ar_block:verify_cumulative_diff(NewB, OldB),
 
 	ar:report(
 		[
@@ -535,7 +536,8 @@ validate(
 			{block_retarget_time, RetargetCheck},
 			{block_previous_check, PreviousBCheck},
 			{block_hash_list, HashlistCheck},
-			{block_wallet_list, WalletListCheck}
+			{block_wallet_list, WalletListCheck},
+			{block_cumulative_diff, CumulativeDiffCheck}
 		]
 	),
 
@@ -579,7 +581,8 @@ validate(
 		andalso RetargetCheck
 		andalso PreviousBCheck
 		andalso HashlistCheck
-		andalso WalletListCheck;
+		andalso WalletListCheck
+		andalso CumulativeDiffCheck;
 validate(_HL, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
 	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
