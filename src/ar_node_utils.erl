@@ -75,7 +75,7 @@ get_full_block_from_remote_peers(Peers, ID, BHL) ->
 							{time, Time}
 						]
 					);
-				false -> do_nothing
+				_ -> do_nothing
 			end,
 			B;
 		false ->
