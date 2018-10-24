@@ -11,7 +11,7 @@
 %% Default test error tolerance in percent.
 -define(DEFAULT_TOLERANCE_PERCENT, 0.001).
 %% Height at which the 1.5.0.0 fork takes affect.
--define(FORK_15_HEIGHT, 81000).
+-define(FORK_15_HEIGHT, 95000).
 %% Height at which block rewards began.
 -define(REWARD_START_HEIGHT, 65700).
 %% @doc BLOCK_PER_YEAR macro prior to 1.5.0.0 release.
@@ -19,7 +19,7 @@
 
 %% @doc The number of extra tokens to grant for blocks between the 1.5.0.0 release
 %% and the end of year one.
--define(POST_15_Y1_EXTRA, 11031851716149).
+-define(POST_15_Y1_EXTRA, 13275279633337).
 
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
