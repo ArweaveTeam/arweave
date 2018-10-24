@@ -11,7 +11,7 @@
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
 -export([get_time/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
--export([get_current_block/1]).
+-export([get_current_block/1, get_current_block/2]).
 -export([reregister/1, reregister/2]).
 -export([verify_request_to_blockshadow/1]). %% exported for verifier
 
@@ -482,8 +482,6 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 			{404, [], <<"Block not found.">>};
 		_  ->
 			case {ar_meta_db:get(api_compat), elli_request:get_header(<<"X-Version">>, Req, <<"7">>)} of
-				{_, <<"8">>} ->
-					{ok, [], {file, Filename}};
 				{false, <<"7">>} ->
 					{426, [], <<"Client version incompatible.">>};
 				{_, <<"7">>} ->
@@ -518,7 +516,9 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 							}
 					catch error:cannot_generate_block_hash_list ->
 						{404, [], <<"Requested block not found on block hash list.">>}
-					end
+					end;
+				{_, _} ->
+					{ok, [], {file, Filename}}
 			end
 	end;
 
@@ -861,13 +861,17 @@ add_peer(Peer) ->
 
 %% @doc Get a peers current, top block.
 get_current_block(Peer) ->
+	get_current_block(Peer, get_hash_list(Peer)).
+get_current_block(Peer, BHL) ->
 	handle_block_response(
+		Peer,
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
 			"/current_block",
 			[]
-		)
+		),
+		BHL
 	).
 
 %% @doc Get the minimum cost that a remote peer would charge for
@@ -934,45 +938,16 @@ prepare_block_id(ID) when is_integer(ID) ->
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer.
 get_full_block(Peer, ID, BHL) ->
-	B =
-		handle_block_response(
-			ar_httpc:request(
-				<<"GET">>,
-				Peer,
-				prepare_block_id(ID),
-				[]
-			)
+	handle_block_response(
+		Peer,
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			prepare_block_id(ID),
+			[]
 		),
-	case ?IS_BLOCK(B) of
-		true ->
-			WalletList =
-				case is_binary(WL = B#block.wallet_list) of
-					true ->
-						case ar_storage:read_wallet_list(WL) of
-							{error, _} ->
-								get_wallet_list(Peer, WL);
-							ReadWL -> ReadWL
-						end;
-					false -> WL
-				end,
-			HashList =
-				case B#block.hash_list of
-					undefined ->
-						ar_block:generate_hash_list_for_block(B, BHL);
-					HL -> HL
-				end,
-			FullB =
-				B#block {
-					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
-					hash_list = HashList,
-					wallet_list = WalletList
-				},
-			case lists:any(fun erlang:is_atom/1, FullB#block.txs) or is_atom(WalletList) of
-				false -> FullB;
-				true -> unavailable
-			end;
-		false -> B
-	end.
+		BHL
+	).
 
 %% @doc Get a wallet list (by its hash) from the external peer.
 get_wallet_list(Peer, Hash) ->
@@ -1141,12 +1116,42 @@ process_get_info(Body) ->
 	].
 
 %% @doc Process the response of an /block call.
-handle_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_block(Body);
-handle_block_response({error, _}) -> unavailable;
-handle_block_response({ok, {{<<"400">>, _}, _, _, _, _}}) -> unavailable;
-handle_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+handle_block_response(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
+	B = ar_serialize:json_struct_to_block(Body),
+	case ?IS_BLOCK(B) of
+		true ->
+			WalletList =
+				case is_binary(WL = B#block.wallet_list) of
+					true ->
+						case ar_storage:read_wallet_list(WL) of
+							{error, _} ->
+								get_wallet_list(Peer, WL);
+							ReadWL -> ReadWL
+						end;
+					false -> WL
+				end,
+			HashList =
+				case B#block.hash_list of
+					unset ->
+						ar_block:generate_hash_list_for_block(B, BHL);
+					HL -> HL
+				end,
+			FullB =
+				B#block {
+					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
+					hash_list = HashList,
+					wallet_list = WalletList
+				},
+			case lists:any(fun erlang:is_atom/1, FullB#block.txs) or is_atom(WalletList) of
+				false -> FullB;
+				true -> unavailable
+			end;
+		false -> B
+	end;
+handle_block_response(_, {error, _}, _) -> unavailable;
+handle_block_response(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
+handle_block_response(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable.
 
 %% @doc Process the response of a /block/.../all call.
 handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
