@@ -7,7 +7,7 @@
 -define(CLIENT_VERSION, 3).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 13).
+-define(RELEASE_NUMBER, 14).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
