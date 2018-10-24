@@ -599,7 +599,7 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) ->
 		_		  -> erlang:unregister(fork_recovery_server)
 	end,
 	NewB = ar_storage:read_block(hd(NewHs), NewHs),
-	case is_state_preferable(NewB, maps:get(cumulative_diff), HashList) of
+	case is_state_preferable(NewB, maps:get(cumulative_diff, StateIn), HashList) of
 		true ->
 			do_recovered_from_fork(StateIn, NewB);
 		false ->
