@@ -481,10 +481,10 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		_  ->
-			case {ar_meta_db:get(api_compat), elli_request:get_header(<<"X-Version">>, Req, <<"7">>)} of
-				{false, <<"7">>} ->
+			case {ar_meta_db:get(api_compat), elli_request:get_header(<<"X-Block-Format">>, Req, <<"1">>)} of
+				{false, <<"1">>} ->
 					{426, [], <<"Client version incompatible.">>};
-				{_, <<"7">>} ->
+				{_, <<"1">>} ->
 					% Supprt for legacy nodes (pre-1.5).
 					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 					try ar_storage:do_read_block(Filename, BHL) of
@@ -863,16 +863,7 @@ add_peer(Peer) ->
 get_current_block(Peer) ->
 	get_current_block(Peer, get_hash_list(Peer)).
 get_current_block(Peer, BHL) ->
-	handle_block_response(
-		Peer,
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/current_block",
-			[]
-		),
-		BHL
-	).
+	get_full_block(Peer, hd(BHL), BHL).
 
 %% @doc Get the minimum cost that a remote peer would charge for
 %% a transaction of the given data size in bytes.
@@ -960,7 +951,7 @@ get_wallet_list(Peer, Hash) ->
 		),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			ar_serialize:dejsonify(ar_serialize:json_struct_to_wallet_list(Body));
+			ar_serialize:json_struct_to_wallet_list(Body);
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found;
 		_ -> unavailable
 	end.
@@ -1125,7 +1116,7 @@ handle_block_response(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
 					true ->
 						case ar_storage:read_wallet_list(WL) of
 							{error, _} ->
-								get_wallet_list(Peer, WL);
+								get_wallet_list(Peer, B#block.indep_hash);
 							ReadWL -> ReadWL
 						end;
 					false -> WL
