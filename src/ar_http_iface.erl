@@ -1383,31 +1383,27 @@ process_request(get_block, [Type, ID, <<"hash_list">>]) ->
 		false ->
 			{404, [], <<"Block not found.">>}
 	end;
-%% @doc Return the wallet list associated with a block.
+%% @doc Return the wallet list associated with a block (as referenced by hash
+%% or height).
 process_request(get_block, [Type, ID, <<"wallet_list">>]) ->
 	HTTPEntryPointPid = whereis(http_entrypoint_node),
-	B =
-		case Type of
-			<<"height">> ->
-				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
-				ar_node:get_block(
-					HTTPEntryPointPid,
-					ID,
-					CurrentBHL);
-			<<"hash">> ->
-				ar_storage:read_block(ID, ar_node:get_hash_list(HTTPEntryPointPid))
-		end,
-	case ?IS_BLOCK(B) of
+	CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
+	case is_block_known(Type, ID, CurrentBHL) of
+		false -> {404, [], <<"Block not found.">>};
 		true ->
-			{200, [],
-				ar_serialize:jsonify(
-					ar_serialize:wallet_list_to_json_struct(
-						B#block.wallet_list
-					)
-				)
-			};
-		false ->
-			{404, [], <<"Block not found.">>}
+			B = find_block(Type, ID, CurrentBHL),
+			case ?IS_BLOCK(B) of
+				true ->
+					{200, [],
+						ar_serialize:jsonify(
+							ar_serialize:wallet_list_to_json_struct(
+								B#block.wallet_list
+							)
+						)
+					};
+				false ->
+					{404, [], <<"Block not found.">>}
+			end
 	end;
 %% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
 %% GET request to endpoint /block/hash/{hash|height}/{field}
@@ -1416,19 +1412,10 @@ process_request(get_block, [Type, ID, <<"wallet_list">>]) ->
 %%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 process_request(get_block, [Type, ID, Field]) ->
+	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	case ar_meta_db:get(subfield_queries) of
 		true ->
-			Block =
-				case Type of
-					<<"height">> ->
-						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-						ar_node:get_block(whereis(http_entrypoint_node),
-							ID,
-							CurrentBHL);
-					<<"hash">> ->
-						ar_storage:read_block(ID, ar_node:get_hash_list(whereis(http_entrypoint_node)))
-				end,
-			case Block of
+			case find_block(Type, ID, CurrentBHL) of
 				unavailable ->
 						{404, [], <<"Not Found.">>};
 				B ->
@@ -1460,6 +1447,23 @@ verify_request_to_blockshadow(Req) ->
 	catch
 		_:_ -> false
 	end.
+
+%% @doc Take a block type specifier, an ID, and a BHL, returning whether the 
+%% given block is part of the BHL.
+is_block_known(<<"height">>, RawHeight, BHL) ->
+	binary_to_integer(RawHeight) < length(BHL);
+is_block_known(<<"hash">>, ID, BHL) ->
+	lists:member(ID, BHL).
+
+%% @doc Find a block, given a type and a specifier.
+find_block(<<"height">>, RawHeight, BHL) ->
+	ar_node:get_block(
+		whereis(http_entrypoint_node),
+		binary_to_integer(RawHeight),
+		BHL
+	);
+find_block(<<"hash">>, ID, BHL) ->
+	ar_storage:read_block(ID, BHL).
 
 %%%
 %%% Tests.
