@@ -11,7 +11,7 @@
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
 -export([get_time/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
--export([get_current_block/1]).
+-export([get_current_block/1, get_current_block/2]).
 -export([reregister/1, reregister/2]).
 -export([verify_request_to_blockshadow/1]). %% exported for verifier
 
@@ -481,12 +481,10 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		_  ->
-			case {ar_meta_db:get(api_compat), elli_request:get_header(<<"X-Version">>, Req, <<"7">>)} of
-				{_, <<"8">>} ->
-					{ok, [], {file, Filename}};
-				{false, <<"7">>} ->
+			case {ar_meta_db:get(api_compat), elli_request:get_header(<<"X-Block-Format">>, Req, <<"1">>)} of
+				{false, <<"1">>} ->
 					{426, [], <<"Client version incompatible.">>};
-				{_, <<"7">>} ->
+				{_, <<"1">>} ->
 					% Supprt for legacy nodes (pre-1.5).
 					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 					try ar_storage:do_read_block(Filename, BHL) of
@@ -518,7 +516,9 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 							}
 					catch error:cannot_generate_block_hash_list ->
 						{404, [], <<"Requested block not found on block hash list.">>}
-					end
+					end;
+				{_, _} ->
+					{ok, [], {file, Filename}}
 			end
 	end;
 
@@ -861,14 +861,9 @@ add_peer(Peer) ->
 
 %% @doc Get a peers current, top block.
 get_current_block(Peer) ->
-	handle_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/current_block",
-			[]
-		)
-	).
+	get_current_block(Peer, get_hash_list(Peer)).
+get_current_block(Peer, BHL) ->
+	get_full_block(Peer, hd(BHL), BHL).
 
 %% @doc Get the minimum cost that a remote peer would charge for
 %% a transaction of the given data size in bytes.
@@ -934,45 +929,16 @@ prepare_block_id(ID) when is_integer(ID) ->
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer.
 get_full_block(Peer, ID, BHL) ->
-	B =
-		handle_block_response(
-			ar_httpc:request(
-				<<"GET">>,
-				Peer,
-				prepare_block_id(ID),
-				[]
-			)
+	handle_block_response(
+		Peer,
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			prepare_block_id(ID),
+			[]
 		),
-	case ?IS_BLOCK(B) of
-		true ->
-			WalletList =
-				case is_binary(WL = B#block.wallet_list) of
-					true ->
-						case ar_storage:read_wallet_list(WL) of
-							{error, _} ->
-								get_wallet_list(Peer, WL);
-							ReadWL -> ReadWL
-						end;
-					false -> WL
-				end,
-			HashList =
-				case B#block.hash_list of
-					undefined ->
-						ar_block:generate_hash_list_for_block(B, BHL);
-					HL -> HL
-				end,
-			FullB =
-				B#block {
-					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
-					hash_list = HashList,
-					wallet_list = WalletList
-				},
-			case lists:any(fun erlang:is_atom/1, FullB#block.txs) or is_atom(WalletList) of
-				false -> FullB;
-				true -> unavailable
-			end;
-		false -> B
-	end.
+		BHL
+	).
 
 %% @doc Get a wallet list (by its hash) from the external peer.
 get_wallet_list(Peer, Hash) ->
@@ -985,7 +951,7 @@ get_wallet_list(Peer, Hash) ->
 		),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			ar_serialize:dejsonify(ar_serialize:json_struct_to_wallet_list(Body));
+			ar_serialize:json_struct_to_wallet_list(Body);
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found;
 		_ -> unavailable
 	end.
@@ -1141,12 +1107,42 @@ process_get_info(Body) ->
 	].
 
 %% @doc Process the response of an /block call.
-handle_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_block(Body);
-handle_block_response({error, _}) -> unavailable;
-handle_block_response({ok, {{<<"400">>, _}, _, _, _, _}}) -> unavailable;
-handle_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+handle_block_response(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
+	B = ar_serialize:json_struct_to_block(Body),
+	case ?IS_BLOCK(B) of
+		true ->
+			WalletList =
+				case is_binary(WL = B#block.wallet_list) of
+					true ->
+						case ar_storage:read_wallet_list(WL) of
+							{error, _} ->
+								get_wallet_list(Peer, B#block.indep_hash);
+							ReadWL -> ReadWL
+						end;
+					false -> WL
+				end,
+			HashList =
+				case B#block.hash_list of
+					unset ->
+						ar_block:generate_hash_list_for_block(B, BHL);
+					HL -> HL
+				end,
+			FullB =
+				B#block {
+					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
+					hash_list = HashList,
+					wallet_list = WalletList
+				},
+			case lists:any(fun erlang:is_atom/1, FullB#block.txs) or is_atom(WalletList) of
+				false -> FullB;
+				true -> unavailable
+			end;
+		false -> B
+	end;
+handle_block_response(_, {error, _}, _) -> unavailable;
+handle_block_response(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
+handle_block_response(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable.
 
 %% @doc Process the response of a /block/.../all call.
 handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
@@ -1364,18 +1360,18 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>]) ->
 	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-	Hash =
-		case Type of
-			<<"height">> ->
-				B =
-					ar_node:get_block(whereis(http_entrypoint_node),
-					ID,
-					CurrentBHL),
-				B#block.indep_hash;
-			<<"hash">> -> ID
-		end,
-	case lists:member(Hash, CurrentBHL) of
+	case is_block_known(Type, ID, CurrentBHL) of
 		true ->
+			Hash =
+				case Type of
+					<<"height">> ->
+						B =
+							ar_node:get_block(whereis(http_entrypoint_node),
+							ID,
+							CurrentBHL),
+						B#block.indep_hash;
+					<<"hash">> -> ID
+				end,
 			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
 			{200, [],
 				ar_serialize:jsonify(
@@ -1387,31 +1383,27 @@ process_request(get_block, [Type, ID, <<"hash_list">>]) ->
 		false ->
 			{404, [], <<"Block not found.">>}
 	end;
-%% @doc Return the wallet list associated with a block.
+%% @doc Return the wallet list associated with a block (as referenced by hash
+%% or height).
 process_request(get_block, [Type, ID, <<"wallet_list">>]) ->
 	HTTPEntryPointPid = whereis(http_entrypoint_node),
-	B =
-		case Type of
-			<<"height">> ->
-				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
-				ar_node:get_block(
-					HTTPEntryPointPid,
-					ID,
-					CurrentBHL);
-			<<"hash">> ->
-				ar_storage:read_block(ID, ar_node:get_hash_list(HTTPEntryPointPid))
-		end,
-	case ?IS_BLOCK(B) of
+	CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
+	case is_block_known(Type, ID, CurrentBHL) of
+		false -> {404, [], <<"Block not found.">>};
 		true ->
-			{200, [],
-				ar_serialize:jsonify(
-					ar_serialize:wallet_list_to_json_struct(
-						B#block.wallet_list
-					)
-				)
-			};
-		false ->
-			{404, [], <<"Block not found.">>}
+			B = find_block(Type, ID, CurrentBHL),
+			case ?IS_BLOCK(B) of
+				true ->
+					{200, [],
+						ar_serialize:jsonify(
+							ar_serialize:wallet_list_to_json_struct(
+								B#block.wallet_list
+							)
+						)
+					};
+				false ->
+					{404, [], <<"Block not found.">>}
+			end
 	end;
 %% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
 %% GET request to endpoint /block/hash/{hash|height}/{field}
@@ -1420,19 +1412,10 @@ process_request(get_block, [Type, ID, <<"wallet_list">>]) ->
 %%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 process_request(get_block, [Type, ID, Field]) ->
+	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	case ar_meta_db:get(subfield_queries) of
 		true ->
-			Block =
-				case Type of
-					<<"height">> ->
-						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-						ar_node:get_block(whereis(http_entrypoint_node),
-							ID,
-							CurrentBHL);
-					<<"hash">> ->
-						ar_storage:read_block(ID, ar_node:get_hash_list(whereis(http_entrypoint_node)))
-				end,
-			case Block of
+			case find_block(Type, ID, CurrentBHL) of
 				unavailable ->
 						{404, [], <<"Not Found.">>};
 				B ->
@@ -1464,6 +1447,25 @@ verify_request_to_blockshadow(Req) ->
 	catch
 		_:_ -> false
 	end.
+
+%% @doc Take a block type specifier, an ID, and a BHL, returning whether the 
+%% given block is part of the BHL.
+is_block_known(<<"height">>, RawHeight, BHL) when is_binary(RawHeight) ->
+	is_block_known(<<"height">>, binary_to_integer(RawHeight), BHL);
+is_block_known(<<"height">>, Height, BHL) ->
+	Height < length(BHL);
+is_block_known(<<"hash">>, ID, BHL) ->
+	lists:member(ID, BHL).
+
+%% @doc Find a block, given a type and a specifier.
+find_block(<<"height">>, RawHeight, BHL) ->
+	ar_node:get_block(
+		whereis(http_entrypoint_node),
+		binary_to_integer(RawHeight),
+		BHL
+	);
+find_block(<<"hash">>, ID, BHL) ->
+	ar_storage:read_block(ID, BHL).
 
 %%%
 %%% Tests.
@@ -1677,6 +1679,27 @@ get_current_block_test() ->
 		2000
 	),
 	?assertEqual(B0, get_current_block({127, 0, 0, 1, 1984})).
+
+%% @doc Test that the various different methods of GETing a block all perform
+%% correctly if the block cannot be found.
+get_non_existent_block_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/wallet_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list", []).
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->

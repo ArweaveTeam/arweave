@@ -7,11 +7,12 @@
 -define(CLIENT_VERSION, 3).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 13).
+-define(RELEASE_NUMBER, 14).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
-		{<<"X-Version">>, list_to_binary(integer_to_list(?RELEASE_NUMBER))}
+		{<<"X-Version">>, <<"8">>},
+		{<<"X-Block-Format">>, <<"2">>}
 	]).
 
 -define(DEFAULT_RESPONSE_HEADERS,
