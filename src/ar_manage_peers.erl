@@ -1,5 +1,6 @@
 -module(ar_manage_peers).
 -export([update/1, stats/0, reset/0]).
+-export([get_more_peers/1]).
 -include("ar.hrl").
 
 %%% Manage and update peer lists.
