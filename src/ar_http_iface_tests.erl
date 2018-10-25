@@ -91,9 +91,7 @@ node_blacklisting_post_spammer_test() ->
 %% @doc Given a label, return a fun and a message.
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
 get_fun_msg_pair(get_info) ->
-	{ fun(_) ->
-			ar_http_iface_client:get_info({127, 0, 0, 1, 1984})
-		end
+	{ fun(_) -> ar_http_iface_client:get_info({127, 0, 0, 1, 1984}) end
 	, info_unavailable};
 get_fun_msg_pair(send_new_tx) ->
 	{ fun(_) ->
@@ -780,9 +778,10 @@ get_txs_by_send_recv_test_() ->
 		receive after 1000 -> ok end,
 		ar_node:mine(Node2), % Mine B2
 		receive after 1000 -> ok end,
+		TE = ar_util:encode(TX#tx.target),
 		QueryJSON = ar_serialize:jsonify(
 			ar_serialize:query_to_json_struct(
-					{'or', {'equals', "to", TX#tx.target}, {'equals', "from", TX#tx.target}}
+					{'or', {'equals', <<"to">>, TE}, {'equals', <<"from">>, TE}}
 				)
 			),
 		{ok, {_, _, Res, _, _}} =
