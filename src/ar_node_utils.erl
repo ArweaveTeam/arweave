@@ -397,7 +397,7 @@ fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 		_ ->
 			whereis(fork_recovery_server) ! {update_target_block, NewB, ar_util:unique(Peer)}
 	end,
-	% TODO mue: Check how an unchanged state has to be returned in
+	% TODO: Check how an unchanged state has to be returned in
 	% program flow.
 	StateIn.
 
@@ -477,6 +477,7 @@ validate(
 				wallet_list = WalletList,
 				nonce = Nonce,
 				diff = Diff,
+				cumulative_diff = CDiff,
 				timestamp = Timestamp
 			},
 		TXs,
@@ -503,6 +504,7 @@ validate(
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
+	CumulativeDiffCheck = ar_block:verify_cumulative_diff(NewB, OldB),
 
 	ar:report(
 		[
@@ -522,7 +524,8 @@ validate(
 			{block_retarget_time, RetargetCheck},
 			{block_previous_check, PreviousBCheck},
 			{block_hash_list, HashlistCheck},
-			{block_wallet_list, WalletListCheck}
+			{block_wallet_list, WalletListCheck},
+			{block_cumulative_diff, CumulativeDiffCheck}
 		]
 	),
 
@@ -539,21 +542,6 @@ validate(
 			ok
 	end,
 
-	case Mine of false -> ar:d(invalid_nonce); _ -> ok end,
-	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok	end,
-	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
-	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
-	case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
-	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
-	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok	end,
-	case Size of false -> ar:d(invalid_size); _ -> ok  end,
-	case TimeCheck of false -> ar:d(invalid_timestamp_diff); _ -> ok  end,
-	case HeightCheck of false -> ar:d(invalid_height); _ -> ok	end,
-	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok	end,
-	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
-	case HashlistCheck of false -> ar:d(invalid_hash_list); _ -> ok  end,
-	case WalletListCheck of false -> ar:d(invalid_wallet_list_rewards); _ -> ok  end,
-
 	(Mine =/= false)
 		andalso Wallet
 		andalso IndepRecall
@@ -568,7 +556,8 @@ validate(
 		andalso RetargetCheck
 		andalso PreviousBCheck
 		andalso HashlistCheck
-		andalso WalletListCheck;
+		andalso WalletListCheck
+		andalso CumulativeDiffCheck;
 validate(_HL, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
 	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->

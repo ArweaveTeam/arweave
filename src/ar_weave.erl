@@ -141,6 +141,11 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
 			0,
 			RawTXs
 		),
+	CDiff =
+		case B#block.height >= (?FORK_1_6 - 1) of
+			true -> B#block.cumulative_diff + (Diff * Diff);
+			false -> 0
+		end,
 	NewB =
 		#block {
 			nonce = Nonce,
@@ -152,6 +157,7 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
 					false -> B#block.last_retarget
 				end,
 			diff = Diff,
+			cumulative_diff = CDiff,
 			height = B#block.height + 1,
 			hash = hash(
 				ar_block:generate_block_data_segment(
@@ -164,7 +170,6 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
 				),
 				Nonce
 			),
-			% indep hash
 			txs = TXs,
 			hash_list = HashList,
 			wallet_list = WalletList,

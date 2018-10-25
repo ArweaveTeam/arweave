@@ -1,5 +1,8 @@
 %%% A collection of record structures used throughout the Arweave server.
 
+%%% FORK INDEX
+-define(FORK_1_6, 80000).
+
 %% @doc How nodes identify they are on the same network.
 -define(NETWORK_NAME, "arweave.N.1").
 
@@ -186,7 +189,8 @@
     tags = [], % Miner specified tags to store with the block.
 	reward_pool = 0, % Current pool of mining reward.
 	weave_size = 0, % Current size of the weave in bytes (counts tx data fields).
-	block_size = 0 % The size of the transactions inside this block.
+	block_size = 0, % The size of the transactions inside this block.
+	cumulative_diff = 0 % The sum of the squared difficulty on the branch.
 }).
 
 %% @doc A transaction, as stored in a block.

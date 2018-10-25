@@ -13,6 +13,7 @@
 -export([generate_block_key/2]).
 -export([generate_block_from_shadow/2, generate_block_data_segment/6]).
 -export([generate_hash_list_for_block/2]).
+-export([verify_cumulative_diff/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -448,6 +449,12 @@ verify_weave_size(NewB, OldB, TXs) ->
 		OldB#block.weave_size,
 		TXs
 	).
+
+%% @doc Ensure that after the 1.6 release cumulative difficulty is enforced.
+verify_cumulative_diff(NewB, _OldB) when NewB#block.height < ?FORK_1_6 -> true;
+verify_cumulative_diff(NewB, OldB) ->
+	NewB#block.cumulative_diff ==
+		(OldB#block.cumulative_diff + (NewB#block.diff * NewB#block.diff)).
 
 % Block shadow functions
 
