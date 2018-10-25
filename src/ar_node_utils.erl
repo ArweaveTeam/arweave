@@ -477,7 +477,6 @@ validate(
 				wallet_list = WalletList,
 				nonce = Nonce,
 				diff = Diff,
-				cumulative_diff = CDiff,
 				timestamp = Timestamp
 			},
 		TXs,
