@@ -1360,18 +1360,18 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>]) ->
 	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-	Hash =
-		case Type of
-			<<"height">> ->
-				B =
-					ar_node:get_block(whereis(http_entrypoint_node),
-					ID,
-					CurrentBHL),
-				B#block.indep_hash;
-			<<"hash">> -> ID
-		end,
-	case lists:member(Hash, CurrentBHL) of
+	case is_block_known(Type, ID, CurrentBHL) of
 		true ->
+			Hash =
+				case Type of
+					<<"height">> ->
+						B =
+							ar_node:get_block(whereis(http_entrypoint_node),
+							ID,
+							CurrentBHL),
+						B#block.indep_hash;
+					<<"hash">> -> ID
+				end,
 			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
 			{200, [],
 				ar_serialize:jsonify(
@@ -1450,8 +1450,10 @@ verify_request_to_blockshadow(Req) ->
 
 %% @doc Take a block type specifier, an ID, and a BHL, returning whether the 
 %% given block is part of the BHL.
-is_block_known(<<"height">>, RawHeight, BHL) ->
-	binary_to_integer(RawHeight) < length(BHL);
+is_block_known(<<"height">>, RawHeight, BHL) when is_binary(RawHeight) ->
+	is_block_known(<<"height">>, binary_to_integer(RawHeight), BHL);
+is_block_known(<<"height">>, Height, BHL) ->
+	Height < length(BHL);
 is_block_known(<<"hash">>, ID, BHL) ->
 	lists:member(ID, BHL).
 
@@ -1677,6 +1679,27 @@ get_current_block_test() ->
 		2000
 	),
 	?assertEqual(B0, get_current_block({127, 0, 0, 1, 1984})).
+
+%% @doc Test that the various different methods of GETing a block all perform
+%% correctly if the block cannot be found.
+get_non_existent_block_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/wallet_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list", []).
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
