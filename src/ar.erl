@@ -214,6 +214,7 @@ start(
 	ar_tx_db:start(),
 	ar_key_db:start(),
 	ar_track_tx_db:start(),
+	ar_miner_log:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),

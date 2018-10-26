@@ -1,6 +1,7 @@
 -module(ar_miner_log).
+-export([start/0]).
 -export([joining/0, joined/0]).
--export([started_hashing/0, foreign_block/1, mined_block/1]).
+-export([started_hashing/0, foreign_block/1, mined_block/1, fork_recovered/1]).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 
@@ -14,10 +15,41 @@
 -ifdef(DEBUG).
 -define(BLOCK_CHECK_TIME, 100).
 -define(CONFIRMATION_DEPTH, 2).
+-define(FOREIGN_BLOCK_ALERT_TIME, 3 * 1000).
 -else.
 -define(BLOCK_CHECK_TIME, 60 * 1000).
 -define(CONFIRMATION_DEPTH, 10).
+-define(FOREIGN_BLOCK_ALERT_TIME, 60 * 60 * 1000).
 -endif.
+
+%% @doc Start the foreign block watchdog process.
+start() ->
+	watchdog_start().
+
+watchdog_start() ->
+	watchdog_stop(),
+	register(miner_connection_watchdog, spawn(fun watchdog/0)).
+
+watchdog_stop() ->
+	case whereis(miner_connection_watchdog) of
+		undefined -> not_started;
+		Pid -> exit(Pid, kill)
+	end.
+
+%% @doc Print a log message if no foreign block is received for
+%% FOREIGN_BLOCK_ALERT_TIME ms.
+watchdog() ->
+	receive
+		accepted_foreign_block -> watchdog();
+		fork_recovered -> watchdog();
+		stop -> ok
+	after ?FOREIGN_BLOCK_ALERT_TIME ->
+		log(
+			"WARNING: No foreign blocks received from network. "
+			"Please check your internet connection."
+		),
+		watchdog()
+	end.
 
 %% @doc Log the message for starting joining the network.
 joining() ->
@@ -28,22 +60,32 @@ joined() ->
 	log("Joined the Arweave network successfully.").
 
 %% @doc Log the message for a foreign block was accepted.
-foreign_block(BH) ->
-	log("Accepted foreign block ~s.", [ar_util:encode(BH)]).
+foreign_block(_BH) ->
+	case whereis(miner_connection_watchdog) of
+		undefined -> ok;
+		PID -> PID ! accepted_foreign_block
+	end.
+
+%% @doc React to a fork recovery event.
+fork_recovered(_BH) ->
+	case whereis(miner_connection_watchdog) of
+		undefined -> ok;
+		PID -> PID ! fork_recovered
+	end.
 
 %% @doc Log the message for hasing started.
 started_hashing() ->
-	log("Successfully proved access to recall block. Starting to hash.").
+	log("[Stage 1/3] Successfully proved access to recall block. Starting to hash.").
 
 %% @doc Log the message a valid block was mined by the local node.
 mined_block(BH) ->
 	start_worker(BH),
-	log("Produced candidate block ~s and dispatched to network.", [ar_util:encode(BH)]).
+	log("[Stage 2/3] Produced candidate block ~s and dispatched to network.", [ar_util:encode(BH)]).
 
 %% @doc Log the message for block mined by the local node got confirmed by the
 %% network.
 accepted_block(BH) ->
-	log("Your block ~s was accepted by the network!", [ar_util:encode(BH)]).
+	log("[Stage 3/3] Your block ~s was accepted by the network!", [ar_util:encode(BH)]).
 
 %% @doc Log a message to the mining output.
 log(FormatStr, Args) ->
@@ -52,18 +94,30 @@ log(Str) ->
 	case ar_meta_db:get(miner_logging) of
 		false -> do_nothing;
 		_ ->
-			interceptor_log(Str),
 			{Date, {Hour, Minute, Second}} =
 				calendar:now_to_datetime(os:timestamp()),
-			io:format(
-				"~s, ~2..0w:~2..0w:~2..0w: ~s~n",
-				[
-					day(Date),
-					Hour, Minute, Second,
-					Str
-				]
-			)
+			Output =
+				lists:flatten(
+					io_lib:format(
+						"~s, ~2..0w:~2..0w:~2..0w: ~s~n",
+						[
+							day(Date),
+							Hour, Minute, Second,
+							Str
+						]
+					)
+				),
+			print(Output),
+			interceptor_log(Str)
 	end.
+
+%% @doc Print the message to the screen, if we are not in DEBUG mode.
+%% Use the DEBUG log for debugging.
+-ifdef(DEBUG).
+print(_) -> do_nothing.
+-else.
+print(Str) -> io:format("~s", [Str]).
+-endif.
 
 %% @doc Start a process that checks the state of mined blocks.
 start_worker(BH) ->
@@ -158,10 +212,9 @@ interception_proc_test() ->
 	Expected = [
 		"Joining the Arweave network...",
 		"Joined the Arweave network successfully.",
-		"Accepted foreign block QS1CTE9DSy1IQVNI.",
-		"Successfully proved access to recall block. Starting to hash.",
-		"Produced candidate block QS1CTE9DSy1IQVNI and dispatched to network.",
-		"Your block QS1CTE9DSy1IQVNI was accepted by the network!"
+		"[Stage 1/3] Successfully proved access to recall block. Starting to hash.",
+		"[Stage 2/3] Produced candidate block QS1CTE9DSy1IQVNI and dispatched to network.",
+		"[Stage 3/3] Your block QS1CTE9DSy1IQVNI was accepted by the network!"
 	],
 	?assertEqual(Expected, interceptor_pop_all()),
 	?assertEqual([], interceptor_pop_all()),
@@ -187,9 +240,24 @@ mined_block_test() ->
 	?assert(lists:any(MsgCheck, interceptor_pop_all())),
 	interception_stop().
 
+%% @doc Deliberately trigger and test the 'no foreign blocks' warning.
+no_foreign_blocks_test() ->
+	interception_start(),
+	start(),
+	timer:sleep(?FOREIGN_BLOCK_ALERT_TIME + 1000),
+	?assert(
+		lists:any(
+			fun ("WARNING: No foreign blocks received" ++ _) -> true;
+				(_) -> false
+			end,
+			interceptor_pop_all()
+		)
+	),
+	interception_stop().
+
 block_accepted_msg_check(BH) ->
 	AcceptedLogMsg = lists:flatten(
-		io_lib:format("Your block ~s was accepted by the network!",
+		io_lib:format("[Stage 3/3] Your block ~s was accepted by the network!",
 						[ar_util:encode(BH)])),
 	fun (LogMsg) ->
 		LogMsg == AcceptedLogMsg
