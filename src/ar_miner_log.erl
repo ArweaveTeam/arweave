@@ -28,10 +28,10 @@ start() ->
 
 watchdog_start() ->
 	watchdog_stop(),
-	register(miner_log_watchdog, spawn(fun watchdog/0)).
+	register(miner_connection_watchdog, spawn(fun watchdog/0)).
 
 watchdog_stop() ->
-	case whereis(miner_log_watchdog) of
+	case whereis(miner_connection_watchdog) of
 		undefined -> not_started;
 		Pid -> exit(Pid, kill)
 	end.
@@ -61,14 +61,14 @@ joined() ->
 
 %% @doc Log the message for a foreign block was accepted.
 foreign_block(_BH) ->
-	case whereis(foreign_block_watchdog) of
+	case whereis(miner_connection_watchdog) of
 		undefined -> ok;
 		PID -> PID ! accepted_foreign_block
 	end.
 
 %% @doc React to a fork recovery event.
 fork_recovered(_BH) ->
-	case whereis(foreign_block_watchdog) of
+	case whereis(miner_connection_watchdog) of
 		undefined -> ok;
 		PID -> PID ! fork_recovered
 	end.
