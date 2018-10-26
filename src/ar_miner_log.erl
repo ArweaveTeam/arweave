@@ -1,7 +1,6 @@
 -module(ar_miner_log).
 -export([joining/0, joined/0]).
 -export([started_hashing/0, foreign_block/1, mined_block/1]).
--export([start_worker/1]).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 
@@ -38,6 +37,7 @@ started_hashing() ->
 
 %% @doc Log the message a valid block was mined by the local node.
 mined_block(BH) ->
+	start_worker(BH),
 	log("Produced candidate block ~s and dispatched to network.", [ar_util:encode(BH)]).
 
 %% @doc Log the message for block mined by the local node got confirmed by the
@@ -66,20 +66,26 @@ log(Str) ->
 	end.
 
 %% @doc Start a process that checks the state of mined blocks.
-start_worker(BH) -> spawn(fun() -> worker(BH) end).
+start_worker(BH) ->
+	spawn(fun() -> worker(BH, current_block_height()) end).
+
+current_block_height() ->
+	length(ar_node:get_hash_list(whereis(http_entrypoint_node))).
 
 %% @doc Worker process for checking the status of candidate blocks.
-worker(BH) ->
+worker(BH, InitBlockHeight) ->
 	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	case ar_util:index_of(BH, BHL) of
-		not_found -> ok;
-		_Depth when _Depth >= ?CONFIRMATION_DEPTH ->
-			accepted_block(BH);
+		not_found when length(BHL) >= InitBlockHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
+			ok;
+		Depth when is_integer(Depth) andalso Depth >= ?CONFIRMATION_DEPTH ->
+			accepted_block(BH),
+			ok;
 		_ ->
 			receive
-				stop -> ok
+				stop -> ok % Not used
 			after ?BLOCK_CHECK_TIME ->
-				worker(BH)
+				worker(BH, InitBlockHeight)
 			end
 	end.
 
@@ -105,7 +111,7 @@ interception_start() ->
 interception_stop() ->
 	Pid = whereis(miner_log_debug),
 	exit(Pid, kill),
-	wait_while_alive(Pid).
+	true = wait_while_alive(Pid).
 
 %% @doc The inception process main function.
 interceptor() ->
@@ -170,16 +176,14 @@ mined_block_test() ->
 	ar_storage:write_block(B0),
 	Node = ar_node:start([], Bs),
 	ar_http_iface:reregister(Node),
-	MyBH = B0#block.indep_hash,
-	Worker = start_worker(MyBH),
-	timer:sleep(100),
+	timer:sleep(500),
 	ar_node:mine(Node),
-	timer:sleep(100),
+	timer:sleep(500),
+	[MyBH | _] = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	MsgCheck = block_accepted_msg_check(MyBH),
 	?assert(not lists:any(MsgCheck, interceptor_pop_all())),
 	ar_node:mine(Node),
-	true = wait_while_alive(Worker),
-	timer:sleep(100),
+	timer:sleep(500),
 	?assert(lists:any(MsgCheck, interceptor_pop_all())),
 	interception_stop().
 
