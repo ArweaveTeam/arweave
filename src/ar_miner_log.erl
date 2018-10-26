@@ -24,9 +24,19 @@
 
 %% @doc Start the foreign block watchdog process.
 start() ->
-	spawn(fun watchdog/0).
+	watchdog_start().
 
-%% @doc Print a log message if no foreign block is received for 
+watchdog_start() ->
+	watchdog_stop(),
+	register(miner_log_watchdog, spawn(fun watchdog/0)).
+
+watchdog_stop() ->
+	case whereis(miner_log_watchdog) of
+		undefined -> not_started;
+		Pid -> exit(Pid, kill)
+	end.
+
+%% @doc Print a log message if no foreign block is received for
 %% FOREIGN_BLOCK_ALERT_TIME ms.
 watchdog() ->
 	receive
@@ -226,7 +236,9 @@ no_foreign_blocks_test() ->
 	timer:sleep(?FOREIGN_BLOCK_ALERT_TIME + 1000),
 	?assert(
 		lists:any(
-			fun(X) -> string:str("WARNING", X) =/= 0 end,
+			fun ("WARNING: No foreign blocks received" ++ _) -> true;
+				(_) -> false
+			end,
 			interceptor_pop_all()
 		)
 	),
@@ -234,7 +246,7 @@ no_foreign_blocks_test() ->
 
 block_accepted_msg_check(BH) ->
 	AcceptedLogMsg = lists:flatten(
-		io_lib:format("Your block ~s was accepted by the network!",
+		io_lib:format("[Stage 3/3] Your block ~s was accepted by the network!",
 						[ar_util:encode(BH)])),
 	fun (LogMsg) ->
 		LogMsg == AcceptedLogMsg
