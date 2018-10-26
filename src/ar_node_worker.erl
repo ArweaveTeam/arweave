@@ -636,6 +636,7 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 			{height, NewB#block.height}
 		]
 	),
+	ar_miner_log:fork_recovered(NewB#block.indep_hash),
 	% ar_cleanup:remove_invalid_blocks(NewHs),
 	TXPool = maps:get(txs, StateIn) ++ maps:get(potential_txs, StateIn),
 	TXs =
