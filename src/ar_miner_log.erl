@@ -94,18 +94,30 @@ log(Str) ->
 	case ar_meta_db:get(miner_logging) of
 		false -> do_nothing;
 		_ ->
-			interceptor_log(Str),
 			{Date, {Hour, Minute, Second}} =
 				calendar:now_to_datetime(os:timestamp()),
-			io:format(
-				"~s, ~2..0w:~2..0w:~2..0w: ~s~n",
-				[
-					day(Date),
-					Hour, Minute, Second,
-					Str
-				]
-			)
+			Output =
+				lists:flatten(
+					io_lib:format(
+						"~s, ~2..0w:~2..0w:~2..0w: ~s~n",
+						[
+							day(Date),
+							Hour, Minute, Second,
+							Str
+						]
+					)
+				),
+			print(Output),
+			interceptor_log(Str)
 	end.
+
+%% @doc Print the message to the screen, if we are not in DEBUG mode.
+%% Use the DEBUG log for debugging.
+-ifdef(DEBUG).
+print(_) -> do_nothing.
+-else.
+print(Str) -> io:format("~s", [Str]).
+-endif.
 
 %% @doc Start a process that checks the state of mined blocks.
 start_worker(BH) ->
@@ -227,7 +239,6 @@ mined_block_test() ->
 	timer:sleep(500),
 	?assert(lists:any(MsgCheck, interceptor_pop_all())),
 	interception_stop().
-
 
 %% @doc Deliberately trigger and test the 'no foreign blocks' warning.
 no_foreign_blocks_test() ->
