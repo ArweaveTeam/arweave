@@ -62,11 +62,11 @@ do_join(Node, RawPeers, NewB) ->
 					{height, NewB#block.height}
 				]
 			),
-			ar:report_miner("Joining the Arweave network..."),
+			ar_miner_log:joining(),
 			get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 			join_peers(Peers),
-			ar:report_miner("Joined the Arweave network successfully."),
+			ar_miner_log:joined(),
 			spawn(fun() -> fill_to_capacity(ar_manage_peers:get_more_peers(Peers), NewB#block.hash_list) end)
 	end.
 
