@@ -555,7 +555,6 @@ fork_recover_by_http_test_() ->
 			10 * 1000
 		),
 		[BTest|_] = ar_node:get_blocks(Node2),
-		ar_http_iface_server:reregister(Node1),
 		NewB = ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
 		BDS = ar_block:generate_block_data_segment(
 			ar_storage:read_block(NewB#block.previous_block, ar_node:get_hash_list(Node2)),
@@ -565,10 +564,11 @@ fork_recover_by_http_test_() ->
 			NewB#block.timestamp,
 			NewB#block.tags
 		),
+		ar_http_iface_server:reregister(Node1),
 		{ok,{{<<"200">>,_},_,_,_,_}} = ar_http_iface_client:send_new_block_with_bds(
 			{127, 0, 0, 1, 1984},
 			?DEFAULT_HTTP_IFACE_PORT,
-			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
+			NewB,
 			BGen,
 			BDS
 		),
@@ -584,6 +584,43 @@ fork_recover_by_http_test_() ->
 		?assertEqual(HB, BTest),
 		LB = lists:last(TBs),
 		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
+	end}.
+
+block_data_segment_valid_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
+		ar_http_iface_server:reregister(Node1),
+		Bridge = ar_bridge:start([], Node1),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		Node2 = ar_node:start([], [BGen]),
+		ar_node:mine(Node2),
+		timer:sleep(500),
+		ar_node:mine(Node2),
+		timer:sleep(500),
+		ar_node:mine(Node2),
+		timer:sleep(500),
+		ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node2)) > 5
+			end,
+			1000,
+			10 * 1000
+		),
+		[BTest|_] = (ar_node:get_blocks(Node2),
+		NewB = ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
+		BDS = ar_block:generate_block_data_segment(
+			ar_storage:read_block(NewB#block.previous_block, ar_node:get_hash_list(Node2)),
+			BGen,
+			lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
+			NewB#block.reward_addr,
+			NewB#block.timestamp,
+			NewB#block.tags
+		),
+		Valid = ar_mine:validate(BDS, NewB#block.nonce, NewB#block.diff),
+		?assertNotEqual(false, Valid)
 	end}.
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
