@@ -338,8 +338,8 @@ maybe_remove_tx(TXs, TXID, Sig) ->
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recoverer as appropriate.
-process_new_block(_StateIn, NewGS, _NewB, _, _Peer, not_joined) ->
-	ar_join:start(ar_gossip:peers(NewGS)),
+process_new_block(_StateIn, NewGS, NewB, _, _Peer, not_joined) ->
+	ar_join:start(ar_gossip:peers(NewGS), NewB),
 	none;
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Peer, HashList)
 		when NewB#block.height == Height + 1 ->
@@ -541,10 +541,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			NewHL = [NextB#block.indep_hash | HashList],
 			ar_storage:write_block_hash_list(BinID, NewHL),
 			app_search:update_tag_table(NextB),
-			ar:report_miner(
-				"You mined block ~s!",
-				[ar_util:encode(NextB#block.indep_hash)]
-			),
+			ar_miner_log:mined_block(NextB#block.indep_hash),
 			ar:report_console(
 				[
 					{node, self()},
@@ -597,6 +594,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			)}
 	end.
 
+%% @doc Handle executed fork recovery.
 recovered_from_fork(#{ cumulative_diff := CDiff, hash_list := HashList } = StateIn, NewHs) ->
 	case whereis(fork_recovery_server) of
 		undefined -> ok;
@@ -630,6 +628,7 @@ do_recovered_from_fork(StateIn, NewB) ->
 				]
 			)
 	end,
+	ar_miner_log:fork_recovered(NewB#block.indep_hash),
 	NextBHL = [NewB#block.indep_hash | NewB#block.hash_list],
 	% ar_cleanup:remove_invalid_blocks(NewHs),
 	TXPool = maps:get(txs, StateIn) ++ maps:get(potential_txs, StateIn),
