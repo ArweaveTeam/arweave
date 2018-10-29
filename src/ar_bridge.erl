@@ -280,9 +280,9 @@ add_processed(X, Y, Procd) ->
 	ok.
 
 %% @doc Find the ID of a 'data', from type.
-get_id(tx, #tx { id = ID}) -> ID;
-get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
-get_id(block, {_, #block { indep_hash = Hash}, _}) -> Hash.
+% get_id(tx, #tx { id = ID}) -> ID;
+% get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
+% get_id(block, {_, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% @doc Send an internal message externally
 send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
@@ -371,11 +371,11 @@ do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
 	NewS.
 
 %% @doc Check whether a message has already been seen.
-already_processed(_Procd, _Type, {_, not_found, _}) ->
-	true;
-already_processed(_Procd, _Type, {_, unavailable, _}) ->
-	true;
-already_processed(Procd, Type, Data) ->
-	already_processed(Procd, Type, Data, undefined).
-already_processed(Procd, Type, Data, IP) ->
-	is_id_ignored(get_id(Type, Data)).
+% already_processed(_Procd, _Type, {_, not_found, _}) ->
+% 	true;
+% already_processed(_Procd, _Type, {_, unavailable, _}) ->
+% 	true;
+% already_processed(Procd, Type, Data) ->
+% 	already_processed(Procd, Type, Data, undefined).
+% already_processed(_Procd, Type, Data, _IP) ->
+% 	is_id_ignored(get_id(Type, Data)).
