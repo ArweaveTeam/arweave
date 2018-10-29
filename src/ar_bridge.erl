@@ -258,20 +258,20 @@ add_processed({add_tx, TX}, Procd) ->
 	add_processed(tx, TX, Procd);
 add_processed({new_block, _, _, B, _}, Procd) ->
 	add_processed(block, B, Procd);
-add_processed(X, Procd) ->
+add_processed(X, _Procd) ->
 	ar:report(
 		[
 			{could_not_ignore, X},
 			{record, X}
 		]),
 	ok.
-add_processed(tx, #tx { id = ID }, Procd) ->
+add_processed(tx, #tx { id = ID }, _Procd) ->
 	ignore_id(ID);
-add_processed(block, #block { indep_hash = Hash }, Procd) ->
+add_processed(block, #block { indep_hash = Hash }, _Procd) ->
 	ignore_id(Hash);
 add_processed(block, {_, B, _}, Procd) ->
 	add_processed(block, B, Procd);
-add_processed(X, Y, Procd) ->
+add_processed(X, Y, _Procd) ->
 	ar:report(
 		[
 			{could_not_ignore, X},
