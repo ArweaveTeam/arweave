@@ -60,7 +60,7 @@ reset_peer(IP) ->
 update_timer(IP) ->
 	case ar_meta_db:get({peer, IP}) of
 		not_found -> #performance{};
-		P -> 
+		P ->
 			ar_meta_db:put({peer, IP},
 				P#performance {
 					transfers = P#performance.transfers,

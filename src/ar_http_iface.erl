@@ -131,7 +131,7 @@ handle('GET', [], _Req) ->
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
 
-%% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node 
+%% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node
 %% is alive. Appease them.
 handle('HEAD', [], _Req) ->
 	{200, [], <<>>};
@@ -1448,7 +1448,7 @@ verify_request_to_blockshadow(Req) ->
 		_:_ -> false
 	end.
 
-%% @doc Take a block type specifier, an ID, and a BHL, returning whether the 
+%% @doc Take a block type specifier, an ID, and a BHL, returning whether the
 %% given block is part of the BHL.
 is_block_known(<<"height">>, RawHeight, BHL) when is_binary(RawHeight) ->
 	is_block_known(<<"height">>, binary_to_integer(RawHeight), BHL);
