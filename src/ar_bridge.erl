@@ -164,7 +164,7 @@ handle(S, {update_peers, remote, Peers}) ->
 handle(S = #state{ gossip = GS0 }, Msg) when is_record(Msg, gs_msg) ->
 	case ar_gossip:recv(GS0, Msg) of
 		{_, ignore} -> S;
-		Gossip      -> do_send_to_external(S, Gossip)
+		Gossip -> gossip_to_external(S, Gossip)
 	end;
 handle(S, {get_more_peers, PID}) ->
 	spawn(
@@ -344,7 +344,7 @@ send_block_to_external_parallel(Peers, BridgePort, NewB, RecallB, Key, Nonce) ->
 	lists:foreach(Send, PeersSequencial).
 
 %% @doc Possibly send a new message to external peers.
-do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
+gossip_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
 	NewS = (send_to_external(S#state { gossip = NewGS }, Msg)),
 	add_processed(Msg, Procd),
 	NewS.
