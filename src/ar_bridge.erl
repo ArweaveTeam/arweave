@@ -218,7 +218,7 @@ maybe_send_block_to_internal(S, Data, Key, Nonce) ->
 			{OriginPeer, NewB, RecallB} = Data,
 			Msg = {new_block, OriginPeer, NewB#block.height, NewB, RecallB},
 			{NewGS, _} = ar_gossip:send(GS, Msg),
-			send_to_external(S, Msg, Key, Nonce),
+			send_block_to_external(S, NewB, RecallB, Key, Nonce),
 			add_processed(block, Data, Procd),
 			S#state {
 				gossip = NewGS
@@ -309,11 +309,9 @@ send_to_external(
 send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
 
-send_to_external(
-		S = #state {external_peers = Peers, port = Port},
-		{new_block, _Peer, _Height, NewB, RecallB},
-		Key,
-		Nonce) ->
+%% @doc Send a block to external peers.
+send_block_to_external(S, NewB, RecallB, Key, Nonce) ->
+	#state {external_peers = Peers, port = Port} = S,
 	case RecallB of
 		unavailable -> ok;
 		_ ->
@@ -325,7 +323,7 @@ send_to_external(
 							{peers, length(Peers)}
 						]
 					),
-					send_to_external_parallel(Peers, Port, NewB, RecallB, Key, Nonce)
+					send_block_to_external_parallel(Peers, Port, NewB, RecallB, Key, Nonce)
 				end
 			)
 	end,
@@ -334,7 +332,7 @@ send_to_external(
 %% @doc Send the new block to the peers by first sending it in parallel to the
 %% best/first peers and then continuing sequentially with the rest of the peers
 %% in order.
-send_to_external_parallel(Peers, BridgePort, NewB, RecallB, Key, Nonce) ->
+send_block_to_external_parallel(Peers, BridgePort, NewB, RecallB, Key, Nonce) ->
 	{PeersParallel, PeersSequencial} = lists:split(
 		min(length(Peers), ?BLOCK_PROPAGATION_PARALLELIZATION),
 		Peers
