@@ -319,6 +319,31 @@ basic_test() ->
 			<< 0:Diff, _/bitstring >> = Res
 	end.
 
+%% @doc Test that a mined block is valid.
+basic_validity_test() ->
+	B0 = ar_weave:init(),
+	ar_node:start([], B0),
+	B1 = ar_weave:add(B0, []),
+	B = hd(B1),
+	RecallB = hd(B0),
+	start(B, RecallB, [], unclaimed, [], self()),
+	receive
+		{work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+			DataSegment = ar_block:generate_block_data_segment(
+				B,
+				RecallB,
+				[],
+				<<>>,
+				Timestamp,
+				[]
+			),
+			Diff = B#block.diff,
+			ar:d({nonce, Nonce}),
+			ar:d({bonce, B#block.nonce}),
+			Valid = ar_mine:validate(DataSegment, Nonce, Diff),
+			?assertNotEqual(false, Valid)
+	end.
+
 %% @doc Ensure that we can change the data while mining is in progress.
 change_data_test() ->
 	B0 = ar_weave:init(),
