@@ -353,16 +353,25 @@ send_to_external(
 							{peers, length(Peers)}
 						]
 					),
-					lists:foreach(
-						fun(Peer) ->
-							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB, Key, Nonce)
-						end,
-						Peers
-					)
+					send_to_external_parallel(Peers, Port, NewB, RecallB, Key, Nonce)
 				end
 			)
 	end,
 	S.
+
+%% @doc Send the new block to the peers by first sending it in parallel to the
+%% best/first peers and then continuing sequentially with the rest of the peers
+%% in order.
+send_to_external_parallel(Peers, BridgePort, NewB, RecallB, Key, Nonce) ->
+	{PeersParallel, PeersSequencial} = lists:split(
+		min(length(Peers), ?BLOCK_PROPAGATION_PARALLELIZATION),
+		Peers
+	),
+	Send = fun(Peer) ->
+		ar_http_iface:send_new_block(Peer, BridgePort, NewB, RecallB, Key, Nonce)
+	end,
+	ar_util:pmap(Send, PeersParallel),
+	lists:foreach(Send, PeersSequencial).
 
 %% @doc Possibly send a new message to external peers.
 do_send_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->

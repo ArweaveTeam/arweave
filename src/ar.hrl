@@ -147,6 +147,9 @@
 %% @doc Length of time to wait (seconds) before dropping after last activity
 -define(PEER_TIMEOUT, 480).
 
+%% @doc The number of the best peers to send new blocks to in parallel.
+-define(BLOCK_PROPAGATION_PARALLELIZATION, 10).
+
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
 -define(BLOCK_DIR, "blocks").
