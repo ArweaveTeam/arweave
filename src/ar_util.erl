@@ -17,6 +17,7 @@
 -export([time_difference/2]).
 -export([rev_bin/1]).
 -export([do_until/3]).
+-export([index_of/2]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -211,6 +212,14 @@ do_until(DoFun, Interval, Timeout) ->
 			do_until(DoFun, Interval, Timeout - (Now - Start))
 	end.
 
+index_of(Elem, List) ->
+	index_of(Elem, List, 1).
+
+index_of(_, [], _) -> not_found;
+index_of(_Subject, [_Subject | _], Counter) -> Counter;
+index_of(Subject, [_ | List], Counter) -> index_of(Subject, List, Counter + 1).
+
+
 %%%
 %%% Tests.
 %%%
@@ -258,3 +267,10 @@ recall_block_test() ->
 	receive after 300 -> ok end,
 	B3 = ar_node:get_current_block(Node),
 	B3#block.wallet_list.
+
+%% @doc Test finding the index of an element in a list.
+index_of_test() ->
+	?assertEqual(1, index_of(a, [a, b, c])),
+	?assertEqual(2, index_of(b, [a, b, c])),
+	?assertEqual(3, index_of(c, [a, b, c])),
+	?assertEqual(not_found, index_of(d, [a, b, c])).

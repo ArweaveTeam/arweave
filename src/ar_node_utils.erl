@@ -238,6 +238,7 @@ start_mining(#{
 			if not is_record(RecallB, block) ->
 				ar:report_console([{erroneous_recall_block, RecallB}]);
 			true ->
+				ar_miner_log:started_hashing(),
 				ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
 			end,
 			RecallBFull = make_full_block(
@@ -328,10 +329,7 @@ integrate_new_block(
 	ar_storage:write_tx(BlockTXs),
 	ar_storage:write_block(NewB),
 	% Recurse over the new block.
-	ar:report_miner(
-		"Accepted foreign block ~s.",
-		[ar_util:encode(NewB#block.indep_hash)]
-	),
+	ar_miner_log:foreign_block(NewB#block.indep_hash),
 	ar:report_console(
 		[
 			{accepted_foreign_block, ar_util:encode(NewB#block.indep_hash)},
