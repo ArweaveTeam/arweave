@@ -1,6 +1,6 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2, start/3]).
--export([add_tx/2, add_block/4, add_block/6]). % Called from ar_http_iface
+-export([add_tx/2, add_block/6]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
@@ -70,8 +70,6 @@ set_remote_peers(PID, Peers) ->
 	PID ! {set_peers, Peers}.
 
 %% @doc Notify the bridge of a new external block.
-add_block(PID, OriginPeer, Block, RecallBlock) ->
-	PID ! {add_block, OriginPeer, Block, RecallBlock}.
 add_block(PID, OriginPeer, Block, RecallBlock, Key, Nonce) ->
 	PID ! {add_block, OriginPeer, Block, RecallBlock, Key, Nonce}.
 
@@ -147,8 +145,6 @@ handle(S, {unignore_peer, Peer}) ->
 	S#state{ ignored_peers = lists:delete(Peer, S#state.ignored_peers) };
 handle(S, {add_tx, TX}) ->
 	maybe_send_to_internal(S, tx, TX);
-handle(S, {add_block, OriginPeer, Block, RecallBlock}) ->
-	maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock});
 handle(S, {add_block, OriginPeer, Block, RecallBlock, Key, Nonce}) ->
 	maybe_send_to_internal(S, block, {OriginPeer, Block, RecallBlock}, Key, Nonce);
 handle(S = #state{ external_peers = ExtPeers }, {add_peer, remote, Peer}) ->
