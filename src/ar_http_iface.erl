@@ -115,7 +115,7 @@ handle(Req, _Args) ->
 	case ar_meta_db:get({peer, Peer}) of
 		not_found ->
 			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
-		X -> do_nothing
+		_ -> do_nothing
 	end,
 	case handle(Req#req.method, elli_request:path(Req), Req) of
 		{Status, Hdrs, Body} ->
@@ -661,45 +661,12 @@ handle_event(_Type, _Args, _Config) ->
 	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
 	ok.
 
-%% @doc Return a block in JSON via HTTP or 404 if can't be found.
-return_block(unavailable) -> {404, [], <<"Block not found.">>};
-return_block(not_found) -> {404, [], <<"Block not found.">>};
-return_block(B) ->
-	{200, [],
-		ar_serialize:jsonify(
-			ar_serialize:block_to_json_struct(B)
-		)
-	}.
-return_encrypted_block(unavailable) -> {404, [], <<"Block not found.">>}.
-return_encrypted_block(unavailable, _, _) -> {404, [], <<"Block not found.">>};
-return_encrypted_block(B, Key, Nonce) ->
-	{200, [],
-		ar_util:encode(ar_block:encrypt_block(B, Key, Nonce))
-	}.
-
-%% @doc Return a full block in JSON via HTTP or 404 if can't be found.
-return_full_block(unavailable) -> {404, [], <<"Block not found.">>};
-return_full_block(B) ->
-	{200, [],
-		ar_serialize:jsonify(
-			ar_serialize:full_block_to_json_struct(B)
-		)
-	}.
-return_encrypted_full_block(unavailable) -> {404, [], <<"Block not found.">>}.
-return_encrypted_full_block(unavailable, _, _) -> {404, [], <<"Block not found.">>};
-return_encrypted_full_block(B, Key, Nonce) ->
-	{200, [],
-		ar_util:encode(ar_block:encrypt_full_block(B, Key, Nonce))
-	}.
-
-%% @doc Return a tx in JSON via HTTP or 404 if can't be found.
-return_tx(unavailable) -> {404, [], <<"TX not found.">>};
-return_tx(T) ->
-	{200, [],
-		ar_serialize:jsonify(
-			ar_serialize:tx_to_json_struct(T)
-		)
-	}.
+% return_encrypted_block(unavailable) -> {404, [], <<"Block not found.">>}.
+% return_encrypted_block(unavailable, _, _) -> {404, [], <<"Block not found.">>};
+% return_encrypted_block(B, Key, Nonce) ->
+% 	{200, [],
+% 		ar_util:encode(ar_block:encrypt_block(B, Key, Nonce))
+% 	}.
 
 %% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
@@ -1144,13 +1111,6 @@ handle_block_response(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
 handle_block_response(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
 handle_block_response(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable.
 
-%% @doc Process the response of a /block/.../all call.
-handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_full_block(Body);
-handle_full_block_response({error, _}) -> unavailable;
-handle_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
-
 %% @doc Process the response of a /block/.../encrypted call.
 handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_util:decode(Body);
@@ -1217,10 +1177,6 @@ block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
-
-%% @doc stdlib function composition.
-binary_to_existing_atom(B) ->
-	list_to_existing_atom(binary_to_list(B)).
 
 %% @doc checks if hash is valid & if so returns filename.
 hash_to_maybe_filename(Type, Hash) ->
