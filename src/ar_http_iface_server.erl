@@ -382,8 +382,8 @@ handle('GET', [<<"block">>, Type, IDBin], Req) ->
 		{error, Response} ->
 			Response;
 		{ok, ID} ->
-			XVersion = elli_request:get_header(<<"X-Block-Format">>, Req, <<"1">>),
-			process_request(get_block, [Type, ID], XVersion)
+			XBFormat = elli_request:get_header(<<"X-Block-Format">>, Req, <<"1">>),
+			process_request(get_block, [Type, ID], XBFormat)
 	end;
 
 %% @doc Return block or block field.
@@ -887,18 +887,6 @@ post_peers(Req, Port, <<?NETWORK_NAME>>) ->
 post_peers(_Req, _Port, _) ->
 	{400, [], "Wrong network."}.
 
-%% @doc Return block or not found
-process_request(get_block, [<<"hash">>, ID], XBFormat) ->
-	case id_to_filename(block, ID) of
-		{error, _, unavailable} ->
-			{404, [], <<"Block not found.">>};
-		{ok, Filename} ->
-			get_block_by_filename(Filename, XBFormat, ar_meta_db:get(api_compat))
-	end;
-process_request(get_block, [<<"height">>, ID], XVersion) ->
-	Filename = ar_storage:lookup_block_filename(ID),
-	get_block_by_filename(Filename, XVersion, ar_meta_db:get(api_compat)).
-
 get_block_by_filename(_, <<"1">>, false) ->
 	{426, [], <<"Client version incompatible.">>};
 get_block_by_filename(Filename, <<"1">>, _) ->
@@ -937,6 +925,21 @@ get_block_by_filename(Filename, <<"1">>, _) ->
 get_block_by_filename(Filename, _, _) ->
 	{ok, [], {file, Filename}}.
 
+%% @doc Return block or not found
+process_request(get_block, [<<"hash">>, ID], XBFormat) ->
+	case id_to_filename(block, ID) of
+		{error, _, unavailable} ->
+			{404, [], <<"Block not found.">>};
+		{ok, Filename} ->
+			get_block_by_filename(Filename, XBFormat, ar_meta_db:get(api_compat))
+	end;
+process_request(get_block, [<<"height">>, ID], XBFormat) ->
+	case ar_storage:lookup_block_filename(ID) of
+		unavailable ->
+			{404, [], <<"Block not found.">>};
+		Filename ->
+			get_block_by_filename(Filename, XBFormat, ar_meta_db:get(api_compat))
+	end.
 
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>]) ->
@@ -944,11 +947,12 @@ process_request(get_block, [Type, ID, <<"hash_list">>]) ->
 	Hash =
 		case Type of
 			<<"height">> ->
-				B =
-					ar_node:get_block(whereis(http_entrypoint_node),
-					ID,
-					CurrentBHL),
-				B#block.indep_hash;
+				case ar_node:get_block(whereis(http_entrypoint_node),
+						ID,
+						CurrentBHL) of
+					unavailable -> unavailable_return_404;
+					B           -> B#block.indep_hash
+				end;
 			<<"hash">> -> ID
 		end,
 	case lists:member(Hash, CurrentBHL) of
