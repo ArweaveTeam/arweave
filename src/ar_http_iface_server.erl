@@ -382,7 +382,7 @@ handle('GET', [<<"block">>, Type, IDBin], Req) ->
 		{error, Response} ->
 			Response;
 		{ok, ID} ->
-			XVersion = elli_request:get_header(<<"X-Version">>, Req, <<"7">>),
+			XVersion = elli_request:get_header(<<"X-Block-Format">>, Req, <<"1">>),
 			process_request(get_block, [Type, ID], XVersion)
 	end;
 
@@ -560,6 +560,16 @@ check_is_id_ignored(Type, ID) ->
 			ok
 	end.
 
+%% @doc Find a block, given a type and a specifier.
+find_block(<<"height">>, RawHeight, BHL) ->
+	ar_node:get_block(
+		whereis(http_entrypoint_node),
+		binary_to_integer(RawHeight),
+		BHL
+	);
+find_block(<<"hash">>, ID, BHL) ->
+	ar_storage:read_block(ID, BHL).
+
 %% @doc Returns block bits for POST /block.
 get_block_bits(ReqStruct, BShadow, OrigPeer) ->
 	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
@@ -593,6 +603,15 @@ id_to_filename(Type, ID) ->
 %% @doc Return true if ID is a pending tx.
 is_a_pending_tx(ID) ->
 	lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))).
+
+%% @doc Take a block type specifier, an ID, and a BHL, returning whether the 
+%% given block is part of the BHL.
+is_block_known(<<"height">>, RawHeight, BHL) when is_binary(RawHeight) ->
+	is_block_known(<<"height">>, binary_to_integer(RawHeight), BHL);
+is_block_known(<<"height">>, Height, BHL) ->
+	Height < length(BHL);
+is_block_known(<<"hash">>, ID, BHL) ->
+	lists:member(ID, BHL).
 
 %% @doc Retrieve the system time from a peer and compare to
 %% local time.
@@ -869,22 +888,20 @@ post_peers(_Req, _Port, _) ->
 	{400, [], "Wrong network."}.
 
 %% @doc Return block or not found
-process_request(get_block, [<<"hash">>, ID], XVersion) ->
+process_request(get_block, [<<"hash">>, ID], XBFormat) ->
 	case id_to_filename(block, ID) of
 		{error, _, unavailable} ->
 			{404, [], <<"Block not found.">>};
 		{ok, Filename} ->
-			get_block_by_filename(Filename, XVersion, ar_meta_db:get(api_compat))
+			get_block_by_filename(Filename, XBFormat, ar_meta_db:get(api_compat))
 	end;
 process_request(get_block, [<<"height">>, ID], XVersion) ->
 	Filename = ar_storage:lookup_block_filename(ID),
 	get_block_by_filename(Filename, XVersion, ar_meta_db:get(api_compat)).
 
-get_block_by_filename(Filename, <<"8">>, _) ->
-	{ok, [], {file, Filename}};
-get_block_by_filename(_, <<"7">>, false) ->
+get_block_by_filename(_, <<"1">>, false) ->
 	{426, [], <<"Client version incompatible.">>};
-get_block_by_filename(Filename, <<"7">>, _) ->
+get_block_by_filename(Filename, <<"1">>, _) ->
 	% Support for legacy nodes (pre-1.5).
 	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	try ar_storage:do_read_block(Filename, BHL) of
@@ -916,7 +933,9 @@ get_block_by_filename(Filename, <<"7">>, _) ->
 			}
 	catch error:cannot_generate_block_hash_list ->
 		{404, [], <<"Requested block not found on block hash list.">>}
-	end.
+	end;
+get_block_by_filename(Filename, _, _) ->
+	{ok, [], {file, Filename}};
 
 
 %% @doc Return the block hash list associated with a block.
@@ -945,31 +964,27 @@ process_request(get_block, [Type, ID, <<"hash_list">>]) ->
 		false ->
 			{404, [], <<"Block not found.">>}
 	end;
-%% @doc Return the wallet list associated with a block.
+%% @doc Return the wallet list associated with a block (as referenced by hash
+%% or height).
 process_request(get_block, [Type, ID, <<"wallet_list">>]) ->
 	HTTPEntryPointPid = whereis(http_entrypoint_node),
-	B =
-		case Type of
-			<<"height">> ->
-				CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
-				ar_node:get_block(
-					HTTPEntryPointPid,
-					ID,
-					CurrentBHL);
-			<<"hash">> ->
-				ar_storage:read_block(ID, ar_node:get_hash_list(HTTPEntryPointPid))
-		end,
-	case ?IS_BLOCK(B) of
+	CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
+	case is_block_known(Type, ID, CurrentBHL) of
+		false -> {404, [], <<"Block not found.">>};
 		true ->
-			{200, [],
-				ar_serialize:jsonify(
-					ar_serialize:wallet_list_to_json_struct(
-						B#block.wallet_list
-					)
-				)
-			};
-		false ->
-			{404, [], <<"Block not found.">>}
+			B = find_block(Type, ID, CurrentBHL),
+			case ?IS_BLOCK(B) of
+				true ->
+					{200, [],
+						ar_serialize:jsonify(
+							ar_serialize:wallet_list_to_json_struct(
+								B#block.wallet_list
+							)
+						)
+					};
+				false ->
+					{404, [], <<"Block not found.">>}
+			end
 	end;
 %% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
 %% GET request to endpoint /block/hash/{hash|height}/{field}
@@ -978,19 +993,10 @@ process_request(get_block, [Type, ID, <<"wallet_list">>]) ->
 %%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 process_request(get_block, [Type, ID, Field]) ->
+	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	case ar_meta_db:get(subfield_queries) of
 		true ->
-			Block =
-				case Type of
-					<<"height">> ->
-						CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-						ar_node:get_block(whereis(http_entrypoint_node),
-							ID,
-							CurrentBHL);
-					<<"hash">> ->
-						ar_storage:read_block(ID, ar_node:get_hash_list(whereis(http_entrypoint_node)))
-				end,
-			case Block of
+			case find_block(Type, ID, CurrentBHL) of
 				unavailable ->
 						{404, [], <<"Not Found.">>};
 				B ->

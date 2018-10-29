@@ -219,6 +219,27 @@ get_current_block_test() ->
 	),
 	?assertEqual(B0, ar_http_iface_client:get_current_block({127, 0, 0, 1, 1984})).
 
+%% @doc Test that the various different methods of GETing a block all perform
+%% correctly if the block cannot be found.
+get_non_existent_block_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	Node1 = ar_node:start([], [B0]),
+	reregister(Node1),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/wallet_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list", []),
+	{ok, {{<<"404">>, _}, _, _, _, _}}
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list", []).
+
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
 	ar_storage:clear(),
@@ -895,7 +916,3 @@ get_txs_by_send_recv_test_() ->
 	% B2 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B1),
 	% B3 = ar_http_iface_client:get_full_block({127, 0, 0, 1, 1984}, B1),
 	% B3 = B2#block {txs = [TX, TX1]},
-
-%%%
-%%% EOF
-%%%

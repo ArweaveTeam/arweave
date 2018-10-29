@@ -11,7 +11,7 @@
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
 -export([get_time/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
--export([get_current_block/1]).
+-export([get_current_block/1, get_current_block/2]).
 
 -include("ar.hrl").
 
@@ -185,16 +185,11 @@ add_peer(Peer) ->
 		)
 	).
 
-%% @doc Get a peers current, top block.
+%% @doc Get a peer's current, top block.
 get_current_block(Peer) ->
-	handle_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/current",
-			[]
-		)
-	).
+	get_current_block(Peer, get_hash_list(Peer)).
+get_current_block(Peer, BHL) ->
+	get_full_block(Peer, hd(BHL), BHL).
 
 %% @doc Get the minimum cost that a remote peer would charge for
 %% a transaction of the given data size in bytes.
@@ -260,45 +255,16 @@ prepare_block_id(ID) when is_integer(ID) ->
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer.
 get_full_block(Peer, ID, BHL) ->
-	B =
-		handle_block_response(
-			ar_httpc:request(
-				<<"GET">>,
-				Peer,
-				prepare_block_id(ID),
-				[]
-			)
+	handle_block_response(
+		Peer,
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			prepare_block_id(ID),
+			[]
 		),
-	case ?IS_BLOCK(B) of
-		true ->
-			WalletList =
-				case is_binary(WL = B#block.wallet_list) of
-					true ->
-						case ar_storage:read_wallet_list(WL) of
-							{error, _} ->
-								get_wallet_list(Peer, WL);
-							ReadWL -> ReadWL
-						end;
-					false -> WL
-				end,
-			HashList =
-				case B#block.hash_list of
-					undefined ->
-						ar_block:generate_hash_list_for_block(B, BHL);
-					HL -> HL
-				end,
-			FullB =
-				B#block {
-					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
-					hash_list = HashList,
-					wallet_list = WalletList
-				},
-			case lists:any(fun erlang:is_atom/1, FullB#block.txs) of
-				false -> FullB;
-				true -> unavailable
-			end;
-		false -> B
-	end.
+		BHL
+	).
 
 %% @doc Get a wallet list (by its hash) from the external peer.
 get_wallet_list(Peer, Hash) ->
@@ -311,7 +277,7 @@ get_wallet_list(Peer, Hash) ->
 		),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			ar_serialize:dejsonify(ar_serialize:json_struct_to_wallet_list(Body));
+			ar_serialize:json_struct_to_wallet_list(Body);
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
 	end.
 
@@ -380,8 +346,11 @@ get_tx_data(Peer, Hash) ->
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
 get_time(Peer) ->
-	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_httpc:request(<<"GET">>, Peer, "/time", []),
-	binary_to_integer(Body).
+	case ar_httpc:request(<<"GET">>, Peer, "/time", []) of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			binary_to_integer(Body);
+		_ -> unknown
+	end.
 
 %% @doc Retreive all valid transactions held that have not yet been mined into
 %% a block from a remote peer.
@@ -463,12 +432,42 @@ process_get_info(Body) ->
 	].
 
 %% @doc Process the response of a /block call.
-handle_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_block(Body);
-handle_block_response({error, _}) -> unavailable;
-handle_block_response({ok, {{<<"400">>, _}, _, _, _, _}}) -> unavailable;
-handle_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+handle_block_response(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
+	B = ar_serialize:json_struct_to_block(Body),
+	case ?IS_BLOCK(B) of
+		true ->
+			WalletList =
+				case is_binary(WL = B#block.wallet_list) of
+					true ->
+						case ar_storage:read_wallet_list(WL) of
+							{error, _} ->
+								get_wallet_list(Peer, B#block.indep_hash);
+							ReadWL -> ReadWL
+						end;
+					false -> WL
+				end,
+			HashList =
+				case B#block.hash_list of
+					unset ->
+						ar_block:generate_hash_list_for_block(B, BHL);
+					HL -> HL
+				end,
+			FullB =
+				B#block {
+					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
+					hash_list = HashList,
+					wallet_list = WalletList
+				},
+			case lists:any(fun erlang:is_atom/1, FullB#block.txs) or is_atom(WalletList) of
+				false -> FullB;
+				true -> unavailable
+			end;
+		false -> B
+	end;
+handle_block_response(_, {error, _}, _) -> unavailable;
+handle_block_response(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
+handle_block_response(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable.
 
 %% @doc Process the response of a /block/.../all call.
 handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
