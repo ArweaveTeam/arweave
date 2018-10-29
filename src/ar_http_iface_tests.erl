@@ -226,7 +226,7 @@ get_non_existent_block_test() ->
 	[B0] = ar_weave:init([]),
 	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
-	reregister(Node1),
+	ar_http_iface_server:reregister(Node1),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
 		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100", []),
 	{ok, {{<<"404">>, _}, _, _, _, _}}

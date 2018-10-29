@@ -935,7 +935,7 @@ get_block_by_filename(Filename, <<"1">>, _) ->
 		{404, [], <<"Requested block not found on block hash list.">>}
 	end;
 get_block_by_filename(Filename, _, _) ->
-	{ok, [], {file, Filename}};
+	{ok, [], {file, Filename}}.
 
 
 %% @doc Return the block hash list associated with a block.
