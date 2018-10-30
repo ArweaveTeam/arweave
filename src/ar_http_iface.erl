@@ -808,7 +808,8 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 					{<<"nonce">>, ar_util:encode(Nonce)}
 				]
 			}
-		)
+		),
+		3 * 1000
 	).
 
 %% @doc Request to be added as a peer to a remote host.
