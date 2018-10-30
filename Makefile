@@ -43,10 +43,19 @@ gitmodules:
 
 build: ebin data logs blocks hash_lists wallet_lists
 	rm -rf priv
-	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
+	( \
+		cd lib/jiffy && \
+		./rebar compile && \
+		cd ../.. && \
+		mv lib/jiffy/priv ./ \
+	)
 	(cd lib/prometheus && ./rebar3 compile)
 	(cd lib/accept && ./rebar3 compile)
-	(cd lib/prometheus_process_collector && ./rebar3 compile && cp _build/default/lib/prometheus_process_collector/priv/*.so ../../priv)
+	( \
+		cd lib/prometheus_process_collector && \
+		./rebar3 compile && \
+		cp _build/default/lib/prometheus_process_collector/priv/*.so ../../priv \
+	)
 	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
