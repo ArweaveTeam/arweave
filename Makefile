@@ -41,7 +41,7 @@ all: gitmodules build
 gitmodules:
 	git submodule update --init
 
-build: ebin data logs blocks hash_lists wallet_lists
+build: data blocks hash_lists wallet_lists
 	( \
 		cd lib/jiffy && \
 		./rebar compile && \
@@ -58,12 +58,6 @@ build: ebin data logs blocks hash_lists wallet_lists
 	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
-
-ebin:
-	mkdir -p ebin
-
-logs:
-	mkdir -p logs
 
 blocks:
 	mkdir -p blocks
@@ -92,7 +86,9 @@ sim_hard: all
 	erl $(ERL_OPTS) -s ar_network spawn_and_mine hard
 
 clean:
-	rm -rf ebin docs logs
+	rm ./ebin/*.beam
+	rm ./logs/*.log
+	rm -rf docs
 	rm -f priv/jiffy.so priv/prometheus_process_collector.so
 	rm -f erl_crash.dump
 
