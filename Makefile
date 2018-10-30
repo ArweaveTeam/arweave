@@ -42,19 +42,18 @@ gitmodules:
 	git submodule update --init
 
 build: ebin data logs blocks hash_lists wallet_lists
-	rm -rf priv
 	( \
 		cd lib/jiffy && \
 		./rebar compile && \
 		cd ../.. && \
-		mv lib/jiffy/priv ./ \
+		cp lib/jiffy/priv/jiffy.so ./priv/ \
 	)
 	(cd lib/prometheus && ./rebar3 compile)
 	(cd lib/accept && ./rebar3 compile)
 	( \
 		cd lib/prometheus_process_collector && \
 		./rebar3 compile && \
-		cp _build/default/lib/prometheus_process_collector/priv/*.so ../../priv \
+		cp _build/default/lib/prometheus_process_collector/priv/prometheus_process_collector.so ../../priv/ \
 	)
 	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
@@ -93,7 +92,8 @@ sim_hard: all
 	erl $(ERL_OPTS) -s ar_network spawn_and_mine hard
 
 clean:
-	rm -rf ebin docs logs priv
+	rm -rf ebin docs logs
+	rm -f priv/jiffy.so priv/prometheus_process_collector.so
 	rm -f erl_crash.dump
 
 todo:
