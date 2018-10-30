@@ -86,11 +86,15 @@ sim_hard: all
 	erl $(ERL_OPTS) -s ar_network spawn_and_mine hard
 
 clean:
-	rm ./ebin/*.beam
-	rm ./logs/*.log
+	rm -f ./ebin/*.beam
+	rm -f ./logs/*.log
 	rm -rf docs
 	rm -f priv/jiffy.so priv/prometheus_process_collector.so
 	rm -f erl_crash.dump
+	(cd lib/jiffy && ./rebar clean)
+	(cd lib/prometheus && ./rebar3 clean --all)
+	(cd lib/accept && ./rebar3 clean --all)
+	(cd lib/prometheus_process_collector && ./rebar3 clean --all)
 
 todo:
 	grep --color --line-number --recursive TODO "src"
