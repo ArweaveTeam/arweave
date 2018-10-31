@@ -22,7 +22,6 @@
 	CORE_TEST_MODS,
 	[
 		ar,
-		ar_http_iface_tests,
 		ar_block,
 		ar_cleanup,
 		ar_firewall,
@@ -42,6 +41,7 @@
 		ar_tx_db,
 		ar_util,
 		ar_wallet,
+		ar_http_iface_tests,
 		ar_weave
 	]
 ).
