@@ -1013,7 +1013,6 @@ process_request(get_block, [Type, ID, Field]) ->
 			{421, [], <<"Subfield block querying is disabled on this node.">>}
 	end;
 process_request(post_tx, TX) ->
-	ar_bridge:ignore_id(TX#tx.id),
 	ar_bridge:add_tx(whereis(http_bridge_node), TX),
 	{200, [], <<"OK">>}.
 
@@ -1040,6 +1039,7 @@ validate_post_tx(Req) ->
 			case check_is_id_ignored(tx, TX#tx.id) of
 				{error, Response} -> {error, Response};
 				ok ->
+					ar_bridge:ignore_id(TX#tx.id),
 					case verify_difficulty() of
 						error -> {error, {503, <<"Transaction verification failed.">>}};
 						{ok, Diff} ->
