@@ -79,7 +79,7 @@ block_to_json_struct(
 			{reward_pool, RewardPool},
 			{weave_size, WeaveSize},
 			{block_size, BlockSize},
-			{cumulative_diff, integer_to_binary(CDiff)}
+			{cumulative_diff, CDiff}
 		]
 	}.
 
