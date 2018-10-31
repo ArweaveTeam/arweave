@@ -203,7 +203,7 @@ start_mining(#{
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL), BHL),
 			RecallHash = find_recall_hash(B, BHL),
-			% TODO mue: Cleanup.
+			% TODO: Cleanup.
 			% FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BHL),
 			case FullBlock of
@@ -511,6 +511,7 @@ validate(
 	{Td,HashlistCheck} = timer:tc(ar_block,verify_block_hash_list,[NewB, OldB]),
 	{Te,WalletListCheck} = timer:tc(ar_block,verify_wallet_list,[NewB, OldB, RecallB, TXs]),
 	{Tf,CumulativeDiffCheck} = timer:tc(ar_block,verify_cumulative_diff,[NewB, OldB]),
+	{Tg,BHLMerkleCheck} = timer:tc(ar_block,verify_block_hash_list_merkle,[NewB, OldB]),
 
 	ar:report(
 		[
@@ -530,7 +531,8 @@ validate(
 			{block_previous_check, PreviousBCheck, Tc},
 			{block_hash_list, HashlistCheck, Td},
 			{block_wallet_list, WalletListCheck, Te},
-			{block_cumulative_diff, CumulativeDiffCheck, Tf}
+			{block_cumulative_diff, CumulativeDiffCheck, Tf},
+			{hash_list_merkle, BHLMerkleCheck, Tg}
 		]
 	),
 
@@ -561,7 +563,8 @@ validate(
 		andalso PreviousBCheck
 		andalso HashlistCheck
 		andalso WalletListCheck
-		andalso CumulativeDiffCheck;
+		andalso CumulativeDiffCheck
+		andalso BHLMerkleCheck;
 validate(_HL, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
 	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->

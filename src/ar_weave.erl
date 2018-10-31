@@ -130,8 +130,9 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, Recal
 		Nonce,
 		Timestamp
 	);
-add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
+add([PrevB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
 	% ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
+	NewHeight = PrevB#block.height + 1,
 	RecallB = ar_node_utils:find_recall_block(HashList),
 	TXs = [T#tx.id || T <- RawTXs],
 	BlockSize = lists:foldl(
@@ -142,26 +143,36 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
 			RawTXs
 		),
 	CDiff =
-		case B#block.height >= (?FORK_1_6 - 1) of
-			true -> B#block.cumulative_diff + (Diff * Diff);
+		case PrevB#block.height >= (?FORK_1_6 - 1) of
+			true -> PrevB#block.cumulative_diff + (Diff * Diff);
 			false -> 0
+		end,
+	MR =
+		case NewHeight of
+			_ when NewHeight < ?FORK_1_6 ->
+				<<>>;
+			_ when NewHeight == ?FORK_1_6 ->
+				ar_merkle:block_hash_list_to_merkle_root(PrevB#block.hash_list);
+			_ ->
+				ar_merkle:add_hash(PrevB#block.hash_list_merkle, PrevB#block.indep_hash)
 		end,
 	NewB =
 		#block {
 			nonce = Nonce,
-			previous_block = B#block.indep_hash,
+			previous_block = PrevB#block.indep_hash,
 			timestamp = Timestamp,
 			last_retarget =
-				case ar_retarget:is_retarget_height(B#block.height + 1) of
+				case ar_retarget:is_retarget_height(PrevB#block.height + 1) of
 					true -> Timestamp;
-					false -> B#block.last_retarget
+					false -> PrevB#block.last_retarget
 				end,
 			diff = Diff,
 			cumulative_diff = CDiff,
-			height = B#block.height + 1,
+			hash_list_merkle = MR,
+			height = NewHeight,
 			hash = hash(
 				ar_block:generate_block_data_segment(
-					B,
+					PrevB,
 					RecallB,
 					RawTXs,
 					RewardAddr,
@@ -176,7 +187,7 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
 			reward_addr = RewardAddr,
 			tags = Tags,
 			reward_pool = RewardPool,
-			weave_size = B#block.weave_size + BlockSize,
+			weave_size = PrevB#block.weave_size + BlockSize,
 			block_size = BlockSize
 		},
 	[NewB#block { indep_hash = indep_hash(NewB) }|HashList].

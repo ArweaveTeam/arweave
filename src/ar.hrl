@@ -40,6 +40,7 @@
 %% @doc The hashing algorithm used to verify that the weave has not been
 %% tampered with.
 -define(MINING_HASH_ALG, sha384).
+-define(MERKLE_HASH_ALG, sha384).
 -define(HASH_SZ, 256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
@@ -188,6 +189,7 @@
 	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
 	txs = [], % A list of transaction records associated with this block.
 	hash_list = unset, % A list of all previous indep hashes.
+	hash_list_merkle = <<>>, % The merkle root of the block's BHL.
 	wallet_list = [], % A map of wallet balances, or undefined.
     reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
     tags = [], % Miner specified tags to store with the block.
