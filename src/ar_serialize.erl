@@ -39,7 +39,8 @@ block_to_json_struct(
 		reward_pool = RewardPool,
 		weave_size = WeaveSize,
 		block_size = BlockSize,
-		cumulative_diff = CDiff
+		cumulative_diff = CDiff,
+		hash_list_merkle = MR
 	}) ->
 	JSONElements =
 		[
@@ -79,12 +80,24 @@ block_to_json_struct(
 			{reward_pool, RewardPool},
 			{weave_size, WeaveSize},
 			{block_size, BlockSize},
-			{cumulative_diff, CDiff}
+			{cumulative_diff, CDiff},
+			{hash_list_merkle, ar_util:encode(MR)}
 		],
 	case Height < ?FORK_1_6 of
-		true -> {lists:keydelete(cumulative_diff, 1, JSONElements)};
-		false -> {JSONElements}
+		true ->
+			KeysToDelete = [cumulative_diff, hash_list_merkle],
+			{delete_keys(KeysToDelete, JSONElements)};
+		false ->
+			{JSONElements}
 	end.
+
+delete_keys([], Proplist) ->
+	Proplist;
+delete_keys([Key | Keys], Proplist) ->
+	delete_keys(
+		Keys,
+		lists:keydelete(Key, 1, Proplist)
+	).
 
 %% @doc Convert a full block record into a JSON struct.
 full_block_to_json_struct(B = #block { txs = TXs }) ->
@@ -113,6 +126,10 @@ json_struct_to_block(JSONBlock) ->
 	CDiff = case find_value(<<"cumulative_diff">>, BlockStruct) of
 		_ when Height < ?FORK_1_6 -> 0;
 		CD -> CD
+	end,
+	MR = case find_value(<<"hash_list_merkle">>, BlockStruct) of
+		_ when Height < ?FORK_1_6 -> <<>>;
+		R -> ar_util:decode(R)
 	end,
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
@@ -171,7 +188,8 @@ json_struct_to_block(JSONBlock) ->
 		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
 		block_size = find_value(<<"block_size">>, BlockStruct),
-		cumulative_diff = CDiff
+		cumulative_diff = CDiff,
+		hash_list_merkle = MR
 	}.
 
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a
