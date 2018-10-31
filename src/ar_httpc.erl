@@ -15,7 +15,7 @@ request(Method, Peer, Path, Body) ->
 request(Method, Peer, Path, Body, Timeout) ->
 	%ar:report([{ar_httpc_request,Peer},{method,Method}, {path,Path}]),
 	Host="http://" ++ ar_util:format_peer(Peer),
-	{ok, Client} = fusco:start(Host, [{connect_timeout, ?CONNECT_TIMEOUT}]),
+	{ok, Client} = fusco:start(Host, [{connect_timeout, min(Timeout, ?CONNECT_TIMEOUT)}]),
 	Result = fusco:request(Client, list_to_binary(Path), Method, ?DEFAULT_REQUEST_HEADERS, Body, 1, Timeout),
 	ok = fusco:disconnect(Client),
 	case Result of
@@ -60,7 +60,7 @@ reset_peer(IP) ->
 update_timer(IP) ->
 	case ar_meta_db:get({peer, IP}) of
 		not_found -> #performance{};
-		P -> 
+		P ->
 			ar_meta_db:put({peer, IP},
 				P#performance {
 					transfers = P#performance.transfers,

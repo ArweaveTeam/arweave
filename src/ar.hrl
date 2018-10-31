@@ -101,20 +101,20 @@
 -define(MAX_BODY_SIZE, 3 * 1024 * 1024).
 
 %% @doc Default timeout value for network requests.
--define(NET_TIMEOUT, 300 * 1000).
+-define(NET_TIMEOUT, 5 * 60 * 1000).
 
 %% @doc Default timeout value for local requests
--define(LOCAL_NET_TIMEOUT, 30000).
+-define(LOCAL_NET_TIMEOUT, 30 * 1000).
 
 %% @doc Default timeout for initial request
 -define(CONNECT_TIMEOUT, 25 * 1000).
 
 %% @doc Default time to wait after a failed join to retry
--define(REJOIN_TIMEOUT, 3000).
+-define(REJOIN_TIMEOUT, 3 * 1000).
 
 %% @doc The amount of time to wait before refreshing miner data in case of a
 %% difficulty change.
--define(REFRESH_MINE_DATA_TIMER, 60000).
+-define(REFRESH_MINE_DATA_TIMER, 60 * 1000).
 
 %% @doc Time between attempts to find optimise peers.
 -define(GET_MORE_PEERS_TIME,  240 * 1000).
@@ -135,7 +135,7 @@
 %% @doc Amount of peers without a given transaction to send a new transaction to.
 -define(NUM_REGOSSIP_TX, 20).
 
-%% Maximum nunber of requests allowed by an IP in any 30 second period.
+%% Maximum number of requests allowed by an IP in any 30 second period.
 -define(MAX_REQUESTS, 450).
 
 %% @doc Delay before mining rewards manifest.
@@ -145,7 +145,10 @@
 -define(PEER_PERMANENT_BLACKLIST,[]).
 
 %% @doc Length of time to wait (seconds) before dropping after last activity
--define(PEER_TIMEOUT, 480).
+-define(PEER_TIMEOUT, 8 * 60).
+
+%% @doc The number of the best peers to send new blocks to in parallel.
+-define(BLOCK_PROPAGATION_PARALLELIZATION, 10).
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").

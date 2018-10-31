@@ -115,7 +115,7 @@ handle(Req, _Args) ->
 	case ar_meta_db:get({peer, Peer}) of
 		not_found ->
 			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
-		X -> do_nothing
+		_ -> do_nothing
 	end,
 	case handle(Req#req.method, elli_request:path(Req), Req) of
 		{Status, Hdrs, Body} ->
@@ -131,7 +131,7 @@ handle('GET', [], _Req) ->
 handle('GET', [<<"info">>], _Req) ->
 	return_info();
 
-%% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node 
+%% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node
 %% is alive. Appease them.
 handle('HEAD', [], _Req) ->
 	{200, [], <<>>};
@@ -661,45 +661,12 @@ handle_event(_Type, _Args, _Config) ->
 	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
 	ok.
 
-%% @doc Return a block in JSON via HTTP or 404 if can't be found.
-return_block(unavailable) -> {404, [], <<"Block not found.">>};
-return_block(not_found) -> {404, [], <<"Block not found.">>};
-return_block(B) ->
-	{200, [],
-		ar_serialize:jsonify(
-			ar_serialize:block_to_json_struct(B)
-		)
-	}.
-return_encrypted_block(unavailable) -> {404, [], <<"Block not found.">>}.
-return_encrypted_block(unavailable, _, _) -> {404, [], <<"Block not found.">>};
-return_encrypted_block(B, Key, Nonce) ->
-	{200, [],
-		ar_util:encode(ar_block:encrypt_block(B, Key, Nonce))
-	}.
-
-%% @doc Return a full block in JSON via HTTP or 404 if can't be found.
-return_full_block(unavailable) -> {404, [], <<"Block not found.">>};
-return_full_block(B) ->
-	{200, [],
-		ar_serialize:jsonify(
-			ar_serialize:full_block_to_json_struct(B)
-		)
-	}.
-return_encrypted_full_block(unavailable) -> {404, [], <<"Block not found.">>}.
-return_encrypted_full_block(unavailable, _, _) -> {404, [], <<"Block not found.">>};
-return_encrypted_full_block(B, Key, Nonce) ->
-	{200, [],
-		ar_util:encode(ar_block:encrypt_full_block(B, Key, Nonce))
-	}.
-
-%% @doc Return a tx in JSON via HTTP or 404 if can't be found.
-return_tx(unavailable) -> {404, [], <<"TX not found.">>};
-return_tx(T) ->
-	{200, [],
-		ar_serialize:jsonify(
-			ar_serialize:tx_to_json_struct(T)
-		)
-	}.
+% return_encrypted_block(unavailable) -> {404, [], <<"Block not found.">>}.
+% return_encrypted_block(unavailable, _, _) -> {404, [], <<"Block not found.">>};
+% return_encrypted_block(B, Key, Nonce) ->
+% 	{200, [],
+% 		ar_util:encode(ar_block:encrypt_block(B, Key, Nonce))
+% 	}.
 
 %% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
@@ -841,7 +808,8 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 					{<<"nonce">>, ar_util:encode(Nonce)}
 				]
 			}
-		)
+		),
+		3 * 1000
 	).
 
 %% @doc Request to be added as a peer to a remote host.
@@ -1144,13 +1112,6 @@ handle_block_response(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
 handle_block_response(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
 handle_block_response(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable.
 
-%% @doc Process the response of a /block/.../all call.
-handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_full_block(Body);
-handle_full_block_response({error, _}) -> unavailable;
-handle_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
-
 %% @doc Process the response of a /block/.../encrypted call.
 handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_util:decode(Body);
@@ -1217,10 +1178,6 @@ block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
-
-%% @doc stdlib function composition.
-binary_to_existing_atom(B) ->
-	list_to_existing_atom(binary_to_list(B)).
 
 %% @doc checks if hash is valid & if so returns filename.
 hash_to_maybe_filename(Type, Hash) ->
@@ -1448,7 +1405,7 @@ verify_request_to_blockshadow(Req) ->
 		_:_ -> false
 	end.
 
-%% @doc Take a block type specifier, an ID, and a BHL, returning whether the 
+%% @doc Take a block type specifier, an ID, and a BHL, returning whether the
 %% given block is part of the BHL.
 is_block_known(<<"height">>, RawHeight, BHL) when is_binary(RawHeight) ->
 	is_block_known(<<"height">>, binary_to_integer(RawHeight), BHL);
@@ -1563,14 +1520,46 @@ get_fun_msg_pair(send_new_tx) ->
 	, too_many_requests}.
 
 %% @doc Frame to test spamming an endpoint.
+%% TODO: Perform the requests in parallel. Just changing the lists:map/2 call
+%% to an ar_util:pmap/2 call fails the tests currently.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_blacklist:reset_counters(),
-	Responses =	ar_util:pmap(RequestFun, lists:seq(1, NRequests)),
-	ar_blacklist:reset_counters(),
-	ActualErrors = length(lists:filter(fun(X) -> X == ErrorResponse end, Responses)),
+	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
-	?assertEqual(ExpectedErrors, ActualErrors).
+	ar_blacklist:reset_counters(),
+	ByResponseType = count_by_response_type(ErrorResponse, Responses),
+	Expected = #{
+		error_responses => ExpectedErrors,
+		ok_responses => NRequests - ExpectedErrors
+	},
+	?assertEqual(Expected, ByResponseType).
+
+%% @doc Count the number of successful and error responses.
+count_by_response_type(ErrorResponse, Responses) ->
+	count_by(
+		fun
+			(Response) when Response == ErrorResponse -> error_responses;
+			(_) -> ok_responses
+		end,
+		Responses
+	).
+
+%% @doc Count the occurances in the list based on the predicate.
+count_by(Pred, List) ->
+	maps:map(fun (_, Value) -> length(Value) end, group(Pred, List)).
+
+%% @doc Group the list based on the key generated by Grouper.
+group(Grouper, Values) ->
+	group(Grouper, Values, maps:new()).
+
+group(_, [], Acc) ->
+	Acc;
+group(Grouper, [Item | List], Acc) ->
+	Key = Grouper(Item),
+	Updater = fun (Old) -> [Item | Old] end,
+	NewAcc = maps:update_with(Key, Updater, [Item], Acc),
+	group(Grouper, List, NewAcc).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_unjoined_info_test() ->
