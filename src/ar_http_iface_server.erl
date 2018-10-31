@@ -351,7 +351,7 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
-%handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
+% handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 %	ar:d({resp_block_hash, Hash}),
 %	ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 %	case ar_key_db:get(ar_util:decode(Hash)) of
@@ -368,9 +368,9 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 %			ar:d(not_found_block),
 %			return_encrypted_block(unavailable)
 %	 end;
-%return_encrypted_block(unavailable) -> {404, [], <<"Block not found.">>}.
-%return_encrypted_block(unavailable, _, _) -> {404, [], <<"Block not found.">>};
-%return_encrypted_block(B, Key, Nonce) ->
+% return_encrypted_block(unavailable) -> {404, [], <<"Block not found.">>}.
+% return_encrypted_block(unavailable, _, _) -> {404, [], <<"Block not found.">>};
+% return_encrypted_block(B, Key, Nonce) ->
 %	{200, [],
 %		ar_util:encode(ar_block:encrypt_block(B, Key, Nonce))
 %	}.
@@ -604,7 +604,7 @@ id_to_filename(Type, ID) ->
 is_a_pending_tx(ID) ->
 	lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))).
 
-%% @doc Take a block type specifier, an ID, and a BHL, returning whether the 
+%% @doc Take a block type specifier, an ID, and a BHL, returning whether the
 %% given block is part of the BHL.
 is_block_known(<<"height">>, RawHeight, BHL) when is_binary(RawHeight) ->
 	is_block_known(<<"height">>, binary_to_integer(RawHeight), BHL);

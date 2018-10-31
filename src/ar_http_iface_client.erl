@@ -119,7 +119,8 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 					{<<"nonce">>, ar_util:encode(Nonce)}
 				]
 			}
-		)
+		),
+		3 * 1000
 	).
 
 %% @doc As send_new_block but with block_data_segment in POST json.
@@ -468,13 +469,6 @@ handle_block_response(_, {error, _}, _) -> unavailable;
 handle_block_response(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
 handle_block_response(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
 handle_block_response(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable.
-
-%% @doc Process the response of a /block/.../all call.
-handle_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_full_block(Body);
-handle_full_block_response({error, _}) -> unavailable;
-handle_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
 
 %% @doc Process the response of a /block/.../encrypted call.
 handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->

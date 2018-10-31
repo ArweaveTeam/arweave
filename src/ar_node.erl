@@ -25,7 +25,7 @@
 -export([is_joined/1]).
 
 -export([mine/1, mine_at_diff/2, automine/1, truncate/1]).
--export([add_block/3, add_block/4, add_block/5]).
+-export([add_block/3]).
 -export([add_tx/2]).
 -export([cancel_tx/3]).
 -export([add_peers/2]).
@@ -279,20 +279,20 @@ get_block(Host, ID, BHL) ->
 
 %% @doc Convert a block with tx references into a full block, that is a block
 %% containing the entirety of all its referenced txs.
-make_full_block(ID, BHL) ->
-	case ar_storage:read_block(ID, BHL) of
-		unavailable -> unavailable;
-		BlockHeader ->
-			FullB =
-				BlockHeader#block{
-					txs =
-						ar_storage:read_tx(BlockHeader#block.txs)
-				},
-			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
-				[] -> FullB;
-				_ -> unavailable
-			end
-	end.
+% make_full_block(ID, BHL) ->
+%	case ar_storage:read_block(ID, BHL) of
+%		unavailable -> unavailable;
+%		BlockHeader ->
+%			FullB =
+%				BlockHeader#block{
+%					txs =
+%						ar_storage:read_tx(BlockHeader#block.txs)
+%				},
+%			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
+%				[] -> FullB;
+%				_ -> unavailable
+%			end
+%	end.
 
 %% @doc Gets the set of all known txs from the node.
 %% This set includes those on timeout waiting to distribute around the
@@ -826,70 +826,70 @@ handle(_SPid, UnhandledMsg) ->
 
 %% @doc Get a specific encrypted block via the blocks indep_hash.
 %% If the block is found locally an unencrypted block will be returned.
-get_encrypted_block(Peers, ID, BHL) when is_list(Peers) ->
-	% check locally first, if not found ask list of external peers for
-	% encrypted block
-	case ar_storage:read_block(ID, BHL) of
-		unavailable ->
-			lists:foldl(
-				fun(Peer, Acc) ->
-					case is_atom(Acc) of
-						false -> Acc;
-						true ->
-							B = get_encrypted_block(Peer, ID, BHL),
-							case is_atom(B) of
-								true -> Acc;
-								false -> B
-							end
-					end
-				end,
-				unavailable,
-				Peers
-			);
-		Block -> Block
-	end;
-get_encrypted_block(Proc, ID, BHL) when is_pid(Proc) ->
-	% attempt to get block from local storage
-	% NB: if found block returned will not be encrypted
-	ar_storage:read_block(ID, BHL);
-get_encrypted_block(Host, ID, BHL) ->
-	% handle external peer request
-	ar_http_iface_client:get_encrypted_block(Host, ID, BHL).
+% get_encrypted_block(Peers, ID, BHL) when is_list(Peers) ->
+% 	% check locally first, if not found ask list of external peers for
+% 	% encrypted block
+%	case ar_storage:read_block(ID, BHL) of
+%		unavailable ->
+%			lists:foldl(
+%				fun(Peer, Acc) ->
+%					case is_atom(Acc) of
+%						false -> Acc;
+%						true ->
+%							B = get_encrypted_block(Peer, ID, BHL),
+%							case is_atom(B) of
+%								true -> Acc;
+%								false -> B
+%							end
+%					end
+%				end,
+% 				unavailable,
+%  				Peers
+% 			);
+% 		Block -> Block
+% 	end;
+% get_encrypted_block(Proc, ID, BHL) when is_pid(Proc) ->
+% 	% attempt to get block from local storage
+% 	% NB: if found block returned will not be encrypted
+% 	ar_storage:read_block(ID, BHL);
+% get_encrypted_block(Host, ID, BHL) ->
+% 	% handle external peer request
+% 	ar_http_iface_client:get_encrypted_block(Host, ID, BHL).
 
 %% @doc Get a specific encrypted full block (a block containing full txs) via
 %% the blocks indep_hash.
 %% If the block is found locally an unencrypted block will be returned.
-get_encrypted_full_block(Peers, ID, BHL) when is_list(Peers) ->
-	% check locally first, if not found ask list of external peers for
-	% encrypted block
-	case ar_storage:read_block(ID, BHL) of
-		unavailable ->
-			lists:foldl(
-				fun(Peer, Acc) ->
-					case is_atom(Acc) of
-						false -> Acc;
-						true ->
-							Full = get_encrypted_full_block(Peer, ID, BHL),
-							case is_atom(Full) of
-								true -> Acc;
-								false -> Full
-							end
-					end
-				end,
-				unavailable,
-				Peers
-			);
-		_Block ->
-			% make_full_block(ID, BHL)
-			error(block_hash_list_required_in_context)
-	end;
-get_encrypted_full_block(Proc, ID, BHL) when is_pid(Proc) ->
-	% attempt to get block from local storage and make full
-	% NB: if found block returned will not be encrypted
-	make_full_block(ID, BHL);
-get_encrypted_full_block(Host, ID, BHL) ->
-	% handle external peer request
-	ar_http_iface_client:get_encrypted_full_block(Host, ID, BHL).
+% get_encrypted_full_block(Peers, ID, BHL) when is_list(Peers) ->
+% 	% check locally first, if not found ask list of external peers for
+% 	% encrypted block
+% 	case ar_storage:read_block(ID, BHL) of
+% 		unavailable ->
+% 			lists:foldl(
+% 				fun(Peer, Acc) ->
+% 					case is_atom(Acc) of
+% 						false -> Acc;
+% 						true ->
+% 							Full = get_encrypted_full_block(Peer, ID, BHL),
+% 							case is_atom(Full) of
+% 								true -> Acc;
+% 								false -> Full
+% 							end
+% 					end
+% 				end,
+% 				unavailable,
+% 				Peers
+% 			);
+% 		_Block ->
+% 			% make_full_block(ID, BHL)
+% 			error(block_hash_list_required_in_context)
+% 	end;
+% get_encrypted_full_block(Proc, ID, BHL) when is_pid(Proc) ->
+% 	% attempt to get block from local storage and make full
+% 	% NB: if found block returned will not be encrypted
+% 	make_full_block(ID, BHL);
+% get_encrypted_full_block(Host, ID, BHL) ->
+% 	% handle external peer request
+% 	ar_http_iface_client:get_encrypted_full_block(Host, ID, BHL).
 
 %% @doc Reattempts to find a block from a node retrying up to Count times.
 %retry_block(_, _, Response, 0) ->
@@ -904,20 +904,6 @@ get_encrypted_full_block(Host, ID, BHL) ->
 %			retry_block(Host, ID, unavailable, Count-1);
 %		B -> B
 %	end.
-
-%% @doc Reattempts to find a full block from a node retrying up to Count times.
-retry_full_block(_, _, Response, 0, _) ->
-	Response;
-retry_full_block(Host, ID, _, Count, BHL) ->
-	case ar_node_utils:get_full_block(Host, ID, BHL) of
-		not_found ->
-			timer:sleep(3000),
-			retry_full_block(Host, ID, not_found, Count - 1, BHL);
-		unavailable ->
-			timer:sleep(3000),
-			retry_full_block(Host, ID, unavailable, Count - 1, BHL);
-		B -> B
-	end.
 
 %% @doc Reattempts to find an encrypted full block from a node retrying
 %% up to Count times.
