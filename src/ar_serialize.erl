@@ -39,7 +39,8 @@ block_to_json_struct(
 		reward_pool = RewardPool,
 		weave_size = WeaveSize,
 		block_size = BlockSize,
-		cumulative_diff = CDiff
+		cumulative_diff = CDiff,
+		hash_list_merkle = MR
 	}) ->
 	{
 		[
@@ -79,7 +80,8 @@ block_to_json_struct(
 			{reward_pool, RewardPool},
 			{weave_size, WeaveSize},
 			{block_size, BlockSize},
-			{cumulative_diff, integer_to_binary(CDiff)}
+			{cumulative_diff, CDiff},
+			{hash_list_merkle, ar_util:encode(MR)}
 		]
 	}.
 
@@ -106,7 +108,8 @@ json_struct_to_block(JSONBlock) ->
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
 	HashList = find_value(<<"hash_list">>, BlockStruct),
 	Tags = find_value(<<"tags">>, BlockStruct),
-	CDiff = binary_to_integer(find_value(<<"cumulative_diff">>, BlockStruct)),
+	CDiff = find_value(<<"cumulative_diff">>, BlockStruct),
+	MR = find_value(<<"hash_list_merkle">>, BlockStruct),
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
 		previous_block =
@@ -168,6 +171,11 @@ json_struct_to_block(JSONBlock) ->
 			case CDiff of
 				undefined -> 0;
 				_ -> CDiff
+			end,
+		hash_list_merkle =
+			case MR of
+				undefined -> <<>>;
+				_ -> ar_util:decode(MR)
 			end
 	}.
 

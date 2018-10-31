@@ -203,7 +203,7 @@ start_mining(#{
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL), BHL),
 			RecallHash = find_recall_hash(B, BHL),
-			% TODO mue: Cleanup.
+			% TODO: Cleanup.
 			% FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BHL),
 			case FullBlock of
@@ -510,6 +510,7 @@ validate(
 	RetargetCheck = ar_block:verify_last_retarget(NewB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
+	BHLMerkleCheck = ar_block:verify_block_hash_list_merkle(NewB, OldB),
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
 	CumulativeDiffCheck = ar_block:verify_cumulative_diff(NewB, OldB),
 
@@ -532,7 +533,8 @@ validate(
 			{block_previous_check, PreviousBCheck},
 			{block_hash_list, HashlistCheck},
 			{block_wallet_list, WalletListCheck},
-			{block_cumulative_diff, CumulativeDiffCheck}
+			{block_cumulative_diff, CumulativeDiffCheck},
+			{hash_list_merkle, BHLMerkleCheck}
 		]
 	),
 
@@ -564,7 +566,8 @@ validate(
 		andalso PreviousBCheck
 		andalso HashlistCheck
 		andalso WalletListCheck
-		andalso CumulativeDiffCheck;
+		andalso CumulativeDiffCheck
+		andalso BHLMerkleCheck;
 validate(_HL, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
 	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
