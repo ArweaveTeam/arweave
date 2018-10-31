@@ -497,7 +497,6 @@ validate(
 		ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
 		Nonce),
 	Mine = ar_mine:validate_by_hash(BDSHash, Diff),
-	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
 	Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
 	Retarget = ar_retarget:validate(NewB, OldB),
@@ -518,7 +517,6 @@ validate(
 			{block_validation_results, ar_util:encode(NewB#block.indep_hash)},
 			{height, NewB#block.height},
 			{block_mine_validate, Mine},
-			{block_wallet_validate, Wallet},
 			{block_indep_validate, IndepRecall},
 			{block_txs_validate, Txs},
 			{block_diff_validate, Retarget},
@@ -550,7 +548,6 @@ validate(
 	end,
 
 	(Mine =/= false)
-		andalso Wallet
 		andalso IndepRecall
 		andalso Txs
 		andalso Retarget

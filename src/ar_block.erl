@@ -412,7 +412,7 @@ verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
 			ar_node_utils:calculate_proportion(
 				RecallB#block.block_size,
 				NewB#block.weave_size,
-				length(NewB#block.hash_list)
+				NewB#block.height
 			)
 		),
 	RewardAddress = case OldB#block.reward_addr of
@@ -429,7 +429,7 @@ verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
 			{txs, length(NewTXs)},
 			{recall_block_size, RecallB#block.block_size},
 			{weave_size, NewB#block.weave_size},
-			{length, length(NewB#block.hash_list)}
+			{height, NewB#block.height}
 		]
 	),
 	(NewB#block.reward_pool == RewardPool) and

@@ -165,13 +165,9 @@ maybe_store_reason(_, true, _) ->
 %% Returns true if the entire set verifies otherwise false.
 verify_txs([], _, _) ->
 	true;
-verify_txs(TXs, Diff, WalletList) ->
-	do_verify_txs(TXs, Diff, WalletList).
-do_verify_txs([], _, _) ->
-	true;
-do_verify_txs([T|TXs], Diff, WalletList) ->
+verify_txs([T|TXs], Diff, WalletList) ->
 	case verify(T, Diff, WalletList) of
-		true -> do_verify_txs(TXs, Diff, ar_node_utils:apply_tx(WalletList, T));
+		true  -> verify_txs(TXs, Diff, ar_node_utils:apply_tx(WalletList, T));
 		false -> false
 	end.
 
