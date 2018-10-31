@@ -22,6 +22,7 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_merkle,
 		ar_block,
 		ar_cleanup,
 		ar_firewall,

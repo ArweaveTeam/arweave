@@ -40,6 +40,7 @@
 %% @doc The hashing algorithm used to verify that the weave has not been
 %% tampered with.
 -define(MINING_HASH_ALG, sha384).
+-define(MERKLE_HASH_ALG, sha384).
 -define(HASH_SZ, 256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
