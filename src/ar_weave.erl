@@ -132,6 +132,7 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, Recal
 	);
 add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
 	% ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
+	NewHeight = CurrentB#block.height + 1,
 	RecallB = ar_node_utils:find_recall_block(HashList),
 	TXs = [T#tx.id || T <- RawTXs],
 	BlockSize = lists:foldl(
@@ -146,6 +147,15 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 		case NewHeight >= ?FORK_1_6 of
 			true -> CurrentB#block.cumulative_diff + (Diff * Diff);
 			false -> 0
+		end,
+	MR =
+		case NewHeight of
+			_ when NewHeight < ?FORK_1_6 ->
+				<<>>;
+			_ when NewHeight == ?FORK_1_6 ->
+				ar_merkle:block_hash_list_to_merkle_root(CurrentB#block.hash_list);
+			_ ->
+				ar_merkle:add_hash(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash)
 		end,
 	NewB =
 		#block {
