@@ -39,18 +39,20 @@ server(S = #state { sigs = Sigs } ) ->
 	receive
 		{scan, PID, Type, Data} ->
 			Pass = case Type of
-				block -> true;
-				tx -> (not scan_transaction(Data, Sigs));
-				_ -> false
+				block -> accept;
+				tx -> scan_transaction(Data, Sigs);
+				_ -> reject
 			end,
 			PID ! {scanned, Data, Pass},
 			server(S)
 	end.
 
-%% @doc Compare a transaction against known bad signatures
-%% return true if matched, otherwise return false.
+%% @doc Compare a transaction against known bad signatures.
 scan_transaction(TX, Sigs) ->
-	av_detect:is_infected(TX#tx.data, Sigs).
+	case av_detect:is_infected(TX#tx.data, Sigs) of
+		{true, _} -> reject;
+		false -> accept
+	end.
 
 
 %% Tests: ar_firewall
@@ -65,8 +67,8 @@ blacklist_transaction_test() ->
 			binary = <<"badstuff">>
 		}
 	},
-	{true, _} = scan_transaction(ar_tx:new(<<"badstuff">>), [Sigs]),
-	false = scan_transaction(ar_tx:new(<<"goodstuff">>), [Sigs]).
+	?assertEqual(reject, scan_transaction(ar_tx:new(<<"badstuff">>), [Sigs])),
+	?assertEqual(accept, scan_transaction(ar_tx:new(<<"goodstuff">>), [Sigs])).
 
 load_blacklist_test() ->
 	ExpectedSig =
