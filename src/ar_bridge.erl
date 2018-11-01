@@ -146,7 +146,7 @@ handle(S, {unignore_peer, Peer}) ->
 handle(S, {add_tx, TX}) ->
 	maybe_send_tx_to_internal(S, TX);
 handle(S, {add_block, OriginPeer, Block, RecallBlock, Key, Nonce}) ->
-	maybe_send_block_to_internal(S, {OriginPeer, Block, RecallBlock}, Key, Nonce);
+	send_block_to_internal(S, {OriginPeer, Block, RecallBlock}, Key, Nonce);
 handle(S = #state{ external_peers = ExtPeers }, {add_peer, remote, Peer}) ->
 	case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
 		true  -> S;
@@ -198,32 +198,23 @@ maybe_send_tx_to_internal(S, Data) ->
 	end.
 
 %% @doc Potentially send a block to internal processes.
-maybe_send_block_to_internal(S, Data, Key, Nonce) ->
+send_block_to_internal(S, Data, Key, Nonce) ->
 	#state {
 		gossip = GS,
-		firewall = FW,
 		processed = Procd
 	} = S,
-	case
-		% TODO: Is it always appropriate not to check whether the block has
-		% already been processed?
-		%(not already_processed(Procd, Type, Data)) andalso
-		ar_firewall:scan(FW, block, Data)
-	of
-		reject ->
-			% If the data does not pass the scan, ignore the message.
-			S;
-		accept ->
-			% The message is at least valid, distribute it.
-			{OriginPeer, NewB, RecallB} = Data,
-			Msg = {new_block, OriginPeer, NewB#block.height, NewB, RecallB},
-			{NewGS, _} = ar_gossip:send(GS, Msg),
-			send_block_to_external(S, NewB, RecallB, Key, Nonce),
-			add_processed(block, Data, Procd),
-			S#state {
-				gossip = NewGS
-			}
-	end.
+	% TODO: Is it always appropriate not to check whether the block has
+	% already been processed?
+	%(not already_processed(Procd, Type, Data)) andalso
+	% The message is at least valid, distribute it.
+	{OriginPeer, NewB, RecallB} = Data,
+	Msg = {new_block, OriginPeer, NewB#block.height, NewB, RecallB},
+	{NewGS, _} = ar_gossip:send(GS, Msg),
+	send_block_to_external(S, NewB, RecallB, Key, Nonce),
+	add_processed(block, Data, Procd),
+	S#state {
+		gossip = NewGS
+	}.
 
 %% @doc Add the ID of a new TX/block to a processed list.
 add_processed({add_tx, TX}, Procd) ->
