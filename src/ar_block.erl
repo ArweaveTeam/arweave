@@ -6,7 +6,6 @@
 -export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([verify_cumulative_diff/2, verify_block_hash_list_merkle/2]).
--export([hash_wallet_list/1]).
 -export([encrypt_block/2, encrypt_block/3]).
 -export([encrypt_full_block/2, encrypt_full_block/3]).
 -export([decrypt_block/4]).
@@ -16,16 +15,6 @@
 -export([generate_hash_list_for_block/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
-%% @doc Generate a re-producible hash from a wallet list.
-hash_wallet_list(WalletList) ->
-	Bin =
-		<<
-			<< Addr/binary, (binary:encode_unsigned(Balance))/binary, LastTX/binary >>
-		||
-			{Addr, Balance, LastTX} <- WalletList
-		>>,
-	crypto:hash(?HASH_ALG, Bin).
 
 %% @doc Find the appropriate block hash list for a block/indep. hash, from a
 %% block hash list further down the weave.

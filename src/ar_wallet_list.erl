@@ -5,6 +5,7 @@
 	check_address_last_tx/3,
 	filter_all_out_of_order_txs/2,
 	filter_out_of_order_txs/2, filter_out_of_order_txs/3,
+	hash/1,
 	validate/1
 	]).
 
@@ -104,6 +105,16 @@ filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
 				OutTXs
 			)
 	end.
+
+%% @doc Generate a re-producible hash from a wallet list.
+hash(WalletList) ->
+	Bin =
+		<<
+			<< Addr/binary, (binary:encode_unsigned(Balance))/binary, LastTX/binary >>
+		||
+			{Addr, Balance, LastTX} <- WalletList
+		>>,
+	crypto:hash(?HASH_ALG, Bin).
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 validate([]) ->

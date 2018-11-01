@@ -423,7 +423,7 @@ write_block_hash_list(BinID, BHL) ->
 
 %% Write a block hash list to disk for retreival later (in emergencies).
 write_wallet_list(WalletList) ->
-	ID = ar_block:hash_wallet_list(WalletList),
+	ID = ar_wallet_list:hash(WalletList),
 	JSON = ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)),
 	file:write_file(
 		?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(ID)) ++ ".json",
@@ -607,4 +607,4 @@ store_and_retreive_wallet_list_test() ->
     [B0] = ar_weave:init(),
 	write_wallet_list(WL = B0#block.wallet_list),
 	receive after 500 -> ok end,
-	WL = read_wallet_list(ar_block:hash_wallet_list(WL)).
+	WL = read_wallet_list(ar_wallet_list:hash(WL)).
