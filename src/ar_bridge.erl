@@ -184,7 +184,7 @@ maybe_send_tx_to_internal(S, Data) ->
 		firewall = FW,
 		processed = Procd
 	} = S,
-	case ar_firewall:scan(FW, tx, Data) of
+	case ar_firewall:scan_tx(FW, Data) of
 		reject ->
 			% If the data does not pass the scan, ignore the message.
 			S;
