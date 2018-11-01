@@ -1,7 +1,7 @@
 -module(ar_tx).
 -export([new/0, new/1, new/2, new/3, new/4]).
 -export([sign/2, sign/3, verify/3, verify_txs/3, signature_data_segment/1]).
--export([tx_to_binary/1, tags_to_binary/1, calculate_min_tx_cost/2, calculate_min_tx_cost/4, tx_cost_above_min/2, tx_cost_above_min/4, check_last_tx/2]).
+-export([tx_to_binary/1, tags_to_binary/1, calculate_min_tx_cost/2, calculate_min_tx_cost/4, check_last_tx/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -81,7 +81,7 @@ verify(TX, Diff, WalletList) ->
 	Checks = [
 		{TX#tx.quantity >= 0,
 			tx_quantity_positive, "tx_quantity_negative "},
-		{tx_cost_above_min(TX, Diff, WalletList, TX#tx.target),
+		{tx_cost_above_min(TX, Diff, WalletList),
 			tx_above_min_cost, "tx_too_cheap "},
 		{tx_field_size_limit(TX),
 			tx_field_size_verify, "tx_fields_too_large "},
@@ -121,7 +121,7 @@ verify(TX, Diff, WalletList) ->
 			tx_quantity_positive, "tx_quantity_negative "},
 		{(ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target), %% not in debug
 			tx_owner_not_target, "tx_owner_is_target "},
-		{tx_cost_above_min(TX, Diff, WalletList, TX#tx.target),
+		{tx_cost_above_min(TX, Diff, WalletList),
 			tx_above_min_cost, "tx_too_cheap "},
 		{tx_field_size_limit(TX),
 			tx_field_size_verify, "tx_fields_too_large "},
@@ -171,37 +171,35 @@ verify_txs([T|TXs], Diff, WalletList) ->
 		false -> false
 	end.
 
-%% @doc Ensure that transaction cost above proscribed minimum.
+%% @doc Ensure that transaction cost above prescribed minimum.
 tx_cost_above_min(TX, Diff) ->
-	TX#tx.reward >= (calculate_min_tx_cost(byte_size(TX#tx.data), Diff) + ?WALLET_GEN_FEE).
-tx_cost_above_min(TX, Diff, WalletList, Addr) ->
 	TX#tx.reward >=
-		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, WalletList, Addr).
+		(calculate_min_tx_cost(byte_size(TX#tx.data), Diff) + ?WALLET_GEN_FEE).
+tx_cost_above_min(TX, Diff, WalletList) ->
+	TX#tx.reward >=
+		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, WalletList, TX#tx.target).
 
 %% @doc Calculate the minimum transaction cost for a TX with the given data size.
 %% The constant 3210 is the max byte size of each of the other fields.
 %% Cost per byte is static unless size is bigger than 10mb, at which
 %% point cost per byte starts increasing.
-calculate_min_tx_cost(DataSize, Diff) when Diff >= ?DIFF_CENTER ->
+calculate_min_tx_cost(DataSize, Diff) ->
 	Size = 3210 + DataSize,
 	CurveSteepness = 2,
-	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (Diff - (?DIFF_CENTER - CurveSteepness)),
-	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024)));
-calculate_min_tx_cost(DataSize, _Diff) ->
-	Size = 3210 + DataSize,
-	CurveSteepness = 2,
-	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (?DIFF_CENTER - (?DIFF_CENTER - CurveSteepness)),
+	ThisDiff = erlang:max(Diff, ?DIFF_CENTER),
+	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (ThisDiff - (?DIFF_CENTER - CurveSteepness)),
 	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024))).
-calculate_min_tx_cost(DataSize, Diff, _, undefined) ->
-	calculate_min_tx_cost(DataSize, Diff);
-calculate_min_tx_cost(DataSize, Diff, _, <<>>) ->
-	calculate_min_tx_cost(DataSize, Diff);
 calculate_min_tx_cost(DataSize, Diff, WalletList, Addr) ->
-	Addrs = [ X || {X, _, _} <- WalletList ],
-	(case lists:member(Addr, Addrs) of
-		true -> 0;
+	calculate_tx_gen_fee(WalletList, Addr)
+	+ calculate_min_tx_cost(DataSize, Diff).
+
+calculate_tx_gen_fee(_, undefined) -> 0;
+calculate_tx_gen_fee(_, <<>>) -> 0;
+calculate_tx_gen_fee(WalletList, Addr) ->
+	case lists:keymember(Addr, 1, WalletList) of
+		true  -> 0;
 		false -> ?WALLET_GEN_FEE
-	end) + calculate_min_tx_cost(DataSize, Diff).
+    end.
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
 tx_field_size_limit(TX) ->
@@ -252,24 +250,22 @@ tags_to_binary(Tags) ->
 %% value found in the wallet list wallet list, if so returns true else false.
 -ifdef(DEBUG).
 check_last_tx([], _) -> true;
-check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> -> true;
-check_last_tx(WalletList, TX) ->
-	Address = ar_wallet:to_address(TX#tx.owner),
+check_last_tx(_, #tx{owner = <<>>}) -> true;
+check_last_tx(WalletList, #tx{owner = Owner, last_tx = Last}) ->
+	Address = ar_wallet:to_address(Owner),
 	case lists:keyfind(Address, 1, WalletList) of
-		{Address, _Quantity, Last} ->
-			Last == TX#tx.last_tx;
+		{Address, _Quantity, Last} -> true;
 		_ -> false
 	end.
 -else.
 check_last_tx([], _) -> true;
-check_last_tx(WalletList, TX) ->
-	Address = ar_wallet:to_address(TX#tx.owner),
+check_last_tx(WalletList, #tx{owner = Owner, last_tx = Last}) ->
+	Address = ar_wallet:to_address(Owner),
 	case lists:keyfind(Address, 1, WalletList) of
-		{Address, _Quantity, Last} -> Last == TX#tx.last_tx;
+		{Address, _Quantity, Last} -> true;
 		_ -> false
 	end.
 -endif.
-
 
 %%% Tests: ar_tx
 

@@ -493,7 +493,7 @@ validate(
 		RewardAddr,
 		Tags) ->
 	% TODO: Fix names.
-	{T0,BDSHash} = timer:tc(ar_weave,hash,[
+	{_, BDSHash} = timer:tc(ar_weave,hash,[
 		ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
 		Nonce]),
 	{T1,Mine} = timer:tc(ar_mine,validate_by_hash,[BDSHash, Diff]),
