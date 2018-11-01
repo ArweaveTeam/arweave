@@ -9,7 +9,7 @@
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
--export([get_time/1]).
+-export([get_time/1, get_height/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1, get_current_block/2]).
 -export([reregister/1, reregister/2]).
@@ -642,6 +642,13 @@ handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
 		end,
 	handle('GET', [<<"tx">>, Hash, <<"data.", Ext/binary>>], Req);
 
+%% @doc Return the current block hieght, or 500
+handle('GET', [<<"height">>], _Req) ->
+	case ar_node:get_height(whereis(http_entrypoint_node)) of
+		not_found -> {503, [], <<"Node has not joined the network yet.">>};
+		H -> {200, [], integer_to_binary(H)}
+	end;
+
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
@@ -954,6 +961,20 @@ get_hash_list(Peer, Hash) ->
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body));
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
+	end.
+
+%% @doc Return the current height of a remote node.
+get_height(Peer) ->
+	Response =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/height",
+			[]
+		),
+	case Response of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} -> binary_to_integer(Body);
+		{ok, {{<<"500">>, _}, _, _, _, _}} -> not_joined
 	end.
 
 %% @doc Retreive a full block (full transactions included in body)
@@ -1596,6 +1617,17 @@ get_balance_test() ->
 			[]
 		),
 	?assertEqual(10000, binary_to_integer(Body)).
+
+%% @doc Test that heights are returned correctly.
+get_height_test() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
+	Node1 = ar_node:start([self()], B0),
+	reregister(Node1),
+	0 = get_height({127,0,0,1,1984}),
+	ar_node:mine(Node1),
+	timer:sleep(1000),
+	1 = get_height({127,0,0,1,1984}).
 
 %% @doc Test that wallets issued in the pre-sale can be viewed.
 get_presale_balance_test() ->
