@@ -671,8 +671,10 @@ handle_event(_Type, _Args, _Config) ->
 %% @doc Generate and return an informative JSON object regarding
 %% the state of the node.
 return_info() ->
-	{Time, HL} =
-		timer:tc(fun() -> ar_node:get_hash_list(whereis(http_entrypoint_node)) end),
+	{Time, Current} =
+		timer:tc(fun() -> ar_node:get_current_block_hash(whereis(http_entrypoint_node)) end),
+	{Time2, Height} =
+		timer:tc(fun() -> ar_node:get_height(whereis(http_entrypoint_node)) end),
 	{200, [],
 		ar_serialize:jsonify(
 			{
@@ -681,12 +683,17 @@ return_info() ->
 					{version, ?CLIENT_VERSION},
 					{release, ?RELEASE_NUMBER},
 					{height,
-						case HL of
-							[] -> 0;
-							Hashes -> (length(Hashes) - 1)
+						case Height of
+							not_joined -> -1;
+							H -> H
 						end
 					},
-					{current, case HL of [] -> <<"not_joined">>; [C|_] -> ar_util:encode(C) end},
+					{current,
+						case Current of
+							not_joined -> <<"not_joined">>;
+							C -> ar_util:encode(C)
+						end
+					},
 					{blocks, ar_storage:blocks_on_disk()},
 					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
 					{queue_length,
@@ -695,7 +702,7 @@ return_info() ->
 							erlang:process_info(whereis(http_entrypoint_node), message_queue_len)
 						)
 					},
-					{node_state_latency, Time}
+					{node_state_latency, (Time + Time2) div 2}
 				]
 			}
 		)
@@ -1572,7 +1579,7 @@ get_unjoined_info_test() ->
 	?assertEqual(?CLIENT_VERSION, get_info({127, 0, 0, 1, 1984}, version)),
 	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, peers)),
 	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, blocks)),
-	?assertEqual(0, get_info({127, 0, 0, 1, 1984}, height)).
+	?assertEqual(-1, get_info({127, 0, 0, 1, 1984}, height)).
 
 %% @doc Check that balances can be retreived over the network.
 get_balance_test() ->
