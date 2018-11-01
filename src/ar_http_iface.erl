@@ -645,7 +645,7 @@ handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
 %% @doc Return the current block hieght, or 500
 handle('GET', [<<"height">>], _Req) ->
 	case ar_node:get_height(whereis(http_entrypoint_node)) of
-		not_found -> {503, [], <<"Node has not joined the network yet.">>};
+		-1 -> {503, [], <<"Node has not joined the network yet.">>};
 		H -> {200, [], integer_to_binary(H)}
 	end;
 
