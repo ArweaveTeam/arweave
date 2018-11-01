@@ -759,12 +759,7 @@ has_tx(Peer, ID) ->
 send_new_block(IP, NewB, RecallB) ->
 	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Peer, Port, NewB, RecallB) ->
-	RecallBHash =
-		case ?IS_BLOCK(RecallB) of
-			true ->  RecallB#block.indep_hash;
-			false -> <<>>
-		end,
-	case ar_key_db:get(RecallBHash) of
+	case ar_key_db:get(RecallB#block.indep_hash) of
 		[{Key, Nonce}] ->
 			send_new_block(
 				Peer,
@@ -785,11 +780,6 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 			)
 	end.
 send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
-	RecallBHash =
-		case ?IS_BLOCK(RecallB) of
-			true ->  RecallB#block.indep_hash;
-			false -> <<>>
-		end,
 	HashList =
 		lists:map(
 			fun ar_util:encode/1,
@@ -815,7 +805,7 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 			{
 				[
 					{<<"new_block">>, BlockJSON},
-					{<<"recall_block">>, ar_util:encode(RecallBHash)},
+					{<<"recall_block">>, ar_util:encode(RecallB#block.indep_hash)},
 					{<<"recall_size">>, RecallB#block.block_size},
 					{<<"port">>, Port},
 					{<<"key">>, ar_util:encode(Key)},
