@@ -66,28 +66,20 @@ check_address_last_tx(WalletList, Address, LastTX) ->
 %% txs can be applied in a given order. The output is the set of all txs
 %% that could be applied.
 filter_all_out_of_order_txs(WalletList, InTXs) ->
-	filter_all_out_of_order_txs(
-		WalletList,
-		InTXs,
-		[]
-	).
+	filter_all_out_of_order_txs(WalletList, InTXs, []).
 
 filter_all_out_of_order_txs(_WalletList, [], OutTXs) ->
 	lists:reverse(OutTXs);
 filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
 	{FloatingWalletList, PassedTXs} =
-		filter_out_of_order_txs(
-			WalletList,
-			InTXs,
-			OutTXs
-		),
-	RemainingInTXs = InTXs -- PassedTXs,
+		filter_out_of_order_txs(WalletList, InTXs, OutTXs),
 	case PassedTXs of
 		[] ->
 			lists:reverse(OutTXs);
 		OutTXs ->
 			lists:reverse(OutTXs);
 		_ ->
+			RemainingInTXs = InTXs -- PassedTXs,
 			filter_all_out_of_order_txs(
 				FloatingWalletList,
 				RemainingInTXs,
@@ -106,21 +98,16 @@ filter_out_of_order_txs(WalletList, InTXs) ->
 filter_out_of_order_txs(WalletList, [], OutTXs) ->
 	{WalletList, OutTXs};
 filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
-	case ar_tx:check_last_tx(WalletList, T) of
-		true ->
-			UpdatedWalletList = ar_wallet_list:apply_tx(WalletList, T),
-			filter_out_of_order_txs(
-				UpdatedWalletList,
-				RawTXs,
-				[T | OutTXs]
-			);
-		false ->
-			filter_out_of_order_txs(
-				WalletList,
-				RawTXs,
-				OutTXs
-			)
-	end.
+	UpdatedWalletList =
+		case ar_tx:check_last_tx(WalletList, T) of
+			true  -> apply_tx(WalletList, T);
+			false -> WalletList
+		end,
+	filter_out_of_order_txs(
+		UpdatedWalletList,
+		RawTXs,
+		[T | OutTXs]
+	).
 
 %% @doc Generate a re-producible hash from a wallet list.
 hash(WalletList) ->
@@ -132,15 +119,20 @@ hash(WalletList) ->
 		>>,
 	crypto:hash(?HASH_ALG, Bin).
 
-%% @doc Ensure that all wallets in the wallet list have a positive balance.
+%% @doc Ensure that all wallets in the wallet list are well-formed:
+%% - if empty, have a last_tx;
+%% - have a positive balance;
+%% - have three fields.
 validate([]) ->
 	true;
 validate([{_, 0, Last} | _]) when byte_size(Last) == 0 ->
 	false;
 validate([{_, Qty, _} | _]) when Qty < 0 ->
 	false;
-validate([_ | Rest]) ->
-	validate(Rest).
+validate([{_,_,_} | Rest]) ->
+	validate(Rest);
+validate(_) ->
+	false.
 
 %%%% Private
 
