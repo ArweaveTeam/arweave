@@ -138,7 +138,7 @@ do_apply_tx(
 			),
 			case lists:keyfind(To, 1, NewWalletList) of
 				false ->
-					maybe_append_wallet({To, Qty, <<>>}, NewWalletList);
+					maybe_append_wallet(NewWalletList, {To, Qty, <<>>});
 				{To, OldBalance, LastTX} ->
 					maybe_replace_wallet(NewWalletList, {To, OldBalance + Qty, LastTX})
 			end;
