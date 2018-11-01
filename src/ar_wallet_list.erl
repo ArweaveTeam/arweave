@@ -24,10 +24,8 @@ apply_txs(WalletList, TXs) ->
 
 %% @doc Apply a transaction to a wallet list, updating it.
 %% Critically, filter empty wallets from the list after application.
-apply_tx(WalletList, unavailable) ->
-	WalletList;
-apply_tx(WalletList, TX) ->
-	filter_empty_wallets(do_apply_tx(WalletList, TX)).
+apply_tx(WalletList, unavailable) -> WalletList;
+apply_tx(WalletList, TX) ->	do_apply_tx(WalletList, TX).
 
 %% @doc Calculate base tx generation fee for a wallet list.
 %% called from ar_tx
@@ -134,21 +132,23 @@ do_apply_tx(
 	Addr = ar_wallet:to_address(From),
 	case lists:keyfind(Addr, 1, WalletList) of
 		{Addr, Balance, Last} ->
-			NewWalletList = lists:keyreplace(Addr, 1, WalletList, {Addr, Balance - (Qty + Reward), ID}),
+			NewWalletList = maybe_replace_wallet(
+				WalletList,
+				{Addr, Balance - (Qty + Reward), ID}
+			),
 			case lists:keyfind(To, 1, NewWalletList) of
 				false ->
-					[{To, Qty, <<>>} | NewWalletList];
+					maybe_append_wallet({To, Qty, <<>>}, NewWalletList);
 				{To, OldBalance, LastTX} ->
-					lists:keyreplace(To, 1, NewWalletList, {To, OldBalance + Qty, LastTX})
+					maybe_replace_wallet(NewWalletList, {To, OldBalance + Qty, LastTX})
 			end;
 		_ ->
 			WalletList
 	end.
 
-%% @doc Remove wallets with zero balance from a wallet list.
-filter_empty_wallets([]) ->
-	[];
-filter_empty_wallets([{_, 0, <<>>} | WalletList]) ->
-	filter_empty_wallets(WalletList);
-filter_empty_wallets([Wallet | Rest]) ->
-	[Wallet | filter_empty_wallets(Rest)].
+maybe_append_wallet(WalletList, {_,0,_}) -> WalletList;
+maybe_append_wallet(WalletList, Wallet)  -> [Wallet | WalletList].
+
+maybe_replace_wallet(WalletList, {_,0,_}) -> WalletList;
+maybe_replace_wallet(WalletList, Wallet={Addr,_,_}) ->
+	lists:keyreplace(Addr, 1, WalletList, Wallet).

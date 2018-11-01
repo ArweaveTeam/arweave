@@ -43,6 +43,7 @@
 		ar_util,
 		ar_wallet,
 		ar_http_iface_tests,
+		ar_wallet_list_tests,
 		ar_weave
 	]
 ).

@@ -1,4 +1,6 @@
 -module(ar_wallet_list_tests).
+-include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %% @doc Ensure that a set of txs can be checked for serialization, those that
 %% don't serialize disregarded.
