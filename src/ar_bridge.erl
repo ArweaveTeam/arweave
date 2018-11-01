@@ -201,7 +201,9 @@ maybe_send_tx_to_internal(S, Data) ->
 send_block_to_internal(S, Data, Key, Nonce) ->
 	#state {
 		gossip = GS,
-		processed = Procd
+		processed = Procd,
+		external_peers = ExternalPeers,
+		port = BridgePort
 	} = S,
 	% TODO: Is it always appropriate not to check whether the block has
 	% already been processed?
@@ -210,7 +212,7 @@ send_block_to_internal(S, Data, Key, Nonce) ->
 	{OriginPeer, NewB, RecallB} = Data,
 	Msg = {new_block, OriginPeer, NewB#block.height, NewB, RecallB},
 	{NewGS, _} = ar_gossip:send(GS, Msg),
-	send_block_to_external(S, NewB, RecallB, Key, Nonce),
+	send_block_to_external(ExternalPeers, BridgePort, NewB, RecallB, Key, Nonce),
 	add_processed(block, Data, Procd),
 	S#state {
 		gossip = NewGS
@@ -278,12 +280,21 @@ send_to_external(_, {new_block, _, _, _, unavailable}) ->
 send_to_external(S, {new_block, _Peer, _Height, NewB, RecallB}) ->
 	spawn(
 		fun() ->
-			case ar_key_db:get(RecallB#block.indep_hash) of
-				[{Key, Nonce}] ->
-					send_block_to_external(S, NewB, RecallB, Key, Nonce);
-				_ ->
-					send_block_to_external(S, NewB, RecallB, <<>>, <<>>)
-			end
+			{Key, Nonce} =
+				case ar_key_db:get(RecallB#block.indep_hash) of
+					[{K, N}] ->
+						{K, N};
+					_ ->
+						{<<>>, <<>>}
+				end,
+			send_block_to_external(
+				S#state.external_peers,
+				S#state.port,
+				NewB,
+				RecallB,
+				Key,
+				Nonce
+			)
 		end
 	),
 	S;
@@ -291,24 +302,17 @@ send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
 
 %% @doc Send a block to external peers.
-send_block_to_external(S, NewB, RecallB, Key, Nonce) ->
-	#state {external_peers = Peers, port = Port} = S,
-	case RecallB of
-		unavailable -> ok;
-		_ ->
-			spawn(
-				fun() ->
-					ar:report(
-						[
-							{sending_block_to_external_peers, ar_util:encode(NewB#block.indep_hash)},
-							{peers, length(Peers)}
-						]
-					),
-					send_block_to_external_parallel(Peers, Port, NewB, RecallB, Key, Nonce)
-				end
-			)
-	end,
-	S.
+send_block_to_external(_ExternalPeers, _BridgePort, _NewB, unavailable, _Key, _Nonce) -> ok;
+send_block_to_external(ExternalPeers, BridgePort, NewB, RecallB, Key, Nonce) ->
+	spawn(fun() ->
+		ar:report(
+			[
+				{sending_block_to_external_peers, ar_util:encode(NewB#block.indep_hash)},
+				{peers, length(ExternalPeers)}
+			]
+		),
+		send_block_to_external_parallel(ExternalPeers, BridgePort, NewB, RecallB, Key, Nonce)
+	end).
 
 %% @doc Send the new block to the peers by first sending it in parallel to the
 %% best/first peers and then continuing sequentially with the rest of the peers
