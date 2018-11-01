@@ -185,10 +185,10 @@ maybe_send_tx_to_internal(S, Data) ->
 		processed = Procd
 	} = S,
 	case ar_firewall:scan(FW, tx, Data) of
-		false ->
+		reject ->
 			% If the data does not pass the scan, ignore the message.
 			S;
-		true ->
+		accept ->
 			% The message is at least valid, distribute it.
 			Msg = {add_tx, Data},
 			{NewGS, _} = ar_gossip:send(GS,	Msg),
@@ -210,10 +210,10 @@ maybe_send_block_to_internal(S, Data, Key, Nonce) ->
 		%(not already_processed(Procd, Type, Data)) andalso
 		ar_firewall:scan(FW, block, Data)
 	of
-		false ->
+		reject ->
 			% If the data does not pass the scan, ignore the message.
 			S;
-		true ->
+		accept ->
 			% The message is at least valid, distribute it.
 			{OriginPeer, NewB, RecallB} = Data,
 			Msg = {new_block, OriginPeer, NewB#block.height, NewB, RecallB},
