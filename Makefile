@@ -41,21 +41,23 @@ all: gitmodules build
 gitmodules:
 	git submodule update --init
 
-build: ebin data logs blocks hash_lists wallet_lists
-	rm -rf priv
-	cd lib/jiffy && ./rebar compile && cd ../.. && mv lib/jiffy/priv ./
+build: data blocks hash_lists wallet_lists
+	( \
+		cd lib/jiffy && \
+		./rebar compile && \
+		cd ../.. && \
+		cp lib/jiffy/priv/jiffy.so ./priv/ \
+	)
 	(cd lib/prometheus && ./rebar3 compile)
 	(cd lib/accept && ./rebar3 compile)
-	(cd lib/prometheus_process_collector && ./rebar3 compile && cp _build/default/lib/prometheus_process_collector/priv/*.so ../../priv)
+	( \
+		cd lib/prometheus_process_collector && \
+		./rebar3 compile && \
+		cp _build/default/lib/prometheus_process_collector/priv/prometheus_process_collector.so ../../priv/ \
+	)
 	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
-
-ebin:
-	mkdir -p ebin
-
-logs:
-	mkdir -p logs
 
 blocks:
 	mkdir -p blocks
@@ -84,8 +86,15 @@ sim_hard: all
 	erl $(ERL_OPTS) -s ar_network spawn_and_mine hard
 
 clean:
-	rm -rf ebin docs logs priv
+	rm -f ./ebin/*.beam
+	rm -f ./logs/*.log
+	rm -rf docs
+	rm -f priv/jiffy.so priv/prometheus_process_collector.so
 	rm -f erl_crash.dump
+	(cd lib/jiffy && ./rebar clean)
+	(cd lib/prometheus && ./rebar3 clean --all)
+	(cd lib/accept && ./rebar3 clean --all)
+	(cd lib/prometheus_process_collector && ./rebar3 clean --all)
 
 todo:
 	grep --color --line-number --recursive TODO "src"
