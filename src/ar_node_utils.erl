@@ -11,8 +11,6 @@
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/2]).
 -export([fork_recover/3]).
--export([filter_out_of_order_txs/2, filter_out_of_order_txs/3]).
--export([filter_all_out_of_order_txs/2]).
 -export([validate/5, validate/8]).
 
 -include("ar.hrl").
@@ -302,7 +300,7 @@ integrate_new_block(
 			end,
 			TXs ++ WaitingTXs ++ PotentialTXs
 		),
-	KeepNotMinedTXs = filter_all_out_of_order_txs(
+	KeepNotMinedTXs = ar_wallet_list:filter_all_out_of_order_txs(
 							NewB#block.wallet_list,
 							RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
@@ -389,65 +387,6 @@ fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 	% TODO: Check how an unchanged state has to be returned in
 	% program flow.
 	StateIn.
-
-%% @doc Takes a wallet list and a set of txs and checks to ensure that the
-%% txs can be iteratively applied. When a tx is encountered that cannot be
-%% applied it is disregarded. The return is a tuple containing the output
-%% wallet list and the set of applied transactions.
-%% Helper function for 'filter_all_out_of_order_txs'.
-filter_out_of_order_txs(WalletList, InTXs) ->
-	filter_out_of_order_txs(WalletList, InTXs, []).
-
-filter_out_of_order_txs(WalletList, [], OutTXs) ->
-	{WalletList, OutTXs};
-filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
-	case ar_tx:check_last_tx(WalletList, T) of
-		true ->
-			UpdatedWalletList = ar_wallet_list:apply_tx(WalletList, T),
-			filter_out_of_order_txs(
-				UpdatedWalletList,
-				RawTXs,
-				[T | OutTXs]
-			);
-		false ->
-			filter_out_of_order_txs(
-				WalletList,
-				RawTXs,
-				OutTXs
-			)
-	end.
-
-%% @doc Takes a wallet list and a set of txs and checks to ensure that the
-%% txs can be applied in a given order. The output is the set of all txs
-%% that could be applied.
-filter_all_out_of_order_txs(WalletList, InTXs) ->
-	filter_all_out_of_order_txs(
-		WalletList,
-		InTXs,
-		[]
-	).
-filter_all_out_of_order_txs(_WalletList, [], OutTXs) ->
-	lists:reverse(OutTXs);
-filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
-	{FloatingWalletList, PassedTXs} =
-		filter_out_of_order_txs(
-			WalletList,
-			InTXs,
-			OutTXs
-		),
-	RemainingInTXs = InTXs -- PassedTXs,
-	case PassedTXs of
-		[] ->
-			lists:reverse(OutTXs);
-		OutTXs ->
-			lists:reverse(OutTXs);
-		_ ->
-			filter_all_out_of_order_txs(
-				FloatingWalletList,
-				RemainingInTXs,
-				PassedTXs
-			)
-	end.
 
 %% @doc Validate a block, given a node state and the dependencies.
 validate(#{ hash_list := HashList, wallet_list := WalletList }, B, TXs, OldB, RecallB) ->

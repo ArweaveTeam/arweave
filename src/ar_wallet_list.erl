@@ -3,6 +3,8 @@
 	apply_txs/2, apply_tx/2,
 	calculate_tx_gen_fee/2,
 	check_address_last_tx/3,
+	filter_all_out_of_order_txs/2,
+	filter_out_of_order_txs/2, filter_out_of_order_txs/3,
 	validate/1
 	]).
 
@@ -43,6 +45,66 @@ check_address_last_tx(WalletList, Address, LastTX) ->
 	case lists:keyfind(Address, 1, WalletList) of
 		{Address, _, LastTX} -> true;
 		_ -> false
+	end.
+
+%% @doc Takes a wallet list and a set of txs and checks to ensure that the
+%% txs can be applied in a given order. The output is the set of all txs
+%% that could be applied.
+filter_all_out_of_order_txs(WalletList, InTXs) ->
+	filter_all_out_of_order_txs(
+		WalletList,
+		InTXs,
+		[]
+	).
+
+filter_all_out_of_order_txs(_WalletList, [], OutTXs) ->
+	lists:reverse(OutTXs);
+filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
+	{FloatingWalletList, PassedTXs} =
+		filter_out_of_order_txs(
+			WalletList,
+			InTXs,
+			OutTXs
+		),
+	RemainingInTXs = InTXs -- PassedTXs,
+	case PassedTXs of
+		[] ->
+			lists:reverse(OutTXs);
+		OutTXs ->
+			lists:reverse(OutTXs);
+		_ ->
+			filter_all_out_of_order_txs(
+				FloatingWalletList,
+				RemainingInTXs,
+				PassedTXs
+			)
+	end.
+
+%% @doc Takes a wallet list and a set of txs and checks to ensure that the
+%% txs can be iteratively applied. When a tx is encountered that cannot be
+%% applied it is disregarded. The return is a tuple containing the output
+%% wallet list and the set of applied transactions.
+%% Helper function for 'filter_all_out_of_order_txs'.
+filter_out_of_order_txs(WalletList, InTXs) ->
+	filter_out_of_order_txs(WalletList, InTXs, []).
+
+filter_out_of_order_txs(WalletList, [], OutTXs) ->
+	{WalletList, OutTXs};
+filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
+	case ar_tx:check_last_tx(WalletList, T) of
+		true ->
+			UpdatedWalletList = ar_wallet_list:apply_tx(WalletList, T),
+			filter_out_of_order_txs(
+				UpdatedWalletList,
+				RawTXs,
+				[T | OutTXs]
+			);
+		false ->
+			filter_out_of_order_txs(
+				WalletList,
+				RawTXs,
+				OutTXs
+			)
 	end.
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.

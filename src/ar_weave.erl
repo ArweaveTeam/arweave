@@ -81,7 +81,7 @@ add([B|Bs], TXs, HashList, RewardAddr) ->
 			)
 		),
 	WalletList = ar_node_utils:apply_mining_reward(
-		ar_node_utils:apply_txs(B#block.wallet_list, TXs),
+		ar_wallet_list:apply_txs(B#block.wallet_list, TXs),
 		RewardAddr,
 		FinderReward,
 		length(HashList)

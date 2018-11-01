@@ -339,7 +339,7 @@ try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 		),
 	WalletList =
 		ar_node_utils:apply_mining_reward(
-			ar_node_utils:apply_txs(B#block.wallet_list, TXs),
+			ar_wallet_list:apply_txs(B#block.wallet_list, TXs),
 			NextB#block.reward_addr,
 			FinderReward,
 			NextB#block.height

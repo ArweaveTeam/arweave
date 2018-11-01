@@ -458,10 +458,10 @@ test_networks() ->
 	ar_test_sup:start().
 
 test_slow() ->
-	ar_node_test:filter_out_of_order_txs_test_slow(),
-	ar_node_test:filter_out_of_order_txs_large_test_slow(),
-	ar_node_test:filter_all_out_of_order_txs_test_slow(),
-	ar_node_test:filter_all_out_of_order_txs_large_test_slow(),
+	ar_wallet_list_tests:filter_out_of_order_txs_test_slow(),
+	ar_wallet_list_tests:filter_out_of_order_txs_large_test_slow(),
+	ar_wallet_list_tests:filter_all_out_of_order_txs_test_slow(),
+	ar_wallet_list_tests:filter_all_out_of_order_txs_large_test_slow(),
 	ar_node_test:wallet_transaction_test_slow(),
 	ar_node_test:wallet_two_transaction_test_slow(),
 	ar_node_test:single_wallet_double_tx_before_mine_test_slow(),

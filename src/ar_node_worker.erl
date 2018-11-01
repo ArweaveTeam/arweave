@@ -507,7 +507,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 	NotMinedTXs =
 		lists:filter(
 			fun(T) -> ar_tx:verify(T, Diff, WalletList) end,
-			ar_node_utils:filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs)
+			ar_wallet_list:filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs)
 		),
 	StateNew = StateIn#{ wallet_list => WalletList },
 	% Build the block record, verify it, and gossip it to the other nodes.
@@ -633,7 +633,7 @@ do_recovered_from_fork(StateIn, NewB) ->
 	% ar_cleanup:remove_invalid_blocks(NewHs),
 	TXPool = maps:get(txs, StateIn) ++ maps:get(potential_txs, StateIn),
 	TXs =
-		ar_node_utils:filter_all_out_of_order_txs(
+		ar_wallet_list:filter_all_out_of_order_txs(
 			NewB#block.wallet_list,
 			TXPool
 		),
