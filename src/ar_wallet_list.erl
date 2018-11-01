@@ -1,6 +1,8 @@
 -module(ar_wallet_list).
 -export([
+	apply_mining_reward/4,
 	apply_txs/2, apply_tx/2,
+	apply_txs_then_mining_reward/5,
 	calculate_tx_gen_fee/2,
 	check_address_last_tx/3,
 	filter_all_out_of_order_txs/2,
@@ -10,6 +12,12 @@
 	]).
 
 -include("ar.hrl").
+
+%% @doc Calculate and apply mining reward quantities to a wallet list.
+apply_mining_reward(WalletList, unclaimed, _Quantity, _Height) ->
+	WalletList;
+apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
+	alter_wallet(WalletList, RewardAddr, ar_node_utils:calculate_reward(Height, Quantity)).
 
 %% @doc Update a wallet list with a set of new transactions.
 apply_txs(WalletList, TXs) ->
@@ -21,6 +29,14 @@ apply_txs(WalletList, TXs) ->
 			WalletList,
 			TXs
 		)
+	).
+
+apply_txs_then_mining_reward(WalletList, TXs, RewardAddr, Quantity, Height) ->
+	apply_mining_reward(
+		apply_txs(WalletList, TXs),
+		RewardAddr,
+		Quantity,
+		Height
 	).
 
 %% @doc Apply a transaction to a wallet list, updating it.
@@ -127,6 +143,15 @@ validate([_ | Rest]) ->
 	validate(Rest).
 
 %%%% Private
+
+%% @doc Alter a wallet in a wallet list.
+alter_wallet(WalletList, Target, Adjustment) ->
+	case lists:keyfind(Target, 1, WalletList) of
+		false ->
+			maybe_append_wallet(WalletList, {Target, Adjustment, <<>>});
+		{Target, Balance, LastTX} ->
+			maybe_replace_wallet(WalletList, {Target, Balance + Adjustment, LastTX})
+	end.
 
 %% @doc Perform the concrete application of a transaction to
 %% a prefiltered wallet list.

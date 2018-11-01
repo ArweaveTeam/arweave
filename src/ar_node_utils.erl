@@ -7,7 +7,6 @@
 -export([get_conflicting_txs/2, get_full_block/3]).
 -export([find_recall_hash/2, find_recall_block/1, find_block/1]).
 -export([calculate_reward/2, calculate_reward_pool/4, calculate_proportion/3]).
--export([apply_mining_reward/4]).
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/2]).
 -export([fork_recover/3]).
@@ -157,12 +156,6 @@ calculate_proportion(RecallSize, WeaveSize, Height) ->
 		0.1,
 		(math:pow(2, X)/(math:pow(2, X) + 2))
 	).
-
-%% @doc Calculate and apply mining reward quantities to a wallet list.
-apply_mining_reward(WalletList, unclaimed, _Quantity, _Height) ->
-	WalletList;
-apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
-	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, Quantity)).
 
 %% @doc Force a node to start mining, update state.
 start_mining(StateIn) ->
@@ -557,21 +550,7 @@ get_tx(Host, ID) ->
 	% handle external peer request
 	ar_http_iface_client:get_tx(Host, ID).
 
-%% @doc Alter a wallet in a wallet list.
-alter_wallet(WalletList, Target, Adjustment) ->
-	case lists:keyfind(Target, 1, WalletList) of
-		false ->
-			[{Target, Adjustment, <<>>}|WalletList];
-		{Target, Balance, LastTX} ->
-			lists:keyreplace(
-				Target,
-				1,
-				WalletList,
-				{Target, Balance + Adjustment, LastTX}
-			)
-	end.
-
-%% @doc Calculate the total mining reward for the a block and it's associated TXs.
+%% @doc Calculate the total mining reward for the a block and its associated TXs.
 calculate_reward(Height, Quantity) ->
 	erlang:trunc(ar_inflation:calculate(Height) + Quantity).
 
@@ -599,12 +578,12 @@ calculate_tx_reward(#tx { reward = Reward }) ->
 %% @doc Given a wallet list and set of txs will try to apply the txs
 %% iteratively to the wallet list and return the result.
 %% Txs that cannot be applied are disregarded.
-generate_floating_wallet_list(WalletList, []) ->
-	WalletList;
-generate_floating_wallet_list(WalletList, [T | TXs]) ->
-	case ar_tx:check_last_tx(WalletList, T) of
-		true ->
-			UpdatedWalletList = ar_wallet_list:apply_tx(WalletList, T),
-			generate_floating_wallet_list(UpdatedWalletList, TXs);
-		false -> false
-	end.
+%generate_floating_wallet_list(WalletList, []) ->
+%	WalletList;
+%generate_floating_wallet_list(WalletList, [T | TXs]) ->
+%	case ar_tx:check_last_tx(WalletList, T) of
+%		true ->
+%			UpdatedWalletList = ar_wallet_list:apply_tx(WalletList, T),
+%			generate_floating_wallet_list(UpdatedWalletList, TXs);
+%		false -> false
+%	end.

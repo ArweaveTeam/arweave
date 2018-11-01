@@ -399,8 +399,9 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 			)
 		),
 	NewWalletList =
-		ar_node_utils:apply_mining_reward(
-			ar_wallet_list:apply_txs(WalletList, TXs),
+		ar_wallet_list:apply_txs_then_mining_reward(
+			WalletList,
+			TXs,
 			NewB#block.reward_addr,
 			FinderReward,
 			NewB#block.height
@@ -496,8 +497,9 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 		]
 	),
 	WalletList =
-		ar_node_utils:apply_mining_reward(
-			ar_wallet_list:apply_txs(RawWalletList, MinedTXs),
+		ar_wallet_list:apply_txs_then_mining_reward(
+			RawWalletList,
+			MinedTXs,
 			RewardAddr,
 			FinderReward,
 			length(HashList)

@@ -289,8 +289,9 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
 			)
 		),
 	NewWalletList =
-		ar_node_utils:apply_mining_reward(
-			ar_wallet_list:apply_txs(CurrentB#block.wallet_list, TXs),
+		ar_wallet_list:apply_txs_then_mining_reward(
+			CurrentB#block.wallet_list,
+			TXs,
 			RewardAddr,
 			FinderReward,
 			length(CurrentB#block.hash_list) - 1
@@ -430,8 +431,9 @@ verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
 	),
 	(NewB#block.reward_pool == RewardPool) and
 	((NewB#block.wallet_list) ==
-		ar_node_utils:apply_mining_reward(
-			ar_wallet_list:apply_txs(OldB#block.wallet_list, NewTXs),
+		ar_wallet_list:apply_txs_then_mining_reward(
+			OldB#block.wallet_list,
+			NewTXs,
 			NewB#block.reward_addr,
 			FinderReward,
 			NewB#block.height
@@ -517,11 +519,9 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 					end
 		end,
 	WalletList =
-		ar_node_utils:apply_mining_reward(
-			ar_wallet_list:apply_txs(
-				ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-				TXs
-			),
+		ar_wallet_list:apply_txs_then_mining_reward(
+			ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+			TXs,
 			BShadow#block.reward_addr,
 			FinderPool,
 			BShadow#block.height
