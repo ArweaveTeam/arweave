@@ -286,7 +286,7 @@ encounter_new_tx(StateIn, TX, NewGS) ->
 			NewTXs = TXs ++ [TX],
 			{ok, [
 				{txs, NewTXs},
-				{floating_wallet_list, ar_node_utils:apply_tx(FloatingWalletList, TX)},
+				{floating_wallet_list, ar_wallet_list:apply_tx(FloatingWalletList, TX)},
 				{gossip, NewGS},
 				{waiting_txs, WaitingTXs -- [TX]}
 			]};
@@ -400,7 +400,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 		),
 	NewWalletList =
 		ar_node_utils:apply_mining_reward(
-			ar_node_utils:apply_txs(WalletList, TXs),
+			ar_wallet_list:apply_txs(WalletList, TXs),
 			NewB#block.reward_addr,
 			FinderReward,
 			NewB#block.height
@@ -497,7 +497,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 	),
 	WalletList =
 		ar_node_utils:apply_mining_reward(
-			ar_node_utils:apply_txs(RawWalletList, MinedTXs),
+			ar_wallet_list:apply_txs(RawWalletList, MinedTXs),
 			RewardAddr,
 			FinderReward,
 			length(HashList)
@@ -584,7 +584,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 					gossip               => NewGS,
 					txs                  => ar_track_tx_db:remove_bad_txs(NotMinedTXs), % TXs not included in the block
 					height               => NextB#block.height,
-					floating_wallet_list => ar_node_utils:apply_txs(WalletList, NotMinedTXs),
+					floating_wallet_list => ar_wallet_list:apply_txs(WalletList, NotMinedTXs),
 					reward_pool          => RewardPool,
 					potential_txs        => [],
 					diff                 => NextB#block.diff,

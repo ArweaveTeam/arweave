@@ -7,13 +7,13 @@
 -export([get_conflicting_txs/2, get_full_block/3]).
 -export([find_recall_hash/2, find_recall_block/1, find_block/1]).
 -export([calculate_reward/2, calculate_reward_pool/4, calculate_proportion/3]).
--export([apply_mining_reward/4, apply_tx/2, apply_txs/2]).
+-export([apply_mining_reward/4]).
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/2]).
 -export([fork_recover/3]).
 -export([filter_out_of_order_txs/2, filter_out_of_order_txs/3]).
 -export([filter_all_out_of_order_txs/2]).
--export([validate/5, validate/8, validate_wallet_list/1]).
+-export([validate/5, validate/8]).
 
 -include("ar.hrl").
 
@@ -165,25 +165,6 @@ apply_mining_reward(WalletList, unclaimed, _Quantity, _Height) ->
 	WalletList;
 apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, Quantity)).
-
-%% @doc Apply a transaction to a wallet list, updating it.
-%% Critically, filter empty wallets from the list after application.
-apply_tx(WalletList, unavailable) ->
-	WalletList;
-apply_tx(WalletList, TX) ->
-	filter_empty_wallets(do_apply_tx(WalletList, TX)).
-
-%% @doc Update a wallet list with a set of new transactions.
-apply_txs(WalletList, TXs) ->
-	lists:sort(
-		lists:foldl(
-			fun(TX, CurrWalletList) ->
-				apply_tx(CurrWalletList, TX)
-			end,
-			WalletList,
-			TXs
-		)
-	).
 
 %% @doc Force a node to start mining, update state.
 start_mining(StateIn) ->
@@ -374,7 +355,7 @@ integrate_new_block(
 		hash_list			 => [NewB#block.indep_hash | HashList],
 		txs					 => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
 		height				 => NewB#block.height,
-		floating_wallet_list => apply_txs(WalletList, TXs),
+		floating_wallet_list => ar_wallet_list:apply_txs(WalletList, TXs),
 		reward_pool			 => NewB#block.reward_pool,
 		potential_txs		 => [],
 		diff				 => NewB#block.diff,
@@ -422,7 +403,7 @@ filter_out_of_order_txs(WalletList, [], OutTXs) ->
 filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
 	case ar_tx:check_last_tx(WalletList, T) of
 		true ->
-			UpdatedWalletList = apply_tx(WalletList, T),
+			UpdatedWalletList = ar_wallet_list:apply_tx(WalletList, T),
 			filter_out_of_order_txs(
 				UpdatedWalletList,
 				RawTXs,
@@ -573,16 +554,6 @@ validate(_HL, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:report([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
 	false.
 
-%% @doc Ensure that all wallets in the wallet list have a positive balance.
-validate_wallet_list([]) ->
-	true;
-validate_wallet_list([{_, 0, Last} | _]) when byte_size(Last) == 0 ->
-	false;
-validate_wallet_list([{_, Qty, _} | _]) when Qty < 0 ->
-	false;
-validate_wallet_list([_ | Rest]) ->
-	validate_wallet_list(Rest).
-
 %%%
 %%% Private functions.
 %%%
@@ -647,40 +618,6 @@ get_tx(Host, ID) ->
 	% handle external peer request
 	ar_http_iface_client:get_tx(Host, ID).
 
-%% @doc Perform the concrete application of a transaction to
-%% a prefiltered wallet list.
-do_apply_tx(
-		WalletList,
-		#tx {
-			id = ID,
-			owner = From,
-			last_tx = Last,
-			target = To,
-			quantity = Qty,
-			reward = Reward
-		}) ->
-	Addr = ar_wallet:to_address(From),
-	case lists:keyfind(Addr, 1, WalletList) of
-		{Addr, Balance, Last} ->
-			NewWalletList = lists:keyreplace(Addr, 1, WalletList, {Addr, Balance - (Qty + Reward), ID}),
-			case lists:keyfind(To, 1, NewWalletList) of
-				false ->
-					[{To, Qty, <<>>} | NewWalletList];
-				{To, OldBalance, LastTX} ->
-					lists:keyreplace(To, 1, NewWalletList, {To, OldBalance + Qty, LastTX})
-			end;
-		_ ->
-			WalletList
-	end.
-
-%% @doc Remove wallets with zero balance from a wallet list.
-filter_empty_wallets([]) ->
-	[];
-filter_empty_wallets([{_, 0, <<>>} | WalletList]) ->
-	filter_empty_wallets(WalletList);
-filter_empty_wallets([Wallet | Rest]) ->
-	[Wallet | filter_empty_wallets(Rest)].
-
 %% @doc Alter a wallet in a wallet list.
 alter_wallet(WalletList, Target, Adjustment) ->
 	case lists:keyfind(Target, 1, WalletList) of
@@ -728,7 +665,7 @@ generate_floating_wallet_list(WalletList, []) ->
 generate_floating_wallet_list(WalletList, [T | TXs]) ->
 	case ar_tx:check_last_tx(WalletList, T) of
 		true ->
-			UpdatedWalletList = apply_tx(WalletList, T),
+			UpdatedWalletList = ar_wallet_list:apply_tx(WalletList, T),
 			generate_floating_wallet_list(UpdatedWalletList, TXs);
 		false -> false
 	end.

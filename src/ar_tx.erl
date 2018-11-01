@@ -91,7 +91,7 @@ verify(TX, Diff, WalletList) ->
 			tx_last_tx_legal, "last_tx_not_valid "},
 		{tx_verify_hash(TX),
 			tx_verify_hash, "tx_id_not_valid "},
-		{ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])),
+		{ar_wallet_list:validate(ar_wallet_list:apply_txs(WalletList, [TX])),
 			tx_wallet_list_valid, "tx_wallet_list_invalid"},
 		{ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature),
 			tx_wallet_verify, "tx_signature_not_valid "}
@@ -131,7 +131,7 @@ verify(TX, Diff, WalletList) ->
 			tx_last_tx_legal, "last_tx_not_valid "},
 		{tx_verify_hash(TX),
 			tx_verify_hash, "tx_id_not_valid "},
-		{ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])),
+		{ar_wallet_list:validate(ar_wallet_list:apply_txs(WalletList, [TX])),
 			tx_wallet_list_valid, "tx_wallet_list_invalid"},
 		{ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature),
 			tx_wallet_verify, "tx_signature_not_valid "}
@@ -167,7 +167,7 @@ verify_txs([], _, _) ->
 	true;
 verify_txs([T|TXs], Diff, WalletList) ->
 	case verify(T, Diff, WalletList) of
-		true  -> verify_txs(TXs, Diff, ar_node_utils:apply_tx(WalletList, T));
+		true  -> verify_txs(TXs, Diff, ar_wallet_list:apply_tx(WalletList, T));
 		false -> false
 	end.
 
@@ -190,16 +190,8 @@ calculate_min_tx_cost(DataSize, Diff) ->
 	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (ThisDiff - (?DIFF_CENTER - CurveSteepness)),
 	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024))).
 calculate_min_tx_cost(DataSize, Diff, WalletList, Addr) ->
-	calculate_tx_gen_fee(WalletList, Addr)
+	ar_wallet_list:calculate_tx_gen_fee(WalletList, Addr)
 	+ calculate_min_tx_cost(DataSize, Diff).
-
-calculate_tx_gen_fee(_, undefined) -> 0;
-calculate_tx_gen_fee(_, <<>>) -> 0;
-calculate_tx_gen_fee(WalletList, Addr) ->
-	case lists:keymember(Addr, 1, WalletList) of
-		true  -> 0;
-		false -> ?WALLET_GEN_FEE
-    end.
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
 tx_field_size_limit(TX) ->
@@ -246,25 +238,19 @@ tags_to_binary(Tags) ->
 		)
 	).
 
-%% @doc A check if the transactions last_tx field and owner match the expected
-%% value found in the wallet list wallet list, if so returns true else false.
+%% @doc A check if the transaction's last_tx field and owner match the expected
+%% value found in the wallet list, if so returns true else false.
 -ifdef(DEBUG).
 check_last_tx([], _) -> true;
 check_last_tx(_, #tx{owner = <<>>}) -> true;
 check_last_tx(WalletList, #tx{owner = Owner, last_tx = Last}) ->
 	Address = ar_wallet:to_address(Owner),
-	case lists:keyfind(Address, 1, WalletList) of
-		{Address, _Quantity, Last} -> true;
-		_ -> false
-	end.
+	ar_wallet_list:check_address_last_tx(WalletList, Address, Last).
 -else.
 check_last_tx([], _) -> true;
 check_last_tx(WalletList, #tx{owner = Owner, last_tx = Last}) ->
 	Address = ar_wallet:to_address(Owner),
-	case lists:keyfind(Address, 1, WalletList) of
-		{Address, _Quantity, Last} -> true;
-		_ -> false
-	end.
+	ar_wallet_list:check_address_last_tx(WalletList, Address, Last).
 -endif.
 
 %%% Tests: ar_tx
