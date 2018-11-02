@@ -1302,7 +1302,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 			Nonce = ar_util:decode(NonceEnc),
 			CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 			B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
-			RecallHash = ar_util:decode(JSONRecallB),
+			RecallIndepHash = ar_util:decode(JSONRecallB),
 			case (not is_atom(CurrentB)) andalso
 				(B#block.height > CurrentB#block.height) andalso
 				(B#block.height =< (CurrentB#block.height + 50)) andalso
@@ -1313,16 +1313,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
 						]
 					),
-					RecallB =
-						ar_block:get_recall_block(
-							OrigPeer,
-							RecallHash,
-							B,
-							Key,
-							Nonce,
-							CurrentB#block.hash_list
-						),
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
+					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, {RecallIndepHash, Key, Nonce});
 				_ ->
 					ok
 			end

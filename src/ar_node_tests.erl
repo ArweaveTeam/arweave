@@ -179,13 +179,15 @@ add_bogus_block_test() ->
 	Node ! {replace_block_list, BL},
 	Bs = [B2|_] = ar_weave:add(B1, [TX2]),
 	ar_storage:write_block(B2),
+	RecallB = ar_node_utils:find_recall_block(Bs),
+	Recall = {RecallB#block.indep_hash, <<>>, <<>>},
 	ar_gossip:send(GS0,
 		{
 			new_block,
 			self(),
 			B2#block.height,
 			B2#block { hash = <<"INCORRECT">> },
-			ar_node_utils:find_recall_block(Bs)
+			Recall
 		}),
 	?assert(ar_util:do_until(
 		fun() ->
@@ -217,12 +219,14 @@ add_bogus_block_nonce_test() ->
 	Node ! {replace_block_list, BL},
 	B2 = ar_weave:add(B1, [TX2]),
 	ar_storage:write_block(hd(B2)),
+	RecallB = ar_node_utils:find_recall_block(B2),
+	Recall = {RecallB#block.indep_hash, <<>>, <<>>},
 	ar_gossip:send(GS0,
 		{new_block,
 			self(),
 			(hd(B2))#block.height,
 			(hd(B2))#block { nonce = <<"INCORRECT">> },
-			ar_node_utils:find_recall_block(B2)
+			Recall
 		}
 	),
 	?assert(ar_util:do_until(
@@ -254,6 +258,8 @@ add_bogus_hash_list_test() ->
 	Node ! {replace_block_list, BL},
 	B2 = ar_weave:add(B1, [TX2]),
 	ar_storage:write_block(hd(B2)),
+	RecallB = ar_node_utils:find_recall_block(B2),
+	Recall = {RecallB#block.indep_hash, <<>>, <<>>},
 	ar_gossip:send(GS0,
 		{new_block,
 			self(),
@@ -262,7 +268,7 @@ add_bogus_hash_list_test() ->
 				hash_list =
 					[<<"INCORRECT HASH">> | tl((hd(B2))#block.hash_list)]
 			},
-			ar_node_utils:find_recall_block(B2)
+			Recall
 		}),
 	?assert(ar_util:do_until(
 		fun() ->
