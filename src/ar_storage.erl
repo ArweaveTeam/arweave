@@ -35,10 +35,25 @@ clear() ->
 
 %% @doc Removes a saved block.
 delete_block(Hash) ->
+	modify_blocks_on_disk(-1),
 	file:delete(name_block(Hash)).
+
+%% @doc Change the cached count of blocks on disk by the given value.
+modify_blocks_on_disk(Val) ->
+	blocks_on_disk(),
+	ar_meta_db:increase(blocks_on_disk, Val).
 
 %% @doc Returns the number of blocks stored on disk.
 blocks_on_disk() ->
+	case ar_meta_db:get(blocks_on_disk) of
+		not_found ->
+			Res = calculate_blocks_on_disk(),
+			ar_meta_db:put(blocks_on_disk, Res),
+			Res;
+		Count -> Count
+	end.
+
+calculate_blocks_on_disk() ->
 	{ok, RawFiles} = file:list_dir(?BLOCK_DIR),
 	Files =
 		lists:filter(
@@ -95,6 +110,7 @@ write_block(RawB) ->
 	WalletID = write_wallet_list(RawB#block.wallet_list),
 	B = RawB#block { wallet_list = WalletID },
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
+	modify_blocks_on_disk(1),
 	file:write_file(
 		Name = lists:flatten(
 			io_lib:format(
@@ -117,6 +133,7 @@ write_block(RawB) ->
 	WalletID = write_wallet_list(RawB#block.wallet_list),
 	B = RawB#block { wallet_list = WalletID },
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
+	modify_blocks_on_disk(1),
 	case enough_space(byte_size(BlockToWrite)) of
 		true ->
 			file:write_file(

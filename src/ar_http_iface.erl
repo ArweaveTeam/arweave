@@ -701,7 +701,7 @@ return_info() ->
 							C -> ar_util:encode(C)
 						end
 					},
-					%{blocks, ar_storage:blocks_on_disk()},
+					{blocks, ar_storage:blocks_on_disk()},
 					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
 					{queue_length,
 						element(
