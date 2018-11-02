@@ -1,6 +1,6 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1]).
--export([get_recall_block/6]).
+-export([get_recall_block/5]).
 -export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/2]).
 -export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
@@ -511,9 +511,8 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 	),
 	BShadow#block { wallet_list = WalletList, hash_list = HashList }.
 
-
-get_recall_block(OrigPeer,RecallHash,B,Key,Nonce, BHL) ->
-	case ar_storage:read_block(RecallHash, BHL) of
+get_recall_block(OrigPeer, RecallHash, B, Key, Nonce) ->
+	case ar_storage:read_block(RecallHash, B#block.hash_list) of
 		unavailable ->
 			case ar_storage:read_encrypted_block(RecallHash) of
 				unavailable ->

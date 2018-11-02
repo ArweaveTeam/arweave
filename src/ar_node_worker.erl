@@ -101,13 +101,15 @@ handle(SPid, {cancel_tx, TXID, Sig}) ->
 	{ok, StateOut} = cancel_tx(StateIn, TXID, Sig),
 	ar_node_state:update(SPid, StateOut),
 	{ok, cancel_tx};
-handle(SPid, {process_new_block, Peer, Height, NewB, RecallB}) ->
+handle(SPid, {process_new_block, Peer, Height, NewB, Recall}) ->
 	% We have a new block. Distribute it to the gossip network.
 	{ok, StateIn} = ar_node_state:all(SPid),
 	GS = maps:get(gossip, StateIn),
 	HashList = maps:get(hash_list, StateIn),
-	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, RecallB}),
+	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, Recall}),
 	ar_node_state:update(SPid, [{gossip, NewGS}]),
+	{RecallIndepHash, Key, Nonce} = Recall,
+	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB, Key, Nonce),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -194,9 +196,11 @@ handle(_SPid, Msg) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
 %% @doc Handle the gossip receive results.
-handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, RecallB}}) ->
+handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, Recall}}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	HashList = maps:get(hash_list, StateIn),
+	{RecallIndepHash, Key, Nonce} = Recall,
+	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB, Key, Nonce),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -563,10 +567,11 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				end,
 				PotentialTXs
 			),
+			Recall = {RecallB#block.indep_hash, <<>>, <<>>},
 			{NewGS, _} =
 				ar_gossip:send(
 					GS,
-					{new_block, self(), NextB#block.height, NextB, RecallB}
+					{new_block, self(), NextB#block.height, NextB, Recall}
 				),
 			{ok, ar_node_utils:reset_miner(
 				StateNew#{
