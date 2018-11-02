@@ -488,9 +488,10 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 			{[], OldHashList} -> OldHashList;
 			{ShadowHashList, []} -> ShadowHashList;
 			{ShadowHashList, OldHashList} ->
+				EarliestShadowHash = lists:last(ShadowHashList),
 				NewL =
 					lists:dropwhile(
-						fun(X) -> X =/= lists:last(ShadowHashList) end,
+						fun(X) -> X =/= EarliestShadowHash end,
 						OldHashList
 					),
 				ShadowHashList ++
