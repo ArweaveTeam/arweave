@@ -171,6 +171,11 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 						B = ar_storage:read_block(H, HashList),
 						{B#block.reward_pool, B#block.weave_size}
 				end,
+			Current =
+				case HashList of
+					not_joined -> not_joined;
+					[C|_] -> C
+				end,
 			% Start processes, init state, and start server.
 			NPid = self(),
 			{ok, SPid} = ar_node_state:start(),
@@ -180,6 +185,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{node, NPid},
 				{gossip, Gossip},
 				{hash_list, HashList},
+				{current, Current},
 				{wallet_list, Wallets},
 				{floating_wallet_list, Wallets},
 				{mining_delay, MiningDelay},
@@ -765,11 +771,7 @@ handle(SPid, {get_hashlist, From}) ->
 	From ! {hashlist, HashList},
 	ok;
 handle(SPid, {get_current_block_hash, From}) ->
-	Res =
-		case ar_node_state:lookup(SPid, hash_list) of
-			{ok, [Curr|_]} -> Curr;
-			{ok, not_joined} -> not_joined
-		end,
+	{ok, Res} = ar_node_state:lookup(SPid, current),
 	From ! {current_block_hash, Res},
 	ok;
 handle(SPid, {get_height, From}) ->
