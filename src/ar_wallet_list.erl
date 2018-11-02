@@ -98,16 +98,20 @@ filter_out_of_order_txs(WalletList, InTXs) ->
 filter_out_of_order_txs(WalletList, [], OutTXs) ->
 	{WalletList, OutTXs};
 filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
-	UpdatedWalletList =
-		case ar_tx:check_last_tx(WalletList, T) of
-			true  -> apply_tx(WalletList, T);
-			false -> WalletList
-		end,
-	filter_out_of_order_txs(
-		UpdatedWalletList,
-		RawTXs,
-		[T | OutTXs]
-	).
+	case ar_tx:check_last_tx(WalletList, T) of
+		true  ->
+			filter_out_of_order_txs(
+				apply_tx(WalletList, T),
+				RawTXs,
+				[T | OutTXs]
+			);
+		false ->
+			filter_out_of_order_txs(
+				WalletList,
+				RawTXs,
+				OutTXs
+			)
+	end.
 
 %% @doc Generate a re-producible hash from a wallet list.
 hash(WalletList) ->
