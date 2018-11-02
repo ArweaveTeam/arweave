@@ -11,7 +11,7 @@
 -export([get_blocks/1, get_block/3]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
--export([get_hash_list/1]).
+-export([get_hash_list/1, get_height/1]).
 -export([get_trusted_peers/1]).
 -export([get_balance/2]).
 -export([get_last_tx/2, get_last_tx_from_floating/2]).
@@ -19,7 +19,7 @@
 -export([get_current_diff/1, get_diff/1]).
 -export([get_floating_wallet_list/1]).
 -export([get_waiting_txs/1, get_all_known_txs/1]).
--export([get_current_block/1]).
+-export([get_current_block_hash/1, get_current_block/1]).
 -export([get_reward_addr/1]).
 -export([get_reward_pool/1]).
 -export([is_joined/1]).
@@ -354,6 +354,23 @@ get_hash_list(Node) ->
 		{hashlist, not_joined} -> [];
 		{hashlist, HashList} -> HashList
 		after ?LOCAL_NET_TIMEOUT -> []
+	end.
+
+%% @doc Get the current block hash.
+get_current_block_hash(Node) ->
+	Node ! {get_current_block_hash, self()},
+	receive
+		{current_block_hash, not_joined} -> not_joined;
+		{current_block_hash, Current} -> Current
+		after ?LOCAL_NET_TIMEOUT -> unavailable
+	end.
+
+%% @doc Return the current height of the blockweave.
+get_height(Node) ->
+	Node ! {get_height, self()},
+	receive
+		{height, H} -> H
+	after ?LOCAL_NET_TIMEOUT -> -1
 	end.
 
 %% @doc Check whether self node has joined the weave.
@@ -746,6 +763,18 @@ handle(SPid, {get_walletlist, From}) ->
 handle(SPid, {get_hashlist, From}) ->
 	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
 	From ! {hashlist, HashList},
+	ok;
+handle(SPid, {get_current_block_hash, From}) ->
+	Res =
+		case ar_node_state:lookup(SPid, hash_list) of
+			{ok, [Curr|_]} -> Curr;
+			{ok, not_joined} -> not_joined
+		end,
+	From ! {current_block_hash, Res},
+	ok;
+handle(SPid, {get_height, From}) ->
+	{ok, Height} = ar_node_state:lookup(SPid, height),
+	From ! {height, Height},
 	ok;
 handle(SPid, {get_balance, From, WalletID}) ->
 	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),

@@ -158,7 +158,7 @@ get_unjoined_info_test() ->
 	?assertEqual(?CLIENT_VERSION, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, version)),
 	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, peers)),
 	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, blocks)),
-	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, height)).
+	?assertEqual(-1, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, height)).
 
 %% @doc Check that balances can be retreived over the network.
 get_balance_test() ->
@@ -175,6 +175,17 @@ get_balance_test() ->
 			[]
 		),
 	?assertEqual(10000, binary_to_integer(Body)).
+
+%% @doc Test that heights are returned correctly.
+get_height_test() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
+	Node1 = ar_node:start([self()], B0),
+	ar_http_iface_server:reregister(Node1),
+	0 = ar_http_iface_client:get_height({127,0,0,1,1984}),
+	ar_node:mine(Node1),
+	timer:sleep(1000),
+	1 = ar_http_iface_client:get_height({127,0,0,1,1984}).
 
 %% @doc Test that wallets issued in the pre-sale can be viewed.
 get_presale_balance_test() ->
