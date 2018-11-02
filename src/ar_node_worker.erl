@@ -682,7 +682,7 @@ aggregate_txs(#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := Potentia
 -ifdef(FIXED_DELAY).
 calculate_delay(0) ->
 	?FIXED_DELAY;
-calculate_delay(Bytes) ->
+calculate_delay(_Bytes) ->
 	?FIXED_DELAY.
 -else.
 calculate_delay(0) ->
