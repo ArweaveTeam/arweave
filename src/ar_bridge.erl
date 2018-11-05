@@ -282,29 +282,19 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 		end
 	),
 	S;
-send_to_external(
-		S = #state {external_peers = Peers, port = Port},
-		{new_block, _Peer, _Height, NewB, RecallB}) ->
-	case RecallB of
-		unavailable -> ok;
-		_ ->
-			spawn(
-				fun() ->
-					ar:report(
-						[
-							{sending_block_to_external_peers, ar_util:encode(NewB#block.indep_hash)},
-							{peers, length(Peers)}
-						]
-					),
-					lists:foreach(
-						fun(Peer) ->
-							ar_http_iface:send_new_block(Peer, Port, NewB, RecallB)
-						end,
-						Peers
-					)
-				end
-			)
-	end,
+send_to_external(_, {new_block, _, _, _, unavailable}) ->
+	ok;
+send_to_external(S, {new_block, _Peer, _Height, NewB, RecallB}) ->
+	spawn(
+		fun() ->
+			case ar_key_db:get(RecallB#block.indep_hash) of
+				[{Key, Nonce}] ->
+					send_block_to_external(S, NewB, RecallB, Key, Nonce);
+				_ ->
+					send_block_to_external(S, NewB, RecallB, <<>>, <<>>)
+			end
+		end
+	),
 	S;
 send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
