@@ -373,6 +373,7 @@ integrate_new_block(
 	end,
 	reset_miner(StateIn#{
 		hash_list			 => [NewB#block.indep_hash | HashList],
+		current				 => NewB#block.indep_hash,
 		txs					 => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
 		height				 => NewB#block.height,
 		floating_wallet_list => apply_txs(WalletList, TXs),

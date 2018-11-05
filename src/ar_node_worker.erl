@@ -571,6 +571,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			{ok, ar_node_utils:reset_miner(
 				StateNew#{
 					hash_list            => NewHL,
+					current              => hd(NewHL),
 					gossip               => NewGS,
 					txs                  => ar_track_tx_db:remove_bad_txs(NotMinedTXs), % TXs not included in the block
 					height               => NextB#block.height,
@@ -612,6 +613,7 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			hash_list            => NewHs,
+			current              => NewB#block.indep_hash,
 			wallet_list          => NewB#block.wallet_list,
 			height               => NewB#block.height,
 			reward_pool          => NewB#block.reward_pool,
@@ -650,6 +652,7 @@ recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs)
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			hash_list            => NewHS,
+			current              => NewB#block.indep_hash,
 			wallet_list          => NewB#block.wallet_list,
 			height               => NewB#block.height,
 			reward_pool          => NewB#block.reward_pool,

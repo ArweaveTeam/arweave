@@ -13,6 +13,23 @@
 %%% Tests.
 %%%
 
+%% @doc Ensure that the hieght of the node can be correctly obtained externally.
+get_height_test() ->
+	ar_storage:clear(),
+	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
+	Node1 = ar_node:start([self()], B0),
+	0 = ar_node:get_height(Node1),
+	ar_node:mine(Node1),
+	timer:sleep(1000),
+	1 = ar_node:get_height(Node1).
+
+%% @doc Test retrieval of the current block hash.
+get_current_block_hash_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
+	Node1 = ar_node:start([self()], [B0]),
+	?assertEqual(B0#block.indep_hash, ar_node:get_current_block_hash(Node1)).
+
 %% @doc Ensure that nodes will not re-gossip txs more than once.
 single_tx_regossip_test() ->
 	ar_storage:clear(),
