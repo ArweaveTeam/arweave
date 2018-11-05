@@ -602,7 +602,7 @@ block_data_segment_valid_test_() ->
 		NewB = ar_storage:read_block(BTest, HL),
 		PrevB = ar_storage:read_block(BPre, HL),
 		PrevB = ar_storage:read_block(NewB#block.previous_block, HL),
-		RecallB = get_recall_block(NewB, HL),
+		RecallB = ar_node_utils:find_recall_block(tl(HL)),
 		?assertEqual([], NewB#block.txs),
 		?assertEqual([], NewB#block.tags),
 		?assertEqual(unclaimed, NewB#block.reward_addr),
@@ -617,10 +617,6 @@ block_data_segment_valid_test_() ->
 		Valid = ar_mine:validate(BDS, NewB#block.nonce, NewB#block.diff),
 		?assertNotEqual(false, Valid)
 	end}.
-
-get_recall_block(B, BHL) ->
-	RecallHash = ar_util:get_recall_hash(B, BHL),
-	ar_storage:read_block(RecallHash, BHL).
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
@@ -640,7 +636,7 @@ fork_recover_by_http_test_() ->
 		timer:sleep(500),
 		ar_node:mine(Node2),
 		timer:sleep(500),
-		ar_util:do_until(
+		{error, timeout} = ar_util:do_until(
 			fun() ->
 				length(ar_node:get_blocks(Node2)) > 5
 			end,
@@ -650,7 +646,7 @@ fork_recover_by_http_test_() ->
 		[BTest|_] = ar_node:get_blocks(Node2),
 		HL = ar_node:get_hash_list(Node2),
 		NewB = ar_storage:read_block(BTest, HL),
-		RecallB = get_recall_block(NewB, HL),
+		RecallB = ar_node_utils:find_recall_block(tl(HL)),
 		BDS = ar_block:generate_block_data_segment(
 			ar_storage:read_block(NewB#block.previous_block, HL),
 			RecallB,

@@ -328,7 +328,7 @@ basic_validity_test() ->
 	RecallB = hd(B0),
 	start(B, RecallB, [], unclaimed, [], self()),
 	receive
-		{work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+		{work_complete, _MinedTXs, _Hash, Diff, _Nonce, Timestamp} ->
 			DataSegment = ar_block:generate_block_data_segment(
 				RecallB,
 				RecallB,
@@ -339,9 +339,6 @@ basic_validity_test() ->
 			),
 			Diff = B#block.diff,
 			Timestamp = B#block.timestamp,
-			ar:d({nonce, Nonce}),
-			ar:d({bonce, B#block.nonce}),
-			ar:d({ronce, RecallB#block.nonce}),
 			Valid = ar_mine:validate(DataSegment, B#block.nonce, Diff),
 			?assertNotEqual(false, Valid)
 	end.
