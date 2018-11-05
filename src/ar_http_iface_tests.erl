@@ -589,24 +589,30 @@ block_data_segment_valid_test_() ->
 		timer:sleep(500),
 		ar_node:mine(Node2),
 		timer:sleep(500),
-		ar_util:do_until(
+		{error, timeout} = ar_util:do_until(
 			fun() ->
 				length(ar_node:get_blocks(Node2)) > 5
 			end,
 			1000,
 			10 * 1000
 		),
-		[BTest|_] = ar_node:get_blocks(Node2),
+		Blocks = ar_node:get_blocks(Node2),
+		[BTest, BPre | _] = Blocks,
 		HL = ar_node:get_hash_list(Node2),
 		NewB = ar_storage:read_block(BTest, HL),
+		PrevB = ar_storage:read_block(BPre, HL),
+		PrevB = ar_storage:read_block(NewB#block.previous_block, HL),
 		RecallB = get_recall_block(NewB, HL),
+		?assertEqual([], NewB#block.txs),
+		?assertEqual([], NewB#block.tags),
+		?assertEqual(unclaimed, NewB#block.reward_addr),
 		BDS = ar_block:generate_block_data_segment(
-			ar_storage:read_block(NewB#block.previous_block, HL),
+			PrevB,
 			RecallB,
-			lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
-			NewB#block.reward_addr,
+			[],
+			unclaimed,
 			NewB#block.timestamp,
-			NewB#block.tags
+			[]
 		),
 		Valid = ar_mine:validate(BDS, NewB#block.nonce, NewB#block.diff),
 		?assertNotEqual(false, Valid)
