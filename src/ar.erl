@@ -22,6 +22,7 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_block_index,
 		ar_inflation,
 		ar_node_tests,
 		ar_util,
@@ -200,7 +201,7 @@ start(
 		disable = Disable,
 		content_policies = Policies
 	}) ->
-	ar_storage:ensure_directories(),
+	ar_storage:start(),
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
 	%register prometheus stats collector,
