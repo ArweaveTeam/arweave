@@ -1,5 +1,5 @@
 -module(ar_block_index).
--export([start/0]).
+-export([start/0, stop/1]).
 -export([add/2, remove/1, clear/0]).
 -export([get_block_filename/1, count/0]).
 -include("ar.hrl").
@@ -13,26 +13,31 @@
 start() ->
 	% Spawn a new process to own the table.
 	Parent = self(),
-	spawn(
-		fun() ->
-			ar:report([starting_block_index]),
-			case ets:info(?MODULE) of
-				undefined ->
-					ets:new(?MODULE, [bag, public, named_table]);
-				_ -> do_nothing
-			end,
-			Parent ! table_ready,
-			receive stop -> ok end
-		end
-	),
+	PID = 
+		spawn(
+			fun() ->
+				ar:report([starting_block_index]),
+				case ets:info(?MODULE) of
+					undefined ->
+						ets:new(?MODULE, [bag, public, named_table]);
+					_ -> do_nothing
+				end,
+				Parent ! table_ready,
+				receive stop -> ok end
+			end
+		),
 	receive table_ready -> ok end,
 	lists:foreach(
 		fun({Number, Hash, FN}) ->
 			add(Number, Hash, FN)
 		end,
 		blocks_on_disk()
-	).
+	),
+	PID.
 
+%% @doc Hal the ets table.
+stop(ETSOwner) ->
+	ETSOwner ! stop.
 
 %% @doc Add an index for a given block to the database.
 add(B, Filename) -> add(B#block.height, B#block.indep_hash, Filename).
@@ -112,3 +117,17 @@ basic_index_test() ->
 	?assertEqual(1, count()),
 	remove(ID2),
 	?assertEqual(0, count()).
+
+%% @doc Test that new indexes are generated correctly on start.
+index_generation_test() ->
+	ar_storage:clear(),
+	PID = start(),
+	?assertEqual(0, count()),
+    B0s = ar_weave:init([]),
+	ar_storage:write_block(hd(B0s)),
+    B1s = ar_weave:add(B0s, []),
+	ar_storage:write_block(hd(B1s)),
+	PID ! stop,
+	receive after 100 -> ok end,
+	start(),
+	?assertEqual(2, count()).
