@@ -524,7 +524,8 @@ store_and_retrieve_block_test() ->
     ar_storage:write_block(B2),
 	write_block(B1),
 	?assertEqual(3, blocks_on_disk()),
-	B1 = read_block(B1#block.indep_hash, B2#block.hash_list).
+	B1 = read_block(B1#block.indep_hash, B2#block.hash_list),
+	B1 = read_block(B1#block.height, B2#block.hash_list).
 
 clear_blocks_test() ->
 	ar_storage:clear(),

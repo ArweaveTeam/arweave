@@ -63,15 +63,16 @@ get_block_filename(ID) ->
 		[] -> unavailable;
 		[{_, Filename}] -> Filename;
 		Filenames ->
-			hd(lists:sort(
-					fun({_, Filename}, {_, Filename2}) ->
-						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
-						{ok, Info2} = file:read_file_info(Filename2, [{time, posix}]),
-						Info#file_info.mtime >= Info2#file_info.mtime
-					end,
-					Filenames
-				)
-			)
+			[{_, FN}|_] =
+				lists:sort(
+						fun({_, Filename}, {_, Filename2}) ->
+							{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
+							{ok, Info2} = file:read_file_info(Filename2, [{time, posix}]),
+							Info#file_info.mtime >= Info2#file_info.mtime
+						end,
+						Filenames
+				),
+			FN
 	end.
 
 %% @doc Return a list of block keys (hash and height) and their associated
