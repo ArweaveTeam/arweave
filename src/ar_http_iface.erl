@@ -696,9 +696,9 @@ return_info() ->
 						end
 					},
 					{current,
-						case Current of
-							not_joined -> <<"not_joined">>;
-							C -> ar_util:encode(C)
+						case is_atom(Current) of
+							true -> atom_to_binary(Current, utf8);
+							false -> ar_util:encode(Current)
 						end
 					},
 					{blocks, ar_storage:blocks_on_disk()},
