@@ -26,6 +26,10 @@ get_current_block_hash_test() ->
 
 %% @doc Ensure that nodes will not re-gossip txs more than once.
 single_tx_regossip_test() ->
+	receive
+		Noise when is_record(Noise, gs_msg) -> ok
+		after 250 -> ok
+	end,
 	ar_storage:clear(),
 	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
 	Node1 = ar_node:start([self()], B0),
