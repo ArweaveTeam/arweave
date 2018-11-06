@@ -423,7 +423,7 @@ handle('GET', [<<"services">>], _Req) ->
 					{
 						[
 							{<<"name">>, Name},
-							{<<"host">>, ar_util:format_peer(Host)},
+							{<<"host">>, list_to_binary(ar_util:format_peer(Host))},
 							{<<"expires">>, Expires}
 						]
 					}
@@ -489,7 +489,7 @@ handle('POST', [<<"services">>], Req) ->
 		undefined -> {404, [], "Services server not found."};
 		Pid ->
 			BodyBin = elli_request:body(Req),
-			{ServicesJSON} = ar_serialize:dejsonify(BodyBin),
+			ServicesJSON = ar_serialize:dejsonify(BodyBin),
 			ar_services:add(
 			Pid,
 			lists:map(

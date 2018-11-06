@@ -22,9 +22,9 @@ get_some_services_test() ->
 	Node1 = ar_node:start([], [B0]),
 	PID = ar_services:start(Node1),
 	ar_http_iface_server:reregister(http_service_node, PID),
-	ar_services:add(PID, [#service { name = "test1", host = {127,0,0,1,1984}, expires = 1 }]),
-	ar_services:add(PID, [#service { name = "test2", host = {127,0,0,1,1984}, expires = 2 }]),
-	ar_services:add(PID, [#service { name = "test3", host = {127,0,0,1,1984}, expires = 3 }]),
+	ar_services:add(PID, [#service { name = <<"test1">>, host = {127,0,0,1,1984}, expires = 1 }]),
+	ar_services:add(PID, [#service { name = <<"test2">>, host = {127,0,0,1,1984}, expires = 2 }]),
+	ar_services:add(PID, [#service { name = <<"test3">>, host = {127,0,0,1,1984}, expires = 3 }]),
 	ar:d(ar_services:get(PID)),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
@@ -42,6 +42,17 @@ post_no_services_test() ->
 		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/services", JB),
 	?assertEqual({<<"404">>, <<"Not Found">>}, RespTup),
 	?assertEqual(<<"Services server not found.">>, Body).
+
+post_some_services_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	PID = ar_services:start(Node1),
+	ar_http_iface_server:reregister(http_service_node, PID),
+	JB = <<"[{\"name\":\"test3\",\"host\":\"127.0.0.1:1984\",\"expires\":3},{\"name\":\"test2\",\"host\":\"127.0.0.1:1984\",\"expires\":2},{\"name\":\"test1\",\"host\":\"127.0.0.1:1984\",\"expires\":1}]">>,
+	{ok, {RespTup, _, _, _, _}} =
+		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/services", JB),
+	?assertEqual({<<"200">>, <<"OK">>}, RespTup).
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
