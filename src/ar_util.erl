@@ -117,7 +117,7 @@ parse_peer(Str) when is_list(Str) ->
 			{127, 0, 0, 1, parse_port(Str)}
 	end;
 parse_peer({IP, Port}) ->
-	{A, B, C, D} = parse_peer(IP),
+	{A, B, C, D, _} = parse_peer(IP),
 	{A, B, C, D, parse_port(Port)}.
 
 %% @doc Parses a port string into an integer.
@@ -235,6 +235,11 @@ basic_unique_test() ->
 %% @doc Ensure that hosts are formatted as lists correctly.
 basic_peer_format_test() ->
 	"127.0.0.1:9001" = format_peer({127,0,0,1,9001}).
+
+host_port_peer_format_test() ->
+	Expected = {178,62,126,142,1984},
+	Actual = parse_peer({<<"178.62.126.142">>, 1984}),
+	?assertEqual(Expected, Actual).
 
 %% @doc Ensure that pick_random's are actually in the starting list.
 pick_random_test() ->
