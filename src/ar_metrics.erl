@@ -79,10 +79,14 @@ config() -> application:get_env(prometheus, elli_exporter, ?DEFAULT_CONFIG).
 %% TODO: Describe format.
 %% TODO: Add links to Prometheus and Prometheus.erl docs.
 handle(Req, _Config) ->
-  Path = path(),
-  case {elli_request:method(Req), elli_request:raw_path(Req)} of
-    {'GET', Path} -> format_metrics(Req);
-    _             -> ignore
+  case ar_meta_db:get(metrics) of
+	  false -> ignore;
+	  _ ->
+		  Path = path(),
+		  case {elli_request:method(Req), elli_request:raw_path(Req)} of
+			{'GET', Path} -> format_metrics(Req);
+			_             -> ignore
+		  end
   end.
 
 handle_event(request_complete, Args, Config) ->

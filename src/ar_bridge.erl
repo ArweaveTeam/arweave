@@ -282,6 +282,20 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 		end
 	),
 	S;
+send_to_external(S, {new_block, _, _, _, unavailable}) ->
+	S;
+send_to_external(S, {new_block, _Peer, _Height, NewB, RecallB}) ->
+	spawn(
+		fun() ->
+			case ar_key_db:get(RecallB#block.indep_hash) of
+				[{Key, Nonce}] ->
+					send_block_to_external(S, NewB, RecallB, Key, Nonce);
+				_ ->
+					send_block_to_external(S, NewB, RecallB, <<>>, <<>>)
+			end
+		end
+	),
+	S;
 send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
 

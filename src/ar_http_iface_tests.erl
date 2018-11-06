@@ -37,7 +37,8 @@ get_some_services_test() ->
 
 %% @doc Does POST /services work?
 post_no_services_test() ->
-	JB = ar_serialize:jsonify({[]}),
+	unregister(http_service_node),
+	JB = ar_serialize:jsonify([]),
 	{ok, {RespTup, _, Body, _, _}} =
 		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/services", JB),
 	?assertEqual({<<"404">>, <<"Not Found">>}, RespTup),

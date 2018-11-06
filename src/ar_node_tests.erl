@@ -38,15 +38,13 @@ single_tx_regossip_test() ->
 	% Send transaction first time.
 	ar_gossip:send(InitGS, {add_tx, TX}),
 	receive
-		Msg1 when is_record(Msg1, gs_msg) ->
-			{add_tx, TX1} = Msg1#gs_msg.data,
+		#gs_msg{data = {add_tx, TX1}} ->
 			?assertEqual(TX, TX1)
 	end,
 	% Send transaction second time.
 	ar_gossip:send(InitGS, {add_tx, TX}),
 	receive
-		Msg2 when is_record(Msg2, gs_msg) ->
-			{add_tx, TX2} = Msg2#gs_msg.data,
+		#gs_msg{data = {add_tx, TX2}} ->
 			?assertNotEqual(TX, TX2)
 	after 1000 ->
 		ok

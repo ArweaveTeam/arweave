@@ -22,15 +22,16 @@
 	CORE_TEST_MODS,
 	[
 		ar,
-		ar_merkle,
 		ar_block,
 		ar_cleanup,
 		ar_firewall,
 		ar_fork_recovery,
 		ar_gossip,
+		ar_http_iface_tests,
 		ar_inflation,
 		ar_join,
 		ar_meta_db,
+		ar_merkle,
 		ar_mine,
 		ar_node_tests,
 		ar_retarget,
@@ -42,7 +43,6 @@
 		ar_tx_db,
 		ar_util,
 		ar_wallet,
-		ar_http_iface_tests,
 		ar_wallet_list_tests,
 		ar_weave
 	]
