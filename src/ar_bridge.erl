@@ -175,6 +175,9 @@ handle(S, {get_more_peers, PID}) ->
 			reset_timer(PID, get_more_peers)
 		end
 	),
+	S;
+handle(S, UnknownMsg) ->
+	ar:report([{ar_bridge_handle_unknown_message, UnknownMsg}]),
 	S.
 
 %% @doc Potentially send a tx to internal processes.
