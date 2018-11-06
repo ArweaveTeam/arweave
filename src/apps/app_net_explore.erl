@@ -51,12 +51,17 @@ get_all_nodes(Acc, [Peer|Peers]) ->
 
 %% @doc Remove offline nodes from a list of peers.
 filter_offline_nodes(Peers) ->
-	lists:filter(
+	NodesWithInfo = ar_util:pmap(
 		fun(Peer) ->
-			ar_http_iface:get_info(Peer) =/= info_unavailable
+			{Peer, ar_http_iface:get_info(Peer)}
 		end,
 		Peers
-	).
+	),
+	FilterMapper = fun
+		({_, info_unavailable}) -> false;
+		({Peer, _}) -> {true, Peer}
+	end,
+	lists:filtermap(FilterMapper, NodesWithInfo).
 
 %% @doc Return a three-tuple with every live host in the network, it's average
 %% position by peers connected to it, the number of peers connected to it.
@@ -73,8 +78,7 @@ generate_gephi_csv(NamesJsonFile) ->
 	generate_gephi_csv(parse_names_file(NamesJsonFile), get_live_nodes()).
 
 get_nodes_version() ->
-	% lists:keysort(2, get_node_versions(get_all_nodes())).
-	get_nodes_version(get_all_nodes()).
+	get_nodes_version(get_live_nodes()).
 
 get_nodes_version(Peers) ->
 	Mapper = fun (Peer) ->
