@@ -275,8 +275,8 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 		end
 	),
 	S;
-send_to_external(_, {new_block, _, _, _, unavailable}) ->
-	ok;
+send_to_external(S, {new_block, _, _, _, unavailable}) ->
+	S;
 send_to_external(S, {new_block, _Peer, _Height, NewB, RecallB}) ->
 	spawn(
 		fun() ->
