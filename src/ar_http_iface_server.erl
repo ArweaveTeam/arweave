@@ -412,15 +412,19 @@ handle('GET', [<<"current_block">>], Req) ->
 %% @doc Return a list of known services.
 %% GET request to endpoint /services
 handle('GET', [<<"services">>], _Req) ->
+	Services =
+		case whereis(http_service_node) of
+			undefined -> [];
+			Pid       -> ar_services:get(Pid)
+		end,
 	{200, [],
 		ar_serialize:jsonify(
-			{
 				[
 					{
 						[
-							{"name", Name},
-							{"host", ar_util:format_peer(Host)},
-							{"expires", Expires}
+							{<<"name">>, Name},
+							{<<"host">>, ar_util:format_peer(Host)},
+							{<<"expires">>, Expires}
 						]
 					}
 				||
@@ -428,9 +432,8 @@ handle('GET', [<<"services">>], _Req) ->
 						name = Name,
 						host = Host,
 						expires = Expires
-					} <- ar_services:get(whereis(http_service_node))
+					} <- Services
 				]
-			}
 		)
 	};
 
@@ -701,9 +704,9 @@ return_info() ->
 						end
 					},
 					{current,
-						case Current of
-							not_joined -> <<"not_joined">>;
-							C -> ar_util:encode(C)
+						case is_atom(Current) of
+							true -> atom_to_binary(Current, utf8);
+							false -> ar_util:encode(Current)
 						end
 					},
 					{blocks, ar_storage:blocks_on_disk()},

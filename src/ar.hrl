@@ -191,8 +191,8 @@
 	hash_list = unset, % A list of all previous indep hashes.
 	hash_list_merkle = <<>>, % The merkle root of the block's BHL.
 	wallet_list = [], % A map of wallet balances, or undefined.
-    reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
-    tags = [], % Miner specified tags to store with the block.
+	reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
+	tags = [], % Miner specified tags to store with the block.
 	reward_pool = 0, % Current pool of mining reward.
 	weave_size = 0, % Current size of the weave in bytes (counts tx data fields).
 	block_size = 0, % The size of the transactions inside this block.
