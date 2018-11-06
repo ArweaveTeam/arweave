@@ -484,21 +484,26 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 %% POST request to endpoint /services where the body of the request is a JSON encoded serivce as
 %% specified in ar_serialize.
 handle('POST', [<<"services">>], Req) ->
-	BodyBin = elli_request:body(Req),
-	{ServicesJSON} = ar_serialize:jsonify(BodyBin),
-	ar_services:add(
-		whereis(http_service_node),
-		lists:map(
-			fun({Vals}) ->
-				{<<"name">>, Name} = lists:keyfind(<<"name">>, 1, Vals),
-				{<<"host">>, Host} = lists:keyfind(<<"host">>, 1, Vals),
-				{<<"expires">>, Expiry} = lists:keyfind(<<"expires">>, 1, Vals),
-				#service { name = Name, host = Host, expires = Expiry }
-			end,
-			ServicesJSON
-		)
-	),
-	{200, [], "OK"};
+	ar:d(whereis(http_service_node)),
+	case whereis(http_service_node) of
+		undefined -> {404, [], "Services server not found."};
+		Pid ->
+			BodyBin = elli_request:body(Req),
+			{ServicesJSON} = ar_serialize:dejsonify(BodyBin),
+			ar_services:add(
+			Pid,
+			lists:map(
+				fun({Vals}) ->
+					{<<"name">>, Name} = lists:keyfind(<<"name">>, 1, Vals),
+					{<<"host">>, Host} = lists:keyfind(<<"host">>, 1, Vals),
+					{<<"expires">>, Expiry} = lists:keyfind(<<"expires">>, 1, Vals),
+					#service { name = Name, host = Host, expires = Expiry }
+				end,
+				ServicesJSON
+				)
+			),
+			{200, [], "OK"}
+	end;
 
 %% @doc If we are given a hash with no specifier (block, tx, etc), assume that
 %% the user is requesting the data from the TX associated with that hash.

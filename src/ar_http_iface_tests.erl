@@ -35,6 +35,14 @@ get_some_services_test() ->
 		),
 	ar:d(Body).
 
+%% @doc Does POST /services work?
+post_no_services_test() ->
+	JB = ar_serialize:jsonify({[]}),
+	{ok, {RespTup, _, Body, _, _}} =
+		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/services", JB),
+	?assertEqual({<<"404">>, <<"Not Found">>}, RespTup),
+	?assertEqual(<<"Services server not found.">>, Body).
+
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	ar_storage:clear(),
