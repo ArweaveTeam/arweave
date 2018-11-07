@@ -199,7 +199,13 @@ fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, ToWrite, BHL) ->
 	timer:sleep(1 * 1000),
 	RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
-	case ar_node_utils:get_full_block(Peers, RandHash, BHL) of
+	B =
+		try
+			ar_node_utils:get_full_block(Peers, RandHash, BHL)
+		catch _:_ ->
+			unavailable
+		end,
+	case B of
 		unavailable ->
 			timer:sleep(3000),
 			fill_to_capacity(Peers, ToWrite, BHL);
