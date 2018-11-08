@@ -117,7 +117,7 @@ group_by([Item | List], Fun, Acc) ->
 %% Returns a list of tuples with arity 2. The first element is the local peer,
 %% the second element is the list of remote peers it talks to.
 generate_map(Peers) ->
-	lists:map(
+	ar_util:pmap(
 		fun(Peer) ->
 			{
 				Peer,
