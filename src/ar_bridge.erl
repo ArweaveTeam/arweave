@@ -295,7 +295,7 @@ send_to_external(S, {NewGS, Msg}) ->
 send_block_to_external(ExternalPeers, BridgePort, B, OriginPeer, Recall) ->
 	spawn(fun() ->
 		{RecallIndepHash, Key, Nonce} = Recall,
-		case ar_block:get_recall_block(OriginPeer, RecallIndepHash, B, Key, Nonce) of
+		case ar_block:get_recall_block(OriginPeer, RecallIndepHash, B#block.hash_list, Key, Nonce) of
 			unavailable -> ok;
 			RecallB ->
 				ar:report(
