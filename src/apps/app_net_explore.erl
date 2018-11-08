@@ -3,6 +3,7 @@
 -export([get_all_nodes/0, get_live_nodes/0, filter_offline_nodes/1]).
 -export([get_nodes_connectivity/0,
 		 generate_gephi_csv/0,
+		 generate_gephi_csv/1,
 		 get_nodes_version/0]).
 
 %%% Tools for building a map of connected peers.
@@ -66,7 +67,10 @@ get_nodes_connectivity() ->
 %% importing into Gephi - The Open Graph Viz Platform (https://gephi.org/). The
 %% weight is based on the Wildfire ranking.
 generate_gephi_csv() ->
-	generate_gephi_csv(get_live_nodes()).
+	generate_gephi_csv(maps:new(), get_live_nodes()).
+
+generate_gephi_csv(NamesJsonFile) ->
+	generate_gephi_csv(parse_names_file(NamesJsonFile), get_live_nodes()).
 
 get_nodes_version() ->
 	% lists:keysort(2, get_node_versions(get_all_nodes())).
@@ -227,17 +231,40 @@ avg_connectivity_score(Hosts) ->
 	end,
 	maps:map(Mapper, Hosts).
 
+%% @doc Pareses a JSON file with the names of nodes in the same format as on the
+%% Observatory page.
+parse_names_file(NamesJsonFile) ->
+	{ok, Json} = file:read_file(NamesJsonFile),
+	AddrNameMap = [{parse_ip_addr(IpAddr), Name} || #{<<"ip">> := IpAddr, <<"name">> := Name}
+		<- jiffy_to_map(jiffy:decode(Json))],
+	maps:from_list(AddrNameMap).
+
+parse_ip_addr(Addr) ->
+	remove_port(ar_util:parse_peer(Addr)).
+
+remove_port(IpAddrWithPort) ->
+	{A, B, C, D, _} = IpAddrWithPort,
+	{A, B, C, D}.
+
+jiffy_to_map({JiffyObj}) ->
+	Props = [{Key, jiffy_to_map(Value)} || {Key, Value} <- JiffyObj],
+	maps:from_list(Props);
+jiffy_to_map(List) when is_list(List) ->
+	[jiffy_to_map(Item) || Item <- List];
+jiffy_to_map(Value) ->
+	Value.
+
 %% @doc Like generate_gephi_csv/0 but takes a list of the nodes to use in the
 %% export.
-generate_gephi_csv(Nodes) ->
-	generate_gephi_csv1(generate_map(Nodes)).
+generate_gephi_csv(AddrNameMap, Nodes) ->
+	generate_gephi_csv1(AddrNameMap, generate_map(Nodes)).
 
 %% @doc Like generate_gephi_csv/0 but takes the host-to-peers map to use in the
 %% export.
-generate_gephi_csv1(Map) ->
+generate_gephi_csv1(AddrNameMap, Map) ->
 	{IoDevice, File} = create_gephi_file(),
 	write_gephi_csv_header(IoDevice),
-	write_gephi_csv_rows(gephi_edges(Map), IoDevice),
+	write_gephi_csv_rows(use_names(AddrNameMap, gephi_edges(Map)), IoDevice),
 	ok = file:close(IoDevice),
 	io:format("Gephi CSV file written to: '" ++ File ++ "'~n").
 
@@ -269,13 +296,29 @@ gephi_edges([{Host, Peers} | Map], Acc) ->
 	NewAcc = lists:foldl(Folder, Acc, PeersWithPosition),
 	gephi_edges(Map, NewAcc).
 
+use_names(AddrNameMap, GephiEdges) ->
+	Mapper = fun({Host, Peer, Weight}) ->
+		{ip_addr_to_name(Host, AddrNameMap),
+		 ip_addr_to_name(Peer, AddrNameMap),
+		 Weight}
+	end,
+	lists:map(Mapper, GephiEdges).
+
+ip_addr_to_name(AddrWithPort, AddrNameMap) ->
+	{A, B, C, D, Port} = AddrWithPort,
+	Addr = {A, B, C, D},
+	case maps:find(Addr, AddrNameMap) of
+		{ok, Name} ->
+			<<Name/binary, ":", (integer_to_binary(Port))/binary>>;
+		error ->
+			ar_util:format_peer(AddrWithPort)
+	end.
+
 %% @doc Write the list of connections to the IO device.
 write_gephi_csv_rows([], _) ->
 	done;
 write_gephi_csv_rows([Edge | Edges], IoDevice) ->
 	{Host, Peer, Weight} = Edge,
-	Row = io_lib:format("~s,~s,~f\n", [ar_util:format_peer(Host),
-									   ar_util:format_peer(Peer),
-									   Weight]),
+	Row = io_lib:format("~s,~s,~f\n", [Host, Peer, Weight]),
 	ok = file:write(IoDevice, Row),
 	write_gephi_csv_rows(Edges, IoDevice).
