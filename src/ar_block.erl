@@ -9,7 +9,6 @@
 -export([encrypt_block/2, encrypt_block/3]).
 -export([encrypt_full_block/2, encrypt_full_block/3]).
 -export([decrypt_block/4]).
--export([decrypt_full_block/4]).
 -export([generate_block_key/2]).
 -export([generate_block_from_shadow/2, generate_block_data_segment/6]).
 -export([generate_hash_list_for_block/2]).
@@ -128,9 +127,7 @@ encrypt_full_block(Recall, Key, Nonce) ->
 	CipherText.
 
 %% @doc Decrypt a recall block
-decrypt_full_block(B, CipherText, Key, Nonce) when ?IS_BLOCK(B)->
-	decrypt_full_block(B#block.indep_hash, CipherText, Key, Nonce);
-decrypt_full_block(_Hash, CipherText, Key, Nonce) ->
+decrypt_full_block(CipherText, Key, Nonce) ->
 	if
 		(Key == <<>>) or (Nonce == <<>>) -> unavailable;
 		true ->
@@ -556,8 +553,7 @@ get_recall_block(OrigPeer, RecallHash, B, Key, Nonce) ->
 					end;
 				EncryptedRecall ->
 					FBlock =
-						ar_block:decrypt_full_block(
-							B,
+						decrypt_full_block(
 							EncryptedRecall,
 							Key,
 							Nonce
