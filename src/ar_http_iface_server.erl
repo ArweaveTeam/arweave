@@ -634,7 +634,7 @@ is_valid_peer_time({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	% Peer has API endpoint. Check time.
 	PeerT = binary_to_integer(Body),
 	LocalT = os:system_time(second),
-	LocalT >= (PeerT + ?NODE_TIME_SYNC_TOLERANCE);
+	within_tolerance(PeerT, LocalT, ?NODE_TIME_SYNC_TOLERANCE);
 is_valid_peer_time({ok, {{<<"400">>, _}, _, <<"Request type not found.">>, _, _}}) ->
 	% Peer is not yet updated. Be tolerant.
 	true;
@@ -645,6 +645,9 @@ is_valid_peer_time(Peer) ->
 		_:_ ->
 			false
 	end.
+
+within_tolerance(TS1, TS2, Tolerance) ->
+	abs(TS1 - TS2) =< Tolerance.
 
 %% @doc Validates the difficulty of an incoming block.
 new_block_difficulty_ok(B) ->
