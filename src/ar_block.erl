@@ -533,14 +533,14 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 	),
 	BShadow#block { wallet_list = WalletList, hash_list = HashList }.
 
-get_recall_block(OrigPeer, RecallHash, B, Key, Nonce) ->
-	case ar_storage:read_block(RecallHash, B#block.hash_list) of
+get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
+	case ar_storage:read_block(RecallHash, BHL) of
 		unavailable ->
 			case ar_storage:read_encrypted_block(RecallHash) of
 				unavailable ->
 					ar:report([{downloading_recall_block, ar_util:encode(RecallHash)}]),
 					FullBlock =
-						ar_http_iface:get_full_block(OrigPeer, RecallHash, B#block.hash_list),
+						ar_http_iface:get_full_block(OrigPeer, RecallHash, BHL),
 					case ?IS_BLOCK(FullBlock)  of
 						true ->
 							Recall = FullBlock#block {
