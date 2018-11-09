@@ -90,9 +90,12 @@ generate_gephi_csv(NamesJsonFile, StartPeers) ->
 		OnlineNodeMap
 	).
 
+%% @doc Crawls the network and returns a proplist keyed by the node version and
+%% with a counter as value.
 get_nodes_version() ->
 	get_nodes_version(get_live_nodes()).
 
+%% @doc Takes a list of peers and filters out the ones with a local address.
 filter_local_peers(Peers) ->
 	lists:filter(fun(Peer) -> not is_peer_local(Peer) end, Peers).
 
@@ -126,6 +129,7 @@ generate_map(Peers) ->
 		Peers
 	).
 
+%% @dock Takes a peer and return true if it's a local address, otherwise false.
 is_peer_local({127, _, _, _, _}) -> true;
 is_peer_local({10, _, _, _, _}) -> true;
 is_peer_local({192, 168, _, _, _}) -> true;
