@@ -2,9 +2,9 @@
 -export([graph/0, graph/1]).
 -export([get_all_nodes/0, get_live_nodes/0, filter_offline_nodes/1]).
 -export([get_nodes_connectivity/0,
-		 generate_gephi_csv/0,
-		 generate_gephi_csv/1,
-		 get_nodes_version/0]).
+		 generate_gephi_csv/2,
+		 get_nodes_version/0,
+		 filter_local_peers/1]).
 
 %%% Tools for building a map of connected peers.
 %%% Requires graphviz for visualisation.
@@ -74,15 +74,27 @@ get_nodes_connectivity() ->
 
 %% @doc Create a CSV file with all connections in the network suitable for
 %% importing into Gephi - The Open Graph Viz Platform (https://gephi.org/). The
-%% weight is based on the Wildfire ranking.
-generate_gephi_csv() ->
-	generate_gephi_csv(maps:new(), get_live_nodes()).
-
-generate_gephi_csv(NamesJsonFile) ->
-	generate_gephi_csv(parse_names_file(NamesJsonFile), get_live_nodes()).
+%% weight is based on the Wildfire ranking. Takes a file path to a JSON file
+%% described in parse_names_file/1 and a list of peers used as entry points to
+%% the network.
+generate_gephi_csv(NamesJsonFile, StartPeers) ->
+	OnlineNodeMap = lists:filter(
+		fun
+			({_, unavailable}) -> false;
+			(_) -> true
+		end,
+		maps:to_list(app_net_crawler:crawl(StartPeers))
+	),
+	generate_gephi_csv1(
+		parse_names_file(NamesJsonFile),
+		OnlineNodeMap
+	).
 
 get_nodes_version() ->
 	get_nodes_version(get_live_nodes()).
+
+filter_local_peers(Peers) ->
+	lists:filter(fun(Peer) -> not is_peer_local(Peer) end, Peers).
 
 
 %% INTERNAL
@@ -113,9 +125,6 @@ generate_map(Peers) ->
 		end,
 		Peers
 	).
-
-filter_local_peers(Peers) ->
-	lists:filter(fun(Peer) -> not is_peer_local(Peer) end, Peers).
 
 is_peer_local({127, _, _, _, _}) -> true;
 is_peer_local({10, _, _, _, _}) -> true;
@@ -254,17 +263,12 @@ jiffy_to_map(List) when is_list(List) ->
 jiffy_to_map(Value) ->
 	Value.
 
-%% @doc Like generate_gephi_csv/0 but takes a list of the nodes to use in the
-%% export.
-generate_gephi_csv(AddrNameMap, Nodes) ->
-	generate_gephi_csv1(AddrNameMap, generate_map(Nodes)).
-
 %% @doc Like generate_gephi_csv/0 but takes the host-to-peers map to use in the
 %% export.
-generate_gephi_csv1(AddrNameMap, Map) ->
+generate_gephi_csv1(AddrNameMap, NodeMap) ->
 	{IoDevice, File} = create_gephi_file(),
 	write_gephi_csv_header(IoDevice),
-	write_gephi_csv_rows(use_names(AddrNameMap, gephi_edges(Map)), IoDevice),
+	write_gephi_csv_rows(use_names(AddrNameMap, gephi_edges(NodeMap)), IoDevice),
 	ok = file:close(IoDevice),
 	io:format("Gephi CSV file written to: '" ++ File ++ "'~n").
 
@@ -284,21 +288,26 @@ write_gephi_csv_header(IoDevice) ->
 %% @doc Transform the host to peers map into a list of all connections where
 %% each connection is a three-tuple of host, peer, weight.
 gephi_edges(Map) ->
-	gephi_edges(Map, []).
+	OnlineNodes = [Peer || {Peer, Peers} <- Map, Peers /= unavailable],
+	gephi_edges(Map, sets:from_list(OnlineNodes), []).
 
-gephi_edges([], Acc) ->
+gephi_edges([], _, Acc) ->
 	Acc;
-gephi_edges([{Host, Peers} | Map], Acc) ->
+gephi_edges([{Node, Peers} | Map], OnlineNodes, Acc) ->
 	PeersWithPosition = add_list_position(Peers),
 	NonLocalPeers = lists:filter(
 		fun({Peer, _}) -> not is_peer_local(Peer) end,
 		PeersWithPosition
 	),
+	OnlinePeers = lists:filter(
+		fun({Peer, _}) -> sets:is_element(Peer, OnlineNodes) end,
+		NonLocalPeers
+	),
 	Folder = fun ({Peer, Position}, FolderAcc) ->
-		[{Host, Peer, 1 / Position} | FolderAcc]
+		[{Node, Peer, 1 / Position} | FolderAcc]
 	end,
-	NewAcc = lists:foldl(Folder, Acc, NonLocalPeers),
-	gephi_edges(Map, NewAcc).
+	NewAcc = lists:foldl(Folder, Acc, OnlinePeers),
+	gephi_edges(Map, OnlineNodes, NewAcc).
 
 %% @doc Replace IP addresses with more human friendly names.
 use_names(AddrNameMap, GephiEdges) ->
