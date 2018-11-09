@@ -44,7 +44,7 @@ format_stats(Peer, Perf) ->
 %% New, unknown peers are given 100 blocks of grace.
 update(Peers) ->
 	ar_meta_db:remove_old(os:system_time(seconds)),
-	{Rankable, Newbies} = 
+	{Rankable, Newbies} =
 		partition_newbies(
 			score(
 				lists:filter(
@@ -64,7 +64,7 @@ update(Peers) ->
 				_ -> ok
 			end
 		end,
-		Peers	
+		Peers
 	),
 	NewPeers.
 
@@ -125,7 +125,7 @@ maybe_drop_peers(Rank, NumPeers, [Peer|Peers]) ->
 roll(Rank, NumPeers) ->
 	case Rank =< ?MINIMUM_PEERS of
 		true -> true;
-		false -> 
+		false ->
 			(2 * rand:uniform(NumPeers - ?MINIMUM_PEERS)) >=
 				(Rank - ?MINIMUM_PEERS)
 	end.
