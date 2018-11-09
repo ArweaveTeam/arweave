@@ -1065,7 +1065,7 @@ get_peers(Peer) ->
 			PeerArray = ar_serialize:dejsonify(Body),
 			lists:map(fun ar_util:parse_peer/1, PeerArray)
 		end
-	catch _:_ -> []
+	catch _:_ -> unavailable
 	end.
 
 %% @doc Produce a key value list based on a /info response.

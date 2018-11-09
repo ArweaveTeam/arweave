@@ -46,7 +46,7 @@ get_all_nodes() ->
 get_all_nodes(Acc, []) -> Acc;
 get_all_nodes(Acc, [Peer|Peers]) ->
 	io:format("Getting peers from ~s... ", [ar_util:format_peer(Peer)]),
-	MorePeers = filter_local_peers(ar_http_iface:get_peers(Peer)),
+	MorePeers = filter_local_peers(peers_by_peer(Peer)),
 	io:format(" got ~w!~n", [length(MorePeers)]),
 	get_all_nodes(
 		[Peer|Acc],
@@ -87,6 +87,12 @@ get_nodes_version() ->
 
 %% INTERNAL
 
+%% @doc Fetches the peers for a given peer.
+peers_by_peer(Peer) ->
+	case ar_http_iface:get_peers(Peer) of
+		unavailable -> [];
+		Peers -> Peers
+	end.
 
 %% @doc Return a map of every peers connections including peers with local
 %% addresses.
@@ -101,7 +107,7 @@ generate_map(Peers) ->
 					fun(RemotePeer) ->
 						lists:member(RemotePeer, Peers)
 					end,
-					ar_http_iface:get_peers(Peer)
+					peers_by_peer(Peer)
 				)
 			}
 		end,
