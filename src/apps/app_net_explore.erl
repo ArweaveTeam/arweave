@@ -294,7 +294,8 @@ gephi_edges(Map) ->
 gephi_edges([], _, Acc) ->
 	Acc;
 gephi_edges([{Node, Peers} | Map], OnlineNodes, Acc) ->
-	PeersWithPosition = add_list_position(Peers),
+	NonSelfPeers = list_remove(Node, Peers),
+	PeersWithPosition = add_list_position(NonSelfPeers),
 	NonLocalPeers = lists:filter(
 		fun({Peer, _}) -> not is_peer_local(Peer) end,
 		PeersWithPosition
@@ -308,6 +309,9 @@ gephi_edges([{Node, Peers} | Map], OnlineNodes, Acc) ->
 	end,
 	NewAcc = lists:foldl(Folder, Acc, OnlinePeers),
 	gephi_edges(Map, OnlineNodes, NewAcc).
+
+list_remove(Remove, List) ->
+	lists:filter(fun(Item) -> Item /= Remove end, List).
 
 %% @doc Replace IP addresses with more human friendly names.
 use_names(AddrNameMap, GephiEdges) ->
