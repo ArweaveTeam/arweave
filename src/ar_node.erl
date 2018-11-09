@@ -333,7 +333,10 @@ get_peers(Proc) when is_pid(Proc) ->
 		after ?LOCAL_NET_TIMEOUT -> []
 	end;
 get_peers(Host) ->
-	ar_http_iface:get_peers(Host).
+	case ar_http_iface:get_peers(Host) of
+		unavailable -> [];
+		Peers -> Peers
+	end.
 
 %% @doc Get the current wallet list from the node.
 %% This wallet list is up to date to the latest block held.
