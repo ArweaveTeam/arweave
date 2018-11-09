@@ -304,14 +304,22 @@ gephi_edges([{Node, Peers} | Map], OnlineNodes, Acc) ->
 		fun({Peer, _}) -> sets:is_element(Peer, OnlineNodes) end,
 		PeersWithPosition
 	),
-	Folder = fun ({Peer, Position}, FolderAcc) ->
-		[{Node, Peer, 1 / Position} | FolderAcc]
-	end,
-	NewAcc = lists:foldl(Folder, Acc, OnlinePeers),
+	NewAcc = lists:foldl(
+		fun ({Peer, Position}, FolderAcc) ->
+			[{Node, Peer, 1 / Position} | FolderAcc]
+		end,
+		Acc,
+		OnlinePeers
+	),
 	gephi_edges(Map, OnlineNodes, NewAcc).
 
 list_remove(Remove, List) ->
-	lists:filter(fun(Item) -> Item /= Remove end, List).
+	lists:filter(
+		fun(Item) ->
+			Item /= Remove
+		end,
+		List
+	).
 
 %% @doc Replace IP addresses with more human friendly names.
 use_names(AddrNameMap, GephiEdges) ->
