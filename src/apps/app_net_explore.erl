@@ -295,14 +295,14 @@ gephi_edges([], _, Acc) ->
 	Acc;
 gephi_edges([{Node, Peers} | Map], OnlineNodes, Acc) ->
 	NonSelfPeers = list_remove(Node, Peers),
-	PeersWithPosition = add_list_position(NonSelfPeers),
 	NonLocalPeers = lists:filter(
-		fun({Peer, _}) -> not is_peer_local(Peer) end,
-		PeersWithPosition
+		fun(Peer) -> not is_peer_local(Peer) end,
+		NonSelfPeers
 	),
+	PeersWithPosition = add_list_position(NonLocalPeers),
 	OnlinePeers = lists:filter(
 		fun({Peer, _}) -> sets:is_element(Peer, OnlineNodes) end,
-		NonLocalPeers
+		PeersWithPosition
 	),
 	Folder = fun ({Peer, Position}, FolderAcc) ->
 		[{Node, Peer, 1 / Position} | FolderAcc]
