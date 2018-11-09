@@ -19,7 +19,6 @@ graph() ->
 graph(Nodes) ->
 	io:format("Generating connection map...~n"),
 	Map = generate_map(Nodes),
-	ar:d(Map),
 	io:format("Generating dot file...~n"),
 	Timestamp = erlang:timestamp(),
 	DotFile = filename(Timestamp, "graph", "dot"),
