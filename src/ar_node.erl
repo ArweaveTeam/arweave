@@ -11,7 +11,7 @@
 -export([get_blocks/1, get_block/3]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
--export([get_hash_list/1, get_height/1]).
+-export([get_hash_list/1, get_height/1, get_last_retarget/1]).
 -export([get_trusted_peers/1]).
 -export([get_balance/2]).
 -export([get_last_tx/2, get_last_tx_from_floating/2]).
@@ -376,6 +376,14 @@ get_height(Node) ->
 	Node ! {get_height, self()},
 	receive
 		{height, H} -> H
+	after ?LOCAL_NET_TIMEOUT -> -1
+	end.
+
+%% @doc Return the last retarget timestamp.
+get_last_retarget(Node) ->
+	Node ! {get_last_retarget, self()},
+	receive
+		{last_retarget, T} -> T
 	after ?LOCAL_NET_TIMEOUT -> -1
 	end.
 
@@ -777,6 +785,10 @@ handle(SPid, {get_current_block_hash, From}) ->
 handle(SPid, {get_height, From}) ->
 	{ok, Height} = ar_node_state:lookup(SPid, height),
 	From ! {height, Height},
+	ok;
+handle(SPid, {get_last_retarget, From}) ->
+	{ok, Height} = ar_node_state:lookup(SPid, last_retarget),
+	From ! {last_retarget, Height},
 	ok;
 handle(SPid, {get_balance, From, WalletID}) ->
 	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
