@@ -560,6 +560,18 @@ block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
+%% @doc wrapper to do multiple check_is_id_ignored/1
+check_any_ids_ignored(_, []) -> ok;
+check_any_ids_ignored(Type, [error|T]) ->
+	check_any_ids_ignored(Type, T);
+check_any_ids_ignored(Type, [{ok, ID}|T]) ->
+	check_any_ids_ignored(Type, [ID|T]);
+check_any_ids_ignored(Type, [ID|T]) ->
+	case check_is_id_ignored(Type, ID) of
+		{error, Response} -> {error, Response};
+		ok                -> check_any_ids_ignored(Type, T)
+	end.
+
 %% @doc http validator wrapper around ar_bridge:is_id_ignored/1
 check_is_id_ignored(Type, ID) ->
 	case ar_bridge:is_id_ignored(ID) of
@@ -795,7 +807,10 @@ post_block(request, Req) ->
 	end;
 post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer}) ->
 	% Check if block is already known.
-	case check_is_id_ignored(block, BShadow#block.indep_hash) of
+	case check_any_ids_ignored(block,
+			[BShadow#block.indep_hash,
+			safe_val_for_key(<<"block_data_segment">>, ReqStruct)]
+		) of
 		{error, Response} ->
 			Response;
 		ok ->
@@ -852,8 +867,11 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
 	case safe_val_for_key(<<"block_data_segment">>, ReqStruct) of
 		{ok, DataSegment} ->
 		    case ar_mine:validate(ar_util:decode(DataSegment), NewB#block.nonce, NewB#block.diff) of
-				false -> {400, [], <<"Invalid Block Work">>};
-				_  -> post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
+				false ->
+					{400, [], <<"Invalid Block Work">>};
+				_  ->
+					ar_bridge:ignore_id(DataSegment),
+					post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
 			end;
 		error -> % skip pow check until internal validation
 			post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
