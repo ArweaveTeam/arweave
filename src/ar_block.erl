@@ -376,15 +376,20 @@ verify_timestamp_diff(NewT, OldT) when is_integer(NewT), is_integer(OldT) ->
 verify_timestamp_diff(_, _) ->
 	false.
 
+%% @doc Verify that the last retarget timestamp is older or as old as the
+%% block's timestamp.
+verify_last_retarget(NewB) ->
+	case ar_retarget:is_retarget_height(NewB#block.height) of
+		true ->
+			NewB#block.last_retarget == NewB#block.timestamp;
+		false ->
+			NewB#block.last_retarget == ar_node:get_last_retarget(whereis(http_entrypoint_node))
+	end.
+
 %% @doc Verify the height of the new block is one higher than the
 %% current height.
 verify_height(NewB, OldB) ->
 	NewB#block.height == (OldB#block.height + 1).
-
-%% @doc Verify that the last retarget timestamp is older or as old as the
-%% block's timestamp.
-verify_last_retarget(NewB) ->
-	(NewB#block.timestamp - NewB#block.last_retarget) >= 0.
 
 %% @doc Verify that the previous_block hash of the new block is the indep_hash
 %% of the current block.

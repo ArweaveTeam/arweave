@@ -414,6 +414,46 @@ fail_external_tx_test() ->
 	BadTX = ar_tx:new(<<"BADDATA">>),
 	?assertEqual(not_found, ar_http_iface_client:get_tx({127, 0, 0, 1, 1984}, BadTX#tx.id)).
 
+block_report(Node) ->
+		Bs = ar_node:get_blocks(Node),
+		HL = ar_node:get_hash_list(Node),
+		ar:d({nblocks, length(Bs)}),
+		lists:map(fun(BH) ->
+				ar:d({bhash, BH}),
+				ar:d(ar_block:verify_last_retarget(ar_storage:read_block(BH, HL)))
+			end,
+			Bs).
+
+last_retarget_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[BGen] = ar_weave:init([]),
+		Node1 = ar_node:start([], [BGen]),
+		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
+		timer:sleep(500),
+		Bridge = ar_bridge:start([], Node1),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node1, Bridge),
+		Node2 = ar_node:start([], [BGen]),
+		ar_node:mine(Node2),
+		timer:sleep(300),
+		ar_node:mine(Node2),
+		timer:sleep(300),
+		ar_node:mine(Node2),
+		timer:sleep(300),
+		ar_node:mine(Node2),
+		timer:sleep(300),
+		ar_util:do_until(
+			fun() ->
+				length(ar_node:get_blocks(Node2)) == 2
+			end,
+			100,
+			10 * 1000
+		),
+		Tests = block_report(Node2),
+		?assert(lists:all(fun(X) -> X == true end, Tests))
+	end}.
+
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
 add_external_block_test_() ->
