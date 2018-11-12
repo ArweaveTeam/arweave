@@ -284,8 +284,7 @@ start(
 				0,
 				MiningAddress,
 				AutoJoin,
-				Diff,
-				os:system_time(seconds)
+				Diff
 			]
 		]
 	),

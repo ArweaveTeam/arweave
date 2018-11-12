@@ -5,7 +5,7 @@
 -module(ar_node).
 
 -export([start_link/1]).
--export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7]).
+-export([start/0, start/1, start/2, start/3, start/4, start/5, start/6]).
 -export([stop/1]).
 
 -export([get_blocks/1, get_block/3]).
@@ -117,17 +117,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 		AutoJoin,
 		?DEFAULT_DIFF
 	).
-start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
-	start(
-		Peers,
-		HashList,
-		MiningDelay,
-		RewardAddr,
-		AutoJoin,
-		Diff,
-		os:system_time(seconds)
-	).
-start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when is_record(B, block) ->
+start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff) when is_record(B, block) ->
 	lists:map(
 		fun ar_storage:write_block/1,
 		Bs
@@ -138,12 +128,11 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
-		Diff,
-		LastRetarget
+		Diff
 	);
-start(Peers, B, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when ?IS_BLOCK(B) ->
-	start(Peers, B#block.hash_list, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
-start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
+start(Peers, B, MiningDelay, RewardAddr, AutoJoin, Diff) when ?IS_BLOCK(B) ->
+	start(Peers, B#block.hash_list, MiningDelay, RewardAddr, AutoJoin, Diff);
+start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
 	% Spawns the node server process.
 	PID = spawn(
 		fun() ->
@@ -163,13 +152,13 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				),
 			Wallets = ar_util:wallets_from_hashes(HashList),
 			Height = ar_util:height_from_hashes(HashList),
-			{RewardPool, WeaveSize} =
+			{RewardPool, WeaveSize, LastRetarget} =
 				case HashList of
 					not_joined ->
-						{0,0};
+						{0, 0, os:system_time(seconds)};
 					[H | _] ->
 						B = ar_storage:read_block(H, HashList),
-						{B#block.reward_pool, B#block.weave_size}
+						{B#block.reward_pool, B#block.weave_size, B#block.last_retarget}
 				end,
 			Current =
 				case HashList of
