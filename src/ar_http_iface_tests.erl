@@ -100,6 +100,7 @@ single_regossip_test_() ->
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
 	TX = ar_tx:new(<<"TEST DATA">>),
+	ar_blacklist:reset_counters(),
 	Responses =
 		ar_util:pmap(
 			fun(_) ->

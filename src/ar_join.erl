@@ -198,44 +198,27 @@ fill_to_capacity(Peers, ToWrite) -> fill_to_capacity(Peers, ToWrite, ToWrite).
 fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, ToWrite, BHL) ->
 	timer:sleep(1 * 1000),
-	try
-		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
-		case ar_node_utils:get_full_block(Peers, RandHash, BHL) of
-			unavailable ->
-				timer:sleep(3000),
-				fill_to_capacity(Peers, ToWrite, BHL);
-			B ->
-				case ar_storage:write_full_block(B) of
-					{error, _} -> disk_full;
-					_ ->
-						fill_to_capacity(
-							Peers,
-							lists:delete(RandHash, ToWrite),
-							BHL
-						)
-				end
-		end
-	catch
-	throw:Term ->
-		ar:report(
-			[
-				{'JoinEXCEPTION', Term}
-			]
-		),
-		fill_to_capacity(Peers, ToWrite);
-	exit:Term ->
-		ar:report(
-			[
-				{'JoinEXIT', Term}
-			]
-		);
-	error:Term ->
-		ar:report(
-			[
-				{'JoinEXIT', {Term, erlang:get_stacktrace()}}
-			]
-		),
-		fill_to_capacity(Peers, ToWrite, BHL)
+	RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
+	B =
+		try
+			ar_node_utils:get_full_block(Peers, RandHash, BHL)
+		catch _:_ ->
+			unavailable
+		end,
+	case B of
+		unavailable ->
+			timer:sleep(3000),
+			fill_to_capacity(Peers, ToWrite, BHL);
+		B ->
+			case ar_storage:write_full_block(B) of
+				{error, _} -> disk_full;
+				_ ->
+					fill_to_capacity(
+						Peers,
+						lists:delete(RandHash, ToWrite),
+						BHL
+					)
+			end
 	end.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
