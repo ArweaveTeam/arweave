@@ -387,8 +387,13 @@ three_block_ahead_recovery_test() ->
 	timer:sleep(500),
 	ar_node:mine(Node1),
 	timer:sleep(1000),
-	[B | _] = ar_node:get_blocks(Node2),
-	7 = (ar_storage:read_block(B, ar_node:get_hash_list(Node2)))#block.height.
+	?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
+	?assertEqual(8, length(block_hashes_by_node(Node2))).
+
+block_hashes_by_node(Node) ->
+	BHs = ar_node:get_blocks(Node),
+	Bs = [ar_storage:read_block(BH, ar_node:get_hash_list(Node)) || BH <- BHs],
+	[ar_util:encode(B#block.indep_hash) || B <- Bs].
 
 %% @doc Ensure that nodes on a fork that is far behind will catchup correctly.
 multiple_blocks_ahead_recovery_test() ->
@@ -418,8 +423,8 @@ multiple_blocks_ahead_recovery_test() ->
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
 	timer:sleep(1500),
-	[B | _] = ar_node:get_blocks(Node2),
-	9 = (ar_storage:read_block(B, ar_node:get_hash_list(Node2)))#block.height.
+	?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
+	?assertEqual(10, length(block_hashes_by_node(Node2))).
 
 %% @doc Ensure that nodes on a fork that is far behind blocks that contain
 %% transactions will catchup correctly.
@@ -456,8 +461,8 @@ multiple_blocks_ahead_with_transaction_recovery_test_() ->
 		ar_node:add_peers(Node1, Node2),
 		ar_node:mine(Node1),
 		receive after 1500 -> ok end,
-		[B | _] = ar_node:get_blocks(Node2),
-		9 = (ar_storage:read_block(B, ar_node:get_hash_list(Node2)))#block.height
+		?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
+		?assertEqual(10, length(block_hashes_by_node(Node2)))
 	end}.
 
 %% @doc Ensure that nodes that have diverged by multiple blocks each can
@@ -490,8 +495,8 @@ multiple_blocks_since_fork_test() ->
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
 	timer:sleep(1500),
-	[B | _] = ar_node:get_blocks(Node2),
-	9 = (ar_storage:read_block(B, ar_node:get_hash_list(Node2)))#block.height.
+	?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
+	?assertEqual(10, length(block_hashes_by_node(Node2))).
 
 %% @doc Ensure that nodes that nodes recovering from the first block can
 %% reconcile.

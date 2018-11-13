@@ -590,13 +590,15 @@ add_block(Conn, NewB, RecallB, Height) ->
 		Height
 	).
 add_block(GS, Peer, NewB, RecallB, Height) when is_record(GS, gs_state) ->
+	Recall = {RecallB#block.indep_hash, <<>>, <<>>},
 	{NewGS, _} =
 		ar_gossip:send(
-			GS, {new_block, Peer, Height, NewB, RecallB}
+			GS, {new_block, Peer, Height, NewB, Recall}
 		),
 	NewGS;
 add_block(Node, Peer, NewB, RecallB, Height) when is_pid(Node) ->
-	Node ! {new_block, Peer, Height, NewB, RecallB},
+	Recall = {RecallB#block.indep_hash, <<>>, <<>>},
+	Node ! {new_block, Peer, Height, NewB, Recall},
 	ok;
 add_block(Host, Peer, NewB, RecallB, _Height) ->
 	ar_http_iface_client:send_new_block(Host, Peer, NewB, RecallB),
@@ -700,8 +702,8 @@ handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
 handle(_SPid, {apply_tx, TX}) ->
 	{task, {encounter_new_tx, TX}};
-handle(_SPid, {new_block, Peer, Height, NewB, RecallB}) ->
-	{task, {process_new_block, Peer, Height, NewB, RecallB}};
+handle(_SPid, {new_block, Peer, Height, NewB, Recall}) ->
+	{task, {process_new_block, Peer, Height, NewB, Recall}};
 handle(_SPid, {replace_block_list, NewBL}) ->
 	% Replace the entire stored block list, regenerating the hash list.
 	{task, {replace_block_list, NewBL}};

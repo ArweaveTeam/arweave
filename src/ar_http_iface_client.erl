@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
+-export([send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
 -export([send_new_block_with_bds/5]).
 -export([get_tx/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
@@ -56,15 +56,8 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(IP, NewB, RecallB) ->
-	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Peer, Port, NewB, RecallB) ->
-	RecallBHash =
-		case ?IS_BLOCK(RecallB) of
-			true ->  RecallB#block.indep_hash;
-			false -> <<>>
-		end,
-	{Key, Nonce} = case ar_key_db:get(RecallBHash) of
+	{Key, Nonce} = case ar_key_db:get(RecallB#block.indep_hash) of
 		[{K, N}] -> {K, N};
 		_        -> {<<>>, <<>>}
 	end,
@@ -112,7 +105,7 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 				[
 					{<<"block_data_segment">>, ar_util:encode(BDS)},
 					{<<"new_block">>, BlockJSON},
-					{<<"recall_block">>, ar_util:encode(RecallBHash)},
+					{<<"recall_block">>, ar_util:encode(RecallB#block.indep_hash)},
 					{<<"recall_size">>, RecallB#block.block_size},
 					{<<"port">>, Port},
 					{<<"key">>, ar_util:encode(Key)},

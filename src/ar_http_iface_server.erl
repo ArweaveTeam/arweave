@@ -599,11 +599,10 @@ get_block_bits(ReqStruct, BShadow, OrigPeer) ->
 	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
 	PrevB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
-	RecallHash = ar_util:decode(JSONRecallB),
+	RecallIndepHash = ar_util:decode(JSONRecallB),
 	Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
 	Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
-	RecallB = ar_block:get_recall_block(OrigPeer, RecallHash, B, Key, Nonce),
-	{B, PrevB, RecallB, Key, Nonce}.
+	{B, PrevB, {RecallIndepHash, Key, Nonce}}.
 
 %% @doc Checks if hash is valid & if so returns filename.
 hash_to_maybe_filename(Type, Hash) ->
@@ -860,7 +859,7 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer}) ->
 			post_block(check_pow, {ReqStruct, BShadow, OrigPeer})
 	end;
 post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
-	{NewB, PrevB, RecallB, Key, Nonce} = get_block_bits(ReqStruct, BShadow, OrigPeer),
+	{NewB, PrevB, BlockSet} = get_block_bits(ReqStruct, BShadow, OrigPeer),
 	case safe_val_for_key(<<"block_data_segment">>, ReqStruct) of
 		{ok, DataSegment} ->
 		    case ar_mine:validate(ar_util:decode(DataSegment), NewB#block.nonce, NewB#block.diff) of
@@ -868,12 +867,12 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer}) ->
 					{400, [], <<"Invalid Block Work">>};
 				_  ->
 					ar_bridge:ignore_id(DataSegment),
-					post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
+					post_block(post_block, {NewB, PrevB, OrigPeer, BlockSet})
 			end;
 		error -> % skip pow check until internal validation
-			post_block(post_block, {NewB, PrevB, RecallB, OrigPeer, Key, Nonce})
+			post_block(post_block, {NewB, PrevB, OrigPeer, BlockSet})
     end;
-post_block(post_block, {NewB, CurrentB, RecallB, OrigPeer, Key, Nonce}) ->
+post_block(post_block, {NewB, CurrentB, OrigPeer, BlockSet}) ->
 	% Everything fine, post block.
 	spawn(
 		fun() ->
@@ -887,7 +886,7 @@ post_block(post_block, {NewB, CurrentB, RecallB, OrigPeer, Key, Nonce}) ->
 							{sending_external_block_to_bridge, ar_util:encode(NewB#block.indep_hash)}
 						]
 					),
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, NewB, RecallB, Key, Nonce);
+					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, NewB, BlockSet);
 				_ ->
 					ok
 			end
