@@ -1,13 +1,19 @@
+%%%
+%%% @doc Arweave server entrypoint and basic utilities.
+%%%
+
 -module(ar).
+
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
--export([test/0, test/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
+-export([tests/0, tests/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
--include("ar.hrl").
+-export([parse/1]).
 
-%%% Archain server entrypoint and basic utilities.
+-include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %% A list of the modules to test.
 %% At some point we might want to make this just test all mods starting with
@@ -15,6 +21,10 @@
 -define(
 	CORE_TEST_MODS,
 	[
+		ar,
+		ar_block_index,
+		ar_inflation,
+		ar_node_tests,
 		ar_util,
 		ar_cleanup,
 		ar_meta_db,
@@ -30,7 +40,6 @@
 		ar_join,
 		ar_fork_recovery,
 		ar_http_iface,
-		ar_node,
 		ar_simple_reporter,
 		ar_retarget,
 		ar_block,
@@ -38,16 +47,25 @@
 	]
 ).
 
+%% Supported feature flags (default behaviour)
+% http_logging (false)
+% disk_logging (false)
+% miner_logging (true)
+% subfield_queries (false)
+% partial_fork_recovery (false)
+% blacklist (true)
+% time_syncing (true)
+
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
 
-%% Start options
+%% Start options with default values.
 -record(opts, {
 	benchmark = false,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	init = false,
 	mine = false,
-	peers = default,
+	peers = [],
 	polling = false,
 	auto_join = true,
 	clean = false,
@@ -59,9 +77,11 @@
 	pause = true,
 	disk_space = ar_storage:calculate_disk_space(),
 	used_space = ar_storage:calculate_used_space(),
-	start_block = undefined,
+	start_hash_list = undefined,
 	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
-	enable = []
+	enable = [],
+	disable = [],
+	content_policies = []
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -82,7 +102,7 @@ main("") ->
 		end,
 		[
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_block", "Start the node from a given block."},
+			{"start_hash_list (file)", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -96,54 +116,61 @@ main("") ->
 			{"max_miners (num)", "The maximum number of mining processes."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
+			{"content_policy (file)", "Load a content policy file for the node."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
-			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."}
+			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
+			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."}
 		]
 	),
 	erlang:halt();
-main(Args) -> main(Args, #opts{}).
-main([], O) -> start(O);
-main(["init"|Rest], O) ->
-	main(Rest, O#opts { init = true });
-main(["mine"|Rest], O) ->
-	main(Rest, O#opts { mine = true });
-main(["peer", Peer|Rest], O = #opts { peers = default }) ->
-	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)] });
-main(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
-	main(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
-main(["port", Port|Rest], O) ->
-	main(Rest, O#opts { port = list_to_integer(Port) });
-main(["diff", Diff|Rest], O) ->
-	main(Rest, O#opts { diff = list_to_integer(Diff) });
-main(["polling"|Rest], O) ->
-	main(Rest, O#opts { polling = true });
-main(["clean"|Rest], O) ->
-	main(Rest, O#opts { clean = true });
-main(["no_auto_join"|Rest], O) ->
-	main(Rest, O#opts { auto_join = false });
-main(["mining_addr", Addr|Rest], O) ->
-	main(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
-main(["max_miners", Num|Rest], O) ->
-	main(Rest, O#opts { max_miners = list_to_integer(Num) });
-main(["new_mining_key"|Rest], O)->
-	main(Rest, O#opts { new_key = true });
-main(["disk_space", Size|Rest], O) ->
-	main(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
-main(["load_mining_key", File|Rest], O)->
-	main(Rest, O#opts { load_key = File });
-main(["start_block", IndepHash|Rest], O)->
-	main(Rest, O#opts { start_block = ar_util:decode(IndepHash) });
-main(["benchmark"|Rest], O)->
-	main(Rest, O#opts { benchmark = true });
-main(["auto_update", "false" | Rest], O) ->
-	main(Rest, O#opts { auto_update = false });
-main(["auto_update", Addr | Rest], O) ->
-	main(Rest, O#opts { auto_update = ar_util:decode(Addr) });
-main(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
-	main(Rest, O#opts { enable = [ list_to_atom(Feature) |Enabled] });
-main([Arg|_Rest], _O) ->
+main(Args) ->
+	start(parse(Args)).
+
+parse(Args) -> parse(Args, #opts{}).
+parse([], O) -> O;
+parse(["init"|Rest], O) ->
+	parse(Rest, O#opts { init = true });
+parse(["mine"|Rest], O) ->
+	parse(Rest, O#opts { mine = true });
+parse(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
+	parse(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
+parse(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
+	parse(Rest, O#opts { content_policies = [F|Fs] });
+parse(["port", Port|Rest], O) ->
+	parse(Rest, O#opts { port = list_to_integer(Port) });
+parse(["diff", Diff|Rest], O) ->
+	parse(Rest, O#opts { diff = list_to_integer(Diff) });
+parse(["polling"|Rest], O) ->
+	parse(Rest, O#opts { polling = true });
+parse(["clean"|Rest], O) ->
+	parse(Rest, O#opts { clean = true });
+parse(["no_auto_join"|Rest], O) ->
+	parse(Rest, O#opts { auto_join = false });
+parse(["mining_addr", Addr|Rest], O) ->
+	parse(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
+parse(["max_miners", Num|Rest], O) ->
+	parse(Rest, O#opts { max_miners = list_to_integer(Num) });
+parse(["new_mining_key"|Rest], O)->
+	parse(Rest, O#opts { new_key = true });
+parse(["disk_space", Size|Rest], O) ->
+	parse(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
+parse(["load_mining_key", File|Rest], O)->
+	parse(Rest, O#opts { load_key = File });
+parse(["start_hash_list", IndepHash|Rest], O)->
+	parse(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
+parse(["benchmark"|Rest], O)->
+	parse(Rest, O#opts { benchmark = true });
+parse(["auto_update", "false" | Rest], O) ->
+	parse(Rest, O#opts { auto_update = false });
+parse(["auto_update", Addr | Rest], O) ->
+	parse(Rest, O#opts { auto_update = ar_util:decode(Addr) });
+parse(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
+	parse(Rest, O#opts { enable = [ list_to_atom(Feature) | Enabled ] });
+parse(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
+	parse(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
+parse([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
 %% @doc Start an Archain node on this BEAM.
@@ -155,7 +182,7 @@ start(
 	#opts {
 		port = Port,
 		init = Init,
-		peers = RawPeers,
+		peers = Peers,
 		mine = Mine,
 		polling = Polling,
 		clean = Clean,
@@ -168,10 +195,13 @@ start(
 		pause = Pause,
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
-		start_block = IndepHash,
+		start_hash_list = BHL,
 		auto_update = AutoUpdate,
-		enable = Enable
+		enable = Enable,
+		disable = Disable,
+		content_policies = Policies
 	}) ->
+	ar_storage:start(),
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
 	%register prometheus stats collector,
@@ -185,16 +215,13 @@ start(
 	ar_tx_db:start(),
 	ar_key_db:start(),
 	ar_track_tx_db:start(),
+	ar_miner_log:start(),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
+	ar_meta_db:put(content_policies, Policies),
 	ar_storage:update_directory_size(),
-	Peers =
-		case RawPeers of
-			default -> ?DEFAULT_PEER_LIST;
-			_ -> RawPeers
-		end,
 	% Determine mining address.
 	case {Addr, LoadKey, NewKey} of
 		{false, false, false} ->
@@ -246,13 +273,12 @@ start(
 		[
 			[
 				Peers,
-				case IndepHash of
+				case BHL of
 					undefined ->
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
-					_ ->
-						(ar_storage:read_block(IndepHash))#block.hash_list
+					_ -> ar_storage:read_hash_list(ar_util:decode(BHL))
 				end,
 				0,
 				MiningAddress,
@@ -298,6 +324,7 @@ start(
 	end,
 	% Store enabled features
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	% Add self to all remote nodes.
 	%lists:foreach(fun ar_http_iface:add_peer/1, Peers),
 	% Start the logging system.
@@ -339,6 +366,7 @@ start(
 		false -> ok;
 		_ -> receive after infinity -> ok end
 	end.
+
 %% @doc Create a name for a session log file.
 generate_logfile_name() ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
@@ -352,7 +380,6 @@ generate_logfile_name() ->
 %% @doc Run the erlang make system on the project.
 rebuild() ->
 	io:format("Rebuilding Arweave...~n"),
-	receive after 3000 -> ok end,
 	make:all(
 		[
 			load,
@@ -397,7 +424,8 @@ init(Args) ->
 	{ok, {SupFlags, ChildSpecs}}.
 
 %% @doc Run all of the tests associated with the core project.
-test() ->
+tests() ->
+	ar_storage:ensure_directories(),
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(
@@ -413,10 +441,11 @@ test() ->
 
 %% @doc Run the TNT test system, printing coverage results.
 test_coverage() ->
-	ar_coverage:analyse(fun test/0).
+	ar_coverage:analyse(fun tests/0).
 
 %% @doc Run the tests for a single module.
-test(Mod) ->
+tests(Mod) ->
+	ar_storage:ensure_directories(),
 	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
 
 %% @doc Run tests on the apps.
@@ -429,19 +458,19 @@ test_networks() ->
 	ar_test_sup:start().
 
 test_slow() ->
-	ar_node:filter_out_of_order_txs_test_slow(),
-	ar_node:filter_out_of_order_txs_large_test_slow(),
-	ar_node:filter_all_out_of_order_txs_test_slow(),
-	ar_node:filter_all_out_of_order_txs_large_test_slow(),
-	ar_node:wallet_transaction_test_slow(),
-	ar_node:wallet_two_transaction_test_slow(),
-	ar_node:single_wallet_double_tx_before_mine_test_slow(),
-	ar_node:single_wallet_double_tx_wrong_order_test_slow(),
-	ar_node:tx_threading_test_slow(),
-	ar_node:bogus_tx_thread_test_slow(),
-	ar_node:large_weakly_connected_blockweave_with_data_test_slow(),
-	ar_node:large_blockweave_with_data_test_slow(),
-	ar_node:medium_blockweave_mine_multiple_data_test_slow(),
+	ar_node_test:filter_out_of_order_txs_test_slow(),
+	ar_node_test:filter_out_of_order_txs_large_test_slow(),
+	ar_node_test:filter_all_out_of_order_txs_test_slow(),
+	ar_node_test:filter_all_out_of_order_txs_large_test_slow(),
+	ar_node_test:wallet_transaction_test_slow(),
+	ar_node_test:wallet_two_transaction_test_slow(),
+	ar_node_test:single_wallet_double_tx_before_mine_test_slow(),
+	ar_node_test:single_wallet_double_tx_wrong_order_test_slow(),
+	ar_node_test:tx_threading_test_slow(),
+	ar_node_test:bogus_tx_thread_test_slow(),
+	ar_node_test:large_weakly_connected_blockweave_with_data_test_slow(),
+	ar_node_test:large_blockweave_with_data_test_slow(),
+	ar_node_test:medium_blockweave_mine_multiple_data_test_slow(),
 	ar_http_iface:get_txs_by_send_recv_test_slow(),
 	ar_http_iface:get_full_block_by_hash_test_slow(),
 	ar_fork_recovery:multiple_blocks_ahead_with_transaction_recovery_test_slow(),
@@ -485,3 +514,23 @@ scale_time(Time) -> Time.
 timestamp() ->
 	{MegaSec, Sec, _MilliSec} = os:timestamp(),
 	(MegaSec * 1000000) + Sec.
+
+%% @doc Ensure that parsing of core command line options functions correctly.
+commandline_parser_test() ->
+	Addr = crypto:strong_rand_bytes(32),
+	Tests =
+		[
+			{"peer 1.2.3.4 peer 5.6.7.8:9", #opts.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
+			{"mine", #opts.mine, true},
+			{"port 22", #opts.port, 22},
+			{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #opts.mining_addr, Addr}
+		],
+	X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
+	ar:d({x, X}),
+	O = parse(X),
+	lists:foreach(
+		fun({_, Index, Value}) ->
+			?assertEqual(element(Index, O), Value)
+		end,
+		Tests
+	).

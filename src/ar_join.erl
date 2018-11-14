@@ -11,7 +11,9 @@
 start(Peers, NewB) when is_record(NewB, block) ->
 	start(self(), Peers, NewB);
 start(Node, Peers) ->
-	start(Node, Peers, ar_node:get_current_block(Peers)).
+	start(Node, Peers, find_current_block(Peers)).
+start(_, [], _) ->
+	ar:report_console([not_joining, {reason, no_peers}]);
 start(Node, Peers, B) when is_atom(B) ->
 	ar:report_console(
 		[
@@ -20,44 +22,88 @@ start(Node, Peers, B) when is_atom(B) ->
 		]
 	),
 	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
-start(_, _, not_found) -> do_nothing;
-start(_, _, unavailable) -> do_nothing;
-start(_, _, no_response) -> do_nothing;
-start(Node, RawPeers, RawNewB) ->
+start(Node, RawPeers, NewB) ->
 	case whereis(join_server) of
 		undefined ->
-			PID = spawn(
-				fun() ->
-					Peers = filter_peer_list(RawPeers),
-					NewB = ar_node:get_full_block(Peers, RawNewB#block.indep_hash),
-					join_peers(Peers),
-					case ?IS_BLOCK(NewB) of
-						true ->
-							ar:report_console(
-								[
-									joining_network,
-									{node, Node},
-									{peers, Peers},
-									{height, NewB#block.height}
-								]
-							),
-							get_block_and_trail(Peers, NewB, NewB#block.hash_list),
-							Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
-							spawn(fun() -> fill_to_capacity(Peers, NewB#block.hash_list) end);
-						false ->
-							ar:report_console(
-								[
-									node_not_joining,
-									{reason, cannot_get_full_block_from_peer},
-									{received_instead, NewB}
-								]
-							),
-							ok
-					end
-				end
-			),
+			PID = spawn(fun() -> do_join(Node, RawPeers, NewB) end),
 			erlang:register(join_server, PID);
 		_ -> already_running
+	end.
+
+%% @doc Perform the joining process.
+do_join(_Node, _RawPeers, NewB) when not ?IS_BLOCK(NewB) ->
+	ar:report_console(
+		[
+			node_not_joining,
+			{reason, cannot_get_full_block_from_peer},
+			{received_instead, NewB}
+		]
+	);
+do_join(Node, RawPeers, NewB) ->
+	case verify_time_sync(RawPeers) of
+		false ->
+			ar:report(
+				[
+					node_not_joining,
+					{reason, clock_time_in_sync_with_join_peers},
+					{
+						recommendation,
+						"Ensure that your machine's time is up-to-date."
+					}
+				]
+			);
+		true ->
+			Peers = filter_peer_list(RawPeers),
+			ar:report_console(
+				[
+					joining_network,
+					{node, Node},
+					{peers, Peers},
+					{height, NewB#block.height}
+				]
+			),
+			ar_miner_log:joining(),
+			get_block_and_trail(Peers, NewB, NewB#block.hash_list),
+			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
+			join_peers(Peers),
+			ar_miner_log:joined(),
+			spawn(fun() -> fill_to_capacity(ar_manage_peers:get_more_peers(Peers), NewB#block.hash_list) end)
+	end.
+
+%% @doc Verify timestamps of peers.
+verify_time_sync(Peers) ->
+	% Ignore this check if time syncing is disable.
+	case ar_meta_db:get(time_syncing) of
+		false -> true;
+		_ ->
+			lists:all(
+				fun(Peer) ->
+					LocalT = os:system_time(second),
+					RemoteT = ar_http_iface:get_time(Peer),
+					case RemoteT of
+						unknown -> true;
+						_ ->
+							(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
+							(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
+					end
+				end,
+				[ P || P <- Peers, not is_pid(P) ]
+			)
+	end.
+
+%% @doc Return the current block from a list of peers.
+find_current_block([]) ->
+	unavailable;
+find_current_block([Peer|Tail]) ->
+	try ar_node:get_hash_list(Peer) of
+		[] ->
+			find_current_block(Tail);
+		BHL ->
+			Hash = hd(BHL),
+			ar_node_utils:get_full_block(Peer, Hash, BHL)
+	catch
+		_:_ ->
+			find_current_block(Tail)
 	end.
 
 %% @doc Verify peer(s) are on the same network as the client. Remove any that
@@ -102,35 +148,36 @@ get_block_and_trail(_, unavailable, _, _) -> ok;
 get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
 	ar_storage:write_block(NewB#block { txs = [T#tx.id || T <- NewB#block.txs] }),
 	ar_storage:write_tx(NewB#block.txs),
-	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block),
+	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block, NewB#block.hash_list),
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
 get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
-	PreviousBlock = ar_node:get_full_block(Peers, NewB#block.previous_block),
+	PreviousBlock = ar_node_utils:get_full_block(Peers, NewB#block.previous_block, NewB#block.hash_list),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-			case {NewB, ar_node:get_full_block(Peers, RecallBlock)} of
+			case {NewB, ar_node_utils:get_full_block(Peers, RecallBlock, NewB#block.hash_list)} of
 				{B, unavailable} ->
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
 					ar:report(
 						[
-							{could_not_retrieve_joining_recall_block},
-							{retrying}
+							could_not_retrieve_joining_recall_block,
+							retrying
 						]
 					),
-					% mue: timer:sleep(3000),
 					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
 				{B, R} ->
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
+					ar_storage:write_tx(R#block.txs),
+					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
 					ar:report(
 						[
 							{writing_block, B#block.height},
 							{writing_recall_block, R#block.height},
-							{blocks_written, (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
-							{blocks_to_write, (BehindCurrent-1)}
+							{blocks_written, 2 * (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
+							{blocks_to_write, 2 * (BehindCurrent-1)}
 						]
 					),
 					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
@@ -147,74 +194,63 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	end.
 
 %% @doc Fills node to capacity based on weave storage limit.
-fill_to_capacity(_, []) -> ok;
-fill_to_capacity(Peers, ToWrite) ->
-	timer:sleep(30 * 1000),
-	try
-		RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
-		case ar_node:get_full_block(Peers, RandHash) of
-			unavailable ->
-				timer:sleep(3000),
-				fill_to_capacity(Peers, ToWrite);
-			B ->
-				case ar_storage:write_full_block(B) of
-					{error, _} -> disk_full;
-					_ ->
-						fill_to_capacity(
-							Peers,
-							lists:delete(RandHash, ToWrite)
-						)
-				end
-		end
-	catch
-	throw:Term ->
-		ar:report(
-			[
-				{'EXCEPTION', {Term}}
-			]
-		),
-		fill_to_capacity(Peers, ToWrite);
-	exit:Term ->
-		ar:report(
-			[
-				{'EXIT', Term}
-			]
-		);
-	error:Term ->
-		ar:report(
-			[
-				{'EXIT', {Term, erlang:get_stacktrace()}}
-			]
-		),
-		fill_to_capacity(Peers, ToWrite)
+fill_to_capacity(Peers, ToWrite) -> fill_to_capacity(Peers, ToWrite, ToWrite).
+fill_to_capacity(_, [], _) -> ok;
+fill_to_capacity(Peers, ToWrite, BHL) ->
+	timer:sleep(1 * 1000),
+	RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
+	B =
+		try
+			ar_node_utils:get_full_block(Peers, RandHash, BHL)
+		catch _:_ ->
+			unavailable
+		end,
+	case B of
+		unavailable ->
+			timer:sleep(3000),
+			fill_to_capacity(Peers, ToWrite, BHL);
+		B ->
+			case ar_storage:write_full_block(B) of
+				{error, _} -> disk_full;
+				_ ->
+					fill_to_capacity(
+						Peers,
+						lists:delete(RandHash, ToWrite),
+						BHL
+					)
+			end
 	end.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->
-	ar_storage:clear(),
-	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 600 -> ok end,
-	Node2 = ar_node:start([Node1]),
-	receive after 1500 -> ok end,
-	[B|_] = ar_node:get_blocks(Node2),
-	2 = (ar_storage:read_block(B))#block.height.
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		Node1 = ar_node:start([], _B0 = ar_weave:init([])),
+		timer:sleep(300),
+		ar_node:mine(Node1),
+		timer:sleep(300),
+		ar_node:mine(Node1),
+		timer:sleep(600),
+		Node2 = ar_node:start([Node1]),
+		timer:sleep(1500),
+		[B|_] = ar_node:get_blocks(Node2),
+		2 = (ar_storage:read_block(B, ar_node:get_hash_list(Node1)))#block.height
+	end}.
 
 %% @doc Ensure that both nodes can mine after a join.
 node_join_test() ->
-	ar_storage:clear(),
-	Node1 = ar_node:start([], _B0 = ar_weave:init([])),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	ar_node:mine(Node1),
-	receive after 300 -> ok end,
-	Node2 = ar_node:start([Node1]),
-	receive after 600 -> ok end,
-	ar_node:mine(Node2),
-	receive after 1500 -> ok end,
-	[B|_] = ar_node:get_blocks(Node1),
-	3 = (ar_storage:read_block(B))#block.height.
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		Node1 = ar_node:start([], _B0 = ar_weave:init([])),
+		timer:sleep(300),
+		ar_node:mine(Node1),
+		timer:sleep(300),
+		ar_node:mine(Node1),
+		timer:sleep(300),
+		Node2 = ar_node:start([Node1]),
+		timer:sleep(600),
+		ar_node:mine(Node2),
+		timer:sleep(1500),
+		[B|_] = ar_node:get_blocks(Node1),
+		3 = (ar_storage:read_block(B, ar_node:get_hash_list(Node1)))#block.height
+	end}.

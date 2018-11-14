@@ -79,10 +79,14 @@ config() -> application:get_env(prometheus, elli_exporter, ?DEFAULT_CONFIG).
 %% TODO: Describe format.
 %% TODO: Add links to Prometheus and Prometheus.erl docs.
 handle(Req, _Config) ->
-  Path = path(),
-  case {elli_request:method(Req), elli_request:raw_path(Req)} of
-    {'GET', Path} -> format_metrics(Req);
-    _             -> ignore
+  case ar_meta_db:get(metrics) of
+	  false -> ignore;
+	  _ ->
+		  Path = path(),
+		  case {elli_request:method(Req), elli_request:raw_path(Req)} of
+			{'GET', Path} -> format_metrics(Req);
+			_             -> ignore
+		  end
   end.
 
 handle_event(request_complete, Args, Config) ->
@@ -190,51 +194,56 @@ handle_event(_Event, _Args, _Config) -> ok.
 
 handle_full_response(Type, [Req, Code, _Hs, _B, {Timings, Sizes}], _Config) ->
 %%handle_full_response(Type, [Req, Code, _Hs, _B, Timings], _Config) ->
-  Path = path(),
-  case {elli_request:method(Req), elli_request:raw_path(Req)} of
-    {'GET', Path} -> ok;
-    _ ->
-      Labels = labels(Req, Code),
-      TypedLabels = case Type of
-                      request_complete -> ["full" | Labels];
-                      chunk_complete -> ["chunks" | Labels] %;
-                                        %% _ -> Labels
-                    end,
-      prometheus_counter:inc(?TOTAL, Labels),
+	Path = path(),
+	case {elli_request:method(Req), elli_request:raw_path(Req)} of
+		{'GET', Path} -> ok;
+		_ ->
+			Labels = labels(Req, Code),
+			TypedLabels = case Type of
+							request_complete -> ["full" | Labels];
+							chunk_complete   -> ["chunks" | Labels] %;
+							%% _ -> Labels
+						end,
+		prometheus_counter:inc(?TOTAL, Labels),
 
-      ReqTime=duration(Timings, request),
-      ReqSize= size(Sizes, response),
+		ReqTime = duration(Timings, request),
+		ReqSize = size(Sizes, response),
 
-      prometheus_histogram:observe(?REQUEST_DURATION, TypedLabels, ReqTime),
-      prometheus_histogram:observe(?REQUEST_HEADERS_DURATION, Labels,
-                                   duration(Timings, headers)),
-      prometheus_histogram:observe(?REQUEST_BODY_DURATION, Labels,
-                                   duration(Timings, body)),
-      prometheus_histogram:observe(?REQUEST_USER_DURATION, Labels,
-                                   duration(Timings, user)),
-      prometheus_histogram:observe(?RESPONSE_SEND_DURATION, TypedLabels,
-                                   duration(Timings, send)),
+		prometheus_histogram:observe(
+			?REQUEST_DURATION, TypedLabels, ReqTime),
+		prometheus_histogram:observe(
+			?REQUEST_HEADERS_DURATION, Labels, duration(Timings, headers)),
+		prometheus_histogram:observe(
+			?REQUEST_BODY_DURATION, Labels, duration(Timings, body)),
+		prometheus_histogram:observe(
+			?REQUEST_USER_DURATION, Labels, duration(Timings, user)),
+		prometheus_histogram:observe(
+			?RESPONSE_SEND_DURATION, TypedLabels, duration(Timings, send)),
+		prometheus_summary:observe(
+			?RESPONSE_SIZE, TypedLabels, ReqSize),
+		prometheus_summary:observe(
+			?RESPONSE_HEADERS_SIZE, TypedLabels, size(Sizes, response_headers)),
+		prometheus_summary:observe(
+			?RESPONSE_BODY_SIZE, TypedLabels, size(Sizes, response_body)),
 
-      prometheus_summary:observe(?RESPONSE_SIZE, TypedLabels, ReqSize),
-      prometheus_summary:observe(?RESPONSE_HEADERS_SIZE, TypedLabels,
-                                 size(Sizes, response_headers)),
-      prometheus_summary:observe(?RESPONSE_BODY_SIZE, TypedLabels,
-                                 size(Sizes, response_body)),
-
-      Peer = ar_util:parse_peer(elli_request:peer(Req)),
-      P = case ar_meta_db:get({peer, Peer}) of
-        not_found -> #performance{};
-        X -> X
-      end,
-      ar_meta_db:put({peer, Peer},
-        P#performance {
-          transfers = P#performance.transfers + 1,
-          time = P#performance.time + ReqTime,
-          bytes = P#performance.bytes + ReqSize,
-          timeout = os:system_time(seconds)
-        }),
-      ok
-  end.
+		case elli_request:peer(Req) of
+			undefined -> ok;
+			EP ->
+				Peer = ar_util:parse_peer(EP),
+				P = case ar_meta_db:get({peer, Peer}) of
+					not_found -> #performance{};
+					X -> X
+				end,
+				ar_meta_db:put({peer, Peer},
+					P#performance {
+					transfers = P#performance.transfers + 1,
+					time = P#performance.time + ReqTime,
+					bytes = P#performance.bytes + ReqSize,
+					timeout = os:system_time(seconds)
+					}),
+				ok
+		end
+	end.
 
 count_failed_request(Reason) ->
   prometheus_counter:inc(?FAILED_TOTAL, [Reason]).
@@ -326,20 +335,24 @@ duration(StartKey, EndKey, Timings) ->
   End - Start.
 
 size(Sizes, response) ->
-  size(Sizes, response_headers) +
-    size(Sizes, response_body);
+	size_safe_add(size(Sizes, response_headers), size(Sizes, response_body));
 size(Sizes, response_headers) ->
-  proplists:get_value(resp_headers, Sizes);
+	proplists:get_value(resp_headers, Sizes);
 size(Sizes, response_body) ->
-  case proplists:get_value(chunks, Sizes) of
-    undefined ->
-      case proplists:get_value(file, Sizes) of
-        undefined ->
-          proplists:get_value(resp_body, Sizes);
-        FileSize -> FileSize
-      end;
-    ChunksSize -> ChunksSize
-  end.
+	case proplists:get_value(chunks, Sizes) of
+		undefined ->
+			case proplists:get_value(file, Sizes) of
+				undefined ->
+					proplists:get_value(resp_body, Sizes);
+				FileSize -> FileSize
+			end;
+		ChunksSize -> ChunksSize
+	end.
+
+size_safe_add(undefined, undefined) -> 0;
+size_safe_add(undefined, Y) -> Y;
+size_safe_add(X, undefined) -> X;
+size_safe_add(X, Y) -> X + Y.
 
 metric(Name, Labels, Desc) -> metric(Name, Labels, [], Desc).
 

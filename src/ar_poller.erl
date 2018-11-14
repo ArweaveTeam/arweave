@@ -22,6 +22,7 @@ server(Node, Peers, LastB) ->
 	receive after ?POLL_TIME -> ok end,
 	case ar_node:get_current_block(Peers) of
 		LastB -> server(Node, Peers, LastB);
+		X when is_atom(X) -> server(Node, Peers, LastB);
 		NewB ->
 			Node ! {
 				new_block,
@@ -31,9 +32,10 @@ server(Node, Peers, LastB) ->
 				ar_node:get_block(
 					Peers,
 					lists:nth(
-						1 + ar_weave:calculate_recall_block(NewB),
+						1 + ar_weave:calculate_recall_block(NewB, NewB#block.hash_list),
 						lists:reverse(NewB#block.hash_list)
-					)
+					),
+					NewB#block.hash_list
 				)
 			},
 			server(Node, Peers, NewB)

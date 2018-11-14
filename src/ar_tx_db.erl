@@ -22,7 +22,7 @@ start() ->
 
 %% @doc Put an Erlang term into the meta DB. Typically these are
 %% write-once values.
-put(Key, Val) -> 
+put(Key, Val) ->
     ets:insert(?MODULE, {Key, Val}),
     timer:apply_after(1800*1000, ?MODULE, remove, [Key]).
 %% @doc Retreive a term from the meta db.
@@ -49,6 +49,6 @@ tx_db_test() ->
 	TX = OrphanedTX#tx { owner = Pub1 , signature = <<"BAD">>},
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	ar_tx:verify(TX, 8, B0#block.wallet_list),
-    receive after 500 -> ok end,
+	timer:sleep(500),
     ["tx_too_cheap ","tx_fields_too_large ","tag_field_illegally_specified ","last_tx_not_valid "] = get(TX#tx.id),
     ar_tx:verify(SignedTX, 8, B0#block.wallet_list).

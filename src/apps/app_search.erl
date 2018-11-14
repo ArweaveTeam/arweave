@@ -34,7 +34,10 @@ start(Peers) ->
 		end
 	).
 
-add_entry(Name, Value, ID) -> add_entry(whereis(http_search_node), Name, Value, ID).
+add_entry(Name, Value, ID) -> add_entry(http_search_node, Name, Value, ID).
+add_entry(ProcessName, Name, Value, ID) when not is_pid(ProcessName) ->
+	add_entry(whereis(ProcessName), Name, Value, ID);
+add_entry(undefined, _, _, _) -> do_nothing;
 add_entry(PID, Name, Value, ID) ->
 	PID ! {add_tx, Name, Value, ID}.
 
@@ -60,8 +63,8 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 				end,
 				TX#tx.tags
 			),
-			add_entry(<<"from">>, ar_wallet:to_address(TX#tx.owner), TX#tx.id),
-			add_entry(<<"to">>, ar_wallet:to_address(TX#tx.target), TX#tx.id),
+			add_entry(<<"from">>, ar_util:encode(ar_wallet:to_address(TX#tx.owner)), TX#tx.id),
+			add_entry(<<"to">>, ar_util:encode(ar_wallet:to_address(TX#tx.target)), TX#tx.id),
 			add_entry(<<"quantity">>, TX#tx.quantity, TX#tx.id),
 			add_entry(<<"reward">>, TX#tx.reward, TX#tx.id)
 		end,
@@ -90,7 +93,7 @@ server(S = #state { gossip = _GS }) ->
 		throw:Term ->
 			ar:report(
 				[
-					{'SearchEXCEPTION', {Term}}
+					{'SearchEXCEPTION', Term}
 				]
 			),
 			server(S);
