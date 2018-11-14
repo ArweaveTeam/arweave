@@ -4,10 +4,10 @@
 -define(NETWORK_NAME, "arweave.N.1").
 
 %% @doc Current release number of the arweave client software.
--define(CLIENT_VERSION, 3).
+-define(CLIENT_VERSION, 4).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 17).
+-define(RELEASE_NUMBER, 18).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
