@@ -3,7 +3,7 @@
 -export([get_all_nodes/0, get_live_nodes/0, filter_offline_nodes/1]).
 -export([get_nodes_connectivity/0,
 		 generate_gephi_csv/2,
-		 get_nodes_version/0,
+		 get_nodes_version/1,
 		 filter_local_peers/1]).
 
 %%% Tools for building a map of connected peers.
@@ -92,8 +92,18 @@ generate_gephi_csv(NamesJsonFile, StartPeers) ->
 
 %% @doc Crawls the network and returns a proplist keyed by the node version and
 %% with a counter as value.
-get_nodes_version() ->
-	get_nodes_version(get_live_nodes()).
+get_nodes_version(StartPeers) ->
+	FilterMapper = fun
+		({_, unavailable}) ->
+			false;
+		({Node, Peers}) when is_list(Peers) ->
+			{true, Node}
+	end,
+	Nodes = lists:filtermap(
+		FilterMapper,
+		maps:to_list(app_net_crawler:crawl(StartPeers))
+	),
+	get_nodes_version1(Nodes).
 
 %% @doc Takes a list of peers and filters out the ones with a local address.
 filter_local_peers(Peers) ->
@@ -355,7 +365,7 @@ write_gephi_csv_rows([Edge | Edges], IoDevice) ->
 
 %% @doc Get a list of all node versions used in the network with a counter of
 %% the number of nodes on that version.
-get_nodes_version(Peers) ->
+get_nodes_version1(Peers) ->
 	Mapper = fun (Peer) ->
 		{Peer, get_version(Peer)}
 	end,
