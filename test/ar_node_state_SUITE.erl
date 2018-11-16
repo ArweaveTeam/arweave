@@ -52,8 +52,8 @@ update_success(_Config) ->
 update_and_all_success(_Config) ->
 	{ok, Pid} = ar_node_state:start(),
 	{ok, All} = ar_node_state:all(Pid),
-	% 18 reflect number of standard node state fields.
-	18 = maps:size(All),
+	% 22 reflect number of standard node state fields.
+	22 = maps:size(All),
 	ok = ar_node_state:stop(Pid).
 
 %% @doc Successful updates and lookups.
