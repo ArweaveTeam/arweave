@@ -37,14 +37,14 @@ end_per_testcase(_, _Config) ->
 
 get_known_local(Config) ->
 	{Hash, Data} = ?config(known_local, Config),
-	Data = ipfs:get_data_by_hash(Hash).
+	{ok, Data} = ar_ipfs:get_data_by_hash(Hash).
 
 %%% private
 
 add_known_local(Config) ->
 	Fn = "known_local.txt",
 	DataDir = ?config(data_dir, Config),
-	Path = DataDir ++ "/" ++ Fn,
+	Path = DataDir ++ Fn,
 	{ok, Data} = file:read_file(Path),
-	Hash = ipfs:add(Path),
+	{ok, Hash} = ar_ipfs:add(Path),
 	{Hash, Data}.
