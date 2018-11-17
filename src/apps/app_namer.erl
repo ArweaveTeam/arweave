@@ -35,7 +35,7 @@ guess() ->
 
 %% @doc If the wallet is a hit, save it and notify the user.
 maybe_save(Str, Addr) ->
-    case lists:prefix(Str, Addr) of
+    case lists:prefix(string:to_lower(Str), string:to_lower(Addr)) of
         false ->
             file:delete("wallets/arweave_keyfile_" ++ Addr ++ ".json");
         true ->
