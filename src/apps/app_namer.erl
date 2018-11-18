@@ -9,7 +9,7 @@
 start(Str) -> start(Str, 1).
 start(Str, Cores) -> start(Str, Cores, normal).
 start(Str, Cores, Type) ->
-    [ spawn(fun() -> server(Str, Type) end) || _ <- lists:seq(1, Cores) ].
+    [ spawn(fun() -> server(Type, Str) end) || _ <- lists:seq(1, Cores) ].
 
 %% @doc Stops all of the processes in a name search.
 stop(PIDs) ->
@@ -44,5 +44,24 @@ maybe_save(Type, Str, Addr) ->
     end.
 
 %% @doc Check whether an address matches a query.
+matches(strict, Str, Addr) ->
+    lists:prefix(Str, Addr);
 matches(normal, Str, Addr) ->
-    lists:prefix(string:to_lower(Str), string:to_lower(Addr)).
+    matches(strict, string:to_lower(Str), string:to_lower(Addr));
+matches(txt, Str, Addr) ->
+    matches(normal, base55(Str), base55(Addr));
+matches(l33t, Str, Addr) ->
+    matches(normal, base55(Str), base55(Addr)).
+
+%% @doc Minimise the base 64 state space 55.
+base55(Str) when is_list(Str) ->lists:map(fun base55/1, Str);
+base55($1) -> $i;
+base55($3) -> $e;
+base55($4) -> $a;
+base55($5) -> $s;
+base55($7) -> $l;
+base55($9) -> $g;
+base55($0) -> $o;
+base55($-) -> $ ;
+base55($_) -> $ ;
+base55(X) -> X.
