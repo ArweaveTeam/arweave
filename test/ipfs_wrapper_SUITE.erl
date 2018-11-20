@@ -42,7 +42,7 @@ end_per_testcase(_, _Config) ->
 add_local_and_get(Config) ->
 	{Data, Filename} = ?config(add_local_data, Config),
 	{ok, Hash} = ar_ipfs:add_data(Data, Filename),
-	{ok, Data} = ar_ipfs:get_data_by_hash(Hash).
+	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash).
 
 %%% private
 

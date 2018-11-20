@@ -1,11 +1,13 @@
 -module(ar_ipfs).
 -export([add_data/2, add_data/4, add_file/1, add_file/3]).
--export([dht_provide/1, dht_provide/3]).
+-export([cat_data_by_hash/1, cat_data_by_hash/3]).
 
 -define(BOUNDARY, "------------qwerasdfzxcv").
+-define(IPFS_HOST, "127.0.0.1").
+-define(IPFS_PORT, "5001").
 
 add_data(Data, Filename) ->
-	add_data("127.0.0.1", "5001", Data, Filename).
+	add_data(?IPFS_HOST, ?IPFS_PORT, Data, Filename).
 
 add_data(IP, Port, DataB, Filename) ->
     URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/add",
@@ -14,22 +16,25 @@ add_data(IP, Port, DataB, Filename) ->
     Body = format_multipart_formdata(Boundary, [{Filename, Data}]),
     ContentType = lists:concat(["multipart/form-data; boundary=", Boundary]),
     Headers = [{"Content-Length", integer_to_list(length(Body))}],
-    request(post, {URL, Headers, ContentType, Body}).
+    {ok, Response} = request(post, {URL, Headers, ContentType, Body}),
+	{Props} = response_to_json(Response),
+	{<<"Hash">>, Hash} = lists:keyfind(<<"Hash">>, 1, Props),
+	{ok, Hash}.
 
 add_file(Path) ->
-	add_file("127.0.0.1", "5001", Path).
+	add_file(?IPFS_HOST, ?IPFS_PORT, Path).
 
 add_file(IP, Port, Path)->
     {ok, Data} = file:read_file(Path), 
 	Filename = filename:basename(Path),
 	add_data(IP, Port, Data, Filename).
 
-dht_provide(Key) ->
-	dht_provide("127.0.0.1", "5001", Key).
-    
-dht_provide(IP, PORT, Key) ->
-  URL = "http://" ++ IP ++ ":" ++ PORT ++ "/api/v0/dht/provide?arg=" ++ Key,
-  request(get, {URL, []}).
+cat_data_by_hash(Hash) ->
+	cat_data_by_hash(?IPFS_HOST, ?IPFS_PORT, Hash).
+
+cat_data_by_hash(IP, Port, Hash) ->
+	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/cat?arg=" ++ binary_to_list(Hash),
+	{ok, _Data} = request(get, {URL, []}).
 
 %%% private
 
@@ -48,14 +53,13 @@ format_multipart_formdata(Boundary,  Files) ->
 	string:join(Parts, "\r\n").
 
 request(Method, Request) ->
-    R = httpc:request(Method, Request, [{ssl,[{verify,0}]}], []),
-    response(R).
-
-response(Response) ->
+    Response = httpc:request(Method, Request, [{ssl,[{verify,0}]}], []),
 	case Response of
 		{ok, {_, _, Body}} ->
-			B1 = list_to_binary(Body),
-			io:format(B1),
-			{ok, jiffy:decode([B1])};
-		_ -> {error, reasons_not_yet_implemented}
+			{ok, list_to_binary(Body)};
+		_ ->
+			{error, reasons_not_yet_implemented}
 	end.
+
+response_to_json(Response) ->
+	jiffy:decode(Response).
