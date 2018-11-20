@@ -11,6 +11,7 @@
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
+-export([start_for_tests/0]).
 -export([parse/1]).
 
 -include("ar.hrl").
@@ -461,9 +462,12 @@ tests() ->
 				]
 			);
 		_ ->
-			start(#opts { peers = [], pause = false}),
+			start_for_tests(),
 			eunit:test({timeout, ?TEST_TIMEOUT, ?CORE_TEST_MODS}, [verbose])
 	end.
+
+start_for_tests() ->
+	start(#opts { peers = [], pause = false}).
 
 %% @doc Run the TNT test system, printing coverage results.
 test_coverage() ->

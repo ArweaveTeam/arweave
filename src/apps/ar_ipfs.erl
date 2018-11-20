@@ -57,7 +57,11 @@ request(Method, Request) ->
 	case Response of
 		{ok, {_, _, Body}} ->
 			{ok, list_to_binary(Body)};
-		_ ->
+		_Error ->
+			%% example errors:
+			%% {error,{failed_connect,[{to_address,{"127.0.0.1",5001}},
+			%%                         {inet,[inet],econnrefused}]}}
+			%% ct:pal("httpc:request error:~n~n~p",[Error]),
 			{error, reasons_not_yet_implemented}
 	end.
 
