@@ -43,7 +43,6 @@ end_per_testcase(_, _Config) ->
 
 adt_simple_callback_gets_block(Config) ->
 	Node = ar_node_init(),
-	ct:pal("Node: ~p", [Node]),
 	{ok, Pid} = app_ipfs:start(),
 	% TODO start adt callback module with gossip peers
 	% TODO ... which does something testable on recv block
@@ -64,7 +63,9 @@ add_local_and_get(Config) ->
 
 ar_node_init() ->
 	ar_storage:clear(),
-	ar_node:start().
+	Pid = ar_node:start(),
+	timer:sleep(1000),
+	Pid.
 
 mine_n_blocks_on_node(N, Node) ->
 	lists:foreach(fun(_) ->
