@@ -35,9 +35,9 @@
 %% @doc Start a new adt_simple app. Takes the module that implements our
 %% callbacks, an optional state of the app and an optional peer list.
 start(CallbackMod) ->
-    start(CallbackMod, []).
+	start(CallbackMod, []).
 start(CallbackMod, AppState) ->
-    start(CallbackMod, AppState, []).
+	start(CallbackMod, AppState, []).
 start(CallbackMod, AppState, Peers) ->
 	spawn(
 		fun() ->
@@ -63,10 +63,10 @@ server(S = #state { gossip = GS }) ->
 		Msg when is_record(Msg, gs_msg) ->
 			% We have received a gossip mesage. Use the library to process it.
 			case ar_gossip:recv(GS, Msg) of
-                % Ignore gossip message.
+				% Ignore gossip message.
 				{NewGS, ignore} ->
 					server(S#state { gossip = NewGS });
-                % New tx received.
+				% New tx received.
 				{NewGS, {add_tx, TX}} ->
 					server(
 						apply_callback(
@@ -75,35 +75,35 @@ server(S = #state { gossip = GS }) ->
 							TX
 						)
 					);
-                % New block and confirmed txs callback.
+				% New block and confirmed txs callback.
 				{NewGS, {new_block, _, _, B, _}} ->
-                    FullTXs =
-                        lists:map(
-                            fun(T) -> ar_storage:read_tx(T) end,
-                            B#block.txs
-                        ),
+					FullTXs =
+						lists:map(
+							fun(T) -> ar_storage:read_tx(T) end,
+							B#block.txs
+						),
 					NewS =
 						lists:foldl(
 							fun(TX, NextS) ->
 								apply_callback(
-                                    NextS,
-                                    confirmed_transaction,
-                                    TX
-                                )
+									NextS,
+									confirmed_transaction,
+									TX
+								)
 							end,
 							S#state { gossip = NewGS },
 							FullTXs
 						),
 					server(
-                        apply_callback(
-                            NewS,
-                            new_block,
-                            B#block { txs = FullTXs })
-                        )
+						apply_callback(
+							NewS,
+							new_block,
+							B#block { txs = FullTXs })
+						)
 			end;
 		stop -> ok;
 		OtherMsg ->
-            server(apply_callback(S, message, OtherMsg))
+			server(apply_callback(S, message, OtherMsg))
 	end.
 
 %%% Utility functions
@@ -123,4 +123,4 @@ apply_callback(S = #state { mod = Mod }, GS, AppS, Fun, Val) ->
 			Mod:Fun(Val),
 			S;
 		false -> S
-    end.
+	end.
