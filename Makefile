@@ -24,6 +24,7 @@ test_networks: all
 tnt: test
 
 ct: all
+	mkdir -p testlog
 	@ct_run $(ERL_OPTS) -dir test/ -logdir testlog/
 
 no-vlns: test_networks
