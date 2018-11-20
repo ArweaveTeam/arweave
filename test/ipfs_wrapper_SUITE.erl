@@ -41,8 +41,11 @@ end_per_testcase(_, _Config) ->
 
 add_local_and_get(Config) ->
 	{Data, Filename} = ?config(add_local_data, Config),
-	{ok, Hash} = ar_ipfs:add_data(Data, Filename),
-	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash).
+	TS = list_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second))),
+	DataToHash = <<"***  *", TS/binary, "*        ", Data/binary>>,
+	{ok, Hash} = ar_ipfs:add_data(DataToHash, Filename),
+	ct:pal("Hash at ~p: ~p", [TS, Hash]),
+	{ok, DataToHash} = ar_ipfs:cat_data_by_hash(Hash).
 
 %%% private
 
