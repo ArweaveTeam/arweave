@@ -8,24 +8,28 @@
 	]).
 
 -export([
-	get_known_local/1
+	add_local_and_get/1
 	]).
 
 all() -> [
-	get_known_local
+	add_local_and_get
 	].
 
 %%%% set up
 
 init_per_suite(Config) ->
+	{ok,_} = application:ensure_all_started(inets),
 	Config.
 
 end_per_suite(_Config) ->
 	ok.
 
-init_per_testcase(get_known_local, Config) ->
-	{Hash, Data} = add_known_local(Config),
-	[{known_local, {Hash, Data}} | Config];
+init_per_testcase(add_local_and_get, Config) ->
+	Filename = "known_local.txt",
+	DataDir = ?config(data_dir, Config),
+	Path = DataDir ++ Filename,
+	{ok, Data} = file:read_file(Path),
+	[{add_local_data, {Data, Filename}} | Config];
 
 init_per_testcase(_, Config) ->
     Config.
@@ -35,16 +39,10 @@ end_per_testcase(_, _Config) ->
 
 %%% tests
 
-get_known_local(Config) ->
-	{Hash, Data} = ?config(known_local, Config),
+add_local_and_get(Config) ->
+	{Data, Filename} = ?config(add_local_data, Config),
+	{ok, Hash} = ar_ipfs:add_data(Data, Filename),
 	{ok, Data} = ar_ipfs:get_data_by_hash(Hash).
 
 %%% private
 
-add_known_local(Config) ->
-	Fn = "known_local.txt",
-	DataDir = ?config(data_dir, Config),
-	Path = DataDir ++ Fn,
-	{ok, Data} = file:read_file(Path),
-	{ok, Hash} = ar_ipfs:add(Path),
-	{Hash, Data}.

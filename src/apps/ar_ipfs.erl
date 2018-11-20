@@ -1,47 +1,28 @@
-%%% @doc ipfs module
-%%% @private
-%%% @end
-%%%
-%%% Copyright (c) 2017, Hendry Rodriguez
-%%%
-%%% The MIT License
-%%%
-%%% Permission is hereby granted, free of charge, to any person obtaining a copy
-%%% of this software and associated documentation files (the "Software"), to deal
-%%% in the Software without restriction, including without limitation the rights
-%%% to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-%%% copies of the Software, and to permit persons to whom the Software is
-%%% furnished to do so, subject to the following conditions:
-%%%
-%%% The above copyright notice and this permission notice shall be included in
-%%% all copies or substantial portions of the Software.
-%%%
-%%% THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-%%% IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-%%% FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-%%% AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-%%% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-%%% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-%%% THE SOFTWARE.
-%%%
-%%%---------------------------------------------------------------------------------------
 -module(ar_ipfs).
--compile([export_all]).
--define(BOUNDARY, "------------e897glvjfEoq").
+-export([add_data/2, add_data/4, add_file/1, add_file/3]).
+-export([dht_provide/1, dht_provide/3]).
 
+-define(BOUNDARY, "------------qwerasdfzxcv").
 
-add(Path, Filename) ->
-	add("127.0.0.1", "5001", Path, Filename).
+add_data(Data, Filename) ->
+	add_data("127.0.0.1", "5001", Data, Filename).
 
-add(IP, PORT, PathFile, FileName)->
-    URL = "http://" ++ IP ++ ":" ++ PORT ++ "/api/v0/add",
-    {ok, Cont} = file:read_file(PathFile), 
-    Data = binary_to_list(Cont),
+add_data(IP, Port, DataB, Filename) ->
+    URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/add",
+    Data = binary_to_list(DataB),
     Boundary = ?BOUNDARY,
-    Body = format_multipart_formdata(Boundary, [{ FileName, Data}]),
+    Body = format_multipart_formdata(Boundary, [{Filename, Data}]),
     ContentType = lists:concat(["multipart/form-data; boundary=", Boundary]),
     Headers = [{"Content-Length", integer_to_list(length(Body))}],
     request(post, {URL, Headers, ContentType, Body}).
+
+add_file(Path) ->
+	add_file("127.0.0.1", "5001", Path).
+
+add_file(IP, Port, Path)->
+    {ok, Data} = file:read_file(Path), 
+	Filename = filename:basename(Path),
+	add_data(IP, Port, Data, Filename).
 
 dht_provide(Key) ->
 	dht_provide("127.0.0.1", "5001", Key).
@@ -53,17 +34,18 @@ dht_provide(IP, PORT, Key) ->
 %%% private
 
 format_multipart_formdata(Boundary,  Files) ->
-    FileParts = lists:map(fun({FileName, FileContent}) ->
-                                  [lists:concat(["--", Boundary]),
-                                   lists:concat(["Content-Disposition: file; name=\"","path","\"; filename=\"",FileName,"\""]),
-                                   lists:concat(["Content-Type: ", "application/octet-stream"]),
-                                   "",
-                                   FileContent]
-                          end, Files),
-    FileParts2 = lists:append(FileParts),
-    EndingParts = [lists:concat(["--", Boundary, "--"]), ""],
-    Parts = lists:append([ FileParts2, EndingParts]),
-    string:join(Parts, "\r\n").
+	FileParts = lists:append(lists:map(
+					fun({FileName, FileContent}) ->
+							[lists:concat(["--", Boundary]),
+							lists:concat(["Content-Disposition: file; name=\"","path","\"; filename=\"",FileName,"\""]),
+							lists:concat(["Content-Type: ", "application/octet-stream"]),
+							"",
+							FileContent]
+					end,
+					Files)),
+	Suffix = [lists:concat(["--", Boundary, "--"]), ""],
+	Parts = lists:append([FileParts, Suffix]),
+	string:join(Parts, "\r\n").
 
 request(Method, Request) ->
     R = httpc:request(Method, Request, [{ssl,[{verify,0}]}], []),
