@@ -25,7 +25,7 @@ add_file(Path) ->
 	add_file(?IPFS_HOST, ?IPFS_PORT, Path).
 
 add_file(IP, Port, Path)->
-    {ok, Data} = file:read_file(Path), 
+    {ok, Data} = file:read_file(Path),
 	Filename = filename:basename(Path),
 	add_data(IP, Port, Data, Filename).
 
