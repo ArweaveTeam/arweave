@@ -9,12 +9,12 @@
 
 -export([
 	add_local_and_get/1,
-	adt_simple_callback_gets_block/1
+	adt_simple_callback_gets_blocks/1
 	]).
 
 all() -> [
 	add_local_and_get,
-	adt_simple_callback_gets_block
+	adt_simple_callback_gets_blocks
 	].
 
 %%%% set up
@@ -41,7 +41,7 @@ end_per_testcase(_, _Config) ->
 
 %%% tests
 
-adt_simple_callback_gets_block(Config) ->
+adt_simple_callback_gets_blocks(Config) ->
 	Node = ar_node_init(),
 	{ok, Pid} = app_ipfs:start(),
 	% TODO start adt callback module with gossip peers
