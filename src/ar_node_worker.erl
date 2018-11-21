@@ -634,7 +634,7 @@ recovered_from_fork(#{ id := BinID, hash_list := not_joined} = StateIn, NewHs) -
 			weave_size           => NewB#block.weave_size
 		}
 	)};
-recovered_from_fork(#{ id := BinID, hash_list := HashList } = StateIn, NewHs) ->
+recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) ->
 	case whereis(fork_recovery_server) of
 		undefined -> ok;
 		_		  -> erlang:unregister(fork_recovery_server)
@@ -650,7 +650,7 @@ recovered_from_fork(_StateIn, _) ->
 	none.
 
 do_recovered_from_fork(StateIn, NewB) ->
-	#{ id := BinID, hash_list := HashList } = StateIn,
+	#{ id := BinID } = StateIn,
 	ar:report_console(
 		[
 			fork_recovered_successfully,
