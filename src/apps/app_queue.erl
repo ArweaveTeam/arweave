@@ -85,7 +85,7 @@ wait_for_block(S, TargetH) ->
    CurrentH = get_current_height(S),
    if CurrentH >= TargetH -> ok;
    true ->
-       timer:sleep(?POLL_INTERVAL * 1000),
+       timer:sleep(?POLL_INTERVAL),
        wait_for_block(S, TargetH)
     end.
 
@@ -95,26 +95,28 @@ get_current_height(S) ->
 
 %%% TESTS
 
-queue_single_tx_test() ->
-	ar_storage:clear(),
-	Wallet = {_Priv1, Pub1} = ar_wallet:new(),
-    Addr = crypto:strong_rand_bytes(32),
-	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = ar_node:start([], Bs),
-    Queue = start(Node1, Wallet),
-    receive after 500 -> ok end,
-    add(Queue, ar_tx:new(Addr, ?AR(1), ?AR(1000), <<>>)),
-    receive after 500 -> ok end,
-    lists:foreach(
-        fun(_) ->
-            ar_node:mine(Node1),
-            receive after 500 -> ok end
-        end,
-        lists:seq(1, ?CONFIRMATION_DEPTH)
-    ),
-    ?assertEqual(?AR(1000), ar_node:get_balance(Node1, Addr)).
+queue_single_tx_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		Wallet = {_Priv1, Pub1} = ar_wallet:new(),
+		Addr = crypto:strong_rand_bytes(32),
+		Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+		Node1 = ar_node:start([], Bs),
+		Queue = start(Node1, Wallet),
+		receive after 500 -> ok end,
+		add(Queue, ar_tx:new(Addr, ?AR(1), ?AR(1000), <<>>)),
+		receive after 500 -> ok end,
+		lists:foreach(
+			fun(_) ->
+				ar_node:mine(Node1),
+				receive after 500 -> ok end
+			end,
+			lists:seq(1, ?CONFIRMATION_DEPTH)
+		),
+		?assertEqual(?AR(1000), ar_node:get_balance(Node1, Addr))
+	end}.
 
-queue_double_tx_test() ->
+queue_double_tx_test_() ->
     {timeout, 60, fun() ->
         ar_storage:clear(),
         Wallet = {_Priv1, Pub1} = ar_wallet:new(),
