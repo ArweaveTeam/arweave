@@ -11,7 +11,7 @@
 %% Default test error tolerance in percent.
 -define(DEFAULT_TOLERANCE_PERCENT, 0.001).
 %% Height at which the 1.5.0.0 fork takes affect.
--define(FORK_15_HEIGHT, 95000).
+-define(FORK_15_HEIGHT, ?FORK_1_6).
 %% Height at which block rewards began.
 -define(REWARD_START_HEIGHT, 65700).
 %% @doc BLOCK_PER_YEAR macro prior to 1.5.0.0 release.
