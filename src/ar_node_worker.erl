@@ -598,7 +598,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ id := BinID, hash_list := not_joined} = StateIn, NewHs) ->
-	timer:sleep(15 * 1000),
+	timer:sleep(15 * 1000), % Waiting for blocks to be written to disk before reading NewB.
 	NewB = ar_storage:read_block(hd(NewHs), NewHs),
 	ar:report_console(
 		[
