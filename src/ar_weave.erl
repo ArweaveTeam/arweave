@@ -245,7 +245,7 @@ indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 		integer_to_binary(B#block.cumulative_diff),
 		integer_to_binary(B#block.height),
 		B#block.hash,
-		B#block.hash_list,
+		B#block.hash_list_merkle,
 		[ar_tx:tx_to_list(TX) || TX <- B#block.txs],
 		[[Addr, integer_to_binary(Balance), LastTX]
 			||	{Addr, Balance, LastTX} <- B#block.wallet_list],
