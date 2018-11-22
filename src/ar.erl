@@ -47,7 +47,8 @@
 		ar_simple_reporter,
 		ar_retarget,
 		ar_block,
-		ar_tx_db
+		ar_tx_db,
+		app_ipfs_tests
 	]
 ).
 

@@ -1,11 +1,12 @@
 -module(app_ipfs).
--export([start/1, stop/1, get_block_hashes/1, get_txs/1]).
+-export([start/1, stop/1, get_block_hashes/1, get_txs/1, get_ipfs_hashes/1]).
 -export([confirmed_transaction/2, new_block/2]).
 -include("../ar.hrl").
 
 -record(state,{
 	adt_pid = undefined,
 	block_hashes = [],
+	ipfs_hashes = [],
 	txs = []
 }).
 
@@ -22,15 +23,18 @@ stop(Pid) ->
 	Pid ! stop.
 
 get_block_hashes(Pid) ->
-	Pid ! {get_block_hashes, self()},
-	receive
-		{block_hashes, BHs} -> BHs
-	end.
+	send_and_retreive(Pid, get_block_hashes, block_hashes).
+
+get_ipfs_hashes(Pid) ->
+	send_and_retreive(Pid, get_ipfs_hashes, ipfs_hashes).
 
 get_txs(Pid) ->
-	Pid ! {get_txs, self()},
+	send_and_retreive(Pid, get_txs, txs).
+
+send_and_retreive(Pid, SendTag, RecvTag) ->
+	Pid ! {SendTag, self()},
 	receive
-		{txs, TXs} -> TXs
+		{RecvTag, Xs} -> Xs
 	end.
 
 %%% adt_simple callbacks
@@ -46,7 +50,7 @@ new_block(Pid, Block) ->
 
 %%% local server
 
-server(State) ->
+server(State=#state{block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 	receive
 		stop ->
 			State#state.adt_pid ! stop,
@@ -54,14 +58,24 @@ server(State) ->
 		{add_adt_pid, Pid} ->
 			server(State#state{adt_pid=Pid});
 		{get_block_hashes, From} ->
-			From ! {block_hashes, State#state.block_hashes},
+			From ! {block_hashes, BHs},
+			server(State);
+		{get_ipfs_hashes, From} ->
+			From ! {ipfs_hashes, IHs},
 			server(State);
 		{get_txs, From} ->
-			From ! {txs, State#state.txs},
+			From ! {txs, TXs},
 			server(State);
 		{recv_new_block, Block} ->
 			BH = Block#block.indep_hash,
-			server(State#state{block_hashes=[BH|State#state.block_hashes]});
-		{recv_new_tx, TX} ->
-			server(State#state{txs=[TX|State#state.txs]})
+			server(State#state{block_hashes=[BH|BHs]});
+		{recv_new_tx, TX=#tx{tags=Tags}} ->
+			NewTXs = [TX|TXs],
+			NewIHs = case lists:keyfind(<<"IPFS-Add">>, 1, Tags) of
+				false -> IHs;
+				{<<"IPFS-Add">>, Filename}  ->
+					{ok, Hash} = ar_ipfs:add_data(TX#tx.data, Filename),
+					[Hash|IHs]
+			end,
+			server(State#state{txs=NewTXs, ipfs_hashes=NewIHs})
 	end.

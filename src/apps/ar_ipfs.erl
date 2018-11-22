@@ -9,9 +9,10 @@
 add_data(Data, Filename) ->
 	add_data(?IPFS_HOST, ?IPFS_PORT, Data, Filename).
 
-add_data(IP, Port, DataB, Filename) ->
+add_data(IP, Port, DataB, FilenameB) ->
     URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/add",
     Data = binary_to_list(DataB),
+	Filename = thing_to_list(FilenameB),
     Boundary = ?BOUNDARY,
     Body = format_multipart_formdata(Boundary, [{Filename, Data}]),
     ContentType = lists:concat(["multipart/form-data; boundary=", Boundary]),
@@ -67,3 +68,6 @@ request(Method, Request) ->
 
 response_to_json(Response) ->
 	jiffy:decode(Response).
+
+thing_to_list(X) when is_list(X) -> X;
+thing_to_list(X) when is_binary(X) -> binary_to_list(X).
