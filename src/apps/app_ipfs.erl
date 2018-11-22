@@ -80,8 +80,11 @@ server(State=#state{block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 					{ok, Hash} = ar_ipfs:add_data(TX#tx.data, Filename),
 					[Hash|IHs];
 				{false, {<<"IPFS-Hash">>, Hash}} ->
-					{ok, Hash} = ar_ipfs:add_data(TX#tx.data, Hash),
-					[Hash|IHs]
+					{ok, Hash2} = ar_ipfs:add_data(TX#tx.data, Hash),
+					case Hash2 of
+						Hash -> [Hash|IHs];
+						_    -> IHs
+					end
 			end,
 			server(State#state{txs=NewTXs, ipfs_hashes=NewIHs})
 	end.
