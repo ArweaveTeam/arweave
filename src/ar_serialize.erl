@@ -41,7 +41,7 @@ block_to_json_struct(
 		block_size = BlockSize,
 		cumulative_diff = CDiff
 	}) ->
-	{
+	JSONElements =
 		[
 			{nonce, ar_util:encode(Nonce)},
 			{previous_block, ar_util:encode(PrevHash)},
@@ -80,8 +80,11 @@ block_to_json_struct(
 			{weave_size, WeaveSize},
 			{block_size, BlockSize},
 			{cumulative_diff, CDiff}
-		]
-	}.
+		],
+	case Height < ?FORK_1_6 of
+		true -> {lists:keydelete(cumulative_diff, 1, JSONElements)};
+		false -> {JSONElements}
+	end.
 
 %% @doc Convert a full block record into a JSON struct.
 full_block_to_json_struct(B = #block { txs = TXs }) ->
@@ -102,11 +105,15 @@ json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	end;
 json_struct_to_block(JSONBlock) ->
 	{BlockStruct} = JSONBlock,
+	Height = find_value(<<"height">>, BlockStruct),
 	TXs = find_value(<<"txs">>, BlockStruct),
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
 	HashList = find_value(<<"hash_list">>, BlockStruct),
 	Tags = find_value(<<"tags">>, BlockStruct),
-	CDiff = find_value(<<"cumulative_diff">>, BlockStruct),
+	CDiff = case find_value(<<"cumulative_diff">>, BlockStruct) of
+		_ when Height < ?FORK_1_6 -> 0;
+		CD -> CD
+	end,
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
 		previous_block =
@@ -116,7 +123,7 @@ json_struct_to_block(JSONBlock) ->
 		timestamp = find_value(<<"timestamp">>, BlockStruct),
 		last_retarget = find_value(<<"last_retarget">>, BlockStruct),
 		diff = find_value(<<"diff">>, BlockStruct),
-		height = find_value(<<"height">>, BlockStruct),
+		height = Height,
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
 		txs =
@@ -164,11 +171,7 @@ json_struct_to_block(JSONBlock) ->
 		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
 		block_size = find_value(<<"block_size">>, BlockStruct),
-		cumulative_diff =
-			case CDiff of
-				undefined -> 0;
-				_ -> CDiff
-			end
+		cumulative_diff = CDiff
 	}.
 
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a
