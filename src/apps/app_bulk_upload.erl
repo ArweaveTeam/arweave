@@ -9,17 +9,20 @@
 %%% the queue module.
 
 -define(MB, 1048576).
--define(BLOCK_HASH_ALGO, sha256).
+-define(BLOB_HASH_ALGO, sha256).
 
 %% @doc Starts a queue server, splits the given file into chunks, wraps the chunks as 
 %% Arweave transactions, and submits them to the queue. Returns the queue PID.
-upload(Wallet, Filename) ->
-	upload(whereis(http_entrypoint_node), Wallet, Filename).
-upload(Node, Wallet, Filename) ->
-	Queue = app_queue:start(Node, Wallet),
+upload(Wallet, Filename) when is_list(Filename) ->
 	{ok, Filecontents} = file:read_file(Filename),
-	Hash = crypto:hash(?BLOCK_HASH_ALGO, Filecontents),
-	upload_blob(Queue, Hash, Filecontents),
+	upload(Wallet, Filecontents);
+upload(Wallet, Blob) when is_binary(Blob) ->
+	upload(whereis(http_entrypoint_node), Wallet, Blob).
+
+upload(Node, Wallet, Blob) ->
+	Queue = app_queue:start(Node, Wallet),
+	Hash = crypto:hash(?BLOB_HASH_ALGO, Blob),
+	upload_blob(Queue, Hash, Blob),
 	Queue.
 
 %% @doc Takes a binary blob and processes it chunk by chunk. Each chunk is converted into
@@ -50,10 +53,8 @@ upload_test_() ->
 		Wallet = {_, Pub} = ar_wallet:new(),
 		Bs = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 		Node = ar_node:start([], Bs),
-		Filename = filename:join(os:getenv("TMPDIR", "tmp-test-dir"), "tmp-bulk-upload-file"),
-		Contents = list_to_binary(lists:duplicate(?MB * 2, 1)),
-		ok = file:write_file(Filename, Contents, [write]),
-		upload(Node, Wallet, Filename),
+		Blob = list_to_binary(lists:duplicate(?MB * 2, 1)),
+		upload(Node, Wallet, Blob),
 		receive after 1000 -> ok end,
 		lists:foreach(
 			fun(_) ->
@@ -66,7 +67,7 @@ upload_test_() ->
 		Transactions = collect_transactions(BHL, BHL),
 		?assertEqual(2, length(Transactions)),
 		[First, Second] = Transactions,
-		?assertEqual(Contents, << (First#tx.data)/binary, (Second#tx.data)/binary >>)
+		?assertEqual(Blob, << (First#tx.data)/binary, (Second#tx.data)/binary >>)
 	end}.
 
 collect_transactions(_, []) ->
