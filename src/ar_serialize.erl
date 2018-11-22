@@ -182,7 +182,7 @@ json_struct_to_full_block(JSONBlock) ->
 	{BlockStruct} = JSONBlock,
 	TXs = find_value(<<"txs">>, BlockStruct),
 	TempStruct =
-		{	
+		{
 			[
 				{<<"txs">>, []}
 			|
@@ -394,4 +394,3 @@ query_roundtrip_test() ->
 			)
 		),
 	?assert(Query == ar_serialize:json_struct_to_query(QueryJSON)).
-
