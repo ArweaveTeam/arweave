@@ -232,6 +232,7 @@ indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 		integer_to_binary(B#block.timestamp),
 		integer_to_binary(B#block.last_retarget),
 		integer_to_binary(B#block.diff),
+		integer_to_binary(B#block.cumulative_diff),
 		integer_to_binary(B#block.height),
 		B#block.hash,
 		B#block.hash_list,
