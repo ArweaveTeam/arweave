@@ -12,15 +12,18 @@ add_local_and_get_test() ->
 	ar:d({TS, Hash}),
 	{ok, DataToHash} = ar_ipfs:cat_data_by_hash(Hash).
 
-adt_simple_callback_gets_blocks_test() ->
-	Node = ar_node_init(),
-	{ok, Pid} = app_ipfs:start(),
-	% TODO start adt callback module with gossip peers
-	% TODO ... which does something testable on recv block
-	Expected = mine_n_blocks_on_node(3, Node),
-	ar:d({expected_hashes, Expected}),
-	Actual = app_ipfs:get_block_hashes(Pid),
-	?assertEqual(Expected, Actual).
+adt_simple_callback_gets_blocks_test_() ->
+	% {timeout, 30, fun() ->
+		Node = ar_node_init(),
+		Peers = [Node],
+		timer:sleep(1000),
+		{ok, Pid} = app_ipfs:start(Peers),
+		timer:sleep(1000),
+		Expected = mine_n_blocks_on_node(3, Node),
+		ar:d({expected_hashes, Expected}),
+		Actual = app_ipfs:get_block_hashes(Pid),
+		?assertEqual(Expected, Actual).
+	% end}.
 
 %%% private
 
@@ -28,13 +31,12 @@ ar_node_init() ->
 	ar_storage:clear(),
 	B0 = ar_weave:init([]),
 	Pid = ar_node:start([], B0),
-	timer:sleep(1000),
 	Pid.
 
 mine_n_blocks_on_node(N, Node) ->
 	lists:foreach(fun(_) ->
 			ar_node:mine(Node),
-			timer:sleep(500)
+			timer:sleep(1000)
 		end, lists:seq(1,N)),
 	timer:sleep(1000),
 	ar_node:get_blocks(Node).
