@@ -26,7 +26,8 @@ adt_simple_callback_gets_blocks_test() ->
 
 ar_node_init() ->
 	ar_storage:clear(),
-	Pid = ar_node:start(),
+	B0 = ar_weave:init([]),
+	Pid = ar_node:start([], B0),
 	timer:sleep(1000),
 	Pid.
 
