@@ -28,22 +28,29 @@ upload(Node, Wallet, Blob) ->
 %% @doc Takes a binary blob and processes it chunk by chunk. Each chunk is converted into
 %% a transaction and put into the queue. Chunk size is 1MB.
 upload_blob(Queue, Hash, Blob) ->
+	BlobSize = byte_size(Blob),
+	ChunkNumber = BlobSize div ?MB + if BlobSize rem ?MB =/= 0 -> 1; true -> 0 end,
+	upload_blob(Queue, Hash, Blob, ChunkNumber, 1).
+
+upload_blob(Queue, Hash, Blob, ChunkNumber, ChunkPosition) ->
 	if byte_size(Blob) =< ?MB ->
-		app_queue:add(Queue, chunk_to_tx(Hash, Blob));
-	true ->	
+		app_queue:add(Queue, chunk_to_tx(Hash, Blob, ChunkNumber, ChunkPosition));
+	true ->
 		<< Chunk:?MB/binary, Rest/binary >> = Blob,
-		app_queue:add(Queue, chunk_to_tx(Hash, Chunk)),
-		upload_blob(Queue, Hash, Rest)
+		app_queue:add(Queue, chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition)),
+		upload_blob(Queue, Hash, Rest, ChunkNumber, ChunkPosition + 1)
 	end.
 
 %% @doc Converts the given binary chunk into a transaction. A hash of the whole block the chunk
 %% is part of is assigned as a tag.
-chunk_to_tx(Hash, Chunk) ->
+chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition) ->
 	#tx {
 		tags =
 			[
 				{"app_name", "BulkUpload"},
-				{"blob_hash", Hash}
+				{"blob_hash", Hash},
+				{"number_of_chunks", << ChunkNumber >>},
+				{"chunk_position", << ChunkPosition >>}
 			],
 		data = Chunk
 	}.
@@ -55,7 +62,7 @@ upload_test_() ->
 		Node = ar_node:start([], Bs),
 		Blob = list_to_binary(lists:duplicate(?MB * 2, 1)),
 		upload(Node, Wallet, Blob),
-		receive after 1000 -> ok end,
+		receive after 500 -> ok end,
 		lists:foreach(
 			fun(_) ->
 				ar_node:mine(Node),
@@ -67,7 +74,26 @@ upload_test_() ->
 		Transactions = collect_transactions(BHL, BHL),
 		?assertEqual(2, length(Transactions)),
 		[First, Second] = Transactions,
-		?assertEqual(Blob, << (First#tx.data)/binary, (Second#tx.data)/binary >>)
+		?assertEqual(Blob, << (First#tx.data)/binary, (Second#tx.data)/binary >>),
+		ExpectedHash = crypto:hash(?BLOB_HASH_ALGO, Blob),
+		?assertEqual(
+			[
+				{<< "app_name" >>, << "BulkUpload" >>},
+				{<< "blob_hash" >>, ExpectedHash},
+				{<< "number_of_chunks" >>, << 2 >>},
+				{<< "chunk_position" >>, << 1 >>}
+			],
+			First#tx.tags
+		),
+		?assertEqual(
+			[
+				{<< "app_name" >>, << "BulkUpload" >>},
+				{<< "blob_hash" >>, ExpectedHash},
+				{<< "number_of_chunks" >>, << 2 >>},
+				{<< "chunk_position" >>, << 2 >>}
+			],
+			Second#tx.tags
+		)
 	end}.
 
 collect_transactions(_, []) ->
@@ -75,9 +101,9 @@ collect_transactions(_, []) ->
 collect_transactions(BHL, BHLRest) ->
 	[Head | Rest] = BHLRest,
 	Block = ar_storage:read_block(Head, BHL),
-	lists:map(
+	collect_transactions(BHL, Rest) ++ lists:map(
 		fun(Hash) ->
 			ar_storage:read_tx(Hash)
 		end,
 		Block#block.txs
-	) ++ collect_transactions(BHL, Rest).
+	).
