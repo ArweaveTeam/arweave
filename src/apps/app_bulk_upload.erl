@@ -8,7 +8,7 @@
 %%% submits them to Arweave as separate transactions. Transactions are submitted via
 %%% the queue module.
 
--define(MB, 1048576).
+-define(MB, 1048576). % 1024 * 1024
 -define(BLOB_HASH_ALGO, sha256).
 
 %% @doc Starts a queue server, splits the given file into chunks, wraps the chunks as 
