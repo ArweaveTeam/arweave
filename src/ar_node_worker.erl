@@ -688,10 +688,10 @@ do_recovered_from_fork(StateIn, NewB) ->
 %% @doc Test whether a new fork is 'preferable' to the current one.
 %% The highest cumulated diff is the one with most work performed and should
 %% therefor be prefered.
-is_fork_preferable(NewB, _CDiff, OldBHL) when NewB#block.height < ?FORK_1_6 ->
-	(length(NewB#block.hash_list) + 1) > (length(OldBHL));
-is_fork_preferable(NewB, OldCDiff, _OldBHL) ->
-	NewB#block.cumulative_diff > OldCDiff.
+is_fork_preferable(ForkB, _, CurrentBHL) when ForkB#block.height < ?FORK_1_6 ->
+	(length(ForkB#block.hash_list) + 1) > length(CurrentBHL);
+is_fork_preferable(ForkB, CurrentCDiff, _) ->
+	ForkB#block.cumulative_diff > CurrentCDiff.
 
 %% @doc Aggregates the transactions of a state to one list.
 aggregate_txs(#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs}) ->
