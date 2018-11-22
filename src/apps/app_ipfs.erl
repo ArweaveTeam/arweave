@@ -71,10 +71,16 @@ server(State=#state{block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 			server(State#state{block_hashes=[BH|BHs]});
 		{recv_new_tx, TX=#tx{tags=Tags}} ->
 			NewTXs = [TX|TXs],
-			NewIHs = case lists:keyfind(<<"IPFS-Add">>, 1, Tags) of
-				false -> IHs;
-				{<<"IPFS-Add">>, Filename}  ->
+			NewIHs = case
+						{lists:keyfind(<<"IPFS-Add">>, 1, Tags),
+						 lists:keyfind(<<"IPFS-Hash">>, 1, Tags)} of
+				{false, false} ->
+					IHs;
+				{{<<"IPFS-Add">>, Filename},_}  ->
 					{ok, Hash} = ar_ipfs:add_data(TX#tx.data, Filename),
+					[Hash|IHs];
+				{false, {<<"IPFS-Hash">>, Hash}} ->
+					{ok, Hash} = ar_ipfs:add_data(TX#tx.data, Hash),
 					[Hash|IHs]
 			end,
 			server(State#state{txs=NewTXs, ipfs_hashes=NewIHs})

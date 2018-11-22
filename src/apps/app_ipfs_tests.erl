@@ -13,38 +13,44 @@ add_local_and_get_test() ->
 
 adt_simple_callback_gets_blocks_test_() ->
 	{timeout, 30, fun() ->
-		Node = ar_node_init(),
-		timer:sleep(1000),
-		{ok, Pid} = app_ipfs:start([Node]),
-		timer:sleep(1000),
-		ExpectedIndeps = lists:droplast(mine_n_blocks_on_node(3, Node)),
-		Actual = app_ipfs:get_block_hashes(Pid),
+		{ARNode, IPFSPid} = setup(),
+		ExpectedIndeps = lists:droplast(mine_n_blocks_on_node(3, ARNode)),
+		Actual = app_ipfs:get_block_hashes(IPFSPid),
 		?assertEqual(ExpectedIndeps, Actual)
 	end}.
 
 adt_simple_callback_gets_txs_test_() ->
 	{timeout, 30, fun() ->
-		Node = ar_node_init(),
-		timer:sleep(1000),
-		{ok, Pid} = app_ipfs:start([Node]),
-		timer:sleep(1000),
-		ExpectedTXIDs = add_n_txs_to_node(3, Node),
-		Actual = lists:reverse([TX#tx.id || TX <- app_ipfs:get_txs(Pid)]),
+		{ARNode, IPFSPid} = setup(),
+		ExpectedTXIDs = add_n_txs_to_node(3, ARNode),
+		Actual = lists:reverse([TX#tx.id || TX <- app_ipfs:get_txs(IPFSPid)]),
 		?assertEqual(ExpectedTXIDs, Actual)
 	end}.
 
-adt_simple_callback_ipfs_adds_txs_test_() ->
+adt_simple_callback_ipfs_add_txs_test_() ->
 	{timeout, 30, fun() ->
-		Node = ar_node_init(),
-		timer:sleep(1000),
-		{ok, Pid} = app_ipfs:start([Node]),
-		timer:sleep(1000),
-		ExpectedTSs = add_n_tx_pairs_to_node(3, Node),
-		Actual = ipfs_hashes_to_TSs(Pid),
+		{ARNode, IPFSPid} = setup(),
+		ExpectedTSs = add_n_tx_pairs_to_node(3, ARNode, add),
+		Actual = ipfs_hashes_to_TSs(IPFSPid),
 		?assertEqual(ExpectedTSs, Actual)
 	end}.
 
+adt_simple_callback_ipfs_hash_txs_test_() ->
+	{timeout, 30, fun() ->
+		{ARNode, IPFSPid} = setup(),
+		ExpectedHashes = add_n_tx_pairs_to_node(3, ARNode, hash),
+		Actual = lists:reverse(app_ipfs:get_ipfs_hashes(IPFSPid)),
+		?assertEqual(ExpectedHashes, Actual)
+	end}.
+
 %%% private
+
+setup() ->
+	Node = ar_node_init(),
+	timer:sleep(1000),
+	{ok, Pid} = app_ipfs:start([Node]),
+	timer:sleep(1000),
+	{Node, Pid}.
 
 ar_node_init() ->
 	ar_storage:clear(),
@@ -77,7 +83,7 @@ add_n_txs_to_node(N, Node) ->
 		end,
 		lists:seq(1,N)).
 
-add_n_tx_pairs_to_node(N, Node) ->
+add_n_tx_pairs_to_node(N, Node, add) ->
 	prepare_tx_adder(Node),
 	BoringTags = [
 		{<<"TEST_TAG1">>, <<"TEST_VAL1">>},
@@ -92,6 +98,26 @@ add_n_tx_pairs_to_node(N, Node) ->
 			TX2 = tag_tx(ar_tx:new(timestamp_data(TS, <<"DATA">>)), IPFSTags),
 			send_tx_mine_block(Node, TX2),
 			TS
+		end,
+		lists:seq(1,N));
+
+add_n_tx_pairs_to_node(N, Node, hash) ->
+	prepare_tx_adder(Node),
+	BoringTags = [
+		{<<"TEST_TAG1">>, <<"TEST_VAL1">>},
+		{<<"TEST_TAG2">>, <<"TEST_VAL2">>}
+	],
+	lists:map(fun(X) ->
+			TX1 = tag_tx(ar_tx:new(timestamp_data(<<"DATA">>)), BoringTags),
+			send_tx_mine_block(Node, TX1),
+			TS = ts_bin(),
+			Filename = numbered_fn(X),
+			Data = timestamp_data(TS, <<"Data">>),
+			{ok, Hash} = ar_ipfs:add_data(Data, Filename),
+			IPFSTags = [{<<"IPFS-Hash">>, Hash}],
+			TX2 = tag_tx(ar_tx:new(Data), IPFSTags),
+			send_tx_mine_block(Node, TX2),
+			Hash
 		end,
 		lists:seq(1,N)).
 
