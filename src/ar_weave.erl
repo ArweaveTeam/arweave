@@ -163,7 +163,7 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 			previous_block = CurrentB#block.indep_hash,
 			timestamp = Timestamp,
 			last_retarget =
-				case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
+				case ar_retarget:is_retarget_height(NewHeight) of
 					true -> Timestamp;
 					false -> CurrentB#block.last_retarget
 				end,

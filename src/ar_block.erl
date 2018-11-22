@@ -274,8 +274,8 @@ generate_block_data_segment(CurrentB, RecallB, TXs, unclaimed, Time, Tags) ->
 	);
 generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
 	NewHeight = CurrentB#block.height + 1,
-	Retarget = 
-		case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
+	Retarget =
+		case ar_retarget:is_retarget_height(NewHeight) of
 			true -> Time;
 			false -> CurrentB#block.last_retarget
 		end,
@@ -323,7 +323,7 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
 	% ar:d({recall, byte_size(block_to_binary(RecallB))}),
 	% ar:d({txs, binary:list_to_bin(lists:map(fun ar_tx:tx_to_binary/1, TXs))}),
 	MR =
-		case NewHeight > ?FORK_1_6 of
+		case CurrentB#block.height >= ?FORK_1_6 of
 			true -> CurrentB#block.hash_list_merkle;
 			false -> <<>>
 		end,
