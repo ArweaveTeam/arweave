@@ -689,7 +689,7 @@ do_recovered_from_fork(StateIn, NewB) ->
 %% The highest cumulated diff is the one with most work performed and should
 %% therefor be prefered.
 is_fork_preferable(ForkB, _, CurrentBHL) when ForkB#block.height < ?FORK_1_6 ->
-	(length(ForkB#block.hash_list) + 1) > length(CurrentBHL);
+	ForkB#block.height > length(CurrentBHL);
 is_fork_preferable(ForkB, CurrentCDiff, _) ->
 	ForkB#block.cumulative_diff > CurrentCDiff.
 
