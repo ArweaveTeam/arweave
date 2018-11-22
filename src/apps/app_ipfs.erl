@@ -1,11 +1,12 @@
 -module(app_ipfs).
--export([start/1, stop/1, get_block_hashes/1]).
+-export([start/1, stop/1, get_block_hashes/1, get_txs/1]).
 -export([confirmed_transaction/2, new_block/2]).
 -include("../ar.hrl").
 
 -record(state,{
 	adt_pid = undefined,
-	block_hashes = []
+	block_hashes = [],
+	txs = []
 }).
 
 %%% api
@@ -26,10 +27,17 @@ get_block_hashes(Pid) ->
 		{block_hashes, BHs} -> BHs
 	end.
 
+get_txs(Pid) ->
+	Pid ! {get_txs, self()},
+	receive
+		{txs, TXs} -> TXs
+	end.
+
 %%% adt_simple callbacks
 %%% return the new state (i.e. always the server pid)
 
 confirmed_transaction(Pid, TX) ->
+	Pid ! {recv_new_tx, TX},
 	Pid.
 
 new_block(Pid, Block) ->
@@ -48,7 +56,12 @@ server(State) ->
 		{get_block_hashes, From} ->
 			From ! {block_hashes, State#state.block_hashes},
 			server(State);
+		{get_txs, From} ->
+			From ! {txs, State#state.txs},
+			server(State);
 		{recv_new_block, Block} ->
 			BH = Block#block.indep_hash,
-			server(State#state{block_hashes=[BH|State#state.block_hashes]})
+			server(State#state{block_hashes=[BH|State#state.block_hashes]});
+		{recv_new_tx, TX} ->
+			server(State#state{txs=[TX|State#state.txs]})
 	end.
