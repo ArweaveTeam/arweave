@@ -15,11 +15,10 @@ add_local_and_get_test() ->
 adt_simple_callback_gets_blocks_test_() ->
 	% {timeout, 30, fun() ->
 		Node = ar_node_init(),
-		Peers = [Node],
 		timer:sleep(1000),
-		{ok, Pid} = app_ipfs:start(Peers),
+		{ok, Pid} = app_ipfs:start([Node]),
 		timer:sleep(1000),
-		Expected = mine_n_blocks_on_node(3, Node),
+		Expected = lists:droplast(mine_n_blocks_on_node(3, Node)),
 		ar:d({expected_hashes, Expected}),
 		Actual = app_ipfs:get_block_hashes(Pid),
 		?assertEqual(Expected, Actual).

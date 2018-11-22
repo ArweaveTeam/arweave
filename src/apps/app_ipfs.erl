@@ -12,7 +12,8 @@
 
 start(Peers) ->
 	PidMod = spawn(fun() -> server(#state{}) end),
-	PidADT = adt_simple:start(?MODULE, PidMod, Peers),
+	PidADT = adt_simple:start(?MODULE, PidMod),
+	lists:foreach(fun(Node) -> ar_node:add_peers(Node, [PidADT]) end, Peers),
 	PidMod ! {add_adt_pid, PidADT},
 	{ok, PidMod}.
 
@@ -48,6 +49,6 @@ server(State) ->
 			From ! {block_hashes, State#state.block_hashes},
 			server(State);
 		{recv_new_block, Block} ->
-			BH = Block#block.hash,
+			BH = Block#block.indep_hash,
 			server(State#state{block_hashes=[BH|State#state.block_hashes]})
 	end.
