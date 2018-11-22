@@ -690,7 +690,6 @@ do_recovered_from_fork(StateIn, NewB) ->
 %% cumulative difficulty must increase.
 is_state_preferable(NewB, _CDiff, OldBHL) when NewB#block.height < ?FORK_1_6 ->
 	(length(NewB#block.hash_list) + 1) > (length(OldBHL));
-is_state_preferable(_NewB, _CDiff, not_joined) -> true;
 is_state_preferable(NewB, OldCDiff, _OldBHL) ->
 	NewB#block.cumulative_diff > OldCDiff.
 
