@@ -418,7 +418,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 			end;
 		false ->
 			ar:report([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
-			case is_state_preferable(NewB, CDiff, BHL) of
+			case is_fork_preferable(NewB, CDiff, BHL) of
 				false -> [];
 				true ->
 					ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
@@ -438,7 +438,7 @@ process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList
 	{ok, [{gossip, NewGS}]};
 process_new_block(#{ height := Height, cumulative_diff := CDiff } = StateIn, NewGS, NewB, _RecallB, Peer, HashList)
 		when (NewB#block.height > Height + 1) ->
-	case is_state_preferable(NewB, CDiff, HashList) of
+	case is_fork_preferable(NewB, CDiff, HashList) of
 		true ->
 			{ok, ar_node_utils:fork_recover(StateIn#{ gossip => NewGS }, Peer, NewB)};
 		false ->
@@ -640,7 +640,7 @@ recovered_from_fork(#{ hash_list := HashList } = StateIn, NewHs) ->
 		_		  -> erlang:unregister(fork_recovery_server)
 	end,
 	NewB = ar_storage:read_block(hd(NewHs), NewHs),
-	case is_state_preferable(NewB, maps:get(cumulative_diff, StateIn), HashList) of
+	case is_fork_preferable(NewB, maps:get(cumulative_diff, StateIn), HashList) of
 		true ->
 			do_recovered_from_fork(StateIn, NewB);
 		false ->
@@ -685,12 +685,12 @@ do_recovered_from_fork(StateIn, NewB) ->
 		}
 	)}.
 
-%% @doc Test whether a new state is 'preferable' to the current one.
-%% If we have not joined, any state is an improvement. Otherwise, the
-%% cumulative difficulty must increase.
-is_state_preferable(NewB, _CDiff, OldBHL) when NewB#block.height < ?FORK_1_6 ->
+%% @doc Test whether a new fork is 'preferable' to the current one.
+%% The highest cumulated diff is the one with most work performed and should
+%% therefor be prefered.
+is_fork_preferable(NewB, _CDiff, OldBHL) when NewB#block.height < ?FORK_1_6 ->
 	(length(NewB#block.hash_list) + 1) > (length(OldBHL));
-is_state_preferable(NewB, OldCDiff, _OldBHL) ->
+is_fork_preferable(NewB, OldCDiff, _OldBHL) ->
 	NewB#block.cumulative_diff > OldCDiff.
 
 %% @doc Aggregates the transactions of a state to one list.
