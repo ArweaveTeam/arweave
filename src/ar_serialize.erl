@@ -38,9 +38,10 @@ block_to_json_struct(
 		tags = Tags,
 		reward_pool = RewardPool,
 		weave_size = WeaveSize,
-		block_size = BlockSize
+		block_size = BlockSize,
+		cumulative_diff = CDiff
 	}) ->
-	{
+	JSONElements =
 		[
 			{nonce, ar_util:encode(Nonce)},
 			{previous_block, ar_util:encode(PrevHash)},
@@ -77,67 +78,22 @@ block_to_json_struct(
 			{tags, Tags},
 			{reward_pool, RewardPool},
 			{weave_size, WeaveSize},
-			{block_size, BlockSize}
-		]
-	}.
+			{block_size, BlockSize},
+			{cumulative_diff, CDiff}
+		],
+	case Height < ?FORK_1_6 of
+		true -> {lists:keydelete(cumulative_diff, 1, JSONElements)};
+		false -> {JSONElements}
+	end.
 
 %% @doc Convert a full block record into a JSON struct.
-full_block_to_json_struct(
-	#block {
-		nonce = Nonce,
-		previous_block = PrevHash,
-		timestamp = TimeStamp,
-		last_retarget = LastRetarget,
-		diff = Diff,
-		height = Height,
-		hash = Hash,
-		indep_hash = IndepHash,
-		txs = TXs,
-		wallet_list = WalletList,
-		reward_addr = RewardAddr,
-		tags = Tags,
-		reward_pool = RewardPool,
-		weave_size = WeaveSize,
-		block_size = BlockSize
-	}) ->
+full_block_to_json_struct(B = #block { txs = TXs }) ->
+	{JSONElements} = block_to_json_struct(B#block { txs = [] }),
 	{
 		[
-			{nonce, ar_util:encode(Nonce)},
-			{previous_block, ar_util:encode(PrevHash)},
-			{timestamp, TimeStamp},
-			{last_retarget, LastRetarget},
-			{diff, Diff},
-			{height, Height},
-			{hash, ar_util:encode(Hash)},
-			{indep_hash, ar_util:encode(IndepHash)},
-			{txs, lists:map(fun tx_safely_to_json_struct/1, TXs)},
-			{wallet_list,
-				case is_binary(WalletList) of
-					true -> ar_util:encode(WalletList);
-					false ->
-						lists:map(
-							fun({Wallet, Qty, Last}) ->
-								{
-									[
-										{wallet, ar_util:encode(Wallet)},
-										{quantity, Qty},
-										{last_tx, ar_util:encode(Last)}
-									]
-								}
-							end,
-							WalletList
-						)
-				end
-			},
-			{reward_addr,
-				if RewardAddr == unclaimed -> list_to_binary("unclaimed");
-				true -> ar_util:encode(RewardAddr)
-				end
-			},
-			{tags, Tags},
-			{reward_pool, RewardPool},
-			{weave_size, WeaveSize},
-			{block_size, BlockSize}
+			{txs, lists:map(fun tx_safely_to_json_struct/1, TXs)}
+		|
+			lists:keydelete(txs, 1, JSONElements)
 		]
 	}.
 
@@ -149,11 +105,15 @@ json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	end;
 json_struct_to_block(JSONBlock) ->
 	{BlockStruct} = JSONBlock,
+	Height = find_value(<<"height">>, BlockStruct),
 	TXs = find_value(<<"txs">>, BlockStruct),
-
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
 	HashList = find_value(<<"hash_list">>, BlockStruct),
 	Tags = find_value(<<"tags">>, BlockStruct),
+	CDiff = case find_value(<<"cumulative_diff">>, BlockStruct) of
+		_ when Height < ?FORK_1_6 -> 0;
+		CD -> CD
+	end,
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
 		previous_block =
@@ -163,10 +123,11 @@ json_struct_to_block(JSONBlock) ->
 		timestamp = find_value(<<"timestamp">>, BlockStruct),
 		last_retarget = find_value(<<"last_retarget">>, BlockStruct),
 		diff = find_value(<<"diff">>, BlockStruct),
-		height = find_value(<<"height">>, BlockStruct),
+		height = Height,
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
-		txs = lists:map(
+		txs =
+			lists:map(
 			fun (TX) when is_binary(TX) ->
 					ar_util:decode(TX);
 				(TX) ->
@@ -209,7 +170,8 @@ json_struct_to_block(JSONBlock) ->
 		tags = Tags,
 		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
-		block_size = find_value(<<"block_size">>, BlockStruct)
+		block_size = find_value(<<"block_size">>, BlockStruct),
+		cumulative_diff = CDiff
 	}.
 
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a
@@ -222,57 +184,17 @@ json_struct_to_full_block(JSONBlock) when is_binary(JSONBlock) ->
 json_struct_to_full_block(JSONBlock) ->
 	{BlockStruct} = JSONBlock,
 	TXs = find_value(<<"txs">>, BlockStruct),
-	WalletList = find_value(<<"wallet_list">>, BlockStruct),
-	HashList = find_value(<<"hash_list">>, BlockStruct),
-	Tags = find_value(<<"tags">>, BlockStruct),
-	#block {
-		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
-		previous_block =
-			ar_util:decode(
-				find_value(<<"previous_block">>, BlockStruct)
-			),
-		timestamp = find_value(<<"timestamp">>, BlockStruct),
-		last_retarget = find_value(<<"last_retarget">>, BlockStruct),
-		diff = find_value(<<"diff">>, BlockStruct),
-		height = find_value(<<"height">>, BlockStruct),
-		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
-		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
-		txs = lists:map(fun json_struct_to_tx/1, TXs),
-		hash_list =
-			case HashList of
-				undefined -> unset;
-				_		  -> [ ar_util:decode(Hash) || Hash <- HashList ]
-			end,
-		wallet_list =
-			case is_binary(WalletList) of
-				false ->
-					[
-						{
-							ar_util:decode(Wallet),
-							Qty,
-							ar_util:decode(Last)
-						}
-					||
-						{
-							[
-								{<<"wallet">>, Wallet},
-								{<<"quantity">>, Qty},
-								{<<"last_tx">>, Last}
-							]
-						}
-						<- WalletList
-					];
-				true -> ar_util:decode(WalletList)
-			end,
-		reward_addr =
-			case find_value(<<"reward_addr">>, BlockStruct) of
-				<<"unclaimed">> -> unclaimed;
-				StrAddr -> ar_util:decode(StrAddr)
-			end,
-		tags = Tags,
-		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
-		weave_size = find_value(<<"weave_size">>, BlockStruct),
-		block_size = find_value(<<"block_size">>, BlockStruct)
+	TempStruct =
+		{
+			[
+				{<<"txs">>, []}
+			|
+				lists:keydelete(<<"txs">>, 1, BlockStruct)
+			]
+		},
+	B = json_struct_to_block(TempStruct),
+	B#block {
+		txs = lists:map(fun json_struct_to_tx/1, TXs)
 	}.
 
 tx_safely_to_json_struct(TX) when is_record(TX, tx) ->
@@ -475,4 +397,3 @@ query_roundtrip_test() ->
 			)
 		),
 	?assert(Query == ar_serialize:json_struct_to_query(QueryJSON)).
-

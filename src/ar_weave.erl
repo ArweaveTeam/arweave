@@ -130,7 +130,7 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, Recal
 		Nonce,
 		Timestamp
 	);
-add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
+add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
 	% ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
 	RecallB = ar_node_utils:find_recall_block(HashList),
 	TXs = [T#tx.id || T <- RawTXs],
@@ -141,21 +141,28 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
 			0,
 			RawTXs
 		),
+	NewHeight = CurrentB#block.height + 1,
+	CDiff =
+		case NewHeight >= ?FORK_1_6 of
+			true -> CurrentB#block.cumulative_diff + (Diff * Diff);
+			false -> 0
+		end,
 	NewB =
 		#block {
 			nonce = Nonce,
-			previous_block = B#block.indep_hash,
+			previous_block = CurrentB#block.indep_hash,
 			timestamp = Timestamp,
 			last_retarget =
-				case ar_retarget:is_retarget_height(B#block.height + 1) of
+				case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
 					true -> Timestamp;
-					false -> B#block.last_retarget
+					false -> CurrentB#block.last_retarget
 				end,
 			diff = Diff,
-			height = B#block.height + 1,
+			cumulative_diff = CDiff,
+			height = NewHeight,
 			hash = hash(
 				ar_block:generate_block_data_segment(
-					B,
+					CurrentB,
 					RecallB,
 					RawTXs,
 					RewardAddr,
@@ -164,14 +171,13 @@ add([B|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB
 				),
 				Nonce
 			),
-			% indep hash
 			txs = TXs,
 			hash_list = HashList,
 			wallet_list = WalletList,
 			reward_addr = RewardAddr,
 			tags = Tags,
 			reward_pool = RewardPool,
-			weave_size = B#block.weave_size + BlockSize,
+			weave_size = CurrentB#block.weave_size + BlockSize,
 			block_size = BlockSize
 		},
 	[NewB#block { indep_hash = indep_hash(NewB) }|HashList].
@@ -226,6 +232,7 @@ indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 		integer_to_binary(B#block.timestamp),
 		integer_to_binary(B#block.last_retarget),
 		integer_to_binary(B#block.diff),
+		integer_to_binary(B#block.cumulative_diff),
 		integer_to_binary(B#block.height),
 		B#block.hash,
 		B#block.hash_list,
