@@ -134,10 +134,12 @@ json_struct_to_block(JSONBlock) ->
 	Tags = find_value(<<"tags">>, BlockStruct),
 	CDiff = case find_value(<<"cumulative_diff">>, BlockStruct) of
 		_ when Height < ?FORK_1_6 -> 0;
+		undefined -> 0; % In case it's an invalid block (in the pre-fork format)
 		CD -> CD
 	end,
 	MR = case find_value(<<"hash_list_merkle">>, BlockStruct) of
 		_ when Height < ?FORK_1_6 -> <<>>;
+		undefined -> <<>>; % In case it's an invalid block (in the pre-fork format)
 		R -> ar_util:decode(R)
 	end,
 	#block {
