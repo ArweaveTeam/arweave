@@ -9,8 +9,8 @@ hash(List) when is_list(List) -> hash_bin_or_list(List).
 %%% INTERNAL
 
 hash_bin_or_list(Bin) when is_binary(Bin) ->
-	TaggedBin = <<"blob", (integer_to_binary(byte_size(Bin)))/binary, Bin/binary>>,
-	hash_bin(TaggedBin);
+	Tag = <<"blob", (integer_to_binary(byte_size(Bin)))/binary>>,
+	hash_bin(<<(hash_bin(Tag))/binary, (hash_bin(Bin))/binary>>);
 hash_bin_or_list(List) when is_list(List) ->
 	Tag = <<"list", (integer_to_binary(length(List)))/binary>>,
 	hash_list(List, hash_bin(Tag)).
@@ -34,10 +34,10 @@ hash_test() ->
 	V3 = crypto:strong_rand_bytes(32),
 	V4 = crypto:strong_rand_bytes(32),
 	DeepList = [V1, [V2, V3], V4],
-	H1 = hash_bin(<<"blob", "32", V1/binary>>),
-	H2 = hash_bin(<<"blob", "32", V2/binary>>),
-	H3 = hash_bin(<<"blob", "32", V3/binary>>),
-	H4 = hash_bin(<<"blob", "32", V4/binary>>),
+	H1 = hash_bin(<<(hash_bin(<<"blob", "32">>))/binary, (hash_bin(V1))/binary>>),
+	H2 = hash_bin(<<(hash_bin(<<"blob", "32">>))/binary, (hash_bin(V2))/binary>>),
+	H3 = hash_bin(<<(hash_bin(<<"blob", "32">>))/binary, (hash_bin(V3))/binary>>),
+	H4 = hash_bin(<<(hash_bin(<<"blob", "32">>))/binary, (hash_bin(V4))/binary>>),
 	HSublistTag = hash_bin(<<"list", "2">>),
 	HSublistHead = hash_bin(<<HSublistTag/binary, H2/binary>>),
 	HSublist = hash_bin(<<HSublistHead/binary, H3/binary>>),
