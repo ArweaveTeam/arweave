@@ -32,14 +32,14 @@ hash_test() ->
 	V3 = crypto:strong_rand_bytes(32),
 	V4 = crypto:strong_rand_bytes(32),
 	DeepList = [V1, [V2, V3], V4],
-	H1 = test_hash(<<"blob32", V1/binary>>),
-	H2 = test_hash(<<"blob32", V2/binary>>),
-	H3 = test_hash(<<"blob32", V3/binary>>),
-	H4 = test_hash(<<"blob32", V4/binary>>),
-	HSublistTag = test_hash(<<"list2">>),
+	H1 = test_hash(<<"blob", "32", V1/binary>>),
+	H2 = test_hash(<<"blob", "32", V2/binary>>),
+	H3 = test_hash(<<"blob", "32", V3/binary>>),
+	H4 = test_hash(<<"blob", "32", V4/binary>>),
+	HSublistTag = test_hash(<<"list", "2">>),
 	HSublistHead = test_hash(<<HSublistTag/binary, H2/binary>>),
 	HSublist = test_hash(<<HSublistHead/binary, H3/binary>>),
-	HListTag = test_hash(<<"list3">>),
+	HListTag = test_hash(<<"list", "3">>),
 	HHead = test_hash(<<HListTag/binary, H1/binary>>),
 	HWithSublist = test_hash(<<HHead/binary, HSublist/binary>>),
 	H = test_hash(<<HWithSublist/binary, H4/binary>>),
@@ -49,7 +49,7 @@ test_hash(Bin) when is_binary(Bin) ->
 	crypto:hash(?DEEP_HASH_ALG, Bin).
 
 hash_empty_list_test() ->
-	?assertEqual(test_hash(<<"list0">>), hash([])).
+	?assertEqual(test_hash(<<"list", "0">>), hash([])).
 
 hash_uniqueness_test() ->
 	?assertNotEqual(
