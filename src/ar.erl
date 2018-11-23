@@ -28,6 +28,7 @@
 		ar_node_tests,
 		ar_util,
 		ar_cleanup,
+		ar_merkle,
 		ar_meta_db,
 		ar_storage,
 		ar_serialize,

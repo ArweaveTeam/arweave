@@ -94,7 +94,7 @@ is_in_tolerance_test() ->
 %%% Calculate and verify per-year expected and actual inflation.
 
 year_1_test() ->
-    true = is_in_tolerance(year_sum_rewards(0), ?AR(8988500)).
+    true = is_in_tolerance(year_sum_rewards(0), ?AR(5500000)).
 
 year_2_test() ->
     true = is_in_tolerance(year_sum_rewards(1), ?AR(2750000)).

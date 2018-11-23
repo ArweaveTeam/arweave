@@ -1,16 +1,7 @@
 %%% A collection of record structures used throughout the Arweave server.
 
-%% @doc Specifies whether the software should be run in debug mode
-%% (excuting ifdef code blocks).
-%% WARNING: Only define debug during testing.
-%-define(DEBUG, debug).
-
 %%% FORK INDEX
--ifdef(DEBUG).
--define(FORK_1_6, 4).
--else.
 -define(FORK_1_6, 95000).
--endif.
 
 %% @doc How nodes identify they are on the same network.
 -define(NETWORK_NAME, "arweave.N.1").
@@ -32,6 +23,11 @@
 		{<<"Access-Control-Allow-Origin">>, <<"*">>}
 	]).
 
+%% @doc Specifies whether the software should be run in debug mode
+%% (excuting ifdef code blocks).
+%% WARNING: Only define debug during testing.
+%-define(DEBUG, debug).
+
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").
 
@@ -45,6 +41,7 @@
 %% tampered with.
 -define(MINING_HASH_ALG, sha384).
 -define(DEEP_HASH_ALG, sha384).
+-define(MERKLE_HASH_ALG, sha384).
 -define(HASH_SZ, 256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
@@ -193,6 +190,7 @@
 	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
 	txs = [], % A list of transaction records associated with this block.
 	hash_list = unset, % A list of all previous indep hashes.
+	hash_list_merkle = <<>>, % The merkle root of the block's BHL.
 	wallet_list = [], % A map of wallet balances, or undefined.
     reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
     tags = [], % Miner specified tags to store with the block.

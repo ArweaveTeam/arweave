@@ -45,7 +45,8 @@ start() ->
 		{diff, 0},                          % current mining difficulty of the weave (no. of preceeding zero)
 		{last_retarget, undefined},         % timestamp at which the last difficulty retarget occurred
 		{weave_size, 0},                    % current size of the weave in bytes (only inc. data tx size)
-		{cumulative_diff, 0}                % Sum of the difficulty squared along the current weave
+		{cumulative_diff, 0},               % Sum of the difficulty squared along the current weave
+		{hash_list_merkle, <<>>}            % The Merkle root of the current BHL
 	]),
 	{ok, Pid}.
 

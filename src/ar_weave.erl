@@ -132,6 +132,7 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, Recal
 	);
 add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
 	% ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
+	NewHeight = CurrentB#block.height + 1,
 	RecallB = ar_node_utils:find_recall_block(HashList),
 	TXs = [T#tx.id || T <- RawTXs],
 	BlockSize = lists:foldl(
@@ -147,13 +148,22 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 			true -> CurrentB#block.cumulative_diff + (Diff * Diff);
 			false -> 0
 		end,
+	MR =
+		case NewHeight of
+			_ when NewHeight < ?FORK_1_6 ->
+				<<>>;
+			_ when NewHeight == ?FORK_1_6 ->
+				ar_merkle:block_hash_list_to_merkle_root(CurrentB#block.hash_list);
+			_ ->
+				ar_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash)
+		end,
 	NewB =
 		#block {
 			nonce = Nonce,
 			previous_block = CurrentB#block.indep_hash,
 			timestamp = Timestamp,
 			last_retarget =
-				case ar_retarget:is_retarget_height(CurrentB#block.height + 1) of
+				case ar_retarget:is_retarget_height(NewHeight) of
 					true -> Timestamp;
 					false -> CurrentB#block.last_retarget
 				end,
@@ -173,6 +183,7 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 			),
 			txs = TXs,
 			hash_list = HashList,
+			hash_list_merkle = MR,
 			wallet_list = WalletList,
 			reward_addr = RewardAddr,
 			tags = Tags,
@@ -235,7 +246,7 @@ indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 		integer_to_binary(B#block.cumulative_diff),
 		integer_to_binary(B#block.height),
 		B#block.hash,
-		B#block.hash_list,
+		B#block.hash_list_merkle,
 		[ar_tx:tx_to_list(TX) || TX <- B#block.txs],
 		[[Addr, integer_to_binary(Balance), LastTX]
 			||	{Addr, Balance, LastTX} <- B#block.wallet_list],
