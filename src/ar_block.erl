@@ -460,14 +460,14 @@ verify_cumulative_diff(NewB, OldB) ->
 		(OldB#block.cumulative_diff + (NewB#block.diff * NewB#block.diff)).
 
 %% @doc After 1.6 fork check that the given merkle root in a new block is valid.
-verify_block_hash_list_merkle(NewB, _OldB) when NewB#block.height < ?FORK_1_6 ->
+verify_block_hash_list_merkle(NewB, _CurrentB) when NewB#block.height < ?FORK_1_6 ->
 	NewB#block.hash_list_merkle == <<>>;
-verify_block_hash_list_merkle(NewB, OldB) when NewB#block.height == ?FORK_1_6 ->
+verify_block_hash_list_merkle(NewB, CurrentB) when NewB#block.height == ?FORK_1_6 ->
 	NewB#block.hash_list_merkle ==
-		ar_merkle:block_hash_list_to_merkle_root(OldB#block.hash_list);
-verify_block_hash_list_merkle(NewB, OldB) ->
+		ar_merkle:block_hash_list_to_merkle_root(CurrentB#block.hash_list);
+verify_block_hash_list_merkle(NewB, CurrentB) ->
 	NewB#block.hash_list_merkle ==
-		ar_merkle:add_hash(OldB#block.hash_list_merkle, OldB#block.indep_hash).
+		ar_merkle:add_hash(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash).
 
 % Block shadow functions
 
