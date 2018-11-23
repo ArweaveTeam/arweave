@@ -10,18 +10,20 @@ hash(List) when is_list(List) -> hash_bin_or_list(List).
 
 hash_bin_or_list(Bin) when is_binary(Bin) ->
 	TaggedBin = <<"blob", (integer_to_binary(byte_size(Bin)))/binary, Bin/binary>>,
-	crypto:hash(?DEEP_HASH_ALG, TaggedBin);
+	hash_bin(TaggedBin);
 hash_bin_or_list(List) when is_list(List) ->
 	Tag = <<"list", (integer_to_binary(length(List)))/binary>>,
-	Acc = crypto:hash(?DEEP_HASH_ALG, Tag),
-	hash_list(List, Acc).
+	hash_list(List, hash_bin(Tag)).
 
 hash_list([], Acc) ->
 	Acc;
 hash_list([Head | List], Acc) ->
 	HashPair = <<Acc/binary, (hash_bin_or_list(Head))/binary>>,
-	NewAcc = crypto:hash(?DEEP_HASH_ALG, HashPair),
+	NewAcc = hash_bin(HashPair),
 	hash_list(List, NewAcc).
+
+hash_bin(Bin) when is_binary(Bin) ->
+	crypto:hash(?DEEP_HASH_ALG, Bin).
 
 
 %%% TESTS
@@ -32,24 +34,21 @@ hash_test() ->
 	V3 = crypto:strong_rand_bytes(32),
 	V4 = crypto:strong_rand_bytes(32),
 	DeepList = [V1, [V2, V3], V4],
-	H1 = test_hash(<<"blob", "32", V1/binary>>),
-	H2 = test_hash(<<"blob", "32", V2/binary>>),
-	H3 = test_hash(<<"blob", "32", V3/binary>>),
-	H4 = test_hash(<<"blob", "32", V4/binary>>),
-	HSublistTag = test_hash(<<"list", "2">>),
-	HSublistHead = test_hash(<<HSublistTag/binary, H2/binary>>),
-	HSublist = test_hash(<<HSublistHead/binary, H3/binary>>),
-	HListTag = test_hash(<<"list", "3">>),
-	HHead = test_hash(<<HListTag/binary, H1/binary>>),
-	HWithSublist = test_hash(<<HHead/binary, HSublist/binary>>),
-	H = test_hash(<<HWithSublist/binary, H4/binary>>),
+	H1 = hash_bin(<<"blob", "32", V1/binary>>),
+	H2 = hash_bin(<<"blob", "32", V2/binary>>),
+	H3 = hash_bin(<<"blob", "32", V3/binary>>),
+	H4 = hash_bin(<<"blob", "32", V4/binary>>),
+	HSublistTag = hash_bin(<<"list", "2">>),
+	HSublistHead = hash_bin(<<HSublistTag/binary, H2/binary>>),
+	HSublist = hash_bin(<<HSublistHead/binary, H3/binary>>),
+	HListTag = hash_bin(<<"list", "3">>),
+	HHead = hash_bin(<<HListTag/binary, H1/binary>>),
+	HWithSublist = hash_bin(<<HHead/binary, HSublist/binary>>),
+	H = hash_bin(<<HWithSublist/binary, H4/binary>>),
 	?assertEqual(H, hash(DeepList)).
 
-test_hash(Bin) when is_binary(Bin) ->
-	crypto:hash(?DEEP_HASH_ALG, Bin).
-
 hash_empty_list_test() ->
-	?assertEqual(test_hash(<<"list", "0">>), hash([])).
+	?assertEqual(hash_bin(<<"list", "0">>), hash([])).
 
 hash_uniqueness_test() ->
 	?assertNotEqual(
