@@ -1,6 +1,5 @@
 -module(ar_merkle).
 -export([root/2, root/3]).
--export([add_hash/2, add_wallet/2]).
 -export([block_hash_list_to_merkle_root/1, wallet_list_to_merkle_root/1]).
 
 -include("ar.hrl").
@@ -36,12 +35,6 @@ wallet_list_to_merkle_root(WL) ->
 		lists:reverse(WL)
 	).
 
-%% @doc Add a new hash to an existing merkle tree, resulting in a new Merkle root.
-add_hash(MR, BH) -> root(MR, BH).
-
-%% @doc Add a new formatted wallet entry to an existing wallet merkle tree and return the new root.
-add_wallet(MR, Wallet) -> root(MR, Wallet, fun wallet_to_binary/1).
-
 %%% Helper functions
 
 %% @doc Turn a wallet into a binary, for addition to a Merkle tree.
@@ -61,13 +54,13 @@ basic_hash_root_generation_test() ->
 
 test_hash(Bin) -> crypto:hash(?MERKLE_HASH_ALG, Bin).
 
-add_hash_test() ->
+root_update_test() ->
 	BH0 = crypto:strong_rand_bytes(32),
 	BH1 = crypto:strong_rand_bytes(32),
 	BH2 = crypto:strong_rand_bytes(32),
 	BH3 = crypto:strong_rand_bytes(32),
-	Root = add_hash(
-		add_hash(
+	Root = root(
+		root(
 			block_hash_list_to_merkle_root([BH1, BH0]),
 			BH2
 		),

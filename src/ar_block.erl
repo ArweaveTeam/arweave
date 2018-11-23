@@ -467,7 +467,7 @@ verify_block_hash_list_merkle(NewB, CurrentB) when NewB#block.height == ?FORK_1_
 		ar_merkle:block_hash_list_to_merkle_root(CurrentB#block.hash_list);
 verify_block_hash_list_merkle(NewB, CurrentB) ->
 	NewB#block.hash_list_merkle ==
-		ar_merkle:add_hash(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash).
+		ar_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash).
 
 % Block shadow functions
 

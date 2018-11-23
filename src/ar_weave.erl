@@ -155,7 +155,7 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 			_ when NewHeight == ?FORK_1_6 ->
 				ar_merkle:block_hash_list_to_merkle_root(CurrentB#block.hash_list);
 			_ ->
-				ar_merkle:add_hash(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash)
+				ar_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash)
 		end,
 	NewB =
 		#block {
