@@ -460,7 +460,8 @@ verify_cumulative_diff(NewB, OldB) ->
 		(OldB#block.cumulative_diff + (NewB#block.diff * NewB#block.diff)).
 
 %% @doc After 1.6 fork check that the given merkle root in a new block is valid.
-verify_block_hash_list_merkle(NewB, _OldB) when NewB#block.height < ?FORK_1_6 -> true;
+verify_block_hash_list_merkle(NewB, _OldB) when NewB#block.height < ?FORK_1_6 ->
+	NewB#block.hash_list_merkle == <<>>;
 verify_block_hash_list_merkle(NewB, OldB) when NewB#block.height == ?FORK_1_6 ->
 	NewB#block.hash_list_merkle ==
 		ar_merkle:block_hash_list_to_merkle_root(OldB#block.hash_list);
