@@ -52,7 +52,16 @@ block_to_json_struct(
 			{height, Height},
 			{hash, ar_util:encode(Hash)},
 			{indep_hash, ar_util:encode(IndepHash)},
-			{txs, lists:map(fun ar_util:encode/1, TXs)},
+			{txs,
+				lists:map(
+					fun(TXID) when is_binary(TXID) ->
+						ar_util:encode(TXID);
+					(TX) ->
+						ar_util:encode(TX#tx.id)
+					end,
+					TXs
+				)
+			},
 			{wallet_list,
 				case is_binary(WalletList) of
 					true -> ar_util:encode(WalletList);
