@@ -1,5 +1,17 @@
 %%% A collection of record structures used throughout the Arweave server.
 
+%% @doc Specifies whether the software should be run in debug mode
+%% (excuting ifdef code blocks).
+%% WARNING: Only define debug during testing.
+%-define(DEBUG, debug).
+
+%%% FORK INDEX
+-ifdef(DEBUG).
+-define(FORK_1_6, 4).
+-else.
+-define(FORK_1_6, 95000).
+-endif.
+
 %% @doc How nodes identify they are on the same network.
 -define(NETWORK_NAME, "arweave.N.1").
 
@@ -20,11 +32,6 @@
 		{<<"Access-Control-Allow-Origin">>, <<"*">>}
 	]).
 
-%% @doc Specifies whether the software should be run in debug mode
-%% (excuting ifdef code blocks).
-%% WARNING: Only define debug during testing.
-%-define(DEBUG, debug).
-
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").
 
@@ -37,6 +44,7 @@
 %% @doc The hashing algorithm used to verify that the weave has not been
 %% tampered with.
 -define(MINING_HASH_ALG, sha384).
+-define(DEEP_HASH_ALG, sha384).
 -define(HASH_SZ, 256).
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).

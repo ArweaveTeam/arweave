@@ -23,6 +23,7 @@
 	[
 		ar,
 		ar_block_index,
+		ar_deep_hash,
 		ar_inflation,
 		ar_node_tests,
 		ar_util,

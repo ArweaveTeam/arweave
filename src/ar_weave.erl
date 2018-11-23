@@ -219,6 +219,28 @@ hash(DataSegment, Nonce) ->
 
 %% @doc Create an independent hash from a block. Independent hashes
 %% verify a block's contents in isolation and are stored in a node's hash list.
+indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
+	ar_deep_hash:hash([
+		B#block.nonce,
+		B#block.previous_block,
+		integer_to_binary(B#block.timestamp),
+		integer_to_binary(B#block.last_retarget),
+		integer_to_binary(B#block.diff),
+		integer_to_binary(B#block.height),
+		B#block.hash,
+		B#block.hash_list,
+		[ar_tx:tx_to_list(TX) || TX <- B#block.txs],
+		[[Addr, integer_to_binary(Balance), LastTX]
+			||	{Addr, Balance, LastTX} <- B#block.wallet_list],
+		case B#block.reward_addr of
+			unclaimed -> <<"unclaimed">>;
+			_ -> B#block.reward_addr
+		end,
+		ar_tx:tags_to_list(B#block.tags),
+		integer_to_binary(B#block.reward_pool),
+		integer_to_binary(B#block.weave_size),
+		integer_to_binary(B#block.block_size)
+	]);
 indep_hash(#block {
 		nonce = Nonce,
 		previous_block = PrevHash,
