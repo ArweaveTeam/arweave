@@ -446,7 +446,8 @@ verify_weave_size(NewB, OldB, TXs) ->
 	).
 
 %% @doc Ensure that after the 1.6 release cumulative difficulty is enforced.
-verify_cumulative_diff(NewB, _OldB) when NewB#block.height < ?FORK_1_6 -> true;
+verify_cumulative_diff(NewB, _OldB) when NewB#block.height < ?FORK_1_6 ->
+	NewB#block.cumulative_diff == 0;
 verify_cumulative_diff(NewB, OldB) ->
 	NewB#block.cumulative_diff ==
 		(OldB#block.cumulative_diff + (NewB#block.diff * NewB#block.diff)).
