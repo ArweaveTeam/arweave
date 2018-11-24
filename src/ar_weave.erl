@@ -247,7 +247,7 @@ indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 		integer_to_binary(B#block.height),
 		B#block.hash,
 		B#block.hash_list_merkle,
-		[ar_tx:tx_to_list(TX) || TX <- B#block.txs],
+		[tx_id(TX) || TX <- B#block.txs],
 		[[Addr, integer_to_binary(Balance), LastTX]
 			||	{Addr, Balance, LastTX} <- B#block.wallet_list],
 		case B#block.reward_addr of
@@ -276,10 +276,7 @@ indep_hash(#block {
 		weave_size = WeaveSize,
 		block_size = BlockSize
 	}) ->
-	EncodeTX = fun
-		(TXID) when is_binary(TXID)   -> ar_util:encode(TXID);
-		(TX)   when is_record(TX, tx) -> ar_util:encode(TX#tx.id)
-	end,
+	EncodeTX = fun (TX) -> ar_util:encode(tx_id(TX)) end,
 	crypto:hash(
 		?MINING_HASH_ALG,
 		ar_serialize:jsonify(
@@ -322,6 +319,10 @@ indep_hash(#block {
 			}
 		)
 	).
+
+%% @doc Returns the transaction id
+tx_id(Id) when is_binary(Id) -> Id;
+tx_id(TX) -> TX#tx.id.
 
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.

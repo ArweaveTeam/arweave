@@ -1,7 +1,7 @@
 -module(ar_tx).
 -export([new/0, new/1, new/2, new/3, new/4]).
 -export([sign/2, sign/3, verify/3, verify_txs/3, signature_data_segment/1]).
--export([tx_to_binary/1, tx_to_list/1, tags_to_list/1]).
+-export([tx_to_binary/1, tags_to_list/1]).
 -export([calculate_min_tx_cost/2, calculate_min_tx_cost/4, tx_cost_above_min/2, tx_cost_above_min/4, check_last_tx/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -38,20 +38,17 @@ generate_id() -> crypto:strong_rand_bytes(32).
 %% @doc Generate a hashable binary from a #tx object.
 %% NB: This function cannot be used for signature data as the id and signature fields are not set.
 tx_to_binary(T) ->
-	list_to_binary(tx_to_list(T)).
-
-tx_to_list(T) ->
-	[
-		T#tx.id,
-		T#tx.last_tx,
-		T#tx.owner,
-		tags_to_list(T#tx.tags),
-		T#tx.target,
-		integer_to_binary(T#tx.quantity),
-		T#tx.data,
-		T#tx.signature,
-		integer_to_binary(T#tx.reward)
-	].
+	<<
+		(T#tx.id)/binary,
+		(T#tx.last_tx)/binary,
+		(T#tx.owner)/binary,
+		(tags_to_binary(T#tx.tags))/binary,
+		(T#tx.target)/binary,
+		(list_to_binary(integer_to_list(T#tx.quantity)))/binary,
+		(T#tx.data)/binary,
+		(T#tx.signature)/binary,
+		(list_to_binary(integer_to_list(T#tx.reward)))/binary
+	>>.
 
 %% @doc Generate the data segment to be signed for a given TX.
 signature_data_segment(T) ->
