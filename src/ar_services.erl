@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %%% A module defining a process that keeps track of known services
-%%% on an Archain network.
+%%% on an Arweave network.
 
 %% Server state.
 -record(state, {

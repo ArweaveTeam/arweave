@@ -3,7 +3,7 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% A framework for simply building Archain apps.
+%%% A framework for simply building Arweave apps.
 %%% Simply add your code in the areas marked TODO.
 
 %% Internal state record.

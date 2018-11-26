@@ -2,7 +2,7 @@
 -export([start/0, new_block/1]).
 -include("ar.hrl").
 
-%%% An Archain monitoring app. Scans new (confirmed) transactions for archived
+%%% An Arweave monitoring app. Scans new (confirmed) transactions for archived
 %%% web pages that match a given regular expression.
 
 %% The regular expression to match on.

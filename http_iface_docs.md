@@ -18,7 +18,7 @@ A JSON array containing the network information for the current node.
 
 ```javascript
 {
-  "network": "archain.BATN.4",
+  "network": "arweave.N.1",
   "version": "3",
   "height": "2956",
   "blocks": "3495",
