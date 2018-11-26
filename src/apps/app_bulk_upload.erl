@@ -1,5 +1,5 @@
 -module(app_bulk_upload).
--export([upload/2, upload/3]).
+-export([upload/2, upload/3, download/2]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -55,12 +55,58 @@ chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition) ->
 		data = Chunk
 	}.
 
+%% @doc Searches the local storage for the chunks of the blob with the given hash.
+%% If the blob is reconstructed successfuly, writes it to the specified destination.
+download(Hash, Filename) ->
+	{ok, Blob} = download(Hash),
+	file:write_file(Filename, Blob, [write]).
+
+download(Hash) ->
+	app_search:get_entries(<< "blob_hash" >>, Hash),
+	receive TXIDs ->
+		Transactions = lists:map(fun(TX) -> ar_storage:read_tx(TX) end, TXIDs),
+		{ok, Blob} = reconstruct_blob(Transactions),
+		BlobHash = crypto:hash(?BLOB_HASH_ALGO, Blob),
+		if BlobHash /= Hash ->
+			{error, invalid_upload};
+		true ->
+			{ok, Blob}
+		end
+	end.
+
+reconstruct_blob([]) -> {error, not_found};
+reconstruct_blob(Transactions) ->
+	Head = hd(Transactions),
+	{_, ChunkNumberBinary} = lists:keyfind(<< "number_of_chunks" >>, 1, Head#tx.tags),
+	ChunkNumber = binary_to_integer(ChunkNumberBinary),
+	if length(Transactions) < ChunkNumber ->
+		{error, missing_chunks};
+	true ->
+		SortedTransactions = lists:sort(fun(First, Second) ->
+			{_, FirstPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, First#tx.tags),
+			{_, SecondPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, Second#tx.tags),
+			FirstChunkPosition = binary_to_integer(FirstPositionBinary),
+			SecondChunkPosition = binary_to_integer(SecondPositionBinary),
+			FirstChunkPosition =< SecondChunkPosition
+		end,
+		Transactions
+		),
+		{ok, << (TX#tx.data) || TX <- SortedTransactions >>}
+	end.
+
+
 upload_test_() ->
 	{timeout, 60, fun() ->
+		app_search:deleteDB(),
+
 		Wallet = {_, Pub} = ar_wallet:new(),
 		Bs = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 		Node = ar_node:start([], Bs),
 		Blob = list_to_binary(lists:duplicate(?MB * 2, 1)),
+
+		SearchServer = app_search:start(),
+		ar_node:add_peers(Node, SearchServer),
+
 		upload(Node, Wallet, Blob),
 		BHL = mine_blocks(Node, 6),
 		Transactions = collect_transactions(BHL, BHL),
@@ -85,7 +131,9 @@ upload_test_() ->
 				{<< "chunk_position" >>, << "2" >>}
 			],
 			Second#tx.tags
-		)
+		),
+		{ok, Blob} = download(ExpectedHash),
+		?assertEqual(ExpectedHash, crypto:hash(?BLOB_HASH_ALGO, Blob))
 	end}.
 
 mine_blocks(_, Number) when Number =< 0 -> none;
