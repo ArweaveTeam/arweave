@@ -49,8 +49,8 @@ chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition) ->
 			[
 				{"app_name", "BulkUpload"},
 				{"blob_hash", Hash},
-				{"number_of_chunks", << ChunkNumber >>},
-				{"chunk_position", << ChunkPosition >>}
+				{"number_of_chunks", integer_to_binary(ChunkNumber)},
+				{"chunk_position", integer_to_binary(ChunkPosition)}
 			],
 		data = Chunk
 	}.
@@ -80,8 +80,8 @@ upload_test_() ->
 			[
 				{<< "app_name" >>, << "BulkUpload" >>},
 				{<< "blob_hash" >>, ExpectedHash},
-				{<< "number_of_chunks" >>, << 2 >>},
-				{<< "chunk_position" >>, << 1 >>}
+				{<< "number_of_chunks" >>, << "2" >>},
+				{<< "chunk_position" >>, << "1" >>}
 			],
 			First#tx.tags
 		),
@@ -89,8 +89,8 @@ upload_test_() ->
 			[
 				{<< "app_name" >>, << "BulkUpload" >>},
 				{<< "blob_hash" >>, ExpectedHash},
-				{<< "number_of_chunks" >>, << 2 >>},
-				{<< "chunk_position" >>, << 2 >>}
+				{<< "number_of_chunks" >>, << "2" >>},
+				{<< "chunk_position" >>, << "2" >>}
 			],
 			Second#tx.tags
 		)
