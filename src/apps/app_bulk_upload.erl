@@ -62,15 +62,7 @@ upload_test_() ->
 		Node = ar_node:start([], Bs),
 		Blob = list_to_binary(lists:duplicate(?MB * 2, 1)),
 		upload(Node, Wallet, Blob),
-		receive after 500 -> ok end,
-		lists:foreach(
-			fun(_) ->
-				ar_node:mine(Node),
-				receive after 500 -> ok end
-			end,
-			lists:seq(1, 6)
-		),
-		BHL = ar_node:get_hash_list(Node),
+		BHL = mine_blocks(Node, 6),
 		Transactions = collect_transactions(BHL, BHL),
 		?assertEqual(2, length(Transactions)),
 		[First, Second] = Transactions,
@@ -95,6 +87,29 @@ upload_test_() ->
 			Second#tx.tags
 		)
 	end}.
+
+mine_blocks(_, Number) when Number =< 0 -> none;
+mine_blocks(Node, Number) when Number > 0 ->
+	mine_blocks(Node, Number, []).
+mine_blocks(Node, Total, Mined) ->
+	if Total == 0 ->
+		Mined;
+	true ->
+		ar_node:mine(Node),
+		NewMined = wait_for_blocks(Node,  length(Mined) + 1),
+		mine_blocks(Node, Total - 1, NewMined)
+	end.
+
+wait_for_blocks(Node, ExpectedLength) ->
+	BHL = ar_node:get_hash_list(Node),
+	if length(BHL) < ExpectedLength ->
+		%% A relatively big interval is used here to give app_queue some time
+		%% to post transactions.
+		timer:sleep(1000),
+		wait_for_blocks(Node, ExpectedLength);
+	true ->
+		BHL
+	end.
 
 collect_transactions(_, []) ->
 	[];
