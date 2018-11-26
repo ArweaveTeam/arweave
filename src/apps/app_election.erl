@@ -4,11 +4,11 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% The Archain OpenElections monitor node.
+%%% The Arweave OpenElections monitor node.
 %%% Listens for votes being cast in elections. Returns results when asked.
 
 %% How should the app identify itself in the 'type' field?
--define(APP_TYPE_ID, "Archain.OpenElection").
+-define(APP_TYPE_ID, "Arweave.OpenElection").
 
 -record(state, {
 	name, % A string representation of the name of the election.

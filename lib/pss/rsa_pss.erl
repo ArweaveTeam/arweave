@@ -7,7 +7,7 @@
 %%% https://github.com/potatosalad/erlang-crypto_rsassa_pss
 %%% @end
 %%% Created :  20 Jul 2015 by Andrew Bennett <andrew@pixid.com>
-%%% Modified:  17 Nov 2017 by The Archain Team <team@archain.org>
+%%% Modified:  17 Nov 2017 by The Arweave Team <team@arweave.org>
 %%%-------------------------------------------------------------------
 -module(rsa_pss).
 

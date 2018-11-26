@@ -173,7 +173,7 @@ parse(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
 parse([Arg|_Rest], _O) ->
 	io:format("Unknown argument: ~s. Terminating.", [Arg]).
 
-%% @doc Start an Archain node on this BEAM.
+%% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#opts { port = Port });
 start(#opts { benchmark = true }) ->

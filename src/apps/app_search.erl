@@ -7,7 +7,7 @@
 -include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% A search node for the Archain network. Given a transaction hash,
+%%% A search node for the Arweave network. Given a transaction hash,
 %%% returns to the requesting node the independant block hash of the
 %%% block containing the transaction.
 %%% For examplary purposes only.

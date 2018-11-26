@@ -3,7 +3,7 @@
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
-%%% Defines a small in-memory metadata table for Archain nodes.
+%%% Defines a small in-memory metadata table for Arweave nodes.
 %%% Typically used to store small peices of globally useful information
 %%% (for example: the port number used by the node).
 

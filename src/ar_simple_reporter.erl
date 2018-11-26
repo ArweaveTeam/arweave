@@ -3,7 +3,7 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% A simple Archain app that reports when it hears about new blocks.
+%%% A simple Arweave app that reports when it hears about new blocks.
 %%% The app will send a message to the process ID given to it as a
 %%% starting argument, or it will print to the console.
 
@@ -56,14 +56,14 @@ server(S = #state { gossip = GS, report = ReportPID }) ->
 		stop -> ok
 	end.
 
-%% @doc Start an Archain network with a simple monitor.
+%% @doc Start an Arweave network with a simple monitor.
 %% Ensure that new block notifications are received.
 simple_test() ->
 	% Create genesis block.
 	B0 = ar_weave:init(),
 	% Start an observer.
 	Node1 = start(self()),
-	% Start an Archain node with the new blockweave.
+	% Start an Arweave node with the new blockweave.
 	Node2 = ar_node:start([Node1], B0),
 	% Add the testing process to the gossip network.
 	GS0 = ar_gossip:init([Node2]),

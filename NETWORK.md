@@ -1,16 +1,16 @@
-# The Archain Network
+# The Arweave Network
 
-This (draft!) document aims to provide a breif overview of the key design points of the Archain network.
+This (draft!) document aims to provide a breif overview of the key design points of the Arweave network.
 
 ## Summary
 
-Every node in the Archain network runs a HTTP server, which exposes an interface to a miner (which does not have to be active).
+Every node in the Arweave network runs a HTTP server, which exposes an interface to a miner (which does not have to be active).
 
-Inside a node, a gossip-based message passing network between Archain ADT app and mining nodes is employed.
+Inside a node, a gossip-based message passing network between Arweave ADT app and mining nodes is employed.
 
 ## HTTP Interface
 
-The Archain HTTP interface exposes the following endpoints:
+The Arweave HTTP interface exposes the following endpoints:
 
 ```
 	GET /block/hash/[hash_id]
@@ -23,6 +23,6 @@ JSON structures are employed in the bodies of the HTTP requests to represent blo
 
 ## Gossipping
 
-Archain is essentially a gossip network, in which nodes repeat valid messages that they have received to their peers.
+Arweave is essentially a gossip network, in which nodes repeat valid messages that they have received to their peers.
 
 Nodes maintain a list of hashes of the messages they have received, not forwarding those that have already been sent once.
