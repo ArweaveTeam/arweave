@@ -59,7 +59,7 @@ chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition) ->
 %% If the blob is reconstructed successfuly, writes it to the specified destination.
 download(Hash, Filename) ->
 	{ok, Blob} = download(Hash),
-	file:write_file(Filename, Blob, [write]).
+	file:write_file(Filename, Blob, [{encoding, unicode}]).
 
 download(Hash) ->
 	app_search:get_entries(<< "blob_hash" >>, Hash),
