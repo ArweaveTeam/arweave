@@ -1,7 +1,7 @@
 %%% A collection of record structures used throughout the Arweave server.
 
 %%% FORK INDEX
--define(FORK_1_6, 88205).
+-define(FORK_1_6, 95000).
 
 %% @doc How nodes identify they are on the same network.
 -define(NETWORK_NAME, "arweave.N.1").
