@@ -67,7 +67,7 @@ mine_n_blocks_on_node(N, Node) ->
 	ar_node:get_blocks(Node).
 
 add_n_txs_to_node(N, Node) ->
-	% cribbed from ar_http_iface_tests:add_external_tx_with_tags_test/0.
+	% cribbed from ar_http_iface:add_external_tx_with_tags_test/0.
 	prepare_tx_adder(Node),
 	lists:map(fun(_) ->
 			Tags = [
@@ -75,7 +75,7 @@ add_n_txs_to_node(N, Node) ->
 				{<<"TEST_TAG2">>, <<"TEST_VAL2">>}
 			],
 			TX = tag_tx(ar_tx:new(<<"DATA">>), Tags),
-			ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+			ar_http_iface:send_new_tx({127, 0, 0, 1, 1984}, TX),
 			receive after 1000 -> ok end,
 			ar_node:mine(Node),
 			receive after 1000 -> ok end,
@@ -134,13 +134,13 @@ numbered_fn(N) ->
 	<<"testdata-", NB/binary, ".txt">>.
 
 prepare_tx_adder(Node) ->
-	ar_http_iface_server:reregister(Node),
+	ar_http_iface:reregister(Node),
 	Bridge = ar_bridge:start([], Node),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
+	ar_http_iface:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge).
 
 send_tx_mine_block(Node, TX) ->
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+	ar_http_iface:send_new_tx({127, 0, 0, 1, 1984}, TX),
 	receive after 1000 -> ok end,
 	ar_node:mine(Node),
 	receive after 1000 -> ok end.
