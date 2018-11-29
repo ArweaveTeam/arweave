@@ -481,7 +481,8 @@ validate(#{ hash_list := HashList, wallet_list := WalletList }, B, TXs, OldB, Re
 
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
-validate(_, _, _, _, _, _RecallB = unavailable, _, _) ->
+validate(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
+	ar:report([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),
 	false;
 validate(
 		HashList,
