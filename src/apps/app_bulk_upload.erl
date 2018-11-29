@@ -48,7 +48,7 @@ chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition) ->
 		tags =
 			[
 				{"app_name", "BulkUpload"},
-				{"blob_hash", Hash},
+				{"blob_hash", ar_util:encode(Hash)},
 				{"number_of_chunks", integer_to_binary(ChunkNumber)},
 				{"chunk_position", integer_to_binary(ChunkPosition)}
 			],
@@ -57,6 +57,7 @@ chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition) ->
 
 %% @doc Searches the local storage for the chunks of the blob with the given hash.
 %% If the blob is reconstructed successfuly, writes it to the specified destination.
+%% The provided hash has to be a Base 64 encoded SHA 256 hash of the file as a binary string.
 download(Hash, Filename) ->
 	{ok, Blob} = download(Hash),
 	file:write_file(Filename, Blob, [{encoding, unicode}]).
@@ -66,7 +67,7 @@ download(Hash) ->
 	receive TXIDs ->
 		Transactions = lists:map(fun(TX) -> ar_storage:read_tx(TX) end, TXIDs),
 		{ok, Blob} = reconstruct_blob(Transactions),
-		BlobHash = crypto:hash(?BLOB_HASH_ALGO, Blob),
+		BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)),
 		if BlobHash /= Hash ->
 			{error, invalid_upload};
 		true ->
@@ -113,7 +114,7 @@ upload_test_() ->
 		?assertEqual(2, length(Transactions)),
 		[First, Second] = Transactions,
 		?assertEqual(Blob, << (First#tx.data)/binary, (Second#tx.data)/binary >>),
-		ExpectedHash = crypto:hash(?BLOB_HASH_ALGO, Blob),
+		ExpectedHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)),
 		?assertEqual(
 			[
 				{<< "app_name" >>, << "BulkUpload" >>},
@@ -133,7 +134,7 @@ upload_test_() ->
 			Second#tx.tags
 		),
 		{ok, Blob} = download(ExpectedHash),
-		?assertEqual(ExpectedHash, crypto:hash(?BLOB_HASH_ALGO, Blob))
+		?assertEqual(ExpectedHash, ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)))
 	end}.
 
 mine_blocks(_, Number) when Number =< 0 -> none;
