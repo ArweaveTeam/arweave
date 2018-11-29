@@ -24,19 +24,21 @@ server(Node, Peers, LastB) ->
 		LastB -> server(Node, Peers, LastB);
 		X when is_atom(X) -> server(Node, Peers, LastB);
 		NewB ->
+			RecallIndepHash = lists:nth(
+				1 + ar_weave:calculate_recall_block(NewB, NewB#block.hash_list),
+				lists:reverse(NewB#block.hash_list)
+			),
+			Recall = {
+				RecallIndepHash,
+				<<>>,
+				<<>>
+			},
 			Node ! {
 				new_block,
 				hd(Peers),
 				NewB#block.height,
 				NewB,
-				ar_node:get_block(
-					Peers,
-					lists:nth(
-						1 + ar_weave:calculate_recall_block(NewB, NewB#block.hash_list),
-						lists:reverse(NewB#block.hash_list)
-					),
-					NewB#block.hash_list
-				)
+				Recall
 			},
 			server(Node, Peers, NewB)
 	end.

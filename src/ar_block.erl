@@ -1,6 +1,6 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1]).
--export([get_recall_block/5, get_recall_block/6]).
+-export([get_recall_block/5]).
 -export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/2]).
 -export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
@@ -9,7 +9,6 @@
 -export([encrypt_block/2, encrypt_block/3]).
 -export([encrypt_full_block/2, encrypt_full_block/3]).
 -export([decrypt_block/4]).
--export([decrypt_full_block/4]).
 -export([generate_block_key/2]).
 -export([generate_block_from_shadow/2, generate_block_data_segment/6]).
 -export([generate_hash_list_for_block/2]).
@@ -128,9 +127,7 @@ encrypt_full_block(Recall, Key, Nonce) ->
 	CipherText.
 
 %% @doc Decrypt a recall block
-decrypt_full_block(B, CipherText, Key, Nonce) when ?IS_BLOCK(B)->
-	decrypt_full_block(B#block.indep_hash, CipherText, Key, Nonce);
-decrypt_full_block(_Hash, CipherText, Key, Nonce) ->
+decrypt_full_block(CipherText, Key, Nonce) ->
 	if
 		(Key == <<>>) or (Nonce == <<>>) -> unavailable;
 		true ->
@@ -513,9 +510,10 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 			{[], OldHashList} -> OldHashList;
 			{ShadowHashList, []} -> ShadowHashList;
 			{ShadowHashList, OldHashList} ->
+				EarliestShadowHash = lists:last(ShadowHashList),
 				NewL =
 					lists:dropwhile(
-						fun(X) -> X =/= lists:last(ShadowHashList) end,
+						fun(X) -> X =/= EarliestShadowHash end,
 						OldHashList
 					),
 				ShadowHashList ++
@@ -535,17 +533,14 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 	),
 	BShadow#block { wallet_list = WalletList, hash_list = HashList }.
 
-
-get_recall_block(OrigPeer,RecallHash,B,Key,Nonce) ->
-	get_recall_block(OrigPeer,RecallHash,B,Key,Nonce, B#block.hash_list).
-get_recall_block(OrigPeer,RecallHash,B,Key,Nonce, BHL) ->
+get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
 	case ar_storage:read_block(RecallHash, BHL) of
 		unavailable ->
 			case ar_storage:read_encrypted_block(RecallHash) of
 				unavailable ->
 					ar:report([{downloading_recall_block, ar_util:encode(RecallHash)}]),
 					FullBlock =
-						ar_http_iface:get_full_block(OrigPeer, RecallHash, B#block.hash_list),
+						ar_http_iface:get_full_block(OrigPeer, RecallHash, BHL),
 					case ?IS_BLOCK(FullBlock)  of
 						true ->
 							Recall = FullBlock#block {
@@ -558,8 +553,7 @@ get_recall_block(OrigPeer,RecallHash,B,Key,Nonce, BHL) ->
 					end;
 				EncryptedRecall ->
 					FBlock =
-						ar_block:decrypt_full_block(
-							B,
+						decrypt_full_block(
 							EncryptedRecall,
 							Key,
 							Nonce

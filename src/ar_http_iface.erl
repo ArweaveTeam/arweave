@@ -5,7 +5,7 @@
 -module(ar_http_iface).
 
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
--export([send_new_block/3, send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
+-export([send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
@@ -756,15 +756,8 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(IP, NewB, RecallB) ->
-	send_new_block(IP, ?DEFAULT_HTTP_IFACE_PORT, NewB, RecallB).
 send_new_block(Peer, Port, NewB, RecallB) ->
-	RecallBHash =
-		case ?IS_BLOCK(RecallB) of
-			true ->  RecallB#block.indep_hash;
-			false -> <<>>
-		end,
-	case ar_key_db:get(RecallBHash) of
+	case ar_key_db:get(RecallB#block.indep_hash) of
 		[{Key, Nonce}] ->
 			send_new_block(
 				Peer,
@@ -785,11 +778,6 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 			)
 	end.
 send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
-	RecallBHash =
-		case ?IS_BLOCK(RecallB) of
-			true ->  RecallB#block.indep_hash;
-			false -> <<>>
-		end,
 	HashList =
 		lists:map(
 			fun ar_util:encode/1,
@@ -815,7 +803,7 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 			{
 				[
 					{<<"new_block">>, BlockJSON},
-					{<<"recall_block">>, ar_util:encode(RecallBHash)},
+					{<<"recall_block">>, ar_util:encode(RecallB#block.indep_hash)},
 					{<<"recall_size">>, RecallB#block.block_size},
 					{<<"port">>, Port},
 					{<<"key">>, ar_util:encode(Key)},
@@ -1314,7 +1302,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 			Nonce = ar_util:decode(NonceEnc),
 			CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 			B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
-			RecallHash = ar_util:decode(JSONRecallB),
+			RecallIndepHash = ar_util:decode(JSONRecallB),
 			case (not is_atom(CurrentB)) andalso
 				(B#block.height > CurrentB#block.height) andalso
 				(B#block.height =< (CurrentB#block.height + 50)) andalso
@@ -1325,16 +1313,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
 							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
 						]
 					),
-					RecallB =
-						ar_block:get_recall_block(
-							OrigPeer,
-							RecallHash,
-							B,
-							Key,
-							Nonce,
-							CurrentB#block.hash_list
-						),
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, RecallB, Key, Nonce);
+					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, {RecallIndepHash, Key, Nonce});
 				_ ->
 					ok
 			end

@@ -1,6 +1,6 @@
 -module(ar_bridge).
 -export([start/0, start/1, start/2, start/3]).
--export([add_tx/2, add_block/6]). % Called from ar_http_iface
+-export([add_tx/2, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
@@ -70,8 +70,8 @@ set_remote_peers(PID, Peers) ->
 	PID ! {set_peers, Peers}.
 
 %% @doc Notify the bridge of a new external block.
-add_block(PID, OriginPeer, Block, RecallBlock, Key, Nonce) ->
-	PID ! {add_block, OriginPeer, Block, RecallBlock, Key, Nonce}.
+add_block(PID, OriginPeer, Block, Recall = {_RecallIndepHash, _Key, _Nonce}) ->
+	PID ! {add_block, OriginPeer, Block, Recall}.
 
 %% @doc Notify the bridge of a new external block.
 add_tx(PID, TX) ->%, OriginPeer) ->
@@ -145,8 +145,8 @@ handle(S, {unignore_peer, Peer}) ->
 	S#state{ ignored_peers = lists:delete(Peer, S#state.ignored_peers) };
 handle(S, {add_tx, TX}) ->
 	maybe_send_tx_to_internal(S, TX);
-handle(S, {add_block, OriginPeer, Block, RecallBlock, Key, Nonce}) ->
-	maybe_send_block_to_internal(S, {OriginPeer, Block, RecallBlock}, Key, Nonce);
+handle(S, {add_block, OriginPeer, Block, Recall}) ->
+	send_block_to_internal(S, OriginPeer, Block, Recall);
 handle(S = #state{ external_peers = ExtPeers }, {add_peer, remote, Peer}) ->
 	case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
 		true  -> S;
@@ -175,6 +175,9 @@ handle(S, {get_more_peers, PID}) ->
 			reset_timer(PID, get_more_peers)
 		end
 	),
+	S;
+handle(S, UnknownMsg) ->
+	ar:report([{ar_bridge_handle_unknown_message, UnknownMsg}]),
 	S.
 
 %% @doc Potentially send a tx to internal processes.
@@ -184,11 +187,11 @@ maybe_send_tx_to_internal(S, Data) ->
 		firewall = FW,
 		processed = Procd
 	} = S,
-	case ar_firewall:scan(FW, tx, Data) of
-		false ->
+	case ar_firewall:scan_tx(FW, Data) of
+		reject ->
 			% If the data does not pass the scan, ignore the message.
 			S;
-		true ->
+		accept ->
 			% The message is at least valid, distribute it.
 			Msg = {add_tx, Data},
 			{NewGS, _} = ar_gossip:send(GS,	Msg),
@@ -198,32 +201,25 @@ maybe_send_tx_to_internal(S, Data) ->
 	end.
 
 %% @doc Potentially send a block to internal processes.
-maybe_send_block_to_internal(S, Data, Key, Nonce) ->
+send_block_to_internal(S, OriginPeer, B, Recall) ->
 	#state {
 		gossip = GS,
-		firewall = FW,
-		processed = Procd
+		processed = Procd,
+		external_peers = ExternalPeers,
+		port = BridgePort
 	} = S,
-	case
-		% TODO: Is it always appropriate not to check whether the block has
-		% already been processed?
-		%(not already_processed(Procd, Type, Data)) andalso
-		ar_firewall:scan(FW, block, Data)
-	of
-		false ->
-			% If the data does not pass the scan, ignore the message.
-			S;
-		true ->
-			% The message is at least valid, distribute it.
-			{OriginPeer, NewB, RecallB} = Data,
-			Msg = {new_block, OriginPeer, NewB#block.height, NewB, RecallB},
-			{NewGS, _} = ar_gossip:send(GS, Msg),
-			send_block_to_external(S, NewB, RecallB, Key, Nonce),
-			add_processed(block, Data, Procd),
-			S#state {
-				gossip = NewGS
-			}
-	end.
+	% TODO: Is it always appropriate not to check whether the block has
+	% already been processed?
+	%(not already_processed(Procd, Type, Data)) andalso
+	% The message is at least valid, distribute it.
+	% {OriginPeer, NewB, RecallIndepHash} = Data,
+	Msg = {new_block, OriginPeer, B#block.height, B, Recall},
+	{NewGS, _} = ar_gossip:send(GS, Msg),
+	send_block_to_external(ExternalPeers, BridgePort, B, OriginPeer, Recall),
+	add_processed(block, B, Procd),
+	S#state {
+		gossip = NewGS
+	}.
 
 %% @doc Add the ID of a new TX/block to a processed list.
 add_processed({add_tx, TX}, Procd) ->
@@ -241,8 +237,6 @@ add_processed(tx, #tx { id = ID }, _Procd) ->
 	ignore_id(ID);
 add_processed(block, #block { indep_hash = Hash }, _Procd) ->
 	ignore_id(Hash);
-add_processed(block, {_, B, _}, Procd) ->
-	add_processed(block, B, Procd);
 add_processed(X, Y, _Procd) ->
 	ar:report(
 		[
@@ -257,14 +251,13 @@ add_processed(X, Y, _Procd) ->
 % get_id(block, {_, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% @doc Send an internal message externally
-send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
-	Peers = [Y||{_,Y} <- lists:sort([ {rand:uniform(), N} || N <- OrderedPeers])],
+send_to_external(S = #state {external_peers = ExternalPeers}, {add_tx, TX}) ->
 	spawn(
 		fun() ->
 			ar:report(
 				[
 					{sending_tx_to_external_peers, ar_util:encode(TX#tx.id)},
-					{peers, length(Peers)}
+					{peers, length(ExternalPeers)}
 				]
 			),
 			lists:foldl(
@@ -277,47 +270,46 @@ send_to_external(S = #state {external_peers = OrderedPeers}, {add_tx, TX}) ->
 					end
 				end,
 				0,
-				Peers
+				disorder(ExternalPeers)
 			)
 		end
 	),
 	S;
-send_to_external(_, {new_block, _, _, _, unavailable}) ->
-	ok;
-send_to_external(S, {new_block, _Peer, _Height, NewB, RecallB}) ->
+send_to_external(S, {new_block, OriginPeer, _Height, NewB, Recall}) ->
 	spawn(
 		fun() ->
-			case ar_key_db:get(RecallB#block.indep_hash) of
-				[{Key, Nonce}] ->
-					send_block_to_external(S, NewB, RecallB, Key, Nonce);
-				_ ->
-					send_block_to_external(S, NewB, RecallB, <<>>, <<>>)
-			end
+			send_block_to_external(
+				S#state.external_peers,
+				S#state.port,
+				NewB,
+				OriginPeer,
+				Recall
+			)
 		end
 	),
 	S;
 send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
 
-%% @doc Send a block to external peers.
-send_block_to_external(S, NewB, RecallB, Key, Nonce) ->
-	#state {external_peers = Peers, port = Port} = S,
-	case RecallB of
-		unavailable -> ok;
-		_ ->
-			spawn(
-				fun() ->
-					ar:report(
-						[
-							{sending_block_to_external_peers, ar_util:encode(NewB#block.indep_hash)},
-							{peers, length(Peers)}
-						]
-					),
-					send_block_to_external_parallel(Peers, Port, NewB, RecallB, Key, Nonce)
-				end
-			)
-	end,
-	S.
+%% @doc Send a block to external peers in a spawned process.
+send_block_to_external(ExternalPeers, BridgePort, B, OriginPeer, Recall) ->
+	spawn(fun() ->
+		{RecallIndepHash, Key, Nonce} = Recall,
+		case ar_block:get_recall_block(OriginPeer, RecallIndepHash, B#block.hash_list, Key, Nonce) of
+			unavailable -> ok;
+			RecallB ->
+				ar:report(
+					[
+						{sending_block_to_external_peers, ar_util:encode(B#block.indep_hash)},
+						{peers, length(ExternalPeers)}
+					]
+				),
+				send_block_to_external_parallel(ExternalPeers, BridgePort, B, RecallB, Key, Nonce)
+		end
+	end).
+
+disorder(List) ->
+	[Item || {_, Item} <- lists:sort([{rand:uniform(), Item} || Item <- List])].
 
 %% @doc Send the new block to the peers by first sending it in parallel to the
 %% best/first peers and then continuing sequentially with the rest of the peers

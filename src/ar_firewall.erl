@@ -1,5 +1,5 @@
 -module(ar_firewall).
--export([start/0, scan/3]).
+-export([start/0, scan_tx/2]).
 -include("ar.hrl").
 -include("av/av_recs.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -22,13 +22,13 @@ start() ->
 		end
 	).
 
-%% @doc Check that a received object does not match the firewall rules.
-scan(PID, Type, Data) ->
-	ar:report([{scanning_object_of_type, Type}]),
-	PID ! {scan, self(), Type, Data},
+%% @doc Check that a received TX does not match the firewall rules.
+scan_tx(FwServer, Data) ->
+	ar:report([{scanning_object_of_type, tx}]),
+	FwServer ! {scan_tx, self(), Data},
 	receive
-		{scanned, _Obj, Response} ->
-			ar:report([{scanned_object_of_type, Type}, {response, Response}]),
+		{scanned_tx, Response} ->
+			ar:report([{scanned_object_of_type, tx}, {response, Response}]),
 			Response
 	end.
 
@@ -37,20 +37,17 @@ scan(PID, Type, Data) ->
 %% the set of known 'harmful'/'ignored' signatures.
 server(S = #state { sigs = Sigs } ) ->
 	receive
-		{scan, PID, Type, Data} ->
-			Pass = case Type of
-				block -> true;
-				tx -> (not scan_transaction(Data, Sigs));
-				_ -> false
-			end,
-			PID ! {scanned, Data, Pass},
+		{scan_tx, Pid, Data} ->
+			Pid ! {scanned_tx, scan_transaction(Data, Sigs)},
 			server(S)
 	end.
 
-%% @doc Compare a transaction against known bad signatures
-%% return true if matched, otherwise return false.
+%% @doc Compare a transaction against known bad signatures.
 scan_transaction(TX, Sigs) ->
-	av_detect:is_infected(TX#tx.data, Sigs).
+	case av_detect:is_infected(TX#tx.data, Sigs) of
+		{true, _} -> reject;
+		false -> accept
+	end.
 
 
 %% Tests: ar_firewall
@@ -65,8 +62,8 @@ blacklist_transaction_test() ->
 			binary = <<"badstuff">>
 		}
 	},
-	{true, _} = scan_transaction(ar_tx:new(<<"badstuff">>), [Sigs]),
-	false = scan_transaction(ar_tx:new(<<"goodstuff">>), [Sigs]).
+	?assertEqual(reject, scan_transaction(ar_tx:new(<<"badstuff">>), [Sigs])),
+	?assertEqual(accept, scan_transaction(ar_tx:new(<<"goodstuff">>), [Sigs])).
 
 load_blacklist_test() ->
 	ExpectedSig =
