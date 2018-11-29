@@ -558,7 +558,7 @@ validate(
 			ok
 	end,
 
-	case Mine of false -> ar:d(invalid_nonce); _ -> ok end,
+	case Mine of false -> ar:report([{invalid_nonce, BDSHash}]); _ -> ok end,
 	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok      end,
 	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
 	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
