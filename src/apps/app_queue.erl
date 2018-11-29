@@ -68,7 +68,6 @@ send_tx(S, TX) ->
             },
             S#state.wallet
         ),
-    StartHeight = get_current_height(S),
     ar_node:add_tx(S#state.node, SignedTX),
     ar:report(
         [
@@ -78,6 +77,8 @@ send_tx(S, TX) ->
             {size, byte_size(SignedTX#tx.data)}
         ]
     ),
+    timer:sleep(ar_node_utils:calculate_delay(byte_size(TX#tx.data))),
+    StartHeight = get_current_height(S),
     wait_for_block(S, StartHeight + ?CONFIRMATION_DEPTH).
 
 %% @doc Wait until a given block height has been reached.

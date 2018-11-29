@@ -249,7 +249,7 @@ add_tx(StateIn, TX, GS) ->
 		[] ->
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			timer:send_after(
-				calculate_delay(byte_size(TX#tx.data)),
+				ar_node_utils:calculate_delay(byte_size(TX#tx.data)),
 				Node,
 				{apply_tx, TX}
 			),
@@ -686,23 +686,3 @@ is_fork_preferable(ForkB, CurrentCDiff, _) ->
 %% @doc Aggregates the transactions of a state to one list.
 aggregate_txs(#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs}) ->
 	TXs ++ WaitingTXs ++ PotentialTXs.
-
-%% @doc Calculate the time a tx must wait after being received to be mined.
-%% Wait time is a fixed interval combined with a wait dependent on tx data size.
-%% This wait helps ensure that a tx has propogated around the network.
-%% NB: If debug is defined no wait is applied.
--ifdef(DEBUG).
--define(FIXED_DELAY, 0).
--endif.
-
--ifdef(FIXED_DELAY).
-calculate_delay(0) ->
-	?FIXED_DELAY;
-calculate_delay(_Bytes) ->
-	?FIXED_DELAY.
--else.
-calculate_delay(0) ->
-	30000;
-calculate_delay(Bytes) ->
-	30000 + ((Bytes * 300) div 1000).
--endif.

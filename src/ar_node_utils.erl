@@ -14,6 +14,7 @@
 -export([filter_out_of_order_txs/2, filter_out_of_order_txs/3]).
 -export([filter_all_out_of_order_txs/2]).
 -export([validate/5, validate/8, validate_wallet_list/1]).
+-export([calculate_delay/1]).
 
 -include("ar.hrl").
 
@@ -755,3 +756,23 @@ generate_floating_wallet_list(WalletList, [T | TXs]) ->
 			generate_floating_wallet_list(UpdatedWalletList, TXs);
 		false -> false
 	end.
+
+%% @doc Calculate the time a tx must wait after being received to be mined.
+%% Wait time is a fixed interval combined with a wait dependent on tx data size.
+%% This wait helps ensure that a tx has propogated around the network.
+%% NB: If debug is defined no wait is applied.
+-ifdef(DEBUG).
+-define(FIXED_DELAY, 0).
+-endif.
+
+-ifdef(FIXED_DELAY).
+calculate_delay(0) ->
+	?FIXED_DELAY;
+calculate_delay(_Bytes) ->
+	?FIXED_DELAY.
+-else.
+calculate_delay(0) ->
+	30000;
+calculate_delay(Bytes) ->
+	30000 + ((Bytes * 300) div 1000).
+-endif.
