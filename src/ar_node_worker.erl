@@ -78,8 +78,12 @@ handle(SPid, {gossip_message, Msg}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	handle_gossip(SPid, ar_gossip:recv(GS, Msg));
 handle(SPid, {add_tx, TX}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, potential_txs]),
-	case add_tx(StateIn, TX) of
+	{ok, StateIn} =
+		ar_node_state:lookup(
+			SPid,
+			[gossip, node, txs, waiting_txs, potential_txs]
+		),
+	case add_tx(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
@@ -88,8 +92,7 @@ handle(SPid, {add_tx, TX}) ->
 	{ok, add_tx};
 handle(SPid, {encounter_new_tx, TX}) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [gossip, txs, waiting_txs, floating_wallet_list]),
-	{NewGS, _} = ar_gossip:send(maps:get(gossip, StateIn), {add_tx, TX}),
-	case encounter_new_tx(StateIn, TX, NewGS) of
+	case encounter_new_tx(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
@@ -240,30 +243,11 @@ handle_gossip(SPid, {NewGS, UnhandledMsg}) ->
 %%%
 
 %% @doc Add new transaction to a server state.
-add_tx(StateIn, TX) ->
+add_tx(StateIn, TX, GS) ->
 	#{node := Node, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
 	case ar_node_utils:get_conflicting_txs(aggregate_txs(StateIn), TX) of
 		[] ->
-			timer:send_after(
-				calculate_delay(byte_size(TX#tx.data)),
-				Node,
-				{apply_tx, TX}
-			),
-			{ok , [
-				{waiting_txs, ar_util:unique([TX | WaitingTXs])}
-			]};
-		_ ->
-			% TODO mue: Space in string atom correct?
-			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
-			{ok, [
-				{potential_txs, ar_util:unique([TX | PotentialTXs])}
-			]}
-	end.
-
-add_tx(StateIn, TX, NewGS) ->
-	#{node := Node, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
-	case ar_node_utils:get_conflicting_txs(aggregate_txs(StateIn), TX) of
-		[] ->
+			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			timer:send_after(
 				calculate_delay(byte_size(TX#tx.data)),
 				Node,
@@ -274,9 +258,10 @@ add_tx(StateIn, TX, NewGS) ->
 				{gossip, NewGS}
 			]};
 		_ ->
+			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
 			{ok, [
 				{potential_txs, ar_util:unique([TX | PotentialTXs])},
-				{gossip, NewGS}
+				{gossip, GS}
 			]}
 	end.
 
