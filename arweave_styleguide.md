@@ -31,9 +31,18 @@ Module description comments should be prixed with '%%%' .
 
 
 
-### Function clause comments should be placed above the header
+### Function clause comments
 
-All functions should have a detailed description of their purpose above the header. This description should not include implementation details unless absolutely required, the code itself should be the main conveyor of the specific implementation.
+
+Function clause comments should be placed above the header.
+
+Every function should have a comment describing its purpose, unless the function signature explains it well enough.
+
+Function comments should not include implementation details unless absolutely required, the code itself should be the main conveyor of the specific implementation.
+
+It is more important to comment exported functions.
+
+A specification (`-spec`) may be used to document the function, as an alternative or an addition to the comment.
 
 Function description comments should be prefixed with  '%% @doc'. 
 
