@@ -55,7 +55,7 @@ get_full_block(Pid, ID, BHL) when is_pid(Pid) ->
 	make_full_block(ID, BHL);
 get_full_block(Host, ID, BHL) ->
 	% Handle external peer request.
-	ar_http_iface:get_full_block(Host, ID, BHL).
+	ar_http_iface_client:get_full_block(Host, ID, BHL).
 
 %% @doc Attempt to get a full block from a HTTP peer, picking the node to query
 %% randomly until the block is retreived.
@@ -668,7 +668,7 @@ get_tx(Proc, ID) when is_pid(Proc) ->
 	ar_storage:read_tx(ID);
 get_tx(Host, ID) ->
 	% handle external peer request
-	ar_http_iface:get_tx(Host, ID).
+	ar_http_iface_client:get_tx(Host, ID).
 
 %% @doc Perform the concrete application of a transaction to
 %% a prefiltered wallet list.

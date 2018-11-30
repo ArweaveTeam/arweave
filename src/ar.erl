@@ -41,7 +41,7 @@
 		ar_mine,
 		ar_join,
 		ar_fork_recovery,
-		ar_http_iface,
+		ar_http_iface_tests,
 		ar_simple_reporter,
 		ar_retarget,
 		ar_block,
@@ -328,7 +328,7 @@ start(
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	% Add self to all remote nodes.
-	%lists:foreach(fun ar_http_iface:add_peer/1, Peers),
+	%lists:foreach(fun ar_http_iface_client:add_peer/1, Peers),
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
@@ -352,7 +352,7 @@ start(
 		]
 	),
 	% Start the first node in the gossip network (with HTTP interface)
-	ar_http_iface:start(
+	ar_http_iface_server:start(
 		Port,
 		Node,
 		SearchNode,
@@ -473,8 +473,8 @@ test_slow() ->
 	ar_node_test:large_weakly_connected_blockweave_with_data_test_slow(),
 	ar_node_test:large_blockweave_with_data_test_slow(),
 	ar_node_test:medium_blockweave_mine_multiple_data_test_slow(),
-	ar_http_iface:get_txs_by_send_recv_test_slow(),
-	ar_http_iface:get_full_block_by_hash_test_slow(),
+	ar_http_iface_client:get_txs_by_send_recv_test_slow(),
+	ar_http_iface_client:get_full_block_by_hash_test_slow(),
 	ar_fork_recovery:multiple_blocks_ahead_with_transaction_recovery_test_slow(),
 	ar_tx:check_last_tx_test_slow().
 

@@ -79,7 +79,7 @@ verify_time_sync(Peers) ->
 			lists:all(
 				fun(Peer) ->
 					LocalT = os:system_time(second),
-					RemoteT = ar_http_iface:get_time(Peer),
+					RemoteT = ar_http_iface_client:get_time(Peer),
 					case RemoteT of
 						unknown -> true;
 						_ ->
@@ -112,7 +112,7 @@ find_current_block([Peer|Tail]) ->
 filter_peer_list(Peers) when is_list(Peers) ->
 	lists:filter(
 		fun(Peer) when is_pid(Peer) -> true;
-		   (Peer) -> ar_http_iface:get_info(Peer, name) == <<?NETWORK_NAME>>
+		   (Peer) -> ar_http_iface_client:get_info(Peer, name) == <<?NETWORK_NAME>>
 		end,
 	Peers);
 filter_peer_list(Peer) -> filter_peer_list([Peer]).
@@ -120,7 +120,7 @@ filter_peer_list(Peer) -> filter_peer_list([Peer]).
 filter_peer_list(Peers) when is_list(Peers) ->
 	lists:filter(
 		fun(Peer) when is_pid(Peer) -> false;
-		   (Peer) -> ar_http_iface:get_info(Peer, name) == <<?NETWORK_NAME>>
+		   (Peer) -> ar_http_iface_client:get_info(Peer, name) == <<?NETWORK_NAME>>
 		end,
 	Peers);
 filter_peer_list(Peer) -> filter_peer_list([Peer]).
@@ -135,7 +135,7 @@ join_peers(Peers) when is_list(Peers) ->
 		Peers
 	);
 join_peers(Peer) when is_pid(Peer) -> ok;
-join_peers(Peer) -> ar_http_iface:add_peer(Peer).
+join_peers(Peer) -> ar_http_iface_client:add_peer(Peer).
 
 %% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
 %% blocks and recall blocks. Alternatively, if the blocklist is shorter than

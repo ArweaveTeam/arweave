@@ -57,7 +57,7 @@ get_all_nodes(Acc, [Peer|Peers]) ->
 filter_offline_nodes(Peers) ->
 	NodesWithInfo = ar_util:pmap(
 		fun(Peer) ->
-			{Peer, ar_http_iface:get_info(Peer)}
+			{Peer, ar_http_iface_client:get_info(Peer)}
 		end,
 		Peers
 	),
@@ -114,7 +114,7 @@ filter_local_peers(Peers) ->
 
 %% @doc Fetches the peers for a given peer.
 peers_by_peer(Peer) ->
-	case ar_http_iface:get_peers(Peer) of
+	case ar_http_iface_client:get_peers(Peer) of
 		unavailable -> [];
 		Peers -> Peers
 	end.
@@ -377,7 +377,7 @@ get_nodes_version1(Peers) ->
 
 %% @doc Get the version a certain peer is running.
 get_version(Peer) ->
-	case ar_http_iface:get_info(Peer) of
+	case ar_http_iface_client:get_info(Peer) of
 		info_unavailable -> unavailable;
 		Info -> {proplists:get_value(version, Info), proplists:get_value(release, Info)}
 	end.

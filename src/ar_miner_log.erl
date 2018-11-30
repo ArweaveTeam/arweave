@@ -228,7 +228,7 @@ mined_block_test() ->
 	[B0] = Bs = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
 	ar_storage:write_block(B0),
 	Node = ar_node:start([], Bs),
-	ar_http_iface:reregister(Node),
+	ar_http_iface_server:reregister(Node),
 	timer:sleep(500),
 	ar_node:mine(Node),
 	timer:sleep(500),
