@@ -352,7 +352,6 @@ In rare cases when even unexpected failures have to be processed, like in the HT
 The Arweave client codebase is hosted on Github, the below standards define the criteria for committed code. We aim to adhere to these standards as to make it as easy possible for new contributors to get involved.
 
 
-
 ### All committed code must be commented
 
 All committed code should be fully commented and should aim to fit the styling as detailed in this document. Committing uncommented code is unhelpful to all those maintaining or exploring the project.
@@ -377,21 +376,25 @@ Code commits should aim to be a single logical change or addition to the codebas
 - Added block shadows, refactored HTTP iface.
 ```
 
-
-
 ### Commit message syntax
 
 To keep the repository clean a set structure for commit messages has been decided.
 
-- The message should be preceeded with the dash character followed by a space.
 - The first character should be capitalized. 
-- The message should be terminated with a full stop.
 - The message should be succinct.
-- Actions taken should be written in past tense.
+- The message should be in the imperative mood.
 - Multiple actions should be comma separated.
 
+### Commit description
+
+In addition to a message, a commit should have a description focusing on why the change was made rather than what was made.
+
+### Commit example
+
 ```
-- Added arweave style guide, removed inconsistent styling.
+Add arweave style guide
+
+Inconsistent styling made it hard for us to view, comprehend, and edit the code so we had a discussion and agreed on the common style.
 ```
 
 
