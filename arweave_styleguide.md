@@ -338,8 +338,13 @@ example() ->
 	...
 ```
 
+## Error handling
 
+Functions with side effects (in Erlang it boils down to IO) should return an `{ok, ...}` tuple upon successful execution, and `error_code` or `{error_code, ...}` otherwise.
 
+When invoking functions with side effects, failing fast by only pattern matching against `{ok, ...}` is encouraged.
+
+In rare cases when even unexpected failures have to be processed, like in the HTTP event loop, `try/catch` may be used.
 
 
 ## Version control
