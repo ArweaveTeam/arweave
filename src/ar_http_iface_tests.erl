@@ -1,5 +1,5 @@
 %%%
-%%% @doc Tests for ar_http_ifcae_* modules.
+%%% @doc Tests for ar_http_iface_* modules.
 %%%
 
 -module(ar_http_iface_tests).
