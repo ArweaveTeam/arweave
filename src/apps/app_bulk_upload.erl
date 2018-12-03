@@ -63,14 +63,14 @@ chunk_to_tx(Hash, Chunk, NumberOfChunks, ChunkPosition) ->
 %% The provided hash has to be a Base 64 encoded SHA 256 hash of the file as a binary string.
 download(Hash, Filename) ->
 	{ok, Blob} = download(Hash),
-	file:write_file(Filename, Blob, [write]).
+	file:write_file(Filename, iolist_to_binary(Blob), [write]).
 
 download(Hash) ->
 	app_search:get_entries(<< "blob_hash" >>, Hash),
 	receive TXIDs ->
 		Transactions = lists:map(fun(TX) -> ar_storage:read_tx(TX) end, TXIDs),
 		{ok, Blob} = reconstruct_blob(Transactions),
-		BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)),
+		BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(Blob))),
 		case BlobHash == Hash of
 			true ->
 				{ok, Blob};
@@ -97,7 +97,7 @@ reconstruct_blob(Transactions) ->
 			end,
 			Transactions
 			),
-			{ok, << (TX#tx.data) || TX <- SortedTransactions >>}
+			{ok, [TX#tx.data || TX <- SortedTransactions]}
 	end.
 
 
@@ -138,8 +138,11 @@ upload_test_() ->
 			],
 			Second#tx.tags
 		),
-		{ok, Blob} = download(ExpectedHash),
-		?assertEqual(ExpectedHash, ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)))
+		{ok, BlobList} = download(ExpectedHash),
+		?assertEqual(
+			ExpectedHash,
+			ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(BlobList)))
+		)
 	end}.
 
 mine_blocks(_, Number) when Number =< 0 -> none;
