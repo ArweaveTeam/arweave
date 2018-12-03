@@ -29,16 +29,17 @@ upload(Node, Wallet, Blob) ->
 %% a transaction and put into the queue. Chunk size is 1MB.
 upload_blob(Queue, Hash, Blob) ->
 	BlobSize = byte_size(Blob),
-	ChunkNumber = BlobSize div ?MB + if BlobSize rem ?MB =/= 0 -> 1; true -> 0 end,
+	ChunkNumber = BlobSize div ?MB + case BlobSize rem ?MB =/= 0 of true -> 1; false -> 0 end,
 	upload_blob(Queue, Hash, Blob, ChunkNumber, 1).
 
 upload_blob(Queue, Hash, Blob, ChunkNumber, ChunkPosition) ->
-	if byte_size(Blob) =< ?MB ->
-		app_queue:add(Queue, chunk_to_tx(Hash, Blob, ChunkNumber, ChunkPosition));
-	true ->
-		<< Chunk:?MB/binary, Rest/binary >> = Blob,
-		app_queue:add(Queue, chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition)),
-		upload_blob(Queue, Hash, Rest, ChunkNumber, ChunkPosition + 1)
+	case byte_size(Blob) =< ?MB of
+		true ->
+			app_queue:add(Queue, chunk_to_tx(Hash, Blob, ChunkNumber, ChunkPosition));
+		false ->
+			<< Chunk:?MB/binary, Rest/binary >> = Blob,
+			app_queue:add(Queue, chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition)),
+			upload_blob(Queue, Hash, Rest, ChunkNumber, ChunkPosition + 1)
 	end.
 
 %% @doc Converts the given binary chunk into a transaction. A hash of the whole block the chunk
@@ -68,10 +69,11 @@ download(Hash) ->
 		Transactions = lists:map(fun(TX) -> ar_storage:read_tx(TX) end, TXIDs),
 		{ok, Blob} = reconstruct_blob(Transactions),
 		BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)),
-		if BlobHash /= Hash ->
-			{error, invalid_upload};
-		true ->
-			{ok, Blob}
+		case BlobHash == Hash of
+			true ->
+				{ok, Blob};
+			false ->
+				{error, invalid_upload}
 		end
 	end.
 
@@ -80,19 +82,20 @@ reconstruct_blob(Transactions) ->
 	Head = hd(Transactions),
 	{_, ChunkNumberBinary} = lists:keyfind(<< "number_of_chunks" >>, 1, Head#tx.tags),
 	ChunkNumber = binary_to_integer(ChunkNumberBinary),
-	if length(Transactions) < ChunkNumber ->
-		{error, missing_chunks};
-	true ->
-		SortedTransactions = lists:sort(fun(First, Second) ->
-			{_, FirstPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, First#tx.tags),
-			{_, SecondPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, Second#tx.tags),
-			FirstChunkPosition = binary_to_integer(FirstPositionBinary),
-			SecondChunkPosition = binary_to_integer(SecondPositionBinary),
-			FirstChunkPosition =< SecondChunkPosition
-		end,
-		Transactions
-		),
-		{ok, << (TX#tx.data) || TX <- SortedTransactions >>}
+	case length(Transactions) < ChunkNumber of
+		true ->
+			{error, missing_chunks};
+		false ->
+			SortedTransactions = lists:sort(fun(First, Second) ->
+				{_, FirstPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, First#tx.tags),
+				{_, SecondPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, Second#tx.tags),
+				FirstChunkPosition = binary_to_integer(FirstPositionBinary),
+				SecondChunkPosition = binary_to_integer(SecondPositionBinary),
+				FirstChunkPosition =< SecondChunkPosition
+			end,
+			Transactions
+			),
+			{ok, << (TX#tx.data) || TX <- SortedTransactions >>}
 	end.
 
 
@@ -141,23 +144,25 @@ mine_blocks(_, Number) when Number =< 0 -> none;
 mine_blocks(Node, Number) when Number > 0 ->
 	mine_blocks(Node, Number, []).
 mine_blocks(Node, Total, Mined) ->
-	if Total == 0 ->
-		Mined;
-	true ->
-		ar_node:mine(Node),
-		NewMined = wait_for_blocks(Node,  length(Mined) + 1),
-		mine_blocks(Node, Total - 1, NewMined)
+	case Total == 0 of
+		true ->
+			Mined;
+		false ->
+			ar_node:mine(Node),
+			NewMined = wait_for_blocks(Node,  length(Mined) + 1),
+			mine_blocks(Node, Total - 1, NewMined)
 	end.
 
 wait_for_blocks(Node, ExpectedLength) ->
 	BHL = ar_node:get_hash_list(Node),
-	if length(BHL) < ExpectedLength ->
-		%% A relatively big interval is used here to give app_queue some time
-		%% to post transactions.
-		timer:sleep(1000),
-		wait_for_blocks(Node, ExpectedLength);
-	true ->
-		BHL
+	case length(BHL) < ExpectedLength of
+		true ->
+			%% A relatively big interval is used here to give app_queue some time
+			%% to post transactions.
+			timer:sleep(1000),
+			wait_for_blocks(Node, ExpectedLength);
+		false ->
+			BHL
 	end.
 
 collect_transactions(_, []) ->
