@@ -43,6 +43,14 @@ adt_simple_callback_ipfs_get_txs_test_() ->
 		?assertEqual(ExpectedData, Actual)
 	end}.
 
+adt_simple_callback_ipfs_remote_get_txs_test_() ->
+	{timeout, 60, fun() ->
+		{ARNode, IPFSPid} = setup(),
+		ExpectedData = add_n_tx_pairs_to_node(3, ARNode, getremote),
+		Actual = ipfs_hashes_to_data(IPFSPid),
+		?assertEqual(ExpectedData, Actual)
+	end}.
+
 adt_simple_callback_ipfs_hash_txs_test_() ->
 	{timeout, 30, fun() ->
 		{ARNode, IPFSPid} = setup(),
@@ -91,6 +99,23 @@ add_n_txs_to_node(N, Node) ->
 		end,
 		lists:seq(1,N)).
 
+add_n_tx_pairs_to_node(_, Node, getremote=Type) ->
+	prepare_tx_adder(Node),
+	BoringTags = [
+		{<<"TEST_TAG1">>, <<"TEST_VAL1">>},
+		{<<"TEST_TAG2">>, <<"TEST_VAL2">>}
+	],
+	lists:map(fun(X) ->
+			TX1 = tag_tx(ar_tx:new(timestamp_data(<<"DATA">>)), BoringTags),
+			send_tx_mine_block(Node, TX1),
+			TS = ts_bin(),
+			{Data, Tags} = return_and_tags(Type, X),
+			TX2 = tag_tx(ar_tx:new(Data), Tags),
+			send_tx_mine_block(Node, TX2),
+			Data
+		end,
+		lists:seq(1,3));
+
 add_n_tx_pairs_to_node(N, Node, Type) ->
 	prepare_tx_adder(Node),
 	BoringTags = [
@@ -118,6 +143,18 @@ return_and_tags(_, Data, Filename, hash) ->
 return_and_tags(_, Data, Filename, get) ->
 	{ok, Hash} = ar_ipfs:add_data(Data, Filename),
 	{Data, [{<<"IPFS-Get">>, Hash}]}.
+
+return_and_tags(getremote, 1) ->
+	rt(<<"QmSk4C7XGFJs23keAWxVeYVf7jMQHZ9Uq7EkK23xLqCZai">>);
+return_and_tags(getremote, 2) ->
+	rt(<<"QmUT69FfJHzpTcjqZTXgeHGvpPbCCfwLaLMC558oFQBZEL">>);
+return_and_tags(getremote, 3) ->
+	rt(<<"QmQXFVkSyDun1if8GQXYFgvYPGsnBn2xtC26BEJGZHpY9y">>).
+
+rt(Hash) ->
+	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
+	{Data, [{<<"IPFS-Get">>, Hash}]}.
+
 
 ipfs_hashes_to_data(Pid) ->
 	lists:map(fun(Hash) ->
