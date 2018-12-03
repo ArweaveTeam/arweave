@@ -1,5 +1,5 @@
 -module(app_bulk_upload).
--export([upload/2, upload/3, download/2]).
+-export([upload_file/2, download/2]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -13,33 +13,34 @@
 
 %% @doc Starts a queue server, splits the given file into chunks, wraps the chunks as 
 %% Arweave transactions, and submits them to the queue. Returns the queue PID.
-upload(Wallet, Filename) when is_list(Filename) ->
+upload_file(Wallet, Filename) when is_list(Filename) ->
 	{ok, Filecontents} = file:read_file(Filename),
-	upload(Wallet, Filecontents);
-upload(Wallet, Blob) when is_binary(Blob) ->
-	upload(whereis(http_entrypoint_node), Wallet, Blob).
+	upload_blob(Wallet, Filecontents).
 
-upload(Node, Wallet, Blob) ->
+upload_blob(Wallet, Blob) when is_binary(Blob) ->
+	upload_blob(whereis(http_entrypoint_node), Wallet, Blob).
+
+upload_blob(Node, Wallet, Blob) ->
 	Queue = app_queue:start(Node, Wallet),
 	Hash = crypto:hash(?BLOB_HASH_ALGO, Blob),
-	upload_blob(Queue, Hash, Blob),
+	upload_chunks(Queue, Hash, Blob),
 	Queue.
 
 %% @doc Takes a binary blob and processes it chunk by chunk. Each chunk is converted into
 %% a transaction and put into the queue. Chunk size is 1MB.
-upload_blob(Queue, Hash, Blob) ->
+upload_chunks(Queue, Hash, Blob) ->
 	BlobSize = byte_size(Blob),
 	ChunkNumber = BlobSize div ?MB + case BlobSize rem ?MB =/= 0 of true -> 1; false -> 0 end,
-	upload_blob(Queue, Hash, Blob, ChunkNumber, 1).
+	upload_chunks(Queue, Hash, Blob, ChunkNumber, 1).
 
-upload_blob(Queue, Hash, Blob, ChunkNumber, ChunkPosition) ->
+upload_chunks(Queue, Hash, Blob, ChunkNumber, ChunkPosition) ->
 	case byte_size(Blob) =< ?MB of
 		true ->
 			app_queue:add(Queue, chunk_to_tx(Hash, Blob, ChunkNumber, ChunkPosition));
 		false ->
 			<< Chunk:?MB/binary, Rest/binary >> = Blob,
 			app_queue:add(Queue, chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition)),
-			upload_blob(Queue, Hash, Rest, ChunkNumber, ChunkPosition + 1)
+			upload_chunks(Queue, Hash, Rest, ChunkNumber, ChunkPosition + 1)
 	end.
 
 %% @doc Converts the given binary chunk into a transaction. A hash of the whole block the chunk
@@ -111,7 +112,7 @@ upload_test_() ->
 		SearchServer = app_search:start(),
 		ar_node:add_peers(Node, SearchServer),
 
-		upload(Node, Wallet, Blob),
+		upload_blob(Node, Wallet, Blob),
 		BHL = mine_blocks(Node, 6),
 		Transactions = collect_transactions(BHL, BHL),
 		?assertEqual(2, length(Transactions)),
