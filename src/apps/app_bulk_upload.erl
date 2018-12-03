@@ -88,18 +88,29 @@ reconstruct_blob(Transactions) ->
 		true ->
 			{error, missing_chunks};
 		false ->
-			SortedTransactions = lists:sort(fun(First, Second) ->
-				{_, FirstPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, First#tx.tags),
-				{_, SecondPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, Second#tx.tags),
-				FirstChunkPosition = binary_to_integer(FirstPositionBinary),
-				SecondChunkPosition = binary_to_integer(SecondPositionBinary),
-				FirstChunkPosition =< SecondChunkPosition
-			end,
-			Transactions
-			),
-			{ok, [TX#tx.data || TX <- SortedTransactions]}
+			Sorted = sort_transactions_by_chunk_position(Transactions),
+			SortedUnique = lists:foldl(fun(V, A) -> drop_duplicates(V, A) end, [], Sorted),
+			{ok, [TX#tx.data || TX <- SortedUnique]}
 	end.
 
+sort_transactions_by_chunk_position(Transactions) ->
+	SortFn = fun(First, Second) ->
+		{_, FirstPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, First#tx.tags),
+		{_, SecondPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, Second#tx.tags),
+		FirstChunkPosition = binary_to_integer(FirstPositionBinary),
+		SecondChunkPosition = binary_to_integer(SecondPositionBinary),
+		FirstChunkPosition =< SecondChunkPosition
+	end,
+	lists:sort(SortFn, Transactions).
+
+drop_duplicates(TX, []) -> [TX];
+drop_duplicates(TX, [Head|Rest]) ->
+	ChunkPosition = lists:keyfind(<< "chunk_position" >>, 1, TX#tx.tags),
+	HeadPosition = lists:keyfind(<< "chunk_position" >>, 1, Head#tx.tags),
+	case ChunkPosition == HeadPosition of
+		true -> [Head|Rest];
+		false -> [TX,Head|Rest]
+	end.
 
 upload_test_() ->
 	{timeout, 60, fun() ->
