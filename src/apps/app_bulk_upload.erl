@@ -62,7 +62,7 @@ chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition) ->
 %% The provided hash has to be a Base 64 encoded SHA 256 hash of the file as a binary string.
 download(Hash, Filename) ->
 	{ok, Blob} = download(Hash),
-	file:write_file(Filename, Blob, [{encoding, unicode}]).
+	file:write_file(Filename, Blob, [write]).
 
 download(Hash) ->
 	app_search:get_entries(<< "blob_hash" >>, Hash),
