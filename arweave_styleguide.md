@@ -119,13 +119,15 @@ A maximum of eighty characters should be present on any singular line.
 
 To help enforce this styling consider using a ruler, most extensible editors will have this functionality by default or a simple plugin should be available to help.
 
+### Do not use if
 
+The `true ->` subclause of the `if` clause is confusing because `true` suggests the `if` expression evaluates to `true`, while the clause is executed when the expression is false. Use `case` instead.
 
 ### Try to avoid deeply nested code
 
 Deeply nested code should be avoided as it can mask a large set of alternative code paths and can become very difficult to debug.
 
-Code that uses if, case or receive structures should aim for a singular level of nesting and at most two levels of depth.
+Code that uses case or receive structures should aim for a singular level of nesting and at most two levels of depth.
 
 ```erlang
 %% Bad
@@ -134,9 +136,9 @@ contains_data_tx(TXList) ->
 	[TX|Rest] = TXList,
     case is_record(TX, tx) of
         true ->
-            if
-            	length(TX#tx.data) > 0 -> true;
-            	false -> contains_data_tx(Rest)
+            case byte_size(TX#tx.data) > 0 of
+                true -> true;
+                false -> contains_data_tx(Rest)
             end;
         false -> error_not_tx.
     end.
@@ -144,8 +146,8 @@ contains_data_tx(TXList) ->
 %% Better
 contains_data_tx([]) -> false;
 contains_data_tx([TX|Rest]) when is_record(TX, tx) ->
-	if
-		length(TX#tx.data > 0) -> true;
+	case byte_size(TX#tx.data) > 0 of
+	    true -> true;
 		false -> contains_data_tx(Rest)
 	end;
 contains_data_tx(_) ->
@@ -211,8 +213,6 @@ When a new record is defined the information regarding the purpose of each field
 	reward = 0 			% Transaction mining reward.
 }).
 ```
-
-
 
 ### Redundant or deprecated code should be removed
 
