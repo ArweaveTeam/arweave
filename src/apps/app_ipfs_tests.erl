@@ -20,7 +20,7 @@ adt_simple_callback_gets_blocks_test_() ->
 	end}.
 
 adt_simple_callback_gets_txs_test_() ->
-	{timeout, 30, fun() ->
+	{timeout, 60, fun() ->
 		{ARNode, IPFSPid} = setup(),
 		ExpectedTXIDs = add_n_txs_to_node(3, ARNode),
 		Actual = lists:reverse([TX#tx.id || TX <- app_ipfs:get_txs(IPFSPid)]),
@@ -28,7 +28,7 @@ adt_simple_callback_gets_txs_test_() ->
 	end}.
 
 adt_simple_callback_ipfs_add_txs_test_() ->
-	{timeout, 30, fun() ->
+	{timeout, 60, fun() ->
 		{ARNode, IPFSPid} = setup(),
 		ExpectedTSs = add_n_tx_pairs_to_node(3, ARNode, add),
 		Actual = ipfs_hashes_to_TSs(IPFSPid),
@@ -36,7 +36,7 @@ adt_simple_callback_ipfs_add_txs_test_() ->
 	end}.
 
 adt_simple_callback_ipfs_get_txs_test_() ->
-	{timeout, 30, fun() ->
+	{timeout, 60, fun() ->
 		{ARNode, IPFSPid} = setup(),
 		ExpectedData = add_n_tx_pairs_to_node(3, ARNode, get),
 		Actual = ipfs_hashes_to_data(IPFSPid),
@@ -64,7 +64,8 @@ adt_simple_callback_ipfs_hash_txs_test_() ->
 setup() ->
 	Node = ar_node_init(),
 	timer:sleep(1000),
-	{ok, Pid} = app_ipfs:start([Node]),
+	Wallet = ar_wallet:new(),
+	{ok, Pid} = app_ipfs:start([Node], Wallet, []),
 	timer:sleep(1000),
 	{Node, Pid}.
 
@@ -108,7 +109,6 @@ add_n_tx_pairs_to_node(_, Node, getremote=Type) ->
 	lists:map(fun(X) ->
 			TX1 = tag_tx(ar_tx:new(timestamp_data(<<"DATA">>)), BoringTags),
 			send_tx_mine_block(Node, TX1),
-			TS = ts_bin(),
 			{Data, Tags} = return_and_tags(Type, X),
 			TX2 = tag_tx(ar_tx:new(Data), Tags),
 			send_tx_mine_block(Node, TX2),

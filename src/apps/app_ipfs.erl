@@ -1,10 +1,13 @@
 -module(app_ipfs).
--export([start/1, stop/1, get_block_hashes/1, get_txs/1, get_ipfs_hashes/1]).
+-export([start/3, stop/1, get_and_send/2,
+	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1]).
 -export([confirmed_transaction/2, new_block/2]).
 -include("../ar.hrl").
 
 -record(state,{
-	adt_pid = undefined,
+	adt_pid,
+	wallet,
+	queue,
 	block_hashes = [],
 	ipfs_hashes = [],
 	txs = []
@@ -12,29 +15,40 @@
 
 %%% api
 
-start(Peers) ->
-	PidMod = spawn(fun() -> server(#state{}) end),
+start(Peers, Wallet, IPFSHashes) ->
+	Queue = app_queue:start(Wallet),
+	PidMod = spawn(fun() -> server(#state{queue=Queue, wallet=Wallet}) end),
+	register(?MODULE, PidMod),
 	PidADT = adt_simple:start(?MODULE, PidMod),
 	lists:foreach(fun(Node) -> ar_node:add_peers(Node, [PidADT]) end, Peers),
 	PidMod ! {add_adt_pid, PidADT},
+	spawn(?MODULE, get_and_send, [PidMod, IPFSHashes]),
 	{ok, PidMod}.
 
 stop(Pid) ->
-	Pid ! stop.
+	Pid ! stop,
+	unregister(?MODULE).
+
+get_and_send(Pid, IPFSHashes) ->
+	Q = send_and_retrieve(Pid, get_queue, queue),
+	lists:foreach(fun(Hash) ->
+			spawn(fun() -> get_hash_and_queue(Hash, Q) end)
+		end,
+		IPFSHashes).
 
 get_block_hashes(Pid) ->
-	send_and_retreive(Pid, get_block_hashes, block_hashes).
+	send_and_retrieve(Pid, get_block_hashes, block_hashes).
 
 get_ipfs_hashes(Pid) ->
-	send_and_retreive(Pid, get_ipfs_hashes, ipfs_hashes).
+	send_and_retrieve(Pid, get_ipfs_hashes, ipfs_hashes).
 
 get_txs(Pid) ->
-	send_and_retreive(Pid, get_txs, txs).
+	send_and_retrieve(Pid, get_txs, txs).
 
-send_and_retreive(Pid, SendTag, RecvTag) ->
+send_and_retrieve(Pid, SendTag, RecvTag) ->
 	Pid ! {SendTag, self()},
 	receive
-		{RecvTag, Xs} -> Xs
+		{RecvTag, X} -> X
 	end.
 
 %%% adt_simple callbacks
@@ -50,7 +64,7 @@ new_block(Pid, Block) ->
 
 %%% local server
 
-server(State=#state{block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
+server(State=#state{queue=Q, block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 	receive
 		stop ->
 			State#state.adt_pid ! stop,
@@ -66,6 +80,10 @@ server(State=#state{block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 		{get_txs, From} ->
 			From ! {txs, TXs},
 			server(State);
+		{get_queue, From} ->
+			From ! {queue, Q};
+		{queue_tx, UnsignedTX} ->
+			app_queue:add(Q, UnsignedTX);
 		{recv_new_block, Block} ->
 			BH = Block#block.indep_hash,
 			server(State#state{block_hashes=[BH|BHs]});
@@ -74,26 +92,31 @@ server(State=#state{block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 			NewIHs = case first_ipfs_tag(Tags) of
 				false ->
 					IHs;
-				{value, {<<"IPFS-Add">>, Filename}}  ->
-					{ok, Hash} = ar_ipfs:add_data(TX#tx.data, Filename),
-					[Hash|IHs];
+				{value, {<<"IPFS-Add">>, Hash}} ->
+					%% version 0.1, no validation
+					{ok, Hash2} = ar_ipfs:add_data(TX#tx.data, Hash),
+					[Hash2|IHs];
+					%% with validation:
+					%% case ar_ipfs:add_data(TX#tx.data, Hash) of
+					%%	{ok, Hash} -> [Hash|IHs];
+					%%	_          -> IHs
+					%% end;
 				{value, {<<"IPFS-Get">>, Hash}} ->
-					{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
-					[Hash|IHs];
-				{value, {<<"IPFS-Hash">>, Hash}} ->
-					case ar_ipfs:add_data(TX#tx.data, Hash) of
-						{ok, Hash} -> [Hash|IHs];
-						_          -> IHs
-					end
+					get_hash_and_queue(Hash, Q),
+					[Hash|IHs]
 			end,
 			server(State#state{txs=NewTXs, ipfs_hashes=NewIHs})
 	end.
+
+get_hash_and_queue(Hash, Queue) ->
+	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
+	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
+	app_queue:add(Queue, UnsignedTX).
 
 first_ipfs_tag(Tags) ->
 	lists:search(fun
 		({<<"IPFS-Add">>,  _}) -> true;
 		({<<"IPFS-Get">>,  _}) -> true;
-		({<<"IPFS-Hash">>, _}) -> true;
 		(_) -> false
 	end,
 	Tags).
