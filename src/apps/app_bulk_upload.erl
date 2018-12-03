@@ -8,7 +8,7 @@
 %%% submits them to Arweave as separate transactions. Transactions are submitted via
 %%% the queue module.
 
--define(MB, (1024 * 1024)).
+-define(CHUNK_SIZE, (1024 * 1024)).
 -define(BLOB_HASH_ALGO, sha256).
 
 %% @doc Starts a queue server, splits the given file into chunks, wraps the chunks as 
@@ -30,15 +30,16 @@ upload_blob(Node, Wallet, Blob) ->
 %% a transaction and put into the queue. Chunk size is 1MB.
 upload_chunks(Queue, Hash, Blob) ->
 	BlobSize = byte_size(Blob),
-	ChunkNumber = BlobSize div ?MB + case BlobSize rem ?MB =/= 0 of true -> 1; false -> 0 end,
+	HasRemainder = BlobSize rem ?CHUNK_SIZE =/= 0,
+	ChunkNumber = BlobSize div ?CHUNK_SIZE + case HasRemainder of true -> 1; false -> 0 end,
 	upload_chunks(Queue, Hash, Blob, ChunkNumber, 1).
 
 upload_chunks(Queue, Hash, Blob, ChunkNumber, ChunkPosition) ->
-	case byte_size(Blob) =< ?MB of
+	case byte_size(Blob) =< ?CHUNK_SIZE of
 		true ->
 			app_queue:add(Queue, chunk_to_tx(Hash, Blob, ChunkNumber, ChunkPosition));
 		false ->
-			<< Chunk:?MB/binary, Rest/binary >> = Blob,
+			<< Chunk:?CHUNK_SIZE/binary, Rest/binary >> = Blob,
 			app_queue:add(Queue, chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition)),
 			upload_chunks(Queue, Hash, Rest, ChunkNumber, ChunkPosition + 1)
 	end.
@@ -107,7 +108,7 @@ upload_test_() ->
 		Wallet = {_, Pub} = ar_wallet:new(),
 		Bs = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 		Node = ar_node:start([], Bs),
-		Blob = list_to_binary(lists:duplicate(?MB * 2, 1)),
+		Blob = list_to_binary(lists:duplicate(?CHUNK_SIZE * 2, 1)),
 
 		SearchServer = app_search:start(),
 		ar_node:add_peers(Node, SearchServer),
