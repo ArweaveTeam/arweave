@@ -347,6 +347,10 @@ When invoking functions with side effects, failing fast by only pattern matching
 In rare cases when even unexpected failures have to be processed, like in the HTTP event loop, `try/catch` may be used.
 
 
+## Put tests for the module X into X_tests.erl
+
+It is usually very difficult to separate tests from the actual code in the search results unless tests reside in the dedicated files. For instance, using separate files for tests makes it easier to see in how many places a particular function is used.
+
 ## Version control
 
 The Arweave client codebase is hosted on Github, the below standards define the criteria for committed code. We aim to adhere to these standards as to make it as easy possible for new contributors to get involved.
