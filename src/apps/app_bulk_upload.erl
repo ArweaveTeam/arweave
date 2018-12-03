@@ -31,28 +31,28 @@ upload_blob(Node, Wallet, Blob) ->
 upload_chunks(Queue, Hash, Blob) ->
 	BlobSize = byte_size(Blob),
 	HasRemainder = BlobSize rem ?CHUNK_SIZE =/= 0,
-	ChunkNumber = BlobSize div ?CHUNK_SIZE + case HasRemainder of true -> 1; false -> 0 end,
-	upload_chunks(Queue, Hash, Blob, ChunkNumber, 1).
+	NumberOfChunks = BlobSize div ?CHUNK_SIZE + case HasRemainder of true -> 1; false -> 0 end,
+	upload_chunks(Queue, Hash, Blob, NumberOfChunks, 1).
 
-upload_chunks(Queue, Hash, Blob, ChunkNumber, ChunkPosition) ->
+upload_chunks(Queue, Hash, Blob, NumberOfChunks, ChunkPosition) ->
 	case byte_size(Blob) =< ?CHUNK_SIZE of
 		true ->
-			app_queue:add(Queue, chunk_to_tx(Hash, Blob, ChunkNumber, ChunkPosition));
+			app_queue:add(Queue, chunk_to_tx(Hash, Blob, NumberOfChunks, ChunkPosition));
 		false ->
 			<< Chunk:?CHUNK_SIZE/binary, Rest/binary >> = Blob,
-			app_queue:add(Queue, chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition)),
-			upload_chunks(Queue, Hash, Rest, ChunkNumber, ChunkPosition + 1)
+			app_queue:add(Queue, chunk_to_tx(Hash, Chunk, NumberOfChunks, ChunkPosition)),
+			upload_chunks(Queue, Hash, Rest, NumberOfChunks, ChunkPosition + 1)
 	end.
 
 %% @doc Converts the given binary chunk into a transaction. A hash of the whole block the chunk
 %% is part of is assigned as a tag.
-chunk_to_tx(Hash, Chunk, ChunkNumber, ChunkPosition) ->
+chunk_to_tx(Hash, Chunk, NumberOfChunks, ChunkPosition) ->
 	#tx {
 		tags =
 			[
 				{"app_name", "BulkUpload"},
 				{"blob_hash", ar_util:encode(Hash)},
-				{"number_of_chunks", integer_to_binary(ChunkNumber)},
+				{"number_of_chunks", integer_to_binary(NumberOfChunks)},
 				{"chunk_position", integer_to_binary(ChunkPosition)}
 			],
 		data = Chunk
@@ -82,9 +82,9 @@ download(Hash) ->
 reconstruct_blob([]) -> {error, not_found};
 reconstruct_blob(Transactions) ->
 	Head = hd(Transactions),
-	{_, ChunkNumberBinary} = lists:keyfind(<< "number_of_chunks" >>, 1, Head#tx.tags),
-	ChunkNumber = binary_to_integer(ChunkNumberBinary),
-	case length(Transactions) < ChunkNumber of
+	{_, NumberOfChunksBinary} = lists:keyfind(<< "number_of_chunks" >>, 1, Head#tx.tags),
+	NumberOfChunks = binary_to_integer(NumberOfChunksBinary),
+	case length(Transactions) < NumberOfChunks of
 		true ->
 			{error, missing_chunks};
 		false ->
