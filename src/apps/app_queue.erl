@@ -16,9 +16,9 @@
 -define(CONFIRMATION_DEPTH, 3).
 %% How many ms should we wait between checking the current height.
 -ifdef(DEBUG).
--define(POLL_INTERVAL, 250).
+-define(POLL_INTERVAL_MS, 250).
 -else.
--define(POLL_INTERVAL, 15 * 1000).
+-define(POLL_INTERVAL_MS, 15 * 1000).
 -endif.
 
 %% @doc Takes a wallet, and optionally a node (if none is supplied, the local node
@@ -86,7 +86,7 @@ wait_for_block(S, TargetH) ->
    CurrentH = get_current_height(S),
    if CurrentH >= TargetH -> ok;
    true ->
-       timer:sleep(?POLL_INTERVAL),
+       timer:sleep(?POLL_INTERVAL_MS),
        wait_for_block(S, TargetH)
     end.
 
