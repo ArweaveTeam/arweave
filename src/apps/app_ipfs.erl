@@ -71,20 +71,29 @@ server(State=#state{block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 			server(State#state{block_hashes=[BH|BHs]});
 		{recv_new_tx, TX=#tx{tags=Tags}} ->
 			NewTXs = [TX|TXs],
-			NewIHs = case
-						{lists:keyfind(<<"IPFS-Add">>, 1, Tags),
-						 lists:keyfind(<<"IPFS-Hash">>, 1, Tags)} of
-				{false, false} ->
+			NewIHs = case first_ipfs_tag(Tags) of
+				false ->
 					IHs;
-				{{<<"IPFS-Add">>, Filename},_}  ->
+				{value, {<<"IPFS-Add">>, Filename}}  ->
 					{ok, Hash} = ar_ipfs:add_data(TX#tx.data, Filename),
 					[Hash|IHs];
-				{false, {<<"IPFS-Hash">>, Hash}} ->
-					{ok, Hash2} = ar_ipfs:add_data(TX#tx.data, Hash),
-					case Hash2 of
-						Hash -> [Hash|IHs];
-						_    -> IHs
+				{value, {<<"IPFS-Get">>, Hash}} ->
+					{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
+					[Hash|IHs];
+				{value, {<<"IPFS-Hash">>, Hash}} ->
+					case ar_ipfs:add_data(TX#tx.data, Hash) of
+						{ok, Hash} -> [Hash|IHs];
+						_          -> IHs
 					end
 			end,
 			server(State#state{txs=NewTXs, ipfs_hashes=NewIHs})
 	end.
+
+first_ipfs_tag(Tags) ->
+	lists:search(fun
+		({<<"IPFS-Add">>,  _}) -> true;
+		({<<"IPFS-Get">>,  _}) -> true;
+		({<<"IPFS-Hash">>, _}) -> true;
+		(_) -> false
+	end,
+	Tags).
