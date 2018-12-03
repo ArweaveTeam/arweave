@@ -81,17 +81,17 @@ server(State=#state{queue=Q, block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 			From ! {txs, TXs},
 			server(State);
 		{get_queue, From} ->
-			From ! {queue, Q};
+			From ! {queue, Q},
+			server(State);
 		{queue_tx, UnsignedTX} ->
-			app_queue:add(Q, UnsignedTX);
+			app_queue:add(Q, UnsignedTX),
+			server(State);
 		{recv_new_block, Block} ->
 			BH = Block#block.indep_hash,
 			server(State#state{block_hashes=[BH|BHs]});
 		{recv_new_tx, TX=#tx{tags=Tags}} ->
 			NewTXs = [TX|TXs],
 			NewIHs = case first_ipfs_tag(Tags) of
-				false ->
-					IHs;
 				{value, {<<"IPFS-Add">>, Hash}} ->
 					%% version 0.1, no validation
 					{ok, Hash2} = ar_ipfs:add_data(TX#tx.data, Hash),
@@ -101,17 +101,13 @@ server(State=#state{queue=Q, block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 					%%	{ok, Hash} -> [Hash|IHs];
 					%%	_          -> IHs
 					%% end;
-				{value, {<<"IPFS-Get">>, Hash}} ->
-					get_hash_and_queue(Hash, Q),
-					[Hash|IHs]
+				false ->
+					IHs
 			end,
 			server(State#state{txs=NewTXs, ipfs_hashes=NewIHs})
 	end.
 
-get_hash_and_queue(Hash, Queue) ->
-	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
-	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
-	app_queue:add(Queue, UnsignedTX).
+%%% private functions
 
 first_ipfs_tag(Tags) ->
 	lists:search(fun
@@ -120,3 +116,8 @@ first_ipfs_tag(Tags) ->
 		(_) -> false
 	end,
 	Tags).
+
+get_hash_and_queue(Hash, Queue) ->
+	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
+	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
+	app_queue:add(Queue, UnsignedTX).
