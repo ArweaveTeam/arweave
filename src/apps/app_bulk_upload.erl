@@ -63,7 +63,7 @@ chunk_to_tx(Hash, Chunk, NumberOfChunks, ChunkPosition) ->
 %% The provided hash has to be a Base 64 encoded SHA 256 hash of the file as a binary string.
 download(Hash, Filename) ->
 	{ok, Blob} = download(Hash),
-	file:write_file(Filename, iolist_to_binary(Blob), [write]).
+	file:write_file(Filename, Blob, [write]).
 
 download(Hash) ->
 	TXIDs = app_search:get_entries(<< "blob_hash" >>, Hash),
