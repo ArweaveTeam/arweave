@@ -119,12 +119,10 @@ drop_duplicates(TX, [Head|Rest]) ->
 
 upload_test_() ->
 	{timeout, 60, fun() ->
-		app_search:deleteDB(),
-
 		Wallet = {_, Pub} = ar_wallet:new(),
 		Bs = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 		Node = ar_node:start([], Bs),
-		Blob = list_to_binary(lists:duplicate(?CHUNK_SIZE * 2, 1)),
+		Blob = iolist_to_binary(generate_blob(?CHUNK_SIZE * 2)),
 
 		SearchServer = app_search:start(),
 		ar_node:add_peers(Node, SearchServer),
@@ -160,6 +158,19 @@ upload_test_() ->
 			ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(BlobList)))
 		)
 	end}.
+
+%% Generates an iolist() of the given size.
+%% The first 100 bytes are randomly picked from [1; 100].
+%% The rest is filled with 1. It would take too long to randomly pick every byte for a huge blob.
+generate_blob(Size) ->
+	generate_blob(Size, []).
+
+generate_blob(0, Acc) ->
+	Acc;
+generate_blob(Size, Acc) when Size =< 100 ->
+	generate_blob(Size - 1, [rand:uniform(100)|Acc]);
+generate_blob(Size, _) ->
+	generate_blob(100, lists:duplicate(Size - 100, 1)).
 
 mine_blocks(_, Number) when Number =< 0 -> none;
 mine_blocks(Node, Number) when Number > 0 ->
