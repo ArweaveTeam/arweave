@@ -9,6 +9,17 @@ get_everipedia_hashes_test() ->
 	lists:foreach(fun(H) -> io:format("Hash: ~p~n", [H]) end, Hashes),
 	?assertEqual(N, length(Hashes)).
 
+not_sending_already_got_test_() ->
+	{timeout, 30, fun() ->
+		{_, _} = setup(),
+		{HashTups, _} = ar_ipfs:ep_get_ipfs_hashes(3, 123),
+		Hashes = ar_ipfs:hashes_only(HashTups),
+		ar:d({here, Hashes}),
+		app_ipfs:get_and_send(app_ipfs, Hashes),
+		timer:sleep(3000),
+		app_ipfs:get_and_send(app_ipfs, Hashes)
+	end}.
+
 add_local_and_get_test() ->
 	Filename = "known_local.txt",
 	DataDir = "src/apps/app_ipfs_test_data/",

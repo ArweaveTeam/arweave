@@ -32,7 +32,7 @@ stop(Pid) ->
 get_and_send(Pid, IPFSHashes) ->
 	Q = send_and_retrieve(Pid, get_queue, queue),
 	lists:foreach(fun(Hash) ->
-			spawn(fun() -> get_hash_and_queue(Hash, Q) end)
+			spawn(fun() -> maybe_get_hash_and_queue(Hash, Q) end)
 		end,
 		IPFSHashes).
 
@@ -117,7 +117,17 @@ first_ipfs_tag(Tags) ->
 	end,
 	Tags).
 
-get_hash_and_queue(Hash, Queue) ->
-	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
-	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
-	app_queue:add(Queue, UnsignedTX).
+maybe_get_hash_and_queue(Hash, Queue) ->
+	ar:d({get_maybe, Hash}),
+	Pins = ar_ipfs:pin_ls(),
+	ar:d({pins, Pins}),
+	case lists:member(Hash, Pins) of
+		true  ->
+			ar:d({got_already, Hash});
+		false ->
+			{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
+			{ok, Hash2} = ar_ipfs:add_data(Data, Hash),
+			ar:d({added, Hash, Hash2}),
+			UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
+			app_queue:add(Queue, UnsignedTX)
+	end.

@@ -1,6 +1,7 @@
 -module(ar_ipfs).
 -export([add_data/2, add_data/4, add_file/1, add_file/3]).
 -export([cat_data_by_hash/1, cat_data_by_hash/3]).
+-export([pin_ls/0, pin_ls/2]).
 -export([ep_get_ipfs_hashes/2, hashes_only/1]).
 
 -define(BOUNDARY, "------------qwerasdfzxcv").
@@ -51,7 +52,7 @@ add_data(Data, Filename) ->
 	add_data(?IPFS_HOST, ?IPFS_PORT, Data, Filename).
 
 add_data(IP, Port, DataB, FilenameB) ->
-    URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/add",
+    URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/add?pin=true",
     Data = binary_to_list(DataB),
 	Filename = thing_to_list(FilenameB),
     Boundary = ?BOUNDARY,
@@ -77,6 +78,17 @@ cat_data_by_hash(Hash) ->
 cat_data_by_hash(IP, Port, Hash) ->
 	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/cat?arg=" ++ binary_to_list(Hash),
 	{ok, _Data} = request(get, {URL, []}).
+
+pin_ls() ->
+	pin_ls(?IPFS_HOST, ?IPFS_PORT).
+
+pin_ls(IP, Port) ->
+    URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/pin/ls",
+    {ok, Response} = request(post, {URL, [], [], ""}),
+	{[{<<"Keys">>, {Props}}]} = response_to_json(Response),
+	Hashes = [K || {K, _} <- Props],
+	Hashes.
+
 
 %%% private
 
