@@ -68,18 +68,14 @@ download(Hash, Filename) ->
 download(Hash) ->
 	TXIDs = app_search:get_entries(<< "blob_hash" >>, Hash),
 	Transactions = lists:map(fun(TX) -> ar_storage:read_tx(TX) end, TXIDs),
-	case lists:member(unavailable, Transactions) of
-		true ->
-			{error, invalid_storage_state};
-		false ->
-			{ok, Blob} = reconstruct_blob(Transactions),
-			BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(Blob))),
-			case BlobHash == Hash of
-				true ->
-					{ok, Blob};
-				false ->
-					{error, invalid_upload}
-			end
+	AvailableTransactions = lists:filter(fun(TX) -> TX /= unavailable end, Transactions),
+	{ok, Blob} = reconstruct_blob(AvailableTransactions),
+	BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(Blob))),
+	case BlobHash of
+		Hash ->
+			{ok, Blob};
+		_ ->
+			{error, invalid_upload}
 	end.
 
 reconstruct_blob([]) -> {error, not_found};
@@ -92,7 +88,7 @@ reconstruct_blob(Transactions) ->
 			{error, missing_chunks};
 		false ->
 			Sorted = sort_transactions_by_chunk_position(Transactions),
-			SortedUnique = lists:foldr(fun(V, A) -> drop_duplicates(V, A) end, [], Sorted),
+			SortedUnique = lists:foldr(fun drop_duplicates/2, [], Sorted),
 			{ok, [TX#tx.data || TX <- SortedUnique]}
 	end.
 
