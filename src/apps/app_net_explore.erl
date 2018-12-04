@@ -253,12 +253,12 @@ avg_connectivity_score(Hosts) ->
 	end,
 	maps:map(Mapper, Hosts).
 
-%% @doc Pareses a JSON file with the names of nodes in the same format as on the
-%% Observatory page.
+%% @doc Parses a JSON map of IP address to name obtained by running
+%% nameMapToNetExplore() on the Observatory page.
 parse_names_file(NamesJsonFile) ->
 	{ok, Json} = file:read_file(NamesJsonFile),
-	AddrNameMap = [{parse_ip_addr(IpAddr), Name} || #{<<"ip">> := IpAddr, <<"name">> := Name}
-		<- jiffy_to_map(jiffy:decode(Json))],
+	AddrNameMap = [{parse_ip_addr(IpAddr), Name} || {IpAddr, Name}
+		<- maps:to_list(jiffy_to_map(jiffy:decode(Json)))],
 	maps:from_list(AddrNameMap).
 
 %% @doc Parse an IP address string (without port).
