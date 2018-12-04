@@ -94,7 +94,7 @@ reconstruct_blob(Transactions) ->
 			{error, missing_chunks};
 		false ->
 			Sorted = sort_transactions_by_chunk_position(Transactions),
-			SortedUnique = lists:foldl(fun(V, A) -> drop_duplicates(V, A) end, [], Sorted),
+			SortedUnique = lists:foldr(fun(V, A) -> drop_duplicates(V, A) end, [], Sorted),
 			{ok, [TX#tx.data || TX <- SortedUnique]}
 	end.
 
