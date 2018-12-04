@@ -16,11 +16,7 @@ eval(true) -> true;
 eval(false) -> false;
 eval([]) -> [];
 eval({equals, Key, Value}) ->
-    app_search:get_entries(whereis(http_search_node), Key, Value),
-    receive
-        Resp -> Resp
-        after 3000 -> []
-    end;
+    app_search:get_entries(whereis(http_search_node), Key, Value);
 eval({'and',E1,E2}) ->
     sets:to_list(
         sets:intersection(
@@ -35,4 +31,3 @@ eval({'or',E1,E2}) ->
             sets:from_list(eval(E2))
         )
     ).
-	     
