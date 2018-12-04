@@ -109,10 +109,10 @@ server(S = #state { gossip = _GS }) ->
 				]
 			),
 			server(S);
-		error:Term:Stacktrace ->
+		error:Term ->
 			ar:report(
 				[
-					{'SearchERROR', {Term, Stacktrace}}
+					{'SearchERROR', {Term, erlang:get_stacktrace()}}
 				]
 			),
 			server(S)
