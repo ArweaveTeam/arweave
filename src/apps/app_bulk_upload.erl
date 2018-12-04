@@ -13,7 +13,7 @@
 
 %% @doc Starts a queue server, splits the given file into chunks, wraps the chunks as 
 %% Arweave transactions, and submits them to the queue. Returns the queue PID.
-upload_file(Wallet, Filename) when is_list(Filename) ->
+upload_file(Wallet, Filename) ->
 	{ok, Filecontents} = file:read_file(Filename),
 	upload_blob(Wallet, Filecontents).
 
