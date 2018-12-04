@@ -11,13 +11,14 @@ get_everipedia_hashes_test() ->
 
 not_sending_already_got_test_() ->
 	{timeout, 30, fun() ->
-		{_, _} = setup(),
+		{_, IPFSPid} = setup(),
 		{HashTups, _} = ar_ipfs:ep_get_ipfs_hashes(3, 123),
 		Hashes = ar_ipfs:hashes_only(HashTups),
 		ar:d({here, Hashes}),
 		app_ipfs:get_and_send(app_ipfs, Hashes),
 		timer:sleep(3000),
-		app_ipfs:get_and_send(app_ipfs, Hashes)
+		app_ipfs:get_and_send(app_ipfs, Hashes),
+		closedown(IPFSPid)
 	end}.
 
 add_local_and_get_test() ->
