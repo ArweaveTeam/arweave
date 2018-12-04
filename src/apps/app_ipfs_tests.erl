@@ -2,6 +2,13 @@
 -include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+get_everipedia_hashes_test() ->
+	N = 6,
+	From = 240,
+	{Hashes, _More} = ar_ipfs:ep_get_ipfs_hashes(N, From),
+	lists:foreach(fun(H) -> io:format("Hash: ~p~n", [H]) end, Hashes),
+	?assertEqual(N, length(Hashes)).
+
 add_local_and_get_test() ->
 	Filename = "known_local.txt",
 	DataDir = "src/apps/app_ipfs_test_data/",

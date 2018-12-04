@@ -1,10 +1,51 @@
 -module(ar_ipfs).
 -export([add_data/2, add_data/4, add_file/1, add_file/3]).
 -export([cat_data_by_hash/1, cat_data_by_hash/3]).
+-export([ep_get_ipfs_hashes/2, hashes_only/1]).
 
 -define(BOUNDARY, "------------qwerasdfzxcv").
 -define(IPFS_HOST, "127.0.0.1").
 -define(IPFS_PORT, "5001").
+
+ep_get_ipfs_hashes(N, From) ->
+	{ok, _} = application:ensure_all_started(ssl),
+	URL = "https://mainnet.libertyblock.io:7777/v1/chain/get_table_rows",
+	Headers = [],
+	ContentType = [],
+	ReqProps = [
+		{scope, <<"eparticlectr">>},
+		{code, <<"eparticlectr">>},
+		{table, <<"wikistbl">>},
+		{json, true},
+		{lower_bound, From},
+		{limit, N}
+	],
+	Body = jiffy:encode({ReqProps}),
+	{ok, Response} = request(post, {URL, Headers, ContentType, Body}),
+	{RespProps} = response_to_json(Response),
+	MaybeMore = case lists:keyfind(<<"more">>, 1, RespProps) of
+		{<<"more">>, More} -> More;
+		false              -> false
+	end,
+	HashTups = case lists:keyfind(<<"rows">>, 1, RespProps) of
+		false              -> [];
+		{<<"rows">>, Rows} -> lists:map(fun row_to_hash_tup/1, Rows)
+	end,
+	{HashTups, MaybeMore}.
+
+hashes_only(HashTups) ->
+	lists:flatten(lists:map(fun
+		({_,H,<<>>}) -> H;
+		({_,H,P})    -> [H,P]
+	end, HashTups)).
+
+row_to_hash_tup({Props}) ->
+	case lists:sort(Props) of
+		[{<<"hash">>, Hash},{<<"id">>, Id},{<<"parent_hash">>, PHash}] ->
+			{Id, Hash, PHash};
+		_ ->
+			{none, <<>>, <<>>}
+	end.
 
 add_data(Data, Filename) ->
 	add_data(?IPFS_HOST, ?IPFS_PORT, Data, Filename).
@@ -62,7 +103,7 @@ request(Method, Request) ->
 			%% example errors:
 			%% {error,{failed_connect,[{to_address,{"127.0.0.1",5001}},
 			%%                         {inet,[inet],econnrefused}]}}
-			%% ct:pal("httpc:request error:~n~n~p",[Error]),
+			%% io:format("httpc:request error:~n~n~p",[Error]),
 			{error, reasons_not_yet_implemented}
 	end.
 
