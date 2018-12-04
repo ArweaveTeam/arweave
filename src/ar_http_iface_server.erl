@@ -407,7 +407,7 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 		{ok, AddrOK} ->
 			case ar_node:get_balance(whereis(http_entrypoint_node), AddrOK) of
 				node_unavailable ->
-					{504, [], <<"Temporary timeout.">>};
+					{503, [], <<"Temporary timeout.">>};
 				Balance ->
 					{200, [], integer_to_binary(Balance)}
 			end
