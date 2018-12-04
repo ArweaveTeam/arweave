@@ -46,7 +46,7 @@ get_entries(PID, Name, Value) ->
 	PID ! {get_tx, Name, Value, self()},
 	receive TXIDs ->
 		TXIDs
-	after 1000 ->
+	after 3000 ->
 		[]
 	end.
 
