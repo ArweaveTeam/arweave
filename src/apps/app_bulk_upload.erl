@@ -69,13 +69,18 @@ download(Hash) ->
 	app_search:get_entries(<< "blob_hash" >>, Hash),
 	receive TXIDs ->
 		Transactions = lists:map(fun(TX) -> ar_storage:read_tx(TX) end, TXIDs),
-		{ok, Blob} = reconstruct_blob(Transactions),
-		BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(Blob))),
-		case BlobHash == Hash of
+		case lists:member(unavailable, Transactions) of
 			true ->
-				{ok, Blob};
+				{error, invalid_storage_state};
 			false ->
-				{error, invalid_upload}
+				{ok, Blob} = reconstruct_blob(Transactions),
+				BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(Blob))),
+				case BlobHash == Hash of
+					true ->
+						{ok, Blob};
+					false ->
+						{error, invalid_upload}
+				end
 		end
 	end.
 
