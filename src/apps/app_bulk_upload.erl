@@ -76,15 +76,15 @@ download_chunks(TXID, Chunks) ->
 			tx_not_found;
 		TX ->
 			case lists:keyfind(<< "app_name" >>, 1, TX#tx.tags) of
-				false ->
-					invalid_tx;
-				_ ->
+				{<< "app_name" >>, << "BulkUpload" >>} ->
 					case lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags) of
 						false ->
 							download_chunks(ar_util:encode(TX#tx.last_tx), [TX#tx.data|Chunks]);
 						_ ->
 							[TX#tx.data|Chunks]
-					end
+					end;
+				_ ->
+					invalid_tx
 			end
 	end.
 
