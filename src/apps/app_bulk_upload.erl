@@ -63,27 +63,22 @@ download(TXID, Filename) ->
 	file:write_file(Filename, Blob, [write]).
 
 download(TXID) ->
-	case download_chunks(TXID, []) of
-		Chunks when is_list(Chunks) ->
-			{ok, Chunks};
-		Err ->
-			{error, Err}
-	end.
+	download_chunks(TXID, []).
 
 download_chunks(TXID, Chunks) ->
 	case ar_storage:read_tx(ar_util:decode(TXID)) of
 		unavailable ->
-			tx_not_found;
+			{error, tx_not_found};
 		TX ->
 			AppNameTag = lists:keyfind(<< "app_name" >>, 1, TX#tx.tags),
 			FirstChunkTag = lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags),
 			case {AppNameTag, FirstChunkTag} of
 				{{<< "app_name" >>, << "BulkUpload" >>}, {<< "first_chunk" >>, _}} ->
-					[TX#tx.data|Chunks];
+					{ok, [TX#tx.data|Chunks]};
 				{{<< "app_name" >>, << "BulkUpload" >>}, false} ->
 					download_chunks(ar_util:encode(TX#tx.last_tx), [TX#tx.data|Chunks]);
 				_ ->
-					non_bulk_upload_tx
+					{error, non_bulk_upload_tx}
 			end
 	end.
 
