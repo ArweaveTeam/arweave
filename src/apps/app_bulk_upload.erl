@@ -28,32 +28,32 @@ upload_blob(Node, Wallet, Blob) ->
 %% @doc Takes a binary blob and processes it chunk by chunk. Each chunk is converted into
 %% a transaction and put into the queue. Chunk size is 1MB.
 upload_chunks(Queue, Blob) ->
-	upload_chunks(Queue, Blob, true).
+	upload_chunks(Queue, Blob, 1).
 
-upload_chunks(Queue, Blob, IsFirstChunk) ->
+upload_chunks(Queue, Blob, ChunkSequenceNumber) ->
 	case byte_size(Blob) =< ?CHUNK_SIZE of
 		true ->
-			app_queue:add(Queue, chunk_to_tx(Blob, IsFirstChunk));
+			app_queue:add(Queue, chunk_to_tx(Blob, ChunkSequenceNumber));
 		false ->
 			<< Chunk:?CHUNK_SIZE/binary, Rest/binary >> = Blob,
-			app_queue:add(Queue, chunk_to_tx(Chunk, IsFirstChunk)),
-			upload_chunks(Queue, Rest, false)
+			app_queue:add(Queue, chunk_to_tx(Chunk, ChunkSequenceNumber)),
+			upload_chunks(Queue, Rest, ChunkSequenceNumber + 1)
 	end.
 
 %% @doc Converts the given binary chunk into a transaction.
 %% The first chunk is tagged as such so that we know where to stop when the blob is downloaded.
-chunk_to_tx(Chunk, IsFirstChunk) ->
+chunk_to_tx(Chunk, ChunkSequenceNumber) ->
 	#tx {
-		tags = chunk_tags(IsFirstChunk),
+		tags = chunk_tags(ChunkSequenceNumber),
 		data = Chunk
 	}.
 
-chunk_tags(false) ->
+chunk_tags(ChunkSequenceNumber) when ChunkSequenceNumber > 1 ->
 	[
 		{<< "app_name" >>, << "BulkUpload" >>}
 	];
-chunk_tags(true) ->
-	chunk_tags(false) ++ [{<< "first_chunk" >>, << "true" >>}].
+chunk_tags(1) ->
+	chunk_tags(2) ++ [{<< "first_chunk" >>, << "true" >>}].
 
 %% @doc Searches the local storage for the chunks of the blob identified by the given
 %% Base 64 encoded transaction ID. If the blob is reconstructed successfully,
