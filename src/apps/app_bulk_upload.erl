@@ -22,93 +22,70 @@ upload_blob(Wallet, Blob) when is_binary(Blob) ->
 
 upload_blob(Node, Wallet, Blob) ->
 	Queue = app_queue:start(Node, Wallet),
-	Hash = crypto:hash(?BLOB_HASH_ALGO, Blob),
-	upload_chunks(Queue, Hash, Blob),
+	upload_chunks(Queue, Blob),
 	Queue.
 
 %% @doc Takes a binary blob and processes it chunk by chunk. Each chunk is converted into
 %% a transaction and put into the queue. Chunk size is 1MB.
-upload_chunks(Queue, Hash, Blob) ->
-	BlobSize = byte_size(Blob),
-	HasRemainder = BlobSize rem ?CHUNK_SIZE =/= 0,
-	NumberOfChunks = BlobSize div ?CHUNK_SIZE + case HasRemainder of true -> 1; false -> 0 end,
-	upload_chunks(Queue, Hash, Blob, NumberOfChunks, 1).
+upload_chunks(Queue, Blob) ->
+	upload_chunks(Queue, Blob, true).
 
-upload_chunks(Queue, Hash, Blob, NumberOfChunks, ChunkPosition) ->
+upload_chunks(Queue, Blob, IsFirstChunk) ->
 	case byte_size(Blob) =< ?CHUNK_SIZE of
 		true ->
-			app_queue:add(Queue, chunk_to_tx(Hash, Blob, NumberOfChunks, ChunkPosition));
+			app_queue:add(Queue, chunk_to_tx(Blob, IsFirstChunk));
 		false ->
 			<< Chunk:?CHUNK_SIZE/binary, Rest/binary >> = Blob,
-			app_queue:add(Queue, chunk_to_tx(Hash, Chunk, NumberOfChunks, ChunkPosition)),
-			upload_chunks(Queue, Hash, Rest, NumberOfChunks, ChunkPosition + 1)
+			app_queue:add(Queue, chunk_to_tx(Chunk, IsFirstChunk)),
+			upload_chunks(Queue, Rest, false)
 	end.
 
-%% @doc Converts the given binary chunk into a transaction. A hash of the whole block the chunk
-%% is part of is assigned as a tag.
-chunk_to_tx(Hash, Chunk, NumberOfChunks, ChunkPosition) ->
+%% @doc Converts the given binary chunk into a transaction.
+%% The first chunk is tagged as such so that we know where to stop when the blob is downloaded.
+chunk_to_tx(Chunk, IsFirstChunk) ->
 	#tx {
-		tags =
-			[
-				{"app_name", "BulkUpload"},
-				{"blob_hash", ar_util:encode(Hash)},
-				{"number_of_chunks", integer_to_binary(NumberOfChunks)},
-				{"chunk_position", integer_to_binary(ChunkPosition)}
-			],
+		tags = chunk_tags(IsFirstChunk),
 		data = Chunk
 	}.
 
-%% @doc Searches the local storage for the chunks of the blob with the given hash.
-%% If the blob is reconstructed successfuly, writes it to the specified destination.
-%% The provided hash has to be a Base 64 encoded SHA 256 hash of the file as a binary string.
-download(Hash, Filename) ->
-	{ok, Blob} = download(Hash),
+chunk_tags(false) ->
+	[
+		{<< "app_name" >>, << "BulkUpload" >>}
+	];
+chunk_tags(true) ->
+	chunk_tags(false) ++ [{<< "first_chunk" >>, << "true" >>}].
+
+%% @doc Searches the local storage for the chunks of the blob identified by the given
+%% Base 64 encoded transaction ID. If the blob is reconstructed successfully,
+%% writes it to the specified destination.
+download(TXID, Filename) ->
+	{ok, Blob} = download(TXID),
 	file:write_file(Filename, Blob, [write]).
 
-download(Hash) ->
-	TXIDs = app_search:get_entries(<< "blob_hash" >>, Hash),
-	Transactions = lists:map(fun(TX) -> ar_storage:read_tx(TX) end, TXIDs),
-	AvailableTransactions = lists:filter(fun(TX) -> TX /= unavailable end, Transactions),
-	{ok, Blob} = reconstruct_blob(AvailableTransactions),
-	BlobHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(Blob))),
-	case BlobHash of
-		Hash ->
-			{ok, Blob};
-		_ ->
-			{error, invalid_upload}
+download(TXID) ->
+	case download_chunks(TXID, []) of
+		Chunks when is_list(Chunks) ->
+			{ok, Chunks};
+		Err ->
+			{error, Err}
 	end.
 
-reconstruct_blob([]) -> {error, not_found};
-reconstruct_blob(Transactions) ->
-	Head = hd(Transactions),
-	{_, NumberOfChunksBinary} = lists:keyfind(<< "number_of_chunks" >>, 1, Head#tx.tags),
-	NumberOfChunks = binary_to_integer(NumberOfChunksBinary),
-	case length(Transactions) < NumberOfChunks of
-		true ->
-			{error, missing_chunks};
-		false ->
-			Sorted = sort_transactions_by_chunk_position(Transactions),
-			SortedUnique = lists:foldr(fun drop_duplicates/2, [], Sorted),
-			{ok, [TX#tx.data || TX <- SortedUnique]}
-	end.
-
-sort_transactions_by_chunk_position(Transactions) ->
-	SortFn = fun(First, Second) ->
-		{_, FirstPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, First#tx.tags),
-		{_, SecondPositionBinary} = lists:keyfind(<< "chunk_position" >>, 1, Second#tx.tags),
-		FirstChunkPosition = binary_to_integer(FirstPositionBinary),
-		SecondChunkPosition = binary_to_integer(SecondPositionBinary),
-		FirstChunkPosition =< SecondChunkPosition
-	end,
-	lists:sort(SortFn, Transactions).
-
-drop_duplicates(TX, []) -> [TX];
-drop_duplicates(TX, [Head|Rest]) ->
-	ChunkPosition = lists:keyfind(<< "chunk_position" >>, 1, TX#tx.tags),
-	HeadPosition = lists:keyfind(<< "chunk_position" >>, 1, Head#tx.tags),
-	case ChunkPosition == HeadPosition of
-		true -> [Head|Rest];
-		false -> [TX,Head|Rest]
+download_chunks(TXID, Chunks) ->
+	case ar_storage:read_tx(ar_util:decode(TXID)) of
+		unavailable ->
+			tx_not_found;
+		TX ->
+			case lists:keyfind(<< "app_name" >>, 1, TX#tx.tags) of
+				false ->
+					invalid_tx;
+				_ ->
+					case lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags) of
+						false ->
+							download_chunks(ar_util:encode(TX#tx.last_tx), [TX#tx.data|Chunks]);
+						_ ->
+							[TX#tx.data|Chunks]
+					end
+			end
 	end.
 
 upload_test_() ->
@@ -118,40 +95,34 @@ upload_test_() ->
 		Node = ar_node:start([], Bs),
 		Blob = iolist_to_binary(generate_blob(?CHUNK_SIZE * 2)),
 
-		SearchServer = app_search:start(),
-		ar_node:add_peers(Node, SearchServer),
-
 		upload_blob(Node, Wallet, Blob),
-		BHL = mine_blocks(Node, 6),
-		Transactions = collect_transactions(BHL, BHL),
-		?assertEqual(2, length(Transactions)),
-		[First, Second] = Transactions,
-		?assertEqual(Blob, << (First#tx.data)/binary, (Second#tx.data)/binary >>),
-		ExpectedHash = ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)),
+		mine_blocks(Node, 6),
+		Transactions = collect_transactions(Node, Wallet),
+		?assertEqual(
+			hash(Blob),
+			hash(<< (TX#tx.data) || TX <- Transactions >>)
+		),
+		[First,Second|_] = Transactions,
 		?assertEqual(
 			[
 				{<< "app_name" >>, << "BulkUpload" >>},
-				{<< "blob_hash" >>, ExpectedHash},
-				{<< "number_of_chunks" >>, << "2" >>},
-				{<< "chunk_position" >>, << "1" >>}
+				{<< "first_chunk" >>, << "true" >>}
 			],
 			First#tx.tags
 		),
 		?assertEqual(
 			[
-				{<< "app_name" >>, << "BulkUpload" >>},
-				{<< "blob_hash" >>, ExpectedHash},
-				{<< "number_of_chunks" >>, << "2" >>},
-				{<< "chunk_position" >>, << "2" >>}
+				{<< "app_name" >>, << "BulkUpload" >>}
 			],
 			Second#tx.tags
 		),
-		{ok, BlobList} = download(ExpectedHash),
-		?assertEqual(
-			ExpectedHash,
-			ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, iolist_to_binary(BlobList)))
-		)
+		LastTX = lists:last(Transactions),
+		{ok, DownloadedChunks} = download(ar_util:encode(LastTX#tx.id)),
+		?assertEqual(hash(Blob), hash(iolist_to_binary(DownloadedChunks)))
 	end}.
+
+hash(Blob) ->
+	ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)).
 
 %% Generates an iolist() of the given size.
 %% The first 100 bytes are randomly picked from [1; 100].
@@ -165,6 +136,21 @@ generate_blob(Size, Acc) when Size =< 100 ->
 	generate_blob(Size - 1, [rand:uniform(100)|Acc]);
 generate_blob(Size, _) ->
 	generate_blob(100, lists:duplicate(Size - 100, 1)).
+
+collect_transactions(Node, Wallet) ->
+	Addr = ar_wallet:to_address(Wallet),
+	TXID = ar_node:get_last_tx(Node, Addr),
+	TX = ar_storage:read_tx(TXID),
+	collect_chunk_transactions(TX, []).
+
+collect_chunk_transactions(TX, Transactions) ->
+	case lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags) of
+		false ->
+			PreviousTX = ar_storage:read_tx(TX#tx.last_tx),
+			collect_chunk_transactions(PreviousTX, [TX|Transactions]);
+		_ ->
+			[TX|Transactions]
+	end.
 
 mine_blocks(_, Number) when Number =< 0 -> none;
 mine_blocks(Node, Number) when Number > 0 ->
@@ -190,15 +176,3 @@ wait_for_blocks(Node, ExpectedLength) ->
 		false ->
 			BHL
 	end.
-
-collect_transactions(_, []) ->
-	[];
-collect_transactions(BHL, BHLRest) ->
-	[Head | Rest] = BHLRest,
-	Block = ar_storage:read_block(Head, BHL),
-	collect_transactions(BHL, Rest) ++ lists:map(
-		fun(Hash) ->
-			ar_storage:read_tx(Hash)
-		end,
-		Block#block.txs
-	).
