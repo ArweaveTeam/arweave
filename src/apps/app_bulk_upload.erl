@@ -88,38 +88,63 @@ download_chunks(TXID, Chunks) ->
 			end
 	end.
 
-upload_test_() ->
-	{timeout, 60, fun() ->
-		Wallet = {_, Pub} = ar_wallet:new(),
-		Bs = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
-		Node = ar_node:start([], Bs),
-		Blob = iolist_to_binary(generate_blob(?CHUNK_SIZE * 2)),
+upload_one_chunk_test_() ->
+	{
+		timeout, 60, fun() ->
+			upload_blob_test_with_blob_size(?CHUNK_SIZE - 1)
+		end
+	}.
 
-		upload_blob(Node, Wallet, Blob),
-		mine_blocks(Node, 6),
-		Transactions = collect_transactions(Node, Wallet),
-		?assertEqual(
-			hash(Blob),
-			hash(<< (TX#tx.data) || TX <- Transactions >>)
-		),
-		[First,Second|_] = Transactions,
-		?assertEqual(
-			[
-				{<< "app_name" >>, << "BulkUpload" >>},
-				{<< "first_chunk" >>, << "true" >>}
-			],
-			First#tx.tags
-		),
-		?assertEqual(
-			[
-				{<< "app_name" >>, << "BulkUpload" >>}
-			],
-			Second#tx.tags
-		),
-		LastTX = lists:last(Transactions),
-		{ok, DownloadedChunks} = download(ar_util:encode(LastTX#tx.id)),
-		?assertEqual(hash(Blob), hash(iolist_to_binary(DownloadedChunks)))
-	end}.
+upload_one_even_chunk_test_() ->
+	{
+		timeout, 60, fun() ->
+			upload_blob_test_with_blob_size(?CHUNK_SIZE)
+		end
+	}.
+
+upload_two_even_chunks_test_() ->
+	{
+		timeout, 60, fun() ->
+			upload_blob_test_with_blob_size(?CHUNK_SIZE * 2)
+		end
+	}.
+
+upload_three_chunks_test_() ->
+	{
+		timeout, 60, fun() ->
+			upload_blob_test_with_blob_size(?CHUNK_SIZE * 2 + 1)
+		end
+	}.
+
+upload_blob_test_with_blob_size(BlobSize) ->
+	Wallet = {_, Pub} = ar_wallet:new(),
+	Bs = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
+	Node = ar_node:start([], Bs),
+
+	Blob = iolist_to_binary(generate_blob(BlobSize)),
+
+	upload_blob(Node, Wallet, Blob),
+
+	BlobSizeByChunkSize = BlobSize div ?CHUNK_SIZE,
+	Remainder = case BlobSize rem ?CHUNK_SIZE of 0 -> 0; _ -> 1 end,
+	ExpectedTXNumber = BlobSizeByChunkSize + Remainder,
+
+	mine_blocks(Node, ExpectedTXNumber * 3),
+	Transactions = collect_transactions(Node, Wallet),
+	?assertEqual(ExpectedTXNumber, length(Transactions)),
+	?assertEqual(hash(Blob), hash(<< (TX#tx.data) || TX <- Transactions >>)),
+	[First|Rest] = Transactions,
+	?assertEqual(
+		[
+			{<< "app_name" >>, << "BulkUpload" >>},
+			{<< "first_chunk" >>, << "true" >>}
+		],
+		First#tx.tags
+	),
+	assert_rest(Rest),
+	LastTX = lists:last(Transactions),
+	{ok, DownloadedChunks} = download(ar_util:encode(LastTX#tx.id)),
+	?assertEqual(hash(Blob), hash(iolist_to_binary(DownloadedChunks))).
 
 hash(Blob) ->
 	ar_util:encode(crypto:hash(?BLOB_HASH_ALGO, Blob)).
@@ -176,3 +201,12 @@ wait_for_blocks(Node, ExpectedLength) ->
 		false ->
 			BHL
 	end.
+
+assert_rest([]) -> ok;
+assert_rest([TX|_]) ->
+	?assertEqual(
+		[
+			{<< "app_name" >>, << "BulkUpload" >>}
+		],
+		TX#tx.tags
+	).
