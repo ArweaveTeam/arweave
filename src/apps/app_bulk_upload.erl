@@ -75,14 +75,13 @@ download_chunks(TXID, Chunks) ->
 		unavailable ->
 			tx_not_found;
 		TX ->
-			case lists:keyfind(<< "app_name" >>, 1, TX#tx.tags) of
-				{<< "app_name" >>, << "BulkUpload" >>} ->
-					case lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags) of
-						false ->
-							download_chunks(ar_util:encode(TX#tx.last_tx), [TX#tx.data|Chunks]);
-						_ ->
-							[TX#tx.data|Chunks]
-					end;
+			AppNameTag = lists:keyfind(<< "app_name" >>, 1, TX#tx.tags),
+			FirstChunkTag = lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags),
+			case {AppNameTag, FirstChunkTag} of
+				{{<< "app_name" >>, << "BulkUpload" >>}, {<< "first_chunk" >>, _}} ->
+					[TX#tx.data|Chunks];
+				{{<< "app_name" >>, << "BulkUpload" >>}, false} ->
+					download_chunks(ar_util:encode(TX#tx.last_tx), [TX#tx.data|Chunks]);
 				_ ->
 					non_bulk_upload_tx
 			end
