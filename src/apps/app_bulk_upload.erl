@@ -84,7 +84,7 @@ download_chunks(TXID, Chunks) ->
 							[TX#tx.data|Chunks]
 					end;
 				_ ->
-					invalid_tx
+					non_bulk_upload_tx
 			end
 	end.
 
