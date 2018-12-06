@@ -1,5 +1,5 @@
 -module(app_queue).
--export([start/1, start/2, add/2, stop/1]).
+-export([start/1, start/2, start/3, add/2, stop/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -10,7 +10,8 @@
 -record(state, {
 	node,
 	wallet,
-	previous_tx = none
+	previous_tx = none,
+	previous_tx_tag_name = undefined
 }).
 
 %% How many blocks deep should be bury a TX before continuing?
@@ -26,12 +27,17 @@
 %% is used).
 start(Wallet) ->
 	start(whereis(http_entrypoint_node), Wallet).
+
 start(Node, Wallet) ->
+	start(Node, Wallet, undefined).
+
+start(Node, Wallet, PreviousTXTagName) ->
 	spawn(
 		fun() ->
 			server(#state {
 				node = Node,
-				wallet = Wallet
+				wallet = Wallet,
+				previous_tx_tag_name = PreviousTXTagName
 			})
 		end
 	).
@@ -61,7 +67,7 @@ send_tx(S, TX) ->
 			ar_node:get_wallet_list(S#state.node),
 			TX#tx.target
 		),
-	Tags = tx_tags(TX, S#state.previous_tx),
+	Tags = tx_tags(TX, S#state.previous_tx, S#state.previous_tx_tag_name),
 	SignedTX =
 		ar_tx:sign(
 			TX#tx {
@@ -84,15 +90,12 @@ send_tx(S, TX) ->
 	StartHeight = get_current_height(S),
 	wait_for_block(S#state { previous_tx = SignedTX#tx.id }, StartHeight + ?CONFIRMATION_DEPTH).
 
-tx_tags(TX, none) ->
+tx_tags(TX, none, _) ->
 	TX#tx.tags;
-tx_tags(TX, PreviousTX) ->
-	case ar_storage:read_tx(PreviousTX) of
-		unavailable ->
-			TX#tx.tags;
-		_ ->
-			TX#tx.tags ++ [{<< "queue_previous_tx" >>, ar_util:encode(PreviousTX)}]
-	end.
+tx_tags(TX, _, undefined) ->
+	TX#tx.tags;
+tx_tags(TX, PreviousTXID, PreviousTXTagName) ->
+	TX#tx.tags ++ [{PreviousTXTagName, ar_util:encode(PreviousTXID)}].
 
 %% @doc Wait until a given block height has been reached.
 wait_for_block(S, TargetH) ->
