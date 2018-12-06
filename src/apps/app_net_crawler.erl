@@ -70,7 +70,7 @@ fetch_peers(Node) ->
 fetch_peers(_, 0) ->
 	unavailable;
 fetch_peers(Node, AttemptsLeft) ->
-	case ar_http_iface:get_peers(Node) of
+	case ar_http_iface_client:get_peers(Node) of
 		unavailable ->
 			timer:sleep(20 * 1000),
 			io:format("Retrying fetching peers from: ~p~n", [Node]),

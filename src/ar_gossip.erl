@@ -75,7 +75,6 @@ possibly_send(_S, Peer, #gs_msg { data = {new_block, _Node, _Height, _NewB, _Rec
 		when (not is_pid(Peer)) ->
 	ignore;
 possibly_send(_S, Peer, #gs_msg { data = {add_tx, _TX} }) when not is_pid(Peer) ->
-	%ar_http_iface:send_new_tx(Peer, TX);
 	ignore;
 possibly_send(S, Peer, Msg) when is_pid(Peer) ->
 	case rand:uniform() >= S#gs_state.loss_probability of
