@@ -6,6 +6,11 @@
 %%% Starts a server that takes, signs and submits transactions to a node.
 %%% The server also handles waiting until the transaction is sufficiently
 %%% 'buried' in blocks, before sending the next one.
+%%%
+%%% Note! The transactions are never properly confirmed (by checking that they
+%%% ended up in a block not on a fork), so it's possible that one transaction
+%%% gets lost and the queue continues succeeding in submitting the following
+%%% transactions.
 
 -record(state, {
 	node,
