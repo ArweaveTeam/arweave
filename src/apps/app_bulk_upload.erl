@@ -88,40 +88,44 @@ download_chunks(TXID, Chunks) ->
 upload_one_chunk_test_() ->
 	{
 		timeout, 60, fun() ->
-			upload_blob_test_with_blob_size(?CHUNK_SIZE - 1)
+			Blob = iolist_to_binary(generate_blob(?CHUNK_SIZE - 1)),
+			upload_blob_test_with_blob(Blob),
+			upload_blob_test_with_blob(Blob) %% upload the same blob again
 		end
 	}.
 
 upload_one_even_chunk_test_() ->
 	{
 		timeout, 60, fun() ->
-			upload_blob_test_with_blob_size(?CHUNK_SIZE)
+			Blob = iolist_to_binary(generate_blob(?CHUNK_SIZE)),
+			upload_blob_test_with_blob(Blob)
 		end
 	}.
 
 upload_two_even_chunks_test_() ->
 	{
 		timeout, 60, fun() ->
-			upload_blob_test_with_blob_size(?CHUNK_SIZE * 2)
+			Blob = iolist_to_binary(generate_blob(?CHUNK_SIZE * 2)),
+			upload_blob_test_with_blob(Blob)
 		end
 	}.
 
 upload_three_chunks_test_() ->
 	{
 		timeout, 60, fun() ->
-			upload_blob_test_with_blob_size(?CHUNK_SIZE * 2 + 1)
+			Blob = iolist_to_binary(generate_blob(?CHUNK_SIZE * 2 + 1)),
+			upload_blob_test_with_blob(Blob)
 		end
 	}.
 
-upload_blob_test_with_blob_size(BlobSize) ->
+upload_blob_test_with_blob(Blob) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	Bs = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 	Node = ar_node:start([], Bs),
 
-	Blob = iolist_to_binary(generate_blob(BlobSize)),
-
 	upload_blob(Node, Wallet, Blob),
 
+	BlobSize = byte_size(Blob),
 	BlobSizeByChunkSize = BlobSize div ?CHUNK_SIZE,
 	Remainder = case BlobSize rem ?CHUNK_SIZE of 0 -> 0; _ -> 1 end,
 	ExpectedTXNumber = BlobSizeByChunkSize + Remainder,
