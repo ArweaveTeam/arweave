@@ -21,39 +21,30 @@ upload_blob(Wallet, Blob) when is_binary(Blob) ->
 	upload_blob(whereis(http_entrypoint_node), Wallet, Blob).
 
 upload_blob(Node, Wallet, Blob) ->
-	Queue = app_queue:start(Node, Wallet),
+	Queue = app_queue:start(Node, Wallet, << "previous_chunk" >>),
 	upload_chunks(Queue, Blob),
 	Queue.
 
 %% @doc Takes a binary blob and processes it chunk by chunk. Each chunk is converted into
 %% a transaction and put into the queue. Chunk size is 1MB.
 upload_chunks(Queue, Blob) ->
-	upload_chunks(Queue, Blob, 1).
-
-upload_chunks(Queue, Blob, ChunkSequenceNumber) ->
 	case byte_size(Blob) =< ?CHUNK_SIZE of
 		true ->
-			app_queue:add(Queue, chunk_to_tx(Blob, ChunkSequenceNumber));
+			app_queue:add(Queue, chunk_to_tx(Blob));
 		false ->
 			<< Chunk:?CHUNK_SIZE/binary, Rest/binary >> = Blob,
-			app_queue:add(Queue, chunk_to_tx(Chunk, ChunkSequenceNumber)),
-			upload_chunks(Queue, Rest, ChunkSequenceNumber + 1)
+			app_queue:add(Queue, chunk_to_tx(Chunk)),
+			upload_chunks(Queue, Rest)
 	end.
 
 %% @doc Converts the given binary chunk into a transaction.
-%% The first chunk is tagged as such so that we know where to stop when the blob is downloaded.
-chunk_to_tx(Chunk, ChunkSequenceNumber) ->
+chunk_to_tx(Chunk) ->
 	#tx {
-		tags = chunk_tags(ChunkSequenceNumber),
+		tags = [
+			{<< "app_name" >>, << "BulkUpload" >>}
+		],
 		data = Chunk
 	}.
-
-chunk_tags(ChunkSequenceNumber) when ChunkSequenceNumber > 1 ->
-	[
-		{<< "app_name" >>, << "BulkUpload" >>}
-	];
-chunk_tags(1) ->
-	chunk_tags(2) ++ [{<< "first_chunk" >>, << "true" >>}].
 
 %% @doc Searches the local storage for the chunks of the blob identified by the given
 %% Base 64 encoded transaction ID. If the blob is reconstructed successfully,
@@ -71,15 +62,12 @@ download_chunks(TXID, Chunks) ->
 			{error, tx_not_found};
 		TX ->
 			AppNameTag = lists:keyfind(<< "app_name" >>, 1, TX#tx.tags),
-			FirstChunkTag = lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags),
-			PreviousTXTag = lists:keyfind(<< "queue_previous_tx" >>, 1, TX#tx.tags),
-			case {AppNameTag, FirstChunkTag, PreviousTXTag} of
-				{{<< "app_name" >>, << "BulkUpload" >>}, {<< "first_chunk" >>, _}, _} ->
+			PreviousTXTag = lists:keyfind(<< "previous_chunk" >>, 1, TX#tx.tags),
+			case {AppNameTag, PreviousTXTag} of
+				{{_, << "BulkUpload" >>}, false} ->
 					{ok, [TX#tx.data|Chunks]};
-				{{<< "app_name" >>, << "BulkUpload" >>}, false, false} ->
-					{error, corrupted_bulk_upload};
-				{{<< "app_name" >>, << "BulkUpload" >>}, false, {_, PreviousTX}} ->
-					download_chunks(PreviousTX, [TX#tx.data|Chunks]);
+				{{_, << "BulkUpload" >>}, {_, PreviousTXID}} ->
+					download_chunks(PreviousTXID, [TX#tx.data|Chunks]);
 				_ ->
 					{error, non_bulk_upload_tx}
 			end
@@ -162,12 +150,12 @@ collect_transactions(Node, Wallet) ->
 	collect_chunk_transactions(TX, []).
 
 collect_chunk_transactions(TX, Transactions) ->
-	case lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags) of
+	case lists:keyfind(<< "previous_chunk" >>, 1, TX#tx.tags) of
 		false ->
-			PreviousTX = ar_storage:read_tx(TX#tx.last_tx),
-			collect_chunk_transactions(PreviousTX, [TX|Transactions]);
+			[TX | Transactions];
 		_ ->
-			[TX|Transactions]
+			PreviousTX = ar_storage:read_tx(TX#tx.last_tx),
+			collect_chunk_transactions(PreviousTX, [TX | Transactions])
 	end.
 
 mine_blocks(_, Number) when Number =< 0 -> none;
@@ -199,8 +187,7 @@ assert_transactions(Transactions) ->
 	[First|Rest] = Transactions,
 	?assertEqual(
 		[
-			{<< "app_name" >>, << "BulkUpload" >>},
-			{<< "first_chunk" >>, << "true" >>}
+			{<< "app_name" >>, << "BulkUpload" >>}
 		],
 		First#tx.tags
 	),
@@ -211,7 +198,7 @@ assert_transactions(PreviousTX, [TX|_]) ->
 	?assertEqual(
 		[
 			{<< "app_name" >>, << "BulkUpload" >>},
-			{<< "queue_previous_tx" >>, ar_util:encode(PreviousTX#tx.id)}
+			{<< "previous_chunk" >>, ar_util:encode(PreviousTX#tx.id)}
 		],
 		TX#tx.tags
 	).
