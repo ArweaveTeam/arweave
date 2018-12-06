@@ -405,9 +405,12 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 		{error, invalid} ->
 			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
+			%% ar_node:get_balance/2 can time out which is not suitable for this
+			%% use-case. It would be better if it never timed out so that Elli
+			%% would handle the timeout instead.
 			case ar_node:get_balance(whereis(http_entrypoint_node), AddrOK) of
 				node_unavailable ->
-					{503, [], <<"Temporary timeout.">>};
+					{503, [], <<"Internal timeout.">>};
 				Balance ->
 					{200, [], integer_to_binary(Balance)}
 			end
