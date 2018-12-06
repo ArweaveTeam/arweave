@@ -9,7 +9,8 @@
 
 -record(state, {
     node,
-    wallet
+    wallet,
+	previous_tx = none
 }).
 
 %% How many blocks deep should be bury a TX before continuing?
@@ -46,8 +47,8 @@ server(S) ->
     receive
         stop -> ok;
         {add_tx, TX} ->
-            send_tx(S, TX),
-            server(S)
+            NewS = send_tx(S, TX),
+            server(NewS)
     end.
 
 %% @doc Send a tx to the network and wait for it to be confirmed.
@@ -60,11 +61,13 @@ send_tx(S, TX) ->
             ar_node:get_wallet_list(S#state.node),
             TX#tx.target
         ),
+	Tags = tx_tags(TX, S#state.previous_tx),
     SignedTX =
         ar_tx:sign(
             TX#tx {
                 last_tx = ar_node:get_last_tx(S#state.node, Addr),
-                reward = Price
+                reward = Price,
+				tags = Tags
             },
             S#state.wallet
         ),
@@ -79,12 +82,22 @@ send_tx(S, TX) ->
     ),
     timer:sleep(ar_node_utils:calculate_delay(byte_size(TX#tx.data))),
     StartHeight = get_current_height(S),
-    wait_for_block(S, StartHeight + ?CONFIRMATION_DEPTH).
+    wait_for_block(S#state { previous_tx = SignedTX#tx.id }, StartHeight + ?CONFIRMATION_DEPTH).
+
+tx_tags(TX, none) ->
+	TX#tx.tags;
+tx_tags(TX, PreviousTX) ->
+	case ar_storage:read_tx(PreviousTX) of
+		unavailable ->
+			TX#tx.tags;
+		_ ->
+			TX#tx.tags ++ [{<< "queue_previous_tx" >>, ar_util:encode(PreviousTX}]
+	end.
 
 %% @doc Wait until a given block height has been reached.
 wait_for_block(S, TargetH) ->
    CurrentH = get_current_height(S),
-   if CurrentH >= TargetH -> ok;
+   if CurrentH >= TargetH -> S;
    true ->
        timer:sleep(?POLL_INTERVAL_MS),
        wait_for_block(S, TargetH)
