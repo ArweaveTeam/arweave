@@ -72,11 +72,14 @@ download_chunks(TXID, Chunks) ->
 		TX ->
 			AppNameTag = lists:keyfind(<< "app_name" >>, 1, TX#tx.tags),
 			FirstChunkTag = lists:keyfind(<< "first_chunk" >>, 1, TX#tx.tags),
-			case {AppNameTag, FirstChunkTag} of
-				{{<< "app_name" >>, << "BulkUpload" >>}, {<< "first_chunk" >>, _}} ->
+			PreviousTXTag = lists:keyfind(<< "queue_previous_tx" >>, 1, TX#tx.tags),
+			case {AppNameTag, FirstChunkTag, PreviousTXTag} of
+				{{<< "app_name" >>, << "BulkUpload" >>}, {<< "first_chunk" >>, _}, _} ->
 					{ok, [TX#tx.data|Chunks]};
-				{{<< "app_name" >>, << "BulkUpload" >>}, false} ->
-					download_chunks(ar_util:encode(TX#tx.last_tx), [TX#tx.data|Chunks]);
+				{{<< "app_name" >>, << "BulkUpload" >>}, false, false} ->
+					{error, corrupted_bulk_upload};
+				{{<< "app_name" >>, << "BulkUpload" >>}, false, {_, PreviousTX}} ->
+					download_chunks(PreviousTX, [TX#tx.data|Chunks]);
 				_ ->
 					{error, non_bulk_upload_tx}
 			end
@@ -127,15 +130,7 @@ upload_blob_test_with_blob_size(BlobSize) ->
 	Transactions = collect_transactions(Node, Wallet),
 	?assertEqual(ExpectedTXNumber, length(Transactions)),
 	?assertEqual(hash(Blob), hash(<< (TX#tx.data) || TX <- Transactions >>)),
-	[First|Rest] = Transactions,
-	?assertEqual(
-		[
-			{<< "app_name" >>, << "BulkUpload" >>},
-			{<< "first_chunk" >>, << "true" >>}
-		],
-		First#tx.tags
-	),
-	assert_rest(Rest),
+	assert_transactions(Transactions),
 	LastTX = lists:last(Transactions),
 	{ok, DownloadedChunks} = download(ar_util:encode(LastTX#tx.id)),
 	?assertEqual(hash(Blob), hash(iolist_to_binary(DownloadedChunks))).
@@ -196,11 +191,23 @@ wait_for_blocks(Node, ExpectedLength) ->
 			BHL
 	end.
 
-assert_rest([]) -> ok;
-assert_rest([TX|_]) ->
+assert_transactions(Transactions) ->
+	[First|Rest] = Transactions,
 	?assertEqual(
 		[
-			{<< "app_name" >>, << "BulkUpload" >>}
+			{<< "app_name" >>, << "BulkUpload" >>},
+			{<< "first_chunk" >>, << "true" >>}
+		],
+		First#tx.tags
+	),
+	assert_transactions(First, Rest).
+
+assert_transactions(_, []) -> ok;
+assert_transactions(PreviousTX, [TX|_]) ->
+	?assertEqual(
+		[
+			{<< "app_name" >>, << "BulkUpload" >>},
+			{<< "queue_previous_tx" >>, ar_util:encode(PreviousTX#tx.id)}
 		],
 		TX#tx.tags
 	).
