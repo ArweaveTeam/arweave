@@ -91,7 +91,7 @@ tx_tags(TX, PreviousTX) ->
 		unavailable ->
 			TX#tx.tags;
 		_ ->
-			TX#tx.tags ++ [{<< "queue_previous_tx" >>, ar_util:encode(PreviousTX}]
+			TX#tx.tags ++ [{<< "queue_previous_tx" >>, ar_util:encode(PreviousTX)}]
 	end.
 
 %% @doc Wait until a given block height has been reached.
