@@ -21,7 +21,7 @@ upload_blob(Wallet, Blob) when is_binary(Blob) ->
 	upload_blob(whereis(http_entrypoint_node), Wallet, Blob).
 
 upload_blob(Node, Wallet, Blob) ->
-	Queue = app_queue:start(Node, Wallet, << "previous_chunk" >>),
+	Queue = app_queue:start(Node, Wallet, <<"previous_chunk">>),
 	upload_chunks(Queue, Blob),
 	Queue.
 
@@ -32,7 +32,7 @@ upload_chunks(Queue, Blob) ->
 		true ->
 			app_queue:add(Queue, chunk_to_tx(Blob));
 		false ->
-			<< Chunk:?CHUNK_SIZE/binary, Rest/binary >> = Blob,
+			<<Chunk:?CHUNK_SIZE/binary, Rest/binary>> = Blob,
 			app_queue:add(Queue, chunk_to_tx(Chunk)),
 			upload_chunks(Queue, Rest)
 	end.
@@ -41,7 +41,7 @@ upload_chunks(Queue, Blob) ->
 chunk_to_tx(Chunk) ->
 	#tx {
 		tags = [
-			{<< "app_name" >>, << "BulkUpload" >>}
+			{<<"app_name">>, <<"BulkUpload">>}
 		],
 		data = Chunk
 	}.
@@ -61,12 +61,12 @@ download_chunks(TXID, Chunks) ->
 		unavailable ->
 			{error, tx_not_found};
 		TX ->
-			AppNameTag = lists:keyfind(<< "app_name" >>, 1, TX#tx.tags),
-			PreviousTXTag = lists:keyfind(<< "previous_chunk" >>, 1, TX#tx.tags),
+			AppNameTag = lists:keyfind(<<"app_name">>, 1, TX#tx.tags),
+			PreviousTXTag = lists:keyfind(<<"previous_chunk">>, 1, TX#tx.tags),
 			case {AppNameTag, PreviousTXTag} of
-				{{_, << "BulkUpload" >>}, false} ->
+				{{_, <<"BulkUpload">>}, false} ->
 					{ok, [TX#tx.data|Chunks]};
-				{{_, << "BulkUpload" >>}, {_, PreviousTXID}} ->
+				{{_, <<"BulkUpload">>}, {_, PreviousTXID}} ->
 					download_chunks(PreviousTXID, [TX#tx.data|Chunks]);
 				_ ->
 					{error, non_bulk_upload_tx}
@@ -121,7 +121,7 @@ upload_blob_test_with_blob(Blob) ->
 	mine_blocks(Node, ExpectedTXNumber * 3),
 	Transactions = collect_transactions(Node, Wallet),
 	?assertEqual(ExpectedTXNumber, length(Transactions)),
-	?assertEqual(hash(Blob), hash(<< (TX#tx.data) || TX <- Transactions >>)),
+	?assertEqual(hash(Blob), hash(<<(TX#tx.data) || TX <- Transactions>>)),
 	assert_transactions(Transactions),
 	LastTX = lists:last(Transactions),
 	{ok, DownloadedChunks} = download(ar_util:encode(LastTX#tx.id)),
@@ -150,7 +150,7 @@ collect_transactions(Node, Wallet) ->
 	collect_chunk_transactions(TX, []).
 
 collect_chunk_transactions(TX, Transactions) ->
-	case lists:keyfind(<< "previous_chunk" >>, 1, TX#tx.tags) of
+	case lists:keyfind(<<"previous_chunk">>, 1, TX#tx.tags) of
 		false ->
 			[TX | Transactions];
 		_ ->
@@ -187,7 +187,7 @@ assert_transactions(Transactions) ->
 	[First|Rest] = Transactions,
 	?assertEqual(
 		[
-			{<< "app_name" >>, << "BulkUpload" >>}
+			{<<"app_name">>, <<"BulkUpload">>}
 		],
 		First#tx.tags
 	),
@@ -197,8 +197,8 @@ assert_transactions(_, []) -> ok;
 assert_transactions(PreviousTX, [TX|_]) ->
 	?assertEqual(
 		[
-			{<< "app_name" >>, << "BulkUpload" >>},
-			{<< "previous_chunk" >>, ar_util:encode(PreviousTX#tx.id)}
+			{<<"app_name">>, <<"BulkUpload">>},
+			{<<"previous_chunk">>, ar_util:encode(PreviousTX#tx.id)}
 		],
 		TX#tx.tags
 	).
