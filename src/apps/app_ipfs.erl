@@ -116,6 +116,7 @@ server(State=#state{
 			NewIHs = case first_ipfs_tag(Tags) of
 				{value, {<<"IPFS-Add">>, Hash}} ->
 					%% version 0.1, no validation
+					ar:d({recv_tx_ipfs_add, TX#tx.id, Hash}),
 					{ok, Hash2} = ar_ipfs:add_data(TX#tx.data, Hash),
 					[Hash2|IHs];
 					%% with validation:
