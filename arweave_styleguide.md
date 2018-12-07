@@ -31,9 +31,18 @@ Module description comments should be prixed with '%%%' .
 
 
 
-### Function clause comments should be placed above the header
+### Function clause comments
 
-All functions should have a detailed description of their purpose above the header. This description should not include implementation details unless absolutely required, the code itself should be the main conveyor of the specific implementation.
+
+Function clause comments should be placed above the header.
+
+Every function should have a comment describing its purpose, unless the function signature explains it well enough.
+
+Function comments should not include implementation details unless absolutely required, the code itself should be the main conveyor of the specific implementation.
+
+It is more important to comment exported functions.
+
+A specification (`-spec`) may be used to document the function, as an alternative or an addition to the comment.
 
 Function description comments should be prefixed with  '%% @doc'. 
 
@@ -110,13 +119,15 @@ A maximum of eighty characters should be present on any singular line.
 
 To help enforce this styling consider using a ruler, most extensible editors will have this functionality by default or a simple plugin should be available to help.
 
+### Do not use if
 
+The `true ->` subclause of the `if` clause is confusing because `true` suggests the `if` expression evaluates to `true`, while the clause is executed when the expression is false. Use `case` instead.
 
 ### Try to avoid deeply nested code
 
 Deeply nested code should be avoided as it can mask a large set of alternative code paths and can become very difficult to debug.
 
-Code that uses if, case or receive structures should aim for a singular level of nesting and at most two levels of depth.
+Code that uses case or receive structures should aim for a singular level of nesting and at most two levels of depth.
 
 ```erlang
 %% Bad
@@ -125,9 +136,9 @@ contains_data_tx(TXList) ->
 	[TX|Rest] = TXList,
     case is_record(TX, tx) of
         true ->
-            if
-            	length(TX#tx.data) > 0 -> true;
-            	false -> contains_data_tx(Rest)
+            case byte_size(TX#tx.data) > 0 of
+                true -> true;
+                false -> contains_data_tx(Rest)
             end;
         false -> error_not_tx.
     end.
@@ -135,8 +146,8 @@ contains_data_tx(TXList) ->
 %% Better
 contains_data_tx([]) -> false;
 contains_data_tx([TX|Rest]) when is_record(TX, tx) ->
-	if
-		length(TX#tx.data > 0) -> true;
+	case byte_size(TX#tx.data) > 0 of
+	    true -> true;
 		false -> contains_data_tx(Rest)
 	end;
 contains_data_tx(_) ->
@@ -202,8 +213,6 @@ When a new record is defined the information regarding the purpose of each field
 	reward = 0 			% Transaction mining reward.
 }).
 ```
-
-
 
 ### Redundant or deprecated code should be removed
 
@@ -329,14 +338,22 @@ example() ->
 	...
 ```
 
+## Error handling
+
+Functions with side effects (in Erlang it boils down to IO) should return an `{ok, ...}` tuple upon successful execution, and `error_code` or `{error_code, ...}` otherwise.
+
+When invoking functions with side effects, failing fast by only pattern matching against `{ok, ...}` is encouraged.
+
+In rare cases when even unexpected failures have to be processed, like in the HTTP event loop, `try/catch` may be used.
 
 
+## Put tests for the module X into X_tests.erl
 
+It is usually very difficult to separate tests from the actual code in the search results unless tests reside in the dedicated files. For instance, using separate files for tests makes it easier to see in how many places a particular function is used.
 
 ## Version control
 
 The Arweave client codebase is hosted on Github, the below standards define the criteria for committed code. We aim to adhere to these standards as to make it as easy possible for new contributors to get involved.
-
 
 
 ### All committed code must be commented
@@ -363,21 +380,25 @@ Code commits should aim to be a single logical change or addition to the codebas
 - Added block shadows, refactored HTTP iface.
 ```
 
-
-
 ### Commit message syntax
 
 To keep the repository clean a set structure for commit messages has been decided.
 
-- The message should be preceeded with the dash character followed by a space.
 - The first character should be capitalized. 
-- The message should be terminated with a full stop.
 - The message should be succinct.
-- Actions taken should be written in past tense.
+- The message should be in the imperative mood.
 - Multiple actions should be comma separated.
 
+### Commit description
+
+In addition to a message, a commit should have a description focusing on why the change was made rather than what was made.
+
+### Commit example
+
 ```
-- Added arweave style guide, removed inconsistent styling.
+Add arweave style guide
+
+Inconsistent styling made it hard for us to view, comprehend, and edit the code so we had a discussion and agreed on the common style.
 ```
 
 
