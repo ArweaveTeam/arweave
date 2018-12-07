@@ -1,6 +1,8 @@
 -module(app_ipfs).
--export([start/3, stop/1, get_and_send/2,
-	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1]).
+-export([start/0, start/3, stop/1,
+	get_and_send/2,
+	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1,
+	report/1]).
 -export([confirmed_transaction/2, new_block/2]).
 -include("../ar.hrl").
 
@@ -14,6 +16,13 @@
 }).
 
 %%% api
+
+start() ->
+	Node = whereis(http_entrypoint_node),
+	Filename = "arweave_keyfile_gIK2HLIhvFUoAJFcpHOqwmGeZPgVZLcE3ss8sT64gFY.json",
+	Wallet = ar_wallet:load_keyfile("wallets/" ++ Filename),
+	{ok, Pid} = start([Node], Wallet, []),
+	{Node, Wallet, Pid}.
 
 start(Peers, Wallet, IPFSHashes) ->
 	Queue = app_queue:start(Wallet),
@@ -30,22 +39,25 @@ stop(Pid) ->
 	unregister(?MODULE).
 
 get_and_send(Pid, IPFSHashes) ->
-	Q = send_and_retrieve(Pid, get_queue, queue),
+	Q = get_x(Pid, get_queue, queue),
 	lists:foreach(fun(Hash) ->
 			spawn(fun() -> maybe_get_hash_and_queue(Hash, Q) end)
 		end,
 		IPFSHashes).
 
 get_block_hashes(Pid) ->
-	send_and_retrieve(Pid, get_block_hashes, block_hashes).
+	get_x(Pid, get_block_hashes, block_hashes).
 
 get_ipfs_hashes(Pid) ->
-	send_and_retrieve(Pid, get_ipfs_hashes, ipfs_hashes).
+	get_x(Pid, get_ipfs_hashes, ipfs_hashes).
 
 get_txs(Pid) ->
-	send_and_retrieve(Pid, get_txs, txs).
+	get_x(Pid, get_txs, txs).
 
-send_and_retrieve(Pid, SendTag, RecvTag) ->
+report(Pid) ->
+	get_x(Pid, get_report, report).
+
+get_x(Pid, SendTag, RecvTag) ->
 	Pid ! {SendTag, self()},
 	receive
 		{RecvTag, X} -> X
@@ -64,13 +76,23 @@ new_block(Pid, Block) ->
 
 %%% local server
 
-server(State=#state{queue=Q, block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
+server(State=#state{
+			adt_pid=ADTPid, queue=Q, wallet=Wallet,
+			block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 	receive
 		stop ->
 			State#state.adt_pid ! stop,
 			ok;
 		{add_adt_pid, Pid} ->
 			server(State#state{adt_pid=Pid});
+		{get_report, From} ->
+			Report = [
+				{adt_pid, ADTPid},{queue, Q},{wallet, Wallet},
+				{blocks, length(BHs), safe_hd(BHs)},
+				{txs, length(TXs), safe_hd(TXs)},
+				{ipfs_hashes, length(IHs), safe_hd(IHs)}],
+			From ! {report, Report},
+			server(State);
 		{get_block_hashes, From} ->
 			From ! {block_hashes, BHs},
 			server(State);
@@ -125,9 +147,13 @@ maybe_get_hash_and_queue(Hash, Queue) ->
 		true  ->
 			ar:d({got_already, Hash});
 		false ->
+			ar:d({fetching, Hash, '...'}),
 			{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
 			{ok, Hash2} = ar_ipfs:add_data(Data, Hash),
 			ar:d({added, Hash, Hash2}),
 			UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
 			app_queue:add(Queue, UnsignedTX)
 	end.
+
+safe_hd([])    -> [];
+safe_hd([H|_]) -> H.

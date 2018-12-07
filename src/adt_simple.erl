@@ -1,5 +1,6 @@
 -module(adt_simple).
 -export([start/1, start/2, start/3, stop/1]).
+-export([report/1]).
 -include("ar.hrl").
 
 %%% A simple abstraction for building Arweave apps.
@@ -51,6 +52,12 @@ start(CallbackMod, AppState, Peers) ->
 		end
 	).
 
+report(PID) ->
+	PID ! {get_report, self()},
+	receive
+		{report, Report} -> Report
+	end.
+
 %% @doc Stop the app.
 stop(PID) ->
 	PID ! stop.
@@ -60,6 +67,9 @@ server(S = #state { gossip = GS }) ->
 	%% Listen for gossip and normal messages.
 	%% Recurse through the message box, updating one's state each time.
 	receive
+		{get_report, From} ->
+			From ! {report, S},
+			server(S);
 		Msg when is_record(Msg, gs_msg) ->
 			% We have received a gossip mesage. Use the library to process it.
 			case ar_gossip:recv(GS, Msg) of
@@ -77,6 +87,7 @@ server(S = #state { gossip = GS }) ->
 					);
 				% New block and confirmed txs callback.
 				{NewGS, {new_block, _, _, B, _}} ->
+					ar:d({adt, recvd_new_block}),
 					FullTXs =
 						lists:map(
 							fun(T) -> ar_storage:read_tx(T) end,
@@ -85,6 +96,7 @@ server(S = #state { gossip = GS }) ->
 					NewS =
 						lists:foldl(
 							fun(TX, NextS) ->
+								ar:d({adt, confirmed_transaction, TX#tx.id}),
 								apply_callback(
 									NextS,
 									confirmed_transaction,
