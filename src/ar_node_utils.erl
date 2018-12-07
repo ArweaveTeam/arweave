@@ -767,13 +767,9 @@ generate_floating_wallet_list(WalletList, [T | TXs]) ->
 -endif.
 
 -ifdef(FIXED_DELAY).
-calculate_delay(0) ->
-	?FIXED_DELAY;
 calculate_delay(_Bytes) ->
 	?FIXED_DELAY.
 -else.
-calculate_delay(0) ->
-	30000;
 calculate_delay(Bytes) ->
 	30000 + ((Bytes * 300) div 1000).
 -endif.
