@@ -43,7 +43,12 @@ add_entry(PID, Name, Value, ID) ->
 
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 get_entries(PID, Name, Value) ->
-	PID ! {get_tx, Name, Value, self()}.
+	PID ! {get_tx, Name, Value, self()},
+	receive TXIDs ->
+		TXIDs
+	after 3000 ->
+		[]
+	end.
 
 %% @doc Updates the table of stored tranasaction data with all of the
 %% transactions in the given block
@@ -70,7 +75,7 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 		end,
 		ar_storage:read_tx(B#block.txs)
 	);
-update_tag_table(B) ->
+update_tag_table(_) ->
 	not_updated.
 
 server(S = #state { gossip = _GS }) ->

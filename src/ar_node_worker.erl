@@ -78,8 +78,12 @@ handle(SPid, {gossip_message, Msg}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	handle_gossip(SPid, ar_gossip:recv(GS, Msg));
 handle(SPid, {add_tx, TX}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, potential_txs]),
-	case add_tx(StateIn, TX) of
+	{ok, StateIn} =
+		ar_node_state:lookup(
+			SPid,
+			[gossip, node, txs, waiting_txs, potential_txs]
+		),
+	case add_tx(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
@@ -88,8 +92,7 @@ handle(SPid, {add_tx, TX}) ->
 	{ok, add_tx};
 handle(SPid, {encounter_new_tx, TX}) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [gossip, txs, waiting_txs, floating_wallet_list]),
-	{NewGS, _} = ar_gossip:send(maps:get(gossip, StateIn), {add_tx, TX}),
-	case encounter_new_tx(StateIn, TX, NewGS) of
+	case encounter_new_tx(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
@@ -240,32 +243,13 @@ handle_gossip(SPid, {NewGS, UnhandledMsg}) ->
 %%%
 
 %% @doc Add new transaction to a server state.
-add_tx(StateIn, TX) ->
+add_tx(StateIn, TX, GS) ->
 	#{node := Node, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
 	case ar_node_utils:get_conflicting_txs(aggregate_txs(StateIn), TX) of
 		[] ->
+			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			timer:send_after(
-				calculate_delay(byte_size(TX#tx.data)),
-				Node,
-				{apply_tx, TX}
-			),
-			{ok , [
-				{waiting_txs, ar_util:unique([TX | WaitingTXs])}
-			]};
-		_ ->
-			% TODO mue: Space in string atom correct?
-			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
-			{ok, [
-				{potential_txs, ar_util:unique([TX | PotentialTXs])}
-			]}
-	end.
-
-add_tx(StateIn, TX, NewGS) ->
-	#{node := Node, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
-	case ar_node_utils:get_conflicting_txs(aggregate_txs(StateIn), TX) of
-		[] ->
-			timer:send_after(
-				calculate_delay(byte_size(TX#tx.data)),
+				ar_node_utils:calculate_delay(byte_size(TX#tx.data)),
 				Node,
 				{apply_tx, TX}
 			),
@@ -274,9 +258,10 @@ add_tx(StateIn, TX, NewGS) ->
 				{gossip, NewGS}
 			]};
 		_ ->
+			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
 			{ok, [
 				{potential_txs, ar_util:unique([TX | PotentialTXs])},
-				{gossip, NewGS}
+				{gossip, GS}
 			]}
 	end.
 
@@ -701,23 +686,3 @@ is_fork_preferable(ForkB, CurrentCDiff, _) ->
 %% @doc Aggregates the transactions of a state to one list.
 aggregate_txs(#{txs := TXs, waiting_txs := WaitingTXs, potential_txs := PotentialTXs}) ->
 	TXs ++ WaitingTXs ++ PotentialTXs.
-
-%% @doc Calculate the time a tx must wait after being received to be mined.
-%% Wait time is a fixed interval combined with a wait dependent on tx data size.
-%% This wait helps ensure that a tx has propogated around the network.
-%% NB: If debug is defined no wait is applied.
--ifdef(DEBUG).
--define(FIXED_DELAY, 0).
--endif.
-
--ifdef(FIXED_DELAY).
-calculate_delay(0) ->
-	?FIXED_DELAY;
-calculate_delay(_Bytes) ->
-	?FIXED_DELAY.
--else.
-calculate_delay(0) ->
-	30000;
-calculate_delay(Bytes) ->
-	30000 + ((Bytes * 300) div 1000).
--endif.

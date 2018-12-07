@@ -14,6 +14,7 @@
 -export([filter_out_of_order_txs/2, filter_out_of_order_txs/3]).
 -export([filter_all_out_of_order_txs/2]).
 -export([validate/5, validate/8, validate_wallet_list/1]).
+-export([calculate_delay/1]).
 
 -include("ar.hrl").
 
@@ -480,7 +481,8 @@ validate(#{ hash_list := HashList, wallet_list := WalletList }, B, TXs, OldB, Re
 
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
-validate(_, _, _, _, _, _RecallB = unavailable, _, _) ->
+validate(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
+	ar:report([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),
 	false;
 validate(
 		HashList,
@@ -556,7 +558,7 @@ validate(
 			ok
 	end,
 
-	case Mine of false -> ar:d(invalid_nonce); _ -> ok end,
+	case Mine of false -> ar:report({invalid_nonce, BDSHash}); _ -> ok end,
 	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok      end,
 	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
 	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
@@ -755,3 +757,19 @@ generate_floating_wallet_list(WalletList, [T | TXs]) ->
 			generate_floating_wallet_list(UpdatedWalletList, TXs);
 		false -> false
 	end.
+
+%% @doc Calculate the time a tx must wait after being received to be mined.
+%% Wait time is a fixed interval combined with a wait dependent on tx data size.
+%% This wait helps ensure that a tx has propogated around the network.
+%% NB: If debug is defined no wait is applied.
+-ifdef(DEBUG).
+-define(FIXED_DELAY, 0).
+-endif.
+
+-ifdef(FIXED_DELAY).
+calculate_delay(_Bytes) ->
+	?FIXED_DELAY.
+-else.
+calculate_delay(Bytes) ->
+	30000 + ((Bytes * 300) div 1000).
+-endif.
