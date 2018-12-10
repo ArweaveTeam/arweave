@@ -25,7 +25,6 @@
 -export([is_joined/1]).
 
 -export([mine/1, mine_at_diff/2, automine/1, truncate/1]).
--export([add_block/3]).
 -export([add_tx/2]).
 -export([cancel_tx/3]).
 -export([add_peers/2]).
@@ -580,38 +579,6 @@ add_tx(Host, TX) ->
 %% @doc remove a TX from the waiting queues, with permission from the owner.
 cancel_tx(Node, TXID, Sig) ->
 	Node ! {cancel_tx, TXID, Sig}.
-
-%% @doc Add a new block to the node server loop.
-%% If accepted the nodes state will change.
-add_block(Conn, NewB, RecallB) ->
-	add_block(
-		Conn,
-		NewB,
-		RecallB,
-		NewB#block.height
-	).
-add_block(Conn, NewB, RecallB, Height) ->
-	add_block(
-		Conn,
-		undefined,
-		NewB,
-		RecallB,
-		Height
-	).
-add_block(GS, Peer, NewB, RecallB, Height) when is_record(GS, gs_state) ->
-	Recall = {RecallB#block.indep_hash, <<>>, <<>>},
-	{NewGS, _} =
-		ar_gossip:send(
-			GS, {new_block, Peer, Height, NewB, Recall}
-		),
-	NewGS;
-add_block(Node, Peer, NewB, RecallB, Height) when is_pid(Node) ->
-	Recall = {RecallB#block.indep_hash, <<>>, <<>>},
-	Node ! {new_block, Peer, Height, NewB, Recall},
-	ok;
-add_block(Host, Peer, NewB, RecallB, _Height) ->
-	ar_http_iface_client:send_new_block(Host, Peer, NewB, RecallB),
-	ok.
 
 %% @doc Request to add a list of peers to the node server loop.
 add_peers(Node, Peer) when not is_list(Peer) ->
