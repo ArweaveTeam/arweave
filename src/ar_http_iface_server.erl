@@ -824,35 +824,54 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer}) ->
 		false ->
 			{404, [], <<"Invalid block.">>};
 		true ->
-			post_block(post_block, {ReqStruct, BShadow, OrigPeer})
+			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer})
 	end;
-post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer}) ->
+	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
+	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
+	case B#block.diff >= ?MIN_DIFF of
+		true ->
+			post_block(check_current_block, {B, ReqStruct, OrigPeer});
+		_ ->
+			{400, [], <<"Difficulty too low">>}
+	end;
+post_block(check_current_block, {B, ReqStruct, OrigPeer}) ->
+	CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	case is_atom(CurrentB) of
+		true ->
+			{400, [], <<"Current block not available">>};
+		_ ->
+			post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer})
+	end;
+post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer}) ->
+	case B#block.height of
+		Height when Height =< CurrentB#block.height ->
+			{400, [], <<"The block height is too low">>};
+		Height when Height > CurrentB#block.height + 50 ->
+			{400, [], <<"The block is too much ahead">>};
+		_ ->
+			post_block(post_block, {B, ReqStruct, OrigPeer})
+	end;
+post_block(post_block, {B, ReqStruct, OrigPeer}) ->
 	% Everything fine, post block.
 	spawn(
 		fun() ->
 			JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
-			RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
 			KeyEnc = val_for_key(<<"key">>, ReqStruct),
 			NonceEnc = val_for_key(<<"nonce">>, ReqStruct),
 			Key = ar_util:decode(KeyEnc),
 			Nonce = ar_util:decode(NonceEnc),
-			CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-			B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
 			RecallIndepHash = ar_util:decode(JSONRecallB),
-			case (not is_atom(CurrentB)) andalso
-				(B#block.height > CurrentB#block.height) andalso
-				(B#block.height =< (CurrentB#block.height + 50)) andalso
-				(B#block.diff >= ?MIN_DIFF) of
-				true ->
-					ar:report(
-						[
-							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
-						]
-					),
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, {RecallIndepHash, Key, Nonce});
-				_ ->
-					ok
-			end
+			ar:report([{
+				sending_external_block_to_bridge,
+				ar_util:encode(B#block.indep_hash)
+			}]),
+			ar_bridge:add_block(
+				whereis(http_bridge_node),
+				OrigPeer,
+				B,
+				{RecallIndepHash, Key, Nonce}
+			)
 		end
 	),
 	{200, [], <<"OK">>}.
