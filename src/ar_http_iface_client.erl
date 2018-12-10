@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/4, send_new_block/6, send_new_tx/2, get_block/3]).
+-export([send_new_block/3, send_new_block/5, send_new_tx/2, get_block/3]).
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
@@ -52,12 +52,11 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, Port, NewB, RecallB) ->
+send_new_block(Peer, NewB, RecallB) ->
 	case ar_key_db:get(RecallB#block.indep_hash) of
 		[{Key, Nonce}] ->
 			send_new_block(
 				Peer,
-				Port,
 				NewB,
 				RecallB,
 				Key,
@@ -66,14 +65,13 @@ send_new_block(Peer, Port, NewB, RecallB) ->
 		_ ->
 			send_new_block(
 				Peer,
-				Port,
 				NewB,
 				RecallB,
 				<<>>,
 				<<>>
 			)
 	end.
-send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
+send_new_block(Peer, NewB, RecallB, Key, Nonce) ->
 	HashList =
 		lists:map(
 			fun ar_util:encode/1,
@@ -101,7 +99,9 @@ send_new_block(Peer, Port, NewB, RecallB, Key, Nonce) ->
 					{<<"new_block">>, BlockJSON},
 					{<<"recall_block">>, ar_util:encode(RecallB#block.indep_hash)},
 					{<<"recall_size">>, RecallB#block.block_size},
-					{<<"port">>, Port},
+					%% Add the P2P port field to be backwards compatible with nodes
+					%% running the old version of the P2P port feature.
+					{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
 					{<<"key">>, ar_util:encode(Key)},
 					{<<"nonce">>, ar_util:encode(Nonce)}
 				]

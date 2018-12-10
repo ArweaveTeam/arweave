@@ -388,7 +388,6 @@ add_external_block_test_() ->
 		ar_http_iface_server:reregister(Node1),
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
-			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
 			BGen
 		),
@@ -435,7 +434,6 @@ add_external_block_with_tx_test_() ->
 		ar_http_iface_server:reregister(Node1),
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
-			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
 			BGen
 		),
@@ -481,7 +479,6 @@ fork_recover_by_http_test_() ->
 		ar_http_iface_server:reregister(Node1),
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
-			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
 			BGen
 		),
