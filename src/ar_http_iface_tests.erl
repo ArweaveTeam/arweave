@@ -54,7 +54,7 @@ single_regossip_test_() ->
 post_block_to_unjoined_node_test() ->
 	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
 	{ok, {RespTup, _, Body, _, _}} =
-		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", JB),
+		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", [], JB),
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
@@ -164,8 +164,7 @@ get_balance_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
-			[]
+			"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
 		),
 	?assertEqual(10000, binary_to_integer(Body)).
 
@@ -191,8 +190,7 @@ get_presale_balance_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
-			[]
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
 		),
 	?assertEqual(10000, binary_to_integer(Body)).
 
@@ -207,8 +205,7 @@ get_last_tx_single_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx",
-			[]
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
 		),
 	?assertEqual(<<"TEST_ID">>, ar_util:decode(Body)).
 
@@ -268,17 +265,17 @@ get_non_existent_block_test() ->
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/wallet_list", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/wallet_list"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list", []).
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list").
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
@@ -518,8 +515,7 @@ add_tx_and_get_last_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx",
-			[]
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
 		),
 	?assertEqual(ID, ar_util:decode(Body)).
 
@@ -544,8 +540,7 @@ get_subfields_of_tx_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
-			[]
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data"
 		),
 	Orig = TX#tx.data,
 	?assertEqual(Orig, ar_util:decode(Body)).
@@ -571,8 +566,7 @@ get_pending_tx_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)),
-			[]
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id))
 		),
 	?assertEqual(<<"Pending">>, Body).
 
@@ -610,8 +604,7 @@ get_multiple_pending_txs_test_() ->
 					ar_httpc:request(
 						<<"GET">>,
 						{127, 0, 0, 1, 1984},
-						"/tx/pending",
-						[]
+						"/tx/pending"
 					),
 				PendingTXs = ar_serialize:dejsonify(Body),
 				case length(PendingTXs) of
@@ -649,6 +642,7 @@ get_tx_by_tag_test() ->
 			<<"POST">>,
 			{127, 0, 0, 1, 1984},
 			"/arql",
+			[],
 			QueryJSON
 		),
 	TXs = ar_serialize:dejsonify(Body),
@@ -720,6 +714,7 @@ get_txs_by_send_recv_test_() ->
 				<<"POST">>,
 				{127, 0, 0, 1, 1984},
 				"/arql",
+				[],
 				QueryJSON
 			),
 		TXs = ar_serialize:dejsonify(Res),

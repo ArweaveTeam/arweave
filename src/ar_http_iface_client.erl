@@ -32,6 +32,7 @@ do_send_new_tx(Peer, TX) ->
 		<<"POST">>,
 		Peer,
 		"/tx",
+		[],
 		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 	).
 
@@ -39,10 +40,9 @@ do_send_new_tx(Peer, TX) ->
 has_tx(Peer, ID) ->
 	case
 		ar_httpc:request(
-				<<"GET">>,
-				Peer,
-				"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
-				[]
+			<<"GET">>,
+			Peer,
+			"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id"
 		)
 	of
 		{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
@@ -93,6 +93,7 @@ send_new_block(Peer, NewB, RecallB, Key, Nonce) ->
 		<<"POST">>,
 		Peer,
 		"/block",
+		[],
 		ar_serialize:jsonify(
 			{
 				[
@@ -116,6 +117,7 @@ add_peer(Peer) ->
 		<<"POST">>,
 		Peer,
 		"/peers",
+		[],
 		ar_serialize:jsonify(
 			{
 				[
@@ -138,8 +140,7 @@ get_tx_reward(Peer, Size) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/price/" ++ integer_to_list(Size),
-			[]
+			"/price/" ++ integer_to_list(Size)
 		),
 	binary_to_integer(Body).
 
@@ -156,8 +157,7 @@ get_encrypted_block(Peer, Hash) when is_binary(Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/encrypted",
-			[]
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/encrypted"
 		)
 	).
 
@@ -169,8 +169,7 @@ get_block_subfield(Peer, Hash, Subfield) when is_binary(Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/" ++ Subfield,
-			[]
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/" ++ Subfield
 		)
 	);
 %% @doc Get a specified subfield from the block with the given height
@@ -181,8 +180,7 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/block/height/" ++integer_to_list(Height) ++ "/" ++ Subfield,
-			[]
+			"/block/height/" ++integer_to_list(Height) ++ "/" ++ Subfield
 		)
 	).
 
@@ -200,8 +198,7 @@ get_full_block(Peer, ID, BHL) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			prepare_block_id(ID),
-			[]
+			prepare_block_id(ID)
 		),
 		BHL
 	).
@@ -212,8 +209,7 @@ get_wallet_list(Peer, Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/wallet_list",
-			[]
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/wallet_list"
 		),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
@@ -228,8 +224,7 @@ get_hash_list(Peer) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/hash_list",
-			[]
+			"/hash_list"
 		),
 	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Body)).
 
@@ -238,8 +233,7 @@ get_hash_list(Peer, Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/hash_list",
-			[]
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/hash_list"
 		),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
@@ -253,8 +247,7 @@ get_height(Peer) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/height",
-			[]
+			"/height"
 		),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} -> binary_to_integer(Body);
@@ -270,8 +263,7 @@ get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/all/encrypted",
-			[]
+			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/all/encrypted"
 		)
 	).
 
@@ -283,8 +275,7 @@ get_tx(Peer, Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/tx/" ++ binary_to_list(ar_util:encode(Hash)),
-			[]
+			"/tx/" ++ binary_to_list(ar_util:encode(Hash))
 		)
 	).
 
@@ -294,14 +285,13 @@ get_tx_data(Peer, Hash) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/" ++ binary_to_list(ar_util:encode(Hash)),
-			[]
+			"/" ++ binary_to_list(ar_util:encode(Hash))
 		),
 	Body.
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
 get_time(Peer) ->
-	case ar_httpc:request(<<"GET">>, Peer, "/time", []) of
+	case ar_httpc:request(<<"GET">>, Peer, "/time") of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			binary_to_integer(Body);
 		_ -> unknown
@@ -316,8 +306,7 @@ get_pending_txs(Peer) ->
 				ar_httpc:request(
 					<<"GET">>,
 					Peer,
-					"/tx/pending",
-					[]
+					"/tx/pending"
 				),
 			PendingTxs = ar_serialize:dejsonify(Body),
 			[list_to_binary(P) || P <- PendingTxs]
@@ -339,8 +328,7 @@ get_info(Peer) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/info",
-			[]
+			"/info"
 		)
 	of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(Body);
@@ -353,10 +341,9 @@ get_peers(Peer) ->
 		begin
 			{ok, {{<<"200">>, _}, _, Body, _, _}} =
 				ar_httpc:request(
-				<<"GET">>,
-				Peer,
-				"/peers",
-				[]
+					<<"GET">>,
+					Peer,
+					"/peers"
 				),
 			PeerArray = ar_serialize:dejsonify(Body),
 			lists:map(fun ar_util:parse_peer/1, PeerArray)
