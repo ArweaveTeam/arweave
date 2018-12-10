@@ -39,11 +39,9 @@ request(Method, Peer, Path, Headers, Body, Timeout) ->
 	ok = fusco:disconnect(Client),
 	case Result of
 		{ok, {{_, _}, _, _, Start, End}} ->
-			[_|RawIP] = string:split(Host, "//"),
-			[IP|_Port] = string:split(RawIP, ":"),
 			case Body of
-				[] -> store_data_time(ar_util:parse_peer(IP), 0, End-Start);
-				_ -> store_data_time(ar_util:parse_peer(IP), byte_size(Body), End-Start)
+				[] -> store_data_time(Peer, 0, End-Start);
+				_ -> store_data_time(Peer, byte_size(Body), End-Start)
 			end;
 		_ -> ok
 		end,
@@ -58,13 +56,13 @@ merge_headers(HeadersA, HeadersB) ->
 	).
 
 %% @doc Update the database with new timing data.
-store_data_time(IP, Bytes, MicroSecs) ->
+store_data_time(Peer = {_, _, _, _, _}, Bytes, MicroSecs) ->
 	P =
-		case ar_meta_db:get({peer, IP}) of
+		case ar_meta_db:get({peer, Peer}) of
 			not_found -> #performance{};
 			X -> X
 		end,
-	ar_meta_db:put({peer, IP},
+	ar_meta_db:put({peer, Peer},
 		P#performance {
 			transfers = P#performance.transfers + 1,
 			time = P#performance.time + MicroSecs,
@@ -73,22 +71,22 @@ store_data_time(IP, Bytes, MicroSecs) ->
 	).
 
 %% @doc Return the performance object for a node.
-get_performance(IP) ->
-	case ar_meta_db:get({peer, IP}) of
+get_performance(Peer = {_, _, _, _, _}) ->
+	case ar_meta_db:get({peer, Peer}) of
 		not_found -> #performance{};
 		P -> P
 	end.
 
 %% @doc Reset the performance data for a given peer.
-reset_peer(IP) ->
-	ar_meta_db:put({peer, IP}, #performance{}).
+reset_peer(Peer = {_, _, _, _, _}) ->
+	ar_meta_db:put({peer, Peer}, #performance{}).
 
 %% @doc Update the "last on list" timestamp of a given peer
-update_timer(IP) ->
-	case ar_meta_db:get({peer, IP}) of
+update_timer(Peer = {_, _, _, _, _}) ->
+	case ar_meta_db:get({peer, Peer}) of
 		not_found -> #performance{};
 		P ->
-			ar_meta_db:put({peer, IP},
+			ar_meta_db:put({peer, Peer},
 				P#performance {
 					transfers = P#performance.transfers,
 					time = P#performance.time ,

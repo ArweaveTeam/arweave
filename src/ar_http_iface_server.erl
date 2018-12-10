@@ -6,6 +6,7 @@
 
 -export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([reregister/1, reregister/2]).
+-export([elli_request_to_peer/1]).
 
 -include("ar.hrl").
 -include_lib("lib/elli/include/elli.hrl").
@@ -49,6 +50,15 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 	reregister(http_bridge_node, BridgeNode),
 	start(Port).
 
+elli_request_to_peer(Req) ->
+	{A, B, C, D, _} = ar_util:parse_peer(elli_request:peer(Req)),
+	case elli_request:get_header(<<"X-P2p-Port">>, Req) of
+		undefined ->
+			{A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT};
+		Port ->
+			{A, B, C, D, binary_to_integer(Port)}
+	end.
+
 %%%
 %%% Server side functions.
 %%%
@@ -88,9 +98,9 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 %% NB: Blocks and transactions are transmitted between HTTP nodes in a JSON encoded format.
 %% To find the specifics regarding this look at ar_serialize module.
 handle(Req, _Args) ->
-	% Inform ar_bridge about new peer, performance rec will be updated  from ar_metrics
-	% (this is leftover from update_performance_list)
-	Peer = ar_util:parse_peer(elli_request:peer(Req)),
+	%% Inform ar_bridge about new peer, performance rec will be updated from ar_metrics
+	%% (this is leftover from update_performance_list)
+	Peer = elli_request_to_peer(Req),
 	case ar_meta_db:get(http_logging) of
 		true ->
 			ar:report(
@@ -296,7 +306,7 @@ handle('GET', [<<"peers">>], Req) ->
 				list_to_binary(ar_util:format_peer(P))
 			||
 				P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-				P /= ar_util:parse_peer(elli_request:peer(Req))
+				P /= elli_request_to_peer(Req)
 			]
 		)
 	};
@@ -368,10 +378,10 @@ handle('POST', [<<"peers">>], Req) ->
 				false ->
 					{400, [], <<"Wrong network.">>};
 				true ->
-					Peer = elli_request:peer(Req),
-					case ar_meta_db:get({peer, ar_util:parse_peer(Peer)}) of
+					Peer = elli_request_to_peer(Req),
+					case ar_meta_db:get({peer, Peer}) of
 						not_found ->
-							ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(Peer));
+							ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
 						X -> X
 					end,
 					{200, [], []}
@@ -794,9 +804,7 @@ post_block(request, Req) ->
 		{error, {_, _}} ->
 			{400, [], <<"Invalid block.">>};
 		{ok, {ReqStruct, BShadow}} ->
-			Port = val_for_key(<<"port">>, ReqStruct),
-			Peer = bitstring_to_list(elli_request:peer(Req)) ++ ":" ++ integer_to_list(Port),
-			OrigPeer = ar_util:parse_peer(Peer),
+			OrigPeer = elli_request_to_peer(Req),
 			post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer})
 	end;
 post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer}) ->

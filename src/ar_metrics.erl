@@ -226,23 +226,19 @@ handle_full_response(Type, [Req, Code, _Hs, _B, {Timings, Sizes}], _Config) ->
 			prometheus_summary:observe(
 				?RESPONSE_BODY_SIZE, TypedLabels, size(Sizes, response_body)),
 
-			case elli_request:peer(Req) of
-				undefined -> ok;
-				EP ->
-					Peer = ar_util:parse_peer(EP),
-					P = case ar_meta_db:get({peer, Peer}) of
-						not_found -> #performance{};
-						X -> X
-					end,
-					ar_meta_db:put({peer, Peer},
-						P#performance {
-						transfers = P#performance.transfers + 1,
-						time = P#performance.time + ReqTime,
-						bytes = P#performance.bytes + ReqSize,
-						timeout = os:system_time(seconds)
-						}),
-					ok
-			end
+			Peer = ar_http_iface_server:elli_request_to_peer(Req),
+			P = case ar_meta_db:get({peer, Peer}) of
+				not_found -> #performance{};
+				X -> X
+			end,
+			ar_meta_db:put({peer, Peer},
+				P#performance {
+				transfers = P#performance.transfers + 1,
+				time = P#performance.time + ReqTime,
+				bytes = P#performance.bytes + ReqSize,
+				timeout = os:system_time(seconds)
+				}),
+			ok
 	end.
 
 count_failed_request(Reason) ->
