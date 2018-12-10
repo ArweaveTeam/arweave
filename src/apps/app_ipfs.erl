@@ -2,6 +2,7 @@
 -export([start/0, start/3, stop/1,
 	get_and_send/2,
 	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1,
+	maybe_ipfs_add_txs/1,
 	report/1]).
 -export([confirmed_transaction/2, new_block/2]).
 -include("../ar.hrl").
@@ -54,14 +55,21 @@ get_ipfs_hashes(Pid) ->
 get_txs(Pid) ->
 	get_x(Pid, get_txs, txs).
 
+maybe_ipfs_add_txs(TXs) ->
+	case whereis(?MODULE) of
+		undefined -> not_running;
+		Pid ->
+			case is_process_alive(Pid) of
+				false -> not_running;
+				true ->
+					lists:foreach(
+						fun(TX) -> confirmed_transaction(Pid, TX) end,
+						TXs)
+			end
+	end.
+
 report(Pid) ->
 	get_x(Pid, get_report, report).
-
-get_x(Pid, SendTag, RecvTag) ->
-	Pid ! {SendTag, self()},
-	receive
-		{RecvTag, X} -> X
-	end.
 
 %%% adt_simple callbacks
 %%% return the new state (i.e. always the server pid)
@@ -139,6 +147,12 @@ first_ipfs_tag(Tags) ->
 		(_) -> false
 	end,
 	Tags).
+
+get_x(Pid, SendTag, RecvTag) ->
+	Pid ! {SendTag, self()},
+	receive
+		{RecvTag, X} -> X
+	end.
 
 maybe_get_hash_and_queue(Hash, Queue) ->
 	ar:d({get_maybe, Hash}),

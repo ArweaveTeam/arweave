@@ -344,6 +344,7 @@ integrate_new_block(
 	end,
 	% ar:d({new_hash_list, [NewB#block.indep_hash | HashList]}),
 	ar_tx_search:update_tag_table(NewB),
+	app_ipfs:maybe_ipfs_add_txs(BlockTXs),
 	lists:foreach(
 		fun(T) ->
 			ar_tx_db:ensure_error(T#tx.id)
