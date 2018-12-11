@@ -87,7 +87,6 @@ elli_request_to_peer(Req) ->
 %% POST /services
 %% GET /peers
 %% POST /peers
-%% POST /peers/port/{port}
 %% GET /hash_list
 %% GET /wallet_list
 %% GET /wallet/{address}/balance
@@ -388,26 +387,6 @@ handle('POST', [<<"peers">>], Req) ->
 			end;
 		_ -> {400, [], "Wrong network"}
 	end;
-handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
-	BlockJSON = elli_request:body(Req),
-	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	case lists:keyfind(<<"network">>, 1, Struct) of
-		{<<"network">>, NetworkName} ->
-			case (NetworkName == <<?NETWORK_NAME>>) of
-				false ->
-					{400, [], <<"Wrong network.">>};
-				true ->
-					Peer = elli_request:peer(Req),
-					Port = binary_to_integer(RawPort),
-					ar_bridge:add_remote_peer(
-						whereis(http_bridge_node),
-						ar_util:parse_peer({Peer, Port})
-						),
-					{200, [], []}
-			end;
-		_ -> {400, [], "Wrong network"}
-	end;
-
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
