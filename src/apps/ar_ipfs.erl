@@ -2,6 +2,7 @@
 -export([daemon_start/0, daemon_stop/0, daemon_stop/2]).
 -export([add_data/2, add_data/4, add_file/1, add_file/3]).
 -export([cat_data_by_hash/1, cat_data_by_hash/3]).
+-export([config_set_identity/1]).
 -export([key_gen/1, key_gen/3]).
 -export([pin_ls/0, pin_ls/2]).
 -export([ep_get_ipfs_hashes/2, hashes_only/1]).
@@ -91,6 +92,9 @@ cat_data_by_hash(Hash) ->
 cat_data_by_hash(IP, Port, Hash) ->
 	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/cat?arg=" ++ binary_to_list(Hash),
 	{ok, _Data} = request(get, {URL, []}).
+
+config_set_identity(Key) ->
+	os:cmd("ipfs config Identity.PeerID " ++ thing_to_list(Key)).
 
 key_gen(Name) ->
 	key_gen(?IPFS_HOST, ?IPFS_PORT, Name).
