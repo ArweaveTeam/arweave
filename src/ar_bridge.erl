@@ -1,5 +1,5 @@
 -module(ar_bridge).
--export([start/0, start/1, start/2, start/3]).
+-export([start/3]).
 -export([add_tx/2, add_block/4]). % Called from ar_http_iface
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
@@ -24,14 +24,11 @@
 }).
 
 %% @doc Start a node, linking to a supervisor process
-start_link(Args) ->
+start_link([_, _, _] = Args) ->
 	PID = erlang:apply(ar_bridge, start, Args),
 	{ok, PID}.
 
 %% @doc Launch a bridge node.
-start() -> start([]).
-start(ExtPeers) -> start(ExtPeers, []).
-start(ExtPeers, IntPeers) -> start(ExtPeers, IntPeers, ?DEFAULT_HTTP_IFACE_PORT).
 start(ExtPeers, IntPeers, Port) ->
 	spawn(
 		fun() ->

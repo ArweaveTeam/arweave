@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_server).
 
--export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
+-export([start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([reregister/1, reregister/2]).
 -export([elli_request_to_peer/1]).
 
@@ -17,7 +17,6 @@
 %%%
 
 %% @doc Start the Arweave HTTP API and returns a process ID.
-start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
 	spawn(
 		fun() ->
