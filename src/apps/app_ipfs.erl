@@ -1,5 +1,5 @@
 -module(app_ipfs).
--export([start/0, start/3, stop/1,
+-export([start/0, start/2, start_link/1, stop/1,
 	get_and_send/2,
 	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1,
 	maybe_ipfs_add_txs/1,
@@ -22,18 +22,23 @@ start() ->
 	Node = whereis(http_entrypoint_node),
 	Filename = "arweave_keyfile_gIK2HLIhvFUoAJFcpHOqwmGeZPgVZLcE3ss8sT64gFY.json",
 	Wallet = ar_wallet:load_keyfile("wallets/" ++ Filename),
-	{ok, Pid} = start([Node], Wallet, []),
+	{ok, Pid} = start([Node], Wallet),
 	{Node, Wallet, Pid}.
 
-start(Peers, Wallet, IPFSHashes) ->
+start(Peers, Wallet) ->
 	Queue = app_queue:start(Wallet),
 	PidMod = spawn(fun() -> server(#state{queue=Queue, wallet=Wallet}) end),
 	register(?MODULE, PidMod),
 	PidADT = adt_simple:start(?MODULE, PidMod),
 	lists:foreach(fun(Node) -> ar_node:add_peers(Node, [PidADT]) end, Peers),
 	PidMod ! {add_adt_pid, PidADT},
-	spawn(?MODULE, get_and_send, [PidMod, IPFSHashes]),
 	{ok, PidMod}.
+
+%% @doc Start a node, linking to a supervisor process
+%% function and doc comment copied from other {ar,app}_*:start_link functions.
+start_link(Args) ->
+	PID = erlang:apply(app_ipfs, start, Args),
+	{ok, PID}.
 
 stop(Pid) ->
 	Pid ! stop,
