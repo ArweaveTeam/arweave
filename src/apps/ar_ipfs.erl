@@ -1,4 +1,5 @@
 -module(ar_ipfs).
+-export([daemon_start/0, daemon_stop/0, daemon_stop/2]).
 -export([add_data/2, add_data/4, add_file/1, add_file/3]).
 -export([cat_data_by_hash/1, cat_data_by_hash/3]).
 -export([pin_ls/0, pin_ls/2]).
@@ -7,6 +8,17 @@
 -define(BOUNDARY, "------------qwerasdfzxcv").
 -define(IPFS_HOST, "127.0.0.1").
 -define(IPFS_PORT, "5001").
+
+daemon_start() ->
+	Pid = spawn(os, cmd, ["ipfs daemon"]),
+	{ok, Pid}.
+
+daemon_stop() ->
+	daemon_stop(?IPFS_HOST, ?IPFS_PORT).
+
+daemon_stop(IP, Port) ->
+    URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/shutdown",
+    {ok, _} = request(post, {URL, [], "", ""}).
 
 ep_get_ipfs_hashes(N, From) ->
 	{ok, _} = application:ensure_all_started(ssl),
