@@ -13,7 +13,7 @@ get_info_test() ->
 	[B0] = ar_weave:init([]),
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
-	BridgeNode = ar_bridge:start([]),
+	BridgeNode = ar_bridge:start([], [], ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, BridgeNode),
 	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, name)),
 	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, release)),
@@ -54,7 +54,7 @@ single_regossip_test_() ->
 post_block_to_unjoined_node_test() ->
 	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
 	{ok, {RespTup, _, Body, _, _}} =
-		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", JB),
+		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", [], JB),
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
@@ -145,7 +145,7 @@ get_unjoined_info_test() ->
 	ar_storage:clear(),
 	Node1 = ar_node:start([]),
 	ar_http_iface_server:reregister(Node1),
-	BridgeNode = ar_bridge:start([]),
+	BridgeNode = ar_bridge:start([], [], ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, BridgeNode),
 	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, name)),
 	?assertEqual(?CLIENT_VERSION, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, version)),
@@ -164,8 +164,7 @@ get_balance_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
-			[]
+			"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
 		),
 	?assertEqual(10000, binary_to_integer(Body)).
 
@@ -191,8 +190,7 @@ get_presale_balance_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance",
-			[]
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
 		),
 	?assertEqual(10000, binary_to_integer(Body)).
 
@@ -207,8 +205,7 @@ get_last_tx_single_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx",
-			[]
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
 		),
 	?assertEqual(<<"TEST_ID">>, ar_util:decode(Body)).
 
@@ -268,17 +265,17 @@ get_non_existent_block_test() ->
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/wallet_list", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/wallet_list"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list", []),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list", []).
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list").
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
@@ -286,7 +283,7 @@ add_external_tx_test() ->
 	[B0] = ar_weave:init([]),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
@@ -303,7 +300,7 @@ add_external_tx_with_tags_test() ->
 	[B0] = ar_weave:init([]),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	TX = ar_tx:new(<<"DATA">>),
@@ -334,7 +331,7 @@ find_external_tx_test() ->
 	SearchNode = app_search:start(Node),
 	ar_node:add_peers(Node, SearchNode),
 	ar_http_iface_server:reregister(http_search_node, SearchNode),
-	Bridge = ar_bridge:start([], Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
@@ -350,7 +347,7 @@ fail_external_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	SearchNode = app_search:start(Node),
@@ -372,7 +369,7 @@ add_external_block_test_() ->
 		Node1 = ar_node:start([], [BGen]),
 		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
 		timer:sleep(500),
-		Bridge = ar_bridge:start([], Node1),
+		Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node1, Bridge),
 		Node2 = ar_node:start([], [BGen]),
@@ -388,7 +385,6 @@ add_external_block_test_() ->
 		ar_http_iface_server:reregister(Node1),
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
-			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
 			BGen
 		),
@@ -413,7 +409,7 @@ add_external_block_with_tx_test_() ->
 		Node1 = ar_node:start([], [BGen]),
 		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
 		timer:sleep(500),
-		Bridge = ar_bridge:start([], Node1),
+		Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node1, Bridge),
 		% Start node 2, add transaction, and wait until mined.
@@ -435,7 +431,6 @@ add_external_block_with_tx_test_() ->
 		ar_http_iface_server:reregister(Node1),
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
-			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
 			BGen
 		),
@@ -460,7 +455,7 @@ fork_recover_by_http_test_() ->
 		[BGen] = ar_weave:init([]),
 		Node1 = ar_node:start([], [BGen]),
 		ar_http_iface_server:reregister(Node1),
-		Bridge = ar_bridge:start([], Node1),
+		Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node1, Bridge),
 		Node2 = ar_node:start([], [BGen]),
@@ -481,7 +476,6 @@ fork_recover_by_http_test_() ->
 		ar_http_iface_server:reregister(Node1),
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
-			?DEFAULT_HTTP_IFACE_PORT,
 			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
 			BGen
 		),
@@ -506,7 +500,7 @@ add_tx_and_get_last_test() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	{_Priv2, Pub2} = ar_wallet:new(),
@@ -521,8 +515,7 @@ add_tx_and_get_last_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx",
-			[]
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
 		),
 	?assertEqual(ID, ar_util:decode(Body)).
 
@@ -532,7 +525,7 @@ get_subfields_of_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	SearchNode = app_search:start(Node),
@@ -547,8 +540,7 @@ get_subfields_of_tx_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
-			[]
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data"
 		),
 	Orig = TX#tx.data,
 	?assertEqual(Orig, ar_util:decode(Body)).
@@ -559,7 +551,7 @@ get_pending_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	SearchNode = app_search:start(Node),
@@ -574,8 +566,7 @@ get_pending_tx_test() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)),
-			[]
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id))
 		),
 	?assertEqual(<<"Pending">>, Body).
 
@@ -601,7 +592,7 @@ get_multiple_pending_txs_test_() ->
 			),
 		Node = ar_node:start([], [B0]),
 		ar_http_iface_server:reregister(Node),
-		Bridge = ar_bridge:start([], [Node]),
+		Bridge = ar_bridge:start([], [Node], ?DEFAULT_HTTP_IFACE_PORT),
 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node, Bridge),
 		ar_http_iface_client:send_new_tx({127, 0, 0, 1,1984}, SignedTX1),
@@ -613,8 +604,7 @@ get_multiple_pending_txs_test_() ->
 					ar_httpc:request(
 						<<"GET">>,
 						{127, 0, 0, 1, 1984},
-						"/tx/pending",
-						[]
+						"/tx/pending"
 					),
 				PendingTXs = ar_serialize:dejsonify(Body),
 				case length(PendingTXs) of
@@ -652,6 +642,7 @@ get_tx_by_tag_test() ->
 			<<"POST">>,
 			{127, 0, 0, 1, 1984},
 			"/arql",
+			[],
 			QueryJSON
 		),
 	TXs = ar_serialize:dejsonify(Body),
@@ -669,7 +660,7 @@ get_tx_body_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	TX = ar_tx:new(<<"TEST DATA">>),
@@ -723,6 +714,7 @@ get_txs_by_send_recv_test_() ->
 				<<"POST">>,
 				{127, 0, 0, 1, 1984},
 				"/arql",
+				[],
 				QueryJSON
 			),
 		TXs = ar_serialize:dejsonify(Res),

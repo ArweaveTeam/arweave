@@ -1,5 +1,5 @@
 -module(ar_httpc).
--export([request/1, request/4, request/5, get_performance/1, update_timer/1]).
+-export([request/1, request/3, request/4, request/5, request/6, get_performance/1, update_timer/1]).
 -export([reset_peer/1]).
 -include("ar.hrl").
 
@@ -9,35 +9,60 @@
 
 %% @doc Perform a HTTP call with the httpc library, store the time required.
 request(Peer) ->
-	request(<<"GET">>, Peer, "/", <<>>).
-request(Method, Peer, Path, Body) ->
-	request(Method, Peer, Path, Body, ?NET_TIMEOUT).
-request(Method, Peer, Path, Body, Timeout) ->
+	request(<<"GET">>, Peer, "/", [], <<>>).
+
+request(Method, Peer, Path) ->
+	request(Method, Peer, Path, []).
+
+request(Method, Peer, Path, Headers) ->
+	request(Method, Peer, Path, Headers, <<>>).
+
+request(Method, Peer, Path, Headers, Body) ->
+	request(Method, Peer, Path, Headers, Body, ?NET_TIMEOUT).
+
+request(Method, Peer, Path, Headers, Body, Timeout) ->
 	%ar:report([{ar_httpc_request,Peer},{method,Method}, {path,Path}]),
-	Host="http://" ++ ar_util:format_peer(Peer),
-	{ok, Client} = fusco:start(Host, [{connect_timeout, min(Timeout, ?CONNECT_TIMEOUT)}]),
-	Result = fusco:request(Client, list_to_binary(Path), Method, ?DEFAULT_REQUEST_HEADERS, Body, 1, Timeout),
+	Host = "http://" ++ ar_util:format_peer(Peer),
+	{ok, Client} = fusco:start(
+		Host,
+		[{connect_timeout, min(Timeout, ?CONNECT_TIMEOUT)}]
+	),
+	Result = fusco:request(
+		Client,
+		list_to_binary(Path),
+		Method,
+		merge_headers(?DEFAULT_REQUEST_HEADERS, Headers),
+		Body,
+		1,
+		Timeout
+	),
 	ok = fusco:disconnect(Client),
 	case Result of
 		{ok, {{_, _}, _, _, Start, End}} ->
-			[_|RawIP] = string:split(Host, "//"),
-			[IP|_Port] = string:split(RawIP, ":"),
 			case Body of
-				[] -> store_data_time(ar_util:parse_peer(IP), 0, End-Start);
-				_ -> store_data_time(ar_util:parse_peer(IP), byte_size(Body), End-Start)
+				[] -> store_data_time(Peer, 0, End-Start);
+				_ -> store_data_time(Peer, byte_size(Body), End-Start)
 			end;
 		_ -> ok
 		end,
 	Result.
 
+%% @doc Merges proplists with headers. For duplicates, HeadersB has precedence.
+merge_headers(HeadersA, HeadersB) ->
+	lists:ukeymerge(
+		1,
+		lists:keysort(1, HeadersB),
+		lists:keysort(1, HeadersA)
+	).
+
 %% @doc Update the database with new timing data.
-store_data_time(IP, Bytes, MicroSecs) ->
+store_data_time(Peer = {_, _, _, _, _}, Bytes, MicroSecs) ->
 	P =
-		case ar_meta_db:get({peer, IP}) of
+		case ar_meta_db:get({peer, Peer}) of
 			not_found -> #performance{};
 			X -> X
 		end,
-	ar_meta_db:put({peer, IP},
+	ar_meta_db:put({peer, Peer},
 		P#performance {
 			transfers = P#performance.transfers + 1,
 			time = P#performance.time + MicroSecs,
@@ -46,22 +71,22 @@ store_data_time(IP, Bytes, MicroSecs) ->
 	).
 
 %% @doc Return the performance object for a node.
-get_performance(IP) ->
-	case ar_meta_db:get({peer, IP}) of
+get_performance(Peer = {_, _, _, _, _}) ->
+	case ar_meta_db:get({peer, Peer}) of
 		not_found -> #performance{};
 		P -> P
 	end.
 
 %% @doc Reset the performance data for a given peer.
-reset_peer(IP) ->
-	ar_meta_db:put({peer, IP}, #performance{}).
+reset_peer(Peer = {_, _, _, _, _}) ->
+	ar_meta_db:put({peer, Peer}, #performance{}).
 
 %% @doc Update the "last on list" timestamp of a given peer
-update_timer(IP) ->
-	case ar_meta_db:get({peer, IP}) of
+update_timer(Peer = {_, _, _, _, _}) ->
+	case ar_meta_db:get({peer, Peer}) of
 		not_found -> #performance{};
 		P ->
-			ar_meta_db:put({peer, IP},
+			ar_meta_db:put({peer, Peer},
 				P#performance {
 					transfers = P#performance.transfers,
 					time = P#performance.time ,

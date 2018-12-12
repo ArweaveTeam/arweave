@@ -148,17 +148,6 @@ get_current_block_test() ->
 	B1 = ar_node:get_current_block(Node),
 	?assertEqual(B0, B1).
 
-%% @doc Check that blocks can be added (if valid) by external processes.
-add_block_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init(),
-	Node1 = ar_node:start([], [B0]),
-	[B1 | _] = ar_weave:add([B0]),
-	ar_node:add_block(Node1, B1, B0),
-	Blocks = lists:map(fun(B) -> B#block.indep_hash end, [B1, B0]),
-	timer:sleep(1000),
-	?assertEqual(ar_node:get_blocks(Node1), Blocks).
-
 %% @doc Ensure that bogus blocks are not accepted onto the network.
 add_bogus_block_test() ->
 	ar_storage:clear(),

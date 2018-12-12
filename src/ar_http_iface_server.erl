@@ -4,8 +4,9 @@
 
 -module(ar_http_iface_server).
 
--export([start/0, start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
+-export([start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
 -export([reregister/1, reregister/2]).
+-export([elli_request_to_peer/1]).
 
 -include("ar.hrl").
 -include_lib("lib/elli/include/elli.hrl").
@@ -16,7 +17,6 @@
 %%%
 
 %% @doc Start the Arweave HTTP API and returns a process ID.
-start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) ->
 	spawn(
 		fun() ->
@@ -49,6 +49,15 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 	reregister(http_bridge_node, BridgeNode),
 	start(Port).
 
+elli_request_to_peer(Req) ->
+	{A, B, C, D, _} = ar_util:parse_peer(elli_request:peer(Req)),
+	case elli_request:get_header(<<"X-P2p-Port">>, Req) of
+		undefined ->
+			{A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT};
+		Port ->
+			{A, B, C, D, binary_to_integer(Port)}
+	end.
+
 %%%
 %%% Server side functions.
 %%%
@@ -77,7 +86,6 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 %% POST /services
 %% GET /peers
 %% POST /peers
-%% POST /peers/port/{port}
 %% GET /hash_list
 %% GET /wallet_list
 %% GET /wallet/{address}/balance
@@ -88,9 +96,9 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 %% NB: Blocks and transactions are transmitted between HTTP nodes in a JSON encoded format.
 %% To find the specifics regarding this look at ar_serialize module.
 handle(Req, _Args) ->
-	% Inform ar_bridge about new peer, performance rec will be updated  from ar_metrics
-	% (this is leftover from update_performance_list)
-	Peer = ar_util:parse_peer(elli_request:peer(Req)),
+	%% Inform ar_bridge about new peer, performance rec will be updated from ar_metrics
+	%% (this is leftover from update_performance_list)
+	Peer = elli_request_to_peer(Req),
 	case ar_meta_db:get(http_logging) of
 		true ->
 			ar:report(
@@ -296,7 +304,7 @@ handle('GET', [<<"peers">>], Req) ->
 				list_to_binary(ar_util:format_peer(P))
 			||
 				P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-				P /= ar_util:parse_peer(elli_request:peer(Req))
+				P /= elli_request_to_peer(Req)
 			]
 		)
 	};
@@ -368,36 +376,16 @@ handle('POST', [<<"peers">>], Req) ->
 				false ->
 					{400, [], <<"Wrong network.">>};
 				true ->
-					Peer = elli_request:peer(Req),
-					case ar_meta_db:get({peer, ar_util:parse_peer(Peer)}) of
+					Peer = elli_request_to_peer(Req),
+					case ar_meta_db:get({peer, Peer}) of
 						not_found ->
-							ar_bridge:add_remote_peer(whereis(http_bridge_node), ar_util:parse_peer(Peer));
+							ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
 						X -> X
 					end,
 					{200, [], []}
 			end;
 		_ -> {400, [], "Wrong network"}
 	end;
-handle('POST', [<<"peers">>, <<"port">>, RawPort], Req) ->
-	BlockJSON = elli_request:body(Req),
-	{Struct} = ar_serialize:dejsonify(BlockJSON),
-	case lists:keyfind(<<"network">>, 1, Struct) of
-		{<<"network">>, NetworkName} ->
-			case (NetworkName == <<?NETWORK_NAME>>) of
-				false ->
-					{400, [], <<"Wrong network.">>};
-				true ->
-					Peer = elli_request:peer(Req),
-					Port = binary_to_integer(RawPort),
-					ar_bridge:add_remote_peer(
-						whereis(http_bridge_node),
-						ar_util:parse_peer({Peer, Port})
-						),
-					{200, [], []}
-			end;
-		_ -> {400, [], "Wrong network"}
-	end;
-
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
 handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
@@ -794,9 +782,7 @@ post_block(request, Req) ->
 		{error, {_, _}} ->
 			{400, [], <<"Invalid block.">>};
 		{ok, {ReqStruct, BShadow}} ->
-			Port = val_for_key(<<"port">>, ReqStruct),
-			Peer = bitstring_to_list(elli_request:peer(Req)) ++ ":" ++ integer_to_list(Port),
-			OrigPeer = ar_util:parse_peer(Peer),
+			OrigPeer = elli_request_to_peer(Req),
 			post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer})
 	end;
 post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer}) ->
@@ -824,35 +810,54 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer}) ->
 		false ->
 			{404, [], <<"Invalid block.">>};
 		true ->
-			post_block(post_block, {ReqStruct, BShadow, OrigPeer})
+			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer})
 	end;
-post_block(post_block, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer}) ->
+	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
+	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
+	case B#block.diff >= ?MIN_DIFF of
+		true ->
+			post_block(check_current_block, {B, ReqStruct, OrigPeer});
+		_ ->
+			{400, [], <<"Difficulty too low">>}
+	end;
+post_block(check_current_block, {B, ReqStruct, OrigPeer}) ->
+	CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
+	case is_atom(CurrentB) of
+		true ->
+			{400, [], <<"Current block not available">>};
+		_ ->
+			post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer})
+	end;
+post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer}) ->
+	case B#block.height of
+		Height when Height =< CurrentB#block.height ->
+			{400, [], <<"The block height is too low">>};
+		Height when Height > CurrentB#block.height + 50 ->
+			{400, [], <<"The block is too much ahead">>};
+		_ ->
+			post_block(post_block, {B, ReqStruct, OrigPeer})
+	end;
+post_block(post_block, {B, ReqStruct, OrigPeer}) ->
 	% Everything fine, post block.
 	spawn(
 		fun() ->
 			JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
-			RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
 			KeyEnc = val_for_key(<<"key">>, ReqStruct),
 			NonceEnc = val_for_key(<<"nonce">>, ReqStruct),
 			Key = ar_util:decode(KeyEnc),
 			Nonce = ar_util:decode(NonceEnc),
-			CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-			B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
 			RecallIndepHash = ar_util:decode(JSONRecallB),
-			case (not is_atom(CurrentB)) andalso
-				(B#block.height > CurrentB#block.height) andalso
-				(B#block.height =< (CurrentB#block.height + 50)) andalso
-				(B#block.diff >= ?MIN_DIFF) of
-				true ->
-					ar:report(
-						[
-							{sending_external_block_to_bridge, ar_util:encode(BShadow#block.indep_hash)}
-						]
-					),
-					ar_bridge:add_block(whereis(http_bridge_node), OrigPeer, B, {RecallIndepHash, Key, Nonce});
-				_ ->
-					ok
-			end
+			ar:report([{
+				sending_external_block_to_bridge,
+				ar_util:encode(B#block.indep_hash)
+			}]),
+			ar_bridge:add_block(
+				whereis(http_bridge_node),
+				OrigPeer,
+				B,
+				{RecallIndepHash, Key, Nonce}
+			)
 		end
 	),
 	{200, [], <<"OK">>}.

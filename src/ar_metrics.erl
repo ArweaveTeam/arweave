@@ -109,7 +109,7 @@ handle_event(client_timeout, [RequestPart], _) ->
 handle_event(bad_request, [{Reason, _}], _) ->
   prometheus_counter:inc(?BAD_REQUEST_TOTAL, [Reason]),
   count_failed_request(bad_request);
-handle_event(elli_startup, Args, Config) ->
+handle_event(elli_startup, _Args, _Config) ->
   Labels        = labels(),
   Buckets       = duration_buckets(),
   UP            = [{name, ?UP},
@@ -204,45 +204,41 @@ handle_full_response(Type, [Req, Code, _Hs, _B, {Timings, Sizes}], _Config) ->
 							chunk_complete   -> ["chunks" | Labels] %;
 							%% _ -> Labels
 						end,
-		prometheus_counter:inc(?TOTAL, Labels),
+			prometheus_counter:inc(?TOTAL, Labels),
 
-		ReqTime = duration(Timings, request),
-		ReqSize = size(Sizes, response),
+			ReqTime = duration(Timings, request),
+			ReqSize = size(Sizes, response),
 
-		prometheus_histogram:observe(
-			?REQUEST_DURATION, TypedLabels, ReqTime),
-		prometheus_histogram:observe(
-			?REQUEST_HEADERS_DURATION, Labels, duration(Timings, headers)),
-		prometheus_histogram:observe(
-			?REQUEST_BODY_DURATION, Labels, duration(Timings, body)),
-		prometheus_histogram:observe(
-			?REQUEST_USER_DURATION, Labels, duration(Timings, user)),
-		prometheus_histogram:observe(
-			?RESPONSE_SEND_DURATION, TypedLabels, duration(Timings, send)),
-		prometheus_summary:observe(
-			?RESPONSE_SIZE, TypedLabels, ReqSize),
-		prometheus_summary:observe(
-			?RESPONSE_HEADERS_SIZE, TypedLabels, size(Sizes, response_headers)),
-		prometheus_summary:observe(
-			?RESPONSE_BODY_SIZE, TypedLabels, size(Sizes, response_body)),
+			prometheus_histogram:observe(
+				?REQUEST_DURATION, TypedLabels, ReqTime),
+			prometheus_histogram:observe(
+				?REQUEST_HEADERS_DURATION, Labels, duration(Timings, headers)),
+			prometheus_histogram:observe(
+				?REQUEST_BODY_DURATION, Labels, duration(Timings, body)),
+			prometheus_histogram:observe(
+				?REQUEST_USER_DURATION, Labels, duration(Timings, user)),
+			prometheus_histogram:observe(
+				?RESPONSE_SEND_DURATION, TypedLabels, duration(Timings, send)),
+			prometheus_summary:observe(
+				?RESPONSE_SIZE, TypedLabels, ReqSize),
+			prometheus_summary:observe(
+				?RESPONSE_HEADERS_SIZE, TypedLabels, size(Sizes, response_headers)),
+			prometheus_summary:observe(
+				?RESPONSE_BODY_SIZE, TypedLabels, size(Sizes, response_body)),
 
-		case elli_request:peer(Req) of
-			undefined -> ok;
-			EP ->
-				Peer = ar_util:parse_peer(EP),
-				P = case ar_meta_db:get({peer, Peer}) of
-					not_found -> #performance{};
-					X -> X
-				end,
-				ar_meta_db:put({peer, Peer},
-					P#performance {
-					transfers = P#performance.transfers + 1,
-					time = P#performance.time + ReqTime,
-					bytes = P#performance.bytes + ReqSize,
-					timeout = os:system_time(seconds)
-					}),
-				ok
-		end
+			Peer = ar_http_iface_server:elli_request_to_peer(Req),
+			P = case ar_meta_db:get({peer, Peer}) of
+				not_found -> #performance{};
+				X -> X
+			end,
+			ar_meta_db:put({peer, Peer},
+				P#performance {
+				transfers = P#performance.transfers + 1,
+				time = P#performance.time + ReqTime,
+				bytes = P#performance.bytes + ReqSize,
+				timeout = os:system_time(seconds)
+				}),
+			ok
 	end.
 
 count_failed_request(Reason) ->
@@ -424,4 +420,3 @@ label(status_class, _, StatusCode) -> prometheus_http:status_class(StatusCode).
 %% @see elli_prometheus
 %% @copyright 2016 elli-lib team
 %% Macros.
-

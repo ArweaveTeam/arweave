@@ -31,7 +31,7 @@ realistic: all
 	@erl $(ERL_OPTS) -noshell -s ar start -s ar_test_sup start realistic
 
 log:
-	tail -f logs/`ls -t logs |  head -n 1`
+	tail -n 100 -f logs/`ls -t logs |  head -n 1`
 
 catlog:
 	cat logs/`ls -t logs | head -n 1`
