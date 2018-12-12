@@ -44,7 +44,7 @@ gitmodules:
 build: data blocks hash_lists wallet_lists
 	( \
 		cd lib/jiffy && \
-		./rebar compile && \
+		../../bin/mute-on-success ./rebar compile && \
 		cd ../.. && \
 		cp lib/jiffy/priv/jiffy.so ./priv/ \
 	)
