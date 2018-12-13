@@ -109,8 +109,9 @@ get_txs(Pid) ->
 
 ipfs_hash_status(Hash) ->
 	Pinned = is_pinned(Hash),
-	TXid = app_search:get_entries(<<"IPFS-Add">>, Hash),
-	[{pinned, Pinned}, {tx, TXid}].
+	app_search:get_entries(<<"IPFS-Add">>, Hash),
+	TXIDs = receive X -> X end,
+	[{pinned, Pinned}, {tx, TXIDs}].
 
 maybe_ipfs_add_txs(TXs) ->
 	case whereis(?MODULE) of
