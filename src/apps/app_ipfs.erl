@@ -11,6 +11,8 @@
 	adt_pid,
 	wallet,
 	queue,
+	ipfs_name,
+	ipfs_key,
 	block_hashes = [],
 	ipfs_hashes = [],
 	txs = []
@@ -26,8 +28,21 @@ start() ->
 	{Node, Wallet, Pid}.
 
 start(Peers, Wallet) ->
+	start(Peers, Wallet, "").
+
+start(Peers, Wallet, Name) ->
 	Queue = app_queue:start(Wallet),
-	PidMod = spawn(fun() -> server(#state{queue=Queue, wallet=Wallet}) end),
+	PidMod = case Name of
+		"" -> 
+			spawn(fun() -> server(#state{
+				queue=Queue, wallet=Wallet
+			}) end);
+		_  ->
+			{ok, Key} = make_identity(Name),
+			spawn(fun() -> server(#state{
+				queue=Queue, wallet=Wallet, ipfs_name=Name, ipfs_key=Key
+			}) end)
+		end,
 	register(?MODULE, PidMod),
 	PidADT = adt_simple:start(?MODULE, PidMod),
 	lists:foreach(fun(Node) -> ar_node:add_peers(Node, [PidADT]) end, Peers),
@@ -91,6 +106,7 @@ new_block(Pid, Block) ->
 
 server(State=#state{
 			adt_pid=ADTPid, queue=Q, wallet=Wallet,
+			ipfs_name=Name, ipfs_key=Key,
 			block_hashes=BHs, ipfs_hashes=IHs, txs=TXs}) ->
 	receive
 		stop ->
@@ -101,6 +117,7 @@ server(State=#state{
 		{get_report, From} ->
 			Report = [
 				{adt_pid, ADTPid},{queue, Q},{wallet, Wallet},
+				{ipfs_name, Name}, {ipfs_key, Key},
 				{blocks, length(BHs), safe_hd(BHs)},
 				{txs, length(TXs), safe_hd(TXs)},
 				{ipfs_hashes, length(IHs), safe_hd(IHs)}],
@@ -158,6 +175,11 @@ get_x(Pid, SendTag, RecvTag) ->
 	receive
 		{RecvTag, X} -> X
 	end.
+
+make_identity(Name) ->
+	{ok, Key} = ar_ipfs:key_gen(Name),
+	ok = ar_ipfs:config_set_identity(Key),
+	{ok, Key}.
 
 maybe_get_hash_and_queue(Hash, Queue) ->
 	ar:d({get_maybe, Hash}),

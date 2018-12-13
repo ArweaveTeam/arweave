@@ -2,7 +2,7 @@
 -export([daemon_start/0, daemon_stop/0, daemon_stop/2]).
 -export([add_data/2, add_data/4, add_file/1, add_file/3]).
 -export([cat_data_by_hash/1, cat_data_by_hash/3]).
--export([config_set_identity/1]).
+-export([config_get_identity/0, config_set_identity/1]).
 -export([key_gen/1, key_gen/3]).
 -export([pin_ls/0, pin_ls/2]).
 -export([ep_get_ipfs_hashes/2, hashes_only/1]).
@@ -10,6 +10,8 @@
 -define(BOUNDARY, "------------qwerasdfzxcv").
 -define(IPFS_HOST, "127.0.0.1").
 -define(IPFS_PORT, "5001").
+
+-type hash() :: binary().
 
 daemon_start() ->
 	Pid = spawn(os, cmd, ["ipfs daemon"]),
@@ -93,12 +95,20 @@ cat_data_by_hash(IP, Port, Hash) ->
 	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/cat?arg=" ++ binary_to_list(Hash),
 	{ok, _Data} = request(get, {URL, []}).
 
-config_set_identity(Key) ->
-	os:cmd("ipfs config Identity.PeerID " ++ thing_to_list(Key)).
+-spec config_get_identity() -> string().
+config_get_identity() ->
+	lists:droplast(os:cmd("ipfs config Identity.PeerID")).
 
+-spec config_set_identity(hash()) -> ok.
+config_set_identity(Key) ->
+	os:cmd("ipfs config Identity.PeerID " ++ thing_to_list(Key)),
+	ok.
+
+-spec key_gen(string()) -> {ok, hash()} | {error, list()}.
 key_gen(Name) ->
 	key_gen(?IPFS_HOST, ?IPFS_PORT, Name).
 
+-spec key_gen(string(), string(), string()) -> {ok, binary()} | {error, list()}.
 key_gen(IP, Port, Name) ->
 	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/key/gen?type=rsa&arg=" ++ Name,
 	{ok, Response} = request(get, {URL, []}),
