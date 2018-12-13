@@ -1,5 +1,5 @@
 -module(app_ipfs).
--export([start/0, start/2, start_link/1, stop/1,
+-export([start/0, start/1, start/2, start/3, start_link/1, stop/1,
 	get_and_send/2,
 	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1,
 	maybe_ipfs_add_txs/1,
@@ -21,10 +21,13 @@
 %%% api
 
 start() ->
+	start("").
+
+start(Name) ->
 	Node = whereis(http_entrypoint_node),
 	Filename = "arweave_keyfile_gIK2HLIhvFUoAJFcpHOqwmGeZPgVZLcE3ss8sT64gFY.json",
 	Wallet = ar_wallet:load_keyfile("wallets/" ++ Filename),
-	{ok, Pid} = start([Node], Wallet),
+	{ok, Pid} = start([Node], Wallet, Name),
 	{Node, Wallet, Pid}.
 
 start(Peers, Wallet) ->
