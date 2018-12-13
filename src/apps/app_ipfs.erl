@@ -1,7 +1,12 @@
 -module(app_ipfs).
--export([start/0, start/1, start/2, start/3, start_link/1, stop/1,
+-export([
+	start/0, start/1, start/2, start/3,
+	start_link/1, start_recv_only/0,
+	stop/1,
 	get_and_send/2,
+	bulk_get_and_send/2, bulk_get_and_send_from_file/2,
 	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1,
+	ipfs_hash_status/1,
 	maybe_ipfs_add_txs/1,
 	report/1]).
 -export([confirmed_transaction/2, new_block/2]).
@@ -20,6 +25,13 @@
 
 %%% api
 
+start_recv_only() ->
+	Node = whereis(http_entrypoint_node),
+	Wallet = undefined,
+	Name = "",
+	{ok, _Pid} = start([Node], Wallet, Name),
+	ok.
+
 start() ->
 	start("").
 
@@ -34,7 +46,10 @@ start(Peers, Wallet) ->
 	start(Peers, Wallet, "").
 
 start(Peers, Wallet, Name) ->
-	Queue = app_queue:start(Wallet),
+	Queue = case Wallet of
+		undefined -> undefined;
+		_         -> app_queue:start(Wallet)
+	end,
 	PidMod = case Name of
 		"" -> 
 			spawn(fun() -> server(#state{
@@ -62,12 +77,26 @@ stop(Pid) ->
 	Pid ! stop,
 	unregister(?MODULE).
 
-get_and_send(Pid, IPFSHashes) ->
+get_and_send(Pid, Hashes) ->
+	Pins = ar_ipfs:pin_ls(),
+	HashesToGet = lists:filter(fun(H) -> not(lists:member(H, Pins)) end,
+		Hashes),
 	Q = get_x(Pid, get_queue, queue),
 	lists:foreach(fun(Hash) ->
-			spawn(fun() -> maybe_get_hash_and_queue(Hash, Q) end)
+			spawn(fun() -> get_hash_and_queue(Hash, Q) end)
 		end,
-		IPFSHashes).
+		HashesToGet).
+
+bulk_get_and_send(Pid, Hashes) ->
+	Pins = ar_ipfs:pin_ls(),
+	HashesToGet = lists:filter(fun(H) -> not(lists:member(H, Pins)) end,
+		Hashes),
+	Q = get_x(Pid, get_queue, queue),
+	lists:foreach(fun(Hash) -> get_hash_and_queue(Hash, Q) end, HashesToGet).
+
+bulk_get_and_send_from_file(Pid, Filename) ->
+	{ok, Hashes} = file:consult(Filename),
+	bulk_get_and_send(Pid, Hashes).
 
 get_block_hashes(Pid) ->
 	get_x(Pid, get_block_hashes, block_hashes).
@@ -77,6 +106,11 @@ get_ipfs_hashes(Pid) ->
 
 get_txs(Pid) ->
 	get_x(Pid, get_txs, txs).
+
+ipfs_hash_status(Hash) ->
+	Pinned = is_pinned(Hash),
+	TXid = app_search:get_entries(<<"IPFS-Add">>, Hash),
+	[{pinned, Pinned}, {tx, TXid}].
 
 maybe_ipfs_add_txs(TXs) ->
 	case whereis(?MODULE) of
@@ -173,32 +207,28 @@ first_ipfs_tag(Tags) ->
 	end,
 	Tags).
 
+get_hash_and_queue(Hash, Queue) ->
+	ar:d({fetching, Hash}),
+	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
+	{ok, Hash2} = ar_ipfs:add_data(Data, Hash),
+	ar:d({added, Hash, Hash2}),
+	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
+	app_queue:add(Queue, UnsignedTX).
+
 get_x(Pid, SendTag, RecvTag) ->
 	Pid ! {SendTag, self()},
 	receive
 		{RecvTag, X} -> X
 	end.
 
+is_pinned(Hash) ->
+	Pins = ar_ipfs:pin_ls(),
+	lists:member(Hash, Pins).
+
 make_identity(Name) ->
 	{ok, Key} = ar_ipfs:key_gen(Name),
 	ok = ar_ipfs:config_set_identity(Key),
 	{ok, Key}.
-
-maybe_get_hash_and_queue(Hash, Queue) ->
-	ar:d({get_maybe, Hash}),
-	Pins = ar_ipfs:pin_ls(),
-	ar:d({pins, Pins}),
-	case lists:member(Hash, Pins) of
-		true  ->
-			ar:d({got_already, Hash});
-		false ->
-			ar:d({fetching, Hash, '...'}),
-			{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
-			{ok, Hash2} = ar_ipfs:add_data(Data, Hash),
-			ar:d({added, Hash, Hash2}),
-			UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
-			app_queue:add(Queue, UnsignedTX)
-	end.
 
 safe_hd([])    -> [];
 safe_hd([H|_]) -> H.
