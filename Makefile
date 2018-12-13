@@ -39,26 +39,24 @@ catlog:
 all: gitmodules build
 
 gitmodules:
-	@echo "Fetching dependencies"
-	@git submodule update --init
+	git submodule update --init
 
 build: data blocks hash_lists wallet_lists
-	@echo "Building"
-	@( \
+	( \
 		cd lib/jiffy && \
 		./rebar compile && \
 		cd ../.. && \
 		cp lib/jiffy/priv/jiffy.so ./priv/ \
 	)
-	@(cd lib/prometheus && QUIET=1 ./rebar3 compile)
-	@(cd lib/accept && QUIET=1 ./rebar3 compile)
-	@( \
+	(cd lib/prometheus && ./rebar3 compile)
+	(cd lib/accept && ./rebar3 compile)
+	( \
 		cd lib/prometheus_process_collector && \
-		QUIET=1 ./rebar3 compile && \
+		./rebar3 compile && \
 		cp _build/default/lib/prometheus_process_collector/priv/prometheus_process_collector.so ../../priv/ \
 	)
-	@erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
-	@erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
+	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
+	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
 
 blocks:
