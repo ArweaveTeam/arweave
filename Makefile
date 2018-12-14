@@ -7,6 +7,7 @@ ERL_OPTS= -pa ebin/ \
 	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
 	-pa lib/accept/_build/default/lib/accept/ebin \
 	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
+	-sasl errlog_type error \
 	-s prometheus
 
 test_all: test test_apps

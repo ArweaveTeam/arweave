@@ -19,6 +19,7 @@ while true; do
             -pa lib/prometheus/_build/default/lib/prometheus/ebin \
             -pa lib/accept/_build/default/lib/accept/ebin \
             -pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
+            -sasl errlog_type error \
             -s ar rebuild -s prometheus  -run ar main "$@";
     then
         echo "Arweave Heartbeat: Server terminated safely."
