@@ -101,7 +101,7 @@ handle(Req, _Args) ->
 	Peer = elli_request_to_peer(Req),
 	case ar_meta_db:get(http_logging) of
 		true ->
-			ar:report(
+			ar:info(
 				[
 					http_request,
 					{method, Req#req.method},
@@ -271,7 +271,7 @@ handle('POST', [<<"tx">>], Req) ->
 						),
 					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
 						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
-							ar:report(
+							ar:info(
 								[
 									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
 									{balance, B},
@@ -644,12 +644,10 @@ handle_event(Type, Args, Config)
 		when (Type == request_throw)
 		or (Type == request_error)
 		or (Type == request_exit) ->
-	ar:report([{elli_event, Type}, {args, Args}, {config, Config}]),
-	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
+	ar:info([{elli_event, Type}, {args, Args}, {config, Config}]),
 	ok;
 %% Uncomment to show unhandeled message types.
 handle_event(_Type, _Args, _Config) ->
-	%ar:report_console([{elli_event, Type}, {args, Args}, {config, Config}]),
 	ok.
 
 %% @doc Helper function : registers a new node as the entrypoint.
@@ -848,7 +846,7 @@ post_block(post_block, {B, ReqStruct, OrigPeer}) ->
 			Key = ar_util:decode(KeyEnc),
 			Nonce = ar_util:decode(NonceEnc),
 			RecallIndepHash = ar_util:decode(JSONRecallB),
-			ar:report([{
+			ar:info([{
 				sending_external_block_to_bridge,
 				ar_util:encode(B#block.indep_hash)
 			}]),
