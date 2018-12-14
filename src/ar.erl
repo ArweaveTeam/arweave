@@ -571,21 +571,23 @@ timestamp() ->
 	(MegaSec * 1000000) + Sec.
 
 %% @doc Ensure that parsing of core command line options functions correctly.
-commandline_parser_test() ->
-	Addr = crypto:strong_rand_bytes(32),
-	Tests =
-		[
-			{"peer 1.2.3.4 peer 5.6.7.8:9", #opts.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
-			{"mine", #opts.mine, true},
-			{"port 22", #opts.port, 22},
-			{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #opts.mining_addr, Addr}
-		],
-	X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
-	ar:d({x, X}),
-	O = parse(X),
-	lists:foreach(
-		fun({_, Index, Value}) ->
-			?assertEqual(element(Index, O), Value)
-		end,
-		Tests
-	).
+commandline_parser_test_() ->
+	{timeout, 20, fun() ->
+		Addr = crypto:strong_rand_bytes(32),
+		Tests =
+			[
+				{"peer 1.2.3.4 peer 5.6.7.8:9", #opts.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
+				{"mine", #opts.mine, true},
+				{"port 22", #opts.port, 22},
+				{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #opts.mining_addr, Addr}
+			],
+		X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
+		ar:d({x, X}),
+		O = parse(X),
+		lists:foreach(
+			fun({_, Index, Value}) ->
+				?assertEqual(element(Index, O), Value)
+			end,
+			Tests
+		)
+	end}.
