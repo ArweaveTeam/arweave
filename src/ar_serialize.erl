@@ -122,7 +122,7 @@ full_block_to_json_struct(B = #block { txs = TXs }) ->
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a block.
 json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	case dejsonify(JSONBlock) of
-		{error, Error} -> ar:report([{error, Error}]);
+		{error, Error} -> ar:err([{error, Error}]);
 		BlockStruct -> json_struct_to_block(BlockStruct)
 	end;
 json_struct_to_block(JSONBlock) ->
@@ -207,7 +207,7 @@ json_struct_to_block(JSONBlock) ->
 %% full block record.
 json_struct_to_full_block(JSONBlock) when is_binary(JSONBlock) ->
 	case dejsonify(JSONBlock) of
-		{error, Error} -> ar:report([{error, Error}]);
+		{error, Error} -> ar:err([{error, Error}]);
 		BlockStruct -> json_struct_to_full_block(BlockStruct)
 	end;
 json_struct_to_full_block(JSONBlock) ->
@@ -274,7 +274,7 @@ tx_to_json_struct(
 %% transaction record.
 json_struct_to_tx(JSONTX) when is_binary(JSONTX) ->
 	case dejsonify(JSONTX) of
-		{error, Error} -> ar:report([{error, Error}]);
+		{error, Error} -> ar:err([{error, Error}]);
 		TXStruct -> json_struct_to_tx(TXStruct)
 	end;
 json_struct_to_tx(JSONTX) ->
@@ -317,7 +317,7 @@ wallet_to_json_struct({Address, Balance, Last}) ->
 %% @doc Convert parsed JSON from fields into a valid wallet list.
 json_struct_to_wallet_list(JSONList) when is_binary(JSONList) ->
 	case dejsonify(JSONList) of
-		{error, Error} -> ar:report([{error, Error}]);
+		{error, Error} -> ar:err([{error, Error}]);
 		ListStruct -> json_struct_to_wallet_list(ListStruct)
 	end;
 json_struct_to_wallet_list(WalletsStruct) ->
