@@ -374,14 +374,16 @@ mining_reward_test() ->
 	?assert(ar_node:get_balance(Node1, Pub1) > 0).
 
 %% @doc Check that other nodes accept a new block and associated mining reward.
-multi_node_mining_reward_test() ->
-	ar_storage:clear(),
-	{_Priv1, Pub1} = ar_wallet:new(),
-	Node1 = ar_node:start([], B0 = ar_weave:init([])),
-	Node2 = ar_node:start([Node1], B0, 0, ar_wallet:to_address(Pub1)),
-	ar_node:mine(Node2),
-	timer:sleep(2000),
-	?assert(ar_node:get_balance(Node1, Pub1) > 0).
+multi_node_mining_reward_test_() ->
+	{timeout, 20, fun() ->
+		ar_storage:clear(),
+		{_Priv1, Pub1} = ar_wallet:new(),
+		Node1 = ar_node:start([], B0 = ar_weave:init([])),
+		Node2 = ar_node:start([Node1], B0, 0, ar_wallet:to_address(Pub1)),
+		ar_node:mine(Node2),
+		timer:sleep(2000),
+		?assert(ar_node:get_balance(Node1, Pub1) > 0)
+	end}.
 
 %% @doc Ensure that TX replay attack mitigation works.
 replay_attack_test() ->
