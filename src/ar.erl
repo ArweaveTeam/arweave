@@ -204,6 +204,10 @@ start(
 		disable = Disable,
 		content_policies = Policies
 	}) ->
+	% Start the logging system.
+	error_logger:logfile({open, Filename = generate_logfile_name()}),
+	error_logger:tty(false),
+
 	ar_storage:start(),
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -328,9 +332,6 @@ start(
 	% Store enabled features
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
-	% Start the logging system.
-	error_logger:logfile({open, Filename = generate_logfile_name()}),
-	error_logger:tty(false),
 	PrintMiningAddress = case MiningAddress of
 			unclaimed -> "unclaimed";
 			_ -> binary_to_list(ar_util:encode(MiningAddress))
