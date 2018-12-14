@@ -153,8 +153,6 @@ get_block(Peer, ID, BHL) ->
 %% @doc Get an encrypted block from a remote peer.
 %% Used when the next block is the recall block.
 get_encrypted_block(Peer, Hash) when is_binary(Hash) ->
-	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_encrypted_block_response(
 		ar_httpc:request(
 			<<"GET">>,
@@ -166,8 +164,6 @@ get_encrypted_block(Peer, Hash) when is_binary(Hash) ->
 
 %% @doc Get a specified subfield from the block with the given hash
 get_block_subfield(Peer, Hash, Subfield) when is_binary(Hash) ->
-	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_block, {host,[] Host}, {hash, Hash}]),
 	handle_block_field_response(
 		ar_httpc:request(
 			<<"GET">>,
@@ -178,8 +174,6 @@ get_block_subfield(Peer, Hash, Subfield) when is_binary(Hash) ->
 	);
 %% @doc Get a specified subfield from the block with the given height
 get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
-	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_block_field_response(
 		ar_httpc:request(
 			<<"GET">>,
@@ -267,8 +261,6 @@ get_height(Peer) ->
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from a remote peer in an encrypted form
 get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
-	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_block, {host, Host}, {hash, Hash}]),
 	handle_encrypted_full_block_response(
 		ar_httpc:request(
 			<<"GET">>,
@@ -280,8 +272,6 @@ get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
 
 %% @doc Retreive a tx by hash from a remote peer
 get_tx(Peer, Hash) ->
-	%ar:report_console([{req_getting_block_by_hash, Hash}]),
-	%ar:d([getting_new_block, {host, Host}, {hash, Hash}]),
 	handle_tx_response(
 		ar_httpc:request(
 			<<"GET">>,
