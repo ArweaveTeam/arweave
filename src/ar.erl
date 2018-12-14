@@ -510,13 +510,21 @@ d(X) ->
 	X.
 
 %% @doc Print an information message to the log file (log level INFO) and console.
+-ifdef(DEBUG).
+console(Report) -> info(Report).
+-else.
 console(Report) ->
 	io:format("~P~n", [Report, 30]),
 	info(Report).
+-endif.
 
+-ifdef(DEBUG).
+console(Format, Data) -> info(Format, Data).
+-else.
 console(Format, Data) ->
 	io:format(Format, Data),
 	info(Format, Data).
+-endif.
 
 %% @doc Print an INFO message to the log file.
 info(Report) ->
