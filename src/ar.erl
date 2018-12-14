@@ -7,6 +7,7 @@
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
 -export([tests/0, tests/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
+-export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
@@ -496,6 +497,7 @@ report(X) ->
 report_console(X) -> report(X).
 -else.
 %% @doc Print an information message to the log file and console.
+%% @deprecated Use console/1, console/2 instead.
 report_console(X) ->
 	error_logger:tty(true),
 	error_logger:info_report(X),
@@ -505,6 +507,54 @@ report_console(X) ->
 d(X) ->
 	report_console(X),
 	X.
+
+%% @doc Print an information message to the log file (log level INFO) and console.
+console(Report) ->
+	io:format("~P~n", [Report, 30]),
+	info(Report).
+
+console(Format, Data) ->
+	io:format(Format, Data),
+	info(Format, Data).
+
+%% @doc Print an INFO message to the log file.
+info(Report) ->
+	error_logger:info_report(Report).
+
+info(Format, Data) ->
+	info(io_lib:format(Format, Data)).
+
+%% @doc Print a WARNING message to the log file.
+warn(Report) ->
+	error_logger:warning_report(Report).
+
+warn(Format, Data) ->
+	warn(io_lib:format(Format, Data)).
+
+%% @doc Print an error message to the log file (log level ERROR) and console.
+err(Report) ->
+	case is_list(Report) andalso is_tuple_list(Report) of
+		true ->
+			io:format("ERROR: ~n" ++ format_list_msg(Report) ++ "~n");
+		false ->
+			io:format("ERROR: ~n~p~n", [Report])
+	end,
+	error_logger:error_report(Report).
+
+err(Format, Data) ->
+	err(io_lib:format(Format, Data)).
+
+is_tuple_list(List) ->
+	lists:all(fun is_tuple/1, List).
+
+format_list_msg(List) ->
+	FormatRow = fun
+		({Key, Value}) ->
+			io_lib:format("\s\s\s\s~p: ~p", [Key, Value]);
+		(Item) ->
+			io_lib:format("\s\s\s\s~p", [Item])
+	end,
+	lists:flatten(lists:join("~n", lists:map(FormatRow, List))).
 
 %% @doc A multiplier applied to all simulated time elements in the system.
 -ifdef(DEBUG).

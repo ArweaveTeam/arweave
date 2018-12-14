@@ -15,7 +15,7 @@ start(Node, Peers) ->
 start(_, [], _) ->
 	ar:report_console([not_joining, {reason, no_peers}]);
 start(Node, Peers, B) when is_atom(B) ->
-	ar:report_console(
+	ar:warn(
 		[
 			could_not_retrieve_current_block,
 			{trying_again_in, ?REJOIN_TIMEOUT, seconds}

@@ -16,7 +16,7 @@ start() ->
 	PID = 
 		spawn(
 			fun() ->
-				ar:report([starting_block_index]),
+				ar:info([starting_block_index]),
 				case ets:info(?MODULE) of
 					undefined ->
 						ets:new(?MODULE, [bag, public, named_table]);
