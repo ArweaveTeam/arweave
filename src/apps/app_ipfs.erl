@@ -9,7 +9,7 @@
 	ipfs_hash_status/1,
 	maybe_ipfs_add_txs/1,
 	report/1]).
--export([confirmed_transaction/2, new_block/2]).
+-export([confirmed_transaction/2]).
 -include("../ar.hrl").
 
 -record(state,{
@@ -136,10 +136,6 @@ confirmed_transaction(Pid, TX) ->
 	Pid ! {recv_new_tx, TX},
 	Pid.
 
-new_block(Pid, Block) ->
-	Pid ! {recv_new_block, Block},
-	Pid.
-
 %%% local server
 
 server(State=#state{
@@ -176,26 +172,21 @@ server(State=#state{
 		{queue_tx, UnsignedTX} ->
 			app_queue:add(Q, UnsignedTX),
 			server(State);
-		{recv_new_block, Block} ->
-			BH = Block#block.indep_hash,
-			server(State#state{block_hashes=[BH|BHs]});
 		{recv_new_tx, TX=#tx{tags=Tags}} ->
-			NewTXs = [TX|TXs],
-			NewIHs = case first_ipfs_tag(Tags) of
+			case first_ipfs_tag(Tags) of
 				{value, {<<"IPFS-Add">>, Hash}} ->
 					%% version 0.1, no validation
 					ar:d({recv_tx_ipfs_add, TX#tx.id, Hash}),
-					{ok, Hash2} = ar_ipfs:add_data(TX#tx.data, Hash),
-					[Hash2|IHs];
+					{ok, _Hash2} = ar_ipfs:add_data(TX#tx.data, Hash);
 					%% with validation:
 					%% case ar_ipfs:add_data(TX#tx.data, Hash) of
 					%%	{ok, Hash} -> [Hash|IHs];
 					%%	_          -> IHs
 					%% end;
 				false ->
-					IHs
+					pass
 			end,
-			server(State#state{txs=NewTXs, ipfs_hashes=NewIHs})
+			server(State)
 	end.
 
 %%% private functions
