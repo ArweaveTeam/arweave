@@ -124,7 +124,7 @@ At any time, state of the app_ipfs server can be accessed via either of:
 The status of an IPFS hash can be checked:
 
 ```
-> ipfs_hash_status(Hash).
+> app_ipfs:ipfs_hash_status(Hash).
 
 [{pinned, true | false},   % whether the hash is pinned by the local ipfs node
  {tx,     list()      }].  % IDs of TXs containing the ipfs hash & data (generally only one TX)
