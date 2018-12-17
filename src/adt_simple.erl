@@ -96,7 +96,6 @@ server(S = #state { gossip = GS }) ->
 					NewS =
 						lists:foldl(
 							fun(TX, NextS) ->
-								ar:d({adt, confirmed_transaction, TX#tx.id}),
 								apply_callback(
 									NextS,
 									confirmed_transaction,
