@@ -72,8 +72,14 @@ server(NPid, SPid) ->
 					NPid ! {worker, {error, Term}},
 					server(NPid, SPid)
 			end;
+		{'DOWN', _, _, _, normal} ->
+			%% There is a hidden monitor started in ar_node_utils:fork_recover/3
+			server(NPid, SPid);
 		stop ->
-			ok
+			ok;
+		Other ->
+			ar:report({ar_node_worker_unknown_msg, Other}),
+			server(NPid, SPid)
 	end.
 
 %% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks like
