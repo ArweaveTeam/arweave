@@ -17,7 +17,6 @@ jsonify(JSONStruct) ->
 	jiffy:encode(JSONStruct).
 
 %% @doc Decode JSON string into a JSON struct.
-dejsonify(<<>>) -> <<>>;
 dejsonify(JSON) ->
 	jiffy:decode(JSON).
 
