@@ -15,7 +15,7 @@ start(Node, Peers) ->
 start(_, [], _) ->
 	ar:report_console([not_joining, {reason, no_peers}]);
 start(Node, Peers, B) when is_atom(B) ->
-	ar:warn(
+	ar:report_console(
 		[
 			could_not_retrieve_current_block,
 			{trying_again_in, ?REJOIN_TIMEOUT, seconds}
@@ -42,7 +42,7 @@ do_join(_Node, _RawPeers, NewB) when not ?IS_BLOCK(NewB) ->
 do_join(Node, RawPeers, NewB) ->
 	case verify_time_sync(RawPeers) of
 		false ->
-			ar:report(
+			ar:err(
 				[
 					node_not_joining,
 					{reason, clock_time_in_sync_with_join_peers},
@@ -160,7 +160,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 				{B, unavailable} ->
 					ar_storage:write_tx(B#block.txs),
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
-					ar:report(
+					ar:info(
 						[
 							could_not_retrieve_joining_recall_block,
 							retrying
@@ -172,7 +172,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
 					ar_storage:write_tx(R#block.txs),
 					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
-					ar:report(
+					ar:info(
 						[
 							{writing_block, B#block.height},
 							{writing_recall_block, R#block.height},
@@ -183,7 +183,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList)
 			end;
 		false ->
-			ar:report(
+			ar:info(
 				[
 					could_not_retrieve_joining_block,
 					retrying

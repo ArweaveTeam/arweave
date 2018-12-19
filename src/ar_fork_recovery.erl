@@ -68,7 +68,7 @@ start(Peers, TargetBShadow, HashList, Parent) ->
 					PID;
 				% target block has invalid hash list
 				false ->
-					ar:err(
+					ar:warn(
 						[
 							could_not_start_fork_recovery,
 							{reason, target_block_hash_list_incorrect}
@@ -77,7 +77,7 @@ start(Peers, TargetBShadow, HashList, Parent) ->
 				undefined
 			end;
 		false ->
-			ar:err(
+			ar:warn(
 				[
 					could_not_start_fork_recovery,
 					{reason, could_not_retrieve_target_block}
@@ -207,7 +207,7 @@ do_fork_recover(S = #state {
 		case ?IS_BLOCK(NextB) of
 			% could not retrieve the next block to be applied
 			false ->
-				ar:err(
+				ar:warn(
 					[
 						{fork_recovery_block_retreival_failed, ar_util:encode(NextH)},
 						{received_instead, NextB}
@@ -302,7 +302,7 @@ do_fork_recover(S = #state {
 					)
 				of
 					false ->
-						ar:err(
+						ar:report_console(
 							[
 								could_not_validate_fork_block,
 								{next_block, ?IS_BLOCK(NextB)},
@@ -311,7 +311,7 @@ do_fork_recover(S = #state {
 							]
 						);
 					true ->
-						ar:console(
+						ar:info(
 							[
 								{applied_fork_recovery_block, ar_util:encode(NextH)},
 								{block_height, NextB#block.height}
@@ -324,7 +324,7 @@ do_fork_recover(S = #state {
 										reported_partial_fork_recovery,
 										{height, NextB#block.height}
 									]
-								),	
+								),
 								Parent ! {fork_recovered, [NextH | BlockList]};
 							_ -> do_nothing
 						end,
