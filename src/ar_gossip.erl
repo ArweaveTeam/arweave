@@ -122,31 +122,33 @@ already_heard(S, Hash) ->
 
 %% @doc Ensure single message receipt on every process in a fully
 %% connected network of gossipers.
-fully_connected_test() ->
-	TestPID = self(),
-	BasicServer =
-		fun Server(S) ->
-			receive
-				Msg when is_record(Msg, gs_msg) ->
-					case recv(S, Msg) of
-						{NewS, ignore} ->
-							io:format("~p ignoring message.~n", [self()]),
-							Server(NewS);
-						{NewS, Data} ->
-							io:format("Sending message from ~p.~n", [self()]),
-							TestPID ! Data,
-							Server(NewS)
-					end;
-				{peers, Peers} -> Server(add_peers(S, Peers))
-			end
-		end,
-	% Start the gossip servers and send them the complete list of peers.
-	Servers = [ spawn(fun() -> BasicServer(init()) end) || _ <- lists:seq(1, 100) ],
-	[ Serv ! {peers, Servers} || Serv <- Servers ],
-	% Start a local gossip node.
-	State = init([lists:last(Servers)]),
-	send(State, test_message),
-	100 = count_receipts(test_message, 1000).
+fully_connected_test_() ->
+	{timeout, 20, fun() ->
+		TestPID = self(),
+		BasicServer =
+			fun Server(S) ->
+				receive
+					Msg when is_record(Msg, gs_msg) ->
+						case recv(S, Msg) of
+							{NewS, ignore} ->
+								io:format("~p ignoring message.~n", [self()]),
+								Server(NewS);
+							{NewS, Data} ->
+								io:format("Sending message from ~p.~n", [self()]),
+								TestPID ! Data,
+								Server(NewS)
+						end;
+					{peers, Peers} -> Server(add_peers(S, Peers))
+				end
+			end,
+		% Start the gossip servers and send them the complete list of peers.
+		Servers = [ spawn(fun() -> BasicServer(init()) end) || _ <- lists:seq(1, 100) ],
+		[ Serv ! {peers, Servers} || Serv <- Servers ],
+		% Start a local gossip node.
+		State = init([lists:last(Servers)]),
+		send(State, test_message),
+		100 = count_receipts(test_message, 1000)
+	end}.
 
 %% @doc Ensure single message receipt on every process in a partially
 %% connected network of gossipers.

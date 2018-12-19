@@ -28,7 +28,7 @@ start(Peers, TargetBShadow, HashList, Parent) ->
 	% a valid block or a block with a malformed hashlist (Outside FR range).
 	case ?IS_BLOCK(TargetBShadow) of
 		true ->
-			ar:report(
+			ar:info(
 				[
 					{started_fork_recovery_proc, Parent},
 					{block, ar_util:encode(TargetBShadow#block.indep_hash)},
@@ -68,7 +68,7 @@ start(Peers, TargetBShadow, HashList, Parent) ->
 					PID;
 				% target block has invalid hash list
 				false ->
-					ar:report(
+					ar:err(
 						[
 							could_not_start_fork_recovery,
 							{reason, target_block_hash_list_incorrect}
@@ -77,7 +77,7 @@ start(Peers, TargetBShadow, HashList, Parent) ->
 				undefined
 			end;
 		false ->
-			ar:report(
+			ar:err(
 				[
 					could_not_start_fork_recovery,
 					{reason, could_not_retrieve_target_block}
@@ -115,7 +115,7 @@ server(S = #state { target_block = TargetB }) ->
 	receive
 		{parent_accepted_block, B} ->
 			if B#block.height > TargetB#block.height ->
-				ar:report(
+				ar:info(
 					[
 						stopping_fork_recovery,
 						{reason, parent_accepted_higher_block_than_target}
@@ -123,7 +123,7 @@ server(S = #state { target_block = TargetB }) ->
 				),
 				ok;
 			true ->
-				ar:report(
+				ar:info(
 					[
 						continuing_fork_recovery,
 						{reason, parent_accepted_lower_block_than_target}
@@ -151,18 +151,18 @@ do_fork_recover(S = #state {
 		NewToVerify =
 			case lists:member(TargetB#block.indep_hash, NewBHL) of
 				true ->
-					ar:report([encountered_block_on_same_fork_as_recovery_process]),
+					ar:info([encountered_block_on_same_fork_as_recovery_process]),
 					drop_until_diverge(
 						lists:reverse(NewBHL),
 						lists:reverse(BlockList)
 					);
 				false ->
-					ar:report([encountered_block_on_different_fork_to_recovery_process]),
+					ar:info([encountered_block_on_different_fork_to_recovery_process]),
 					[]
 			end,
 		case NewToVerify =/= [] of
 			true ->
-				ar:report(
+				ar:info(
 					[
 						updating_fork_recovery_target,
 						{current_target_height, TargetB#block.height},
@@ -188,7 +188,7 @@ do_fork_recover(S = #state {
 					}
 				);
 			false ->
-				ar:report(
+				ar:info(
 					[
 						not_updating_target_block,
 						{ignored_block, ar_util:encode(Block#block.indep_hash)},
@@ -199,7 +199,7 @@ do_fork_recover(S = #state {
 		end;
 	apply_next_block ->
 		NextB = ar_node_utils:get_full_block(Peers, NextH, BHL),
-		ar:report(
+		ar:info(
 			[
 				{applying_fork_recovery, ar_util:encode(NextH)}
 			]
@@ -207,7 +207,7 @@ do_fork_recover(S = #state {
 		case ?IS_BLOCK(NextB) of
 			% could not retrieve the next block to be applied
 			false ->
-				ar:report(
+				ar:err(
 					[
 						{fork_recovery_block_retreival_failed, ar_util:encode(NextH)},
 						{received_instead, NextB}
@@ -233,7 +233,7 @@ do_fork_recover(S = #state {
 				of
 					% Recovering to genesis block
 					{0, _} ->
-						ar:report(
+						ar:err(
 							[
 								fork_recovery_failed,
 								recovery_block_is_genesis_block
@@ -246,7 +246,7 @@ do_fork_recover(S = #state {
 						server(S, rejoin);
 					% Target block is too far ahead and cannot be recovered.
 					{_, true} ->
-						ar:report(
+						ar:err(
 							[
 								fork_recovery_failed,
 								recovery_block_is_too_far_ahead
@@ -302,7 +302,7 @@ do_fork_recover(S = #state {
 					)
 				of
 					false ->
-						ar:report_console(
+						ar:err(
 							[
 								could_not_validate_fork_block,
 								{next_block, ?IS_BLOCK(NextB)},
@@ -311,7 +311,7 @@ do_fork_recover(S = #state {
 							]
 						);
 					true ->
-						ar:report_console(
+						ar:console(
 							[
 								{applied_fork_recovery_block, ar_util:encode(NextH)},
 								{block_height, NextB#block.height}
@@ -319,7 +319,7 @@ do_fork_recover(S = #state {
 						),
 						case ar_meta_db:get(partial_fork_recovery) of
 							true ->
-								ar:report(
+								ar:info(
 									[
 										reported_partial_fork_recovery,
 										{height, NextB#block.height}

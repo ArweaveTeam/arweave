@@ -7,6 +7,7 @@ ERL_OPTS= -pa ebin/ \
 	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
 	-pa lib/accept/_build/default/lib/accept/ebin \
 	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
+	-sasl errlog_type error \
 	-s prometheus
 
 test_all: test test_apps
@@ -44,7 +45,7 @@ gitmodules:
 build: data blocks hash_lists wallet_lists
 	( \
 		cd lib/jiffy && \
-		./rebar compile && \
+		../../bin/mute-on-success ./rebar compile && \
 		cd ../.. && \
 		cp lib/jiffy/priv/jiffy.so ./priv/ \
 	)

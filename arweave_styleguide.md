@@ -1,6 +1,6 @@
 # Arweave code style
 
-The main development language of the Arweave client is Erlang, and as the number of developers of the project continues to grow this stlye guide will act as a means of keeping the codebase clean and comprehensible. 
+The main development language of the Arweave client is Erlang, and as the number of developers of the project continues to grow this stlye guide will act as a means of keeping the codebase clean and comprehensible.
 
 
 
@@ -44,7 +44,7 @@ It is more important to comment exported functions.
 
 A specification (`-spec`) may be used to document the function, as an alternative or an addition to the comment.
 
-Function description comments should be prefixed with  '%% @doc'. 
+Function description comments should be prefixed with  '%% @doc'.
 
 ```erlang
 %% Example
@@ -85,9 +85,9 @@ sign_verify_test({Priv, Pub}) ->
 
 ### Use the minimal descriptive words for function names
 
-Function names should be descriptive enough to explain the high-level purpose of the function whilst remaining short enough as to not hinder the code readability. 
+Function names should be descriptive enough to explain the high-level purpose of the function whilst remaining short enough as to not hinder the code readability.
 
-The name of the module can sometimes be used to help increase clarity without increasing the wordiness of the function name. 
+The name of the module can sometimes be used to help increase clarity without increasing the wordiness of the function name.
 
 ```erlang
 %% Bad function names
@@ -105,7 +105,7 @@ ar_serialize:block_to_json_struct(Block).
 
 ### Tests should be defined at the tail of the module
 
-Tests should be defined as the last thing present within a module and should be prefixed with the following comment. 
+Tests should be defined as the last thing present within a module and should be prefixed with the following comment.
 
 ```erlang
 % Tests: {module name}
@@ -115,7 +115,7 @@ Tests should be defined as the last thing present within a module and should be 
 
 ### Maximum of eighty characters per line
 
-A maximum of eighty characters should be present on any singular line. 
+A maximum of eighty characters should be present on any singular line.
 
 To help enforce this styling consider using a ruler, most extensible editors will have this functionality by default or a simple plugin should be available to help.
 
@@ -158,7 +158,7 @@ contains_data_tx(_) ->
 
 ### Deconstruct arguments in the function header
 
-The maximum number of variables should be deconstructed within the function clause header and not the clause body. 
+The maximum number of variables should be deconstructed within the function clause header and not the clause body.
 
 This makes the arguments to the function explicit and helps debugging as should the wrong form of data be provided no matching function clause will be found.
 
@@ -168,7 +168,7 @@ server(State, Keypair) ->
     Keypair = {Priv, Pub},
 	State#state { peers = Peers, heard = HeardMsg, ignored = IgnoredMsg },
 	...
-	
+
 %% Good
 server(State#state {
     peers = Peers,
@@ -182,7 +182,7 @@ server(State#state {
 
 ### Atoms should be lowercase and separated by underscores
 
-For easy recognisability the Arweave codebase uses descriptive lowercase atoms where multiple words are separated by the underscore character. 
+For easy recognisability the Arweave codebase uses descriptive lowercase atoms where multiple words are separated by the underscore character.
 
 ```erlang
 %% Bad atoms
@@ -216,7 +216,7 @@ When a new record is defined the information regarding the purpose of each field
 
 ### Redundant or deprecated code should be removed
 
-Should existing code be made redundant with the implementation of new developments, this old code should be removed. It should not be left cluttering the code base as either code or comment. 
+Should existing code be made redundant with the implementation of new developments, this old code should be removed. It should not be left cluttering the code base as either code or comment.
 
 If reference to these old implementation details is still required they will remain present in the project repositories version control.
 
@@ -249,7 +249,7 @@ This helps in understanding the purpose of a codeblock without the need for verb
 %% Bad variables
 sign_data(X, Y) ->
 	{A, B} = X,
-	sign(A, Y). 
+	sign(A, Y).
 
 %% Good variables
 sign_data(Keypair, Data) ->
@@ -257,21 +257,52 @@ sign_data(Keypair, Data) ->
     sign(Priv, Data).
 ```
 
- 
 
- ### Use ar:report to present information to the end user
 
-Presenting information to the user from the Arweave client is done via a live view of the log. Variables can be printed to the screen via the report function in the ar.erl module.
+### Use ar:console/1-2 to present information to the end user
+
+Writing to the Erlang console is done via the `ar:console/1-2` functions. This will also be written to the log file.
 
 ```erlang
-%% Example, ar:report from ar_node.erl
+ar:console("Started mining on block height ~B", [Height]),
+```
 
-ar:report(
+```erlang
+ar:console(
 	[
-		fork_recovered_successfully,
+		node_joined_successfully,
 		{height, NewB#block.height}
 	]
 ),
+```
+
+
+
+### Use `ar:info/1-2`, `ar:warn/1-2`, `ar:err/1-2` to generate log entries.
+
+All three types of messages will be written to the one and only log file.
+Note! Errors (generated by `ar:err/1-2`) will also be displayed in the console.
+
+```erlang
+ar:warn("Could not retrieve current block. Will retry in ~B seconds", [?REJOIN_TIMEOUT]),
+```
+
+```erlang
+ar:err(
+	[
+		node_not_joining,
+		{reason, cannot_get_full_block_from_peer},
+		{received_instead, NewB}
+	]
+),
+```
+
+
+
+### Don't log huge messages
+Avoid logging huge messages. Truncate arguments, e.g. with `~P` like this:
+```erlang
+ar:warn("Invalid Block Hash List: ~P", [BHL, 100]),
 ```
 
 
@@ -327,7 +358,7 @@ If the arguments for a given function call exceed the previously stated line len
 example() ->
 	TotalTime = lists:foldl(fun(X, Acc) -> X + Acc end, 0, [12, 15, 8, 21, 35, 33, 14]),
 	...
-    
+
 %% Better
 example() ->
 	TotalTime = lists:foldl(
@@ -384,7 +415,7 @@ Code commits should aim to be a single logical change or addition to the codebas
 
 To keep the repository clean a set structure for commit messages has been decided.
 
-- The first character should be capitalized. 
+- The first character should be capitalized.
 - The message should be succinct.
 - The message should be in the imperative mood.
 - Multiple actions should be comma separated.
@@ -400,10 +431,3 @@ Add arweave style guide
 
 Inconsistent styling made it hard for us to view, comprehend, and edit the code so we had a discussion and agreed on the common style.
 ```
-
-
-
-
-
-
-

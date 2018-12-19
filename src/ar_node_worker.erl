@@ -59,13 +59,13 @@ server(NPid, SPid) ->
 					server(NPid, SPid)
 			catch
 				throw:Term ->
-					ar:report( [ {'NodeWorkerEXCEPTION', Term } ]),
+					ar:err( [ {'NodeWorkerEXCEPTION', Term } ]),
 					server(NPid, SPid);
 				exit:Term ->
-					ar:report( [ {'NodeWorkerEXIT', Term} ] ),
+					ar:info( [ {'NodeWorkerEXIT', Term} ] ),
 					server(NPid, SPid);
 				error:Term ->
-					ar:report( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
+					ar:err( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
 					server(NPid, SPid)
 			end;
 		stop ->
@@ -227,7 +227,7 @@ handle_gossip(SPid, {NewGS, ignore}) ->
 	{ok, ignore};
 handle_gossip(SPid, {NewGS, UnhandledMsg}) ->
 	{ok, NPid} = ar_node_state:lookup(SPid, node),
-	ar:report(
+	ar:info(
 		[
 			{node, NPid},
 			{unhandeled_gossip_msg, UnhandledMsg}
@@ -307,7 +307,7 @@ maybe_remove_tx(TXs, TXID, Sig) ->
 				% for the TX if the sig /does/ verify correctly.
 				case ar:d(ar_wallet:verify(TX#tx.owner, TXID, Sig)) of
 					true ->
-						ar:report(
+						ar:warn(
 							[
 								{cancelling_tx, ar_util:encode(TXID)},
 								{
@@ -346,7 +346,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Pee
 			StateNext = StateIn#{ gossip => NewGS },
 			process_new_block(StateNext, NewGS, NewB, RecallShadow, Peer, HashList);
 		false ->
-			ar:report(failed_to_get_recall_block),
+			ar:err(failed_to_get_recall_block),
 			none
 	end;
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, HashList)
@@ -406,7 +406,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
 		false ->
-			ar:report([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
+			ar:err([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
 			case is_fork_preferable(NewB, CDiff, BHL) of
 				false -> [];
 				true ->
@@ -417,7 +417,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< Height ->
 	% Block is lower than us, ignore it.
-	ar:report(
+	ar:info(
 		[
 			{ignoring_block_below_current, ar_util:encode(NewB#block.indep_hash)},
 			{current_height, Height},
@@ -471,7 +471,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				length(HashList)
 			)
 		),
-	ar:report(
+	ar:info(
 		[
 			calculated_reward_for_mined_block,
 			{finder_reward, FinderReward},
@@ -547,7 +547,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			),
 			lists:foreach(
 				fun(MinedTX) ->
-					ar:report(
+					ar:info(
 						[
 							{successfully_mined_tx_into_block, ar_util:encode(MinedTX#tx.id)},
 							{size, byte_size(MinedTX#tx.data)}

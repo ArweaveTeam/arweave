@@ -134,7 +134,7 @@ write_block(RawB) ->
 			),
 			Name;
 		false ->
-			ar:report(
+			ar:err(
 				[
 					{not_enough_space_to_write_block},
 					{block_not_written}

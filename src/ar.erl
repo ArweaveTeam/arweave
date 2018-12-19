@@ -7,6 +7,7 @@
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
 -export([tests/0, tests/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
+-export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
@@ -203,6 +204,10 @@ start(
 		disable = Disable,
 		content_policies = Policies
 	}) ->
+	% Start the logging system.
+	error_logger:logfile({open, Filename = generate_logfile_name()}),
+	error_logger:tty(false),
+
 	ar_storage:start(),
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -327,9 +332,6 @@ start(
 	% Store enabled features
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
-	% Start the logging system.
-	error_logger:logfile({open, Filename = generate_logfile_name()}),
-	error_logger:tty(false),
 	PrintMiningAddress = case MiningAddress of
 			unclaimed -> "unclaimed";
 			_ -> binary_to_list(ar_util:encode(MiningAddress))
@@ -380,14 +382,18 @@ generate_logfile_name() ->
 %% @doc Run the erlang make system on the project.
 rebuild() ->
 	io:format("Rebuilding Arweave...~n"),
-	make:all(
-		[
-			load,
-			{d, 'TARGET_TIME', ?TARGET_TIME},
-			{d, 'RETARGET_BLOCKS', ?RETARGET_BLOCKS}
-		] ++ fixed_diff_option() ++ fixed_delay_option()
-	),
-	io:format("~nBuild complete!~n").
+	MakeOptions = [
+		load,
+		{d, 'TARGET_TIME', ?TARGET_TIME},
+		{d, 'RETARGET_BLOCKS', ?RETARGET_BLOCKS}
+	] ++ fixed_diff_option() ++ fixed_delay_option(),
+	case make:all(MakeOptions) of
+		error ->
+			io:format("~nBuild failed!~n"),
+			init:stop(1);
+		up_to_date ->
+			io:format("~nBuild complete!~n")
+	end.
 
 -ifdef(FIXED_DIFF).
 fixed_diff_option() -> [{d, 'FIXED_DIFF', ?FIXED_DIFF}].
@@ -492,6 +498,7 @@ report(X) ->
 report_console(X) -> report(X).
 -else.
 %% @doc Print an information message to the log file and console.
+%% @deprecated Use console/1, console/2 instead.
 report_console(X) ->
 	error_logger:tty(true),
 	error_logger:info_report(X),
@@ -501,6 +508,62 @@ report_console(X) ->
 d(X) ->
 	report_console(X),
 	X.
+
+%% @doc Print an information message to the log file (log level INFO) and console.
+-ifdef(DEBUG).
+console(Report) -> info(Report).
+-else.
+console(Report) ->
+	io:format("~P~n", [Report, 30]),
+	info(Report).
+-endif.
+
+-ifdef(DEBUG).
+console(Format, Data) -> info(Format, Data).
+-else.
+console(Format, Data) ->
+	io:format(Format, Data),
+	info(Format, Data).
+-endif.
+
+%% @doc Print an INFO message to the log file.
+info(Report) ->
+	error_logger:info_report(Report).
+
+info(Format, Data) ->
+	info(io_lib:format(Format, Data)).
+
+%% @doc Print a WARNING message to the log file.
+warn(Report) ->
+	error_logger:warning_report(Report).
+
+warn(Format, Data) ->
+	warn(io_lib:format(Format, Data)).
+
+%% @doc Print an error message to the log file (log level ERROR) and console.
+err(Report) ->
+	case is_list(Report) andalso is_tuple_list(Report) of
+		true ->
+			io:format("ERROR: ~n" ++ format_list_msg(Report) ++ "~n");
+		false ->
+			io:format("ERROR: ~n~p~n", [Report])
+	end,
+	error_logger:error_report(Report).
+
+err(Format, Data) ->
+	err(io_lib:format(Format, Data)).
+
+is_tuple_list(List) ->
+	lists:all(fun is_tuple/1, List).
+
+format_list_msg(List) ->
+	FormatRow = fun
+		({Key, Value}) ->
+			io_lib:format("\s\s\s\s~p: ~p", [Key, Value]);
+		(Item) ->
+			io_lib:format("\s\s\s\s~p", [Item])
+	end,
+	lists:flatten(lists:join("~n", lists:map(FormatRow, List))).
 
 %% @doc A multiplier applied to all simulated time elements in the system.
 -ifdef(DEBUG).
@@ -516,21 +579,23 @@ timestamp() ->
 	(MegaSec * 1000000) + Sec.
 
 %% @doc Ensure that parsing of core command line options functions correctly.
-commandline_parser_test() ->
-	Addr = crypto:strong_rand_bytes(32),
-	Tests =
-		[
-			{"peer 1.2.3.4 peer 5.6.7.8:9", #opts.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
-			{"mine", #opts.mine, true},
-			{"port 22", #opts.port, 22},
-			{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #opts.mining_addr, Addr}
-		],
-	X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
-	ar:d({x, X}),
-	O = parse(X),
-	lists:foreach(
-		fun({_, Index, Value}) ->
-			?assertEqual(element(Index, O), Value)
-		end,
-		Tests
-	).
+commandline_parser_test_() ->
+	{timeout, 20, fun() ->
+		Addr = crypto:strong_rand_bytes(32),
+		Tests =
+			[
+				{"peer 1.2.3.4 peer 5.6.7.8:9", #opts.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
+				{"mine", #opts.mine, true},
+				{"port 22", #opts.port, 22},
+				{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #opts.mining_addr, Addr}
+			],
+		X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
+		ar:d({x, X}),
+		O = parse(X),
+		lists:foreach(
+			fun({_, Index, Value}) ->
+				?assertEqual(element(Index, O), Value)
+			end,
+			Tests
+		)
+	end}.

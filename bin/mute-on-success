@@ -1,0 +1,10 @@
+#!/bin/sh
+
+OUT=`${@:1}`
+if [ $? -ne 0 ];
+then
+	echo "$OUT"
+	exit 1
+else
+	exit 0
+fi

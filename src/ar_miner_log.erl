@@ -96,28 +96,16 @@ log(Str) ->
 		_ ->
 			{Date, {Hour, Minute, Second}} =
 				calendar:now_to_datetime(os:timestamp()),
-			Output =
-				lists:flatten(
-					io_lib:format(
-						"~s, ~2..0w:~2..0w:~2..0w: ~s~n",
-						[
-							day(Date),
-							Hour, Minute, Second,
-							Str
-						]
-					)
-				),
-			print(Output),
+			ar:console(
+				"~s, ~2..0w:~2..0w:~2..0w: ~s~n",
+				[
+					day(Date),
+					Hour, Minute, Second,
+					Str
+				]
+			),
 			interceptor_log(Str)
 	end.
-
-%% @doc Print the message to the screen, if we are not in DEBUG mode.
-%% Use the DEBUG log for debugging.
--ifdef(DEBUG).
-print(_) -> do_nothing.
--else.
-print(Str) -> io:format("~s", [Str]).
--endif.
 
 %% @doc Start a process that checks the state of mined blocks.
 start_worker(BH) ->
