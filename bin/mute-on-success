@@ -1,6 +1,6 @@
 #!/bin/sh
 
-OUT=`${@:1}`
+OUT=`$@`
 if [ $? -ne 0 ];
 then
 	echo "$OUT"
