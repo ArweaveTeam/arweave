@@ -51,7 +51,6 @@
 		ar_block,
 		ar_tx_db,
 		ar_firewall_distributed_tests,
-		ar_fork_recovery_tests,
 		ar_randomx_mining_tests,
 		ar_semaphore_tests,
 		% ar_meta_db must be the last in the list since it resets global configuraiton

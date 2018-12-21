@@ -4,6 +4,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_fork, [test_on_fork/3]).
+-import(ar_test_node, [slave_start/1]).
 -import(ar_test_node, [slave_call/3, connect_to_slave/0, slave_mine/1]).
 -import(ar_test_node, [wait_until_height/2]).
 
@@ -22,8 +23,7 @@ two_nodes_successfully_fork_from_sha384_to_randomx_test_() ->
 
 two_nodes_successfully_fork_from_sha384_to_randomx(ForkHeight) ->
 	%% Start a remote node.
-	Peer = {127, 0, 0, 1, ar_meta_db:get(port)},
-	{Slave, B0} = slave_call(ar_test_node, start, [no_block, Peer]),
+	{Slave, B0} = slave_start(no_block),
 	%% Start a local node and connect to slave.
 	{Master, _} = ar_test_node:start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}),
 	connect_to_slave(),

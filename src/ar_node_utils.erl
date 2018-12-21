@@ -319,7 +319,8 @@ integrate_new_block(
 			hash_list := HashList,
 			wallet_list := WalletList,
 			waiting_txs := WaitingTXs,
-			potential_txs := PotentialTXs
+			potential_txs := PotentialTXs,
+			height := Height
 		} = StateIn,
 		NewB) ->
 	%% Filter completed TXs from the pending list. The mining reward for TXs is
@@ -328,14 +329,9 @@ integrate_new_block(
 	%% a block. Therefore, we re-use the difficulty from NewB when verifying TXs
 	%% for the next block because even if the next difficulty makes the price go
 	%% up, it should be fine.
-	RawKeepNotMinedTXs =
-		lists:filter(
-			fun(T) ->
-				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
-				ar_tx:verify(T, NewB#block.diff, NewB#block.height + 1, WalletList)
-			end,
-			TXs
-		),
+	Diff = NewB#block.diff,
+	%% Filter completed TXs from the pending list.
+	RawKeepNotMinedTXs = pick_not_mined_txs(Height, Diff, NewB, WalletList, TXs),
 	NotMinedTXs =
 		lists:filter(
 			fun(T) ->
@@ -404,6 +400,33 @@ integrate_new_block(
 		last_retarget		 => NewB#block.last_retarget,
 		weave_size			 => NewB#block.weave_size
 	}).
+
+pick_not_mined_txs(Height, Diff, NewB, WalletList, TXs) ->
+	case Height >= ar_fork:height_1_8() of
+		true ->
+			{PickedTXs, _} = lists:foldl(
+				fun(T, {Acc, FloatingWalletList}) ->
+					NotInWeave = (not ar_weave:is_tx_on_block_list([NewB], T#tx.id)),
+					case NotInWeave and ar_tx:verify(T, Diff, Height + 2, FloatingWalletList) of
+						true ->
+							{Acc ++ [T], ar_node_utils:apply_tx(FloatingWalletList, T)};
+						false ->
+							{Acc, FloatingWalletList}
+					end
+				end,
+				{[], WalletList},
+				TXs
+			),
+			PickedTXs;
+		false ->
+			lists:filter(
+				fun(T) ->
+					(not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
+					ar_tx:verify(T, Diff, Height + 2, WalletList)
+				end,
+				TXs
+			)
+	end.
 
 %% @doc Recovery from a fork.
 fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->

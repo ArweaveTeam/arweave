@@ -120,19 +120,7 @@ update_txs(
 		true -> calc_diff(CurrentB, NextBlockTimestamp);
 		false -> CurrentDiff
 	end,
-	NextBlockHeight = CurrentB#block.height + 1,
-	%% Filter out invalid TXs. A TX can be valid by itself, but still invalid
-	%% in the context of the other TXs and the block it would be mined to.
-	ValidTXs =
-		lists:filter(
-			fun(TX) ->
-				ar_tx:verify(TX, NextDiff, NextBlockHeight, CurrentB#block.wallet_list)
-			end,
-			ar_node_utils:filter_all_out_of_order_txs(
-				CurrentB#block.wallet_list,
-				TXs
-			)
-		),
+	ValidTXs = pick_txs_to_mine(CurrentB#block.height, NextDiff, CurrentB#block.wallet_list, TXs),
 	update_data_segment(S, ValidTXs, NextBlockTimestamp, NextDiff).
 
 %% @doc Generate a new timestamp to be used in the next block. To compensate for
@@ -151,6 +139,33 @@ calc_diff(CurrentB, NextBlockTimestamp) ->
 		NextBlockTimestamp,
 		CurrentB#block.last_retarget
 	).
+
+%% @doc Filter out invalid TXs. A TX can be valid by itself, but still invalid
+%% in the context of the other TXs and the block it would be mined to.
+pick_txs_to_mine(Height, Diff, WalletList, TXs) ->
+	case Height >= ar_fork:height_1_8() of
+		true ->
+			{PickedTXs, _} = lists:foldl(
+				fun(T, {Acc, FloatingWalletList}) ->
+					case ar_tx:verify(T, Diff, Height + 1, FloatingWalletList) of
+						true ->
+							{Acc ++ [T], ar_node_utils:apply_tx(FloatingWalletList, T)};
+						_ ->
+							{Acc, FloatingWalletList}
+					end
+				end,
+				{[], WalletList},
+				ar_node_utils:filter_all_out_of_order_txs(WalletList, TXs)
+			),
+			PickedTXs;
+		false ->
+			lists:filter(
+				fun(TX) ->
+					ar_tx:verify(TX, Diff, Height + 1, WalletList)
+				end,
+				ar_node_utils:filter_all_out_of_order_txs(WalletList, TXs)
+			)
+	end.
 
 %% @doc Generate a new data_segment and update the timestamp and diff.
 update_data_segment(S = #state { txs = TXs }) ->
