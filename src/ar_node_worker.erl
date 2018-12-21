@@ -62,7 +62,7 @@ server(NPid, SPid) ->
 					ar:err( [ {'NodeWorkerEXCEPTION', Term } ]),
 					server(NPid, SPid);
 				exit:Term ->
-					ar:info( [ {'NodeWorkerEXIT', Term} ] ),
+					ar:err( [ {'NodeWorkerEXIT', Term} ] ),
 					server(NPid, SPid);
 				error:Term ->
 					ar:err( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
@@ -307,7 +307,7 @@ maybe_remove_tx(TXs, TXID, Sig) ->
 				% for the TX if the sig /does/ verify correctly.
 				case ar:d(ar_wallet:verify(TX#tx.owner, TXID, Sig)) of
 					true ->
-						ar:warn(
+						ar:info(
 							[
 								{cancelling_tx, ar_util:encode(TXID)},
 								{
@@ -346,7 +346,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Pee
 			StateNext = StateIn#{ gossip => NewGS },
 			process_new_block(StateNext, NewGS, NewB, RecallShadow, Peer, HashList);
 		false ->
-			ar:err(failed_to_get_recall_block),
+			ar:warn(failed_to_get_recall_block),
 			none
 	end;
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, HashList)
@@ -406,7 +406,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
 		false ->
-			ar:err([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
+			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
 			case is_fork_preferable(NewB, CDiff, BHL) of
 				false -> [];
 				true ->
