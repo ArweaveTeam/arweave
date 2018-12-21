@@ -270,7 +270,7 @@ validate_by_hash(DataSegmentHash, Diff) ->
 	NewDiff = adjust_for_min_diff(Diff),
 	case DataSegmentHash of
 		<< 0:NewDiff, _/bitstring >> ->
-			DataSegmentHash;
+			true;
 		_ ->
 			false
 	end.
