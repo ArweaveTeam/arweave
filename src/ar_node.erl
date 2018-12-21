@@ -677,8 +677,13 @@ handle(_SPid, {cancel_tx, TXID, Sig}) ->
 	{task, {cancel_tx, TXID, Sig}};
 handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
-handle(_SPid, {apply_tx, TX}) ->
-	{task, {encounter_new_tx, TX}};
+handle(_SPid, {add_tx_to_mining_pool, TX}) ->
+	{task, {add_tx_to_mining_pool, TX}};
+handle(SPid, {update_floating_wallet_list, TX}) ->
+	{ok, FloatingWalletList} = ar_node_state:lookup(SPid, floating_wallet_list),
+	NewFloatingWalletList = ar_node_utils:apply_tx(FloatingWalletList, TX),
+	ar_node_state:update(SPid, [{floating_wallet_list, NewFloatingWalletList}]),
+	ar:info("Updating ~p to the floating wallet list", [TX#tx.id]);
 handle(_SPid, {new_block, Peer, Height, NewB, BDS, Recall}) ->
 	{task, {process_new_block, Peer, Height, NewB, BDS, Recall}};
 handle(_SPid, {replace_block_list, NewBL}) ->
@@ -787,9 +792,9 @@ handle(SPid, {get_all_known_txs, From, Ref}) ->
 	AllTXs = TXs ++ WaitingTXs ++ PotentialTXs,
 	From ! {Ref, all_known_txs, AllTXs},
 	ok;
-handle(SPid, {get_floatingwalletlist, From}) ->
+handle(SPid, {get_floatingwalletlist, From, Ref}) ->
 	{ok, FloatingWalletList} = ar_node_state:lookup(SPid, floating_wallet_list),
-	From ! {floatingwalletlist, FloatingWalletList},
+	From ! {Ref, floatingwalletlist, FloatingWalletList},
 	ok;
 handle(SPid, {get_current_diff, From, Ref}) ->
 	{ok, #{

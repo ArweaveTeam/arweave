@@ -94,7 +94,7 @@ handle(SPid, {add_tx, TX}) ->
 	{ok, StateIn} =
 		ar_node_state:lookup(
 			SPid,
-			[gossip, node, txs, waiting_txs, potential_txs]
+			[gossip, node, txs, waiting_txs, potential_txs, height]
 		),
 	case add_tx(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
@@ -103,15 +103,18 @@ handle(SPid, {add_tx, TX}) ->
 			ok
 	end,
 	{ok, add_tx};
-handle(SPid, {encounter_new_tx, TX}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [gossip, txs, waiting_txs, floating_wallet_list]),
-	case encounter_new_tx(StateIn, TX, maps:get(gossip, StateIn)) of
+handle(SPid, {add_tx_to_mining_pool, TX}) ->
+	{ok, StateIn} = ar_node_state:lookup(
+		SPid,
+		[gossip, txs, waiting_txs, floating_wallet_list, height]
+	),
+	case add_tx_to_mining_pool(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
 			ok
 	end,
-	{ok, encounter_new_tx};
+	{ok, add_tx_to_mining_pool};
 handle(SPid, {cancel_tx, TXID, Sig}) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
 	{ok, StateOut} = cancel_tx(StateIn, TXID, Sig),
@@ -226,7 +229,7 @@ handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, _BDS, Recall}}) ->
 	end,
 	{ok, process_new_block};
 handle_gossip(SPid, {NewGS, {add_tx, TX}}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, potential_txs]),
+	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, potential_txs, height]),
 	case add_tx(StateIn, TX, NewGS) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -258,14 +261,25 @@ handle_gossip(SPid, {NewGS, UnhandledMsg}) ->
 
 %% @doc Add new transaction to a server state.
 add_tx(StateIn, TX, GS) ->
-	#{node := Node, waiting_txs := WaitingTXs, potential_txs := PotentialTXs} = StateIn,
+	#{
+		node := Node,
+		waiting_txs := WaitingTXs,
+		potential_txs := PotentialTXs,
+		height := Height
+	} = StateIn,
 	case ar_node_utils:get_conflicting_txs(aggregate_txs(StateIn), TX) of
 		[] ->
+			case Height >= ar_fork:height_1_8() of
+				true ->
+					Node ! {update_floating_wallet_list, TX};
+				false ->
+					noop
+			end,
 			{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 			timer:send_after(
 				ar_node_utils:calculate_delay(byte_size(TX#tx.data)),
 				Node,
-				{apply_tx, TX}
+				{add_tx_to_mining_pool, TX}
 			),
 			{ok, [
 				{waiting_txs, ar_util:unique([TX | WaitingTXs])},
@@ -279,9 +293,12 @@ add_tx(StateIn, TX, GS) ->
 			]}
 	end.
 
-%% @doc Update miner and amend server state when encountering a new transaction.
-encounter_new_tx(StateIn, TX, NewGS) ->
-	#{txs := TXs, waiting_txs := WaitingTXs, floating_wallet_list := FloatingWalletList} = StateIn,
+%% @doc Add the transaction to the mining pool, to be included in the mined block.
+add_tx_to_mining_pool(StateIn, TX, NewGS) ->
+	#{
+		txs := TXs,
+		waiting_txs := WaitingTXs
+	} = StateIn,
 	memsup:start_link(),
 	{_, Mem} = lists:keyfind(system_total_memory, 1, memsup:get_system_memory_data()),
 	case (Mem div 4) > byte_size(TX#tx.data) of
@@ -289,7 +306,6 @@ encounter_new_tx(StateIn, TX, NewGS) ->
 			NewTXs = TXs ++ [TX],
 			{ok, [
 				{txs, NewTXs},
-				{floating_wallet_list, ar_node_utils:apply_tx(FloatingWalletList, TX)},
 				{gossip, NewGS},
 				{waiting_txs, WaitingTXs -- [TX]}
 			]};
@@ -473,7 +489,8 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 		tags          := Tags,
 		reward_pool   := OldPool,
 		weave_size    := OldWeaveSize,
-		potential_txs := PotentialTXs
+		potential_txs := PotentialTXs,
+		height        := Height
 	} = StateIn,
 	% Calculate the new wallet list (applying TXs and mining rewards).
 	RecallB = ar_node_utils:find_recall_block(HashList),
@@ -518,12 +535,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 		),
 	% Store the transactions that we know about, but were not mined in
 	% this block.
-	NextBHeight = length(HashList),
-	NotMinedTXs =
-		lists:filter(
-			fun(T) -> ar_tx:verify(T, Diff, NextBHeight + 1, WalletList) end,
-			ar_node_utils:filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs)
-		),
+	NotMinedTXs = pick_not_mined_txs(Height, Diff, WalletList, TXs, MinedTXs),
 	StateNew = StateIn#{ wallet_list => WalletList },
 	% Build the block record, verify it, and gossip it to the other nodes.
 	[NextB | _] = ar_weave:add(
@@ -626,6 +638,31 @@ generate_block_data_segment(NextB, RecallB) ->
 		NextB#block.timestamp,
 		NextB#block.tags
 	).
+
+pick_not_mined_txs(Height, Diff, WalletList, TXs, MinedTXs) ->
+	case Height >= ar_fork:height_1_8() of
+		true ->
+			{NotMinedTXs, _} = lists:foldl(
+				fun(T, {Acc, FloatingWalletList}) ->
+					case ar_tx:verify(T, Diff, Height + 2, FloatingWalletList) of
+						true ->
+							{Acc ++ [T], ar_node_utils:apply_tx(FloatingWalletList, T)};
+						false ->
+							{Acc, FloatingWalletList}
+					end
+				end,
+				{[], WalletList},
+				ar_node_utils:filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs)
+			),
+			NotMinedTXs;
+		false ->
+			lists:filter(
+				fun(T) ->
+					ar_tx:verify(T, Diff, Height + 2, WalletList)
+				end,
+				ar_node_utils:filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs)
+			)
+	end.
 
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ id := BinID, hash_list := not_joined} = StateIn, NewHs) ->

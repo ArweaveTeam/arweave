@@ -7,6 +7,34 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+fork_1_8_test_() ->
+	{
+		foreach,
+		fun() ->
+			meck:new(ar_fork, [passthrough]),
+			meck:expect(ar_fork, height_1_8, fun() -> 0 end),
+			ok
+		end,
+		fun(ok) ->
+			meck:unload(ar_fork)
+		end,
+		[
+			%% Tests that run for both before and after fork 1.7
+			{"get_last_tx_single_test", fun get_last_tx_single_test/0},
+			{"add_external_tx_test", fun add_external_tx_test/0},
+			{"add_external_tx_with_tags_test", fun add_external_tx_with_tags_test/0},
+			{"find_external_tx_test", fun find_external_tx_test/0},
+			{"fail_external_tx_test", fun fail_external_tx_test/0},
+			{"add_tx_and_get_last_test", fun add_tx_and_get_last_test/0},
+			{"get_subfields_of_tx_test", fun get_subfields_of_tx_test/0},
+			{"get_pending_tx_test", fun get_pending_tx_test/0},
+			{"get_multiple_pending_txs_test_", get_multiple_pending_txs_test_()},
+			{"get_tx_by_tag_test", fun get_tx_by_tag_test/0},
+			{"get_tx_body_test", fun get_tx_body_test/0},
+			{"get_txs_by_send_recv_test_", get_txs_by_send_recv_test_()}
+		]
+	}.
+
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	ar_storage:clear(),
@@ -1192,6 +1220,36 @@ get_wallet_deposits_test_() ->
 			GetTXs(ar_util:encode(SecondTX#tx.id))
 		)
 	end}.
+
+%% The test ensures that if a node has multiple txs per wallet in the mempool and
+%% receives a new block, it preserves those txs in the mempool and later mines them
+%% into another block successfully. Runs after fork 1.7.
+accepts_blocks_with_multiple_txs_per_wallet() ->
+	ar_storage:clear(),
+	{Priv, Pub} = ar_wallet:new(),
+	%% Create a node and fill its mempool with 2 txs from the same wallet
+	B0 = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	NodeA = ar_node:start([], B0),
+	TX = (ar_tx:new())#tx{ owner = Pub, reward = ?AR(1) },
+	SignedTX = ar_tx:sign(TX, {Priv, Pub}),
+	ar_node:add_tx(NodeA, SignedTX),
+	TX2 = (ar_tx:new())#tx{ owner = Pub, reward = ?AR(1), last_tx = SignedTX#tx.id },
+	SignedTX2 = ar_tx:sign(TX2, {Priv, Pub}),
+	ar_node:add_tx(NodeA, SignedTX2),
+	%% Wait a little bit so that when we connect the nodes, NodeB does not receive the txs
+	receive after 1000 -> ok end,
+	%% Create another node, mine an empty block on it, connect it with NodeA to receive it
+	NodeB = ar_node:start([], B0),
+	ar_node:add_peers(NodeB, NodeA),
+	ar_node:mine(NodeB),
+	receive after 1000 -> ok end,
+	%% Mine a new block on NodeA - expect the original transactions to be mined into it
+	ar_node:mine(NodeA),
+	receive after 1000 -> ok end,
+	ReadTX = ar_storage:read_tx(SignedTX#tx.id),
+	?assertEqual(<<>>, ReadTX#tx.last_tx),
+	ReadTX2 = ar_storage:read_tx(SignedTX2#tx.id),
+	?assertEqual(SignedTX#tx.id, ReadTX2#tx.last_tx).
 
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),

@@ -1,15 +1,25 @@
 -module(ar_test_node).
 
--export([start/2, connect_to_slave/0, slave_call/3, slave_call/4]).
--export([slave_gossip/2, slave_add_tx/2, slave_mine/1]).
+-export([start/1, start/2, slave_start/1, connect_to_slave/0, slave_call/3, slave_call/4]).
+-export([gossip/2, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
 -export([wait_until_height/2, slave_wait_until_height/2]).
 -export([wait_until_block_hash_list/2]).
+-export([wait_until_receives_txs/2, slave_wait_until_receives_txs/2]).
 
 -include_lib("eunit/include/eunit.hrl").
 
-start(no_block, Peer) ->
+start(no_block) ->
 	[B0] = ar_weave:init([]),
-	start(B0, Peer);
+	start(B0);
+start(B0) ->
+	start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).
+
+slave_start(no_block) ->
+	[B0] = ar_weave:init([]),
+	slave_start(B0);
+slave_start(B0) ->
+	slave_call(?MODULE, start, [B0, {127, 0, 0, 1, ar_meta_db:get(port)}]).
+
 start(B0, Peer) ->
 	ar_storage:clear(),
 	Node = ar_node:start([], [B0]),
@@ -31,16 +41,21 @@ connect_to_slave() ->
 			[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}]
 		).
 
+gossip(off, Node) ->
+	ar_node:set_loss_probability(Node, 1);
+gossip(on, Node) ->
+	ar_node:set_loss_probability(Node, 0).
+
 slave_call(Module, Function, Args) ->
 	slave_call(Module, Function, Args, 5000).
 
 slave_call(Module, Function, Args, Timeout) ->
 	ar_rpc:call(slave, Module, Function, Args, Timeout).
 
-slave_gossip(on, Node) ->
-	slave_call(ar_node, set_loss_probability, [Node, 0]);
 slave_gossip(off, Node) ->
-	slave_call(ar_node, set_loss_probability, [Node, 1]).
+	slave_call(?MODULE, gossip, [off, Node]);
+slave_gossip(on, Node) ->
+	slave_call(?MODULE, gossip, [on, Node]).
 
 slave_add_tx(Node, TX) ->
 	slave_call(ar_node, add_tx, [Node, TX]).
@@ -79,3 +94,20 @@ wait_until_block_hash_list(Node, BHL) ->
 		100,
 		60 * 1000
 	)).
+
+wait_until_receives_txs(Node, TXs) ->
+	?assertEqual(ok, ar_util:do_until(
+		fun() ->
+			case ar_node:get_all_known_txs(Node) of
+				TXs ->
+					ok;
+				_ ->
+					false
+			end
+		end,
+		100,
+		10 * 1000
+	)).
+
+slave_wait_until_receives_txs(Node, TXs) ->
+	slave_call(?MODULE, wait_until_receives_txs, [Node, TXs]).

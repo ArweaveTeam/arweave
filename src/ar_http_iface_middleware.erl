@@ -813,43 +813,36 @@ get_wallet_txs(EarliestTXID, PreviousTXID, Acc) ->
 	end.
 
 handle_post_tx(TX) ->
-	% Check whether the TX is already ignored, ignore it if it is not
-	% (and then pass to processing steps).
+	%% Check whether the TX is already ignored, ignore it if it is not
+	%% (and then pass to processing steps).
 	case ar_bridge:is_id_ignored(TX#tx.id) of
 		true -> {error_response, {208, #{}, <<"Transaction already processed.">>}};
 		false ->
 			ar_bridge:ignore_id(TX#tx.id),
 			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
 				Diff ->
-					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
-					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-					WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
+					Node = whereis(http_entrypoint_node),
+					Height = ar_node:get_height(Node),
+					FloatingWalletList = case Height < ar_fork:height_1_8() of
+						true ->
+							ar_node:get_wallet_list(Node);
+						false ->
+							ar_node:get_floating_wallet_list(Node)
+					end,
 					OwnerAddr = ar_wallet:to_address(TX#tx.owner),
-					WinstonInQueue =
-						lists:sum(
-							[
-								T#tx.quantity + T#tx.reward
-							||
-								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
-							]
-						),
-					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
-						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
-							ar:info(
-								[
-									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
-									{balance, B},
-									{in_queue, WinstonInQueue},
-									{cost, TX#tx.reward + TX#tx.quantity}
-								]
-							),
+					case lists:keyfind(OwnerAddr, 1, FloatingWalletList) of
+						{_, Balance, _} when (TX#tx.reward + TX#tx.quantity) > Balance ->
+							ar:info([
+								submitted_txs_exceed_balance,
+								{owner, ar_util:encode(OwnerAddr)},
+								{balance, Balance},
+								{tx_cost, TX#tx.reward + TX#tx.quantity}
+							]),
 							{error_response, {400, #{}, <<"Waiting TXs exceed balance for wallet.">>}};
 						_ ->
-							% Finally, validate the veracity of the TX.
 							CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
 							case ar_tx:verify(TX, Diff, CurrentHeight + 1, FloatingWalletList) of
 								false ->
-									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 									{error_response, {400, #{}, <<"Transaction verification failed.">>}};
 								true ->
 									ar:info([
@@ -857,7 +850,7 @@ handle_post_tx(TX) ->
 										accepted_tx,
 										{id, ar_util:encode(TX#tx.id)}
 									]),
-									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
+									ar_bridge:add_tx(whereis(http_bridge_node), TX),
 									ok
 							end
 					end

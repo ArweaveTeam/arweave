@@ -3,11 +3,11 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-import(ar_test_node, [start/1, slave_start/1, slave_wait_until_receives_txs/2]).
+
 node_validates_blocks_with_rejected_tx_test() ->
 	%% Start a remote node.
-	ar_rpc:ping(slave),
-	Peer = {127, 0, 0, 1, ar_meta_db:get(port)},
-	{SlaveNode, B0} = ar_rpc:call(slave, ar_test_node, start, [no_block, Peer], 5000),
+	{SlaveNode, B0} = slave_start(no_block),
 	%% Post the first tx to the remote node. This should also make the second node peer with the first one.
 	{_, Pub} = ar_wallet:new(),
 	TX1 = (ar_tx:new())#tx{ data = <<"BADCONTENT1">>, owner = Pub },
@@ -20,9 +20,9 @@ node_validates_blocks_with_rejected_tx_test() ->
 			[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX1))
 		),
-	timer:sleep(200),
+	slave_wait_until_receives_txs(SlaveNode, [TX1]),
 	%% Start a local node.
-	{Node, _} = ar_test_node:start(B0, {127, 0, 0, 1, ar_rpc:call(slave, ar_meta_db, get, [port], 5000)}),
+	{Node, _} = start(B0),
 	%% Configure the firewall to reject one of the txs submitted to the remote node.
 	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
 	ar_firewall:reload(),
@@ -41,7 +41,7 @@ node_validates_blocks_with_rejected_tx_test() ->
 			[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX2))
 		),
-	timer:sleep(200),
+	slave_wait_until_receives_txs(SlaveNode, [TX2]),
 	%% Mine the second tx into a block.
 	ar_rpc:call(slave, ar_node, mine, [SlaveNode], 5000),
 	%% Expect the local node to fork recover to the block.
