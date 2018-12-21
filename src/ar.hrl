@@ -22,9 +22,12 @@
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
 %-define(DEBUG, debug).
+
 -ifdef(DEBUG).
 -define(FORK_1_6, 0).
 -else.
+%%% FORK INDEX
+%%% @deprecated Fork heights from 1.7 on are defined in the ar_fork module.
 -define(FORK_1_6, 95000).
 -endif.
 
