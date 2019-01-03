@@ -88,7 +88,7 @@
 	enable = [],
 	disable = [],
 	content_policies = [],
-	ipfs = false
+	ipfs_ro = false
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -123,7 +123,7 @@ main("") ->
 			{"max_miners (num)", "The maximum number of mining processes."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
-			{"ipfs", "Start the IPFS interface."},
+			{"ipfs_ro", "Start the IPFS listener."},
 			{"content_policy (file)", "Load a content policy file for the node."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
@@ -174,8 +174,8 @@ parse(["disk_space", Size|Rest], O) ->
 	parse(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 parse(["load_mining_key", File|Rest], O)->
 	parse(Rest, O#opts { load_key = File });
-parse(["ipfs", IPFS|Rest], O)->
-	parse(Rest, O#opts { ipfs = IPFS });
+parse(["ipfs_ro", IPFSro|Rest], O)->
+	parse(Rest, O#opts { ipfs_ro = IPFSro });
 parse(["start_hash_list", IndepHash|Rest], O)->
 	parse(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
 parse(["benchmark"|Rest], O)->
@@ -228,7 +228,7 @@ start(
 		enable = Enable,
 		disable = Disable,
 		content_policies = Policies,
-		ipfs = IPFS
+		ipfs_ro = IPFSro
 	}) ->
 	% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -391,6 +391,10 @@ start(
 		false -> do_nothing
 	end,
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
+	case IPFSro of
+		false -> ok;
+		true  -> app_ipfs:start_recv_only()
+	end,
 	case Pause of
 		false -> ok;
 		_ -> receive after infinity -> ok end
