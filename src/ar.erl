@@ -174,8 +174,8 @@ parse(["disk_space", Size|Rest], O) ->
 	parse(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 parse(["load_mining_key", File|Rest], O)->
 	parse(Rest, O#opts { load_key = File });
-parse(["ipfs_ro", IPFSro|Rest], O)->
-	parse(Rest, O#opts { ipfs_ro = IPFSro });
+parse(["ipfs_ro"|Rest], O)->
+	parse(Rest, O#opts { ipfs_ro = true });
 parse(["start_hash_list", IndepHash|Rest], O)->
 	parse(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
 parse(["benchmark"|Rest], O)->
