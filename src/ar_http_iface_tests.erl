@@ -736,6 +736,26 @@ get_txs_by_send_recv_test_() ->
 			))
 	end}.
 
+get_tx_status_test() ->
+	ar_storage:clear(),
+	SearchServer = app_search:start(),
+	Peers = ar_network:start(10, 10),
+	ar_node:add_peers(hd(Peers), SearchServer),
+	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	ar_node:add_tx(hd(Peers), TX),
+	receive after 250 -> ok end,
+	ar_node:mine(hd(Peers)),
+	receive after 1000 -> ok end,
+	{ok, {_, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
+		),
+	Res = ar_serialize:dejsonify(Body),
+	[LastHash|_] = ar_node:get_hash_list(hd(Peers)),
+	?assertEqual({[{<<"block_indep_hash">>, ar_util:encode(LastHash)}]}, Res).
+
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),
 %	ar_node:mine(Node),

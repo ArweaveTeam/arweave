@@ -178,22 +178,40 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 			)
 	};
 
-%% @doc Return a transaction specified via the the transaction id (hash)
+%% @doc Return additional information about the transaction with the given identifier (hash).
+%% GET request to endpoint /tx/{hash}.
+handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
+	case handle_get_tx(Hash) of
+		{ok, _} ->
+			TagsToInclude = [
+				<<"block_indep_hash">>
+			],
+			{200, [], ar_serialize:jsonify(
+				{lists:filter(
+					fun(Tag) ->
+						{Name, _} = Tag,
+						lists:member(Name, TagsToInclude)
+					end,
+					app_search:get_tags_by_id(ar_util:decode(Hash))
+				)}
+			)};
+		Err ->
+			Err
+	end;
+
+
+% @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	case hash_to_maybe_filename(tx, Hash) of
+	case handle_get_tx(Hash) of
 		{error, invalid} ->
 			{400, [], <<"Invalid hash.">>};
-		{error, ID, unavailable} ->
-			case is_a_pending_tx(ID) of
-				true ->
-					{202, [], <<"Pending">>};
-				false ->
-					case ar_tx_db:get_error_codes(ID) of
-						{ok, Codes} -> {410, [], list_to_binary(lists:join(" ", Codes))};
-						not_found -> {404, [], <<"Not Found.">>}
-					end
-			end;
+		{error, pending} ->
+			{202, [], <<"Pending">>};
+		{error, not_found} ->
+			{404, [], <<"Not Found.">>};
+		{error, {invalid_tx, ErrorCodes}} ->
+			{410, [], list_to_binary(lists:join(" ", ErrorCodes))};
 		{ok, Filename} ->
 			{ok, [], {file, Filename}}
 	end;
@@ -650,6 +668,24 @@ handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD'
 %% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
+
+handle_get_tx(Hash) ->
+	case hash_to_maybe_filename(tx, Hash) of
+		{error, ID, unavailable} ->
+			case is_a_pending_tx(ID) of
+				true ->
+					{error, pending};
+				false ->
+					case ar_tx_db:get_error_codes(ID) of
+						{ok, Codes} ->
+							{error, {invalid_tx, Codes}};
+						not_found ->
+							{error, not_found}
+					end
+			end;
+		Result ->
+			Result
+	end.
 
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, _Args, _Config) -> ok;
