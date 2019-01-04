@@ -754,8 +754,33 @@ get_tx_status_test() ->
 		),
 	{Res} = ar_serialize:dejsonify(Body),
 	HashList = ar_node:get_hash_list(hd(Peers)),
-	?assertEqual(true, lists:member({<<"block_height">>, length(HashList) - 1}, Res)),
-	?assertEqual(true, lists:member({<<"block_indep_hash">>, ar_util:encode(hd(HashList))}, Res)).
+	?assertEqual(
+		#{
+			<<"block_height">> => length(HashList) - 1,
+			<<"block_indep_hash">> => ar_util:encode(hd(HashList)),
+			<<"number_of_confirmations">> => 0
+		},
+		maps:from_list(Res)
+	),
+	% mine yet another block and assert the increment
+	receive after 250 -> ok end,
+	ar_node:mine(hd(Peers)),
+	receive after 1000 -> ok end,
+	{ok, {_, _, Body2, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
+		),
+	{Res2} = ar_serialize:dejsonify(Body2),
+	?assertEqual(
+		#{
+			<<"block_height">> => length(HashList) - 1,
+			<<"block_indep_hash">> => ar_util:encode(hd(HashList)),
+			<<"number_of_confirmations">> => 1
+		},
+		maps:from_list(Res2)
+	).
 
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),

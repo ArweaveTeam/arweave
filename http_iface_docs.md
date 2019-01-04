@@ -92,7 +92,7 @@ A JSON transaction record.
 #### Example Response
 
 ```javascript
-{"block_indep_hash": "KCdtB29b5V0rz2hX_sSGfEd5Fw7iTEiuXp5M34dWPEIdhxPqf3rsNyRFUznAhDzb","block_height":1}
+{"block_indep_hash": "KCdtB29b5V0rz2hX_sSGfEd5Fw7iTEiuXp5M34dWPEIdhxPqf3rsNyRFUznAhDzb","block_height":10,"number_of_confirmations":3}
 ```
 #### JavaScript Example Request
 

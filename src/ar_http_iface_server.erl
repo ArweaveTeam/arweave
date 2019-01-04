@@ -181,21 +181,28 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 %% @doc Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}.
 handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
+	Height = ar_node:get_height(whereis(http_entrypoint_node)),
 	case handle_get_tx(Hash) of
 		{ok, _} ->
 			TagsToInclude = [
 				<<"block_height">>,
 				<<"block_indep_hash">>
 			],
-			{200, [], ar_serialize:jsonify(
-				{lists:filter(
-					fun(Tag) ->
-						{Name, _} = Tag,
-						lists:member(Name, TagsToInclude)
-					end,
-					app_search:get_tags_by_id(ar_util:decode(Hash))
-				)}
-			)};
+			Tags = lists:filter(
+				fun(Tag) ->
+					{Name, _} = Tag,
+					lists:member(Name, TagsToInclude)
+				end,
+				app_search:get_tags_by_id(ar_util:decode(Hash))
+			),
+			TXHeight = proplists:get_value(<<"block_height">>, Tags),
+			NumberOfConfirmations = case Height of
+				not_joined ->
+					[];
+				Height ->
+					[{<<"number_of_confirmations">>, Height - TXHeight}]
+			end,
+			{200, [], ar_serialize:jsonify({Tags ++ NumberOfConfirmations})};
 		Err ->
 			Err
 	end;
