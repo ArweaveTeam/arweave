@@ -184,6 +184,7 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 	case handle_get_tx(Hash) of
 		{ok, _} ->
 			TagsToInclude = [
+				<<"block_height">>,
 				<<"block_indep_hash">>
 			],
 			{200, [], ar_serialize:jsonify(

@@ -752,9 +752,10 @@ get_tx_status_test() ->
 			{127, 0, 0, 1, 1984},
 			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
 		),
-	Res = ar_serialize:dejsonify(Body),
-	[LastHash|_] = ar_node:get_hash_list(hd(Peers)),
-	?assertEqual({[{<<"block_indep_hash">>, ar_util:encode(LastHash)}]}, Res).
+	{Res} = ar_serialize:dejsonify(Body),
+	HashList = ar_node:get_hash_list(hd(Peers)),
+	?assertEqual(true, lists:member({<<"block_height">>, length(HashList) - 1}, Res)),
+	?assertEqual(true, lists:member({<<"block_indep_hash">>, ar_util:encode(hd(HashList))}, Res)).
 
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),
