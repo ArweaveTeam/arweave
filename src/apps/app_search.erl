@@ -3,7 +3,7 @@
 -export([start_link/1]).
 -export([update_tag_table/1]).
 -export([initDB/0, deleteDB/0, storeDB/3]).
--export([add_entry/3, add_entry/4, get_entries/2, get_entries/3]).
+-export([add_entry/3, add_entry/4, get_entries/2, get_entries/3, get_tags_by_id/1]).
 -include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -40,6 +40,16 @@ add_entry(ProcessName, Name, Value, ID) when not is_pid(ProcessName) ->
 add_entry(undefined, _, _, _) -> do_nothing;
 add_entry(PID, Name, Value, ID) ->
 	PID ! {add_tx, Name, Value, ID}.
+
+get_tags_by_id(TXID) ->
+	get_tags_by_id(whereis(http_search_node), TXID).
+get_tags_by_id(PID, TXID) ->
+	PID ! {get_tags, TXID, self()},
+	receive {tags, Tags} ->
+		Tags
+	after 3000 ->
+		[]
+	end.
 
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 get_entries(PID, Name, Value) ->
@@ -86,6 +96,16 @@ server(S = #state { gossip = _GS }) ->
 			{get_tx, Name, Value, PID} ->
 				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
 				PID ! search_by_exact_tag(Name, Value),
+				server(S);
+			{get_tags, TXID, PID} ->
+				Tags = lists:map(
+					fun(Tag) ->
+						{_, Name, Value, _} = Tag,
+						{Name, Value}
+					end,
+					search_by_id(TXID)
+				),
+				PID ! {tags, Tags},
 				server(S);
 			stop -> ok;
 			{add_tx, Name, Value, ID} ->
@@ -158,6 +178,19 @@ search_by_exact_tag(Name, Value) ->
 		]
 	).
 
+%% @doc Search for a list of tags of the transaction with the given ID
+search_by_id(TXID) ->
+	mnesia:dirty_select(
+		arql_tag,
+		[
+			{
+				#arql_tag { tx = TXID, _ = '_' },
+				[],
+				['$_']
+			}
+		]
+	).
+
 basic_usage_test() ->
 	% Spawn a network with two nodes and a chirper server
 	ar_storage:clear(),
@@ -173,10 +206,9 @@ basic_usage_test() ->
 	receive after 250 -> ok end,
 	ar_node:mine(hd(Peers)),
 	receive after 1000 -> ok end,
-	% recieve a "get transaction" message
-	whereis(http_search_node) ! {get_tx,self(),<<"TestName">>, <<"TestVal">>},
-	% check that newly mined block matches the block the most recent transaction was mined in
-	true =
-		receive
-			TXIDs -> lists:member(TX#tx.id, TXIDs)
-		end.
+	% get TX by tag
+	TXIDs = get_entries(<<"TestName">>, <<"TestVal">>),
+	?assertEqual(true, lists:member(TX#tx.id, TXIDs)),
+	% get tags by TX
+	Tags = get_tags_by_id(TX#tx.id),
+	?assertEqual(true, lists:member({<<"TestName">>, <<"TestVal">>}, Tags)).
