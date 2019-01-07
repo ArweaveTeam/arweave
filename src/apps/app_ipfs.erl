@@ -116,6 +116,10 @@ get_local_ipfs_txs() ->
 		10 * 1000 -> []
 	end.
 
+add_local_ipfs_tx_data() ->
+	TXids = get_local_ipfs_txs(),
+	lists:foreach(fun add_local_ipfs_tx_data/1, TXids).
+
 add_local_ipfs_tx_data(TXid) ->
 	TX = ar_storage:read_tx(TXid),
 	case lists:keyfind(<<"IPFS-Add">>, 1, TX#tx.tags) of
