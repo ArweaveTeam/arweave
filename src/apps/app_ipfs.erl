@@ -6,7 +6,7 @@
 	get_and_send/2,
 	bulk_get_and_send/2, bulk_get_and_send_from_file/2,
 	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1,
-	get_local_ipfs_txs/0, add_local_ipfs_tx_data/1,
+	get_local_ipfs_txs/0, add_local_ipfs_tx_data/0, add_local_ipfs_tx_data/1,
 	ipfs_hash_status/1,
 	maybe_ipfs_add_txs/1,
 	report/1]).
