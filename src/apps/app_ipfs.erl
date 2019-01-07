@@ -6,6 +6,7 @@
 	get_and_send/2,
 	bulk_get_and_send/2, bulk_get_and_send_from_file/2,
 	get_block_hashes/1, get_txs/1, get_ipfs_hashes/1,
+	get_local_ipfs_txs/0, add_local_ipfs_tx_data/1,
 	ipfs_hash_status/1,
 	maybe_ipfs_add_txs/1,
 	report/1]).
@@ -107,10 +108,32 @@ get_ipfs_hashes(Pid) ->
 get_txs(Pid) ->
 	get_x(Pid, get_txs, txs).
 
+get_local_ipfs_txs() ->
+	app_search:get_entries_by_tag_name(<<"IPFS-Add">>),
+	receive
+		TXs -> TXs
+	after
+		10 * 1000 -> []
+	end.
+
+add_local_ipfs_tx_data(TXid) ->
+	TX = ar_storage:read_tx(TXid),
+	case lists:keyfind(<<"IPFS-Add">>, 1, TX#tx.tags) of
+		{<<"IPFS-Add">>, Hash} ->
+			add_ipfs_data(TX, Hash);
+		false ->
+			{error, hash_not_found}
+	end.
+
 ipfs_hash_status(Hash) ->
 	Pinned = is_pinned(Hash),
 	app_search:get_entries(<<"IPFS-Add">>, Hash),
-	TXIDs = receive X -> X end,
+	TXIDs =
+		receive
+			X -> X
+		after
+			10 * 1000 -> timeout
+		end,
 	[{hash, Hash}, {pinned, Pinned}, {tx, TXIDs}].
 
 maybe_ipfs_add_txs(TXs) ->
@@ -175,9 +198,7 @@ server(State=#state{
 		{recv_new_tx, TX=#tx{tags=Tags}} ->
 			case first_ipfs_tag(Tags) of
 				{value, {<<"IPFS-Add">>, Hash}} ->
-					%% version 0.1, no validation
-					ar:d({recv_tx_ipfs_add, TX#tx.id, Hash}),
-					{ok, _Hash2} = ar_ipfs:add_data(TX#tx.data, Hash);
+					{ok, _Hash2} = add_ipfs_data(TX, Hash);
 					%% with validation:
 					%% case ar_ipfs:add_data(TX#tx.data, Hash) of
 					%%	{ok, Hash} -> [Hash|IHs];
@@ -192,6 +213,11 @@ server(State=#state{
 	end.
 
 %%% private functions
+
+add_ipfs_data(TX, Hash) ->
+	%% version 0.1, no validation
+	ar:d({recv_tx_ipfs_add, TX#tx.id, Hash}),
+	{ok, _Hash2} = ar_ipfs:add_data(TX#tx.data, Hash).
 
 first_ipfs_tag(Tags) ->
 	lists:search(fun
