@@ -121,12 +121,15 @@ add_local_ipfs_tx_data() ->
 	lists:foreach(fun add_local_ipfs_tx_data/1, TXids).
 
 add_local_ipfs_tx_data(TXid) ->
-	TX = ar_storage:read_tx(TXid),
-	case lists:keyfind(<<"IPFS-Add">>, 1, TX#tx.tags) of
-		{<<"IPFS-Add">>, Hash} ->
-			add_ipfs_data(TX, Hash);
-		false ->
-			{error, hash_not_found}
+	case ar_storage:read_tx(TXid) of
+		unavailable -> {error, tx_unavailable};
+		TX ->
+			case lists:keyfind(<<"IPFS-Add">>, 1, TX#tx.tags) of
+				{<<"IPFS-Add">>, Hash} ->
+					add_ipfs_data(TX, Hash);
+				false ->
+					{error, hash_not_found}
+			end
 	end.
 
 ipfs_hash_status(Hash) ->
