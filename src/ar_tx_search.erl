@@ -2,6 +2,7 @@
 -export([start/0]).
 -export([update_tag_table/1]).
 -export([get_entries/2, get_entries/3, get_tags_by_id/3]).
+-export([get_entries_by_tag_name/1, get_entries_by_tag_name/2]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -47,7 +48,7 @@ get_tags_by_id(PID, TXID, Timeout) ->
 		{error, timeout}
 	end.
 
-%% @doc Returns a list of all transaction IDs which has the tag Name set to
+%% @doc Returns a list of all transaction IDs which have the tag Name set to
 %% Value. Duplicates might be returned due to the duplication in the index.
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 
@@ -58,6 +59,13 @@ get_entries(PID, Name, Value) ->
 	after 3000 ->
 		[]
 	end.
+
+%% @doc Returns a list of all transaction IDs which have the given tag Name.
+get_entries_by_tag_name(Name) ->
+	get_entries_by_tag_name(whereis(http_search_node), Name).
+
+get_entries_by_tag_name(PID, Name) ->
+	PID ! {get_txs_by_tag_name, Name, self()}.
 
 %% @doc Updates the index of stored tranasaction data with all of the
 %% transactions in the given block. Returns early after sending the task to the
@@ -94,6 +102,9 @@ server() ->
 				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
 				PID ! {txs, search_by_exact_tag(Name, Value)},
 				server();
+			{get_txs_by_tag_name, Name, PID} ->
+				PID ! search_by_tag_name(Name),
+				server(S);
 			{get_tags, TXID, PID} ->
 				Tags = lists:map(
 					fun(Tag) ->
@@ -167,7 +178,20 @@ search_by_exact_tag(Name, Value) ->
 		]
 	).
 
-%% @doc Search for a list of tags of the transaction with the given ID
+%% @doc Search for a list of transactions that match the given tag name
+search_by_tag_name(Name) ->
+	mnesia:dirty_select(
+		arql_tag,
+		[
+			{
+				#arql_tag { name = Name, value = '_', tx = '$1'},
+				[],
+				['$1']
+			}
+		]
+).
+
+%% @doc Search for a list of tags for the transaction with the given ID
 search_by_id(TXID) ->
 	mnesia:dirty_select(
 		arql_tag,
