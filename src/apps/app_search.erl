@@ -3,7 +3,7 @@
 -export([start_link/1]).
 -export([update_tag_table/1]).
 -export([initDB/0, deleteDB/0, storeDB/3]).
--export([add_entry/3, add_entry/4, get_entries/2, get_entries/3, get_tags_by_id/1]).
+-export([add_entry/3, add_entry/4, get_entries/2, get_entries/3, get_tags_by_id/2]).
 -include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -41,8 +41,6 @@ add_entry(undefined, _, _, _) -> do_nothing;
 add_entry(PID, Name, Value, ID) ->
 	PID ! {add_tx, Name, Value, ID}.
 
-get_tags_by_id(TXID) ->
-	get_tags_by_id(whereis(http_search_node), TXID).
 get_tags_by_id(PID, TXID) ->
 	PID ! {get_tags, TXID, self()},
 	receive {tags, Tags} ->
@@ -211,8 +209,8 @@ basic_usage_test() ->
 	ar_node:mine(hd(Peers)),
 	receive after 1000 -> ok end,
 	% get TX by tag
-	TXIDs = get_entries(<<"TestName">>, <<"TestVal">>),
+	TXIDs = get_entries(SearchServer, <<"TestName">>, <<"TestVal">>),
 	?assertEqual(true, lists:member(TX#tx.id, TXIDs)),
 	% get tags by TX
-	Tags = get_tags_by_id(TX#tx.id),
+	Tags = get_tags_by_id(whereis(http_search_node), TX#tx.id),
 	?assertEqual(true, lists:member({<<"TestName">>, <<"TestVal">>}, Tags)).
