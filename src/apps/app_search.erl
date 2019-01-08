@@ -26,6 +26,7 @@ start_link(Args) ->
 
 %% @doc Start a search node.
 start() -> start([]).
+
 start(Peers) ->
 	initDB(),
 	spawn(
@@ -35,6 +36,7 @@ start(Peers) ->
 	).
 
 add_entry(Name, Value, ID) -> add_entry(http_search_node, Name, Value, ID).
+
 add_entry(ProcessName, Name, Value, ID) when not is_pid(ProcessName) ->
 	add_entry(whereis(ProcessName), Name, Value, ID);
 add_entry(undefined, _, _, _) -> do_nothing;
@@ -50,6 +52,7 @@ get_tags_by_id(PID, TXID, Timeout) ->
 	end.
 
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
+
 get_entries(PID, Name, Value) ->
 	PID ! {get_tx, Name, Value, self()},
 	receive TXIDs ->
