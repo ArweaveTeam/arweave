@@ -193,7 +193,13 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 					{Name, _} = Tag,
 					lists:member(Name, TagsToInclude)
 				end,
-				app_search:get_tags_by_id(whereis(http_search_node), ar_util:decode(Hash))
+				?OK(
+					app_search:get_tags_by_id(
+						whereis(http_search_node),
+						ar_util:decode(Hash),
+						infinity
+					)
+				)
 			),
 			TXHeight = proplists:get_value(<<"block_height">>, Tags),
 			NumberOfConfirmations = case Height of
