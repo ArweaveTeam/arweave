@@ -598,26 +598,20 @@ server(SPid, WPid, TaskQueue) ->
 			ar_node_worker:stop(WPid),
 			ar_node_state:stop(SPid),
 			ok;
-		{worker, {ok, Task}} ->
+		{worker, Response} ->
 			% Worker finished a task w/o errors.
+			case Response of
+				{error, Error} ->
+					ar:err([{node_worker_error, {error, Error}}]);
+				{ok, _} ->
+					noop
+			end,
 			case queue:out(TaskQueue) of
 				{empty, TaskQueue} ->
 					% Empty queue, nothing to cast.
 					server(SPid, WPid, TaskQueue);
 				{{value, Task}, NewTaskQueue} ->
 					% At least one task in queue, cast it to worker.
-					ar_node_worker:cast(WPid, Task),
-					server(SPid, WPid, NewTaskQueue)
-			end;
-		{worker, {error, Error}} ->
-			% Worker finished task with error.
-			ar:err([{node_worker_error, {error, Error}}]),
-			case queue:out(TaskQueue) of
-				{empty, TaskQueue} ->
-					% Empty queue, nothing to cast.
-					server(SPid, WPid, TaskQueue);
-				{{value, Task}, NewTaskQueue} ->
-					% Task is in queue, cast to worker.
 					ar_node_worker:cast(WPid, Task),
 					server(SPid, WPid, NewTaskQueue)
 			end;
