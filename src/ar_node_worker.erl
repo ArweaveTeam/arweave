@@ -49,7 +49,8 @@ call(Pid, Task, Timeout) ->
 %%% Server functions.
 %%%
 
-%% @doc Main server loop.
+%% @doc Main server loop. For every task received, a message back to the ar_node
+%% server must be sent, otherwise ar_node server might get stuck.
 server(NPid, SPid) ->
 	receive
 		{task, Task} ->
@@ -60,12 +61,15 @@ server(NPid, SPid) ->
 			catch
 				throw:Term ->
 					ar:err( [ {'NodeWorkerEXCEPTION', Term } ]),
+					NPid ! {worker, {error, Term}},
 					server(NPid, SPid);
 				exit:Term ->
 					ar:err( [ {'NodeWorkerEXIT', Term} ] ),
+					NPid ! {worker, {error, Term}},
 					server(NPid, SPid);
 				error:Term ->
 					ar:err( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
+					NPid ! {worker, {error, Term}},
 					server(NPid, SPid)
 			end;
 		stop ->
