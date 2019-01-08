@@ -21,8 +21,8 @@
 
 %%@doc Start a search node, linking to a supervisor process
 start_link(Args) ->
-	PID = erlang:apply(app_search, start, Args),
-	{ok, PID}.
+	Pid = erlang:apply(app_search, start, Args),
+	{ok, Pid}.
 
 %% @doc Start a search node.
 start() -> start([]).
@@ -40,11 +40,11 @@ add_entry(Name, Value, ID) -> add_entry(http_search_node, Name, Value, ID).
 add_entry(ProcessName, Name, Value, ID) when not is_pid(ProcessName) ->
 	add_entry(whereis(ProcessName), Name, Value, ID);
 add_entry(undefined, _, _, _) -> do_nothing;
-add_entry(PID, Name, Value, ID) ->
-	PID ! {add_tx, Name, Value, ID}.
+add_entry(Pid, Name, Value, ID) ->
+	Pid ! {add_tx, Name, Value, ID}.
 
-get_tags_by_id(PID, TXID, Timeout) ->
-	PID ! {get_tags, TXID, self()},
+get_tags_by_id(Pid, TXID, Timeout) ->
+	Pid ! {get_tags, TXID, self()},
 	receive {tags, Tags} ->
 		{ok, Tags}
 	after Timeout ->
@@ -53,8 +53,8 @@ get_tags_by_id(PID, TXID, Timeout) ->
 
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 
-get_entries(PID, Name, Value) ->
-	PID ! {get_tx, Name, Value, self()},
+get_entries(Pid, Name, Value) ->
+	Pid ! {get_tx, Name, Value, self()},
 	receive TXIDs ->
 		TXIDs
 	after 3000 ->
@@ -98,11 +98,11 @@ server(S = #state { gossip = _GS }) ->
 	%% Recurse through the message box, updating one's state each time.
 	try
 		receive
-			{get_tx, Name, Value, PID} ->
+			{get_tx, Name, Value, Pid} ->
 				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
-				PID ! search_by_exact_tag(Name, Value),
+				Pid ! search_by_exact_tag(Name, Value),
 				server(S);
-			{get_tags, TXID, PID} ->
+			{get_tags, TXID, Pid} ->
 				Tags = lists:map(
 					fun(Tag) ->
 						{_, Name, Value, _} = Tag,
@@ -110,7 +110,7 @@ server(S = #state { gossip = _GS }) ->
 					end,
 					search_by_id(TXID)
 				),
-				PID ! {tags, Tags},
+				Pid ! {tags, Tags},
 				server(S);
 			stop -> ok;
 			{add_tx, Name, Value, ID} ->
