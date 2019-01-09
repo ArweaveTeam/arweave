@@ -1,5 +1,5 @@
 -module(ar_key_db).
--export([start/0, get/1, put/2, maybe_add/1, remove/1]).
+-export([start/0, get/1, put/2]).
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
@@ -31,12 +31,3 @@ get(Key) ->
 		[{Key, Obj}] -> Obj;
 		[] -> not_found
 	end.
-
-maybe_add(Key) ->
-    case ets:lookup(?MODULE, Key) of
-        [{Key, Value}] -> ok;
-        _ -> put(Key, ["unknown_error "])
-    end.
-
-remove(Key) ->
-    ets:delete(?MODULE, Key).
