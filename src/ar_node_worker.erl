@@ -258,7 +258,7 @@ add_tx(StateIn, TX, GS) ->
 				{gossip, NewGS}
 			]};
 		_ ->
-			ar_tx_db:put(TX#tx.id, ["last_tx_not_valid "]),
+			ar_tx_db:put_error_codes(TX#tx.id, ["last_tx_not_valid "]),
 			{ok, [
 				{potential_txs, ar_util:unique([TX | PotentialTXs])},
 				{gossip, GS}
@@ -558,7 +558,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			),
 			lists:foreach(
 				fun(T) ->
-					ar_tx_db:maybe_add(T#tx.id)
+					ar_tx_db:ensure_error(T#tx.id)
 				end,
 				PotentialTXs
 			),

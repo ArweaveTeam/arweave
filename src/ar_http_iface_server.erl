@@ -176,9 +176,9 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 				true ->
 					{202, [], <<"Pending">>};
 				false ->
-					case ar_tx_db:get(ID) of
-						not_found -> {404, [], <<"Not Found.">>};
-						Err		  -> {410, [], list_to_binary(Err)}
+					case ar_tx_db:get_error_codes(ID) of
+						{ok, Codes} -> {410, [], list_to_binary(Codes)};
+						not_found -> {404, [], <<"Not Found.">>}
 					end
 			end;
 		{ok, Filename} ->

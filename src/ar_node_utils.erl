@@ -346,7 +346,7 @@ integrate_new_block(
 	app_search:update_tag_table(NewB),
 	lists:foreach(
 		fun(T) ->
-			ar_tx_db:maybe_add(T#tx.id)
+			ar_tx_db:ensure_error(T#tx.id)
 		end,
 		PotentialTXs
 	),

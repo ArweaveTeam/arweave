@@ -122,7 +122,7 @@ verify(TX, Diff, WalletList) ->
 						]
 					)
 				),
-			ar_tx_db:put(TX#tx.id, Reason),
+			ar_tx_db:put_error_codes(TX#tx.id, Reason),
 			false
 	end.
 -else.
@@ -171,7 +171,7 @@ verify(TX, Diff, WalletList) ->
 						]
 					)
 				),
-			ar_tx_db:put(TX#tx.id, Reason),
+			ar_tx_db:put_error_codes(TX#tx.id, Reason),
 			false
 	end.
 -endif.
