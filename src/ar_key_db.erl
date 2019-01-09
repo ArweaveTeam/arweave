@@ -3,11 +3,10 @@
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
-%%% Defines a small in-memory metadata table for Arweave nodes.
-%%% Typically used to store small peices of globally useful information
-%%% (for example: the port number used by the node).
+%%% Database for storing decryption keys from encrypted recall blocks. The
+%%% entries has a TTL. The DB is a singleton.
 
-%% @doc Initialise the metadata storage service.
+%% @doc Create the DB. This will fail if a DB already exists.
 start() ->
 	spawn(
 		fun() ->
@@ -20,13 +19,12 @@ start() ->
 	% before returning.
 	receive after 250 -> ok end.
 
-%% @doc Put an Erlang term into the meta DB. Typically these are
-%% write-once values.
+%% @doc Write a term into the DB. It will be deleted after 30 minutes.
 put(Key, Val) ->
 	ets:insert(?MODULE, {Key, Val}),
-	timer:apply_after(1800*1000, ?MODULE, remove, [Key]).
+	timer:apply_after(30 * 60 * 1000, ?MODULE, remove, [Key]).
 
-%% @doc Retreive a term from the meta db.
+%% @doc Retreive a term from the DB.
 get(Key) ->
 	case ets:lookup(?MODULE, Key) of
 		[{Key, Obj}] -> Obj;

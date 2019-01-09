@@ -6,7 +6,7 @@
 %%% can get the error reason when polling the status of a transaction. The entries
 %%% has a TTL. The DB is a singleton.
 
-%% @doc Create the DB. This will fail if a DB already exists.
+%% @doc Create a DB. This will fail if the DB already exists.
 start() ->
 	spawn(
 		fun() ->
