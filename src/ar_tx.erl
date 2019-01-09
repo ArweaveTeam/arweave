@@ -78,56 +78,12 @@ sign(TX, PrivKey, PubKey) ->
 %% submitting an arbitrary length signature field and having it processed.
 -ifdef(DEBUG).
 verify(#tx { signature = <<>> }, _, _) -> true;
-verify(TX, Diff, WalletList) ->
-	% ar:report(
-	% 	[
-	% 		{validate_tx, ar_util:encode(TX#tx.id)},
-	% 		{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
-	% 		{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
-	% 		{tx_field_size_verify, tx_field_size_limit(TX)},
-	% 		{tx_tag_field_legal, tag_field_legal(TX)},
-	% 		{tx_last_tx_legal, check_last_tx(WalletList, TX)},
-	% 		{tx_verify_hash, tx_verify_hash(TX)}
-	% 	]
-	% ),
-	case
-		TX#tx.quantity >= 0 andalso
-		(ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target) andalso
-		tx_cost_above_min(TX, Diff, WalletList, TX#tx.target) andalso
-		tx_field_size_limit(TX) andalso
-		tag_field_legal(TX) andalso
-		check_last_tx(WalletList, TX) andalso
-		tx_verify_hash(TX) andalso
-		ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX])) andalso
-		ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)
-	of
-		true -> true;
-		false ->
-			Reason =
-				lists:map(
-					fun({A, _}) -> A end,
-					lists:filter(
-						fun({_, TF}) ->
-							case TF of
-								true -> true;
-								false -> false
-							end
-						end,
-						[
-							{"tx_signature_not_valid ", ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
-							{"tx_too_cheap ", tx_cost_above_min(TX, Diff, WalletList, TX#tx.target)},
-							{"tx_fields_too_large ", tx_field_size_limit(TX)},
-							{"tag_field_illegally_specified ", tag_field_legal(TX)},
-							{"last_tx_not_valid ", check_last_tx(WalletList, TX)},
-							{"tx_id_not_valid ", tx_verify_hash(TX)}
-						]
-					)
-				),
-			ar_tx_db:put_error_codes(TX#tx.id, Reason),
-			false
-	end.
+verify(TX, Diff, WalletList) -> do_verify(TX, Diff, WalletList).
 -else.
-verify(TX, Diff, WalletList) ->
+verify(TX, Diff, WalletList) -> do_verify(TX, Diff, WalletList).
+-endif.
+
+do_verify(TX, Diff, WalletList) ->
 	% ar:report(
 	% 	[
 	% 		{validate_tx, ar_util:encode(TX#tx.id)},
@@ -175,7 +131,6 @@ verify(TX, Diff, WalletList) ->
 			ar_tx_db:put_error_codes(TX#tx.id, Reason),
 			false
 	end.
--endif.
 
 %% @doc Verify a list of transactions.
 %% Returns true if the entire set verifies otherwise false.
