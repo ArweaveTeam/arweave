@@ -40,15 +40,3 @@ maybe_add(Key) ->
 
 remove(Key) ->
     ets:delete(?MODULE, Key).
-
-tx_db_test() ->
-  	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	OrphanedTX = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
-	TX = OrphanedTX#tx { owner = Pub1 , signature = <<"BAD">>},
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	ar_tx:verify(TX, 8, B0#block.wallet_list),
-    receive after 500 -> ok end,
-    ["tx_too_cheap ","tx_fields_too_large ","tag_field_illegally_specified ","last_tx_not_valid "] = get(TX#tx.id),
-    ar_tx:verify(SignedTX, 8, B0#block.wallet_list).
