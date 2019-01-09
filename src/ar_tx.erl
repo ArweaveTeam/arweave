@@ -112,12 +112,7 @@ do_verify(TX, Diff, WalletList) ->
 				lists:map(
 					fun({A, _}) -> A end,
 					lists:filter(
-						fun({_, TF}) ->
-							case TF of
-								true -> true;
-								false -> false
-							end
-						end,
+						fun({_, Valid}) -> not Valid end,
 						[
 							{"tx_signature_not_valid ", ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
 							{"tx_too_cheap ", tx_cost_above_min(TX, Diff, WalletList, TX#tx.target)},
