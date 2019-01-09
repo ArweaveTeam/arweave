@@ -92,6 +92,7 @@ verify(TX, Diff, WalletList) ->
 	% ),
 	case
 		TX#tx.quantity >= 0 andalso
+		(ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target) andalso
 		tx_cost_above_min(TX, Diff, WalletList, TX#tx.target) andalso
 		tx_field_size_limit(TX) andalso
 		tag_field_legal(TX) andalso
@@ -129,12 +130,12 @@ verify(TX, Diff, WalletList) ->
 verify(TX, Diff, WalletList) ->
 	% ar:report(
 	% 	[
-	% 		{validate_tx, ar_util:encode(ar_wallet:to_address(TX#tx.owner))},
+	% 		{validate_tx, ar_util:encode(TX#tx.id)},
 	% 		{tx_wallet_verify, ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
 	% 		{tx_above_min_cost, tx_cost_above_min(TX, Diff)},
 	% 		{tx_field_size_verify, tx_field_size_limit(TX)},
 	% 		{tx_tag_field_legal, tag_field_legal(TX)},
-	% 		{tx_lasttx_legal, check_last_tx(WalletList, TX)},
+	% 		{tx_last_tx_legal, check_last_tx(WalletList, TX)},
 	% 		{tx_verify_hash, tx_verify_hash(TX)}
 	% 	]
 	% ),
