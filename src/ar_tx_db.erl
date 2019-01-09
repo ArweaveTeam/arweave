@@ -23,8 +23,8 @@ start() ->
 %% @doc Put an Erlang term into the meta DB. Typically these are
 %% write-once values.
 put(Key, Val) ->
-    ets:insert(?MODULE, {Key, Val}),
-    timer:apply_after(1800*1000, ?MODULE, remove, [Key]).
+	ets:insert(?MODULE, {Key, Val}),
+	timer:apply_after(1800*1000, ?MODULE, remove, [Key]).
 %% @doc Retreive a term from the meta db.
 get(Key) ->
 	case ets:lookup(?MODULE, Key) of
@@ -33,16 +33,16 @@ get(Key) ->
 	end.
 
 maybe_add(Key) ->
-    case ets:lookup(?MODULE, Key) of
-        [{Key, Value}] -> ok;
-        _ -> put(Key, ["unknown_error "])
-    end.
+	case ets:lookup(?MODULE, Key) of
+		[{Key, Value}] -> ok;
+		_ -> put(Key, ["unknown_error "])
+	end.
 
 remove(Key) ->
-    ets:delete(?MODULE, Key).
+	ets:delete(?MODULE, Key).
 
 tx_db_test() ->
-  	ar_storage:clear(),
+	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	OrphanedTX = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
@@ -50,5 +50,5 @@ tx_db_test() ->
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	ar_tx:verify(TX, 8, B0#block.wallet_list),
 	timer:sleep(500),
-    ["tx_too_cheap ","tx_fields_too_large ","tag_field_illegally_specified ","last_tx_not_valid "] = get(TX#tx.id),
-    ar_tx:verify(SignedTX, 8, B0#block.wallet_list).
+	["tx_too_cheap ","tx_fields_too_large ","tag_field_illegally_specified ","last_tx_not_valid "] = get(TX#tx.id),
+	ar_tx:verify(SignedTX, 8, B0#block.wallet_list).
