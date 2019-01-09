@@ -114,12 +114,12 @@ do_verify(TX, Diff, WalletList) ->
 					lists:filter(
 						fun({_, Valid}) -> not Valid end,
 						[
-							{"tx_signature_not_valid ", ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
-							{"tx_too_cheap ", tx_cost_above_min(TX, Diff, WalletList, TX#tx.target)},
-							{"tx_fields_too_large ", tx_field_size_limit(TX)},
-							{"tag_field_illegally_specified ", tag_field_legal(TX)},
-							{"last_tx_not_valid ", check_last_tx(WalletList, TX)},
-							{"tx_id_not_valid ", tx_verify_hash(TX)}
+							{"tx_signature_not_valid", ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)},
+							{"tx_too_cheap", tx_cost_above_min(TX, Diff, WalletList, TX#tx.target)},
+							{"tx_fields_too_large", tx_field_size_limit(TX)},
+							{"tag_field_illegally_specified", tag_field_legal(TX)},
+							{"last_tx_not_valid", check_last_tx(WalletList, TX)},
+							{"tx_id_not_valid", tx_verify_hash(TX)}
 						]
 					)
 				),

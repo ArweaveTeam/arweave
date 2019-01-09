@@ -177,7 +177,7 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 					{202, [], <<"Pending">>};
 				false ->
 					case ar_tx_db:get_error_codes(ID) of
-						{ok, Codes} -> {410, [], list_to_binary(Codes)};
+						{ok, Codes} -> {410, [], list_to_binary(lists:join(" ", Codes))};
 						not_found -> {404, [], <<"Not Found.">>}
 					end
 			end;

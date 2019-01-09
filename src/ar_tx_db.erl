@@ -38,7 +38,7 @@ get_error_codes(TXID) ->
 ensure_error(TXID) ->
 	case ets:lookup(?MODULE, TXID) of
 		[_] -> ok;
-		[] -> put_error_codes(TXID, ["unknown_error "])
+		[] -> put_error_codes(TXID, ["unknown_error"])
 	end.
 
 %% @doc Removes all error codes for this TX.
@@ -50,9 +50,9 @@ tx_db_test() ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 	OrphanedTX = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
-	TX = OrphanedTX#tx { owner = Pub1 , signature = <<"BAD">>},
+	TX = OrphanedTX#tx { owner = Pub1, signature = <<"BAD">> },
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	ar_tx:verify(TX, 8, B0#block.wallet_list),
 	timer:sleep(500),
-	{ok, ["tx_signature_not_valid ", "tx_id_not_valid "]} = get_error_codes(TX#tx.id),
+	{ok, ["tx_signature_not_valid", "tx_id_not_valid"]} = get_error_codes(TX#tx.id),
 	ar_tx:verify(SignedTX, 8, B0#block.wallet_list).

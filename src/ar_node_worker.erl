@@ -258,7 +258,7 @@ add_tx(StateIn, TX, GS) ->
 				{gossip, NewGS}
 			]};
 		_ ->
-			ar_tx_db:put_error_codes(TX#tx.id, ["last_tx_not_valid "]),
+			ar_tx_db:put_error_codes(TX#tx.id, ["last_tx_not_valid"]),
 			{ok, [
 				{potential_txs, ar_util:unique([TX | PotentialTXs])},
 				{gossip, GS}
