@@ -458,7 +458,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				Acc + byte_size(TX#tx.data)
 			end,
 			0,
-			TXs
+			MinedTXs
 		),
 	{FinderReward, RewardPool} =
 		ar_node_utils:calculate_reward_pool(
