@@ -45,6 +45,23 @@ ensure_error(TXID) ->
 clear_error_codes(TXID) ->
 	ets:delete(?MODULE, TXID).
 
+%%% Test
+
+read_write_test() ->
+	put_error_codes(mocked_txid1, mocked_error),
+	put_error_codes(mocked_txid2, mocked_error),
+	ensure_error(mocked_txid3),
+	assert_clear_error_codes(mocked_txid1),
+	assert_clear_error_codes(mocked_txid2),
+	assert_clear_error_codes(mocked_txid3).
+
+assert_clear_error_codes(TXID) ->
+	Fetched = get_error_codes(TXID),
+	?assertMatch({ok, _}, Fetched),
+	clear_error_codes(TXID),
+	?assert(not_found == get_error_codes(TXID)),
+	ok.
+
 tx_db_test() ->
 	ar_storage:clear(),
 	{_, Pub1} = ar_wallet:new(),
