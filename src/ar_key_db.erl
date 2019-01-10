@@ -1,13 +1,12 @@
 -module(ar_key_db).
--export([start/0, get/1, put/2, maybe_add/1, remove/1]).
+-export([start/0, get/1, put/2]).
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
-%%% Defines a small in-memory metadata table for Arweave nodes.
-%%% Typically used to store small peices of globally useful information
-%%% (for example: the port number used by the node).
+%%% Database for storing decryption keys from encrypted recall blocks. The
+%%% entries has a TTL. The DB is a singleton.
 
-%% @doc Initialise the metadata storage service.
+%% @doc Create the DB. This will fail if a DB already exists.
 start() ->
 	spawn(
 		fun() ->
@@ -20,35 +19,14 @@ start() ->
 	% before returning.
 	receive after 250 -> ok end.
 
-%% @doc Put an Erlang term into the meta DB. Typically these are
-%% write-once values.
+%% @doc Write a term into the DB. It will be deleted after 30 minutes.
 put(Key, Val) ->
-    ets:insert(?MODULE, {Key, Val}),
-    timer:apply_after(1800*1000, ?MODULE, remove, [Key]).
-%% @doc Retreive a term from the meta db.
+	ets:insert(?MODULE, {Key, Val}),
+	timer:apply_after(30 * 60 * 1000, ?MODULE, remove, [Key]).
+
+%% @doc Retreive a term from the DB.
 get(Key) ->
 	case ets:lookup(?MODULE, Key) of
 		[{Key, Obj}] -> Obj;
 		[] -> not_found
 	end.
-
-maybe_add(Key) ->
-    case ets:lookup(?MODULE, Key) of
-        [{Key, Value}] -> ok;
-        _ -> put(Key, ["unknown_error "])
-    end.
-
-remove(Key) ->
-    ets:delete(?MODULE, Key).
-
-tx_db_test() ->
-  	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	OrphanedTX = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
-	TX = OrphanedTX#tx { owner = Pub1 , signature = <<"BAD">>},
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	ar_tx:verify(TX, 8, B0#block.wallet_list),
-    receive after 500 -> ok end,
-    ["tx_too_cheap ","tx_fields_too_large ","tag_field_illegally_specified ","last_tx_not_valid "] = get(TX#tx.id),
-    ar_tx:verify(SignedTX, 8, B0#block.wallet_list).

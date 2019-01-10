@@ -1,13 +1,12 @@
 -module(ar_tx_db).
--export([start/0, get/1, put/2, maybe_add/1, remove/1]).
--compile({no_auto_import, [{get, 1}, {put, 2}]}).
+-export([start/0, get_error_codes/1, put_error_codes/2, ensure_error/1, clear_error_codes/1]).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
-%%% Defines a small in-memory metadata table for Arweave nodes.
-%%% Typically used to store small peices of globally useful information
-%%% (for example: the port number used by the node).
+%%% Database for storing error codes for failed transactions, so that a user
+%%% can get the error reason when polling the status of a transaction. The entries
+%%% has a TTL. The DB is a singleton.
 
-%% @doc Initialise the metadata storage service.
+%% @doc Create a DB. This will fail if the DB already exists.
 start() ->
 	spawn(
 		fun() ->
@@ -22,33 +21,65 @@ start() ->
 
 %% @doc Put an Erlang term into the meta DB. Typically these are
 %% write-once values.
-put(Key, Val) ->
-    ets:insert(?MODULE, {Key, Val}),
-    timer:apply_after(1800*1000, ?MODULE, remove, [Key]).
+put_error_codes(TXID, ErrorCodes) ->
+	ets:insert(?MODULE, {TXID, ErrorCodes}),
+	{ok, _} = timer:apply_after(1800*1000, ?MODULE, remove, [TXID]),
+	ok.
+
 %% @doc Retreive a term from the meta db.
-get(Key) ->
-	case ets:lookup(?MODULE, Key) of
-		[{Key, Obj}] -> Obj;
+get_error_codes(TXID) ->
+	case ets:lookup(?MODULE, TXID) of
+		[{_, ErrorCodes}] -> {ok, ErrorCodes};
 		[] -> not_found
 	end.
 
-maybe_add(Key) ->
-    case ets:lookup(?MODULE, Key) of
-        [{Key, Value}] -> ok;
-        _ -> put(Key, ["unknown_error "])
-    end.
+%% @doc Writes an unknown error code if there are not already any error codes
+%% for this TX.
+ensure_error(TXID) ->
+	case ets:lookup(?MODULE, TXID) of
+		[_] -> ok;
+		[] -> put_error_codes(TXID, ["unknown_error"])
+	end.
 
-remove(Key) ->
-    ets:delete(?MODULE, Key).
+%% @doc Removes all error codes for this TX.
+clear_error_codes(TXID) ->
+	ets:delete(?MODULE, TXID).
+
+%%% Test
+
+read_write_test() ->
+	put_error_codes(mocked_txid1, mocked_error),
+	put_error_codes(mocked_txid2, mocked_error),
+	ensure_error(mocked_txid3),
+	assert_clear_error_codes(mocked_txid1),
+	assert_clear_error_codes(mocked_txid2),
+	assert_clear_error_codes(mocked_txid3).
+
+assert_clear_error_codes(TXID) ->
+	Fetched = get_error_codes(TXID),
+	?assertMatch({ok, _}, Fetched),
+	clear_error_codes(TXID),
+	?assert(not_found == get_error_codes(TXID)),
+	ok.
 
 tx_db_test() ->
-  	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	OrphanedTX = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
-	TX = OrphanedTX#tx { owner = Pub1 , signature = <<"BAD">>},
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	ar_tx:verify(TX, 8, B0#block.wallet_list),
-	timer:sleep(500),
-    ["tx_too_cheap ","tx_fields_too_large ","tag_field_illegally_specified ","last_tx_not_valid "] = get(TX#tx.id),
-    ar_tx:verify(SignedTX, 8, B0#block.wallet_list).
+	ar_storage:clear(),
+	{_, Pub1} = ar_wallet:new(),
+	{Priv2, Pub2} = ar_wallet:new(),
+	[B0] = ar_weave:init([
+		{ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
+		{ar_wallet:to_address(Pub2), ?AR(10000), <<>>}
+	]),
+	%% Test bad transaction
+	OrphanedTX1 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
+	BadTX = OrphanedTX1#tx { owner = Pub1, signature = <<"BAD">> },
+	?assert(not ar_tx:verify(BadTX, 8, B0#block.wallet_list)),
+	Expected = {ok, ["same_owner_as_target", "tx_id_not_valid", "tx_signature_not_valid"]},
+	?assertEqual(Expected, get_error_codes(BadTX#tx.id)),
+	%% Test good transaction
+	OrphanedTX2 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
+	SignedTX = ar_tx:sign(OrphanedTX2, Priv2, Pub2),
+	?assert(ar_tx:verify(SignedTX, 8, B0#block.wallet_list)),
+	clear_error_codes(BadTX#tx.id),
+	clear_error_codes(SignedTX#tx.id),
+	ok.
