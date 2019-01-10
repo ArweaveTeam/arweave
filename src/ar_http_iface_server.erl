@@ -685,6 +685,8 @@ handle(_, _, _) ->
 
 handle_get_tx(Hash) ->
 	case hash_to_filename(tx, Hash) of
+		{error, invalid} ->
+			{error, invalid};
 		{error, ID, unavailable} ->
 			case is_a_pending_tx(ID) of
 				true ->
