@@ -261,7 +261,7 @@ handle('POST', [<<"arql">>], Req) ->
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
-	case hash_to_maybe_filename(tx, Hash) of
+	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, [], <<"Invalid hash.">>};
 		{error, _, unavailable} ->
@@ -489,7 +489,7 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 	Filename =
 		case Type of
 			<<"hash">> ->
-				case hash_to_maybe_filename(block, ID) of
+				case hash_to_filename(block, ID) of
 					{error, invalid}        -> invalid_hash;
 					{error, _, unavailable} -> unavailable;
 					{ok, Fn}                -> Fn
@@ -605,7 +605,7 @@ handle('GET', [<<"services">>], _Req) ->
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 %%
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
-	case hash_to_maybe_filename(tx, Hash) of
+	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, [], <<"Invalid hash.">>};
 		{error, ID, unavailable} ->
@@ -684,7 +684,7 @@ handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
 
 handle_get_tx(Hash) ->
-	case hash_to_maybe_filename(tx, Hash) of
+	case hash_to_filename(tx, Hash) of
 		{error, ID, unavailable} ->
 			case is_a_pending_tx(ID) of
 				true ->
@@ -697,8 +697,8 @@ handle_get_tx(Hash) ->
 							{error, not_found}
 					end
 			end;
-		Result ->
-			Result
+		{ok, Filename} ->
+			{ok, Filename}
 	end.
 
 %% @doc Handles all other elli metadata events.
@@ -741,7 +741,7 @@ block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
 %% @doc checks if hash is valid & if so returns filename.
-hash_to_maybe_filename(Type, Hash) ->
+hash_to_filename(Type, Hash) ->
 	case safe_decode(Hash) of
 		{error, invalid} ->
 			{error, invalid};
