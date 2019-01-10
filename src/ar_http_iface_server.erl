@@ -294,58 +294,56 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 handle('POST', [<<"block">>], Req) ->
 	post_block(request, Req);
 
+%% @doc Generate a wallet and receive a secret key identifying it.
+%% Requires post_unsigned_tx to be enabled.
+%% WARNING: only use it if you really really know what you are doing.
+handle('POST', [<<"wallet">>], _Req) ->
+	case ar_meta_db:get(post_unsigned_tx) of
+		true ->
+			WalletKey = ar_util:encode(crypto:strong_rand_bytes(32)),
+			{{_, _}, _} = ar_wallet:new_keyfile(WalletKey),
+			{200, [], ar_serialize:jsonify({[{<<"wallet_key">>, WalletKey}]})};
+		_ ->
+			{421, [], <<"Generating wallets is disabled on this node.">>}
+	end;
+
 %% @doc Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
-	% Check whether the TX is already ignored, ignore it if it is not
-	% (and then pass to processing steps).
-	case ar_bridge:is_id_ignored(TX#tx.id) of
-		undefined -> {429, <<"Too Many Requests">>};
-		true -> {208, <<"Transaction already processed.">>};
-		false ->
-			ar_bridge:ignore_id(TX#tx.id),
-			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
-				unavailable -> {503, [], <<"Transaction verification failed.">>};
-				Diff ->
-					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
-					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-					WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
-					OwnerAddr = ar_wallet:to_address(TX#tx.owner),
-					WinstonInQueue =
-						lists:sum(
-							[
-								T#tx.quantity + T#tx.reward
-							||
-								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
-							]
-						),
-					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
-						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
-							ar:info(
-								[
-									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
-									{balance, B},
-									{in_queue, WinstonInQueue},
-									{cost, TX#tx.reward + TX#tx.quantity}
-								]
-							),
-							{400, [], <<"Waiting TXs exceed balance for wallet.">>};
-						_ ->
-							% Finally, validate the veracity of the TX.
-							case ar_tx:verify(TX, Diff, FloatingWalletList) of
-								false ->
-									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
-									{400, [], <<"Transaction verification failed.">>};
-								true ->
-									%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
-									{200, [], <<"OK">>}
-							end
-					end
-			end
+	case handle_post_tx(TX) of
+		ok ->
+			{200, [], <<"OK">>};
+		{error_response, Response} ->
+			Response
+	end;
+
+%% @doc Sign and send a tx to the network.
+%% Fetches the wallet by the provided key generated via POST /wallet.
+%% Requires post_unsigned_tx to be enabled.
+%% WARNING: only use it if you really really know what you are doing.
+handle('POST', [<<"unsigned_tx">>], Req) ->
+	case ar_meta_db:get(post_unsigned_tx) of
+		true ->
+			{TXJSON} = ar_serialize:dejsonify(elli_request:body(Req)),
+			WalletKey = proplists:get_value(<<"wallet_key">>, TXJSON),
+			KeyPair = ar_wallet:load_keyfile(
+				"wallets/arweave_keyfile_" ++ binary_to_list(WalletKey) ++ ".json"
+			),
+			UnsignedTX = ar_serialize:json_struct_to_tx(
+				{proplists:delete(<<"wallet_key">>, TXJSON)}
+			),
+			SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
+			case handle_post_tx(SignedTX) of
+				ok ->
+					{200, [], ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]})};
+				{error_response, Response} ->
+					Response
+			end;
+		_ ->
+			{421, [], <<"Accepting unsigned transactions is disabled on this node.">>}
 	end;
 
 %% @doc Return the list of peers held by the node.
@@ -711,6 +709,55 @@ get_tx_filename(Hash) ->
 			end;
 		{ok, Filename} ->
 			{ok, Filename}
+	end.
+
+handle_post_tx(TX) ->
+	% Check whether the TX is already ignored, ignore it if it is not
+	% (and then pass to processing steps).
+	case ar_bridge:is_id_ignored(TX#tx.id) of
+		undefined -> {error_response, {429, <<"Too Many Requests">>}};
+		true -> {error_response, {208, <<"Transaction already processed.">>}};
+		false ->
+			ar_bridge:ignore_id(TX#tx.id),
+			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
+				unavailable -> {error_response, {503, [], <<"Transaction verification failed.">>}};
+				Diff ->
+					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
+					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+					WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
+					OwnerAddr = ar_wallet:to_address(TX#tx.owner),
+					WinstonInQueue =
+						lists:sum(
+							[
+								T#tx.quantity + T#tx.reward
+							||
+								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
+							]
+						),
+					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
+						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
+							ar:info(
+								[
+									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
+									{balance, B},
+									{in_queue, WinstonInQueue},
+									{cost, TX#tx.reward + TX#tx.quantity}
+								]
+							),
+							{error_response, {400, [], <<"Waiting TXs exceed balance for wallet.">>}};
+						_ ->
+							% Finally, validate the veracity of the TX.
+							case ar_tx:verify(TX, Diff, FloatingWalletList) of
+								false ->
+									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+									{error_response, {400, [], <<"Transaction verification failed.">>}};
+								true ->
+									%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
+									ok
+							end
+					end
+			end
 	end.
 
 %% @doc Handles all other elli metadata events.

@@ -4,7 +4,8 @@
 
 -module(ar_wallet).
 
--export([new/0, sign/2, verify/3, to_address/1, new_keyfile/0, load_keyfile/1, to_binary/1]).
+-export([new/0, sign/2, verify/3, to_address/1, load_keyfile/1, to_binary/1]).
+-export([new_keyfile/0, new_keyfile/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -18,9 +19,13 @@ new() ->
 		= crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 	{{Priv, Pub}, Pub}.
 
-
-%% @doc Generates a new wallet public and private key, with a corresponding keyfile
+%% @doc Generates a new wallet public and private key, with a corresponding keyfile.
 new_keyfile() ->
+	new_keyfile(wallet_address).
+
+%% @doc Generates a new wallet public and private key, with a corresponding keyfile.
+%% The provided key is used as part of the file name.
+new_keyfile(WalletKey) ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 		Key =
@@ -40,7 +45,14 @@ new_keyfile() ->
 					]
 				}
 			),
-		FileName = "wallets/arweave_keyfile_" ++ binary_to_list(ar_util:encode(to_address(Pub))) ++ ".json",
+		FileName =
+			"wallets/arweave_keyfile_" ++
+			case WalletKey of wallet_address ->
+				binary_to_list(ar_util:encode(to_address(Pub)));
+			Name ->
+				binary_to_list(Name)
+			end ++
+			".json",
 		filelib:ensure_dir(FileName),
 		file:write_file(FileName, Key),
 	{{Priv, Pub}, Pub}.
