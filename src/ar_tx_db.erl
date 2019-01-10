@@ -57,7 +57,6 @@ tx_db_test() ->
 	OrphanedTX1 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
 	BadTX = OrphanedTX1#tx { owner = Pub1, signature = <<"BAD">> },
 	?assert(not ar_tx:verify(BadTX, 8, B0#block.wallet_list)),
-	timer:sleep(500),
 	Expected = {ok, ["same_owner_as_target", "tx_id_not_valid", "tx_signature_not_valid"]},
 	?assertEqual(Expected, get_error_codes(BadTX#tx.id)),
 	%% Test good transaction
