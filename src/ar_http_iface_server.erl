@@ -182,7 +182,7 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 %% GET request to endpoint /tx/{hash}.
 handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 	Height = ar_node:get_height(whereis(http_entrypoint_node)),
-	case handle_get_tx(Hash) of
+	case get_tx_filename(Hash) of
 		{ok, _} ->
 			TagsToInclude = [
 				<<"block_height">>,
@@ -209,25 +209,19 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 					[{<<"number_of_confirmations">>, Height - TXHeight}]
 			end,
 			{200, [], ar_serialize:jsonify({Tags ++ NumberOfConfirmations})};
-		Err ->
-			Err
+		{response, Response} ->
+			Response
 	end;
 
 
 % @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	case handle_get_tx(Hash) of
-		{error, invalid} ->
-			{400, [], <<"Invalid hash.">>};
-		{error, pending} ->
-			{202, [], <<"Pending">>};
-		{error, not_found} ->
-			{404, [], <<"Not Found.">>};
-		{error, {invalid_tx, ErrorCodes}} ->
-			{410, [], list_to_binary(lists:join(" ", ErrorCodes))};
+	case get_tx_filename(Hash) of
 		{ok, Filename} ->
-			{ok, [], {file, Filename}}
+			{ok, [], {file, Filename}};
+		{response, Response} ->
+			Response
 	end;
 
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
@@ -683,20 +677,22 @@ handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD'
 handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
 
-handle_get_tx(Hash) ->
+%% @doc Get the filename for an encoded TX id.
+get_tx_filename(Hash) ->
 	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
-			{error, invalid};
+			{response, {400, [], <<"Invalid hash.">>}};
 		{error, ID, unavailable} ->
 			case is_a_pending_tx(ID) of
 				true ->
-					{error, pending};
+					{response, {202, [], <<"Pending">>}};
 				false ->
 					case ar_tx_db:get_error_codes(ID) of
-						{ok, Codes} ->
-							{error, {invalid_tx, Codes}};
+						{ok, ErrorCodes} ->
+							ErrorBody = list_to_binary(lists:join(" ", ErrorCodes)),
+							{response, {410, [], ErrorBody}};
 						not_found ->
-							{error, not_found}
+							{response, {404, [], <<"Not Found.">>}}
 					end
 			end;
 		{ok, Filename} ->
