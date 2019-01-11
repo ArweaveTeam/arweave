@@ -34,14 +34,6 @@ delete_for_tx(TXID) ->
 	DeleteRecord = fun(Record) -> ok = mnesia:dirty_delete_object(Record) end,
 	lists:foreach(DeleteRecord, Records).
 
-add_entry(Name, Value, ID) -> add_entry(http_search_node, Name, Value, ID).
-
-add_entry(ProcessName, Name, Value, ID) when not is_pid(ProcessName) ->
-	add_entry(whereis(ProcessName), Name, Value, ID);
-add_entry(undefined, _, _, _) -> do_nothing;
-add_entry(Pid, Name, Value, ID) ->
-	Pid ! {add_tx, Name, Value, ID}.
-
 get_tags_by_id(Pid, TXID, Timeout) ->
 	Pid ! {get_tags, TXID, self()},
 	receive {tags, Tags} ->
@@ -64,18 +56,18 @@ get_entries(Pid, Name, Value) ->
 
 %% @doc Updates the index of stored tranasaction data with all of the
 %% transactions in the given block
-update_tag_table(B) when ?IS_BLOCK(B) ->
-	lists:foreach(
-		fun(TX) ->
-			delete_for_tx(TX#tx.id),
-			AddEntry = fun({Name, Value}) ->
-				add_entry(Name, Value, TX#tx.id)
-			end,
-			lists:foreach(AddEntry, entries(B, TX))
-		end,
-		ar_storage:read_tx(B#block.txs)
-	);
-update_tag_table(_) ->
+update_tag_table(B) ->
+	update_tag_table(whereis(http_search_node), B).
+
+update_tag_table(Pid, B) when ?IS_BLOCK(B) ->
+	Ref = make_ref(),
+	Pid ! {update_tags_for_block, B, Ref, self()},
+	receive {tags_for_block_updated, Ref} ->
+		ok
+	after 20000 ->
+		timeout
+	end;
+update_tag_table(_, _) ->
 	not_updated.
 
 entries(B, TX) ->
@@ -111,11 +103,20 @@ server() ->
 				),
 				Pid ! {tags, Tags},
 				server();
-			stop -> ok;
-			{add_tx, Name, Value, ID} ->
-				% ar:d({adding_tags, Name, Value, ID}),
-				storeDB(Name, Value, ID),
+			{update_tags_for_block, B, Ref, Pid} ->
+				lists:foreach(
+					fun(TX) ->
+						delete_for_tx(TX#tx.id),
+						AddEntry = fun({Name, Value}) ->
+							storeDB(Name, Value, TX#tx.id)
+						end,
+						lists:foreach(AddEntry, entries(B, TX))
+					end,
+					ar_storage:read_tx(B#block.txs)
+				),
+				Pid ! {tags_for_block_updated, Ref},
 				server();
+			stop -> ok;
 			_OtherMsg -> server()
 		end
 	catch
