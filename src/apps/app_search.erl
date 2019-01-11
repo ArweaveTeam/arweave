@@ -68,7 +68,7 @@ get_entries(Pid, Name, Value) ->
 		[]
 	end.
 
-%% @doc Updates the table of stored tranasaction data with all of the
+%% @doc Updates the index of stored tranasaction data with all of the
 %% transactions in the given block
 update_tag_table(B) when ?IS_BLOCK(B) ->
 	lists:foreach(
@@ -154,11 +154,11 @@ initDB() ->
 			)
 	end.
 
-%% @doc Delete the entire ARQL mnesia database
+%% @doc Delete the entire index.
 deleteDB() ->
 	mnesia:delete_table(arql_tag).
 
-%% @doc Store a transaction/tag pair in the database
+%% @doc Store a transaction ID tag triplet in the index.
 storeDB(Name, Value, TXid) ->
 	mnesia:dirty_write(#arql_tag { name = Name, value = Value, tx = TXid}).
 
@@ -189,7 +189,6 @@ search_by_id(TXID) ->
 	).
 
 basic_usage_test() ->
-	% Spawn a network with two nodes and a chirper server
 	ar_storage:clear(),
 	SearchServer = start(),
 	Peers = ar_network:start(10, 10),
@@ -200,17 +199,17 @@ basic_usage_test() ->
 		{<<"TestName">>, <<"TestVal">>},
 		{<<"block_height">>, <<"user-specified-block-height">>}
 	]},
-	% Add tx to network
+	%% Add tx to network
 	ar_node:add_tx(hd(Peers), TX),
-	% Begin mining
+	%% Begin mining
 	receive after 250 -> ok end,
 	ar_node:mine(hd(Peers)),
 	receive after 1000 -> ok end,
-	% get TX by tag
+	%% Get TX by tag
 	TXIDs = get_entries(SearchServer, <<"TestName">>, <<"TestVal">>),
 	?assert(lists:member(TX#tx.id, TXIDs)),
-	% get tags by TX
+	%% Get tags by TX
 	{ok, Tags} = get_tags_by_id(SearchServer, TX#tx.id, 3000),
 	?assert(lists:member({<<"TestName">>, <<"TestVal">>}, Tags)),
-	% check aux tags
+	%% Check aux tags
 	?assert({<<"block_height">>, 1} == lists:keyfind(<<"block_height">>, 1, Tags)).
