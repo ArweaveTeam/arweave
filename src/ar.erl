@@ -300,7 +300,7 @@ start(
 		Supervisor,
 		{
 			app_search,
-			{app_search, start_link, [[[Node|Peers]]]},
+			{app_search, start, []},
 			permanent,
 			brutal_kill,
 			worker,

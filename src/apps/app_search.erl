@@ -1,6 +1,5 @@
 -module(app_search).
--export([start/0, start/1]).
--export([start_link/1]).
+-export([start/0]).
 -export([update_tag_table/1]).
 -export([get_entries/2, get_entries/3, get_tags_by_id/3]).
 -include("../ar.hrl").
@@ -25,17 +24,10 @@
 
 -record(arql_tag, {name, value, tx}).
 
-%%@doc Start a search node, linking to a supervisor process
-start_link(Args) ->
-	Pid = erlang:apply(app_search, start, Args),
-	{ok, Pid}.
-
 %% @doc Start a search node.
-start() -> start([]).
-
-start(Peers) ->
+start() ->
 	initDB(),
-	spawn(fun server/0).
+	{ok, spawn(fun server/0)}.
 
 delete_for_tx(TXID) ->
 	Records = mnesia:dirty_match_object(#arql_tag{tx = TXID, _ = '_'}),
@@ -189,7 +181,7 @@ search_by_id(TXID) ->
 
 basic_usage_test() ->
 	ar_storage:clear(),
-	SearchServer = start(),
+	{ok, SearchServer} = start(),
 	[Peer | _] = ar_network:start(10, 10),
 	ar_node:add_peers(Peer, SearchServer),
 	% Generate the transaction.
