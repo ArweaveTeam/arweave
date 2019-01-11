@@ -2,8 +2,7 @@
 -export([start/0, start/1]).
 -export([start_link/1]).
 -export([update_tag_table/1]).
--export([initDB/0, deleteDB/0, storeDB/3]).
--export([add_entry/3, add_entry/4, get_entries/2, get_entries/3, get_tags_by_id/3]).
+-export([get_entries/2, get_entries/3, get_tags_by_id/3]).
 -include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -153,10 +152,6 @@ initDB() ->
 				]
 			)
 	end.
-
-%% @doc Delete the entire index.
-deleteDB() ->
-	mnesia:delete_table(arql_tag).
 
 %% @doc Store a transaction ID tag triplet in the index.
 storeDB(Name, Value, TXid) ->
