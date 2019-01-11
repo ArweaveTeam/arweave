@@ -71,7 +71,7 @@ get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 
 get_entries(Pid, Name, Value) ->
 	Pid ! {get_tx, Name, Value, self()},
-	receive TXIDs ->
+	receive {txs, TXIDs} ->
 		TXIDs
 	after 3000 ->
 		[]
@@ -116,7 +116,7 @@ server(S = #state { gossip = _GS }) ->
 		receive
 			{get_tx, Name, Value, Pid} ->
 				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
-				Pid ! search_by_exact_tag(Name, Value),
+				Pid ! {txs, search_by_exact_tag(Name, Value)},
 				server(S);
 			{get_tags, TXID, Pid} ->
 				Tags = lists:map(
