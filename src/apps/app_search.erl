@@ -212,9 +212,9 @@ basic_usage_test() ->
 	?assert(lists:member(TX#tx.id, TXIDs)),
 	%% Get tags by TX
 	{ok, Tags} = get_tags_by_id(SearchServer, TX#tx.id, 3000),
-	?assert(lists:member({<<"TestName">>, <<"TestVal">>}, Tags)),
+	?assertMatch({_, <<"TestVal">>}, lists:keyfind(<<"TestName">>, 1, Tags)),
 	%% Check aux tags
-	?assert({<<"block_height">>, 1} == lists:keyfind(<<"block_height">>, 1, Tags)),
+	?assertMatch({_, 1}, lists:keyfind(<<"block_height">>, 1, Tags)),
 	%% Check that if writing the TX to the index again, the entries gets
 	%% overwritten, not duplicated.
 	AddTx(TX#tx{tags = [{<<"TestName">>, <<"Updated value">>}]}),
