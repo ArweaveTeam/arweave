@@ -56,7 +56,7 @@ Retrieve a JSON transaction record via the specified ID.
 - **Method**
   GET
 - **URL Parameters**
-  [transaction_id] : base64url encoded ID associated with the transaction
+  [transaction_id] : Base64 encoded ID associated with the transaction
 
 
 #### Example Response
@@ -473,7 +473,7 @@ Retrieve the ID of the last transaction made by the given address.
 - **Method**
   GET
 - **URL Parameters**
-  [wallet_address] : A base64url encoded SHA256 hash of the RSA modulus.
+  [wallet_address] : A Base64 encoded SHA256 hash of the public key.
 
 
 #### Example Response
@@ -503,10 +503,45 @@ xhr.send();
 ```
 
 
+## GET transactions via address
+
+Retrieve the ID of the last transaction made by the given wallet.
+
+- **URL**
+  `/wallet/[wallet_address]/txs/[earliest_tx]`
+- **Method**
+  GET
+- **URL Parameters**
+
+  - [wallet_address] : A Base64 encoded SHA256 hash of the public key.
+  - [earliest_tx] (optional) : A Base64 encoded ID of the earliest transaction to fetch. If not specified, all transactions of the given wallet are returned.
 
 
+#### Example Response
+
+A JSON list of base64url encoded transaction identifiers.
+
+```javascript
+["bUfaJN-KKS1LRh_DlJv4ff1gmdbHP4io-J9x7cLY5is","b23...xg"]
+```
 
 
+#### JavaScript Example Request
+
+```javascript
+var node = 'http://127.0.0.1:1984';
+var path = '/wallet/VukPk7P3qXAS2Q76ejTwC6Y_U_bMl_z6mgLvgSUJIzE/txs/bUfaJN-KKS1LRh_DlJv4ff1gmdbHP4io-J9x7cLY5is';
+var url = node + path;
+var xhr = new XMLHttpRequest();
+
+xhr.open('GET', url);
+xhr.onreadystatechange = function() {
+  if(xhr.readystate == 4 && xhr.status == 200) {
+    // Do something.
+  }
+};
+xhr.send();
+```
 
 
 ## GET nodes peer list  
