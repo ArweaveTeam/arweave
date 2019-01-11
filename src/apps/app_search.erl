@@ -7,10 +7,24 @@
 -include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% A search node for the Arweave network. Given a transaction hash,
-%%% returns to the requesting node the independant block hash of the
-%%% block containing the transaction.
-%%% For examplary purposes only.
+%%% Searchable transaction tag index.
+%%%
+%%% Access to the DB is wrapped in a server, which limits the number of
+%%% concurrent requests to 1.
+%%%
+%%% In addition to the transaction tags, some auxilirary tags are added (which
+%%% overwrites potential real tags with the same name).
+%%%
+%%% Warning! Data is never removed from the index, so it might return entries
+%%% for transactions that only existed in a fork.
+%%%
+%%% Warning! Duplications of tags exists because every time a block is integrated
+%%% into the weave, all it's transactions are written to the index no matter if
+%%% the transaction was already written once before, e.g. in a different fork.
+%%%
+%%% Warning! The index is not complete. E.g. block_height and block_indep_hash
+%%% was added at a later stage. The index includes only the transactions from
+%%% the downloaded blocks.
 
 %% @doc For compatibility. Dets database supercedes state.
 -record(arql_tag, {name, value, tx}).
@@ -51,6 +65,8 @@ get_tags_by_id(Pid, TXID, Timeout) ->
 		{error, timeout}
 	end.
 
+%% @doc Returns a list of all transaction IDs which has the tag Name set to
+%% Value. Duplicates might be returned due to the duplication in the index.
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 
 get_entries(Pid, Name, Value) ->
