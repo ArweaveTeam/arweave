@@ -26,12 +26,7 @@
 %%% was added at a later stage. The index includes only the transactions from
 %%% the downloaded blocks.
 
-%% @doc For compatibility. Dets database supercedes state.
 -record(arql_tag, {name, value, tx}).
--record(state,{
-	gossip,
-	towrite = []% State of the gossip protocol.
-}).
 
 %%@doc Start a search node, linking to a supervisor process
 start_link(Args) ->
@@ -43,11 +38,7 @@ start() -> start([]).
 
 start(Peers) ->
 	initDB(),
-	spawn(
-		fun() ->
-			server(#state{gossip = ar_gossip:init(Peers)})
-		end
-	).
+	spawn(fun server/0).
 
 add_entry(Name, Value, ID) -> add_entry(http_search_node, Name, Value, ID).
 
@@ -108,15 +99,13 @@ multi_delete(Proplist, []) ->
 multi_delete(Proplist, [Key | Keys]) ->
 	multi_delete(proplists:delete(Key, Proplist), Keys).
 
-server(S = #state { gossip = _GS }) ->
-	%% Listen for gossip and normal messages.
-	%% Recurse through the message box, updating one's state each time.
+server() ->
 	try
 		receive
 			{get_tx, Name, Value, Pid} ->
 				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
 				Pid ! {txs, search_by_exact_tag(Name, Value)},
-				server(S);
+				server();
 			{get_tags, TXID, Pid} ->
 				Tags = lists:map(
 					fun(Tag) ->
@@ -126,36 +115,24 @@ server(S = #state { gossip = _GS }) ->
 					search_by_id(TXID)
 				),
 				Pid ! {tags, Tags},
-				server(S);
+				server();
 			stop -> ok;
 			{add_tx, Name, Value, ID} ->
 				% ar:d({adding_tags, Name, Value, ID}),
 				storeDB(Name, Value, ID),
-				server(S);
-			_OtherMsg -> server(S)
+				server();
+			_OtherMsg -> server()
 		end
 	catch
 		throw:Term ->
-			ar:report(
-				[
-					{'SearchEXCEPTION', Term}
-				]
-			),
-			server(S);
+			ar:report([{'SearchEXCEPTION', Term}]),
+			server();
 		exit:Term ->
-			ar:report(
-				[
-					{'SearchEXIT', Term}
-				]
-			),
-			server(S);
+			ar:report([{'SearchEXIT', Term}]),
+			server();
 		error:Term ->
-			ar:report(
-				[
-					{'SearchERROR', {Term, erlang:get_stacktrace()}}
-				]
-			),
-			server(S)
+			ar:report([{'SearchERROR', {Term, erlang:get_stacktrace()}}]),
+			server()
 	end.
 
 %% @doc Initialise the mnesia database
