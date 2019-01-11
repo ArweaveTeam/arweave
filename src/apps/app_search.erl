@@ -82,32 +82,31 @@ get_entries(Pid, Name, Value) ->
 update_tag_table(B) when ?IS_BLOCK(B) ->
 	lists:foreach(
 		fun(TX) ->
-			lists:foreach(
-				fun(Tag) ->
-					case Tag of
-						{<<"from">>, _ } -> ok;
-						{<<"to">>, _} -> ok;
-						{<<"quantity">>, _} -> ok;
-						{<<"reward">>, _} -> ok;
-						{<<"block_height">>, _} -> ok;
-						{<<"block_indep_hash">>, _} -> ok;
-						{Name, Value} -> add_entry(Name, Value, TX#tx.id);
-						_ -> ok
-					end
-				end,
-				TX#tx.tags
-			),
-			add_entry(<<"from">>, ar_util:encode(ar_wallet:to_address(TX#tx.owner)), TX#tx.id),
-			add_entry(<<"to">>, ar_util:encode(ar_wallet:to_address(TX#tx.target)), TX#tx.id),
-			add_entry(<<"quantity">>, TX#tx.quantity, TX#tx.id),
-			add_entry(<<"reward">>, TX#tx.reward, TX#tx.id),
-			add_entry(<<"block_height">>, B#block.height, TX#tx.id),
-			add_entry(<<"block_indep_hash">>, ar_util:encode(B#block.indep_hash), TX#tx.id)
+			AddEntry = fun({Name, Value}) ->
+				add_entry(Name, Value, TX#tx.id)
+			end,
+			lists:foreach(AddEntry, entries(B, TX))
 		end,
 		ar_storage:read_tx(B#block.txs)
 	);
 update_tag_table(_) ->
 	not_updated.
+
+entries(B, TX) ->
+	AuxTags = [
+		{<<"from">>, ar_util:encode(ar_wallet:to_address(TX#tx.owner))},
+		{<<"to">>, ar_util:encode(ar_wallet:to_address(TX#tx.target))},
+		{<<"quantity">>, TX#tx.quantity},
+		{<<"reward">>, TX#tx.reward},
+		{<<"block_height">>, B#block.height},
+		{<<"block_indep_hash">>, ar_util:encode(B#block.indep_hash)}
+	],
+	AuxTags ++ multi_delete(TX#tx.tags, proplists:get_keys(AuxTags)).
+
+multi_delete(Proplist, []) ->
+	Proplist;
+multi_delete(Proplist, [Key | Keys]) ->
+	multi_delete(proplists:delete(Key, Proplist), Keys).
 
 server(S = #state { gossip = _GS }) ->
 	%% Listen for gossip and normal messages.
@@ -220,7 +219,10 @@ basic_usage_test() ->
 	ar_node:add_peers(hd(Peers), SearchServer),
 	% Generate the transaction.
 	RawTX = ar_tx:new(),
-	TX = RawTX#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	TX = RawTX#tx {tags = [
+		{<<"TestName">>, <<"TestVal">>},
+		{<<"block_height">>, <<"user-specified-block-height">>}
+	]},
 	% Add tx to network
 	ar_node:add_tx(hd(Peers), TX),
 	% Begin mining
@@ -229,7 +231,9 @@ basic_usage_test() ->
 	receive after 1000 -> ok end,
 	% get TX by tag
 	TXIDs = get_entries(SearchServer, <<"TestName">>, <<"TestVal">>),
-	?assertEqual(true, lists:member(TX#tx.id, TXIDs)),
+	?assert(lists:member(TX#tx.id, TXIDs)),
 	% get tags by TX
 	{ok, Tags} = get_tags_by_id(SearchServer, TX#tx.id, 3000),
-	?assertEqual(true, lists:member({<<"TestName">>, <<"TestVal">>}, Tags)).
+	?assert(lists:member({<<"TestName">>, <<"TestVal">>}, Tags)),
+	% check aux tags
+	?assert({<<"block_height">>, 1} == lists:keyfind(<<"block_height">>, 1, Tags)).
