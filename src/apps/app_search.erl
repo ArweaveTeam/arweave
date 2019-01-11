@@ -14,12 +14,10 @@
 %%% In addition to the transaction tags, some auxilirary tags are added (which
 %%% overwrites potential real tags with the same name).
 %%%
-%%% Warning! Data is never removed from the index, so it might return entries
-%%% for transactions that only existed in a fork.
-%%%
-%%% Warning! Duplications of tags exists because every time a block is integrated
-%%% into the weave, all it's transactions are written to the index no matter if
-%%% the transaction was already written once before, e.g. in a different fork.
+%%% Warning! Data is not properly removed from the index. E.g. if doing a fork
+%%% recovery to a fork where a transaction doesn't exist anymore, then the
+%%% transactions is never removed from the index. If the transaction does exist
+%%% also in the fork, then the transaction in the index is updated.
 %%%
 %%% Warning! The index is not complete. E.g. block_height and block_indep_hash
 %%% was added at a later stage. The index includes only the transactions from
@@ -38,6 +36,11 @@ start() -> start([]).
 start(Peers) ->
 	initDB(),
 	spawn(fun server/0).
+
+delete_for_tx(TXID) ->
+	Records = mnesia:dirty_match_object(#arql_tag{tx = TXID, _ = '_'}),
+	DeleteRecord = fun(Record) -> ok = mnesia:dirty_delete_object(Record) end,
+	lists:foreach(DeleteRecord, Records).
 
 add_entry(Name, Value, ID) -> add_entry(http_search_node, Name, Value, ID).
 
@@ -72,6 +75,7 @@ get_entries(Pid, Name, Value) ->
 update_tag_table(B) when ?IS_BLOCK(B) ->
 	lists:foreach(
 		fun(TX) ->
+			delete_for_tx(TX#tx.id),
 			AddEntry = fun({Name, Value}) ->
 				add_entry(Name, Value, TX#tx.id)
 			end,
@@ -186,20 +190,23 @@ search_by_id(TXID) ->
 basic_usage_test() ->
 	ar_storage:clear(),
 	SearchServer = start(),
-	Peers = ar_network:start(10, 10),
-	ar_node:add_peers(hd(Peers), SearchServer),
+	[Peer | _] = ar_network:start(10, 10),
+	ar_node:add_peers(Peer, SearchServer),
 	% Generate the transaction.
 	RawTX = ar_tx:new(),
 	TX = RawTX#tx {tags = [
 		{<<"TestName">>, <<"TestVal">>},
 		{<<"block_height">>, <<"user-specified-block-height">>}
 	]},
-	%% Add tx to network
-	ar_node:add_tx(hd(Peers), TX),
-	%% Begin mining
-	receive after 250 -> ok end,
-	ar_node:mine(hd(Peers)),
-	receive after 1000 -> ok end,
+	AddTx = fun(TXToAdd) ->
+		%% Add tx to network
+		ar_node:add_tx(Peer, TXToAdd),
+		%% Begin mining
+		receive after 250 -> ok end,
+		ar_node:mine(Peer),
+		receive after 1000 -> ok end
+	end,
+	AddTx(TX),
 	%% Get TX by tag
 	TXIDs = get_entries(SearchServer, <<"TestName">>, <<"TestVal">>),
 	?assert(lists:member(TX#tx.id, TXIDs)),
@@ -207,4 +214,9 @@ basic_usage_test() ->
 	{ok, Tags} = get_tags_by_id(SearchServer, TX#tx.id, 3000),
 	?assert(lists:member({<<"TestName">>, <<"TestVal">>}, Tags)),
 	%% Check aux tags
-	?assert({<<"block_height">>, 1} == lists:keyfind(<<"block_height">>, 1, Tags)).
+	?assert({<<"block_height">>, 1} == lists:keyfind(<<"block_height">>, 1, Tags)),
+	%% Check that if writing the TX to the index again, the entries gets
+	%% overwritten, not duplicated.
+	AddTx(TX#tx{tags = [{<<"TestName">>, <<"Updated value">>}]}),
+	{ok, UpdatedTags} = get_tags_by_id(SearchServer, TX#tx.id, 3000),
+	?assertMatch([<<"Updated value">>], proplists:get_all_values(<<"TestName">>, UpdatedTags)).
