@@ -23,7 +23,7 @@ start() ->
 %% write-once values.
 put_error_codes(TXID, ErrorCodes) ->
 	ets:insert(?MODULE, {TXID, ErrorCodes}),
-	{ok, _} = timer:apply_after(1800*1000, ?MODULE, remove, [TXID]),
+	{ok, _} = timer:apply_after(1800*1000, ?MODULE, clear_error_codes, [TXID]),
 	ok.
 
 %% @doc Retreive a term from the meta db.
