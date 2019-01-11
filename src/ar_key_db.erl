@@ -1,5 +1,5 @@
 -module(ar_key_db).
--export([start/0, get/1, put/2]).
+-export([start/0, get/1, put/2, remove/1]).
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
@@ -30,3 +30,6 @@ get(Key) ->
 		[{Key, Obj}] -> Obj;
 		[] -> not_found
 	end.
+
+remove(Key) ->
+	ets:delete(?MODULE, Key).
