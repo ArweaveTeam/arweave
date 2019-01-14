@@ -738,49 +738,51 @@ get_txs_by_send_recv_test_() ->
 
 get_tx_status_test() ->
 	ar_storage:clear(),
-	{ok, SearchServer} = ar_tx_search:start(),
-	Peers = ar_network:start(10, 10),
-	ar_node:add_peers(hd(Peers), SearchServer),
+	[B0] = ar_weave:init([]),
+	Node = ar_node:start([], [B0]),
 	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
-	ar_node:add_tx(hd(Peers), TX),
+	ar_node:add_tx(Node, TX),
 	receive after 250 -> ok end,
-	ar_node:mine(hd(Peers)),
-	receive after 1000 -> ok end,
-	{ok, {_, _, Body, _, _}} =
+	FetchStatus = fun() ->
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
 			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
-		),
+		)
+	end,
+	?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = FetchStatus(),
 	{Res} = ar_serialize:dejsonify(Body),
-	HashList = ar_node:get_hash_list(hd(Peers)),
-	?assertEqual(
-		#{
-			<<"block_height">> => length(HashList) - 1,
-			<<"block_indep_hash">> => ar_util:encode(hd(HashList)),
-			<<"number_of_confirmations">> => 0
-		},
-		maps:from_list(Res)
-	),
-	% mine yet another block and assert the increment
-	receive after 250 -> ok end,
-	ar_node:mine(hd(Peers)),
-	receive after 1000 -> ok end,
-	{ok, {_, _, Body2, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
-		),
-	{Res2} = ar_serialize:dejsonify(Body2),
+	HashList = ar_node:get_hash_list(Node),
 	?assertEqual(
 		#{
 			<<"block_height">> => length(HashList) - 1,
 			<<"block_indep_hash">> => ar_util:encode(hd(HashList)),
 			<<"number_of_confirmations">> => 1
 		},
+		maps:from_list(Res)
+	),
+	% mine yet another block and assert the increment
+	receive after 250 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
+	{Res2} = ar_serialize:dejsonify(Body2),
+	?assertEqual(
+		#{
+			<<"block_height">> => length(HashList) - 1,
+			<<"block_indep_hash">> => ar_util:encode(hd(HashList)),
+			<<"number_of_confirmations">> => 2
+		},
 		maps:from_list(Res2)
-	).
+	),
+	%% Emulate fork recovering to a fork where the TX doesn't exist
+	[ForkB0] = ar_weave:init([]),
+	Node ! {replace_block_list, [ForkB0]},
+	receive after 50 -> ok end,
+	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, FetchStatus()).
 
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),

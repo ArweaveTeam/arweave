@@ -181,7 +181,6 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 %% @doc Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}.
 handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
-	Height = ar_node:get_height(whereis(http_entrypoint_node)),
 	case get_tx_filename(Hash) of
 		{ok, _} ->
 			TagsToInclude = [
@@ -201,17 +200,29 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 					)
 				)
 			),
-			[TXHeight] = proplists:get_all_values(<<"block_height">>, Tags),
-			NumberOfConfirmations =
-				case Height of
-					not_joined -> -1;
-					_ -> Height - TXHeight
-				end,
-			Meta = [
-				{<<"number_of_confirmations">>, NumberOfConfirmations}
-			],
-			Status = Tags ++ Meta,
-			{200, [], ar_serialize:jsonify({Status})};
+			CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+			[TXIndepHashEncoded] = proplists:get_all_values(<<"block_indep_hash">>, Tags),
+			TXIndepHash = ar_util:decode(TXIndepHashEncoded),
+			case lists:member(TXIndepHash, CurrentBHL) of
+				false ->
+					{404, [], <<"Not Found.">>};
+				true ->
+					CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+					[TXHeight] = proplists:get_all_values(<<"block_height">>, Tags),
+					true = (TXHeight >= -1),
+					%% First confirmation is when the TX is in the latest block.
+					%% Zero confirmations would mean it's only in the mempool, but this
+					%% has not support for checking this for now.
+					NumberOfConfirmations =
+						case CurrentHeight of
+							-1 ->
+								-1;
+							_Height when _Height >= 0 ->
+								CurrentHeight - TXHeight + 1
+						end,
+					Status = Tags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
+					{200, [], ar_serialize:jsonify({Status})}
+			end;
 		{response, Response} ->
 			Response
 	end;
