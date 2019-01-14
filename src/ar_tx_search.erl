@@ -1,8 +1,9 @@
--module(app_search).
+-module(ar_tx_search).
 -export([start/0]).
 -export([update_tag_table/1]).
 -export([get_entries/2, get_entries/3, get_tags_by_id/3]).
--include("../ar.hrl").
+
+-include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Searchable transaction tag index.

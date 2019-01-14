@@ -332,7 +332,7 @@ do_fork_recover(S = #state {
 						ar_storage:write_tx(NextB#block.txs),
 						ar_storage:write_block(NextB#block {txs = [T#tx.id || T <- NextB#block.txs]}),
 						ar_storage:write_block(RecallB#block {txs = [T#tx.id || T <- RecallB#block.txs]}),
-						app_search:update_tag_table(NextB),
+						ar_tx_search:update_tag_table(NextB),
 						server(
 							S#state {
 								block_list = [NextH | BlockList],

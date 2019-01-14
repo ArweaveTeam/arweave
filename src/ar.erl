@@ -299,12 +299,12 @@ start(
 	{ok, SearchNode} = supervisor:start_child(
 		Supervisor,
 		{
-			app_search,
-			{app_search, start, []},
+			ar_tx_search,
+			{ar_tx_search, start, []},
 			permanent,
 			brutal_kill,
 			worker,
-			[app_search]
+			[ar_tx_search]
 		}
 	),
 	ar_node:add_peers(Node, SearchNode),

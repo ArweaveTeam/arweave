@@ -194,7 +194,7 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 					lists:member(Name, TagsToInclude)
 				end,
 				?OK(
-					app_search:get_tags_by_id(
+					ar_tx_search:get_tags_by_id(
 						whereis(http_search_node),
 						ar_util:decode(Hash),
 						infinity
