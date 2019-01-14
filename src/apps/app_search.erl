@@ -34,8 +34,8 @@ delete_for_tx(TXID) ->
 	DeleteRecord = fun(Record) -> ok = mnesia:dirty_delete_object(Record) end,
 	lists:foreach(DeleteRecord, Records).
 
-get_tags_by_id(Pid, TXID, Timeout) ->
-	Pid ! {get_tags, TXID, self()},
+get_tags_by_id(PID, TXID, Timeout) ->
+	PID ! {get_tags, TXID, self()},
 	receive {tags, Tags} ->
 		{ok, Tags}
 	after Timeout ->
@@ -46,8 +46,8 @@ get_tags_by_id(Pid, TXID, Timeout) ->
 %% Value. Duplicates might be returned due to the duplication in the index.
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 
-get_entries(Pid, Name, Value) ->
-	Pid ! {get_tx, Name, Value, self()},
+get_entries(PID, Name, Value) ->
+	PID ! {get_tx, Name, Value, self()},
 	receive {txs, TXIDs} ->
 		TXIDs
 	after 3000 ->
@@ -59,9 +59,9 @@ get_entries(Pid, Name, Value) ->
 update_tag_table(B) ->
 	update_tag_table(whereis(http_search_node), B).
 
-update_tag_table(Pid, B) when ?IS_BLOCK(B) ->
+update_tag_table(PID, B) when ?IS_BLOCK(B) ->
 	Ref = make_ref(),
-	Pid ! {update_tags_for_block, B, Ref, self()},
+	PID ! {update_tags_for_block, B, Ref, self()},
 	receive {tags_for_block_updated, Ref} ->
 		ok
 	after 20000 ->
@@ -89,11 +89,11 @@ multi_delete(Proplist, [Key | Keys]) ->
 server() ->
 	try
 		receive
-			{get_tx, Name, Value, Pid} ->
+			{get_tx, Name, Value, PID} ->
 				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
-				Pid ! {txs, search_by_exact_tag(Name, Value)},
+				PID ! {txs, search_by_exact_tag(Name, Value)},
 				server();
-			{get_tags, TXID, Pid} ->
+			{get_tags, TXID, PID} ->
 				Tags = lists:map(
 					fun(Tag) ->
 						{_, Name, Value, _} = Tag,
@@ -101,9 +101,9 @@ server() ->
 					end,
 					search_by_id(TXID)
 				),
-				Pid ! {tags, Tags},
+				PID ! {tags, Tags},
 				server();
-			{update_tags_for_block, B, Ref, Pid} ->
+			{update_tags_for_block, B, Ref, PID} ->
 				lists:foreach(
 					fun(TX) ->
 						delete_for_tx(TX#tx.id),
@@ -114,7 +114,7 @@ server() ->
 					end,
 					ar_storage:read_tx(B#block.txs)
 				),
-				Pid ! {tags_for_block_updated, Ref},
+				PID ! {tags_for_block_updated, Ref},
 				server();
 			stop -> ok;
 			_OtherMsg -> server()
