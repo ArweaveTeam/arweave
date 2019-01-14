@@ -201,14 +201,17 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 					)
 				)
 			),
-			TXHeight = proplists:get_value(<<"block_height">>, Tags),
-			NumberOfConfirmations = case Height of
-				not_joined ->
-					[];
-				Height ->
-					[{<<"number_of_confirmations">>, Height - TXHeight}]
-			end,
-			{200, [], ar_serialize:jsonify({Tags ++ NumberOfConfirmations})};
+			[TXHeight] = proplists:get_all_values(<<"block_height">>, Tags),
+			NumberOfConfirmations =
+				case Height of
+					not_joined -> -1;
+					_ -> Height - TXHeight
+				end,
+			Meta = [
+				{<<"number_of_confirmations">>, NumberOfConfirmations}
+			],
+			Status = Tags ++ Meta,
+			{200, [], ar_serialize:jsonify({Status})};
 		{response, Response} ->
 			Response
 	end;
