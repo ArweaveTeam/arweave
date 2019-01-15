@@ -50,8 +50,13 @@ start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 	start(Port).
 
 elli_request_to_peer(Req) ->
-	{A, B, C, D, _} = ar_util:parse_peer(elli_request:peer(Req)),
-	case elli_request:get_header(<<"X-P2p-Port">>, Req) of
+	elli_request_to_peer(elli_request:peer(Req), elli_request:get_header(<<"X-P2p-Port">>, Req)).
+
+elli_request_to_peer(undefined, _) ->
+	undefined;
+elli_request_to_peer(IpAddr, Port) ->
+	{A, B, C, D, _} = ar_util:parse_peer(IpAddr),
+	case Port of
 		undefined ->
 			{A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT};
 		Port ->
@@ -98,7 +103,15 @@ elli_request_to_peer(Req) ->
 handle(Req, _Args) ->
 	%% Inform ar_bridge about new peer, performance rec will be updated from ar_metrics
 	%% (this is leftover from update_performance_list)
-	Peer = elli_request_to_peer(Req),
+	case elli_request_to_peer(Req) of
+		undefined ->
+			ar:info("Could not get client IP addr for ~p ~p", [Req#req.method, elli_request:path(Req)]),
+			{500, ?DEFAULT_RESPONSE_HEADERS, <<"Client disconnected">>};
+		Peer ->
+			do_handle(Req, Peer)
+	end.
+
+do_handle(Req, Peer) ->
 	case ar_meta_db:get(http_logging) of
 		true ->
 			ar:info(
