@@ -178,24 +178,64 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 			)
 	};
 
-%% @doc Return a transaction specified via the the transaction id (hash)
+%% @doc Return additional information about the transaction with the given identifier (hash).
+%% GET request to endpoint /tx/{hash}.
+handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
+	case get_tx_filename(Hash) of
+		{ok, _} ->
+			TagsToInclude = [
+				<<"block_height">>,
+				<<"block_indep_hash">>
+			],
+			Tags = lists:filter(
+				fun(Tag) ->
+					{Name, _} = Tag,
+					lists:member(Name, TagsToInclude)
+				end,
+				?OK(
+					ar_tx_search:get_tags_by_id(
+						whereis(http_search_node),
+						ar_util:decode(Hash),
+						infinity
+					)
+				)
+			),
+			CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+			[TXIndepHashEncoded] = proplists:get_all_values(<<"block_indep_hash">>, Tags),
+			TXIndepHash = ar_util:decode(TXIndepHashEncoded),
+			case lists:member(TXIndepHash, CurrentBHL) of
+				false ->
+					{404, [], <<"Not Found.">>};
+				true ->
+					CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+					[TXHeight] = proplists:get_all_values(<<"block_height">>, Tags),
+					true = (TXHeight >= -1),
+					%% First confirmation is when the TX is in the latest block.
+					%% Zero confirmations would mean it's only in the mempool, but this
+					%% has not support for checking this for now.
+					NumberOfConfirmations =
+						case CurrentHeight of
+							-1 ->
+								-1;
+							_Height when _Height >= 0 ->
+								CurrentHeight - TXHeight + 1
+						end,
+					Status = Tags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
+					{200, [], ar_serialize:jsonify({Status})}
+			end;
+		{response, Response} ->
+			Response
+	end;
+
+
+% @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle('GET', [<<"tx">>, Hash], _Req) ->
-	case hash_to_maybe_filename(tx, Hash) of
-		{error, invalid} ->
-			{400, [], <<"Invalid hash.">>};
-		{error, ID, unavailable} ->
-			case is_a_pending_tx(ID) of
-				true ->
-					{202, [], <<"Pending">>};
-				false ->
-					case ar_tx_db:get_error_codes(ID) of
-						{ok, Codes} -> {410, [], list_to_binary(lists:join(" ", Codes))};
-						not_found -> {404, [], <<"Not Found.">>}
-					end
-			end;
+	case get_tx_filename(Hash) of
 		{ok, Filename} ->
-			{ok, [], {file, Filename}}
+			{ok, [], {file, Filename}};
+		{response, Response} ->
+			Response
 	end;
 
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
@@ -229,7 +269,7 @@ handle('POST', [<<"arql">>], Req) ->
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
-	case hash_to_maybe_filename(tx, Hash) of
+	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, [], <<"Invalid hash.">>};
 		{error, _, unavailable} ->
@@ -457,7 +497,7 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 	Filename =
 		case Type of
 			<<"hash">> ->
-				case hash_to_maybe_filename(block, ID) of
+				case hash_to_filename(block, ID) of
 					{error, invalid}        -> invalid_hash;
 					{error, _, unavailable} -> unavailable;
 					{ok, Fn}                -> Fn
@@ -573,7 +613,7 @@ handle('GET', [<<"services">>], _Req) ->
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 %%
 handle('GET', [<<"tx">>, Hash, Field], _Req) ->
-	case hash_to_maybe_filename(tx, Hash) of
+	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, [], <<"Invalid hash.">>};
 		{error, ID, unavailable} ->
@@ -651,6 +691,28 @@ handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD'
 handle(_, _, _) ->
 	{400, [], <<"Request type not found.">>}.
 
+%% @doc Get the filename for an encoded TX id.
+get_tx_filename(Hash) ->
+	case hash_to_filename(tx, Hash) of
+		{error, invalid} ->
+			{response, {400, [], <<"Invalid hash.">>}};
+		{error, ID, unavailable} ->
+			case is_a_pending_tx(ID) of
+				true ->
+					{response, {202, [], <<"Pending">>}};
+				false ->
+					case ar_tx_db:get_error_codes(ID) of
+						{ok, ErrorCodes} ->
+							ErrorBody = list_to_binary(lists:join(" ", ErrorCodes)),
+							{response, {410, [], ErrorBody}};
+						not_found ->
+							{response, {404, [], <<"Not Found.">>}}
+					end
+			end;
+		{ok, Filename} ->
+			{ok, Filename}
+	end.
+
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, _Args, _Config) -> ok;
 handle_event(Type, Args, Config)
@@ -691,7 +753,7 @@ block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
 %% @doc checks if hash is valid & if so returns filename.
-hash_to_maybe_filename(Type, Hash) ->
+hash_to_filename(Type, Hash) ->
 	case safe_decode(Hash) of
 		{error, invalid} ->
 			{error, invalid};

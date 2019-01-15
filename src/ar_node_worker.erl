@@ -529,7 +529,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			ar_storage:write_block(NextB),
 			NewHL = [NextB#block.indep_hash | HashList],
 			ar_storage:write_block_hash_list(BinID, NewHL),
-			app_search:update_tag_table(NextB),
+			ar_tx_search:update_tag_table(NextB),
 			ar_miner_log:mined_block(NextB#block.indep_hash),
 			ar:report_console(
 				[

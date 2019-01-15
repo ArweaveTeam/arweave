@@ -79,6 +79,21 @@ A JSON transaction record.
 ```
 
 
+## GET additional info about the transaction via ID
+
+- **URL**
+  `/tx/[transaction_id]/status`
+- **Method**
+  GET
+- **URL Parameters**
+  [transaction_id] : base64url encoded ID associated with the transaction
+
+
+#### Example Response
+
+```javascript
+{"block_indep_hash": "KCdtB29b5V0rz2hX_sSGfEd5Fw7iTEiuXp5M34dWPEIdhxPqf3rsNyRFUznAhDzb","block_height":10,"number_of_confirmations":3}
+```
 #### JavaScript Example Request
 
 ```javascript

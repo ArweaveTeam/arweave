@@ -255,5 +255,8 @@
 %% @doc A Macro to return whether a value is an address.
 -define(IS_ADDR(Addr), (is_binary(Addr) and (bit_size(Addr) == ?HASH_SZ))).
 
+%% @doc Pattern matches on ok-tuple and returns the value.
+-define(OK(Tuple), begin (case (Tuple) of {ok, SuccessValue} -> (SuccessValue) end) end).
+
 %% The messages to be stored inside the genesis block.
 -define(GENESIS_BLOCK_MESSAGES, []).
