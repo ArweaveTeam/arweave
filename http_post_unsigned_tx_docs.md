@@ -2,7 +2,7 @@
 
 ## **Warning** only use it if you really really know what you are doing.
 
-The HTTP endpoints are only available if the miner is started with the `enable post_unsigned_tx` CLI option.
+The HTTP endpoints are only available if `arweave-server` is started with the `enable post_unsigned_tx` argument.
 
 ## Generate a wallet and receive its secret key
 
@@ -17,7 +17,7 @@ The HTTP endpoints are only available if the miner is started with the `enable p
 A key which can be used to sign transactions via `POST /unsigned_tx`.
 
 ```javascript
-{"wallet_key":"..."}
+{"wallet_key":"UEhkVh0LBqfIj60-EB-yaDSrMpR2_EytWrY0bGJc_AZaiITJ4PrzRZ_xaEH5KBD4"}
 ```
 
 ## POST unsigned transaction to the network
@@ -34,21 +34,22 @@ Post a transaction to be signed and sent to the network.
 
 ```javascript
 {
-    "last_tx": "",    // base64url encoded ID of last transaction made by address
-    "owner": "",      // base64url encoded modulus of wallet making transaction
-    "target": "",     // base64url encoded SHA256 hash of recipients modulus
-    "quantity": "",   // string representing the amount of sent AR in winston
-    "type": "",       // string stating type of transaction 'data' or 'transfer'
-    "data": "",       // base64url encoded data being archived in transaction
-    "reward": "",     // string representing the mining reward AR in winston
-    "wallet_key": ""  // the wallet key (a Base64 encoded string) as returned by the POST /wallet endpoint
+    "type": "",       // String stating type of transaction 'data' or 'transfer'.
+    "last_tx": "",    // Base64 encoded ID of the last transaction made by this wallet.
+    "owner": "",      // Base64 encoded SHA256 hash of the public key making this transaction.
+    "target": "",     // Base64 encoded SHA256 hash of recipient's public key. Empty for data transactions.
+    "quantity": "",   // Decimal string representation of the amount of sent AR in winston. Empty for data transactions.
+    "data": "",       // The base64 encoded data being store in the transaction. Empty for transfer transactions.
+    "reward": "",     // Decimal string representation of the mining reward AR amount in winston.
+    "wallet_key": ""  // The wallet key as returned by the POST /wallet endpoint.
 }
 ```
+
 
 #### Example Response
 
 A transaction ID (Base64 encoded hash of the signature).
 
 ```javascript
-{"id":"..."}
+{"id": "F8ITA-zojpRtUNnULnKasJCHL46rcqQBpSyqBekWnF30S7GCd58LcIcOXhYnYL6U"}
 ```
