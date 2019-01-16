@@ -300,9 +300,9 @@ handle('POST', [<<"block">>], Req) ->
 handle('POST', [<<"wallet">>], Req) ->
 	case check_internal_api_secret(Req) of
 		pass ->
-			WalletKey = ar_util:encode(crypto:strong_rand_bytes(32)),
-			{{_, _}, _} = ar_wallet:new_keyfile(WalletKey),
-			{200, [], ar_serialize:jsonify({[{<<"wallet_key">>, WalletKey}]})};
+			WalletAccessCode = ar_util:encode(crypto:strong_rand_bytes(32)),
+			{{_, _}, _} = ar_wallet:new_keyfile(WalletAccessCode),
+			{200, [], ar_serialize:jsonify({[{<<"wallet_access_code">>, WalletAccessCode}]})};
 		{reject, Response} ->
 			Response
 	end;
@@ -328,12 +328,12 @@ handle('POST', [<<"unsigned_tx">>], Req) ->
 	case check_internal_api_secret(Req) of
 		pass ->
 			{TXJSON} = ar_serialize:dejsonify(elli_request:body(Req)),
-			WalletKey = proplists:get_value(<<"wallet_key">>, TXJSON),
+			WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, TXJSON),
 			KeyPair = ar_wallet:load_keyfile(
-				"wallets/arweave_keyfile_" ++ binary_to_list(WalletKey) ++ ".json"
+				"wallets/arweave_keyfile_" ++ binary_to_list(WalletAccessCode) ++ ".json"
 			),
 			UnsignedTX = ar_serialize:json_struct_to_tx(
-				{proplists:delete(<<"wallet_key">>, TXJSON)}
+				{proplists:delete(<<"wallet_access_code">>, TXJSON)}
 			),
 			SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
 			case handle_post_tx(SignedTX) of

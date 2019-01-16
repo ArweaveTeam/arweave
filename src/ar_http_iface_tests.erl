@@ -795,7 +795,7 @@ post_unsigned_tx() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	% generate a wallet and receive a secret wallet key
+	% generate a wallet and receive a wallet access code
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
@@ -823,7 +823,7 @@ post_unsigned_tx() ->
 		),
 	ar_meta_db:put(internal_api_secret, not_set),
 	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
-	WalletKey = proplists:get_value(<<"wallet_key">>, CreateWalletRes),
+	WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, CreateWalletRes),
 	% send an unsigned transaction to be signed with the generated key
 	TX = (ar_tx:new())#tx{reward = ?AR(1)},
 	{TXDATA} = ar_serialize:tx_to_json_struct(TX),
@@ -835,7 +835,7 @@ post_unsigned_tx() ->
 			[],
 			ar_serialize:jsonify(
 				{TXDATA ++ [
-					{<<"wallet_key">>, WalletKey}
+					{<<"wallet_access_code">>, WalletAccessCode}
 				]}
 			)
 		),
@@ -848,7 +848,7 @@ post_unsigned_tx() ->
 			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
 			ar_serialize:jsonify(
 				{TXDATA ++ [
-					{<<"wallet_key">>, WalletKey}
+					{<<"wallet_access_code">>, WalletAccessCode}
 				]}
 			)
 		),
@@ -860,7 +860,7 @@ post_unsigned_tx() ->
 			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
 			ar_serialize:jsonify(
 				{TXDATA ++ [
-					{<<"wallet_key">>, WalletKey}
+					{<<"wallet_access_code">>, WalletAccessCode}
 				]}
 			)
 		),

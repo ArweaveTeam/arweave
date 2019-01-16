@@ -25,7 +25,7 @@ new_keyfile() ->
 
 %% @doc Generates a new wallet public and private key, with a corresponding keyfile.
 %% The provided key is used as part of the file name.
-new_keyfile(WalletKey) ->
+new_keyfile(WalletName) ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 		Key =
@@ -47,7 +47,7 @@ new_keyfile(WalletKey) ->
 			),
 		FileName =
 			"wallets/arweave_keyfile_" ++
-			case WalletKey of wallet_address ->
+			case WalletName of wallet_address ->
 				binary_to_list(ar_util:encode(to_address(Pub)));
 			Name ->
 				binary_to_list(Name)
