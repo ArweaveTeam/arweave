@@ -182,17 +182,17 @@ parse(["internal_api_secret", Secret | Rest], O) when length(Secret) >= ?INTERNA
 	parse(Rest, O#opts { internal_api_secret = list_to_binary(Secret)});
 parse(["internal_api_secret", _ | _], _) ->
 	io:format(
-		"The internal_api_secret must be at least ~B characters long.~n",
+		"~nThe internal_api_secret must be at least ~B characters long.~n~n",
 		[?INTERNAL_API_SECRET_MIN_LEN]
 	),
-	invalid_internal_api_secret;
+	erlang:halt();
 parse(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
 	parse(Rest, O#opts { enable = [ list_to_atom(Feature) | Enabled ] });
 parse(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
 	parse(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
 parse([Arg|_Rest], _O) ->
-	io:format("Unknown argument: ~s. Terminating.~n", [Arg]),
-	invalid_arguments.
+	io:format("~nUnknown argument: ~s. Terminating.~n~n", [Arg]),
+	erlang:halt().
 
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
