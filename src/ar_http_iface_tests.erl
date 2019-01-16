@@ -804,16 +804,24 @@ post_unsigned_tx() ->
 			[],
 			<<>>
 		),
-	ar_meta_db:put(post_unsigned_tx, true),
+	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
+	{ok, {{<<"421">>, _}, _, _, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/wallet",
+			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
+			<<>>
+		),
 	{ok, {{<<"200">>, <<"OK">>}, _, CreateWalletBody, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
 			{127, 0, 0, 1, 1984},
 			"/wallet",
-			[],
+			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
 			<<>>
 		),
-	ar_meta_db:put(post_unsigned_tx, false),
+	ar_meta_db:put(internal_api_secret, not_set),
 	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
 	WalletKey = proplists:get_value(<<"wallet_key">>, CreateWalletRes),
 	% send an unsigned transaction to be signed with the generated key
@@ -831,20 +839,32 @@ post_unsigned_tx() ->
 				]}
 			)
 		),
-	ar_meta_db:put(post_unsigned_tx, true),
-	{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
+	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
+	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
 			{127, 0, 0, 1, 1984},
 			"/unsigned_tx",
-			[],
+			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
 			ar_serialize:jsonify(
 				{TXDATA ++ [
 					{<<"wallet_key">>, WalletKey}
 				]}
 			)
 		),
-	ar_meta_db:put(post_unsigned_tx, false),
+	{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/unsigned_tx",
+			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
+			ar_serialize:jsonify(
+				{TXDATA ++ [
+					{<<"wallet_key">>, WalletKey}
+				]}
+			)
+		),
+	ar_meta_db:put(internal_api_secret, not_set),
 	{Res} = ar_serialize:dejsonify(Body),
 	TXID = proplists:get_value(<<"id">>, Res),
 	% mine it into a block

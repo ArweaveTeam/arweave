@@ -2,7 +2,7 @@
 
 ## **Warning** only use it if you really really know what you are doing.
 
-The HTTP endpoints are only available if `arweave-server` is started with the `enable post_unsigned_tx` argument.
+These HTTP endpoints are only available if the `internal_api_secret` startup option is set when `arweave-server` is started.
 
 ## Generate a wallet and receive its secret key
 
@@ -11,6 +11,9 @@ The HTTP endpoints are only available if `arweave-server` is started with the `e
 
 - **Method**
   POST
+
+- **Request Headers**
+    * `X-Internal-Api-Secret` : must match `internal_api_secret`
 
 #### Example Response
 
@@ -29,6 +32,9 @@ Post a transaction to be signed and sent to the network.
 
 - **Method**
   POST
+
+- **Request Headers**
+   * `X-Internal-Api-Secret` : must match `internal_api_secret`
 
 #### Data Parameter (Post body)
 

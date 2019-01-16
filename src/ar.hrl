@@ -260,3 +260,6 @@
 
 %% The messages to be stored inside the genesis block.
 -define(GENESIS_BLOCK_MESSAGES, []).
+
+%% @doc Minimum number of characters for internal API secret.
+-define(INTERNAL_API_SECRET_MIN_LEN, 16).

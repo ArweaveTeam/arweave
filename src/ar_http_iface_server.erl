@@ -295,16 +295,16 @@ handle('POST', [<<"block">>], Req) ->
 	post_block(request, Req);
 
 %% @doc Generate a wallet and receive a secret key identifying it.
-%% Requires post_unsigned_tx to be enabled.
+%% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
-handle('POST', [<<"wallet">>], _Req) ->
-	case ar_meta_db:get(post_unsigned_tx) of
-		true ->
+handle('POST', [<<"wallet">>], Req) ->
+	case check_internal_api_secret(Req) of
+		pass ->
 			WalletKey = ar_util:encode(crypto:strong_rand_bytes(32)),
 			{{_, _}, _} = ar_wallet:new_keyfile(WalletKey),
 			{200, [], ar_serialize:jsonify({[{<<"wallet_key">>, WalletKey}]})};
-		_ ->
-			{421, [], <<"Generating wallets is disabled on this node.">>}
+		{reject, Response} ->
+			Response
 	end;
 
 %% @doc Share a new transaction with a peer.
@@ -322,11 +322,11 @@ handle('POST', [<<"tx">>], Req) ->
 
 %% @doc Sign and send a tx to the network.
 %% Fetches the wallet by the provided key generated via POST /wallet.
-%% Requires post_unsigned_tx to be enabled.
+%% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
 handle('POST', [<<"unsigned_tx">>], Req) ->
-	case ar_meta_db:get(post_unsigned_tx) of
-		true ->
+	case check_internal_api_secret(Req) of
+		pass ->
 			{TXJSON} = ar_serialize:dejsonify(elli_request:body(Req)),
 			WalletKey = proplists:get_value(<<"wallet_key">>, TXJSON),
 			KeyPair = ar_wallet:load_keyfile(
@@ -342,8 +342,8 @@ handle('POST', [<<"unsigned_tx">>], Req) ->
 				{error_response, Response} ->
 					Response
 			end;
-		_ ->
-			{421, [], <<"Accepting unsigned transactions is disabled on this node.">>}
+		{reject, Response} ->
+			Response
 	end;
 
 %% @doc Return the list of peers held by the node.
@@ -759,6 +759,29 @@ handle_post_tx(TX) ->
 					end
 			end
 	end.
+
+check_internal_api_secret(Req) ->
+	Reject = fun(Msg) ->
+		log_internal_api_reject(Msg, Req),
+		timer:sleep(rand:uniform(1000) + 1000), % Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
+		{reject, {421, [], <<"Internal API disabled or invalid internal API secret in request.">>}}
+	end,
+	case {ar_meta_db:get(internal_api_secret), elli_request:get_header(<<"X-Internal-Api-Secret">>, Req)} of
+		{not_set, _} ->
+			Reject("Request to disabled internal API");
+		{_Secret, _Secret} when is_binary(_Secret) ->
+			pass;
+		_ ->
+			Reject("Invalid secret for internal API request")
+	end.
+
+log_internal_api_reject(Msg, Req) ->
+	spawn(fun() ->
+		Path = elli_request:path(Req),
+		IpAddr = elli_request:peer(Req), % Might return undefined
+		ar:warn("~s: IP address: ~s Path: ~p", [Msg, IpAddr, Path])
+	end).
+
 
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, _Args, _Config) -> ok;
