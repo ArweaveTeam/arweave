@@ -174,7 +174,8 @@ parse(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
 parse(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
 	parse(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
 parse([Arg|_Rest], _O) ->
-	io:format("Unknown argument: ~s. Terminating.", [Arg]).
+	io:format("Unknown argument: ~s. Terminating.~n", [Arg]),
+	invalid_arguments.
 
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
