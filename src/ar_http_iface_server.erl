@@ -715,12 +715,10 @@ handle_post_tx(TX) ->
 	% Check whether the TX is already ignored, ignore it if it is not
 	% (and then pass to processing steps).
 	case ar_bridge:is_id_ignored(TX#tx.id) of
-		undefined -> {error_response, {429, <<"Too Many Requests">>}};
 		true -> {error_response, {208, <<"Transaction already processed.">>}};
 		false ->
 			ar_bridge:ignore_id(TX#tx.id),
 			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
-				unavailable -> {error_response, {503, [], <<"Transaction verification failed.">>}};
 				Diff ->
 					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
 					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
@@ -931,8 +929,6 @@ post_block(request, Req) ->
 post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer}) ->
 	% Check if block is already known.
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
-		undefined ->
-			{429, <<"Too many requests.">>};
 		true ->
 			{208, <<"Block already processed.">>};
 		false ->
