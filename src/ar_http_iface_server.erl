@@ -301,8 +301,12 @@ handle('POST', [<<"wallet">>], Req) ->
 	case check_internal_api_secret(Req) of
 		pass ->
 			WalletAccessCode = ar_util:encode(crypto:strong_rand_bytes(32)),
-			{{_, _}, _} = ar_wallet:new_keyfile(WalletAccessCode),
-			{200, [], ar_serialize:jsonify({[{<<"wallet_access_code">>, WalletAccessCode}]})};
+			{{_, PubKey}, _} = ar_wallet:new_keyfile(WalletAccessCode),
+			ResponseProps = [
+				{<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(PubKey))},
+				{<<"wallet_access_code">>, WalletAccessCode}
+			],
+			{200, [], ar_serialize:jsonify({ResponseProps})};
 		{reject, Response} ->
 			Response
 	end;
