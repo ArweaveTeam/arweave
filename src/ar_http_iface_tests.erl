@@ -823,7 +823,8 @@ post_unsigned_tx() ->
 		),
 	ar_meta_db:put(internal_api_secret, not_set),
 	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
-	WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, CreateWalletRes),
+	[WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
+	?assertMatch([_], proplists:get_all_values(<<"wallet_address">>, CreateWalletRes)),
 	% send an unsigned transaction to be signed with the generated key
 	TX = (ar_tx:new())#tx{reward = ?AR(1)},
 	{TXDATA} = ar_serialize:tx_to_json_struct(TX),
