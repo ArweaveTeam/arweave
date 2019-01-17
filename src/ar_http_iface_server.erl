@@ -468,7 +468,7 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 		{ok, AddrOK} ->
 			{200, [],
 				ar_util:encode(
-					ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK)
+					?OK(ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK))
 				)
 			}
 	end;

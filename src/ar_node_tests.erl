@@ -428,7 +428,7 @@ last_tx_test_() ->
 		timer:sleep(500),
 		ar_node:mine(Node1), % Mine B1
 		timer:sleep(500),
-		?assertEqual(ar_node:get_last_tx(Node2, Pub1), ID)
+		?assertEqual(?OK(ar_node:get_last_tx(Node2, Pub1)), ID)
 	end}.
 
 %%%

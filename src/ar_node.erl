@@ -406,12 +406,13 @@ get_balance(Node, WalletID) ->
 
 %% @doc Get the last tx id associated with a given wallet address.
 %% Should the wallet not have made a tx the empty binary will be returned.
-% TODO: Timeout returns an empty binary, this is also a valid return.
 get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx, self(), Addr},
 	receive
-		{last_tx, Addr, LastTX} -> LastTX
-		after ?LOCAL_NET_TIMEOUT -> <<>>
+		{last_tx, Addr, LastTX} ->
+			{ok, LastTX}
+	after ?LOCAL_NET_TIMEOUT ->
+		timeout
 	end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
@@ -419,7 +420,7 @@ get_last_tx(Node, WalletID) ->
 %% @doc Get the last tx id associated with a a given wallet address from the
 %% floating wallet list.
 %% Should the wallet not have made a tx the empty binary will be returned.
-% TODO: Duplicate of get_last_tx, returns empty binary on timeout, this is also
+% TODO: Returns empty binary on timeout, this is also
 % a valid return.
 get_last_tx_from_floating(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx_from_floating, self(), Addr},
