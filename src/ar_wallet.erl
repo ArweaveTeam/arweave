@@ -45,17 +45,22 @@ new_keyfile(WalletName) ->
 				]
 			}
 		),
-	FileName =
-		"wallets/arweave_keyfile_" ++
-		case WalletName of
-			wallet_address ->
-				binary_to_list(ar_util:encode(to_address(Pub)));
-			Name ->
-				binary_to_list(Name)
-		end ++ ".json",
-	filelib:ensure_dir(FileName),
-	file:write_file(FileName, Key),
+	Filename = wallet_filename(WalletName, Pub),
+	filelib:ensure_dir(Filename),
+	file:write_file(Filename, Key),
 	{{Priv, Pub}, Pub}.
+
+wallet_filename(WalletName, PubKey) ->
+	lists:flatten([
+		"wallets/arweave_keyfile_",
+		binary_to_list(wallet_name(WalletName, PubKey)),
+		".json"
+	]).
+
+wallet_name(wallet_address, PubKey) ->
+	ar_util:encode(to_address(PubKey));
+wallet_name(WalletName, _) ->
+	WalletName.
 
 %% @doc Extracts the public and private key from a keyfile
 load_keyfile(File) ->
