@@ -28,33 +28,33 @@ new_keyfile() ->
 new_keyfile(WalletName) ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
-		Key =
-			ar_serialize:jsonify(
-				{
-					[
-						{kty, <<"RSA">>},
-						{ext, true},
-						{e, ar_util:encode(Expnt)},
-						{n, ar_util:encode(Pub)},
-						{d, ar_util:encode(Priv)},
-						{p, ar_util:encode(P1)},
-						{q, ar_util:encode(P2)},
-						{dp, ar_util:encode(E1)},
-						{dq, ar_util:encode(E2)},
-						{qi, ar_util:encode(C)}
-					]
-				}
-			),
-		FileName =
-			"wallets/arweave_keyfile_" ++
-			case WalletName of wallet_address ->
+	Key =
+		ar_serialize:jsonify(
+			{
+				[
+					{kty, <<"RSA">>},
+					{ext, true},
+					{e, ar_util:encode(Expnt)},
+					{n, ar_util:encode(Pub)},
+					{d, ar_util:encode(Priv)},
+					{p, ar_util:encode(P1)},
+					{q, ar_util:encode(P2)},
+					{dp, ar_util:encode(E1)},
+					{dq, ar_util:encode(E2)},
+					{qi, ar_util:encode(C)}
+				]
+			}
+		),
+	FileName =
+		"wallets/arweave_keyfile_" ++
+		case WalletName of
+			wallet_address ->
 				binary_to_list(ar_util:encode(to_address(Pub)));
 			Name ->
 				binary_to_list(Name)
-			end ++
-			".json",
-		filelib:ensure_dir(FileName),
-		file:write_file(FileName, Key),
+		end ++ ".json",
+	filelib:ensure_dir(FileName),
+	file:write_file(FileName, Key),
 	{{Priv, Pub}, Pub}.
 
 %% @doc Extracts the public and private key from a keyfile
