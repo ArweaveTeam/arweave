@@ -294,58 +294,60 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 handle('POST', [<<"block">>], Req) ->
 	post_block(request, Req);
 
+%% @doc Generate a wallet and receive a secret key identifying it.
+%% Requires internal_api_secret startup option to be set.
+%% WARNING: only use it if you really really know what you are doing.
+handle('POST', [<<"wallet">>], Req) ->
+	case check_internal_api_secret(Req) of
+		pass ->
+			WalletAccessCode = ar_util:encode(crypto:strong_rand_bytes(32)),
+			{{_, PubKey}, _} = ar_wallet:new_keyfile(WalletAccessCode),
+			ResponseProps = [
+				{<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(PubKey))},
+				{<<"wallet_access_code">>, WalletAccessCode}
+			],
+			{200, [], ar_serialize:jsonify({ResponseProps})};
+		{reject, Response} ->
+			Response
+	end;
+
 %% @doc Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
 handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
-	% Check whether the TX is already ignored, ignore it if it is not
-	% (and then pass to processing steps).
-	case ar_bridge:is_id_ignored(TX#tx.id) of
-		undefined -> {429, <<"Too Many Requests">>};
-		true -> {208, <<"Transaction already processed.">>};
-		false ->
-			ar_bridge:ignore_id(TX#tx.id),
-			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
-				unavailable -> {503, [], <<"Transaction verification failed.">>};
-				Diff ->
-					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
-					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-					WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
-					OwnerAddr = ar_wallet:to_address(TX#tx.owner),
-					WinstonInQueue =
-						lists:sum(
-							[
-								T#tx.quantity + T#tx.reward
-							||
-								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
-							]
-						),
-					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
-						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
-							ar:info(
-								[
-									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
-									{balance, B},
-									{in_queue, WinstonInQueue},
-									{cost, TX#tx.reward + TX#tx.quantity}
-								]
-							),
-							{400, [], <<"Waiting TXs exceed balance for wallet.">>};
-						_ ->
-							% Finally, validate the veracity of the TX.
-							case ar_tx:verify(TX, Diff, FloatingWalletList) of
-								false ->
-									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
-									{400, [], <<"Transaction verification failed.">>};
-								true ->
-									%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
-									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
-									{200, [], <<"OK">>}
-							end
-					end
-			end
+	case handle_post_tx(TX) of
+		ok ->
+			{200, [], <<"OK">>};
+		{error_response, Response} ->
+			Response
+	end;
+
+%% @doc Sign and send a tx to the network.
+%% Fetches the wallet by the provided key generated via POST /wallet.
+%% Requires internal_api_secret startup option to be set.
+%% WARNING: only use it if you really really know what you are doing.
+handle('POST', [<<"unsigned_tx">>], Req) ->
+	case check_internal_api_secret(Req) of
+		pass ->
+			{TXJSON} = ar_serialize:dejsonify(elli_request:body(Req)),
+			WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, TXJSON),
+			KeyPair = ar_wallet:load_keyfile(
+				"wallets/arweave_keyfile_" ++ binary_to_list(WalletAccessCode) ++ ".json"
+			),
+			UnsignedTX = ar_serialize:json_struct_to_tx(
+				{proplists:delete(<<"wallet_access_code">>, TXJSON)}
+			),
+			SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
+			case handle_post_tx(SignedTX) of
+				ok ->
+					{200, [], ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]})};
+				{error_response, Response} ->
+					Response
+			end;
+		{reject, Response} ->
+			Response
 	end;
 
 %% @doc Return the list of peers held by the node.
@@ -713,6 +715,76 @@ get_tx_filename(Hash) ->
 			{ok, Filename}
 	end.
 
+handle_post_tx(TX) ->
+	% Check whether the TX is already ignored, ignore it if it is not
+	% (and then pass to processing steps).
+	case ar_bridge:is_id_ignored(TX#tx.id) of
+		true -> {error_response, {208, <<"Transaction already processed.">>}};
+		false ->
+			ar_bridge:ignore_id(TX#tx.id),
+			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
+				Diff ->
+					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
+					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+					WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
+					OwnerAddr = ar_wallet:to_address(TX#tx.owner),
+					WinstonInQueue =
+						lists:sum(
+							[
+								T#tx.quantity + T#tx.reward
+							||
+								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
+							]
+						),
+					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
+						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
+							ar:info(
+								[
+									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
+									{balance, B},
+									{in_queue, WinstonInQueue},
+									{cost, TX#tx.reward + TX#tx.quantity}
+								]
+							),
+							{error_response, {400, [], <<"Waiting TXs exceed balance for wallet.">>}};
+						_ ->
+							% Finally, validate the veracity of the TX.
+							case ar_tx:verify(TX, Diff, FloatingWalletList) of
+								false ->
+									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
+									{error_response, {400, [], <<"Transaction verification failed.">>}};
+								true ->
+									%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
+									ok
+							end
+					end
+			end
+	end.
+
+check_internal_api_secret(Req) ->
+	Reject = fun(Msg) ->
+		log_internal_api_reject(Msg, Req),
+		timer:sleep(rand:uniform(1000) + 1000), % Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
+		{reject, {421, [], <<"Internal API disabled or invalid internal API secret in request.">>}}
+	end,
+	case {ar_meta_db:get(internal_api_secret), elli_request:get_header(<<"X-Internal-Api-Secret">>, Req)} of
+		{not_set, _} ->
+			Reject("Request to disabled internal API");
+		{_Secret, _Secret} when is_binary(_Secret) ->
+			pass;
+		_ ->
+			Reject("Invalid secret for internal API request")
+	end.
+
+log_internal_api_reject(Msg, Req) ->
+	spawn(fun() ->
+		Path = elli_request:path(Req),
+		IpAddr = elli_request:peer(Req), % Might return undefined
+		ar:warn("~s: IP address: ~s Path: ~p", [Msg, IpAddr, Path])
+	end).
+
+
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, _Args, _Config) -> ok;
 handle_event(Type, Args, Config)
@@ -861,8 +933,6 @@ post_block(request, Req) ->
 post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer}) ->
 	% Check if block is already known.
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
-		undefined ->
-			{429, <<"Too many requests.">>};
 		true ->
 			{208, <<"Block already processed.">>};
 		false ->

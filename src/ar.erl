@@ -82,6 +82,7 @@
 	used_space = ar_storage:calculate_used_space(),
 	start_hash_list = undefined,
 	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
+	internal_api_secret = not_set,
 	enable = [],
 	disable = [],
 	content_policies = []
@@ -123,6 +124,14 @@ main("") ->
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
+			{"internal_api_secret (secret)",
+				lists:flatten(
+					io_lib:format(
+						"Enables the internal API endpoints, only accessible with this secret. Min. ~B chars.",
+						[?INTERNAL_API_SECRET_MIN_LEN]
+					)
+				)
+			},
 			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
 			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."}
 		]
@@ -169,12 +178,21 @@ parse(["auto_update", "false" | Rest], O) ->
 	parse(Rest, O#opts { auto_update = false });
 parse(["auto_update", Addr | Rest], O) ->
 	parse(Rest, O#opts { auto_update = ar_util:decode(Addr) });
+parse(["internal_api_secret", Secret | Rest], O) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+	parse(Rest, O#opts { internal_api_secret = list_to_binary(Secret)});
+parse(["internal_api_secret", _ | _], _) ->
+	io:format(
+		"~nThe internal_api_secret must be at least ~B characters long.~n~n",
+		[?INTERNAL_API_SECRET_MIN_LEN]
+	),
+	erlang:halt();
 parse(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
 	parse(Rest, O#opts { enable = [ list_to_atom(Feature) | Enabled ] });
 parse(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
 	parse(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
 parse([Arg|_Rest], _O) ->
-	io:format("Unknown argument: ~s. Terminating.", [Arg]).
+	io:format("~nUnknown argument: ~s. Terminating.~n~n", [Arg]),
+	erlang:halt().
 
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
@@ -200,6 +218,7 @@ start(
 		used_space = UsedSpace,
 		start_hash_list = BHL,
 		auto_update = AutoUpdate,
+		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
 		content_policies = Policies
@@ -228,6 +247,7 @@ start(
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(content_policies, Policies),
+	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_storage:update_directory_size(),
 	% Determine mining address.
 	case {Addr, LoadKey, NewKey} of

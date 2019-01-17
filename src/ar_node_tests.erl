@@ -386,46 +386,50 @@ multi_node_mining_reward_test_() ->
 	end}.
 
 %% @doc Ensure that TX replay attack mitigation works.
-replay_attack_test() ->
-	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
-	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = ar_node:start([], B0),
-	Node2 = ar_node:start([Node1], B0),
-	ar_node:add_peers(Node1, Node2),
-	ar_node:add_tx(Node1, SignedTX),
-	ar_storage:write_tx(SignedTX),
-	ar_node:mine(Node1), % Mine B1
-	timer:sleep(500),
-	ar_node:add_tx(Node1, SignedTX),
-	ar_node:mine(Node1), % Mine B1
-	timer:sleep(500),
-	?assertEqual(?AR(8999), ar_node:get_balance(Node2, Pub1)),
-	?assertEqual(?AR(1000), ar_node:get_balance(Node2, Pub2)).
+replay_attack_test_() ->
+	{timeout, 120, fun() ->
+		ar_storage:clear(),
+		{Priv1, Pub1} = ar_wallet:new(),
+		{_Priv2, Pub2} = ar_wallet:new(),
+		TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
+		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+		Node1 = ar_node:start([], B0),
+		Node2 = ar_node:start([Node1], B0),
+		ar_node:add_peers(Node1, Node2),
+		ar_node:add_tx(Node1, SignedTX),
+		ar_storage:write_tx(SignedTX),
+		ar_node:mine(Node1), % Mine B1
+		timer:sleep(500),
+		ar_node:add_tx(Node1, SignedTX),
+		ar_node:mine(Node1), % Mine B1
+		timer:sleep(500),
+		?assertEqual(?AR(8999), ar_node:get_balance(Node2, Pub1)),
+		?assertEqual(?AR(1000), ar_node:get_balance(Node2, Pub2))
+	end}.
 
 %% @doc Ensure last_tx functions after block mine.
-last_tx_test() ->
-	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
-	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	ID = SignedTX#tx.id,
-	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node1 = ar_node:start([], B0),
-	Node2 = ar_node:start([Node1], B0),
-	ar_node:add_peers(Node1, Node2),
-	timer:sleep(500),
-	ar_node:add_tx(Node1, SignedTX),
-	timer:sleep(500),
-	ar_storage:write_tx(SignedTX),
-	timer:sleep(500),
-	ar_node:mine(Node1), % Mine B1
-	timer:sleep(500),
-	?assertEqual(ar_node:get_last_tx(Node2, Pub1), ID).
+last_tx_test_() ->
+	{timeout, 20, fun() ->
+		ar_storage:clear(),
+		{Priv1, Pub1} = ar_wallet:new(),
+		{_Priv2, Pub2} = ar_wallet:new(),
+		TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
+		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		ID = SignedTX#tx.id,
+		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+		Node1 = ar_node:start([], B0),
+		Node2 = ar_node:start([Node1], B0),
+		ar_node:add_peers(Node1, Node2),
+		timer:sleep(500),
+		ar_node:add_tx(Node1, SignedTX),
+		timer:sleep(500),
+		ar_storage:write_tx(SignedTX),
+		timer:sleep(500),
+		ar_node:mine(Node1), % Mine B1
+		timer:sleep(500),
+		?assertEqual(ar_node:get_last_tx(Node2, Pub1), ID)
+	end}.
 
 %%%
 %%% Embedded tests.

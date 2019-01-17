@@ -4,7 +4,8 @@
 
 -module(ar_wallet).
 
--export([new/0, sign/2, verify/3, to_address/1, new_keyfile/0, load_keyfile/1, to_binary/1]).
+-export([new/0, sign/2, verify/3, to_address/1, load_keyfile/1, to_binary/1]).
+-export([new_keyfile/0, new_keyfile/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -18,32 +19,48 @@ new() ->
 		= crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 	{{Priv, Pub}, Pub}.
 
-
-%% @doc Generates a new wallet public and private key, with a corresponding keyfile
+%% @doc Generates a new wallet public and private key, with a corresponding keyfile.
 new_keyfile() ->
+	new_keyfile(wallet_address).
+
+%% @doc Generates a new wallet public and private key, with a corresponding keyfile.
+%% The provided key is used as part of the file name.
+new_keyfile(WalletName) ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
-		Key =
-			ar_serialize:jsonify(
-				{
-					[
-						{kty, <<"RSA">>},
-						{ext, true},
-						{e, ar_util:encode(Expnt)},
-						{n, ar_util:encode(Pub)},
-						{d, ar_util:encode(Priv)},
-						{p, ar_util:encode(P1)},
-						{q, ar_util:encode(P2)},
-						{dp, ar_util:encode(E1)},
-						{dq, ar_util:encode(E2)},
-						{qi, ar_util:encode(C)}
-					]
-				}
-			),
-		FileName = "wallets/arweave_keyfile_" ++ binary_to_list(ar_util:encode(to_address(Pub))) ++ ".json",
-		filelib:ensure_dir(FileName),
-		file:write_file(FileName, Key),
+	Key =
+		ar_serialize:jsonify(
+			{
+				[
+					{kty, <<"RSA">>},
+					{ext, true},
+					{e, ar_util:encode(Expnt)},
+					{n, ar_util:encode(Pub)},
+					{d, ar_util:encode(Priv)},
+					{p, ar_util:encode(P1)},
+					{q, ar_util:encode(P2)},
+					{dp, ar_util:encode(E1)},
+					{dq, ar_util:encode(E2)},
+					{qi, ar_util:encode(C)}
+				]
+			}
+		),
+	Filename = wallet_filename(WalletName, Pub),
+	filelib:ensure_dir(Filename),
+	file:write_file(Filename, Key),
 	{{Priv, Pub}, Pub}.
+
+wallet_filename(WalletName, PubKey) ->
+	lists:flatten([
+		"wallets/arweave_keyfile_",
+		binary_to_list(wallet_name(WalletName, PubKey)),
+		".json"
+	]).
+
+wallet_name(wallet_address, PubKey) ->
+	ar_util:encode(to_address(PubKey));
+wallet_name(WalletName, _) ->
+	WalletName.
 
 %% @doc Extracts the public and private key from a keyfile
 load_keyfile(File) ->

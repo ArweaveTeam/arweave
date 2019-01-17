@@ -570,15 +570,14 @@ Post a transaction to the network.
 
 ```javascript
 {
-    "id": "",     // base64url encoded random string of 32-bytes
-    "last_tx": "",    // base64url encoded ID of last transaction made by address
-    "owner": "",    // base64url encoded modulus of wallet making transaction
-    "target": "",   // base64url encoded SHA256 hash of recipients modulus
-    "quantity": "",   // string representing the amount of sent AR in winston
-    "type": "",     // string stating type of transaction 'data' or 'transfer'
-    "data": "",     // base64url encoded data being archived in transaction
-    "reward": "",   // string representing the mining reward AR in winston
-    "signature": ""   // base64url encoded signature of transaction
+    "type": "",     // String stating type of transaction: 'data' or 'transfer'.
+    "last_tx": "",  // Base64 encoded ID of the last transaction made by this wallet.
+    "owner": "",    // Base64 encoded SHA256 hash of the public key making this transaction.
+    "target": "",   // Base64 encoded SHA256 hash of recipient's public key. Empty for data transactions.
+    "quantity": "", // Decimal string representation of the amount of sent AR in winston. Empty for data transactions.
+    "data": "",     // The Base64 encoded data being store in the transaction. Empty for transfer transactions.
+    "reward": "",   // Decimal string representation of the mining reward AR amount in winston.
+    "signature": "" // Base64 encoded signature of the transaction
 }
 ```
 

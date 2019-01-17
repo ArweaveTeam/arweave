@@ -784,6 +784,109 @@ get_tx_status_test() ->
 	receive after 50 -> ok end,
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, FetchStatus()).
 
+post_unsigned_tx_test_() ->
+	{timeout, 20, fun post_unsigned_tx/0}.
+
+post_unsigned_tx() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node = ar_node:start([], [B0]),
+	ar_http_iface_server:reregister(Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
+	ar_http_iface_server:reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	% generate a wallet and receive a wallet access code
+	{ok, {{<<"421">>, _}, _, _, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/wallet",
+			[],
+			<<>>
+		),
+	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
+	{ok, {{<<"421">>, _}, _, _, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/wallet",
+			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
+			<<>>
+		),
+	{ok, {{<<"200">>, <<"OK">>}, _, CreateWalletBody, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/wallet",
+			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
+			<<>>
+		),
+	ar_meta_db:put(internal_api_secret, not_set),
+	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
+	[WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
+	?assertMatch([_], proplists:get_all_values(<<"wallet_address">>, CreateWalletRes)),
+	% send an unsigned transaction to be signed with the generated key
+	TX = (ar_tx:new())#tx{reward = ?AR(1)},
+	{TXDATA} = ar_serialize:tx_to_json_struct(TX),
+	{ok, {{<<"421">>, _}, _, _, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/unsigned_tx",
+			[],
+			ar_serialize:jsonify(
+				{TXDATA ++ [
+					{<<"wallet_access_code">>, WalletAccessCode}
+				]}
+			)
+		),
+	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
+	{ok, {{<<"421">>, _}, _, _, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/unsigned_tx",
+			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
+			ar_serialize:jsonify(
+				{TXDATA ++ [
+					{<<"wallet_access_code">>, WalletAccessCode}
+				]}
+			)
+		),
+	{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/unsigned_tx",
+			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
+			ar_serialize:jsonify(
+				{TXDATA ++ [
+					{<<"wallet_access_code">>, WalletAccessCode}
+				]}
+			)
+		),
+	ar_meta_db:put(internal_api_secret, not_set),
+	{Res} = ar_serialize:dejsonify(Body),
+	TXID = proplists:get_value(<<"id">>, Res),
+	% mine it into a block
+	receive after 250 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
+	% expect the transaction to be successfully mined
+	{ok, {_, _, GetTXBody, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/" ++ binary_to_list(TXID) ++ "/status"
+		),
+	{GetTXRes} = ar_serialize:dejsonify(GetTXBody),
+	?assertMatch(
+		#{
+			<<"number_of_confirmations">> := 1
+		},
+		maps:from_list(GetTXRes)
+	).
+
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),
 %	ar_node:mine(Node),
