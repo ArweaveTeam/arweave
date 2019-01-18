@@ -732,9 +732,8 @@ handle_get_wallet_txs(Addr, EarliestTXID) ->
 			{400, [], <<"Invalid address.">>};
 		{ok, AddrOK} ->
 			{ok, LastTXID} = ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK),
-			{200, [],
-				ar_serialize:jsonify(get_wallet_txs(EarliestTXID, LastTXID))
-			}
+			EncodedTXIDs = lists:map(fun ar_util:encode/1, get_wallet_txs(EarliestTXID, LastTXID)),
+			{200, [], ar_serialize:jsonify(EncodedTXIDs)}
 	end.
 
 %% @doc Returns a list of all TX IDs starting with LastTXID to EarliestTXID (inclusive)
@@ -747,10 +746,10 @@ get_wallet_txs(EarliestTXID, PreviousTXID, Acc) ->
 		<<>> ->
 			lists:reverse(Acc);
 		EarliestTXID ->
-			lists:reverse([ar_util:encode(EarliestTXID) | Acc]);
+			lists:reverse([EarliestTXID | Acc]);
 		_ ->
 			TX = ar_storage:read_tx(PreviousTXID),
-			get_wallet_txs(EarliestTXID, TX#tx.last_tx, [ar_util:encode(PreviousTXID) | Acc])
+			get_wallet_txs(EarliestTXID, TX#tx.last_tx, [PreviousTXID | Acc])
 	end.
 
 handle_post_tx(TX) ->
