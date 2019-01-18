@@ -22,6 +22,10 @@
 %%% Warning! The index is not complete. E.g. block_height and block_indep_hash
 %%% was added at a later stage. The index includes only the transactions from
 %%% the downloaded blocks.
+%%%
+%%% Warning! Writes returns early but are serialized together with reads. If a
+%%% write fails it will be logged, but the queue of reads and writes will
+%%% continue.
 
 -record(arql_tag, {name, value, tx}).
 
@@ -56,20 +60,16 @@ get_entries(PID, Name, Value) ->
 	end.
 
 %% @doc Updates the index of stored tranasaction data with all of the
-%% transactions in the given block
+%% transactions in the given block. Returns early after sending the task to the
+%% server.
 update_tag_table(B) ->
 	update_tag_table(whereis(http_search_node), B).
 
 update_tag_table(PID, B) when ?IS_BLOCK(B) ->
-	Ref = make_ref(),
-	PID ! {update_tags_for_block, B, Ref, self()},
-	receive {tags_for_block_updated, Ref} ->
-		ok
-	after 20000 ->
-		timeout
-	end;
+	PID ! {update_tags_for_block, B},
+	enqueued;
 update_tag_table(_, _) ->
-	not_updated.
+	not_a_block.
 
 entries(B, TX) ->
 	AuxTags = [
@@ -104,7 +104,7 @@ server() ->
 				),
 				PID ! {tags, Tags},
 				server();
-			{update_tags_for_block, B, Ref, PID} ->
+			{update_tags_for_block, B} ->
 				lists:foreach(
 					fun(TX) ->
 						delete_for_tx(TX#tx.id),
@@ -115,7 +115,6 @@ server() ->
 					end,
 					ar_storage:read_tx(B#block.txs)
 				),
-				PID ! {tags_for_block_updated, Ref},
 				server();
 			stop -> ok;
 			_OtherMsg -> server()
