@@ -428,7 +428,7 @@ last_tx_test_() ->
 		timer:sleep(500),
 		ar_node:mine(Node1), % Mine B1
 		timer:sleep(500),
-		?assertEqual(ar_node:get_last_tx(Node2, Pub1), ID)
+		?assertEqual(?OK(ar_node:get_last_tx(Node2, Pub1)), ID)
 	end}.
 
 %%%
@@ -731,24 +731,26 @@ wallet_two_transaction_test_() ->
 	end}.
 
 %% @doc Wallet0 -> Wallet1 { with tags } | mine | check
-mine_tx_with_key_val_tags_test() ->
-	ar_storage:clear(),
-	{Priv1, Pub1} = ar_wallet:new(),
-	{_Priv2, Pub2} = ar_wallet:new(),
-	TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-	B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
-	Node1 = ar_node:start([], B0),
-	Node2 = ar_node:start([Node1], B0),
-	ar_node:add_peers(Node1, Node2),
-	ar_storage:write_tx([SignedTX]),
-	ar_node:add_tx(Node1, SignedTX),
-	timer:sleep(300),
-	ar_node:mine(Node1), % Mine B1
-	timer:sleep(1000),
-	BHL = [B1Hash|_] = ar_node:get_blocks(Node2),
-	#block { txs = TXs } = ar_storage:read_block(B1Hash, BHL),
-	?assertEqual(ar_storage:read_tx(TXs), [SignedTX]).
+mine_tx_with_key_val_tags_test_() ->
+	{timeout, 10, fun() ->
+		ar_storage:clear(),
+		{Priv1, Pub1} = ar_wallet:new(),
+		{_Priv2, Pub2} = ar_wallet:new(),
+		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
+		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
+		Node1 = ar_node:start([], B0),
+		Node2 = ar_node:start([Node1], B0),
+		ar_node:add_peers(Node1, Node2),
+		ar_storage:write_tx([SignedTX]),
+		ar_node:add_tx(Node1, SignedTX),
+		timer:sleep(300),
+		ar_node:mine(Node1), % Mine B1
+		timer:sleep(1000),
+		BHL = [B1Hash|_] = ar_node:get_blocks(Node2),
+		#block { txs = TXs } = ar_storage:read_block(B1Hash, BHL),
+		?assertEqual(ar_storage:read_tx(TXs), [SignedTX])
+	end}.
 
 %% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
 %% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check

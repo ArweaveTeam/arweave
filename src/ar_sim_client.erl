@@ -186,7 +186,7 @@ send_specified_data_tx(Filepath) ->
 	).
 
 create_data_tx({Priv, Pub}, Data) ->
-	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	{ok, LastTx} = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
 	TX = ar_tx:new(Data, 0, LastTx),
 	Cost = ar_tx:calculate_min_tx_cost(
@@ -205,7 +205,7 @@ create_data_tx(KeyList, Data) ->
 %% @doc Create a random data TX with max length MaxTxLen
 create_random_data_tx({Priv, Pub}, MaxTxLen) ->
 	% Generate and dispatch a new data transaction.
-	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	{ok, LastTx} = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
 	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
@@ -223,7 +223,7 @@ create_random_data_tx({Priv, Pub}, MaxTxLen) ->
 create_random_data_tx(KeyList, MaxTxLen) ->
 	{Priv, Pub} = lists:nth(rand:uniform(50), KeyList),
 	% Generate and dispatch a new data transaction.
-	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	{ok, LastTx} = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
 	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
 	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
@@ -259,7 +259,7 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 	{Priv, Pub} = lists:nth(rand:uniform(50), KeyList),
 	{_, Dest} = lists:nth(rand:uniform(50), KeyList),
 	% Generate and dispatch a new data transaction.
-	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	{ok, LastTx} = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
 	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
 	Qty = rand:uniform(MaxAmount),
@@ -277,7 +277,7 @@ create_random_fin_tx(KeyList, MaxAmount) ->
 create_random_fin_tx({Priv, Pub}, KeyList, MaxAmount) ->
 	{_, Dest} = lists:nth(rand:uniform(10), KeyList),
 	% Generate and dispatch a new data transaction.
-	LastTx = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
+	{ok, LastTx} = ar_node:get_last_tx(whereis(http_entrypoint_node), Pub),
 	%ar:d({random_fin_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
 	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
 	Qty = rand:uniform(MaxAmount),

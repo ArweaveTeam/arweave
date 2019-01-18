@@ -14,7 +14,7 @@
 -export([get_hash_list/1, get_height/1]).
 -export([get_trusted_peers/1]).
 -export([get_balance/2]).
--export([get_last_tx/2, get_last_tx_from_floating/2]).
+-export([get_last_tx/2]).
 -export([get_pending_txs/1, get_full_pending_txs/1]).
 -export([get_current_diff/1, get_diff/1]).
 -export([get_floating_wallet_list/1]).
@@ -406,29 +406,16 @@ get_balance(Node, WalletID) ->
 
 %% @doc Get the last tx id associated with a given wallet address.
 %% Should the wallet not have made a tx the empty binary will be returned.
-% TODO: Timeout returns an empty binary, this is also a valid return.
 get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	Node ! {get_last_tx, self(), Addr},
 	receive
-		{last_tx, Addr, LastTX} -> LastTX
-		after ?LOCAL_NET_TIMEOUT -> <<>>
+		{last_tx, Addr, LastTX} ->
+			{ok, LastTX}
+	after ?LOCAL_NET_TIMEOUT ->
+		timeout
 	end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
-
-%% @doc Get the last tx id associated with a a given wallet address from the
-%% floating wallet list.
-%% Should the wallet not have made a tx the empty binary will be returned.
-% TODO: Duplicate of get_last_tx, returns empty binary on timeout, this is also
-% a valid return.
-get_last_tx_from_floating(Node, Addr) when ?IS_ADDR(Addr) ->
-	Node ! {get_last_tx_from_floating, self(), Addr},
-	receive
-		{last_tx_from_floating, Addr, LastTX} -> LastTX
-		after ?LOCAL_NET_TIMEOUT -> <<>>
-	end;
-get_last_tx_from_floating(Node, WalletID) ->
-	get_last_tx_from_floating(Node, ar_wallet:to_address(WalletID)).
 
 %% @doc Returns a list of pending transactions.
 %% Pending transactions are those that are valid, but not currently actively
@@ -765,14 +752,6 @@ handle(SPid, {get_last_tx, From, Addr}) ->
 	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
 	From ! {last_tx, Addr,
 		case lists:keyfind(Addr, 1, WalletList) of
-			{Addr, _Balance, Last} -> Last;
-			false				   -> <<>>
-		end},
-	ok;
-handle(SPid, {get_last_tx_from_floating, From, Addr}) ->
-	{ok, FloatingWalletList} = ar_node_state:lookup(SPid, floating_wallet_list),
-	From ! {last_tx_from_floating, Addr,
-		case lists:keyfind(Addr, 1, FloatingWalletList) of
 			{Addr, _Balance, Last} -> Last;
 			false				   -> <<>>
 		end},

@@ -468,10 +468,21 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 		{ok, AddrOK} ->
 			{200, [],
 				ar_util:encode(
-					ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK)
+					?OK(ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK))
 				)
 			}
 	end;
+
+%% @doc Return transaction identifiers (hashes) for the wallet specified via wallet_address.
+%% GET request to endpoint /wallet/{wallet_address}/txs
+handle('GET', [<<"wallet">>, Addr, <<"txs">>], _Req) ->
+	handle_get_wallet_txs(Addr, none);
+
+%% @doc Return transaction identifiers (hashes) starting from the earliest_tx for the wallet
+%% specified via wallet_address.
+%% GET request to endpoint /wallet/{wallet_address}/txs/{earliest_tx}
+handle('GET', [<<"wallet">>, Addr, <<"txs">>, EarliestTX], _Req) ->
+	handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX));
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
@@ -713,6 +724,32 @@ get_tx_filename(Hash) ->
 			end;
 		{ok, Filename} ->
 			{ok, Filename}
+	end.
+
+handle_get_wallet_txs(Addr, EarliestTXID) ->
+	case safe_decode(Addr) of
+		{error, invalid} ->
+			{400, [], <<"Invalid address.">>};
+		{ok, AddrOK} ->
+			{ok, LastTXID} = ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK),
+			EncodedTXIDs = lists:map(fun ar_util:encode/1, get_wallet_txs(EarliestTXID, LastTXID)),
+			{200, [], ar_serialize:jsonify(EncodedTXIDs)}
+	end.
+
+%% @doc Returns a list of all TX IDs starting with LastTXID to EarliestTXID (inclusive)
+%% for the same wallet.
+get_wallet_txs(EarliestTXID, LatestTXID) ->
+	get_wallet_txs(EarliestTXID, LatestTXID, []).
+
+get_wallet_txs(EarliestTXID, PreviousTXID, Acc) ->
+	case PreviousTXID of
+		<<>> ->
+			lists:reverse(Acc);
+		EarliestTXID ->
+			lists:reverse([EarliestTXID | Acc]);
+		_ ->
+			TX = ar_storage:read_tx(PreviousTXID),
+			get_wallet_txs(EarliestTXID, TX#tx.last_tx, [PreviousTXID | Acc])
 	end.
 
 handle_post_tx(TX) ->

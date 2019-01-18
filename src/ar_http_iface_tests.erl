@@ -887,6 +887,89 @@ post_unsigned_tx() ->
 		maps:from_list(GetTXRes)
 	).
 
+get_wallet_txs_test() ->
+	{timeout, 10, fun() ->
+		ar_storage:clear(),
+		%% Create a wallet
+		{_, Pub} = ar_wallet:new(),
+		WalletAddress = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))),
+		[B0] = ar_weave:init([{ar_wallet:to_address(Pub), 10000, <<>>}]),
+		Node = ar_node:start([], [B0]),
+		ar_http_iface_server:reregister(Node),
+		Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node, Bridge),
+		{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
+			ar_httpc:request(
+				<<"GET">>,
+				{127, 0, 0, 1, 1984},
+				"/wallet/" ++ WalletAddress ++ "/txs"
+			),
+		TXs = ar_serialize:dejsonify(Body),
+		%% Expect the wallet to have no transactions
+		?assertEqual([], TXs),
+		%% Sign and post a transaction and expect it to appear in the wallet list
+		TX = (ar_tx:new())#tx{ owner = ar_wallet:to_address(Pub) },
+		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
+			ar_httpc:request(
+				<<"POST">>,
+				{127, 0, 0, 1, 1984},
+				"/tx",
+				[],
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+			),
+		receive after 250 -> ok end,
+		ar_node:mine(Node),
+		receive after 1000 -> ok end,
+		{ok, {{<<"200">>, <<"OK">>}, _, GetOneTXBody, _, _}} =
+			ar_httpc:request(
+				<<"GET">>,
+				{127, 0, 0, 1, 1984},
+				"/wallet/" ++ WalletAddress ++ "/txs"
+			),
+		OneTX = ar_serialize:dejsonify(GetOneTXBody),
+		?assertEqual([ar_util:encode(TX#tx.id)], OneTX),
+		%% Expect the same when the TX is specified as the earliest TX
+		{ok, {{<<"200">>, <<"OK">>}, _, GetOneTXAgainBody, _, _}} =
+			ar_httpc:request(
+				<<"GET">>,
+				{127, 0, 0, 1, 1984},
+				"/wallet/" ++ WalletAddress ++ "/txs/" ++ binary_to_list(ar_util:encode(TX#tx.id))
+			),
+		OneTXAgain = ar_serialize:dejsonify(GetOneTXAgainBody),
+		?assertEqual([ar_util:encode(TX#tx.id)], OneTXAgain),
+		%% Add one more TX and expect it to be appended to the wallet list
+		SecondTX = (ar_tx:new())#tx{ owner = ar_wallet:to_address(Pub), last_tx = TX#tx.id },
+		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
+			ar_httpc:request(
+				<<"POST">>,
+				{127, 0, 0, 1, 1984},
+				"/tx",
+				[],
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SecondTX))
+			),
+		receive after 250 -> ok end,
+		ar_node:mine(Node),
+		receive after 1000 -> ok end,
+		{ok, {{<<"200">>, <<"OK">>}, _, GetTwoTXsBody, _, _}} =
+			ar_httpc:request(
+				<<"GET">>,
+				{127, 0, 0, 1, 1984},
+				"/wallet/" ++ WalletAddress ++ "/txs"
+			),
+		Expected = [ar_util:encode(SecondTX#tx.id), ar_util:encode(TX#tx.id)],
+		?assertEqual(Expected, ar_serialize:dejsonify(GetTwoTXsBody)),
+		%% Specify the second TX as the earliest and expect the first one to be excluded
+		{ok, {{<<"200">>, <<"OK">>}, _, GetSecondTXBody, _, _}} =
+			ar_httpc:request(
+				<<"GET">>,
+				{127, 0, 0, 1, 1984},
+				"/wallet/" ++ WalletAddress ++ "/txs/" ++ binary_to_list(ar_util:encode(SecondTX#tx.id))
+			),
+		OneSecondTX = ar_serialize:dejsonify(GetSecondTXBody),
+		?assertEqual([ar_util:encode(SecondTX#tx.id)], OneSecondTX)
+	end}.
+
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),
 %	ar_node:mine(Node),
