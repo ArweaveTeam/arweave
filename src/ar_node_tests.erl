@@ -665,7 +665,7 @@ large_weakly_connected_blockweave_with_data_test_() ->
 		receive after 2500 -> ok end,
 		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 		TestDataID	= TestData#tx.id,
-		[TestDataID] = (hd(ar_storage:read_block(B1, B1)))#block.txs
+		?assertEqual([TestDataID], (ar_storage:read_block(hd(B1), B1))#block.txs)
 	end}.
 
 %% @doc Ensure that the network can add multiple peices of data and have
