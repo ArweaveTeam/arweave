@@ -249,34 +249,34 @@ block_field_size_limit(B) ->
 	end,
 	Check.
 
-%% @docs Generate a hashable data segment for a block from the current
-%% block, recall block, TXs to be mined, reward address and tags.
-generate_block_data_segment(CurrentB, RecallB, [unavailable], RewardAddr, Time, Tags) ->
+%% @docs Generate a hashable data segment for a block from the preceding block,
+%% the preceding block's recall block, TXs to be mined, reward address and tags.
+generate_block_data_segment(PrecedingB, PrecedingRecallB, [unavailable], RewardAddr, Time, Tags) ->
 	generate_block_data_segment(
-		CurrentB,
-		RecallB,
+		PrecedingB,
+		PrecedingRecallB,
 		[],
 		RewardAddr,
 		Time,
 		Tags
 	);
-generate_block_data_segment(CurrentB, RecallB, TXs, unclaimed, Time, Tags) ->
+generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, unclaimed, Time, Tags) ->
 	generate_block_data_segment(
-		CurrentB,
-		RecallB,
+		PrecedingB,
+		PrecedingRecallB,
 		TXs,
 		<<>>,
 		Time,
 		Tags
 	);
-generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
-	NewHeight = CurrentB#block.height + 1,
+generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags) ->
+	NewHeight = PrecedingB#block.height + 1,
 	Retarget =
 		case ar_retarget:is_retarget_height(NewHeight) of
 			true -> Time;
-			false -> CurrentB#block.last_retarget
+			false -> PrecedingB#block.last_retarget
 		end,
-	WeaveSize = CurrentB#block.weave_size +
+	WeaveSize = PrecedingB#block.weave_size +
 		lists:foldl(
 			fun(TX, Acc) ->
 				Acc + byte_size(TX#tx.data)
@@ -286,55 +286,38 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
 		),
 	{FinderReward, RewardPool} =
 		ar_node_utils:calculate_reward_pool(
-			CurrentB#block.reward_pool,
+			PrecedingB#block.reward_pool,
 			TXs,
 			RewardAddr,
 			ar_node_utils:calculate_proportion(
-				RecallB#block.block_size,
+				PrecedingRecallB#block.block_size,
 				WeaveSize,
-				CurrentB#block.height + 1
+				PrecedingB#block.height + 1
 			)
 		),
 	NewWalletList =
 		ar_node_utils:apply_mining_reward(
-			ar_node_utils:apply_txs(CurrentB#block.wallet_list, TXs),
+			ar_node_utils:apply_txs(PrecedingB#block.wallet_list, TXs),
 			RewardAddr,
 			FinderReward,
-			length(CurrentB#block.hash_list) - 1
+			length(PrecedingB#block.hash_list) - 1
 		),
-	% ar:d({indep, CurrentB#block.indep_hash}),
-	% ar:d({retarget, integer_to_binary(Retarget)}),
-	% ar:d({height, integer_to_binary(CurrentB#block.height + 1)}),
-	% ar:d({wallets,
-	%	  binary:list_to_bin(
-	%		  lists:map(fun ar_wallet:to_binary/1, NewWalletList)
-	%	  )
-	% }),
-	% ar:d({reward,
-	%	  case is_atom(RewardAddr) of
-	%		  true -> <<>>;
-	%		  false -> RewardAddr
-	%	  end
-	% }),
-	% ar:d({tags, list_to_binary(Tags)}),
-	% ar:d({recall, byte_size(block_to_binary(RecallB))}),
-	% ar:d({txs, binary:list_to_bin(lists:map(fun ar_tx:tx_to_binary/1, TXs))}),
 	MR =
-		case CurrentB#block.height >= ?FORK_1_6 of
-			true -> CurrentB#block.hash_list_merkle;
+		case PrecedingB#block.height >= ?FORK_1_6 of
+			true -> PrecedingB#block.hash_list_merkle;
 			false -> <<>>
 		end,
 	crypto:hash(
 		?MINING_HASH_ALG,
 		<<
-			(CurrentB#block.indep_hash)/binary,
-			(CurrentB#block.hash)/binary,
+			(PrecedingB#block.indep_hash)/binary,
+			(PrecedingB#block.hash)/binary,
 			(integer_to_binary(Time))/binary,
 			(integer_to_binary(Retarget))/binary,
-			(integer_to_binary(CurrentB#block.height + 1))/binary,
+			(integer_to_binary(PrecedingB#block.height + 1))/binary,
 			(
 				list_to_binary(
-					[CurrentB#block.indep_hash | CurrentB#block.hash_list]
+					[PrecedingB#block.indep_hash | PrecedingB#block.hash_list]
 				)
 			)/binary,
 			(
@@ -353,7 +336,7 @@ generate_block_data_segment(CurrentB, RecallB, TXs, RewardAddr, Time, Tags) ->
 			)/binary,
 			(list_to_binary(Tags))/binary,
 			(integer_to_binary(RewardPool))/binary,
-			(block_to_binary(RecallB))/binary,
+			(block_to_binary(PrecedingRecallB))/binary,
 			(
 				binary:list_to_bin(
 					lists:map(
