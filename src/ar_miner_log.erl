@@ -95,7 +95,7 @@ log(Str) ->
 		false -> do_nothing;
 		_ ->
 			{Date, {Hour, Minute, Second}} =
-				calendar:now_to_datetime(os:timestamp()),
+				calendar:now_to_local_time(os:timestamp()),
 			ar:console(
 				"~s, ~2..0w:~2..0w:~2..0w: ~s~n",
 				[
