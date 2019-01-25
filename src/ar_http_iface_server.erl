@@ -167,8 +167,8 @@ handle('OPTIONS', [<<"arql">>], _) ->
 handle('OPTIONS', _, _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
 
-handle(Method, [<<"api">>, <<"ipfs">>|_]=Path, Req) ->
-	app_ipfs_daemon_server:handle(Method, Path, Req).
+handle(Method, [<<"api">>, <<"ipfs">> | Path], Req) ->
+	app_ipfs_daemon_server:handle(Method, Path, Req);
 
 %% @doc Return the current universal time in seconds.
 handle('GET', [<<"time">>], _Req) ->

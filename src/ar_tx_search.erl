@@ -104,7 +104,7 @@ server() ->
 				server();
 			{get_txs_by_tag_name, Name, PID} ->
 				PID ! search_by_tag_name(Name),
-				server(S);
+				server();
 			{get_tags, TXID, PID} ->
 				Tags = lists:map(
 					fun(Tag) ->
