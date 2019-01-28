@@ -449,49 +449,29 @@ add_external_block_with_tx_test_() ->
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
-fork_recover_by_http_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[BGen] = ar_weave:init([]),
-		Node1 = ar_node:start([], [BGen]),
-		ar_http_iface_server:reregister(Node1),
-		Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
-		ar_http_iface_server:reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node1, Bridge),
-		Node2 = ar_node:start([], [BGen]),
-		ar_node:mine(Node2),
-		timer:sleep(500),
-		ar_node:mine(Node2),
-		timer:sleep(500),
-		ar_node:mine(Node2),
-		timer:sleep(500),
-		ar_util:do_until(
-			fun() ->
-				length(ar_node:get_blocks(Node2)) > 5
-			end,
-			1000,
-			10 * 1000
-		),
-		[BTest|_] = ar_node:get_blocks(Node2),
-		ar_http_iface_server:reregister(Node1),
+fork_recover_by_http_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node1 = ar_node:start([], [B0]),
+	Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
+	ar_http_iface_server:reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node1, Bridge),
+	Node2 = ar_node:start([], [B0]),
+	timer:sleep(500),
+	ar_http_iface_server:reregister(Node1),
+	BHL0 = [B0#block.indep_hash],
+	FullBHL = mine_n_blocks(Node2, BHL0, 3),
+	%% Send only the latest block to Node1 and let it fork recover up to it.
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
-			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
-			BGen
-		),
-		% Wait for test block and assert.
-		?assert(ar_util:do_until(
-			fun() ->
-				length(ar_node:get_blocks(Node1)) > 1
-			end,
-			1000,
-			10 * 1000
-		)),
-		[HB | TBs] = ar_node:get_blocks(Node1),
-		?assertEqual(HB, BTest),
-		LB = lists:last(TBs),
-		?assertEqual(BGen, ar_storage:read_block(LB, ar_node:get_hash_list(Node1)))
-	end}.
+			ar_storage:read_block(hd(FullBHL), FullBHL),
+			ar_node_utils:find_recall_block(FullBHL)
+		)
+	),
+	% Wait for test block and assert.
+	?assertEqual(FullBHL, wait_until_node_on_height(Node1, length(FullBHL) - 1)).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
@@ -1129,3 +1109,33 @@ get_wallet_deposits_test_() ->
 	% B2 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B1),
 	% B3 = ar_http_iface_client:get_full_block({127, 0, 0, 1, 1984}, B1),
 	% B3 = B2#block {txs = [TX, TX1]},
+
+
+%% Utility functions
+
+mine_n_blocks(_, BHL, 0) ->
+	BHL;
+mine_n_blocks(Node, PreMineBHL, N) ->
+	PostMineBHL = mine_one_block(Node, PreMineBHL),
+	mine_n_blocks(Node, PostMineBHL, N - 1).
+
+mine_one_block(Node, PreMineBHL) ->
+	ar_node:mine(Node),
+	PostMineBHL = wait_until_node_on_height(Node, length(PreMineBHL)),
+	?assertMatch([_ | PreMineBHL], PostMineBHL),
+	PostMineBHL.
+
+wait_until_node_on_height(Node, TargetHeight) ->
+	{ok, BHL} = ar_util:do_until(
+		fun() ->
+			case ar_node:get_blocks(Node) of
+				BHL when length(BHL) - 1 == TargetHeight ->
+					{ok, BHL};
+				_ ->
+					false
+			end
+		end,
+		100,
+		10 * 1000
+	),
+	BHL.
