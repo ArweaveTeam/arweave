@@ -460,18 +460,17 @@ fork_recover_by_http_test() ->
 	timer:sleep(500),
 	ar_http_iface_server:reregister(Node1),
 	BHL0 = [B0#block.indep_hash],
-	FullBHL = mine_n_blocks(Node2, BHL0, 3),
+	FullBHL = mine_n_blocks(Node2, BHL0, 10),
 	%% Send only the latest block to Node1 and let it fork recover up to it.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
 			ar_storage:read_block(hd(FullBHL), FullBHL),
-			ar_node_utils:find_recall_block(FullBHL)
+			ar_node_utils:find_recall_block(tl(FullBHL))
 		)
 	),
-	% Wait for test block and assert.
-	?assertEqual(FullBHL, wait_until_node_on_height(Node1, length(FullBHL) - 1)).
+	?assert(ok == wait_until_node_on_block_hash(Node1, hd(FullBHL))).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
