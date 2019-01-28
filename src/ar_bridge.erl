@@ -4,7 +4,7 @@
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
--export([ignore_id/1, is_id_ignored/1]).
+-export([ignore_id/1, is_id_ignored/1, clear_ignored_ids/0]).
 -export([ignore_peer/2]).
 -include("ar.hrl").
 
@@ -98,6 +98,11 @@ is_id_ignored(ID) ->
 		[{ID, ignored}] -> true;
 		[] -> false
 	end.
+
+%% @doc Clear the ignore ids database.
+clear_ignored_ids() ->
+	true = ets:delete_all_objects(ignored_ids),
+	ok.
 
 ignore_peer(_PID, []) -> ok;
 ignore_peer(PID, Peer) ->

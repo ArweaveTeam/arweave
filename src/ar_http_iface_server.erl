@@ -1000,10 +1000,25 @@ post_block(request, Req) ->
 			{400, [], <<"Invalid block.">>};
 		{ok, {ReqStruct, BShadow}} ->
 			OrigPeer = elli_request_to_peer(Req),
-			post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer})
+			post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer})
 	end;
-post_block(check_is_ignored, {ReqStruct, BShadow, OrigPeer}) ->
+%% TODO: Make block_data_segment mandatory when all nodes are posting it.
+post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}) ->
 	% Check if block is already known.
+	case lists:keyfind(<<"block_data_segment">>, 1, ReqStruct) of
+		{_, DataSegmentEncoded} ->
+			DataSegment = ar_util:decode(DataSegmentEncoded),
+			case ar_bridge:is_id_ignored(DataSegment) of
+				true ->
+					{208, [], <<"Block Data Segment already processed.">>};
+				false ->
+					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer})
+			end;
+		_ ->
+			post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer})
+	end;
+%% TODO: Remove the check_is_ignored clause when all nodes send block_data_segment.
+post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer}) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		true ->
 			{208, <<"Block already processed.">>};
@@ -1032,9 +1047,24 @@ post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer}) ->
 	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
 	case B#block.diff >= ?MIN_DIFF of
 		true ->
-			post_block(check_current_block, {B, ReqStruct, OrigPeer});
+			post_block(check_pow, {B, ReqStruct, OrigPeer});
 		_ ->
 			{400, [], <<"Difficulty too low">>}
+	end;
+%% TODO: Make block_data_segment mandatory when all nodes are posting it.
+post_block(check_pow, {B, ReqStruct, OrigPeer}) ->
+	case lists:keyfind(<<"block_data_segment">>, 1, ReqStruct) of
+		{_, DataSegmentEncoded} ->
+			DataSegment = ar_util:decode(DataSegmentEncoded),
+			case ar_mine:validate(DataSegment, B#block.nonce, B#block.diff) of
+				false ->
+					{400, [], <<"Invalid Block Proof of Work">>};
+				_  ->
+					ar_bridge:ignore_id(DataSegment),
+					post_block(check_current_block, {B, ReqStruct, OrigPeer})
+			end;
+		false ->
+			post_block(check_current_block, {B, ReqStruct, OrigPeer})
 	end;
 post_block(check_current_block, {B, ReqStruct, OrigPeer}) ->
 	CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),

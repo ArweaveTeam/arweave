@@ -400,6 +400,69 @@ add_external_block_test_() ->
 		?assertEqual(BH1, BH2)
 	end}.
 
+%% @doc POST block with bad "block_data_segment" field in json
+add_external_block_with_bad_bds_test() ->
+	{timeout, 20, fun() ->
+		Setup = fun() ->
+			ar_storage:clear(),
+			[B0] = ar_weave:init([]),
+			BHL0 = [B0#block.indep_hash],
+			NodeWithBridge = ar_node:start([], [B0]),
+			Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
+			ar_bridge:clear_ignored_ids(),
+			OtherNode = ar_node:start([], [B0]),
+			timer:sleep(500),
+			ar_http_iface_server:reregister(http_bridge_node, Bridge),
+			ar_http_iface_server:reregister(http_entrypoint_node, NodeWithBridge),
+			{BHL0, {NodeWithBridge, {127, 0, 0, 1, 1984}}, OtherNode}
+		end,
+		BlocksFromStorage = fun(BHL) ->
+			B = ar_storage:read_block(hd(BHL), BHL),
+			RecallB = ar_node_utils:find_recall_block(BHL),
+			{B, RecallB}
+		end,
+		{BHL0, {RemoteNode, RemotePeer}, LocalNode} = Setup(),
+		%% Create a long enough weave so that it's low risk that two later blocks
+		%% have the same recall block.
+		BHL20 = mine_n_blocks(LocalNode, BHL0, 20),
+		?assertMatch(BHL0, ar_node:get_blocks(RemoteNode)),
+		send_new_blocks(tl(lists:reverse(BHL20)), {RemotePeer, RemoteNode}, BHL20),
+		%% Send a new block to RemoteNode and re-use the previous BDS
+		[_ | BHL20 = [_ | BHL19]] = BHL21 = mine_one_block(LocalNode, BHL20),
+		{B19, RecallB19} = BlocksFromStorage(BHL19),
+		{B20, RecallB20} = BlocksFromStorage(BHL20),
+		{B21, _} = BlocksFromStorage(BHL21),
+		?assertMatch(
+			{ok, {{<<"208">>, _}, _, <<"Block Data Segment already processed.">>, _, _}},
+			ar_http_iface_client:send_new_block(
+				RemotePeer, B21, RecallB20, <<>>, <<>>, block_data_segment(B20, B19, RecallB19)
+			)
+		),
+		%% If the HTTP server receives two blocks with the same indep hash, the
+		%% second block will be rejected due to the same indep hash, even if the
+		%% first block wasn't valid. Therefor, we reset the ignored_ids database
+		%% here, so that it forgets about the previous failed try of B2.
+		ar_bridge:clear_ignored_ids(),
+		?assertMatch(
+			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
+			ar_http_iface_client:send_new_block(
+				RemotePeer, B21, RecallB20, <<>>, <<>>, <<"bad-block-data-segment">>
+			)
+		),
+		%% Check RemoteNode still only got block 0-20.
+		timer:sleep(1 * 1000),
+		?assertMatch(BHL20, ar_node:get_blocks(RemoteNode)),
+		%% Successfully send the last block to RemoteNode
+		ar_bridge:clear_ignored_ids(),
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			ar_http_iface_client:send_new_block(
+				RemotePeer, B21, RecallB20, <<>>, <<>>, block_data_segment(B21, B20, RecallB20)
+			)
+		),
+		?assert(ok == wait_until_node_on_block_hash(RemoteNode, hd(BHL21)))
+	end}.
+
 %% @doc Ensure that blocks with tx can be added to a network from outside
 %% a single node.
 add_external_block_with_tx_test_() ->
@@ -1138,3 +1201,46 @@ wait_until_node_on_height(Node, TargetHeight) ->
 		10 * 1000
 	),
 	BHL.
+
+wait_until_node_on_block_hash(Node, BH) ->
+	ok = ar_util:do_until(
+		fun() ->
+			case ar_node:get_blocks(Node) of
+				[BH | _] ->
+					ok;
+				_ ->
+					false
+			end
+		end,
+		100,
+		10 * 1000
+	),
+	ok.
+
+send_new_blocks([], _, _) ->
+	ok;
+send_new_blocks([BH | BHRest], {Peer, Node}, BHL) ->
+	B = ar_storage:read_block(BH, BHL),
+	PrecedingBH = B#block.previous_block,
+	PrecedingRecallB = recall_block(PrecedingBH, BHL),
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		ar_http_iface_client:send_new_block(Peer, B, PrecedingRecallB)
+	),
+	wait_until_node_on_block_hash(Node, BH),
+	send_new_blocks(BHRest, {Peer, Node}, BHL).
+
+recall_block(BH, FullBHL) ->
+	NotBH = fun(Hash) -> Hash /= BH end,
+	[BH | _] = BHL = lists:dropwhile(NotBH, FullBHL),
+	ar_node_utils:find_recall_block(BHL).
+
+block_data_segment(B, PrecedingB, PrecedingRecallB) ->
+	ar_block:generate_block_data_segment(
+		PrecedingB,
+		PrecedingRecallB,
+		lists:map(fun ar_storage:read_tx/1, B#block.txs),
+		B#block.reward_addr,
+		B#block.timestamp,
+		B#block.tags
+	).
