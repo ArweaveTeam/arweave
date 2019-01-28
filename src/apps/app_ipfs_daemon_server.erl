@@ -27,7 +27,7 @@ stop() ->
 
 %% @doc Add a new {api_key, queue, wallet} tuple to the db.
 put_key(K, Q, W) ->
-	F = mnesia:write(#ipfsar_key_q_wal{api_key=K, queue_pid=Q, wallet=W}),
+	F = fun() -> mnesia:write(#ipfsar_key_q_wal{api_key=K, queue_pid=Q, wallet=W}) end,
 	mnesia:activity(transaction, F).
 
 %% @doc get queue and wallet for the api key.
@@ -37,9 +37,9 @@ get_key(APIKey) ->
 			[{
 				#ipfsar_key_q_wal{api_key=APIKey, queue_pid='$1', wallet='$2'},
 				[],
-				[{'$1', '$2'}]
+				[['$1', '$2']]
 			}]) of
-		[{Queue, Wallet}] -> {ok, Queue, Wallet};
+		[[Queue, Wallet]] -> {ok, Queue, Wallet};
 		_                 -> {error, not_found}
 	end.
 
@@ -113,13 +113,13 @@ process_request(<<"getsend">>, [_APIKey, Queue, Wallet, IPFSHash]) ->
 all_fields(KVs, Keys) ->
 	lists:foldr(fun
 		(_, error) -> error;
-		(Key, Acc) ->
+		(Key, {ok, Acc}) ->
 			case lists:keyfind(Key, 1, KVs) of
-				{Key, Val} -> [Val|Acc];
+				{Key, Val} -> {ok, [Val|Acc]};
 				false      -> error
 			end
 		end,
-	[], Keys).
+	{ok, []}, Keys).
 
 %% @doc Given a request, returns the json body as a struct (or error).
 request_to_struct(Req) ->
