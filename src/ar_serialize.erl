@@ -17,7 +17,6 @@ jsonify(JSONStruct) ->
 	jiffy:encode(JSONStruct).
 
 %% @doc Decode JSON string into a JSON struct.
-dejsonify(<<>>) -> <<>>;
 dejsonify(JSON) ->
 	jiffy:decode(JSON).
 
@@ -121,12 +120,8 @@ full_block_to_json_struct(B = #block { txs = TXs }) ->
 
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a block.
 json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
-	case dejsonify(JSONBlock) of
-		{error, Error} -> ar:err([{error, Error}]);
-		BlockStruct -> json_struct_to_block(BlockStruct)
-	end;
-json_struct_to_block(JSONBlock) ->
-	{BlockStruct} = JSONBlock,
+	json_struct_to_block(dejsonify(JSONBlock));
+json_struct_to_block({BlockStruct}) ->
 	Height = find_value(<<"height">>, BlockStruct),
 	TXs = find_value(<<"txs">>, BlockStruct),
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
@@ -205,13 +200,9 @@ json_struct_to_block(JSONBlock) ->
 
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a
 %% full block record.
-json_struct_to_full_block(JSONBlock) when is_binary(JSONBlock) ->
-	case dejsonify(JSONBlock) of
-		{error, Error} -> ar:err([{error, Error}]);
-		BlockStruct -> json_struct_to_full_block(BlockStruct)
-	end;
-json_struct_to_full_block(JSONBlock) ->
-	{BlockStruct} = JSONBlock,
+json_struct_to_full_block(JSON) when is_binary(JSON) ->
+	json_struct_to_full_block(dejsonify(JSON));
+json_struct_to_full_block({BlockStruct}) ->
 	TXs = find_value(<<"txs">>, BlockStruct),
 	TempStruct =
 		{
@@ -273,12 +264,8 @@ tx_to_json_struct(
 %% @doc Convert parsed JSON tx fields from a HTTP request into a
 %% transaction record.
 json_struct_to_tx(JSONTX) when is_binary(JSONTX) ->
-	case dejsonify(JSONTX) of
-		{error, Error} -> ar:err([{error, Error}]);
-		TXStruct -> json_struct_to_tx(TXStruct)
-	end;
-json_struct_to_tx(JSONTX) ->
-	{TXStruct} = JSONTX,
+	json_struct_to_tx(dejsonify(JSONTX));
+json_struct_to_tx({TXStruct}) ->
 	Tags = case find_value(<<"tags">>, TXStruct) of
 		undefined -> [];
 		Xs -> Xs
@@ -315,11 +302,8 @@ wallet_to_json_struct({Address, Balance, Last}) ->
 	}.
 
 %% @doc Convert parsed JSON from fields into a valid wallet list.
-json_struct_to_wallet_list(JSONList) when is_binary(JSONList) ->
-	case dejsonify(JSONList) of
-		{error, Error} -> ar:err([{error, Error}]);
-		ListStruct -> json_struct_to_wallet_list(ListStruct)
-	end;
+json_struct_to_wallet_list(JSON) when is_binary(JSON) ->
+	json_struct_to_wallet_list(dejsonify(JSON));
 json_struct_to_wallet_list(WalletsStruct) ->
 	lists:map(fun json_struct_to_wallet/1, WalletsStruct).
 json_struct_to_wallet({Wallet}) ->
@@ -349,10 +333,8 @@ query_to_json_struct(Expr) ->
 
 %% @doc Convert parsed JSON from fields into an internal ARQL query.
 json_struct_to_query(QueryJSON) ->
-	case dejsonify (QueryJSON) of
-		{error, Error} -> {error, Error};
-		Query -> do_json_struct_to_query(Query)
-	end.
+	do_json_struct_to_query(dejsonify(QueryJSON)).
+
 do_json_struct_to_query({Query}) ->
 	{
 		list_to_existing_atom(binary_to_list(find_value(<<"op">>, Query))),

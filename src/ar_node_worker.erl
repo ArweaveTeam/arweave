@@ -49,7 +49,8 @@ call(Pid, Task, Timeout) ->
 %%% Server functions.
 %%%
 
-%% @doc Main server loop.
+%% @doc Main server loop. For every task received, a message back to the ar_node
+%% server must be sent, otherwise ar_node server might get stuck.
 server(NPid, SPid) ->
 	receive
 		{task, Task} ->
@@ -60,16 +61,25 @@ server(NPid, SPid) ->
 			catch
 				throw:Term ->
 					ar:err( [ {'NodeWorkerEXCEPTION', Term } ]),
+					NPid ! {worker, {error, Term}},
 					server(NPid, SPid);
 				exit:Term ->
 					ar:err( [ {'NodeWorkerEXIT', Term} ] ),
+					NPid ! {worker, {error, Term}},
 					server(NPid, SPid);
 				error:Term ->
 					ar:err( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
+					NPid ! {worker, {error, Term}},
 					server(NPid, SPid)
 			end;
+		{'DOWN', _, _, _, normal} ->
+			%% There is a hidden monitor started in ar_node_utils:fork_recover/3
+			server(NPid, SPid);
 		stop ->
-			ok
+			ok;
+		Other ->
+			ar:report({ar_node_worker_unknown_msg, Other}),
+			server(NPid, SPid)
 	end.
 
 %% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks like
