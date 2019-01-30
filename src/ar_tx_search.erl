@@ -148,7 +148,7 @@ initDB() ->
 	mnesia:create_schema([node()]),
 	mnesia:start(),
 	try
-		mnesia:table_info(type, arql_tag)
+		mnesia:table_info(arql_tag, type)
 	catch
 		exit: _ ->
 			mnesia:create_table(
