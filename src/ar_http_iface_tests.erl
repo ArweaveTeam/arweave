@@ -970,6 +970,74 @@ get_wallet_txs_test_() ->
 		?assertEqual([ar_util:encode(SecondTX#tx.id)], OneSecondTX)
 	end}.
 
+get_wallet_deposits_test_() ->
+	{timeout, 10, fun() ->
+		ar_storage:clear(),
+		%% Create a wallet to transfer tokens to
+		{_, PubTo} = ar_wallet:new(),
+		WalletAddressTo = binary_to_list(ar_util:encode(ar_wallet:to_address(PubTo))),
+		%% Create a wallet to transfer tokens from
+		{_, PubFrom} = ar_wallet:new(),
+		[B0] = ar_weave:init([
+			{ar_wallet:to_address(PubTo), 0, <<>>},
+			{ar_wallet:to_address(PubFrom), 200, <<>>}
+		]),
+		Node = ar_node:start([], [B0]),
+		ar_http_iface_server:reregister(Node),
+		Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node, Bridge),
+		GetTXs = fun() ->
+			{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
+				ar_httpc:request(
+					<<"GET">>,
+					{127, 0, 0, 1, 1984},
+					"/wallet/" ++ WalletAddressTo ++ "/deposits"
+				),
+			ar_serialize:dejsonify(Body)
+		end,
+		TXs = GetTXs(),
+		%% Expect the wallet to have no incoming transfers
+		?assertEqual([], TXs),
+		%% Send some Winston to WalletAddressTo
+		TX = (ar_tx:new())#tx{
+			owner = ar_wallet:to_address(PubFrom),
+			target = ar_wallet:to_address(PubTo),
+			quantity = 100
+		},
+		PostTX = fun(T) ->
+			{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
+				ar_httpc:request(
+					<<"POST">>,
+					{127, 0, 0, 1, 1984},
+					"/tx",
+					[],
+					ar_serialize:jsonify(ar_serialize:tx_to_json_struct(T))
+				)
+		end,
+		PostTX(TX),
+		receive after 250 -> ok end,
+		ar_node:mine(Node),
+		receive after 1000 -> ok end,
+		%% Expect the endpoint to report the received transfer
+		OneTX = GetTXs(),
+		?assertEqual([ar_util:encode(TX#tx.id)], OneTX),
+		%% Send some more Winston to WalletAddressTo
+		SecondTX = (ar_tx:new())#tx{
+			owner = ar_wallet:to_address(PubFrom),
+			target = ar_wallet:to_address(PubTo),
+			last_tx = TX#tx.id,
+			quantity = 100
+		},
+		PostTX(SecondTX),
+		receive after 250 -> ok end,
+		ar_node:mine(Node),
+		receive after 1000 -> ok end,
+		%% Expect the endpoint to report the received transfer
+		TwoTXs = GetTXs(),
+		?assertEqual([ar_util:encode(TX#tx.id), ar_util:encode(SecondTX#tx.id)], TwoTXs)
+	end}.
+
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),
 %	ar_node:mine(Node),
