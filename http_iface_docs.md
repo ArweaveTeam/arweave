@@ -503,9 +503,9 @@ xhr.send();
 ```
 
 
-## GET transactions via address
+## GET transactions made by the wallet
 
-Retrieve the ID of the last transaction made by the given wallet.
+Retrieve identifiers of transactions made by the given wallet.
 
 - **URL**
   `/wallet/[wallet_address]/txs/[earliest_tx]`
@@ -514,7 +514,7 @@ Retrieve the ID of the last transaction made by the given wallet.
 - **URL Parameters**
 
   - [wallet_address] : A Base64 encoded SHA256 hash of the public key.
-  - [earliest_tx] (optional) : A Base64 encoded ID of the earliest transaction to fetch. If not specified, all transactions of the given wallet are returned.
+  - [earliest_tx] (optional) : A Base64 encoded ID of the earliest transaction to fetch. If not specified, all transactions made by the given wallet are returned.
 
 
 #### Example Response
@@ -543,6 +543,27 @@ xhr.onreadystatechange = function() {
 xhr.send();
 ```
 
+
+## Get transactions sent to the given address
+
+Retrieve identifiers of transfer transactions depositing to the given wallet. The index is partial - only transactions known by the given node are returned.
+
+- **URL**
+  `/wallet/[wallet_address]/deposits`
+- **Method**
+  GET
+- **URL Parameters**
+
+  - [wallet_address] : A Base64 encoded SHA256 hash of the public key.
+
+
+#### Example Response
+
+A JSON list of base64url encoded transaction identifiers.
+
+```javascript
+["bUfaJN-KKS1LRh_DlJv4ff1gmdbHP4io-J9x7cLY5is","b23...xg"]
+```
 
 ## GET nodes peer list  
 
