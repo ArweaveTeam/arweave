@@ -1,5 +1,6 @@
 -module(app_ipfs_daemon_server).
--export([start/0, stop/0, put_key/3, get_key/1, del_key/1, handle/3]).
+-export([start/0, stop/0, handle/3]).
+-export([put_key_wallet_address/2, put_key_wallet/2, get_key_q_wallet/1, del_key/1]).
 -export([already_reported/2]).
 -include("ar.hrl").
 
@@ -26,13 +27,21 @@ stop() ->
 		ok,
 		ipfsar_key_q_wal).
 
+%% @doc Find the wallet keyfile for the given address, and call put_key_wal/2.
+-spec put_key_wallet_address(binary(), binary()) -> ok.
+put_key_wallet_address(Key, Addr) ->
+	Filename = <<"wallets/arweave_keyfile_", Addr/binary, ".json">>,
+	Wallet = ar_wallet:load_keyfile(Filename),
+	put_key_wallet(Key, Wallet).
+
 %% @doc Add a new {api_key, queue, wallet} tuple to the db.
-put_key(K, Q, W) ->
+put_key_wallet(K, W) ->
+	Q = app_queue:start(W),
 	F = fun() -> mnesia:write(#ipfsar_key_q_wal{api_key=K, queue_pid=Q, wallet=W}) end,
 	mnesia:activity(transaction, F).
 
 %% @doc get queue and wallet for the api key.
-get_key(APIKey) ->
+get_key_q_wallet(APIKey) ->
 	case mnesia:dirty_select(
 			ipfsar_key_q_wal,
 			[{
@@ -52,16 +61,24 @@ del_key(APIKey) ->
 %% @doc Handle /api/ipfs/... calls.
 -spec handle(atom(), list(binary()), elli_http_request()) ->
 	elli_http_response().
-handle('POST', [<<"getsend">>], Req) ->
+handle(Method, Path, Req) ->
+	case is_app_running() of
+		true  -> really_handle(Method, Path, Req);
+		false -> {503, [], <<"Service not running">>}
+	end.
+
+%%% Private functions.
+
+%%% Handlers
+
+really_handle('POST', [<<"getsend">>], Req) ->
 	case validate_request(<<"getsend">>, Req) of
 		{error, Response} ->
 			Response;
 		{ok, Args} ->
 			process_request(<<"getsend">>, Args)
 	end;
-handle(_,_,_) -> {404, [], <<"Endpoint not found">>}.
-
-%%% Private functions.
+really_handle(_,_,_) -> {404, [], <<"Endpoint not found">>}.
 
 %%% Validators
 
@@ -122,6 +139,16 @@ all_fields(KVs, Keys) ->
 		end,
 	{ok, []}, Keys).
 
+%% @doc is the ipfs->ar service running?
+is_app_running() ->
+	try
+		mnesia:table_info(type, ipfsar_key_q_wal),
+		true
+	catch
+		exit: _ ->
+			false
+	end.
+
 %% @doc Given a request, returns the json body as a struct (or error).
 request_to_struct(Req) ->
 	try
@@ -148,8 +175,7 @@ already_reported(_APIKey, IPFSHash) ->
 
 %% @doc Does the wallet have sufficient funds to submit the data.
 -ifdef(DEBUG).
-sufficient_funds(Wallet, DataSize) ->
-	ok.
+sufficient_funds(_, _) -> ok.
 -else.
 sufficient_funds(Wallet, DataSize) ->
 	Diff = ar_node:get_current_diff(whereis(http_entrypoint_node)),
