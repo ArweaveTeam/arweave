@@ -1,5 +1,6 @@
 -module(app_ipfs_daemon_server).
 -export([start/0, stop/0, put_key/3, get_key/1, del_key/1, handle/3]).
+-export([already_reported/2]).
 -include("ar.hrl").
 
 -type elli_http_request() :: term().
@@ -140,15 +141,7 @@ is_authorized(APIKey) ->
 %% n.b.: just checks whether the hash has been mined into a tx, likelihood
 %% of separate users uploading the same hash is low.
 already_reported(_APIKey, IPFSHash) ->
-	ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash),
-	TXIDs =
-		receive
-			X -> X
-		after
-			10 * 1000 -> timeout
-		end,
-	case TXIDs of
-		timeout -> {ok, new_hash};
+	case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
 		[]      -> {ok, new_hash};
 	    _       -> {error, already_reported}
 	end.

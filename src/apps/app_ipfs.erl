@@ -109,12 +109,7 @@ get_txs(Pid) ->
 	get_x(Pid, get_txs, txs).
 
 get_local_ipfs_txs() ->
-	ar_tx_search:get_entries_by_tag_name(<<"IPFS-Add">>),
-	receive
-		TXs -> TXs
-	after
-		10 * 1000 -> []
-	end.
+	TXs = ar_tx_search:get_entries_by_tag_name(<<"IPFS-Add">>).
 
 add_local_ipfs_tx_data() ->
 	TXids = get_local_ipfs_txs(),
@@ -134,13 +129,7 @@ add_local_ipfs_tx_data(TXid) ->
 
 ipfs_hash_status(Hash) ->
 	Pinned = is_pinned(Hash),
-	ar_tx_search:get_entries(<<"IPFS-Add">>, Hash),
-	TXIDs =
-		receive
-			X -> X
-		after
-			10 * 1000 -> timeout
-		end,
+	TXIDs = ar_tx_search:get_entries(<<"IPFS-Add">>, Hash),
 	[{hash, Hash}, {pinned, Pinned}, {tx, TXIDs}].
 
 maybe_ipfs_add_txs(TXs) ->

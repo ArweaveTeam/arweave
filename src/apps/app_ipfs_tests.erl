@@ -30,24 +30,6 @@ add_local_and_get_test() ->
 	{ok, Hash} = ar_ipfs:add_data(DataToHash, Filename),
 	{ok, DataToHash} = ar_ipfs:cat_data_by_hash(Hash).
 
-adt_simple_callback_gets_blocks_test_() ->
-	{timeout, 30, fun() ->
-		{ARNode, IPFSPid} = setup(),
-		ExpectedIndeps = lists:droplast(mine_n_blocks_on_node(3, ARNode)),
-		Actual = app_ipfs:get_block_hashes(IPFSPid),
-		closedown(IPFSPid),
-		?assertEqual(ExpectedIndeps, Actual)
-	end}.
-
-adt_simple_callback_gets_txs_test_() ->
-	{timeout, 60, fun() ->
-		{ARNode, IPFSPid} = setup(),
-		ExpectedTXIDs = add_n_txs_to_node(3, ARNode),
-		Actual = lists:reverse([TX#tx.id || TX <- app_ipfs:get_txs(IPFSPid)]),
-		closedown(IPFSPid),
-		?assertEqual(ExpectedTXIDs, Actual)
-	end}.
-
 adt_simple_callback_ipfs_add_txs_test_() ->
 	{timeout, 60, fun() ->
 		{ARNode, IPFSPid} = setup(),
@@ -139,13 +121,13 @@ numbered_fn(N) ->
 	<<"testdata-", NB/binary, ".txt">>.
 
 prepare_tx_adder(Node) ->
-	ar_http_iface:reregister(Node),
-	Bridge = ar_bridge:start([], Node),
-	ar_http_iface:reregister(http_bridge_node, Bridge),
+	ar_http_iface_server:reregister(Node),
+	Bridge = ar_bridge:start([], [], Node),
+	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge).
 
 send_tx_mine_block(Node, TX) ->
-	ar_http_iface:send_new_tx({127, 0, 0, 1, 1984}, TX),
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
 	receive after 1000 -> ok end,
 	ar_node:mine(Node),
 	receive after 1000 -> ok end.
