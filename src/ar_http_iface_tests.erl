@@ -887,7 +887,7 @@ post_unsigned_tx() ->
 		maps:from_list(GetTXRes)
 	).
 
-get_wallet_txs_test() ->
+get_wallet_txs_test_() ->
 	{timeout, 10, fun() ->
 		ar_storage:clear(),
 		%% Create a wallet
