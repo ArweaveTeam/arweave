@@ -162,7 +162,7 @@ request_to_struct(Req) ->
 
 %% @doc Check if the API key is on the books. If so, return their wallet.
 is_authorized(APIKey) ->
-	?MODULE:get_key(APIKey).
+	?MODULE:get_key_q_wallet(APIKey).
 
 %% @doc Check if this user has already ipfs pinned this hash with us.
 %% n.b.: just checks whether the hash has been mined into a tx, likelihood
