@@ -142,7 +142,7 @@ all_fields(KVs, Keys) ->
 %% @doc is the ipfs->ar service running?
 is_app_running() ->
 	try
-		mnesia:table_info(type, ipfsar_key_q_wal),
+		mnesia:table_info(ipfsar_key_q_wal, type),
 		true
 	catch
 		exit: _ ->
