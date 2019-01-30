@@ -4,6 +4,7 @@
 -export([already_reported/2]).
 -include("ar.hrl").
 
+-type elli_http_method() :: 'GET' | 'POST'.
 -type elli_http_request() :: term().
 -type elli_http_response() :: {non_neg_integer(), list(), binary()}.
 -type path() :: binary() | list(binary()).
@@ -71,12 +72,19 @@ handle(Method, Path, Req) ->
 
 %%% Handlers
 
-really_handle('POST', [<<"getsend">>], Req) ->
-	case validate_request(<<"getsend">>, Req) of
+-type endpoint() :: binary().
+%	<<"getsend">> |
+%	<<"balance">> |
+%	<<"pending">> |
+%	<<"done">>.
+-spec really_handle(elli_http_method(), [endpoint()], elli_http_request()) ->
+	elli_http_response().
+really_handle('POST', [Endpoint], Req) ->
+	case validate_request(Endpoint, Req) of
 		{error, Response} ->
 			Response;
 		{ok, Args} ->
-			process_request(<<"getsend">>, Args)
+			process_request(Endpoint, Args)
 	end;
 really_handle(_,_,_) -> {404, [], <<"Endpoint not found">>}.
 
@@ -106,6 +114,23 @@ validate_request(<<"getsend">>, Req) ->
 			end;
 		{error, _} ->
 			{error, {400, [], <<"Invalid json">>}}
+	end;
+validate_request(<<"balance">>, Req) ->
+	case request_to_struct(Req) of
+		{ok, Struct} ->
+			case all_fields(Struct, [<<"api_key">>]) of
+				{ok, [APIKey]} ->
+					case is_authorized(APIKey) of
+						{ok, _Queue, Wallet} ->
+								{ok, [APIKey, Wallet]};
+						{error, _} ->
+							{error, {401, [], <<"Invalid API Key">>}}
+					end;
+				error ->
+					{error, {400, [], <<"Invalid json fields">>}}
+			end;
+		{error, _} ->
+			{error, {400, [], <<"Invalid json">>}}
 	end.
 
 %%% Processors
@@ -122,7 +147,15 @@ process_request(<<"getsend">>, [_APIKey, Queue, Wallet, IPFSHash]) ->
 			{200, [], <<"Data queued for distribution">>};
 		{error, _} ->
 			{402, [], <<"Insufficient funds in wallet">>}
-	end.
+	end;
+process_request(<<"balance">>, [_APIKey, Wallet]) ->
+	Address = ar_wallet:to_address(Wallet),
+	Balance = ar_node:get_balance(whereis(http_entrypoint_node), Wallet),
+	JsonS = {[
+		{address, ar_util:encode(Address)},
+		{balance, integer_to_binary(Balance)}]},
+	JsonB = ar_serialize:jsonify(JsonS),
+	{200, [], JsonB}.
 
 %%% Helpers
 
