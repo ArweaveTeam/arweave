@@ -48,7 +48,8 @@
 		ar_retarget,
 		ar_block,
 		ar_tx_db,
-		app_ipfs_tests
+		app_ipfs_tests,
+		app_ipfs_daemon_server_tests
 	]
 ).
 

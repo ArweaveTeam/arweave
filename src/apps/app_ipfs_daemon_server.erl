@@ -147,6 +147,10 @@ already_reported(_APIKey, IPFSHash) ->
 	end.
 
 %% @doc Does the wallet have sufficient funds to submit the data.
+-ifdef(DEBUG).
+sufficient_funds(Wallet, DataSize) ->
+	ok.
+-else.
 sufficient_funds(Wallet, DataSize) ->
 	Diff = ar_node:get_current_diff(whereis(http_entrypoint_node)),
 	Cost = ar_tx:calculate_min_tx_cost(DataSize, Diff),
@@ -157,3 +161,4 @@ sufficient_funds(Wallet, DataSize) ->
 		true  -> ok;
 		false -> {error, insufficient_funds}
 	end.
+-endif.

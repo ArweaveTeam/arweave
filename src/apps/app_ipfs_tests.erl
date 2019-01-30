@@ -30,15 +30,6 @@ add_local_and_get_test() ->
 	{ok, Hash} = ar_ipfs:add_data(DataToHash, Filename),
 	{ok, DataToHash} = ar_ipfs:cat_data_by_hash(Hash).
 
-adt_simple_callback_ipfs_add_txs_test_() ->
-	{timeout, 60, fun() ->
-		{ARNode, IPFSPid} = setup(),
-		ExpectedTSs = add_n_tx_pairs_to_node(3, ARNode),
-		Actual = ipfs_hashes_to_TSs(IPFSPid),
-		closedown(IPFSPid),
-		?assertEqual(ExpectedTSs, Actual)
-	end}.
-
 %%% private
 
 setup() ->

@@ -109,7 +109,7 @@ get_txs(Pid) ->
 	get_x(Pid, get_txs, txs).
 
 get_local_ipfs_txs() ->
-	TXs = ar_tx_search:get_entries_by_tag_name(<<"IPFS-Add">>).
+	ar_tx_search:get_entries_by_tag_name(<<"IPFS-Add">>).
 
 add_local_ipfs_tx_data() ->
 	TXids = get_local_ipfs_txs(),
