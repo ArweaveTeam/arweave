@@ -1012,78 +1012,77 @@ post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}) ->
 				true ->
 					{208, [], <<"Block Data Segment already processed.">>};
 				false ->
-					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer})
+					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, DataSegment})
 			end;
 		_ ->
-			post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer})
+			post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, no_data_segment})
 	end;
 %% TODO: Remove the check_is_ignored clause when all nodes send block_data_segment.
-post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		true ->
 			{208, <<"Block already processed.">>};
 		false ->
 			ar_bridge:ignore_id(BShadow#block.indep_hash),
-			post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer})
+			post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, DataSegment})
 	end;
-post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
 	% Check if node is joined.
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			{503, [], <<"Not joined.">>};
 		true ->
-			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer})
+			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, DataSegment})
 	end;
-post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
 	% Verify the timestamp of the block shadow.
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false ->
 			{404, [], <<"Invalid block.">>};
 		true ->
-			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer})
+			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, DataSegment})
 	end;
-post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer}) ->
+post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
 	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
 	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
 	case B#block.diff >= ?MIN_DIFF of
 		true ->
-			post_block(check_pow, {B, ReqStruct, OrigPeer});
+			post_block(check_pow, {B, ReqStruct, OrigPeer, DataSegment});
 		_ ->
 			{400, [], <<"Difficulty too low">>}
 	end;
 %% TODO: Make block_data_segment mandatory when all nodes are posting it.
-post_block(check_pow, {B, ReqStruct, OrigPeer}) ->
-	case lists:keyfind(<<"block_data_segment">>, 1, ReqStruct) of
-		{_, DataSegmentEncoded} ->
-			DataSegment = ar_util:decode(DataSegmentEncoded),
+post_block(check_pow, {B, ReqStruct, OrigPeer, DataSegment}) ->
+	case DataSegment of
+		no_data_segment ->
+			post_block(check_current_block, {B, ReqStruct, OrigPeer, DataSegment});
+		_ ->
 			case ar_mine:validate(DataSegment, B#block.nonce, B#block.diff) of
 				false ->
 					{400, [], <<"Invalid Block Proof of Work">>};
 				_  ->
 					ar_bridge:ignore_id(DataSegment),
-					post_block(check_current_block, {B, ReqStruct, OrigPeer})
-			end;
-		false ->
-			post_block(check_current_block, {B, ReqStruct, OrigPeer})
+					post_block(check_current_block, {B, ReqStruct, OrigPeer, DataSegment})
+			end
 	end;
-post_block(check_current_block, {B, ReqStruct, OrigPeer}) ->
+post_block(check_current_block, {B, ReqStruct, OrigPeer, DataSegment}) ->
 	CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
 	case is_atom(CurrentB) of
 		true ->
 			{400, [], <<"Current block not available">>};
 		_ ->
-			post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer})
+			post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer, DataSegment})
 	end;
-post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer}) ->
+post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer, DataSegment}) ->
 	case B#block.height of
 		Height when Height =< CurrentB#block.height ->
 			{400, [], <<"The block height is too low">>};
 		Height when Height > CurrentB#block.height + 50 ->
 			{400, [], <<"The block is too much ahead">>};
 		_ ->
-			post_block(post_block, {B, ReqStruct, OrigPeer})
+			post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment})
 	end;
-post_block(post_block, {B, ReqStruct, OrigPeer}) ->
+post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment}) ->
 	% Everything fine, post block.
 	spawn(
 		fun() ->
@@ -1101,7 +1100,7 @@ post_block(post_block, {B, ReqStruct, OrigPeer}) ->
 				whereis(http_bridge_node),
 				OrigPeer,
 				B,
-				{RecallIndepHash, Key, Nonce}
+				{RecallIndepHash, Key, Nonce, DataSegment}
 			)
 		end
 	),

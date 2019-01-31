@@ -66,7 +66,7 @@ set_remote_peers(PID, Peers) ->
 	PID ! {set_peers, Peers}.
 
 %% @doc Notify the bridge of a new external block.
-add_block(PID, OriginPeer, Block, Recall = {_RecallIndepHash, _Key, _Nonce}) ->
+add_block(PID, OriginPeer, Block, Recall = {_RecallIndepHash, _Key, _Nonce, _DataSegment}) ->
 	PID ! {add_block, OriginPeer, Block, Recall}.
 
 %% @doc Notify the bridge of a new external block.
@@ -288,7 +288,7 @@ send_to_external(S, {NewGS, Msg}) ->
 %% @doc Send a block to external peers in a spawned process.
 send_block_to_external(ExternalPeers, B, OriginPeer, Recall) ->
 	spawn(fun() ->
-		{RecallIndepHash, Key, Nonce} = Recall,
+		{RecallIndepHash, Key, Nonce, DataSegment} = Recall,
 		case ar_block:get_recall_block(OriginPeer, RecallIndepHash, B#block.hash_list, Key, Nonce) of
 			unavailable -> ok;
 			RecallB ->
@@ -298,7 +298,7 @@ send_block_to_external(ExternalPeers, B, OriginPeer, Recall) ->
 						{peers, length(ExternalPeers)}
 					]
 				),
-				send_block_to_external_parallel(ExternalPeers, B, RecallB, Key, Nonce)
+				send_block_to_external_parallel(ExternalPeers, B, RecallB, Key, Nonce, DataSegment)
 		end
 	end).
 
@@ -308,13 +308,19 @@ disorder(List) ->
 %% @doc Send the new block to the peers by first sending it in parallel to the
 %% best/first peers and then continuing sequentially with the rest of the peers
 %% in order.
-send_block_to_external_parallel(Peers, NewB, RecallB, Key, Nonce) ->
+send_block_to_external_parallel(Peers, NewB, RecallB, Key, Nonce, DataSegment) ->
 	{PeersParallel, PeersSequencial} = lists:split(
 		min(length(Peers), ?BLOCK_PROPAGATION_PARALLELIZATION),
 		Peers
 	),
 	Send = fun(Peer) ->
-		ar_http_iface_client:send_new_block(Peer, NewB, RecallB, Key, Nonce)
+		%% TODO always regossip data segment when all nodes start including it
+		case DataSegment of
+			no_data_segment ->
+				ar_http_iface_client:send_new_block(Peer, NewB, RecallB, Key, Nonce);
+			_ ->
+				ar_http_iface_client:send_new_block(Peer, NewB, RecallB, Key, Nonce, DataSegment)
+		end
 	end,
 	ar_util:pmap(Send, PeersParallel),
 	lists:foreach(Send, PeersSequencial).
