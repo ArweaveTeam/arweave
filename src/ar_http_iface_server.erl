@@ -1055,54 +1055,30 @@ post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
 post_block(check_pow, {B, ReqStruct, OrigPeer, DataSegment}) ->
 	case DataSegment of
 		no_data_segment ->
-			post_block(check_current_block, {B, ReqStruct, OrigPeer, DataSegment});
+			post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment});
 		_ ->
 			case ar_mine:validate(DataSegment, B#block.nonce, B#block.diff) of
 				false ->
 					{400, [], <<"Invalid Block Proof of Work">>};
 				_  ->
 					ar_bridge:ignore_id(DataSegment),
-					post_block(check_current_block, {B, ReqStruct, OrigPeer, DataSegment})
+					post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment})
 			end
-	end;
-post_block(check_current_block, {B, ReqStruct, OrigPeer, DataSegment}) ->
-	CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-	case is_atom(CurrentB) of
-		true ->
-			{400, [], <<"Current block not available">>};
-		_ ->
-			post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer, DataSegment})
-	end;
-post_block(check_height, {B, CurrentB, ReqStruct, OrigPeer, DataSegment}) ->
-	case B#block.height of
-		Height when Height =< CurrentB#block.height ->
-			{400, [], <<"The block height is too low">>};
-		Height when Height > CurrentB#block.height + 50 ->
-			{400, [], <<"The block is too much ahead">>};
-		_ ->
-			post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment})
 	end;
 post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment}) ->
 	% Everything fine, post block.
-	spawn(
-		fun() ->
-			JSONRecallB = val_for_key(<<"recall_block">>, ReqStruct),
-			KeyEnc = val_for_key(<<"key">>, ReqStruct),
-			NonceEnc = val_for_key(<<"nonce">>, ReqStruct),
-			Key = ar_util:decode(KeyEnc),
-			Nonce = ar_util:decode(NonceEnc),
-			RecallIndepHash = ar_util:decode(JSONRecallB),
-			ar:info([{
-				sending_external_block_to_bridge,
-				ar_util:encode(B#block.indep_hash)
-			}]),
-			ar_bridge:add_block(
-				whereis(http_bridge_node),
-				OrigPeer,
-				B,
-				{RecallIndepHash, Key, Nonce, DataSegment}
-			)
-		end
+	RecallIndepHash = ar_util:decode(val_for_key(<<"recall_block">>, ReqStruct)),
+	Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
+	Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
+	ar:info([{
+		sending_external_block_to_bridge,
+		ar_util:encode(B#block.indep_hash)
+	}]),
+	ar_bridge:add_block(
+		whereis(http_bridge_node),
+		OrigPeer,
+		B,
+		{RecallIndepHash, Key, Nonce, DataSegment}
 	),
 	{200, [], <<"OK">>}.
 
