@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/5, send_new_block/6, send_new_tx/2, get_block/3]).
+-export([send_new_block/7, send_new_tx/2, get_block/3]).
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
@@ -53,18 +53,7 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, NewB, RecallB, Key, Nonce) ->
-	BlockDataSegment = ar_block:generate_block_data_segment(
-		ar_storage:read_block(NewB#block.previous_block, NewB#block.hash_list),
-		RecallB,
-		lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
-		NewB#block.reward_addr,
-		NewB#block.timestamp,
-		NewB#block.tags
-	),
-	send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment).
-
-send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment) ->
+send_new_block(Peer, NewB, RecallIndepHash, RecallSize, Key, Nonce, BlockDataSegment) ->
 	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
@@ -79,26 +68,28 @@ send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment) ->
 			NewB#block { wallet_list = [] }
 		),
 	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | SmallBlockProps],
+	PostProps = [
+		{<<"new_block">>, {BlockShadowProps}},
+		{<<"recall_block">>, ar_util:encode(RecallIndepHash)},
+		{<<"recall_size">>, RecallSize},
+		%% Add the P2P port field to be backwards compatible with nodes
+		%% running the old version of the P2P port feature.
+		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
+		{<<"key">>, ar_util:encode(Key)},
+		{<<"nonce">>, ar_util:encode(Nonce)}
+	],
+	OptionalProps = case BlockDataSegment of
+		no_data_segment ->
+			[];
+		_ ->
+			[{<<"block_data_segment">>, ar_util:encode(BlockDataSegment)}]
+	end,
 	ar_httpc:request(
 		<<"POST">>,
 		Peer,
 		"/block",
 		p2p_headers(),
-		ar_serialize:jsonify(
-			{
-				[
-					{<<"new_block">>, {BlockShadowProps}},
-					{<<"recall_block">>, ar_util:encode(RecallB#block.indep_hash)},
-					{<<"recall_size">>, RecallB#block.block_size},
-					{<<"block_data_segment">>, ar_util:encode(BlockDataSegment)},
-					%% Add the P2P port field to be backwards compatible with nodes
-					%% running the old version of the P2P port feature.
-					{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
-					{<<"key">>, ar_util:encode(Key)},
-					{<<"nonce">>, ar_util:encode(Nonce)}
-				]
-			}
-		),
+		ar_serialize:jsonify({OptionalProps ++ PostProps}),
 		3 * 1000
 	).
 

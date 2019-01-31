@@ -121,7 +121,7 @@ handle(SPid, {process_new_block, Peer, Height, NewB, Recall}) ->
 	HashList = maps:get(hash_list, StateIn),
 	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, Recall}),
 	ar_node_state:update(SPid, [{gossip, NewGS}]),
-	{RecallIndepHash, Key, Nonce, _} = Recall,
+	{RecallIndepHash, _, Key, Nonce, _} = Recall,
 	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB#block.hash_list, Key, Nonce),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
@@ -212,7 +212,7 @@ handle(_SPid, Msg) ->
 handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, Recall}}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	HashList = maps:get(hash_list, StateIn),
-	{RecallIndepHash, Key, Nonce, _} = Recall,
+	{RecallIndepHash, _, Key, Nonce, _} = Recall,
 	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB#block.hash_list, Key, Nonce),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
@@ -572,7 +572,12 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				end,
 				PotentialTXs
 			),
-			Recall = {RecallB#block.indep_hash, <<>>, <<>>, no_data_segment},
+			Recall = {
+				RecallB#block.indep_hash,
+				RecallB#block.block_size,
+				<<>>, <<>>,
+				generate_block_data_segment(NextB, RecallB)
+			},
 			{NewGS, _} =
 				ar_gossip:send(
 					GS,
@@ -595,6 +600,17 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			)}
 	end.
 
+%% @doc Generates the data segment for the NextB where the RecallB is the recall
+%% block of the previous block to NextB.
+generate_block_data_segment(NextB, RecallB) ->
+	ar_block:generate_block_data_segment(
+		ar_storage:read_block(NextB#block.previous_block, NextB#block.hash_list),
+		RecallB,
+		lists:map(fun ar_storage:read_tx/1, NextB#block.txs),
+		NextB#block.reward_addr,
+		NextB#block.timestamp,
+		NextB#block.tags
+	).
 
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ id := BinID, hash_list := not_joined} = StateIn, NewHs) ->

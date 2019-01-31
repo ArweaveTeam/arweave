@@ -383,10 +383,10 @@ add_external_block_test_() ->
 		),
 		[BH2 | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			{127, 0, 0, 1, 1984},
 			ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
-			BGen, <<>>, <<>>
+			BGen
 		),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
@@ -427,29 +427,35 @@ add_external_block_with_bad_bds_test_() ->
 		{B1, _} = BlocksFromStorage(BHL1),
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
-			ar_http_iface_client:send_new_block(RemotePeer, B1, RecallB0, <<>>, <<>>)
+			send_new_block(
+				RemotePeer,
+				B1,
+				RecallB0
+			)
 		),
 		%% Try to post the same block again
 		?assertMatch(
 			{ok, {{<<"208">>, _}, _, <<"Block Data Segment already processed.">>, _, _}},
-			ar_http_iface_client:send_new_block(RemotePeer, B1, RecallB0, <<>>, <<>>)
+			send_new_block(RemotePeer, B1, RecallB0)
 		),
 		%% Try to post the same block again, but with a different data segment
 		?assertMatch(
 			{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
-			ar_http_iface_client:send_new_block(
+			send_new_block(
 				RemotePeer,
 				B1,
-				RecallB0, <<>>, <<>>, add_rand_suffix(<<"other-block-data-segment">>)
+				RecallB0,
+				add_rand_suffix(<<"other-block-data-segment">>)
 			)
 		),
 		%% Try to post an invalid data segment
 		?assertMatch(
 			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
-			ar_http_iface_client:send_new_block(
+			send_new_block(
 				RemotePeer,
 				B1#block{indep_hash = add_rand_suffix(<<"new-hash">>)},
-				RecallB0, <<>>, <<>>, add_rand_suffix(<<"bad-block-data-segment">>)
+				RecallB0,
+				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
 		)
 	end}.
@@ -487,10 +493,10 @@ add_external_block_with_tx_test_() ->
 		),
 		[BTest|_] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			{127, 0, 0, 1, 1984},
 			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
-			BGen, <<>>, <<>>
+			BGen
 		),
 		% Wait for test block and assert that it contains transaction.
 		?assert(ar_util:do_until(
@@ -522,11 +528,9 @@ fork_recover_by_http_test() ->
 	%% Send only the latest block to Node1 and let it fork recover up to it.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			{127, 0, 0, 1, 1984},
-			ar_storage:read_block(hd(FullBHL), FullBHL),
-			ar_node_utils:find_recall_block(tl(FullBHL)),
-			<<>>, <<>>
+			ar_storage:read_block(hd(FullBHL), FullBHL)
 		)
 	),
 	?assert(ok == wait_until_node_on_block_hash(Node1, hd(FullBHL))).
@@ -1212,3 +1216,36 @@ wait_until_node_on_block_hash(Node, BH) ->
 		10 * 1000
 	),
 	ok.
+
+send_new_block(Peer, B) ->
+	PreviousRecallB = ar_node_utils:find_recall_block(B#block.hash_list),
+	?assert(is_record(PreviousRecallB, block)),
+	send_new_block(Peer, B, PreviousRecallB).
+
+send_new_block(Peer, B, PreviousRecallB) ->
+	send_new_block(
+		Peer,
+		B,
+		PreviousRecallB,
+		generate_block_data_segment(B, PreviousRecallB)
+	).
+
+send_new_block(Peer, B, PreviousRecallB, DataSegment) ->
+	ar_http_iface_client:send_new_block(
+		Peer,
+		B,
+		PreviousRecallB#block.indep_hash,
+		PreviousRecallB#block.block_size,
+		<<>>, <<>>,
+		DataSegment
+	).
+
+generate_block_data_segment(B, PreviousRecallB) ->
+	ar_block:generate_block_data_segment(
+		ar_storage:read_block(B#block.previous_block, B#block.hash_list),
+		PreviousRecallB,
+		lists:map(fun ar_storage:read_tx/1, B#block.txs),
+		B#block.reward_addr,
+		B#block.timestamp,
+		B#block.tags
+	).

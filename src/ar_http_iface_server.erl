@@ -1066,22 +1066,25 @@ post_block(check_pow, {BShadow, ReqStruct, OrigPeer, DataSegment}) ->
 			end
 	end;
 post_block(post_block, {BShadow, ReqStruct, OrigPeer, DataSegment}) ->
-	% Everything fine, post block.
-	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
-	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
-	RecallIndepHash = ar_util:decode(val_for_key(<<"recall_block">>, ReqStruct)),
-	Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
-	Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
-	ar:info([{
-		sending_external_block_to_bridge,
-		ar_util:encode(B#block.indep_hash)
-	}]),
-	ar_bridge:add_block(
-		whereis(http_bridge_node),
-		OrigPeer,
-		B,
-		{RecallIndepHash, Key, Nonce, DataSegment}
-	),
+	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
+	%% all validation steps already passed, we can do the rest in a separate
+	spawn(fun() ->
+		RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
+		B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
+		RecallIndepHash = ar_util:decode(val_for_key(<<"recall_block">>, ReqStruct)),
+		Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
+		Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
+		ar:info([{
+			sending_external_block_to_bridge,
+			ar_util:encode(B#block.indep_hash)
+		}]),
+		ar_bridge:add_block(
+			whereis(http_bridge_node),
+			OrigPeer,
+			B,
+			{RecallIndepHash, RecallSize, Key, Nonce, DataSegment}
+		)
+	end),
 	{200, [], <<"OK">>}.
 
 %% @doc Return the block hash list associated with a block.
