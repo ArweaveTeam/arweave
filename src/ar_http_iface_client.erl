@@ -84,7 +84,7 @@ send_new_block(Peer, NewB, RecallB, Key, Nonce) ->
 	send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment).
 
 send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment) ->
-	HashList =
+	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
 			lists:sublist(
@@ -93,14 +93,11 @@ send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment) ->
 				?STORE_BLOCKS_BEHIND_CURRENT
 			)
 		),
-	{TempJSONStruct} =
+	{SmallBlockProps} =
 		ar_serialize:block_to_json_struct(
 			NewB#block { wallet_list = [] }
 		),
-	BlockJSON =
-		{
-			[{<<"hash_list">>, HashList }|TempJSONStruct]
-		},
+	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | SmallBlockProps],
 	ar_httpc:request(
 		<<"POST">>,
 		Peer,
@@ -109,7 +106,7 @@ send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment) ->
 		ar_serialize:jsonify(
 			{
 				[
-					{<<"new_block">>, BlockJSON},
+					{<<"new_block">>, {BlockShadowProps}},
 					{<<"recall_block">>, ar_util:encode(RecallB#block.indep_hash)},
 					{<<"recall_size">>, RecallB#block.block_size},
 					{<<"block_data_segment">>, ar_util:encode(BlockDataSegment)},
