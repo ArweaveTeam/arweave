@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/3, send_new_block/5, send_new_block/6, send_new_tx/2, get_block/3]).
+-export([send_new_block/5, send_new_block/6, send_new_tx/2, get_block/3]).
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
@@ -53,25 +53,6 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, NewB, RecallB) ->
-	case ar_key_db:get(RecallB#block.indep_hash) of
-		[{Key, Nonce}] ->
-			send_new_block(
-				Peer,
-				NewB,
-				RecallB,
-				Key,
-				Nonce
-			);
-		_ ->
-			send_new_block(
-				Peer,
-				NewB,
-				RecallB,
-				<<>>,
-				<<>>
-			)
-	end.
 send_new_block(Peer, NewB, RecallB, Key, Nonce) ->
 	BlockDataSegment = ar_block:generate_block_data_segment(
 		ar_storage:read_block(NewB#block.previous_block, NewB#block.hash_list),

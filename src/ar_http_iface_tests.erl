@@ -386,7 +386,7 @@ add_external_block_test_() ->
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
 			ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
-			BGen
+			BGen, <<>>, <<>>
 		),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
@@ -427,12 +427,12 @@ add_external_block_with_bad_bds_test_() ->
 		{B1, _} = BlocksFromStorage(BHL1),
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
-			ar_http_iface_client:send_new_block(RemotePeer, B1, RecallB0)
+			ar_http_iface_client:send_new_block(RemotePeer, B1, RecallB0, <<>>, <<>>)
 		),
 		%% Try to post the same block again
 		?assertMatch(
 			{ok, {{<<"208">>, _}, _, <<"Block Data Segment already processed.">>, _, _}},
-			ar_http_iface_client:send_new_block(RemotePeer, B1, RecallB0)
+			ar_http_iface_client:send_new_block(RemotePeer, B1, RecallB0, <<>>, <<>>)
 		),
 		%% Try to post the same block again, but with a different data segment
 		?assertMatch(
@@ -440,7 +440,7 @@ add_external_block_with_bad_bds_test_() ->
 			ar_http_iface_client:send_new_block(
 				RemotePeer,
 				B1,
-				RecallB0, <<>>,	<<>>, add_rand_suffix(<<"other-block-data-segment">>)
+				RecallB0, <<>>, <<>>, add_rand_suffix(<<"other-block-data-segment">>)
 			)
 		),
 		%% Try to post an invalid data segment
@@ -490,7 +490,7 @@ add_external_block_with_tx_test_() ->
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
 			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
-			BGen
+			BGen, <<>>, <<>>
 		),
 		% Wait for test block and assert that it contains transaction.
 		?assert(ar_util:do_until(
@@ -525,7 +525,8 @@ fork_recover_by_http_test() ->
 		ar_http_iface_client:send_new_block(
 			{127, 0, 0, 1, 1984},
 			ar_storage:read_block(hd(FullBHL), FullBHL),
-			ar_node_utils:find_recall_block(tl(FullBHL))
+			ar_node_utils:find_recall_block(tl(FullBHL)),
+			<<>>, <<>>
 		)
 	),
 	?assert(ok == wait_until_node_on_block_hash(Node1, hd(FullBHL))).
