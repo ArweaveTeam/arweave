@@ -1043,30 +1043,32 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
 			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, DataSegment})
 	end;
 post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
-	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
-	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
-	case B#block.diff >= ?MIN_DIFF of
+	case BShadow#block.diff >= ?MIN_DIFF of
 		true ->
-			post_block(check_pow, {B, ReqStruct, OrigPeer, DataSegment});
+			post_block(check_pow, {BShadow, ReqStruct, OrigPeer, DataSegment});
 		_ ->
 			{400, [], <<"Difficulty too low">>}
 	end;
-%% TODO: Make block_data_segment mandatory when all nodes are posting it.
-post_block(check_pow, {B, ReqStruct, OrigPeer, DataSegment}) ->
+%% Note! Checking PoW should be as cheap as possible. All slow steps should
+%% be after the PoW check to reduce the possibility of doing a DOS attack on
+%% the network.
+post_block(check_pow, {BShadow, ReqStruct, OrigPeer, DataSegment}) ->
 	case DataSegment of
 		no_data_segment ->
-			post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment});
+			post_block(post_block, {BShadow, ReqStruct, OrigPeer, DataSegment});
 		_ ->
-			case ar_mine:validate(DataSegment, B#block.nonce, B#block.diff) of
+			case ar_mine:validate(DataSegment, BShadow#block.nonce, BShadow#block.diff) of
 				false ->
 					{400, [], <<"Invalid Block Proof of Work">>};
 				_  ->
 					ar_bridge:ignore_id(DataSegment),
-					post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment})
+					post_block(post_block, {BShadow, ReqStruct, OrigPeer, DataSegment})
 			end
 	end;
-post_block(post_block, {B, ReqStruct, OrigPeer, DataSegment}) ->
+post_block(post_block, {BShadow, ReqStruct, OrigPeer, DataSegment}) ->
 	% Everything fine, post block.
+	RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
+	B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
 	RecallIndepHash = ar_util:decode(val_for_key(<<"recall_block">>, ReqStruct)),
 	Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
 	Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
