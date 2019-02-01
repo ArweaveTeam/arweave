@@ -131,7 +131,6 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, Recal
 		Timestamp
 	);
 add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
-	% ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
 	NewHeight = CurrentB#block.height + 1,
 	RecallB = ar_node_utils:find_recall_block(HashList),
 	TXs = [T#tx.id || T <- RawTXs],
@@ -221,14 +220,11 @@ calculate_recall_block(B, HashList) when is_record(B, block) ->
 		_ -> calculate_recall_block(B#block.indep_hash, B#block.height, HashList)
 	end.
 calculate_recall_block(IndepHash, Height, _HashList) ->
-	%ar:d({recall_indep_hash, binary:decode_unsigned(IndepHash)}),
-	%ar:d({recall_height, Height}),
 	binary:decode_unsigned(IndepHash) rem Height.
 
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TXs and the nonce.
 hash(BDS, Nonce) ->
-	% ar:d({hash, {data, BDS}, {nonce, Nonce}, {timestamp, Timestamp}}),
 	crypto:hash(
 		?MINING_HASH_ALG,
 		<< Nonce/binary, BDS/binary >>
@@ -327,7 +323,6 @@ tx_id(TX) -> TX#tx.id.
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.
 mine(B, RecallB, TXs, RewardAddr, Tags) ->
-	%ar:d({weave_mine, {block, B}, {recall, RecallB}, {tx, TXs}, {reward, RewardAddr}, {tags, Tags}}),
 	ar_mine:start(B, RecallB, TXs, RewardAddr, Tags, self()),
 	receive
 		{work_complete, TXs, _Hash, Diff, Nonce, Timestamp} ->
