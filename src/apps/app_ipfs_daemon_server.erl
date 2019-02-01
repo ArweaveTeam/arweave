@@ -90,27 +90,26 @@ handle(Method, Path, Req) ->
 %%% Handlers
 
 -type endpoint() :: binary().
-%	<<"getsend">> |
-%	<<"balance">> |
-%	<<"pending">> |
-%	<<"done">>.
+%	POST <<"getsend">> |
+%	GET  <<"balance">> |
+%	GET  <<"status">>.
 -spec really_handle(elli_http_method(), [endpoint()], elli_http_request()) ->
 	elli_http_response().
-really_handle('POST', [Endpoint], Req) ->
-	case validate_request(Endpoint, Req) of
+really_handle(Method, [Endpoint], Req) ->
+	case validate_request(Method, Endpoint, Req) of
 		{error, Response} ->
 			Response;
 		{ok, Args} ->
-			process_request(Endpoint, Args)
+			process_request(Method, Endpoint, Args)
 	end;
 really_handle(_,_,_) -> {404, [], <<"Endpoint not found">>}.
 
 %%% Validators
 
 %% @doc validate a request and return required info
--spec validate_request(path(), elli_http_request()) ->
+-spec validate_request(elli_http_method(), path(), elli_http_request()) ->
 	{ok, list()} | {error, elli_http_response()}.
-validate_request(<<"getsend">>, Req) ->
+validate_request('POST', <<"getsend">>, Req) ->
 	case validate_req_fields_auth(Req, [<<"api_key">>, <<"ipfs_hash">>]) of
 		{ok, [APIKey, IPFSHash], Queue, Wallet} ->
 			case already_reported(APIKey, IPFSHash) of
@@ -132,37 +131,32 @@ validate_request(<<"getsend">>, Req) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request(<<"pending">>, Req) ->
-	case validate_req_fields_auth(Req, [<<"api_key">>]) of
-		{ok, [APIKey], _Queue, _Wallet} ->
-			{ok, [APIKey]};
-		{error, Response} ->
-			{error, Response}
-	end;
-validate_request(<<"done">>, Req) ->
+validate_request('GET', <<"status">>, Req) ->
 	case validate_req_fields_auth(Req, [<<"api_key">>, <<"n">>]) of
 		{ok, [APIKey, N], _Queue, _Wallet} ->
 			{ok, [APIKey, N]};
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request(<<"balance">>, Req) ->
+validate_request('GET', <<"balance">>, Req) ->
 	case validate_req_fields_auth(Req, [<<"api_key">>]) of
 		{ok, [APIKey], _Queue, Wallet} ->
 			{ok, [APIKey, Wallet]};
 		{error, Response} ->
 			{error, Response}
-	end.
+	end;
+validate_request(_,_,) ->
+	{error, {400, [], <<"Unrecognised request">>}}.
 
 %%% Processors
 
 %% @doc Process a validated request.
--spec process_request(path(), list()) -> elli_http_response().
-process_request(<<"getsend">>, [APIKey, Queue, Wallet, IPFSHash]) ->
+-spec process_request(elli_http_method(), path(), list()) -> elli_http_response().
+process_request('POST', <<"getsend">>, [APIKey, Queue, Wallet, IPFSHash]) ->
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
 	update_status(APIKey, IPFSHash, pending),
 	{200, [], <<"Request sent to queue">>};
-process_request(<<"status">>, [APIKey, N]) ->
+process_request('GET', <<"status">>, [APIKey, N]) ->
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			({ok, [T,H,S]}, Acc) ->
 				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
@@ -174,7 +168,7 @@ process_request(<<"status">>, [APIKey, N]) ->
 		queued_status(APIKey)))),
 	JsonB = ar_serialize:jsonify(nthhead(N, JsonS)),
 	{200, [], JsonB};
-process_request(<<"balance">>, [_APIKey, Wallet]) ->
+process_request('GET', <<"balance">>, [_APIKey, Wallet]) ->
 	Address = ar_wallet:to_address(Wallet),
 	Balance = ar_node:get_balance(whereis(http_entrypoint_node), Wallet),
 	JsonS = {[
