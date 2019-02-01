@@ -284,14 +284,13 @@ send_to_external(S, {NewGS, Msg}) ->
 %% @doc Send a block to external peers in a spawned process.
 send_block_to_external(ExternalPeers, B, BDS, Recall) ->
 	spawn(fun() ->
-		{RecallIndepHash, RecallSize, Key, Nonce} = Recall,
 		ar:report(
 			[
 				{sending_block_to_external_peers, ar_util:encode(B#block.indep_hash)},
 				{peers, length(ExternalPeers)}
 			]
 		),
-		send_block_to_external_parallel(ExternalPeers, B, BDS, RecallIndepHash, RecallSize, Key, Nonce)
+		send_block_to_external_parallel(ExternalPeers, B, BDS, Recall)
 	end).
 
 disorder(List) ->
@@ -300,13 +299,13 @@ disorder(List) ->
 %% @doc Send the new block to the peers by first sending it in parallel to the
 %% best/first peers and then continuing sequentially with the rest of the peers
 %% in order.
-send_block_to_external_parallel(Peers, NewB, BDS, RecallIndepHash, RecallSize, Key, Nonce) ->
+send_block_to_external_parallel(Peers, NewB, BDS, Recall) ->
 	{PeersParallel, PeersSequencial} = lists:split(
 		min(length(Peers), ?BLOCK_PROPAGATION_PARALLELIZATION),
 		Peers
 	),
 	Send = fun(Peer) ->
-		ar_http_iface_client:send_new_block(Peer, NewB, RecallIndepHash, RecallSize, Key, Nonce, BDS)
+		ar_http_iface_client:send_new_block(Peer, NewB, BDS, Recall)
 	end,
 	ar_util:pmap(Send, PeersParallel),
 	lists:foreach(Send, PeersSequencial).

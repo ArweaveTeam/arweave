@@ -1234,10 +1234,13 @@ send_new_block(Peer, B, PreviousRecallB, BDS) ->
 	ar_http_iface_client:send_new_block(
 		Peer,
 		B,
-		PreviousRecallB#block.indep_hash,
-		PreviousRecallB#block.block_size,
-		<<>>, <<>>,
-		BDS
+		BDS,
+		{
+			PreviousRecallB#block.indep_hash,
+			PreviousRecallB#block.block_size,
+			<<>>,
+			<<>>
+		}
 	).
 
 generate_block_data_segment(B, PreviousRecallB) ->

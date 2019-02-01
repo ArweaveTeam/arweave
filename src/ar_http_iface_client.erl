@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/7, send_new_tx/2, get_block/3]).
+-export([send_new_block/4, send_new_tx/2, get_block/3]).
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
@@ -53,7 +53,7 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, NewB, RecallIndepHash, RecallSize, Key, Nonce, BDS) ->
+send_new_block(Peer, NewB, BDS, {RecallIndepHash, RecallSize, Key, Nonce}) ->
 	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
