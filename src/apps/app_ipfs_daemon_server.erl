@@ -95,21 +95,20 @@ handle(Method, Path, Req) ->
 %	GET  <<"status">>.
 -spec really_handle(elli_http_method(), [endpoint()], elli_http_request()) ->
 	elli_http_response().
-really_handle(Method, [Endpoint], Req) ->
+really_handle(Method, Endpoint, Req) ->
 	case validate_request(Method, Endpoint, Req) of
 		{error, Response} ->
 			Response;
 		{ok, Args} ->
 			process_request(Method, Endpoint, Args)
-	end;
-really_handle(_,_,_) -> {404, [], <<"Endpoint not found">>}.
+	end.
 
 %%% Validators
 
 %% @doc validate a request and return required info
 -spec validate_request(elli_http_method(), path(), elli_http_request()) ->
 	{ok, list()} | {error, elli_http_response()}.
-validate_request('POST', <<"getsend">>, Req) ->
+validate_request('POST', [<<"getsend">>], Req) ->
 	case validate_req_fields_auth(Req, [<<"api_key">>, <<"ipfs_hash">>]) of
 		{ok, [APIKey, IPFSHash], Queue, Wallet} ->
 			case already_reported(APIKey, IPFSHash) of
@@ -131,16 +130,16 @@ validate_request('POST', <<"getsend">>, Req) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', <<"status">>, Req) ->
-	case validate_req_fields_auth(Req, [<<"api_key">>, <<"n">>]) of
-		{ok, [APIKey, N], _Queue, _Wallet} ->
-			{ok, [APIKey, N]};
+validate_request('GET', [<<"status">>, APIKey], _Req) ->
+	case is_authorized(APIKey) of
+		{ok, _Queue, _Wallet} ->
+			{ok, [APIKey]};
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', <<"balance">>, Req) ->
-	case validate_req_fields_auth(Req, [<<"api_key">>]) of
-		{ok, [APIKey], _Queue, Wallet} ->
+validate_request('GET', [<<"balance">>, APIKey], _Req) ->
+	case is_authorized(APIKey) of
+		{ok, _Queue, Wallet} ->
 			{ok, [APIKey, Wallet]};
 		{error, Response} ->
 			{error, Response}
@@ -156,7 +155,7 @@ process_request('POST', <<"getsend">>, [APIKey, Queue, Wallet, IPFSHash]) ->
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
 	update_status(APIKey, IPFSHash, pending),
 	{200, [], <<"Request sent to queue">>};
-process_request('GET', <<"status">>, [APIKey, N]) ->
+process_request('GET', <<"status">>, [APIKey]) ->
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			({ok, [T,H,S]}, Acc) ->
 				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
@@ -166,7 +165,7 @@ process_request('GET', <<"status">>, [APIKey, N]) ->
 		 end,
 		[],
 		queued_status(APIKey)))),
-	JsonB = ar_serialize:jsonify(nthhead(N, JsonS)),
+	JsonB = ar_serialize:jsonify(JsonS),
 	{200, [], JsonB};
 process_request('GET', <<"balance">>, [_APIKey, Wallet]) ->
 	Address = ar_wallet:to_address(Wallet),
@@ -283,13 +282,6 @@ is_app_running() ->
 %% @doc Check if the API key is on the books. If so, return their wallet.
 is_authorized(APIKey) ->
 	?MODULE:get_key_q_wallet(APIKey).
-
-nthhead(N, Xs) ->
-	L = length(Xs),
-	case N >= L of
-		true  -> Xs;
-		false -> lists:reverse(lists:nthtail(L-N, lists:reverse(Xs)))
-	end.
 
 queued_status(APIKey) ->
 	case mnesia:dirty_select(
