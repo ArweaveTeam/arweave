@@ -145,7 +145,7 @@ validate_request('GET', <<"balance">>, Req) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request(_,_,) ->
+validate_request(_,_,_) ->
 	{error, {400, [], <<"Unrecognised request">>}}.
 
 %%% Processors
