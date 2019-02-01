@@ -187,7 +187,7 @@ server(
 %% TODO: Change byte string for nonces to bitstring
 miner(
 	S = #state {
-		data_segment = DataSegment,
+		data_segment = BDS,
 		diff = Diff,
 		nonces = Nonces
 	},
@@ -196,7 +196,7 @@ miner(
 		stop -> ok;
 		hash ->
 			schedule_hash(S),
-			case validate(DataSegment, iolist_to_binary(Nonces), Diff) of
+			case validate(BDS, iolist_to_binary(Nonces), Diff) of
 				false ->
 					case(length(Nonces) > 512) and coinflip() of
 						false ->
@@ -258,17 +258,17 @@ next_diff(CurrentB) ->
 	end.
 
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
-validate(DataSegment, Nonce, Diff) ->
+validate(BDS, Nonce, Diff) ->
 	NewDiff = adjust_for_min_diff(Diff),
-	case NewHash = ar_weave:hash(DataSegment, Nonce) of
+	case NewHash = ar_weave:hash(BDS, Nonce) of
 		<< 0:NewDiff, _/bitstring >> -> NewHash;
 		_ -> false
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
-validate_by_hash(DataSegmentHash, Diff) ->
+validate_by_hash(BDSHash, Diff) ->
 	NewDiff = adjust_for_min_diff(Diff),
-	case DataSegmentHash of
+	case BDSHash of
 		<< 0:NewDiff, _/bitstring >> ->
 			true;
 		_ ->
@@ -294,7 +294,7 @@ basic_test() ->
 	start(B, RecallB, [], unclaimed, [], self()),
 	receive
 		{work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
-			DataSegment = ar_block:generate_block_data_segment(
+			BDS = ar_block:generate_block_data_segment(
 				B,
 				RecallB,
 				[],
@@ -304,7 +304,7 @@ basic_test() ->
 			),
 			Res = crypto:hash(
 				?MINING_HASH_ALG,
-				<< Nonce/binary, DataSegment/binary >>
+				<< Nonce/binary, BDS/binary >>
 			),
 			<< 0:Diff, _/bitstring >> = Res
 	end.
@@ -323,7 +323,7 @@ change_data_test() ->
 	timer:sleep(500),
 	receive
 		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
-			DataSegment = ar_block:generate_block_data_segment(
+			BDS = ar_block:generate_block_data_segment(
 				B,
 				RecallB,
 				MinedTXs,
@@ -333,7 +333,7 @@ change_data_test() ->
 			),
 			Res = crypto:hash(
 				?MINING_HASH_ALG,
-				<< Nonce/binary, DataSegment/binary >>
+				<< Nonce/binary, BDS/binary >>
 			),
 			<< 0:Diff, _/bitstring >> = Res,
 			MinedTXs == NewTXs
