@@ -4,9 +4,8 @@
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
--export([ignore_id/1]).
+-export([ignore_id/1, is_id_ignored/1]).
 -export([ignore_peer/2]).
--export([is_id_ignored/1]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -94,15 +93,15 @@ ignore_id(ID) ->
 reset_timer(PID, get_more_peers) ->
 	erlang:send_after(?GET_MORE_PEERS_TIME, PID, {get_more_peers, PID}).
 
-ignore_peer(_PID, []) -> ok;
-ignore_peer(PID, Peer) ->
-	PID ! {ignore_peer, Peer}.
-
 is_id_ignored(ID) ->
 	case ets:lookup(ignored_ids, ID) of
 		[{ID, ignored}] -> true;
 		[] -> false
 	end.
+
+ignore_peer(_PID, []) -> ok;
+ignore_peer(PID, Peer) ->
+	PID ! {ignore_peer, Peer}.
 
 %% @doc Is the IP address in question a loopback ('us') address?
 is_loopback_ip({A, B, C, D, _Port}) -> is_loopback_ip({A, B, C, D});
