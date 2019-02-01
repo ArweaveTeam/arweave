@@ -2,13 +2,17 @@
 -export([start/0, stop/0, handle/3]).
 -export([put_key_wallet_address/2, put_key_wallet/2, get_key_q_wallet/1, del_key/1]).
 -export([already_reported/2]).
--export([ipfs_getter/4, sufficient_funds/2]).
+-export([cleaner_upper/0, ipfs_getter/4, sufficient_funds/2]).
 -include("ar.hrl").
 
 -ifdef(DEBUG).
+-define(CLEANER_WAIT, 6 * 60 * 1000).
 -define(MAX_IPFSAR_PENDING, 3).
+-define(N_STATS_TO_KEEP, 25).
 -else.
+-define(CLEANER_WAIT, 6 * 60 * 60 * 1000).
 -define(MAX_IPFSAR_PENDING, 100).
+-define(N_STATS_TO_KEEP, 250).
 -endif.
 
 -type elli_http_method() :: 'GET' | 'POST'.
@@ -28,9 +32,10 @@
 %% @doc Start anything that needs to be started.  So far, just the mnesia table.
 start() ->
 	%% assume mnesia already started (used in ar_tx_search)
-	create_mnesia_table(ipfsar_key_q_wal,   bag, record_info(fields, ipfsar_key_q_wal)),
+	create_mnesia_table(ipfsar_key_q_wal,   set, record_info(fields, ipfsar_key_q_wal)),
 	create_mnesia_table(ipfsar_ipfs_status, bag, record_info(fields, ipfsar_ipfs_status)),
-	create_mnesia_table(ipfsar_most_recent, set, record_info(fields, ipfsar_most_recent)).
+	create_mnesia_table(ipfsar_most_recent, set, record_info(fields, ipfsar_most_recent)),
+	spawn(?MODULE, cleaner_upper, []).
 
 %% @doc Stop all the queues.
 stop() ->
@@ -210,6 +215,37 @@ already_reported(_APIKey, IPFSHash) ->
 		[]      -> {ok, new_hash};
 	    _       -> {error, already_reported}
 	end.
+
+%% @doc remove old ipfsar_ipfs_status records.  Only keep newest 250 per key.
+cleaner_upper() ->
+	Keys = mnesia:dirty_select(
+			ipfsar_key_q_wal,
+			[{
+				#ipfsar_key_q_wal{api_key='$1', _='_'},
+				[],
+				['$1']
+			}]),
+	lists:foreach(fun(APIKey) ->
+			THSs = lists:reverse(lists:sort(mnesia:dirty_select(
+				ipfsar_ipfs_status,
+				[{
+					#ipfsar_ipfs_status{
+						api_key=APIKey, timestamp='$1', ipfs_hash='$2', status='$3'},
+					[],
+					[['$1', '$2', '$3']]
+				}]))),
+			ToDelete = case length(THSs) > ?N_STATS_TO_KEEP of
+				true -> lists:nthtail(?N_STATS_TO_KEEP, THSs);
+				false -> []
+			end,
+			lists:foreach(fun([T,H,S]) ->
+					mnesia:delete_object(#ipfsar_ipfs_status{
+						api_key=APIKey, timestamp=T, ipfs_hash=H, status=S})
+				end,
+				ToDelete)
+		end,
+		Keys),
+	timer:apply_after(?CLEANER_WAIT, ?MODULE, cleaner_upper, []).
 
 create_mnesia_table(Name, Type, Info) ->
 	TabDef = [{attributes, Info}, {disc_copies, [node()]}, {type, Type}],
