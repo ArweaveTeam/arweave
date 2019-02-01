@@ -354,8 +354,8 @@ verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 	Indep == ar_weave:indep_hash(Block).
 
 %% @doc Verify the dependent hash of a given block is valid
-verify_dep_hash(NewB, BlockDataSegmentHash) ->
-	NewB#block.hash == BlockDataSegmentHash.
+verify_dep_hash(NewB, BDSHash) ->
+	NewB#block.hash == BDSHash.
 
 %% @doc Verify that the block was created within the last ten minutes
 verify_timestamp(Timestamp, NewB) ->

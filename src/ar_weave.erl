@@ -227,11 +227,11 @@ calculate_recall_block(IndepHash, Height, _HashList) ->
 
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TXs and the nonce.
-hash(DataSegment, Nonce) ->
-	% ar:d({hash, {data, DataSegment}, {nonce, Nonce}, {timestamp, Timestamp}}),
+hash(BDS, Nonce) ->
+	% ar:d({hash, {data, BDS}, {nonce, Nonce}, {timestamp, Timestamp}}),
 	crypto:hash(
 		?MINING_HASH_ALG,
-		<< Nonce/binary, DataSegment/binary >>
+		<< Nonce/binary, BDS/binary >>
 	).
 
 %% @doc Create an independent hash from a block. Independent hashes

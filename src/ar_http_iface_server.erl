@@ -1006,66 +1006,66 @@ post_block(request, Req) ->
 post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}) ->
 	% Check if block is already known.
 	case lists:keyfind(<<"block_data_segment">>, 1, ReqStruct) of
-		{_, DataSegmentEncoded} ->
-			DataSegment = ar_util:decode(DataSegmentEncoded),
-			case ar_bridge:is_id_ignored(DataSegment) of
+		{_, BDSEncoded} ->
+			BDS = ar_util:decode(BDSEncoded),
+			case ar_bridge:is_id_ignored(BDS) of
 				true ->
 					{208, [], <<"Block Data Segment already processed.">>};
 				false ->
-					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, DataSegment})
+					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS})
 			end;
 		_ ->
 			post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, no_data_segment})
 	end;
 %% TODO: Remove the check_is_ignored clause when all nodes send block_data_segment.
-post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
+post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		true ->
 			{208, <<"Block already processed.">>};
 		false ->
 			ar_bridge:ignore_id(BShadow#block.indep_hash),
-			post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, DataSegment})
+			post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS})
 	end;
-post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
+post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS}) ->
 	% Check if node is joined.
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			{503, [], <<"Not joined.">>};
 		true ->
-			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, DataSegment})
+			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS})
 	end;
-post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
+post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}) ->
 	% Verify the timestamp of the block shadow.
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false ->
 			{404, [], <<"Invalid block.">>};
 		true ->
-			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, DataSegment})
+			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS})
 	end;
-post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, DataSegment}) ->
+post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}) ->
 	case BShadow#block.diff >= ?MIN_DIFF of
 		true ->
-			post_block(check_pow, {BShadow, ReqStruct, OrigPeer, DataSegment});
+			post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS});
 		_ ->
 			{400, [], <<"Difficulty too low">>}
 	end;
 %% Note! Checking PoW should be as cheap as possible. All slow steps should
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
-post_block(check_pow, {BShadow, ReqStruct, OrigPeer, DataSegment}) ->
-	case DataSegment of
+post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}) ->
+	case BDS of
 		no_data_segment ->
-			post_block(post_block, {BShadow, ReqStruct, OrigPeer, DataSegment});
+			post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS});
 		_ ->
-			case ar_mine:validate(DataSegment, BShadow#block.nonce, BShadow#block.diff) of
+			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff) of
 				false ->
 					{400, [], <<"Invalid Block Proof of Work">>};
 				_  ->
-					ar_bridge:ignore_id(DataSegment),
-					post_block(post_block, {BShadow, ReqStruct, OrigPeer, DataSegment})
+					ar_bridge:ignore_id(BDS),
+					post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS})
 			end
 	end;
-post_block(post_block, {BShadow, ReqStruct, OrigPeer, DataSegment}) ->
+post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->
@@ -1082,7 +1082,7 @@ post_block(post_block, {BShadow, ReqStruct, OrigPeer, DataSegment}) ->
 			whereis(http_bridge_node),
 			OrigPeer,
 			B,
-			{RecallIndepHash, RecallSize, Key, Nonce, DataSegment}
+			{RecallIndepHash, RecallSize, Key, Nonce, BDS}
 		)
 	end),
 	{200, [], <<"OK">>}.

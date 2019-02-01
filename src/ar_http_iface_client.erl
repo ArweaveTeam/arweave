@@ -53,7 +53,7 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, NewB, RecallIndepHash, RecallSize, Key, Nonce, BlockDataSegment) ->
+send_new_block(Peer, NewB, RecallIndepHash, RecallSize, Key, Nonce, BDS) ->
 	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
@@ -78,11 +78,11 @@ send_new_block(Peer, NewB, RecallIndepHash, RecallSize, Key, Nonce, BlockDataSeg
 		{<<"key">>, ar_util:encode(Key)},
 		{<<"nonce">>, ar_util:encode(Nonce)}
 	],
-	OptionalProps = case BlockDataSegment of
+	OptionalProps = case BDS of
 		no_data_segment ->
 			[];
 		_ ->
-			[{<<"block_data_segment">>, ar_util:encode(BlockDataSegment)}]
+			[{<<"block_data_segment">>, ar_util:encode(BDS)}]
 	end,
 	ar_httpc:request(
 		<<"POST">>,
