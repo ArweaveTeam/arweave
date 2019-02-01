@@ -167,9 +167,8 @@ process_request(<<"status">>, [APIKey, N]) ->
 		 end,
 		[],
 		queued_status(APIKey)))),
-	JsonB = ar_serialize:jsonify(JsonS),
+	JsonB = ar_serialize:jsonify(nthhead(N, JsonS)),
 	{200, [], JsonB};
-
 process_request(<<"balance">>, [_APIKey, Wallet]) ->
 	Address = ar_wallet:to_address(Wallet),
 	Balance = ar_node:get_balance(whereis(http_entrypoint_node), Wallet),
@@ -254,6 +253,13 @@ is_app_running() ->
 %% @doc Check if the API key is on the books. If so, return their wallet.
 is_authorized(APIKey) ->
 	?MODULE:get_key_q_wallet(APIKey).
+
+nthhead(N, Xs) ->
+	L = length(Xs),
+	case N >= L of
+		true  -> Xs;
+		false -> lists:reverse(lists:nthtail(L-N, lists:reverse(Xs)))
+	end.
 
 queued_status(APIKey) ->
 	case mnesia:dirty_select(
