@@ -114,12 +114,12 @@ handle(SPid, {cancel_tx, TXID, Sig}) ->
 	{ok, StateOut} = cancel_tx(StateIn, TXID, Sig),
 	ar_node_state:update(SPid, StateOut),
 	{ok, cancel_tx};
-handle(SPid, {process_new_block, Peer, Height, NewB, Recall}) ->
+handle(SPid, {process_new_block, Peer, Height, NewB, BDS, Recall}) ->
 	% We have a new block. Distribute it to the gossip network.
 	{ok, StateIn} = ar_node_state:all(SPid),
 	GS = maps:get(gossip, StateIn),
 	HashList = maps:get(hash_list, StateIn),
-	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, Recall}),
+	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, BDS, Recall}),
 	ar_node_state:update(SPid, [{gossip, NewGS}]),
 	{RecallIndepHash, _, Key, Nonce, _} = Recall,
 	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB#block.hash_list, Key, Nonce),
@@ -209,10 +209,10 @@ handle(_SPid, Msg) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
 %% @doc Handle the gossip receive results.
-handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, Recall}}) ->
+handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, _BDS, Recall}}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	HashList = maps:get(hash_list, StateIn),
-	{RecallIndepHash, _, Key, Nonce, _} = Recall,
+	{RecallIndepHash, _, Key, Nonce} = Recall,
 	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB#block.hash_list, Key, Nonce),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
@@ -575,13 +575,14 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			Recall = {
 				RecallB#block.indep_hash,
 				RecallB#block.block_size,
-				<<>>, <<>>,
-				generate_block_data_segment(NextB, RecallB)
+				<<>>,
+				<<>>
 			},
+			BDS = generate_block_data_segment(NextB, RecallB),
 			{NewGS, _} =
 				ar_gossip:send(
 					GS,
-					{new_block, self(), NextB#block.height, NextB, Recall}
+					{new_block, self(), NextB#block.height, NextB, BDS, Recall}
 				),
 			{ok, ar_node_utils:reset_miner(
 				StateNew#{

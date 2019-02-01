@@ -659,8 +659,8 @@ handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
 handle(_SPid, {apply_tx, TX}) ->
 	{task, {encounter_new_tx, TX}};
-handle(_SPid, {new_block, Peer, Height, NewB, Recall}) ->
-	{task, {process_new_block, Peer, Height, NewB, Recall}};
+handle(_SPid, {new_block, Peer, Height, NewB, BDS, Recall}) ->
+	{task, {process_new_block, Peer, Height, NewB, BDS, Recall}};
 handle(_SPid, {replace_block_list, NewBL}) ->
 	% Replace the entire stored block list, regenerating the hash list.
 	{task, {replace_block_list, NewBL}};

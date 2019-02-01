@@ -1082,7 +1082,8 @@ post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}) ->
 			whereis(http_bridge_node),
 			OrigPeer,
 			B,
-			{RecallIndepHash, RecallSize, Key, Nonce, BDS}
+			BDS,
+			{RecallIndepHash, RecallSize, Key, Nonce}
 		)
 	end),
 	{200, [], <<"OK">>}.
