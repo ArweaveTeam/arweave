@@ -19,6 +19,9 @@
 -type elli_http_request() :: term().
 -type elli_http_response() :: {non_neg_integer(), list(), binary()}.
 -type path() :: binary() | list(binary()).
+%	POST [<<"getsend">>] |
+%	GET  [<<"balance">>, APIKey] |
+%	GET  [<<"status">>, APIKey].
 
 -record(ipfsar_key_q_wal, {api_key, queue_pid, wallet}).
 -record(ipfsar_ipfs_status, {
@@ -89,18 +92,14 @@ handle(Method, Path, Req) ->
 
 %%% Handlers
 
--type endpoint() :: binary().
-%	POST <<"getsend">> |
-%	GET  <<"balance">> |
-%	GET  <<"status">>.
--spec really_handle(elli_http_method(), [endpoint()], elli_http_request()) ->
+-spec really_handle(elli_http_method(), path(), elli_http_request()) ->
 	elli_http_response().
-really_handle(Method, Endpoint, Req) ->
-	case validate_request(Method, Endpoint, Req) of
+really_handle(Method, Path, Req) ->
+	case validate_request(Method, Path, Req) of
 		{error, Response} ->
 			Response;
 		{ok, Args} ->
-			process_request(Method, Endpoint, Args)
+			process_request(Method, Path, Args)
 	end.
 
 %%% Validators
@@ -141,8 +140,8 @@ validate_request('GET', [<<"balance">>, APIKey], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, Wallet} ->
 			{ok, [APIKey, Wallet]};
-		{error, Response} ->
-			{error, Response}
+		{error, _} ->
+			{error, {401, [], <<"Invalid API Key">>}}
 	end;
 validate_request(_,_,_) ->
 	{error, {400, [], <<"Unrecognised request">>}}.
@@ -151,23 +150,23 @@ validate_request(_,_,_) ->
 
 %% @doc Process a validated request.
 -spec process_request(elli_http_method(), path(), list()) -> elli_http_response().
-process_request('POST', <<"getsend">>, [APIKey, Queue, Wallet, IPFSHash]) ->
+process_request('POST', [<<"getsend">>], [APIKey, Queue, Wallet, IPFSHash]) ->
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
 	update_status(APIKey, IPFSHash, pending),
 	{200, [], <<"Request sent to queue">>};
-process_request('GET', <<"status">>, [APIKey]) ->
+process_request('GET', [<<"status">>, APIKey], [APIKey]) ->
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
-			({ok, [T,H,S]}, Acc) ->
+			([T,H,S], Acc) ->
 				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
 				[{[{timestamp, Tiso}, {ipfs_hash, H}, {status, S}]}|Acc];
-			({error, _}, Acc) ->
+			([], Acc) ->
 				Acc
 		 end,
 		[],
 		queued_status(APIKey)))),
 	JsonB = ar_serialize:jsonify(JsonS),
 	{200, [], JsonB};
-process_request('GET', <<"balance">>, [_APIKey, Wallet]) ->
+process_request('GET', [<<"balance">>, _APIKey], [_APIKey, Wallet]) ->
 	Address = ar_wallet:to_address(Wallet),
 	Balance = ar_node:get_balance(whereis(http_entrypoint_node), Wallet),
 	JsonS = {[
@@ -203,10 +202,11 @@ all_fields(KVs, Keys) ->
 %% @doc Check if this user has already ipfs pinned this hash with us.
 %% n.b.: just checks whether the hash has been mined into a tx, likelihood
 %% of separate users uploading the same hash is low.
-already_reported(_APIKey, IPFSHash) ->
-	case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
-		[]      -> {ok, new_hash};
-	    _       -> {error, already_reported}
+already_reported(APIKey, IPFSHash) ->
+	%% case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
+	case queued_status_hash(APIKey, IPFSHash) of
+		[] -> {ok, new_hash};
+		_  -> {error, already_reported}
 	end.
 
 %% @doc remove old ipfsar_ipfs_status records.  Only keep newest 250 per key.
@@ -284,20 +284,17 @@ is_authorized(APIKey) ->
 	?MODULE:get_key_q_wallet(APIKey).
 
 queued_status(APIKey) ->
-	case mnesia:dirty_select(
+	mnesia:dirty_select(
 			ipfsar_ipfs_status,
 			[{
 				#ipfsar_ipfs_status{api_key=APIKey,
 					timestamp='$1', ipfs_hash='$2', status='$3'},
 				[],
 				[['$1','$2','$3']]
-			}]) of
-		[[T,H,S]] -> {ok, [T,H,S]};
-		_       -> {error, not_found}
-	end.
+			}]).
 
 queued_status(APIKey, Status) ->
-	case mnesia:dirty_select(
+	mnesia:dirty_select(
 			ipfsar_ipfs_status,
 			[{
 				#ipfsar_ipfs_status{
@@ -305,10 +302,18 @@ queued_status(APIKey, Status) ->
 					timestamp='$1', ipfs_hash='$2'},
 				[],
 				[['$1','$2']]
-			}]) of
-		[[T,H]] -> {ok, [T,H]};
-		_       -> {error, not_found}
-	end.
+			}]).
+
+queued_status_hash(APIKey, IPFSHash) ->
+	mnesia:dirty_select(
+			ipfsar_ipfs_status,
+			[{
+				#ipfsar_ipfs_status{
+					api_key=APIKey, status='$2',
+					timestamp='$1', ipfs_hash=IPFSHash},
+				[],
+				[['$1','$2']]
+			}]).
 
 %% @doc Given a request, returns the json body as a struct (or error).
 request_to_struct(Req) ->
