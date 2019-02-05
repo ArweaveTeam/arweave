@@ -210,7 +210,10 @@ get_last_tx_single_test() ->
 
 %% @doc Check that we can qickly get the local time from the peer.
 get_time_test() ->
-	?assertEqual(os:system_time(second), ar_http_iface_client:get_time({127, 0, 0, 1, 1984})).
+	Now = os:system_time(second),
+	{ok, {Min, Max}} = ar_http_iface_client:get_time({127, 0, 0, 1, 1984}, 10 * 1000),
+	?assert(Min < Now),
+	?assert(Now < Max).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
