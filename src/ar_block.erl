@@ -1,7 +1,7 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1]).
 -export([get_recall_block/5]).
--export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/2]).
+-export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/1]).
 -export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([verify_cumulative_diff/2, verify_block_hash_list_merkle/2]).
@@ -357,9 +357,15 @@ verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 verify_dep_hash(NewB, BDSHash) ->
 	NewB#block.hash == BDSHash.
 
-%% @doc Verify that the block was created within the last ten minutes
-verify_timestamp(Timestamp, NewB) ->
-	(NewB#block.timestamp - Timestamp) =< 600.
+%% @doc Verify that the block timestamp is not too far in the past respecting reasonable
+%% block propagation time.
+verify_timestamp(NewB) ->
+	TimestampDiff = os:system_time(seconds) - NewB#block.timestamp,
+	(
+		-(?NODE_CLOCK_SYNC_TOLERANCE) =< TimestampDiff
+		andalso
+		TimestampDiff =< (?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE) + (?NODE_CLOCK_SYNC_TOLERANCE)
+	).
 
 %% @doc Verify the height of the new block is the one higher than the
 %% current height.

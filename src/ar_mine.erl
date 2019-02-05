@@ -146,6 +146,29 @@ server(
 					diff = NewDiff
 				}
 			);
+		%% Blocks have limited time to propagate across the network. To compenstate for
+		%% the time spent mining, refresh the timestamp in the data segment every once in a while.
+		refresh_timestamp ->
+			NewTimestamp = os:system_time(seconds),
+			BSD = ar_block:generate_block_data_segment(
+				CurrentB,
+				RecallB,
+				TXs,
+				RewardAddr,
+				NewTimestamp,
+				Tags
+			),
+			lists:foreach(
+				fun(Miner) -> Miner ! stop end,
+				Miners
+			),
+			self() ! mine,
+			server(
+				S#state {
+					timestamp = NewTimestamp,
+					data_segment = BSD
+				}
+			);
 		% Refresh the mining data in case of diff change.
 		{refresh_data, PID} ->
 			ar:report([miner_data_refreshed]),
@@ -166,6 +189,11 @@ server(
 			lists:foreach(
 				fun(Worker) -> Worker ! hash end,
 				Workers
+			),
+			erlang:send_after(
+				?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE div 2,
+				self(),
+				refresh_timestamp
 			),
 			server(
 				S#state {
