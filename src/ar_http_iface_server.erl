@@ -1038,7 +1038,7 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}) ->
 	% Verify the timestamp of the block shadow.
 	case ar_block:verify_timestamp(os:system_time(seconds), BShadow) of
 		false ->
-			{404, [], <<"Invalid block.">>};
+			{400, [], <<"Invalid timestamp.">>};
 		true ->
 			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS})
 	end;
