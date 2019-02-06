@@ -65,7 +65,12 @@ get_entries_by_tag_name(Name) ->
 	get_entries_by_tag_name(whereis(http_search_node), Name).
 
 get_entries_by_tag_name(PID, Name) ->
-	PID ! {get_txs_by_tag_name, Name, self()}.
+	PID ! {get_txs_by_tag_name, Name, self()},
+	receive {txs, TXIDs} ->
+		TXIDs
+	after 3000 ->
+		[]
+	end.
 
 %% @doc Updates the index of stored tranasaction data with all of the
 %% transactions in the given block. Returns early after sending the task to the
@@ -103,7 +108,7 @@ server() ->
 				PID ! {txs, search_by_exact_tag(Name, Value)},
 				server();
 			{get_txs_by_tag_name, Name, PID} ->
-				PID ! search_by_tag_name(Name),
+				PID ! {txs, search_by_tag_name(Name)},
 				server();
 			{get_tags, TXID, PID} ->
 				Tags = lists:map(
