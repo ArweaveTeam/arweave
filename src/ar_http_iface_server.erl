@@ -487,7 +487,9 @@ handle('GET', [<<"wallet">>, Addr, <<"txs">>, EarliestTX], _Req) ->
 %% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/deposits
 handle('GET', [<<"wallet">>, Addr, <<"deposits">>], _Req) ->
-	TXIDs = lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr)),
+	TXIDs = lists:reverse(
+		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
+	),
 	{200, [], ar_serialize:jsonify(TXIDs)};
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.

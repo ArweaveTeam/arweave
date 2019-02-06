@@ -1035,7 +1035,7 @@ get_wallet_deposits_test_() ->
 		receive after 1000 -> ok end,
 		%% Expect the endpoint to report the received transfer
 		TwoTXs = GetTXs(),
-		?assertEqual([ar_util:encode(TX#tx.id), ar_util:encode(SecondTX#tx.id)], TwoTXs)
+		?assertEqual([ar_util:encode(SecondTX#tx.id), ar_util:encode(TX#tx.id)], TwoTXs)
 	end}.
 
 %	Node = ar_node:start([], B0),
