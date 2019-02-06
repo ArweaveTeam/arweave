@@ -18,16 +18,17 @@
 -type elli_http_method() :: 'GET' | 'POST'.
 -type elli_http_request() :: term().
 -type elli_http_response() :: {non_neg_integer(), list(), binary()}.
--type path() :: binary() | list(binary()).
+-type path() :: list(binary()).
 %	POST [<<"getsend">>] |
 %	GET  [<<"balance">>, APIKey] |
 %	GET  [<<"status">>, APIKey].
+-type ipfs_status() :: pending | queued | nofunds | mined.
 
 -record(ipfsar_key_q_wal, {api_key, queue_pid, wallet}).
 -record(ipfsar_ipfs_status, {
 	api_key,
 	ipfs_hash,
-	status :: atom(),
+	status :: ipfs_status(),
 	timestamp :: non_neg_integer()
 	}).
 -record(ipfsar_most_recent, {api_key, ipfs_hash, status, timestamp}).
@@ -227,15 +228,28 @@ cleaner_upper() ->
 					[],
 					[['$1', '$2', '$3']]
 				}]))),
-			ToDelete = case length(THSs) > ?N_STATS_TO_KEEP of
-				true -> lists:nthtail(?N_STATS_TO_KEEP, THSs);
-				false -> []
+			{ToKeep, ToDelete} = case length(THSs) > ?N_STATS_TO_KEEP of
+				true -> lists:split(?N_STATS_TO_KEEP, THSs);
+				false -> {THSs, []}
 			end,
 			lists:foreach(fun([T,H,S]) ->
 					mnesia:delete_object(#ipfsar_ipfs_status{
 						api_key=APIKey, timestamp=T, ipfs_hash=H, status=S})
 				end,
-				ToDelete)
+				ToDelete),
+			lists:foreach(fun
+					([_, _, mined]) -> pass;
+					([T, H, S]) ->
+					case hash_mined(H) of
+						false -> pass;
+						true ->
+							mnesia:delete_object(#ipfsar_ipfs_status{
+								api_key=APIKey, timestamp=T, ipfs_hash=H, status=S}),
+							write_mnesia(#ipfsar_ipfs_status{
+								api_key=APIKey, timestamp=T, ipfs_hash=H, status=mined})
+					end
+				end,
+				ToKeep)
 		end,
 		Keys),
 	timer:apply_after(?CLEANER_WAIT, ?MODULE, cleaner_upper, []).
@@ -254,6 +268,12 @@ current_status(APIKey) ->
 			}]) of
 		[Status] -> {ok, Status};
 		_        -> {error, not_found}
+	end.
+
+hash_mined(Hash) ->
+	case ar_tx_search:get_entries(<<"IPFS-Add">>, Hash) of
+		[] -> false;
+		_  -> true
 	end.
 
 ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
