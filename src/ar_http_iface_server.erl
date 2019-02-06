@@ -492,6 +492,17 @@ handle('GET', [<<"wallet">>, Addr, <<"deposits">>], _Req) ->
 	),
 	{200, [], ar_serialize:jsonify(TXIDs)};
 
+%% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address
+%% starting from the earliest_deposit.
+%% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}
+handle('GET', [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], _Req) ->
+	TXIDs = lists:reverse(
+		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
+	),
+	{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
+	FilteredTXs = Before ++ case length(After) > 0 of true -> [EarliestDeposit]; _ -> [] end,
+	{200, [], ar_serialize:jsonify(FilteredTXs)};
+
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
 %handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->

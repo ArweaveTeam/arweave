@@ -987,16 +987,23 @@ get_wallet_deposits_test_() ->
 		Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node, Bridge),
-		GetTXs = fun() ->
+		GetTXs = fun(EarliestDeposit) ->
+			BasePath = "/wallet/" ++ WalletAddressTo ++ "/deposits",
+			Path = case EarliestDeposit of
+				no_earliest_deposit ->
+					BasePath;
+				_ ->
+					BasePath ++ "/" ++ EarliestDeposit
+			end,
 			{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
 				ar_httpc:request(
 					<<"GET">>,
 					{127, 0, 0, 1, 1984},
-					"/wallet/" ++ WalletAddressTo ++ "/deposits"
+					Path
 				),
 			ar_serialize:dejsonify(Body)
 		end,
-		TXs = GetTXs(),
+		TXs = GetTXs(no_earliest_deposit),
 		%% Expect the wallet to have no incoming transfers
 		?assertEqual([], TXs),
 		%% Send some Winston to WalletAddressTo
@@ -1020,7 +1027,7 @@ get_wallet_deposits_test_() ->
 		ar_node:mine(Node),
 		receive after 1000 -> ok end,
 		%% Expect the endpoint to report the received transfer
-		OneTX = GetTXs(),
+		OneTX = GetTXs(no_earliest_deposit),
 		?assertEqual([ar_util:encode(TX#tx.id)], OneTX),
 		%% Send some more Winston to WalletAddressTo
 		SecondTX = (ar_tx:new())#tx{
@@ -1034,8 +1041,14 @@ get_wallet_deposits_test_() ->
 		ar_node:mine(Node),
 		receive after 1000 -> ok end,
 		%% Expect the endpoint to report the received transfer
-		TwoTXs = GetTXs(),
-		?assertEqual([ar_util:encode(SecondTX#tx.id), ar_util:encode(TX#tx.id)], TwoTXs)
+		TwoTXs = GetTXs(no_earliest_deposit),
+		?assertEqual([ar_util:encode(SecondTX#tx.id), ar_util:encode(TX#tx.id)], TwoTXs),
+		%% Specify the first tx as the earliest, still expect to get both txs
+		TXsSinceFirstTX = GetTXs(ar_util:encode(TX#tx.id)),
+		?assertEqual([ar_util:encode(SecondTX#tx.id), ar_util:encode(TX#tx.id)], TXsSinceFirstTX),
+		%% Specify the second tx as the earliest, expect to get only it
+		TXsSinceSecondTX = GetTXs(ar_util:encode(SecondTX#tx.id)),
+		?assertEqual([ar_util:encode(SecondTX#tx.id)], TXsSinceSecondTX)
 	end}.
 
 %	Node = ar_node:start([], B0),
