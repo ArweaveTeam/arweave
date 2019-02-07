@@ -153,11 +153,14 @@ handle('HEAD', [<<"info">>], _Req) ->
 
 %% @doc Return permissive CORS headers for all endpoints
 handle('OPTIONS', [<<"block">>], _) ->
-	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
+	       {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
 handle('OPTIONS', [<<"tx">>], _) ->
-	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
+	       {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
 handle('OPTIONS', [<<"peer">>|_], _) ->
-	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>}], <<"OK">>};
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
+	       {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
 handle('OPTIONS', _, _Req) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
 
