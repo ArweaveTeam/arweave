@@ -153,7 +153,6 @@ validate_request(_,_,_) ->
 -spec process_request(elli_http_method(), path(), list()) -> elli_http_response().
 process_request('POST', [<<"getsend">>], [APIKey, Queue, Wallet, IPFSHash]) ->
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
-	update_status(APIKey, IPFSHash, pending),
 	{200, [], <<"Request sent to queue">>};
 process_request('GET', [<<"status">>, APIKey], [APIKey]) ->
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
@@ -225,16 +224,12 @@ cleaner_upper() ->
 				end,
 				ToDelete),
 			lists:foreach(fun
-					([_, _, mined]) -> pass;
-					([T, H, S]) ->
+					([_, _, mined])   -> pass;
+					([_, _, nofunds]) -> pass;
+					([_, H, _]) ->
 					case hash_mined(H) of
 						false -> pass;
-						true ->
-							mnesia_del_obj(#ipfsar_ipfs_status{
-								api_key=APIKey, timestamp=T, ipfs_hash=H, status=S}),
-							mnesia_write(#ipfsar_ipfs_status{
-								api_key=APIKey, timestamp=timestamp(),
-								ipfs_hash=H, status=mined})
+						true  -> status_update(APIKey, H, mined)
 					end
 				end,
 				ToKeep)
@@ -265,6 +260,7 @@ hash_mined(Hash) ->
 	end.
 
 ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
+	status_update(APIKey, IPFSHash, pending),
 	{ok, Data} = ar_ipfs:cat_data_by_hash(IPFSHash),
 	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, IPFSHash}], data=Data},
 	Status = case ?MODULE:sufficient_funds(Wallet, byte_size(Data)) of
@@ -275,7 +271,7 @@ ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
 		{error, _} ->
 			nofunds
 	end,
-	update_status(APIKey, IPFSHash, Status).
+	status_update(APIKey, IPFSHash, Status).
 
 %% @doc is the ipfs->ar service running?
 is_app_running() ->
@@ -334,6 +330,26 @@ request_to_struct(Req) ->
 			{error, {Exception, Reason}}
 	end.
 
+status_delete(APIKey, IPFSHash) ->
+	lists:foreach(fun([T,S]) ->
+			mnesia_del_obj(#ipfsar_ipfs_status{
+				api_key=APIKey, ipfs_hash=IPFSHash,
+				status=S, timestamp=T})
+		end,
+		queued_status_hash(APIKey, IPFSHash)).
+
+status_update(APIKey, IPFSHash, Status) ->
+	status_delete(APIKey, IPFSHash),
+	TS = timestamp(),
+	R1 = #ipfsar_ipfs_status{
+		api_key=APIKey, ipfs_hash=IPFSHash,
+		status=Status, timestamp=TS},
+	mnesia_write(R1),
+	R2 = #ipfsar_most_recent{
+		api_key=APIKey, ipfs_hash=IPFSHash,
+		status=Status, timestamp=TS},
+	mnesia_write(R2).
+
 %% @doc Does the wallet have sufficient funds to submit the data.
 -ifdef(DEBUG).
 sufficient_funds(_, _) -> ok.
@@ -352,17 +368,6 @@ sufficient_funds(Wallet, DataSize) ->
 
 timestamp() ->
 	erlang:system_time(second).
-
-update_status(APIKey, IPFSHash, Status) ->
-	TS = timestamp(),
-	R1 = #ipfsar_ipfs_status{
-        api_key=APIKey, ipfs_hash=IPFSHash,
-        status=Status, timestamp=TS},
-	mnesia_write(R1),
-	R2 = #ipfsar_most_recent{
-        api_key=APIKey, ipfs_hash=IPFSHash,
-        status=Status, timestamp=TS},
-	mnesia_write(R2).
 
 validate_req_fields_auth(Req, FieldsRequired) ->
 	case request_to_struct(Req) of
