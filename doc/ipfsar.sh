@@ -1,14 +1,17 @@
 #! /bin/bash
 
-APIKEY="qwe123asd234zxc345"
-SERVER="http://123.45.67.89:1984"
+APIKEY="test_key_ivan"
+SERVER="http://178.62.126.142:1984"
+PINS_DONE_FN="pins.done"
 
 curlpost () {  # $1=hash to pin
-	#echoerr $1
+	echoerr $1
 	path="/api/ipfs/getsend/"
 	url="$SERVER$path"
 	json="{\"api_key\":\"$APIKEY\", \"ipfs_hash\":\"$1\"}"
-	/usr/bin/curl -H "Content-Type: application/json" -X POST -d $json $url
+	echoerr $json
+	/usr/bin/curl -H "Content-Type: application/json" -X POST -d "$json" $url
+	sleep .5s
 	echo 200
 }
 
@@ -16,7 +19,9 @@ echoerr () {
 	printf "%s\n" "$*" >&2
 }
 
-mapfile -t pins_done < pins.done
+#mapfile -t pins_done < $PINS_DONE_FN # linux / current bash
+while IFS= read -r line; do pins_done+=("$line"); done < $PINS_DONE_FN # mac / old bash
+
 pins_done_sorted=($(sort <<<"${pins_done[*]}"))
 
 pins_curr=`ipfs pin ls | sort | awk '{print $1}'`
@@ -46,7 +51,6 @@ for p in "${pins_new[@]}"; do
 	esac
 done
 
-printf "%s\n" "${pins_new[@]}" > out.new
-printf "%s\n" "${pins_curr_sorted[@]}" > out.curr
-printf "%s\n" "${pins_done[@]}" > out.done
-
+#printf "%s\n" "${pins_new[@]}" > pins.new
+#printf "%s\n" "${pins_curr_sorted[@]}" > pins.curr
+printf "%s\n" "${pins_done[@]}" > $PINS_DONE_FN

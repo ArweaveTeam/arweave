@@ -77,6 +77,10 @@ get_key_q_wallet(APIKey) ->
 
 %% @doc remove record with api key from the db.
 del_key(APIKey) ->
+	case get_key_q_wallet(APIKey) of
+		{error, not_found} -> pass;
+		{ok, Queue, _}     -> app_queue:stop(Queue)
+	end,
 	F = fun() -> mnesia:delete({ipfsar_key_q_wal, APIKey}) end,
 	mnesia:activity(transaction, F).
 
