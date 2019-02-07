@@ -77,8 +77,8 @@ get_key_q_wallet(APIKey) ->
 
 %% @doc remove record with api key from the db.
 del_key(APIKey) ->
-	mnesia:delete({ipfsar_key_q_wal, APIKey}),
-	ok.
+	F = fun() -> mnesia:delete({ipfsar_key_q_wal, APIKey}) end,
+	mnesia:activity(transaction, F).
 
 %% @doc Handle /api/ipfs/... calls.
 -spec handle(atom(), list(binary()), elli_http_request()) ->
@@ -220,7 +220,7 @@ cleaner_upper() ->
 				false -> {THSs, []}
 			end,
 			lists:foreach(fun([T,H,S]) ->
-					mnesia:delete_object(#ipfsar_ipfs_status{
+					mnesia_del_obj(#ipfsar_ipfs_status{
 						api_key=APIKey, timestamp=T, ipfs_hash=H, status=S})
 				end,
 				ToDelete),
@@ -230,9 +230,9 @@ cleaner_upper() ->
 					case hash_mined(H) of
 						false -> pass;
 						true ->
-							mnesia:delete_object(#ipfsar_ipfs_status{
+							mnesia_del_obj(#ipfsar_ipfs_status{
 								api_key=APIKey, timestamp=T, ipfs_hash=H, status=S}),
-							write_mnesia(#ipfsar_ipfs_status{
+							mnesia_write(#ipfsar_ipfs_status{
 								api_key=APIKey, timestamp=timestamp(),
 								ipfs_hash=H, status=mined})
 					end
@@ -358,11 +358,11 @@ update_status(APIKey, IPFSHash, Status) ->
 	R1 = #ipfsar_ipfs_status{
         api_key=APIKey, ipfs_hash=IPFSHash,
         status=Status, timestamp=TS},
-	write_mnesia(R1),
+	mnesia_write(R1),
 	R2 = #ipfsar_most_recent{
         api_key=APIKey, ipfs_hash=IPFSHash,
         status=Status, timestamp=TS},
-	write_mnesia(R2).
+	mnesia_write(R2).
 
 validate_req_fields_auth(Req, FieldsRequired) ->
 	case request_to_struct(Req) of
@@ -382,8 +382,12 @@ validate_req_fields_auth(Req, FieldsRequired) ->
 			{error, {400, [], <<"Invalid json">>}}
 	end.
 
-write_mnesia(Record) ->
+mnesia_write(Record) ->
 	F = fun() -> mnesia:write(Record) end,
+	mnesia:activity(transaction, F).
+
+mnesia_del_obj(Obj) ->
+	F = fun() -> mnesia:delete_object(Obj) end,
 	mnesia:activity(transaction, F).
 
 mnesia_get_keys() ->
