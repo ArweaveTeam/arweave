@@ -549,12 +549,13 @@ xhr.send();
 Retrieve identifiers of transfer transactions depositing to the given wallet. The index is partial - only transactions known by the given node are returned.
 
 - **URL**
-  `/wallet/[wallet_address]/deposits`
+  `/wallet/[wallet_address]/deposits/[earliest_deposit]`
 - **Method**
   GET
 - **URL Parameters**
 
   - [wallet_address] : A Base64 encoded SHA256 hash of the public key.
+  - [earliest_deposit] (optional) : A Base64 encoded ID of the earliest transaction to fetch. If not specified, all deposits known by the node are fetched.
 
 
 #### Example Response
