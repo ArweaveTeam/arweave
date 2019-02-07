@@ -114,7 +114,7 @@ validate_request('POST', [<<"getsend">>], Req) ->
 			case already_reported(APIKey, IPFSHash) of
 				{ok, _} ->
 					case current_status(APIKey) of
-						[{ok, nofunds}] ->
+						{ok, nofunds} ->
 							{error, {402, [], <<"Insufficient funds in wallet">>}};
 						_ ->
 							case length(queued_status(APIKey, pending)) > ?MAX_IPFSAR_PENDING of
