@@ -212,22 +212,9 @@ already_reported(APIKey, IPFSHash) ->
 
 %% @doc remove old ipfsar_ipfs_status records.  Only keep newest 250 per key.
 cleaner_upper() ->
-	Keys = mnesia:dirty_select(
-			ipfsar_key_q_wal,
-			[{
-				#ipfsar_key_q_wal{api_key='$1', _='_'},
-				[],
-				['$1']
-			}]),
+	Keys = mnesia_get_keys(),
 	lists:foreach(fun(APIKey) ->
-			THSs = lists:reverse(lists:sort(mnesia:dirty_select(
-				ipfsar_ipfs_status,
-				[{
-					#ipfsar_ipfs_status{
-						api_key=APIKey, timestamp='$1', ipfs_hash='$2', status='$3'},
-					[],
-					[['$1', '$2', '$3']]
-				}]))),
+			THSs = lists:reverse(lists:sort(queued_status(APIKey))),
 			{ToKeep, ToDelete} = case length(THSs) > ?N_STATS_TO_KEEP of
 				true -> lists:split(?N_STATS_TO_KEEP, THSs);
 				false -> {THSs, []}
@@ -246,7 +233,8 @@ cleaner_upper() ->
 							mnesia:delete_object(#ipfsar_ipfs_status{
 								api_key=APIKey, timestamp=T, ipfs_hash=H, status=S}),
 							write_mnesia(#ipfsar_ipfs_status{
-								api_key=APIKey, timestamp=T, ipfs_hash=H, status=mined})
+								api_key=APIKey, timestamp=timestamp(),
+								ipfs_hash=H, status=mined})
 					end
 				end,
 				ToKeep)
@@ -397,3 +385,12 @@ validate_req_fields_auth(Req, FieldsRequired) ->
 write_mnesia(Record) ->
 	F = fun() -> mnesia:write(Record) end,
 	mnesia:activity(transaction, F).
+
+mnesia_get_keys() ->
+	mnesia:dirty_select(
+		ipfsar_key_q_wal,
+		[{
+			#ipfsar_key_q_wal{api_key='$1', _='_'},
+			[],
+			['$1']
+		}]).
