@@ -25,10 +25,14 @@ Script will do the following:
     - curl the Arweave endpoint below
     - on 2xx response: add hash to local ignore list
 
+### TODO periodic execution
+script currently relies on cron (or equivalent) for periodic execution.  Make self-sufficient.
+
 ## API endpoints
 
 ### Send a hash to be incentivised
 
+```
     > POST /api/ipfs/getsend/
     >
     > {
@@ -40,7 +44,7 @@ Script will do the following:
     < 208 Already Reported  --  User has already submitted this hash
     < 400 Bad Request       --  invalid json
     < 401 Unauthorized      --  invalid api key
-
+```
 
 Sending this with a valid API Key (with sufficient funds in wallet) will cause the Arweave server to:
 - check request validity & auth (error responses 400, 401)
@@ -64,6 +68,7 @@ task queued:
 
 ### Get status of User's requests
 
+```
     > GET /api/ipfs/status/<key>
 
     < [
@@ -72,6 +77,7 @@ task queued:
     <     "ipfs_hash": "QmZDQb8iK7BaTAWraCrSDSygZ23UkrhXzwVUuV2ZUKm7Rw",
     <     "status": "queued"
     <   }, ...]
+```
 
 Returns status of most recent 500 hashes.
 
@@ -84,12 +90,14 @@ Field "status" is one of:
 
 ### Get balance of User's wallet
 
+```
     > GET /api/ipfs/balance/<key>
 
     < {
     <   "address": "gIK2HLIhvFUoAJFcpHOqwmGeZPgVZLcE3ss8sT64gFY",
     <   "balance": "1165405188938"
     < }
+```
 
 Returns balance (in Winston) in User's wallet, along with the wallet address.
 
