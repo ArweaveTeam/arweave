@@ -160,7 +160,10 @@ handle('OPTIONS', [<<"tx">>], _) ->
 	       {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
 handle('OPTIONS', [<<"peer">>|_], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
-	       {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
+		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
+handle('OPTIONS', [<<"arql">>], _) ->
+	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
+		  {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
 handle('OPTIONS', _, _Req) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
 
