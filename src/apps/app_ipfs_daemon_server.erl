@@ -148,6 +148,13 @@ validate_request('GET', [<<"balance">>, APIKey], _Req) ->
 		{error, _} ->
 			{error, {401, [], <<"Invalid API Key">>}}
 	end;
+validate_request('DELETE', [APIKey, IPFSHash], _Req) ->
+	case is_authorized(APIKey) of
+		{ok, _Queue, _Wallet} ->
+			{ok, [APIKey, IPFSHash]};
+		{error, _} ->
+			{error, {401, [], <<"Invalid API Key">>}}
+	end;
 validate_request(_,_,_) ->
 	{error, {400, [], <<"Unrecognised request">>}}.
 
@@ -177,7 +184,20 @@ process_request('GET', [<<"balance">>, _APIKey], [_APIKey, Wallet]) ->
 		{address, ar_util:encode(Address)},
 		{balance, integer_to_binary(Balance)}]},
 	JsonB = ar_serialize:jsonify(JsonS),
-	{200, [], JsonB}.
+	{200, [], JsonB};
+process_request('DELETE', [APIKey, IPFSHash], [APIKey, IPFSHash]) ->
+	case queued_status_hash(APIKey, IPFSHash) of
+		[_, mined]  -> {400, [], <<"Hash already mined.">>};
+		[_, queued] -> {400, [], <<"Hash already queued.">>};
+		[T, S]      ->
+			mnesia_del_obj(#ipfsar_ipfs_status{
+				api_key=APIKey, timestamp=T, ipfs_hash=IPFSHash, status=S}),
+			{200, [], <<"Removed from queue.">>};
+		_ ->
+			{404, [], <<"Hash not found.">>}
+	end;
+process_request(_,_,_) ->
+	{404, [], <<"Request not recognised">>}.
 
 %%% Helpers
 
