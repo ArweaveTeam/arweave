@@ -4,7 +4,7 @@
 -export([already_reported/2]).
 -export([cleaner_upper/0, ipfs_getter/4, sufficient_funds/2]).
 -include("ar.hrl").
-
+-compile([export_all]).
 -ifdef(DEBUG).
 -define(CLEANER_WAIT, 6 * 60 * 1000).
 -define(MAX_IPFSAR_PENDING, 3).
@@ -148,7 +148,7 @@ validate_request('GET', [<<"balance">>, APIKey], _Req) ->
 		{error, _} ->
 			{error, {401, [], <<"Invalid API Key">>}}
 	end;
-validate_request('DELETE', [APIKey, IPFSHash], _Req) ->
+validate_request(<<"DEL">>, [APIKey, IPFSHash], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, _Wallet} ->
 			{ok, [APIKey, IPFSHash]};
@@ -185,16 +185,17 @@ process_request('GET', [<<"balance">>, _APIKey], [_APIKey, Wallet]) ->
 		{balance, integer_to_binary(Balance)}]},
 	JsonB = ar_serialize:jsonify(JsonS),
 	{200, [], JsonB};
-process_request('DELETE', [APIKey, IPFSHash], [APIKey, IPFSHash]) ->
+process_request(<<"DEL">>, [APIKey, IPFSHash], [APIKey, IPFSHash]) ->
 	case queued_status_hash(APIKey, IPFSHash) of
+		[]          -> {404, [], <<"Hash not found.">>}
 		[_, mined]  -> {400, [], <<"Hash already mined.">>};
 		[_, queued] -> {400, [], <<"Hash already queued.">>};
-		[T, S]      ->
-			mnesia_del_obj(#ipfsar_ipfs_status{
-				api_key=APIKey, timestamp=T, ipfs_hash=IPFSHash, status=S}),
+		Found ->
+			lists:foreach(fun([T,S]) ->
+				mnesia_del_obj(#ipfsar_ipfs_status{
+					api_key=APIKey, timestamp=T, ipfs_hash=IPFSHash, status=S})
+				end, Found),
 			{200, [], <<"Removed from queue.">>};
-		_ ->
-			{404, [], <<"Hash not found.">>}
 	end;
 process_request(_,_,_) ->
 	{404, [], <<"Request not recognised">>}.
