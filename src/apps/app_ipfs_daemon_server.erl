@@ -187,7 +187,7 @@ process_request('GET', [<<"balance">>, _APIKey], [_APIKey, Wallet]) ->
 	{200, [], JsonB};
 process_request(<<"DEL">>, [APIKey, IPFSHash], [APIKey, IPFSHash]) ->
 	case queued_status_hash(APIKey, IPFSHash) of
-		[]          -> {404, [], <<"Hash not found.">>}
+		[]          -> {404, [], <<"Hash not found.">>};
 		[_, mined]  -> {400, [], <<"Hash already mined.">>};
 		[_, queued] -> {400, [], <<"Hash already queued.">>};
 		Found ->
@@ -195,7 +195,7 @@ process_request(<<"DEL">>, [APIKey, IPFSHash], [APIKey, IPFSHash]) ->
 				mnesia_del_obj(#ipfsar_ipfs_status{
 					api_key=APIKey, timestamp=T, ipfs_hash=IPFSHash, status=S})
 				end, Found),
-			{200, [], <<"Removed from queue.">>};
+			{200, [], <<"Removed from queue.">>}
 	end;
 process_request(_,_,_) ->
 	{404, [], <<"Request not recognised">>}.
