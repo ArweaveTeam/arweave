@@ -154,17 +154,17 @@ handle('HEAD', [<<"info">>], _Req) ->
 %% @doc Return permissive CORS headers for all endpoints
 handle('OPTIONS', [<<"block">>], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
-	       {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
+		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
 handle('OPTIONS', [<<"tx">>], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
-	       {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
+		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
 handle('OPTIONS', [<<"peer">>|_], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
 		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
 handle('OPTIONS', [<<"arql">>], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
-		  {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
-handle('OPTIONS', _, _Req) ->
+		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
+handle('OPTIONS', _, _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
 
 %% @doc Return the current universal time in seconds.
