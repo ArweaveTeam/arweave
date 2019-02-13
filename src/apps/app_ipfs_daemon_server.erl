@@ -4,7 +4,7 @@
 -export([already_reported/2]).
 -export([cleaner_upper/0, ipfs_getter/4, sufficient_funds/2]).
 -include("ar.hrl").
--compile([export_all]).
+
 -ifdef(DEBUG).
 -define(CLEANER_WAIT, 6 * 60 * 1000).
 -define(MAX_IPFSAR_PENDING, 3).
@@ -15,6 +15,7 @@
 -define(N_STATS_TO_KEEP, 250).
 -endif.
 
+-type ar_wallet() :: tuple().
 -type elli_http_method() :: 'GET' | 'POST'.
 -type elli_http_request() :: term().
 -type elli_http_response() :: {non_neg_integer(), list(), binary()}.
@@ -50,17 +51,20 @@ stop() ->
 		ipfsar_key_q_wal).
 
 %% @doc Find the wallet keyfile for the given address, and call put_key_wal/2.
--spec put_key_wallet_address(binary(), binary()) -> ok.
+%% Returns pid for the generated queue.
+-spec put_key_wallet_address(binary(), binary()) -> {ok, pid()}.
 put_key_wallet_address(Key, Addr) ->
 	Filename = <<"wallets/arweave_keyfile_", Addr/binary, ".json">>,
 	Wallet = ar_wallet:load_keyfile(Filename),
 	put_key_wallet(Key, Wallet).
 
 %% @doc Add a new {api_key, queue, wallet} tuple to the db.
+-spec put_key_wallet(binary(), ar_wallet()) -> {ok, pid()}.
 put_key_wallet(K, W) ->
 	Q = app_queue:start(W),
 	F = fun() -> mnesia:write(#ipfsar_key_q_wal{api_key=K, queue_pid=Q, wallet=W}) end,
-	mnesia:activity(transaction, F).
+	mnesia:activity(transaction, F),
+	{ok, Q}.
 
 %% @doc get queue and wallet for the api key.
 get_key_q_wallet(APIKey) ->
@@ -290,7 +294,7 @@ ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
 	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, IPFSHash}], data=Data},
 	Status = case ?MODULE:sufficient_funds(Wallet, byte_size(Data)) of
 		ok ->
-			app_queue:add(Queue, UnsignedTX),
+			app_queue:add(maybe_restart_queue(APIKey, Queue, Wallet), UnsignedTX),
 			%% tx will be added to ar_tx_search db after mined into block.
 			queued;
 		{error, _} ->
@@ -311,6 +315,12 @@ is_app_running() ->
 %% @doc Check if the API key is on the books. If so, return their wallet.
 is_authorized(APIKey) ->
 	?MODULE:get_key_q_wallet(APIKey).
+
+maybe_restart_queue(APIKey, Queue, Wallet) ->
+	case is_process_alive(Queue) of
+		true  -> Queue;
+		false -> put_key_wallet(APIKey, Wallet)
+	end.
 
 queued_status(APIKey) ->
 	mnesia:dirty_select(
