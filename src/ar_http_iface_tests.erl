@@ -827,18 +827,18 @@ post_unsigned_tx() ->
 	?assertMatch([_], proplists:get_all_values(<<"wallet_address">>, CreateWalletRes)),
 	% send an unsigned transaction to be signed with the generated key
 	TX = (ar_tx:new())#tx{reward = ?AR(1)},
-	{TXDATA} = ar_serialize:tx_to_json_struct(TX),
+	{FullTXProps} = ar_serialize:tx_to_json_struct(TX),
+	UnsignedTXProps = lists:append(
+		props_pick(FullTXProps, [last_tx, target, quantity, data, reward]),
+		[{<<"wallet_access_code">>, WalletAccessCode}]
+	),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
 			{127, 0, 0, 1, 1984},
 			"/unsigned_tx",
 			[],
-			ar_serialize:jsonify(
-				{TXDATA ++ [
-					{<<"wallet_access_code">>, WalletAccessCode}
-				]}
-			)
+			ar_serialize:jsonify({UnsignedTXProps})
 		),
 	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
@@ -847,11 +847,7 @@ post_unsigned_tx() ->
 			{127, 0, 0, 1, 1984},
 			"/unsigned_tx",
 			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
-			ar_serialize:jsonify(
-				{TXDATA ++ [
-					{<<"wallet_access_code">>, WalletAccessCode}
-				]}
-			)
+			ar_serialize:jsonify({UnsignedTXProps})
 		),
 	{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
 		ar_httpc:request(
@@ -859,11 +855,7 @@ post_unsigned_tx() ->
 			{127, 0, 0, 1, 1984},
 			"/unsigned_tx",
 			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
-			ar_serialize:jsonify(
-				{TXDATA ++ [
-					{<<"wallet_access_code">>, WalletAccessCode}
-				]}
-			)
+			ar_serialize:jsonify({UnsignedTXProps})
 		),
 	ar_meta_db:put(internal_api_secret, not_set),
 	{Res} = ar_serialize:dejsonify(Body),
@@ -886,6 +878,16 @@ post_unsigned_tx() ->
 		},
 		maps:from_list(GetTXRes)
 	).
+
+%% @doc Create a new proplist from Proplist with the keys in Keys.
+props_pick(Proplist, Keys) ->
+	props_pick(Proplist, Keys, []).
+
+props_pick(_, [], Acc) ->
+	Acc;
+props_pick(Proplist, [Key | Keys], Acc) ->
+	Prop = {_, _} = lists:keyfind(Key, 1, Proplist),
+	props_pick(Proplist, Keys, [Prop | Acc]).
 
 get_wallet_txs_test_() ->
 	{timeout, 10, fun() ->
