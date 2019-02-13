@@ -318,8 +318,12 @@ is_authorized(APIKey) ->
 
 maybe_restart_queue(APIKey, Queue, Wallet) ->
 	case is_process_alive(Queue) of
-		true  -> Queue;
-		false -> put_key_wallet(APIKey, Wallet)
+		true  ->
+			Queue;
+		false ->
+			Q2 = put_key_wallet(APIKey, Wallet),
+			spawn(fun() -> requeue_hashes(APIKey, Q2) end),
+			Q2
 	end.
 
 queued_status(APIKey) ->
@@ -364,6 +368,23 @@ request_to_struct(Req) ->
 		Exception:Reason ->
 			{error, {Exception, Reason}}
 	end.
+
+requeue_hashes(APIKey, Queue) ->
+	S = queued,
+	THs = queued_status(APIKey, S),
+	lists:foreach(fun([T,H]) ->
+			mnesia_del_obj(#ipfsar_ipfs_status{
+				api_key=APIKey, status=S, timestamp=T, ipfs_hash=H}),
+			case hash_mined(H) of
+				true -> pass;
+				false ->
+					{ok, Data} = ar_ipfs:cat_data_by_hash(H),
+					UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, H}], data=Data},
+					app_queue:add(Queue, UnsignedTX),
+					status_update(APIKey, H , S)
+			end
+		end,
+	THs).
 
 status_delete(APIKey, IPFSHash) ->
 	lists:foreach(fun([T,S]) ->
