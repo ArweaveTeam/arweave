@@ -40,7 +40,6 @@ Post a transaction to be signed and sent to the network.
 
 ```javascript
 {
-    "type": "",               // String stating type of transaction: 'data' or 'transfer'.
     "last_tx": "",            // Base64 encoded ID of the last transaction made by this wallet.
     "target": "",             // Base64 encoded SHA256 hash of recipient's public key. Empty for data transactions.
     "quantity": "",           // Decimal string representation of the amount of sent AR in winston. Empty for data transactions.

@@ -627,7 +627,6 @@ Post a transaction to the network.
 
 ```javascript
 {
-    "type": "",     // String stating type of transaction: 'data' or 'transfer'.
     "last_tx": "",  // Base64 encoded ID of the last transaction made by this wallet.
     "owner": "",    // The public key making this transaction.
     "target": "",   // Base64 encoded SHA256 hash of recipient's public key. Empty for data transactions.
