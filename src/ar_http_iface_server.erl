@@ -337,14 +337,23 @@ handle('POST', [<<"tx">>], Req) ->
 handle('POST', [<<"unsigned_tx">>], Req) ->
 	case check_internal_api_secret(Req) of
 		pass ->
-			{TXJSON} = ar_serialize:dejsonify(elli_request:body(Req)),
-			WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, TXJSON),
+			{UnsignedTXProps} = ar_serialize:dejsonify(elli_request:body(Req)),
+			WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, UnsignedTXProps),
+			%% ar_serialize:json_struct_to_tx/1 requires all properties to be there,
+			%% so we're adding id, owner and signature with bogus values. These
+			%% will later be overwritten in ar_tx:sign/2
+			FullTxProps = lists:append(
+				proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
+				[
+					{<<"id">>, ar_util:encode(<<"id placeholder">>)},
+					{<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
+					{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
+				]
+			),
 			KeyPair = ar_wallet:load_keyfile(
 				"wallets/arweave_keyfile_" ++ binary_to_list(WalletAccessCode) ++ ".json"
 			),
-			UnsignedTX = ar_serialize:json_struct_to_tx(
-				{proplists:delete(<<"wallet_access_code">>, TXJSON)}
-			),
+			UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
 			SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
 			case handle_post_tx(SignedTX) of
 				ok ->
@@ -506,7 +515,12 @@ handle('GET', [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], _Req) ->
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
 	{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
-	FilteredTXs = Before ++ case length(After) > 0 of true -> [EarliestDeposit]; _ -> [] end,
+	FilteredTXs = case After of
+		[] ->
+			Before;
+		[EarliestDeposit | _] ->
+			Before ++ [EarliestDeposit]
+	end,
 	{200, [], ar_serialize:jsonify(FilteredTXs)};
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.

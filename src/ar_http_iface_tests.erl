@@ -827,18 +827,18 @@ post_unsigned_tx() ->
 	?assertMatch([_], proplists:get_all_values(<<"wallet_address">>, CreateWalletRes)),
 	% send an unsigned transaction to be signed with the generated key
 	TX = (ar_tx:new())#tx{reward = ?AR(1)},
-	{TXDATA} = ar_serialize:tx_to_json_struct(TX),
+	{FullTXProps} = ar_serialize:tx_to_json_struct(TX),
+	UnsignedTXProps = lists:append(
+		props_pick(FullTXProps, [last_tx, target, quantity, data, reward]),
+		[{<<"wallet_access_code">>, WalletAccessCode}]
+	),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
 			{127, 0, 0, 1, 1984},
 			"/unsigned_tx",
 			[],
-			ar_serialize:jsonify(
-				{TXDATA ++ [
-					{<<"wallet_access_code">>, WalletAccessCode}
-				]}
-			)
+			ar_serialize:jsonify({UnsignedTXProps})
 		),
 	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
@@ -847,11 +847,7 @@ post_unsigned_tx() ->
 			{127, 0, 0, 1, 1984},
 			"/unsigned_tx",
 			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
-			ar_serialize:jsonify(
-				{TXDATA ++ [
-					{<<"wallet_access_code">>, WalletAccessCode}
-				]}
-			)
+			ar_serialize:jsonify({UnsignedTXProps})
 		),
 	{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
 		ar_httpc:request(
@@ -859,11 +855,7 @@ post_unsigned_tx() ->
 			{127, 0, 0, 1, 1984},
 			"/unsigned_tx",
 			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
-			ar_serialize:jsonify(
-				{TXDATA ++ [
-					{<<"wallet_access_code">>, WalletAccessCode}
-				]}
-			)
+			ar_serialize:jsonify({UnsignedTXProps})
 		),
 	ar_meta_db:put(internal_api_secret, not_set),
 	{Res} = ar_serialize:dejsonify(Body),
@@ -887,6 +879,16 @@ post_unsigned_tx() ->
 		maps:from_list(GetTXRes)
 	).
 
+%% @doc Create a new proplist from Proplist with the keys in Keys.
+props_pick(Proplist, Keys) ->
+	props_pick(Proplist, Keys, []).
+
+props_pick(_, [], Acc) ->
+	Acc;
+props_pick(Proplist, [Key | Keys], Acc) ->
+	Prop = {_, _} = lists:keyfind(Key, 1, Proplist),
+	props_pick(Proplist, Keys, [Prop | Acc]).
+
 get_wallet_txs_test_() ->
 	{timeout, 10, fun() ->
 		ar_storage:clear(),
@@ -909,7 +911,7 @@ get_wallet_txs_test_() ->
 		%% Expect the wallet to have no transactions
 		?assertEqual([], TXs),
 		%% Sign and post a transaction and expect it to appear in the wallet list
-		TX = (ar_tx:new())#tx{ owner = ar_wallet:to_address(Pub) },
+		TX = (ar_tx:new())#tx{ owner = Pub },
 		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 			ar_httpc:request(
 				<<"POST">>,
@@ -939,7 +941,7 @@ get_wallet_txs_test_() ->
 		OneTXAgain = ar_serialize:dejsonify(GetOneTXAgainBody),
 		?assertEqual([ar_util:encode(TX#tx.id)], OneTXAgain),
 		%% Add one more TX and expect it to be appended to the wallet list
-		SecondTX = (ar_tx:new())#tx{ owner = ar_wallet:to_address(Pub), last_tx = TX#tx.id },
+		SecondTX = (ar_tx:new())#tx{ owner = Pub, last_tx = TX#tx.id },
 		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 			ar_httpc:request(
 				<<"POST">>,
@@ -989,12 +991,7 @@ get_wallet_deposits_test_() ->
 		ar_node:add_peers(Node, Bridge),
 		GetTXs = fun(EarliestDeposit) ->
 			BasePath = "/wallet/" ++ WalletAddressTo ++ "/deposits",
-			Path = case EarliestDeposit of
-				no_earliest_deposit ->
-					BasePath;
-				_ ->
-					BasePath ++ "/" ++ EarliestDeposit
-			end,
+			Path = 	BasePath ++ "/" ++ EarliestDeposit,
 			{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
 				ar_httpc:request(
 					<<"GET">>,
@@ -1003,12 +1000,11 @@ get_wallet_deposits_test_() ->
 				),
 			ar_serialize:dejsonify(Body)
 		end,
-		TXs = GetTXs(no_earliest_deposit),
 		%% Expect the wallet to have no incoming transfers
-		?assertEqual([], TXs),
+		?assertEqual([], GetTXs("")),
 		%% Send some Winston to WalletAddressTo
-		TX = (ar_tx:new())#tx{
-			owner = ar_wallet:to_address(PubFrom),
+		FirstTX = (ar_tx:new())#tx{
+			owner = PubFrom,
 			target = ar_wallet:to_address(PubTo),
 			quantity = 100
 		},
@@ -1022,18 +1018,17 @@ get_wallet_deposits_test_() ->
 					ar_serialize:jsonify(ar_serialize:tx_to_json_struct(T))
 				)
 		end,
-		PostTX(TX),
+		PostTX(FirstTX),
 		receive after 250 -> ok end,
 		ar_node:mine(Node),
 		receive after 1000 -> ok end,
 		%% Expect the endpoint to report the received transfer
-		OneTX = GetTXs(no_earliest_deposit),
-		?assertEqual([ar_util:encode(TX#tx.id)], OneTX),
+		?assertEqual([ar_util:encode(FirstTX#tx.id)], GetTXs("")),
 		%% Send some more Winston to WalletAddressTo
 		SecondTX = (ar_tx:new())#tx{
-			owner = ar_wallet:to_address(PubFrom),
+			owner = PubFrom,
 			target = ar_wallet:to_address(PubTo),
-			last_tx = TX#tx.id,
+			last_tx = FirstTX#tx.id,
 			quantity = 100
 		},
 		PostTX(SecondTX),
@@ -1041,14 +1036,20 @@ get_wallet_deposits_test_() ->
 		ar_node:mine(Node),
 		receive after 1000 -> ok end,
 		%% Expect the endpoint to report the received transfer
-		TwoTXs = GetTXs(no_earliest_deposit),
-		?assertEqual([ar_util:encode(SecondTX#tx.id), ar_util:encode(TX#tx.id)], TwoTXs),
+		?assertEqual(
+			[ar_util:encode(SecondTX#tx.id), ar_util:encode(FirstTX#tx.id)],
+			GetTXs("")
+		),
 		%% Specify the first tx as the earliest, still expect to get both txs
-		TXsSinceFirstTX = GetTXs(ar_util:encode(TX#tx.id)),
-		?assertEqual([ar_util:encode(SecondTX#tx.id), ar_util:encode(TX#tx.id)], TXsSinceFirstTX),
+		?assertEqual(
+			[ar_util:encode(SecondTX#tx.id), ar_util:encode(FirstTX#tx.id)],
+			GetTXs(ar_util:encode(FirstTX#tx.id))
+		),
 		%% Specify the second tx as the earliest, expect to get only it
-		TXsSinceSecondTX = GetTXs(ar_util:encode(SecondTX#tx.id)),
-		?assertEqual([ar_util:encode(SecondTX#tx.id)], TXsSinceSecondTX)
+		?assertEqual(
+			[ar_util:encode(SecondTX#tx.id)],
+			GetTXs(ar_util:encode(SecondTX#tx.id))
+		)
 	end}.
 
 %	Node = ar_node:start([], B0),
