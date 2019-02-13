@@ -506,7 +506,12 @@ handle('GET', [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], _Req) ->
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
 	{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
-	FilteredTXs = Before ++ case length(After) > 0 of true -> [EarliestDeposit]; _ -> [] end,
+	FilteredTXs = case After of
+		[] ->
+			Before;
+		[EarliestDeposit | _] ->
+			Before ++ [EarliestDeposit]
+	end,
 	{200, [], ar_serialize:jsonify(FilteredTXs)};
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
