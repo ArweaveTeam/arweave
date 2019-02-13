@@ -6,11 +6,11 @@
 -include("ar.hrl").
 
 -ifdef(DEBUG).
--define(CLEANER_WAIT, 6 * 60 * 1000).
+-define(CLEANER_WAIT, 3 * 60 * 1000).
 -define(MAX_IPFSAR_PENDING, 3).
 -define(N_STATS_TO_KEEP, 25).
 -else.
--define(CLEANER_WAIT, 6 * 60 * 60 * 1000).
+-define(CLEANER_WAIT, 30 * 60 * 1000).
 -define(MAX_IPFSAR_PENDING, 100).
 -define(N_STATS_TO_KEEP, 250).
 -endif.
