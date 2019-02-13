@@ -909,7 +909,7 @@ get_wallet_txs_test_() ->
 		%% Expect the wallet to have no transactions
 		?assertEqual([], TXs),
 		%% Sign and post a transaction and expect it to appear in the wallet list
-		TX = (ar_tx:new())#tx{ owner = ar_wallet:to_address(Pub) },
+		TX = (ar_tx:new())#tx{ owner = Pub },
 		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 			ar_httpc:request(
 				<<"POST">>,
@@ -939,7 +939,7 @@ get_wallet_txs_test_() ->
 		OneTXAgain = ar_serialize:dejsonify(GetOneTXAgainBody),
 		?assertEqual([ar_util:encode(TX#tx.id)], OneTXAgain),
 		%% Add one more TX and expect it to be appended to the wallet list
-		SecondTX = (ar_tx:new())#tx{ owner = ar_wallet:to_address(Pub), last_tx = TX#tx.id },
+		SecondTX = (ar_tx:new())#tx{ owner = Pub, last_tx = TX#tx.id },
 		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 			ar_httpc:request(
 				<<"POST">>,
@@ -1008,7 +1008,7 @@ get_wallet_deposits_test_() ->
 		?assertEqual([], TXs),
 		%% Send some Winston to WalletAddressTo
 		TX = (ar_tx:new())#tx{
-			owner = ar_wallet:to_address(PubFrom),
+			owner = PubFrom,
 			target = ar_wallet:to_address(PubTo),
 			quantity = 100
 		},
@@ -1031,7 +1031,7 @@ get_wallet_deposits_test_() ->
 		?assertEqual([ar_util:encode(TX#tx.id)], OneTX),
 		%% Send some more Winston to WalletAddressTo
 		SecondTX = (ar_tx:new())#tx{
-			owner = ar_wallet:to_address(PubFrom),
+			owner = PubFrom,
 			target = ar_wallet:to_address(PubTo),
 			last_tx = TX#tx.id,
 			quantity = 100
