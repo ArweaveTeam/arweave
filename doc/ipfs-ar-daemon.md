@@ -10,7 +10,7 @@ User registers with Arweave:
 - User is sent an API Key which:
   - authorises use of Arweave's ar+ipfs api
   - links to their wallet
-- User is sent bash script (with user's guide) to run as a daemon
+- User is sent bash script ipfsar.sh (with user's guide) to run as a daemon
 
 ## bash script
 
@@ -18,7 +18,7 @@ see `ipfsar.sh`
 
 Bash script will already have User's API Key, and an Arweave server IP address.
 
-Script will do the following:
+When run, script will do the following:
 - call `ipfs pin ls` & convert output to a list of ipfs hashes
 - with each hash:
   - if not in local ignore list
@@ -32,7 +32,6 @@ script currently relies on cron (or equivalent) for periodic execution.  Make se
 
 ### Send a hash to be incentivised
 
-```
     > POST /api/ipfs/getsend/
     >
     > {
@@ -44,7 +43,7 @@ script currently relies on cron (or equivalent) for periodic execution.  Make se
     < 208 Already Reported  --  User has already submitted this hash
     < 400 Bad Request       --  invalid json
     < 401 Unauthorized      --  invalid api key
-```
+
 
 Sending this with a valid API Key (with sufficient funds in wallet) will cause the Arweave server to:
 - check request validity & auth (error responses 400, 401)
@@ -66,9 +65,17 @@ task queued:
   - add hash to ignore list
   - charge wallet with get-send fee
 
+### Delete a hash request
+
+    > DEL /api/ipfs/<key>/<hash>
+
+If the hash status is `pending` or `nofunds` (see get status below), the hash request is removed.  Otherwise a 400 is returned, with an informative body:
+
+    < 400 "Hash already mined."
+    < 400 "Hash already queued."
+
 ### Get status of User's requests
 
-```
     > GET /api/ipfs/status/<key>
 
     < [
@@ -77,7 +84,6 @@ task queued:
     <     "ipfs_hash": "QmZDQb8iK7BaTAWraCrSDSygZ23UkrhXzwVUuV2ZUKm7Rw",
     <     "status": "queued"
     <   }, ...]
-```
 
 Returns status of most recent 500 hashes.
 
@@ -90,14 +96,12 @@ Field "status" is one of:
 
 ### Get balance of User's wallet
 
-```
     > GET /api/ipfs/balance/<key>
 
     < {
     <   "address": "gIK2HLIhvFUoAJFcpHOqwmGeZPgVZLcE3ss8sT64gFY",
     <   "balance": "1165405188938"
     < }
-```
 
 Returns balance (in Winston) in User's wallet, along with the wallet address.
 
@@ -105,7 +109,7 @@ Returns balance (in Winston) in User's wallet, along with the wallet address.
 
 ### command-line parameters
 
-- ipfs_getsend (no arguments): Start the IPFS->AR server.
+- `ipfs_getsend` (no arguments): Start the IPFS->AR server.
 
 Starts the app_ipfs_daemon_server:
 
@@ -113,6 +117,10 @@ Starts the app_ipfs_daemon_server:
 - starts the cleaner_upper process (updates user hash statuses)
 
 ### shell functions
+
+- `app_ipfs_daemon_server:start()`
+
+Starts the IPFS->AR server (in case it wasn't started at the command-line).
 
 - `app_ipfs_daemon_server:stop()`
 
