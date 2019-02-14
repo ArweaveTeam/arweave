@@ -215,17 +215,8 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 				true ->
 					CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
 					[TXHeight] = proplists:get_all_values(<<"block_height">>, Tags),
-					true = (TXHeight >= -1),
 					%% First confirmation is when the TX is in the latest block.
-					%% Zero confirmations would mean it's only in the mempool, but this
-					%% has not support for checking this for now.
-					NumberOfConfirmations =
-						case CurrentHeight of
-							-1 ->
-								-1;
-							_Height when _Height >= 0 ->
-								CurrentHeight - TXHeight + 1
-						end,
+					NumberOfConfirmations = CurrentHeight - TXHeight + 1,
 					Status = Tags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
 					{200, [], ar_serialize:jsonify({Status})}
 			end;
