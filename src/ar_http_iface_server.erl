@@ -722,16 +722,21 @@ handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD'
 %% the user is requesting the data from the TX associated with that hash.
 %% Optionally allow a file extension.
 handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
-	Ext =
-		case MaybeExt of
-			<< ".", Part/binary >> -> Part;
-			<<>> -> <<"html">>
-		end,
-	handle('GET', [<<"tx">>, Hash, <<"data.", Ext/binary>>], Req);
+	case MaybeExt of
+		<< ".", Part/binary >> ->
+			handle('GET', [<<"tx">>, Hash, <<"data.", Part/binary>>], Req);
+		<<>> ->
+			handle('GET', [<<"tx">>, Hash, <<"data.html">>], Req);
+		_ ->
+			not_found()
+	end;
 
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
+	not_found().
+
+not_found() ->
 	{400, [], <<"Request type not found.">>}.
 
 %% @doc Get the filename for an encoded TX id.
