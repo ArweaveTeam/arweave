@@ -71,7 +71,6 @@ A JSON transaction record.
   "tags": [],
   "target": "",
   "quantity": "0",
-  "type": "data",
   "data": "3DduMPkwLkE0LjIxM9o",
   "reward": "1966476441",
   "signature": "RwBICn...Rxqi54"
@@ -127,7 +126,7 @@ Retrieve a string of the requested field for a given transaction.
   [transaction_id] : Base64url encoded ID associated with the transaction
   [field] : A string containing the name of the data field being requested
 - **Fields**
-  id | last_tx | owner | target | quantity | type | data | reward | signature
+  id | last_tx | owner | target | quantity | data | reward | signature
 
 
 #### Example Response
@@ -652,7 +651,6 @@ var post =
       "tags": [],
       "target": "",
       "quantity": "0",
-      "type": "data",
       "data": "3DduMPkwLkE0LjIxM9o",
       "reward": "1966476441",
       "signature": "RwBICn...Rxqi54"
