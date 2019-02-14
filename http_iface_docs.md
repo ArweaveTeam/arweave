@@ -627,7 +627,7 @@ Post a transaction to the network.
 
 ```javascript
 {
-    "last_tx": "",  // Base64 encoded ID of the last transaction made by this wallet.
+    "last_tx": "",  // Base64 encoded ID of the last transaction made by this wallet. Empty if this is the first transaction.
     "owner": "",    // The public key making this transaction.
     "target": "",   // Base64 encoded SHA256 hash of recipient's public key. Empty for data transactions.
     "quantity": "", // Decimal string representation of the amount of sent AR in winston. Empty for data transactions.
