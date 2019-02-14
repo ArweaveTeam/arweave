@@ -827,11 +827,14 @@ post_unsigned_tx() ->
 	?assertMatch([_], proplists:get_all_values(<<"wallet_address">>, CreateWalletRes)),
 	% send an unsigned transaction to be signed with the generated key
 	TX = (ar_tx:new())#tx{reward = ?AR(1)},
-	{FullTXProps} = ar_serialize:tx_to_json_struct(TX),
-	UnsignedTXProps = lists:append(
-		props_pick(FullTXProps, [last_tx, target, quantity, data, reward]),
-		[{<<"wallet_access_code">>, WalletAccessCode}]
-	),
+	UnsignedTXProps = [
+		{<<"last_tx">>, TX#tx.last_tx},
+		{<<"target">>, TX#tx.target},
+		{<<"quantity">>, integer_to_binary(TX#tx.quantity)},
+		{<<"data">>, TX#tx.data},
+		{<<"reward">>, integer_to_binary(TX#tx.reward)},
+		{<<"wallet_access_code">>, WalletAccessCode}
+	],
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
@@ -878,16 +881,6 @@ post_unsigned_tx() ->
 		},
 		maps:from_list(GetTXRes)
 	).
-
-%% @doc Create a new proplist from Proplist with the keys in Keys.
-props_pick(Proplist, Keys) ->
-	props_pick(Proplist, Keys, []).
-
-props_pick(_, [], Acc) ->
-	Acc;
-props_pick(Proplist, [Key | Keys], Acc) ->
-	Prop = {_, _} = lists:keyfind(Key, 1, Proplist),
-	props_pick(Proplist, Keys, [Prop | Acc]).
 
 get_wallet_txs_test_() ->
 	{timeout, 10, fun() ->
