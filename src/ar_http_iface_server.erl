@@ -711,6 +711,13 @@ handle('POST', [<<"services">>], Req) ->
 	),
 	{200, [], "OK"};
 
+%% @doc Return the current block hieght, or 500
+handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD') ->
+	case ar_node:get_height(whereis(http_entrypoint_node)) of
+		-1 -> {503, [], <<"Node has not joined the network yet.">>};
+		H -> {200, [], integer_to_binary(H)}
+	end;
+
 %% @doc If we are given a hash with no specifier (block, tx, etc), assume that
 %% the user is requesting the data from the TX associated with that hash.
 %% Optionally allow a file extension.
@@ -721,13 +728,6 @@ handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
 			<<>> -> <<"html">>
 		end,
 	handle('GET', [<<"tx">>, Hash, <<"data.", Ext/binary>>], Req);
-
-%% @doc Return the current block hieght, or 500
-handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD') ->
-	case ar_node:get_height(whereis(http_entrypoint_node)) of
-		-1 -> {503, [], <<"Node has not joined the network yet.">>};
-		H -> {200, [], integer_to_binary(H)}
-	end;
 
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
