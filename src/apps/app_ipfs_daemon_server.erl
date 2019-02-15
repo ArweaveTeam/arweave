@@ -290,8 +290,11 @@ hash_mined(Hash) ->
 
 ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
 	status_update(APIKey, IPFSHash, pending),
+	ar:d({app_ipfs_daemon, ipfs_getter, getting, IPFSHash}),
 	{ok, Data} = ar_ipfs:cat_data_by_hash(IPFSHash),
+	ar:d({app_ipfs_daemon, ipfs_getter, got, IPFSHash}),
 	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, IPFSHash}], data=Data},
+	ar:d({app_ipfs_daemon, ipfs_getter, tx_created, IPFSHash}),
 	Status = case ?MODULE:sufficient_funds(Wallet, byte_size(Data)) of
 		ok ->
 			app_queue:add(maybe_restart_queue(APIKey, Queue, Wallet), UnsignedTX),
