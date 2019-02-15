@@ -62,15 +62,15 @@ start_worker(Node) ->
 		end
 	).
 
-%% @doc Try to fetch peers for a node. Will timeout and try up to 3 times with
+%% @doc Try to fetch peers for a node. Will timeout and try up to 4 times with
 %% a 20 seconds delay in between.
 fetch_peers(Node) ->
-	fetch_peers(Node, {1, 3}).
+	fetch_peers(Node, {1, 4}).
 
 fetch_peers(_, {_Attempt, _MaxAttempts}) when _Attempt >= _MaxAttempts ->
 	unavailable;
 fetch_peers(Node, {Attempt, MaxAttempts}) when Attempt > 1 ->
-	timer:sleep(20 * 1000),
+	timer:sleep(30 * 1000),
 	io:format(
 		"Retrying (try ~B of ~B) fetching peers from: ~p~n",
 		[Attempt, MaxAttempts, Node]
@@ -80,7 +80,7 @@ fetch_peers(Node, {Attempt, MaxAttempts}) ->
 	fetch_peers1(Node, {Attempt, MaxAttempts}).
 
 fetch_peers1(Node, {Attempt, MaxAttempts}) ->
-	case ar_http_iface_client:get_peers(Node) of
+	case ar_http_iface_client:get_peers(Node, 10 * 1000) of
 		unavailable ->
 			fetch_peers(Node, {Attempt + 1, MaxAttempts});
 		Peers ->
