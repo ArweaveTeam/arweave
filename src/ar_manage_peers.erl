@@ -86,7 +86,10 @@ get_peers(Peer) ->
 	end.
 
 responds(Peer) ->
-	not (is_atom(ar_http_iface_client:get_info(Peer))).
+	case ar_http_iface_client:get_info(Peer) of
+		info_unavailable -> false;
+		_ -> true
+	end.
 
 %% @doc Calculate a rank order for any given peer or list of peers.
 score(Peers) when is_list(Peers) ->
