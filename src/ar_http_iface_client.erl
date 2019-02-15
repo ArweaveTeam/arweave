@@ -363,17 +363,17 @@ get_peers(Peer, Timeout) ->
 
 %% @doc Produce a key value list based on a /info response.
 process_get_info(Body) ->
-	{Struct} = ar_serialize:dejsonify(Body),
-	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Struct),
+	{Props} = ar_serialize:dejsonify(Body),
+	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Props),
+	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Props),
 	ReleaseNumber =
-		case lists:keyfind(<<"release">>, 1, Struct) of
+		case lists:keyfind(<<"release">>, 1, Props) of
 			false -> 0;
 			R -> R
 		end,
-	{_, Height} = lists:keyfind(<<"height">>, 1, Struct),
-	{_, Blocks} = lists:keyfind(<<"blocks">>, 1, Struct),
-	{_, Peers} = lists:keyfind(<<"peers">>, 1, Struct),
+	{_, Height} = lists:keyfind(<<"height">>, 1, Props),
+	{_, Blocks} = lists:keyfind(<<"blocks">>, 1, Props),
+	{_, Peers} = lists:keyfind(<<"peers">>, 1, Props),
 	[
 		{name, NetworkName},
 		{version, ClientVersion},
