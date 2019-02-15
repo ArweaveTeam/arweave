@@ -416,14 +416,25 @@ read_block_hash_list(BinID) ->
 	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Binary)).
 
 %% @doc Read a given wallet list (by hash) from the disk.
-read_wallet_list(ID) ->
-	FileName = ?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(ID)) ++ ".json",
-	case file:read_file(FileName) of
-		{ok, Binary} ->
-			{ok, ar_serialize:json_struct_to_wallet_list(ar_serialize:dejsonify(Binary))};
+read_wallet_list(WalletListHash) ->
+	Filename = wallet_list_file(WalletListHash),
+	case file:read_file(Filename) of
+		{ok, JSON} ->
+			parse_wallet_list_json(JSON);
 		{error, Reason} ->
-			{error, Reason}
+			{error, {failed_reading_file, Filename, Reason}}
 	end.
+
+parse_wallet_list_json(JSON) ->
+	case ar_serialize:json_decode(JSON) of
+		{ok, JiffyStruct} ->
+			{ok, ar_serialize:json_struct_to_wallet_list(JiffyStruct)};
+		{error, Reason} ->
+			{error, {invalid_json, Reason}}
+	end.
+
+wallet_list_file(Hash) ->
+	?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(Hash)) ++ ".json".
 
 lookup_tx_filename(ID) ->
 	case filelib:wildcard(name_tx(ID)) of
@@ -595,3 +606,12 @@ store_and_retrieve_wallet_list_test() ->
 	write_wallet_list(WL = B0#block.wallet_list),
 	receive after 500 -> ok end,
 	?assertEqual({ok, WL}, read_wallet_list(ar_block:hash_wallet_list(WL))).
+
+handle_corrupted_wallet_list_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
+	?assertEqual(B0, read_block(B0#block.indep_hash, B0#block.hash_list)),
+	WalletListHash = ar_block:hash_wallet_list(B0#block.wallet_list),
+	ok = file:write_file(wallet_list_file(WalletListHash), <<>>),
+	?assertEqual(unavailable, read_block(B0#block.indep_hash, B0#block.hash_list)).
