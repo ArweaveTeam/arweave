@@ -316,6 +316,7 @@ json_struct_to_wallet_list(JSON) when is_binary(JSON) ->
 	json_struct_to_wallet_list(dejsonify(JSON));
 json_struct_to_wallet_list(WalletsStruct) ->
 	lists:map(fun json_struct_to_wallet/1, WalletsStruct).
+
 json_struct_to_wallet({Wallet}) ->
 	Address = ar_util:decode(find_value(<<"address">>, Wallet)),
 	Balance = binary_to_integer(find_value(<<"balance">>, Wallet)),

@@ -513,15 +513,15 @@ select_drive(Disks, CWD) ->
 
 %% @doc Test block storage.
 store_and_retrieve_block_test() ->
-    ar_storage:clear(),
+	ar_storage:clear(),
 	?assertEqual(0, blocks_on_disk()),
-    B0s = [B0] = ar_weave:init([]),
-    ar_storage:write_block(B0),
+	B0s = [B0] = ar_weave:init([]),
+	ar_storage:write_block(B0),
 	B0 = read_block(B0#block.indep_hash, B0#block.hash_list),
-    B1s = [B1|_] = ar_weave:add(B0s, []),
-    ar_storage:write_block(B1),
-    [B2|_] = ar_weave:add(B1s, []),
-    ar_storage:write_block(B2),
+	B1s = [B1|_] = ar_weave:add(B0s, []),
+	ar_storage:write_block(B1),
+	[B2|_] = ar_weave:add(B1s, []),
+	ar_storage:write_block(B2),
 	write_block(B1),
 	?assertEqual(3, blocks_on_disk()),
 	B1 = read_block(B1#block.indep_hash, B2#block.hash_list),
@@ -576,18 +576,18 @@ invalidate_block_test() ->
 
 store_and_retrieve_block_hash_list_test() ->
 	ID = crypto:strong_rand_bytes(32),
-    B0s = ar_weave:init([]),
+	B0s = ar_weave:init([]),
 	write_block(hd(B0s)),
-    B1s = ar_weave:add(B0s, []),
+	B1s = ar_weave:add(B0s, []),
 	write_block(hd(B1s)),
-    [B2|_] = ar_weave:add(B1s, []),
+	[B2|_] = ar_weave:add(B1s, []),
 	write_block_hash_list(ID, B2#block.hash_list),
 	receive after 500 -> ok end,
 	BHL = read_block_hash_list(ID),
 	BHL = B2#block.hash_list.
 
 store_and_retrieve_wallet_list_test() ->
-    [B0] = ar_weave:init(),
+	[B0] = ar_weave:init(),
 	write_wallet_list(WL = B0#block.wallet_list),
 	receive after 500 -> ok end,
 	WL = read_wallet_list(ar_block:hash_wallet_list(WL)).
