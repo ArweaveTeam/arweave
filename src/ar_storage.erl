@@ -218,22 +218,24 @@ do_read_block(Filename, BHL) ->
 		B#block {
 			hash_list = ar_block:generate_hash_list_for_block(B, BHL),
 			wallet_list =
-				if is_binary(WL) ->
-					case read_wallet_list(WL) of
-						{error, Type} ->
-							ar:report(
-								[
-									{
-										error_reading_wallet_list_from_disk,
-										ar_util:encode(B#block.indep_hash)
-									},
-									{type, Type}
-								]
-							),
-							not_found;
-						ReadWL -> ReadWL
-					end;
-				true -> WL
+				case WL of
+					WL when is_list(WL) ->
+						WL;
+					WL when is_binary(WL) ->
+						case read_wallet_list(WL) of
+							{error, Type} ->
+								ar:report(
+									[
+										{
+											error_reading_wallet_list_from_disk,
+											ar_util:encode(B#block.indep_hash)
+										},
+										{type, Type}
+									]
+								),
+								not_found;
+							ReadWL -> ReadWL
+						end
 				end
 		},
 	case FinalB#block.wallet_list of
