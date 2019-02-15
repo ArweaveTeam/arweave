@@ -336,7 +336,7 @@ get_info(Peer) ->
 			p2p_headers()
 		)
 	of
-		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(Body);
+		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> process_get_info_json(JSON);
 		_ -> info_unavailable
 	end.
 
@@ -362,8 +362,15 @@ get_peers(Peer, Timeout) ->
 	end.
 
 %% @doc Produce a key value list based on a /info response.
-process_get_info(Body) ->
-	{Props} = ar_serialize:dejsonify(Body),
+process_get_info_json(JSON) ->
+	case ar_serialize:json_decode(JSON) of
+		{ok, {Props}} ->
+			process_get_info(Props);
+		{error, _} ->
+			info_unavailable
+	end.
+
+process_get_info(Props) ->
 	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Props),
 	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Props),
 	ReleaseNumber =
