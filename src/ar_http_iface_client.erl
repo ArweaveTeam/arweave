@@ -377,14 +377,15 @@ handle_block_response(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
 	case ?IS_BLOCK(B) of
 		true ->
 			WalletList =
-				case is_binary(WL = B#block.wallet_list) of
-					true ->
+				case B#block.wallet_list of
+					WL when is_list(WL) -> WL;
+					WL when is_binary(WL) ->
 						case ar_storage:read_wallet_list(WL) of
+							{ok, ReadWL} ->
+								ReadWL;
 							{error, _} ->
-								get_wallet_list(Peer, B#block.indep_hash);
-							ReadWL -> ReadWL
-						end;
-					false -> WL
+								get_wallet_list(Peer, B#block.indep_hash)
+						end
 				end,
 			HashList =
 				case B#block.hash_list of

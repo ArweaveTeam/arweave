@@ -223,6 +223,8 @@ do_read_block(Filename, BHL) ->
 						WL;
 					WL when is_binary(WL) ->
 						case read_wallet_list(WL) of
+							{ok, ReadWL} ->
+								ReadWL;
 							{error, Type} ->
 								ar:report(
 									[
@@ -233,8 +235,7 @@ do_read_block(Filename, BHL) ->
 										{type, Type}
 									]
 								),
-								not_found;
-							ReadWL -> ReadWL
+								not_found
 						end
 				end
 		},
@@ -419,8 +420,9 @@ read_wallet_list(ID) ->
 	FileName = ?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(ID)) ++ ".json",
 	case file:read_file(FileName) of
 		{ok, Binary} ->
-			ar_serialize:json_struct_to_wallet_list(ar_serialize:dejsonify(Binary));
-		Err -> Err
+			{ok, ar_serialize:json_struct_to_wallet_list(ar_serialize:dejsonify(Binary))};
+		{error, Reason} ->
+			{error, Reason}
 	end.
 
 lookup_tx_filename(ID) ->
@@ -592,4 +594,4 @@ store_and_retrieve_wallet_list_test() ->
 	[B0] = ar_weave:init(),
 	write_wallet_list(WL = B0#block.wallet_list),
 	receive after 500 -> ok end,
-	WL = read_wallet_list(ar_block:hash_wallet_list(WL)).
+	?assertEqual({ok, WL}, read_wallet_list(ar_block:hash_wallet_list(WL))).
