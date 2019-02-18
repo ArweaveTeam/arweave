@@ -30,7 +30,6 @@
 		ar_util,
 		ar_cleanup,
 		ar_merkle,
-		ar_meta_db,
 		ar_storage,
 		ar_serialize,
 		ar_services,
@@ -46,7 +45,8 @@
 		ar_simple_reporter,
 		ar_retarget,
 		ar_block,
-		ar_tx_db
+		ar_tx_db,
+		ar_meta_db
 	]
 ).
 
@@ -237,7 +237,7 @@ start(
 	prometheus_registry:register_collector(ar_metrics_collector),
 	% Start apps which we depend on.
 	inets:start(),
-	ar_meta_db:start(),
+	ar_meta_db:start_link(),
 	ar_tx_db:start(),
 	ar_key_db:start(),
 	ar_track_tx_db:start(),
