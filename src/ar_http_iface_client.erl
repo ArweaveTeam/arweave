@@ -8,7 +8,7 @@
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
--export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1, has_tx/2]).
+-export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1, has_tx/2]).
 -export([get_time/1, get_height/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1, get_current_block/2]).
@@ -336,12 +336,14 @@ get_info(Peer) ->
 			p2p_headers()
 		)
 	of
-		{ok, {{<<"200">>, _}, _, Body, _, _}} -> process_get_info(Body);
+		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> process_get_info_json(JSON);
 		_ -> info_unavailable
 	end.
 
 %% @doc Return a list of parsed peer IPs for a remote server.
-get_peers(Peer) ->
+get_peers(Peer) -> get_peers(Peer, default_timeout).
+
+get_peers(Peer, Timeout) ->
 	try
 		begin
 			{ok, {{<<"200">>, _}, _, Body, _, _}} =
@@ -349,7 +351,9 @@ get_peers(Peer) ->
 					<<"GET">>,
 					Peer,
 					"/peers",
-					p2p_headers()
+					p2p_headers(),
+					[],
+					Timeout
 				),
 			PeerArray = ar_serialize:dejsonify(Body),
 			lists:map(fun ar_util:parse_peer/1, PeerArray)
@@ -358,18 +362,25 @@ get_peers(Peer) ->
 	end.
 
 %% @doc Produce a key value list based on a /info response.
-process_get_info(Body) ->
-	{Struct} = ar_serialize:dejsonify(Body),
-	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Struct),
+process_get_info_json(JSON) ->
+	case ar_serialize:json_decode(JSON) of
+		{ok, {Props}} ->
+			process_get_info(Props);
+		{error, _} ->
+			info_unavailable
+	end.
+
+process_get_info(Props) ->
+	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Props),
+	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Props),
 	ReleaseNumber =
-		case lists:keyfind(<<"release">>, 1, Struct) of
+		case lists:keyfind(<<"release">>, 1, Props) of
 			false -> 0;
 			R -> R
 		end,
-	{_, Height} = lists:keyfind(<<"height">>, 1, Struct),
-	{_, Blocks} = lists:keyfind(<<"blocks">>, 1, Struct),
-	{_, Peers} = lists:keyfind(<<"peers">>, 1, Struct),
+	{_, Height} = lists:keyfind(<<"height">>, 1, Props),
+	{_, Blocks} = lists:keyfind(<<"blocks">>, 1, Props),
+	{_, Peers} = lists:keyfind(<<"peers">>, 1, Props),
 	[
 		{name, NetworkName},
 		{version, ClientVersion},

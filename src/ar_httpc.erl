@@ -18,14 +18,14 @@ request(Method, Peer, Path, Headers) ->
 	request(Method, Peer, Path, Headers, <<>>).
 
 request(Method, Peer, Path, Headers, Body) ->
-	request(Method, Peer, Path, Headers, Body, ?NET_TIMEOUT).
+	request(Method, Peer, Path, Headers, Body, default_timeout).
 
 request(Method, Peer, Path, Headers, Body, Timeout) ->
 	%ar:report([{ar_httpc_request,Peer},{method,Method}, {path,Path}]),
 	Host = "http://" ++ ar_util:format_peer(Peer),
 	{ok, Client} = fusco:start(
 		Host,
-		[{connect_timeout, min(Timeout, ?CONNECT_TIMEOUT)}]
+		[{connect_timeout, connect_timeout(Timeout)}]
 	),
 	Result = fusco:request(
 		Client,
@@ -34,7 +34,7 @@ request(Method, Peer, Path, Headers, Body, Timeout) ->
 		merge_headers(?DEFAULT_REQUEST_HEADERS, Headers),
 		Body,
 		1,
-		Timeout
+		request_timeout(Timeout)
 	),
 	ok = fusco:disconnect(Client),
 	case Result of
@@ -46,6 +46,16 @@ request(Method, Peer, Path, Headers, Body, Timeout) ->
 		_ -> ok
 		end,
 	Result.
+
+connect_timeout(default_timeout) ->
+	?CONNECT_TIMEOUT;
+connect_timeout(Timeout) ->
+	Timeout.
+
+request_timeout(default_timeout) ->
+	?NET_TIMEOUT;
+request_timeout(Timeout) ->
+	Timeout.
 
 %% @doc Merges proplists with headers. For duplicates, HeadersB has precedence.
 merge_headers(HeadersA, HeadersB) ->

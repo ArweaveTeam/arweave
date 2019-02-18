@@ -215,17 +215,8 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 				true ->
 					CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
 					[TXHeight] = proplists:get_all_values(<<"block_height">>, Tags),
-					true = (TXHeight >= -1),
 					%% First confirmation is when the TX is in the latest block.
-					%% Zero confirmations would mean it's only in the mempool, but this
-					%% has not support for checking this for now.
-					NumberOfConfirmations =
-						case CurrentHeight of
-							-1 ->
-								-1;
-							_Height when _Height >= 0 ->
-								CurrentHeight - TXHeight + 1
-						end,
+					NumberOfConfirmations = CurrentHeight - TXHeight + 1,
 					Status = Tags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
 					{200, [], ar_serialize:jsonify({Status})}
 			end;
@@ -720,17 +711,6 @@ handle('POST', [<<"services">>], Req) ->
 	),
 	{200, [], "OK"};
 
-%% @doc If we are given a hash with no specifier (block, tx, etc), assume that
-%% the user is requesting the data from the TX associated with that hash.
-%% Optionally allow a file extension.
-handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
-	Ext =
-		case MaybeExt of
-			<< ".", Part/binary >> -> Part;
-			<<>> -> <<"html">>
-		end,
-	handle('GET', [<<"tx">>, Hash, <<"data.", Ext/binary>>], Req);
-
 %% @doc Return the current block hieght, or 500
 handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD') ->
 	case ar_node:get_height(whereis(http_entrypoint_node)) of
@@ -738,9 +718,25 @@ handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD'
 		H -> {200, [], integer_to_binary(H)}
 	end;
 
+%% @doc If we are given a hash with no specifier (block, tx, etc), assume that
+%% the user is requesting the data from the TX associated with that hash.
+%% Optionally allow a file extension.
+handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
+	case MaybeExt of
+		<< ".", Part/binary >> ->
+			handle('GET', [<<"tx">>, Hash, <<"data.", Part/binary>>], Req);
+		<<>> ->
+			handle('GET', [<<"tx">>, Hash, <<"data.html">>], Req);
+		_ ->
+			not_found()
+	end;
+
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, _) ->
+	not_found().
+
+not_found() ->
 	{400, [], <<"Request type not found.">>}.
 
 %% @doc Get the filename for an encoded TX id.

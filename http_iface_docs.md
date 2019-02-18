@@ -71,7 +71,6 @@ A JSON transaction record.
   "tags": [],
   "target": "",
   "quantity": "0",
-  "type": "data",
   "data": "3DduMPkwLkE0LjIxM9o",
   "reward": "1966476441",
   "signature": "RwBICn...Rxqi54"
@@ -127,7 +126,7 @@ Retrieve a string of the requested field for a given transaction.
   [transaction_id] : Base64url encoded ID associated with the transaction
   [field] : A string containing the name of the data field being requested
 - **Fields**
-  id | last_tx | owner | target | quantity | type | data | reward | signature
+  id | last_tx | owner | target | quantity | data | reward | signature
 
 
 #### Example Response
@@ -627,7 +626,7 @@ Post a transaction to the network.
 
 ```javascript
 {
-    "last_tx": "",  // Base64 encoded ID of the last transaction made by this wallet.
+    "last_tx": "",  // Base64 encoded ID of the last transaction made by this wallet. Empty if this is the first transaction.
     "owner": "",    // The public key making this transaction.
     "target": "",   // Base64 encoded SHA256 hash of recipient's public key. Empty for data transactions.
     "quantity": "", // Decimal string representation of the amount of sent AR in winston. Empty for data transactions.
@@ -652,7 +651,6 @@ var post =
       "tags": [],
       "target": "",
       "quantity": "0",
-      "type": "data",
       "data": "3DduMPkwLkE0LjIxM9o",
       "reward": "1966476441",
       "signature": "RwBICn...Rxqi54"
