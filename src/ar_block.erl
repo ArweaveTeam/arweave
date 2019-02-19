@@ -359,12 +359,15 @@ verify_dep_hash(NewB, BDSHash) ->
 
 %% @doc Verify that the block timestamp is not too far in the past respecting reasonable
 %% block propagation time.
-verify_timestamp(NewB) ->
-	TimestampDiff = os:system_time(seconds) - NewB#block.timestamp,
+verify_timestamp(B) ->
+	CurrentTime = os:system_time(seconds),
 	(
-		-(?NODE_CLOCK_SYNC_TOLERANCE) =< TimestampDiff
+		B#block.timestamp =< CurrentTime + (?NODE_CLOCK_SYNC_TOLERANCE)
 		andalso
-		TimestampDiff =< (?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE) + (?NODE_CLOCK_SYNC_TOLERANCE)
+		B#block.timestamp >= CurrentTime - (
+			(?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE) +
+			(?NODE_CLOCK_SYNC_TOLERANCE)
+		)
 	).
 
 %% @doc Verify the height of the new block is the one higher than the
