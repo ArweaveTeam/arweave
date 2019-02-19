@@ -362,11 +362,11 @@ verify_dep_hash(NewB, BDSHash) ->
 verify_timestamp(B) ->
 	CurrentTime = os:system_time(seconds),
 	(
-		B#block.timestamp =< CurrentTime + (?NODE_CLOCK_SYNC_TOLERANCE)
+		B#block.timestamp =< CurrentTime + ?NODE_CLOCK_SYNC_TOLERANCE
 		andalso
 		B#block.timestamp >= CurrentTime - (
-			(?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE) +
-			(?NODE_CLOCK_SYNC_TOLERANCE)
+			?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE +
+			?NODE_CLOCK_SYNC_TOLERANCE
 		)
 	).
 

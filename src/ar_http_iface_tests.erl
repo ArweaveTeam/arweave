@@ -480,7 +480,7 @@ add_external_block_with_invalid_timestamp_test() ->
 	B1 = ar_storage:read_block(hd(BHL1), BHL1),
 	RecallB0 = ar_node_utils:find_recall_block(BHL0),
 	%% Expect the timestamp too far from the future to be rejected
-	FarFutureTimestamp = os:system_time(second) + (?NODE_CLOCK_SYNC_TOLERANCE) + 5,
+	FarFutureTimestamp = os:system_time(second) + ?NODE_CLOCK_SYNC_TOLERANCE + 5,
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
 		send_new_block(
@@ -493,7 +493,7 @@ add_external_block_with_invalid_timestamp_test() ->
 		)
 	),
 	%% Expect the timestamp from the future within the tolerance interval to be accepted
-	FutureTimestamp = os:system_time(second) + (?NODE_CLOCK_SYNC_TOLERANCE) - 1,
+	FutureTimestamp = os:system_time(second) + ?NODE_CLOCK_SYNC_TOLERANCE - 1,
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
@@ -508,8 +508,8 @@ add_external_block_with_invalid_timestamp_test() ->
 	%% Expect the timestamp far from the past to be rejected
 	PastTolerance = (
 		os:system_time(second) -
-		(?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE) -
-		(?NODE_CLOCK_SYNC_TOLERANCE)
+		?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE -
+		?NODE_CLOCK_SYNC_TOLERANCE
 	),
 	FarPastTimestamp = PastTolerance - 5,
 	?assertMatch(

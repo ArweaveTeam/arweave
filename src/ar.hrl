@@ -67,7 +67,7 @@
 
 %% @doc Defines how far in the past the block timestamp can be.
 %% Accounts for the block propagation time.
--define(BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE, 2 * 60). % 2 minutes
+-define(BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE, (2 * 60)). % 2 minutes
 
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
 
