@@ -82,18 +82,18 @@ verify_time_sync(Peers) ->
 						LocalT = os:system_time(second),
 						Tolerance = ?NODE_CLOCK_SYNC_TOLERANCE,
 						case LocalT of
-							T when T < RemoteTMin andalso T > RemoteTMin - Tolerance ->
-								log_peer_clock_diff(Peer, RemoteTMin - T),
-								true;
-							T when T > RemoteTMax andalso T < RemoteTMax + Tolerance->
-								log_peer_clock_diff(Peer, T - RemoteTMax),
-								true;
 							T when T < RemoteTMin - Tolerance ->
 								log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
 								false;
+							T when T < RemoteTMin ->
+								log_peer_clock_diff(Peer, RemoteTMin - T),
+								true;
 							T when T > RemoteTMax + Tolerance ->
 								log_peer_clock_diff(Peer, T - RemoteTMax - Tolerance),
 								false;
+							T when T > RemoteTMax ->
+								log_peer_clock_diff(Peer, T - RemoteTMax),
+								true;
 							_ ->
 								true
 						end;
