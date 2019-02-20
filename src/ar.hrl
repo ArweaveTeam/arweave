@@ -125,10 +125,6 @@
 %% @doc Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 3 * 1000).
 
-%% @doc The amount of time to wait before refreshing miner data in case of a
-%% difficulty change.
--define(REFRESH_MINE_DATA_TIMER, 60 * 1000).
-
 %% @doc Time between attempts to find optimise peers.
 -define(GET_MORE_PEERS_TIME,  240 * 1000).
 

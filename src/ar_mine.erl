@@ -145,12 +145,6 @@ server(
 				data_segment = BSD
 			},
 			server(restart_miners(NewS));
-		% Refresh the mining data in case of diff change.
-		{refresh_data, PID} ->
-			ar:report([miner_data_refreshed]),
-			PID ! {new_data, TXs},
-			erlang:send_after(?REFRESH_MINE_DATA_TIMER, PID, {refresh_data, PID}),
-			server(S);
 		% Spawn the hashing worker processes and begin to mine.
 		mine ->
 			NewS = start_miners(S),
