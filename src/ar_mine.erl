@@ -97,17 +97,11 @@ server(
 	receive
 		% Stop the mining process killing all the workers.
 		stop ->
-			lists:foreach(
-				fun(Miner) -> Miner ! stop end,
-				Miners
-			),
+			stop_miners(Miners),
 			ok;
 		% Update the miner to mine on a new set of data.
 		{new_data, RawTXs} ->
-			lists:foreach(
-				fun(Miner) -> Miner ! stop end,
-				Miners
-			),
+			stop_miners(Miners),
 			self() ! mine,
 			% Update mine loop to mine on the newly provided data.
 			NewTimestamp = os:system_time(seconds),
@@ -154,10 +148,7 @@ server(
 				NewTimestamp,
 				Tags
 			),
-			lists:foreach(
-				fun(Miner) -> Miner ! stop end,
-				Miners
-			),
+			stop_miners(Miners),
 			self() ! mine,
 			server(
 				S#state {
@@ -195,12 +186,15 @@ server(
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce} ->
-			lists:foreach(
-				fun(Miner) -> Miner ! stop end,
-				Miners
-			),
+			stop_miners(Miners),
 			Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
 	end.
+
+stop_miners(Miners) ->
+	lists:foreach(
+		fun(Pid) -> Pid ! stop end,
+		Miners
+	).
 
 %% @doc A worker process to hash the data segment searching for a solution
 %% for the given diff.
@@ -363,7 +357,7 @@ kill_miner_test() ->
 	RecallB = hd(B0),
 	PID = start(B, RecallB, [], unclaimed, [], self()),
 	erlang:monitor(process, PID),
-	PID ! stop,
+	stop_miners([PID]),
 	receive
 		{'DOWN', _Ref, process, PID, normal} -> ok
 		after 1000 -> erlang:error(no_match)
