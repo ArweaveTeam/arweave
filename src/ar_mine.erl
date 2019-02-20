@@ -117,12 +117,8 @@ server(
 				),
 			server(
 				S#state {
-					parent = Parent,
-					current_block = CurrentB,
-					recall_block = RecallB,
 					txs = NewTXs,
 					timestamp = NewTimestamp,
-					reward_addr = RewardAddr,
 					data_segment =
 						ar_block:generate_block_data_segment(
 							CurrentB,
@@ -132,7 +128,6 @@ server(
 							NewTimestamp,
 							Tags
 						),
-					tags = Tags,
 					diff = NewDiff
 				}
 			);
