@@ -80,10 +80,6 @@ stop(PID) ->
 change_data(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
 
-%% @doc Schedule a timer to refresh data segment.
-refresh_data_timer(PID) ->
-	erlang:send_after(?REFRESH_MINE_DATA_TIMER, PID, {refresh_data, PID}).
-
 %% @doc The main mining server.
 server(
 	S = #state {
@@ -172,12 +168,8 @@ server(
 		% Refresh the mining data in case of diff change.
 		{refresh_data, PID} ->
 			ar:report([miner_data_refreshed]),
-			spawn(
-				fun() ->
-					PID ! {new_data, TXs},
-					refresh_data_timer(PID)
-				end
-			),
+			PID ! {new_data, TXs},
+			erlang:send_after(?REFRESH_MINE_DATA_TIMER, PID, {refresh_data, PID}),
 			server(S);
 		% Spawn the hashing worker processes and begin to mine.
 		mine ->
