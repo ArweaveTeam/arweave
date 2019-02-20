@@ -256,17 +256,12 @@ schedule_hash(S = #state { delay = Delay }) ->
 %% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
 %% This is done in attempt to maintain on average a fixed block time.
 next_diff(CurrentB) ->
-	Timestamp = os:system_time(seconds),
-	IsRetargetHeight = ar_retarget:is_retarget_height(CurrentB#block.height + 1),
-	case IsRetargetHeight of
-		true -> ar_retarget:maybe_retarget(
-				CurrentB#block.height + 1,
-				CurrentB#block.diff,
-				Timestamp,
-				CurrentB#block.last_retarget
-			);
-		false -> CurrentB#block.diff
-	end.
+	ar_retarget:maybe_retarget(
+		CurrentB#block.height + 1,
+		CurrentB#block.diff,
+		os:system_time(seconds),
+		CurrentB#block.last_retarget
+	).
 
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff) ->
