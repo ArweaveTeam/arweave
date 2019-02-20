@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/6, start/7, change_data/2, stop/1, miner_start/2, schedule_hash/1]).
+-export([start/6, start/7, change_data/2, stop/1, start_miner/2, schedule_hash/1]).
 -export([validate/3, validate_by_hash/2, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -91,8 +91,7 @@ server(
 		reward_addr = RewardAddr,
 		tags = Tags,
 		diff = Diff,
-		miners = Miners,
-		max_miners = MaxMiners
+		miners = Miners
 	}) ->
 	receive
 		% Stop the mining process killing all the workers.
@@ -159,31 +158,31 @@ server(
 			server(S);
 		% Spawn the hashing worker processes and begin to mine.
 		mine ->
-			Workers =
-				lists:map(
-					fun(_) -> spawn(?MODULE, miner_start, [S, self()]) end,
-					lists:seq(1, MaxMiners)
-				),
-			lists:foreach(
-				fun(Worker) -> Worker ! hash end,
-				Workers
-			),
+			NewS = start_miners(S),
 			erlang:send_after(
 				?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE div 2,
 				self(),
 				refresh_timestamp
 			),
-			server(
-				S#state {
-					miners = Workers
-				}
-			);
+			server(NewS);
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce} ->
 			stop_miners(Miners),
 			Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
 	end.
+
+start_miners(S = #state {max_miners = MaxMiners}) ->
+	Miners =
+		lists:map(
+			fun(_) -> spawn(?MODULE, start_miner, [S, self()]) end,
+			lists:seq(1, MaxMiners)
+		),
+	lists:foreach(
+		fun(Pid) -> Pid ! hash end,
+		Miners
+	),
+	S#state {miners = Miners}.
 
 stop_miners(Miners) ->
 	lists:foreach(
@@ -194,7 +193,7 @@ stop_miners(Miners) ->
 %% @doc A worker process to hash the data segment searching for a solution
 %% for the given diff.
 %% TODO: Change byte string for nonces to bitstring
-miner_start(S, Supervisor) ->
+start_miner(S, Supervisor) ->
 	process_flag(priority, low),
 	miner(S, Supervisor).
 
