@@ -359,6 +359,8 @@ kill_miner_test() ->
 	erlang:monitor(process, PID),
 	stop_miners([PID]),
 	receive
-		{'DOWN', _Ref, process, PID, normal} -> ok
-		after 1000 -> erlang:error(no_match)
+		{'DOWN', _Ref, process, PID, normal} ->
+			ok
+	after 1000 ->
+		erlang:error(no_match)
 	end.
