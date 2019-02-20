@@ -32,8 +32,7 @@
 %% @doc Checls if the given height is a retarget height.
 %% Reteurns true if so, otherwise returns false.
 is_retarget_height(Height) ->
-	((Height rem ?RETARGET_BLOCKS) == 0) and
-	(Height =/= 0).
+	?IS_RETARGET_HEIGHT(Height).
 
 %% @doc Maybe set a new difficulty and last retarget, if the block is at
 %% an appropriate retarget height, else returns the current diff
