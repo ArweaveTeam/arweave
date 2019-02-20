@@ -101,7 +101,6 @@ server(
 		% Update the miner to mine on a new set of data.
 		{new_data, RawTXs} ->
 			stop_miners(Miners),
-			self() ! mine,
 			% Update mine loop to mine on the newly provided data.
 			NewTimestamp = os:system_time(seconds),
 			NewDiff = next_diff(CurrentB),
@@ -114,22 +113,21 @@ server(
 						CurrentB#block.wallet_list, RawTXs
 					)
 				),
-			server(
-				S#state {
-					txs = NewTXs,
-					timestamp = NewTimestamp,
-					data_segment =
-						ar_block:generate_block_data_segment(
-							CurrentB,
-							RecallB,
-							NewTXs,
-							RewardAddr,
-							NewTimestamp,
-							Tags
-						),
-					diff = NewDiff
-				}
-			);
+			NewS = S#state {
+				txs = NewTXs,
+				timestamp = NewTimestamp,
+				data_segment =
+					ar_block:generate_block_data_segment(
+						CurrentB,
+						RecallB,
+						NewTXs,
+						RewardAddr,
+						NewTimestamp,
+						Tags
+					),
+				diff = NewDiff
+			},
+			server(start_miners(NewS));
 		%% Blocks have limited time to propagate across the network. To compenstate for
 		%% the time spent mining, refresh the timestamp in the data segment every once in a while.
 		refresh_timestamp ->
@@ -142,14 +140,11 @@ server(
 				NewTimestamp,
 				Tags
 			),
-			stop_miners(Miners),
-			self() ! mine,
-			server(
-				S#state {
-					timestamp = NewTimestamp,
-					data_segment = BSD
-				}
-			);
+			NewS = S#state {
+				timestamp = NewTimestamp,
+				data_segment = BSD
+			},
+			server(restart_miners(NewS));
 		% Refresh the mining data in case of diff change.
 		{refresh_data, PID} ->
 			ar:report([miner_data_refreshed]),
@@ -189,6 +184,10 @@ stop_miners(Miners) ->
 		fun(Pid) -> Pid ! stop end,
 		Miners
 	).
+
+restart_miners(S) ->
+	stop_miners(S#state.miners),
+	start_miners(S).
 
 %% @doc A worker process to hash the data segment searching for a solution
 %% for the given diff.
