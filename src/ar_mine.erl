@@ -128,32 +128,21 @@ server(
 				diff = NewDiff
 			},
 			server(start_miners(NewS));
-		%% Blocks have limited time to propagate across the network. To compenstate for
-		%% the time spent mining, refresh the timestamp in the data segment every once in a while.
+		%% The block timestamp must be reasonable fresh since it's going to be
+		%% validated on the remote nodes when it's propagated to them. Only blocks
+		%% with a timestamp close to current time will be accepted in the propagation.
 		refresh_timestamp ->
-			NewTimestamp = os:system_time(seconds),
-			BSD = ar_block:generate_block_data_segment(
-				CurrentB,
-				RecallB,
-				TXs,
-				RewardAddr,
-				NewTimestamp,
-				Tags
-			),
-			NewS = S#state {
-				timestamp = NewTimestamp,
-				data_segment = BSD
-			},
-			server(restart_miners(NewS));
+			case {os:system_time(seconds), timestamp_refresh_interval()} of
+				{CurrentTime, Interval} when Timestamp > CurrentTime - Interval ->
+					%% Something else (i.e. new TXs received) triggered an update
+					%% already, so this refresh is unessesary.
+					server(S);
+				{CurrentTime, _} ->
+					server(restart_miners(update_timestamp(S, CurrentTime)))
+			end;
 		% Spawn the hashing worker processes and begin to mine.
 		mine ->
-			NewS = start_miners(S),
-			erlang:send_after(
-				?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE div 2,
-				self(),
-				refresh_timestamp
-			),
-			server(NewS);
+			server(start_miners(S));
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce} ->
@@ -171,7 +160,26 @@ start_miners(S = #state {max_miners = MaxMiners}) ->
 		fun(Pid) -> Pid ! hash end,
 		Miners
 	),
+	schedule_refresh_timestamp(S#state.timestamp),
 	S#state {miners = Miners}.
+
+schedule_refresh_timestamp(Timestamp) ->
+	case timestamp_refresh_interval() - (os:system_time(seconds) - Timestamp) of
+		NextRefreshSeconds when NextRefreshSeconds =< 0 ->
+			ar:warn(
+				"ar_mine: Cannot keep up refreshing the timestamp fast enough. Time margin (seconds): ~B",
+				[NextRefreshSeconds]
+			),
+			self() ! refresh_timestamp;
+		NextRefreshSeconds ->
+			erlang:send_after(
+				NextRefreshSeconds * 1000,
+				self(),
+				refresh_timestamp
+			)
+	end.
+
+timestamp_refresh_interval() ->  ?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE div 2.
 
 stop_miners(Miners) ->
 	lists:foreach(
@@ -182,6 +190,29 @@ stop_miners(Miners) ->
 restart_miners(S) ->
 	stop_miners(S#state.miners),
 	start_miners(S).
+
+update_timestamp(
+	S = #state {
+		current_block = CurrentB,
+		recall_block = RecallB,
+		txs = TXs,
+		reward_addr = RewardAddr,
+		tags = Tags
+	},
+	Timestamp
+) ->
+	BDS = ar_block:generate_block_data_segment(
+		CurrentB,
+		RecallB,
+		TXs,
+		RewardAddr,
+		Timestamp,
+		Tags
+	),
+	S#state {
+		timestamp = Timestamp,
+		data_segment = BDS
+	}.
 
 %% @doc A worker process to hash the data segment searching for a solution
 %% for the given diff.
