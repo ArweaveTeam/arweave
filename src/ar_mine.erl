@@ -83,12 +83,8 @@ start_server(S) ->
 server(
 	S = #state {
 		parent = Parent,
-		current_block = CurrentB,
-		recall_block = RecallB,
 		txs = TXs,
 		timestamp = Timestamp,
-		reward_addr = RewardAddr,
-		tags = Tags,
 		diff = Diff,
 		miners = Miners
 	}) ->
@@ -99,34 +95,7 @@ server(
 			ok;
 		% Update the miner to mine on a new set of data.
 		{new_data, RawTXs} ->
-			stop_miners(Miners),
-			% Update mine loop to mine on the newly provided data.
-			NewTimestamp = os:system_time(seconds),
-			NewDiff = next_diff(CurrentB),
-			NewTXs =
-				lists:filter(
-					fun(T) ->
-						ar_tx:verify(T, NewDiff, CurrentB#block.wallet_list)
-					end,
-					ar_node_utils:filter_all_out_of_order_txs(
-						CurrentB#block.wallet_list, RawTXs
-					)
-				),
-			NewS = S#state {
-				txs = NewTXs,
-				timestamp = NewTimestamp,
-				data_segment =
-					ar_block:generate_block_data_segment(
-						CurrentB,
-						RecallB,
-						NewTXs,
-						RewardAddr,
-						NewTimestamp,
-						Tags
-					),
-				diff = NewDiff
-			},
-			server(start_miners(NewS));
+			server(restart_miners(update_txs(S, RawTXs)));
 		%% The block timestamp must be reasonable fresh since it's going to be
 		%% validated on the remote nodes when it's propagated to them. Only blocks
 		%% with a timestamp close to current time will be accepted in the propagation.
@@ -208,6 +177,42 @@ update_timestamp(
 	S#state {
 		timestamp = Timestamp,
 		data_segment = BDS
+	}.
+
+update_txs(
+	S = #state {
+		current_block = CurrentB,
+		recall_block = RecallB,
+		reward_addr = RewardAddr,
+		tags = Tags
+	},
+	TXs
+) ->
+	CurrentTimestamp = os:system_time(seconds),
+	Diff = next_diff(CurrentB),
+	ValidTXs =
+		lists:filter(
+			fun(TX) ->
+				ar_tx:verify(TX, Diff, CurrentB#block.wallet_list)
+			end,
+			ar_node_utils:filter_all_out_of_order_txs(
+				CurrentB#block.wallet_list,
+				TXs
+			)
+		),
+	S#state {
+		txs = ValidTXs,
+		timestamp = CurrentTimestamp,
+		data_segment =
+			ar_block:generate_block_data_segment(
+				CurrentB,
+				RecallB,
+				ValidTXs,
+				RewardAddr,
+				CurrentTimestamp,
+				Tags
+			),
+		diff = Diff
 	}.
 
 %% @doc A worker process to hash the data segment searching for a solution
