@@ -34,20 +34,20 @@ get_tx_reward_test() ->
 
 %% @doc Ensure that objects are only re-gossiped once.
 single_regossip_test_() ->
-	{ timeout, 60, fun() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
-	TX = ar_tx:new(<<"TEST DATA">>),
-	Responses =
-		ar_util:pmap(
-			fun(_) ->
-				ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
-			end,
-			lists:seq(1, 100)
-		),
-	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ])
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[B0] = ar_weave:init([]),
+		Node1 = ar_node:start([], [B0]),
+		ar_http_iface_server:reregister(Node1),
+		TX = ar_tx:new(),
+		Responses =
+			lists:map(
+				fun(_) ->
+					ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+				end,
+				lists:seq(1, 100)
+			),
+		?assertEqual(1, length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]))
 	end}.
 
 %% @doc Unjoined nodes should not accept blocks
