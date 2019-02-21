@@ -100,12 +100,12 @@ server(
 		%% validated on the remote nodes when it's propagated to them. Only blocks
 		%% with a timestamp close to current time will be accepted in the propagation.
 		refresh_timestamp ->
-			case {os:system_time(seconds), timestamp_refresh_interval()} of
-				{CurrentTime, Interval} when Timestamp > CurrentTime - Interval ->
+			case os:system_time(seconds) of
+				CurrentTime when Timestamp > CurrentTime - ?MINING_TIMESTAMP_REFRESH_INTERVAL ->
 					%% Something else (i.e. new TXs received) triggered an update
 					%% already, so this refresh is unessesary.
 					server(S);
-				{CurrentTime, _} ->
+				CurrentTime ->
 					server(restart_miners(update_timestamp(S, CurrentTime)))
 			end;
 		% Handle a potential solution for the mining puzzle.
@@ -129,7 +129,7 @@ start_miners(S = #state {max_miners = MaxMiners}) ->
 	S#state {miners = Miners}.
 
 schedule_refresh_timestamp(Timestamp) ->
-	case timestamp_refresh_interval() - (os:system_time(seconds) - Timestamp) of
+	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - (os:system_time(seconds) - Timestamp) of
 		NextRefreshSeconds when NextRefreshSeconds =< 0 ->
 			ar:warn(
 				"ar_mine: Cannot keep up refreshing the timestamp fast enough. Time margin (seconds): ~B",
@@ -143,8 +143,6 @@ schedule_refresh_timestamp(Timestamp) ->
 				refresh_timestamp
 			)
 	end.
-
-timestamp_refresh_interval() ->  ?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE div 2.
 
 stop_miners(Miners) ->
 	lists:foreach(

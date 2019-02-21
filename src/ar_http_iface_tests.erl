@@ -480,56 +480,58 @@ add_external_block_with_invalid_timestamp_test() ->
 	B1 = ar_storage:read_block(hd(BHL1), BHL1),
 	RecallB0 = ar_node_utils:find_recall_block(BHL0),
 	%% Expect the timestamp too far from the future to be rejected
-	FarFutureTimestamp = os:system_time(second) + ?NODE_CLOCK_SYNC_TOLERANCE + 5,
+	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
+	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
 		send_new_block(
 			RemotePeer,
 			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
-				timestamp = FarFutureTimestamp
+				timestamp = TooFarFutureTimestamp
 			},
 			RecallB0
 		)
 	),
 	%% Expect the timestamp from the future within the tolerance interval to be accepted
-	FutureTimestamp = os:system_time(second) + ?NODE_CLOCK_SYNC_TOLERANCE - 1,
+	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
 			RemotePeer,
 			update_nonce(B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
-				timestamp = FutureTimestamp
+				timestamp = OkFutureTimestamp
 			}, RecallB0),
 			RecallB0
 		)
 	),
 	%% Expect the timestamp far from the past to be rejected
-	PastTolerance = (
-		os:system_time(second) -
-		?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE -
-		?NODE_CLOCK_SYNC_TOLERANCE
-	),
-	FarPastTimestamp = PastTolerance - 5,
+	PastTimestampTolerance = lists:sum([
+		?JOIN_CLOCK_TOLERANCE * 2,
+		?CLOCK_DRIFT_MAX,
+		?MINING_TIMESTAMP_REFRESH_INTERVAL,
+		?MAX_BLOCK_PROPAGATION_TIME
+	]),
+	TooFarPastTimestamp = os:system_time(second) - PastTimestampTolerance - 3,
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
 		send_new_block(
 			RemotePeer,
 			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
-				timestamp = FarPastTimestamp
+				timestamp = TooFarPastTimestamp
 			},
 			RecallB0
 		)
 	),
 	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
-	PastTimestamp = PastTolerance + 5,
+	OkPastTimestamp = os:system_time(second) - PastTimestampTolerance + 3,
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
 			RemotePeer,
-			update_nonce(B1#block { timestamp = PastTimestamp}, RecallB0),
+			update_nonce(B1#block { timestamp = OkPastTimestamp}, RecallB0),
 			RecallB0
 		)
 	).

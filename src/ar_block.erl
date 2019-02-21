@@ -357,17 +357,23 @@ verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 verify_dep_hash(NewB, BDSHash) ->
 	NewB#block.hash == BDSHash.
 
-%% @doc Verify that the block timestamp is not too far in the past respecting reasonable
-%% block propagation time.
+%% @doc Verify the block timestamp is not too far in the future nor too far in
+%% the past. We calculate the maximum reasonable clock difference between any
+%% two nodes. This is a simplification since there is a chaining effect in the
+%% network which we don't take into account. Instead, we assume two nodes can
+%% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
+%% other.
 verify_timestamp(B) ->
 	CurrentTime = os:system_time(seconds),
+	MaxNodesClockDeviation = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
 	(
-		B#block.timestamp =< CurrentTime + ?NODE_CLOCK_SYNC_TOLERANCE
+		B#block.timestamp =< CurrentTime + MaxNodesClockDeviation
 		andalso
-		B#block.timestamp >= CurrentTime - (
-			?BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE +
-			?NODE_CLOCK_SYNC_TOLERANCE
-		)
+		B#block.timestamp >= CurrentTime - lists:sum([
+			?MINING_TIMESTAMP_REFRESH_INTERVAL,
+			?MAX_BLOCK_PROPAGATION_TIME,
+			MaxNodesClockDeviation
+		])
 	).
 
 %% @doc Verify the height of the new block is the one higher than the

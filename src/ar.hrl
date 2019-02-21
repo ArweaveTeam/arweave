@@ -63,11 +63,11 @@
 -endif.
 
 -define(RETARGET_TOLERANCE, 0.1).
--define(NODE_CLOCK_SYNC_TOLERANCE, 15).
 
-%% @doc Defines how far in the past the block timestamp can be.
-%% Accounts for the block propagation time.
--define(BLOCK_PROPAGATION_TIMESTAMP_TOLERANCE, (2 * 60)). % 2 minutes
+-define(JOIN_CLOCK_TOLERANCE, 15).
+-define(MAX_BLOCK_PROPAGATION_TIME, 60).
+-define(CLOCK_DRIFT_MAX, 5).
+-define(MINING_TIMESTAMP_REFRESH_INTERVAL, 10).
 
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
 

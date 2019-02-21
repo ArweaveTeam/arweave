@@ -80,7 +80,7 @@ verify_time_sync(Peers) ->
 				case ar_http_iface_client:get_time(Peer, 5 * 1000) of
 					{ok, {RemoteTMin, RemoteTMax}} ->
 						LocalT = os:system_time(second),
-						Tolerance = ?NODE_CLOCK_SYNC_TOLERANCE,
+						Tolerance = ?JOIN_CLOCK_TOLERANCE,
 						case LocalT of
 							T when T < RemoteTMin - Tolerance ->
 								log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
