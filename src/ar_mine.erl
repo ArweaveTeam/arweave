@@ -314,7 +314,8 @@ basic_test() ->
 	RecallB = hd(B0),
 	start(B, RecallB, [], unclaimed, [], self()),
 	receive
-		{work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+			?assertEqual(MinedTXs, []),
 			BDS = ar_block:generate_block_data_segment(
 				B,
 				RecallB,
@@ -327,7 +328,10 @@ basic_test() ->
 				?MINING_HASH_ALG,
 				<< Nonce/binary, BDS/binary >>
 			),
-			<< 0:Diff, _/bitstring >> = Res
+			?assertMatch(
+				<< 0:Diff, _/bitstring >>,
+				Res
+			)
 	end.
 
 %% @doc Ensure that we can change the data while mining is in progress.
@@ -337,27 +341,35 @@ change_data_test() ->
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
-	TXs = [ar_tx:new()],
-	NewTXs = TXs ++ [ar_tx:new(), ar_tx:new()],
-	PID = start(B, RecallB, TXs, unclaimed, [], self()),
-	change_data(PID, NewTXs),
-	timer:sleep(500),
+	FirstTXSet = [ar_tx:new()],
+	SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
+	%% Start mining with a very high difficulty, so that the mining won't finish
+	%% before adding more TXs.
+	VeryHighDiff = 100,
+	PID = start(B, RecallB, FirstTXSet, unclaimed, [], VeryHighDiff, self()),
+	%% Add more TXs. This will also re-calculate a new difficulty.
+	change_data(PID, SecondTXSet),
 	receive
-		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
+		{work_complete, SecondTXSet, Hash, Diff, Nonce, Timestamp} ->
 			BDS = ar_block:generate_block_data_segment(
 				B,
 				RecallB,
-				MinedTXs,
+				SecondTXSet,
 				<<>>,
 				Timestamp,
 				[]
 			),
-			Res = crypto:hash(
-				?MINING_HASH_ALG,
-				<< Nonce/binary, BDS/binary >>
+			?assertEqual(
+				Hash,
+				crypto:hash(
+					?MINING_HASH_ALG,
+					<< Nonce/binary, BDS/binary >>
+				)
 			),
-			<< 0:Diff, _/bitstring >> = Res,
-			MinedTXs == NewTXs
+			?assertMatch(
+				<< 0:Diff, _/bitstring >>,
+				Hash
+			)
 	end.
 
 %% @doc Ensure that an active miner process can be killed.
