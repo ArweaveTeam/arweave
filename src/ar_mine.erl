@@ -106,7 +106,7 @@ server(
 			NewTXs =
 				lists:filter(
 					fun(T) ->
-						ar_tx:verify(T, Diff, CurrentB#block.wallet_list)
+						ar_tx:verify(T, NewDiff, CurrentB#block.wallet_list)
 					end,
 					ar_node_utils:filter_all_out_of_order_txs(
 						CurrentB#block.wallet_list, RawTXs
