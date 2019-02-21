@@ -42,35 +42,29 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 				CurrentB#block.wallet_list, RawTXs
 			)
 		),
-	PID = spawn(
-		fun() ->
-			server(
-				#state {
-					parent = Parent,
-					current_block = CurrentB,
-					recall_block = RecallB,
-					txs = TXs,
-					timestamp = Timestamp,
-					data_segment =
-						ar_block:generate_block_data_segment(
-							CurrentB,
-							RecallB,
-							TXs,
-							RewardAddr,
-							Timestamp,
-							Tags
-						),
-					reward_addr = RewardAddr,
-					tags = Tags,
-					diff = Diff,
-					max_miners = ar_meta_db:get(max_miners),
-					nonces = []
-				}
-			)
-		end
-	),
-	PID ! mine,
-	PID.
+	start_server(
+		#state {
+			parent = Parent,
+			current_block = CurrentB,
+			recall_block = RecallB,
+			txs = TXs,
+			timestamp = Timestamp,
+			data_segment =
+				ar_block:generate_block_data_segment(
+					CurrentB,
+					RecallB,
+					TXs,
+					RewardAddr,
+					Timestamp,
+					Tags
+				),
+			reward_addr = RewardAddr,
+			tags = Tags,
+			diff = Diff,
+			max_miners = ar_meta_db:get(max_miners),
+			nonces = []
+		}
+	).
 
 %% @doc Stop a running mining server.
 stop(PID) ->
@@ -79,6 +73,11 @@ stop(PID) ->
 %% @doc Update the set of TXs that the miner is mining on.
 change_data(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
+
+start_server(S) ->
+	spawn(fun() ->
+		server(start_miners(S))
+	end).
 
 %% @doc The main mining server.
 server(
@@ -140,9 +139,6 @@ server(
 				{CurrentTime, _} ->
 					server(restart_miners(update_timestamp(S, CurrentTime)))
 			end;
-		% Spawn the hashing worker processes and begin to mine.
-		mine ->
-			server(start_miners(S));
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce} ->
