@@ -265,7 +265,6 @@ recall_block_test() ->
 	ar_storage:write_block(B0),
 	Node ! {replace_block_list, B0},
 	receive after 300 -> ok end,
-	B1 = ar_node:get_current_block(Node),
 	ar_node:mine(Node),
 	receive after 300 -> ok end,
 	B3 = ar_node:get_current_block(Node),
