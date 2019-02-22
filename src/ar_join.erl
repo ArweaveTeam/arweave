@@ -170,8 +170,7 @@ get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
 get_block_and_trail(_, unavailable, _, _) -> ok;
 get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
-	ar_storage:write_block(NewB#block { txs = [T#tx.id || T <- NewB#block.txs] }),
-	ar_storage:write_tx(NewB#block.txs),
+	ar_storage:write_full_block(NewB),
 	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block, NewB#block.hash_list),
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
@@ -180,10 +179,9 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-			case {NewB, ar_node_utils:get_full_block(Peers, RecallBlock, NewB#block.hash_list)} of
-				{B, unavailable} ->
-					ar_storage:write_tx(B#block.txs),
-					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
+			ar_storage:write_full_block(NewB),
+			case ar_node_utils:get_full_block(Peers, RecallBlock, NewB#block.hash_list) of
+				unavailable ->
 					ar:info(
 						[
 							could_not_retrieve_joining_recall_block,
@@ -191,16 +189,13 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 						]
 					),
 					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
-				{B, R} ->
-					ar_storage:write_tx(B#block.txs),
-					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
-					ar_storage:write_tx(R#block.txs),
-					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
+				RecallB ->
+					ar_storage:write_full_block(RecallB),
 					ar:info(
 						[
-							{writing_block, B#block.height},
-							{writing_recall_block, R#block.height},
-							{blocks_written, 2 * (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
+							{writing_block, NewB#block.height},
+							{writing_recall_block, RecallB#block.height},
+							{blocks_written, 2 * (?STORE_BLOCKS_BEHIND_CURRENT - (BehindCurrent-1))},
 							{blocks_to_write, 2 * (BehindCurrent-1)}
 						]
 					),

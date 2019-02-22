@@ -553,8 +553,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 					{ok, ar_node_utils:reset_miner(StateIn)}
 			end;
 		true ->
-			ar_storage:write_tx(MinedTXs),
-			ar_storage:write_block(NextB),
+			ar_storage:write_full_block(NextB, MinedTXs),
 			NewHL = [NextB#block.indep_hash | HashList],
 			ar_storage:write_block_hash_list(BinID, NewHL),
 			ar_tx_search:update_tag_table(NextB),

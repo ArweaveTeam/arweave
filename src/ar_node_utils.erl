@@ -331,8 +331,7 @@ integrate_new_block(
 							RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
 	% Write new block and included TXs to local storage.
-	ar_storage:write_tx(BlockTXs),
-	ar_storage:write_block(NewB),
+	ar_storage:write_full_block(NewB, BlockTXs),
 	% Recurse over the new block.
 	ar_miner_log:foreign_block(NewB#block.indep_hash),
 	ar:report_console(
