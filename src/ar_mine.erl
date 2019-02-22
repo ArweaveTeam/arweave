@@ -83,9 +83,7 @@ start_server(S) ->
 server(
 	S = #state {
 		parent = Parent,
-		txs = TXs,
 		timestamp = Timestamp,
-		diff = Diff,
 		miners = Miners
 	}) ->
 	receive
@@ -110,9 +108,9 @@ server(
 			end;
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
-		{solution, Hash, Nonce} ->
+		{solution, Hash, Nonces, MinedTXs, MinedDiff, MinedTimestamp} ->
 			stop_miners(Miners),
-			Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
+			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonces, MinedTimestamp}
 	end.
 
 start_miners(S = #state {max_miners = MaxMiners}) ->
@@ -224,7 +222,9 @@ miner(
 	S = #state {
 		data_segment = BDS,
 		diff = Diff,
-		nonces = Nonces
+		nonces = Nonces,
+		txs = TXs,
+		timestamp = Timestamp
 	},
 	Supervisor) ->
 	receive
@@ -251,7 +251,7 @@ miner(
 							)
 					end;
 				Hash ->
-					Supervisor ! {solution, Hash, iolist_to_binary(Nonces)}
+					Supervisor ! {solution, Hash, iolist_to_binary(Nonces), TXs, Diff, Timestamp}
 			end
 	end.
 
