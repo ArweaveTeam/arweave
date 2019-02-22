@@ -324,7 +324,6 @@ do_fork_recover(S = #state {
 						self() ! apply_next_block,
 						ar_storage:write_full_block(NextB),
 						ar_storage:write_full_block(RecallB),
-						ar_tx_search:update_tag_table(NextB),
 						server(
 							S#state {
 								block_list = [NextH | BlockList],
