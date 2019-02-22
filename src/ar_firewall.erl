@@ -58,18 +58,38 @@ scan_tx(TX) ->
 %% the set of known 'harmful'/'ignored' signatures.
 server(S = #state { sigs = Sigs } ) ->
 	receive
-		{scan_tx, Pid, Ref, Data} ->
-			Pid ! {scanned_tx, Ref, scan_transaction(Data, Sigs)},
+		{scan_tx, Pid, Ref, TX} ->
+			Pid ! {scanned_tx, Ref, scan_transaction(TX, Sigs)},
 			server(S)
 	end.
 
 %% @doc Compare a transaction against known bad signatures.
 scan_transaction(TX, Sigs) ->
-	case av_detect:is_infected(TX#tx.data, Sigs) of
-		{true, _} -> reject;
-		false -> accept
+	Tags = lists:foldl(
+		fun({K, V}, Acc) ->
+			[K,V|Acc]
+		end,
+		[],
+		TX#tx.tags
+	),
+	ScanList = [TX#tx.data,TX#tx.target|Tags],
+	case lists:any(
+		fun(Data) ->
+			case av_detect:is_infected(Data, Sigs) of
+				{true, _} ->
+					io:format("Infected! ~p~n", [Data]),
+					true;
+				_ ->
+					false
+			end
+		end,
+		ScanList
+	) of
+		true ->
+			reject;
+		false ->
+			accept
 	end.
-
 
 %% Tests: ar_firewall
 
@@ -83,8 +103,30 @@ blacklist_transaction_test() ->
 			binary = <<"badstuff">>
 		}
 	},
-	?assertEqual(reject, scan_transaction(ar_tx:new(<<"badstuff">>), [Sigs])),
-	?assertEqual(accept, scan_transaction(ar_tx:new(<<"goodstuff">>), [Sigs])).
+	TX = ar_tx:new(),
+	GoodTXs = [
+		TX#tx{ data = <<"goodstuff">> },
+		TX#tx{ tags = [{<<"goodstuff">>, <<"goodstuff">>}] },
+		TX#tx{ target = <<"goodstuff">> }
+	],
+	BadTXs = [
+		TX#tx{ data = <<"badstuff">> },
+		TX#tx{ tags = [{<<"badstuff">>, <<"goodstuff">>}] },
+		TX#tx{ tags = [{<<"goodstuff">>, <<"badstuff">>}] },
+		TX#tx{ target = <<"badstuff">> }
+	],
+	lists:foreach(
+		fun(BadTX) ->
+			?assertEqual(reject, scan_transaction(BadTX, [Sigs]))
+		end,
+		BadTXs
+	),
+	lists:foreach(
+		fun(GoodTX) ->
+			?assertEqual(accept, scan_transaction(GoodTX, [Sigs]))
+		end,
+		GoodTXs
+	).
 
 parse_ndb_blacklist_test() ->
 	ExpectedSig =
