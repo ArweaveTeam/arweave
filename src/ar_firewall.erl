@@ -1,5 +1,5 @@
 -module(ar_firewall).
--export([start/0, scan_tx/2]).
+-export([start/0, reload/0, scan_tx/1]).
 -include("ar.hrl").
 -include("av/av_recs.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -14,18 +14,35 @@
 
 %% @doc Start a firewall node.
 start() ->
-	spawn(
-		fun() ->
-			server(#state {
-				sigs = av_sigs:all()
-			})
-		end
-	).
+	case whereis(default_firewall) of
+		undefined ->
+			F = spawn(
+				fun() ->
+					server(#state {
+						sigs = av_sigs:all()
+					})
+				end
+			),
+			erlang:register(default_firewall, F);
+		_ ->
+			do_nothing
+	end.
+
+reload() ->
+	case whereis(default_firewall) of
+		undefined ->
+			do_nothing;
+		Firewall ->
+			erlang:unregister(default_firewall),
+			exit(Firewall, {shutdown, reloading})
+	end,
+	start().
 
 %% @doc Check that a received TX does not match the firewall rules.
-scan_tx(FwServer, Data) ->
+scan_tx(TX) ->
+	FwServer = whereis(default_firewall),
 	ar:report([{scanning_object_of_type, tx}]),
-	FwServer ! {scan_tx, self(), Data},
+	FwServer ! {scan_tx, self(), TX},
 	receive
 		{scanned_tx, Response} ->
 			ar:report([{scanned_object_of_type, tx}, {response, Response}]),

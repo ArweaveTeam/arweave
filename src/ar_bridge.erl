@@ -17,7 +17,6 @@
 	gossip, % Gossip state
 	external_peers, % Peers to send message to ordered by best to worst.
 	processed = [], % IDs to ignore.
-	firewall = ar_firewall:start(),
 	port,
 	ignored_peers = []
 }).
@@ -29,6 +28,7 @@ start_link([_, _, _] = Args) ->
 
 %% @doc Launch a bridge node.
 start(ExtPeers, IntPeers, Port) ->
+	ar_firewall:start(),
 	spawn(
 		fun() ->
 			ar:report([starting_ignored_ids_db]),
@@ -184,10 +184,9 @@ handle(S, UnknownMsg) ->
 maybe_send_tx(S, Data) ->
 	#state {
 		gossip = GS,
-		firewall = FW,
 		processed = Procd
 	} = S,
-	case ar_firewall:scan_tx(FW, Data) of
+	case ar_firewall:scan_tx(Data) of
 		reject ->
 			% If the data does not pass the scan, ignore the message.
 			S;
