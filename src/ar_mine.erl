@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/6, start/7, change_data/2, stop/1, start_miner/2, schedule_hash/1]).
+-export([start/6, start/7, change_txs/2, stop/1, start_miner/2, schedule_hash/1]).
 -export([validate/3, validate_by_hash/2, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -71,7 +71,7 @@ stop(PID) ->
 	PID ! stop.
 
 %% @doc Update the set of TXs that the miner is mining on.
-change_data(PID, NewTXs) ->
+change_txs(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
 
 %% @doc Start the main mining server.
@@ -347,8 +347,8 @@ basic_test() ->
 			)
 	end.
 
-%% @doc Ensure that we can change the data while mining is in progress.
-change_data_test() ->
+%% @doc Ensure that we can change the transactions while mining is in progress.
+change_txs_test() ->
 	B0 = ar_weave:init(),
 	ar_node:start([], B0),
 	B1 = ar_weave:add(B0, []),
@@ -361,7 +361,7 @@ change_data_test() ->
 	VeryHighDiff = 100,
 	PID = start(B, RecallB, FirstTXSet, unclaimed, [], VeryHighDiff, self()),
 	%% Add more TXs. This will also re-calculate a new difficulty.
-	change_data(PID, SecondTXSet),
+	change_txs(PID, SecondTXSet),
 	receive
 		{work_complete, SecondTXSet, Hash, Diff, Nonce, Timestamp} ->
 			BDS = ar_block:generate_block_data_segment(
