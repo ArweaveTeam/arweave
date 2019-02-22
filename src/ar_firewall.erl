@@ -49,6 +49,9 @@ scan_tx(TX) ->
 		{scanned_tx, Response} ->
 			ar:report([{scanned_object_of_type, tx}, {response, Response}]),
 			Response
+	after 10000 ->
+		ar:err("The firewall failed to scan the transaction within 10 seconds; data: ~p", [TX]),
+		accept
 	end.
 
 %% @doc Main firewall server loop.
