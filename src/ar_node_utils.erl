@@ -341,8 +341,6 @@ integrate_new_block(
 		PID ->
 			PID ! {parent_accepted_block, NewB}
 	end,
-	% ar:d({new_hash_list, [NewB#block.indep_hash | HashList]}),
-	ar_tx_search:update_tag_table(NewB),
 	lists:foreach(
 		fun(T) ->
 			ar_tx_db:ensure_error(T#tx.id)

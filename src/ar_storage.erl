@@ -136,7 +136,8 @@ write_full_block(BShadow, TXs) ->
 		TXs
 	),
 	ar_storage:write_tx(ScannedTXs),
-	ar_storage:write_block(BShadow).
+	ar_storage:write_block(BShadow),
+	ar_tx_search:update_tag_table(BShadow).
 
 %% @doc Write an encrypted	block (with the hash.json as the filename) to disk.
 %% When debug is set, does not consider disk space. This is currently
