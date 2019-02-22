@@ -1,11 +1,12 @@
 -module(ar_weave).
+
 -export([init/0, init/1, init/2, init/3, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
 -export([hash/2, indep_hash/1]).
 -export([verify_indep/2]).
 -export([calculate_recall_block/2, calculate_recall_block/3]).
 -export([generate_hash_list/1]).
 -export([is_data_on_block_list/2, is_tx_on_block_list/2]).
--export([create_genesis_txs/0]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -351,20 +352,3 @@ read_genesis_txs() ->
 		[],
 		Files
 	).
-
-create_genesis_txs() ->
-	TXs = lists:map(
-		fun({M}) ->
-			{Priv, Pub} = ar_wallet:new(),
-			LastTx = <<>>,
-			Data = unicode:characters_to_binary(M),
-			TX = ar_tx:new(Data, 0, LastTx),
-			Reward = 0,
-			SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub),
-			ar_storage:write_tx(SignedTX),
-			SignedTX
-		end,
-		?GENESIS_BLOCK_MESSAGES
-	),
-	file:write_file("genesis_wallets.csv", lists:map(fun(T) -> binary_to_list(ar_util:encode(T#tx.id)) ++ "," end, TXs)),
-	[T#tx.id || T <- TXs].
