@@ -43,9 +43,10 @@ single_regossip_test_() ->
 	Responses =
 		ar_util:pmap(
 			fun(_) ->
+				timer:sleep(rand:uniform(100)),
 				ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
 			end,
-			lists:seq(1, 100)
+			lists:seq(1, 10)
 		),
 	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ])
 	end}.
