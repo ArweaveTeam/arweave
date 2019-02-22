@@ -31,8 +31,8 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent) ->
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 	crypto:rand_seed(),
 	Timestamp = os:system_time(seconds),
-	% Ensure that the txs in which the mining process is passed
-	% validate and can be serialized.
+	%% Filter out invalid TXs. A TX could be valid by itself, but still invalid
+	%% in the context of the other TXs and the block it would be mined to.
 	TXs =
 		lists:filter(
 			fun(T) ->
@@ -74,6 +74,7 @@ stop(PID) ->
 change_data(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
 
+%% @doc Start the main mining server.
 start_server(S) ->
 	spawn(fun() ->
 		server(start_miners(S))
@@ -85,15 +86,16 @@ server(
 		parent = Parent,
 		timestamp = Timestamp,
 		miners = Miners
-	}) ->
+	}
+) ->
 	receive
 		% Stop the mining process killing all the workers.
 		stop ->
 			stop_miners(Miners),
 			ok;
 		% Update the miner to mine on a new set of data.
-		{new_data, RawTXs} ->
-			server(restart_miners(update_txs(S, RawTXs)));
+		{new_data, TXs} ->
+			server(restart_miners(update_txs(S, TXs)));
 		%% The block timestamp must be reasonable fresh since it's going to be
 		%% validated on the remote nodes when it's propagated to them. Only blocks
 		%% with a timestamp close to current time will be accepted in the propagation.
@@ -101,7 +103,9 @@ server(
 			case os:system_time(seconds) of
 				CurrentTime when Timestamp > CurrentTime - ?MINING_TIMESTAMP_REFRESH_INTERVAL ->
 					%% Something else (i.e. new TXs received) triggered an update
-					%% already, so this refresh is unessesary.
+					%% recently, so this refresh is unessesary. A new refresh
+					%% should already be scheduled by whatever triggered the
+					%% recent refresh.
 					server(S);
 				CurrentTime ->
 					server(restart_miners(update_timestamp(S, CurrentTime)))
@@ -109,10 +113,11 @@ server(
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonces, MinedTXs, MinedDiff, MinedTimestamp} ->
-			stop_miners(Miners),
-			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonces, MinedTimestamp}
+			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonces, MinedTimestamp},
+			stop_miners(Miners)
 	end.
 
+%% @doc Start the workers and return the new state.
 start_miners(S = #state {max_miners = MaxMiners}) ->
 	Miners =
 		lists:map(
@@ -126,6 +131,7 @@ start_miners(S = #state {max_miners = MaxMiners}) ->
 	schedule_refresh_timestamp(S#state.timestamp),
 	S#state {miners = Miners}.
 
+%% @doc Creates a timer for refreshing the block timestamp in the mining.
 schedule_refresh_timestamp(Timestamp) ->
 	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - (os:system_time(seconds) - Timestamp) of
 		NextRefreshSeconds when NextRefreshSeconds =< 0 ->
@@ -142,16 +148,20 @@ schedule_refresh_timestamp(Timestamp) ->
 			)
 	end.
 
+%% @doc Stop all workers.
 stop_miners(Miners) ->
 	lists:foreach(
 		fun(Pid) -> Pid ! stop end,
 		Miners
 	).
 
+%% @doc Stop and then start the workers again and return the new state.
 restart_miners(S) ->
 	stop_miners(S#state.miners),
 	start_miners(S).
 
+%% @doc Takes a state and a timestamp and returns an updated state with the new
+%% timestamp.
 update_timestamp(
 	S = #state {
 		current_block = CurrentB,
@@ -175,6 +185,8 @@ update_timestamp(
 		data_segment = BDS
 	}.
 
+%% @doc Takes a state and a set of transactions and return a new state with the
+%% new set of transactions.
 update_txs(
 	S = #state {
 		current_block = CurrentB,
@@ -226,7 +238,8 @@ miner(
 		txs = TXs,
 		timestamp = Timestamp
 	},
-	Supervisor) ->
+	Supervisor
+) ->
 	receive
 		stop -> ok;
 		hash ->
