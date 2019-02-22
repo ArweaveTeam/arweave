@@ -1,7 +1,6 @@
 -module(av_sigs).
 -export([quick/0, deep/0, all/0, load/1]).
 -include("av_recs.hrl").
--include("ar.hrl").
 
 %%% Loads signature definition files from the sigs/ directory.
 %%% Supports multiple definition types, returning a #sig record
@@ -64,10 +63,11 @@ all() ->
 do_load(File) ->
 	Fun =
 		case filename:extension(File) of
-			".ndb" -> fun create_binary_sig/1;
+			".ndb" -> fun create_binary_sig_from_hex/1;
 			".hdb" -> fun create_hash_sig/1;
 			".hsb" -> fun create_hash_sig/1;
-			".fp" -> fun create_hash_sig/1
+			".fp" -> fun create_hash_sig/1;
+			".txt" -> fun create_binary_sig/1
 		end,
 	lists:filtermap(
 		fun(Row) ->
@@ -83,7 +83,7 @@ do_load(File) ->
 	).
 
 %% Take a CSV row and return a binary sig object.
-create_binary_sig([Name, Type, Offset, Sig]) ->
+create_binary_sig_from_hex([Name, Type, Offset, Sig]) ->
 	#sig {
 		name = Name,
 		type = binary,
@@ -97,7 +97,7 @@ create_binary_sig([Name, Type, Offset, Sig]) ->
 				binary = av_utils:hex_to_binary(Sig)
 			}
 	};
-create_binary_sig([Sig, Name]) ->
+create_binary_sig_from_hex([Sig, Name]) ->
 	#sig {
 		name = Name,
 		type = binary,
@@ -105,6 +105,16 @@ create_binary_sig([Sig, Name]) ->
 			#binary_sig {
 				offset = any,
 				binary = av_utils:hex_to_binary(Sig)
+			}
+	}.
+
+create_binary_sig([Sig]) ->
+	#sig {
+		type = binary,
+		data =
+			#binary_sig {
+				offset = any,
+				binary = list_to_binary(Sig)
 			}
 	}.
 
