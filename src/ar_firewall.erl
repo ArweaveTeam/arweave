@@ -42,11 +42,15 @@ reload() ->
 scan_tx(TX) ->
 	FwServer = whereis(default_firewall),
 	ar:report([{scanning_object_of_type, tx}]),
-	FwServer ! {scan_tx, self(), TX},
+	Ref = make_ref(),
+	FwServer ! {scan_tx, self(), Ref, TX},
 	receive
-		{scanned_tx, Response} ->
+		{scanned_tx, Ref, Response} ->
 			ar:report([{scanned_object_of_type, tx}, {response, Response}]),
 			Response
+	after 10000 ->
+		ar:err("The firewall failed to scan the transaction within 10 seconds; data: ~p", [TX]),
+		reject
 	end.
 
 %% @doc Main firewall server loop.
@@ -54,8 +58,8 @@ scan_tx(TX) ->
 %% the set of known 'harmful'/'ignored' signatures.
 server(S = #state { sigs = Sigs } ) ->
 	receive
-		{scan_tx, Pid, Data} ->
-			Pid ! {scanned_tx, scan_transaction(Data, Sigs)},
+		{scan_tx, Pid, Ref, Data} ->
+			Pid ! {scanned_tx, Ref, scan_transaction(Data, Sigs)},
 			server(S)
 	end.
 
