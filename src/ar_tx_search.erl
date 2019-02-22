@@ -107,11 +107,16 @@ server() ->
 			{update_tags_for_block, B} ->
 				lists:foreach(
 					fun(TX) ->
-						delete_for_tx(TX#tx.id),
-						AddEntry = fun({Name, Value}) ->
-							storeDB(Name, Value, TX#tx.id)
-						end,
-						lists:foreach(AddEntry, entries(B, TX))
+						case TX of
+							unavailable ->
+								do_nothing;
+							_ ->
+								delete_for_tx(TX#tx.id),
+								AddEntry = fun({Name, Value}) ->
+									storeDB(Name, Value, TX#tx.id)
+								end,
+								lists:foreach(AddEntry, entries(B, TX))
+						end
 					end,
 					ar_storage:read_tx(B#block.txs)
 				),
