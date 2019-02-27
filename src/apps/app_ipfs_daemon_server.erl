@@ -6,13 +6,13 @@
 -include("ar.hrl").
 
 -ifdef(DEBUG).
--define(CLEANER_WAIT, 3 * 60 * 1000).
+-define(WAIT_CLEANER, 3 * 60 * 1000).
+-define(WAIT_RETRY, 1 * 60 * 1000).
 -define(MAX_IPFSAR_PENDING, 3).
--define(N_STATS_TO_KEEP, 25).
 -else.
--define(CLEANER_WAIT, 30 * 60 * 1000).
+-define(WAIT_CLEANER, 30 * 60 * 1000).
+-define(WAIT_RETRY, 5 * 60 * 1000).
 -define(MAX_IPFSAR_PENDING, 100).
--define(N_STATS_TO_KEEP, 250).
 -endif.
 
 -type ar_wallet() :: tuple().
@@ -24,7 +24,7 @@
 %	GET  [<<"balance">>, APIKey]
 %	GET  [<<"status">>, APIKey]
 %   DEL  [APIKey, IPFSHash]
--type ipfs_status() :: pending | queued | nofunds | mined.
+-type ipfs_status() :: pending | queued | nofunds | mined | ipfs_error.
 
 -record(ipfsar_key_q_wal, {api_key, queue_pid, wallet}).
 -record(ipfsar_ipfs_status, {
@@ -240,33 +240,50 @@ already_reported(APIKey, IPFSHash) ->
 		_  -> {error, already_reported}
 	end.
 
-%% @doc remove old ipfsar_ipfs_status records.  Only keep newest 250 per key.
+%% @doc remove old ipfsar_ipfs_status records.
 cleaner_upper() ->
 	Keys = mnesia_get_keys(),
 	lists:foreach(fun(APIKey) ->
-			THSs = lists:reverse(lists:sort(queued_status(APIKey))),
-			{ToKeep, ToDelete} = case length(THSs) > ?N_STATS_TO_KEEP of
-				true  -> lists:split(?N_STATS_TO_KEEP, THSs);
-				false -> {THSs, []}
-			end,
-			lists:foreach(fun([T,H,S]) ->
-					mnesia_del_obj(#ipfsar_ipfs_status{
-						api_key=APIKey, timestamp=T, ipfs_hash=H, status=S})
-				end,
-				ToDelete),
+			THSs = queued_status(APIKey),
 			lists:foreach(fun
 					([_, _, mined])   -> pass;
 					([_, _, nofunds]) -> pass;
-					([_, H, _]) ->
+					([_, H, ipfs_error]) ->
+						{ok, Queue, Wallet} = get_key_q_wallet(APIKey),
+						timer:apply_after(
+							?WAIT_RETRY, ?MODULE, ipfs_getter,
+							[APIKey, Queue, Wallet, H]);
+					([_, H, _]) -> % pending | queued
 						case hash_mined(H) of
 							false -> pass;
 							true  -> status_update(APIKey, H, mined)
 						end
 				end,
-				ToKeep)
+				THSs)
 		end,
 		Keys),
-	timer:apply_after(?CLEANER_WAIT, ?MODULE, cleaner_upper, []).
+	timer:apply_after(?WAIT_CLEANER, ?MODULE, cleaner_upper, []).
+
+ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
+	ar:d({app_ipfs_daemon, ipfs_getter, IPFSHash, getting}),
+	Status = case ar_ipfs:cat_data_by_hash(IPFSHash) of
+		{ok, Data} ->
+			ar:d({app_ipfs_daemon, ipfs_getter, IPFSHash, got}),
+			UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, IPFSHash}], data=Data},
+			ar:d({app_ipfs_daemon, ipfs_getter, IPFSHash, tx_created}),
+			case ?MODULE:sufficient_funds(Wallet, byte_size(Data)) of
+				ok ->
+					app_queue:add(maybe_restart_queue(APIKey, Queue, Wallet), UnsignedTX),
+					%% tx will be added to ar_tx_search db after being mined into a block.
+					queued;
+				{error, _} ->
+					nofunds
+				end;
+		{error, _Reason} ->
+			ar:d({app_ipfs_daemon, ipfs_getter, IPFSHash, ipfs_error}),
+			ipfs_error
+	end,
+	status_update(APIKey, IPFSHash, Status).
 
 current_status(APIKey) ->
 	case mnesia:dirty_select(
@@ -285,22 +302,6 @@ hash_mined(Hash) ->
 		[] -> false;
 		_  -> true
 	end.
-
-ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
-	ar:d({app_ipfs_daemon, ipfs_getter, getting, IPFSHash}),
-	{ok, Data} = ar_ipfs:cat_data_by_hash(IPFSHash),
-	ar:d({app_ipfs_daemon, ipfs_getter, got, IPFSHash}),
-	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, IPFSHash}], data=Data},
-	ar:d({app_ipfs_daemon, ipfs_getter, tx_created, IPFSHash}),
-	Status = case ?MODULE:sufficient_funds(Wallet, byte_size(Data)) of
-		ok ->
-			app_queue:add(maybe_restart_queue(APIKey, Queue, Wallet), UnsignedTX),
-			%% tx will be added to ar_tx_search db after being mined into a block.
-			queued;
-		{error, _} ->
-			nofunds
-	end,
-	status_update(APIKey, IPFSHash, Status).
 
 %% @doc is the ipfs->ar service running?
 is_app_running() ->

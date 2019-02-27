@@ -93,7 +93,7 @@ cat_data_by_hash(Hash) ->
 
 cat_data_by_hash(IP, Port, Hash) ->
 	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/cat?arg=" ++ binary_to_list(Hash),
-	{ok, _Data} = request(get, {URL, []}).
+	request(get, {URL, []}).
 
 -spec config_get_identity() -> string().
 config_get_identity() ->
@@ -150,12 +150,11 @@ request(Method, Request) ->
 	case Response of
 		{ok, {_, _, Body}} ->
 			{ok, list_to_binary(Body)};
-		_Error ->
-			%% example errors:
-			%% {error,{failed_connect,[{to_address,{"127.0.0.1",5001}},
-			%%                         {inet,[inet],econnrefused}]}}
-			%% io:format("httpc:request error:~n~n~p",[Error]),
-			{error, reasons_not_yet_implemented}
+		Error ->
+			% example errors:
+			% {error,{failed_connect,[{to_address,{"127.0.0.1",5001}},
+			%                         {inet,[inet],econnrefused}]}}
+			{error, Error}
 	end.
 
 response_to_json(Response) ->

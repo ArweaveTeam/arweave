@@ -225,11 +225,16 @@ first_ipfs_tag(Tags) ->
 
 get_hash_and_queue(Hash, Queue) ->
 	ar:d({fetching, Hash}),
-	{ok, Data} = ar_ipfs:cat_data_by_hash(Hash),
-	{ok, Hash2} = ar_ipfs:add_data(Data, Hash),
-	ar:d({added, Hash, Hash2}),
-	UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
-	app_queue:add(Queue, UnsignedTX).
+	case ar_ipfs:cat_data_by_hash(Hash) of
+		{ok, Data} ->
+			{ok, Hash2} = ar_ipfs:add_data(Data, Hash),
+			ar:d({added, Hash, Hash2}),
+			UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
+			app_queue:add(Queue, UnsignedTX),
+			ok;
+		{error, Reason} ->
+			{error, Reason}
+	end.
 
 get_x(Pid, SendTag, RecvTag) ->
 	Pid ! {SendTag, self()},
