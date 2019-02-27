@@ -168,6 +168,7 @@ validate_request(_,_,_) ->
 %% @doc Process a validated request.
 -spec process_request(elli_http_method(), path(), list()) -> elli_http_response().
 process_request('POST', [<<"getsend">>], [APIKey, Queue, Wallet, IPFSHash]) ->
+	status_update(APIKey, IPFSHash, pending),
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
 	{200, [], <<"Request sent to queue">>};
 process_request('GET', [<<"status">>, APIKey], [APIKey]) ->
@@ -286,7 +287,6 @@ hash_mined(Hash) ->
 	end.
 
 ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
-	status_update(APIKey, IPFSHash, pending),
 	ar:d({app_ipfs_daemon, ipfs_getter, getting, IPFSHash}),
 	{ok, Data} = ar_ipfs:cat_data_by_hash(IPFSHash),
 	ar:d({app_ipfs_daemon, ipfs_getter, got, IPFSHash}),
@@ -295,7 +295,7 @@ ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
 	Status = case ?MODULE:sufficient_funds(Wallet, byte_size(Data)) of
 		ok ->
 			app_queue:add(maybe_restart_queue(APIKey, Queue, Wallet), UnsignedTX),
-			%% tx will be added to ar_tx_search db after mined into block.
+			%% tx will be added to ar_tx_search db after being mined into a block.
 			queued;
 		{error, _} ->
 			nofunds
@@ -322,7 +322,7 @@ maybe_restart_queue(APIKey, Queue, Wallet) ->
 			Queue;
 		false ->
 			Q2 = put_key_wallet(APIKey, Wallet),
-			spawn(fun() -> requeue_hashes(APIKey, Q2) end),
+			spawn(fun() -> requeue_hashes(APIKey, Q2, Wallet) end),
 			Q2
 	end.
 
@@ -369,19 +369,15 @@ request_to_struct(Req) ->
 			{error, {Exception, Reason}}
 	end.
 
-requeue_hashes(APIKey, Queue) ->
+requeue_hashes(APIKey, Queue, Wallet) ->
 	S = queued,
 	THs = queued_status(APIKey, S),
 	lists:foreach(fun([T,H]) ->
 			mnesia_del_obj(#ipfsar_ipfs_status{
 				api_key=APIKey, status=S, timestamp=T, ipfs_hash=H}),
 			case hash_mined(H) of
-				true -> pass;
-				false ->
-					{ok, Data} = ar_ipfs:cat_data_by_hash(H),
-					UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, H}], data=Data},
-					app_queue:add(Queue, UnsignedTX),
-					status_update(APIKey, H , S)
+				true  -> pass;
+				false -> spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, H])
 			end
 		end,
 	THs).
