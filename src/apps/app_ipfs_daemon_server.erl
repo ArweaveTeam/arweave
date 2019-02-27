@@ -20,9 +20,10 @@
 -type elli_http_request() :: term().
 -type elli_http_response() :: {non_neg_integer(), list(), binary()}.
 -type path() :: list(binary()).
-%	POST [<<"getsend">>] |
-%	GET  [<<"balance">>, APIKey] |
-%	GET  [<<"status">>, APIKey].
+%	POST [<<"getsend">>]
+%	GET  [<<"balance">>, APIKey]
+%	GET  [<<"status">>, APIKey]
+%   DEL  [APIKey, IPFSHash]
 -type ipfs_status() :: pending | queued | nofunds | mined.
 
 -record(ipfsar_key_q_wal, {api_key, queue_pid, wallet}).
@@ -37,9 +38,9 @@
 %% @doc Start anything that needs to be started.  So far, just the mnesia table.
 start() ->
 	%% assume mnesia already started (used in ar_tx_search)
-	create_mnesia_table(ipfsar_key_q_wal,   set, record_info(fields, ipfsar_key_q_wal)),
-	create_mnesia_table(ipfsar_ipfs_status, bag, record_info(fields, ipfsar_ipfs_status)),
-	create_mnesia_table(ipfsar_most_recent, set, record_info(fields, ipfsar_most_recent)),
+	mnesia_create_table(ipfsar_key_q_wal,   set, record_info(fields, ipfsar_key_q_wal)),
+	mnesia_create_table(ipfsar_ipfs_status, bag, record_info(fields, ipfsar_ipfs_status)),
+	mnesia_create_table(ipfsar_most_recent, set, record_info(fields, ipfsar_most_recent)),
 	spawn(?MODULE, cleaner_upper, []).
 
 %% @doc Stop all the queues.
@@ -244,7 +245,7 @@ cleaner_upper() ->
 	lists:foreach(fun(APIKey) ->
 			THSs = lists:reverse(lists:sort(queued_status(APIKey))),
 			{ToKeep, ToDelete} = case length(THSs) > ?N_STATS_TO_KEEP of
-				true -> lists:split(?N_STATS_TO_KEEP, THSs);
+				true  -> lists:split(?N_STATS_TO_KEEP, THSs);
 				false -> {THSs, []}
 			end,
 			lists:foreach(fun([T,H,S]) ->
@@ -256,19 +257,15 @@ cleaner_upper() ->
 					([_, _, mined])   -> pass;
 					([_, _, nofunds]) -> pass;
 					([_, H, _]) ->
-					case hash_mined(H) of
-						false -> pass;
-						true  -> status_update(APIKey, H, mined)
-					end
+						case hash_mined(H) of
+							false -> pass;
+							true  -> status_update(APIKey, H, mined)
+						end
 				end,
 				ToKeep)
 		end,
 		Keys),
 	timer:apply_after(?CLEANER_WAIT, ?MODULE, cleaner_upper, []).
-
-create_mnesia_table(Name, Type, Info) ->
-	TabDef = [{attributes, Info}, {disc_copies, [node()]}, {type, Type}],
-	mnesia:create_table(Name, TabDef).
 
 current_status(APIKey) ->
 	case mnesia:dirty_select(
@@ -446,9 +443,9 @@ validate_req_fields_auth(Req, FieldsRequired) ->
 			{error, {400, [], <<"Invalid json">>}}
 	end.
 
-mnesia_write(Record) ->
-	F = fun() -> mnesia:write(Record) end,
-	mnesia:activity(transaction, F).
+mnesia_create_table(Name, Type, Info) ->
+	TabDef = [{attributes, Info}, {disc_copies, [node()]}, {type, Type}],
+	mnesia:create_table(Name, TabDef).
 
 mnesia_del_obj(Obj) ->
 	F = fun() -> mnesia:delete_object(Obj) end,
@@ -462,3 +459,7 @@ mnesia_get_keys() ->
 			[],
 			['$1']
 		}]).
+
+mnesia_write(Record) ->
+	F = fun() -> mnesia:write(Record) end,
+	mnesia:activity(transaction, F).
