@@ -195,7 +195,8 @@ server(State=#state{
 			ar:d({app_ipfs, recv_new_tx, TX#tx.id}),
 			case lists:keyfind(<<"IPFS-Add">>, 1, Tags) of
 				{<<"IPFS-Add">>, Hash} ->
-					{ok, _Hash2} = add_ipfs_data(TX, Hash);
+					{ok, _Hash2} = add_ipfs_data(TX, Hash),
+					spawn(ar_ipfs, dht_provide_hash, [Hash]);
 					%% with validation:
 					%% case ar_ipfs:add_data(TX#tx.data, Hash) of
 					%%	{ok, Hash} -> [Hash|IHs];

@@ -111,6 +111,7 @@ dht_provide_hash(IPFSHash) ->
 dht_provide_hash(IP, Port, IPFSHash) ->
     URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/dht/provide?arg="
 		++ thing_to_list(IPFSHash),
+	ar:d({ar_ipfs, dht_provide_hash, IPFSHash}),
 	request(get, {URL, []}).
 
 -spec key_gen(string()) -> {ok, hash()} | {error, list()}.
