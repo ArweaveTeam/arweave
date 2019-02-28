@@ -193,8 +193,8 @@ server(State=#state{
 			server(State);
 		{recv_new_tx, TX=#tx{tags=Tags}} ->
 			ar:d({app_ipfs, recv_new_tx, TX#tx.id}),
-			case first_ipfs_tag(Tags) of
-				{value, {<<"IPFS-Add">>, Hash}} ->
+			case lists:keyfind(<<"IPFS-Add">>, 1, Tags) of
+				{<<"IPFS-Add">>, Hash} ->
 					{ok, _Hash2} = add_ipfs_data(TX, Hash);
 					%% with validation:
 					%% case ar_ipfs:add_data(TX#tx.data, Hash) of
@@ -216,14 +216,6 @@ add_ipfs_data(TX, Hash) ->
 	%% version 0.1, no validation
 	ar:d({recv_tx_ipfs_add, TX#tx.id, Hash}),
 	{ok, _Hash2} = ar_ipfs:add_data(TX#tx.data, Hash).
-
-first_ipfs_tag(Tags) ->
-	lists:search(fun
-		({<<"IPFS-Add">>,  _}) -> true;
-		({<<"IPFS-Get">>,  _}) -> true;
-		(_) -> false
-	end,
-	Tags).
 
 get_hash_and_queue(Hash, Queue) ->
 	ar:d({fetching, Hash}),
