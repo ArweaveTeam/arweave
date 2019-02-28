@@ -192,6 +192,7 @@ server(State=#state{
 			app_queue:add(Q, UnsignedTX),
 			server(State);
 		{recv_new_tx, TX=#tx{tags=Tags}} ->
+			ar:d({app_ipfs, recv_new_tx, TX#tx.id}),
 			case first_ipfs_tag(Tags) of
 				{value, {<<"IPFS-Add">>, Hash}} ->
 					{ok, _Hash2} = add_ipfs_data(TX, Hash);
@@ -204,7 +205,8 @@ server(State=#state{
 					pass
 			end,
 			server(State);
-		{recv_new_tx, _} ->
+		{recv_new_tx, X} ->
+			ar:d({app_ipfs, recv_new_tx, X}),
 			server(State)
 	end.
 
