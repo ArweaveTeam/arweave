@@ -269,6 +269,7 @@ ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
 	Status = case ar_ipfs:cat_data_by_hash(IPFSHash) of
 		{ok, Data} ->
 			ar:d({app_ipfs_daemon, ipfs_getter, IPFSHash, got}),
+			pin_provide_hash(Data, IPFSHash),
 			UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, IPFSHash}], data=Data},
 			ar:d({app_ipfs_daemon, ipfs_getter, IPFSHash, tx_created}),
 			case ?MODULE:sufficient_funds(Wallet, byte_size(Data)) of
@@ -284,6 +285,10 @@ ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
 			ipfs_error
 	end,
 	status_update(APIKey, IPFSHash, Status).
+
+pin_provide_hash(Data, IPFSHash) ->
+	{ok, _Hash2} = ar_ipfs:add_data(Data, IPFSHash),
+	spawn(ar_ipfs, dht_provide_hash, [IPFSHash]).
 
 current_status(APIKey) ->
 	case mnesia:dirty_select(

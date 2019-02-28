@@ -3,6 +3,7 @@
 -export([add_data/2, add_data/4, add_file/1, add_file/3]).
 -export([cat_data_by_hash/1, cat_data_by_hash/3]).
 -export([config_get_identity/0, config_set_identity/1]).
+-export([dht_provide_hash/1, dht_provide_hash/3]).
 -export([key_gen/1, key_gen/3]).
 -export([pin_ls/0, pin_ls/2]).
 -export([ep_get_ipfs_hashes/2, hashes_only/1]).
@@ -68,7 +69,7 @@ add_data(Data, Filename) ->
 	add_data(?IPFS_HOST, ?IPFS_PORT, Data, Filename).
 
 add_data(IP, Port, DataB, FilenameB) ->
-    URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/add?pin=true",
+	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/add?pin=true",
     Data = binary_to_list(DataB),
 	Filename = thing_to_list(FilenameB),
     Boundary = ?BOUNDARY,
@@ -103,6 +104,14 @@ config_get_identity() ->
 config_set_identity(Key) ->
 	os:cmd("ipfs config Identity.PeerID " ++ thing_to_list(Key)),
 	ok.
+
+dht_provide_hash(IPFSHash) ->
+	dht_provide_hash(?IPFS_HOST, ?IPFS_PORT, IPFSHash).
+
+dht_provide_hash(IP, Port, IPFSHash) ->
+    URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/dht/provide?arg="
+		++ thing_to_list(IPFSHash),
+	request(get, {URL, []}).
 
 -spec key_gen(string()) -> {ok, hash()} | {error, list()}.
 key_gen(Name) ->
