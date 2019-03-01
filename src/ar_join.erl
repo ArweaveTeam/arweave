@@ -85,13 +85,13 @@ verify_time_sync(Peers) ->
 							T when T < RemoteTMin - Tolerance ->
 								log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
 								false;
-							T when T < RemoteTMin ->
+							T when T < RemoteTMin - Tolerance div 2 ->
 								log_peer_clock_diff(Peer, RemoteTMin - T),
 								true;
 							T when T > RemoteTMax + Tolerance ->
 								log_peer_clock_diff(Peer, T - RemoteTMax - Tolerance),
 								false;
-							T when T > RemoteTMax ->
+							T when T > RemoteTMax + Tolerance div 2 ->
 								log_peer_clock_diff(Peer, T - RemoteTMax),
 								true;
 							_ ->
@@ -110,10 +110,10 @@ verify_time_sync(Peers) ->
 	end.
 
 log_peer_clock_diff(Peer, Diff) ->
-	ar:console(
-		"Your local clock deviates from peer ~s by ~B seconds or more.",
-		[ar_util:format_peer(Peer), Diff]
-	).
+	Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
+	WarningArgs = [ar_util:format_peer(Peer), Diff],
+	ar:console(Warning, WarningArgs),
+	ar:warn(Warning, WarningArgs).
 
 %% @doc Return the current block from a list of peers.
 find_current_block([]) ->
