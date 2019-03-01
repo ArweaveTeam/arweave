@@ -44,10 +44,12 @@ get_full_block(Peers, ID, BHL) when is_list(Peers) ->
 			get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BHL);
 		Block ->
 			case make_full_block(Block) of
-				unavailable ->
+				{error, unavailable} ->
 					ar_storage:invalidate_block(Block),
 					get_full_block(Peers, ID, BHL);
-				FinalB ->
+				{error, txs_missing} ->
+					unavailable;
+				{ok, FinalB} ->
 					FinalB
 			end
 	end;
@@ -226,35 +228,40 @@ start_mining(#{
 								]
 							);
 						false ->
-								ar:report(
-									[
-										could_not_start_mining,
-										{received_invalid_recall_block, FullBlock#block.indep_hash}
-									]
-								)
+							ar:report(
+								[
+									could_not_start_mining,
+									{received_invalid_recall_block, FullBlock#block.indep_hash}
+								]
+							)
 					end
 			end,
 			StateIn;
 		RecallB ->
-			if not is_record(RecallB, block) ->
-				ar:report_console([{erroneous_recall_block, RecallB}]);
-			true ->
-				ar_miner_log:started_hashing(),
-				ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
+			case is_record(RecallB, block) of
+				false ->
+					ar:report_console([{erroneous_recall_block, RecallB}]);
+				true ->
+					ar_miner_log:started_hashing(),
+					ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
 			end,
-			RecallBFull = make_full_block(
+			case make_full_block(
 				RecallB#block.indep_hash,
 				BHL
-			),
-			ar_key_db:put(
-				RecallB#block.indep_hash,
-				[
-					{
-						ar_block:generate_block_key(RecallBFull, hd(BHL)),
-						binary:part(hd(BHL), 0, 16)
-					}
-				]
-			),
+			) of
+				{ok, RecallBFull} ->
+					ar_key_db:put(
+						RecallB#block.indep_hash,
+						[
+							{
+								ar_block:generate_block_key(RecallBFull, hd(BHL)),
+								binary:part(hd(BHL), 0, 16)
+							}
+						]
+					);
+				_ ->
+					do_nothing
+			end,
 			B = ar_storage:read_block(hd(BHL), BHL),
 			case ForceDiff of
 				unforced ->
@@ -351,21 +358,23 @@ integrate_new_block(
 	RawRecallB = ar_storage:read_block(RecallHash, BHL),
 	case ?IS_BLOCK(RawRecallB) of
 		true ->
-			RecallB =
-				RawRecallB#block {
-					txs = lists:map(fun ar_storage:read_tx/1, RawRecallB#block.txs)
-				},
-			ar_key_db:put(
-				RecallB#block.indep_hash,
-				[
-					{
-						ar_block:generate_block_key(
-							RecallB,
-							NewB#block.previous_block),
-						binary:part(NewB#block.indep_hash, 0, 16)
-					}
-				]
-			);
+			case make_full_block(RawRecallB) of
+				{ok, RecallB} ->
+					ar_key_db:put(
+						RecallB#block.indep_hash,
+						[
+							{
+								ar_block:generate_block_key(
+									RecallB,
+									NewB#block.previous_block
+								),
+								binary:part(NewB#block.indep_hash, 0, 16)
+							}
+						]
+					);
+				_ ->
+					ok
+			end;
 		false ->
 			ok
 	end,
@@ -614,7 +623,7 @@ validate_wallet_list([_ | Rest]) ->
 %% containing the entirety of all its referenced txs.
 make_full_block(ID, BHL) ->
 	make_full_block(ar_storage:read_block(ID, BHL)).
-make_full_block(unavailable) -> unavailable;
+make_full_block(unavailable) -> {error, unavailable};
 make_full_block(BlockHeader) ->
 	FullB =
 		BlockHeader#block{
@@ -625,8 +634,8 @@ make_full_block(BlockHeader) ->
 				)
 		},
 	case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
-		[] -> FullB;
-		_  -> unavailable
+		[] -> {ok, FullB};
+		_  -> {error, txs_missing}
 	end.
 
 %% @doc Return a specific tx from a node, if it has it.
