@@ -247,6 +247,20 @@ add_processed(X, Y, _Procd) ->
 
 %% @doc Send an internal message externally.
 send_to_external(S = #state {external_peers = ExternalPeers}, {add_tx, TX}) ->
+	send_tx_to_external(ExternalPeers, TX),
+	S;
+send_to_external(S, {new_block, _, _Height, NewB, BDS, Recall}) ->
+	send_block_to_external(
+		S#state.external_peers,
+		NewB,
+		BDS,
+		Recall
+	),
+	S;
+send_to_external(S, {NewGS, Msg}) ->
+	send_to_external(S#state { gossip = NewGS }, Msg).
+
+send_tx_to_external(ExternalPeers, TX) ->
 	spawn(
 		fun() ->
 			ar:report(
@@ -268,18 +282,7 @@ send_to_external(S = #state {external_peers = ExternalPeers}, {add_tx, TX}) ->
 				disorder(ExternalPeers)
 			)
 		end
-	),
-	S;
-send_to_external(S, {new_block, _, _Height, NewB, BDS, Recall}) ->
-	send_block_to_external(
-		S#state.external_peers,
-		NewB,
-		BDS,
-		Recall
-	),
-	S;
-send_to_external(S, {NewGS, Msg}) ->
-	send_to_external(S#state { gossip = NewGS }, Msg).
+	).
 
 %% @doc Send a block to external peers in a spawned process.
 send_block_to_external(ExternalPeers, B, BDS, Recall) ->
