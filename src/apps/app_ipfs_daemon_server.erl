@@ -140,14 +140,14 @@ validate_request('POST', [<<"getsend">>], Req) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [<<"status">>, APIKey], _Req) ->
+validate_request('GET', [APIKey, <<"status">>], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, _Wallet} ->
 			{ok, []};
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [<<"balance">>, APIKey], _Req) ->
+validate_request('GET', [APIKey, <<"balance">>], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, Wallet} ->
 			{ok, [Wallet]};

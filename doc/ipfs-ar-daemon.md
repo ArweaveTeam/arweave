@@ -76,7 +76,7 @@ If the hash status is `pending` or `nofunds` (see get status below), the hash re
 
 ### Get status of User's requests
 
-    > GET /api/ipfs/status/<key>
+    > GET /api/ipfs/<key>/status
 
     < [
     <   {
@@ -110,7 +110,7 @@ Field "status" is one of:
 
 ### Get balance of User's wallet
 
-    > GET /api/ipfs/balance/<key>
+    > GET /api/ipfs/<key>/balance
 
     < {
     <   "address": "gIK2HLIhvFUoAJFcpHOqwmGeZPgVZLcE3ss8sT64gFY",
