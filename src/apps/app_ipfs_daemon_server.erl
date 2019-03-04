@@ -218,7 +218,8 @@ process_request('GET', [IPFSHash], []) ->
 				unavailable ->
 					{404, [], <<"IPFS hash not found.">>};
 				Filename ->
-					{ok, [], {file, Filename}}
+					TX = ar_storage:do_read_tx(Filename),
+					{200, [], TX#tx.data}
 			end
 	end;
 process_request('GET', [APIKey, IPFSHash, <<"tx">>], []) ->
