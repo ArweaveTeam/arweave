@@ -94,6 +94,20 @@ Field "status" is one of:
 - mined: mined into a TX
 - nofunds: User ran out of funds before hash was queued
 
+### Get containing TX for a specified IPFS hash
+
+    > GET /api/ipfs/<key>/<ipfs_hash>
+
+    < 404 IPFS hash not found.
+
+    < 200 <TX.id>  // If the hash has been mined
+
+    < 200 {
+    <     "timestamp": <ISO datetime>,
+    <     "ipfs_hash": <ipfs_hash>,
+    <     "status": <string>
+    <     }  // If the hash has not yet been mined
+
 ### Get balance of User's wallet
 
     > GET /api/ipfs/balance/<key>
