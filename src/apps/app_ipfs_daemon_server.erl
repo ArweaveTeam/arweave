@@ -143,6 +143,7 @@ validate_request('POST', [<<"getsend">>], Req) ->
 validate_request('GET', [APIKey, <<"status">>|Options], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, _Wallet} ->
+			ar:d({get_status, options, Options}),
 			{ok, parse_get_status_options(Options)};
 		{error, Response} ->
 			{error, Response}
@@ -179,7 +180,8 @@ process_request('POST', [<<"getsend">>], [APIKey, Queue, Wallet, IPFSHash]) ->
 	status_update(APIKey, IPFSHash, pending),
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
 	{200, [], <<"Request sent to queue">>};
-process_request('GET', [<<"status">>, APIKey], [all, 0]) ->
+process_request('GET', [APIKey, <<"status">>|_], [all, 0]) ->
+	ar:d({get_status, process, all}),
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			([T,H,S], Acc) ->
 				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
@@ -191,7 +193,8 @@ process_request('GET', [<<"status">>, APIKey], [all, 0]) ->
 		queued_status(APIKey)))),
 	JsonB = ar_serialize:jsonify(JsonS),
 	{200, [], JsonB};
-process_request('GET', [<<"status">>, APIKey], [Limit, Offset]) ->
+process_request('GET', [APIKey, <<"status">>|_], [Limit, Offset]) ->
+	ar:d({get_status, process, Limit, Offset}),
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			([T,H,S], Acc) ->
 				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
@@ -203,7 +206,7 @@ process_request('GET', [<<"status">>, APIKey], [Limit, Offset]) ->
 		queued_status(APIKey)))),
 	JsonB = ar_serialize:jsonify(safe_offset_limit(JsonS, Offset, Limit)),
 	{200, [], JsonB};
-process_request('GET', [<<"balance">>, _APIKey], [Wallet]) ->
+process_request('GET', [_APIKey, <<"balance">>], [Wallet]) ->
 	Address = ar_wallet:to_address(Wallet),
 	Balance = ar_node:get_balance(whereis(http_entrypoint_node), Wallet),
 	JsonS = {[
@@ -366,9 +369,17 @@ maybe_restart_queue(APIKey, Queue, Wallet) ->
 			Q2
 	end.
 
-parse_get_status_options([<<"limit">>, N]) -> [N, 0];
-parse_get_status_options([<<"limit">>, N, <<"offset">>, M]) -> [N, M];
-parse_get_status_options(_) -> [all, 0].
+parse_get_status_options([<<"limit">>, N]) ->
+	[safe_binary_to_integer(N,1), 0];
+parse_get_status_options([<<"limit">>, N, <<"offset">>, M]) ->
+	[safe_binary_to_integer(N,1), safe_binary_to_integer(M,0)];
+parse_get_status_options(_) ->
+	[all, 0].
+
+safe_binary_to_integer(B, Default) ->
+	try   binary_to_integer(B)
+	catch _ -> Default
+	end.
 
 queued_status(APIKey) ->
 	mnesia:dirty_select(
