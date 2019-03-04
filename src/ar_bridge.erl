@@ -69,9 +69,9 @@ set_remote_peers(PID, Peers) ->
 add_block(PID, OriginPeer, Block, BDS, Recall) ->
 	PID ! {add_block, OriginPeer, Block, BDS, Recall}.
 
-%% @doc Notify the bridge of a new external block.
-add_tx(PID, TX) ->%, OriginPeer) ->
-	PID ! {add_tx, TX}.%, OriginPeer}.
+%% @doc Notify the bridge of a new external transaction.
+add_tx(PID, TX) ->
+	PID ! {add_tx, TX}.
 
 %% @doc Add a remote HTTP peer.
 add_remote_peer(PID, Node) ->
@@ -140,9 +140,9 @@ handle(S, {ignore_peer, Peer}) ->
 handle(S, {unignore_peer, Peer}) ->
 	S#state{ ignored_peers = lists:delete(Peer, S#state.ignored_peers) };
 handle(S, {add_tx, TX}) ->
-	maybe_send_tx_to_internal(S, TX);
+	maybe_send_tx(S, TX);
 handle(S, {add_block, OriginPeer, B, BDS, Recall}) ->
-	send_block_to_internal(S, OriginPeer, B, BDS, Recall);
+	send_block(S, OriginPeer, B, BDS, Recall);
 handle(S = #state{ external_peers = ExtPeers }, {add_peer, remote, Peer}) ->
 	case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
 		true  -> S;
@@ -176,8 +176,8 @@ handle(S, UnknownMsg) ->
 	ar:report([{ar_bridge_handle_unknown_message, UnknownMsg}]),
 	S.
 
-%% @doc Potentially send a tx to internal processes.
-maybe_send_tx_to_internal(S, Data) ->
+%% @doc Send the transaction to internal processes and to peers.
+maybe_send_tx(S, Data) ->
 	#state {
 		gossip = GS,
 		firewall = FW,
@@ -196,8 +196,8 @@ maybe_send_tx_to_internal(S, Data) ->
 			S#state { gossip = NewGS }
 	end.
 
-%% @doc Potentially send a block to internal processes.
-send_block_to_internal(S, OriginPeer, B, BDS, Recall) ->
+%% @doc Send the block to internal processes and to peers.
+send_block(S, OriginPeer, B, BDS, Recall) ->
 	#state {
 		gossip = GS,
 		processed = Procd,
@@ -245,7 +245,7 @@ add_processed(X, Y, _Procd) ->
 % get_id(block, B) when ?IS_BLOCK(B) -> B#block.indep_hash;
 % get_id(block, {_, #block { indep_hash = Hash}, _}) -> Hash.
 
-%% @doc Send an internal message externally
+%% @doc Send an internal message externally.
 send_to_external(S = #state {external_peers = ExternalPeers}, {add_tx, TX}) ->
 	spawn(
 		fun() ->
