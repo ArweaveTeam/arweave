@@ -23,7 +23,8 @@
 %	POST [<<"getsend">>]
 %	GET  [<<"balance">>, APIKey]
 %	GET  [<<"status">>, APIKey]
-%   DEL  [APIKey, IPFSHash]
+%	GET  [IPFSHash, <<"tx">>]
+%	DEL  [APIKey, IPFSHash]
 -type ipfs_status() :: pending | queued | nofunds | mined | ipfs_error.
 
 -record(ipfsar_key_q_wal, {api_key, queue_pid, wallet}).
@@ -142,21 +143,28 @@ validate_request('POST', [<<"getsend">>], Req) ->
 validate_request('GET', [<<"status">>, APIKey], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, _Wallet} ->
-			{ok, [APIKey]};
+			{ok, []};
 		{error, Response} ->
 			{error, Response}
 	end;
 validate_request('GET', [<<"balance">>, APIKey], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, Wallet} ->
-			{ok, [APIKey, Wallet]};
+			{ok, [Wallet]};
 		{error, _} ->
 			{error, {401, [], <<"Invalid API Key">>}}
 	end;
-validate_request(<<"DEL">>, [APIKey, IPFSHash], _Req) ->
+validate_request(<<"DEL">>, [APIKey, _IPFSHash], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, _Wallet} ->
-			{ok, [APIKey, IPFSHash]};
+			{ok, []};
+		{error, _} ->
+			{error, {401, [], <<"Invalid API Key">>}}
+	end;
+validate_request('GET', [APIKey, _IPFSHash, <<"tx">>], _Req) ->
+	case is_authorized(APIKey) of
+		{ok, _Queue, _Wallet} ->
+			{ok, []};
 		{error, _} ->
 			{error, {401, [], <<"Invalid API Key">>}}
 	end;
@@ -171,7 +179,7 @@ process_request('POST', [<<"getsend">>], [APIKey, Queue, Wallet, IPFSHash]) ->
 	status_update(APIKey, IPFSHash, pending),
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
 	{200, [], <<"Request sent to queue">>};
-process_request('GET', [<<"status">>, APIKey], [APIKey]) ->
+process_request('GET', [<<"status">>, APIKey], []) ->
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			([T,H,S], Acc) ->
 				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
@@ -183,7 +191,7 @@ process_request('GET', [<<"status">>, APIKey], [APIKey]) ->
 		queued_status(APIKey)))),
 	JsonB = ar_serialize:jsonify(JsonS),
 	{200, [], JsonB};
-process_request('GET', [<<"balance">>, _APIKey], [_APIKey, Wallet]) ->
+process_request('GET', [<<"balance">>, _APIKey], [Wallet]) ->
 	Address = ar_wallet:to_address(Wallet),
 	Balance = ar_node:get_balance(whereis(http_entrypoint_node), Wallet),
 	JsonS = {[
@@ -191,7 +199,21 @@ process_request('GET', [<<"balance">>, _APIKey], [_APIKey, Wallet]) ->
 		{balance, integer_to_binary(Balance)}]},
 	JsonB = ar_serialize:jsonify(JsonS),
 	{200, [], JsonB};
-process_request(<<"DEL">>, [APIKey, IPFSHash], [APIKey, IPFSHash]) ->
+process_request('GET', [APIKey, IPFSHash, <<"tx">>], []) ->
+	case lists:reverse(lists:sort(queued_status_hash(APIKey, IPFSHash))) of
+		[] ->
+			{404, [], <<"IPFS hash not found.">>};
+		[[_, mined]|_] ->
+			case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
+				[]  -> {404, [], <<"IPFS hash not found.">>};
+				TXs -> {200, [], TXs}
+			end;
+		[[T,S]|_] ->
+			JsonS = {[{timestamp, T}, {ipfs_hash, IPFSHash}, {status, S}]},
+			JsonB = ar_serialize:jsonify(JsonS),
+			{200, [], JsonB}
+	end;
+process_request(<<"DEL">>, [APIKey, IPFSHash], []) ->
 	case queued_status_hash(APIKey, IPFSHash) of
 		[]          -> {404, [], <<"Hash not found.">>};
 		[_, mined]  -> {400, [], <<"Hash already mined.">>};
