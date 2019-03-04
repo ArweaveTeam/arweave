@@ -76,7 +76,7 @@ If the hash status is `pending` or `nofunds` (see get status below), the hash re
 
 ### Get status of User's requests
 
-    > GET /api/ipfs/<key>/status
+    > GET /api/ipfs/<key>/status[/limit/<N>[/offset/<M>]]
 
     < [
     <   {
@@ -85,7 +85,7 @@ If the hash status is `pending` or `nofunds` (see get status below), the hash re
     <     "status": "queued"
     <   }, ...]
 
-Returns status of most recent 500 hashes.
+Returns status of hashes in reverse chronological order.  Limit N and offset M are optional.  Without these arguments, status of all hashes requested by the user is returned.  Otherwise, the specified subset.
 
 Field "status" is one of:
 
