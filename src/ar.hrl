@@ -153,7 +153,7 @@
 -define(TX_PROPAGATION_PARALLELIZATION, 5).
 
 %% @doc The number of the best peers to send new blocks to in parallel.
--define(BLOCK_PROPAGATION_PARALLELIZATION, 10).
+-define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
