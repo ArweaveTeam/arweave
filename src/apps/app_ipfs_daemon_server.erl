@@ -23,6 +23,7 @@
 %	POST [<<"getsend">>]
 %	GET  [<<"balance">>, APIKey]
 %	GET  [<<"status">>, APIKey]
+%	GET  [IPFSHash]
 %	GET  [IPFSHash, <<"tx">>]
 %	DEL  [APIKey, IPFSHash]
 -type ipfs_status() :: pending | queued | nofunds | mined | ipfs_error.
@@ -94,24 +95,16 @@ del_key(APIKey) ->
 -spec handle(atom(), list(binary()), elli_http_request()) ->
 	elli_http_response().
 handle(Method, Path, Req) ->
-	case is_app_running() of
-		true  -> really_handle(Method, Path, Req);
-		false -> {503, [], <<"Service not running">>}
-	end.
-
-%%% Private functions.
-
-%%% Handlers
-
--spec really_handle(elli_http_method(), path(), elli_http_request()) ->
-	elli_http_response().
-really_handle(Method, Path, Req) ->
 	case validate_request(Method, Path, Req) of
 		{error, Response} ->
 			Response;
 		{ok, Args} ->
 			process_request(Method, Path, Args)
 	end.
+
+%%% Private functions.
+
+%%% Handlers
 
 %%% Validators
 
@@ -169,6 +162,8 @@ validate_request('GET', [APIKey, _IPFSHash, <<"tx">>], _Req) ->
 		{error, _} ->
 			{error, {401, [], <<"Invalid API Key">>}}
 	end;
+validate_request('GET', [_IPFSHash], _Req) ->
+	{ok, []};
 validate_request(_,_,_) ->
 	{error, {400, [], <<"Unrecognised request">>}}.
 
@@ -214,6 +209,18 @@ process_request('GET', [_APIKey, <<"balance">>], [Wallet]) ->
 		{balance, integer_to_binary(Balance)}]},
 	JsonB = ar_serialize:jsonify(JsonS),
 	{200, [], JsonB};
+process_request('GET', [IPFSHash], []) ->
+	case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
+		[]  ->
+			{404, [], <<"IPFS hash not found.">>};
+		[TXID|_] ->
+			case ar_storage:lookup_tx_filename(TXID) of
+				unavailable ->
+					{404, [], <<"IPFS hash not found.">>};
+				Filename ->
+					{ok, [], {file, Filename}}
+			end
+	end;
 process_request('GET', [APIKey, IPFSHash, <<"tx">>], []) ->
 	case lists:reverse(lists:sort(queued_status_hash(APIKey, IPFSHash))) of
 		[] ->
@@ -357,7 +364,10 @@ is_app_running() ->
 
 %% @doc Check if the API key is on the books. If so, return their wallet.
 is_authorized(APIKey) ->
-	?MODULE:get_key_q_wallet(APIKey).
+	case is_app_running() of
+		true  -> ?MODULE:get_key_q_wallet(APIKey);
+		false -> {error, {503, [], <<"Service not running">>}}
+	end.
 
 maybe_restart_queue(APIKey, Queue, Wallet) ->
 	case is_process_alive(Queue) of
