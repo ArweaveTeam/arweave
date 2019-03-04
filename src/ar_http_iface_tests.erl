@@ -74,10 +74,9 @@ node_blacklisting_get_spammer_test() ->
 -spec node_blacklisting_post_spammer_test() -> ok.
 node_blacklisting_post_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
-	%% send_new_tx sends two requests
-	NReqs = ?MAX_REQUESTS + 1,
-	NErrs = NReqs - (?MAX_REQUESTS div 2),
-	node_blacklisting_test_frame(RequestFun, ErrorResponse, NReqs, NErrs).
+	NErrors = 11,
+	NRequests = ?MAX_REQUESTS + NErrors,
+	node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, NErrors).
 
 %% @doc Given a label, return a fun and a message.
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.

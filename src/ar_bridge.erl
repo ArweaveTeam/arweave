@@ -269,18 +269,7 @@ send_tx_to_external(ExternalPeers, TX) ->
 					{peers, length(ExternalPeers)}
 				]
 			),
-			lists:foldl(
-				fun(Peer, Acc) ->
-					case (not (ar_http_iface_client:has_tx(Peer, TX#tx.id))) and (Acc =< ?NUM_REGOSSIP_TX) of
-						true ->
-							ar_http_iface_client:send_new_tx(Peer, TX),
-							Acc + 1;
-						_ -> Acc
-					end
-				end,
-				0,
-				disorder(ExternalPeers)
-			)
+			send_tx_to_external_parallel(ExternalPeers, TX)
 		end
 	).
 
@@ -296,8 +285,19 @@ send_block_to_external(ExternalPeers, B, BDS, Recall) ->
 		send_block_to_external_parallel(ExternalPeers, B, BDS, Recall)
 	end).
 
-disorder(List) ->
-	[Item || {_, Item} <- lists:sort([{rand:uniform(), Item} || Item <- List])].
+%% @doc Send the new tx to the peers by first sending it in parallel to the
+%% best/first peers and then continuing sequentially with the rest of the peers
+%% in order.
+send_tx_to_external_parallel(Peers, TX) ->
+	{PeersParallel, PeersSequencial} = lists:split(
+		min(length(Peers), ?TX_PROPAGATION_PARALLELIZATION),
+		Peers
+	),
+	Send = fun(Peer) ->
+		ar_http_iface_client:send_new_tx(Peer, TX)
+	end,
+	ar_util:pmap(Send, PeersParallel),
+	lists:foreach(Send, PeersSequencial).
 
 %% @doc Send the new block to the peers by first sending it in parallel to the
 %% best/first peers and then continuing sequentially with the rest of the peers
