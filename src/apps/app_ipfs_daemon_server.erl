@@ -140,10 +140,10 @@ validate_request('POST', [<<"getsend">>], Req) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [APIKey, <<"status">>], _Req) ->
+validate_request('GET', [APIKey, <<"status">>|Options], _Req) ->
 	case is_authorized(APIKey) of
 		{ok, _Queue, _Wallet} ->
-			{ok, []};
+			{ok, parse_get_status_options(Options)};
 		{error, Response} ->
 			{error, Response}
 	end;
@@ -179,7 +179,7 @@ process_request('POST', [<<"getsend">>], [APIKey, Queue, Wallet, IPFSHash]) ->
 	status_update(APIKey, IPFSHash, pending),
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
 	{200, [], <<"Request sent to queue">>};
-process_request('GET', [<<"status">>, APIKey], []) ->
+process_request('GET', [<<"status">>, APIKey], [all, 0]) ->
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			([T,H,S], Acc) ->
 				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
@@ -190,6 +190,18 @@ process_request('GET', [<<"status">>, APIKey], []) ->
 		[],
 		queued_status(APIKey)))),
 	JsonB = ar_serialize:jsonify(JsonS),
+	{200, [], JsonB};
+process_request('GET', [<<"status">>, APIKey], [Limit, Offset]) ->
+	JsonS = lists:reverse(lists:sort(lists:foldl(fun
+			([T,H,S], Acc) ->
+				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
+				[{[{timestamp, Tiso}, {ipfs_hash, H}, {status, S}]}|Acc];
+			([], Acc) ->
+				Acc
+		 end,
+		[],
+		queued_status(APIKey)))),
+	JsonB = ar_serialize:jsonify(safe_offset_limit(JsonS, Offset, Limit)),
 	{200, [], JsonB};
 process_request('GET', [<<"balance">>, _APIKey], [Wallet]) ->
 	Address = ar_wallet:to_address(Wallet),
@@ -354,6 +366,10 @@ maybe_restart_queue(APIKey, Queue, Wallet) ->
 			Q2
 	end.
 
+parse_get_status_options([<<"limit">>, N]) -> [N, 0];
+parse_get_status_options([<<"limit">>, N, <<"offset">>, M]) -> [N, M];
+parse_get_status_options(_) -> [all, 0].
+
 queued_status(APIKey) ->
 	mnesia:dirty_select(
 			ipfsar_ipfs_status,
@@ -409,6 +425,17 @@ requeue_hashes(APIKey, Queue, Wallet) ->
 			end
 		end,
 	THs).
+
+safe_offset_limit([], _, _) -> [];
+safe_offset_limit(Xs, Offset, _) when Offset >= length(Xs) -> [];
+safe_offset_limit(Xs, Offset, Limit) ->
+	Ys = lists:nthtail(Offset, Xs),
+	case Limit >= length(Ys) of
+		true  -> Ys;
+		false ->
+			{Zs,_} = lists:split(Limit, Ys),
+			Zs
+	end.
 
 status_delete(APIKey, IPFSHash) ->
 	lists:foreach(fun([T,S]) ->
