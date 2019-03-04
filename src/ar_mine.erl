@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/6, start/7, change_data/2, stop/1, miner/2, schedule_hash/1]).
+-export([start/6, start/7, change_data/2, stop/1, miner_start/2, schedule_hash/1]).
 -export([validate/3, validate_by_hash/2, next_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -160,7 +160,7 @@ server(
 		mine ->
 			Workers =
 				lists:map(
-					fun(_) -> spawn(?MODULE, miner, [S, self()]) end,
+					fun(_) -> spawn(?MODULE, miner_start, [S, self()]) end,
 					lists:seq(1, MaxMiners)
 				),
 			lists:foreach(
@@ -185,6 +185,10 @@ server(
 %% @doc A worker process to hash the data segment searching for a solution
 %% for the given diff.
 %% TODO: Change byte string for nonces to bitstring
+miner_start(S, Supervisor) ->
+	process_flag(priority, low),
+	miner(S, Supervisor).
+
 miner(
 	S = #state {
 		data_segment = BDS,
