@@ -206,7 +206,7 @@ process_request('GET', [APIKey, IPFSHash, <<"tx">>], []) ->
 		[[_, mined]|_] ->
 			case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
 				[]  -> {404, [], <<"IPFS hash not found.">>};
-				TXs -> {200, [], TXs}
+				TXs -> {200, [], lists:map(fun ar_util:encode/1, TXs)}
 			end;
 		[[T,S]|_] ->
 			JsonS = {[{timestamp, T}, {ipfs_hash, IPFSHash}, {status, S}]},
