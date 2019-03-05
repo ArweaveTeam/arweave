@@ -15,7 +15,7 @@
 -record(state, {
 	protocol = http, % Interface to bridge across
 	gossip, % Gossip state
-	external_peers, % Peers to send message to.
+	external_peers, % Peers to send message to ordered by best to worst.
 	processed = [], % IDs to ignore.
 	firewall = ar_firewall:start(),
 	port,
@@ -144,9 +144,13 @@ handle(S, {add_tx, TX}) ->
 handle(S, {add_block, OriginPeer, B, BDS, Recall}) ->
 	send_block(S, OriginPeer, B, BDS, Recall);
 handle(S = #state{ external_peers = ExtPeers }, {add_peer, remote, Peer}) ->
-	case lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) of
-		true  -> S;
-		false -> S#state{ external_peers = ar_util:unique([Peer|ExtPeers]) }
+	case {lists:member(Peer, ?PEER_PERMANENT_BLACKLIST), lists:member(Peer, ExtPeers)} of
+		{true, _} ->
+			S;
+		{_, true} ->
+			S;
+		{_, false} ->
+			S#state{ external_peers = ExtPeers ++ [Peer] }
 	end;
 handle(S = #state{ gossip = GS0 }, {add_peer, local, Peer}) ->
 	S#state{ gossip = ar_gossip:add_peers(GS0, Peer)};
