@@ -121,7 +121,7 @@ handle(SPid, {process_new_block, Peer, Height, NewB, BDS, Recall}) ->
 	HashList = maps:get(hash_list, StateIn),
 	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, BDS, Recall}),
 	ar_node_state:update(SPid, [{gossip, NewGS}]),
-	{RecallIndepHash, _, Key, Nonce, _} = Recall,
+	{RecallIndepHash, _, Key, Nonce} = Recall,
 	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB#block.hash_list, Key, Nonce),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
