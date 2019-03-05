@@ -115,7 +115,8 @@ handle(SPid, {cancel_tx, TXID, Sig}) ->
 	ar_node_state:update(SPid, StateOut),
 	{ok, cancel_tx};
 handle(SPid, {process_new_block, Peer, Height, NewB, BDS, Recall}) ->
-	% We have a new block. Distribute it to the gossip network.
+	%% We have a new block. Distribute it to the gossip network. This is only
+	%% triggered in polling mode.
 	{ok, StateIn} = ar_node_state:all(SPid),
 	GS = maps:get(gossip, StateIn),
 	HashList = maps:get(hash_list, StateIn),
