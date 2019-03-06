@@ -63,7 +63,7 @@ get_full_block(Host, ID, BHL) ->
 get_full_block_from_remote_peers([], _ID, _BHL) ->
 	unavailable;
 get_full_block_from_remote_peers(Peers, ID, BHL) ->
-	Peer = ar_util:pick_random(Peers),
+	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
 	{Time, B} = timer:tc(fun() -> get_full_block(Peer, ID, BHL) end),
 	case ?IS_BLOCK(B) of
 		true ->
