@@ -137,9 +137,6 @@
 %% @doc Never have more than this number of peers (new peers excluded).
 -define(MAXIMUM_PEERS, 20).
 
-%% @doc Amount of peers without a given transaction to send a new transaction to.
--define(NUM_REGOSSIP_TX, 20).
-
 %% Maximum number of requests allowed by an IP in any 30 second period.
 -define(MAX_REQUESTS, 450).
 
@@ -152,8 +149,11 @@
 %% @doc Length of time to wait (seconds) before dropping after last activity
 -define(PEER_TIMEOUT, 8 * 60).
 
+%% @doc The number of the best peers to send new transactions to in parallel.
+-define(TX_PROPAGATION_PARALLELIZATION, 5).
+
 %% @doc The number of the best peers to send new blocks to in parallel.
--define(BLOCK_PROPAGATION_PARALLELIZATION, 10).
+-define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").

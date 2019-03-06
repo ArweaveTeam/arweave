@@ -8,7 +8,7 @@
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
--export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1, has_tx/2]).
+-export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
 -export([get_time/1, get_height/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1, get_current_block/2]).
@@ -17,13 +17,14 @@
 
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
-	if
-		byte_size(TX#tx.data < 50000) ->
+	case byte_size(TX#tx.data) of
+		_Size when _Size < 50000 ->
 			do_send_new_tx(Peer, TX);
-		true ->
+		_ ->
 			case has_tx(Peer, TX#tx.id) of
-				false -> do_send_new_tx(Peer, TX);
-				true -> not_sent
+				doesnt_have_tx -> do_send_new_tx(Peer, TX);
+				has_tx -> not_sent;
+				error -> not_sent
 			end
 	end.
 
@@ -33,7 +34,8 @@ do_send_new_tx(Peer, TX) ->
 		Peer,
 		"/tx",
 		p2p_headers(),
-		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+		3 * 1000
 	).
 
 %% @doc Check whether a peer has a given transaction
@@ -43,12 +45,15 @@ has_tx(Peer, ID) ->
 			<<"GET">>,
 			Peer,
 			"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
-			p2p_headers()
+			p2p_headers(),
+			[],
+			3 * 1000
 		)
 	of
-		{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
-		{ok, {{<<"202">>, _}, _, _, _, _}} -> true;
-		_ -> false
+		{ok, {{<<"200">>, _}, _, _, _, _}} -> has_tx;
+		{ok, {{<<"202">>, _}, _, _, _, _}} -> has_tx; % In the mempool
+		{ok, {{<<"404">>, _}, _, _, _, _}} -> doesnt_have_tx;
+		_ -> error
 	end.
 
 
