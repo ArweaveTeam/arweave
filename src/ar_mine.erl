@@ -192,12 +192,12 @@ update_txs(
 		current_block = CurrentB,
 		recall_block = RecallB,
 		reward_addr = RewardAddr,
-		tags = Tags
+		tags = Tags,
+		diff = Diff
 	},
 	TXs
 ) ->
 	CurrentTimestamp = os:system_time(seconds),
-	Diff = next_diff(CurrentB),
 	ValidTXs =
 		lists:filter(
 			fun(TX) ->
