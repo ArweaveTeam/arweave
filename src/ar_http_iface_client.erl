@@ -184,7 +184,9 @@ get_full_block(Peer, ID, BHL) ->
 			<<"GET">>,
 			Peer,
 			prepare_block_id(ID),
-			p2p_headers()
+			p2p_headers(),
+			[],
+			10 * 1000
 		),
 		BHL
 	).
@@ -263,7 +265,9 @@ get_tx(Peer, Hash) ->
 			<<"GET">>,
 			Peer,
 			"/tx/" ++ binary_to_list(ar_util:encode(Hash)),
-			p2p_headers()
+			p2p_headers(),
+			[],
+			10 * 1000
 		)
 	).
 
@@ -274,7 +278,9 @@ get_tx_data(Peer, Hash) ->
 			<<"GET">>,
 			Peer,
 			"/" ++ binary_to_list(ar_util:encode(Hash)),
-			p2p_headers()
+			p2p_headers(),
+			[],
+			10 * 1000
 		),
 	Body.
 
