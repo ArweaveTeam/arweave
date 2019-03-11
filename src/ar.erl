@@ -380,8 +380,11 @@ start(
 		Bridge
 	),
 	case Polling of
-		true -> ar_poller:start(Node, Peers);
-		false -> do_nothing
+		true ->
+			ar_meta_db:put(polling_mode, true),
+			ar_poller:start(Node, Peers);
+		false ->
+			do_nothing
 	end,
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case Pause of

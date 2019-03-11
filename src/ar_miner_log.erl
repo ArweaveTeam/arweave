@@ -44,10 +44,21 @@ watchdog() ->
 		fork_recovered -> watchdog();
 		stop -> ok
 	after ?FOREIGN_BLOCK_ALERT_TIME ->
-		log(
-			"WARNING: No foreign blocks received from network. "
-			"Please check your internet connection."
-		),
+		case ar_meta_db:get(polling_mode) of
+			true ->
+				log(
+					"WARNING: No foreign blocks fetched from the network. "
+					"Please check your internet connection and the logs for errors."
+				);
+			_ ->
+				log(
+					"WARNING: No foreign blocks received from the network. "
+					"Please confirm your node is available on port ~B "
+					"on your Internet IP address. E.g. browse to http://[Internet IP address]:~B/info. "
+					"If so, please check the logs for errors.",
+					[ar_meta_db:get(port), ar_meta_db:get(port)]
+				)
+		end,
 		watchdog()
 	end.
 
