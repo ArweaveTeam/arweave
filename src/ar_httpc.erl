@@ -48,12 +48,12 @@ request(Method, Peer, Path, Headers, Body, Timeout) ->
 	Result.
 
 connect_timeout(default_timeout) ->
-	?CONNECT_TIMEOUT;
+	?HTTP_REQUEST_CONNECT_TIMEOUT;
 connect_timeout(Timeout) ->
 	Timeout.
 
 request_timeout(default_timeout) ->
-	?NET_TIMEOUT;
+	?HTTP_REQUEST_SEND_TIMEOUT;
 request_timeout(Timeout) ->
 	Timeout.
 

@@ -25,11 +25,11 @@ start(Port) ->
 				elli:start_link(
 					[
 						{callback, elli_middleware}, {callback_args, Config},
-						{body_timeout, ?NET_TIMEOUT},
-						{header_timeout, ?CONNECT_TIMEOUT},
+						{body_timeout, ?HTTP_SERVER_GET_BODY_TIMEOUT},
+						{header_timeout, ?HTTP_SERVER_GET_HEADERS_TIMEOUT},
 						{max_body_size, ?MAX_BODY_SIZE},
-						{request_timeout, ?NET_TIMEOUT},
-						{accept_timeout, ?CONNECT_TIMEOUT},
+						{request_timeout, ?HTTP_SERVER_GET_REQUEST_TIMEOUT},
+						{accept_timeout, ?HTTP_SERVER_ACCEPT_TIMEOUT},
 						{port, Port}
 					]
 				),
