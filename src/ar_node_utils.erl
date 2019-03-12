@@ -35,20 +35,25 @@ get_conflicting_txs(StateTXs, TX) ->
 			)
 	].
 
-%% @doc Get a specific full block (a block containing full txs) via
-%% blocks indep_hash.
+%% @doc Get a full block (a block containing all transactions) by the independent hash.
+%%      Try to find the block locally first. If we do not have the full block on disk, try to download it from peers.
 get_full_block(Peers, ID, BHL) when is_list(Peers) ->
-	% check locally first, if not found ask list of external peers for block
+	GetBlockFromPeersFun = fun() ->
+		get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BHL)
+	end,
 	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
-			get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BHL);
+			GetBlockFromPeersFun();
 		Block ->
 			case make_full_block(Block) of
 				{error, unavailable} ->
-					ar_storage:invalidate_block(Block),
-					get_full_block(Peers, ID, BHL);
-				{error, txs_missing} ->
-					unavailable;
+					GetBlockFromPeersFun();
+				{error, {txs_missing, MissingTXIDs}} ->
+					ar:info([
+						{transactions_missing_on_disk_for_block, ar_util:encode(ID)},
+						{missing_txs, lists:map(fun ar_util:encode/1, MissingTXIDs)}
+					]),
+					GetBlockFromPeersFun();
 				{ok, FinalB} ->
 					FinalB
 			end
@@ -619,23 +624,28 @@ validate_wallet_list([_ | Rest]) ->
 %%% Private functions.
 %%%
 
-%% @doc Convert a block with tx references into a full block, that is a block
-%% containing the entirety of all its referenced txs.
+%% @doc Read a block shadow from disk, read its transactions from disk.
 make_full_block(ID, BHL) ->
 	make_full_block(ar_storage:read_block(ID, BHL)).
 make_full_block(unavailable) -> {error, unavailable};
-make_full_block(BlockHeader) ->
-	FullB =
-		BlockHeader#block{
-			txs =
-				get_tx(
-					whereis(http_entrypoint_node),
-					BlockHeader#block.txs
-				)
-		},
-	case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
-		[] -> {ok, FullB};
-		_  -> {error, txs_missing}
+make_full_block(BShadow) ->
+	{TXs, MissingTXIDs} = lists:foldl(
+		fun(TXID, {TXs, MissingTXIDs}) ->
+			case ar_storage:read_tx(TXID) of
+				unavailable ->
+					{TXs, [TXID | MissingTXIDs]};
+				TX ->
+					{[TX | TXs], MissingTXIDs}
+			end
+		end,
+		{[], []},
+		BShadow#block.txs
+	),
+	case MissingTXIDs of
+		[] ->
+			{ok, BShadow#block{ txs = TXs }};
+		_ ->
+			{error, {txs_missing, MissingTXIDs}}
 	end.
 
 %% @doc Return a specific tx from a node, if it has it.
