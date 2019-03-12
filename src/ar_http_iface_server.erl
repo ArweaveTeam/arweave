@@ -561,7 +561,7 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 		unavailable ->
 			{404, [], <<"Block not found.">>};
 		_  ->
-			case {ar_meta_db:get(api_compat), elli_request:get_header(<<"X-Block-Format">>, Req, <<"1">>)} of
+			case {ar_meta_db:get(api_compat), elli_request:get_header(<<"X-Block-Format">>, Req, <<"2">>)} of
 				{false, <<"1">>} ->
 					{426, [], <<"Client version incompatible.">>};
 				{_, <<"1">>} ->
