@@ -659,47 +659,6 @@ make_full_block(BShadow) ->
 			{error, {txs_missing, MissingTXIDs}}
 	end.
 
-%% @doc Return a specific tx from a node, if it has it.
-%% TODO: Should catch case return empty list or not_found atom.
-get_tx(_, []) ->
-	[];
-get_tx(Peers, ID) when is_list(Peers) ->
-	% check locally first, if not found in storage nor nodes state ask
-	% list of external peers for tx
-	ar:report([{getting_tx, ID}, {peers, Peers}]),
-	case
-		{
-			ar_storage:read_tx(ID),
-			lists:keyfind(ID, 2, ar_node:get_full_pending_txs(whereis(http_entrypoint_node)))
-		} of
-		{unavailable, false} ->
-			lists:foldl(
-				fun(Peer, Acc) ->
-					case is_atom(Acc) of
-						false -> Acc;
-						true ->
-							T = get_tx(Peer, ID),
-							case is_atom(T) of
-								true -> Acc;
-								false -> T
-							end
-					end
-				end,
-				unavailable,
-				Peers
-			);
-		{TX, false} -> TX;
-		{unavailable, TX} -> TX;
-		{TX, _} -> TX
-	end;
-get_tx(Proc, ID) when is_pid(Proc) ->
-	% attempt to get tx from local storage
-	%ar:d({pending, get_full_pending_txs(whereis(http_entrypoint_node))}),
-	ar_storage:read_tx(ID);
-get_tx(Host, ID) ->
-	% handle external peer request
-	ar_http_iface_client:get_tx(Host, ID).
-
 %% @doc Perform the concrete application of a transaction to
 %% a prefiltered wallet list.
 do_apply_tx(
