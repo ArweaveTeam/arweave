@@ -345,17 +345,12 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Pee
 		when NewB#block.height == Height + 1 ->
 	% This block is at the correct height.
 	RecallHash = ar_node_utils:find_recall_hash(NewB, HashList),
-	FullBlock = ar_node_utils:get_full_block(Peer, RecallHash, HashList),
-	case ?IS_BLOCK(FullBlock) of
+	RecallB = ar_node_utils:get_full_block(Peer, RecallHash, HashList),
+	case ?IS_BLOCK(RecallB) of
 		true ->
-			% TODO: Cleanup full block -> shadow generation.
-			RecallShadow = FullBlock#block { txs = [
-													T#tx.id
-													||
-													T <- FullBlock#block.txs] },
-			ar_storage:write_full_block(FullBlock),
+			ar_storage:write_full_block(RecallB),
 			StateNext = StateIn#{ gossip => NewGS },
-			process_new_block(StateNext, NewGS, NewB, RecallShadow, Peer, HashList);
+			process_new_block(StateNext, NewGS, NewB, RecallB, Peer, HashList);
 		false ->
 			ar:warn(failed_to_get_recall_block),
 			none
