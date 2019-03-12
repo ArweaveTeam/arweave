@@ -1,6 +1,6 @@
 -module(ar_mine).
 -export([start/6, start/7, change_txs/2, stop/1, start_miner/2, schedule_hash/1]).
--export([validate/3, validate_by_hash/2, next_diff/1]).
+-export([validate/3, validate_by_hash/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
