@@ -372,21 +372,8 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 	} = StateNext,
 	% If transaction not found in state or storage, txlist built will be
 	% incomplete and will fail in validate
-	TXs = lists:foldr(
-		fun(T, Acc) ->
-			case [ TX || TX <- aggregate_txs(StateNext), TX#tx.id == T ] of
-				[] ->
-					case ar_storage:read_tx(T) of
-						unavailable -> Acc;
-						TX			-> [TX | Acc]
-					end;
-				[TX | _] ->
-					[TX | Acc]
-			end
-		end,
-		[],
-		NewB#block.txs
-	),
+	{TXs, MissingTXIDs} = pick_txs(NewB#block.txs, aggregate_txs(StateNext)),
+	log_missing_txs(NewB#block.indep_hash, MissingTXIDs),
 	{FinderReward, _} =
 		ar_node_utils:calculate_reward_pool(
 			RewardPool,
@@ -444,6 +431,36 @@ process_new_block(#{ height := Height, cumulative_diff := CDiff } = StateIn, New
 		false ->
 			none
 	end.
+
+pick_txs(TXIDs, TXs) ->
+	lists:foldr(
+		fun(TXID, {Found, Missing}) ->
+			case [TX || TX <- TXs, TX#tx.id == TXID] of
+				[] ->
+					%% This disk read should almost never be useful. Presumably, the only reason to find some of these
+					%% transactions on disk is they had been written prior to the call, what means they are
+					%% from an orphaned fork, more than one block behind.
+					case ar_storage:read_tx(TXID) of
+						unavailable ->
+							{Found, [TXID | Missing]};
+						TX ->
+							{[TX | Found], Missing}
+					end;
+				[TX | _] ->
+					{[TX | Found], Missing}
+			end
+		end,
+		{[], []},
+		TXIDs
+	).
+
+log_missing_txs(_BH, []) ->
+	noop;
+log_missing_txs(BH, MissingTXIDs) ->
+	ar:info([
+		{transactions_missing_in_mempool_for_block, ar_util:encode(BH)},
+		{missing_txs, lists:map(fun ar_util:encode/1, MissingTXIDs)}
+	]).
 
 %% @doc Verify a new block found by a miner, integrate it.
 integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp) ->
