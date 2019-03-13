@@ -36,20 +36,20 @@ start_link() ->
 
 %% @doc Stops the server
 stop() ->
-	gen_server:stop(?MODULE).
+	gen_server:stop(?SERVER).
 
 %% @doc Stops the server with a reason
 stop(Reason) ->
 	StopTimeout = 5000, %% milliseconds
-	gen_server:stop(?MODULE, Reason, StopTimeout).
+	gen_server:stop(?SERVER, Reason, StopTimeout).
 
 %% @doc Deletes all objects in db
 reset() ->
-	gen_server:call(?MODULE, reset).
+	gen_server:call(?SERVER, reset).
 
 %% @doc Insert key-value-pair into db
 put(Key, Value) ->
-	gen_server:call(?MODULE, {put, Key, Value}).
+	gen_server:call(?SERVER, {put, Key, Value}).
 
 %% @doc Retreive value for key
 %% We don't want to serialize reads. So, we let
@@ -65,16 +65,16 @@ get(Key) ->
 
 %% @doc Increase the value associated by a key by Val
 increase(Key, Val) ->
-	gen_server:call(?MODULE, {increase, Key, Val}).
+	gen_server:call(?SERVER, {increase, Key, Val}).
 
 %% @doc Remove entries from the performance database older than
 %% ?PEER_TMEOUT
 remove_old(Time) ->
-	gen_server:call(?MODULE, {remove_old, Time}).
+	gen_server:call(?SERVER, {remove_old, Time}).
 
 %% @doc Return all of the keys available in the database.
 keys() ->
-	gen_server:call(?MODULE, keys).
+	gen_server:call(?SERVER, keys).
 
 %%------------------------------------------------------------------------------
 %% Behaviour callbacks
