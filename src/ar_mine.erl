@@ -24,10 +24,11 @@
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
-start(CurrentB, RecallB, TXs, unclaimed, Tags, Parent) ->
-	start(CurrentB, RecallB, TXs, <<>>, Tags, Parent);
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent) ->
 	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, next_diff(CurrentB), Parent).
+
+start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent) ->
+	start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent);
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 	crypto:rand_seed(),
 	Timestamp = os:system_time(seconds),
