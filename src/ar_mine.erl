@@ -25,13 +25,18 @@
 
 %% @doc Spawns a new mining process and returns its PID.
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent) ->
-	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, next_diff(CurrentB), Parent).
-
-start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent) ->
-	start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent);
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
-	crypto:rand_seed(),
 	Timestamp = os:system_time(seconds),
+	Diff = next_diff(CurrentB, Timestamp),
+	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Timestamp, Parent).
+
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, ForceDiff, Parent) ->
+	Timestamp = os:system_time(seconds),
+	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, ForceDiff, Timestamp, Parent).
+
+start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Timestamp, Parent) ->
+	start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Timestamp, Parent);
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Timestamp, Parent) ->
+	crypto:rand_seed(),
 	%% Filter out invalid TXs. A TX could be valid by itself, but still invalid
 	%% in the context of the other TXs and the block it would be mined to.
 	TXs =
@@ -293,11 +298,11 @@ schedule_hash(S = #state { delay = Delay }) ->
 %% @doc Given a block calculate the difficulty to mine on for the next block.
 %% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
 %% This is done in attempt to maintain on average a fixed block time.
-next_diff(CurrentB) ->
+next_diff(CurrentB, NextBlockTimestamp) ->
 	ar_retarget:maybe_retarget(
 		CurrentB#block.height + 1,
 		CurrentB#block.diff,
-		os:system_time(seconds),
+		NextBlockTimestamp,
 		CurrentB#block.last_retarget
 	).
 

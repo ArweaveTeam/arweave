@@ -516,7 +516,9 @@ print_reward_addr() ->
 mine(Node) ->
 	Node ! mine.
 
-%% @doc Trigger a node to start mining a block at a certain difficulty.
+%% @doc Trigger a node to start mining a block at a certain difficulty. This is
+%% not used in the original/upstream git repo, but supposedly partners are using
+%% it in their forks.
 mine_at_diff(Node, Diff) ->
 	Node ! {mine_at_diff, Diff}.
 
