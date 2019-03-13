@@ -17,12 +17,14 @@
 -export([get/1, put/2, keys/0, remove_old/1, increase/2]).
 
 %% Behaviour callbacks
--export([init/1,
-	 handle_call/3,
-	 handle_cast/2,
-	 handle_info/2,
-	 terminate/2,
-	 code_change/3]).
+-export([
+	init/1,
+	handle_call/3,
+	handle_cast/2,
+	handle_info/2,
+	terminate/2,
+	code_change/3
+]).
 
 %%------------------------------------------------------------------------------
 %% API
@@ -38,7 +40,7 @@ stop() ->
 
 %% @doc Stops the server with a reason
 stop(Reason) ->
-	StopTimeout = 5000,  %% milliseconds
+	StopTimeout = 5000, %% milliseconds
 	gen_server:stop(?MODULE, Reason, StopTimeout).
 
 %% @doc Deletes all objects in db
@@ -104,7 +106,7 @@ handle_call({increase, Key, Val}, _From, State) ->
 	Res = case ets:lookup(?MODULE, Key) of
 		[{Key, Obj}] -> ets:insert(?MODULE, {Key, Obj + Val});
 		[] -> not_found
-	      end,
+	end,
 	{reply, Res, State};
 
 %% @hidden
@@ -159,7 +161,7 @@ priv_remove_old(Time, Key, _, _ ) ->
 	priv_remove_old(Time, ets:next(?MODULE, Key)).
 
 collect_keys({Key, _Value}, Acc) ->
-	[Key|Acc].
+	[Key | Acc].
 
 %%------------------------------------------------------------------------------
 %% Tests
@@ -178,14 +180,20 @@ test_teardown(_) ->
 
 %% @doc Store and retreieve a test value.
 basic_storage_test_() ->
-	{setup,
-	 fun test_setup/0,
-	 fun test_teardown/1,
-	 {inorder,
-	  [?_assertEqual(not_found, get(test_key)),
-		?_assertEqual(true, put(test_key, test_value)),
-		?_assertEqual(test_value, get(test_key)),
-		?_assertEqual(not_found, get(dummy_key))]}}.
+	{
+		setup,
+		fun test_setup/0,
+		fun test_teardown/1,
+		{
+			inorder,
+			[
+				?_assertEqual(not_found, get(test_key)),
+				?_assertEqual(true, put(test_key, test_value)),
+				?_assertEqual(test_value, get(test_key)),
+				?_assertEqual(not_found, get(dummy_key))
+			]
+		}
+	}.
 
 %% @doc Data older than ?PEER_TIMEOUT is removed, newer data is not
 purge_old_peers_test_() ->
@@ -194,14 +202,18 @@ purge_old_peers_test_() ->
 	P2 = #performance{timeout = Time - 1},
 	Key1 = {peer, {127,0,0,1,1984}},
 	Key2 = {peer, {127,0,0,1,1985}},
-
-	{setup,
-	 fun test_setup/0,
-	 fun test_teardown/1,
-	 {inorder,
-	  [?_assert(put(Key1, P1) =:= true),
-		?_assert(put(Key2, P2) =:= true),
-		?_assert(remove_old(Time) =:= done),
-		?_assert(get(Key1) =:= not_found),
-		?_assert(get(Key2) =:= P2)
-	  ]}}.
+	{
+		setup,
+		fun test_setup/0,
+		fun test_teardown/1,
+		{
+			inorder,
+			[
+				?_assert(put(Key1, P1) =:= true),
+				?_assert(put(Key2, P2) =:= true),
+				?_assert(remove_old(Time) =:= done),
+				?_assert(get(Key1) =:= not_found),
+				?_assert(get(Key2) =:= P2)
+			]
+		}
+	}.
