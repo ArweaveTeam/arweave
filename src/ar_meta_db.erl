@@ -92,15 +92,11 @@ init(_) ->
 handle_call(reset, _From, State) ->
 	Res = ets:delete_all_objects(?MODULE),
 	{reply, Res, State};
-
-%% @hidden
 handle_call({put, Key, Val}, _From, State) ->
 	%% @doc Put an Erlang term into the meta DB. Typically these are
 	%% write-once values.
 	Res = ets:insert(?MODULE, {Key, Val}),
 	{reply, Res, State};
-
-%% @hidden
 handle_call({increase, Key, Val}, _From, State) ->
 	%% @doc Increase the value associated by a key by Val
 	Res = case ets:lookup(?MODULE, Key) of
@@ -108,15 +104,11 @@ handle_call({increase, Key, Val}, _From, State) ->
 		[] -> not_found
 	end,
 	{reply, Res, State};
-
-%% @hidden
 handle_call({remove_old, Time}, _From, State) ->
 	ets:safe_fixtable(?MODULE, true),
 	Res = priv_remove_old(Time, ets:first(?MODULE)),
 	ets:safe_fixtable(?MODULE, false),
 	{reply, Res, State};
-
-%% @hidden
 handle_call(keys, _From, State) ->
 	Keys = ets:foldl(fun collect_keys/2, [], ?MODULE),
 	{reply, Keys, State}.
