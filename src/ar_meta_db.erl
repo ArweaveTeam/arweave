@@ -102,10 +102,8 @@ handle_call({increase, Key, Val}, _From, State) ->
 		[] -> not_found
 	end,
 	{reply, Res, State};
-handle_call({remove_old, Time}, _From, State) ->
-	ets:safe_fixtable(?MODULE, true),
-	Res = priv_remove_old(Time, ets:first(?MODULE)),
-	ets:safe_fixtable(?MODULE, false),
+handle_call({remove_old, CurrentTime}, _From, State) ->
+	Res = remove_old_performance(CurrentTime),
 	{reply, Res, State};
 handle_call(keys, _From, State) ->
 	Keys = ets:foldl(fun collect_keys/2, [], ?MODULE),
@@ -131,24 +129,25 @@ code_change(_OldVsn, State, _Extra) ->
 %% Private
 %%------------------------------------------------------------------------------
 
-priv_remove_old(_Time, '$end_of_table') ->
-	done;
+remove_old_performance(CurrentTime) ->
+	ThresholdTime = CurrentTime - ?PEER_TIMEOUT,
+	ets:safe_fixtable(?MODULE, true),
+	remove_old_performance(ThresholdTime, ets:first(?MODULE)),
+	ets:safe_fixtable(?MODULE, false),
+	done.
 
-priv_remove_old(Time, Key) ->
-	[{Key, P}] = ets:lookup(?MODULE, Key),
-	Timeout = P#performance.timeout,
-	TooOld = (Time - Timeout) >= ?PEER_TIMEOUT,
-	priv_remove_old(Time, Key, Timeout, TooOld).
-
-priv_remove_old(Time, Key, 0, _) ->
-	priv_remove_old(Time, ets:next(?MODULE, Key));
-
-priv_remove_old(Time, Key, _, true) ->
-	true = ets:delete(?MODULE, Key),
-	priv_remove_old(Time, ets:next(?MODULE, Key));
-
-priv_remove_old(Time, Key, _, _ ) ->
-	priv_remove_old(Time, ets:next(?MODULE, Key)).
+remove_old_performance(_, '$end_of_table') ->
+	ok;
+remove_old_performance(ThresholdTime, Key) ->
+	[{_, Obj}] = ets:lookup(?MODULE, Key),
+	case Obj of
+		#performance{} when Obj#performance.timeout < ThresholdTime ->
+			ets:delete(?MODULE, Key);
+		_ ->
+			%% The object might be something else than a performance record.
+			noop
+	end,
+	remove_old_performance(ThresholdTime, ets:next(?MODULE, Key)).
 
 collect_keys({Key, _Value}, Acc) ->
 	[Key | Acc].
