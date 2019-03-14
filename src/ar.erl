@@ -237,7 +237,7 @@ start(
 	prometheus_registry:register_collector(ar_metrics_collector),
 	% Start apps which we depend on.
 	inets:start(),
-	ar_meta_db:start_link(),
+	ar_meta_db:start(),
 	ar_tx_db:start(),
 	ar_key_db:start(),
 	ar_track_tx_db:start(),

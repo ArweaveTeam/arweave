@@ -12,7 +12,7 @@
 -include("ar.hrl").
 
 %% API
--export([start_link/0, stop/0, stop/1]).
+-export([start/0, stop/0, stop/1]).
 -export([reset/0]).
 -export([get/1, put/2, keys/0, purge_peer_performance/0, increase/2]).
 
@@ -31,8 +31,8 @@
 %%------------------------------------------------------------------------------
 
 %% @doc Starts the server
-start_link() ->
-	gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+start() ->
+	gen_server:start({local, ?SERVER}, ?MODULE, [], []).
 
 %% @doc Stops the server
 stop() ->
