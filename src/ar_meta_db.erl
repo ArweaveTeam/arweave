@@ -156,55 +156,25 @@ collect_keys({Key, _Value}, Acc) ->
 %% Tests
 %%------------------------------------------------------------------------------
 
-%% TODO: Right now, some tests are dependent on each other.
-%% This means that we are not free to start and stop this module
-%% as we please.
-
-test_setup() ->
-	ok.
-
-test_teardown(_) ->
-	reset(),
-	ok.
-
 %% @doc Store and retreieve a test value.
-basic_storage_test_() ->
-	{
-		setup,
-		fun test_setup/0,
-		fun test_teardown/1,
-		{
-			inorder,
-			[
-				?_assertEqual(not_found, get(test_key)),
-				?_assertEqual(true, put(test_key, test_value)),
-				?_assertEqual(test_value, get(test_key)),
-				?_assertEqual(not_found, get(dummy_key))
-			]
-		}
-	}.
+basic_storage_test() ->
+	reset(),
+	?assertEqual(not_found, get(test_key)),
+	put(test_key, test_value),
+	?assertEqual(test_value, get(test_key)),
+	?assertEqual(not_found, get(dummy_key)).
 
 %% @doc Data older than ?PEER_TIMEOUT is removed, newer data is not
-purge_old_peers_test_() ->
-	Time = os:system_time(seconds),
-	P1 = #performance{timeout = Time - (?PEER_TIMEOUT + 1)},
-	P2 = #performance{timeout = Time - 1},
-	Key1 = {peer, {127,0,0,1,1984}},
-	Key2 = {peer, {127,0,0,1,1985}},
-	{
-		setup,
-		fun test_setup/0,
-		fun test_teardown/1,
-		{
-			inorder,
-			[
-				?_assert(put(Key1, P1) =:= true),
-				?_assert(put(Key2, P2) =:= true),
-				?_assert(put(port, 1984) =:= true),
-				?_assert(purge_peer_performance() =:= ok),
-				?_assert(get(Key1) =:= not_found),
-				?_assert(get(Key2) =:= P2),
-				?_assert(get(port) =:= 1984)
-			]
-		}
-	}.
+purge_peer_performance_test() ->
+	CurrentTime = os:system_time(seconds),
+	P1 = #performance{timeout = CurrentTime - (?PEER_TIMEOUT + 1)},
+	P2 = #performance{timeout = CurrentTime - 1},
+	Key1 = {peer, {127,1,2,3,1984}},
+	Key2 = {peer, {127,1,2,3,1985}},
+	put(Key1, P1),
+	put(Key2, P2),
+	put(some_config, 1984),
+	purge_peer_performance(),
+	?assertEqual(get(Key1), not_found),
+	?assertEqual(get(Key2), P2),
+	?assertEqual(get(some_config), 1984).
