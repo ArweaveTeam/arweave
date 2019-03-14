@@ -67,8 +67,7 @@ get(Key) ->
 increase(Key, Val) ->
 	gen_server:call(?SERVER, {increase, Key, Val}).
 
-%% @doc Remove entries from the performance database older than
-%% ?PEER_TMEOUT
+%% @doc Remove entries from the performance database older than ?PEER_TMEOUT
 remove_old(Time) ->
 	gen_server:call(?SERVER, {remove_old, Time}).
 
@@ -82,7 +81,7 @@ keys() ->
 
 %% @hidden
 init(_) ->
-	%% @doc Initialise the metadata storage service.
+	%% Initialise the metadata storage service.
 	ar:report([starting_meta_db]),
 	ets:new(?MODULE, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(blacklist, [set, public, named_table]),
@@ -93,12 +92,11 @@ handle_call(reset, _From, State) ->
 	Res = ets:delete_all_objects(?MODULE),
 	{reply, Res, State};
 handle_call({put, Key, Val}, _From, State) ->
-	%% @doc Put an Erlang term into the meta DB. Typically these are
-	%% write-once values.
+	%% Put an Erlang term into the meta DB. Typically these are write-once values.
 	Res = ets:insert(?MODULE, {Key, Val}),
 	{reply, Res, State};
 handle_call({increase, Key, Val}, _From, State) ->
-	%% @doc Increase the value associated by a key by Val
+	%% Increase the value associated by a key by Val
 	Res = case ets:lookup(?MODULE, Key) of
 		[{Key, Obj}] -> ets:insert(?MODULE, {Key, Obj + Val});
 		[] -> not_found
