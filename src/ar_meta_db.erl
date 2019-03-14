@@ -201,9 +201,11 @@ purge_old_peers_test_() ->
 			[
 				?_assert(put(Key1, P1) =:= true),
 				?_assert(put(Key2, P2) =:= true),
+				?_assert(put(port, 1984) =:= true),
 				?_assert(remove_old(Time) =:= done),
 				?_assert(get(Key1) =:= not_found),
-				?_assert(get(Key2) =:= P2)
+				?_assert(get(Key2) =:= P2),
+				?_assert(get(port) =:= 1984)
 			]
 		}
 	}.
