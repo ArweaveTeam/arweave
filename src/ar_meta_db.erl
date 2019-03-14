@@ -14,7 +14,7 @@
 %% API
 -export([start_link/0, stop/0, stop/1]).
 -export([reset/0]).
--export([get/1, put/2, keys/0, remove_old/1, increase/2]).
+-export([get/1, put/2, keys/0, purge_peer_performance/0, increase/2]).
 
 %% Behaviour callbacks
 -export([
@@ -68,8 +68,8 @@ increase(Key, Val) ->
 	gen_server:call(?SERVER, {increase, Key, Val}).
 
 %% @doc Remove entries from the performance database older than ?PEER_TMEOUT
-remove_old(Time) ->
-	gen_server:call(?SERVER, {remove_old, Time}).
+purge_peer_performance() ->
+	gen_server:call(?SERVER, purge_peer_performance).
 
 %% @doc Return all of the keys available in the database.
 keys() ->
@@ -89,12 +89,12 @@ init(_) ->
 
 %% @hidden
 handle_call(reset, _From, State) ->
-	Res = ets:delete_all_objects(?MODULE),
-	{reply, Res, State};
+	ets:delete_all_objects(?MODULE),
+	{reply, true, State};
 handle_call({put, Key, Val}, _From, State) ->
 	%% Put an Erlang term into the meta DB. Typically these are write-once values.
-	Res = ets:insert(?MODULE, {Key, Val}),
-	{reply, Res, State};
+	ets:insert(?MODULE, {Key, Val}),
+	{reply, true, State};
 handle_call({increase, Key, Val}, _From, State) ->
 	%% Increase the value associated by a key by Val
 	Res = case ets:lookup(?MODULE, Key) of
@@ -102,9 +102,9 @@ handle_call({increase, Key, Val}, _From, State) ->
 		[] -> not_found
 	end,
 	{reply, Res, State};
-handle_call({remove_old, CurrentTime}, _From, State) ->
-	Res = remove_old_performance(CurrentTime),
-	{reply, Res, State};
+handle_call(purge_peer_performance, _From, State) ->
+	purge_performance(),
+	{reply, ok, State};
 handle_call(keys, _From, State) ->
 	Keys = ets:foldl(fun collect_keys/2, [], ?MODULE),
 	{reply, Keys, State}.
@@ -129,16 +129,16 @@ code_change(_OldVsn, State, _Extra) ->
 %% Private
 %%------------------------------------------------------------------------------
 
-remove_old_performance(CurrentTime) ->
-	ThresholdTime = CurrentTime - ?PEER_TIMEOUT,
+purge_performance() ->
+	ThresholdTime = os:system_time(seconds) - ?PEER_TIMEOUT,
 	ets:safe_fixtable(?MODULE, true),
-	remove_old_performance(ThresholdTime, ets:first(?MODULE)),
+	purge_performance(ThresholdTime, ets:first(?MODULE)),
 	ets:safe_fixtable(?MODULE, false),
-	done.
+	ok.
 
-remove_old_performance(_, '$end_of_table') ->
+purge_performance(_, '$end_of_table') ->
 	ok;
-remove_old_performance(ThresholdTime, Key) ->
+purge_performance(ThresholdTime, Key) ->
 	[{_, Obj}] = ets:lookup(?MODULE, Key),
 	case Obj of
 		#performance{} when Obj#performance.timeout < ThresholdTime ->
@@ -147,7 +147,7 @@ remove_old_performance(ThresholdTime, Key) ->
 			%% The object might be something else than a performance record.
 			noop
 	end,
-	remove_old_performance(ThresholdTime, ets:next(?MODULE, Key)).
+	purge_performance(ThresholdTime, ets:next(?MODULE, Key)).
 
 collect_keys({Key, _Value}, Acc) ->
 	[Key | Acc].
@@ -201,7 +201,7 @@ purge_old_peers_test_() ->
 				?_assert(put(Key1, P1) =:= true),
 				?_assert(put(Key2, P2) =:= true),
 				?_assert(put(port, 1984) =:= true),
-				?_assert(remove_old(Time) =:= done),
+				?_assert(purge_peer_performance() =:= ok),
 				?_assert(get(Key1) =:= not_found),
 				?_assert(get(Key2) =:= P2),
 				?_assert(get(port) =:= 1984)

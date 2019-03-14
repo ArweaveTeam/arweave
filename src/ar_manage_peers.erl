@@ -43,7 +43,7 @@ format_stats(Peer, Perf) ->
 %% Peers who have behaved well in the past are favoured in ranking.
 %% New, unknown peers are given 100 blocks of grace.
 update(Peers) ->
-	ar_meta_db:remove_old(os:system_time(seconds)),
+	ar_meta_db:purge_peer_performance(),
 	{Rankable, Newbies} =
 		partition_newbies(
 			score(
