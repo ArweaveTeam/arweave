@@ -345,7 +345,7 @@ read_genesis_txs() ->
 	{ok, Files} = file:list_dir("data/genesis_txs"),
 	lists:foldl(
 		fun(F, Acc) ->
-			file:copy("data/genesis_txs/" ++ F, "txs/" ++ F),
+			file:copy("data/genesis_txs/" ++ F, ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR ++ "/" ++ F),
 			[ar_util:decode(hd(string:split(F, ".")))|Acc]
 		end,
 		[],
