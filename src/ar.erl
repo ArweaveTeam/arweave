@@ -69,6 +69,7 @@
 	init = false,
 	mine = false,
 	peers = [],
+	data_dir = ".",
 	polling = false,
 	auto_join = true,
 	clean = false,
@@ -110,6 +111,7 @@ main("") ->
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
+			{"data_dir", "The directory for storing the weave and the wallets (when generated)."},
 			{"polling", "Poll peers for new blocks. Useful in environments where "
 						"port forwarding is not possible."},
 			{"clean", "Clear the block cache before starting."},
@@ -152,6 +154,8 @@ parse(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
 	parse(Rest, O#opts { content_policies = [F|Fs] });
 parse(["port", Port|Rest], O) ->
 	parse(Rest, O#opts { port = list_to_integer(Port) });
+parse(["data_dir", DataDir|Rest], O) ->
+	parse(Rest, O#opts { data_dir = DataDir });
 parse(["diff", Diff|Rest], O) ->
 	parse(Rest, O#opts { diff = list_to_integer(Diff) });
 parse(["polling"|Rest], O) ->
@@ -202,6 +206,7 @@ start(#opts { benchmark = true }) ->
 start(
 	#opts {
 		port = Port,
+		data_dir = DataDir,
 		init = Init,
 		peers = Peers,
 		mine = Mine,
@@ -227,6 +232,9 @@ start(
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
 
+	ar_meta_db:start(),
+	ar_meta_db:put(data_dir, DataDir),
+
 	ar_storage:start(),
 	% Optionally clear the block cache
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
@@ -237,7 +245,6 @@ start(
 	prometheus_registry:register_collector(ar_metrics_collector),
 	% Start apps which we depend on.
 	inets:start(),
-	ar_meta_db:start(),
 	ar_tx_db:start(),
 	ar_key_db:start(),
 	ar_track_tx_db:start(),
@@ -454,7 +461,6 @@ init(Args) ->
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
-	ar_storage:ensure_directories(),
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(

@@ -133,7 +133,10 @@ server() ->
 
 %% @doc Initialise the mnesia database
 initDB() ->
-	application:set_env(mnesia, dir, "data/mnesia"),
+	DataDir = ar_meta_db:get(data_dir),
+	TXIndexDir = DataDir ++ "/" ++ ?TX_INDEX_DIR,
+	filelib:ensure_dir(TXIndexDir ++ "/"),
+	application:set_env(mnesia, dir, TXIndexDir),
 	mnesia:create_schema([node()]),
 	mnesia:start(),
 	try

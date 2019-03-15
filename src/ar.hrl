@@ -168,8 +168,12 @@
 
 %% @doc Backup block hash list storage directory.
 -define(HASH_LIST_DIR, "hash_lists").
+%% @doc Directory for storing miner wallets.
+-define(WALLET_DIR, "wallets").
 %% @doc Directory for storing unique wallet lists.
 -define(WALLET_LIST_DIR, "wallet_lists").
+%% @doc Directory for storing transaction index.
+-define(TX_INDEX_DIR, "data/mnesia").
 
 %% @doc Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).

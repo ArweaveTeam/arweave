@@ -52,7 +52,7 @@ new_keyfile(WalletName) ->
 
 wallet_filename(WalletName, PubKey) ->
 	lists:flatten([
-		"wallets/arweave_keyfile_",
+		ar_meta_db:get(data_dir) ++ "/" ++ ?WALLET_DIR ++ "/arweave_keyfile_",
 		binary_to_list(wallet_name(WalletName, PubKey)),
 		".json"
 	]).
@@ -136,7 +136,7 @@ address_double_encode_test() ->
 %%doc Check generated keyfiles can be retrieved
 generate_keyfile_test() ->
 	{Priv, Pub} = new_keyfile(),
-	FileName = "wallets/arweave_keyfile_" ++ binary_to_list(ar_util:encode(to_address(Pub))) ++ ".json",
+	FileName = ar_meta_db:get(data_dir) ++ "/" ++ ?WALLET_DIR ++ "/arweave_keyfile_" ++ binary_to_list(ar_util:encode(to_address(Pub))) ++ ".json",
 	{Priv, Pub} = load_keyfile(FileName).
 
 %% @doc Check keyfile generation

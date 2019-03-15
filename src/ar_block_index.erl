@@ -78,12 +78,13 @@ get_block_filename(ID) ->
 %% @doc Return a list of block keys (hash and height) and their associated
 %% file names.
 blocks_on_disk() ->
+	BlocksDir = ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR,
 	filelib:fold_files(
-		"blocks",
+		BlocksDir,
 		"\.json$",
 		false,
 		fun(FN, Acc) ->
-			{ok, [Height, RawHash], ""} = io_lib:fread("blocks/~u_~64c.json", FN),
+			{ok, [Height, RawHash], ""} = io_lib:fread(BlocksDir ++ "/~u_~64c.json", FN),
 			[
 				{Height, ar_util:decode(RawHash), FN}
 			|

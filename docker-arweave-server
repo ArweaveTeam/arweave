@@ -2,7 +2,7 @@
 
 set -o errexit
 
-mkdir -p ebin logs blocks wallets txs blocks/enc priv data/genesis_txs
+mkdir -p ebin logs priv
 
 if [ -t 1 ]; then
 	SHELL_OPTS=

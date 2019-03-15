@@ -42,7 +42,7 @@ all: gitmodules build
 gitmodules:
 	git submodule update --init
 
-build: data blocks hash_lists wallet_lists
+build:
 	( \
 		cd lib/jiffy && \
 		../../bin/mute-on-success ./rebar compile && \
@@ -58,20 +58,6 @@ build: data blocks hash_lists wallet_lists
 	)
 	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
-
-
-blocks:
-	mkdir -p blocks
-	mkdir -p blocks/enc
-
-hash_lists:
-	mkdir -p hash_lists
-
-wallet_lists:
-	mkdir -p wallet_lists
-
-data:
-	mkdir -p data/mnesia
 
 docs: all
 	mkdir -p docs

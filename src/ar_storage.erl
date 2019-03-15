@@ -29,16 +29,17 @@ start() ->
 
 %% @doc Ensure that all of the relevant storage directories exist.
 ensure_directories() ->
-	filelib:ensure_dir(?TX_DIR),
-	filelib:ensure_dir(?BLOCK_DIR),
-	filelib:ensure_dir(?BLOCK_ENC_DIR),
-	filelib:ensure_dir(?WALLET_LIST_DIR),
-	filelib:ensure_dir(?HASH_LIST_DIR),
+	DataDir = ar_meta_db:get(data_dir) ++ "/",
+	filelib:ensure_dir(DataDir ++ ?TX_DIR ++ "/"),
+	filelib:ensure_dir(DataDir ++ ?BLOCK_DIR ++ "/"),
+	filelib:ensure_dir(DataDir ++ ?BLOCK_ENC_DIR ++ "/"),
+	filelib:ensure_dir(DataDir ++ ?WALLET_LIST_DIR ++ "/"),
+	filelib:ensure_dir(DataDir ++ ?HASH_LIST_DIR ++ "/"),
 	filelib:ensure_dir(?LOG_DIR).
 
 %% @doc Clear the cache of saved blocks.
 clear() ->
-	lists:map(fun file:delete/1, filelib:wildcard(?BLOCK_DIR ++ "/*.json")),
+	lists:map(fun file:delete/1, filelib:wildcard(ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR ++ "/*.json")),
 	ar_block_index:clear().
 
 %% @doc Removes a saved block.
@@ -59,11 +60,12 @@ block_exists(Hash) ->
 %% @doc Move a block into the 'invalid' block directory.
 invalidate_block(B) ->
 	ar_block_index:remove(B#block.indep_hash),
+	DataDir = ar_meta_db:get(data_dir) ++ "/",
 	TargetFile =
 		lists:flatten(
 			io_lib:format(
 				"~s/invalid/~w_~s.json",
-				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+				[DataDir ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
 	filelib:ensure_dir(TargetFile),
@@ -71,7 +73,7 @@ invalidate_block(B) ->
 		lists:flatten(
 			io_lib:format(
 				"~s/~w_~s.json",
-				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+				[DataDir ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
 		TargetFile
@@ -96,7 +98,7 @@ write_block(RawB) ->
 		Name = lists:flatten(
 			io_lib:format(
 				"~s/~w_~s.json",
-				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
 		BlockToWrite
@@ -121,7 +123,7 @@ write_block(RawB) ->
 				Name = lists:flatten(
 					io_lib:format(
 						"~s/~w_~s.json",
-						[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+						[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 					)
 				),
 				BlockToWrite
@@ -161,7 +163,7 @@ write_encrypted_block(Hash, B) ->
 		Name = lists:flatten(
 			io_lib:format(
 				"~s/~s_~s.json",
-				[?BLOCK_ENC_DIR, "encrypted" , ar_util:encode(Hash)]
+				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_ENC_DIR, "encrypted" , ar_util:encode(Hash)]
 			)
 		),
 		BlockToWrite
@@ -176,7 +178,7 @@ write_encrypted_block(Hash, B) ->
 				Name = lists:flatten(
 					io_lib:format(
 						"~s/~s_~s.json",
-						[?BLOCK_ENC_DIR, "encrypted" , ar_util:encode(Hash)]
+						[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_ENC_DIR, "encrypted" , ar_util:encode(Hash)]
 					)
 				),
 				BlockToWrite
@@ -283,21 +285,21 @@ lookup_block_filename(ID) ->
 %% @doc Generate a wildcard search string for a block,
 %% given a block, binary hash, or list.
 name_block(Height) when is_integer(Height) ->
-	?BLOCK_DIR ++ "/" ++ integer_to_list(Height) ++ "_*.json";
+	ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR ++ "/" ++ integer_to_list(Height) ++ "_*.json";
 name_block(B) when is_record(B, block) ->
-	?BLOCK_DIR
+	ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR
 		++ "/"
 		++ integer_to_list(B#block.height)
 		++ "_"
 		++ binary_to_list(ar_util:encode(B#block.indep_hash))
 		++ ".json";
 name_block(BinHash) when is_binary(BinHash) ->
-	?BLOCK_DIR ++ "/*_" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
+	ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR ++ "/*_" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
 
 %% @doc Generate a wildcard search string for an encrypted block,
 %% given a block, binary hash, or list.
 name_enc_block(BinHash) when is_binary(BinHash) ->
-	?BLOCK_ENC_DIR ++ "/*_" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
+	ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_ENC_DIR ++ "/*_" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
 
 %% @doc Delete the tx with the given hash from disk.
 delete_tx(Hash) ->
@@ -305,7 +307,7 @@ delete_tx(Hash) ->
 
 %% @doc Returns the number of blocks stored on disk.
 txs_on_disk() ->
-	{ok, Files} = file:list_dir(?TX_DIR),
+	{ok, Files} = file:list_dir(ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR),
 	length(Files).
 
 %% @doc Returns whether the TX with the given hash is stored on disk.
@@ -325,7 +327,7 @@ write_tx(Tx) ->
 		Name = lists:flatten(
 			io_lib:format(
 				"~s/~s.json",
-				[?TX_DIR, ar_util:encode(Tx#tx.id)]
+				[ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR, ar_util:encode(Tx#tx.id)]
 			)
 		),
 		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(Tx))
@@ -341,7 +343,7 @@ write_tx(Tx) ->
 				Name = lists:flatten(
 					io_lib:format(
 						"~s/~s.json",
-						[?TX_DIR, ar_util:encode(Tx#tx.id)]
+						[ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR, ar_util:encode(Tx#tx.id)]
 					)
 				),
 				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(Tx))
@@ -394,7 +396,7 @@ write_block_hash_list(BinID, BHL) ->
 	ar:report([{writing_block_hash_list_to_disk, ID = ar_util:encode(BinID)}]),
 	JSON = ar_serialize:jsonify(ar_serialize:hash_list_to_json_struct(BHL)),
 	file:write_file(
-		?HASH_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinID)) ++ ".json",
+		ar_meta_db:get(data_dir) ++ "/" ++ ?HASH_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinID)) ++ ".json",
 		JSON
 	),
 	ID.
@@ -404,14 +406,14 @@ write_wallet_list(WalletList) ->
 	ID = ar_block:hash_wallet_list(WalletList),
 	JSON = ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)),
 	file:write_file(
-		?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(ID)) ++ ".json",
+		ar_meta_db:get(data_dir) ++ "/" ++ ?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(ID)) ++ ".json",
 		JSON
 	),
 	ID.
 
 %% @doc Read a list of block hashes from the disk.
 read_block_hash_list(BinID) ->
-	FileName = ?HASH_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinID)) ++ ".json",
+	FileName = ar_meta_db:get(data_dir) ++ "/" ++ ?HASH_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinID)) ++ ".json",
 	{ok, Binary} = file:read_file(FileName),
 	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Binary)).
 
@@ -434,7 +436,7 @@ parse_wallet_list_json(JSON) ->
 	end.
 
 wallet_list_file(Hash) ->
-	?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(Hash)) ++ ".json".
+	ar_meta_db:get(data_dir) ++ "/" ++ ?WALLET_LIST_DIR ++ "/" ++ binary_to_list(ar_util:encode(Hash)) ++ ".json".
 
 lookup_tx_filename(ID) ->
 	case filelib:wildcard(name_tx(ID)) of
@@ -454,12 +456,12 @@ lookup_tx_filename(ID) ->
 
 %% @doc Returns the file name for a TX with the given hash
 name_tx(Tx) when is_record(Tx, tx) ->
-	?TX_DIR
+	ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR
 		++ "/"
 		++ binary_to_list(ar_util:encode(Tx#tx.id))
 		++ ".json";
 name_tx(BinHash) when is_binary(BinHash) ->
-	?TX_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
+	ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR ++ "/" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
 
 % @doc Check that there is enough space to write Bytes bytes of data
 enough_space(Bytes) ->
@@ -584,7 +586,7 @@ invalidate_block_test() ->
 		lists:flatten(
 			io_lib:format(
 				"~s/invalid/~w_~s.json",
-				[?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
+				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
 	?assert(B == do_read_block(TargetFile, B#block.hash_list)).
