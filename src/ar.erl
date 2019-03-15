@@ -30,7 +30,6 @@
 		ar_util,
 		ar_cleanup,
 		ar_merkle,
-		ar_meta_db,
 		ar_storage,
 		ar_serialize,
 		ar_services,
@@ -46,7 +45,8 @@
 		ar_simple_reporter,
 		ar_retarget,
 		ar_block,
-		ar_tx_db
+		ar_tx_db,
+		ar_meta_db
 	]
 ).
 

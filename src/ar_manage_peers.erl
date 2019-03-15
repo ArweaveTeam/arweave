@@ -8,11 +8,10 @@
 %% @doc Print statistics about the current peers.
 stats() ->
 	Connected = ar_bridge:get_remote_peers(http_bridge_node),
-	All = all_peers(),
 	io:format("Connected peers, in preference order:~n"),
 	stats(Connected),
 	io:format("Other known peers:~n"),
-	stats(All).
+	stats(all_peers() -- Connected).
 stats(Peers) ->
 	lists:foreach(
 		fun(Peer) -> format_stats(Peer, ar_httpc:get_performance(Peer)) end,
@@ -43,7 +42,7 @@ format_stats(Peer, Perf) ->
 %% Peers who have behaved well in the past are favoured in ranking.
 %% New, unknown peers are given 100 blocks of grace.
 update(Peers) ->
-	ar_meta_db:remove_old(os:system_time(seconds)),
+	ar_meta_db:purge_peer_performance(),
 	{Rankable, Newbies} =
 		partition_newbies(
 			score(
