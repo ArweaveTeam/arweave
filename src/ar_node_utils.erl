@@ -515,7 +515,7 @@ validate(
 	Size = ar_block:block_field_size_limit(NewB),
 	%Time = ar_block:verify_timestamp(OldB, NewB),
 	HeightCheck = ar_block:verify_height(NewB, OldB),
-	RetargetCheck = ar_block:verify_last_retarget(NewB),
+	RetargetCheck = ar_block:verify_last_retarget(NewB, OldB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
 	BHLMerkleCheck = ar_block:verify_block_hash_list_merkle(NewB, OldB),

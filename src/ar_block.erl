@@ -2,7 +2,7 @@
 -export([block_to_binary/1, block_field_size_limit/1]).
 -export([get_recall_block/5]).
 -export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/2]).
--export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
+-export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([verify_cumulative_diff/2, verify_block_hash_list_merkle/2]).
 -export([hash_wallet_list/1]).
@@ -366,10 +366,15 @@ verify_timestamp(Timestamp, NewB) ->
 verify_height(NewB, OldB) ->
 	NewB#block.height == (OldB#block.height + 1).
 
-%% @doc Verify that the last retarget timestamp is older or as old as the
-%%	blocks timestamp.
-verify_last_retarget(NewB) ->
-	(NewB#block.timestamp - NewB#block.last_retarget) >= 0.
+%% @doc Verify the retarget timestamp on NewB is correct.
+verify_last_retarget(NewB, OldB) ->
+	case ar_retarget:is_retarget_height(NewB#block.height) of
+		true ->
+			NewB#block.last_retarget == NewB#block.timestamp;
+		false ->
+			NewB#block.last_retarget == OldB#block.last_retarget
+				andalso NewB#block.timestamp >= NewB#block.last_retarget
+	end.
 
 %% @doc Verify that the previous_block hash of the new block is the indep_hash
 %% of the current block.
