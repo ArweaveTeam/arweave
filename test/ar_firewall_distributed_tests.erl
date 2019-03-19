@@ -1,6 +1,6 @@
 -module(ar_firewall_distributed_tests).
 
--export([start_node/1]).
+-export([start_node/2]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -8,7 +8,8 @@
 node_validates_blocks_with_rejected_tx_test() ->
 	%% Start a remote node.
 	ar_rpc:ping(slave),
-	{SlaveNode, B0} = ar_rpc:call(slave, ar_firewall_distributed_tests, start_node, [no_block], 5000),
+	Peer = {127, 0, 0, 1, ar_meta_db:get(port)},
+	{SlaveNode, B0} = ar_rpc:call(slave, ar_firewall_distributed_tests, start_node, [no_block, Peer], 5000),
 	%% Post the first tx to the remote node. This should also make the second node peer with the first one.
 	{_, Pub} = ar_wallet:new(),
 	TX1 = (ar_tx:new())#tx{ data = <<"BADCONTENT1">>, owner = Pub },
@@ -23,7 +24,7 @@ node_validates_blocks_with_rejected_tx_test() ->
 		),
 	timer:sleep(200),
 	%% Start a local node.
-	{Node, _} = start_node(B0),
+	{Node, _} = start_node(B0, {127, 0, 0, 1, ar_rpc:call(slave, ar_meta_db, get, [port], 5000)}),
 	%% Configure the firewall to reject one of the txs submitted to the remote node.
 	ar_meta_db:put(content_policies, ["test/test_sig.txt"]),
 	ar_firewall:reload(),
@@ -76,7 +77,7 @@ node_validates_blocks_with_rejected_tx_test() ->
 	[RemoteTX1] = RemoteB1#block.txs,
 	?assertEqual(RemoteTX1, (ar_rpc:call(slave, ar_storage, read_tx, [RemoteTX1], 5000))#tx.id).
 
-start_node(MaybeB) ->
+start_node(MaybeB, Peer) ->
 	ar_storage:clear(),
 	[B0] = case MaybeB of
 		no_block ->
@@ -86,6 +87,7 @@ start_node(MaybeB) ->
 	end,
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(http_entrypoint_node, Node),
+	ar_meta_db:reset_peer(Peer),
 	Bridge = ar_bridge:start([], Node, ar_meta_db:get(port)),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),

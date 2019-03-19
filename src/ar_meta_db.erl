@@ -13,7 +13,7 @@
 
 %% API
 -export([start/0, stop/0, stop/1]).
--export([reset/0]).
+-export([reset/0, reset_peer/1]).
 -export([get/1, put/2, keys/0, purge_peer_performance/0, increase/2]).
 
 %% Behaviour callbacks
@@ -46,6 +46,9 @@ stop(Reason) ->
 %% @doc Deletes all objects in db
 reset() ->
 	gen_server:call(?SERVER, reset).
+
+reset_peer(Peer) ->
+	gen_server:call(?SERVER, {reset_peer, Peer}).
 
 %% @doc Insert key-value-pair into db
 put(Key, Value) ->
@@ -90,6 +93,10 @@ init(_) ->
 %% @hidden
 handle_call(reset, _From, State) ->
 	ets:delete_all_objects(?MODULE),
+	{reply, true, State};
+%% @hidden
+handle_call({reset_peer, Peer}, _From, State) ->
+	ets:delete(?MODULE, {peer, Peer}),
 	{reply, true, State};
 handle_call({put, Key, Val}, _From, State) ->
 	%% Put an Erlang term into the meta DB. Typically these are write-once values.
