@@ -388,7 +388,6 @@ verify_last_retarget(NewB, OldB) ->
 			NewB#block.last_retarget == NewB#block.timestamp;
 		false ->
 			NewB#block.last_retarget == OldB#block.last_retarget
-				andalso NewB#block.timestamp >= NewB#block.last_retarget
 	end.
 
 %% @doc Verify that the previous_block hash of the new block is the indep_hash
