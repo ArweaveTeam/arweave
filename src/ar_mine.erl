@@ -362,19 +362,25 @@ change_txs_test() ->
 			)
 	end.
 
-%% @doc Ensure that an active miner process can be killed.
-kill_miner_test() ->
+%% @doc Ensures ar_mine can be started and stopped.
+start_stop_test() ->
 	B0 = ar_weave:init(),
 	ar_node:start([], B0),
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
 	PID = start(B, RecallB, [], unclaimed, [], self()),
-	erlang:monitor(process, PID),
+	link(PID),
+	stop(PID),
+	assert_not_alive(PID, 500).
+
+%% @doc Ensures a miner can be started and stopped.
+miner_start_stop_test() ->
+	S = #state{},
+	PID = spawn_link(fun() -> start_miner(S, self()) end),
 	stop_miners([PID]),
-	receive
-		{'DOWN', _Ref, process, PID, normal} ->
-			ok
-	after 1000 ->
-		erlang:error(no_match)
-	end.
+	assert_not_alive(PID, 500).
+
+assert_not_alive(PID, Timeout) ->
+	Do = fun () -> not is_process_alive(PID) end,
+	?assert(ar_util:do_until(Do, 50, Timeout)).
