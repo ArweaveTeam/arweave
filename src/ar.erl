@@ -5,7 +5,8 @@
 -module(ar).
 
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
--export([tests/0, tests/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
+-export([tests/0, tests/1, tests/2]).
+-export([test_with_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
 -export([report/1, report_console/1, d/1]).
@@ -46,6 +47,8 @@
 		ar_retarget,
 		ar_block,
 		ar_tx_db,
+		ar_firewall_distributed_tests,
+		% ar_meta_db must be the last in the list since it resets global configuraiton
 		ar_meta_db
 	]
 ).
@@ -405,10 +408,18 @@ generate_logfile_name() ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
 	lists:flatten(
 		io_lib:format(
-			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b.log",
-			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se]
+			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b~s.log",
+			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se, maybe_node_postfix()]
 		)
 	).
+
+maybe_node_postfix() ->
+	case init:get_argument(sname) of
+		{ok, [[Sname]]} ->
+			"-" ++ Sname;
+		_ ->
+			""
+	end.
 
 %% @doc Run the erlang make system on the project.
 rebuild() ->
@@ -462,6 +473,9 @@ init(Args) ->
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
+	tests(?CORE_TEST_MODS, #opts {}).
+
+tests(Mods, Opts) when is_list(Mods) ->
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(
@@ -471,18 +485,18 @@ tests() ->
 				]
 			);
 		_ ->
-			start(#opts { peers = [], pause = false}),
-			eunit:test({timeout, ?TEST_TIMEOUT, ?CORE_TEST_MODS}, [verbose])
+			start(Opts#opts { peers = [], pause = false, data_dir = "test_master"}),
+			eunit:test({timeout, ?TEST_TIMEOUT, Mods}, [verbose])
 	end.
-
-%% @doc Run the TNT test system, printing coverage results.
-test_coverage() ->
-	ar_coverage:analyse(fun tests/0).
 
 %% @doc Run the tests for a single module.
 tests(Mod) ->
 	ar_storage:ensure_directories(),
 	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
+
+%% @doc Run the tests, printing coverage results.
+test_with_coverage() ->
+	ar_coverage:analyse(fun tests/0).
 
 %% @doc Run tests on the apps.
 test_apps() ->

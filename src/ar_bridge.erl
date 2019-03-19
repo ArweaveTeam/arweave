@@ -81,6 +81,21 @@ add_remote_peer(PID, Node) ->
 			PID ! {add_peer, remote, Node}
 	end.
 
+-ifdef(DEBUG).
+%% Do not filter out loopback IP addresses with custom port in the debug mode
+%% to allow multiple local VMs to peer with each other.
+is_loopback_ip({127, _, _, _, Port}) -> Port == ar_meta_db:get(port);
+is_loopback_ip({_, _, _, _, _}) -> false.
+-else.
+%% @doc Is the IP address in question a loopback ('us') address?
+is_loopback_ip({A, B, C, D, _Port}) -> is_loopback_ip({A, B, C, D});
+is_loopback_ip({127, _, _, _}) -> true;
+is_loopback_ip({0, _, _, _}) -> true;
+is_loopback_ip({169, 254, _, _}) -> true;
+is_loopback_ip({255, 255, 255, 255}) -> true;
+is_loopback_ip({_, _, _, _}) -> false.
+-endif.
+
 %% @doc Add a local gossip peer.
 add_local_peer(PID, Node) ->
 	PID ! {add_peer, local, Node}.
@@ -102,14 +117,6 @@ is_id_ignored(ID) ->
 ignore_peer(_PID, []) -> ok;
 ignore_peer(PID, Peer) ->
 	PID ! {ignore_peer, Peer}.
-
-%% @doc Is the IP address in question a loopback ('us') address?
-is_loopback_ip({A, B, C, D, _Port}) -> is_loopback_ip({A, B, C, D});
-is_loopback_ip({127, _, _, _}) -> true;
-is_loopback_ip({0, _, _, _}) -> true;
-is_loopback_ip({169, 254, _, _}) -> true;
-is_loopback_ip({255, 255, 255, 255}) -> true;
-is_loopback_ip(_) -> false.
 
 %%% INTERNAL FUNCTIONS
 
