@@ -355,21 +355,19 @@ basic_test() ->
 
 %% @doc Ensure that we can change the transactions while mining is in progress.
 change_txs_test() ->
-	B0 = ar_weave:init(),
-	ar_node:start([], B0),
-	B1 = ar_weave:add(B0, []),
-	B = hd(B1),
-	RecallB = hd(B0),
+	[B0] = ar_weave:init(),
+	B = B0,
+	RecallB = B0,
 	FirstTXSet = [ar_tx:new()],
 	SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
-	%% Start mining with a very high difficulty, so that the mining won't finish
-	%% before adding more TXs.
-	VeryHighDiff = 100,
-	PID = start(B, RecallB, FirstTXSet, unclaimed, [], VeryHighDiff, self()),
-	%% Add more TXs. This will also re-calculate a new difficulty.
+	%% Start mining with a high enough difficulty, so that the mining won't
+	%% finish before adding more TXs.
+	Diff = 14,
+	PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self()),
 	change_txs(PID, SecondTXSet),
 	receive
-		{work_complete, SecondTXSet, Hash, Diff, Nonce, Timestamp} ->
+		{work_complete, MinedTXs, Hash, _, Nonce, Timestamp} ->
+			?assertEqual(SecondTXSet, MinedTXs),
 			BDS = ar_block:generate_block_data_segment(
 				B,
 				RecallB,
