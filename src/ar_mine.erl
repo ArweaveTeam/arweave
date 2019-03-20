@@ -299,7 +299,9 @@ coinflip() ->
 		2 -> false
 	end.
 
-%%% Tests: ar_mine
+
+%% Tests
+
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->
@@ -309,62 +311,23 @@ basic_test() ->
 	B = hd(B1),
 	RecallB = hd(B0),
 	start(B, RecallB, [], unclaimed, [], self()),
-	receive
-		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
-			?assertEqual(MinedTXs, []),
-			BDS = ar_block:generate_block_data_segment(
-				B,
-				RecallB,
-				[],
-				<<>>,
-				Timestamp,
-				[]
-			),
-			Res = crypto:hash(
-				?MINING_HASH_ALG,
-				<< Nonce/binary, BDS/binary >>
-			),
-			?assertMatch(
-				<< 0:Diff, _/bitstring >>,
-				Res
-			)
-	end.
+	assert_mine_output(B, RecallB, []).
 
 %% @doc Ensure that we can change the transactions while mining is in progress.
-change_txs_test() ->
-	[B0] = ar_weave:init(),
-	B = B0,
-	RecallB = B0,
-	FirstTXSet = [ar_tx:new()],
-	SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
-	%% Start mining with a high enough difficulty, so that the mining won't
-	%% finish before adding more TXs.
-	Diff = 14,
-	PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self()),
-	change_txs(PID, SecondTXSet),
-	receive
-		{work_complete, MinedTXs, Hash, _, Nonce, Timestamp} ->
-			?assertEqual(SecondTXSet, MinedTXs),
-			BDS = ar_block:generate_block_data_segment(
-				B,
-				RecallB,
-				SecondTXSet,
-				<<>>,
-				Timestamp,
-				[]
-			),
-			?assertEqual(
-				Hash,
-				crypto:hash(
-					?MINING_HASH_ALG,
-					<< Nonce/binary, BDS/binary >>
-				)
-			),
-			?assertMatch(
-				<< 0:Diff, _/bitstring >>,
-				Hash
-			)
-	end.
+change_txs_test_() ->
+	{timeout, 20, fun() ->
+		[B0] = ar_weave:init(),
+		B = B0,
+		RecallB = B0,
+		FirstTXSet = [ar_tx:new()],
+		SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
+		%% Start mining with a high enough difficulty, so that the mining won't
+		%% finish before adding more TXs.
+		Diff = 20,
+		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self()),
+		change_txs(PID, SecondTXSet),
+		assert_mine_output(B, RecallB, SecondTXSet, Diff)
+	end}.
 
 %% @doc Ensures ar_mine can be started and stopped.
 start_stop_test() ->
@@ -384,6 +347,37 @@ miner_start_stop_test() ->
 	PID = spawn_link(fun() -> start_miner(S, self()) end),
 	stop_miners([PID]),
 	assert_not_alive(PID, 500).
+
+assert_mine_output(B, RecallB, TXs, Diff) ->
+	?assertEqual(Diff, assert_mine_output(B, RecallB, TXs)).
+
+assert_mine_output(B, RecallB, TXs) ->
+	receive
+		{work_complete, MinedTXs, Hash, MinedDiff, Nonce, Timestamp} ->
+			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
+			BDS = ar_block:generate_block_data_segment(
+				B,
+				RecallB,
+				TXs,
+				<<>>,
+				Timestamp,
+				[]
+			),
+			?assertEqual(
+				crypto:hash(
+					?MINING_HASH_ALG,
+					<< Nonce/binary, BDS/binary >>
+				),
+				Hash
+			),
+			?assertMatch(
+				<< 0:MinedDiff, _/bitstring >>,
+				Hash
+			),
+			MinedDiff
+	after 20000 ->
+		error(timeout)
+	end.
 
 assert_not_alive(PID, Timeout) ->
 	Do = fun () -> not is_process_alive(PID) end,
