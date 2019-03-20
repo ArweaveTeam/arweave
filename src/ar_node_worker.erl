@@ -399,12 +399,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
 		false ->
-			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
-			case is_fork_preferable(NewB, CDiff, BHL) of
-				false -> [];
-				true ->
-					ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
-			end
+			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}])
 	end,
 	{ok, StateOut};
 process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
