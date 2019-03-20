@@ -1,8 +1,5 @@
 %%% A collection of record structures used throughout the Arweave server.
 
-%%% FORK INDEX
--define(FORK_1_6, 95000).
-
 %% @doc How nodes identify they are on the same network.
 -define(NETWORK_NAME, "arweave.N.1").
 
@@ -27,6 +24,11 @@
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
 %-define(DEBUG, debug).
+-ifdef(DEBUG).
+-define(FORK_1_6, 0).
+-else.
+-define(FORK_1_6, 95000).
+-endif.
 
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").
