@@ -7,16 +7,19 @@
 %%% A module for managing mining of blocks on the weave,
 
 %% State record for miners
--record(state,{
+-record(state, {
 	parent, % miners parent process (initiator)
 	current_block, % current block held by node
 	recall_block, % recall block related to current
 	txs, % the set of txs to be mined
-	timestamp, % the current timestamp of the miner
+	timestamp, % the block timestamp used for the mining
+	timestamp_refresh_timer, % Reference for timer for updating the timestamp
 	data_segment = <<>>, % the data segment generated for mining
+	generate_data_segment_duration, % duration in seconds for last generation of the data segment.
 	reward_addr, % the nodes reward address
 	tags, % the nodes block tags
 	diff, % the current network difficulty
+	auto_update_diff, % should the diff be kept or updated automatically
 	delay = 0, % hashing delay used for testing
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
 	miners = [], % miner worker processes
@@ -25,51 +28,29 @@
 
 %% @doc Spawns a new mining process and returns its PID.
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent) ->
-	Timestamp = os:system_time(seconds),
-	Diff = next_diff(CurrentB, Timestamp),
-	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Timestamp, Parent).
+	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, auto_update, Parent).
 
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, ForceDiff, Parent) ->
-	Timestamp = os:system_time(seconds),
-	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, ForceDiff, Timestamp, Parent).
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent) when is_integer(StaticDiff) ->
+	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent).
 
-start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Timestamp, Parent) ->
-	start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Timestamp, Parent);
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Timestamp, Parent) ->
+do_start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent) ->
+	do_start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent);
+do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 	crypto:rand_seed(),
-	%% Filter out invalid TXs. A TX could be valid by itself, but still invalid
-	%% in the context of the other TXs and the block it would be mined to.
-	TXs =
-		lists:filter(
-			fun(T) ->
-				ar_tx:verify(T, Diff, CurrentB#block.wallet_list)
-			end,
-			ar_node_utils:filter_all_out_of_order_txs(
-				CurrentB#block.wallet_list, RawTXs
-			)
-		),
 	start_server(
 		#state {
 			parent = Parent,
 			current_block = CurrentB,
 			recall_block = RecallB,
-			txs = TXs,
-			timestamp = Timestamp,
-			data_segment =
-				ar_block:generate_block_data_segment(
-					CurrentB,
-					RecallB,
-					TXs,
-					RewardAddr,
-					Timestamp,
-					Tags
-				),
+			generate_data_segment_duration = 0,
 			reward_addr = RewardAddr,
 			tags = Tags,
-			diff = Diff,
 			max_miners = ar_meta_db:get(max_miners),
-			nonces = []
-		}
+			nonces = [],
+			diff = Diff,
+			auto_update_diff = Diff == auto_update
+		},
+		RawTXs
 	).
 
 %% @doc Stop a running mining server.
@@ -80,22 +61,75 @@ stop(PID) ->
 change_txs(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
 
+%% @doc Generate a new data_segment and update the timestamp. Adjust for the
+%% generation duration, so that the timestamp is as fresh as possible when
+%% the update finishes.
+update_data_segment(S = #state { txs = TXs }) ->
+	update_data_segment(S, TXs).
+
+update_data_segment(S, TXs) ->
+	StartTimestamp = os:system_time(seconds),
+	BlockTimestamp = StartTimestamp + S#state.generate_data_segment_duration,
+	BDS = ar_block:generate_block_data_segment(
+		S#state.current_block,
+		S#state.recall_block,
+		TXs,
+		S#state.reward_addr,
+		BlockTimestamp,
+		S#state.tags
+	),
+	NewDuration = os:system_time(seconds) - StartTimestamp,
+	NewS = S#state {
+		timestamp = BlockTimestamp,
+		txs = TXs,
+		data_segment = BDS,
+		generate_data_segment_duration = NewDuration
+	},
+	maybe_update_difficulty(reschedule_timestamp_refresh(NewS)).
+
+reschedule_timestamp_refresh(S = #state{
+	timestamp_refresh_timer = Timer,
+	generate_data_segment_duration = DurationSeconds
+}) ->
+	timer:cancel(Timer),
+	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - DurationSeconds  of
+		TimeoutSeconds when TimeoutSeconds =< 0 ->
+			ar:warn(
+				"ar_mine: Updating data segment slower (~B seconds) than timestamp refresh interval (~B seconds)",
+				[DurationSeconds, ?MINING_TIMESTAMP_REFRESH_INTERVAL]
+			),
+			self() ! refresh_timestamp,
+			S#state{ timestamp_refresh_timer = no_timer };
+		TimeoutSeconds ->
+			case timer:send_after(TimeoutSeconds * 1000, refresh_timestamp) of
+				{ok, Ref} ->
+					S#state{ timestamp_refresh_timer = Ref };
+				{error, Reason} ->
+					ar:err("ar_mine: Reschedule timestamp refresh failed: ~p", [Reason]),
+					S
+			end
+	end.
+
+maybe_update_difficulty(S = #state{ auto_update_diff = false }) ->
+	S;
+maybe_update_difficulty(S = #state{ current_block = B, timestamp = Timestamp }) ->
+	S#state{ diff = next_diff(B, Timestamp) }.
+
 %% @doc Start the main mining server.
-start_server(S) ->
+start_server(S, TXs) ->
 	spawn(fun() ->
-		server(start_miners(S))
+		server(start_miners(update_txs(S, TXs)))
 	end).
 
 %% @doc The main mining server.
 server(
 	S = #state {
 		parent = Parent,
-		timestamp = Timestamp,
 		miners = Miners
 	}
 ) ->
 	receive
-		% Stop the mining process killing all the workers.
+		% Stop the mining process and all the workers.
 		stop ->
 			stop_miners(Miners),
 			ok;
@@ -106,16 +140,7 @@ server(
 		%% validated on the remote nodes when it's propagated to them. Only blocks
 		%% with a timestamp close to current time will be accepted in the propagation.
 		refresh_timestamp ->
-			case os:system_time(seconds) of
-				CurrentTime when Timestamp > CurrentTime - ?MINING_TIMESTAMP_REFRESH_INTERVAL ->
-					%% Something else (i.e. new TXs received) triggered an update
-					%% recently, so this refresh is unessesary. A new refresh
-					%% should already be scheduled by whatever triggered the
-					%% recent refresh.
-					server(S);
-				CurrentTime ->
-					server(restart_miners(update_timestamp(S, CurrentTime)))
-			end;
+			server(restart_miners(update_data_segment(S)));
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonces, MinedTXs, MinedDiff, MinedTimestamp} ->
@@ -134,25 +159,7 @@ start_miners(S = #state {max_miners = MaxMiners}) ->
 		fun(Pid) -> Pid ! hash end,
 		Miners
 	),
-	schedule_refresh_timestamp(S#state.timestamp),
 	S#state {miners = Miners}.
-
-%% @doc Creates a timer for refreshing the block timestamp in the mining.
-schedule_refresh_timestamp(Timestamp) ->
-	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - (os:system_time(seconds) - Timestamp) of
-		NextRefreshSeconds when NextRefreshSeconds =< 0 ->
-			ar:warn(
-				"ar_mine: Cannot keep up refreshing the timestamp fast enough. Time margin (seconds): ~B",
-				[NextRefreshSeconds]
-			),
-			self() ! refresh_timestamp;
-		NextRefreshSeconds ->
-			erlang:send_after(
-				NextRefreshSeconds * 1000,
-				self(),
-				refresh_timestamp
-			)
-	end.
 
 %% @doc Stop all workers.
 stop_miners(Miners) ->
@@ -166,44 +173,23 @@ restart_miners(S) ->
 	stop_miners(S#state.miners),
 	start_miners(S).
 
-%% @doc Takes a state and a timestamp and returns an updated state with the new
-%% timestamp.
-update_timestamp(
-	S = #state {
-		current_block = CurrentB,
-		recall_block = RecallB,
-		txs = TXs,
-		reward_addr = RewardAddr,
-		tags = Tags
-	},
-	Timestamp
-) ->
-	BDS = ar_block:generate_block_data_segment(
-		CurrentB,
-		RecallB,
-		TXs,
-		RewardAddr,
-		Timestamp,
-		Tags
-	),
-	S#state {
-		timestamp = Timestamp,
-		data_segment = BDS
-	}.
-
 %% @doc Takes a state and a set of transactions and return a new state with the
 %% new set of transactions.
+update_txs(S = #state { diff = auto_update }, TXs) ->
+	%% We haven't set the timestamp and difficulty yet because that's done later
+	%% in update_data_segment/2. The difficulty is needed for the
+	%% ar_tx:verify/3 call, so let's updated the block data segment with emtpy
+	%% transactions just to get the difficulty.
+	update_txs(update_data_segment(S, []), TXs);
 update_txs(
 	S = #state {
 		current_block = CurrentB,
-		recall_block = RecallB,
-		reward_addr = RewardAddr,
-		tags = Tags,
 		diff = Diff
 	},
 	TXs
 ) ->
-	CurrentTimestamp = os:system_time(seconds),
+	%% Filter out invalid TXs. A TX can be valid by itself, but still invalid
+	%% in the context of the other TXs and the block it would be mined to.
 	ValidTXs =
 		lists:filter(
 			fun(TX) ->
@@ -214,20 +200,7 @@ update_txs(
 				TXs
 			)
 		),
-	S#state {
-		txs = ValidTXs,
-		timestamp = CurrentTimestamp,
-		data_segment =
-			ar_block:generate_block_data_segment(
-				CurrentB,
-				RecallB,
-				ValidTXs,
-				RewardAddr,
-				CurrentTimestamp,
-				Tags
-			),
-		diff = Diff
-	}.
+	update_data_segment(S, ValidTXs).
 
 %% @doc A worker process to hash the data segment searching for a solution
 %% for the given diff.
