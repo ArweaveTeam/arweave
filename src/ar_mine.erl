@@ -36,7 +36,6 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent) when is_i
 do_start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent) ->
 	do_start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent);
 do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
-	crypto:rand_seed(),
 	start_server(
 		#state {
 			parent = Parent,
