@@ -329,6 +329,25 @@ change_txs_test_() ->
 		assert_mine_output(B, RecallB, SecondTXSet, Diff)
 	end}.
 
+%% @doc Ensure that the block timestamp gets updated regularly while mining.
+timestamp_refresh_test_() ->
+	{timeout, 20, fun() ->
+		[B0] = ar_weave:init(),
+		B = B0,
+		RecallB = B0,
+		%% Start mining with a high enough difficulty, so that the block
+		%% timestamp gets refreshed at least once. Since we might be unlucky
+		%% and find the block too fast, we retry until it succeeds.
+		Run = fun(_) ->
+			TXs = [],
+			start(B, RecallB, TXs, unclaimed, [], 19, self()),
+			StartTime = os:system_time(seconds),
+			{_, MinedTimestamp} = assert_mine_output(B, RecallB, TXs),
+			MinedTimestamp > StartTime
+		end,
+		?assert(lists:any(Run, lists:seq(1, 20)))
+	end}.
+
 %% @doc Ensures ar_mine can be started and stopped.
 start_stop_test() ->
 	B0 = ar_weave:init(),
@@ -349,7 +368,9 @@ miner_start_stop_test() ->
 	assert_not_alive(PID, 500).
 
 assert_mine_output(B, RecallB, TXs, Diff) ->
-	?assertEqual(Diff, assert_mine_output(B, RecallB, TXs)).
+	Result = assert_mine_output(B, RecallB, TXs),
+	?assertMatch({Diff, _}, Result),
+	Result.
 
 assert_mine_output(B, RecallB, TXs) ->
 	receive
@@ -374,7 +395,7 @@ assert_mine_output(B, RecallB, TXs) ->
 				<< 0:MinedDiff, _/bitstring >>,
 				Hash
 			),
-			MinedDiff
+			{MinedDiff, Timestamp}
 	after 20000 ->
 		error(timeout)
 	end.
