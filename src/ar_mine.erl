@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/6, start/7, change_txs/2, stop/1, start_miner/2, schedule_hash/1]).
+-export([start/6, start/7, change_txs/2, stop/1, start_miner/2]).
 -export([validate/3, validate_by_hash/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -60,6 +60,61 @@ stop(PID) ->
 change_txs(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
 
+%% @doc A worker process to hash the data segment searching for a solution
+%% for the given diff.
+start_miner(S, Supervisor) ->
+	process_flag(priority, low),
+	miner(S, Supervisor).
+
+%% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
+validate(BDS, Nonce, Diff) ->
+	case NewHash = ar_weave:hash(BDS, Nonce) of
+		<< 0:Diff, _/bitstring >> -> NewHash;
+		_ -> false
+	end.
+
+%% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
+validate_by_hash(BDSHash, Diff) ->
+	case BDSHash of
+		<< 0:Diff, _/bitstring >> ->
+			true;
+		_ ->
+			false
+	end.
+
+
+%% PRIVATE
+
+
+%% @doc Takes a state and a set of transactions and return a new state with the
+%% new set of transactions.
+update_txs(S = #state { diff = auto_update }, TXs) ->
+	%% We haven't set the timestamp and difficulty yet because that's done later
+	%% in update_data_segment/2. The difficulty is needed for the
+	%% ar_tx:verify/3 call, so let's updated the block data segment with emtpy
+	%% transactions just to get the difficulty.
+	update_txs(update_data_segment(S, []), TXs);
+update_txs(
+	S = #state {
+		current_block = CurrentB,
+		diff = Diff
+	},
+	TXs
+) ->
+	%% Filter out invalid TXs. A TX can be valid by itself, but still invalid
+	%% in the context of the other TXs and the block it would be mined to.
+	ValidTXs =
+		lists:filter(
+			fun(TX) ->
+				ar_tx:verify(TX, Diff, CurrentB#block.wallet_list)
+			end,
+			ar_node_utils:filter_all_out_of_order_txs(
+				CurrentB#block.wallet_list,
+				TXs
+			)
+		),
+	update_data_segment(S, ValidTXs).
+
 %% @doc Generate a new data_segment and update the timestamp. Adjust for the
 %% generation duration, so that the timestamp is as fresh as possible when
 %% the update finishes.
@@ -114,11 +169,35 @@ maybe_update_difficulty(S = #state{ auto_update_diff = false }) ->
 maybe_update_difficulty(S = #state{ current_block = B, timestamp = Timestamp }) ->
 	S#state{ diff = next_diff(B, Timestamp) }.
 
+%% @doc Given a block calculate the difficulty to mine on for the next block.
+%% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
+%% This is done in attempt to maintain on average a fixed block time.
+next_diff(CurrentB, NextBlockTimestamp) ->
+	ar_retarget:maybe_retarget(
+		CurrentB#block.height + 1,
+		CurrentB#block.diff,
+		NextBlockTimestamp,
+		CurrentB#block.last_retarget
+	).
+
 %% @doc Start the main mining server.
 start_server(S, TXs) ->
 	spawn(fun() ->
 		server(start_miners(update_txs(S, TXs)))
 	end).
+
+%% @doc Start the workers and return the new state.
+start_miners(S = #state {max_miners = MaxMiners}) ->
+	Miners =
+		lists:map(
+			fun(_) -> spawn(?MODULE, start_miner, [S, self()]) end,
+			lists:seq(1, MaxMiners)
+		),
+	lists:foreach(
+		fun(Pid) -> Pid ! hash end,
+		Miners
+	),
+	S#state {miners = Miners}.
 
 %% @doc The main mining server.
 server(
@@ -147,19 +226,6 @@ server(
 			stop_miners(Miners)
 	end.
 
-%% @doc Start the workers and return the new state.
-start_miners(S = #state {max_miners = MaxMiners}) ->
-	Miners =
-		lists:map(
-			fun(_) -> spawn(?MODULE, start_miner, [S, self()]) end,
-			lists:seq(1, MaxMiners)
-		),
-	lists:foreach(
-		fun(Pid) -> Pid ! hash end,
-		Miners
-	),
-	S#state {miners = Miners}.
-
 %% @doc Stop all workers.
 stop_miners(Miners) ->
 	lists:foreach(
@@ -172,42 +238,8 @@ restart_miners(S) ->
 	stop_miners(S#state.miners),
 	start_miners(S).
 
-%% @doc Takes a state and a set of transactions and return a new state with the
-%% new set of transactions.
-update_txs(S = #state { diff = auto_update }, TXs) ->
-	%% We haven't set the timestamp and difficulty yet because that's done later
-	%% in update_data_segment/2. The difficulty is needed for the
-	%% ar_tx:verify/3 call, so let's updated the block data segment with emtpy
-	%% transactions just to get the difficulty.
-	update_txs(update_data_segment(S, []), TXs);
-update_txs(
-	S = #state {
-		current_block = CurrentB,
-		diff = Diff
-	},
-	TXs
-) ->
-	%% Filter out invalid TXs. A TX can be valid by itself, but still invalid
-	%% in the context of the other TXs and the block it would be mined to.
-	ValidTXs =
-		lists:filter(
-			fun(TX) ->
-				ar_tx:verify(TX, Diff, CurrentB#block.wallet_list)
-			end,
-			ar_node_utils:filter_all_out_of_order_txs(
-				CurrentB#block.wallet_list,
-				TXs
-			)
-		),
-	update_data_segment(S, ValidTXs).
-
-%% @doc A worker process to hash the data segment searching for a solution
-%% for the given diff.
+%% @doc The minig server performing the hashing.
 %% TODO: Change byte string for nonces to bitstring
-start_miner(S, Supervisor) ->
-	process_flag(priority, low),
-	miner(S, Supervisor).
-
 miner(
 	S = #state {
 		data_segment = BDS,
@@ -246,17 +278,6 @@ miner(
 			end
 	end.
 
-%% @doc Converts a boolean value to a binary of 0 or 1.
-bool_to_binary(true) -> <<1>>;
-bool_to_binary(false) -> <<0>>.
-
-%% @doc A simple boolean coinflip.
-coinflip() ->
-	case rand:uniform(2) of
-		1 -> true;
-		2 -> false
-	end.
-
 %% @doc Schedule a hashing attempt.
 %% Hashing attempts can be delayed for testing purposes.
 schedule_hash(S = #state { delay = 0 }) ->
@@ -267,31 +288,15 @@ schedule_hash(S = #state { delay = Delay }) ->
 	spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
 	S.
 
-%% @doc Given a block calculate the difficulty to mine on for the next block.
-%% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
-%% This is done in attempt to maintain on average a fixed block time.
-next_diff(CurrentB, NextBlockTimestamp) ->
-	ar_retarget:maybe_retarget(
-		CurrentB#block.height + 1,
-		CurrentB#block.diff,
-		NextBlockTimestamp,
-		CurrentB#block.last_retarget
-	).
+%% @doc Converts a boolean value to a binary of 0 or 1.
+bool_to_binary(true) -> <<1>>;
+bool_to_binary(false) -> <<0>>.
 
-%% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
-validate(BDS, Nonce, Diff) ->
-	case NewHash = ar_weave:hash(BDS, Nonce) of
-		<< 0:Diff, _/bitstring >> -> NewHash;
-		_ -> false
-	end.
-
-%% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
-validate_by_hash(BDSHash, Diff) ->
-	case BDSHash of
-		<< 0:Diff, _/bitstring >> ->
-			true;
-		_ ->
-			false
+%% @doc A simple boolean coinflip.
+coinflip() ->
+	case rand:uniform(2) of
+		1 -> true;
+		2 -> false
 	end.
 
 %%% Tests: ar_mine
