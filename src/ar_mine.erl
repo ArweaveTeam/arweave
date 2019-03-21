@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/6, start/7, change_txs/2, stop/1, start_miner/2]).
+-export([start/6, start/7, change_txs/2, stop/1, mine/2]).
 -export([validate/3, validate_by_hash/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -22,8 +22,7 @@
 	auto_update_diff, % should the diff be kept or updated automatically
 	delay = 0, % hashing delay used for testing
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
-	miners = [], % miner worker processes
-	nonces % nonce builder to ensure entropy
+	miners = [] % miner worker processes
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
@@ -49,7 +48,6 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 			reward_addr = RewardAddr,
 			tags = Tags,
 			max_miners = ar_meta_db:get(max_miners),
-			nonces = [],
 			diff = NewDiff,
 			auto_update_diff = AutoUpdateDiff
 		},
@@ -223,8 +221,8 @@ server(
 			server(restart_miners(update_data_segment(S)));
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
-		{solution, Hash, Nonces, MinedTXs, MinedDiff, MinedTimestamp} ->
-			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonces, MinedTimestamp},
+		{solution, Hash, Nonce, MinedTXs, MinedDiff, MinedTimestamp} ->
+			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp},
 			stop_miners(Miners)
 	end.
 
@@ -232,7 +230,7 @@ server(
 start_miners(S = #state {max_miners = MaxMiners}) ->
 	Miners =
 		lists:map(
-			fun(_) -> spawn_link(?MODULE, start_miner, [S, self()]) end,
+			fun(_) -> spawn_link(?MODULE, mine, [S, self()]) end,
 			lists:seq(1, MaxMiners)
 		),
 	S#state {miners = Miners}.
@@ -254,43 +252,31 @@ restart_miners(S) ->
 
 %% @doc A worker process to hash the data segment searching for a solution
 %% for the given diff.
-start_miner(S, Supervisor) ->
-	process_flag(priority, low),
-	miner(S, Supervisor).
-
-%% @doc The minig server performing the hashing.
-%% TODO: Change byte string for nonces to bitstring
-miner(
-	S = #state {
+mine(
+	#state {
 		data_segment = BDS,
 		diff = Diff,
-		nonces = Nonces,
 		txs = TXs,
 		timestamp = Timestamp
 	},
 	Supervisor
 ) ->
-	case validate(BDS, iolist_to_binary(Nonces), Diff) of
+	process_flag(priority, low),
+	{Hash, Nonces} = find_nonce(BDS, Diff),
+	Supervisor ! {solution, Hash, Nonces, TXs, Diff, Timestamp}.
+
+find_nonce(BDS, Diff) ->
+	find_nonce(BDS, Diff, []).
+
+find_nonce(BDS, Diff, Nonces) when length(Nonces) >= 512 ->
+	find_nonce(BDS, Diff, []);
+find_nonce(BDS, Diff, Nonces) ->
+	NewNonces = [bool_to_binary(coinflip()) | Nonces],
+	case validate(BDS, iolist_to_binary(NewNonces), Diff) of
 		false ->
-			case length(Nonces) >= 512 of
-				false ->
-					miner(
-						S#state {
-							nonces =
-								[bool_to_binary(coinflip()) | Nonces]
-						},
-						Supervisor
-					);
-				true ->
-					miner(
-						S#state {
-							nonces = []
-						},
-						Supervisor
-					)
-			end;
-		Hash ->
-			Supervisor ! {solution, Hash, iolist_to_binary(Nonces), TXs, Diff, Timestamp}
+			find_nonce(BDS, Diff, NewNonces);
+		ValidHash ->
+			{ValidHash, iolist_to_binary(NewNonces)}
 	end.
 
 %% @doc Converts a boolean value to a byte of 0 or 1.
@@ -368,7 +354,7 @@ start_stop_test() ->
 %% @doc Ensures a miner can be started and stopped.
 miner_start_stop_test() ->
 	S = #state{},
-	PID = spawn_link(?MODULE, start_miner, [S, self()]),
+	PID = spawn_link(?MODULE, mine, [S, self()]),
 	stop_miners([PID]),
 	assert_not_alive(PID, 500).
 
