@@ -274,7 +274,7 @@ miner(
 	receive
 		stop -> ok;
 		hash ->
-			schedule_hash(S),
+			self() ! hash,
 			case validate(BDS, iolist_to_binary(Nonces), Diff) of
 				false ->
 					case length(Nonces) >= 512 of
@@ -298,16 +298,6 @@ miner(
 					Supervisor ! {solution, Hash, iolist_to_binary(Nonces), TXs, Diff, Timestamp}
 			end
 	end.
-
-%% @doc Schedule a hashing attempt.
-%% Hashing attempts can be delayed for testing purposes.
-schedule_hash(S = #state { delay = 0 }) ->
-	self() ! hash,
-	S;
-schedule_hash(S = #state { delay = Delay }) ->
-	Parent = self(),
-	spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
-	S.
 
 %% @doc Converts a boolean value to a binary of 0 or 1.
 bool_to_binary(true) -> <<1>>;
