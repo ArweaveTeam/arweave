@@ -232,19 +232,18 @@ server(
 start_miners(S = #state {max_miners = MaxMiners}) ->
 	Miners =
 		lists:map(
-			fun(_) -> spawn(?MODULE, start_miner, [S, self()]) end,
+			fun(_) -> spawn_link(?MODULE, start_miner, [S, self()]) end,
 			lists:seq(1, MaxMiners)
 		),
-	lists:foreach(
-		fun(Pid) -> Pid ! hash end,
-		Miners
-	),
 	S#state {miners = Miners}.
 
 %% @doc Stop all workers.
 stop_miners(Miners) ->
 	lists:foreach(
-		fun(Pid) -> Pid ! stop end,
+		fun(PID) ->
+			unlink(PID),
+			exit(PID, stop)
+		end,
 		Miners
 	).
 
@@ -271,35 +270,30 @@ miner(
 	},
 	Supervisor
 ) ->
-	receive
-		stop -> ok;
-		hash ->
-			self() ! hash,
-			case validate(BDS, iolist_to_binary(Nonces), Diff) of
+	case validate(BDS, iolist_to_binary(Nonces), Diff) of
+		false ->
+			case length(Nonces) >= 512 of
 				false ->
-					case length(Nonces) >= 512 of
-						false ->
-							miner(
-								S#state {
-									nonces =
-										[bool_to_binary(coinflip()) | Nonces]
-								},
-								Supervisor
-							);
-						true ->
-							miner(
-								S#state {
-									nonces = []
-								},
-								Supervisor
-							)
-					end;
-				Hash ->
-					Supervisor ! {solution, Hash, iolist_to_binary(Nonces), TXs, Diff, Timestamp}
-			end
+					miner(
+						S#state {
+							nonces =
+								[bool_to_binary(coinflip()) | Nonces]
+						},
+						Supervisor
+					);
+				true ->
+					miner(
+						S#state {
+							nonces = []
+						},
+						Supervisor
+					)
+			end;
+		Hash ->
+			Supervisor ! {solution, Hash, iolist_to_binary(Nonces), TXs, Diff, Timestamp}
 	end.
 
-%% @doc Converts a boolean value to a binary of 0 or 1.
+%% @doc Converts a boolean value to a byte of 0 or 1.
 bool_to_binary(true) -> <<1>>;
 bool_to_binary(false) -> <<0>>.
 
@@ -321,7 +315,7 @@ basic_test() ->
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
-	start(B, RecallB, [], unclaimed, [], self()),
+	link(start(B, RecallB, [], unclaimed, [], self())),
 	assert_mine_output(B, RecallB, []).
 
 %% @doc Ensure that we can change the transactions while mining is in progress.
@@ -374,7 +368,7 @@ start_stop_test() ->
 %% @doc Ensures a miner can be started and stopped.
 miner_start_stop_test() ->
 	S = #state{},
-	PID = spawn_link(fun() -> start_miner(S, self()) end),
+	PID = spawn_link(?MODULE, start_miner, [S, self()]),
 	stop_miners([PID]),
 	assert_not_alive(PID, 500).
 
