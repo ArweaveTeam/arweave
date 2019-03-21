@@ -64,12 +64,6 @@ stop(PID) ->
 change_txs(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
 
-%% @doc A worker process to hash the data segment searching for a solution
-%% for the given diff.
-start_miner(S, Supervisor) ->
-	process_flag(priority, low),
-	miner(S, Supervisor).
-
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff) ->
 	case NewHash = ar_weave:hash(BDS, Nonce) of
@@ -207,19 +201,6 @@ start_server(S, TXs) ->
 		server(start_miners(update_txs(S, TXs)))
 	end).
 
-%% @doc Start the workers and return the new state.
-start_miners(S = #state {max_miners = MaxMiners}) ->
-	Miners =
-		lists:map(
-			fun(_) -> spawn(?MODULE, start_miner, [S, self()]) end,
-			lists:seq(1, MaxMiners)
-		),
-	lists:foreach(
-		fun(Pid) -> Pid ! hash end,
-		Miners
-	),
-	S#state {miners = Miners}.
-
 %% @doc The main mining server.
 server(
 	S = #state {
@@ -247,6 +228,19 @@ server(
 			stop_miners(Miners)
 	end.
 
+%% @doc Start the workers and return the new state.
+start_miners(S = #state {max_miners = MaxMiners}) ->
+	Miners =
+		lists:map(
+			fun(_) -> spawn(?MODULE, start_miner, [S, self()]) end,
+			lists:seq(1, MaxMiners)
+		),
+	lists:foreach(
+		fun(Pid) -> Pid ! hash end,
+		Miners
+	),
+	S#state {miners = Miners}.
+
 %% @doc Stop all workers.
 stop_miners(Miners) ->
 	lists:foreach(
@@ -258,6 +252,12 @@ stop_miners(Miners) ->
 restart_miners(S) ->
 	stop_miners(S#state.miners),
 	start_miners(S).
+
+%% @doc A worker process to hash the data segment searching for a solution
+%% for the given diff.
+start_miner(S, Supervisor) ->
+	process_flag(priority, low),
+	miner(S, Supervisor).
 
 %% @doc The minig server performing the hashing.
 %% TODO: Change byte string for nonces to bitstring
