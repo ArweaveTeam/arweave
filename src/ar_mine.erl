@@ -277,7 +277,7 @@ miner(
 			schedule_hash(S),
 			case validate(BDS, iolist_to_binary(Nonces), Diff) of
 				false ->
-					case(length(Nonces) > 512) and coinflip() of
+					case length(Nonces) >= 512 of
 						false ->
 							miner(
 								S#state {
