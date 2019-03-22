@@ -508,14 +508,14 @@ validate(
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
 	Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
-	Retarget = ar_retarget:validate(NewB, OldB),
+	DiffCheck = ar_retarget:validate_difficulty(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
 	WeaveSize = ar_block:verify_weave_size(NewB, OldB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
 	%Time = ar_block:verify_timestamp(OldB, NewB),
 	HeightCheck = ar_block:verify_height(NewB, OldB),
-	RetargetCheck = ar_block:verify_last_retarget(NewB),
+	RetargetCheck = ar_block:verify_last_retarget(NewB, OldB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
 	BHLMerkleCheck = ar_block:verify_block_hash_list_merkle(NewB, OldB),
@@ -531,7 +531,7 @@ validate(
 			{block_wallet_validate, Wallet},
 			{block_indep_validate, IndepRecall},
 			{block_txs_validate, Txs},
-			{block_diff_validate, Retarget},
+			{block_diff_validate, DiffCheck},
 			{block_indep, IndepHash},
 			{block_hash, Hash},
 			{weave_size, WeaveSize},
@@ -562,7 +562,7 @@ validate(
 	case Mine of false -> ar:report({invalid_nonce, BDSHash}); _ -> ok end,
 	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok      end,
 	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
-	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
+	case DiffCheck of false -> ar:d(invalid_difficulty); _ -> ok  end,
 	case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
 	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
 	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok      end,
@@ -579,7 +579,7 @@ validate(
 		andalso Wallet
 		andalso IndepRecall
 		andalso Txs
-		andalso Retarget
+		andalso DiffCheck
 		andalso IndepHash
 		andalso Hash
 		andalso WeaveSize

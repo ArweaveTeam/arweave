@@ -2,7 +2,7 @@
 -export([is_retarget_height/1]).
 -export([maybe_retarget/2, maybe_retarget/4]).
 -export([calculate_difficulty/3]).
--export([validate/2]).
+-export([validate_difficulty/2]).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 
@@ -84,14 +84,14 @@ calculate_difficulty(OldDiff, TS, Last) ->
 -endif.
 
 %% @doc Validate that a new block has an appropriate difficulty.
-validate(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
+validate_difficulty(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
 	(NewB#block.diff >=
 		calculate_difficulty(
 			OldB#block.diff,
 			NewB#block.timestamp,
 			OldB#block.last_retarget)
 	);
-validate(NewB, OldB) ->
+validate_difficulty(NewB, OldB) ->
 	(NewB#block.diff >= OldB#block.diff) and
 		(NewB#block.last_retarget == OldB#block.last_retarget).
 

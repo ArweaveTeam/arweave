@@ -197,7 +197,9 @@ parse([Arg|_Rest], _O) ->
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#opts { port = Port });
-start(#opts { benchmark = true }) ->
+start(#opts { benchmark = true, max_miners = MaxMiners }) ->
+	ar_meta_db:start(),
+	ar_meta_db:put(max_miners, MaxMiners),
 	ar_benchmark:run();
 start(
 	#opts {

@@ -263,28 +263,19 @@ next_diff(CurrentB) ->
 
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff) ->
-	NewDiff = adjust_for_min_diff(Diff),
 	case NewHash = ar_weave:hash(BDS, Nonce) of
-		<< 0:NewDiff, _/bitstring >> -> NewHash;
+		<< 0:Diff, _/bitstring >> -> NewHash;
 		_ -> false
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
 validate_by_hash(BDSHash, Diff) ->
-	NewDiff = adjust_for_min_diff(Diff),
 	case BDSHash of
-		<< 0:NewDiff, _/bitstring >> ->
+		<< 0:Diff, _/bitstring >> ->
 			true;
 		_ ->
 			false
 	end.
-
-%% @doc Adjust the difficulty for the minumum difficulty.
--ifdef(DEBUG).
-adjust_for_min_diff(Diff) -> Diff.
--else.
-adjust_for_min_diff(Diff) -> erlang:max(Diff, ?MIN_DIFF).
--endif.
 
 %%% Tests: ar_mine
 
