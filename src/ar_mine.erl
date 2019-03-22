@@ -64,9 +64,11 @@ change_txs(PID, NewTXs) ->
 
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff) ->
-	case NewHash = ar_weave:hash(BDS, Nonce) of
-		<< 0:Diff, _/bitstring >> -> NewHash;
-		_ -> false
+	case ar_weave:hash(BDS, Nonce) of
+		<< 0:Diff, _/bitstring >> = ValidHash ->
+			{valid, ValidHash};
+		InvalidHash ->
+			{invalid, InvalidHash}
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
@@ -262,32 +264,23 @@ mine(
 	Supervisor
 ) ->
 	process_flag(priority, low),
-	{Hash, Nonces} = find_nonce(BDS, Diff),
-	Supervisor ! {solution, Hash, Nonces, TXs, Diff, Timestamp}.
+	{Nonce, Hash} = find_nonce(BDS, Diff),
+	Supervisor ! {solution, Hash, Nonce, TXs, Diff, Timestamp}.
 
 find_nonce(BDS, Diff) ->
-	find_nonce(BDS, Diff, []).
+	crypto:rand_seed(),
+	%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
+	%% arbitrary size for the initial nonce.
+	Nonce = crypto:strong_rand_bytes(384 div 8),
+	find_nonce(BDS, Diff, Nonce).
 
-find_nonce(BDS, Diff, Nonces) when length(Nonces) >= 512 ->
-	find_nonce(BDS, Diff, []);
-find_nonce(BDS, Diff, Nonces) ->
-	NewNonces = [bool_to_binary(coinflip()) | Nonces],
-	case validate(BDS, iolist_to_binary(NewNonces), Diff) of
-		false ->
-			find_nonce(BDS, Diff, NewNonces);
-		ValidHash ->
-			{ValidHash, iolist_to_binary(NewNonces)}
-	end.
-
-%% @doc Converts a boolean value to a byte of 0 or 1.
-bool_to_binary(true) -> <<1>>;
-bool_to_binary(false) -> <<0>>.
-
-%% @doc A simple boolean coinflip.
-coinflip() ->
-	case rand:uniform(2) of
-		1 -> true;
-		2 -> false
+find_nonce(BDS, Diff, Nonce) ->
+	case validate(BDS, Nonce, Diff) of
+		{invalid, Hash} ->
+			%% Re-use the hash as the next nonce, since we get it for free.
+			find_nonce(BDS, Diff, Hash);
+		{valid, Hash} ->
+			{Nonce, Hash}
 	end.
 
 
