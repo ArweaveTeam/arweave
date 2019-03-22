@@ -83,7 +83,6 @@ validate_by_hash(BDSHash, Diff) ->
 
 %% PRIVATE
 
-
 %% @doc Takes a state and a set of transactions and return a new state with the
 %% new set of transactions.
 update_txs(
@@ -307,7 +306,7 @@ change_txs_test_() ->
 		SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
 		%% Start mining with a high enough difficulty, so that the mining won't
 		%% finish before adding more TXs.
-		Diff = 20,
+		Diff = 22,
 		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self()),
 		change_txs(PID, SecondTXSet),
 		assert_mine_output(B, RecallB, SecondTXSet, Diff)
@@ -324,7 +323,7 @@ timestamp_refresh_test_() ->
 		%% and find the block too fast, we retry until it succeeds.
 		Run = fun(_) ->
 			TXs = [],
-			start(B, RecallB, TXs, unclaimed, [], 19, self()),
+			start(B, RecallB, TXs, unclaimed, [], 20, self()),
 			StartTime = os:system_time(seconds),
 			{_, MinedTimestamp} = assert_mine_output(B, RecallB, TXs),
 			MinedTimestamp > StartTime
@@ -342,14 +341,14 @@ start_stop_test() ->
 	PID = start(B, RecallB, [], unclaimed, [], self()),
 	link(PID),
 	stop(PID),
-	assert_not_alive(PID, 500).
+	assert_not_alive(PID, 3000).
 
 %% @doc Ensures a miner can be started and stopped.
 miner_start_stop_test() ->
 	S = #state{},
 	PID = spawn_link(?MODULE, mine, [S, self()]),
 	stop_miners([PID]),
-	assert_not_alive(PID, 500).
+	assert_not_alive(PID, 3000).
 
 assert_mine_output(B, RecallB, TXs, Diff) ->
 	Result = assert_mine_output(B, RecallB, TXs),
