@@ -122,22 +122,22 @@ update_data_segment(S = #state { txs = TXs }) ->
 	update_data_segment(S, TXs).
 
 update_data_segment(S, TXs) ->
-	StartTimestamp = os:system_time(seconds),
-	BlockTimestamp = StartTimestamp + S#state.generate_data_segment_duration,
-	BDS = ar_block:generate_block_data_segment(
-		S#state.current_block,
-		S#state.recall_block,
-		TXs,
-		S#state.reward_addr,
-		BlockTimestamp,
-		S#state.tags
-	),
-	NewDuration = os:system_time(seconds) - StartTimestamp,
+	BlockTimestamp = os:system_time(seconds) + S#state.generate_data_segment_duration,
+	{DurationMicros, BDS} = timer:tc(fun() ->
+		ar_block:generate_block_data_segment(
+			S#state.current_block,
+			S#state.recall_block,
+			TXs,
+			S#state.reward_addr,
+			BlockTimestamp,
+			S#state.tags
+		)
+	end),
 	NewS = S#state {
 		timestamp = BlockTimestamp,
 		txs = TXs,
 		data_segment = BDS,
-		generate_data_segment_duration = NewDuration
+		generate_data_segment_duration = round(DurationMicros / 1000000)
 	},
 	maybe_update_difficulty(reschedule_timestamp_refresh(NewS)).
 
