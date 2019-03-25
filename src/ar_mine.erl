@@ -15,7 +15,7 @@
 	timestamp, % the block timestamp used for the mining
 	timestamp_refresh_timer, % Reference for timer for updating the timestamp
 	data_segment = <<>>, % the data segment generated for mining
-	generate_data_segment_duration, % duration in seconds for last generation of the data segment.
+	data_segment_duration, % duration in seconds of the last generation of the data segment.
 	reward_addr, % the nodes reward address
 	tags, % the nodes block tags
 	diff, % the current network difficulty
@@ -45,7 +45,7 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 			parent = Parent,
 			current_block = CurrentB,
 			recall_block = RecallB,
-			generate_data_segment_duration = 0,
+			data_segment_duration = 0,
 			reward_addr = RewardAddr,
 			tags = Tags,
 			max_miners = ar_meta_db:get(max_miners),
@@ -96,12 +96,12 @@ update_txs(
 	S = #state {
 		current_block = CurrentB,
 		diff = CurrentDiff,
-		generate_data_segment_duration = GenerateBDSDuration,
+		data_segment_duration = BDSGenerationDuration,
 		auto_update_diff = AutoUpdateDiff
 	},
 	TXs
 ) ->
-	NextBlockTimestamp = next_block_timestamp(GenerateBDSDuration),
+	NextBlockTimestamp = next_block_timestamp(BDSGenerationDuration),
 	NextDiff = case AutoUpdateDiff of
 		true -> calc_diff(CurrentB, NextBlockTimestamp);
 		false -> CurrentDiff
@@ -120,8 +120,11 @@ update_txs(
 		),
 	update_data_segment(S, ValidTXs, NextBlockTimestamp, NextDiff).
 
-next_block_timestamp(GenerateBDSDuration) ->
-	os:system_time(seconds) + GenerateBDSDuration.
+%% @doc Generate a new timestamp to be used in the next block. To compensate for
+%% the time it takes to generate the block data segment, adjust the timestamp
+%% with the same time it took to generate the block data segment the last time.
+next_block_timestamp(BDSGenerationDuration) ->
+	os:system_time(seconds) + BDSGenerationDuration.
 
 %% @doc Given a block calculate the difficulty to mine on for the next block.
 %% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
@@ -134,22 +137,21 @@ calc_diff(CurrentB, NextBlockTimestamp) ->
 		CurrentB#block.last_retarget
 	).
 
-%% @doc Generate a new data_segment and update the timestamp. Adjust for the
-%% generation duration, so that the timestamp is as fresh as possible when
-%% the update finishes.
+%% @doc Generate a new data_segment and update the timestamp and diff.
 update_data_segment(S = #state { txs = TXs }) ->
 	update_data_segment(S, TXs).
 
+%% @doc Generate a new data_segment and update the timestamp, diff and transactions.
 update_data_segment(
 	S = #state {
-		generate_data_segment_duration = GenerateBDSDuration,
+		data_segment_duration = BDSGenerationDuration,
 		auto_update_diff = AutoUpdateDiff,
 		diff = CurrentDiff,
 		current_block = CurrentB
 	},
 	TXs
 ) ->
-	BlockTimestamp = next_block_timestamp(GenerateBDSDuration),
+	BlockTimestamp = next_block_timestamp(BDSGenerationDuration),
 	Diff = case AutoUpdateDiff of
 		true -> calc_diff(CurrentB, BlockTimestamp);
 		false -> CurrentDiff
@@ -172,20 +174,20 @@ update_data_segment(S, TXs, BlockTimestamp, Diff) ->
 		diff = Diff,
 		txs = TXs,
 		data_segment = BDS,
-		generate_data_segment_duration = round(DurationMicros / 1000000)
+		data_segment_duration = round(DurationMicros / 1000000)
 	},
 	reschedule_timestamp_refresh(NewS).
 
 reschedule_timestamp_refresh(S = #state{
 	timestamp_refresh_timer = Timer,
-	generate_data_segment_duration = DurationSeconds
+	data_segment_duration = BDSGenerationDuration
 }) ->
 	timer:cancel(Timer),
-	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - DurationSeconds  of
+	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - BDSGenerationDuration  of
 		TimeoutSeconds when TimeoutSeconds =< 0 ->
 			ar:warn(
 				"ar_mine: Updating data segment slower (~B seconds) than timestamp refresh interval (~B seconds)",
-				[DurationSeconds, ?MINING_TIMESTAMP_REFRESH_INTERVAL]
+				[BDSGenerationDuration, ?MINING_TIMESTAMP_REFRESH_INTERVAL]
 			),
 			self() ! refresh_timestamp,
 			S#state{ timestamp_refresh_timer = no_timer };
