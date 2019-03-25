@@ -36,6 +36,10 @@ start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent) when is_i
 do_start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent) ->
 	do_start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent);
 do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
+	{NewDiff, AutoUpdateDiff} = case Diff of
+		auto_update -> {not_set, true};
+		_ -> {Diff, false}
+	end,
 	start_server(
 		#state {
 			parent = Parent,
@@ -46,8 +50,8 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 			tags = Tags,
 			max_miners = ar_meta_db:get(max_miners),
 			nonces = [],
-			diff = Diff,
-			auto_update_diff = Diff == auto_update
+			diff = NewDiff,
+			auto_update_diff = AutoUpdateDiff
 		},
 		RawTXs
 	).
@@ -88,32 +92,47 @@ validate_by_hash(BDSHash, Diff) ->
 
 %% @doc Takes a state and a set of transactions and return a new state with the
 %% new set of transactions.
-update_txs(S = #state { diff = auto_update }, TXs) ->
-	%% We haven't set the timestamp and difficulty yet because that's done later
-	%% in update_data_segment/2. The difficulty is needed for the
-	%% ar_tx:verify/3 call, so let's updated the block data segment with emtpy
-	%% transactions just to get the difficulty.
-	update_txs(update_data_segment(S, []), TXs);
 update_txs(
 	S = #state {
 		current_block = CurrentB,
-		diff = Diff
+		diff = CurrentDiff,
+		generate_data_segment_duration = GenerateBDSDuration,
+		auto_update_diff = AutoUpdateDiff
 	},
 	TXs
 ) ->
+	NextBlockTimestamp = next_block_timestamp(GenerateBDSDuration),
+	NextDiff = case AutoUpdateDiff of
+		true -> calc_diff(CurrentB, NextBlockTimestamp);
+		false -> CurrentDiff
+	end,
 	%% Filter out invalid TXs. A TX can be valid by itself, but still invalid
 	%% in the context of the other TXs and the block it would be mined to.
 	ValidTXs =
 		lists:filter(
 			fun(TX) ->
-				ar_tx:verify(TX, Diff, CurrentB#block.wallet_list)
+				ar_tx:verify(TX, NextDiff, CurrentB#block.wallet_list)
 			end,
 			ar_node_utils:filter_all_out_of_order_txs(
 				CurrentB#block.wallet_list,
 				TXs
 			)
 		),
-	update_data_segment(S, ValidTXs).
+	update_data_segment(S, ValidTXs, NextBlockTimestamp, NextDiff).
+
+next_block_timestamp(GenerateBDSDuration) ->
+	os:system_time(seconds) + GenerateBDSDuration.
+
+%% @doc Given a block calculate the difficulty to mine on for the next block.
+%% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
+%% This is done in attempt to maintain on average a fixed block time.
+calc_diff(CurrentB, NextBlockTimestamp) ->
+	ar_retarget:maybe_retarget(
+		CurrentB#block.height + 1,
+		CurrentB#block.diff,
+		NextBlockTimestamp,
+		CurrentB#block.last_retarget
+	).
 
 %% @doc Generate a new data_segment and update the timestamp. Adjust for the
 %% generation duration, so that the timestamp is as fresh as possible when
@@ -121,8 +140,23 @@ update_txs(
 update_data_segment(S = #state { txs = TXs }) ->
 	update_data_segment(S, TXs).
 
-update_data_segment(S, TXs) ->
-	BlockTimestamp = os:system_time(seconds) + S#state.generate_data_segment_duration,
+update_data_segment(
+	S = #state {
+		generate_data_segment_duration = GenerateBDSDuration,
+		auto_update_diff = AutoUpdateDiff,
+		diff = CurrentDiff,
+		current_block = CurrentB
+	},
+	TXs
+) ->
+	BlockTimestamp = next_block_timestamp(GenerateBDSDuration),
+	Diff = case AutoUpdateDiff of
+		true -> calc_diff(CurrentB, BlockTimestamp);
+		false -> CurrentDiff
+	end,
+	update_data_segment(S, TXs, BlockTimestamp, Diff).
+
+update_data_segment(S, TXs, BlockTimestamp, Diff) ->
 	{DurationMicros, BDS} = timer:tc(fun() ->
 		ar_block:generate_block_data_segment(
 			S#state.current_block,
@@ -135,11 +169,12 @@ update_data_segment(S, TXs) ->
 	end),
 	NewS = S#state {
 		timestamp = BlockTimestamp,
+		diff = Diff,
 		txs = TXs,
 		data_segment = BDS,
 		generate_data_segment_duration = round(DurationMicros / 1000000)
 	},
-	maybe_update_difficulty(reschedule_timestamp_refresh(NewS)).
+	reschedule_timestamp_refresh(NewS).
 
 reschedule_timestamp_refresh(S = #state{
 	timestamp_refresh_timer = Timer,
@@ -163,22 +198,6 @@ reschedule_timestamp_refresh(S = #state{
 					S
 			end
 	end.
-
-maybe_update_difficulty(S = #state{ auto_update_diff = false }) ->
-	S;
-maybe_update_difficulty(S = #state{ current_block = B, timestamp = Timestamp }) ->
-	S#state{ diff = next_diff(B, Timestamp) }.
-
-%% @doc Given a block calculate the difficulty to mine on for the next block.
-%% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
-%% This is done in attempt to maintain on average a fixed block time.
-next_diff(CurrentB, NextBlockTimestamp) ->
-	ar_retarget:maybe_retarget(
-		CurrentB#block.height + 1,
-		CurrentB#block.diff,
-		NextBlockTimestamp,
-		CurrentB#block.last_retarget
-	).
 
 %% @doc Start the main mining server.
 start_server(S, TXs) ->
