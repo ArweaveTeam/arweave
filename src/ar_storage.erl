@@ -34,8 +34,7 @@ ensure_directories() ->
 	filelib:ensure_dir(DataDir ++ ?BLOCK_DIR ++ "/"),
 	filelib:ensure_dir(DataDir ++ ?BLOCK_ENC_DIR ++ "/"),
 	filelib:ensure_dir(DataDir ++ ?WALLET_LIST_DIR ++ "/"),
-	filelib:ensure_dir(DataDir ++ ?HASH_LIST_DIR ++ "/"),
-	filelib:ensure_dir(?LOG_DIR).
+	filelib:ensure_dir(DataDir ++ ?HASH_LIST_DIR ++ "/").
 
 %% @doc Clear the cache of saved blocks.
 clear() ->
