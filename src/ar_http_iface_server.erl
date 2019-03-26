@@ -1032,20 +1032,6 @@ post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS}) ->
 		false ->
 			{503, [], <<"Not joined.">>};
 		true ->
-			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS})
-	end;
-post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}) ->
-	% Verify the timestamp of the block shadow.
-	case ar_block:verify_timestamp(BShadow) of
-		false ->
-			post_block_reject_warn(
-				BShadow,
-				check_timestamp,
-				[{block_time, BShadow#block.timestamp},
-				 {current_time, os:system_time(seconds)}]
-			),
-			{400, [], <<"Invalid timestamp.">>};
-		true ->
 			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS})
 	end;
 %% The MIN_DIFF check is filtering out blocks from smaller networks, e.g.
@@ -1058,6 +1044,23 @@ post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}) ->
 		_ ->
 			{400, [], <<"Difficulty too low">>}
 	end;
+%% TODO: Enable check_timestamp when all nodes are running the new miner which
+%% updates the timestamp regularly. Also re-enable:
+%% ar_http_iface_tests:add_external_block_with_invalid_timestamp_test/0
+%% post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}) ->
+%% 	% Verify the timestamp of the block shadow.
+%% 	case ar_block:verify_timestamp(BShadow) of
+%% 		false ->
+%% 			post_block_reject_warn(
+%% 				BShadow,
+%% 				check_timestamp,
+%% 				[{block_time, BShadow#block.timestamp},
+%% 				 {current_time, os:system_time(seconds)}]
+%% 			),
+%% 			{400, [], <<"Invalid timestamp.">>};
+%% 		true ->
+%% 			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS})
+%% 	end;
 %% Note! Checking PoW should be as cheap as possible. All slow steps should
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
@@ -1104,11 +1107,11 @@ post_block_reject_warn(BShadow, Step) ->
 		Step
 	]).
 
-post_block_reject_warn(BShadow, Step, Params) ->
-	ar:warn([
-		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
-		{Step, Params}
-	]).
+%% post_block_reject_warn(BShadow, Step, Params) ->
+%% 	ar:warn([
+%% 		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
+%% 		{Step, Params}
+%% 	]).
 
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>]) ->
