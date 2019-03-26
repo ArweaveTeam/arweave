@@ -2,8 +2,6 @@
 
 set -o errexit
 
-mkdir -p ebin logs priv
-
 if [ -t 1 ]; then
     SHELL_OPTS=
 else
