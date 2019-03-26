@@ -163,7 +163,7 @@
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
 -define(BLOCK_DIR, "blocks").
--define(BLOCK_ENC_DIR, "blocks/enc").
+-define(ENCRYPTED_BLOCK_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
 
 %% @doc Backup block hash list storage directory.

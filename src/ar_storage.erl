@@ -32,7 +32,7 @@ ensure_directories() ->
 	DataDir = ar_meta_db:get(data_dir) ++ "/",
 	filelib:ensure_dir(DataDir ++ ?TX_DIR ++ "/"),
 	filelib:ensure_dir(DataDir ++ ?BLOCK_DIR ++ "/"),
-	filelib:ensure_dir(DataDir ++ ?BLOCK_ENC_DIR ++ "/"),
+	filelib:ensure_dir(DataDir ++ ?ENCRYPTED_BLOCK_DIR ++ "/"),
 	filelib:ensure_dir(DataDir ++ ?WALLET_LIST_DIR ++ "/"),
 	filelib:ensure_dir(DataDir ++ ?HASH_LIST_DIR ++ "/").
 
@@ -162,7 +162,7 @@ write_encrypted_block(Hash, B) ->
 		Name = lists:flatten(
 			io_lib:format(
 				"~s/~s_~s.json",
-				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_ENC_DIR, "encrypted" , ar_util:encode(Hash)]
+				[ar_meta_db:get(data_dir) ++ "/" ++ ?ENCRYPTED_BLOCK_DIR, "encrypted" , ar_util:encode(Hash)]
 			)
 		),
 		BlockToWrite
@@ -177,7 +177,7 @@ write_encrypted_block(Hash, B) ->
 				Name = lists:flatten(
 					io_lib:format(
 						"~s/~s_~s.json",
-						[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_ENC_DIR, "encrypted" , ar_util:encode(Hash)]
+						[ar_meta_db:get(data_dir) ++ "/" ++ ?ENCRYPTED_BLOCK_DIR, "encrypted" , ar_util:encode(Hash)]
 					)
 				),
 				BlockToWrite
@@ -298,7 +298,7 @@ name_block(BinHash) when is_binary(BinHash) ->
 %% @doc Generate a wildcard search string for an encrypted block,
 %% given a block, binary hash, or list.
 name_enc_block(BinHash) when is_binary(BinHash) ->
-	ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_ENC_DIR ++ "/*_" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
+	ar_meta_db:get(data_dir) ++ "/" ++ ?ENCRYPTED_BLOCK_DIR ++ "/*_" ++ binary_to_list(ar_util:encode(BinHash)) ++ ".json".
 
 %% @doc Delete the tx with the given hash from disk.
 delete_tx(Hash) ->

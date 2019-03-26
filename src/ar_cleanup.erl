@@ -48,11 +48,11 @@ remove_invalid_blocks(HashList) ->
 			Files
 		)
 	),
-	case file:list_dir(DataDir ++ ?BLOCK_ENC_DIR) of
+	case file:list_dir(DataDir ++ ?ENCRYPTED_BLOCK_DIR) of
 		{ok, FilesEnc} ->
 			lists:foreach(
 				fun(X) ->
-					file:delete(DataDir ++ ?BLOCK_ENC_DIR ++ X)
+					file:delete(DataDir ++ ?ENCRYPTED_BLOCK_DIR ++ X)
 				end,
 				FilesEnc
 			);
