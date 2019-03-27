@@ -72,24 +72,48 @@ do_join(Node, RawPeers, NewB) ->
 
 %% @doc Verify timestamps of peers.
 verify_time_sync(Peers) ->
-	% Ignore this check if time syncing is disable.
+	%% Ignore this check if time syncing is disabled.
 	case ar_meta_db:get(time_syncing) of
 		false -> true;
 		_ ->
-			lists:all(
-				fun(Peer) ->
-					LocalT = os:system_time(second),
-					RemoteT = ar_http_iface_client:get_time(Peer),
-					case RemoteT of
-						unknown -> true;
-						_ ->
-							(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
-							(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
-					end
-				end,
-				[ P || P <- Peers, not is_pid(P) ]
-			)
+			VerifyPeerClock = fun(Peer) ->
+				case ar_http_iface_client:get_time(Peer, 5 * 1000) of
+					{ok, {RemoteTMin, RemoteTMax}} ->
+						LocalT = os:system_time(second),
+						Tolerance = ?JOIN_CLOCK_TOLERANCE,
+						case LocalT of
+							T when T < RemoteTMin - Tolerance ->
+								log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
+								false;
+							T when T < RemoteTMin - Tolerance div 2 ->
+								log_peer_clock_diff(Peer, RemoteTMin - T),
+								true;
+							T when T > RemoteTMax + Tolerance ->
+								log_peer_clock_diff(Peer, T - RemoteTMax - Tolerance),
+								false;
+							T when T > RemoteTMax + Tolerance div 2 ->
+								log_peer_clock_diff(Peer, T - RemoteTMax),
+								true;
+							_ ->
+								true
+						end;
+					{error, Err} ->
+						ar:info(
+							"Failed to get time from peer ~s: ~p.",
+							[ar_util:format(Peer), Err]
+						),
+						true
+				end
+			end,
+			Responses = ar_util:pmap(VerifyPeerClock, [P || P <- Peers, not is_pid(P)]),
+			lists:all(fun(R) -> R end, Responses)
 	end.
+
+log_peer_clock_diff(Peer, Diff) ->
+	Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
+	WarningArgs = [ar_util:format_peer(Peer), Diff],
+	ar:console(Warning, WarningArgs),
+	ar:warn(Warning, WarningArgs).
 
 %% @doc Return the current block from a list of peers.
 find_current_block([]) ->

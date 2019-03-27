@@ -63,8 +63,16 @@
 -endif.
 
 -define(RETARGET_TOLERANCE, 0.1).
--define(BLOCK_TIME_DIFF_TOLERANCE, 90).
--define(NODE_TIME_SYNC_TOLERANCE, 15).
+
+-define(JOIN_CLOCK_TOLERANCE, 15).
+-define(MAX_BLOCK_PROPAGATION_TIME, 60).
+-define(CLOCK_DRIFT_MAX, 5).
+
+-ifdef(DEBUG).
+-define(MINING_TIMESTAMP_REFRESH_INTERVAL, 1).
+-else.
+-define(MINING_TIMESTAMP_REFRESH_INTERVAL, 10).
+-endif.
 
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
 
@@ -121,10 +129,6 @@
 
 %% @doc Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 3 * 1000).
-
-%% @doc The amount of time to wait before refreshing miner data in case of a
-%% difficulty change.
--define(REFRESH_MINE_DATA_TIMER, 60 * 1000).
 
 %% @doc Time between attempts to find optimise peers.
 -define(GET_MORE_PEERS_TIME,  240 * 1000).

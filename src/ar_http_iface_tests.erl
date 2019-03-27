@@ -34,20 +34,20 @@ get_tx_reward_test() ->
 
 %% @doc Ensure that objects are only re-gossiped once.
 single_regossip_test_() ->
-	{ timeout, 60, fun() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
-	TX = ar_tx:new(<<"TEST DATA">>),
-	Responses =
-		ar_util:pmap(
-			fun(_) ->
-				ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
-			end,
-			lists:seq(1, 100)
-		),
-	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ])
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[B0] = ar_weave:init([]),
+		Node1 = ar_node:start([], [B0]),
+		ar_http_iface_server:reregister(Node1),
+		TX = ar_tx:new(),
+		Responses =
+			lists:map(
+				fun(_) ->
+					ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+				end,
+				lists:seq(1, 100)
+			),
+		?assertEqual(1, length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]))
 	end}.
 
 %% @doc Unjoined nodes should not accept blocks
@@ -210,7 +210,10 @@ get_last_tx_single_test() ->
 
 %% @doc Check that we can qickly get the local time from the peer.
 get_time_test() ->
-	?assertEqual(os:system_time(second), ar_http_iface_client:get_time({127, 0, 0, 1, 1984})).
+	Now = os:system_time(second),
+	{ok, {Min, Max}} = ar_http_iface_client:get_time({127, 0, 0, 1, 1984}, 10 * 1000),
+	?assert(Min < Now),
+	?assert(Now < Max).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
@@ -458,6 +461,80 @@ add_external_block_with_bad_bds_test_() ->
 			)
 		)
 	end}.
+
+% add_external_block_with_invalid_timestamp_test() ->
+% 	Setup = fun() ->
+% 		ar_storage:clear(),
+% 		[B0] = ar_weave:init([]),
+% 		BHL0 = [B0#block.indep_hash],
+% 		NodeWithBridge = ar_node:start([], [B0]),
+% 		Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
+% 		OtherNode = ar_node:start([], [B0]),
+% 		timer:sleep(500),
+% 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+% 		ar_http_iface_server:reregister(http_entrypoint_node, NodeWithBridge),
+% 		{BHL0, {127, 0, 0, 1, 1984}, OtherNode}
+% 	end,
+% 	{BHL0, RemotePeer, LocalNode} = Setup(),
+% 	BHL1 = mine_one_block(LocalNode, BHL0),
+% 	B1 = ar_storage:read_block(hd(BHL1), BHL1),
+% 	RecallB0 = ar_node_utils:find_recall_block(BHL0),
+% 	%% Expect the timestamp too far from the future to be rejected
+% 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
+% 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
+% 	?assertMatch(
+% 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
+% 		send_new_block(
+% 			RemotePeer,
+% 			B1#block {
+% 				indep_hash = add_rand_suffix(<<"random-hash">>),
+% 				timestamp = TooFarFutureTimestamp
+% 			},
+% 			RecallB0
+% 		)
+% 	),
+% 	%% Expect the timestamp from the future within the tolerance interval to be accepted
+% 	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
+% 	?assertMatch(
+% 		{ok, {{<<"200">>, _}, _, _, _, _}},
+% 		send_new_block(
+% 			RemotePeer,
+% 			update_nonce(B1#block {
+% 				indep_hash = add_rand_suffix(<<"random-hash">>),
+% 				timestamp = OkFutureTimestamp
+% 			}, RecallB0),
+% 			RecallB0
+% 		)
+% 	),
+% 	%% Expect the timestamp far from the past to be rejected
+% 	PastTimestampTolerance = lists:sum([
+% 		?JOIN_CLOCK_TOLERANCE * 2,
+% 		?CLOCK_DRIFT_MAX,
+% 		?MINING_TIMESTAMP_REFRESH_INTERVAL,
+% 		?MAX_BLOCK_PROPAGATION_TIME
+% 	]),
+% 	TooFarPastTimestamp = os:system_time(second) - PastTimestampTolerance - 3,
+% 	?assertMatch(
+% 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
+% 		send_new_block(
+% 			RemotePeer,
+% 			B1#block {
+% 				indep_hash = add_rand_suffix(<<"random-hash">>),
+% 				timestamp = TooFarPastTimestamp
+% 			},
+% 			RecallB0
+% 		)
+% 	),
+% 	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
+% 	OkPastTimestamp = os:system_time(second) - PastTimestampTolerance + 3,
+% 	?assertMatch(
+% 		{ok, {{<<"200">>, _}, _, _, _, _}},
+% 		send_new_block(
+% 			RemotePeer,
+% 			update_nonce(B1#block { timestamp = OkPastTimestamp}, RecallB0),
+% 			RecallB0
+% 		)
+% 	).
 
 add_rand_suffix(Bin) ->
 	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
@@ -1251,3 +1328,16 @@ generate_block_data_segment(B, PreviousRecallB) ->
 		B#block.timestamp,
 		B#block.tags
 	).
+
+update_nonce(B, PreviousRecallB) ->
+	update_nonce(B, PreviousRecallB, 0).
+
+update_nonce(B, PreviousRecallB, Nonce) ->
+	NonceBinary = integer_to_binary(Nonce),
+	BDS = generate_block_data_segment(B#block { nonce = NonceBinary }, PreviousRecallB),
+	case ar_weave:hash(BDS, NonceBinary) of
+		<< 0:(?MIN_DIFF), _/bitstring >> ->
+			B#block{ nonce = NonceBinary };
+		_ ->
+			update_nonce(B, PreviousRecallB, Nonce + 1)
+	end.

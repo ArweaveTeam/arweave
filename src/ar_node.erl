@@ -516,7 +516,9 @@ print_reward_addr() ->
 mine(Node) ->
 	Node ! mine.
 
-%% @doc Trigger a node to start mining a block at a certain difficulty.
+%% @doc Trigger a node to start mining a block at a certain difficulty. This is
+%% not used in the original/upstream git repo, but supposedly partners are using
+%% it in their forks.
 mine_at_diff(Node, Diff) ->
 	Node ! {mine_at_diff, Diff}.
 
@@ -779,18 +781,14 @@ handle(SPid, {get_current_diff, From}) ->
 	}} = ar_node_state:lookup(SPid, [height, diff, last_retarget]),
 	From ! {
 		current_diff,
-		case ar_retarget:is_retarget_height(Height + 1) of
-			true ->
-				ar_retarget:maybe_retarget(
-					Height + 1,
-					Diff,
-					os:system_time(seconds),
-					LastRetarget
-				);
-			false ->
-				Diff
-		end},
-		ok;
+		ar_retarget:maybe_retarget(
+			Height + 1,
+			Diff,
+			os:system_time(seconds),
+			LastRetarget
+		)
+	},
+	ok;
 handle(SPid, {get_diff, From}) ->
 	{ok, Diff} = ar_node_state:lookup(SPid, diff),
 	From ! {diff, Diff},

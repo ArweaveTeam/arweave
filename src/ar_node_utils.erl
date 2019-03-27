@@ -305,13 +305,17 @@ integrate_new_block(
 			potential_txs := PotentialTXs
 		} = StateIn,
 		NewB) ->
-	% Filter completed TXs from the pending list.
-	Diff = ar_mine:next_diff(NewB),
+	%% Filter completed TXs from the pending list. The mining reward for TXs is
+	%% supposed to be pessimistic (see the /price/[bytes] endpoint) by taking
+	%% into account the difficulty may change 1 step before the TX is mined into
+	%% a block. Therefore, we re-use the difficulty from NewB when verifying TXs
+	%% for the next block because even if the next difficulty makes the price go
+	%% up, it should be fine.
 	RawKeepNotMinedTXs =
 		lists:filter(
 			fun(T) ->
 				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
-				ar_tx:verify(T, Diff, WalletList)
+				ar_tx:verify(T, NewB#block.diff, WalletList)
 			end,
 			TXs
 		),

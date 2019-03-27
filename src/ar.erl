@@ -547,7 +547,8 @@ console(Report) ->
 console(Format, Data) -> info(Format, Data).
 -else.
 console(Format, Data) ->
-	io:format(Format, Data),
+	WithNewLine = iolist_to_binary([Format, "~n"]),
+	io:format(WithNewLine, Data),
 	info(Format, Data).
 -endif.
 

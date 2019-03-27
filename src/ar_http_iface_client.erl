@@ -9,7 +9,7 @@
 -export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
--export([get_time/1, get_height/1]).
+-export([get_time/2, get_height/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1, get_current_block/2]).
 
@@ -285,11 +285,31 @@ get_tx_data(Peer, Hash) ->
 	Body.
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
-get_time(Peer) ->
-	case ar_httpc:request(<<"GET">>, Peer, "/time", p2p_headers()) of
-		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			binary_to_integer(Body);
-		_ -> unknown
+get_time(Peer, Timeout) ->
+	Parent = self(),
+	Ref = make_ref(),
+	Child = spawn_link(
+		fun() ->
+			Resp = ar_httpc:request(<<"GET">>, Peer, "/time", p2p_headers(), <<>>, Timeout + 100),
+			Parent ! {get_time_response, Ref, Resp}
+		end
+	),
+	receive
+		{get_time_response, Ref, Response} ->
+			case Response of
+				{ok, {{<<"200">>, _}, _, Body, Start, End}} ->
+					Time = binary_to_integer(Body),
+					RequestTime = ceil((End - Start) / 1000000),
+					%% The timestamp returned by the HTTP daemon is floored second precision. Thus the
+					%% upper bound is increased by 1.
+					{ok, {Time - RequestTime, Time + RequestTime + 1}};
+				_ ->
+					{error, Response}
+			end
+		after Timeout ->
+			%% Note: the fusco client (used in ar_httpc:request) is not shutdown properly this way.
+			exit(Child, {shutdown, timeout}),
+			{error, timeout}
 	end.
 
 %% @doc Retreive all valid transactions held that have not yet been mined into

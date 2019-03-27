@@ -1,7 +1,7 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1]).
 -export([get_recall_block/5]).
--export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/2]).
+-export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/1]).
 -export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([verify_cumulative_diff/2, verify_block_hash_list_merkle/2]).
@@ -357,9 +357,24 @@ verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 verify_dep_hash(NewB, BDSHash) ->
 	NewB#block.hash == BDSHash.
 
-%% @doc Verify that the block was created within the last ten minutes
-verify_timestamp(Timestamp, NewB) ->
-	(NewB#block.timestamp - Timestamp) =< 600.
+%% @doc Verify the block timestamp is not too far in the future nor too far in
+%% the past. We calculate the maximum reasonable clock difference between any
+%% two nodes. This is a simplification since there is a chaining effect in the
+%% network which we don't take into account. Instead, we assume two nodes can
+%% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
+%% other.
+verify_timestamp(B) ->
+	CurrentTime = os:system_time(seconds),
+	MaxNodesClockDeviation = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
+	(
+		B#block.timestamp =< CurrentTime + MaxNodesClockDeviation
+		andalso
+		B#block.timestamp >= CurrentTime - lists:sum([
+			?MINING_TIMESTAMP_REFRESH_INTERVAL,
+			?MAX_BLOCK_PROPAGATION_TIME,
+			MaxNodesClockDeviation
+		])
+	).
 
 %% @doc Verify the height of the new block is the one higher than the
 %% current height.
@@ -373,7 +388,6 @@ verify_last_retarget(NewB, OldB) ->
 			NewB#block.last_retarget == NewB#block.timestamp;
 		false ->
 			NewB#block.last_retarget == OldB#block.last_retarget
-				andalso NewB#block.timestamp >= NewB#block.last_retarget
 	end.
 
 %% @doc Verify that the previous_block hash of the new block is the indep_hash
