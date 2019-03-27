@@ -350,6 +350,12 @@ miner_start_stop_test() ->
 	stop_miners([PID]),
 	assert_not_alive(PID, 3000).
 
+validator_test() ->
+	BDS = ar_util:decode(<<"DIhZtgVPvAyGlWDfAq7NfoL28x_4yxDOSFU-thfBPoRdRsDaZPYrkCyQ-5zL5LeS">>),
+	Nonce = ar_util:decode(<<"AQEBAQEBAQEBAAABAQAAAAEBAQAAAQEBAAAAAQEAAAAAAQABAAEBAQAAAQAAAAE">>),
+	?assertMatch({valid, _}, validate(BDS, Nonce, 37)),
+	?assertMatch({invalid, _}, validate(BDS, Nonce, 38)).
+
 assert_mine_output(B, RecallB, TXs, Diff) ->
 	Result = assert_mine_output(B, RecallB, TXs),
 	?assertMatch({Diff, _}, Result),
