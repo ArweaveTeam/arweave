@@ -476,26 +476,7 @@ store_and_retrieve_tx_test() ->
 	write_tx(Tx0),
 	Tx0 = read_tx(Tx0),
 	Tx0 = read_tx(Tx0#tx.id),
-	file:delete(name_tx(Tx0)).
-
-% store_and_retrieve_encrypted_block_test() ->
-%	  B0 = ar_weave:init([]),
-%	  ar_storage:write_block(B0),
-%	  B1 = ar_weave:add(B0, []),
-%	  CipherText = ar_block:encrypt_block(hd(B0), hd(B1)),
-%	  write_encrypted_block((hd(B0))#block.hash, CipherText),
-%	read_encrypted_block((hd(B0))#block.hash),
-%	Block0 = hd(B0),
-%	Block0 = ar_block:decrypt_full_block(hd(B1), CipherText, Key).
-
-% not_enough_space_test() ->
-%	Disk = ar_meta_db:get(disk_space),
-%	ar_meta_db:put(disk_space, 0),
-%	[B0] = ar_weave:init(),
-%	Tx0 = ar_tx:new(<<"DATA1">>),
-%	{error, enospc} = write_block(B0),
-%	{error, enospc} = write_tx(Tx0),
-%	ar_meta_db:put(disk_space, Disk).
+	file:delete(tx_filepath(Tx0)).
 
 %% @doc Ensure blocks can be written to disk, then moved into the 'invalid'
 %% block directory.
