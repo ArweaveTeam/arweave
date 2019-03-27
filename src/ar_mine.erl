@@ -231,7 +231,7 @@ server(
 start_miners(S = #state {max_miners = MaxMiners}) ->
 	Miners =
 		lists:map(
-			fun(_) -> spawn_link(?MODULE, mine, [S, self()]) end,
+			fun(_) -> spawn(?MODULE, mine, [S, self()]) end,
 			lists:seq(1, MaxMiners)
 		),
 	S#state {miners = Miners}.
@@ -240,7 +240,6 @@ start_miners(S = #state {max_miners = MaxMiners}) ->
 stop_miners(Miners) ->
 	lists:foreach(
 		fun(PID) ->
-			unlink(PID),
 			exit(PID, stop)
 		end,
 		Miners
@@ -293,7 +292,7 @@ basic_test() ->
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
-	link(start(B, RecallB, [], unclaimed, [], self())),
+	start(B, RecallB, [], unclaimed, [], self()),
 	assert_mine_output(B, RecallB, []).
 
 %% @doc Ensure that we can change the transactions while mining is in progress.
@@ -338,15 +337,19 @@ start_stop_test() ->
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
-	PID = start(B, RecallB, [], unclaimed, [], self()),
-	link(PID),
+	VeryHighDiff = 100,
+	PID = start(B, RecallB, [], unclaimed, [], VeryHighDiff, self()),
+	timer:sleep(500),
+	assert_alive(PID),
 	stop(PID),
 	assert_not_alive(PID, 3000).
 
 %% @doc Ensures a miner can be started and stopped.
 miner_start_stop_test() ->
-	S = #state{},
-	PID = spawn_link(?MODULE, mine, [S, self()]),
+	S = #state{ diff = 100 },
+	PID = spawn(?MODULE, mine, [S, self()]),
+	timer:sleep(500),
+	assert_alive(PID),
 	stop_miners([PID]),
 	assert_not_alive(PID, 3000).
 
@@ -388,6 +391,9 @@ assert_mine_output(B, RecallB, TXs) ->
 	after 20000 ->
 		error(timeout)
 	end.
+
+assert_alive(PID) ->
+	?assert(is_process_alive(PID)).
 
 assert_not_alive(PID, Timeout) ->
 	Do = fun () -> not is_process_alive(PID) end,
