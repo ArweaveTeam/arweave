@@ -21,8 +21,9 @@ all() ->
 
 %% @doc Remove all blocks from blocks directory not in HashList
 remove_invalid_blocks(HashList) ->
-	DataDir = ar_meta_db:get(data_dir) ++ "/",
-	{ok, RawFiles} = file:list_dir(DataDir ++ ?BLOCK_DIR),
+	DataDir = ar_meta_db:get(data_dir),
+	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
+	{ok, RawFiles} = file:list_dir(BlockDir),
 	Files =
 		lists:filter(
 			fun(X) ->
@@ -32,7 +33,7 @@ remove_invalid_blocks(HashList) ->
 		),
 	lists:foreach(
 		fun(X) ->
-			file:delete(DataDir ++ ?BLOCK_DIR ++ X)
+			file:delete(filename:join(BlockDir, X))
 		end,
 		lists:filter(
 			fun(Y) ->
@@ -48,11 +49,12 @@ remove_invalid_blocks(HashList) ->
 			Files
 		)
 	),
-	case file:list_dir(DataDir ++ ?ENCRYPTED_BLOCK_DIR) of
+	EncryptedBlockDir = filename:join(DataDir, ?ENCRYPTED_BLOCK_DIR),
+	case file:list_dir(EncryptedBlockDir) of
 		{ok, FilesEnc} ->
 			lists:foreach(
 				fun(X) ->
-					file:delete(DataDir ++ ?ENCRYPTED_BLOCK_DIR ++ X)
+					file:delete(filename:join(EncryptedBlockDir, X))
 				end,
 				FilesEnc
 			);
@@ -90,5 +92,5 @@ remove_block_keep_directory_test() ->
 	B1 = ar_weave:add(B0, []),
 	ar_storage:write_block(hd(B1)),
 	remove_invalid_blocks([]),
-	{ok, Files} = (file:list_dir(ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR)),
+	{ok, Files} = file:list_dir(filename:join(ar_meta_db:get(data_dir), ?BLOCK_DIR)),
 	0 = length(lists:filter(fun filelib:is_file/1, Files -- [".gitignore"])).

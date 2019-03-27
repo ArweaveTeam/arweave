@@ -133,8 +133,8 @@ server() ->
 
 %% @doc Initialise the mnesia database
 initDB() ->
-	DataDir = ar_meta_db:get(data_dir),
-	TXIndexDir = DataDir ++ "/" ++ ?TX_INDEX_DIR,
+	TXIndexDir = filename:join(ar_meta_db:get(data_dir), ?TX_INDEX_DIR),
+	%% Append the / to make filelib:ensure_dir/1 create a directory if one does not exist.
 	filelib:ensure_dir(TXIndexDir ++ "/"),
 	application:set_env(mnesia, dir, TXIndexDir),
 	mnesia:create_schema([node()]),
