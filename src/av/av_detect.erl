@@ -2,43 +2,30 @@
 -export([is_infected/2]).
 -include("av_recs.hrl").
 
-%%% Perform the malware detection.
+%%% Perform the illicit content detection.
 %%% Given it's task, we should optimise this as much as possible.
 
-%% Given a filename and a set of signatures, test whether the file
-%% is infected. If not, return false, if it is, return true and
-%% the matching sigs.
-%% Only files can be infected, return false for directories.
-% is_infected(FileName, Sigs) ->
-% 	case try_read(FileName) of
-% 		error -> pass;
-% 		Bin -> do_is_infected(FileName, Bin, Sigs)
-% 	end.
-
-is_infected(Obj, Sigs) ->
-	do_is_infected(Obj, Sigs).
-
-%% Try to read the file. If this fails, ignore it.
-try_read(FileName) ->
-	try element(2, {ok, _} = file:read_file(FileName))
-	catch _:_ -> error
+%% Given a binary and a set of signatures, test whether the binary
+%% contains illicit content. If not, return false, if it is, return true and
+%% the matching signatures. The list of matching signatures is empty if an issue
+%% is discovered by a quick check.
+is_infected(Binary, {Sigs, BinaryPattern, HashPattern}) ->
+	Hash = av_utils:md5sum(Binary),
+	case {quick_check(Binary, BinaryPattern), quick_check(Hash, HashPattern)} of
+		{false, false} ->
+			full_check(Binary, byte_size(Binary), Hash, Sigs);
+		_ ->
+			{true, []}
 	end.
 
-do_is_infected(Bin, Sigs) ->
-	full_check(Bin, byte_size(Bin), av_utils:md5sum(Bin), Sigs).
 %% Perform a quick check. This only tells us whether there is probably an
 %% infection, not what that infection is, if there is one. Has a very low
 %% false-positive rate.
-quick_check(CPs, Bin, Hash) ->
-	lists:any(
-		fun({no_pattern, _Data}) -> false;
-		   ({CP, Data}) ->
-			binary:match(Data, CP) =/= nomatch
-		end,
-		lists:zip(CPs, [Bin, Hash])
-	).
+quick_check(_, no_pattern) -> false;
+quick_check(Data, Pattern) ->
+	binary:match(Data, Pattern) =/= nomatch.
 
-%% Perform a full, slow check. This returns false, or a list of infections.
+%% Perform a full, slow check. This returns false, or true with a list of matched signatures.
 full_check(Bin, Sz, Hash, Sigs) ->
 	Res =
 		lists:filtermap(
@@ -64,7 +51,7 @@ check_sig(Bin, _Sz, _Hash, S = #sig { type = binary, data = D }) ->
 	end;
 check_sig(_Bin, Sz, Hash,
 		S = #sig { type = hash, data = D = #hash_sig { hash = SigHash } }) ->
-	% Check the binary size first, as this is very low cost.
+	%% Check the binary size first, as this is very low cost.
 	case D#hash_sig.size of
 		Sz -> check_hash(Hash, SigHash, S);
 		any -> check_hash(Hash, SigHash, S);
