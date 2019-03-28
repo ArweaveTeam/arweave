@@ -89,7 +89,8 @@
 	internal_api_secret = not_set,
 	enable = [],
 	disable = [],
-	content_policies = []
+	content_policies = [],
+	transaction_blacklist = []
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -126,6 +127,8 @@ main("") ->
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"content_policy (file)", "Load a content policy file for the node."},
+			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
+											 "One Base64 encoded transaction ID per line."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
@@ -153,8 +156,10 @@ parse(["mine"|Rest], O) ->
 	parse(Rest, O#opts { mine = true });
 parse(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
 	parse(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
-parse(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
-	parse(Rest, O#opts { content_policies = [F|Fs] });
+parse(["content_policy", File|Rest], O = #opts { content_policies = Files }) ->
+	parse(Rest, O#opts { content_policies = [File|Files] });
+parse(["transaction_blacklist", File|Rest], O = #opts { transaction_blacklist = Files } ) ->
+	parse(Rest, O#opts { transaction_blacklist = [File|Files] });
 parse(["port", Port|Rest], O) ->
 	parse(Rest, O#opts { port = list_to_integer(Port) });
 parse(["data_dir", DataDir|Rest], O) ->
@@ -231,7 +236,8 @@ start(
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
-		content_policies = Policies
+		content_policies = Policies,
+		transaction_blacklist = TransactionBlacklist
 	}) ->
 	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -244,6 +250,7 @@ start(
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(content_policies, Policies),
+	ar_meta_db:put(transaction_blacklist, TransactionBlacklist),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	%% Prepare the storage for operation.
 	ar_storage:start(),

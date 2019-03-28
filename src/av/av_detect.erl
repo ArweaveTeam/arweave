@@ -7,21 +7,25 @@
 
 %% Given a binary and a set of signatures, test whether the binary
 %% contains illicit content. If not, return false, if it is, return true and
-%% the matching signatures. The list of matching signatures is empty if an issue
-%% is discovered by a quick check.
+%% the matching signatures.
 is_infected(Binary, {Sigs, BinaryPattern, HashPattern}) ->
 	Hash = av_utils:md5sum(Binary),
-	case {quick_check(Binary, BinaryPattern), quick_check(Hash, HashPattern)} of
-		{false, false} ->
+	case quick_check(Binary, BinaryPattern) orelse quick_check(Hash, HashPattern) of
+		true ->
+			%% The full check makes sure it is not a false positive, and collects matching
+			%% signatures.
 			full_check(Binary, byte_size(Binary), Hash, Sigs);
 		_ ->
-			{true, []}
+			false
 	end.
 
 %% Perform a quick check. This only tells us whether there is probably an
 %% infection, not what that infection is, if there is one. Has a very low
-%% false-positive rate.
-quick_check(_, no_pattern) -> false;
+%% false-positive rate. If there is illicit content, returns true in 100% of the cases.
+%% There is a small chance related to joining the independent chunks together before
+%% compiling them that it will return true when there is no illicit content.
+%% If the pattern is no_pattern, returns true indicating the need for a full check.
+quick_check(_, no_pattern) -> true;
 quick_check(Data, Pattern) ->
 	binary:match(Data, Pattern) =/= nomatch.
 
