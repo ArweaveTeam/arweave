@@ -6,10 +6,10 @@
 
 %%% Arweave firewall implementation.
 
-%% State definition.
-%% Should store compiled binary scan objects.
+%% Stores compiled binary scan objects.
 -record(state, {
-	sigs = [] % the set of known signatures to filter against
+	tx_id_sigs = [], % a set of known signatures to filter transaction identifiers against
+	content_sigs = [] % a set of known signatures to filter transaction content against
 }).
 
 %% @doc Start a firewall node.
@@ -20,7 +20,8 @@ start() ->
 			F = spawn(
 				fun() ->
 					server(#state {
-						sigs = av_sigs:all()
+						tx_id_sigs = av_sigs:load(ar_meta_db:get(transaction_blacklist)),
+						content_sigs = av_sigs:load(ar_meta_db:get(content_policies))
 					})
 				end
 			),
@@ -40,45 +41,43 @@ reload() ->
 	end,
 	start().
 
-%% @doc Check that a received TX does not match the firewall rules.
+%% @doc Check whether a received TX matches the firewall rules.
 scan_tx(TX) ->
 	FwServer = whereis(default_firewall),
-	ar:report([{scanning_object_of_type, tx}]),
 	FwServer ! {scan_tx, self(), TX},
 	receive
 		{scanned_tx, Response} ->
-			ar:report([{scanned_object_of_type, tx}, {response, Response}]),
 			Response
 	after 10000 ->
-		ar:err("The firewall failed to scan the transaction within 10 seconds; data: ~p", [TX]),
+		ar:err([{ar_firewall, scan_tx_timeout}, {tx, ar_util:encode(TX#tx.id)}]),
 		accept
 	end.
 
 %% @doc Main firewall server loop.
-%% Receives scan requests and returns whether the given contents matches
+%% Receives scan requests and returns whether the given transaction and its contents match
 %% the set of known 'harmful'/'ignored' signatures.
-server(S = #state { sigs = Sigs } ) ->
+server(S = #state { tx_id_sigs = TXIDSigs, content_sigs = ContentSigs } ) ->
 	receive
 		{scan_tx, Pid, TX} ->
-			Pid ! {scanned_tx, scan_transaction(TX, Sigs)},
+			Pid ! {scanned_tx, scan_transaction(TX, TXIDSigs, ContentSigs)},
 			server(S)
 	end.
 
-%% @doc Compare a transaction against known bad signatures.
-scan_transaction(TX, Sigs) ->
+%% @doc Check if a transaction is in the black list and compare its contents against known bad signatures.
+scan_transaction(TX, TXIDSigs, ContentSigs) ->
 	Tags = lists:foldl(
 		fun({K, V}, Acc) ->
-			[K,V|Acc]
+			[{K, ContentSigs},{V, ContentSigs}|Acc]
 		end,
 		[],
 		TX#tx.tags
 	),
-	ScanList = [TX#tx.data,TX#tx.target|Tags],
+	ScanList = [{ar_util:encode(TX#tx.id), TXIDSigs},{TX#tx.data, ContentSigs},{TX#tx.target, ContentSigs}|Tags],
 	case lists:any(
-		fun(Data) ->
+		fun({Data, Sigs}) ->
 			case av_detect:is_infected(Data, Sigs) of
 				{true, _} ->
-					io:format("Infected! ~p~n", [Data]),
+					ar:info([{ar_firewall, reject_tx}, {tx, ar_util:encode(TX#tx.id)}, {content, Data}]),
 					true;
 				_ ->
 					false
@@ -94,8 +93,8 @@ scan_transaction(TX, Sigs) ->
 
 %% Tests: ar_firewall
 
-blacklist_transaction_test() ->
-	Sigs = #sig{
+scan_signatures_test() ->
+	ContentSigs = {[#sig{
 		name = "Test",
 		type = binary,
 		data = #binary_sig{
@@ -103,7 +102,16 @@ blacklist_transaction_test() ->
 			offset = any,
 			binary = <<"badstuff">>
 		}
-	},
+	}], no_pattern, no_pattern},
+	TXSigs = {[#sig{
+		name = "Test",
+		type = binary,
+		data = #binary_sig{
+			target_type = "0",
+			offset = any,
+			binary = ar_util:encode(<<"badtxid">>)
+		}
+	}], no_pattern, no_pattern},
 	TX = ar_tx:new(),
 	GoodTXs = [
 		TX#tx{ data = <<"goodstuff">> },
@@ -114,17 +122,18 @@ blacklist_transaction_test() ->
 		TX#tx{ data = <<"badstuff">> },
 		TX#tx{ tags = [{<<"badstuff">>, <<"goodstuff">>}] },
 		TX#tx{ tags = [{<<"goodstuff">>, <<"badstuff">>}] },
-		TX#tx{ target = <<"badstuff">> }
+		TX#tx{ target = <<"badstuff">> },
+		TX#tx{ id = <<"badtxid">>, data = <<"goodstuff">> }
 	],
 	lists:foreach(
 		fun(BadTX) ->
-			?assertEqual(reject, scan_transaction(BadTX, [Sigs]))
+			?assertEqual(reject, scan_transaction(BadTX, TXSigs, ContentSigs))
 		end,
 		BadTXs
 	),
 	lists:foreach(
 		fun(GoodTX) ->
-			?assertEqual(accept, scan_transaction(GoodTX, [Sigs]))
+			?assertEqual(accept, scan_transaction(GoodTX, TXSigs, ContentSigs))
 		end,
 		GoodTXs
 	).
@@ -141,9 +150,12 @@ parse_ndb_blacklist_test() ->
 					binary = <<"BADCONTENT">>
 				}
 		},
+	{Sigs, _, _} = av_sigs:load(["test/test_sig.ndb"]),
+	?assertEqual([ExpectedSig], Sigs),
 	ar_meta_db:put(content_policies, ["test/test_sig.ndb"]),
-	Sigs = av_sigs:all(),
-	?assertEqual([ExpectedSig], Sigs).
+	ar_firewall:reload(),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<".. BADCONTENT ..">> })),
+	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ data = <<".. B A D C ONTENT ..">> })).
 
 parse_txt_blacklist_test() ->
 	ExpectedSigs = [
@@ -172,8 +184,7 @@ parse_txt_blacklist_test() ->
 				}
 		}
 	],
-	ar_meta_db:put(content_policies, ["test/test_sig.txt"]),
-	Sigs = av_sigs:all(),
+	{Sigs, _, _ } = av_sigs:load(["test/test_sig.txt"]),
 	lists:foreach(
 		fun(ExpectedSig) ->
 			?assert(
@@ -182,4 +193,17 @@ parse_txt_blacklist_test() ->
 			)
 		end,
 		ExpectedSigs
-	).
+	),
+	ar_meta_db:put(content_policies, ["test/test_sig.txt"]),
+	ar_firewall:reload(),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<".. BADCONTENT1 ..">> })),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<"..blablaBADCONTENT2 ..">> })),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<"..BADCONTENT3111..">> })),
+	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ data = <<"B A D C ONTENT1 BADCONTENT 2 BADCONTEN T3">> })).
+
+blacklist_transaction_test() ->
+	ar_meta_db:put(transaction_blacklist, ["test/test_transaction_blacklist.txt"]),
+	ar_firewall:reload(),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid1">> })),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid2">> })),
+	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ id = <<"goodtxid">> })).
