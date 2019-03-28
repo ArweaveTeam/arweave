@@ -61,26 +61,49 @@ all() ->
 %% Load the signatures from a specified file, throwing away signatures
 %% that we are not able to process.
 do_load(File) ->
-	Fun =
-		case filename:extension(File) of
-			".ndb" -> fun create_binary_sig_from_hex/1;
-			".hdb" -> fun create_hash_sig/1;
-			".hsb" -> fun create_hash_sig/1;
-			".fp" -> fun create_hash_sig/1;
-			".txt" -> fun create_binary_sig/1
-		end,
-	lists:filtermap(
-		fun(Row) ->
-			try
-				S = Fun(Row),
-				{true, S}
-			catch _:_ ->
-				%sv:log(warning, "Unable to process row.", []),
-				false
+	case filelib:is_file(File) of
+		false ->
+			warn_on_load(File, lookup_file, [invalid_file]),
+			[];
+		true ->
+			Fun =
+				case filename:extension(File) of
+					".ndb" -> fun create_binary_sig_from_hex/1;
+					".hdb" -> fun create_hash_sig/1;
+					".hsb" -> fun create_hash_sig/1;
+					".fp" -> fun create_hash_sig/1;
+					".txt" -> fun create_binary_sig/1;
+					Other -> {extension_not_supported, Other}
+				end,
+			case Fun of
+				{extension_not_supported, Extension} ->
+					warn_on_load(File, check_file_extension, [{file_extension_not_supported, Extension}]),
+					[];
+				_ ->
+					try
+						lists:filtermap(
+							fun(Row) ->
+								try
+									S = Fun(Row),
+									{true, S}
+								catch Type:Pattern ->
+									warn_on_load(File, parse_row, [{row, Row}, {exception, {Type, Pattern}}]),
+									false
+								end
+							end,
+							av_csv:parse_file(File, $:)
+						)
+					catch Type:Pattern ->
+						warn_on_load(File, load_file, [{exception, {Type, Pattern}}]),
+						[]
+					end
 			end
-		end,
-		av_csv:parse_file(File, $:)
-	).
+	end.
+
+warn_on_load(File, Step, Context) ->
+	Warning = [{load_content_policies, Step}, {file, File}] ++ Context,
+	ar:warn(Warning),
+	ar:console(Warning).
 
 %% Take a CSV row and return a binary sig object.
 create_binary_sig_from_hex([Name, Type, Offset, Sig]) ->
