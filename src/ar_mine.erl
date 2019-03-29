@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/6, start/7, change_txs/2, stop/1, start_miner/2]).
+-export([start/6, start/7, change_txs/2, stop/1, mine/2]).
 -export([validate/3, validate_by_hash/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -22,8 +22,7 @@
 	auto_update_diff, % should the diff be kept or updated automatically
 	delay = 0, % hashing delay used for testing
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
-	miners = [], % miner worker processes
-	nonces % nonce builder to ensure entropy
+	miners = [] % miner worker processes
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
@@ -49,7 +48,6 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 			reward_addr = RewardAddr,
 			tags = Tags,
 			max_miners = ar_meta_db:get(max_miners),
-			nonces = [],
 			diff = NewDiff,
 			auto_update_diff = AutoUpdateDiff
 		},
@@ -64,17 +62,13 @@ stop(PID) ->
 change_txs(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
 
-%% @doc A worker process to hash the data segment searching for a solution
-%% for the given diff.
-start_miner(S, Supervisor) ->
-	process_flag(priority, low),
-	miner(S, Supervisor).
-
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff) ->
-	case NewHash = ar_weave:hash(BDS, Nonce) of
-		<< 0:Diff, _/bitstring >> -> NewHash;
-		_ -> false
+	case ar_weave:hash(BDS, Nonce) of
+		<< 0:Diff, _/bitstring >> = ValidHash ->
+			{valid, ValidHash};
+		InvalidHash ->
+			{invalid, InvalidHash}
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
@@ -88,7 +82,6 @@ validate_by_hash(BDSHash, Diff) ->
 
 
 %% PRIVATE
-
 
 %% @doc Takes a state and a set of transactions and return a new state with the
 %% new set of transactions.
@@ -207,19 +200,6 @@ start_server(S, TXs) ->
 		server(start_miners(update_txs(S, TXs)))
 	end).
 
-%% @doc Start the workers and return the new state.
-start_miners(S = #state {max_miners = MaxMiners}) ->
-	Miners =
-		lists:map(
-			fun(_) -> spawn(?MODULE, start_miner, [S, self()]) end,
-			lists:seq(1, MaxMiners)
-		),
-	lists:foreach(
-		fun(Pid) -> Pid ! hash end,
-		Miners
-	),
-	S#state {miners = Miners}.
-
 %% @doc The main mining server.
 server(
 	S = #state {
@@ -242,15 +222,26 @@ server(
 			server(restart_miners(update_data_segment(S)));
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
-		{solution, Hash, Nonces, MinedTXs, MinedDiff, MinedTimestamp} ->
-			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonces, MinedTimestamp},
+		{solution, Hash, Nonce, MinedTXs, MinedDiff, MinedTimestamp} ->
+			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp},
 			stop_miners(Miners)
 	end.
+
+%% @doc Start the workers and return the new state.
+start_miners(S = #state {max_miners = MaxMiners}) ->
+	Miners =
+		lists:map(
+			fun(_) -> spawn(?MODULE, mine, [S, self()]) end,
+			lists:seq(1, MaxMiners)
+		),
+	S#state {miners = Miners}.
 
 %% @doc Stop all workers.
 stop_miners(Miners) ->
 	lists:foreach(
-		fun(Pid) -> Pid ! stop end,
+		fun(PID) ->
+			exit(PID, stop)
+		end,
 		Miners
 	).
 
@@ -259,65 +250,35 @@ restart_miners(S) ->
 	stop_miners(S#state.miners),
 	start_miners(S).
 
-%% @doc The minig server performing the hashing.
-%% TODO: Change byte string for nonces to bitstring
-miner(
-	S = #state {
+%% @doc A worker process to hash the data segment searching for a solution
+%% for the given diff.
+mine(
+	#state {
 		data_segment = BDS,
 		diff = Diff,
-		nonces = Nonces,
 		txs = TXs,
 		timestamp = Timestamp
 	},
 	Supervisor
 ) ->
-	receive
-		stop -> ok;
-		hash ->
-			schedule_hash(S),
-			case validate(BDS, iolist_to_binary(Nonces), Diff) of
-				false ->
-					case(length(Nonces) > 512) and coinflip() of
-						false ->
-							miner(
-								S#state {
-									nonces =
-										[bool_to_binary(coinflip()) | Nonces]
-								},
-								Supervisor
-							);
-						true ->
-							miner(
-								S#state {
-									nonces = []
-								},
-								Supervisor
-							)
-					end;
-				Hash ->
-					Supervisor ! {solution, Hash, iolist_to_binary(Nonces), TXs, Diff, Timestamp}
-			end
-	end.
+	process_flag(priority, low),
+	{Nonce, Hash} = find_nonce(BDS, Diff),
+	Supervisor ! {solution, Hash, Nonce, TXs, Diff, Timestamp}.
 
-%% @doc Schedule a hashing attempt.
-%% Hashing attempts can be delayed for testing purposes.
-schedule_hash(S = #state { delay = 0 }) ->
-	self() ! hash,
-	S;
-schedule_hash(S = #state { delay = Delay }) ->
-	Parent = self(),
-	spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
-	S.
+find_nonce(BDS, Diff) ->
+	crypto:rand_seed(),
+	%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
+	%% arbitrary size for the initial nonce.
+	Nonce = crypto:strong_rand_bytes(384 div 8),
+	find_nonce(BDS, Diff, Nonce).
 
-%% @doc Converts a boolean value to a binary of 0 or 1.
-bool_to_binary(true) -> <<1>>;
-bool_to_binary(false) -> <<0>>.
-
-%% @doc A simple boolean coinflip.
-coinflip() ->
-	case rand:uniform(2) of
-		1 -> true;
-		2 -> false
+find_nonce(BDS, Diff, Nonce) ->
+	case validate(BDS, Nonce, Diff) of
+		{invalid, Hash} ->
+			%% Re-use the hash as the next nonce, since we get it for free.
+			find_nonce(BDS, Diff, Hash);
+		{valid, Hash} ->
+			{Nonce, Hash}
 	end.
 
 
@@ -344,7 +305,7 @@ change_txs_test_() ->
 		SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
 		%% Start mining with a high enough difficulty, so that the mining won't
 		%% finish before adding more TXs.
-		Diff = 20,
+		Diff = 22,
 		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self()),
 		change_txs(PID, SecondTXSet),
 		assert_mine_output(B, RecallB, SecondTXSet, Diff)
@@ -361,7 +322,7 @@ timestamp_refresh_test_() ->
 		%% and find the block too fast, we retry until it succeeds.
 		Run = fun(_) ->
 			TXs = [],
-			start(B, RecallB, TXs, unclaimed, [], 19, self()),
+			start(B, RecallB, TXs, unclaimed, [], 20, self()),
 			StartTime = os:system_time(seconds),
 			{_, MinedTimestamp} = assert_mine_output(B, RecallB, TXs),
 			MinedTimestamp > StartTime
@@ -376,17 +337,27 @@ start_stop_test() ->
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
-	PID = start(B, RecallB, [], unclaimed, [], self()),
-	link(PID),
+	VeryHighDiff = 100,
+	PID = start(B, RecallB, [], unclaimed, [], VeryHighDiff, self()),
+	timer:sleep(500),
+	assert_alive(PID),
 	stop(PID),
-	assert_not_alive(PID, 500).
+	assert_not_alive(PID, 3000).
 
 %% @doc Ensures a miner can be started and stopped.
 miner_start_stop_test() ->
-	S = #state{},
-	PID = spawn_link(fun() -> start_miner(S, self()) end),
+	S = #state{ diff = 100 },
+	PID = spawn(?MODULE, mine, [S, self()]),
+	timer:sleep(500),
+	assert_alive(PID),
 	stop_miners([PID]),
-	assert_not_alive(PID, 500).
+	assert_not_alive(PID, 3000).
+
+validator_test() ->
+	BDS = ar_util:decode(<<"DIhZtgVPvAyGlWDfAq7NfoL28x_4yxDOSFU-thfBPoRdRsDaZPYrkCyQ-5zL5LeS">>),
+	Nonce = ar_util:decode(<<"AQEBAQEBAQEBAAABAQAAAAEBAQAAAQEBAAAAAQEAAAAAAQABAAEBAQAAAQAAAAE">>),
+	?assertMatch({valid, _}, validate(BDS, Nonce, 37)),
+	?assertMatch({invalid, _}, validate(BDS, Nonce, 38)).
 
 assert_mine_output(B, RecallB, TXs, Diff) ->
 	Result = assert_mine_output(B, RecallB, TXs),
@@ -420,6 +391,9 @@ assert_mine_output(B, RecallB, TXs) ->
 	after 20000 ->
 		error(timeout)
 	end.
+
+assert_alive(PID) ->
+	?assert(is_process_alive(PID)).
 
 assert_not_alive(PID, Timeout) ->
 	Do = fun () -> not is_process_alive(PID) end,

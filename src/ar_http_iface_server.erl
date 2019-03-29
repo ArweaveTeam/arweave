@@ -1070,10 +1070,10 @@ post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}) ->
 			post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS});
 		_ ->
 			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff) of
-				false ->
+				{invalid, _} ->
 					post_block_reject_warn(BShadow, check_pow),
 					{400, [], <<"Invalid Block Proof of Work">>};
-				_  ->
+				{valid, _} ->
 					ar_bridge:ignore_id(BDS),
 					post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS})
 			end

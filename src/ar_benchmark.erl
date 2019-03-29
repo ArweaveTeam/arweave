@@ -13,7 +13,7 @@ run() ->
 	loop({0, 0}).
 
 loop({TotalHashesTried, TotalTimeSpent}) ->
-	{HashesTried, TimeSpent} = mine(18, 10),
+	{HashesTried, TimeSpent} = mine(20, 10),
 	NewTotalHashesTried = TotalHashesTried + HashesTried,
 	NewTotalTimeSpent = TotalTimeSpent + TimeSpent,
 	io:format(
