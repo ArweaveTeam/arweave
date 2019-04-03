@@ -7,3 +7,6 @@
 [submodule "lib/prometheus_process_collector"]
 	path = lib/prometheus_process_collector
 	url = https://github.com/deadtrickster/prometheus_process_collector.git
+[submodule "lib/cowboy"]
+	path = lib/cowboy
+	url = https://github.com/ninenines/cowboy.git
