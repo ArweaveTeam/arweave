@@ -88,7 +88,6 @@ sim_hard: all
 
 clean:
 	rm -f ./ebin/*.beam
-	rm -f ./logs/*.log
 	rm -rf docs
 	rm -f priv/jiffy.so priv/prometheus_process_collector.so
 	rm -f erl_crash.dump
