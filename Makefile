@@ -1,9 +1,14 @@
 .DEFAULT_GOAL = test_all
 
+MAKE_V4 := $(shell hash "gmake" && echo "gmake" || echo "make")
+
 DIALYZER = dialyzer
-PLT_APPS = erts kernel stdlib sasl inets ssl public_key crypto compiler  mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
+PLT_APPS = erts kernel stdlib sasl inets ssl public_key crypto compiler mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
 
 ERL_OPTS= -pa ebin/ \
+	-pa lib/cowboy/ebin \
+	-pa lib/cowboy/deps/cowlib/ebin \
+	-pa lib/cowboy/deps/ranch/ebin \
 	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
 	-pa lib/accept/_build/default/lib/accept/ebin \
 	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
@@ -45,6 +50,10 @@ gitmodules:
 
 build:
 	( \
+		cd lib/cowboy && \
+		$(MAKE_V4) app deps \
+	)
+	( \
 		cd lib/jiffy && \
 		../../bin/mute-on-success ./rebar compile && \
 		cd ../.. && \
@@ -79,6 +88,7 @@ clean:
 	rm -rf docs
 	rm -f priv/jiffy.so priv/prometheus_process_collector.so
 	rm -f erl_crash.dump
+	(cd lib/cowboy && $(MAKE_V4) clean)
 	(cd lib/jiffy && ./rebar clean)
 	(cd lib/prometheus && ./rebar3 clean --all)
 	(cd lib/accept && ./rebar3 clean --all)
