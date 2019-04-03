@@ -98,8 +98,6 @@ handle(Req, _Args) ->
 			do_handle(Req, Peer)
 	end.
 
-
-
 %% @doc Handles all other elli metadata events.
 handle_event(elli_startup, _Args, _Config) -> ok;
 handle_event(Type, Args, Config)
@@ -133,7 +131,23 @@ do_start(Port) ->
 						{port, Port}
 					]
 				),
-			receive stop -> elli:stop(PID) end
+			{ok, _} =
+				cowboy:start_clear(
+					ar_cowboy_listener,
+					[{port, Port + 1}],
+					#{
+						middlewares => [cowboy_handler],
+						env => #{
+							handler => ar_cowboy_handler,
+							handler_opts => []
+						}
+					}
+				),
+			receive
+				stop ->
+					elli:stop(PID),
+					cowboy:stop_listener(ar_cowboy_listener)
+			end
 		end
 	).
 

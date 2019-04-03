@@ -260,6 +260,8 @@ start(
 	application:ensure_started(prometheus),
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
+	%% Start Cowboy and its dependencies
+	{ok, _} = application:ensure_all_started(cowboy),
 	%% Start other apps which we depend on.
 	inets:start(),
 	ar_tx_db:start(),
