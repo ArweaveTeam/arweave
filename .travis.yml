@@ -1,0 +1,9 @@
+language: erlang
+
+otp_release: 21.3.2
+
+install:
+
+script:
+  - sed -e 's/%-define(DEBUG, debug)./-define(DEBUG, debug)./' -i src/ar.hrl
+  - make test
