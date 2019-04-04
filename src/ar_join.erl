@@ -100,7 +100,7 @@ verify_time_sync(Peers) ->
 					{error, Err} ->
 						ar:info(
 							"Failed to get time from peer ~s: ~p.",
-							[ar_util:format(Peer), Err]
+							[ar_util:format_peer(Peer), Err]
 						),
 						true
 				end
