@@ -4,9 +4,10 @@
 
 -module(ar_http_iface_server).
 
--export([start/1, start/2, start/3, start/4, start/5, handle/2, handle_event/3]).
+-export([start/5]).
 -export([reregister/1, reregister/2]).
 -export([elli_request_to_peer/1]).
+-export([handle/2, handle_event/3]).
 
 -include("ar.hrl").
 -include_lib("lib/elli/include/elli.hrl").
@@ -17,37 +18,23 @@
 %%%
 
 %% @doc Start the Arweave HTTP API and returns a process ID.
-start(Port) ->
-	spawn(
-		fun() ->
-			Config = [{mods, [{ar_blacklist, []},{ar_metrics, []},{?MODULE, []}]}],
-			{ok, PID} =
-				elli:start_link(
-					[
-						{callback, elli_middleware}, {callback_args, Config},
-						{body_timeout, ?HTTP_SERVER_GET_BODY_TIMEOUT},
-						{header_timeout, ?HTTP_SERVER_GET_HEADERS_TIMEOUT},
-						{max_body_size, ?MAX_BODY_SIZE},
-						{request_timeout, ?HTTP_SERVER_GET_REQUEST_TIMEOUT},
-						{accept_timeout, ?HTTP_SERVER_ACCEPT_TIMEOUT},
-						{port, Port}
-					]
-				),
-			receive stop -> elli:stop(PID) end
-		end
-	).
-start(Port, Node) ->
-	start(Port, Node, undefined).
-start(Port, Node, SearchNode) ->
-	start(Port, Node, SearchNode, undefined).
-start(Port, Node, SearchNode, ServiceNode) ->
-	start(Port, Node, SearchNode, ServiceNode, undefined).
 start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
 	reregister(http_entrypoint_node, Node),
 	reregister(http_search_node, SearchNode),
 	reregister(http_service_node, ServiceNode),
 	reregister(http_bridge_node, BridgeNode),
-	start(Port).
+	do_start(Port).
+
+%% @doc Helper function : registers a new node as the entrypoint.
+reregister(Node) ->
+	reregister(http_entrypoint_node, Node).
+reregister(_, undefined) -> not_registering;
+reregister(Name, Node) ->
+	case erlang:whereis(Name) of
+		undefined -> do_nothing;
+		_ -> erlang:unregister(Name)
+	end,
+	erlang:register(Name, Node).
 
 elli_request_to_peer(Req) ->
 	elli_request_to_peer(elli_request:peer(Req), elli_request:get_header(<<"X-P2p-Port">>, Req)).
@@ -111,6 +98,45 @@ handle(Req, _Args) ->
 			do_handle(Req, Peer)
 	end.
 
+
+
+%% @doc Handles all other elli metadata events.
+handle_event(elli_startup, _Args, _Config) -> ok;
+handle_event(Type, Args, Config)
+		when (Type == request_throw)
+		or (Type == request_error)
+		or (Type == request_exit) ->
+	ar:info([{elli_event, Type}, {args, Args}, {config, Config}]),
+	ok;
+%% Uncomment to show unhandeled message types.
+handle_event(_Type, _Args, _Config) ->
+	ok.
+
+%%%
+%%% Private functions
+%%%
+
+%% @doc Start the server
+do_start(Port) ->
+	spawn(
+		fun() ->
+			Config = [{mods, [{ar_blacklist, []},{ar_metrics, []},{?MODULE, []}]}],
+			{ok, PID} =
+				elli:start_link(
+					[
+						{callback, elli_middleware}, {callback_args, Config},
+						{body_timeout, ?HTTP_SERVER_GET_BODY_TIMEOUT},
+						{header_timeout, ?HTTP_SERVER_GET_HEADERS_TIMEOUT},
+						{max_body_size, ?MAX_BODY_SIZE},
+						{request_timeout, ?HTTP_SERVER_GET_REQUEST_TIMEOUT},
+						{accept_timeout, ?HTTP_SERVER_ACCEPT_TIMEOUT},
+						{port, Port}
+					]
+				),
+			receive stop -> elli:stop(PID) end
+		end
+	).
+
 do_handle(Req, Peer) ->
 	case ar_meta_db:get(http_logging) of
 		true ->
@@ -130,7 +156,7 @@ do_handle(Req, Peer) ->
 			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
 		_ -> do_nothing
 	end,
-	case handle(Req#req.method, elli_request:path(Req), Req) of
+	case do_handle(Req#req.method, elli_request:path(Req), Req) of
 		{Status, Hdrs, Body} ->
 			{Status, ?DEFAULT_RESPONSE_HEADERS ++ Hdrs, Body};
 		{Status, Body} ->
@@ -139,41 +165,41 @@ do_handle(Req, Peer) ->
 
 %% @doc Return network information from a given node.
 %% GET request to endpoint /info
-handle('GET', [], _Req) ->
+do_handle('GET', [], _Req) ->
 	return_info();
-handle('GET', [<<"info">>], _Req) ->
+do_handle('GET', [<<"info">>], _Req) ->
 	return_info();
 
 %% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node
 %% is alive. Appease them.
-handle('HEAD', [], _Req) ->
+do_handle('HEAD', [], _Req) ->
 	{200, [], <<>>};
-handle('HEAD', [<<"info">>], _Req) ->
+do_handle('HEAD', [<<"info">>], _Req) ->
 	{200, [], <<>>};
 
 %% @doc Return permissive CORS headers for all endpoints
-handle('OPTIONS', [<<"block">>], _) ->
+do_handle('OPTIONS', [<<"block">>], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
 		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
-handle('OPTIONS', [<<"tx">>], _) ->
+do_handle('OPTIONS', [<<"tx">>], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
 		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
-handle('OPTIONS', [<<"peer">>|_], _) ->
+do_handle('OPTIONS', [<<"peer">>|_], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
 		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
-handle('OPTIONS', [<<"arql">>], _) ->
+do_handle('OPTIONS', [<<"arql">>], _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET, POST">>},
 		   {<<"Access-Control-Allow-Headers">>, <<"Content-Type">>}], <<"OK">>};
-handle('OPTIONS', _, _) ->
+do_handle('OPTIONS', _, _) ->
 	{200, [{<<"Access-Control-Allow-Methods">>, <<"GET">>}], <<"OK">>};
 
 %% @doc Return the current universal time in seconds.
-handle('GET', [<<"time">>], _Req) ->
+do_handle('GET', [<<"time">>], _Req) ->
 	{200, [], integer_to_binary(os:system_time(second))};
 
 %% @doc Return all transactions from node that are waiting to be mined into a block.
 %% GET request to endpoint /tx/pending
-handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
+do_handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 	{200, [],
 			ar_serialize:jsonify(
 				%% Should encode
@@ -186,7 +212,7 @@ handle('GET', [<<"tx">>, <<"pending">>], _Req) ->
 
 %% @doc Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}.
-handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
+do_handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 	case get_tx_filename(Hash) of
 		{ok, _} ->
 			TagsToInclude = [
@@ -227,7 +253,7 @@ handle('GET', [<<"tx">>, Hash, <<"status">>], _Req) ->
 
 % @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
-handle('GET', [<<"tx">>, Hash], _Req) ->
+do_handle('GET', [<<"tx">>, Hash], _Req) ->
 	case get_tx_filename(Hash) of
 		{ok, Filename} ->
 			{ok, [], {file, Filename}};
@@ -245,7 +271,7 @@ handle('GET', [<<"tx">>, Hash], _Req) ->
 %%		expr2:	{ string | logical expression }
 %%	}
 %%
-handle('POST', [<<"arql">>], Req) ->
+do_handle('POST', [<<"arql">>], Req) ->
 	QueryJson = elli_request:body(Req),
 	Query = ar_serialize:json_struct_to_query(
 		binary_to_list(QueryJson)
@@ -265,7 +291,7 @@ handle('POST', [<<"arql">>], Req) ->
 
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
-handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
+do_handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, [], <<"Invalid hash.">>};
@@ -288,13 +314,13 @@ handle('GET', [<<"tx">>, Hash, << "data.", _/binary >>], _Req) ->
 %% @doc Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block
 %% as specified in ar_serialize.
-handle('POST', [<<"block">>], Req) ->
+do_handle('POST', [<<"block">>], Req) ->
 	post_block(request, Req);
 
 %% @doc Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
-handle('POST', [<<"wallet">>], Req) ->
+do_handle('POST', [<<"wallet">>], Req) ->
 	case check_internal_api_secret(Req) of
 		pass ->
 			WalletAccessCode = ar_util:encode(crypto:strong_rand_bytes(32)),
@@ -311,7 +337,7 @@ handle('POST', [<<"wallet">>], Req) ->
 %% @doc Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
-handle('POST', [<<"tx">>], Req) ->
+do_handle('POST', [<<"tx">>], Req) ->
 	TXJSON = elli_request:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
 	case handle_post_tx(TX) of
@@ -325,7 +351,7 @@ handle('POST', [<<"tx">>], Req) ->
 %% Fetches the wallet by the provided key generated via POST /wallet.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
-handle('POST', [<<"unsigned_tx">>], Req) ->
+do_handle('POST', [<<"unsigned_tx">>], Req) ->
 	case check_internal_api_secret(Req) of
 		pass ->
 			{UnsignedTXProps} = ar_serialize:dejsonify(elli_request:body(Req)),
@@ -356,7 +382,7 @@ handle('POST', [<<"unsigned_tx">>], Req) ->
 
 %% @doc Return the list of peers held by the node.
 %% GET request to endpoint /peers
-handle('GET', [<<"peers">>], Req) ->
+do_handle('GET', [<<"peers">>], Req) ->
 	{200, [],
 		ar_serialize:jsonify(
 			[
@@ -371,7 +397,7 @@ handle('GET', [<<"peers">>], Req) ->
 %% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
 %% GET request to endpoint /price/{bytes}
 %% TODO: Change so current block does not need to be pulled to calculate cost
-handle('GET', [<<"price">>, SizeInBytes], _Req) ->
+do_handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 	{200, [],
 		integer_to_binary(
 			ar_tx:calculate_min_tx_cost(
@@ -384,7 +410,7 @@ handle('GET', [<<"price">>, SizeInBytes], _Req) ->
 %% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
 %% GET request to endpoint /price/{bytes}/{address}
 %% TODO: Change so current block does not need to be pulled to calculate cost
-handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
+do_handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
 			{400, [], <<"Invalid address.">>};
@@ -403,7 +429,7 @@ handle('GET', [<<"price">>, SizeInBytes, Addr], _Req) ->
 
 %% @doc Return the current hash list held by the node.
 %% GET request to endpoint /hash_list
-handle('GET', [<<"hash_list">>], _Req) ->
+do_handle('GET', [<<"hash_list">>], _Req) ->
 	HashList = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	{200, [],
 		ar_serialize:jsonify(
@@ -413,7 +439,7 @@ handle('GET', [<<"hash_list">>], _Req) ->
 
 %% @doc Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list
-handle('GET', [<<"wallet_list">>], _Req) ->
+do_handle('GET', [<<"wallet_list">>], _Req) ->
 	Node = whereis(http_entrypoint_node),
 	WalletList = ar_node:get_wallet_list(Node),
 	{200, [],
@@ -426,7 +452,7 @@ handle('GET', [<<"wallet_list">>], _Req) ->
 %% POST request to endpoint /peers with the body of the request being your
 %% nodes network information JSON encoded as specified in ar_serialize.
 % NOTE: Consider returning remaining timeout on a failed request
-handle('POST', [<<"peers">>], Req) ->
+do_handle('POST', [<<"peers">>], Req) ->
 	BlockJSON = elli_request:body(Req),
 	case ar_serialize:dejsonify(BlockJSON) of
 		{Struct} ->
@@ -447,7 +473,7 @@ handle('POST', [<<"peers">>], Req) ->
 	end;
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
-handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
+do_handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
 			{400, [], <<"Invalid address.">>};
@@ -465,7 +491,7 @@ handle('GET', [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 
 %% @doc Return the last transaction ID (hash) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/last_tx
-handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
+do_handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 	case safe_decode(Addr) of
 		{error, invalid} ->
 			{400, [], <<"Invalid address.">>};
@@ -479,18 +505,18 @@ handle('GET', [<<"wallet">>, Addr, <<"last_tx">>], _Req) ->
 
 %% @doc Return transaction identifiers (hashes) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs
-handle('GET', [<<"wallet">>, Addr, <<"txs">>], _Req) ->
+do_handle('GET', [<<"wallet">>, Addr, <<"txs">>], _Req) ->
 	handle_get_wallet_txs(Addr, none);
 
 %% @doc Return transaction identifiers (hashes) starting from the earliest_tx for the wallet
 %% specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs/{earliest_tx}
-handle('GET', [<<"wallet">>, Addr, <<"txs">>, EarliestTX], _Req) ->
+do_handle('GET', [<<"wallet">>, Addr, <<"txs">>, EarliestTX], _Req) ->
 	handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX));
 
 %% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/deposits
-handle('GET', [<<"wallet">>, Addr, <<"deposits">>], _Req) ->
+do_handle('GET', [<<"wallet">>, Addr, <<"deposits">>], _Req) ->
 	TXIDs = lists:reverse(
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
@@ -499,7 +525,7 @@ handle('GET', [<<"wallet">>, Addr, <<"deposits">>], _Req) ->
 %% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address
 %% starting from the earliest_deposit.
 %% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}
-handle('GET', [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], _Req) ->
+do_handle('GET', [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], _Req) ->
 	TXIDs = lists:reverse(
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
@@ -514,7 +540,7 @@ handle('GET', [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], _Req) ->
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
-%handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
+%do_handle('GET', [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, elli_request:path(Req)}]),
 	%case ar_key_db:get(ar_util:decode(Hash)) of
@@ -534,7 +560,7 @@ handle('GET', [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], _Req) ->
 
 %% @doc Return the blockshadow corresponding to the indep_hash / height.
 %% GET request to endpoint /block/{height|hash}/{indep_hash|height}
-handle('GET', [<<"block">>, Type, ID], Req) ->
+do_handle('GET', [<<"block">>, Type, ID], Req) ->
 	Filename =
 		case Type of
 			<<"hash">> ->
@@ -601,7 +627,7 @@ handle('GET', [<<"block">>, Type, ID], Req) ->
 	end;
 
 %% @doc Return block or block field.
-handle('GET', [<<"block">>, Type, IDBin, Field], _Req) ->
+do_handle('GET', [<<"block">>, Type, IDBin, Field], _Req) ->
 	case validate_get_block_type_id(Type, IDBin) of
 		{error, Response} ->
 			Response;
@@ -612,20 +638,20 @@ handle('GET', [<<"block">>, Type, IDBin, Field], _Req) ->
 %% @doc Return the current block.
 %% GET request to endpoint /current_block
 %% GET request to endpoint /block/current
-handle('GET', [<<"block">>, <<"current">>], Req) ->
+do_handle('GET', [<<"block">>, <<"current">>], Req) ->
 	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
 		[] -> {404, [], <<"Block not found.">>};
 		[IndepHash|_] ->
-			handle('GET', [<<"block">>, <<"hash">>, ar_util:encode(IndepHash)], Req)
+			do_handle('GET', [<<"block">>, <<"hash">>, ar_util:encode(IndepHash)], Req)
 	end;
 
 %% DEPRECATED (12/07/2018)
-handle('GET', [<<"current_block">>], Req) ->
-	handle('GET', [<<"block">>, <<"current">>], Req);
+do_handle('GET', [<<"current_block">>], Req) ->
+	do_handle('GET', [<<"block">>, <<"current">>], Req);
 
 %% @doc Return a list of known services.
 %% GET request to endpoint /services
-handle('GET', [<<"services">>], _Req) ->
+do_handle('GET', [<<"services">>], _Req) ->
 	{200, [],
 		ar_serialize:jsonify(
 			{
@@ -653,7 +679,7 @@ handle('GET', [<<"services">>], _Req) ->
 %%
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 %%
-handle('GET', [<<"tx">>, Hash, Field], _Req) ->
+do_handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, [], <<"Invalid hash.">>};
@@ -692,7 +718,7 @@ handle('GET', [<<"tx">>, Hash, Field], _Req) ->
 %% @doc Share the location of a given service with a peer.
 %% POST request to endpoint /services where the body of the request is a JSON encoded serivce as
 %% specified in ar_serialize.
-handle('POST', [<<"services">>], Req) ->
+do_handle('POST', [<<"services">>], Req) ->
 	BodyBin = elli_request:body(Req),
 	{ServicesJSON} = ar_serialize:jsonify(BodyBin),
 	ar_services:add(
@@ -710,7 +736,7 @@ handle('POST', [<<"services">>], Req) ->
 	{200, [], "OK"};
 
 %% @doc Return the current block hieght, or 500
-handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD') ->
+do_handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD') ->
 	case ar_node:get_height(whereis(http_entrypoint_node)) of
 		-1 -> {503, [], <<"Node has not joined the network yet.">>};
 		H -> {200, [], integer_to_binary(H)}
@@ -719,19 +745,19 @@ handle(Method, [<<"height">>], _Req) when (Method == 'GET') or (Method == 'HEAD'
 %% @doc If we are given a hash with no specifier (block, tx, etc), assume that
 %% the user is requesting the data from the TX associated with that hash.
 %% Optionally allow a file extension.
-handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
+do_handle('GET', [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
 	case MaybeExt of
 		<< ".", Part/binary >> ->
-			handle('GET', [<<"tx">>, Hash, <<"data.", Part/binary>>], Req);
+			do_handle('GET', [<<"tx">>, Hash, <<"data.", Part/binary>>], Req);
 		<<>> ->
-			handle('GET', [<<"tx">>, Hash, <<"data.html">>], Req);
+			do_handle('GET', [<<"tx">>, Hash, <<"data.html">>], Req);
 		_ ->
 			not_found()
 	end;
 
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
-handle(_, _, _) ->
+do_handle(_, _, _) ->
 	not_found().
 
 not_found() ->
@@ -853,32 +879,6 @@ log_internal_api_reject(Msg, Req) ->
 		IpAddr = elli_request:peer(Req), % Might return undefined
 		ar:warn("~s: IP address: ~s Path: ~p", [Msg, IpAddr, Path])
 	end).
-
-
-%% @doc Handles all other elli metadata events.
-handle_event(elli_startup, _Args, _Config) -> ok;
-handle_event(Type, Args, Config)
-		when (Type == request_throw)
-		or (Type == request_error)
-		or (Type == request_exit) ->
-	ar:info([{elli_event, Type}, {args, Args}, {config, Config}]),
-	ok;
-%% Uncomment to show unhandeled message types.
-handle_event(_Type, _Args, _Config) ->
-	ok.
-
-%% @doc Helper function : registers a new node as the entrypoint.
-reregister(Node) ->
-	reregister(http_entrypoint_node, Node).
-reregister(_, undefined) -> not_registering;
-reregister(Name, Node) ->
-	case erlang:whereis(Name) of
-		undefined -> do_nothing;
-		_ -> erlang:unregister(Name)
-	end,
-	erlang:register(Name, Node).
-
-%%% Private functions
 
 %% @doc Convert a blocks field with the given label into a string
 block_field_to_string(<<"nonce">>, Res) -> Res;
