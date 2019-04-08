@@ -41,9 +41,10 @@ reregister(Name, Node) ->
 do_start(Port) ->
 	spawn(
 		fun() ->
+			ar_blacklist:start(),
 			ProtocolOpts =
 				#{
-					middlewares => [cowboy_handler],
+					middlewares => [ar_blacklist, cowboy_handler],
 					env => #{
 						handler => ar_http_iface_cowboy_handler,
 						handler_opts => []
