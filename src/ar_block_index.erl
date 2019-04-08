@@ -13,7 +13,7 @@
 start() ->
 	% Spawn a new process to own the table.
 	Parent = self(),
-	PID = 
+	PID =
 		spawn(
 			fun() ->
 				ar:info([starting_block_index]),
@@ -41,7 +41,7 @@ stop(ETSOwner) ->
 
 %% @doc Add an index for a given block to the database.
 add(B, Filename) -> add(B#block.height, B#block.indep_hash, Filename).
-add(Height, Hash, Filename) ->
+add(Height, Hash, Filename) when is_list(Filename) ->
 	ets:insert(?MODULE, [{Height, Filename}, {Hash, Filename}]).
 
 %% @doc Remove a reference to a block when given its hash or height.

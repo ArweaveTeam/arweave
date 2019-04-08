@@ -416,40 +416,44 @@ select_drive(Disks, CWD) ->
 	end.
 
 filepath(PathComponents) ->
-	filename:join([ar_meta_db:get(data_dir)|PathComponents]).
+	to_string(filename:join([ar_meta_db:get(data_dir) | PathComponents])).
+
+to_string(Bin) when is_binary(Bin) ->
+	binary_to_list(Bin);
+to_string(String) ->
+	String.
 
 block_filename(B) when is_record(B, block) ->
-	lists:flatten([
-		integer_to_list(B#block.height), "_", binary_to_list(ar_util:encode(B#block.indep_hash)), ".json"
+	iolist_to_binary([
+		integer_to_list(B#block.height), "_", ar_util:encode(B#block.indep_hash), ".json"
 	]);
 block_filename(Hash) when is_binary(Hash) ->
-	lists:flatten(["*_", binary_to_list(ar_util:encode(Hash)), ".json"]);
+	iolist_to_binary(["*_", ar_util:encode(Hash), ".json"]);
 block_filename(Height) when is_integer(Height) ->
-	lists:flatten([integer_to_list(Height), "_*.json"]).
+	iolist_to_binary([integer_to_list(Height), "_*.json"]).
 
-block_filepath(B) when is_record(B, block) ->
-	filepath([?BLOCK_DIR, block_filename(B)]);
-block_filepath(Hash) when is_binary(Hash) ->
-	filepath([?BLOCK_DIR, block_filename(Hash)]);
-block_filepath(Height) when is_integer(Height) ->
-	filepath([?BLOCK_DIR, block_filename(Height)]).
+block_filepath(B) ->
+	filepath([?BLOCK_DIR, block_filename(B)]).
 
 invalid_block_filepath(B) ->
 	filepath([?BLOCK_DIR, "invalid", block_filename(B)]).
 
 encrypted_block_filepath(Hash) when is_binary(Hash) ->
-	filepath([?ENCRYPTED_BLOCK_DIR, lists:flatten(["encrypted_", Hash, ".json"])]).
+	filepath([?ENCRYPTED_BLOCK_DIR, iolist_to_binary(["encrypted_", ar_util:encode(Hash), ".json"])]).
 
-tx_filepath(TX) when is_record(TX, tx) ->
-	filepath([?TX_DIR, lists:flatten([binary_to_list(ar_util:encode(TX#tx.id)), ".json"])]);
-tx_filepath(Hash) when is_binary(Hash) ->
-	filepath([?TX_DIR, lists:flatten([binary_to_list(ar_util:encode(Hash)), ".json"])]).
+tx_filepath(TX) ->
+	filepath([?TX_DIR, tx_filename(TX)]).
+
+tx_filename(TX) when is_record(TX, tx) ->
+	iolist_to_binary([ar_util:encode(TX#tx.id), ".json"]);
+tx_filename(TXID) when is_binary(TXID) ->
+	iolist_to_binary([ar_util:encode(TXID), ".json"]).
 
 hash_list_filepath(Hash) when is_binary(Hash) ->
-	filepath([?HASH_LIST_DIR, lists:flatten([binary_to_list(ar_util:encode(Hash)), ".json"])]).
+	filepath([?HASH_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
 
 wallet_list_filepath(Hash) when is_binary(Hash) ->
-	filepath([?WALLET_LIST_DIR, lists:flatten([binary_to_list(ar_util:encode(Hash)), ".json"])]).
+	filepath([?WALLET_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
 
 %% @doc Test block storage.
 store_and_retrieve_block_test() ->
@@ -493,7 +497,7 @@ invalidate_block_test() ->
 				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
-	?assert(B == do_read_block(TargetFile, B#block.hash_list)).
+	?assertEqual(B, do_read_block(TargetFile, B#block.hash_list)).
 
 store_and_retrieve_block_hash_list_test() ->
 	ID = crypto:strong_rand_bytes(32),
