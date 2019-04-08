@@ -27,9 +27,9 @@ remove_invalid_blocks(HashList) ->
 	Files =
 		lists:filter(
 			fun(X) ->
-				not filelib:is_dir(X)
+				not filelib:is_dir(filename:join(BlockDir, X))
 			end,
-			RawFiles
+			RawFiles -- [".gitignore"]
 		),
 	lists:foreach(
 		fun(X) ->
@@ -91,6 +91,12 @@ remove_block_keep_directory_test() ->
 	ar_storage:write_block(B0),
 	B1 = ar_weave:add(B0, []),
 	ar_storage:write_block(hd(B1)),
+	ListBlockFiles = fun() ->
+		BlockDir = filename:join(ar_meta_db:get(data_dir), ?BLOCK_DIR),
+		{ok, FilesAndDirs} = file:list_dir(BlockDir),
+		FullFilesAndDirs = [filename:join(BlockDir, Name) || Name <- FilesAndDirs, Name /= ".gitignore"],
+		lists:filter(fun(Filename) -> not filelib:is_dir(Filename) end, FullFilesAndDirs)
+	end,
+	?assert(length(ListBlockFiles()) > 0),
 	remove_invalid_blocks([]),
-	{ok, Files} = file:list_dir(filename:join(ar_meta_db:get(data_dir), ?BLOCK_DIR)),
-	0 = length(lists:filter(fun filelib:is_file/1, Files -- [".gitignore"])).
+	?assertEqual([], ListBlockFiles()).
