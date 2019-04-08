@@ -16,9 +16,7 @@
 	]).
 
 -define(DEFAULT_RESPONSE_HEADERS,
-	[
-		{<<"Access-Control-Allow-Origin">>, <<"*">>}
-	]).
+	#{<<"access-control-allow-origin">> => <<"*">>}).
 
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).

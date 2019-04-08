@@ -6,7 +6,6 @@
 
 -export([start/5]).
 -export([reregister/1, reregister/2]).
--export([elli_request_to_peer/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -33,20 +32,6 @@ reregister(Name, Node) ->
 		_ -> erlang:unregister(Name)
 	end,
 	erlang:register(Name, Node).
-
-elli_request_to_peer(Req) ->
-	elli_request_to_peer(elli_request:peer(Req), elli_request:get_header(<<"X-P2p-Port">>, Req)).
-
-elli_request_to_peer(undefined, _) ->
-	undefined;
-elli_request_to_peer(IpAddr, Port) ->
-	{A, B, C, D, _} = ar_util:parse_peer(IpAddr),
-	case Port of
-		undefined ->
-			{A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT};
-		Port ->
-			{A, B, C, D, binary_to_integer(Port)}
-	end.
 
 %%%
 %%% Private functions
