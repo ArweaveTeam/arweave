@@ -69,6 +69,7 @@
 	init = false,
 	mine = false,
 	peers = [],
+	data_dir = ".",
 	polling = false,
 	auto_join = true,
 	clean = false,
@@ -110,6 +111,7 @@ main("") ->
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
+			{"data_dir", "The directory for storing the weave and the wallets (when generated)."},
 			{"polling", "Poll peers for new blocks. Useful in environments where "
 						"port forwarding is not possible."},
 			{"clean", "Clear the block cache before starting."},
@@ -152,6 +154,8 @@ parse(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
 	parse(Rest, O#opts { content_policies = [F|Fs] });
 parse(["port", Port|Rest], O) ->
 	parse(Rest, O#opts { port = list_to_integer(Port) });
+parse(["data_dir", DataDir|Rest], O) ->
+	parse(Rest, O#opts { data_dir = DataDir });
 parse(["diff", Diff|Rest], O) ->
 	parse(Rest, O#opts { diff = list_to_integer(Diff) });
 parse(["polling"|Rest], O) ->
@@ -204,6 +208,7 @@ start(#opts { benchmark = true, max_miners = MaxMiners }) ->
 start(
 	#opts {
 		port = Port,
+		data_dir = DataDir,
 		init = Init,
 		peers = Peers,
 		mine = Mine,
@@ -225,33 +230,34 @@ start(
 		disable = Disable,
 		content_policies = Policies
 	}) ->
-	% Start the logging system.
+	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
-
-	ar_storage:start(),
-	% Optionally clear the block cache
-	if Clean -> ar_storage:clear(); true -> do_nothing end,
-	%register prometheus stats collector,
-	%prometheus collector app is started at cmdline
-	application:ensure_started(prometheus),
-	prometheus_registry:register_collector(prometheus_process_collector),
-	prometheus_registry:register_collector(ar_metrics_collector),
-	% Start apps which we depend on.
-	inets:start(),
+	%% Fill up ar_meta_db.
 	ar_meta_db:start(),
-	ar_tx_db:start(),
-	ar_key_db:start(),
-	ar_track_tx_db:start(),
-	ar_miner_log:start(),
+	ar_meta_db:put(data_dir, DataDir),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(content_policies, Policies),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
+	%% Prepare the storage for operation.
+	ar_storage:start(),
+	%% Optionally clear the block cache.
+	if Clean -> ar_storage:clear(); true -> do_nothing end,
+	%% Register prometheus stats collector.
+	application:ensure_started(prometheus),
+	prometheus_registry:register_collector(prometheus_process_collector),
+	prometheus_registry:register_collector(ar_metrics_collector),
+	%% Start other apps which we depend on.
+	inets:start(),
+	ar_tx_db:start(),
+	ar_key_db:start(),
+	ar_track_tx_db:start(),
+	ar_miner_log:start(),
 	ar_storage:update_directory_size(),
-	% Determine mining address.
+	%% Determine the mining address.
 	case {Addr, LoadKey, NewKey} of
 		{false, false, false} ->
 			{_, Pub} = ar_wallet:new_keyfile(),
@@ -330,7 +336,7 @@ start(
 		}
 	),
 	ar_node:add_peers(Node, SearchNode),
-	% Start a bridge, add it to the node's peer list.
+	%% Start a bridge, add it to the node's peer list.
 	{ok, Bridge} = supervisor:start_child(
 		Supervisor,
 		{
@@ -343,7 +349,7 @@ start(
 		}
 	),
 	ar_node:add_peers(Node, Bridge),
-	% Initialise the auto-updater, if enabled
+	%% Initialise the auto-updater, if enabled.
 	case AutoUpdate of
 		false ->
 			do_nothing;
@@ -351,7 +357,7 @@ start(
 			AutoUpdateNode = app_autoupdate:start(AutoUpdateAddr),
 			ar_node:add_peers(Node, AutoUpdateNode)
 	end,
-	% Store enabled features
+	%% Store enabled features.
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	PrintMiningAddress = case MiningAddress of
@@ -373,7 +379,7 @@ start(
 			{retarget_blocks, ?RETARGET_BLOCKS}
 		]
 	),
-	% Start the first node in the gossip network (with HTTP interface)
+	%% Start the first node in the gossip network (with HTTP interface).
 	ar_http_iface_server:start(
 		Port,
 		Node,
@@ -456,7 +462,6 @@ init(Args) ->
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
-	ar_storage:ensure_directories(),
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(

@@ -45,17 +45,17 @@ new_keyfile(WalletName) ->
 				]
 			}
 		),
-	Filename = wallet_filename(WalletName, Pub),
+	Filename = wallet_filepath(WalletName, Pub),
 	filelib:ensure_dir(Filename),
 	file:write_file(Filename, Key),
 	{{Priv, Pub}, Pub}.
 
-wallet_filename(WalletName, PubKey) ->
-	lists:flatten([
-		"wallets/arweave_keyfile_",
-		binary_to_list(wallet_name(WalletName, PubKey)),
-		".json"
-	]).
+wallet_filepath(WalletName, PubKey) ->
+	wallet_filepath(wallet_name(WalletName, PubKey)).
+
+wallet_filepath(Wallet) ->
+	Filename = lists:flatten(["arweave_keyfile_", binary_to_list(Wallet), ".json"]),
+	filename:join([ar_meta_db:get(data_dir), ?WALLET_DIR, Filename]).
 
 wallet_name(wallet_address, PubKey) ->
 	ar_util:encode(to_address(PubKey));
@@ -136,7 +136,7 @@ address_double_encode_test() ->
 %%doc Check generated keyfiles can be retrieved
 generate_keyfile_test() ->
 	{Priv, Pub} = new_keyfile(),
-	FileName = "wallets/arweave_keyfile_" ++ binary_to_list(ar_util:encode(to_address(Pub))) ++ ".json",
+	FileName = wallet_filepath(ar_util:encode(to_address(Pub))),
 	{Priv, Pub} = load_keyfile(FileName).
 
 %% @doc Check keyfile generation
