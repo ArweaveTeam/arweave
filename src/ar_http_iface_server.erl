@@ -341,9 +341,7 @@ handle('POST', [<<"unsigned_tx">>], Req) ->
 					{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
 				]
 			),
-			KeyPair = ar_wallet:load_keyfile(
-				"wallets/arweave_keyfile_" ++ binary_to_list(WalletAccessCode) ++ ".json"
-			),
+			KeyPair = ar_wallet:load_keyfile(ar_wallet:wallet_filepath(WalletAccessCode)),
 			UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
 			SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
 			case handle_post_tx(SignedTX) of

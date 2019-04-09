@@ -6,6 +6,7 @@
 
 -export([new/0, sign/2, verify/3, to_address/1, load_keyfile/1, to_binary/1]).
 -export([new_keyfile/0, new_keyfile/1]).
+-export([wallet_filepath/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
