@@ -14,28 +14,28 @@
 
 %% @doc Start a firewall node.
 start() ->
-	case whereis(default_firewall) of
+	case whereis(?MODULE) of
 		undefined ->
 			F = do_start(),
-			erlang:register(default_firewall, F);
+			erlang:register(?MODULE, F);
 		_ ->
 			do_nothing
 	end.
 
 reload() ->
-	case whereis(default_firewall) of
+	case whereis(?MODULE) of
 		undefined ->
 			do_nothing;
 		Firewall ->
 			NewF = do_start(),
-			erlang:unregister(default_firewall),
-			erlang:register(default_firewall, NewF),
+			erlang:unregister(?MODULE),
+			erlang:register(?MODULE, NewF),
 			exit(Firewall, {shutdown, reloading})
 	end.
 
 %% @doc Check whether a received TX matches the firewall rules.
 scan_tx(TX) ->
-	FwServer = whereis(default_firewall),
+	FwServer = whereis(?MODULE),
 	Ref = make_ref(),
 	FwServer ! {scan_tx, self(), Ref, TX},
 	receive
