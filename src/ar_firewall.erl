@@ -79,8 +79,8 @@ scan_transaction(TX, TXIDSigs, ContentSigs) ->
 	case lists:any(
 		fun({Data, Sigs}) ->
 			case av_detect:is_infected(Data, Sigs) of
-				{true, _} ->
-					ar:info([{ar_firewall, reject_tx}, {tx, ar_util:encode(TX#tx.id)}, {content, Data}]),
+				{true, MatchedSigs} ->
+					ar:info([{ar_firewall, reject_tx}, {tx, ar_util:encode(TX#tx.id)}, {matches, MatchedSigs}]),
 					true;
 				_ ->
 					false

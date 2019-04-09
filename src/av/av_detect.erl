@@ -38,7 +38,22 @@ full_check(Bin, Sz, Hash, Sigs) ->
 		),
 	case Res of
 		[] -> false;
-		MatchedSigs -> {true, [ S#sig.name || S <- MatchedSigs ]}
+		MatchedSigs -> {true, [ get_sig_name(S) || S <- MatchedSigs ]}
+	end.
+
+get_sig_name(S) ->
+	Name = S#sig.name,
+	case Name of
+		undefined ->
+			Type = S#sig.type,
+			case Type of
+				binary ->
+					iolist_to_binary(io_lib:format("Contains ~s", [(S#sig.data)#binary_sig.binary]));
+				hash ->
+					iolist_to_binary(io_lib:format("Has hash ~s", [(S#sig.data)#hash_sig.hash]))
+			end;
+		_ ->
+			Name
 	end.
 
 %% Perform the actual check.
