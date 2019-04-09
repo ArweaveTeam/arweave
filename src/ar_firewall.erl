@@ -16,14 +16,7 @@
 start() ->
 	case whereis(default_firewall) of
 		undefined ->
-			F = spawn(
-				fun() ->
-					server(#state {
-						tx_id_sigs = av_sigs:load(ar_meta_db:get(transaction_blacklist)),
-						content_sigs = av_sigs:load(ar_meta_db:get(content_policies))
-					})
-				end
-			),
+			F = do_start(),
 			erlang:register(default_firewall, F);
 		_ ->
 			do_nothing
@@ -34,10 +27,11 @@ reload() ->
 		undefined ->
 			do_nothing;
 		Firewall ->
+			NewF = do_start(),
 			erlang:unregister(default_firewall),
+			erlang:register(default_firewall, NewF),
 			exit(Firewall, {shutdown, reloading})
-	end,
-	start().
+	end.
 
 %% @doc Check whether a received TX matches the firewall rules.
 scan_tx(TX) ->
@@ -51,6 +45,16 @@ scan_tx(TX) ->
 		ar:err([{ar_firewall, scan_tx_timeout}, {tx, ar_util:encode(TX#tx.id)}]),
 		reject
 	end.
+
+do_start() ->
+	spawn(
+		fun() ->
+			server(#state {
+				tx_id_sigs = av_sigs:load(ar_meta_db:get(transaction_blacklist)),
+				content_sigs = av_sigs:load(ar_meta_db:get(content_policies))
+			})
+		end
+	).
 
 %% @doc Main firewall server loop.
 %% Receives scan requests and returns whether the given transaction and its contents match
