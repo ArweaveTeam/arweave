@@ -26,7 +26,7 @@ node_validates_blocks_with_rejected_tx_test() ->
 	%% Start a local node.
 	{Node, _} = start_node(B0, {127, 0, 0, 1, ar_rpc:call(slave, ar_meta_db, get, [port], 5000)}),
 	%% Configure the firewall to reject one of the txs submitted to the remote node.
-	ar_meta_db:put(content_policies, ["test/test_sig.txt"]),
+	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
 	ar_firewall:reload(),
 	%% Mine the tx into blocks on the remote node.
 	ar_rpc:call(slave, ar_node, mine, [SlaveNode], 5000),

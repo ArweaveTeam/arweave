@@ -50,8 +50,8 @@ do_start() ->
 	spawn(
 		fun() ->
 			server(#state {
-				tx_id_sigs = av_sigs:load(ar_meta_db:get(transaction_blacklist)),
-				content_sigs = av_sigs:load(ar_meta_db:get(content_policies))
+				tx_id_sigs = av_sigs:load(ar_meta_db:get(transaction_blacklist_files)),
+				content_sigs = av_sigs:load(ar_meta_db:get(content_policy_files))
 			})
 		end
 	).
@@ -155,7 +155,7 @@ parse_ndb_blacklist_test() ->
 		},
 	{Sigs, _, _} = av_sigs:load(["test/test_sig.ndb"]),
 	?assertEqual([ExpectedSig], Sigs),
-	ar_meta_db:put(content_policies, ["test/test_sig.ndb"]),
+	ar_meta_db:put(content_policy_files, ["test/test_sig.ndb"]),
 	ar_firewall:reload(),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<".. BADCONTENT ..">> })),
 	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ data = <<".. B A D C ONTENT ..">> })).
@@ -199,7 +199,7 @@ parse_txt_blacklist_test() ->
 		end,
 		ExpectedSigs
 	),
-	ar_meta_db:put(content_policies, ["test/test_sig.txt"]),
+	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
 	ar_firewall:reload(),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<".. BADCONTENT1 ..">> })),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<"..blablaBADCONTENT2 ..">> })),
@@ -210,7 +210,7 @@ iolist_to_string(IOList) ->
 	binary_to_list(iolist_to_binary(IOList)).
 
 blacklist_transaction_test() ->
-	ar_meta_db:put(transaction_blacklist, ["test/test_transaction_blacklist.txt"]),
+	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
 	ar_firewall:reload(),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid1">> })),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid2">> })),

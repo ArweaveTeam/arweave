@@ -89,8 +89,8 @@
 	internal_api_secret = not_set,
 	enable = [],
 	disable = [],
-	content_policies = [],
-	transaction_blacklist = []
+	content_policy_files = [],
+	transaction_blacklist_files = []
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -156,10 +156,10 @@ parse(["mine"|Rest], O) ->
 	parse(Rest, O#opts { mine = true });
 parse(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
 	parse(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
-parse(["content_policy", File|Rest], O = #opts { content_policies = Files }) ->
-	parse(Rest, O#opts { content_policies = [File|Files] });
-parse(["transaction_blacklist", File|Rest], O = #opts { transaction_blacklist = Files } ) ->
-	parse(Rest, O#opts { transaction_blacklist = [File|Files] });
+parse(["content_policy", File|Rest], O = #opts { content_policy_files = Files }) ->
+	parse(Rest, O#opts { content_policy_files = [File|Files] });
+parse(["transaction_blacklist", File|Rest], O = #opts { transaction_blacklist_files = Files } ) ->
+	parse(Rest, O#opts { transaction_blacklist_files = [File|Files] });
 parse(["port", Port|Rest], O) ->
 	parse(Rest, O#opts { port = list_to_integer(Port) });
 parse(["data_dir", DataDir|Rest], O) ->
@@ -236,8 +236,8 @@ start(
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
-		content_policies = Policies,
-		transaction_blacklist = TransactionBlacklist
+		content_policy_files = ContentPolicyFiles,
+		transaction_blacklist_files = TransactionBlacklistFiles
 	}) ->
 	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -249,8 +249,8 @@ start(
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
-	ar_meta_db:put(content_policies, Policies),
-	ar_meta_db:put(transaction_blacklist, TransactionBlacklist),
+	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
+	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
