@@ -257,7 +257,8 @@ start(
 	%% Optionally clear the block cache.
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
 	%% Register prometheus stats collector.
-	application:ensure_started(prometheus),
+	ok = application:ensure_started(prometheus),
+	{ok, _} = application:ensure_all_started(prometheus_cowboy),
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
 	%% Start Cowboy and its dependencies

@@ -42,13 +42,23 @@ do_start(Port) ->
 	spawn(
 		fun() ->
 			ar_blacklist:start(),
+			Routes = [
+				{'_', [
+					{"/metrics/[:registry]", prometheus_cowboy2_handler, []},
+					{"/[...]", ar_http_iface_cowboy_handler, []}
+				]}
+			],
+			Dispatch = cowboy_router:compile(Routes),
 			ProtocolOpts =
 				#{
-					middlewares => [ar_blacklist, cowboy_handler],
-					env => #{
-						handler => ar_http_iface_cowboy_handler,
-						handler_opts => []
-					}
+					middlewares => [
+						ar_blacklist,
+						cowboy_router,
+						cowboy_handler
+					],
+					env => #{dispatch => Dispatch},
+					metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
+					stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
 				},
 
 			{ok, _} =

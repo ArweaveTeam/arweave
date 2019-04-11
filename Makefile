@@ -12,6 +12,8 @@ ERL_OPTS= -pa ebin/ \
 	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
 	-pa lib/accept/_build/default/lib/accept/ebin \
 	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
+	-pa lib/prometheus-cowboy/_build/default/lib/prometheus_httpd/ebin \
+	-pa lib/prometheus-cowboy/_build/default/lib/prometheus_cowboy/ebin \
 	-sasl errlog_type error \
 	-s prometheus
 
@@ -66,6 +68,7 @@ build:
 		./rebar3 compile && \
 		cp _build/default/lib/prometheus_process_collector/priv/prometheus_process_collector.so ../../priv/ \
 	)
+	(cd lib/prometheus-cowboy && ./rebar3 compile)
 	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
@@ -93,6 +96,7 @@ clean:
 	(cd lib/prometheus && ./rebar3 clean --all)
 	(cd lib/accept && ./rebar3 clean --all)
 	(cd lib/prometheus_process_collector && ./rebar3 clean --all)
+	(cd lib/prometheus-cowboy && ./rebar3 clean --all)
 
 todo:
 	grep --color --line-number --recursive TODO "src"
