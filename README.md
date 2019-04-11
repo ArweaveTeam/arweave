@@ -42,7 +42,7 @@ make test
 ```
 
 The command launches two Erlang VMs connected in the distributed mode. The master VM runs an HTTP server on the port
-1984. The slave VM uses the port 1983. The data folders are `test_master` and `test_slave` accordingly. The tests
+1984. The slave VM uses the port 1983. The data folders are `data_test_master` and `data_test_slave` accordingly. The tests
 that do not depend on two VMs are run against the master VM.
 
 ## Build and enter shell

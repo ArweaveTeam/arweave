@@ -492,7 +492,7 @@ tests(Mods, Opts) when is_list(Mods) ->
 				]
 			);
 		_ ->
-			start(Opts#opts { peers = [], pause = false, data_dir = "test_master"}),
+			start(Opts#opts { peers = [], pause = false, data_dir = "data_test_master"}),
 			eunit:test({timeout, ?TEST_TIMEOUT, Mods}, [verbose])
 	end.
 
