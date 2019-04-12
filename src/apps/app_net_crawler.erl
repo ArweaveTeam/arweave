@@ -1,11 +1,15 @@
 -module(app_net_crawler).
--export([crawl/0, crawl/1]).
+-export([crawl/0, crawl/1, reload_jobs/0]).
+
+-define(JOBS_QUEUE_NAME, fetch_peers_queue).
+-define(PARALLEL_FETCHES, 100).
 
 %%% A parallel network crawler that will find all nodes in the network.
+%%% The number of concurrent fetch requests is limited by the 'jobs' library
+%%% (https://github.com/uwiger/jobs), which is NOT defined as a dependency. Therefor
+%%% it's recommended to add 'jobs' to $ERL_LIBS to be able to run this.
 
-%% @doc Crawls the network and returns a map of peers by node. A new fetch will
-%% start as soon as a new node is found. Therefor, the number of parallel
-%% fetches is not limited and exponential to the network size.
+%% @doc Crawls the network and returns a map of peers by node.
 crawl() ->
 	StartPeers = app_net_explore:filter_local_peers(
 		ar_bridge:get_remote_peers(whereis(http_bridge_node))
@@ -13,8 +17,20 @@ crawl() ->
 	crawl(StartPeers).
 
 crawl(StartPeers) ->
+	reload_jobs(),
 	InitState = start_fetching(#{}, StartPeers),
+	io:format("Starting to crawl~n"),
 	crawl_loop(InitState).
+
+%% We don't have a config file, so we hack in the jobs config here.
+reload_jobs() ->
+	application:stop(jobs),
+	application:set_env(jobs, queues, jobs_queues_config()),
+	{ok, _} = application:ensure_all_started(jobs),
+	ok.
+
+jobs_queues_config() ->
+	[{?JOBS_QUEUE_NAME, [{regulators, [{counter, [{limit, ?PARALLEL_FETCHES}]}]}]}].
 
 %% @doc Main loop for the crawler.
 crawl_loop(State) ->
@@ -42,14 +58,13 @@ wait_for_more(State) ->
 		{found_peers, Node, Peers} ->
 			UnseenNodes = lists:usort(Peers -- maps:keys(State)),
 			NewState = start_fetching(State, UnseenNodes),
-			io:format("Ongoing fetch count: ~p~n", [count_ongoing(NewState)]),
 			maps:update(Node, Peers, NewState)
 	end.
 
 %% @doc Start fetches for all the supplied nodes.
 start_fetching(State, Nodes) ->
 	NonLocalNodes = app_net_explore:filter_local_peers(Nodes),
-	lists:foreach(fun start_worker/1, NonLocalNodes),
+	lists:foreach(fun(Node) -> start_worker(Node) end, NonLocalNodes),
 	StateOverlay = [{Node, fetching} || Node <- NonLocalNodes],
 	maps:merge(State, maps:from_list(StateOverlay)).
 
@@ -80,7 +95,8 @@ fetch_peers(Node, {Attempt, MaxAttempts}) ->
 	fetch_peers1(Node, {Attempt, MaxAttempts}).
 
 fetch_peers1(Node, {Attempt, MaxAttempts}) ->
-	case ar_http_iface_client:get_peers(Node, 10 * 1000) of
+	Fetch = fun() -> ar_http_iface_client:get_peers(Node, 10 * 1000) end,
+	case jobs:run(?JOBS_QUEUE_NAME, Fetch) of
 		unavailable ->
 			fetch_peers(Node, {Attempt + 1, MaxAttempts});
 		Peers ->
