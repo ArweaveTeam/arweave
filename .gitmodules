@@ -13,3 +13,12 @@
 [submodule "lib/prometheus-cowboy"]
 	path = lib/prometheus_cowboy
 	url = https://github.com/deadtrickster/prometheus-cowboy.git
+[submodule "lib/cowlib"]
+	path = lib/cowlib
+	url = https://github.com/ninenines/cowlib.git
+[submodule "lib/ranch"]
+	path = lib/ranch
+	url = https://github.com/ninenines/ranch.git
+[submodule "lib/prometheus_httpd"]
+	path = lib/prometheus_httpd
+	url = https://github.com/deadtrickster/prometheus-httpd.git
