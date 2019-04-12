@@ -75,29 +75,19 @@ scan_transaction(TX, TXBlacklist, ContentSigs) ->
 		false ->
 			Tags = lists:foldl(
 				fun({K, V}, Acc) ->
-					[{K, ContentSigs},{V, ContentSigs}|Acc]
+					[K, V | Acc]
 				end,
 				[],
 				TX#tx.tags
 			),
-			ScanList = [{TX#tx.data, ContentSigs}, {TX#tx.target, ContentSigs} | Tags],
-			case lists:any(
-				fun({Data, Sigs}) ->
-					case av_detect:is_infected(Data, Sigs) of
-						{true, MatchedSigs} ->
-							ar:info([
-								{ar_firewall, reject_tx},
-								{tx, ar_util:encode(TX#tx.id)},
-								{matches, MatchedSigs}
-							]),
-							true;
-						_ ->
-							false
-					end
-				end,
-				ScanList
-			) of
-				true ->
+			ScanList = [TX#tx.data, TX#tx.target | Tags],
+			case av_detect:is_infected(ScanList, ContentSigs) of
+				{true, MatchedSigs} ->
+					ar:info([
+						{ar_firewall, reject_tx},
+						{tx, ar_util:encode(TX#tx.id)},
+						{matches, MatchedSigs}
+					]),
 					reject;
 				false ->
 					accept
@@ -115,7 +105,7 @@ scan_signatures_test() ->
 			offset = any,
 			binary = <<"badstuff">>
 		}
-	}], no_pattern, no_pattern},
+	}], no_pattern},
 	TXBlacklist = sets:from_list([<<"badtxid">>]),
 	TX = ar_tx:new(),
 	GoodTXs = [
@@ -155,7 +145,7 @@ parse_ndb_blacklist_test() ->
 					binary = <<"BADCONTENT">>
 				}
 		},
-	{Sigs, _, _} = av_sigs:load(["test/test_sig.ndb"]),
+	{Sigs, _} = av_sigs:load(["test/test_sig.ndb"]),
 	?assertEqual([ExpectedSig], Sigs),
 	ar_meta_db:put(content_policy_files, ["test/test_sig.ndb"]),
 	ar_firewall:reload(),
@@ -189,7 +179,7 @@ parse_txt_blacklist_test() ->
 				}
 		}
 	],
-	{Sigs, _, _ } = av_sigs:load(["test/test_sig.txt"]),
+	{Sigs, _} = av_sigs:load(["test/test_sig.txt"]),
 	lists:foreach(
 		fun(ExpectedSig) ->
 			?assert(

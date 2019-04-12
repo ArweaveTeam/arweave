@@ -5,31 +5,72 @@
 %%% Perform the illicit content detection.
 %%% Given it's task, we should optimise this as much as possible.
 
-%% Given a binary and a set of signatures, test whether the binary
-%% contains illicit content. If not, return false, if it is, return true and
+%% Given a list of binaries and a set of signatures, test whether some binaries
+%% contain illicit content or have illicit hash. If not, return false, if yes, return true and
 %% the matching signatures.
-is_infected(Binary, {Sigs, BinaryPattern, HashPattern}) ->
-	Hash = av_utils:md5sum(Binary),
-	case quick_check(Binary, BinaryPattern) orelse quick_check(Hash, HashPattern) of
-		true ->
-			%% The full check makes sure it is not a false positive, and collects matching
-			%% signatures.
-			full_check(Binary, byte_size(Binary), Hash, Sigs);
+is_infected(Binaries, {Sigs, BinaryPattern}) ->
+	HashSigs = hash_sigs(Sigs),
+	MatchedHashSigs = case HashSigs of
+		[] ->
+			[];
 		_ ->
-			false
+			full_check(Binaries, HashSigs)
+	end,
+	BinarySigs = binary_sigs(Sigs),
+	MatchedBinarySigs = case BinarySigs of
+		[] ->
+			[];
+		_ ->
+			case quick_check(<< Binary || Binary <- Binaries >>, BinaryPattern) of
+				true ->
+					%% The full check makes sure it is not a false positive, and collects matching
+					%% signatures.
+					full_check(Binaries, BinarySigs);
+				false ->
+					[]
+			end
+	end,
+	case MatchedHashSigs ++ MatchedBinarySigs of
+		[] ->
+			false;
+		MatchedSigs ->
+			{true, MatchedSigs}
 	end.
+
+hash_sigs(Sigs) ->
+	[Sig || Sig <- Sigs, Sig#sig.type == hash].
+
+binary_sigs(Sigs) ->
+	[Sig || Sig <- Sigs, Sig#sig.type == binary].
 
 %% Perform a quick check. This only tells us whether there is probably an
 %% infection, not what that infection is, if there is one. Has a very low
 %% false-positive rate. If there is illicit content, returns true in 100% of the cases.
-%% There is a small chance related to joining the independent chunks together before
-%% compiling them that it will return true when there is no illicit content.
+%% There is a small chance related to joining the independent binaries together
+%% that it will return true when there is no illicit content.
 %% If the pattern is no_pattern, returns true indicating the need for a full check.
 quick_check(_, no_pattern) -> true;
 quick_check(Data, Pattern) ->
 	binary:match(Data, Pattern) =/= nomatch.
 
-%% Perform a full, slow check. This returns false, or true with a list of matched signatures.
+%% Perform a full, slow check. Every binary is checked against every signature.
+%% Returns false or true with a list of matched signatures.
+full_check(Binaries, Sigs) ->
+	lists:flatten(
+		lists:map(
+			fun(Binary) ->
+				Hash = av_utils:md5sum(Binary),
+				case full_check(Binary, byte_size(Binary), Hash, Sigs) of
+					{true, MatchedSigs} ->
+						MatchedSigs;
+					false ->
+						[]
+				end
+			end,
+			Binaries
+		)
+	).
+
 full_check(Bin, Sz, Hash, Sigs) ->
 	Res =
 		lists:filtermap(

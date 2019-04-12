@@ -20,14 +20,7 @@ load(Files) ->
 		_ ->
 			binary:compile_pattern(BinarySigs)
 	end,
-	HashSigs = [(Sig#sig.data)#hash_sig.hash || Sig <- hash_sigs(Sigs)],
-	HashPattern = case HashSigs of
-		[] ->
-			no_pattern;
-		_ ->
-			binary:compile_pattern(HashSigs)
-	end,
-	{Sigs, BinaryPattern, HashPattern}.
+	{Sigs, BinaryPattern}.
 
 %% Load the signatures from a specified file, throwing away signatures
 %% that we are not able to process.
@@ -78,9 +71,6 @@ warn_on_load(File, Step, Context) ->
 
 binary_sigs(Sigs) ->
 	[Sig || Sig <- Sigs, Sig#sig.type == binary].
-
-hash_sigs(Sigs) ->
-	[Sig || Sig <- Sigs, Sig#sig.type == hash].
 
 %% Take a CSV row and return a binary sig object.
 create_binary_sig_from_hex([Name, Type, Offset, Sig]) ->
