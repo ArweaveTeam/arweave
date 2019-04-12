@@ -11,5 +11,5 @@
 	path = lib/cowboy
 	url = https://github.com/ninenines/cowboy.git
 [submodule "lib/prometheus-cowboy"]
-	path = lib/prometheus-cowboy
+	path = lib/prometheus_cowboy
 	url = https://github.com/deadtrickster/prometheus-cowboy.git
