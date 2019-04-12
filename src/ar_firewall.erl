@@ -1,5 +1,5 @@
 -module(ar_firewall).
--export([start/0, reload/0, scan_tx/1]).
+-export([start/0, reload/0, scan_tx/1, scan_and_clean_disk/0]).
 -include("ar.hrl").
 -include("av/av_recs.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -44,6 +44,68 @@ scan_tx(TX) ->
 	after 10000 ->
 		ar:err([{ar_firewall, scan_tx_timeout}, {tx, ar_util:encode(TX#tx.id)}]),
 		reject
+	end.
+
+scan_and_clean_disk() ->
+	PID = self(),
+	Ref = make_ref(),
+	spawn(
+		fun() ->
+			do_scan_and_clean_disk(),
+			ar:console([{ar_firewall, disk_scan_complete}]),
+			PID ! {scan_complete, Ref}
+		end
+	),
+	Ref.
+
+do_scan_and_clean_disk() ->
+	TXDir = filename:join(ar_meta_db:get(data_dir), ?TX_DIR),
+	case file:list_dir(TXDir) of
+		{error, Reason} ->
+			ar:err([
+				{ar_firewall, scan_and_clean_disk},
+				{listing_dir, TXDir},
+				{error, Reason}
+			]),
+			ok;
+		{ok, Files} ->
+			lists:foreach(
+				fun(File) ->
+					Filepath = filename:join(TXDir, File),
+					case scan_file(Filepath) of
+						reject ->
+							ar:info([
+								{ar_firewall, scan_and_clean_disk},
+								{removing_file, File}
+							]),
+							file:delete(Filepath),
+							ok;
+						{error, Reason} ->
+							ar:warn([
+								{ar_firewall, scan_and_clean_disk},
+								{loading_file, File},
+								{error, Reason}
+							]),
+							ok;
+						accept ->
+							ok
+					end
+				end,
+				Files
+			)
+	end.
+
+scan_file(File) ->
+	case file:read_file(File) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, Binary} ->
+			try
+				TX = ar_serialize:json_struct_to_tx(Binary),
+				scan_tx(TX)
+			catch Type:Pattern ->
+				{error, {exception, Type, Pattern}}
+			end
 	end.
 
 do_start() ->
@@ -207,3 +269,32 @@ blacklist_transaction_test() ->
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid1">> })),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid2">> })),
 	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ id = <<"goodtxid">> })).
+
+scan_and_clean_disk_test() ->
+	%% Blacklist a transaction and write it to disk.
+	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
+	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"badtxid1">> }),
+	?assertEqual(<<"badtxid1">>, (ar_storage:read_tx(<<"badtxid1">>))#tx.id),
+	%% Setup a content policy and write a bad tx to disk.
+	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"badtx">>, data = <<"BADCONTENT1">>}),
+	?assertEqual(<<"badtx">>, (ar_storage:read_tx(<<"badtx">>))#tx.id),
+	%% Write a good tx to disk,
+	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"goodtxid">> }),
+	?assertEqual(<<"goodtxid">>, (ar_storage:read_tx(<<"goodtxid">>))#tx.id),
+	%% Write a file that is not a tx to the transaction directory.
+	NotTXFile = filename:join([ar_meta_db:get(data_dir), ?TX_DIR, "not_a_tx"]),
+	file:write_file(NotTXFile, <<"not a tx">>),
+	%% Assert illicit txs and only they are removed by the cleanup procedure.
+	reload(),
+	Ref = scan_and_clean_disk(),
+	receive
+		{scan_complete, Ref} ->
+			do_nothing
+	after 10000 ->
+		?assert(false, "The disk scan did not complete after 10 seconds")
+	end,
+	?assertEqual(<<"goodtxid">>, (ar_storage:read_tx(<<"goodtxid">>))#tx.id),
+	{ok, <<"not a tx">>} = file:read_file(NotTXFile),
+	?assertEqual(unavailable, ar_storage:read_tx(<<"badtxid1">>)),
+	?assertEqual(unavailable, ar_storage:read_tx(<<"badtx">>)).

@@ -64,3 +64,29 @@ Example:
 ```
 signature:0:*:7c267e9720076ded59ef7105a38033b1
 ```
+
+## Update Firewall On The Fly
+
+If you add a new entry to one of your transaction blacklist or content policy files, the changes
+are not picked up automatically by the miner. To make them take effect without restarting the miner, run this in your miner console:
+
+```
+> ar_firewall:reload().
+```
+
+If you wish to add more content policy or transaction blacklist files, restart the miner with the additional command argument(s) specifying the file(s).
+## Clean Up Old Data
+
+The firewall filters every incoming transaction and every incoming block. However, your node may already store the data which does not comply with the configured policies.
+
+To scan and clean up the disk, run this in your miner console:
+
+```
+> ar_firewall:scan_and_clean_disk().
+```
+
+The cleanup will be conducted in the background and may take some time. It reports the progress to the console and the logs. When the process is finished, the following message will be printed to the console:
+
+```
+    ar_firewall: disk_scan_complete
+```
