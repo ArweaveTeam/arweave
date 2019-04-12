@@ -14,14 +14,15 @@ while true; do
     echo Launching Erlang Virtual Machine...
     if
         erl $SHELL_OPTS -pa ebin/ \
+            -pa lib/jiffy/ebin \
             -pa lib/cowboy/ebin \
-            -pa lib/cowboy/deps/cowlib/ebin \
-            -pa lib/cowboy/deps/ranch/ebin \
-            -pa lib/prometheus/_build/default/lib/prometheus/ebin \
-            -pa lib/accept/_build/default/lib/accept/ebin \
-            -pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
-            -pa lib/prometheus-cowboy/_build/default/lib/prometheus_httpd/ebin \
-            -pa lib/prometheus-cowboy/_build/default/lib/prometheus_cowboy/ebin \
+            -pa lib/cowlib/ebin \
+            -pa lib/ranch/ebin \
+            -pa lib/prometheus/ebin \
+            -pa lib/accept/ebin \
+            -pa lib/prometheus_process_collector/ebin \
+            -pa lib/prometheus_httpd/ebin \
+            -pa lib/prometheus_cowboy/ebin \
             -sasl errlog_type error \
             -s ar rebuild -s prometheus -run ar main "$@";
     then
