@@ -86,12 +86,14 @@ get_head_block(not_joined) -> unavailable;
 get_head_block(BHL = [IndepHash|_]) ->
 	ar_storage:read_block(IndepHash, BHL).
 
-%% @doc find the hash of a recall block.
-get_recall_hash(B, HashList) ->
+%% @doc find the hash of a recall block. If BlockOrHash is a hash, its block
+%% must be on disk already. TODO: Get rid of this requirement.
+get_recall_hash(BlockOrHash, HashList) ->
 	lists:nth(
-        1 + ar_weave:calculate_recall_block(B, HashList),
+        1 + ar_weave:calculate_recall_block(BlockOrHash, HashList),
         lists:reverse(HashList)
     ).
+
 get_recall_hash(_Height, Hash, []) -> Hash;
 get_recall_hash(0, Hash, _HastList) -> Hash;
 get_recall_hash(Height, Hash, HashList) ->
