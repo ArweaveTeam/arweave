@@ -13,7 +13,7 @@
 	ignore = untracked
 [submodule "lib/prometheus-cowboy"]
 	path = lib/prometheus_cowboy
-	url = https://github.com/deadtrickster/prometheus-cowboy.git
+	url = https://github.com/ArweaveTeam/prometheus-cowboy.git
 [submodule "lib/cowlib"]
 	path = lib/cowlib
 	url = https://github.com/ninenines/cowlib.git
