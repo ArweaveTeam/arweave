@@ -8,33 +8,34 @@
 %% Given a list of binaries and a set of signatures, test whether some binaries
 %% contain illicit content or have illicit hash. If not, return false, if yes, return true and
 %% the matching signatures.
-is_infected(Binaries, {Sigs, BinaryPattern}) ->
-	HashSigs = hash_sigs(Sigs),
-	MatchedHashSigs = case HashSigs of
-		[] ->
-			[];
-		_ ->
-			full_check(Binaries, HashSigs)
-	end,
-	BinarySigs = binary_sigs(Sigs),
-	MatchedBinarySigs = case BinarySigs of
-		[] ->
-			[];
-		_ ->
-			case quick_check(<< Binary || Binary <- Binaries >>, BinaryPattern) of
-				true ->
-					%% The full check makes sure it is not a false positive, and collects matching
-					%% signatures.
-					full_check(Binaries, BinarySigs);
-				false ->
-					[]
-			end
-	end,
-	case MatchedHashSigs ++ MatchedBinarySigs of
+is_infected(Subjects, {Sigs, BinaryPattern}) ->
+	MatchingSigs = lists:append(
+		matching_hash_sigs(Subjects, Sigs),
+		matching_binary_sigs(Subjects, Sigs, BinaryPattern)
+	),
+	case MatchingSigs of
 		[] ->
 			false;
-		MatchedSigs ->
-			{true, MatchedSigs}
+		_ ->
+			{true, MatchingSigs}
+	end.
+
+matching_hash_sigs(Subjects, Sigs) ->
+	matching_sigs(Subjects, hash_sigs(Sigs)).
+
+matching_binary_sigs(Subjects, Sigs, BinaryPattern) ->
+	case binary_sigs(Sigs) of
+		[] ->
+			[];
+		BinarySigs ->
+			case quick_check(Subjects, BinaryPattern) of
+				maybe_infected ->
+					%% The full check makes sure it is not a false positive, and collects matching
+					%% signatures.
+					matching_sigs(Subjects, BinarySigs);
+				not_infected ->
+					[]
+			end
 	end.
 
 hash_sigs(Sigs) ->
@@ -43,83 +44,78 @@ hash_sigs(Sigs) ->
 binary_sigs(Sigs) ->
 	[Sig || Sig <- Sigs, Sig#sig.type == binary].
 
-%% Perform a quick check. This only tells us whether there is probably an
-%% infection, not what that infection is, if there is one. Has a very low
-%% false-positive rate. If there is illicit content, returns true in 100% of the cases.
-%% There is a small chance related to joining the independent binaries together
-%% that it will return true when there is no illicit content.
-%% If the pattern is no_pattern, returns true indicating the need for a full check.
-quick_check(_, no_pattern) -> true;
-quick_check(Data, Pattern) ->
-	binary:match(Data, Pattern) =/= nomatch.
+%% Performs a quick check. It's faster than matching_sigs/2 because we
+%% join all subjects together. The return of not_infected means it's defenitely
+%% not infected. It can also return maybe_infected, which means it's most likely
+%% that one of the subjects is infected, but we need to run a matching_sigs/2 to be sure.
+quick_check(Subjects, Pattern) ->
+	CompositeSubject = << Subject || Subject <- Subjects >>,
+	case binary:match(CompositeSubject, Pattern) of
+		nomatch ->
+			not_infected;
+		_ ->
+			maybe_infected
+	end.
 
-%% Perform a full, slow check. Every binary is checked against every signature.
-%% Returns false or true with a list of matched signatures.
-full_check(Binaries, Sigs) ->
+%% Perform a full, slow check. Every subject is checked against every signature.
+%% Returns a list of matching signatures.
+matching_sigs(Subjects, Sigs) ->
 	lists:flatten(
 		lists:map(
-			fun(Binary) ->
-				Hash = av_utils:md5sum(Binary),
-				case full_check(Binary, byte_size(Binary), Hash, Sigs) of
-					{true, MatchedSigs} ->
-						MatchedSigs;
-					false ->
-						[]
-				end
+			fun(Subject) ->
+				Hash = av_utils:md5sum(Subject),
+				matching_sigs(Subject, Hash, Sigs)
 			end,
-			Binaries
+			Subjects
 		)
 	).
 
-full_check(Bin, Sz, Hash, Sigs) ->
-	Res =
+matching_sigs(Subject, Hash, Sigs) ->
+	MatchingSigs =
 		lists:filtermap(
-			fun(Sig) -> check_sig(Bin, Sz, Hash, Sig) end,
+			fun(Sig) ->
+				case is_sig_matching(Subject, Hash, Sig) of
+					false -> false;
+					true -> {true, Sig}
+				end
+			end,
 			Sigs
 		),
-	case Res of
-		[] -> false;
-		MatchedSigs -> {true, [ get_sig_name(S) || S <- MatchedSigs ]}
-	end.
+	[get_sig_name(S) || S <- MatchingSigs].
 
 get_sig_name(S) ->
-	Name = S#sig.name,
-	case Name of
+	case S#sig.name of
 		undefined ->
-			Type = S#sig.type,
-			case Type of
+			case S#sig.type of
 				binary ->
 					iolist_to_binary(io_lib:format("Contains ~s", [(S#sig.data)#binary_sig.binary]));
 				hash ->
 					iolist_to_binary(io_lib:format("Has hash ~s", [(S#sig.data)#hash_sig.hash]))
 			end;
-		_ ->
+		Name ->
 			Name
 	end.
 
 %% Perform the actual check.
-check_sig(Bin, _Sz, _Hash, S = #sig { type = binary, data = D }) ->
-	case binary:match(Bin, D#binary_sig.binary) of
+is_sig_matching(Subject, _Hash, #sig { type = binary, data = SigData }) ->
+	case binary:match(Subject, SigData#binary_sig.binary) of
 		nomatch -> false;
 		{FoundOffset, _} ->
 			% The file is infected. If the offset was set, check it.
-			case D#binary_sig.offset of
-				any -> {true, S};
-				FoundOffset -> {true, S};
+			case SigData#binary_sig.offset of
+				any -> true;
+				FoundOffset -> true;
 				_ -> false
 			end
 	end;
-check_sig(_Bin, Sz, Hash,
-		S = #sig { type = hash, data = D = #hash_sig { hash = SigHash } }) ->
-	%% Check the binary size first, as this is very low cost.
-	case D#hash_sig.size of
-		Sz -> check_hash(Hash, SigHash, S);
-		any -> check_hash(Hash, SigHash, S);
-		_ -> false
-	end.
-
-%% Perform a hash check, returning filtermap format results.
-check_hash(Hash, SigHash, S) ->
-	if SigHash == Hash -> {true, S};
-	true -> false
+is_sig_matching(Subject, Hash,
+		#sig { type = hash, data = SigData = #hash_sig { hash = SigHash } }) ->
+	SubjectSize = byte_size(Subject),
+	case SigData#hash_sig.size of
+		SubjectSize ->
+			Hash == SigHash;
+		any ->
+			Hash == SigHash;
+		_ ->
+			false
 	end.

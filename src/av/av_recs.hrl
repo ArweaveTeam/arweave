@@ -9,6 +9,8 @@
 %% A record that stores md5-sig-specific information.
 -record(hash_sig, {
 	hash,
+	%% The byte size of the original content. Both the hash and the size must
+	%% match according to the file formats we use to derive this record from.
 	size
 }).
 

@@ -159,7 +159,7 @@ scan_transaction(TX, TXBlacklist, ContentSigs) ->
 %% Tests: ar_firewall
 
 scan_signatures_test() ->
-	ContentSigs = {[#sig{
+	Sig = #sig{
 		name = "Test",
 		type = binary,
 		data = #binary_sig{
@@ -167,7 +167,8 @@ scan_signatures_test() ->
 			offset = any,
 			binary = <<"badstuff">>
 		}
-	}], no_pattern},
+	},
+	ContentSigs = {[Sig], binary:compile_pattern([(Sig#sig.data)#binary_sig.binary])},
 	TXBlacklist = sets:from_list([<<"badtxid">>]),
 	TX = ar_tx:new(),
 	GoodTXs = [
