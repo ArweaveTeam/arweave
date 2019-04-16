@@ -18,7 +18,7 @@ init(Req0, State) ->
 %%%===================================================================
 
 do_handle(Req) ->
-	%% Inform ar_bridge about new peer, performance rec will be updated from ar_metrics
+	%% Inform ar_bridge about new peer, performance rec will be updated from cowboy_metrics_h
 	%% (this is leftover from update_performance_list)
 	Peer = arweave_peer(Req),
 	do_handle(Req, Peer).
@@ -369,7 +369,7 @@ do_handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], _Req) ->
 			{400, #{}, <<"Invalid address.">>};
 		{ok, AddrOK} ->
 			%% ar_node:get_balance/2 can time out which is not suitable for this
-			%% use-case. It would be better if it never timed out so that Elli
+			%% use-case. It would be better if it never timed out so that Cowboy
 			%% would handle the timeout instead.
 			case ar_node:get_balance(whereis(http_entrypoint_node), AddrOK) of
 				node_unavailable ->
