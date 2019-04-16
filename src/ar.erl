@@ -257,6 +257,11 @@ start(
 	%% Optionally clear the block cache.
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
 	%% Register prometheus stats collector.
+	application:set_env(prometheus, cowboy_instrumenter, [
+		{request_labels, [http_method, route, reason, status_class]},
+		{error_labels, [http_method, route, reason, error]},
+		{labels_module, ar_prometheus_cowboy_labels}
+	]),
 	ok = application:ensure_started(prometheus),
 	{ok, _} = application:ensure_all_started(prometheus_cowboy),
 	prometheus_registry:register_collector(prometheus_process_collector),
