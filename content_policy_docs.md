@@ -1,11 +1,11 @@
 
-# Arweave Firewall Docs
+# Arweave Content Policy Docs
 
 To support the freedom of individual participants in the network to control what content they store, and to allow the network as a whole to democratically reject content that is widely reviled, the Arweave software provides a blacklisting system.
 Each node maintains an (optional) blacklist containing, for example, the hashes or substrings of certain data that it doesn't wish to ever store, and will never include into the block when mining or write to disk the content that matches this.
 These blacklists can be built by individuals or collaboratively, or can be imported from other sources.
 
-## Firewall Formats
+## Content Policy Formats
 
 ### Transaction identifiers
 
@@ -65,7 +65,7 @@ Example:
 signature:0:*:7c267e9720076ded59ef7105a38033b1
 ```
 
-## Update Firewall On The Fly
+## Update Content Policy On The Fly
 
 If you add a new entry to one of your transaction blacklist or content policy files, the changes
 are not picked up automatically by the miner. To make them take effect without restarting the miner, run this in your miner console:
@@ -77,7 +77,7 @@ are not picked up automatically by the miner. To make them take effect without r
 If you wish to add more content policy or transaction blacklist files, restart the miner with the additional command argument(s) specifying the file(s).
 ## Clean Up Old Data
 
-The firewall filters every incoming transaction and every incoming block. However, your node may already store the data which does not comply with the configured policies.
+The content policy firewall filters every incoming transaction and every incoming block. However, your node may already store the data which does not comply with the configured policies.
 
 To scan and clean up the disk, run this in your miner console:
 
