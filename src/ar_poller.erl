@@ -54,10 +54,17 @@ get_remote_block_pair(Peer, BHL) ->
 	end.
 
 get_remote_block_pair(Peer, BHL, B) ->
-	PreviousRecallBH = ar_util:get_recall_hash(B#block.previous_block, BHL),
-	case get_block(PreviousRecallBH, BHL, Peer) of
-		{ok, PreviouRecallB} -> {B, PreviouRecallB};
-		unavailable -> unavailable
+	%% Fetch the previous block, since that's required before calling
+	%% ar_util:get_recall_hash/2
+	case get_block(B#block.previous_block, BHL, Peer) of
+		{ok, _} ->
+			PreviousRecallBH = ar_util:get_recall_hash(B#block.previous_block, BHL),
+			case get_block(PreviousRecallBH, BHL, Peer) of
+				{ok, PreviouRecallB} -> {B, PreviouRecallB};
+				unavailable -> unavailable
+			end;
+		unavailable ->
+			unavailable
 	end.
 
 get_block(BH, BHL, Peer) ->
