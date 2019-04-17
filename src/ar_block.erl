@@ -545,12 +545,10 @@ get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
 						ar_http_iface_client:get_full_block(OrigPeer, RecallHash, BHL),
 					case ?IS_BLOCK(FullBlock)  of
 						true ->
-							Recall = FullBlock#block {
+							ar_storage:write_full_block(FullBlock),
+							FullBlock#block {
 								txs = [ T#tx.id || T <- FullBlock#block.txs]
-							},
-							ar_storage:write_tx(FullBlock#block.txs),
-							ar_storage:write_block(Recall),
-							Recall;
+							};
 						false -> unavailable
 					end;
 				EncryptedRecall ->
@@ -563,12 +561,10 @@ get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
 					case FBlock of
 						unavailable -> unavailable;
 						FullBlock ->
-							Recall = FullBlock#block {
+							ar_storage:write_full_block(FullBlock),
+							FullBlock#block {
 								txs = [ T#tx.id || T <- FullBlock#block.txs]
-							},
-							ar_storage:write_tx(FullBlock#block.txs),
-							ar_storage:write_block(Recall),
-							Recall
+							}
 					end
 			end;
 		Recall -> Recall

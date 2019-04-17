@@ -5,7 +5,8 @@
 -module(ar).
 
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
--export([tests/0, tests/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
+-export([tests/0, tests/1, tests/2]).
+-export([test_with_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
 -export([report/1, report_console/1, d/1]).
@@ -46,6 +47,8 @@
 		ar_retarget,
 		ar_block,
 		ar_tx_db,
+		ar_firewall_distributed_tests,
+		% ar_meta_db must be the last in the list since it resets global configuraiton
 		ar_meta_db
 	]
 ).
@@ -86,7 +89,8 @@
 	internal_api_secret = not_set,
 	enable = [],
 	disable = [],
-	content_policies = []
+	content_policy_files = [],
+	transaction_blacklist_files = []
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -123,6 +127,8 @@ main("") ->
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"content_policy (file)", "Load a content policy file for the node."},
+			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
+											 "One Base64 encoded transaction ID per line."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
@@ -150,8 +156,10 @@ parse(["mine"|Rest], O) ->
 	parse(Rest, O#opts { mine = true });
 parse(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
 	parse(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
-parse(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
-	parse(Rest, O#opts { content_policies = [F|Fs] });
+parse(["content_policy", File|Rest], O = #opts { content_policy_files = Files }) ->
+	parse(Rest, O#opts { content_policy_files = [File|Files] });
+parse(["transaction_blacklist", File|Rest], O = #opts { transaction_blacklist_files = Files } ) ->
+	parse(Rest, O#opts { transaction_blacklist_files = [File|Files] });
 parse(["port", Port|Rest], O) ->
 	parse(Rest, O#opts { port = list_to_integer(Port) });
 parse(["data_dir", DataDir|Rest], O) ->
@@ -228,7 +236,8 @@ start(
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
-		content_policies = Policies
+		content_policy_files = ContentPolicyFiles,
+		transaction_blacklist_files = TransactionBlacklistFiles
 	}) ->
 	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -240,7 +249,8 @@ start(
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
-	ar_meta_db:put(content_policies, Policies),
+	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
+	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
@@ -405,10 +415,18 @@ generate_logfile_name() ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
 	lists:flatten(
 		io_lib:format(
-			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b.log",
-			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se]
+			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b~s.log",
+			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se, maybe_node_postfix()]
 		)
 	).
+
+maybe_node_postfix() ->
+	case init:get_argument(sname) of
+		{ok, [[Sname]]} ->
+			"-" ++ Sname;
+		_ ->
+			""
+	end.
 
 %% @doc Run the erlang make system on the project.
 rebuild() ->
@@ -462,6 +480,9 @@ init(Args) ->
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
+	tests(?CORE_TEST_MODS, #opts {}).
+
+tests(Mods, Opts) when is_list(Mods) ->
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(
@@ -471,18 +492,18 @@ tests() ->
 				]
 			);
 		_ ->
-			start(#opts { peers = [], pause = false}),
-			eunit:test({timeout, ?TEST_TIMEOUT, ?CORE_TEST_MODS}, [verbose])
+			start(Opts#opts { peers = [], pause = false, data_dir = "data_test_master"}),
+			eunit:test({timeout, ?TEST_TIMEOUT, Mods}, [verbose])
 	end.
-
-%% @doc Run the TNT test system, printing coverage results.
-test_coverage() ->
-	ar_coverage:analyse(fun tests/0).
 
 %% @doc Run the tests for a single module.
 tests(Mod) ->
 	ar_storage:ensure_directories(),
 	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
+
+%% @doc Run the tests, printing coverage results.
+test_with_coverage() ->
+	ar_coverage:analyse(fun tests/0).
 
 %% @doc Run tests on the apps.
 test_apps() ->

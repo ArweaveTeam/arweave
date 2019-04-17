@@ -1,6 +1,7 @@
 -module(ar_storage).
+
 -export([start/0]).
--export([write_block/1, write_full_block/1, read_block/2, clear/0]).
+-export([write_block/1, write_full_block/1, write_full_block/2, read_block/2, clear/0]).
 -export([write_encrypted_block/2, read_encrypted_block/1, invalidate_block/1]).
 -export([delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
@@ -12,6 +13,7 @@
 -export([lookup_block_filename/1,lookup_tx_filename/1]).
 -export([do_read_block/2, do_read_tx/1]).
 -export([ensure_directories/0]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -24,6 +26,7 @@
 %% @doc Ready the system for block/tx reading and writing.
 %% %% This function should block.
 start() ->
+	ar_firewall:start(),
 	ensure_directories(),
 	ar_block_index:start().
 
@@ -115,12 +118,26 @@ write_block(RawB) ->
 	end.
 -endif.
 
-%% Write a full block to disk, including writing TXs and modifying the
-%% TX list.
 write_full_block(B) ->
 	BShadow = B#block { txs = [T#tx.id || T <- B#block.txs] },
-	ar_storage:write_tx(B#block.txs),
-	ar_storage:write_block(BShadow).
+	write_full_block(BShadow, B#block.txs).
+
+write_full_block(BShadow, TXs) ->
+	%% We only store data that passes the firewall configured by the miner.
+	ScannedTXs = lists:filter(
+		fun(TX) ->
+			case ar_firewall:scan_tx(TX) of
+				accept ->
+					true;
+				reject ->
+					false
+			end
+		end,
+		TXs
+	),
+	write_tx(ScannedTXs),
+	write_block(BShadow),
+	ar_tx_search:update_tag_table(BShadow#block{ txs = ScannedTXs }).
 
 %% @doc Write an encrypted	block (with the hash.json as the filename) to disk.
 %% When debug is set, does not consider disk space. This is currently

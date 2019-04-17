@@ -13,7 +13,8 @@ ERL_OPTS= -pa ebin/ \
 test_all: test test_apps
 
 test: all
-	@erl $(ERL_OPTS) -noshell -s ar test_coverage -s init stop
+	@erl $(ERL_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
+	@erl $(ERL_OPTS) -noshell -sname master -setcookie test -run ar test_with_coverage -s init stop
 
 test_apps: all
 	@erl $(ERL_OPTS) -noshell -s ar test_apps -s init stop
@@ -32,7 +33,7 @@ realistic: all
 	@erl $(ERL_OPTS) -noshell -s ar start -s ar_test_sup start realistic
 
 log:
-	tail -n 100 -f logs/`ls -t logs |  head -n 1`
+	tail -n 100 -f logs/`ls -t logs | grep -v slave | head -n 1`
 
 catlog:
 	cat logs/`ls -t logs | head -n 1`
@@ -64,7 +65,8 @@ docs: all
 	(cd docs && erl -noshell -s ar docs -pa ../ebin -s init stop)
 
 session: all
-	erl $(ERL_OPTS) -s ar start -pa ebin/
+	erl $(ERL_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
+	erl $(ERL_OPTS) -sname master -setcookie test -run ar main data_dir data_test_master -pa ebin/
 
 sim_realistic: all
 	erl $(ERL_OPTS) -s ar_network spawn_and_mine realistic

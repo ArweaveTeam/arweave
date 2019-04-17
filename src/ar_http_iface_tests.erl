@@ -43,9 +43,10 @@ single_regossip_test_() ->
 		Responses =
 			lists:map(
 				fun(_) ->
+					timer:sleep(rand:uniform(100)),
 					ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
 				end,
-				lists:seq(1, 100)
+				lists:seq(1, 10)
 			),
 		?assertEqual(1, length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]))
 	end}.
@@ -586,6 +587,27 @@ add_external_block_with_tx_test_() ->
 		B = ar_storage:read_block(BH, ar_node:get_hash_list(Node1)),
 		?assert(lists:member(TX#tx.id, B#block.txs))
 	end}.
+
+mine_illicit_tx_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node = ar_node:start([], [B0]),
+	TX = ar_tx:new(<<"BADCONTENT1">>),
+	ar_node:add_tx(Node, TX),
+	timer:sleep(500),
+	ar_meta_db:put(content_policy_files, []),
+	ar_firewall:reload(),
+	ar_node:mine(Node),
+	timer:sleep(500),
+	?assertEqual(<<"BADCONTENT1">>, (ar_storage:read_tx(TX#tx.id))#tx.data),
+	FilteredTX = ar_tx:new(<<"BADCONTENT1">>),
+	ar_node:add_tx(Node, FilteredTX),
+	timer:sleep(500),
+	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_firewall:reload(),
+	ar_node:mine(Node),
+	timer:sleep(500),
+	?assertEqual(unavailable, ar_storage:read_tx(FilteredTX#tx.id)).
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.

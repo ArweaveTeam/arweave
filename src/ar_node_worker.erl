@@ -345,17 +345,12 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Pee
 		when NewB#block.height == Height + 1 ->
 	% This block is at the correct height.
 	RecallHash = ar_node_utils:find_recall_hash(NewB, HashList),
-	FullBlock = ar_node_utils:get_full_block(Peer, RecallHash, HashList),
-	case ?IS_BLOCK(FullBlock) of
+	RecallB = ar_node_utils:get_full_block(Peer, RecallHash, HashList),
+	case ?IS_BLOCK(RecallB) of
 		true ->
-			% TODO: Cleanup full block -> shadow generation.
-			RecallShadow = FullBlock#block { txs = [
-													T#tx.id
-													||
-													T <- FullBlock#block.txs] },
-			ar_storage:write_full_block(FullBlock),
+			ar_storage:write_full_block(RecallB),
 			StateNext = StateIn#{ gossip => NewGS },
-			process_new_block(StateNext, NewGS, NewB, RecallShadow, Peer, HashList);
+			process_new_block(StateNext, NewGS, NewB, RecallB, Peer, HashList);
 		false ->
 			ar:warn(failed_to_get_recall_block),
 			none
@@ -404,12 +399,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
 		false ->
-			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
-			case is_fork_preferable(NewB, CDiff, BHL) of
-				false -> [];
-				true ->
-					ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
-			end
+			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}])
 	end,
 	{ok, StateOut};
 process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
@@ -553,11 +543,9 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 					{ok, ar_node_utils:reset_miner(StateIn)}
 			end;
 		true ->
-			ar_storage:write_tx(MinedTXs),
-			ar_storage:write_block(NextB),
+			ar_storage:write_full_block(NextB, MinedTXs),
 			NewHL = [NextB#block.indep_hash | HashList],
 			ar_storage:write_block_hash_list(BinID, NewHL),
-			ar_tx_search:update_tag_table(NextB),
 			ar_miner_log:mined_block(NextB#block.indep_hash),
 			ar:report_console(
 				[
