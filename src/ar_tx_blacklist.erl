@@ -1,11 +1,11 @@
 -module(ar_tx_blacklist).
--export([load_from_files/1, is_element/2]).
+-export([load_from_files/1, is_blacklisted/2]).
 -include("ar.hrl").
 
 load_from_files(Files) ->
 	sets:from_list(lists:flatten(lists:map(fun load_from_file/1, Files))).
 
-is_element(TX, TXBlacklist) ->
+is_blacklisted(TX, TXBlacklist) ->
 	sets:is_element(TX#tx.id, TXBlacklist).
 
 load_from_file(File) ->

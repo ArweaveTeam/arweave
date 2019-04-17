@@ -130,7 +130,7 @@ server(S = #state { tx_blacklist = TXBlacklist, content_sigs = ContentSigs } ) -
 
 %% @doc Check if a transaction is in the black list and compare its contents against known bad signatures.
 scan_transaction(TX, TXBlacklist, ContentSigs) ->
-	case ar_tx_blacklist:is_element(TX, TXBlacklist) of
+	case ar_tx_blacklist:is_blacklisted(TX, TXBlacklist) of
 		true ->
 			ar:info([{ar_firewall, reject_tx}, {tx, ar_util:encode(TX#tx.id)}, tx_is_blacklisted]),
 			reject;
