@@ -161,22 +161,26 @@ do_handle(<<"GET">>, [<<"tx">>, Hash], Req) ->
 %%	}
 %%
 do_handle(<<"POST">>, [<<"arql">>], Req) ->
-	{QueryJson, ReadReq} = read_complete_body(Req),
-	Query = ar_serialize:json_struct_to_query(
-		binary_to_list(QueryJson)
-	),
-	TXs = ar_util:unique(ar_parser:eval(Query)),
-	case TXs of
-		[] -> {200, #{}, [], ReadReq};
-		Set ->
-			{
-				200,
-				#{},
-				ar_serialize:jsonify(
-					ar_serialize:hash_list_to_json_struct(Set)
-				),
-				ReadReq
-			}
+	case read_complete_body(Req) of
+		{ok, QueryJson, ReadReq} ->
+			Query = ar_serialize:json_struct_to_query(
+				binary_to_list(QueryJson)
+			),
+			TXs = ar_util:unique(ar_parser:eval(Query)),
+			case TXs of
+				[] -> {200, #{}, [], ReadReq};
+				Set ->
+					{
+						200,
+						#{},
+						ar_serialize:jsonify(
+							ar_serialize:hash_list_to_json_struct(Set)
+						),
+						ReadReq
+					}
+			end;
+		{error, body_size_too_large, TooLargeReq} ->
+			reply_with_413(TooLargeReq)
 	end;
 
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
@@ -228,13 +232,17 @@ do_handle(<<"POST">>, [<<"wallet">>], Req) ->
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
 do_handle(<<"POST">>, [<<"tx">>], Req) ->
-	{TXJSON, ReadReq} = read_complete_body(Req),
-	TX = ar_serialize:json_struct_to_tx(TXJSON),
-	case handle_post_tx(TX) of
-		ok ->
-			{200, #{}, <<"OK">>, ReadReq};
-		{error_response, {Status, Headers, Body}} ->
-			{Status, Headers, Body, ReadReq}
+	case read_complete_body(Req) of
+		{ok, TXJSON, ReadReq} ->
+			TX = ar_serialize:json_struct_to_tx(TXJSON),
+			case handle_post_tx(TX) of
+				ok ->
+					{200, #{}, <<"OK">>, ReadReq};
+				{error_response, {Status, Headers, Body}} ->
+					{Status, Headers, Body, ReadReq}
+			end;
+		{error, body_size_too_large, TooLargeReq} ->
+			reply_with_413(TooLargeReq)
 	end;
 
 %% @doc Sign and send a tx to the network.
@@ -244,28 +252,32 @@ do_handle(<<"POST">>, [<<"tx">>], Req) ->
 do_handle(<<"POST">>, [<<"unsigned_tx">>], Req) ->
 	case check_internal_api_secret(Req) of
 		pass ->
-			{Body, ReadReq} = read_complete_body(Req),
-			{UnsignedTXProps} = ar_serialize:dejsonify(Body),
-			WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, UnsignedTXProps),
-			%% ar_serialize:json_struct_to_tx/1 requires all properties to be there,
-			%% so we're adding id, owner and signature with bogus values. These
-			%% will later be overwritten in ar_tx:sign/2
-			FullTxProps = lists:append(
-				proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
-				[
-					{<<"id">>, ar_util:encode(<<"id placeholder">>)},
-					{<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
-					{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
-				]
-			),
-			KeyPair = ar_wallet:load_keyfile(ar_wallet:wallet_filepath(WalletAccessCode)),
-			UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
-			SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
-			case handle_post_tx(SignedTX) of
-				ok ->
-					{200, #{}, ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}), ReadReq};
-				{error_response, {Status, Headers, Body}} ->
-					{Status, Headers, Body, ReadReq}
+			case read_complete_body(Req) of
+				{ok, Body, ReadReq} ->
+					{UnsignedTXProps} = ar_serialize:dejsonify(Body),
+					WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, UnsignedTXProps),
+					%% ar_serialize:json_struct_to_tx/1 requires all properties to be there,
+					%% so we're adding id, owner and signature with bogus values. These
+					%% will later be overwritten in ar_tx:sign/2
+					FullTxProps = lists:append(
+						proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
+						[
+							{<<"id">>, ar_util:encode(<<"id placeholder">>)},
+							{<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
+							{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
+						]
+					),
+					KeyPair = ar_wallet:load_keyfile(ar_wallet:wallet_filepath(WalletAccessCode)),
+					UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
+					SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
+					case handle_post_tx(SignedTX) of
+						ok ->
+							{200, #{}, ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}), ReadReq};
+						{error_response, {Status, Headers, Body}} ->
+							{Status, Headers, Body, ReadReq}
+					end;
+				{error, body_size_too_large, TooLargeReq} ->
+					reply_with_413(TooLargeReq)
 			end;
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
@@ -344,23 +356,27 @@ do_handle(<<"GET">>, [<<"wallet_list">>], Req) ->
 %% nodes network information JSON encoded as specified in ar_serialize.
 % NOTE: Consider returning remaining timeout on a failed request
 do_handle(<<"POST">>, [<<"peers">>], Req) ->
-	{BlockJSON, ReadReq} = read_complete_body(Req),
-	case ar_serialize:dejsonify(BlockJSON) of
-		{Struct} ->
-			{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-			case (NetworkName == <<?NETWORK_NAME>>) of
-				false ->
-					{400, #{}, <<"Wrong network.">>, ReadReq};
-				true ->
-					Peer = arweave_peer(ReadReq),
-					case ar_meta_db:get({peer, Peer}) of
-						not_found ->
-							ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
-						X -> X
-					end,
-					{200, #{}, [], ReadReq}
+	case read_complete_body(Req) of
+		{ok, BlockJSON, ReadReq} ->
+			case ar_serialize:dejsonify(BlockJSON) of
+				{Struct} ->
+					{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
+					case (NetworkName == <<?NETWORK_NAME>>) of
+						false ->
+							{400, #{}, <<"Wrong network.">>, ReadReq};
+						true ->
+							Peer = arweave_peer(ReadReq),
+							case ar_meta_db:get({peer, Peer}) of
+								not_found ->
+									ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
+								X -> X
+							end,
+							{200, #{}, [], ReadReq}
+					end;
+				_ -> {400, #{}, "Wrong network", ReadReq}
 			end;
-		_ -> {400, #{}, "Wrong network", ReadReq}
+		{error, body_size_too_large, TooLargeReq} ->
+			reply_with_413(TooLargeReq)
 	end;
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
@@ -612,21 +628,25 @@ do_handle(<<"GET">>, [<<"tx">>, Hash, Field], Req) ->
 %% POST request to endpoint /services where the body of the request is a JSON encoded serivce as
 %% specified in ar_serialize.
 do_handle(<<"POST">>, [<<"services">>], Req) ->
-	{BodyBin, ReadReq} = read_complete_body(Req)
-	{ServicesJSON} = ar_serialize:jsonify(BodyBin),
-	ar_services:add(
-		whereis(http_services_node),
-		lists:map(
-			fun({Vals}) ->
-				{<<"name">>, Name} = lists:keyfind(<<"name">>, 1, Vals),
-				{<<"host">>, Host} = lists:keyfind(<<"host">>, 1, Vals),
-				{<<"expires">>, Expiry} = lists:keyfind(<<"expires">>, 1, Vals),
-				#service { name = Name, host = Host, expires = Expiry }
-			end,
-			ServicesJSON
-		)
-	),
-	{200, #{}, "OK", ReadReq};
+	case read_complete_body(Req) of
+		{ok, BodyBin, ReadReq} ->
+			{ServicesJSON} = ar_serialize:jsonify(BodyBin),
+			ar_services:add(
+				whereis(http_services_node),
+				lists:map(
+					fun({Vals}) ->
+						{<<"name">>, Name} = lists:keyfind(<<"name">>, 1, Vals),
+						{<<"host">>, Host} = lists:keyfind(<<"host">>, 1, Vals),
+						{<<"expires">>, Expiry} = lists:keyfind(<<"expires">>, 1, Vals),
+						#service { name = Name, host = Host, expires = Expiry }
+					end,
+					ServicesJSON
+				)
+			),
+			{200, #{}, "OK", ReadReq};
+		{error, body_size_too_large, TooLargeReq} ->
+			reply_with_413(TooLargeReq)
+	end;
 
 %% @doc Return the current block hieght, or 500
 do_handle(Method, [<<"height">>], Req)
@@ -680,16 +700,23 @@ sendfile(Filename) ->
 read_complete_body(Req) ->
 	read_complete_body(Req, <<>>).
 
-read_complete_body(UnreadReq, Acc) ->
-	case cowboy_req:read_body(UnreadReq) of
-		{more, Data, ReadReq} ->
-			read_complete_body(ReadReq, <<Acc/binary, Data/binary>>);
-		{ok, Data, ReadReq} ->
-			{<<Acc/binary, Data/binary>>, ReadReq}
-	end.
+read_complete_body(Req, Acc) ->
+	{MoreOrOk, Data, ReadReq} = cowboy_req:read_body(Req),
+	NewAcc = <<Acc/binary, Data/binary>>,
+	read_complete_body(MoreOrOk, NewAcc, ReadReq).
+
+read_complete_body(_, Data, Req) when byte_size(Data) > ?MAX_BODY_SIZE ->
+	{error, body_size_too_large, Req};
+read_complete_body(more, Data, Req) ->
+	read_complete_body(Req, Data);
+read_complete_body(ok, Data, Req) ->
+	{ok, Data, Req}.
 
 not_found(Req) ->
 	{400, #{}, <<"Request type not found.">>, Req}.
+
+reply_with_413(Req) ->
+	{413, #{}, <<"Payload too large">>, Req}.
 
 %% @doc Get the filename for an encoded TX id.
 get_tx_filename(Hash) ->
@@ -845,15 +872,19 @@ is_a_pending_tx(ID) ->
 
 %% @doc Given a request, returns a blockshadow.
 request_to_struct_with_blockshadow(Req) ->
-	{BlockJSON, ReadReq} = read_complete_body(Req),
-	try
-		{Struct} = ar_serialize:dejsonify(BlockJSON),
-		JSONB = val_for_key(<<"new_block">>, Struct),
-		BShadow = ar_serialize:json_struct_to_block(JSONB),
-		{ok, {Struct, BShadow}, ReadReq}
-	catch
-		Exception:Reason ->
-			{error, {Exception, Reason}, ReadReq}
+	case read_complete_body(Req) of
+		{ok, BlockJSON, ReadReq} ->
+			try
+				{Struct} = ar_serialize:dejsonify(BlockJSON),
+				JSONB = val_for_key(<<"new_block">>, Struct),
+				BShadow = ar_serialize:json_struct_to_block(JSONB),
+				{ok, {Struct, BShadow}, ReadReq}
+			catch
+				Exception:Reason ->
+					{error, {Exception, Reason}, ReadReq}
+			end;
+		{error, body_size_too_large, TooLargeReq} ->
+			{error, body_size_too_large, TooLargeReq}
 	end.
 
 %% @doc Generate and return an informative JSON object regarding
@@ -925,6 +956,8 @@ post_block(request, Req) ->
 	case request_to_struct_with_blockshadow(Req) of
 		{error, {_, _}, ReadReq} ->
 			{400, #{}, <<"Invalid block.">>, ReadReq};
+		{error, body_size_too_large, TooLargeReq} ->
+			reply_with_413(TooLargeReq);
 		{ok, {ReqStruct, BShadow}, ReadReq} ->
 			OrigPeer = arweave_peer(ReadReq),
 			post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, ReadReq)
