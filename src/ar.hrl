@@ -113,11 +113,6 @@
 %% @doc The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 3 * 1024 * 1024).
 
--define(HTTP_SERVER_ACCEPT_TIMEOUT, (25 * 1000)).
--define(HTTP_SERVER_GET_REQUEST_TIMEOUT, (5 * 60 * 1000)).
--define(HTTP_SERVER_GET_HEADERS_TIMEOUT, (25 * 1000)).
--define(HTTP_SERVER_GET_BODY_TIMEOUT, (5 * 60 * 1000)).
-
 %% @doc Default timeout for establishing an HTTP connection.
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
 %% @doc Default timeout used when sending to and receiving from a TCP socket
