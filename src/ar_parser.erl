@@ -1,7 +1,6 @@
 -module(ar_parser).
 
 -include("ar.hrl").
--include("../lib/elli/include/elli.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -export([eval/1]).
 

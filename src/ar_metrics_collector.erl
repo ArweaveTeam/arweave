@@ -45,7 +45,7 @@ metrics() ->
 		% FIXME This metric should be updated by arb_ridge itself, not pulled like this
 		length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
 	 {storage_blocks_stored, gauge,
-		"Blocks stroed",
+		"Blocks stored",
 		ar_storage:blocks_on_disk()},
 	 {arnode_queue_len, gauge,
 		"Size of message queuee on ar_node",
@@ -54,6 +54,6 @@ metrics() ->
 		"Size of message queuee on ar_bridge",
 		element(2, erlang:process_info(whereis(http_bridge_node), message_queue_len))},
 	 {ignored_ids_len, gauge,
-		"Size of table of Ignored/already seen IDs:", 
+		"Size of table of Ignored/already seen IDs:",
 		ets:info(ignored_ids, size)}
 	].

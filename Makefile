@@ -1,12 +1,18 @@
 .DEFAULT_GOAL = test_all
 
 DIALYZER = dialyzer
-PLT_APPS = erts kernel stdlib sasl inets ssl public_key crypto compiler  mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
+PLT_APPS = erts kernel stdlib sasl inets ssl public_key crypto compiler mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
 
 ERL_OPTS= -pa ebin/ \
-	-pa lib/prometheus/_build/default/lib/prometheus/ebin \
-	-pa lib/accept/_build/default/lib/accept/ebin \
-	-pa lib/prometheus_process_collector/_build/default/lib/prometheus_process_collector/ebin \
+	-pa lib/jiffy/ebin \
+	-pa lib/cowboy/ebin \
+	-pa lib/cowlib/ebin \
+	-pa lib/ranch/ebin \
+	-pa lib/prometheus/ebin \
+	-pa lib/accept/ebin \
+	-pa lib/prometheus_process_collector/ebin \
+	-pa lib/prometheus_httpd/ebin \
+	-pa lib/prometheus_cowboy/ebin \
 	-sasl errlog_type error \
 	-s prometheus
 
@@ -44,19 +50,7 @@ gitmodules:
 	git submodule update --init
 
 build:
-	( \
-		cd lib/jiffy && \
-		../../bin/mute-on-success ./rebar compile && \
-		cd ../.. && \
-		cp lib/jiffy/priv/jiffy.so ./priv/ \
-	)
-	(cd lib/prometheus && ./rebar3 compile)
-	(cd lib/accept && ./rebar3 compile)
-	( \
-		cd lib/prometheus_process_collector && \
-		./rebar3 compile && \
-		cp _build/default/lib/prometheus_process_collector/priv/prometheus_process_collector.so ../../priv/ \
-	)
+	./rebar3 compile --deps_only
 	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
@@ -79,10 +73,15 @@ clean:
 	rm -rf docs
 	rm -f priv/jiffy.so priv/prometheus_process_collector.so
 	rm -f erl_crash.dump
-	(cd lib/jiffy && ./rebar clean)
-	(cd lib/prometheus && ./rebar3 clean --all)
-	(cd lib/accept && ./rebar3 clean --all)
-	(cd lib/prometheus_process_collector && ./rebar3 clean --all)
+	rm -f lib/*/ebin/*.beam
+	rm -rf lib/*/_build
+	rm -rf lib/*/.rebar3
+	rm -f lib/jiffy/ebin/jiffy.app
+	rm -f lib/prometheus/ebin/prometheus.app
+	rm -f lib/accept/ebin/accept.app
+	rm -f lib/prometheus_process_collector/ebin/prometheus_process_collector.app
+	rm -f lib/prometheus_httpd/ebin/prometheus_httpd.app
+	rm -f lib/prometheus_cowboy/ebin/prometheus_cowboy.app
 
 todo:
 	grep --color --line-number --recursive TODO "src"
