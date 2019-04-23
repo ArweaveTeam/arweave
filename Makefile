@@ -73,7 +73,15 @@ clean:
 	rm -rf docs
 	rm -f priv/jiffy.so priv/prometheus_process_collector.so
 	rm -f erl_crash.dump
-	./rebar3 clean --all
+	rm -f lib/*/ebin/*.beam
+	rm -rf lib/*/_build
+	rm -rf lib/*/.rebar3
+	rm -f lib/jiffy/ebin/jiffy.app
+	rm -f lib/prometheus/ebin/prometheus.app
+	rm -f lib/accept/ebin/accept.app
+	rm -f lib/prometheus_process_collector/ebin/prometheus_process_collector.app
+	rm -f lib/prometheus_httpd/ebin/prometheus_httpd.app
+	rm -f lib/prometheus_cowboy/ebin/prometheus_cowboy.app
 
 todo:
 	grep --color --line-number --recursive TODO "src"
