@@ -209,7 +209,22 @@ generate_hash_list([Hash|Bs], N) when is_binary(Hash) ->
 %% @doc Verify a block from a hash list. Hash lists are stored in reverse order
 verify_indep(#block{ height = 0 }, []) -> true;
 verify_indep(B = #block { height = Height }, HashList) ->
-	lists:nth(Height + 1, lists:reverse(HashList)) == indep_hash(B).
+	IndepHash = indep_hash(B),
+	ReversedHashList = lists:reverse(HashList),
+	case lists:nth(Height + 1, ReversedHashList) == IndepHash of
+		true ->
+			true;
+		false ->
+			ar:err([
+				verify_indep_hash,
+				{height, Height},
+				{indep_hash, ar_util:encode(IndepHash)},
+				{hash_list_length, length(HashList)},
+				{hash_list_first_blocks, lists:map(fun ar_util:encode/1, lists:sublist(HashList, 10))},
+				{hash_list_last_blocks, lists:map(fun ar_util:encode/1, lists:sublist(ReversedHashList, 10))}
+			]),
+			false
+	end.
 
 %% @doc Generate a recall block number from a block or a hash and block height.
 calculate_recall_block(Hash, HashList) when is_binary(Hash) ->

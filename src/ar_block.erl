@@ -508,9 +508,15 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 				ar_node:get_hash_list(whereis(http_entrypoint_node))
 			}
 		of
-			{[], []} -> [];
-			{[], OldHashList} -> OldHashList;
-			{ShadowHashList, []} -> ShadowHashList;
+			{[], []} ->
+				ar:err([generate_block_from_shadow, generate_hash_list, node_hash_list_empty, block_hash_list_empty]),
+				[];
+			{[], OldHashList} ->
+				ar:err([generate_block_from_shadow, generate_hash_list, block_hash_list_empty]),
+				OldHashList;
+			{ShadowHashList, []} ->
+				ar:err([generate_block_from_shadow, generate_hash_list, node_hash_list_empty]),
+				ShadowHashList;
 			{ShadowHashList, OldHashList} ->
 				EarliestShadowHash = lists:last(ShadowHashList),
 				NewL =
@@ -520,7 +526,15 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 					),
 				ShadowHashList ++
 					case NewL of
-						[] -> OldHashList;
+						[] ->
+							OldHashListLastBlocks = lists:sublist(OldHashList, ?STORE_BLOCKS_BEHIND_CURRENT),
+							ar:warn([
+								generate_block_from_shadow,
+								hash_list_no_intersection,
+								{block_hash_list, lists:map(fun ar_util:encode/1, ShadowHashList)},
+								{node_hash_list_last_blocks, lists:map(fun ar_util:encode/1, OldHashListLastBlocks)}
+							]),
+							OldHashList;
 						NewL -> tl(NewL)
 					end
 		end,
