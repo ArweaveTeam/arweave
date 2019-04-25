@@ -50,7 +50,7 @@ do_start(Port) ->
 	Routes = [
 		{'_', [
 			{"/metrics/[:registry]", prometheus_cowboy2_handler, []},
-			{"/[...]", ar_http_iface_cowboy_handler, []}
+			{"/[...]", ar_http_iface_h, []}
 		]}
 	],
 	Dispatch = cowboy_router:compile(Routes),
@@ -65,10 +65,9 @@ do_start(Port) ->
 			metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
 			stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
 		},
+	{ok, _} = cowboy:start_clear(
+		ar_http_iface_listener,
+		[{port, Port}],
+		ProtocolOpts
+	).
 
-	{ok, _} =
-		cowboy:start_clear(
-			ar_cowboy_listener,
-			[{port, Port}],
-			ProtocolOpts
-		).

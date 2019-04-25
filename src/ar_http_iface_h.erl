@@ -1,29 +1,58 @@
--module(ar_http_iface_cowboy_handler).
+-module(ar_http_iface_h).
 -behaviour(cowboy_handler).
 -export([init/2]).
 -include("ar.hrl").
+-define(HANDLER_TIMEOUT, 30000).
 
 %%%===================================================================
 %%% Cowboy handler callbacks.
 %%%===================================================================
 
 init(InitialReq, State) ->
-	{Status, Headers, Body, HandledReq} = handle(InitialReq),
-	CowboyStatus = handle208(Status),
-	RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
-	{ok, RepliedReq, State}.
+	Pid = self(),
+	spawn_link(fun() ->
+		Pid ! {handled, handle(InitialReq, Pid)}
+	end),
+	{ok, TimeoutRef} = timer:send_after(?HANDLER_TIMEOUT, {timeout, InitialReq}),
+	loop(TimeoutRef, State).
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
-handle(Req) ->
+%% @doc In order to be able to have a handler-side timeout, we need to
+%% handle the request asynchronously. However, cowboy doesn't allow
+%% reading the request's body from a process other than its handler's.
+%% This following loop function allows us to work around this
+%% limitation. (see https://github.com/ninenines/cowboy/issues/1374)
+loop(TimeoutRef, State) ->
+	receive
+		{handled, {Status, Headers, Body, HandledReq}} ->
+			timer:cancel(TimeoutRef),
+			CowboyStatus = handle208(Status),
+			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
+			{ok, RepliedReq, State};
+		{read_complete_body, From, Req} ->
+			Term = do_read_complete_body(Req),
+			From ! {read_complete_body, Term},
+			loop(TimeoutRef, State);
+		{timeout, InitialReq} ->
+			ar:warn([
+				handler_timeout,
+				{method, cowboy_req:method(InitialReq)},
+				{path, cowboy_req:path(InitialReq)}
+			]),
+			RepliedReq = cowboy_req:reply(500, #{}, <<"Handler timeout">>, InitialReq),
+			{ok, RepliedReq, State}
+	end.
+
+handle(Req, Pid) ->
 	%% Inform ar_bridge about new peer, performance rec will be updated from cowboy_metrics_h
 	%% (this is leftover from update_performance_list)
 	Peer = arweave_peer(Req),
-	handle(Req, Peer).
+	handle(Peer, Req, Pid).
 
-handle(Req, Peer) ->
+handle(Peer, Req, Pid) ->
 	Method = cowboy_req:method(Req),
 	SplitPath = split_path(cowboy_req:path(Req)),
 	case ar_meta_db:get(http_logging) of
@@ -45,7 +74,7 @@ handle(Req, Peer) ->
 		_ ->
 			do_nothing
 	end,
-	case handle(Method, SplitPath, Req) of
+	case handle(Method, SplitPath, Req, Pid) of
 		{Status, Hdrs, Body, HandledReq} ->
 			{Status, maps:merge(?DEFAULT_RESPONSE_HEADERS, Hdrs), Body, HandledReq};
 		{Status, Body, HandledReq} ->
@@ -54,41 +83,42 @@ handle(Req, Peer) ->
 
 %% @doc Return network information from a given node.
 %% GET request to endpoint /info
-handle(<<"GET">>, [], Req) ->
+handle(<<"GET">>, [], Req, _) ->
 	return_info(Req);
-handle(<<"GET">>, [<<"info">>], Req) ->
+
+handle(<<"GET">>, [<<"info">>], Req, _) ->
 	return_info(Req);
 
 %% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node
 %% is alive. Appease them.
-handle(<<"HEAD">>, [], Req) ->
+handle(<<"HEAD">>, [], Req, _) ->
 	{200, #{}, <<>>, Req};
-handle(<<"HEAD">>, [<<"info">>], Req) ->
+handle(<<"HEAD">>, [<<"info">>], Req, _) ->
 	{200, #{}, <<>>, Req};
 
 %% @doc Return permissive CORS headers for all endpoints
-handle(<<"OPTIONS">>, [<<"block">>], Req) ->
+handle(<<"OPTIONS">>, [<<"block">>], Req, _) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 		    <<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
-handle(<<"OPTIONS">>, [<<"tx">>], Req) ->
+handle(<<"OPTIONS">>, [<<"tx">>], Req, _) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 		    <<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
-handle(<<"OPTIONS">>, [<<"peer">>|_], Req) ->
+handle(<<"OPTIONS">>, [<<"peer">>|_], Req, _) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 		    <<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
-handle(<<"OPTIONS">>, [<<"arql">>], Req) ->
+handle(<<"OPTIONS">>, [<<"arql">>], Req, _) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 		    <<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
-handle(<<"OPTIONS">>, _, Req) ->
+handle(<<"OPTIONS">>, _, Req, _) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET">>}, <<"OK">>, Req};
 
 %% @doc Return the current universal time in seconds.
-handle(<<"GET">>, [<<"time">>], Req) ->
+handle(<<"GET">>, [<<"time">>], Req, _) ->
 	{200, #{}, integer_to_binary(os:system_time(second)), Req};
 
 %% @doc Return all transactions from node that are waiting to be mined into a block.
 %% GET request to endpoint /tx/pending
-handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req) ->
+handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _) ->
 	{200, #{},
 			ar_serialize:jsonify(
 				%% Should encode
@@ -101,7 +131,7 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req) ->
 
 %% @doc Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}.
-handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req) ->
+handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _) ->
 	case get_tx_filename(Hash) of
 		{ok, _} ->
 			TagsToInclude = [
@@ -142,7 +172,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req) ->
 
 % @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
-handle(<<"GET">>, [<<"tx">>, Hash], Req) ->
+handle(<<"GET">>, [<<"tx">>, Hash], Req, _) ->
 	case get_tx_filename(Hash) of
 		{ok, Filename} ->
 			{200, #{}, sendfile(Filename), Req};
@@ -160,8 +190,8 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req) ->
 %%		expr2:	{ string | logical expression }
 %%	}
 %%
-handle(<<"POST">>, [<<"arql">>], Req) ->
-	case read_complete_body(Req) of
+handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
+	case read_complete_body(Req, Pid) of
 		{ok, QueryJson, ReadReq} ->
 			Query = ar_serialize:json_struct_to_query(
 				binary_to_list(QueryJson)
@@ -185,7 +215,7 @@ handle(<<"POST">>, [<<"arql">>], Req) ->
 
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
-handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req) ->
+handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _) ->
 	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
@@ -208,13 +238,13 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req) ->
 %% @doc Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block
 %% as specified in ar_serialize.
-handle(<<"POST">>, [<<"block">>], Req) ->
-	post_block(request, Req);
+handle(<<"POST">>, [<<"block">>], Req, Pid) ->
+	post_block(request, Req, Pid);
 
 %% @doc Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
-handle(<<"POST">>, [<<"wallet">>], Req) ->
+handle(<<"POST">>, [<<"wallet">>], Req, _) ->
 	case check_internal_api_secret(Req) of
 		pass ->
 			WalletAccessCode = ar_util:encode(crypto:strong_rand_bytes(32)),
@@ -231,8 +261,8 @@ handle(<<"POST">>, [<<"wallet">>], Req) ->
 %% @doc Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
-handle(<<"POST">>, [<<"tx">>], Req) ->
-	case read_complete_body(Req) of
+handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
+	case read_complete_body(Req, Pid) of
 		{ok, TXJSON, ReadReq} ->
 			TX = ar_serialize:json_struct_to_tx(TXJSON),
 			case handle_post_tx(TX) of
@@ -249,10 +279,10 @@ handle(<<"POST">>, [<<"tx">>], Req) ->
 %% Fetches the wallet by the provided key generated via POST /wallet.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
-handle(<<"POST">>, [<<"unsigned_tx">>], Req) ->
+handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 	case check_internal_api_secret(Req) of
 		pass ->
-			case read_complete_body(Req) of
+			case read_complete_body(Req, Pid) of
 				{ok, Body, ReadReq} ->
 					{UnsignedTXProps} = ar_serialize:dejsonify(Body),
 					WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, UnsignedTXProps),
@@ -285,7 +315,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req) ->
 
 %% @doc Return the list of peers held by the node.
 %% GET request to endpoint /peers
-handle(<<"GET">>, [<<"peers">>], Req) ->
+handle(<<"GET">>, [<<"peers">>], Req, _) ->
 	{200, #{},
 		ar_serialize:jsonify(
 			[
@@ -300,7 +330,7 @@ handle(<<"GET">>, [<<"peers">>], Req) ->
 %% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
 %% GET request to endpoint /price/{bytes}
 %% TODO: Change so current block does not need to be pulled to calculate cost
-handle(<<"GET">>, [<<"price">>, SizeInBytes], Req) ->
+handle(<<"GET">>, [<<"price">>, SizeInBytes], Req, _) ->
 	{200, #{},
 		integer_to_binary(
 			ar_tx:calculate_min_tx_cost(
@@ -313,8 +343,8 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes], Req) ->
 %% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
 %% GET request to endpoint /price/{bytes}/{address}
 %% TODO: Change so current block does not need to be pulled to calculate cost
-handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req) ->
-	case safe_decode(Addr) of
+handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req, _) ->
+	case ar_util:safe_decode(Addr) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>, Req};
 		{ok, AddrOK} ->
@@ -332,7 +362,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req) ->
 
 %% @doc Return the current hash list held by the node.
 %% GET request to endpoint /hash_list
-handle(<<"GET">>, [<<"hash_list">>], Req) ->
+handle(<<"GET">>, [<<"hash_list">>], Req, _) ->
 	HashList = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	{200, #{},
 		ar_serialize:jsonify(
@@ -342,7 +372,7 @@ handle(<<"GET">>, [<<"hash_list">>], Req) ->
 
 %% @doc Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list
-handle(<<"GET">>, [<<"wallet_list">>], Req) ->
+handle(<<"GET">>, [<<"wallet_list">>], Req, _) ->
 	Node = whereis(http_entrypoint_node),
 	WalletList = ar_node:get_wallet_list(Node),
 	{200, #{},
@@ -355,8 +385,8 @@ handle(<<"GET">>, [<<"wallet_list">>], Req) ->
 %% POST request to endpoint /peers with the body of the request being your
 %% nodes network information JSON encoded as specified in ar_serialize.
 % NOTE: Consider returning remaining timeout on a failed request
-handle(<<"POST">>, [<<"peers">>], Req) ->
-	case read_complete_body(Req) of
+handle(<<"POST">>, [<<"peers">>], Req, Pid) ->
+	case read_complete_body(Req, Pid) of
 		{ok, BlockJSON, ReadReq} ->
 			case ar_serialize:dejsonify(BlockJSON) of
 				{Struct} ->
@@ -380,8 +410,8 @@ handle(<<"POST">>, [<<"peers">>], Req) ->
 	end;
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req) ->
-	case safe_decode(Addr) of
+handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _) ->
+	case ar_util:safe_decode(Addr) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>, Req};
 		{ok, AddrOK} ->
@@ -398,8 +428,8 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req) ->
 
 %% @doc Return the last transaction ID (hash) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/last_tx
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req) ->
-	case safe_decode(Addr) of
+handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _) ->
+	case ar_util:safe_decode(Addr) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>, Req};
 		{ok, AddrOK} ->
@@ -412,20 +442,20 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req) ->
 
 %% @doc Return transaction identifiers (hashes) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req) ->
+handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req, _) ->
 	{Status, Headers, Body} = handle_get_wallet_txs(Addr, none),
 	{Status, Headers, Body, Req};
 
 %% @doc Return transaction identifiers (hashes) starting from the earliest_tx for the wallet
 %% specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs/{earliest_tx}
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req) ->
+handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req, _) ->
 	{Status, Headers, Body} = handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX)),
 	{Status, Headers, Body, Req};
 
 %% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/deposits
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req) ->
+handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _) ->
 	TXIDs = lists:reverse(
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
@@ -434,7 +464,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req) ->
 %% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address
 %% starting from the earliest_deposit.
 %% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}
-handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req) ->
+handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _) ->
 	TXIDs = lists:reverse(
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
@@ -449,7 +479,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req) ->
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
-%handle(<<"GET">>, [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
+%handle(<<"GET">>, [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req, _) ->
 	%ar:d({resp_block_hash, Hash}),
 	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, split_path(cowboy_req:path(Req))}]),
 	%case ar_key_db:get(ar_util:decode(Hash)) of
@@ -469,7 +499,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req) ->
 
 %% @doc Return the blockshadow corresponding to the indep_hash / height.
 %% GET request to endpoint /block/{height|hash}/{indep_hash|height}
-handle(<<"GET">>, [<<"block">>, Type, ID], Req) ->
+handle(<<"GET">>, [<<"block">>, Type, ID], Req, _) ->
 	Filename =
 		case Type of
 			<<"hash">> ->
@@ -536,7 +566,7 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req) ->
 	end;
 
 %% @doc Return block or block field.
-handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req) ->
+handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req, _) ->
 	case validate_get_block_type_id(Type, IDBin) of
 		{error, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req};
@@ -547,20 +577,20 @@ handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req) ->
 %% @doc Return the current block.
 %% GET request to endpoint /current_block
 %% GET request to endpoint /block/current
-handle(<<"GET">>, [<<"block">>, <<"current">>], Req) ->
+handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid) ->
 	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
 		[] -> {404, #{}, <<"Block not found.">>, Req};
 		[IndepHash|_] ->
-			handle(<<"GET">>, [<<"block">>, <<"hash">>, ar_util:encode(IndepHash)], Req)
+			handle(<<"GET">>, [<<"block">>, <<"hash">>, ar_util:encode(IndepHash)], Req, Pid)
 	end;
 
 %% DEPRECATED (12/07/2018)
-handle(<<"GET">>, [<<"current_block">>], Req) ->
-	handle(<<"GET">>, [<<"block">>, <<"current">>], Req);
+handle(<<"GET">>, [<<"current_block">>], Req, Pid) ->
+	handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid);
 
 %% @doc Return a list of known services.
 %% GET request to endpoint /services
-handle(<<"GET">>, [<<"services">>], Req) ->
+handle(<<"GET">>, [<<"services">>], Req, _) ->
 	{200, #{},
 		ar_serialize:jsonify(
 			{
@@ -588,7 +618,7 @@ handle(<<"GET">>, [<<"services">>], Req) ->
 %%
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 %%
-handle(<<"GET">>, [<<"tx">>, Hash, Field], Req) ->
+handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _) ->
 	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
@@ -627,8 +657,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req) ->
 %% @doc Share the location of a given service with a peer.
 %% POST request to endpoint /services where the body of the request is a JSON encoded serivce as
 %% specified in ar_serialize.
-handle(<<"POST">>, [<<"services">>], Req) ->
-	case read_complete_body(Req) of
+handle(<<"POST">>, [<<"services">>], Req, Pid) ->
+	case read_complete_body(Req, Pid) of
 		{ok, BodyBin, ReadReq} ->
 			{ServicesJSON} = ar_serialize:jsonify(BodyBin),
 			ar_services:add(
@@ -649,7 +679,7 @@ handle(<<"POST">>, [<<"services">>], Req) ->
 	end;
 
 %% @doc Return the current block hieght, or 500
-handle(Method, [<<"height">>], Req)
+handle(Method, [<<"height">>], Req, _)
 		when (Method == <<"GET">>) or (Method == <<"HEAD">>) ->
 	case ar_node:get_height(whereis(http_entrypoint_node)) of
 		-1 -> {503, #{}, <<"Node has not joined the network yet.">>, Req};
@@ -659,19 +689,12 @@ handle(Method, [<<"height">>], Req)
 %% @doc If we are given a hash with no specifier (block, tx, etc), assume that
 %% the user is requesting the data from the TX associated with that hash.
 %% Optionally allow a file extension.
-handle(<<"GET">>, [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
-	case MaybeExt of
-		<< ".", Part/binary >> ->
-			handle(<<"GET">>, [<<"tx">>, Hash, <<"data.", Part/binary>>], Req);
-		<<>> ->
-			handle(<<"GET">>, [<<"tx">>, Hash, <<"data.html">>], Req);
-		_ ->
-			not_found(Req)
-	end;
+handle(<<"GET">>, [<<Hash:43/binary, MaybeExt/binary>>], Req, Pid) ->
+	handle(<<"GET">>, [<<"tx">>, Hash, <<"data.", MaybeExt/binary>>], Req, Pid);
 
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
-handle(_, _, Req) ->
+handle(_, _, Req, _) ->
 	not_found(Req).
 
 % Cowlib does not yet support status code 208 properly.
@@ -689,27 +712,30 @@ arweave_peer(Req) ->
 	{IpV4_1, IpV4_2, IpV4_3, IpV4_4, ArweavePeerPort}.
 
 split_path(Path) ->
-	lists:filter(
-		fun(C) -> C /= <<>> end,
-		string:split(Path, <<"/">>, all)
-	).
+	binary:split(Path, <<"/">>, [global, trim_all]).
 
 sendfile(Filename) ->
 	{sendfile, 0, filelib:file_size(Filename), Filename}.
 
-read_complete_body(Req) ->
-	read_complete_body(Req, <<>>).
+read_complete_body(Req, Pid) ->
+	Pid ! {read_complete_body, self(), Req},
+	receive
+		{read_complete_body, Term} -> Term
+	end.
 
-read_complete_body(Req, Acc) ->
+do_read_complete_body(Req) ->
+	do_read_complete_body(Req, <<>>).
+
+do_read_complete_body(Req, Acc) ->
 	{MoreOrOk, Data, ReadReq} = cowboy_req:read_body(Req),
 	NewAcc = <<Acc/binary, Data/binary>>,
-	read_complete_body(MoreOrOk, NewAcc, ReadReq).
+	do_read_complete_body(MoreOrOk, NewAcc, ReadReq).
 
-read_complete_body(_, Data, Req) when byte_size(Data) > ?MAX_BODY_SIZE ->
+do_read_complete_body(_, Data, Req) when byte_size(Data) > ?MAX_BODY_SIZE ->
 	{error, body_size_too_large, Req};
-read_complete_body(more, Data, Req) ->
-	read_complete_body(Req, Data);
-read_complete_body(ok, Data, Req) ->
+do_read_complete_body(more, Data, Req) ->
+	do_read_complete_body(Req, Data);
+do_read_complete_body(ok, Data, Req) ->
 	{ok, Data, Req}.
 
 not_found(Req) ->
@@ -741,7 +767,7 @@ get_tx_filename(Hash) ->
 	end.
 
 handle_get_wallet_txs(Addr, EarliestTXID) ->
-	case safe_decode(Addr) of
+	case ar_util:safe_decode(Addr) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>};
 		{ok, AddrOK} ->
@@ -852,7 +878,7 @@ block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
 %% @doc checks if hash is valid & if so returns filename.
 hash_to_filename(Type, Hash) ->
-	case safe_decode(Hash) of
+	case ar_util:safe_decode(Hash) of
 		{error, invalid} ->
 			{error, invalid};
 		{ok, ID} ->
@@ -871,8 +897,8 @@ is_a_pending_tx(ID) ->
 	lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))).
 
 %% @doc Given a request, returns a blockshadow.
-request_to_struct_with_blockshadow(Req) ->
-	case read_complete_body(Req) of
+request_to_struct_with_blockshadow(Req, Pid) ->
+	case read_complete_body(Req, Pid) of
 		{ok, BlockJSON, ReadReq} ->
 			try
 				{Struct} = ar_serialize:dejsonify(BlockJSON),
@@ -927,16 +953,6 @@ return_info(Req) ->
 		),
 	Req}.
 
-%% @doc wrapper aound util:decode catching exceptions for invalid base64url encoding.
-safe_decode(X) ->
-	try
-		D = ar_util:decode(X),
-		{ok, D}
-	catch
-		_:_ ->
-			{error, invalid}
-	end.
-
 %% @doc converts a tuple of atoms to a {Module, Function} tuple.
 type_to_mf({tx, lookup_filename}) ->
 	{ar_storage, lookup_tx_filename};
@@ -951,9 +967,9 @@ val_for_key(K, L) ->
 
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
-post_block(request, Req) ->
+post_block(request, Req, Pid) ->
 	% Convert request to struct and block shadow.
-	case request_to_struct_with_blockshadow(Req) of
+	case request_to_struct_with_blockshadow(Req, Pid) of
 		{error, {_, _}, ReadReq} ->
 			{400, #{}, <<"Invalid block.">>, ReadReq};
 		{error, body_size_too_large, TooLargeReq} ->
@@ -961,7 +977,7 @@ post_block(request, Req) ->
 		{ok, {ReqStruct, BShadow}, ReadReq} ->
 			OrigPeer = arweave_peer(ReadReq),
 			post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, ReadReq)
-	end.
+	end;
 %% TODO: Make block_data_segment mandatory when all nodes are posting it.
 post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 	% Check if block is already known.
@@ -1151,7 +1167,7 @@ validate_get_block_type_id(<<"height">>, ID) ->
 		{error, {400, #{}, <<"Invalid height.">>}}
 	end;
 validate_get_block_type_id(<<"hash">>, ID) ->
-	case safe_decode(ID) of
+	case ar_util:safe_decode(ID) of
 		{ok, Hash} -> {ok, Hash};
 		invalid    -> {error, {400, #{}, <<"Invalid hash.">>}}
 	end.
