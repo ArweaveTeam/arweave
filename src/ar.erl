@@ -400,13 +400,11 @@ start(
 		]
 	),
 	%% Start the first node in the gossip network (with HTTP interface).
-	ar_http_iface_server:start(
-		Port,
-		Node,
-		SearchNode,
-		undefined,
-		Bridge
-	),
+	ar_http_iface_server:start(Port, [
+		{http_entrypoint_node, Node},
+		{http_search_node, SearchNode},
+		{http_bridge_node, Bridge}
+	]),
 	case Polling of
 		true ->
 			ar_meta_db:put(polling_mode, true),
