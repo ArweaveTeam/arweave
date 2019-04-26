@@ -112,7 +112,7 @@ main("") ->
 		end,
 		[
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_hash_list (file)", "Start the node from a given block."},
+			{"start_hash_list (hash)", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -183,8 +183,8 @@ parse(["disk_space", Size|Rest], O) ->
 	parse(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 parse(["load_mining_key", File|Rest], O)->
 	parse(Rest, O#opts { load_key = File });
-parse(["start_hash_list", IndepHash|Rest], O)->
-	parse(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
+parse(["start_hash_list", BHLHash|Rest], O)->
+	parse(Rest, O#opts { start_hash_list = ar_util:decode(BHLHash) });
 parse(["benchmark"|Rest], O)->
 	parse(Rest, O#opts { benchmark = true });
 parse(["auto_update", "false" | Rest], O) ->
@@ -332,7 +332,8 @@ start(
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
-					_ -> ar_storage:read_hash_list(ar_util:decode(BHL))
+					_ ->
+						ar_storage:read_block_hash_list(BHL)
 				end,
 				0,
 				MiningAddress,
