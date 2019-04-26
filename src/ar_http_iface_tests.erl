@@ -475,79 +475,90 @@ add_external_block_with_bad_bds_test_() ->
 		ar_blacklist_middleware:reset()
 	end}.
 
-% add_external_block_with_invalid_timestamp_test() ->
-% 	Setup = fun() ->
-% 		ar_storage:clear(),
-% 		[B0] = ar_weave:init([]),
-% 		BHL0 = [B0#block.indep_hash],
-% 		NodeWithBridge = ar_node:start([], [B0]),
-% 		Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
-% 		OtherNode = ar_node:start([], [B0]),
-% 		timer:sleep(500),
-% 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
-% 		ar_http_iface_server:reregister(http_entrypoint_node, NodeWithBridge),
-% 		{BHL0, {127, 0, 0, 1, 1984}, OtherNode}
-% 	end,
-% 	{BHL0, RemotePeer, LocalNode} = Setup(),
-% 	BHL1 = mine_one_block(LocalNode, BHL0),
-% 	B1 = ar_storage:read_block(hd(BHL1), BHL1),
-% 	RecallB0 = ar_node_utils:find_recall_block(BHL0),
-% 	%% Expect the timestamp too far from the future to be rejected
-% 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
-% 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
-% 	?assertMatch(
-% 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
-% 		send_new_block(
-% 			RemotePeer,
-% 			B1#block {
-% 				indep_hash = add_rand_suffix(<<"random-hash">>),
-% 				timestamp = TooFarFutureTimestamp
-% 			},
-% 			RecallB0
-% 		)
-% 	),
-% 	%% Expect the timestamp from the future within the tolerance interval to be accepted
-% 	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
-% 	?assertMatch(
-% 		{ok, {{<<"200">>, _}, _, _, _, _}},
-% 		send_new_block(
-% 			RemotePeer,
-% 			update_nonce(B1#block {
-% 				indep_hash = add_rand_suffix(<<"random-hash">>),
-% 				timestamp = OkFutureTimestamp
-% 			}, RecallB0),
-% 			RecallB0
-% 		)
-% 	),
-% 	%% Expect the timestamp far from the past to be rejected
-% 	PastTimestampTolerance = lists:sum([
-% 		?JOIN_CLOCK_TOLERANCE * 2,
-% 		?CLOCK_DRIFT_MAX,
-% 		?MINING_TIMESTAMP_REFRESH_INTERVAL,
-% 		?MAX_BLOCK_PROPAGATION_TIME
-% 	]),
-% 	TooFarPastTimestamp = os:system_time(second) - PastTimestampTolerance - 3,
-% 	?assertMatch(
-% 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
-% 		send_new_block(
-% 			RemotePeer,
-% 			B1#block {
-% 				indep_hash = add_rand_suffix(<<"random-hash">>),
-% 				timestamp = TooFarPastTimestamp
-% 			},
-% 			RecallB0
-% 		)
-% 	),
-% 	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
-% 	OkPastTimestamp = os:system_time(second) - PastTimestampTolerance + 3,
-% 	?assertMatch(
-% 		{ok, {{<<"200">>, _}, _, _, _, _}},
-% 		send_new_block(
-% 			RemotePeer,
-% 			update_nonce(B1#block { timestamp = OkPastTimestamp}, RecallB0),
-% 			RecallB0
-% 		)
-% 	).
+add_external_block_with_invalid_timestamp_test() ->
+	Setup = fun() ->
+		ar_storage:clear(),
+		ar_blacklist_middleware:reset(),
+		[B0] = ar_weave:init([]),
+		BHL0 = [B0#block.indep_hash],
+		NodeWithBridge = ar_node:start([], [B0]),
+		Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
+		OtherNode = ar_node:start([], [B0]),
+		timer:sleep(500),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_http_iface_server:reregister(http_entrypoint_node, NodeWithBridge),
+		{BHL0, {127, 0, 0, 1, 1984}, OtherNode}
+	end,
+	{BHL0, RemotePeer, LocalNode} = Setup(),
+	BHL1 = mine_one_block(LocalNode, BHL0),
+	B1 = ar_storage:read_block(hd(BHL1), BHL1),
+	RecallB0 = ar_node_utils:find_recall_block(BHL0),
+	%% Expect the timestamp too far from the future to be rejected
+	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
+	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
+	?assertMatch(
+		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
+		send_new_block(
+			RemotePeer,
+			B1#block {
+				indep_hash = add_rand_suffix(<<"random-hash">>),
+				timestamp = TooFarFutureTimestamp
+			},
+			RecallB0
+		)
+	),
+	%% Expect the timestamp from the future within the tolerance interval to be accepted
+	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		send_new_block(
+			RemotePeer,
+			update_nonce(B1#block {
+				indep_hash = add_rand_suffix(<<"random-hash">>),
+				timestamp = OkFutureTimestamp
+			}, RecallB0),
+			RecallB0
+		)
+	),
+	%% Expect the timestamp far from the past to be rejected
+	PastTimestampTolerance = lists:sum([
+		?JOIN_CLOCK_TOLERANCE * 2,
+		?CLOCK_DRIFT_MAX,
+		?MINING_TIMESTAMP_REFRESH_INTERVAL,
+		?MAX_BLOCK_PROPAGATION_TIME
+	]),
+	TooFarPastTimestamp = os:system_time(second) - PastTimestampTolerance - 3,
+	SendTooFarPastTimestamp = fun() ->
+		send_new_block(
+			RemotePeer,
+			B1#block {
+				indep_hash = add_rand_suffix(<<"random-hash">>),
+				timestamp = TooFarPastTimestamp
+			},
+			RecallB0
+		)
+	end,
+	?assertMatch(
+		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
+		SendTooFarPastTimestamp()
+	),
+	ar_blacklist:reset(),
+	?assertMatch(
+		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
+		SendTooFarPastTimestamp()
+	),
+	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
+	OkPastTimestamp = os:system_time(second) - PastTimestampTolerance + 3,
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		send_new_block(
+			RemotePeer,
+			update_nonce(B1#block { timestamp = OkPastTimestamp}, RecallB0),
+			RecallB0
+		)
+	),
+	ar_blacklist:reset(),
+	ok.
 
 add_rand_suffix(Bin) ->
 	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
