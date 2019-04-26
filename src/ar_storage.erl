@@ -219,8 +219,12 @@ do_read_block(Filename, BHL) ->
 %% @doc Read an encrypted block from disk, given a hash.
 read_encrypted_block(unavailable) -> unavailable;
 read_encrypted_block(ID) ->
-	{ok, Binary} = file:read_file(encrypted_block_filepath(ID)),
-	Binary.
+	case file:read_file(encrypted_block_filepath(ID)) of
+		{ok, Binary} ->
+			Binary;
+		{error, _} ->
+			unavailable
+	end.
 
 %% @doc Accurately recalculate the current cumulative size of the Arweave directory
 update_directory_size() ->
