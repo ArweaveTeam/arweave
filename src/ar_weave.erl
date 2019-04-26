@@ -209,19 +209,25 @@ generate_hash_list([Hash|Bs], N) when is_binary(Hash) ->
 %% @doc Verify a block from a hash list. Hash lists are stored in reverse order
 verify_indep(#block{ height = 0 }, []) -> true;
 verify_indep(B = #block { height = Height }, HashList) ->
-	IndepHash = indep_hash(B),
+	ComputedIndepHash = indep_hash(B),
 	ReversedHashList = lists:reverse(HashList),
-	case lists:nth(Height + 1, ReversedHashList) == IndepHash of
-		true ->
+	BHL = B#block.hash_list,
+	ReversedBHL = lists:reverse(BHL),
+	ExpectedIndepHash = lists:nth(Height + 1, ReversedHashList),
+	case ComputedIndepHash of
+		ExpectedIndepHash ->
 			true;
-		false ->
+		_ ->
 			ar:err([
 				verify_indep_hash,
 				{height, Height},
-				{indep_hash, ar_util:encode(IndepHash)},
+				{computed_indep_hash, ar_util:encode(ComputedIndepHash)},
+				{expected_indep_hash, ar_util:encode(ExpectedIndepHash)},
 				{hash_list_length, length(HashList)},
-				{hash_list_first_blocks, lists:map(fun ar_util:encode/1, lists:sublist(HashList, 10))},
-				{hash_list_last_blocks, lists:map(fun ar_util:encode/1, lists:sublist(ReversedHashList, 10))}
+				{hash_list_latest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(HashList, 10))},
+				{hash_list_eariest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(ReversedHashList, 10))},
+				{block_hash_list_latest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(BHL, 10))},
+				{block_hash_list_earlies_blocks, lists:map(fun ar_util:encode/1, lists:sublist(ReversedBHL, 10))}
 			]),
 			false
 	end.
