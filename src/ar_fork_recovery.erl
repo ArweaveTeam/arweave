@@ -291,7 +291,7 @@ do_fork_recover(S = #state {
 						NextB#block {txs = [T#tx.id || T <- NextB#block.txs]},
 						TXs,
 						B,
-						RecallB#block {txs = [T#tx.id || T <- RecallB#block.txs]}
+						RecallB
 					)
 				of
 					false ->
