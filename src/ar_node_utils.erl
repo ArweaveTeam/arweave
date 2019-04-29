@@ -640,7 +640,7 @@ make_full_block(ID, BHL) ->
 make_full_block(unavailable) ->
 	{error, unavailable};
 make_full_block(BShadow) ->
-	{TXs, MissingTXIDs} = lists:foldl(
+	{TXs, MissingTXIDs} = lists:foldr(
 		fun(TXID, {TXs, MissingTXIDs}) ->
 			case ar_storage:read_tx(TXID) of
 				unavailable ->
