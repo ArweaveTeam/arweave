@@ -2,6 +2,10 @@
 
 -export([start/2, connect_to_slave/0, slave_run/3, slave_run/4]).
 -export([slave_gossip/2, slave_add_tx/2, slave_mine/1]).
+-export([wait_until_height/2]).
+-export([wait_until_block_hash_list/2]).
+
+-include_lib("eunit/include/eunit.hrl").
 
 start(no_block, Peer) ->
 	[B0] = ar_weave:init([]),
@@ -44,3 +48,32 @@ slave_add_tx(Node, TX) ->
 slave_mine(Node) ->
 	slave_run(ar_node, mine, [Node]),
 	timer:sleep(100).
+
+wait_until_height(Node, TargetHeight) ->
+	{ok, BHL} = ar_util:do_until(
+		fun() ->
+			case ar_node:get_blocks(Node) of
+				BHL when length(BHL) - 1 == TargetHeight ->
+					{ok, BHL};
+				_ ->
+					false
+			end
+		end,
+		100,
+		10 * 1000
+	),
+	BHL.
+
+wait_until_block_hash_list(Node, BHL) ->
+	?assertEqual(ok, ar_util:do_until(
+		fun() ->
+			case ar_node:get_blocks(Node) of
+				BHL ->
+					ok;
+				_ ->
+					false
+			end
+		end,
+		100,
+		10 * 1000
+	)).
