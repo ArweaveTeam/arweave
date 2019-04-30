@@ -3,7 +3,7 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [slave_run/3]).
+-import(ar_test_node, [slave_call/3]).
 
 missing_txs_fork_recovery_test() ->
 	%% Mine two blocks with transactions on the slave node but do not gossip the transactions in advance.
@@ -11,9 +11,9 @@ missing_txs_fork_recovery_test() ->
 	%%
 	%% Start a remote node.
 	Peer = {127, 0, 0, 1, ar_meta_db:get(port)},
-	{SlaveNode, B0} = slave_run(ar_test_node, start, [no_block, Peer]),
+	{SlaveNode, B0} = slave_call(ar_test_node, start, [no_block, Peer]),
 	%% Start a local node and connect to slave.
-	{MasterNode, B0} = ar_test_node:start(B0, {127, 0, 0, 1, slave_run(ar_meta_db, get, [port])}),
+	{MasterNode, B0} = ar_test_node:start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}),
 	ar_test_node:connect_to_slave(),
 	%% Turn off gossip and add a TX to the slave.
 	ar_test_node:slave_gossip(off, SlaveNode),
@@ -22,7 +22,7 @@ missing_txs_fork_recovery_test() ->
 	timer:sleep(100),
 	%% Turn on gossip and mine a block.
 	ar_test_node:slave_gossip(on, SlaveNode),
-	?assertEqual([TX1], ar_rpc:call(slave, ar_node, get_all_known_txs, [SlaveNode], 5000)),
+	?assertEqual([TX1], slave_call(ar_node, get_all_known_txs, [SlaveNode])),
 	?assertEqual([], ar_node:get_all_known_txs(MasterNode)),
 	ar_test_node:slave_mine(SlaveNode),
 	timer:sleep(200),
@@ -56,7 +56,7 @@ recall_block_missing_multiple_txs_fork_recovery_test() ->
 	Peer = {127, 0, 0, 1, ar_meta_db:get(port)},
 	{SlaveNode, _} = ar_rpc:call(slave, ar_test_node, start, [B0, Peer], 5000),
 	%% Start a local node and connect to slave.
-	{MasterNode, _} = ar_test_node:start(B0, {127, 0, 0, 1, slave_run(ar_meta_db, get, [port])}),
+	{MasterNode, _} = ar_test_node:start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}),
 	ar_test_node:connect_to_slave(),
 	%% Store transactions on the slave node.
 	ar_rpc:call(slave, ar_storage, write_tx, [GenesisTXs], 5000),
@@ -72,7 +72,7 @@ recall_block_missing_multiple_txs_fork_recovery_test() ->
 		SlaveNode,
 		(ar_tx:new())#tx{ owner = ar_wallet:to_address(AnotherPub) }
 	),
-	?assertEqual(2, length(slave_run(ar_node, get_all_known_txs, [SlaveNode]))),
+	?assertEqual(2, length(slave_call(ar_node, get_all_known_txs, [SlaveNode]))),
 	%% Turn the gossip back on and mine a block on the slave.
 	ar_test_node:slave_gossip(on, SlaveNode),
 	ar_test_node:slave_mine(SlaveNode),
