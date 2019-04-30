@@ -25,6 +25,7 @@ missing_txs_fork_recovery_test() ->
 	?assertEqual([TX1], ar_rpc:call(slave, ar_node, get_all_known_txs, [SlaveNode], 5000)),
 	?assertEqual([], ar_node:get_all_known_txs(MasterNode)),
 	ar_test_node:slave_mine(SlaveNode),
+	timer:sleep(200),
 	%% Expect the local node to reject the block.
 	?assertEqual(1, length(ar_node:get_hash_list(MasterNode))),
 	%% Turn off gossip again and add the second TX.
@@ -37,18 +38,7 @@ missing_txs_fork_recovery_test() ->
 	?assertEqual([], ar_node:get_all_known_txs(MasterNode)),
 	ar_test_node:slave_mine(SlaveNode),
 	%% Expect the local node to fork recover.
-	ok = ar_util:do_until(
-		fun() ->
-			case ar_node:get_hash_list(MasterNode) of
-				[_H1, _H2, _H3|_Rest] ->
-					ok;
-				_ ->
-					not_ok
-			end
-		end,
-		10,
-		5000
-	).
+	ar_test_node:wait_until_height(MasterNode, 2).
 
 recall_block_missing_multiple_txs_fork_recovery_test() ->
 	%% Create a genesis block with two transactions but do not store them on the master node.
@@ -86,23 +76,12 @@ recall_block_missing_multiple_txs_fork_recovery_test() ->
 	%% Turn the gossip back on and mine a block on the slave.
 	ar_test_node:slave_gossip(on, SlaveNode),
 	ar_test_node:slave_mine(SlaveNode),
-	timer:sleep(200),
+	ar_test_node:slave_wait_until_height(SlaveNode, 1),
 	%% Expect it to reject the block since it misses transactions.
-	?assertEqual(1, length(ar_node:get_hash_list(MasterNode))),
+	?assertEqual([B0#block.indep_hash], ar_node:get_hash_list(MasterNode)),
 	%% Mine another one. Its recall block would be either 0 or 1 - both have two txs,
 	%% neither of those txs are known by master.
 	ar_test_node:slave_mine(SlaveNode),
-	timer:sleep(200),
+	FinalBHL = ar_test_node:slave_wait_until_height(SlaveNode, 2),
 	%% Expect the master node to recover.
-	ok = ar_util:do_until(
-		fun() ->
-			case ar_node:get_hash_list(MasterNode) of
-				[_H1, _H2, _H3|_Rest] ->
-					ok;
-				_ ->
-					not_ok
-			end
-		end,
-		10,
-		5000
-	).
+	ar_test_node:wait_until_block_hash_list(MasterNode, FinalBHL).

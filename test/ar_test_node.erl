@@ -2,7 +2,7 @@
 
 -export([start/2, connect_to_slave/0, slave_run/3, slave_run/4]).
 -export([slave_gossip/2, slave_add_tx/2, slave_mine/1]).
--export([wait_until_height/2]).
+-export([wait_until_height/2, slave_wait_until_height/2]).
 -export([wait_until_block_hash_list/2]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -46,8 +46,7 @@ slave_add_tx(Node, TX) ->
 	slave_run(ar_node, add_tx, [Node, TX]).
 
 slave_mine(Node) ->
-	slave_run(ar_node, mine, [Node]),
-	timer:sleep(100).
+	slave_run(ar_node, mine, [Node]).
 
 wait_until_height(Node, TargetHeight) ->
 	{ok, BHL} = ar_util:do_until(
@@ -63,6 +62,9 @@ wait_until_height(Node, TargetHeight) ->
 		10 * 1000
 	),
 	BHL.
+
+slave_wait_until_height(Node, TargetHeight) ->
+	slave_run(?MODULE, wait_until_height, [Node, TargetHeight]).
 
 wait_until_block_hash_list(Node, BHL) ->
 	?assertEqual(ok, ar_util:do_until(
