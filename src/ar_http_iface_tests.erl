@@ -631,7 +631,7 @@ fork_recover_by_http_test() ->
 			ar_storage:read_block(hd(FullBHL), FullBHL)
 		)
 	),
-	?assert(ok == wait_until_node_on_block_hash(Node1, hd(FullBHL))).
+	ar_test_node:wait_until_block_hash_list(Node1, FullBHL).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
@@ -1281,39 +1281,9 @@ mine_n_blocks(Node, PreMineBHL, N) ->
 
 mine_one_block(Node, PreMineBHL) ->
 	ar_node:mine(Node),
-	PostMineBHL = wait_until_node_on_height(Node, length(PreMineBHL)),
+	PostMineBHL = ar_test_node:wait_until_height(Node, length(PreMineBHL)),
 	?assertMatch([_ | PreMineBHL], PostMineBHL),
 	PostMineBHL.
-
-wait_until_node_on_height(Node, TargetHeight) ->
-	{ok, BHL} = ar_util:do_until(
-		fun() ->
-			case ar_node:get_blocks(Node) of
-				BHL when length(BHL) - 1 == TargetHeight ->
-					{ok, BHL};
-				_ ->
-					false
-			end
-		end,
-		100,
-		10 * 1000
-	),
-	BHL.
-
-wait_until_node_on_block_hash(Node, BH) ->
-	ok = ar_util:do_until(
-		fun() ->
-			case ar_node:get_blocks(Node) of
-				[BH | _] ->
-					ok;
-				_ ->
-					false
-			end
-		end,
-		100,
-		10 * 1000
-	),
-	ok.
 
 send_new_block(Peer, B) ->
 	PreviousRecallB = ar_node_utils:find_recall_block(B#block.hash_list),
