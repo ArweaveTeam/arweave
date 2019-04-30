@@ -2,14 +2,11 @@
 
 -export([start/2, connect_to_slave/0, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
 
-start(MaybeB, Peer) ->
+start(no_block, Peer) ->
+	[B0] = ar_weave:init([]),
+	start(B0, Peer);
+start(B0, Peer) ->
 	ar_storage:clear(),
-	[B0] = case MaybeB of
-		no_block ->
-			ar_weave:init([]);
-		B ->
-			[B]
-	end,
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(http_entrypoint_node, Node),
 	ar_meta_db:reset_peer(Peer),
