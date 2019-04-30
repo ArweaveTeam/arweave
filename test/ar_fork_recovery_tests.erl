@@ -3,15 +3,17 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-import(ar_test_node, [slave_run/3]).
+
 missing_txs_fork_recovery_test() ->
 	%% Mine two blocks with transactions on the slave node but do not gossip the transactions in advance.
 	%% The master node should reject the first block, but accept the second one and fork recover.
 	%%
 	%% Start a remote node.
 	Peer = {127, 0, 0, 1, ar_meta_db:get(port)},
-	{SlaveNode, B0} = ar_rpc:call(slave, ar_test_node, start, [no_block, Peer], 5000),
+	{SlaveNode, B0} = slave_run(ar_test_node, start, [no_block, Peer]),
 	%% Start a local node and connect to slave.
-	{MasterNode, B0} = ar_test_node:start(B0, {127, 0, 0, 1, ar_rpc:call(slave, ar_meta_db, get, [port], 5000)}),
+	{MasterNode, B0} = ar_test_node:start(B0, {127, 0, 0, 1, slave_run(ar_meta_db, get, [port])}),
 	ar_test_node:connect_to_slave(),
 	%% Turn off gossip and add a TX to the slave.
 	ar_test_node:slave_gossip(off, SlaveNode),
@@ -64,7 +66,7 @@ recall_block_missing_multiple_txs_fork_recovery_test() ->
 	Peer = {127, 0, 0, 1, ar_meta_db:get(port)},
 	{SlaveNode, _} = ar_rpc:call(slave, ar_test_node, start, [B0, Peer], 5000),
 	%% Start a local node and connect to slave.
-	{MasterNode, _} = ar_test_node:start(B0, {127, 0, 0, 1, ar_rpc:call(slave, ar_meta_db, get, [port], 5000)}),
+	{MasterNode, _} = ar_test_node:start(B0, {127, 0, 0, 1, slave_run(ar_meta_db, get, [port])}),
 	ar_test_node:connect_to_slave(),
 	%% Store transactions on the slave node.
 	ar_rpc:call(slave, ar_storage, write_tx, [GenesisTXs], 5000),
@@ -80,7 +82,7 @@ recall_block_missing_multiple_txs_fork_recovery_test() ->
 		SlaveNode,
 		(ar_tx:new())#tx{ owner = ar_wallet:to_address(AnotherPub) }
 	),
-	?assertEqual(2, length(ar_rpc:call(slave, ar_node, get_all_known_txs, [SlaveNode], 5000))),
+	?assertEqual(2, length(slave_run(ar_node, get_all_known_txs, [SlaveNode]))),
 	%% Turn the gossip back on and mine a block on the slave.
 	ar_test_node:slave_gossip(on, SlaveNode),
 	ar_test_node:slave_mine(SlaveNode),
