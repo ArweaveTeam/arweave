@@ -1003,7 +1003,6 @@ post_block(request, Req, Pid) ->
 			OrigPeer = arweave_peer(ReadReq),
 			post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, ReadReq)
 	end;
-%% TODO: Make block_data_segment mandatory when all nodes are posting it.
 post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 	% Check if block is already known.
 	case lists:keyfind(<<"block_data_segment">>, 1, ReqStruct) of
@@ -1015,8 +1014,8 @@ post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 				false ->
 					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 			end;
-		_ ->
-			post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, no_data_segment}, Req)
+		false ->
+			{400, #{}, <<"block_data_segment missing.">>, Req}
 	end;
 %% TODO: Remove the check_is_ignored clause when all nodes send block_data_segment.
 post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
@@ -1080,19 +1079,14 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
 post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case BDS of
-		no_data_segment ->
-			post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
-		_ ->
-			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
-				{invalid, _} ->
-					post_block_reject_warn(BShadow, check_pow),
-					ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
-					{400, #{}, <<"Invalid Block Proof of Work">>, Req};
-				{valid, _} ->
-					ar_bridge:ignore_id(BDS),
-					post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
-			end
+	case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
+		{invalid, _} ->
+			post_block_reject_warn(BShadow, check_pow),
+			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
+			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
+		{valid, _} ->
+			ar_bridge:ignore_id(BDS),
+			post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
