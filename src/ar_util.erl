@@ -4,7 +4,7 @@
 
 -module(ar_util).
 
--export([pick_random/1, pick_random/2]).
+-export([pick_random/1, pick_random/2, pick_random_pareto/1]).
 -export([encode/1, decode/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
@@ -35,6 +35,22 @@ pick_random(List, N) ->
 %% @doc Select a random element from a list.
 pick_random(Xs) ->
 	lists:nth(rand:uniform(length(Xs)), Xs).
+
+%% @doc Pick a random element, on a `1/(1+rank)` distribution.
+pick_random_pareto(Xs) ->
+	ProbabilityPairs =
+		lists:foldl(
+			fun(Elem, Pairs) ->
+				Pairs ++ [{1/(length(Pairs) + 2), Elem}]
+			end,
+			[],
+			Xs
+		),
+	pick_element_by_proportion(rand:uniform(), ProbabilityPairs).
+
+pick_element_by_proportion(X, [{Y, Value}|_]) when Y > X -> Value;
+pick_element_by_proportion(X, [{Y, _}|Rest]) ->
+	pick_element_by_proportion(X - Y, Rest).
 
 %% @doc Encode a binary to URL safe base64.
 encode(Bin) ->
@@ -144,8 +160,7 @@ count(A, List) ->
 	length([ B || B <- List, A == B ]).
 
 %% @doc Takes a list and return the unique values in it.
-unique(Xs) when not is_list(Xs) ->
-[Xs];
+unique(Xs) when not is_list(Xs) -> [Xs];
 unique(Xs) -> unique([], Xs).
 unique(Res, []) -> lists:reverse(Res);
 unique(Res, [X|Xs]) ->

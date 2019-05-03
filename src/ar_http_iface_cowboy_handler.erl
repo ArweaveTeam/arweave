@@ -185,12 +185,13 @@ do_handle(<<"POST">>, [<<"arql">>], Req) ->
 
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
-do_handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req) ->
+do_handle(<<"GET">>, Addr = [<<"tx">>, Hash, << "data.", _/binary >>], Req) ->
 	case hash_to_filename(tx, Hash) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
 		{error, _, unavailable} ->
-			{404, #{}, sendfile("data/not_found.html"), Req};
+			data_not_found(Addr, Req);
+			%{404, #{}, sendfile("data/not_found.html"), Req};
 		{ok, Filename} ->
 			T = ar_storage:do_read_tx(Filename),
 			{
@@ -672,12 +673,36 @@ do_handle(<<"GET">>, [<< Hash:43/binary, MaybeExt/binary >>], Req) ->
 %% @doc Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 do_handle(_, _, Req) ->
-	not_found(Req).
+	request_type_not_found(Req).
 
-% Cowlib does not yet support status code 208 properly.
-% See https://github.com/ninenines/cowlib/pull/79
+%% @doc Cowlib does not yet support status code 208 properly.
+%% See https://github.com/ninenines/cowlib/pull/79
 handle208(208) -> <<"208 Already Reported">>;
 handle208(Status) -> Status.
+
+%% @doc Return that the data is not found and also another node IP that 
+%% the client should try. If the `redirect` flag is set, the node will return
+%% a 307 Temporary Redirect, so that browsers automatically route to the 
+%% proposed peer.
+data_not_found(AddrCompontents, Req) ->
+	Addr = list_to_binary(
+				lists:join("/", lists:map(fun binary_to_list/1, AddrCompontents))
+			),
+	Peer = list_to_binary(ar_util:format_peer(pick_redirect_peer())),
+	RedirectAddress = << <<"http://">>/binary, Peer/binary, <<"/">>/binary, Addr/binary >>,
+	{
+		case ar_meta_db:get(redirect) of
+			false -> 404;
+			_ -> 307
+		end,
+		#{ <<"Location">> => RedirectAddress },
+		<<"Not found on this node.">>,
+		Req
+	}.
+
+%% @doc Probabilistically (Pareto dist.) pick node to redirect the user to.
+pick_redirect_peer() ->
+	ar_util:pick_random_pareto((ar_bridge:get_remote_peers(http_bridge_node))).
 
 arweave_peer(Req) ->
 	{{IpV4_1, IpV4_2, IpV4_3, IpV4_4}, _TcpPeerPort} = cowboy_req:peer(Req),
@@ -712,7 +737,7 @@ read_complete_body(more, Data, Req) ->
 read_complete_body(ok, Data, Req) ->
 	{ok, Data, Req}.
 
-not_found(Req) ->
+request_type_not_found(Req) ->
 	{400, #{}, <<"Request type not found.">>, Req}.
 
 reply_with_413(Req) ->
