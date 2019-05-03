@@ -173,15 +173,20 @@ update_data_segment(S, TXs, BlockTimestamp, Diff) ->
 
 reschedule_timestamp_refresh(S = #state{
 	timestamp_refresh_timer = Timer,
-	data_segment_duration = BDSGenerationDuration
+	data_segment_duration = BDSGenerationDuration,
+	txs = TXs
 }) ->
 	timer:cancel(Timer),
 	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - BDSGenerationDuration  of
 		TimeoutSeconds when TimeoutSeconds =< 0 ->
-			ar:warn(
-				"ar_mine: Updating data segment slower (~B seconds) than timestamp refresh interval (~B seconds)",
-				[BDSGenerationDuration, ?MINING_TIMESTAMP_REFRESH_INTERVAL]
-			),
+			TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
+			ar:warn([
+				ar_mine,
+				slow_data_segment_generation,
+				{duration, BDSGenerationDuration},
+				{timestamp_refresh_interval, ?MINING_TIMESTAMP_REFRESH_INTERVAL},
+				{txs, lists:map(fun ar_util:encode/1, lists:sort(TXIDs))}
+			]),
 			self() ! refresh_timestamp,
 			S#state{ timestamp_refresh_timer = no_timer };
 		TimeoutSeconds ->
