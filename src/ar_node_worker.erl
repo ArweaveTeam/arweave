@@ -300,21 +300,11 @@ add_tx_to_mining_pool(StateIn, TX, NewGS) ->
 		waiting_txs := WaitingTXs
 	} = StateIn,
 	memsup:start_link(),
-	{_, Mem} = lists:keyfind(system_total_memory, 1, memsup:get_system_memory_data()),
-	case (Mem div 4) > byte_size(TX#tx.data) of
-		true ->
-			NewTXs = TXs ++ [TX],
-			{ok, [
-				{txs, NewTXs},
-				{gossip, NewGS},
-				{waiting_txs, WaitingTXs -- [TX]}
-			]};
-		false ->
-			{ok, [
-				{gossip, NewGS},
-				{waiting_txs, WaitingTXs -- [TX]}
-			]}
-	end.
+	{ok, [
+		{txs, TXs ++ [TX]},
+		{gossip, NewGS},
+		{waiting_txs, WaitingTXs -- [TX]}
+	]}.
 
 %% @doc Remove a TX from the pools if the signature is valid.
 cancel_tx(StateIn, TXID, Sig) ->
