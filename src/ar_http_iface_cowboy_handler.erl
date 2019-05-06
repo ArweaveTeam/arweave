@@ -192,7 +192,7 @@ do_handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req) ->
 		{error, _, unavailable} ->
 			{404, #{}, sendfile("data/not_found.html"), Req};
 		{ok, Filename} ->
-			T = ar_storage:do_read_tx(Filename),
+			T = ar_storage:read_tx_file(Filename),
 			{
 				200,
 				#{
@@ -500,7 +500,7 @@ do_handle(<<"GET">>, [<<"block">>, Type, ID], Req) ->
 				{_, <<"1">>} ->
 					% Supprt for legacy nodes (pre-1.5).
 					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-					try ar_storage:do_read_block(Filename, BHL) of
+					try ar_storage:read_block_file(Filename, BHL) of
 						B ->
 							{JSONStruct} =
 								ar_serialize:block_to_json_struct(
@@ -602,7 +602,7 @@ do_handle(<<"GET">>, [<<"tx">>, Hash, Field], Req) ->
 		{ok, Filename} ->
 			case Field of
 				<<"tags">> ->
-					TX = ar_storage:do_read_tx(Filename),
+					TX = ar_storage:read_tx_file(Filename),
 					{200, #{}, ar_serialize:jsonify(
 						lists:map(
 							fun({Name, Value}) ->

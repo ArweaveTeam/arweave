@@ -11,7 +11,7 @@
 -export([enough_space/1, select_drive/2]).
 -export([calculate_disk_space/0, calculate_used_space/0, update_directory_size/0]).
 -export([lookup_block_filename/1,lookup_tx_filename/1]).
--export([do_read_block/2, do_read_tx/1]).
+-export([read_block_file/2, read_tx_file/1]).
 -export([ensure_directories/0]).
 
 -include("ar.hrl").
@@ -178,9 +178,9 @@ read_block(Bs, BHL) when is_list(Bs) ->
 read_block(ID, BHL) ->
 	case ar_block_index:get_block_filename(ID) of
 		unavailable -> unavailable;
-		Filename -> do_read_block(Filename, BHL)
+		Filename -> read_block_file(Filename, BHL)
 	end.
-do_read_block(Filename, BHL) ->
+read_block_file(Filename, BHL) ->
 	{ok, Binary} = file:read_file(Filename),
 	B = ar_serialize:json_struct_to_block(Binary),
 	WL = B#block.wallet_list,
@@ -300,9 +300,9 @@ read_tx(Txs) when is_list(Txs) ->
 read_tx(ID) ->
 	case filelib:wildcard(tx_filepath(ID)) of
 		[] -> unavailable;
-		[Filename] -> do_read_tx(Filename);
+		[Filename] -> read_tx_file(Filename);
 		Filenames ->
-			do_read_tx(hd(
+			read_tx_file(hd(
 				lists:sort(
 					fun(Filename, Filename2) ->
 						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
@@ -314,7 +314,7 @@ read_tx(ID) ->
 			))
 	end.
 
-do_read_tx(Filename) ->
+read_tx_file(Filename) ->
 	{ok, Binary} = file:read_file(Filename),
 	ar_serialize:json_struct_to_tx(Binary).
 
@@ -518,7 +518,7 @@ invalidate_block_test() ->
 				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
-	?assertEqual(B, do_read_block(TargetFile, B#block.hash_list)).
+	?assertEqual(B, read_block_file(TargetFile, B#block.hash_list)).
 
 store_and_retrieve_block_hash_list_test() ->
 	ID = crypto:strong_rand_bytes(32),
