@@ -176,7 +176,7 @@ tx_field_size_limit(TX) ->
 			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
 			(byte_size(TX#tx.target) =< 32) and
 			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
-			(byte_size(TX#tx.data) =< 6000000) and
+			(byte_size(TX#tx.data) =< (?TX_DATA_SIZE_LIMIT)) and
 			(byte_size(TX#tx.signature) =< 512) and
 			(byte_size(integer_to_binary(TX#tx.reward)) =< 21);
 		false -> false

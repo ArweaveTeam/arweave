@@ -109,7 +109,8 @@
     ((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 
 %% @doc The maximum size of a single POST body.
--define(MAX_BODY_SIZE, 3 * 1024 * 1024).
+-define(MAX_BODY_SIZE, 15 * 1024 * 1024).
+-define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
 
 %% @doc Default timeout for establishing an HTTP connection.
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
