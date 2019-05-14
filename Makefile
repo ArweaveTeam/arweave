@@ -16,11 +16,14 @@ ERL_OPTS= -pa ebin/ \
 	-sasl errlog_type error \
 	-s prometheus
 
+ERL_TEST_OPTS= $(ERL_OPTS) \
+	-pa lib/meck/ebin
+
 test_all: test test_apps test_ipfs
 
-test: all
-	@erl $(ERL_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
-	@erl $(ERL_OPTS) -noshell -sname master -setcookie test -run ar test_with_coverage -s init stop
+test: build_test
+	@erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
+	@erl $(ERL_TEST_OPTS) -noshell -sname master -setcookie test -run ar test_with_coverage -s init stop
 
 test_apps: all
 	@erl $(ERL_OPTS) -noshell -sname master -run ar test_apps -s init stop
@@ -49,13 +52,26 @@ log:
 catlog:
 	cat logs/`ls -t logs | head -n 1`
 
-all: gitmodules build
+all: build
+
+build-randomx:
+	make -C lib/RandomX
+	make -C c_src
 
 gitmodules:
-	git submodule update --init
+	git submodule sync && git submodule update --init
 
-build:
+compile_prod: build-randomx
 	./rebar3 compile --deps_only
+
+compile_test: build-randomx
+	./rebar3 as test compile
+
+build: gitmodules compile_prod build_arweave
+
+build_test: gitmodules compile_test build_arweave
+
+build_arweave:
 	erlc $(ERLC_OPTS) +export_all -o ebin/ src/ar.erl
 	erl $(ERL_OPTS) -noshell -s ar rebuild -s init stop
 
@@ -63,9 +79,9 @@ docs: all
 	mkdir -p docs
 	(cd docs && erl -noshell -s ar docs -pa ../ebin -s init stop)
 
-session: all
-	erl $(ERL_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
-	erl $(ERL_OPTS) -sname master -setcookie test -run ar main data_dir data_test_master -pa ebin/
+session: build_test
+	erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
+	erl $(ERL_TEST_OPTS) -sname master -setcookie test -run ar main data_dir data_test_master -pa ebin/
 
 sim_realistic: all
 	erl $(ERL_OPTS) -s ar_network spawn_and_mine realistic
@@ -76,11 +92,13 @@ sim_hard: all
 clean:
 	rm -f ./ebin/*.beam
 	rm -rf docs
-	rm -f priv/jiffy.so priv/prometheus_process_collector.so
+	rm -f priv/arweave.so priv/jiffy.so priv/prometheus_process_collector.so
+	rm -f c_src/ar_mine_randomx.o
 	rm -f erl_crash.dump
 	rm -f lib/*/ebin/*.beam
 	rm -rf lib/*/_build
 	rm -rf lib/*/.rebar3
+	rm -rf lib/RandomX/obj lib/RandomX/bin
 	(cd lib/jiffy && make clean)
 	rm -f lib/prometheus/ebin/prometheus.app
 	rm -f lib/accept/ebin/accept.app

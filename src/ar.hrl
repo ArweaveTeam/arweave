@@ -185,6 +185,22 @@
 %% @doc Target number of blocks per year.
 -define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME/60)) ).
 
+%% @doc The adjustment of difficutly going from SHA-384 to RandomX.
+-define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
+-ifdef(DEBUG).
+-define(RANDOMX_KEY_SWAP_FREQ, 10).
+-define(RANDOMX_MIN_KEY_GEN_AHEAD, 1).
+-define(RANDOMX_MAX_KEY_GEN_AHEAD, 4).
+-define(RANDOMX_STATE_POLL_INTERVAL, 2).
+-define(RANDOMX_KEEP_KEY, 3).
+-else.
+-define(RANDOMX_KEY_SWAP_FREQ, 2000).
+-define(RANDOMX_MIN_KEY_GEN_AHEAD, (30 + ?STORE_BLOCKS_BEHIND_CURRENT)).
+-define(RANDOMX_MAX_KEY_GEN_AHEAD, (90 + ?STORE_BLOCKS_BEHIND_CURRENT)).
+-define(RANDOMX_STATE_POLL_INTERVAL, ?TARGET_TIME).
+-define(RANDOMX_KEEP_KEY, ?STORE_BLOCKS_BEHIND_CURRENT).
+-endif.
+
 %% @doc A block on the weave.
 -record(block, {
 	nonce = <<>>, % The nonce used to satisfy the mining problem when mined

@@ -1,7 +1,8 @@
 -module(ar_mine).
 -export([start/6, start/7, change_txs/2, stop/1, mine/2]).
 -export([validate/4, validate/2]).
--export([min_difficulty/1]).
+-export([min_difficulty/1, genesis_difficulty/0]).
+-export([sha384_diff_to_randomx_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -90,6 +91,16 @@ min_difficulty(Height) ->
 			min_sha384_difficulty()
 	end.
 
+genesis_difficulty() ->
+	case ar_fork:height_1_7() of
+		0 ->
+			randomx_genesis_difficulty();
+		_ ->
+			?DEFAULT_DIFF
+	end.
+
+sha384_diff_to_randomx_diff(Sha384Diff) ->
+	max(Sha384Diff + ?RANDOMX_DIFF_ADJUSTMENT, min_randomx_difficulty()).
 
 %% PRIVATE
 
@@ -282,19 +293,63 @@ mine(
 	Supervisor ! {solution, Hash, Nonce, TXs, Diff, Timestamp}.
 
 find_nonce(BDS, Diff, Height) ->
-	%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
-	%% arbitrary size for the initial nonce.
-	Nonce = crypto:strong_rand_bytes(384 div 8),
-	find_nonce(BDS, Diff, Nonce, Height).
+	case Height >= ar_fork:height_1_7() of
+		true ->
+			case randomx_hasher(Height) of
+				{ok, Hasher} ->
+					StartNonce = crypto:strong_rand_bytes(256 div 8),
+					find_nonce(BDS, Diff, StartNonce, Hasher);
+				not_found ->
+					ar:info("Mining is waiting on RandomX initialization"),
+					timer:sleep(30 * 1000),
+					find_nonce(BDS, Diff, Height)
+			end;
+		false ->
+			%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
+			%% arbitrary size for the initial nonce.
+			StartNonce = crypto:strong_rand_bytes(384 div 8),
+			Hasher = fun(Data) -> crypto:hash(?MINING_HASH_ALG, Data) end,
+			find_nonce(BDS, Diff, StartNonce, Hasher)
+	end.
 
-find_nonce(BDS, Diff, Nonce, Height) ->
-	%% TODO Pass in RandomX State
-	case validate(BDS, Nonce, Diff, Height) of
-		{invalid, Hash} ->
+-ifdef(DEBUG).
+%% Use RandomX light-mode, where hashing is slow but initialization is fast.
+randomx_hasher(Height) ->
+	case ar_randomx_state:randomx_state_by_height(Height) of
+		{state, {light, LightState}} ->
+			Hasher = fun(Data) ->
+				ar_mine_randomx:hash_light(LightState, Data)
+			end,
+			{ok, Hasher};
+		{state, {fast, _}} ->
+			not_found;
+		{key, _} ->
+			not_found
+	end.
+-else.
+%% Use RandomX fast-mode, where hashing is fast but initialization is slow.
+randomx_hasher(Height) ->
+	case ar_randomx_state:randomx_state_by_height(Height) of
+		{state, {fast, FastState}} ->
+			Hasher = fun(Data) ->
+				ar_mine_randomx:hash_fast(FastState, Data)
+			end,
+			{ok, Hasher};
+		{state, {light, _}} ->
+			not_found;
+		{key, _} ->
+			not_found
+	end.
+-endif.
+
+find_nonce(BDS, Diff, Nonce, Hasher) ->
+	BDSHash = Hasher(<< Nonce/binary, BDS/binary >>),
+	case validate(BDSHash, Diff) of
+		false ->
 			%% Re-use the hash as the next nonce, since we get it for free.
-			find_nonce(BDS, Diff, Hash, Height);
-		{valid, Hash} ->
-			{Nonce, Hash}
+			find_nonce(BDS, Diff, BDSHash, Hasher);
+		true ->
+			{Nonce, BDSHash}
 	end.
 
 %% In DEBUG mode, we're running RandomX in light-mode, which is much slower
@@ -302,9 +357,11 @@ find_nonce(BDS, Diff, Nonce, Height) ->
 -ifdef(DEBUG).
 min_randomx_difficulty() -> 1.
 min_sha384_difficulty() -> 8.
+randomx_genesis_difficulty() -> min_randomx_difficulty().
 -else.
-min_randomx_difficulty() -> min_sha384_difficulty() - 14.
+min_randomx_difficulty() -> min_sha384_difficulty() + ?RANDOMX_DIFF_ADJUSTMENT.
 min_sha384_difficulty() -> 31.
+randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 -endif.
 
 
@@ -331,7 +388,10 @@ change_txs_test_() ->
 		SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
 		%% Start mining with a high enough difficulty, so that the mining won't
 		%% finish before adding more TXs.
-		Diff = 22,
+		Diff = case ar_fork:height_1_7() of
+			0 -> 4;
+			_ -> 22
+		end,
 		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self()),
 		change_txs(PID, SecondTXSet),
 		assert_mine_output(B, RecallB, SecondTXSet, Diff)
@@ -346,9 +406,13 @@ timestamp_refresh_test_() ->
 		%% Start mining with a high enough difficulty, so that the block
 		%% timestamp gets refreshed at least once. Since we might be unlucky
 		%% and find the block too fast, we retry until it succeeds.
+		Diff = case ar_fork:height_1_7() of
+			0 -> 4;
+			_ -> 20
+		end,
 		Run = fun(_) ->
 			TXs = [],
-			start(B, RecallB, TXs, unclaimed, [], 20, self()),
+			start(B, RecallB, TXs, unclaimed, [], Diff, self()),
 			StartTime = os:system_time(seconds),
 			{_, MinedTimestamp} = assert_mine_output(B, RecallB, TXs),
 			MinedTimestamp > StartTime

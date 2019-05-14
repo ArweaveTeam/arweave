@@ -63,6 +63,7 @@ do_join(Node, RawPeers, NewB) ->
 				]
 			),
 			ar_miner_log:joining(),
+			ar_randomx_state:init(NewB#block.hash_list, Peers),
 			get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 			Node ! {fork_recovered, [NewB#block.indep_hash|NewB#block.hash_list]},
 			join_peers(Peers),

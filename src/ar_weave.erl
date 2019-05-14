@@ -15,9 +15,10 @@
 %% for the genesis block.
 -ifdef(DEBUG).
 init() -> init(ar_util:genesis_wallets()).
-init(WalletList) -> init(WalletList, ?DEFAULT_DIFF, 0).
+init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty(), 0).
 init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
+	ar_randomx_state:reset(),
 	% Generate and dispatch a new data transaction
 	B0 =
 		#block{
@@ -39,6 +40,7 @@ init() -> init(ar_util:genesis_wallets()).
 init(WalletList) -> init(WalletList, ?DEFAULT_DIFF).
 init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
+	ar_randomx_state:reset(),
 	% Generate and dispatch a new data transaction.
 	TXs = read_genesis_txs(),
 	B0 =
@@ -246,11 +248,14 @@ calculate_recall_block(IndepHash, Height, _HashList) ->
 
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TXs and the nonce.
-hash(BDS, Nonce, _Height) ->
-	crypto:hash(
-		?MINING_HASH_ALG,
-		<< Nonce/binary, BDS/binary >>
-	).
+hash(BDS, Nonce, Height) ->
+	HashData = << Nonce/binary, BDS/binary >>,
+	case Height >= ar_fork:height_1_7() of
+		true ->
+			ar_randomx_state:hash(Height, HashData);
+		false ->
+			crypto:hash(?MINING_HASH_ALG, HashData)
+	end.
 
 %% @doc Create an independent hash from a block. Independent hashes
 %% verify a block's contents in isolation and are stored in a node's hash list.

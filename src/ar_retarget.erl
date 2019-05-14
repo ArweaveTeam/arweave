@@ -70,6 +70,14 @@ calculate_difficulty(_OldDiff, _TS, _Last, _Height) ->
 	?FIXED_DIFF.
 -else.
 calculate_difficulty(OldDiff, TS, Last, Height) ->
+	case ar_fork:height_1_7() of
+		Height ->
+			switch_to_randomx_fork_diff(OldDiff);
+		_ ->
+			calculate_difficulty1(OldDiff, TS, Last, Height)
+	end.
+
+calculate_difficulty1(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeError = abs(ActualTime - TargetTime),
@@ -82,6 +90,14 @@ calculate_difficulty(OldDiff, TS, Last, Height) ->
 		ar_mine:min_difficulty(Height)
 	),
 	Diff.
+-endif.
+
+-ifdef(DEBUG).
+switch_to_randomx_fork_diff(_) ->
+	1.
+-else.
+switch_to_randomx_fork_diff(OldDiff) ->
+	ar_mine:sha384_diff_to_randomx_diff(OldDiff) - 2.
 -endif.
 
 %% @doc Validate that a new block has an appropriate difficulty.

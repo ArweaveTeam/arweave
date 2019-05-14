@@ -52,9 +52,10 @@
 		ar_tx_db,
 		ar_firewall_distributed_tests,
 		ar_fork_recovery_tests,
+		ar_randomx_mining_tests,
+		ar_semaphore_tests,
 		% ar_meta_db must be the last in the list since it resets global configuraiton
-		ar_meta_db,
-		ar_semaphore_tests
+		ar_meta_db
 	]
 ).
 
@@ -110,7 +111,7 @@ main("") ->
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
-			{"benchmark", "Run a mining performance benchmark."},
+			{"benchmark (algorithm)", "Run a mining performance benchmark. Pick an algorithm from sha384, randomx."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
 			{"internal_api_secret (secret)",
 				lists:flatten(
@@ -185,8 +186,8 @@ parse_cli_args(["ipfs_import" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_import = true });
 parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
 	parse_cli_args(Rest, C#config { start_hash_list = ar_util:decode(BHLHash) });
-parse_cli_args(["benchmark"|Rest], C)->
-	parse_cli_args(Rest, C#config { benchmark = true });
+parse_cli_args(["benchmark", Algorithm|Rest], C)->
+	parse_cli_args(Rest, C#config { benchmark = true, benchmark_algorithm = list_to_atom(Algorithm) });
 parse_cli_args(["auto_update", "false" | Rest], C) ->
 	parse_cli_args(Rest, C#config { auto_update = false });
 parse_cli_args(["auto_update", Addr | Rest], C) ->
@@ -216,10 +217,12 @@ parse_cli_args([Arg|_Rest], _O) ->
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#config { port = Port });
-start(#config { benchmark = true, max_miners = MaxMiners }) ->
+start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = MaxMiners }) ->
 	ar_meta_db:start(),
 	ar_meta_db:put(max_miners, MaxMiners),
-	ar_benchmark:run();
+	ar_meta_db:put(mine, true),
+	ar_randomx_state:start(),
+	ar_benchmark:run(Algorithm);
 start(
 	#config {
 		port = Port,
@@ -254,12 +257,14 @@ start(
 	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
+	warn_if_single_scheduler(),
 	%% Fill up ar_meta_db.
 	ar_meta_db:start(),
 	ar_meta_db:put(data_dir, DataDir),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),
+	ar_meta_db:put(mine, Mine),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
@@ -336,6 +341,7 @@ start(
 				]
 			)
 	end,
+	ar_randomx_state:start(),
 	{ok, Supervisor} = start_link(
 		[
 			[
@@ -405,6 +411,7 @@ start(
 		{http_entrypoint_node, Node},
 		{http_bridge_node, Bridge}
 	]),
+	ar_randomx_state:start_block_polling(),
 	case GatewayOpts of
 		{on, GatewayPort, GatewayDomain} ->
 			ar_gateway_server:start(GatewayPort, GatewayDomain, GatewayCustomDomains);
@@ -448,6 +455,17 @@ maybe_node_postfix() ->
 			"-" ++ Sname;
 		_ ->
 			""
+	end.
+
+%% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
+%% for validating a block, will be blocked on initializing a RandomX dataset,
+%% which takes minutes.
+warn_if_single_scheduler() ->
+	case erlang:system_info(schedulers_online) of
+		1 ->
+			console("WARNING: Running only one CPU core / Erlang scheduler may cause issues");
+		_ ->
+			ok
 	end.
 
 %% @doc Run the erlang make system on the project.
