@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_server).
 
--export([start/5]).
+-export([start/2]).
 -export([reregister/1, reregister/2]).
 
 -include("ar.hrl").
@@ -15,12 +15,19 @@
 %%%
 
 %% @doc Start the Arweave HTTP API and returns a process ID.
-start(Port, Node, SearchNode, ServiceNode, BridgeNode) ->
-	reregister(http_entrypoint_node, Node),
-	reregister(http_search_node, SearchNode),
-	reregister(http_service_node, ServiceNode),
-	reregister(http_bridge_node, BridgeNode),
+start(Port, HttpNodes) ->
+	reregister_from_proplist([
+		http_entrypoint_node,
+		http_search_node,
+		http_service_node,
+		http_bridge_node
+	], HttpNodes),
 	do_start(Port).
+
+reregister_from_proplist(Names, HttpNodes) ->
+	lists:foreach(fun(Name) ->
+		reregister(Name, proplists:get_value(Name, HttpNodes))
+	end, Names).
 
 %% @doc Helper function : registers a new node as the entrypoint.
 reregister(Node) ->
@@ -43,7 +50,7 @@ do_start(Port) ->
 	Routes = [
 		{'_', [
 			{"/metrics/[:registry]", prometheus_cowboy2_handler, []},
-			{"/[...]", ar_http_iface_cowboy_handler, []}
+			{"/[...]", ar_http_iface_h, []}
 		]}
 	],
 	Dispatch = cowboy_router:compile(Routes),
@@ -58,10 +65,9 @@ do_start(Port) ->
 			metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
 			stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
 		},
+	{ok, _} = cowboy:start_clear(
+		ar_http_iface_listener,
+		[{port, Port}],
+		ProtocolOpts
+	).
 
-	{ok, _} =
-		cowboy:start_clear(
-			ar_cowboy_listener,
-			[{port, Port}],
-			ProtocolOpts
-		).

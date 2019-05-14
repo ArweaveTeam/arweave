@@ -5,7 +5,7 @@
 -module(ar_util).
 
 -export([pick_random/1, pick_random/2]).
--export([encode/1, decode/1]).
+-export([encode/1, decode/1, safe_decode/1]).
 -export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_hash_list/2, hash_from_hash_list/2]).
@@ -40,12 +40,24 @@ pick_random(Xs) ->
 encode(Bin) ->
 	base64url:encode(Bin).
 
-%% @doc Decode a URL safe base64 to binary.
+%% @doc Try to decode a URL safe base64 into a binary or throw an error when
+%% invalid.
 decode([]) -> [];
-decode(Bin) when is_list(Bin) ->
-	decode(list_to_binary(Bin));
+decode(List) when is_list(List) ->
+	decode(list_to_binary(List));
 decode(Bin) when is_binary(Bin) ->
 	base64url:decode(Bin).
+
+%% @doc Safely decode a URL safe base64 into a binary returning an ok or error
+%% tuple.
+safe_decode(E) ->
+	try
+		D = decode(E),
+		{ok, D}
+	catch
+		_:_ ->
+			{error, invalid}
+	end.
 
 %% @doc Reverse a binary
 rev_bin(Bin) ->

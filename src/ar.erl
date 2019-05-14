@@ -91,7 +91,9 @@
 	enable = [],
 	disable = [],
 	content_policy_files = [],
-	transaction_blacklist_files = []
+	transaction_blacklist_files = [],
+	gateway = off,
+	custom_domains = []
 }).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
@@ -112,7 +114,7 @@ main("") ->
 		end,
 		[
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_hash_list (file)", "Start the node from a given block."},
+			{"start_hash_list (hash)", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -142,7 +144,9 @@ main("") ->
 				)
 			},
 			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
-			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."}
+			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."},
+			{"gateway (port) (domain)", "Run a gateway on the specified port and domain"},
+			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."}
 		]
 	),
 	erlang:halt();
@@ -183,8 +187,8 @@ parse(["disk_space", Size|Rest], O) ->
 	parse(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 parse(["load_mining_key", File|Rest], O)->
 	parse(Rest, O#opts { load_key = File });
-parse(["start_hash_list", IndepHash|Rest], O)->
-	parse(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
+parse(["start_hash_list", BHLHash|Rest], O)->
+	parse(Rest, O#opts { start_hash_list = ar_util:decode(BHLHash) });
 parse(["benchmark"|Rest], O)->
 	parse(Rest, O#opts { benchmark = true });
 parse(["auto_update", "false" | Rest], O) ->
@@ -203,6 +207,10 @@ parse(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
 	parse(Rest, O#opts { enable = [ list_to_atom(Feature) | Enabled ] });
 parse(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
 	parse(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
+parse(["gateway", Port, Domain | Rest ], O = #opts { gateway = off }) ->
+	parse(Rest, O#opts { gateway = {on, list_to_integer(Port), list_to_binary(Domain)} });
+parse(["custom_domain", Domain|Rest], O = #opts { custom_domains = Ds }) ->
+	parse(Rest, O#opts { custom_domains = [ list_to_binary(Domain) | Ds ] });
 parse([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s. Terminating.~n~n", [Arg]),
 	erlang:halt().
@@ -238,7 +246,9 @@ start(
 		enable = Enable,
 		disable = Disable,
 		content_policy_files = ContentPolicyFiles,
-		transaction_blacklist_files = TransactionBlacklistFiles
+		transaction_blacklist_files = TransactionBlacklistFiles,
+		gateway = GatewayOpts,
+		custom_domains = GatewayCustomDomains
 	}) ->
 	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -332,7 +342,8 @@ start(
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
-					_ -> ar_storage:read_hash_list(ar_util:decode(BHL))
+					_ ->
+						ar_storage:read_block_hash_list(BHL)
 				end,
 				0,
 				MiningAddress,
@@ -399,13 +410,17 @@ start(
 		]
 	),
 	%% Start the first node in the gossip network (with HTTP interface).
-	ar_http_iface_server:start(
-		Port,
-		Node,
-		SearchNode,
-		undefined,
-		Bridge
-	),
+	ar_http_iface_server:start(Port, [
+		{http_entrypoint_node, Node},
+		{http_search_node, SearchNode},
+		{http_bridge_node, Bridge}
+	]),
+	case GatewayOpts of
+		{on, GatewayPort, GatewayDomain} ->
+			ar_gateway_server:start(GatewayPort, GatewayDomain, GatewayCustomDomains);
+		off ->
+			do_nothing
+	end,
 	case Polling of
 		true ->
 			ar_meta_db:put(polling_mode, true),
