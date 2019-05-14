@@ -135,10 +135,10 @@ calculate_reward_pool(OldPool, TXs, _RewardAddr, Proportion) ->
 %% @doc Calculates the portion of the rewardpool that the miner is entitled
 %% to for mining a block with a given recall. The proportion is based on the
 %% size of the recall block and the average data stored within the weave.
-calculate_proportion(0, W, H) -> calculate_proportion(1, W, H);
-calculate_proportion(R, 0, H) -> calculate_proportion(R, 1, H);
-calculate_proportion(R, W, 0) -> calculate_proportion(R, W, 1);
-calculate_proportion(R, W, H) when R < (W/H) -> 0.1;
+calculate_proportion(0, _, _) -> ?MIN_REWARD_PROPORTION;
+calculate_proportion(_, 0, _) -> ?MIN_REWARD_PROPORTION;
+calculate_proportion(_, _, 0) -> ?MIN_REWARD_PROPORTION;
+calculate_proportion(R, W, H) when R < (W/H) -> ?MIN_REWARD_PROPORTION;
 calculate_proportion(RecallSize, WeaveSize, Height) ->
 	X = ((Height * RecallSize) / WeaveSize) - 1,
 	max(

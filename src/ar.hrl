@@ -147,6 +147,9 @@
 %% @doc Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
 
+%% @doc Minimum mining reward proportion.
+-define(MIN_REWARD_PROPORTION, 0.1).
+
 %% @doc Peers to never add to peer list
 -define(PEER_PERMANENT_BLACKLIST,[]).
 

@@ -866,3 +866,27 @@ bogus_tx_thread_test_() ->
 		?AR(8999) = ar_node:get_balance(Node2, Pub1),
 		?AR(1000) = ar_node:get_balance(Node2, Pub2)
 	end}.
+
+%% @doc Ensure calculate_proportion/3 returns minimum at right times..
+calculate_proportion_minimum_test() ->
+	M = ?MIN_REWARD_PROPORTION,
+	M = ar_node_utils:calculate_proportion(0,w,h), % atoms demonstrate
+	M = ar_node_utils:calculate_proportion(r,0,h), % no maths is done
+	M = ar_node_utils:calculate_proportion(r,w,0), % constant is returned.
+	M = ar_node_utils:calculate_proportion(9, 100, 10).
+
+%% @doc Test/document reward proportions.
+calculate_proportions_test() ->
+	?assert(floats_similar(ar_node_utils:calculate_proportion(10, 100, 10), 0.333)),
+	?assert(floats_similar(ar_node_utils:calculate_proportion(10, 200, 20), 0.333)),
+	?assert(floats_similar(ar_node_utils:calculate_proportion(15, 150, 10), 0.333)),
+	?assert(floats_similar(ar_node_utils:calculate_proportion(11, 100, 10), 0.348)),
+	?assert(floats_similar(ar_node_utils:calculate_proportion(11, 150, 15), 0.348)),
+	?assert(floats_similar(ar_node_utils:calculate_proportion(22, 200, 10), 0.348)),
+	?assert(floats_similar(ar_node_utils:calculate_proportion(15, 100, 10), 0.414)),
+	?assert(floats_similar(ar_node_utils:calculate_proportion(20, 100, 10), 0.5)).
+
+floats_similar(X, Y) ->
+	floats_similar(X, Y, 0.001).
+floats_similar(X, Y, Margin) ->
+	abs(X - Y ) < Margin.
