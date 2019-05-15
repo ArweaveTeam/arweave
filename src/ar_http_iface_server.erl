@@ -50,7 +50,7 @@ do_start(Port) ->
 	Routes = [
 		{'_', [
 			{"/metrics/[:registry]", prometheus_cowboy2_handler, []},
-			{"/[...]", ar_http_iface_h, []}
+			{"/[...]", ar_http_iface_handler, []}
 		]}
 	],
 	Dispatch = cowboy_router:compile(Routes),

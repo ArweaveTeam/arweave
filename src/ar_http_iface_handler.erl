@@ -1,4 +1,4 @@
--module(ar_http_iface_h).
+-module(ar_http_iface_handler).
 -behaviour(cowboy_handler).
 -export([init/2]).
 -include("ar.hrl").

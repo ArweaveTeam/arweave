@@ -1,4 +1,4 @@
--module(ar_gateway_h).
+-module(ar_gateway_handler).
 -behaviour(cowboy_handler).
 -export([init/2]).
 
