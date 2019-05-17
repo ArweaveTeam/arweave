@@ -1,7 +1,6 @@
 *.beam
 *.log
 *.dat
-*.json
 .arweave.plt
 testlog
 priv/jiffy.so
