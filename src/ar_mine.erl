@@ -1,6 +1,6 @@
 -module(ar_mine).
 -export([start/6, start/7, change_txs/2, stop/1, mine/2]).
--export([validate/3, validate_by_hash/2]).
+-export([validate/3, validate/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -73,7 +73,7 @@ validate(BDS, Nonce, Diff) ->
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
-validate_by_hash(BDSHash, Diff) ->
+validate(BDSHash, Diff) ->
 	case BDSHash of
 		<< 0:Diff, _/bitstring >> ->
 			true;
