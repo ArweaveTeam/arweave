@@ -64,11 +64,12 @@ change_txs(PID, NewTXs) ->
 
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff) ->
-	case ar_weave:hash(BDS, Nonce) of
-		<< 0:Diff, _/bitstring >> = ValidHash ->
-			{valid, ValidHash};
-		InvalidHash ->
-			{invalid, InvalidHash}
+	BDSHash = ar_weave:hash(BDS, Nonce),
+	case validate_by_hash(BDSHash, Diff) of
+		true ->
+			{valid, BDSHash};
+		false ->
+			{invalid, BDSHash}
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
