@@ -1,6 +1,6 @@
 -module(ar_weave).
 -export([init/0, init/1, init/2, init/3, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
--export([hash/2, indep_hash/1]).
+-export([hash/3, indep_hash/1]).
 -export([verify_indep/2]).
 -export([calculate_recall_block/2, calculate_recall_block/3]).
 -export([generate_hash_list/1]).
@@ -178,7 +178,8 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 					Timestamp,
 					Tags
 				),
-				Nonce
+				Nonce,
+				NewHeight
 			),
 			txs = TXs,
 			hash_list = HashList,
@@ -245,7 +246,7 @@ calculate_recall_block(IndepHash, Height, _HashList) ->
 
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TXs and the nonce.
-hash(BDS, Nonce) ->
+hash(BDS, Nonce, _Height) ->
 	crypto:hash(
 		?MINING_HASH_ALG,
 		<< Nonce/binary, BDS/binary >>

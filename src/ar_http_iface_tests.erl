@@ -1332,7 +1332,7 @@ update_nonce(B, PreviousRecallB) ->
 update_nonce(B, PreviousRecallB, Nonce) ->
 	NonceBinary = integer_to_binary(Nonce),
 	BDS = generate_block_data_segment(B#block { nonce = NonceBinary }, PreviousRecallB),
-	case ar_weave:hash(BDS, NonceBinary) of
+	case ar_weave:hash(BDS, NonceBinary, 0) of %% TODO: Height
 		<< 0:(?MIN_DIFF), _/bitstring >> ->
 			B#block{ nonce = NonceBinary };
 		_ ->

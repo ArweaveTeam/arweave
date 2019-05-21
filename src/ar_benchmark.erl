@@ -39,7 +39,8 @@ mine(Diff) ->
 		hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
 		timestamp = os:system_time(seconds),
 		last_retarget = os:system_time(seconds),
-		hash_list = []
+		hash_list = [],
+		height = 1234
 	},
 	ar_mine:start(B, B, [], unclaimed, [], Diff, self()),
 	receive

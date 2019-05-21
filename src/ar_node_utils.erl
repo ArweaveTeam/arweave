@@ -513,7 +513,8 @@ validate(
 				wallet_list = WalletList,
 				nonce = Nonce,
 				diff = Diff,
-				timestamp = Timestamp
+				timestamp = Timestamp,
+				height = Height
 			},
 		TXs,
 		OldB,
@@ -523,7 +524,9 @@ validate(
 	% TODO: Fix names.
 	BDSHash = ar_weave:hash(
 		ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
-		Nonce),
+		Nonce,
+		Height
+	),
 	Mine = ar_mine:validate(BDSHash, Diff),
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),

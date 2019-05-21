@@ -1060,7 +1060,7 @@ post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}, Req) ->
 		no_data_segment ->
 			post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}, Req);
 		_ ->
-			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff) of
+			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
 				{invalid, _} ->
 					post_block_reject_warn(BShadow, check_pow),
 					{400, #{}, <<"Invalid Block Proof of Work">>, Req};
