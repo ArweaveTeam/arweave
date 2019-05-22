@@ -273,7 +273,6 @@ mine(
 	Supervisor ! {solution, Hash, Nonce, TXs, Diff, Timestamp}.
 
 find_nonce(BDS, Diff, Height) ->
-	crypto:rand_seed(),
 	%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
 	%% arbitrary size for the initial nonce.
 	Nonce = crypto:strong_rand_bytes(384 div 8),
