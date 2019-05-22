@@ -6,7 +6,7 @@
 
 -export([pick_random/1, pick_random/2]).
 -export([encode/1, decode/1, safe_decode/1]).
--export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
+-export([parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_hash_list/2, hash_from_hash_list/2]).
 -export([get_recall_hash/2, get_recall_hash/3]).
@@ -140,6 +140,13 @@ parse_port("") -> ?DEFAULT_HTTP_IFACE_PORT;
 parse_port(PortStr) ->
 	{ok, [Port], ""} = io_lib:fread(":~d", PortStr),
 	Port.
+
+safe_parse_peer(Peer) ->
+	try
+		{ok, parse_peer(Peer)}
+	catch
+		_:_ -> {error, invalid}
+	end.
 
 %% @doc Take a remote host ID in various formats, return a HTTP-friendly string.
 format_peer({A, B, C, D}) ->

@@ -1,0 +1,53 @@
+{
+  "peers": [
+    "188.166.200.45",
+    "188.166.192.169",
+    "163.47.11.64",
+    "159.203.158.108",
+    "159.203.49.13",
+    "139.59.51.59",
+    "138.197.232.192",
+    "46.101.67.172"
+  ],
+  "start_hash_list": "ZFTD3ne7_U3BONHi8O-QpBv0ZQTAXJ2eFIih8dod0f8",
+  "mine": true,
+  "port": 1985,
+  "data_dir": "some_data_dir",
+  "polling": true,
+  "clean": true,
+  "no_auto_join": true,
+  "init": true,
+  "diff": 42,
+  "mining_addr": "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
+  "max_miners": 43,
+  "new_mining_key": true,
+  "load_mining_key": "some_key_file",
+  "content_policies": [
+    "some_content_policy_1",
+    "some_content_policy_2"
+  ],
+  "transaction_blacklists": [
+    "some_blacklist_1",
+    "some_blacklist_2"
+  ],
+  "disk_space": 44,
+  "benchmark": true,
+  "auto_update": "V_zW1A2HeqWFBpwKCjyd8V6eI8S3ia8GOVA6g7YXAdU",
+  "internal_api_secret": "some_very_very_long_secret",
+  "enable": [
+    "feature_1",
+    "feature_2"
+  ],
+  "disable": [
+    "feature_3",
+    "feature_4"
+  ],
+  "gateway": {
+    "port": 443,
+    "domain": "gateway.localhost"
+  },
+  "custom_domains": [
+    "domain1.example",
+    "domain2.example"
+  ]
+}

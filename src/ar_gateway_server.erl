@@ -10,7 +10,7 @@ start(Port, Domain, CustomDomains) ->
 	ProtocolOpts = #{
 		middlewares => [cowboy_handler],
 		env => #{
-			handler => ar_gateway_h,
+			handler => ar_gateway_handler,
 			handler_opts => {Domain, CustomDomains}
 		}
 	},
