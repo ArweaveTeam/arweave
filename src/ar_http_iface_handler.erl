@@ -1025,11 +1025,11 @@ post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 		true ->
 			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
-%% The MIN_DIFF check is filtering out blocks from smaller networks, e.g.
+%% The min difficulty check is filtering out blocks from smaller networks, e.g.
 %% testnets. Therefor, we don't want to log when this check or any check above
 %% rejects the block because there are potentially a lot of rejections.
 post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case BShadow#block.diff >= ?MIN_DIFF of
+	case BShadow#block.diff >= ar_mine:min_difficulty(BShadow#block.height) of
 		true ->
 			post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}, Req);
 		_ ->

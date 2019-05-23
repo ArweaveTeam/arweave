@@ -1,6 +1,7 @@
 -module(ar_mine).
 -export([start/6, start/7, change_txs/2, stop/1, mine/2]).
 -export([validate/4, validate/2]).
+-export([min_difficulty/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -79,6 +80,14 @@ validate(BDSHash, Diff) ->
 			true;
 		_ ->
 			false
+	end.
+
+min_difficulty(Height) ->
+	case Height >= ar_fork:height_1_7() of
+		true ->
+			min_randomx_difficulty();
+		false ->
+			min_sha384_difficulty()
 	end.
 
 
@@ -287,6 +296,16 @@ find_nonce(BDS, Diff, Nonce, Height) ->
 		{valid, Hash} ->
 			{Nonce, Hash}
 	end.
+
+%% In DEBUG mode, we're running RandomX in light-mode, which is much slower
+%% than fast-mode we run in non-DEBUG mode.
+-ifdef(DEBUG).
+min_randomx_difficulty() -> 1.
+min_sha384_difficulty() -> 8.
+-else.
+min_randomx_difficulty() -> min_sha384_difficulty() - 14.
+min_sha384_difficulty() -> 31.
+-endif.
 
 
 %% Tests
