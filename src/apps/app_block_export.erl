@@ -1,5 +1,5 @@
 -module(app_block_export).
--export([export_blocks/1, export_blocks/4]).
+-export([export_blocks/1, export_blocks/3]).
 -include("../ar.hrl").
 
 -record(state, {
@@ -8,7 +8,6 @@
 }).
 
 export_blocks(RemoteNodeAddrs) ->
-	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	Peers = lists:map(fun ar_util:parse_peer/1, RemoteNodeAddrs),
 	Filename = fun({HeightStart, HeightEnd}) ->
 		"blocks-export-" ++ integer_to_list(HeightStart) ++ "-to-" ++ integer_to_list(HeightEnd) ++ ".csv"
@@ -17,13 +16,14 @@ export_blocks(RemoteNodeAddrs) ->
 		{0, 49999},
 		{50000, 99999},
 		{100000, 149999},
-		{150000, length(BHL)}
+		{150000, 159999}
 	],
 	lists:map(fun(Range) ->
-		export_blocks(Filename(Range), Peers, Range, BHL)
+		export_blocks(Filename(Range), Peers, Range)
 	end, Ranges).
 
-export_blocks(Filename, Peers, {HeightStart, HeightEnd}, BHL) ->
+export_blocks(Filename, Peers, {HeightStart, HeightEnd}) ->
+	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	spawn(fun() ->
 		Columns = ["Height", "ID", "Timestamp", "Block Size (Bytes)", "Difficulty", "Cumulative Difficulty",
 					"Reward Address", "Weave Size (Bytes)", "TXs", "TX Reward Sum (AR)", "Inflation Reward (AR)",
