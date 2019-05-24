@@ -1,5 +1,6 @@
 -module(app_block_export).
 -export([export_blocks/1, export_blocks/3]).
+-export([export_transactions/1, export_transactions/3]).
 -include("../ar.hrl").
 
 -record(state, {
@@ -43,6 +44,48 @@ export_blocks(Filename, Peers, {HeightStart, HeightEnd}) ->
 		ok = file:close(IoDevice),
 		io:format("Finished!~n")
 	end).
+
+export_transactions(RemoteNodeAddrs) ->
+	Peers = lists:map(fun ar_util:parse_peer/1, RemoteNodeAddrs),
+	Filename = fun({HeightStart, HeightEnd}) ->
+		"transactions-export-" ++ integer_to_list(HeightStart) ++ "-to-" ++ integer_to_list(HeightEnd) ++ ".csv"
+	end,
+	Ranges = [
+		{0, 49999},
+		{50000, 99999},
+		{100000, 149999},
+		{150000, 199999},
+		{200000, 205000}
+	],
+	lists:map(fun(Range) ->
+		export_transactions(Filename(Range), Peers, Range)
+	end, Ranges).
+
+export_transactions(Filename, Peers, {HeightStart, HeightEnd}) ->
+	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	spawn(fun() ->
+		Columns = ["Block Height", "Block ID", "Block Timestamp", "Block Size (Bytes)",
+					"Weave Size (Bytes)", "TX ID", "Last TX ID", "Owner",
+					"Target", "Quantity (AR)", "Data Size (Bytes)", "Reward (AR)",
+					"App Name", "App Version", "Content Type"],
+		IoDevice = init_csv(Filename, Columns),
+		S = #state{
+			bhl = BHL,
+			peers = Peers
+		},
+		BHs = lists:sublist(lists:reverse(BHL), HeightStart + 1, HeightEnd - HeightStart + 1),
+		WriteOneRow = fun(Values) ->
+			ok = file:write(IoDevice, csv_encode_row(Values))
+		end,
+		Fun = fun(B) ->
+			io:format("Exporting TXs for block height: ~p~n", [B#block.height]),
+			lists:foreach(WriteOneRow, extract_transaction_values(full_block(B)))
+		end,
+		blocks_foreach(Fun, S, BHs),
+		ok = file:close(IoDevice),
+		io:format("Finished!~n")
+	end).
+
 
 %% Private
 
@@ -154,6 +197,33 @@ winston_to_ar(Windston) ->
 format_float(Float) ->
 	float_to_binary(Float, [{decimals, 12}]).
 
+extract_transaction_values(B) ->
+	lists:map(
+		fun(TX) ->
+			extract_transaction_values(B, TX)
+		end,
+		B#block.txs
+	).
+
+extract_transaction_values(B, TX) ->
+	[
+		integer_to_binary(B#block.height),
+		ar_util:encode(B#block.indep_hash),
+		integer_to_binary(B#block.timestamp),
+		integer_to_binary(B#block.block_size),
+		integer_to_binary(B#block.weave_size),
+		ar_util:encode(TX#tx.id),
+		ar_util:encode(TX#tx.last_tx),
+		ar_util:encode(TX#tx.owner),
+		ar_util:encode(TX#tx.target),
+		format_float(winston_to_ar(TX#tx.quantity)),
+		integer_to_binary(byte_size(TX#tx.data)),
+		format_float(winston_to_ar(TX#tx.reward)),
+		proplists:get_value(<<"App-Name">>, TX#tx.tags, <<>>),
+		proplists:get_value(<<"App-Version">>, TX#tx.tags, <<>>),
+		proplists:get_value(<<"Content-Type">>, TX#tx.tags, <<>>)
+	].
+
 %% CSV
 
 csv_encode_row(Values) ->
@@ -168,5 +238,11 @@ csv_encode_row([Value | Values], Acc) ->
 	NewAcc = [[csv_encode_value(Value), ","] | Acc],
 	csv_encode_row(Values, NewAcc).
 
-csv_encode_value(Value) ->
-	["\"", Value, "\""].
+csv_encode_value(String) when is_list(String) ->
+	csv_encode_value(list_to_binary(String));
+csv_encode_value(Value) when is_binary(Value) ->
+	[
+		<<"\"">>,
+		binary:replace(Value, <<"\"">>, <<"\"\"">>),
+		<<"\"">>
+	].
