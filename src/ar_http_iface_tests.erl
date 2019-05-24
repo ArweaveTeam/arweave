@@ -336,9 +336,6 @@ find_external_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	{ok, SearchNode} = ar_tx_search:start(),
-	ar_node:add_peers(Node, SearchNode),
-	ar_http_iface_server:reregister(http_search_node, SearchNode),
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
@@ -358,9 +355,6 @@ fail_external_tx_test() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	{ok, SearchNode} = ar_tx_search:start(),
-	ar_node:add_peers(Node, SearchNode),
-	ar_http_iface_server:reregister(http_search_node, SearchNode),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)),
 	timer:sleep(1000),
 	ar_node:mine(Node),
@@ -673,9 +667,6 @@ get_subfields_of_tx_test() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	{ok, SearchNode} = ar_tx_search:start(),
-	ar_node:add_peers(Node, SearchNode),
-	ar_http_iface_server:reregister(http_search_node, SearchNode),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
 	timer:sleep(1000),
 	ar_node:mine(Node),
@@ -699,9 +690,6 @@ get_pending_tx_test() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	{ok, SearchNode} = ar_tx_search:start(),
-	ar_node:add_peers(Node, SearchNode),
-	ar_http_iface_server:reregister(http_search_node, SearchNode),
 	io:format("~p\n",[
 		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>))
 		]),
@@ -766,9 +754,7 @@ get_multiple_pending_txs_test_() ->
 %% @doc Spawn a network with two nodes and a chirper server.
 get_tx_by_tag_test() ->
 	ar_storage:clear(),
-	{ok, SearchServer} = ar_tx_search:start(),
 	Peers = ar_network:start(10, 10),
-	ar_node:add_peers(hd(Peers), SearchServer),
 	% Generate the transaction.
 	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
 	% Add tx to network

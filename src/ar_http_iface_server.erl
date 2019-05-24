@@ -18,7 +18,6 @@
 start(Port, HttpNodes) ->
 	reregister_from_proplist([
 		http_entrypoint_node,
-		http_search_node,
 		http_service_node,
 		http_bridge_node
 	], HttpNodes),

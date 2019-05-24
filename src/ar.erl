@@ -287,6 +287,7 @@ start(
 	ar_key_db:start(),
 	ar_track_tx_db:start(),
 	ar_miner_log:start(),
+	ar_tx_search:start(),
 	ar_storage:start_update_used_space(),
 	%% Determine the mining address.
 	case {Addr, LoadKey, NewKey} of
@@ -356,17 +357,6 @@ start(
 		]
 	),
 	Node = whereis(http_entrypoint_node),
-	{ok, SearchNode} = supervisor:start_child(
-		Supervisor,
-		{
-			ar_tx_search,
-			{ar_tx_search, start, []},
-			permanent,
-			brutal_kill,
-			worker,
-			[ar_tx_search]
-		}
-	),
 	%% Start a bridge, add it to the node's peer list.
 	{ok, Bridge} = supervisor:start_child(
 		Supervisor,
@@ -413,7 +403,6 @@ start(
 	%% Start the first node in the gossip network (with HTTP interface).
 	ar_http_iface_server:start(Port, [
 		{http_entrypoint_node, Node},
-		{http_search_node, SearchNode},
 		{http_bridge_node, Bridge}
 	]),
 	case GatewayOpts of
@@ -685,7 +674,6 @@ commandline_parser_test_() ->
 				{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #config.mining_addr, Addr}
 			],
 		X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
-		ar:d({x, X}),
 		C = parse_cli_args(X, #config{}),
 		lists:foreach(
 			fun({_, Index, Value}) ->

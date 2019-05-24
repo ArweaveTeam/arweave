@@ -34,7 +34,9 @@
 %% @doc Start a search node.
 start() ->
 	initDB(),
-	{ok, spawn(fun server/0)}.
+	PID = spawn(fun server/0),
+	erlang:register(http_search_node, PID),
+	{ok, PID}.
 
 delete_tx_records(TXID) ->
 	delete_tx_records(whereis(http_search_node), TXID).
