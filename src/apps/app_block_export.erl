@@ -21,7 +21,7 @@ export_blocks(RemoteNodeAddrs) ->
 		{150000, length(BHL)}
 	],
 	lists:map(fun(Range) ->
-		app_block_tx_export:export_blocks(Filename(Range), Peers, Range, BHL)
+		export_blocks(Filename(Range), Peers, Range, BHL)
 	end, Ranges).
 
 export_blocks(Filename, Peers, {HeightStart, HeightEnd}, BHL) ->
@@ -40,6 +40,8 @@ export_blocks(Filename, Peers, {HeightStart, HeightEnd}, BHL) ->
 		ok = file:close(IoDevice),
 		io:format("Finished!~n")
 	end).
+
+%% Private
 
 init_csv(Filename, Columns) ->
 	{ok, IoDevice} = file:open(Filename, [write, exclusive]),
