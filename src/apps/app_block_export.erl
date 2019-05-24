@@ -3,7 +3,6 @@
 -include("../ar.hrl").
 
 -record(state, {
-	io_device,
 	bhl,
 	peers
 }).
@@ -31,12 +30,16 @@ export_blocks(Filename, Peers, {HeightStart, HeightEnd}, BHL) ->
 					"TX Mining Reward (AR)", "TX Reward Pool (AR)", "Calculated TX Reward Pool (AR)"],
 		IoDevice = init_csv(Filename, Columns),
 		S = #state{
-			io_device = IoDevice,
 			bhl = BHL,
 			peers = Peers
 		},
 		BHs = lists:sublist(lists:reverse(BHL), HeightStart + 1, HeightEnd - HeightStart),
-		export_blocks1(S, BHs),
+		Fun = fun(B) ->
+			io:format("Exporting block height: ~p~n", [B#block.height]),
+			Values = extract_block_values(S, full_block(B)),
+			ok = file:write(IoDevice, csv_encode_row(Values))
+		end,
+		blocks_foreach(Fun, S, BHs),
 		ok = file:close(IoDevice),
 		io:format("Finished!~n")
 	end).
@@ -48,17 +51,12 @@ init_csv(Filename, Columns) ->
 	ok = file:write(IoDevice, csv_encode_row(Columns)),
 	IoDevice.
 
-export_blocks1(_, []) ->
+blocks_foreach(_, _, []) ->
 	ok;
-export_blocks1(S, BHL) ->
-	ok = export_head_block(S, BHL),
-	export_blocks1(S, tl(BHL)).
-
-export_head_block(S, BHL) ->
-	{ok, B} = get_block(hd(BHL), BHL, S#state.peers),
-	io:format("Exporting block height: ~p~n", [B#block.height]),
-	Values = extract_block_values(S, full_block(B)),
-	ok = file:write(S#state.io_device, csv_encode_row(Values)).
+blocks_foreach(Fun, S, [BH | BHs]) ->
+	{ok, B} = get_block(BH, S#state.bhl, S#state.peers),
+	ok = Fun(B),
+	blocks_foreach(Fun, S, BHs).
 
 get_block(BH, BHL, Peers) ->
 	case block_from_storage(BH) of
