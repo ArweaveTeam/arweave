@@ -1,4 +1,4 @@
--module(app_block_export).
+-module(app_block_tx_export).
 -export([export_blocks/1, export_blocks/3]).
 -export([export_transactions/1, export_transactions/3]).
 -include("../ar.hrl").
