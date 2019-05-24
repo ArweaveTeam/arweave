@@ -367,7 +367,6 @@ start(
 			[ar_tx_search]
 		}
 	),
-	ar_node:add_peers(Node, SearchNode),
 	%% Start a bridge, add it to the node's peer list.
 	{ok, Bridge} = supervisor:start_child(
 		Supervisor,
