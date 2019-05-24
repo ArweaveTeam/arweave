@@ -33,7 +33,7 @@ export_blocks(Filename, Peers, {HeightStart, HeightEnd}, BHL) ->
 			bhl = BHL,
 			peers = Peers
 		},
-		BHs = lists:sublist(lists:reverse(BHL), HeightStart + 1, HeightEnd - HeightStart),
+		BHs = lists:sublist(lists:reverse(BHL), HeightStart + 1, HeightEnd - HeightStart + 1),
 		Fun = fun(B) ->
 			io:format("Exporting block height: ~p~n", [B#block.height]),
 			Values = extract_block_values(S, full_block(B)),
