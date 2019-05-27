@@ -1023,6 +1023,16 @@ post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 		false ->
 			{503, #{}, <<"Not joined.">>, Req};
 		true ->
+			post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+	end;
+post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+	CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+	case BShadow#block.height of
+		H when H < CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT ->
+			{400, #{}, <<"Height is too far behind">>, Req};
+		H when H > CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
+			{400, #{}, <<"Height is too far ahead">>, Req};
+		_ ->
 			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 %% The min difficulty check is filtering out blocks from smaller networks, e.g.
@@ -1031,7 +1041,7 @@ post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	case BShadow#block.diff >= ar_mine:min_difficulty(BShadow#block.height) of
 		true ->
-			post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}, Req);
+			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
 		_ ->
 			{400, #{}, <<"Difficulty too low">>, Req}
 	end;
@@ -1055,10 +1065,10 @@ post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 %% Note! Checking PoW should be as cheap as possible. All slow steps should
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
-post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}, Req) ->
+post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	case BDS of
 		no_data_segment ->
-			post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}, Req);
+			post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
 		_ ->
 			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
 				{invalid, _} ->
@@ -1066,10 +1076,10 @@ post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}, Req) ->
 					{400, #{}, <<"Invalid Block Proof of Work">>, Req};
 				{valid, _} ->
 					ar_bridge:ignore_id(BDS),
-					post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}, Req)
+					post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 			end
 	end;
-post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}, Req) ->
+post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->
