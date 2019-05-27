@@ -55,7 +55,7 @@ export_transactions(RemoteNodeAddrs) ->
 		{50000, 99999},
 		{100000, 149999},
 		{150000, 199999},
-		{200000, 205000}
+		{200000, 206838}
 	],
 	lists:map(fun(Range) ->
 		export_transactions(Filename(Range), Peers, Range)
@@ -64,10 +64,9 @@ export_transactions(RemoteNodeAddrs) ->
 export_transactions(Filename, Peers, {HeightStart, HeightEnd}) ->
 	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	spawn(fun() ->
-		Columns = ["Block Height", "Block ID", "Block Timestamp", "Block Size (Bytes)",
-					"Weave Size (Bytes)", "TX ID", "Last TX ID", "Owner",
+		Columns = ["Block Timestamp", "TX ID", "Submitted Address",
 					"Target", "Quantity (AR)", "Data Size (Bytes)", "Reward (AR)",
-					"App Name", "App Version", "Content Type"],
+					"App Name", "Content Type"],
 		IoDevice = init_csv(Filename, Columns),
 		S = #state{
 			bhl = BHL,
@@ -207,22 +206,35 @@ extract_transaction_values(B) ->
 
 extract_transaction_values(B, TX) ->
 	[
-		integer_to_binary(B#block.height),
-		ar_util:encode(B#block.indep_hash),
 		integer_to_binary(B#block.timestamp),
-		integer_to_binary(B#block.block_size),
-		integer_to_binary(B#block.weave_size),
 		ar_util:encode(TX#tx.id),
-		ar_util:encode(TX#tx.last_tx),
-		ar_util:encode(TX#tx.owner),
+		ar_util:encode(ar_wallet:to_address(TX#tx.owner)),
 		ar_util:encode(TX#tx.target),
 		format_float(winston_to_ar(TX#tx.quantity)),
 		integer_to_binary(byte_size(TX#tx.data)),
 		format_float(winston_to_ar(TX#tx.reward)),
-		proplists:get_value(<<"App-Name">>, TX#tx.tags, <<>>),
-		proplists:get_value(<<"App-Version">>, TX#tx.tags, <<>>),
+		extract_app_name(TX#tx.tags),
 		proplists:get_value(<<"Content-Type">>, TX#tx.tags, <<>>)
 	].
+
+extract_app_name(Tags) ->
+	IsAppName = fun({TagName, _}) ->
+		case re:run(TagName, "^\s*app[-_]{0,1}name\s*$", [caseless]) of
+			{match, _} -> true;
+			nomatch -> false
+		end
+	end,
+	FilteredTags = lists:filter(IsAppName, Tags),
+	LengthSorter = fun({A, _}, {B, _}) ->
+		byte_size(A) =< byte_size(B)
+	end,
+	SortedTags = lists:sort(LengthSorter, FilteredTags),
+	case SortedTags of
+		[] ->
+			<<>>;
+		[{_, TagValue} | _] ->
+			TagValue
+	end.
 
 %% CSV
 
