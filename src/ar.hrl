@@ -34,9 +34,6 @@
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").
 
-%% @doc Should ar:report_console/1 /actually/ report to the console?
--define(SILENT, true).
-
 %% @doc The hashing algorithm used to calculate wallet addresses
 -define(HASH_ALG, sha256).
 

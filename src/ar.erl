@@ -577,19 +577,13 @@ docs() ->
 %% @doc Print an informational message to the log file.
 report(X) ->
 	error_logger:info_report(X).
--ifdef(SILENT).
-report_console(X) -> report(X).
--else.
-%% @doc Print an information message to the log file and console.
-%% @deprecated Use console/1, console/2 instead.
-report_console(X) ->
-	error_logger:tty(true),
-	error_logger:info_report(X),
-	error_logger:tty(false).
--endif.
+
+%% @deprecated
+report_console(X) -> info(X).
+
 %% @doc Report a value and return it.
 d(X) ->
-	report_console(X),
+	info(X),
 	X.
 
 %% @doc Print an information message to the log file (log level INFO) and console.
