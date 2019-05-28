@@ -13,11 +13,11 @@
 -define(THROTTLE_PERIOD, 30000).
 
 execute(Req, Env) ->
-	Peer = cowboy_binary_peer_address(Req),
+	IpAddr = requesting_ip_addr(Req),
 	case ar_meta_db:get(blacklist) of
 		false -> {ok, Req, Env};
 		_ ->
-			case increment_ip(Peer) of
+			case increment_ip(IpAddr) of
 				true -> {stop, blacklisted(Req)};
 				false -> {ok, Req, Env}
 			end
@@ -42,19 +42,18 @@ reset_counters() ->
 	true = ets:delete_all_objects(?THROTTLE_TABLE),
 	ok.
 
-reset_counter(Peer) ->
-	%ar:report([{reset_counter, Peer}]),
-	ets:delete(?THROTTLE_TABLE, Peer),
+reset_counter(IpAddr) ->
+	ets:delete(?THROTTLE_TABLE, IpAddr),
 	ok.
 
-increment_ip(Peer) ->
-	Count = ets:update_counter(?THROTTLE_TABLE, Peer, {2,1}, {Peer,0}),
+increment_ip(IpAddr) ->
+	Count = ets:update_counter(?THROTTLE_TABLE, IpAddr, {2,1}, {IpAddr,0}),
 	case Count of
-		1 -> timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_counter, [Peer]);
+		1 -> timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_counter, [IpAddr]);
 		_ -> ok
 	end,
 	Count > ar_meta_db:get(requests_per_minute_limit) div 2. % Dividing by 2 as throttle period is 30 seconds.
 
-cowboy_binary_peer_address(Req) ->
-	{IpAddr, _Port} = cowboy_req:peer(Req),
-	list_to_binary(inet:ntoa(IpAddr)).
+requesting_ip_addr(Req) ->
+	{IpAddr, _} = cowboy_req:peer(Req),
+	IpAddr.
