@@ -503,7 +503,7 @@ validate(#{ hash_list := HashList, wallet_list := WalletList }, B, TXs, OldB, Re
 %% and the recall block.
 validate(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
 	ar:info([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),
-	false;
+	{invalid, [recall_block_unavailable]};
 validate(
 		HashList,
 		WalletList,
@@ -598,7 +598,7 @@ validate(
 	case CumulativeDiffCheck of false -> ar:info(invalid_cumulative_diff); _ -> ok end,
 	case BHLMerkleCheck of false -> ar:info(invalid_hash_list_merkle); _ -> ok end,
 
-	(Mine
+	Valid = (Mine
 		andalso Wallet
 		andalso IndepRecall
 		andalso Txs
@@ -613,14 +613,24 @@ validate(
 		andalso HashlistCheck
 		andalso WalletListCheck
 		andalso CumulativeDiffCheck
-		andalso BHLMerkleCheck);
+		andalso BHLMerkleCheck),
+	InvalidReasons = case Hash of
+		true -> [];
+		false -> [dep_hash]
+	end,
+	case Valid of
+		true ->
+			valid;
+		false ->
+			{invalid, InvalidReasons}
+	end;
 validate(_HL, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
 	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
 	validate(HL, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(_HL, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
-	false.
+	{invalid, [hash_list_or_wallet_list]}.
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 validate_wallet_list([]) ->

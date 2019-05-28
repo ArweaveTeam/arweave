@@ -362,7 +362,7 @@ try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 			FinderReward,
 			NextB#block.height
 		),
-	ar_node_utils:validate(
+	case ar_node_utils:validate(
 		HashList,
 		WalletList,
 		NextB,
@@ -371,7 +371,10 @@ try_apply_block(HashList, NextB, TXs, B, RecallB) ->
 		RecallB,
 		NextB#block.reward_addr,
 		NextB#block.tags
-	).
+	) of
+		valid -> true;
+		{invalid, _} -> false
+	end.
 
 %%%
 %%% Tests: ar_fork_recovery

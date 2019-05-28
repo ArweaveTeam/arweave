@@ -395,13 +395,13 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 	% checked. The gossip is already set to NewGS in first function
 	% statement. Compare to pre-refactoring.
 	StateOut = case ar_node_utils:validate(StateNew, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
-		true ->
+		valid ->
 			% The block is legit. Accept it.
 			case whereis(fork_recovery_server) of
 				undefined -> ar_node_utils:integrate_new_block(StateNew, NewB);
 				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
-		false ->
+		{invalid, _} ->
 			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}])
 	end,
 	{ok, StateOut};
@@ -530,7 +530,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			MinedTXs,
 			ar_util:get_head_block(HashList),
 			RecallB = ar_node_utils:find_recall_block(HashList)) of
-		false ->
+		{invalid, _} ->
 			ar:report_console(miner_produced_invalid_block),
 			case rand:uniform(5) of
 				1 ->
@@ -545,7 +545,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				_ ->
 					{ok, ar_node_utils:reset_miner(StateIn)}
 			end;
-		true ->
+		valid ->
 			ar_storage:write_full_block(NextB, MinedTXs),
 			NewHL = [NextB#block.indep_hash | HashList],
 			ar_storage:write_block_hash_list(BinID, NewHL),
