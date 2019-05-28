@@ -5,11 +5,13 @@
 -export([execute/2]).
 -export([start/0]).
 -export([reset/0, reset/1]).
+-export([ban_peer/2, is_peer_banned/1, cleanup_ban/0]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(THROTTLE_PERIOD, 30000).
+-define(BAN_CLEANUP_INTERVAL, 60000).
 
 execute(Req, Env) ->
 	IpAddr = requesting_ip_addr(Req),
@@ -26,8 +28,34 @@ execute(Req, Env) ->
 start() ->
 	ar:report([{?MODULE, start}]),
 	ets:new(?MODULE, [set, public, named_table]),
-%	{ok,_} = timer:apply_interval(?THROTTLE_PERIOD,?MODULE, reset_counters, []),
+	{ok, _} = timer:apply_interval(?BAN_CLEANUP_INTERVAL, ?MODULE, cleanup_ban, []),
 	ok.
+
+%% Ban a peer completely for TTLSeconds seoncds. Since we cannot trust the port,
+%% we ban the whole IP address.
+ban_peer(Peer, TTLSeconds) ->
+	Key = {ban, peer_to_ip_addr(Peer)},
+	Expires = os:system_time(seconds) + TTLSeconds,
+	ets:insert(?MODULE, {Key, Expires}).
+
+is_peer_banned(Peer) ->
+	Key = {ban, peer_to_ip_addr(Peer)},
+	case ets:lookup(?MODULE, Key) of
+		[] -> not_banned;
+		[_] -> banned
+	end.
+
+cleanup_ban() ->
+	Now = os:system_time(seconds),
+	Folder = fun
+		({{ban, _} = Key, Expires}, Acc) when Expires < Now ->
+			[Key | Acc];
+		(_, Acc) ->
+			Acc
+	end,
+	RemoveKeys = ets:foldl(Folder, [], ?MODULE),
+	Delete = fun(Key) -> ets:delete(?MODULE, Key) end,
+	lists:foreach(Delete, RemoveKeys).
 
 %private functions
 blacklisted(Req) ->
@@ -63,3 +91,5 @@ increment_ip_addr(IpAddr) ->
 requesting_ip_addr(Req) ->
 	{IpAddr, _} = cowboy_req:peer(Req),
 	IpAddr.
+
+peer_to_ip_addr({A, B, C, D, _}) -> {A, B, C, D}.

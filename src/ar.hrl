@@ -139,6 +139,10 @@
 %% Maximum allowed number of accepted requests per minute per IP.
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
 
+%% @doc Number of seconds an IP address should be completely banned from doing
+%% HTTP requests after posting a block with bad PoW.
+-define(BAD_POW_BAN_TIME, 24 * 60 * 60).
+
 %% @doc Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
 

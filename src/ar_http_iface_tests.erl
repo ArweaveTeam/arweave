@@ -407,6 +407,7 @@ add_external_block_with_bad_bds_test_() ->
 	{timeout, 20, fun() ->
 		Setup = fun() ->
 			ar_storage:clear(),
+			ar_blacklist:reset(),
 			[B0] = ar_weave:init([]),
 			BHL0 = [B0#block.indep_hash],
 			NodeWithBridge = ar_node:start([], [B0]),
@@ -450,7 +451,7 @@ add_external_block_with_bad_bds_test_() ->
 				add_rand_suffix(<<"other-block-data-segment">>)
 			)
 		),
-		%% Try to post an invalid data segment
+		%% Try to post an invalid data segment. This triggers a ban in ar_blacklist.
 		?assertMatch(
 			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
 			send_new_block(
@@ -459,7 +460,18 @@ add_external_block_with_bad_bds_test_() ->
 				RecallB0,
 				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
-		)
+		),
+		%% Verify the IP address of self is banned in ar_blacklist.
+		?assertMatch(
+			{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
+			send_new_block(
+				RemotePeer,
+				B1#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)},
+				RecallB0,
+				add_rand_suffix(<<"bad-block-data-segment">>)
+			)
+		),
+		ar_blacklist:reset()
 	end}.
 
 % add_external_block_with_invalid_timestamp_test() ->

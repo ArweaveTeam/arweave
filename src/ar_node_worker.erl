@@ -401,7 +401,13 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 				undefined -> ar_node_utils:integrate_new_block(StateNew, NewB);
 				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
-		{invalid, _} ->
+		{invalid, Reasons} ->
+			case lists:member(dep_hash, Reasons) of
+				true ->
+					ar_blacklist:ban_peer(Peer, ?BAD_POW_BAN_TIME);
+				false ->
+					ok
+			end,
 			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}])
 	end,
 	{ok, StateOut};
