@@ -15,11 +15,12 @@
 execute(Req, Env) ->
 	IpAddr = requesting_ip_addr(Req),
 	case ar_meta_db:get(blacklist) of
-		false -> {ok, Req, Env};
+		false ->
+			{ok, Req, Env};
 		_ ->
-			case increment_ip(IpAddr) of
-				true -> {stop, blacklisted(Req)};
-				false -> {ok, Req, Env}
+			case increment_ip_addr(IpAddr) of
+				block -> {stop, blacklisted(Req)};
+				pass -> {ok, Req, Env}
 			end
 	end.
 
@@ -46,13 +47,17 @@ reset_counter(IpAddr) ->
 	ets:delete(?THROTTLE_TABLE, IpAddr),
 	ok.
 
-increment_ip(IpAddr) ->
-	Count = ets:update_counter(?THROTTLE_TABLE, IpAddr, {2,1}, {IpAddr,0}),
-	case Count of
-		1 -> timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_counter, [IpAddr]);
-		_ -> ok
-	end,
-	Count > ar_meta_db:get(requests_per_minute_limit) div 2. % Dividing by 2 as throttle period is 30 seconds.
+increment_ip_addr(IpAddr) ->
+	RequestLimit = ar_meta_db:get(requests_per_minute_limit) div 2, % Dividing by 2 as throttle period is 30 seconds.
+	case ets:update_counter(?THROTTLE_TABLE, IpAddr, {2,1}, {IpAddr,0}) of
+		1 ->
+			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_counter, [IpAddr]),
+			pass;
+		Count when Count =< RequestLimit ->
+			pass;
+		_ ->
+			block
+	end.
 
 requesting_ip_addr(Req) ->
 	{IpAddr, _} = cowboy_req:peer(Req),
