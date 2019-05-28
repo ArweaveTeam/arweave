@@ -4,12 +4,11 @@
 %% cowboy_middleware callbacks
 -export([execute/2]).
 -export([start/0]).
--export([reset_counters/0, reset_counter/1]).
+-export([reset/0, reset/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(THROTTLE_TABLE, http_throttle_list).
 -define(THROTTLE_PERIOD, 30000).
 
 execute(Req, Env) ->
@@ -26,7 +25,7 @@ execute(Req, Env) ->
 
 start() ->
 	ar:report([{?MODULE, start}]),
-	ets:new(?THROTTLE_TABLE, [set, public, named_table]),
+	ets:new(?MODULE, [set, public, named_table]),
 %	{ok,_} = timer:apply_interval(?THROTTLE_PERIOD,?MODULE, reset_counters, []),
 	ok.
 
@@ -39,19 +38,21 @@ blacklisted(Req) ->
 		Req
 	).
 
-reset_counters() ->
-	true = ets:delete_all_objects(?THROTTLE_TABLE),
+reset() ->
+	true = ets:delete_all_objects(?MODULE),
 	ok.
 
-reset_counter(IpAddr) ->
-	ets:delete(?THROTTLE_TABLE, IpAddr),
+reset(IpAddr) ->
+	ets:delete(?MODULE, {rate_limit, IpAddr}),
+	ets:delete(?MODULE, {ban, IpAddr}),
 	ok.
 
 increment_ip_addr(IpAddr) ->
 	RequestLimit = ar_meta_db:get(requests_per_minute_limit) div 2, % Dividing by 2 as throttle period is 30 seconds.
-	case ets:update_counter(?THROTTLE_TABLE, IpAddr, {2,1}, {IpAddr,0}) of
+	Key = {rate_limit, IpAddr},
+	case ets:update_counter(?MODULE, Key, {2, 1}, {Key, 0}) of
 		1 ->
-			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_counter, [IpAddr]),
+			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset, [IpAddr]),
 			pass;
 		Count when Count =< RequestLimit ->
 			pass;
