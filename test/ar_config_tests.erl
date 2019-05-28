@@ -1,6 +1,6 @@
 -module(ar_config_tests).
--include("ar.hrl").
--include("ar_config.hrl").
+-include("src/ar.hrl").
+-include("src/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 parse_test_() ->
