@@ -10,10 +10,13 @@
 
 init(InitialReq, State) ->
 	Pid = self(),
-	spawn_link(fun() ->
+	HandlerPid = spawn_link(fun() ->
 		Pid ! {handled, handle(InitialReq, Pid)}
 	end),
-	{ok, TimeoutRef} = timer:send_after(?HANDLER_TIMEOUT, {timeout, InitialReq}),
+	{ok, TimeoutRef} = timer:send_after(
+		?HANDLER_TIMEOUT,
+		{timeout, HandlerPid, InitialReq}
+	),
 	loop(TimeoutRef, State).
 
 %%%===================================================================
@@ -36,7 +39,9 @@ loop(TimeoutRef, State) ->
 			Term = do_read_complete_body(Req),
 			From ! {read_complete_body, Term},
 			loop(TimeoutRef, State);
-		{timeout, InitialReq} ->
+		{timeout, HandlerPid, InitialReq} ->
+			unlink(HandlerPid),
+			exit(HandlerPid, handler_timeout),
 			ar:warn([
 				handler_timeout,
 				{method, cowboy_req:method(InitialReq)},
