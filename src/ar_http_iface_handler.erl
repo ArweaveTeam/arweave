@@ -369,6 +369,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req, _) ->
 %% GET request to endpoint /hash_list
 handle(<<"GET">>, [<<"hash_list">>], Req, _) ->
 	HashList = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	ok = ar_semaphore:acquire(hash_list_semaphore, infinity),
 	{200, #{},
 		ar_serialize:jsonify(
 			ar_serialize:hash_list_to_json_struct(HashList)
