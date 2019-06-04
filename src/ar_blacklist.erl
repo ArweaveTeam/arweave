@@ -53,7 +53,7 @@ increment_ip(Peer) ->
 		1 -> timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_counter, [Peer]);
 		_ -> ok
 	end,
-	Count > ?MAX_REQUESTS. % yup, just logical expr that evaulates true of false.
+	Count > ar_meta_db:get(requests_per_minute_limit) div 2. % Dividing by 2 as throttle period is 30 seconds.
 
 cowboy_binary_peer_address(Req) ->
 	{IpAddr, _Port} = cowboy_req:peer(Req),

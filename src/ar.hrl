@@ -141,8 +141,8 @@
 %% @doc Never have more than this number of peers (new peers excluded).
 -define(MAXIMUM_PEERS, 20).
 
-%% Maximum number of requests allowed by an IP in any 30 second period.
--define(MAX_REQUESTS, 450).
+%% Maximum allowed number of accepted requests per minute per IP.
+-define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
 
 %% @doc Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
