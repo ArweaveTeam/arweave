@@ -69,14 +69,19 @@ post_block_to_unjoined_node_test() ->
 -spec node_blacklisting_get_spammer_test() -> ok.
 node_blacklisting_get_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
-	node_blacklisting_test_frame(RequestFun, ErrorResponse, ?MAX_REQUESTS + 1, 1).
+	node_blacklisting_test_frame(
+		RequestFun,
+		ErrorResponse,
+		(ar_meta_db:get(requests_per_minute_limit) div 2)+ 1,
+		1
+	).
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 -spec node_blacklisting_post_spammer_test() -> ok.
 node_blacklisting_post_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
 	NErrors = 11,
-	NRequests = ?MAX_REQUESTS + NErrors,
+	NRequests = (ar_meta_db:get(requests_per_minute_limit) div 2) + NErrors,
 	node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, NErrors).
 
 %% @doc Given a label, return a fun and a message.

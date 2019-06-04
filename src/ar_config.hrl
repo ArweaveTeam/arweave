@@ -25,5 +25,6 @@
 	content_policy_files = [],
 	transaction_blacklist_files = [],
 	gateway = off,
-	custom_domains = []
+	custom_domains = [],
+	requests_per_minute_limit = ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT
 }).

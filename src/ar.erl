@@ -118,7 +118,8 @@ main("") ->
 			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
 			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."},
 			{"gateway (port) (domain)", "Run a gateway on the specified port and domain"},
-			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."}
+			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
+			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."}
 		]
 	),
 	erlang:halt();
@@ -197,6 +198,8 @@ parse_cli_args(["gateway", Port, Domain | Rest ], C = #config { gateway = off })
 	parse_cli_args(Rest, C#config { gateway = {on, list_to_integer(Port), list_to_binary(Domain)} });
 parse_cli_args(["custom_domain", Domain|Rest], C = #config { custom_domains = Ds }) ->
 	parse_cli_args(Rest, C#config { custom_domains = [ list_to_binary(Domain) | Ds ] });
+parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s. Terminating.~n~n", [Arg]),
 	erlang:halt().
@@ -234,7 +237,8 @@ start(
 		content_policy_files = ContentPolicyFiles,
 		transaction_blacklist_files = TransactionBlacklistFiles,
 		gateway = GatewayOpts,
-		custom_domains = GatewayCustomDomains
+		custom_domains = GatewayCustomDomains,
+		requests_per_minute_limit = RequestsPerMinuteLimit
 	}) ->
 	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -249,6 +253,7 @@ start(
 	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
+	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
