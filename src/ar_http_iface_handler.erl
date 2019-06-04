@@ -328,6 +328,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _) ->
 	Req};
 
 %% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
+%% The endpoint is pessimistic, it reports the price as if the network difficulty was smaller by one, to account for the possible difficulty change.
 %% GET request to endpoint /price/{bytes}
 %% TODO: Change so current block does not need to be pulled to calculate cost
 handle(<<"GET">>, [<<"price">>, SizeInBytes], Req, _) ->
@@ -335,12 +336,13 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes], Req, _) ->
 		integer_to_binary(
 			ar_tx:calculate_min_tx_cost(
 				binary_to_integer(SizeInBytes),
-				ar_node:get_current_diff(whereis(http_entrypoint_node))
+				ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1
 			)
 		),
 	Req};
 
 %% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
+%% The endpoint is pessimistic, it reports the price as if the network difficulty was smaller by one, to account for the possible difficulty change.
 %% GET request to endpoint /price/{bytes}/{address}
 %% TODO: Change so current block does not need to be pulled to calculate cost
 handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req, _) ->
@@ -352,7 +354,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req, _) ->
 				integer_to_binary(
 					ar_tx:calculate_min_tx_cost(
 						binary_to_integer(SizeInBytes),
-						ar_node:get_current_diff(whereis(http_entrypoint_node)),
+						ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1,
 						ar_node:get_wallet_list(whereis(http_entrypoint_node)),
 						AddrOK
 					)
