@@ -81,9 +81,10 @@ update(Pid, KeyValues) ->
 
 %% @doc Send a message to the server and wait for the result.
 send(Pid, Msg) ->
-	Pid ! {?MODULE, Msg, self()},
+	Ref = make_ref(),
+	Pid ! {?MODULE, Msg, self(), Ref},
 	receive
-		{?MODULE, Reply} ->
+		{?MODULE, Ref, Msg, Reply} ->
 			Reply
 	after
 		5000 ->
@@ -93,10 +94,10 @@ send(Pid, Msg) ->
 %% @doc Main server loop.
 server(Tid) ->
 	receive
-		{Module, Msg, From} ->
+		{Module, Msg, From, Ref} ->
 			try handle(Tid, Msg) of
 				Reply ->
-					From ! {Module, Reply},
+					From ! {Module, Ref, Msg, Reply},
 					server(Tid)
 			catch
 				throw:Term ->
