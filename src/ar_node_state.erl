@@ -84,10 +84,18 @@ send(Pid, Msg) ->
 	Ref = make_ref(),
 	Pid ! {?MODULE, Msg, self(), Ref},
 	receive
-		{?MODULE, Ref, Msg, Reply} ->
+		{?MODULE, Ref, Reply} ->
 			Reply
 	after
 		5000 ->
+			case Msg of
+				{lookup, Keys} ->
+					ar:warn([ar_node_state, lookup_timeout, {keys, Keys}]);
+				{update, KeyValues} when is_list(KeyValues) ->
+					ar:warn([ar_node_state, update_timeout, {keys, proplists:get_keys(KeyValues)}]);
+				Other ->
+					ar:warn([ar_node_state, msg_timeout, {message, Other}])
+			end,
 			{error, timeout}
 	end.
 
@@ -97,7 +105,7 @@ server(Tid) ->
 		{Module, Msg, From, Ref} ->
 			try handle(Tid, Msg) of
 				Reply ->
-					From ! {Module, Ref, Msg, Reply},
+					From ! {Module, Ref, Reply},
 					server(Tid)
 			catch
 				throw:Term ->

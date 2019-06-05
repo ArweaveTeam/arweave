@@ -77,8 +77,11 @@ server(NPid, SPid) ->
 			server(NPid, SPid);
 		stop ->
 			ok;
+		{ar_node_state, _, _} ->
+			%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
+			server(NPid, SPid);
 		Other ->
-			ar:report({ar_node_worker_unknown_msg, Other}),
+			ar:warn({ar_node_worker_unknown_msg, Other}),
 			server(NPid, SPid)
 	end.
 
