@@ -360,57 +360,20 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Pee
 	end;
 process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, HashList)
 		when NewB#block.height == Height + 1 ->
-	% This block is at the correct height.
-	StateNext = StateIn#{ gossip => NewGS },
-	#{
-		reward_pool := RewardPool,
-		wallet_list := WalletList,
-		cumulative_diff := CDiff,
-		hash_list := BHL
-	} = StateNext,
-	% If transaction not found in state or storage, txlist built will be
-	% incomplete and will fail in validate
-	{TXs, MissingTXIDs} = pick_txs(NewB#block.txs, aggregate_txs(StateNext)),
-	log_missing_txs(NewB#block.indep_hash, MissingTXIDs),
-	{FinderReward, _} =
-		ar_node_utils:calculate_reward_pool(
-			RewardPool,
-			TXs,
-			NewB#block.reward_addr,
-			ar_node_utils:calculate_proportion(
-				RecallB#block.block_size,
-				NewB#block.weave_size,
-				NewB#block.height
-			)
-		),
-	NewWalletList =
-		ar_node_utils:apply_mining_reward(
-			ar_node_utils:apply_txs(WalletList, TXs),
-			NewB#block.reward_addr,
-			FinderReward,
-			NewB#block.height
-		),
-	StateNew = StateNext#{ wallet_list => NewWalletList },
-	% TODO: Setting the state gossip for fork_recover/3 has to be
-	% checked. The gossip is already set to NewGS in first function
-	% statement. Compare to pre-refactoring.
-	StateOut = case ar_node_utils:validate(StateNew, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
-		valid ->
-			% The block is legit. Accept it.
-			case whereis(fork_recovery_server) of
-				undefined -> ar_node_utils:integrate_new_block(StateNew, NewB);
-				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
-			end;
-		{invalid, Reasons} ->
-			case lists:member(dep_hash, Reasons) of
-				true ->
-					ar_blacklist:ban_peer(Peer, ?BAD_POW_BAN_TIME);
-				false ->
-					ok
-			end,
-			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}])
-	end,
-	{ok, StateOut};
+	%% This block is at the correct height.
+	{TXs, MissingTXIDs} = pick_txs(NewB#block.txs, aggregate_txs(StateIn)),
+	case MissingTXIDs of
+		[] ->
+			process_new_block2(StateIn, NewGS, NewB, RecallB, Peer, HashList, TXs);
+		_ ->
+			ar:info([
+				ar_node_worker,
+				block_not_accepted,
+				{transactions_missing_in_mempool_for_block, ar_util:encode(NewB#block.indep_hash)},
+				{missing_txs, lists:map(fun ar_util:encode/1, MissingTXIDs)}
+			]),
+			{ok, []}
+	end;
 process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
 		when NewB#block.height =< Height ->
 	% Block is lower than us, ignore it.
@@ -453,13 +416,51 @@ pick_txs(TXIDs, TXs) ->
 		TXIDs
 	).
 
-log_missing_txs(_BH, []) ->
-	noop;
-log_missing_txs(BH, MissingTXIDs) ->
-	ar:info([
-		{transactions_missing_in_mempool_for_block, ar_util:encode(BH)},
-		{missing_txs, lists:map(fun ar_util:encode/1, MissingTXIDs)}
-	]).
+process_new_block2(StateIn, NewGS, NewB, RecallB, Peer, HashList, TXs) ->
+	StateNext = StateIn#{ gossip => NewGS },
+	#{
+		reward_pool := RewardPool,
+		wallet_list := WalletList
+	} = StateNext,
+	{FinderReward, _} =
+		ar_node_utils:calculate_reward_pool(
+			RewardPool,
+			TXs,
+			NewB#block.reward_addr,
+			ar_node_utils:calculate_proportion(
+				RecallB#block.block_size,
+				NewB#block.weave_size,
+				NewB#block.height
+			)
+		),
+	NewWalletList =
+		ar_node_utils:apply_mining_reward(
+			ar_node_utils:apply_txs(WalletList, TXs),
+			NewB#block.reward_addr,
+			FinderReward,
+			NewB#block.height
+		),
+	StateNew = StateNext#{ wallet_list => NewWalletList },
+	% TODO: Setting the state gossip for fork_recover/3 has to be
+	% checked. The gossip is already set to NewGS in first function
+	% statement. Compare to pre-refactoring.
+	StateOut = case ar_node_utils:validate(StateNew, NewB, TXs, ar_util:get_head_block(HashList), RecallB) of
+		valid ->
+			% The block is legit. Accept it.
+			case whereis(fork_recovery_server) of
+				undefined -> ar_node_utils:integrate_new_block(StateNew, NewB);
+				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
+			end;
+		{invalid, Reasons} ->
+			case lists:member(dep_hash, Reasons) of
+				true ->
+					ar_blacklist:ban_peer(Peer, ?BAD_POW_BAN_TIME);
+				false ->
+					ok
+			end,
+			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}])
+	end,
+	{ok, StateOut}.
 
 %% @doc Verify a new block found by a miner, integrate it.
 integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp) ->
