@@ -1,15 +1,14 @@
--module(app_block_export).
--export([export_blocks/1, export_blocks/4]).
+-module(app_block_tx_export).
+-export([export_blocks/1, export_blocks/3]).
+-export([export_transactions/1, export_transactions/3]).
 -include("../ar.hrl").
 
 -record(state, {
-	io_device,
 	bhl,
 	peers
 }).
 
 export_blocks(RemoteNodeAddrs) ->
-	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	Peers = lists:map(fun ar_util:parse_peer/1, RemoteNodeAddrs),
 	Filename = fun({HeightStart, HeightEnd}) ->
 		"blocks-export-" ++ integer_to_list(HeightStart) ++ "-to-" ++ integer_to_list(HeightEnd) ++ ".csv"
@@ -18,45 +17,88 @@ export_blocks(RemoteNodeAddrs) ->
 		{0, 49999},
 		{50000, 99999},
 		{100000, 149999},
-		{150000, length(BHL)}
+		{150000, 159999}
 	],
 	lists:map(fun(Range) ->
-		app_block_tx_export:export_blocks(Filename(Range), Peers, Range, BHL)
+		export_blocks(Filename(Range), Peers, Range)
 	end, Ranges).
 
-export_blocks(Filename, Peers, {HeightStart, HeightEnd}, BHL) ->
+export_blocks(Filename, Peers, {HeightStart, HeightEnd}) ->
+	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	spawn(fun() ->
 		Columns = ["Height", "ID", "Timestamp", "Block Size (Bytes)", "Difficulty", "Cumulative Difficulty",
 					"Reward Address", "Weave Size (Bytes)", "TXs", "TX Reward Sum (AR)", "Inflation Reward (AR)",
 					"TX Mining Reward (AR)", "TX Reward Pool (AR)", "Calculated TX Reward Pool (AR)"],
 		IoDevice = init_csv(Filename, Columns),
 		S = #state{
-			io_device = IoDevice,
 			bhl = BHL,
 			peers = Peers
 		},
-		BHs = lists:sublist(lists:reverse(BHL), HeightStart + 1, HeightEnd - HeightStart),
-		export_blocks1(S, BHs),
+		BHs = lists:sublist(lists:reverse(BHL), HeightStart + 1, HeightEnd - HeightStart + 1),
+		Fun = fun(B) ->
+			io:format("Exporting block height: ~p~n", [B#block.height]),
+			Values = extract_block_values(S, full_block(B)),
+			ok = file:write(IoDevice, csv_encode_row(Values))
+		end,
+		blocks_foreach(Fun, S, BHs),
 		ok = file:close(IoDevice),
 		io:format("Finished!~n")
 	end).
+
+export_transactions(RemoteNodeAddrs) ->
+	Peers = lists:map(fun ar_util:parse_peer/1, RemoteNodeAddrs),
+	Filename = fun({HeightStart, HeightEnd}) ->
+		"transactions-export-" ++ integer_to_list(HeightStart) ++ "-to-" ++ integer_to_list(HeightEnd) ++ ".csv"
+	end,
+	Ranges = [
+		{0, 49999},
+		{50000, 99999},
+		{100000, 149999},
+		{150000, 199999},
+		{200000, 206838}
+	],
+	lists:map(fun(Range) ->
+		export_transactions(Filename(Range), Peers, Range)
+	end, Ranges).
+
+export_transactions(Filename, Peers, {HeightStart, HeightEnd}) ->
+	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	spawn(fun() ->
+		Columns = ["Block Timestamp", "TX ID", "Submitted Address",
+					"Target", "Quantity (AR)", "Data Size (Bytes)", "Reward (AR)",
+					"App Name", "Content Type"],
+		IoDevice = init_csv(Filename, Columns),
+		S = #state{
+			bhl = BHL,
+			peers = Peers
+		},
+		BHs = lists:sublist(lists:reverse(BHL), HeightStart + 1, HeightEnd - HeightStart + 1),
+		WriteOneRow = fun(Values) ->
+			ok = file:write(IoDevice, csv_encode_row(Values))
+		end,
+		Fun = fun(B) ->
+			io:format("Exporting TXs for block height: ~p~n", [B#block.height]),
+			lists:foreach(WriteOneRow, extract_transaction_values(full_block(B)))
+		end,
+		blocks_foreach(Fun, S, BHs),
+		ok = file:close(IoDevice),
+		io:format("Finished!~n")
+	end).
+
+
+%% Private
 
 init_csv(Filename, Columns) ->
 	{ok, IoDevice} = file:open(Filename, [write, exclusive]),
 	ok = file:write(IoDevice, csv_encode_row(Columns)),
 	IoDevice.
 
-export_blocks1(_, []) ->
+blocks_foreach(_, _, []) ->
 	ok;
-export_blocks1(S, BHL) ->
-	ok = export_head_block(S, BHL),
-	export_blocks1(S, tl(BHL)).
-
-export_head_block(S, BHL) ->
-	{ok, B} = get_block(hd(BHL), BHL, S#state.peers),
-	io:format("Exporting block height: ~p~n", [B#block.height]),
-	Values = extract_block_values(S, full_block(B)),
-	ok = file:write(S#state.io_device, csv_encode_row(Values)).
+blocks_foreach(Fun, S, [BH | BHs]) ->
+	{ok, B} = get_block(BH, S#state.bhl, S#state.peers),
+	ok = Fun(B),
+	blocks_foreach(Fun, S, BHs).
 
 get_block(BH, BHL, Peers) ->
 	case block_from_storage(BH) of
@@ -154,6 +196,46 @@ winston_to_ar(Windston) ->
 format_float(Float) ->
 	float_to_binary(Float, [{decimals, 12}]).
 
+extract_transaction_values(B) ->
+	lists:map(
+		fun(TX) ->
+			extract_transaction_values(B, TX)
+		end,
+		B#block.txs
+	).
+
+extract_transaction_values(B, TX) ->
+	[
+		integer_to_binary(B#block.timestamp),
+		ar_util:encode(TX#tx.id),
+		ar_util:encode(ar_wallet:to_address(TX#tx.owner)),
+		ar_util:encode(TX#tx.target),
+		format_float(winston_to_ar(TX#tx.quantity)),
+		integer_to_binary(byte_size(TX#tx.data)),
+		format_float(winston_to_ar(TX#tx.reward)),
+		extract_app_name(TX#tx.tags),
+		proplists:get_value(<<"Content-Type">>, TX#tx.tags, <<>>)
+	].
+
+extract_app_name(Tags) ->
+	IsAppName = fun({TagName, _}) ->
+		case re:run(TagName, "^\s*app[-_]{0,1}name\s*$", [caseless]) of
+			{match, _} -> true;
+			nomatch -> false
+		end
+	end,
+	FilteredTags = lists:filter(IsAppName, Tags),
+	LengthSorter = fun({A, _}, {B, _}) ->
+		byte_size(A) =< byte_size(B)
+	end,
+	SortedTags = lists:sort(LengthSorter, FilteredTags),
+	case SortedTags of
+		[] ->
+			<<>>;
+		[{_, TagValue} | _] ->
+			TagValue
+	end.
+
 %% CSV
 
 csv_encode_row(Values) ->
@@ -168,5 +250,11 @@ csv_encode_row([Value | Values], Acc) ->
 	NewAcc = [[csv_encode_value(Value), ","] | Acc],
 	csv_encode_row(Values, NewAcc).
 
-csv_encode_value(Value) ->
-	["\"", Value, "\""].
+csv_encode_value(String) when is_list(String) ->
+	csv_encode_value(list_to_binary(String));
+csv_encode_value(Value) when is_binary(Value) ->
+	[
+		<<"\"">>,
+		binary:replace(Value, <<"\"">>, <<"\"\"">>),
+		<<"\"">>
+	].
