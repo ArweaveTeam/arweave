@@ -143,7 +143,7 @@ calc_diff(CurrentB, NextBlockTimestamp) ->
 %% @doc Filter out invalid TXs. A TX can be valid by itself, but still invalid
 %% in the context of the other TXs and the block it would be mined to.
 pick_txs_to_mine(Height, Diff, WalletList, TXs) ->
-	case Height >= ar_fork:height_1_8() of
+	ValidTXs = case Height >= ar_fork:height_1_8() of
 		true ->
 			{PickedTXs, _} = lists:foldl(
 				fun(T, {Acc, FloatingWalletList}) ->
@@ -165,7 +165,21 @@ pick_txs_to_mine(Height, Diff, WalletList, TXs) ->
 				end,
 				ar_node_utils:filter_all_out_of_order_txs(WalletList, TXs)
 			)
-	end.
+	end,
+	{_, TXsUnderSizeLimit} = lists:foldl(
+		fun(TX, {TotalSize, PickedTXs}) ->
+			TXSize = byte_size(TX#tx.data),
+			case TXSize + TotalSize of
+				NewTotalSize when NewTotalSize =< ?BLOCK_TX_DATA_SIZE_LIMIT ->
+					{NewTotalSize, PickedTXs ++ [TX]};
+				_ ->
+					{TotalSize, PickedTXs}
+			end
+		end,
+		{0, []},
+		ValidTXs
+	),
+	TXsUnderSizeLimit.
 
 %% @doc Generate a new data_segment and update the timestamp and diff.
 update_data_segment(S = #state { txs = TXs }) ->
