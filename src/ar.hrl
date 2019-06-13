@@ -110,7 +110,12 @@
 
 %% @doc The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).
+-ifdef(DEBUG).
+-define(TX_DATA_SIZE_LIMIT, 10 * 1024).
+-else.
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
+-endif.
+-define(BLOCK_TX_DATA_SIZE_LIMIT, ?TX_DATA_SIZE_LIMIT). % Must be greater or equal to tx data size limit.
 
 %% @doc Default timeout for establishing an HTTP connection.
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).

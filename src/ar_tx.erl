@@ -120,12 +120,43 @@ do_verify(TX, Diff, Height, WalletList) ->
 
 %% @doc Verify a list of transactions.
 %% Returns false if any TX in the set fails verification.
-verify_txs([], _, _, _) ->
+verify_txs(TXs, Diff, Height, WalletList) ->
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			case verify_txs_size(TXs) of
+				true ->
+					verify_txs(valid_size_txs, TXs, Diff, Height, WalletList);
+				false ->
+					false
+			end;
+		_ ->
+			verify_txs(valid_size_txs, TXs, Diff, Height, WalletList)
+	end.
+
+verify_txs_size(TXs) ->
+	TotalTXSize = lists:foldl(
+		fun(TX, CurrentTotalTXSize) ->
+			CurrentTotalTXSize + byte_size(TX#tx.data)
+		end,
+		0,
+		TXs
+	),
+	TotalTXSize =< ?BLOCK_TX_DATA_SIZE_LIMIT.
+
+verify_txs(valid_size_txs, [], _, _, _) ->
 	true;
-verify_txs([T|TXs], Diff, Height, WalletList) ->
-	case verify(T, Diff, Height, WalletList) of
-		true -> verify_txs(TXs, Diff, Height, ar_node_utils:apply_tx(WalletList, T));
-		false -> false
+verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletList) ->
+	case verify(TX, Diff, Height, WalletList) of
+		true ->
+			verify_txs(
+				valid_size_txs,
+				TXs,
+				Diff,
+				Height,
+				ar_node_utils:apply_tx(WalletList, TX)
+			);
+		false ->
+			false
 	end.
 
 %% @doc Ensure that transaction cost above proscribed minimum.

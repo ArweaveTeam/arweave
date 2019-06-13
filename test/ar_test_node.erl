@@ -5,7 +5,9 @@
 -export([wait_until_height/2, slave_wait_until_height/2]).
 -export([wait_until_block_hash_list/2]).
 -export([wait_until_receives_txs/2, slave_wait_until_receives_txs/2]).
+-export([post_tx_to_slave/2]).
 
+-include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 start(no_block) ->
@@ -111,3 +113,25 @@ wait_until_receives_txs(Node, TXs) ->
 
 slave_wait_until_receives_txs(Node, TXs) ->
 	slave_call(?MODULE, wait_until_receives_txs, [Node, TXs]).
+
+post_tx_to_slave(Slave, TX) ->
+	SlaveIP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+	Reply =
+		ar_httpc:request(
+			<<"POST">>,
+			SlaveIP,
+			"/tx",
+			[],
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+		),
+	case Reply of
+		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
+			slave_wait_until_receives_txs(Slave, [TX]);
+		_ ->
+			ar:console(
+				"Failed to post transaction. Error DB entries: ~p~n",
+				[slave_call(ar_tx_db, get_error_codes, [TX#tx.id])]
+			),
+			noop
+	end,
+	Reply.
