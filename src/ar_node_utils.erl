@@ -752,52 +752,15 @@ calculate_tx_reward(#tx { reward = Reward }) ->
 	% TDOD mue: Calculation is not calculated, only returned.
 	Reward.
 
-%%%
-%%% Unreferenced!
-%%%
-
-% @doc Return the last block to include both a wallet and hash list.
-% NOTE: For now, all blocks are sync blocks.
-%find_sync_block([]) ->
-%	not_found;
-%find_sync_block([Hash | Rest]) when is_binary(Hash) ->
-%	find_sync_block([ar_storage:read_block(Hash) | Rest]);
-%find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList } | _])
-%		when HashList =/= undefined, WalletList =/= undefined ->
-%	B;
-%find_sync_block([_ | Xs]) ->
-%	find_sync_block(Xs).
-
-%% @doc Given a wallet list and set of txs will try to apply the txs
-%% iteratively to the wallet list and return the result.
-%% Txs that cannot be applied are disregarded.
-generate_floating_wallet_list(WalletList, []) ->
-	WalletList;
-generate_floating_wallet_list(WalletList, [T | TXs]) ->
-	case ar_tx:check_last_tx(WalletList, T) of
-		true ->
-			UpdatedWalletList = apply_tx(WalletList, T),
-			generate_floating_wallet_list(UpdatedWalletList, TXs);
-		false -> false
-	end.
-
-%% @doc Calculate the time a tx must wait after being received to be mined.
-%% Wait time is a fixed interval combined with a wait dependent on tx data size.
-%% This wait helps ensure that a tx has propogated around the network.
-%% NB: If debug is defined no wait is applied.
--ifdef(DEBUG).
--define(FIXED_DELAY, 0).
--endif.
-
 -ifdef(FIXED_DELAY).
 calculate_delay(_Bytes) ->
 	?FIXED_DELAY.
 -else.
--ifdef(DEBUG).
+%% Returns a delay in milliseconds to wait before including a transaction into a block.
+%% The delay is computed as base delay + a function of data size with a conservative
+%% estimation of the network speed.
 calculate_delay(Bytes) ->
-	0.
--else.
-calculate_delay(Bytes) ->
-	30000 + ((Bytes * 300) div 1000).
--endif.
+	BaseDelay = (?BASE_TX_PROPAGATION_DELAY) * 1000,
+	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
+	BaseDelay + NetworkDelay.
 -endif.
