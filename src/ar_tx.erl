@@ -2,7 +2,7 @@
 -export([new/0, new/1, new/2, new/3, new/4]).
 -export([sign/2, sign/3, verify/3, verify_txs/3, signature_data_segment/1]).
 -export([tx_to_binary/1, tags_to_list/1]).
--export([calculate_min_tx_cost/2, calculate_min_tx_cost/4, tx_cost_above_min/2, tx_cost_above_min/4, check_last_tx/2]).
+-export([calculate_min_tx_cost/2, calculate_min_tx_cost/4, check_last_tx/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -133,8 +133,6 @@ do_verify_txs([T|TXs], Diff, WalletList) ->
 	end.
 
 %% @doc Ensure that transaction cost above proscribed minimum.
-tx_cost_above_min(TX, Diff) ->
-	TX#tx.reward >= (calculate_min_tx_cost(byte_size(TX#tx.data), Diff) + ?WALLET_GEN_FEE).
 tx_cost_above_min(TX, Diff, WalletList, Addr) ->
 	TX#tx.reward >=
 		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, WalletList, Addr).
@@ -251,15 +249,12 @@ forge_test() ->
 	{Priv, Pub} = ar_wallet:new(),
 	?assert(not verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }, 1, [])).
 
-%% @doc Ensure that a transaction above the minimum tx cost are accepted.
+%% @doc Ensure that transactions above the minimum tx cost are accepted.
 tx_cost_above_min_test() ->
-	TestTX = new(<<"TEST DATA">>, ?AR(10)),
-	?assert(tx_cost_above_min(TestTX, 1)).
-
-%% @doc Ensure that a transaction below the minimum tx cost are rejected.
-reject_tx_below_min_test() ->
-	TestTX = new(<<"TEST DATA">>, 1),
-	?assert(not tx_cost_above_min(TestTX, 10)).
+	ValidTX = new(<<"TEST DATA">>, ?AR(10)),
+	InvalidTX = new(<<"TEST DATA">>, 1),
+	?assert(tx_cost_above_min(ValidTX, 1, [], <<"non-existing-addr">>)),
+	?assert(not tx_cost_above_min(InvalidTX, 10, [], <<"non-existing-addr">>)).
 
 %% @doc Ensure that the check_last_tx function only validates transactions in which
 %% last tx field matches that expected within the wallet list.
