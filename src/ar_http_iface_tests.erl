@@ -29,7 +29,8 @@ get_tx_reward_test() ->
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
 	% Hand calculated result for 1000 bytes.
-	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff - 1),
+	Height = 0,
+	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff - 1, Height),
 	ExpectedPrice = ar_http_iface_client:get_tx_reward({127, 0, 0, 1, 1984}, 1000).
 
 %% @doc Ensure that objects are only re-gossiped once.

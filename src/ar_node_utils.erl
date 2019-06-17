@@ -332,7 +332,7 @@ integrate_new_block(
 		lists:filter(
 			fun(T) ->
 				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
-				ar_tx:verify(T, NewB#block.diff, WalletList)
+				ar_tx:verify(T, NewB#block.diff, NewB#block.height + 1, WalletList)
 			end,
 			TXs
 		),
@@ -530,7 +530,7 @@ validate(
 	Mine = ar_mine:validate(BDSHash, Diff),
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
-	Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
+	Txs = ar_tx:verify_txs(TXs, Diff, Height, OldB#block.wallet_list),
 	DiffCheck = ar_retarget:validate_difficulty(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),

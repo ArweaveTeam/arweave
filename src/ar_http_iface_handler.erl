@@ -344,7 +344,8 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes], Req, _) ->
 		integer_to_binary(
 			ar_tx:calculate_min_tx_cost(
 				binary_to_integer(SizeInBytes),
-				ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1
+				ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1,
+				ar_node:get_height(whereis(http_entrypoint_node))
 			)
 		),
 	Req};
@@ -363,6 +364,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req, _) ->
 					ar_tx:calculate_min_tx_cost(
 						binary_to_integer(SizeInBytes),
 						ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1,
+						ar_node:get_height(whereis(http_entrypoint_node)),
 						ar_node:get_wallet_list(whereis(http_entrypoint_node)),
 						AddrOK
 					)
@@ -837,7 +839,8 @@ handle_post_tx(TX) ->
 							{error_response, {400, #{}, <<"Waiting TXs exceed balance for wallet.">>}};
 						_ ->
 							% Finally, validate the veracity of the TX.
-							case ar_tx:verify(TX, Diff, FloatingWalletList) of
+							CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+							case ar_tx:verify(TX, Diff, CurrentHeight + 1, FloatingWalletList) of
 								false ->
 									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 									{error_response, {400, #{}, <<"Transaction verification failed.">>}};

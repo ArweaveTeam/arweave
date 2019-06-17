@@ -521,9 +521,10 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 		),
 	% Store the transactions that we know about, but were not mined in
 	% this block.
+	NextBHeight = length(HashList),
 	NotMinedTXs =
 		lists:filter(
-			fun(T) -> ar_tx:verify(T, Diff, WalletList) end,
+			fun(T) -> ar_tx:verify(T, Diff, NextBHeight + 1, WalletList) end,
 			ar_node_utils:filter_all_out_of_order_txs(WalletList, TXs -- MinedTXs)
 		),
 	StateNew = StateIn#{ wallet_list => WalletList },

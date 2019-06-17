@@ -120,12 +120,13 @@ update_txs(
 		true -> calc_diff(CurrentB, NextBlockTimestamp);
 		false -> CurrentDiff
 	end,
+	NextBlockHeight = CurrentB#block.height + 1,
 	%% Filter out invalid TXs. A TX can be valid by itself, but still invalid
 	%% in the context of the other TXs and the block it would be mined to.
 	ValidTXs =
 		lists:filter(
 			fun(TX) ->
-				ar_tx:verify(TX, NextDiff, CurrentB#block.wallet_list)
+				ar_tx:verify(TX, NextDiff, NextBlockHeight, CurrentB#block.wallet_list)
 			end,
 			ar_node_utils:filter_all_out_of_order_txs(
 				CurrentB#block.wallet_list,
