@@ -281,3 +281,20 @@ check_last_tx_test_() ->
 		false = check_last_tx(WalletList, SignedTX3),
 		true = check_last_tx(WalletList, SignedTX2)
 	end}.
+
+tx_cost_test() ->
+	{_, Pub1} = ar_wallet:new(),
+	{_, Pub2} = ar_wallet:new(),
+	Addr1 = ar_wallet:to_address(Pub1),
+	Addr2 = ar_wallet:to_address(Pub2),
+	WalletList = [{Addr1, 1000, <<>>}],
+	Size = 1000,
+	Diff = 20,
+	?assertEqual(
+		calculate_min_tx_cost(Size, Diff),
+		calculate_min_tx_cost(Size, Diff, WalletList, Addr1)
+	),
+	?assertEqual(
+		calculate_min_tx_cost(Size, Diff) + ?WALLET_GEN_FEE,
+		calculate_min_tx_cost(Size, Diff, WalletList, Addr2)
+	).
