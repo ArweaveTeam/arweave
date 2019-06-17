@@ -243,23 +243,23 @@ check_last_tx(WalletList, TX) ->
 sign_tx_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),
-	true = verify(sign(NewTX, Priv, Pub), 1, []).
+	?assert(verify(sign(NewTX, Priv, Pub), 1, [])).
 
 %% @doc Ensure that a forged transaction does not pass verification.
 forge_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),
-	false = verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }, 1, []).
+	?assert(not verify((sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> }, 1, [])).
 
 %% @doc Ensure that a transaction above the minimum tx cost are accepted.
 tx_cost_above_min_test() ->
 	TestTX = new(<<"TEST DATA">>, ?AR(10)),
-	true = tx_cost_above_min(TestTX, 1).
+	?assert(tx_cost_above_min(TestTX, 1)).
 
 %% @doc Ensure that a transaction below the minimum tx cost are rejected.
 reject_tx_below_min_test() ->
 	TestTX = new(<<"TEST DATA">>, 1),
-	false = tx_cost_above_min(TestTX, 10).
+	?assert(not tx_cost_above_min(TestTX, 10)).
 
 %% @doc Ensure that the check_last_tx function only validates transactions in which
 %% last tx field matches that expected within the wallet list.
