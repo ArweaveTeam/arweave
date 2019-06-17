@@ -143,10 +143,7 @@ calculate_min_tx_cost(DataSize, Diff) when Diff >= ?DIFF_CENTER ->
 	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (Diff - (?DIFF_CENTER - CurveSteepness)),
 	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024)));
 calculate_min_tx_cost(DataSize, _Diff) ->
-	Size = 3210 + DataSize,
-	CurveSteepness = 2,
-	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (?DIFF_CENTER - (?DIFF_CENTER - CurveSteepness)),
-	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024))).
+	calculate_min_tx_cost(DataSize, ?DIFF_CENTER).
 
 calculate_min_tx_cost(DataSize, Diff, _, undefined) ->
 	calculate_min_tx_cost(DataSize, Diff);
