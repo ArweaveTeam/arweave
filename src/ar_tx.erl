@@ -153,16 +153,18 @@ calculate_min_tx_cost(DataSize, _Diff) ->
 	CurveSteepness = 2,
 	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (?DIFF_CENTER - (?DIFF_CENTER - CurveSteepness)),
 	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024))).
+
 calculate_min_tx_cost(DataSize, Diff, _, undefined) ->
 	calculate_min_tx_cost(DataSize, Diff);
 calculate_min_tx_cost(DataSize, Diff, _, <<>>) ->
 	calculate_min_tx_cost(DataSize, Diff);
 calculate_min_tx_cost(DataSize, Diff, WalletList, Addr) ->
-	Addrs = [ X || {X, _, _} <- WalletList ],
-	(case lists:member(Addr, Addrs) of
-		true -> 0;
-		false -> ?WALLET_GEN_FEE
-	end) + calculate_min_tx_cost(DataSize, Diff).
+	case lists:keyfind(Addr, 1, WalletList) of
+		false ->
+			calculate_min_tx_cost(DataSize, Diff) + ?WALLET_GEN_FEE;
+		{_, _, _} ->
+			calculate_min_tx_cost(DataSize, Diff)
+	end.
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
 tx_field_size_limit(TX) ->
