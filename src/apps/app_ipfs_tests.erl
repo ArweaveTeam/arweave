@@ -2,15 +2,19 @@
 -include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-get_everipedia_hashes_test() ->
-	N = 6,
-	From = 240,
-	{Hashes, _More} = ar_ipfs:ep_get_ipfs_hashes(N, From),
-	lists:foreach(fun(H) -> io:format("Hash: ~p~n", [H]) end, Hashes),
-	?assertEqual(N, length(Hashes)).
+-export([timestamp_data/1]).
+
+get_everipedia_hashes_test_() ->
+	{timeout, 60, fun() ->
+		N = 6,
+		From = 240,
+		{Hashes, _More} = ar_ipfs:ep_get_ipfs_hashes(N, From),
+		lists:foreach(fun(H) -> io:format("Hash: ~p~n", [H]) end, Hashes),
+		?assertEqual(N, length(Hashes))
+	end}.
 
 not_sending_already_got_test_() ->
-	{timeout, 30, fun() ->
+	{timeout, 60, fun() ->
 		{_, IPFSPid} = setup(),
 		{HashTups, _} = ar_ipfs:ep_get_ipfs_hashes(3, 123),
 		Hashes = ar_ipfs:hashes_only(HashTups),

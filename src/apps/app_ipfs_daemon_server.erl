@@ -8,7 +8,7 @@
 -ifdef(DEBUG).
 -define(WAIT_CLEANER, 3 * 60 * 1000).
 -define(WAIT_RETRY, 1 * 60 * 1000).
--define(MAX_IPFSAR_PENDING, 3).
+-define(MAX_IPFSAR_PENDING, 100).
 -else.
 -define(WAIT_CLEANER, 30 * 60 * 1000).
 -define(WAIT_RETRY, 5 * 60 * 1000).

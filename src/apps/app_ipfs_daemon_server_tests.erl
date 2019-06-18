@@ -3,53 +3,60 @@
 -include_lib("eunit/include/eunit.hrl").
 
 put_get_key_test() ->
-	app_ipfs_daemon_server:start(),
-	W = ar_wallet:new(),
-	Q = app_queue:start(W),
-	K = <<"api_key_for_test">>,
-	app_ipfs_daemon_server:put_key(K, Q, W),
-	{ok, Q, W} = app_ipfs_daemon_server:get_key(K),
+	{K, W} = init_kqw(),
+	{ok, _Q, W} = app_ipfs_daemon_server:get_key_q_wallet(K),
+	app_ipfs_daemon_server:del_key(K),
 	ok.
 
 all_ok_test() ->
-	K = init_kqw(),
-	H = <<"QmYNRMvMEYhVqWrUzn5D228CBxghLUu9WKGoxgBxJS3vG9">>,
+	{K, _W} = init_kqw(),
+	H = make_new_ipfs_hash(),
 	{ok, {{Status, _}, _, Body, _, _}} = send_request(getsend, {K, H}),
+	app_ipfs_daemon_server:del_key(K),
 	?assertEqual(<<"200">>, Status),
-	?assertEqual(<<"Data queued for distribution">>, Body).
+	?assertEqual(<<"Request sent to queue">>, Body).
 
-ignore_second_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+ignore_second_test_() ->
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[B0] = ar_weave:init([]),
+		Node = ar_node:start([], [B0]),
+		ar_http_iface_server:reregister(Node),
+		Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+		ar_node:add_peers(Node, Bridge),
 
-	K = init_kqw(),
-	H = <<"QmYNRMvMEYhVqWrUzn5D228CBxghLUu9WKGoxgBxJS3vG9">>,
-	{ok, {{Status1, _}, _, Body1, _, _}} = send_request(getsend, {K, H}),
-	?assertEqual(<<"200">>, Status1),
-	?assertEqual(<<"Data queued for distribution">>, Body1),
+		{K, _W} = init_kqw(),
+		H = make_new_ipfs_hash(),
+		{ok, {{Status1, _}, _, Body1, _, _}} = send_request(getsend, {K, H}),
 
-	timer:sleep(1000),
-	ar_node:mine(Node),
-	timer:sleep(1000),
+		timer:sleep(1000),
+		ar_node:mine(Node),
+		timer:sleep(1000),
 
-	{ok, {{Status2, _}, _, Body2, _, _}} = send_request(getsend, {K, H}),
-	?assertEqual(<<"208">>, Status2),
-	?assertEqual(<<"Hash already reported by this user">>, Body2).
+		{ok, {{Status2, _}, _, Body2, _, _}} = send_request(getsend, {K, H}),
+		app_ipfs_daemon_server:del_key(K),
+
+		?assertEqual(<<"200">>, Status1),
+		?assertEqual(<<"Request sent to queue">>, Body1),
+		?assertEqual(<<"208">>, Status2),
+		?assertEqual(<<"Hash already reported by this user">>, Body2)
+	end}.
 
 %%% Private
 
 init_kqw() ->
 	app_ipfs_daemon_server:start(),
 	W = ar_wallet:new(),
-	Q = app_queue:start(W),
 	K = <<"api_key_for_test">>,
-	app_ipfs_daemon_server:put_key(K, Q, W),
-	K.
+	app_ipfs_daemon_server:put_key_wallet(K, W),
+	{K, W}.
+
+make_new_ipfs_hash() ->
+	Filename = <<"testdata4ipfs.txt">>,
+	DataToHash = app_ipfs_tests:timestamp_data(Filename),
+	{ok, Hash} = ar_ipfs:add_data(DataToHash, Filename),
+	Hash.
 
 send_request(getsend, {APIKey, IPFSHash}) ->
 	JStruct = {[

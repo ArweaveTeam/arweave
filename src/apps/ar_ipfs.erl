@@ -70,13 +70,13 @@ add_data(Data, Filename) ->
 
 add_data(IP, Port, DataB, FilenameB) ->
 	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/add?pin=true",
-    Data = binary_to_list(DataB),
+	Data = binary_to_list(DataB),
 	Filename = thing_to_list(FilenameB),
-    Boundary = ?BOUNDARY,
-    Body = format_multipart_formdata(Boundary, [{Filename, Data}]),
-    ContentType = lists:concat(["multipart/form-data; boundary=", Boundary]),
-    Headers = [{"Content-Length", integer_to_list(length(Body))}],
-    {ok, Response} = request(post, {URL, Headers, ContentType, Body}),
+	Boundary = ?BOUNDARY,
+	Body = format_multipart_formdata(Boundary, [{Filename, Data}]),
+	ContentType = lists:concat(["multipart/form-data; boundary=", Boundary]),
+	Headers = [{"Content-Length", integer_to_list(length(Body))}],
+	{ok, Response} = request(post, {URL, Headers, ContentType, Body}),
 	{Props} = response_to_json(Response),
 	{<<"Hash">>, Hash} = lists:keyfind(<<"Hash">>, 1, Props),
 	{ok, Hash}.
