@@ -1,9 +1,27 @@
 [submodule "lib/prometheus"]
 	path = lib/prometheus
-	url = https://github.com/deadtrickster/prometheus.erl.git
+	url = https://github.com/ArweaveTeam/prometheus.erl.git
 [submodule "lib/accept"]
 	path = lib/accept
 	url = https://github.com/deadtrickster/accept.git
 [submodule "lib/prometheus_process_collector"]
 	path = lib/prometheus_process_collector
 	url = https://github.com/deadtrickster/prometheus_process_collector.git
+[submodule "lib/cowboy"]
+	path = lib/cowboy
+	url = https://github.com/ninenines/cowboy.git
+	ignore = untracked
+[submodule "lib/prometheus-cowboy"]
+	path = lib/prometheus_cowboy
+	url = https://github.com/ArweaveTeam/prometheus-cowboy.git
+[submodule "lib/cowlib"]
+	path = lib/cowlib
+	url = https://github.com/ninenines/cowlib.git
+	ignore = untracked
+[submodule "lib/ranch"]
+	path = lib/ranch
+	url = https://github.com/ninenines/ranch.git
+	ignore = untracked
+[submodule "lib/prometheus_httpd"]
+	path = lib/prometheus_httpd
+	url = https://github.com/deadtrickster/prometheus-httpd.git

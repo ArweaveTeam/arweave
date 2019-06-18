@@ -35,27 +35,39 @@ get_conflicting_txs(StateTXs, TX) ->
 			)
 	].
 
-%% @doc Get a specific full block (a block containing full txs) via
-%% blocks indep_hash.
+%% @doc Get a full block (a block containing all transactions) by the independent hash.
+%%      Try to find the block locally first. If we do not have the full block on disk, try to download it from peers.
 get_full_block(Peers, ID, BHL) when is_list(Peers) ->
-	% check locally first, if not found ask list of external peers for block
+	GetBlockFromPeersFun = fun() ->
+		get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BHL)
+	end,
 	case ar_storage:read_block(ID, BHL) of
 		unavailable ->
-			get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BHL);
+			GetBlockFromPeersFun();
 		Block ->
 			case make_full_block(Block) of
-				unavailable ->
-					ar_storage:invalidate_block(Block),
-					get_full_block(Peers, ID, BHL);
-				FinalB ->
+				{error, unavailable} ->
+					GetBlockFromPeersFun();
+				{error, {txs_missing, MissingTXIDs}} ->
+					ar:info([
+						{transactions_missing_on_disk_for_block, ar_util:encode(ID)},
+						{missing_txs, lists:map(fun ar_util:encode/1, MissingTXIDs)}
+					]),
+					GetBlockFromPeersFun();
+				{ok, FinalB} ->
 					FinalB
 			end
 	end;
 get_full_block(Pid, ID, BHL) when is_pid(Pid) ->
-	% Attempt to get block from local storage and add transactions.
-	make_full_block(ID, BHL);
+	%% Attempt to get block from local storage and add transactions.
+	case make_full_block(ID, BHL) of
+		{ok, B} ->
+			B;
+		{error, _} ->
+			unavailable
+	end;
 get_full_block(Host, ID, BHL) ->
-	% Handle external peer request.
+	%% Handle external peer request.
 	ar_http_iface_client:get_full_block(Host, ID, BHL).
 
 %% @doc Attempt to get a full block from a HTTP peer, picking the node to query
@@ -63,7 +75,7 @@ get_full_block(Host, ID, BHL) ->
 get_full_block_from_remote_peers([], _ID, _BHL) ->
 	unavailable;
 get_full_block_from_remote_peers(Peers, ID, BHL) ->
-	Peer = ar_util:pick_random(Peers),
+	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
 	{Time, B} = timer:tc(fun() -> get_full_block(Peer, ID, BHL) end),
 	case ?IS_BLOCK(B) of
 		true ->
@@ -226,35 +238,40 @@ start_mining(#{
 								]
 							);
 						false ->
-								ar:report(
-									[
-										could_not_start_mining,
-										{received_invalid_recall_block, FullBlock#block.indep_hash}
-									]
-								)
+							ar:report(
+								[
+									could_not_start_mining,
+									{received_invalid_recall_block, FullBlock#block.indep_hash}
+								]
+							)
 					end
 			end,
 			StateIn;
 		RecallB ->
-			if not is_record(RecallB, block) ->
-				ar:report_console([{erroneous_recall_block, RecallB}]);
-			true ->
-				ar_miner_log:started_hashing(),
-				ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
+			case ?IS_BLOCK(RecallB) of
+				false ->
+					ar:report_console([{erroneous_recall_block, RecallB}]);
+				true ->
+					ar_miner_log:started_hashing(),
+					ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
 			end,
-			RecallBFull = make_full_block(
+			case make_full_block(
 				RecallB#block.indep_hash,
 				BHL
-			),
-			ar_key_db:put(
-				RecallB#block.indep_hash,
-				[
-					{
-						ar_block:generate_block_key(RecallBFull, hd(BHL)),
-						binary:part(hd(BHL), 0, 16)
-					}
-				]
-			),
+			) of
+				{ok, RecallBFull} ->
+					ar_key_db:put(
+						RecallB#block.indep_hash,
+						[
+							{
+								ar_block:generate_block_key(RecallBFull, hd(BHL)),
+								binary:part(hd(BHL), 0, 16)
+							}
+						]
+					);
+				{error, _} ->
+					do_nothing
+			end,
 			B = ar_storage:read_block(hd(BHL), BHL),
 			case ForceDiff of
 				unforced ->
@@ -305,13 +322,17 @@ integrate_new_block(
 			potential_txs := PotentialTXs
 		} = StateIn,
 		NewB) ->
-	% Filter completed TXs from the pending list.
-	Diff = ar_mine:next_diff(NewB),
+	%% Filter completed TXs from the pending list. The mining reward for TXs is
+	%% supposed to be pessimistic (see the /price/[bytes] endpoint) by taking
+	%% into account the difficulty may change 1 step before the TX is mined into
+	%% a block. Therefore, we re-use the difficulty from NewB when verifying TXs
+	%% for the next block because even if the next difficulty makes the price go
+	%% up, it should be fine.
 	RawKeepNotMinedTXs =
 		lists:filter(
 			fun(T) ->
 				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
-				ar_tx:verify(T, Diff, WalletList)
+				ar_tx:verify(T, NewB#block.diff, WalletList)
 			end,
 			TXs
 		),
@@ -327,8 +348,7 @@ integrate_new_block(
 							RawKeepNotMinedTXs),
 	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
 	% Write new block and included TXs to local storage.
-	ar_storage:write_tx(BlockTXs),
-	ar_storage:write_block(NewB),
+	ar_storage:write_full_block(NewB, BlockTXs),
 	% Recurse over the new block.
 	ar_miner_log:foreign_block(NewB#block.indep_hash),
 	ar:report_console(
@@ -342,8 +362,6 @@ integrate_new_block(
 		PID ->
 			PID ! {parent_accepted_block, NewB}
 	end,
-	% ar:d({new_hash_list, [NewB#block.indep_hash | HashList]}),
-	ar_tx_search:update_tag_table(NewB),
 	app_ipfs:maybe_ipfs_add_txs(BlockTXs),
 	lists:foreach(
 		fun(T) ->
@@ -355,21 +373,23 @@ integrate_new_block(
 	RawRecallB = ar_storage:read_block(RecallHash, BHL),
 	case ?IS_BLOCK(RawRecallB) of
 		true ->
-			RecallB =
-				RawRecallB#block {
-					txs = lists:map(fun ar_storage:read_tx/1, RawRecallB#block.txs)
-				},
-			ar_key_db:put(
-				RecallB#block.indep_hash,
-				[
-					{
-						ar_block:generate_block_key(
-							RecallB,
-							NewB#block.previous_block),
-						binary:part(NewB#block.indep_hash, 0, 16)
-					}
-				]
-			);
+			case make_full_block(RawRecallB) of
+				{ok, RecallB} ->
+					ar_key_db:put(
+						RecallB#block.indep_hash,
+						[
+							{
+								ar_block:generate_block_key(
+									RecallB,
+									NewB#block.previous_block
+								),
+								binary:part(NewB#block.indep_hash, 0, 16)
+							}
+						]
+					);
+				{error, _} ->
+					ok
+			end;
 		false ->
 			ok
 	end,
@@ -509,14 +529,14 @@ validate(
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
 	Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
-	Retarget = ar_retarget:validate(NewB, OldB),
+	DiffCheck = ar_retarget:validate_difficulty(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
 	WeaveSize = ar_block:verify_weave_size(NewB, OldB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
 	%Time = ar_block:verify_timestamp(OldB, NewB),
 	HeightCheck = ar_block:verify_height(NewB, OldB),
-	RetargetCheck = ar_block:verify_last_retarget(NewB),
+	RetargetCheck = ar_block:verify_last_retarget(NewB, OldB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
 	BHLMerkleCheck = ar_block:verify_block_hash_list_merkle(NewB, OldB),
@@ -532,7 +552,7 @@ validate(
 			{block_wallet_validate, Wallet},
 			{block_indep_validate, IndepRecall},
 			{block_txs_validate, Txs},
-			{block_diff_validate, Retarget},
+			{block_diff_validate, DiffCheck},
 			{block_indep, IndepHash},
 			{block_hash, Hash},
 			{weave_size, WeaveSize},
@@ -563,7 +583,7 @@ validate(
 	case Mine of false -> ar:report({invalid_nonce, BDSHash}); _ -> ok end,
 	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok      end,
 	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
-	case Retarget of false -> ar:d(invalid_difficulty); _ -> ok  end,
+	case DiffCheck of false -> ar:d(invalid_difficulty); _ -> ok  end,
 	case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
 	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
 	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok      end,
@@ -580,7 +600,7 @@ validate(
 		andalso Wallet
 		andalso IndepRecall
 		andalso Txs
-		andalso Retarget
+		andalso DiffCheck
 		andalso IndepHash
 		andalso Hash
 		andalso WeaveSize
@@ -614,65 +634,31 @@ validate_wallet_list([_ | Rest]) ->
 %%% Private functions.
 %%%
 
-%% @doc Convert a block with tx references into a full block, that is a block
-%% containing the entirety of all its referenced txs.
+%% @doc Read a block shadow from disk, read its transactions from disk.
 make_full_block(ID, BHL) ->
 	make_full_block(ar_storage:read_block(ID, BHL)).
-make_full_block(unavailable) -> unavailable;
-make_full_block(BlockHeader) ->
-	FullB =
-		BlockHeader#block{
-			txs =
-				get_tx(
-					whereis(http_entrypoint_node),
-					BlockHeader#block.txs
-				)
-		},
-	case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
-		[] -> FullB;
-		_  -> unavailable
-	end.
 
-%% @doc Return a specific tx from a node, if it has it.
-%% TODO: Should catch case return empty list or not_found atom.
-get_tx(_, []) ->
-	[];
-get_tx(Peers, ID) when is_list(Peers) ->
-	% check locally first, if not found in storage nor nodes state ask
-	% list of external peers for tx
-	ar:report([{getting_tx, ID}, {peers, Peers}]),
-	case
-		{
-			ar_storage:read_tx(ID),
-			lists:keyfind(ID, 2, ar_node:get_full_pending_txs(whereis(http_entrypoint_node)))
-		} of
-		{unavailable, false} ->
-			lists:foldl(
-				fun(Peer, Acc) ->
-					case is_atom(Acc) of
-						false -> Acc;
-						true ->
-							T = get_tx(Peer, ID),
-							case is_atom(T) of
-								true -> Acc;
-								false -> T
-							end
-					end
-				end,
-				unavailable,
-				Peers
-			);
-		{TX, false} -> TX;
-		{unavailable, TX} -> TX;
-		{TX, _} -> TX
-	end;
-get_tx(Proc, ID) when is_pid(Proc) ->
-	% attempt to get tx from local storage
-	%ar:d({pending, get_full_pending_txs(whereis(http_entrypoint_node))}),
-	ar_storage:read_tx(ID);
-get_tx(Host, ID) ->
-	% handle external peer request
-	ar_http_iface_client:get_tx(Host, ID).
+make_full_block(unavailable) ->
+	{error, unavailable};
+make_full_block(BShadow) ->
+	{TXs, MissingTXIDs} = lists:foldr(
+		fun(TXID, {TXs, MissingTXIDs}) ->
+			case ar_storage:read_tx(TXID) of
+				unavailable ->
+					{TXs, [TXID | MissingTXIDs]};
+				TX ->
+					{[TX | TXs], MissingTXIDs}
+			end
+		end,
+		{[], []},
+		BShadow#block.txs
+	),
+	case MissingTXIDs of
+		[] ->
+			{ok, BShadow#block{ txs = TXs }};
+		_ ->
+			{error, {txs_missing, MissingTXIDs}}
+	end.
 
 %% @doc Perform the concrete application of a transaction to
 %% a prefiltered wallet list.

@@ -1,59 +1,165 @@
 -module(ar_firewall).
--export([start/0, scan_tx/2]).
+-export([start/0, reload/0, scan_tx/1, scan_and_clean_disk/0]).
 -include("ar.hrl").
 -include("av/av_recs.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Arweave firewall implementation.
 
-%% State definition.
-%% Should store compiled binary scan objects.
+%% Stores compiled binary scan objects.
 -record(state, {
-	sigs = [] % the set of known signatures to filter against
+	tx_blacklist = [], % a set of blacklisted transaction identifiers
+	content_sigs = [] % a set of known signatures to filter transaction content against
 }).
 
 %% @doc Start a firewall node.
 start() ->
+	case whereis(?MODULE) of
+		undefined ->
+			F = do_start(),
+			erlang:register(?MODULE, F);
+		_ ->
+			do_nothing
+	end.
+
+reload() ->
+	case whereis(?MODULE) of
+		undefined ->
+			do_nothing;
+		Firewall ->
+			NewF = do_start(),
+			erlang:unregister(?MODULE),
+			erlang:register(?MODULE, NewF),
+			exit(Firewall, {shutdown, reloading})
+	end.
+
+%% @doc Check whether a received TX matches the firewall rules.
+scan_tx(TX) ->
+	FwServer = whereis(?MODULE),
+	Ref = make_ref(),
+	FwServer ! {scan_tx, self(), Ref, TX},
+	receive
+		{scanned_tx, Ref, Response} ->
+			Response
+	after 10000 ->
+		ar:err([{ar_firewall, scan_tx_timeout}, {tx, ar_util:encode(TX#tx.id)}]),
+		reject
+	end.
+
+scan_and_clean_disk() ->
+	PID = self(),
+	Ref = make_ref(),
+	spawn(
+		fun() ->
+			do_scan_and_clean_disk(),
+			ar:console([{ar_firewall, disk_scan_complete}]),
+			PID ! {scan_complete, Ref}
+		end
+	),
+	Ref.
+
+do_scan_and_clean_disk() ->
+	TXDir = filename:join(ar_meta_db:get(data_dir), ?TX_DIR),
+	case file:list_dir(TXDir) of
+		{error, Reason} ->
+			ar:err([
+				{ar_firewall, scan_and_clean_disk},
+				{listing_dir, TXDir},
+				{error, Reason}
+			]),
+			ok;
+		{ok, Files} ->
+			lists:foreach(
+				fun(File) ->
+					Filepath = filename:join(TXDir, File),
+					case scan_file(Filepath) of
+						reject ->
+							ar:info([
+								{ar_firewall, scan_and_clean_disk},
+								{removing_file, File}
+							]),
+							file:delete(Filepath),
+							ok;
+						{error, Reason} ->
+							ar:warn([
+								{ar_firewall, scan_and_clean_disk},
+								{loading_file, File},
+								{error, Reason}
+							]),
+							ok;
+						accept ->
+							ok
+					end
+				end,
+				Files
+			)
+	end.
+
+scan_file(File) ->
+	case file:read_file(File) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, Binary} ->
+			try
+				TX = ar_serialize:json_struct_to_tx(Binary),
+				scan_tx(TX)
+			catch Type:Pattern ->
+				{error, {exception, Type, Pattern}}
+			end
+	end.
+
+do_start() ->
 	spawn(
 		fun() ->
 			server(#state {
-				sigs = av_sigs:all()
+				tx_blacklist = ar_tx_blacklist:load_from_files(ar_meta_db:get(transaction_blacklist_files)),
+				content_sigs = av_sigs:load(ar_meta_db:get(content_policy_files))
 			})
 		end
 	).
 
-%% @doc Check that a received TX does not match the firewall rules.
-scan_tx(FwServer, Data) ->
-	ar:report([{scanning_object_of_type, tx}]),
-	FwServer ! {scan_tx, self(), Data},
-	receive
-		{scanned_tx, Response} ->
-			ar:report([{scanned_object_of_type, tx}, {response, Response}]),
-			Response
-	end.
-
 %% @doc Main firewall server loop.
-%% Receives scan requests and returns whether the given contents matches
+%% Receives scan requests and returns whether the given transaction and its contents match
 %% the set of known 'harmful'/'ignored' signatures.
-server(S = #state { sigs = Sigs } ) ->
+server(S = #state { tx_blacklist = TXBlacklist, content_sigs = ContentSigs } ) ->
 	receive
-		{scan_tx, Pid, Data} ->
-			Pid ! {scanned_tx, scan_transaction(Data, Sigs)},
+		{scan_tx, Pid, Ref, TX} ->
+			Pid ! {scanned_tx, Ref, scan_transaction(TX, TXBlacklist, ContentSigs)},
 			server(S)
 	end.
 
-%% @doc Compare a transaction against known bad signatures.
-scan_transaction(TX, Sigs) ->
-	case av_detect:is_infected(TX#tx.data, Sigs) of
-		{true, _} -> reject;
-		false -> accept
+%% @doc Check if a transaction is in the black list and compare its contents against known bad signatures.
+scan_transaction(TX, TXBlacklist, ContentSigs) ->
+	case ar_tx_blacklist:is_blacklisted(TX, TXBlacklist) of
+		true ->
+			ar:info([{ar_firewall, reject_tx}, {tx, ar_util:encode(TX#tx.id)}, tx_is_blacklisted]),
+			reject;
+		false ->
+			Tags = lists:foldl(
+				fun({K, V}, Acc) ->
+					[K, V | Acc]
+				end,
+				[],
+				TX#tx.tags
+			),
+			ScanList = [TX#tx.data, TX#tx.target | Tags],
+			case av_detect:is_infected(ScanList, ContentSigs) of
+				{true, MatchedSigs} ->
+					ar:info([
+						{ar_firewall, reject_tx},
+						{tx, ar_util:encode(TX#tx.id)},
+						{matches, MatchedSigs}
+					]),
+					reject;
+				false ->
+					accept
+			end
 	end.
-
 
 %% Tests: ar_firewall
 
-blacklist_transaction_test() ->
-	Sigs = #sig{
+scan_signatures_test() ->
+	Sig = #sig{
 		name = "Test",
 		type = binary,
 		data = #binary_sig{
@@ -62,10 +168,35 @@ blacklist_transaction_test() ->
 			binary = <<"badstuff">>
 		}
 	},
-	?assertEqual(reject, scan_transaction(ar_tx:new(<<"badstuff">>), [Sigs])),
-	?assertEqual(accept, scan_transaction(ar_tx:new(<<"goodstuff">>), [Sigs])).
+	ContentSigs = {[Sig], binary:compile_pattern([(Sig#sig.data)#binary_sig.binary])},
+	TXBlacklist = sets:from_list([<<"badtxid">>]),
+	TX = ar_tx:new(),
+	GoodTXs = [
+		TX#tx{ data = <<"goodstuff">> },
+		TX#tx{ tags = [{<<"goodstuff">>, <<"goodstuff">>}] },
+		TX#tx{ target = <<"goodstuff">> }
+	],
+	BadTXs = [
+		TX#tx{ data = <<"badstuff">> },
+		TX#tx{ tags = [{<<"badstuff">>, <<"goodstuff">>}] },
+		TX#tx{ tags = [{<<"goodstuff">>, <<"badstuff">>}] },
+		TX#tx{ target = <<"badstuff">> },
+		TX#tx{ id = <<"badtxid">>, data = <<"goodstuff">> }
+	],
+	lists:foreach(
+		fun(BadTX) ->
+			?assertEqual(reject, scan_transaction(BadTX, TXBlacklist, ContentSigs))
+		end,
+		BadTXs
+	),
+	lists:foreach(
+		fun(GoodTX) ->
+			?assertEqual(accept, scan_transaction(GoodTX, TXBlacklist, ContentSigs))
+		end,
+		GoodTXs
+	).
 
-load_blacklist_test() ->
+parse_ndb_blacklist_test() ->
 	ExpectedSig =
 		#sig {
 			name = "Test signature",
@@ -77,6 +208,94 @@ load_blacklist_test() ->
 					binary = <<"BADCONTENT">>
 				}
 		},
-	ar_meta_db:put(content_policies, ["test/test_sig.ndb"]),
-	Sigs = av_sigs:all(),
-	?assertEqual([ExpectedSig], Sigs).
+	{Sigs, _} = av_sigs:load(["test/test_sig.ndb"]),
+	?assertEqual([ExpectedSig], Sigs),
+	ar_meta_db:put(content_policy_files, ["test/test_sig.ndb"]),
+	ar_firewall:reload(),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<".. BADCONTENT ..">> })),
+	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ data = <<".. B A D C ONTENT ..">> })).
+
+parse_txt_blacklist_test() ->
+	ExpectedSigs = [
+		#sig {
+			type = binary,
+			data =
+				#binary_sig {
+					offset = any,
+					binary = <<"BADCONTENT1">>
+				}
+		},
+		#sig {
+			type = binary,
+			data =
+				#binary_sig {
+					offset = any,
+					binary = <<"BADCONTENT2">>
+				}
+		},
+		#sig {
+			type = binary,
+			data =
+				#binary_sig {
+					offset = any,
+					binary = <<"BADCONTENT3">>
+				}
+		}
+	],
+	{Sigs, _} = av_sigs:load(["test/test_sig.txt"]),
+	lists:foreach(
+		fun(ExpectedSig) ->
+			?assert(
+				lists:member(ExpectedSig, Sigs),
+				iolist_to_string(
+					io_lib:format("The binary signature ~p is missing", [(ExpectedSig#sig.data)#binary_sig.binary])
+				)
+			)
+		end,
+		ExpectedSigs
+	),
+	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_firewall:reload(),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<".. BADCONTENT1 ..">> })),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<"..blablaBADCONTENT2 ..">> })),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<"..BADCONTENT3111..">> })),
+	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ data = <<"B A D C ONTENT1 BADCONTENT 2 BADCONTEN T3">> })).
+
+iolist_to_string(IOList) ->
+	binary_to_list(iolist_to_binary(IOList)).
+
+blacklist_transaction_test() ->
+	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
+	ar_firewall:reload(),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid1">> })),
+	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid2">> })),
+	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ id = <<"goodtxid">> })).
+
+scan_and_clean_disk_test() ->
+	%% Blacklist a transaction and write it to disk.
+	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
+	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"badtxid1">> }),
+	?assertEqual(<<"badtxid1">>, (ar_storage:read_tx(<<"badtxid1">>))#tx.id),
+	%% Setup a content policy and write a bad tx to disk.
+	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"badtx">>, data = <<"BADCONTENT1">>}),
+	?assertEqual(<<"badtx">>, (ar_storage:read_tx(<<"badtx">>))#tx.id),
+	%% Write a good tx to disk,
+	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"goodtxid">> }),
+	?assertEqual(<<"goodtxid">>, (ar_storage:read_tx(<<"goodtxid">>))#tx.id),
+	%% Write a file that is not a tx to the transaction directory.
+	NotTXFile = filename:join([ar_meta_db:get(data_dir), ?TX_DIR, "not_a_tx"]),
+	file:write_file(NotTXFile, <<"not a tx">>),
+	%% Assert illicit txs and only they are removed by the cleanup procedure.
+	reload(),
+	Ref = scan_and_clean_disk(),
+	receive
+		{scan_complete, Ref} ->
+			do_nothing
+	after 10000 ->
+		?assert(false, "The disk scan did not complete after 10 seconds")
+	end,
+	?assertEqual(<<"goodtxid">>, (ar_storage:read_tx(<<"goodtxid">>))#tx.id),
+	{ok, <<"not a tx">>} = file:read_file(NotTXFile),
+	?assertEqual(unavailable, ar_storage:read_tx(<<"badtxid1">>)),
+	?assertEqual(unavailable, ar_storage:read_tx(<<"badtx">>)).

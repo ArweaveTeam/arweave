@@ -273,13 +273,6 @@ do_fork_recover(S = #state {
 									_ -> RecallB = ar_node_utils:get_full_block(Peers, ar_util:get_recall_hash(B, B#block.hash_list), BHL)
 								end,
 								%% TODO: Rewrite validate so it also takes recall block txs
-								% ar:d({old_block, B#block.indep_hash}),
-								% ar:d({new_block, NextB#block.indep_hash}),
-								% ar:d({recall_block, RecallB#block.indep_hash}),
-								% ar:d({old_block_txs, B#block.txs}),
-								% ar:d({new_block_txs, NextB#block.txs}),
-								% ar:d({recall_block_txs, RecallB#block.txs}),
-								ar_storage:write_tx(RecallB#block.txs),
 								TXs = NextB#block.txs
 						end
 				end
@@ -298,7 +291,7 @@ do_fork_recover(S = #state {
 						NextB#block {txs = [T#tx.id || T <- NextB#block.txs]},
 						TXs,
 						B,
-						RecallB#block {txs = [T#tx.id || T <- RecallB#block.txs]}
+						RecallB
 					)
 				of
 					false ->
@@ -329,10 +322,8 @@ do_fork_recover(S = #state {
 							_ -> do_nothing
 						end,
 						self() ! apply_next_block,
-						ar_storage:write_tx(NextB#block.txs),
-						ar_storage:write_block(NextB#block {txs = [T#tx.id || T <- NextB#block.txs]}),
-						ar_storage:write_block(RecallB#block {txs = [T#tx.id || T <- RecallB#block.txs]}),
-						ar_tx_search:update_tag_table(NextB),
+						ar_storage:write_full_block(NextB),
+						ar_storage:write_full_block(RecallB),
 						server(
 							S#state {
 								block_list = [NextH | BlockList],

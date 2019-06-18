@@ -131,7 +131,6 @@ add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, Recal
 		Timestamp
 	);
 add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
-	% ar:d({ar_weave_add,{hashlist, HashList}, {walletlist, WalletList}, {txs, RawTXs}, {nonce, Nonce}, {diff, Diff}, {reward, RewardAddr}, {ts, Timestamp}, {tags, Tags} }),
 	NewHeight = CurrentB#block.height + 1,
 	RecallB = ar_node_utils:find_recall_block(HashList),
 	TXs = [T#tx.id || T <- RawTXs],
@@ -210,7 +209,28 @@ generate_hash_list([Hash|Bs], N) when is_binary(Hash) ->
 %% @doc Verify a block from a hash list. Hash lists are stored in reverse order
 verify_indep(#block{ height = 0 }, []) -> true;
 verify_indep(B = #block { height = Height }, HashList) ->
-	lists:nth(Height + 1, lists:reverse(HashList)) == indep_hash(B).
+	ComputedIndepHash = indep_hash(B),
+	ReversedHashList = lists:reverse(HashList),
+	BHL = B#block.hash_list,
+	ReversedBHL = lists:reverse(BHL),
+	ExpectedIndepHash = lists:nth(Height + 1, ReversedHashList),
+	case ComputedIndepHash of
+		ExpectedIndepHash ->
+			true;
+		_ ->
+			ar:err([
+				verify_indep_hash,
+				{height, Height},
+				{computed_indep_hash, ar_util:encode(ComputedIndepHash)},
+				{expected_indep_hash, ar_util:encode(ExpectedIndepHash)},
+				{hash_list_length, length(HashList)},
+				{hash_list_latest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(HashList, 10))},
+				{hash_list_eariest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(ReversedHashList, 10))},
+				{block_hash_list_latest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(BHL, 10))},
+				{block_hash_list_earlies_blocks, lists:map(fun ar_util:encode/1, lists:sublist(ReversedBHL, 10))}
+			]),
+			false
+	end.
 
 %% @doc Generate a recall block number from a block or a hash and block height.
 calculate_recall_block(Hash, HashList) when is_binary(Hash) ->
@@ -221,17 +241,14 @@ calculate_recall_block(B, HashList) when is_record(B, block) ->
 		_ -> calculate_recall_block(B#block.indep_hash, B#block.height, HashList)
 	end.
 calculate_recall_block(IndepHash, Height, _HashList) ->
-	%ar:d({recall_indep_hash, binary:decode_unsigned(IndepHash)}),
-	%ar:d({recall_height, Height}),
 	binary:decode_unsigned(IndepHash) rem Height.
 
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TXs and the nonce.
-hash(DataSegment, Nonce) ->
-	% ar:d({hash, {data, DataSegment}, {nonce, Nonce}, {timestamp, Timestamp}}),
+hash(BDS, Nonce) ->
 	crypto:hash(
 		?MINING_HASH_ALG,
-		<< Nonce/binary, DataSegment/binary >>
+		<< Nonce/binary, BDS/binary >>
 	).
 
 %% @doc Create an independent hash from a block. Independent hashes
@@ -327,7 +344,6 @@ tx_id(TX) -> TX#tx.id.
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.
 mine(B, RecallB, TXs, RewardAddr, Tags) ->
-	%ar:d({weave_mine, {block, B}, {recall, RecallB}, {tx, TXs}, {reward, RewardAddr}, {tags, Tags}}),
 	ar_mine:start(B, RecallB, TXs, RewardAddr, Tags, self()),
 	receive
 		{work_complete, TXs, _Hash, Diff, Nonce, Timestamp} ->
@@ -350,7 +366,7 @@ read_genesis_txs() ->
 	{ok, Files} = file:list_dir("data/genesis_txs"),
 	lists:foldl(
 		fun(F, Acc) ->
-			file:copy("data/genesis_txs/" ++ F, "txs/" ++ F),
+			file:copy("data/genesis_txs/" ++ F, ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR ++ "/" ++ F),
 			[ar_util:decode(hd(string:split(F, ".")))|Acc]
 		end,
 		[],

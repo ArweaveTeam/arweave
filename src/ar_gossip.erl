@@ -71,7 +71,7 @@ send(S, Msg) ->
 
 %% @doc Potentially send a message to a node, depending on state.
 %% No warning is issued for messages that cannot be sent to network peers!
-possibly_send(_S, Peer, #gs_msg { data = {new_block, _Node, _Height, _NewB, _Recall} })
+possibly_send(_S, Peer, #gs_msg { data = {new_block, _Node, _Height, _NewB, _BSD, _Recall} })
 		when (not is_pid(Peer)) ->
 	ignore;
 possibly_send(_S, Peer, #gs_msg { data = {add_tx, _TX} }) when not is_pid(Peer) ->

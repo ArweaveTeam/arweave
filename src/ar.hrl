@@ -1,8 +1,5 @@
 %%% A collection of record structures used throughout the Arweave server.
 
-%%% FORK INDEX
--define(FORK_1_6, 95000).
-
 %% @doc How nodes identify they are on the same network.
 -define(NETWORK_NAME, "arweave.N.1").
 
@@ -10,7 +7,7 @@
 -define(CLIENT_VERSION, 5).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 20).
+-define(RELEASE_NUMBER, 23).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
@@ -19,14 +16,17 @@
 	]).
 
 -define(DEFAULT_RESPONSE_HEADERS,
-	[
-		{<<"Access-Control-Allow-Origin">>, <<"*">>}
-	]).
+	#{<<"access-control-allow-origin">> => <<"*">>}).
 
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
 %-define(DEBUG, debug).
+-ifdef(DEBUG).
+-define(FORK_1_6, 0).
+-else.
+-define(FORK_1_6, 95000).
+-endif.
 
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").
@@ -63,8 +63,16 @@
 -endif.
 
 -define(RETARGET_TOLERANCE, 0.1).
--define(BLOCK_TIME_DIFF_TOLERANCE, 90).
--define(NODE_TIME_SYNC_TOLERANCE, 15).
+
+-define(JOIN_CLOCK_TOLERANCE, 15).
+-define(MAX_BLOCK_PROPAGATION_TIME, 60).
+-define(CLOCK_DRIFT_MAX, 5).
+
+-ifdef(DEBUG).
+-define(MINING_TIMESTAMP_REFRESH_INTERVAL, 1).
+-else.
+-define(MINING_TIMESTAMP_REFRESH_INTERVAL, 10).
+-endif.
 
 -define(BLOCK_PAD_SIZE, (1024*1024*1)).
 
@@ -105,21 +113,17 @@
 %% @doc The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 3 * 1024 * 1024).
 
-%% @doc Default timeout value for network requests.
--define(NET_TIMEOUT, 5 * 60 * 1000).
+%% @doc Default timeout for establishing an HTTP connection.
+-define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
+%% @doc Default timeout used when sending to and receiving from a TCP socket
+%%      when making an HTTP request.
+-define(HTTP_REQUEST_SEND_TIMEOUT, 25 * 1000).
 
 %% @doc Default timeout value for local requests
 -define(LOCAL_NET_TIMEOUT, 30 * 1000).
 
-%% @doc Default timeout for initial request
--define(CONNECT_TIMEOUT, 25 * 1000).
-
 %% @doc Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 3 * 1000).
-
-%% @doc The amount of time to wait before refreshing miner data in case of a
-%% difficulty change.
--define(REFRESH_MINE_DATA_TIMER, 60 * 1000).
 
 %% @doc Time between attempts to find optimise peers.
 -define(GET_MORE_PEERS_TIME,  240 * 1000).
@@ -137,11 +141,8 @@
 %% @doc Never have more than this number of peers (new peers excluded).
 -define(MAXIMUM_PEERS, 20).
 
-%% @doc Amount of peers without a given transaction to send a new transaction to.
--define(NUM_REGOSSIP_TX, 20).
-
-%% Maximum number of requests allowed by an IP in any 30 second period.
--define(MAX_REQUESTS, 450).
+%% Maximum allowed number of accepted requests per minute per IP.
+-define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
 
 %% @doc Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
@@ -152,19 +153,26 @@
 %% @doc Length of time to wait (seconds) before dropping after last activity
 -define(PEER_TIMEOUT, 8 * 60).
 
+%% @doc The number of the best peers to send new transactions to in parallel.
+-define(TX_PROPAGATION_PARALLELIZATION, 5).
+
 %% @doc The number of the best peers to send new blocks to in parallel.
--define(BLOCK_PROPAGATION_PARALLELIZATION, 10).
+-define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
 -define(BLOCK_DIR, "blocks").
--define(BLOCK_ENC_DIR, "blocks/enc").
+-define(ENCRYPTED_BLOCK_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
 
 %% @doc Backup block hash list storage directory.
 -define(HASH_LIST_DIR, "hash_lists").
+%% @doc Directory for storing miner wallets.
+-define(WALLET_DIR, "wallets").
 %% @doc Directory for storing unique wallet lists.
 -define(WALLET_LIST_DIR, "wallet_lists").
+%% @doc Directory for storing transaction index.
+-define(TX_INDEX_DIR, "data/mnesia").
 
 %% @doc Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).

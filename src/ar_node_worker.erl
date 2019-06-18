@@ -114,14 +114,15 @@ handle(SPid, {cancel_tx, TXID, Sig}) ->
 	{ok, StateOut} = cancel_tx(StateIn, TXID, Sig),
 	ar_node_state:update(SPid, StateOut),
 	{ok, cancel_tx};
-handle(SPid, {process_new_block, Peer, Height, NewB, Recall}) ->
-	% We have a new block. Distribute it to the gossip network.
+handle(SPid, {process_new_block, Peer, Height, NewB, BDS, Recall}) ->
+	%% We have a new block. Distribute it to the gossip network. This is only
+	%% triggered in polling mode.
 	{ok, StateIn} = ar_node_state:all(SPid),
 	GS = maps:get(gossip, StateIn),
 	HashList = maps:get(hash_list, StateIn),
-	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, Recall}),
+	{NewGS, _} = ar_gossip:send(GS, {new_block, Peer, Height, NewB, BDS, Recall}),
 	ar_node_state:update(SPid, [{gossip, NewGS}]),
-	{RecallIndepHash, Key, Nonce} = Recall,
+	{RecallIndepHash, _, Key, Nonce} = Recall,
 	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB#block.hash_list, Key, Nonce),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
@@ -209,10 +210,10 @@ handle(_SPid, Msg) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
 %% @doc Handle the gossip receive results.
-handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, Recall}}) ->
+handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, NewB, _BDS, Recall}}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	HashList = maps:get(hash_list, StateIn),
-	{RecallIndepHash, Key, Nonce} = Recall,
+	{RecallIndepHash, _, Key, Nonce} = Recall,
 	RecallB = ar_block:get_recall_block(Peer, RecallIndepHash, NewB#block.hash_list, Key, Nonce),
 	case process_new_block(StateIn, NewGS, NewB, RecallB, Peer, HashList) of
 		{ok, StateOut} ->
@@ -344,17 +345,12 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, unavailable, Pee
 		when NewB#block.height == Height + 1 ->
 	% This block is at the correct height.
 	RecallHash = ar_node_utils:find_recall_hash(NewB, HashList),
-	FullBlock = ar_node_utils:get_full_block(Peer, RecallHash, HashList),
-	case ?IS_BLOCK(FullBlock) of
+	RecallB = ar_node_utils:get_full_block(Peer, RecallHash, HashList),
+	case ?IS_BLOCK(RecallB) of
 		true ->
-			% TODO: Cleanup full block -> shadow generation.
-			RecallShadow = FullBlock#block { txs = [
-													T#tx.id
-													||
-													T <- FullBlock#block.txs] },
-			ar_storage:write_full_block(FullBlock),
+			ar_storage:write_full_block(RecallB),
 			StateNext = StateIn#{ gossip => NewGS },
-			process_new_block(StateNext, NewGS, NewB, RecallShadow, Peer, HashList);
+			process_new_block(StateNext, NewGS, NewB, RecallB, Peer, HashList);
 		false ->
 			ar:warn(failed_to_get_recall_block),
 			none
@@ -371,21 +367,8 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 	} = StateNext,
 	% If transaction not found in state or storage, txlist built will be
 	% incomplete and will fail in validate
-	TXs = lists:foldr(
-		fun(T, Acc) ->
-			case [ TX || TX <- aggregate_txs(StateNext), TX#tx.id == T ] of
-				[] ->
-					case ar_storage:read_tx(T) of
-						unavailable -> Acc;
-						TX			-> [TX | Acc]
-					end;
-				[TX | _] ->
-					[TX | Acc]
-			end
-		end,
-		[],
-		NewB#block.txs
-	),
+	{TXs, MissingTXIDs} = pick_txs(NewB#block.txs, aggregate_txs(StateNext)),
+	log_missing_txs(NewB#block.indep_hash, MissingTXIDs),
 	{FinderReward, _} =
 		ar_node_utils:calculate_reward_pool(
 			RewardPool,
@@ -416,12 +399,7 @@ process_new_block(#{ height := Height } = StateIn, NewGS, NewB, RecallB, Peer, H
 				_		  -> ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
 			end;
 		false ->
-			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}]),
-			case is_fork_preferable(NewB, CDiff, BHL) of
-				false -> [];
-				true ->
-					ar_node_utils:fork_recover(StateNext#{ gossip => NewGS }, Peer, NewB)
-			end
+			ar:info([{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)}])
 	end,
 	{ok, StateOut};
 process_new_block(#{ height := Height }, NewGS, NewB, _RecallB, _Peer, _HashList)
@@ -443,6 +421,36 @@ process_new_block(#{ height := Height, cumulative_diff := CDiff } = StateIn, New
 		false ->
 			none
 	end.
+
+pick_txs(TXIDs, TXs) ->
+	lists:foldr(
+		fun(TXID, {Found, Missing}) ->
+			case [TX || TX <- TXs, TX#tx.id == TXID] of
+				[] ->
+					%% This disk read should almost never be useful. Presumably, the only reason to find some of these
+					%% transactions on disk is they had been written prior to the call, what means they are
+					%% from an orphaned fork, more than one block behind.
+					case ar_storage:read_tx(TXID) of
+						unavailable ->
+							{Found, [TXID | Missing]};
+						TX ->
+							{[TX | Found], Missing}
+					end;
+				[TX | _] ->
+					{[TX | Found], Missing}
+			end
+		end,
+		{[], []},
+		TXIDs
+	).
+
+log_missing_txs(_BH, []) ->
+	noop;
+log_missing_txs(BH, MissingTXIDs) ->
+	ar:info([
+		{transactions_missing_in_mempool_for_block, ar_util:encode(BH)},
+		{missing_txs, lists:map(fun ar_util:encode/1, MissingTXIDs)}
+	]).
 
 %% @doc Verify a new block found by a miner, integrate it.
 integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp) ->
@@ -535,11 +543,9 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 					{ok, ar_node_utils:reset_miner(StateIn)}
 			end;
 		true ->
-			ar_storage:write_tx(MinedTXs),
-			ar_storage:write_block(NextB),
+			ar_storage:write_full_block(NextB, MinedTXs),
 			NewHL = [NextB#block.indep_hash | HashList],
 			ar_storage:write_block_hash_list(BinID, NewHL),
-			ar_tx_search:update_tag_table(NextB),
 			app_ipfs:maybe_ipfs_add_txs(MinedTXs),
 			ar_miner_log:mined_block(NextB#block.indep_hash),
 			ar:report_console(
@@ -573,11 +579,17 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				end,
 				PotentialTXs
 			),
-			Recall = {RecallB#block.indep_hash, <<>>, <<>>},
+			Recall = {
+				RecallB#block.indep_hash,
+				RecallB#block.block_size,
+				<<>>,
+				<<>>
+			},
+			BDS = generate_block_data_segment(NextB, RecallB),
 			{NewGS, _} =
 				ar_gossip:send(
 					GS,
-					{new_block, self(), NextB#block.height, NextB, Recall}
+					{new_block, self(), NextB#block.height, NextB, BDS, Recall}
 				),
 			{ok, ar_node_utils:reset_miner(
 				StateNew#{
@@ -596,6 +608,17 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			)}
 	end.
 
+%% @doc Generates the data segment for the NextB where the RecallB is the recall
+%% block of the previous block to NextB.
+generate_block_data_segment(NextB, RecallB) ->
+	ar_block:generate_block_data_segment(
+		ar_storage:read_block(NextB#block.previous_block, NextB#block.hash_list),
+		RecallB,
+		lists:map(fun ar_storage:read_tx/1, NextB#block.txs),
+		NextB#block.reward_addr,
+		NextB#block.timestamp,
+		NextB#block.tags
+	).
 
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ id := BinID, hash_list := not_joined} = StateIn, NewHs) ->

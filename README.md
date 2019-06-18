@@ -24,21 +24,32 @@ documentation [here](ADT_README.md).
 For more information on the Arweave project and to read our lightpaper visit
 [arweave.org](https://www.arweave.org/).
 
-# Ubuntu/Debian Linux Quickstart
-You can download the Arweave codebase, all dependencies and start mining
-straight away by opening a terminal and running:
+# Mining
 
-`curl https://raw.githubusercontent.com/ArweaveTeam/arweave/master/install.sh | bash && cd arweave && ./arweave-server mine peer xxx.xxx.xxx.xxx peer yyy.yyy.yyy.yyy`
+To start mining, follow the instructions in the [mining guide](https://docs.arweave.org/info/mining/mining-guide).
 
-Don’t forget to change xxx.xxx.xxx.xxx, yyy.yyy.yyy.yyy, etc to the IP addresses you want to peer with.
+# Development
 
-# TNT/NO-VLNS
-TNT (Tiny Network Tests) and NO-VLNS (Never Off Very Large Network Simulator)
-are the two halves of Arweave's testing suite.
+## Prerequisites
 
-You can launch TNT by running `make tnt` and NO-VLNS by running `make no-vlns`.
+- Erlang OTP v20
+- GNU Make
 
-More information on [TNT](https://medium.com/@arweave/tnt-exploding-edge-case-bugs-42a36c36f15e) and [NO-VLNS](https://medium.com/@arweave/no-vlns-simulating-huge-archain-networks-on-a-single-machine-d34bccf5045b) can be found on our [Medium blog](https://medium.com/@arweave).
+## Run tests
+
+```
+make test
+```
+
+The command launches two Erlang VMs connected in the distributed mode. The master VM runs an HTTP server on the port
+1984. The slave VM uses the port 1983. The data folders are `data_test_master` and `data_test_slave` accordingly. The tests
+that do not depend on two VMs are run against the master VM.
+
+## Build and enter shell
+
+```
+make session
+```
 
 # App Developer Toolkit (ADT)
 You can find separate documentation for the App Developer Toolkit [here](ADT_README.md).

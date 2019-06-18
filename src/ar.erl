@@ -5,16 +5,17 @@
 -module(ar).
 
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
--export([tests/0, tests/1, test_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
+-export([tests/0, tests/1, tests/2]).
+-export([test_with_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
 -export([start_for_tests/0]).
--export([parse/1]).
 
 -include("ar.hrl").
+-include("ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% A list of the modules to test.
@@ -25,13 +26,13 @@
 	[
 		ar,
 		ar_block_index,
+		ar_config_tests,
 		ar_deep_hash,
 		ar_inflation,
 		ar_node_tests,
 		ar_util,
 		ar_cleanup,
 		ar_merkle,
-		ar_meta_db,
 		ar_storage,
 		ar_serialize,
 		ar_services,
@@ -49,7 +50,11 @@
 		ar_block,
 		ar_tx_db,
 		app_ipfs_tests,
-		app_ipfs_daemon_server_tests
+		app_ipfs_daemon_server_tests,
+		ar_firewall_distributed_tests,
+		ar_fork_recovery_tests,
+		% ar_meta_db must be the last in the list since it resets global configuraiton
+		ar_meta_db
 	]
 ).
 
@@ -64,34 +69,6 @@
 
 %% All of the apps that have tests associated with them
 -define(APP_TEST_MODS, [app_chirper]).
-
-%% Start options with default values.
--record(opts, {
-	benchmark = false,
-	port = ?DEFAULT_HTTP_IFACE_PORT,
-	init = false,
-	mine = false,
-	peers = [],
-	polling = false,
-	auto_join = true,
-	clean = false,
-	diff = ?DEFAULT_DIFF,
-	mining_addr = false,
-	max_miners = ?NUM_MINING_PROCESSES,
-	new_key = false,
-	load_key = false,
-	pause = true,
-	disk_space = ar_storage:calculate_disk_space(),
-	used_space = ar_storage:calculate_used_space(),
-	start_hash_list = undefined,
-	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
-	internal_api_secret = not_set,
-	enable = [],
-	disable = [],
-	content_policies = [],
-	ipfs_ro = false,
-	ipfs_getsend = false
-}).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
 main() -> main("").
@@ -110,11 +87,13 @@ main("") ->
 			)
 		end,
 		[
+			{"config_file (path)", "Load configuration from specified file."},
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_hash_list (file)", "Start the node from a given block."},
+			{"start_hash_list (hash)", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
+			{"data_dir", "The directory for storing the weave and the wallets (when generated)."},
 			{"polling", "Poll peers for new blocks. Useful in environments where "
 						"port forwarding is not possible."},
 			{"clean", "Clear the block cache before starting."},
@@ -128,6 +107,8 @@ main("") ->
 			{"ipfs_ro", "Start the IPFS listener."},
 			{"ipfs_getsend", "Start the IPFS->AR server."},
 			{"content_policy (file)", "Load a content policy file for the node."},
+			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
+											 "One Base64 encoded transaction ID per line."},
 			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
 			{"benchmark", "Run a mining performance benchmark."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
@@ -140,79 +121,109 @@ main("") ->
 				)
 			},
 			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
-			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."}
+			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."},
+			{"gateway (port) (domain)", "Run a gateway on the specified port and domain"},
+			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
+			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."}
 		]
 	),
 	erlang:halt();
 main(Args) ->
-	start(parse(Args)).
+	start(parse_config_file(Args, [], #config{})).
 
-parse(Args) -> parse(Args, #opts{}).
-parse([], O) -> O;
-parse(["init"|Rest], O) ->
-	parse(Rest, O#opts { init = true });
-parse(["mine"|Rest], O) ->
-	parse(Rest, O#opts { mine = true });
-parse(["peer", Peer|Rest], O = #opts { peers = Ps }) ->
-	parse(Rest, O#opts { peers = [ar_util:parse_peer(Peer)|Ps] });
-parse(["content_policy", F|Rest], O = #opts { content_policies = Fs }) ->
-	parse(Rest, O#opts { content_policies = [F|Fs] });
-parse(["port", Port|Rest], O) ->
-	parse(Rest, O#opts { port = list_to_integer(Port) });
-parse(["diff", Diff|Rest], O) ->
-	parse(Rest, O#opts { diff = list_to_integer(Diff) });
-parse(["polling"|Rest], O) ->
-	parse(Rest, O#opts { polling = true });
-parse(["clean"|Rest], O) ->
-	parse(Rest, O#opts { clean = true });
-parse(["no_auto_join"|Rest], O) ->
-	parse(Rest, O#opts { auto_join = false });
-parse(["mining_addr", Addr|Rest], O) ->
-	parse(Rest, O#opts { mining_addr = ar_util:decode(Addr) });
-parse(["max_miners", Num|Rest], O) ->
-	parse(Rest, O#opts { max_miners = list_to_integer(Num) });
-parse(["new_mining_key"|Rest], O)->
-	parse(Rest, O#opts { new_key = true });
-parse(["disk_space", Size|Rest], O) ->
-	parse(Rest, O#opts { disk_space = (list_to_integer(Size)*1024*1024*1024) });
-parse(["load_mining_key", File|Rest], O)->
-	parse(Rest, O#opts { load_key = File });
-parse(["ipfs_ro"|Rest], O)->
-	parse(Rest, O#opts { ipfs_ro = true });
-parse(["ipfs_getsend"|Rest], O)->
-	parse(Rest, O#opts { ipfs_getsend = true });
-parse(["start_hash_list", IndepHash|Rest], O)->
-	parse(Rest, O#opts { start_hash_list = ar_util:decode(IndepHash) });
-parse(["benchmark"|Rest], O)->
-	parse(Rest, O#opts { benchmark = true });
-parse(["auto_update", "false" | Rest], O) ->
-	parse(Rest, O#opts { auto_update = false });
-parse(["auto_update", Addr | Rest], O) ->
-	parse(Rest, O#opts { auto_update = ar_util:decode(Addr) });
-parse(["internal_api_secret", Secret | Rest], O) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
-	parse(Rest, O#opts { internal_api_secret = list_to_binary(Secret)});
-parse(["internal_api_secret", _ | _], _) ->
+parse_config_file(["config_file", Path | Rest], Skipped, _) ->
+	{ok, Config} = read_config_from_file(Path),
+	parse_config_file(Rest, Skipped, Config);
+parse_config_file([Arg | Rest], Skipped, Config) ->
+	parse_config_file(Rest, [Arg | Skipped], Config);
+parse_config_file([], Skipped, Config) ->
+	Args = lists:reverse(Skipped),
+	parse_cli_args(Args, Config).
+
+read_config_from_file(Path) ->
+	case file:read_file(Path) of
+		{ok, FileData} -> ar_config:parse(FileData);
+		{error, _} -> {error, file_unreadable, Path}
+	end.
+
+parse_cli_args([], C) -> C;
+parse_cli_args(["init"|Rest], C) ->
+	parse_cli_args(Rest, C#config { init = true });
+parse_cli_args(["mine"|Rest], C) ->
+	parse_cli_args(Rest, C#config { mine = true });
+parse_cli_args(["peer", Peer|Rest], C = #config { peers = Ps }) ->
+	parse_cli_args(Rest, C#config { peers = [ar_util:parse_peer(Peer)|Ps] });
+parse_cli_args(["content_policy", File|Rest], C = #config { content_policy_files = Files }) ->
+	parse_cli_args(Rest, C#config { content_policy_files = [File|Files] });
+parse_cli_args(["transaction_blacklist", File|Rest], C = #config { transaction_blacklist_files = Files } ) ->
+	parse_cli_args(Rest, C#config { transaction_blacklist_files = [File|Files] });
+parse_cli_args(["port", Port|Rest], C) ->
+	parse_cli_args(Rest, C#config { port = list_to_integer(Port) });
+parse_cli_args(["data_dir", DataDir|Rest], C) ->
+	parse_cli_args(Rest, C#config { data_dir = DataDir });
+parse_cli_args(["diff", Diff|Rest], C) ->
+	parse_cli_args(Rest, C#config { diff = list_to_integer(Diff) });
+parse_cli_args(["polling"|Rest], C) ->
+	parse_cli_args(Rest, C#config { polling = true });
+parse_cli_args(["clean"|Rest], C) ->
+	parse_cli_args(Rest, C#config { clean = true });
+parse_cli_args(["no_auto_join"|Rest], C) ->
+	parse_cli_args(Rest, C#config { auto_join = false });
+parse_cli_args(["mining_addr", Addr|Rest], C) ->
+	parse_cli_args(Rest, C#config { mining_addr = ar_util:decode(Addr) });
+parse_cli_args(["max_miners", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { max_miners = list_to_integer(Num) });
+parse_cli_args(["new_mining_key"|Rest], C)->
+	parse_cli_args(Rest, C#config { new_key = true });
+parse_cli_args(["disk_space", Size|Rest], C) ->
+	parse_cli_args(Rest, C#config { disk_space = (list_to_integer(Size)*1024*1024*1024) });
+parse_cli_args(["load_mining_key", File|Rest], C) ->
+	parse_cli_args(Rest, C#config { load_key = File });
+parse_cli_args(["ipfs_ro" | Rest], C) ->
+	parse_cli_args(Rest, C#config { ipfs_ro = true });
+parse_cli_args(["ipfs_getsend" | Rest], C) ->
+	parse_cli_args(Rest, C#config { ipfs_getsend = true });
+parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
+	parse_cli_args(Rest, C#config { start_hash_list = ar_util:decode(BHLHash) });
+parse_cli_args(["benchmark"|Rest], C)->
+	parse_cli_args(Rest, C#config { benchmark = true });
+parse_cli_args(["auto_update", "false" | Rest], C) ->
+	parse_cli_args(Rest, C#config { auto_update = false });
+parse_cli_args(["auto_update", Addr | Rest], C) ->
+	parse_cli_args(Rest, C#config { auto_update = ar_util:decode(Addr) });
+parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+	parse_cli_args(Rest, C#config { internal_api_secret = list_to_binary(Secret)});
+parse_cli_args(["internal_api_secret", _ | _], _) ->
 	io:format(
 		"~nThe internal_api_secret must be at least ~B characters long.~n~n",
 		[?INTERNAL_API_SECRET_MIN_LEN]
 	),
 	erlang:halt();
-parse(["enable", Feature | Rest ], O = #opts { enable = Enabled }) ->
-	parse(Rest, O#opts { enable = [ list_to_atom(Feature) | Enabled ] });
-parse(["disable", Feature | Rest ], O = #opts { disable = Disabled }) ->
-	parse(Rest, O#opts { disable = [ list_to_atom(Feature) | Disabled ] });
-parse([Arg|_Rest], _O) ->
+parse_cli_args(["enable", Feature | Rest ], C = #config { enable = Enabled }) ->
+	parse_cli_args(Rest, C#config { enable = [ list_to_atom(Feature) | Enabled ] });
+parse_cli_args(["disable", Feature | Rest ], C = #config { disable = Disabled }) ->
+	parse_cli_args(Rest, C#config { disable = [ list_to_atom(Feature) | Disabled ] });
+parse_cli_args(["gateway", Port, Domain | Rest ], C = #config { gateway = off }) ->
+	parse_cli_args(Rest, C#config { gateway = {on, list_to_integer(Port), list_to_binary(Domain)} });
+parse_cli_args(["custom_domain", Domain|Rest], C = #config { custom_domains = Ds }) ->
+	parse_cli_args(Rest, C#config { custom_domains = [ list_to_binary(Domain) | Ds ] });
+parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
+parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s. Terminating.~n~n", [Arg]),
 	erlang:halt().
 
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
-start(Port) when is_integer(Port) -> start(#opts { port = Port });
-start(#opts { benchmark = true }) ->
+start(Port) when is_integer(Port) -> start(#config { port = Port });
+start(#config { benchmark = true, max_miners = MaxMiners }) ->
+	ar_meta_db:start(),
+	ar_meta_db:put(max_miners, MaxMiners),
 	ar_benchmark:run();
 start(
-	#opts {
+	#config {
 		port = Port,
+		data_dir = DataDir,
 		init = Init,
 		peers = Peers,
 		mine = Mine,
@@ -232,37 +243,52 @@ start(
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
-		content_policies = Policies,
+		content_policy_files = ContentPolicyFiles,
+		transaction_blacklist_files = TransactionBlacklistFiles,
+		gateway = GatewayOpts,
+		custom_domains = GatewayCustomDomains,
+		requests_per_minute_limit = RequestsPerMinuteLimit,
 		ipfs_ro = IPFSro,
 		ipfs_getsend = IPFSgs
 	}) ->
-	% Start the logging system.
+	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
-
-	ar_storage:start(),
-	% Optionally clear the block cache
-	if Clean -> ar_storage:clear(); true -> do_nothing end,
-	%register prometheus stats collector,
-	%prometheus collector app is started at cmdline
-	application:ensure_started(prometheus),
-	prometheus_registry:register_collector(prometheus_process_collector),
-	prometheus_registry:register_collector(ar_metrics_collector),
-	% Start apps which we depend on.
-	inets:start(),
+	%% Fill up ar_meta_db.
 	ar_meta_db:start(),
-	ar_tx_db:start(),
-	ar_key_db:start(),
-	ar_track_tx_db:start(),
-	ar_miner_log:start(),
+	ar_meta_db:put(data_dir, DataDir),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(max_miners, MaxMiners),
-	ar_meta_db:put(content_policies, Policies),
+	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
+	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
+	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
+	%% Prepare the storage for operation.
+	ar_storage:start(),
+	%% Optionally clear the block cache.
+	if Clean -> ar_storage:clear(); true -> do_nothing end,
+	%% Register prometheus stats collector.
+	application:set_env(prometheus, cowboy_instrumenter, [
+		{request_labels, [http_method, route, reason, status_class]},
+		{error_labels, [http_method, route, reason, error]},
+		{labels_module, ar_prometheus_cowboy_labels}
+	]),
+	ok = application:ensure_started(prometheus),
+	{ok, _} = application:ensure_all_started(prometheus_cowboy),
+	prometheus_registry:register_collector(prometheus_process_collector),
+	prometheus_registry:register_collector(ar_metrics_collector),
+	%% Start Cowboy and its dependencies
+	{ok, _} = application:ensure_all_started(cowboy),
+	%% Start other apps which we depend on.
+	inets:start(),
+	ar_tx_db:start(),
+	ar_key_db:start(),
+	ar_track_tx_db:start(),
+	ar_miner_log:start(),
 	ar_storage:update_directory_size(),
-	% Determine mining address.
+	%% Determine the mining address.
 	case {Addr, LoadKey, NewKey} of
 		{false, false, false} ->
 			{_, Pub} = ar_wallet:new_keyfile(),
@@ -318,7 +344,8 @@ start(
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
-					_ -> ar_storage:read_hash_list(ar_util:decode(BHL))
+					_ ->
+						ar_storage:read_block_hash_list(BHL)
 				end,
 				0,
 				MiningAddress,
@@ -341,7 +368,7 @@ start(
 		}
 	),
 	ar_node:add_peers(Node, SearchNode),
-	% Start a bridge, add it to the node's peer list.
+	%% Start a bridge, add it to the node's peer list.
 	{ok, Bridge} = supervisor:start_child(
 		Supervisor,
 		{
@@ -354,7 +381,7 @@ start(
 		}
 	),
 	ar_node:add_peers(Node, Bridge),
-	% Initialise the auto-updater, if enabled
+	%% Initialise the auto-updater, if enabled.
 	case AutoUpdate of
 		false ->
 			do_nothing;
@@ -362,7 +389,7 @@ start(
 			AutoUpdateNode = app_autoupdate:start(AutoUpdateAddr),
 			ar_node:add_peers(Node, AutoUpdateNode)
 	end,
-	% Store enabled features
+	%% Store enabled features.
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	PrintMiningAddress = case MiningAddress of
@@ -384,17 +411,24 @@ start(
 			{retarget_blocks, ?RETARGET_BLOCKS}
 		]
 	),
-	% Start the first node in the gossip network (with HTTP interface)
-	ar_http_iface_server:start(
-		Port,
-		Node,
-		SearchNode,
-		undefined,
-		Bridge
-	),
+	%% Start the first node in the gossip network (with HTTP interface).
+	ar_http_iface_server:start(Port, [
+		{http_entrypoint_node, Node},
+		{http_search_node, SearchNode},
+		{http_bridge_node, Bridge}
+	]),
+	case GatewayOpts of
+		{on, GatewayPort, GatewayDomain} ->
+			ar_gateway_server:start(GatewayPort, GatewayDomain, GatewayCustomDomains);
+		off ->
+			do_nothing
+	end,
 	case Polling of
-		true -> ar_poller:start(Node, Peers);
-		false -> do_nothing
+		true ->
+			ar_meta_db:put(polling_mode, true),
+			ar_poller:start(Node, Peers);
+		false ->
+			do_nothing
 	end,
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case IPFSro of
@@ -415,10 +449,18 @@ generate_logfile_name() ->
 	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
 	lists:flatten(
 		io_lib:format(
-			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b.log",
-			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se]
+			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b~s.log",
+			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se, maybe_node_postfix()]
 		)
 	).
+
+maybe_node_postfix() ->
+	case init:get_argument(sname) of
+		{ok, [[Sname]]} ->
+			"-" ++ Sname;
+		_ ->
+			""
+	end.
 
 %% @doc Run the erlang make system on the project.
 rebuild() ->
@@ -472,7 +514,9 @@ init(Args) ->
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
-	ar_storage:ensure_directories(),
+	tests(?CORE_TEST_MODS, #config {}).
+
+tests(Mods, Config) when is_list(Mods) ->
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(
@@ -482,21 +526,24 @@ tests() ->
 				]
 			);
 		_ ->
-			start_for_tests(),
-			eunit:test({timeout, ?TEST_TIMEOUT, ?CORE_TEST_MODS}, [verbose])
+			start_for_tests(Config),
+			eunit:test({timeout, ?TEST_TIMEOUT, Mods}, [verbose])
 	end.
 
 start_for_tests() ->
-	start(#opts { peers = [], pause = false}).
+	start_for_tests(#config { }).
 
-%% @doc Run the TNT test system, printing coverage results.
-test_coverage() ->
-	ar_coverage:analyse(fun tests/0).
+start_for_tests(Config) ->
+	start(Config#config { peers = [], pause = false, data_dir = "data_test_master"}).
 
 %% @doc Run the tests for a single module.
 tests(Mod) ->
 	ar_storage:ensure_directories(),
 	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
+
+%% @doc Run the tests, printing coverage results.
+test_with_coverage() ->
+	ar_coverage:analyse(fun tests/0).
 
 %% @doc Run tests on the apps.
 test_apps() ->
@@ -566,7 +613,8 @@ console(Report) ->
 console(Format, Data) -> info(Format, Data).
 -else.
 console(Format, Data) ->
-	io:format(Format, Data),
+	WithNewLine = iolist_to_binary([Format, "~n"]),
+	io:format(WithNewLine, Data),
 	info(Format, Data).
 -endif.
 
@@ -628,17 +676,17 @@ commandline_parser_test_() ->
 		Addr = crypto:strong_rand_bytes(32),
 		Tests =
 			[
-				{"peer 1.2.3.4 peer 5.6.7.8:9", #opts.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
-				{"mine", #opts.mine, true},
-				{"port 22", #opts.port, 22},
-				{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #opts.mining_addr, Addr}
+				{"peer 1.2.3.4 peer 5.6.7.8:9", #config.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
+				{"mine", #config.mine, true},
+				{"port 22", #config.port, 22},
+				{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #config.mining_addr, Addr}
 			],
 		X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
 		ar:d({x, X}),
-		O = parse(X),
+		C = parse_cli_args(X, #config{}),
 		lists:foreach(
 			fun({_, Index, Value}) ->
-				?assertEqual(element(Index, O), Value)
+				?assertEqual(element(Index, C), Value)
 			end,
 			Tests
 		)

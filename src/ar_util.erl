@@ -5,8 +5,8 @@
 -module(ar_util).
 
 -export([pick_random/1, pick_random/2]).
--export([encode/1, decode/1]).
--export([parse_peer/1, parse_port/1, format_peer/1, unique/1, count/2]).
+-export([encode/1, decode/1, safe_decode/1]).
+-export([parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_hash_list/2, hash_from_hash_list/2]).
 -export([get_recall_hash/2, get_recall_hash/3]).
@@ -40,12 +40,24 @@ pick_random(Xs) ->
 encode(Bin) ->
 	base64url:encode(Bin).
 
-%% @doc Decode a URL safe base64 to binary.
+%% @doc Try to decode a URL safe base64 into a binary or throw an error when
+%% invalid.
 decode([]) -> [];
-decode(Bin) when is_list(Bin) ->
-	decode(list_to_binary(Bin));
+decode(List) when is_list(List) ->
+	decode(list_to_binary(List));
 decode(Bin) when is_binary(Bin) ->
 	base64url:decode(Bin).
+
+%% @doc Safely decode a URL safe base64 into a binary returning an ok or error
+%% tuple.
+safe_decode(E) ->
+	try
+		D = decode(E),
+		{ok, D}
+	catch
+		_:_ ->
+			{error, invalid}
+	end.
 
 %% @doc Reverse a binary
 rev_bin(Bin) ->
@@ -86,12 +98,14 @@ get_head_block(not_joined) -> unavailable;
 get_head_block(BHL = [IndepHash|_]) ->
 	ar_storage:read_block(IndepHash, BHL).
 
-%% @doc find the hash of a recall block.
-get_recall_hash(B, HashList) ->
+%% @doc find the hash of a recall block. If BlockOrHash is a hash, its block
+%% must be on disk already. TODO: Get rid of this requirement.
+get_recall_hash(BlockOrHash, HashList) ->
 	lists:nth(
-        1 + ar_weave:calculate_recall_block(B, HashList),
+        1 + ar_weave:calculate_recall_block(BlockOrHash, HashList),
         lists:reverse(HashList)
     ).
+
 get_recall_hash(_Height, Hash, []) -> Hash;
 get_recall_hash(0, Hash, _HastList) -> Hash;
 get_recall_hash(Height, Hash, HashList) ->
@@ -126,6 +140,13 @@ parse_port("") -> ?DEFAULT_HTTP_IFACE_PORT;
 parse_port(PortStr) ->
 	{ok, [Port], ""} = io_lib:fread(":~d", PortStr),
 	Port.
+
+safe_parse_peer(Peer) ->
+	try
+		{ok, parse_peer(Peer)}
+	catch
+		_:_ -> {error, invalid}
+	end.
 
 %% @doc Take a remote host ID in various formats, return a HTTP-friendly string.
 format_peer({A, B, C, D}) ->
@@ -265,7 +286,6 @@ recall_block_test() ->
 	ar_storage:write_block(B0),
 	Node ! {replace_block_list, B0},
 	receive after 300 -> ok end,
-	_B1 = ar_node:get_current_block(Node),
 	ar_node:mine(Node),
 	receive after 300 -> ok end,
 	B3 = ar_node:get_current_block(Node),

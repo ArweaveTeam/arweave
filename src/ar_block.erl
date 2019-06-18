@@ -1,8 +1,8 @@
 -module(ar_block).
 -export([block_to_binary/1, block_field_size_limit/1]).
 -export([get_recall_block/5]).
--export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/2]).
--export([verify_height/2, verify_last_retarget/1, verify_previous_block/2]).
+-export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/1]).
+-export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([verify_cumulative_diff/2, verify_block_hash_list_merkle/2]).
 -export([hash_wallet_list/1]).
@@ -354,22 +354,41 @@ verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 	Indep == ar_weave:indep_hash(Block).
 
 %% @doc Verify the dependent hash of a given block is valid
-verify_dep_hash(NewB, BlockDataSegmentHash) ->
-	NewB#block.hash == BlockDataSegmentHash.
+verify_dep_hash(NewB, BDSHash) ->
+	NewB#block.hash == BDSHash.
 
-%% @doc Verify that the block was created within the last ten minutes
-verify_timestamp(Timestamp, NewB) ->
-	(NewB#block.timestamp - Timestamp) =< 600.
+%% @doc Verify the block timestamp is not too far in the future nor too far in
+%% the past. We calculate the maximum reasonable clock difference between any
+%% two nodes. This is a simplification since there is a chaining effect in the
+%% network which we don't take into account. Instead, we assume two nodes can
+%% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
+%% other.
+verify_timestamp(B) ->
+	CurrentTime = os:system_time(seconds),
+	MaxNodesClockDeviation = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
+	(
+		B#block.timestamp =< CurrentTime + MaxNodesClockDeviation
+		andalso
+		B#block.timestamp >= CurrentTime - lists:sum([
+			?MINING_TIMESTAMP_REFRESH_INTERVAL,
+			?MAX_BLOCK_PROPAGATION_TIME,
+			MaxNodesClockDeviation
+		])
+	).
 
 %% @doc Verify the height of the new block is the one higher than the
 %% current height.
 verify_height(NewB, OldB) ->
 	NewB#block.height == (OldB#block.height + 1).
 
-%% @doc Verify that the last retarget timestamp is older or as old as the
-%%	blocks timestamp.
-verify_last_retarget(NewB) ->
-	(NewB#block.timestamp - NewB#block.last_retarget) >= 0.
+%% @doc Verify the retarget timestamp on NewB is correct.
+verify_last_retarget(NewB, OldB) ->
+	case ar_retarget:is_retarget_height(NewB#block.height) of
+		true ->
+			NewB#block.last_retarget == NewB#block.timestamp;
+		false ->
+			NewB#block.last_retarget == OldB#block.last_retarget
+	end.
 
 %% @doc Verify that the previous_block hash of the new block is the indep_hash
 %% of the current block.
@@ -489,9 +508,15 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 				ar_node:get_hash_list(whereis(http_entrypoint_node))
 			}
 		of
-			{[], []} -> [];
-			{[], OldHashList} -> OldHashList;
-			{ShadowHashList, []} -> ShadowHashList;
+			{[], []} ->
+				ar:err([generate_block_from_shadow, generate_hash_list, node_hash_list_empty, block_hash_list_empty]),
+				[];
+			{[], OldHashList} ->
+				ar:err([generate_block_from_shadow, generate_hash_list, block_hash_list_empty]),
+				OldHashList;
+			{ShadowHashList, []} ->
+				ar:err([generate_block_from_shadow, generate_hash_list, node_hash_list_empty]),
+				ShadowHashList;
 			{ShadowHashList, OldHashList} ->
 				EarliestShadowHash = lists:last(ShadowHashList),
 				NewL =
@@ -501,7 +526,15 @@ generate_block_from_shadow(BShadow, RecallSize) ->
 					),
 				ShadowHashList ++
 					case NewL of
-						[] -> OldHashList;
+						[] ->
+							OldHashListLastBlocks = lists:sublist(OldHashList, ?STORE_BLOCKS_BEHIND_CURRENT),
+							ar:warn([
+								generate_block_from_shadow,
+								hash_list_no_intersection,
+								{block_hash_list, lists:map(fun ar_util:encode/1, ShadowHashList)},
+								{node_hash_list_last_blocks, lists:map(fun ar_util:encode/1, OldHashListLastBlocks)}
+							]),
+							OldHashList;
 						NewL -> tl(NewL)
 					end
 		end,
@@ -526,12 +559,10 @@ get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
 						ar_http_iface_client:get_full_block(OrigPeer, RecallHash, BHL),
 					case ?IS_BLOCK(FullBlock)  of
 						true ->
-							Recall = FullBlock#block {
+							ar_storage:write_full_block(FullBlock),
+							FullBlock#block {
 								txs = [ T#tx.id || T <- FullBlock#block.txs]
-							},
-							ar_storage:write_tx(FullBlock#block.txs),
-							ar_storage:write_block(Recall),
-							Recall;
+							};
 						false -> unavailable
 					end;
 				EncryptedRecall ->
@@ -544,12 +575,10 @@ get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
 					case FBlock of
 						unavailable -> unavailable;
 						FullBlock ->
-							Recall = FullBlock#block {
+							ar_storage:write_full_block(FullBlock),
+							FullBlock#block {
 								txs = [ T#tx.id || T <- FullBlock#block.txs]
-							},
-							ar_storage:write_tx(FullBlock#block.txs),
-							ar_storage:write_block(Recall),
-							Recall
+							}
 					end
 			end;
 		Recall -> Recall

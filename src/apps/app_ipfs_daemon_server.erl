@@ -16,9 +16,9 @@
 -endif.
 
 -type ar_wallet() :: tuple().
--type elli_http_method() :: 'GET' | 'POST'.
--type elli_http_request() :: term().
--type elli_http_response() :: {non_neg_integer(), list(), binary()}.
+-type cowboy_http_method() :: binary().
+-type cowboy_http_request() :: term().
+-type cowboy_http_response() :: {non_neg_integer(), map(), iolist(), cowboy_http_request()}.
 -type path() :: list(binary()).
 %	POST [<<"getsend">>]
 %	GET  [<<"balance">>, APIKey]
@@ -92,90 +92,93 @@ del_key(APIKey) ->
 	mnesia:activity(transaction, F).
 
 %% @doc Handle /api/ipfs/... calls.
--spec handle(atom(), list(binary()), elli_http_request()) ->
-	elli_http_response().
+-spec handle(atom(), path(), cowboy_http_request()) -> cowboy_http_response().
 handle(Method, Path, Req) ->
 	case validate_request(Method, Path, Req) of
 		{error, Response} ->
-			Response;
+			handle208(Response);
 		{ok, Args} ->
-			process_request(Method, Path, Args)
+			handle208(process_request(Method, Path, Args, Req))
 	end.
 
 %%% Private functions.
+
+% Cowlib does not yet support status code 208 properly.
+% See https://github.com/ninenines/cowlib/pull/79
+handle208({208, Headers, Body, Req}) ->
+	{<<"208 Already Reported">>, Headers, Body, Req};
+handle208(Response) -> Response.
 
 %%% Handlers
 
 %%% Validators
 
 %% @doc validate a request and return required info
--spec validate_request(elli_http_method(), path(), elli_http_request()) ->
-	{ok, list()} | {error, elli_http_response()}.
-validate_request('POST', [<<"getsend">>], Req) ->
+validate_request(<<"POST">>, [<<"getsend">>], Req) ->
 	case validate_req_fields_auth(Req, [<<"api_key">>, <<"ipfs_hash">>]) of
 		{ok, [APIKey, IPFSHash], Queue, Wallet} ->
 			case already_reported(APIKey, IPFSHash) of
 				{ok, _} ->
 					case current_status(APIKey) of
 						{ok, nofunds} ->
-							{error, {402, [], <<"Insufficient funds in wallet">>}};
+							{error, {402, #{}, <<"Insufficient funds in wallet">>, Req}};
 						_ ->
 							case length(queued_status(APIKey, pending)) > ?MAX_IPFSAR_PENDING of
 								true ->
-									{error, {429, [], <<"Too many requests pending">>}};
+									{error, {429, #{}, <<"Too many requests pending">>, Req}};
 								false ->
 									{ok, [APIKey, Queue, Wallet, IPFSHash]}
 							end
 					end;
 				{error, _} ->
-					{error, {208, [], <<"Hash already reported by this user">>}}
+					{error, {208, #{}, <<"Hash already reported by this user">>, Req}}
 			end;
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [APIKey, <<"status">>|Options], _Req) ->
-	case is_authorized(APIKey) of
+validate_request('GET', [APIKey, <<"status">>|Options], Req) ->
+	case is_authorized(APIKey, Req) of
 		{ok, _Queue, _Wallet} ->
 			ar:d({get_status, options, Options}),
 			{ok, parse_get_status_options(Options)};
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [APIKey, <<"balance">>], _Req) ->
-	case is_authorized(APIKey) of
+validate_request('GET', [APIKey, <<"balance">>], Req) ->
+	case is_authorized(APIKey, Req) of
 		{ok, _Queue, Wallet} ->
 			{ok, [Wallet]};
 		{error, _} ->
-			{error, {401, [], <<"Invalid API Key">>}}
+			{error, {401, #{}, <<"Invalid API Key">>, Req}}
 	end;
-validate_request(<<"DEL">>, [APIKey, _IPFSHash], _Req) ->
-	case is_authorized(APIKey) of
+validate_request(<<"DEL">>, [APIKey, _IPFSHash], Req) ->
+	case is_authorized(APIKey, Req) of
 		{ok, _Queue, _Wallet} ->
 			{ok, []};
 		{error, _} ->
-			{error, {401, [], <<"Invalid API Key">>}}
+			{error, {401, #{}, <<"Invalid API Key">>, Req}}
 	end;
-validate_request('GET', [APIKey, _IPFSHash, <<"tx">>], _Req) ->
-	case is_authorized(APIKey) of
+validate_request(<<"GET">>, [APIKey, _IPFSHash, <<"tx">>], Req) ->
+	case is_authorized(APIKey, Req) of
 		{ok, _Queue, _Wallet} ->
 			{ok, []};
 		{error, _} ->
-			{error, {401, [], <<"Invalid API Key">>}}
+			{error, {401, #{}, <<"Invalid API Key">>, Req}}
 	end;
-validate_request('GET', [_IPFSHash], _Req) ->
+validate_request(<<"GET">>, [_IPFSHash], _Req) ->
 	{ok, []};
-validate_request(_,_,_) ->
-	{error, {400, [], <<"Unrecognised request">>}}.
+validate_request(_, _, Req) ->
+	{error, {400, #{}, <<"Unrecognised request">>, Req}}.
 
 %%% Processors
 
 %% @doc Process a validated request.
--spec process_request(elli_http_method(), path(), list()) -> elli_http_response().
-process_request('POST', [<<"getsend">>], [APIKey, Queue, Wallet, IPFSHash]) ->
+-spec process_request(cowboy_http_method(), path(), list(), cowboy_http_request()) -> cowboy_http_response().
+process_request(<<"POST">>, [<<"getsend">>], [APIKey, Queue, Wallet, IPFSHash], Req) ->
 	status_update(APIKey, IPFSHash, pending),
 	spawn(?MODULE, ipfs_getter, [APIKey, Queue, Wallet, IPFSHash]),
-	{200, [], <<"Request sent to queue">>};
-process_request('GET', [APIKey, <<"status">>|_], [all, 0]) ->
+	{200, #{}, <<"Request sent to queue">>, Req};
+process_request(<<"GET">>, [APIKey, <<"status">>|_], [all, 0], Req) ->
 	ar:d({get_status, process, all}),
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			([T,H,S], Acc) ->
@@ -187,8 +190,8 @@ process_request('GET', [APIKey, <<"status">>|_], [all, 0]) ->
 		[],
 		queued_status(APIKey)))),
 	JsonB = ar_serialize:jsonify(JsonS),
-	{200, [], JsonB};
-process_request('GET', [APIKey, <<"status">>|_], [Limit, Offset]) ->
+	{200, #{}, JsonB, Req};
+process_request(<<"GET">>, [APIKey, <<"status">>|_], [Limit, Offset], Req) ->
 	ar:d({get_status, process, Limit, Offset}),
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			([T,H,S], Acc) ->
@@ -200,43 +203,43 @@ process_request('GET', [APIKey, <<"status">>|_], [Limit, Offset]) ->
 		[],
 		queued_status(APIKey)))),
 	JsonB = ar_serialize:jsonify(safe_offset_limit(JsonS, Offset, Limit)),
-	{200, [], JsonB};
-process_request('GET', [_APIKey, <<"balance">>], [Wallet]) ->
+	{200, #{}, JsonB, Req};
+process_request(<<"GET">>, [_APIKey, <<"balance">>], [Wallet], Req) ->
 	Address = ar_wallet:to_address(Wallet),
 	Balance = ar_node:get_balance(whereis(http_entrypoint_node), Wallet),
 	JsonS = {[
 		{address, ar_util:encode(Address)},
 		{balance, integer_to_binary(Balance)}]},
 	JsonB = ar_serialize:jsonify(JsonS),
-	{200, [], JsonB};
-process_request('GET', [IPFSHash], []) ->
+	{200, #{}, JsonB, Req};
+process_request(<<"GET">>, [IPFSHash], [], Req) ->
 	case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
 		[]  ->
-			{404, [], <<"IPFS hash not found.">>};
+			{404, #{}, <<"IPFS hash not found.">>, Req};
 		[TXID|_] ->
 			case ar_storage:lookup_tx_filename(TXID) of
 				unavailable ->
-					{404, [], <<"IPFS hash not found.">>};
+					{404, #{}, <<"IPFS hash not found.">>, Req};
 				Filename ->
 					TX = ar_storage:do_read_tx(Filename),
-					{200, [], TX#tx.data}
+					{200, #{}, TX#tx.data, Req}
 			end
 	end;
-process_request('GET', [APIKey, IPFSHash, <<"tx">>], []) ->
+process_request(<<"GET">>, [APIKey, IPFSHash, <<"tx">>], [], Req) ->
 	case lists:reverse(lists:sort(queued_status_hash(APIKey, IPFSHash))) of
 		[] ->
-			{404, [], <<"IPFS hash not found.">>};
+			{404, #{}, <<"IPFS hash not found.">>, Req};
 		[[_, mined]|_] ->
 			case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
-				[]  -> {404, [], <<"IPFS hash not found.">>};
-				TXs -> {200, [], lists:map(fun ar_util:encode/1, TXs)}
+				[]  -> {404, #{}, <<"IPFS hash not found.">>, Req};
+				TXs -> {200, #{}, lists:map(fun ar_util:encode/1, TXs), Req}
 			end;
 		[[T,S]|_] ->
 			JsonS = {[{timestamp, T}, {ipfs_hash, IPFSHash}, {status, S}]},
 			JsonB = ar_serialize:jsonify(JsonS),
-			{200, [], JsonB}
+			{200, #{}, JsonB, Req}
 	end;
-process_request(<<"DEL">>, [APIKey, IPFSHash], []) ->
+process_request(<<"DEL">>, [APIKey, IPFSHash], [], Req) ->
 	case queued_status_hash(APIKey, IPFSHash) of
 		[]          -> {404, [], <<"Hash not found.">>};
 		[_, mined]  -> {400, [], <<"Hash already mined.">>};
@@ -246,10 +249,10 @@ process_request(<<"DEL">>, [APIKey, IPFSHash], []) ->
 				mnesia_del_obj(#ipfsar_ipfs_status{
 					api_key=APIKey, timestamp=T, ipfs_hash=IPFSHash, status=S})
 				end, Found),
-			{200, [], <<"Removed from queue.">>}
+			{200, #{}, <<"Removed from queue.">>, Req}
 	end;
-process_request(_,_,_) ->
-	{404, [], <<"Request not recognised">>}.
+process_request(_, _, _, Req) ->
+	{404, #{}, <<"Request not recognised">>, Req}.
 
 %%% Helpers
 
@@ -364,10 +367,10 @@ is_app_running() ->
 	end.
 
 %% @doc Check if the API key is on the books. If so, return their wallet.
-is_authorized(APIKey) ->
+is_authorized(APIKey, Req) ->
 	case is_app_running() of
 		true  -> ?MODULE:get_key_q_wallet(APIKey);
-		false -> {error, {503, [], <<"Service not running">>}}
+		false -> {error, {503, #{}, <<"Service not running">>, Req}}
 	end.
 
 maybe_restart_queue(APIKey, Queue, Wallet) ->
@@ -503,17 +506,17 @@ validate_req_fields_auth(Req, FieldsRequired) ->
 		{ok, Struct} ->
 			case all_fields(Struct, FieldsRequired) of
 				{ok, APIKey, ReqFields} ->
-					case is_authorized(APIKey) of
+					case is_authorized(APIKey, Req) of
 						{ok, Queue, Wallet} ->
 								{ok, ReqFields, Queue, Wallet};
 						{error, _} ->
-							{error, {401, [], <<"Invalid API Key">>}}
+							{error, {401, #{}, <<"Invalid API Key">>, Req}}
 					end;
 				error ->
-					{error, {400, [], <<"Invalid json fields">>}}
+					{error, {400, #{}, <<"Invalid json fields">>, Req}}
 			end;
 		{error, _} ->
-			{error, {400, [], <<"Invalid json">>}}
+			{error, {400, #{}, <<"Invalid json">>, Req}}
 	end.
 
 mnesia_create_table(Name, Type, Info) ->

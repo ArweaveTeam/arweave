@@ -4,12 +4,12 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/3, send_new_block/5, send_new_block/6, send_new_tx/2, get_block/3]).
+-export([send_new_block/4, send_new_tx/2, get_block/3]).
 -export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
--export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1, has_tx/2]).
--export([get_time/1, get_height/1]).
+-export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
+-export([get_time/2, get_height/1]).
 -export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
 -export([get_current_block/1, get_current_block/2]).
 
@@ -17,13 +17,14 @@
 
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
-	if
-		byte_size(TX#tx.data < 50000) ->
+	case byte_size(TX#tx.data) of
+		_Size when _Size < 50000 ->
 			do_send_new_tx(Peer, TX);
-		true ->
+		_ ->
 			case has_tx(Peer, TX#tx.id) of
-				false -> do_send_new_tx(Peer, TX);
-				true -> not_sent
+				doesnt_have_tx -> do_send_new_tx(Peer, TX);
+				has_tx -> not_sent;
+				error -> not_sent
 			end
 	end.
 
@@ -33,7 +34,8 @@ do_send_new_tx(Peer, TX) ->
 		Peer,
 		"/tx",
 		p2p_headers(),
-		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+		3 * 1000
 	).
 
 %% @doc Check whether a peer has a given transaction
@@ -43,48 +45,21 @@ has_tx(Peer, ID) ->
 			<<"GET">>,
 			Peer,
 			"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
-			p2p_headers()
+			p2p_headers(),
+			[],
+			3 * 1000
 		)
 	of
-		{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
-		{ok, {{<<"202">>, _}, _, _, _, _}} -> true;
-		_ -> false
+		{ok, {{<<"200">>, _}, _, _, _, _}} -> has_tx;
+		{ok, {{<<"202">>, _}, _, _, _, _}} -> has_tx; % In the mempool
+		{ok, {{<<"404">>, _}, _, _, _, _}} -> doesnt_have_tx;
+		_ -> error
 	end.
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, NewB, RecallB) ->
-	case ar_key_db:get(RecallB#block.indep_hash) of
-		[{Key, Nonce}] ->
-			send_new_block(
-				Peer,
-				NewB,
-				RecallB,
-				Key,
-				Nonce
-			);
-		_ ->
-			send_new_block(
-				Peer,
-				NewB,
-				RecallB,
-				<<>>,
-				<<>>
-			)
-	end.
-send_new_block(Peer, NewB, RecallB, Key, Nonce) ->
-	BlockDataSegment = ar_block:generate_block_data_segment(
-		ar_storage:read_block(NewB#block.previous_block, NewB#block.hash_list),
-		RecallB,
-		lists:map(fun ar_storage:read_tx/1, NewB#block.txs),
-		NewB#block.reward_addr,
-		NewB#block.timestamp,
-		NewB#block.tags
-	),
-	send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment).
-
-send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment) ->
-	HashList =
+send_new_block(Peer, NewB, BDS, {RecallIndepHash, RecallSize, Key, Nonce}) ->
+	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
 			lists:sublist(
@@ -93,34 +68,33 @@ send_new_block(Peer, NewB, RecallB, Key, Nonce, BlockDataSegment) ->
 				?STORE_BLOCKS_BEHIND_CURRENT
 			)
 		),
-	{TempJSONStruct} =
+	{SmallBlockProps} =
 		ar_serialize:block_to_json_struct(
 			NewB#block { wallet_list = [] }
 		),
-	BlockJSON =
-		{
-			[{<<"hash_list">>, HashList }|TempJSONStruct]
-		},
+	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | SmallBlockProps],
+	PostProps = [
+		{<<"new_block">>, {BlockShadowProps}},
+		{<<"recall_block">>, ar_util:encode(RecallIndepHash)},
+		{<<"recall_size">>, RecallSize},
+		%% Add the P2P port field to be backwards compatible with nodes
+		%% running the old version of the P2P port feature.
+		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
+		{<<"key">>, ar_util:encode(Key)},
+		{<<"nonce">>, ar_util:encode(Nonce)}
+	],
+	OptionalProps = case BDS of
+		no_data_segment ->
+			[];
+		_ ->
+			[{<<"block_data_segment">>, ar_util:encode(BDS)}]
+	end,
 	ar_httpc:request(
 		<<"POST">>,
 		Peer,
 		"/block",
 		p2p_headers(),
-		ar_serialize:jsonify(
-			{
-				[
-					{<<"new_block">>, BlockJSON},
-					{<<"recall_block">>, ar_util:encode(RecallB#block.indep_hash)},
-					{<<"recall_size">>, RecallB#block.block_size},
-					{<<"block_data_segment">>, ar_util:encode(BlockDataSegment)},
-					%% Add the P2P port field to be backwards compatible with nodes
-					%% running the old version of the P2P port feature.
-					{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
-					{<<"key">>, ar_util:encode(Key)},
-					{<<"nonce">>, ar_util:encode(Nonce)}
-				]
-			}
-		),
+		ar_serialize:jsonify({OptionalProps ++ PostProps}),
 		3 * 1000
 	).
 
@@ -210,7 +184,9 @@ get_full_block(Peer, ID, BHL) ->
 			<<"GET">>,
 			Peer,
 			prepare_block_id(ID),
-			p2p_headers()
+			p2p_headers(),
+			[],
+			10 * 1000
 		),
 		BHL
 	).
@@ -289,7 +265,9 @@ get_tx(Peer, Hash) ->
 			<<"GET">>,
 			Peer,
 			"/tx/" ++ binary_to_list(ar_util:encode(Hash)),
-			p2p_headers()
+			p2p_headers(),
+			[],
+			10 * 1000
 		)
 	).
 
@@ -300,16 +278,38 @@ get_tx_data(Peer, Hash) ->
 			<<"GET">>,
 			Peer,
 			"/" ++ binary_to_list(ar_util:encode(Hash)),
-			p2p_headers()
+			p2p_headers(),
+			[],
+			10 * 1000
 		),
 	Body.
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
-get_time(Peer) ->
-	case ar_httpc:request(<<"GET">>, Peer, "/time", p2p_headers()) of
-		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			binary_to_integer(Body);
-		_ -> unknown
+get_time(Peer, Timeout) ->
+	Parent = self(),
+	Ref = make_ref(),
+	Child = spawn_link(
+		fun() ->
+			Resp = ar_httpc:request(<<"GET">>, Peer, "/time", p2p_headers(), <<>>, Timeout + 100),
+			Parent ! {get_time_response, Ref, Resp}
+		end
+	),
+	receive
+		{get_time_response, Ref, Response} ->
+			case Response of
+				{ok, {{<<"200">>, _}, _, Body, Start, End}} ->
+					Time = binary_to_integer(Body),
+					RequestTime = ceil((End - Start) / 1000000),
+					%% The timestamp returned by the HTTP daemon is floored second precision. Thus the
+					%% upper bound is increased by 1.
+					{ok, {Time - RequestTime, Time + RequestTime + 1}};
+				_ ->
+					{error, Response}
+			end
+		after Timeout ->
+			%% Note: the fusco client (used in ar_httpc:request) is not shutdown properly this way.
+			exit(Child, {shutdown, timeout}),
+			{error, timeout}
 	end.
 
 %% @doc Retreive all valid transactions held that have not yet been mined into
@@ -408,14 +408,15 @@ handle_block_response(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
 	case ?IS_BLOCK(B) of
 		true ->
 			WalletList =
-				case is_binary(WL = B#block.wallet_list) of
-					true ->
+				case B#block.wallet_list of
+					WL when is_list(WL) -> WL;
+					WL when is_binary(WL) ->
 						case ar_storage:read_wallet_list(WL) of
+							{ok, ReadWL} ->
+								ReadWL;
 							{error, _} ->
-								get_wallet_list(Peer, B#block.indep_hash);
-							ReadWL -> ReadWL
-						end;
-					false -> WL
+								get_wallet_list(Peer, B#block.indep_hash)
+						end
 				end,
 			HashList =
 				case B#block.hash_list of

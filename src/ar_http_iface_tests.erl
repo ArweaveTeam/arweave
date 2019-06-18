@@ -29,25 +29,26 @@ get_tx_reward_test() ->
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
 	% Hand calculated result for 1000 bytes.
-	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff),
+	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff - 1),
 	ExpectedPrice = ar_http_iface_client:get_tx_reward({127, 0, 0, 1, 1984}, 1000).
 
 %% @doc Ensure that objects are only re-gossiped once.
 single_regossip_test_() ->
-	{ timeout, 60, fun() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
-	TX = ar_tx:new(<<"TEST DATA">>),
-	Responses =
-		ar_util:pmap(
-			fun(_) ->
-				ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
-			end,
-			lists:seq(1, 100)
-		),
-	1 = length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ])
+	{timeout, 60, fun() ->
+		ar_storage:clear(),
+		[B0] = ar_weave:init([]),
+		Node1 = ar_node:start([], [B0]),
+		ar_http_iface_server:reregister(Node1),
+		TX = ar_tx:new(),
+		Responses =
+			lists:map(
+				fun(_) ->
+					timer:sleep(rand:uniform(100)),
+					ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+				end,
+				lists:seq(1, 10)
+			),
+		?assertEqual(1, length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]))
 	end}.
 
 %% @doc Unjoined nodes should not accept blocks
@@ -68,16 +69,20 @@ post_block_to_unjoined_node_test() ->
 -spec node_blacklisting_get_spammer_test() -> ok.
 node_blacklisting_get_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
-	node_blacklisting_test_frame(RequestFun, ErrorResponse, ?MAX_REQUESTS + 1, 1).
+	node_blacklisting_test_frame(
+		RequestFun,
+		ErrorResponse,
+		(ar_meta_db:get(requests_per_minute_limit) div 2)+ 1,
+		1
+	).
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 -spec node_blacklisting_post_spammer_test() -> ok.
 node_blacklisting_post_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
-	%% send_new_tx sends two requests
-	NReqs = ?MAX_REQUESTS + 1,
-	NErrs = NReqs - (?MAX_REQUESTS div 2),
-	node_blacklisting_test_frame(RequestFun, ErrorResponse, NReqs, NErrs).
+	NErrors = 11,
+	NRequests = (ar_meta_db:get(requests_per_minute_limit) div 2) + NErrors,
+	node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, NErrors).
 
 %% @doc Given a label, return a fun and a message.
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
@@ -211,7 +216,10 @@ get_last_tx_single_test() ->
 
 %% @doc Check that we can qickly get the local time from the peer.
 get_time_test() ->
-	?assertEqual(os:system_time(second), ar_http_iface_client:get_time({127, 0, 0, 1, 1984})).
+	Now = os:system_time(second),
+	{ok, {Min, Max}} = ar_http_iface_client:get_time({127, 0, 0, 1, 1984}, 10 * 1000),
+	?assert(Min < Now),
+	?assert(Now < Max).
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
@@ -383,7 +391,7 @@ add_external_block_test_() ->
 		),
 		[BH2 | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			{127, 0, 0, 1, 1984},
 			ar_storage:read_block(BH2, ar_node:get_hash_list(Node2)),
 			BGen
@@ -427,32 +435,112 @@ add_external_block_with_bad_bds_test_() ->
 		{B1, _} = BlocksFromStorage(BHL1),
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
-			ar_http_iface_client:send_new_block(RemotePeer, B1, RecallB0)
+			send_new_block(
+				RemotePeer,
+				B1,
+				RecallB0
+			)
 		),
 		%% Try to post the same block again
 		?assertMatch(
 			{ok, {{<<"208">>, _}, _, <<"Block Data Segment already processed.">>, _, _}},
-			ar_http_iface_client:send_new_block(RemotePeer, B1, RecallB0)
+			send_new_block(RemotePeer, B1, RecallB0)
 		),
 		%% Try to post the same block again, but with a different data segment
 		?assertMatch(
 			{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
-			ar_http_iface_client:send_new_block(
+			send_new_block(
 				RemotePeer,
 				B1,
-				RecallB0, <<>>,	<<>>, add_rand_suffix(<<"other-block-data-segment">>)
+				RecallB0,
+				add_rand_suffix(<<"other-block-data-segment">>)
 			)
 		),
 		%% Try to post an invalid data segment
 		?assertMatch(
 			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
-			ar_http_iface_client:send_new_block(
+			send_new_block(
 				RemotePeer,
 				B1#block{indep_hash = add_rand_suffix(<<"new-hash">>)},
-				RecallB0, <<>>, <<>>, add_rand_suffix(<<"bad-block-data-segment">>)
+				RecallB0,
+				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
 		)
 	end}.
+
+% add_external_block_with_invalid_timestamp_test() ->
+% 	Setup = fun() ->
+% 		ar_storage:clear(),
+% 		[B0] = ar_weave:init([]),
+% 		BHL0 = [B0#block.indep_hash],
+% 		NodeWithBridge = ar_node:start([], [B0]),
+% 		Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
+% 		OtherNode = ar_node:start([], [B0]),
+% 		timer:sleep(500),
+% 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
+% 		ar_http_iface_server:reregister(http_entrypoint_node, NodeWithBridge),
+% 		{BHL0, {127, 0, 0, 1, 1984}, OtherNode}
+% 	end,
+% 	{BHL0, RemotePeer, LocalNode} = Setup(),
+% 	BHL1 = mine_one_block(LocalNode, BHL0),
+% 	B1 = ar_storage:read_block(hd(BHL1), BHL1),
+% 	RecallB0 = ar_node_utils:find_recall_block(BHL0),
+% 	%% Expect the timestamp too far from the future to be rejected
+% 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
+% 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
+% 	?assertMatch(
+% 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
+% 		send_new_block(
+% 			RemotePeer,
+% 			B1#block {
+% 				indep_hash = add_rand_suffix(<<"random-hash">>),
+% 				timestamp = TooFarFutureTimestamp
+% 			},
+% 			RecallB0
+% 		)
+% 	),
+% 	%% Expect the timestamp from the future within the tolerance interval to be accepted
+% 	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
+% 	?assertMatch(
+% 		{ok, {{<<"200">>, _}, _, _, _, _}},
+% 		send_new_block(
+% 			RemotePeer,
+% 			update_nonce(B1#block {
+% 				indep_hash = add_rand_suffix(<<"random-hash">>),
+% 				timestamp = OkFutureTimestamp
+% 			}, RecallB0),
+% 			RecallB0
+% 		)
+% 	),
+% 	%% Expect the timestamp far from the past to be rejected
+% 	PastTimestampTolerance = lists:sum([
+% 		?JOIN_CLOCK_TOLERANCE * 2,
+% 		?CLOCK_DRIFT_MAX,
+% 		?MINING_TIMESTAMP_REFRESH_INTERVAL,
+% 		?MAX_BLOCK_PROPAGATION_TIME
+% 	]),
+% 	TooFarPastTimestamp = os:system_time(second) - PastTimestampTolerance - 3,
+% 	?assertMatch(
+% 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
+% 		send_new_block(
+% 			RemotePeer,
+% 			B1#block {
+% 				indep_hash = add_rand_suffix(<<"random-hash">>),
+% 				timestamp = TooFarPastTimestamp
+% 			},
+% 			RecallB0
+% 		)
+% 	),
+% 	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
+% 	OkPastTimestamp = os:system_time(second) - PastTimestampTolerance + 3,
+% 	?assertMatch(
+% 		{ok, {{<<"200">>, _}, _, _, _, _}},
+% 		send_new_block(
+% 			RemotePeer,
+% 			update_nonce(B1#block { timestamp = OkPastTimestamp}, RecallB0),
+% 			RecallB0
+% 		)
+% 	).
 
 add_rand_suffix(Bin) ->
 	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
@@ -487,7 +575,7 @@ add_external_block_with_tx_test_() ->
 		),
 		[BTest|_] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			{127, 0, 0, 1, 1984},
 			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
 			BGen
@@ -504,6 +592,27 @@ add_external_block_with_tx_test_() ->
 		B = ar_storage:read_block(BH, ar_node:get_hash_list(Node1)),
 		?assert(lists:member(TX#tx.id, B#block.txs))
 	end}.
+
+mine_illicit_tx_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init([]),
+	Node = ar_node:start([], [B0]),
+	TX = ar_tx:new(<<"BADCONTENT1">>),
+	ar_node:add_tx(Node, TX),
+	timer:sleep(500),
+	ar_meta_db:put(content_policy_files, []),
+	ar_firewall:reload(),
+	ar_node:mine(Node),
+	timer:sleep(500),
+	?assertEqual(<<"BADCONTENT1">>, (ar_storage:read_tx(TX#tx.id))#tx.data),
+	FilteredTX = ar_tx:new(<<"BADCONTENT1">>),
+	ar_node:add_tx(Node, FilteredTX),
+	timer:sleep(500),
+	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_firewall:reload(),
+	ar_node:mine(Node),
+	timer:sleep(500),
+	?assertEqual(unavailable, ar_storage:read_tx(FilteredTX#tx.id)).
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
@@ -522,13 +631,12 @@ fork_recover_by_http_test() ->
 	%% Send only the latest block to Node1 and let it fork recover up to it.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			{127, 0, 0, 1, 1984},
-			ar_storage:read_block(hd(FullBHL), FullBHL),
-			ar_node_utils:find_recall_block(tl(FullBHL))
+			ar_storage:read_block(hd(FullBHL), FullBHL)
 		)
 	),
-	?assert(ok == wait_until_node_on_block_hash(Node1, hd(FullBHL))).
+	ar_test_node:wait_until_block_hash_list(Node1, FullBHL).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
@@ -1178,36 +1286,55 @@ mine_n_blocks(Node, PreMineBHL, N) ->
 
 mine_one_block(Node, PreMineBHL) ->
 	ar_node:mine(Node),
-	PostMineBHL = wait_until_node_on_height(Node, length(PreMineBHL)),
+	PostMineBHL = ar_test_node:wait_until_height(Node, length(PreMineBHL)),
 	?assertMatch([_ | PreMineBHL], PostMineBHL),
 	PostMineBHL.
 
-wait_until_node_on_height(Node, TargetHeight) ->
-	{ok, BHL} = ar_util:do_until(
-		fun() ->
-			case ar_node:get_blocks(Node) of
-				BHL when length(BHL) - 1 == TargetHeight ->
-					{ok, BHL};
-				_ ->
-					false
-			end
-		end,
-		100,
-		10 * 1000
-	),
-	BHL.
+send_new_block(Peer, B) ->
+	PreviousRecallB = ar_node_utils:find_recall_block(B#block.hash_list),
+	?assert(is_record(PreviousRecallB, block)),
+	send_new_block(Peer, B, PreviousRecallB).
 
-wait_until_node_on_block_hash(Node, BH) ->
-	ok = ar_util:do_until(
-		fun() ->
-			case ar_node:get_blocks(Node) of
-				[BH | _] ->
-					ok;
-				_ ->
-					false
-			end
-		end,
-		100,
-		10 * 1000
-	),
-	ok.
+send_new_block(Peer, B, PreviousRecallB) ->
+	send_new_block(
+		Peer,
+		B,
+		PreviousRecallB,
+		generate_block_data_segment(B, PreviousRecallB)
+	).
+
+send_new_block(Peer, B, PreviousRecallB, BDS) ->
+	ar_http_iface_client:send_new_block(
+		Peer,
+		B,
+		BDS,
+		{
+			PreviousRecallB#block.indep_hash,
+			PreviousRecallB#block.block_size,
+			<<>>,
+			<<>>
+		}
+	).
+
+generate_block_data_segment(B, PreviousRecallB) ->
+	ar_block:generate_block_data_segment(
+		ar_storage:read_block(B#block.previous_block, B#block.hash_list),
+		PreviousRecallB,
+		lists:map(fun ar_storage:read_tx/1, B#block.txs),
+		B#block.reward_addr,
+		B#block.timestamp,
+		B#block.tags
+	).
+
+update_nonce(B, PreviousRecallB) ->
+	update_nonce(B, PreviousRecallB, 0).
+
+update_nonce(B, PreviousRecallB, Nonce) ->
+	NonceBinary = integer_to_binary(Nonce),
+	BDS = generate_block_data_segment(B#block { nonce = NonceBinary }, PreviousRecallB),
+	case ar_weave:hash(BDS, NonceBinary) of
+		<< 0:(?MIN_DIFF), _/bitstring >> ->
+			B#block{ nonce = NonceBinary };
+		_ ->
+			update_nonce(B, PreviousRecallB, Nonce + 1)
+	end.

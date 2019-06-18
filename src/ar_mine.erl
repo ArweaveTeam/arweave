@@ -1,288 +1,294 @@
 -module(ar_mine).
--export([start/6, start/7, change_data/2, stop/1, miner/2, schedule_hash/1]).
--export([validate/3, validate_by_hash/2, next_diff/1]).
+-export([start/6, start/7, change_txs/2, stop/1, mine/2]).
+-export([validate/3, validate_by_hash/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% A module for managing mining of blocks on the weave,
 
 %% State record for miners
--record(state,{
+-record(state, {
 	parent, % miners parent process (initiator)
 	current_block, % current block held by node
 	recall_block, % recall block related to current
 	txs, % the set of txs to be mined
-	timestamp, % the current timestamp of the miner
+	timestamp, % the block timestamp used for the mining
+	timestamp_refresh_timer, % Reference for timer for updating the timestamp
 	data_segment = <<>>, % the data segment generated for mining
+	data_segment_duration, % duration in seconds of the last generation of the data segment.
 	reward_addr, % the nodes reward address
 	tags, % the nodes block tags
 	diff, % the current network difficulty
+	auto_update_diff, % should the diff be kept or updated automatically
 	delay = 0, % hashing delay used for testing
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
-	miners = [], % miner worker processes
-	nonces % nonce builder to ensure entropy
+	miners = [] % miner worker processes
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
-start(CurrentB, RecallB, TXs, unclaimed, Tags, Parent) ->
-	start(CurrentB, RecallB, TXs, <<>>, Tags, Parent);
 start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent) ->
-	start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, next_diff(CurrentB), Parent).
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
-	crypto:rand_seed(),
-	Timestamp = os:system_time(seconds),
-	% Ensure that the txs in which the mining process is passed
-	% validate and can be serialized.
-	TXs =
-		lists:filter(
-			fun(T) ->
-				ar_tx:verify(T, Diff, CurrentB#block.wallet_list)
-			end,
-			ar_node_utils:filter_all_out_of_order_txs(
-				CurrentB#block.wallet_list, RawTXs
-			)
-		),
-	PID = spawn(
-		fun() ->
-			server(
-				#state {
-					parent = Parent,
-					current_block = CurrentB,
-					recall_block = RecallB,
-					txs = TXs,
-					timestamp = Timestamp,
-					data_segment =
-						ar_block:generate_block_data_segment(
-							CurrentB,
-							RecallB,
-							TXs,
-							RewardAddr,
-							Timestamp,
-							Tags
-						),
-					reward_addr = RewardAddr,
-					tags = Tags,
-					diff = Diff,
-					max_miners = ar_meta_db:get(max_miners),
-					nonces = []
-				}
-			)
-		end
-	),
-	PID ! mine,
-	PID.
+	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, auto_update, Parent).
+
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent) when is_integer(StaticDiff) ->
+	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent).
+
+do_start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent) ->
+	do_start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent);
+do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
+	{NewDiff, AutoUpdateDiff} = case Diff of
+		auto_update -> {not_set, true};
+		_ -> {Diff, false}
+	end,
+	start_server(
+		#state {
+			parent = Parent,
+			current_block = CurrentB,
+			recall_block = RecallB,
+			data_segment_duration = 0,
+			reward_addr = RewardAddr,
+			tags = Tags,
+			max_miners = ar_meta_db:get(max_miners),
+			diff = NewDiff,
+			auto_update_diff = AutoUpdateDiff
+		},
+		RawTXs
+	).
 
 %% @doc Stop a running mining server.
 stop(PID) ->
 	PID ! stop.
 
 %% @doc Update the set of TXs that the miner is mining on.
-change_data(PID, NewTXs) ->
+change_txs(PID, NewTXs) ->
 	PID ! {new_data, NewTXs}.
 
-%% @doc Schedule a timer to refresh data segment.
-refresh_data_timer(PID) ->
-	erlang:send_after(?REFRESH_MINE_DATA_TIMER, PID, {refresh_data, PID}).
-
-%% @doc The main mining server.
-server(
-	S = #state {
-		parent = Parent,
-		current_block = CurrentB,
-		recall_block = RecallB,
-		txs = TXs,
-		timestamp = Timestamp,
-		reward_addr = RewardAddr,
-		tags = Tags,
-		diff = Diff,
-		miners = Miners,
-		max_miners = MaxMiners
-	}) ->
-	receive
-		% Stop the mining process killing all the workers.
-		stop ->
-			lists:foreach(
-				fun(Miner) -> Miner ! stop end,
-				Miners
-			),
-			ok;
-		% Update the miner to mine on a new set of data.
-		{new_data, RawTXs} ->
-			lists:foreach(
-				fun(Miner) -> Miner ! stop end,
-				Miners
-			),
-			self() ! mine,
-			% Update mine loop to mine on the newly provided data.
-			NewTimestamp = os:system_time(seconds),
-			NewDiff = next_diff(CurrentB),
-			NewTXs =
-				lists:filter(
-					fun(T) ->
-						ar_tx:verify(T, Diff, CurrentB#block.wallet_list)
-					end,
-					ar_node_utils:filter_all_out_of_order_txs(
-						CurrentB#block.wallet_list, RawTXs
-					)
-				),
-			server(
-				S#state {
-					parent = Parent,
-					current_block = CurrentB,
-					recall_block = RecallB,
-					txs = NewTXs,
-					timestamp = NewTimestamp,
-					reward_addr = RewardAddr,
-					data_segment =
-						ar_block:generate_block_data_segment(
-							CurrentB,
-							RecallB,
-							NewTXs,
-							RewardAddr,
-							NewTimestamp,
-							Tags
-						),
-					tags = Tags,
-					diff = NewDiff
-				}
-			);
-		% Refresh the mining data in case of diff change.
-		{refresh_data, PID} ->
-			ar:report([miner_data_refreshed]),
-			spawn(
-				fun() ->
-					PID ! {new_data, TXs},
-					refresh_data_timer(PID)
-				end
-			),
-			server(S);
-		% Spawn the hashing worker processes and begin to mine.
-		mine ->
-			Workers =
-				lists:map(
-					fun(_) -> spawn(?MODULE, miner, [S, self()]) end,
-					lists:seq(1, MaxMiners)
-				),
-			lists:foreach(
-				fun(Worker) -> Worker ! hash end,
-				Workers
-			),
-			server(
-				S#state {
-					miners = Workers
-				}
-			);
-		% Handle a potential solution for the mining puzzle.
-		% Returns the solution back to the node to verify and ends the process.
-		{solution, Hash, Nonce} ->
-			lists:foreach(
-				fun(Miner) -> Miner ! stop end,
-				Miners
-			),
-			Parent ! {work_complete, TXs, Hash, Diff, Nonce, Timestamp}
-	end.
-
-%% @doc A worker process to hash the data segment searching for a solution
-%% for the given diff.
-%% TODO: Change byte string for nonces to bitstring
-miner(
-	S = #state {
-		data_segment = DataSegment,
-		diff = Diff,
-		nonces = Nonces
-	},
-	Supervisor) ->
-	receive
-		stop -> ok;
-		hash ->
-			schedule_hash(S),
-			case validate(DataSegment, iolist_to_binary(Nonces), Diff) of
-				false ->
-					case(length(Nonces) > 512) and coinflip() of
-						false ->
-							miner(
-								S#state {
-									nonces =
-										[bool_to_binary(coinflip()) | Nonces]
-								},
-								Supervisor
-							);
-						true ->
-							miner(
-								S#state {
-									nonces = []
-								},
-								Supervisor
-							)
-					end;
-				Hash ->
-					Supervisor ! {solution, Hash, iolist_to_binary(Nonces)}
-			end
-	end.
-
-%% @doc Converts a boolean value to a binary of 0 or 1.
-bool_to_binary(true) -> <<1>>;
-bool_to_binary(false) -> <<0>>.
-
-%% @doc A simple boolean coinflip.
-coinflip() ->
-	case rand:uniform(2) of
-		1 -> true;
-		2 -> false
-	end.
-
-%% @doc Schedule a hashing attempt.
-%% Hashing attempts can be delayed for testing purposes.
-schedule_hash(S = #state { delay = 0 }) ->
-	self() ! hash,
-	S;
-schedule_hash(S = #state { delay = Delay }) ->
-	Parent = self(),
-	spawn(fun() -> receive after ar:scale_time(Delay) -> Parent ! hash end end),
-	S.
-
-%% @doc Given a block calculate the difficulty to mine on for the next block.
-%% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
-%% This is done in attempt to maintain on average a fixed block time.
-next_diff(CurrentB) ->
-	Timestamp = os:system_time(seconds),
-	IsRetargetHeight = ar_retarget:is_retarget_height(CurrentB#block.height + 1),
-	case IsRetargetHeight of
-		true -> ar_retarget:maybe_retarget(
-				CurrentB#block.height + 1,
-				CurrentB#block.diff,
-				Timestamp,
-				CurrentB#block.last_retarget
-			);
-		false -> CurrentB#block.diff
-	end.
-
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
-validate(DataSegment, Nonce, Diff) ->
-	NewDiff = adjust_for_min_diff(Diff),
-	case NewHash = ar_weave:hash(DataSegment, Nonce) of
-		<< 0:NewDiff, _/bitstring >> -> NewHash;
-		_ -> false
+validate(BDS, Nonce, Diff) ->
+	case ar_weave:hash(BDS, Nonce) of
+		<< 0:Diff, _/bitstring >> = ValidHash ->
+			{valid, ValidHash};
+		InvalidHash ->
+			{invalid, InvalidHash}
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
-validate_by_hash(DataSegmentHash, Diff) ->
-	NewDiff = adjust_for_min_diff(Diff),
-	case DataSegmentHash of
-		<< 0:NewDiff, _/bitstring >> ->
+validate_by_hash(BDSHash, Diff) ->
+	case BDSHash of
+		<< 0:Diff, _/bitstring >> ->
 			true;
 		_ ->
 			false
 	end.
 
-%% @doc Adjust the difficulty for the minumum difficulty.
--ifdef(DEBUG).
-adjust_for_min_diff(Diff) -> Diff.
--else.
-adjust_for_min_diff(Diff) -> erlang:max(Diff, ?MIN_DIFF).
--endif.
 
-%%% Tests: ar_mine
+%% PRIVATE
+
+%% @doc Takes a state and a set of transactions and return a new state with the
+%% new set of transactions.
+update_txs(
+	S = #state {
+		current_block = CurrentB,
+		diff = CurrentDiff,
+		data_segment_duration = BDSGenerationDuration,
+		auto_update_diff = AutoUpdateDiff
+	},
+	TXs
+) ->
+	NextBlockTimestamp = next_block_timestamp(BDSGenerationDuration),
+	NextDiff = case AutoUpdateDiff of
+		true -> calc_diff(CurrentB, NextBlockTimestamp);
+		false -> CurrentDiff
+	end,
+	%% Filter out invalid TXs. A TX can be valid by itself, but still invalid
+	%% in the context of the other TXs and the block it would be mined to.
+	ValidTXs =
+		lists:filter(
+			fun(TX) ->
+				ar_tx:verify(TX, NextDiff, CurrentB#block.wallet_list)
+			end,
+			ar_node_utils:filter_all_out_of_order_txs(
+				CurrentB#block.wallet_list,
+				TXs
+			)
+		),
+	update_data_segment(S, ValidTXs, NextBlockTimestamp, NextDiff).
+
+%% @doc Generate a new timestamp to be used in the next block. To compensate for
+%% the time it takes to generate the block data segment, adjust the timestamp
+%% with the same time it took to generate the block data segment the last time.
+next_block_timestamp(BDSGenerationDuration) ->
+	os:system_time(seconds) + BDSGenerationDuration.
+
+%% @doc Given a block calculate the difficulty to mine on for the next block.
+%% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
+%% This is done in attempt to maintain on average a fixed block time.
+calc_diff(CurrentB, NextBlockTimestamp) ->
+	ar_retarget:maybe_retarget(
+		CurrentB#block.height + 1,
+		CurrentB#block.diff,
+		NextBlockTimestamp,
+		CurrentB#block.last_retarget
+	).
+
+%% @doc Generate a new data_segment and update the timestamp and diff.
+update_data_segment(S = #state { txs = TXs }) ->
+	update_data_segment(S, TXs).
+
+%% @doc Generate a new data_segment and update the timestamp, diff and transactions.
+update_data_segment(
+	S = #state {
+		data_segment_duration = BDSGenerationDuration,
+		auto_update_diff = AutoUpdateDiff,
+		diff = CurrentDiff,
+		current_block = CurrentB
+	},
+	TXs
+) ->
+	BlockTimestamp = next_block_timestamp(BDSGenerationDuration),
+	Diff = case AutoUpdateDiff of
+		true -> calc_diff(CurrentB, BlockTimestamp);
+		false -> CurrentDiff
+	end,
+	update_data_segment(S, TXs, BlockTimestamp, Diff).
+
+update_data_segment(S, TXs, BlockTimestamp, Diff) ->
+	{DurationMicros, BDS} = timer:tc(fun() ->
+		ar_block:generate_block_data_segment(
+			S#state.current_block,
+			S#state.recall_block,
+			TXs,
+			S#state.reward_addr,
+			BlockTimestamp,
+			S#state.tags
+		)
+	end),
+	NewS = S#state {
+		timestamp = BlockTimestamp,
+		diff = Diff,
+		txs = TXs,
+		data_segment = BDS,
+		data_segment_duration = round(DurationMicros / 1000000)
+	},
+	reschedule_timestamp_refresh(NewS).
+
+reschedule_timestamp_refresh(S = #state{
+	timestamp_refresh_timer = Timer,
+	data_segment_duration = BDSGenerationDuration,
+	txs = TXs
+}) ->
+	timer:cancel(Timer),
+	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - BDSGenerationDuration  of
+		TimeoutSeconds when TimeoutSeconds =< 0 ->
+			TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
+			ar:warn([
+				ar_mine,
+				slow_data_segment_generation,
+				{duration, BDSGenerationDuration},
+				{timestamp_refresh_interval, ?MINING_TIMESTAMP_REFRESH_INTERVAL},
+				{txs, lists:map(fun ar_util:encode/1, lists:sort(TXIDs))}
+			]),
+			self() ! refresh_timestamp,
+			S#state{ timestamp_refresh_timer = no_timer };
+		TimeoutSeconds ->
+			case timer:send_after(TimeoutSeconds * 1000, refresh_timestamp) of
+				{ok, Ref} ->
+					S#state{ timestamp_refresh_timer = Ref };
+				{error, Reason} ->
+					ar:err("ar_mine: Reschedule timestamp refresh failed: ~p", [Reason]),
+					S
+			end
+	end.
+
+%% @doc Start the main mining server.
+start_server(S, TXs) ->
+	spawn(fun() ->
+		server(start_miners(update_txs(S, TXs)))
+	end).
+
+%% @doc The main mining server.
+server(
+	S = #state {
+		parent = Parent,
+		miners = Miners
+	}
+) ->
+	receive
+		% Stop the mining process and all the workers.
+		stop ->
+			stop_miners(Miners),
+			ok;
+		% Update the miner to mine on a new set of data.
+		{new_data, TXs} ->
+			server(restart_miners(update_txs(S, TXs)));
+		%% The block timestamp must be reasonable fresh since it's going to be
+		%% validated on the remote nodes when it's propagated to them. Only blocks
+		%% with a timestamp close to current time will be accepted in the propagation.
+		refresh_timestamp ->
+			server(restart_miners(update_data_segment(S)));
+		% Handle a potential solution for the mining puzzle.
+		% Returns the solution back to the node to verify and ends the process.
+		{solution, Hash, Nonce, MinedTXs, MinedDiff, MinedTimestamp} ->
+			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp},
+			stop_miners(Miners)
+	end.
+
+%% @doc Start the workers and return the new state.
+start_miners(S = #state {max_miners = MaxMiners}) ->
+	Miners =
+		lists:map(
+			fun(_) -> spawn(?MODULE, mine, [S, self()]) end,
+			lists:seq(1, MaxMiners)
+		),
+	S#state {miners = Miners}.
+
+%% @doc Stop all workers.
+stop_miners(Miners) ->
+	lists:foreach(
+		fun(PID) ->
+			exit(PID, stop)
+		end,
+		Miners
+	).
+
+%% @doc Stop and then start the workers again and return the new state.
+restart_miners(S) ->
+	stop_miners(S#state.miners),
+	start_miners(S).
+
+%% @doc A worker process to hash the data segment searching for a solution
+%% for the given diff.
+mine(
+	#state {
+		data_segment = BDS,
+		diff = Diff,
+		txs = TXs,
+		timestamp = Timestamp
+	},
+	Supervisor
+) ->
+	process_flag(priority, low),
+	{Nonce, Hash} = find_nonce(BDS, Diff),
+	Supervisor ! {solution, Hash, Nonce, TXs, Diff, Timestamp}.
+
+find_nonce(BDS, Diff) ->
+	crypto:rand_seed(),
+	%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
+	%% arbitrary size for the initial nonce.
+	Nonce = crypto:strong_rand_bytes(384 div 8),
+	find_nonce(BDS, Diff, Nonce).
+
+find_nonce(BDS, Diff, Nonce) ->
+	case validate(BDS, Nonce, Diff) of
+		{invalid, Hash} ->
+			%% Re-use the hash as the next nonce, since we get it for free.
+			find_nonce(BDS, Diff, Hash);
+		{valid, Hash} ->
+			{Nonce, Hash}
+	end.
+
+
+%% Tests
+
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->
@@ -292,64 +298,108 @@ basic_test() ->
 	B = hd(B1),
 	RecallB = hd(B0),
 	start(B, RecallB, [], unclaimed, [], self()),
-	receive
-		{work_complete, _MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
-			DataSegment = ar_block:generate_block_data_segment(
-				B,
-				RecallB,
-				[],
-				<<>>,
-				Timestamp,
-				[]
-			),
-			Res = crypto:hash(
-				?MINING_HASH_ALG,
-				<< Nonce/binary, DataSegment/binary >>
-			),
-			<< 0:Diff, _/bitstring >> = Res
-	end.
+	assert_mine_output(B, RecallB, []).
 
-%% @doc Ensure that we can change the data while mining is in progress.
-change_data_test() ->
+%% @doc Ensure that we can change the transactions while mining is in progress.
+change_txs_test_() ->
+	{timeout, 20, fun() ->
+		[B0] = ar_weave:init(),
+		B = B0,
+		RecallB = B0,
+		FirstTXSet = [ar_tx:new()],
+		SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
+		%% Start mining with a high enough difficulty, so that the mining won't
+		%% finish before adding more TXs.
+		Diff = 22,
+		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self()),
+		change_txs(PID, SecondTXSet),
+		assert_mine_output(B, RecallB, SecondTXSet, Diff)
+	end}.
+
+%% @doc Ensure that the block timestamp gets updated regularly while mining.
+timestamp_refresh_test_() ->
+	{timeout, 20, fun() ->
+		[B0] = ar_weave:init(),
+		B = B0,
+		RecallB = B0,
+		%% Start mining with a high enough difficulty, so that the block
+		%% timestamp gets refreshed at least once. Since we might be unlucky
+		%% and find the block too fast, we retry until it succeeds.
+		Run = fun(_) ->
+			TXs = [],
+			start(B, RecallB, TXs, unclaimed, [], 20, self()),
+			StartTime = os:system_time(seconds),
+			{_, MinedTimestamp} = assert_mine_output(B, RecallB, TXs),
+			MinedTimestamp > StartTime
+		end,
+		?assert(lists:any(Run, lists:seq(1, 20)))
+	end}.
+
+%% @doc Ensures ar_mine can be started and stopped.
+start_stop_test() ->
 	B0 = ar_weave:init(),
 	ar_node:start([], B0),
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
-	TXs = [ar_tx:new()],
-	NewTXs = TXs ++ [ar_tx:new(), ar_tx:new()],
-	PID = start(B, RecallB, TXs, unclaimed, [], self()),
-	change_data(PID, NewTXs),
+	VeryHighDiff = 100,
+	PID = start(B, RecallB, [], unclaimed, [], VeryHighDiff, self()),
 	timer:sleep(500),
+	assert_alive(PID),
+	stop(PID),
+	assert_not_alive(PID, 3000).
+
+%% @doc Ensures a miner can be started and stopped.
+miner_start_stop_test() ->
+	S = #state{ diff = 100 },
+	PID = spawn(?MODULE, mine, [S, self()]),
+	timer:sleep(500),
+	assert_alive(PID),
+	stop_miners([PID]),
+	assert_not_alive(PID, 3000).
+
+validator_test() ->
+	BDS = ar_util:decode(<<"DIhZtgVPvAyGlWDfAq7NfoL28x_4yxDOSFU-thfBPoRdRsDaZPYrkCyQ-5zL5LeS">>),
+	Nonce = ar_util:decode(<<"AQEBAQEBAQEBAAABAQAAAAEBAQAAAQEBAAAAAQEAAAAAAQABAAEBAQAAAQAAAAE">>),
+	?assertMatch({valid, _}, validate(BDS, Nonce, 37)),
+	?assertMatch({invalid, _}, validate(BDS, Nonce, 38)).
+
+assert_mine_output(B, RecallB, TXs, Diff) ->
+	Result = assert_mine_output(B, RecallB, TXs),
+	?assertMatch({Diff, _}, Result),
+	Result.
+
+assert_mine_output(B, RecallB, TXs) ->
 	receive
-		{work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp} ->
-			DataSegment = ar_block:generate_block_data_segment(
+		{work_complete, MinedTXs, Hash, MinedDiff, Nonce, Timestamp} ->
+			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
+			BDS = ar_block:generate_block_data_segment(
 				B,
 				RecallB,
-				MinedTXs,
+				TXs,
 				<<>>,
 				Timestamp,
 				[]
 			),
-			Res = crypto:hash(
-				?MINING_HASH_ALG,
-				<< Nonce/binary, DataSegment/binary >>
+			?assertEqual(
+				crypto:hash(
+					?MINING_HASH_ALG,
+					<< Nonce/binary, BDS/binary >>
+				),
+				Hash
 			),
-			<< 0:Diff, _/bitstring >> = Res,
-			MinedTXs == NewTXs
+			?assertMatch(
+				<< 0:MinedDiff, _/bitstring >>,
+				Hash
+			),
+			{MinedDiff, Timestamp}
+	after 20000 ->
+		error(timeout)
 	end.
 
-%% @doc Ensure that an active miner process can be killed.
-kill_miner_test() ->
-	B0 = ar_weave:init(),
-	ar_node:start([], B0),
-	B1 = ar_weave:add(B0, []),
-	B = hd(B1),
-	RecallB = hd(B0),
-	PID = start(B, RecallB, [], unclaimed, [], self()),
-	erlang:monitor(process, PID),
-	PID ! stop,
-	receive
-		{'DOWN', _Ref, process, PID, normal} -> ok
-		after 1000 -> erlang:error(no_match)
-	end.
+assert_alive(PID) ->
+	?assert(is_process_alive(PID)).
+
+assert_not_alive(PID, Timeout) ->
+	Do = fun () -> not is_process_alive(PID) end,
+	?assert(ar_util:do_until(Do, 50, Timeout)).

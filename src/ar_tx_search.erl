@@ -79,19 +79,24 @@ update_tag_table(B) ->
 	update_tag_table(whereis(http_search_node), B).
 
 update_tag_table(PID, B) when ?IS_BLOCK(B) ->
-	PID ! {update_tags_for_block, B},
+	#block{
+		indep_hash = IndepHash,
+		height = Height,
+		txs = TXs
+	} = B,
+	PID ! {update_tags_for_block, IndepHash, Height, TXs},
 	enqueued;
 update_tag_table(_, _) ->
 	not_a_block.
 
-entries(B, TX) ->
+entries(IndepHash, Height, TX) ->
 	AuxTags = [
 		{<<"from">>, ar_util:encode(ar_wallet:to_address(TX#tx.owner))},
 		{<<"to">>, ar_util:encode(ar_wallet:to_address(TX#tx.target))},
 		{<<"quantity">>, TX#tx.quantity},
 		{<<"reward">>, TX#tx.reward},
-		{<<"block_height">>, B#block.height},
-		{<<"block_indep_hash">>, ar_util:encode(B#block.indep_hash)}
+		{<<"block_height">>, Height},
+		{<<"block_indep_hash">>, ar_util:encode(IndepHash)}
 	],
 	AuxTags ++ multi_delete(TX#tx.tags, proplists:get_keys(AuxTags)).
 
@@ -120,16 +125,21 @@ server() ->
 				),
 				PID ! {tags, Tags},
 				server();
-			{update_tags_for_block, B} ->
+			{update_tags_for_block, IndepHash, Height, TXs} ->
 				lists:foreach(
 					fun(TX) ->
-						delete_for_tx(TX#tx.id),
-						AddEntry = fun({Name, Value}) ->
-							storeDB(Name, Value, TX#tx.id)
-						end,
-						lists:foreach(AddEntry, entries(B, TX))
+						case TX of
+							unavailable ->
+								do_nothing;
+							_ ->
+								delete_for_tx(TX#tx.id),
+								AddEntry = fun({Name, Value}) ->
+									storeDB(Name, Value, TX#tx.id)
+								end,
+								lists:foreach(AddEntry, entries(IndepHash, Height, TX))
+						end
 					end,
-					ar_storage:read_tx(B#block.txs)
+					ar_storage:read_tx(TXs)
 				),
 				server();
 			stop -> ok;
@@ -149,7 +159,10 @@ server() ->
 
 %% @doc Initialise the mnesia database
 initDB() ->
-	application:set_env(mnesia, dir, "data/mnesia"),
+	TXIndexDir = filename:join(ar_meta_db:get(data_dir), ?TX_INDEX_DIR),
+	%% Append the / to make filelib:ensure_dir/1 create a directory if one does not exist.
+	filelib:ensure_dir(TXIndexDir ++ "/"),
+	application:set_env(mnesia, dir, TXIndexDir),
 	mnesia:create_schema([node()]),
 	mnesia:start(),
 	try

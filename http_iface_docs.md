@@ -208,6 +208,8 @@ xhr.send();
 Returns an estimated cost for a transaction of the given size.
 The returned amount is in winston (the smallest division of AR, 1 AR = 1000000000000 winston).
 
+The endpoint is pessimistic, it reports the price as if the network difficulty was smaller by one, to account for the possible difficulty change.
+
 - **URL**
   `/price/[byte_size]`
 - **Method**

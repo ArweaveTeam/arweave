@@ -72,24 +72,48 @@ do_join(Node, RawPeers, NewB) ->
 
 %% @doc Verify timestamps of peers.
 verify_time_sync(Peers) ->
-	% Ignore this check if time syncing is disable.
+	%% Ignore this check if time syncing is disabled.
 	case ar_meta_db:get(time_syncing) of
 		false -> true;
 		_ ->
-			lists:all(
-				fun(Peer) ->
-					LocalT = os:system_time(second),
-					RemoteT = ar_http_iface_client:get_time(Peer),
-					case RemoteT of
-						unknown -> true;
-						_ ->
-							(LocalT >= (RemoteT - ?NODE_TIME_SYNC_TOLERANCE)) andalso
-							(LocalT =< (RemoteT + ?NODE_TIME_SYNC_TOLERANCE))
-					end
-				end,
-				[ P || P <- Peers, not is_pid(P) ]
-			)
+			VerifyPeerClock = fun(Peer) ->
+				case ar_http_iface_client:get_time(Peer, 5 * 1000) of
+					{ok, {RemoteTMin, RemoteTMax}} ->
+						LocalT = os:system_time(second),
+						Tolerance = ?JOIN_CLOCK_TOLERANCE,
+						case LocalT of
+							T when T < RemoteTMin - Tolerance ->
+								log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
+								false;
+							T when T < RemoteTMin - Tolerance div 2 ->
+								log_peer_clock_diff(Peer, RemoteTMin - T),
+								true;
+							T when T > RemoteTMax + Tolerance ->
+								log_peer_clock_diff(Peer, T - RemoteTMax - Tolerance),
+								false;
+							T when T > RemoteTMax + Tolerance div 2 ->
+								log_peer_clock_diff(Peer, T - RemoteTMax),
+								true;
+							_ ->
+								true
+						end;
+					{error, Err} ->
+						ar:info(
+							"Failed to get time from peer ~s: ~p.",
+							[ar_util:format_peer(Peer), Err]
+						),
+						true
+				end
+			end,
+			Responses = ar_util:pmap(VerifyPeerClock, [P || P <- Peers, not is_pid(P)]),
+			lists:all(fun(R) -> R end, Responses)
 	end.
+
+log_peer_clock_diff(Peer, Diff) ->
+	Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
+	WarningArgs = [ar_util:format_peer(Peer), Diff],
+	ar:console(Warning, WarningArgs),
+	ar:warn(Warning, WarningArgs).
 
 %% @doc Return the current block from a list of peers.
 find_current_block([]) ->
@@ -146,8 +170,7 @@ get_block_and_trail(Peers, NewB, HashList) ->
 	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList).
 get_block_and_trail(_, unavailable, _, _) -> ok;
 get_block_and_trail(Peers, NewB, _, _) when NewB#block.height =< 1 ->
-	ar_storage:write_block(NewB#block { txs = [T#tx.id || T <- NewB#block.txs] }),
-	ar_storage:write_tx(NewB#block.txs),
+	ar_storage:write_full_block(NewB),
 	PreviousBlock = ar_node:get_block(Peers, NewB#block.previous_block, NewB#block.hash_list),
 	ar_storage:write_block(PreviousBlock);
 get_block_and_trail(_, _, 0, _) -> ok;
@@ -156,10 +179,9 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
-			case {NewB, ar_node_utils:get_full_block(Peers, RecallBlock, NewB#block.hash_list)} of
-				{B, unavailable} ->
-					ar_storage:write_tx(B#block.txs),
-					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
+			ar_storage:write_full_block(NewB),
+			case ar_node_utils:get_full_block(Peers, RecallBlock, NewB#block.hash_list) of
+				unavailable ->
 					ar:info(
 						[
 							could_not_retrieve_joining_recall_block,
@@ -167,16 +189,13 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList) ->
 						]
 					),
 					get_block_and_trail(Peers, NewB, BehindCurrent, HashList);
-				{B, R} ->
-					ar_storage:write_tx(B#block.txs),
-					ar_storage:write_block(B#block { txs = [T#tx.id || T <- B#block.txs] } ),
-					ar_storage:write_tx(R#block.txs),
-					ar_storage:write_block(R#block { txs = [T#tx.id || T <- R#block.txs] } ),
+				RecallB ->
+					ar_storage:write_full_block(RecallB),
 					ar:info(
 						[
-							{writing_block, B#block.height},
-							{writing_recall_block, R#block.height},
-							{blocks_written, 2 * (?STORE_BLOCKS_BEHIND_CURRENT - ( BehindCurrent -1 ))},
+							{writing_block, NewB#block.height},
+							{writing_recall_block, RecallB#block.height},
+							{blocks_written, 2 * (?STORE_BLOCKS_BEHIND_CURRENT - (BehindCurrent-1))},
 							{blocks_to_write, 2 * (BehindCurrent-1)}
 						]
 					),

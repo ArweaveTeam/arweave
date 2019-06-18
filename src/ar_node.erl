@@ -231,10 +231,10 @@ get_current_block(Peers) when is_list(Peers) ->
 		Peers
 	);
 get_current_block(Peer) when is_pid(Peer) ->
-	% ask own node server for block
-	Peer ! {get_current_block, self()},
+	Ref = make_ref(),
+	Peer ! {get_current_block, self(), Ref},
 	receive
-		{block, CurrentBlock} -> CurrentBlock
+		{Ref, block, CurrentBlock} -> CurrentBlock
 	after ?LOCAL_NET_TIMEOUT ->
 		not_found
 	end;
@@ -246,9 +246,10 @@ get_current_block(Peer) ->
 % TODO: Change references to hashlist, not blocklist.
 % Code duplication against get_hashlist function.
 get_blocks(Node) ->
-	Node ! {get_blocks, self()},
+	Ref = make_ref(),
+	Node ! {get_blocks, self(), Ref},
 	receive
-		{blocks, Node, Bs} -> Bs
+		{Ref, blocks, Node, Bs} -> Bs
 	after ?LOCAL_NET_TIMEOUT ->
 		not_found
 	end.
@@ -305,18 +306,20 @@ get_block(Host, ID, BHL) ->
 %% This set includes those on timeout waiting to distribute around the
 %% network, the potentially valid txs as well as those being mined on.
 get_all_known_txs(Node) ->
-	Node ! {get_all_known_txs, self()},
+	Ref = make_ref(),
+	Node ! {get_all_known_txs, self(), Ref},
 	receive
-		{all_known_txs, TXs} -> TXs
+		{Ref, all_known_txs, TXs} -> TXs
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 %% @doc Get the set of trusted peers.
 %% The set of trusted peers is that in whcih where joined on.
 get_trusted_peers(Proc) when is_pid(Proc) ->
-	Proc ! {get_trusted_peers, self()},
+	Ref = make_ref(),
+	Proc ! {get_trusted_peers, self(), Ref},
 	receive
-		{peers, Ps} -> Ps
+		{Ref, peers, Ps} -> Ps
 		after ?LOCAL_NET_TIMEOUT -> []
 	end;
 get_trusted_peers(_) ->
@@ -326,9 +329,10 @@ get_trusted_peers(_) ->
 %% This is the list of peers that node will request blocks/txs from and will
 %% distribute its mined blocks to.
 get_peers(Proc) when is_pid(Proc) ->
-	Proc ! {get_peers, self()},
+	Ref = make_ref(),
+	Proc ! {get_peers, self(), Ref},
 	receive
-		{peers, Ps} -> Ps
+		{Ref, peers, Ps} -> Ps
 		after ?LOCAL_NET_TIMEOUT -> []
 	end;
 get_peers(Host) ->
@@ -340,17 +344,19 @@ get_peers(Host) ->
 %% @doc Get the current wallet list from the node.
 %% This wallet list is up to date to the latest block held.
 get_wallet_list(Node) ->
-	Node ! {get_walletlist, self()},
+	Ref = make_ref(),
+	Node ! {get_walletlist, self(), Ref},
 	receive
-		{walletlist, WalletList} -> WalletList
+		{Ref, walletlist, WalletList} -> WalletList
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 %% @doc Get the current waiting tx list from a node.
 get_waiting_txs(Node) ->
-	Node ! {get_waiting_txs, self()},
+	Ref = make_ref(),
+	Node ! {get_waiting_txs, self(), Ref},
 	receive
-		{waiting_txs, Waiting} -> Waiting
+		{Ref, waiting_txs, Waiting} -> Waiting
 		after ?LOCAL_NET_TIMEOUT -> error(could_not_get_waiting_txs)
 	end.
 
@@ -359,46 +365,50 @@ get_waiting_txs(Node) ->
 get_hash_list(IP) when not is_pid(IP) ->
 	ar_http_iface_client:get_hash_list(IP);
 get_hash_list(Node) ->
-	Node ! {get_hashlist, self()},
+	Ref = make_ref(),
+	Node ! {get_hashlist, self(), Ref},
 	receive
-		{hashlist, not_joined} -> [];
-		{hashlist, HashList} -> HashList
+		{Ref, hashlist, not_joined} -> [];
+		{Ref, hashlist, HashList} -> HashList
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
-
 %% @doc Get the current block hash.
 get_current_block_hash(Node) ->
-	Node ! {get_current_block_hash, self()},
+	Ref = make_ref(),
+	Node ! {get_current_block_hash, self(), Ref},
 	receive
-		{current_block_hash, not_joined} -> not_joined;
-		{current_block_hash, Current} -> Current
+		{Ref, current_block_hash, not_joined} -> not_joined;
+		{Ref, current_block_hash, Current} -> Current
 		after ?LOCAL_NET_TIMEOUT -> unavailable
 	end.
 
 %% @doc Return the current height of the blockweave.
 get_height(Node) ->
-	Node ! {get_height, self()},
+	Ref = make_ref(),
+	Node ! {get_height, self(), Ref},
 	receive
-		{height, H} -> H
+		{Ref, height, H} -> H
 	after ?LOCAL_NET_TIMEOUT -> -1
 	end.
 
 %% @doc Check whether self node has joined the weave.
 %% Uses hashlist value not_joined as witness.
 is_joined(Node) ->
-	Node ! {get_hashlist, self()},
+	Ref = make_ref(),
+	Node ! {get_hashlist, self(), Ref},
 	receive
-		{hashlist, not_joined} -> false;
-		{hashlist, _} -> true
+		{Ref, hashlist, not_joined} -> false;
+		{Ref, hashlist, _} -> true
 	end.
 
 %% @doc Get the current balance of a given wallet address.
 %% The balance returned is in relation to the nodes current wallet list.
 get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
-	Node ! {get_balance, self(), Addr},
+	Ref = make_ref(),
+	Node ! {get_balance, self(), Ref, Addr},
 	receive
-		{balance, Addr, B} -> B
+		{Ref, balance, Addr, B} -> B
 		after ?LOCAL_NET_TIMEOUT -> node_unavailable
 	end;
 get_balance(Node, WalletID) ->
@@ -407,9 +417,10 @@ get_balance(Node, WalletID) ->
 %% @doc Get the last tx id associated with a given wallet address.
 %% Should the wallet not have made a tx the empty binary will be returned.
 get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
-	Node ! {get_last_tx, self(), Addr},
+	Ref = make_ref(),
+	Node ! {get_last_tx, self(), Ref, Addr},
 	receive
-		{last_tx, Addr, LastTX} ->
+		{Ref, last_tx, Addr, LastTX} ->
 			{ok, LastTX}
 	after ?LOCAL_NET_TIMEOUT ->
 		timeout
@@ -421,15 +432,17 @@ get_last_tx(Node, WalletID) ->
 %% Pending transactions are those that are valid, but not currently actively
 %% being mined as they are waiting to be distributed around the network.
 get_pending_txs(Node) ->
-	Node ! {get_txs, self()},
+	Ref = make_ref(),
+	Node ! {get_txs, self(), Ref},
 	receive
-		{all_txs, Txs} -> [T#tx.id || T <- Txs]
+		{Ref, all_txs, Txs} -> [T#tx.id || T <- Txs]
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 get_full_pending_txs(Node) ->
-	Node ! {get_txs, self()},
+	Ref = make_ref(),
+	Node ! {get_txs, self(), Ref},
 	receive
-		{all_txs, Txs} -> Txs
+		{Ref, all_txs, Txs} -> Txs
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
@@ -437,9 +450,10 @@ get_full_pending_txs(Node) ->
 %% The floating wallet list is the current wallet list with the txs being
 %% mined on applied to it.
 get_floating_wallet_list(Node) ->
-	Node ! {get_floatingwalletlist, self()},
+	Ref = make_ref(),
+	Node ! {get_floatingwalletlist, self(), Ref},
 	receive
-		{floatingwalletlist, WalletList} -> WalletList
+		{Ref, floatingwalletlist, WalletList} -> WalletList
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
@@ -447,26 +461,29 @@ get_floating_wallet_list(Node) ->
 % TODO: Function name is confusing, returns the new difficulty being mined on,
 % not the 'current' diff (that of the latest block)
 get_current_diff(Node) ->
-	Node ! {get_current_diff, self()},
+	Ref = make_ref(),
+	Node ! {get_current_diff, self(), Ref},
 	receive
-		{current_diff, Diff} -> Diff
+		{Ref, current_diff, Diff} -> Diff
 		after ?LOCAL_NET_TIMEOUT -> 1
 	end.
 
 %% @doc Returns the difficulty of the last successfully mined block.
 %% Returns the difficulty of the current block (not of that being mined).
 get_diff(Node) ->
-	Node ! {get_diff, self()},
+	Ref = make_ref(),
+	Node ! {get_diff, self(), Ref},
 	receive
-		{diff, Diff} -> Diff
+		{Ref, diff, Diff} -> Diff
 		after ?LOCAL_NET_TIMEOUT -> 1
 	end.
 
 %% @doc Get the current rewardpool from the node.
 get_reward_pool(Node) ->
-	Node ! {get_reward_pool, self()},
+	Ref = make_ref(),
+	Node ! {get_reward_pool, self(), Ref},
 	receive
-		{reward_pool, RewardPool} -> RewardPool
+		{Ref, reward_pool, RewardPool} -> RewardPool
 		after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
@@ -474,9 +491,10 @@ get_reward_pool(Node) ->
 %% This is the wallet address that should the node successfully mine a block
 %% the reward will be credited to.
 get_reward_addr(Node) ->
-	Node ! {get_reward_addr, self()},
+	Ref = make_ref(),
+	Node ! {get_reward_addr, self(), Ref},
 	receive
-		{reward_addr, Addr} -> Addr
+		{Ref, reward_addr, Addr} -> Addr
 	after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
@@ -516,7 +534,9 @@ print_reward_addr() ->
 mine(Node) ->
 	Node ! mine.
 
-%% @doc Trigger a node to start mining a block at a certain difficulty.
+%% @doc Trigger a node to start mining a block at a certain difficulty. This is
+%% not used in the original/upstream git repo, but supposedly partners are using
+%% it in their forks.
 mine_at_diff(Node, Diff) ->
 	Node ! {mine_at_diff, Diff}.
 
@@ -659,8 +679,8 @@ handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
 handle(_SPid, {apply_tx, TX}) ->
 	{task, {encounter_new_tx, TX}};
-handle(_SPid, {new_block, Peer, Height, NewB, Recall}) ->
-	{task, {process_new_block, Peer, Height, NewB, Recall}};
+handle(_SPid, {new_block, Peer, Height, NewB, BDS, Recall}) ->
+	{task, {process_new_block, Peer, Height, NewB, BDS, Recall}};
 handle(_SPid, {replace_block_list, NewBL}) ->
 	% Replace the entire stored block list, regenerating the hash list.
 	{task, {replace_block_list, NewBL}};
@@ -698,110 +718,107 @@ handle(_SPid, {mine_at_diff, Diff}) ->
 handle(_SPid, automine) ->
 	{task, automine};
 %% ----- Getters and non-state-changing actions. -----
-handle(SPid, {get_current_block, From}) ->
+handle(SPid, {get_current_block, From, Ref}) ->
 	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	From ! {block, ar_util:get_head_block(HashList)},
+	From ! {Ref, block, ar_util:get_head_block(HashList)},
 	ok;
-handle(SPid, {get_blocks, From}) ->
+handle(SPid, {get_blocks, From, Ref}) ->
 	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	From ! {blocks, self(), HashList},
+	From ! {Ref, blocks, self(), HashList},
 	ok;
-handle(SPid, {get_block, From}) ->
+handle(SPid, {get_block, From, Ref}) ->
 	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	From ! {block, self(), ar_node_utils:find_block(HashList)},
+	From ! {Ref, block, self(), ar_node_utils:find_block(HashList)},
 	ok;
-handle(SPid, {get_peers, From}) ->
+handle(SPid, {get_peers, From, Ref}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
-	From ! {peers, ar_gossip:peers(GS)},
+	From ! {Ref, peers, ar_gossip:peers(GS)},
 	ok;
-handle(SPid, {get_trusted_peers, From}) ->
+handle(SPid, {get_trusted_peers, From, Ref}) ->
 	{ok, TrustedPeers} = ar_node_state:lookup(SPid, trusted_peers),
-	From ! {peers, TrustedPeers},
+	From ! {Ref, peers, TrustedPeers},
 	ok;
-handle(SPid, {get_walletlist, From}) ->
+handle(SPid, {get_walletlist, From, Ref}) ->
 	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
-	From ! {walletlist, WalletList},
+	From ! {Ref, walletlist, WalletList},
 	ok;
-handle(SPid, {get_hashlist, From}) ->
+handle(SPid, {get_hashlist, From, Ref}) ->
 	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	From ! {hashlist, HashList},
+	From ! {Ref, hashlist, HashList},
 	ok;
-handle(SPid, {get_current_block_hash, From}) ->
+handle(SPid, {get_current_block_hash, From, Ref}) ->
 	{ok, Res} = ar_node_state:lookup(SPid, current),
-	From ! {current_block_hash, Res},
+	From ! {Ref, current_block_hash, Res},
 	ok;
-handle(SPid, {get_height, From}) ->
+handle(SPid, {get_height, From, Ref}) ->
 	{ok, Height} = ar_node_state:lookup(SPid, height),
-	From ! {height, Height},
+	From ! {Ref, height, Height},
 	ok;
-handle(SPid, {get_balance, From, WalletID}) ->
+handle(SPid, {get_balance, From, Ref, WalletID}) ->
 	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
-	From ! {balance, WalletID,
+	From ! {Ref, balance, WalletID,
 		case lists:keyfind(WalletID, 1, WalletList) of
 			{WalletID, Balance, _Last} -> Balance;
 			false					   -> 0
 		end},
 	ok;
-handle(SPid, {get_last_tx, From, Addr}) ->
+handle(SPid, {get_last_tx, From, Ref, Addr}) ->
 	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
-	From ! {last_tx, Addr,
+	From ! {Ref, last_tx, Addr,
 		case lists:keyfind(Addr, 1, WalletList) of
 			{Addr, _Balance, Last} -> Last;
 			false				   -> <<>>
 		end},
 	ok;
-handle(SPid, {get_txs, From}) ->
+handle(SPid, {get_txs, From, Ref}) ->
 	{ok, #{ txs := TXs, waiting_txs := WaitingTXs }} = ar_node_state:lookup(SPid, [txs, waiting_txs]),
-	From ! {all_txs, TXs ++ WaitingTXs},
+	From ! {Ref, all_txs, TXs ++ WaitingTXs},
 	ok;
-handle(SPid, {get_waiting_txs, From}) ->
+handle(SPid, {get_waiting_txs, From, Ref}) ->
 	{ok, WaitingTXs} = ar_node_state:lookup(SPid, waiting_txs),
-	From ! {waiting_txs, WaitingTXs},
+	From ! {Ref, waiting_txs, WaitingTXs},
 	ok;
-handle(SPid, {get_all_known_txs, From}) ->
+handle(SPid, {get_all_known_txs, From, Ref}) ->
 	{ok, #{
 		txs           := TXs,
 		waiting_txs   := WaitingTXs,
 		potential_txs := PotentialTXs
 	}} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
 	AllTXs = TXs ++ WaitingTXs ++ PotentialTXs,
-	From ! {all_known_txs, AllTXs},
+	From ! {Ref, all_known_txs, AllTXs},
 	ok;
 handle(SPid, {get_floatingwalletlist, From}) ->
 	{ok, FloatingWalletList} = ar_node_state:lookup(SPid, floating_wallet_list),
 	From ! {floatingwalletlist, FloatingWalletList},
 	ok;
-handle(SPid, {get_current_diff, From}) ->
+handle(SPid, {get_current_diff, From, Ref}) ->
 	{ok, #{
 		height        := Height,
 		diff          := Diff,
 		last_retarget := LastRetarget
 	}} = ar_node_state:lookup(SPid, [height, diff, last_retarget]),
 	From ! {
+		Ref,
 		current_diff,
-		case ar_retarget:is_retarget_height(Height + 1) of
-			true ->
-				ar_retarget:maybe_retarget(
-					Height + 1,
-					Diff,
-					os:system_time(seconds),
-					LastRetarget
-				);
-			false ->
-				Diff
-		end},
-		ok;
-handle(SPid, {get_diff, From}) ->
+		ar_retarget:maybe_retarget(
+			Height + 1,
+			Diff,
+			os:system_time(seconds),
+			LastRetarget
+		)
+	},
+	ok;
+handle(SPid, {get_diff, From, Ref}) ->
 	{ok, Diff} = ar_node_state:lookup(SPid, diff),
-	From ! {diff, Diff},
+	From ! {Ref, diff, Diff},
 	ok;
-handle(SPid, {get_reward_pool, From}) ->
+handle(SPid, {get_reward_pool, From, Ref}) ->
 	{ok, RewardPool} = ar_node_state:lookup(SPid, reward_pool),
-	From ! {reward_pool, RewardPool},
+	From ! {Ref, reward_pool, RewardPool},
 	ok;
-handle(SPid, {get_reward_addr, From}) ->
+handle(SPid, {get_reward_addr, From, Ref}) ->
 	{ok, RewardAddr} = ar_node_state:lookup(SPid, reward_addr),
-	From ! {reward_addr,RewardAddr},
+	From ! {Ref, reward_addr,RewardAddr},
 	ok;
 %% ----- Server handling. -----
 handle(_SPid, {'DOWN', _, _, _, _}) ->
