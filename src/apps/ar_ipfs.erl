@@ -7,6 +7,7 @@
 -export([key_gen/1, key_gen/3]).
 -export([pin_ls/0, pin_ls/2]).
 -export([ep_get_ipfs_hashes/2, hashes_only/1]).
+-export([rfc3339_timestamp/0, rfc3339_timestamp/1]).
 
 -define(BOUNDARY, "------------qwerasdfzxcv").
 -define(IPFS_HOST, "127.0.0.1").
@@ -56,6 +57,18 @@ hashes_only(HashTups) ->
 		({_,H,<<>>}) -> H;
 		({_,H,P})    -> [H,P]
 	end, HashTups)).
+
+rfc3339_timestamp() ->
+	rfc3339_timestamp({utc, calendar:universal_time()}).
+
+rfc3339_timestamp({utc, UTCDateTime}) ->
+	{{Year, Month, Day}, {Hours, Min, Sec}} = UTCDateTime,
+	iolist_to_binary(
+		io_lib:format(
+			"~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ",
+			[Year, Month, Day, Hours, Min, Sec]
+		)
+	).
 
 row_to_hash_tup({Props}) ->
 	case lists:sort(Props) of

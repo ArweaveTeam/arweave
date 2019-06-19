@@ -91,7 +91,7 @@ add_local_and_get_test() ->
 % 	lists:map(fun(X) ->
 % 			TX1 = tag_tx(ar_tx:new(timestamp_data(<<"DATA">>)), BoringTags),
 % 			send_tx_mine_block(Node, TX1),
-% 			TS = ts_bin(),
+% 			TS = ar_ipfs:rfc3339_timestamp(),
 % 			Filename = numbered_fn(X),
 % 			Data = timestamp_data(TS, <<"Data">>),
 % 			Tags = [{<<"IPFS-Add">>, Filename}],
@@ -135,9 +135,6 @@ add_local_and_get_test() ->
 % 	TX#tx{tags=Tags}.
 
 timestamp_data(Data) ->
-	timestamp_data(ts_bin(), Data).
+	timestamp_data(ar_ipfs:rfc3339_timestamp(), Data).
 timestamp_data(TS, Data) ->
 	<<TS/binary, "  *  ", Data/binary>>.
-
-ts_bin() ->
-	list_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second))).

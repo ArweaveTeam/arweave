@@ -182,7 +182,7 @@ process_request(<<"GET">>, [APIKey, <<"status">>|_], [all, 0], Req) ->
 	ar:d({get_status, process, all}),
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			([T,H,S], Acc) ->
-				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
+				Tiso = ar_ipfs:rfc3339_timestamp(T),
 				[{[{timestamp, Tiso}, {ipfs_hash, H}, {status, S}]}|Acc];
 			([], Acc) ->
 				Acc
@@ -195,7 +195,7 @@ process_request(<<"GET">>, [APIKey, <<"status">>|_], [Limit, Offset], Req) ->
 	ar:d({get_status, process, Limit, Offset}),
 	JsonS = lists:reverse(lists:sort(lists:foldl(fun
 			([T,H,S], Acc) ->
-				Tiso = list_to_binary(calendar:system_time_to_rfc3339(T)),
+				Tiso = ar_ipfs:rfc3339_timestamp(T),
 				[{[{timestamp, Tiso}, {ipfs_hash, H}, {status, S}]}|Acc];
 			([], Acc) ->
 				Acc
@@ -499,7 +499,7 @@ sufficient_funds(Wallet, DataSize) ->
 -endif.
 
 timestamp() ->
-	erlang:system_time(second).
+	{utc, calendar:universal_time()}.
 
 validate_req_fields_auth(Req, FieldsRequired) ->
 	case request_to_struct(Req) of
