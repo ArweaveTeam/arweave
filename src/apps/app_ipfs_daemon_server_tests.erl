@@ -9,12 +9,14 @@ put_get_key_test() ->
 	ok.
 
 all_ok_test() ->
-	{K, _W} = init_kqw(),
-	H = make_new_ipfs_hash(),
-	{ok, {{Status, _}, _, Body, _, _}} = send_request(getsend, {K, H}),
-	app_ipfs_daemon_server:del_key(K),
-	?assertEqual(<<"200">>, Status),
-	?assertEqual(<<"Request sent to queue">>, Body).
+	{timeout, 60, fun() ->
+		{K, _W} = init_kqw(),
+		H = make_new_ipfs_hash(),
+		{ok, {{Status, _}, _, Body, _, _}} = send_request(getsend, {K, H}),
+		app_ipfs_daemon_server:del_key(K),
+		?assertEqual(<<"200">>, Status),
+		?assertEqual(<<"Request sent to queue">>, Body)
+	end}.
 
 ignore_second_test_() ->
 	{timeout, 60, fun() ->

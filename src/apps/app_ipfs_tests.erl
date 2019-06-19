@@ -40,6 +40,10 @@ setup() ->
 	Node = ar_node_init(),
 	timer:sleep(1000),
 	Wallet = ar_wallet:new(),
+	case whereis(app_ipfs) of
+		undefined -> ok;
+		AlreadyRunningPid -> app_ipfs:stop(AlreadyRunningPid)
+	end,
 	{ok, Pid} = app_ipfs:start([Node], Wallet, []),
 	timer:sleep(1000),
 	{Node, Pid}.
