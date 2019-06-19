@@ -33,7 +33,9 @@ watchdog_start() ->
 watchdog_stop() ->
 	case whereis(miner_connection_watchdog) of
 		undefined -> not_started;
-		Pid -> exit(Pid, kill)
+		Pid ->
+			exit(Pid, kill),
+			wait_while_alive(Pid)
 	end.
 
 %% @doc Print a log message if no foreign block is received for
