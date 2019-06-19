@@ -41,8 +41,9 @@ delete_for_tx(TXID) ->
 	lists:foreach(DeleteRecord, Records).
 
 get_tags_by_id(PID, TXID, Timeout) ->
-	PID ! {get_tags, TXID, self()},
-	receive {tags, Tags} ->
+	Ref = make_ref(),
+	PID ! {get_tags, Ref, TXID, self()},
+	receive {tags, Ref, Tags} ->
 		{ok, Tags}
 	after Timeout ->
 		{error, timeout}
@@ -53,8 +54,9 @@ get_tags_by_id(PID, TXID, Timeout) ->
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 
 get_entries(PID, Name, Value) ->
-	PID ! {get_tx, Name, Value, self()},
-	receive {txs, TXIDs} ->
+	Ref = make_ref(),
+	PID ! {get_tx, Ref, Name, Value, self()},
+	receive {txs, Ref, TXIDs} ->
 		TXIDs
 	after 3000 ->
 		[]
@@ -65,8 +67,9 @@ get_entries_by_tag_name(Name) ->
 	get_entries_by_tag_name(whereis(http_search_node), Name).
 
 get_entries_by_tag_name(PID, Name) ->
-	PID ! {get_txs_by_tag_name, Name, self()},
-	receive {txs, TXIDs} ->
+	Ref = make_ref(),
+	PID ! {get_txs_by_tag_name, Ref, Name, self()},
+	receive {txs_by_tag_name, Ref, TXIDs} ->
 		TXIDs
 	after 3000 ->
 		[]
@@ -108,14 +111,14 @@ multi_delete(Proplist, [Key | Keys]) ->
 server() ->
 	try
 		receive
-			{get_tx, Name, Value, PID} ->
+			{get_tx, Ref, Name, Value, PID} ->
 				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
-				PID ! {txs, search_by_exact_tag(Name, Value)},
+				PID ! {txs, Ref, search_by_exact_tag(Name, Value)},
 				server();
-			{get_txs_by_tag_name, Name, PID} ->
-				PID ! {txs, search_by_tag_name(Name)},
+			{get_txs_by_tag_name, Ref, Name, PID} ->
+				PID ! {txs_by_tag_name, Ref, search_by_tag_name(Name)},
 				server();
-			{get_tags, TXID, PID} ->
+			{get_tags, Ref, TXID, PID} ->
 				Tags = lists:map(
 					fun(Tag) ->
 						{_, Name, Value, _} = Tag,
@@ -123,7 +126,7 @@ server() ->
 					end,
 					search_by_id(TXID)
 				),
-				PID ! {tags, Tags},
+				PID ! {tags, Ref, Tags},
 				server();
 			{update_tags_for_block, IndepHash, Height, TXs} ->
 				lists:foreach(
