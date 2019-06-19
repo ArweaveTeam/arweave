@@ -16,7 +16,7 @@ ERL_OPTS= -pa ebin/ \
 	-sasl errlog_type error \
 	-s prometheus
 
-test_all: test test_apps
+test_all: test test_apps test_ipfs
 
 test: all
 	@erl $(ERL_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
@@ -27,6 +27,10 @@ test_apps: all
 
 test_networks: all
 	@erl $(ERL_OPTS) -s ar start -s ar test_networks -s init stop
+
+test_ipfs: all
+# 	Since we're using mnesia for IPFS, the sname is important.
+	@erl $(ERL_OPTS) -noshell -sname master -run ar test_ipfs -s init stop
 
 tnt: test
 

@@ -6,6 +6,7 @@
 
 -export([main/0, main/1, start/0, start/1, rebuild/0]).
 -export([tests/0, tests/1, tests/2]).
+-export([test_ipfs/0]).
 -export([test_with_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
@@ -49,8 +50,6 @@
 		ar_retarget,
 		ar_block,
 		ar_tx_db,
-		app_ipfs_tests,
-		app_ipfs_daemon_server_tests,
 		ar_firewall_distributed_tests,
 		ar_fork_recovery_tests,
 		% ar_meta_db must be the last in the list since it resets global configuraiton
@@ -572,6 +571,11 @@ test_slow() ->
 	ar_http_iface_client:get_full_block_by_hash_test_slow(),
 	ar_fork_recovery:multiple_blocks_ahead_with_transaction_recovery_test_slow(),
 	ar_tx:check_last_tx_test_slow().
+
+%% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
+test_ipfs() ->
+	Mods = [app_ipfs_tests, app_ipfs_daemon_server_tests],
+	tests(Mods, #config {}).
 
 %% @doc Generate the project documentation.
 docs() ->
