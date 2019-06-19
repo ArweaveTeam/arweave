@@ -23,7 +23,7 @@ test: all
 	@erl $(ERL_OPTS) -noshell -sname master -setcookie test -run ar test_with_coverage -s init stop
 
 test_apps: all
-	@erl $(ERL_OPTS) -noshell -s ar test_apps -s init stop
+	@erl $(ERL_OPTS) -noshell -sname master -run ar test_apps -s init stop
 
 test_networks: all
 	@erl $(ERL_OPTS) -s ar start -s ar test_networks -s init stop

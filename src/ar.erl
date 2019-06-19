@@ -546,8 +546,7 @@ test_with_coverage() ->
 
 %% @doc Run tests on the apps.
 test_apps() ->
-	start(),
-	eunit:test(?APP_TEST_MODS, [verbose]).
+	tests(?APP_TEST_MODS, #config {}).
 
 test_networks() ->
 	error_logger:tty(false),
