@@ -13,17 +13,17 @@ get_everipedia_hashes_test_() ->
 		?assertEqual(N, length(Hashes))
 	end}.
 
-not_sending_already_got_test_() ->
-	{timeout, 60, fun() ->
-		{_, IPFSPid} = setup(),
-		{HashTups, _} = ar_ipfs:ep_get_ipfs_hashes(3, 123),
-		Hashes = ar_ipfs:hashes_only(HashTups),
-		ar:d({here, Hashes}),
-		app_ipfs:get_and_send(app_ipfs, Hashes),
-		timer:sleep(3000),
-		app_ipfs:get_and_send(app_ipfs, Hashes),
-		closedown(IPFSPid)
-	end}.
+% not_sending_already_got_test_() ->
+% 	{timeout, 60, fun() ->
+% 		{_, IPFSPid} = setup(),
+% 		{HashTups, _} = ar_ipfs:ep_get_ipfs_hashes(3, 123),
+% 		Hashes = ar_ipfs:hashes_only(HashTups),
+% 		ar:d({here, Hashes}),
+% 		app_ipfs:get_and_send(app_ipfs, Hashes),
+% 		timer:sleep(3000),
+% 		app_ipfs:get_and_send(app_ipfs, Hashes),
+% 		closedown(IPFSPid)
+% 	end}.
 
 add_local_and_get_test() ->
 	Filename = "known_local.txt",
@@ -36,26 +36,26 @@ add_local_and_get_test() ->
 
 %%% private
 
-setup() ->
-	Node = ar_node_init(),
-	timer:sleep(1000),
-	Wallet = ar_wallet:new(),
-	case whereis(app_ipfs) of
-		undefined -> ok;
-		AlreadyRunningPid -> app_ipfs:stop(AlreadyRunningPid)
-	end,
-	{ok, Pid} = app_ipfs:start([Node], Wallet, []),
-	timer:sleep(1000),
-	{Node, Pid}.
+% setup() ->
+% 	Node = ar_node_init(),
+% 	timer:sleep(1000),
+% 	Wallet = ar_wallet:new(),
+% 	case whereis(app_ipfs) of
+% 		undefined -> ok;
+% 		AlreadyRunningPid -> app_ipfs:stop(AlreadyRunningPid)
+% 	end,
+% 	{ok, Pid} = app_ipfs:start([Node], Wallet, []),
+% 	timer:sleep(1000),
+% 	{Node, Pid}.
 
-closedown(IPFSPid) ->
-	app_ipfs:stop(IPFSPid).
+% closedown(IPFSPid) ->
+% 	app_ipfs:stop(IPFSPid).
 
-ar_node_init() ->
-	ar_storage:clear(),
-	B0 = ar_weave:init([]),
-	Pid = ar_node:start([], B0),
-	Pid.
+% ar_node_init() ->
+% 	ar_storage:clear(),
+% 	B0 = ar_weave:init([]),
+% 	Pid = ar_node:start([], B0),
+% 	Pid.
 
 % mine_n_blocks_on_node(N, Node) ->
 % 	lists:foreach(fun(_) ->
