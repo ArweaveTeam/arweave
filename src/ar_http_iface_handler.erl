@@ -1,6 +1,6 @@
 -module(ar_http_iface_handler).
 -behaviour(cowboy_handler).
--export([init/2]).
+-export([init/2, read_complete_body/2]).
 -include("ar.hrl").
 -define(HANDLER_TIMEOUT, 30000).
 
@@ -112,8 +112,8 @@ handle(<<"OPTIONS">>, [<<"arql">>], Req, _) ->
 handle(<<"OPTIONS">>, _, Req, _) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET">>}, <<"OK">>, Req};
 
-handle(Method, [<<"api">>, <<"ipfs">> | Path], Req, _) ->
-	app_ipfs_daemon_server:handle(Method, Path, Req);
+handle(Method, [<<"api">>, <<"ipfs">> | Path], Req, Pid) ->
+	app_ipfs_daemon_server:handle(Method, Path, Req, Pid);
 
 %% @doc Return the current universal time in seconds.
 handle(<<"GET">>, [<<"time">>], Req, _) ->

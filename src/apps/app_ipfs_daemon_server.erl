@@ -1,5 +1,5 @@
 -module(app_ipfs_daemon_server).
--export([start/0, stop/0, handle/3]).
+-export([start/0, stop/0, handle/4]).
 -export([put_key_wallet_address/2, put_key_wallet/2, get_key_q_wallet/1, del_key/1]).
 -export([already_reported/2]).
 -export([cleaner_upper/0, ipfs_getter/4, sufficient_funds/2]).
@@ -92,9 +92,9 @@ del_key(APIKey) ->
 	mnesia:activity(transaction, F).
 
 %% @doc Handle /api/ipfs/... calls.
--spec handle(atom(), path(), cowboy_http_request()) -> cowboy_http_response().
-handle(Method, Path, Req) ->
-	case validate_request(Method, Path, Req) of
+-spec handle(atom(), path(), cowboy_http_request(), pid()) -> cowboy_http_response().
+handle(Method, Path, Req, Pid) ->
+	case validate_request(Method, Path, Req, Pid) of
 		{error, Response} ->
 			handle208(Response);
 		{ok, Args} ->
@@ -114,8 +114,8 @@ handle208(Response) -> Response.
 %%% Validators
 
 %% @doc validate a request and return required info
-validate_request(<<"POST">>, [<<"getsend">>], Req) ->
-	case validate_req_fields_auth(Req, [<<"api_key">>, <<"ipfs_hash">>]) of
+validate_request(<<"POST">>, [<<"getsend">>], Req, Pid) ->
+	case validate_req_fields_auth(Req, Pid, [<<"api_key">>, <<"ipfs_hash">>]) of
 		{ok, [APIKey, IPFSHash], Queue, Wallet} ->
 			case already_reported(APIKey, IPFSHash) of
 				{ok, _} ->
@@ -136,7 +136,7 @@ validate_request(<<"POST">>, [<<"getsend">>], Req) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [APIKey, <<"status">>|Options], Req) ->
+validate_request('GET', [APIKey, <<"status">>|Options], Req, _Pid) ->
 	case is_authorized(APIKey, Req) of
 		{ok, _Queue, _Wallet} ->
 			ar:d({get_status, options, Options}),
@@ -144,30 +144,30 @@ validate_request('GET', [APIKey, <<"status">>|Options], Req) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [APIKey, <<"balance">>], Req) ->
+validate_request('GET', [APIKey, <<"balance">>], Req, _Pid) ->
 	case is_authorized(APIKey, Req) of
 		{ok, _Queue, Wallet} ->
 			{ok, [Wallet]};
 		{error, _} ->
 			{error, {401, #{}, <<"Invalid API Key">>, Req}}
 	end;
-validate_request(<<"DEL">>, [APIKey, _IPFSHash], Req) ->
+validate_request(<<"DEL">>, [APIKey, _IPFSHash], Req, _Pid) ->
 	case is_authorized(APIKey, Req) of
 		{ok, _Queue, _Wallet} ->
 			{ok, []};
 		{error, _} ->
 			{error, {401, #{}, <<"Invalid API Key">>, Req}}
 	end;
-validate_request(<<"GET">>, [APIKey, _IPFSHash, <<"tx">>], Req) ->
+validate_request(<<"GET">>, [APIKey, _IPFSHash, <<"tx">>], Req, _Pid) ->
 	case is_authorized(APIKey, Req) of
 		{ok, _Queue, _Wallet} ->
 			{ok, []};
 		{error, _} ->
 			{error, {401, #{}, <<"Invalid API Key">>, Req}}
 	end;
-validate_request(<<"GET">>, [_IPFSHash], _Req) ->
+validate_request(<<"GET">>, [_IPFSHash], _Req, _Pid) ->
 	{ok, []};
-validate_request(_, _, Req) ->
+validate_request(_, _, Req, _Pid) ->
 	{error, {400, #{}, <<"Unrecognised request">>, Req}}.
 
 %%% Processors
@@ -428,15 +428,21 @@ queued_status_hash(APIKey, IPFSHash) ->
 			}]).
 
 %% @doc Given a request, returns the json body as a struct (or error).
-request_to_struct(Req) ->
-	try
-		BlockJSON = elli_request:body(Req),
-		{Struct} = ar_serialize:dejsonify(BlockJSON),
-		{ok, Struct}
-	catch
-		Exception:Reason ->
-			{error, {Exception, Reason}}
+request_to_struct(Req, Pid) ->
+	case ar_http_iface_handler:read_complete_body(Req, Pid) of
+		{ok, JSON, ReadReq} ->
+			case ar_serialize:json_decode(JSON) of
+				{ok, {Struct}} ->
+					{ok, Struct, ReadReq};
+				{error, _} ->
+					{error, {400, #{}, <<"Invalid json">>, ReadReq}}
+			end;
+		{error, body_size_too_large, TooLargeReq} ->
+			{error, reply_with_413(TooLargeReq)}
 	end.
+
+reply_with_413(Req) ->
+	{413, #{}, <<"Payload too large">>, Req}.
 
 requeue_hashes(APIKey, Queue, Wallet) ->
 	S = queued,
@@ -501,22 +507,22 @@ sufficient_funds(Wallet, DataSize) ->
 timestamp() ->
 	{utc, calendar:universal_time()}.
 
-validate_req_fields_auth(Req, FieldsRequired) ->
-	case request_to_struct(Req) of
-		{ok, Struct} ->
+validate_req_fields_auth(Req, Pid, FieldsRequired) ->
+	case request_to_struct(Req, Pid) of
+		{ok, Struct, NewReq} ->
 			case all_fields(Struct, FieldsRequired) of
 				{ok, APIKey, ReqFields} ->
-					case is_authorized(APIKey, Req) of
+					case is_authorized(APIKey, NewReq) of
 						{ok, Queue, Wallet} ->
 								{ok, ReqFields, Queue, Wallet};
 						{error, _} ->
-							{error, {401, #{}, <<"Invalid API Key">>, Req}}
+							{error, {401, #{}, <<"Invalid API Key">>, NewReq}}
 					end;
 				error ->
-					{error, {400, #{}, <<"Invalid json fields">>, Req}}
+					{error, {400, #{}, <<"Invalid json fields">>, NewReq}}
 			end;
-		{error, _} ->
-			{error, {400, #{}, <<"Invalid json">>, Req}}
+		{error, Response} ->
+			{error, Response}
 	end.
 
 mnesia_create_table(Name, Type, Info) ->
