@@ -131,7 +131,7 @@ Returns balance (in Winston) in User's wallet, along with the wallet address.
 
 ### command-line parameters
 
-- `ipfs_getsend` (no arguments): Start the IPFS->AR server.
+- `ipfs_import` (no arguments): Start the IPFS->AR server.
 
 Starts the app_ipfs_daemon_server:
 

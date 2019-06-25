@@ -28,5 +28,5 @@
 	custom_domains = [],
 	requests_per_minute_limit = ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT,
 	ipfs_pin = false,
-	ipfs_getsend = false
+	ipfs_import = false
 }).

@@ -104,7 +104,7 @@ main("") ->
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
-			{"ipfs_getsend", "Start the IPFS->AR server."},
+			{"ipfs_import", "Start the IPFS->AR server for importing IPFS objects into Arweave."},
 			{"content_policy (file)", "Load a content policy file for the node."},
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
@@ -180,8 +180,8 @@ parse_cli_args(["load_mining_key", File|Rest], C) ->
 	parse_cli_args(Rest, C#config { load_key = File });
 parse_cli_args(["ipfs_pin" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_pin = true });
-parse_cli_args(["ipfs_getsend" | Rest], C) ->
-	parse_cli_args(Rest, C#config { ipfs_getsend = true });
+parse_cli_args(["ipfs_import" | Rest], C) ->
+	parse_cli_args(Rest, C#config { ipfs_import = true });
 parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
 	parse_cli_args(Rest, C#config { start_hash_list = ar_util:decode(BHLHash) });
 parse_cli_args(["benchmark"|Rest], C)->
@@ -248,7 +248,7 @@ start(
 		custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
 		ipfs_pin = IPFSPin,
-		ipfs_getsend = IPFSgs
+		ipfs_import = IPFSImport
 	}) ->
 	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -434,7 +434,7 @@ start(
 		false -> ok;
 		true  -> app_ipfs:start_pinning()
 	end,
-	case IPFSgs of
+	case IPFSImport of
 		false -> ok;
 		true  -> app_ipfs_daemon_server:start()
 	end,

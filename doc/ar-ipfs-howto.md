@@ -7,7 +7,7 @@ Download from https://dist.ipfs.io/#go-ipfs
 From their website:
 
 > After downloading, untar the archive, and move the ipfs binary somewhere in your executables $PATH using the install.sh script:
-> 
+>
 ```
 $ tar xvfz go-ipfs.tar.gz
 $ cd go-ipfs
@@ -98,7 +98,7 @@ If present will load ipfs hashes from a file in the current directory called ipf
 To run:
 
 ```
-$ arweave-server peer ... mine ipfs-rw load_mining_key <wallet-filename>
+$ arweave-server peer ... mine ipfs_import load_mining_key <wallet-filename>
 ```
 
 ### monitoring
