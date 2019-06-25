@@ -43,14 +43,14 @@ I hope to write arweave-server commandline arguments for the above this morning 
 ```erlang
 $ arweave-server peer ... mine
 
-1> app_ipfs:start_recv_only().
+1> app_ipfs:start_pinning().
 ok
 ```
 
 #### TODO with commandline argument
 
 ```
-$ arweave-server peer ... mine ipfs-ro
+$ arweave-server peer ... mine ipfs_pin
 ```
 
 ### read-write

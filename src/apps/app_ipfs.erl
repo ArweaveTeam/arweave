@@ -1,7 +1,7 @@
 -module(app_ipfs).
 -export([
 	start/0, start/1, start/2, start/3,
-	start_link/1, start_recv_only/0,
+	start_link/1, start_pinning/0,
 	stop/1,
 	get_and_send/2,
 	bulk_get_and_send/2, bulk_get_and_send_from_file/2,
@@ -26,7 +26,8 @@
 
 %%% api
 
-start_recv_only() ->
+%% @doc Start pinning incoming tagged TXs to a local IPFS node.
+start_pinning() ->
 	Node = whereis(http_entrypoint_node),
 	Wallet = undefined,
 	Name = "",
@@ -52,7 +53,7 @@ start(Peers, Wallet, Name) ->
 		_         -> app_queue:start(Wallet)
 	end,
 	PidMod = case Name of
-		"" -> 
+		"" ->
 			spawn(fun() -> server(#state{
 				queue=Queue, wallet=Wallet
 			}) end);

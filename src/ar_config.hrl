@@ -27,6 +27,6 @@
 	gateway = off,
 	custom_domains = [],
 	requests_per_minute_limit = ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT,
-	ipfs_ro = false,
+	ipfs_pin = false,
 	ipfs_getsend = false
 }).

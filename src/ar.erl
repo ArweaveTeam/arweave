@@ -103,7 +103,7 @@ main("") ->
 			{"max_miners (num)", "The maximum number of mining processes."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
-			{"ipfs_ro", "Start the IPFS listener."},
+			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
 			{"ipfs_getsend", "Start the IPFS->AR server."},
 			{"content_policy (file)", "Load a content policy file for the node."},
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
@@ -178,8 +178,8 @@ parse_cli_args(["disk_space", Size|Rest], C) ->
 	parse_cli_args(Rest, C#config { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 parse_cli_args(["load_mining_key", File|Rest], C) ->
 	parse_cli_args(Rest, C#config { load_key = File });
-parse_cli_args(["ipfs_ro" | Rest], C) ->
-	parse_cli_args(Rest, C#config { ipfs_ro = true });
+parse_cli_args(["ipfs_pin" | Rest], C) ->
+	parse_cli_args(Rest, C#config { ipfs_pin = true });
 parse_cli_args(["ipfs_getsend" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_getsend = true });
 parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
@@ -247,7 +247,7 @@ start(
 		gateway = GatewayOpts,
 		custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
-		ipfs_ro = IPFSro,
+		ipfs_pin = IPFSPin,
 		ipfs_getsend = IPFSgs
 	}) ->
 	%% Start the logging system.
@@ -430,9 +430,9 @@ start(
 			do_nothing
 	end,
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
-	case IPFSro of
+	case IPFSPin of
 		false -> ok;
-		true  -> app_ipfs:start_recv_only()
+		true  -> app_ipfs:start_pinning()
 	end,
 	case IPFSgs of
 		false -> ok;
