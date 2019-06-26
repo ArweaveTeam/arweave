@@ -1,6 +1,6 @@
 -module(app_ipfs).
 -export([
-	start/0, start/1, start/2, start/3,
+	start/2, start/3,
 	start_link/1, start_pinning/0,
 	stop/1,
 	get_and_send/2,
@@ -33,16 +33,6 @@ start_pinning() ->
 	Name = "",
 	{ok, _Pid} = start([Node], Wallet, Name),
 	ok.
-
-start() ->
-	start("").
-
-start(Name) ->
-	Node = whereis(http_entrypoint_node),
-	Filename = "arweave_keyfile_gIK2HLIhvFUoAJFcpHOqwmGeZPgVZLcE3ss8sT64gFY.json",
-	Wallet = ar_wallet:load_keyfile("wallets/" ++ Filename),
-	{ok, Pid} = start([Node], Wallet, Name),
-	{Node, Wallet, Pid}.
 
 start(Peers, Wallet) ->
 	start(Peers, Wallet, "").
