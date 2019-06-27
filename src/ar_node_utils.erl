@@ -362,7 +362,6 @@ integrate_new_block(
 		PID ->
 			PID ! {parent_accepted_block, NewB}
 	end,
-	app_ipfs:maybe_ipfs_add_txs(BlockTXs),
 	lists:foreach(
 		fun(T) ->
 			ar_tx_db:ensure_error(T#tx.id)
