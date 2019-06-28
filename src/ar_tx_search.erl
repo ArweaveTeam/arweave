@@ -2,6 +2,7 @@
 -export([start/0]).
 -export([update_tag_table/1]).
 -export([get_entries/2, get_entries/3, get_tags_by_id/3]).
+-export([delete_tx_records/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -33,6 +34,12 @@
 start() ->
 	initDB(),
 	{ok, spawn(fun server/0)}.
+
+delete_tx_records(TXID) ->
+	delete_tx_records(whereis(http_search_node), TXID).
+
+delete_tx_records(PID, TXID) ->
+	PID ! {delete_tx_records, TXID}.
 
 delete_for_tx(TXID) ->
 	Records = mnesia:dirty_match_object(#arql_tag{tx = TXID, _ = '_'}),
@@ -125,6 +132,9 @@ server() ->
 					end,
 					ar_storage:read_tx(TXs)
 				),
+				server();
+			{delete_tx_records, TXID} ->
+				delete_for_tx(TXID),
 				server();
 			stop -> ok;
 			_OtherMsg -> server()

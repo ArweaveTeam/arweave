@@ -73,11 +73,12 @@ do_scan_and_clean_disk() ->
 				fun(File) ->
 					Filepath = filename:join(TXDir, File),
 					case scan_file(Filepath) of
-						reject ->
+						{reject, TXID} ->
 							ar:info([
 								{ar_firewall, scan_and_clean_disk},
 								{removing_file, File}
 							]),
+							ar_tx_search:delete_tx_records(TXID),
 							file:delete(Filepath),
 							ok;
 						{error, Reason} ->
@@ -87,7 +88,7 @@ do_scan_and_clean_disk() ->
 								{error, Reason}
 							]),
 							ok;
-						accept ->
+						{accept, _} ->
 							ok
 					end
 				end,
@@ -102,7 +103,7 @@ scan_file(File) ->
 		{ok, Binary} ->
 			try
 				TX = ar_serialize:json_struct_to_tx(Binary),
-				scan_tx(TX)
+				{scan_tx(TX), TX#tx.id}
 			catch Type:Pattern ->
 				{error, {exception, Type, Pattern}}
 			end
@@ -272,17 +273,31 @@ blacklist_transaction_test() ->
 	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ id = <<"goodtxid">> })).
 
 scan_and_clean_disk_test() ->
-	%% Blacklist a transaction and write it to disk.
+	GoodTXID = <<"goodtxid">>,
+	BadTXID = <<"badtxid1">>,
+	BadDataTXID = <<"badtxid">>,
+	TagName = <<"name">>,
+	TagValue = <<"value">>,
+	Tags = [{TagName, TagValue}],
+	lists:foreach(fun ar_tx_search:delete_tx_records/1, [GoodTXID, BadTXID, BadDataTXID]),
+	%% Blacklist a transaction, write it to disk and add it to the index.
 	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
-	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"badtxid1">> }),
-	?assertEqual(<<"badtxid1">>, (ar_storage:read_tx(<<"badtxid1">>))#tx.id),
-	%% Setup a content policy and write a bad tx to disk.
+	ar_storage:write_tx((ar_tx:new())#tx{ id = BadTXID, tags = Tags }),
+	ar_tx_search:update_tag_table(#block{ txs = [BadTXID] }),
+	?assertEqual(BadTXID, (ar_storage:read_tx(BadTXID))#tx.id),
+	%% Setup a content policy, write a bad tx to disk and add it to the index.
 	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
-	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"badtx">>, data = <<"BADCONTENT1">>}),
-	?assertEqual(<<"badtx">>, (ar_storage:read_tx(<<"badtx">>))#tx.id),
-	%% Write a good tx to disk,
-	ar_storage:write_tx((ar_tx:new())#tx{ id = <<"goodtxid">> }),
-	?assertEqual(<<"goodtxid">>, (ar_storage:read_tx(<<"goodtxid">>))#tx.id),
+	ar_storage:write_tx((ar_tx:new())#tx{ id = BadDataTXID, data = <<"BADCONTENT1">>, tags = Tags }),
+	ar_tx_search:update_tag_table(#block{ txs = [BadDataTXID] }),
+	?assertEqual(BadDataTXID, (ar_storage:read_tx(BadDataTXID))#tx.id),
+	%% Write a good tx to disk and add it to the index.
+	ar_storage:write_tx((ar_tx:new())#tx{ id = GoodTXID, tags = Tags }),
+	ar_tx_search:update_tag_table(#block{ txs = [GoodTXID] }),
+	?assertEqual(GoodTXID, (ar_storage:read_tx(GoodTXID))#tx.id),
+	?assertEqual(
+		lists:sort([BadTXID, BadDataTXID, GoodTXID]),
+		lists:sort(ar_tx_search:get_entries(TagName, TagValue))
+	),
 	%% Write a file that is not a tx to the transaction directory.
 	NotTXFile = filename:join([ar_meta_db:get(data_dir), ?TX_DIR, "not_a_tx"]),
 	file:write_file(NotTXFile, <<"not a tx">>),
@@ -295,7 +310,9 @@ scan_and_clean_disk_test() ->
 	after 10000 ->
 		?assert(false, "The disk scan did not complete after 10 seconds")
 	end,
-	?assertEqual(<<"goodtxid">>, (ar_storage:read_tx(<<"goodtxid">>))#tx.id),
+	?assertEqual(GoodTXID, (ar_storage:read_tx(GoodTXID))#tx.id),
 	{ok, <<"not a tx">>} = file:read_file(NotTXFile),
-	?assertEqual(unavailable, ar_storage:read_tx(<<"badtxid1">>)),
-	?assertEqual(unavailable, ar_storage:read_tx(<<"badtx">>)).
+	?assertEqual(unavailable, ar_storage:read_tx(BadTXID)),
+	?assertEqual(unavailable, ar_storage:read_tx(BadDataTXID)),
+	%% Assert illicit transactions were removed from the index.
+	?assertEqual([GoodTXID], ar_tx_search:get_entries(TagName, TagValue)).
