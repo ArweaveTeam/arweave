@@ -59,7 +59,7 @@ build-randomx:
 	make -C c_src
 
 gitmodules:
-	git submodule sync && git submodule update --init
+	git submodule foreach 'git remote prune origin' && git submodule sync && git submodule update --init
 
 compile_prod: build-randomx
 	./rebar3 compile --deps_only
