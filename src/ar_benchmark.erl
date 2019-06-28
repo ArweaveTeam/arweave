@@ -49,7 +49,7 @@ mine(Diff, Rounds, Algorithm) ->
 		Run = fun(_) -> mine(Diff, Algorithm) end,
 		lists:foreach(Run, lists:seq(1, Rounds))
 	end),
-	EstimatedTriedHashes = (math:pow(2, Diff) / 2) * Rounds,
+	EstimatedTriedHashes = math:pow(2, Diff) * Rounds,
 	{EstimatedTriedHashes, Time}.
 
 mine(Diff, Algorithm) ->
