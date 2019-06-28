@@ -185,6 +185,11 @@
 %% @doc The number of the best peers to send new blocks to in parallel.
 -define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
 
+%% @doc When the transaction data size is smaller than this number of bytes,
+%% the transaction is gossiped to the peer without a prior check if the peer
+%% already has this transaction.
+-define(TX_SEND_WITHOUT_ASKING_SIZE_LIMIT, 1000).
+
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
 -define(BLOCK_DIR, "blocks").

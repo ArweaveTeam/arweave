@@ -18,7 +18,7 @@
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
 	case byte_size(TX#tx.data) of
-		_Size when _Size < 50000 ->
+		_Size when _Size < ?TX_SEND_WITHOUT_ASKING_SIZE_LIMIT ->
 			do_send_new_tx(Peer, TX);
 		_ ->
 			case has_tx(Peer, TX#tx.id) of
