@@ -169,7 +169,7 @@ format_multipart_formdata(Boundary,  Files) ->
 	string:join(Parts, "\r\n").
 
 request(Method, Request) ->
-    Response = httpc:request(Method, Request, [{ssl,[{verify,0}]}], []),
+    Response = httpc:request(Method, Request, [], []),
 	case Response of
 		{ok, {_, _, Body}} ->
 			{ok, list_to_binary(Body)};
