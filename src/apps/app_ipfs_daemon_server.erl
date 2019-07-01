@@ -1,6 +1,6 @@
 -module(app_ipfs_daemon_server).
 -export([start/0, stop/0, handle/4]).
--export([put_key_wallet_address/2, put_key_wallet/2, get_key_q_wallet/1, del_key/1]).
+-export([put_key_wallet_address/2, put_key_wallet/2, get_key_q_wallet/1, get_keys/0, del_key/1]).
 -export([already_reported/2]).
 -export([cleaner_upper/0, ipfs_getter/4, sufficient_funds/2]).
 -include("ar.hrl").
@@ -81,6 +81,10 @@ get_key_q_wallet(APIKey) ->
 		[[Queue, Wallet]] -> {ok, Queue, Wallet};
 		_                 -> {error, not_found}
 	end.
+
+%% @doc return list of current API keys.
+get_keys() ->
+	mnesia_get_keys().
 
 %% @doc remove record with api key from the db.
 del_key(APIKey) ->
