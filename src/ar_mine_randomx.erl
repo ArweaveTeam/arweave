@@ -22,9 +22,10 @@ hash_light(LightState, Data) ->
 release_state(State) ->
 	case release_state_nif(State) of
 		ok ->
+			ar:info([ar_mine_randomx, succeeded_releasing_randomx_state]),
 			ok;
 		{error, Reason} ->
-			ar:warn([ar_mine_randomx, failed_to_release_mining_state, {reason, Reason}]),
+			ar:warn([ar_mine_randomx, failed_to_release_randomx_state, {reason, Reason}]),
 			error
 	end.
 
