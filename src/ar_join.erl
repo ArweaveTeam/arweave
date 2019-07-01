@@ -218,6 +218,18 @@ fill_to_capacity(_, [], _) -> ok;
 fill_to_capacity(Peers, ToWrite, BHL) ->
 	timer:sleep(1 * 1000),
 	RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
+	case ar_storage:read_block(RandHash, BHL) of
+		unavailable ->
+			fill_to_capacity2(Peers, RandHash, ToWrite, BHL);
+		_ ->
+			fill_to_capacity(
+				Peers,
+				lists:delete(RandHash, ToWrite),
+				BHL
+			)
+	end.
+
+fill_to_capacity2(Peers, RandHash, ToWrite, BHL) ->
 	B =
 		try
 			ar_node_utils:get_full_block(Peers, RandHash, BHL)
