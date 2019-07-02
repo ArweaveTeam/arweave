@@ -8,11 +8,8 @@
 %% @doc Start the server that will handle gateway requests.
 start(Port, Domain, CustomDomains) ->
 	ProtocolOpts = #{
-		middlewares => [cowboy_handler],
-		env => #{
-			handler => ar_gateway_handler,
-			handler_opts => {Domain, CustomDomains}
-		}
+		middlewares => [ar_gateway_middleware],
+		env => #{ gateway => {Domain, CustomDomains} }
 	},
 	SniHosts = derive_sni_hosts(CustomDomains),
 	{ok, _} = cowboy:start_tls(ar_gateway_listener, [

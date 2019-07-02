@@ -1,12 +1,12 @@
--module(ar_gateway_handler).
--behaviour(cowboy_handler).
--export([init/2]).
+-module(ar_gateway_middleware).
+-behaviour(cowboy_middleware).
+-export([execute/2]).
 
 -include("ar.hrl").
 -define(BH_SEARCH_TIMEOUT, 25000).
 
 %%%===================================================================
-%%% Cowboy handler callback.
+%%% Cowboy middleware callback.
 %%%===================================================================
 
 %% @doc Handle gateway requests.
@@ -59,7 +59,7 @@
 %% rather than
 %%
 %%     <a href="https://{txlabel}.gateway.example/{txid}">Link</a>
-init(Req, {Domain, CustomDomains} = State) ->
+execute(Req, #{ gateway := {Domain, CustomDomains} }) ->
 	Hostname = cowboy_req:host(Req),
 	Req1 =
 		case ar_domain:get_labeling(Domain, CustomDomains, Hostname) of
@@ -68,7 +68,7 @@ init(Req, {Domain, CustomDomains} = State) ->
 			{custom, CustomDomain} -> handle_custom_request(Domain, CustomDomain, Req);
 			unknown -> not_found(Req)
 		end,
-	{ok, Req1, State}.
+	{stop, Req1}.
 
 %%%===================================================================
 %%% Private functions.
