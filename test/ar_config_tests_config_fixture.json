@@ -42,10 +42,7 @@
     "feature_3",
     "feature_4"
   ],
-  "gateway": {
-    "port": 443,
-    "domain": "gateway.localhost"
-  },
+  "gateway": "gateway.localhost",
   "custom_domains": [
     "domain1.example",
     "domain2.example"

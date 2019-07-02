@@ -107,7 +107,7 @@ polling_session: all
 polling_gateway_session: all certs
 	erl $(ERL_OPTS) -run ar main \
 		polling \
-		gateway 443 gateway.localhost \
+		gateway gateway.localhost \
 		$(DEFAULT_PEER_OPTS)
 
 sim_realistic: all
