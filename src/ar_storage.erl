@@ -230,10 +230,10 @@ read_encrypted_block(ID) ->
 start_update_used_space() ->
 	spawn(
 		fun() ->
-			ar_meta_db:put(used_space, calculate_used_space())
+			catch ar_meta_db:put(used_space, calculate_used_space()),
+			timer:apply_after(?DIRECTORY_SIZE_TIMER, ?MODULE, start_update_used_space, [])
 		end
-	),
-	timer:apply_after(?DIRECTORY_SIZE_TIMER, ar_storage, start_update_used_space, []).
+	).
 
 lookup_block_filename(ID) ->
 	ar_block_index:get_block_filename(ID).
