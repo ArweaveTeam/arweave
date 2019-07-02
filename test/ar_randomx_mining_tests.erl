@@ -10,7 +10,15 @@
 two_nodes_successfully_fork_from_sha384_to_randomx_test_() ->
 	%% Set retarget height so that RandomX difficuly is small enough after fork.
 	ForkHeight = ?RETARGET_BLOCKS,
-	test_on_fork(height_1_7, ForkHeight, fun() -> two_nodes_successfully_fork_from_sha384_to_randomx(ForkHeight) end).
+	{
+		timeout,
+		240,
+		test_on_fork(
+			height_1_7,
+			ForkHeight,
+			fun() -> two_nodes_successfully_fork_from_sha384_to_randomx(ForkHeight) end
+		)
+	}.
 
 two_nodes_successfully_fork_from_sha384_to_randomx(ForkHeight) ->
 	%% Start a remote node.
