@@ -81,22 +81,31 @@ update(Pid, KeyValues) ->
 
 %% @doc Send a message to the server and wait for the result.
 send(Pid, Msg) ->
-	Pid ! {?MODULE, Msg, self()},
+	Ref = make_ref(),
+	Pid ! {?MODULE, Msg, self(), Ref},
 	receive
-		{?MODULE, Reply} ->
+		{?MODULE, Ref, Reply} ->
 			Reply
 	after
 		5000 ->
+			case Msg of
+				{lookup, Keys} ->
+					ar:warn([ar_node_state, lookup_timeout, {keys, Keys}]);
+				{update, KeyValues} when is_list(KeyValues) ->
+					ar:warn([ar_node_state, update_timeout, {keys, proplists:get_keys(KeyValues)}]);
+				Other ->
+					ar:warn([ar_node_state, msg_timeout, {message, Other}])
+			end,
 			{error, timeout}
 	end.
 
 %% @doc Main server loop.
 server(Tid) ->
 	receive
-		{Module, Msg, From} ->
+		{Module, Msg, From, Ref} ->
 			try handle(Tid, Msg) of
 				Reply ->
-					From ! {Module, Reply},
+					From ! {Module, Ref, Reply},
 					server(Tid)
 			catch
 				throw:Term ->
