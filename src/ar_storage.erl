@@ -375,17 +375,36 @@ lookup_tx_filename(ID) ->
 enough_space(Bytes) ->
 	(ar_meta_db:get(disk_space)) >= (Bytes + ar_meta_db:get(used_space)).
 
-%% @doc Calculate the amount of file space used by the Arweave client
+%% @doc Sum up the sizes of the files written by the Arweave client.
 calculate_used_space() ->
+	DataDir = ar_meta_db:get(data_dir),
 	{ok, CWD} = file:get_cwd(),
-	(
-		filelib:fold_files(
-			CWD,
-			"/*",
-			true,
-			fun(F, Acc) -> Acc + filelib:file_size(F) end,
-			0
-		)
+	Dirs = [
+		filename:join(DataDir, ?BLOCK_DIR),
+		filename:join(DataDir, ?ENCRYPTED_BLOCK_DIR),
+		filename:join(DataDir, ?HASH_LIST_DIR),
+		filename:join(DataDir, ?TX_DIR),
+		filename:join(DataDir, ?TX_INDEX_DIR),
+		filename:join(DataDir, ?WALLET_DIR),
+		filename:join(DataDir, ?WALLET_LIST_DIR),
+		filename:join(CWD, ?LOG_DIR)
+	],
+	lists:foldl(
+		fun(Dir, Acc) ->
+			Acc + calculate_used_space(Dir)
+		end,
+		0,
+		Dirs
+	).
+
+%% @doc Sum up the sizes of the files located directly (not in subdir) under the directory.
+calculate_used_space(Directory) ->
+	filelib:fold_files(
+		Directory,
+		"",
+		false,
+		fun(File, Acc) -> Acc + filelib:file_size(File) end,
+		0
 	).
 
 %% @doc Calculate the total amount of disk space available
