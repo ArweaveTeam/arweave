@@ -239,7 +239,8 @@ process_request(<<"GET">>, [APIKey, IPFSHash, <<"tx">>], [], Req) ->
 				TXs -> {200, #{}, lists:map(fun ar_util:encode/1, TXs), Req}
 			end;
 		[[T,S]|_] ->
-			JsonS = {[{timestamp, T}, {ipfs_hash, IPFSHash}, {status, S}]},
+			Tiso = ar_ipfs:rfc3339_timestamp(T),
+			JsonS = {[{timestamp, Tiso}, {ipfs_hash, IPFSHash}, {status, S}]},
 			JsonB = ar_serialize:jsonify(JsonS),
 			{200, #{}, JsonB, Req}
 	end;
