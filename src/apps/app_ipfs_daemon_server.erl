@@ -383,7 +383,7 @@ maybe_restart_queue(APIKey, Queue, Wallet) ->
 		true  ->
 			Queue;
 		false ->
-			Q2 = put_key_wallet(APIKey, Wallet),
+			{ok, Q2} = put_key_wallet(APIKey, Wallet),
 			spawn(fun() -> requeue_hashes(APIKey, Q2, Wallet) end),
 			Q2
 	end.
