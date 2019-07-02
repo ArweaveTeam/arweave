@@ -1038,7 +1038,7 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case ar_blacklist:is_peer_banned(OrigPeer) of
+	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
 		not_banned ->
 			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
 		banned ->
@@ -1082,7 +1082,7 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
 				{invalid, _} ->
 					post_block_reject_warn(BShadow, check_pow),
-					ar_blacklist:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
+					ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 					{400, #{}, <<"Invalid Block Proof of Work">>, Req};
 				{valid, _} ->
 					ar_bridge:ignore_id(BDS),

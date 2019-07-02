@@ -454,7 +454,7 @@ process_new_block2(StateIn, NewGS, NewB, RecallB, Peer, HashList, TXs) ->
 		{invalid, Reasons} ->
 			case lists:member(dep_hash, Reasons) of
 				true ->
-					ar_blacklist:ban_peer(Peer, ?BAD_POW_BAN_TIME);
+					ar_blacklist_middleware:ban_peer(Peer, ?BAD_POW_BAN_TIME);
 				false ->
 					ok
 			end,

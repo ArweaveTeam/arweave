@@ -50,7 +50,7 @@ split_path(Path) ->
 %% @doc Start the server
 do_start(Port) ->
 	ar_semaphore:start_link(hash_list_semaphore, 1),
-	ar_blacklist:start(),
+	ar_blacklist_middleware:start(),
 	Routes = [
 		{'_', [
 			{"/metrics/[:registry]", prometheus_cowboy2_handler, []},
@@ -61,7 +61,7 @@ do_start(Port) ->
 	ProtocolOpts =
 		#{
 			middlewares => [
-				ar_blacklist,
+				ar_blacklist_middleware,
 				cowboy_router,
 				cowboy_handler
 			],
