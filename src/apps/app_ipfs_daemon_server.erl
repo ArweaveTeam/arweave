@@ -140,7 +140,7 @@ validate_request(<<"POST">>, [<<"getsend">>], Req, Pid) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [APIKey, <<"status">>|Options], Req, _Pid) ->
+validate_request(<<"GET">>, [APIKey, <<"status">>|Options], Req, _Pid) ->
 	case is_authorized(APIKey, Req) of
 		{ok, _Queue, _Wallet} ->
 			ar:d({get_status, options, Options}),
@@ -148,7 +148,7 @@ validate_request('GET', [APIKey, <<"status">>|Options], Req, _Pid) ->
 		{error, Response} ->
 			{error, Response}
 	end;
-validate_request('GET', [APIKey, <<"balance">>], Req, _Pid) ->
+validate_request(<<"GET">>, [APIKey, <<"balance">>], Req, _Pid) ->
 	case is_authorized(APIKey, Req) of
 		{ok, _Queue, Wallet} ->
 			{ok, [Wallet]};
