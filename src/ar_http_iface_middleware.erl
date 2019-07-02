@@ -1,6 +1,6 @@
--module(ar_http_iface_handler).
--behaviour(cowboy_handler).
--export([init/2, read_complete_body/2]).
+-module(ar_http_iface_middleware).
+-behaviour(cowboy_middleware).
+-export([execute/2, read_complete_body/2]).
 -include("ar.hrl").
 -define(HANDLER_TIMEOUT, 55000).
 
@@ -8,16 +8,24 @@
 %%% Cowboy handler callbacks.
 %%%===================================================================
 
-init(InitialReq, State) ->
+%% To allow prometheus_cowboy2_handler to be run when the
+%% cowboy_router middleware matches on the /metrics route, this
+%% middleware runs between the cowboy_router and cowboy_handler
+%% middlewares. It uses the `handler` env value set by cowboy_router
+%% to determine whether or not it should run, otherwise it lets
+%% the cowboy_handler middleware run prometheus_cowboy2_handler.
+execute(Req, #{ handler := ar_http_iface_handler }) ->
 	Pid = self(),
 	HandlerPid = spawn_link(fun() ->
-		Pid ! {handled, handle(InitialReq, Pid)}
+		Pid ! {handled, handle(Req, Pid)}
 	end),
 	{ok, TimeoutRef} = timer:send_after(
 		?HANDLER_TIMEOUT,
-		{timeout, HandlerPid, InitialReq}
+		{timeout, HandlerPid, Req}
 	),
-	loop(TimeoutRef, State).
+	loop(TimeoutRef);
+execute(Req, Env) ->
+	{ok, Req, Env}.
 
 %%%===================================================================
 %%% Private functions.
@@ -28,17 +36,17 @@ init(InitialReq, State) ->
 %% reading the request's body from a process other than its handler's.
 %% This following loop function allows us to work around this
 %% limitation. (see https://github.com/ninenines/cowboy/issues/1374)
-loop(TimeoutRef, State) ->
+loop(TimeoutRef) ->
 	receive
 		{handled, {Status, Headers, Body, HandledReq}} ->
 			timer:cancel(TimeoutRef),
 			CowboyStatus = handle208(Status),
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
-			{ok, RepliedReq, State};
+			{stop, RepliedReq};
 		{read_complete_body, From, Req} ->
 			Term = do_read_complete_body(Req),
 			From ! {read_complete_body, Term},
-			loop(TimeoutRef, State);
+			loop(TimeoutRef);
 		{timeout, HandlerPid, InitialReq} ->
 			unlink(HandlerPid),
 			exit(HandlerPid, handler_timeout),
@@ -48,7 +56,7 @@ loop(TimeoutRef, State) ->
 				{path, cowboy_req:path(InitialReq)}
 			]),
 			RepliedReq = cowboy_req:reply(500, #{}, <<"Handler timeout">>, InitialReq),
-			{ok, RepliedReq, State}
+			{stop, RepliedReq}
 	end.
 
 handle(Req, Pid) ->

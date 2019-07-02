@@ -63,6 +63,7 @@ do_start(Port) ->
 			middlewares => [
 				ar_blacklist_middleware,
 				cowboy_router,
+				ar_http_iface_middleware,
 				cowboy_handler
 			],
 			env => #{dispatch => Dispatch},
