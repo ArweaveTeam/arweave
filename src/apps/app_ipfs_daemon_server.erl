@@ -236,7 +236,9 @@ process_request(<<"GET">>, [APIKey, IPFSHash, <<"tx">>], [], Req) ->
 		[[_, mined]|_] ->
 			case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
 				[]  -> {404, #{}, <<"IPFS hash not found.">>, Req};
-				TXs -> {200, #{}, lists:map(fun ar_util:encode/1, TXs), Req}
+				TXs ->
+					TXEs = lists:map(fun ar_util:encode/1, TXs),
+					{200, #{}, ar_serialize:jsonify(TXEs), Req}
 			end;
 		[[T,S]|_] ->
 			Tiso = ar_ipfs:rfc3339_timestamp(T),
