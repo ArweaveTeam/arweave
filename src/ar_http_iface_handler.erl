@@ -2,7 +2,7 @@
 -behaviour(cowboy_handler).
 -export([init/2, read_complete_body/2]).
 -include("ar.hrl").
--define(HANDLER_TIMEOUT, 30000).
+-define(HANDLER_TIMEOUT, 55000).
 
 %%%===================================================================
 %%% Cowboy handler callbacks.
