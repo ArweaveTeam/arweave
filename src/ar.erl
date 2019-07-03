@@ -435,8 +435,11 @@ start(
 		true  -> app_ipfs_daemon_server:start()
 	end,
 	case Pause of
-		false -> ok;
-		_ -> receive after infinity -> ok end
+		false ->
+			ok;
+		_ ->
+			garbage_collect(),
+			receive after infinity -> ok end
 	end.
 
 %% @doc Create a name for a session log file.
