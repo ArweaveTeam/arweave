@@ -1,5 +1,4 @@
 -module(ar_config_tests).
--include("src/ar.hrl").
 -include("src/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 

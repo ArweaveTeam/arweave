@@ -1,3 +1,8 @@
+-ifndef(AR_CONFIG_HRL).
+-define(AR_CONFIG_HRL, true).
+
+-include("ar.hrl").
+
 %% Start options with default values.
 -record(config, {
 	benchmark = false,
@@ -31,3 +36,5 @@
 	ipfs_pin = false,
 	ipfs_import = false
 }).
+
+-endif.
