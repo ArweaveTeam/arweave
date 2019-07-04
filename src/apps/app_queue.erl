@@ -71,6 +71,7 @@ send_tx(S, TX) ->
 				ar_tx:calculate_min_tx_cost(
 					byte_size(TX#tx.data),
 					ar_node:get_current_diff(S#state.node),
+					ar_node:get_height(S#state.node),
 					ar_node:get_wallet_list(S#state.node),
 					TX#tx.target
 				),

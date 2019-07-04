@@ -81,7 +81,7 @@ get_full_block_from_remote_peers(Peers, ID, BHL) ->
 		true ->
 			case ar_meta_db:get(http_logging) of
 				true ->
-					ar:report(
+					ar:info(
 						[
 							{downloaded_block, ar_util:encode(ID)},
 							{peer, Peer},
@@ -221,7 +221,7 @@ start_mining(#{
 			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BHL),
 			case FullBlock of
 				X when (X == unavailable) or (X == not_found) ->
-					ar:report(
+					ar:info(
 						[
 							could_not_start_mining,
 							could_not_retrieve_recall_block
@@ -231,14 +231,14 @@ start_mining(#{
 					case ar_weave:verify_indep(FullBlock, BHL) of
 						true ->
 							ar_storage:write_full_block(FullBlock),
-							ar:report(
+							ar:info(
 								[
 									could_not_start_mining,
 									stored_recall_block_for_foreign_verification
 								]
 							);
 						false ->
-							ar:report(
+							ar:info(
 								[
 									could_not_start_mining,
 									{received_invalid_recall_block, FullBlock#block.indep_hash}
@@ -253,7 +253,7 @@ start_mining(#{
 					ar:report_console([{erroneous_recall_block, RecallB}]);
 				true ->
 					ar_miner_log:started_hashing(),
-					ar:report([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
+					ar:info([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
 			end,
 			case make_full_block(
 				RecallB#block.indep_hash,
@@ -283,7 +283,7 @@ start_mining(#{
 						Tags,
 						Node
 					),
-					ar:report([{node, Node}, {started_miner, Miner}]),
+					ar:info([{node, Node}, {started_miner, Miner}]),
 					StateIn#{ miner => Miner };
 				ForceDiff ->
 					Miner = ar_mine:start(
@@ -295,7 +295,7 @@ start_mining(#{
 						ForceDiff,
 						Node
 					),
-					ar:report([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
+					ar:info([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
 					StateIn#{ miner => Miner, diff => ForceDiff }
 			end
 	end.
@@ -332,7 +332,7 @@ integrate_new_block(
 		lists:filter(
 			fun(T) ->
 				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
-				ar_tx:verify(T, NewB#block.diff, WalletList)
+				ar_tx:verify(T, NewB#block.diff, NewB#block.height + 1, WalletList)
 			end,
 			TXs
 		),
@@ -502,8 +502,8 @@ validate(#{ hash_list := HashList, wallet_list := WalletList }, B, TXs, OldB, Re
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
 validate(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
-	ar:report([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),
-	false;
+	ar:info([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),
+	{invalid, [recall_block_unavailable]};
 validate(
 		HashList,
 		WalletList,
@@ -513,7 +513,8 @@ validate(
 				wallet_list = WalletList,
 				nonce = Nonce,
 				diff = Diff,
-				timestamp = Timestamp
+				timestamp = Timestamp,
+				height = Height
 			},
 		TXs,
 		OldB,
@@ -523,11 +524,13 @@ validate(
 	% TODO: Fix names.
 	BDSHash = ar_weave:hash(
 		ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
-		Nonce),
-	Mine = ar_mine:validate_by_hash(BDSHash, Diff),
+		Nonce,
+		Height
+	),
+	Mine = ar_mine:validate(BDSHash, Diff),
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
-	Txs = ar_tx:verify_txs(TXs, Diff, OldB#block.wallet_list),
+	Txs = ar_tx:verify_txs(TXs, Diff, Height, OldB#block.wallet_list),
 	DiffCheck = ar_retarget:validate_difficulty(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
@@ -542,7 +545,7 @@ validate(
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
 	CumulativeDiffCheck = ar_block:verify_cumulative_diff(NewB, OldB),
 
-	ar:report(
+	ar:info(
 		[
 			{block_validation_results, ar_util:encode(NewB#block.indep_hash)},
 			{height, NewB#block.height},
@@ -568,7 +571,7 @@ validate(
 
 	case IndepRecall of
 		false ->
-			ar:report(
+			ar:info(
 				[
 					{encountered_invalid_recall_block, ar_util:encode(RecallB#block.indep_hash)},
 					moving_to_invalid_block_directory
@@ -579,23 +582,23 @@ validate(
 			ok
 	end,
 
-	case Mine of false -> ar:report({invalid_nonce, BDSHash}); _ -> ok end,
-	case Wallet of false -> ar:d(invalid_wallet_list); _ -> ok      end,
-	case Txs of false -> ar:d(invalid_txs); _ -> ok  end,
-	case DiffCheck of false -> ar:d(invalid_difficulty); _ -> ok  end,
-	case IndepHash of false -> ar:d(invalid_indep_hash); _ -> ok  end,
-	case Hash of false -> ar:d(invalid_dependent_hash); _ -> ok  end,
-	case WeaveSize of false -> ar:d(invalid_total_weave_size); _ -> ok      end,
-	case Size of false -> ar:d(invalid_size); _ -> ok  end,
-	case HeightCheck of false -> ar:d(invalid_height); _ -> ok      end,
-	case RetargetCheck of false -> ar:d(invalid_retarget); _ -> ok  end,
-	case PreviousBCheck of false -> ar:d(invalid_previous_block); _ -> ok  end,
-	case HashlistCheck of false -> ar:d(invalid_hash_list); _ -> ok  end,
-	case WalletListCheck of false -> ar:d(invalid_wallet_list_rewards); _ -> ok  end,
-	case CumulativeDiffCheck of false -> ar:d(invalid_cumulative_diff); _ -> ok  end,
-	case BHLMerkleCheck of false -> ar:d(invalid_hash_list_merkle); _ -> ok  end,
+	case Mine of false -> ar:info({invalid_nonce, BDSHash}); _ -> ok end,
+	case Wallet of false -> ar:info(invalid_wallet_list); _ -> ok end,
+	case Txs of false -> ar:info(invalid_txs); _ -> ok end,
+	case DiffCheck of false -> ar:info(invalid_difficulty); _ -> ok end,
+	case IndepHash of false -> ar:info(invalid_indep_hash); _ -> ok end,
+	case Hash of false -> ar:info(invalid_dependent_hash); _ -> ok end,
+	case WeaveSize of false -> ar:info(invalid_total_weave_size); _ -> ok end,
+	case Size of false -> ar:info(invalid_size); _ -> ok end,
+	case HeightCheck of false -> ar:info(invalid_height); _ -> ok end,
+	case RetargetCheck of false -> ar:info(invalid_retarget); _ -> ok end,
+	case PreviousBCheck of false -> ar:info(invalid_previous_block); _ -> ok end,
+	case HashlistCheck of false -> ar:info(invalid_hash_list); _ -> ok end,
+	case WalletListCheck of false -> ar:info(invalid_wallet_list_rewards); _ -> ok end,
+	case CumulativeDiffCheck of false -> ar:info(invalid_cumulative_diff); _ -> ok end,
+	case BHLMerkleCheck of false -> ar:info(invalid_hash_list_merkle); _ -> ok end,
 
-	(Mine
+	Valid = (Mine
 		andalso Wallet
 		andalso IndepRecall
 		andalso Txs
@@ -610,14 +613,24 @@ validate(
 		andalso HashlistCheck
 		andalso WalletListCheck
 		andalso CumulativeDiffCheck
-		andalso BHLMerkleCheck);
+		andalso BHLMerkleCheck),
+	InvalidReasons = case Hash of
+		true -> [];
+		false -> [dep_hash]
+	end,
+	case Valid of
+		true ->
+			valid;
+		false ->
+			{invalid, InvalidReasons}
+	end;
 validate(_HL, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
 	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
 	validate(HL, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate(_HL, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
-	ar:report([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
-	false.
+	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
+	{invalid, [hash_list_or_wallet_list]}.
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 validate_wallet_list([]) ->

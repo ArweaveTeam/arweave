@@ -41,7 +41,7 @@ scan_tx(TX) ->
 	receive
 		{scanned_tx, Ref, Response} ->
 			Response
-	after 10000 ->
+	after 30000 ->
 		ar:err([{ar_firewall, scan_tx_timeout}, {tx, ar_util:encode(TX#tx.id)}]),
 		reject
 	end.
@@ -136,25 +136,33 @@ scan_transaction(TX, TXBlacklist, ContentSigs) ->
 			ar:info([{ar_firewall, reject_tx}, {tx, ar_util:encode(TX#tx.id)}, tx_is_blacklisted]),
 			reject;
 		false ->
-			Tags = lists:foldl(
-				fun({K, V}, Acc) ->
-					[K, V | Acc]
-				end,
-				[],
-				TX#tx.tags
-			),
-			ScanList = [TX#tx.data, TX#tx.target | Tags],
-			case av_detect:is_infected(ScanList, ContentSigs) of
-				{true, MatchedSigs} ->
-					ar:info([
-						{ar_firewall, reject_tx},
-						{tx, ar_util:encode(TX#tx.id)},
-						{matches, MatchedSigs}
-					]),
-					reject;
-				false ->
-					accept
+			case ContentSigs of
+				{[], no_pattern} ->
+					accept;
+				_ ->
+					verify_content_sigs(TX, ContentSigs)
 			end
+	end.
+
+verify_content_sigs(TX, ContentSigs) ->
+	Tags = lists:foldl(
+		fun({K, V}, Acc) ->
+			[K, V | Acc]
+		end,
+		[],
+		TX#tx.tags
+	),
+	ScanList = [TX#tx.data, TX#tx.target | Tags],
+	case av_detect:is_infected(ScanList, ContentSigs) of
+		{true, MatchedSigs} ->
+			ar:info([
+				{ar_firewall, reject_tx},
+				{tx, ar_util:encode(TX#tx.id)},
+				{matches, MatchedSigs}
+			]),
+			reject;
+		false ->
+			accept
 	end.
 
 %% Tests: ar_firewall

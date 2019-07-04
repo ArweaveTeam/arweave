@@ -128,7 +128,7 @@ parse_peer(Str) when is_list(Str) ->
 		{ok, [A, B, C, D], PortStr} ->
 			{A, B, C, D, parse_port(PortStr)};
 		{error, _} ->
-			{127, 0, 0, 1, parse_port(Str)}
+			throw({invalid_peer_string, Str})
 	end;
 parse_peer({IP, Port}) ->
 	{A, B, C, D} = parse_peer(IP),

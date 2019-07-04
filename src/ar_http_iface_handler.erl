@@ -2,7 +2,7 @@
 -behaviour(cowboy_handler).
 -export([init/2, read_complete_body/2]).
 -include("ar.hrl").
--define(HANDLER_TIMEOUT, 30000).
+-define(HANDLER_TIMEOUT, 55000).
 
 %%%===================================================================
 %%% Cowboy handler callbacks.
@@ -344,7 +344,8 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes], Req, _) ->
 		integer_to_binary(
 			ar_tx:calculate_min_tx_cost(
 				binary_to_integer(SizeInBytes),
-				ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1
+				ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1,
+				ar_node:get_height(whereis(http_entrypoint_node))
 			)
 		),
 	Req};
@@ -363,6 +364,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req, _) ->
 					ar_tx:calculate_min_tx_cost(
 						binary_to_integer(SizeInBytes),
 						ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1,
+						ar_node:get_height(whereis(http_entrypoint_node)),
 						ar_node:get_wallet_list(whereis(http_entrypoint_node)),
 						AddrOK
 					)
@@ -373,8 +375,8 @@ handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req, _) ->
 %% @doc Return the current hash list held by the node.
 %% GET request to endpoint /hash_list
 handle(<<"GET">>, [<<"hash_list">>], Req, _) ->
-	HashList = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	ok = ar_semaphore:acquire(hash_list_semaphore, infinity),
+	HashList = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	{200, #{},
 		ar_serialize:jsonify(
 			ar_serialize:hash_list_to_json_struct(HashList)
@@ -837,7 +839,8 @@ handle_post_tx(TX) ->
 							{error_response, {400, #{}, <<"Waiting TXs exceed balance for wallet.">>}};
 						_ ->
 							% Finally, validate the veracity of the TX.
-							case ar_tx:verify(TX, Diff, FloatingWalletList) of
+							CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+							case ar_tx:verify(TX, Diff, CurrentHeight + 1, FloatingWalletList) of
 								false ->
 									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 									{error_response, {400, #{}, <<"Transaction verification failed.">>}};
@@ -1023,15 +1026,32 @@ post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 		false ->
 			{503, #{}, <<"Not joined.">>, Req};
 		true ->
-			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+			post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
-%% The MIN_DIFF check is filtering out blocks from smaller networks, e.g.
+post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+	CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+	case BShadow#block.height of
+		H when H < CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT ->
+			{400, #{}, <<"Height is too far behind">>, Req};
+		H when H > CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
+			{400, #{}, <<"Height is too far ahead">>, Req};
+		_ ->
+			post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+	end;
+post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+	case ar_blacklist:is_peer_banned(OrigPeer) of
+		not_banned ->
+			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
+		banned ->
+			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
+	end;
+%% The min difficulty check is filtering out blocks from smaller networks, e.g.
 %% testnets. Therefor, we don't want to log when this check or any check above
 %% rejects the block because there are potentially a lot of rejections.
 post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case BShadow#block.diff >= ?MIN_DIFF of
+	case BShadow#block.diff >= ar_mine:min_difficulty(BShadow#block.height) of
 		true ->
-			post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}, Req);
+			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
 		_ ->
 			{400, #{}, <<"Difficulty too low">>, Req}
 	end;
@@ -1055,21 +1075,22 @@ post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 %% Note! Checking PoW should be as cheap as possible. All slow steps should
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
-post_block(check_pow, {BShadow, ReqStruct, OrigPeer, BDS}, Req) ->
+post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	case BDS of
 		no_data_segment ->
-			post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}, Req);
+			post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
 		_ ->
-			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff) of
+			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
 				{invalid, _} ->
 					post_block_reject_warn(BShadow, check_pow),
+					ar_blacklist:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 					{400, #{}, <<"Invalid Block Proof of Work">>, Req};
 				{valid, _} ->
 					ar_bridge:ignore_id(BDS),
-					post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}, Req)
+					post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 			end
 	end;
-post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}, Req) ->
+post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->

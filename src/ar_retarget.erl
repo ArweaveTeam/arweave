@@ -1,7 +1,7 @@
 -module(ar_retarget).
 -export([is_retarget_height/1]).
 -export([maybe_retarget/2, maybe_retarget/4]).
--export([calculate_difficulty/3]).
+-export([calculate_difficulty/4]).
 -export([validate_difficulty/2]).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
@@ -40,7 +40,8 @@ maybe_retarget(Height, CurDiff, TS, Last) when ?IS_RETARGET_HEIGHT(Height) ->
 	calculate_difficulty(
 		CurDiff,
 		TS,
-		Last
+		Last,
+		Height
 	);
 maybe_retarget(_Height, CurDiff, _TS, _Last) ->
 	CurDiff.
@@ -51,7 +52,8 @@ maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
 			calculate_difficulty(
 				B#block.diff,
 				B#block.timestamp,
-				Last
+				Last,
+				B#block.height
 			),
 		last_retarget = B#block.timestamp
 	};
@@ -64,10 +66,18 @@ maybe_retarget(B, OldB) ->
 %% @doc Calculate a new difficulty, given an old difficulty and the period
 %% since the last retarget occcurred.
 -ifdef(FIXED_DIFF).
-calculate_difficulty(_OldDiff, _TS, _Last) ->
+calculate_difficulty(_OldDiff, _TS, _Last, _Height) ->
 	?FIXED_DIFF.
 -else.
-calculate_difficulty(OldDiff, TS, Last) ->
+calculate_difficulty(OldDiff, TS, Last, Height) ->
+	case ar_fork:height_1_7() of
+		Height ->
+			switch_to_randomx_fork_diff(OldDiff);
+		_ ->
+			calculate_difficulty1(OldDiff, TS, Last, Height)
+	end.
+
+calculate_difficulty1(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeError = abs(ActualTime - TargetTime),
@@ -77,9 +87,17 @@ calculate_difficulty(OldDiff, TS, Last) ->
 			TargetTime > ActualTime                        -> OldDiff + 1;
 			true                                           -> OldDiff - 1
 		end,
-		?MIN_DIFF
+		ar_mine:min_difficulty(Height)
 	),
 	Diff.
+-endif.
+
+-ifdef(DEBUG).
+switch_to_randomx_fork_diff(_) ->
+	1.
+-else.
+switch_to_randomx_fork_diff(OldDiff) ->
+	ar_mine:sha384_diff_to_randomx_diff(OldDiff) - 2.
 -endif.
 
 %% @doc Validate that a new block has an appropriate difficulty.
@@ -88,7 +106,8 @@ validate_difficulty(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
 		calculate_difficulty(
 			OldB#block.diff,
 			NewB#block.timestamp,
-			OldB#block.last_retarget)
+			OldB#block.last_retarget,
+			NewB#block.height)
 	);
 validate_difficulty(NewB, OldB) ->
 	(NewB#block.diff >= OldB#block.diff) and

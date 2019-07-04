@@ -29,7 +29,8 @@ get_tx_reward_test() ->
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
 	% Hand calculated result for 1000 bytes.
-	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff - 1),
+	Height = 0,
+	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff - 1, Height),
 	ExpectedPrice = ar_http_iface_client:get_tx_reward({127, 0, 0, 1, 1984}, 1000).
 
 %% @doc Ensure that objects are only re-gossiped once.
@@ -108,10 +109,10 @@ get_fun_msg_pair(send_new_tx) ->
 %% to an ar_util:pmap/2 call fails the tests currently.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
-	ar_blacklist:reset_counters(),
+	ar_blacklist:reset(),
 	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
-	ar_blacklist:reset_counters(),
+	ar_blacklist:reset(),
 	ByResponseType = count_by_response_type(ErrorResponse, Responses),
 	Expected = #{
 		error_responses => ExpectedErrors,
@@ -336,9 +337,6 @@ find_external_tx_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
-	{ok, SearchNode} = ar_tx_search:start(),
-	ar_node:add_peers(Node, SearchNode),
-	ar_http_iface_server:reregister(http_search_node, SearchNode),
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
@@ -358,9 +356,6 @@ fail_external_tx_test() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	{ok, SearchNode} = ar_tx_search:start(),
-	ar_node:add_peers(Node, SearchNode),
-	ar_http_iface_server:reregister(http_search_node, SearchNode),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)),
 	timer:sleep(1000),
 	ar_node:mine(Node),
@@ -413,6 +408,7 @@ add_external_block_with_bad_bds_test_() ->
 	{timeout, 20, fun() ->
 		Setup = fun() ->
 			ar_storage:clear(),
+			ar_blacklist:reset(),
 			[B0] = ar_weave:init([]),
 			BHL0 = [B0#block.indep_hash],
 			NodeWithBridge = ar_node:start([], [B0]),
@@ -456,7 +452,7 @@ add_external_block_with_bad_bds_test_() ->
 				add_rand_suffix(<<"other-block-data-segment">>)
 			)
 		),
-		%% Try to post an invalid data segment
+		%% Try to post an invalid data segment. This triggers a ban in ar_blacklist.
 		?assertMatch(
 			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
 			send_new_block(
@@ -465,7 +461,18 @@ add_external_block_with_bad_bds_test_() ->
 				RecallB0,
 				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
-		)
+		),
+		%% Verify the IP address of self is banned in ar_blacklist.
+		?assertMatch(
+			{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
+			send_new_block(
+				RemotePeer,
+				B1#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)},
+				RecallB0,
+				add_rand_suffix(<<"bad-block-data-segment">>)
+			)
+		),
+		ar_blacklist:reset()
 	end}.
 
 % add_external_block_with_invalid_timestamp_test() ->
@@ -673,9 +680,6 @@ get_subfields_of_tx_test() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	{ok, SearchNode} = ar_tx_search:start(),
-	ar_node:add_peers(Node, SearchNode),
-	ar_http_iface_server:reregister(http_search_node, SearchNode),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
 	timer:sleep(1000),
 	ar_node:mine(Node),
@@ -699,9 +703,6 @@ get_pending_tx_test() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	{ok, SearchNode} = ar_tx_search:start(),
-	ar_node:add_peers(Node, SearchNode),
-	ar_http_iface_server:reregister(http_search_node, SearchNode),
 	io:format("~p\n",[
 		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>))
 		]),
@@ -766,9 +767,7 @@ get_multiple_pending_txs_test_() ->
 %% @doc Spawn a network with two nodes and a chirper server.
 get_tx_by_tag_test() ->
 	ar_storage:clear(),
-	{ok, SearchServer} = ar_tx_search:start(),
 	Peers = ar_network:start(10, 10),
-	ar_node:add_peers(hd(Peers), SearchServer),
 	% Generate the transaction.
 	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
 	% Add tx to network
@@ -1332,8 +1331,9 @@ update_nonce(B, PreviousRecallB) ->
 update_nonce(B, PreviousRecallB, Nonce) ->
 	NonceBinary = integer_to_binary(Nonce),
 	BDS = generate_block_data_segment(B#block { nonce = NonceBinary }, PreviousRecallB),
-	case ar_weave:hash(BDS, NonceBinary) of
-		<< 0:(?MIN_DIFF), _/bitstring >> ->
+	MinDiff = ar_mine:min_difficulty(B#block.height),
+	case ar_weave:hash(BDS, NonceBinary, B#block.height) of
+		<< 0:MinDiff, _/bitstring >> ->
 			B#block{ nonce = NonceBinary };
 		_ ->
 			update_nonce(B, PreviousRecallB, Nonce + 1)

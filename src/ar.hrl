@@ -22,17 +22,17 @@
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
 %-define(DEBUG, debug).
+
 -ifdef(DEBUG).
 -define(FORK_1_6, 0).
 -else.
+%%% FORK INDEX
+%%% @deprecated Fork heights from 1.7 on are defined in the ar_fork module.
 -define(FORK_1_6, 95000).
 -endif.
 
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").
-
-%% @doc Should ar:report_console/1 /actually/ report to the console?
--define(SILENT, true).
 
 %% @doc The hashing algorithm used to calculate wallet addresses
 -define(HASH_ALG, sha256).
@@ -48,11 +48,6 @@
 
 %% @doc NB: Setting the default difficulty high will cause TNT to fail.
 -define(DEFAULT_DIFF, 8).
--ifdef(DEBUG).
--define(MIN_DIFF, ?DEFAULT_DIFF).
--else.
--define(MIN_DIFF, 31).
--endif.
 
 -ifndef(TARGET_TIME).
 -define(TARGET_TIME, 120).
@@ -144,6 +139,10 @@
 %% Maximum allowed number of accepted requests per minute per IP.
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
 
+%% @doc Number of seconds an IP address should be completely banned from doing
+%% HTTP requests after posting a block with bad PoW.
+-define(BAD_POW_BAN_TIME, 24 * 60 * 60).
+
 %% @doc Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
 
@@ -185,6 +184,22 @@
 
 %% @doc Target number of blocks per year.
 -define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME/60)) ).
+
+%% @doc The adjustment of difficutly going from SHA-384 to RandomX.
+-define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
+-ifdef(DEBUG).
+-define(RANDOMX_KEY_SWAP_FREQ, 10).
+-define(RANDOMX_MIN_KEY_GEN_AHEAD, 1).
+-define(RANDOMX_MAX_KEY_GEN_AHEAD, 4).
+-define(RANDOMX_STATE_POLL_INTERVAL, 2).
+-define(RANDOMX_KEEP_KEY, 3).
+-else.
+-define(RANDOMX_KEY_SWAP_FREQ, 2000).
+-define(RANDOMX_MIN_KEY_GEN_AHEAD, (30 + ?STORE_BLOCKS_BEHIND_CURRENT)).
+-define(RANDOMX_MAX_KEY_GEN_AHEAD, (90 + ?STORE_BLOCKS_BEHIND_CURRENT)).
+-define(RANDOMX_STATE_POLL_INTERVAL, ?TARGET_TIME).
+-define(RANDOMX_KEEP_KEY, ?STORE_BLOCKS_BEHIND_CURRENT).
+-endif.
 
 %% @doc A block on the weave.
 -record(block, {

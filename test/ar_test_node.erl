@@ -59,7 +59,7 @@ wait_until_height(Node, TargetHeight) ->
 			end
 		end,
 		100,
-		10 * 1000
+		60 * 1000
 	),
 	BHL.
 
@@ -77,5 +77,5 @@ wait_until_block_hash_list(Node, BHL) ->
 			end
 		end,
 		100,
-		10 * 1000
+		60 * 1000
 	)).
