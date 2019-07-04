@@ -53,7 +53,8 @@
 		ar_firewall_distributed_tests,
 		ar_fork_recovery_tests,
 		% ar_meta_db must be the last in the list since it resets global configuraiton
-		ar_meta_db
+		ar_meta_db,
+		ar_semaphore_tests
 	]
 ).
 

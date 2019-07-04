@@ -46,6 +46,7 @@ reregister(Name, Node) ->
 
 %% @doc Start the server
 do_start(Port) ->
+	ar_semaphore:start_link(hash_list_semaphore, 1),
 	ar_blacklist:start(),
 	Routes = [
 		{'_', [
