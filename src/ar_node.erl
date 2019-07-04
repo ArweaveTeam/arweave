@@ -824,8 +824,11 @@ handle(SPid, {get_reward_addr, From, Ref}) ->
 handle(_SPid, {'DOWN', _, _, _, _}) ->
 	% Ignore DOWN message.
 	ok;
+handle(_Spid, {ar_node_state, _, _}) ->
+	%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
+	ok;
 handle(_SPid, UnhandledMsg) ->
-	ar:report_console([{unknown_msg_node, UnhandledMsg}]),
+	ar:warn([ar_node, received_unknown_message, {message, UnhandledMsg}]),
 	ok.
 
 %%%

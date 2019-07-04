@@ -16,7 +16,7 @@
 	load_key = false,
 	pause = true,
 	disk_space = ar_storage:calculate_disk_space(),
-	used_space = ar_storage:calculate_used_space(),
+	used_space = 0,
 	start_hash_list = undefined,
 	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
 	internal_api_secret = not_set,

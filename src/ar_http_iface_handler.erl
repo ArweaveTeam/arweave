@@ -836,7 +836,11 @@ handle_post_tx(TX) ->
 									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
 									{error_response, {400, #{}, <<"Transaction verification failed.">>}};
 								true ->
-									%ar:d({accepted_tx , ar_util:encode(TX#tx.id)}),
+									ar:info([
+										ar_http_iface_handler,
+										accepted_tx,
+										{id, ar_util:encode(TX#tx.id)}
+									]),
 									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
 									ok
 							end
@@ -1072,6 +1076,11 @@ post_block(post_block, {BShadow, ReqStruct, OrigPeer, BDS}, Req) ->
 			sending_external_block_to_bridge,
 			ar_util:encode(B#block.indep_hash)
 		}]),
+		ar:info([
+			ar_http_iface_handler,
+			accepted_block,
+			{indep_hash, ar_util:encode(B#block.indep_hash)}
+		]),
 		ar_bridge:add_block(
 			whereis(http_bridge_node),
 			OrigPeer,

@@ -286,7 +286,7 @@ start(
 	ar_key_db:start(),
 	ar_track_tx_db:start(),
 	ar_miner_log:start(),
-	ar_storage:update_directory_size(),
+	ar_storage:start_update_used_space(),
 	%% Determine the mining address.
 	case {Addr, LoadKey, NewKey} of
 		{false, false, false} ->
