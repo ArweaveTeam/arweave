@@ -59,7 +59,7 @@ handle(Req, Pid) ->
 
 handle(Peer, Req, Pid) ->
 	Method = cowboy_req:method(Req),
-	SplitPath = split_path(cowboy_req:path(Req)),
+	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	case ar_meta_db:get(http_logging) of
 		true ->
 			ar:info(
@@ -496,7 +496,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _)
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
 %handle(<<"GET">>, [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req, _) ->
 	%ar:d({resp_block_hash, Hash}),
-	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, split_path(cowboy_req:path(Req))}]),
+	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, ar_http_iface_middleware:split_path(cowboy_req:path(Req))}]),
 	%case ar_key_db:get(ar_util:decode(Hash)) of
 	%	[{Key, Nonce}] ->
 	%		return_encrypted_block(
@@ -726,9 +726,6 @@ arweave_peer(Req) ->
 		end,
 	{IpV4_1, IpV4_2, IpV4_3, IpV4_4, ArweavePeerPort}.
 
-split_path(Path) ->
-	binary:split(Path, <<"/">>, [global, trim_all]).
-
 sendfile(Filename) ->
 	{sendfile, 0, filelib:file_size(Filename), Filename}.
 
@@ -876,7 +873,7 @@ check_internal_api_secret(Req) ->
 
 log_internal_api_reject(Msg, Req) ->
 	spawn(fun() ->
-		Path = split_path(cowboy_req:path(Req)),
+		Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 		{IpAddr, _Port} = cowboy_req:peer(Req),
 		BinIpAddr = list_to_binary(inet:ntoa(IpAddr)),
 		ar:warn("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])

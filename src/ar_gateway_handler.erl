@@ -116,10 +116,10 @@ handle_custom_request(Domain, CustomDomain, Req) ->
 	end.
 
 resolve_path(Path) ->
-	case Path of
-		<<"/">> -> root;
-		<<"/", Hash/binary>> -> resolve_path_1(Hash);
-		_ -> invalid
+	case ar_http_iface_server:split_path(Path) of
+		[] -> root;
+		[<<Hash:43/bytes>>] -> resolve_path_1(Hash);
+		[_ | _] -> other
 	end.
 
 resolve_path_1(Hash) ->

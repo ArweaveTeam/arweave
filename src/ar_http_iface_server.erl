@@ -6,6 +6,7 @@
 
 -export([start/2]).
 -export([reregister/1, reregister/2]).
+-export([split_path/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -38,6 +39,9 @@ reregister(Name, Node) ->
 		_ -> erlang:unregister(Name)
 	end,
 	erlang:register(Name, Node).
+
+split_path(Path) ->
+	binary:split(Path, <<"/">>, [global, trim_all]).
 
 %%%
 %%% Private functions
