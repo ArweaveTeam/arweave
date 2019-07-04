@@ -2,6 +2,7 @@
 -export([start/0]).
 -export([update_tag_table/1]).
 -export([get_entries/2, get_entries/3, get_tags_by_id/3]).
+-export([get_entries_by_tag_name/1, get_entries_by_tag_name/2]).
 -export([delete_tx_records/1]).
 
 -include("ar.hrl").
@@ -47,20 +48,35 @@ delete_for_tx(TXID) ->
 	lists:foreach(DeleteRecord, Records).
 
 get_tags_by_id(PID, TXID, Timeout) ->
-	PID ! {get_tags, TXID, self()},
-	receive {tags, Tags} ->
+	Ref = make_ref(),
+	PID ! {get_tags, Ref, TXID, self()},
+	receive {tags, Ref, Tags} ->
 		{ok, Tags}
 	after Timeout ->
 		{error, timeout}
 	end.
 
-%% @doc Returns a list of all transaction IDs which has the tag Name set to
+%% @doc Returns a list of all transaction IDs which have the tag Name set to
 %% Value. Duplicates might be returned due to the duplication in the index.
 get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
 
 get_entries(PID, Name, Value) ->
-	PID ! {get_tx, Name, Value, self()},
-	receive {txs, TXIDs} ->
+	Ref = make_ref(),
+	PID ! {get_tx, Ref, Name, Value, self()},
+	receive {txs, Ref, TXIDs} ->
+		TXIDs
+	after 3000 ->
+		[]
+	end.
+
+%% @doc Returns a list of all transaction IDs which have the given tag Name.
+get_entries_by_tag_name(Name) ->
+	get_entries_by_tag_name(whereis(http_search_node), Name).
+
+get_entries_by_tag_name(PID, Name) ->
+	Ref = make_ref(),
+	PID ! {get_txs_by_tag_name, Ref, Name, self()},
+	receive {txs_by_tag_name, Ref, TXIDs} ->
 		TXIDs
 	after 3000 ->
 		[]
@@ -102,11 +118,14 @@ multi_delete(Proplist, [Key | Keys]) ->
 server() ->
 	try
 		receive
-			{get_tx, Name, Value, PID} ->
+			{get_tx, Ref, Name, Value, PID} ->
 				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
-				PID ! {txs, search_by_exact_tag(Name, Value)},
+				PID ! {txs, Ref, search_by_exact_tag(Name, Value)},
 				server();
-			{get_tags, TXID, PID} ->
+			{get_txs_by_tag_name, Ref, Name, PID} ->
+				PID ! {txs_by_tag_name, Ref, search_by_tag_name(Name)},
+				server();
+			{get_tags, Ref, TXID, PID} ->
 				Tags = lists:map(
 					fun(Tag) ->
 						{_, Name, Value, _} = Tag,
@@ -114,7 +133,7 @@ server() ->
 					end,
 					search_by_id(TXID)
 				),
-				PID ! {tags, Tags},
+				PID ! {tags, Ref, Tags},
 				server();
 			{update_tags_for_block, IndepHash, Height, TXs} ->
 				lists:foreach(
@@ -160,7 +179,7 @@ initDB() ->
 	mnesia:create_schema([node()]),
 	mnesia:start(),
 	try
-		mnesia:table_info(type, arql_tag)
+		mnesia:table_info(arql_tag, type)
 	catch
 		exit: _ ->
 			mnesia:create_table(
@@ -190,7 +209,20 @@ search_by_exact_tag(Name, Value) ->
 		]
 	).
 
-%% @doc Search for a list of tags of the transaction with the given ID
+%% @doc Search for a list of transactions that match the given tag name
+search_by_tag_name(Name) ->
+	mnesia:dirty_select(
+		arql_tag,
+		[
+			{
+				#arql_tag { name = Name, value = '_', tx = '$1'},
+				[],
+				['$1']
+			}
+		]
+).
+
+%% @doc Search for a list of tags for the transaction with the given ID
 search_by_id(TXID) ->
 	mnesia:dirty_select(
 		arql_tag,

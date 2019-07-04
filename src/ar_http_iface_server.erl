@@ -70,4 +70,3 @@ do_start(Port) ->
 		[{port, Port}],
 		ProtocolOpts
 	).
-

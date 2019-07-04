@@ -65,35 +65,44 @@ server(S) ->
 %% @doc Send a tx to the network and wait for it to be confirmed.
 send_tx(S, TX) ->
 	Addr = ar_wallet:to_address(S#state.wallet),
-	Price =
-		ar_tx:calculate_min_tx_cost(
-			byte_size(TX#tx.data),
-			ar_node:get_current_diff(S#state.node),
-			ar_node:get_wallet_list(S#state.node),
-			TX#tx.target
-		),
-	Tags = tx_tags(TX, S#state.previous_tx, S#state.previous_tx_tag_name),
-	SignedTX =
-		ar_tx:sign(
-			TX#tx {
-				last_tx = ar_node:get_last_tx(S#state.node, Addr),
-				reward = Price,
-				tags = Tags
-			},
-			S#state.wallet
-		),
-	ar_node:add_tx(S#state.node, SignedTX),
-	ar:report(
-		[
-			{app, ?MODULE},
-			{submitted_tx, ar_util:encode(SignedTX#tx.id)},
-			{cost, SignedTX#tx.reward / ?AR(1)},
-			{size, byte_size(SignedTX#tx.data)}
-		]
-	),
-	timer:sleep(ar_node_utils:calculate_delay(byte_size(TX#tx.data))),
-	StartHeight = get_current_height(S),
-	wait_for_block(S#state { previous_tx = SignedTX#tx.id }, StartHeight + ?CONFIRMATION_DEPTH).
+	case ar_node:get_last_tx(S#state.node, Addr) of
+		{ok, LastTXid} ->
+			Price =
+				ar_tx:calculate_min_tx_cost(
+					byte_size(TX#tx.data),
+					ar_node:get_current_diff(S#state.node),
+					ar_node:get_wallet_list(S#state.node),
+					TX#tx.target
+				),
+			Tags = tx_tags(TX, S#state.previous_tx, S#state.previous_tx_tag_name),
+			SignedTX =
+				ar_tx:sign(
+					TX#tx {
+						last_tx = LastTXid,
+						reward = Price,
+						tags = Tags
+					},
+					S#state.wallet
+				),
+			ar_node:add_tx(S#state.node, SignedTX),
+			ar:report(
+				[
+					{app, ?MODULE},
+					{submitted_tx, ar_util:encode(SignedTX#tx.id)},
+					{cost, SignedTX#tx.reward / ?AR(1)},
+					{size, byte_size(SignedTX#tx.data)}
+				]
+			),
+			timer:sleep(ar_node_utils:calculate_delay(byte_size(TX#tx.data))),
+			StartHeight = get_current_height(S),
+			wait_for_block(
+				S#state { previous_tx = SignedTX#tx.id },
+				StartHeight + ?CONFIRMATION_DEPTH
+			);
+		timeout ->
+			timer:sleep(?REJOIN_TIMEOUT),
+			send_tx(S, TX)
+	end.
 
 tx_tags(TX, none, _) ->
 	TX#tx.tags;
