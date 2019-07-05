@@ -345,7 +345,12 @@ query_to_json_struct(Expr) ->
 
 %% @doc Convert parsed JSON from fields into an internal ARQL query.
 json_struct_to_query(QueryJSON) ->
-	do_json_struct_to_query(dejsonify(QueryJSON)).
+	case json_decode(QueryJSON) of
+		{ok, Decoded} ->
+			{ok, do_json_struct_to_query(Decoded)};
+		{error, _} ->
+			{error, invalid_json}
+	end.
 
 do_json_struct_to_query({Query}) ->
 	{
@@ -419,4 +424,4 @@ query_roundtrip_test() ->
 			Query
 			)
 		),
-	?assert(Query == ar_serialize:json_struct_to_query(QueryJSON)).
+	?assertEqual({ok, Query}, ar_serialize:json_struct_to_query(QueryJSON)).
