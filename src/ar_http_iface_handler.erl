@@ -201,21 +201,23 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _) ->
 handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 	case read_complete_body(Req, Pid) of
 		{ok, QueryJson, ReadReq} ->
-			Query = ar_serialize:json_struct_to_query(
-				binary_to_list(QueryJson)
-			),
-			TXs = ar_util:unique(ar_parser:eval(Query)),
-			case TXs of
-				[] -> {200, #{}, [], ReadReq};
-				Set ->
-					{
-						200,
-						#{},
-						ar_serialize:jsonify(
-							ar_serialize:hash_list_to_json_struct(Set)
-						),
-						ReadReq
-					}
+			case ar_serialize:json_struct_to_query(QueryJson) of
+				{ok, Query} ->
+					TXs = ar_util:unique(ar_parser:eval(Query)),
+					case TXs of
+						[] -> {200, #{}, [], ReadReq};
+						Set ->
+							{
+								200,
+								#{},
+								ar_serialize:jsonify(
+									ar_serialize:hash_list_to_json_struct(Set)
+								),
+								ReadReq
+							}
+					end;
+				{error, _} ->
+					{400, #{}, <<"Invalid ARQL query.">>, ReadReq}
 			end;
 		{error, body_size_too_large, TooLargeReq} ->
 			reply_with_413(TooLargeReq)
