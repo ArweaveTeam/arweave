@@ -7,4 +7,4 @@
 -export([height_1_7/0]).
 
 height_1_7() ->
-	300000.
+	235200. % Targeting 2019-07-08 UTC
