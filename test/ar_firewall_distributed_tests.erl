@@ -3,7 +3,8 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, slave_wait_until_receives_txs/2]).
+-import(ar_test_node, [start/1, slave_start/1]).
+-import(ar_test_node, [assert_slave_wait_until_receives_txs/2]).
 
 node_validates_blocks_with_rejected_tx_test() ->
 	%% Start a remote node.
@@ -20,7 +21,7 @@ node_validates_blocks_with_rejected_tx_test() ->
 			[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX1))
 		),
-	slave_wait_until_receives_txs(SlaveNode, [TX1]),
+	assert_slave_wait_until_receives_txs(SlaveNode, [TX1]),
 	%% Start a local node.
 	{Node, _} = start(B0),
 	%% Configure the firewall to reject one of the txs submitted to the remote node.
@@ -41,7 +42,7 @@ node_validates_blocks_with_rejected_tx_test() ->
 			[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX2))
 		),
-	slave_wait_until_receives_txs(SlaveNode, [TX2]),
+	assert_slave_wait_until_receives_txs(SlaveNode, [TX2]),
 	%% Mine the second tx into a block.
 	ar_rpc:call(slave, ar_node, mine, [SlaveNode], 5000),
 	%% Expect the local node to fork recover to the block.
