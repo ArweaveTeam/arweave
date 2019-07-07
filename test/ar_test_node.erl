@@ -128,8 +128,9 @@ assert_wait_until_receives_txs(Node, TXs) ->
 wait_until_receives_txs(Node, TXs) ->
 	ar_util:do_until(
 		fun() ->
-			case ar_node:get_all_known_txs(Node) of
-				TXs ->
+			KnownTXs = ar_node:get_all_known_txs(Node),
+			case lists:all(fun(TX) -> lists:member(TX, KnownTXs) end, TXs) of
+				true ->
 					ok;
 				_ ->
 					false
