@@ -36,14 +36,33 @@ start(B0, Peer) ->
 	{Node, B0}.
 
 connect_to_slave() ->
-	%% Connect the nodes by making an HTTP call.
+	%% Connect the nodes by making two HTTP calls.
+	%%
+	%% After a request to a peer, the peer is recorded in ar_meta_db but
+	%% not in the remote peer list. So we need to remove it from ar_meta_db
+	%% otherwise it's not added to the remote peer list when it makes a request
+	%% to us in turn.
+	MasterPort = ar_meta_db:get(port),
+	slave_call(ar_meta_db, reset_peer, [{127, 0, 0, 1, MasterPort}]),
 	SlavePort = slave_call(ar_meta_db, get, [port]),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_httpc:request(
 			<<"GET">>,
 			{127, 0, 0, 1, SlavePort},
 			"/info",
-			[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}]
+			[{<<"X-P2p-Port">>, integer_to_binary(MasterPort)}]
+		),
+	ar_meta_db:reset_peer({127, 0, 0, 1, SlavePort}),
+	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
+		slave_call(
+			ar_httpc,
+			request,
+			[
+				<<"GET">>,
+				{127, 0, 0, 1, MasterPort},
+				"/info",
+				[{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}]
+			]
 		).
 
 gossip(off, Node) ->

@@ -98,9 +98,7 @@ keeps_txs_after_new_block() ->
 	%% Start the nodes.
 	{Master, _} = start(B0),
 	{Slave, _} = slave_start(B0),
-	connect_to_slave(),
-	%% Disable gossip so that slave does not receive transactions.
-	gossip(off, Master),
+	%% Do not connect the nodes so that slave does not receive txs.
 	%% Post two transactions from the same wallet to master.
 	TX1 = (ar_tx:new())#tx{ owner = Pub, reward = ?AR(1) },
 	SignedTX1 = ar_tx:sign(TX1, {Priv, Pub}),
