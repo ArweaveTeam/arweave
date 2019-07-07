@@ -3,7 +3,8 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, slave_call/3, slave_wait_until_receives_txs/2]).
+-import(ar_test_node, [start/1, slave_start/1, slave_call/3]).
+-import(ar_test_node, [assert_slave_wait_until_receives_txs/2]).
 
 missing_txs_fork_recovery_test() ->
 	%% Mine two blocks with transactions on the slave node but do not gossip the transactions in advance.
@@ -18,7 +19,7 @@ missing_txs_fork_recovery_test() ->
 	ar_test_node:slave_gossip(off, SlaveNode),
 	TX1 = ar_tx:new(),
 	ar_test_node:slave_add_tx(SlaveNode, TX1),
-	slave_wait_until_receives_txs(SlaveNode, [TX1]),
+	assert_slave_wait_until_receives_txs(SlaveNode, [TX1]),
 	%% Turn on gossip and mine a block.
 	ar_test_node:slave_gossip(on, SlaveNode),
 	?assertEqual([], ar_node:get_all_known_txs(MasterNode)),
@@ -30,7 +31,7 @@ missing_txs_fork_recovery_test() ->
 	ar_test_node:slave_gossip(off, SlaveNode),
 	TX2 = ar_tx:new(),
 	ar_test_node:slave_add_tx(SlaveNode, TX2),
-	slave_wait_until_receives_txs(SlaveNode, [TX2]),
+	assert_slave_wait_until_receives_txs(SlaveNode, [TX2]),
 	%% Turn on gossip and mine a block.
 	ar_test_node:slave_gossip(on, SlaveNode),
 	?assertEqual([], ar_node:get_all_known_txs(MasterNode)),
@@ -81,4 +82,4 @@ recall_block_missing_multiple_txs_fork_recovery_test() ->
 	ar_test_node:slave_mine(SlaveNode),
 	FinalBHL = ar_test_node:slave_wait_until_height(SlaveNode, 2),
 	%% Expect the master node to recover.
-	ar_test_node:wait_until_block_hash_list(MasterNode, FinalBHL).
+	ar_test_node:assert_wait_until_block_hash_list(MasterNode, FinalBHL).

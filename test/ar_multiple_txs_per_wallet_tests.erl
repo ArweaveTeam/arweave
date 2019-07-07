@@ -3,9 +3,12 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, slave_mine/1, gossip/2]).
--import(ar_test_node, [wait_until_receives_txs/2, slave_wait_until_receives_txs/2]).
--import(ar_test_node, [wait_until_height/2, slave_wait_until_height/2, slave_call/3]).
+-import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0]).
+-import(ar_test_node, [slave_mine/1, gossip/2]).
+-import(ar_test_node, [assert_wait_until_receives_txs/2]).
+-import(ar_test_node, [assert_slave_wait_until_receives_txs/2]).
+-import(ar_test_node, [wait_until_height/2, slave_wait_until_height/2]).
+-import(ar_test_node, [slave_call/3]).
 -import(ar_test_node, [post_tx_to_slave/2]).
 
 -import(ar_test_fork, [test_on_fork/3]).
@@ -51,7 +54,7 @@ accepts_gossips_and_mines() ->
 			[],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SignedTX1))
 		),
-	slave_wait_until_receives_txs(Slave, [SignedTX1]),
+	assert_slave_wait_until_receives_txs(Slave, [SignedTX1]),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
@@ -60,9 +63,9 @@ accepts_gossips_and_mines() ->
 			[],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SignedTX2))
 		),
-	slave_wait_until_receives_txs(Slave, [SignedTX1, SignedTX2]),
+	assert_slave_wait_until_receives_txs(Slave, [SignedTX1, SignedTX2]),
 	%% Expect both transactions to be gossiped to master.
-	wait_until_receives_txs(Master, [SignedTX1, SignedTX2]),
+	assert_wait_until_receives_txs(Master, [SignedTX1, SignedTX2]),
 	%% Mine a block.
 	slave_mine(Slave),
 	%% Expect both transactions to be included into block.
@@ -112,7 +115,7 @@ keeps_txs_after_new_block() ->
 			[],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SignedTX1))
 		),
-	wait_until_receives_txs(Master, [SignedTX1]),
+	assert_wait_until_receives_txs(Master, [SignedTX1]),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
@@ -121,16 +124,16 @@ keeps_txs_after_new_block() ->
 			[],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SignedTX2))
 		),
-	wait_until_receives_txs(Master, [SignedTX1, SignedTX2]),
+	assert_wait_until_receives_txs(Master, [SignedTX1, SignedTX2]),
 	?assertEqual([], slave_call(ar_node, get_all_known_txs, [Slave])),
-	%% Enable gossip and mine an empty block on slave.
-	gossip(on, Master),
+	%% Connect the nodes mine an empty block on slave.
+	connect_to_slave(),
 	slave_mine(Slave),
 	%% Expect master to receive the block.
 	BHL = wait_until_height(Master, 1),
 	?assertEqual([], (ar_storage:read_block(hd(BHL), BHL))#block.txs),
 	%% Expect master to still have two transactions in the mempool.
-	wait_until_receives_txs(Master, [SignedTX1, SignedTX2]),
+	assert_wait_until_receives_txs(Master, [SignedTX1, SignedTX2]),
 	%% Mine a block on master and expect both transactions to be included.
 	ar_node:mine(Master),
 	BHL2 = wait_until_height(Master, 2),

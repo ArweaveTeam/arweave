@@ -4,7 +4,10 @@
 -export([gossip/2, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
 -export([wait_until_height/2, slave_wait_until_height/2]).
 -export([wait_until_block_hash_list/2]).
--export([wait_until_receives_txs/2, slave_wait_until_receives_txs/2]).
+-export([assert_wait_until_block_hash_list/2]).
+-export([wait_until_receives_txs/2]).
+-export([assert_wait_until_receives_txs/2]).
+-export([assert_slave_wait_until_receives_txs/2]).
 -export([post_tx_to_slave/2]).
 
 -include("src/ar.hrl").
@@ -49,7 +52,7 @@ gossip(on, Node) ->
 	ar_node:set_loss_probability(Node, 0).
 
 slave_call(Module, Function, Args) ->
-	slave_call(Module, Function, Args, 5000).
+	slave_call(Module, Function, Args, 60000).
 
 slave_call(Module, Function, Args, Timeout) ->
 	ar_rpc:call(slave, Module, Function, Args, Timeout).
@@ -83,8 +86,11 @@ wait_until_height(Node, TargetHeight) ->
 slave_wait_until_height(Node, TargetHeight) ->
 	slave_call(?MODULE, wait_until_height, [Node, TargetHeight]).
 
+assert_wait_until_block_hash_list(Node, BHL) ->
+	?assertEqual(ok, wait_until_block_hash_list(Node, BHL)).
+
 wait_until_block_hash_list(Node, BHL) ->
-	?assertEqual(ok, ar_util:do_until(
+	ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks(Node) of
 				BHL ->
@@ -95,10 +101,13 @@ wait_until_block_hash_list(Node, BHL) ->
 		end,
 		100,
 		60 * 1000
-	)).
+	).
+
+assert_wait_until_receives_txs(Node, TXs) ->
+	?assertEqual(ok, wait_until_receives_txs(Node, TXs)).
 
 wait_until_receives_txs(Node, TXs) ->
-	?assertEqual(ok, ar_util:do_until(
+	ar_util:do_until(
 		fun() ->
 			case ar_node:get_all_known_txs(Node) of
 				TXs ->
@@ -109,10 +118,10 @@ wait_until_receives_txs(Node, TXs) ->
 		end,
 		100,
 		10 * 1000
-	)).
+	).
 
-slave_wait_until_receives_txs(Node, TXs) ->
-	slave_call(?MODULE, wait_until_receives_txs, [Node, TXs]).
+assert_slave_wait_until_receives_txs(Node, TXs) ->
+	?assertEqual(ok, slave_call(?MODULE, wait_until_receives_txs, [Node, TXs])).
 
 post_tx_to_slave(Slave, TX) ->
 	SlaveIP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
@@ -126,7 +135,7 @@ post_tx_to_slave(Slave, TX) ->
 		),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
-			slave_wait_until_receives_txs(Slave, [TX]);
+			assert_slave_wait_until_receives_txs(Slave, [TX]);
 		_ ->
 			ar:console(
 				"Failed to post transaction. Error DB entries: ~p~n",
