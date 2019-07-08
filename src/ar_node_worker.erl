@@ -411,11 +411,11 @@ process_new_block2(StateIn, NewGS, NewB, RecallB, Peer, HashList, TXs) ->
 			RewardPool,
 			TXs,
 			NewB#block.reward_addr,
-			ar_node_utils:calculate_proportion(
-				RecallB#block.block_size,
-				NewB#block.weave_size,
-				NewB#block.height
-			)
+			RecallB#block.block_size,
+			NewB#block.weave_size,
+			NewB#block.height,
+			NewB#block.diff,
+			NewB#block.timestamp
 		),
 	NewWalletList =
 		ar_node_utils:apply_mining_reward(
@@ -439,6 +439,7 @@ process_new_block2(StateIn, NewGS, NewB, RecallB, Peer, HashList, TXs) ->
 				TXs,
 				NewB#block.diff,
 				Height,
+				NewB#block.timestamp,
 				WalletList,
 				BlockTXPairs
 			),
@@ -494,11 +495,11 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			OldPool,
 			MinedTXs,
 			RewardAddr,
-			ar_node_utils:calculate_proportion(
-				RecallB#block.block_size,
-				WeaveSize,
-				length(HashList)
-			)
+			RecallB#block.block_size,
+			WeaveSize,
+			length(HashList),
+			Diff,
+			Timestamp
 		),
 	ar:info(
 		[
@@ -541,6 +542,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				MinedTXs,
 				Diff,
 				Height,
+				Timestamp,
 				RawWalletList,
 				BlockTXPairs
 			),

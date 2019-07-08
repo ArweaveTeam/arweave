@@ -65,7 +65,7 @@ start_link(Args) ->
 % MiningDelay: delay in mining, used primarily for network simulation
 % RewardAddr: the address in which mining rewards will be attributed with
 % AutoJoin: boolean stating if a node should automatically attempt to join
-% Diff: starting diff of the network (?DEFAULT_DIFF)
+% Diff: starting diff of the network
 % LastRetarget: timestamp (seconds) stating when difficulty was last changed
 start() ->
 	start([]).
@@ -114,7 +114,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
-		?DEFAULT_DIFF
+		ar_mine:genesis_difficulty()
 	).
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
 	start(

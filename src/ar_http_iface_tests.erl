@@ -50,17 +50,6 @@ get_info_test() ->
 	?assertEqual(1, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, blocks)),
 	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, height)).
 
-%% @doc Ensure transaction reward can be retrieved via http iface.
-get_tx_reward_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
-	% Hand calculated result for 1000 bytes.
-	Height = 0,
-	ExpectedPrice = ar_tx:calculate_min_tx_cost(1000, B0#block.diff - 1, Height),
-	ExpectedPrice = ar_http_iface_client:get_tx_reward({127, 0, 0, 1, 1984}, 1000).
-
 %% @doc Ensure that objects are only re-gossiped once.
 single_regossip_test_() ->
 	{timeout, 60, fun() ->
@@ -859,7 +848,7 @@ get_txs_by_send_recv_test_() ->
 		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 		SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
-		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
+		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),

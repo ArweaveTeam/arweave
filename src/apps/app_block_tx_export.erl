@@ -169,11 +169,11 @@ reward_pool1(B, PreviousB, PreviousRecallB) ->
 		PreviousB#block.reward_pool,
 		FullB#block.txs,
 		B#block.reward_addr,
-		ar_node_utils:calculate_proportion(
-			PreviousRecallB#block.block_size,
-			B#block.weave_size,
-			B#block.height
-		)
+		PreviousRecallB#block.block_size,
+		B#block.weave_size,
+		B#block.height,
+		B#block.diff,
+		B#block.timestamp
 	).
 
 full_block(B) ->

@@ -340,41 +340,25 @@ handle(<<"GET">>, [<<"peers">>], Req) ->
 		),
 	Req};
 
-%% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
-%% The endpoint is pessimistic, it reports the price as if the network difficulty was smaller by one, to account for the possible difficulty change.
+%% @doc Return the estimated transaction fee.
+%% The endpoint is pessimistic, it computes the difficulty of the new block
+%% as if it has been just mined and uses the smaller of the two difficulties
+%% to estimate the price.
 %% GET request to endpoint /price/{bytes}
-%% TODO: Change so current block does not need to be pulled to calculate cost
-handle(<<"GET">>, [<<"price">>, SizeInBytes], Req) ->
-	{200, #{},
-		integer_to_binary(
-			ar_tx:calculate_min_tx_cost(
-				binary_to_integer(SizeInBytes),
-				ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1,
-				ar_node:get_height(whereis(http_entrypoint_node))
-			)
-		),
-	Req};
+handle(<<"GET">>, [<<"price">>, SizeInBytesBinary], Req) ->
+	{200, #{}, integer_to_binary(estimate_tx_price(SizeInBytesBinary, no_wallet)), Req};
 
 %% @doc Return the estimated reward cost of transactions with a data body size of 'bytes'.
-%% The endpoint is pessimistic, it reports the price as if the network difficulty was smaller by one, to account for the possible difficulty change.
+%% The endpoint is pessimistic, it computes the difficulty of the new block
+%% as if it has been just mined and uses the smaller of the two difficulties
+%% to estimate the price.
 %% GET request to endpoint /price/{bytes}/{address}
-%% TODO: Change so current block does not need to be pulled to calculate cost
-handle(<<"GET">>, [<<"price">>, SizeInBytes, Addr], Req) ->
+handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req) ->
 	case ar_util:safe_decode(Addr) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>, Req};
 		{ok, AddrOK} ->
-			{200, #{},
-				integer_to_binary(
-					ar_tx:calculate_min_tx_cost(
-						binary_to_integer(SizeInBytes),
-						ar_node:get_current_diff(whereis(http_entrypoint_node)) - 1,
-						ar_node:get_height(whereis(http_entrypoint_node)),
-						ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-						AddrOK
-					)
-				),
-			Req}
+			{200, #{}, integer_to_binary(estimate_tx_price(SizeInBytesBinary, AddrOK)), Req}
 	end;
 
 %% @doc Return the current hash list held by the node.
@@ -804,6 +788,37 @@ get_tx_filename(Hash) ->
 			{ok, Filename}
 	end.
 
+estimate_tx_price(SizeInBytesBinary, WalletAddr) ->
+	SizeInBytes = binary_to_integer(SizeInBytesBinary),
+	Node = whereis(http_entrypoint_node),
+	Height = ar_node:get_height(Node),
+	CurrentDiff = ar_node:get_diff(Node),
+	NextDiff = ar_node:get_current_diff(Node),
+	Timestamp  = os:system_time(seconds),
+	CurrentDiffPrice = estimate_tx_price(SizeInBytes, CurrentDiff, Height, WalletAddr, Timestamp),
+	NextDiffPrice = estimate_tx_price(SizeInBytes, NextDiff, Height + 1, WalletAddr, Timestamp),
+	max(NextDiffPrice, CurrentDiffPrice).
+
+estimate_tx_price(SizeInBytes, Diff, Height, WalletAddr, Timestamp) ->
+	case WalletAddr of
+		no_wallet ->
+			ar_tx:calculate_min_tx_cost(
+				SizeInBytes,
+				Diff,
+				Height,
+				Timestamp
+			);
+		Addr ->
+			ar_tx:calculate_min_tx_cost(
+				SizeInBytes,
+				Diff,
+				Height,
+				ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+				Addr,
+				Timestamp
+			)
+	end.
+
 handle_get_wallet_txs(Addr, EarliestTXID) ->
 	case ar_util:safe_decode(Addr) of
 		{error, invalid} ->
@@ -945,10 +960,10 @@ handle_post_tx_bad_anchor_response() ->
 	{error_response, {400, #{}, <<"Invalid anchor (last_tx).">>}}.
 
 handle_post_tx_already_in_weave_response() ->
-	{error_response, {400, #{}, <<"Transaction is already on the weave">>}}.
+	{error_response, {400, #{}, <<"Transaction is already on the weave.">>}}.
 
 handle_post_tx_already_in_mempool_response() ->
-	{error_response, {400, #{}, <<"Transaction is already in the mempool">>}}.
+	{error_response, {400, #{}, <<"Transaction is already in the mempool.">>}}.
 
 check_internal_api_secret(Req) ->
 	Reject = fun(Msg) ->

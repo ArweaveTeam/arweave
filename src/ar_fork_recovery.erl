@@ -406,11 +406,11 @@ try_apply_block(HashList, NextB, TXs, B, RecallB, BlockTXPairs) ->
 			B#block.reward_pool,
 			TXs,
 			NextB#block.reward_addr,
-			ar_node_utils:calculate_proportion(
-				RecallB#block.block_size,
-				NextB#block.weave_size,
-				NextB#block.height
-			)
+			RecallB#block.block_size,
+			NextB#block.weave_size,
+			NextB#block.height,
+			NextB#block.diff,
+			NextB#block.timestamp
 		),
 	WalletList =
 		ar_node_utils:apply_mining_reward(
@@ -437,6 +437,7 @@ try_apply_block(HashList, NextB, TXs, B, RecallB, BlockTXPairs) ->
 				TXs,
 				NextB#block.diff,
 				B#block.height,
+				NextB#block.timestamp,
 				B#block.wallet_list,
 				BlockTXPairs
 			),
