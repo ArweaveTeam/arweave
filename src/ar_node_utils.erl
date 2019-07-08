@@ -6,7 +6,8 @@
 
 -export([get_full_block/3]).
 -export([find_recall_hash/2, find_recall_block/1, find_block/1]).
--export([calculate_reward/2, calculate_reward_pool/4, calculate_proportion/3]).
+-export([calculate_reward/2]).
+-export([calculate_reward_pool/8]).
 -export([apply_mining_reward/4, apply_tx/3, apply_txs/3]).
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/3]).
@@ -16,6 +17,7 @@
 -export([update_block_txs_pairs/3]).
 
 -include("ar.hrl").
+-include("perpetual_storage.hrl").
 
 %%%
 %%% Public API.
@@ -103,8 +105,50 @@ find_recall_block(HashList) ->
 find_block(Hash) when is_binary(Hash) ->
 	ar_storage:read_block(Hash).
 
+calculate_reward_pool(OldPool, TXs, RewardAddr, RecallSize, WeaveSize, Height, Diff, Timestamp) ->
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			calculate_reward_pool_perpetual(OldPool, TXs, RewardAddr, RecallSize, WeaveSize, Height, Diff, Timestamp);
+		_ ->
+			Proportion = calculate_proportion(RecallSize, WeaveSize, Height),
+			calculate_reward_pool_original(OldPool, TXs, RewardAddr, Proportion)
+	end.
+
+%% @doc Split current reward pool into {FinderReward, NewPool}.
+calculate_reward_pool_perpetual(OldPool, TXs, unclaimed, _, _, _, _, _) ->
+	NewPool = OldPool + lists:sum([TX#tx.reward || TX <- TXs]),
+	{0, NewPool};
+calculate_reward_pool_perpetual(OldPool, TXs, _, RecallSize, WeaveSize, Height, Diff, Timestamp) ->
+	Inflation = erlang:trunc(ar_inflation:calculate(Height)),
+	{TXsCost, TXsReward} = lists:foldl(
+		fun(TX, {TXCostAcc, TXRewardAcc}) ->
+			TXFee = TX#tx.reward,
+			TXReward = erlang:trunc((?MINING_REWARD_MULTIPLIER) * TXFee / ((?MINING_REWARD_MULTIPLIER) + 1)),
+			{TXCostAcc + TXFee - TXReward, TXRewardAcc + TXReward}
+		end,
+		{0, 0},
+		TXs
+	),
+	BaseReward = Inflation + TXsReward,
+	CostPerGB = ar_tx_perpetual_storage:usd_to_ar(
+		ar_tx_perpetual_storage:perpetual_cost_at_timestamp(Timestamp),
+		Diff,
+		Height
+	),
+	Burden = erlang:trunc(WeaveSize * CostPerGB / (1024 * 1024 * 1024)),
+	AR = Burden - BaseReward,
+	NewPool = OldPool + TXsCost,
+	case AR =< 0 of
+		true  -> % BaseReward >= Burden
+			{BaseReward, NewPool};
+		false -> % Burden > BaseReward
+			X = erlang:trunc(AR * max(1, RecallSize) * Height / WeaveSize),
+			Take = min(NewPool, X),
+			{BaseReward + Take, NewPool - Take}
+	end.
+
 %% @doc Calculate the reward.
-calculate_reward_pool(OldPool, TXs, unclaimed, _Proportion) ->
+calculate_reward_pool_original(OldPool, TXs, unclaimed, _Proportion) ->
 	Pool = OldPool + lists:sum(
 		lists:map(
 			fun calculate_tx_reward/1,
@@ -112,7 +156,7 @@ calculate_reward_pool(OldPool, TXs, unclaimed, _Proportion) ->
 		)
 	),
 	{0, Pool};
-calculate_reward_pool(OldPool, TXs, _RewardAddr, Proportion) ->
+calculate_reward_pool_original(OldPool, TXs, _RewardAddr, Proportion) ->
 	Pool = OldPool + lists:sum(
 		lists:map(
 			fun calculate_tx_reward/1,
@@ -451,10 +495,10 @@ validate(
 		Nonce,
 		Height
 	),
-	Mine = ar_mine:validate(BDSHash, Diff),
+	Mine = ar_mine:validate(BDSHash, Diff, Height),
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
-	Txs = ar_tx:verify_txs(TXs, Diff, Height - 1, OldB#block.wallet_list),
+	Txs = ar_tx:verify_txs(TXs, Diff, Height - 1, OldB#block.wallet_list, Timestamp),
 	DiffCheck = ar_retarget:validate_difficulty(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
@@ -678,9 +722,14 @@ alter_wallet(WalletList, Target, Adjustment) ->
 			)
 	end.
 
-%% @doc Calculate the total mining reward for the a block and it's associated TXs.
+%% @doc Calculate the total mining reward for a block and its associated TXs.
 calculate_reward(Height, Quantity) ->
-	erlang:trunc(ar_inflation:calculate(Height) + Quantity).
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			Quantity;
+		_ ->
+			erlang:trunc(ar_inflation:calculate(Height) + Quantity)
+	end.
 
 %% @doc Given a TX, calculate an appropriate reward.
 calculate_tx_reward(#tx { reward = Reward }) ->

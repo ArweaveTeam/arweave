@@ -6,7 +6,6 @@
 
 -export([send_new_block/4, send_new_tx/2, get_block/3]).
 -export([get_tx/3, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
--export([get_tx_reward/2]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).
@@ -120,18 +119,6 @@ get_current_block(Peer, BHL) ->
 		Error ->
 			Error
 	end.
-
-%% @doc Get the minimum cost that a remote peer would charge for
-%% a transaction of the given data size in bytes.
-get_tx_reward(Peer, Size) ->
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/price/" ++ integer_to_list(Size),
-			p2p_headers()
-		),
-	binary_to_integer(Body).
 
 %% @doc Retreive a block by height or hash from a remote peer.
 get_block(Peer, ID, BHL) ->

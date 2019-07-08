@@ -1,8 +1,8 @@
 -module(ar_tx).
 -export([new/0, new/1, new/2, new/3, new/4]).
--export([sign/2, sign/3, verify/4, verify_txs/4, signature_data_segment/1]).
+-export([sign/2, sign/3, verify/5, verify_txs/5, signature_data_segment/1]).
 -export([tx_to_binary/1, tags_to_list/1]).
--export([calculate_min_tx_cost/3, calculate_min_tx_cost/5, check_last_tx/2]).
+-export([calculate_min_tx_cost/4, calculate_min_tx_cost/6, check_last_tx/2]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -77,13 +77,15 @@ sign(TX, PrivKey, PubKey) ->
 %% NB: The signature verification is the last step due to the potential of an attacker
 %% submitting an arbitrary length signature field and having it processed.
 -ifdef(DEBUG).
-verify(#tx { signature = <<>> }, _, _, _) -> true;
-verify(TX, Diff, Height, WalletList) -> do_verify(TX, Diff, Height, WalletList).
+verify(#tx { signature = <<>> }, _, _, _, _) -> true;
+verify(TX, Diff, Height, WalletList, Timestamp) ->
+	do_verify(TX, Diff, Height, WalletList, Timestamp).
 -else.
-verify(TX, Diff, Height, WalletList) -> do_verify(TX, Diff, Height, WalletList).
+verify(TX, Diff, Height, WalletList, Timestamp) ->
+	do_verify(TX, Diff, Height, WalletList, Timestamp).
 -endif.
 
-do_verify(TX, Diff, Height, WalletList) ->
+do_verify(TX, Diff, Height, WalletList, Timestamp) ->
 	Fork_1_8 = ar_fork:height_1_8(),
 	LastTXCheck = case Height of
 		H when H >= Fork_1_8 ->
@@ -97,7 +99,7 @@ do_verify(TX, Diff, Height, WalletList) ->
 		{"same_owner_as_target",
 		 (ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target)},
 		{"tx_too_cheap",
-		 tx_cost_above_min(TX, Diff, Height, WalletList, TX#tx.target)},
+		 tx_cost_above_min(TX, Diff, Height, WalletList, TX#tx.target, Timestamp)},
 		{"tx_fields_too_large",
 		 tx_field_size_limit(TX, Height)},
 		{"tag_field_illegally_specified",
@@ -127,17 +129,17 @@ do_verify(TX, Diff, Height, WalletList) ->
 
 %% @doc Verify a list of transactions.
 %% Returns false if any TX in the set fails verification.
-verify_txs(TXs, Diff, Height, WalletList) ->
+verify_txs(TXs, Diff, Height, WalletList, Timestamp) ->
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
 			case verify_txs_size(TXs) of
 				true ->
-					verify_txs(valid_size_txs, TXs, Diff, Height, WalletList);
+					verify_txs(valid_size_txs, TXs, Diff, Height, WalletList, Timestamp);
 				false ->
 					false
 			end;
 		_ ->
-			verify_txs(valid_size_txs, TXs, Diff, Height, WalletList)
+			verify_txs(valid_size_txs, TXs, Diff, Height, WalletList, Timestamp)
 	end.
 
 verify_txs_size(TXs) ->
@@ -155,50 +157,56 @@ verify_txs_size(TXs) ->
 			TotalTXSize =< ?BLOCK_TX_DATA_SIZE_LIMIT
 	end.
 
-verify_txs(valid_size_txs, [], _, _, _) ->
+verify_txs(valid_size_txs, [], _, _, _, _) ->
 	true;
-verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletList) ->
-	case verify(TX, Diff, Height, WalletList) of
+verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletList, Timestamp) ->
+	case verify(TX, Diff, Height, WalletList, Timestamp) of
 		true ->
 			verify_txs(
 				valid_size_txs,
 				TXs,
 				Diff,
 				Height,
-				ar_node_utils:apply_tx(WalletList, TX, Height)
+				ar_node_utils:apply_tx(WalletList, TX, Height),
+				Timestamp
 			);
 		false ->
 			false
 	end.
 
 %% @doc Ensure that transaction cost above proscribed minimum.
-tx_cost_above_min(TX, Diff, Height, WalletList, Addr) ->
+tx_cost_above_min(TX, Diff, Height, WalletList, Addr, Timestamp) ->
 	TX#tx.reward >=
-		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, Height + 1, WalletList, Addr).
+		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, Height + 1, WalletList, Addr, Timestamp).
 
 %% @doc Calculate the minimum transaction cost for a TX with the given data size.
 %% The constant 3210 is the max byte size of each of the other fields.
 %% Cost per byte is static unless size is bigger than 10mb, at which
 %% point cost per byte starts increasing.
-calculate_min_tx_cost(DataSize, Diff, Height) ->
-	DiffCenter = case ar_fork:height_1_7() of
-		ForkHeight when Height >= ForkHeight ->
-			?DIFF_CENTER + ?RANDOMX_DIFF_ADJUSTMENT;
+calculate_min_tx_cost(DataSize, Diff, Height, Timestamp) ->
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			ar_tx_perpetual_storage:calculate_tx_fee(DataSize, Diff, Height, Timestamp);
 		_ ->
-			?DIFF_CENTER
-	end,
-	min_tx_cost(DataSize, Diff, DiffCenter).
+			DiffCenter = case ar_fork:height_1_7() of
+				ForkHeight when Height >= ForkHeight ->
+					?DIFF_CENTER + ?RANDOMX_DIFF_ADJUSTMENT;
+				_ ->
+					?DIFF_CENTER
+			end,
+			min_tx_cost(DataSize, Diff, DiffCenter)
+	end.
 
-calculate_min_tx_cost(DataSize, Diff, Height, _, undefined) ->
-	calculate_min_tx_cost(DataSize, Diff, Height);
-calculate_min_tx_cost(DataSize, Diff, Height, _, <<>>) ->
-	calculate_min_tx_cost(DataSize, Diff, Height);
-calculate_min_tx_cost(DataSize, Diff, Height, WalletList, Addr) ->
+calculate_min_tx_cost(DataSize, Diff, Height, _, undefined, Timestamp) ->
+	calculate_min_tx_cost(DataSize, Diff, Height, Timestamp);
+calculate_min_tx_cost(DataSize, Diff, Height, _, <<>>, Timestamp) ->
+	calculate_min_tx_cost(DataSize, Diff, Height, Timestamp);
+calculate_min_tx_cost(DataSize, Diff, Height, WalletList, Addr, Timestamp) ->
 	case lists:keyfind(Addr, 1, WalletList) of
 		false ->
-			calculate_min_tx_cost(DataSize, Diff, Height) + ?WALLET_GEN_FEE;
+			calculate_min_tx_cost(DataSize, Diff, Height, Timestamp) + ?WALLET_GEN_FEE;
 		{_, _, _} ->
-			calculate_min_tx_cost(DataSize, Diff, Height)
+			calculate_min_tx_cost(DataSize, Diff, Height, Timestamp)
 	end.
 
 min_tx_cost(DataSize, Diff, DiffCenter) when Diff >= DiffCenter ->
@@ -294,7 +302,8 @@ sign_tx_test() ->
 	{Priv, Pub} = ar_wallet:new(),
 	Diff = 1,
 	Height = 0,
-	?assert(verify(sign(NewTX, Priv, Pub), Diff, Height, [])).
+	Timestamp = os:system_time(seconds),
+	?assert(verify(sign(NewTX, Priv, Pub), Diff, Height, [], Timestamp)).
 
 %% @doc Ensure that a forged transaction does not pass verification.
 forge_test() ->
@@ -303,7 +312,8 @@ forge_test() ->
 	Diff = 1,
 	Height = 0,
 	InvalidSignTX = (sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> },
-	?assert(not verify(InvalidSignTX, Diff, Height, [])).
+	Timestamp = os:system_time(seconds),
+	?assert(not verify(InvalidSignTX, Diff, Height, [], Timestamp)).
 
 %% @doc Ensure that transactions above the minimum tx cost are accepted.
 tx_cost_above_min_test() ->
@@ -311,8 +321,9 @@ tx_cost_above_min_test() ->
 	InvalidTX = new(<<"TEST DATA">>, 1),
 	Diff = 10,
 	Height = 123,
-	?assert(tx_cost_above_min(ValidTX, 1, Height, [], <<"non-existing-addr">>)),
-	?assert(not tx_cost_above_min(InvalidTX, Diff, Height, [], <<"non-existing-addr">>)).
+	Timestamp = os:system_time(seconds),
+	?assert(tx_cost_above_min(ValidTX, 1, Height, [], <<"non-existing-addr">>, Timestamp)),
+	?assert(not tx_cost_above_min(InvalidTX, Diff, Height, [], <<"non-existing-addr">>, Timestamp)).
 
 %% @doc Ensure that the check_last_tx function only validates transactions in which
 %% last tx field matches that expected within the wallet list.
@@ -346,11 +357,12 @@ tx_cost_test() ->
 	Size = 1000,
 	Diff = 20,
 	Height = 123,
+	Timestamp = os:system_time(seconds),
 	?assertEqual(
-		calculate_min_tx_cost(Size, Diff, Height),
-		calculate_min_tx_cost(Size, Diff, Height, WalletList, Addr1)
+		calculate_min_tx_cost(Size, Diff, Height, Timestamp),
+		calculate_min_tx_cost(Size, Diff, Height, WalletList, Addr1, Timestamp)
 	),
 	?assertEqual(
-		calculate_min_tx_cost(Size, Diff, Height) + ?WALLET_GEN_FEE,
-		calculate_min_tx_cost(Size, Diff, Height, WalletList, Addr2)
+		calculate_min_tx_cost(Size, Diff, Height, Timestamp) + ?WALLET_GEN_FEE,
+		calculate_min_tx_cost(Size, Diff, Height, WalletList, Addr2, Timestamp)
 	).

@@ -52,13 +52,19 @@ block_to_json_struct(
 		cumulative_diff = CDiff,
 		hash_list_merkle = MR
 	}) ->
+	{JSONDiff, JSONCDiff} = case ar_fork:height_1_8() of
+		H when Height >= H ->
+			{integer_to_binary(Diff), integer_to_binary(CDiff)};
+		_ ->
+			{Diff, CDiff}
+	end,
 	JSONElements =
 		[
 			{nonce, ar_util:encode(Nonce)},
 			{previous_block, ar_util:encode(PrevHash)},
 			{timestamp, TimeStamp},
 			{last_retarget, LastRetarget},
-			{diff, Diff},
+			{diff, JSONDiff},
 			{height, Height},
 			{hash, ar_util:encode(Hash)},
 			{indep_hash, ar_util:encode(IndepHash)},
@@ -99,7 +105,7 @@ block_to_json_struct(
 			{reward_pool, RewardPool},
 			{weave_size, WeaveSize},
 			{block_size, BlockSize},
-			{cumulative_diff, CDiff},
+			{cumulative_diff, JSONCDiff},
 			{hash_list_merkle, ar_util:encode(MR)}
 		],
 	case Height < ?FORK_1_6 of
@@ -138,10 +144,16 @@ json_struct_to_block({BlockStruct}) ->
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
 	HashList = find_value(<<"hash_list">>, BlockStruct),
 	Tags = find_value(<<"tags">>, BlockStruct),
+	Fork_1_8 = ar_fork:height_1_8(),
 	CDiff = case find_value(<<"cumulative_diff">>, BlockStruct) of
 		_ when Height < ?FORK_1_6 -> 0;
 		undefined -> 0; % In case it's an invalid block (in the pre-fork format)
+		BinaryCDiff when Height >= Fork_1_8 -> binary_to_integer(BinaryCDiff);
 		CD -> CD
+	end,
+	Diff = case find_value(<<"diff">>, BlockStruct) of
+		BinaryDiff when Height >= Fork_1_8 -> binary_to_integer(BinaryDiff);
+		D -> D
 	end,
 	MR = case find_value(<<"hash_list_merkle">>, BlockStruct) of
 		_ when Height < ?FORK_1_6 -> <<>>;
@@ -156,7 +168,7 @@ json_struct_to_block({BlockStruct}) ->
 			),
 		timestamp = find_value(<<"timestamp">>, BlockStruct),
 		last_retarget = find_value(<<"last_retarget">>, BlockStruct),
-		diff = find_value(<<"diff">>, BlockStruct),
+		diff = Diff,
 		height = Height,
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),

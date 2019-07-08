@@ -11,6 +11,7 @@
 -export([assert_slave_wait_until_receives_txs/2]).
 -export([post_tx_to_slave/2, post_tx_to_master/2]).
 -export([assert_post_tx_to_slave/2]).
+-export([sign_tx/1, sign_tx/2]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -193,3 +194,36 @@ post_tx_to_master(Master, TX) ->
 			noop
 	end,
 	Reply.
+
+sign_tx(Wallet) ->
+	sign_tx(Wallet, #{}).
+
+sign_tx(Wallet, TXParams) ->
+	{_, Pub} = Wallet,
+	Data = maps:get(data, TXParams, <<>>),
+	Reward = case maps:get(reward, TXParams, none) of
+		none ->
+			IP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+			{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+				ar_httpc:request(
+					<<"GET">>,
+					IP,
+					"/price/" ++ integer_to_binary(byte_size(Data)),
+					[]
+				),
+			binary_to_integer(Reply);
+		AssignedReward ->
+			AssignedReward
+	end,
+	ar_tx:sign(
+		(ar_tx:new())#tx {
+			owner = Pub,
+			reward = Reward,
+			data = Data,
+			target = maps:get(target, TXParams, <<>>),
+			quantity = maps:get(quantity, TXParams, 0),
+			tags = maps:get(tags, TXParams, []),
+			last_tx = maps:get(last_tx, TXParams, <<>>)
+		},
+		Wallet
+	).
