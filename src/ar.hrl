@@ -241,6 +241,13 @@
 -define(RANDOMX_KEEP_KEY, ?STORE_BLOCKS_BEHIND_CURRENT).
 -endif.
 
+%% @doc Adjust the difficulty down to the limit. The adjustment
+%% is lower when the difficulty goes down than when it goes up
+%% to prevent forks - stalls are preferred over forks.
+-define(DIFF_ADJUSTMENT_DOWN_LIMIT(Diff), (Diff div 2)).
+%% @doc Adjust the difficulty up to the limit.
+-define(DIFF_ADJUSTMENT_UP_LIMIT(Diff), (Diff * 4)).
+
 %% @doc A block on the weave.
 -record(block, {
 	nonce = <<>>, % The nonce used to satisfy the mining problem when mined

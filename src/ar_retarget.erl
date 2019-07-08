@@ -1,8 +1,9 @@
 -module(ar_retarget).
 -export([is_retarget_height/1]).
--export([maybe_retarget/2, maybe_retarget/4]).
+-export([maybe_retarget/4]).
 -export([calculate_difficulty/4]).
 -export([validate_difficulty/2]).
+-export([switch_to_linear_diff/1]).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 
@@ -46,23 +47,6 @@ maybe_retarget(Height, CurDiff, TS, Last) when ?IS_RETARGET_HEIGHT(Height) ->
 maybe_retarget(_Height, CurDiff, _TS, _Last) ->
 	CurDiff.
 
-maybe_retarget(B, #block { last_retarget = Last }) when ?IS_RETARGET_BLOCK(B) ->
-	B#block {
-		diff =
-			calculate_difficulty(
-				B#block.diff,
-				B#block.timestamp,
-				Last,
-				B#block.height
-			),
-		last_retarget = B#block.timestamp
-	};
-maybe_retarget(B, OldB) ->
-	B#block {
-		last_retarget = OldB#block.last_retarget,
-		diff = OldB#block.diff
-	}.
-
 %% @doc Calculate a new difficulty, given an old difficulty and the period
 %% since the last retarget occcurred.
 -ifdef(FIXED_DIFF).
@@ -70,9 +54,13 @@ calculate_difficulty(_OldDiff, _TS, _Last, _Height) ->
 	?FIXED_DIFF.
 -else.
 calculate_difficulty(OldDiff, TS, Last, Height) ->
-	case ar_fork:height_1_7() of
-		Height ->
+	case {ar_fork:height_1_7(), ar_fork:height_1_8()} of
+		{Height, _} ->
 			switch_to_randomx_fork_diff(OldDiff);
+		{_, Height} ->
+			switch_to_linear_diff(OldDiff);
+		{_, H} when Height > H ->
+			calculate_difficulty_linear(OldDiff, TS, Last, Height);
 		_ ->
 			calculate_difficulty1(OldDiff, TS, Last, Height)
 	end.
@@ -90,7 +78,33 @@ calculate_difficulty1(OldDiff, TS, Last, Height) ->
 		ar_mine:min_difficulty(Height)
 	),
 	Diff.
+
+calculate_difficulty_linear(OldDiff, TS, Last, Height) ->
+	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
+	ActualTime = TS - Last,
+	TimeDelta = ActualTime / TargetTime,
+	case abs(1 - TimeDelta) < ?RETARGET_TOLERANCE of
+		true ->
+			OldDiff;
+		false ->
+			MaxDiff = ar_mine:max_difficulty(Height),
+			MinDiff = ar_mine:min_difficulty(Height),
+			between(
+				MaxDiff - (MaxDiff - OldDiff) * ActualTime div TargetTime,
+				max(MinDiff, ?DIFF_ADJUSTMENT_DOWN_LIMIT(OldDiff)),
+				min(MaxDiff, ?DIFF_ADJUSTMENT_UP_LIMIT(OldDiff))
+			)
+	end.
 -endif.
+
+between(N, Min, _) when N < Min -> Min;
+between(N, _, Max) when N > Max -> Max;
+between(N, _, _) -> N.
+
+%% @doc The number a hash must be greater than, to give the same odds of success
+%% as the old-style Diff (number of leading zeros in the bitstring).
+switch_to_linear_diff(Diff) ->
+	erlang:trunc(math:pow(2, 256)) - erlang:trunc(math:pow(2, 256 - Diff)).
 
 -ifdef(DEBUG).
 switch_to_randomx_fork_diff(_) ->
@@ -102,7 +116,7 @@ switch_to_randomx_fork_diff(OldDiff) ->
 
 %% @doc Validate that a new block has an appropriate difficulty.
 validate_difficulty(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
-	(NewB#block.diff >=
+	(NewB#block.diff ==
 		calculate_difficulty(
 			OldB#block.diff,
 			NewB#block.timestamp,
@@ -110,7 +124,7 @@ validate_difficulty(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
 			NewB#block.height)
 	);
 validate_difficulty(NewB, OldB) ->
-	(NewB#block.diff >= OldB#block.diff) and
+	(NewB#block.diff == OldB#block.diff) and
 		(NewB#block.last_retarget == OldB#block.last_retarget).
 
 %%%

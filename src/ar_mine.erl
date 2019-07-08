@@ -1,7 +1,7 @@
 -module(ar_mine).
 -export([start/7, start/8, change_txs/2, stop/1, mine/2]).
--export([validate/4, validate/2]).
--export([min_difficulty/1, genesis_difficulty/0]).
+-export([validate/4, validate/3]).
+-export([min_difficulty/1, genesis_difficulty/0, max_difficulty/1]).
 -export([sha384_diff_to_randomx_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -69,7 +69,7 @@ change_txs(PID, NewTXs) ->
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff, Height) ->
 	BDSHash = ar_weave:hash(BDS, Nonce, Height),
-	case validate(BDSHash, Diff) of
+	case validate(BDSHash, Diff, Height) of
 		true ->
 			{valid, BDSHash};
 		false ->
@@ -77,28 +77,50 @@ validate(BDS, Nonce, Diff, Height) ->
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
-validate(BDSHash, Diff) ->
-	case BDSHash of
-		<< 0:Diff, _/bitstring >> ->
-			true;
+validate(BDSHash, Diff, Height) ->
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			binary:decode_unsigned(BDSHash) > Diff;
 		_ ->
-			false
+			case BDSHash of
+				<< 0:Diff, _/bitstring >> ->
+					true;
+				_ ->
+					false
+			end
 	end.
 
+%% @doc Maximum linear difficulty.
+%% Assumes using 256 bit RandomX hashes.
+max_difficulty(_Height) ->
+	erlang:trunc(math:pow(2, 256)).
+
 min_difficulty(Height) ->
-	case Height >= ar_fork:height_1_7() of
+	Diff = case Height >= ar_fork:height_1_7() of
 		true ->
 			min_randomx_difficulty();
 		false ->
 			min_sha384_difficulty()
+	end,
+	case Height >= ar_fork:height_1_8() of
+		true ->
+			ar_retarget:switch_to_linear_diff(Diff);
+		false ->
+			Diff
 	end.
 
 genesis_difficulty() ->
-	case ar_fork:height_1_7() of
+	Diff = case ar_fork:height_1_7() of
 		0 ->
 			randomx_genesis_difficulty();
 		_ ->
 			?DEFAULT_DIFF
+	end,
+	case ar_fork:height_1_8() of
+		0 ->
+			ar_retarget:switch_to_linear_diff(Diff);
+		_ ->
+			Diff
 	end.
 
 sha384_diff_to_randomx_diff(Sha384Diff) ->
@@ -127,6 +149,7 @@ update_txs(
 		BlockTXPairs,
 		CurrentB#block.height,
 		NextDiff,
+		NextBlockTimestamp,
 		CurrentB#block.wallet_list,
 		TXs
 	),
@@ -296,7 +319,7 @@ find_nonce(BDS, Diff, Height) ->
 			case randomx_hasher(Height) of
 				{ok, Hasher} ->
 					StartNonce = crypto:strong_rand_bytes(256 div 8),
-					find_nonce(BDS, Diff, StartNonce, Hasher);
+					find_nonce(BDS, Diff, Height, StartNonce, Hasher);
 				not_found ->
 					ar:info("Mining is waiting on RandomX initialization"),
 					timer:sleep(30 * 1000),
@@ -307,7 +330,7 @@ find_nonce(BDS, Diff, Height) ->
 			%% arbitrary size for the initial nonce.
 			StartNonce = crypto:strong_rand_bytes(384 div 8),
 			Hasher = fun(Data) -> crypto:hash(?MINING_HASH_ALG, Data) end,
-			find_nonce(BDS, Diff, StartNonce, Hasher)
+			find_nonce(BDS, Diff, Height, StartNonce, Hasher)
 	end.
 
 -ifdef(DEBUG).
@@ -340,12 +363,12 @@ randomx_hasher(Height) ->
 	end.
 -endif.
 
-find_nonce(BDS, Diff, Nonce, Hasher) ->
+find_nonce(BDS, Diff, Height, Nonce, Hasher) ->
 	BDSHash = Hasher(<< Nonce/binary, BDS/binary >>),
-	case validate(BDSHash, Diff) of
+	case validate(BDSHash, Diff, Height) of
 		false ->
 			%% Re-use the hash as the next nonce, since we get it for free.
-			find_nonce(BDS, Diff, BDSHash, Hasher);
+			find_nonce(BDS, Diff, Height, BDSHash, Hasher);
 		true ->
 			{Nonce, BDSHash}
 	end.
@@ -362,9 +385,7 @@ min_sha384_difficulty() -> 31.
 randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 -endif.
 
-
 %% Tests
-
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->

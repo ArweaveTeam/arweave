@@ -1,6 +1,7 @@
 -module(ar_tx_replay_pool_tests).
 
 -include("src/ar.hrl").
+-include("src/perpetual_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 verify_block_txs_test() ->
@@ -8,154 +9,175 @@ verify_block_txs_test() ->
 	Key2 = ar_wallet:new(),
 	Hashes = generate_hashes(),
 	EmptyBlockTXPairs = block_txs_pairs(Hashes),
-	TX1 = tx(Key1, 5, <<>>),
-	TX2 = tx(Key1, 5, TX1#tx.id),
-	BlockAnchorTX = tx(Key1, 1, <<"hash">>),
+	Timestamp = os:system_time(seconds),
+	Diff = random_diff(),
+	BlockAnchorTXAtForkHeight = tx(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp), <<"hash">>),
+	BlockAnchorTXAfterForkHeight = tx(Key1, fee(Diff, ar_fork:height_1_8() + 1, Timestamp), <<"hash">>),
 	TestCases = [
 		#{
 			title => "Fork height 1.8 accepts block anchors",
-			txs => [tx(Key1, 10, <<"hash">>)],
-			diff => 1,
+			txs => [tx(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp), <<"hash">>)],
 			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp))],
 			block_txs_pairs => [{<<"hash">>, []}],
 			expected_result => valid
 		},
 		#{
 			title => "After fork height 1.8 accepts block anchors",
-			txs => [tx(Key1, 10, <<"hash">>)],
-			diff => 1,
+			txs => [tx(Key1, fee(Diff, ar_fork:height_1_8() + 1, Timestamp), <<"hash">>)],
 			height => ar_fork:height_1_8() + 1,
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_1_8() + 1, Timestamp))],
 			block_txs_pairs => [{<<"hash">>, []}],
 			expected_result => valid
 		},
 		#{
 			title => "Before fork height 1.8 rejects block anchors",
-			txs => [tx(Key1, 10, <<"hash">>)],
-			diff => 1,
+			txs => [tx(Key1, fee(Diff, ar_fork:height_1_8() - 1, Timestamp), <<"hash">>)],
 			height => ar_fork:height_1_8() - 1,
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_1_8() - 1, Timestamp))],
 			block_txs_pairs => [{<<"hash">>, []}],
 			expected_result => invalid
 		},
 		#{
 			title => "Fork height 1.8 rejects outdated block anchors",
-			txs => [tx(Key1, 10, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, Hashes))],
-			diff => 1,
+			txs => [
+				tx(
+					Key1,
+					fee(Diff, ar_fork:height_1_8(), Timestamp),
+					lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, Hashes)
+				)
+			],
 			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp))],
 			block_txs_pairs => EmptyBlockTXPairs,
 			expected_result => invalid
 		},
 		#{
 			title => "Fork height 1.8 accepts wallet list anchors",
-			txs => [tx(Key1, 10, <<>>), tx(Key2, 10, <<>>)],
-			diff => 1,
+			txs => [
+				tx(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp), <<>>),
+				tx(Key2, fee(Diff, ar_fork:height_1_8(), Timestamp), <<>>)
+			],
 			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10), wallet(Key2, 10)],
+			wallet_list => [
+				wallet(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp)),
+				wallet(Key2, fee(Diff, ar_fork:height_1_8(), Timestamp))
+			],
 			block_txs_pairs => [],
 			expected_result => valid
 		},
 		#{
 			title => "After fork height 1.8 accepts wallet list anchors",
-			txs => [tx(Key1, 10, <<>>), tx(Key2, 10, <<>>)],
-			diff => 1,
+			txs => [
+				tx(Key1, fee(Diff, ar_fork:height_1_8() + 1, Timestamp), <<>>),
+				tx(Key2, fee(Diff, ar_fork:height_1_8() + 1, Timestamp), <<>>)
+			],
 			height => ar_fork:height_1_8() + 1,
-			wallet_list => [wallet(Key1, 10), wallet(Key2, 10)],
+			wallet_list => [
+				wallet(Key1, fee(Diff, ar_fork:height_1_8() + 1, Timestamp)),
+				wallet(Key2, fee(Diff, ar_fork:height_1_8() + 1, Timestamp))
+			],
 			block_txs_pairs => [],
 			expected_result => valid
 		},
 		#{
 			title => "Before fork height 1.8 rejects conflicting wallet list anchors",
-			txs => [tx(Key1, 5, <<>>), tx(Key1, 5, <<>>)],
-			diff => 1,
+			txs => [
+				tx(Key1, fee(Diff, ar_fork:height_1_8() - 1, Timestamp), <<>>),
+				tx(Key1, fee(Diff, ar_fork:height_1_8() - 1, Timestamp), <<>>)
+			],
 			height => ar_fork:height_1_8() - 1,
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_1_8() - 1, Timestamp))],
 			block_txs_pairs => [],
 			expected_result => invalid
 		},
 		#{
 			title => "Before fork height 1.8 accepts chained wallet list anchors",
-			txs => [TX1, TX2],
-			diff => 1,
+			txs => make_tx_chain(Key1, Diff, ar_fork:height_1_8() - 1, Timestamp),
 			height => ar_fork:height_1_8() - 1,
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_1_8() - 1, Timestamp))],
 			block_txs_pairs => [],
 			expected_result => valid
 		},
 		#{
 			title => "Fork height 1.8 rejects conflicting wallet list anchors",
-			txs => [tx(Key1, 5, <<>>), tx(Key1, 5, <<>>)],
-			diff => 1,
+			txs => [
+				tx(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp), <<>>),
+				tx(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp), <<>>)
+			],
 			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_1_8(), Timestamp))],
 			block_txs_pairs => [],
 			expected_result => invalid
 		},
 		#{
 			title => "Fork height 1.8 rejects chained wallet list anchors",
-			txs => [TX1, TX2],
-			diff => 1,
+			txs => make_tx_chain(Key1, Diff, ar_fork:height_1_8(), Timestamp),
 			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_1_8(), Timestamp))],
 			block_txs_pairs => [],
 			expected_result => invalid
 		},
 		#{
 			title => "Before fork height 1.8 rejects conflicting balances",
-			txs => [tx(Key1, 6, <<>>), tx(Key1, 6, <<>>)],
-			diff => 1,
+			txs => [
+				tx(Key1, fee(Diff, ar_fork:height_1_8() - 1, Timestamp), <<>>),
+				tx(Key1, fee(Diff, ar_fork:height_1_8() - 1, Timestamp), <<>>)
+			],
 			height => ar_fork:height_1_8() - 1,
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, erlang:trunc(1.5 * fee(Diff, ar_fork:height_1_8() - 1, Timestamp)))],
 			block_txs_pairs => [],
 			expected_result => invalid
 		},
 		#{
 			title => "Fork height 1.8 rejects conflicting balances",
-			txs => [tx(Key1, 6, <<>>), tx(Key1, 6, <<>>)],
-			diff => 1,
+			txs => [
+				tx(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp), <<>>),
+				tx(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp), <<>>)
+			],
 			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, erlang:trunc(1.5 * fee(Diff, ar_fork:height_1_8(), Timestamp)))],
 			block_txs_pairs => [],
 			expected_result => invalid
 		},
 		#{
 			title => "Fork height 1.8 rejects duplicates",
-			txs => [BlockAnchorTX, BlockAnchorTX],
-			diff => 1,
+			txs => [BlockAnchorTXAtForkHeight, BlockAnchorTXAtForkHeight],
 			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_1_8(), Timestamp))],
 			block_txs_pairs => [],
 			expected_result => invalid
 		},
 		#{
 			title => "After fork height 1.8 rejects duplicates",
-			txs => [BlockAnchorTX, BlockAnchorTX],
-			diff => 1,
+			txs => [BlockAnchorTXAfterForkHeight, BlockAnchorTXAfterForkHeight],
 			height => ar_fork:height_1_8() + 1,
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_1_8() + 1, Timestamp))],
 			block_txs_pairs => [],
 			expected_result => invalid
 		},
 		#{
 			title => "Fork height 1.8 rejects txs from the weave",
-			txs => [BlockAnchorTX],
-			diff => 1,
+			txs => [BlockAnchorTXAtForkHeight],
 			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10)],
+			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_1_8(), Timestamp))],
 			block_txs_pairs =>
-				[{<<"hash">>, []}, {<<"otherhash">>, [<<"txid">>, <<"txid2">>, BlockAnchorTX#tx.id]}],
+				[
+					{<<"hash">>, []},
+					{<<"otherhash">>, [<<"txid">>, <<"txid2">>, BlockAnchorTXAtForkHeight#tx.id]}
+				],
 			expected_result => invalid
 		},
 		#{
 			title => "After fork height 1.8 rejects txs from the weave",
-			txs => [BlockAnchorTX],
-			diff => 1,
-			height => ar_fork:height_1_8(),
-			wallet_list => [wallet(Key1, 10)],
+			txs => [BlockAnchorTXAfterForkHeight],
+			height => ar_fork:height_1_8() + 1,
+			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_1_8() + 1, Timestamp))],
 			block_txs_pairs =>
-				[{<<"hash">>, []}, {<<"otherhash">>, [<<"txid">>, <<"txid2">>, BlockAnchorTX#tx.id]}],
+				[
+					{<<"hash">>, []},
+					{<<"otherhash">>, [<<"txid">>, <<"txid2">>, BlockAnchorTXAfterForkHeight#tx.id]}
+				],
 			expected_result => invalid
 		}
 	],
@@ -163,7 +185,6 @@ verify_block_txs_test() ->
 		fun(#{
 			title := Title,
 			txs := TXs,
-			diff := Diff,
 			height := Height,
 			wallet_list := WalletList,
 			block_txs_pairs := BlockTXPairs,
@@ -171,36 +192,64 @@ verify_block_txs_test() ->
 		}) ->
 			?assertEqual(
 				ExpectedResult,
-				ar_tx_replay_pool:verify_block_txs(TXs, Diff, Height, WalletList, BlockTXPairs),
+				ar_tx_replay_pool:verify_block_txs(
+					TXs,
+					Diff,
+					Height,
+					Timestamp,
+					WalletList,
+					BlockTXPairs
+				),
 				Title
 			),
-			PickedTXs = ar_tx_replay_pool:pick_txs_to_mine(BlockTXPairs, Height, Diff, WalletList, TXs),
+			PickedTXs = ar_tx_replay_pool:pick_txs_to_mine(
+				BlockTXPairs,
+				Height,
+				Diff,
+				Timestamp,
+				WalletList,
+				TXs
+			),
 			?assertEqual(
 				valid,
-				ar_tx_replay_pool:verify_block_txs(PickedTXs, Diff, Height, WalletList, BlockTXPairs),
-				lists:flatten(io_lib:format("Verifyng after picking_txs_to_mine: ~s:", [Title]))
+				ar_tx_replay_pool:verify_block_txs(
+					PickedTXs,
+					Diff,
+					Height,
+					Timestamp,
+					WalletList,
+					BlockTXPairs
+				),
+				lists:flatten(
+					io_lib:format("Verifyng after picking_txs_to_mine: ~s:", [Title])
+				)
 			)
 		end,
 		TestCases
 	).
 
+make_tx_chain(Key, Diff, Height, Timestamp) ->
+	TX1 = tx(Key, fee(Diff, Height, Timestamp), <<>>),
+	TX2 = tx(Key, fee(Diff, Height, Timestamp), TX1#tx.id),
+	[TX1, TX2].
+
 tx(Key = {_, Pub}, Reward, Anchor) ->
 	ar_tx:sign(
-		(ar_tx:new())#tx{
+		#tx {
 			owner = Pub,
-			reward = ?AR(Reward),
+			reward = Reward,
 			last_tx = Anchor
 		},
 		Key
 	).
 
 wallet({_, Pub}, Balance) ->
-	{ar_wallet:to_address(Pub), ?AR(Balance), <<>>}.
+	{ar_wallet:to_address(Pub), Balance, <<>>}.
 
 generate_hashes() ->
 	lists:map(
 		fun(_) ->
-			integer_to_binary(rand:uniform(1000))
+			integer_to_binary(rand:uniform(1000000))
 		end,
 		lists:seq(1, (?MAX_TX_ANCHOR_DEPTH) * 2)
 	).
@@ -212,3 +261,11 @@ block_txs_pairs(Hashes) ->
 		end,
 		Hashes
 	).
+
+fee(Diff, Height, Timestamp) ->
+	ar_tx_perpetual_storage:calculate_tx_fee(?TX_SIZE_BASE, Diff, Height, Timestamp).
+
+random_diff() ->
+	MinDiff = ar_mine:min_difficulty(ar_fork:height_1_8()),
+	MaxDiff = ar_mine:max_difficulty(ar_fork:height_1_8()),
+	MinDiff + rand:uniform(MaxDiff - MinDiff).
