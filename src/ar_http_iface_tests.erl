@@ -583,11 +583,13 @@ add_external_block_with_tx_test_() ->
 			10 * 1000
 		),
 		[BTest|_] = ar_node:get_blocks(Node2),
-		ar_http_iface_server:reregister(Node1),
-		send_new_block(
-			{127, 0, 0, 1, 1984},
-			ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
-			BGen
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			send_new_block(
+				{127, 0, 0, 1, 1984},
+				ar_storage:read_block(BTest, ar_node:get_hash_list(Node2)),
+				BGen
+			)
 		),
 		% Wait for test block and assert that it contains transaction.
 		?assert(ar_util:do_until(
