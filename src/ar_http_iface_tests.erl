@@ -500,10 +500,10 @@ add_external_block_with_invalid_timestamp_test() ->
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
 		send_new_block(
 			RemotePeer,
-			B1#block {
+			update_block(B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = TooFarFutureTimestamp
-			},
+			}, RecallB0),
 			RecallB0
 		)
 	),
@@ -513,7 +513,7 @@ add_external_block_with_invalid_timestamp_test() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
 			RemotePeer,
-			update_nonce(B1#block {
+			update_block(B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = OkFutureTimestamp
 			}, RecallB0),
@@ -528,24 +528,16 @@ add_external_block_with_invalid_timestamp_test() ->
 		?MAX_BLOCK_PROPAGATION_TIME
 	]),
 	TooFarPastTimestamp = os:system_time(second) - PastTimestampTolerance - 3,
-	SendTooFarPastTimestamp = fun() ->
-		send_new_block(
-			RemotePeer,
-			B1#block {
-				indep_hash = add_rand_suffix(<<"random-hash">>),
-				timestamp = TooFarPastTimestamp
-			},
-			RecallB0
-		)
-	end,
-	?assertMatch(
-		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
-		SendTooFarPastTimestamp()
-	),
-	ar_blacklist:reset(),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
-		SendTooFarPastTimestamp()
+		send_new_block(
+			RemotePeer,
+			update_block(B1#block {
+				indep_hash = add_rand_suffix(<<"random-hash">>),
+				timestamp = TooFarPastTimestamp
+			}, RecallB0),
+			RecallB0
+		)
 	),
 	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
 	OkPastTimestamp = os:system_time(second) - PastTimestampTolerance + 3,
@@ -553,12 +545,10 @@ add_external_block_with_invalid_timestamp_test() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
 			RemotePeer,
-			update_nonce(B1#block { timestamp = OkPastTimestamp}, RecallB0),
+			update_block(B1#block { timestamp = OkPastTimestamp}, RecallB0),
 			RecallB0
 		)
-	),
-	ar_blacklist:reset(),
-	ok.
+	).
 
 add_rand_suffix(Bin) ->
 	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
@@ -569,15 +559,16 @@ add_rand_suffix(Bin) ->
 add_external_block_with_tx_test_() ->
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
+		ar_blacklist_middleware:reset(),
 		[BGen] = ar_weave:init([]),
 		Node1 = ar_node:start([], [BGen]),
-		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
 		timer:sleep(500),
 		Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
-		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node1, Bridge),
 		% Start node 2, add transaction, and wait until mined.
 		Node2 = ar_node:start([], [BGen]),
+		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
+		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		TX = ar_tx:new(<<"TEST DATA">>),
 		ar_node:add_tx(Node2, TX),
 		timer:sleep(500),
@@ -1336,16 +1327,21 @@ generate_block_data_segment(B, PreviousRecallB) ->
 		B#block.tags
 	).
 
-update_nonce(B, PreviousRecallB) ->
-	update_nonce(B, PreviousRecallB, 0).
+%% Update the nonce, dependent hash and the independen hash.
+update_block(B, PreviousRecallB) ->
+	update_block(B, PreviousRecallB, 0).
 
-update_nonce(B, PreviousRecallB, Nonce) ->
+update_block(B, PreviousRecallB, Nonce) ->
 	NonceBinary = integer_to_binary(Nonce),
 	BDS = generate_block_data_segment(B#block { nonce = NonceBinary }, PreviousRecallB),
 	MinDiff = ar_mine:min_difficulty(B#block.height),
 	case ar_weave:hash(BDS, NonceBinary, B#block.height) of
-		<< 0:MinDiff, _/bitstring >> ->
-			B#block{ nonce = NonceBinary };
+		<< 0:MinDiff, _/bitstring >> = DepHash ->
+			UpdatedB = B#block {
+				hash = DepHash,
+				nonce = NonceBinary
+			},
+			UpdatedB#block { indep_hash = ar_weave:indep_hash(UpdatedB) };
 		_ ->
-			update_nonce(B, PreviousRecallB, Nonce + 1)
+			update_block(B, PreviousRecallB, Nonce + 1)
 	end.
