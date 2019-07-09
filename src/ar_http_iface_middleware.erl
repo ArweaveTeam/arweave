@@ -1017,7 +1017,6 @@ post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 		false ->
 			{400, #{}, <<"block_data_segment missing.">>, Req}
 	end;
-%% TODO: Remove the check_is_ignored clause when all nodes send block_data_segment.
 post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		true ->
