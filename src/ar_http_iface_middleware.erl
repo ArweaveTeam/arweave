@@ -1068,6 +1068,7 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			post_block_reject_warn(
 				BShadow,
 				check_timestamp,
+				OrigPeer,
 				[{block_time, BShadow#block.timestamp},
 				 {current_time, os:system_time(seconds)}]
 			),
@@ -1081,7 +1082,7 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
 		{invalid, _} ->
-			post_block_reject_warn(BShadow, check_pow),
+			post_block_reject_warn(BShadow, check_pow, OrigPeer),
 			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
 		{valid, _} ->
@@ -1116,16 +1117,18 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	end),
 	{200, #{}, <<"OK">>, Req}.
 
-post_block_reject_warn(BShadow, Step) ->
+post_block_reject_warn(BShadow, Step, Peer) ->
 	ar:warn([
 		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
-		Step
+		Step,
+		{peer, ar_util:format_peer(Peer)}
 	]).
 
-post_block_reject_warn(BShadow, Step, Params) ->
+post_block_reject_warn(BShadow, Step, Peer, Params) ->
 	ar:warn([
 		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
-		{Step, Params}
+		{Step, Params},
+		{peer, ar_util:format_peer(Peer)}
 	]).
 
 %% @doc Return the block hash list associated with a block.
