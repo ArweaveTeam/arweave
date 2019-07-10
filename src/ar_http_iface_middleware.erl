@@ -1056,9 +1056,22 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	case BShadow#block.diff >= ar_mine:min_difficulty(BShadow#block.height) of
 		true ->
-			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
+			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
 		_ ->
 			{400, #{}, <<"Difficulty too low">>, Req}
+	end;
+%% Note! Checking PoW should be as cheap as possible. All slow steps should
+%% be after the PoW check to reduce the possibility of doing a DOS attack on
+%% the network.
+post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+	case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
+		{invalid, _} ->
+			post_block_reject_warn(BShadow, check_pow, OrigPeer),
+			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
+			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
+		{valid, _} ->
+			ar_bridge:ignore_id(BDS),
+			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% Verify the timestamp of the block shadow.
@@ -1073,19 +1086,6 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			),
 			{400, #{}, <<"Invalid timestamp.">>, Req};
 		true ->
-			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
-	end;
-%% Note! Checking PoW should be as cheap as possible. All slow steps should
-%% be after the PoW check to reduce the possibility of doing a DOS attack on
-%% the network.
-post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
-		{invalid, _} ->
-			post_block_reject_warn(BShadow, check_pow, OrigPeer),
-			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
-			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
-		{valid, _} ->
-			ar_bridge:ignore_id(BDS),
 			post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
