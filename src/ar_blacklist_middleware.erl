@@ -4,7 +4,7 @@
 %% cowboy_middleware callbacks
 -export([execute/2]).
 -export([start/0]).
--export([reset/0, reset/1]).
+-export([reset/0, reset_rate_limit/1]).
 -export([ban_peer/2, is_peer_banned/1, cleanup_ban/0]).
 
 -include("ar.hrl").
@@ -70,9 +70,8 @@ reset() ->
 	true = ets:delete_all_objects(?MODULE),
 	ok.
 
-reset(IpAddr) ->
+reset_rate_limit(IpAddr) ->
 	ets:delete(?MODULE, {rate_limit, IpAddr}),
-	ets:delete(?MODULE, {ban, IpAddr}),
 	ok.
 
 increment_ip_addr(IpAddr) ->
@@ -80,7 +79,7 @@ increment_ip_addr(IpAddr) ->
 	Key = {rate_limit, IpAddr},
 	case ets:update_counter(?MODULE, Key, {2, 1}, {Key, 0}) of
 		1 ->
-			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset, [IpAddr]),
+			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_rate_limit, [IpAddr]),
 			pass;
 		Count when Count =< RequestLimit ->
 			pass;
