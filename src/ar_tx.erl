@@ -84,6 +84,13 @@ verify(TX, Diff, Height, WalletList) -> do_verify(TX, Diff, Height, WalletList).
 -endif.
 
 do_verify(TX, Diff, Height, WalletList) ->
+	Fork_1_8 = ar_fork:height_1_8(),
+	LastTXCheck = case Height of
+		H when H >= Fork_1_8 ->
+			true;
+		_ ->
+			check_last_tx(WalletList, TX)
+	end,
 	Checks = [
 		{"quantity_negative",
 		 TX#tx.quantity >= 0},
@@ -92,15 +99,15 @@ do_verify(TX, Diff, Height, WalletList) ->
 		{"tx_too_cheap",
 		 tx_cost_above_min(TX, Diff, Height, WalletList, TX#tx.target)},
 		{"tx_fields_too_large",
-		 tx_field_size_limit(TX)},
+		 tx_field_size_limit(TX, Height)},
 		{"tag_field_illegally_specified",
 		 tag_field_legal(TX)},
 		{"last_tx_not_valid",
-		 check_last_tx(WalletList, TX)},
+		 LastTXCheck},
 		{"tx_id_not_valid",
 		 tx_verify_hash(TX)},
 		{"overspend",
-		 ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX]))},
+		 ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX], Height))},
 		{"tx_signature_not_valid",
 		 ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)}
 	],
@@ -134,14 +141,19 @@ verify_txs(TXs, Diff, Height, WalletList) ->
 	end.
 
 verify_txs_size(TXs) ->
-	TotalTXSize = lists:foldl(
-		fun(TX, CurrentTotalTXSize) ->
-			CurrentTotalTXSize + byte_size(TX#tx.data)
-		end,
-		0,
-		TXs
-	),
-	TotalTXSize =< ?BLOCK_TX_DATA_SIZE_LIMIT.
+	case length(TXs) of
+		L when L > ?BLOCK_TX_COUNT_LIMIT ->
+			false;
+		_ ->
+			TotalTXSize = lists:foldl(
+				fun(TX, CurrentTotalTXSize) ->
+					CurrentTotalTXSize + byte_size(TX#tx.data)
+				end,
+				0,
+				TXs
+			),
+			TotalTXSize =< ?BLOCK_TX_DATA_SIZE_LIMIT
+	end.
 
 verify_txs(valid_size_txs, [], _, _, _) ->
 	true;
@@ -153,7 +165,7 @@ verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletList) ->
 				TXs,
 				Diff,
 				Height,
-				ar_node_utils:apply_tx(WalletList, TX)
+				ar_node_utils:apply_tx(WalletList, TX, Height)
 			);
 		false ->
 			false
@@ -162,7 +174,7 @@ verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletList) ->
 %% @doc Ensure that transaction cost above proscribed minimum.
 tx_cost_above_min(TX, Diff, Height, WalletList, Addr) ->
 	TX#tx.reward >=
-		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, Height, WalletList, Addr).
+		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, Height + 1, WalletList, Addr).
 
 %% @doc Calculate the minimum transaction cost for a TX with the given data size.
 %% The constant 3210 is the max byte size of each of the other fields.
@@ -198,11 +210,18 @@ min_tx_cost(DataSize, _Diff, DiffCenter) ->
 	min_tx_cost(DataSize, DiffCenter, DiffCenter).
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
-tx_field_size_limit(TX) ->
+tx_field_size_limit(TX, Height) ->
+	Fork_1_8 = ar_fork:height_1_8(),
+	LastTXLimit = case Height of
+		H when H >= Fork_1_8 ->
+			48;
+		_ ->
+			32
+	end,
 	case tag_field_legal(TX) of
 		true ->
 			(byte_size(TX#tx.id) =< 32) and
-			(byte_size(TX#tx.last_tx) =< 32) and
+			(byte_size(TX#tx.last_tx) =< LastTXLimit) and
 			(byte_size(TX#tx.owner) =< 512) and
 			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
 			(byte_size(TX#tx.target) =< 32) and
@@ -266,7 +285,6 @@ check_last_tx(WalletList, TX) ->
 		_ -> false
 	end.
 -endif.
-
 
 %%% Tests: ar_tx
 

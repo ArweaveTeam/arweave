@@ -322,12 +322,12 @@ medium_blockweave_multi_mine_test_() ->
 		Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
 		[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
-		timer:sleep(1000),
+		timer:sleep(2000),
 		ar_node:mine(ar_util:pick_random(Nodes)),
-		timer:sleep(1000),
+		timer:sleep(2000),
 		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
-		timer:sleep(1000),
+		timer:sleep(2000),
 		ar_node:mine(ar_util:pick_random(Nodes)),
 		?assert(ar_util:do_until(
 			fun() ->
@@ -441,179 +441,6 @@ last_tx_test_() ->
 %%%
 %%% Embedded tests.
 %%%
-
-%% @doc Ensure that a set of txs can be checked for serialization, those that
-%% don't serialize disregarded.
-filter_out_of_order_txs_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		{_Priv3, Pub3} = ar_wallet:new(),
-		RawTX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-		TX = RawTX#tx {owner = Pub1},
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		RawTX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
-		TX2 = RawTX2#tx {owner = Pub1},
-		SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-		WalletList =
-			[
-				{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
-				{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
-				{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
-			],
-		% TX1 applied, TX2 applied
-		{_, [SignedTX2, SignedTX]} =
-			ar_node_utils:filter_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX2]
-			),
-		% TX2 disregarded, TX1 applied
-		{_, [SignedTX]} =
-			ar_node_utils:filter_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX]
-			)
-	end}.
-
-%% @doc Ensure that a large set of txs can be checked for serialization,
-%% those that don't serialize disregarded.
-filter_out_of_order_txs_large_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		{_Priv3, Pub3} = ar_wallet:new(),
-		TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
-		SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-		TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), SignedTX2#tx.id),
-		SignedTX3 = ar_tx:sign(TX3, Priv1, Pub1),
-		WalletList =
-			[
-				{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
-				{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
-				{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
-			],
-		% TX1 applied, TX2 applied, TX3 applied
-		{_, [SignedTX3, SignedTX2, SignedTX]} =
-			ar_node_utils:filter_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX2, SignedTX3]
-			),
-		% TX2 disregarded, TX3 disregarded, TX1 applied
-		{_, [SignedTX]} =
-			ar_node_utils:filter_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX3, SignedTX]
-			),
-		% TX1 applied, TX3 disregarded, TX2 applied.
-		{_, [SignedTX2, SignedTX]} =
-			ar_node_utils:filter_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX3, SignedTX2]
-			)
-	end}.
-
-%% @doc Ensure that a set of txs can be serialized in the best possible order.
-filter_all_out_of_order_txs_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		{_Priv3, Pub3} = ar_wallet:new(),
-		TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
-		SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-		WalletList =
-			[
-				{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
-				{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
-				{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
-			],
-		% TX1 applied, TX2 applied
-		[SignedTX, SignedTX2] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX2]
-			),
-		% TX2 applied, TX1 applied
-		[SignedTX, SignedTX2] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX]
-			)
-	end}.
-
-%% @doc Ensure that a large set of txs can be serialized in the best
-%% possible order.
-filter_all_out_of_order_txs_large_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{Priv2, Pub2} = ar_wallet:new(),
-		{_Priv3, Pub3} = ar_wallet:new(),
-		TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), SignedTX#tx.id),
-		SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-		TX3 = ar_tx:new(Pub3, ?AR(1), ?AR(50), SignedTX2#tx.id),
-		SignedTX3 = ar_tx:sign(TX3, Priv1, Pub1),
-		TX4 = ar_tx:new(Pub1, ?AR(1), ?AR(25), <<>>),
-		SignedTX4 = ar_tx:sign(TX4, Priv2, Pub2),
-		WalletList =
-			[
-				{ar_wallet:to_address(Pub1), ?AR(1000), <<>>},
-				{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
-				{ar_wallet:to_address(Pub3), ?AR(3000), <<>>}
-			],
-		% TX1 applied, TX2 applied, TX3 applied
-		[SignedTX, SignedTX2, SignedTX3] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX2, SignedTX3]
-			),
-		% TX1 applied, TX3 applied, TX2 applied
-		[SignedTX, SignedTX2, SignedTX3] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX3, SignedTX2]
-			),
-		% TX2 applied, TX1 applied, TX3 applied
-		[SignedTX, SignedTX2, SignedTX3] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX, SignedTX3]
-			),
-		% TX2 applied, TX3 applied, TX1 applied
-		[SignedTX, SignedTX2, SignedTX3] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX2, SignedTX3, SignedTX]
-			),
-		% TX3 applied, TX1 applied, TX2 applied
-		[SignedTX, SignedTX2, SignedTX3] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX3, SignedTX, SignedTX2]
-			),
-		% TX3 applied, TX2 applied, TX1 applied
-		[SignedTX, SignedTX2, SignedTX3] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX3, SignedTX2, SignedTX]
-			),
-		% TX1 applied, TX1 duplicate, TX1 duplicate, TX2 applied, TX4 applied
-		% TX1 duplicate, TX3 applied
-		% NB: Consider moving into separate test.
-		[SignedTX, SignedTX2, SignedTX4, SignedTX3] =
-			ar_node_utils:filter_all_out_of_order_txs(
-				WalletList,
-				[SignedTX, SignedTX, SignedTX, SignedTX2, SignedTX4, SignedTX, SignedTX3]
-			)
-	end}.
 
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
@@ -772,37 +599,6 @@ mine_tx_with_key_val_tags_test_() ->
 		BHL = [B1Hash|_] = ar_node:get_blocks(Node2),
 		#block { txs = TXs } = ar_storage:read_block(B1Hash, BHL),
 		?assertEqual(ar_storage:read_tx(TXs), [SignedTX])
-	end}.
-
-%% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
-%% @doc Wallet1 -> Wallet2 | Wallet1 -> Wallet3 | mine | check
-single_wallet_double_tx_before_mine_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		{_Priv3, Pub3} = ar_wallet:new(),
-		OrphanedTX = ar_tx:new(Pub2, ?AR(1), ?AR(5000), <<>>),
-		OrphanedTX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), <<>>),
-		TX = OrphanedTX#tx { owner = Pub1 },
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		TX2 = OrphanedTX2#tx { owner = Pub1, last_tx = SignedTX#tx.id },
-		SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx([SignedTX]),
-		timer:sleep(500),
-		ar_node:add_tx(Node1, SignedTX2),
-		ar_storage:write_tx([SignedTX2]),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
-		?AR(4999) = ar_node:get_balance(Node2, Pub1),
-		?AR(5000) = ar_node:get_balance(Node2, Pub2),
-		?AR(0) = ar_node:get_balance(Node2, Pub3)
 	end}.
 
 %% @doc Verify the behaviour of out of order TX submission.

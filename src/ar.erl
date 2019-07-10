@@ -51,8 +51,10 @@
 		ar_block,
 		ar_tx_db,
 		ar_firewall_distributed_tests,
-		ar_randomx_mining_tests,
 		ar_semaphore_tests,
+		ar_tx_replay_pool_tests,
+		ar_multiple_txs_per_wallet_tests,
+		ar_randomx_mining_tests,
 		% ar_meta_db must be the last in the list since it resets global configuraiton
 		ar_meta_db
 	]
@@ -298,7 +300,6 @@ start(
 	inets:start(),
 	ar_tx_db:start(),
 	ar_key_db:start(),
-	ar_track_tx_db:start(),
 	ar_miner_log:start(),
 	ar_tx_search:start(),
 	ar_storage:start_update_used_space(),
@@ -570,10 +571,6 @@ test_networks() ->
 	ar_test_sup:start().
 
 test_slow() ->
-	ar_node_test:filter_out_of_order_txs_test_slow(),
-	ar_node_test:filter_out_of_order_txs_large_test_slow(),
-	ar_node_test:filter_all_out_of_order_txs_test_slow(),
-	ar_node_test:filter_all_out_of_order_txs_large_test_slow(),
 	ar_node_test:wallet_transaction_test_slow(),
 	ar_node_test:wallet_two_transaction_test_slow(),
 	ar_node_test:single_wallet_double_tx_before_mine_test_slow(),
