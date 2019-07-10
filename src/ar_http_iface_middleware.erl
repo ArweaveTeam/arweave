@@ -993,6 +993,14 @@ val_for_key(K, L) ->
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
 post_block(request, Req, Pid) ->
+	OrigPeer = arweave_peer(Req),
+	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
+		not_banned ->
+			post_block(read_blockshadow, {Pid, OrigPeer}, Req);
+		banned ->
+			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
+	end;
+post_block(read_blockshadow, {Pid, OrigPeer}, Req) ->
 	% Convert request to struct and block shadow.
 	case request_to_struct_with_blockshadow(Req, Pid) of
 		{error, {_, _}, ReadReq} ->
@@ -1000,7 +1008,6 @@ post_block(request, Req, Pid) ->
 		{error, body_size_too_large, TooLargeReq} ->
 			reply_with_413(TooLargeReq);
 		{ok, {ReqStruct, BShadow}, ReadReq} ->
-			OrigPeer = arweave_peer(ReadReq),
 			post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, ReadReq)
 	end;
 post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
@@ -1041,14 +1048,7 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 		H when H > CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
 			{400, #{}, <<"Height is too far ahead">>, Req};
 		_ ->
-			post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
-	end;
-post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
-		not_banned ->
-			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
-		banned ->
-			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
+			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 %% The min difficulty check is filtering out blocks from smaller networks, e.g.
 %% testnets. Therefor, we don't want to log when this check or any check above
