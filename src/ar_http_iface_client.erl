@@ -29,13 +29,14 @@ send_new_tx(Peer, TX) ->
 	end.
 
 do_send_new_tx(Peer, TX) ->
+	TXSize = byte_size(TX#tx.data),
 	ar_httpc:request(
 		<<"POST">>,
 		Peer,
 		"/tx",
 		p2p_headers(),
 		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-		3 * 1000
+		max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
 	).
 
 %% @doc Check whether a peer has a given transaction

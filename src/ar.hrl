@@ -102,7 +102,7 @@
 -define(DEBUG_TIME_SCALAR, 1.0).
 
 %% @doc Length of time to wait before giving up on test(s).
--define(TEST_TIMEOUT, 5 * 60).
+-define(TEST_TIMEOUT, 15 * 60).
 
 %% @doc Calculate MS to wait in order to hit target block time.
 -define(DEFAULT_MINING_DELAY,
@@ -111,11 +111,19 @@
 %% @doc The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).
 -ifdef(DEBUG).
+-define(TOTAL_WAITING_TXS_DATA_SIZE_LIMIT, 50 * 1024).
+-else.
+-define(TOTAL_WAITING_TXS_DATA_SIZE_LIMIT, 250 * 1024 * 1024).
+-endif.
+-ifdef(DEBUG).
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024).
 -else.
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
 -endif.
 -define(BLOCK_TX_DATA_SIZE_LIMIT, ?TX_DATA_SIZE_LIMIT). % Must be greater or equal to tx data size limit.
+-define(BLOCK_TX_COUNT_LIMIT, 1000).
+
+-define(MAX_TX_ANCHOR_DEPTH, ?STORE_BLOCKS_BEHIND_CURRENT).
 
 %% @doc Default timeout for establishing an HTTP connection.
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).

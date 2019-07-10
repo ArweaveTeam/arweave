@@ -8,10 +8,15 @@
 
 node_validates_blocks_with_rejected_tx_test() ->
 	%% Start a remote node.
-	{SlaveNode, B0} = slave_start(no_block),
+	Key = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	{SlaveNode, _} = slave_start(B0),
+	{Node, _} = start(B0),
 	%% Post the first tx to the remote node. This should also make the second node peer with the first one.
-	{_, Pub} = ar_wallet:new(),
-	TX1 = (ar_tx:new())#tx{ data = <<"BADCONTENT1">>, owner = Pub },
+	TX1 = ar_tx:sign(
+		(ar_tx:new())#tx{ data = <<"BADCONTENT1">>, owner = Pub, reward = ?AR(1) },
+		Key
+	),
 	SlavePort = ar_rpc:call(slave, ar_meta_db, get, [port], 5000),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_httpc:request(
@@ -23,7 +28,6 @@ node_validates_blocks_with_rejected_tx_test() ->
 		),
 	assert_slave_wait_until_receives_txs(SlaveNode, [TX1]),
 	%% Start a local node.
-	{Node, _} = start(B0),
 	%% Configure the firewall to reject one of the txs submitted to the remote node.
 	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
 	ar_firewall:reload(),
@@ -33,7 +37,10 @@ node_validates_blocks_with_rejected_tx_test() ->
 	%% Expect the local node to reject the block.
 	?assertEqual(1, length(ar_node:get_hash_list(Node))),
 	%% Post the second tx to the remote node.
-	TX2 = (ar_tx:new())#tx{ data = <<"GOOD CONTENT">>, owner = Pub },
+	TX2 = ar_tx:sign(
+		(ar_tx:new())#tx{ data = <<"GOOD CONTENT">>, owner = Pub, reward = ?AR(1), last_tx = TX1#tx.id },
+		Key
+	),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,

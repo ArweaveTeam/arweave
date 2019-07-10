@@ -1,14 +1,6 @@
 %%%
 %%% @doc Server to maintain a node state.
 %%%
-%%% NB: The potential_txs field stores the set of txs that contradict those
-%%% already stored within the txs field. That is those that have the same last
-%%% tx reference as one already held in txs.
-%%%
-%%% These txs are not dropped as when a block is a mined blockshadows do not
-%%% redistribute the set mined on, only their IDs. As such they may be required
-%%% to validate newly distributed blocks from other nodes in the network.
-%%%
 
 -module(ar_node_state).
 
@@ -29,7 +21,6 @@ start() ->
 		{hash_list, not_joined},            % current full hashlist
 		{current, not_joined},              % current block hash
 		{wallet_list, []},                  % current up to date walletlist
-		{floating_wallet_list, []},         % up to date walletlist with new txs applied
 		{height, 0},                        % current height of the blockweave
 		{gossip, undefined},                % Gossip protcol state
 		{txs, []},                          % set of new txs to be mined into the next block
@@ -39,14 +30,14 @@ start() ->
 		{reward_addr, unclaimed},           % reward address for mining a new block
 		{trusted_peers, []},                % set of trusted peers used to join on
 		{waiting_txs, []},                  % set of txs on timeout whilst network distribution occurs
-		{potential_txs, []},                % set of valid but contradictory txs
 		{tags, []},                         % nodes tags to apply to a block when mining
 		{reward_pool, 0},                   % current mining rewardpool of the weave
 		{diff, 0},                          % current mining difficulty of the weave (no. of preceeding zero)
 		{last_retarget, undefined},         % timestamp at which the last difficulty retarget occurred
 		{weave_size, 0},                    % current size of the weave in bytes (only inc. data tx size)
 		{cumulative_diff, 0},               % Sum of the difficulty squared along the current weave
-		{hash_list_merkle, <<>>}            % The Merkle root of the current BHL
+		{hash_list_merkle, <<>>},           % The Merkle root of the current BHL
+		{block_txs_pairs, []}               % List of {BH, TXIDs} pairs for last ?MAX_TX_ANCHOR_DEPTH blocks
 	]),
 	{ok, Pid}.
 

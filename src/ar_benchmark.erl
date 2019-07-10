@@ -61,7 +61,7 @@ mine(Diff, Algorithm) ->
 		hash_list = [],
 		height = case Algorithm of randomx -> ar_fork:height_1_7(); sha384 -> ar_fork:height_1_7() - 2 end
 	},
-	ar_mine:start(B, B, [], unclaimed, [], Diff, self()),
+	ar_mine:start(B, B, [], unclaimed, [], Diff, self(), []),
 	receive
 		{work_complete, _, _, _, _, _} ->
 			ok

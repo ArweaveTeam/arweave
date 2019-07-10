@@ -1,6 +1,7 @@
 -module(ar_test_node).
 
--export([start/1, start/2, slave_start/1, connect_to_slave/0, slave_call/3, slave_call/4]).
+-export([start/1, start/2, slave_start/1]).
+-export([connect_to_slave/0, slave_call/3, slave_call/4]).
 -export([gossip/2, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
 -export([wait_until_height/2, slave_wait_until_height/2]).
 -export([wait_until_block_hash_list/2]).
@@ -8,7 +9,8 @@
 -export([wait_until_receives_txs/2]).
 -export([assert_wait_until_receives_txs/2]).
 -export([assert_slave_wait_until_receives_txs/2]).
--export([post_tx_to_slave/2]).
+-export([post_tx_to_slave/2, post_tx_to_master/2]).
+-export([assert_post_tx_to_slave/2]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -17,12 +19,14 @@ start(no_block) ->
 	[B0] = ar_weave:init([]),
 	start(B0);
 start(B0) ->
+	ar_storage:write_full_block(B0),
 	start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).
 
 slave_start(no_block) ->
-	[B0] = ar_weave:init([]),
+	[B0] = slave_call(ar_weave, init, []),
 	slave_start(B0);
 slave_start(B0) ->
+	slave_call(ar_storage, write_full_block, [B0]),
 	slave_call(?MODULE, start, [B0, {127, 0, 0, 1, ar_meta_db:get(port)}]).
 
 start(B0, Peer) ->
@@ -160,6 +164,31 @@ post_tx_to_slave(Slave, TX) ->
 			ar:console(
 				"Failed to post transaction. Error DB entries: ~p~n",
 				[slave_call(ar_tx_db, get_error_codes, [TX#tx.id])]
+			),
+			noop
+	end,
+	Reply.
+
+assert_post_tx_to_slave(Slave, TX) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Slave, TX).
+
+post_tx_to_master(Master, TX) ->
+	MasterIP = {127, 0, 0, 1, ar_meta_db:get(port)},
+	Reply =
+		ar_httpc:request(
+			<<"POST">>,
+			MasterIP,
+			"/tx",
+			[],
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+		),
+	case Reply of
+		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
+			assert_wait_until_receives_txs(Master, [TX]);
+		_ ->
+			ar:console(
+				"Failed to post transaction. Error DB entries: ~p~n",
+				[ar_tx_db:get_error_codes(TX#tx.id)]
 			),
 			noop
 	end,

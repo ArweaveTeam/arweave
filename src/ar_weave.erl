@@ -83,7 +83,7 @@ add([B|Bs], TXs, HashList, RewardAddr) ->
 			)
 		),
 	WalletList = ar_node_utils:apply_mining_reward(
-		ar_node_utils:apply_txs(B#block.wallet_list, TXs),
+		ar_node_utils:apply_txs(B#block.wallet_list, TXs, length(HashList) - 1),
 		RewardAddr,
 		FinderReward,
 		length(HashList)
@@ -350,7 +350,7 @@ tx_id(TX) -> TX#tx.id.
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.
 mine(B, RecallB, TXs, RewardAddr, Tags) ->
-	ar_mine:start(B, RecallB, TXs, RewardAddr, Tags, self()),
+	ar_mine:start(B, RecallB, TXs, RewardAddr, Tags, self(), []),
 	receive
 		{work_complete, TXs, _Hash, Diff, Nonce, Timestamp} ->
 			{Nonce, Timestamp, Diff}
