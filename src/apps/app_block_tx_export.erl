@@ -26,7 +26,7 @@ export_blocks(RemoteNodeAddrs) ->
 export_blocks(Filename, Peers, {HeightStart, HeightEnd}) ->
 	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	spawn(fun() ->
-		Columns = ["Height", "ID", "Timestamp", "Block Size (Bytes)", "Difficulty", "Cumulative Difficulty",
+		Columns = ["Height", "Block ID", "Timestamp", "Block Size (Bytes)", "Difficulty", "Cumulative Difficulty",
 					"Reward Address", "Weave Size (Bytes)", "TXs", "TX Reward Sum (AR)", "Inflation Reward (AR)",
 					"TX Mining Reward (AR)", "TX Reward Pool (AR)", "Calculated TX Reward Pool (AR)"],
 		IoDevice = init_csv(Filename, Columns),
