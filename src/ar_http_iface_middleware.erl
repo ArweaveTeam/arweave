@@ -159,13 +159,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _) ->
 					{Name, _} = Tag,
 					lists:member(Name, TagsToInclude)
 				end,
-				?OK(
-					ar_tx_search:get_tags_by_id(
-						whereis(http_search_node),
-						ar_util:decode(Hash),
-						infinity
-					)
-				)
+				?OK(ar_tx_search:get_tags_by_id(ar_util:decode(Hash)))
 			),
 			CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 			[TXIndepHashEncoded] = proplists:get_all_values(<<"block_indep_hash">>, Tags),
