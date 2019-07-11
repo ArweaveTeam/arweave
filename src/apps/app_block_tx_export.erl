@@ -66,7 +66,7 @@ export_transactions(Filename, Peers, {HeightStart, HeightEnd}) ->
 	spawn(fun() ->
 		Columns = ["Block Height", "Block Timestamp", "TX ID", "Submitted Address",
 					"Target", "Quantity (AR)", "Data Size (Bytes)", "Reward (AR)",
-					"App Name", "Content Type", "User Agent"],
+					"App Name Tag", "Content Type Tag", "User Agent Tag", "Other Tags"],
 		IoDevice = init_csv(Filename, Columns),
 		S = #state{
 			bhl = BHL,
@@ -216,17 +216,12 @@ extract_transaction_values(B, TX) ->
 		format_float(winston_to_ar(TX#tx.reward)),
 		extract_app_name(TX#tx.tags),
 		proplists:get_value(<<"Content-Type">>, TX#tx.tags, <<>>),
-		proplists:get_value(<<"User-Agent">>, TX#tx.tags, <<>>)
+		proplists:get_value(<<"User-Agent">>, TX#tx.tags, <<>>),
+		format_tags(TX#tx.tags)
 	].
 
 extract_app_name(Tags) ->
-	IsAppName = fun({TagName, _}) ->
-		case re:run(TagName, "^\s*app[-_]{0,1}name\s*$", [caseless]) of
-			{match, _} -> true;
-			nomatch -> false
-		end
-	end,
-	FilteredTags = lists:filter(IsAppName, Tags),
+	FilteredTags = lists:filter(fun is_app_name_tag/1, Tags),
 	LengthSorter = fun({A, _}, {B, _}) ->
 		byte_size(A) =< byte_size(B)
 	end,
@@ -237,6 +232,27 @@ extract_app_name(Tags) ->
 		[{_, TagValue} | _] ->
 			TagValue
 	end.
+
+is_app_name_tag({TagName, _}) ->
+	case re:run(TagName, "^\s*app[-_]{0,1}name\s*$", [caseless]) of
+		{match, _} -> true;
+		nomatch -> false
+	end.
+
+format_tags(Tags) ->
+	IsCommonTag = fun
+		({<<"Content-Type">>, _}) -> true;
+		({<<"User-Agent">>, _}) -> true;
+		(Tag) -> is_app_name_tag(Tag)
+	end,
+	tags_to_json(reject(IsCommonTag, Tags)).
+
+reject(Pred, List) -> lists:filter(fun(Elem) -> not Pred(Elem) end, List).
+
+%% @doc Multiple tags with the same names may occur (and is supported). Jiffy
+%% can handle this, but your JSON decoder is likely to not handle it.
+tags_to_json([]) -> <<>>;
+tags_to_json(Tags) -> jiffy:encode({Tags}).
 
 %% CSV
 
