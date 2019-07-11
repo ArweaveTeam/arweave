@@ -64,7 +64,7 @@ export_transactions(RemoteNodeAddrs) ->
 export_transactions(Filename, Peers, {HeightStart, HeightEnd}) ->
 	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	spawn(fun() ->
-		Columns = ["Block Timestamp", "TX ID", "Submitted Address",
+		Columns = ["Block Height", "Block Timestamp", "TX ID", "Submitted Address",
 					"Target", "Quantity (AR)", "Data Size (Bytes)", "Reward (AR)",
 					"App Name", "Content Type"],
 		IoDevice = init_csv(Filename, Columns),
@@ -206,6 +206,7 @@ extract_transaction_values(B) ->
 
 extract_transaction_values(B, TX) ->
 	[
+		integer_to_binary(B#block.height),
 		integer_to_binary(B#block.timestamp),
 		ar_util:encode(TX#tx.id),
 		ar_util:encode(ar_wallet:to_address(TX#tx.owner)),
