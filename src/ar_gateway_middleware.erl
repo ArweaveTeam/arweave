@@ -1,12 +1,12 @@
--module(ar_gateway_handler).
--behaviour(cowboy_handler).
--export([init/2]).
+-module(ar_gateway_middleware).
+-behaviour(cowboy_middleware).
+-export([execute/2]).
 
 -include("ar.hrl").
 -define(BH_SEARCH_TIMEOUT, 25000).
 
 %%%===================================================================
-%%% Cowboy handler callback.
+%%% Cowboy middleware callback.
 %%%===================================================================
 
 %% @doc Handle gateway requests.
@@ -59,33 +59,34 @@
 %% rather than
 %%
 %%     <a href="https://{txlabel}.gateway.example/{txid}">Link</a>
-init(Req, {Domain, CustomDomains} = State) ->
+execute(Req, #{ gateway := {Domain, CustomDomains} } = Env) ->
 	Hostname = cowboy_req:host(Req),
-	Req1 =
-		case ar_domain:get_labeling(Domain, CustomDomains, Hostname) of
-			apex -> handle_apex_request(Domain, Req);
-			{labeled, Label} -> handle_labeled_request(Domain, Label, Req);
-			{custom, CustomDomain} -> handle_custom_request(Domain, CustomDomain, Req);
-			unknown -> not_found(Req)
-		end,
-	{ok, Req1, State}.
+	case ar_domain:get_labeling(Domain, CustomDomains, Hostname) of
+		apex -> handle_apex_request(Req, Env);
+		{labeled, Label} -> handle_labeled_request(Label, Req, Env);
+		{custom, CustomDomain} -> handle_custom_request(CustomDomain, Req, Env);
+		unknown -> handle_unknown_request(Req, Env)
+	end.
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
-handle_apex_request(Domain, Req) ->
+handle_apex_request(Req, Env) ->
 	case resolve_path(cowboy_req:path(Req)) of
-		{tx, TXID, _} -> derive_label_and_redirect(Domain, TXID, Req);
+		{tx, TXID, _} -> derive_label_and_redirect(TXID, Req, Env);
+		other -> other_request(Req, Env);
 		root -> bad_request(Req);
 		invalid -> bad_request(Req);
 		not_found -> not_found(Req)
 	end.
 
-handle_labeled_request(Domain, Label, Req) ->
+handle_labeled_request(Label, Req, Env) ->
 	case resolve_path(cowboy_req:path(Req)) of
 		{tx, TXID, Filename} ->
-			handle_labeled_request_1(Domain, Label, TXID, Filename, Req);
+			handle_labeled_request_1(Label, TXID, Filename, Req, Env);
+		other ->
+			other_request(Req, Env);
 		root ->
 			bad_request(Req);
 		invalid ->
@@ -94,44 +95,59 @@ handle_labeled_request(Domain, Label, Req) ->
 			not_found(Req)
 	end.
 
-handle_labeled_request_1(Domain, Label, TXID, Filename, Req) ->
+handle_labeled_request_1(Label, TXID, Filename, Req, Env) ->
 	case get_tx_block_hash(TXID) of
 		{ok, BH} ->
-			handle_labeled_request_2(Domain, Label, TXID, Filename, BH, Req);
+			handle_labeled_request_2(Label, TXID, Filename, BH, Req, Env);
 		not_found ->
 			not_found(Req)
 	end.
 
-handle_labeled_request_2(Domain, Label, TXID, Filename, BH, Req) ->
+handle_labeled_request_2(Label, TXID, Filename, BH, Req, Env) ->
 	case ar_domain:derive_tx_label(TXID, BH) of
-		Label -> serve_tx(Filename, Req);
-		OtherLabel -> redirect_to_labeled_tx(Domain, OtherLabel, TXID, Req)
+		Label ->
+			handle_labeled_request_3(Label, TXID, Filename, Req, Env);
+		OtherLabel ->
+			redirect_to_labeled_tx(OtherLabel, TXID, Req, Env)
 	end.
 
-handle_custom_request(Domain, CustomDomain, Req) ->
+handle_labeled_request_3(Label, TXID, Filename, Req, Env) ->
+	case cowboy_req:scheme(Req) of
+		<<"https">> -> serve_tx(Filename, Req);
+		<<"http">> -> redirect_to_labeled_tx(Label, TXID, Req, Env)
+	end.
+
+handle_custom_request(CustomDomain, Req, Env) ->
 	case resolve_path(cowboy_req:path(Req)) of
 		root -> handle_custom_request_1(CustomDomain, Req);
-		{tx, TXID, _} -> derive_label_and_redirect(Domain, TXID, Req);
+		{tx, TXID, _} -> derive_label_and_redirect(TXID, Req, Env);
+		other -> other_request(Req, Env);
 		invalid -> bad_request(Req)
 	end.
 
+handle_unknown_request(Req, Env) ->
+	case cowboy_req:scheme(Req) of
+		<<"https">> -> not_found(Req);
+		<<"http">> -> other_request(Req, Env)
+	end.
+
 resolve_path(Path) ->
-	case Path of
-		<<"/">> -> root;
-		<<"/", Hash/binary>> -> resolve_path_1(Hash);
-		_ -> invalid
+	case ar_http_iface_server:split_path(Path) of
+		[] -> root;
+		[<<Hash:43/bytes>>] -> resolve_path_1(Hash);
+		[_ | _] -> other
 	end.
 
 resolve_path_1(Hash) ->
 	case get_tx_from_hash(Hash) of
 		{ok, TXID, Filename} -> {tx, TXID, Filename};
-		invalid -> invalid;
+		invalid -> other;
 		not_found -> not_found
 	end.
 
-derive_label_and_redirect(Domain, TXID, Req) ->
+derive_label_and_redirect(TXID, Req, Env) ->
 	case get_tx_block_hash(TXID) of
-		{ok, BH} -> derive_label_and_redirect_1(Domain, TXID, BH, Req);
+		{ok, BH} -> derive_label_and_redirect_1(TXID, BH, Req, Env);
 		not_found -> not_found(Req)
 	end.
 
@@ -148,43 +164,68 @@ get_tx_block_hash_1(PseudoTags) ->
 		BH -> {ok, BH}
 	end.
 
-derive_label_and_redirect_1(Domain, TXID, BH, Req) ->
+derive_label_and_redirect_1(TXID, BH, Req, Env) ->
 	Label = ar_domain:derive_tx_label(TXID, BH),
-	redirect_to_labeled_tx(Domain, Label, TXID, Req).
+	redirect_to_labeled_tx(Label, TXID, Req, Env).
 
-redirect_to_labeled_tx(Domain, Label, TXID, Req) ->
-	Scheme = cowboy_req:scheme(Req),
-	Port = integer_to_binary(cowboy_req:port(Req)),
+redirect_to_labeled_tx(Label, TXID, Req, #{ gateway := {Domain, _} }) ->
 	Hash = ar_util:encode(TXID),
 	Location = <<
-		Scheme/binary, "://",
+		"https://",
 		Label/binary, ".",
-		Domain/binary, ":",
-		Port/binary, "/",
+		Domain/binary, "/",
 		Hash/binary
 	>>,
-	cowboy_req:reply(301, #{<<"location">> => Location}, Req).
+	{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}.
+
+other_request(Req, Env) ->
+	case cowboy_req:scheme(Req) of
+		<<"https">> ->
+			{ok, Req, Env};
+		<<"http">> ->
+			Hostname = cowboy_req:host(Req),
+			Path = cowboy_req:path(Req),
+			Location = <<
+				"https://",
+				Hostname/binary,
+				Path/binary
+			>>,
+			{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}
+	end.
 
 bad_request(Req) ->
-	cowboy_req:reply(400, Req).
+	{stop, cowboy_req:reply(400, Req)}.
 
 not_found(Req) ->
-	cowboy_req:reply(404, Req).
+	{stop, cowboy_req:reply(404, Req)}.
 
 handle_custom_request_1(CustomDomain, Req) ->
+	case cowboy_req:scheme(Req) of
+		<<"https">> -> handle_custom_request_2(CustomDomain, Req);
+		<<"http">> -> redirect_to_secure_custom_domain(CustomDomain, Req)
+	end.
+
+handle_custom_request_2(CustomDomain, Req) ->
 	case ar_domain:lookup_arweave_txt_record(CustomDomain) of
 		not_found ->
 			domain_improperly_configured(Req);
 		TxtRecord ->
-			handle_custom_request_2(TxtRecord, Req)
+			handle_custom_request_3(TxtRecord, Req)
 	end.
 
-handle_custom_request_2(TxtRecord, Req) ->
+handle_custom_request_3(TxtRecord, Req) ->
 	case get_tx_from_hash(TxtRecord) of
 		{ok, _, Filename} -> serve_tx(Filename, Req);
 		invalid -> domain_improperly_configured(Req);
 		not_found -> domain_improperly_configured(Req)
 	end.
+
+redirect_to_secure_custom_domain(CustomDomain, Req) ->
+	Location = <<
+		"https://",
+		CustomDomain/binary, "/"
+	>>,
+	{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}.
 
 get_tx_from_hash(Hash) ->
 	case ar_util:safe_decode(Hash) of
@@ -202,7 +243,7 @@ serve_tx(Filename, Req) ->
 	TX = ar_storage:read_tx_file(Filename),
 	ContentType = proplists:get_value(<<"Content-Type">>, TX#tx.tags, "text/html"),
 	Headers = #{<<"content-type">> => ContentType},
-	cowboy_req:reply(200, Headers, TX#tx.data, Req).
+	{stop, cowboy_req:reply(200, Headers, TX#tx.data, Req)}.
 
 domain_improperly_configured(Req) ->
-	cowboy_req:reply(502, #{}, <<"Domain improperly configured">>, Req).
+	{stop, cowboy_req:reply(502, #{}, <<"Domain improperly configured">>, Req)}.

@@ -1,3 +1,8 @@
+-ifndef(AR_CONFIG_HRL).
+-define(AR_CONFIG_HRL, true).
+
+-include("ar.hrl").
+
 %% Start options with default values.
 -record(config, {
 	benchmark = false,
@@ -25,9 +30,11 @@
 	disable = [],
 	content_policy_files = [],
 	transaction_blacklist_files = [],
-	gateway = off,
-	custom_domains = [],
+	gateway_domain = not_set,
+	gateway_custom_domains = [],
 	requests_per_minute_limit = ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT,
 	ipfs_pin = false,
 	ipfs_import = false
 }).
+
+-endif.

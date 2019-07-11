@@ -1,9 +1,13 @@
-.DEFAULT_GOAL = test_all
+.DEFAULT_GOAL := test_all
 
-DIALYZER = dialyzer
-PLT_APPS = erts kernel stdlib sasl inets ssl public_key crypto compiler mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
+TLS_CERT_FILE := priv/tls/cert.pem
+TLS_KEY_FILE := priv/tls/key.pem
+TLS_FILES := $(TLS_CERT_FILE) $(TLS_KEY_FILE)
 
-ERL_OPTS= -pa ebin/ \
+DIALYZER := dialyzer
+PLT_APPS := erts kernel stdlib sasl inets ssl public_key crypto compiler mnesia sasl eunit asn1 compiler runtime_tools syntax_tools xmerl edoc tools os_mon
+
+ERL_OPTS := -pa ebin/ \
 	-pa lib/jiffy/ebin \
 	-pa lib/cowboy/ebin \
 	-pa lib/cowlib/ebin \
@@ -19,10 +23,16 @@ ERL_OPTS= -pa ebin/ \
 ERL_TEST_OPTS= $(ERL_OPTS) \
 	-pa lib/meck/ebin
 
+DEFAULT_PEER_OPTS := \
+	peer 188.166.200.45 peer 188.166.192.169 \
+	peer 163.47.11.64 peer 159.203.158.108 \
+	peer 159.203.49.13 peer 139.59.51.59 \
+	peer 138.197.232.192 peer 46.101.67.172
+
 test_all: test test_apps test_ipfs
 
 test: build_test
-	@erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
+	@erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave &
 	@erl $(ERL_TEST_OPTS) -noshell -sname master -setcookie test -run ar test_with_coverage -s init stop
 
 test_apps: all
@@ -79,9 +89,26 @@ docs: all
 	mkdir -p docs
 	(cd docs && erl -noshell -s ar docs -pa ../ebin -s init stop)
 
+certs: $(TLS_FILES)
+$(TLS_FILES):
+	mkdir -p priv/tls
+	mkcert \
+		-cert-file $(TLS_CERT_FILE) \
+		-key-file $(TLS_KEY_FILE) \
+		 'gateway.localhost' '*.gateway.localhost'
+
 session: build_test
-	erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave -pa ebin/ &
-	erl $(ERL_TEST_OPTS) -sname master -setcookie test -run ar main data_dir data_test_master -pa ebin/
+	erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave &
+	erl $(ERL_TEST_OPTS) -sname master -setcookie test -run ar main data_dir data_test_master
+
+polling_session: all
+	erl $(ERL_OPTS) -run ar main polling $(DEFAULT_PEER_OPTS)
+
+polling_gateway_session: all certs
+	erl $(ERL_OPTS) -run ar main \
+		polling \
+		gateway gateway.localhost \
+		$(DEFAULT_PEER_OPTS)
 
 sim_realistic: all
 	erl $(ERL_OPTS) -s ar_network spawn_and_mine realistic

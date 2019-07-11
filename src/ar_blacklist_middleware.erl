@@ -1,4 +1,4 @@
--module(ar_blacklist).
+-module(ar_blacklist_middleware).
 -behaviour(cowboy_middleware).
 
 %% cowboy_middleware callbacks

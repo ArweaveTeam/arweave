@@ -174,21 +174,16 @@ parse_options([{<<"disable">>, Features} | Rest], Config) when is_list(Features)
 	end;
 parse_options([{<<"disable">>, Features} | _], _) ->
 	{error, {bad_type, disable, array}, Features};
-parse_options([{<<"gateway">>, {KVPairs} = Gateway} | Rest], Config) when is_list(KVPairs) ->
-	case parse_gateway_opts(KVPairs, {undefined, undefined}) of
-		{ok, Port, Domain} ->
-			parse_options(Rest, Config#config { gateway = {on, Port, Domain} });
-		{error, bad_gateway} ->
-			{error, bad_gateway, Gateway}
-	end;
+parse_options([{<<"gateway">>, Domain} | Rest], Config) when is_binary(Domain) ->
+	parse_options(Rest, Config#config { gateway_domain = Domain });
 parse_options([{<<"gateway">>, false} | Rest], Config) ->
 	parse_options(Rest, Config);
 parse_options([{<<"gateway">>, Gateway} | _], _) ->
-	{error, bad_gateway, Gateway};
+	{error, {bad_type, gateway, string}, Gateway};
 parse_options([{<<"custom_domains">>, CustomDomains} | Rest], Config) when is_list(CustomDomains) ->
 	case lists:all(fun is_binary/1, CustomDomains) of
 		true ->
-			parse_options(Rest, Config#config { custom_domains = CustomDomains });
+			parse_options(Rest, Config#config { gateway_custom_domains = CustomDomains });
 		false ->
 			{error, bad_custom_domains}
 	end;
@@ -213,16 +208,3 @@ parse_peers([Peer | Rest], ParsedPeers) ->
 	end;
 parse_peers([], ParsedPeers) ->
 	{ok, lists:reverse(ParsedPeers)}.
-
-parse_gateway_opts([{<<"port">>, Port} | Rest], {_, Domain}) when is_integer(Port) ->
-	parse_gateway_opts(Rest, {Port, Domain});
-parse_gateway_opts([{<<"port">>, _} | _], _) ->
-	{error, bad_gateway};
-parse_gateway_opts([{<<"domain">>, Domain} | Rest], {Port, _}) when is_binary(Domain) ->
-	parse_gateway_opts(Rest, {Port, Domain});
-parse_gateway_opts([{<<"domain">>, _} | _], _) ->
-	{error, bad_gateway};
-parse_gateway_opts([], {Port, Domain}) when is_integer(Port), is_binary(Domain) ->
-	{ok, Port, Domain};
-parse_gateway_opts(_, _) ->
-	{error, bad_gateway}.

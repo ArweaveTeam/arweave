@@ -1,6 +1,6 @@
--module(ar_http_iface_handler).
--behaviour(cowboy_handler).
--export([init/2, read_complete_body/2]).
+-module(ar_http_iface_middleware).
+-behaviour(cowboy_middleware).
+-export([execute/2, read_complete_body/2]).
 -include("ar.hrl").
 -define(HANDLER_TIMEOUT, 55000).
 
@@ -8,16 +8,24 @@
 %%% Cowboy handler callbacks.
 %%%===================================================================
 
-init(InitialReq, State) ->
+%% To allow prometheus_cowboy2_handler to be run when the
+%% cowboy_router middleware matches on the /metrics route, this
+%% middleware runs between the cowboy_router and cowboy_handler
+%% middlewares. It uses the `handler` env value set by cowboy_router
+%% to determine whether or not it should run, otherwise it lets
+%% the cowboy_handler middleware run prometheus_cowboy2_handler.
+execute(Req, #{ handler := ar_http_iface_handler }) ->
 	Pid = self(),
 	HandlerPid = spawn_link(fun() ->
-		Pid ! {handled, handle(InitialReq, Pid)}
+		Pid ! {handled, handle(Req, Pid)}
 	end),
 	{ok, TimeoutRef} = timer:send_after(
 		?HANDLER_TIMEOUT,
-		{timeout, HandlerPid, InitialReq}
+		{timeout, HandlerPid, Req}
 	),
-	loop(TimeoutRef, State).
+	loop(TimeoutRef);
+execute(Req, Env) ->
+	{ok, Req, Env}.
 
 %%%===================================================================
 %%% Private functions.
@@ -28,17 +36,17 @@ init(InitialReq, State) ->
 %% reading the request's body from a process other than its handler's.
 %% This following loop function allows us to work around this
 %% limitation. (see https://github.com/ninenines/cowboy/issues/1374)
-loop(TimeoutRef, State) ->
+loop(TimeoutRef) ->
 	receive
 		{handled, {Status, Headers, Body, HandledReq}} ->
 			timer:cancel(TimeoutRef),
 			CowboyStatus = handle208(Status),
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
-			{ok, RepliedReq, State};
+			{stop, RepliedReq};
 		{read_complete_body, From, Req} ->
 			Term = do_read_complete_body(Req),
 			From ! {read_complete_body, Term},
-			loop(TimeoutRef, State);
+			loop(TimeoutRef);
 		{timeout, HandlerPid, InitialReq} ->
 			unlink(HandlerPid),
 			exit(HandlerPid, handler_timeout),
@@ -48,7 +56,7 @@ loop(TimeoutRef, State) ->
 				{path, cowboy_req:path(InitialReq)}
 			]),
 			RepliedReq = cowboy_req:reply(500, #{}, <<"Handler timeout">>, InitialReq),
-			{ok, RepliedReq, State}
+			{stop, RepliedReq}
 	end.
 
 handle(Req, Pid) ->
@@ -59,7 +67,7 @@ handle(Req, Pid) ->
 
 handle(Peer, Req, Pid) ->
 	Method = cowboy_req:method(Req),
-	SplitPath = split_path(cowboy_req:path(Req)),
+	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	case ar_meta_db:get(http_logging) of
 		true ->
 			ar:info(
@@ -496,7 +504,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _)
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
 %handle(<<"GET">>, [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req, _) ->
 	%ar:d({resp_block_hash, Hash}),
-	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, split_path(cowboy_req:path(Req))}]),
+	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, ar_http_iface_middleware:split_path(cowboy_req:path(Req))}]),
 	%case ar_key_db:get(ar_util:decode(Hash)) of
 	%	[{Key, Nonce}] ->
 	%		return_encrypted_block(
@@ -726,9 +734,6 @@ arweave_peer(Req) ->
 		end,
 	{IpV4_1, IpV4_2, IpV4_3, IpV4_4, ArweavePeerPort}.
 
-split_path(Path) ->
-	binary:split(Path, <<"/">>, [global, trim_all]).
-
 sendfile(Filename) ->
 	{sendfile, 0, filelib:file_size(Filename), Filename}.
 
@@ -876,7 +881,7 @@ check_internal_api_secret(Req) ->
 
 log_internal_api_reject(Msg, Req) ->
 	spawn(fun() ->
-		Path = split_path(cowboy_req:path(Req)),
+		Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 		{IpAddr, _Port} = cowboy_req:peer(Req),
 		BinIpAddr = list_to_binary(inet:ntoa(IpAddr)),
 		ar:warn("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
@@ -1041,7 +1046,7 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case ar_blacklist:is_peer_banned(OrigPeer) of
+	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
 		not_banned ->
 			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
 		banned ->
@@ -1085,7 +1090,7 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
 				{invalid, _} ->
 					post_block_reject_warn(BShadow, check_pow),
-					ar_blacklist:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
+					ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 					{400, #{}, <<"Invalid Block Proof of Work">>, Req};
 				{valid, _} ->
 					ar_bridge:ignore_id(BDS),

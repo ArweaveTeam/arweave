@@ -1,5 +1,4 @@
 -module(ar_config_tests).
--include("src/ar.hrl").
 -include("src/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -44,8 +43,8 @@ parse_config() ->
 		disable = [feature_3, feature_4],
 		content_policy_files = ["some_content_policy_1", "some_content_policy_2"],
 		transaction_blacklist_files = ["some_blacklist_1", "some_blacklist_2"],
-		gateway = {on, 443, <<"gateway.localhost">>},
-		custom_domains = [<<"domain1.example">>, <<"domain2.example">>]
+		gateway_domain = <<"gateway.localhost">>,
+		gateway_custom_domains = [<<"domain1.example">>, <<"domain2.example">>]
 	}}, ar_config:parse(config_fixture())).
 
 config_fixture() ->

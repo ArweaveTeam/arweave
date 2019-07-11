@@ -123,7 +123,7 @@ main("") ->
 			},
 			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
 			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."},
-			{"gateway (port) (domain)", "Run a gateway on the specified port and domain"},
+			{"gateway (domain)", "Run a gateway on the specified domain"},
 			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."}
 		]
@@ -204,10 +204,10 @@ parse_cli_args(["enable", Feature | Rest ], C = #config { enable = Enabled }) ->
 	parse_cli_args(Rest, C#config { enable = [ list_to_atom(Feature) | Enabled ] });
 parse_cli_args(["disable", Feature | Rest ], C = #config { disable = Disabled }) ->
 	parse_cli_args(Rest, C#config { disable = [ list_to_atom(Feature) | Disabled ] });
-parse_cli_args(["gateway", Port, Domain | Rest ], C = #config { gateway = off }) ->
-	parse_cli_args(Rest, C#config { gateway = {on, list_to_integer(Port), list_to_binary(Domain)} });
-parse_cli_args(["custom_domain", Domain|Rest], C = #config { custom_domains = Ds }) ->
-	parse_cli_args(Rest, C#config { custom_domains = [ list_to_binary(Domain) | Ds ] });
+parse_cli_args(["gateway", Domain | Rest ], C) ->
+	parse_cli_args(Rest, C#config { gateway_domain = list_to_binary(Domain) });
+parse_cli_args(["custom_domain", Domain|Rest], C = #config { gateway_custom_domains = Ds }) ->
+	parse_cli_args(Rest, C#config { gateway_custom_domains = [ list_to_binary(Domain) | Ds ] });
 parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
@@ -248,8 +248,8 @@ start(
 		disable = Disable,
 		content_policy_files = ContentPolicyFiles,
 		transaction_blacklist_files = TransactionBlacklistFiles,
-		gateway = GatewayOpts,
-		custom_domains = GatewayCustomDomains,
+		gateway_domain = GatewayDomain,
+		gateway_custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
 		ipfs_pin = IPFSPin,
 		ipfs_import = IPFSImport
@@ -258,6 +258,15 @@ start(
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
 	warn_if_single_scheduler(),
+	%% Verify port collisions when gateway enabled
+	GatewayOpts = gateway_opts(GatewayDomain, GatewayCustomDomains),
+	case {Port, GatewayOpts} of
+		{P, {on, _, _}} when P == 80; P == 443 ->
+			io:format("~nThe port must be different than 80 or 443 when the gateway is enabled.~n~n"),
+			erlang:halt();
+		_ ->
+			do_nothing
+	end,
 	%% Fill up ar_meta_db.
 	ar_meta_db:start(),
 	ar_meta_db:put(data_dir, DataDir),
@@ -407,17 +416,11 @@ start(
 		]
 	),
 	%% Start the first node in the gossip network (with HTTP interface).
-	ar_http_iface_server:start(Port, [
+	ok = ar_http_iface_server:start(Port, GatewayOpts, [
 		{http_entrypoint_node, Node},
 		{http_bridge_node, Bridge}
 	]),
 	ar_randomx_state:start_block_polling(),
-	case GatewayOpts of
-		{on, GatewayPort, GatewayDomain} ->
-			ar_gateway_server:start(GatewayPort, GatewayDomain, GatewayCustomDomains);
-		off ->
-			do_nothing
-	end,
 	case Polling of
 		true ->
 			ar_meta_db:put(polling_mode, true),
@@ -441,6 +444,11 @@ start(
 			garbage_collect(),
 			receive after infinity -> ok end
 	end.
+
+gateway_opts(Domain, CustomDomains) when is_binary(Domain) ->
+	{on, Domain, CustomDomains};
+gateway_opts(not_set, _) ->
+	off.
 
 %% @doc Create a name for a session log file.
 generate_logfile_name() ->

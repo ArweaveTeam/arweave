@@ -1,3 +1,6 @@
+-ifndef(AR_HRL).
+-define(AR_HRL, true).
+
 %%% A collection of record structures used throughout the Arweave server.
 
 %% @doc How nodes identify they are on the same network.
@@ -286,3 +289,5 @@
 
 %% @doc Minimum number of characters for internal API secret.
 -define(INTERNAL_API_SECRET_MIN_LEN, 16).
+
+-endif.

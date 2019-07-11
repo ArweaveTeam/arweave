@@ -109,10 +109,10 @@ get_fun_msg_pair(send_new_tx) ->
 %% to an ar_util:pmap/2 call fails the tests currently.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
-	ar_blacklist:reset(),
+	ar_blacklist_middleware:reset(),
 	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
-	ar_blacklist:reset(),
+	ar_blacklist_middleware:reset(),
 	ByResponseType = count_by_response_type(ErrorResponse, Responses),
 	Expected = #{
 		error_responses => ExpectedErrors,
@@ -408,7 +408,7 @@ add_external_block_with_bad_bds_test_() ->
 	{timeout, 20, fun() ->
 		Setup = fun() ->
 			ar_storage:clear(),
-			ar_blacklist:reset(),
+			ar_blacklist_middleware:reset(),
 			[B0] = ar_weave:init([]),
 			BHL0 = [B0#block.indep_hash],
 			NodeWithBridge = ar_node:start([], [B0]),
@@ -452,7 +452,7 @@ add_external_block_with_bad_bds_test_() ->
 				add_rand_suffix(<<"other-block-data-segment">>)
 			)
 		),
-		%% Try to post an invalid data segment. This triggers a ban in ar_blacklist.
+		%% Try to post an invalid data segment. This triggers a ban in ar_blacklist_middleware.
 		?assertMatch(
 			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
 			send_new_block(
@@ -462,7 +462,7 @@ add_external_block_with_bad_bds_test_() ->
 				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
 		),
-		%% Verify the IP address of self is banned in ar_blacklist.
+		%% Verify the IP address of self is banned in ar_blacklist_middleware.
 		?assertMatch(
 			{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
 			send_new_block(
@@ -472,7 +472,7 @@ add_external_block_with_bad_bds_test_() ->
 				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
 		),
-		ar_blacklist:reset()
+		ar_blacklist_middleware:reset()
 	end}.
 
 % add_external_block_with_invalid_timestamp_test() ->
