@@ -34,6 +34,7 @@ test_all: test test_apps test_ipfs
 test: build_test
 	@erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave &
 	@erl $(ERL_TEST_OPTS) -noshell -sname master -setcookie test -run ar test_with_coverage -s init stop
+	kill 0
 
 test_apps: all
 	@erl $(ERL_OPTS) -noshell -sname master -run ar test_apps -s init stop
@@ -100,6 +101,7 @@ $(TLS_FILES):
 session: build_test
 	erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave &
 	erl $(ERL_TEST_OPTS) -sname master -setcookie test -run ar main data_dir data_test_master
+	kill 0
 
 polling_session: all
 	erl $(ERL_OPTS) -run ar main polling $(DEFAULT_PEER_OPTS)
