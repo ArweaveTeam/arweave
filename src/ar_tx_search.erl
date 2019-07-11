@@ -65,6 +65,15 @@ get_entries_by_tag_name(Name) ->
 	{atomic, TXIDs} = search_by_tag_name(Name),
 	TXIDs.
 
+get_tx_block_height(TXID) ->
+	{atomic, [Record]} = mnesia:transaction(fun() ->
+		mnesia:index_match_object(
+			#arql_tag{ tx = TXID, name = <<"block_height">>, value = '_' },
+			#arql_tag.tx
+		)
+	end),
+	{Record#arql_tag.value, TXID}.
+
 %% @doc Updates the tag index with the information of all the transactions in
 %% the given block as part of a single transaction.
 update_tag_table(B) when ?IS_BLOCK(B) ->
