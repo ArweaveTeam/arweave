@@ -45,7 +45,7 @@ delete_tx_records(PID, TXID) ->
 	PID ! {delete_tx_records, TXID}.
 
 delete_for_tx(TXID) ->
-	Records = mnesia:dirty_match_object(#arql_tag{tx = TXID, _ = '_'}),
+	Records = mnesia:dirty_index_match_object(#arql_tag{tx = TXID, _ = '_'}, #arql_tag.tx),
 	DeleteRecord = fun(Record) -> ok = mnesia:dirty_delete_object(Record) end,
 	lists:foreach(DeleteRecord, Records).
 
@@ -176,22 +176,36 @@ server() ->
 initDB() ->
 	TXIndexDir = filename:join(ar_meta_db:get(data_dir), ?TX_INDEX_DIR),
 	%% Append the / to make filelib:ensure_dir/1 create a directory if one does not exist.
-	filelib:ensure_dir(TXIndexDir ++ "/"),
-	application:set_env(mnesia, dir, TXIndexDir),
-	mnesia:create_schema([node()]),
-	mnesia:start(),
-	try
-		mnesia:table_info(arql_tag, type)
-	catch
-		exit: _ ->
-			mnesia:create_table(
-				arql_tag,
-				[
-					{attributes, record_info(fields, arql_tag)},
-					{type, bag},
-					{disc_only_copies, [node()]}
-				]
-			)
+	ok = filelib:ensure_dir(TXIndexDir ++ "/"),
+	ok = application:set_env(mnesia, dir, TXIndexDir),
+	ok = ensure_schema_exists(),
+	ok = mnesia:start(),
+	ok = ensure_table_exists(),
+	ok = ensure_tx_index_exists().
+
+ensure_schema_exists() ->
+	Node = node(),
+	case mnesia:create_schema([Node]) of
+		ok -> ok;
+		{error, {Node , {already_exists, Node}}} -> ok
+	end.
+
+ensure_table_exists() ->
+	ok = case mnesia:create_table(arql_tag, [
+		{attributes, record_info(fields, arql_tag)},
+		{type, bag},
+		{disc_only_copies, [node()]}
+	]) of
+		{atomic, ok} -> ok;
+		{aborted, {already_exists, arql_tag}} -> ok
+	end,
+	ok = mnesia:wait_for_tables([arql_tag], 5000),
+	ok.
+
+ensure_tx_index_exists() ->
+	case mnesia:add_table_index(arql_tag, #arql_tag.tx) of
+		{atomic, ok} -> ok;
+		{aborted, {already_exists, arql_tag, #arql_tag.tx}} -> ok
 	end.
 
 %% @doc Store a transaction ID tag triplet in the index.
@@ -226,16 +240,7 @@ search_by_tag_name(Name) ->
 
 %% @doc Search for a list of tags for the transaction with the given ID
 search_by_id(TXID) ->
-	mnesia:dirty_select(
-		arql_tag,
-		[
-			{
-				#arql_tag { tx = TXID, _ = '_' },
-				[],
-				['$_']
-			}
-		]
-	).
+	mnesia:dirty_index_match_object(#arql_tag { tx = TXID, _ = '_' }, #arql_tag.tx).
 
 basic_usage_test() ->
 	ar_storage:clear(),
