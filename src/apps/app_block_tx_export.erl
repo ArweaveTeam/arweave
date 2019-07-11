@@ -66,7 +66,7 @@ export_transactions(Filename, Peers, {HeightStart, HeightEnd}) ->
 	spawn(fun() ->
 		Columns = ["Block Height", "Block Timestamp", "TX ID", "Submitted Address",
 					"Target", "Quantity (AR)", "Data Size (Bytes)", "Reward (AR)",
-					"App Name", "Content Type"],
+					"App Name", "Content Type", "User Agent"],
 		IoDevice = init_csv(Filename, Columns),
 		S = #state{
 			bhl = BHL,
@@ -215,7 +215,8 @@ extract_transaction_values(B, TX) ->
 		integer_to_binary(byte_size(TX#tx.data)),
 		format_float(winston_to_ar(TX#tx.reward)),
 		extract_app_name(TX#tx.tags),
-		proplists:get_value(<<"Content-Type">>, TX#tx.tags, <<>>)
+		proplists:get_value(<<"Content-Type">>, TX#tx.tags, <<>>),
+		proplists:get_value(<<"User-Agent">>, TX#tx.tags, <<>>)
 	].
 
 extract_app_name(Tags) ->
