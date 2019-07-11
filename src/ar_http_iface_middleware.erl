@@ -1022,6 +1022,7 @@ post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 			end;
 		false ->
+			post_block_reject_warn(BShadow, block_data_segment_missing, OrigPeer),
 			{400, #{}, <<"block_data_segment missing.">>, Req}
 	end;
 post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
