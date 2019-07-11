@@ -212,18 +212,8 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 			case ar_serialize:json_struct_to_query(QueryJson) of
 				{ok, Query} ->
 					TXs = ar_util:unique(ar_parser:eval(Query)),
-					case TXs of
-						[] -> {200, #{}, [], ReadReq};
-						Set ->
-							{
-								200,
-								#{},
-								ar_serialize:jsonify(
-									ar_serialize:hash_list_to_json_struct(Set)
-								),
-								ReadReq
-							}
-					end;
+					Body = ar_serialize:jsonify(ar_serialize:hash_list_to_json_struct(TXs)),
+					{200, #{}, Body, ReadReq};
 				{error, _} ->
 					{400, #{}, <<"Invalid ARQL query.">>, ReadReq}
 			end;
