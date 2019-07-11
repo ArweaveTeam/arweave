@@ -256,6 +256,6 @@ csv_encode_value(String) when is_list(String) ->
 csv_encode_value(Value) when is_binary(Value) ->
 	[
 		<<"\"">>,
-		binary:replace(Value, <<"\"">>, <<"\"\"">>),
+		binary:replace(Value, <<"\"">>, <<"\"\"">>, [global]),
 		<<"\"">>
 	].
