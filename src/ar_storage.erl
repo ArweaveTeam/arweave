@@ -28,7 +28,14 @@
 start() ->
 	ar_firewall:start(),
 	ensure_directories(),
-	ar_block_index:start().
+	ar_block_index:start(),
+	case ar_meta_db:get(disk_space) of
+		undefined ->
+			ar_meta_db:put(disk_space, calculate_disk_space()),
+			ok;
+		_ ->
+			ok
+	end.
 
 %% @doc Ensure that all of the relevant storage directories exist.
 ensure_directories() ->
@@ -412,8 +419,8 @@ calculate_used_space(Directory) ->
 calculate_disk_space() ->
 	application:start(sasl),
 	application:start(os_mon),
-	{ok, CWD} = file:get_cwd(),
-	[{_,Size,_}|_] = select_drive(disksup:get_disk_data(), CWD),
+	DataDir = filename:absname(ar_meta_db:get(data_dir)),
+	[{_,Size,_}|_] = select_drive(disksup:get_disk_data(), DataDir),
 	Size*1024.
 
 %% @doc Calculate the root drive in which the Arweave server resides
