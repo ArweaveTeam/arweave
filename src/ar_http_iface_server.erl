@@ -19,15 +19,14 @@
 	ar_blacklist_middleware,
 	ar_http_body_middleware,
 	cowboy_router,
+	ar_arql_middleware,
 	ar_http_iface_middleware,
 	cowboy_handler
 ]).
 
 -define(HTTP_IFACE_ROUTES, [
-	{'_', [
-		{"/metrics/[:registry]", prometheus_cowboy2_handler, []},
-		{"/[...]", ar_http_iface_handler, []}
-	]}
+	{"/metrics/[:registry]", prometheus_cowboy2_handler, []},
+	{"/[...]", ar_http_iface_handler, []}
 ]).
 
 %%%===================================================================
@@ -68,18 +67,18 @@ split_path(Path) ->
 
 %% @doc Start the server
 do_start(Port, GatewayOpts) ->
-	Dispatch = cowboy_router:compile(?HTTP_IFACE_ROUTES),
-	HttpIfaceEnv = #{ dispatch => Dispatch },
 	ok = ar_semaphore:start_link(hash_list_semaphore, ?MAX_PARALLEL_HASH_LIST_REQUESTS),
 	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
 	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
 	ok = ar_blacklist_middleware:start(),
-	ok = start_http_iface_listener(Port, HttpIfaceEnv),
+	ok = start_http_iface_listener(Port),
 	ok = start_http_gateway_listener(GatewayOpts),
-	ok = start_https_gateway_listener(GatewayOpts, HttpIfaceEnv),
+	ok = start_https_gateway_listener(GatewayOpts),
 	ok.
 
-start_http_iface_listener(Port, HttpIfaceEnv) ->
+start_http_iface_listener(Port) ->
+	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
+	HttpIfaceEnv = #{ dispatch => Dispatch },
 	TransportOpts = [{port, Port}],
 	ProtocolOpts = protocol_opts([{http_iface, HttpIfaceEnv}]),
 	{ok, _} = cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts),
@@ -93,7 +92,9 @@ start_http_gateway_listener({on, Domain, CustomDomains}) ->
 start_http_gateway_listener(off) ->
 	ok.
 
-start_https_gateway_listener({on, Domain, CustomDomains}, HttpIfaceEnv) ->
+start_https_gateway_listener({on, Domain, CustomDomains}) ->
+	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
+	HttpIfaceEnv = #{ dispatch => Dispatch },
 	SniHosts = derive_sni_hosts(CustomDomains),
 	TransportOpts = [
 		{port, 443},
@@ -104,7 +105,7 @@ start_https_gateway_listener({on, Domain, CustomDomains}, HttpIfaceEnv) ->
 	ProtocolOpts = protocol_opts([{http_iface, HttpIfaceEnv}, {gateway, Domain, CustomDomains}]),
 	{ok, _} = cowboy:start_tls(ar_https_gateway_listener, TransportOpts, ProtocolOpts),
 	ok;
-start_https_gateway_listener(off, _) ->
+start_https_gateway_listener(off) ->
 	ok.
 
 protocol_opts(List) ->

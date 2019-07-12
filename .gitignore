@@ -3,6 +3,7 @@
 *.dat
 .arweave.plt
 testlog
+priv/tls
 priv/jiffy.so
 priv/prometheus_process_collector.so
 _build

@@ -1,0 +1,24 @@
+type Query {
+    transaction(id: ID!): Transaction
+    transactions(tags: [TagInput!]!): [Transaction!]!
+    countTransactions(tags: [TagInput!]!): Int!
+}
+
+type Transaction {
+    id: ID!
+    tags: [Tag!]!
+    tagValue(tagName: String!): String
+    linkedToTransaction(byOwnTag: String!): Transaction
+    linkedFromTransactions(byForeignTag: String!, tags: [TagInput!]): [Transaction!]!
+    countLinkedFromTransactions(byForeignTag: String!, tags: [TagInput!]): Int!
+}
+
+type Tag {
+    name: String!
+    value: String!
+}
+
+input TagInput {
+    name: String!
+    value: String!
+}

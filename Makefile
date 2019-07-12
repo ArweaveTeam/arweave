@@ -14,6 +14,7 @@ ERL_OPTS := -pa ebin/ \
 	-pa lib/ranch/ebin \
 	-pa lib/prometheus/ebin \
 	-pa lib/accept/ebin \
+	-pa lib/graphql/ebin \
 	-pa lib/prometheus_process_collector/ebin \
 	-pa lib/prometheus_httpd/ebin \
 	-pa lib/prometheus_cowboy/ebin \
