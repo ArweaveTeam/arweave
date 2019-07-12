@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -e
+
+startBlock="$1"
+endBlock="$2"
+if [ ! -z "$3" ]; then
+    outputFile="$3"
+else
+    outputFile="blocks-${startBlock}-${endBlock}.csv"
+fi
+
+if [ -f "$outputFile" ]; then
+    rm "$outputFile"
+fi
+ERL_EPMD_ADDRESS=127.0.0.1 erl \
+                -pa ebin/ \
+                -noshell \
+                -kernel inet_dist_use_interface "{127,0,0,1}" \
+                -name exporter@127.0.0.1 \
+                -setcookie arweave \
+                -run app_block_tx_export export_blocks \
+                "$outputFile" "$startBlock" "$endBlock"

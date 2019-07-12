@@ -1,5 +1,5 @@
 -module(app_block_tx_export).
--export([export_blocks/3]).
+-export([export_blocks/1, export_blocks/2, export_blocks/3]).
 -export([export_transactions/3]).
 -include("../ar.hrl").
 
@@ -8,7 +8,17 @@
 	peers
 }).
 
-export_blocks(Filename, Peers, {HeightStart, HeightEnd}) ->
+-define(MAIN_NODE, 'arweave@127.0.0.1').
+
+%% Called from /bin/export-blocks
+export_blocks([Filename, HeightStart, HeightEnd]) ->
+	export_on_main_node(Filename, HeightStart, HeightEnd, export_blocks).
+
+export_blocks(Filename, Range) ->
+	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	export_blocks(Filename, Range, take(Peers, 10)).
+
+export_blocks(Filename, {HeightStart, HeightEnd}, Peers) ->
 	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	Columns = ["Height", "Block ID", "Timestamp", "Block Size (Bytes)", "Difficulty", "Cumulative Difficulty",
 				"Reward Address", "Weave Size (Bytes)", "TXs", "TX Reward Sum (AR)", "Inflation Reward (AR)",
@@ -49,6 +59,26 @@ export_transactions(Filename, Peers, {HeightStart, HeightEnd}) ->
 	ok = file:close(IoDevice).
 
 %% Private
+
+take(List, Num) when length(List) =< Num -> List;
+take(List, Num) ->
+	{ShortList, _} = lists:split(Num, List),
+	ShortList.
+
+export_on_main_node(Filename, HeightStart, HeightEnd, ExportFunction) ->
+	Range = {list_to_integer(HeightStart), list_to_integer(HeightEnd)},
+	AbsFilePath = filename:absname(Filename),
+	case net_kernel:connect_node(?MAIN_NODE) of
+		false ->
+			io:format(standard_error, "Could not connect to ~p. Is arweave-server running?~n", [?MAIN_NODE]),
+			erlang:halt(1);
+		true ->
+			ok
+	end,
+	rpc:call(?MAIN_NODE, ?MODULE, ExportFunction, [AbsFilePath, Range]),
+	io:format("Export finished. CSV written to:~n~n~s~n", [AbsFilePath]),
+	true = erlang:disconnect_node(?MAIN_NODE),
+	erlang:halt(0).
 
 init_csv(Filename, Columns) ->
 	{ok, IoDevice} = file:open(Filename, [write, exclusive]),
