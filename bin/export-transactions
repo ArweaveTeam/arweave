@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -e
+
+startBlock="$1"
+endBlock="$2"
+if [ ! -z "$3" ]; then
+    outputFile="$3"
+else
+    outputFile="transactions-${startBlock}-${endBlock}.csv"
+fi
+
+if [ -f "$outputFile" ]; then
+    rm "$outputFile"
+fi
+erl -noshell -sname exporter@localhost -setcookie arweave \
+    -run app_block_tx_export export_transactions \
+    "$outputFile" "$startBlock" "$endBlock"

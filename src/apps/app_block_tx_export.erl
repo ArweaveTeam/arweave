@@ -1,6 +1,6 @@
 -module(app_block_tx_export).
 -export([export_blocks/1, export_blocks/2, export_blocks/3]).
--export([export_transactions/3]).
+-export([export_transactions/1, export_transactions/2, export_transactions/3]).
 -include("../ar.hrl").
 
 -record(state, {
@@ -37,7 +37,15 @@ export_blocks(Filename, {HeightStart, HeightEnd}, Peers) ->
 	blocks_foreach(Fun, S, BHs),
 	ok = file:close(IoDevice).
 
-export_transactions(Filename, Peers, {HeightStart, HeightEnd}) ->
+%% Called from /bin/export-transactions
+export_transactions([Filename, HeightStart, HeightEnd]) ->
+	export_on_main_node(Filename, HeightStart, HeightEnd, export_transactions).
+
+export_transactions(Filename, Range) ->
+	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	export_transactions(Filename, Range, take(Peers, 10)).
+
+export_transactions(Filename, {HeightStart, HeightEnd}, Peers) ->
 	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	Columns = ["Block Height", "Block Timestamp", "TX ID", "Submitted Address",
 				"Target", "Quantity (AR)", "Data Size (Bytes)", "Reward (AR)",
