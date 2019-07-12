@@ -13,18 +13,22 @@ while true; do
     ./bin/mute-on-success make all
     echo Launching Erlang Virtual Machine...
     if
-        erl $SHELL_OPTS -pa ebin/ \
-            -pa lib/jiffy/ebin \
-            -pa lib/cowboy/ebin \
-            -pa lib/cowlib/ebin \
-            -pa lib/ranch/ebin \
-            -pa lib/prometheus/ebin \
-            -pa lib/accept/ebin \
-            -pa lib/prometheus_process_collector/ebin \
-            -pa lib/prometheus_httpd/ebin \
-            -pa lib/prometheus_cowboy/ebin \
-            -sasl errlog_type error \
-            -s ar rebuild -s prometheus -run ar main "$@";
+        ERL_EPMD_ADDRESS=127.0.0.1 erl \
+                        $SHELL_OPTS \
+                        -kernel inet_dist_use_interface "{127,0,0,1}" \
+                        -name arweave@127.0.0.1 -setcookie arweave \
+                        -pa ebin/ \
+                        -pa lib/jiffy/ebin \
+                        -pa lib/cowboy/ebin \
+                        -pa lib/cowlib/ebin \
+                        -pa lib/ranch/ebin \
+                        -pa lib/prometheus/ebin \
+                        -pa lib/accept/ebin \
+                        -pa lib/prometheus_process_collector/ebin \
+                        -pa lib/prometheus_httpd/ebin \
+                        -pa lib/prometheus_cowboy/ebin \
+                        -sasl errlog_type error \
+                        -s ar rebuild -s prometheus -run ar main "$@";
     then
         echo "Arweave Heartbeat: Server terminated safely."
         exit 1
