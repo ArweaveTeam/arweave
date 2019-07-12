@@ -18,12 +18,19 @@ export_blocks(Filename, Range) ->
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 	export_blocks(Filename, Range, take(Peers, 10)).
 
-export_blocks(Filename, {HeightStart, HeightEnd}, Peers) ->
-	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+export_blocks(Filename, Range, Peers) ->
 	Columns = ["Height", "Block ID", "Timestamp", "Block Size (Bytes)", "Difficulty", "Cumulative Difficulty",
 				"Reward Address", "Weave Size (Bytes)", "TXs", "TX Reward Sum (AR)", "Inflation Reward (AR)",
 				"TX Mining Reward (AR)", "TX Reward Pool (AR)", "Calculated TX Reward Pool (AR)"],
-	IoDevice = init_csv(Filename, Columns),
+	case init_csv(Filename, Columns) of
+		{ok, IoDevice} ->
+			export_blocks1(Range, Peers, IoDevice);
+		{error, Reason} ->
+			{error, Reason}
+	end.
+
+export_blocks1({HeightStart, HeightEnd}, Peers, IoDevice) ->
+	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	S = #state{
 		bhl = BHL,
 		peers = Peers
@@ -35,7 +42,7 @@ export_blocks(Filename, {HeightStart, HeightEnd}, Peers) ->
 		ok = file:write(IoDevice, csv_encode_row(Values))
 	end,
 	blocks_foreach(Fun, S, BHs),
-	ok = file:close(IoDevice).
+	file:close(IoDevice).
 
 %% Called from /bin/export-transactions
 export_transactions([Filename, HeightStart, HeightEnd]) ->
@@ -45,12 +52,19 @@ export_transactions(Filename, Range) ->
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 	export_transactions(Filename, Range, take(Peers, 10)).
 
-export_transactions(Filename, {HeightStart, HeightEnd}, Peers) ->
-	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+export_transactions(Filename, Range, Peers) ->
 	Columns = ["Block Height", "Block Timestamp", "TX ID", "Submitted Address",
 				"Target", "Quantity (AR)", "Data Size (Bytes)", "Reward (AR)",
 				"App Name Tag", "Content Type Tag", "User Agent Tag", "Other Tags"],
-	IoDevice = init_csv(Filename, Columns),
+	case init_csv(Filename, Columns) of
+		{ok, IoDevice} ->
+			export_transactions1(Range, Peers, IoDevice);
+		{error, Reason} ->
+			{error, Reason}
+	end.
+
+export_transactions1({HeightStart, HeightEnd}, Peers, IoDevice) ->
+	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	S = #state{
 		bhl = BHL,
 		peers = Peers
@@ -83,15 +97,24 @@ export_on_main_node(Filename, HeightStart, HeightEnd, ExportFunction) ->
 		true ->
 			ok
 	end,
-	rpc:call(?MAIN_NODE, ?MODULE, ExportFunction, [AbsFilePath, Range]),
-	io:format("Export finished. CSV written to:~n~n~s~n", [AbsFilePath]),
-	true = erlang:disconnect_node(?MAIN_NODE),
-	erlang:halt(0).
+	case rpc:call(?MAIN_NODE, ?MODULE, ExportFunction, [AbsFilePath, Range]) of
+		ok ->
+			io:format("Export finished. CSV written to:~n~n~s~n", [AbsFilePath]),
+			true = erlang:disconnect_node(?MAIN_NODE),
+			erlang:halt(0);
+		{error, Reason} ->
+			io:format(standard_error, "Export failed: ~p~n", [Reason]),
+			erlang:halt(2)
+	end.
 
 init_csv(Filename, Columns) ->
-	{ok, IoDevice} = file:open(Filename, [write, exclusive]),
-	ok = file:write(IoDevice, csv_encode_row(Columns)),
-	IoDevice.
+	case file:open(Filename, [write, exclusive]) of
+		{error, Reason} ->
+			{error, {file_open, Reason}};
+		{ok, IoDevice} ->
+			ok = file:write(IoDevice, csv_encode_row(Columns)),
+			{ok, IoDevice}
+	end.
 
 blocks_foreach(_, _, []) ->
 	ok;
