@@ -150,9 +150,13 @@ ensure_table_exists() ->
 	ok.
 
 ensure_tx_index_exists() ->
-	case mnesia:add_table_index(arql_tag, #arql_tag.tx) of
-		{atomic, ok} -> ok;
-		{aborted, {already_exists, arql_tag, #arql_tag.tx}} -> ok
+	{Time, Value} = timer:tc(fun() -> mnesia:add_table_index(arql_tag, #arql_tag.tx) end),
+	case Value of
+		{atomic, ok} ->
+			ar:info([ar_tx_search, added_tx_index, {microseconds, Time}]),
+			ok;
+		{aborted, {already_exists, arql_tag, #arql_tag.tx}} ->
+			ok
 	end.
 
 %% @doc Store a transaction ID tag triplet in the index.
