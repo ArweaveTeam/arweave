@@ -31,7 +31,9 @@ start() ->
 	ar_block_index:start(),
 	case ar_meta_db:get(disk_space) of
 		undefined ->
-			ar_meta_db:put(disk_space, calculate_disk_space()),
+			%% Add some margin for filesystem overhead.
+			DiskSpaceWithMargin = round(calculate_disk_space() * 0.98),
+			ar_meta_db:put(disk_space, DiskSpaceWithMargin),
 			ok;
 		_ ->
 			ok
