@@ -259,6 +259,8 @@ add_processed(X, Y, _Procd) ->
 send_to_external(S = #state {external_peers = ExternalPeers}, {add_tx, TX}) ->
 	send_tx_to_external(ExternalPeers, TX),
 	S;
+send_to_external(S, {new_block, _, _Height, _NewB, no_data_segment, _Recall}) ->
+	S;
 send_to_external(S, {new_block, _, _Height, NewB, BDS, Recall}) ->
 	send_block_to_external(
 		S#state.external_peers,

@@ -81,20 +81,15 @@ send_new_block(Peer, NewB, BDS, {RecallIndepHash, RecallSize, Key, Nonce}) ->
 		%% running the old version of the P2P port feature.
 		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
 		{<<"key">>, ar_util:encode(Key)},
-		{<<"nonce">>, ar_util:encode(Nonce)}
+		{<<"nonce">>, ar_util:encode(Nonce)},
+		{<<"block_data_segment">>, ar_util:encode(BDS)}
 	],
-	OptionalProps = case BDS of
-		no_data_segment ->
-			[];
-		_ ->
-			[{<<"block_data_segment">>, ar_util:encode(BDS)}]
-	end,
 	ar_httpc:request(
 		<<"POST">>,
 		Peer,
 		"/block",
 		p2p_headers(),
-		ar_serialize:jsonify({OptionalProps ++ PostProps}),
+		ar_serialize:jsonify({PostProps}),
 		3 * 1000
 	).
 

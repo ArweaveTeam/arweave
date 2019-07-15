@@ -993,6 +993,14 @@ val_for_key(K, L) ->
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
 post_block(request, Req, Pid) ->
+	OrigPeer = arweave_peer(Req),
+	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
+		not_banned ->
+			post_block(read_blockshadow, {Pid, OrigPeer}, Req);
+		banned ->
+			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
+	end;
+post_block(read_blockshadow, {Pid, OrigPeer}, Req) ->
 	% Convert request to struct and block shadow.
 	case request_to_struct_with_blockshadow(Req, Pid) of
 		{error, {_, _}, ReadReq} ->
@@ -1000,10 +1008,8 @@ post_block(request, Req, Pid) ->
 		{error, body_size_too_large, TooLargeReq} ->
 			reply_with_413(TooLargeReq);
 		{ok, {ReqStruct, BShadow}, ReadReq} ->
-			OrigPeer = arweave_peer(ReadReq),
 			post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, ReadReq)
 	end;
-%% TODO: Make block_data_segment mandatory when all nodes are posting it.
 post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 	% Check if block is already known.
 	case lists:keyfind(<<"block_data_segment">>, 1, ReqStruct) of
@@ -1015,10 +1021,10 @@ post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 				false ->
 					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 			end;
-		_ ->
-			post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, no_data_segment}, Req)
+		false ->
+			post_block_reject_warn(BShadow, block_data_segment_missing, OrigPeer),
+			{400, #{}, <<"block_data_segment missing.">>, Req}
 	end;
-%% TODO: Remove the check_is_ignored clause when all nodes send block_data_segment.
 post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		true ->
@@ -1043,14 +1049,7 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 		H when H > CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
 			{400, #{}, <<"Height is too far ahead">>, Req};
 		_ ->
-			post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
-	end;
-post_block(check_peer_is_banned, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
-		not_banned ->
-			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
-		banned ->
-			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
+			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 %% The min difficulty check is filtering out blocks from smaller networks, e.g.
 %% testnets. Therefor, we don't want to log when this check or any check above
@@ -1062,40 +1061,33 @@ post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 		_ ->
 			{400, #{}, <<"Difficulty too low">>, Req}
 	end;
-%% TODO: Enable check_timestamp when all nodes are running the new miner which
-%% updates the timestamp regularly. Also re-enable:
-%% ar_http_iface_tests:add_external_block_with_invalid_timestamp_test/0
-%% post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}) ->
-%% 	% Verify the timestamp of the block shadow.
-%% 	case ar_block:verify_timestamp(BShadow) of
-%% 		false ->
-%% 			post_block_reject_warn(
-%% 				BShadow,
-%% 				check_timestamp,
-%% 				[{block_time, BShadow#block.timestamp},
-%% 				 {current_time, os:system_time(seconds)}]
-%% 			),
-%% 			{400, #{}, <<"Invalid timestamp.">>};
-%% 		true ->
-%% 			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS})
-%% 	end;
 %% Note! Checking PoW should be as cheap as possible. All slow steps should
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
 post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
-	case BDS of
-		no_data_segment ->
-			post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
-		_ ->
-			case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
-				{invalid, _} ->
-					post_block_reject_warn(BShadow, check_pow),
-					ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
-					{400, #{}, <<"Invalid Block Proof of Work">>, Req};
-				{valid, _} ->
-					ar_bridge:ignore_id(BDS),
-					post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
-			end
+	case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
+		{invalid, _} ->
+			post_block_reject_warn(BShadow, check_pow, OrigPeer),
+			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
+			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
+		{valid, _} ->
+			ar_bridge:ignore_id(BDS),
+			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+	end;
+post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+	%% Verify the timestamp of the block shadow.
+	case ar_block:verify_timestamp(BShadow) of
+		false ->
+			post_block_reject_warn(
+				BShadow,
+				check_timestamp,
+				OrigPeer,
+				[{block_time, BShadow#block.timestamp},
+				 {current_time, os:system_time(seconds)}]
+			),
+			{400, #{}, <<"Invalid timestamp.">>, Req};
+		true ->
+			post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
 	end;
 post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
@@ -1125,17 +1117,19 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	end),
 	{200, #{}, <<"OK">>, Req}.
 
-post_block_reject_warn(BShadow, Step) ->
+post_block_reject_warn(BShadow, Step, Peer) ->
 	ar:warn([
 		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
-		Step
+		Step,
+		{peer, ar_util:format_peer(Peer)}
 	]).
 
-%% post_block_reject_warn(BShadow, Step, Params) ->
-%% 	ar:warn([
-%% 		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
-%% 		{Step, Params}
-%% 	]).
+post_block_reject_warn(BShadow, Step, Peer, Params) ->
+	ar:warn([
+		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
+		{Step, Params},
+		{peer, ar_util:format_peer(Peer)}
+	]).
 
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
