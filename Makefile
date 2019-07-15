@@ -60,7 +60,7 @@ log:
 	tail -n 100 -f logs/`ls -t logs | grep -v slave | head -n 1`
 
 catlog:
-	cat logs/`ls -t logs | head -n 1`
+	cat logs/`ls -t logs | grep -v slave | head -n 1`
 
 all: build
 
