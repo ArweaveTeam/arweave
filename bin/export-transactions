@@ -12,6 +12,11 @@ fi
 if [ -f "$outputFile" ]; then
     rm "$outputFile"
 fi
-erl -noshell -sname exporter@localhost -setcookie arweave \
-    -run app_block_tx_export export_transactions \
-    "$outputFile" "$startBlock" "$endBlock"
+ERL_EPMD_ADDRESS=127.0.0.1 erl \
+                -pa ebin/ \
+                -noshell \
+                -kernel inet_dist_use_interface "{127,0,0,1}" \
+                -name exporter@127.0.0.1 \
+                -setcookie arweave \
+                -run app_block_tx_export export_transactions \
+                "$outputFile" "$startBlock" "$endBlock"

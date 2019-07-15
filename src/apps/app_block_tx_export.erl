@@ -29,8 +29,15 @@ export_blocks(Filename, Range, Peers) ->
 			{error, Reason}
 	end.
 
-export_blocks1({HeightStart, HeightEnd}, Peers, IoDevice) ->
-	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+export_blocks1(Range, Peers, IoDevice) ->
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[] ->
+			{error, node_not_joined};
+		BHL ->
+			export_blocks(Range, Peers, IoDevice, BHL)
+	end.
+
+export_blocks({HeightStart, HeightEnd}, Peers, IoDevice, BHL) ->
 	S = #state{
 		bhl = BHL,
 		peers = Peers
@@ -63,8 +70,15 @@ export_transactions(Filename, Range, Peers) ->
 			{error, Reason}
 	end.
 
-export_transactions1({HeightStart, HeightEnd}, Peers, IoDevice) ->
-	BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+export_transactions1(Range, Peers, IoDevice) ->
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[] ->
+			{error, node_not_joined};
+		BHL ->
+			export_transactions(Range, Peers, IoDevice, BHL)
+	end.
+
+export_transactions({HeightStart, HeightEnd}, Peers, IoDevice, BHL) ->
 	S = #state{
 		bhl = BHL,
 		peers = Peers
