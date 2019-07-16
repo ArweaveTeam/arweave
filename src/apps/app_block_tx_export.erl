@@ -45,7 +45,7 @@ export_blocks({HeightStart, HeightEnd}, Peers, IoDevice, BHL) ->
 	BHs = lists:sublist(lists:reverse(BHL), HeightStart + 1, HeightEnd - HeightStart + 1),
 	Fun = fun(B) ->
 		io:format("Exporting block height: ~p~n", [B#block.height]),
-		Values = extract_block_values(S, full_block(B)),
+		Values = extract_block_values(S, full_block(B, Peers)),
 		ok = file:write(IoDevice, csv_encode_row(Values))
 	end,
 	blocks_foreach(Fun, S, BHs),
@@ -89,7 +89,7 @@ export_transactions({HeightStart, HeightEnd}, Peers, IoDevice, BHL) ->
 	end,
 	Fun = fun(B) ->
 		io:format("Exporting TXs for block height: ~p~n", [B#block.height]),
-		lists:foreach(WriteOneRow, extract_transaction_values(full_block(B)))
+		lists:foreach(WriteOneRow, extract_transaction_values(full_block(B, Peers)))
 	end,
 	blocks_foreach(Fun, S, BHs),
 	ok = file:close(IoDevice).
@@ -148,8 +148,8 @@ get_block(BH, BHL, Peers) ->
 disorder(List) ->
 	[Item || {_, Item} <- lists:sort([{rand:uniform(), Item} || Item <- List])].
 
-fetch_and_store_block(_, _, []) ->
-	{error, could_not_download};
+fetch_and_store_block(BH, _, []) ->
+	{error, {could_not_download_block, ar_util:encode(BH)}};
 fetch_and_store_block(BH, BHL, [Peer | Peers]) ->
 	io:format("Downloading block: ~p~n", [ar_util:encode(BH)]),
 	case ar_http_iface_client:get_full_block(Peer, BH, BHL) of
@@ -188,13 +188,13 @@ reward_pool(S, B) ->
 reward_pool(S, B, PreviousB) ->
 	PreviousRecallBH = ar_node_utils:find_recall_hash(PreviousB, S#state.bhl),
 	{ok, PreviousRecallB} = get_block(PreviousRecallBH, S#state.bhl, S#state.peers),
-	reward_pool1(B, PreviousB, PreviousRecallB).
+	FullB = full_block(B, S#state.peers),
+	reward_pool1(FullB, PreviousB, PreviousRecallB).
 
 reward_pool1(B, PreviousB, PreviousRecallB) ->
-	FullB = full_block(B),
 	ar_node_utils:calculate_reward_pool(
 		PreviousB#block.reward_pool,
-		FullB#block.txs,
+		B#block.txs,
 		B#block.reward_addr,
 		ar_node_utils:calculate_proportion(
 			PreviousRecallB#block.block_size,
@@ -203,10 +203,39 @@ reward_pool1(B, PreviousB, PreviousRecallB) ->
 		)
 	).
 
-full_block(B) ->
+full_block(B, Peers) ->
+	PeersForFetching = disorder(Peers),
 	B#block{
-		txs = lists:map(fun ar_storage:read_tx/1, B#block.txs)
+		txs = [get_tx(TXID, PeersForFetching) || TXID <- B#block.txs]
 	}.
+
+get_tx(TXID, Peers) ->
+	case ar_storage:read_tx(TXID) of
+		unavailable ->
+			?OK(fetch_and_store_tx(TXID, Peers));
+		TX ->
+			TX
+	end.
+
+fetch_and_store_tx(TXID, []) ->
+	{error, {could_not_download_tx, ar_util:encode(TXID)}};
+fetch_and_store_tx(TXID, [Peer | Peers]) ->
+	io:format("Downloading transaction: ~p~n", [ar_util:encode(TXID)]),
+	case ar_http_iface_client:get_tx(Peer, TXID) of
+		TX when is_record(TX, tx) ->
+			store_tx(TX),
+			{ok, TX};
+		_ ->
+			fetch_and_store_tx(TXID, Peers)
+	end.
+
+store_tx(TX) ->
+	case ar_firewall:scan_tx(TX) of
+		accept ->
+			ar_storage:write_tx(TX);
+		reject ->
+			rejected
+	end.
 
 format_reward_addr(unclaimed) ->
 	<<>>;
