@@ -389,19 +389,10 @@ parse_wallet_list_json(JSON) ->
 	end.
 
 lookup_tx_filename(ID) ->
-	case filelib:wildcard(tx_filepath(ID)) of
-		[] -> unavailable;
-		[Filename] -> Filename;
-		Filenames ->
-			hd(lists:sort(
-					fun(Filename, Filename2) ->
-						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
-						{ok, Info2} = file:read_file_info(Filename2, [{time, posix}]),
-						Info#file_info.mtime >= Info2#file_info.mtime
-					end,
-					Filenames
-				)
-			)
+	Filename = tx_filepath(ID),
+	case filelib:is_file(Filename) of
+		true -> Filename;
+		false -> unavailable
 	end.
 
 % @doc Check that there is enough space to write Bytes bytes of data
