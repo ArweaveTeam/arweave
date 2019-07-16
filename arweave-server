@@ -8,6 +8,14 @@ else
     SHELL_OPTS=-noinput
 fi
 
+ARG_STRING=`echo "$@" | sed -e s/^erlang_distribution//`
+if [[ "$ARG_STRING" == "$@" ]];
+then
+    DIST_OPTS=
+else
+    DIST_OPTS='-kernel inet_dist_use_interface "{127,0,0,1}" -name arweave@127.0.0.1 -setcookie arweave'
+fi
+
 while true; do
     echo Building dependencies...
     ./bin/mute-on-success make all
@@ -15,8 +23,7 @@ while true; do
     if
         ERL_EPMD_ADDRESS=127.0.0.1 erl \
                         $SHELL_OPTS \
-                        -kernel inet_dist_use_interface "{127,0,0,1}" \
-                        -name arweave@127.0.0.1 -setcookie arweave \
+                        $DIST_OPTS \
                         -pa ebin/ \
                         -pa lib/jiffy/ebin \
                         -pa lib/cowboy/ebin \
