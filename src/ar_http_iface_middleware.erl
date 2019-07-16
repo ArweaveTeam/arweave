@@ -240,7 +240,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _) ->
 		{error, _, unavailable} ->
 			{404, #{}, sendfile("data/not_found.html"), Req};
 		{ok, Filename} ->
-			T = ar_storage:read_tx_file(Filename),
+			{ok, T} = ar_storage:read_tx_file(Filename),
 			{
 				200,
 				#{
@@ -655,7 +655,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _) ->
 		{ok, Filename} ->
 			case Field of
 				<<"tags">> ->
-					TX = ar_storage:read_tx_file(Filename),
+					{ok, TX} = ar_storage:read_tx_file(Filename),
 					{200, #{}, ar_serialize:jsonify(
 						lists:map(
 							fun({Name, Value}) ->

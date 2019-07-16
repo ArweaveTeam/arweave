@@ -240,7 +240,7 @@ get_tx_from_hash_1(TXID) ->
 	end.
 
 serve_tx(Filename, Req) ->
-	TX = ar_storage:read_tx_file(Filename),
+	{ok, TX} = ar_storage:read_tx_file(Filename),
 	ContentType = proplists:get_value(<<"Content-Type">>, TX#tx.tags, "text/html"),
 	Headers = #{<<"content-type">> => ContentType},
 	{stop, cowboy_req:reply(200, Headers, TX#tx.data, Req)}.
