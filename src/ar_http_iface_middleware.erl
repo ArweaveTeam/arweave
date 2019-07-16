@@ -14,10 +14,12 @@
 %% middlewares. It uses the `handler` env value set by cowboy_router
 %% to determine whether or not it should run, otherwise it lets
 %% the cowboy_handler middleware run prometheus_cowboy2_handler.
-execute(Req, #{ handler := ar_http_iface_handler }) ->
+execute(Req, #{ handler := ar_http_iface_handler } = Env) ->
 	Pid = self(),
+	Req1 = with_pid_req_field(Req, Pid),
+	Req2 = with_arql_semaphore_req_field(Req1, Env),
 	HandlerPid = spawn_link(fun() ->
-		Pid ! {handled, handle(Req#{ '_ar_http_iface_middleware_pid' => Pid })}
+		Pid ! {handled, handle(Req2)}
 	end),
 	{ok, TimeoutRef} = timer:send_after(
 		?HANDLER_TIMEOUT,
@@ -30,6 +32,12 @@ execute(Req, Env) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+with_pid_req_field(Req, Pid) ->
+	Req#{ '_ar_http_iface_middleware_pid' => Pid }.
+
+with_arql_semaphore_req_field(Req, #{ arql_semaphore := Name }) ->
+	Req#{ '_ar_http_iface_middleware_arql_semaphore' => Name }.
 
 %% @doc In order to be able to have a handler-side timeout, we need to
 %% handle the request asynchronously. However, cowboy doesn't allow
@@ -148,7 +156,7 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req) ->
 %% @doc Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req) ->
-	ar_semaphore:acquire(arql_semaphore, 5000),
+	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	case get_tx_filename(Hash) of
 		{ok, _} ->
 			TagsToInclude = [
@@ -202,7 +210,7 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req) ->
 %%	}
 %%
 handle(<<"POST">>, [<<"arql">>], Req) ->
-	ar_semaphore:acquire(arql_semaphore, 5000),
+	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	case read_complete_body(Req) of
 		{ok, QueryJson, ReadReq} ->
 			case ar_serialize:json_struct_to_query(QueryJson) of
@@ -468,7 +476,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req) ->
 %% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/deposits
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req) ->
-	ar_semaphore:acquire(arql_semaphore, 5000),
+	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	TXIDs = lists:reverse(
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
@@ -478,7 +486,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req) ->
 %% starting from the earliest_deposit.
 %% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req) ->
-	ar_semaphore:acquire(arql_semaphore, 5000),
+	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	TXIDs = lists:reverse(
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
@@ -733,6 +741,9 @@ read_complete_body(#{'_ar_http_iface_middleware_pid' := Pid} = Req) ->
 	receive
 		{read_complete_body, Term} -> Term
 	end.
+
+arql_semaphore(#{'_ar_http_iface_middleware_arql_semaphore' := Name}) ->
+	Name.
 
 do_read_complete_body(Req) ->
 	do_read_complete_body(Req, <<>>).

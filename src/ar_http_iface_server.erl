@@ -13,6 +13,7 @@
 
 -define(MAX_PARALLEL_HASH_LIST_REQUESTS, 1).
 -define(MAX_PARALLEL_ARQL_REQUESTS, 10).
+-define(MAX_PARALLEL_GATEWAY_ARQL_REQUESTS, infinity).
 
 -define(HTTP_IFACE_MIDDLEWARES, [
 	ar_blacklist_middleware,
@@ -70,6 +71,7 @@ do_start(Port, GatewayOpts) ->
 	HttpIfaceEnv = #{ dispatch => Dispatch },
 	ok = ar_semaphore:start_link(hash_list_semaphore, ?MAX_PARALLEL_HASH_LIST_REQUESTS),
 	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
+	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
 	ok = ar_blacklist_middleware:start(),
 	ok = start_http_iface_listener(Port, HttpIfaceEnv),
 	ok = start_http_gateway_listener(GatewayOpts),
@@ -122,10 +124,13 @@ protocol_opts(List) ->
 			{gateway, Domain, CustomDomains} ->
 				Opts1#{
 					middlewares := [ar_gateway_middleware | Middlewares1],
-					env := Env1#{ gateway => {Domain, CustomDomains} }
+					env := Env1#{
+						gateway => {Domain, CustomDomains},
+						arql_semaphore => gateway_arql_semaphore
+					}
 				};
 			none ->
-				Opts1
+				Opts1#{ env := Env1#{ arql_semaphore => arql_semaphore } }
 		end,
 	Opts2.
 
