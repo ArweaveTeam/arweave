@@ -106,7 +106,7 @@ export_on_main_node(Filename, HeightStart, HeightEnd, ExportFunction) ->
 	AbsFilePath = filename:absname(Filename),
 	case net_kernel:connect_node(?MAIN_NODE) of
 		false ->
-			io:format(standard_error, "Could not connect to ~p. Is arweave-server running?~n", [?MAIN_NODE]),
+			io:format(standard_error, "Could not connect to ~p. Is arweave-server running with distribution enabled?~n", [?MAIN_NODE]),
 			erlang:halt(1);
 		true ->
 			ok

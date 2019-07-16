@@ -8,12 +8,13 @@ else
     SHELL_OPTS=-noinput
 fi
 
-ARG_STRING=`echo "$@" | sed -e s/^erlang_distribution//`
+ARG_STRING=`echo "$@" | sed -e s/^erlang_distribution\ *//`
 if [[ "$ARG_STRING" == "$@" ]];
 then
     DIST_OPTS=
 else
-    DIST_OPTS='-kernel inet_dist_use_interface "{127,0,0,1}" -name arweave@127.0.0.1 -setcookie arweave'
+    DIST_OPTS="-kernel inet_dist_use_interface {127,0,0,1} \
+               -name arweave@127.0.0.1 -setcookie arweave"
 fi
 
 while true; do
@@ -35,7 +36,7 @@ while true; do
                         -pa lib/prometheus_httpd/ebin \
                         -pa lib/prometheus_cowboy/ebin \
                         -sasl errlog_type error \
-                        -s ar rebuild -s prometheus -run ar main "$@";
+                        -s ar rebuild -s prometheus -run ar main $ARG_STRING;
     then
         echo "Arweave Heartbeat: Server terminated safely."
         exit 1
