@@ -1,9 +1,9 @@
 -module(ar_storage).
 
 -export([start/0]).
--export([write_block/1, write_full_block/1, write_full_block/2, read_block/2, clear/0]).
--export([write_encrypted_block/2, read_encrypted_block/1, invalidate_block/1]).
--export([delete_block/1, blocks_on_disk/0, block_exists/1]).
+-export([write_block/1, write_full_block/1, write_full_block/2, write_encrypted_block/2]).
+-export([read_block/2, read_encrypted_block/1]).
+-export([invalidate_block/1, delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
 -export([write_wallet_list/1, read_wallet_list/1]).
 -export([write_block_hash_list/2, read_block_hash_list/1]).
@@ -12,7 +12,7 @@
 -export([calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0]).
 -export([lookup_block_filename/1,lookup_tx_filename/1]).
 -export([read_block_file/2, read_tx_file/1]).
--export([ensure_directories/0]).
+-export([ensure_directories/0, clear/0]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
