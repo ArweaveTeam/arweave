@@ -11,6 +11,9 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(MAX_PARALLEL_HASH_LIST_REQUESTS, 1).
+-define(MAX_PARALLEL_ARQL_REQUESTS, 10).
+
 -define(HTTP_IFACE_MIDDLEWARES, [
 	ar_blacklist_middleware,
 	cowboy_router,
@@ -65,7 +68,8 @@ split_path(Path) ->
 do_start(Port, GatewayOpts) ->
 	Dispatch = cowboy_router:compile(?HTTP_IFACE_ROUTES),
 	HttpIfaceEnv = #{ dispatch => Dispatch },
-	ok = ar_semaphore:start_link(hash_list_semaphore, 1),
+	ok = ar_semaphore:start_link(hash_list_semaphore, ?MAX_PARALLEL_HASH_LIST_REQUESTS),
+	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
 	ok = ar_blacklist_middleware:start(),
 	ok = start_http_iface_listener(Port, HttpIfaceEnv),
 	ok = start_http_gateway_listener(GatewayOpts),

@@ -148,6 +148,7 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _) ->
 %% @doc Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _) ->
+	ar_semaphore:acquire(arql_semaphore, 5000),
 	case get_tx_filename(Hash) of
 		{ok, _} ->
 			TagsToInclude = [
@@ -201,6 +202,7 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _) ->
 %%	}
 %%
 handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
+	ar_semaphore:acquire(arql_semaphore, 5000),
 	case read_complete_body(Req, Pid) of
 		{ok, QueryJson, ReadReq} ->
 			case ar_serialize:json_struct_to_query(QueryJson) of
@@ -466,6 +468,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req, _) ->
 %% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/deposits
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _) ->
+	ar_semaphore:acquire(arql_semaphore, 5000),
 	TXIDs = lists:reverse(
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
@@ -475,6 +478,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _) ->
 %% starting from the earliest_deposit.
 %% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _) ->
+	ar_semaphore:acquire(arql_semaphore, 5000),
 	TXIDs = lists:reverse(
 		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
 	),
