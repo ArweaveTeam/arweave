@@ -138,21 +138,11 @@ blocks_foreach(Fun, S, [BH | BHs]) ->
 	blocks_foreach(Fun, S, BHs).
 
 get_block(BH, BHL, Peers) ->
-	case block_from_storage(BH) of
-		{ok, B} ->
-			{ok, B};
-		_ ->
-			{ok, _} = fetch_and_store_block(BH, BHL, disorder(Peers))
-	end.
-
-%% Read block from storage without hash_list and wallet_list.
-block_from_storage(BH) ->
-	case ar_block_index:get_block_filename(BH) of
+	case ar_storage:read_block_shadow(BH) of
 		unavailable ->
-			not_found;
-		Filename ->
-			{ok, Binary} = file:read_file(Filename),
-			{ok, ar_serialize:json_struct_to_block(Binary)}
+			fetch_and_store_block(BH, BHL, disorder(Peers));
+		B ->
+			{ok, B}
 	end.
 
 disorder(List) ->

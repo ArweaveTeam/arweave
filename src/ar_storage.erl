@@ -2,7 +2,7 @@
 
 -export([start/0]).
 -export([write_block/1, write_full_block/1, write_full_block/2, write_encrypted_block/2]).
--export([read_block/2, read_encrypted_block/1]).
+-export([read_block/2, read_encrypted_block/1, read_block_shadow/1]).
 -export([invalidate_block/1, delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
 -export([write_wallet_list/1, read_wallet_list/1]).
@@ -181,6 +181,7 @@ read_block(ID, BHL) ->
 		unavailable -> unavailable;
 		Filename -> read_block_file(Filename, BHL)
 	end.
+
 read_block_file(Filename, BHL) ->
 	{ok, Binary} = file:read_file(Filename),
 	B = ar_serialize:json_struct_to_block(Binary),
@@ -224,6 +225,30 @@ read_encrypted_block(ID) ->
 		{ok, Binary} ->
 			Binary;
 		{error, _} ->
+			unavailable
+	end.
+
+%% @doc Read block shadow from disk, given a hash.
+read_block_shadow(BH) ->
+	case ar_block_index:get_block_filename(BH) of
+		unavailable ->
+			unavailable;
+		Filename ->
+			case file:read_file(Filename) of
+				{ok, JSON} ->
+					read_block_shadow(BH, JSON);
+				{error, _} ->
+					ar_block_index:remove(BH),
+					unavailable
+			end
+	end.
+
+read_block_shadow(BH, JSON) ->
+	case ar_serialize:json_decode(JSON) of
+		{ok, JiffyStruct} ->
+			ar_serialize:json_struct_to_block(JiffyStruct);
+		{error, _} ->
+			ar_block_index:remove(BH),
 			unavailable
 	end.
 
