@@ -511,7 +511,7 @@ tx_filepath(TX) ->
 	filepath([?TX_DIR, tx_filename(TX)]).
 
 tx_filename(TX) when is_record(TX, tx) ->
-	iolist_to_binary([ar_util:encode(TX#tx.id), ".json"]);
+	tx_filename(TX#tx.id);
 tx_filename(TXID) when is_binary(TXID) ->
 	iolist_to_binary([ar_util:encode(TXID), ".json"]).
 
