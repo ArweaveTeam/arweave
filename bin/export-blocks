@@ -16,7 +16,7 @@ ERL_EPMD_ADDRESS=127.0.0.1 erl \
                 -pa ebin/ \
                 -noshell \
                 -kernel inet_dist_use_interface "{127,0,0,1}" \
-                -name exporter@127.0.0.1 \
+                -name block-exporter@127.0.0.1 \
                 -setcookie arweave \
                 -run app_block_tx_export export_blocks \
                 "$outputFile" "$startBlock" "$endBlock"
