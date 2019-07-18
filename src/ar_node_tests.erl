@@ -311,30 +311,37 @@ tiny_blockweave_with_added_data_test() ->
 	end}.
 
 %% @doc Ensure that the network can mine multiple blocks correctly.
-medium_blockweave_multi_mine_test() ->
-	ar_storage:clear(),
-	TestData1 = ar_tx:new(<<"TEST DATA1">>),
-	ar_storage:write_tx(TestData1),
-	TestData2 = ar_tx:new(<<"TEST DATA2">>),
-	ar_storage:write_tx(TestData2),
-	B0 = ar_weave:init([]),
-	Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
-	[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
-	ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
-	timer:sleep(1000),
-	ar_node:mine(ar_util:pick_random(Nodes)),
-	timer:sleep(1000),
-	B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-	ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
-	timer:sleep(1000),
-	ar_node:mine(ar_util:pick_random(Nodes)),
-	timer:sleep(1000),
-	B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-	TestDataID1 = TestData1#tx.id,
-	TestDataID2 = TestData2#tx.id,
-	BHL = ar_node:get_hash_list(ar_util:pick_random(Nodes)),
-	?assertEqual([TestDataID1], (hd(ar_storage:read_block(B1, BHL)))#block.txs),
-	?assertEqual([TestDataID2], (hd(ar_storage:read_block(B2, BHL)))#block.txs).
+medium_blockweave_multi_mine_test_() ->
+	{timeout, 120, fun() ->
+		ar_storage:clear(),
+		TestData1 = ar_tx:new(<<"TEST DATA1">>),
+		ar_storage:write_tx(TestData1),
+		TestData2 = ar_tx:new(<<"TEST DATA2">>),
+		ar_storage:write_tx(TestData2),
+		B0 = ar_weave:init([]),
+		Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
+		[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
+		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
+		timer:sleep(1000),
+		ar_node:mine(ar_util:pick_random(Nodes)),
+		timer:sleep(1000),
+		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
+		timer:sleep(1000),
+		ar_node:mine(ar_util:pick_random(Nodes)),
+		?assert(ar_util:do_until(
+			fun() ->
+				B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+				TestDataID1 = TestData1#tx.id,
+				TestDataID2 = TestData2#tx.id,
+				BHL = ar_node:get_hash_list(ar_util:pick_random(Nodes)),
+				[TestDataID1] == (hd(ar_storage:read_block(B1, BHL)))#block.txs andalso
+				[TestDataID2] == (hd(ar_storage:read_block(B2, BHL)))#block.txs
+			end,
+			1000,
+			30000
+		))
+	end}.
 
 %% @doc Setup a network, mine a block, cause one node to forget that block.
 %% Ensure that the 'truncated' node can still verify and accept new blocks.
@@ -643,10 +650,15 @@ large_blockweave_with_data_test_() ->
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData),
 		receive after 2500 -> ok end,
 		ar_node:mine(ar_util:pick_random(Nodes)),
-		receive after 2500 -> ok end,
-		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-		TestDataID	= TestData#tx.id,
-		[TestDataID] = (hd(ar_storage:read_block(B1, B1)))#block.txs
+		?assert(ar_util:do_until(
+			fun() ->
+				B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+				TestDataID = TestData#tx.id,
+				[TestDataID] == (hd(ar_storage:read_block(B1, B1)))#block.txs
+			end,
+			1000,
+			30000
+		))
 	end}.
 
 %% @doc Test that large networks (500 nodes) with only 1% connectivity
@@ -662,10 +674,15 @@ large_weakly_connected_blockweave_with_data_test_() ->
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData),
 		receive after 2500 -> ok end,
 		ar_node:mine(ar_util:pick_random(Nodes)),
-		receive after 2500 -> ok end,
-		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-		TestDataID	= TestData#tx.id,
-		?assertEqual([TestDataID], (ar_storage:read_block(hd(B1), B1))#block.txs)
+		?assert(ar_util:do_until(
+			fun() ->
+				B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+				TestDataID = TestData#tx.id,
+				[TestDataID] == (ar_storage:read_block(hd(B1), B1))#block.txs
+			end,
+			1000,
+			30000
+		))
 	end}.
 
 %% @doc Ensure that the network can add multiple peices of data and have
@@ -686,18 +703,23 @@ medium_blockweave_mine_multiple_data_test_() ->
 		ar_node:add_tx(ar_util:pick_random(Nodes), SignedTX2),
 		receive after 1500 -> ok end,
 		ar_node:mine(ar_util:pick_random(Nodes)),
-		receive after 1250 -> ok end,
-		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-		true =
-			lists:member(
-				SignedTX#tx.id,
-				(hd(ar_storage:read_block(B1, B1)))#block.txs
-			),
-		true =
-			lists:member(
-				SignedTX2#tx.id,
-				(hd(ar_storage:read_block(B1, B1)))#block.txs
-			)
+		?assert(ar_util:do_until(
+			fun() ->
+				B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
+				true ==
+					lists:member(
+						SignedTX#tx.id,
+						(hd(ar_storage:read_block(B1, B1)))#block.txs
+					) andalso
+				true ==
+					lists:member(
+						SignedTX2#tx.id,
+						(hd(ar_storage:read_block(B1, B1)))#block.txs
+					)
+			end,
+			1000,
+			30000
+		))
 	end}.
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
