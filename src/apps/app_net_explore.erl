@@ -6,6 +6,8 @@
 		 get_nodes_version/1,
 		 filter_local_peers/1]).
 
+-include("../ar.hrl").
+
 %%% Tools for building a map of connected peers.
 %%% Requires graphviz for visualisation.
 
@@ -83,7 +85,7 @@ generate_gephi_csv(NamesJsonFile, StartPeers) ->
 			({_, unavailable}) -> false;
 			(_) -> true
 		end,
-		maps:to_list(app_net_crawler:crawl(StartPeers))
+		maps:to_list(?OK(app_net_crawler:crawl(StartPeers)))
 	),
 	generate_gephi_csv1(
 		parse_names_file(NamesJsonFile),
@@ -101,7 +103,7 @@ get_nodes_version(StartPeers) ->
 	end,
 	Nodes = lists:filtermap(
 		FilterMapper,
-		maps:to_list(app_net_crawler:crawl(StartPeers))
+		maps:to_list(?OK(app_net_crawler:crawl(StartPeers)))
 	),
 	get_nodes_version1(Nodes).
 

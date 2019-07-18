@@ -17,17 +17,24 @@ crawl() ->
 	crawl(StartPeers).
 
 crawl(StartPeers) ->
-	reload_jobs(),
-	InitState = start_fetching(#{}, StartPeers),
-	io:format("Starting to crawl~n"),
-	crawl_loop(InitState).
+	case reload_jobs() of
+		jobs_missing ->
+			ar:err("Application jobs could not be started. Make sure it's in your local ERL_LIBS directory."),
+			{error, jobs_missing};
+		ok ->
+			InitState = start_fetching(#{}, StartPeers),
+			io:format("Starting to crawl~n"),
+			{ok, crawl_loop(InitState)}
+	end.
 
 %% We don't have a config file, so we hack in the jobs config here.
 reload_jobs() ->
 	application:stop(jobs),
 	application:set_env(jobs, queues, jobs_queues_config()),
-	{ok, _} = application:ensure_all_started(jobs),
-	ok.
+	case application:ensure_started(jobs) of
+		ok -> ok;
+		{error, _} -> jobs_missing
+	end.
 
 jobs_queues_config() ->
 	[{?JOBS_QUEUE_NAME, [{regulators, [{counter, [{limit, ?PARALLEL_FETCHES}]}]}]}].
