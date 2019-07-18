@@ -3,7 +3,6 @@
 -export([execute/2]).
 
 -include("ar.hrl").
--define(BH_SEARCH_TIMEOUT, 25000).
 
 %%%===================================================================
 %%% Cowboy middleware callback.
@@ -152,8 +151,7 @@ derive_label_and_redirect(TXID, Req, Env) ->
 	end.
 
 get_tx_block_hash(TXID) ->
-	HttpSearchNode = whereis(http_search_node),
-	case ar_tx_search:get_tags_by_id(HttpSearchNode, TXID, ?BH_SEARCH_TIMEOUT) of
+	case ar_tx_search:get_tags_by_id(TXID) of
 		{ok, PseudoTags} -> get_tx_block_hash_1(PseudoTags);
 		{error, _} -> not_found
 	end.

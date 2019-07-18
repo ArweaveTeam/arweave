@@ -1,17 +1,15 @@
 -module(ar_tx_search).
 -export([start/0]).
 -export([update_tag_table/1]).
--export([get_entries/2, get_entries/3, get_tags_by_id/3]).
--export([get_entries_by_tag_name/1, get_entries_by_tag_name/2]).
+-export([get_entries/2, get_tags_by_id/1]).
+-export([get_entries_by_tag_name/1]).
+-export([get_tx_block_height/1]).
 -export([delete_tx_records/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Searchable transaction tag index.
-%%%
-%%% Access to the DB is wrapped in a server, which limits the number of
-%%% concurrent requests to 1.
 %%%
 %%% In addition to the transaction tags, some auxilirary tags are added (which
 %%% overwrites potential real tags with the same name).
@@ -24,81 +22,85 @@
 %%% Warning! The index is not complete. E.g. block_height and block_indep_hash
 %%% was added at a later stage. The index includes only the transactions from
 %%% the downloaded blocks.
-%%%
-%%% Warning! Writes returns early but are serialized together with reads. If a
-%%% write fails it will be logged, but the queue of reads and writes will
-%%% continue.
 
 -record(arql_tag, {name, value, tx}).
 
 %% @doc Start a search node.
 start() ->
 	initDB(),
-	PID = spawn(fun server/0),
-	erlang:register(http_search_node, PID),
-	{ok, PID}.
+	ok.
 
 delete_tx_records(TXID) ->
-	delete_tx_records(whereis(http_search_node), TXID).
-
-delete_tx_records(PID, TXID) ->
-	PID ! {delete_tx_records, TXID}.
+	{atomic, ok} = mnesia:transaction(fun() ->
+		delete_for_tx(TXID)
+	end),
+	ok.
 
 delete_for_tx(TXID) ->
-	Records = mnesia:dirty_match_object(#arql_tag{tx = TXID, _ = '_'}),
-	DeleteRecord = fun(Record) -> ok = mnesia:dirty_delete_object(Record) end,
-	lists:foreach(DeleteRecord, Records).
+	Records = mnesia:index_match_object(#arql_tag{tx = TXID, _ = '_'}, #arql_tag.tx),
+	lists:foreach(
+		fun(Record) -> ok = mnesia:delete_object(Record) end,
+		Records
+	).
 
-get_tags_by_id(PID, TXID, Timeout) ->
-	Ref = make_ref(),
-	PID ! {get_tags, Ref, TXID, self()},
-	receive {tags, Ref, Tags} ->
-		{ok, Tags}
-	after Timeout ->
-		{error, timeout}
-	end.
+get_tags_by_id(TXID) ->
+	{atomic, Records} = mnesia:transaction(fun() -> search_by_id(TXID) end),
+	Tags = lists:map(
+		fun(Record) ->
+			{_, Name, Value, _} = Record,
+			{Name, Value}
+		end,
+		Records
+	),
+	{ok, Tags}.
 
 %% @doc Returns a list of all transaction IDs which have the tag Name set to
 %% Value. Duplicates might be returned due to the duplication in the index.
-get_entries(Name, Value) -> get_entries(whereis(http_search_node), Name, Value).
-
-get_entries(PID, Name, Value) ->
-	Ref = make_ref(),
-	PID ! {get_tx, Ref, Name, Value, self()},
-	receive {txs, Ref, TXIDs} ->
-		TXIDs
-	after 3000 ->
-		[]
-	end.
+get_entries(Name, Value) ->
+	{atomic, TXIDs} = search_by_exact_tag(Name, Value),
+	TXIDs.
 
 %% @doc Returns a list of all transaction IDs which have the given tag Name.
 get_entries_by_tag_name(Name) ->
-	get_entries_by_tag_name(whereis(http_search_node), Name).
+	{atomic, TXIDs} = search_by_tag_name(Name),
+	TXIDs.
 
-get_entries_by_tag_name(PID, Name) ->
-	Ref = make_ref(),
-	PID ! {get_txs_by_tag_name, Ref, Name, self()},
-	receive {txs_by_tag_name, Ref, TXIDs} ->
-		TXIDs
-	after 3000 ->
-		[]
-	end.
+get_tx_block_height(TXID) ->
+	{atomic, [Record]} = mnesia:transaction(fun() ->
+		mnesia:index_match_object(
+			#arql_tag{ tx = TXID, name = <<"block_height">>, value = '_' },
+			#arql_tag.tx
+		)
+	end),
+	{Record#arql_tag.value, TXID}.
 
-%% @doc Updates the index of stored tranasaction data with all of the
-%% transactions in the given block. Returns early after sending the task to the
-%% server.
-update_tag_table(B) ->
-	update_tag_table(whereis(http_search_node), B).
-
-update_tag_table(PID, B) when ?IS_BLOCK(B) ->
+%% @doc Updates the tag index with the information of all the transactions in
+%% the given block as part of a single transaction.
+update_tag_table(B) when ?IS_BLOCK(B) ->
 	#block{
 		indep_hash = IndepHash,
 		height = Height,
 		txs = TXs
 	} = B,
-	PID ! {update_tags_for_block, IndepHash, Height, TXs},
-	enqueued;
-update_tag_table(_, _) ->
+	{atomic, ok} = mnesia:transaction(fun() ->
+		lists:foreach(
+			fun(TX) ->
+				case TX of
+					unavailable ->
+						do_nothing;
+					_ ->
+							delete_for_tx(TX#tx.id),
+							AddEntry = fun({Name, Value}) ->
+								storeDB(Name, Value, TX#tx.id)
+							end,
+							lists:foreach(AddEntry, entries(IndepHash, Height, TX))
+				end
+			end,
+			ar_storage:read_tx(TXs)
+		)
+	end),
+	ok;
+update_tag_table(_) ->
 	not_a_block.
 
 entries(IndepHash, Height, TX) ->
@@ -117,131 +119,88 @@ multi_delete(Proplist, []) ->
 multi_delete(Proplist, [Key | Keys]) ->
 	multi_delete(proplists:delete(Key, Proplist), Keys).
 
-server() ->
-	try
-		receive
-			{get_tx, Ref, Name, Value, PID} ->
-				% ar:d({retrieving_tx, search_by_exact_tag(Name, Value)}),
-				PID ! {txs, Ref, search_by_exact_tag(Name, Value)},
-				server();
-			{get_txs_by_tag_name, Ref, Name, PID} ->
-				PID ! {txs_by_tag_name, Ref, search_by_tag_name(Name)},
-				server();
-			{get_tags, Ref, TXID, PID} ->
-				Tags = lists:map(
-					fun(Tag) ->
-						{_, Name, Value, _} = Tag,
-						{Name, Value}
-					end,
-					search_by_id(TXID)
-				),
-				PID ! {tags, Ref, Tags},
-				server();
-			{update_tags_for_block, IndepHash, Height, TXs} ->
-				lists:foreach(
-					fun(TX) ->
-						case TX of
-							unavailable ->
-								do_nothing;
-							_ ->
-								delete_for_tx(TX#tx.id),
-								AddEntry = fun({Name, Value}) ->
-									storeDB(Name, Value, TX#tx.id)
-								end,
-								lists:foreach(AddEntry, entries(IndepHash, Height, TX))
-						end
-					end,
-					ar_storage:read_tx(TXs)
-				),
-				server();
-			{delete_tx_records, TXID} ->
-				delete_for_tx(TXID),
-				server();
-			stop -> ok;
-			_OtherMsg -> server()
-		end
-	catch
-		throw:Term ->
-			ar:report([{'SearchEXCEPTION', Term}]),
-			server();
-		exit:Term ->
-			ar:report([{'SearchEXIT', Term}]),
-			server();
-		error:Term ->
-			ar:report([{'SearchERROR', {Term, erlang:get_stacktrace()}}]),
-			server()
-	end.
-
 %% @doc Initialise the mnesia database
 initDB() ->
 	TXIndexDir = filename:join(ar_meta_db:get(data_dir), ?TX_INDEX_DIR),
 	%% Append the / to make filelib:ensure_dir/1 create a directory if one does not exist.
-	filelib:ensure_dir(TXIndexDir ++ "/"),
-	application:set_env(mnesia, dir, TXIndexDir),
-	mnesia:create_schema([node()]),
-	mnesia:start(),
-	try
-		mnesia:table_info(arql_tag, type)
-	catch
-		exit: _ ->
-			mnesia:create_table(
-				arql_tag,
-				[
-					{attributes, record_info(fields, arql_tag)},
-					{type, bag},
-					{disc_only_copies, [node()]}
-				]
-			)
+	ok = filelib:ensure_dir(TXIndexDir ++ "/"),
+	ok = application:set_env(mnesia, dir, TXIndexDir),
+	ok = ensure_schema_exists(),
+	ok = mnesia:start(),
+	ok = ensure_table_exists(),
+	ok = ensure_tx_index_exists().
+
+ensure_schema_exists() ->
+	Node = node(),
+	case mnesia:create_schema([Node]) of
+		ok -> ok;
+		{error, {Node , {already_exists, Node}}} -> ok
+	end.
+
+ensure_table_exists() ->
+	ok = case mnesia:create_table(arql_tag, [
+		{attributes, record_info(fields, arql_tag)},
+		{type, bag},
+		{disc_only_copies, [node()]}
+	]) of
+		{atomic, ok} -> ok;
+		{aborted, {already_exists, arql_tag}} -> ok
+	end,
+	ok = mnesia:wait_for_tables([arql_tag], 5000),
+	ok.
+
+ensure_tx_index_exists() ->
+	{Time, Value} = timer:tc(fun() -> mnesia:add_table_index(arql_tag, #arql_tag.tx) end),
+	case Value of
+		{atomic, ok} ->
+			ar:info([ar_tx_search, added_tx_index, {microseconds, Time}]),
+			ok;
+		{aborted, {already_exists, arql_tag, #arql_tag.tx}} ->
+			ok
 	end.
 
 %% @doc Store a transaction ID tag triplet in the index.
 storeDB(Name, Value, TXid) ->
-	mnesia:dirty_write(#arql_tag { name = Name, value = Value, tx = TXid}).
+	mnesia:write(#arql_tag { name = Name, value = Value, tx = TXid}).
 
 %% @doc Search for a list of transactions that match the given tag
 search_by_exact_tag(Name, Value) ->
-	mnesia:dirty_select(
-		arql_tag,
-		[
-			{
-				#arql_tag { name = Name, value = Value, tx = '$1'},
-				[],
-				['$1']
-			}
-		]
-	).
+	mnesia:transaction(fun() ->
+		mnesia:select(
+			arql_tag,
+			[
+				{
+					#arql_tag { name = Name, value = Value, tx = '$1'},
+					[],
+					['$1']
+				}
+			]
+		)
+	end).
 
 %% @doc Search for a list of transactions that match the given tag name
 search_by_tag_name(Name) ->
-	mnesia:dirty_select(
-		arql_tag,
-		[
-			{
-				#arql_tag { name = Name, value = '_', tx = '$1'},
-				[],
-				['$1']
-			}
-		]
-).
+	mnesia:transaction(fun() ->
+		mnesia:select(
+			arql_tag,
+			[
+				{
+					#arql_tag { name = Name, value = '_', tx = '$1'},
+					[],
+					['$1']
+				}
+			]
+		)
+	end).
 
 %% @doc Search for a list of tags for the transaction with the given ID
 search_by_id(TXID) ->
-	mnesia:dirty_select(
-		arql_tag,
-		[
-			{
-				#arql_tag { tx = TXID, _ = '_' },
-				[],
-				['$_']
-			}
-		]
-	).
+	mnesia:index_match_object(#arql_tag { tx = TXID, _ = '_' }, #arql_tag.tx).
 
 basic_usage_test() ->
 	ar_storage:clear(),
-	{ok, SearchServer} = start(),
+	ok = start(),
 	[Peer | _] = ar_network:start(10, 10),
-	ar_node:add_peers(Peer, SearchServer),
 	% Generate the transaction.
 	RawTX = ar_tx:new(),
 	TX = RawTX#tx {tags = [
@@ -258,15 +217,15 @@ basic_usage_test() ->
 	end,
 	AddTx(TX),
 	%% Get TX by tag
-	TXIDs = get_entries(SearchServer, <<"TestName">>, <<"TestVal">>),
+	TXIDs = get_entries(<<"TestName">>, <<"TestVal">>),
 	?assert(lists:member(TX#tx.id, TXIDs)),
 	%% Get tags by TX
-	{ok, Tags} = get_tags_by_id(SearchServer, TX#tx.id, 3000),
+	{ok, Tags} = get_tags_by_id(TX#tx.id),
 	?assertMatch({_, <<"TestVal">>}, lists:keyfind(<<"TestName">>, 1, Tags)),
 	%% Check aux tags
 	?assertMatch({_, 1}, lists:keyfind(<<"block_height">>, 1, Tags)),
 	%% Check that if writing the TX to the index again, the entries gets
 	%% overwritten, not duplicated.
 	AddTx(TX#tx{tags = [{<<"TestName">>, <<"Updated value">>}]}),
-	{ok, UpdatedTags} = get_tags_by_id(SearchServer, TX#tx.id, 3000),
+	{ok, UpdatedTags} = get_tags_by_id(TX#tx.id),
 	?assertMatch([<<"Updated value">>], proplists:get_all_values(<<"TestName">>, UpdatedTags)).

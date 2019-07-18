@@ -32,10 +32,12 @@ stop(Name) ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([InitCapacity]) ->
-	{ok, {InitCapacity, #{}, queue:new()}}.
+init([InitCapacity]) when is_integer(InitCapacity) ->
+	{ok, {InitCapacity, #{}, queue:new()}};
+init([infinity]) ->
+	{ok, {infinity, undefined, undefined}}.
 
-handle_call(acquire, {FromPid, FromRef}, {Capacity, WaitingPids, Queue}) ->
+handle_call(acquire, {FromPid, FromRef}, {Capacity, WaitingPids, Queue}) when is_integer(Capacity) ->
 	case maps:is_key(FromPid, WaitingPids) of
 		true ->
 			{reply, {error, process_already_waiting}, {Capacity, WaitingPids, Queue}};
@@ -48,7 +50,9 @@ handle_call(acquire, {FromPid, FromRef}, {Capacity, WaitingPids, Queue}) ->
 					Queue1 = queue:in({FromPid, FromRef}, Queue),
 					{noreply, {Capacity, WaitingPids, Queue1}}
 			end
-	end.
+	end;
+handle_call(acquire, _, {infinity, _, _} = State) ->
+	{reply, ok, State}.
 
 handle_cast(_, State) ->
 	{stop, {error, handle_cast_unsupported}, State}.

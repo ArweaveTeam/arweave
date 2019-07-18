@@ -15,7 +15,7 @@ eval(true) -> true;
 eval(false) -> false;
 eval([]) -> [];
 eval({equals, Key, Value}) ->
-    ar_tx_search:get_entries(whereis(http_search_node), Key, Value);
+    ar_tx_search:get_entries(Key, Value);
 eval({'and',E1,E2}) ->
     sets:to_list(
         sets:intersection(
