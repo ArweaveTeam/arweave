@@ -1,32 +1,10 @@
-# AR+IPFS daemon
+# IPFS Import Server
 
 ## Overview
 
-User is running an ipfs node.
+This server provides a service to registered users who want to store their ipfs hashed data on the Arweave and on Arweave's AR+IPFS nodes.
 
-User registers with Arweave:
-- Arweave creates a wallet for User
-- User pays to fund wallet or Arweave funds wallet
-- User is sent an API Key which:
-  - authorises use of Arweave's ar+ipfs api
-  - links to their wallet
-- User is sent bash script ipfsar.sh (with user's guide) to run as a daemon
-
-## bash script
-
-see `ipfsar.sh`
-
-Bash script will already have User's API Key, and an Arweave server IP address.
-
-When run, script will do the following:
-- call `ipfs pin ls` & convert output to a list of ipfs hashes
-- with each hash:
-  - if not in local ignore list
-    - curl the Arweave endpoint below
-    - on 2xx response: add hash to local ignore list
-
-### TODO periodic execution
-script currently relies on cron (or equivalent) for periodic execution.  Make self-sufficient.
+User registration is not covered in this document, but the result of registration will include an API Key, and a wallet with funds.  The server needs access to the wallet to sign "IPFS_Add" tagged TXs.  The user includes the API Key in API calls (see below).
 
 ## API endpoints
 
@@ -54,16 +32,12 @@ Sending this with a valid API Key (with sufficient funds in wallet) will cause t
 - queue the task (see below)
 - return 200
 
-task queued:
-- ipfs get the hash data
-- wrap the data into an "IPFS-Add" TX
-- estimate cost of TX
-- if not sufficient funds in wallet linked to User's API Key: add nofunds to User's status
-- TX is funded from wallet linked to User's API Key
-- submit to the Arweave network
-- Once TX has been mined:
-  - add hash to ignore list
-  - charge wallet with get-send fee
+The server will then (out-of-loop):
+- `ipfs get` the hash data and wrap it into an "IPFS-Add" TX
+- providing the user has sufficient funds, queue the TX for submission to the Arweave network
+- update the user's status with `nofunds` or `queued` as appropriate
+
+Once the TX has been mined, the server will update the user's status again, and charge the user's wallet with the getsend fee.
 
 ### Delete a hash request
 
@@ -83,18 +57,20 @@ If the hash status is `pending` or `nofunds` (see get status below), the hash re
     <     "timestamp": "2019-02-07T13:49:23+00:00",
     <     "ipfs_hash": "QmZDQb8iK7BaTAWraCrSDSygZ23UkrhXzwVUuV2ZUKm7Rw",
     <     "status": "queued"
-    <   }, ...]
+    <   },
+    <  ...
+    < ]
 
 Returns status of hashes in reverse chronological order.  Limit N and offset M are optional.  Without these arguments, status of all hashes requested by the user is returned.  Otherwise, the specified subset.
 
-Field "status" is one of:
+The "status" field is one of:
 
 - pending: waiting to be sent to an app-queue
 - queued: queued for mining into a TX
 - mined: mined into a TX
 - nofunds: User ran out of funds before hash was queued
 
-### Get ID of containing TX(s) for a specified IPFS hash
+### Get ID(s) of containing TX(s) for a specified IPFS hash
 
     > GET /api/ipfs/<key>/<ipfs_hash>/tx
 
@@ -121,7 +97,7 @@ Field "status" is one of:
     > GET /api/ipfs/<key>/balance
 
     < {
-    <   "address": "gIK2HLIhvFUoAJFcpHOqwmGeZPgVZLcE3ss8sT64gFY",
+    <   "address": "qwe...asd",
     <   "balance": "1165405188938"
     < }
 
@@ -133,11 +109,6 @@ Returns balance (in Winston) in User's wallet, along with the wallet address.
 
 - `ipfs_import` (no arguments): Start the IPFS->AR server.
 
-Starts the app_ipfs_daemon_server:
-
-- initialised the mnesia db is necessary
-- starts the cleaner_upper process (updates user hash statuses)
-
 ### shell functions
 
 - `app_ipfs_daemon_server:start()`
@@ -146,11 +117,11 @@ Starts the IPFS->AR server (in case it wasn't started at the command-line).
 
 - `app_ipfs_daemon_server:stop()`
 
-Stops all app_queue queues linked to api keys.
+Stops ter and all app_queue queues linked to api keys.
 
 - `put_key_wallet_address(APIKey, WalletAddress)`
 
-Loads the wallet keyfile from wallets/, starts an app_queue with the wallet, adds all to the mnesia db.
+Loads the wallet keyfile from `wallets/`, starts an app_queue with the wallet, adds all to the mnesia db.
 
 - `put_key_wallet(APIKey, Wallet)`
 
@@ -163,3 +134,7 @@ Returns queue pid and wallet for the key.
 - `del_key(APIKey)`
 
 Delete key from the mnesia db.  Stop the associated app_queue.
+
+## client bash script
+
+The shell script [ipfsar.sh](ipfsar.sh) is one possible way of using the service as a client.  When run, the script call `ipfs pin ls` on a local ipfs node, and sends getsend requests to a specified IPFS Import Server.  The script keeps a local ignore list, and can be run from cron or equivalent to automatically request incentivised storage for new hashes.
