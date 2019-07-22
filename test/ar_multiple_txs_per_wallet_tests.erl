@@ -79,6 +79,9 @@ accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
 does_not_allow_to_spend_mempool_tokens_test_() ->
 	test_on_fork(height_1_8, 0, fun does_not_allow_to_spend_mempool_tokens/0).
 
+does_not_allow_to_replay_empty_wallet_txs_test_() ->
+	test_on_fork(height_1_8, 0, fun does_not_allow_to_replay_empty_wallet_txs/0).
+
 mines_blocks_under_the_size_limit_test_() ->
 	lists:map(
 		fun({Name, B0, TXGroups}) ->
@@ -352,6 +355,79 @@ does_not_allow_to_spend_mempool_tokens() ->
 	SlaveBHL2 = slave_wait_until_height(Slave, 2),
 	B2 = slave_call(ar_storage, read_block, [hd(SlaveBHL2), SlaveBHL2]),
 	?assertEqual([TX3#tx.id], B2#block.txs).
+
+does_not_allow_to_replay_empty_wallet_txs() ->
+	%% Create a new wallet by sending some tokens to it. Mine a block.
+	%% Send the tokens back so that the wallet balance is back to zero. Mine a block.
+	%% Send the same amount of tokens to the same wallet again. Mine a block.
+	%% Try to replay the transaction which sent the tokens back (before and after mining).
+	%%
+	%% Expect the replay to be rejected.
+	Key1 = {_, Pub1} = ar_wallet:new(),
+	Key2 = {_, Pub2} = ar_wallet:new(),
+	[B0] = ar_weave:init([
+		{ar_wallet:to_address(Pub1), ?AR(50), <<>>}
+	]),
+	{Slave, _} = slave_start(B0),
+	TX1 = ar_tx:sign(
+		(ar_tx:new())#tx{
+			owner = Pub1,
+			target = ar_wallet:to_address(Pub2),
+			reward = ?AR(6),
+			quantity = ?AR(2)
+		},
+		Key1
+	),
+	assert_post_tx_to_slave(Slave, TX1),
+	slave_mine(Slave),
+	slave_wait_until_height(Slave, 1),
+	SlaveIP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+	GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			SlaveIP,
+			"/wallet/" ++ GetBalancePath ++ "/balance",
+			[]
+		),
+	Balance = binary_to_integer(Body),
+	TX2 = ar_tx:sign(
+		(ar_tx:new())#tx{
+			owner = Pub2,
+			target = ar_wallet:to_address(Pub1),
+			reward = Balance - ?AR(1),
+			quantity = ?AR(1)
+		},
+		Key2
+	),
+	assert_post_tx_to_slave(Slave, TX2),
+	slave_mine(Slave),
+	slave_wait_until_height(Slave, 2),
+	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			SlaveIP,
+			"/wallet/" ++ GetBalancePath ++ "/balance",
+			[]
+		),
+	?assertEqual(0, binary_to_integer(Body2)),
+	TX3 = ar_tx:sign(
+		(ar_tx:new())#tx{
+			owner = Pub1,
+			target = ar_wallet:to_address(Pub2),
+			reward = ?AR(6),
+			quantity = ?AR(2),
+			last_tx = TX1#tx.id
+		},
+		Key1
+	),
+	assert_post_tx_to_slave(Slave, TX3),
+	slave_mine(Slave),
+	slave_wait_until_height(Slave, 3),
+	%% Remove the replay TX from the ingnore list (to simulate e.g. a node restart).
+	slave_call(ets, delete, [ignored_ids, TX2#tx.id]),
+	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+		post_tx_to_slave(Slave, TX2).
 
 mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	%% Post the given transactions grouped by block size to a node.
