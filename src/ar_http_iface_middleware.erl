@@ -458,6 +458,22 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req) ->
 			Req}
 	end;
 
+%% @doc Return a block anchor to use for building transactions.
+handle(<<"GET">>, [<<"tx_anchor">>], Req) ->
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[] ->
+			{400, #{}, <<"The node has not joined the network yet.">>, Req};
+		BHL when is_list(BHL) ->
+			{
+				200,
+				#{},
+				ar_util:encode(
+					lists:nth(min(length(BHL), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, BHL)
+				),
+				Req
+			}
+	end;
+
 %% @doc Return transaction identifiers (hashes) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req) ->
