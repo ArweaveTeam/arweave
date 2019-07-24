@@ -146,8 +146,17 @@ ensure_table_exists() ->
 		{atomic, ok} -> ok;
 		{aborted, {already_exists, arql_tag}} -> ok
 	end,
-	ok = mnesia:wait_for_tables([arql_tag], 5000),
-	ok.
+	case mnesia:wait_for_tables([arql_tag], 5000) of
+		ok ->
+			ok;
+		{timeout, _} ->
+			%% Force loading the table in case a transaction has been
+			%% interrupted and machine's hostname has changed.
+			%% We always work with a single Mnesia node only so it does not
+			%% cause an inconsistent database state.
+			yes = mnesia:force_load_table(arql_tag),
+			ok
+	end.
 
 ensure_tx_index_exists() ->
 	{Time, Value} = timer:tc(fun() -> mnesia:add_table_index(arql_tag, #arql_tag.tx) end),
