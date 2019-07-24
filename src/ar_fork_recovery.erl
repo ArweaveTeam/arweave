@@ -34,7 +34,7 @@ start(Peers, TargetBShadow, HashList, Parent, BlockTXPairs) ->
 					{started_fork_recovery_proc, Parent},
 					{block, ar_util:encode(TargetBShadow#block.indep_hash)},
 					{target_height, TargetBShadow#block.height},
-					{peer, Peers}
+					{top_peers, lists:sublist(Peers, 5)}
 				]
 			),
 			% Ensures that the block is within the recovery range and is has
