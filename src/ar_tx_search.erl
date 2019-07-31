@@ -3,7 +3,7 @@
 -export([update_tag_table/1]).
 -export([get_entries/2, get_tags_by_id/1]).
 -export([get_entries_by_tag_name/1]).
--export([get_tx_block_height/1]).
+-export([sort_txids/1]).
 -export([delete_tx_records/1]).
 
 -include("ar.hrl").
@@ -65,14 +65,29 @@ get_entries_by_tag_name(Name) ->
 	{atomic, TXIDs} = search_by_tag_name(Name),
 	TXIDs.
 
-get_tx_block_height(TXID) ->
-	{atomic, [Record]} = mnesia:transaction(fun() ->
-		mnesia:index_match_object(
-			#arql_tag{ tx = TXID, name = <<"block_height">>, value = '_' },
-			#arql_tag.tx
-		)
+sort_txids(TXIDs) ->
+	{atomic, SearchList} = mnesia:transaction(fun() ->
+		mnesia:select(arql_tag, [{
+			#arql_tag { name = <<"block_height">>, tx = '$1', value = '$2'},
+			[],
+			[{{'$1', '$2'}}]
+		}])
 	end),
-	{Record#arql_tag.value, TXID}.
+	{_, TXIDHeightPairs} = lists:foldl(
+		fun(TXID, {SearchList, TXIDHeightPairs}) ->
+			case lists:keytake(TXID, 1, SearchList) of
+				{value, {TXID, Height}, NewSearchList} ->
+					{NewSearchList, [{Height, TXID} | TXIDHeightPairs]};
+				false ->
+					{SearchList, TXIDHeightPairs}
+			end
+		end,
+		{SearchList, []},
+		TXIDs
+	),
+	SortedPairs = lists:sort(fun(A, B) -> A >= B end, TXIDHeightPairs),
+	SortedTXIDs = lists:map(fun({_, TXID}) -> TXID end, SortedPairs),
+	SortedTXIDs.
 
 %% @doc Updates the tag index with the information of all the transactions in
 %% the given block as part of a single transaction.

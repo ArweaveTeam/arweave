@@ -216,10 +216,8 @@ handle(<<"POST">>, [<<"arql">>], Req) ->
 			case ar_serialize:json_struct_to_query(QueryJson) of
 				{ok, Query} ->
 					TXIDs = ar_util:unique(ar_parser:eval(Query)),
-					TXBlockHeightPairs = lists:map(fun ar_tx_search:get_tx_block_height/1, TXIDs),
-					SortedPairs = lists:sort(fun(A, B) -> A >= B end, TXBlockHeightPairs),
-					SortedTXs = [TXID || {_, TXID} <- SortedPairs],
-					Body = ar_serialize:jsonify(ar_serialize:hash_list_to_json_struct(SortedTXs)),
+					SortedTXIDs = ar_tx_search:sort_txids(TXIDs),
+					Body = ar_serialize:jsonify(ar_serialize:hash_list_to_json_struct(SortedTXIDs)),
 					{200, #{}, Body, ReadReq};
 				{error, _} ->
 					{400, #{}, <<"Invalid ARQL query.">>, ReadReq}
