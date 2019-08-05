@@ -631,7 +631,6 @@ generate_block_data_segment(NextB, RecallB) ->
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{id := BinID, hash_list := not_joined} = StateIn, BHL, BlockTXPairs) ->
 	#{ txs := TXs } = StateIn,
-	timer:sleep(15 * 1000), % Waiting for blocks to be written to disk before reading NewB.
 	NewB = ar_storage:read_block(hd(BHL), BHL),
 	ar:report_console(
 		[
