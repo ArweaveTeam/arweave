@@ -36,7 +36,6 @@
 		ar_merkle,
 		ar_storage,
 		ar_serialize,
-		ar_services,
 		ar_tx,
 		ar_weave,
 		ar_wallet,

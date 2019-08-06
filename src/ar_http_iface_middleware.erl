@@ -610,31 +610,6 @@ handle(<<"GET">>, [<<"block">>, <<"current">>], Req) ->
 handle(<<"GET">>, [<<"current_block">>], Req) ->
 	handle(<<"GET">>, [<<"block">>, <<"current">>], Req);
 
-%% @doc Return a list of known services.
-%% GET request to endpoint /services
-handle(<<"GET">>, [<<"services">>], Req) ->
-	{200, #{},
-		ar_serialize:jsonify(
-			{
-				[
-					{
-						[
-							{"name", Name},
-							{"host", ar_util:format_peer(Host)},
-							{"expires", Expires}
-						]
-					}
-				||
-					#service {
-						name = Name,
-						host = Host,
-						expires = Expires
-					} <- ar_services:get(whereis(http_service_node))
-				]
-			}
-		),
-	Req};
-
 %% @doc Return a given field of the transaction specified by the transaction ID (hash).
 %% GET request to endpoint /tx/{hash}/{field}
 %%
@@ -674,30 +649,6 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req) ->
 					Res = val_for_key(Field, TXJSON),
 					{200, #{}, Res, Req}
 			end
-	end;
-
-%% @doc Share the location of a given service with a peer.
-%% POST request to endpoint /services where the body of the request is a JSON encoded serivce as
-%% specified in ar_serialize.
-handle(<<"POST">>, [<<"services">>], Req) ->
-	case read_complete_body(Req) of
-		{ok, BodyBin, ReadReq} ->
-			{ServicesJSON} = ar_serialize:jsonify(BodyBin),
-			ar_services:add(
-				whereis(http_services_node),
-				lists:map(
-					fun({Vals}) ->
-						{<<"name">>, Name} = lists:keyfind(<<"name">>, 1, Vals),
-						{<<"host">>, Host} = lists:keyfind(<<"host">>, 1, Vals),
-						{<<"expires">>, Expiry} = lists:keyfind(<<"expires">>, 1, Vals),
-						#service { name = Name, host = Host, expires = Expiry }
-					end,
-					ServicesJSON
-				)
-			),
-			{200, #{}, "OK", ReadReq};
-		{error, body_size_too_large, TooLargeReq} ->
-			reply_with_413(TooLargeReq)
 	end;
 
 %% @doc Return the current block hieght, or 500
