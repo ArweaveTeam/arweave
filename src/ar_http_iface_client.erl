@@ -401,8 +401,15 @@ process_get_info(Props) ->
 %% @doc Process the response of an /block call.
 handle_block_response(Peer, Response, BHL) ->
 	case catch handle_block_response1(Peer, Response, BHL) of
-		{'EXIT', _} -> unavailable;
-		Handled -> Handled
+		{'EXIT', Reason} ->
+			ar:info([
+				"Failed to parse block response.",
+				{peer, Peer},
+				{reason, Reason}
+			]),
+			unavailable;
+		Handled ->
+			Handled
 	end.
 
 handle_block_response1(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
