@@ -10,8 +10,10 @@
 -export([assert_wait_until_receives_txs/2]).
 -export([assert_slave_wait_until_receives_txs/2]).
 -export([post_tx_to_slave/2, post_tx_to_master/2]).
--export([assert_post_tx_to_slave/2]).
+-export([assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
 -export([sign_tx/1, sign_tx/2]).
+-export([get_tx_anchor/0]).
+-export([join/1]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -39,6 +41,15 @@ start(B0, Peer) ->
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	{Node, B0}.
+
+join(Peer) ->
+	Node = ar_node:start([Peer]),
+	ar_http_iface_server:reregister(http_entrypoint_node, Node),
+	ar_meta_db:reset_peer(Peer),
+	Bridge = ar_bridge:start([], Node, ar_meta_db:get(port)),
+	ar_http_iface_server:reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	Node.
 
 connect_to_slave() ->
 	%% Connect the nodes by making two HTTP calls.
@@ -173,6 +184,9 @@ post_tx_to_slave(Slave, TX) ->
 assert_post_tx_to_slave(Slave, TX) ->
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Slave, TX).
 
+assert_post_tx_to_master(Master, TX) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(Master, TX).
+
 post_tx_to_master(Master, TX) ->
 	MasterIP = {127, 0, 0, 1, ar_meta_db:get(port)},
 	Reply =
@@ -227,3 +241,14 @@ sign_tx(Wallet, TXParams) ->
 		},
 		Wallet
 	).
+
+get_tx_anchor() ->
+	IP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			IP,
+			"/tx_anchor",
+			[]
+		),
+	ar_util:decode(Reply).
