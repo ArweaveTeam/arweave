@@ -161,7 +161,7 @@ ensure_table_exists() ->
 		{atomic, ok} -> ok;
 		{aborted, {already_exists, arql_tag}} -> ok
 	end,
-	ok = mnesia:wait_for_tables([arql_tag], 5000),
+	ok = mnesia:wait_for_tables([arql_tag], 60000),
 	ok.
 
 ensure_tx_index_exists() ->
