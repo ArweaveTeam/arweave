@@ -1,6 +1,6 @@
 -module(ar_http_iface_middleware).
 -behaviour(cowboy_middleware).
--export([execute/2, read_complete_body/1]).
+-export([execute/2]).
 -include("ar.hrl").
 -define(HANDLER_TIMEOUT, 55000).
 
@@ -16,10 +16,9 @@
 %% the cowboy_handler middleware run prometheus_cowboy2_handler.
 execute(Req, #{ handler := ar_http_iface_handler } = Env) ->
 	Pid = self(),
-	Req1 = with_pid_req_field(Req, Pid),
-	Req2 = with_arql_semaphore_req_field(Req1, Env),
+	Req1 = with_arql_semaphore_req_field(Req, Env),
 	HandlerPid = spawn_link(fun() ->
-		Pid ! {handled, handle(Req2)}
+		Pid ! {handled, handle(Req1)}
 	end),
 	{ok, TimeoutRef} = timer:send_after(
 		?HANDLER_TIMEOUT,
@@ -33,17 +32,9 @@ execute(Req, Env) ->
 %%% Private functions.
 %%%===================================================================
 
-with_pid_req_field(Req, Pid) ->
-	Req#{ '_ar_http_iface_middleware_pid' => Pid }.
-
 with_arql_semaphore_req_field(Req, #{ arql_semaphore := Name }) ->
 	Req#{ '_ar_http_iface_middleware_arql_semaphore' => Name }.
 
-%% @doc In order to be able to have a handler-side timeout, we need to
-%% handle the request asynchronously. However, cowboy doesn't allow
-%% reading the request's body from a process other than its handler's.
-%% This following loop function allows us to work around this
-%% limitation. (see https://github.com/ninenines/cowboy/issues/1374)
 loop(TimeoutRef) ->
 	receive
 		{handled, {Status, Headers, Body, HandledReq}} ->
@@ -51,10 +42,6 @@ loop(TimeoutRef) ->
 			CowboyStatus = handle208(Status),
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
 			{stop, RepliedReq};
-		{read_complete_body, From, Req} ->
-			Term = do_read_complete_body(Req),
-			From ! {read_complete_body, Term},
-			loop(TimeoutRef);
 		{timeout, HandlerPid, InitialReq} ->
 			unlink(HandlerPid),
 			exit(HandlerPid, handler_timeout),
@@ -211,19 +198,15 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req) ->
 %%
 handle(<<"POST">>, [<<"arql">>], Req) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	case read_complete_body(Req) of
-		{ok, QueryJson, ReadReq} ->
-			case ar_serialize:json_struct_to_query(QueryJson) of
-				{ok, Query} ->
-					TXIDs = ar_util:unique(ar_parser:eval(Query)),
-					SortedTXIDs = ar_tx_search:sort_txids(TXIDs),
-					Body = ar_serialize:jsonify(ar_serialize:hash_list_to_json_struct(SortedTXIDs)),
-					{200, #{}, Body, ReadReq};
-				{error, _} ->
-					{400, #{}, <<"Invalid ARQL query.">>, ReadReq}
-			end;
-		{error, body_size_too_large, TooLargeReq} ->
-			reply_with_413(TooLargeReq)
+	QueryJson = ar_http_req:body(Req),
+	case ar_serialize:json_struct_to_query(QueryJson) of
+		{ok, Query} ->
+			TXIDs = ar_util:unique(ar_parser:eval(Query)),
+			SortedTXIDs = ar_tx_search:sort_txids(TXIDs),
+			Body = ar_serialize:jsonify(ar_serialize:hash_list_to_json_struct(SortedTXIDs)),
+			{200, #{}, Body, Req};
+		{error, _} ->
+			{400, #{}, <<"Invalid ARQL query.">>, Req}
 	end;
 
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
@@ -275,17 +258,13 @@ handle(<<"POST">>, [<<"wallet">>], Req) ->
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
 handle(<<"POST">>, [<<"tx">>], Req) ->
-	case read_complete_body(Req) of
-		{ok, TXJSON, ReadReq} ->
-			TX = ar_serialize:json_struct_to_tx(TXJSON),
-			case handle_post_tx(TX) of
-				ok ->
-					{200, #{}, <<"OK">>, ReadReq};
-				{error_response, {Status, Headers, Body}} ->
-					{Status, Headers, Body, ReadReq}
-			end;
-		{error, body_size_too_large, TooLargeReq} ->
-			reply_with_413(TooLargeReq)
+	TXJSON = ar_http_req:body(Req),
+	TX = ar_serialize:json_struct_to_tx(TXJSON),
+	case handle_post_tx(TX) of
+		ok ->
+			{200, #{}, <<"OK">>, Req};
+		{error_response, {Status, Headers, Body}} ->
+			{Status, Headers, Body, Req}
 	end;
 
 %% @doc Sign and send a tx to the network.
@@ -295,32 +274,28 @@ handle(<<"POST">>, [<<"tx">>], Req) ->
 handle(<<"POST">>, [<<"unsigned_tx">>], Req) ->
 	case check_internal_api_secret(Req) of
 		pass ->
-			case read_complete_body(Req) of
-				{ok, Body, ReadReq} ->
-					{UnsignedTXProps} = ar_serialize:dejsonify(Body),
-					WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, UnsignedTXProps),
-					%% ar_serialize:json_struct_to_tx/1 requires all properties to be there,
-					%% so we're adding id, owner and signature with bogus values. These
-					%% will later be overwritten in ar_tx:sign/2
-					FullTxProps = lists:append(
-						proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
-						[
-							{<<"id">>, ar_util:encode(<<"id placeholder">>)},
-							{<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
-							{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
-						]
-					),
-					KeyPair = ar_wallet:load_keyfile(ar_wallet:wallet_filepath(WalletAccessCode)),
-					UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
-					SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
-					case handle_post_tx(SignedTX) of
-						ok ->
-							{200, #{}, ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}), ReadReq};
-						{error_response, {Status, Headers, Body}} ->
-							{Status, Headers, Body, ReadReq}
-					end;
-				{error, body_size_too_large, TooLargeReq} ->
-					reply_with_413(TooLargeReq)
+			Body = ar_http_req:body(Req),
+			{UnsignedTXProps} = ar_serialize:dejsonify(Body),
+			WalletAccessCode = proplists:get_value(<<"wallet_access_code">>, UnsignedTXProps),
+			%% ar_serialize:json_struct_to_tx/1 requires all properties to be there,
+			%% so we're adding id, owner and signature with bogus values. These
+			%% will later be overwritten in ar_tx:sign/2
+			FullTxProps = lists:append(
+				proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
+				[
+					{<<"id">>, ar_util:encode(<<"id placeholder">>)},
+					{<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
+					{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
+				]
+			),
+			KeyPair = ar_wallet:load_keyfile(ar_wallet:wallet_filepath(WalletAccessCode)),
+			UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
+			SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
+			case handle_post_tx(SignedTX) of
+				ok ->
+					{200, #{}, ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}), Req};
+				{error_response, {Status, Headers, Body}} ->
+					{Status, Headers, Body, Req}
 			end;
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
@@ -388,27 +363,23 @@ handle(<<"GET">>, [<<"wallet_list">>], Req) ->
 %% nodes network information JSON encoded as specified in ar_serialize.
 % NOTE: Consider returning remaining timeout on a failed request
 handle(<<"POST">>, [<<"peers">>], Req) ->
-	case read_complete_body(Req) of
-		{ok, BlockJSON, ReadReq} ->
-			case ar_serialize:dejsonify(BlockJSON) of
-				{Struct} ->
-					{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-					case (NetworkName == <<?NETWORK_NAME>>) of
-						false ->
-							{400, #{}, <<"Wrong network.">>, ReadReq};
-						true ->
-							Peer = arweave_peer(ReadReq),
-							case ar_meta_db:get({peer, Peer}) of
-								not_found ->
-									ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
-								X -> X
-							end,
-							{200, #{}, [], ReadReq}
-					end;
-				_ -> {400, #{}, "Wrong network", ReadReq}
+	BlockJSON = ar_http_req:body(Req),
+	case ar_serialize:dejsonify(BlockJSON) of
+		{Struct} ->
+			{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
+			case (NetworkName == <<?NETWORK_NAME>>) of
+				false ->
+					{400, #{}, <<"Wrong network.">>, Req};
+				true ->
+					Peer = arweave_peer(Req),
+					case ar_meta_db:get({peer, Peer}) of
+						not_found ->
+							ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
+						X -> X
+					end,
+					{200, #{}, [], Req}
 			end;
-		{error, body_size_too_large, TooLargeReq} ->
-			reply_with_413(TooLargeReq)
+		_ -> {400, #{}, "Wrong network", Req}
 	end;
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
@@ -687,35 +658,11 @@ arweave_peer(Req) ->
 sendfile(Filename) ->
 	{sendfile, 0, filelib:file_size(Filename), Filename}.
 
-read_complete_body(#{'_ar_http_iface_middleware_pid' := Pid} = Req) ->
-	Pid ! {read_complete_body, self(), Req},
-	receive
-		{read_complete_body, Term} -> Term
-	end.
-
 arql_semaphore(#{'_ar_http_iface_middleware_arql_semaphore' := Name}) ->
 	Name.
 
-do_read_complete_body(Req) ->
-	do_read_complete_body(Req, <<>>).
-
-do_read_complete_body(Req, Acc) ->
-	{MoreOrOk, Data, ReadReq} = cowboy_req:read_body(Req),
-	NewAcc = <<Acc/binary, Data/binary>>,
-	do_read_complete_body(MoreOrOk, NewAcc, ReadReq).
-
-do_read_complete_body(_, Data, Req) when byte_size(Data) > ?MAX_BODY_SIZE ->
-	{error, body_size_too_large, Req};
-do_read_complete_body(more, Data, Req) ->
-	do_read_complete_body(Req, Data);
-do_read_complete_body(ok, Data, Req) ->
-	{ok, Data, Req}.
-
 not_found(Req) ->
 	{400, #{}, <<"Request type not found.">>, Req}.
-
-reply_with_413(Req) ->
-	{413, #{}, <<"Payload too large">>, Req}.
 
 %% @doc Get the filename for an encoded TX id.
 get_tx_filename(Hash) ->
@@ -975,19 +922,15 @@ is_a_pending_tx(ID) ->
 
 %% @doc Given a request, returns a blockshadow.
 request_to_struct_with_blockshadow(Req) ->
-	case read_complete_body(Req) of
-		{ok, BlockJSON, ReadReq} ->
-			try
-				{Struct} = ar_serialize:dejsonify(BlockJSON),
-				JSONB = val_for_key(<<"new_block">>, Struct),
-				BShadow = ar_serialize:json_struct_to_block(JSONB),
-				{ok, {Struct, BShadow}, ReadReq}
-			catch
-				Exception:Reason ->
-					{error, {Exception, Reason}, ReadReq}
-			end;
-		{error, body_size_too_large, TooLargeReq} ->
-			{error, body_size_too_large, TooLargeReq}
+	BlockJSON = ar_http_req:body(Req),
+	try
+		{Struct} = ar_serialize:dejsonify(BlockJSON),
+		JSONB = val_for_key(<<"new_block">>, Struct),
+		BShadow = ar_serialize:json_struct_to_block(JSONB),
+		{ok, {Struct, BShadow}, Req}
+	catch
+		Exception:Reason ->
+			{error, {Exception, Reason}, Req}
 	end.
 
 %% @doc Generate and return an informative JSON object regarding
@@ -1057,8 +1000,6 @@ post_block(read_blockshadow, OrigPeer, Req) ->
 	case request_to_struct_with_blockshadow(Req) of
 		{error, {_, _}, ReadReq} ->
 			{400, #{}, <<"Invalid block.">>, ReadReq};
-		{error, body_size_too_large, TooLargeReq} ->
-			reply_with_413(TooLargeReq);
 		{ok, {ReqStruct, BShadow}, ReadReq} ->
 			post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, ReadReq)
 	end;
