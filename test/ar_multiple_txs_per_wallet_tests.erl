@@ -9,8 +9,10 @@
 -import(ar_test_node, [wait_until_height/2, slave_wait_until_height/2]).
 -import(ar_test_node, [slave_call/3]).
 -import(ar_test_node, [post_tx_to_slave/2, post_tx_to_master/2]).
--import(ar_test_node, [assert_post_tx_to_slave/2]).
+-import(ar_test_node, [assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
 -import(ar_test_node, [sign_tx/1, sign_tx/2]).
+-import(ar_test_node, [get_tx_anchor/0, join/1]).
+-import(ar_test_node, [assert_wait_until_block_hash_list/2]).
 -import(ar_test_fork, [test_on_fork/3]).
 
 accepts_gossips_and_mines_test_() ->
@@ -155,6 +157,11 @@ rejects_txs_with_outdated_anchors_test_() ->
 
 rejects_txs_exceeding_mempool_limit_test_() ->
 	test_on_fork(height_1_8, 0, fun rejects_txs_exceeding_mempool_limit/0).
+
+joins_network_successfully_test_() ->
+	%% Fork height must be a retarget height so that we have
+	%% a difficulty switch on time.
+	test_on_fork(height_1_8, 10, fun() -> joins_network_successfully(10) end).
 
 accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Post the given transactions made from the given wallets to a node.
@@ -542,6 +549,82 @@ rejects_txs_exceeding_mempool_limit() ->
 	{ok, {{<<"400">>, _}, _, <<"Mempool is full.">>, _, _}} =
 		post_tx_to_slave(Slave, lists:last(TXs)).
 
+joins_network_successfully(ForkHeight) ->
+	%% Start a node and mine ?MAX_TX_ANCHOR_DEPTH blocks, some of them
+	%% with transactions.
+	%%
+	%% Join this node by another node.
+	%% Post a transaction with an outdated anchor to the new node.
+	%% Expect it to be rejected.
+	%%
+	%% Try to replay the transactions from the weave on the new node.
+	%% Expect them to be rejected.
+	Key = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([
+		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
+	]),
+	{Slave, _} = slave_start(B0),
+	slave_call(ar_meta_db, put, [requests_per_minute_limit, 10000]),
+	{PreForkTXs, _} = lists:foldl(
+		fun(Height, {TXs, LastTX}) ->
+			TX = sign_tx(Key, #{ last_tx => LastTX }),
+			assert_post_tx_to_slave(Slave, TX),
+			slave_mine(Slave),
+			slave_wait_until_height(Slave, Height),
+			{TXs ++ [TX], TX#tx.id}
+		end,
+		{[], <<>>},
+		lists:seq(1, ForkHeight)
+	),
+	PostForkTXs = lists:foldl(
+		fun(Height, TXs) ->
+			BH = get_tx_anchor(),
+			NewTXs = lists:map(
+				fun(_) ->
+					TX = sign_tx(
+						Key,
+						#{
+							last_tx => BH,
+							tags => [{<<"nonce">>, integer_to_binary(rand:uniform(100))}]
+						}
+					),
+					assert_post_tx_to_slave(Slave, TX),
+					TX
+				end,
+				lists:seq(1, rand:uniform(5))
+			),
+			slave_mine(Slave),
+			slave_wait_until_height(Slave, Height),
+			TXs ++ NewTXs
+		end,
+		[],
+		lists:seq(ForkHeight + 1, ?MAX_TX_ANCHOR_DEPTH)
+	),
+	Master = join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}),
+	BHL = slave_call(ar_node, get_hash_list, [Slave]),
+	assert_wait_until_block_hash_list(Master, BHL),
+	TX1 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BHL) }),
+	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+		post_tx_to_master(Master, TX1),
+	TX2 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
+	assert_post_tx_to_master(Master, TX2),
+	%% Remove transactions from the ignore list.
+	forget_txs(PreForkTXs ++ PostForkTXs),
+	lists:foreach(
+		fun(TX) ->
+			{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+				post_tx_to_master(Master, TX)
+		end,
+		PreForkTXs
+	),
+	lists:foreach(
+		fun(TX) ->
+			{ok, {{<<"400">>, _}, _, <<"Transaction is already on the weave.">>, _, _}} =
+				post_tx_to_master(Master, TX)
+		end,
+		PostForkTXs
+	).
+
 one_wallet_list_one_block_anchored_txs(Key, B0) ->
 	%% Sign only after the node has started to get the correct price
 	%% estimation from it.
@@ -616,3 +699,11 @@ slave_mine_blocks(Slave, Height, TargetHeight) ->
 	slave_mine(Slave),
 	slave_wait_until_height(Slave, Height),
 	slave_mine_blocks(Slave, Height + 1, TargetHeight).
+
+forget_txs(TXs) ->
+	lists:foreach(
+		fun(TX) ->
+			ets:delete(ignored_ids, TX#tx.id)
+		end,
+		TXs
+	).
