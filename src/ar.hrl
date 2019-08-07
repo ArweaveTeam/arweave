@@ -129,7 +129,7 @@
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
 %% @doc Default timeout used when sending to and receiving from a TCP socket
 %%      when making an HTTP request.
--define(HTTP_REQUEST_SEND_TIMEOUT, 25 * 1000).
+-define(HTTP_REQUEST_SEND_TIMEOUT, 60 * 1000).
 
 %% @doc Default timeout value for local requests
 -define(LOCAL_NET_TIMEOUT, 30 * 1000).
