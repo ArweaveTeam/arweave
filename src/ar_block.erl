@@ -557,7 +557,7 @@ get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
 				unavailable ->
 					ar:report([{downloading_recall_block, ar_util:encode(RecallHash)}]),
 					FullBlock =
-						ar_http_iface_client:get_full_block(OrigPeer, RecallHash, BHL),
+						ar_node_utils:get_full_block(OrigPeer, RecallHash, BHL),
 					case ?IS_BLOCK(FullBlock)  of
 						true ->
 							ar_storage:write_full_block(FullBlock),

@@ -125,7 +125,7 @@ fetch_and_store_block(_, _, []) ->
 	{error, could_not_download};
 fetch_and_store_block(BH, BHL, [Peer | Peers]) ->
 	io:format("Downloading block: ~p~n", [ar_util:encode(BH)]),
-	case ar_http_iface_client:get_full_block(Peer, BH, BHL) of
+	case ar_node_utils:get_full_block(Peer, BH, BHL) of
 		B when ?IS_BLOCK(B) ->
 			ar_storage:write_full_block(B),
 			{ok, B};

@@ -47,9 +47,8 @@ get_remote_block_hash_list([Peer | Peers]) ->
 	end.
 
 get_remote_block_pair(Peer, BHL) ->
-	case ar_http_iface_client:get_full_block(Peer, hd(BHL), BHL) of
+	case ar_node_utils:get_full_block(Peer, hd(BHL), BHL) of
 		unavailable -> unavailable;
-		not_found -> unavailable;
 		B -> get_remote_block_pair(Peer, BHL, B)
 	end.
 
@@ -76,7 +75,7 @@ get_block(BH, BHL, Peer) ->
 	end.
 
 get_block_remote(BH, BHL, Peer) ->
-	case ar_http_iface_client:get_full_block(Peer, BH, BHL) of
+	case ar_node_utils:get_full_block(Peer, BH, BHL) of
 		unavailable -> unavailable;
 		not_found -> unavailable;
 		B ->

@@ -52,19 +52,23 @@ get_full_block(Pid, ID, BHL) when is_pid(Pid) ->
 		{error, _} ->
 			unavailable
 	end;
-get_full_block(Host, ID, BHL) ->
+get_full_block(Peer, ID, BHL) ->
 	%% Handle external peer request.
-	ar_http_iface_client:get_full_block(Host, ID, BHL).
+	case ar_http_iface_client:get_full_block([Peer], ID, BHL) of
+		{_Peer, B} ->
+			B;
+		Error ->
+			Error
+	end.
 
 %% @doc Attempt to get a full block from a HTTP peer, picking the node to query
 %% randomly until the block is retreived.
 get_full_block_from_remote_peers([], _ID, _BHL) ->
 	unavailable;
 get_full_block_from_remote_peers(Peers, ID, BHL) ->
-	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	{Time, B} = timer:tc(fun() -> get_full_block(Peer, ID, BHL) end),
-	case ?IS_BLOCK(B) of
-		true ->
+	{Time, MaybeB} = timer:tc(fun() -> ar_http_iface_client:get_full_block(Peers, ID, BHL) end),
+	case MaybeB of
+		{Peer, B} when ?IS_BLOCK(B) ->
 			case ar_meta_db:get(http_logging) of
 				true ->
 					ar:info(
@@ -77,8 +81,8 @@ get_full_block_from_remote_peers(Peers, ID, BHL) ->
 				_ -> do_nothing
 			end,
 			B;
-		false ->
-			get_full_block_from_remote_peers(Peers -- [Peer], ID, BHL)
+		_ ->
+			unavailable
 	end.
 
 %% @doc Return the hash of the next recall block.
