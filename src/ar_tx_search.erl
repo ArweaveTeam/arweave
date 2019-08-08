@@ -24,6 +24,7 @@
 %%% the downloaded blocks.
 
 -record(arql_tag, {name, value, tx}).
+-record(arql_block, {tx, block_indep_hash, block_height}).
 
 %% @doc Start a search node.
 start() ->
@@ -44,21 +45,29 @@ delete_for_tx(TXID) ->
 	).
 
 get_tags_by_id(TXID) ->
-	{atomic, Records} = mnesia:transaction(fun() -> search_by_id(TXID) end),
-	Tags = lists:map(
-		fun(Record) ->
-			{_, Name, Value, _} = Record,
-			{Name, Value}
-		end,
-		Records
+	{atomic, Records} = mnesia:transaction(
+		fun() ->
+			Tags = lists:map(
+				fun(Record) ->
+					{_, Name, Value, _} = Record,
+					{Name, Value}
+				end,
+				search_arql_tag_by_id(TXID)
+			),
+			BlockInfo = search_arql_block_by_id(TXID),
+			case BlockInfo of
+				[] ->
+					%% For the old records block information is stored along with the tags.
+					Tags;
+				[{IndepHash, Height}] ->
+					%% The old records contain the block information which needs to be
+					%% replaced by the relevant information from the new table.
+					Tags2 = lists:keystore(<<"block_indep_hash">>, 1, Tags, {<<"block_indep_hash">>, IndepHash}),
+					lists:keystore(<<"block_height">>, 1, Tags2, {<<"block_height">>, Height})
+			end
+		end
 	),
-	{ok, Tags}.
-
-%% @doc Returns a list of all transaction IDs which have the tag Name set to
-%% Value. Duplicates might be returned due to the duplication in the index.
-get_entries(Name, Value) ->
-	{atomic, TXIDs} = search_by_exact_tag(Name, Value),
-	TXIDs.
+	{ok, Records}.
 
 %% @doc Returns a list of all transaction IDs which have the given tag Name.
 get_entries_by_tag_name(Name) ->
@@ -67,19 +76,25 @@ get_entries_by_tag_name(Name) ->
 
 sort_txids(TXIDs) ->
 	{atomic, SearchList} = mnesia:transaction(fun() ->
-		mnesia:select(arql_tag, [{
+		NewEntries = mnesia:select(arql_block, [{
+			#arql_block { block_height = '$2', tx = '$1', block_indep_hash = '_' },
+			[],
+			[{{'$1', '$2'}}]
+		}]),
+		OldEntries = mnesia:select(arql_tag, [{
 			#arql_tag { name = <<"block_height">>, tx = '$1', value = '$2'},
 			[],
 			[{{'$1', '$2'}}]
-		}])
+		}]),
+		ar_util:unique(OldEntries ++ NewEntries)
 	end),
 	{_, TXIDHeightPairs} = lists:foldl(
-		fun(TXID, {SearchList, TXIDHeightPairs}) ->
-			case lists:keytake(TXID, 1, SearchList) of
+		fun(TXID, {CurrentSearchList, TXIDHeightPairs}) ->
+			case lists:keytake(TXID, 1, CurrentSearchList) of
 				{value, {TXID, Height}, NewSearchList} ->
 					{NewSearchList, [{Height, TXID} | TXIDHeightPairs]};
 				false ->
-					{SearchList, TXIDHeightPairs}
+					{CurrentSearchList, TXIDHeightPairs}
 			end
 		end,
 		{SearchList, []},
@@ -100,32 +115,25 @@ update_tag_table(B) when ?IS_BLOCK(B) ->
 	{atomic, ok} = mnesia:transaction(fun() ->
 		lists:foreach(
 			fun(TX) ->
-				case TX of
-					unavailable ->
-						do_nothing;
-					_ ->
-							delete_for_tx(TX#tx.id),
-							AddEntry = fun({Name, Value}) ->
-								storeDB(Name, Value, TX#tx.id)
-							end,
-							lists:foreach(AddEntry, entries(IndepHash, Height, TX))
-				end
+				AddEntry = fun({Name, Value}) ->
+					storeTags(Name, Value, TX#tx.id)
+				end,
+				lists:foreach(AddEntry, entries(TX)),
+				storeBlockInfo(TX#tx.id, ar_util:encode(IndepHash), Height)
 			end,
-			ar_storage:read_tx(TXs)
+			TXs
 		)
 	end),
 	ok;
 update_tag_table(_) ->
 	not_a_block.
 
-entries(IndepHash, Height, TX) ->
+entries(TX) ->
 	AuxTags = [
 		{<<"from">>, ar_util:encode(ar_wallet:to_address(TX#tx.owner))},
 		{<<"to">>, ar_util:encode(ar_wallet:to_address(TX#tx.target))},
 		{<<"quantity">>, TX#tx.quantity},
-		{<<"reward">>, TX#tx.reward},
-		{<<"block_height">>, Height},
-		{<<"block_indep_hash">>, ar_util:encode(IndepHash)}
+		{<<"reward">>, TX#tx.reward}
 	],
 	AuxTags ++ multi_delete(TX#tx.tags, proplists:get_keys(AuxTags)).
 
@@ -142,7 +150,8 @@ initDB() ->
 	ok = application:set_env(mnesia, dir, TXIndexDir),
 	ok = ensure_schema_exists(),
 	ok = mnesia:start(),
-	ok = ensure_table_exists(),
+	ok = ensure_arql_tag_exists(),
+	ok = ensure_arql_block_exists(),
 	ok = ensure_tx_index_exists().
 
 ensure_schema_exists() ->
@@ -152,7 +161,7 @@ ensure_schema_exists() ->
 		{error, {Node , {already_exists, Node}}} -> ok
 	end.
 
-ensure_table_exists() ->
+ensure_arql_tag_exists() ->
 	ok = case mnesia:create_table(arql_tag, [
 		{attributes, record_info(fields, arql_tag)},
 		{type, bag},
@@ -162,6 +171,18 @@ ensure_table_exists() ->
 		{aborted, {already_exists, arql_tag}} -> ok
 	end,
 	ok = mnesia:wait_for_tables([arql_tag], 60000),
+	ok.
+
+ensure_arql_block_exists() ->
+	ok = case mnesia:create_table(arql_block, [
+		{attributes, record_info(fields, arql_block)},
+		{type, set},
+		{disc_only_copies, [node()]}
+	]) of
+		{atomic, ok} -> ok;
+		{aborted, {already_exists, arql_block}} -> ok
+	end,
+	ok = mnesia:wait_for_tables([arql_block], 60000),
 	ok.
 
 ensure_tx_index_exists() ->
@@ -175,42 +196,126 @@ ensure_tx_index_exists() ->
 	end.
 
 %% @doc Store a transaction ID tag triplet in the index.
-storeDB(Name, Value, TXid) ->
-	mnesia:write(#arql_tag { name = Name, value = Value, tx = TXid}).
+storeTags(Name, Value, TXID) ->
+	mnesia:write(#arql_tag { name = Name, value = Value, tx = TXID}).
 
-%% @doc Search for a list of transactions that match the given tag
-search_by_exact_tag(Name, Value) ->
-	mnesia:transaction(fun() ->
+%% @doc Store a transaction ID, block independent hash, block height triplet in the index.
+storeBlockInfo(TXID, BlockIndepHash, BlockHeight) ->
+	mnesia:write(#arql_block { tx = TXID, block_indep_hash = BlockIndepHash, block_height = BlockHeight }).
+
+%% @doc Returns a list of all transaction IDs which have the tag Name set to
+%% Value. Duplicates might be returned due to the duplication in the index.
+get_entries(Name, Value) ->
+	%% Fetch the block height and the block hash from the new table
+	%% if it is there, otherwise fall back to the arql_tag table.
+	ShouldSearchInARQLTagTable = case Name of
+		<<"block_height">> ->
+			case search_arql_block_by_height(Value) of
+				[] ->
+					true;
+				Result ->
+					{false, Result}
+			end;
+		<<"block_indep_hash">> ->
+			case search_arql_block_by_indep_hash(Value) of
+				[] ->
+					true;
+				Result ->
+					{false, Result}
+			end;
+		_ ->
+			true
+	end,
+	case ShouldSearchInARQLTagTable of
+		{false, TXIDs} ->
+			TXIDs;
+		true ->
+			{atomic, TXIDs} = mnesia:transaction(fun() ->
+				mnesia:select(
+					arql_tag,
+					[
+						{
+							#arql_tag { name = Name, value = Value, tx = '$1'},
+							[],
+							['$1']
+						}
+					]
+				)
+			end),
+			TXIDs
+	end.
+
+search_arql_block_by_indep_hash(IndepHash) ->
+	{atomic, TXIDs} = mnesia:transaction(fun() ->
 		mnesia:select(
-			arql_tag,
+			arql_block,
 			[
 				{
-					#arql_tag { name = Name, value = Value, tx = '$1'},
+					#arql_block { block_height = '_', block_indep_hash = IndepHash, tx = '$1'},
 					[],
 					['$1']
 				}
 			]
 		)
-	end).
+	end),
+	TXIDs.
+
+search_arql_block_by_height(Height) ->
+	{atomic, TXIDs} = mnesia:transaction(fun() ->
+		mnesia:select(
+			arql_block,
+			[
+				{
+					#arql_block { block_height = Height, block_indep_hash = '_', tx = '$1'},
+					[],
+					['$1']
+				}
+			]
+		)
+	end),
+	TXIDs.
 
 %% @doc Search for a list of transactions that match the given tag name
 search_by_tag_name(Name) ->
-	mnesia:transaction(fun() ->
-		mnesia:select(
-			arql_tag,
-			[
-				{
-					#arql_tag { name = Name, value = '_', tx = '$1'},
-					[],
-					['$1']
-				}
-			]
-		)
-	end).
+	mnesia:transaction(
+		fun() ->
+			BlockTableTXIDs = case Name of
+				<<"block_height">> ->
+					search_arql_block_by_height('_');
+				<<"block_indep_hash">> ->
+					search_arql_block_by_indep_hash('_');
+				_ ->
+					[]
+			end,
+			TagTableTXIDs = mnesia:select(
+				arql_tag,
+					[
+						{
+							#arql_tag { name = Name, value = '_', tx = '$1'},
+							[],
+							['$1']
+						}
+					]
+				),
+			ar_util:unique(BlockTableTXIDs ++ TagTableTXIDs)
+		end
+	).
 
 %% @doc Search for a list of tags for the transaction with the given ID
-search_by_id(TXID) ->
+search_arql_tag_by_id(TXID) ->
 	mnesia:index_match_object(#arql_tag { tx = TXID, _ = '_' }, #arql_tag.tx).
+
+search_arql_block_by_id(TXID) ->
+	mnesia:select(
+		arql_block,
+		[
+			{
+				#arql_block { tx = TXID, block_indep_hash = '$1', block_height = '$2' },
+				[],
+				[{{'$1', '$2'}}]
+			}
+		]
+	).
 
 basic_usage_test() ->
 	ar_storage:clear(),
@@ -239,8 +344,8 @@ basic_usage_test() ->
 	?assertMatch({_, <<"TestVal">>}, lists:keyfind(<<"TestName">>, 1, Tags)),
 	%% Check aux tags
 	?assertMatch({_, 1}, lists:keyfind(<<"block_height">>, 1, Tags)),
-	%% Check that if writing the TX to the index again, the entries gets
-	%% overwritten, not duplicated.
-	AddTx(TX#tx{tags = [{<<"TestName">>, <<"Updated value">>}]}),
+	%% Write a new block height and a new block hash to the TX index. Expect the
+	%% record to be overwritten.
+	AddTx(TX),
 	{ok, UpdatedTags} = get_tags_by_id(TX#tx.id),
-	?assertMatch([<<"Updated value">>], proplists:get_all_values(<<"TestName">>, UpdatedTags)).
+	?assertMatch({_, 2}, lists:keyfind(<<"block_height">>, 1, UpdatedTags)).

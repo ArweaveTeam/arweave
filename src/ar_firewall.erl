@@ -290,17 +290,20 @@ scan_and_clean_disk_test() ->
 	lists:foreach(fun ar_tx_search:delete_tx_records/1, [GoodTXID, BadTXID, BadDataTXID]),
 	%% Blacklist a transaction, write it to disk and add it to the index.
 	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
-	ar_storage:write_tx((ar_tx:new())#tx{ id = BadTXID, tags = Tags }),
-	ar_tx_search:update_tag_table(#block{ txs = [BadTXID] }),
+	BadTX = (ar_tx:new())#tx{ id = BadTXID, tags = Tags },
+	ar_storage:write_tx(BadTX),
+	ar_tx_search:update_tag_table(#block{ txs = [BadTX] }),
 	?assertEqual(BadTXID, (ar_storage:read_tx(BadTXID))#tx.id),
 	%% Setup a content policy, write a bad tx to disk and add it to the index.
 	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
-	ar_storage:write_tx((ar_tx:new())#tx{ id = BadDataTXID, data = <<"BADCONTENT1">>, tags = Tags }),
-	ar_tx_search:update_tag_table(#block{ txs = [BadDataTXID] }),
+	BadTX2 = (ar_tx:new())#tx{ id = BadDataTXID, data = <<"BADCONTENT1">>, tags = Tags },
+	ar_storage:write_tx(BadTX2),
+	ar_tx_search:update_tag_table(#block{ txs = [BadTX2] }),
 	?assertEqual(BadDataTXID, (ar_storage:read_tx(BadDataTXID))#tx.id),
 	%% Write a good tx to disk and add it to the index.
-	ar_storage:write_tx((ar_tx:new())#tx{ id = GoodTXID, tags = Tags }),
-	ar_tx_search:update_tag_table(#block{ txs = [GoodTXID] }),
+	GoodTX = (ar_tx:new())#tx{ id = GoodTXID, tags = Tags },
+	ar_storage:write_tx(GoodTX),
+	ar_tx_search:update_tag_table(#block{ txs = [GoodTX] }),
 	?assertEqual(GoodTXID, (ar_storage:read_tx(GoodTXID))#tx.id),
 	?assertEqual(
 		lists:sort([BadTXID, BadDataTXID, GoodTXID]),
