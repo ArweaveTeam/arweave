@@ -373,7 +373,7 @@ find_external_tx_test() ->
 	ar_node:mine(Node),
 	timer:sleep(1000),
 	% write a get_tx function like get_block
-	FoundTXID = (ar_http_iface_client:get_tx({127, 0, 0, 1, 1984}, TX#tx.id))#tx.id,
+	FoundTXID = (ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], TX#tx.id, []))#tx.id,
 	?assertEqual(FoundTXID, TX#tx.id).
 
 fail_external_tx_test() ->
@@ -389,7 +389,7 @@ fail_external_tx_test() ->
 	ar_node:mine(Node),
 	timer:sleep(1000),
 	BadTX = ar_tx:new(<<"BADDATA">>),
-	?assertEqual(not_found, ar_http_iface_client:get_tx({127, 0, 0, 1, 1984}, BadTX#tx.id)).
+	?assertEqual(not_found, ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], BadTX#tx.id, [])).
 
 %% @doc Ensure that blocks can be added to a network from outside
 %% a single node.
