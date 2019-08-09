@@ -75,34 +75,36 @@ get_entries_by_tag_name(Name) ->
 	TXIDs.
 
 sort_txids(TXIDs) ->
-	{atomic, SearchList} = mnesia:transaction(fun() ->
-		NewEntries = mnesia:select(arql_block, [{
-			#arql_block { block_height = '$2', tx = '$1', block_indep_hash = '_' },
-			[],
-			[{{'$1', '$2'}}]
-		}]),
-		OldEntries = mnesia:select(arql_tag, [{
-			#arql_tag { name = <<"block_height">>, tx = '$1', value = '$2'},
-			[],
-			[{{'$1', '$2'}}]
-		}]),
-		ar_util:unique(OldEntries ++ NewEntries)
+	{atomic, Map} = mnesia:transaction(fun() ->
+		Map = lists:foldl(
+			fun({TXID, Height}, CurrentMap) ->
+				maps:put(TXID, Height, CurrentMap)
+			end,
+			maps:new(),
+			mnesia:select(arql_tag, [{
+				#arql_tag { name = <<"block_height">>, tx = '$1', value = '$2'},
+				[],
+				[{{'$1', '$2'}}]
+			}])
+		),
+		lists:foldl(
+			fun({TXID, Height}, CurrentMap) ->
+				maps:put(TXID, Height, CurrentMap)
+			end,
+			Map,
+			mnesia:select(arql_block, [{
+				#arql_block { block_height = '$2', tx = '$1', block_indep_hash = '_' },
+				[],
+				[{{'$1', '$2'}}]
+			}])
+		)
 	end),
-	{_, TXIDHeightPairs} = lists:foldl(
-		fun(TXID, {CurrentSearchList, TXIDHeightPairs}) ->
-			case lists:keytake(TXID, 1, CurrentSearchList) of
-				{value, {TXID, Height}, NewSearchList} ->
-					{NewSearchList, [{Height, TXID} | TXIDHeightPairs]};
-				false ->
-					{CurrentSearchList, TXIDHeightPairs}
-			end
+	lists:sort(
+		fun(TXID1, TXID2) ->
+			{maps:get(TXID1, Map, 0), TXID1} >= {maps:get(TXID2, Map, 0), TXID2}
 		end,
-		{SearchList, []},
 		TXIDs
-	),
-	SortedPairs = lists:sort(fun(A, B) -> A >= B end, TXIDHeightPairs),
-	SortedTXIDs = lists:map(fun({_, TXID}) -> TXID end, SortedPairs),
-	SortedTXIDs.
+	).
 
 %% @doc Updates the tag index with the information of all the transactions in
 %% the given block as part of a single transaction.
