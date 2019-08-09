@@ -477,6 +477,7 @@ handle(<<"GET">>, [<<"tx_anchor">>], Req) ->
 %% @doc Return transaction identifiers (hashes) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req) ->
+	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	{Status, Headers, Body} = handle_get_wallet_txs(Addr, none),
 	{Status, Headers, Body, Req};
 
@@ -484,6 +485,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req) ->
 %% specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs/{earliest_tx}
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req) ->
+	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	{Status, Headers, Body} = handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX)),
 	{Status, Headers, Body, Req};
 
