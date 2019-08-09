@@ -12,6 +12,8 @@
 -export([generate_block_key/2]).
 -export([generate_block_from_shadow/2, generate_block_data_segment/6]).
 -export([generate_hash_list_for_block/2]).
+-export([generate_block_data_segment_and_pieces/6, refresh_block_data_segment_timestamp/6]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -276,6 +278,10 @@ generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, unclaimed, Time, 
 		Tags
 	);
 generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags) ->
+	{_, BDS} = generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags),
+	BDS.
+
+generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags) ->
 	NewHeight = PrecedingB#block.height + 1,
 	Retarget =
 		case ar_retarget:is_retarget_height(NewHeight) of
@@ -319,19 +325,24 @@ generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time,
 			true -> PrecedingB#block.hash_list_merkle;
 			false -> <<>>
 		end,
-	crypto:hash(
-		?MINING_HASH_ALG,
+	Pieces = [
 		<<
 			(PrecedingB#block.indep_hash)/binary,
-			(PrecedingB#block.hash)/binary,
+			(PrecedingB#block.hash)/binary
+		>>,
+		<<
 			(integer_to_binary(Time))/binary,
-			(integer_to_binary(Retarget))/binary,
+			(integer_to_binary(Retarget))/binary
+		>>,
+		<<
 			(integer_to_binary(PrecedingB#block.height + 1))/binary,
 			(
 				list_to_binary(
 					[PrecedingB#block.indep_hash | PrecedingB#block.hash_list]
 				)
-			)/binary,
+			)/binary
+		>>,
+		<<
 			(
 				binary:list_to_bin(
 					lists:map(
@@ -339,15 +350,21 @@ generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time,
 						NewWalletList
 					)
 				)
-			)/binary,
+			)/binary
+		>>,
+		<<
 			(
 				case is_atom(RewardAddr) of
 					true -> <<>>;
 					false -> RewardAddr
 				end
 			)/binary,
-			(list_to_binary(Tags))/binary,
-			(integer_to_binary(RewardPool))/binary,
+			(list_to_binary(Tags))/binary
+		>>,
+		<<
+			(integer_to_binary(RewardPool))/binary
+		>>,
+		<<
 			(block_to_binary(PrecedingRecallB))/binary,
 			(
 				binary:list_to_bin(
@@ -359,7 +376,78 @@ generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time,
 			)/binary,
 			MR/binary
 		>>
-	).
+	],
+	{Pieces, crypto:hash(
+		?MINING_HASH_ALG,
+		<< Piece || Piece <- Pieces >>
+	)}.
+
+refresh_block_data_segment_timestamp(Pieces, PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time) ->
+	NewHeight = PrecedingB#block.height + 1,
+	Retarget =
+		case ar_retarget:is_retarget_height(NewHeight) of
+			true -> Time;
+			false -> PrecedingB#block.last_retarget
+		end,
+	WeaveSize = PrecedingB#block.weave_size +
+		lists:foldl(
+			fun(TX, Acc) ->
+				Acc + byte_size(TX#tx.data)
+			end,
+			0,
+			TXs
+		),
+	NewDiff = ar_retarget:maybe_retarget(
+		PrecedingB#block.height + 1,
+		PrecedingB#block.diff,
+		Time,
+		PrecedingB#block.last_retarget
+	),
+	{FinderReward, RewardPool} =
+		ar_node_utils:calculate_reward_pool(
+			PrecedingB#block.reward_pool,
+			TXs,
+			RewardAddr,
+			PrecedingRecallB#block.block_size,
+			WeaveSize,
+			PrecedingB#block.height + 1,
+			NewDiff,
+			Time
+		),
+	NewWalletList =
+		ar_node_utils:apply_mining_reward(
+			ar_node_utils:apply_txs(PrecedingB#block.wallet_list, TXs, PrecedingB#block.height),
+			RewardAddr,
+			FinderReward,
+			length(PrecedingB#block.hash_list) - 1
+		),
+	NewPieces = [
+		lists:nth(1, Pieces),
+		<<
+			(integer_to_binary(Time))/binary,
+			(integer_to_binary(Retarget))/binary
+		>>,
+		lists:nth(3, Pieces),
+		<<
+			(
+				binary:list_to_bin(
+					lists:map(
+						fun ar_wallet:to_binary/1,
+						NewWalletList
+					)
+				)
+			)/binary
+		>>,
+		lists:nth(5, Pieces),
+		<<
+			(integer_to_binary(RewardPool))/binary
+		>>,
+		lists:nth(7, Pieces)
+	],
+	{NewPieces, crypto:hash(
+		?MINING_HASH_ALG,
+		<< Piece || Piece <- NewPieces >>
+	)}.
 
 %% @doc Verify the independant hash of a given block is valid
 verify_indep_hash(Block = #block { indep_hash = Indep }) ->
