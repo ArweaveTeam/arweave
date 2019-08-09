@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/7, start/8, change_txs/2, stop/1, mine/2]).
+-export([start/7, start/8, stop/1, mine/2]).
 -export([validate/4, validate/3]).
 -export([min_difficulty/1, genesis_difficulty/0, max_difficulty/1]).
 -export([sha384_diff_to_randomx_diff/1]).
@@ -25,7 +25,8 @@
 	auto_update_diff, % should the diff be kept or updated automatically
 	delay = 0, % hashing delay used for testing
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
-	miners = [] % miner worker processes
+	miners = [], % miner worker processes
+	bds_pieces = not_generated % a list of binary components of block data segment, stored for quick updates
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
@@ -61,10 +62,6 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent, BlockTXPairs
 %% @doc Stop a running mining server.
 stop(PID) ->
 	PID ! stop.
-
-%% @doc Update the set of TXs that the miner is mining on.
-change_txs(PID, NewTXs) ->
-	PID ! {new_data, NewTXs}.
 
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff, Height) ->
@@ -194,22 +191,37 @@ update_data_segment(
 	update_data_segment(S, TXs, BlockTimestamp, Diff).
 
 update_data_segment(S, TXs, BlockTimestamp, Diff) ->
-	{DurationMicros, BDS} = timer:tc(fun() ->
-		ar_block:generate_block_data_segment(
-			S#state.current_block,
-			S#state.recall_block,
-			TXs,
-			S#state.reward_addr,
-			BlockTimestamp,
-			S#state.tags
-		)
-	end),
+	{DurationMicros, {NewBDSPieces, BDS}} = case S#state.bds_pieces of
+		not_generated ->
+			timer:tc(fun() ->
+				ar_block:generate_block_data_segment_and_pieces(
+					S#state.current_block,
+					S#state.recall_block,
+					TXs,
+					S#state.reward_addr,
+					BlockTimestamp,
+					S#state.tags
+				)
+			end);
+		BDSPieces ->
+			timer:tc(fun() ->
+				ar_block:refresh_block_data_segment_timestamp(
+					BDSPieces,
+					S#state.current_block,
+					S#state.recall_block,
+					TXs,
+					S#state.reward_addr,
+					BlockTimestamp
+				)
+			end)
+	end,
 	NewS = S#state {
 		timestamp = BlockTimestamp,
 		diff = Diff,
 		txs = TXs,
 		data_segment = BDS,
-		data_segment_duration = round(DurationMicros / 1000000)
+		data_segment_duration = round(DurationMicros / 1000000),
+		bds_pieces = NewBDSPieces
 	},
 	reschedule_timestamp_refresh(NewS).
 
@@ -259,9 +271,6 @@ server(
 		stop ->
 			stop_miners(Miners),
 			ok;
-		% Update the miner to mine on a new set of data.
-		{new_data, TXs} ->
-			server(restart_miners(update_txs(S, TXs)));
 		%% The block timestamp must be reasonable fresh since it's going to be
 		%% validated on the remote nodes when it's propagated to them. Only blocks
 		%% with a timestamp close to current time will be accepted in the propagation.
@@ -397,25 +406,6 @@ basic_test() ->
 	start(B, RecallB, [], unclaimed, [], self(), []),
 	assert_mine_output(B, RecallB, []).
 
-%% @doc Ensure that we can change the transactions while mining is in progress.
-change_txs_test_() ->
-	{timeout, 20, fun() ->
-		[B0] = ar_weave:init(),
-		B = B0,
-		RecallB = B0,
-		FirstTXSet = [ar_tx:new()],
-		SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
-		%% Start mining with a high enough difficulty, so that the mining won't
-		%% finish before adding more TXs.
-		Diff = case ar_fork:height_1_7() of
-			0 -> 4;
-			_ -> 22
-		end,
-		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self(), []),
-		change_txs(PID, SecondTXSet),
-		assert_mine_output(B, RecallB, SecondTXSet, Diff)
-	end}.
-
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
 timestamp_refresh_test_() ->
 	{timeout, 20, fun() ->
@@ -471,11 +461,6 @@ validator_test() ->
 	HeightPreRandomX = HeightWithRandomX - 1,
 	?assertMatch({valid, _}, validate(BDS, Nonce, 37, HeightPreRandomX)),
 	?assertMatch({invalid, _}, validate(BDS, Nonce, 38, HeightPreRandomX)).
-
-assert_mine_output(B, RecallB, TXs, Diff) ->
-	Result = assert_mine_output(B, RecallB, TXs),
-	?assertMatch({Diff, _}, Result),
-	Result.
 
 assert_mine_output(B, RecallB, TXs) ->
 	receive
