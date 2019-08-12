@@ -102,6 +102,7 @@ pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, WalletList, TXs) ->
 pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
 	Mempool = #mempool{},
+	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
 	lists:filter(
 		fun(TX) ->
 			case verify_tx(
@@ -110,7 +111,7 @@ pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 				Diff,
 				Height,
 				os:system_time(seconds),
-				WalletList,
+				WalletMap,
 				WeaveState,
 				Mempool
 			) of
@@ -139,15 +140,15 @@ create_state(BlockTXPairs) ->
 		bhl = BHL
 	}.
 
-verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWalletList, WeaveState, Mempool) ->
-	case ar_tx:verify(TX, Diff, Height, FloatingWalletList, Timestamp) of
+verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool) ->
+	case ar_tx:verify(TX, Diff, Height, FloatingWallets, Timestamp) of
 		true ->
-			verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool);
+			verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool);
 		false ->
 			{invalid, tx_verification_failed}
 	end.
 
-verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
+verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	ShouldContinue = case ar_fork:height_1_8() of
 		H when Height >= H ->
 			%% Only verify after fork 1.8 otherwise it causes a soft fork
@@ -170,39 +171,39 @@ verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWalletList, WeaveState, 
 				TX,
 				Diff,
 				Height,
-				FloatingWalletList,
+				FloatingWallets,
 				WeaveState,
 				Mempool
 			);
 		{invalid, Reason} ->
 			{invalid, Reason}
 	end;
-verify_tx(last_tx, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
-	case ar_tx:check_last_tx(FloatingWalletList, TX) of
+verify_tx(last_tx, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
+	case ar_tx:check_last_tx(FloatingWallets, TX) of
 		true ->
 			NewMempool = Mempool#mempool {
 				tx_id_set = sets:add_element(TX#tx.id, Mempool#mempool.tx_id_set)
 			},
-			NewFWL = ar_node_utils:apply_tx(FloatingWalletList, TX, Height),
-			{valid, NewFWL, NewMempool};
+			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
+			{valid, NewFW, NewMempool};
 		false ->
-			verify_tx(anchor_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool)
+			verify_tx(anchor_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
 	end;
-verify_tx(anchor_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
+verify_tx(anchor_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	case lists:member(TX#tx.last_tx, WeaveState#state.bhl) of
 		false ->
 			{invalid, tx_bad_anchor};
 		true ->
-			verify_tx(weave_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool)
+			verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
 	end;
-verify_tx(weave_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
+verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	case weave_map_contains_tx(TX#tx.id, WeaveState#state.weave_map) of
 		true ->
 			{invalid, tx_already_in_weave};
 		false ->
-			verify_tx(mempool_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool)
+			verify_tx(mempool_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
 	end;
-verify_tx(mempool_check, TX, _Diff, Height, FloatingWalletList, _WeaveState, Mempool) ->
+verify_tx(mempool_check, TX, _Diff, Height, FloatingWallets, _WeaveState, Mempool) ->
 	case sets:is_element(TX#tx.id, Mempool#mempool.tx_id_set) of
 		true ->
 			{invalid, tx_already_in_mempool};
@@ -210,8 +211,8 @@ verify_tx(mempool_check, TX, _Diff, Height, FloatingWalletList, _WeaveState, Mem
 			NewMempool = Mempool#mempool {
 				tx_id_set = sets:add_element(TX#tx.id, Mempool#mempool.tx_id_set)
 			},
-			NewFWL = ar_node_utils:apply_tx(FloatingWalletList, TX, Height),
-			{valid, NewFWL, NewMempool}
+			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
+			{valid, NewFW, NewMempool}
 	end.
 
 weave_map_contains_tx(TXID, WeaveMap) ->
@@ -223,25 +224,26 @@ weave_map_contains_tx(TXID, WeaveMap) ->
 	).
 
 apply_txs(TXs, Diff, Height, Timestamp, WalletList, WeaveState, Mempool) ->
+	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
 	lists:foldl(
-		fun(TX, {VerifiedTXs, FloatingWalletList, FloatingMempool}) ->
+		fun(TX, {VerifiedTXs, FloatingWalletMap, FloatingMempool}) ->
 			case verify_tx(
 				general_verification,
 				TX,
 				Diff,
 				Height,
 				Timestamp,
-				FloatingWalletList,
+				FloatingWalletMap,
 				WeaveState,
 				FloatingMempool
 			) of
-				{valid, NewFWL, NewMempool} ->
-					{VerifiedTXs ++ [TX], NewFWL, NewMempool};
+				{valid, NewFWM, NewMempool} ->
+					{VerifiedTXs ++ [TX], NewFWM, NewMempool};
 				{invalid, _} ->
-					{VerifiedTXs, FloatingWalletList, FloatingMempool}
+					{VerifiedTXs, FloatingWalletMap, FloatingMempool}
 			end
 		end,
-		{[], WalletList, Mempool},
+		{[], WalletMap, Mempool},
 		TXs
 	).
 
