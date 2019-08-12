@@ -78,20 +78,20 @@ sign(TX, PrivKey, PubKey) ->
 %% submitting an arbitrary length signature field and having it processed.
 -ifdef(DEBUG).
 verify(#tx { signature = <<>> }, _, _, _, _) -> true;
-verify(TX, Diff, Height, WalletList, Timestamp) ->
-	do_verify(TX, Diff, Height, WalletList, Timestamp).
+verify(TX, Diff, Height, Wallets, Timestamp) ->
+	do_verify(TX, Diff, Height, Wallets, Timestamp).
 -else.
-verify(TX, Diff, Height, WalletList, Timestamp) ->
-	do_verify(TX, Diff, Height, WalletList, Timestamp).
+verify(TX, Diff, Height, Wallets, Timestamp) ->
+	do_verify(TX, Diff, Height, Wallets, Timestamp).
 -endif.
 
-do_verify(TX, Diff, Height, WalletList, Timestamp) ->
+do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 	Fork_1_8 = ar_fork:height_1_8(),
 	LastTXCheck = case Height of
 		H when H >= Fork_1_8 ->
 			true;
 		_ ->
-			check_last_tx(WalletList, TX)
+			check_last_tx(Wallets, TX)
 	end,
 	Checks = [
 		{"quantity_negative",
@@ -99,7 +99,7 @@ do_verify(TX, Diff, Height, WalletList, Timestamp) ->
 		{"same_owner_as_target",
 		 (ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target)},
 		{"tx_too_cheap",
-		 tx_cost_above_min(TX, Diff, Height, WalletList, TX#tx.target, Timestamp)},
+		 tx_cost_above_min(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)},
 		{"tx_fields_too_large",
 		 tx_field_size_limit(TX, Height)},
 		{"tag_field_illegally_specified",
@@ -109,7 +109,7 @@ do_verify(TX, Diff, Height, WalletList, Timestamp) ->
 		{"tx_id_not_valid",
 		 tx_verify_hash(TX)},
 		{"overspend",
-		 ar_node_utils:validate_wallet_list(ar_node_utils:apply_txs(WalletList, [TX], Height))},
+		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
 		{"tx_signature_not_valid",
 		 ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)}
 	],
@@ -127,19 +127,37 @@ do_verify(TX, Diff, Height, WalletList, Timestamp) ->
 			false
 	end.
 
+validate_overspend(TX, Wallets) ->
+	From = ar_wallet:to_address(TX#tx.owner),
+	To = TX#tx.target,
+	lists:all(
+		fun(Addr) ->
+			case ar_node_utils:get_wallet_by_address(Addr, Wallets) of
+				{_, 0, Last} when byte_size(Last) == 0 ->
+					false;
+				{_, Quantity, _} when Quantity < 0 ->
+					false;
+				_ ->
+					true
+			end
+		end,
+		[From, To]
+	).
+
 %% @doc Verify a list of transactions.
 %% Returns false if any TX in the set fails verification.
 verify_txs(TXs, Diff, Height, WalletList, Timestamp) ->
+	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
 			case verify_txs_size(TXs) of
 				true ->
-					verify_txs(valid_size_txs, TXs, Diff, Height, WalletList, Timestamp);
+					verify_txs(valid_size_txs, TXs, Diff, Height, WalletMap, Timestamp);
 				false ->
 					false
 			end;
 		_ ->
-			verify_txs(valid_size_txs, TXs, Diff, Height, WalletList, Timestamp)
+			verify_txs(valid_size_txs, TXs, Diff, Height, WalletMap, Timestamp)
 	end.
 
 verify_txs_size(TXs) ->
@@ -159,15 +177,15 @@ verify_txs_size(TXs) ->
 
 verify_txs(valid_size_txs, [], _, _, _, _) ->
 	true;
-verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletList, Timestamp) ->
-	case verify(TX, Diff, Height, WalletList, Timestamp) of
+verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletMap, Timestamp) ->
+	case verify(TX, Diff, Height, WalletMap, Timestamp) of
 		true ->
 			verify_txs(
 				valid_size_txs,
 				TXs,
 				Diff,
 				Height,
-				ar_node_utils:apply_tx(WalletList, TX, Height),
+				ar_node_utils:apply_tx(WalletMap, TX, Height),
 				Timestamp
 			);
 		false ->
@@ -175,9 +193,9 @@ verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletList, Timestamp) ->
 	end.
 
 %% @doc Ensure that transaction cost above proscribed minimum.
-tx_cost_above_min(TX, Diff, Height, WalletList, Addr, Timestamp) ->
+tx_cost_above_min(TX, Diff, Height, Wallets, Addr, Timestamp) ->
 	TX#tx.reward >=
-		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, Height + 1, WalletList, Addr, Timestamp).
+		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, Height + 1, Wallets, Addr, Timestamp).
 
 %% @doc Calculate the minimum transaction cost for a TX with the given data size.
 %% The constant 3210 is the max byte size of each of the other fields.
@@ -201,8 +219,8 @@ calculate_min_tx_cost(DataSize, Diff, Height, _, undefined, Timestamp) ->
 	calculate_min_tx_cost(DataSize, Diff, Height, Timestamp);
 calculate_min_tx_cost(DataSize, Diff, Height, _, <<>>, Timestamp) ->
 	calculate_min_tx_cost(DataSize, Diff, Height, Timestamp);
-calculate_min_tx_cost(DataSize, Diff, Height, WalletList, Addr, Timestamp) ->
-	case lists:keyfind(Addr, 1, WalletList) of
+calculate_min_tx_cost(DataSize, Diff, Height, Wallets, Addr, Timestamp) ->
+	case ar_node_utils:get_wallet_by_address(Addr, Wallets) of
 		false ->
 			calculate_min_tx_cost(DataSize, Diff, Height, Timestamp) + ?WALLET_GEN_FEE;
 		{_, _, _} ->
@@ -277,20 +295,41 @@ tags_to_list(Tags) ->
 -ifdef(DEBUG).
 check_last_tx([], _) -> true;
 check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> -> true;
-check_last_tx(WalletList, TX) ->
+check_last_tx(WalletList, TX) when is_list(WalletList) ->
 	Address = ar_wallet:to_address(TX#tx.owner),
 	case lists:keyfind(Address, 1, WalletList) of
 		{Address, _Quantity, Last} ->
 			Last == TX#tx.last_tx;
 		_ -> false
+	end;
+check_last_tx(WalletMap, TX) when is_map(WalletMap) ->
+	case maps:size(WalletMap) of
+		0 ->
+			true;
+		_ ->
+			Addr = ar_wallet:to_address(TX#tx.owner),
+			case maps:get(Addr, WalletMap, not_found) of
+				not_found ->
+					false;
+				{_, _, LastTX} ->
+					LastTX == TX#tx.last_tx
+			end
 	end.
 -else.
 check_last_tx([], _) -> true;
-check_last_tx(WalletList, TX) ->
+check_last_tx(WalletList, TX) when is_list(WalletList) ->
 	Address = ar_wallet:to_address(TX#tx.owner),
 	case lists:keyfind(Address, 1, WalletList) of
 		{Address, _Quantity, Last} -> Last == TX#tx.last_tx;
 		_ -> false
+	end;
+check_last_tx(WalletMap, TX) when is_map(WalletMap) ->
+	Addr = ar_wallet:to_address(TX#tx.owner),
+	case maps:get(Addr, WalletMap, not_found) of
+		not_found ->
+			false;
+		{_, _, LastTX} ->
+			LastTX == TX#tx.last_tx
 	end.
 -endif.
 
