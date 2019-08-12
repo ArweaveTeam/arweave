@@ -15,6 +15,7 @@
 -export([validate/5, validate/8, validate_wallet_list/1]).
 -export([calculate_delay/1]).
 -export([update_block_txs_pairs/3]).
+-export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
 
 -include("ar.hrl").
 -include("perpetual_storage.hrl").
@@ -214,22 +215,41 @@ apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, Quantity)).
 
 %% @doc Apply a transaction to a wallet list, updating it.
-%% Critically, filter empty wallets from the list after application.
-apply_tx(WalletList, unavailable, _) ->
-	WalletList;
-apply_tx(WalletList, TX, Height) ->
-	filter_empty_wallets(do_apply_tx(WalletList, TX, Height)).
+apply_tx(Wallets, unavailable, _) ->
+	Wallets;
+apply_tx(Wallets, TX, Height) ->
+	do_apply_tx(Wallets, TX, Height).
 
 %% @doc Update a wallet list with a set of new transactions.
 apply_txs(WalletList, TXs, Height) ->
+	WalletMap = wallet_map_from_wallet_list(WalletList),
+	NewWalletMap = lists:foldl(
+		fun(TX, CurrWalletMap) ->
+			apply_tx(CurrWalletMap, TX, Height)
+		end,
+		WalletMap,
+		TXs
+	),
 	lists:sort(
-		lists:foldl(
-			fun(TX, CurrWalletList) ->
-				apply_tx(CurrWalletList, TX, Height)
-			end,
-			WalletList,
-			TXs
-		)
+		wallet_list_from_wallet_map(NewWalletMap)
+	).
+
+wallet_map_from_wallet_list(WalletList) ->
+	lists:foldl(
+		fun(Wallet = {Addr, _, _}, Map) ->
+			maps:put(Addr, Wallet, Map)
+		end,
+		maps:new(),
+		WalletList
+	).
+
+wallet_list_from_wallet_map(WalletMap) ->
+	maps:fold(
+		fun(_Addr, Wallet, List) ->
+			[Wallet | List]
+		end,
+		[],
+		WalletMap
 	).
 
 %% @doc Force a node to start mining, update state.
@@ -640,10 +660,8 @@ make_full_block(BShadow) ->
 			{error, {txs_missing, MissingTXIDs}}
 	end.
 
-%% @doc Perform the concrete application of a transaction to
-%% a prefiltered wallet list.
 do_apply_tx(
-		WalletList,
+		Wallets,
 		TX = #tx {
 			last_tx = Last,
 			owner = From
@@ -651,14 +669,19 @@ do_apply_tx(
 		Height) ->
 	Addr = ar_wallet:to_address(From),
 	Fork_1_8 = ar_fork:height_1_8(),
-	case {Height, lists:keyfind(Addr, 1, WalletList)} of
+	case {Height, get_wallet_by_address(Addr, Wallets)} of
 		{H, {Addr, _, _}} when H >= Fork_1_8 ->
-			do_apply_tx(WalletList, TX);
+			do_apply_tx(Wallets, TX);
 		{_, {Addr, _, Last}} ->
-			do_apply_tx(WalletList, TX);
+			do_apply_tx(Wallets, TX);
 		_ ->
-			WalletList
+			Wallets
 	end.
+
+get_wallet_by_address(Addr, WalletList) when is_list(WalletList) ->
+	lists:keyfind(Addr, 1, WalletList);
+get_wallet_by_address(Addr, WalletMap) when is_map(WalletMap) ->
+	maps:get(Addr, WalletMap, false).
 
 do_apply_tx(WalletList, TX) ->
 	update_recipient_balance(
@@ -667,7 +690,7 @@ do_apply_tx(WalletList, TX) ->
 	).
 
 update_sender_balance(
-		WalletList,
+		Wallets,
 		#tx {
 			id = ID,
 			owner = From,
@@ -675,38 +698,47 @@ update_sender_balance(
 			reward = Reward
 		}) ->
 	Addr = ar_wallet:to_address(From),
-	case lists:keyfind(Addr, 1, WalletList) of
+	case get_wallet_by_address(Addr, Wallets) of
 		{_, Balance, _} ->
-			lists:keyreplace(
+			update_wallet(
 				Addr,
-				1,
-				WalletList,
-				{Addr, Balance - (Qty + Reward), ID}
+				{Addr, Balance - (Qty + Reward), ID},
+				Wallets
 			);
+
 		_ ->
-			WalletList
+			Wallets
 	end.
 
-update_recipient_balance(
+update_wallet(Addr, Wallet, WalletList) when is_list(WalletList) ->
+	lists:keyreplace(
+		Addr,
+		1,
 		WalletList,
+		Wallet
+	);
+update_wallet(Addr, Wallet, WalletMap) when is_map(WalletMap) ->
+	maps:put(Addr, Wallet, WalletMap).
+
+update_recipient_balance(Wallets, #tx { quantity = 0 }) ->
+	Wallets;
+update_recipient_balance(
+		Wallets,
 		#tx {
 			target = To,
 			quantity = Qty
 		}) ->
-	case lists:keyfind(To, 1, WalletList) of
+	case get_wallet_by_address(To, Wallets) of
 		false ->
-			[{To, Qty, <<>>} | WalletList];
+			insert_wallet(To, {To, Qty, <<>>}, Wallets);
 		{To, OldBalance, LastTX} ->
-			lists:keyreplace(To, 1, WalletList, {To, OldBalance + Qty, LastTX})
+			update_wallet(To, {To, OldBalance + Qty, LastTX}, Wallets)
 	end.
 
-%% @doc Remove wallets with zero balance from a wallet list.
-filter_empty_wallets([]) ->
-	[];
-filter_empty_wallets([{_, 0, <<>>} | WalletList]) ->
-	filter_empty_wallets(WalletList);
-filter_empty_wallets([Wallet | Rest]) ->
-	[Wallet | filter_empty_wallets(Rest)].
+insert_wallet(_Addr, Wallet, WalletList) when is_list(WalletList) ->
+	[Wallet | WalletList];
+insert_wallet(Addr, Wallet, WalletMap) when is_map(WalletMap) ->
+	maps:put(Addr, Wallet, WalletMap).
 
 %% @doc Alter a wallet in a wallet list.
 alter_wallet(WalletList, Target, Adjustment) ->
