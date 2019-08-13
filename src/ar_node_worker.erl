@@ -131,15 +131,22 @@ handle(SPid, {process_new_block, Peer, Height, NewB, BDS, Recall}) ->
 			ok
 	end,
 	{ok, process_new_block};
-handle(SPid, {work_complete, MinedTXs, Diff, Nonce, Timestamp}) ->
+handle(SPid, {work_complete, BH, MinedTXs, Diff, Nonce, Timestamp}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	case integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) of
-		{ok, StateOut} ->
-			ar_node_state:update(SPid, StateOut);
-		none ->
-			ok
-	end,
-	{ok, work_complete};
+	#{ hash_list := [CurrentBH | _] } = StateIn,
+	case BH of
+		CurrentBH ->
+			case integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) of
+				{ok, StateOut} ->
+					ar_node_state:update(SPid, StateOut);
+				none ->
+					ok
+			end,
+			{ok, work_complete};
+		_ ->
+			ar:info([ar_node_worker, ignore_mined_block, {reason, accepted_foreign_block}]),
+			{ok, ignore}
+	end;
 handle(SPid, {fork_recovered, BHL, BlockTXPairs}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	case recovered_from_fork(StateIn, BHL, BlockTXPairs) of

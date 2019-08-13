@@ -361,7 +361,7 @@ tx_id(TX) -> TX#tx.id.
 mine(B, RecallB, TXs, RewardAddr, Tags) ->
 	ar_mine:start(B, RecallB, TXs, RewardAddr, Tags, self(), []),
 	receive
-		{work_complete, TXs, _Hash, Diff, Nonce, Timestamp} ->
+		{work_complete, _BH, TXs, _Hash, Diff, Nonce, Timestamp} ->
 			{Nonce, Timestamp, Diff}
 	end.
 
