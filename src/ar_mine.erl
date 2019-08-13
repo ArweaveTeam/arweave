@@ -263,7 +263,8 @@ start_server(S, TXs) ->
 server(
 	S = #state {
 		parent = Parent,
-		miners = Miners
+		miners = Miners,
+		current_block = #block { indep_hash = CurrentBH }
 	}
 ) ->
 	receive
@@ -279,7 +280,7 @@ server(
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce, MinedTXs, MinedDiff, MinedTimestamp} ->
-			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp},
+			Parent ! {work_complete, CurrentBH, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp},
 			stop_miners(Miners)
 	end.
 
@@ -464,7 +465,8 @@ validator_test() ->
 
 assert_mine_output(B, RecallB, TXs) ->
 	receive
-		{work_complete, MinedTXs, Hash, MinedDiff, Nonce, Timestamp} ->
+		{work_complete, BH, MinedTXs, Hash, MinedDiff, Nonce, Timestamp} ->
+			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
 			BDS = ar_block:generate_block_data_segment(
 				B,
