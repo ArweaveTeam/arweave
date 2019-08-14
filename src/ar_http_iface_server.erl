@@ -99,7 +99,7 @@ start_https_gateway_listener({on, Domain, CustomDomains}, HttpIfaceEnv) ->
 		{certfile, "priv/tls/cert.pem"},
 		{keyfile, "priv/tls/key.pem"},
 		{sni_hosts, SniHosts}
-	],
+	] ++ cacertfile_when_present(),
 	ProtocolOpts = protocol_opts([{http_iface, HttpIfaceEnv}, {gateway, Domain, CustomDomains}]),
 	{ok, _} = cowboy:start_tls(ar_https_gateway_listener, TransportOpts, ProtocolOpts),
 	ok;
@@ -140,5 +140,22 @@ derive_sni_hosts(Domains) ->
 		{SDomain, [
 			{certfile, "priv/tls/" ++ SDomain ++ "/cert.pem"},
 			{keyfile, "priv/tls/" ++ SDomain ++ "/key.pem"}
-		]}
+		] ++ cacertfile_when_present(SDomain)}
 	end, Domains).
+
+cacertfile_when_present() ->
+	cacertfile_when_present(apex_domain).
+
+cacertfile_when_present(Domain) ->
+	Filename = case Domain of
+		apex_domain ->
+			"priv/tls/cacert.pem";
+		CustomDomain ->
+			"priv/tls/" ++ CustomDomain ++ "/cacert.pem"
+	end,
+	case filelib:is_file(Filename) of
+		true ->
+			[{cacertfile, Filename}];
+		false ->
+			[]
+	end.
