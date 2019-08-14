@@ -6,13 +6,17 @@
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0]).
 -import(ar_test_node, [slave_mine/1]).
 -import(ar_test_node, [assert_wait_until_receives_txs/2]).
--import(ar_test_node, [wait_until_height/2, slave_wait_until_height/2]).
+-import(ar_test_node, [wait_until_height/2, assert_slave_wait_until_height/2]).
 -import(ar_test_node, [slave_call/3]).
 -import(ar_test_node, [post_tx_to_slave/2, post_tx_to_master/2]).
 -import(ar_test_node, [assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
--import(ar_test_node, [sign_tx/1, sign_tx/2]).
--import(ar_test_node, [get_tx_anchor/0, join/1]).
+-import(ar_test_node, [sign_tx/1, sign_tx/2, sign_tx/3]).
+-import(ar_test_node, [get_tx_anchor/0, get_tx_anchor/1, join/1]).
 -import(ar_test_node, [assert_wait_until_block_hash_list/2]).
+-import(ar_test_node, [get_last_tx/1, get_last_tx/2]).
+-import(ar_test_node, [get_tx_confirmations/2]).
+-import(ar_test_node, [disconnect_from_slave/0]).
+
 -import(ar_test_fork, [test_on_fork/3]).
 
 accepts_gossips_and_mines_test_() ->
@@ -163,6 +167,9 @@ joins_network_successfully_test_() ->
 	%% a difficulty switch on time.
 	test_on_fork(height_1_8, 10, fun() -> joins_network_successfully(10) end).
 
+recovers_from_forks_test_() ->
+	test_on_fork(height_1_8, 10, fun() -> recovers_from_forks(7, 10) end).
+
 accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Post the given transactions made from the given wallets to a node.
 	%%
@@ -186,7 +193,7 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Mine a block.
 	slave_mine(Slave),
 	%% Expect both transactions to be included into block.
-	SlaveBHL = slave_wait_until_height(Slave, 1),
+	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
 		TXIDs,
@@ -277,7 +284,7 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	assert_post_tx_to_slave(Slave, ExceedBalanceTX),
 	%% Expect only the first two to be included into the block.
 	slave_mine(Slave),
-	SlaveBHL = slave_wait_until_height(Slave, 1),
+	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
 		TXIDs,
@@ -338,7 +345,7 @@ accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	TX1 = sign_tx(Key),
 	assert_post_tx_to_slave(Slave, TX1),
 	slave_mine(Slave),
-	slave_wait_until_height(Slave, 1),
+	assert_slave_wait_until_height(Slave, 1),
 	TX2 = sign_tx(Key, #{ last_tx => TX1#tx.id }),
 	assert_post_tx_to_slave(Slave, TX2),
 	TX3 = sign_tx(Key, #{ last_tx => TX2#tx.id }),
@@ -346,7 +353,7 @@ accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	TX4 = sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
 	assert_post_tx_to_slave(Slave, TX4),
 	slave_mine(Slave),
-	SlaveBHL = slave_wait_until_height(Slave, 2),
+	SlaveBHL = assert_slave_wait_until_height(Slave, 2),
 	B2 = slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]),
 	?assertEqual([TX2#tx.id, TX4#tx.id], B2#block.txs).
 
@@ -382,7 +389,7 @@ does_not_allow_to_spend_mempool_tokens() ->
 	),
 	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} = post_tx_to_slave(Slave, TX2),
 	slave_mine(Slave),
-	SlaveBHL = slave_wait_until_height(Slave, 1),
+	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
 	B1 = slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]),
 	?assertEqual([TX1#tx.id], B1#block.txs),
 	TX3 = sign_tx(
@@ -397,7 +404,7 @@ does_not_allow_to_spend_mempool_tokens() ->
 	),
 	assert_post_tx_to_slave(Slave, TX3),
 	slave_mine(Slave),
-	SlaveBHL2 = slave_wait_until_height(Slave, 2),
+	SlaveBHL2 = assert_slave_wait_until_height(Slave, 2),
 	B2 = slave_call(ar_storage, read_block, [hd(SlaveBHL2), SlaveBHL2]),
 	?assertEqual([TX3#tx.id], B2#block.txs).
 
@@ -424,7 +431,7 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 	),
 	assert_post_tx_to_slave(Slave, TX1),
 	slave_mine(Slave),
-	slave_wait_until_height(Slave, 1),
+	assert_slave_wait_until_height(Slave, 1),
 	SlaveIP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
 	GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
@@ -445,7 +452,7 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 	),
 	assert_post_tx_to_slave(Slave, TX2),
 	slave_mine(Slave),
-	slave_wait_until_height(Slave, 2),
+	assert_slave_wait_until_height(Slave, 2),
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_httpc:request(
 			<<"GET">>,
@@ -465,7 +472,7 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 	),
 	assert_post_tx_to_slave(Slave, TX3),
 	slave_mine(Slave),
-	slave_wait_until_height(Slave, 3),
+	assert_slave_wait_until_height(Slave, 3),
 	%% Remove the replay TX from the ingnore list (to simulate e.g. a node restart).
 	slave_call(ets, delete, [ignored_ids, TX2#tx.id]),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
@@ -490,7 +497,7 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	lists:foldl(
 		fun(Group, Height) ->
 			slave_mine(Slave),
-			SlaveBHL = slave_wait_until_height(Slave, Height),
+			SlaveBHL = assert_slave_wait_until_height(Slave, Height),
 			GroupTXIDs = lists:map(fun(TX) -> TX#tx.id end, Group),
 			?assertEqual(
 				GroupTXIDs,
@@ -512,7 +519,7 @@ rejects_txs_with_outdated_anchors() ->
 	]),
 	{Slave, _} = slave_start(B0),
 	slave_mine_blocks(Slave, ?MAX_TX_ANCHOR_DEPTH),
-	slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH),
+	assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH),
 	TX1 = sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		post_tx_to_slave(Slave, TX1).
@@ -559,6 +566,12 @@ joins_network_successfully(ForkHeight) ->
 	%%
 	%% Try to replay the transactions from the weave on the new node.
 	%% Expect them to be rejected.
+	%%
+	%% Isolate the nodes. Mine 1 block with a transaction anchoring the
+	%% oldest block possible on slave. Mine a block on master so that it stops
+	%% tracking the block just referenced by slave. Reconnect the nodes, mine another
+	%% two blocks with transactions anchoring the oldest block possible on slave.
+	%% Expect master to fork recover successfully.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
@@ -570,7 +583,7 @@ joins_network_successfully(ForkHeight) ->
 			TX = sign_tx(Key, #{ last_tx => LastTX }),
 			assert_post_tx_to_slave(Slave, TX),
 			slave_mine(Slave),
-			slave_wait_until_height(Slave, Height),
+			assert_slave_wait_until_height(Slave, Height),
 			{TXs ++ [TX], TX#tx.id}
 		end,
 		{[], <<>>},
@@ -594,7 +607,7 @@ joins_network_successfully(ForkHeight) ->
 				lists:seq(1, rand:uniform(5))
 			),
 			slave_mine(Slave),
-			slave_wait_until_height(Slave, Height),
+			assert_slave_wait_until_height(Slave, Height),
 			TXs ++ NewTXs
 		end,
 		[],
@@ -623,6 +636,173 @@ joins_network_successfully(ForkHeight) ->
 				post_tx_to_master(Master, TX)
 		end,
 		PostForkTXs
+	),
+	disconnect_from_slave(),
+	TX3 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
+	assert_post_tx_to_slave(Slave, TX3),
+	slave_mine(Slave),
+	BHL2 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 1),
+	ar_node:mine(Master),
+	connect_to_slave(),
+	TX4 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL2) }),
+	assert_post_tx_to_slave(Slave, TX4),
+	slave_mine(Slave),
+	BHL3 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 2),
+	TX5 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL3) }),
+	assert_post_tx_to_slave(Slave, TX5),
+	slave_mine(Slave),
+	BHL4 = wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 3),
+	?assertEqual([TX5#tx.id], (ar_storage:read_block(hd(BHL4), BHL4))#block.txs),
+	?assertEqual([TX4#tx.id], (ar_storage:read_block(hd(BHL3), BHL3))#block.txs),
+	?assertEqual([TX3#tx.id], (ar_storage:read_block(hd(BHL2), BHL2))#block.txs).
+
+recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
+	%% Mine a number of blocks with transactions on slave and master in sync,
+	%% then mine another bunch independently. Place the 1.8 fork in the middle
+	%% of the extra bulk.
+	%%
+	%% Mine an extra block on slave to make master fork recover to it.
+	%% Expect the fork recovery to be successful.
+	%%
+	%% Try to replay all the past transactions on master. Expect the transactions to be rejected.
+	%%
+	%% Resubmit all the transactions from the orphaned fork. Expect them to be accepted
+	%% and successfully mined into a block.
+	Key = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([
+		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
+	]),
+	{Slave, _} = slave_start(B0),
+	{Master, _} = start(B0),
+	connect_to_slave(),
+	{PreForkTXs, _} = lists:foldl(
+		fun(Height, {TXs, LastTX}) ->
+			TX = sign_tx(Key, #{ last_tx => LastTX }),
+			assert_post_tx_to_slave(Slave, TX),
+			slave_mine(Slave),
+			BHL = assert_slave_wait_until_height(Slave, Height),
+			BHL = wait_until_height(Master, Height),
+			slave_assert_block_txs([TX], BHL),
+			assert_block_txs([TX], BHL),
+			{TXs ++ [TX], TX#tx.id}
+		end,
+		{[], <<>>},
+		lists:seq(1, ForkHeight)
+	),
+	disconnect_from_slave(),
+	{SlavePostForkTXs, SlavePostForkBlockAnchoredTXs} = lists:foldl(
+		fun(Height, {TXs, BlockAnchoredTXs}) ->
+			LastTX = get_last_tx(Key),
+			TX = sign_tx(Key, #{ last_tx => LastTX }),
+			BlockAnchoredTX = case Height of
+				H when H > ForkHeight_1_8 ->
+					BTX = sign_tx(
+						Key,
+						#{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }
+					),
+					assert_post_tx_to_slave(Slave, BTX),
+					[BTX];
+				_ ->
+					[]
+			end,
+			assert_post_tx_to_slave(Slave, TX),
+			slave_mine(Slave),
+			BHL = assert_slave_wait_until_height(Slave, Height),
+			slave_assert_block_txs([TX] ++ BlockAnchoredTX, BHL),
+			{TXs ++ [TX], BlockAnchoredTXs ++ BlockAnchoredTX}
+		end,
+		{[], []},
+		lists:seq(ForkHeight + 1, ForkHeight_1_8 + 2)
+	),
+	IncludeOnMasterTX = ar_util:pick_random(SlavePostForkBlockAnchoredTXs),
+	forget_txs([IncludeOnMasterTX]),
+	?assertEqual(ForkHeight, length(ar_node:get_blocks(Master)) - 1),
+	?assertEqual([], ar_node:get_all_known_txs(Master)),
+	{MasterPostForkTXs, MasterPostForkBlockAnchoredTXs} = lists:foldl(
+		fun(Height, {TXs, BlockAnchoredTXs}) ->
+			%% Post one wallet list anchored tx per block. After fork 1.8
+			%% post 1 block anchored tx per block. At fork block, post
+			%% one of the transactions included by slave on the different fork.
+			LastTX = get_last_tx(master, Key),
+			TX = sign_tx(master, Key, #{ last_tx => LastTX }),
+			assert_post_tx_to_master(Master, TX),
+			AdditionalTXs = case Height of
+				H when H == ForkHeight_1_8 + 1 ->
+					assert_post_tx_to_master(Master, IncludeOnMasterTX),
+					[IncludeOnMasterTX];
+				H when H > ForkHeight_1_8 ->
+					BlockAnchoredTX = sign_tx(
+						master,
+						Key,
+						#{ last_tx => get_tx_anchor(master), tags => [{<<"nonce">>, random_nonce()}] }
+					),
+					assert_post_tx_to_master(Master, BlockAnchoredTX),
+					[BlockAnchoredTX];
+				_ ->
+					[]
+			end,
+			ar_node:mine(Master),
+			BHL = wait_until_height(Master, Height),
+			assert_block_txs([TX] ++ AdditionalTXs, BHL),
+			{TXs ++ [TX], BlockAnchoredTXs ++ AdditionalTXs}
+		end,
+		{[], []},
+		lists:seq(ForkHeight + 1, ForkHeight_1_8 + 1)
+	),
+	connect_to_slave(),
+	TX2 = sign_tx(Key, #{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }),
+	assert_post_tx_to_slave(Slave, TX2),
+	assert_wait_until_receives_txs(Master, [TX2]),
+	slave_mine(Slave),
+	assert_slave_wait_until_height(Slave, ForkHeight_1_8 + 3),
+	wait_until_height(Master, ForkHeight_1_8 + 3),
+	forget_txs(
+		PreForkTXs ++
+		MasterPostForkTXs ++
+		MasterPostForkBlockAnchoredTXs ++
+		SlavePostForkTXs ++
+		SlavePostForkBlockAnchoredTXs ++
+		[TX2]
+	),
+	%% Assert pre-fork transactions, the transactions which came during
+	%% fork recovery, and the freshly created transaction are in the
+	%% weave.
+	lists:foreach(
+		fun(TX) ->
+			Confirmations = get_tx_confirmations(master, TX#tx.id),
+			?assert(Confirmations > 0),
+			{ok, {{<<"400">>, _}, _, _, _, _}} =
+				post_tx_to_master(Master, TX)
+		end,
+		PreForkTXs ++ SlavePostForkTXs ++ SlavePostForkBlockAnchoredTXs ++ [TX2]
+	),
+	%% Assert the transactions included in the abandoned fork are removed.
+	lists:foreach(
+		fun(TX) ->
+			Confirmations = get_tx_confirmations(master, TX#tx.id),
+			?assertEqual(-1, Confirmations)
+		end,
+		MasterPostForkTXs ++ MasterPostForkBlockAnchoredTXs -- [IncludeOnMasterTX]
+	),
+	%% Assert the block anchored transactions from the abandoned fork can
+	%% be reposted.
+	lists:foreach(
+		fun(TX) ->
+			assert_post_tx_to_master(Master, TX)
+		end,
+		MasterPostForkBlockAnchoredTXs -- [IncludeOnMasterTX]
+	),
+	ar_node:mine(Master),
+	wait_until_height(Master, ForkHeight_1_8 + 4),
+	forget_txs(MasterPostForkBlockAnchoredTXs),
+	lists:foreach(
+		fun(TX) ->
+			Confirmations = get_tx_confirmations(master, TX#tx.id),
+			?assertEqual(1, Confirmations),
+			{ok, {{<<"400">>, _}, _, <<"Transaction is already on the weave.">>, _, _}} =
+				post_tx_to_master(Master, TX)
+		end,
+		MasterPostForkBlockAnchoredTXs -- [IncludeOnMasterTX]
 	).
 
 one_wallet_list_one_block_anchored_txs(Key, B0) ->
@@ -697,7 +877,7 @@ slave_mine_blocks(_Slave, Height, TargetHeight) when Height == TargetHeight + 1 
 	ok;
 slave_mine_blocks(Slave, Height, TargetHeight) ->
 	slave_mine(Slave),
-	slave_wait_until_height(Slave, Height),
+	assert_slave_wait_until_height(Slave, Height),
 	slave_mine_blocks(Slave, Height + 1, TargetHeight).
 
 forget_txs(TXs) ->
@@ -707,3 +887,16 @@ forget_txs(TXs) ->
 		end,
 		TXs
 	).
+
+slave_assert_block_txs(TXs, BHL) ->
+	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
+	B = slave_call(ar_storage, read_block, [hd(BHL), BHL]),
+	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
+
+assert_block_txs(TXs, BHL) ->
+	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
+	B = ar_storage:read_block(hd(BHL), BHL),
+	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
+
+random_nonce() ->
+	integer_to_binary(rand:uniform(1000000)).
