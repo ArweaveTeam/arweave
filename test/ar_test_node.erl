@@ -1,6 +1,6 @@
 -module(ar_test_node).
 
--export([start/1, start/2, slave_start/1]).
+-export([start/1, start/2, start/3, slave_start/1, slave_start/2]).
 -export([connect_to_slave/0, disconnect_from_slave/0]).
 -export([slave_call/3, slave_call/4]).
 -export([gossip/2, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
@@ -18,27 +18,34 @@
 -export([join/1]).
 -export([get_last_tx/1, get_last_tx/2]).
 -export([get_tx_confirmations/2]).
+-export([get_balance/1]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 start(no_block) ->
 	[B0] = ar_weave:init([]),
-	start(B0);
+	start(B0, unclaimed);
 start(B0) ->
+	start(B0, unclaimed).
+
+start(B0, RewardAddr) ->
 	ar_storage:write_full_block(B0),
-	start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).
+	start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, RewardAddr).
 
 slave_start(no_block) ->
 	[B0] = slave_call(ar_weave, init, []),
-	slave_start(B0);
+	slave_start(B0, unclaimed);
 slave_start(B0) ->
-	slave_call(ar_storage, write_full_block, [B0]),
-	slave_call(?MODULE, start, [B0, {127, 0, 0, 1, ar_meta_db:get(port)}]).
+	slave_start(B0, unclaimed).
 
-start(B0, Peer) ->
+slave_start(B0, RewardAddr) ->
+	slave_call(ar_storage, write_full_block, [B0]),
+	slave_call(?MODULE, start, [B0, {127, 0, 0, 1, ar_meta_db:get(port)}, RewardAddr]).
+
+start(B0, Peer, RewardAddr) ->
 	ar_storage:clear(),
-	Node = ar_node:start([], [B0]),
+	Node = ar_node:start([], [B0], 0, RewardAddr),
 	ar_http_iface_server:reregister(http_entrypoint_node, Node),
 	ar_meta_db:reset_peer(Peer),
 	Bridge = ar_bridge:start([], Node, ar_meta_db:get(port)),
@@ -366,3 +373,15 @@ get_tx_confirmations(master, TXID) ->
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
 			-1
 	end.
+
+get_balance(Pub) ->
+	Port = slave_call(ar_meta_db, get, [port]),
+	IP = {127, 0, 0, 1, Port},
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			IP,
+			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/balance",
+			[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		),
+	binary_to_integer(Reply).

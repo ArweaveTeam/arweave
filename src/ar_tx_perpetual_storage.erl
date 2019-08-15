@@ -2,6 +2,7 @@
 -export([
 	calculate_tx_fee/4, calculate_tx_reward/1,
 	perpetual_cost_at_timestamp/1,
+	calculate_tx_cost/4,
 	usd_to_ar/3
 ]).
 -include("ar.hrl").
