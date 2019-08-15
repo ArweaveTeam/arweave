@@ -11,7 +11,14 @@
 -define(USD_PER_GBY_2019, 0.000925).
 
 %% @doc Initial $/AR exchange rate.
+-ifdef(DEBUG).
+%% Use a smaller rate in tests to decrease burden so that
+%% there is space for testing the pooling mechanics before
+%% reward becomes bigger than the burden.
+-define(INITIAL_USD_PER_AR, 0.1).
+-else.
 -define(INITIAL_USD_PER_AR, 1.5).
+-endif.
 
 %% @doc The difficulty of the network at the time when
 %% the $/AR exchange rate was ?INITIAL_USD_PER_AR.
