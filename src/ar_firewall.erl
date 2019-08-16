@@ -280,7 +280,10 @@ blacklist_transaction_test() ->
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid2">> })),
 	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ id = <<"goodtxid">> })).
 
-scan_and_clean_disk_test() ->
+scan_and_clean_disk_test_() ->
+	{timeout, 30, fun test_scan_and_clean_disk/0}.
+
+test_scan_and_clean_disk() ->
 	GoodTXID = <<"goodtxid">>,
 	BadTXID = <<"badtxid1">>,
 	BadDataTXID = <<"badtxid">>,
