@@ -129,7 +129,7 @@
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
 %% @doc Default timeout used when sending to and receiving from a TCP socket
 %%      when making an HTTP request.
--define(HTTP_REQUEST_SEND_TIMEOUT, 25 * 1000).
+-define(HTTP_REQUEST_SEND_TIMEOUT, 60 * 1000).
 
 %% @doc Default timeout value for local requests
 -define(LOCAL_NET_TIMEOUT, 30 * 1000).
@@ -240,6 +240,13 @@
 -define(RANDOMX_STATE_POLL_INTERVAL, ?TARGET_TIME).
 -define(RANDOMX_KEEP_KEY, ?STORE_BLOCKS_BEHIND_CURRENT).
 -endif.
+
+%% @doc Adjust the difficulty down to the limit. The adjustment
+%% is lower when the difficulty goes down than when it goes up
+%% to prevent forks - stalls are preferred over forks.
+-define(DIFF_ADJUSTMENT_DOWN_LIMIT(Diff), (Diff div 2)).
+%% @doc Adjust the difficulty up to the limit.
+-define(DIFF_ADJUSTMENT_UP_LIMIT(Diff), (Diff * 4)).
 
 %% @doc A block on the weave.
 -record(block, {

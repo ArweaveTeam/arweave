@@ -31,13 +31,14 @@ init(WalletList, StartingDiff, RewardPool) ->
 			diff = StartingDiff,
 			weave_size = 0,
 			block_size = 0,
-			reward_pool = RewardPool
+			reward_pool = RewardPool,
+			timestamp = os:system_time(seconds)
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
 -else.
 init() -> init(ar_util:genesis_wallets()).
-init(WalletList) -> init(WalletList, ?DEFAULT_DIFF).
+init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty()).
 init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
 	ar_randomx_state:reset(),
@@ -54,11 +55,13 @@ init(WalletList, StartingDiff, RewardPool) ->
 			diff = StartingDiff,
 			weave_size = 0,
 			block_size = 0,
-			reward_pool = RewardPool
+			reward_pool = RewardPool,
+			timestamp = os:system_time(seconds)
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
 -endif.
+
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
 add(Bs) ->
 	add(Bs, []).
@@ -76,11 +79,11 @@ add([B|Bs], TXs, HashList, RewardAddr) ->
 			B#block.reward_pool,
 			TXs,
 			RewardAddr,
-			ar_node_utils:calculate_proportion(
-				RecallB#block.block_size,
-				B#block.weave_size,
-				B#block.height
-			)
+			RecallB#block.block_size,
+			B#block.weave_size,
+			B#block.height,
+			B#block.diff,
+			B#block.timestamp
 		),
 	WalletList = ar_node_utils:apply_mining_reward(
 		ar_node_utils:apply_txs(B#block.wallet_list, TXs, length(HashList) - 1),
@@ -146,8 +149,14 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 	NewHeight = CurrentB#block.height + 1,
 	CDiff =
 		case NewHeight >= ?FORK_1_6 of
-			true -> CurrentB#block.cumulative_diff + (Diff * Diff);
-			false -> 0
+			true ->
+				ar_difficulty:next_cumulative_diff(
+					CurrentB#block.cumulative_diff,
+					Diff,
+					NewHeight
+				);
+			false ->
+				0
 		end,
 	MR =
 		case NewHeight of
@@ -352,7 +361,7 @@ tx_id(TX) -> TX#tx.id.
 mine(B, RecallB, TXs, RewardAddr, Tags) ->
 	ar_mine:start(B, RecallB, TXs, RewardAddr, Tags, self(), []),
 	receive
-		{work_complete, TXs, _Hash, Diff, Nonce, Timestamp} ->
+		{work_complete, _BH, TXs, _Hash, Diff, Nonce, Timestamp} ->
 			{Nonce, Timestamp, Diff}
 	end.
 

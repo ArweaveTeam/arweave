@@ -5,8 +5,7 @@
 -module(ar_http_iface_client).
 
 -export([send_new_block/4, send_new_tx/2, get_block/3]).
--export([get_tx/2, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
--export([get_tx_reward/2]).
+-export([get_tx/3, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).
@@ -114,23 +113,21 @@ add_peer(Peer) ->
 get_current_block(Peer) ->
 	get_current_block(Peer, get_hash_list(Peer)).
 get_current_block(Peer, BHL) ->
-	get_full_block(Peer, hd(BHL), BHL).
-
-%% @doc Get the minimum cost that a remote peer would charge for
-%% a transaction of the given data size in bytes.
-get_tx_reward(Peer, Size) ->
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/price/" ++ integer_to_list(Size),
-			p2p_headers()
-		),
-	binary_to_integer(Body).
+	case get_full_block([Peer], hd(BHL), BHL) of
+		{_Peer, B} ->
+			B;
+		Error ->
+			Error
+	end.
 
 %% @doc Retreive a block by height or hash from a remote peer.
 get_block(Peer, ID, BHL) ->
-	get_full_block(Peer, ID, BHL).
+	case get_full_block([Peer], ID, BHL) of
+		{_Peer, B} ->
+			B;
+		Error ->
+			Error
+	end.
 
 %% @doc Get an encrypted block from a remote peer.
 %% Used when the next block is the recall block.
@@ -172,10 +169,14 @@ prepare_block_id(ID) when is_integer(ID) ->
 	"/block/height/" ++ integer_to_list(ID).
 
 %% @doc Retreive a full block (full transactions included in body)
-%% by hash from a remote peer.
-get_full_block(Peer, ID, BHL) ->
-	handle_block_response(
+%% by hash from remote peers.
+get_full_block([], _ID, _BHL) ->
+	unavailable;
+get_full_block(Peers, ID, BHL) ->
+	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	case handle_block_response(
 		Peer,
+		Peers,
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
@@ -185,7 +186,14 @@ get_full_block(Peer, ID, BHL) ->
 			10 * 1000
 		),
 		BHL
-	).
+	) of
+		unavailable ->
+			get_full_block(Peers -- [Peer], ID, BHL);
+		not_found ->
+			get_full_block(Peers -- [Peer], ID, BHL);
+		B ->
+			{Peer, B}
+	end.
 
 %% @doc Get a wallet list (by its hash) from the external peer.
 get_wallet_list(Peer, Hash) ->
@@ -254,18 +262,61 @@ get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
 		)
 	).
 
-%% @doc Retreive a tx by hash from a remote peer
-get_tx(Peer, Hash) ->
-	handle_tx_response(
+%% @doc Retreive a tx by ID from the memory pool, disk, or a remote peer.
+get_tx(Peers, TXID, MempoolTXs) ->
+	case list_search(
+		fun(TX) ->
+			TXID == TX#tx.id
+		end,
+		MempoolTXs
+	) of
+		{value, TX} ->
+			TX;
+		false ->
+			get_tx_from_disk_or_peer(Peers, TXID)
+	end.
+
+get_tx_from_disk_or_peer(Peers, TXID) ->
+	case ar_storage:read_tx(TXID) of
+		unavailable ->
+			get_tx_from_remote_peer(Peers, TXID);
+		TX ->
+			TX
+	end.
+
+get_tx_from_remote_peer([], _TXID) ->
+	not_found;
+get_tx_from_remote_peer(Peers, TXID) ->
+	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	case handle_tx_response(
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/tx/" ++ binary_to_list(ar_util:encode(Hash)),
+			"/tx/" ++ binary_to_list(ar_util:encode(TXID)),
 			p2p_headers(),
 			[],
 			10 * 1000
 		)
-	).
+	) of
+		not_found ->
+			get_tx_from_remote_peer(Peers -- [Peer], TXID);
+		pending ->
+			get_tx_from_remote_peer(Peers -- [Peer], TXID);
+		gone ->
+			get_tx_from_remote_peer(Peers -- [Peer], TXID);
+		ShouldBeTX ->
+			ShouldBeTX
+	end.
+
+list_search(_Pred, []) ->
+	false;
+list_search(Pred, [Head | Rest]) ->
+	case Pred(Head) of
+		false ->
+			list_search(Pred, Rest);
+		true ->
+			{value, Head}
+	end.
 
 %% @doc Retreive only the data associated with a transaction.
 get_tx_data(Peer, Hash) ->
@@ -399,13 +450,20 @@ process_get_info(Props) ->
 	].
 
 %% @doc Process the response of an /block call.
-handle_block_response(Peer, Response, BHL) ->
-	case catch handle_block_response1(Peer, Response, BHL) of
-		{'EXIT', _} -> unavailable;
-		Handled -> Handled
+handle_block_response(Peer, Peers, Response, BHL) ->
+	case catch handle_block_response1(Peer, Peers, Response, BHL) of
+		{'EXIT', Reason} ->
+			ar:info([
+				"Failed to parse block response.",
+				{peer, Peer},
+				{reason, Reason}
+			]),
+			unavailable;
+		Handled ->
+			Handled
 	end.
 
-handle_block_response1(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
+handle_block_response1(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
 	B = ar_serialize:json_struct_to_block(Body),
 	case ?IS_BLOCK(B) of
 		true ->
@@ -426,9 +484,10 @@ handle_block_response1(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
 						ar_block:generate_hash_list_for_block(B, BHL);
 					HL -> HL
 				end,
+			MempoolTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
 			FullB =
 				B#block {
-					txs = [ get_tx(Peer, TXID) || TXID <- B#block.txs ],
+					txs = [ get_tx(Peers, TXID, MempoolTXs) || TXID <- B#block.txs ],
 					hash_list = HashList,
 					wallet_list = WalletList
 				},
@@ -438,11 +497,11 @@ handle_block_response1(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
 			end;
 		false -> B
 	end;
-handle_block_response1(_, {error, _}, _) -> unavailable;
-handle_block_response1(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
-handle_block_response1(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
-handle_block_response1(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable;
-handle_block_response1(_, Response, _) ->
+handle_block_response1(_, _, {error, _}, _) -> unavailable;
+handle_block_response1(_, _, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response1(_, _, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
+handle_block_response1(_, _, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response1(_, _, Response, _) ->
 	ar:warn([{unexpected_block_response, Response}]),
 	unavailable.
 

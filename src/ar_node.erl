@@ -65,7 +65,7 @@ start_link(Args) ->
 % MiningDelay: delay in mining, used primarily for network simulation
 % RewardAddr: the address in which mining rewards will be attributed with
 % AutoJoin: boolean stating if a node should automatically attempt to join
-% Diff: starting diff of the network (?DEFAULT_DIFF)
+% Diff: starting diff of the network
 % LastRetarget: timestamp (seconds) stating when difficulty was last changed
 start() ->
 	start([]).
@@ -114,7 +114,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
-		?DEFAULT_DIFF
+		ar_mine:genesis_difficulty()
 	).
 start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
 	start(
@@ -701,7 +701,7 @@ handle(_SPid, {set_reward_addr, Addr}) ->
 	{task, {set_reward_addr, Addr}};
 handle(_SPid, {set_xfer_speed, Speed}) ->
 	{task, {set_xfer_speed, Speed}};
-handle(SPid, {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp}) ->
+handle(SPid, {work_complete, BH, MinedTXs, _Hash, Diff, Nonce, Timestamp}) ->
 	% The miner thinks it has found a new block.
 	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
 	case HashList of
@@ -710,6 +710,7 @@ handle(SPid, {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp}) ->
 		_ ->
 			{task, {
 				work_complete,
+				BH,
 				MinedTXs,
 				Diff,
 				Nonce,

@@ -63,7 +63,7 @@ mine(Diff, Algorithm) ->
 	},
 	ar_mine:start(B, B, [], unclaimed, [], Diff, self(), []),
 	receive
-		{work_complete, _, _, _, _, _} ->
+		{work_complete, _, _, _, _, _, _} ->
 			ok
 	end.
 
