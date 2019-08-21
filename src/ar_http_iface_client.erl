@@ -18,7 +18,7 @@
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
 	case byte_size(TX#tx.data) of
-		_Size when _Size < 50000 ->
+		_Size when _Size < ?TX_SEND_WITHOUT_ASKING_SIZE_LIMIT ->
 			do_send_new_tx(Peer, TX);
 		_ ->
 			case has_tx(Peer, TX#tx.id) of
@@ -29,13 +29,14 @@ send_new_tx(Peer, TX) ->
 	end.
 
 do_send_new_tx(Peer, TX) ->
+	TXSize = byte_size(TX#tx.data),
 	ar_httpc:request(
 		<<"POST">>,
 		Peer,
 		"/tx",
 		p2p_headers(),
 		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-		3 * 1000
+		max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
 	).
 
 %% @doc Check whether a peer has a given transaction
@@ -398,7 +399,13 @@ process_get_info(Props) ->
 	].
 
 %% @doc Process the response of an /block call.
-handle_block_response(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
+handle_block_response(Peer, Response, BHL) ->
+	case catch handle_block_response1(Peer, Response, BHL) of
+		{'EXIT', _} -> unavailable;
+		Handled -> Handled
+	end.
+
+handle_block_response1(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
 	B = ar_serialize:json_struct_to_block(Body),
 	case ?IS_BLOCK(B) of
 		true ->
@@ -431,52 +438,82 @@ handle_block_response(Peer, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
 			end;
 		false -> B
 	end;
-handle_block_response(_, {error, _}, _) -> unavailable;
-handle_block_response(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
-handle_block_response(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
-handle_block_response(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable.
+handle_block_response1(_, {error, _}, _) -> unavailable;
+handle_block_response1(_, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response1(_, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
+handle_block_response1(_, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response1(_, Response, _) ->
+	ar:warn([{unexpected_block_response, Response}]),
+	unavailable.
 
 %% @doc Process the response of a /block/.../encrypted call.
 handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_util:decode(Body);
+	case catch ar_util:decode(Body) of
+		{'EXIT', _} -> unavailable;
+		Decoded -> Decoded
+	end;
 handle_encrypted_block_response({error, _}) -> unavailable;
 handle_encrypted_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_encrypted_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+handle_encrypted_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable;
+handle_encrypted_block_response(Response) ->
+	ar:warn([{unexpected_encrypted_block_response, Response}]),
+	unavailable.
 
 %% @doc Process the response of a /block/.../all/encrypted call.
 handle_encrypted_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_util:decode(Body);
+	case catch ar_util:decode(Body) of
+		{'EXIT', _} -> unavailable;
+		Decoded -> Decoded
+	end;
 handle_encrypted_full_block_response({error, _}) -> unavailable;
 handle_encrypted_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_encrypted_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable.
+handle_encrypted_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable;
+handle_encrypted_full_block_response(Response) ->
+	ar:warn([{unexpected_encrypted_full_block_response, Response}]),
+	unavailable.
 
 %% @doc Process the response of a /block/[{Height}|{Hash}]/{Subfield} call.
-handle_block_field_response({"timestamp", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+handle_block_field_response(Response) ->
+	case catch handle_block_field_response1(Response) of
+		{'EXIT', _} -> unavailable;
+		Handled -> Handled
+	end.
+
+handle_block_field_response1({"timestamp", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	binary_to_integer(Body);
-handle_block_field_response({"last_retarget", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+handle_block_field_response1({"last_retarget", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	binary_to_integer(Body);
-handle_block_field_response({"diff", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+handle_block_field_response1({"diff", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	binary_to_integer(Body);
-handle_block_field_response({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+handle_block_field_response1({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	binary_to_integer(Body);
-handle_block_field_response({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+handle_block_field_response1({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_tx(Body);
-handle_block_field_response({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+handle_block_field_response1({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Body));
-handle_block_field_response({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
+handle_block_field_response1({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_wallet_list(Body);
-handle_block_field_response({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> Body;
-handle_block_field_response({error, _}) -> unavailable;
-handle_block_field_response({ok, {{<<"404">>, _}, _, _}}) -> not_found;
-handle_block_field_response({ok, {{<<"500">>, _}, _, _}}) -> unavailable.
+handle_block_field_response1({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> Body;
+handle_block_field_response1({error, _}) -> unavailable;
+handle_block_field_response1({ok, {{<<"404">>, _}, _, _}}) -> not_found;
+handle_block_field_response1({ok, {{<<"500">>, _}, _, _}}) -> unavailable;
+handle_block_field_response1(Response) ->
+	ar:warn([{unexpected_block_field_response, Response}]),
+	unavailable.
 
 %% @doc Process the response of a /tx call.
 handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	ar_serialize:json_struct_to_tx(Body);
+	case catch ar_serialize:json_struct_to_tx(Body) of
+		{'EXIT', _} -> not_found;
+		TX -> TX
+	end;
 handle_tx_response({ok, {{<<"202">>, _}, _, _, _, _}}) -> pending;
 handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_tx_response({ok, {{<<"410">>, _}, _, _, _, _}}) -> gone;
-handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found.
+handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found;
+handle_tx_response(Response) ->
+	ar:warn([{unexpected_tx_response, Response}]),
+	not_found.
 
 p2p_headers() ->
 	[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}].

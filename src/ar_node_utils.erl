@@ -4,36 +4,22 @@
 
 -module(ar_node_utils).
 
--export([get_conflicting_txs/2, get_full_block/3]).
+-export([get_full_block/3]).
 -export([find_recall_hash/2, find_recall_block/1, find_block/1]).
 -export([calculate_reward/2, calculate_reward_pool/4, calculate_proportion/3]).
--export([apply_mining_reward/4, apply_tx/2, apply_txs/2]).
+-export([apply_mining_reward/4, apply_tx/3, apply_txs/3]).
 -export([start_mining/1, reset_miner/1]).
--export([integrate_new_block/2]).
+-export([integrate_new_block/3]).
 -export([fork_recover/3]).
--export([filter_out_of_order_txs/2, filter_out_of_order_txs/3]).
--export([filter_all_out_of_order_txs/2]).
 -export([validate/5, validate/8, validate_wallet_list/1]).
 -export([calculate_delay/1]).
+-export([update_block_txs_pairs/3]).
 
 -include("ar.hrl").
 
 %%%
 %%% Public API.
 %%%
-
-%% @doc Get the conflicting transaction between state and passed ones.
-get_conflicting_txs(StateTXs, TX) ->
-	[
-		TXOut
-	||
-		TXOut <-
-			StateTXs,
-			(
-				(TXOut#tx.last_tx == TX#tx.last_tx) and
-				(TXOut#tx.owner == TX#tx.owner)
-			)
-	].
 
 %% @doc Get a full block (a block containing all transactions) by the independent hash.
 %%      Try to find the block locally first. If we do not have the full block on disk, try to download it from peers.
@@ -181,17 +167,17 @@ apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
 
 %% @doc Apply a transaction to a wallet list, updating it.
 %% Critically, filter empty wallets from the list after application.
-apply_tx(WalletList, unavailable) ->
+apply_tx(WalletList, unavailable, _) ->
 	WalletList;
-apply_tx(WalletList, TX) ->
-	filter_empty_wallets(do_apply_tx(WalletList, TX)).
+apply_tx(WalletList, TX, Height) ->
+	filter_empty_wallets(do_apply_tx(WalletList, TX, Height)).
 
 %% @doc Update a wallet list with a set of new transactions.
-apply_txs(WalletList, TXs) ->
+apply_txs(WalletList, TXs, Height) ->
 	lists:sort(
 		lists:foldl(
 			fun(TX, CurrWalletList) ->
-				apply_tx(CurrWalletList, TX)
+				apply_tx(CurrWalletList, TX, Height)
 			end,
 			WalletList,
 			TXs
@@ -211,7 +197,8 @@ start_mining(#{
 		hash_list := BHL,
 		txs := TXs,
 		reward_addr := RewardAddr,
-		tags := Tags } = StateIn, ForceDiff) ->
+		tags := Tags,
+		block_txs_pairs := BlockTXPairs } = StateIn, ForceDiff) ->
 	case find_recall_block(BHL) of
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL), BHL),
@@ -281,7 +268,8 @@ start_mining(#{
 						TXs,
 						RewardAddr,
 						Tags,
-						Node
+						Node,
+						BlockTXPairs
 					),
 					ar:info([{node, Node}, {started_miner, Miner}]),
 					StateIn#{ miner => Miner };
@@ -293,7 +281,8 @@ start_mining(#{
 						RewardAddr,
 						Tags,
 						ForceDiff,
-						Node
+						Node,
+						BlockTXPairs
 					),
 					ar:info([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
 					StateIn#{ miner => Miner, diff => ForceDiff }
@@ -317,39 +306,32 @@ integrate_new_block(
 		#{
 			txs := TXs,
 			hash_list := HashList,
-			wallet_list := WalletList,
-			waiting_txs := WaitingTXs,
-			potential_txs := PotentialTXs
+			block_txs_pairs := BlockTXPairs
 		} = StateIn,
-		NewB) ->
+		NewB,
+		BlockTXs) ->
 	%% Filter completed TXs from the pending list. The mining reward for TXs is
 	%% supposed to be pessimistic (see the /price/[bytes] endpoint) by taking
 	%% into account the difficulty may change 1 step before the TX is mined into
 	%% a block. Therefore, we re-use the difficulty from NewB when verifying TXs
 	%% for the next block because even if the next difficulty makes the price go
 	%% up, it should be fine.
-	RawKeepNotMinedTXs =
-		lists:filter(
-			fun(T) ->
-				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id)) and
-				ar_tx:verify(T, NewB#block.diff, NewB#block.height + 1, WalletList)
-			end,
-			TXs
-		),
-	NotMinedTXs =
-		lists:filter(
-			fun(T) ->
-				(not ar_weave:is_tx_on_block_list([NewB], T#tx.id))
-			end,
-			TXs ++ WaitingTXs ++ PotentialTXs
-		),
-	KeepNotMinedTXs = filter_all_out_of_order_txs(
-							NewB#block.wallet_list,
-							RawKeepNotMinedTXs),
-	BlockTXs = (TXs ++ WaitingTXs ++ PotentialTXs) -- NotMinedTXs,
-	% Write new block and included TXs to local storage.
+	%% Write new block and included TXs to local storage.
 	ar_storage:write_full_block(NewB, BlockTXs),
-	% Recurse over the new block.
+	NewBHL = [NewB#block.indep_hash | HashList],
+	NewBlockTXPairs = update_block_txs_pairs(
+		NewB#block.indep_hash,
+		[TX#tx.id || TX <- BlockTXs],
+		BlockTXPairs
+	),
+	ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+		NewBlockTXPairs,
+		TXs -- BlockTXs,
+		NewB#block.diff,
+		NewB#block.height,
+		NewB#block.wallet_list
+	),
+	%% Recurse over the new block.
 	ar_miner_log:foreign_block(NewB#block.indep_hash),
 	ar:report_console(
 		[
@@ -362,13 +344,7 @@ integrate_new_block(
 		PID ->
 			PID ! {parent_accepted_block, NewB}
 	end,
-	lists:foreach(
-		fun(T) ->
-			ar_tx_db:ensure_error(T#tx.id)
-		end,
-		PotentialTXs
-	),
-	RecallHash = find_recall_hash(NewB, BHL = [NewB#block.indep_hash | HashList]),
+	RecallHash = find_recall_hash(NewB, BHL = NewBHL),
 	RawRecallB = ar_storage:read_block(RecallHash, BHL),
 	case ?IS_BLOCK(RawRecallB) of
 		true ->
@@ -393,20 +369,22 @@ integrate_new_block(
 			ok
 	end,
 	reset_miner(StateIn#{
-		hash_list			 => [NewB#block.indep_hash | HashList],
-		current				 => NewB#block.indep_hash,
-		txs					 => ar_track_tx_db:remove_bad_txs(KeepNotMinedTXs),
-		height				 => NewB#block.height,
-		floating_wallet_list => apply_txs(WalletList, TXs),
-		reward_pool			 => NewB#block.reward_pool,
-		potential_txs		 => [],
-		diff				 => NewB#block.diff,
-		last_retarget		 => NewB#block.last_retarget,
-		weave_size			 => NewB#block.weave_size
+		hash_list       => NewBHL,
+		current         => NewB#block.indep_hash,
+		txs             => ValidTXs,
+		height          => NewB#block.height,
+		reward_pool     => NewB#block.reward_pool,
+		diff            => NewB#block.diff,
+		last_retarget   => NewB#block.last_retarget,
+		weave_size      => NewB#block.weave_size,
+		block_txs_pairs => NewBlockTXPairs
 	}).
 
+update_block_txs_pairs(BH, TXIDs, List) ->
+	lists:sublist([{BH, TXIDs} | List], ?MAX_TX_ANCHOR_DEPTH).
+
 %% @doc Recovery from a fork.
-fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
+fork_recover(#{ node := Node, hash_list := HashList, block_txs_pairs := BlockTXPairs } = StateIn, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
 			PrioritisedPeers = ar_util:unique(Peer) ++
@@ -420,7 +398,8 @@ fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 					PrioritisedPeers,
 					NewB,
 					HashList,
-					Node
+					Node,
+					BlockTXPairs
 				)
 			),
 			case PID of
@@ -435,65 +414,6 @@ fork_recover(#{ node := Node, hash_list := HashList } = StateIn, Peer, NewB) ->
 	% TODO: Check how an unchanged state has to be returned in
 	% program flow.
 	StateIn.
-
-%% @doc Takes a wallet list and a set of txs and checks to ensure that the
-%% txs can be iteratively applied. When a tx is encountered that cannot be
-%% applied it is disregarded. The return is a tuple containing the output
-%% wallet list and the set of applied transactions.
-%% Helper function for 'filter_all_out_of_order_txs'.
-filter_out_of_order_txs(WalletList, InTXs) ->
-	filter_out_of_order_txs(WalletList, InTXs, []).
-
-filter_out_of_order_txs(WalletList, [], OutTXs) ->
-	{WalletList, OutTXs};
-filter_out_of_order_txs(WalletList, [T | RawTXs], OutTXs) ->
-	case ar_tx:check_last_tx(WalletList, T) of
-		true ->
-			UpdatedWalletList = apply_tx(WalletList, T),
-			filter_out_of_order_txs(
-				UpdatedWalletList,
-				RawTXs,
-				[T | OutTXs]
-			);
-		false ->
-			filter_out_of_order_txs(
-				WalletList,
-				RawTXs,
-				OutTXs
-			)
-	end.
-
-%% @doc Takes a wallet list and a set of txs and checks to ensure that the
-%% txs can be applied in a given order. The output is the set of all txs
-%% that could be applied.
-filter_all_out_of_order_txs(WalletList, InTXs) ->
-	filter_all_out_of_order_txs(
-		WalletList,
-		InTXs,
-		[]
-	).
-filter_all_out_of_order_txs(_WalletList, [], OutTXs) ->
-	lists:reverse(OutTXs);
-filter_all_out_of_order_txs(WalletList, InTXs, OutTXs) ->
-	{FloatingWalletList, PassedTXs} =
-		filter_out_of_order_txs(
-			WalletList,
-			InTXs,
-			OutTXs
-		),
-	RemainingInTXs = InTXs -- PassedTXs,
-	case PassedTXs of
-		[] ->
-			lists:reverse(OutTXs);
-		OutTXs ->
-			lists:reverse(OutTXs);
-		_ ->
-			filter_all_out_of_order_txs(
-				FloatingWalletList,
-				RemainingInTXs,
-				PassedTXs
-			)
-	end.
 
 %% @doc Validate a block, given a node state and the dependencies.
 validate(#{ hash_list := HashList, wallet_list := WalletList }, B, TXs, OldB, RecallB) ->
@@ -530,7 +450,7 @@ validate(
 	Mine = ar_mine:validate(BDSHash, Diff),
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
-	Txs = ar_tx:verify_txs(TXs, Diff, Height, OldB#block.wallet_list),
+	Txs = ar_tx:verify_txs(TXs, Diff, Height - 1, OldB#block.wallet_list),
 	DiffCheck = ar_retarget:validate_difficulty(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
@@ -676,26 +596,60 @@ make_full_block(BShadow) ->
 %% a prefiltered wallet list.
 do_apply_tx(
 		WalletList,
+		TX = #tx {
+			last_tx = Last,
+			owner = From
+		},
+		Height) ->
+	Addr = ar_wallet:to_address(From),
+	Fork_1_8 = ar_fork:height_1_8(),
+	case {Height, lists:keyfind(Addr, 1, WalletList)} of
+		{H, {Addr, _, _}} when H >= Fork_1_8 ->
+			do_apply_tx(WalletList, TX);
+		{_, {Addr, _, Last}} ->
+			do_apply_tx(WalletList, TX);
+		_ ->
+			WalletList
+	end.
+
+do_apply_tx(WalletList, TX) ->
+	update_recipient_balance(
+		update_sender_balance(WalletList, TX),
+		TX
+	).
+
+update_sender_balance(
+		WalletList,
 		#tx {
 			id = ID,
 			owner = From,
-			last_tx = Last,
-			target = To,
 			quantity = Qty,
 			reward = Reward
 		}) ->
 	Addr = ar_wallet:to_address(From),
 	case lists:keyfind(Addr, 1, WalletList) of
-		{Addr, Balance, Last} ->
-			NewWalletList = lists:keyreplace(Addr, 1, WalletList, {Addr, Balance - (Qty + Reward), ID}),
-			case lists:keyfind(To, 1, NewWalletList) of
-				false ->
-					[{To, Qty, <<>>} | NewWalletList];
-				{To, OldBalance, LastTX} ->
-					lists:keyreplace(To, 1, NewWalletList, {To, OldBalance + Qty, LastTX})
-			end;
+		{_, Balance, _} ->
+			lists:keyreplace(
+				Addr,
+				1,
+				WalletList,
+				{Addr, Balance - (Qty + Reward), ID}
+			);
 		_ ->
 			WalletList
+	end.
+
+update_recipient_balance(
+		WalletList,
+		#tx {
+			target = To,
+			quantity = Qty
+		}) ->
+	case lists:keyfind(To, 1, WalletList) of
+		false ->
+			[{To, Qty, <<>>} | WalletList];
+		{To, OldBalance, LastTX} ->
+			lists:keyreplace(To, 1, WalletList, {To, OldBalance + Qty, LastTX})
 	end.
 
 %% @doc Remove wallets with zero balance from a wallet list.
@@ -729,47 +683,15 @@ calculate_tx_reward(#tx { reward = Reward }) ->
 	% TDOD mue: Calculation is not calculated, only returned.
 	Reward.
 
-%%%
-%%% Unreferenced!
-%%%
-
-% @doc Return the last block to include both a wallet and hash list.
-% NOTE: For now, all blocks are sync blocks.
-%find_sync_block([]) ->
-%	not_found;
-%find_sync_block([Hash | Rest]) when is_binary(Hash) ->
-%	find_sync_block([ar_storage:read_block(Hash) | Rest]);
-%find_sync_block([B = #block { hash_list = HashList, wallet_list = WalletList } | _])
-%		when HashList =/= undefined, WalletList =/= undefined ->
-%	B;
-%find_sync_block([_ | Xs]) ->
-%	find_sync_block(Xs).
-
-%% @doc Given a wallet list and set of txs will try to apply the txs
-%% iteratively to the wallet list and return the result.
-%% Txs that cannot be applied are disregarded.
-generate_floating_wallet_list(WalletList, []) ->
-	WalletList;
-generate_floating_wallet_list(WalletList, [T | TXs]) ->
-	case ar_tx:check_last_tx(WalletList, T) of
-		true ->
-			UpdatedWalletList = apply_tx(WalletList, T),
-			generate_floating_wallet_list(UpdatedWalletList, TXs);
-		false -> false
-	end.
-
-%% @doc Calculate the time a tx must wait after being received to be mined.
-%% Wait time is a fixed interval combined with a wait dependent on tx data size.
-%% This wait helps ensure that a tx has propogated around the network.
-%% NB: If debug is defined no wait is applied.
--ifdef(DEBUG).
--define(FIXED_DELAY, 0).
--endif.
-
 -ifdef(FIXED_DELAY).
 calculate_delay(_Bytes) ->
 	?FIXED_DELAY.
 -else.
+%% Returns a delay in milliseconds to wait before including a transaction into a block.
+%% The delay is computed as base delay + a function of data size with a conservative
+%% estimation of the network speed.
 calculate_delay(Bytes) ->
-	30000 + ((Bytes * 300) div 1000).
+	BaseDelay = (?BASE_TX_PROPAGATION_DELAY) * 1000,
+	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
+	BaseDelay + NetworkDelay.
 -endif.

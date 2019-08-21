@@ -140,8 +140,8 @@ handle(Method, [<<"api">>, <<"ipfs">> | Path], Req) ->
 handle(<<"GET">>, [<<"time">>], Req) ->
 	{200, #{}, integer_to_binary(os:system_time(second)), Req};
 
-%% @doc Return all transactions from node that are waiting to be mined into a block.
-%% GET request to endpoint /tx/pending
+%% @doc Return all mempool transactions.
+%% GET request to endpoint /tx/pending.
 handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req) ->
 	{200, #{},
 			ar_serialize:jsonify(
@@ -456,6 +456,22 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req) ->
 					?OK(ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK))
 				),
 			Req}
+	end;
+
+%% @doc Return a block anchor to use for building transactions.
+handle(<<"GET">>, [<<"tx_anchor">>], Req) ->
+	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+		[] ->
+			{400, #{}, <<"The node has not joined the network yet.">>, Req};
+		BHL when is_list(BHL) ->
+			{
+				200,
+				#{},
+				ar_util:encode(
+					lists:nth(min(length(BHL), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, BHL)
+				),
+				Req
+			}
 	end;
 
 %% @doc Return transaction identifiers (hashes) for the wallet specified via wallet_address.
@@ -790,79 +806,147 @@ handle_get_wallet_txs(Addr, EarliestTXID) ->
 	case ar_util:safe_decode(Addr) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>};
-		{ok, AddrOK} ->
-			{ok, LastTXID} = ar_node:get_last_tx(whereis(http_entrypoint_node), AddrOK),
-			EncodedTXIDs = lists:map(fun ar_util:encode/1, get_wallet_txs(EarliestTXID, LastTXID)),
+		{ok, _} ->
+			TXIDs = ar_tx_search:get_entries(<<"from">>, Addr),
+			SortedTXIDs = ar_tx_search:sort_txids(TXIDs),
+			RecentTXIDs = get_wallet_txs(EarliestTXID, SortedTXIDs),
+			EncodedTXIDs = lists:map(fun ar_util:encode/1, RecentTXIDs),
 			{200, #{}, ar_serialize:jsonify(EncodedTXIDs)}
 	end.
 
-%% @doc Returns a list of all TX IDs starting with LastTXID to EarliestTXID (inclusive)
+%% @doc Returns a list of all TX IDs starting with the last one to EarliestTXID (inclusive)
 %% for the same wallet.
-get_wallet_txs(EarliestTXID, LatestTXID) ->
-	get_wallet_txs(EarliestTXID, LatestTXID, []).
+get_wallet_txs(EarliestTXID, TXIDs) ->
+	lists:reverse(get_wallet_txs(EarliestTXID, TXIDs, [])).
 
-get_wallet_txs(EarliestTXID, PreviousTXID, Acc) ->
-	case PreviousTXID of
-		<<>> ->
-			lists:reverse(Acc);
+get_wallet_txs(_EarliestTXID, [], Acc) ->
+	Acc;
+get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
+	case TXID of
 		EarliestTXID ->
-			lists:reverse([EarliestTXID | Acc]);
+			[EarliestTXID | Acc];
 		_ ->
-			TX = ar_storage:read_tx(PreviousTXID),
-			get_wallet_txs(EarliestTXID, TX#tx.last_tx, [PreviousTXID | Acc])
+			get_wallet_txs(EarliestTXID, TXIDs, [TXID | Acc])
 	end.
 
 handle_post_tx(TX) ->
-	% Check whether the TX is already ignored, ignore it if it is not
-	% (and then pass to processing steps).
+	Node = whereis(http_entrypoint_node),
+	MempoolTXs = ar_node:get_all_known_txs(Node),
+	Height = ar_node:get_height(Node),
+	case verify_mempool_txs_size(MempoolTXs, TX, Height) of
+		invalid ->
+			handle_post_tx_no_mempool_space_response();
+		valid ->
+			handle_post_tx(Node, TX, Height, MempoolTXs)
+	end.
+
+handle_post_tx(Node, TX, Height, MempoolTXs) ->
+	%% Check whether the TX is already ignored, ignore it if it is not
+	%% (and then pass to processing steps).
 	case ar_bridge:is_id_ignored(TX#tx.id) of
-		true -> {error_response, {208, #{}, <<"Transaction already processed.">>}};
+		true ->
+			{error_response, {208, #{}, <<"Transaction already processed.">>}};
 		false ->
 			ar_bridge:ignore_id(TX#tx.id),
-			case ar_node:get_current_diff(whereis(http_entrypoint_node)) of
-				Diff ->
-					% Validate that the waiting TXs in the pool for a wallet do not exceed the balance.
-					FloatingWalletList = ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-					WaitingTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
-					OwnerAddr = ar_wallet:to_address(TX#tx.owner),
-					WinstonInQueue =
-						lists:sum(
-							[
-								T#tx.quantity + T#tx.reward
-							||
-								T <- WaitingTXs, OwnerAddr == ar_wallet:to_address(T#tx.owner)
-							]
-						),
-					case [ Balance || {Addr, Balance, _} <- FloatingWalletList, OwnerAddr == Addr ] of
-						[B|_] when ((WinstonInQueue + TX#tx.reward + TX#tx.quantity) > B) ->
-							ar:info(
-								[
-									{offered_txs_for_wallet_exceed_balance, ar_util:encode(OwnerAddr)},
-									{balance, B},
-									{in_queue, WinstonInQueue},
-									{cost, TX#tx.reward + TX#tx.quantity}
-								]
-							),
-							{error_response, {400, #{}, <<"Waiting TXs exceed balance for wallet.">>}};
-						_ ->
-							% Finally, validate the veracity of the TX.
-							CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
-							case ar_tx:verify(TX, Diff, CurrentHeight + 1, FloatingWalletList) of
-								false ->
-									%ar:d({rejected_tx , ar_util:encode(TX#tx.id)}),
-									{error_response, {400, #{}, <<"Transaction verification failed.">>}};
-								true ->
-									ar:info([
-										ar_http_iface_handler,
-										accepted_tx,
-										{id, ar_util:encode(TX#tx.id)}
-									]),
-									ar_bridge:add_tx(whereis(http_bridge_node), TX),%, OrigPeer),
-									ok
-							end
-					end
-			end
+			handle_post_tx2(Node, TX, Height, MempoolTXs)
 	end.
+
+handle_post_tx2(Node, TX, Height, MempoolTXs) ->
+	WalletList = ar_node:get_wallet_list(Node),
+	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
+	case lists:keyfind(OwnerAddr, 1, WalletList) of
+		{_, Balance, _} when (TX#tx.reward + TX#tx.quantity) > Balance ->
+			ar:info([
+				submitted_txs_exceed_balance,
+				{owner, ar_util:encode(OwnerAddr)},
+				{balance, Balance},
+				{tx_cost, TX#tx.reward + TX#tx.quantity}
+			]),
+			handle_post_tx_exceed_balance_response();
+		_ ->
+			handle_post_tx(Node, TX, Height, MempoolTXs, WalletList)
+	end.
+
+handle_post_tx(Node, TX, Height, MempoolTXs, WalletList) ->
+	Diff = ar_node:get_current_diff(Node),
+	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
+	case ar_tx_replay_pool:verify_tx(
+		TX,
+		Diff,
+		Height,
+		BlockTXPairs,
+		MempoolTXs,
+		WalletList
+	) of
+		{invalid, tx_verification_failed} ->
+			handle_post_tx_verification_response();
+		{invalid, last_tx_in_mempool} ->
+			handle_post_tx_last_tx_in_mempool_response();
+		{invalid, invalid_last_tx} ->
+			handle_post_tx_verification_response();
+		{invalid, tx_bad_anchor} ->
+			handle_post_tx_bad_anchor_response();
+		{invalid, tx_already_in_weave} ->
+			handle_post_tx_already_in_weave_response();
+		{invalid, tx_already_in_mempool} ->
+			handle_post_tx_already_in_mempool_response();
+		{valid, _, _} ->
+			handle_post_tx_accepted(TX)
+	end.
+
+verify_mempool_txs_size(MempoolTXs, TX, Height) ->
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			verify_mempool_txs_size(MempoolTXs, TX);
+		_ ->
+			valid
+	end.
+
+verify_mempool_txs_size(MempoolTXs, TX) ->
+	TotalSize = lists:foldl(
+		fun(MempoolTX, Sum) ->
+			Sum + byte_size(MempoolTX#tx.data)
+		end,
+		0,
+		MempoolTXs
+	),
+	case byte_size(TX#tx.data) + TotalSize of
+		Size when Size > ?TOTAL_WAITING_TXS_DATA_SIZE_LIMIT ->
+			invalid;
+		_ ->
+			valid
+	end.
+
+handle_post_tx_accepted(TX) ->
+	ar:info([
+		ar_http_iface_handler,
+		accepted_tx,
+		{id, ar_util:encode(TX#tx.id)}
+	]),
+	ar_bridge:add_tx(whereis(http_bridge_node), TX),
+	ok.
+
+handle_post_tx_exceed_balance_response() ->
+	{error_response, {400, #{}, <<"Waiting TXs exceed balance for wallet.">>}}.
+
+handle_post_tx_verification_response() ->
+	{error_response, {400, #{}, <<"Transaction verification failed.">>}}.
+
+handle_post_tx_last_tx_in_mempool_response() ->
+	{error_response, {400, #{}, <<"Invalid anchor (last_tx from mempool).">>}}.
+
+handle_post_tx_no_mempool_space_response() ->
+	ar:err([ar_http_iface_middleware, rejected_transaction, {reason, mempool_is_full}]),
+	{error_response, {400, #{}, <<"Mempool is full.">>}}.
+
+handle_post_tx_bad_anchor_response() ->
+	{error_response, {400, #{}, <<"Invalid anchor (last_tx).">>}}.
+
+handle_post_tx_already_in_weave_response() ->
+	{error_response, {400, #{}, <<"Transaction is already on the weave">>}}.
+
+handle_post_tx_already_in_mempool_response() ->
+	{error_response, {400, #{}, <<"Transaction is already in the mempool">>}}.
 
 check_internal_api_secret(Req) ->
 	Reject = fun(Msg) ->

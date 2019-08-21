@@ -102,14 +102,28 @@
 -define(DEBUG_TIME_SCALAR, 1.0).
 
 %% @doc Length of time to wait before giving up on test(s).
--define(TEST_TIMEOUT, 5 * 60).
+-define(TEST_TIMEOUT, 15 * 60).
 
 %% @doc Calculate MS to wait in order to hit target block time.
 -define(DEFAULT_MINING_DELAY,
     ((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 
 %% @doc The maximum size of a single POST body.
--define(MAX_BODY_SIZE, 3 * 1024 * 1024).
+-define(MAX_BODY_SIZE, 15 * 1024 * 1024).
+-ifdef(DEBUG).
+-define(TOTAL_WAITING_TXS_DATA_SIZE_LIMIT, 50 * 1024).
+-else.
+-define(TOTAL_WAITING_TXS_DATA_SIZE_LIMIT, 250 * 1024 * 1024).
+-endif.
+-ifdef(DEBUG).
+-define(TX_DATA_SIZE_LIMIT, 10 * 1024).
+-else.
+-define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
+-endif.
+-define(BLOCK_TX_DATA_SIZE_LIMIT, ?TX_DATA_SIZE_LIMIT). % Must be greater or equal to tx data size limit.
+-define(BLOCK_TX_COUNT_LIMIT, 1000).
+
+-define(MAX_TX_ANCHOR_DEPTH, ?STORE_BLOCKS_BEHIND_CURRENT).
 
 %% @doc Default timeout for establishing an HTTP connection.
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
@@ -155,11 +169,34 @@
 %% @doc Length of time to wait (seconds) before dropping after last activity
 -define(PEER_TIMEOUT, 8 * 60).
 
+%% @doc A part of transaction propagation delay independent from the size.
+-ifdef(DEBUG).
+-define(BASE_TX_PROPAGATION_DELAY, 0). % seconds
+-else.
+-define(BASE_TX_PROPAGATION_DELAY, 30). % seconds
+-endif.
+
+%% @doc A conservative assumption of the network speed used to
+%% estimate the transaction propagation delay. The real network
+%% speed is much higher - a conservative assumption is used to
+%% avoid forks when nodes are congested by an overwhelming number
+%% of transactions.
+-ifdef(DEBUG).
+-define(TX_PROPAGATION_BITS_PER_SECOND, 1000000000).
+-else.
+-define(TX_PROPAGATION_BITS_PER_SECOND, 80000). % 80 kbps
+-endif.
+
 %% @doc The number of the best peers to send new transactions to in parallel.
 -define(TX_PROPAGATION_PARALLELIZATION, 5).
 
 %% @doc The number of the best peers to send new blocks to in parallel.
 -define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
+
+%% @doc When the transaction data size is smaller than this number of bytes,
+%% the transaction is gossiped to the peer without a prior check if the peer
+%% already has this transaction.
+-define(TX_SEND_WITHOUT_ASKING_SIZE_LIMIT, 1000).
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").

@@ -1,5 +1,5 @@
 -module(ar_mine).
--export([start/6, start/7, change_txs/2, stop/1, mine/2]).
+-export([start/7, start/8, change_txs/2, stop/1, mine/2]).
 -export([validate/4, validate/2]).
 -export([min_difficulty/1, genesis_difficulty/0]).
 -export([sha384_diff_to_randomx_diff/1]).
@@ -12,6 +12,7 @@
 -record(state, {
 	parent, % miners parent process (initiator)
 	current_block, % current block held by node
+	block_txs_pairs, % list of {BH, TXIDs} pairs for latest ?MAX_TX_ANCHOR_DEPTH blocks
 	recall_block, % recall block related to current
 	txs, % the set of txs to be mined
 	timestamp, % the block timestamp used for the mining
@@ -28,15 +29,15 @@
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent) ->
-	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, auto_update, Parent).
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent, BlockTXPairs) ->
+	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, auto_update, Parent, BlockTXPairs).
 
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent) when is_integer(StaticDiff) ->
-	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent).
+start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent, BlockTXPairs) when is_integer(StaticDiff) ->
+	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent, BlockTXPairs).
 
-do_start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent) ->
-	do_start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent);
-do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
+do_start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent, BlockTXPairs) ->
+	do_start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent, BlockTXPairs);
+do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent, BlockTXPairs) ->
 	{NewDiff, AutoUpdateDiff} = case Diff of
 		auto_update -> {not_set, true};
 		_ -> {Diff, false}
@@ -51,7 +52,8 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent) ->
 			tags = Tags,
 			max_miners = ar_meta_db:get(max_miners),
 			diff = NewDiff,
-			auto_update_diff = AutoUpdateDiff
+			auto_update_diff = AutoUpdateDiff,
+			block_txs_pairs = BlockTXPairs
 		},
 		RawTXs
 	).
@@ -111,7 +113,8 @@ update_txs(
 		current_block = CurrentB,
 		diff = CurrentDiff,
 		data_segment_duration = BDSGenerationDuration,
-		auto_update_diff = AutoUpdateDiff
+		auto_update_diff = AutoUpdateDiff,
+		block_txs_pairs = BlockTXPairs
 	},
 	TXs
 ) ->
@@ -120,19 +123,13 @@ update_txs(
 		true -> calc_diff(CurrentB, NextBlockTimestamp);
 		false -> CurrentDiff
 	end,
-	NextBlockHeight = CurrentB#block.height + 1,
-	%% Filter out invalid TXs. A TX can be valid by itself, but still invalid
-	%% in the context of the other TXs and the block it would be mined to.
-	ValidTXs =
-		lists:filter(
-			fun(TX) ->
-				ar_tx:verify(TX, NextDiff, NextBlockHeight, CurrentB#block.wallet_list)
-			end,
-			ar_node_utils:filter_all_out_of_order_txs(
-				CurrentB#block.wallet_list,
-				TXs
-			)
-		),
+	ValidTXs = ar_tx_replay_pool:pick_txs_to_mine(
+		BlockTXPairs,
+		CurrentB#block.height,
+		NextDiff,
+		CurrentB#block.wallet_list,
+		TXs
+	),
 	update_data_segment(S, ValidTXs, NextBlockTimestamp, NextDiff).
 
 %% @doc Generate a new timestamp to be used in the next block. To compensate for
@@ -376,7 +373,7 @@ basic_test() ->
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
-	start(B, RecallB, [], unclaimed, [], self()),
+	start(B, RecallB, [], unclaimed, [], self(), []),
 	assert_mine_output(B, RecallB, []).
 
 %% @doc Ensure that we can change the transactions while mining is in progress.
@@ -393,7 +390,7 @@ change_txs_test_() ->
 			0 -> 4;
 			_ -> 22
 		end,
-		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self()),
+		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self(), []),
 		change_txs(PID, SecondTXSet),
 		assert_mine_output(B, RecallB, SecondTXSet, Diff)
 	end}.
@@ -413,7 +410,7 @@ timestamp_refresh_test_() ->
 		end,
 		Run = fun(_) ->
 			TXs = [],
-			start(B, RecallB, TXs, unclaimed, [], Diff, self()),
+			start(B, RecallB, TXs, unclaimed, [], Diff, self(), []),
 			StartTime = os:system_time(seconds),
 			{_, MinedTimestamp} = assert_mine_output(B, RecallB, TXs),
 			MinedTimestamp > StartTime
@@ -429,7 +426,7 @@ start_stop_test() ->
 	B = hd(B1),
 	RecallB = hd(B0),
 	VeryHighDiff = 100,
-	PID = start(B, RecallB, [], unclaimed, [], VeryHighDiff, self()),
+	PID = start(B, RecallB, [], unclaimed, [], VeryHighDiff, self(), []),
 	timer:sleep(500),
 	assert_alive(PID),
 	stop(PID),

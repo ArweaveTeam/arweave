@@ -8,10 +8,10 @@ test_on_fork(ForkHeightFun, ForkHeight, TestFun) ->
 	{
 		foreach,
 		fun() ->
-			meck:new(ar_fork),
+			meck:new(ar_fork, [passthrough]),
 			meck:expect(ar_fork, ForkHeightFun, fun() -> ForkHeight end),
 			%% Do the same on slave.
-			slave_call(meck, new, [ar_fork, [no_link]]),
+			slave_call(meck, new, [ar_fork, [no_link, passthrough]]),
 			slave_call(meck, expect, [ar_fork, ForkHeightFun, fun() -> ForkHeight end]),
 			ok
 		end,

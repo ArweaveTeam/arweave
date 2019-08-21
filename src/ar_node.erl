@@ -17,12 +17,12 @@
 -export([get_last_tx/2]).
 -export([get_pending_txs/1, get_full_pending_txs/1]).
 -export([get_current_diff/1, get_diff/1]).
--export([get_floating_wallet_list/1]).
 -export([get_waiting_txs/1, get_all_known_txs/1]).
 -export([get_current_block_hash/1, get_current_block/1]).
 -export([get_reward_addr/1]).
 -export([get_reward_pool/1]).
 -export([is_joined/1]).
+-export([get_block_txs_pairs/1]).
 
 -export([mine/1, mine_at_diff/2, automine/1, truncate/1]).
 -export([add_tx/2]).
@@ -181,14 +181,12 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			NPid = self(),
 			{ok, SPid} = ar_node_state:start(),
 			{ok, WPid} = ar_node_worker:start(NPid, SPid),
-
 			ok = ar_node_state:update(SPid, [
 				{node, NPid},
 				{gossip, Gossip},
 				{hash_list, HashList},
 				{current, Current},
 				{wallet_list, Wallets},
-				{floating_wallet_list, Wallets},
 				{mining_delay, MiningDelay},
 				{reward_addr, RewardAddr},
 				{reward_pool, RewardPool},
@@ -196,7 +194,8 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{trusted_peers, Peers},
 				{diff, Diff},
 				{last_retarget, LastRetarget},
-				{weave_size, WeaveSize}
+				{weave_size, WeaveSize},
+				{block_txs_pairs, create_block_txs_pairs(HashList)}
 			]),
 
 			server(SPid, WPid, queue:new())
@@ -204,6 +203,17 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	),
 	ar_http_iface_server:reregister(http_entrypoint_node, PID),
 	PID.
+
+create_block_txs_pairs(not_joined) ->
+	[];
+create_block_txs_pairs(BHL) ->
+	create_block_txs_pairs(recent_blocks, lists:sublist(BHL, ?MAX_TX_ANCHOR_DEPTH)).
+
+create_block_txs_pairs(recent_blocks, []) ->
+	[];
+create_block_txs_pairs(recent_blocks, BHL = [BH | Rest]) ->
+	B = ar_storage:read_block(BH, BHL),
+	[{BH, B#block.txs} | create_block_txs_pairs(Rest)].
 
 %% @doc Stop a node server loop and its subprocesses.
 stop(Node) ->
@@ -304,7 +314,7 @@ get_block(Host, ID, BHL) ->
 
 %% @doc Gets the set of all known txs from the node.
 %% This set includes those on timeout waiting to distribute around the
-%% network, the potentially valid txs as well as those being mined on.
+%% network as well as those being mined on.
 get_all_known_txs(Node) ->
 	Ref = make_ref(),
 	Node ! {get_all_known_txs, self(), Ref},
@@ -446,17 +456,6 @@ get_full_pending_txs(Node) ->
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
-%% @doc Returns the floating wallet list held by the node.
-%% The floating wallet list is the current wallet list with the txs being
-%% mined on applied to it.
-get_floating_wallet_list(Node) ->
-	Ref = make_ref(),
-	Node ! {get_floatingwalletlist, self(), Ref},
-	receive
-		{Ref, floatingwalletlist, WalletList} -> WalletList
-		after ?LOCAL_NET_TIMEOUT -> []
-	end.
-
 %% @doc Returns the new difficulty of next mined block.
 % TODO: Function name is confusing, returns the new difficulty being mined on,
 % not the 'current' diff (that of the latest block)
@@ -485,6 +484,16 @@ get_reward_pool(Node) ->
 	receive
 		{Ref, reward_pool, RewardPool} -> RewardPool
 		after ?LOCAL_NET_TIMEOUT -> 0
+	end.
+
+%% @doc Returns transaction identifiers from the last ?MAX_TX_ANCHOR_DEPTH
+%% blocks grouped by block hash.
+get_block_txs_pairs(Node) ->
+	Ref = make_ref(),
+	Node ! {get_block_txs_pairs, self(), Ref},
+	receive
+		{Ref, block_txs_pairs, BlockTXPairs} -> {ok, BlockTXPairs}
+		after ?LOCAL_NET_TIMEOUT -> {error, timeout}
 	end.
 
 %% @doc Get the reward address attributed to the node.
@@ -572,8 +581,6 @@ set_xfer_speed(Node, Speed) ->
 %% @doc Add a transaction to the node server loop.
 %% If accepted the tx will enter the waiting pool before being mined into the
 %% the next block.
-%% If the tx contradicts another in the tx mining pool it will be moved to
-%% the list of potential txs for potential foreign block verification.
 add_tx(GS, TX) when is_record(GS, gs_state) ->
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	NewGS;
@@ -677,8 +684,8 @@ handle(_SPid, {cancel_tx, TXID, Sig}) ->
 	{task, {cancel_tx, TXID, Sig}};
 handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
-handle(_SPid, {apply_tx, TX}) ->
-	{task, {encounter_new_tx, TX}};
+handle(_SPid, {add_tx_to_mining_pool, TX}) ->
+	{task, {add_tx_to_mining_pool, TX}};
 handle(_SPid, {new_block, Peer, Height, NewB, BDS, Recall}) ->
 	{task, {process_new_block, Peer, Height, NewB, BDS, Recall}};
 handle(_SPid, {replace_block_list, NewBL}) ->
@@ -709,8 +716,8 @@ handle(SPid, {work_complete, MinedTXs, _Hash, Diff, Nonce, Timestamp}) ->
 				Timestamp
 			}}
 	end;
-handle(_SPid, {fork_recovered, NewHs}) ->
-	{task, {fork_recovered, NewHs}};
+handle(_SPid, {fork_recovered, BHL, BlockTXPairs}) ->
+	{task, {fork_recovered, BHL, BlockTXPairs}};
 handle(_SPid, mine) ->
 	{task, mine};
 handle(_SPid, {mine_at_diff, Diff}) ->
@@ -781,15 +788,10 @@ handle(SPid, {get_waiting_txs, From, Ref}) ->
 handle(SPid, {get_all_known_txs, From, Ref}) ->
 	{ok, #{
 		txs           := TXs,
-		waiting_txs   := WaitingTXs,
-		potential_txs := PotentialTXs
-	}} = ar_node_state:lookup(SPid, [txs, waiting_txs, potential_txs]),
-	AllTXs = TXs ++ WaitingTXs ++ PotentialTXs,
+		waiting_txs   := WaitingTXs
+	}} = ar_node_state:lookup(SPid, [txs, waiting_txs]),
+	AllTXs = TXs ++ WaitingTXs,
 	From ! {Ref, all_known_txs, AllTXs},
-	ok;
-handle(SPid, {get_floatingwalletlist, From}) ->
-	{ok, FloatingWalletList} = ar_node_state:lookup(SPid, floating_wallet_list),
-	From ! {floatingwalletlist, FloatingWalletList},
 	ok;
 handle(SPid, {get_current_diff, From, Ref}) ->
 	{ok, #{
@@ -819,6 +821,10 @@ handle(SPid, {get_reward_pool, From, Ref}) ->
 handle(SPid, {get_reward_addr, From, Ref}) ->
 	{ok, RewardAddr} = ar_node_state:lookup(SPid, reward_addr),
 	From ! {Ref, reward_addr,RewardAddr},
+	ok;
+handle(SPid, {get_block_txs_pairs, From, Ref}) ->
+	{ok, BlockTXPairs} = ar_node_state:lookup(SPid, block_txs_pairs),
+	From ! {Ref, block_txs_pairs, BlockTXPairs},
 	ok;
 %% ----- Server handling. -----
 handle(_SPid, {'DOWN', _, _, _, _}) ->
