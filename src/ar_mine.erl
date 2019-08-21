@@ -1,7 +1,7 @@
 -module(ar_mine).
--export([start/7, start/8, change_txs/2, stop/1, mine/2]).
--export([validate/4, validate/2]).
--export([min_difficulty/1, genesis_difficulty/0]).
+-export([start/7, start/8, stop/1, mine/2]).
+-export([validate/4, validate/3]).
+-export([min_difficulty/1, genesis_difficulty/0, max_difficulty/1]).
 -export([sha384_diff_to_randomx_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -25,7 +25,8 @@
 	auto_update_diff, % should the diff be kept or updated automatically
 	delay = 0, % hashing delay used for testing
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
-	miners = [] % miner worker processes
+	miners = [], % miner worker processes
+	bds_pieces = not_generated % a list of binary components of block data segment, stored for quick updates
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
@@ -62,14 +63,10 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent, BlockTXPairs
 stop(PID) ->
 	PID ! stop.
 
-%% @doc Update the set of TXs that the miner is mining on.
-change_txs(PID, NewTXs) ->
-	PID ! {new_data, NewTXs}.
-
 %% @doc Validate that a given hash/nonce satisfy the difficulty requirement.
 validate(BDS, Nonce, Diff, Height) ->
 	BDSHash = ar_weave:hash(BDS, Nonce, Height),
-	case validate(BDSHash, Diff) of
+	case validate(BDSHash, Diff, Height) of
 		true ->
 			{valid, BDSHash};
 		false ->
@@ -77,28 +74,50 @@ validate(BDS, Nonce, Diff, Height) ->
 	end.
 
 %% @doc Validate that a given block data segment hash satisfies the difficulty requirement.
-validate(BDSHash, Diff) ->
-	case BDSHash of
-		<< 0:Diff, _/bitstring >> ->
-			true;
+validate(BDSHash, Diff, Height) ->
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			binary:decode_unsigned(BDSHash) > Diff;
 		_ ->
-			false
+			case BDSHash of
+				<< 0:Diff, _/bitstring >> ->
+					true;
+				_ ->
+					false
+			end
 	end.
 
+%% @doc Maximum linear difficulty.
+%% Assumes using 256 bit RandomX hashes.
+max_difficulty(_Height) ->
+	erlang:trunc(math:pow(2, 256)).
+
 min_difficulty(Height) ->
-	case Height >= ar_fork:height_1_7() of
+	Diff = case Height >= ar_fork:height_1_7() of
 		true ->
 			min_randomx_difficulty();
 		false ->
 			min_sha384_difficulty()
+	end,
+	case Height >= ar_fork:height_1_8() of
+		true ->
+			ar_retarget:switch_to_linear_diff(Diff);
+		false ->
+			Diff
 	end.
 
 genesis_difficulty() ->
-	case ar_fork:height_1_7() of
+	Diff = case ar_fork:height_1_7() of
 		0 ->
 			randomx_genesis_difficulty();
 		_ ->
 			?DEFAULT_DIFF
+	end,
+	case ar_fork:height_1_8() of
+		0 ->
+			ar_retarget:switch_to_linear_diff(Diff);
+		_ ->
+			Diff
 	end.
 
 sha384_diff_to_randomx_diff(Sha384Diff) ->
@@ -127,6 +146,7 @@ update_txs(
 		BlockTXPairs,
 		CurrentB#block.height,
 		NextDiff,
+		NextBlockTimestamp,
 		CurrentB#block.wallet_list,
 		TXs
 	),
@@ -171,22 +191,37 @@ update_data_segment(
 	update_data_segment(S, TXs, BlockTimestamp, Diff).
 
 update_data_segment(S, TXs, BlockTimestamp, Diff) ->
-	{DurationMicros, BDS} = timer:tc(fun() ->
-		ar_block:generate_block_data_segment(
-			S#state.current_block,
-			S#state.recall_block,
-			TXs,
-			S#state.reward_addr,
-			BlockTimestamp,
-			S#state.tags
-		)
-	end),
+	{DurationMicros, {NewBDSPieces, BDS}} = case S#state.bds_pieces of
+		not_generated ->
+			timer:tc(fun() ->
+				ar_block:generate_block_data_segment_and_pieces(
+					S#state.current_block,
+					S#state.recall_block,
+					TXs,
+					S#state.reward_addr,
+					BlockTimestamp,
+					S#state.tags
+				)
+			end);
+		BDSPieces ->
+			timer:tc(fun() ->
+				ar_block:refresh_block_data_segment_timestamp(
+					BDSPieces,
+					S#state.current_block,
+					S#state.recall_block,
+					TXs,
+					S#state.reward_addr,
+					BlockTimestamp
+				)
+			end)
+	end,
 	NewS = S#state {
 		timestamp = BlockTimestamp,
 		diff = Diff,
 		txs = TXs,
 		data_segment = BDS,
-		data_segment_duration = round(DurationMicros / 1000000)
+		data_segment_duration = round(DurationMicros / 1000000),
+		bds_pieces = NewBDSPieces
 	},
 	reschedule_timestamp_refresh(NewS).
 
@@ -228,7 +263,8 @@ start_server(S, TXs) ->
 server(
 	S = #state {
 		parent = Parent,
-		miners = Miners
+		miners = Miners,
+		current_block = #block { indep_hash = CurrentBH }
 	}
 ) ->
 	receive
@@ -236,9 +272,6 @@ server(
 		stop ->
 			stop_miners(Miners),
 			ok;
-		% Update the miner to mine on a new set of data.
-		{new_data, TXs} ->
-			server(restart_miners(update_txs(S, TXs)));
 		%% The block timestamp must be reasonable fresh since it's going to be
 		%% validated on the remote nodes when it's propagated to them. Only blocks
 		%% with a timestamp close to current time will be accepted in the propagation.
@@ -247,7 +280,7 @@ server(
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce, MinedTXs, MinedDiff, MinedTimestamp} ->
-			Parent ! {work_complete, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp},
+			Parent ! {work_complete, CurrentBH, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp},
 			stop_miners(Miners)
 	end.
 
@@ -296,7 +329,7 @@ find_nonce(BDS, Diff, Height) ->
 			case randomx_hasher(Height) of
 				{ok, Hasher} ->
 					StartNonce = crypto:strong_rand_bytes(256 div 8),
-					find_nonce(BDS, Diff, StartNonce, Hasher);
+					find_nonce(BDS, Diff, Height, StartNonce, Hasher);
 				not_found ->
 					ar:info("Mining is waiting on RandomX initialization"),
 					timer:sleep(30 * 1000),
@@ -307,7 +340,7 @@ find_nonce(BDS, Diff, Height) ->
 			%% arbitrary size for the initial nonce.
 			StartNonce = crypto:strong_rand_bytes(384 div 8),
 			Hasher = fun(Data) -> crypto:hash(?MINING_HASH_ALG, Data) end,
-			find_nonce(BDS, Diff, StartNonce, Hasher)
+			find_nonce(BDS, Diff, Height, StartNonce, Hasher)
 	end.
 
 -ifdef(DEBUG).
@@ -340,12 +373,12 @@ randomx_hasher(Height) ->
 	end.
 -endif.
 
-find_nonce(BDS, Diff, Nonce, Hasher) ->
+find_nonce(BDS, Diff, Height, Nonce, Hasher) ->
 	BDSHash = Hasher(<< Nonce/binary, BDS/binary >>),
-	case validate(BDSHash, Diff) of
+	case validate(BDSHash, Diff, Height) of
 		false ->
 			%% Re-use the hash as the next nonce, since we get it for free.
-			find_nonce(BDS, Diff, BDSHash, Hasher);
+			find_nonce(BDS, Diff, Height, BDSHash, Hasher);
 		true ->
 			{Nonce, BDSHash}
 	end.
@@ -362,9 +395,7 @@ min_sha384_difficulty() -> 31.
 randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 -endif.
 
-
 %% Tests
-
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->
@@ -375,25 +406,6 @@ basic_test() ->
 	RecallB = hd(B0),
 	start(B, RecallB, [], unclaimed, [], self(), []),
 	assert_mine_output(B, RecallB, []).
-
-%% @doc Ensure that we can change the transactions while mining is in progress.
-change_txs_test_() ->
-	{timeout, 20, fun() ->
-		[B0] = ar_weave:init(),
-		B = B0,
-		RecallB = B0,
-		FirstTXSet = [ar_tx:new()],
-		SecondTXSet = FirstTXSet ++ [ar_tx:new(), ar_tx:new()],
-		%% Start mining with a high enough difficulty, so that the mining won't
-		%% finish before adding more TXs.
-		Diff = case ar_fork:height_1_7() of
-			0 -> 4;
-			_ -> 22
-		end,
-		PID = start(B, RecallB, FirstTXSet, unclaimed, [], Diff, self(), []),
-		change_txs(PID, SecondTXSet),
-		assert_mine_output(B, RecallB, SecondTXSet, Diff)
-	end}.
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
 timestamp_refresh_test_() ->
@@ -451,14 +463,10 @@ validator_test() ->
 	?assertMatch({valid, _}, validate(BDS, Nonce, 37, HeightPreRandomX)),
 	?assertMatch({invalid, _}, validate(BDS, Nonce, 38, HeightPreRandomX)).
 
-assert_mine_output(B, RecallB, TXs, Diff) ->
-	Result = assert_mine_output(B, RecallB, TXs),
-	?assertMatch({Diff, _}, Result),
-	Result.
-
 assert_mine_output(B, RecallB, TXs) ->
 	receive
-		{work_complete, MinedTXs, Hash, MinedDiff, Nonce, Timestamp} ->
+		{work_complete, BH, MinedTXs, Hash, MinedDiff, Nonce, Timestamp} ->
+			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
 			BDS = ar_block:generate_block_data_segment(
 				B,

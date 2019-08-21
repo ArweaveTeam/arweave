@@ -287,13 +287,11 @@ get_block_remote(BH, BHL) ->
 
 get_block_remote(_, _, []) ->
 	unavailable;
-get_block_remote(BH, BHL, [Peer | Peers]) ->
-	case ar_http_iface_client:get_full_block(Peer, BH, BHL) of
+get_block_remote(BH, BHL, Peers) ->
+	case ar_http_iface_client:get_full_block(Peers, BH, BHL) of
 		unavailable ->
-			get_block_remote(BH, BHL, Peers);
-		not_found ->
-			get_block_remote(BH, BHL, Peers);
-		B ->
+			unavailable;
+		{Peer, B} ->
 			case ar_weave:indep_hash(B) of
 				BH ->
 					ar_storage:write_full_block(B),

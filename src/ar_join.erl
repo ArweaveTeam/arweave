@@ -122,6 +122,7 @@ log_peer_clock_diff(Peer, Diff) ->
 
 %% @doc Return the current block from a list of peers.
 find_current_block([]) ->
+	ar:info("Did not manage to fetch current block from any of the peers. Will retry later."),
 	unavailable;
 find_current_block([Peer|Tail]) ->
 	try ar_node:get_hash_list(Peer) of
@@ -129,9 +130,30 @@ find_current_block([Peer|Tail]) ->
 			find_current_block(Tail);
 		BHL ->
 			Hash = hd(BHL),
-			ar_node_utils:get_full_block(Peer, Hash, BHL)
+			ar:info([
+				"Fetching current block.",
+				{peer, Peer},
+				{hash, Hash}
+			]),
+			MaybeB = ar_node_utils:get_full_block(Peer, Hash, BHL),
+			case MaybeB of
+				Atom when is_atom(Atom) ->
+					ar:info([
+						"Failed to fetch block from peer. Will retry using a different one.",
+						{reply, Atom}
+					]),
+					Atom;
+				B ->
+					B
+			end
 	catch
-		_:_ ->
+		Exc:Reason ->
+			ar:info([
+				"Failed to fetch block from peer. Will retry using a different one.",
+				{peer, Peer},
+				{exception, Exc},
+				{reason, Reason}
+			]),
 			find_current_block(Tail)
 	end.
 

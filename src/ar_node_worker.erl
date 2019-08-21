@@ -131,15 +131,22 @@ handle(SPid, {process_new_block, Peer, Height, NewB, BDS, Recall}) ->
 			ok
 	end,
 	{ok, process_new_block};
-handle(SPid, {work_complete, MinedTXs, Diff, Nonce, Timestamp}) ->
+handle(SPid, {work_complete, BH, MinedTXs, Diff, Nonce, Timestamp}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	case integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) of
-		{ok, StateOut} ->
-			ar_node_state:update(SPid, StateOut);
-		none ->
-			ok
-	end,
-	{ok, work_complete};
+	#{ hash_list := [CurrentBH | _] } = StateIn,
+	case BH of
+		CurrentBH ->
+			case integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) of
+				{ok, StateOut} ->
+					ar_node_state:update(SPid, StateOut);
+				none ->
+					ok
+			end,
+			{ok, work_complete};
+		_ ->
+			ar:info([ar_node_worker, ignore_mined_block, {reason, accepted_foreign_block}]),
+			{ok, ignore}
+	end;
 handle(SPid, {fork_recovered, BHL, BlockTXPairs}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	case recovered_from_fork(StateIn, BHL, BlockTXPairs) of
@@ -411,11 +418,11 @@ process_new_block2(StateIn, NewGS, NewB, RecallB, Peer, HashList, TXs) ->
 			RewardPool,
 			TXs,
 			NewB#block.reward_addr,
-			ar_node_utils:calculate_proportion(
-				RecallB#block.block_size,
-				NewB#block.weave_size,
-				NewB#block.height
-			)
+			RecallB#block.block_size,
+			NewB#block.weave_size,
+			NewB#block.height,
+			NewB#block.diff,
+			NewB#block.timestamp
 		),
 	NewWalletList =
 		ar_node_utils:apply_mining_reward(
@@ -439,6 +446,7 @@ process_new_block2(StateIn, NewGS, NewB, RecallB, Peer, HashList, TXs) ->
 				TXs,
 				NewB#block.diff,
 				Height,
+				NewB#block.timestamp,
 				WalletList,
 				BlockTXPairs
 			),
@@ -494,11 +502,11 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 			OldPool,
 			MinedTXs,
 			RewardAddr,
-			ar_node_utils:calculate_proportion(
-				RecallB#block.block_size,
-				WeaveSize,
-				length(HashList)
-			)
+			RecallB#block.block_size,
+			WeaveSize,
+			length(HashList),
+			Diff,
+			Timestamp
 		),
 	ar:info(
 		[
@@ -541,6 +549,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 				MinedTXs,
 				Diff,
 				Height,
+				Timestamp,
 				RawWalletList,
 				BlockTXPairs
 			),
@@ -631,7 +640,6 @@ generate_block_data_segment(NextB, RecallB) ->
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{id := BinID, hash_list := not_joined} = StateIn, BHL, BlockTXPairs) ->
 	#{ txs := TXs } = StateIn,
-	timer:sleep(15 * 1000), % Waiting for blocks to be written to disk before reading NewB.
 	NewB = ar_storage:read_block(hd(BHL), BHL),
 	ar:report_console(
 		[

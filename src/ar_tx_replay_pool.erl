@@ -1,6 +1,6 @@
 -module(ar_tx_replay_pool).
 
--export([verify_tx/6, verify_block_txs/5, pick_txs_to_mine/5]).
+-export([verify_tx/6, verify_block_txs/6, pick_txs_to_mine/6]).
 -export([pick_txs_to_keep_in_mempool/5]).
 
 -include("ar.hrl").
@@ -23,13 +23,13 @@
 }).
 
 %% @doc Verify that a transaction against the given mempool, wallet list, recent
-%% weave txs, current block height, and current difficulty. The mempool is used
-%% to look for the same transaction there and to make sure the transaction
-%% does not reference another transaction from the mempool. The mempool is NOT
-%% used to verify shared resources like funds, wallet list references, and
-%% data size. Therefore, the function is suitable for on-edge verification
-%% where we want to accept potentially conflicting transactions to avoid
-%% consensus issues later.
+%% weave txs, current block height, current difficulty, and current time.
+%% The mempool is used to look for the same transaction there and to make sure
+%% the transaction does not reference another transaction from the mempool.
+%% The mempool is NOT used to verify shared resources like funds,
+%% wallet list references, and data size. Therefore, the function is suitable
+%% for on-edge verification where we want to accept potentially conflicting
+%% transactions to avoid consensus issues later.
 verify_tx(TX, Diff, Height, BlockTXPairs, MempoolTXs, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
 	TXIDSet = sets:from_list(
@@ -43,6 +43,7 @@ verify_tx(TX, Diff, Height, BlockTXPairs, MempoolTXs, WalletList) ->
 		TX,
 		Diff,
 		Height,
+		os:system_time(seconds),
 		WalletList,
 		WeaveState,
 		Mempool
@@ -51,12 +52,13 @@ verify_tx(TX, Diff, Height, BlockTXPairs, MempoolTXs, WalletList) ->
 %% @doc Verify the transactions are valid for the block taken into account
 %% the given current difficulty and height, the previous blocks' wallet list,
 %% and recent weave transactions.
-verify_block_txs(TXs, Diff, Height, WalletList, BlockTXPairs) ->
+verify_block_txs(TXs, Diff, Height, Timestamp, WalletList, BlockTXPairs) ->
 	WeaveState = create_state(BlockTXPairs),
 	{VerifiedTXs, _, _} = apply_txs(
 		TXs,
 		Diff,
 		Height,
+		Timestamp,
 		WalletList,
 		WeaveState,
 		#mempool {}
@@ -75,12 +77,13 @@ verify_block_txs(TXs, Diff, Height, WalletList, BlockTXPairs) ->
 %% exceed the block size limit. Before a valid subset of transactions is chosen,
 %% transactions are sorted from biggest to smallest and then from oldest
 %% block anchors to newest.
-pick_txs_to_mine(BlockTXPairs, Height, Diff, WalletList, TXs) ->
+pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, WalletList, TXs) ->
 	WeaveState = create_state(BlockTXPairs),
 	{VerifiedTXs, _, _} = apply_txs(
 		sort_txs_by_data_size_and_anchor(TXs, WeaveState#state.bhl),
 		Diff,
 		Height,
+		Timestamp,
 		WalletList,
 		WeaveState,
 		#mempool {}
@@ -95,10 +98,11 @@ pick_txs_to_mine(BlockTXPairs, Height, Diff, WalletList, TXs) ->
 %% @doc Choose transactions to keep in the mempool after a new block is
 %% accepted. Transactions are verified independently from each other
 %% taking into account the given difficulty and height of the new block,
-%% the new recent weave transactions, and the new wallet list.
+%% the new recent weave transactions, the new wallet list, and the current time.
 pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
 	Mempool = #mempool{},
+	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
 	lists:filter(
 		fun(TX) ->
 			case verify_tx(
@@ -106,7 +110,8 @@ pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 				TX,
 				Diff,
 				Height,
-				WalletList,
+				os:system_time(seconds),
+				WalletMap,
 				WeaveState,
 				Mempool
 			) of
@@ -135,14 +140,15 @@ create_state(BlockTXPairs) ->
 		bhl = BHL
 	}.
 
-verify_tx(general_verification, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
-	case ar_tx:verify(TX, Diff, Height, FloatingWalletList) of
+verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool) ->
+	case ar_tx:verify(TX, Diff, Height, FloatingWallets, Timestamp) of
 		true ->
-			verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool);
+			verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool);
 		false ->
 			{invalid, tx_verification_failed}
-	end;
-verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
+	end.
+
+verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	ShouldContinue = case ar_fork:height_1_8() of
 		H when Height >= H ->
 			%% Only verify after fork 1.8 otherwise it causes a soft fork
@@ -165,39 +171,39 @@ verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWalletList, WeaveState, 
 				TX,
 				Diff,
 				Height,
-				FloatingWalletList,
+				FloatingWallets,
 				WeaveState,
 				Mempool
 			);
 		{invalid, Reason} ->
 			{invalid, Reason}
 	end;
-verify_tx(last_tx, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
-	case ar_tx:check_last_tx(FloatingWalletList, TX) of
+verify_tx(last_tx, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
+	case ar_tx:check_last_tx(FloatingWallets, TX) of
 		true ->
 			NewMempool = Mempool#mempool {
 				tx_id_set = sets:add_element(TX#tx.id, Mempool#mempool.tx_id_set)
 			},
-			NewFWL = ar_node_utils:apply_tx(FloatingWalletList, TX, Height),
-			{valid, NewFWL, NewMempool};
+			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
+			{valid, NewFW, NewMempool};
 		false ->
-			verify_tx(anchor_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool)
+			verify_tx(anchor_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
 	end;
-verify_tx(anchor_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
+verify_tx(anchor_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	case lists:member(TX#tx.last_tx, WeaveState#state.bhl) of
 		false ->
 			{invalid, tx_bad_anchor};
 		true ->
-			verify_tx(weave_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool)
+			verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
 	end;
-verify_tx(weave_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool) ->
+verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	case weave_map_contains_tx(TX#tx.id, WeaveState#state.weave_map) of
 		true ->
 			{invalid, tx_already_in_weave};
 		false ->
-			verify_tx(mempool_check, TX, Diff, Height, FloatingWalletList, WeaveState, Mempool)
+			verify_tx(mempool_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
 	end;
-verify_tx(mempool_check, TX, _Diff, Height, FloatingWalletList, _WeaveState, Mempool) ->
+verify_tx(mempool_check, TX, _Diff, Height, FloatingWallets, _WeaveState, Mempool) ->
 	case sets:is_element(TX#tx.id, Mempool#mempool.tx_id_set) of
 		true ->
 			{invalid, tx_already_in_mempool};
@@ -205,8 +211,8 @@ verify_tx(mempool_check, TX, _Diff, Height, FloatingWalletList, _WeaveState, Mem
 			NewMempool = Mempool#mempool {
 				tx_id_set = sets:add_element(TX#tx.id, Mempool#mempool.tx_id_set)
 			},
-			NewFWL = ar_node_utils:apply_tx(FloatingWalletList, TX, Height),
-			{valid, NewFWL, NewMempool}
+			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
+			{valid, NewFW, NewMempool}
 	end.
 
 weave_map_contains_tx(TXID, WeaveMap) ->
@@ -217,25 +223,27 @@ weave_map_contains_tx(TXID, WeaveMap) ->
 		maps:keys(WeaveMap)
 	).
 
-apply_txs(TXs, Diff, Height, WalletList, WeaveState, Mempool) ->
+apply_txs(TXs, Diff, Height, Timestamp, WalletList, WeaveState, Mempool) ->
+	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
 	lists:foldl(
-		fun(TX, {VerifiedTXs, FloatingWalletList, FloatingMempool}) ->
+		fun(TX, {VerifiedTXs, FloatingWalletMap, FloatingMempool}) ->
 			case verify_tx(
 				general_verification,
 				TX,
 				Diff,
 				Height,
-				FloatingWalletList,
+				Timestamp,
+				FloatingWalletMap,
 				WeaveState,
 				FloatingMempool
 			) of
-				{valid, NewFWL, NewMempool} ->
-					{VerifiedTXs ++ [TX], NewFWL, NewMempool};
+				{valid, NewFWM, NewMempool} ->
+					{VerifiedTXs ++ [TX], NewFWM, NewMempool};
 				{invalid, _} ->
-					{VerifiedTXs, FloatingWalletList, FloatingMempool}
+					{VerifiedTXs, FloatingWalletMap, FloatingMempool}
 			end
 		end,
-		{[], WalletList, Mempool},
+		{[], WalletMap, Mempool},
 		TXs
 	).
 

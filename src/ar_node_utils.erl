@@ -6,7 +6,8 @@
 
 -export([get_full_block/3]).
 -export([find_recall_hash/2, find_recall_block/1, find_block/1]).
--export([calculate_reward/2, calculate_reward_pool/4, calculate_proportion/3]).
+-export([calculate_reward/2]).
+-export([calculate_reward_pool/8]).
 -export([apply_mining_reward/4, apply_tx/3, apply_txs/3]).
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/3]).
@@ -14,8 +15,10 @@
 -export([validate/5, validate/8, validate_wallet_list/1]).
 -export([calculate_delay/1]).
 -export([update_block_txs_pairs/3]).
+-export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
 
 -include("ar.hrl").
+-include("perpetual_storage.hrl").
 
 %%%
 %%% Public API.
@@ -52,19 +55,23 @@ get_full_block(Pid, ID, BHL) when is_pid(Pid) ->
 		{error, _} ->
 			unavailable
 	end;
-get_full_block(Host, ID, BHL) ->
+get_full_block(Peer, ID, BHL) ->
 	%% Handle external peer request.
-	ar_http_iface_client:get_full_block(Host, ID, BHL).
+	case ar_http_iface_client:get_full_block([Peer], ID, BHL) of
+		{_Peer, B} ->
+			B;
+		Error ->
+			Error
+	end.
 
 %% @doc Attempt to get a full block from a HTTP peer, picking the node to query
 %% randomly until the block is retreived.
 get_full_block_from_remote_peers([], _ID, _BHL) ->
 	unavailable;
 get_full_block_from_remote_peers(Peers, ID, BHL) ->
-	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	{Time, B} = timer:tc(fun() -> get_full_block(Peer, ID, BHL) end),
-	case ?IS_BLOCK(B) of
-		true ->
+	{Time, MaybeB} = timer:tc(fun() -> ar_http_iface_client:get_full_block(Peers, ID, BHL) end),
+	case MaybeB of
+		{Peer, B} when ?IS_BLOCK(B) ->
 			case ar_meta_db:get(http_logging) of
 				true ->
 					ar:info(
@@ -77,8 +84,8 @@ get_full_block_from_remote_peers(Peers, ID, BHL) ->
 				_ -> do_nothing
 			end,
 			B;
-		false ->
-			get_full_block_from_remote_peers(Peers -- [Peer], ID, BHL)
+		_ ->
+			unavailable
 	end.
 
 %% @doc Return the hash of the next recall block.
@@ -99,8 +106,50 @@ find_recall_block(HashList) ->
 find_block(Hash) when is_binary(Hash) ->
 	ar_storage:read_block(Hash).
 
+calculate_reward_pool(OldPool, TXs, RewardAddr, RecallSize, WeaveSize, Height, Diff, Timestamp) ->
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			calculate_reward_pool_perpetual(OldPool, TXs, RewardAddr, RecallSize, WeaveSize, Height, Diff, Timestamp);
+		_ ->
+			Proportion = calculate_proportion(RecallSize, WeaveSize, Height),
+			calculate_reward_pool_original(OldPool, TXs, RewardAddr, Proportion)
+	end.
+
+%% @doc Split current reward pool into {FinderReward, NewPool}.
+calculate_reward_pool_perpetual(OldPool, TXs, unclaimed, _, _, _, _, _) ->
+	NewPool = OldPool + lists:sum([TX#tx.reward || TX <- TXs]),
+	{0, NewPool};
+calculate_reward_pool_perpetual(OldPool, TXs, _, RecallSize, WeaveSize, Height, Diff, Timestamp) ->
+	Inflation = erlang:trunc(ar_inflation:calculate(Height)),
+	{TXsCost, TXsReward} = lists:foldl(
+		fun(TX, {TXCostAcc, TXRewardAcc}) ->
+			TXFee = TX#tx.reward,
+			TXReward = erlang:trunc((?MINING_REWARD_MULTIPLIER) * TXFee / ((?MINING_REWARD_MULTIPLIER) + 1)),
+			{TXCostAcc + TXFee - TXReward, TXRewardAcc + TXReward}
+		end,
+		{0, 0},
+		TXs
+	),
+	BaseReward = Inflation + TXsReward,
+	CostPerGB = ar_tx_perpetual_storage:usd_to_ar(
+		ar_tx_perpetual_storage:perpetual_cost_at_timestamp(Timestamp),
+		Diff,
+		Height
+	),
+	Burden = erlang:trunc(WeaveSize * CostPerGB / (1024 * 1024 * 1024)),
+	AR = Burden - BaseReward,
+	NewPool = OldPool + TXsCost,
+	case AR =< 0 of
+		true  -> % BaseReward >= Burden
+			{BaseReward, NewPool};
+		false -> % Burden > BaseReward
+			X = erlang:trunc(AR * max(1, RecallSize) * Height / WeaveSize),
+			Take = min(NewPool, X),
+			{BaseReward + Take, NewPool - Take}
+	end.
+
 %% @doc Calculate the reward.
-calculate_reward_pool(OldPool, TXs, unclaimed, _Proportion) ->
+calculate_reward_pool_original(OldPool, TXs, unclaimed, _Proportion) ->
 	Pool = OldPool + lists:sum(
 		lists:map(
 			fun calculate_tx_reward/1,
@@ -108,7 +157,7 @@ calculate_reward_pool(OldPool, TXs, unclaimed, _Proportion) ->
 		)
 	),
 	{0, Pool};
-calculate_reward_pool(OldPool, TXs, _RewardAddr, Proportion) ->
+calculate_reward_pool_original(OldPool, TXs, _RewardAddr, Proportion) ->
 	Pool = OldPool + lists:sum(
 		lists:map(
 			fun calculate_tx_reward/1,
@@ -166,22 +215,41 @@ apply_mining_reward(WalletList, RewardAddr, Quantity, Height) ->
 	alter_wallet(WalletList, RewardAddr, calculate_reward(Height, Quantity)).
 
 %% @doc Apply a transaction to a wallet list, updating it.
-%% Critically, filter empty wallets from the list after application.
-apply_tx(WalletList, unavailable, _) ->
-	WalletList;
-apply_tx(WalletList, TX, Height) ->
-	filter_empty_wallets(do_apply_tx(WalletList, TX, Height)).
+apply_tx(Wallets, unavailable, _) ->
+	Wallets;
+apply_tx(Wallets, TX, Height) ->
+	do_apply_tx(Wallets, TX, Height).
 
 %% @doc Update a wallet list with a set of new transactions.
 apply_txs(WalletList, TXs, Height) ->
+	WalletMap = wallet_map_from_wallet_list(WalletList),
+	NewWalletMap = lists:foldl(
+		fun(TX, CurrWalletMap) ->
+			apply_tx(CurrWalletMap, TX, Height)
+		end,
+		WalletMap,
+		TXs
+	),
 	lists:sort(
-		lists:foldl(
-			fun(TX, CurrWalletList) ->
-				apply_tx(CurrWalletList, TX, Height)
-			end,
-			WalletList,
-			TXs
-		)
+		wallet_list_from_wallet_map(NewWalletMap)
+	).
+
+wallet_map_from_wallet_list(WalletList) ->
+	lists:foldl(
+		fun(Wallet = {Addr, _, _}, Map) ->
+			maps:put(Addr, Wallet, Map)
+		end,
+		maps:new(),
+		WalletList
+	).
+
+wallet_list_from_wallet_map(WalletMap) ->
+	maps:fold(
+		fun(_Addr, Wallet, List) ->
+			[Wallet | List]
+		end,
+		[],
+		WalletMap
 	).
 
 %% @doc Force a node to start mining, update state.
@@ -447,10 +515,10 @@ validate(
 		Nonce,
 		Height
 	),
-	Mine = ar_mine:validate(BDSHash, Diff),
+	Mine = ar_mine:validate(BDSHash, Diff, Height),
 	Wallet = validate_wallet_list(WalletList),
 	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
-	Txs = ar_tx:verify_txs(TXs, Diff, Height - 1, OldB#block.wallet_list),
+	Txs = ar_tx:verify_txs(TXs, Diff, Height - 1, OldB#block.wallet_list, Timestamp),
 	DiffCheck = ar_retarget:validate_difficulty(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
@@ -592,10 +660,8 @@ make_full_block(BShadow) ->
 			{error, {txs_missing, MissingTXIDs}}
 	end.
 
-%% @doc Perform the concrete application of a transaction to
-%% a prefiltered wallet list.
 do_apply_tx(
-		WalletList,
+		Wallets,
 		TX = #tx {
 			last_tx = Last,
 			owner = From
@@ -603,14 +669,19 @@ do_apply_tx(
 		Height) ->
 	Addr = ar_wallet:to_address(From),
 	Fork_1_8 = ar_fork:height_1_8(),
-	case {Height, lists:keyfind(Addr, 1, WalletList)} of
+	case {Height, get_wallet_by_address(Addr, Wallets)} of
 		{H, {Addr, _, _}} when H >= Fork_1_8 ->
-			do_apply_tx(WalletList, TX);
+			do_apply_tx(Wallets, TX);
 		{_, {Addr, _, Last}} ->
-			do_apply_tx(WalletList, TX);
+			do_apply_tx(Wallets, TX);
 		_ ->
-			WalletList
+			Wallets
 	end.
+
+get_wallet_by_address(Addr, WalletList) when is_list(WalletList) ->
+	lists:keyfind(Addr, 1, WalletList);
+get_wallet_by_address(Addr, WalletMap) when is_map(WalletMap) ->
+	maps:get(Addr, WalletMap, false).
 
 do_apply_tx(WalletList, TX) ->
 	update_recipient_balance(
@@ -619,7 +690,7 @@ do_apply_tx(WalletList, TX) ->
 	).
 
 update_sender_balance(
-		WalletList,
+		Wallets,
 		#tx {
 			id = ID,
 			owner = From,
@@ -627,38 +698,47 @@ update_sender_balance(
 			reward = Reward
 		}) ->
 	Addr = ar_wallet:to_address(From),
-	case lists:keyfind(Addr, 1, WalletList) of
+	case get_wallet_by_address(Addr, Wallets) of
 		{_, Balance, _} ->
-			lists:keyreplace(
+			update_wallet(
 				Addr,
-				1,
-				WalletList,
-				{Addr, Balance - (Qty + Reward), ID}
+				{Addr, Balance - (Qty + Reward), ID},
+				Wallets
 			);
+
 		_ ->
-			WalletList
+			Wallets
 	end.
 
-update_recipient_balance(
+update_wallet(Addr, Wallet, WalletList) when is_list(WalletList) ->
+	lists:keyreplace(
+		Addr,
+		1,
 		WalletList,
+		Wallet
+	);
+update_wallet(Addr, Wallet, WalletMap) when is_map(WalletMap) ->
+	maps:put(Addr, Wallet, WalletMap).
+
+update_recipient_balance(Wallets, #tx { quantity = 0 }) ->
+	Wallets;
+update_recipient_balance(
+		Wallets,
 		#tx {
 			target = To,
 			quantity = Qty
 		}) ->
-	case lists:keyfind(To, 1, WalletList) of
+	case get_wallet_by_address(To, Wallets) of
 		false ->
-			[{To, Qty, <<>>} | WalletList];
+			insert_wallet(To, {To, Qty, <<>>}, Wallets);
 		{To, OldBalance, LastTX} ->
-			lists:keyreplace(To, 1, WalletList, {To, OldBalance + Qty, LastTX})
+			update_wallet(To, {To, OldBalance + Qty, LastTX}, Wallets)
 	end.
 
-%% @doc Remove wallets with zero balance from a wallet list.
-filter_empty_wallets([]) ->
-	[];
-filter_empty_wallets([{_, 0, <<>>} | WalletList]) ->
-	filter_empty_wallets(WalletList);
-filter_empty_wallets([Wallet | Rest]) ->
-	[Wallet | filter_empty_wallets(Rest)].
+insert_wallet(_Addr, Wallet, WalletList) when is_list(WalletList) ->
+	[Wallet | WalletList];
+insert_wallet(Addr, Wallet, WalletMap) when is_map(WalletMap) ->
+	maps:put(Addr, Wallet, WalletMap).
 
 %% @doc Alter a wallet in a wallet list.
 alter_wallet(WalletList, Target, Adjustment) ->
@@ -674,9 +754,14 @@ alter_wallet(WalletList, Target, Adjustment) ->
 			)
 	end.
 
-%% @doc Calculate the total mining reward for the a block and it's associated TXs.
+%% @doc Calculate the total mining reward for a block and its associated TXs.
 calculate_reward(Height, Quantity) ->
-	erlang:trunc(ar_inflation:calculate(Height) + Quantity).
+	case ar_fork:height_1_8() of
+		H when Height >= H ->
+			Quantity;
+		_ ->
+			erlang:trunc(ar_inflation:calculate(Height) + Quantity)
+	end.
 
 %% @doc Given a TX, calculate an appropriate reward.
 calculate_tx_reward(#tx { reward = Reward }) ->
