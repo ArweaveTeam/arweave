@@ -8,3 +8,5 @@ priv/prometheus_process_collector.so
 _build
 .rebar3
 c_src/*.o
+data_test_master/*
+data_test_slave/*
