@@ -189,6 +189,15 @@ parse_options([{<<"custom_domains">>, CustomDomains} | Rest], Config) when is_li
 	end;
 parse_options([{<<"custom_domains">>, CustomDomains} | _], _) ->
 	{error, {bad_type, custom_domains, array}, CustomDomains};
+parse_options([{<<"webhooks">>, WebhookConfigs} | Rest], Config) when is_list(WebhookConfigs) ->
+	case parse_webhooks(WebhookConfigs, []) of
+		{ok, ParsedWebhooks} ->
+			parse_options(Rest, Config#config { webhooks = ParsedWebhooks });
+		error ->
+			{error, bad_webhooks, WebhookConfigs}
+	end;
+parse_options([{<<"webhooks">>, Webhooks} | _], _) ->
+	{error, {bad_type, webhooks, array}, Webhooks};
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
@@ -208,3 +217,42 @@ parse_peers([Peer | Rest], ParsedPeers) ->
 	end;
 parse_peers([], ParsedPeers) ->
 	{ok, lists:reverse(ParsedPeers)}.
+
+parse_webhooks([{WebhookConfig} | Rest], ParsedWebhookConfigs) when is_list(WebhookConfig) ->
+	case parse_webhook(WebhookConfig, #config_webhook{}) of
+		{ok, ParsedWebhook} -> parse_webhooks(Rest, [ParsedWebhook | ParsedWebhookConfigs]);
+		error -> error
+	end;
+parse_webhooks([_ | _], _) ->
+	error;
+parse_webhooks([], ParsedWebhookConfigs) ->
+	{ok, lists:reverse(ParsedWebhookConfigs)}.
+
+parse_webhook([{<<"events">>, Events} | Rest], Webhook) when is_list(Events) ->
+	case parse_webhook_events(Events, []) of
+		{ok, ParsedEvents} ->
+			parse_webhook(Rest, Webhook#config_webhook{ events = ParsedEvents });
+		error ->
+			error
+	end;
+parse_webhook([{<<"events">>, _} | _], _) ->
+	error;
+parse_webhook([{<<"url">>, Url} | Rest], Webhook) when is_binary(Url) ->
+	parse_webhook(Rest, Webhook#config_webhook{ url = Url });
+parse_webhook([{<<"url">>, _} | _], _) ->
+	error;
+parse_webhook([{<<"headers">>, {Headers}} | Rest], Webhook) when is_list(Headers) ->
+	parse_webhook(Rest, Webhook#config_webhook{ headers = Headers });
+parse_webhook([{<<"headers">>, _} | _], _) ->
+	error;
+parse_webhook([], Webhook) ->
+	{ok, Webhook}.
+
+parse_webhook_events([Event | Rest], Events) ->
+	case Event of
+		<<"transaction">> -> parse_webhook_events(Rest, [transaction | Events]);
+		<<"block">> -> parse_webhook_events(Rest, [block | Events]);
+		_ -> error
+	end;
+parse_webhook_events([], Events) ->
+	{ok, lists:reverse(Events)}.

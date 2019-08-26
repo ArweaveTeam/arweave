@@ -9,7 +9,8 @@ parse_config() ->
 	ExpectedMiningAddr = ar_util:decode(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>),
 	ExpectedStartHashList = ar_util:decode(<<"ZFTD3ne7_U3BONHi8O-QpBv0ZQTAXJ2eFIih8dod0f8">>),
 	ExpectedUpdateAddr = ar_util:decode(<<"V_zW1A2HeqWFBpwKCjyd8V6eI8S3ia8GOVA6g7YXAdU">>),
-	?assertMatch({ok, #config{
+	{ok, ParsedConfig} = ar_config:parse(config_fixture()),
+	?assertMatch(#config{
 		benchmark = true,
 		port = 1985,
 		init = true,
@@ -44,8 +45,15 @@ parse_config() ->
 		content_policy_files = ["some_content_policy_1", "some_content_policy_2"],
 		transaction_blacklist_files = ["some_blacklist_1", "some_blacklist_2"],
 		gateway_domain = <<"gateway.localhost">>,
-		gateway_custom_domains = [<<"domain1.example">>, <<"domain2.example">>]
-	}}, ar_config:parse(config_fixture())).
+		gateway_custom_domains = [<<"domain1.example">>, <<"domain2.example">>],
+		webhooks = [
+			#config_webhook{
+				events = [transaction, block],
+				url = <<"https://example.com/hook">>,
+				headers = [{<<"Authorization">>, <<"Bearer 123456">>}]
+			}
+		]
+	}, ParsedConfig).
 
 config_fixture() ->
 	Dir = filename:dirname(?FILE),
