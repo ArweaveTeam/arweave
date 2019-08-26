@@ -248,7 +248,7 @@
 %% @doc Adjust the difficulty up to the limit.
 -define(DIFF_ADJUSTMENT_UP_LIMIT(Diff), (Diff * 4)).
 
-%% @doc A block on the weave.
+%% @doc A full block or block shadow (see more on txs field).
 -record(block, {
 	nonce = <<>>, % The nonce used to satisfy the mining problem when mined
 	previous_block = <<>>, % indep_hash of the previous block in the weave
@@ -258,7 +258,7 @@
 	height = -1, % How many blocks have passed since the Genesis block?
 	hash = <<>>, % A hash of this block, the previous block and the recall block.
 	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
-	txs = [], % A list of transaction records associated with this block.
+	txs = [], % A list of tx records in full blocks, or a list of tx ids in block shadows.
 	hash_list = unset, % A list of all previous indep hashes.
 	hash_list_merkle = <<>>, % The merkle root of the block's BHL.
 	wallet_list = [], % A map of wallet balances, or undefined.

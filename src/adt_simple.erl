@@ -87,30 +87,25 @@ server(S = #state { gossip = GS }) ->
 					);
 				% New block and confirmed txs callback.
 				{NewGS, {new_block, _, _, B, _, _}} ->
-					ar:d({adt, recvd_new_block}),
-					FullTXs =
-						lists:map(
-							fun(T) -> ar_storage:read_tx(T) end,
-							B#block.txs
+					S1 =
+						apply_callback(
+							S#state { gossip = NewGS },
+							new_block,
+							B
 						),
-					NewS =
+					S2 =
 						lists:foldl(
-							fun(TX, NextS) ->
+							fun(TXID, NextS) ->
 								apply_callback(
 									NextS,
 									confirmed_transaction,
-									TX
+									ar_storage:read_tx(TXID)
 								)
 							end,
-							S#state { gossip = NewGS },
-							FullTXs
+							S1,
+							B#block.txs
 						),
-					server(
-						apply_callback(
-							NewS,
-							new_block,
-							B#block { txs = FullTXs })
-						)
+					server(S2)
 			end;
 		stop -> ok;
 		OtherMsg ->
