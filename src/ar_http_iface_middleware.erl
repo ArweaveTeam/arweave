@@ -788,6 +788,13 @@ handle_post_tx2(Node, TX, Height, MempoolTXs) ->
 handle_post_tx(Node, TX, Height, MempoolTXs, WalletList) ->
 	Diff = ar_node:get_current_diff(Node),
 	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
+	NewMempoolSize = byte_size(TX#tx.data) + lists:foldl(
+		fun(MempoolTX, Sum) ->
+			Sum + byte_size(MempoolTX#tx.data)
+		end,
+		0,
+		MempoolTXs
+	),
 	case ar_tx_replay_pool:verify_tx(
 		TX,
 		Diff,
@@ -809,7 +816,7 @@ handle_post_tx(Node, TX, Height, MempoolTXs, WalletList) ->
 		{invalid, tx_already_in_mempool} ->
 			handle_post_tx_already_in_mempool_response();
 		{valid, _, _} ->
-			handle_post_tx_accepted(TX)
+			handle_post_tx_accepted(TX, NewMempoolSize)
 	end.
 
 verify_mempool_txs_size(MempoolTXs, TX, Height) ->
@@ -835,11 +842,13 @@ verify_mempool_txs_size(MempoolTXs, TX) ->
 			valid
 	end.
 
-handle_post_tx_accepted(TX) ->
+handle_post_tx_accepted(TX, NewMempoolSize) ->
 	ar:info([
 		ar_http_iface_handler,
 		accepted_tx,
-		{id, ar_util:encode(TX#tx.id)}
+		{id, ar_util:encode(TX#tx.id)},
+		{size_kb, byte_size(TX#tx.data) div 1000},
+		{mempool_size_kb, NewMempoolSize div 1000}
 	]),
 	ar_bridge:add_tx(whereis(http_bridge_node), TX),
 	ok.
