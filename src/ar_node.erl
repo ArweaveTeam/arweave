@@ -15,9 +15,8 @@
 -export([get_trusted_peers/1]).
 -export([get_balance/2]).
 -export([get_last_tx/2]).
--export([get_pending_txs/1, get_full_pending_txs/1]).
 -export([get_current_diff/1, get_diff/1]).
--export([get_waiting_txs/1, get_all_known_txs/1]).
+-export([get_pending_txs/1, get_pending_txs/2, get_mined_txs/1]).
 -export([get_current_block_hash/1, get_current_block/1]).
 -export([get_reward_addr/1]).
 -export([get_reward_pool/1]).
@@ -295,31 +294,37 @@ get_block(Host, ID, BHL) ->
 	% handle external peer request
 	ar_http_iface_client:get_block(Host, ID, BHL).
 
-%% @doc Convert a block with tx references into a full block, that is a block
-%% containing the entirety of all its referenced txs.
-% make_full_block(ID, BHL) ->
-% 	case ar_storage:read_block(ID, BHL) of
-% 		unavailable -> unavailable;
-% 		BlockHeader ->
-% 			FullB =
-% 				BlockHeader#block{
-% 					txs =
-% 						ar_storage:read_tx(BlockHeader#block.txs)
-% 				},
-% 			case [ NotTX || NotTX <- FullB#block.txs, is_atom(NotTX) ] of
-% 				[] -> FullB;
-% 				_ -> unavailable
-% 			end
-% 	end.
+%% @doc Gets the list of pending transactions. This includes:
+%% 1. The transactions currently staying in the priority queue.
+%% 2. The transactions on timeout waiting to be distributed around the network.
+%% 3. The transactions ready to be and being mined.
+get_pending_txs(Node) ->
+	get_pending_txs(Node, []).
 
-%% @doc Gets the set of all known txs from the node.
-%% This set includes those on timeout waiting to distribute around the
-%% network as well as those being mined on.
-get_all_known_txs(Node) ->
+get_pending_txs(Node, Opts) ->
 	Ref = make_ref(),
-	Node ! {get_all_known_txs, self(), Ref},
+	Node ! {get_pending_txs, self(), Ref},
 	receive
-		{Ref, all_known_txs, TXs} -> TXs
+		{Ref, pending_txs, TXs} ->
+			Reply = case lists:member(id_only, Opts) of
+				true ->
+					[TX#tx.id || TX <- TXs];
+				false ->
+					TXs
+			end,
+			Reply
+		after ?LOCAL_NET_TIMEOUT -> []
+	end.
+
+%% @doc Gets the list of mined or ready to be mined transactions.
+%% The list does _not_ include transactions in the priority queue or
+%% those on timeout waiting for network propagation.
+get_mined_txs(Node) ->
+	Ref = make_ref(),
+	Node ! {get_mined_txs, self(), Ref},
+	receive
+		{Ref, mined_txs, TXs} ->
+			TXs
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
@@ -359,15 +364,6 @@ get_wallet_list(Node) ->
 	receive
 		{Ref, walletlist, WalletList} -> WalletList
 		after ?LOCAL_NET_TIMEOUT -> []
-	end.
-
-%% @doc Get the current waiting tx list from a node.
-get_waiting_txs(Node) ->
-	Ref = make_ref(),
-	Node ! {get_waiting_txs, self(), Ref},
-	receive
-		{Ref, waiting_txs, Waiting} -> Waiting
-		after ?LOCAL_NET_TIMEOUT -> error(could_not_get_waiting_txs)
 	end.
 
 %% @doc Get the current hash list held by the node.
@@ -437,24 +433,6 @@ get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
-
-%% @doc Returns a list of pending transactions.
-%% Pending transactions are those that are valid, but not currently actively
-%% being mined as they are waiting to be distributed around the network.
-get_pending_txs(Node) ->
-	Ref = make_ref(),
-	Node ! {get_txs, self(), Ref},
-	receive
-		{Ref, all_txs, Txs} -> [T#tx.id || T <- Txs]
-		after ?LOCAL_NET_TIMEOUT -> []
-	end.
-get_full_pending_txs(Node) ->
-	Ref = make_ref(),
-	Node ! {get_txs, self(), Ref},
-	receive
-		{Ref, all_txs, Txs} -> Txs
-		after ?LOCAL_NET_TIMEOUT -> []
-	end.
 
 %% @doc Returns the new difficulty of next mined block.
 % TODO: Function name is confusing, returns the new difficulty being mined on,
@@ -684,8 +662,6 @@ handle(_SPid, {cancel_tx, TXID, Sig}) ->
 	{task, {cancel_tx, TXID, Sig}};
 handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
-handle(_SPid, {add_tx_to_mining_pool, TX}) ->
-	{task, {add_tx_to_mining_pool, TX}};
 handle(_SPid, {new_block, Peer, Height, NewB, BDS, Recall}) ->
 	{task, {process_new_block, Peer, Height, NewB, BDS, Recall}};
 handle(_SPid, {replace_block_list, NewBL}) ->
@@ -778,21 +754,14 @@ handle(SPid, {get_last_tx, From, Ref, Addr}) ->
 			false				   -> <<>>
 		end},
 	ok;
-handle(SPid, {get_txs, From, Ref}) ->
-	{ok, #{ txs := TXs, waiting_txs := WaitingTXs }} = ar_node_state:lookup(SPid, [txs, waiting_txs]),
-	From ! {Ref, all_txs, TXs ++ WaitingTXs},
+handle(SPid, {get_pending_txs, From, Ref}) ->
+	{ok, #{ txs := TXs, waiting_txs := WaitingTXs }} =
+		ar_node_state:lookup(SPid, [waiting_txs, txs]),
+	From ! {Ref, pending_txs, TXs ++ WaitingTXs},
 	ok;
-handle(SPid, {get_waiting_txs, From, Ref}) ->
-	{ok, WaitingTXs} = ar_node_state:lookup(SPid, waiting_txs),
-	From ! {Ref, waiting_txs, WaitingTXs},
-	ok;
-handle(SPid, {get_all_known_txs, From, Ref}) ->
-	{ok, #{
-		txs           := TXs,
-		waiting_txs   := WaitingTXs
-	}} = ar_node_state:lookup(SPid, [txs, waiting_txs]),
-	AllTXs = TXs ++ WaitingTXs,
-	From ! {Ref, all_known_txs, AllTXs},
+handle(SPid, {get_mined_txs, From, Ref}) ->
+	{ok, #{ txs := TXs }} = ar_node_state:lookup(SPid, [txs]),
+	From ! {Ref, mined_txs, TXs},
 	ok;
 handle(SPid, {get_current_diff, From, Ref}) ->
 	{ok, #{

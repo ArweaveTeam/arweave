@@ -198,7 +198,6 @@ tx_cost_above_min(TX, Diff, Height, Wallets, Addr, Timestamp) ->
 		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, Height + 1, Wallets, Addr, Timestamp).
 
 %% @doc Calculate the minimum transaction cost for a TX with the given data size.
-%% The constant 3210 is the max byte size of each of the other fields.
 %% Cost per byte is static unless size is bigger than 10mb, at which
 %% point cost per byte starts increasing.
 calculate_min_tx_cost(DataSize, Diff, Height, Timestamp) ->
@@ -228,7 +227,7 @@ calculate_min_tx_cost(DataSize, Diff, Height, Wallets, Addr, Timestamp) ->
 	end.
 
 min_tx_cost(DataSize, Diff, DiffCenter) when Diff >= DiffCenter ->
-	Size = 3210 + DataSize,
+	Size = ?TX_SIZE_BASE + DataSize,
 	CurveSteepness = 2,
 	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (Diff - (DiffCenter - CurveSteepness)),
 	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024)));

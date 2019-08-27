@@ -24,6 +24,7 @@
 	diff = ?DEFAULT_DIFF,
 	mining_addr = false,
 	max_miners = ?NUM_MINING_PROCESSES,
+	max_emitters = ?NUM_EMITTER_PROCESSES,
 	new_key = false,
 	load_key = false,
 	pause = true,

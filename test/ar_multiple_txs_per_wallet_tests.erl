@@ -241,7 +241,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 		end,
 		SecondTXSet ++ FirstTXSet
 	),
-	?assertEqual([], slave_call(ar_node, get_all_known_txs, [Slave])),
+	?assertEqual([], slave_call(ar_node, get_pending_txs, [Slave])),
 	%% Post transactions from the second set to slave.
 	lists:foreach(
 		fun(TX) ->
@@ -282,18 +282,19 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	%% into the mempool cause it can be potentially included by
 	%% other nodes.
 	assert_post_tx_to_slave(Slave, ExceedBalanceTX),
+	assert_wait_until_receives_txs(Master, TXs),
 	%% Expect only the first two to be included into the block.
 	slave_mine(Slave),
 	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
-		TXIDs,
-		(slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]))#block.txs
+		lists:sort(TXIDs),
+		lists:sort((slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]))#block.txs)
 	),
 	BHL = wait_until_height(Master, 1),
 	?assertEqual(
-		TXIDs,
-		(ar_storage:read_block(hd(BHL), BHL))#block.txs
+		lists:sort(TXIDs),
+		lists:sort((ar_storage:read_block(hd(BHL), BHL))#block.txs)
 	),
 	%% Post the balance exceeding transaction again
 	%% and expect the balance exceeded error.
@@ -570,7 +571,7 @@ joins_network_successfully(ForkHeight) ->
 	%% Isolate the nodes. Mine 1 block with a transaction anchoring the
 	%% oldest block possible on slave. Mine a block on master so that it stops
 	%% tracking the block just referenced by slave. Reconnect the nodes, mine another
-	%% two blocks with transactions anchoring the oldest block possible on slave.
+	%% block with transactions anchoring the oldest block possible on slave.
 	%% Expect master to fork recover successfully.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([
@@ -646,13 +647,10 @@ joins_network_successfully(ForkHeight) ->
 	connect_to_slave(),
 	TX4 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL2) }),
 	assert_post_tx_to_slave(Slave, TX4),
+	assert_wait_until_receives_txs(Master, [TX4]),
 	slave_mine(Slave),
 	BHL3 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 2),
-	TX5 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL3) }),
-	assert_post_tx_to_slave(Slave, TX5),
-	slave_mine(Slave),
-	BHL4 = wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 3),
-	?assertEqual([TX5#tx.id], (ar_storage:read_block(hd(BHL4), BHL4))#block.txs),
+	BHL3 = wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 2),
 	?assertEqual([TX4#tx.id], (ar_storage:read_block(hd(BHL3), BHL3))#block.txs),
 	?assertEqual([TX3#tx.id], (ar_storage:read_block(hd(BHL2), BHL2))#block.txs).
 
@@ -679,6 +677,7 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 		fun(Height, {TXs, LastTX}) ->
 			TX = sign_tx(Key, #{ last_tx => LastTX }),
 			assert_post_tx_to_slave(Slave, TX),
+			assert_wait_until_receives_txs(Master, [TX]),
 			slave_mine(Slave),
 			BHL = assert_slave_wait_until_height(Slave, Height),
 			BHL = wait_until_height(Master, Height),
@@ -717,7 +716,7 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 	IncludeOnMasterTX = ar_util:pick_random(SlavePostForkBlockAnchoredTXs),
 	forget_txs([IncludeOnMasterTX]),
 	?assertEqual(ForkHeight, length(ar_node:get_blocks(Master)) - 1),
-	?assertEqual([], ar_node:get_all_known_txs(Master)),
+	?assertEqual([], ar_node:get_pending_txs(Master)),
 	{MasterPostForkTXs, MasterPostForkBlockAnchoredTXs} = lists:foldl(
 		fun(Height, {TXs, BlockAnchoredTXs}) ->
 			%% Post one wallet list anchored tx per block. After fork 1.8
