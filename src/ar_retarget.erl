@@ -80,6 +80,14 @@ calculate_difficulty1(OldDiff, TS, Last, Height) ->
 	Diff.
 
 calculate_difficulty_linear(OldDiff, TS, Last, Height) ->
+	case Height >= ar_fork:height_1_9() of
+		false ->
+			calculate_difficulty_legacy(OldDiff, TS, Last, Height);
+		true ->
+			calculate_difficulty_linear2(OldDiff, TS, Last, Height)
+	end.
+
+calculate_difficulty_legacy(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	TimeDelta = ActualTime / TargetTime,
@@ -91,8 +99,31 @@ calculate_difficulty_linear(OldDiff, TS, Last, Height) ->
 			MinDiff = ar_mine:min_difficulty(Height),
 			between(
 				MaxDiff - (MaxDiff - OldDiff) * ActualTime div TargetTime,
-				max(MinDiff, ?DIFF_ADJUSTMENT_DOWN_LIMIT(OldDiff)),
-				min(MaxDiff, ?DIFF_ADJUSTMENT_UP_LIMIT(OldDiff))
+				max(MinDiff, OldDiff div 2),
+				min(MaxDiff, OldDiff * 4)
+			)
+	end.
+
+calculate_difficulty_linear2(OldDiff, TS, Last, Height) ->
+	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
+	ActualTime = TS - Last,
+	TimeDelta = ActualTime / TargetTime,
+	case abs(1 - TimeDelta) < ?RETARGET_TOLERANCE of
+		true ->
+			OldDiff;
+		false ->
+			MaxDiff = ar_mine:max_difficulty(),
+			MinDiff = ar_mine:min_difficulty(Height),
+			EffectiveTimeDelta = between(
+				ActualTime / TargetTime,
+				1 / ?DIFF_ADJUSTMENT_UP_LIMIT,
+				?DIFF_ADJUSTMENT_DOWN_LIMIT
+			),
+			DiffInverse = erlang:trunc((MaxDiff - OldDiff) * EffectiveTimeDelta),
+			between(
+				MaxDiff - DiffInverse,
+				MinDiff,
+				MaxDiff
 			)
 	end.
 -endif.
@@ -152,3 +183,53 @@ simple_retarget_test_() ->
 			5 * 60 * 1000
 		)
 	end}.
+
+calculate_difficulty_linear_test() ->
+	Height = ar_fork:height_1_9(),
+	Diff = switch_to_linear_diff(27),
+	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
+	%% The change is smaller than retarget tolerance.
+	Timestamp = os:system_time(seconds),
+	Retarget1 = Timestamp - erlang:trunc(TargetTime / (1 + ?RETARGET_TOLERANCE / 2)),
+	?assertEqual(
+		Diff,
+		calculate_difficulty_linear(Diff, Timestamp, Retarget1, Height)
+	),
+	Retarget2 = Timestamp - erlang:trunc(TargetTime * (1 + ?RETARGET_TOLERANCE / 2)),
+	?assertEqual(
+		Diff,
+		calculate_difficulty_linear(Diff, Timestamp, Retarget2, Height)
+	),
+	%% The change is bigger than max allowed change up.
+	Retarget3 = Timestamp - TargetTime div (?DIFF_ADJUSTMENT_UP_LIMIT + 1),
+	?assertEqual(
+		?DIFF_ADJUSTMENT_UP_LIMIT * hashes(Diff),
+		hashes(calculate_difficulty_linear(Diff, Timestamp, Retarget3, Height))
+	),
+	%% The change is bigger than max allowed change down.
+	Retarget4 = Timestamp - (?DIFF_ADJUSTMENT_DOWN_LIMIT + 1) * TargetTime,
+	?assertEqual(
+		hashes(Diff),
+		?DIFF_ADJUSTMENT_DOWN_LIMIT * hashes(
+			calculate_difficulty_linear(Diff, Timestamp, Retarget4, Height)
+		)
+	),
+	%% The change is within limits.
+	Retarget5 = Timestamp - TargetTime div (?DIFF_ADJUSTMENT_UP_LIMIT - 1),
+	NewDiff = calculate_difficulty_linear(Diff, Timestamp, Retarget5, Height),
+	?assert(Diff < NewDiff),
+	?assertEqual(
+		(?DIFF_ADJUSTMENT_UP_LIMIT - 1) * hashes(Diff),
+		hashes(NewDiff)
+	),
+	Retarget6 = Timestamp - ?DIFF_ADJUSTMENT_DOWN_LIMIT * TargetTime,
+	NewDiff2 = calculate_difficulty_linear(Diff, Timestamp, Retarget6, Height),
+	?assert(Diff > NewDiff2),
+	?assertEqual(
+		hashes(Diff),
+		?DIFF_ADJUSTMENT_DOWN_LIMIT * hashes(NewDiff2)
+	).
+
+hashes(Diff) ->
+	MaxDiff = ar_mine:max_difficulty(),
+	erlang:trunc(MaxDiff / (MaxDiff - Diff)).
