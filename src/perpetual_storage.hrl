@@ -11,24 +11,47 @@
 -define(USD_PER_GBY_2019, 0.000925).
 
 %% @doc Initial $/AR exchange rate.
--ifdef(DEBUG).
-%% Use a smaller rate in tests to decrease burden so that
-%% there is space for testing the pooling mechanics before
-%% reward becomes bigger than the burden.
--define(INITIAL_USD_PER_AR, 0.1).
--else.
--define(INITIAL_USD_PER_AR, 1.5).
--endif.
+-define(INITIAL_USD_PER_AR(Height), fun() ->
+	Forks = {
+		ar_fork:height_1_9()
+	},
+	case Forks of
+		{Fork_1_9} when Height < Fork_1_9 ->
+			1.5;
+		_ ->
+			1.2
+	end
+end).
 
 %% @doc The difficulty of the network at the time when
 %% the $/AR exchange rate was ?INITIAL_USD_PER_AR.
 %% This is an old-style diff - needs to be converted
 %% to the linear diff for price calculations.
--define(INITIAL_USD_PER_AR_DIFF, 28).
+-define(INITIAL_USD_PER_AR_DIFF(Height), fun() ->
+	Forks = {
+		ar_fork:height_1_9()
+	},
+	case Forks of
+		{Fork_1_9} when Height < Fork_1_9 ->
+			28;
+		_ ->
+			29
+	end
+end).
 
 %% @doc The network height at the time when
 %% the $/AR exchange rate was ?INITIAL_USD_PER_AR.
--define(INITIAL_USD_PER_AR_HEIGHT, ar_fork:height_1_8()).
+-define(INITIAL_USD_PER_AR_HEIGHT(Height), fun() ->
+	Forks = {
+		ar_fork:height_1_9()
+	},
+	case Forks of
+		{Fork_1_9} when Height < Fork_1_9 ->
+			ar_fork:height_1_8();
+		{Fork_1_9} ->
+			Fork_1_9
+	end
+end).
 
 %% @doc Mining reward as a proportion of tx cost.
 -define(MINING_REWARD_MULTIPLIER, 0.2).
