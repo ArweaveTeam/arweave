@@ -36,7 +36,6 @@
 		ar_merkle,
 		ar_storage,
 		ar_serialize,
-		ar_services,
 		ar_tx,
 		ar_weave,
 		ar_wallet,
@@ -417,6 +416,7 @@ start(
 			{retarget_blocks, ?RETARGET_BLOCKS}
 		]
 	),
+	ok = start_graphql(),
 	%% Start the first node in the gossip network (with HTTP interface).
 	ok = ar_http_iface_server:start(Port, GatewayOpts, [
 		{http_entrypoint_node, Node},
@@ -451,6 +451,11 @@ gateway_opts(Domain, CustomDomains) when is_binary(Domain) ->
 	{on, Domain, CustomDomains};
 gateway_opts(not_set, _) ->
 	off.
+
+start_graphql() ->
+	ok = application:start(graphql),
+	ok = ar_graphql:load_schema(),
+	ok.
 
 %% @doc Create a name for a session log file.
 generate_logfile_name() ->

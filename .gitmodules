@@ -31,3 +31,6 @@
 [submodule "lib/meck"]
 	path = lib/meck
 	url = https://github.com/eproxus/meck.git
+[submodule "lib/graphql"]
+	path = lib/graphql
+	url = https://github.com/shopgun/graphql-erlang.git

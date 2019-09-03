@@ -436,20 +436,13 @@ queued_status_hash(APIKey, IPFSHash) ->
 
 %% @doc Given a request, returns the json body as a struct (or error).
 request_to_struct(Req) ->
-	case ar_http_iface_handler:read_complete_body(Req) of
-		{ok, JSON, ReadReq} ->
-			case ar_serialize:json_decode(JSON) of
-				{ok, {Struct}} ->
-					{ok, Struct, ReadReq};
-				{error, _} ->
-					{error, {400, #{}, <<"Invalid json">>, ReadReq}}
-			end;
-		{error, body_size_too_large, TooLargeReq} ->
-			{error, reply_with_413(TooLargeReq)}
+	JSON = ar_http_req:body(Req),
+	case ar_serialize:json_decode(JSON) of
+		{ok, {Struct}} ->
+			{ok, Struct, Req};
+		{error, _} ->
+			{error, {400, #{}, <<"Invalid json">>, Req}}
 	end.
-
-reply_with_413(Req) ->
-	{413, #{}, <<"Payload too large">>, Req}.
 
 requeue_hashes(APIKey, Queue, Wallet) ->
 	S = queued,
