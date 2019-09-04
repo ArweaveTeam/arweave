@@ -1,10 +1,15 @@
 -module(ar_tx_db).
--export([start/0, get_error_codes/1, put_error_codes/2, ensure_error/1, clear_error_codes/1]).
+
+-export([start/0]).
+-export([log/2, put_error_codes/2, get_error_codes/1, ensure_error/1]).
+-export([clear_records/1, get_tx_log/1]).
+
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
-%%% Database for storing error codes for failed transactions, so that a user
-%%% can get the error reason when polling the status of a transaction. The entries
-%%% has a TTL. The DB is a singleton.
+
+%%% Event log for transactions. Temporarily stores transaction processing events.
+%%% Used for troubleshooting and reporting validation failures to users.
+%%% The entries have a TTL.
 
 %% @doc Create a DB. This will fail if the DB already exists.
 start() ->
@@ -15,35 +20,57 @@ start() ->
 			receive stop -> ok end
 		end
 	),
-	% Add a short wait to ensure that the table has been created
-	% before returning.
+	%% Add a short wait to ensure that the table has been created
+	%% before returning.
 	receive after 250 -> ok end.
 
-%% @doc Put an Erlang term into the meta DB. Typically these are
-%% write-once values.
 put_error_codes(TXID, ErrorCodes) ->
-	ets:insert(?MODULE, {TXID, ErrorCodes}),
-	{ok, _} = timer:apply_after(1800*1000, ?MODULE, clear_error_codes, [TXID]),
-	ok.
+	log(TXID, {validation_error, ErrorCodes}).
 
-%% @doc Retreive a term from the meta db.
 get_error_codes(TXID) ->
-	case ets:lookup(?MODULE, TXID) of
-		[{_, ErrorCodes}] -> {ok, ErrorCodes};
-		[] -> not_found
-	end.
+	Log = get_tx_log(TXID),
+	search_for_validation_error(Log).
+
+search_for_validation_error([{{validation_error, ErrorCodes}, _} | _] ) ->
+	{ok, ErrorCodes};
+search_for_validation_error([_ | Tail]) ->
+	search_for_validation_error(Tail);
+search_for_validation_error([]) ->
+	not_found.
 
 %% @doc Writes an unknown error code if there are not already any error codes
 %% for this TX.
 ensure_error(TXID) ->
-	case ets:lookup(?MODULE, TXID) of
-		[_] -> ok;
-		[] -> put_error_codes(TXID, ["unknown_error"])
+	case get_tx_log(TXID) of
+		[{{validation_error, ErrorCodes}, _} | _] ->
+			{ok, ErrorCodes};
+		_ ->
+			log(TXID, {validation_error, ["unknown_error"]})
 	end.
 
-%% @doc Removes all error codes for this TX.
-clear_error_codes(TXID) ->
+%% @doc Removes all records for this TX.
+clear_records(TXID) ->
 	ets:delete(?MODULE, TXID).
+
+log(TXID, Event) ->
+	Events = case get_tx_log(TXID) of
+		[] ->
+			{ok, _} = timer:apply_after(3600 * 1000, ?MODULE, clear_records, [TXID]),
+			[];
+		CurrentEvents ->
+			CurrentEvents
+	end,
+	Timestamp = os:system_time(millisecond),
+	ets:insert(?MODULE, {TXID, [{Event, Timestamp} | Events]}),
+	ok.
+
+get_tx_log(TXID) ->
+	case ets:lookup(?MODULE, TXID) of
+		[{_, Events}] ->
+			Events;
+		[] ->
+			[]
+	end.
 
 %%% Test
 
@@ -58,7 +85,7 @@ read_write_test() ->
 assert_clear_error_codes(TXID) ->
 	Fetched = get_error_codes(TXID),
 	?assertMatch({ok, _}, Fetched),
-	clear_error_codes(TXID),
+	clear_records(TXID),
 	?assert(not_found == get_error_codes(TXID)),
 	ok.
 
@@ -81,6 +108,6 @@ tx_db_test() ->
 	OrphanedTX2 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
 	SignedTX = ar_tx:sign(OrphanedTX2, Priv2, Pub2),
 	?assert(ar_tx:verify(SignedTX, 8, 1, B0#block.wallet_list, Timestamp)),
-	clear_error_codes(BadTX#tx.id),
-	clear_error_codes(SignedTX#tx.id),
+	clear_records(BadTX#tx.id),
+	clear_records(SignedTX#tx.id),
 	ok.

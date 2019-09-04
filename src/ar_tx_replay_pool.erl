@@ -157,6 +157,7 @@ verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mem
 			%% TX is validated against a previous blocks' wallet list then.
 			case sets:is_element(TX#tx.last_tx, Mempool#mempool.tx_id_set) of
 				true ->
+					ar_tx_db:put_error_codes(TX#tx.id, ["last_tx_in_mempool"]),
 					{invalid, last_tx_in_mempool};
 				false ->
 					continue
@@ -192,6 +193,7 @@ verify_tx(last_tx, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 verify_tx(anchor_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	case lists:member(TX#tx.last_tx, WeaveState#state.bhl) of
 		false ->
+			ar_tx_db:put_error_codes(TX#tx.id, ["tx_bad_anchor"]),
 			{invalid, tx_bad_anchor};
 		true ->
 			verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
@@ -199,6 +201,7 @@ verify_tx(anchor_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) 
 verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	case weave_map_contains_tx(TX#tx.id, WeaveState#state.weave_map) of
 		true ->
+			ar_tx_db:put_error_codes(TX#tx.id, ["tx_already_in_weave"]),
 			{invalid, tx_already_in_weave};
 		false ->
 			verify_tx(mempool_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
@@ -206,6 +209,7 @@ verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) -
 verify_tx(mempool_check, TX, _Diff, Height, FloatingWallets, _WeaveState, Mempool) ->
 	case sets:is_element(TX#tx.id, Mempool#mempool.tx_id_set) of
 		true ->
+			ar_tx_db:put_error_codes(TX#tx.id, ["tx_already_in_mempool"]),
 			{invalid, tx_already_in_mempool};
 		false ->
 			NewMempool = Mempool#mempool {

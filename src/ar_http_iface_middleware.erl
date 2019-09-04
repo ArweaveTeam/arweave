@@ -763,11 +763,13 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 	end.
 
 handle_post_tx(TX) ->
+	ar_tx_db:log(TX#tx.id, {?MODULE, received_tx}),
 	Node = whereis(http_entrypoint_node),
 	MempoolTXs = ar_node:get_all_known_txs(Node),
 	Height = ar_node:get_height(Node),
 	case verify_mempool_txs_size(MempoolTXs, TX, Height) of
 		invalid ->
+			ar_tx_db:log(TX#tx.id, {?MODULE, rejected_for_no_mempool_space}),
 			handle_post_tx_no_mempool_space_response();
 		valid ->
 			handle_post_tx(Node, TX, Height, MempoolTXs)
@@ -778,9 +780,11 @@ handle_post_tx(Node, TX, Height, MempoolTXs) ->
 	%% (and then pass to processing steps).
 	case ar_bridge:is_id_ignored(TX#tx.id) of
 		true ->
+			ar_tx_db:log(TX#tx.id, {?MODULE, rejected_for_already_processed}),
 			{error_response, {208, #{}, <<"Transaction already processed.">>}};
 		false ->
 			ar_bridge:ignore_id(TX#tx.id),
+			ar_tx_db:log(TX#tx.id, {?MODULE, stored_in_the_ignore_list}),
 			handle_post_tx2(Node, TX, Height, MempoolTXs)
 	end.
 
@@ -795,6 +799,7 @@ handle_post_tx2(Node, TX, Height, MempoolTXs) ->
 				{balance, Balance},
 				{tx_cost, TX#tx.reward + TX#tx.quantity}
 			]),
+			ar_tx_db:log(TX#tx.id, {?MODULE, rejected_for_insufficient_funds}),
 			handle_post_tx_exceed_balance_response();
 		_ ->
 			handle_post_tx(Node, TX, Height, MempoolTXs, WalletList)
@@ -803,6 +808,7 @@ handle_post_tx2(Node, TX, Height, MempoolTXs) ->
 handle_post_tx(Node, TX, Height, MempoolTXs, WalletList) ->
 	Diff = ar_node:get_current_diff(Node),
 	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
+	ar_tx_db:log(TX#tx.id, {?MODULE, started_verification}),
 	case ar_tx_replay_pool:verify_tx(
 		TX,
 		Diff,
@@ -812,16 +818,22 @@ handle_post_tx(Node, TX, Height, MempoolTXs, WalletList) ->
 		WalletList
 	) of
 		{invalid, tx_verification_failed} ->
+			ar_tx_db:log(TX#tx.id, {?MODULE, verification_failed}),
 			handle_post_tx_verification_response();
 		{invalid, last_tx_in_mempool} ->
+			ar_tx_db:log(TX#tx.id, {?MODULE, rejected_for_last_tx_in_mempool}),
 			handle_post_tx_last_tx_in_mempool_response();
 		{invalid, invalid_last_tx} ->
+			ar_tx_db:log(TX#tx.id, {?MODULE, rejected_for_invalid_last_tx}),
 			handle_post_tx_verification_response();
 		{invalid, tx_bad_anchor} ->
+			ar_tx_db:log(TX#tx.id, {?MODULE, rejected_for_invalid_anchor}),
 			handle_post_tx_bad_anchor_response();
 		{invalid, tx_already_in_weave} ->
+			ar_tx_db:log(TX#tx.id, {?MODULE, rejected_for_already_on_the_weave}),
 			handle_post_tx_already_in_weave_response();
 		{invalid, tx_already_in_mempool} ->
+			ar_tx_db:log(TX#tx.id, {?MODULE, rejected_for_already_in_mempool}),
 			handle_post_tx_already_in_mempool_response();
 		{valid, _, _} ->
 			handle_post_tx_accepted(TX)
@@ -856,6 +868,7 @@ handle_post_tx_accepted(TX) ->
 		accepted_tx,
 		{id, ar_util:encode(TX#tx.id)}
 	]),
+	ar_tx_db:log(TX#tx.id, {?MODULE, accepted_tx}),
 	ar_bridge:add_tx(whereis(http_bridge_node), TX),
 	ok.
 
