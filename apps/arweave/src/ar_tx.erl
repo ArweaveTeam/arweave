@@ -1,8 +1,11 @@
 -module(ar_tx).
+
 -export([new/0, new/1, new/2, new/3, new/4]).
 -export([sign/2, sign/3, verify/5, verify_txs/5, signature_data_segment/1]).
+-export([sign_pre_fork_2_0/2, sign_pre_fork_2_0/3]).
 -export([tx_to_binary/1, tags_to_list/1]).
 -export([calculate_min_tx_cost/4, calculate_min_tx_cost/6, check_last_tx/2]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -51,7 +54,18 @@ tx_to_binary(T) ->
 	>>.
 
 %% @doc Generate the data segment to be signed for a given TX.
-signature_data_segment(T) ->
+signature_data_segment(TX) ->
+	ar_deep_hash:hash([
+		<<(TX#tx.owner)/binary>>,
+		<<(TX#tx.target)/binary>>,
+		<<(TX#tx.data)/binary>>,
+		<<(list_to_binary(integer_to_list(TX#tx.quantity)))/binary>>,
+		<<(list_to_binary(integer_to_list(TX#tx.reward)))/binary>>,
+		<<(TX#tx.last_tx)/binary>>,
+		tags_to_list(TX#tx.tags)
+	]).
+
+signature_data_segment_pre_fork_2_0(T) ->
 	<<
 		(T#tx.owner)/binary,
 		(T#tx.target)/binary,
@@ -64,10 +78,21 @@ signature_data_segment(T) ->
 
 %% @doc Cryptographicvally sign ('claim ownership') of a transaction.
 %% After it is signed, it can be placed into a block and verified at a later date.
-sign(TX, {PrivKey, PubKey}) -> sign(TX, PrivKey, PubKey).
+sign(TX, {PrivKey, PubKey}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey })).
+
 sign(TX, PrivKey, PubKey) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey })).
+
+sign_pre_fork_2_0(TX, {PrivKey, PubKey}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_pre_fork_2_0(TX#tx{ owner = PubKey })).
+
+sign_pre_fork_2_0(TX, PrivKey, PubKey) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_pre_fork_2_0(TX#tx{ owner = PubKey })).
+
+sign(TX, PrivKey, PubKey, SignatureDataSegment) ->
 	NewTX = TX#tx{ owner = PubKey },
-	Sig = ar_wallet:sign(PrivKey, signature_data_segment(NewTX)),
+	Sig = ar_wallet:sign(PrivKey, SignatureDataSegment),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx {
 		signature = Sig, id = ID
@@ -111,7 +136,7 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 		{"overspend",
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
 		{"tx_signature_not_valid",
-		 ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)}
+		 verify_signature(TX, Height)}
 	],
 	KeepFailed = fun
 		({_, true}) ->
@@ -126,6 +151,16 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 			ar_tx_db:put_error_codes(TX#tx.id, ErrorCodes),
 			false
 	end.
+
+verify_signature(TX, Height) ->
+	Fork_2_0 = ar_fork:height_2_0(),
+	SignatureDataSegment = case Height of
+		H when H < Fork_2_0->
+			signature_data_segment_pre_fork_2_0(TX);
+		H when Fork_2_0 =< H ->
+			signature_data_segment(TX)
+	end,
+	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
 
 validate_overspend(TX, Wallets) ->
 	From = ar_wallet:to_address(TX#tx.owner),
@@ -343,20 +378,19 @@ check_last_tx(WalletMap, TX) when is_map(WalletMap) ->
 
 %% @doc Ensure that a public and private key pair can be used to sign and verify data.
 sign_tx_test() ->
-	NewTX = new(<<"TEST DATA">>, ?AR(10)),
+	NewTX = new(<<"TEST DATA">>, ?AR(100000)),
 	{Priv, Pub} = ar_wallet:new(),
 	Diff = 1,
-	Height = 0,
 	Timestamp = os:system_time(seconds),
-	?assert(
-		verify(
-			sign(NewTX, Priv, Pub),
-			Diff,
-			Height,
-			[{ar_wallet:to_address(Pub), ?AR(20), <<>>}],
-			Timestamp
-		)
-	).
+	WalletList = [{ar_wallet:to_address(Pub), ?AR(2000000), <<>>}],
+	SignedTXPreFork_2_0 = sign_pre_fork_2_0(NewTX, Priv, Pub),
+	SignedTX = sign(NewTX, Priv, Pub),
+	?assert(verify(SignedTXPreFork_2_0, Diff, 0, WalletList, Timestamp)),
+	?assert(not verify(SignedTX, Diff, 0, WalletList, Timestamp)),
+	?assert(not verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),
+	?assert(verify(SignedTX, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),
+	?assert(not verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)),
+	?assert(verify(SignedTX, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)).
 
 %% @doc Ensure that a forged transaction does not pass verification.
 forge_test() ->
@@ -364,7 +398,9 @@ forge_test() ->
 	{Priv, Pub} = ar_wallet:new(),
 	Diff = 1,
 	Height = 0,
-	InvalidSignTX = (sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> },
+	InvalidSignTX = (sign_pre_fork_2_0(NewTX, Priv, Pub))#tx {
+		data = <<"FAKE DATA">>
+	},
 	Timestamp = os:system_time(seconds),
 	?assert(not verify(InvalidSignTX, Diff, Height, [], Timestamp)).
 
@@ -389,8 +425,8 @@ check_last_tx_test_() ->
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
 		TX3 = ar_tx:new(Pub1, ?AR(1), ?AR(300), TX#tx.id),
-		SignedTX2 = sign(TX2, Priv2, Pub2),
-		SignedTX3 = sign(TX3, Priv3, Pub3),
+		SignedTX2 = sign_pre_fork_2_0(TX2, Priv2, Pub2),
+		SignedTX3 = sign_pre_fork_2_0(TX3, Priv3, Pub3),
 		WalletList =
 			[
 				{ar_wallet:to_address(Pub1), 1000, <<>>},

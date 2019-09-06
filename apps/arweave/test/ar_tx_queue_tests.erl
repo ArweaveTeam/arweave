@@ -7,7 +7,7 @@
 
 -import(ar_test_node, [assert_post_tx_to_slave/2]).
 -import(ar_test_node, [assert_wait_until_receives_txs/2, wait_until_height/2]).
--import(ar_test_node, [sign_tx/2, get_tx_anchor/0]).
+-import(ar_test_node, [sign_tx_pre_fork_2_0/2, get_tx_anchor/0]).
 -import(ar_test_node, [get_tx_price/1, slave_mine/1, slave_call/3]).
 
 txs_broadcast_order_test_() ->
@@ -109,14 +109,14 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 	{MasterNode, SlaveNode, Wallet} = setup(),
 	TXs = [
 		%% Base size, extra reward.
-		sign_tx(Wallet, #{ reward => get_tx_price(0) + ?AR(1), last_tx => get_tx_anchor() }),
+		sign_tx_pre_fork_2_0(Wallet, #{ reward => get_tx_price(0) + ?AR(1), last_tx => get_tx_anchor() }),
 		%% More data, same extra reward.
-		sign_tx(
+		sign_tx_pre_fork_2_0(
 			Wallet,
 			#{ data => <<"More data">>, reward => get_tx_price(9) + ?AR(1), last_tx => get_tx_anchor() }
 		),
 		%% Base size, default reward.
-		sign_tx(Wallet, #{ last_tx => get_tx_anchor() })
+		sign_tx_pre_fork_2_0(Wallet, #{ last_tx => get_tx_anchor() })
 	],
 	lists:foldl(
 		fun(_, ToPost) ->

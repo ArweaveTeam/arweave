@@ -234,7 +234,7 @@ make_tx_chain(Key, Diff, Height, Timestamp) ->
 	[TX1, TX2].
 
 tx(Key = {_, Pub}, Reward, Anchor) ->
-	ar_tx:sign(
+	ar_tx:sign_pre_fork_2_0(
 		#tx {
 			owner = Pub,
 			reward = Reward,

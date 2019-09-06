@@ -535,7 +535,7 @@ multiple_blocks_ahead_with_transaction_recovery_test_() ->
 		{Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_pre_fork_2_0(TX, Priv1, Pub1),
 		Node1 = ar_node:start(),
 		Node2 = ar_node:start(),
 		B0 = ar_weave:init([]),
