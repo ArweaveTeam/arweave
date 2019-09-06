@@ -10,7 +10,8 @@
 -import(ar_test_node, [slave_call/3]).
 -import(ar_test_node, [post_tx_to_slave/2, post_tx_to_master/2]).
 -import(ar_test_node, [assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
--import(ar_test_node, [sign_tx/1, sign_tx/2, sign_tx/3]).
+-import(ar_test_node, [sign_tx_pre_fork_2_0/1, sign_tx_pre_fork_2_0/2]).
+-import(ar_test_node, [sign_tx_pre_fork_2_0/3]).
 -import(ar_test_node, [get_tx_anchor/0, get_tx_anchor/1, join/1]).
 -import(ar_test_node, [assert_wait_until_block_hash_list/2]).
 -import(ar_test_node, [get_last_tx/1, get_last_tx/2]).
@@ -321,9 +322,9 @@ rejects_transactions_above_the_size_limit() ->
 	connect_to_slave(),
 	SmallData = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT) >>,
 	BigData = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT + 1) >>,
-	GoodTX = sign_tx(Key1, #{ data => SmallData }),
+	GoodTX = sign_tx_pre_fork_2_0(Key1, #{ data => SmallData }),
 	assert_post_tx_to_slave(Slave, GoodTX),
-	BadTX = sign_tx(Key2, #{ data => BigData }),
+	BadTX = sign_tx_pre_fork_2_0(Key2, #{ data => BigData }),
 	{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}} = post_tx_to_slave(Slave, BadTX),
 	{ok, ["tx_fields_too_large"]} = slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id]).
 
@@ -343,15 +344,15 @@ accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	]),
 	{Slave, _} = slave_start(B0),
 	connect_to_slave(),
-	TX1 = sign_tx(Key),
+	TX1 = sign_tx_pre_fork_2_0(Key),
 	assert_post_tx_to_slave(Slave, TX1),
 	slave_mine(Slave),
 	assert_slave_wait_until_height(Slave, 1),
-	TX2 = sign_tx(Key, #{ last_tx => TX1#tx.id }),
+	TX2 = sign_tx_pre_fork_2_0(Key, #{ last_tx => TX1#tx.id }),
 	assert_post_tx_to_slave(Slave, TX2),
-	TX3 = sign_tx(Key, #{ last_tx => TX2#tx.id }),
+	TX3 = sign_tx_pre_fork_2_0(Key, #{ last_tx => TX2#tx.id }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = post_tx_to_slave(Slave, TX3),
-	TX4 = sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
+	TX4 = sign_tx_pre_fork_2_0(Key, #{ last_tx => B0#block.indep_hash }),
 	assert_post_tx_to_slave(Slave, TX4),
 	slave_mine(Slave),
 	SlaveBHL = assert_slave_wait_until_height(Slave, 2),
@@ -376,9 +377,9 @@ does_not_allow_to_spend_mempool_tokens() ->
 	]),
 	{Slave, _} = slave_start(B0),
 	connect_to_slave(),
-	TX1 = sign_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1), quantity => ?AR(2) }),
+	TX1 = sign_tx_pre_fork_2_0(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1), quantity => ?AR(2) }),
 	assert_post_tx_to_slave(Slave, TX1),
-	TX2 = sign_tx(
+	TX2 = sign_tx_pre_fork_2_0(
 		Key2,
 		#{
 			target => ar_wallet:to_address(Pub1),
@@ -393,7 +394,7 @@ does_not_allow_to_spend_mempool_tokens() ->
 	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
 	B1 = slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]),
 	?assertEqual([TX1#tx.id], B1#block.txs),
-	TX3 = sign_tx(
+	TX3 = sign_tx_pre_fork_2_0(
 		Key2,
 		#{
 			target => ar_wallet:to_address(Pub1),
@@ -422,7 +423,7 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 		{ar_wallet:to_address(Pub1), ?AR(50), <<>>}
 	]),
 	{Slave, _} = slave_start(B0),
-	TX1 = sign_tx(
+	TX1 = sign_tx_pre_fork_2_0(
 		Key1,
 		#{
 			target => ar_wallet:to_address(Pub2),
@@ -443,7 +444,7 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 			[]
 		),
 	Balance = binary_to_integer(Body),
-	TX2 = sign_tx(
+	TX2 = sign_tx_pre_fork_2_0(
 		Key2,
 		#{
 			target => ar_wallet:to_address(Pub1),
@@ -462,7 +463,7 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 			[]
 		),
 	?assertEqual(0, binary_to_integer(Body2)),
-	TX3 = sign_tx(
+	TX3 = sign_tx_pre_fork_2_0(
 		Key1,
 		#{
 			target => ar_wallet:to_address(Pub2),
@@ -521,7 +522,7 @@ rejects_txs_with_outdated_anchors() ->
 	{Slave, _} = slave_start(B0),
 	slave_mine_blocks(Slave, ?MAX_TX_ANCHOR_DEPTH),
 	assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH),
-	TX1 = sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
+	TX1 = sign_tx_pre_fork_2_0(Key, #{ last_tx => B0#block.indep_hash }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		post_tx_to_slave(Slave, TX1).
 
@@ -537,7 +538,7 @@ rejects_txs_exceeding_mempool_limit() ->
 	BigChunk = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT) >>,
 	TXs = lists:map(
 		fun(N) ->
-			sign_tx(
+			sign_tx_pre_fork_2_0(
 				Key,
 				#{
 					last_tx => B0#block.indep_hash,
@@ -581,7 +582,7 @@ joins_network_successfully(ForkHeight) ->
 	slave_call(ar_meta_db, put, [requests_per_minute_limit, 10000]),
 	{PreForkTXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
-			TX = sign_tx(Key, #{ last_tx => LastTX }),
+			TX = sign_tx_pre_fork_2_0(Key, #{ last_tx => LastTX }),
 			assert_post_tx_to_slave(Slave, TX),
 			slave_mine(Slave),
 			assert_slave_wait_until_height(Slave, Height),
@@ -595,7 +596,7 @@ joins_network_successfully(ForkHeight) ->
 			BH = get_tx_anchor(),
 			NewTXs = lists:map(
 				fun(_) ->
-					TX = sign_tx(
+					TX = sign_tx_pre_fork_2_0(
 						Key,
 						#{
 							last_tx => BH,
@@ -617,10 +618,10 @@ joins_network_successfully(ForkHeight) ->
 	Master = join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}),
 	BHL = slave_call(ar_node, get_hash_list, [Slave]),
 	assert_wait_until_block_hash_list(Master, BHL),
-	TX1 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BHL) }),
+	TX1 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BHL) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		post_tx_to_master(Master, TX1),
-	TX2 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
+	TX2 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
 	assert_post_tx_to_master(Master, TX2),
 	%% Remove transactions from the ignore list.
 	forget_txs(PreForkTXs ++ PostForkTXs),
@@ -639,13 +640,13 @@ joins_network_successfully(ForkHeight) ->
 		PostForkTXs
 	),
 	disconnect_from_slave(),
-	TX3 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
+	TX3 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
 	assert_post_tx_to_slave(Slave, TX3),
 	slave_mine(Slave),
 	BHL2 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 1),
 	ar_node:mine(Master),
 	connect_to_slave(),
-	TX4 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL2) }),
+	TX4 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL2) }),
 	assert_post_tx_to_slave(Slave, TX4),
 	assert_wait_until_receives_txs(Master, [TX4]),
 	slave_mine(Slave),
@@ -675,7 +676,7 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 	connect_to_slave(),
 	{PreForkTXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
-			TX = sign_tx(Key, #{ last_tx => LastTX }),
+			TX = sign_tx_pre_fork_2_0(Key, #{ last_tx => LastTX }),
 			assert_post_tx_to_slave(Slave, TX),
 			assert_wait_until_receives_txs(Master, [TX]),
 			slave_mine(Slave),
@@ -692,10 +693,10 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 	{SlavePostForkTXs, SlavePostForkBlockAnchoredTXs} = lists:foldl(
 		fun(Height, {TXs, BlockAnchoredTXs}) ->
 			LastTX = get_last_tx(Key),
-			TX = sign_tx(Key, #{ last_tx => LastTX }),
+			TX = sign_tx_pre_fork_2_0(Key, #{ last_tx => LastTX }),
 			BlockAnchoredTX = case Height of
 				H when H > ForkHeight_1_8 ->
-					BTX = sign_tx(
+					BTX = sign_tx_pre_fork_2_0(
 						Key,
 						#{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }
 					),
@@ -723,14 +724,14 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 			%% post 1 block anchored tx per block. At fork block, post
 			%% one of the transactions included by slave on the different fork.
 			LastTX = get_last_tx(master, Key),
-			TX = sign_tx(master, Key, #{ last_tx => LastTX }),
+			TX = sign_tx_pre_fork_2_0(master, Key, #{ last_tx => LastTX }),
 			assert_post_tx_to_master(Master, TX),
 			AdditionalTXs = case Height of
 				H when H == ForkHeight_1_8 + 1 ->
 					assert_post_tx_to_master(Master, IncludeOnMasterTX),
 					[IncludeOnMasterTX];
 				H when H > ForkHeight_1_8 ->
-					BlockAnchoredTX = sign_tx(
+					BlockAnchoredTX = sign_tx_pre_fork_2_0(
 						master,
 						Key,
 						#{ last_tx => get_tx_anchor(master), tags => [{<<"nonce">>, random_nonce()}] }
@@ -749,7 +750,7 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 		lists:seq(ForkHeight + 1, ForkHeight_1_8 + 1)
 	),
 	connect_to_slave(),
-	TX2 = sign_tx(Key, #{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }),
+	TX2 = sign_tx_pre_fork_2_0(Key, #{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }),
 	assert_post_tx_to_slave(Slave, TX2),
 	assert_wait_until_receives_txs(Master, [TX2]),
 	slave_mine(Slave),
@@ -807,15 +808,15 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 one_wallet_list_one_block_anchored_txs(Key, B0) ->
 	%% Sign only after the node has started to get the correct price
 	%% estimation from it.
-	TX1Fun = fun() -> sign_tx(Key) end,
-	TX2Fun = fun() -> sign_tx(Key, #{ last_tx => B0#block.indep_hash }) end,
+	TX1Fun = fun() -> sign_tx_pre_fork_2_0(Key) end,
+	TX2Fun = fun() -> sign_tx_pre_fork_2_0(Key, #{ last_tx => B0#block.indep_hash }) end,
 	[TX1Fun, TX2Fun].
 
 two_block_anchored_txs(Key, B0) ->
 	%% Sign only after the node has started to get the correct price
 	%% estimation from it.
-	TX1Fun = fun() -> sign_tx(Key, #{ last_tx => B0#block.indep_hash }) end,
-	TX2Fun = fun() -> sign_tx(Key, #{ last_tx => B0#block.indep_hash }) end,
+	TX1Fun = fun() -> sign_tx_pre_fork_2_0(Key, #{ last_tx => B0#block.indep_hash }) end,
+	TX2Fun = fun() -> sign_tx_pre_fork_2_0(Key, #{ last_tx => B0#block.indep_hash }) end,
 	[TX1Fun, TX2Fun].
 
 empty_tx_set(_Key, _B0) ->
@@ -824,19 +825,19 @@ empty_tx_set(_Key, _B0) ->
 block_anchor_txs_spending_balance_plus_one_more() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	TX1 = sign_tx(Key, #{ quantity => ?AR(4), reward => ?AR(6), last_tx => B0#block.indep_hash }),
-	TX2 = sign_tx(Key, #{ reward => ?AR(10), last_tx => B0#block.indep_hash }),
-	ExceedBalanceTX = sign_tx(Key, #{ reward => ?AR(1), last_tx => B0#block.indep_hash }),
+	TX1 = sign_tx_pre_fork_2_0(Key, #{ quantity => ?AR(4), reward => ?AR(6), last_tx => B0#block.indep_hash }),
+	TX2 = sign_tx_pre_fork_2_0(Key, #{ reward => ?AR(10), last_tx => B0#block.indep_hash }),
+	ExceedBalanceTX = sign_tx_pre_fork_2_0(Key, #{ reward => ?AR(1), last_tx => B0#block.indep_hash }),
 	{B0, [TX1, TX2], ExceedBalanceTX}.
 
 mixed_anchor_txs_spending_balance_plus_one_more() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	TX1 = sign_tx(Key, #{ quantity => ?AR(4), reward => ?AR(6) }),
-	TX2 = sign_tx(Key, #{ reward => ?AR(5), last_tx => B0#block.indep_hash }),
-	TX3 = sign_tx(Key, #{ reward => ?AR(2), last_tx => B0#block.indep_hash }),
-	TX4 = sign_tx(Key, #{ reward => ?AR(3), last_tx => B0#block.indep_hash }),
-	ExceedBalanceTX = sign_tx(Key, #{ reward => ?AR(1), last_tx => B0#block.indep_hash }),
+	TX1 = sign_tx_pre_fork_2_0(Key, #{ quantity => ?AR(4), reward => ?AR(6) }),
+	TX2 = sign_tx_pre_fork_2_0(Key, #{ reward => ?AR(5), last_tx => B0#block.indep_hash }),
+	TX3 = sign_tx_pre_fork_2_0(Key, #{ reward => ?AR(2), last_tx => B0#block.indep_hash }),
+	TX4 = sign_tx_pre_fork_2_0(Key, #{ reward => ?AR(3), last_tx => B0#block.indep_hash }),
+	ExceedBalanceTX = sign_tx_pre_fork_2_0(Key, #{ reward => ?AR(1), last_tx => B0#block.indep_hash }),
 	{B0, [TX1, TX2, TX3, TX4], ExceedBalanceTX}.
 
 grouped_txs(FirstAnchorType) ->
@@ -860,13 +861,13 @@ grouped_txs(FirstAnchorType) ->
 		block_anchor ->
 			B0#block.indep_hash
 	end,
-	Wallet1TX1 = sign_tx(Key1, #{ data => Chunk1, last_tx => FirstAnchor }),
+	Wallet1TX1 = sign_tx_pre_fork_2_0(Key1, #{ data => Chunk1, last_tx => FirstAnchor }),
 	%% Block 2: 2 TXs from different wallets.
-	Wallet2TX1 = sign_tx(Key2, #{ data => Chunk2, last_tx => B0#block.indep_hash }),
-	Wallet1TX2 = sign_tx(Key1, #{ data => Chunk3, last_tx => B0#block.indep_hash }),
+	Wallet2TX1 = sign_tx_pre_fork_2_0(Key2, #{ data => Chunk2, last_tx => B0#block.indep_hash }),
+	Wallet1TX2 = sign_tx_pre_fork_2_0(Key1, #{ data => Chunk3, last_tx => B0#block.indep_hash }),
 	%% Block 3: 2 TXs from the same wallet.
-	Wallet1TX3 = sign_tx(Key1, #{ data => Chunk4, last_tx => B0#block.indep_hash }),
-	Wallet1TX4 = sign_tx(Key1, #{ data => Chunk5, last_tx => B0#block.indep_hash }),
+	Wallet1TX3 = sign_tx_pre_fork_2_0(Key1, #{ data => Chunk4, last_tx => B0#block.indep_hash }),
+	Wallet1TX4 = sign_tx_pre_fork_2_0(Key1, #{ data => Chunk5, last_tx => B0#block.indep_hash }),
 	{B0, [[Wallet1TX1], [Wallet2TX1, Wallet1TX2], [Wallet1TX3, Wallet1TX4]]}.
 
 slave_mine_blocks(Slave, TargetHeight) ->

@@ -27,6 +27,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden_test_() ->
 		[
 			{ar_fork, height_1_8, fun() -> 0 end},
 			{ar_fork, height_1_9, fun() -> 0 end},
+			{ar_fork, height_2_0, fun() -> 0 end},
 			{ar_inflation, calculate, fun big_inflation/1}
 		],
 		fun updates_pool_and_assigns_rewards_correctly_before_burden/0
@@ -39,6 +40,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden_test_() ->
 		[
 			{ar_fork, height_1_8, fun ar_tx_perpetual_storage_tests:zero_height/0},
 			{ar_fork, height_1_9, fun ar_tx_perpetual_storage_tests:zero_height/0},
+			{ar_fork, height_2_0, fun ar_tx_perpetual_storage_tests:zero_height/0},
 			{ar_inflation, calculate, fun ar_tx_perpetual_storage_tests:small_inflation/1}
 		],
 		fun updates_pool_and_assigns_rewards_correctly_after_burden/0

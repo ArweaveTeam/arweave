@@ -14,6 +14,7 @@
 -export([post_tx_to_slave/2, post_tx_to_master/2]).
 -export([assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
 -export([sign_tx/1, sign_tx/2, sign_tx/3]).
+-export([sign_tx_pre_fork_2_0/1, sign_tx_pre_fork_2_0/2, sign_tx_pre_fork_2_0/3]).
 -export([get_tx_anchor/0, get_tx_anchor/1]).
 -export([join/1]).
 -export([get_last_tx/1, get_last_tx/2]).
@@ -251,12 +252,24 @@ post_tx_to_master(Master, TX) ->
 	Reply.
 
 sign_tx(Wallet) ->
-	sign_tx(slave, Wallet, #{}).
+	sign_tx(slave, Wallet, #{}, fun ar_tx:sign/2).
 
 sign_tx(Wallet, TXParams) ->
-	sign_tx(slave, Wallet, TXParams).
+	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign/2).
 
 sign_tx(Node, Wallet, TXParams) ->
+	sign_tx(Node, Wallet, TXParams, fun ar_tx:sign/2).
+
+sign_tx_pre_fork_2_0(Wallet) ->
+	sign_tx(slave, Wallet, #{}, fun ar_tx:sign_pre_fork_2_0/2).
+
+sign_tx_pre_fork_2_0(Wallet, TXParams) ->
+	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign_pre_fork_2_0/2).
+
+sign_tx_pre_fork_2_0(Node, Wallet, TXParams) ->
+	sign_tx(Node, Wallet, TXParams, fun ar_tx:sign_pre_fork_2_0/2).
+
+sign_tx(Node, Wallet, TXParams, SignFun) ->
 	{_, Pub} = Wallet,
 	Data = maps:get(data, TXParams, <<>>),
 	Reward = case maps:get(reward, TXParams, none) of
@@ -265,7 +278,7 @@ sign_tx(Node, Wallet, TXParams) ->
 		AssignedReward ->
 			AssignedReward
 	end,
-	ar_tx:sign(
+	SignFun(
 		(ar_tx:new())#tx {
 			owner = Pub,
 			reward = Reward,
