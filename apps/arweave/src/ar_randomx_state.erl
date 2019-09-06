@@ -50,18 +50,17 @@ debug_server() ->
 		{state, State} -> State
 	end.
 
-init(BHL, Peers) ->
-	CurrentHeight = length(BHL) - 1,
+init(BI, Peers) ->
+	CurrentHeight = length(BI) - 1,
 	SwapHeights = lists:usort([
 		swap_height(CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT),
 		swap_height(max(0, CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT))
 	]),
-	SwapHeightsFiltered = lists:filter(fun should_init/1, SwapHeights),
 	Init = fun(SwapHeight) ->
-		{ok, Key} = randomx_key(SwapHeight, BHL, Peers),
+		{ok, Key} = randomx_key(SwapHeight, BI, Peers),
 		init(whereis(?MODULE), SwapHeight, Key, erlang:system_info(schedulers_online))
 	end,
-	lists:foreach(Init, SwapHeightsFiltered).
+	lists:foreach(Init, SwapHeights).
 
 %% PRIVATE
 
@@ -178,33 +177,15 @@ swap_height(Height) ->
 	(Height div ?RANDOMX_KEY_SWAP_FREQ) * ?RANDOMX_KEY_SWAP_FREQ.
 
 ensure_initialized(State, SwapHeight) ->
-	case should_init(SwapHeight) of
-		true ->
-			case maps:find(SwapHeight, State#state.randomx_states) of
-				{ok, _} ->
-					did_not_start;
-				error ->
-					{started, start_init(State, SwapHeight)}
-			end;
-		false ->
-			did_not_start
+	case maps:find(SwapHeight, State#state.randomx_states) of
+		{ok, _} ->
+			did_not_start;
+		error ->
+			{started, start_init(State, SwapHeight)}
 	end.
 
 get_key_from_cache(State, Height) ->
 	maps:get(swap_height(Height), State#state.key_cache, key_not_found).
-
-%% Initialize RandomX is only needed from the 1.7 fork height and onward,
-%% but we initialize pre-fork to test it in shadow mode. If there are any issues,
-%% this will increase the likeliness of them being found (and fixed) before the
-%% fork happens. For non-RandomX related tests, we care more about performance,
-%% so we don't run it in shadow mode for DEBUG.
--ifdef(DEBUG).
-should_init(SwapHeight) ->
-	SwapHeight >= ar_fork:height_1_7().
--else.
-should_init(_SwapHeight) ->
-	true.
--endif.
 
 start_init(State, SwapHeight) ->
 	Server = self(),
@@ -226,22 +207,12 @@ init(Server, SwapHeight, Threads) ->
 	end.
 
 init(Server, SwapHeight, Key, Threads) ->
-	case is_fast_mode_enabled() of
-		true ->
-			ar:console(
-				"Initialising RandomX dataset for fast hashing. Swap height: ~p, Key: ~p. "
-				"The process may take several minutes.~n", [SwapHeight, ar_util:encode(Key)]
-			),
-			Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(Key, Threads)}},
-			ar:console("RandomX dataset initialisation for swap height ~p complete.", [SwapHeight]);
-		false ->
-			ar:console(
-				"Initialising RandomX cache for slow low-memory hashing. "
-				"Swap height: ~p, Key: ~p~n", [SwapHeight, ar_util:encode(Key)]
-			),
-			Server ! {add_randomx_state, SwapHeight, {light, ar_mine_randomx:init_light(Key)}},
-			ar:console("RandomX cache initialisation for swap height ~p complete.", [SwapHeight])
-	end.
+	ar:console(
+		"Initialising RandomX dataset for fast hashing. Swap height: ~p, Key: ~p. "
+		"The process may take several minutes.~n", [SwapHeight, ar_util:encode(Key)]
+	),
+	Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(Key, Threads)}},
+	ar:console("RandomX dataset initialisation for swap height ~p complete.", [SwapHeight]).
 
 %% @doc Return the key used in RandomX by key swap height. The key is the
 %% dependent hash from the block at the previous swap height. If RandomX is used
@@ -261,32 +232,25 @@ randomx_key(SwapHeight) ->
 	end.
 
 get_block(Height) ->
-	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+	case ar_node:get_block_index(whereis(http_entrypoint_node)) of
 		[] -> unavailable;
-		BHL ->
-			BH = lists:nth(Height + 1, lists:reverse(BHL)),
-			get_block(BH, BHL)
+		BI ->
+			{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
+			get_block(BH, BI)
 	end.
 
-get_block(BH, BHL) ->
-	case ar_storage:read_block(BH, BHL) of
-		unavailable ->
-			get_block_remote(BH, BHL);
-		B ->
-			{ok, B}
-	end.
-
-get_block_remote(BH, BHL) ->
+get_block(BH, BI) ->
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-	get_block_remote(BH, BHL, Peers).
+	get_block(BH, BI, Peers).
 
-get_block_remote(_, _, []) ->
-	unavailable;
-get_block_remote(BH, BHL, Peers) ->
-	case ar_http_iface_client:get_full_block(Peers, BH, BHL) of
+get_block(Height, BI, Peers) when is_integer(Height) ->
+	{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
+	get_block(BH, BI, Peers);
+get_block(BH, BI, Peers) ->
+	case ar_http_iface_client:get_block(Peers, BH, BI) of
 		unavailable ->
 			unavailable;
-		{Peer, B} ->
+		B ->
 			case ar_weave:indep_hash(B) of
 				BH ->
 					ar_storage:write_full_block(B),
@@ -295,36 +259,20 @@ get_block_remote(BH, BHL, Peers) ->
 					ar:warn([
 						ar_randomx_state,
 						get_block_remote_got_invalid_block,
-						{peer, Peer},
 						{requested_block_hash, ar_util:encode(BH)},
 						{received_block_hash, ar_util:encode(InvalidBH)}
 					]),
-					get_block_remote(BH, BHL, Peers)
+					get_block(BH, BI)
 			end
 	end.
 
 randomx_key(SwapHeight, _, _) when SwapHeight < ?RANDOMX_KEY_SWAP_FREQ ->
 	randomx_key(SwapHeight);
-randomx_key(SwapHeight, BHL, Peers) ->
+randomx_key(SwapHeight, BI, Peers) ->
 	KeyBlockHeight = SwapHeight - ?RANDOMX_KEY_SWAP_FREQ,
-	case get_block(KeyBlockHeight, BHL, Peers) of
+	case get_block(KeyBlockHeight, BI, Peers) of
 		{ok, KeyB} ->
 			{ok, KeyB#block.hash};
 		unavailable ->
 			unavailable
 	end.
-
-get_block(Height, BHL, Peers) ->
-	BH = lists:nth(Height + 1, lists:reverse(BHL)),
-	case ar_storage:read_block(BH, BHL) of
-		unavailable ->
-			get_block_remote(BH, BHL, Peers);
-		B ->
-			{ok, B}
-	end.
-
--ifdef(DEBUG).
-is_fast_mode_enabled() -> false.
--else.
-is_fast_mode_enabled() -> true.
--endif.

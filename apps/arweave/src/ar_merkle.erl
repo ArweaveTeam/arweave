@@ -1,72 +1,227 @@
 -module(ar_merkle).
--export([root/2, root/3]).
--export([block_hash_list_to_merkle_root/1, wallet_list_to_merkle_root/1]).
+-export([generate_tree/1, generate_path/3]).
+-export([validate_path/3]).
+-export([extract_note/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Module for building and manipulating generic and specific merkle trees.
+%%% Generates annotated merkle trees, paths inside those trees, as well 
+%%% as verification of those proofs.
 
-%% @doc Take a prior merkle root and add a new peice of data to it, optionally
-%% providing a conversion function prior to hashing.
-root(OldRoot, Data, Fun) -> root(OldRoot, Fun(Data)).
-root(OldRoot, Data) ->
-	crypto:hash(?MERKLE_HASH_ALG, << OldRoot/binary, Data/binary >>).
+-record(node, {
+	id,
+	type = branch, % root | branch | leaf
+	data, % The value (for leaves)
+	note, % A number less than 2^256
+	left, % The (optional) ID of a node to the left
+	right, % The (optional) ID of a node to the right
+	max % The maximum observed note at this point
+}).
 
-%% @doc Generate a new entire merkle tree from a BHL.
-block_hash_list_to_merkle_root(BHL) ->
-	lists:foldl(
-		fun(BH, MR) -> root(MR, BH) end,
-		<<>>,
-		lists:reverse(BHL)
-	).
+-define(HASH_SIZE, ?CHUNK_ID_HASH_SIZE).
+-define(NOTE_SIZE, 32).
 
-%% @doc Generate a new wallet list merkle root from a WL.
-wallet_list_to_merkle_root(WL) ->
-	lists:foldl(
-		fun(Wallet, MR) ->
-			root(
-				MR,
-				Wallet,
-				fun wallet_to_binary/1
+%%% Tree generation.
+%%% Returns the merkle root and the tree data structure.
+
+%% @doc Generate a tree from a list of pairs of IDs (of length 32 bytes)
+%% and labels -- most often sizes.
+generate_tree(Elements) ->
+	generate_all_rows(generate_leaves(Elements)).
+
+generate_leaves(Elements) ->
+	lists:foldr(
+		fun({Data, Note}, Nodes) ->
+			Hash = hash([hash(Data), hash(note_to_binary(Note))]),
+			insert(
+				#node {
+					id = Hash,
+					type = leaf,
+					data = Data,
+					note = Note,
+					max = Note
+				},
+				Nodes
 			)
 		end,
-		<<>>,
-		lists:reverse(WL)
+		new(),
+		Elements
 	).
 
-%%% Helper functions
+%% TODO: This implementation leaves some duplicates in the tree structure.
+%% The produced trees could be a little smaller if these duplicates were 
+%% not present, but removing them with `ar_util:unique` takes far too long.
+generate_all_rows([]) ->
+	{<<>>, []};
+generate_all_rows(Leaves) ->
+	generate_all_rows(Leaves, Leaves).
 
-%% @doc Turn a wallet into a binary, for addition to a Merkle tree.
-wallet_to_binary({Addr, Balance, LastTX}) ->
-	<< Addr/binary, (integer_to_binary(Balance))/binary, LastTX/binary >>.
+generate_all_rows([RootN], Tree) ->
+	{RootN#node.id, Tree};
+generate_all_rows(Row, Tree) ->
+	NewRow = generate_row(Row),
+	generate_all_rows(NewRow, NewRow ++ Tree).
 
-%%% TESTS
+generate_row([]) -> [];
+generate_row([Left]) -> [generate_node(Left, empty)];
+generate_row([L, R | Rest]) ->
+	[generate_node(L, R) | generate_row(Rest)].
 
-basic_hash_root_generation_test() ->
-	BH0 = crypto:strong_rand_bytes(32),
-	BH1 = crypto:strong_rand_bytes(32),
-	BH2 = crypto:strong_rand_bytes(32),
-	MR0 = test_hash(BH0),
-	MR1 = test_hash(<<MR0/binary, BH1/binary>>),
-	MR2 = test_hash(<<MR1/binary, BH2/binary>>),
-	?assertEqual(MR2, block_hash_list_to_merkle_root([BH2, BH1, BH0])).
+generate_node(Left, empty) ->
+	Left;
+generate_node(L, R) ->
+	#node {
+		id = hash([hash(L#node.id), hash(R#node.id), hash(note_to_binary(L#node.max))]),
+		type = branch,
+		left = L#node.id,
+		right = R#node.id,
+		note = L#node.max,
+		max = R#node.max
+	}.
 
-test_hash(Bin) -> crypto:hash(?MERKLE_HASH_ALG, Bin).
+%%% Merkle path generation and verification functions.
 
-root_update_test() ->
-	BH0 = crypto:strong_rand_bytes(32),
-	BH1 = crypto:strong_rand_bytes(32),
-	BH2 = crypto:strong_rand_bytes(32),
-	BH3 = crypto:strong_rand_bytes(32),
-	Root = root(
-		root(
-			block_hash_list_to_merkle_root([BH1, BH0]),
-			BH2
-		),
-		BH3
-	),
+generate_path(ID, Dest, Tree) ->
+	binary:list_to_bin(generate_path_parts(ID, Dest, Tree)).
+
+generate_path_parts(ID, Dest, Tree) ->
+	case get(ID, Tree) of
+		N when N#node.type == leaf ->
+			[N#node.data, note_to_binary(N#node.note)];
+		N when N#node.type == branch ->
+			[
+				N#node.left, N#node.right, note_to_binary(N#node.note)
+			|
+				generate_path_parts(
+					case Dest < N#node.note of
+						true -> N#node.left;
+						false -> N#node.right
+					end,
+					Dest,
+					Tree
+				)
+			]
+	end.
+
+validate_path(ID, Dest, Path) ->
+	validate_path(ID, Dest, 0, Path).
+
+validate_path(ID, _Dest, StartOffset, << Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
+	case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
+		ID -> {Data, StartOffset, EndOffset};
+		_ -> false
+	end;
+validate_path(ID, Dest, StartOffset,
+		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>) ->
+	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
+		ID ->
+			{Path, NextStartOffset} =
+				case Dest < Note of
+					true ->
+						{L, StartOffset};
+					false ->
+						{R, Note}
+				end,
+			validate_path(Path, Dest, NextStartOffset, Rest);
+		_ ->
+			false
+	end;
+validate_path(_ID, _Dest, _StartOffset, _Path) ->
+	false.
+
+%% @doc Get the note attached to the final node from a path.
+extract_note(Path) ->
+	binary:decode_unsigned(
+		binary:part(Path, byte_size(Path) - ?NOTE_SIZE, ?NOTE_SIZE)
+	).
+
+%%% Helper functions for managing the tree data structure.
+%%% Abstracted so that the concrete data type can be replaced later.
+
+new() ->
+	[].
+
+insert(Node, Map) ->
+	[Node | Map].
+
+get(ID, Map) ->
+	case lists:keyfind(ID, #node.id, Map) of
+		false -> false;
+		Node -> Node
+	end.
+
+note_to_binary(Note) ->
+	<< Note:(?NOTE_SIZE * 8) >>.
+
+hash(Parts) when is_list(Parts) ->
+	crypto:hash(sha256, binary:list_to_bin(Parts));
+hash(Binary) ->
+	crypto:hash(sha256, Binary).
+
+%%% Helpers
+
+make_tags_cumulative(L) ->
+	lists:reverse(
+		element(2,
+			lists:foldl(
+				fun({X, Tag}, {AccTag, AccL}) ->
+					Curr = AccTag + Tag,
+					{Curr, [{X, Curr} | AccL]}
+				end,
+				{0, []},
+				L
+			)
+		)
+	).
+
+%%% Tests
+
+-define(TEST_SIZE, 64 * 1024).
+-define(UNEVEN_TEST_SIZE, 35643).
+-define(UNEVEN_TEST_TARGET, 33271).
+
+generate_balanced_tree_test() ->
+	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)]),
+	{_MR, Tree} = ar_merkle:generate_tree(Tags),
+	?assertEqual(length(Tree), (?TEST_SIZE * 2) - 1).
+
+generate_and_validate_balanced_tree_path_test() ->
+	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)]),
+	{MR, Tree} = ar_merkle:generate_tree(Tags),
+	lists:foreach(
+		fun(_TestCase) ->
+			RandomTarget = rand:uniform(?TEST_SIZE) - 1,
+			Path = ar_merkle:generate_path(MR, RandomTarget, Tree),
+			{Leaf, StartOffset, EndOffset} =
+				ar_merkle:validate_path(MR, RandomTarget, Path),
+			?assertEqual(RandomTarget, binary:decode_unsigned(Leaf)),
+			?assert(RandomTarget < EndOffset),
+			?assert(RandomTarget >= StartOffset)
+		end,
+		lists:seq(1, 100)
+	).
+
+generate_and_validate_uneven_tree_path_test() ->
+	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?UNEVEN_TEST_SIZE - 1)]),
+	{MR, Tree} = ar_merkle:generate_tree(Tags),
+	%% Make sure the target is in the 'uneven' ending of the tree.
+	Path = ar_merkle:generate_path(MR, ?UNEVEN_TEST_TARGET, Tree),
+	{Leaf, StartOffset, EndOffset} =
+		ar_merkle:validate_path(MR, ?UNEVEN_TEST_TARGET, Path),
+	?assertEqual(?UNEVEN_TEST_TARGET, binary:decode_unsigned(Leaf)),
+	?assert(?UNEVEN_TEST_TARGET < EndOffset),
+	?assert(?UNEVEN_TEST_TARGET >= StartOffset).
+
+reject_invalid_tree_path_test() ->
+	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)]),
+	{MR, Tree} =
+		ar_merkle:generate_tree(Tags),
+	RandomTarget = rand:uniform(?TEST_SIZE) - 1,
 	?assertEqual(
-		block_hash_list_to_merkle_root([BH3, BH2, BH1, BH0]),
-		Root
+		false,
+		ar_merkle:validate_path(
+			MR, RandomTarget,
+			ar_merkle:generate_path(MR, 1000, Tree)
+		)
 	).

@@ -62,9 +62,9 @@ cancel_tx_test_() ->
 		AllowedTX = ar_tx:new(AllowedTarget, ?AR(1), ?AR(1000), <<>>),
 		CancelTX = ar_tx:new(CancelTarget, ?AR(1), ?AR(9000), <<>>),
 		% 1000 AR from Wallet1 -> AllowedTarget, 1 AR fee.
-		SignedAllowedTX = ar_tx:sign(AllowedTX, Priv1, Pub1),
+		SignedAllowedTX = ar_tx:sign_v1(AllowedTX, Priv1, Pub1),
 		% 9000 AR from Wallet2 -> CANCELLED.
-		SignedCancelTX = ar_tx:sign(CancelTX, Priv2, Pub2),
+		SignedCancelTX = ar_tx:sign_v1(CancelTX, Priv2, Pub2),
 		B0 =
 			ar_weave:init(
 				[
@@ -96,7 +96,7 @@ bogus_cancel_tx_test_() ->
 		AllowedTarget = crypto:strong_rand_bytes(32),
 		AllowedTX = ar_tx:new(AllowedTarget, ?AR(1), ?AR(1000), <<>>),
 		% 1000 AR from Wallet1 -> AllowedTarget, 1 AR fee.
-		SignedAllowedTX = ar_tx:sign(AllowedTX, Priv1, Pub1),
+		SignedAllowedTX = ar_tx:sign_v1(AllowedTX, Priv1, Pub1),
 		B0 =
 			ar_weave:init(
 				[
@@ -140,126 +140,6 @@ get_current_block_test() ->
 	B1 = ar_node:get_current_block(Node),
 	?assertEqual(B0, B1).
 
-%% @doc Ensure that bogus blocks are not accepted onto the network.
-add_bogus_block_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"HELLO WORLD">>),
-			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-		]
-	),
-	Node = ar_node:start(),
-	GS0 = ar_gossip:init([Node]),
-	B0 = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	B1 = ar_weave:add(B0, [TX1]),
-	LastB = hd(B1),
-	ar_storage:write_block(hd(B1)),
-	BL = [hd(B1), hd(B0)],
-	Node ! {replace_block_list, BL},
-	Bs = [B2|_] = ar_weave:add(B1, [TX2]),
-	ar_storage:write_block(B2),
-	RecallB = ar_node_utils:find_recall_block(Bs),
-	Recall = {RecallB#block.indep_hash, <<>>, <<>>},
-	ar_gossip:send(GS0,
-		{
-			new_block,
-			self(),
-			B2#block.height,
-			B2#block { hash = <<"INCORRECT">> },
-			Recall
-		}),
-	?assert(ar_util:do_until(
-		fun() ->
-			[RecvdB | _] = ar_node:get_blocks(Node),
-			LastB == ar_storage:read_block(RecvdB, B2#block.hash_list)
-		end,
-		500,
-		4000
-	)).
-
-%% @doc Ensure that blocks with incorrect nonces are not accepted onto
-%% the network.
-add_bogus_block_nonce_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"HELLO WORLD">>),
-			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-		]
-	),
-	Node = ar_node:start(),
-	GS0 = ar_gossip:init([Node]),
-	B0 = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	B1 = ar_weave:add(B0, [TX1]),
-	LastB = hd(B1),
-	ar_storage:write_block(hd(B1)),
-	BL = [hd(B1), hd(B0)],
-	Node ! {replace_block_list, BL},
-	B2 = ar_weave:add(B1, [TX2]),
-	ar_storage:write_block(hd(B2)),
-	RecallB = ar_node_utils:find_recall_block(B2),
-	Recall = {RecallB#block.indep_hash, mocked_recall_size, <<>>, <<>>},
-	ar_gossip:send(GS0,
-		{new_block,
-			self(),
-			(hd(B2))#block.height,
-			(hd(B2))#block { nonce = <<"INCORRECT">> },
-			Recall
-		}
-	),
-	?assert(ar_util:do_until(
-		fun() ->
-			[RecvdB | _] = ar_node:get_blocks(Node),
-			LastB == ar_storage:read_block(RecvdB, (hd(B2))#block.hash_list)
-		end,
-		500,
-		4000
-	)).
-
-%% @doc Ensure that blocks with bogus hash lists are not accepted by the network.
-add_bogus_hash_list_test() ->
-	ar_storage:clear(),
-	ar_storage:write_tx(
-		[
-			TX1 = ar_tx:new(<<"HELLO WORLD">>),
-			TX2 = ar_tx:new(<<"NEXT BLOCK.">>)
-		]
-	),
-	Node = ar_node:start(),
-	GS0 = ar_gossip:init([Node]),
-	B0 = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	B1 = ar_weave:add(B0, [TX1]),
-	LastB = hd(B1),
-	ar_storage:write_block(hd(B1)),
-	BL = [hd(B1), hd(B0)],
-	Node ! {replace_block_list, BL},
-	B2 = ar_weave:add(B1, [TX2]),
-	ar_storage:write_block(hd(B2)),
-	RecallB = ar_node_utils:find_recall_block(B2),
-	Recall = {RecallB#block.indep_hash, mocked_recall_size, <<>>, <<>>},
-	ar_gossip:send(GS0,
-		{new_block,
-			self(),
-			(hd(B2))#block.height,
-			(hd(B2))#block {
-				hash_list =
-					[<<"INCORRECT HASH">> | tl((hd(B2))#block.hash_list)]
-			},
-			Recall
-		}),
-	?assert(ar_util:do_until(
-		fun() ->
-			[RecvdB | _] = ar_node:get_blocks(Node),
-			LastB == ar_storage:read_block(RecvdB, (hd(B2))#block.hash_list)
-		end,
-		500,
-		4000
-	)).
-
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_blockweave_with_mining_test() ->
 	ar_storage:clear(),
@@ -288,8 +168,8 @@ tiny_blockweave_with_added_data_test() ->
 		ar_test_node:wait_until_height(Node1, 1),
 		ar_util:do_until(
 			fun() ->
-				BHL = ar_node:get_blocks(Node2),
-				BL = ar_storage:read_block(BHL, BHL),
+				BI = ar_node:get_blocks(Node2),
+				BL = ar_storage:read_block(BI, BI),
 				BHead = hd(BL),
 				TXs = BHead#block.txs,
 				TestDataID = TestData#tx.id,
@@ -327,9 +207,9 @@ medium_blockweave_multi_mine_test_() ->
 				B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 				TestDataID1 = TestData1#tx.id,
 				TestDataID2 = TestData2#tx.id,
-				BHL = ar_node:get_hash_list(ar_util:pick_random(Nodes)),
-				[TestDataID1] == (hd(ar_storage:read_block(B1, BHL)))#block.txs andalso
-				[TestDataID2] == (hd(ar_storage:read_block(B2, BHL)))#block.txs
+				BI = ar_node:get_block_index(ar_util:pick_random(Nodes)),
+				[TestDataID1] == (hd(ar_storage:read_block(B1, BI)))#block.txs andalso
+				[TestDataID2] == (hd(ar_storage:read_block(B2, BI)))#block.txs
 			end,
 			1000,
 			30000
@@ -364,7 +244,7 @@ replay_attack_test_() ->
 		{Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
@@ -386,7 +266,7 @@ last_tx_test_() ->
 		{Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		ID = SignedTX#tx.id,
 		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		Node1 = ar_node:start([], B0),
@@ -411,7 +291,7 @@ wallet_transaction_test_() ->
 		{Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
@@ -481,9 +361,9 @@ medium_blockweave_mine_multiple_data_test_() ->
 		{Priv2, Pub2} = ar_wallet:new(),
 		{_Priv3, Pub3} = ar_wallet:new(),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
-		SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
+		SignedTX2 = ar_tx:sign_v1(TX2, Priv2, Pub2),
 		B0 = ar_weave:init([
 			{ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
 			{ar_wallet:to_address(Pub2), ?AR(10000), <<>>},
@@ -522,9 +402,9 @@ wallet_two_transaction_test_() ->
 		{Priv2, Pub2} = ar_wallet:new(),
 		{_Priv3, Pub3} = ar_wallet:new(),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
-		SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
+		SignedTX2 = ar_tx:sign_v1(TX2, Priv2, Pub2),
 		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
@@ -549,7 +429,7 @@ mine_tx_with_key_val_tags_test_() ->
 		{Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
@@ -559,41 +439,9 @@ mine_tx_with_key_val_tags_test_() ->
 		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
 		ar_node:mine(Node1),
 		ar_test_node:wait_until_height(Node2, 1),
-		BHL = [B1Hash |_] = ar_node:get_blocks(Node2),
-		#block { txs = TXs } = ar_storage:read_block(B1Hash, BHL),
+		BI = [{B1Hash, _, _} | _] = ar_node:get_blocks(Node2),
+		#block { txs = TXs } = ar_storage:read_block(B1Hash, BI),
 		?assertEqual([SignedTX], ar_storage:read_tx(TXs))
-	end}.
-
-%% @doc Verify the behaviour of out of order TX submission.
-%% NOTE: The current behaviour (out of order TXs get dropped)
-%% is not necessarily the behaviour we want, but we should keep
-%% track of it.
-single_wallet_double_tx_wrong_order_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		{_Priv3, Pub3} = ar_wallet:new(),
-		TX = ar_tx:new(Pub2, ?AR(1), ?AR(5000), <<>>),
-		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), TX#tx.id),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
-		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:add_tx(Node1, SignedTX2),
-		timer:sleep(500),
-		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx([SignedTX]),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		receive after 200 -> ok end,
-		?AR(4999) = ar_node:get_balance(Node2, Pub1),
-		?AR(5000) = ar_node:get_balance(Node2, Pub2),
-		?AR(0) = ar_node:get_balance(Node2, Pub3),
-		CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-		length(CurrentB#block.txs) == 1
 	end}.
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
@@ -603,9 +451,9 @@ tx_threading_test_() ->
 		{Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), SignedTX#tx.id),
-		SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+		SignedTX2 = ar_tx:sign_v1(TX2, Priv1, Pub1),
 		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
@@ -630,8 +478,8 @@ bogus_tx_thread_test_() ->
 		{_Priv2, Pub2} = ar_wallet:new(),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<>>),
 		TX2 = ar_tx:new(Pub2, ?AR(1), ?AR(1000), <<"INCORRECT TX ID">>),
-		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
-		SignedTX2 = ar_tx:sign(TX2, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
+		SignedTX2 = ar_tx:sign_v1(TX2, Priv1, Pub1),
 		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),

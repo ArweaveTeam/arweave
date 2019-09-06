@@ -6,12 +6,11 @@
 
 -export([send_new_block/4, send_new_tx/2, get_block/3]).
 -export([get_block_shadow/2]).
--export([get_tx/3, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
--export([get_encrypted_block/2, get_encrypted_full_block/2]).
+-export([get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2]).
+-export([add_peer/1]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).
--export([get_wallet_list/2, get_hash_list/1, get_hash_list/2]).
--export([get_current_block/1, get_current_block/2]).
+-export([get_block_index/1, get_block_index/2]).
 
 -include("ar.hrl").
 
@@ -61,32 +60,35 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, NewB, BDS, {RecallIndepHash, RecallSize, Key, Nonce}) ->
+send_new_block(Peer, NewB, BDS, Recall) ->
 	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
-			lists:sublist(
-				NewB#block.hash_list,
-				1,
-				?STORE_BLOCKS_BEHIND_CURRENT
-			)
+			lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
 		),
 	{SmallBlockProps} =
 		ar_serialize:block_to_json_struct(
-			NewB#block { wallet_list = [] }
+			NewB#block{ wallet_list = [] }
 		),
-	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | SmallBlockProps],
+	BlockShadowProps =
+		[{<<"hash_list">>, ShortHashList} | SmallBlockProps],
 	PostProps = [
 		{<<"new_block">>, {BlockShadowProps}},
-		{<<"recall_block">>, ar_util:encode(RecallIndepHash)},
-		{<<"recall_size">>, RecallSize},
 		%% Add the P2P port field to be backwards compatible with nodes
 		%% running the old version of the P2P port feature.
 		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
-		{<<"key">>, ar_util:encode(Key)},
-		{<<"nonce">>, ar_util:encode(Nonce)},
 		{<<"block_data_segment">>, ar_util:encode(BDS)}
-	],
+	] ++
+	case Recall of
+		{RecallIndepHash, RecallSize, Key, Nonce} ->
+			[
+				{<<"recall_block">>, ar_util:encode(RecallIndepHash)},
+				{<<"recall_size">>, RecallSize},
+				{<<"key">>, ar_util:encode(Key)},
+				{<<"nonce">>, ar_util:encode(Nonce)}
+			];
+		_ -> []
+	end,
 	ar_httpc:request(
 		<<"POST">>,
 		Peer,
@@ -113,70 +115,29 @@ add_peer(Peer) ->
 		3 * 1000
 	).
 
-%% @doc Get a peers current, top block.
-get_current_block(Peer) ->
-	get_current_block(Peer, get_hash_list(Peer)).
-get_current_block(Peer, BHL) ->
-	case get_full_block([Peer], hd(BHL), BHL) of
-		{_Peer, B} ->
-			B;
-		Error ->
-			Error
-	end.
+%% @doc Retreive a block by height or hash from disk or a remote peer.
+get_block(Peers, ID, BI) when is_list(Peers) ->
+	case ar_storage:read_block(ID, BI) of
+		unavailable ->
+			get_block_from_remote_peers(Peers, ID, BI);
+		B ->
+			case catch reconstruct_full_block(Peers, B, BI) of
+				{'EXIT', Reason} ->
+					ar:info([
+						{event, failed_to_construct_full_block_from_shadow},
+						{reason, Reason}
+					]),
+					unavailable;
+				Handled ->
+					Handled
+			end
+	end;
+get_block(Peer, ID, BI) ->
+	get_block([Peer], ID, BI).
 
-%% @doc Retreive a block by height or hash from a remote peer.
-get_block(Peer, ID, BHL) ->
-	case get_full_block([Peer], ID, BHL) of
-		{_Peer, B} ->
-			B;
-		Error ->
-			Error
-	end.
-
-%% @doc Get an encrypted block from a remote peer.
-%% Used when the next block is the recall block.
-get_encrypted_block(Peer, Hash) when is_binary(Hash) ->
-	handle_encrypted_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/encrypted",
-			p2p_headers()
-		)
-	).
-
-%% @doc Get a specified subfield from the block with the given hash
-get_block_subfield(Peer, Hash, Subfield) when is_binary(Hash) ->
-	handle_block_field_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/" ++ Subfield,
-			p2p_headers()
-		)
-	);
-%% @doc Get a specified subfield from the block with the given height
-get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
-	handle_block_field_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/height/" ++integer_to_list(Height) ++ "/" ++ Subfield,
-			p2p_headers()
-		)
-	).
-
-%% @doc Generate an appropriate URL for a block by its identifier.
-prepare_block_id(ID) when is_binary(ID) ->
-	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
-prepare_block_id(ID) when is_integer(ID) ->
-	"/block/height/" ++ integer_to_list(ID).
-
-%% @doc Retreive a full block (full transactions included in body)
-%% by hash from remote peers.
-get_full_block([], _ID, _BHL) ->
+get_block_from_remote_peers([], _ID, _BI) ->
 	unavailable;
-get_full_block(Peers, ID, BHL) ->
+get_block_from_remote_peers(Peers = [_ | _], ID, BI) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
 	case handle_block_response(
 		Peer,
@@ -187,17 +148,26 @@ get_full_block(Peers, ID, BHL) ->
 			prepare_block_id(ID),
 			p2p_headers(),
 			[],
-			10 * 1000
+			500,
+			30 * 1000
 		),
-		{full_block, BHL}
+		{full_block, BI}
 	) of
 		unavailable ->
-			get_full_block(Peers -- [Peer], ID, BHL);
+			get_block(Peers -- [Peer], ID, BI);
 		not_found ->
-			get_full_block(Peers -- [Peer], ID, BHL);
+			get_block(Peers -- [Peer], ID, BI);
 		B ->
-			{Peer, B}
+			B
 	end.
+
+%% @doc Generate an appropriate URL for a block by its identifier.
+prepare_block_id({ID, _, _}) ->
+	prepare_block_id(ID);
+prepare_block_id(ID) when is_binary(ID) ->
+	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
+prepare_block_id(ID) when is_integer(ID) ->
+	"/block/height/" ++ integer_to_list(ID).
 
 %% @doc Retreive a block shadow by hash or height from remote peers.
 get_block_shadow([], _ID) ->
@@ -213,7 +183,8 @@ get_block_shadow(Peers, ID) ->
 			prepare_block_id(ID),
 			p2p_headers(),
 			[],
-			10 * 1000
+			500,
+			30 * 1000
 		),
 		block_shadow
 	) of
@@ -225,13 +196,24 @@ get_block_shadow(Peers, ID) ->
 			{Peer, B}
 	end.
 
-%% @doc Get a wallet list (by its hash) from the external peer.
-get_wallet_list(Peer, Hash) ->
+%% @doc Get a wallet list by its hash from external peers.
+get_wallet_list([], _H) ->
+	not_found;
+get_wallet_list([Peer | Peers], H) ->
+	case get_wallet_list(Peer, H) of
+		unavailable ->
+			get_wallet_list(Peers, H);
+		not_found ->
+			get_wallet_list(Peers, H);
+		WL ->
+			WL
+	end;
+get_wallet_list(Peer, H) ->
 	Response =
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/wallet_list",
+			"/block/hash/" ++ binary_to_list(ar_util:encode(H)) ++ "/wallet_list",
 			p2p_headers()
 		),
 	case Response of
@@ -242,7 +224,7 @@ get_wallet_list(Peer, Hash) ->
 	end.
 
 %% @doc Get a block hash list (by its hash) from the external peer.
-get_hash_list(Peer) ->
+get_block_index(Peer) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
 			<<"GET">>,
@@ -250,9 +232,13 @@ get_hash_list(Peer) ->
 			"/hash_list",
 			p2p_headers()
 		),
-	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Body)).
+	Fork_2_0 = ar_fork:height_2_0(),
+	case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)) of
+		BI = [{_H, _WS, _TXRoot} | _] -> BI;
+		Hashes when length(Hashes) - 1 < Fork_2_0 -> [{H, not_set, not_set} || H <- Hashes]
+	end.
 
-get_hash_list(Peer, Hash) ->
+get_block_index(Peer, Hash) ->
 	Response =
 		ar_httpc:request(
 			<<"GET">>,
@@ -262,7 +248,7 @@ get_hash_list(Peer, Hash) ->
 		),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			ar_serialize:dejsonify(ar_serialize:json_struct_to_hash_list(Body));
+			ar_serialize:dejsonify(ar_serialize:json_struct_to_block_index(Body));
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
 	end.
 
@@ -280,18 +266,6 @@ get_height(Peer) ->
 		{ok, {{<<"500">>, _}, _, _, _, _}} -> not_joined
 	end.
 
-%% @doc Retreive a full block (full transactions included in body)
-%% by hash from a remote peer in an encrypted form
-get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
-	handle_encrypted_full_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/all/encrypted",
-			p2p_headers()
-		)
-	).
-
 get_txs(Peers, MempoolTXs, B) ->
 	case B#block.txs of
 		TXIDs when length(TXIDs) > ?BLOCK_TX_COUNT_LIMIT ->
@@ -305,6 +279,8 @@ get_txs(_Peers, _MempoolTXs, [], TXs, _TotalSize) ->
 get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
 	case get_tx(Peers, TXID, MempoolTXs) of
 		TX when is_record(TX, tx) ->
+			%% The byte size of the data field is used instead of the data_size
+			%% field because data for format=2 transactions is not fetched here.
 			case TotalSize + byte_size(TX#tx.data) of
 				NewTotalSize when NewTotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
 					{error, txs_exceed_block_size_limit};
@@ -317,15 +293,10 @@ get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
 
 %% @doc Retreive a tx by ID from the memory pool, disk, or a remote peer.
 get_tx(Peers, TXID, MempoolTXs) ->
-	case list_search(
-		fun(TX) ->
-			TXID == TX#tx.id
-		end,
-		MempoolTXs
-	) of
-		{value, TX} ->
+	case maps:get(TXID, MempoolTXs, not_in_mempool) of
+		{TX, _} ->
 			TX;
-		false ->
+		not_in_mempool ->
 			get_tx_from_disk_or_peer(Peers, TXID)
 	end.
 
@@ -349,7 +320,7 @@ get_tx_from_remote_peer(Peers, TXID) ->
 			p2p_headers(),
 			[],
 			500,
-			10 * 1000
+			60 * 1000
 		)
 	) of
 		not_found ->
@@ -362,28 +333,39 @@ get_tx_from_remote_peer(Peers, TXID) ->
 			ShouldBeTX
 	end.
 
-list_search(_Pred, []) ->
-	false;
-list_search(Pred, [Head | Rest]) ->
-	case Pred(Head) of
-		false ->
-			list_search(Pred, Rest);
-		true ->
-			{value, Head}
-	end.
-
 %% @doc Retreive only the data associated with a transaction.
+get_tx_data([], _Hash) ->
+	unavailable;
+get_tx_data(Peers, Hash) when is_list(Peers) ->
+	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	case get_tx_data(Peer, Hash) of
+		unavailable ->
+			get_tx_data(Peers -- [Peer], Hash);
+		Data ->
+			Data
+	end;
 get_tx_data(Peer, Hash) ->
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+	Reply =
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			"/" ++ binary_to_list(ar_util:encode(Hash)),
+			"/tx/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/data",
 			p2p_headers(),
 			[],
-			10 * 1000
+			500,
+			120 * 1000
 		),
-	Body.
+	case Reply of
+		{ok, {{<<"200">>, _}, _, EncodedData, _, _}} ->
+			case ar_util:safe_decode(EncodedData) of
+				{ok, Data} ->
+					Data;
+				{error, invalid} ->
+					unavailable
+			end;
+		_ ->
+			unavailable
+	end.
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
 get_time(Peer, Timeout) ->
@@ -518,11 +500,18 @@ handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block
 				{reason, Reason}
 			]),
 			unavailable;
-		Handled ->
-			Handled
+		B when is_record(B, block) ->
+			B;
+		Error ->
+			ar:info([
+				"Failed to parse block response.",
+				{peer, Peer},
+				{error, Error}
+			]),
+			unavailable
 	end;
-handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, {full_block, BHL}) ->
-	case catch reconstruct_full_block(Peer, Peers, Body, BHL) of
+handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, {full_block, BI}) ->
+	case catch reconstruct_full_block(Peers, Body, BI) of
 		{'EXIT', Reason} ->
 			ar:info([
 				"Failed to parse block response.",
@@ -537,101 +526,51 @@ handle_block_response(_, _, Response, _) ->
 	ar:warn([{unexpected_block_response, Response}]),
 	unavailable.
 
-reconstruct_full_block(Peer, Peers, Body, BHL) ->
-	B = ar_serialize:json_struct_to_block(Body),
-	case ?IS_BLOCK(B) of
-		true ->
-			WalletList =
-				case B#block.wallet_list of
-					WL when is_list(WL) -> WL;
-					WL when is_binary(WL) ->
-						case ar_storage:read_wallet_list(WL) of
-							{ok, ReadWL} ->
-								ReadWL;
-							{error, _} ->
-								get_wallet_list(Peer, B#block.indep_hash)
-						end
-				end,
-			HashList =
-				case B#block.hash_list of
-					unset ->
-						ar_block:generate_hash_list_for_block(B, BHL);
-					HL -> HL
-				end,
-			MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node)),
-			case {get_txs(Peers, MempoolTXs, B), WalletList} of
-				{{ok, TXs}, MaybeWalletList} when is_list(MaybeWalletList) ->
-					B#block {
-						txs = TXs,
-						hash_list = HashList,
-						wallet_list = WalletList
-					};
-				_ ->
-					unavailable
-			end;
-		false -> B
-	end.
-
-%% @doc Process the response of a /block/.../encrypted call.
-handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	case catch ar_util:decode(Body) of
-		{'EXIT', _} -> unavailable;
-		Decoded -> Decoded
+reconstruct_full_block(Peers, Body, BI) when is_binary(Body) ->
+	case ar_serialize:json_struct_to_block(Body) of
+		B when is_record(B, block) ->
+			reconstruct_full_block(Peers, B, BI);
+		B ->
+			B
 	end;
-handle_encrypted_block_response({error, _}) -> unavailable;
-handle_encrypted_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_encrypted_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable;
-handle_encrypted_block_response(Response) ->
-	ar:warn([{unexpected_encrypted_block_response, Response}]),
-	unavailable.
-
-%% @doc Process the response of a /block/.../all/encrypted call.
-handle_encrypted_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	case catch ar_util:decode(Body) of
-		{'EXIT', _} -> unavailable;
-		Decoded -> Decoded
-	end;
-handle_encrypted_full_block_response({error, _}) -> unavailable;
-handle_encrypted_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_encrypted_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable;
-handle_encrypted_full_block_response(Response) ->
-	ar:warn([{unexpected_encrypted_full_block_response, Response}]),
-	unavailable.
-
-%% @doc Process the response of a /block/[{Height}|{Hash}]/{Subfield} call.
-handle_block_field_response(Response) ->
-	case catch handle_block_field_response1(Response) of
-		{'EXIT', _} -> unavailable;
-		Handled -> Handled
+reconstruct_full_block(Peers, B, BI) when is_record(B, block) ->
+	WalletList =
+		case B#block.wallet_list of
+			WL when is_list(WL) -> WL;
+			WL when is_binary(WL) ->
+				case ar_storage:read_wallet_list(WL) of
+					{ok, ReadWL} ->
+						ReadWL;
+					{error, _} ->
+						get_wallet_list(Peers, B#block.indep_hash)
+				end
+		end,
+	HashList =
+		case B#block.hash_list of
+			unset ->
+				ar_block:generate_hash_list_for_block(
+					B,
+					BI
+				);
+			HL -> HL
+		end,
+	MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node), [as_map]),
+	case {get_txs(Peers, MempoolTXs, B), WalletList} of
+		{{ok, TXs}, MaybeWalletList} when is_list(MaybeWalletList) ->
+			B#block {
+				txs = TXs,
+				hash_list = HashList,
+				wallet_list = WalletList
+			};
+		_ ->
+			unavailable
 	end.
-
-handle_block_field_response1({"timestamp", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	binary_to_integer(Body);
-handle_block_field_response1({"last_retarget", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	binary_to_integer(Body);
-handle_block_field_response1({"diff", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	binary_to_integer(Body);
-handle_block_field_response1({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	binary_to_integer(Body);
-handle_block_field_response1({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_tx(Body);
-handle_block_field_response1({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_hash_list(ar_serialize:dejsonify(Body));
-handle_block_field_response1({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_wallet_list(Body);
-handle_block_field_response1({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> Body;
-handle_block_field_response1({error, _}) -> unavailable;
-handle_block_field_response1({ok, {{<<"404">>, _}, _, _}}) -> not_found;
-handle_block_field_response1({ok, {{<<"500">>, _}, _, _}}) -> unavailable;
-handle_block_field_response1(Response) ->
-	ar:warn([{unexpected_block_field_response, Response}]),
-	unavailable.
 
 %% @doc Process the response of a /tx call.
 handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	case catch ar_serialize:json_struct_to_tx(Body) of
-		{'EXIT', _} -> not_found;
-		TX -> TX
+		TX when is_record(TX, tx) -> TX;
+		_ -> not_found
 	end;
 handle_tx_response({ok, {{<<"202">>, _}, _, _, _, _}}) -> pending;
 handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;

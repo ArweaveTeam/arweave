@@ -6,14 +6,15 @@
 -export([gossip/2, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
 -export([wait_until_height/2, slave_wait_until_height/2]).
 -export([assert_slave_wait_until_height/2]).
--export([wait_until_block_hash_list/2]).
--export([assert_wait_until_block_hash_list/2]).
+-export([wait_until_block_block_index/2]).
+-export([assert_wait_until_block_block_index/2]).
 -export([wait_until_receives_txs/2]).
 -export([assert_wait_until_receives_txs/2]).
 -export([assert_slave_wait_until_receives_txs/2]).
 -export([post_tx_to_slave/2, post_tx_to_master/2]).
 -export([assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
 -export([sign_tx/1, sign_tx/2, sign_tx/3]).
+-export([sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3]).
 -export([get_tx_anchor/0, get_tx_anchor/1]).
 -export([join/1]).
 -export([get_last_tx/1, get_last_tx/2]).
@@ -36,7 +37,7 @@ start(B0, RewardAddr) ->
 	start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, RewardAddr).
 
 slave_start(no_block) ->
-	[B0] = slave_call(ar_weave, init, []),
+	[B0] = slave_call(ar_weave, init, [[]]),
 	slave_start(B0, unclaimed);
 slave_start(B0) ->
 	slave_start(B0, unclaimed).
@@ -47,7 +48,9 @@ slave_start(B0, RewardAddr) ->
 
 start(B0, Peer, RewardAddr) ->
 	ar_storage:clear(),
+	ar_transition:remove_checkpoint(),
 	ar_tx_queue:stop(),
+	ar_downloader:reset(),
 	ok = kill_if_running([http_bridge_node, http_entrypoint_node]),
 	Node = ar_node:start([], [B0], 0, RewardAddr),
 	ar_http_iface_server:reregister(http_entrypoint_node, Node),
@@ -138,11 +141,11 @@ slave_mine(Node) ->
 	slave_call(ar_node, mine, [Node]).
 
 wait_until_height(Node, TargetHeight) ->
-	{ok, BHL} = ar_util:do_until(
+	{ok, BI} = ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks(Node) of
-				BHL when length(BHL) - 1 == TargetHeight ->
-					{ok, BHL};
+				BI when length(BI) - 1 == TargetHeight ->
+					{ok, BI};
 				_ ->
 					false
 			end
@@ -150,24 +153,24 @@ wait_until_height(Node, TargetHeight) ->
 		100,
 		60 * 1000
 	),
-	BHL.
+	BI.
 
 slave_wait_until_height(Node, TargetHeight) ->
 	slave_call(?MODULE, wait_until_height, [Node, TargetHeight]).
 
 assert_slave_wait_until_height(Node, TargetHeight) ->
-	BHL = slave_call(?MODULE, wait_until_height, [Node, TargetHeight]),
-	?assert(is_list(BHL)),
-	BHL.
+	BI = slave_call(?MODULE, wait_until_height, [Node, TargetHeight]),
+	?assert(is_list(BI)),
+	BI.
 
-assert_wait_until_block_hash_list(Node, BHL) ->
-	?assertEqual(ok, wait_until_block_hash_list(Node, BHL)).
+assert_wait_until_block_block_index(Node, BI) ->
+	?assertEqual(ok, wait_until_block_block_index(Node, BI)).
 
-wait_until_block_hash_list(Node, BHL) ->
+wait_until_block_block_index(Node, BI) ->
 	ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks(Node) of
-				BHL ->
+				BI ->
 					ok;
 				_ ->
 					false
@@ -183,8 +186,8 @@ assert_wait_until_receives_txs(Node, TXs) ->
 wait_until_receives_txs(Node, TXs) ->
 	ar_util:do_until(
 		fun() ->
-			MinedTXs = ar_node:get_mined_txs(Node),
-			case lists:all(fun(TX) -> lists:member(TX, MinedTXs) end, TXs) of
+			MinedTXIDs = [TX#tx.id || TX <- ar_node:get_mined_txs(Node)],
+			case lists:all(fun(TX) -> lists:member(TX#tx.id, MinedTXIDs) end, TXs) of
 				true ->
 					ok;
 				_ ->
@@ -251,21 +254,45 @@ post_tx_to_master(Master, TX) ->
 	Reply.
 
 sign_tx(Wallet) ->
-	sign_tx(slave, Wallet, #{}).
+	sign_tx(slave, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
 
 sign_tx(Wallet, TXParams) ->
-	sign_tx(slave, Wallet, TXParams).
+	sign_tx(slave, Wallet, insert_root(TXParams#{ format => 2 }), fun ar_tx:sign/2).
 
 sign_tx(Node, Wallet, TXParams) ->
+	sign_tx(Node, Wallet, insert_root(TXParams#{ format => 2 }), fun ar_tx:sign/2).
+
+insert_root(Params) ->
+	case {maps:get(data, Params, <<>>), maps:get(data_root, Params, <<>>)} of
+		{<<>>, _} ->
+			Params;
+		{Data, <<>>} ->
+			TX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
+			Params#{ data_root => TX#tx.data_root };
+		_ ->
+			Params
+	end.
+
+sign_v1_tx(Wallet) ->
+	sign_tx(slave, Wallet, #{}, fun ar_tx:sign_v1/2).
+
+sign_v1_tx(Wallet, TXParams) ->
+	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign_v1/2).
+
+sign_v1_tx(Node, Wallet, TXParams) ->
+	sign_tx(Node, Wallet, TXParams, fun ar_tx:sign_v1/2).
+
+sign_tx(Node, Wallet, TXParams, SignFun) ->
 	{_, Pub} = Wallet,
 	Data = maps:get(data, TXParams, <<>>),
+	DataSize = maps:get(data_size, TXParams, byte_size(Data)),
 	Reward = case maps:get(reward, TXParams, none) of
 		none ->
-			get_tx_price(Node, byte_size(Data));
+			get_tx_price(Node, DataSize);
 		AssignedReward ->
 			AssignedReward
 	end,
-	ar_tx:sign(
+	SignFun(
 		(ar_tx:new())#tx {
 			owner = Pub,
 			reward = Reward,
@@ -273,7 +300,10 @@ sign_tx(Node, Wallet, TXParams) ->
 			target = maps:get(target, TXParams, <<>>),
 			quantity = maps:get(quantity, TXParams, 0),
 			tags = maps:get(tags, TXParams, []),
-			last_tx = maps:get(last_tx, TXParams, <<>>)
+			last_tx = maps:get(last_tx, TXParams, <<>>),
+			data_size = DataSize,
+			data_root = maps:get(data_root, TXParams, <<>>),
+			format = maps:get(format, TXParams, 1)
 		},
 		Wallet
 	).

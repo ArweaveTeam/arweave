@@ -9,7 +9,7 @@
     "138.197.232.192",
     "46.101.67.172"
   ],
-  "start_hash_list": "ZFTD3ne7_U3BONHi8O-QpBv0ZQTAXJ2eFIih8dod0f8",
+  "start_block_index": "ZFTD3ne7_U3BONHi8O-QpBv0ZQTAXJ2eFIih8dod0f8",
   "mine": true,
   "port": 1985,
   "data_dir": "some_data_dir",

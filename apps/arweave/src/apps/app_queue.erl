@@ -123,7 +123,7 @@ wait_for_block(S, TargetH) ->
 
 %% @doc Take a server state and return the current block height.
 get_current_height(S) ->
-	length(ar_node:get_hash_list(S#state.node)).
+	ar_node:get_height(S#state.node).
 
 %%% TESTS
 

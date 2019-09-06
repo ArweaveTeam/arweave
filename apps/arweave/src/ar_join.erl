@@ -6,6 +6,9 @@
 %%% Represents a process that handles creating an initial, minimal
 %%% block list to be used by a node joining a network already in progress.
 
+%%% Define how many recent blocks should have syncing priority.
+-define(DOWNLOAD_TOP_PRIORITY_BLOCKS_COUNT, 1000).
+
 %% @doc Start a process that will attempt to join a network from the last
 %% sync block.
 start(Peers, NewB) when is_record(NewB, block) ->
@@ -22,16 +25,16 @@ start(Node, Peers, B) when is_atom(B) ->
 		]
 	),
 	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
-start(Node, RawPeers, NewB) ->
+start(Node, RawPeers, {NewB, BI}) ->
 	case whereis(join_server) of
 		undefined ->
-			PID = spawn(fun() -> do_join(Node, RawPeers, NewB) end),
+			PID = spawn(fun() -> do_join(Node, RawPeers, NewB, BI) end),
 			erlang:register(join_server, PID);
 		_ -> already_running
 	end.
 
 %% @doc Perform the joining process.
-do_join(_Node, _RawPeers, NewB) when not ?IS_BLOCK(NewB) ->
+do_join(_Node, _RawPeers, NewB, _BI) when not ?IS_BLOCK(NewB) ->
 	ar:report_console(
 		[
 			node_not_joining,
@@ -39,7 +42,7 @@ do_join(_Node, _RawPeers, NewB) when not ?IS_BLOCK(NewB) ->
 			{received_instead, NewB}
 		]
 	);
-do_join(Node, RawPeers, NewB) ->
+do_join(Node, RawPeers, NewB, BI) ->
 	case verify_time_sync(RawPeers) of
 		false ->
 			ar:err(
@@ -64,16 +67,25 @@ do_join(Node, RawPeers, NewB) ->
 			),
 			ar_miner_log:joining(),
 			ar_arql_db:populate_db(NewB#block.hash_list),
-			ar_randomx_state:init(NewB#block.hash_list, Peers),
-			BlockTXPairs = get_block_and_trail(Peers, NewB, NewB#block.hash_list),
-			Node ! {
-				fork_recovered,
-				[NewB#block.indep_hash|NewB#block.hash_list],
-				BlockTXPairs
-			},
+			ar_randomx_state:init(BI, Peers),
+			BlockTXPairs = get_block_and_trail(Peers, NewB, BI),
+			Node ! {fork_recovered, BI, BlockTXPairs},
 			join_peers(Peers),
 			ar_miner_log:joined(),
-			spawn(fun() -> fill_to_capacity(ar_manage_peers:get_more_peers(Peers), NewB#block.hash_list) end)
+			{Recent, Rest} =
+				lists:split(min(length(BI), ?DOWNLOAD_TOP_PRIORITY_BLOCKS_COUNT), BI),
+			lists:foreach(
+				fun({H, _, TXRoot}) ->
+					ar_downloader:enqueue_front({block, {H, TXRoot}})
+				end,
+				lists:sort(fun(_, _) -> rand:uniform(2) == 1 end, Rest)
+			),
+			lists:foreach(
+				fun({H, _, TXRoot}) ->
+					ar_downloader:enqueue_front({block, {H, TXRoot}})
+				end,
+				lists:reverse(Recent)
+			)
 	end.
 
 %% @doc Verify timestamps of peers.
@@ -125,18 +137,18 @@ log_peer_clock_diff(Peer, Diff) ->
 find_current_block([]) ->
 	ar:info("Did not manage to fetch current block from any of the peers. Will retry later."),
 	unavailable;
-find_current_block([Peer|Tail]) ->
-	try ar_node:get_hash_list(Peer) of
+find_current_block([Peer | Tail]) ->
+	try ar_node:get_block_index(Peer) of
 		[] ->
 			find_current_block(Tail);
-		BHL ->
-			Hash = hd(BHL),
+		BI ->
+			{Hash, _, _} = hd(BI),
 			ar:info([
 				"Fetching current block.",
 				{peer, Peer},
 				{hash, Hash}
 			]),
-			MaybeB = ar_node_utils:get_full_block(Peer, Hash, BHL),
+			MaybeB = ar_http_iface_client:get_block([Peer], Hash, BI),
 			case MaybeB of
 				Atom when is_atom(Atom) ->
 					ar:info([
@@ -145,7 +157,7 @@ find_current_block([Peer|Tail]) ->
 					]),
 					Atom;
 				B ->
-					B
+					{B, BI}
 			end
 	catch
 		Exc:Reason ->
@@ -189,69 +201,49 @@ join_peers(Peers) when is_list(Peers) ->
 join_peers(Peer) when is_pid(Peer) -> ok;
 join_peers(Peer) -> ar_http_iface_client:add_peer(Peer).
 
-%% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
-%% blocks and recall blocks. Alternatively, if the blocklist is shorter than
-%% ?STORE_BLOCKS_BEHIND_CURRENT, simply get all existing blocks and recall blocks
+%% @doc Get a block, and its 2 * ?MAX_TX_ANCHOR_DEPTH previous blocks.
+%% If the block list is shorter than 2 * ?MAX_TX_ANCHOR_DEPTH, simply
+%% get all existing blocks.
+%%
+%% The node needs 2 * ?MAX_TX_ANCHOR_DEPTH block anchors so that it
+%% can validate transactions even if it enters a ?MAX_TX_ANCHOR_DEPTH-deep
+%% fork recovery (which is the deepest fork recovery possible) immediately after
+%% joining the network.
 get_block_and_trail(_Peers, NewB, []) ->
+	%% Joining on the genesis block.
 	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
-	ar_storage:write_block(NewB#block { txs = TXIDs }),
+	ar_storage:write_block(NewB#block{ txs = TXIDs }),
 	[{NewB#block.indep_hash, TXIDs}];
-get_block_and_trail(Peers, NewB, HashList) ->
-	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, HashList, []).
+get_block_and_trail(Peers, NewB, BI) ->
+	get_block_and_trail(Peers, NewB, 2 * ?MAX_TX_ANCHOR_DEPTH, BI, []).
 
-get_block_and_trail(_, unavailable, _, _, BlockTXPairs) ->
-	BlockTXPairs;
-get_block_and_trail(Peers, NewB, BehindCurrent, _, BlockTXPairs) when NewB#block.height =< 1 ->
+get_block_and_trail(_Peers, NewB, _BehindCurrent, _BI, BlockTXPairs)
+		when NewB#block.height == 0 ->
 	ar_storage:write_full_block(NewB),
-	PreviousBlock = ar_node:get_block(
-		Peers,
-		NewB#block.previous_block,
-		NewB#block.hash_list
-	),
-	ar_storage:write_block(PreviousBlock),
 	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
-	NewBlockTXPairs = BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}],
-	case BehindCurrent of
-		0 ->
-			NewBlockTXPairs;
-		1 ->
-			NewBlockTXPairs ++ [{PreviousBlock#block.indep_hash, PreviousBlock#block.txs}]
-	end;
-get_block_and_trail(_, _, 0, _, BlockTXPairs) ->
-	BlockTXPairs;
-get_block_and_trail(Peers, NewB, BehindCurrent, HashList, BlockTXPairs) ->
-	PreviousBlock = ar_node_utils:get_full_block(
+	BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}];
+get_block_and_trail(_, NewB, 0, _, BlockTXPairs) ->
+	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
+	BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}];
+get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
+	PreviousBlock = ar_http_iface_client:get_block(
 		Peers,
 		NewB#block.previous_block,
-		NewB#block.hash_list
+		BI
 	),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
-			RecallBlock = ar_util:get_recall_hash(PreviousBlock, HashList),
 			ar_storage:write_full_block(NewB),
 			TXIDs = [TX#tx.id || TX <- NewB#block.txs],
 			NewBlockTXPairs = BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}],
-			case ar_node_utils:get_full_block(Peers, RecallBlock, NewB#block.hash_list) of
-				unavailable ->
-					ar:info(
-						[
-							could_not_retrieve_joining_recall_block,
-							retrying
-						]
-					),
-					get_block_and_trail(Peers, NewB, BehindCurrent, HashList, BlockTXPairs);
-				RecallB ->
-					ar_storage:write_full_block(RecallB),
-					ar:info(
-						[
-							{writing_block, NewB#block.height},
-							{writing_recall_block, RecallB#block.height},
-							{blocks_written, 2 * (?STORE_BLOCKS_BEHIND_CURRENT - (BehindCurrent-1))},
-							{blocks_to_write, 2 * (BehindCurrent-1)}
-						]
-					),
-					get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, HashList, NewBlockTXPairs)
-			end;
+			ar:info(
+				[
+					{writing_block, NewB#block.height},
+					{blocks_written, (2 * ?MAX_TX_ANCHOR_DEPTH - (BehindCurrent - 1))},
+					{blocks_to_write, (BehindCurrent - 1)}
+				]
+			),
+			get_block_and_trail(Peers, PreviousBlock, BehindCurrent - 1, BI, NewBlockTXPairs);
 		false ->
 			ar:info(
 				[
@@ -260,47 +252,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, HashList, BlockTXPairs) ->
 				]
 			),
 			timer:sleep(3000),
-			get_block_and_trail(Peers, NewB, BehindCurrent, HashList, BlockTXPairs)
-	end.
-
-%% @doc Fills node to capacity based on weave storage limit.
-fill_to_capacity(Peers, ToWrite) -> fill_to_capacity(Peers, ToWrite, ToWrite).
-fill_to_capacity(_, [], _) -> ok;
-fill_to_capacity(Peers, ToWrite, BHL) ->
-	timer:sleep(1 * 1000),
-	RandHash = lists:nth(rand:uniform(length(ToWrite)), ToWrite),
-	case ar_storage:read_block(RandHash, BHL) of
-		unavailable ->
-			fill_to_capacity2(Peers, RandHash, ToWrite, BHL);
-		_ ->
-			fill_to_capacity(
-				Peers,
-				lists:delete(RandHash, ToWrite),
-				BHL
-			)
-	end.
-
-fill_to_capacity2(Peers, RandHash, ToWrite, BHL) ->
-	B =
-		try
-			ar_node_utils:get_full_block(Peers, RandHash, BHL)
-		catch _:_ ->
-			unavailable
-		end,
-	case B of
-		unavailable ->
-			timer:sleep(3000),
-			fill_to_capacity(Peers, ToWrite, BHL);
-		B ->
-			case ar_storage:write_full_block(B) of
-				{error, _} -> disk_full;
-				_ ->
-					fill_to_capacity(
-						Peers,
-						lists:delete(RandHash, ToWrite),
-						BHL
-					)
-			end
+			get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs)
 	end.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
@@ -316,7 +268,7 @@ basic_node_join_test() ->
 		Node2 = ar_node:start([Node1]),
 		timer:sleep(1500),
 		[B|_] = ar_node:get_blocks(Node2),
-		2 = (ar_storage:read_block(B, ar_node:get_hash_list(Node1)))#block.height
+		2 = (ar_storage:read_block(B, ar_node:get_block_index(Node1)))#block.height
 	end}.
 
 %% @doc Ensure that both nodes can mine after a join.
@@ -334,5 +286,5 @@ node_join_test() ->
 		ar_node:mine(Node2),
 		timer:sleep(1500),
 		[B|_] = ar_node:get_blocks(Node1),
-		3 = (ar_storage:read_block(B, ar_node:get_hash_list(Node1)))#block.height
+		3 = (ar_storage:read_block(B, ar_node:get_block_index(Node1)))#block.height
 	end}.

@@ -26,9 +26,8 @@
 %% wallet list references, and data size. Therefore, the function is suitable
 %% for on-edge verification where we want to accept potentially conflicting
 %% transactions to avoid consensus issues later.
-verify_tx(TX, Diff, Height, BlockTXPairs, MempoolTXIDs, WalletList) ->
+verify_tx(TX, Diff, Height, BlockTXPairs, Mempool, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
-	TXIDSet = sets:from_list(MempoolTXIDs),
 	verify_tx(
 		general_verification,
 		TX,
@@ -37,7 +36,7 @@ verify_tx(TX, Diff, Height, BlockTXPairs, MempoolTXIDs, WalletList) ->
 		os:system_time(seconds),
 		WalletList,
 		WeaveState,
-		TXIDSet
+		Mempool
 	).
 
 %% @doc Verify the transactions are valid for the block taken into account
@@ -52,7 +51,7 @@ verify_block_txs(TXs, Diff, Height, Timestamp, WalletList, BlockTXPairs) ->
 		Timestamp,
 		WalletList,
 		WeaveState,
-		sets:new()
+		maps:new()
 	),
 	case length(VerifiedTXs) of
 		L when L == length(TXs) ->
@@ -77,7 +76,7 @@ pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, WalletList, TXs) ->
 		Timestamp,
 		WalletList,
 		WeaveState,
-		sets:new()
+		maps:new()
 	),
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
@@ -93,8 +92,8 @@ pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, WalletList, TXs) ->
 pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
 	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
-	lists:foldr(
-		fun(TX, {ValidTXs, InvalidTXs}) ->
+	InvalidTXs = maps:fold(
+		fun(TXID, {TX, _}, InvalidTXs) ->
 			case verify_tx(
 				general_verification,
 				TX,
@@ -103,16 +102,31 @@ pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 				os:system_time(seconds),
 				WalletMap,
 				WeaveState,
-				sets:new()
+				maps:new(),
+				do_not_verify_signature
 			) of
 				{valid, _, _} ->
-					{[TX | ValidTXs], InvalidTXs};
+					InvalidTXs;
+				{invalid, tx_already_in_weave} ->
+					[TX | InvalidTXs];
 				{invalid, Reason} ->
-					{ValidTXs, [{TX#tx.id, Reason} | InvalidTXs]}
+					ar:info([
+						{event, dropped_tx},
+						{id, ar_util:encode(TXID)},
+						{reason, Reason}
+					]),
+					[TX | InvalidTXs]
 			end
 		end,
-		{[], []},
+		[],
 		TXs
+	),
+	lists:foldl(
+		fun(TX, ValidTXs) ->
+			maps:remove(TX#tx.id, ValidTXs)
+		end,
+		TXs,
+		InvalidTXs
 	).
 
 %% PRIVATE
@@ -132,7 +146,10 @@ create_state(BlockTXPairs) ->
 	}.
 
 verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool) ->
-	case ar_tx:verify(TX, Diff, Height, FloatingWallets, Timestamp) of
+	verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool, verify_signature).
+
+verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool, VerifySignature) ->
+	case ar_tx:verify(TX, Diff, Height, FloatingWallets, Timestamp, VerifySignature) of
 		true ->
 			verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool);
 		false ->
@@ -146,7 +163,7 @@ verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mem
 			%% since current nodes can accept blocks with a chain of last_tx
 			%% references. The check would still fail on edge pre 1.8 since
 			%% TX is validated against a previous blocks' wallet list then.
-			case sets:is_element(TX#tx.last_tx, Mempool) of
+			case maps:is_key(TX#tx.last_tx, Mempool) of
 				true ->
 					{invalid, last_tx_in_mempool};
 				false ->
@@ -172,7 +189,7 @@ verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mem
 verify_tx(last_tx, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	case ar_tx:check_last_tx(FloatingWallets, TX) of
 		true ->
-			NewMempool = sets:add_element(TX#tx.id, Mempool),
+			NewMempool = maps:put(TX#tx.id, no_tx, Mempool),
 			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
 			{valid, NewFW, NewMempool};
 		false ->
@@ -193,11 +210,11 @@ verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) -
 			verify_tx(mempool_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
 	end;
 verify_tx(mempool_check, TX, _Diff, Height, FloatingWallets, _WeaveState, Mempool) ->
-	case sets:is_element(TX#tx.id, Mempool) of
+	case maps:is_key(TX#tx.id, Mempool) of
 		true ->
 			{invalid, tx_already_in_mempool};
 		false ->
-			NewMempool = sets:add_element(TX#tx.id, Mempool),
+			NewMempool = maps:put(TX#tx.id, no_tx, Mempool),
 			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
 			{valid, NewFW, NewMempool}
 	end.
@@ -237,7 +254,12 @@ apply_txs(TXs, Diff, Height, Timestamp, WalletList, WeaveState, Mempool) ->
 pick_txs_under_size_limit(TXs) ->
 	{_, _, TXsUnderSizeLimit} = lists:foldl(
 		fun(TX, {TotalSize, TXCount, PickedTXs}) ->
-			TXSize = byte_size(TX#tx.data),
+			TXSize = case TX#tx.format of
+				1 ->
+					TX#tx.data_size;
+				2 ->
+					0
+			end,
 			NewTotalSize = TXSize + TotalSize,
 			NewTXCount = TXCount + 1,
 			case {NewTotalSize, NewTXCount} of

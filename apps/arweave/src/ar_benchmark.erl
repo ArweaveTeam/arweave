@@ -64,15 +64,16 @@ mine(Diff, Rounds, Algorithm) ->
 mine(Diff, Algorithm) ->
 	B = #block{
 		indep_hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
+		diff = Diff,
 		hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
 		timestamp = os:system_time(seconds),
 		last_retarget = os:system_time(seconds),
 		hash_list = [],
 		height = case Algorithm of randomx -> ar_fork:height_1_8(); sha384 -> ar_fork:height_1_7() - 2 end
 	},
-	ar_mine:start(B, B, [], unclaimed, [], Diff, self(), []),
+	ar_mine:start(B, B, [], unclaimed, [], self(), [], []),
 	receive
-		{work_complete, _, _, _, _, _, _, HashesTried} ->
+		{work_complete, _, _, _, _, _, HashesTried} ->
 			HashesTried
 	end.
 

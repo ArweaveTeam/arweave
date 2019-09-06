@@ -36,13 +36,13 @@ parse_options([{<<"peers">>, Peers} | Rest], Config) when is_list(Peers) ->
 	end;
 parse_options([{<<"peers">>, Peers} | _], _) ->
 	{error, {bad_type, peers, array}, Peers};
-parse_options([{<<"start_hash_list">>, Hash} | Rest], Config) when is_binary(Hash) ->
+parse_options([{<<"start_block_index">>, Hash} | Rest], Config) when is_binary(Hash) ->
 	case ar_util:safe_decode(Hash) of
-		{ok, D} -> parse_options(Rest, Config#config { start_hash_list = D });
-		{error, _} -> {error, bad_start_hash_list, Hash}
+		{ok, D} -> parse_options(Rest, Config#config { start_block_index = D });
+		{error, _} -> {error, bad_start_block_index, Hash}
 	end;
-parse_options([{<<"start_hash_list">>, Hash} | _], _) ->
-	{error, {bad_type, start_hash_list, string}, Hash};
+parse_options([{<<"start_block_index">>, Hash} | _], _) ->
+	{error, {bad_type, start_block_index, string}, Hash};
 parse_options([{<<"mine">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config { mine = true });
 parse_options([{<<"mine">>, false} | Rest], Config) ->
@@ -189,6 +189,8 @@ parse_options([{<<"max_connections">>, MaxConnections} | Rest], Config) when is_
 	parse_options(Rest, Config#config { max_connections = MaxConnections });
 parse_options([{<<"max_gateway_connections">>, MaxGatewayConnections} | Rest], Config) when is_integer(MaxGatewayConnections) ->
 	parse_options(Rest, Config#config { max_gateway_connections = MaxGatewayConnections });
+parse_options([{<<"max_poa_option_depth">>, MaxPOAOptionDepth} | Rest], Config) when is_integer(MaxPOAOptionDepth) ->
+	parse_options(Rest, Config#config { max_poa_option_depth = MaxPOAOptionDepth });
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

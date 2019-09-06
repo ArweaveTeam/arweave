@@ -30,6 +30,10 @@ register() ->
 	prometheus_gauge:new([
 		{name, arweave_peer_count},
 		{help, "peer count"}
+	]),
+	prometheus_gauge:new([
+		{name, downloader_queue_size},
+		{help, "The size of the downloader queue"}
 	]).
 
 label_http_path(Path) ->
@@ -77,6 +81,8 @@ name_route([<<"price">>, _SizeInBytes, _Addr]) ->
 	"/price/{bytes}/{address}";
 name_route([<<"hash_list">>]) ->
 	"/hash_list";
+name_route([<<"block_index">>]) ->
+	"/block_index";
 name_route([<<"wallet_list">>]) ->
 	"/wallet_list";
 name_route([<<"wallet">>, _Addr, <<"balance">>]) ->

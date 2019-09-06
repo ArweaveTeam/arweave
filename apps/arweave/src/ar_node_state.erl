@@ -18,26 +18,27 @@ start() ->
 	% Set initial state values.
 	update(Pid, [
 		{id, crypto:strong_rand_bytes(32)}, % unique id of the ar_node
-		{hash_list, not_joined},            % current full hashlist
+		{block_index, not_joined},          % current full block index
 		{current, not_joined},              % current block hash
 		{wallet_list, []},                  % current up to date walletlist
 		{height, 0},                        % current height of the blockweave
 		{gossip, undefined},                % Gossip protcol state
-		{txs, []},                          % set of new txs to be mined into the next block
+		% a map TXID -> {TX, waiting | ready_for_mining} of memory pool transactions
+		{txs, maps:new()},
 		{miner, undefined},                 % PID of the mining process
 		{mining_delay, 0},                  % delay on mining, used for netework simulation
 		{automine, false},                  % boolean dictating if a node should automine
 		{reward_addr, unclaimed},           % reward address for mining a new block
 		{trusted_peers, []},                % set of trusted peers used to join on
-		{waiting_txs, []},                  % set of txs on timeout whilst network distribution occurs
 		{tags, []},                         % nodes tags to apply to a block when mining
 		{reward_pool, 0},                   % current mining rewardpool of the weave
 		{diff, 0},                          % current mining difficulty of the weave (no. of preceeding zero)
 		{last_retarget, undefined},         % timestamp at which the last difficulty retarget occurred
 		{weave_size, 0},                    % current size of the weave in bytes (only inc. data tx size)
 		{cumulative_diff, 0},               % Sum of the difficulty squared along the current weave
-		{hash_list_merkle, <<>>},           % The Merkle root of the current BHL
-		{block_txs_pairs, []}               % List of {BH, TXIDs} pairs for last ?MAX_TX_ANCHOR_DEPTH blocks
+		{hash_list_merkle, <<>>},           % The Merkle root of the current hash list
+		{block_txs_pairs, []},              % List of {BH, TXIDs} pairs for last ?MAX_TX_ANCHOR_DEPTH blocks
+		{mempool_size, {0, 0}}              % Memory pool size
 	]),
 	{ok, Pid}.
 

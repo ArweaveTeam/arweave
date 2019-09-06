@@ -15,7 +15,7 @@
 -define(DEFAULT_REQUEST_HEADERS,
 	[
 		{<<"X-Version">>, <<"8">>},
-		{<<"X-Block-Format">>, <<"2">>}
+		{<<"X-Block-Format">>, <<"3">>}
 	]).
 
 -define(CORS_HEADERS,
@@ -111,26 +111,85 @@
 
 %% @doc The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).
--ifdef(DEBUG).
--define(TOTAL_WAITING_TXS_DATA_SIZE_LIMIT, 50 * 1024).
--else.
--define(TOTAL_WAITING_TXS_DATA_SIZE_LIMIT, 250 * 1024 * 1024).
--endif.
+
+%% @doc The maximum allowed size in bytes for the data field of
+%% a format=1 transaction.
 -ifdef(DEBUG).
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024).
 -else.
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
 -endif.
+
+%% @doc The maximum allowed size in bytes for the combined data fields of
+%% the format=1 transactions included in a block.
 -define(BLOCK_TX_DATA_SIZE_LIMIT, ?TX_DATA_SIZE_LIMIT). % Must be greater or equal to tx data size limit.
+%% @doc The maximum number of transactions (both format=1 and format=2) in a block.
+-ifdef(DEBUG).
+-define(BLOCK_TX_COUNT_LIMIT, 10).
+-else.
 -define(BLOCK_TX_COUNT_LIMIT, 1000).
+-endif.
 
 %% @doc Byte size of the TX headers, tags allowance, etc.
 -define(TX_SIZE_BASE, 3210).
 
-%% @doc The mamimal size in bytes of the transaction queue.
-%% When the limit is reached, transactions with the lowest
-%% utility score are dropped from the queue.
--define(TX_QUEUE_SIZE_LIMIT, 200 * 1024 * 1024).
+%% @doc Mempool Limits.
+%%
+%% The reason we have two different mempool limits has to do with the way
+%% format=2 transactions are distributed. To achieve faster consensus and
+%% reduce the network congestion, the miner does not gossip data of format=2
+%% transactions, but serves it later to those who request it after the
+%% corresponding transaction is included into a block. A single mempool limit
+%% would therefore be reached much quicker by a peer accepting format=2
+%% transactions with data. This would prevent this miner from accepting any
+%% further transactions. Having a separate limit for data allows the miner
+%% to continue accepting transaction headers.
+
+
+%% @doc The maximum allowed size of transaction headers stored in mempool.
+%% The data field of a format=1 transaction is considered to be part of
+%% its headers.
+-ifdef(DEBUG).
+-define(MEMPOOL_HEADER_SIZE_LIMIT, 50 * 1024).
+-else.
+-define(MEMPOOL_HEADER_SIZE_LIMIT, 250 * 1024 * 1024).
+-endif.
+
+%% @doc The maximum allowed size of transaction data stored in mempool.
+%% The format=1 transactions are not counted as their data is considered
+%% to be part of the header.
+-ifdef(DEBUG).
+-define(MEMPOOL_DATA_SIZE_LIMIT, 50 * 1024).
+-else.
+-define(MEMPOOL_DATA_SIZE_LIMIT, 500 * 1024 * 1024).
+-endif.
+
+%% @doc The size limits for the transaction priority queue.
+%%
+%% The two limits are used to align the priority queues of the miners
+%% accepting transactions with and without data. See above for the
+%% explanation of why two mempool size limits are used. Simply not
+%% accounting for transaction data size in the priority queue would not
+%% work because big format=2 transaction would never be dropped from
+%% the queue due to the full data mempool.
+
+%% @doc The maximum allowed size in bytes of the transaction headers
+%% in the transaction queue. The data fields of format=1 transactions
+%% count as transaction headers. When the limit is reached, transactions
+%% with the lowest utility score are dropped from the queue.
+%%
+%% This limit has to be lower than the corresponding mempool limit,
+%% otherwise transactions would never be dropped from the queue.
+-define(TX_QUEUE_HEADER_SIZE_LIMIT, 200 * 1024 * 1024).
+
+%% @doc The maximum allowed size in bytes of the transaction data
+%% in the transaction queue. The data fields of format=1 transactions
+%% does not count as transaction data. When the limit is reached, transactions
+%% with the lowest utility score are dropped from the queue.
+%%
+%% This limit has to be lower than the corresponding mempool limit,
+%% otherwise transactions would never be dropped from the queue.
+-define(TX_QUEUE_DATA_SIZE_LIMIT, 400 * 1024 * 1024).
 
 -define(MAX_TX_ANCHOR_DEPTH, ?STORE_BLOCKS_BEHIND_CURRENT).
 
@@ -209,7 +268,6 @@
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
 -define(BLOCK_DIR, "blocks").
--define(ENCRYPTED_BLOCK_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
 
 %% @doc Backup block hash list storage directory.
@@ -240,7 +298,7 @@
 %% @doc The adjustment of difficutly going from SHA-384 to RandomX.
 -define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
 -ifdef(DEBUG).
--define(RANDOMX_KEY_SWAP_FREQ, 10).
+-define(RANDOMX_KEY_SWAP_FREQ, (?STORE_BLOCKS_BEHIND_CURRENT + 1)).
 -define(RANDOMX_MIN_KEY_GEN_AHEAD, 1).
 -define(RANDOMX_MAX_KEY_GEN_AHEAD, 4).
 -define(RANDOMX_STATE_POLL_INTERVAL, 2).
@@ -259,39 +317,77 @@
 -define(DIFF_ADJUSTMENT_DOWN_LIMIT, 2).
 -define(DIFF_ADJUSTMENT_UP_LIMIT, 4).
 
-%% @doc A full block or block shadow (see more on txs field).
+%% @doc Max size of a single data chunk, in bytes.
+-ifdef(DEBUG).
+-define(DATA_CHUNK_SIZE, 128).
+-else.
+-define(DATA_CHUNK_SIZE, (256 * 1024)).
+-endif.
+%% @doc Max size of the PoA data path, in bytes.
+-define(MAX_PATH_SIZE, (256 * 1024)).
+%% @doc The size of data chunk hashes, in bytes.
+-define(CHUNK_ID_HASH_SIZE, 32).
+
+%% @doc A succinct proof of access to a recall byte found in a TX.
+-record(poa, {
+	option = 1, % The recall byte option (a sequence number) chosen.
+	tx_path = <<>>, % Path through the Merkle tree of TXs in the block.
+	data_path = <<>>, % Path through the Merkle tree of chunk IDs to the required chunk.
+	chunk = <<>> % The required data chunk.
+}).
+
+%% @doc A full block or block shadow.
 -record(block, {
-	nonce = <<>>, % The nonce used to satisfy the mining problem when mined
-	previous_block = <<>>, % indep_hash of the previous block in the weave
-	timestamp = ar:timestamp(), % Unix time of block discovery
-	last_retarget = -1, % Unix timestamp of the last difficulty retarget
-	diff = ?DEFAULT_DIFF, % Puzzle difficulty, number of preceeding zeroes.
-	height = -1, % How many blocks have passed since the Genesis block?
-	hash = <<>>, % A hash of this block, the previous block and the recall block.
-	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
-	txs = [], % A list of tx records in full blocks, or a list of tx ids in block shadows.
-	hash_list = unset, % A list of all previous indep hashes.
-	hash_list_merkle = <<>>, % The merkle root of the block's BHL.
-	wallet_list = [], % A map of wallet balances, or undefined.
-    reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
+	nonce = <<>>, % The nonce used to satisfy the PoW problem when mined.
+	previous_block = <<>>, % indep_hash of the previous block in the weave.
+	timestamp = os:system_time(seconds), % POSIX time of block discovery.
+	last_retarget = -1, % POSIX time of the last difficulty retarget.
+	diff = ?DEFAULT_DIFF, % The PoW difficulty - the number a PoW hash must be greater than.
+	height = -1, % How many blocks have passed since the genesis block.
+	hash = <<>>, % PoW hash of the block, must satisfy the block's difficulty.
+	indep_hash = [], % The hash of the block, including `hash` and `nonce`, the block identifier.
+	txs = [], % A list of tx records in full blocks, or a list of TX identifiers in block shadows.
+	tx_root = <<>>, % Merkle root of the tree of transactions' data roots.
+	tx_tree = [], % Merkle tree of transactions' data roots. Not stored.
+	%% A list of all previous independent hashes. Not returned in the /block/[hash] API endpoint.
+	%% In the block shadows only the last ?STORE_BLOCKS_BEHIND_CURRENT hashes are included.
+	%% Reconstructed on the receiving side. Not stored in the block files.
+	hash_list = unset,
+	hash_list_merkle = <<>>, % The merkle root of the block index.
+	%% A list of {address, balance, last TX ID} tuples. In the block shadows and
+	%% in the /block/[hash] API endpoint the list is replaced with a hash.
+	%% Reconstructed on the receiving side. Stored in the separate files.
+	wallet_list = [],
+	%% A field for internal use, not serialized. Added to avoid hashing the wallet list
+	%% when the hash was known before the list was reconstructed.
+	wallet_list_hash = not_set,
+    reward_addr = unclaimed, % Address to credit mining reward or the unclaimed atom.
     tags = [], % Miner specified tags to store with the block.
-	reward_pool = 0, % Current pool of mining reward.
+	reward_pool = 0, % Current pool of mining rewards.
 	weave_size = 0, % Current size of the weave in bytes (counts tx data fields).
-	block_size = 0, % The size of the transactions inside this block.
-	cumulative_diff = 0 % The sum of the squared difficulty on the branch.
+	block_size = 0, % The total size of transaction data inside this block.
+	%% The sum of average number of hashes tried to mine blocks over all previous blocks.
+	cumulative_diff = 0,
+	poa = #poa{} % The access proof used to generate this block.
 }).
 
 %% @doc A transaction, as stored in a block.
 -record(tx, {
-	id = <<>>, % TX UID (Signature hash).
-	last_tx = <<>>, % Get last TX hash.
+	format = 1, % 1 or 2.
+	id = <<>>, % TX identifier.
+	%% Either the ID of the previous transaction made from this wallet or
+	%% the hash of one of the last ?MAX_TX_ANCHOR_DEPTH blocks.
+	last_tx = <<>>,
 	owner = <<>>, % Public key of transaction owner.
 	tags = [], % Indexable TX category identifiers.
-	target = <<>>, % Address of target of the tx.
-	quantity = 0, % Amount of Winston to send.
-	data = <<>>, % Data in transaction (if data transaction).
+	target = <<>>, % Address of the recipient, if any.
+	quantity = 0, % Amount of Winston to send, if any.
+	data = <<>>, % May be empty. May be submitted in a transfer transaction.
+	data_size = 0, % Size (in bytes) of the transaction data.
+	data_tree = [], % The merkle tree of data chunks, the field is not signed.
+	data_root = <<>>, % The merkle root of the merkle tree of data chunks.
 	signature = <<>>, % Transaction signature.
-	reward = 0 % Transaction mining reward.
+	reward = 0 % Transaction fee, in Winston.
 }).
 
 %% @doc Gossip protocol state.
@@ -332,6 +428,9 @@
 
 %% @doc A Macro to return whether an object is a block.
 -define(IS_BLOCK(X), (is_record(X, block))).
+
+%% @doc Convert a v2.0 block index into an old style block hash list.
+-define(BI_TO_BHL(BI), ([BH || {BH, _, _} <- BI])).
 
 %% @doc A Macro to return whether a value is an address.
 -define(IS_ADDR(Addr), (is_binary(Addr) and (bit_size(Addr) == ?HASH_SZ))).

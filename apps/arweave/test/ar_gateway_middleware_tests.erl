@@ -116,10 +116,10 @@ serve_correctly_labeled_request() ->
 		ar_storage,
 		read_tx_file,
 		fun(<<"some/mock/path">>) ->
-			#tx {
+			{ok, #tx {
 				tags = [{<<"Content-Type">>, <<"text/plain">>}],
 				data = <<"Some mock data">>
-			}
+			}}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -161,10 +161,10 @@ render_manifest_listing() ->
 		ar_storage,
 		read_tx_file,
 		fun(<<"some/mock/path">>) ->
-			#tx {
+			{ok, #tx {
 				tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 				data = listing_manifest_fixture()
-			}
+			}}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -199,10 +199,10 @@ redirect_manifest_to_index() ->
 		ar_storage,
 		read_tx_file,
 		fun(<<"some/mock/path">>) ->
-			#tx {
+			{ok, #tx {
 				tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 				data = index_manifest_fixture()
-			}
+			}}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -246,15 +246,15 @@ serve_manifest_subpath() ->
 		read_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 					data = index_manifest_fixture()
-				};
+				}};
 			(<<"path/to/index">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"text/html">>}],
 					data = <<"<html><body>Some HTML</body></html>">>
-				}
+				}}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -292,15 +292,15 @@ handle_multi_segment_subpaths() ->
 		read_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 					data = index_manifest_fixture()
-				};
+				}};
 			(<<"path/to/dog">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"image/jpeg">>}],
 					data = <<"some jpeg">>
-				}
+				}}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -369,10 +369,10 @@ return_421_on_bad_manifest() ->
 		read_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 					data = <<"inproper json">>
-				}
+				}}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -407,10 +407,10 @@ return_404_on_non_existent_subpath() ->
 		read_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 					data = index_manifest_fixture()
-				}
+				}}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -442,10 +442,10 @@ forward_on_subpath_of_non_manifest() ->
 		ar_storage,
 		read_tx_file,
 		fun(<<"some/mock/path">>) ->
-			#tx {
+			{ok, #tx {
 				tags = [{<<"Content-Type">>, <<"text/plain">>}],
 				data = <<"Some mock data">>
-			}
+			}}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -473,15 +473,15 @@ serve_manifest_subpath_on_custom_domain() ->
 		read_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 					data = index_manifest_fixture()
-				};
+				}};
 			(<<"path/to/index">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"text/html">>}],
 					data = <<"<html><body>Some HTML</body></html>">>
-				}
+				}}
 		end
 	),
 	meck:expect(
@@ -518,10 +518,10 @@ forward_non_existent_subpaths_to_node_api() ->
 		read_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
-				#tx {
+				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 					data = index_manifest_fixture()
-				}
+				}}
 		end
 	),
 	meck:expect(

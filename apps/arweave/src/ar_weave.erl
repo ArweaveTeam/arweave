@@ -1,10 +1,13 @@
 -module(ar_weave).
--export([init/0, init/1, init/2, init/3, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
--export([hash/3, indep_hash/1]).
+
+-export([init/0, init/1, init/2, init/3, add/2]).
+-export([hash/3, indep_hash/1, indep_hash_post_fork_2_0/1, indep_hash_post_fork_2_0/3]).
 -export([verify_indep/2]).
--export([generate_hash_list/1]).
--export([is_data_on_block_list/2, is_tx_on_block_list/2]).
--export([create_genesis_txs/0]).
+-export([is_data_on_block_list/2]).
+-export([create_genesis_txs/0, read_v1_genesis_txs/0]).
+-export([generate_block_index/1]).
+-export([tx_id/1]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -18,7 +21,6 @@ init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty(), 0).
 init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
 	ar_randomx_state:reset(),
-	% Generate and dispatch a new data transaction
 	B0 =
 		#block{
 			height = 0,
@@ -26,12 +28,14 @@ init(WalletList, StartingDiff, RewardPool) ->
 			nonce = crypto:strong_rand_bytes(32),
 			txs = [],
 			wallet_list = WalletList,
+			wallet_list_hash = ar_block:hash_wallet_list(0, unclaimed, WalletList),
 			hash_list = [],
 			diff = StartingDiff,
 			weave_size = 0,
 			block_size = 0,
 			reward_pool = RewardPool,
-			timestamp = os:system_time(seconds)
+			timestamp = os:system_time(seconds),
+			poa = #poa{}
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
@@ -42,7 +46,7 @@ init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
 	ar_randomx_state:reset(),
 	% Generate and dispatch a new data transaction.
-	TXs = read_genesis_txs(),
+	TXs = read_v1_genesis_txs(),
 	B0 =
 		#block{
 			height = 0,
@@ -50,122 +54,113 @@ init(WalletList, StartingDiff, RewardPool) ->
 			nonce = crypto:strong_rand_bytes(32),
 			txs = TXs,
 			wallet_list = WalletList,
+			wallet_list_hash = ar_block:hash_wallet_list(0, unclaimed, WalletList),
 			hash_list = [],
 			diff = StartingDiff,
 			weave_size = 0,
 			block_size = 0,
 			reward_pool = RewardPool,
-			timestamp = os:system_time(seconds)
+			timestamp = os:system_time(seconds),
+			poa = #poa{}
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
 -endif.
 
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
-add(Bs) ->
-	add(Bs, []).
+%% DEPRECATED - only used in tests, mine blocks in tests instead.
 add(Bs, TXs) ->
-	add(Bs, TXs, generate_hash_list(Bs)).
-add(Bs, TXs, HashList) ->
-	add(Bs, TXs, HashList, <<>>).
-add(Bs, TXs, HashList, unclaimed) ->
-	add(Bs, TXs, HashList, <<>>);
-add([B|Bs], TXs, HashList, RewardAddr) ->
-	RecallHash = ar_util:get_recall_hash(B, HashList),
-	RecallB = ar_storage:read_block(RecallHash, HashList),
+	add(Bs, TXs, generate_block_index(Bs)).
+add(Bs, TXs, BI) ->
+	add(Bs, TXs, BI, <<>>).
+add(AllBs = [B | Bs], TXs, BI, RewardAddr) ->
+	ar_storage:write_block([XB || XB <- AllBs, is_record(XB, block)]),
+	case length(BI) == 1 of
+		true ->
+			ar_randomx_state:init(BI, []);
+		false ->
+			noop
+	end,
+	POA = ar_poa:generate(B),
 	{FinderReward, RewardPool} =
 		ar_node_utils:calculate_reward_pool(
 			B#block.reward_pool,
 			TXs,
 			RewardAddr,
-			RecallB#block.block_size,
+			POA,
 			B#block.weave_size,
 			B#block.height,
 			B#block.diff,
 			B#block.timestamp
 		),
 	WalletList = ar_node_utils:apply_mining_reward(
-		ar_node_utils:apply_txs(B#block.wallet_list, TXs, length(HashList) - 1),
+		ar_node_utils:apply_txs(B#block.wallet_list, TXs, length(BI) - 1),
 		RewardAddr,
 		FinderReward,
-		length(HashList)
+		length(BI)
 	),
-	add([B|Bs], TXs, HashList, RewardAddr, RewardPool, WalletList).
-add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList) ->
-	add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList, []).
-add([Hash|Bs], TXs, HashList, RewardAddr, RewardPool, WalletList, Tags) when is_binary(Hash) ->
+	add([B | Bs], TXs, BI, RewardAddr, RewardPool, WalletList).
+add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList) ->
+	add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList, []).
+add([{Hash, _, _} | Bs], TXs, BI, RewardAddr, RewardPool, WalletList, Tags) when is_binary(Hash) ->
 	add(
-		[ar_storage:read_block(Hash, HashList)|Bs],
+		[ar_storage:read_block(Hash, BI) | Bs],
 		TXs,
-		HashList,
+		BI,
 		RewardAddr,
 		RewardPool,
 		WalletList,
 		Tags
 	);
-add(Bs, TXs, HashList, RewardAddr, RewardPool, WalletList, Tags) ->
-	RecallHash = ar_util:get_recall_hash(hd(Bs), HashList),
-	RecallB = ar_storage:read_block(RecallHash, HashList),
-	{Nonce, Timestamp, Diff} = mine(hd(Bs), RecallB, TXs, RewardAddr, Tags),
+add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList, Tags) ->
+	POA = ar_poa:generate(hd(Bs)),
+	{Nonce, Timestamp, Diff} = mine(hd(Bs), POA, TXs, RewardAddr, Tags, BI),
 	add(
 		Bs,
 		TXs,
-		HashList,
+		BI,
 		RewardAddr,
 		RewardPool,
 		WalletList,
 		Tags,
-		RecallB,
+		POA,
 		Diff,
 		Nonce,
 		Timestamp
 	).
-add([Hash|Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) when is_binary(Hash) ->
+add([{Hash, _, _} | Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) when is_binary(Hash) ->
 	add(
-		[ar_storage:read_block(Hash, HashList)|Bs],
+		[ar_storage:read_block(Hash, BI) | Bs],
 		RawTXs,
-		HashList,
+		BI,
 		RewardAddr,
 		RewardPool,
 		WalletList,
 		Tags,
-		RecallB,
+		POA,
 		Diff,
 		Nonce,
 		Timestamp
 	);
-add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, RecallB, Diff, Nonce, Timestamp) ->
+add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) ->
 	NewHeight = CurrentB#block.height + 1,
-	RecallB = ar_node_utils:find_recall_block(HashList),
 	TXs = [T#tx.id || T <- RawTXs],
+	TXRoot = ar_block:generate_tx_root_for_block(RawTXs),
 	BlockSize = lists:foldl(
-			fun(TX, Acc) ->
-				Acc + byte_size(TX#tx.data)
-			end,
-			0,
-			RawTXs
-		),
+		fun(TX, Acc) ->
+			Acc + TX#tx.data_size
+		end,
+		0,
+		RawTXs
+	),
 	NewHeight = CurrentB#block.height + 1,
-	CDiff =
-		case NewHeight >= ?FORK_1_6 of
-			true ->
-				ar_difficulty:next_cumulative_diff(
-					CurrentB#block.cumulative_diff,
-					Diff,
-					NewHeight
-				);
-			false ->
-				0
-		end,
-	MR =
-		case NewHeight of
-			_ when NewHeight < ?FORK_1_6 ->
-				<<>>;
-			_ when NewHeight == ?FORK_1_6 ->
-				ar_merkle:block_hash_list_to_merkle_root(CurrentB#block.hash_list);
-			_ ->
-				ar_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash)
-		end,
+	CDiff = ar_difficulty:next_cumulative_diff(
+		CurrentB#block.cumulative_diff,
+		Diff,
+		NewHeight
+	),
+	MR = ar_block:compute_hash_list_merkle(CurrentB, BI),
+	Fork_2_0 = ar_fork:height_2_0(),
 	NewB =
 		#block {
 			nonce = Nonce,
@@ -179,10 +174,35 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 			diff = Diff,
 			cumulative_diff = CDiff,
 			height = NewHeight,
-			hash = hash(
-				ar_block:generate_block_data_segment(
+			txs = TXs,
+			tx_root = TXRoot,
+			hash_list = ?BI_TO_BHL(BI),
+			hash_list_merkle = MR,
+			wallet_list = WalletList,
+			wallet_list_hash = ar_block:hash_wallet_list(NewHeight, RewardAddr, WalletList),
+			reward_addr = RewardAddr,
+			tags = Tags,
+			reward_pool = RewardPool,
+			weave_size = CurrentB#block.weave_size + BlockSize,
+			block_size = BlockSize,
+			poa =
+				case NewHeight >= Fork_2_0 of
+					true -> POA;
+					false -> #poa{}
+				end
+		},
+	Hash = case NewHeight >= Fork_2_0 of
+		true ->
+			hash(
+				ar_block:generate_block_data_segment(NewB),
+				NewB#block.nonce,
+				NewHeight
+			);
+		false ->
+			hash(
+				ar_block:generate_block_data_segment_pre_2_0(
 					CurrentB,
-					RecallB,
+					POA,
 					RawTXs,
 					RewardAddr,
 					Timestamp,
@@ -190,41 +210,33 @@ add([CurrentB|_Bs], RawTXs, HashList, RewardAddr, RewardPool, WalletList, Tags, 
 				),
 				Nonce,
 				NewHeight
-			),
-			txs = TXs,
-			hash_list = HashList,
-			hash_list_merkle = MR,
-			wallet_list = WalletList,
-			reward_addr = RewardAddr,
-			tags = Tags,
-			reward_pool = RewardPool,
-			weave_size = CurrentB#block.weave_size + BlockSize,
-			block_size = BlockSize
-		},
-	[NewB#block { indep_hash = indep_hash(NewB) }|HashList].
+			)
+	end,
+	[NewB#block { indep_hash = indep_hash(NewB#block { hash = Hash }), hash = Hash } | BI].
 
 %% @doc Take a complete block list and return a list of block hashes.
 %% Throws an error if the block list is not complete.
-generate_hash_list(undefined) -> [];
-generate_hash_list([]) -> [];
-generate_hash_list(Bs = [B|_]) ->
-	generate_hash_list(Bs, B#block.height + 1).
-generate_hash_list([B = #block { hash_list = BHL }|_], _) when is_list(BHL) ->
-	[B#block.indep_hash|BHL];
-generate_hash_list([], 0) -> [];
-generate_hash_list([B|Bs], N) when is_record(B, block) ->
-	[B#block.indep_hash|generate_hash_list(Bs, N - 1)];
-generate_hash_list([Hash|Bs], N) when is_binary(Hash) ->
-	[Hash|generate_hash_list(Bs, N - 1)].
+generate_block_index(undefined) -> [];
+generate_block_index([]) -> [];
+generate_block_index(Blocks) ->
+	lists:map(
+		fun
+			(B) when ?IS_BLOCK(B) ->
+				ar_util:block_index_entry_from_block(B);
+			({H, WS, TXRoot}) ->
+				{H, WS, TXRoot}
+		end,
+		Blocks
+	).
 
 %% @doc Verify a block from a hash list. Hash lists are stored in reverse order
 verify_indep(#block{ height = 0 }, []) -> true;
-verify_indep(B = #block { height = Height }, HashList) ->
+verify_indep(B = #block { height = Height }, BI) ->
+	ReversedBI = lists:reverse(BI),
+	{ExpectedIndepHash, _, _} = lists:nth(Height + 1, ReversedBI),
 	ComputedIndepHash = indep_hash(B),
-	ReversedHashList = lists:reverse(HashList),
 	BHL = B#block.hash_list,
 	ReversedBHL = lists:reverse(BHL),
-	ExpectedIndepHash = lists:nth(Height + 1, ReversedHashList),
 	case ComputedIndepHash of
 		ExpectedIndepHash ->
 			true;
@@ -234,9 +246,9 @@ verify_indep(B = #block { height = Height }, HashList) ->
 				{height, Height},
 				{computed_indep_hash, ar_util:encode(ComputedIndepHash)},
 				{expected_indep_hash, ar_util:encode(ExpectedIndepHash)},
-				{hash_list_length, length(HashList)},
-				{hash_list_latest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(HashList, 10))},
-				{hash_list_eariest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(ReversedHashList, 10))},
+				{hash_list_length, length(BI)},
+				{hash_list_latest_blocks, lists:map(fun ar_util:encode/1, ?BI_TO_BHL(lists:sublist(BI, 10)))},
+				{hash_list_eariest_blocks, lists:map(fun ar_util:encode/1, ?BI_TO_BHL(lists:sublist(ReversedBI, 10)))},
 				{block_hash_list_latest_blocks, lists:map(fun ar_util:encode/1, lists:sublist(BHL, 10))},
 				{block_hash_list_earlies_blocks, lists:map(fun ar_util:encode/1, lists:sublist(ReversedBHL, 10))}
 			]),
@@ -256,7 +268,15 @@ hash(BDS, Nonce, Height) ->
 
 %% @doc Create an independent hash from a block. Independent hashes
 %% verify a block's contents in isolation and are stored in a node's hash list.
-indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
+indep_hash(#block { height = Height } = B) ->
+	case Height >= ar_fork:height_2_0() of
+		true ->
+			indep_hash_post_fork_2_0(B);
+		false ->
+			indep_hash_pre_fork_2_0(B)
+	end.
+
+indep_hash_pre_fork_2_0(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 	ar_deep_hash:hash([
 		B#block.nonce,
 		B#block.previous_block,
@@ -279,7 +299,7 @@ indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 		integer_to_binary(B#block.weave_size),
 		integer_to_binary(B#block.block_size)
 	]);
-indep_hash(#block {
+indep_hash_pre_fork_2_0(#block {
 		nonce = Nonce,
 		previous_block = PrevHash,
 		timestamp = TimeStamp,
@@ -287,7 +307,7 @@ indep_hash(#block {
 		diff = Diff,
 		height = Height,
 		hash = Hash,
-		hash_list = HashList,
+		hash_list = HL,
 		txs = TXs,
 		wallet_list = WalletList,
 		reward_addr = RewardAddr,
@@ -311,7 +331,7 @@ indep_hash(#block {
 					{hash, ar_util:encode(Hash)},
 					{indep_hash, ar_util:encode(<<>>)},
 					{txs, lists:map(EncodeTX, TXs)},
-					{hash_list, lists:map(fun ar_util:encode/1, HashList)},
+					{hash_list, lists:map(fun ar_util:encode/1, HL)},
 					{wallet_list,
 						lists:map(
 							fun({Wallet, Qty, Last}) ->
@@ -340,32 +360,29 @@ indep_hash(#block {
 		)
 	).
 
+indep_hash_post_fork_2_0(B) ->
+	BDS = ar_block:generate_block_data_segment(B),
+	indep_hash_post_fork_2_0(BDS, B#block.hash, B#block.nonce).
+
+indep_hash_post_fork_2_0(BDS, Hash, Nonce) ->
+	ar_deep_hash:hash([BDS, Hash, Nonce]).
+
 %% @doc Returns the transaction id
 tx_id(Id) when is_binary(Id) -> Id;
 tx_id(TX) -> TX#tx.id.
 
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.
-mine(B, RecallB, TXs, RewardAddr, Tags) ->
-	ar_mine:start(B, RecallB, TXs, RewardAddr, Tags, self(), []),
+mine(B, POA, TXs, RewardAddr, Tags, BI) ->
+	ar_mine:start(B, POA, TXs, RewardAddr, Tags, self(), [], BI),
 	receive
-		{work_complete, _BH, TXs, _Hash, Diff, Nonce, Timestamp, _} ->
-			{Nonce, Timestamp, Diff}
-	end.
-
-%% @doc Return whether or not a transaction is found on a block list.
-is_tx_on_block_list([], _) -> false;
-is_tx_on_block_list([BHL = Hash|Bs], TXID) when is_binary(Hash) ->
-	is_tx_on_block_list([ar_storage:read_block(Hash, BHL)|Bs], TXID);
-is_tx_on_block_list([#block { txs = TXs }|Bs], TXID) ->
-	case lists:member(TXID, TXs) of
-		true -> true;
-		false -> is_tx_on_block_list(Bs, TXID)
+		{work_complete, _BH, NewB, TXs, _BDS, _POA, _HashesTried} ->
+			{NewB#block.nonce, NewB#block.timestamp, NewB#block.diff}
 	end.
 
 is_data_on_block_list(_, _) -> false.
 
-read_genesis_txs() ->
+read_v1_genesis_txs() ->
 	{ok, Files} = file:list_dir("data/genesis_txs"),
 	lists:foldl(
 		fun(F, Acc) ->
@@ -384,7 +401,7 @@ create_genesis_txs() ->
 			Data = unicode:characters_to_binary(M),
 			TX = ar_tx:new(Data, 0, LastTx),
 			Reward = 0,
-			SignedTX = ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub),
+			SignedTX = ar_tx:sign_v1(TX#tx{reward = Reward}, Priv, Pub),
 			ar_storage:write_tx(SignedTX),
 			SignedTX
 		end,

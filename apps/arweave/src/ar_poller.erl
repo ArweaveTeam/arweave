@@ -121,7 +121,7 @@ poll_block_step(construct_hash_list, {Peer, BShadow}) ->
 poll_block_step(accept_block, {Peer, BShadow}) ->
 	Node = whereis(http_entrypoint_node),
 	BShadowHeight = BShadow#block.height,
-	Node ! {new_block, Peer, BShadowHeight, BShadow, no_data_segment, no_recall},
+	Node ! {new_block, Peer, BShadowHeight, BShadow, no_data_segment, undefined},
 	ok.
 
 reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL) ->

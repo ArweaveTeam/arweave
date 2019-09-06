@@ -6,7 +6,7 @@
 -export([select_tx_by_id/1, select_txs_by/1]).
 -export([select_block_by_tx_id/1, select_tags_by_tx_id/1]).
 -export([eval_legacy_arql/1]).
--export([insert_full_block/1]).
+-export([insert_full_block/1, insert_block/1, insert_tx/2]).
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include("ar.hrl").
@@ -16,7 +16,7 @@
 -define(LONG_QUERY_TIME, 100000).
 %% Duration after which to consider the full block metadata insert
 %% time unusually long.
--define(LONG_INSERT_FULL_BLOCK_TIME, 1000000).
+-define(LONG_INSERT_TIME, 1000000).
 
 %% Timeout passed to gen_server:call when running SELECTs.
 %% Set to 5s.
@@ -129,6 +129,16 @@ insert_full_block(#block {} = FullBlock) ->
 	{BlockFields, TxFieldsList, TagFieldsList} = full_block_to_fields(FullBlock),
 	gen_server:cast(?MODULE, {insert_full_block, BlockFields, TxFieldsList, TagFieldsList}),
 	ok.
+
+insert_block(B) ->
+    BlockFields = block_to_fields(B),
+    gen_server:cast(?MODULE, {insert_block, BlockFields}),
+    ok.
+
+insert_tx(BH, TX) ->
+    {TXFields, TagFieldsList} = tx_to_fields(BH, TX),
+    gen_server:cast(?MODULE, {insert_tx, TXFields, TagFieldsList}),
+    ok.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -325,12 +335,73 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 		ok
 	end),
 	ok = case Time of
-		T when T > ?LONG_INSERT_FULL_BLOCK_TIME ->
+		T when T > ?LONG_INSERT_TIME ->
 			ar:warn([
 				{ar_arql_db, long_query},
 				{query_type, insert_full_block},
 				{microseconds, T},
 				{block_indep_hash, lists:nth(1, BlockFields)}
+			]),
+			ok;
+		_ ->
+			ok
+	end,
+	{noreply, State};
+handle_cast({insert_block, BlockFields}, State) ->
+	#{
+		conn := Conn,
+		insert_block_stmt := InsertBlockStmt
+	} = State,
+	{Time, ok} = timer:tc(fun() ->
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?DRIVER_TIMEOUT),
+		done = ar_sqlite3:step(InsertBlockStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertBlockStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok
+	end),
+	ok = case Time of
+		T when T > ?LONG_INSERT_TIME ->
+			ar:warn([
+				{ar_arql_db, long_query},
+				{query_type, insert_block},
+				{microseconds, T},
+				{block_indep_hash, lists:nth(1, BlockFields)}
+			]),
+			ok;
+		_ ->
+			ok
+	end,
+	{noreply, State};
+handle_cast({insert_tx, TXFields, TagFieldsList}, State) ->
+	#{
+		conn := Conn,
+		insert_tx_stmt := InsertTxStmt,
+		insert_tag_stmt := InsertTagStmt
+	} = State,
+	{Time, ok} = timer:tc(fun() ->
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
+	    ok = ar_sqlite3:bind(InsertTxStmt, TXFields, ?DRIVER_TIMEOUT),
+		done = ar_sqlite3:step(InsertTxStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertTxStmt, ?DRIVER_TIMEOUT),
+		lists:foreach(
+			fun(TagFields) ->
+				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?DRIVER_TIMEOUT),
+				done = ar_sqlite3:step(InsertTagStmt, ?DRIVER_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTagStmt, ?DRIVER_TIMEOUT)
+			end,
+			TagFieldsList
+		),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok
+	end),
+	ok = case Time of
+		T when T > ?LONG_INSERT_TIME ->
+			ar:warn([
+				{ar_arql_db, long_query},
+				{query_type, insert_tx},
+				{microseconds, T},
+				{block_indep_hash, lists:nth(2, TXFields)}
 			]),
 			ok;
 		_ ->
@@ -692,14 +763,9 @@ eval_legacy_arql_where_clause(_) ->
 	throw(bad_query).
 
 full_block_to_fields(FullBlock) ->
-	BlockIndepHash = ar_util:encode(FullBlock#block.indep_hash),
-	BlockFields = [
-		BlockIndepHash,
-		ar_util:encode(FullBlock#block.previous_block),
-		FullBlock#block.height,
-		FullBlock#block.timestamp
-	],
-	TxFieldsList = lists:map(fun(TX) -> [
+	BlockFields = block_to_fields(FullBlock),
+    BlockIndepHash = lists:nth(1, BlockFields),
+    TxFieldsList = lists:map(fun(TX) -> [
 		ar_util:encode(TX#tx.id),
 		BlockIndepHash,
 		ar_util:encode(TX#tx.last_tx),
@@ -719,3 +785,32 @@ full_block_to_fields(FullBlock) ->
 		] end, TX#tx.tags)
 	end, FullBlock#block.txs),
 	{BlockFields, TxFieldsList, TagFieldsList}.
+
+block_to_fields(B) ->
+    [
+		ar_util:encode(B#block.indep_hash),
+		ar_util:encode(B#block.previous_block),
+		B#block.height,
+		B#block.timestamp
+	].
+
+tx_to_fields(BH, TX) ->
+    TXFields =  [
+		ar_util:encode(TX#tx.id),
+		ar_util:encode(BH),
+		ar_util:encode(TX#tx.last_tx),
+		ar_util:encode(TX#tx.owner),
+		ar_util:encode(ar_wallet:to_address(TX#tx.owner)),
+		ar_util:encode(TX#tx.target),
+		TX#tx.quantity,
+		ar_util:encode(TX#tx.signature),
+		TX#tx.reward
+	],
+    EncodedTXID = ar_util:encode(TX#tx.id),
+	TagFieldsList = lists:map(
+        fun({Name, Value}) ->
+            [EncodedTXID, Name, Value]
+        end,
+        TX#tx.tags
+    ),
+    {TXFields, TagFieldsList}.
