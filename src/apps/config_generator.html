@@ -1,193 +1,226 @@
+<!doctype html>
 <html>
-    <head>
-        <title>Arweave Miner Configuration Generator</title>
-        <script>
-        function generateCommand() {
-            var output = "./arweave-server ";
-            var output_div = document.getElementById("output");
 
-            // Input field values
-            var peer = document.getElementById("peer").value;
-            var addr = document.getElementById("addr").value;
-            var miners = document.getElementById("miners").value;
-            var disk = document.getElementById("disk_usage").value;
+<head lang="en">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>Arweave Miner Configuration Generator</title>
+  <script>
+    const id = document.getElementById.bind(document)
 
-            // Boolean values
-            var mine = document.getElementById("mine").checked;
-            var autoupdate = document.getElementById("autoupdate").checked;
-            var polling = document.getElementById("polling").checked;
-            var http_logging = document.getElementById("http_logging").checked;
-            var disk_logging = document.getElementById("disk_logging").checked;
+    function generateCommand() {
+      let output = "./arweave-server "
+      let output_div = id("output")
 
-            // Generate the command
-            // Deal with strings
-            output += "peer " + peer + " mining_addr " + addr + " max_miners " + miners + " disk_space " + disk + " ";
-            // Deal with flags
-            output += mine ? "mine " : "";
-            output += autoupdate ? "auto_update 8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4 " : "auto_update false ";
-            output += polling ? "polling " : "";
-            output += (http_logging ? "enable " : "disable ") + "http_logging ";
-            output += (disk_logging ? "enable " : "disable ") + "disk_logging ";
-            
-            // Place it in the output box
-            output_div.innerHTML = output;
-        }
-        </script>
-        <style>
-            html {
-                font-family: sans-serif;
-            }
-            table {
-                margin: 2em;
-            }
-            #output {
-                font-family: "Courier New", Courier, monospace;
-                margin-left: 2em;
-            }
-            .subsection {
-                padding: 1em 0 1em 0;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>
-            Arweave miner configuration generator
-        </h1>
-        <h3>
-            Last updated for: Arweave.N.1.5-RC-1
-        </h3>
-        <p>
-            This page allows you to visually generate a launch command for the 
-            Arweave miner, customising all of it's optional features.
-        </p>
-        <p>
-            The output of this generator can be pasted into a terminal running 
-            in the same as the directory as an Arweave installation, or stored
-            as a shell script for repeated execution.
-        </p>
-        <form>
-            <table>
-                <thead>
-                    <td><b>Name</b></td>
-                    <td><b>Option</b></td>
-                    <td><b>Explanation</b></td>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td class="subsection" colspan="3"><i>Basic Settings</i></td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <b>Trusted peer</b>
-                        </td>
-                        <td>
-                            <input id="peer" placeholder="aaa.bbb.ccc.ddd" />
-                        </td>
-                        <td>
-                            The trusted peer to join the Arweave network on.
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <b>Reward Addr</b>
-                        </td>
-                        <td>
-                            <input id="addr" placeholder="R6bwvBjNGQQWjA..." />
-                        </td>
-                        <td>
-                            The address to send your mining rewards to.
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <b># of miners</b>
-                        </td>
-                        <td>
-                            <input id="miners" placeholder="4" />
-                        </td>
-                        <td>
-                            How many mining cores to run (if any) on your node.
-                        </td>
-                    </tr>
-                    <tr><td class="subsection" colspan="3"><i>Extended Settings</i></td></tr>
-                    <tr>
-                        <td>
-                            <b>Enable mining</b>
-                        </td>
-                        <td>
-                            <input type="checkbox" id="mine" checked />
-                        </td>
-                        <td>
-                            Enable mining on your node.
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <b>Polling</b>
-                        </td>
-                        <td>
-                            <input type="checkbox" id="polling" />
-                        </td>
-                        <td>
-                            Frequently poll peers to check for new blocks. <i>Useful
-                            in situations where the node is behind a firewall that
-                            does not allow establishing inbound connections.</i>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <b>Disk usage</b>
-                        </td>
-                        <td>
-                            <input id="disk_usage" placeholder="250" />
-                        </td>
-                        <td>
-                            Maximum disk space to use storing data (in GB).
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <b>Auto-update</b>
-                        </td>
-                        <td>
-                            <input type="checkbox" id="autoupdate" checked />
-                        </td>
-                        <td>
-                            Should the automated node updater be enabled.
-                        </td>
-                    </tr>
-                    <tr><td class="subsection" colspan="3"><i>Feature flags</i></td></tr>
-                    <tr>
-                        <td>
-                            <b>HTTP Logging</b>
-                        </td>
-                        <td>
-                            <input type="checkbox" id="http_logging" />
-                        </td>
-                        <td>
-                            Generate HTTP event logs.
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <b>Disk Logging</b>
-                        </td>
-                        <td>
-                            <input type="checkbox" id="disk_logging" />
-                        </td>
-                        <td>
-                            Generate disk input/output event logs.
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-            <input type="button" onclick="generateCommand()" value="Generate Launch Command" />
-        </form>
-        <h2>
-            Arweave launch command:
-        </h2>
-        <p id="output">
-            ./arweave-server ...
-        </p>
-    </body>
+      // Input field values
+      let peer = id("peer").value
+      let addr = id("addr").value
+      let miners = id("miners").value
+      let disk = id("disk_usage").value
+
+      // Boolean values
+      let mine = id("mine").checked
+      let autoupdate = id("autoupdate").checked
+      let polling = id("polling").checked
+
+      // Generate the command
+      // Deal with strings
+      output += "peer " + peer + " mining_addr " + addr + " max_miners " + miners + " disk_space " + disk + " ";
+      // Deal with flags
+      output += mine ? "mine " : "";
+      output += autoupdate ? "auto_update 8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4 " : "auto_update false ";
+      output += polling ? "polling " : "";
+
+      // Place it in the output box
+      output_div.innerHTML = output;
+    }
+  </script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+    }
+
+    table {
+      margin: 2em;
+    }
+
+    td {
+      margin: .5em;
+    }
+
+    #output, tt {
+      font-family: "Consolas", "Courier New", Courier, monospace;
+      margin-left: 2em;
+      background: #efefef;
+      padding: .25em;
+      border-radius: 40px;
+    }
+    .subsection {
+      padding: 1em 0 1em 0;
+    }
+
+    .submit {
+      background: rgb(66, 140, 227);
+      color: white;
+      border: none;
+      padding: .5em 1em;
+      border-radius: 4px;
+      transition: .314s;
+    }
+
+    .submit:hover {
+      background: rgb(91, 161, 245);
+      color: rgb(240, 240, 255);
+      border-radius: 4px;
+    }
+
+    header {
+      background: rgb(66, 140, 227);
+      color: white;
+      padding: .24em;
+      font-size: 2em;
+      font-weight: 400;
+    }
+
+    .page {
+      margin: 1.5em;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    Arweave Miner Configuration Generator
+  </header>
+
+  <div class="page">
+    <h1>Configuration Generator</h1>
+    <h4><i>Last updated for: Arweave.N.1.5-RC-1</i></h4>
+
+    <p>
+      This page allows you to visually generate a launch command for the
+      Arweave miner, customising all of it's optional features.
+    </p>
+
+    <p>
+      The output of this generator can be pasted into a terminal running
+      in the same as the directory as an Arweave installation, or stored
+      as a shell script for repeated execution.
+    </p>
+
+    <form>
+      <table>
+        <thead>
+          <td><b>Name</b></td>
+          <td><b>Option</b></td>
+          <td><b>Explanation</b></td>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="subsection" colspan="3"><i>Basic Settings</i></td>
+          </tr>
+          <tr>
+            <td>
+              <b>Trusted peer</b>
+            </td>
+            <td>
+              <input id="peer" placeholder="aaa.bbb.ccc.ddd" />
+            </td>
+            <td>
+              The trusted peer to join the Arweave network on (these will be used to initially download the blockchain)
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Reward Addr</b>
+            </td>
+            <td>
+              <input id="addr" placeholder="R6bwvBjNGQQWjA..." />
+            </td>
+            <td>
+              The address to send your mining rewards to (default: one will be generated for you)
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b># of miners</b>
+            </td>
+            <td>
+              <input id="miners" placeholder="4" />
+            </td>
+            <td>
+              How many mining cores to run (if any) on your node (default: all)
+            </td>
+          </tr>
+          <tr>
+            <td class="subsection" colspan="3"><i>Extended Settings</i></td>
+          </tr>
+          <tr>
+            <td>
+              <b>Enable mining</b>
+            </td>
+            <td>
+              <input type="checkbox" id="mine" checked />
+            </td>
+            <td>
+              Enable mining on your node
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Polling</b>
+            </td>
+            <td>
+              <input type="checkbox" id="polling" />
+            </td>
+            <td>
+              Frequently poll peers to check for new blocks
+              <br>
+              <i>Useful
+                in situations where the node is behind a firewall that
+                does not allow establishing inbound connections</i>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Disk usage</b>
+            </td>
+            <td>
+              <input id="disk_usage" placeholder="250" />
+            </td>
+            <td>
+              Maximum disk space to use storing data (in GB).
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Auto-update</b>
+            </td>
+            <td>
+              <input type="checkbox" id="autoupdate" checked />
+            </td>
+            <td>
+              Should the automated node updater be enabled.
+            </td>
+          </tr>
+          <tr>
+            <td class="subsection" colspan="3"><i>Feature flags</i></td>
+          </tr>
+        </tbody>
+      </table>
+      <input class="submit" type="button" onclick="generateCommand()" value="Generate Launch Command" />
+    </form>
+
+    <h1>Arweave Launch Command</h1>
+    <tt id="output">
+      <i>Press "Generate" to generate the command</i>
+    </tt>
+
+    <br>
+    <br>
+    <br>
+  </div>
+</body>
+
 </html>
