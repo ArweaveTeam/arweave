@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
   <title>Arweave Miner Configuration Generator</title>
+
   <script>
     const id = document.getElementById.bind(document)
 
@@ -58,19 +59,18 @@
         validate: v.number,
         str: (v) => v ? `disk_space ${v}` : null,
         name: 'Maximum diskspace usage'
-      },
-
+      }
     }
 
     function generateCommand() {
       let output = "./arweave-server "
-      let output_div = id("output")
 
       let cmd = []
 
       const setError = (err) => {
         id('error').innerHTML = err
         id('error').style.display = 'inline-block'
+        id('output').innerHTML = '<i>Command will appear here once the errors are fixed</i>'
       }
 
       for (const field in fields) {
@@ -96,9 +96,31 @@
       id('error').style.display = 'none'
 
       // Place it in the output box
-      output_div.innerHTML = output + cmd.filter(Boolean).join(' ')
+      id('output').innerHTML = output + cmd.filter(Boolean).join(' ')
     }
+
+    function docReady(fn) {
+      // see if DOM is already available
+      if (document.readyState === "complete" || document.readyState === "interactive") {
+        // call on next available tick
+        setTimeout(fn, 1);
+      } else {
+        document.addEventListener("DOMContentLoaded", fn);
+      }
+    }
+
+    docReady(() => {
+      let i = 0
+      let list = document.getElementsByTagName('input')
+      while (i < list.length) {
+        list[i].onchange = generateCommand
+        i++
+      }
+
+      generateCommand()
+    })
   </script>
+
   <style>
     body {
       font-family: sans-serif;
@@ -123,10 +145,12 @@
 
     #output, tt {
       font-family: "Consolas", "Courier New", Courier, monospace;
-      margin-left: 2em;
       background: #efefef;
       padding: .25em;
+      margin: 1em;
+      margin-left: 2em;
       border-radius: 40px;
+      display: inline-block;
     }
     .subsection {
       padding: 1em 0 1em 0;
@@ -283,15 +307,20 @@
         </tbody>
       </table>
 
-      <input class="submit" type="button" onclick="generateCommand()" value="Generate Launch Command" />
-
-      <span id="error"></span>
     </form>
 
     <h1>Arweave Launch Command</h1>
-    <tt id="output">
-      <i>Press "Generate" to generate the command</i>
-    </tt>
+
+    <div class="page">
+      <input class="submit" type="button" onclick="generateCommand()" value="Generate Launch Command" />
+      <span id="error"></span>
+
+      <br>
+
+      <tt id="output">
+        <i>Command will appear here</i>
+      </tt>
+    </div>
 
     <br>
     <br>
