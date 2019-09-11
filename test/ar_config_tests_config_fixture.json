@@ -46,5 +46,14 @@
   "custom_domains": [
     "domain1.example",
     "domain2.example"
+  ],
+  "webhooks": [
+    {
+      "events": ["transaction", "block"],
+      "url": "https://example.com/hook",
+      "headers": {
+        "Authorization": "Bearer 123456"
+      }
+    }
   ]
 }

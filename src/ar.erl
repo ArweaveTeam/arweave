@@ -254,7 +254,8 @@ start(
 		gateway_custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
 		ipfs_pin = IPFSPin,
-		ipfs_import = IPFSImport
+		ipfs_import = IPFSImport,
+		webhooks = WebhookConfigs
 	}) ->
 	%% Start the logging system.
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
@@ -439,6 +440,7 @@ start(
 		false -> ok;
 		true  -> app_ipfs_daemon_server:start()
 	end,
+	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
 	case Pause of
 		false ->
 			ok;
