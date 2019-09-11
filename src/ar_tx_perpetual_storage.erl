@@ -39,10 +39,16 @@ calculate_tx_reward(TXCost) ->
 -spec usd_to_ar(USD::usd(), Diff::nonegint(), Height::nonegint()) -> winston().
 usd_to_ar(USD, Diff, Height) ->
 	InitialDiff = ar_retarget:switch_to_linear_diff(?INITIAL_USD_PER_AR_DIFF),
-	DeltaDiff = Diff / InitialDiff,
+	DeltaP = case ar_fork:height_1_9() of
+		H when Height >= H ->
+			MaxDiff = ar_mine:max_difficulty(),
+			(MaxDiff - InitialDiff) / (MaxDiff - Diff);
+		_ ->
+			Diff / InitialDiff
+	end,
 	InitialInflation = ar_inflation:calculate(?INITIAL_USD_PER_AR_HEIGHT),
 	DeltaInflation = ar_inflation:calculate(Height) / InitialInflation,
-	(USD * ?WINSTON_PER_AR * DeltaInflation) / (?INITIAL_USD_PER_AR * DeltaDiff).
+	(USD * ?WINSTON_PER_AR * DeltaInflation) / (?INITIAL_USD_PER_AR * DeltaP).
 
 %%%% Costs in USD
 
