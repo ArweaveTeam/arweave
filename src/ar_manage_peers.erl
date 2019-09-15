@@ -42,13 +42,14 @@ format_stats(Peer, Perf) ->
 %% Peers who have behaved well in the past are favoured in ranking.
 %% New, unknown peers are given 100 blocks of grace.
 update(Peers) ->
+	Height = ar_node:get_height(whereis(http_entrypoint_node)),
 	ar_meta_db:purge_peer_performance(),
 	{Rankable, Newbies} =
 		partition_newbies(
 			score(
 				lists:filter(
 					fun(P) ->
-						(not lists:member(P, ?PEER_PERMANENT_BLACKLIST)) and responds(P)
+						(not lists:member(P, ?PEER_PERMANENT_BLACKLIST)) and responds_not_stuck(P, Height)
 					end,
 					get_more_peers(Peers)
 				)
@@ -84,9 +85,10 @@ get_peers(Peer) ->
 		Peers -> Peers
 	end.
 
-responds(Peer) ->
-	case ar_http_iface_client:get_info(Peer) of
+responds_not_stuck(Peer, Height) ->
+	case ar_http_iface_client:get_info(Peer, height) of
 		info_unavailable -> false;
+		H when H < (Height - ?STORE_BLOCKS_BEHIND_CURRENT) -> false;
 		_ -> true
 	end.
 
