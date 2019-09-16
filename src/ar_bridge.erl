@@ -5,7 +5,6 @@
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
 -export([ignore_id/1, is_id_ignored/1]).
--export([ignore_peer/2]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -17,8 +16,7 @@
 	gossip, % Gossip state
 	external_peers, % Peers to send message to ordered by best to worst.
 	processed = [], % IDs to ignore.
-	port,
-	ignored_peers = []
+	port
 }).
 
 %% @doc Start a node, linking to a supervisor process
@@ -114,10 +112,6 @@ is_id_ignored(ID) ->
 		[] -> false
 	end.
 
-ignore_peer(_PID, []) -> ok;
-ignore_peer(PID, Peer) ->
-	PID ! {ignore_peer, Peer}.
-
 %%% INTERNAL FUNCTIONS
 
 %% @doc Main server loop.
@@ -141,11 +135,6 @@ server(S) ->
 	end.
 
 %% @doc Handle the server messages.
-handle(S, {ignore_peer, Peer}) ->
-	timer:send_after(?IGNORE_PEERS_TIME, {unignore_peer, Peer}),
-	S#state{ ignored_peers = [Peer|S#state.ignored_peers] };
-handle(S, {unignore_peer, Peer}) ->
-	S#state{ ignored_peers = lists:delete(Peer, S#state.ignored_peers) };
 handle(S, {add_tx, TX}) ->
 	maybe_send_tx(S, TX);
 handle(S, {add_block, OriginPeer, B, BDS, Recall}) ->
