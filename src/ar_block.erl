@@ -10,7 +10,7 @@
 -export([encrypt_full_block/2, encrypt_full_block/3]).
 -export([decrypt_block/4]).
 -export([generate_block_key/2]).
--export([generate_block_from_shadow/2, generate_block_data_segment/6]).
+-export([reconstruct_hash_list_from_shadow/2, generate_block_data_segment/6]).
 -export([generate_hash_list_for_block/2]).
 -export([generate_block_data_segment_and_pieces/6, refresh_block_data_segment_timestamp/6]).
 
@@ -574,85 +574,40 @@ verify_block_hash_list_merkle(NewB, CurrentB) ->
 
 % Block shadow functions
 
-generate_block_from_shadow(BShadow, RecallSize) ->
-	TXs =
-		% Check if the node state contains the referenced TX.
-		lists:foldr(fun(T, Acc) ->
-		case
-			[
-				TX || TX <- ar_node:get_all_known_txs(
-					whereis(http_entrypoint_node)
+reconstruct_hash_list_from_shadow(ShadowHashList, HashList) ->
+	case
+		{
+			ShadowHashList,
+			HashList
+		}
+	of
+		{[], _} ->
+			ar:err([generate_block_from_shadow, generate_hash_list, block_hash_list_empty]),
+			{error, []};
+		{ShadowHashList, []} ->
+			ar:err([generate_block_from_shadow, generate_hash_list, node_hash_list_empty]),
+			{error, ShadowHashList};
+		{ShadowHashList, OldHashList} ->
+			EarliestShadowHash = lists:last(ShadowHashList),
+			NewL =
+				lists:dropwhile(
+					fun(X) -> X =/= EarliestShadowHash end,
+					OldHashList
 				),
-				TX#tx.id == T
-			]
-		of
-			[] ->
-				case ar_storage:read_tx(T) of
-					unavailable ->
-						Acc;
-					TX -> [TX | Acc]
-				end;
-			[TX | _] -> [TX | Acc]
-		end
-	end, [], BShadow#block.txs),
-	{FinderPool, _} = ar_node_utils:calculate_reward_pool(
-		ar_node:get_reward_pool(whereis(http_entrypoint_node)),
-		TXs,
-		BShadow#block.reward_addr,
-		RecallSize,
-		BShadow#block.weave_size,
-		BShadow#block.height,
-		BShadow#block.diff,
-		BShadow#block.timestamp
-	),
-	HashList =
-		case
-			{
-				BShadow#block.hash_list,
-				ar_node:get_hash_list(whereis(http_entrypoint_node))
-			}
-		of
-			{[], []} ->
-				ar:err([generate_block_from_shadow, generate_hash_list, node_hash_list_empty, block_hash_list_empty]),
-				[];
-			{[], OldHashList} ->
-				ar:err([generate_block_from_shadow, generate_hash_list, block_hash_list_empty]),
-				OldHashList;
-			{ShadowHashList, []} ->
-				ar:err([generate_block_from_shadow, generate_hash_list, node_hash_list_empty]),
-				ShadowHashList;
-			{ShadowHashList, OldHashList} ->
-				EarliestShadowHash = lists:last(ShadowHashList),
-				NewL =
-					lists:dropwhile(
-						fun(X) -> X =/= EarliestShadowHash end,
-						OldHashList
-					),
-				ShadowHashList ++
-					case NewL of
-						[] ->
-							OldHashListLastBlocks = lists:sublist(OldHashList, ?STORE_BLOCKS_BEHIND_CURRENT),
-							ar:warn([
-								generate_block_from_shadow,
-								hash_list_no_intersection,
-								{block_hash_list, lists:map(fun ar_util:encode/1, ShadowHashList)},
-								{node_hash_list_last_blocks, lists:map(fun ar_util:encode/1, OldHashListLastBlocks)}
-							]),
-							OldHashList;
-						NewL -> tl(NewL)
-					end
-		end,
-	WalletList = ar_node_utils:apply_mining_reward(
-		ar_node_utils:apply_txs(
-			ar_node:get_wallet_list(whereis(http_entrypoint_node)),
-			TXs,
-			ar_node:get_height(whereis(http_entrypoint_node))
-		),
-		BShadow#block.reward_addr,
-		FinderPool,
-		BShadow#block.height
-	),
-	BShadow#block { wallet_list = WalletList, hash_list = HashList }.
+			case NewL of
+				[] ->
+					OldHashListLastBlocks = lists:sublist(OldHashList, ?STORE_BLOCKS_BEHIND_CURRENT),
+					ar:warn([
+						generate_block_from_shadow,
+						hash_list_no_intersection,
+						{block_hash_list, lists:map(fun ar_util:encode/1, ShadowHashList)},
+						{node_hash_list_last_blocks, lists:map(fun ar_util:encode/1, OldHashListLastBlocks)}
+					]),
+					{error, ShadowHashList};
+				NewL ->
+					{ok, ShadowHashList ++ tl(NewL)}
+			end
+	end.
 
 get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
 	case ar_storage:read_block(RecallHash, BHL) of

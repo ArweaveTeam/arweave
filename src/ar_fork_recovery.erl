@@ -24,9 +24,8 @@
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
+%% TargetBShadow - a block shadow with the reconstructed hash list.
 start(Peers, TargetBShadow, HashList, Parent, BlockTXPairs) ->
-	% TODO: At this stage the target block is not a shadow, it is either
-	% a valid block or a block with a malformed hashlist (Outside FR range).
 	case ?IS_BLOCK(TargetBShadow) of
 		true ->
 			ar:info(

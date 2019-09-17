@@ -1087,23 +1087,22 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->
 		RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
-		B = ar_block:generate_block_from_shadow(BShadow, RecallSize),
 		RecallIndepHash = ar_util:decode(val_for_key(<<"recall_block">>, ReqStruct)),
 		Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
 		Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
 		ar:info([{
 			sending_external_block_to_bridge,
-			ar_util:encode(B#block.indep_hash)
+			ar_util:encode(BShadow#block.indep_hash)
 		}]),
 		ar:info([
 			ar_http_iface_handler,
 			accepted_block,
-			{indep_hash, ar_util:encode(B#block.indep_hash)}
+			{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
 		]),
 		ar_bridge:add_block(
 			whereis(http_bridge_node),
 			OrigPeer,
-			B,
+			BShadow,
 			BDS,
 			{RecallIndepHash, RecallSize, Key, Nonce}
 		)
