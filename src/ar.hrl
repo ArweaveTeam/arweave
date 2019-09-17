@@ -140,9 +140,6 @@
 %% @doc Time between attempts to find optimise peers.
 -define(GET_MORE_PEERS_TIME,  240 * 1000).
 
-%% @doc Time to wait before not ignoring bad peers.
--define(IGNORE_PEERS_TIME, 5 * 60 * 1000).
-
 %% @doc Number of transfers for which not to score (and potentially drop)
 %% new peers.
 -define(PEER_GRACE_PERIOD, 100).
