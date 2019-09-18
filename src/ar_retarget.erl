@@ -87,7 +87,7 @@ calculate_difficulty_linear(OldDiff, TS, Last, Height) ->
 		true ->
 			OldDiff;
 		false ->
-			MaxDiff = ar_mine:max_difficulty(Height),
+			MaxDiff = ar_mine:max_difficulty(),
 			MinDiff = ar_mine:min_difficulty(Height),
 			between(
 				MaxDiff - (MaxDiff - OldDiff) * ActualTime div TargetTime,

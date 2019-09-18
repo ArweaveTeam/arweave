@@ -4,6 +4,8 @@
 -include("src/perpetual_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-import(ar_difficulty, [twice_smaller_diff/1]).
+
 -import(ar_test_node, [start/2, slave_start/2, connect_to_slave/0]).
 -import(ar_test_node, [slave_mine/1]).
 -import(ar_test_node, [sign_tx/1, sign_tx/2]).
@@ -47,7 +49,7 @@ updates_pool_and_assigns_rewards_correctly() ->
 	B2 = ar_storage:read_block(hd(BHL2), BHL2),
 	RewardPoolIncrement1 = ar_tx_perpetual_storage:calculate_tx_cost(
 		0,
-		B2#block.diff,
+		twice_smaller_diff(B2#block.diff),
 		2,
 		B2#block.timestamp
 	),
@@ -69,7 +71,7 @@ updates_pool_and_assigns_rewards_correctly() ->
 	B3 = ar_storage:read_block(hd(BHL3), BHL3),
 	RewardPoolIncrement2 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(Data),
-		B3#block.diff,
+		twice_smaller_diff(B3#block.diff),
 		3,
 		B3#block.timestamp
 	),
@@ -105,7 +107,7 @@ updates_pool_and_assigns_rewards_correctly() ->
 		fun(Chunk, {Sum, Size}) ->
 			{Sum + ar_tx_perpetual_storage:calculate_tx_cost(
 				byte_size(Chunk),
-				B4#block.diff,
+				twice_smaller_diff(B4#block.diff),
 				4,
 				B4#block.timestamp
 			), Size + byte_size(Chunk)}
@@ -133,7 +135,7 @@ updates_pool_and_assigns_rewards_correctly() ->
 	RecallB = ar_storage:read_block(ar_weave:calculate_recall_block(hd(BHL4), BHL4), BHL4),
 	RewardPoolIncrement4 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(BigChunk),
-		B5#block.diff,
+		twice_smaller_diff(B5#block.diff),
 		5,
 		B5#block.timestamp
 	),
