@@ -1,5 +1,12 @@
 .DEFAULT_GOAL := test_all
 
+UNAME_SYS := $(shell uname -s)
+ifeq ($(UNAME_SYS), Darwin)
+	RANDOMX_JIT=disable randomx_jit
+else
+	RANDOMX_JIT=
+endif
+
 TLS_CERT_FILE := priv/tls/cert.pem
 TLS_KEY_FILE := priv/tls/key.pem
 TLS_FILES := $(TLS_CERT_FILE) $(TLS_KEY_FILE)
@@ -33,7 +40,7 @@ DEFAULT_PEER_OPTS := \
 test_all: test test_apps test_ipfs
 
 test: build_test
-	@erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave &
+	@erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main $(RANDOMX_JIT) port 1983 data_dir data_test_slave &
 	@erl $(ERL_TEST_OPTS) -noshell -sname master -setcookie test -run ar test_with_coverage -s init stop
 	kill 0
 
@@ -100,15 +107,15 @@ $(TLS_FILES):
 		 'gateway.localhost' '*.gateway.localhost'
 
 session: build_test
-	erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main port 1983 data_dir data_test_slave &
-	erl $(ERL_TEST_OPTS) -sname master -setcookie test -run ar main data_dir data_test_master
+	erl $(ERL_TEST_OPTS) -noshell -sname slave -setcookie test -run ar main $(RANDOMX_JIT) port 1983 data_dir data_test_slave &
+	erl $(ERL_TEST_OPTS) -sname master -setcookie test -run ar main $(RANDOMX_JIT) data_dir data_test_master
 	kill 0
 
 polling_session: all
-	erl $(ERL_OPTS) -run ar main polling $(DEFAULT_PEER_OPTS)
+	erl $(ERL_OPTS) -run ar main $(RANDOMX_JIT) polling $(DEFAULT_PEER_OPTS)
 
 polling_gateway_session: all certs
-	erl $(ERL_OPTS) -run ar main \
+	erl $(ERL_OPTS) -run ar main $(RANDOMX_JIT) \
 		polling \
 		gateway gateway.localhost \
 		$(DEFAULT_PEER_OPTS)
