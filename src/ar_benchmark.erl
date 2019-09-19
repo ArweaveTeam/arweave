@@ -17,7 +17,7 @@ run(Algorithm) ->
 			Key = crypto:strong_rand_bytes(32),
 			ar_randomx_state:init(
 				whereis(ar_randomx_state),
-				ar_randomx_state:swap_height(ar_fork:height_1_7()),
+				ar_randomx_state:swap_height(ar_fork:height_1_8()),
 				Key,
 				erlang:system_info(schedulers_online)
 			),
@@ -29,7 +29,7 @@ run(Algorithm) ->
 
 loop({TotalHashesTried, TotalTimeSpent}, Algorithm) ->
 	Difficulty = case Algorithm of
-		randomx -> 20 + ?RANDOMX_DIFF_ADJUSTMENT;
+		randomx -> ar_retarget:switch_to_linear_diff(20 + ?RANDOMX_DIFF_ADJUSTMENT);
 		sha384 -> 20
 	end,
 	{HashesTried, TimeSpent} = mine(Difficulty, 10, Algorithm),
@@ -49,7 +49,7 @@ mine(Diff, Rounds, Algorithm) ->
 		Run = fun(_) -> mine(Diff, Algorithm) end,
 		lists:foreach(Run, lists:seq(1, Rounds))
 	end),
-	EstimatedTriedHashes = math:pow(2, Diff) * Rounds,
+	EstimatedTriedHashes = trunc(math:pow(2, 256) / (math:pow(2, 256) - Diff) * Rounds),
 	{EstimatedTriedHashes, Time}.
 
 mine(Diff, Algorithm) ->
@@ -59,7 +59,7 @@ mine(Diff, Algorithm) ->
 		timestamp = os:system_time(seconds),
 		last_retarget = os:system_time(seconds),
 		hash_list = [],
-		height = case Algorithm of randomx -> ar_fork:height_1_7(); sha384 -> ar_fork:height_1_7() - 2 end
+		height = case Algorithm of randomx -> ar_fork:height_1_8(); sha384 -> ar_fork:height_1_7() - 2 end
 	},
 	ar_mine:start(B, B, [], unclaimed, [], Diff, self(), []),
 	receive

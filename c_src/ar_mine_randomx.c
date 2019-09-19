@@ -64,7 +64,7 @@ static ERL_NIF_TERM init(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[],
 	ERL_NIF_TERM resource;
 	unsigned int numWorkers;
 	int jitEnabled, largePagesEnabled;
-	unsigned flags;
+	randomx_flags flags;
 
 	if (mode == HASHING_MODE_FAST && argc != 4) {
 		return enif_make_badarg(envPtr);
@@ -229,7 +229,7 @@ static ERL_NIF_TERM hash_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 {
 	randomx_vm *vmPtr = NULL;
 	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
-	unsigned flags;
+	randomx_flags flags;
 	char hashPtr[RANDOMX_HASH_SIZE];
 	struct state* statePtr;
 	ErlNifBinary inputData;
