@@ -6,6 +6,64 @@
 -import(ar_test_node, [start/1, slave_start/1, slave_call/3]).
 -import(ar_test_node, [assert_slave_wait_until_receives_txs/2]).
 
+height_plus_one_fork_recovery_test() ->
+	%% Mine two blocks on the same height on master and slave.
+	%% Mine the second block on slave. Expect master to fork recover.
+	%%
+	%% Isolate the nodes and mine a block with a TX on slave. Blacklist
+	%% the TX on master after the master receives it. Expect master
+	%% to reject the block. Mine another block on slave. Expect master
+	%% to accept it.
+	{SlaveNode, B0} = slave_start(no_block),
+	{MasterNode, B0} = start(B0),
+	ar_test_node:connect_to_slave(),
+	ar_meta_db:put(content_policy_files, []),
+	ar_firewall:reload(),
+	%% Turn off gossip.
+	ar_test_node:slave_gossip(off, SlaveNode),
+	ar_test_node:slave_mine(SlaveNode),
+	SlaveBHL = ar_test_node:slave_wait_until_height(SlaveNode, 1),
+	?assertEqual(2, length(SlaveBHL)),
+	ar_node:mine(MasterNode),
+	MasterBHL = ar_test_node:wait_until_height(MasterNode, 1),
+	?assertEqual(2, length(MasterBHL)),
+	?assert(hd(SlaveBHL) /= hd(MasterBHL)),
+	%% Turn off gossip again and mine the second block on slave.
+	ar_test_node:slave_gossip(on, SlaveNode),
+	ar_test_node:slave_mine(SlaveNode),
+	SlaveBHL2 = ar_test_node:slave_wait_until_height(SlaveNode, 2),
+	?assertEqual(3, length(SlaveBHL2)),
+	MasterBHL2 = ar_test_node:wait_until_height(MasterNode, 2),
+	?assertEqual(3, length(MasterBHL2)),
+	?assertEqual(hd(SlaveBHL2), hd(MasterBHL2)),
+	%% Turn off gossip and mine two competing blocks.
+	ar_test_node:slave_gossip(off, SlaveNode),
+	ar_test_node:slave_mine(SlaveNode),
+	SlaveBHL3 = ar_test_node:slave_wait_until_height(SlaveNode, 3),
+	ar_node:mine(MasterNode),
+	MasterBHL3 = ar_test_node:slave_wait_until_height(MasterNode, 3),
+	?assert(hd(SlaveBHL3) /= hd(MasterBHL3)),
+	%% Post a TX master will later reject.
+	TX = (ar_tx:new())#tx{ data = <<"BADCONTENT1">>, reward = ?AR(1) },
+	ar_test_node:assert_post_tx_to_slave(SlaveNode, TX),
+	ar_test_node:assert_slave_wait_until_receives_txs(SlaveNode, [TX]),
+	ar_test_node:assert_wait_until_receives_txs(MasterNode, [TX]),
+	%% Now ban the TX on master.
+	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_firewall:reload(),
+	%% Turn the gossip back on and mine a block on slave.
+	ar_test_node:slave_gossip(on, SlaveNode),
+	ar_test_node:slave_mine(SlaveNode),
+	ar_test_node:slave_wait_until_height(SlaveNode, 4),
+	timer:sleep(500),
+	%% Expect the master to not recover to height + 1 block with illicit TX.
+	?assertEqual(4, length(ar_node:get_hash_list(MasterNode))),
+	%% Mine another block on slave and expect master to recover.
+	ar_test_node:slave_mine(SlaveNode),
+	SlaveBHL5 = ar_test_node:slave_wait_until_height(SlaveNode, 5),
+	MasterBHL4 = ar_test_node:wait_until_height(MasterNode, 5),
+	?assertEqual(SlaveBHL5, MasterBHL4).
+
 missing_txs_fork_recovery_test() ->
 	%% Mine two blocks with transactions on the slave node but do not gossip the transactions in advance.
 	%% The master node should reject the first block, but accept the second one and fork recover.
