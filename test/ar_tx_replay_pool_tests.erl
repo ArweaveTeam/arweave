@@ -267,5 +267,5 @@ fee(Diff, Height, Timestamp) ->
 
 random_diff() ->
 	MinDiff = ar_mine:min_difficulty(ar_fork:height_1_8()),
-	MaxDiff = ar_mine:max_difficulty(ar_fork:height_1_8()),
+	MaxDiff = ar_mine:max_difficulty(),
 	MinDiff + rand:uniform(MaxDiff - MinDiff).

@@ -691,7 +691,10 @@ estimate_tx_price(SizeInBytesBinary, WalletAddr) ->
 	Node = whereis(http_entrypoint_node),
 	Height = ar_node:get_height(Node),
 	CurrentDiff = ar_node:get_diff(Node),
-	NextDiff = ar_node:get_current_diff(Node),
+	%% Add a safety buffer to prevent transactions
+	%% from being rejected after a retarget when the
+	%% difficulty drops
+	NextDiff = ar_difficulty:twice_smaller_diff(CurrentDiff),
 	Timestamp  = os:system_time(seconds),
 	CurrentDiffPrice = estimate_tx_price(SizeInBytes, CurrentDiff, Height, WalletAddr, Timestamp),
 	NextDiffPrice = estimate_tx_price(SizeInBytes, NextDiff, Height + 1, WalletAddr, Timestamp),

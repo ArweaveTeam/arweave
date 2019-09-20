@@ -1,7 +1,7 @@
 -module(ar_mine).
 -export([start/7, start/8, stop/1, mine/2]).
 -export([validate/4, validate/3]).
--export([min_difficulty/1, genesis_difficulty/0, max_difficulty/1]).
+-export([min_difficulty/1, genesis_difficulty/0, max_difficulty/0]).
 -export([sha384_diff_to_randomx_diff/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -89,7 +89,7 @@ validate(BDSHash, Diff, Height) ->
 
 %% @doc Maximum linear difficulty.
 %% Assumes using 256 bit RandomX hashes.
-max_difficulty(_Height) ->
+max_difficulty() ->
 	erlang:trunc(math:pow(2, 256)).
 
 min_difficulty(Height) ->
