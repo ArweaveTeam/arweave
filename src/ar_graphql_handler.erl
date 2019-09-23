@@ -1,5 +1,6 @@
 -module(ar_graphql_handler).
 -behaviour(cowboy_handler).
+-include("ar.hrl").
 
 %% Cowboy Handler Interface
 -export([init/2]).
@@ -106,14 +107,16 @@ run_execute(#{
 	Ctx = #{ params => Coerced, operation_name => OpName },
 	Response = graphql:execute(Ctx, AST),
 	ResponseBody = jiffy:encode(Response),
-	Req2 = cowboy_req:set_resp_body(ResponseBody, Req),
-	Reply = cowboy_req:reply(200, Req2),
+	Req2 = cowboy_req:set_resp_headers(?DEFAULT_RESPONSE_HEADERS, Req),
+	Req3 = cowboy_req:set_resp_body(ResponseBody, Req2),
+	Reply = cowboy_req:reply(200, Req3),
 	{ok, Reply, State}.
 
 err(Code, Msg, Req, State) ->
 	Formatted = iolist_to_binary(io_lib:format("~p", [Msg])),
 	Err = #{ type => error, message => Formatted },
 	Body = jiffy:encode(#{ errors => [Err] }),
-	Req2 = cowboy_req:set_resp_body(Body, Req),
-	Reply = cowboy_req:reply(Code, Req2),
+	Req2 = cowboy_req:set_resp_headers(?DEFAULT_RESPONSE_HEADERS, Req),
+	Req3 = cowboy_req:set_resp_body(Body, Req2),
+	Reply = cowboy_req:reply(Code, Req3),
 	{ok, Reply, State}.
