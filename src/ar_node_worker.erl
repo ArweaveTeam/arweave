@@ -339,7 +339,7 @@ process_new_block(#{ height := Height } = StateIn, BShadow, Recall, Peer)
 						{could_not_validate_new_block, ar_util:encode(NewB#block.indep_hash)},
 						{reason, Reason}
 					]),
-					none;
+					maybe_fork_recover_at_height_plus_one(StateIn, NewB, Peer);
 				valid ->
 					TXReplayCheck = ar_tx_replay_pool:verify_block_txs(
 						TXs,
@@ -491,6 +491,36 @@ generate_wallet_list_from_shadow(StateIn, BShadow, RecallB, TXs) ->
 		FinderReward,
 		BShadow#block.height
 	).
+
+maybe_fork_recover_at_height_plus_one(State, NewB, Peer) ->
+	case lists:any(
+		fun(TX) ->
+			ar_firewall:scan_tx(TX) == reject
+		end,
+		NewB#block.txs
+	) of
+		true ->
+			%% Disincentivize submission of globally rejected content.
+			%% One block is an additional cost for the minority to
+			%% make the majority store unwanted content.
+			%% A tolerable downside of it is in a scenario when a half
+			%% of the network rejects a chunk, the network is going to
+			%% be more forky than it could.
+			ar:info([
+				ar_node_worker,
+				new_block_contains_blacklisted_content,
+				{indep_hash, ar_util:encode(NewB#block.indep_hash)}
+			]),
+			none;
+		false ->
+			#{ cumulative_diff := CDiff, hash_list := BHL } = State,
+			case is_fork_preferable(NewB, CDiff, BHL) of
+				false ->
+					none;
+				true ->
+					{ok, ar_node_utils:fork_recover(State, Peer, NewB)}
+			end
+	end.
 
 %% @doc Verify a new block found by a miner, integrate it.
 integrate_block_from_miner(#{ hash_list := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp) ->
