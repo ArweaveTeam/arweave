@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 set -o errexit
 
@@ -6,6 +6,12 @@ if [ -t 1 ]; then
     SHELL_OPTS=
 else
     SHELL_OPTS=-noinput
+fi
+
+if [ `uname -s` == "Darwin" ]; then
+    RANDOMX_JIT="disable randomx_jit"
+else
+    RANDOMX_JIT=
 fi
 
 while true; do
@@ -25,7 +31,7 @@ while true; do
             -pa lib/prometheus_httpd/ebin \
             -pa lib/prometheus_cowboy/ebin \
             -sasl errlog_type error \
-            -s ar rebuild -s prometheus -run ar main "$@";
+            -s ar rebuild -s prometheus -run ar main $RANDOMX_JIT "$@";
     then
         echo "Arweave Heartbeat: Server terminated safely."
         exit 1

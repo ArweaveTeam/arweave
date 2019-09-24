@@ -219,8 +219,10 @@ parse_cli_args([Arg|_Rest], _O) ->
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#config { port = Port });
-start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = MaxMiners }) ->
+start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = MaxMiners, disable = Disable, enable = Enable }) ->
 	ar_meta_db:start(),
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(mine, true),
 	ar_randomx_state:start(),
@@ -560,7 +562,12 @@ start_for_tests() ->
 	start_for_tests(#config { }).
 
 start_for_tests(Config) ->
-	start(Config#config { peers = [], pause = false, data_dir = "data_test_master"}).
+	start(Config#config {
+		peers = [],
+		pause = false,
+		data_dir = "data_test_master",
+		disable = [randomx_jit]
+	}).
 
 %% @doc Run the tests for a single module.
 tests(Mod) ->

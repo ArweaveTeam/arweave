@@ -4,19 +4,21 @@
 -export([release_state/1]).
 
 init_fast(Key, Threads) ->
-	{ok, FastState} = init_fast_nif(Key, Threads),
+	{ok, FastState} = init_fast_nif(Key, jit(), large_pages(), Threads),
 	FastState.
 
 hash_fast(FastState, Data) ->
-	{ok, Hash} = hash_fast_nif(FastState, Data),
+	{ok, Hash} =
+		hash_fast_nif(FastState, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
 
 init_light(Key) ->
-	{ok, LightState} = init_light_nif(Key),
+	{ok, LightState} = init_light_nif(Key, jit(), large_pages()),
 	LightState.
 
 hash_light(LightState, Data) ->
-	{ok, Hash} = hash_light_nif(LightState, Data),
+	{ok, Hash} =
+		hash_light_nif(LightState, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
 
 release_state(State) ->
@@ -31,16 +33,40 @@ release_state(State) ->
 
 %% Internal
 
-init_fast_nif(_Key, _Threads) ->
+jit() ->
+	case ar_meta_db:get(randomx_jit) of
+		false ->
+			0;
+		_ ->
+			1
+	end.
+
+large_pages() ->
+	case ar_meta_db:get(randomx_large_pages) of
+		true ->
+			1;
+		_ ->
+			0
+	end.
+
+hardware_aes() ->
+	case ar_meta_db:get(randomx_hardware_aes) of
+		false ->
+			0;
+		_ ->
+			1
+	end.
+
+init_fast_nif(_Key, _JIT, _LargePages, _Threads) ->
 	erlang:nif_error(nif_not_loaded).
 
-init_light_nif(_Key) ->
+init_light_nif(_Key, _JIT, _LargePages) ->
 	erlang:nif_error(nif_not_loaded).
 
-hash_fast_nif(_State, _Data) ->
+hash_fast_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
-hash_light_nif(_State, _Data) ->
+hash_light_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
 release_state_nif(_State) ->

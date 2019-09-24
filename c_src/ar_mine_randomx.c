@@ -6,10 +6,10 @@
 ErlNifResourceType* stateType;
 
 static ErlNifFunc nif_funcs[] = {
-	{"init_fast_nif", 2, init_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"init_light_nif", 1, init_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"hash_fast_nif", 2, hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"hash_light_nif", 2, hash_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"init_fast_nif", 4, init_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"init_light_nif", 3, init_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"hash_fast_nif", 5, hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"hash_light_nif", 5, hash_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"release_state_nif", 1, release_state_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND}
 };
 
@@ -63,16 +63,24 @@ static ERL_NIF_TERM init(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[],
 	struct state *statePtr;
 	ERL_NIF_TERM resource;
 	unsigned int numWorkers;
+	int jitEnabled, largePagesEnabled;
+	randomx_flags flags;
 
-	if (mode == HASHING_MODE_FAST && argc != 2) {
+	if (mode == HASHING_MODE_FAST && argc != 4) {
 		return enif_make_badarg(envPtr);
-	} else if (mode == HASHING_MODE_LIGHT && argc != 1) {
+	} else if (mode == HASHING_MODE_LIGHT && argc != 3) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_inspect_binary(envPtr, argv[0], &key)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (mode == HASHING_MODE_FAST && !enif_get_uint(envPtr, argv[1], &numWorkers)) {
+	if (mode == HASHING_MODE_FAST && !enif_get_uint(envPtr, argv[3], &numWorkers)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[1], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[2], &largePagesEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -86,7 +94,15 @@ static ERL_NIF_TERM init(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[],
 		return init_failed(envPtr, statePtr, "enif_rwlock_create failed");
 	}
 
-	statePtr->cachePtr = randomx_alloc_cache(RANDOMX_FLAG_DEFAULT);
+	flags = RANDOMX_FLAG_DEFAULT;
+	if (jitEnabled) {
+		flags |= RANDOMX_FLAG_JIT;
+	}
+	if (largePagesEnabled) {
+		flags |= RANDOMX_FLAG_LARGE_PAGES;
+	}
+
+	statePtr->cachePtr = randomx_alloc_cache(flags);
 	if (statePtr->cachePtr == NULL) {
 		return init_failed(envPtr, statePtr, "randomx_alloc_cache failed");
 	}
@@ -97,7 +113,7 @@ static ERL_NIF_TERM init(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[],
 		key.size);
 
 	if (mode == HASHING_MODE_FAST) {
-		statePtr->datasetPtr = randomx_alloc_dataset(RANDOMX_FLAG_DEFAULT);
+		statePtr->datasetPtr = randomx_alloc_dataset(flags);
 		if (statePtr->datasetPtr == NULL) {
 			return init_failed(envPtr, statePtr, "randomx_alloc_dataset failed");
 		}
@@ -212,18 +228,28 @@ static ERL_NIF_TERM hash_light_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TE
 static ERL_NIF_TERM hash_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[], hashing_mode hashingMode)
 {
 	randomx_vm *vmPtr = NULL;
-	unsigned flags;
+	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	randomx_flags flags;
 	char hashPtr[RANDOMX_HASH_SIZE];
 	struct state* statePtr;
 	ErlNifBinary inputData;
 
-	if (argc != 2) {
+	if (argc != 5) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
 		return error(envPtr, "failed to read state");
 	}
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[2], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[3], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &hardwareAESEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -233,10 +259,18 @@ static ERL_NIF_TERM hash_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 		return error(envPtr, "state has been released");
 	}
 
+	flags = RANDOMX_FLAG_DEFAULT;
 	if (hashingMode == HASHING_MODE_FAST) {
-		flags = RANDOMX_FLAG_FULL_MEM;
-	} else {
-		flags = RANDOMX_FLAG_DEFAULT;
+		flags |= RANDOMX_FLAG_FULL_MEM;
+	}
+	if (hardwareAESEnabled) {
+		flags |= RANDOMX_FLAG_HARD_AES;
+	}
+	if (jitEnabled) {
+		flags |= RANDOMX_FLAG_JIT;
+	}
+	if (largePagesEnabled) {
+		flags |= RANDOMX_FLAG_LARGE_PAGES;
 	}
 	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
 	if (vmPtr == NULL) {
