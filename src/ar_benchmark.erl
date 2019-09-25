@@ -45,12 +45,11 @@ loop({TotalHashesTried, TotalTimeSpent}, Algorithm) ->
 	loop({NewTotalHashesTried, NewTotalTimeSpent}, Algorithm).
 
 mine(Diff, Rounds, Algorithm) ->
-	{Time, _} = timer:tc(fun() ->
+	{Time, HashesTried} = timer:tc(fun() ->
 		Run = fun(_) -> mine(Diff, Algorithm) end,
-		lists:foreach(Run, lists:seq(1, Rounds))
+		lists:sum(lists:map(Run, lists:seq(1, Rounds)))
 	end),
-	EstimatedTriedHashes = trunc(math:pow(2, 256) / (math:pow(2, 256) - Diff) * Rounds),
-	{EstimatedTriedHashes, Time}.
+	{HashesTried, Time}.
 
 mine(Diff, Algorithm) ->
 	B = #block{
@@ -63,8 +62,8 @@ mine(Diff, Algorithm) ->
 	},
 	ar_mine:start(B, B, [], unclaimed, [], Diff, self(), []),
 	receive
-		{work_complete, _, _, _, _, _, _} ->
-			ok
+		{work_complete, _, _, _, _, _, _, HashesTried} ->
+			HashesTried
 	end.
 
 format_hashes_per_second(Hashes, Time) ->

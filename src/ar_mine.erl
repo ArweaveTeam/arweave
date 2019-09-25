@@ -26,7 +26,8 @@
 	delay = 0, % hashing delay used for testing
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
 	miners = [], % miner worker processes
-	bds_pieces = not_generated % a list of binary components of block data segment, stored for quick updates
+	bds_pieces = not_generated, % a list of binary components of block data segment, stored for quick updates
+	total_hashes_tried = 0
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
@@ -264,7 +265,8 @@ server(
 	S = #state {
 		parent = Parent,
 		miners = Miners,
-		current_block = #block { indep_hash = CurrentBH }
+		current_block = #block { indep_hash = CurrentBH },
+		total_hashes_tried = TotalHashesTried
 	}
 ) ->
 	receive
@@ -277,10 +279,13 @@ server(
 		%% with a timestamp close to current time will be accepted in the propagation.
 		refresh_timestamp ->
 			server(restart_miners(update_data_segment(S)));
+		%% Count the number of hashes tried by all workers.
+		{hashes_tried, HashesTried} ->
+			server(S#state { total_hashes_tried = TotalHashesTried + HashesTried });
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce, MinedTXs, MinedDiff, MinedTimestamp} ->
-			Parent ! {work_complete, CurrentBH, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp},
+			Parent ! {work_complete, CurrentBH, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp, TotalHashesTried},
 			stop_miners(Miners)
 	end.
 
@@ -320,27 +325,27 @@ mine(
 	Supervisor
 ) ->
 	process_flag(priority, low),
-	{Nonce, Hash} = find_nonce(BDS, Diff, CurrentHeight + 1),
+	{Nonce, Hash} = find_nonce(BDS, Diff, CurrentHeight + 1, Supervisor),
 	Supervisor ! {solution, Hash, Nonce, TXs, Diff, Timestamp}.
 
-find_nonce(BDS, Diff, Height) ->
+find_nonce(BDS, Diff, Height, Supervisor) ->
 	case Height >= ar_fork:height_1_7() of
 		true ->
 			case randomx_hasher(Height) of
 				{ok, Hasher} ->
 					StartNonce = crypto:strong_rand_bytes(256 div 8),
-					find_nonce(BDS, Diff, Height, StartNonce, Hasher);
+					find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor);
 				not_found ->
 					ar:info("Mining is waiting on RandomX initialization"),
 					timer:sleep(30 * 1000),
-					find_nonce(BDS, Diff, Height)
+					find_nonce(BDS, Diff, Height, Supervisor)
 			end;
 		false ->
 			%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
 			%% arbitrary size for the initial nonce.
 			StartNonce = crypto:strong_rand_bytes(384 div 8),
 			Hasher = fun(Data) -> crypto:hash(?MINING_HASH_ALG, Data) end,
-			find_nonce(BDS, Diff, Height, StartNonce, Hasher)
+			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor)
 	end.
 
 -ifdef(DEBUG).
@@ -373,12 +378,18 @@ randomx_hasher(Height) ->
 	end.
 -endif.
 
-find_nonce(BDS, Diff, Height, Nonce, Hasher) ->
+find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
+	find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor, 0).
+
+find_nonce(_BDS, _Diff, _Height, _Nonce, _Hasher, Supervisor, 10) ->
+	Supervisor ! {hashes_tried, 10},
+	find_nonce(_BDS, _Diff, _Height, _Nonce, _Hasher, Supervisor, 0);
+find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor, HashesTried) ->
 	BDSHash = Hasher(<< Nonce/binary, BDS/binary >>),
 	case validate(BDSHash, Diff, Height) of
 		false ->
 			%% Re-use the hash as the next nonce, since we get it for free.
-			find_nonce(BDS, Diff, Height, BDSHash, Hasher);
+			find_nonce(BDS, Diff, Height, BDSHash, Hasher, Supervisor, HashesTried + 1);
 		true ->
 			{Nonce, BDSHash}
 	end.
@@ -465,7 +476,7 @@ validator_test() ->
 
 assert_mine_output(B, RecallB, TXs) ->
 	receive
-		{work_complete, BH, MinedTXs, Hash, MinedDiff, Nonce, Timestamp} ->
+		{work_complete, BH, MinedTXs, Hash, MinedDiff, Nonce, Timestamp, _} ->
 			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
 			BDS = ar_block:generate_block_data_segment(
