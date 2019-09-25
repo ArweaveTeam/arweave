@@ -2,10 +2,32 @@
 -behaviour(cowboy_handler).
 -include("ar.hrl").
 
+-define(PREFLIGHT_RESPONSE_HEADERS, #{
+	<<"access-control-allow-methods">> => <<"GET, POST">>,
+	<<"access-control-allow-headers">> => <<"Content-Type">>
+}).
+
 %% Cowboy Handler Interface
 -export([init/2]).
 
-init(Req, #{ arql_semaphore := Semaphore } = State) ->
+init(Req, State) ->
+	case cowboy_req:method(Req) of
+		<<"OPTIONS">> ->
+			handle_preflight_request(Req, State);
+		<<"GET">> ->
+			handle_graphql_request(Req, State);
+		<<"POST">> ->
+			handle_graphql_request(Req, State)
+	end.
+
+handle_preflight_request(Req, State) ->
+	Req1 = cowboy_req:set_resp_headers(?DEFAULT_RESPONSE_HEADERS, Req),
+	Req2 = cowboy_req:set_resp_headers(?PREFLIGHT_RESPONSE_HEADERS, Req1),
+	Req3 = cowboy_req:set_resp_body(<<"OK">>, Req2),
+	Reply = cowboy_req:reply(200, Req3),
+	{ok, Reply, State}.
+
+handle_graphql_request(Req, #{ arql_semaphore := Semaphore } = State) ->
 	ar_semaphore:acquire(Semaphore, 5000),
 	case gather_query_params(Req) of
 		{error, Reason} ->
