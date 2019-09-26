@@ -252,18 +252,16 @@ get_tx_from_hash_1(TXID) ->
 
 serve_tx(Filename, Path, Fallback, Req, Env) ->
 	TX = ar_storage:read_tx_file(Filename),
-	ContentType =
-		case lists:keyfind(<<"Content-Type">>, 1, TX#tx.tags) of
-			{<<"Content-Type">>, V} -> V;
-			false -> <<"text/html">>
-		end,
-	case {ContentType, Path} of
-		{?MANIFEST_CONTENT_TYPE, <<>>} ->
+	MaybeContentType = ar_http_util:get_tx_content_type(TX),
+	case {MaybeContentType, Path} of
+		{{valid, ?MANIFEST_CONTENT_TYPE}, <<>>} ->
 			serve_manifest(TX, Req);
-		{?MANIFEST_CONTENT_TYPE, _} ->
+		{{valid, ?MANIFEST_CONTENT_TYPE}, _} ->
 			serve_manifest_path(TX, Path, Fallback, Req, Env);
-		{_, <<>>} ->
+		{{valid, ContentType}, <<>>} ->
 			serve_plain_tx(TX, ContentType, Req);
+		{none, <<>>} ->
+			serve_plain_tx(TX, <<"text/html">>, Req);
 		_ ->
 			other_request(Req, Env)
 	end.
@@ -353,12 +351,15 @@ serve_manifest_path_2(Hash, Req) ->
 
 serve_manifest_path_3(SubFilename, Req) ->
 	SubTX = ar_storage:read_tx_file(SubFilename),
-	ContentType =
-		case lists:keyfind(<<"Content-Type">>, 1, SubTX#tx.tags) of
-			{<<"Content-Type">>, V} -> V;
-			false -> <<"text/html">>
-		end,
-	serve_plain_tx(SubTX, ContentType, Req).
+	MaybeContentType = ar_http_util:get_tx_content_type(SubTX),
+	case MaybeContentType of
+		{valid, ContentType} ->
+			serve_plain_tx(SubTX, ContentType, Req);
+		none ->
+			serve_plain_tx(SubTX, <<"text/html">>, Req);
+		invalid ->
+			misdirected_request(Req)
+	end.
 
 serve_plain_tx(TX, ContentType, Req) ->
 	Headers = #{ <<"content-type">> => ContentType },
