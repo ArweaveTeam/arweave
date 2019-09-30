@@ -55,6 +55,7 @@
 		ar_multiple_txs_per_wallet_tests,
 		ar_tx_perpetual_storage_tests,
 		ar_difficulty_tests,
+		ar_gateway_middleware_tests,
 		ar_randomx_mining_tests,
 		% ar_meta_db must be the last in the list since it resets global configuraiton
 		ar_meta_db

@@ -4,7 +4,7 @@
 -export([tx_to_json_struct/1, json_struct_to_tx/1]).
 -export([wallet_list_to_json_struct/1, json_struct_to_wallet_list/1]).
 -export([hash_list_to_json_struct/1, json_struct_to_hash_list/1]).
--export([jsonify/1, dejsonify/1, json_decode/1]).
+-export([jsonify/1, dejsonify/1, json_decode/1, json_decode/2]).
 -export([query_to_json_struct/1, json_struct_to_query/1]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -19,16 +19,25 @@ jsonify(JSONStruct) ->
 %% @doc Decode JSON string into a JSON struct.
 %% @deprecated In favor of json_decode/1
 dejsonify(JSON) ->
-	jiffy:decode(JSON).
+	case json_decode(JSON) of
+		{ok, V} -> V;
+		{error, Reason} -> throw({error, Reason})
+	end.
 
 json_decode(JSON) ->
-	case catch jiffy:decode(JSON) of
-		{'EXIT', Reason} ->
-			{error, Reason};
-		{error, Reason} ->
-			{error, Reason};
-		JiffyStruct ->
-			{ok, JiffyStruct}
+	json_decode(JSON, []).
+
+json_decode(JSON, Opts) ->
+	ReturnMaps = proplists:get_bool(return_maps, Opts),
+	JiffyOpts =
+		case ReturnMaps of
+			true -> [return_maps];
+			false -> []
+		end,
+	try
+		{ok, jiffy:decode(JSON, JiffyOpts)}
+	catch
+		{error, Reason} -> {error, Reason}
 	end.
 
 %% @doc Convert a block record into a JSON struct.
