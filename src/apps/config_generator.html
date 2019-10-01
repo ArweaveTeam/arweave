@@ -14,6 +14,10 @@
         val: (v) => v.match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/),
         err: 'Must be a valid IP address'
       },
+      ipList: {
+        val: (v) => !v.split(' ').map(v => v.match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/)).filter(v => !v).length,
+        err: 'Must be a valid IP address or list of IP addresses'
+      },
       address: {
         val: (v) => true, // TODO: add validator
         err: 'Must be a valid arweave address'
@@ -26,9 +30,9 @@
 
     const fields = {
       peer: {
-        validate: v.ip,
+        validate: v.ipList,
         name: 'Peer',
-        str: (v) => `peer ${v}`,
+        str: (v) => v.split(' ').map(v => `peer ${v}`).join(' '),
         required: true
       },
       mine: {
@@ -193,7 +197,7 @@
 
   <div class="page">
     <h1>Configuration Generator</h1>
-    <h4><i>Last updated for: Arweave.N.1.5-RC-1</i></h4>
+    <h4><i>Release: 28</i></h4>
 
     <p>
       This page allows you to visually generate a launch command for the
@@ -222,7 +226,7 @@
               <b>Trusted peer</b>
             </td>
             <td>
-              <input id="peer" validate="//" required placeholder="aaa.bbb.ccc.ddd" />
+              <input id="peer" validate="//" required placeholder="aaa.bbb.ccc.ddd..." />
             </td>
             <td>
               The trusted peer to join the Arweave network on (these will be used to initially download the blockchain)
