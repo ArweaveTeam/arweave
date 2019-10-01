@@ -25,6 +25,10 @@
       number: {
         val: (v) => v.match(/^\d+$/),
         err: 'Must be a valid number'
+      },
+      string: {
+        val: (v) => v,
+        err: 'Must be a string'
       }
     }
 
@@ -63,6 +67,16 @@
         validate: v.number,
         str: (v) => v ? `disk_space ${v}` : null,
         name: 'Maximum diskspace usage'
+      },
+      enable: {
+        validate: v.string,
+        name: 'Enable features',
+        str: (v) => v ? v.split(' ').map(v => `enable ${v}`).join(' ') : ''
+      },
+      disable: {
+        validate: v.string,
+        name: 'Disable features',
+        str: (v) => v ? v.split(' ').map(v => `disable ${v}`).join(' ') : ''
       }
     }
 
@@ -307,6 +321,28 @@
           </tr>
           <tr>
             <td class="subsection" colspan="3"><i>Feature flags</i></td>
+          </tr>
+          <tr>
+            <td>
+              <b>Enable features</b>
+            </td>
+            <td>
+              <input type="text" id="enable" placeholder="feature1 feature2..." />
+            </td>
+            <td>
+              Enable those features on the node.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Disable features</b>
+            </td>
+            <td>
+              <input type="text" id="disable" placeholder="feature1 feature2..." />
+            </td>
+            <td>
+              Disable those features on the node.
+            </td>
           </tr>
         </tbody>
       </table>
