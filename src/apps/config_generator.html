@@ -15,7 +15,7 @@
         err: 'Must be a valid IP address'
       },
       ipList: {
-        val: (v) => !v.split(' ').map(v => v.match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/)).filter(v => !v).length,
+        val: (v) => !v.split(' ').map(v => v.match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:?[0-9]{0,5}$/)).filter(v => !v).length,
         err: 'Must be a valid IP address or list of IP addresses'
       },
       address: {
