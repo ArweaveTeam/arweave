@@ -22,6 +22,7 @@ ERL_OPTS := -pa ebin/ \
 	-pa lib/prometheus/ebin \
 	-pa lib/accept/ebin \
 	-pa lib/graphql/ebin \
+	-pa lib/sqlite3/ebin \
 	-pa lib/prometheus_process_collector/ebin \
 	-pa lib/prometheus_httpd/ebin \
 	-pa lib/prometheus_cowboy/ebin \
@@ -77,13 +78,16 @@ build-randomx:
 	make -C lib/RandomX
 	make -C c_src
 
+build-sqlite3:
+	(cd lib/sqlite3 && ./rebar compile)
+
 gitmodules:
 	git submodule foreach 'git remote prune origin' && git submodule sync && git submodule update --init
 
-compile_prod: build-randomx
+compile_prod: build-randomx build-sqlite3
 	./rebar3 compile --deps_only
 
-compile_test: build-randomx
+compile_test: build-randomx build-sqlite3
 	./rebar3 as test compile --deps_only
 
 build: gitmodules compile_prod build_arweave
@@ -137,6 +141,7 @@ clean:
 	rm -rf lib/*/.rebar3
 	rm -rf lib/RandomX/obj lib/RandomX/bin
 	(cd lib/jiffy && make clean)
+	(cd lib/sqlite3 && make clean)
 	rm -f lib/prometheus/ebin/prometheus.app
 	rm -f lib/accept/ebin/accept.app
 	rm -f lib/prometheus_process_collector/ebin/prometheus_process_collector.app

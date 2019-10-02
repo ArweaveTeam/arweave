@@ -1,7 +1,7 @@
 #!/bin/bash
 echo "-----INSTALLING DEPENDENCIES-----"
 sudo apt-get update
-sudo apt-get install -y gcc make build-essential autoconf m4 libncurses5-dev libssh-dev unixodbc-dev openjdk-8-jdk libwxgtk3.0-dev xsltproc fop
+sudo apt-get install -y gcc make build-essential autoconf m4 libncurses5-dev libssh-dev unixodbc-dev openjdk-8-jdk libwxgtk3.0-dev xsltproc fop libsqlite3-dev
 wget http://www.erlang.org/download/otp_src_21.3.tar.gz
 if [ `shasum -a 256 otp_src_21.3.tar.gz | awk {'print $1'}` != 69a743c4f23b2243e06170b1937558122142e47c8ebe652be143199bfafad6e4 ]; then
 	echo 'Integrity check failed for otp_src_21.3.tar.gz. Remove the file and try to download it from another source.'
