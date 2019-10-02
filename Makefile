@@ -84,7 +84,7 @@ compile_prod: build-randomx
 	./rebar3 compile --deps_only
 
 compile_test: build-randomx
-	./rebar3 as test compile
+	./rebar3 as test compile --deps_only
 
 build: gitmodules compile_prod build_arweave
 
