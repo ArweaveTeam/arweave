@@ -63,6 +63,7 @@ do_join(Node, RawPeers, NewB) ->
 				]
 			),
 			ar_miner_log:joining(),
+			ar_sqlite3:populate_db(NewB#block.hash_list),
 			ar_randomx_state:init(NewB#block.hash_list, Peers),
 			BlockTXPairs = get_block_and_trail(Peers, NewB, NewB#block.hash_list),
 			Node ! {

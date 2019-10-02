@@ -2,11 +2,13 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-put_get_key_test() ->
-	{K, W} = init_kqw(),
-	{ok, _Q, W} = app_ipfs_daemon_server:get_key_q_wallet(K),
-	app_ipfs_daemon_server:del_key(K),
-	ok.
+put_get_key_test_() ->
+	{timeout, 60, fun() ->
+		{K, W} = init_kqw(),
+		{ok, _Q, W} = app_ipfs_daemon_server:get_key_q_wallet(K),
+		app_ipfs_daemon_server:del_key(K),
+		ok
+	end}.
 
 all_ok_test() ->
 	{timeout, 60, fun() ->
@@ -48,6 +50,9 @@ ignore_second_test_() ->
 %%% Private
 
 init_kqw() ->
+	TXIndexDir = filename:join(ar_meta_db:get(data_dir), ?TX_INDEX_DIR),
+	ok = application:set_env(mnesia, dir, TXIndexDir),
+	application:start(mnesia),
 	app_ipfs_daemon_server:start(),
 	W = ar_wallet:new(),
 	K = <<"api_key_for_test">>,

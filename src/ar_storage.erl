@@ -146,7 +146,7 @@ write_full_block(BShadow, TXs) ->
 	),
 	write_tx(ScannedTXs),
 	write_block(BShadow),
-	ar_tx_search:update_tag_table(BShadow#block{ txs = ScannedTXs }),
+	ar_sqlite3:insert_full_block(BShadow#block{ txs = ScannedTXs }),
 	app_ipfs:maybe_ipfs_add_txs(ScannedTXs).
 
 %% @doc Write an encrypted	block (with the hash.json as the filename) to disk.

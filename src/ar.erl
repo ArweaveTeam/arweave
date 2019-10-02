@@ -285,6 +285,8 @@ start(
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
+	TXIndexDir = filename:join(ar_meta_db:get(data_dir), ?TX_INDEX_DIR),
+	ok = application:set_env(mnesia, dir, TXIndexDir),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -306,7 +308,7 @@ start(
 	ar_tx_db:start(),
 	ar_key_db:start(),
 	ar_miner_log:start(),
-	ar_tx_search:start(),
+	{ok, _} = ar_sqlite3_sup:start_link([{data_dir, DataDir}]),
 	ar_storage:start_update_used_space(),
 	%% Determine the mining address.
 	case {Addr, LoadKey, NewKey} of
@@ -441,7 +443,12 @@ start(
 	end,
 	case IPFSImport of
 		false -> ok;
-		true  -> app_ipfs_daemon_server:start()
+		true  ->
+			%% Append / to create a directory
+			ok = filelib:ensure_dir(TXIndexDir ++ "/"),
+			%% Still used by app_ipfs_daemon_server
+			ok = application:start(mnesia),
+			app_ipfs_daemon_server:start()
 	end,
 	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
 	case Pause of

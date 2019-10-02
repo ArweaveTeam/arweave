@@ -212,6 +212,8 @@
 -define(WALLET_LIST_DIR, "wallet_lists").
 %% @doc Directory for storing transaction index.
 -define(TX_INDEX_DIR, "data/mnesia").
+%% @doc Directory for storing the ArQL v2 index.
+-define(SQLITE3_DIR, "data/sqlite3").
 
 %% @doc Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).

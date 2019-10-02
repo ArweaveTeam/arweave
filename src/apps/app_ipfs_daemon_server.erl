@@ -39,10 +39,11 @@
 
 %% @doc Start anything that needs to be started.  So far, just the mnesia table.
 start() ->
-	%% assume mnesia already started (used in ar_tx_search)
+	%% assume mnesia already started
 	mnesia_create_table(ipfsar_key_q_wal,   set, record_info(fields, ipfsar_key_q_wal)),
 	mnesia_create_table(ipfsar_ipfs_status, bag, record_info(fields, ipfsar_ipfs_status)),
 	mnesia_create_table(ipfsar_most_recent, set, record_info(fields, ipfsar_most_recent)),
+	ok = mnesia:wait_for_tables([ipfsar_key_q_wal, ipfsar_ipfs_status, ipfsar_most_recent], 6000),
 	spawn(?MODULE, cleaner_upper, []).
 
 %% @doc Stop all the queues.
@@ -217,11 +218,11 @@ process_request(<<"GET">>, [_APIKey, <<"balance">>], [Wallet], Req) ->
 	JsonB = ar_serialize:jsonify(JsonS),
 	{200, #{}, JsonB, Req};
 process_request(<<"GET">>, [IPFSHash], [], Req) ->
-	case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
+	case ar_sqlite3:select_txs_by([{tags, [{<<"IPFS-Add">>, IPFSHash}]}]) of
 		[]  ->
 			{404, #{}, <<"IPFS hash not found.">>, Req};
-		[TXID|_] ->
-			case ar_storage:lookup_tx_filename(TXID) of
+		[#{ id := TXHash }|_] ->
+			case ar_storage:lookup_tx_filename(ar_util:decode(TXHash)) of
 				unavailable ->
 					{404, #{}, <<"IPFS hash not found.">>, Req};
 				Filename ->
@@ -234,10 +235,10 @@ process_request(<<"GET">>, [APIKey, IPFSHash, <<"tx">>], [], Req) ->
 		[] ->
 			{404, #{}, <<"IPFS hash not found.">>, Req};
 		[[_, mined]|_] ->
-			case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
+			case ar_sqlite3:select_txs_by([{tags, [{<<"IPFS-Add">>, IPFSHash}]}]) of
 				[]  -> {404, #{}, <<"IPFS hash not found.">>, Req};
-				TXs ->
-					TXEs = lists:map(fun ar_util:encode/1, TXs),
+				TXMaps ->
+					TXEs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
 					{200, #{}, ar_serialize:jsonify(TXEs), Req}
 			end;
 		[[T,S]|_] ->
@@ -289,7 +290,7 @@ all_fields(KVs, Keys) ->
 %% n.b.: just checks whether the hash has been mined into a tx, likelihood
 %% of separate users uploading the same hash is low.
 already_reported(APIKey, IPFSHash) ->
-	%% case ar_tx_search:get_entries(<<"IPFS-Add">>, IPFSHash) of
+	%% case ar_sqlite3:select_txs_by([{tags, [{<<"IPFS-Add">>, IPFSHash}]}]) of
 	case queued_status_hash(APIKey, IPFSHash) of
 		[] -> {ok, new_hash};
 		_  -> {error, already_reported}
@@ -330,7 +331,7 @@ ipfs_getter(APIKey, Queue, Wallet, IPFSHash) ->
 			case ?MODULE:sufficient_funds(Wallet, byte_size(Data)) of
 				ok ->
 					app_queue:add(maybe_restart_queue(APIKey, Queue, Wallet), UnsignedTX),
-					%% tx will be added to ar_tx_search db after being mined into a block.
+					%% tx will be added to ar_sqlite3 db after being mined into a block.
 					queued;
 				{error, _} ->
 					nofunds
@@ -358,7 +359,7 @@ current_status(APIKey) ->
 	end.
 
 hash_mined(Hash) ->
-	case ar_tx_search:get_entries(<<"IPFS-Add">>, Hash) of
+	case ar_sqlite3:select_txs_by([{tags, [{<<"IPFS-Add">>, Hash}]}]) of
 		[] -> false;
 		_  -> true
 	end.
