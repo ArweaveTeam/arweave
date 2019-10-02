@@ -701,7 +701,7 @@ handle(_SPid, {set_reward_addr, Addr}) ->
 	{task, {set_reward_addr, Addr}};
 handle(_SPid, {set_xfer_speed, Speed}) ->
 	{task, {set_xfer_speed, Speed}};
-handle(SPid, {work_complete, BH, MinedTXs, _Hash, Diff, Nonce, Timestamp}) ->
+handle(SPid, {work_complete, BH, MinedTXs, _Hash, Diff, Nonce, Timestamp, _}) ->
 	% The miner thinks it has found a new block.
 	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
 	case HashList of
