@@ -1,0 +1,371 @@
+<!doctype html>
+<html>
+
+<head lang="en">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>Arweave Miner Configuration Generator</title>
+
+  <script>
+    const id = document.getElementById.bind(document)
+
+    const v = {
+      ip: {
+        val: (v) => v.match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/),
+        err: 'Must be a valid IP address'
+      },
+      ipList: {
+        val: (v) => !v.split(' ').map(v => v.match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:?[0-9]{0,5}$/)).filter(v => !v).length,
+        err: 'Must be a valid IP address or list of IP addresses'
+      },
+      address: {
+        val: (v) => true, // TODO: add validator
+        err: 'Must be a valid arweave address'
+      },
+      number: {
+        val: (v) => v.match(/^\d+$/),
+        err: 'Must be a valid number'
+      },
+      string: {
+        val: (v) => v,
+        err: 'Must be a string'
+      }
+    }
+
+    const fields = {
+      peer: {
+        validate: v.ipList,
+        name: 'Peer',
+        str: (v) => v.split(' ').map(v => `peer ${v}`).join(' '),
+        required: true
+      },
+      mine: {
+        isBool: true,
+        str: (v) => v ? 'mine' : null,
+        name: 'Mine'
+      },
+      mining_addr: {
+        validate: v.address,
+        str: (v) => v ? `mining_addr ${v}` : null,
+        name: 'Reward Address'
+      },
+      polling: {
+        isBool: true,
+        str: (v) => v ? 'polling' : null,
+        name: 'Polling'
+      },
+      autoupdate: {
+        isBool: true,
+        str: (v) => v ? 'auto_update 8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4' : 'auto_update false'
+      },
+      miners: {
+        validate: v.number,
+        str: (v) => v ? `max_miners ${v}` : null,
+        name: 'Maximum miners'
+      },
+      disk_usage: {
+        validate: v.number,
+        str: (v) => v ? `disk_space ${v}` : null,
+        name: 'Maximum diskspace usage'
+      },
+      enable: {
+        validate: v.string,
+        name: 'Enable features',
+        str: (v) => v ? v.split(' ').map(v => `enable ${v}`).join(' ') : ''
+      },
+      disable: {
+        validate: v.string,
+        name: 'Disable features',
+        str: (v) => v ? v.split(' ').map(v => `disable ${v}`).join(' ') : ''
+      }
+    }
+
+    function generateCommand() {
+      let output = "./arweave-server "
+
+      let cmd = []
+
+      const setError = (err) => {
+        id('error').innerHTML = err
+        id('error').style.display = 'inline-block'
+        id('output').innerHTML = '<i>Command will appear here once the errors are fixed</i>'
+      }
+
+      for (const field in fields) {
+        const {validate, required, isBool, str, name} = fields[field]
+
+        if (isBool) {
+          cmd.push(str(id(field).checked))
+        } else {
+          const val = id(field).value
+          if (!val && required) {
+            return setError(` ❌ Field ${name} is required but empty!`)
+          }
+          if (val) {
+            if (!validate.val(val)) {
+              return setError(` ❌ Field ${name} is invalid: ${validate.err}!`)
+            }
+          }
+          cmd.push(str(val))
+        }
+      }
+
+      id('error').innerHTML = ''
+      id('error').style.display = 'none'
+
+      // Place it in the output box
+      id('output').innerHTML = output + cmd.filter(Boolean).join(' ')
+    }
+
+    function docReady(fn) {
+      // see if DOM is already available
+      if (document.readyState === "complete" || document.readyState === "interactive") {
+        // call on next available tick
+        setTimeout(fn, 1);
+      } else {
+        document.addEventListener("DOMContentLoaded", fn);
+      }
+    }
+
+    docReady(() => {
+      let i = 0
+      let list = document.getElementsByTagName('input')
+      while (i < list.length) {
+        list[i].onchange = generateCommand
+        i++
+      }
+
+      generateCommand()
+    })
+  </script>
+
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+    }
+
+    table {
+      margin: 2em;
+    }
+
+    td {
+      margin: .5em;
+    }
+
+    #error {
+      display: none;
+      margin: .5em !important;
+      padding: .5em;
+      margin: 2em;
+      background: rgba(255, 0, 0, .4);
+    }
+
+    #output, tt {
+      font-family: "Consolas", "Courier New", Courier, monospace;
+      background: #efefef;
+      padding: .25em;
+      margin: 1em;
+      margin-left: 2em;
+      border-radius: 40px;
+      display: inline-block;
+    }
+    .subsection {
+      padding: 1em 0 1em 0;
+    }
+
+    .submit {
+      background: rgb(66, 140, 227);
+      color: white;
+      border: none;
+      padding: .5em 1em;
+      border-radius: 4px;
+      transition: .314s;
+      margin-left: 2em;
+    }
+
+    .submit:hover {
+      background: rgb(91, 161, 245);
+      color: rgb(240, 240, 255);
+      border-radius: 4px;
+    }
+
+    header {
+      background: rgb(66, 140, 227);
+      color: white;
+      padding: .24em;
+      font-size: 2em;
+      font-weight: 400;
+    }
+
+    .page {
+      margin: 1.5em;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    Arweave Miner Configuration Generator
+  </header>
+
+  <div class="page">
+    <h1>Configuration Generator</h1>
+    <h4><i>Last updated for: Release 28</i></h4>
+
+    <p>
+      This page allows you to visually generate a launch command for the
+      Arweave miner, customizing all of its optional features.
+    </p>
+
+    <p>
+      The output of this generator can be pasted into a terminal running
+      in the same as the directory as an Arweave installation or stored
+      as a shell script for repeated execution.
+    </p>
+
+    <form>
+      <table>
+        <thead>
+          <td><b>Name</b></td>
+          <td><b>Option</b></td>
+          <td><b>Explanation</b></td>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="subsection" colspan="3"><i>Basic Settings</i></td>
+          </tr>
+          <tr>
+            <td>
+              <b>Trusted peer</b>
+            </td>
+            <td>
+              <input id="peer" validate="//" required placeholder="aaa.bbb.ccc.ddd..." />
+            </td>
+            <td>
+              The trusted peers to join the Arweave network on - these will be used to download the blockchain
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Reward Addr</b>
+            </td>
+            <td>
+              <input id="mining_addr" placeholder="R6bwvBjNGQQWjA..." />
+            </td>
+            <td>
+              The address to send your mining rewards to (default: one will be generated for you)
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b># of miners</b>
+            </td>
+            <td>
+              <input type="number" id="miners" placeholder="4" />
+            </td>
+            <td>
+              How many mining cores to run (if any) on your node (default: the number of CPU threads - 1)
+            </td>
+          </tr>
+          <tr>
+            <td class="subsection" colspan="3"><i>Extended Settings</i></td>
+          </tr>
+          <tr>
+            <td>
+              <b>Enable mining</b>
+            </td>
+            <td>
+              <input type="checkbox" id="mine" checked />
+            </td>
+            <td>
+              Enable mining on your node
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Polling</b>
+            </td>
+            <td>
+              <input type="checkbox" id="polling" />
+            </td>
+            <td>
+              Frequently poll peers to check for new blocks
+              <br>
+              <i>Useful
+                in situations where the node is behind a firewall that
+                does not allow establishing inbound connections</i>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Disk usage</b>
+            </td>
+            <td>
+              <input type="number" id="disk_usage" placeholder="250" />
+            </td>
+            <td>
+              Maximum disk space to use for storing data (in GB)
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Auto-update</b>
+            </td>
+            <td>
+              <input type="checkbox" id="autoupdate" checked />
+            </td>
+            <td>
+              Should the automated node updater be enabled
+            </td>
+          </tr>
+          <tr>
+            <td class="subsection" colspan="3"><i>Feature flags</i></td>
+          </tr>
+          <tr>
+            <td>
+              <b>Enable features</b>
+            </td>
+            <td>
+              <input type="text" id="enable" placeholder="feature1 feature2..." />
+            </td>
+            <td>
+              A space-separated list of custom features to enable
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <b>Disable features</b>
+            </td>
+            <td>
+              <input type="text" id="disable" placeholder="feature1 feature2..." />
+            </td>
+            <td>
+              A space-separated list of custom features to disable
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+    </form>
+
+    <h1>Arweave Launch Command</h1>
+
+    <div class="page">
+      <input class="submit" type="button" onclick="generateCommand()" value="Generate Launch Command" />
+      <span id="error"></span>
+
+      <br>
+
+      <tt id="output">
+        <i>Command will appear here</i>
+      </tt>
+    </div>
+
+    <br>
+    <br>
+    <br>
+  </div>
+</body>
+
+</html>
