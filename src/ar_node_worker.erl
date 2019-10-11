@@ -270,7 +270,6 @@ add_tx_to_mining_pool(StateIn, TX, NewGS) ->
 		txs := TXs,
 		waiting_txs := WaitingTXs
 	} = StateIn,
-	memsup:start_link(),
 	{ok, [
 		{txs, TXs ++ [TX]},
 		{gossip, NewGS},
