@@ -10,6 +10,7 @@ static ErlNifFunc nif_funcs[] = {
 	{"init_light_nif", 3, init_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"hash_fast_nif", 5, hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"hash_light_nif", 5, hash_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"bulk_hash_fast_nif", 7, bulk_hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"release_state_nif", 1, release_state_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND}
 };
 
@@ -283,6 +284,96 @@ static ERL_NIF_TERM hash_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 	return ok_tuple(envPtr, make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE));
 }
 
+static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
+{
+	randomx_vm *vmPtr = NULL;
+	int jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	randomx_flags flags;
+	char hashPtr[RANDOMX_HASH_SIZE];
+	struct state* statePtr;
+	ErlNifBinary nonceBinary, inputData, difficulty;
+	char nonce[RANDOMX_HASH_SIZE];
+	char segment[RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE];
+	int hashesTried;
+
+	if (argc != 7) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &nonceBinary)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (nonceBinary.size != RANDOMX_HASH_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (inputData.size != ARWEAVE_INPUT_DATA_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[3], &difficulty)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (difficulty.size != RANDOMX_HASH_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[6], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+
+	enif_rwlock_rlock(statePtr->lockPtr);
+	if (statePtr->isRandomxReleased != 0) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return error(envPtr, "state has been released");
+	}
+
+	flags = RANDOMX_FLAG_FULL_MEM;
+	if (hardwareAESEnabled) {
+		flags |= RANDOMX_FLAG_HARD_AES;
+	}
+	if (jitEnabled) {
+		flags |= RANDOMX_FLAG_JIT;
+	}
+	if (largePagesEnabled) {
+		flags |= RANDOMX_FLAG_LARGE_PAGES;
+	}
+	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	if (vmPtr == NULL) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return error(envPtr, "randomx_create_vm failed");
+	}
+	memcpy(nonce, nonceBinary.data, RANDOMX_HASH_SIZE);
+	memcpy(segment, nonce, RANDOMX_HASH_SIZE);
+	memcpy(segment + RANDOMX_HASH_SIZE, inputData.data, ARWEAVE_INPUT_DATA_SIZE);
+	for (int i = 0; i < BULK_HASHING_ITERATIONS; i++) {
+		randomx_calculate_hash(vmPtr, segment, RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE, hashPtr);
+		hashesTried = i + 1;
+		if (validate_hash(hashPtr, difficulty.data) > 0) {
+			break;
+		}
+		memcpy(nonce, hashPtr, RANDOMX_HASH_SIZE);
+		memcpy(segment, nonce, RANDOMX_HASH_SIZE);
+		memcpy(segment + RANDOMX_HASH_SIZE, inputData.data, ARWEAVE_INPUT_DATA_SIZE);
+	}
+	randomx_destroy_vm(vmPtr);
+	enif_rwlock_runlock(statePtr->lockPtr);
+	return ok_tuple3(
+		envPtr,
+		make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE),
+		make_output_binary(envPtr, nonce, RANDOMX_HASH_SIZE),
+		enif_make_int(envPtr, hashesTried)
+	);
+}
+
 static ERL_NIF_TERM release_state_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	struct state* statePtr;
@@ -308,6 +399,11 @@ static ERL_NIF_TERM ok_tuple(ErlNifEnv* envPtr, ERL_NIF_TERM term)
 	return enif_make_tuple2(envPtr, enif_make_atom(envPtr, "ok"), term);
 }
 
+static ERL_NIF_TERM ok_tuple3(ErlNifEnv* envPtr, ERL_NIF_TERM term1, ERL_NIF_TERM term2, ERL_NIF_TERM term3)
+{
+	return enif_make_tuple4(envPtr, enif_make_atom(envPtr, "ok"), term1, term2, term3);
+}
+
 static ERL_NIF_TERM error_tuple(ErlNifEnv* envPtr, ERL_NIF_TERM term)
 {
 	return enif_make_tuple2(envPtr, enif_make_atom(envPtr, "error"), term);
@@ -326,4 +422,8 @@ static ERL_NIF_TERM make_output_binary(ErlNifEnv* envPtr, char *dataPtr, size_t 
 	outputTermDataPtr = enif_make_new_binary(envPtr, size, &outputTerm);
 	memcpy(outputTermDataPtr, dataPtr, size);
 	return outputTerm;
+}
+
+static int validate_hash(char hash[RANDOMX_HASH_SIZE], unsigned char difficulty[RANDOMX_HASH_SIZE]) {
+	return memcmp(hash, difficulty, RANDOMX_HASH_SIZE);
 }

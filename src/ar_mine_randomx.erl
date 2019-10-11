@@ -2,6 +2,7 @@
 -on_load(init_nif/0).
 -export([init_fast/2, hash_fast/2, init_light/1, hash_light/2]).
 -export([release_state/1]).
+-export([bulk_hash_fast/4]).
 
 init_fast(Key, Threads) ->
 	{ok, FastState} = init_fast_nif(Key, jit(), large_pages(), Threads),
@@ -11,6 +12,11 @@ hash_fast(FastState, Data) ->
 	{ok, Hash} =
 		hash_fast_nif(FastState, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
+
+bulk_hash_fast(FastState, Nonce, BDS, Diff) ->
+	{ok, Hash, HashNonce, HashesTried} =
+		bulk_hash_fast_nif(FastState, Nonce, BDS, binary:encode_unsigned(Diff, big), jit(), large_pages(), hardware_aes()),
+	{Hash, HashNonce, HashesTried}.
 
 init_light(Key) ->
 	{ok, LightState} = init_light_nif(Key, jit(), large_pages()),
@@ -64,6 +70,9 @@ init_light_nif(_Key, _JIT, _LargePages) ->
 	erlang:nif_error(nif_not_loaded).
 
 hash_fast_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
+	erlang:nif_error(nif_not_loaded).
+
+bulk_hash_fast_nif(_State, _Nonce, _BDS, _Diff, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
 hash_light_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
