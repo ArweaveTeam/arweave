@@ -34,7 +34,7 @@ do_send_new_tx(Peer, TX) ->
 		<<"POST">>,
 		Peer,
 		"/tx",
-		p2p_headers(),
+		p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TX#tx.id)}],
 		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
 		max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
 	).
@@ -89,7 +89,7 @@ send_new_block(Peer, NewB, BDS, {RecallIndepHash, RecallSize, Key, Nonce}) ->
 		<<"POST">>,
 		Peer,
 		"/block",
-		p2p_headers(),
+		p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
 		ar_serialize:jsonify({PostProps}),
 		3 * 1000
 	).

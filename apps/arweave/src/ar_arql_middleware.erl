@@ -14,9 +14,14 @@ execute(Req, Env) ->
 	end.
 
 handle_arql_request_1(Req, Env) ->
-	case bin_to_json(ar_http_req:body(Req)) of
-		{ok, JSON} -> handle_arql_request_2(JSON, Req, Env);
-		error -> use_graphql_handler(Req, Env)
+	case ar_http_req:body(Req) of
+		{ok, Body, Req2} ->
+			case bin_to_json(Body) of
+				{ok, JSON} -> handle_arql_request_2(JSON, Req2, Env);
+				error -> use_graphql_handler(Req2, Env)
+			end;
+		{error, body_size_too_large} ->
+			{stop, cowboy_req:reply(413, #{}, <<"Payload too large">>, Req)}
 	end.
 
 handle_arql_request_2(#{<<"op">> := _}, Req, Env) ->

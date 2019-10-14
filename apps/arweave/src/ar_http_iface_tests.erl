@@ -457,7 +457,7 @@ add_external_block_with_bad_bds_test_() ->
 		),
 		%% Try to post the same block again
 		?assertMatch(
-			{ok, {{<<"208">>, _}, _, <<"Block Data Segment already processed.">>, _, _}},
+			{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
 			send_new_block(RemotePeer, B1, RecallB0)
 		),
 		%% Try to post the same block again, but with a different data segment
