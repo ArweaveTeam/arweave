@@ -1,5 +1,5 @@
 -module(ar_fork_recovery).
--export([start/5]).
+-export([start/6]).
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -25,7 +25,7 @@
 
 %% @doc Start the fork recovery 'catch up' server.
 %% TargetBShadow - a block shadow with the reconstructed hash list.
-start(Peers, TargetBShadow, HashList, Parent, BlockTXPairs) ->
+start(Peers, TrustedPeers, TargetBShadow, HashList, Parent, BlockTXPairs) ->
 	case ?IS_BLOCK(TargetBShadow) of
 		true ->
 			ar:info(
@@ -33,7 +33,8 @@ start(Peers, TargetBShadow, HashList, Parent, BlockTXPairs) ->
 					{started_fork_recovery_proc, Parent},
 					{block, ar_util:encode(TargetBShadow#block.indep_hash)},
 					{target_height, TargetBShadow#block.height},
-					{top_peers, lists:sublist(Peers, 5)}
+					{top_peers, lists:sublist(Peers, 5)},
+					{top_trusted_peers, lists:sublist(TrustedPeers, 5)}
 				]
 			),
 			% Ensures that the block is within the recovery range and is has
@@ -60,7 +61,7 @@ start(Peers, TargetBShadow, HashList, Parent, BlockTXPairs) ->
 										target_block = TargetB,
 										recovery_hash_list =
 											[TargetB#block.indep_hash|TargetB#block.hash_list],
-										block_txs_pairs = get_block_txs_pairs(BlockTXPairs, BlockList)
+										block_txs_pairs = get_block_txs_pairs(BlockTXPairs, BlockList, TrustedPeers)
 									}
 								)
 							end
@@ -92,7 +93,7 @@ start(Peers, TargetBShadow, HashList, Parent, BlockTXPairs) ->
 drop_until_diverge([X | R1], [X | R2]) -> drop_until_diverge(R1, R2);
 drop_until_diverge(R1, _) -> R1.
 
-get_block_txs_pairs(BlockTXPairs, BHL) ->
+get_block_txs_pairs(BlockTXPairs, BHL, TrustedPeers) ->
 	CutBlockTXPairs = cut_block_txs_pairs(BlockTXPairs, hd(BHL)),
 	case {length(BHL), length(CutBlockTXPairs)} of
 		{L, _} when L =< ?MAX_TX_ANCHOR_DEPTH ->
@@ -104,7 +105,7 @@ get_block_txs_pairs(BlockTXPairs, BHL) ->
 			lists:map(
 				fun(Depth) ->
 					BH = lists:nth(Depth, BHL),
-					B = ar_storage:read_block(BH, BHL),
+					B = read_or_fetch_block(BH, BHL, TrustedPeers),
 					{BH, B#block.txs}
 				end,
 				lists:seq(L + 1, ?MAX_TX_ANCHOR_DEPTH)
@@ -117,6 +118,14 @@ cut_block_txs_pairs([], _) ->
 	[];
 cut_block_txs_pairs([_ | Rest], BH) ->
 	cut_block_txs_pairs(Rest, BH).
+
+read_or_fetch_block(BH, BHL, TrustedPeers) ->
+	case ar_storage:read_block(BH, BHL) of
+		unavailable ->
+			ar_node_utils:get_full_block(TrustedPeers, BH, BHL);
+		B ->
+			B
+	end.
 
 %% @doc Subtract the second list from the first. If the first list
 %% is not a superset of the second, return the empty list

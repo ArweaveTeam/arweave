@@ -464,6 +464,7 @@ fork_recover(#{ node := Node, hash_list := HashList, block_txs_pairs := BlockTXP
 				process,
 				PID = ar_fork_recovery:start(
 					PrioritisedPeers,
+					maps:get(trusted_peers, StateIn),
 					NewB,
 					HashList,
 					Node,
