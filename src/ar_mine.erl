@@ -27,7 +27,8 @@
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start (ar.hrl)
 	miners = [], % miner worker processes
 	bds_pieces = not_generated, % a list of binary components of block data segment, stored for quick updates
-	total_hashes_tried = 0
+	total_hashes_tried = 0,
+	started_at = not_set
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
@@ -55,7 +56,8 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent, BlockTXPairs
 			max_miners = ar_meta_db:get(max_miners),
 			diff = NewDiff,
 			auto_update_diff = AutoUpdateDiff,
-			block_txs_pairs = BlockTXPairs
+			block_txs_pairs = BlockTXPairs,
+			started_at = erlang:timestamp()
 		},
 		RawTXs
 	).
@@ -266,13 +268,15 @@ server(
 		parent = Parent,
 		miners = Miners,
 		current_block = #block { indep_hash = CurrentBH },
-		total_hashes_tried = TotalHashesTried
+		total_hashes_tried = TotalHashesTried,
+		started_at = StartedAt
 	}
 ) ->
 	receive
 		% Stop the mining process and all the workers.
 		stop ->
 			stop_miners(Miners),
+			log_performance(TotalHashesTried, StartedAt),
 			ok;
 		%% The block timestamp must be reasonable fresh since it's going to be
 		%% validated on the remote nodes when it's propagated to them. Only blocks
@@ -286,8 +290,13 @@ server(
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce, MinedTXs, MinedDiff, MinedTimestamp} ->
 			Parent ! {work_complete, CurrentBH, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp, TotalHashesTried},
+			log_performance(TotalHashesTried, StartedAt),
 			stop_miners(Miners)
 	end.
+
+log_performance(TotalHashesTried, StartedAt) ->
+	Time = timer:now_diff(erlang:timestamp(), StartedAt),
+	ar:info([ar_mine, stopping_miner, {miner_hashes_per_second, TotalHashesTried / (Time / 1000000)}]).
 
 %% @doc Start the workers and return the new state.
 start_miners(S = #state {max_miners = MaxMiners}) ->
