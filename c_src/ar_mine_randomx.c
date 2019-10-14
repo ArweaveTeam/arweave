@@ -19,11 +19,7 @@ static int load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info)
 {
 	int flags = ERL_NIF_RT_CREATE;
 	stateType = enif_open_resource_type(envPtr, NULL, "state", state_dtor, flags, NULL);
-	if (stateType == NULL) {
-		return 1;
-	} else {
-		return 0;
-	}
+	return stateType != NULL;
 }
 
 static void state_dtor(ErlNifEnv* envPtr, void* objPtr)
