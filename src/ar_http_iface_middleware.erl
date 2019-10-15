@@ -763,7 +763,7 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 	end.
 
 handle_post_tx(TX) ->
-	ar_tx_db:log(TX#tx.id, {?MODULE, {received_tx, TX}}),
+	ar_tx_db:log(TX#tx.id, {?MODULE, {received_tx, TX#tx{ data = <<>> }}}),
 	Node = whereis(http_entrypoint_node),
 	MempoolTXs = ar_node:get_all_known_txs(Node),
 	Height = ar_node:get_height(Node),
