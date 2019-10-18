@@ -153,11 +153,7 @@ static boolean init_dataset(randomx_dataset *datasetPtr, randomx_cache *cachePtr
 		workerPtr->datasetPtr = datasetPtr;
 
 		workerPtr->datasetInitStartItem = startItem;
-		if (i + 1 == numWorkers) {
-			workerPtr->datasetInitItemCount = itemsPerThread + itemsRemainder;
-		} else {
-			workerPtr->datasetInitItemCount = itemsPerThread;
-		}
+		workerPtr->datasetInitItemCount = itemsPerThread + itemsRemainder * (i + 1 == numWorkers);
 		startItem += workerPtr->datasetInitItemCount;
 		workerPtr->optsPtr = enif_thread_opts_create("init_fast_worker");
 		if (0 != enif_thread_create(
