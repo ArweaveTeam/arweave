@@ -46,7 +46,6 @@
 		ar_join,
 		ar_fork_recovery,
 		ar_http_iface_tests,
-		ar_simple_reporter,
 		ar_retarget,
 		ar_block,
 		ar_tx_db,
