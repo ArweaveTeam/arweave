@@ -216,9 +216,9 @@ parse_ndb_blacklist_test() ->
 					binary = <<"BADCONTENT">>
 				}
 		},
-	{Sigs, _} = av_sigs:load(["test/test_sig.ndb"]),
+	{Sigs, _} = av_sigs:load([fixture("test_sig.ndb")]),
 	?assertEqual([ExpectedSig], Sigs),
-	ar_meta_db:put(content_policy_files, ["test/test_sig.ndb"]),
+	ar_meta_db:put(content_policy_files, [fixture("test_sig.ndb")]),
 	ar_firewall:reload(),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<".. BADCONTENT ..">> })),
 	?assertEqual(accept, scan_tx((ar_tx:new())#tx{ data = <<".. B A D C ONTENT ..">> })).
@@ -250,7 +250,7 @@ parse_txt_blacklist_test() ->
 				}
 		}
 	],
-	{Sigs, _} = av_sigs:load(["test/test_sig.txt"]),
+	{Sigs, _} = av_sigs:load([fixture("test_sig.txt")]),
 	lists:foreach(
 		fun(ExpectedSig) ->
 			?assert(
@@ -262,7 +262,7 @@ parse_txt_blacklist_test() ->
 		end,
 		ExpectedSigs
 	),
-	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_meta_db:put(content_policy_files, [fixture("test_sig.txt")]),
 	ar_firewall:reload(),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<".. BADCONTENT1 ..">> })),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ data = <<"..blablaBADCONTENT2 ..">> })),
@@ -273,7 +273,7 @@ iolist_to_string(IOList) ->
 	binary_to_list(iolist_to_binary(IOList)).
 
 blacklist_transaction_test() ->
-	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
+	ar_meta_db:put(transaction_blacklist_files, [fixture("test_transaction_blacklist.txt")]),
 	ar_firewall:reload(),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid1">> })),
 	?assertEqual(reject, scan_tx((ar_tx:new())#tx{ id = <<"badtxid2">> })),
@@ -290,12 +290,12 @@ test_scan_and_clean_disk() ->
 	TagValue = <<"value">>,
 	Tags = [{TagName, TagValue}],
 	%% Blacklist a transaction, write it to disk and add it to the index.
-	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
+	ar_meta_db:put(transaction_blacklist_files, [fixture("test_transaction_blacklist.txt")]),
 	BadTX = (ar_tx:new())#tx{ id = BadTXID, tags = Tags },
 	ar_storage:write_tx(BadTX),
 	?assertEqual(BadTXID, (ar_storage:read_tx(BadTXID))#tx.id),
 	%% Setup a content policy, write a bad tx to disk and add it to the index.
-	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_meta_db:put(content_policy_files, [fixture("test_sig.txt")]),
 	BadTX2 = (ar_tx:new())#tx{ id = BadDataTXID, data = <<"BADCONTENT1">>, tags = Tags },
 	ar_storage:write_tx(BadTX2),
 	?assertEqual(BadDataTXID, (ar_storage:read_tx(BadDataTXID))#tx.id),
@@ -319,3 +319,6 @@ test_scan_and_clean_disk() ->
 	{ok, <<"not a tx">>} = file:read_file(NotTXFile),
 	?assertEqual(unavailable, ar_storage:read_tx(BadTXID)),
 	?assertEqual(unavailable, ar_storage:read_tx(BadDataTXID)).
+
+fixture(Filename) ->
+	filename:dirname(?FILE) ++ "/../test/" ++ Filename.

@@ -4,8 +4,9 @@
 .arweave.plt
 testlog
 apps/arweave/priv/tls
-apps/arweave/priv/jiffy.so
-apps/arweave/priv/prometheus_process_collector.so
+apps/arweave/priv/*.so
 _build
 .rebar3
 apps/arweave/c_src/*.o
+data_test_master
+data_test_slave

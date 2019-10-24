@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+
+PRIV_DIR="$(cd $SCRIPT_DIR/../apps/arweave/priv && pwd -P)"
+
+CERT_FILE="$PRIV_DIR/tls/cert.pem"
+KEY_FILE="$PRIV_DIR/tls/key.pem"
+
+APEX_DOMAIN="${1:-"gateway.localhost"}"
+
+mkdir -p "$PRIV_DIR/tls"
+mkcert -cert-file "$CERT_FILE" \
+       -key-file "$KEY_FILE" \
+       "$APEX_DOMAIN" "*.$APEX_DOMAIN"

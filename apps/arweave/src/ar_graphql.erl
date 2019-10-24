@@ -4,7 +4,9 @@
 -export([load_schema/0]).
 
 load_schema() ->
-	{ok, SchemaData} = file:read_file("priv/schema.graphql"),
+	PrivDir = code:priv_dir(arweave),
+	Filename = filename:join([PrivDir, "schema.graphql"]),
+	{ok, SchemaData} = file:read_file(Filename),
 	Mapping = mapping_rules(),
 	ok = graphql:load_schema(Mapping, SchemaData),
 	ok = setup_root(),

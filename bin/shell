@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+cd "$SCRIPT_DIR/.."
+
+./rebar3 as test compile
+
+if [ `uname -s` == "Darwin" ]; then
+    RANDOMX_JIT="disable randomx_jit"
+else
+    RANDOMX_JIT=
+fi
+
+export ERL_EPMD_ADDRESS=127.0.0.1
+
+ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/arweave/test -config config/sys.config"
+
+erl $ERL_TEST_OPTS -noshell -name slave@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT port 1983 data_dir data_test_slave > /dev/null 2>&1 &
+erl $ERL_TEST_OPTS -name master@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT data_dir data_test_master
+kill 0

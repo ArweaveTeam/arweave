@@ -636,7 +636,7 @@ mine_illicit_tx_test() ->
 	FilteredTX = ar_tx:new(<<"BADCONTENT1">>),
 	ar_node:add_tx(Node, FilteredTX),
 	timer:sleep(500),
-	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_meta_db:put(content_policy_files, [filename:dirname(?FILE) ++ "/../test/test_sig.txt"]),
 	ar_firewall:reload(),
 	ar_node:mine(Node),
 	timer:sleep(500),

@@ -1,8 +1,0 @@
-*.beam
-*.log
-*.dat
-*.json
-blocks/*
-ebin/*
-logs/*
-.arweave.plt

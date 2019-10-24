@@ -49,7 +49,7 @@ height_plus_one_fork_recovery_test() ->
 	ar_test_node:assert_slave_wait_until_receives_txs(SlaveNode, [TX]),
 	ar_test_node:assert_wait_until_receives_txs(MasterNode, [TX]),
 	%% Now ban the TX on master.
-	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
+	ar_meta_db:put(content_policy_files, [filename:dirname(?FILE) ++ "/test_sig.txt"]),
 	ar_firewall:reload(),
 	%% Turn the gossip back on and mine a block on slave.
 	ar_test_node:slave_gossip(on, SlaveNode),

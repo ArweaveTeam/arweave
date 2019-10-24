@@ -93,13 +93,14 @@ start_http_gateway_listener(off) ->
 	ok.
 
 start_https_gateway_listener({on, Domain, CustomDomains}) ->
+	PrivDir = code:priv_dir(arweave),
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	HttpIfaceEnv = #{ dispatch => Dispatch },
 	SniHosts = derive_sni_hosts(CustomDomains),
 	TransportOpts = [
 		{port, 443},
-		{certfile, "priv/tls/cert.pem"},
-		{keyfile, "priv/tls/key.pem"},
+		{certfile, filename:join([PrivDir, "tls/cert.pem"])},
+		{keyfile, filename:join([PrivDir, "tls/key.pem"])},
 		{sni_hosts, SniHosts}
 	] ++ cacertfile_when_present(),
 	ProtocolOpts = protocol_opts([{http_iface, HttpIfaceEnv}, {gateway, Domain, CustomDomains}]),
@@ -137,11 +138,12 @@ protocol_opts(List) ->
 	Opts2.
 
 derive_sni_hosts(Domains) ->
+	PrivDir = code:priv_dir(arweave),
 	lists:map(fun(Domain) ->
 		SDomain = binary_to_list(Domain),
 		{SDomain, [
-			{certfile, "priv/tls/" ++ SDomain ++ "/cert.pem"},
-			{keyfile, "priv/tls/" ++ SDomain ++ "/key.pem"}
+			{certfile, filename:join([PrivDir, "tls", SDomain, "cert.pem"])},
+			{keyfile, filename:join([PrivDir, "tls", SDomain, "key.pem"])}
 		] ++ cacertfile_when_present(SDomain)}
 	end, Domains).
 
@@ -149,11 +151,12 @@ cacertfile_when_present() ->
 	cacertfile_when_present(apex_domain).
 
 cacertfile_when_present(Domain) ->
+	PrivDir = code:priv_dir(arweave),
 	Filename = case Domain of
 		apex_domain ->
-			"priv/tls/cacert.pem";
+			filename:join([PrivDir, "tls/cacert.pem"]);
 		CustomDomain ->
-			"priv/tls/" ++ CustomDomain ++ "/cacert.pem"
+			filename:join([PrivDir, "tls", CustomDomain, "cacert.pem"])
 	end,
 	case filelib:is_file(Filename) of
 		true ->

@@ -4,7 +4,7 @@
 
 -module(ar).
 
--export([main/0, main/1, start/0, start/1, rebuild/0]).
+-export([main/0, main/1, start/0, start/1]).
 -export([tests/0, tests/1, tests/2]).
 -export([test_ipfs/0]).
 -export([test_with_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
@@ -270,6 +270,7 @@ start(
 		webhooks = WebhookConfigs
 	}) ->
 	%% Start the logging system.
+	filelib:ensure_dir(?LOG_DIR ++ "/"),
 	error_logger:logfile({open, Filename = generate_logfile_name()}),
 	error_logger:tty(false),
 	warn_if_single_scheduler(),
@@ -298,12 +299,6 @@ start(
 	ar_storage:start(),
 	%% Optionally clear the block cache.
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
-	%% Register prometheus stats collector.
-	application:set_env(prometheus, cowboy_instrumenter, [
-		{request_labels, [http_method, route, reason, status_class]},
-		{error_labels, [http_method, route, reason, error]},
-		{labels_module, ar_prometheus_cowboy_labels}
-	]),
 	ok = application:ensure_started(prometheus),
 	{ok, _} = application:ensure_all_started(prometheus_cowboy),
 	prometheus_registry:register_collector(prometheus_process_collector),
@@ -463,7 +458,7 @@ gateway_opts(not_set, _) ->
 	off.
 
 start_graphql() ->
-	ok = application:start(graphql),
+	ok = application:ensure_started(graphql),
 	ok = ar_graphql:load_schema(),
 	ok.
 
@@ -478,9 +473,9 @@ generate_logfile_name() ->
 	).
 
 maybe_node_postfix() ->
-	case init:get_argument(sname) of
-		{ok, [[Sname]]} ->
-			"-" ++ Sname;
+	case init:get_argument(name) of
+		{ok, [[Name]]} ->
+			"-" ++ Name;
 		_ ->
 			""
 	end.
@@ -494,22 +489,6 @@ warn_if_single_scheduler() ->
 			console("WARNING: Running only one CPU core / Erlang scheduler may cause issues");
 		_ ->
 			ok
-	end.
-
-%% @doc Run the erlang make system on the project.
-rebuild() ->
-	io:format("Rebuilding Arweave...~n"),
-	MakeOptions = [
-		load,
-		{d, 'TARGET_TIME', ?TARGET_TIME},
-		{d, 'RETARGET_BLOCKS', ?RETARGET_BLOCKS}
-	] ++ fixed_diff_option() ++ fixed_delay_option(),
-	case make:all(MakeOptions) of
-		error ->
-			io:format("~nBuild failed!~n"),
-			init:stop(1);
-		up_to_date ->
-			io:format("~nBuild complete!~n")
 	end.
 
 -ifdef(FIXED_DIFF).

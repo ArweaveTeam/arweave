@@ -1,0 +1,17 @@
+{application, arweave, [
+	{description, "Arweave"},
+	{vsn, "1.9.0.0"},
+	{applications, [
+		kernel,
+		stdlib,
+		os_mon,
+		base64url,
+		jiffy,
+		fusco,
+		cowboy,
+		graphql,
+		prometheus,
+		prometheus_process_collector,
+		prometheus_cowboy
+	]}
+]}.

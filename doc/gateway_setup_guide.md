@@ -4,13 +4,13 @@
 
 Assuming the gateway will run under the domain name `gateway.example`, you will need to acquire a  certificate valid for both `gateway.example` and the wildcard `*.gateway.example`. This certificate's files should be installed at the following location:
 
-- `priv/tls/cert.pem` for the certificate file
-- `priv/tls/key.pem` for this certificate's key file
+- `apps/arweave/priv/tls/cert.pem` for the certificate file
+- `apps/arweave/priv/tls/key.pem` for this certificate's key file
 
 In order to allow the gateway to serve transactions under custom domain names, additional files need to be installed. For example, for a given domain name `custom.domain.example`, a certificate for that domain should be acquired and its files installed at the following location:
 
-- `priv/tls/custom.domain.example/cert.pem` for the certificate file
-- `priv/tls/custom.domain.example/key.pem` for this certificate's key file
+- `apps/arweave/priv/tls/custom.domain.example/cert.pem` for the certificate file
+- `apps/arweave/priv/tls/custom.domain.example/key.pem` for this certificate's key file
 
 ### Custom domain DNS records
 

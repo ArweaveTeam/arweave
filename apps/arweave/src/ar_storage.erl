@@ -402,8 +402,8 @@ calculate_used_space() ->
 	math:ceil(KByteSize * UsedPercentage / 100 * 1024).
 
 get_data_dir_disk_data() ->
-	application:start(sasl),
-	application:start(os_mon),
+	application:ensure_started(sasl),
+	application:ensure_started(os_mon),
 	DataDir = filename:absname(ar_meta_db:get(data_dir)),
 	[DiskData | _] = select_drive(disksup:get_disk_data(), DataDir),
 	DiskData.

@@ -1,39 +1,3 @@
-[submodule "lib/prometheus"]
-	path = apps/arweave/lib/prometheus
-	url = https://github.com/ArweaveTeam/prometheus.erl.git
-[submodule "lib/accept"]
-	path = apps/arweave/lib/accept
-	url = https://github.com/deadtrickster/accept.git
-[submodule "lib/prometheus_process_collector"]
-	path = apps/arweave/lib/prometheus_process_collector
-	url = https://github.com/deadtrickster/prometheus_process_collector.git
-[submodule "lib/cowboy"]
-	path = apps/arweave/lib/cowboy
-	url = https://github.com/ninenines/cowboy.git
-	ignore = untracked
-[submodule "lib/prometheus-cowboy"]
-	path = apps/arweave/lib/prometheus_cowboy
-	url = https://github.com/ArweaveTeam/prometheus-cowboy.git
-[submodule "lib/cowlib"]
-	path = apps/arweave/lib/cowlib
-	url = https://github.com/ninenines/cowlib.git
-	ignore = untracked
-[submodule "lib/ranch"]
-	path = apps/arweave/lib/ranch
-	url = https://github.com/ninenines/ranch.git
-	ignore = untracked
-[submodule "lib/prometheus_httpd"]
-	path = apps/arweave/lib/prometheus_httpd
-	url = https://github.com/deadtrickster/prometheus-httpd.git
 [submodule "lib/RandomX"]
 	path = apps/arweave/lib/RandomX
 	url = https://github.com/ArweaveTeam/RandomX.git
-[submodule "lib/meck"]
-	path = apps/arweave/lib/meck
-	url = https://github.com/eproxus/meck.git
-[submodule "lib/graphql"]
-	path = apps/arweave/lib/graphql
-	url = https://github.com/shopgun/graphql-erlang.git
-[submodule "lib/sqlite3"]
-	path = apps/arweave/lib/sqlite3
-	url = https://github.com/alexeyr/erlang-sqlite3

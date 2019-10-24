@@ -82,4 +82,5 @@ release_state_nif(_State) ->
 	erlang:nif_error(nif_not_loaded).
 
 init_nif() ->
-	ok = erlang:load_nif("priv/arweave", 0).
+	PrivDir = code:priv_dir(arweave),
+	ok = erlang:load_nif(filename:join([PrivDir, "arweave"]), 0).

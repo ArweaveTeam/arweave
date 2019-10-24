@@ -1,1 +1,36 @@
-[].
+{"1.1.0",
+[{<<"accept">>,{pkg,<<"accept">>,<<"0.3.5">>},2},
+ {<<"base64url">>,{pkg,<<"base64url">>,<<"1.0.1">>},0},
+ {<<"cowboy">>,{pkg,<<"cowboy">>,<<"2.7.0">>},0},
+ {<<"cowlib">>,{pkg,<<"cowlib">>,<<"2.8.0">>},1},
+ {<<"fusco">>,{pkg,<<"fusco">>,<<"0.1.0">>},0},
+ {<<"graphql">>,
+  {git,"https://github.com/shopgun/graphql-erlang.git",
+       {ref,"fc76a2df7d1ddcf8bcc3bb46363e7ca8fca80939"}},
+  0},
+ {<<"jiffy">>,{pkg,<<"jiffy">>,<<"0.15.2">>},0},
+ {<<"prometheus">>,{pkg,<<"prometheus">>,<<"4.4.1">>},0},
+ {<<"prometheus_cowboy">>,
+  {git,"https://github.com/ArweaveTeam/prometheus-cowboy.git",
+       {ref,"3386d21191527831fd4480178633d1bb5aed253b"}},
+  0},
+ {<<"prometheus_httpd">>,{pkg,<<"prometheus_httpd">>,<<"2.1.11">>},1},
+ {<<"prometheus_process_collector">>,
+  {pkg,<<"prometheus_process_collector">>,<<"1.4.5">>},
+  0},
+ {<<"ranch">>,{pkg,<<"ranch">>,<<"1.7.1">>},1},
+ {<<"sqlite3">>,{pkg,<<"sqlite3">>,<<"1.1.6">>},0}]}.
+[
+{pkg_hash,[
+ {<<"accept">>, <<"B33B127ABCA7CC948BBE6CAA4C263369ABF1347CFA9D8E699C6D214660F10CD1">>},
+ {<<"base64url">>, <<"F8C7F2DA04CA9A5D0F5F50258F055E1D699F0E8BF4CFDB30B750865368403CF6">>},
+ {<<"cowboy">>, <<"91ED100138A764355F43316B1D23D7FF6BDB0DE4EA618CB5D8677C93A7A2F115">>},
+ {<<"cowlib">>, <<"FD0FF1787DB84AC415B8211573E9A30A3EBE71B5CBFF7F720089972B2319C8A4">>},
+ {<<"fusco">>, <<"9E37B660A55690F687ACE2143316F7998587529BE2580F1AE54245ACD1AD3D40">>},
+ {<<"jiffy">>, <<"DE266C390111FD4EA28B9302F0BC3D7472468F3B8E0ACEABFBEFA26D08CD73B7">>},
+ {<<"prometheus">>, <<"1E96073B3ED7788053768FEA779CBC896DDC3BDD9BA60687F2AD50B252AC87D6">>},
+ {<<"prometheus_httpd">>, <<"F616ED9B85B536B195D94104063025A91F904A4CFC20255363F49A197D96C896">>},
+ {<<"prometheus_process_collector">>, <<"9BAEA93F5D8C2758DBAD0DE021EF74438D2F81A01D1F24F5EF0BB949A7B4191D">>},
+ {<<"ranch">>, <<"6B1FAB51B49196860B733A49C07604465A47BDB78AA10C1C16A3D199F7F8C881">>},
+ {<<"sqlite3">>, <<"4EA71AF0B45908B5F02C9B09E4C87177039EF404F20ACCB35049CD8924CC417C">>}]}
+].

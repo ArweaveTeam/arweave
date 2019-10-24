@@ -1,44 +1,7 @@
 #!/bin/bash
 
-set -o errexit
+set -e
 
-if [ -t 1 ]; then
-    SHELL_OPTS=
-else
-    SHELL_OPTS=-noinput
-fi
+SCRIPT_DIR="$(dirname "$0")"
 
-if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then
-    RANDOMX_JIT="disable randomx_jit"
-else
-    RANDOMX_JIT=
-fi
-
-while true; do
-    echo Building dependencies...
-    ./bin/mute-on-success make all
-    echo Launching Erlang Virtual Machine...
-    if
-        erl $SHELL_OPTS -pa ebin/ \
-            -pa lib/jiffy/ebin \
-            -pa lib/cowboy/ebin \
-            -pa lib/cowlib/ebin \
-            -pa lib/ranch/ebin \
-            -pa lib/prometheus/ebin \
-            -pa lib/accept/ebin \
-            -pa lib/graphql/ebin \
-            -pa lib/sqlite3/ebin \
-            -pa lib/prometheus_process_collector/ebin \
-            -pa lib/prometheus_httpd/ebin \
-            -pa lib/prometheus_cowboy/ebin \
-            -sasl errlog_type error \
-            -s ar rebuild -s prometheus -run ar main $RANDOMX_JIT "$@";
-    then
-        echo "Arweave Heartbeat: Server terminated safely."
-        exit 1
-    else
-        echo "Arweave Heartbeat: The Arweave server has terminated. It will restart in 15 seconds."
-        echo "Arweave Heartbeat: If you would like to avoid this, press control+c to kill the server."
-        sleep 15
-    fi
-done
+"$SCRIPT_DIR/bin/start-dev" "$@"
