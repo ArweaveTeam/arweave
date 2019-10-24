@@ -3,9 +3,9 @@
 *.dat
 .arweave.plt
 testlog
-priv/tls
-priv/jiffy.so
-priv/prometheus_process_collector.so
+apps/arweave/priv/tls
+apps/arweave/priv/jiffy.so
+apps/arweave/priv/prometheus_process_collector.so
 _build
 .rebar3
-c_src/*.o
+apps/arweave/c_src/*.o
