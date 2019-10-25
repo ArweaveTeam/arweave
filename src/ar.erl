@@ -109,7 +109,6 @@ main("") ->
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
-			{"ipfs_import", "Start the IPFS->AR server for importing IPFS objects into Arweave."},
 			{"content_policy (file)", "Load a content policy file for the node."},
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
@@ -185,8 +184,6 @@ parse_cli_args(["load_mining_key", File|Rest], C) ->
 	parse_cli_args(Rest, C#config { load_key = File });
 parse_cli_args(["ipfs_pin" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_pin = true });
-parse_cli_args(["ipfs_import" | Rest], C) ->
-	parse_cli_args(Rest, C#config { ipfs_import = true });
 parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
 	parse_cli_args(Rest, C#config { start_hash_list = ar_util:decode(BHLHash) });
 parse_cli_args(["benchmark", Algorithm|Rest], C)->
@@ -257,7 +254,6 @@ start(
 		gateway_custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
 		ipfs_pin = IPFSPin,
-		ipfs_import = IPFSImport,
 		webhooks = WebhookConfigs
 	}) ->
 	%% Start the logging system.
@@ -285,8 +281,6 @@ start(
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
-	TXIndexDir = filename:join(ar_meta_db:get(data_dir), ?TX_INDEX_DIR),
-	ok = application:set_env(mnesia, dir, TXIndexDir),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -440,15 +434,6 @@ start(
 	case IPFSPin of
 		false -> ok;
 		true  -> app_ipfs:start_pinning()
-	end,
-	case IPFSImport of
-		false -> ok;
-		true  ->
-			%% Append / to create a directory
-			ok = filelib:ensure_dir(TXIndexDir ++ "/"),
-			%% Still used by app_ipfs_daemon_server
-			ok = application:start(mnesia),
-			app_ipfs_daemon_server:start()
 	end,
 	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
 	case Pause of
@@ -611,7 +596,7 @@ test_slow() ->
 
 %% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
 test_ipfs() ->
-	Mods = [app_ipfs_tests, app_ipfs_daemon_server_tests],
+	Mods = [app_ipfs_tests],
 	tests(Mods, #config {}).
 
 %% @doc Generate the project documentation.

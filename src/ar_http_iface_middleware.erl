@@ -120,9 +120,6 @@ handle(<<"OPTIONS">>, [<<"arql">>], Req) ->
 handle(<<"OPTIONS">>, _, Req) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET">>}, <<"OK">>, Req};
 
-handle(Method, [<<"api">>, <<"ipfs">> | Path], Req) ->
-	app_ipfs_daemon_server:handle(Method, Path, Req);
-
 %% @doc Return the current universal time in seconds.
 handle(<<"GET">>, [<<"time">>], Req) ->
 	{200, #{}, integer_to_binary(os:system_time(second)), Req};

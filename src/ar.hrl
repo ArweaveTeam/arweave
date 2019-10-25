@@ -210,8 +210,6 @@
 -define(WALLET_DIR, "wallets").
 %% @doc Directory for storing unique wallet lists.
 -define(WALLET_LIST_DIR, "wallet_lists").
-%% @doc Directory for storing transaction index.
--define(TX_INDEX_DIR, "data/mnesia").
 %% @doc Directory for storing the ArQL v2 index.
 -define(SQLITE3_DIR, "data/sqlite3").
 

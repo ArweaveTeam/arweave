@@ -394,7 +394,6 @@ calculate_used_space() ->
 		filename:join(DataDir, ?ENCRYPTED_BLOCK_DIR),
 		filename:join(DataDir, ?HASH_LIST_DIR),
 		filename:join(DataDir, ?TX_DIR),
-		filename:join(DataDir, ?TX_INDEX_DIR),
 		filename:join(DataDir, ?WALLET_DIR),
 		filename:join(DataDir, ?WALLET_LIST_DIR),
 		filename:join(CWD, ?LOG_DIR)
