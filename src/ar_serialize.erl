@@ -14,7 +14,7 @@
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->
-	jiffy:encode(JSONStruct).
+	iolist_to_binary(jiffy:encode(JSONStruct)).
 
 %% @doc Decode JSON string into a JSON struct.
 %% @deprecated In favor of json_decode/1
