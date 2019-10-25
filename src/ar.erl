@@ -75,11 +75,17 @@
 -define(APP_TEST_MODS, [app_chirper]).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
-main() -> main("").
+main() ->
+	show_help().
+
 main("") ->
-	io:format("Starts an Arweave mining server.~n"),
-	io:format("Compatible with network: ~s~n", [?NETWORK_NAME]),
+	show_help();
+main(Args) ->
+	start(parse_config_file(Args, [], #config{})).
+
+show_help() ->
 	io:format("Usage: arweave-server [options]~n"),
+	io:format("Compatible with network: ~s~n", [?NETWORK_NAME]),
 	io:format("Options:~n"),
 	lists:foreach(
 		fun({Opt, Desc}) ->
@@ -130,13 +136,19 @@ main("") ->
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."}
 		]
 	),
-	erlang:halt();
-main(Args) ->
-	start(parse_config_file(Args, [], #config{})).
+	erlang:halt().
 
 parse_config_file(["config_file", Path | Rest], Skipped, _) ->
-	{ok, Config} = read_config_from_file(Path),
-	parse_config_file(Rest, Skipped, Config);
+	case read_config_from_file(Path) of
+		{ok, Config} ->
+			parse_config_file(Rest, Skipped, Config);
+		{error, Reason, Item} ->
+			io:format("Failed to parse config: ~p: ~p.~n", [Reason, Item]),
+			show_help();
+		{error, Reason} ->
+			io:format("Failed to parse config: ~p.~n", [Reason]),
+			show_help()
+	end;
 parse_config_file([Arg | Rest], Skipped, Config) ->
 	parse_config_file(Rest, [Arg | Skipped], Config);
 parse_config_file([], Skipped, Config) ->
@@ -211,8 +223,8 @@ parse_cli_args(["custom_domain", Domain|Rest], C = #config { gateway_custom_doma
 parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
-	io:format("~nUnknown argument: ~s. Terminating.~n~n", [Arg]),
-	erlang:halt().
+	io:format("~nUnknown argument: ~s.~n", [Arg]),
+	show_help().
 
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
