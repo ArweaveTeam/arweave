@@ -8,7 +8,7 @@ else
     SHELL_OPTS=-noinput
 fi
 
-if [ `uname -s` == "Darwin" ]; then
+if [ $# -gt 0 ] && [ `uname -s` == "Darwin" ]; then
     RANDOMX_JIT="disable randomx_jit"
 else
     RANDOMX_JIT=
