@@ -118,7 +118,7 @@ show_help() ->
 			{"content_policy (file)", "Load a content policy file for the node."},
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
-			{"disk_space (space)", "Max size (in GB) for Arweave to take up on disk"},
+			{"disk_space (num)", "Max size (in GB) for the disk partition containing the Arweave data directory (blocks, txs, etc) when the miner stops writing files to disk."},
 			{"benchmark (algorithm)", "Run a mining performance benchmark. Pick an algorithm from sha384, randomx."},
 			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
 			{"internal_api_secret (secret)",
