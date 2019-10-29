@@ -66,9 +66,10 @@ get(Key) ->
 		[] -> not_found
 	end.
 
-%% @doc Increase the value associated by a key by Val
+%% @doc Increase the value associated with Key by Val. If the key
+%% is not set, set it to Val.
 increase(Key, Val) ->
-	gen_server:call(?SERVER, {increase, Key, Val}).
+	gen_server:cast(?SERVER, {increase, Key, Val}).
 
 %% @doc Remove entries from the performance database older than ?PEER_TMEOUT
 purge_peer_performance() ->
@@ -102,13 +103,6 @@ handle_call({put, Key, Val}, _From, State) ->
 	%% Put an Erlang term into the meta DB. Typically these are write-once values.
 	ets:insert(?MODULE, {Key, Val}),
 	{reply, true, State};
-handle_call({increase, Key, Val}, _From, State) ->
-	%% Increase the value associated by a key by Val
-	Res = case ets:lookup(?MODULE, Key) of
-		[{Key, Obj}] -> ets:insert(?MODULE, {Key, Obj + Val});
-		[] -> not_found
-	end,
-	{reply, Res, State};
 handle_call(purge_peer_performance, _From, State) ->
 	purge_performance(),
 	{reply, ok, State};
@@ -117,6 +111,12 @@ handle_call(keys, _From, State) ->
 	{reply, Keys, State}.
 
 %% @hidden
+handle_cast({increase, Key, Val}, State) ->
+	case ets:lookup(?MODULE, Key) of
+		[{Key, PrevVal}] -> ets:insert(?MODULE, {Key, PrevVal + Val});
+		[] -> ets:insert(?MODULE, {Key, Val})
+	end,
+	{noreply, State};
 handle_cast(_What, State) ->
 	{noreply, State}.
 

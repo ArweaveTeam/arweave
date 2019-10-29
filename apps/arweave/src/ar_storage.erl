@@ -89,11 +89,7 @@ write_block(RawB) ->
 		true ->
 			write_file_atomic(Name = block_filepath(B), BlockToWrite),
 			ar_block_index:add(B, Name),
-			spawn(
-				ar_meta_db,
-				increase,
-				[used_space, byte_size(BlockToWrite)]
-			),
+			ar_meta_db:increase(used_space, byte_size(BlockToWrite)),
 			Name;
 		false ->
 			ar:err(
@@ -132,11 +128,7 @@ write_encrypted_block(Hash, B) ->
 	case enough_space(byte_size(BlockToWrite)) of
 		true ->
 			write_file_atomic(Name = encrypted_block_filepath(Hash), BlockToWrite),
-			spawn(
-				ar_meta_db,
-				increase,
-				[used_space, byte_size(BlockToWrite)]
-			),
+			ar_meta_db:increase(used_space, byte_size(BlockToWrite)),
 			Name;
 		false ->
 			ar:report(
@@ -256,11 +248,7 @@ write_tx(TX) ->
 				Name = tx_filepath(TX),
 				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 			),
-			spawn(
-				ar_meta_db,
-				increase,
-				[used_space, byte_size(TXToWrite)]
-			),
+			ar_meta_db:increase(used_space, byte_size(TXToWrite)),
 			Name;
 		false ->
 			ar:report(
