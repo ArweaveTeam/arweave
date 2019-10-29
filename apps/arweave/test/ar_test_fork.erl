@@ -20,6 +20,6 @@ test_on_fork(ForkHeightFun, ForkHeight, TestFun) ->
 			slave_call(meck, unload, [ar_fork])
 		end,
 		[
-			{timeout, 120, TestFun}
+			{timeout, 240, TestFun}
 		]
 	}.

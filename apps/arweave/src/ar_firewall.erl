@@ -312,8 +312,8 @@ test_scan_and_clean_disk() ->
 	receive
 		{scan_complete, Ref} ->
 			do_nothing
-	after 10000 ->
-		?assert(false, "The disk scan did not complete after 10 seconds")
+	after 30000 ->
+		?assert(false, "The disk scan did not complete after 30 seconds")
 	end,
 	?assertEqual(GoodTXID, (ar_storage:read_tx(GoodTXID))#tx.id),
 	{ok, <<"not a tx">>} = file:read_file(NotTXFile),
