@@ -574,43 +574,10 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 		unavailable ->
 			{404, #{}, <<"Block not found.">>, Req};
 		_  ->
-			case {ar_meta_db:get(api_compat), cowboy_req:header(<<"x-block-format">>, Req, <<"2">>)} of
-				{false, <<"1">>} ->
+			case cowboy_req:header(<<"x-block-format">>, Req, <<"2">>) of
+				<<"1">> ->
 					{426, #{}, <<"Client version incompatible.">>, Req};
-				{_, <<"1">>} ->
-					% Supprt for legacy nodes (pre-1.5).
-					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-					try ar_storage:read_block_file(Filename, BHL) of
-						B ->
-							{JSONStruct} =
-								ar_serialize:block_to_json_struct(
-									B#block {
-										txs =
-											[
-												if is_binary(TX) -> TX; true -> TX#tx.id end
-											||
-												TX <- B#block.txs
-											]
-									}
-								),
-							{200, #{},
-								ar_serialize:jsonify(
-									{
-										[
-											{
-												<<"hash_list">>,
-												ar_serialize:hash_list_to_json_struct(B#block.hash_list)
-											}
-										|
-											JSONStruct
-										]
-									}
-								),
-							Req}
-					catch error:cannot_generate_block_hash_list ->
-						{404, #{}, <<"Requested block not found on block hash list.">>, Req}
-					end;
-				{_, _} ->
+				_ ->
 					{200, #{}, sendfile(Filename), Req}
 			end
 	end;
