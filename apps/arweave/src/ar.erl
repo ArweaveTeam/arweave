@@ -26,7 +26,6 @@
 	CORE_TEST_MODS,
 	[
 		ar,
-		ar_block_index,
 		ar_config_tests,
 		ar_deep_hash,
 		ar_inflation,

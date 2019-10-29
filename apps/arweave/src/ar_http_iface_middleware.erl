@@ -244,7 +244,7 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
-	case hash_to_filename(tx, Hash) of
+	case tx_hash_to_filename(Hash) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
 		{error, _, unavailable} ->
@@ -550,23 +550,35 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _P
 %% @doc Return the blockshadow corresponding to the indep_hash / height.
 %% GET request to endpoint /block/{height|hash}/{indep_hash|height}
 handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
-	Filename =
+	Filepath =
 		case Type of
 			<<"hash">> ->
-				case hash_to_filename(block, ID) of
+				case ar_util:safe_decode(ID) of
 					{error, invalid}        -> invalid_hash;
-					{error, _, unavailable} -> unavailable;
-					{ok, Fn}                -> Fn
+					{ok, Hash}              -> ar_storage:lookup_block_filename(Hash)
 				end;
 			<<"height">> ->
+				Node = whereis(http_entrypoint_node),
+				CurrentHeight = ar_node:get_height(Node),
 				try binary_to_integer(ID) of
-					Int ->
-						ar_storage:lookup_block_filename(Int)
+					Height when Height < 0 ->
+						invalid_height;
+					Height when Height > CurrentHeight ->
+						unavailable;
+					Height ->
+						HL = ar_node:get_hash_list(Node),
+						case Height > length(HL) - 1 of
+							true ->
+								unavailable;
+							false ->
+								Hash = lists:nth(length(HL) - Height, HL),
+								ar_storage:lookup_block_filename(Hash)
+						end
 				catch _:_ ->
 					invalid_height
 				end
 		end,
-	case Filename of
+	case Filepath of
 		invalid_hash ->
 			{400, #{}, <<"Invalid height.">>, Req};
 		invalid_height ->
@@ -578,7 +590,7 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 				<<"1">> ->
 					{426, #{}, <<"Client version incompatible.">>, Req};
 				_ ->
-					{200, #{}, sendfile(Filename), Req}
+					{200, #{}, sendfile(Filepath), Req}
 			end
 	end;
 
@@ -611,7 +623,7 @@ handle(<<"GET">>, [<<"current_block">>], Req, Pid) ->
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 %%
 handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
-	case hash_to_filename(tx, Hash) of
+	case tx_hash_to_filename(Hash) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
 		{error, ID, unavailable} ->
@@ -690,7 +702,7 @@ not_found(Req) ->
 
 %% @doc Get the filename for an encoded TX id.
 get_tx_filename(Hash) ->
-	case hash_to_filename(tx, Hash) of
+	case tx_hash_to_filename(Hash) of
 		{error, invalid} ->
 			{response, {400, #{}, <<"Invalid hash.">>}};
 		{error, ID, unavailable} ->
@@ -927,15 +939,12 @@ block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
-%% @doc checks if hash is valid & if so returns filename.
-hash_to_filename(Type, Hash) ->
+tx_hash_to_filename(Hash) ->
 	case ar_util:safe_decode(Hash) of
 		{error, invalid} ->
 			{error, invalid};
 		{ok, ID} ->
-			{Mod, Fun} = type_to_mf({Type, lookup_filename}),
-			F = apply(Mod, Fun, [ID]),
-			case F of
+			case ar_storage:lookup_tx_filename(ID) of
 				unavailable ->
 					{error, ID, unavailable};
 				Filename ->
@@ -1001,12 +1010,6 @@ return_info(Req) ->
 			}
 		),
 	Req}.
-
-%% @doc converts a tuple of atoms to a {Module, Function} tuple.
-type_to_mf({tx, lookup_filename}) ->
-	{ar_storage, lookup_tx_filename};
-type_to_mf({block, lookup_filename}) ->
-	{ar_storage, lookup_block_filename}.
 
 %% @doc Convenience function for lists:keyfind(Key, 1, List).
 %% returns Value not {Key, Value}.
@@ -1177,17 +1180,16 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
 	case is_block_known(Type, ID, CurrentBHL) of
 		true ->
-			Hash =
-				case Type of
-					<<"height">> ->
-						B =
-							ar_node:get_block(whereis(http_entrypoint_node),
-							ID,
-							CurrentBHL),
-						B#block.indep_hash;
-					<<"hash">> -> ID
-				end,
-			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
+			BlockBHL = case Type of
+				<<"height">> ->
+					{_, BHL} = lists:split(
+						length(CurrentBHL) - ID,
+						CurrentBHL
+					),
+					BHL;
+				<<"hash">> ->
+					ar_block:generate_hash_list_for_block(ID, CurrentBHL)
+			end,
 			{200, #{},
 				ar_serialize:jsonify(
 					ar_serialize:hash_list_to_json_struct(

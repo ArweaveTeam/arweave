@@ -146,8 +146,10 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			case {HashList, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
+				{not_joined, _} ->
+					do_nothing;
 				_ ->
-					do_nothing
+					ar_storage_migration:run_migrations(HashList)
 			end,
 			Gossip =
 				ar_gossip:init(
