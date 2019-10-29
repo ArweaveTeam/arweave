@@ -91,11 +91,7 @@ write_block(B, WriteWalletList) ->
 		true ->
 			write_file_atomic(Name = block_filepath(B), BlockJSON),
 			ar_block_index:add(B, Name),
-			spawn(
-				ar_meta_db,
-				increase,
-				[used_space, ByteSize]
-			),
+			ar_meta_db:increase(used_space, ByteSize),
 			ok;
 		false ->
 			ar:err(
@@ -265,11 +261,7 @@ write_tx_data(Filepath, EncodedData) ->
 	case enough_space(ByteSize) of
 		true ->
 			write_file_atomic(Filepath, EncodedData),
-			spawn(
-				ar_meta_db,
-				increase,
-				[used_space, ByteSize]
-			),
+			ar_meta_db:increase(used_space, ByteSize),
 			ok;
 		false ->
 			ar:err(
