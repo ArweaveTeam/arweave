@@ -74,25 +74,6 @@ invalidate_block(B) ->
 	filelib:ensure_dir(TargetFile),
 	file:rename(block_filepath(B), TargetFile).
 
-%% @doc Write a block (with the hash.json as the filename) to disk.
-%% When debug is set, does not consider disk space. This is currently
-%% necessary because of test timings
--ifdef(DEBUG).
-write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
-write_block(RawB) ->
-	case ar_meta_db:get(disk_logging) of
-		true ->
-			ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]);
-		_ ->
-			do_nothing
-	end,
-	WalletID = write_wallet_list(RawB#block.wallet_list),
-	B = RawB#block { wallet_list = WalletID },
-	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-	write_file_atomic(Name = block_filepath(B), BlockToWrite),
-	ar_block_index:add(B, Name),
-	Name.
--else.
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
 write_block(RawB) ->
 	case ar_meta_db:get(disk_logging) of
@@ -123,7 +104,6 @@ write_block(RawB) ->
 			),
 			{error, not_enough_space}
 	end.
--endif.
 
 write_full_block(B) ->
 	BShadow = B#block { txs = [T#tx.id || T <- B#block.txs] },
@@ -147,15 +127,6 @@ write_full_block(BShadow, TXs) ->
 	ar_sqlite3:insert_full_block(BShadow#block{ txs = ScannedTXs }),
 	app_ipfs:maybe_ipfs_add_txs(ScannedTXs).
 
-%% @doc Write an encrypted	block (with the hash.json as the filename) to disk.
-%% When debug is set, does not consider disk space. This is currently
-%% necessary because of test timings
--ifdef(DEBUG).
-write_encrypted_block(Hash, B) ->
-	BlockToWrite = B,
-	write_file_atomic(Name = encrypted_block_filepath(Hash), BlockToWrite),
-	Name.
--else.
 write_encrypted_block(Hash, B) ->
 	BlockToWrite = B,
 	case enough_space(byte_size(BlockToWrite)) of
@@ -176,7 +147,6 @@ write_encrypted_block(Hash, B) ->
 			),
 			{error, enospc}
 	end.
--endif.
 
 %% @doc Read a block from disk, given a hash.
 read_block(unavailable, _BHL) -> unavailable;
@@ -277,18 +247,6 @@ start_update_used_space() ->
 lookup_block_filename(ID) ->
 	ar_block_index:get_block_filename(ID).
 
-%% @doc Write a tx (with the txid.json as the filename) to disk.
-%% When debug is set, does not consider disk space. This is currently
-%% necessary because of test timings
--ifdef(DEBUG).
-write_tx(TXs) when is_list(TXs) -> lists:foreach(fun write_tx/1, TXs);
-write_tx(TX) ->
-	write_file_atomic(
-		Name = tx_filepath(TX),
-		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-	),
-	Name.
--else.
 write_tx(TXs) when is_list(TXs) -> lists:foreach(fun write_tx/1, TXs);
 write_tx(TX) ->
 	TXToWrite = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
@@ -313,7 +271,6 @@ write_tx(TX) ->
 			),
 			{error, enospc}
 	end.
--endif.
 
 %% @doc Read a tx from disk, given a hash.
 read_tx(unavailable) -> unavailable;
