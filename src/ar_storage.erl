@@ -146,7 +146,7 @@ write_full_block(BShadow, TXs) ->
 	),
 	write_tx(ScannedTXs),
 	write_block(BShadow),
-	ar_tx_search:update_tag_table(BShadow#block{ txs = ScannedTXs }),
+	ar_sqlite3:insert_full_block(BShadow#block{ txs = ScannedTXs }),
 	app_ipfs:maybe_ipfs_add_txs(ScannedTXs).
 
 %% @doc Write an encrypted	block (with the hash.json as the filename) to disk.
@@ -394,7 +394,6 @@ calculate_used_space() ->
 		filename:join(DataDir, ?ENCRYPTED_BLOCK_DIR),
 		filename:join(DataDir, ?HASH_LIST_DIR),
 		filename:join(DataDir, ?TX_DIR),
-		filename:join(DataDir, ?TX_INDEX_DIR),
 		filename:join(DataDir, ?WALLET_DIR),
 		filename:join(DataDir, ?WALLET_LIST_DIR),
 		filename:join(CWD, ?LOG_DIR)

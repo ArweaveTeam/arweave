@@ -1,14 +1,14 @@
 #!/bin/bash
 echo "-----INSTALLING DEPENDENCIES-----"
 sudo apt-get update
-sudo apt-get install -y gcc make build-essential autoconf m4 libncurses5-dev libssh-dev unixodbc-dev openjdk-8-jdk libwxgtk3.0-dev xsltproc fop
-wget http://www.erlang.org/download/otp_src_20.1.tar.gz
-if [ `shasum -a 256 otp_src_20.1.tar.gz | awk {'print $1'}` != 900d35eb563607785a8e27f4b4c03cf6c98b4596028c5d6958569ddde5d4ddbf ]; then
-	echo 'Integrity check failed for otp_src_20.1.tar.gz. Remove the file and try to download it from another source.'
+sudo apt-get install -y gcc make build-essential autoconf m4 libncurses5-dev libssh-dev unixodbc-dev openjdk-8-jdk libwxgtk3.0-dev xsltproc fop libsqlite3-dev
+wget http://www.erlang.org/download/otp_src_21.3.tar.gz
+if [ `shasum -a 256 otp_src_21.3.tar.gz | awk {'print $1'}` != 69a743c4f23b2243e06170b1937558122142e47c8ebe652be143199bfafad6e4 ]; then
+	echo 'Integrity check failed for otp_src_21.3.tar.gz. Remove the file and try to download it from another source.'
 	exit 1
 fi
-tar -zvxf otp_src_20.1.tar.gz
-cd otp_src_20.1
+tar -zvxf otp_src_21.3.tar.gz
+cd otp_src_21.3
 export ERL_TOP=`pwd`
 echo "-----BUILDING ERLANG-----"
 ./configure --without-wx

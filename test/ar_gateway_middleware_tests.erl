@@ -12,11 +12,9 @@
 	161, 80, 254, 205, 177, 34, 211, 210, 234, 32, 253, 228, 43, 175, 198, 13
 >>).
 
--define(MOCK_BLOCKID, <<
-	169, 43, 214, 105, 100, 19, 171, 187, 255, 185, 104, 174, 45, 225, 210, 86,
-	75, 211, 187, 148, 156, 59, 69, 31, 77, 165, 56, 190, 20, 75, 14, 207,
-	212, 134, 4, 201, 13, 244, 65, 73, 236, 174, 28, 174, 27, 250, 30, 246
->>).
+-define(MOCK_TXHASH, <<"VJUdLcoxNANpTypEmSCCwaFQ_s2xItPS6iD95Cuvxg0">>).
+
+-define(MOCK_BLOCKHASH, <<"qSvWaWQTq7v_uWiuLeHSVkvTu5ScO0UfTaU4vhRLDs_UhgTJDfRBSeyuHK4b-h72">>).
 
 -define(MOCK_TXLABEL, <<"ez63a7fvuu3l">>).
 
@@ -49,7 +47,7 @@ execute_test_() ->
 
 setup() ->
 	meck:new(ar_storage),
-	meck:new(ar_tx_search),
+	meck:new(ar_sqlite3),
 	meck:new(ar_domain),
 	meck:expect(
 		ar_domain,
@@ -76,10 +74,10 @@ redirect_root_to_labeled_domain() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -98,7 +96,7 @@ redirect_root_to_labeled_domain() ->
 	>>, Location),
 	?assertEqual(301, Status),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 serve_correctly_labeled_request() ->
@@ -108,10 +106,10 @@ serve_correctly_labeled_request() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	meck:expect(
@@ -136,7 +134,7 @@ serve_correctly_labeled_request() ->
 	?assertEqual(<<"text/plain">>, ContentType),
 	?assertEqual(<<"Some mock data">>, Body),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 forward_other_requests_to_node_api() ->
@@ -153,10 +151,10 @@ render_manifest_listing() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	meck:expect(
@@ -181,7 +179,7 @@ render_manifest_listing() ->
 	?assertMatch({_, _}, binary:match(Body, <<"<a href=\"img/dog.jpg\">img/dog.jpg</a>">>)),
 	?assertMatch({_, _}, binary:match(Body, <<"<a href=\"&lt;script&gt;alert(&apos;XSS!&apos;);&lt;/script&gt;\">&lt;script&gt;alert(&apos;XSS!&apos;);&lt;/script&gt;</a>">>)),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 redirect_manifest_to_index() ->
@@ -191,10 +189,10 @@ redirect_manifest_to_index() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	meck:expect(
@@ -224,7 +222,7 @@ redirect_manifest_to_index() ->
 	?assertEqual(301, Status),
 	?assertEqual(ExpectedLocation, ActualLocation),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 serve_manifest_subpath() ->
@@ -237,10 +235,10 @@ serve_manifest_subpath() ->
 		end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	meck:expect(
@@ -270,7 +268,7 @@ serve_manifest_subpath() ->
 	?assertMatch(#{ <<"content-type">> := <<"text/html">> }, Headers),
 	?assertEqual(<<"<html><body>Some HTML</body></html>">>, Body),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 handle_multi_segment_subpaths() ->
@@ -283,10 +281,10 @@ handle_multi_segment_subpaths() ->
 		end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	meck:expect(
@@ -316,7 +314,7 @@ handle_multi_segment_subpaths() ->
 	?assertMatch(#{ <<"content-type">> := <<"image/jpeg">> }, Headers),
 	?assertEqual(<<"some jpeg">>, Body),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 redirect_badly_labeled_manifest_subpaths() ->
@@ -326,10 +324,10 @@ redirect_badly_labeled_manifest_subpaths() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
@@ -348,7 +346,7 @@ redirect_badly_labeled_manifest_subpaths() ->
 	>>, Location),
 	?assertEqual(301, Status),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 return_421_on_bad_manifest() ->
@@ -360,10 +358,10 @@ return_421_on_bad_manifest() ->
 		end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	meck:expect(
@@ -386,7 +384,7 @@ return_421_on_bad_manifest() ->
 		),
 	?assertEqual(421, Status),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 return_404_on_non_existent_subpath() ->
@@ -398,10 +396,10 @@ return_404_on_non_existent_subpath() ->
 		end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	meck:expect(
@@ -424,7 +422,7 @@ return_404_on_non_existent_subpath() ->
 		),
 	?assertEqual(404, Status),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 forward_on_subpath_of_non_manifest() ->
@@ -434,10 +432,10 @@ forward_on_subpath_of_non_manifest() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_tx_search,
-		get_tags_by_id,
-		fun(?MOCK_TXID) ->
-			{ok, [{<<"block_indep_hash">>, ?MOCK_BLOCKID}]}
+		ar_sqlite3,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
 		end
 	),
 	meck:expect(
@@ -458,7 +456,7 @@ forward_on_subpath_of_non_manifest() ->
 			<<"/", Hash/binary, "/some/subpath">>
 		),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 serve_manifest_subpath_on_custom_domain() ->
@@ -503,7 +501,7 @@ serve_manifest_subpath_on_custom_domain() ->
 	?assertMatch(#{ <<"content-type">> := <<"text/html">> }, Headers),
 	?assertEqual(<<"<html><body>Some HTML</body></html>">>, Body),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 forward_non_existent_subpaths_to_node_api() ->
@@ -540,7 +538,7 @@ forward_non_existent_subpaths_to_node_api() ->
 		<<"/other/path">>
 	)),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_tx_search)),
+	?assert(meck:validate(ar_sqlite3)),
 	?assert(meck:validate(ar_domain)).
 
 req(Scheme, Host, Path) ->

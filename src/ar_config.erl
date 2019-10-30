@@ -132,10 +132,6 @@ parse_options([{<<"ipfs_pin">>, false} | Rest], Config) ->
 	parse_options(Rest, Config);
 parse_options([{<<"ipfs_pin">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config { ipfs_pin = true });
-parse_options([{<<"ipfs_import">>, false} | Rest], Config) ->
-	parse_options(Rest, Config);
-parse_options([{<<"ipfs_import">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config { ipfs_import = true });
 parse_options([{<<"benchmark">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config { benchmark = true });
 parse_options([{<<"benchmark">>, false} | Rest], Config) ->

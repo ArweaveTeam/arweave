@@ -78,7 +78,6 @@ do_scan_and_clean_disk() ->
 								{ar_firewall, scan_and_clean_disk},
 								{removing_file, File}
 							]),
-							ar_tx_search:delete_tx_records(TXID),
 							file:delete(Filepath),
 							ok;
 						{error, Reason} ->
@@ -290,28 +289,20 @@ test_scan_and_clean_disk() ->
 	TagName = <<"name">>,
 	TagValue = <<"value">>,
 	Tags = [{TagName, TagValue}],
-	lists:foreach(fun ar_tx_search:delete_tx_records/1, [GoodTXID, BadTXID, BadDataTXID]),
 	%% Blacklist a transaction, write it to disk and add it to the index.
 	ar_meta_db:put(transaction_blacklist_files, ["test/test_transaction_blacklist.txt"]),
 	BadTX = (ar_tx:new())#tx{ id = BadTXID, tags = Tags },
 	ar_storage:write_tx(BadTX),
-	ar_tx_search:update_tag_table(#block{ txs = [BadTX] }),
 	?assertEqual(BadTXID, (ar_storage:read_tx(BadTXID))#tx.id),
 	%% Setup a content policy, write a bad tx to disk and add it to the index.
 	ar_meta_db:put(content_policy_files, ["test/test_sig.txt"]),
 	BadTX2 = (ar_tx:new())#tx{ id = BadDataTXID, data = <<"BADCONTENT1">>, tags = Tags },
 	ar_storage:write_tx(BadTX2),
-	ar_tx_search:update_tag_table(#block{ txs = [BadTX2] }),
 	?assertEqual(BadDataTXID, (ar_storage:read_tx(BadDataTXID))#tx.id),
 	%% Write a good tx to disk and add it to the index.
 	GoodTX = (ar_tx:new())#tx{ id = GoodTXID, tags = Tags },
 	ar_storage:write_tx(GoodTX),
-	ar_tx_search:update_tag_table(#block{ txs = [GoodTX] }),
 	?assertEqual(GoodTXID, (ar_storage:read_tx(GoodTXID))#tx.id),
-	?assertEqual(
-		lists:sort([BadTXID, BadDataTXID, GoodTXID]),
-		lists:sort(ar_tx_search:get_entries(TagName, TagValue))
-	),
 	%% Write a file that is not a tx to the transaction directory.
 	NotTXFile = filename:join([ar_meta_db:get(data_dir), ?TX_DIR, "not_a_tx"]),
 	file:write_file(NotTXFile, <<"not a tx">>),
@@ -327,6 +318,4 @@ test_scan_and_clean_disk() ->
 	?assertEqual(GoodTXID, (ar_storage:read_tx(GoodTXID))#tx.id),
 	{ok, <<"not a tx">>} = file:read_file(NotTXFile),
 	?assertEqual(unavailable, ar_storage:read_tx(BadTXID)),
-	?assertEqual(unavailable, ar_storage:read_tx(BadDataTXID)),
-	%% Assert illicit transactions were removed from the index.
-	?assertEqual([GoodTXID], ar_tx_search:get_entries(TagName, TagValue)).
+	?assertEqual(unavailable, ar_storage:read_tx(BadDataTXID)).

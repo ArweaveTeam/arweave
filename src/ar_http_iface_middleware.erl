@@ -120,9 +120,6 @@ handle(<<"OPTIONS">>, [<<"arql">>], Req) ->
 handle(<<"OPTIONS">>, _, Req) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET">>}, <<"OK">>, Req};
 
-handle(Method, [<<"api">>, <<"ipfs">> | Path], Req) ->
-	app_ipfs_daemon_server:handle(Method, Path, Req);
-
 %% @doc Return the current universal time in seconds.
 handle(<<"GET">>, [<<"time">>], Req) ->
 	{200, #{}, integer_to_binary(os:system_time(second)), Req};
@@ -146,30 +143,30 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	case get_tx_filename(Hash) of
 		{ok, _} ->
-			TagsToInclude = [
-				<<"block_height">>,
-				<<"block_indep_hash">>
-			],
-			Tags = lists:filter(
-				fun(Tag) ->
-					{Name, _} = Tag,
-					lists:member(Name, TagsToInclude)
-				end,
-				?OK(ar_tx_search:get_tags_by_id(ar_util:decode(Hash)))
-			),
-			CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-			[TXIndepHashEncoded] = proplists:get_all_values(<<"block_indep_hash">>, Tags),
-			TXIndepHash = ar_util:decode(TXIndepHashEncoded),
-			case lists:member(TXIndepHash, CurrentBHL) of
-				false ->
+			case catch ar_sqlite3:select_block_by_tx_id(Hash) of
+				{ok, #{
+					height := Height,
+					indep_hash := EncodedIndepHash
+				}} ->
+					PseudoTags = [
+						{<<"block_height">>, Height},
+						{<<"block_indep_hash">>, EncodedIndepHash}
+					],
+					CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+					case lists:member(ar_util:decode(EncodedIndepHash), CurrentBHL) of
+						false ->
+							{404, #{}, <<"Not Found.">>, Req};
+						true ->
+							CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+							%% First confirmation is when the TX is in the latest block.
+							NumberOfConfirmations = CurrentHeight - Height + 1,
+							Status = PseudoTags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
+							{200, #{}, ar_serialize:jsonify({Status}), Req}
+					end;
+				not_found ->
 					{404, #{}, <<"Not Found.">>, Req};
-				true ->
-					CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
-					[TXHeight] = proplists:get_all_values(<<"block_height">>, Tags),
-					%% First confirmation is when the TX is in the latest block.
-					NumberOfConfirmations = CurrentHeight - TXHeight + 1,
-					Status = Tags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
-					{200, #{}, ar_serialize:jsonify({Status}), Req}
+				{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+					{503, #{}, <<"ArQL unavailable.">>, Req}
 			end;
 		{response, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
@@ -201,10 +198,17 @@ handle(<<"POST">>, [<<"arql">>], Req) ->
 	QueryJson = ar_http_req:body(Req),
 	case ar_serialize:json_struct_to_query(QueryJson) of
 		{ok, Query} ->
-			TXIDs = ar_util:unique(ar_parser:eval(Query)),
-			SortedTXIDs = ar_tx_search:sort_txids(TXIDs),
-			Body = ar_serialize:jsonify(ar_serialize:hash_list_to_json_struct(SortedTXIDs)),
-			{200, #{}, Body, Req};
+			case catch ar_sqlite3:eval_legacy_arql(Query) of
+				EncodedTXIDs when is_list(EncodedTXIDs) ->
+					Body = ar_serialize:jsonify(EncodedTXIDs),
+					{200, #{}, Body, Req};
+				bad_query ->
+					{400, #{}, <<"Invalid query.">>, Req};
+				sqlite_parser_stack_overflow ->
+					{400, #{}, <<"The query nesting depth is too big.">>, Req};
+				{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+					{503, #{}, <<"ArQL unavailable.">>, Req}
+			end;
 		{error, _} ->
 			{400, #{}, <<"Invalid ARQL query.">>, Req}
 	end;
@@ -448,27 +452,33 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req) ->
 %% GET request to endpoint /wallet/{wallet_address}/deposits
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	TXIDs = lists:reverse(
-		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
-	),
-	{200, #{}, ar_serialize:jsonify(TXIDs), Req};
+	case catch ar_sqlite3:select_txs_by([{to, [Addr]}]) of
+		TXMaps when is_list(TXMaps) ->
+			TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
+			{200, #{}, ar_serialize:jsonify(TXIDs), Req};
+		{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+			{503, #{}, <<"ArQL unavailable.">>, Req}
+	end;
 
 %% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address
 %% starting from the earliest_deposit.
 %% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	TXIDs = lists:reverse(
-		lists:map(fun ar_util:encode/1, ar_tx_search:get_entries(<<"to">>, Addr))
-	),
-	{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
-	FilteredTXs = case After of
-		[] ->
-			Before;
-		[EarliestDeposit | _] ->
-			Before ++ [EarliestDeposit]
-	end,
-	{200, #{}, ar_serialize:jsonify(FilteredTXs), Req};
+	case catch ar_sqlite3:select_txs_by([{to, [Addr]}]) of
+		TXMaps when is_list(TXMaps) ->
+			TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
+			{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
+			FilteredTXs = case After of
+				[] ->
+					Before;
+				[EarliestDeposit | _] ->
+					Before ++ [EarliestDeposit]
+			end,
+			{200, #{}, ar_serialize:jsonify(FilteredTXs), Req};
+		{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+			{503, #{}, <<"ArQL unavailable.">>, Req}
+	end;
 
 %% @doc Return the encrypted blockshadow corresponding to the indep_hash.
 %% GET request to endpoint /block/hash/{indep_hash}/encrypted
@@ -725,11 +735,18 @@ handle_get_wallet_txs(Addr, EarliestTXID) ->
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>};
 		{ok, _} ->
-			TXIDs = ar_tx_search:get_entries(<<"from">>, Addr),
-			SortedTXIDs = ar_tx_search:sort_txids(TXIDs),
-			RecentTXIDs = get_wallet_txs(EarliestTXID, SortedTXIDs),
-			EncodedTXIDs = lists:map(fun ar_util:encode/1, RecentTXIDs),
-			{200, #{}, ar_serialize:jsonify(EncodedTXIDs)}
+			case catch ar_sqlite3:select_txs_by([{from, [Addr]}]) of
+				TXMaps when is_list(TXMaps) ->
+					TXIDs = lists:map(
+						fun(#{ id := ID }) -> ar_util:decode(ID) end,
+						TXMaps
+					),
+					RecentTXIDs = get_wallet_txs(EarliestTXID, TXIDs),
+					EncodedTXIDs = lists:map(fun ar_util:encode/1, RecentTXIDs),
+					{200, #{}, ar_serialize:jsonify(EncodedTXIDs)};
+				{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+					{503, #{}, <<"ArQL unavailable.">>}
+			end
 	end.
 
 %% @doc Returns a list of all TX IDs starting with the last one to EarliestTXID (inclusive)

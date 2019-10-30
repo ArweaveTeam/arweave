@@ -30,7 +30,7 @@ $ ipfs daemon
 
 ## arweave-server
 
-There are two modes for app_ipfs: ipfs_pin (which listens for incoming TXs with data and an `{"IPFS_Add", Hash}` tag, and `ipfs add`s the data to the local ipfs node), and ipfs_import (which serves an http api and will forward ipfs hash data into the Arweave network as tagged TXs).  ipfs_import mode requires wallets with sufficient AR.  See [IPFS Import Server](ipfs-import-server.md) for documentation on the ipfs_import http api.
+When running `arweave-server` with the argument `ipfs_pin`, the server listens for incoming TXs with data and an `{"IPFS_Add", Hash}` tag, and `ipfs add`s the data to the local ipfs node.
 
 ### ipfs_pin
 
@@ -47,25 +47,6 @@ ok
 
 ```
 $ arweave-server peer ... ipfs_pin
-```
-
-### ipfs_import
-
-#### in erlang shell
-
-```erlang
-$ arweave-server peer ...
-
-1> app_ipfs_daemon_server:start().
-<0.124.0>
-```
-
-#### with commandline argument
-
-To run:
-
-```
-$ arweave-server peer ... ipfs_import
 ```
 
 ### monitoring

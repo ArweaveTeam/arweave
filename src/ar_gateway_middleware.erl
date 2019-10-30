@@ -167,15 +167,11 @@ derive_label_and_redirect(TXID, SubPath, Req, Env) ->
 	end.
 
 get_tx_block_hash(TXID) ->
-	case ar_tx_search:get_tags_by_id(TXID) of
-		{ok, PseudoTags} -> get_tx_block_hash_1(PseudoTags);
-		{error, _} -> not_found
-	end.
-
-get_tx_block_hash_1(PseudoTags) ->
-	case lists:keyfind(<<"block_indep_hash">>, 1, PseudoTags) of
-		{<<"block_indep_hash">>, BH} -> {ok, BH};
-		false -> not_found
+	case ar_sqlite3:select_tx_by_id(ar_util:encode(TXID)) of
+		{ok, #{ block_indep_hash := EncodedBH }} ->
+			{ok, ar_util:decode(EncodedBH)};
+		not_found ->
+			not_found
 	end.
 
 derive_label_and_redirect_1(TXID, BH, SubPath, Req, Env) ->
