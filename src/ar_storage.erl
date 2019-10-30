@@ -236,12 +236,18 @@ read_encrypted_block(ID) ->
 			unavailable
 	end.
 
-%% @doc Accurately recalculate the current cumulative size of the Arweave directory
+%% @doc Recalculate the used space in bytes of the data directory disk.
 start_update_used_space() ->
 	spawn(
 		fun() ->
-			catch ar_meta_db:put(used_space, calculate_used_space()),
-			timer:apply_after(?DIRECTORY_SIZE_TIMER, ?MODULE, start_update_used_space, [])
+			UsedSpace = ar_meta_db:get(used_space),
+			catch ar_meta_db:put(used_space, max(calculate_used_space(), UsedSpace)),
+			timer:apply_after(
+				?DIRECTORY_SIZE_TIMER,
+				?MODULE,
+				start_update_used_space,
+				[]
+			)
 		end
 	).
 
@@ -385,44 +391,22 @@ lookup_tx_filename(ID) ->
 enough_space(Bytes) ->
 	(ar_meta_db:get(disk_space)) >= (Bytes + ar_meta_db:get(used_space)).
 
-%% @doc Sum up the sizes of the files written by the Arweave client.
-calculate_used_space() ->
-	DataDir = ar_meta_db:get(data_dir),
-	{ok, CWD} = file:get_cwd(),
-	Dirs = [
-		filename:join(DataDir, ?BLOCK_DIR),
-		filename:join(DataDir, ?ENCRYPTED_BLOCK_DIR),
-		filename:join(DataDir, ?HASH_LIST_DIR),
-		filename:join(DataDir, ?TX_DIR),
-		filename:join(DataDir, ?WALLET_DIR),
-		filename:join(DataDir, ?WALLET_LIST_DIR),
-		filename:join(CWD, ?LOG_DIR)
-	],
-	lists:foldl(
-		fun(Dir, Acc) ->
-			Acc + calculate_used_space(Dir)
-		end,
-		0,
-		Dirs
-	).
-
-%% @doc Sum up the sizes of the files located directly (not in subdir) under the directory.
-calculate_used_space(Directory) ->
-	filelib:fold_files(
-		Directory,
-		"",
-		false,
-		fun(File, Acc) -> Acc + filelib:file_size(File) end,
-		0
-	).
-
-%% @doc Calculate the total amount of disk space available
+%% @doc Calculate the available space in bytes on the data directory disk.
 calculate_disk_space() ->
+	{_, KByteSize, _} = get_data_dir_disk_data(),
+	KByteSize * 1024.
+
+%% @doc Calculate the used space in bytes on the data directory disk.
+calculate_used_space() ->
+	{_, KByteSize, UsedPercentage} = get_data_dir_disk_data(),
+	math:ceil(KByteSize * UsedPercentage / 100 * 1024).
+
+get_data_dir_disk_data() ->
 	application:start(sasl),
 	application:start(os_mon),
 	DataDir = filename:absname(ar_meta_db:get(data_dir)),
-	[{_,Size,_}|_] = select_drive(disksup:get_disk_data(), DataDir),
-	Size*1024.
+	[DiskData | _] = select_drive(disksup:get_disk_data(), DataDir),
+	DiskData.
 
 %% @doc Calculate the root drive in which the Arweave server resides
 select_drive(Disks, []) ->
