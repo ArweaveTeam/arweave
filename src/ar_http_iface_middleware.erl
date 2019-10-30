@@ -223,16 +223,14 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req) ->
 			{404, #{}, sendfile("data/not_found.html"), Req};
 		{ok, Filename} ->
 			T = ar_storage:read_tx_file(Filename),
-			{
-				200,
-				#{
-					<<"content-type">> => proplists:get_value(
-						<<"Content-Type">>, T#tx.tags, "text/html"
-					)
-				},
-				T#tx.data,
-				Req
-			}
+			case ar_http_util:get_tx_content_type(T) of
+				{valid, ContentType} ->
+					{200, #{ <<"content-type">> => ContentType }, T#tx.data, Req};
+				none ->
+					{200, #{ <<"content-type">> => <<"text/html">> }, T#tx.data, Req};
+				invalid ->
+					{421, #{}, <<>>, Req}
+			end
 	end;
 
 %% @doc Share a new block to a peer.
