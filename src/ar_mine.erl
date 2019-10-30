@@ -80,7 +80,7 @@ validate(BDS, Nonce, Diff, Height) ->
 validate(BDSHash, Diff, Height) ->
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
-			binary:decode_unsigned(BDSHash) > Diff;
+			binary:decode_unsigned(BDSHash, big) > Diff;
 		_ ->
 			case BDSHash of
 				<< 0:Diff, _/bitstring >> ->
@@ -353,7 +353,9 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 			%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
 			%% arbitrary size for the initial nonce.
 			StartNonce = crypto:strong_rand_bytes(384 div 8),
-			Hasher = fun(Data) -> crypto:hash(?MINING_HASH_ALG, Data) end,
+			Hasher = fun(Nonce, InputBDS, _Diff) ->
+				{crypto:hash(?MINING_HASH_ALG, << Nonce/binary, InputBDS/binary >>), Nonce, 1}
+			end,
 			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor)
 	end.
 
@@ -362,8 +364,8 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 randomx_hasher(Height) ->
 	case ar_randomx_state:randomx_state_by_height(Height) of
 		{state, {light, LightState}} ->
-			Hasher = fun(Data) ->
-				ar_mine_randomx:hash_light(LightState, Data)
+			Hasher = fun(Nonce, BDS, _Diff) ->
+				{ar_mine_randomx:hash_light(LightState, << Nonce/binary, BDS/binary >>), Nonce, 1}
 			end,
 			{ok, Hasher};
 		{state, {fast, _}} ->
@@ -376,8 +378,8 @@ randomx_hasher(Height) ->
 randomx_hasher(Height) ->
 	case ar_randomx_state:randomx_state_by_height(Height) of
 		{state, {fast, FastState}} ->
-			Hasher = fun(Data) ->
-				ar_mine_randomx:hash_fast(FastState, Data)
+			Hasher = fun(Nonce, BDS, Diff) ->
+				ar_mine_randomx:bulk_hash_fast(FastState, Nonce, BDS, Diff)
 			end,
 			{ok, Hasher};
 		{state, {light, _}} ->
@@ -388,19 +390,14 @@ randomx_hasher(Height) ->
 -endif.
 
 find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
-	find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor, 0).
-
-find_nonce(_BDS, _Diff, _Height, _Nonce, _Hasher, Supervisor, 10) ->
-	Supervisor ! {hashes_tried, 10},
-	find_nonce(_BDS, _Diff, _Height, _Nonce, _Hasher, Supervisor, 0);
-find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor, HashesTried) ->
-	BDSHash = Hasher(<< Nonce/binary, BDS/binary >>),
+	{BDSHash, HashNonce, HashesTried}  = Hasher(Nonce, BDS, Diff),
+	Supervisor ! {hashes_tried, HashesTried},
 	case validate(BDSHash, Diff, Height) of
 		false ->
 			%% Re-use the hash as the next nonce, since we get it for free.
-			find_nonce(BDS, Diff, Height, BDSHash, Hasher, Supervisor, HashesTried + 1);
+			find_nonce(BDS, Diff, Height, BDSHash, Hasher, Supervisor);
 		true ->
-			{Nonce, BDSHash}
+			{HashNonce, BDSHash}
 	end.
 
 %% In DEBUG mode, we're running RandomX in light-mode, which is much slower
