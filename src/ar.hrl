@@ -96,6 +96,7 @@
 -define(WEAVE_STORE_AMT, 1.0).
 
 %% @doc The number of blocks behind the most recent block to store.
+%% The maximum lag when fork recovery is still possible.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
 
 %% Speed to run the network at when simulating.

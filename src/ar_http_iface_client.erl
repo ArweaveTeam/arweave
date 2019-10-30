@@ -430,24 +430,25 @@ process_get_info_json(JSON) ->
 	end.
 
 process_get_info(Props) ->
-	{_, NetworkName} = lists:keyfind(<<"network">>, 1, Props),
-	{_, ClientVersion} = lists:keyfind(<<"version">>, 1, Props),
-	ReleaseNumber =
-		case lists:keyfind(<<"release">>, 1, Props) of
-			false -> 0;
-			R -> R
-		end,
-	{_, Height} = lists:keyfind(<<"height">>, 1, Props),
-	{_, Blocks} = lists:keyfind(<<"blocks">>, 1, Props),
-	{_, Peers} = lists:keyfind(<<"peers">>, 1, Props),
-	[
-		{name, NetworkName},
-		{version, ClientVersion},
-		{height, Height},
-		{blocks, Blocks},
-		{peers, Peers},
-		{release, ReleaseNumber}
-	].
+	Keys = [<<"network">>, <<"version">>, <<"height">>, <<"blocks">>, <<"peers">>],
+	case safe_get_vals(Keys, Props) of
+		error ->
+			info_unavailable;
+		{ok, [NetworkName, ClientVersion, Height, Blocks, Peers]} ->
+			ReleaseNumber =
+				case lists:keyfind(<<"release">>, 1, Props) of
+					false -> 0;
+					R -> R
+				end,
+			[
+				{name, NetworkName},
+				{version, ClientVersion},
+				{height, Height},
+				{blocks, Blocks},
+				{peers, Peers},
+				{release, ReleaseNumber}
+			]
+	end.
 
 %% @doc Process the response of an /block call.
 handle_block_response(Peer, Peers, Response, BHL) ->
@@ -576,3 +577,17 @@ handle_tx_response(Response) ->
 
 p2p_headers() ->
 	[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}].
+
+%% @doc Return values for keys - or error if any key is missing.
+safe_get_vals(Keys, Props) ->
+	case lists:foldl(fun
+			(_, error) -> error;
+			(Key, Acc) ->
+				case lists:keyfind(Key, 1, Props) of
+					{_, Val} -> [Val | Acc];
+					_        -> error
+				end
+			end, [], Keys) of
+		error -> error;
+		Vals  -> {ok, lists:reverse(Vals)}
+	end.
