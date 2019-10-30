@@ -13,4 +13,4 @@ height_1_8() ->
 	269510. % Targeting 2019-08-29 UTC
 
 height_1_9() ->
-	300000.
+	315700. % Targeting 2019-11-04 UTC

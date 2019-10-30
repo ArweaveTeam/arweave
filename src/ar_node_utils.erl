@@ -131,12 +131,21 @@ calculate_reward_pool_perpetual(OldPool, TXs, _, RecallSize, WeaveSize, Height, 
 		TXs
 	),
 	BaseReward = Inflation + TXsReward,
-	CostPerGB = ar_tx_perpetual_storage:usd_to_ar(
-		ar_tx_perpetual_storage:perpetual_cost_at_timestamp(Timestamp),
-		Diff,
-		Height
-	),
-	Burden = erlang:trunc(WeaveSize * CostPerGB / (1024 * 1024 * 1024)),
+	CostPerGBPerBlock = case ar_fork:height_1_9() of
+		H when Height >= H ->
+			ar_tx_perpetual_storage:usd_to_ar(
+				ar_tx_perpetual_storage:get_cost_per_block_at_timestamp(Timestamp),
+				Diff,
+				Height
+			);
+		_ ->
+			ar_tx_perpetual_storage:usd_to_ar(
+				ar_tx_perpetual_storage:perpetual_cost_at_timestamp_pre_fork_1_9(Timestamp),
+				Diff,
+				Height
+			)
+	end,
+	Burden = erlang:trunc(WeaveSize * CostPerGBPerBlock / (1024 * 1024 * 1024)),
 	AR = Burden - BaseReward,
 	NewPool = OldPool + TXsCost,
 	case AR =< 0 of

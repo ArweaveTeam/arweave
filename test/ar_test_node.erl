@@ -19,6 +19,7 @@
 -export([get_last_tx/1, get_last_tx/2]).
 -export([get_tx_confirmations/2]).
 -export([get_balance/1]).
+-export([test_with_mocked_functions/2]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -385,3 +386,40 @@ get_balance(Pub) ->
 			[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
 		),
 	binary_to_integer(Reply).
+
+test_with_mocked_functions(Functions, TestFun) ->
+	{
+		foreach,
+		fun() ->
+			lists:foldl(
+				fun({Module, Fun, Mock}, Mocked) ->
+					NewMocked = case maps:get(Module, Mocked, false) of
+						false ->
+							meck:new(Module, [passthrough]),
+							slave_call(meck, new, [Module, [no_link, passthrough]]),
+							maps:put(Module, true, Mocked);
+						true ->
+							Mocked
+					end,
+					meck:expect(Module, Fun, Mock),
+					slave_call(meck, expect, [Module, Fun, Mock]),
+					NewMocked
+				end,
+				maps:new(),
+				Functions
+			)
+		end,
+		fun(Mocked) ->
+			maps:fold(
+				fun(Module, _, _) ->
+					meck:unload(Module),
+					slave_call(meck, unload, [Module])
+				end,
+				noop,
+				Mocked
+			)
+		end,
+		[
+			{timeout, 120, TestFun}
+		]
+	}.
