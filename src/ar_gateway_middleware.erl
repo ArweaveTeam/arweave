@@ -187,7 +187,7 @@ redirect_to_labeled_tx(Label, TXID, SubPath, Req, #{ gateway := {Domain, _} }) -
 		Domain/binary,
 		Path/binary
 	>>,
-	{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}.
+	{stop, cowboy_req:reply(308, #{<<"location">> => Location}, Req)}.
 
 other_request(Req, Env) ->
 	case cowboy_req:scheme(Req) of
@@ -201,7 +201,7 @@ other_request(Req, Env) ->
 				Hostname/binary,
 				Path/binary
 			>>,
-			{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}
+			{stop, cowboy_req:reply(308, #{<<"location">> => Location}, Req)}
 	end.
 
 bad_request(Req) ->
@@ -236,7 +236,7 @@ redirect_to_secure_custom_domain(CustomDomain, Req) ->
 		"https://",
 		CustomDomain/binary, "/"
 	>>,
-	{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}.
+	{stop, cowboy_req:reply(308, #{<<"location">> => Location}, Req)}.
 
 get_tx_from_hash(Hash) ->
 	case ar_util:safe_decode(Hash) of
@@ -285,7 +285,7 @@ serve_manifest_index(Index, Req) ->
 		Hostname/binary,
 		NewPath/binary
 	>>,
-	{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}.
+	{stop, cowboy_req:reply(308, #{<<"location">> => Location}, Req)}.
 
 serve_manifest_listing(TXID, Hrefs, Req) ->
 	Body = [
