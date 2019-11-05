@@ -525,12 +525,14 @@ tags_map({TxId, Name, Value}) ->
 		value => Value
 	}.
 
-eval_legacy_arql_where_clause({equals, <<"from">>, Value}) ->
+eval_legacy_arql_where_clause({equals, <<"from">>, Value})
+	when is_binary(Value) ->
 	{
 		"tx.from_address = ?",
 		[Value]
 	};
-eval_legacy_arql_where_clause({equals, <<"to">>, Value}) ->
+eval_legacy_arql_where_clause({equals, <<"to">>, Value})
+	when is_binary(Value) ->
 	{
 		"tx.target = ?",
 		[Value]
