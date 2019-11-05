@@ -231,6 +231,8 @@ parse_cli_args([Arg|_Rest], _O) ->
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#config { port = Port });
 start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = MaxMiners, disable = Disable, enable = Enable }) ->
+	error_logger:logfile({open, Filename = generate_logfile_name()}),
+	error_logger:tty(false),
 	ar_meta_db:start(),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
