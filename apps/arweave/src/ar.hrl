@@ -191,8 +191,8 @@
 %% @doc The number of the best peers to send new blocks to in parallel.
 -define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
 
-%% @doc The maximum number of peers to propagate blocks or txs to.
--define(MAX_PROPAGATION_PEERS, 65).
+%% @doc The maximum number of peers to propagate blocks or txs to, by default.
+-define(DEFAULT_MAX_PROPAGATION_PEERS, 65).
 
 %% @doc When the transaction data size is smaller than this number of bytes,
 %% the transaction is gossiped to the peer without a prior check if the peer

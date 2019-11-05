@@ -134,7 +134,8 @@ show_help() ->
 			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."},
 			{"gateway (domain)", "Run a gateway on the specified domain"},
 			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
-			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."}
+			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
+			{"max_propagation_peers (number)", "How many peers to propagate blocks and transactions to. Default is 65."}
 		]
 	),
 	erlang:halt().
@@ -223,6 +224,8 @@ parse_cli_args(["custom_domain", Domain|Rest], C = #config { gateway_custom_doma
 	parse_cli_args(Rest, C#config { gateway_custom_domains = [ list_to_binary(Domain) | Ds ] });
 parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
+parse_cli_args(["max_propagation_peers", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { max_propagation_peers = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -268,6 +271,7 @@ start(
 		gateway_domain = GatewayDomain,
 		gateway_custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
+		max_propagation_peers = MaxPropagationPeers,
 		ipfs_pin = IPFSPin,
 		webhooks = WebhookConfigs
 	}) ->
@@ -297,6 +301,8 @@ start(
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
+	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
+
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
