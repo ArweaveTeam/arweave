@@ -33,7 +33,9 @@ execute(_, #{ id := TXID }, <<"linkedFromTransactions">>, Args) ->
 		<<"byForeignTag">> := ForeignTagName,
 		<<"from">> := FromQuery,
 		<<"to">> := ToQuery,
-		<<"tags">> := TagsQuery
+		<<"tags">> := TagsQuery,
+		<<"limit">> := LimitQuery,
+		<<"offset">> := OffsetQuery
 	} = Args,
 	Tags = case TagsQuery of
 		List when is_list(List) ->
@@ -50,7 +52,15 @@ execute(_, #{ id := TXID }, <<"linkedFromTransactions">>, Args) ->
 			To when is_list(To) -> [{to, To}];
 			null -> []
 		end,
-		[{tags, [{ForeignTagName, TXID} | lists:map(fun ar_graphql_tag:to_tuple/1, Tags)]}]
+		[{tags, [{ForeignTagName, TXID} | lists:map(fun ar_graphql_tag:to_tuple/1, Tags)]}],
+		case LimitQuery of
+			Limit when is_integer(Limit) -> [{limit, Limit}];
+			null -> []
+		end,
+		case OffsetQuery of
+			Offset when is_integer(Offset) -> [{offset, Offset}];
+			null -> []
+		end
 	]),
 	{ok, [{ok, TX} || TX <- ar_sqlite3:select_txs_by(Opts)]};
 execute(Ctx, Obj, <<"countLinkedFromTransactions">>, Args) ->

@@ -87,6 +87,8 @@ DROP INDEX idx_tag_name_value;
 
 -define(SELECT_TAGS_BY_TX_ID_SQL, "SELECT * FROM tag WHERE tx_id = ?").
 
+-define(MAX_QUERY_LIMIT, 50).
+
 %%%===================================================================
 %%% Public API.
 %%%===================================================================
@@ -161,12 +163,16 @@ handle_call({select_tx_by_id, ID}, _, State) ->
 	ok = sqlite3:reset(?DB_NAME, Stmt),
 	{reply, Reply, State};
 handle_call({select_txs_by, Opts}, _, State) ->
-	{WhereClause, Params} = select_txs_by_where_clause(Opts),
+	{WhereClause, WhereParams} = select_txs_by_where_clause(Opts),
+	Limit = min(proplists:get_value(limit, Opts, ?MAX_QUERY_LIMIT), ?MAX_QUERY_LIMIT),
+	Offset = proplists:get_value(offset, Opts, 0),
+	Params = WhereParams ++ [Limit, Offset],
 	SQL = lists:concat([
 		"SELECT tx.* FROM tx ",
 		"JOIN block on tx.block_indep_hash = block.indep_hash ",
-		"WHERE ", WhereClause,
-		" ORDER BY block.height DESC, tx.id DESC"
+		"WHERE ", WhereClause, " ",
+		"ORDER BY block.height DESC, tx.id DESC ",
+		"LIMIT ? OFFSET ?"
 	]),
 	{ok, Stmt} = sqlite3:prepare(?DB_NAME, SQL),
 	ok = sqlite3:bind(?DB_NAME, Stmt, Params),

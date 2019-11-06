@@ -16,13 +16,13 @@ do_execute(_, _, <<"transaction">>, #{ <<"id">> := TXID }) ->
 		{ok, TX} -> {ok, TX};
 		not_found -> {ok, null}
 	end;
-do_execute(_, _, <<"transactions">>, #{ <<"from">> := null, <<"to">> := null, <<"tags">> := [] }) ->
-	{ok, []};
 do_execute(_, _, <<"transactions">>, Args) ->
 	#{
 		<<"from">> := FromQuery,
 		<<"to">> := ToQuery,
-		<<"tags">> := TagsQuery
+		<<"tags">> := TagsQuery,
+		<<"limit">> := LimitQuery,
+		<<"offset">> := OffsetQuery
 	} = Args,
 	Opts = lists:concat([
 		case FromQuery of
@@ -38,13 +38,17 @@ do_execute(_, _, <<"transactions">>, Args) ->
 				[{tags, lists:map(fun ar_graphql_tag:to_tuple/1, Tags)}];
 			null ->
 				[]
+		end,
+		case LimitQuery of
+			Limit when is_integer(Limit) -> [{limit, Limit}];
+			null -> []
+		end,
+		case OffsetQuery of
+			Offset when is_integer(Offset) -> [{offset, Offset}];
+			null -> []
 		end
 	]),
-	TXs = case Opts of
-		[_|_] -> ar_sqlite3:select_txs_by(Opts);
-		[] -> []
-	end,
-	{ok, [{ok, TX} || TX <- TXs]};
+	{ok, [{ok, TX} || TX <- ar_sqlite3:select_txs_by(Opts)]};
 do_execute(Ctx, Obj, <<"countTransactions">>, Args) ->
 	{ok, Results} = execute(Ctx, Obj, <<"transactions">>, Args),
 	{ok, length(Results)}.

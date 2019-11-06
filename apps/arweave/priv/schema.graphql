@@ -1,7 +1,7 @@
 type Query {
     transaction(id: ID!): Transaction
-    transactions(from: [String!], to: [String!], tags: [TagInput!]): [Transaction!]!
-    countTransactions(from: [String!], to: [String!], tags: [TagInput!]): Int!
+    transactions(from: [String!], to: [String!], tags: [TagInput!], limit: Int, offset: Int): [Transaction!]!
+    countTransactions(from: [String!], to: [String!], tags: [TagInput!], limit: Int, offset: Int): Int!
 }
 
 type Transaction {
@@ -9,8 +9,8 @@ type Transaction {
     tags: [Tag!]!
     tagValue(tagName: String!): String
     linkedToTransaction(byOwnTag: String!): Transaction
-    linkedFromTransactions(byForeignTag: String!, from: [String!], to: [String!], tags: [TagInput!]): [Transaction!]!
-    countLinkedFromTransactions(byForeignTag: String!, from: [String!], to: [String!], tags: [TagInput!]): Int!
+    linkedFromTransactions(byForeignTag: String!, from: [String!], to: [String!], tags: [TagInput!], limit: Int, offset: Int): [Transaction!]!
+    countLinkedFromTransactions(byForeignTag: String!, from: [String!], to: [String!], tags: [TagInput!], limit: Int, offset: Int): Int!
 }
 
 type Tag {
