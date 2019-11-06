@@ -51,4 +51,6 @@ do_execute(_, _, <<"transactions">>, Args) ->
 	{ok, [{ok, TX} || TX <- ar_sqlite3:select_txs_by(Opts)]};
 do_execute(Ctx, Obj, <<"countTransactions">>, Args) ->
 	{ok, Results} = execute(Ctx, Obj, <<"transactions">>, Args),
-	{ok, length(Results)}.
+	{ok, length(Results)};
+do_execute(_, _, <<"maxTransactionsLimit">>, _) ->
+	{ok, ar_sqlite3:get_max_query_limit()}.

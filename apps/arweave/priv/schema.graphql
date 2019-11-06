@@ -2,6 +2,7 @@ type Query {
     transaction(id: ID!): Transaction
     transactions(from: [String!], to: [String!], tags: [TagInput!], limit: Int, offset: Int): [Transaction!]!
     countTransactions(from: [String!], to: [String!], tags: [TagInput!], limit: Int, offset: Int): Int!
+    maxTransactionsLimit: Int!
 }
 
 type Transaction {

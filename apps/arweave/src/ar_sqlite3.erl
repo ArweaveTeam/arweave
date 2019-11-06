@@ -7,6 +7,7 @@
 -export([select_block_by_tx_id/1, select_tags_by_tx_id/1]).
 -export([eval_legacy_arql/1]).
 -export([insert_full_block/1]).
+-export([get_max_query_limit/0]).
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include("ar.hrl").
@@ -124,6 +125,9 @@ insert_full_block(#block {} = FullBlock) ->
 		gen_server:cast(?MODULE, {insert_tag, TagFields})
 	end, TagFieldsList),
 	ok.
+
+get_max_query_limit() ->
+	?MAX_QUERY_LIMIT.
 
 %%%===================================================================
 %%% Generic server callbacks.
