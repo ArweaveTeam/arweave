@@ -200,8 +200,9 @@ handle_call({eval_legacy_arql, Query}, _, State) ->
 			SQL = lists:concat([
 				"SELECT tx.id FROM tx ",
 				"JOIN block ON tx.block_indep_hash = block.indep_hash ",
-				"WHERE ", WhereClause,
-				" ORDER BY block.height DESC, tx.id DESC"
+				"WHERE ", WhereClause, " ",
+				"ORDER BY block.height DESC, tx.id DESC ",
+				"LIMIT ", integer_to_list(?MAX_QUERY_LIMIT)
 			]),
 			case sqlite3:prepare(?DB_NAME, SQL) of
 				{ok, Stmt} ->
