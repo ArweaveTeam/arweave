@@ -47,9 +47,6 @@
 %% @doc Ensure this number of the last blocks are not dropped.
 -define(KEEP_LAST_BLOCKS, 5).
 
-%% @doc The time to poll peers for a new current block.
--define(POLL_TIME, 60*100).
-
 %%%
 %%% Public API.
 %%%

@@ -1,84 +1,118 @@
 -module(ar_poller).
--export([start/2]).
+-behaviour(gen_server).
+
+-export([start_link/1]).
+-export([init/1]).
+-export([handle_cast/2, handle_call/3]).
+
 -include("ar.hrl").
 
-%%% This module spawns a process that regularly checks for updates to
-%%% the current block and returns it if a new one is found.
+%%% This module fetches blocks from trusted peers in case the node is not in the
+%%% public network or hasn't received blocks for some other reason.
 
-%% The time to poll peers for a new current block.
--define(POLL_TIME, 10*1000).
+%% The polling frequency in seconds.
+-define(DEFAULT_POLLING_INTERVAL, 60 * 1000).
 
-%% @doc Starts poll server.
-start(Node, Peers) ->
-	spawn(
-		fun() ->
-			server(Node, Peers)
-		end
-	).
+%%%===================================================================
+%%% Public API.
+%%%===================================================================
 
-%% @doc Regularly poll peers for a new block.
-server(Node, Peers) -> server(Node, Peers, no_block_hash).
-server(Node, Peers, LastBH) ->
-	receive after ?POLL_TIME -> ok end,
-	case get_remote_block_hash_list(Peers) of
-		unavailable ->
-			server(Node, Peers, LastBH);
-		{[LastBH | _], _} ->
-			server(Node, Peers, LastBH);
-		{BHL, Peer} ->
-			case get_remote_block_pair(Peer, BHL) of
-				{B, PreviousRecallB} ->
-					Recall = {PreviousRecallB#block.indep_hash, PreviousRecallB#block.block_size, <<>>, <<>>},
-					Node ! {new_block, Peer, B#block.height, B, no_data_segment, Recall},
-					server(Node, Peers, hd(BHL));
-				unavailable ->
-					server(Node, Peers, LastBH)
-			end
-	end.
+start_link(Args) ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
-get_remote_block_hash_list([]) ->
-	unavailable;
-get_remote_block_hash_list([Peer | Peers]) ->
-	case catch ar_http_iface_client:get_hash_list(Peer) of
-		{'EXIT', _} ->
-			get_remote_block_hash_list(Peers);
-		BHL ->
-			{BHL, Peer}
-	end.
+%%%===================================================================
+%%% Generic server callbacks.
+%%%===================================================================
 
-get_remote_block_pair(Peer, BHL) ->
-	case ar_node_utils:get_full_block(Peer, hd(BHL), BHL) of
-		unavailable -> unavailable;
-		B -> get_remote_block_pair(Peer, BHL, B)
-	end.
+init(Args) ->
+	ar:info([{event, ar_poller_start}]),
+	I = proplists:get_value(polling_interval, Args, ?DEFAULT_POLLING_INTERVAL),
+	{ok, _} = schedule_polling(I),
+	{ok, #{
+		trusted_peers => proplists:get_value(trusted_peers, Args, []),
+		last_seen_height => -1,
+		interval => I
+	}}.
 
-get_remote_block_pair(Peer, BHL, B) ->
-	%% Fetch the previous block, since that's required before calling
-	%% ar_util:get_recall_hash/2
-	case get_block(B#block.previous_block, BHL, Peer) of
-		{ok, _} ->
-			PreviousRecallBH = ar_util:get_recall_hash(B#block.previous_block, BHL),
-			case get_block(PreviousRecallBH, BHL, Peer) of
-				{ok, PreviouRecallB} -> {B, PreviouRecallB};
-				unavailable -> unavailable
+handle_cast(poll_block, State) ->
+	#{ trusted_peers := TrustedPeers, last_seen_height := LastSeenHeight, interval := Interval } = State,
+	{NewLastSeenHeight, NeedPoll} = case ar_node:get_height(whereis(http_entrypoint_node)) of
+		-1 ->
+			%% Wait until the node joins the network or starts from a hash list.
+			{-1, false};
+		Height when LastSeenHeight == -1 ->
+			{Height, true};
+		Height when Height > LastSeenHeight ->
+			%% Skip this poll if the block has been already received by other means.
+			{Height, false};
+		_ ->
+			{LastSeenHeight, true}
+	end,
+	NewState = case NeedPoll of
+		true ->
+			case poll_block(TrustedPeers, NewLastSeenHeight + 1) of
+				{error, block_already_received} ->
+					State#{ last_seen_height => NewLastSeenHeight + 1 };
+				ok ->
+					State#{ last_seen_height => NewLastSeenHeight + 1 };
+				{error, _} ->
+					State#{ last_seen_height => NewLastSeenHeight }
 			end;
-		unavailable ->
-			unavailable
-	end.
+		false ->
+			State#{ last_seen_height => NewLastSeenHeight }
+	end,
+	{ok, _} = schedule_polling(Interval),
+	{noreply, NewState}.
 
-get_block(BH, BHL, Peer) ->
-	case ar_storage:read_block(BH, BHL) of
-		unavailable ->
-			get_block_remote(BH, BHL, Peer);
-		B ->
-			{ok, B}
-	end.
+handle_call(_Request, _From, State) ->
+	{noreply, State}.
 
-get_block_remote(BH, BHL, Peer) ->
-	case ar_node_utils:get_full_block(Peer, BH, BHL) of
-		unavailable -> unavailable;
-		not_found -> unavailable;
-		B ->
-			ar_storage:write_full_block(B),
-			{ok, B}
-	end.
+%%%===================================================================
+%%% Internal functions.
+%%%===================================================================
+
+schedule_polling(Interval) ->
+	timer:apply_after(Interval, gen_server, cast, [?MODULE, poll_block]).
+
+poll_block(Peers, Height) ->
+	poll_block_step(download_block_shadow, {Peers, Height}).
+
+poll_block_step(download_block_shadow, {Peers, Height}) ->
+	case ar_http_iface_client:get_block_shadow(Peers, Height) of
+		unavailable ->
+			{error, block_not_found};
+		{Peer, BShadow} ->
+			poll_block_step(check_ignore_list, {Peer, BShadow})
+	end;
+poll_block_step(check_ignore_list, {Peer, BShadow}) ->
+	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
+		true ->
+			{error, block_already_received};
+		false ->
+			ar_bridge:ignore_id(BShadow#block.indep_hash),
+			poll_block_step(check_hash_list, {Peer, BShadow})
+	end;
+poll_block_step(check_hash_list, {Peer, BShadow}) ->
+	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(whereis(http_entrypoint_node)),
+	HL = lists:map(fun({BH, _}) -> BH end, BlockTXsPairs),
+	PrevH = BShadow#block.previous_block,
+	case HL of
+		[PrevH | _] ->
+			poll_block_step(accept_block, {Peer, BShadow#block{ hash_list = HL }});
+		_ ->
+			PeerHL = ar_http_iface_client:get_hash_list(Peer),
+			BlockHL = reconstruct_block_hash_list(BShadow#block.indep_hash, PeerHL),
+			poll_block_step(accept_block, {Peer, BShadow#block{ hash_list = BlockHL }})
+	end;
+poll_block_step(accept_block, {Peer, BShadow}) ->
+	Node = whereis(http_entrypoint_node),
+	BShadowHeight = BShadow#block.height,
+	Node ! {new_block, Peer, BShadowHeight, BShadow, no_data_segment, no_recall},
+	ok.
+
+reconstruct_block_hash_list(_H, []) ->
+	{error, failed_to_reconstruct_block_hash_list};
+reconstruct_block_hash_list(H, [H | Rest]) ->
+	lists:sublist(Rest, ?STORE_BLOCKS_BEHIND_CURRENT);
+reconstruct_block_hash_list(H, [_ | HL]) ->
+	reconstruct_block_hash_list(H, HL).

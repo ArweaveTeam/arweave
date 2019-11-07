@@ -105,8 +105,11 @@ show_help() ->
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
 			{"data_dir", "The directory for storing the weave and the wallets (when generated)."},
-			{"polling", "Poll peers for new blocks. Useful in environments where "
-						"port forwarding is not possible."},
+			{"polling", "Poll peers for new blocks every 10 seconds. "
+						"Useful in environments where "
+						"port forwarding is not possible. "
+						"When the flag is not set, the node still polls "
+						"if it does not receive blocks for a minute."},
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"init", "Start a new blockweave."},
@@ -439,13 +442,13 @@ start(
 		{http_bridge_node, Bridge}
 	]),
 	ar_randomx_state:start_block_polling(),
-	case Polling of
+	PollingArgs = [{trusted_peers, Peers}] ++ case Polling of
 		true ->
-			ar_meta_db:put(polling_mode, true),
-			ar_poller:start(Node, Peers);
+			[{polling_interval, 10 * 1000}];
 		false ->
-			do_nothing
+			[]
 	end,
+	{ok, _} = ar_poller_sup:start_link(PollingArgs),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case IPFSPin of
 		false -> ok;

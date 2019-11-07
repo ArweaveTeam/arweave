@@ -408,7 +408,6 @@ integrate_new_block(
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
-	%% Recurse over the new block.
 	ar_miner_log:foreign_block(NewB#block.indep_hash),
 	ar:report_console(
 		[
