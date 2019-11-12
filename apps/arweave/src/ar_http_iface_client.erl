@@ -289,6 +289,29 @@ get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
 		)
 	).
 
+get_txs(Peers, MempoolTXs, B) ->
+	case B#block.txs of
+		TXIDs when length(TXIDs) > ?BLOCK_TX_COUNT_LIMIT ->
+			{error, txs_count_exceeds_limit};
+		TXIDs ->
+			get_txs(Peers, MempoolTXs, TXIDs, [], 0)
+	end.
+
+get_txs(_Peers, _MempoolTXs, [], TXs, _TotalSize) ->
+	{ok, lists:reverse(TXs)};
+get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
+	case get_tx(Peers, TXID, MempoolTXs) of
+		TX when is_record(TX, tx) ->
+			case TotalSize + byte_size(TX#tx.data) of
+				NewTotalSize when NewTotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
+					{error, txs_exceed_block_size_limit};
+				NewTotalSize ->
+					get_txs(Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
+			end;
+		_ ->
+			{error, tx_not_found}
+	end.
+
 %% @doc Retreive a tx by ID from the memory pool, disk, or a remote peer.
 get_tx(Peers, TXID, MempoolTXs) ->
 	case list_search(
@@ -532,15 +555,15 @@ reconstruct_full_block(Peer, Peers, Body, BHL) ->
 					HL -> HL
 				end,
 			MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node)),
-			FullB =
-				B#block {
-					txs = [ get_tx(Peers, TXID, MempoolTXs) || TXID <- B#block.txs ],
-					hash_list = HashList,
-					wallet_list = WalletList
-				},
-			case lists:any(fun erlang:is_atom/1, FullB#block.txs) or is_atom(WalletList) of
-				false -> FullB;
-				true -> unavailable
+			case {get_txs(Peers, MempoolTXs, B), WalletList} of
+				{{ok, TXs}, MaybeWalletList} when is_list(MaybeWalletList) ->
+					B#block {
+						txs = TXs,
+						hash_list = HashList,
+						wallet_list = WalletList
+					};
+				_ ->
+					unavailable
 			end;
 		false -> B
 	end.
