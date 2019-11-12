@@ -133,10 +133,10 @@ create_state(BlockTXPairs) ->
 
 verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool) ->
 	case ar_tx:verify(TX, Diff, Height, FloatingWallets, Timestamp) of
-		true ->
+		valid ->
 			verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool);
-		false ->
-			{invalid, tx_verification_failed}
+		{invalid, ErrorCodes} ->
+			{invalid, {tx_verification_failed, ErrorCodes}}
 	end.
 
 verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
