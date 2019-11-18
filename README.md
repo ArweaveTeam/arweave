@@ -14,7 +14,7 @@ store rare data.
 Download and extract the latest archive for your platform on the release
 page, then run the included `bin/start` script to get started.
 
-For mor information, refer to the [mining guide](https://docs.arweave.org/info/mining/mining-guide).
+For more information, refer to the [mining guide](https://docs.arweave.org/info/mining/mining-guide).
 
 # Building from source
 
