@@ -1,7 +1,7 @@
 # Arweave Server
 
-This repository holds the Arweave server, as well as the App Developer
-Toolkit (ADT) and the Arweave testing framework, TNT/NO-VLNS.
+This is the repository for the official Erlang implementation of the Arweave
+protocol and a gateway implementation.
 
 Arweave is a distributed, cryptographically verified permanent archive built
 on a cryptocurrency that aims to, for the first time, provide feasible data
@@ -9,59 +9,92 @@ permanence. By leveraging our novel Blockweave datastructure, data is stored
 in a decentralised, peer-to-peer manner where miners are incentivised to
 store rare data.
 
-# Requirements
-
-In order to run the Arweave server prototype and ADT, a recent (R20 and above)
-version of Erlang/OTP is required as well as a version of make.
-
 # Getting Started
-To get started, simply download this repo. You can start an Arweave server
-session simply by running `make session`.
 
-You can learn more about building Arweave ADT apps by checking out our
-documentation [here](ADT_README.md).
+Download and extract the latest archive for your platform on the release
+page, then run the included `bin/start` script to get started.
 
-For more information on the Arweave project and to read our lightpaper visit
-[arweave.org](https://www.arweave.org/).
+For mor information, refer to the [mining guide](https://docs.arweave.org/info/mining/mining-guide).
 
-# Mining
+# Building from source
 
-To start mining, follow the instructions in the [mining guide](https://docs.arweave.org/info/mining/mining-guide).
+## Requirements
 
-# Development
-
-## Prerequisites
-
-- Erlang OTP v20
+- Erlang OTP v21+
+- GCC or Clang
 - GNU Make
+- SQLite3 headers (libsqlite3-dev on Ubuntu)
 
-## Run tests
-
-```
-make test
-```
-
-The command launches two Erlang VMs connected in the distributed mode. The master VM runs an HTTP server on the port
-1984. The slave VM uses the port 1983. The data folders are `data_test_master` and `data_test_slave` accordingly. The tests
-that do not depend on two VMs are run against the master VM.
-
-## Build and enter shell
-
-```
-make session
+```shell script
+git clone --recursive https://github.com/ArweaveTeam/arweave.git
+cd arweave
+./rebar3 as prod tar
 ```
 
-# App Developer Toolkit (ADT)
-You can find separate documentation for the App Developer Toolkit [here](ADT_README.md).
+You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z.tar.gz`.
+
+# Running a gateway
+
+To run a gateway, consult the [gateway setup guide](doc/gateway_setup_guide.md).
+
+# Contributing
+
+Make sure to have the build requirements installed.
+
+Clone the repo and initialize the Git submodules:
+```shell script
+git clone --recursive https://github.com/ArweaveTeam/arweave.git
+```
+
+## Running a node locally
+
+```shell
+bin/start-dev
+```
+
+## Running the tests
+
+To run the tests, uncomment this line in ar.hrl:
+```
+%-define(DEBUG, debug).
+```
+
+Then run the following command:
+
+```
+bin/test
+```
+
+## Running a shell
+
+```
+bin/shell
+```
+
+`bin/test` and `bin/shell` launch two connected Erlang VMs in distributed mode. The
+master VM runs an HTTP server on the port 1984. The slave VM uses the
+port 1983. The data folders are `data_test_master` and `data_test_slave`
+respectively. The tests that do not depend on two VMs are run against the
+master VM.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for more information.
 
 # HTTP API
+
 You can find documentation regarding our HTTP interface [here](http_iface_docs.md).
 
 # Contact
-If you have questions or comments on the Arweave you can get in touch by
-finding us on [Twitter](https://twitter.com/ArweaveTeam/), [Reddit](https://www.reddit.com/r/arweave), [Discord](https://discord.gg/2ZpV8nM) or by
+
+If you have questions or comments about Arweave you can get in touch by
+finding us on [Twitter](https://twitter.com/ArweaveTeam/), [Reddit](https://www.reddit.com/r/arweave), [Discord](https://discord.gg/DjAFMJc) or by
 emailing us at team@arweave.org.
 
+
+For more information about the Arweave project visit [https://www.arweave.org](https://www.arweave.org/)
+or have a look at our [yellow paper](https://www.arweave.org/files/arweave-yellowpaper.pdf).
+
 # License
+
 The Arweave project is released under GNU General Public License v2.0.
 See [LICENSE](LICENSE.md) for full license conditions.
+

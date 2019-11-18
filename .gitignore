@@ -3,9 +3,10 @@
 *.dat
 .arweave.plt
 testlog
-priv/tls
-priv/jiffy.so
-priv/prometheus_process_collector.so
+apps/arweave/priv/tls
+apps/arweave/priv/*.so
 _build
 .rebar3
-c_src/*.o
+apps/arweave/c_src/*.o
+data_test_master
+data_test_slave
