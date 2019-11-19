@@ -421,7 +421,16 @@ generate_block_from_shadow(StateIn, BShadow, Recall, TXs, Peer) ->
 
 generate_block_from_shadow(StateIn, BShadow, Recall, TXs, NewHashList, Peer) ->
 	#{ hash_list := HashList } = StateIn,
-	{RecallIndepHash, _, Key, Nonce} = Recall,
+	{RecallIndepHash, Key, Nonce} = case Recall of
+		no_recall ->
+			{
+				ar_util:get_recall_hash(BShadow#block.previous_block, NewHashList),
+				<<>>,
+				<<>>
+			};
+		{RecallH, _, K, N} ->
+			{RecallH, K, N}
+	end,
 	MaybeRecallB = case ar_block:get_recall_block(Peer, RecallIndepHash, NewHashList, Key, Nonce) of
 		unavailable ->
 			RecallHash = ar_node_utils:find_recall_hash(BShadow, HashList),

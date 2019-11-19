@@ -5,6 +5,7 @@
 -module(ar_http_iface_client).
 
 -export([send_new_block/4, send_new_tx/2, get_block/3]).
+-export([get_block_shadow/2]).
 -export([get_tx/3, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
@@ -185,12 +186,38 @@ get_full_block(Peers, ID, BHL) ->
 			[],
 			10 * 1000
 		),
-		BHL
+		{full_block, BHL}
 	) of
 		unavailable ->
 			get_full_block(Peers -- [Peer], ID, BHL);
 		not_found ->
 			get_full_block(Peers -- [Peer], ID, BHL);
+		B ->
+			{Peer, B}
+	end.
+
+%% @doc Retreive a block shadow by hash or height from remote peers.
+get_block_shadow([], _ID) ->
+	unavailable;
+get_block_shadow(Peers, ID) ->
+	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	case handle_block_response(
+		Peer,
+		Peers,
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			prepare_block_id(ID),
+			p2p_headers(),
+			[],
+			10 * 1000
+		),
+		block_shadow
+	) of
+		unavailable ->
+			get_block_shadow(Peers -- [Peer], ID);
+		not_found ->
+			get_block_shadow(Peers -- [Peer], ID);
 		B ->
 			{Peer, B}
 	end.
@@ -451,8 +478,12 @@ process_get_info(Props) ->
 	end.
 
 %% @doc Process the response of an /block call.
-handle_block_response(Peer, Peers, Response, BHL) ->
-	case catch handle_block_response1(Peer, Peers, Response, BHL) of
+handle_block_response(_, _, {error, _}, _) -> unavailable;
+handle_block_response(_, _, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response(_, _, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
+handle_block_response(_, _, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable;
+handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block_shadow) ->
+	case catch ar_serialize:json_struct_to_block(Body) of
 		{'EXIT', Reason} ->
 			ar:info([
 				"Failed to parse block response.",
@@ -462,9 +493,24 @@ handle_block_response(Peer, Peers, Response, BHL) ->
 			unavailable;
 		Handled ->
 			Handled
-	end.
+	end;
+handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, {full_block, BHL}) ->
+	case catch reconstruct_full_block(Peer, Peers, Body, BHL) of
+		{'EXIT', Reason} ->
+			ar:info([
+				"Failed to parse block response.",
+				{peer, Peer},
+				{reason, Reason}
+			]),
+			unavailable;
+		Handled ->
+			Handled
+	end;
+handle_block_response(_, _, Response, _) ->
+	ar:warn([{unexpected_block_response, Response}]),
+	unavailable.
 
-handle_block_response1(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) ->
+reconstruct_full_block(Peer, Peers, Body, BHL) ->
 	B = ar_serialize:json_struct_to_block(Body),
 	case ?IS_BLOCK(B) of
 		true ->
@@ -497,14 +543,7 @@ handle_block_response1(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, BHL) 
 				true -> unavailable
 			end;
 		false -> B
-	end;
-handle_block_response1(_, _, {error, _}, _) -> unavailable;
-handle_block_response1(_, _, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
-handle_block_response1(_, _, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
-handle_block_response1(_, _, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable;
-handle_block_response1(_, _, Response, _) ->
-	ar:warn([{unexpected_block_response, Response}]),
-	unavailable.
+	end.
 
 %% @doc Process the response of a /block/.../encrypted call.
 handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
