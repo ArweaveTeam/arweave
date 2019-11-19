@@ -1,0 +1,30 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+cd "$SCRIPT_DIR/.."
+
+./rebar3 compile
+
+startBlock="$1"
+endBlock="$2"
+if [ ! -z "$3" ]; then
+    outputFile="$3"
+else
+    outputFile="transactions-${startBlock}-${endBlock}.csv"
+fi
+
+if [ -f "$outputFile" ]; then
+    rm "$outputFile"
+fi
+
+export ERL_EPMD_ADDRESS=127.0.0.1
+
+erl -pa `./rebar3 path` \
+    -noshell \
+    -config config/sys.config \
+    -name tx-exporter@127.0.0.1 \
+    -setcookie arweave \
+    -run app_block_tx_export export_transactions \
+    "$outputFile" "$startBlock" "$endBlock"
