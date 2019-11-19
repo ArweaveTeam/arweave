@@ -282,7 +282,7 @@ send_tx_to_external_parallel(Peers, TX) ->
 		min(length(Peers), ?TX_PROPAGATION_PARALLELIZATION),
 		Peers
 	),
-	NSeqPeers = max(0, ?MAX_PROPAGATION_PEERS - ?TX_PROPAGATION_PARALLELIZATION),
+	NSeqPeers = max(0, ar_meta_db:get(max_propagation_peers) - ?TX_PROPAGATION_PARALLELIZATION),
 	PeersSequential = lists:sublist(PeersRest, NSeqPeers),
 	ar:report(
 		[
@@ -304,7 +304,7 @@ send_block_to_external_parallel(Peers, NewB, BDS, Recall) ->
 		min(length(Peers), ?BLOCK_PROPAGATION_PARALLELIZATION),
 		Peers
 	),
-	NSeqPeers = max(0, ?MAX_PROPAGATION_PEERS - ?BLOCK_PROPAGATION_PARALLELIZATION),
+	NSeqPeers = max(0, ar_meta_db:get(max_propagation_peers) - ?BLOCK_PROPAGATION_PARALLELIZATION),
 	PeersSequential = lists:sublist(PeersRest, NSeqPeers),
 	ar:report(
 		[
