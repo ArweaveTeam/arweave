@@ -18,7 +18,7 @@
 		{<<"X-Block-Format">>, <<"2">>}
 	]).
 
--define(DEFAULT_RESPONSE_HEADERS,
+-define(CORS_HEADERS,
 	#{<<"access-control-allow-origin">> => <<"*">>}).
 
 %% @doc Specifies whether the software should be run in debug mode

@@ -21,7 +21,7 @@ init(Req, State) ->
 	end.
 
 handle_preflight_request(Req, State) ->
-	Req1 = cowboy_req:set_resp_headers(?DEFAULT_RESPONSE_HEADERS, Req),
+	Req1 = cowboy_req:set_resp_headers(?CORS_HEADERS, Req),
 	Req2 = cowboy_req:set_resp_headers(?PREFLIGHT_RESPONSE_HEADERS, Req1),
 	Req3 = cowboy_req:set_resp_body(<<"OK">>, Req2),
 	Reply = cowboy_req:reply(200, Req3),
@@ -129,7 +129,7 @@ run_execute(#{
 	Ctx = #{ params => Coerced, operation_name => OpName },
 	Response = graphql:execute(Ctx, AST),
 	ResponseBody = jiffy:encode(Response),
-	Req2 = cowboy_req:set_resp_headers(?DEFAULT_RESPONSE_HEADERS, Req),
+	Req2 = cowboy_req:set_resp_headers(?CORS_HEADERS, Req),
 	Req3 = cowboy_req:set_resp_body(ResponseBody, Req2),
 	Reply = cowboy_req:reply(200, Req3),
 	{ok, Reply, State}.
@@ -138,7 +138,7 @@ err(Code, Msg, Req, State) ->
 	Formatted = iolist_to_binary(io_lib:format("~p", [Msg])),
 	Err = #{ type => error, message => Formatted },
 	Body = jiffy:encode(#{ errors => [Err] }),
-	Req2 = cowboy_req:set_resp_headers(?DEFAULT_RESPONSE_HEADERS, Req),
+	Req2 = cowboy_req:set_resp_headers(?CORS_HEADERS, Req),
 	Req3 = cowboy_req:set_resp_body(Body, Req2),
 	Reply = cowboy_req:reply(Code, Req3),
 	{ok, Reply, State}.

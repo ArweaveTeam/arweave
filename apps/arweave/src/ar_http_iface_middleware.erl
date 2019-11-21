@@ -84,9 +84,9 @@ handle(Peer, Req) ->
 	end,
 	case handle(Method, SplitPath, Req) of
 		{Status, Hdrs, Body, HandledReq} ->
-			{Status, maps:merge(?DEFAULT_RESPONSE_HEADERS, Hdrs), Body, HandledReq};
+			{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
 		{Status, Body, HandledReq} ->
-			{Status, ?DEFAULT_RESPONSE_HEADERS, Body, HandledReq}
+			{Status, ?CORS_HEADERS, Body, HandledReq}
 	end.
 
 %% @doc Return network information from a given node.
