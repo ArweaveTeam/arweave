@@ -545,6 +545,7 @@ req(Scheme, Host, Path) ->
 	Pid = self(),
 	StreamId = make_ref(),
 	Req = #{
+		method => <<"GET">>,
 		scheme => Scheme,
 		host => Host,
 		path => Path,
