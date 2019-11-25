@@ -9,6 +9,7 @@
 		jiffy,
 		fusco,
 		cowboy,
+		esqlite,
 		graphql,
 		prometheus,
 		prometheus_process_collector,
