@@ -16,6 +16,6 @@ start_link(Args) ->
 %%%===================================================================
 
 init(Args) ->
-	SupFlags = #{strategy => one_for_one, intensity => 1000, period => 1},
+	SupFlags = #{strategy => one_for_one, intensity => 50, period => 1},
 	ChildSpec = #{ id => ar_sqlite3, start => {ar_sqlite3, start_link, [Args]} },
 	{ok, {SupFlags, [ChildSpec]}}.
