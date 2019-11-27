@@ -60,7 +60,32 @@
 %% rather than
 %%
 %%     <a href="https://{txlabel}.gateway.example/{txid}">Link</a>
-execute(Req, #{ gateway := {Domain, CustomDomains} } = Env) ->
+execute(Req, Env) ->
+	Method = cowboy_req:method(Req),
+	case handle(Method, Req, Env) of
+		{ok, HandledReq, NewEnv} ->
+			{ok, HandledReq, NewEnv};
+		{stop, {Status, HandledReq}} ->
+			{stop, cowboy_req:reply(Status, ?CORS_HEADERS, <<>>, HandledReq)};
+		{stop, {Status, Headers, HandledReq}} when is_map(Headers) ->
+			{stop, cowboy_req:reply(Status, maps:merge(?CORS_HEADERS, Headers), <<>>, HandledReq)};
+		{stop, {Status, Body, HandledReq}} when is_binary(Body) ->
+			{stop, cowboy_req:reply(Status, ?CORS_HEADERS, Body, HandledReq)};
+		{stop, {Status, Headers, Body, HandledReq}} ->
+			{stop, cowboy_req:reply(Status, maps:merge(?CORS_HEADERS, Headers), Body, HandledReq)}
+	end.
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+handle(<<"OPTIONS">>, Req, _Env) ->
+	Headers = maps:merge(?CORS_HEADERS, #{
+		<<"access-control-allow-methods">> => <<"GET">>,
+		<<"access-control-allow-headers">> => <<"Content-Type">>
+	}),
+	{stop, {200, Headers, <<"OK">>, Req}};
+handle(_, Req, #{ gateway := {Domain, CustomDomains} } = Env) ->
 	Hostname = cowboy_req:host(Req),
 	case ar_domain:get_labeling(Domain, CustomDomains, Hostname) of
 		apex -> handle_apex_request(Req, Env);
@@ -68,10 +93,6 @@ execute(Req, #{ gateway := {Domain, CustomDomains} } = Env) ->
 		{custom, CustomDomain} -> handle_custom_request(CustomDomain, Req, Env);
 		unknown -> handle_unknown_request(Req, Env)
 	end.
-
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
 
 handle_apex_request(Req, Env) ->
 	case resolve_path(cowboy_req:path(Req)) of
@@ -187,7 +208,7 @@ redirect_to_labeled_tx(Label, TXID, SubPath, Req, #{ gateway := {Domain, _} }) -
 		Domain/binary,
 		Path/binary
 	>>,
-	{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}.
+	{stop, {301, #{<<"location">> => Location}, Req}}.
 
 other_request(Req, Env) ->
 	case cowboy_req:scheme(Req) of
@@ -201,14 +222,14 @@ other_request(Req, Env) ->
 				Hostname/binary,
 				Path/binary
 			>>,
-			{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}
+			{stop, {301, #{<<"location">> => Location}, Req}}
 	end.
 
 bad_request(Req) ->
-	{stop, cowboy_req:reply(400, Req)}.
+	{stop, {400, Req}}.
 
 not_found(Req) ->
-	{stop, cowboy_req:reply(404, Req)}.
+	{stop, {404, Req}}.
 
 handle_custom_request_1(CustomDomain, Path, Req, Env) ->
 	case cowboy_req:scheme(Req) of
@@ -236,7 +257,7 @@ redirect_to_secure_custom_domain(CustomDomain, Req) ->
 		"https://",
 		CustomDomain/binary, "/"
 	>>,
-	{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}.
+	{stop, {301, #{<<"location">> => Location}, Req}}.
 
 get_tx_from_hash(Hash) ->
 	case ar_util:safe_decode(Hash) of
@@ -285,7 +306,7 @@ serve_manifest_index(Index, Req) ->
 		Hostname/binary,
 		NewPath/binary
 	>>,
-	{stop, cowboy_req:reply(301, #{<<"location">> => Location}, Req)}.
+	{stop, {301, #{<<"location">> => Location}, Req}}.
 
 serve_manifest_listing(TXID, Hrefs, Req) ->
 	Body = [
@@ -308,7 +329,7 @@ serve_manifest_listing(TXID, Hrefs, Req) ->
 		<<"</body>">>,
 		<<"</html>">>
 	],
-	{stop, cowboy_req:reply(200, #{ <<"content-type">> => <<"text/html">> }, Body, Req)}.
+	{stop, {200, #{ <<"content-type">> => <<"text/html">> }, Body, Req}}.
 
 html_escape(Html) ->
 	lists:foldl(fun({Char, Escape}, NextHtml) ->
@@ -363,10 +384,10 @@ serve_manifest_path_3(SubFilename, Req) ->
 
 serve_plain_tx(TX, ContentType, Req) ->
 	Headers = #{ <<"content-type">> => ContentType },
-	{stop, cowboy_req:reply(200, Headers, TX#tx.data, Req)}.
+	{stop, {200, Headers, TX#tx.data, Req}}.
 
 misdirected_request(Req) ->
-	{stop, cowboy_req:reply(421, Req)}.
+	{stop, {421, Req}}.
 
 domain_improperly_configured(Req) ->
-	{stop, cowboy_req:reply(502, #{}, <<"Domain improperly configured">>, Req)}.
+	{stop, {502, #{}, <<"Domain improperly configured">>, Req}}.
