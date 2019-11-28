@@ -10,7 +10,7 @@
 -define(CLIENT_VERSION, 5).
 
 %% @doc The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 30).
+-define(RELEASE_NUMBER, 31).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
@@ -124,6 +124,14 @@
 -define(BLOCK_TX_DATA_SIZE_LIMIT, ?TX_DATA_SIZE_LIMIT). % Must be greater or equal to tx data size limit.
 -define(BLOCK_TX_COUNT_LIMIT, 1000).
 
+%% @doc Byte size of the TX headers, tags allowance, etc.
+-define(TX_SIZE_BASE, 3210).
+
+%% @doc The mamimal size in bytes of the transaction queue.
+%% When the limit is reached, transactions with the lowest
+%% utility score are dropped from the queue.
+-define(TX_QUEUE_SIZE_LIMIT, 200 * 1024 * 1024).
+
 -define(MAX_TX_ANCHOR_DEPTH, ?STORE_BLOCKS_BEHIND_CURRENT).
 
 %% @doc Default timeout for establishing an HTTP connection.
@@ -175,14 +183,13 @@
 -endif.
 
 %% @doc A conservative assumption of the network speed used to
-%% estimate the transaction propagation delay. The real network
-%% speed is much higher - a conservative assumption is used to
-%% avoid forks when nodes are congested by an overwhelming number
-%% of transactions.
+%% estimate the transaction propagation delay. It does not include
+%% the base delay, the time the transaction spends in the priority
+%% queue, and the time it takes to propagate the transaction to peers.
 -ifdef(DEBUG).
 -define(TX_PROPAGATION_BITS_PER_SECOND, 1000000000).
 -else.
--define(TX_PROPAGATION_BITS_PER_SECOND, 80000). % 80 kbps
+-define(TX_PROPAGATION_BITS_PER_SECOND, 160000). % 160 kbps
 -endif.
 
 %% @doc The number of the best peers to send new transactions to in parallel.
@@ -222,6 +229,10 @@
 %% More mining can be performed with every core utilised, but at significant
 %% cost to node performance.
 -define(NUM_MINING_PROCESSES, max(1, (erlang:system_info(schedulers_online) - 1))).
+
+%% @doc Number of message emitter processes to spawn
+%% Each emitter process broadcasts TX or block messages to peers
+-define(NUM_EMITTER_PROCESSES, 8).
 
 %% @doc Target number of blocks per year.
 -define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME/60)) ).

@@ -15,6 +15,7 @@
 -export([validate/5, validate/8, validate_wallet_list/1]).
 -export([calculate_delay/1]).
 -export([update_block_txs_pairs/3]).
+-export([log_invalid_txs_drop_reason/1]).
 -export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
 
 -include("ar.hrl").
@@ -401,13 +402,14 @@ integrate_new_block(
 		[TX#tx.id || TX <- BlockTXs],
 		BlockTXPairs
 	),
-	ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		NewBlockTXPairs,
 		TXs -- BlockTXs,
 		NewB#block.diff,
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
+	log_invalid_txs_drop_reason(InvalidTXs),
 	ar_miner_log:foreign_block(NewB#block.indep_hash),
 	ar:report_console(
 		[
@@ -458,6 +460,23 @@ integrate_new_block(
 
 update_block_txs_pairs(BH, TXIDs, List) ->
 	lists:sublist([{BH, TXIDs} | List], ?MAX_TX_ANCHOR_DEPTH).
+
+log_invalid_txs_drop_reason(InvalidTXs) ->
+	lists:foreach(
+		fun({TXID, Reason}) ->
+			case Reason of
+				tx_already_in_weave ->
+					noop;
+				_ ->
+					ar:info([
+						{event, dropped_tx},
+						{id, ar_util:encode(TXID)},
+						{reason, Reason}
+					])
+			end
+		end,
+		InvalidTXs
+	).
 
 %% @doc Recovery from a fork.
 fork_recover(#{ node := Node, hash_list := HashList, block_txs_pairs := BlockTXPairs } = StateIn, Peer, NewB) ->

@@ -531,7 +531,7 @@ reconstruct_full_block(Peer, Peers, Body, BHL) ->
 						ar_block:generate_hash_list_for_block(B, BHL);
 					HL -> HL
 				end,
-			MempoolTXs = ar_node:get_all_known_txs(whereis(http_entrypoint_node)),
+			MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node)),
 			FullB =
 				B#block {
 					txs = [ get_tx(Peers, TXID, MempoolTXs) || TXID <- B#block.txs ],

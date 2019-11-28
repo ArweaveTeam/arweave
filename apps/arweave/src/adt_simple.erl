@@ -73,11 +73,16 @@ server(S = #state { gossip = GS }) ->
 		Msg when is_record(Msg, gs_msg) ->
 			% We have received a gossip mesage. Use the library to process it.
 			case ar_gossip:recv(GS, Msg) of
-				% Ignore gossip message.
-				{NewGS, ignore} ->
-					server(S#state { gossip = NewGS });
 				% New tx received.
 				{NewGS, {add_tx, TX}} ->
+					server(
+						apply_callback(
+							S#state { gossip = NewGS },
+							new_transaction,
+							TX
+						)
+					);
+				{NewGS, {move_tx_to_mining_pool, TX}} ->
 					server(
 						apply_callback(
 							S#state { gossip = NewGS },
@@ -105,7 +110,10 @@ server(S = #state { gossip = GS }) ->
 							S1,
 							B#block.txs
 						),
-					server(S2)
+					server(S2);
+				% Ignore gossip message.
+				{NewGS, _} ->
+					server(S#state { gossip = NewGS })
 			end;
 		stop -> ok;
 		OtherMsg ->

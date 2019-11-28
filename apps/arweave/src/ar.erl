@@ -30,6 +30,7 @@
 		ar_config_tests,
 		ar_deep_hash,
 		ar_inflation,
+		ar_tx_queue,
 		ar_node_tests,
 		ar_util,
 		ar_cleanup,
@@ -45,7 +46,6 @@
 		ar_join,
 		ar_fork_recovery,
 		ar_http_iface_tests,
-		ar_simple_reporter,
 		ar_retarget,
 		ar_block,
 		ar_tx_db,
@@ -116,6 +116,7 @@ show_help() ->
 			{"diff (init_diff)", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
 			{"max_miners (num)", "The maximum number of mining processes."},
+			{"max_emitters (num)", "The maximum number of message emitter processes (default 8)."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
@@ -193,6 +194,8 @@ parse_cli_args(["mining_addr", Addr|Rest], C) ->
 	parse_cli_args(Rest, C#config { mining_addr = ar_util:decode(Addr) });
 parse_cli_args(["max_miners", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_miners = list_to_integer(Num) });
+parse_cli_args(["max_emitters", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { max_emitters = list_to_integer(Num) });
 parse_cli_args(["new_mining_key"|Rest], C)->
 	parse_cli_args(Rest, C#config { new_key = true });
 parse_cli_args(["disk_space", Size|Rest], C) ->
@@ -259,6 +262,7 @@ start(
 		diff = Diff,
 		mining_addr = Addr,
 		max_miners = MaxMiners,
+		max_emitters = MaxEmitters,
 		new_key = NewKey,
 		load_key = LoadKey,
 		pause = Pause,
@@ -300,6 +304,7 @@ start(
 	ar_meta_db:put(used_space, UsedSpace),
 	ar_meta_db:put(mine, Mine),
 	ar_meta_db:put(max_miners, MaxMiners),
+	ar_meta_db:put(max_emitters, MaxEmitters),
 	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),

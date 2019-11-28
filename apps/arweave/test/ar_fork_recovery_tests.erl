@@ -80,7 +80,7 @@ missing_txs_fork_recovery_test() ->
 	assert_slave_wait_until_receives_txs(SlaveNode, [TX1]),
 	%% Turn on gossip and mine a block.
 	ar_test_node:slave_gossip(on, SlaveNode),
-	?assertEqual([], ar_node:get_all_known_txs(MasterNode)),
+	?assertEqual([], ar_node:get_pending_txs(MasterNode)),
 	ar_test_node:slave_mine(SlaveNode),
 	timer:sleep(1000),
 	%% Expect the local node to reject the block.
@@ -92,7 +92,7 @@ missing_txs_fork_recovery_test() ->
 	assert_slave_wait_until_receives_txs(SlaveNode, [TX2]),
 	%% Turn on gossip and mine a block.
 	ar_test_node:slave_gossip(on, SlaveNode),
-	?assertEqual([], ar_node:get_all_known_txs(MasterNode)),
+	?assertEqual([], ar_node:get_pending_txs(MasterNode)),
 	ar_test_node:slave_mine(SlaveNode),
 	%% Expect the local node to fork recover.
 	ar_test_node:wait_until_height(MasterNode, 2).
@@ -126,7 +126,7 @@ recall_block_missing_multiple_txs_fork_recovery_test() ->
 		SlaveNode,
 		(ar_tx:new())#tx{ owner = ar_wallet:to_address(AnotherPub) }
 	),
-	?assertEqual(2, length(slave_call(ar_node, get_all_known_txs, [SlaveNode]))),
+	?assertEqual(2, length(slave_call(ar_node, get_pending_txs, [SlaveNode]))),
 	%% Turn the gossip back on and mine a block on the slave.
 	ar_test_node:slave_gossip(on, SlaveNode),
 	ar_test_node:slave_mine(SlaveNode),

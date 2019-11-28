@@ -100,15 +100,15 @@ handle(SPid, {add_tx, TX}) ->
 			ok
 	end,
 	{ok, add_tx};
-handle(SPid, {add_tx_to_mining_pool, TX}) ->
+handle(SPid, {move_tx_to_mining_pool, TX}) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [gossip, txs, waiting_txs, height]),
-	case add_tx_to_mining_pool(StateIn, TX, maps:get(gossip, StateIn)) of
+	case move_tx_to_mining_pool(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
 			ok
 	end,
-	{ok, add_tx_to_mining_pool};
+	{ok, move_tx_to_mining_pool};
 handle(SPid, {cancel_tx, TXID, Sig}) ->
 	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, waiting_txs]),
 	{ok, StateOut} = cancel_tx(StateIn, TXID, Sig),
@@ -217,7 +217,7 @@ handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, BShadow, _BDS, Recall}}) 
 	end,
 	{ok, process_new_block};
 handle_gossip(SPid, {NewGS, {add_tx, TX}}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [node, txs, waiting_txs, height]),
+	{ok, StateIn} = ar_node_state:lookup(SPid, [txs]),
 	case add_tx(StateIn, TX, NewGS) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -225,6 +225,33 @@ handle_gossip(SPid, {NewGS, {add_tx, TX}}) ->
 			ok
 	end,
 	{ok, add_tx};
+handle_gossip(SPid, {NewGS, {add_waiting_tx, TX}}) ->
+	{ok, StateIn} = ar_node_state:lookup(SPid, [waiting_txs]),
+	case add_waiting_tx(StateIn, TX, NewGS) of
+		{ok, StateOut} ->
+			ar_node_state:update(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, add_waiting_tx};
+handle_gossip(SPid, {NewGS, {move_tx_to_mining_pool, TX}}) ->
+	{ok, StateIn} = ar_node_state:lookup(SPid, [waiting_txs, txs]),
+	case move_tx_to_mining_pool(StateIn, TX, NewGS) of
+		{ok, StateOut} ->
+			ar_node_state:update(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, move_tx_to_mining_pool};
+handle_gossip(SPid, {NewGS, {drop_waiting_txs, TXs}}) ->
+	{ok, StateIn} = ar_node_state:lookup(SPid, [waiting_txs]),
+	case drop_waiting_txs(StateIn, TXs, NewGS) of
+		{ok, StateOut} ->
+			ar_node_state:update(SPid, StateOut);
+		none ->
+			ok
+	end,
+	{ok, drop_waiting_txs};
 handle_gossip(SPid, {NewGS, ignore}) ->
 	ar_node_state:update(SPid, [
 		{gossip, NewGS}
@@ -247,33 +274,49 @@ handle_gossip(SPid, {NewGS, UnhandledMsg}) ->
 %%% Private API functions.
 %%%
 
-%% @doc Add new transaction to a server state.
+%% @doc Add the new transaction to the server state.
 add_tx(StateIn, TX, GS) ->
-	#{
-		node := Node,
-		waiting_txs := WaitingTXs
-	} = StateIn,
+	#{ txs := TXs } = StateIn,
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-	timer:send_after(
-		ar_node_utils:calculate_delay(byte_size(TX#tx.data)),
-		Node,
-		{add_tx_to_mining_pool, TX}
-	),
+	{ok, [
+		{txs, TXs ++ [TX]},
+		{gossip, NewGS}
+	]}.
+
+%% @doc Add the new waiting transaction to the server state.
+add_waiting_tx(StateIn, TX, GS) ->
+	#{ waiting_txs := WaitingTXs } = StateIn,
+	{NewGS, _} = ar_gossip:send(GS, {add_waiting_tx, TX}),
 	{ok, [
 		{waiting_txs, WaitingTXs ++ [TX]},
 		{gossip, NewGS}
 	]}.
 
 %% @doc Add the transaction to the mining pool, to be included in the mined block.
-add_tx_to_mining_pool(StateIn, TX, NewGS) ->
+move_tx_to_mining_pool(StateIn, TX, GS) ->
 	#{
 		txs := TXs,
 		waiting_txs := WaitingTXs
 	} = StateIn,
+	{NewGS, _} = ar_gossip:send(GS, {move_tx_to_mining_pool, TX}),
 	{ok, [
 		{txs, TXs ++ [TX]},
 		{gossip, NewGS},
 		{waiting_txs, WaitingTXs -- [TX]}
+	]}.
+
+drop_waiting_txs(#{ waiting_txs := WaitingTXs }, DropTXs, GS) ->
+	{NewGS, _} = ar_gossip:send(GS, {drop_waiting_txs, DropTXs}),
+	DropSet = sets:from_list(lists:map(fun(TX) -> TX#tx.id end, DropTXs)),
+	FilteredTXs = lists:filter(
+		fun(TX) ->
+			not sets:is_element(TX#tx.id, DropSet)
+		end,
+		WaitingTXs
+	),
+	{ok, [
+		{waiting_txs, FilteredTXs},
+		{gossip, NewGS}
 	]}.
 
 %% @doc Remove a TX from the pools if the signature is valid.
@@ -624,13 +667,15 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp) ->
 						[TX#tx.id || TX <- MinedTXs],
 						BlockTXPairs
 					),
-					ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
-						NewBlockTXPairs,
-						TXs -- MinedTXs,
-						NextB#block.diff,
-						NextB#block.height,
-						NextB#block.wallet_list
-					),
+					{ValidTXs, InvalidTXs} =
+						ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+							NewBlockTXPairs,
+							TXs -- MinedTXs,
+							NextB#block.diff,
+							NextB#block.height,
+							NextB#block.wallet_list
+						),
+					ar_node_utils:log_invalid_txs_drop_reason(InvalidTXs),
 					NewHL = [NextB#block.indep_hash | HashList],
 					ar_storage:write_block_hash_list(BinID, NewHL),
 					ar_miner_log:mined_block(NextB#block.indep_hash),
@@ -711,13 +756,14 @@ recovered_from_fork(#{id := BinID, hash_list := not_joined} = StateIn, BHL, Bloc
 		undefined -> ok;
 		_		  -> erlang:unregister(fork_recovery_server)
 	end,
-	ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		BlockTXPairs,
 		TXs,
 		NewB#block.diff,
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
+	ar_node_utils:log_invalid_txs_drop_reason(InvalidTXs),
 	ar_storage:write_block_hash_list(BinID, BHL),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
@@ -758,13 +804,14 @@ do_recovered_from_fork(StateIn, NewB, BlockTXPairs) ->
 	),
 	ar_miner_log:fork_recovered(NewB#block.indep_hash),
 	NextBHL = [NewB#block.indep_hash | NewB#block.hash_list],
-	ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		BlockTXPairs,
 		TXs,
 		NewB#block.diff,
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
+	ar_node_utils:log_invalid_txs_drop_reason(InvalidTXs),
 	ar_storage:write_block_hash_list(BinID, NextBHL),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{

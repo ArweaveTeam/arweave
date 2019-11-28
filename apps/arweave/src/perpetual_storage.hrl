@@ -55,6 +55,3 @@ end).
 
 %% @doc Mining reward as a proportion of tx cost.
 -define(MINING_REWARD_MULTIPLIER, 0.2).
-
-%% @doc Byte size of the TX headers, tags allowance, etc.
--define(TX_SIZE_BASE, 3210).

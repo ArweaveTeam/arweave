@@ -132,9 +132,20 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req) ->
 				%% Should encode
 				lists:map(
 					fun ar_util:encode/1,
-					ar_node:get_pending_txs(whereis(http_entrypoint_node))
+					ar_node:get_pending_txs(whereis(http_entrypoint_node), [id_only])
 				)
 			),
+	Req};
+
+%% @doc Return outgoing transaction priority queue.
+%% GET request to endpoint /queue.
+handle(<<"GET">>, [<<"queue">>], Req) ->
+	{200, #{}, ar_serialize:jsonify(
+		lists:map(
+			fun({TXID, Reward, Size}) ->
+				{[{tx, TXID}, {reward, Reward}, {size, Size}]}
+			end,
+			ar_tx_queue:show_queue())),
 	Req};
 
 %% @doc Return additional information about the transaction with the given identifier (hash).
@@ -764,16 +775,16 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 
 handle_post_tx(TX) ->
 	Node = whereis(http_entrypoint_node),
-	MempoolTXs = ar_node:get_all_known_txs(Node),
+	MempoolTXs = ar_node:get_pending_txs(Node),
 	Height = ar_node:get_height(Node),
 	case verify_mempool_txs_size(MempoolTXs, TX, Height) of
 		invalid ->
 			handle_post_tx_no_mempool_space_response();
 		valid ->
-			handle_post_tx(Node, TX, Height, MempoolTXs)
+			handle_post_tx(Node, TX, Height, [MTX#tx.id || MTX <- MempoolTXs])
 	end.
 
-handle_post_tx(Node, TX, Height, MempoolTXs) ->
+handle_post_tx(Node, TX, Height, MempoolTXIDs) ->
 	%% Check whether the TX is already ignored, ignore it if it is not
 	%% (and then pass to processing steps).
 	case ar_bridge:is_id_ignored(TX#tx.id) of
@@ -781,10 +792,10 @@ handle_post_tx(Node, TX, Height, MempoolTXs) ->
 			{error_response, {208, #{}, <<"Transaction already processed.">>}};
 		false ->
 			ar_bridge:ignore_id(TX#tx.id),
-			handle_post_tx2(Node, TX, Height, MempoolTXs)
+			handle_post_tx2(Node, TX, Height, MempoolTXIDs)
 	end.
 
-handle_post_tx2(Node, TX, Height, MempoolTXs) ->
+handle_post_tx2(Node, TX, Height, MempoolTXIDs) ->
 	WalletList = ar_node:get_wallet_list(Node),
 	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
 	case lists:keyfind(OwnerAddr, 1, WalletList) of
@@ -797,10 +808,10 @@ handle_post_tx2(Node, TX, Height, MempoolTXs) ->
 			]),
 			handle_post_tx_exceed_balance_response();
 		_ ->
-			handle_post_tx(Node, TX, Height, MempoolTXs, WalletList)
+			handle_post_tx(Node, TX, Height, MempoolTXIDs, WalletList)
 	end.
 
-handle_post_tx(Node, TX, Height, MempoolTXs, WalletList) ->
+handle_post_tx(Node, TX, Height, MempoolTXIDs, WalletList) ->
 	Diff = ar_node:get_current_diff(Node),
 	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
 	case ar_tx_replay_pool:verify_tx(
@@ -808,7 +819,7 @@ handle_post_tx(Node, TX, Height, MempoolTXs, WalletList) ->
 		Diff,
 		Height,
 		BlockTXPairs,
-		MempoolTXs,
+		MempoolTXIDs,
 		WalletList
 	) of
 		{invalid, tx_verification_failed} ->
@@ -936,7 +947,10 @@ hash_to_filename(Type, Hash) ->
 
 %% @doc Return true if ID is a pending tx.
 is_a_pending_tx(ID) ->
-	lists:member(ID, ar_node:get_pending_txs(whereis(http_entrypoint_node))).
+	lists:member(
+		ID,
+		ar_node:get_pending_txs(whereis(http_entrypoint_node), [id_only])
+	).
 
 %% @doc Given a request, returns a blockshadow.
 request_to_struct_with_blockshadow(Req) ->
