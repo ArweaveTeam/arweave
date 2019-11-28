@@ -20,6 +20,7 @@
 -export([get_tx_confirmations/2]).
 -export([get_balance/1]).
 -export([test_with_mocked_functions/2]).
+-export([get_tx_price/1]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -46,6 +47,8 @@ slave_start(B0, RewardAddr) ->
 
 start(B0, Peer, RewardAddr) ->
 	ar_storage:clear(),
+	ar_tx_queue:stop(),
+	ok = kill_if_running([http_bridge_node, http_entrypoint_node]),
 	Node = ar_node:start([], [B0], 0, RewardAddr),
 	ar_http_iface_server:reregister(http_entrypoint_node, Node),
 	ar_meta_db:reset_peer(Peer),
@@ -53,6 +56,17 @@ start(B0, Peer, RewardAddr) ->
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	{Node, B0}.
+
+kill_if_running([Name | Names]) ->
+	case whereis(Name) of
+		undefined ->
+			do_nothing;
+		PID ->
+			exit(PID, kill)
+	end,
+	kill_if_running(Names);
+kill_if_running([]) ->
+	ok.
 
 join(Peer) ->
 	Node = ar_node:start([Peer]),
@@ -169,8 +183,8 @@ assert_wait_until_receives_txs(Node, TXs) ->
 wait_until_receives_txs(Node, TXs) ->
 	ar_util:do_until(
 		fun() ->
-			KnownTXs = ar_node:get_all_known_txs(Node),
-			case lists:all(fun(TX) -> lists:member(TX, KnownTXs) end, TXs) of
+			MinedTXs = ar_node:get_mined_txs(Node),
+			case lists:all(fun(TX) -> lists:member(TX, MinedTXs) end, TXs) of
 				true ->
 					ok;
 				_ ->
@@ -247,31 +261,7 @@ sign_tx(Node, Wallet, TXParams) ->
 	Data = maps:get(data, TXParams, <<>>),
 	Reward = case maps:get(reward, TXParams, none) of
 		none ->
-			{IP, Port} = case Node of
-				slave ->
-					P = slave_call(ar_meta_db, get, [port]),
-					{{127, 0, 0, 1, P}, P};
-				master ->
-					P = ar_meta_db:get(port),
-					{{127, 0, 0, 1, P}, P}
-			end,
-			{ok, {{<<"200">>, _}, _, Reply, _, _}} = case Node of
-				slave ->
-					ar_httpc:request(
-						<<"GET">>,
-						IP,
-						"/price/" ++ integer_to_binary(byte_size(Data)),
-						[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-					);
-				master ->
-					ar_httpc:request(
-						<<"GET">>,
-						IP,
-						"/price/" ++ integer_to_binary(byte_size(Data)),
-						[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-					)
-			end,
-			binary_to_integer(Reply);
+			get_tx_price(Node, byte_size(Data));
 		AssignedReward ->
 			AssignedReward
 	end,
@@ -423,3 +413,33 @@ test_with_mocked_functions(Functions, TestFun) ->
 			{timeout, 120, TestFun}
 		]
 	}.
+
+get_tx_price(DataSize) ->
+	get_tx_price(slave, DataSize).
+
+get_tx_price(Node, DataSize) ->
+	{IP, Port} = case Node of
+		slave ->
+			P = slave_call(ar_meta_db, get, [port]),
+			{{127, 0, 0, 1, P}, P};
+		master ->
+			P = ar_meta_db:get(port),
+			{{127, 0, 0, 1, P}, P}
+	end,
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} = case Node of
+		slave ->
+			ar_httpc:request(
+				<<"GET">>,
+				IP,
+				"/price/" ++ integer_to_binary(DataSize),
+				[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			);
+		master ->
+			ar_httpc:request(
+				<<"GET">>,
+				IP,
+				"/price/" ++ integer_to_binary(DataSize),
+				[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			)
+	end,
+	binary_to_integer(Reply).

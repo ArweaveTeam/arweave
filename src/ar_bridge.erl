@@ -1,10 +1,11 @@
 -module(ar_bridge).
 -export([start/3]).
--export([add_tx/2, add_block/5]).
+-export([add_tx/2, move_tx_to_mining_pool/2, add_block/5]).
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
 -export([ignore_id/1, is_id_ignored/1]).
+-export([drop_waiting_txs/2]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -38,6 +39,7 @@ start(ExtPeers, IntPeers, Port) ->
     PID =
 		spawn(
 			fun() ->
+				ok = ar_tx_queue:start_link(),
 				server(
 					#state {
 						gossip = ar_gossip:init(IntPeers),
@@ -70,6 +72,15 @@ add_block(PID, OriginPeer, Block, BDS, Recall) ->
 %% @doc Notify the bridge of a new external transaction.
 add_tx(PID, TX) ->
 	PID ! {add_tx, TX}.
+
+%% @doc Notify the bridge of the dropped transactions from
+%% the awaiting propgation transaction set.
+drop_waiting_txs(PID, TXs) ->
+	PID ! {drop_waiting_txs, TXs}.
+
+%% @doc Notify the bridge of a transaction ready to be mined.
+move_tx_to_mining_pool(PID, TX) ->
+	PID ! {move_tx_to_mining_pool, TX}.
 
 %% @doc Add a remote HTTP peer.
 add_remote_peer(PID, Node) ->
@@ -137,6 +148,12 @@ server(S) ->
 %% @doc Handle the server messages.
 handle(S, {add_tx, TX}) ->
 	maybe_send_tx(S, TX);
+handle(S = #state{ gossip = GS }, {drop_waiting_txs, _TXs} = Msg) ->
+	{NewGS, _} = ar_gossip:send(GS,	Msg),
+	S#state { gossip = NewGS };
+handle(S = #state{ gossip = GS }, {move_tx_to_mining_pool, _TX} = Msg) ->
+	{NewGS, _} = ar_gossip:send(GS,	Msg),
+	S#state { gossip = NewGS };
 handle(S, {add_block, OriginPeer, B, BDS, Recall}) ->
 	send_block(S, OriginPeer, B, BDS, Recall);
 handle(S = #state{ external_peers = ExtPeers }, {add_peer, remote, Peer}) ->
@@ -176,22 +193,20 @@ handle(S, UnknownMsg) ->
 	ar:report([{ar_bridge_handle_unknown_message, UnknownMsg}]),
 	S.
 
-%% @doc Send the transaction to internal processes and to peers.
-maybe_send_tx(S, Data) ->
+%% @doc Send the transaction to internal processes.
+maybe_send_tx(S, TX) ->
 	#state {
 		gossip = GS,
 		processed = Procd
 	} = S,
-	case ar_firewall:scan_tx(Data) of
+	case ar_firewall:scan_tx(TX) of
 		reject ->
-			% If the data does not pass the scan, ignore the message.
 			S;
 		accept ->
-			% The message is at least valid, distribute it.
-			Msg = {add_tx, Data},
+			Msg = {add_waiting_tx, TX},
 			{NewGS, _} = ar_gossip:send(GS,	Msg),
-			send_to_external(S, Msg),
-			add_processed(tx, Data, Procd),
+			ar_tx_queue:add_tx(TX),
+			add_processed(tx, TX, Procd),
 			S#state { gossip = NewGS }
 	end.
 
@@ -245,9 +260,6 @@ add_processed(X, Y, _Procd) ->
 % get_id(block, {_, #block { indep_hash = Hash}, _}) -> Hash.
 
 %% @doc Send an internal message externally.
-send_to_external(S = #state {external_peers = ExternalPeers}, {add_tx, TX}) ->
-	send_tx_to_external(ExternalPeers, TX),
-	S;
 send_to_external(S, {new_block, _, _Height, _NewB, no_data_segment, _Recall}) ->
 	S;
 send_to_external(S, {new_block, _, _Height, NewB, BDS, Recall}) ->
@@ -261,40 +273,11 @@ send_to_external(S, {new_block, _, _Height, NewB, BDS, Recall}) ->
 send_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
 
-send_tx_to_external(ExternalPeers, TX) ->
-	spawn(
-		fun() ->
-			send_tx_to_external_parallel(ExternalPeers, TX)
-		end
-	).
-
 %% @doc Send a block to external peers in a spawned process.
 send_block_to_external(ExternalPeers, B, BDS, Recall) ->
 	spawn(fun() ->
 		send_block_to_external_parallel(ExternalPeers, B, BDS, Recall)
 	end).
-
-%% @doc Send the new tx to the peers by first sending it in parallel to the
-%% best/first peers and then continuing sequentially with the rest of the peers
-%% in order.
-send_tx_to_external_parallel(Peers, TX) ->
-	{PeersParallel, PeersRest} = lists:split(
-		min(length(Peers), ?TX_PROPAGATION_PARALLELIZATION),
-		Peers
-	),
-	NSeqPeers = max(0, ?MAX_PROPAGATION_PEERS - ?TX_PROPAGATION_PARALLELIZATION),
-	PeersSequential = lists:sublist(PeersRest, NSeqPeers),
-	ar:report(
-		[
-			{sending_tx_to_external_peers, ar_util:encode(TX#tx.id)},
-			{peers, length(PeersParallel) + length(PeersSequential)}
-		]
-	),
-	Send = fun(Peer) ->
-		ar_http_iface_client:send_new_tx(Peer, TX)
-	end,
-	ar_util:pmap(Send, PeersParallel),
-	lists:foreach(Send, PeersSequential).
 
 %% @doc Send the new block to the peers by first sending it in parallel to the
 %% best/first peers and then continuing sequentially with the rest of the peers

@@ -18,10 +18,6 @@
 	bhl = []
 }).
 
--record(mempool, {
-	tx_id_set = sets:new()
-}).
-
 %% @doc Verify that a transaction against the given mempool, wallet list, recent
 %% weave txs, current block height, current difficulty, and current time.
 %% The mempool is used to look for the same transaction there and to make sure
@@ -30,14 +26,9 @@
 %% wallet list references, and data size. Therefore, the function is suitable
 %% for on-edge verification where we want to accept potentially conflicting
 %% transactions to avoid consensus issues later.
-verify_tx(TX, Diff, Height, BlockTXPairs, MempoolTXs, WalletList) ->
+verify_tx(TX, Diff, Height, BlockTXPairs, MempoolTXIDs, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
-	TXIDSet = sets:from_list(
-		[MempoolTX#tx.id || MempoolTX <- MempoolTXs]
-	),
-	Mempool = #mempool {
-		tx_id_set = TXIDSet
-	},
+	TXIDSet = sets:from_list(MempoolTXIDs),
 	verify_tx(
 		general_verification,
 		TX,
@@ -46,7 +37,7 @@ verify_tx(TX, Diff, Height, BlockTXPairs, MempoolTXs, WalletList) ->
 		os:system_time(seconds),
 		WalletList,
 		WeaveState,
-		Mempool
+		TXIDSet
 	).
 
 %% @doc Verify the transactions are valid for the block taken into account
@@ -61,7 +52,7 @@ verify_block_txs(TXs, Diff, Height, Timestamp, WalletList, BlockTXPairs) ->
 		Timestamp,
 		WalletList,
 		WeaveState,
-		#mempool {}
+		sets:new()
 	),
 	case length(VerifiedTXs) of
 		L when L == length(TXs) ->
@@ -75,18 +66,18 @@ verify_block_txs(TXs, Diff, Height, Timestamp, WalletList, BlockTXPairs) ->
 %% into account the current height and diff, recent weave transactions, and
 %% the wallet list. The total data size of chosen transactions does not
 %% exceed the block size limit. Before a valid subset of transactions is chosen,
-%% transactions are sorted from biggest to smallest and then from oldest
+%% transactions are sorted from highest to lowest utility and then from oldest
 %% block anchors to newest.
 pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, WalletList, TXs) ->
 	WeaveState = create_state(BlockTXPairs),
 	{VerifiedTXs, _, _} = apply_txs(
-		sort_txs_by_data_size_and_anchor(TXs, WeaveState#state.bhl),
+		sort_txs_by_utility_and_anchor(TXs, WeaveState#state.bhl),
 		Diff,
 		Height,
 		Timestamp,
 		WalletList,
 		WeaveState,
-		#mempool {}
+		sets:new()
 	),
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
@@ -101,10 +92,9 @@ pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, WalletList, TXs) ->
 %% the new recent weave transactions, the new wallet list, and the current time.
 pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
-	Mempool = #mempool{},
 	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
-	lists:filter(
-		fun(TX) ->
+	lists:foldr(
+		fun(TX, {ValidTXs, InvalidTXs}) ->
 			case verify_tx(
 				general_verification,
 				TX,
@@ -113,14 +103,15 @@ pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 				os:system_time(seconds),
 				WalletMap,
 				WeaveState,
-				Mempool
+				sets:new()
 			) of
 				{valid, _, _} ->
-					true;
-				{invalid, _} ->
-					false
+					{[TX | ValidTXs], InvalidTXs};
+				{invalid, Reason} ->
+					{ValidTXs, [{TX#tx.id, Reason} | InvalidTXs]}
 			end
 		end,
+		{[], []},
 		TXs
 	).
 
@@ -155,7 +146,7 @@ verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mem
 			%% since current nodes can accept blocks with a chain of last_tx
 			%% references. The check would still fail on edge pre 1.8 since
 			%% TX is validated against a previous blocks' wallet list then.
-			case sets:is_element(TX#tx.last_tx, Mempool#mempool.tx_id_set) of
+			case sets:is_element(TX#tx.last_tx, Mempool) of
 				true ->
 					{invalid, last_tx_in_mempool};
 				false ->
@@ -181,9 +172,7 @@ verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mem
 verify_tx(last_tx, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
 	case ar_tx:check_last_tx(FloatingWallets, TX) of
 		true ->
-			NewMempool = Mempool#mempool {
-				tx_id_set = sets:add_element(TX#tx.id, Mempool#mempool.tx_id_set)
-			},
+			NewMempool = sets:add_element(TX#tx.id, Mempool),
 			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
 			{valid, NewFW, NewMempool};
 		false ->
@@ -204,13 +193,11 @@ verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) -
 			verify_tx(mempool_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
 	end;
 verify_tx(mempool_check, TX, _Diff, Height, FloatingWallets, _WeaveState, Mempool) ->
-	case sets:is_element(TX#tx.id, Mempool#mempool.tx_id_set) of
+	case sets:is_element(TX#tx.id, Mempool) of
 		true ->
 			{invalid, tx_already_in_mempool};
 		false ->
-			NewMempool = Mempool#mempool {
-				tx_id_set = sets:add_element(TX#tx.id, Mempool#mempool.tx_id_set)
-			},
+			NewMempool = sets:add_element(TX#tx.id, Mempool),
 			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
 			{valid, NewFW, NewMempool}
 	end.
@@ -267,7 +254,7 @@ pick_txs_under_size_limit(TXs) ->
 	),
 	TXsUnderSizeLimit.
 
-sort_txs_by_data_size_and_anchor(TXs, BHL) ->
+sort_txs_by_utility_and_anchor(TXs, BHL) ->
 	lists:sort(fun(TX1, TX2) -> compare_txs(TX1, TX2, BHL) end, TXs).
 
 compare_txs(TX1, TX2, BHL) ->
@@ -277,15 +264,17 @@ compare_txs(TX1, TX2, BHL) ->
 		{true, false} ->
 			false;
 		{true, true} ->
-			compare_txs_by_size(TX1, TX2, BHL)
+			compare_txs_by_utility(TX1, TX2, BHL)
 	end.
 
-compare_txs_by_size(TX1, TX2, BHL) ->
-	case byte_size(TX1#tx.data) == byte_size(TX2#tx.data) of
+compare_txs_by_utility(TX1, TX2, BHL) ->
+	U1 = ar_tx_queue:utility(TX1),
+	U2 = ar_tx_queue:utility(TX2),
+	case U1 == U2 of
 		true ->
 			compare_anchors(TX1, TX2, BHL);
 		false ->
-			byte_size(TX1#tx.data) > byte_size(TX2#tx.data)
+			U1 > U2
 	end.
 
 compare_anchors(_Anchor1, _Anchor2, []) ->
