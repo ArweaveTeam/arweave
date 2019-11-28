@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_server).
 
--export([start/3]).
+-export([start/1]).
 -export([reregister/1, reregister/2]).
 -export([split_path/1]).
 
@@ -34,17 +34,17 @@
 %%%===================================================================
 
 %% @doc Start the Arweave HTTP API and returns a process ID.
-start(Port, GatewayOpts, HttpNodes) ->
+start(Opts) ->
 	reregister_from_proplist([
 		http_entrypoint_node,
 		http_service_node,
 		http_bridge_node
-	], HttpNodes),
-	do_start(Port, GatewayOpts).
+	], Opts),
+	do_start(Opts).
 
-reregister_from_proplist(Names, HttpNodes) ->
+reregister_from_proplist(Names, Opts) ->
 	lists:foreach(fun(Name) ->
-		reregister(Name, proplists:get_value(Name, HttpNodes))
+		reregister(Name, proplists:get_value(Name, Opts))
 	end, Names).
 
 %% @doc Helper function : registers a new node as the entrypoint.
@@ -66,47 +66,65 @@ split_path(Path) ->
 %%%===================================================================
 
 %% @doc Start the server
-do_start(Port, GatewayOpts) ->
+do_start(Opts) ->
 	ok = ar_semaphore:start_link(hash_list_semaphore, ?MAX_PARALLEL_HASH_LIST_REQUESTS),
 	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
 	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
 	ok = ar_blacklist_middleware:start(),
-	ok = start_http_iface_listener(Port),
-	ok = start_http_gateway_listener(GatewayOpts),
-	ok = start_https_gateway_listener(GatewayOpts),
+	ok = start_http_iface_listener(Opts),
+	ok = start_gateway_listeners(Opts),
 	ok.
 
-start_http_iface_listener(Port) ->
+start_http_iface_listener(Opts) ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	HttpIfaceEnv = #{ dispatch => Dispatch },
-	TransportOpts = [{port, Port}],
+	TransportOpts = #{
+		max_connections => proplists:get_value(max_connections, Opts),
+		socket_opts => [{port, proplists:get_value(port, Opts)}]
+	},
 	ProtocolOpts = protocol_opts([{http_iface, HttpIfaceEnv}]),
 	{ok, _} = cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts),
 	ok.
 
-start_http_gateway_listener({on, Domain, CustomDomains}) ->
-	TransportOpts = [{port, 80}],
+start_gateway_listeners(Opts) ->
+	case proplists:get_value(gateway_domain, Opts) of
+		Domain when is_binary(Domain) ->
+			ok = start_http_gateway_listener(Opts),
+			ok = start_https_gateway_listener(Opts),
+			ok;
+		not_set ->
+			ok
+	end.
+
+start_http_gateway_listener(Opts) ->
+	Domain = proplists:get_value(gateway_domain, Opts),
+	CustomDomains = proplists:get_value(gateway_custom_domains, Opts),
+	TransportOpts = #{
+		max_connections => 10,
+		socket_opts => [{port, 80}]
+	},
 	ProtocolOpts = protocol_opts([{gateway, Domain, CustomDomains}]),
 	{ok, _} = cowboy:start_clear(ar_http_gateway_listener, TransportOpts, ProtocolOpts),
-	ok;
-start_http_gateway_listener(off) ->
 	ok.
 
-start_https_gateway_listener({on, Domain, CustomDomains}) ->
+start_https_gateway_listener(Opts) ->
 	PrivDir = code:priv_dir(arweave),
+	Domain = proplists:get_value(gateway_domain, Opts),
+	CustomDomains = proplists:get_value(gateway_custom_domains, Opts),
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	HttpIfaceEnv = #{ dispatch => Dispatch },
 	SniHosts = derive_sni_hosts(CustomDomains),
-	TransportOpts = [
-		{port, 443},
-		{certfile, filename:join([PrivDir, "tls/cert.pem"])},
-		{keyfile, filename:join([PrivDir, "tls/key.pem"])},
-		{sni_hosts, SniHosts}
-	] ++ cacertfile_when_present(),
+	TransportOpts = #{
+		max_connections => proplists:get_value(max_gateway_connections, Opts),
+		socket_opts => [
+			{port, 443},
+			{certfile, filename:join([PrivDir, "tls/cert.pem"])},
+			{keyfile, filename:join([PrivDir, "tls/key.pem"])},
+			{sni_hosts, SniHosts}
+		] ++ cacertfile_when_present()
+	},
 	ProtocolOpts = protocol_opts([{http_iface, HttpIfaceEnv}, {gateway, Domain, CustomDomains}]),
 	{ok, _} = cowboy:start_tls(ar_https_gateway_listener, TransportOpts, ProtocolOpts),
-	ok;
-start_https_gateway_listener(off) ->
 	ok.
 
 protocol_opts(List) ->
