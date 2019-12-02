@@ -273,7 +273,8 @@ handle(<<"POST">>, [<<"wallet">>], Req) ->
 handle(<<"POST">>, [<<"tx">>], Req) ->
 	TXJSON = ar_http_req:body(Req),
 	TX = ar_serialize:json_struct_to_tx(TXJSON),
-	case handle_post_tx(TX) of
+	{PeerIP, _Port} = cowboy_req:peer(Req),
+	case handle_post_tx(PeerIP, TX) of
 		ok ->
 			{200, #{}, <<"OK">>, Req};
 		{error_response, {Status, Headers, Body}} ->
@@ -304,7 +305,8 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req) ->
 			KeyPair = ar_wallet:load_keyfile(ar_wallet:wallet_filepath(WalletAccessCode)),
 			UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
 			SignedTX = ar_tx:sign(UnsignedTX, KeyPair),
-			case handle_post_tx(SignedTX) of
+			{PeerIP, _Port} = cowboy_req:peer(Req),
+			case handle_post_tx(PeerIP, SignedTX) of
 				ok ->
 					{200, #{}, ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}), Req};
 				{error_response, {Status, Headers, Body}} ->
@@ -773,7 +775,7 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 			get_wallet_txs(EarliestTXID, TXIDs, [TXID | Acc])
 	end.
 
-handle_post_tx(TX) ->
+handle_post_tx(PeerIP, TX) ->
 	Node = whereis(http_entrypoint_node),
 	MempoolTXs = ar_node:get_pending_txs(Node),
 	Height = ar_node:get_height(Node),
@@ -781,10 +783,10 @@ handle_post_tx(TX) ->
 		invalid ->
 			handle_post_tx_no_mempool_space_response();
 		valid ->
-			handle_post_tx(Node, TX, Height, [MTX#tx.id || MTX <- MempoolTXs])
+			handle_post_tx(PeerIP, Node, TX, Height, [MTX#tx.id || MTX <- MempoolTXs])
 	end.
 
-handle_post_tx(Node, TX, Height, MempoolTXIDs) ->
+handle_post_tx(PeerIP, Node, TX, Height, MempoolTXIDs) ->
 	%% Check whether the TX is already ignored, ignore it if it is not
 	%% (and then pass to processing steps).
 	case ar_bridge:is_id_ignored(TX#tx.id) of
@@ -792,10 +794,10 @@ handle_post_tx(Node, TX, Height, MempoolTXIDs) ->
 			{error_response, {208, #{}, <<"Transaction already processed.">>}};
 		false ->
 			ar_bridge:ignore_id(TX#tx.id),
-			handle_post_tx2(Node, TX, Height, MempoolTXIDs)
+			handle_post_tx2(PeerIP, Node, TX, Height, MempoolTXIDs)
 	end.
 
-handle_post_tx2(Node, TX, Height, MempoolTXIDs) ->
+handle_post_tx2(PeerIP, Node, TX, Height, MempoolTXIDs) ->
 	WalletList = ar_node:get_wallet_list(Node),
 	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
 	case lists:keyfind(OwnerAddr, 1, WalletList) of
@@ -808,10 +810,10 @@ handle_post_tx2(Node, TX, Height, MempoolTXIDs) ->
 			]),
 			handle_post_tx_exceed_balance_response();
 		_ ->
-			handle_post_tx(Node, TX, Height, MempoolTXIDs, WalletList)
+			handle_post_tx(PeerIP, Node, TX, Height, MempoolTXIDs, WalletList)
 	end.
 
-handle_post_tx(Node, TX, Height, MempoolTXIDs, WalletList) ->
+handle_post_tx(PeerIP, Node, TX, Height, MempoolTXIDs, WalletList) ->
 	Diff = ar_node:get_current_diff(Node),
 	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
 	case ar_tx_replay_pool:verify_tx(
@@ -835,7 +837,7 @@ handle_post_tx(Node, TX, Height, MempoolTXIDs, WalletList) ->
 		{invalid, tx_already_in_mempool} ->
 			handle_post_tx_already_in_mempool_response();
 		{valid, _, _} ->
-			handle_post_tx_accepted(TX)
+			handle_post_tx_accepted(PeerIP, TX)
 	end.
 
 verify_mempool_txs_size(MempoolTXs, TX, Height) ->
@@ -861,7 +863,11 @@ verify_mempool_txs_size(MempoolTXs, TX) ->
 			valid
 	end.
 
-handle_post_tx_accepted(TX) ->
+handle_post_tx_accepted(PeerIP, TX) ->
+	%% Exclude successful requests with valid transactions from the
+	%% IP-based throttling, to avoid connectivity issues at the times
+	%% of excessive transaction volumes.
+	ar_blacklist_middleware:decrement_ip_addr(PeerIP),
 	ar:info([
 		ar_http_iface_handler,
 		accepted_tx,

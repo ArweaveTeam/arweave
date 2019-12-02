@@ -6,6 +6,7 @@
 -export([start/0]).
 -export([reset/0, reset_rate_limit/1]).
 -export([ban_peer/2, is_peer_banned/1, cleanup_ban/0]).
+-export([decrement_ip_addr/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -75,9 +76,15 @@ reset_rate_limit(IpAddr) ->
 	ok.
 
 increment_ip_addr(IpAddr) ->
+	update_ip_addr(IpAddr, 1).
+
+decrement_ip_addr(IpAddr) ->
+	update_ip_addr(IpAddr, -1).
+
+update_ip_addr(IpAddr, Diff) ->
 	RequestLimit = ar_meta_db:get(requests_per_minute_limit) div 2, % Dividing by 2 as throttle period is 30 seconds.
 	Key = {rate_limit, IpAddr},
-	case ets:update_counter(?MODULE, Key, {2, 1}, {Key, 0}) of
+	case ets:update_counter(?MODULE, Key, {2, Diff}, {Key, 0}) of
 		1 ->
 			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_rate_limit, [IpAddr]),
 			pass;

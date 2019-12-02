@@ -111,7 +111,8 @@ get_fun_msg_pair(get_info) ->
 	, info_unavailable};
 get_fun_msg_pair(send_new_tx) ->
 	{ fun(_) ->
-			case ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)) of
+			InvalidTX = (ar_tx:new())#tx { owner = <<"key">>, signature = <<"invalid">> },
+			case ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, InvalidTX) of
 				{ok,
 					{{<<"429">>, <<"Too Many Requests">>}, _,
 						<<"Too Many Requests">>, _, _}} ->
