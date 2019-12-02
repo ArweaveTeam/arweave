@@ -85,12 +85,19 @@ poll_block_step(download_block_shadow, {Peers, Height}) ->
 			poll_block_step(check_ignore_list, {Peer, BShadow})
 	end;
 poll_block_step(check_ignore_list, {Peer, BShadow}) ->
-	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
+	BH = BShadow#block.indep_hash,
+	case ar_bridge:is_id_ignored(BH) of
 		true ->
 			{error, block_already_received};
 		false ->
-			ar_bridge:ignore_id(BShadow#block.indep_hash),
-			poll_block_step(construct_hash_list, {Peer, BShadow})
+			ar_bridge:ignore_id(BH),
+			case catch poll_block_step(construct_hash_list, {Peer, BShadow}) of
+				ok ->
+					ok;
+				Error ->
+					ar_bridge:unignore_id(BH),
+					Error
+			end
 	end;
 poll_block_step(construct_hash_list, {Peer, BShadow}) ->
 	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(whereis(http_entrypoint_node)),
