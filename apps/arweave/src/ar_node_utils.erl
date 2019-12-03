@@ -5,7 +5,7 @@
 -module(ar_node_utils).
 
 -export([get_full_block/3]).
--export([find_recall_hash/2, find_recall_block/1, find_block/1]).
+-export([find_recall_block/1, find_block/1]).
 -export([calculate_reward/2]).
 -export([calculate_reward_pool/8]).
 -export([apply_mining_reward/4, apply_tx/3, apply_txs/3]).
@@ -89,18 +89,12 @@ get_full_block_from_remote_peers(Peers, ID, BHL) ->
 			unavailable
 	end.
 
-%% @doc Return the hash of the next recall block.
-find_recall_hash(Block, []) ->
-	Block#block.indep_hash;
-find_recall_hash(Block, HashList) ->
-	lists:nth(1 + ar_weave:calculate_recall_block(Block, HashList), lists:reverse(HashList)).
-
 %% @doc Search a block list for the next recall block.
 find_recall_block(BHL = [Hash]) ->
 	ar_storage:read_block(Hash, BHL);
 find_recall_block(HashList) ->
 	Block = ar_storage:read_block(hd(HashList), HashList),
-	RecallHash = find_recall_hash(Block, HashList),
+	RecallHash = ar_util:get_recall_hash(Block, HashList),
 	ar_storage:read_block(RecallHash, HashList).
 
 %% @doc Find a block from an ordered block list.
@@ -280,7 +274,7 @@ start_mining(#{
 	case find_recall_block(BHL) of
 		unavailable ->
 			B = ar_storage:read_block(hd(BHL), BHL),
-			RecallHash = find_recall_hash(B, BHL),
+			RecallHash = ar_util:get_recall_hash(B, BHL),
 			% TODO: Cleanup.
 			% FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BHL),
@@ -422,7 +416,7 @@ integrate_new_block(
 		PID ->
 			PID ! {parent_accepted_block, NewB}
 	end,
-	RecallHash = find_recall_hash(NewB, BHL = NewBHL),
+	RecallHash = ar_util:get_recall_hash(NewB, BHL = NewBHL),
 	RawRecallB = ar_storage:read_block(RecallHash, BHL),
 	case ?IS_BLOCK(RawRecallB) of
 		true ->
