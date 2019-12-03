@@ -5,6 +5,8 @@ set -e
 SCRIPT_DIR="$(dirname "$0")"
 cd "$SCRIPT_DIR/.."
 
+bin/check-nofile
+
 echo Building dependencies...
 ./rebar3 compile
 
