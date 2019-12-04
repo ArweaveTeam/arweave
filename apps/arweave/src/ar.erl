@@ -139,7 +139,9 @@ show_help() ->
 			{"gateway (domain)", "Run a gateway on the specified domain"},
 			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
-			{"max_propagation_peers (number)", "How many peers to propagate blocks and transactions to. Default is 65."}
+			{"max_propagation_peers (number)", "How many peers to propagate blocks and transactions to. Default is 65."},
+			{"max_connections", "The number of connections to be handled concurrently. Its purpose is to prevent your system from being overloaded and ensuring all the connections are handled optimally. Default is 1024."},
+			{"max_gateway_connections", "The number of gateway connections to be handled concurrently. Default is 128."}
 		]
 	),
 	erlang:halt().
@@ -232,6 +234,10 @@ parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args(["max_propagation_peers", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_propagation_peers = list_to_integer(Num) });
+parse_cli_args(["max_connections", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { max_connections = list_to_integer(Num) });
+parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { max_gateway_connections = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -280,7 +286,9 @@ start(
 		requests_per_minute_limit = RequestsPerMinuteLimit,
 		max_propagation_peers = MaxPropagationPeers,
 		ipfs_pin = IPFSPin,
-		webhooks = WebhookConfigs
+		webhooks = WebhookConfigs,
+		max_connections = MaxConnections,
+		max_gateway_connections = MaxGatewayConnections
 	}) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -288,9 +296,8 @@ start(
 	error_logger:tty(false),
 	warn_if_single_scheduler(),
 	%% Verify port collisions when gateway enabled
-	GatewayOpts = gateway_opts(GatewayDomain, GatewayCustomDomains),
-	case {Port, GatewayOpts} of
-		{P, {on, _, _}} when P == 80; P == 443 ->
+	case {Port, GatewayDomain} of
+		{P, D} when is_binary(D) andalso (P == 80 orelse P == 443) ->
 			io:format("~nThe port must be different than 80 or 443 when the gateway is enabled.~n~n"),
 			erlang:halt();
 		_ ->
@@ -442,9 +449,14 @@ start(
 	),
 	ok = start_graphql(),
 	%% Start the first node in the gossip network (with HTTP interface).
-	ok = ar_http_iface_server:start(Port, GatewayOpts, [
+	ok = ar_http_iface_server:start([
 		{http_entrypoint_node, Node},
-		{http_bridge_node, Bridge}
+		{http_bridge_node, Bridge},
+		{port, Port},
+		{gateway_domain, GatewayDomain},
+		{gateway_custom_domains, GatewayCustomDomains},
+		{max_connections, MaxConnections},
+		{max_gateway_connections, MaxGatewayConnections}
 	]),
 	ar_randomx_state:start_block_polling(),
 	PollingArgs = [{trusted_peers, Peers}] ++ case Polling of
@@ -467,11 +479,6 @@ start(
 			garbage_collect(),
 			receive after infinity -> ok end
 	end.
-
-gateway_opts(Domain, CustomDomains) when is_binary(Domain) ->
-	{on, Domain, CustomDomains};
-gateway_opts(not_set, _) ->
-	off.
 
 start_graphql() ->
 	ok = application:ensure_started(graphql),

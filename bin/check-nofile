@@ -1,0 +1,15 @@
+#!/bin/bash
+
+limit="$(ulimit -n)"
+recommendation="10000"
+
+if [ "$limit" -lt "$recommendation" ]; then
+  echo "WARN: ************************************************************************"
+  echo "WARN: Your maximum number of open file descriptors is currently set to $limit."
+  echo "WARN: We recommend setting that limit to $recommendation or higher."
+  echo "WARN: "
+  echo "WARN: Otherwise, consider setting your max_connections setting to something"
+  echo "WARN: lower than your file descriptor limit."
+  echo "WARN: ************************************************************************"
+  echo
+fi

@@ -52,7 +52,9 @@ parse_config() ->
 				url = <<"https://example.com/hook">>,
 				headers = [{<<"Authorization">>, <<"Bearer 123456">>}]
 			}
-		]
+		],
+		max_connections = 512,
+		max_gateway_connections = 64
 	}, ParsedConfig).
 
 config_fixture() ->

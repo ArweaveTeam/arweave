@@ -194,6 +194,10 @@ parse_options([{<<"webhooks">>, WebhookConfigs} | Rest], Config) when is_list(We
 	end;
 parse_options([{<<"webhooks">>, Webhooks} | _], _) ->
 	{error, {bad_type, webhooks, array}, Webhooks};
+parse_options([{<<"max_connections">>, MaxConnections} | Rest], Config) when is_integer(MaxConnections) ->
+	parse_options(Rest, Config#config { max_connections = MaxConnections });
+parse_options([{<<"max_gateway_connections">>, MaxGatewayConnections} | Rest], Config) when is_integer(MaxGatewayConnections) ->
+	parse_options(Rest, Config#config { max_gateway_connections = MaxGatewayConnections });
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
