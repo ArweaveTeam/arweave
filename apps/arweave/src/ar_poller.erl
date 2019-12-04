@@ -4,6 +4,7 @@
 -export([start_link/1]).
 -export([init/1]).
 -export([handle_cast/2, handle_call/3]).
+-export([handle_info/2]).
 
 -include("ar.hrl").
 
@@ -65,6 +66,14 @@ handle_cast(poll_block, State) ->
 	{noreply, NewState}.
 
 handle_call(_Request, _From, State) ->
+	{noreply, State}.
+
+handle_info(_Info, State) ->
+	%% Ignore unexpected messages. Some unexpected messages are received
+	%% during startup (and sometimes later on) from ar_node
+	%% after the get function times out, but the reply still arrives then.
+	%% This handler only avoids a few warnings in the logs -
+	%% the ar_node functions have to be changed to address the problem.
 	{noreply, State}.
 
 %%%===================================================================
