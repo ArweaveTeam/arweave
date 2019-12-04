@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(dirname "$0")"
 LOGS_DIR="$(cd $SCRIPT_DIR/../logs && pwd -P)"
 
-ls -t logs \
+ls -t $LOGS_DIR \
     | grep -F -v slave \
     | head -1 \
     | xargs -I % tail "$@" "$LOGS_DIR/%"
