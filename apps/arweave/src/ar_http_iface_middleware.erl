@@ -1241,7 +1241,7 @@ validate_get_block_type_id(<<"height">>, ID) ->
 validate_get_block_type_id(<<"hash">>, ID) ->
 	case ar_util:safe_decode(ID) of
 		{ok, Hash} -> {ok, Hash};
-		invalid    -> {error, {400, #{}, <<"Invalid hash.">>}}
+		{error, invalid} -> {error, {400, #{}, <<"Invalid hash.">>}}
 	end.
 
 %% @doc Take a block type specifier, an ID, and a BHL, returning whether the
