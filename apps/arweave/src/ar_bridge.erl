@@ -4,7 +4,7 @@
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
--export([ignore_id/1, is_id_ignored/1]).
+-export([ignore_id/1, unignore_id/1, is_id_ignored/1]).
 -export([drop_waiting_txs/2]).
 -include("ar.hrl").
 
@@ -112,6 +112,9 @@ add_local_peer(PID, Node) ->
 %% @doc Ignore messages matching the given ID.
 ignore_id(ID) ->
 	ets:insert(ignored_ids, {ID, ignored}).
+
+unignore_id(ID) ->
+	ets:delete_object(ignored_ids, {ID, ignored}).
 
 %% @doc Schedule a message timer.
 reset_timer(PID, get_more_peers) ->

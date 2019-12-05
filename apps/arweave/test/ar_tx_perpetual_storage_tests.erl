@@ -271,7 +271,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	BHL2 = wait_until_height(Master, 2),
 	B2 = ar_storage:read_block(hd(BHL2), BHL2),
 	RecallB2 = ar_storage:read_block(
-		ar_weave:calculate_recall_block(hd(BHL1), BHL1),
+		ar_util:get_recall_hash(hd(BHL1), 1, BHL1),
 		BHL1
 	),
 	BaseReward2 = ar_inflation:calculate(2),

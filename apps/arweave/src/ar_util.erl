@@ -98,21 +98,23 @@ get_head_block(not_joined) -> unavailable;
 get_head_block(BHL = [IndepHash|_]) ->
 	ar_storage:read_block(IndepHash, BHL).
 
-%% @doc find the hash of a recall block. If BlockOrHash is a hash, its block
-%% must be on disk already. TODO: Get rid of this requirement.
-get_recall_hash(BlockOrHash, HashList) ->
-	lists:nth(
-        1 + ar_weave:calculate_recall_block(BlockOrHash, HashList),
-        lists:reverse(HashList)
-    ).
+%% @doc Get the hash of the recall block for the current block
+%% and its hash list.
+get_recall_hash(B, HL) when ?IS_BLOCK(B) ->
+	get_recall_hash(B#block.indep_hash, B#block.height, HL).
 
-get_recall_hash(_Height, Hash, []) -> Hash;
-get_recall_hash(0, Hash, _HastList) -> Hash;
-get_recall_hash(Height, Hash, HashList) ->
-	lists:nth(
-        1 + ar_weave:calculate_recall_block(Hash, Height, HashList),
-        lists:reverse(HashList)
-    ).
+%% @doc Get the hash of the recall block for the current block's
+%% hash, height, hash list.
+get_recall_hash(H, _Height, []) ->
+	H;
+get_recall_hash(H, Height, HL) ->
+	RecallIndex = case Height of
+		0 ->
+			1;
+		RecallHeight ->
+			1 + binary:decode_unsigned(H) rem RecallHeight
+	end,
+	lists:nth(RecallIndex, lists:reverse(HL)).
 
 %% @doc Replace a term in a list with another term.
 replace(_, _, []) -> [];

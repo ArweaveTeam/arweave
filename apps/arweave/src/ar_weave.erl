@@ -2,7 +2,6 @@
 -export([init/0, init/1, init/2, init/3, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
 -export([hash/3, indep_hash/1]).
 -export([verify_indep/2]).
--export([calculate_recall_block/2, calculate_recall_block/3]).
 -export([generate_hash_list/1]).
 -export([is_data_on_block_list/2, is_tx_on_block_list/2]).
 -export([create_genesis_txs/0]).
@@ -72,7 +71,7 @@ add(Bs, TXs, HashList) ->
 add(Bs, TXs, HashList, unclaimed) ->
 	add(Bs, TXs, HashList, <<>>);
 add([B|Bs], TXs, HashList, RewardAddr) ->
-	RecallHash = ar_util:get_recall_hash(hd([B|Bs]), HashList),
+	RecallHash = ar_util:get_recall_hash(B, HashList),
 	RecallB = ar_storage:read_block(RecallHash, HashList),
 	{FinderReward, RewardPool} =
 		ar_node_utils:calculate_reward_pool(
@@ -243,17 +242,6 @@ verify_indep(B = #block { height = Height }, HashList) ->
 			]),
 			false
 	end.
-
-%% @doc Generate a recall block number from a block or a hash and block height.
-calculate_recall_block(Hash, HashList) when is_binary(Hash) ->
-	calculate_recall_block(ar_storage:read_block(Hash, HashList), HashList);
-calculate_recall_block(B, HashList) when is_record(B, block) ->
-	case B#block.height of
-		0 -> 0;
-		_ -> calculate_recall_block(B#block.indep_hash, B#block.height, HashList)
-	end.
-calculate_recall_block(IndepHash, Height, _HashList) ->
-	binary:decode_unsigned(IndepHash) rem Height.
 
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TXs and the nonce.

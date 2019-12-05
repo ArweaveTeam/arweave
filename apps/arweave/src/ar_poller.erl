@@ -4,6 +4,7 @@
 -export([start_link/1]).
 -export([init/1]).
 -export([handle_cast/2, handle_call/3]).
+-export([handle_info/2]).
 
 -include("ar.hrl").
 
@@ -67,6 +68,14 @@ handle_cast(poll_block, State) ->
 handle_call(_Request, _From, State) ->
 	{noreply, State}.
 
+handle_info(_Info, State) ->
+	%% Ignore unexpected messages. Some unexpected messages are received
+	%% during startup (and sometimes later on) from ar_node
+	%% after the get function times out, but the reply still arrives then.
+	%% This handler only avoids a few warnings in the logs -
+	%% the ar_node functions have to be changed to address the problem.
+	{noreply, State}.
+
 %%%===================================================================
 %%% Internal functions.
 %%%===================================================================
@@ -85,24 +94,28 @@ poll_block_step(download_block_shadow, {Peers, Height}) ->
 			poll_block_step(check_ignore_list, {Peer, BShadow})
 	end;
 poll_block_step(check_ignore_list, {Peer, BShadow}) ->
-	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
+	BH = BShadow#block.indep_hash,
+	case ar_bridge:is_id_ignored(BH) of
 		true ->
 			{error, block_already_received};
 		false ->
-			ar_bridge:ignore_id(BShadow#block.indep_hash),
-			poll_block_step(check_hash_list, {Peer, BShadow})
+			ar_bridge:ignore_id(BH),
+			case catch poll_block_step(construct_hash_list, {Peer, BShadow}) of
+				ok ->
+					ok;
+				Error ->
+					ar_bridge:unignore_id(BH),
+					Error
+			end
 	end;
-poll_block_step(check_hash_list, {Peer, BShadow}) ->
+poll_block_step(construct_hash_list, {Peer, BShadow}) ->
 	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(whereis(http_entrypoint_node)),
 	HL = lists:map(fun({BH, _}) -> BH end, BlockTXsPairs),
-	PrevH = BShadow#block.previous_block,
-	case HL of
-		[PrevH | _] ->
-			poll_block_step(accept_block, {Peer, BShadow#block{ hash_list = HL }});
-		_ ->
-			PeerHL = ar_http_iface_client:get_hash_list(Peer),
-			BlockHL = reconstruct_block_hash_list(BShadow#block.indep_hash, PeerHL),
-			poll_block_step(accept_block, {Peer, BShadow#block{ hash_list = BlockHL }})
+	case reconstruct_block_hash_list(Peer, BShadow, HL) of
+		{ok, BHL} ->
+			poll_block_step(accept_block, {Peer, BShadow#block{ hash_list = BHL }});
+		{error, _} = Error ->
+			Error
 	end;
 poll_block_step(accept_block, {Peer, BShadow}) ->
 	Node = whereis(http_entrypoint_node),
@@ -110,9 +123,21 @@ poll_block_step(accept_block, {Peer, BShadow}) ->
 	Node ! {new_block, Peer, BShadowHeight, BShadow, no_data_segment, no_recall},
 	ok.
 
-reconstruct_block_hash_list(_H, []) ->
-	{error, failed_to_reconstruct_block_hash_list};
-reconstruct_block_hash_list(H, [H | Rest]) ->
-	lists:sublist(Rest, ?STORE_BLOCKS_BEHIND_CURRENT);
-reconstruct_block_hash_list(H, [_ | HL]) ->
-	reconstruct_block_hash_list(H, HL).
+reconstruct_block_hash_list(Peer, BShadow, HL) ->
+	reconstruct_block_hash_list(Peer, BShadow, HL, []).
+
+reconstruct_block_hash_list(Peer, BShadow, HL, BHL) ->
+	PrevH = BShadow#block.previous_block,
+	case HL of
+		[PrevH | _] = L ->
+			{ok, lists:reverse(BHL) ++ L};
+		[_ | HLTail] ->
+			case ar_http_iface_client:get_block_shadow([Peer], PrevH) of
+				unavailable ->
+					{error, previous_block_not_found};
+				{_, PrevBShadow} ->
+					reconstruct_block_hash_list(Peer, PrevBShadow, HLTail, [PrevH | BHL])
+			end;
+		[] ->
+			{error, failed_to_reconstruct_block_hash_list}
+	end.
