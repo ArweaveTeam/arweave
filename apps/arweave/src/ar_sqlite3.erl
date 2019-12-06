@@ -11,6 +11,13 @@
 
 -include("ar.hrl").
 
+%% Duration after which to consider the query time unusually long.
+%% Set to 100ms.
+-define(LONG_QUERY_TIME, 100000).
+%% Duration after which to consider the full block metadata insert
+%% time unusually long.
+-define(LONG_INSERT_FULL_BLOCK_TIME, 1000000).
+
 %% The migration name should follow the format YYYYMMDDHHMMSS_human_readable_name
 %% where the date is picked at the time of naming the migration.
 -define(CREATE_MIGRATION_TABLE_SQL, "
@@ -98,8 +105,8 @@ populate_db(BHL) ->
 select_tx_by_id(ID) ->
 	gen_server:call(?MODULE, {select_tx_by_id, ID}).
 
-select_txs_by(Tags) ->
-	gen_server:call(?MODULE, {select_txs_by, Tags}).
+select_txs_by(Opts) ->
+	gen_server:call(?MODULE, {select_txs_by, Opts}).
 
 select_block_by_tx_id(TXID) ->
 	gen_server:call(?MODULE, {select_block_by_tx_id, TXID}).
@@ -153,9 +160,24 @@ init(Opts) ->
 handle_call({select_tx_by_id, ID}, _, State) ->
 	#{ select_tx_by_id_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, [ID]),
-	Reply = case esqlite3:fetchone(Stmt) of
-		Tuple when is_tuple(Tuple) -> {ok, tx_map(Tuple)};
-		ok -> not_found
+	{Time, Reply} = timer:tc(fun() ->
+		case esqlite3:fetchone(Stmt) of
+			Tuple when is_tuple(Tuple) -> {ok, tx_map(Tuple)};
+			ok -> not_found
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, select_tx_by_id},
+				{microseconds, T},
+				{sql, select_tx_by_id},
+				{txid, ID}
+			]),
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State};
 handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
@@ -166,47 +188,106 @@ handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 		"WHERE ", WhereClause,
 		" ORDER BY block.height DESC, tx.id DESC"
 	]),
-	Reply = case esqlite3:q(SQL, Params, Conn) of
-		Rows when is_list(Rows) ->
-			lists:map(fun tx_map/1, Rows)
+	{Time, Reply} = timer:tc(fun() ->
+		case esqlite3:q(SQL, Params, Conn) of
+			Rows when is_list(Rows) ->
+				lists:map(fun tx_map/1, Rows)
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, select_txs_by},
+				{microseconds, T},
+				{sql, SQL},
+				{params, Params}
+			]),
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State};
 handle_call({select_block_by_tx_id, TXID}, _, State) ->
 	#{ select_block_by_tx_id_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, [TXID]),
-	Reply = case esqlite3:fetchone(Stmt) of
-		Tuple when is_tuple(Tuple) -> {ok, block_map(Tuple)};
-		ok -> not_found
+	{Time, Reply} = timer:tc(fun() ->
+		case esqlite3:fetchone(Stmt) of
+			Tuple when is_tuple(Tuple) -> {ok, block_map(Tuple)};
+			ok -> not_found
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, select_block_by_tx_id},
+				{microseconds, T},
+				{sql, select_block_by_tx_id},
+				{txid, TXID}
+			]),
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State};
 handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 	#{ select_tags_by_tx_id_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, [TXID]),
-	Reply = case esqlite3:fetchall(Stmt) of
-		Rows when is_list(Rows) ->
-			lists:map(fun tags_map/1, Rows)
+	{Time, Reply} = timer:tc(fun() ->
+		case esqlite3:fetchall(Stmt) of
+			Rows when is_list(Rows) ->
+				lists:map(fun tags_map/1, Rows)
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, select_tags_by_tx_id},
+				{microseconds, T},
+				{sql, select_tags_by_tx_id},
+				{txid, TXID}
+			]),
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State};
 handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
-	Reply = case catch eval_legacy_arql_where_clause(Query) of
-		{WhereClause, Params} ->
-			SQL = lists:concat([
-				"SELECT tx.id FROM tx ",
-				"JOIN block ON tx.block_indep_hash = block.indep_hash ",
-				"WHERE ", WhereClause,
-				" ORDER BY block.height DESC, tx.id DESC"
+	{Time, {Reply, SQL, Params}} = timer:tc(fun() ->
+		case catch eval_legacy_arql_where_clause(Query) of
+			{WhereClause, Params} ->
+				SQL = lists:concat([
+					"SELECT tx.id FROM tx ",
+					"JOIN block ON tx.block_indep_hash = block.indep_hash ",
+					"WHERE ", WhereClause,
+					" ORDER BY block.height DESC, tx.id DESC"
+				]),
+				case catch esqlite3:q(SQL, Params, Conn) of
+					Rows when is_list(Rows) ->
+						{lists:map(fun({TXID}) -> TXID end, Rows), SQL, Params};
+					{error, {sqlite_error, "parser stack overflow"}} ->
+						{sqlite_parser_stack_overflow, SQL, Params};
+					Error ->
+						ar:warn([{ar_sqlite3, eval_legacy_arql}, {error, Error}]),
+						{bad_query, SQL, Params}
+				end;
+			bad_query ->
+				{bad_query, 'n/a', 'n/a'}
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, eval_legacy_arql},
+				{microseconds, T},
+				{query, Query}
 			]),
-			case catch esqlite3:q(SQL, Params, Conn) of
-				Rows when is_list(Rows) ->
-					lists:map(fun({TXID}) -> TXID end, Rows);
-				{error, {sqlite_error, "parser stack overflow"}} ->
-					sqlite_parser_stack_overflow;
-				Error ->
-					ar:warn([{ar_sqlite3, eval_legacy_arql}, {error, Error}]),
-					bad_query
-			end;
-		bad_query ->
-			bad_query
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State}.
 
@@ -216,17 +297,57 @@ handle_cast({populate_db, BHL}, State) ->
 handle_cast({insert_block, BlockFields}, State) ->
 	#{ insert_block_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, BlockFields),
-	ok = esqlite3:fetchone(Stmt),
+	{Time, ok} = timer:tc(fun() ->
+		esqlite3:fetchone(Stmt)
+	end),
+	ok = case Time of
+		T when T > ?LONG_INSERT_FULL_BLOCK_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, insert_block},
+				{microseconds, T},
+				{indep_hash, lists:nth(1, BlockFields)}
+			]),
+			ok;
+		_ ->
+			ok
+	end,
 	{noreply, State};
 handle_cast({insert_tx, TxFields}, State) ->
 	#{ insert_tx_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, TxFields),
-	ok = esqlite3:fetchone(Stmt),
+	{Time, ok} = timer:tc(fun() ->
+		esqlite3:fetchone(Stmt)
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, insert_tx},
+				{microseconds, T}
+			]),
+			ok;
+		_ ->
+			ok
+	end,
 	{noreply, State};
 handle_cast({insert_tag, TagFields}, State) ->
 	#{ insert_tag_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, TagFields),
-	ok = esqlite3:fetchone(Stmt),
+	{Time, ok} = timer:tc(fun() ->
+		esqlite3:fetchone(Stmt)
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, insert_tag},
+				{microseconds, T}
+			]),
+			ok;
+		_ ->
+			ok
+	end,
 	{noreply, State}.
 
 terminate(Reason, #{conn := Conn}) ->
