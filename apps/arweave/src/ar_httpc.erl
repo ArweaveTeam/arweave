@@ -21,7 +21,6 @@ request(Method, Peer, Path, Headers, Body) ->
 	request(Method, Peer, Path, Headers, Body, default_timeout).
 
 request(Method, Peer, Path, Headers, Body, Timeout) ->
-	%ar:report([{ar_httpc_request,Peer},{method,Method}, {path,Path}]),
 	Host = "http://" ++ ar_util:format_peer(Peer),
 	{ok, Client} = fusco:start(
 		Host,
@@ -36,9 +35,24 @@ request(Method, Peer, Path, Headers, Body, Timeout) ->
 		1,
 		request_timeout(Timeout)
 	),
+	case Body of
+		[] ->
+			noop;
+		_ ->
+			prometheus_counter:inc(
+				http_client_uploaded_bytes_total,
+				[ar_metrics:label_http_path(list_to_binary(Path))],
+				byte_size(Body)
+			)
+	end,
 	ok = fusco:disconnect(Client),
 	case Result of
-		{ok, {{_, _}, _, _, Start, End}} ->
+		{ok, {{_, _}, _, ResponseBody, Start, End}} ->
+			prometheus_counter:inc(
+				http_client_downloaded_bytes_total,
+				[ar_metrics:label_http_path(list_to_binary(Path))],
+				byte_size(ResponseBody)
+			),
 			case Body of
 				[] -> store_data_time(Peer, 0, End-Start);
 				_ -> store_data_time(Peer, byte_size(Body), End-Start)

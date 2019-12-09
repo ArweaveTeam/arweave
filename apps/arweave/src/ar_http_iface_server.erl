@@ -151,7 +151,10 @@ protocol_opts(List) ->
 					}
 				};
 			none ->
-				Opts1#{ env := Env1#{ arql_semaphore => arql_semaphore } }
+				Opts1#{
+					env := Env1#{ arql_semaphore => arql_semaphore },
+					metrics_callback => fun collect_http_response_metrics/1
+				}
 		end,
 	Opts2.
 
@@ -182,3 +185,11 @@ cacertfile_when_present(Domain) ->
 		false ->
 			[]
 	end.
+
+collect_http_response_metrics(Metrics) ->
+	Req = maps:get(req, Metrics),
+	prometheus_counter:inc(
+		http_server_served_bytes_total,
+		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
+		maps:get(resp_body_length, Metrics, 0)
+	).
