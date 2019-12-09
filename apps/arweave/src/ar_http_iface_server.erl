@@ -192,4 +192,5 @@ collect_http_response_metrics(Metrics) ->
 		http_server_served_bytes_total,
 		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
 		maps:get(resp_body_length, Metrics, 0)
-	).
+	),
+	prometheus_cowboy2_instrumenter:observe(Metrics).

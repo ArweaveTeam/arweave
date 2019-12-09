@@ -41,6 +41,8 @@ name_route([<<"block">>]) ->
 	"/block";
 name_route([<<"tx">>]) ->
 	"/tx";
+name_route([<<"tx_anchor">>]) ->
+	"/tx_anchor";
 name_route([<<"peer">>|_]) ->
 	"/peer/...";
 name_route([<<"arql">>]) ->
