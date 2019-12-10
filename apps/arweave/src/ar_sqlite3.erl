@@ -131,13 +131,7 @@ eval_legacy_arql(Query) ->
 
 insert_full_block(#block {} = FullBlock) ->
 	{BlockFields, TxFieldsList, TagFieldsList} = full_block_to_fields(FullBlock),
-	gen_server:cast(?MODULE, {insert_block, BlockFields}),
-	lists:foreach(fun (TxFields) ->
-		gen_server:cast(?MODULE, {insert_tx, TxFields})
-	end, TxFieldsList),
-	lists:foreach(fun (TagFields) ->
-		gen_server:cast(?MODULE, {insert_tag, TagFields})
-	end, TagFieldsList),
+	gen_server:cast(?MODULE, {insert_full_block, BlockFields, TxFieldsList, TagFieldsList}),
 	ok.
 
 %%%===================================================================
@@ -306,55 +300,41 @@ handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 handle_cast({populate_db, BHL}, State) ->
 	ok = ensure_db_populated(BHL, State),
 	{noreply, State};
-handle_cast({insert_block, BlockFields}, State) ->
-	#{ insert_block_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, BlockFields),
-	{Time, '$done'} = timer:tc(fun() ->
-		esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT)
+handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State) ->
+	#{
+		conn := Conn,
+		insert_block_stmt := InsertBlockStmt,
+		insert_tx_stmt := InsertTxStmt,
+		insert_tag_stmt := InsertTagStmt
+	} = State,
+	{Time, ok} = timer:tc(fun() ->
+		ok = esqlite3:exec("BEGIN TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
+		ok = esqlite3:bind(InsertBlockStmt, BlockFields),
+		'$done' = esqlite3:step(InsertBlockStmt, ?ESQLITE_NIF_TIMEOUT),
+		lists:foreach(
+			fun(TxFields) ->
+				ok = esqlite3:bind(InsertTxStmt, TxFields),
+				'$done' = esqlite3:step(InsertTxStmt, ?ESQLITE_NIF_TIMEOUT)
+			end,
+			TxFieldsList
+		),
+		lists:foreach(
+			fun(TagFields) ->
+				ok = esqlite3:bind(InsertTagStmt, TagFields),
+				'$done' = esqlite3:step(InsertTagStmt, ?ESQLITE_NIF_TIMEOUT)
+			end,
+			TagFieldsList
+		),
+		ok = esqlite3:exec("COMMIT TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
+		ok
 	end),
 	ok = case Time of
 		T when T > ?LONG_INSERT_FULL_BLOCK_TIME ->
 			ar:warn([
 				{ar_sqlite3, long_query},
-				{query_type, insert_block},
+				{query_type, insert_full_block},
 				{microseconds, T},
-				{indep_hash, lists:nth(1, BlockFields)}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
-	{noreply, State};
-handle_cast({insert_tx, TxFields}, State) ->
-	#{ insert_tx_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, TxFields),
-	{Time, '$done'} = timer:tc(fun() ->
-		esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT)
-	end),
-	ok = case Time of
-		T when T > ?LONG_QUERY_TIME ->
-			ar:warn([
-				{ar_sqlite3, long_query},
-				{query_type, insert_tx},
-				{microseconds, T}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
-	{noreply, State};
-handle_cast({insert_tag, TagFields}, State) ->
-	#{ insert_tag_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, TagFields),
-	{Time, '$done'} = timer:tc(fun() ->
-		esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT)
-	end),
-	ok = case Time of
-		T when T > ?LONG_QUERY_TIME ->
-			ar:warn([
-				{ar_sqlite3, long_query},
-				{query_type, insert_tag},
-				{microseconds, T}
+				{block_indep_hash, lists:nth(1, BlockFields)}
 			]),
 			ok;
 		_ ->
