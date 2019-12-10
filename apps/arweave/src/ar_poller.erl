@@ -109,7 +109,8 @@ poll_block_step(check_ignore_list, {Peer, BShadow}) ->
 			end
 	end;
 poll_block_step(construct_hash_list, {Peer, BShadow}) ->
-	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(whereis(http_entrypoint_node)),
+	Node = whereis(http_entrypoint_node),
+	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(Node),
 	HL = lists:map(fun({BH, _}) -> BH end, BlockTXsPairs),
 	case reconstruct_block_hash_list(Peer, BShadow, HL) of
 		{ok, BHL} ->
@@ -123,21 +124,22 @@ poll_block_step(accept_block, {Peer, BShadow}) ->
 	Node ! {new_block, Peer, BShadowHeight, BShadow, no_data_segment, no_recall},
 	ok.
 
-reconstruct_block_hash_list(Peer, BShadow, HL) ->
-	reconstruct_block_hash_list(Peer, BShadow, HL, []).
+reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL) ->
+	reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL, []).
 
-reconstruct_block_hash_list(Peer, BShadow, HL, BHL) ->
-	PrevH = BShadow#block.previous_block,
-	case HL of
+reconstruct_block_hash_list(_Peer, _FetchedBShadow, _BehindCurrentHL, FetchedHL)
+		when length(FetchedHL) >= ?STORE_BLOCKS_BEHIND_CURRENT ->
+	{error, failed_to_reconstruct_block_hash_list};
+reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL, FetchedHL) ->
+	PrevH = FetchedBShadow#block.previous_block,
+	case lists:dropwhile(fun(H) -> H /= PrevH end, BehindCurrentHL) of
 		[PrevH | _] = L ->
-			{ok, lists:reverse(BHL) ++ L};
-		[_ | HLTail] ->
+			{ok, lists:sublist(lists:reverse(FetchedHL) ++ L, ?STORE_BLOCKS_BEHIND_CURRENT)};
+		_ ->
 			case ar_http_iface_client:get_block_shadow([Peer], PrevH) of
 				unavailable ->
 					{error, previous_block_not_found};
 				{_, PrevBShadow} ->
-					reconstruct_block_hash_list(Peer, PrevBShadow, HLTail, [PrevH | BHL])
-			end;
-		[] ->
-			{error, failed_to_reconstruct_block_hash_list}
+					reconstruct_block_hash_list(Peer, PrevBShadow, BehindCurrentHL, [PrevH | FetchedHL])
+			end
 	end.
