@@ -11,6 +11,25 @@
 
 -include("ar.hrl").
 
+%% Duration after which to consider the query time unusually long.
+%% Set to 100ms.
+-define(LONG_QUERY_TIME, 100000).
+%% Duration after which to consider the full block metadata insert
+%% time unusually long.
+-define(LONG_INSERT_FULL_BLOCK_TIME, 1000000).
+
+%% Timeout passed to gen_server:call when running SELECTs.
+%% Set to 5s.
+-define(SELECT_TIMEOUT, 5000).
+
+%% Time to wait for the NIF thread to send back the query results.
+%% Set to 4.5s.
+-define(ESQLITE_NIF_TIMEOUT, 4500).
+
+%% Copied from DEFAULT_CHUNK_SIZE in esqlite3.erl
+-define(ESQLITE_CHUNK_SIZE, 5000).
+
+
 %% The migration name should follow the format YYYYMMDDHHMMSS_human_readable_name
 %% where the date is picked at the time of naming the migration.
 -define(CREATE_MIGRATION_TABLE_SQL, "
@@ -96,29 +115,23 @@ populate_db(BHL) ->
 	gen_server:cast(?MODULE, {populate_db, BHL}).
 
 select_tx_by_id(ID) ->
-	gen_server:call(?MODULE, {select_tx_by_id, ID}).
+	gen_server:call(?MODULE, {select_tx_by_id, ID}, ?SELECT_TIMEOUT).
 
-select_txs_by(Tags) ->
-	gen_server:call(?MODULE, {select_txs_by, Tags}).
+select_txs_by(Opts) ->
+	gen_server:call(?MODULE, {select_txs_by, Opts}, ?SELECT_TIMEOUT).
 
 select_block_by_tx_id(TXID) ->
-	gen_server:call(?MODULE, {select_block_by_tx_id, TXID}).
+	gen_server:call(?MODULE, {select_block_by_tx_id, TXID}, ?SELECT_TIMEOUT).
 
 select_tags_by_tx_id(TXID) ->
-	gen_server:call(?MODULE, {select_tags_by_tx_id, TXID}).
+	gen_server:call(?MODULE, {select_tags_by_tx_id, TXID}, ?SELECT_TIMEOUT).
 
 eval_legacy_arql(Query) ->
-	gen_server:call(?MODULE, {eval_legacy_arql, Query}).
+	gen_server:call(?MODULE, {eval_legacy_arql, Query}, ?SELECT_TIMEOUT).
 
 insert_full_block(#block {} = FullBlock) ->
 	{BlockFields, TxFieldsList, TagFieldsList} = full_block_to_fields(FullBlock),
-	gen_server:cast(?MODULE, {insert_block, BlockFields}),
-	lists:foreach(fun (TxFields) ->
-		gen_server:cast(?MODULE, {insert_tx, TxFields})
-	end, TxFieldsList),
-	lists:foreach(fun (TagFields) ->
-		gen_server:cast(?MODULE, {insert_tag, TagFields})
-	end, TagFieldsList),
+	gen_server:cast(?MODULE, {insert_full_block, BlockFields, TxFieldsList, TagFieldsList}),
 	ok.
 
 %%%===================================================================
@@ -126,36 +139,57 @@ insert_full_block(#block {} = FullBlock) ->
 %%%===================================================================
 
 init(Opts) ->
-	{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
-	ar:info([{ar_sqlite3, init}, {data_dir, DataDir}]),
-	DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
-	ok = filelib:ensure_dir(DbPath),
-	{ok, Conn} = esqlite3:open(DbPath),
-	ok = ensure_meta_table_created(Conn),
-	ok = ensure_schema_created(Conn),
-	{ok, InsertBlockStmt} = esqlite3:prepare(?INSERT_BLOCK_SQL, Conn),
-	{ok, InsertTxStmt} = esqlite3:prepare(?INSERT_TX_SQL, Conn),
-	{ok, InsertTagStmt} = esqlite3:prepare(?INSERT_TAG_SQL, Conn),
-	{ok, SelectTxByIdStmt} = esqlite3:prepare(?SELECT_TX_BY_ID_SQL, Conn),
-	{ok, SelectBlockByTxIdStmt} = esqlite3:prepare(?SELECT_BLOCK_BY_TX_ID_SQL, Conn),
-	{ok, SelectTagsByTxIdStmt} = esqlite3:prepare(?SELECT_TAGS_BY_TX_ID_SQL, Conn),
-	{ok, #{
-		data_dir => DataDir,
-		conn => Conn,
-		insert_block_stmt => InsertBlockStmt,
-		insert_tx_stmt => InsertTxStmt,
-		insert_tag_stmt => InsertTagStmt,
-		select_tx_by_id_stmt => SelectTxByIdStmt,
-		select_block_by_tx_id_stmt => SelectBlockByTxIdStmt,
-		select_tags_by_tx_id_stmt => SelectTagsByTxIdStmt
-	}}.
+	try
+		{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
+		ar:info([{ar_sqlite3, init}, {data_dir, DataDir}]),
+		DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
+		ok = filelib:ensure_dir(DbPath),
+		{ok, Conn} = esqlite3:open(DbPath),
+		ok = ensure_meta_table_created(Conn),
+		ok = ensure_schema_created(Conn),
+		{ok, InsertBlockStmt} = esqlite3:prepare(?INSERT_BLOCK_SQL, Conn),
+		{ok, InsertTxStmt} = esqlite3:prepare(?INSERT_TX_SQL, Conn),
+		{ok, InsertTagStmt} = esqlite3:prepare(?INSERT_TAG_SQL, Conn),
+		{ok, SelectTxByIdStmt} = esqlite3:prepare(?SELECT_TX_BY_ID_SQL, Conn),
+		{ok, SelectBlockByTxIdStmt} = esqlite3:prepare(?SELECT_BLOCK_BY_TX_ID_SQL, Conn),
+		{ok, SelectTagsByTxIdStmt} = esqlite3:prepare(?SELECT_TAGS_BY_TX_ID_SQL, Conn),
+		{ok, #{
+			data_dir => DataDir,
+			conn => Conn,
+			insert_block_stmt => InsertBlockStmt,
+			insert_tx_stmt => InsertTxStmt,
+			insert_tag_stmt => InsertTagStmt,
+			select_tx_by_id_stmt => SelectTxByIdStmt,
+			select_block_by_tx_id_stmt => SelectBlockByTxIdStmt,
+			select_tags_by_tx_id_stmt => SelectTagsByTxIdStmt
+		}}
+	catch
+		Class:Error ->
+			ar:warn([{ar_sqlite3, init_failed}, {reason, {Class, Error}}]),
+			{error, {Class, Error}}
+	end.
 
 handle_call({select_tx_by_id, ID}, _, State) ->
 	#{ select_tx_by_id_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, [ID]),
-	Reply = case esqlite3:fetchone(Stmt) of
-		Tuple when is_tuple(Tuple) -> {ok, tx_map(Tuple)};
-		ok -> not_found
+	{Time, Reply} = timer:tc(fun() ->
+		case esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT) of
+			{row, Tuple} when is_tuple(Tuple) -> {ok, tx_map(Tuple)};
+			'$done' -> not_found
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, select_tx_by_id},
+				{microseconds, T},
+				{sql, select_tx_by_id},
+				{txid, ID}
+			]),
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State};
 handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
@@ -166,72 +200,162 @@ handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 		"WHERE ", WhereClause,
 		" ORDER BY block.height DESC, tx.id DESC"
 	]),
-	Reply = case esqlite3:q(SQL, Params, Conn) of
-		Rows when is_list(Rows) ->
-			lists:map(fun tx_map/1, Rows)
+	{Time, Reply} = timer:tc(fun() ->
+		case esqlite3:q(SQL, Params, Conn, ?ESQLITE_NIF_TIMEOUT) of
+			Rows when is_list(Rows) ->
+				lists:map(fun tx_map/1, Rows)
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, select_txs_by},
+				{microseconds, T},
+				{sql, SQL},
+				{params, Params}
+			]),
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State};
 handle_call({select_block_by_tx_id, TXID}, _, State) ->
 	#{ select_block_by_tx_id_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, [TXID]),
-	Reply = case esqlite3:fetchone(Stmt) of
-		Tuple when is_tuple(Tuple) -> {ok, block_map(Tuple)};
-		ok -> not_found
+	{Time, Reply} = timer:tc(fun() ->
+		case esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT) of
+			{row, Tuple} when is_tuple(Tuple) -> {ok, block_map(Tuple)};
+			'$done' -> not_found
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, select_block_by_tx_id},
+				{microseconds, T},
+				{sql, select_block_by_tx_id},
+				{txid, TXID}
+			]),
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State};
 handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 	#{ select_tags_by_tx_id_stmt := Stmt } = State,
 	ok = esqlite3:bind(Stmt, [TXID]),
-	Reply = case esqlite3:fetchall(Stmt) of
-		Rows when is_list(Rows) ->
-			lists:map(fun tags_map/1, Rows)
+	{Time, Reply} = timer:tc(fun() ->
+		case esqlite3:fetchall(Stmt, ?ESQLITE_CHUNK_SIZE, ?ESQLITE_NIF_TIMEOUT) of
+			Rows when is_list(Rows) ->
+				lists:map(fun tags_map/1, Rows)
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, select_tags_by_tx_id},
+				{microseconds, T},
+				{sql, select_tags_by_tx_id},
+				{txid, TXID}
+			]),
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State};
 handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
-	Reply = case catch eval_legacy_arql_where_clause(Query) of
-		{WhereClause, Params} ->
-			SQL = lists:concat([
-				"SELECT tx.id FROM tx ",
-				"JOIN block ON tx.block_indep_hash = block.indep_hash ",
-				"WHERE ", WhereClause,
-				" ORDER BY block.height DESC, tx.id DESC"
+	{Time, {Reply, SQL, Params}} = timer:tc(fun() ->
+		case catch eval_legacy_arql_where_clause(Query) of
+			{WhereClause, Params} ->
+				SQL = lists:concat([
+					"SELECT tx.id FROM tx ",
+					"JOIN block ON tx.block_indep_hash = block.indep_hash ",
+					"WHERE ", WhereClause,
+					" ORDER BY block.height DESC, tx.id DESC"
+				]),
+				case catch esqlite3:q(SQL, Params, Conn, ?ESQLITE_NIF_TIMEOUT) of
+					Rows when is_list(Rows) ->
+						{lists:map(fun({TXID}) -> TXID end, Rows), SQL, Params};
+					{error, {sqlite_error, "parser stack overflow"}} ->
+						{sqlite_parser_stack_overflow, SQL, Params};
+					Error ->
+						ar:warn([{ar_sqlite3, eval_legacy_arql}, {error, Error}]),
+						{bad_query, SQL, Params}
+				end;
+			bad_query ->
+				{bad_query, 'n/a', 'n/a'}
+		end
+	end),
+	ok = case Time of
+		T when T > ?LONG_QUERY_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, eval_legacy_arql},
+				{microseconds, T},
+				{query, Query}
 			]),
-			case catch esqlite3:q(SQL, Params, Conn) of
-				Rows when is_list(Rows) ->
-					lists:map(fun({TXID}) -> TXID end, Rows);
-				{error, {sqlite_error, "parser stack overflow"}} ->
-					sqlite_parser_stack_overflow;
-				Error ->
-					ar:warn([{ar_sqlite3, eval_legacy_arql}, {error, Error}]),
-					bad_query
-			end;
-		bad_query ->
-			bad_query
+			ok;
+		_ ->
+			ok
 	end,
 	{reply, Reply, State}.
 
 handle_cast({populate_db, BHL}, State) ->
 	ok = ensure_db_populated(BHL, State),
 	{noreply, State};
-handle_cast({insert_block, BlockFields}, State) ->
-	#{ insert_block_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, BlockFields),
-	ok = esqlite3:fetchone(Stmt),
-	{noreply, State};
-handle_cast({insert_tx, TxFields}, State) ->
-	#{ insert_tx_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, TxFields),
-	ok = esqlite3:fetchone(Stmt),
-	{noreply, State};
-handle_cast({insert_tag, TagFields}, State) ->
-	#{ insert_tag_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, TagFields),
-	ok = esqlite3:fetchone(Stmt),
+handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State) ->
+	#{
+		conn := Conn,
+		insert_block_stmt := InsertBlockStmt,
+		insert_tx_stmt := InsertTxStmt,
+		insert_tag_stmt := InsertTagStmt
+	} = State,
+	{Time, ok} = timer:tc(fun() ->
+		ok = esqlite3:exec("BEGIN TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
+		ok = esqlite3:bind(InsertBlockStmt, BlockFields),
+		'$done' = esqlite3:step(InsertBlockStmt, ?ESQLITE_NIF_TIMEOUT),
+		lists:foreach(
+			fun(TxFields) ->
+				ok = esqlite3:bind(InsertTxStmt, TxFields),
+				'$done' = esqlite3:step(InsertTxStmt, ?ESQLITE_NIF_TIMEOUT)
+			end,
+			TxFieldsList
+		),
+		lists:foreach(
+			fun(TagFields) ->
+				ok = esqlite3:bind(InsertTagStmt, TagFields),
+				'$done' = esqlite3:step(InsertTagStmt, ?ESQLITE_NIF_TIMEOUT)
+			end,
+			TagFieldsList
+		),
+		ok = esqlite3:exec("COMMIT TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
+		ok
+	end),
+	ok = case Time of
+		T when T > ?LONG_INSERT_FULL_BLOCK_TIME ->
+			ar:warn([
+				{ar_sqlite3, long_query},
+				{query_type, insert_full_block},
+				{microseconds, T},
+				{block_indep_hash, lists:nth(1, BlockFields)}
+			]),
+			ok;
+		_ ->
+			ok
+	end,
 	{noreply, State}.
 
 terminate(Reason, #{conn := Conn}) ->
 	ar:info([{ar_sqlite3, terminate}, {reason, Reason}]),
-	ok = esqlite3:close(Conn).
+	case catch esqlite3:close(Conn) of
+		ok ->
+			ok;
+		Error ->
+			ar:warn([{ar_sqlite3, termination_failed}, {reason, Error}])
+	end.
 
 %%%===================================================================
 %%% Internal functions.
@@ -241,39 +365,39 @@ ensure_meta_table_created(Conn) ->
 	case esqlite3:q("
 		SELECT 1 FROM sqlite_master
 		WHERE type = 'table' AND name = 'migration'
-	", Conn) of
+	", [], Conn, ?ESQLITE_NIF_TIMEOUT) of
 		[{1}] -> ok;
 		[] -> create_meta_table(Conn)
 	end.
 
 create_meta_table(Conn) ->
 	ar:info([{ar_sqlite3, creating_meta_table}]),
-	ok = esqlite3:exec(?CREATE_MIGRATION_TABLE_SQL, Conn),
+	ok = esqlite3:exec(?CREATE_MIGRATION_TABLE_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
 	ok.
 
 ensure_schema_created(Conn) ->
 	case esqlite3:q("
 		SELECT 1 FROM migration
 		WHERE name = '20191009160000_schema_created'
-	", Conn) of
+	", [], Conn, ?ESQLITE_NIF_TIMEOUT) of
 		[{1}] -> ok;
 		[] -> create_schema(Conn)
 	end.
 
 create_schema(Conn) ->
 	ar:info([{ar_sqlite3, creating_schema}]),
-	ok = esqlite3:exec("BEGIN TRANSACTION", Conn),
-	ok = esqlite3:exec(?CREATE_TABLES_SQL, Conn),
-	ok = esqlite3:exec(?CREATE_INDEXES_SQL, Conn),
-	'$done' = esqlite3:exec("INSERT INTO migration VALUES ('20191009160000_schema_created', ?)", [sql_now()], Conn),
-	ok = esqlite3:exec("COMMIT TRANSACTION", Conn),
+	ok = esqlite3:exec("BEGIN TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
+	ok = esqlite3:exec(?CREATE_TABLES_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
+	ok = esqlite3:exec(?CREATE_INDEXES_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
+	[] = esqlite3:q("INSERT INTO migration VALUES ('20191009160000_schema_created', ?)", [sql_now()], Conn, ?ESQLITE_NIF_TIMEOUT),
+	ok = esqlite3:exec("COMMIT TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
 	ok.
 
 ensure_db_populated(BHL, #{ conn := Conn} = State) ->
 	case esqlite3:q("
 		SELECT 1 FROM migration
 		WHERE name = '20191015153000_db_populated'
-	", Conn) of
+	", [], Conn, ?ESQLITE_NIF_TIMEOUT) of
 		[{1}] ->
 			ok;
 		[] ->
@@ -284,13 +408,13 @@ ensure_db_populated(BHL, #{ conn := Conn} = State) ->
 	end.
 
 do_populate_db(BHL, #{ conn := Conn} = State) ->
-	ok = esqlite3:exec("BEGIN TRANSACTION", Conn),
-	ok = esqlite3:exec(?DROP_INDEXES_SQL, Conn),
+	ok = esqlite3:exec("BEGIN TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
+	ok = esqlite3:exec(?DROP_INDEXES_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
 	ok = lists:foreach(fun(BH) ->
 		ok = insert_block_json(BH, State)
 	end, BHL),
 	ok = esqlite3:exec(?CREATE_INDEXES_SQL, Conn, infinity),
-	'$done' = esqlite3:exec("INSERT INTO migration VALUES ('20191015153000_db_populated', ?)", [sql_now()], Conn),
+	[] = esqlite3:q("INSERT INTO migration VALUES ('20191015153000_db_populated', ?)", [sql_now()], Conn, ?ESQLITE_NIF_TIMEOUT),
 	ok = esqlite3:exec("COMMIT TRANSACTION", Conn, infinity),
 	ok.
 
@@ -304,7 +428,7 @@ insert_block_json(BH,  Env) ->
 				maps:get(<<"height">>, BlockMap),
 				maps:get(<<"timestamp">>, BlockMap)
 			]),
-			ok = esqlite3:fetchone(Stmt),
+			'$done' = esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT),
 			ok = lists:foreach(fun(TXHash) ->
 				ok = insert_tx_json(TXHash, maps:get(<<"indep_hash">>, BlockMap), Env)
 			end, maps:get(<<"txs">>, BlockMap)),
@@ -328,7 +452,7 @@ insert_tx_json(TXHash, BlockIndepHash, Env) ->
 				maps:get(<<"signature">>, TxMap),
 				maps:get(<<"reward">>, TxMap)
 			]),
-			ok = esqlite3:fetchone(Stmt),
+			'$done' = esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT),
 			ok = lists:foreach(fun(TagMap) ->
 				ok = insert_tag_json(TagMap, maps:get(<<"id">>, TxMap), Env)
 			end, maps:get(<<"tags">>, TxMap)),
@@ -343,7 +467,7 @@ insert_tag_json(TagMap, TXID, #{ insert_tag_stmt := Stmt }) ->
 		ar_util:decode(maps:get(<<"name">>, TagMap)),
 		ar_util:decode(maps:get(<<"value">>, TagMap))
 	]),
-	ok = esqlite3:fetchone(Stmt),
+	'$done' = esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT),
 	ok.
 
 read_block(BH, _DataDir) ->
