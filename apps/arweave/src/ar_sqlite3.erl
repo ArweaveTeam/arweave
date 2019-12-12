@@ -139,29 +139,35 @@ insert_full_block(#block {} = FullBlock) ->
 %%%===================================================================
 
 init(Opts) ->
-	{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
-	ar:info([{ar_sqlite3, init}, {data_dir, DataDir}]),
-	DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
-	ok = filelib:ensure_dir(DbPath),
-	{ok, Conn} = esqlite3:open(DbPath),
-	ok = ensure_meta_table_created(Conn),
-	ok = ensure_schema_created(Conn),
-	{ok, InsertBlockStmt} = esqlite3:prepare(?INSERT_BLOCK_SQL, Conn),
-	{ok, InsertTxStmt} = esqlite3:prepare(?INSERT_TX_SQL, Conn),
-	{ok, InsertTagStmt} = esqlite3:prepare(?INSERT_TAG_SQL, Conn),
-	{ok, SelectTxByIdStmt} = esqlite3:prepare(?SELECT_TX_BY_ID_SQL, Conn),
-	{ok, SelectBlockByTxIdStmt} = esqlite3:prepare(?SELECT_BLOCK_BY_TX_ID_SQL, Conn),
-	{ok, SelectTagsByTxIdStmt} = esqlite3:prepare(?SELECT_TAGS_BY_TX_ID_SQL, Conn),
-	{ok, #{
-		data_dir => DataDir,
-		conn => Conn,
-		insert_block_stmt => InsertBlockStmt,
-		insert_tx_stmt => InsertTxStmt,
-		insert_tag_stmt => InsertTagStmt,
-		select_tx_by_id_stmt => SelectTxByIdStmt,
-		select_block_by_tx_id_stmt => SelectBlockByTxIdStmt,
-		select_tags_by_tx_id_stmt => SelectTagsByTxIdStmt
-	}}.
+	try
+		{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
+		ar:info([{ar_sqlite3, init}, {data_dir, DataDir}]),
+		DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
+		ok = filelib:ensure_dir(DbPath),
+		{ok, Conn} = esqlite3:open(DbPath),
+		ok = ensure_meta_table_created(Conn),
+		ok = ensure_schema_created(Conn),
+		{ok, InsertBlockStmt} = esqlite3:prepare(?INSERT_BLOCK_SQL, Conn),
+		{ok, InsertTxStmt} = esqlite3:prepare(?INSERT_TX_SQL, Conn),
+		{ok, InsertTagStmt} = esqlite3:prepare(?INSERT_TAG_SQL, Conn),
+		{ok, SelectTxByIdStmt} = esqlite3:prepare(?SELECT_TX_BY_ID_SQL, Conn),
+		{ok, SelectBlockByTxIdStmt} = esqlite3:prepare(?SELECT_BLOCK_BY_TX_ID_SQL, Conn),
+		{ok, SelectTagsByTxIdStmt} = esqlite3:prepare(?SELECT_TAGS_BY_TX_ID_SQL, Conn),
+		{ok, #{
+			data_dir => DataDir,
+			conn => Conn,
+			insert_block_stmt => InsertBlockStmt,
+			insert_tx_stmt => InsertTxStmt,
+			insert_tag_stmt => InsertTagStmt,
+			select_tx_by_id_stmt => SelectTxByIdStmt,
+			select_block_by_tx_id_stmt => SelectBlockByTxIdStmt,
+			select_tags_by_tx_id_stmt => SelectTagsByTxIdStmt
+		}}
+	catch
+		Class:Error ->
+			ar:warn([{ar_sqlite3, init_failed}, {reason, {Class, Error}}]),
+			{error, {Class, Error}}
+	end.
 
 handle_call({select_tx_by_id, ID}, _, State) ->
 	#{ select_tx_by_id_stmt := Stmt } = State,
@@ -344,7 +350,12 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 
 terminate(Reason, #{conn := Conn}) ->
 	ar:info([{ar_sqlite3, terminate}, {reason, Reason}]),
-	ok = esqlite3:close(Conn).
+	case catch esqlite3:close(Conn) of
+		ok ->
+			ok;
+		Error ->
+			ar:warn([{ar_sqlite3, termination_failed}, {reason, Error}])
+	end.
 
 %%%===================================================================
 %%% Internal functions.
