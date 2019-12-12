@@ -19,6 +19,11 @@ read_complete_body(Req) ->
 
 do_read_complete_body(Req, Acc) ->
 	{MoreOrOk, Data, ReadReq} = cowboy_req:read_body(Req),
+	prometheus_counter:inc(
+		http_server_accepted_bytes_total,
+		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
+		byte_size(Data)
+	),
 	NewAcc = <<Acc/binary, Data/binary>>,
 	do_read_complete_body(MoreOrOk, NewAcc, ReadReq).
 

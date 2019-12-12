@@ -317,7 +317,6 @@ start(
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
-
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -326,6 +325,8 @@ start(
 	{ok, _} = application:ensure_all_started(prometheus_cowboy),
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
+	% Register custom metrics.
+	ar_metrics:register(),
 	%% Start Cowboy and its dependencies
 	{ok, _} = application:ensure_all_started(cowboy),
 	%% Start other apps which we depend on.
