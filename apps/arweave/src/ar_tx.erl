@@ -77,7 +77,7 @@ sign(TX, PrivKey, PubKey) ->
 %% NB: The signature verification is the last step due to the potential of an attacker
 %% submitting an arbitrary length signature field and having it processed.
 -ifdef(DEBUG).
-verify(#tx { signature = <<>> }, _, _, _, _) -> true;
+verify(#tx { signature = <<>> }, _, _, _, _) -> valid;
 verify(TX, Diff, Height, Wallets, Timestamp) ->
 	do_verify(TX, Diff, Height, Wallets, Timestamp).
 -else.
@@ -94,25 +94,23 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 			check_last_tx(Wallets, TX)
 	end,
 	Checks = [
-		{"quantity_negative",
+		{quantity_negative,
 		 TX#tx.quantity >= 0},
-		{"same_owner_as_target",
+		{same_owner_as_target,
 		 (ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target)},
-		{"tx_too_cheap",
+		{tx_too_cheap,
 		 tx_cost_above_min(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)},
-		{"tx_fields_too_large",
-		 tx_field_size_limit(TX, Height)},
-		{"tag_field_illegally_specified",
+		{tag_field_illegally_specified,
 		 tag_field_legal(TX)},
-		{"last_tx_not_valid",
+		{last_tx_not_valid,
 		 LastTXCheck},
-		{"tx_id_not_valid",
+		{tx_id_not_valid,
 		 tx_verify_hash(TX)},
-		{"overspend",
+		{tx_insufficient_funds,
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
-		{"tx_signature_not_valid",
+		{tx_signature_not_valid,
 		 ar_wallet:verify(TX#tx.owner, signature_data_segment(TX), TX#tx.signature)}
-	],
+	] ++ tx_field_size_limits(TX, Height),
 	KeepFailed = fun
 		({_, true}) ->
 			false;
@@ -121,10 +119,10 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 	end,
 	case lists:filtermap(KeepFailed, Checks) of
 		[] ->
-			true;
+			valid;
 		ErrorCodes ->
 			ar_tx_db:put_error_codes(TX#tx.id, ErrorCodes),
-			false
+			{invalid, ErrorCodes}
 	end.
 
 validate_overspend(TX, Wallets) ->
@@ -179,7 +177,7 @@ verify_txs(valid_size_txs, [], _, _, _, _) ->
 	true;
 verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletMap, Timestamp) ->
 	case verify(TX, Diff, Height, WalletMap, Timestamp) of
-		true ->
+		valid ->
 			verify_txs(
 				valid_size_txs,
 				TXs,
@@ -188,7 +186,7 @@ verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletMap, Timestamp) ->
 				ar_node_utils:apply_tx(WalletMap, TX, Height),
 				Timestamp
 			);
-		false ->
+		{invalid, _} ->
 			false
 	end.
 
@@ -235,7 +233,7 @@ min_tx_cost(DataSize, _Diff, DiffCenter) ->
 	min_tx_cost(DataSize, DiffCenter, DiffCenter).
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
-tx_field_size_limit(TX, Height) ->
+tx_field_size_limits(TX, Height) ->
 	Fork_1_8 = ar_fork:height_1_8(),
 	LastTXLimit = case Height of
 		H when H >= Fork_1_8 ->
@@ -243,19 +241,18 @@ tx_field_size_limit(TX, Height) ->
 		_ ->
 			32
 	end,
-	case tag_field_legal(TX) of
-		true ->
-			(byte_size(TX#tx.id) =< 32) and
-			(byte_size(TX#tx.last_tx) =< LastTXLimit) and
-			(byte_size(TX#tx.owner) =< 512) and
-			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
-			(byte_size(TX#tx.target) =< 32) and
-			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
-			(byte_size(TX#tx.data) =< (?TX_DATA_SIZE_LIMIT)) and
-			(byte_size(TX#tx.signature) =< 512) and
-			(byte_size(integer_to_binary(TX#tx.reward)) =< 21);
-		false -> false
-	end.
+	[
+		{tags_is_not_a_list_of_pairs, tag_field_legal(TX)},
+		{tx_id_too_large, byte_size(TX#tx.id) =< 32},
+		{last_tx_too_large, byte_size(TX#tx.last_tx) =< LastTXLimit},
+		{tx_owner_too_large, byte_size(TX#tx.owner) =< 512},
+		{tx_tags_too_large, byte_size(tags_to_binary(TX#tx.tags)) =< 2048},
+		{tx_quantity_too_large, byte_size(integer_to_binary(TX#tx.quantity)) =< 21},
+		{tx_target_too_large, byte_size(TX#tx.target) =< 32},
+		{tx_data_too_large, byte_size(TX#tx.data) =< (?TX_DATA_SIZE_LIMIT)},
+		{tx_signature_too_large, byte_size(TX#tx.signature) =< 512},
+		{tx_reward_too_large, byte_size(integer_to_binary(TX#tx.reward)) =< 21}
+	].
 
 %% @doc Verify that the transactions ID is a hash of its signature.
 tx_verify_hash(#tx {signature = Sig, id = ID}) ->
@@ -341,7 +338,7 @@ sign_tx_test() ->
 	Diff = 1,
 	Height = 0,
 	Timestamp = os:system_time(seconds),
-	?assert(verify(sign(NewTX, Priv, Pub), Diff, Height, [], Timestamp)).
+	?assertEqual(valid, verify(sign(NewTX, Priv, Pub), Diff, Height, [], Timestamp)).
 
 %% @doc Ensure that a forged transaction does not pass verification.
 forge_test() ->
@@ -351,7 +348,7 @@ forge_test() ->
 	Height = 0,
 	InvalidSignTX = (sign(NewTX, Priv, Pub))#tx { data = <<"FAKE DATA">> },
 	Timestamp = os:system_time(seconds),
-	?assert(not verify(InvalidSignTX, Diff, Height, [], Timestamp)).
+	?assertEqual({invalid, [tx_signature_not_valid]}, verify(InvalidSignTX, Diff, Height, [], Timestamp)).
 
 %% @doc Ensure that transactions above the minimum tx cost are accepted.
 tx_cost_above_min_test() ->

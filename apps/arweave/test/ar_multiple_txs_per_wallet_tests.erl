@@ -299,7 +299,7 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	%% Post the balance exceeding transaction again
 	%% and expect the balance exceeded error.
 	slave_call(ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
-	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} =
+	{ok, {{<<"400">>, _}, _, <<"[\"tx_insufficient_funds\"]">>, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
 			{127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
@@ -324,8 +324,8 @@ rejects_transactions_above_the_size_limit() ->
 	GoodTX = sign_tx(Key1, #{ data => SmallData }),
 	assert_post_tx_to_slave(Slave, GoodTX),
 	BadTX = sign_tx(Key2, #{ data => BigData }),
-	{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}} = post_tx_to_slave(Slave, BadTX),
-	{ok, ["tx_fields_too_large"]} = slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id]).
+	{ok, {{<<"400">>, _}, _, <<"[\"tx_data_too_large\"]">>, _, _}} = post_tx_to_slave(Slave, BadTX),
+	{ok, [tx_data_too_large]} = slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id]).
 
 accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	%% Post a TX, mine a block.
@@ -350,7 +350,7 @@ accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	TX2 = sign_tx(Key, #{ last_tx => TX1#tx.id }),
 	assert_post_tx_to_slave(Slave, TX2),
 	TX3 = sign_tx(Key, #{ last_tx => TX2#tx.id }),
-	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = post_tx_to_slave(Slave, TX3),
+	{ok, {{<<"400">>, _}, _, <<"[\"last_tx_in_mempool\"]">>, _, _}} = post_tx_to_slave(Slave, TX3),
 	TX4 = sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
 	assert_post_tx_to_slave(Slave, TX4),
 	slave_mine(Slave),
@@ -388,7 +388,7 @@ does_not_allow_to_spend_mempool_tokens() ->
 			tags => [{<<"nonce">>, <<"1">>}]
 		}
 	),
-	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} = post_tx_to_slave(Slave, TX2),
+	{ok, {{<<"400">>, _}, _, <<"[\"tx_insufficient_funds\"]">>, _, _}} = post_tx_to_slave(Slave, TX2),
 	slave_mine(Slave),
 	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
 	B1 = slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]),
@@ -476,7 +476,7 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 	assert_slave_wait_until_height(Slave, 3),
 	%% Remove the replay TX from the ingnore list (to simulate e.g. a node restart).
 	slave_call(ets, delete, [ignored_ids, TX2#tx.id]),
-	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+	{ok, {{<<"400">>, _}, _, <<"[\"tx_bad_anchor\"]">>, _, _}} =
 		post_tx_to_slave(Slave, TX2).
 
 mines_blocks_under_the_size_limit(B0, TXGroups) ->
@@ -522,7 +522,7 @@ rejects_txs_with_outdated_anchors() ->
 	slave_mine_blocks(Slave, ?MAX_TX_ANCHOR_DEPTH),
 	assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH),
 	TX1 = sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
-	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+	{ok, {{<<"400">>, _}, _, <<"[\"tx_bad_anchor\"]">>, _, _}} =
 		post_tx_to_slave(Slave, TX1).
 
 rejects_txs_exceeding_mempool_limit() ->
@@ -554,7 +554,7 @@ rejects_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 5)
 	),
-	{ok, {{<<"400">>, _}, _, <<"Mempool is full.">>, _, _}} =
+	{ok, {{<<"400">>, _}, _, <<"[\"mempool_is_full\"]">>, _, _}} =
 		post_tx_to_slave(Slave, lists:last(TXs)).
 
 joins_network_successfully(ForkHeight) ->
@@ -618,7 +618,7 @@ joins_network_successfully(ForkHeight) ->
 	BHL = slave_call(ar_node, get_hash_list, [Slave]),
 	assert_wait_until_block_hash_list(Master, BHL),
 	TX1 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BHL) }),
-	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+	{ok, {{<<"400">>, _}, _, <<"[\"tx_bad_anchor\"]">>, _, _}} =
 		post_tx_to_master(Master, TX1),
 	TX2 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
 	assert_post_tx_to_master(Master, TX2),
@@ -626,14 +626,14 @@ joins_network_successfully(ForkHeight) ->
 	forget_txs(PreForkTXs ++ PostForkTXs),
 	lists:foreach(
 		fun(TX) ->
-			{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+			{ok, {{<<"400">>, _}, _, <<"[\"tx_bad_anchor\"]">>, _, _}} =
 				post_tx_to_master(Master, TX)
 		end,
 		PreForkTXs
 	),
 	lists:foreach(
 		fun(TX) ->
-			{ok, {{<<"400">>, _}, _, <<"Transaction is already on the weave.">>, _, _}} =
+			{ok, {{<<"400">>, _}, _, <<"[\"tx_already_in_weave\"]">>, _, _}} =
 				post_tx_to_master(Master, TX)
 		end,
 		PostForkTXs
@@ -798,7 +798,7 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 		fun(TX) ->
 			Confirmations = get_tx_confirmations(master, TX#tx.id),
 			?assertEqual(1, Confirmations),
-			{ok, {{<<"400">>, _}, _, <<"Transaction is already on the weave.">>, _, _}} =
+			{ok, {{<<"400">>, _}, _, <<"[\"tx_already_in_weave\"]">>, _, _}} =
 				post_tx_to_master(Master, TX)
 		end,
 		MasterPostForkBlockAnchoredTXs -- [IncludeOnMasterTX]

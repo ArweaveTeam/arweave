@@ -697,8 +697,7 @@ get_tx_filename(Hash) ->
 				false ->
 					case ar_tx_db:get_error_codes(ID) of
 						{ok, ErrorCodes} ->
-							ErrorBody = list_to_binary(lists:join(" ", ErrorCodes)),
-							{response, {410, #{}, ErrorBody}};
+							{response, {410, #{}, jiffy:encode(ErrorCodes)}};
 						not_found ->
 							{response, {404, #{}, <<"Not Found.">>}}
 					end
@@ -781,7 +780,7 @@ handle_post_tx(PeerIP, TX) ->
 	Height = ar_node:get_height(Node),
 	case verify_mempool_txs_size(MempoolTXs, TX, Height) of
 		invalid ->
-			handle_post_tx_no_mempool_space_response();
+			handle_post_tx_invalid(mempool_is_full);
 		valid ->
 			handle_post_tx(PeerIP, Node, TX, Height, [MTX#tx.id || MTX <- MempoolTXs])
 	end.
@@ -808,7 +807,7 @@ handle_post_tx2(PeerIP, Node, TX, Height, MempoolTXIDs) ->
 				{balance, Balance},
 				{tx_cost, TX#tx.reward + TX#tx.quantity}
 			]),
-			handle_post_tx_exceed_balance_response();
+			handle_post_tx_invalid(tx_insufficient_funds);
 		_ ->
 			handle_post_tx(PeerIP, Node, TX, Height, MempoolTXIDs, WalletList)
 	end.
@@ -824,18 +823,8 @@ handle_post_tx(PeerIP, Node, TX, Height, MempoolTXIDs, WalletList) ->
 		MempoolTXIDs,
 		WalletList
 	) of
-		{invalid, tx_verification_failed} ->
-			handle_post_tx_verification_response();
-		{invalid, last_tx_in_mempool} ->
-			handle_post_tx_last_tx_in_mempool_response();
-		{invalid, invalid_last_tx} ->
-			handle_post_tx_verification_response();
-		{invalid, tx_bad_anchor} ->
-			handle_post_tx_bad_anchor_response();
-		{invalid, tx_already_in_weave} ->
-			handle_post_tx_already_in_weave_response();
-		{invalid, tx_already_in_mempool} ->
-			handle_post_tx_already_in_mempool_response();
+		{invalid, Reason} ->
+			handle_post_tx_invalid(Reason);
 		{valid, _, _} ->
 			handle_post_tx_accepted(PeerIP, TX)
 	end.
@@ -876,27 +865,13 @@ handle_post_tx_accepted(PeerIP, TX) ->
 	ar_bridge:add_tx(whereis(http_bridge_node), TX),
 	ok.
 
-handle_post_tx_exceed_balance_response() ->
-	{error_response, {400, #{}, <<"Waiting TXs exceed balance for wallet.">>}}.
+handle_post_tx_invalid({tx_verification_failed, ErrorCodes}) ->
+	post_invalid_tx_response(ErrorCodes);
+handle_post_tx_invalid(ErrorCode) ->
+	post_invalid_tx_response([ErrorCode]).
 
-handle_post_tx_verification_response() ->
-	{error_response, {400, #{}, <<"Transaction verification failed.">>}}.
-
-handle_post_tx_last_tx_in_mempool_response() ->
-	{error_response, {400, #{}, <<"Invalid anchor (last_tx from mempool).">>}}.
-
-handle_post_tx_no_mempool_space_response() ->
-	ar:err([ar_http_iface_middleware, rejected_transaction, {reason, mempool_is_full}]),
-	{error_response, {400, #{}, <<"Mempool is full.">>}}.
-
-handle_post_tx_bad_anchor_response() ->
-	{error_response, {400, #{}, <<"Invalid anchor (last_tx).">>}}.
-
-handle_post_tx_already_in_weave_response() ->
-	{error_response, {400, #{}, <<"Transaction is already on the weave.">>}}.
-
-handle_post_tx_already_in_mempool_response() ->
-	{error_response, {400, #{}, <<"Transaction is already in the mempool.">>}}.
+post_invalid_tx_response(ErrorCodes) ->
+	{error_response, {400, #{}, jiffy:encode(ErrorCodes)}}.
 
 check_internal_api_secret(Req) ->
 	Reject = fun(Msg) ->
