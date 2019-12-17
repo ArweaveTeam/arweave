@@ -51,6 +51,10 @@ loop(TimeoutRef) ->
 			Term = ar_http_req:body(Req),
 			From ! {read_complete_body, Term},
 			loop(TimeoutRef);
+		{read_body_chunk, From, Req, Size, Timeout} ->
+			Term = ar_http_req:read_body_chunk(Req, Size, Timeout),
+			From ! {read_body_chunk, Term},
+			loop(TimeoutRef);
 		{timeout, HandlerPid, InitialReq} ->
 			unlink(HandlerPid),
 			exit(HandlerPid, handler_timeout),
@@ -284,34 +288,24 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
 handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
-	TXIDHeaderKnown = case cowboy_req:header(<<"arweave-tx-id">>, Req, not_set) of
-		not_set ->
-			false;
-		EncodedTXID ->
-			case ar_util:safe_decode(EncodedTXID) of
-				{ok, TXID} ->
-					ar_bridge:is_id_ignored(TXID);
-				{error, invalid} ->
-					false
+	case post_tx_parse_id({Req, Pid}) of
+		{error, invalid_hash, Req2} ->
+			{400, #{}, <<"Invalid hash.">>, Req2};
+		{error, tx_already_processed, Req2} ->
+			{208, #{}, <<"Transaction already processed.">>, Req2};
+		{error, invalid_json, Req2} ->
+			{400, #{}, <<"Invalid JSON.">>, Req2};
+		{error, body_size_too_large, Req2} ->
+			{413, #{}, <<"Payload too large">>, Req2};
+		{ok, TX} ->
+			{PeerIP, _Port} = cowboy_req:peer(Req),
+			case handle_post_tx(PeerIP, TX) of
+				ok ->
+					{200, #{}, <<"OK">>, Req};
+				{error_response, {Status, Headers, Body}} ->
+					ar_bridge:unignore_id(TX#tx.id),
+					{Status, Headers, Body, Req}
 			end
-	end,
-	case TXIDHeaderKnown of
-		false ->
-			case read_complete_body(Req, Pid) of
-				{ok, TXJSON, Req2} ->
-					TX = ar_serialize:json_struct_to_tx(TXJSON),
-					{PeerIP, _Port} = cowboy_req:peer(Req2),
-					case handle_post_tx(PeerIP, TX) of
-						ok ->
-							{200, #{}, <<"OK">>, Req2};
-						{error_response, {Status, Headers, Body}} ->
-							{Status, Headers, Body, Req2}
-					end;
-				{error, body_size_too_large} ->
-					{413, #{}, <<"Payload too large">>, Req}
-			end;
-		true ->
-			{208, #{}, <<"Transaction already processed.">>, Req}
 	end;
 
 %% @doc Sign and send a tx to the network.
@@ -829,17 +823,6 @@ handle_post_tx(PeerIP, TX) ->
 	end.
 
 handle_post_tx(PeerIP, Node, TX, Height, MempoolTXIDs) ->
-	%% Check whether the TX is already ignored, ignore it if it is not
-	%% (and then pass to processing steps).
-	case ar_bridge:is_id_ignored(TX#tx.id) of
-		true ->
-			{error_response, {208, #{}, <<"Transaction already processed.">>}};
-		false ->
-			ar_bridge:ignore_id(TX#tx.id),
-			handle_post_tx2(PeerIP, Node, TX, Height, MempoolTXIDs)
-	end.
-
-handle_post_tx2(PeerIP, Node, TX, Height, MempoolTXIDs) ->
 	WalletList = ar_node:get_wallet_list(Node),
 	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
 	case lists:keyfind(OwnerAddr, 1, WalletList) of
@@ -1324,8 +1307,88 @@ find_block(<<"height">>, RawHeight, BHL) ->
 find_block(<<"hash">>, ID, BHL) ->
 	ar_storage:read_block(ID, BHL).
 
+post_tx_parse_id({Req, Pid}) ->
+	post_tx_parse_id(check_header, {Req, Pid}).
+
+post_tx_parse_id(check_header, {Req, Pid}) ->
+	case cowboy_req:header(<<"arweave-tx-id">>, Req, not_set) of
+		not_set ->
+			post_tx_parse_id(check_body, {Req, Pid});
+		EncodedTXID ->
+			case ar_util:safe_decode(EncodedTXID) of
+				{ok, TXID} ->
+					post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, <<>>});
+				{error, invalid} ->
+					{error, invalid_hash, Req}
+			end
+	end;
+post_tx_parse_id(check_body, {Req, Pid}) ->
+	{_, Chunk, Req2} = read_body_chunk(Req, Pid, 100, 10),
+	case re:run(Chunk, <<"\"id\":\s*\"(?<ID>[A-Za-z0-9_-]{43})\"">>, [{capture, ['ID']}]) of
+		{match, [Part]} ->
+			TXID = ar_util:decode(binary:part(Chunk, Part)),
+			post_tx_parse_id(check_ignore_list, {TXID, Req2, Pid, Chunk});
+		_ ->
+			post_tx_parse_id(read_body, {not_set, Req2, Pid, <<>>})
+	end;
+post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, FirstChunk}) ->
+	case ar_bridge:is_id_ignored(TXID) of
+		true ->
+			{error, tx_already_processed, Req};
+		false ->
+			ar_bridge:ignore_id(TXID),
+			post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk})
+	end;
+post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk}) ->
+	case read_complete_body(Req, Pid) of
+		{ok, SecondChunk, Req2} ->
+			Body = iolist_to_binary([FirstChunk | SecondChunk]),
+			post_tx_parse_id(parse_json, {TXID, Req2, Body});
+		{error, body_size_too_large} ->
+			{error, body_size_too_large, Req}
+	end;
+post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
+	case catch ar_serialize:json_struct_to_tx(Body) of
+		{'EXIT', _} ->
+			case TXID of
+				not_set ->
+					noop;
+				_ ->
+					ar_bridge:unignore_id(TXID)
+			end,
+			{error, invalid_json, Req};
+		TX ->
+			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
+	end;
+post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
+	TXID = TX#tx.id,
+	case MaybeTXID of
+		TXID ->
+			{ok, TX};
+		MaybeNotSet ->
+			case MaybeNotSet of
+				not_set ->
+					noop;
+				MismatchingTXID ->
+					ar_bridge:unignore(MismatchingTXID)
+			end,
+			case ar_bridge:is_id_ignored(TXID) of
+				true ->
+					{error, tx_already_processed, Req};
+				false ->
+					ar_bridge:ignore_id(TXID),
+					{ok, TX}
+			end
+	end.
+
 read_complete_body(Req, Pid) ->
 	Pid ! {read_complete_body, self(), Req},
 	receive
 		{read_complete_body, Term} -> Term
+	end.
+
+read_body_chunk(Req, Pid, Size, Timeout) ->
+	Pid ! {read_body_chunk, self(), Req, Size, Timeout},
+	receive
+		{read_body_chunk, Term} -> Term
 	end.

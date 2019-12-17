@@ -3,7 +3,7 @@
 -include("ar.hrl").
 -include("ar_http_req.hrl").
 
--export([body/1]).
+-export([body/1, read_body_chunk/3]).
 
 body(Req) ->
 	case maps:get(?AR_HTTP_REQ_BODY, Req, not_set) of
@@ -13,8 +13,22 @@ body(Req) ->
 			{ok, Body, Req}
 	end.
 
+read_body_chunk(Req, Size, Timeout) ->
+	Reply = cowboy_req:read_body(Req, #{ length => Size, period => Timeout }),
+	prometheus_counter:inc(
+		http_server_accepted_bytes_total,
+		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
+		Size
+	),
+	Reply.
+
 read_complete_body(Req, Acc) ->
 	{MoreOrOk, Data, ReadReq} = cowboy_req:read_body(Req),
+	prometheus_counter:inc(
+		http_server_accepted_bytes_total,
+		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
+		byte_size(Data)
+	),
 	NewAcc = <<Acc/binary, Data/binary>>,
 	read_complete_body(MoreOrOk, NewAcc, ReadReq).
 
