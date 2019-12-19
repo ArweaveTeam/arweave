@@ -107,7 +107,8 @@ add_peer(Peer) ->
 					{network, list_to_binary(?NETWORK_NAME)}
 				]
 			}
-		)
+		),
+		3 * 1000
 	).
 
 %% @doc Get a peers current, top block.
