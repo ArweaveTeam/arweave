@@ -1,5 +1,6 @@
 -module(ar_httpc).
--export([request/1, request/3, request/4, request/5, request/6, get_performance/1, update_timer/1]).
+-export([request/1, request/3, request/4, request/5, request/6, request/7]).
+-export([get_performance/1, update_timer/1]).
 -export([reset_peer/1]).
 -include("ar.hrl").
 
@@ -21,10 +22,13 @@ request(Method, Peer, Path, Headers, Body) ->
 	request(Method, Peer, Path, Headers, Body, default_timeout).
 
 request(Method, Peer, Path, Headers, Body, Timeout) ->
+	request(Method, Peer, Path, Headers, Body, connect_timeout(Timeout), Timeout).
+
+request(Method, Peer, Path, Headers, Body, ConnectTimeout, Timeout) ->
 	Host = "http://" ++ ar_util:format_peer(Peer),
 	{ok, Client} = fusco:start(
 		Host,
-		[{connect_timeout, connect_timeout(Timeout)}]
+		[{connect_timeout, ConnectTimeout}]
 	),
 	Result = fusco:request(
 		Client,

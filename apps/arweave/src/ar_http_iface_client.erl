@@ -36,6 +36,7 @@ do_send_new_tx(Peer, TX) ->
 		"/tx",
 		p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TX#tx.id)}],
 		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+		500,
 		max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
 	).
 
@@ -48,6 +49,7 @@ has_tx(Peer, ID) ->
 			"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
 			p2p_headers(),
 			[],
+			500,
 			3 * 1000
 		)
 	of
@@ -346,6 +348,7 @@ get_tx_from_remote_peer(Peers, TXID) ->
 			"/tx/" ++ binary_to_list(ar_util:encode(TXID)),
 			p2p_headers(),
 			[],
+			500,
 			10 * 1000
 		)
 	) of
