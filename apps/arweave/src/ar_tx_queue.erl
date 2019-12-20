@@ -192,7 +192,6 @@ handle_cast({emit_tx_to_peer, TX}, State = #state { emit_map = EmitMap }) ->
 					gen_server:cast(?MODULE, {emitted_tx_to_peer, TX})
 				end
 			),
-			gen_server:cast(?MODULE, {emit_tx_to_peer, TX}),
 			{noreply, State#state{ emit_map = EmitMap#{ TXID => TXIDMap#{ peers => Peers } } }};
 		_ ->
 			{noreply, State}
@@ -206,6 +205,7 @@ handle_cast({emitted_tx_to_peer, TX}, State = #state { emit_map = EmitMap, tx_qu
 			gen_server:cast(?MODULE, {emitter_finished, TX}),
 			{noreply, State#state{ emit_map = maps:remove(TXID, EmitMap) }};
 		_ ->
+			gen_server:cast(?MODULE, {emit_tx_to_peer, TX}),
 			{noreply, State}
 	end;
 
