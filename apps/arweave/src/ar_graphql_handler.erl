@@ -30,6 +30,8 @@ handle_preflight_request(Req, State) ->
 handle_graphql_request(Req, #{ arql_semaphore := Semaphore } = State) ->
 	ar_semaphore:acquire(Semaphore, 5000),
 	case gather_query_params(Req) of
+		{error, body_size_too_large} ->
+			err(413, <<"Payload too large">>, Req, State);
 		{error, Reason} ->
 			err(400, Reason, Req, State);
 		{ok, Req2, Decoded} ->
@@ -37,13 +39,17 @@ handle_graphql_request(Req, #{ arql_semaphore := Semaphore } = State) ->
 	end.
 
 gather_query_params(Req) ->
-	Body = ar_http_req:body(Req),
-	Params = maps:from_list(cowboy_req:parse_qs(Req)),
-	case bin_to_json(Body) of
-		{ok, JSON} ->
-			gather_query_params(Req, JSON, Params);
-		error ->
-			{error, invalid_json_body}
+	case ar_http_req:body(Req) of
+		{ok, Body, Req2} ->
+			Params = maps:from_list(cowboy_req:parse_qs(Req)),
+			case bin_to_json(Body) of
+				{ok, JSON} ->
+					gather_query_params(Req2, JSON, Params);
+				error ->
+					{error, invalid_json_body}
+			end;
+		{error, body_size_too_large} = Err ->
+			Err
 	end.
 
 gather_query_params(Req, Body, Params) ->
