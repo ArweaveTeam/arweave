@@ -523,7 +523,11 @@ medium_blockweave_mine_multiple_data_test_() ->
 		SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 		SignedTX2 = ar_tx:sign(TX2, Priv2, Pub2),
-		B0 = ar_weave:init([]),
+		B0 = ar_weave:init([
+			{ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
+			{ar_wallet:to_address(Pub2), ?AR(10000), <<>>},
+			{ar_wallet:to_address(Pub3), ?AR(10000), <<>>}
+		]),
 		Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
 		[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 		ar_node:add_tx(ar_util:pick_random(Nodes), SignedTX),
