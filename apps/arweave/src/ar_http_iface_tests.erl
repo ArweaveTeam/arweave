@@ -955,7 +955,8 @@ post_unsigned_tx_test_() ->
 
 post_unsigned_tx() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(5000), <<>>}]),
 	Node = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node),
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
@@ -990,7 +991,25 @@ post_unsigned_tx() ->
 	ar_meta_db:put(internal_api_secret, not_set),
 	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
 	[WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
-	?assertMatch([_], proplists:get_all_values(<<"wallet_address">>, CreateWalletRes)),
+	[Address] = proplists:get_all_values(<<"wallet_address">>, CreateWalletRes),
+	% top up the new wallet
+	TopUpTX = ar_tx:sign((ar_tx:new())#tx {
+		owner = Pub,
+		target = ar_util:decode(Address),
+		quantity = ?AR(1),
+		reward = ?AR(1)
+	}, Wallet),
+	{ok, {{<<"200">>, _}, _, _, _, _}} =
+		ar_httpc:request(
+			<<"POST">>,
+			{127, 0, 0, 1, 1984},
+			"/tx",
+			[],
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TopUpTX))
+		),
+	receive after 250 -> ok end,
+	ar_node:mine(Node),
+	receive after 1000 -> ok end,
 	% send an unsigned transaction to be signed with the generated key
 	TX = (ar_tx:new())#tx{reward = ?AR(1)},
 	UnsignedTXProps = [

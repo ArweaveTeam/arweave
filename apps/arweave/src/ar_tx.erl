@@ -129,7 +129,12 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 
 validate_overspend(TX, Wallets) ->
 	From = ar_wallet:to_address(TX#tx.owner),
-	To = TX#tx.target,
+	Addresses = case TX#tx.target of
+		<<>> ->
+			[From];
+		To ->
+			[From, To]
+	end,
 	lists:all(
 		fun(Addr) ->
 			case ar_node_utils:get_wallet_by_address(Addr, Wallets) of
@@ -137,11 +142,13 @@ validate_overspend(TX, Wallets) ->
 					false;
 				{_, Quantity, _} when Quantity < 0 ->
 					false;
+				false ->
+					false;
 				_ ->
 					true
 			end
 		end,
-		[From, To]
+		Addresses
 	).
 
 %% @doc Verify a list of transactions.
@@ -341,7 +348,15 @@ sign_tx_test() ->
 	Diff = 1,
 	Height = 0,
 	Timestamp = os:system_time(seconds),
-	?assert(verify(sign(NewTX, Priv, Pub), Diff, Height, [], Timestamp)).
+	?assert(
+		verify(
+			sign(NewTX, Priv, Pub),
+			Diff,
+			Height,
+			[{ar_wallet:to_address(Pub), ?AR(20), <<>>}],
+			Timestamp
+		)
+	).
 
 %% @doc Ensure that a forged transaction does not pass verification.
 forge_test() ->
