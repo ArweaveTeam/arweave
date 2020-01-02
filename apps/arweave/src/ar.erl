@@ -59,7 +59,7 @@
 		ar_gateway_middleware_tests,
 		ar_randomx_mining_tests,
 		ar_http_util_tests,
-		% ar_meta_db must be the last in the list since it resets global configuraiton
+		% ar_meta_db must be the last in the list since it resets global configuration
 		ar_meta_db
 	]
 ).
@@ -578,10 +578,18 @@ start_for_tests(Config) ->
 		disable = [randomx_jit]
 	}).
 
-%% @doc Run the tests for a single module.
-tests(Mod) ->
-	ar_storage:ensure_directories(),
-	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
+%% @doc Run the tests for a set of module(s).
+%% Supports strings so that it can be trivially induced from a unix shell call.
+tests(Mod) when not is_list(Mod) -> tests([Mod]);
+tests(Args) ->
+	Mods =
+		lists:map(
+			fun(Mod) when is_atom(Mod) -> Mod;
+			   (Str) -> list_to_atom(Str)
+			end,
+			Args
+		),
+	tests(Mods, #config {}).
 
 %% @doc Run tests on the apps.
 test_apps() ->
