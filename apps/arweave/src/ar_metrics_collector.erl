@@ -39,7 +39,7 @@ metrics() ->
 	 {block_height, gauge,
 		"Block height.",
 		% FIXME This metric should be updated by ar_node itself, not pulled like this
-		length(ar_node:get_hash_list(whereis(http_entrypoint_node))) - 1 },
+		length(ar_node:get_block_index(whereis(http_entrypoint_node))) - 1 },
 	 {peer_count, gauge,
 		"peer count",
 		% FIXME This metric should be updated by arb_ridge itself, not pulled like this

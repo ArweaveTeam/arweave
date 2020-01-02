@@ -176,8 +176,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 						{<<"block_height">>, Height},
 						{<<"block_indep_hash">>, EncodedIndepHash}
 					],
-					CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-					case lists:member(ar_util:decode(EncodedIndepHash), CurrentBHL) of
+					CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
+					case lists:member(ar_util:decode(EncodedIndepHash), ?BI_TO_BHL(CurrentBI)) of
 						false ->
 							{404, #{}, <<"Not Found.">>, Req};
 						true ->
@@ -343,8 +343,8 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					case handle_post_tx(PeerIP, SignedTX) of
 						ok ->
 							{200, #{}, ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}), Req2};
-						{error_response, {Status, Headers, Body}} ->
-							{Status, Headers, Body, Req2}
+						{error_response, {Status, Headers, ErrBody}} ->
+							{Status, Headers, ErrBody, Req2}
 					end;
 				{error, body_size_too_large} ->
 					{413, #{}, <<"Payload too large">>, Req}
@@ -389,13 +389,15 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
 	end;
 
 %% @doc Return the current hash list held by the node.
-%% GET request to endpoint /hash_list
+%% GET request to endpoint /block_index
 handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(hash_list_semaphore, infinity),
-	HashList = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
+handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
+	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
+	BI = ar_node:get_block_index(whereis(http_entrypoint_node)),
 	{200, #{},
 		ar_serialize:jsonify(
-			ar_serialize:hash_list_to_json_struct(HashList)
+			ar_serialize:block_index_to_json_struct(format_bi_for_peer(BI, Req))
 		),
 	Req};
 
@@ -472,15 +474,15 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
 
 %% @doc Return a block anchor to use for building transactions.
 handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
-	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+	case ar_node:get_block_index(whereis(http_entrypoint_node)) of
 		[] ->
 			{400, #{}, <<"The node has not joined the network yet.">>, Req};
-		BHL when is_list(BHL) ->
+		BI when is_list(BI) ->
 			{
 				200,
 				#{},
 				ar_util:encode(
-					lists:nth(min(length(BHL), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, BHL)
+					element(1, lists:nth(min(length(BI), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, BI))
 				),
 				Req
 			}
@@ -583,39 +585,6 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 			case {ar_meta_db:get(api_compat), cowboy_req:header(<<"x-block-format">>, Req, <<"2">>)} of
 				{false, <<"1">>} ->
 					{426, #{}, <<"Client version incompatible.">>, Req};
-				{_, <<"1">>} ->
-					% Supprt for legacy nodes (pre-1.5).
-					BHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-					try ar_storage:read_block_file(Filename, BHL) of
-						B ->
-							{JSONStruct} =
-								ar_serialize:block_to_json_struct(
-									B#block {
-										txs =
-											[
-												if is_binary(TX) -> TX; true -> TX#tx.id end
-											||
-												TX <- B#block.txs
-											]
-									}
-								),
-							{200, #{},
-								ar_serialize:jsonify(
-									{
-										[
-											{
-												<<"hash_list">>,
-												ar_serialize:hash_list_to_json_struct(B#block.hash_list)
-											}
-										|
-											JSONStruct
-										]
-									}
-								),
-							Req}
-					catch error:cannot_generate_block_hash_list ->
-						{404, #{}, <<"Requested block not found on block hash list.">>, Req}
-					end;
 				{_, _} ->
 					{200, #{}, sendfile(Filename), Req}
 			end
@@ -634,9 +603,9 @@ handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req, _Pid) ->
 %% GET request to endpoint /current_block
 %% GET request to endpoint /block/current
 handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid) ->
-	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+	case ar_node:get_block_index(whereis(http_entrypoint_node)) of
 		[] -> {404, #{}, <<"Block not found.">>, Req};
-		[IndepHash|_] ->
+		[{IndepHash,_}|_] ->
 			handle(<<"GET">>, [<<"block">>, <<"hash">>, ar_util:encode(IndepHash)], Req, Pid)
 	end;
 
@@ -717,6 +686,12 @@ arweave_peer(Req) ->
 			Binary -> binary_to_integer(Binary)
 		end,
 	{IpV4_1, IpV4_2, IpV4_3, IpV4_4, ArweavePeerPort}.
+
+format_bi_for_peer(BI, Req) ->
+	case cowboy_req:header(<<"x-block-format">>, Req, <<"2">>) of
+		<<"2">> -> ?BI_TO_BHL(BI);
+		_ -> BI
+	end.
 
 sendfile(Filename) ->
 	{sendfile, 0, filelib:file_size(Filename), Filename}.
@@ -962,7 +937,7 @@ block_field_to_string(<<"height">>, Res) -> integer_to_list(Res);
 block_field_to_string(<<"hash">>, Res) -> Res;
 block_field_to_string(<<"indep_hash">>, Res) -> Res;
 block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
-block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
+block_field_to_string(<<"block_index">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
@@ -1050,8 +1025,10 @@ type_to_mf({block, lookup_filename}) ->
 %% @doc Convenience function for lists:keyfind(Key, 1, List).
 %% returns Value not {Key, Value}.
 val_for_key(K, L) ->
-	{K, V} = lists:keyfind(K, 1, L),
-	V.
+	case lists:keyfind(K, 1, L) of
+		false -> false;
+		{K, V} -> V
+	end.
 
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
@@ -1174,10 +1151,15 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->
-		RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
-		RecallIndepHash = ar_util:decode(val_for_key(<<"recall_block">>, ReqStruct)),
-		Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
-		Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
+		Recall = 
+			case val_for_key(<<"recall_block">>, ReqStruct) of
+				false -> BShadow#block.poa;
+				RecallH ->
+					RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
+					Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
+					Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
+					{RecallH, RecallSize, Key, Nonce}
+			end,
 		ar:info([{
 			sending_external_block_to_bridge,
 			ar_util:encode(BShadow#block.indep_hash)
@@ -1192,7 +1174,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			OrigPeer,
 			BShadow,
 			BDS,
-			{RecallIndepHash, RecallSize, Key, Nonce}
+			Recall
 		)
 	end),
 	{200, #{}, <<"OK">>, Req}.
@@ -1213,8 +1195,10 @@ post_block_reject_warn(BShadow, Step, Peer, Params) ->
 
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
-	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
-	case is_block_known(Type, ID, CurrentBHL) of
+	process_request(get_block, [Type, ID, <<"block_index">>], Req);
+process_request(get_block, [Type, ID, <<"block_index">>], Req) ->
+	CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
+	case is_block_known(Type, ID, CurrentBI) of
 		true ->
 			Hash =
 				case Type of
@@ -1222,15 +1206,15 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 						B =
 							ar_node:get_block(whereis(http_entrypoint_node),
 							ID,
-							CurrentBHL),
+							CurrentBI),
 						B#block.indep_hash;
 					<<"hash">> -> ID
 				end,
-			BlockBHL = ar_block:generate_hash_list_for_block(Hash, CurrentBHL),
+			BlockBI = ar_block:generate_block_index_for_block(Hash, CurrentBI),
 			{200, #{},
 				ar_serialize:jsonify(
-					ar_serialize:hash_list_to_json_struct(
-						BlockBHL
+					ar_serialize:block_index_to_json_struct(
+						format_bi_for_peer(BlockBI, Req)
 					)
 				),
 			Req};
@@ -1241,11 +1225,11 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 %% or height).
 process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 	HTTPEntryPointPid = whereis(http_entrypoint_node),
-	CurrentBHL = ar_node:get_hash_list(HTTPEntryPointPid),
-	case is_block_known(Type, ID, CurrentBHL) of
+	CurrentBI = ar_node:get_block_index(HTTPEntryPointPid),
+	case is_block_known(Type, ID, CurrentBI) of
 		false -> {404, #{}, <<"Block not found.">>, Req};
 		true ->
-			B = find_block(Type, ID, CurrentBHL),
+			B = find_block(Type, ID, CurrentBI),
 			case ?IS_BLOCK(B) of
 				true ->
 					{200, #{},
@@ -1263,13 +1247,13 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 %% GET request to endpoint /block/hash/{hash|height}/{field}
 %%
 %% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
+%%				txs | block_index | wallet_list | reward_addr | tags | reward_pool }
 %%
 process_request(get_block, [Type, ID, Field], Req) ->
-	CurrentBHL = ar_node:get_hash_list(whereis(http_entrypoint_node)),
+	CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
 	case ar_meta_db:get(subfield_queries) of
 		true ->
-			case find_block(Type, ID, CurrentBHL) of
+			case find_block(Type, ID, CurrentBI) of
 				unavailable ->
 					{404, #{}, <<"Not Found.">>, Req};
 				B ->
@@ -1294,24 +1278,24 @@ validate_get_block_type_id(<<"hash">>, ID) ->
 		{error, invalid} -> {error, {400, #{}, <<"Invalid hash.">>}}
 	end.
 
-%% @doc Take a block type specifier, an ID, and a BHL, returning whether the
-%% given block is part of the BHL.
-is_block_known(<<"height">>, RawHeight, BHL) when is_binary(RawHeight) ->
-	is_block_known(<<"height">>, binary_to_integer(RawHeight), BHL);
-is_block_known(<<"height">>, Height, BHL) ->
-	Height < length(BHL);
-is_block_known(<<"hash">>, ID, BHL) ->
-	lists:member(ID, BHL).
+%% @doc Take a block type specifier, an ID, and a BI, returning whether the
+%% given block is part of the BI.
+is_block_known(<<"height">>, RawHeight, BI) when is_binary(RawHeight) ->
+	is_block_known(<<"height">>, binary_to_integer(RawHeight), BI);
+is_block_known(<<"height">>, Height, BI) ->
+	Height < length(BI);
+is_block_known(<<"hash">>, ID, BI) ->
+	lists:member(ID, BI).
 
 %% @doc Find a block, given a type and a specifier.
-find_block(<<"height">>, RawHeight, BHL) ->
+find_block(<<"height">>, RawHeight, BI) ->
 	ar_node:get_block(
 		whereis(http_entrypoint_node),
 		binary_to_integer(RawHeight),
-		BHL
+		BI
 	);
-find_block(<<"hash">>, ID, BHL) ->
-	ar_storage:read_block(ID, BHL).
+find_block(<<"hash">>, ID, BI) ->
+	ar_storage:read_block(ID, BI).
 
 post_tx_parse_id({Req, Pid}) ->
 	post_tx_parse_id(check_header, {Req, Pid}).

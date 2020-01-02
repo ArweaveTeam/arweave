@@ -69,6 +69,8 @@ name_route([<<"price">>, _SizeInBytes, _Addr]) ->
 	"/price/{bytes}/{address}";
 name_route([<<"hash_list">>]) ->
 	"/hash_list";
+name_route([<<"block_index">>]) ->
+	"/block_index";
 name_route([<<"wallet_list">>]) ->
 	"/wallet_list";
 name_route([<<"wallet">>, _Addr, <<"balance">>]) ->

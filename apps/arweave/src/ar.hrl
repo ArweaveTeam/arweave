@@ -15,7 +15,7 @@
 -define(DEFAULT_REQUEST_HEADERS,
 	[
 		{<<"X-Version">>, <<"8">>},
-		{<<"X-Block-Format">>, <<"2">>}
+		{<<"X-Block-Format">>, <<"3">>}
 	]).
 
 -define(CORS_HEADERS,
@@ -33,6 +33,9 @@
 %%% @deprecated Fork heights from 1.7 on are defined in the ar_fork module.
 -define(FORK_1_6, 95000).
 -endif.
+-define(FORK_2_0, 377000).
+%-define(FORK_2_0, 3).
+%-define(FORK_2_0, 0).
 
 %% @doc Default auto-update watch address.
 -define(DEFAULT_UPDATE_ADDR, "8L1NmHR2qY9wH-AqgsOmdw98FMwrdIzTS5-bJi9YDZ4").
@@ -117,7 +120,7 @@
 -define(TOTAL_WAITING_TXS_DATA_SIZE_LIMIT, 250 * 1024 * 1024).
 -endif.
 -ifdef(DEBUG).
--define(TX_DATA_SIZE_LIMIT, 10 * 1024).
+-define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
 -else.
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
 -endif.
@@ -259,6 +262,17 @@
 -define(DIFF_ADJUSTMENT_DOWN_LIMIT, 2).
 -define(DIFF_ADJUSTMENT_UP_LIMIT, 4).
 
+%% @doc Max size of a single data chunk, in bytes.
+%% 512KB should be enough -- future, please don't hate me.
+-define(DATA_CHUNK_SIZE, 512 * 1024).
+-define(MAX_PATH_SIZE, 256 * 1024).
+%% @doc The maximum size of the chunk hash list in bytes. Shorter chunk IDs
+%% (configurable by the user on a per-TX basis) give lower safety in terms of
+%% the potential for hash collisions, but higher transaction size limits.
+-define(MAX_CHUNK_LIST_SIZE, 384 * 1024).
+-define(CHUNK_ID_HASH_SIZE, 32).
+-define(DEFAULT_CHUNK_ALG, "sha2-256").
+
 %% @doc A full block or block shadow (see more on txs field).
 -record(block, {
 	nonce = <<>>, % The nonce used to satisfy the mining problem when mined
@@ -269,20 +283,26 @@
 	height = -1, % How many blocks have passed since the Genesis block?
 	hash = <<>>, % A hash of this block, the previous block and the recall block.
 	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
+	header_hash = <<>>, % Hash of this block (for use in post-v2)
 	txs = [], % A list of tx records in full blocks, or a list of tx ids in block shadows.
-	hash_list = unset, % A list of all previous indep hashes.
-	hash_list_merkle = <<>>, % The merkle root of the block's BHL.
-	wallet_list = [], % A map of wallet balances, or undefined.
+	tx_root = <<>>, % Merkle root of the tree of ordered TXs.
+	tx_tree = [], % The tree data structure of TXs. Not stored.
+	block_index = unset, % A list of all previous indep hashes.
+	block_index_merkle = <<>>, % The merkle root of the block's BI.
+	wallet_list = [], % A map of wallet balances, the wallet list hash, or undefined.
     reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
     tags = [], % Miner specified tags to store with the block.
 	reward_pool = 0, % Current pool of mining reward.
 	weave_size = 0, % Current size of the weave in bytes (counts tx data fields).
 	block_size = 0, % The size of the transactions inside this block.
-	cumulative_diff = 0 % The sum of the squared difficulty on the branch.
+	cumulative_diff = 0, % The sum of the squared difficulty on the branch.
+	poa = undefined, % The access proof used to generate this block.
+	votables = []
 }).
 
 %% @doc A transaction, as stored in a block.
 -record(tx, {
+	format = 1, % The transaction (and signature) format.
 	id = <<>>, % TX UID (Signature hash).
 	last_tx = <<>>, % Get last TX hash.
 	owner = <<>>, % Public key of transaction owner.
@@ -290,8 +310,21 @@
 	target = <<>>, % Address of target of the tx.
 	quantity = 0, % Amount of Winston to send.
 	data = <<>>, % Data in transaction (if data transaction).
+	data_size = 0, % Size (in bytes) of the data used in transactions.
+	data_tree = [], % The list of chunks associated with a transaction.
+	data_root = <<>>, % The hash of all of the chunk IDs.
 	signature = <<>>, % Transaction signature.
 	reward = 0 % Transaction mining reward.
+}).
+
+%% @doc A succinct proof of access to a recall byte found in a TX.
+-record(poa, {
+	option, % The recall byte option chosen.
+	recall_block, % Header of the block that the TX containing the chunk is found in.
+	tx_path, % Path through the merkle tree of TXs in the block.
+	tx, % Header of the TX containing the required data chunk.
+	data_path, % Path through the merkle tree of chunk IDs to the required chunk.
+	chunk % The required data chunk.
 }).
 
 %% @doc Gossip protocol state.
@@ -332,6 +365,9 @@
 
 %% @doc A Macro to return whether an object is a block.
 -define(IS_BLOCK(X), (is_record(X, block))).
+
+%% @doc Convert a v2.0 block index into an old style block hash list.
+-define(BI_TO_BHL(XBI), ([ XBH || {XBH, _} <- XBI ])).
 
 %% @doc A Macro to return whether a value is an address.
 -define(IS_ADDR(Addr), (is_binary(Addr) and (bit_size(Addr) == ?HASH_SZ))).

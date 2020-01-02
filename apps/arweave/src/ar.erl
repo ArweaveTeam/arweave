@@ -25,35 +25,36 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_unbalanced_merkle,
 		ar_block_index,
 		ar_config_tests,
 		ar_deep_hash,
 		ar_inflation,
-		ar_tx_queue,
-		ar_node_tests,
-		ar_util,
 		ar_cleanup,
-		ar_merkle,
+		ar_util,
 		ar_storage,
-		ar_serialize,
-		ar_tx,
-		ar_weave,
-		ar_wallet,
-		ar_firewall,
-		ar_gossip,
-		ar_mine,
-		ar_join,
-		ar_fork_recovery,
-		ar_http_iface_tests,
-		ar_retarget,
-		ar_block,
-		ar_tx_db,
-		ar_firewall_distributed_tests,
+		ar_merkle,
 		ar_semaphore_tests,
+		ar_tx_db,
+		ar_tx,
+		ar_wallet,
+		ar_gossip,
+		ar_serialize,
+		ar_block,
+		ar_difficulty_tests,
+		ar_retarget,
+		ar_weave,
+		ar_join,
+		ar_node_tests,
+		ar_fork_recovery,
+		ar_firewall_distributed_tests,
+		ar_firewall,
+		ar_mine,
 		ar_tx_replay_pool_tests,
+		ar_tx_queue,
+		ar_http_iface_tests,
 		ar_multiple_txs_per_wallet_tests,
 		ar_tx_perpetual_storage_tests,
-		ar_difficulty_tests,
 		ar_gateway_middleware_tests,
 		ar_randomx_mining_tests,
 		ar_http_util_tests,
@@ -99,7 +100,7 @@ show_help() ->
 		[
 			{"config_file (path)", "Load configuration from specified file."},
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_hash_list (hash)", "Start the node from a given block."},
+			{"start_block_index (hash)", "Start the node from a given block."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -201,8 +202,8 @@ parse_cli_args(["disk_space", Size|Rest], C) ->
 	parse_cli_args(Rest, C#config { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 parse_cli_args(["load_mining_key", File|Rest], C) ->
 	parse_cli_args(Rest, C#config { load_key = File });
-parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
-	parse_cli_args(Rest, C#config { start_hash_list = ar_util:decode(BHLHash) });
+parse_cli_args(["start_block_index", BIHash|Rest], C) ->
+	parse_cli_args(Rest, C#config { start_block_index = ar_util:decode(BIHash) });
 parse_cli_args(["benchmark", Algorithm|Rest], C)->
 	parse_cli_args(Rest, C#config { benchmark = true, benchmark_algorithm = list_to_atom(Algorithm) });
 parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
@@ -229,6 +230,8 @@ parse_cli_args(["max_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_connections = list_to_integer(Num) });
 parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_gateway_connections = list_to_integer(Num) });
+parse_cli_args(["max_option_depth", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { max_option_depth = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -265,7 +268,7 @@ start(
 		pause = Pause,
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
-		start_hash_list = BHL,
+		start_block_index = BI,
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
@@ -277,7 +280,9 @@ start(
 		max_propagation_peers = MaxPropagationPeers,
 		webhooks = WebhookConfigs,
 		max_connections = MaxConnections,
-		max_gateway_connections = MaxGatewayConnections
+		max_gateway_connections = MaxGatewayConnections,
+		max_option_depth = MaxOptionDepth,
+		votables = Votables
 	}) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -306,6 +311,7 @@ start(
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
+	ar_meta_db:put(max_option_depth, MaxOptionDepth),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -377,13 +383,13 @@ start(
 		[
 			[
 				Peers,
-				case BHL of
+				case BI of
 					undefined ->
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
 					_ ->
-						ar_storage:read_block_hash_list(BHL)
+						ar_storage:read_block_block_index(BI)
 				end,
 				0,
 				MiningAddress,
@@ -414,6 +420,10 @@ start(
 			unclaimed -> "unclaimed";
 			_ -> binary_to_list(ar_util:encode(MiningAddress))
 		end,
+    lists:foreach(
+		fun({Name, Value}) -> ar_meta_db:put({votable, Name}, Value) end,
+		Votables
+	),
 	ar:report_console(
 		[
 			starting_server,
@@ -487,7 +497,7 @@ maybe_node_postfix() ->
 warn_if_single_scheduler() ->
 	case erlang:system_info(schedulers_online) of
 		1 ->
-			console("WARNING: Running only one CPU core / Erlang scheduler may cause issues");
+			console("WARNING: Running only one CPU core / Erlang scheduler may cause issues.");
 		_ ->
 			ok
 	end.
@@ -531,6 +541,7 @@ tests() ->
 	tests(?CORE_TEST_MODS, #config {}).
 
 tests(Mods, Config) when is_list(Mods) ->
+	error_logger:tty(true),
 	case ?DEFAULT_DIFF of
 		X when X > 8 ->
 			ar:report_console(

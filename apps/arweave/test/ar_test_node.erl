@@ -6,8 +6,8 @@
 -export([gossip/2, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
 -export([wait_until_height/2, slave_wait_until_height/2]).
 -export([assert_slave_wait_until_height/2]).
--export([wait_until_block_hash_list/2]).
--export([assert_wait_until_block_hash_list/2]).
+-export([wait_until_block_block_index/2]).
+-export([assert_wait_until_block_block_index/2]).
 -export([wait_until_receives_txs/2]).
 -export([assert_wait_until_receives_txs/2]).
 -export([assert_slave_wait_until_receives_txs/2]).
@@ -37,7 +37,7 @@ start(B0, RewardAddr) ->
 	start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, RewardAddr).
 
 slave_start(no_block) ->
-	[B0] = slave_call(ar_weave, init, []),
+	[B0] = slave_call(ar_weave, init, [[]]),
 	slave_start(B0, unclaimed);
 slave_start(B0) ->
 	slave_start(B0, unclaimed).
@@ -139,11 +139,11 @@ slave_mine(Node) ->
 	slave_call(ar_node, mine, [Node]).
 
 wait_until_height(Node, TargetHeight) ->
-	{ok, BHL} = ar_util:do_until(
+	{ok, BI} = ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks(Node) of
-				BHL when length(BHL) - 1 == TargetHeight ->
-					{ok, BHL};
+				BI when length(BI) - 1 == TargetHeight ->
+					{ok, BI};
 				_ ->
 					false
 			end
@@ -151,24 +151,24 @@ wait_until_height(Node, TargetHeight) ->
 		100,
 		60 * 1000
 	),
-	BHL.
+	BI.
 
 slave_wait_until_height(Node, TargetHeight) ->
 	slave_call(?MODULE, wait_until_height, [Node, TargetHeight]).
 
 assert_slave_wait_until_height(Node, TargetHeight) ->
-	BHL = slave_call(?MODULE, wait_until_height, [Node, TargetHeight]),
-	?assert(is_list(BHL)),
-	BHL.
+	BI = slave_call(?MODULE, wait_until_height, [Node, TargetHeight]),
+	?assert(is_list(BI)),
+	BI.
 
-assert_wait_until_block_hash_list(Node, BHL) ->
-	?assertEqual(ok, wait_until_block_hash_list(Node, BHL)).
+assert_wait_until_block_block_index(Node, BI) ->
+	?assertEqual(ok, wait_until_block_block_index(Node, BI)).
 
-wait_until_block_hash_list(Node, BHL) ->
+wait_until_block_block_index(Node, BI) ->
 	ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks(Node) of
-				BHL ->
+				BI ->
 					ok;
 				_ ->
 					false
@@ -286,7 +286,8 @@ sign_tx(Node, Wallet, TXParams, SignFun) ->
 			target = maps:get(target, TXParams, <<>>),
 			quantity = maps:get(quantity, TXParams, 0),
 			tags = maps:get(tags, TXParams, []),
-			last_tx = maps:get(last_tx, TXParams, <<>>)
+			last_tx = maps:get(last_tx, TXParams, <<>>),
+			data_size = byte_size(Data)
 		},
 		Wallet
 	).

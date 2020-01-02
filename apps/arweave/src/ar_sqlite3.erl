@@ -111,8 +111,8 @@ DROP INDEX idx_tag_name_value;
 start_link(Opts) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []).
 
-populate_db(BHL) ->
-	gen_server:cast(?MODULE, {populate_db, BHL}).
+populate_db(BI) ->
+	gen_server:cast(?MODULE, {populate_db, BI}).
 
 select_tx_by_id(ID) ->
 	gen_server:call(?MODULE, {select_tx_by_id, ID}, ?SELECT_TIMEOUT).
@@ -303,8 +303,8 @@ handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 	end,
 	{reply, Reply, State}.
 
-handle_cast({populate_db, BHL}, State) ->
-	ok = ensure_db_populated(BHL, State),
+handle_cast({populate_db, BI}, State) ->
+	ok = ensure_db_populated(BI, State),
 	{noreply, State};
 handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State) ->
 	#{
@@ -393,7 +393,7 @@ create_schema(Conn) ->
 	ok = esqlite3:exec("COMMIT TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
 	ok.
 
-ensure_db_populated(BHL, #{ conn := Conn} = State) ->
+ensure_db_populated(BI, #{ conn := Conn} = State) ->
 	case esqlite3:q("
 		SELECT 1 FROM migration
 		WHERE name = '20191015153000_db_populated'
@@ -402,17 +402,17 @@ ensure_db_populated(BHL, #{ conn := Conn} = State) ->
 			ok;
 		[] ->
 			ar:info([{ar_sqlite3, populating_db}]),
-			{Time, ok} = timer:tc(fun() -> ok = do_populate_db(BHL, State) end),
+			{Time, ok} = timer:tc(fun() -> ok = do_populate_db(BI, State) end),
 			ar:info([{ar_sqlite3, populated_db}, {time, Time}]),
 			ok
 	end.
 
-do_populate_db(BHL, #{ conn := Conn} = State) ->
+do_populate_db(BI, #{ conn := Conn} = State) ->
 	ok = esqlite3:exec("BEGIN TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
 	ok = esqlite3:exec(?DROP_INDEXES_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
-	ok = lists:foreach(fun(BH) ->
+	ok = lists:foreach(fun({BH, _}) ->
 		ok = insert_block_json(BH, State)
-	end, BHL),
+	end, BI),
 	ok = esqlite3:exec(?CREATE_INDEXES_SQL, Conn, infinity),
 	[] = esqlite3:q("INSERT INTO migration VALUES ('20191015153000_db_populated', ?)", [sql_now()], Conn, ?ESQLITE_NIF_TIMEOUT),
 	ok = esqlite3:exec("COMMIT TRANSACTION", Conn, infinity),

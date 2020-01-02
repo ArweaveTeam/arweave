@@ -27,11 +27,11 @@
 
 %% @doc Get a full block (a block containing all transactions) by the independent hash.
 %%      Try to find the block locally first. If we do not have the full block on disk, try to download it from peers.
-get_full_block(Peers, ID, BHL) when is_list(Peers) ->
+get_full_block(Peers, ID, BI) when is_list(Peers) ->
 	GetBlockFromPeersFun = fun() ->
-		get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BHL)
+		get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BI)
 	end,
-	case ar_storage:read_block(ID, BHL) of
+	case ar_storage:read_block(ID, BI) of
 		unavailable ->
 			GetBlockFromPeersFun();
 		Block ->
@@ -48,17 +48,17 @@ get_full_block(Peers, ID, BHL) when is_list(Peers) ->
 					FinalB
 			end
 	end;
-get_full_block(Pid, ID, BHL) when is_pid(Pid) ->
+get_full_block(Pid, ID, BI) when is_pid(Pid) ->
 	%% Attempt to get block from local storage and add transactions.
-	case make_full_block(ID, BHL) of
+	case make_full_block(ID, BI) of
 		{ok, B} ->
 			B;
 		{error, _} ->
 			unavailable
 	end;
-get_full_block(Peer, ID, BHL) ->
+get_full_block(Peer, ID, BI) ->
 	%% Handle external peer request.
-	case ar_http_iface_client:get_full_block([Peer], ID, BHL) of
+	case ar_http_iface_client:get_full_block([Peer], ID, BI) of
 		{_Peer, B} ->
 			B;
 		Error ->
@@ -67,10 +67,10 @@ get_full_block(Peer, ID, BHL) ->
 
 %% @doc Attempt to get a full block from a HTTP peer, picking the node to query
 %% randomly until the block is retreived.
-get_full_block_from_remote_peers([], _ID, _BHL) ->
+get_full_block_from_remote_peers([], _ID, _BI) ->
 	unavailable;
-get_full_block_from_remote_peers(Peers, ID, BHL) ->
-	{Time, MaybeB} = timer:tc(fun() -> ar_http_iface_client:get_full_block(Peers, ID, BHL) end),
+get_full_block_from_remote_peers(Peers, ID, BI) ->
+	{Time, MaybeB} = timer:tc(fun() -> ar_http_iface_client:get_full_block(Peers, ID, BI) end),
 	case MaybeB of
 		{Peer, B} when ?IS_BLOCK(B) ->
 			case ar_meta_db:get(http_logging) of
@@ -90,23 +90,34 @@ get_full_block_from_remote_peers(Peers, ID, BHL) ->
 	end.
 
 %% @doc Search a block list for the next recall block.
-find_recall_block(BHL = [Hash]) ->
-	ar_storage:read_block(Hash, BHL);
-find_recall_block(HashList) ->
-	Block = ar_storage:read_block(hd(HashList), HashList),
-	RecallHash = ar_util:get_recall_hash(Block, HashList),
-	ar_storage:read_block(RecallHash, HashList).
+find_recall_block([B|_]) when ?IS_BLOCK(B) ->
+	find_recall_block(B#block.block_index);
+find_recall_block(BI = [{Hash, _}]) ->
+	ar_storage:read_block(Hash, BI);
+find_recall_block(BI) ->
+	Block = ar_storage:read_block(element(1, hd(BI)), BI),
+	RecallHash = ar_util:get_recall_hash(Block, BI),
+	ar_storage:read_block(RecallHash, BI).
 
 %% @doc Find a block from an ordered block list.
 find_block(Hash) when is_binary(Hash) ->
 	ar_storage:read_block(Hash).
 
-calculate_reward_pool(OldPool, TXs, RewardAddr, RecallSize, WeaveSize, Height, Diff, Timestamp) ->
+calculate_reward_pool(
+		OldPool,
+		TXs,
+		RewardAddr,
+		POA,
+		WeaveSize,
+		Height,
+		Diff,
+		Timestamp) ->
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
-			calculate_reward_pool_perpetual(OldPool, TXs, RewardAddr, RecallSize, WeaveSize, Height, Diff, Timestamp);
+			calculate_reward_pool_perpetual(
+				OldPool, TXs, RewardAddr, POA, WeaveSize, Height, Diff, Timestamp);
 		_ ->
-			Proportion = calculate_proportion(RecallSize, WeaveSize, Height),
+			Proportion = calculate_proportion(POA, WeaveSize, Height),
 			calculate_reward_pool_original(OldPool, TXs, RewardAddr, Proportion)
 	end.
 
@@ -114,7 +125,7 @@ calculate_reward_pool(OldPool, TXs, RewardAddr, RecallSize, WeaveSize, Height, D
 calculate_reward_pool_perpetual(OldPool, TXs, unclaimed, _, _, _, _, _) ->
 	NewPool = OldPool + lists:sum([TX#tx.reward || TX <- TXs]),
 	{0, NewPool};
-calculate_reward_pool_perpetual(OldPool, TXs, _, RecallSize, WeaveSize, Height, Diff, Timestamp) ->
+calculate_reward_pool_perpetual(OldPool, TXs, _, POA, WeaveSize, Height, Diff, Timestamp) ->
 	Inflation = erlang:trunc(ar_inflation:calculate(Height)),
 	{TXsCost, TXsReward} = lists:foldl(
 		fun(TX, {TXCostAcc, TXRewardAcc}) ->
@@ -143,13 +154,31 @@ calculate_reward_pool_perpetual(OldPool, TXs, _, RecallSize, WeaveSize, Height, 
 	Burden = erlang:trunc(WeaveSize * CostPerGBPerBlock / (1024 * 1024 * 1024)),
 	AR = Burden - BaseReward,
 	NewPool = OldPool + TXsCost,
-	case AR =< 0 of
-		true  -> % BaseReward >= Burden
-			{BaseReward, NewPool};
-		false -> % Burden > BaseReward
-			X = erlang:trunc(AR * max(1, RecallSize) * Height / WeaveSize),
-			Take = min(NewPool, X),
-			{BaseReward + Take, NewPool - Take}
+	case Height >= ?FORK_2_0 of
+		true ->
+			RewardMultiplier = 1/POA#poa.option,
+			PoolMultiplier = (1 - RewardMultiplier),
+			case AR =< 0 of
+				true ->
+					{
+						erlang:trunc(BaseReward * RewardMultiplier),
+						NewPool + erlang:trunc(BaseReward * PoolMultiplier)
+					};
+				false ->
+					{
+						erlang:trunc((BaseReward + AR) * RewardMultiplier),
+						(NewPool - AR) + erlang:trunc(BaseReward * PoolMultiplier)
+					}
+			end;
+		false ->
+			case AR =< 0 of
+				true  -> % BaseReward >= Burden
+					{BaseReward, NewPool};
+				false -> % Burden > BaseReward
+					X = erlang:trunc(AR * max(1, POA#block.block_size) * Height / WeaveSize),
+					Take = min(NewPool, X),
+					{BaseReward + Take, NewPool - Take}
+			end
 	end.
 
 %% @doc Calculate the reward.
@@ -181,6 +210,8 @@ calculate_proportion(RecallSize, WeaveSize, Height) when (Height == 0)->
 		WeaveSize,
 		1
 	);
+calculate_proportion(RecallB, WeaveSize, Height) when is_record(RecallB, block) ->
+	calculate_proportion(RecallB#block.block_size, WeaveSize, Height);
 calculate_proportion(RecallSize, WeaveSize, Height) when (WeaveSize == 0)->
 	% No data stored in the weave.
 	calculate_proportion(
@@ -260,24 +291,74 @@ wallet_list_from_wallet_map(WalletMap) ->
 start_mining(StateIn) ->
 	start_mining(StateIn, unforced).
 
-start_mining(#{hash_list := not_joined} = StateIn, _) ->
+start_mining(#{block_index := not_joined} = StateIn, _) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	StateIn;
 start_mining(#{
 		node := Node,
-		hash_list := BHL,
+		block_index := BI,
+		txs := TXs,
+		reward_addr := RewardAddr,
+		tags := Tags,
+		block_txs_pairs := BlockTXPairs } = StateIn, ForceDiff)
+		when length(BI) >= ?FORK_2_0 ->
+	case ar_poa:generate(BI) of
+		unavailable ->
+			ar:info(
+				[
+					not_mining_this_block,
+					{reason, data_unavailable_to_generate_poa},
+					{generated_options_to_depth, ar_meta_db:get(max_option_depth)}
+				]
+			);
+		POA ->
+			ar_miner_log:started_hashing(),
+			ar:info([{node_starting_to_mine, Node}]),
+			B = ar_storage:read_block(element(1, hd(BI)), BI),
+			case ForceDiff of
+				unforced ->
+					Miner = ar_mine:start(
+						B,
+						POA,
+						TXs,
+						RewardAddr,
+						Tags,
+						Node,
+						BlockTXPairs
+					),
+					ar:info([{node, Node}, {started_miner, Miner}]),
+					StateIn#{ miner => Miner };
+				ForceDiff ->
+					Miner = ar_mine:start(
+						B,
+						POA,
+						TXs,
+						RewardAddr,
+						Tags,
+						ForceDiff,
+						Node,
+						BlockTXPairs
+					),
+					ar:info([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
+					StateIn#{ miner => Miner, diff => ForceDiff }
+			end
+	end;
+start_mining(#{
+		node := Node,
+		block_index := BI,
 		txs := TXs,
 		reward_addr := RewardAddr,
 		tags := Tags,
 		block_txs_pairs := BlockTXPairs } = StateIn, ForceDiff) ->
-	case find_recall_block(BHL) of
+	% TODO REMOVE after 2.0
+	case find_recall_block(BI) of
 		unavailable ->
-			B = ar_storage:read_block(hd(BHL), BHL),
-			RecallHash = ar_util:get_recall_hash(B, BHL),
+			B = ar_storage:read_block(element(1, hd(BI)), BI),
+			RecallHash = ar_util:get_recall_hash(B, BI),
 			% TODO: Cleanup.
 			% FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
-			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BHL),
+			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BI),
 			case FullBlock of
 				X when (X == unavailable) or (X == not_found) ->
 					ar:info(
@@ -287,7 +368,7 @@ start_mining(#{
 						]
 					);
 				_ ->
-					case ar_weave:verify_indep(FullBlock, BHL) of
+					case ar_weave:verify_indep(FullBlock, BI) of
 						true ->
 							ar_storage:write_full_block(FullBlock),
 							ar:info(
@@ -316,22 +397,22 @@ start_mining(#{
 			end,
 			case make_full_block(
 				RecallB#block.indep_hash,
-				BHL
+				BI
 			) of
 				{ok, RecallBFull} ->
 					ar_key_db:put(
 						RecallB#block.indep_hash,
 						[
 							{
-								ar_block:generate_block_key(RecallBFull, hd(BHL)),
-								binary:part(hd(BHL), 0, 16)
+								ar_block:generate_block_key(RecallBFull, element(1, hd(BI))),
+								binary:part(element(1, hd(BI)), 0, 16)
 							}
 						]
 					);
 				{error, _} ->
 					do_nothing
 			end,
-			B = ar_storage:read_block(hd(BHL), BHL),
+			B = ar_storage:read_block(element(1, hd(BI)), BI),
 			case ForceDiff of
 				unforced ->
 					Miner = ar_mine:start(
@@ -377,7 +458,7 @@ reset_miner(#{ miner := Pid, automine := true } = StateIn) ->
 integrate_new_block(
 		#{
 			txs := TXs,
-			hash_list := HashList,
+			block_index := BI,
 			block_txs_pairs := BlockTXPairs
 		} = StateIn,
 		NewB,
@@ -390,7 +471,7 @@ integrate_new_block(
 	%% up, it should be fine.
 	%% Write new block and included TXs to local storage.
 	ar_storage:write_full_block(NewB, BlockTXs),
-	NewBHL = [NewB#block.indep_hash | HashList],
+	NewBI = [ {NewB#block.indep_hash, NewB#block.weave_size} | BI],
 	NewBlockTXPairs = update_block_txs_pairs(
 		NewB#block.indep_hash,
 		[TX#tx.id || TX <- BlockTXs],
@@ -407,7 +488,9 @@ integrate_new_block(
 	ar_miner_log:foreign_block(NewB#block.indep_hash),
 	ar:report_console(
 		[
-			{accepted_foreign_block, ar_util:encode(NewB#block.indep_hash)},
+			accepted_foreign_block,
+			{indep_hash, ar_util:encode(NewB#block.indep_hash)},
+			{header_hash, ar_util:encode(NewB#block.header_hash)},
 			{height, NewB#block.height}
 		]
 	),
@@ -416,32 +499,19 @@ integrate_new_block(
 		PID ->
 			PID ! {parent_accepted_block, NewB}
 	end,
-	RecallHash = ar_util:get_recall_hash(NewB, BHL = NewBHL),
-	RawRecallB = ar_storage:read_block(RecallHash, BHL),
-	case ?IS_BLOCK(RawRecallB) of
-		true ->
-			case make_full_block(RawRecallB) of
-				{ok, RecallB} ->
-					ar_key_db:put(
-						RecallB#block.indep_hash,
-						[
-							{
-								ar_block:generate_block_key(
-									RecallB,
-									NewB#block.previous_block
-								),
-								binary:part(NewB#block.indep_hash, 0, 16)
-							}
-						]
-					);
-				{error, _} ->
-					ok
-			end;
-		false ->
-			ok
-	end,
+	ar_downloader:add_block(NewB),
+	NewBI2 =
+		case NewB#block.height of
+			?FORK_2_0 ->
+				io:format(
+					"!!!CAUTION!!!~n"
+					"Arweave is now transitioning to version 2.0. This may take a significant time.~n"
+					"In the event of an error, please check the Arweave community's communication channels to liasse with your fellow miners.~n"),
+				[{NewB#block.header_hash, NewB#block.weave_size}|ar_transition:generate_checkpoint(NewBI)];
+			_ -> NewBI
+		end,
 	reset_miner(StateIn#{
-		hash_list       => NewBHL,
+		block_index     => NewBI2,
 		current         => NewB#block.indep_hash,
 		txs             => ValidTXs,
 		height          => NewB#block.height,
@@ -473,7 +543,7 @@ log_invalid_txs_drop_reason(InvalidTXs) ->
 	).
 
 %% @doc Recovery from a fork.
-fork_recover(#{ node := Node, hash_list := HashList, block_txs_pairs := BlockTXPairs } = StateIn, Peer, NewB) ->
+fork_recover(#{ node := Node, block_index := BI, block_txs_pairs := BlockTXPairs } = StateIn, Peer, NewB) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
 			PrioritisedPeers = ar_util:unique(Peer) ++
@@ -487,7 +557,7 @@ fork_recover(#{ node := Node, hash_list := HashList, block_txs_pairs := BlockTXP
 					PrioritisedPeers,
 					maps:get(trusted_peers, StateIn),
 					NewB,
-					HashList,
+					BI,
 					Node,
 					BlockTXPairs
 				)
@@ -506,20 +576,96 @@ fork_recover(#{ node := Node, hash_list := HashList, block_txs_pairs := BlockTXP
 	StateIn.
 
 %% @doc Validate a block, given a node state and the dependencies.
-validate(#{ hash_list := HashList, wallet_list := WalletList }, B, TXs, OldB, RecallB) ->
-	validate(HashList, WalletList, B, TXs, OldB, RecallB, B#block.reward_addr, B#block.tags).
+validate(#{ block_index := BI, wallet_list := WalletList }, B, TXs, OldB, RecallB) ->
+	validate(BI, WalletList, B, TXs, OldB, RecallB, B#block.reward_addr, B#block.tags).
 
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
+validate(
+		_BI,
+		WalletList,
+		NewB =
+			#block {
+				block_index = BI = [{LastHeaderHash, LastWeaveSize}|_],
+				wallet_list = WalletList,
+				nonce = Nonce,
+				diff = Diff,
+				timestamp = Timestamp,
+				height = Height,
+				poa = POA
+			},
+		TXs,
+		OldB,
+		_,
+		RewardAddr,
+		Tags
+	) when Height >= ?FORK_2_0 ->
+	ar:d([performing_v2_block_validation, {height, Height}]),
+	POW = ar_weave:hash(
+		ar_block:generate_block_data_segment(OldB, POA, TXs, RewardAddr, Timestamp, Tags),
+		Nonce,
+		Height
+	),
+	ar:d(
+		[
+			{validating_block, ar_util:encode(NewB#block.indep_hash)},
+			{header_hash, ar_util:encode(NewB#block.header_hash)},
+			{poa_block_header, ar_util:encode(ar_weave:header_hash((NewB#block.poa)#poa.recall_block))}
+		]
+	),
+	{MicroSecs, Results} =
+		timer:tc(
+			fun() ->
+				[
+					{pow, ar_mine:validate(POW, Diff, Height)},
+					{poa, ar_poa:validate(LastHeaderHash, LastWeaveSize, BI, POA)},
+					{votables, ar_votable:validate(NewB, OldB)},
+					{wallet_list, validate_wallet_list(WalletList)},
+					{txs, ar_tx:verify_txs(NewB, TXs, Diff, Height - 1, OldB#block.wallet_list, Timestamp)},
+					{tx_root, ar_block:verify_tx_root(NewB#block { txs = TXs })},
+					{difficulty, ar_retarget:validate_difficulty(NewB, OldB)},
+					{header_hash, ar_weave:header_hash(NewB) == NewB#block.header_hash},
+					{dependent_hash, ar_block:verify_dep_hash(NewB, POW)},
+					{weave_size, ar_block:verify_weave_size(NewB, OldB, TXs)},
+					{block_field_sizes, ar_block:block_field_size_limit(NewB)},
+					{height, ar_block:verify_height(NewB, OldB)},
+					{last_retarget, ar_block:verify_last_retarget(NewB, OldB)},
+					{previous_block, ar_block:verify_previous_block(NewB, OldB)},
+					{block_index, ar_block:verify_block_index(NewB, OldB)},
+					{block_index_root, ar_block:verify_block_index_merkle(NewB, OldB)},
+					{wallet_list2, ar_block:verify_wallet_list(NewB, OldB, POA, TXs)},
+					{cumulative_difficulty, ar_block:verify_cumulative_diff(NewB, OldB)}
+				]
+			end
+		),
+	FailedTests = [ TestName || {TestName, Result} <- Results, Result =/= true ],
+	case FailedTests of
+		[] ->
+			ar:info(
+				[
+					{block_validation_successful, ar_util:encode(NewB#block.header_hash)},
+					{time_taken, MicroSecs}
+				]
+			),
+			valid;
+		_ ->
+			ar:info(
+				[
+					{block_validation_failed, ar_util:encode(NewB#block.header_hash)},
+					{time_taken, MicroSecs}
+				] ++ FailedTests
+			),
+			{invalid, FailedTests}
+	end;
 validate(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
 	ar:info([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),
 	{invalid, [recall_block_unavailable]};
 validate(
-		HashList,
+		BI,
 		WalletList,
 		NewB =
 			#block {
-				hash_list = HashList,
+				block_index = BI,
 				wallet_list = WalletList,
 				nonce = Nonce,
 				diff = Diff,
@@ -531,6 +677,7 @@ validate(
 		RecallB,
 		RewardAddr,
 		Tags) ->
+	ar:d([performing_v1_block_validation, {height, Height}]),
 	% TODO: Fix names.
 	BDSHash = ar_weave:hash(
 		ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
@@ -539,8 +686,8 @@ validate(
 	),
 	Mine = ar_mine:validate(BDSHash, Diff, Height),
 	Wallet = validate_wallet_list(WalletList),
-	IndepRecall = ar_weave:verify_indep(RecallB, HashList),
-	Txs = ar_tx:verify_txs(TXs, Diff, Height - 1, OldB#block.wallet_list, Timestamp),
+	IndepRecall = ar_weave:verify_indep(RecallB, BI),
+	Txs = ar_tx:verify_txs(NewB, TXs, Diff, Height - 1, OldB#block.wallet_list, Timestamp),
 	DiffCheck = ar_retarget:validate_difficulty(NewB, OldB),
 	IndepHash = ar_block:verify_indep_hash(NewB),
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
@@ -550,8 +697,8 @@ validate(
 	HeightCheck = ar_block:verify_height(NewB, OldB),
 	RetargetCheck = ar_block:verify_last_retarget(NewB, OldB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
-	HashlistCheck = ar_block:verify_block_hash_list(NewB, OldB),
-	BHLMerkleCheck = ar_block:verify_block_hash_list_merkle(NewB, OldB),
+	BICheck = ar_block:verify_block_index(NewB, OldB),
+	BIMerkleCheck = ar_block:verify_block_index_merkle(NewB, OldB),
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
 	CumulativeDiffCheck = ar_block:verify_cumulative_diff(NewB, OldB),
 
@@ -572,10 +719,10 @@ validate(
 			{block_height, HeightCheck},
 			{block_retarget_time, RetargetCheck},
 			{block_previous_check, PreviousBCheck},
-			{block_hash_list, HashlistCheck},
+			{block_block_index, BICheck},
 			{block_wallet_list, WalletListCheck},
 			{block_cumulative_diff, CumulativeDiffCheck},
-			{hash_list_merkle, BHLMerkleCheck}
+			{block_index_merkle, BIMerkleCheck}
 		]
 	),
 
@@ -603,10 +750,10 @@ validate(
 	case HeightCheck of false -> ar:info(invalid_height); _ -> ok end,
 	case RetargetCheck of false -> ar:info(invalid_retarget); _ -> ok end,
 	case PreviousBCheck of false -> ar:info(invalid_previous_block); _ -> ok end,
-	case HashlistCheck of false -> ar:info(invalid_hash_list); _ -> ok end,
+	case BICheck of false -> ar:info(invalid_block_index); _ -> ok end,
 	case WalletListCheck of false -> ar:info(invalid_wallet_list_rewards); _ -> ok end,
 	case CumulativeDiffCheck of false -> ar:info(invalid_cumulative_diff); _ -> ok end,
-	case BHLMerkleCheck of false -> ar:info(invalid_hash_list_merkle); _ -> ok end,
+	case BIMerkleCheck of false -> ar:info(invalid_block_index_merkle); _ -> ok end,
 
 	Valid = (Mine
 		andalso Wallet
@@ -620,10 +767,10 @@ validate(
 		andalso HeightCheck
 		andalso RetargetCheck
 		andalso PreviousBCheck
-		andalso HashlistCheck
+		andalso BICheck
 		andalso WalletListCheck
 		andalso CumulativeDiffCheck
-		andalso BHLMerkleCheck),
+		andalso BIMerkleCheck),
 	InvalidReasons = case Hash of
 		true -> [];
 		false -> [dep_hash]
@@ -634,13 +781,13 @@ validate(
 		false ->
 			{invalid, InvalidReasons}
 	end;
-validate(_HL, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
+validate(_BI, WL, NewB = #block { block_index = unset }, TXs, OldB, RecallB, _, _) ->
 	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
-validate(HL, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
-	validate(HL, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
-validate(_HL, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
+validate(BI, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
+	validate(BI, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
+validate(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
-	{invalid, [hash_list_or_wallet_list]}.
+	{invalid, [block_index_or_wallet_list]}.
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 validate_wallet_list([]) ->
@@ -657,8 +804,8 @@ validate_wallet_list([_ | Rest]) ->
 %%%
 
 %% @doc Read a block shadow from disk, read its transactions from disk.
-make_full_block(ID, BHL) ->
-	make_full_block(ar_storage:read_block(ID, BHL)).
+make_full_block(ID, BI) ->
+	make_full_block(ar_storage:read_block(ID, BI)).
 
 make_full_block(unavailable) ->
 	{error, unavailable};
@@ -789,7 +936,9 @@ calculate_reward(Height, Quantity) ->
 calculate_tx_reward(#tx { reward = Reward }) ->
 	% TDOD mue: Calculation is not calculated, only returned.
 	Reward.
-
+-ifdef(DEBUG).
+calculate_delay(_) -> 0.
+-else.
 -ifdef(FIXED_DELAY).
 calculate_delay(_Bytes) ->
 	?FIXED_DELAY.
@@ -801,4 +950,5 @@ calculate_delay(Bytes) ->
 	BaseDelay = (?BASE_TX_PROPAGATION_DELAY) * 1000,
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
 	BaseDelay + NetworkDelay.
+-endif.
 -endif.
