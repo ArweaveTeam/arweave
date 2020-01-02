@@ -11,7 +11,7 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(MAX_PARALLEL_HASH_LIST_REQUESTS, 1).
+-define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
 -define(MAX_PARALLEL_ARQL_REQUESTS, 10).
 -define(MAX_PARALLEL_GATEWAY_ARQL_REQUESTS, infinity).
 
@@ -66,7 +66,7 @@ split_path(Path) ->
 
 %% @doc Start the server
 do_start(Opts) ->
-	ok = ar_semaphore:start_link(hash_list_semaphore, ?MAX_PARALLEL_HASH_LIST_REQUESTS),
+	ok = ar_semaphore:start_link(block_index_semaphore, ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS),
 	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
 	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
 	ok = ar_blacklist_middleware:start(),

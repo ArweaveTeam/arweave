@@ -13,7 +13,7 @@
 -import(ar_test_node, [sign_tx_pre_fork_2_0/1, sign_tx_pre_fork_2_0/2]).
 -import(ar_test_node, [sign_tx_pre_fork_2_0/3]).
 -import(ar_test_node, [get_tx_anchor/0, get_tx_anchor/1, join/1]).
--import(ar_test_node, [assert_wait_until_block_hash_list/2]).
+-import(ar_test_node, [assert_wait_until_block_block_index/2]).
 -import(ar_test_node, [get_last_tx/1, get_last_tx/2]).
 -import(ar_test_node, [get_tx_confirmations/2]).
 -import(ar_test_node, [disconnect_from_slave/0]).
@@ -194,11 +194,11 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Mine a block.
 	slave_mine(Slave),
 	%% Expect both transactions to be included into block.
-	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
+	SlaveBI = assert_slave_wait_until_height(Slave, 1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
 		TXIDs,
-		(slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]))#block.txs
+		(slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]))#block.txs
 	),
 	lists:foreach(
 		fun(TX) ->
@@ -207,10 +207,10 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 		TXs
 	),
 	%% Expect the block to be accepted by master.
-	BHL = wait_until_height(Master, 1),
+	BI = wait_until_height(Master, 1),
 	?assertEqual(
 		TXIDs,
-		(ar_storage:read_block(hd(BHL), BHL))#block.txs
+		(ar_storage:read_block(hd(BI), BI))#block.txs
 	),
 	lists:foreach(
 		fun(TX) ->
@@ -254,18 +254,18 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	connect_to_slave(),
 	slave_mine(Slave),
 	%% Expect master to receive the block.
-	BHL = wait_until_height(Master, 1),
+	BI = wait_until_height(Master, 1),
 	SecondSetTXIDs = lists:map(fun(TX) -> TX#tx.id end, SecondTXSet),
-	?assertEqual(SecondSetTXIDs, (ar_storage:read_block(hd(BHL), BHL))#block.txs),
+	?assertEqual(SecondSetTXIDs, (ar_storage:read_block(hd(BI), BI))#block.txs),
 	%% Expect master to have the set difference in the mempool.
 	assert_wait_until_receives_txs(Master, FirstTXSet -- SecondTXSet),
 	%% Mine a block on master and expect both transactions to be included.
 	ar_node:mine(Master),
-	BHL2 = wait_until_height(Master, 2),
+	BI2 = wait_until_height(Master, 2),
 	SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
 	?assertEqual(
 		SetDifferenceTXIDs,
-		(ar_storage:read_block(hd(BHL2), BHL2))#block.txs
+		(ar_storage:read_block(hd(BI2), BI2))#block.txs
 	).
 
 returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
@@ -286,16 +286,16 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	assert_wait_until_receives_txs(Master, TXs),
 	%% Expect only the first two to be included into the block.
 	slave_mine(Slave),
-	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
+	SlaveBI = assert_slave_wait_until_height(Slave, 1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
 		lists:sort(TXIDs),
-		lists:sort((slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]))#block.txs)
+		lists:sort((slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]))#block.txs)
 	),
-	BHL = wait_until_height(Master, 1),
+	BI = wait_until_height(Master, 1),
 	?assertEqual(
 		lists:sort(TXIDs),
-		lists:sort((ar_storage:read_block(hd(BHL), BHL))#block.txs)
+		lists:sort((ar_storage:read_block(hd(BI), BI))#block.txs)
 	),
 	%% Post the balance exceeding transaction again
 	%% and expect the balance exceeded error.
@@ -355,8 +355,8 @@ accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	TX4 = sign_tx_pre_fork_2_0(Key, #{ last_tx => B0#block.indep_hash }),
 	assert_post_tx_to_slave(Slave, TX4),
 	slave_mine(Slave),
-	SlaveBHL = assert_slave_wait_until_height(Slave, 2),
-	B2 = slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]),
+	SlaveBI = assert_slave_wait_until_height(Slave, 2),
+	B2 = slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]),
 	?assertEqual([TX2#tx.id, TX4#tx.id], B2#block.txs).
 
 does_not_allow_to_spend_mempool_tokens() ->
@@ -391,8 +391,8 @@ does_not_allow_to_spend_mempool_tokens() ->
 	),
 	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} = post_tx_to_slave(Slave, TX2),
 	slave_mine(Slave),
-	SlaveBHL = assert_slave_wait_until_height(Slave, 1),
-	B1 = slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]),
+	SlaveBI = assert_slave_wait_until_height(Slave, 1),
+	B1 = slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]),
 	?assertEqual([TX1#tx.id], B1#block.txs),
 	TX3 = sign_tx_pre_fork_2_0(
 		Key2,
@@ -406,8 +406,8 @@ does_not_allow_to_spend_mempool_tokens() ->
 	),
 	assert_post_tx_to_slave(Slave, TX3),
 	slave_mine(Slave),
-	SlaveBHL2 = assert_slave_wait_until_height(Slave, 2),
-	B2 = slave_call(ar_storage, read_block, [hd(SlaveBHL2), SlaveBHL2]),
+	SlaveBI2 = assert_slave_wait_until_height(Slave, 2),
+	B2 = slave_call(ar_storage, read_block, [hd(SlaveBI2), SlaveBI2]),
 	?assertEqual([TX3#tx.id], B2#block.txs).
 
 does_not_allow_to_replay_empty_wallet_txs() ->
@@ -499,11 +499,11 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	lists:foldl(
 		fun(Group, Height) ->
 			slave_mine(Slave),
-			SlaveBHL = assert_slave_wait_until_height(Slave, Height),
+			SlaveBI = assert_slave_wait_until_height(Slave, Height),
 			GroupTXIDs = lists:map(fun(TX) -> TX#tx.id end, Group),
 			?assertEqual(
 				GroupTXIDs,
-				(slave_call(ar_storage, read_block, [hd(SlaveBHL), SlaveBHL]))#block.txs
+				(slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]))#block.txs
 			),
 			Height + 1
 		end,
@@ -616,12 +616,12 @@ joins_network_successfully(ForkHeight) ->
 		lists:seq(ForkHeight + 1, ?MAX_TX_ANCHOR_DEPTH)
 	),
 	Master = join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}),
-	BHL = slave_call(ar_node, get_hash_list, [Slave]),
-	assert_wait_until_block_hash_list(Master, BHL),
-	TX1 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BHL) }),
+	BI = slave_call(ar_node, get_block_index, [Slave]),
+	assert_wait_until_block_block_index(Master, BI),
+	TX1 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		post_tx_to_master(Master, TX1),
-	TX2 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
+	TX2 = sign_tx(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BI) }),
 	assert_post_tx_to_master(Master, TX2),
 	%% Remove transactions from the ignore list.
 	forget_txs(PreForkTXs ++ PostForkTXs),
@@ -640,20 +640,20 @@ joins_network_successfully(ForkHeight) ->
 		PostForkTXs
 	),
 	disconnect_from_slave(),
-	TX3 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL) }),
+	TX3 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BI) }),
 	assert_post_tx_to_slave(Slave, TX3),
 	slave_mine(Slave),
-	BHL2 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 1),
+	BI2 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 1),
 	ar_node:mine(Master),
 	connect_to_slave(),
-	TX4 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BHL2) }),
+	TX4 = sign_tx_pre_fork_2_0(Key, #{ last_tx => lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2) }),
 	assert_post_tx_to_slave(Slave, TX4),
 	assert_wait_until_receives_txs(Master, [TX4]),
 	slave_mine(Slave),
-	BHL3 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 2),
-	BHL3 = wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 2),
-	?assertEqual([TX4#tx.id], (ar_storage:read_block(hd(BHL3), BHL3))#block.txs),
-	?assertEqual([TX3#tx.id], (ar_storage:read_block(hd(BHL2), BHL2))#block.txs).
+	BI3 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 2),
+	BI3 = wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 2),
+	?assertEqual([TX4#tx.id], (ar_storage:read_block(hd(BI3), BI3))#block.txs),
+	?assertEqual([TX3#tx.id], (ar_storage:read_block(hd(BI2), BI2))#block.txs).
 
 recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 	%% Mine a number of blocks with transactions on slave and master in sync,
@@ -680,10 +680,10 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 			assert_post_tx_to_slave(Slave, TX),
 			assert_wait_until_receives_txs(Master, [TX]),
 			slave_mine(Slave),
-			BHL = assert_slave_wait_until_height(Slave, Height),
-			BHL = wait_until_height(Master, Height),
-			slave_assert_block_txs([TX], BHL),
-			assert_block_txs([TX], BHL),
+			BI = assert_slave_wait_until_height(Slave, Height),
+			BI = wait_until_height(Master, Height),
+			slave_assert_block_txs([TX], BI),
+			assert_block_txs([TX], BI),
 			{TXs ++ [TX], TX#tx.id}
 		end,
 		{[], <<>>},
@@ -707,8 +707,8 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 			end,
 			assert_post_tx_to_slave(Slave, TX),
 			slave_mine(Slave),
-			BHL = assert_slave_wait_until_height(Slave, Height),
-			slave_assert_block_txs([TX] ++ BlockAnchoredTX, BHL),
+			BI = assert_slave_wait_until_height(Slave, Height),
+			slave_assert_block_txs([TX] ++ BlockAnchoredTX, BI),
 			{TXs ++ [TX], BlockAnchoredTXs ++ BlockAnchoredTX}
 		end,
 		{[], []},
@@ -742,8 +742,8 @@ recovers_from_forks(ForkHeight, ForkHeight_1_8) ->
 					[]
 			end,
 			ar_node:mine(Master),
-			BHL = wait_until_height(Master, Height),
-			assert_block_txs([TX] ++ AdditionalTXs, BHL),
+			BI = wait_until_height(Master, Height),
+			assert_block_txs([TX] ++ AdditionalTXs, BI),
 			{TXs ++ [TX], BlockAnchoredTXs ++ AdditionalTXs}
 		end,
 		{[], []},
@@ -888,14 +888,14 @@ forget_txs(TXs) ->
 		TXs
 	).
 
-slave_assert_block_txs(TXs, BHL) ->
+slave_assert_block_txs(TXs, BI) ->
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-	B = slave_call(ar_storage, read_block, [hd(BHL), BHL]),
+	B = slave_call(ar_storage, read_block, [hd(BI), BI]),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
 
-assert_block_txs(TXs, BHL) ->
+assert_block_txs(TXs, BI) ->
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-	B = ar_storage:read_block(hd(BHL), BHL),
+	B = ar_storage:read_block(hd(BI), BI),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).
 
 random_nonce() ->

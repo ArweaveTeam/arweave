@@ -1,9 +1,10 @@
 -module(ar_serialize).
 -export([full_block_to_json_struct/1, json_struct_to_full_block/1]).
 -export([json_struct_to_block/1, block_to_json_struct/1]).
+-export([json_struct_to_poa/1, poa_to_json_struct/1]).
 -export([tx_to_json_struct/1, json_struct_to_tx/1]).
 -export([wallet_list_to_json_struct/1, json_struct_to_wallet_list/1]).
--export([hash_list_to_json_struct/1, json_struct_to_hash_list/1]).
+-export([block_index_to_json_struct/1, json_struct_to_block_index/1]).
 -export([jsonify/1, dejsonify/1, json_decode/1, json_decode/2]).
 -export([query_to_json_struct/1, json_struct_to_query/1]).
 -include("ar.hrl").
@@ -51,7 +52,10 @@ block_to_json_struct(
 		height = Height,
 		hash = Hash,
 		indep_hash = IndepHash,
+		header_hash = HeaderHash,
 		txs = TXs,
+		tx_root = TXRoot,
+		tx_tree = TXTree,
 		wallet_list = WalletList,
 		reward_addr = RewardAddr,
 		tags = Tags,
@@ -59,7 +63,9 @@ block_to_json_struct(
 		weave_size = WeaveSize,
 		block_size = BlockSize,
 		cumulative_diff = CDiff,
-		hash_list_merkle = MR
+		block_index_merkle = MR,
+		poa = POA,
+		votables = Votables
 	}) ->
 	{JSONDiff, JSONCDiff} = case ar_fork:height_1_8() of
 		H when Height >= H ->
@@ -77,6 +83,7 @@ block_to_json_struct(
 			{height, Height},
 			{hash, ar_util:encode(Hash)},
 			{indep_hash, ar_util:encode(IndepHash)},
+			{header_hash, ar_util:encode(HeaderHash)},
 			{txs,
 				lists:map(
 					fun(TXID) when is_binary(TXID) ->
@@ -87,6 +94,8 @@ block_to_json_struct(
 					TXs
 				)
 			},
+			{tx_root, ar_util:encode(TXRoot)},
+			{tx_tree, tree_to_json_struct(TXTree)},
 			{wallet_list,
 				case is_binary(WalletList) of
 					true -> ar_util:encode(WalletList);
@@ -115,11 +124,21 @@ block_to_json_struct(
 			{weave_size, WeaveSize},
 			{block_size, BlockSize},
 			{cumulative_diff, JSONCDiff},
-			{hash_list_merkle, ar_util:encode(MR)}
+			{block_index_merkle, ar_util:encode(MR)},
+			% TODO: Remove this after all nodes have upgraded to 2.0.
+			{hash_list_merkle, ar_util:encode(MR)},
+			{poa, poa_to_json_struct(POA)},
+			{votables,
+				[
+					{[{name, list_to_binary(Name)}, {value, integer_to_binary(Value)}]}
+				||
+					{Name, Value} <- Votables
+				]
+			}
 		],
 	case Height < ?FORK_1_6 of
 		true ->
-			KeysToDelete = [cumulative_diff, hash_list_merkle],
+			KeysToDelete = [cumulative_diff, block_index_merkle],
 			{delete_keys(KeysToDelete, JSONElements)};
 		false ->
 			{JSONElements}
@@ -149,9 +168,27 @@ json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	json_struct_to_block(dejsonify(JSONBlock));
 json_struct_to_block({BlockStruct}) ->
 	Height = find_value(<<"height">>, BlockStruct),
+	Votables =
+		case find_value(<<"votables">>, BlockStruct) of
+			undefined -> [];
+			Struct ->
+				lists:map(
+					fun({Props}) ->
+						{
+							binary_to_list(find_value(<<"name">>, Props)),
+							binary_to_integer(find_value(<<"value">>, Props))
+						}
+					end,
+					Struct
+				)
+		end,
 	TXs = find_value(<<"txs">>, BlockStruct),
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
-	HashList = find_value(<<"hash_list">>, BlockStruct),
+	BI =
+		case {find_value(<<"block_index">>, BlockStruct), find_value(<<"hash_list">>, BlockStruct)} of
+			{false, HL} -> HL;
+			{JSONBI, _} -> JSONBI
+		end,
 	Tags = find_value(<<"tags">>, BlockStruct),
 	Fork_1_8 = ar_fork:height_1_8(),
 	CDiff = case find_value(<<"cumulative_diff">>, BlockStruct) of
@@ -164,7 +201,7 @@ json_struct_to_block({BlockStruct}) ->
 		BinaryDiff when Height >= Fork_1_8 -> binary_to_integer(BinaryDiff);
 		D -> D
 	end,
-	MR = case find_value(<<"hash_list_merkle">>, BlockStruct) of
+	MR = case find_value(<<"block_index_merkle">>, BlockStruct) of
 		_ when Height < ?FORK_1_6 -> <<>>;
 		undefined -> <<>>; % In case it's an invalid block (in the pre-fork format)
 		R -> ar_util:decode(R)
@@ -181,6 +218,11 @@ json_struct_to_block({BlockStruct}) ->
 		height = Height,
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
+		header_hash =
+			case find_value(<<"header_hash">>, BlockStruct) of
+				undefined -> <<>>;
+				HeaderHash -> ar_util:decode(HeaderHash)
+			end,
 		txs =
 			lists:map(
 			fun (TX) when is_binary(TX) ->
@@ -191,10 +233,10 @@ json_struct_to_block({BlockStruct}) ->
 			end,
 			TXs
 		),
-		hash_list =
-			case HashList of
-				undefined -> unset;
-				_		  -> [ ar_util:decode(Hash) || Hash <- HashList ]
+		block_index =
+			case BI of
+				undefined -> [];
+				_		  -> json_struct_to_block_index(BI)
 			end,
 		wallet_list =
 			case is_binary(WalletList) of
@@ -227,7 +269,23 @@ json_struct_to_block({BlockStruct}) ->
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
 		block_size = find_value(<<"block_size">>, BlockStruct),
 		cumulative_diff = CDiff,
-		hash_list_merkle = MR
+		block_index_merkle = MR,
+		tx_root =
+			case find_value(<<"tx_root">>, BlockStruct) of
+				undefined -> <<>>;
+				Root -> ar_util:decode(Root)
+			end,
+		poa =
+			case find_value(<<"poa">>, BlockStruct) of
+				undefined -> undefined;
+				POAStruct -> json_struct_to_poa(POAStruct)
+			end,
+		tx_tree =
+			case find_value(<<"tx_tree">>, BlockStruct) of
+				undefined -> [];
+				POAStruct -> json_struct_to_tree(POAStruct)
+			end,
+		votables = Votables
 	}.
 
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a
@@ -258,6 +316,7 @@ tx_safely_to_json_struct(TX) when is_binary(TX) ->
 tx_to_json_struct(
 	#tx {
 		id = ID,
+		format = Format,
 		last_tx = Last,
 		owner = Owner,
 		tags = Tags,
@@ -265,10 +324,14 @@ tx_to_json_struct(
 		quantity = Quantity,
 		data = Data,
 		reward = Reward,
-		signature = Sig
+		signature = Sig,
+		data_size = DataSize,
+		data_tree = DataTree,
+		data_root = DataRoot
 	}) ->
 	{
 		[
+			{format, Format},
 			{id, ar_util:encode(ID)},
 			{last_tx, ar_util:encode(Last)},
 			{owner, ar_util:encode(Owner)},
@@ -288,10 +351,63 @@ tx_to_json_struct(
 			{target, ar_util:encode(Target)},
 			{quantity, integer_to_binary(Quantity)},
 			{data, ar_util:encode(Data)},
+			{data_size, integer_to_binary(DataSize)},
+			{data_tree, tree_to_json_struct(DataTree)},
+			{data_root, ar_util:encode(DataRoot)},
 			{reward, integer_to_binary(Reward)},
 			{signature, ar_util:encode(Sig)}
 		]
 	}.
+
+%% @doc Transform proofs of access into/out of JSON format.
+poa_to_json_struct(undefined) -> <<"undefined">>;
+poa_to_json_struct(B) when is_record(B, block) -> <<"undefined">>;
+poa_to_json_struct(POA) ->
+	{[
+		{option, POA#poa.option},
+		{recall_block,
+			block_to_json_struct(
+				(POA#poa.recall_block)#block {
+					poa = undefined,
+					wallet_list =
+						ar_block:hash_wallet_list(
+							(POA#poa.recall_block)#block.wallet_list
+						),
+					block_index = []
+				}
+			)
+		},
+		{tx_path, ar_util:encode(POA#poa.tx_path)},
+		{tx,
+			case POA#poa.tx of
+				undefined -> <<"undefined">>;
+				TX -> tx_to_json_struct(TX)
+			end
+		},
+		{data_path, ar_util:encode(POA#poa.data_path)},
+		{chunk, ar_util:encode(POA#poa.chunk)}
+	]}.
+
+json_struct_to_poa(<<"undefined">>) -> undefined;
+json_struct_to_poa({JSONStruct}) ->
+	#poa {
+		option = find_value(<<"option">>, JSONStruct),
+		recall_block = json_struct_to_block(find_value(<<"recall_block">>, JSONStruct)),
+		tx_path = ar_util:decode(find_value(<<"tx_path">>, JSONStruct)),
+		tx =
+			case find_value(<<"tx">>, JSONStruct) of
+				<<"undefined">> -> undefined;
+				TXStruct -> json_struct_to_tx(TXStruct)
+			end,
+		data_path = ar_util:decode(find_value(<<"data_path">>, JSONStruct)),
+		chunk = ar_util:decode(find_value(<<"chunk">>, JSONStruct))
+	}.
+
+%% @doc Transform merkle trees to and from JSON objects.
+%% At the moment, just drop it.
+tree_to_json_struct(_) -> [].
+
+json_struct_to_tree(_) -> [].
 
 %% @doc Convert parsed JSON tx fields from a HTTP request into a
 %% transaction record.
@@ -303,6 +419,11 @@ json_struct_to_tx({TXStruct}) ->
 		Xs -> Xs
 	end,
 	#tx {
+		format =
+			case find_value(<<"format">>, TXStruct) of
+				undefined -> 1;
+				N -> N
+			end,
 		id = ar_util:decode(find_value(<<"id">>, TXStruct)),
 		last_tx = ar_util:decode(find_value(<<"last_tx">>, TXStruct)),
 		owner = ar_util:decode(find_value(<<"owner">>, TXStruct)),
@@ -316,7 +437,22 @@ json_struct_to_tx({TXStruct}) ->
 		quantity = binary_to_integer(find_value(<<"quantity">>, TXStruct)),
 		data = ar_util:decode(find_value(<<"data">>, TXStruct)),
 		reward = binary_to_integer(find_value(<<"reward">>, TXStruct)),
-		signature = ar_util:decode(find_value(<<"signature">>, TXStruct))
+		signature = ar_util:decode(find_value(<<"signature">>, TXStruct)),
+		data_size =
+			case find_value(<<"data_size">>, TXStruct) of
+				undefined -> undefined;
+				X -> binary_to_integer(X)
+			end,
+		data_tree =
+			case find_value(<<"data_tree">>, TXStruct) of
+				undefined -> [];
+				T -> json_struct_to_tree(T)
+			end,
+		data_root =
+			case find_value(<<"data_root">>, TXStruct) of
+				undefined -> undefined;
+				DR -> ar_util:decode(DR)
+			end
 	}.
 
 %% @doc Convert a wallet list into a JSON struct.
@@ -382,13 +518,33 @@ do_json_struct_to_query({Query}) ->
 do_json_struct_to_query(Query) ->
 	Query.
 
-%% @doc Generate a JSON structure representing a block hash list.
-hash_list_to_json_struct(BHL) ->
-	lists:map(fun ar_util:encode/1, BHL).
+%% @doc Generate a JSON structure representing a block hash list OR block index.
+block_index_to_json_struct(BI) ->
+	lists:map(
+		fun({BH, WeaveSize}) ->
+			{
+				[
+					{<<"hash">>, ar_util:encode(BH)},
+					{<<"weave_size">>, integer_to_binary(WeaveSize)}
+				]
+			};
+		   (BH) -> ar_util:encode(BH)
+		end,
+		BI
+	).
 
-%% @doc Convert a JSON structure into a block hash list.
-json_struct_to_hash_list(JSONStruct) ->
-	lists:map(fun ar_util:decode/1, JSONStruct).
+%% @doc Convert a JSON structure into a block index.
+json_struct_to_block_index(JSONStruct) ->
+	lists:map(
+		fun(Hash) when is_binary(Hash) ->
+				ar_util:decode(Hash);
+		   ({JSON}) ->
+				Hash = ar_util:decode(find_value(<<"hash">>, JSON)),
+				WeaveSize = binary_to_integer(find_value(<<"weave_size">>, JSON)),
+				{Hash, WeaveSize}
+		end,
+		JSONStruct
+	).
 
 %%% Tests: ar_serialize
 
@@ -397,7 +553,10 @@ block_roundtrip_test() ->
 	[B] = ar_weave:init(),
 	JSONStruct = jsonify(block_to_json_struct(B)),
 	BRes = json_struct_to_block(JSONStruct),
-	B = BRes#block { hash_list = B#block.hash_list }.
+	?assertEqual(
+		B,
+		BRes#block { block_index = B#block.block_index }
+	).
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 %% Input contains transaction, output only transaction IDs.
@@ -417,14 +576,25 @@ full_block_roundtrip_test() ->
 	B2 = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
 	JsonB = jsonify(full_block_to_json_struct(B2)),
 	BRes = json_struct_to_full_block(JsonB),
-	B2 = BRes#block { hash_list = B#block.hash_list }.
+	?assertEqual(
+		B2,
+		BRes#block { block_index = B#block.block_index }
+	).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
 tx_roundtrip_test() ->
 	TXBase = ar_tx:new(<<"test">>),
-	TX = TXBase#tx { tags = [{<<"Name1">>, <<"Value1">>}] },
+	TX =
+		TXBase#tx {
+			format = 2,
+			tags = [{<<"Name1">>, <<"Value1">>}],
+			data_root = << 0:256 >>
+		},
 	JsonTX = jsonify(tx_to_json_struct(TX)),
-	TX = json_struct_to_tx(JsonTX).
+	?assertEqual(
+		TX,
+		json_struct_to_tx(JsonTX)
+	).
 
 wallet_list_roundtrip_test() ->
 	[B] = ar_weave:init(),
@@ -432,11 +602,14 @@ wallet_list_roundtrip_test() ->
 	JsonWL = jsonify(wallet_list_to_json_struct(WL)),
 	WL = json_struct_to_wallet_list(JsonWL).
 
-hash_list_roundtrip_test() ->
+block_index_roundtrip_test() ->
 	[B] = ar_weave:init(),
 	HL = [B#block.indep_hash, B#block.indep_hash],
-	JsonHL = jsonify(hash_list_to_json_struct(HL)),
-	HL = json_struct_to_hash_list(dejsonify(JsonHL)).
+	JsonHL = jsonify(block_index_to_json_struct(HL)),
+	HL = json_struct_to_block_index(dejsonify(JsonHL)),
+	BI = [{B#block.indep_hash, 1}, {B#block.indep_hash, 2}],
+	JsonBI = jsonify(block_index_to_json_struct(BI)),
+	BI = json_struct_to_block_index(dejsonify(JsonBI)).
 
 query_roundtrip_test() ->
 	Query = {'equals', <<"TestName">>, <<"TestVal">>},

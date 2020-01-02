@@ -8,4 +8,4 @@ LOGS_DIR="$(cd $SCRIPT_DIR/../logs && pwd -P)"
 ls -t $LOGS_DIR \
     | grep -F -v slave \
     | head -1 \
-    | xargs -I % tail "$@" "$LOGS_DIR/%"
+    | xargs -I % tail -n 500 "$@" "$LOGS_DIR/%"

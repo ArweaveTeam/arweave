@@ -176,7 +176,7 @@ simple_retarget_test_() ->
 		true = ar_util:do_until(
 			fun() ->
 				[BH|_] = ar_node:get_blocks(Node),
-				B = ar_storage:read_block(BH, ar_node:get_hash_list(Node)),
+				B = ar_storage:read_block(BH, ar_node:get_block_index(Node)),
 				B#block.diff > ?DEFAULT_DIFF
 			end,
 			1000,
