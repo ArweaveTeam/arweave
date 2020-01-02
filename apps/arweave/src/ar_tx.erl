@@ -1,10 +1,13 @@
 -module(ar_tx).
 
 -export([new/0, new/1, new/2, new/3, new/4]).
--export([sign/2, sign/3, verify/5, verify_txs/5, signature_data_segment/1]).
+-export([sign/2, sign/3, verify/5, verify_txs/6, signature_data_segment/1]).
 -export([sign_pre_fork_2_0/2, sign_pre_fork_2_0/3]).
 -export([tx_to_binary/1, tags_to_list/1]).
 -export([calculate_min_tx_cost/4, calculate_min_tx_cost/6, check_last_tx/2]).
+-export([generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1]).
+-export([verify_after_mining/1, chunk_binary/2]).
+-export([chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -15,11 +18,11 @@
 new() ->
 	#tx { id = generate_id() }.
 new(Data) ->
-	#tx { id = generate_id(), data = Data }.
+	#tx { id = generate_id(), data = Data, data_size = byte_size(Data) }.
 new(Data, Reward) ->
-	#tx { id = generate_id(), data = Data, reward = Reward }.
+	#tx { id = generate_id(), data = Data, reward = Reward, data_size = byte_size(Data) }.
 new(Data, Reward, Last) ->
-	#tx { id = generate_id(), last_tx = Last, data = Data, reward = Reward }.
+	#tx { id = generate_id(), last_tx = Last, data = Data, data_size = byte_size(Data), reward = Reward }.
 new(Dest, Reward, Qty, Last) when bit_size(Dest) == ?HASH_SZ ->
 	#tx {
 		id = generate_id(),
@@ -27,6 +30,7 @@ new(Dest, Reward, Qty, Last) when bit_size(Dest) == ?HASH_SZ ->
 		quantity = Qty,
 		target = Dest,
 		data = <<>>,
+		data_size = 0,
 		reward = Reward
 	};
 new(Dest, Reward, Qty, Last) ->
@@ -40,6 +44,7 @@ generate_id() -> crypto:strong_rand_bytes(32).
 
 %% @doc Generate a hashable binary from a #tx object.
 %% NB: This function cannot be used for signature data as the id and signature fields are not set.
+tx_to_binary(undefined) -> <<>>;
 tx_to_binary(T) ->
 	<<
 		(T#tx.id)/binary,
@@ -56,12 +61,15 @@ tx_to_binary(T) ->
 %% @doc Generate the data segment to be signed for a given TX.
 signature_data_segment(TX) ->
 	ar_deep_hash:hash([
+		<<(integer_to_binary(TX#tx.format))/binary>>,
 		<<(TX#tx.owner)/binary>>,
 		<<(TX#tx.target)/binary>>,
 		<<(list_to_binary(integer_to_list(TX#tx.quantity)))/binary>>,
 		<<(list_to_binary(integer_to_list(TX#tx.reward)))/binary>>,
 		<<(TX#tx.last_tx)/binary>>,
-		tags_to_list(TX#tx.tags)
+		tags_to_list(TX#tx.tags),
+		<<(integer_to_binary(TX#tx.data_size))/binary>>,
+		<<(TX#tx.data_root)/binary>>
 	]).
 
 signature_data_segment_pre_fork_2_0(T) ->
@@ -78,10 +86,10 @@ signature_data_segment_pre_fork_2_0(T) ->
 %% @doc Cryptographicvally sign ('claim ownership') of a transaction.
 %% After it is signed, it can be placed into a block and verified at a later date.
 sign(TX, {PrivKey, PubKey}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey })).
+	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey, data_size = byte_size(TX#tx.data) })).
 
 sign(TX, PrivKey, PubKey) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey })).
+	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey, data_size = byte_size(TX#tx.data) })).
 
 sign_pre_fork_2_0(TX, {PrivKey, PubKey}) ->
 	sign(TX, PrivKey, PubKey, signature_data_segment_pre_fork_2_0(TX#tx{ owner = PubKey })).
@@ -90,7 +98,7 @@ sign_pre_fork_2_0(TX, PrivKey, PubKey) ->
 	sign(TX, PrivKey, PubKey, signature_data_segment_pre_fork_2_0(TX#tx{ owner = PubKey })).
 
 sign(TX, PrivKey, PubKey, SignatureDataSegment) ->
-	NewTX = TX#tx{ owner = PubKey },
+	NewTX = TX#tx{ owner = PubKey, data_size = byte_size(TX#tx.data) },
 	Sig = ar_wallet:sign(PrivKey, SignatureDataSegment),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx {
@@ -131,7 +139,7 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 		{"last_tx_not_valid",
 		 LastTXCheck},
 		{"tx_id_not_valid",
-		 tx_verify_hash(TX)},
+		 verify_hash(TX)},
 		{"overspend",
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
 		{"tx_signature_not_valid",
@@ -147,6 +155,12 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 		[] ->
 			true;
 		ErrorCodes ->
+			ar:d(
+				[
+					{tx_validation_failed, ar_util:encode(TX#tx.id)},
+					{reasons, ErrorCodes}
+				]
+			),
 			ar_tx_db:put_error_codes(TX#tx.id, ErrorCodes),
 			false
 	end.
@@ -187,23 +201,24 @@ validate_overspend(TX, Wallets) ->
 
 %% @doc Verify a list of transactions.
 %% Returns false if any TX in the set fails verification.
-verify_txs(TXs, Diff, Height, WalletList, Timestamp) ->
+verify_txs(B, TXs, Diff, Height, WalletList, Timestamp) ->
 	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
-			case verify_txs_size(TXs) of
+			case verify_txs_size(B, TXs) of
 				true ->
-					verify_txs(valid_size_txs, TXs, Diff, Height, WalletMap, Timestamp);
+					verify_txs(B, valid_size_txs, TXs, Diff, Height, WalletMap, Timestamp);
 				false ->
 					false
 			end;
 		_ ->
-			verify_txs(valid_size_txs, TXs, Diff, Height, WalletMap, Timestamp)
+			verify_txs(B, valid_size_txs, TXs, Diff, Height, WalletMap, Timestamp)
 	end.
 
-verify_txs_size(TXs) ->
+verify_txs_size(B, TXs) ->
+	Limit = erlang:trunc(ar_votable:get("txs_per_block", B)),
 	case length(TXs) of
-		L when L > ?BLOCK_TX_COUNT_LIMIT ->
+		NumTXs when NumTXs > Limit ->
 			false;
 		_ ->
 			TotalTXSize = lists:foldl(
@@ -216,12 +231,13 @@ verify_txs_size(TXs) ->
 			TotalTXSize =< ?BLOCK_TX_DATA_SIZE_LIMIT
 	end.
 
-verify_txs(valid_size_txs, [], _, _, _, _) ->
+verify_txs(_B, valid_size_txs, [], _, _, _, _) ->
 	true;
-verify_txs(valid_size_txs, [TX | TXs], Diff, Height, WalletMap, Timestamp) ->
+verify_txs(B, valid_size_txs, [TX | TXs], Diff, Height, WalletMap, Timestamp) ->
 	case verify(TX, Diff, Height, WalletMap, Timestamp) of
 		true ->
 			verify_txs(
+				B,
 				valid_size_txs,
 				TXs,
 				Diff,
@@ -299,8 +315,15 @@ tx_field_size_limit(TX, Height) ->
 	end.
 
 %% @doc Verify that the transactions ID is a hash of its signature.
-tx_verify_hash(#tx {signature = Sig, id = ID}) ->
+verify_hash(#tx {signature = Sig, id = ID}) ->
 	ID == crypto:hash(?HASH_ALG, <<Sig/binary>>).
+
+%% @doc Validate the signature and the TXID, after it has been mined into
+%% a block. This check ignores whether the transaction comes from an account
+%% with a high enough balance, etc. Should only be used to validate TX 
+%% headers during proof of access.
+verify_after_mining(TX) ->
+	verify_hash(TX).
 
 %% @doc Check that the structure of the txs tag field is in the expected
 %% key value format.
@@ -373,6 +396,48 @@ check_last_tx(WalletMap, TX) when is_map(WalletMap) ->
 	end.
 -endif.
 
+%% @doc Take a transaction with a data segment and generate its chunk index, placing
+%% this in the appropriate point in the transaction record.
+generate_chunk_tree(TX) ->
+	generate_chunk_tree(TX,
+		sized_chunks_to_sized_chunk_ids(
+			chunks_to_size_tagged_chunks(
+				chunk_binary(?DATA_CHUNK_SIZE, TX#tx.data)
+			)
+		)
+	).
+generate_chunk_tree(TX, ChunkIDSizes) ->
+	{Root, Tree} = ar_merkle:generate_tree(ChunkIDSizes),
+	TX#tx { data_tree = Tree, data_root = Root }.
+
+%% @doc Generate a chunk ID according to the specification found in the TX record.
+generate_chunk_id(Chunk) -> 
+	crypto:hash(sha256, Chunk).
+
+chunk_binary(ChunkSize, Bin) when byte_size(Bin) < ChunkSize ->
+	[ Bin ];
+chunk_binary(ChunkSize, Bin) ->
+	<< ChunkBin:ChunkSize/binary, Rest/binary >> = Bin,
+	[ ChunkBin | chunk_binary(ChunkSize, Rest) ].
+
+chunks_to_size_tagged_chunks(Chunks) ->
+	lists:reverse(
+		element(
+			2,
+			lists:foldr(
+				fun(Chunk, {Pos, List}) ->
+					End = Pos + byte_size(Chunk),
+					{End, [{Chunk, End}|List]}
+				end,
+				{0, []},
+				Chunks
+			)
+		)
+	).
+
+sized_chunks_to_sized_chunk_ids(SizedChunks) ->
+	[ {ar_tx:generate_chunk_id(Chunk), Size} || {Chunk, Size} <- SizedChunks ].
+
 %%% Tests: ar_tx
 
 %% @doc Ensure that a public and private key pair can be used to sign and verify data.
@@ -390,6 +455,32 @@ sign_tx_test() ->
 	?assert(verify(SignedTX, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),
 	?assert(not verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)),
 	?assert(verify(SignedTX, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)).
+
+sign_and_verify_chuncked_test() ->
+	TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
+	{Priv, Pub} = ar_wallet:new(),
+	UnsignedTX =
+		generate_chunk_tree(
+			#tx {
+				format = 2,
+				data = TXData,
+				data_size = byte_size(TXData),
+				reward = ?AR(100)
+			}
+		),
+	SignedTX = sign(UnsignedTX#tx { data = <<>> }, Priv, Pub),
+	Diff = 1,
+	Height = 0,
+	Timestamp = os:system_time(seconds),
+	?assert(
+		verify(
+			SignedTX,
+			Diff,
+			Height,
+			[{ar_wallet:to_address(Pub), ?AR(100), <<>>}],
+			Timestamp
+		)
+	).
 
 %% @doc Ensure that a forged transaction does not pass verification.
 forge_test() ->

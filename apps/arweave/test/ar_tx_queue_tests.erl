@@ -129,13 +129,13 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 	),
 	assert_wait_until_receives_txs(MasterNode, TXs),
 	slave_mine(SlaveNode),
-	BHL = wait_until_height(MasterNode, 1),
-	B = ar_storage:read_block(hd(BHL), BHL),
+	BI = wait_until_height(MasterNode, 1),
+	B = ar_storage:read_block(hd(BI), BI),
 	?assertEqual(
 		lists:map(fun(TX) -> TX#tx.id end, TXs),
 		B#block.txs
 	),
-	SlaveB = slave_call(ar_storage, read_block, [hd(BHL), BHL]),
+	SlaveB = slave_call(ar_storage, read_block, [hd(BI), BI]),
 	?assertEqual(
 		lists:map(fun(TX) -> TX#tx.id end, TXs),
 		SlaveB#block.txs

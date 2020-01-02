@@ -50,15 +50,15 @@ debug_server() ->
 		{state, State} -> State
 	end.
 
-init(BHL, Peers) ->
-	CurrentHeight = length(BHL) - 1,
+init(BI, Peers) ->
+	CurrentHeight = length(BI) - 1,
 	SwapHeights = lists:usort([
 		swap_height(CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT),
 		swap_height(max(0, CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT))
 	]),
 	SwapHeightsFiltered = lists:filter(fun should_init/1, SwapHeights),
 	Init = fun(SwapHeight) ->
-		{ok, Key} = randomx_key(SwapHeight, BHL, Peers),
+		{ok, Key} = randomx_key(SwapHeight, BI, Peers),
 		init(whereis(?MODULE), SwapHeight, Key, erlang:system_info(schedulers_online))
 	end,
 	lists:foreach(Init, SwapHeightsFiltered).
@@ -112,23 +112,23 @@ server(State) ->
 
 poll_new_blocks(State) ->
 	NodePid = whereis(http_entrypoint_node),
-	case {ar_node:get_current_block_hash(NodePid), ar_node:get_hash_list(NodePid)} of
+	case {ar_node:get_current_block_hash(NodePid), ar_node:get_block_index(NodePid)} of
 		{not_joined, _} ->
 			%% Add an extra poll soon
 			timer:send_after(1000, poll_new_blocks),
 			State;
 		{_, []} ->
-			%% ar_node:get_hash_list/1 timed out
+			%% ar_node:get_block_index/1 timed out
 			timer:send_after(10 * 1000, poll_new_blocks),
 			State;
-		{_, BHL} ->
-			NewState = handle_new_block_hash_list(State, BHL),
+		{_, BI} ->
+			NewState = handle_new_block_block_index(State, BI),
 			timer:send_after(?RANDOMX_STATE_POLL_INTERVAL * 1000, poll_new_blocks),
 			NewState
 	end.
 
-handle_new_block_hash_list(State, BHL) ->
-	CurrentHeight = length(BHL) - 1,
+handle_new_block_block_index(State, BI) ->
+	CurrentHeight = length(BI) - 1,
 	State1 = remove_old_randomx_states(State, CurrentHeight),
 	case ensure_initialized(State1, swap_height(CurrentHeight)) of
 		{started, State2} ->
@@ -266,29 +266,29 @@ randomx_key(SwapHeight) ->
 	end.
 
 get_block(Height) ->
-	case ar_node:get_hash_list(whereis(http_entrypoint_node)) of
+	case ar_node:get_block_index(whereis(http_entrypoint_node)) of
 		[] -> unavailable;
-		BHL ->
-			BH = lists:nth(Height + 1, lists:reverse(BHL)),
-			get_block(BH, BHL)
+		BI ->
+			{BH, _} = lists:nth(Height + 1, lists:reverse(BI)),
+			get_block(BH, BI)
 	end.
 
-get_block(BH, BHL) ->
-	case ar_storage:read_block(BH, BHL) of
+get_block(BH, BI) ->
+	case ar_storage:read_block(BH, BI) of
 		unavailable ->
-			get_block_remote(BH, BHL);
+			get_block_remote(BH, BI);
 		B ->
 			{ok, B}
 	end.
 
-get_block_remote(BH, BHL) ->
+get_block_remote(BH, BI) ->
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-	get_block_remote(BH, BHL, Peers).
+	get_block_remote(BH, BI, Peers).
 
 get_block_remote(_, _, []) ->
 	unavailable;
-get_block_remote(BH, BHL, Peers) ->
-	case ar_http_iface_client:get_full_block(Peers, BH, BHL) of
+get_block_remote(BH, BI, Peers) ->
+	case ar_http_iface_client:get_full_block(Peers, BH, BI) of
 		unavailable ->
 			unavailable;
 		{Peer, B} ->
@@ -304,26 +304,26 @@ get_block_remote(BH, BHL, Peers) ->
 						{requested_block_hash, ar_util:encode(BH)},
 						{received_block_hash, ar_util:encode(InvalidBH)}
 					]),
-					get_block_remote(BH, BHL, Peers)
+					get_block_remote(BH, BI, Peers)
 			end
 	end.
 
 randomx_key(SwapHeight, _, _) when SwapHeight < ?RANDOMX_KEY_SWAP_FREQ ->
 	randomx_key(SwapHeight);
-randomx_key(SwapHeight, BHL, Peers) ->
+randomx_key(SwapHeight, BI, Peers) ->
 	KeyBlockHeight = SwapHeight - ?RANDOMX_KEY_SWAP_FREQ,
-	case get_block(KeyBlockHeight, BHL, Peers) of
+	case get_block(KeyBlockHeight, BI, Peers) of
 		{ok, KeyB} ->
 			{ok, KeyB#block.hash};
 		unavailable ->
 			unavailable
 	end.
 
-get_block(Height, BHL, Peers) ->
-	BH = lists:nth(Height + 1, lists:reverse(BHL)),
-	case ar_storage:read_block(BH, BHL) of
+get_block(Height, BI, Peers) ->
+	{BH, _} = lists:nth(Height + 1, lists:reverse(BI)),
+	case ar_storage:read_block(BH, BI) of
 		unavailable ->
-			get_block_remote(BH, BHL, Peers);
+			get_block_remote(BH, BI, Peers);
 		B ->
 			{ok, B}
 	end.

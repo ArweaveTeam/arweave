@@ -13,7 +13,7 @@
 	parent, % miners parent process (initiator)
 	current_block, % current block held by node
 	block_txs_pairs, % list of {BH, TXIDs} pairs for latest ?MAX_TX_ANCHOR_DEPTH blocks
-	recall_block, % recall block related to current
+	poa, % recall block related to current
 	txs, % the set of txs to be mined
 	timestamp, % the block timestamp used for the mining
 	timestamp_refresh_timer, % Reference for timer for updating the timestamp
@@ -32,15 +32,16 @@
 }).
 
 %% @doc Spawns a new mining process and returns its PID.
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Parent, BlockTXPairs) ->
-	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, auto_update, Parent, BlockTXPairs).
+start(CurrentB, POA, RawTXs, RewardAddr, Tags, Parent, BlockTXPairs) ->
+	do_start(CurrentB, POA, RawTXs, RewardAddr, Tags, auto_update, Parent, BlockTXPairs).
 
-start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent, BlockTXPairs) when is_integer(StaticDiff) ->
-	do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, StaticDiff, Parent, BlockTXPairs).
+start(CurrentB, POA, RawTXs, RewardAddr, Tags, StaticDiff, Parent, BlockTXPairs) when is_integer(StaticDiff) ->
+	do_start(CurrentB, POA, RawTXs, RewardAddr, Tags, StaticDiff, Parent, BlockTXPairs).
 
-do_start(CurrentB, RecallB, RawTXs, unclaimed, Tags, Diff, Parent, BlockTXPairs) ->
-	do_start(CurrentB, RecallB, RawTXs, <<>>, Tags, Diff, Parent, BlockTXPairs);
-do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent, BlockTXPairs) ->
+do_start(CurrentB, POA, RawTXs, unclaimed, Tags, Diff, Parent, BlockTXPairs) ->
+	do_start(CurrentB, POA, RawTXs, <<>>, Tags, Diff, Parent, BlockTXPairs);
+do_start(CurrentB, POA, RawTXs, RewardAddr, Tags, Diff, Parent, BlockTXPairs) ->
+	%ar:d([{mining_txs, RawTXs}]),
 	{NewDiff, AutoUpdateDiff} = case Diff of
 		auto_update -> {not_set, true};
 		_ -> {Diff, false}
@@ -49,7 +50,7 @@ do_start(CurrentB, RecallB, RawTXs, RewardAddr, Tags, Diff, Parent, BlockTXPairs
 		#state {
 			parent = Parent,
 			current_block = CurrentB,
-			recall_block = RecallB,
+			poa = POA,
 			data_segment_duration = 0,
 			reward_addr = RewardAddr,
 			tags = Tags,
@@ -95,6 +96,9 @@ validate(BDSHash, Diff, Height) ->
 max_difficulty() ->
 	erlang:trunc(math:pow(2, 256)).
 
+-ifdef(DEBUG).
+min_difficulty(_Height) -> 1.
+-else.
 min_difficulty(Height) ->
 	Diff = case Height >= ar_fork:height_1_7() of
 		true ->
@@ -108,6 +112,7 @@ min_difficulty(Height) ->
 		false ->
 			Diff
 	end.
+-endif.
 
 genesis_difficulty() ->
 	Diff = case ar_fork:height_1_7() of
@@ -194,30 +199,31 @@ update_data_segment(
 	update_data_segment(S, TXs, BlockTimestamp, Diff).
 
 update_data_segment(S, TXs, BlockTimestamp, Diff) ->
-	{DurationMicros, {NewBDSPieces, BDS}} = case S#state.bds_pieces of
-		not_generated ->
-			timer:tc(fun() ->
-				ar_block:generate_block_data_segment_and_pieces(
-					S#state.current_block,
-					S#state.recall_block,
-					TXs,
-					S#state.reward_addr,
-					BlockTimestamp,
-					S#state.tags
-				)
-			end);
-		BDSPieces ->
-			timer:tc(fun() ->
-				ar_block:refresh_block_data_segment_timestamp(
-					BDSPieces,
-					S#state.current_block,
-					S#state.recall_block,
-					TXs,
-					S#state.reward_addr,
-					BlockTimestamp
-				)
-			end)
-	end,
+	{DurationMicros, {NewBDSPieces, BDS}} =
+		case S#state.bds_pieces of
+			not_generated ->
+				timer:tc(fun() ->
+					ar_block:generate_block_data_segment_and_pieces(
+						S#state.current_block,
+						S#state.poa,
+						TXs,
+						S#state.reward_addr,
+						BlockTimestamp,
+						S#state.tags
+					)
+				end);
+			BDSPieces ->
+				timer:tc(fun() ->
+					ar_block:refresh_block_data_segment_timestamp(
+						BDSPieces,
+						S#state.current_block,
+						S#state.poa,
+						TXs,
+						S#state.reward_addr,
+						BlockTimestamp
+					)
+				end)
+		end,
 	NewS = S#state {
 		timestamp = BlockTimestamp,
 		diff = Diff,
@@ -268,6 +274,7 @@ server(
 		parent = Parent,
 		miners = Miners,
 		current_block = #block { indep_hash = CurrentBH },
+		poa = POA,
 		total_hashes_tried = TotalHashesTried,
 		started_at = StartedAt
 	}
@@ -289,7 +296,13 @@ server(
 		% Handle a potential solution for the mining puzzle.
 		% Returns the solution back to the node to verify and ends the process.
 		{solution, Hash, Nonce, MinedTXs, MinedDiff, MinedTimestamp} ->
-			Parent ! {work_complete, CurrentBH, MinedTXs, Hash, MinedDiff, Nonce, MinedTimestamp, TotalHashesTried},
+			ar:info(
+				[
+					{miner_found_nonce, self()}
+					%{poa, POA}
+				]
+			),
+			Parent ! {work_complete, CurrentBH, MinedTXs, Hash, POA, MinedDiff, Nonce, MinedTimestamp, TotalHashesTried},
 			log_performance(TotalHashesTried, StartedAt),
 			stop_miners(Miners)
 	end.
@@ -416,13 +429,11 @@ randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test() ->
-	B0 = ar_weave:init(),
-	ar_node:start([], B0),
-	B1 = ar_weave:add(B0, []),
-	B = hd(B1),
-	RecallB = hd(B0),
-	start(B, RecallB, [], unclaimed, [], self(), []),
-	assert_mine_output(B, RecallB, []).
+	[B0] = ar_weave:init([]),
+	ar_node:start([], [B0]),
+	[B1|_] = ar_weave:add([B0], []),
+	start(B1, B1#block.poa, [], unclaimed, [], self(), []),
+	assert_mine_output(B1, B1#block.poa, []).
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
 timestamp_refresh_test_() ->
@@ -480,14 +491,14 @@ validator_test() ->
 	?assertMatch({valid, _}, validate(BDS, Nonce, 37, HeightPreRandomX)),
 	?assertMatch({invalid, _}, validate(BDS, Nonce, 38, HeightPreRandomX)).
 
-assert_mine_output(B, RecallB, TXs) ->
+assert_mine_output(B, POA, TXs) ->
 	receive
-		{work_complete, BH, MinedTXs, Hash, MinedDiff, Nonce, Timestamp, _} ->
+		{work_complete, BH, MinedTXs, Hash, POA, MinedDiff, Nonce, Timestamp, _} ->
 			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
 			BDS = ar_block:generate_block_data_segment(
 				B,
-				RecallB,
+				POA,
 				TXs,
 				<<>>,
 				Timestamp,

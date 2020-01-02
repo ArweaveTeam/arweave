@@ -11,7 +11,7 @@
 -export([get_blocks/1, get_block/3]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
--export([get_hash_list/1, get_height/1]).
+-export([get_block_index/1, get_height/1]).
 -export([get_trusted_peers/1]).
 -export([get_balance/2]).
 -export([get_last_tx/2]).
@@ -83,10 +83,10 @@ start(Peers, Bs, MiningDelay) ->
 		MiningDelay,
 		unclaimed
 	).
-start(Peers, HashList, MiningDelay, RewardAddr) ->
+start(Peers, BI, MiningDelay, RewardAddr) ->
 	start(
 		Peers,
-		HashList,
+		BI,
 		MiningDelay,
 		RewardAddr,
 		true
@@ -99,23 +99,23 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin)
 	),
 	start(
 		Peers,
-		[B#block.indep_hash | B#block.hash_list],
+		[{B#block.indep_hash, B#block.weave_size} | B#block.block_index],
 		MiningDelay,
 		RewardAddr,AutoJoin
 	);
-start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin) ->
+start(Peers, BI, MiningDelay, RewardAddr, AutoJoin) ->
 	start(
 		Peers,
-		HashList,
+		BI,
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
 		ar_mine:genesis_difficulty()
 	).
-start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff) ->
+start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff) ->
 	start(
 		Peers,
-		HashList,
+		BI,
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
@@ -129,7 +129,7 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 	),
 	start(
 		Peers,
-		[B#block.indep_hash | B#block.hash_list],
+		[{B#block.indep_hash, B#block.weave_size} | B#block.block_index],
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
@@ -137,13 +137,13 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 		LastRetarget
 	);
 start(Peers, B, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when ?IS_BLOCK(B) ->
-	start(Peers, B#block.hash_list, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
-start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
+	start(Peers, B#block.block_index, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
+start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	% Spawns the node server process.
 	PID = spawn(
 		fun() ->
 			% Join the node to the network.
-			case {HashList, AutoJoin} of
+			case {BI, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
 				_ ->
@@ -156,22 +156,22 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 						Peers
 					)
 				),
-			Wallets = ar_util:wallets_from_hashes(HashList),
-			Height = ar_util:height_from_hashes(HashList),
+			Wallets = ar_util:wallets_from_hashes(BI),
+			Height = ar_util:height_from_hashes(BI),
 			RewardPool =
-				case HashList of
+				case BI of
 					not_joined -> 0;
-					[H | _] -> (ar_storage:read_block(H, HashList))#block.reward_pool
+					[{H, _} | _] -> (ar_storage:read_block(H, BI))#block.reward_pool
 				end,
 			WeaveSize =
-					case HashList of
+					case BI of
 						not_joined -> 0;
-						[H2 | _] -> (ar_storage:read_block(H2, HashList))#block.weave_size
+						[{H2, _} | _] -> (ar_storage:read_block(H2, BI))#block.weave_size
 					end,
 			Current =
-				case HashList of
+				case BI of
 					not_joined -> not_joined;
-					[C|_] -> C
+					[{C, _}|_] -> C
 				end,
 			% Start processes, init state, and start server.
 			NPid = self(),
@@ -180,7 +180,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			ok = ar_node_state:update(SPid, [
 				{node, NPid},
 				{gossip, Gossip},
-				{hash_list, HashList},
+				{block_index, BI},
 				{current, Current},
 				{wallet_list, Wallets},
 				{mining_delay, MiningDelay},
@@ -191,7 +191,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{diff, Diff},
 				{last_retarget, LastRetarget},
 				{weave_size, WeaveSize},
-				{block_txs_pairs, create_block_txs_pairs(HashList)}
+				{block_txs_pairs, create_block_txs_pairs(BI)}
 			]),
 
 			server(SPid, WPid, queue:new())
@@ -202,13 +202,13 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 
 create_block_txs_pairs(not_joined) ->
 	[];
-create_block_txs_pairs(BHL) ->
-	create_block_txs_pairs(recent_blocks, lists:sublist(BHL, ?MAX_TX_ANCHOR_DEPTH)).
+create_block_txs_pairs(BI) ->
+	create_block_txs_pairs(recent_blocks, lists:sublist(BI, ?MAX_TX_ANCHOR_DEPTH)).
 
 create_block_txs_pairs(recent_blocks, []) ->
 	[];
-create_block_txs_pairs(recent_blocks, BHL = [BH | Rest]) ->
-	B = ar_storage:read_block(BH, BHL),
+create_block_txs_pairs(recent_blocks, BI = [{BH, _} | Rest]) ->
+	B = ar_storage:read_block(BH, BI),
 	[{BH, B#block.txs} | create_block_txs_pairs(Rest)].
 
 %% @doc Stop a node server loop and its subprocesses.
@@ -248,9 +248,9 @@ get_current_block(Peer) ->
 	% handle external peer request
 	ar_http_iface_client:get_current_block(Peer).
 
-%% @doc Return the entire hashlist from a node.
-% TODO: Change references to hashlist, not blocklist.
-% Code duplication against get_hashlist function.
+%% @doc Return the entire blockindex from a node.
+% TODO: Change references to blockindex, not blocklist.
+% Code duplication against get_blockindex function.
 get_blocks(Node) ->
 	Ref = make_ref(),
 	Node ! {get_blocks, self(), Ref},
@@ -262,17 +262,17 @@ get_blocks(Node) ->
 
 %% @doc Get a specific block via blocks indep_hash.
 %% If found the result will be a block with tx references, not a full block.
-get_block(Peers, ID, BHL) when is_list(Peers) ->
+get_block(Peers, ID, BI) when is_list(Peers) ->
 	% ask list of external peers for block
 	% ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
-	case ar_storage:read_block(ID, BHL) of
+	case ar_storage:read_block(ID, BI) of
 		unavailable ->
 			lists:foldl(
 				fun(Peer, Acc) ->
 					case is_atom(Acc) of
 						false -> Acc;
 						true ->
-							B = get_block(Peer, ID, BHL),
+							B = get_block(Peer, ID, BI),
 							case is_atom(B) of
 								true -> Acc;
 								false -> B
@@ -284,12 +284,12 @@ get_block(Peers, ID, BHL) when is_list(Peers) ->
 			);
 		Block -> Block
 	end;
-get_block(Proc, ID, BHL) when is_pid(Proc) ->
+get_block(Proc, ID, BI) when is_pid(Proc) ->
 	% attempt to get block from nodes local storage
-	ar_storage:read_block(ID, BHL);
-get_block(Host, ID, BHL) ->
+	ar_storage:read_block(ID, BI);
+get_block(Host, ID, BI) ->
 	% handle external peer request
-	ar_http_iface_client:get_block(Host, ID, BHL).
+	ar_http_iface_client:get_block(Host, ID, BI).
 
 %% @doc Gets the list of pending transactions. This includes:
 %% 1. The transactions currently staying in the priority queue.
@@ -365,14 +365,14 @@ get_wallet_list(Node) ->
 
 %% @doc Get the current hash list held by the node.
 %% This hash list is up to date to the latest block held.
-get_hash_list(IP) when not is_pid(IP) ->
-	ar_http_iface_client:get_hash_list(IP);
-get_hash_list(Node) ->
+get_block_index(IP) when not is_pid(IP) ->
+	ar_http_iface_client:get_block_index(IP);
+get_block_index(Node) ->
 	Ref = make_ref(),
-	Node ! {get_hashlist, self(), Ref},
+	Node ! {get_blockindex, self(), Ref},
 	receive
-		{Ref, hashlist, not_joined} -> [];
-		{Ref, hashlist, HashList} -> HashList
+		{Ref, blockindex, not_joined} -> [];
+		{Ref, blockindex, BI} -> BI
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
@@ -396,13 +396,13 @@ get_height(Node) ->
 	end.
 
 %% @doc Check whether self node has joined the weave.
-%% Uses hashlist value not_joined as witness.
+%% Uses blockindex value not_joined as witness.
 is_joined(Node) ->
 	Ref = make_ref(),
-	Node ! {get_hashlist, self(), Ref},
+	Node ! {get_blockindex, self(), Ref},
 	receive
-		{Ref, hashlist, not_joined} -> false;
-		{Ref, hashlist, _} -> true
+		{Ref, blockindex, not_joined} -> false;
+		{Ref, blockindex, _} -> true
 	end.
 
 %% @doc Get the current balance of a given wallet address.
@@ -674,24 +674,25 @@ handle(_SPid, {set_reward_addr, Addr}) ->
 	{task, {set_reward_addr, Addr}};
 handle(_SPid, {set_xfer_speed, Speed}) ->
 	{task, {set_xfer_speed, Speed}};
-handle(SPid, {work_complete, BH, MinedTXs, _Hash, Diff, Nonce, Timestamp, _}) ->
+handle(SPid, {work_complete, BH, MinedTXs, _Hash, POA, Diff, Nonce, Timestamp, _}) ->
 	% The miner thinks it has found a new block.
-	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	case HashList of
+	{ok, BI} = ar_node_state:lookup(SPid, block_index),
+	case BI of
 		not_joined ->
 			ok;
 		_ ->
 			{task, {
 				work_complete,
 				BH,
+				POA,
 				MinedTXs,
 				Diff,
 				Nonce,
 				Timestamp
 			}}
 	end;
-handle(_SPid, {fork_recovered, BHL, BlockTXPairs}) ->
-	{task, {fork_recovered, BHL, BlockTXPairs}};
+handle(_SPid, {fork_recovered, BI, BlockTXPairs}) ->
+	{task, {fork_recovered, BI, BlockTXPairs}};
 handle(_SPid, mine) ->
 	{task, mine};
 handle(_SPid, {mine_at_diff, Diff}) ->
@@ -700,16 +701,16 @@ handle(_SPid, automine) ->
 	{task, automine};
 %% ----- Getters and non-state-changing actions. -----
 handle(SPid, {get_current_block, From, Ref}) ->
-	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	From ! {Ref, block, ar_util:get_head_block(HashList)},
+	{ok, BI} = ar_node_state:lookup(SPid, block_index),
+	From ! {Ref, block, ar_util:get_head_block(BI)},
 	ok;
 handle(SPid, {get_blocks, From, Ref}) ->
-	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	From ! {Ref, blocks, self(), HashList},
+	{ok, BI} = ar_node_state:lookup(SPid, block_index),
+	From ! {Ref, blocks, self(), BI},
 	ok;
 handle(SPid, {get_block, From, Ref}) ->
-	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	From ! {Ref, block, self(), ar_node_utils:find_block(HashList)},
+	{ok, BI} = ar_node_state:lookup(SPid, block_index),
+	From ! {Ref, block, self(), ar_node_utils:find_block(BI)},
 	ok;
 handle(SPid, {get_peers, From, Ref}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
@@ -723,9 +724,9 @@ handle(SPid, {get_walletlist, From, Ref}) ->
 	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
 	From ! {Ref, walletlist, WalletList},
 	ok;
-handle(SPid, {get_hashlist, From, Ref}) ->
-	{ok, HashList} = ar_node_state:lookup(SPid, hash_list),
-	From ! {Ref, hashlist, HashList},
+handle(SPid, {get_blockindex, From, Ref}) ->
+	{ok, BI} = ar_node_state:lookup(SPid, block_index),
+	From ! {Ref, blockindex, BI},
 	ok;
 handle(SPid, {get_current_block_hash, From, Ref}) ->
 	{ok, Res} = ar_node_state:lookup(SPid, current),
@@ -810,17 +811,17 @@ handle(_SPid, UnhandledMsg) ->
 
 %% @doc Get a specific encrypted block via the blocks indep_hash.
 %% If the block is found locally an unencrypted block will be returned.
-% get_encrypted_block(Peers, ID, BHL) when is_list(Peers) ->
+% get_encrypted_block(Peers, ID, BI) when is_list(Peers) ->
 % 	% check locally first, if not found ask list of external peers for
 % 	% encrypted block
-% 	case ar_storage:read_block(ID, BHL) of
+% 	case ar_storage:read_block(ID, BI) of
 % 		unavailable ->
 % 			lists:foldl(
 % 				fun(Peer, Acc) ->
 % 					case is_atom(Acc) of
 % 						false -> Acc;
 % 						true ->
-% 							B = get_encrypted_block(Peer, ID, BHL),
+% 							B = get_encrypted_block(Peer, ID, BI),
 % 							case is_atom(B) of
 % 								true -> Acc;
 % 								false -> B
@@ -832,28 +833,28 @@ handle(_SPid, UnhandledMsg) ->
 % 			);
 % 		Block -> Block
 % 	end;
-% get_encrypted_block(Proc, ID, BHL) when is_pid(Proc) ->
+% get_encrypted_block(Proc, ID, BI) when is_pid(Proc) ->
 % 	% attempt to get block from local storage
 % 	% NB: if found block returned will not be encrypted
-% 	ar_storage:read_block(ID, BHL);
-% get_encrypted_block(Host, ID, BHL) ->
+% 	ar_storage:read_block(ID, BI);
+% get_encrypted_block(Host, ID, BI) ->
 % 	% handle external peer request
-% 	ar_http_iface_client:get_encrypted_block(Host, ID, BHL).
+% 	ar_http_iface_client:get_encrypted_block(Host, ID, BI).
 
 %% @doc Get a specific encrypted full block (a block containing full txs) via
 %% the blocks indep_hash.
 %% If the block is found locally an unencrypted block will be returned.
-% get_encrypted_full_block(Peers, ID, BHL) when is_list(Peers) ->
+% get_encrypted_full_block(Peers, ID, BI) when is_list(Peers) ->
 % 	% check locally first, if not found ask list of external peers for
 % 	% encrypted block
-% 	case ar_storage:read_block(ID, BHL) of
+% 	case ar_storage:read_block(ID, BI) of
 % 		unavailable ->
 % 			lists:foldl(
 % 				fun(Peer, Acc) ->
 % 					case is_atom(Acc) of
 % 						false -> Acc;
 % 						true ->
-% 							Full = get_encrypted_full_block(Peer, ID, BHL),
+% 							Full = get_encrypted_full_block(Peer, ID, BI),
 % 							case is_atom(Full) of
 % 								true -> Acc;
 % 								false -> Full
@@ -864,16 +865,16 @@ handle(_SPid, UnhandledMsg) ->
 % 				Peers
 % 			);
 % 		_Block ->
-% 			% make_full_block(ID, BHL)
-% 			error(block_hash_list_required_in_context)
+% 			% make_full_block(ID, BI)
+% 			error(block_block_index_required_in_context)
 % 	end;
-% get_encrypted_full_block(Proc, ID, BHL) when is_pid(Proc) ->
+% get_encrypted_full_block(Proc, ID, BI) when is_pid(Proc) ->
 % 	% attempt to get block from local storage and make full
 % 	% NB: if found block returned will not be encrypted
-% 	make_full_block(ID, BHL);
-% get_encrypted_full_block(Host, ID, BHL) ->
+% 	make_full_block(ID, BI);
+% get_encrypted_full_block(Host, ID, BI) ->
 % 	% handle external peer request
-% 	ar_http_iface_client:get_encrypted_full_block(Host, ID, BHL).
+% 	ar_http_iface_client:get_encrypted_full_block(Host, ID, BI).
 
 %% @doc Reattempts to find a block from a node retrying up to Count times.
 %retry_block(_, _, Response, 0) ->

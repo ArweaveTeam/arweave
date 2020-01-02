@@ -35,7 +35,7 @@ node_validates_blocks_with_rejected_tx_test() ->
 	ar_rpc:call(slave, ar_node, mine, [SlaveNode], 5000),
 	timer:sleep(1000),
 	%% Expect the local node to reject the block.
-	?assertEqual(1, length(ar_node:get_hash_list(Node))),
+	?assertEqual(1, length(ar_node:get_block_index(Node))),
 	%% Post the second tx to the remote node.
 	TX2 = ar_tx:sign_pre_fork_2_0(
 		(ar_tx:new())#tx{ data = <<"GOOD CONTENT">>, owner = Pub, reward = ?AR(1), last_tx = TX1#tx.id },
@@ -55,7 +55,7 @@ node_validates_blocks_with_rejected_tx_test() ->
 	%% Expect the local node to fork recover to the block.
 	{ok, HL} = ar_util:do_until(
 		fun() ->
-			HL = ar_node:get_hash_list(Node),
+			HL = ?BI_TO_BHL(ar_node:get_block_index(Node)),
 			case HL of
 				[_H1, _H2, _H3|_Rest] ->
 					{ok, HL};

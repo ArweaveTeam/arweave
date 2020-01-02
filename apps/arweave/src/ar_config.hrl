@@ -31,7 +31,7 @@
 	pause = true,
 	disk_space,
 	used_space = 0,
-	start_hash_list = undefined,
+	start_block_index = undefined,
 	internal_api_secret = not_set,
 	enable = [],
 	disable = [],
@@ -43,7 +43,9 @@
 	max_propagation_peers = ?DEFAULT_MAX_PROPAGATION_PEERS,
 	webhooks = [],
 	max_connections = 1024,
-	max_gateway_connections = 128
+	max_gateway_connections = 128,
+	max_option_depth = 8,
+	votables = []
 }).
 
 -endif.
