@@ -165,7 +165,7 @@ handle_cast(emitter_go, State = #state { tx_queue = Q, size = Size, emit_map = E
 							fun(_) ->
 								gen_server:cast(?MODULE, {emit_tx_to_peer, TX})
 							end,
-							lists:seq(1, ?TX_PROPAGATION_PARALLELIZATION)
+							lists:seq(1, ar_meta_db:get(tx_propagation_parallelization))
 						),
 						TXID = TX#tx.id,
 						ar:info(
