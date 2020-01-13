@@ -17,7 +17,6 @@
 
 -define(HTTP_IFACE_MIDDLEWARES, [
 	ar_blacklist_middleware,
-	ar_http_body_middleware,
 	cowboy_router,
 	ar_arql_middleware,
 	ar_http_iface_middleware,

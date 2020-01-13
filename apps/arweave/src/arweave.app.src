@@ -1,6 +1,6 @@
 {application, arweave, [
 	{description, "Arweave"},
-	{vsn, "1.9.2.0"},
+	{vsn, "1.9.3.0"},
 	{applications, [
 		kernel,
 		stdlib,
