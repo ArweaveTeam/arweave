@@ -33,25 +33,26 @@ run_migration(HL, {Name, Fun}) ->
 
 v1(HL) ->
 	BlocksDir = filename:join(ar_meta_db:get(data_dir), ?BLOCK_DIR),
-	lists:foldl(
-		fun(H, Height) ->
-			EncodedH = binary_to_list(ar_util:encode(H)),
-			LegacyName = filename:join(
-				BlocksDir,
-				integer_to_list(Height) ++ "_" ++ EncodedH ++ ".json"
-			),
-			NewName = filename:join(
-				BlocksDir,
-				EncodedH ++ ".json"
-			),
-			case file:rename(LegacyName, NewName) of
-				ok ->
-					Height - 1;
-				{error, enoent} ->
-					Height - 1
-			end		
-		end,
-		length(HL) - 1,
-		HL
-	),
+	ok = v1(HL, length(HL) - 1, BlocksDir),
 	ok.
+
+v1([H | HL], Height, BlocksDir) when length(HL) == Height ->
+	EncodedH = binary_to_list(ar_util:encode(H)),
+	LegacyName = filename:join(
+		BlocksDir,
+		integer_to_list(Height) ++ "_" ++ EncodedH ++ ".json"
+	),
+	NewName = filename:join(
+		BlocksDir,
+		EncodedH ++ ".json"
+	),
+	case file:rename(LegacyName, NewName) of
+		ok ->
+			v1(HL, Height - 1, BlocksDir);
+		{error, enoent} ->
+			v1(HL, Height - 1, BlocksDir)
+	end;
+v1([], -1, _BlocksDir) ->
+	ok;
+v1(_HL, _Height, _BlocksDir) ->
+	{error, height_does_not_match_hash_list}.
