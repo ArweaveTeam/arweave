@@ -1,13 +1,13 @@
 -module(ar_storage_migration).
 
--export([run_migrations/1]).
+-export([start_link/1]).
 
 -include("ar.hrl").
 
 get_migrations() ->
 	[{"indep_hash_only_block_filenames_v1", fun v1/1}].
 
-run_migrations(HL) ->
+start_link(HL) ->
 	erlang:spawn_link(fun () -> run_migrations(HL, get_migrations()) end).
 
 run_migrations(HL, [{Name, Fun} | Rest]) ->	

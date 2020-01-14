@@ -149,7 +149,7 @@ start(Peers, HashList, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{not_joined, _} ->
 					do_nothing;
 				_ ->
-					ar_storage_migration:run_migrations(HashList)
+					ar_storage_migration:start_link(HashList)
 			end,
 			Gossip =
 				ar_gossip:init(

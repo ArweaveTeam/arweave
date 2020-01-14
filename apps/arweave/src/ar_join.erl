@@ -25,7 +25,7 @@ start(Node, Peers, B) when is_atom(B) ->
 start(Node, RawPeers, NewB) ->
 	case whereis(join_server) of
 		undefined ->
-			ar_storage_migration:run_migrations(NewB#block.hash_list),
+			ar_storage_migration:start_link(NewB#block.hash_list),
 			PID = spawn(fun() -> do_join(Node, RawPeers, NewB) end),
 			erlang:register(join_server, PID);
 		_ -> already_running
