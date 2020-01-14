@@ -8,7 +8,7 @@ get_migrations() ->
 	[{"indep_hash_only_block_filenames_v1", fun v1/1}].
 
 start_link(HL) ->
-	erlang:spawn_link(fun () -> run_migrations(HL, get_migrations()) end).
+	spawn_link(fun () -> run_migrations(HL, get_migrations()) end).
 
 run_migrations(HL, [{Name, Fun} | Rest]) ->	
 	MigrationsDir = filename:join(ar_meta_db:get(data_dir), ?STORAGE_MIGRATIONS_DIR),
