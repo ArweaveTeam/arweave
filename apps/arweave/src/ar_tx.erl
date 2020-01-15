@@ -86,10 +86,10 @@ signature_data_segment_pre_fork_2_0(T) ->
 %% @doc Cryptographicvally sign ('claim ownership') of a transaction.
 %% After it is signed, it can be placed into a block and verified at a later date.
 sign(TX, {PrivKey, PubKey}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey, data_size = byte_size(TX#tx.data) })).
+	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey })).
 
 sign(TX, PrivKey, PubKey) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey, data_size = byte_size(TX#tx.data) })).
+	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey })).
 
 sign_pre_fork_2_0(TX, {PrivKey, PubKey}) ->
 	sign(TX, PrivKey, PubKey, signature_data_segment_pre_fork_2_0(TX#tx{ owner = PubKey })).
@@ -98,7 +98,7 @@ sign_pre_fork_2_0(TX, PrivKey, PubKey) ->
 	sign(TX, PrivKey, PubKey, signature_data_segment_pre_fork_2_0(TX#tx{ owner = PubKey })).
 
 sign(TX, PrivKey, PubKey, SignatureDataSegment) ->
-	NewTX = TX#tx{ owner = PubKey, data_size = byte_size(TX#tx.data) },
+	NewTX = TX#tx{ owner = PubKey },
 	Sig = ar_wallet:sign(PrivKey, SignatureDataSegment),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx {
