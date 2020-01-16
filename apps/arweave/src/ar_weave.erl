@@ -18,7 +18,6 @@ init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty(), 0).
 init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
 	ar_randomx_state:reset(),
-	% Generate and dispatch a new data transaction
 	B0 =
 		#block{
 			height = 0,
@@ -80,6 +79,12 @@ add(Bs, TXs, BI, unclaimed) ->
 	add(Bs, TXs, BI, <<>>);
 add(AllBs = [B|Bs], TXs, BI, RewardAddr) ->
 	ar_storage:write_block([ XB || XB <- AllBs, is_record(XB, block) ]),
+	case length(BI) == 1 of
+		true ->
+			ar_randomx_state:init(BI, []);
+		false ->
+			noop
+	end,
 	POA = ar_poa:generate(B),
 	{FinderReward, RewardPool} =
 		ar_node_utils:calculate_reward_pool(

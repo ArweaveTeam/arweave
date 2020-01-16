@@ -25,8 +25,6 @@ updates_pool_and_assigns_rewards_correctly_before_burden_test_() ->
 	%% and setting significant inflation rewards.
 	test_with_mocked_functions(
 		[
-			{ar_fork, height_1_8, fun() -> 0 end},
-			{ar_fork, height_1_9, fun() -> 0 end},
 			{ar_fork, height_2_0, fun() -> 0 end},
 			{ar_inflation, calculate, fun big_inflation/1}
 		],
@@ -38,8 +36,6 @@ updates_pool_and_assigns_rewards_correctly_after_burden_test_() ->
 	%% and setting an insignificant inflation reward.
 	test_with_mocked_functions(
 		[
-			{ar_fork, height_1_8, fun ar_tx_perpetual_storage_tests:zero_height/0},
-			{ar_fork, height_1_9, fun ar_tx_perpetual_storage_tests:zero_height/0},
 			{ar_fork, height_2_0, fun ar_tx_perpetual_storage_tests:zero_height/0},
 			{ar_inflation, calculate, fun ar_tx_perpetual_storage_tests:small_inflation/1}
 		],
@@ -315,7 +311,7 @@ assert_reward_bigger_than_burden(Reward, Diff, Height, Timestamp, WeaveSize) ->
 	Burden = erlang:trunc(WeaveSize * Cost / (1024 * 1024 * 1024)),
 	?assert(Reward > Burden).
 
-get_miner_pool_share(Diff, Timestamp, WeaveSize, BaseReward, Height, POA) ->
+get_miner_pool_share(Diff, Timestamp, WeaveSize, BaseReward, Height, _POA) ->
 	Cost = ar_tx_perpetual_storage:usd_to_ar(
 		ar_tx_perpetual_storage:get_cost_per_block_at_timestamp(Timestamp),
 		Diff,
@@ -324,8 +320,4 @@ get_miner_pool_share(Diff, Timestamp, WeaveSize, BaseReward, Height, POA) ->
 	Burden = erlang:trunc(WeaveSize * Cost / (1024 * 1024 * 1024)),
 	AR = Burden - BaseReward,
 	?assert(AR > 0),
-	case Height >= ?FORK_2_0 of
-		true -> AR;
-		false ->
-			erlang:trunc(AR * max(1, POA#block.block_size) * Height / WeaveSize)
-	end.
+	AR.
