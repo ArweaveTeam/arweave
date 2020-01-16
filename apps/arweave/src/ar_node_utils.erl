@@ -972,9 +972,7 @@ calculate_reward(Height, Quantity) ->
 calculate_tx_reward(#tx { reward = Reward }) ->
 	% TDOD mue: Calculation is not calculated, only returned.
 	Reward.
--ifdef(DEBUG).
-calculate_delay(_) -> 0.
--else.
+
 -ifdef(FIXED_DELAY).
 calculate_delay(_Bytes) ->
 	?FIXED_DELAY.
@@ -986,5 +984,4 @@ calculate_delay(Bytes) ->
 	BaseDelay = (?BASE_TX_PROPAGATION_DELAY) * 1000,
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
 	BaseDelay + NetworkDelay.
--endif.
 -endif.
