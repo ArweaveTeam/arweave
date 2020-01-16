@@ -410,7 +410,7 @@ generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, T
 		<<
 			(integer_to_binary(RewardPool))/binary
 		>>,
-		case NewHeight >= ?FORK_2_0 of
+		case NewHeight >= ar_fork:height_2_0() of
 			true ->	<<>>;
 			false ->
 				<<
@@ -558,10 +558,13 @@ verify_last_retarget(NewB, OldB) ->
 
 %% @doc Verify that the previous_block hash of the new block is the indep_hash
 %% of the current block.
-verify_previous_block(NewB, OldB) when NewB#block.height >= ?FORK_2_0 ->
-	OldB#block.header_hash == NewB#block.previous_block;
 verify_previous_block(NewB, OldB) ->
-	OldB#block.indep_hash == NewB#block.previous_block.
+	case NewB#block.height >= ar_fork:height_2_0() of
+		true ->
+			OldB#block.header_hash == NewB#block.previous_block;
+		false ->
+			OldB#block.indep_hash == NewB#block.previous_block
+	end.
 
 %% @doc Verify that the new block's block_index is the current blocks
 %% block_index + indep_hash, until ?FORK_1_6.
@@ -630,23 +633,27 @@ verify_cumulative_diff(NewB, OldB) ->
 		).
 
 %% @doc After 1.6 fork check that the given merkle root in a new block is valid.
-verify_block_index_merkle(NewB, CurrentB) when NewB#block.height == ?FORK_2_0 ->
-	ar_storage:write_block(NewB),
-	[{HeaderHash, _}|_] = ar_transition:generate_checkpoint(
-		[{CurrentB#block.indep_hash, CurrentB#block.weave_size}|CurrentB#block.block_index]),
-	ar:d([{validating_v2_header_root, ar_util:encode(HeaderHash)}, {provided, ar_util:encode(NewB#block.block_index_merkle)}]),
-	NewB#block.block_index_merkle == HeaderHash;
-verify_block_index_merkle(NewB, CurrentB)when NewB#block.height > ?FORK_2_0 ->
-	NewB#block.block_index_merkle ==
-		ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.header_hash);
+verify_block_index_merkle(NewB, CurrentB) when NewB#block.height > ?FORK_1_6 ->
+	Fork_2_0 = ar_fork:height_2_0(),
+	case NewB#block.height of
+		H when H == Fork_2_0 ->
+			ar_storage:write_block(NewB),
+			[{HeaderHash, _}|_] = ar_transition:generate_checkpoint(
+				[{CurrentB#block.indep_hash, CurrentB#block.weave_size}|CurrentB#block.block_index]),
+			ar:d([{validating_v2_header_root, ar_util:encode(HeaderHash)}, {provided, ar_util:encode(NewB#block.block_index_merkle)}]),
+			NewB#block.block_index_merkle == HeaderHash;
+		H when H > Fork_2_0 ->
+			NewB#block.block_index_merkle ==
+				ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.header_hash);
+		_ ->
+			NewB#block.block_index_merkle ==
+				ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.indep_hash)
+	end;
 verify_block_index_merkle(NewB, _CurrentB) when NewB#block.height < ?FORK_1_6 ->
 	NewB#block.block_index_merkle == <<>>;
 verify_block_index_merkle(NewB, CurrentB) when NewB#block.height == ?FORK_1_6 ->
 	NewB#block.block_index_merkle ==
-		ar_unbalanced_merkle:block_index_to_merkle_root(CurrentB#block.block_index);
-verify_block_index_merkle(NewB, CurrentB) ->
-	NewB#block.block_index_merkle ==
-		ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.indep_hash).
+		ar_unbalanced_merkle:block_index_to_merkle_root(CurrentB#block.block_index).
 
 % Block shadow functions
 

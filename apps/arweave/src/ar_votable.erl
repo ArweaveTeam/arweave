@@ -57,9 +57,18 @@ get(Name, Votables) ->
 
 %% @doc Validate that a new block's votables are within bounds of the
 %% previous block.
-validate(NewB, _) when NewB#block.height == ?FORK_2_0 ->
-    NewB#block.votables == init();
-validate(NewB, OldB) when NewB#block.height > ?FORK_2_0 ->
+validate(NewB, OldB) ->
+	Fork_2_0 = ar_fork:height_2_0(),
+	case NewB#block.height of
+		H when H == Fork_2_0 ->
+			NewB#block.votables == init();
+		H when H > Fork_2_0 ->
+			validate_post_fork_2_0(NewB, OldB);
+		_ ->
+			true
+	end.
+
+validate_post_fork_2_0(NewB, OldB) ->
     VotePower = get("vote_power", OldB),
     ar:d([{new_votables, NewB#block.votables}, {old_votables, OldB#block.votables}]),
     lists:all(
@@ -78,8 +87,7 @@ validate(NewB, OldB) when NewB#block.height > ?FORK_2_0 ->
             (NewValue >= Low) and (NewValue =< High)
         end,
         NewB#block.votables
-    );
-validate(_, _) -> true.
+    ).
 
 %% @doc Given the current voting power and property-specific possible
 %% change per block, calculate the maximum and minimum bounds in a new block.
