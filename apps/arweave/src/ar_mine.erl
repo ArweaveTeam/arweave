@@ -444,10 +444,7 @@ timestamp_refresh_test_() ->
 		%% Start mining with a high enough difficulty, so that the block
 		%% timestamp gets refreshed at least once. Since we might be unlucky
 		%% and find the block too fast, we retry until it succeeds.
-		Diff = case ar_fork:height_1_7() of
-			0 -> 4;
-			_ -> 20
-		end,
+		Diff = 4,
 		Run = fun(_) ->
 			TXs = [],
 			start(B, RecallB, TXs, unclaimed, [], Diff, self(), []),
@@ -481,15 +478,6 @@ miner_start_stop_test() ->
 	assert_alive(PID),
 	stop_miners([PID]),
 	assert_not_alive(PID, 3000).
-
-%% TODO: Add validator test for RandomX
-validator_test() ->
-	BDS = ar_util:decode(<<"DIhZtgVPvAyGlWDfAq7NfoL28x_4yxDOSFU-thfBPoRdRsDaZPYrkCyQ-5zL5LeS">>),
-	Nonce = ar_util:decode(<<"AQEBAQEBAQEBAAABAQAAAAEBAQAAAQEBAAAAAQEAAAAAAQABAAEBAQAAAQAAAAE">>),
-	HeightWithRandomX = ar_fork:height_1_7(),
-	HeightPreRandomX = HeightWithRandomX - 1,
-	?assertMatch({valid, _}, validate(BDS, Nonce, 37, HeightPreRandomX)),
-	?assertMatch({invalid, _}, validate(BDS, Nonce, 38, HeightPreRandomX)).
 
 assert_mine_output(B, POA, TXs) ->
 	receive

@@ -185,7 +185,7 @@ simple_retarget_test_() ->
 	end}.
 
 calculate_difficulty_linear_test() ->
-	Height = ar_fork:height_1_9(),
+	Height = 0,
 	Diff = switch_to_linear_diff(27),
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	%% The change is smaller than retarget tolerance.

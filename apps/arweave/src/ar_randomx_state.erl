@@ -56,12 +56,11 @@ init(BI, Peers) ->
 		swap_height(CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT),
 		swap_height(max(0, CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT))
 	]),
-	SwapHeightsFiltered = lists:filter(fun should_init/1, SwapHeights),
 	Init = fun(SwapHeight) ->
 		{ok, Key} = randomx_key(SwapHeight, BI, Peers),
 		init(whereis(?MODULE), SwapHeight, Key, erlang:system_info(schedulers_online))
 	end,
-	lists:foreach(Init, SwapHeightsFiltered).
+	lists:foreach(Init, SwapHeights).
 
 %% PRIVATE
 
@@ -183,33 +182,15 @@ swap_height(Height) ->
 	(Height div ?RANDOMX_KEY_SWAP_FREQ) * ?RANDOMX_KEY_SWAP_FREQ.
 
 ensure_initialized(State, SwapHeight) ->
-	case should_init(SwapHeight) of
-		true ->
-			case maps:find(SwapHeight, State#state.randomx_states) of
-				{ok, _} ->
-					did_not_start;
-				error ->
-					{started, start_init(State, SwapHeight)}
-			end;
-		false ->
-			did_not_start
+	case maps:find(SwapHeight, State#state.randomx_states) of
+		{ok, _} ->
+			did_not_start;
+		error ->
+			{started, start_init(State, SwapHeight)}
 	end.
 
 get_key_from_cache(State, Height) ->
 	maps:get(swap_height(Height), State#state.key_cache, key_not_found).
-
-%% Initialize RandomX is only needed from the 1.7 fork height and onward,
-%% but we initialize pre-fork to test it in shadow mode. If there are any issues,
-%% this will increase the likeliness of them being found (and fixed) before the
-%% fork happens. For non-RandomX related tests, we care more about performance,
-%% so we don't run it in shadow mode for DEBUG.
--ifdef(DEBUG).
-should_init(SwapHeight) ->
-	SwapHeight >= ar_fork:height_1_7().
--else.
-should_init(_SwapHeight) ->
-	true.
--endif.
 
 start_init(State, SwapHeight) ->
 	Server = self(),

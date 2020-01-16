@@ -3,8 +3,6 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_fork, [test_on_fork/3]).
-
 -import(ar_test_node, [assert_post_tx_to_slave/2]).
 -import(ar_test_node, [assert_wait_until_receives_txs/2, wait_until_height/2]).
 -import(ar_test_node, [sign_tx_pre_fork_2_0/2, get_tx_anchor/0]).
@@ -98,14 +96,7 @@ test_get_queue_endpoint() ->
 	Actual = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
 	?assertEqual(Expected, Actual).
 
-txs_are_included_in_blocks_sorted_by_utility_test_() ->
-	test_on_fork(
-		height_1_8,
-		0,
-		fun test_txs_are_included_in_blocks_sorted_by_utility/0
-	).
-
-test_txs_are_included_in_blocks_sorted_by_utility() ->
+test_txs_are_included_in_blocks_sorted_by_utility_test() ->
 	{MasterNode, SlaveNode, Wallet} = setup(),
 	TXs = [
 		%% Base size, extra reward.
