@@ -700,7 +700,7 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp, POA) ->
 						),
 					ar_node_utils:log_invalid_txs_drop_reason(InvalidTXs),
 					NewBI2 =
-						case NextB#block.height == (?FORK_2_0) of
+						case NextB#block.height == ar_fork:height_2_0() of
 							true ->
 								X = [ {NextB#block.header_hash, NextB#block.weave_size} | NextB#block.block_index ],
 								ar:info(
