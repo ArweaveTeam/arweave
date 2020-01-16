@@ -120,7 +120,7 @@
 -define(TOTAL_WAITING_TXS_DATA_SIZE_LIMIT, 250 * 1024 * 1024).
 -endif.
 -ifdef(DEBUG).
--define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
+-define(TX_DATA_SIZE_LIMIT, 10 * 1024).
 -else.
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
 -endif.
