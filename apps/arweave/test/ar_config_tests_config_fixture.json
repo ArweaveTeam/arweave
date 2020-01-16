@@ -32,7 +32,6 @@
   ],
   "disk_space": 44,
   "benchmark": true,
-  "auto_update": "V_zW1A2HeqWFBpwKCjyd8V6eI8S3ia8GOVA6g7YXAdU",
   "internal_api_secret": "some_very_very_long_secret",
   "enable": [
     "feature_1",
