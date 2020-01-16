@@ -32,7 +32,7 @@ init(WalletList, StartingDiff, RewardPool) ->
 			reward_pool = RewardPool,
 			timestamp = os:system_time(seconds),
 			votables =
-				case ?FORK_2_0 of
+				case ar_fork:height_2_0() of
 					0 -> ar_votable:init();
 					_ -> []
 				end
@@ -169,9 +169,10 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 			false ->
 				0
 		end,
+	Fork_2_0 = ar_fork:height_2_0(),
 	{MR, NewBI} =
 		case NewHeight of
-			_ when NewHeight == ?FORK_2_0 ->
+			_ when NewHeight == Fork_2_0 ->
 				CP = [{H, _}|_] =
 					ar_transition:generate_checkpoint(
 						[{CurrentB#block.indep_hash, CurrentB#block.weave_size}|CurrentB#block.block_index]),
@@ -182,7 +183,7 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 					]
 				),
 				{H, CP};
-			_ when NewHeight > ?FORK_2_0 ->
+			_ when NewHeight > Fork_2_0 ->
 				{ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.header_hash), BI};
 			_ when NewHeight < ?FORK_1_6 ->
 				{<<>>, BI};
@@ -193,15 +194,15 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 		end,
 	NewVotables =
 		case NewHeight of
-			X when X == ?FORK_2_0 -> ar_votable:init();
-			X when X > ?FORK_2_0 -> ar_votable:vote(CurrentB#block.votables);
+			X when X == Fork_2_0 -> ar_votable:init();
+			X when X > Fork_2_0 -> ar_votable:vote(CurrentB#block.votables);
 			_ -> []
 		end,
 	NewB =
 		#block {
 			nonce = Nonce,
 			previous_block =
-				case NewHeight >= ?FORK_2_0 of
+				case NewHeight >= Fork_2_0 of
 					true -> CurrentB#block.header_hash;
 					false -> CurrentB#block.indep_hash
 				end,
@@ -237,7 +238,7 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 			weave_size = CurrentB#block.weave_size + BlockSize,
 			block_size = BlockSize,
 			poa =
-				case NewHeight >= ?FORK_2_0 of
+				case NewHeight >= Fork_2_0 of
 					true -> POA;
 					false -> undefined
 				end,
@@ -303,9 +304,15 @@ hash(BDS, Nonce, Height) ->
 
 %% @doc Create an independent hash from a block. Independent hashes
 %% verify a block's contents in isolation and are stored in a node's hash list.
-indep_hash(#block { height = Height, header_hash = HH }) when Height >= ?FORK_2_0 ->
-	HH;
-indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
+indep_hash(#block { height = Height, header_hash = HH } = B) ->
+	case Height >= ar_fork:height_2_0() of
+		true ->
+			HH;
+		false ->
+			indep_hash_pre_fork_2_0(B)
+	end.
+
+indep_hash_pre_fork_2_0(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 	ar_deep_hash:hash([
 		B#block.nonce,
 		B#block.previous_block,
@@ -328,7 +335,7 @@ indep_hash(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
 		integer_to_binary(B#block.weave_size),
 		integer_to_binary(B#block.block_size)
 	]);
-indep_hash(#block {
+indep_hash_pre_fork_2_0(#block {
 		nonce = Nonce,
 		previous_block = PrevHash,
 		timestamp = TimeStamp,
@@ -415,7 +422,7 @@ header_hash(B) ->
 		integer_to_binary(B#block.block_size),
 		integer_to_binary(B#block.cumulative_diff)
 	] ++
-	case B#block.height >= ?FORK_2_0 of
+	case B#block.height >= ar_fork:height_2_0() of
 		true ->
 			lists:map(
 				fun({Name, Value}) ->

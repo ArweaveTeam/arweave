@@ -154,7 +154,7 @@ calculate_reward_pool_perpetual(OldPool, TXs, _, POA, WeaveSize, Height, Diff, T
 	Burden = erlang:trunc(WeaveSize * CostPerGBPerBlock / (1024 * 1024 * 1024)),
 	AR = Burden - BaseReward,
 	NewPool = OldPool + TXsCost,
-	case Height >= ?FORK_2_0 of
+	case Height >= ar_fork:height_2_0() of
 		true ->
 			RewardMultiplier = 1/POA#poa.option,
 			PoolMultiplier = (1 - RewardMultiplier),
@@ -295,14 +295,21 @@ start_mining(#{block_index := not_joined} = StateIn, _) ->
 	% We don't have a block list. Wait until we have one before
 	% starting to mine.
 	StateIn;
-start_mining(#{
+start_mining(#{ block_index := BI } = State, ForceDiff) ->
+	case length(BI) >= ar_fork:height_2_0() of
+		true ->
+			start_mining_post_fork_2_0(State, ForceDiff);
+		false ->
+			start_mining_pre_fork_2_0(State, ForceDiff)
+	end.
+
+start_mining_post_fork_2_0(#{
 		node := Node,
 		block_index := BI,
 		txs := TXs,
 		reward_addr := RewardAddr,
 		tags := Tags,
-		block_txs_pairs := BlockTXPairs } = StateIn, ForceDiff)
-		when length(BI) >= ?FORK_2_0 ->
+		block_txs_pairs := BlockTXPairs } = StateIn, ForceDiff) ->
 	case ar_poa:generate(BI) of
 		unavailable ->
 			ar:info(
@@ -343,8 +350,9 @@ start_mining(#{
 					ar:info([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
 					StateIn#{ miner => Miner, diff => ForceDiff }
 			end
-	end;
-start_mining(#{
+	end.
+
+start_mining_pre_fork_2_0(#{
 		node := Node,
 		block_index := BI,
 		txs := TXs,
@@ -500,9 +508,10 @@ integrate_new_block(
 			PID ! {parent_accepted_block, NewB}
 	end,
 	ar_downloader:add_block(NewB),
+	Fork_2_0 = ar_fork:height_2_0(),
 	NewBI2 =
 		case NewB#block.height of
-			?FORK_2_0 ->
+			Fork_2_0 ->
 				io:format(
 					"!!!CAUTION!!!~n"
 					"Arweave is now transitioning to version 2.0. This may take a significant time.~n"
@@ -586,6 +595,27 @@ validate(
 		WalletList,
 		NewB =
 			#block {
+				wallet_list = WalletList,
+				height = Height
+			},
+		TXs,
+		OldB,
+		_RecallB,
+		RewardAddr,
+		Tags
+	) ->
+	case Height >= ar_fork:height_2_0() of
+		true ->
+			validate_post_fork_2_0(_BI, WalletList, NewB, TXs, OldB, _RecallB, RewardAddr, Tags);
+		false ->
+			validate_pre_fork_2_0(_BI, WalletList, NewB, TXs, OldB, _RecallB, RewardAddr, Tags)
+	end.
+
+validate_post_fork_2_0(
+		_BI,
+		WalletList,
+		NewB =
+			#block {
 				block_index = BI = [{LastHeaderHash, LastWeaveSize}|_],
 				wallet_list = WalletList,
 				nonce = Nonce,
@@ -599,7 +629,7 @@ validate(
 		_,
 		RewardAddr,
 		Tags
-	) when Height >= ?FORK_2_0 ->
+	) ->
 	ar:d([performing_v2_block_validation, {height, Height}]),
 	POW = ar_weave:hash(
 		ar_block:generate_block_data_segment(OldB, POA, TXs, RewardAddr, Timestamp, Tags),
@@ -657,10 +687,16 @@ validate(
 			),
 			{invalid, FailedTests}
 	end;
-validate(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
+validate_post_fork_2_0(BI, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
+	validate_post_fork_2_0(BI, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
+validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
+	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
+	{invalid, [block_index_or_wallet_list]}.
+
+validate_pre_fork_2_0(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
 	ar:info([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),
 	{invalid, [recall_block_unavailable]};
-validate(
+validate_pre_fork_2_0(
 		BI,
 		WalletList,
 		NewB =
@@ -781,11 +817,11 @@ validate(
 		false ->
 			{invalid, InvalidReasons}
 	end;
-validate(_BI, WL, NewB = #block { block_index = unset }, TXs, OldB, RecallB, _, _) ->
-	validate(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
-validate(BI, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
-	validate(BI, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
-validate(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
+validate_pre_fork_2_0(_BI, WL, NewB = #block { block_index = unset }, TXs, OldB, RecallB, _, _) ->
+	validate_pre_fork_2_0(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
+validate_pre_fork_2_0(BI, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
+	validate_pre_fork_2_0(BI, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
+validate_pre_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
 	{invalid, [block_index_or_wallet_list]}.
 

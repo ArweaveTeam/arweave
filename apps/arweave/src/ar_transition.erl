@@ -9,7 +9,7 @@
 %%% node is prepared for the upgrade.
 
 am_i_ready() ->
-    ToGo = ?FORK_2_0 - length(load_checkpoint()),
+    ToGo = ar_fork:height_2_0() - length(load_checkpoint()),
     io:format(
         "During the Arweave 2.0 upgrade you will have to re-verify ~w blocks.~n",
         [ToGo]

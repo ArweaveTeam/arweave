@@ -21,7 +21,7 @@ generate([B|_]) when is_record(B, block) ->
 generate([]) -> unavailable;
 generate([{Seed, WeaveSize}|_] = BI) ->
 	ar:info([{generating_poa_for_block_after, ar_util:encode(Seed)}]),
-	case length(BI) >= ?FORK_2_0 of
+	case length(BI) >= ar_fork:height_2_0() of
 		true ->
 			generate(
 				Seed,
