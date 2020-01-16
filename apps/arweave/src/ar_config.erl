@@ -128,10 +128,6 @@ parse_options([{<<"disk_space">>, DiskSpace} | Rest], Config) when is_integer(Di
 	parse_options(Rest, Config#config { disk_space = DiskSpace*1024*1024*1024 });
 parse_options([{<<"disk_space">>, DiskSpace} | _], _) ->
 	{error, {bad_type, disk_space, number}, DiskSpace};
-parse_options([{<<"ipfs_pin">>, false} | Rest], Config) ->
-	parse_options(Rest, Config);
-parse_options([{<<"ipfs_pin">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config { ipfs_pin = true });
 parse_options([{<<"benchmark">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config { benchmark = true });
 parse_options([{<<"benchmark">>, false} | Rest], Config) ->

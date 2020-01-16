@@ -41,7 +41,6 @@
 	gateway_custom_domains = [],
 	requests_per_minute_limit = ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT,
 	max_propagation_peers = ?DEFAULT_MAX_PROPAGATION_PEERS,
-	ipfs_pin = false,
 	webhooks = [],
 	max_connections = 1024,
 	max_gateway_connections = 128
