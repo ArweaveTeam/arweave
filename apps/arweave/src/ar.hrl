@@ -243,7 +243,7 @@
 %% @doc The adjustment of difficutly going from SHA-384 to RandomX.
 -define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
 -ifdef(DEBUG).
--define(RANDOMX_KEY_SWAP_FREQ, 10).
+-define(RANDOMX_KEY_SWAP_FREQ, (?STORE_BLOCKS_BEHIND_CURRENT + 1)).
 -define(RANDOMX_MIN_KEY_GEN_AHEAD, 1).
 -define(RANDOMX_MAX_KEY_GEN_AHEAD, 4).
 -define(RANDOMX_STATE_POLL_INTERVAL, 2).

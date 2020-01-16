@@ -7,34 +7,6 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-fork_1_8_test_() ->
-	{
-		foreach,
-		fun() ->
-			meck:new(ar_fork, [passthrough]),
-			meck:expect(ar_fork, height_1_8, fun() -> 0 end),
-			ok
-		end,
-		fun(ok) ->
-			meck:unload(ar_fork)
-		end,
-		[
-			%% Tests that run for both before and after fork 1.7
-			{"get_last_tx_single_test", fun get_last_tx_single_test/0},
-			{"add_external_tx_test", fun add_external_tx_test/0},
-			{"add_external_tx_with_tags_test", fun add_external_tx_with_tags_test/0},
-			{"find_external_tx_test", fun find_external_tx_test/0},
-			{"fail_external_tx_test", fun fail_external_tx_test/0},
-			{"add_tx_and_get_last_test", fun add_tx_and_get_last_test/0},
-			{"get_subfields_of_tx_test", fun get_subfields_of_tx_test/0},
-			{"get_pending_tx_test", fun get_pending_tx_test/0},
-			{"get_multiple_pending_txs_test_", get_multiple_pending_txs_test_()},
-			{"get_tx_by_tag_test", fun get_tx_by_tag_test/0},
-			{"get_tx_body_test", fun get_tx_body_test/0},
-			{"get_txs_by_send_recv_test_", get_txs_by_send_recv_test_()}
-		]
-	}.
-
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	ar_storage:clear(),
