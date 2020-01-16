@@ -138,15 +138,6 @@ parse_options([{<<"benchmark">>, false} | Rest], Config) ->
 	parse_options(Rest, Config);
 parse_options([{<<"benchmark">>, Opt} | _], _) ->
 	{error, {bad_type, benchmark, boolean}, Opt};
-parse_options([{<<"auto_update">>, false} | Rest], Config) ->
-	parse_options(Rest, Config#config { auto_update = false });
-parse_options([{<<"auto_update">>, Addr} | Rest], Config) when is_binary(Addr) ->
-	case ar_util:safe_decode(Addr) of
-		{ok, D} -> parse_options(Rest, Config#config { auto_update = D });
-		{error, _} -> {error, bad_auto_update, Addr}
-	end;
-parse_options([{<<"auto_update">>, Addr} | _], _) ->
-	{error, {bad_type, auto_update, string}, Addr};
 parse_options([{<<"internal_api_secret">>, Secret} | Rest], Config)
 		when is_binary(Secret), byte_size(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_options(Rest, Config#config { internal_api_secret = Secret });

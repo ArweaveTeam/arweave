@@ -126,7 +126,6 @@ show_help() ->
 											 "One Base64 encoded transaction ID per line."},
 			{"disk_space (num)", "Max size (in GB) for the disk partition containing the Arweave data directory (blocks, txs, etc) when the miner stops writing files to disk."},
 			{"benchmark (algorithm)", "Run a mining performance benchmark. Pick an algorithm from sha384, randomx."},
-			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
 			{"internal_api_secret (secret)",
 				lists:flatten(
 					io_lib:format(
@@ -211,10 +210,6 @@ parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
 	parse_cli_args(Rest, C#config { start_hash_list = ar_util:decode(BHLHash) });
 parse_cli_args(["benchmark", Algorithm|Rest], C)->
 	parse_cli_args(Rest, C#config { benchmark = true, benchmark_algorithm = list_to_atom(Algorithm) });
-parse_cli_args(["auto_update", "false" | Rest], C) ->
-	parse_cli_args(Rest, C#config { auto_update = false });
-parse_cli_args(["auto_update", Addr | Rest], C) ->
-	parse_cli_args(Rest, C#config { auto_update = ar_util:decode(Addr) });
 parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_cli_args(Rest, C#config { internal_api_secret = list_to_binary(Secret)});
 parse_cli_args(["internal_api_secret", _ | _], _) ->
@@ -279,7 +274,6 @@ start(
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
 		start_hash_list = BHL,
-		auto_update = AutoUpdate,
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
@@ -423,14 +417,6 @@ start(
 		}
 	),
 	ar_node:add_peers(Node, Bridge),
-	%% Initialise the auto-updater, if enabled.
-	case AutoUpdate of
-		false ->
-			do_nothing;
-		AutoUpdateAddr ->
-			AutoUpdateNode = app_autoupdate:start(AutoUpdateAddr),
-			ar_node:add_peers(Node, AutoUpdateNode)
-	end,
 	%% Store enabled features.
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
