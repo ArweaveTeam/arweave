@@ -6,7 +6,6 @@
 
 -export([main/0, main/1, start/0, start/1]).
 -export([tests/0, tests/1, tests/2]).
--export([test_ipfs/0]).
 -export([test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
@@ -120,7 +119,6 @@ show_help() ->
 			{"max_emitters (num)", "The maximum number of message emitter processes (default 8)."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
-			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
 			{"content_policy (file)", "Load a content policy file for the node."},
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
@@ -204,8 +202,6 @@ parse_cli_args(["disk_space", Size|Rest], C) ->
 	parse_cli_args(Rest, C#config { disk_space = (list_to_integer(Size)*1024*1024*1024) });
 parse_cli_args(["load_mining_key", File|Rest], C) ->
 	parse_cli_args(Rest, C#config { load_key = File });
-parse_cli_args(["ipfs_pin" | Rest], C) ->
-	parse_cli_args(Rest, C#config { ipfs_pin = true });
 parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
 	parse_cli_args(Rest, C#config { start_hash_list = ar_util:decode(BHLHash) });
 parse_cli_args(["benchmark", Algorithm|Rest], C)->
@@ -283,7 +279,6 @@ start(
 		gateway_custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
 		max_propagation_peers = MaxPropagationPeers,
-		ipfs_pin = IPFSPin,
 		webhooks = WebhookConfigs,
 		max_connections = MaxConnections,
 		max_gateway_connections = MaxGatewayConnections
@@ -459,10 +454,6 @@ start(
 	end,
 	{ok, _} = ar_poller_sup:start_link(PollingArgs),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
-	case IPFSPin of
-		false -> ok;
-		true  -> app_ipfs:start_pinning()
-	end,
 	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
 	case Pause of
 		false ->
@@ -594,11 +585,6 @@ test_slow() ->
 	ar_http_iface_client:get_full_block_by_hash_test_slow(),
 	ar_fork_recovery:multiple_blocks_ahead_with_transaction_recovery_test_slow(),
 	ar_tx:check_last_tx_test_slow().
-
-%% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
-test_ipfs() ->
-	Mods = [app_ipfs_tests],
-	tests(Mods, #config {}).
 
 %% @doc Generate the project documentation.
 docs() ->
