@@ -223,7 +223,7 @@ read_block_file(Filename, BI) ->
 							{ok, ReadWL} ->
 								ReadWL;
 							{error, _Type} ->
-								WL
+								not_found
 						end
 				end
 		},
