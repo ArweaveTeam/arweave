@@ -312,11 +312,26 @@ do_fork_recover(S = #state {
 								POA = unavailable,
 								TXs = [];
 							true ->
-								BBI = [{B#block.indep_hash, B#block.weave_size}|B#block.block_index],
+								BBI = [{B#block.indep_hash, B#block.weave_size} | B#block.block_index],
 								POA =
-									case NextB#block.poa of
-										undefined -> ar_poa:generate(NextB);
-										X -> X
+									case NextB#block.height >= ar_fork:height_2_0() of
+										true ->
+											NextB#block.poa;
+										false ->
+											case B#block.height of
+												0 ->
+													ar_node_utils:get_full_block(
+														Peers,
+														ar_util:get_recall_hash(B, NextB#block.block_index),
+														RBI
+													);
+												_ ->
+													ar_node_utils:get_full_block(
+														Peers,
+														ar_util:get_recall_hash(B, B#block.block_index),
+														RBI
+													)
+											end
 									end,
 								%% TODO: Rewrite validate so it also takes recall block txs
 								TXs = NextB#block.txs
@@ -328,7 +343,7 @@ do_fork_recover(S = #state {
 		case
 			(not ?IS_BLOCK(NextB)) or
 			(not ?IS_BLOCK(B)) or
-			(not is_record(POA, poa))
+			(not (is_record(POA, poa) orelse is_record(POA, block)))
 		of
 			false ->
 				case
