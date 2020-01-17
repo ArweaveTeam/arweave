@@ -1285,7 +1285,7 @@ is_block_known(<<"height">>, RawHeight, BI) when is_binary(RawHeight) ->
 is_block_known(<<"height">>, Height, BI) ->
 	Height < length(BI);
 is_block_known(<<"hash">>, ID, BI) ->
-	lists:member(ID, BI).
+	lists:member(ID, ?BI_TO_BHL(BI)).
 
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight, BI) ->
