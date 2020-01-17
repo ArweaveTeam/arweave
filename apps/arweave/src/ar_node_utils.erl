@@ -516,7 +516,7 @@ integrate_new_block(
 					"!!!CAUTION!!!~n"
 					"Arweave is now transitioning to version 2.0. This may take a significant time.~n"
 					"In the event of an error, please check the Arweave community's communication channels to liasse with your fellow miners.~n"),
-				[{NewB#block.header_hash, NewB#block.weave_size}|ar_transition:generate_checkpoint(NewBI)];
+				[{NewB#block.header_hash, NewB#block.weave_size}|ar_transition:generate_checkpoint(BI)];
 			_ -> NewBI
 		end,
 	reset_miner(StateIn#{
