@@ -52,7 +52,6 @@ block_to_json_struct(
 		height = Height,
 		hash = Hash,
 		indep_hash = IndepHash,
-		header_hash = HeaderHash,
 		txs = TXs,
 		tx_root = TXRoot,
 		tx_tree = TXTree,
@@ -83,7 +82,6 @@ block_to_json_struct(
 			{height, Height},
 			{hash, ar_util:encode(Hash)},
 			{indep_hash, ar_util:encode(IndepHash)},
-			{header_hash, ar_util:encode(HeaderHash)},
 			{txs,
 				lists:map(
 					fun(TXID) when is_binary(TXID) ->
@@ -218,11 +216,6 @@ json_struct_to_block({BlockStruct}) ->
 		height = Height,
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
-		header_hash =
-			case find_value(<<"header_hash">>, BlockStruct) of
-				undefined -> <<>>;
-				HeaderHash -> ar_util:decode(HeaderHash)
-			end,
 		txs =
 			lists:map(
 			fun (TX) when is_binary(TX) ->

@@ -479,7 +479,6 @@ integrate_new_block(
 	%% up, it should be fine.
 	%% Write new block and included TXs to local storage.
 	ar_storage:write_full_block(NewB, BlockTXs),
-	NewBI = [ {NewB#block.indep_hash, NewB#block.weave_size} | BI],
 	NewBlockTXPairs = update_block_txs_pairs(
 		NewB#block.indep_hash,
 		[TX#tx.id || TX <- BlockTXs],
@@ -498,7 +497,6 @@ integrate_new_block(
 		[
 			accepted_foreign_block,
 			{indep_hash, ar_util:encode(NewB#block.indep_hash)},
-			{header_hash, ar_util:encode(NewB#block.header_hash)},
 			{height, NewB#block.height}
 		]
 	),
@@ -515,9 +513,11 @@ integrate_new_block(
 				io:format(
 					"!!!CAUTION!!!~n"
 					"Arweave is now transitioning to version 2.0. This may take a significant time.~n"
-					"In the event of an error, please check the Arweave community's communication channels to liasse with your fellow miners.~n"),
-				[{NewB#block.header_hash, NewB#block.weave_size}|ar_transition:generate_checkpoint(BI)];
-			_ -> NewBI
+					"In the event of an error, please check the Arweave community's communication "
+					"channels to liasse with your fellow miners.~n"),
+				[{NewB#block.indep_hash, NewB#block.weave_size}  | ar_transition:generate_checkpoint(BI)];
+			_ ->
+				[{NewB#block.indep_hash, NewB#block.weave_size} | BI]
 		end,
 	reset_miner(StateIn#{
 		block_index     => NewBI2,
@@ -616,7 +616,7 @@ validate_post_fork_2_0(
 		WalletList,
 		NewB =
 			#block {
-				block_index = BI = [{LastHeaderHash, LastWeaveSize}|_],
+				block_index = BI = [{LastIndepHash, LastWeaveSize} | _],
 				wallet_list = WalletList,
 				nonce = Nonce,
 				diff = Diff,
@@ -636,11 +636,10 @@ validate_post_fork_2_0(
 		Nonce,
 		Height
 	),
-	ar:d(
+	ar:info(
 		[
 			{validating_block, ar_util:encode(NewB#block.indep_hash)},
-			{header_hash, ar_util:encode(NewB#block.header_hash)},
-			{poa_block_header, ar_util:encode(ar_weave:header_hash((NewB#block.poa)#poa.recall_block))}
+			{poa_block_header, ar_util:encode(ar_weave:indep_hash_post_fork_2_0((NewB#block.poa)#poa.recall_block))}
 		]
 	),
 	{MicroSecs, Results} =
@@ -648,13 +647,13 @@ validate_post_fork_2_0(
 			fun() ->
 				[
 					{pow, ar_mine:validate(POW, Diff, Height)},
-					{poa, ar_poa:validate(LastHeaderHash, LastWeaveSize, BI, POA)},
+					{poa, ar_poa:validate(LastIndepHash, LastWeaveSize, BI, POA)},
 					{votables, ar_votable:validate(NewB, OldB)},
 					{wallet_list, validate_wallet_list(WalletList)},
 					{txs, ar_tx:verify_txs(NewB, TXs, Diff, Height - 1, OldB#block.wallet_list, Timestamp)},
 					{tx_root, ar_block:verify_tx_root(NewB#block { txs = TXs })},
 					{difficulty, ar_retarget:validate_difficulty(NewB, OldB)},
-					{header_hash, ar_weave:header_hash(NewB) == NewB#block.header_hash},
+					{independent_hash, ar_weave:indep_hash_post_fork_2_0(NewB) == NewB#block.indep_hash},
 					{dependent_hash, ar_block:verify_dep_hash(NewB, POW)},
 					{weave_size, ar_block:verify_weave_size(NewB, OldB, TXs)},
 					{block_field_sizes, ar_block:block_field_size_limit(NewB)},
@@ -673,7 +672,7 @@ validate_post_fork_2_0(
 		[] ->
 			ar:info(
 				[
-					{block_validation_successful, ar_util:encode(NewB#block.header_hash)},
+					{block_validation_successful, ar_util:encode(NewB#block.indep_hash)},
 					{time_taken, MicroSecs}
 				]
 			),
@@ -681,7 +680,7 @@ validate_post_fork_2_0(
 		_ ->
 			ar:info(
 				[
-					{block_validation_failed, ar_util:encode(NewB#block.header_hash)},
+					{block_validation_failed, ar_util:encode(NewB#block.indep_hash)},
 					{time_taken, MicroSecs}
 				] ++ FailedTests
 			),

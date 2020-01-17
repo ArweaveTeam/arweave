@@ -93,14 +93,6 @@ write_block(RawB) ->
 	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	file:write_file(Name = block_filepath(B), BlockToWrite),
 	ar_block_index:add(B, Name),
-	% TODO: Remove after 2.0 is live.
-	case B#block.header_hash of
-		<<>> -> do_nothing;
-		HeaderHash ->
-			HeaderHashB = B#block { indep_hash = HeaderHash },
-			file:write_file(Name2 = block_filepath(HeaderHashB), BlockToWrite),
-			ar_block_index:add(B, Name2)
-	end,
 	Name.
 -else.
 write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
@@ -118,14 +110,6 @@ write_block(RawB) ->
 		true ->
 			file:write_file(Name = block_filepath(B), BlockToWrite),
 			ar_block_index:add(B, Name),
-			% TODO: Remove after 2.0 is live.
-			case B#block.header_hash of
-					<<>> -> do_nothing;
-					HeaderHash ->
-						HeaderHashB = B#block { indep_hash = HeaderHash },
-						file:write_file(Name2 = block_filepath(HeaderHashB), BlockToWrite),
-						ar_block_index:add(B, Name2)
-			end,
 			spawn(
 				ar_meta_db,
 				increase,

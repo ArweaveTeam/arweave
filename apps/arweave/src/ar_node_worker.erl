@@ -396,7 +396,6 @@ process_new_block(#{ height := Height } = StateIn, BShadow, Recall, Peer)
 								process_new_block,
 								transaction_replay_detected,
 								{block_indep_hash, ar_util:encode(NewB#block.indep_hash)},
-								{block_header_hash, ar_util:encode(NewB#block.header_hash)},
 								{txs, lists:map(fun(TX) -> ar_util:encode(TX#tx.id) end, TXs)}
 							]),
 							none;
@@ -686,21 +685,6 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp, POA) ->
 							NextB#block.wallet_list
 						),
 					ar_node_utils:log_invalid_txs_drop_reason(InvalidTXs),
-					NewBI2 =
-						case NextB#block.height == ar_fork:height_2_0() of
-							true ->
-								X = [ {NextB#block.header_hash, NextB#block.weave_size} | NextB#block.block_index ],
-								ar:info(
-									[
-										switching_v1_to_v2_block_index,
-										{height, NextB#block.height},
-										{block, ar_util:encode(NextB#block.header_hash)}
-									]
-								),
-								X;
-							false ->
-								[ {NextB#block.indep_hash, NextB#block.weave_size} | BI ]
-						end,
 					ar_storage:write_block_block_index(BinID, NewBI),
 					ar_miner_log:mined_block(NextB#block.indep_hash),
 					ar:report_console(
@@ -723,8 +707,8 @@ integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp, POA) ->
 						),
 					{ok, ar_node_utils:reset_miner(
 						StateNew#{
-							block_index          => NewBI2,
-							current              => element(1, hd(NewBI2)),
+							block_index          => NewBI,
+							current              => element(1, hd(NewBI)),
 							gossip               => NewGS,
 							txs                  => ValidTXs,
 							height               => NextB#block.height,

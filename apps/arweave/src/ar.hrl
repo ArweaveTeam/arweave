@@ -278,7 +278,6 @@
 	height = -1, % How many blocks have passed since the Genesis block?
 	hash = <<>>, % A hash of this block, the previous block and the recall block.
 	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
-	header_hash = <<>>, % Hash of this block (for use in post-v2)
 	txs = [], % A list of tx records in full blocks, or a list of tx ids in block shadows.
 	tx_root = <<>>, % Merkle root of the tree of ordered TXs.
 	tx_tree = [], % The tree data structure of TXs. Not stored.
