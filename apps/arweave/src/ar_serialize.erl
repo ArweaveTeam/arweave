@@ -235,7 +235,7 @@ json_struct_to_block({BlockStruct}) ->
 		),
 		block_index =
 			case BI of
-				undefined -> [];
+				undefined -> unset;
 				_		  -> json_struct_to_block_index(BI)
 			end,
 		wallet_list =
