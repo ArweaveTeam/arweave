@@ -16,10 +16,10 @@ generate([B]) when is_record(B, block) ->
 	generate(B);
 generate(B) when is_record(B, block) ->
 	generate([{B#block.indep_hash, 0}]);
-generate([B|_]) when is_record(B, block) -> 
+generate([B | _]) when is_record(B, block) ->
 	generate(B);
 generate([]) -> unavailable;
-generate([{Seed, WeaveSize}|_] = BI) ->
+generate([{Seed, WeaveSize} | _] = BI) ->
 	ar:info([{generating_poa_for_block_after, ar_util:encode(Seed)}]),
 	case length(BI) >= ar_fork:height_2_0() of
 		true ->
@@ -134,15 +134,15 @@ search(X, [{X,_}|_]) -> 0;
 search(X, [_|R]) -> 1 + search(X, R).
 
 %% @doc Validate a complete proof of access object.
-validate(LastHeaderHash, WeaveSize, BI, RawPOA) ->
+validate(LastIndepHash, WeaveSize, BI, RawPOA) ->
 	POA = RawPOA#poa { recall_block = ar_storage:read_block(RawPOA#poa.recall_block, BI)}, 
-	ChallengeByte = calculate_challenge_byte(LastHeaderHash, WeaveSize, POA#poa.option),
+	ChallengeByte = calculate_challenge_byte(LastIndepHash, WeaveSize, POA#poa.option),
 	{ChallengeBlock, BlockBase} = find_challenge_block(ChallengeByte, BI),
 	validate_recall_block(ChallengeByte - BlockBase, ChallengeBlock, POA).
 
 calculate_challenge_byte(_, 0, _) -> 0;
-calculate_challenge_byte(LastHeaderHash, WeaveSize, Option) ->
-	binary:decode_unsigned(multihash(LastHeaderHash, Option)) rem WeaveSize.
+calculate_challenge_byte(LastIndepHash, WeaveSize, Option) ->
+	binary:decode_unsigned(multihash(LastIndepHash, Option)) rem WeaveSize.
 
 multihash(X, Remaining) when Remaining =< 0 -> X;
 multihash(X, Remaining) ->
@@ -164,10 +164,10 @@ find_byte_in_size_tagged_list(Byte, [_ | Rest]) ->
 
 validate_recall_block(BlockOffset, ChallengeBH, POA) ->
 	ar:info([
-		{poa_validation_rb, ar_util:encode(ar_weave:header_hash(POA#poa.recall_block))},
+		{poa_validation_rb, ar_util:encode(ar_weave:indep_hash_post_fork_2_0(POA#poa.recall_block))},
 		{challenge, ar_util:encode(ChallengeBH)}
 	]),
-	case ar_weave:header_hash(POA#poa.recall_block) of
+	case ar_weave:indep_hash_post_fork_2_0(POA#poa.recall_block) of
 		ChallengeBH -> validate_tx_path(BlockOffset, POA);
 		_ -> false
 	end.
@@ -208,7 +208,7 @@ validate_data_path(BlockOffset, POA) ->
 	ar:info(
 		[
 			poa_verification,
-			{block_header_hash, ar_util:encode((POA#poa.recall_block)#block.header_hash)},
+			{block_indep_hash, ar_util:encode((POA#poa.recall_block)#block.indep_hash)},
 			{tx, ar_util:encode((POA#poa.tx)#tx.id)},
 			{tx_start_offset, TXStartOffset},
 			{tx_end_offset, TXEndOffset},

@@ -1,6 +1,6 @@
 -module(ar_weave).
 -export([init/0, init/1, init/2, init/3, add/1, add/2, add/3, add/4, add/6, add/7, add/11]).
--export([hash/3, indep_hash/1, header_hash/1]).
+-export([hash/3, indep_hash/1, indep_hash_post_fork_2_0/1]).
 -export([verify_indep/2]).
 -export([generate_block_index/1]).
 -export([is_data_on_block_list/2]).
@@ -37,8 +37,7 @@ init(WalletList, StartingDiff, RewardPool) ->
 					_ -> []
 				end
 		},
-	B1TS = B0#block { last_retarget = B0#block.timestamp },
-	B1 = B1TS#block { header_hash = header_hash(B1TS) },
+	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
 -else.
 init() -> init(ar_util:genesis_wallets()).
@@ -63,8 +62,7 @@ init(WalletList, StartingDiff, RewardPool) ->
 			timestamp = os:system_time(seconds),
 			votables = ar_votable:init()
 		},
-	B1TS = B0#block { last_retarget = B0#block.timestamp },
-	B1 = B1TS#block { header_hash = header_hash(B1TS) },
+	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
 -endif.
 
@@ -184,7 +182,7 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 				),
 				{H, CP};
 			_ when NewHeight > Fork_2_0 ->
-				{ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.header_hash), BI};
+				{ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.indep_hash), BI};
 			_ when NewHeight < ?FORK_1_6 ->
 				{<<>>, BI};
 			_ when NewHeight == ?FORK_1_6 ->
@@ -201,11 +199,7 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 	NewB =
 		#block {
 			nonce = Nonce,
-			previous_block =
-				case NewHeight >= Fork_2_0 of
-					true -> CurrentB#block.header_hash;
-					false -> CurrentB#block.indep_hash
-				end,
+			previous_block = CurrentB#block.indep_hash,
 			timestamp = Timestamp,
 			last_retarget =
 				case ar_retarget:is_retarget_height(NewHeight) of
@@ -244,12 +238,7 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 				end,
 			votables = NewVotables
 		},
-	NewBHH = NewB#block { header_hash = header_hash(NewB)},
-	[
-		NewBHH#block {
-			indep_hash = indep_hash(NewBHH)
-		}
-	|BI].
+	[NewB#block { indep_hash = indep_hash(NewB) } | BI].
 
 %% @doc Take a complete block list and return a list of block hashes.
 %% Throws an error if the block list is not complete.
@@ -304,10 +293,10 @@ hash(BDS, Nonce, Height) ->
 
 %% @doc Create an independent hash from a block. Independent hashes
 %% verify a block's contents in isolation and are stored in a node's hash list.
-indep_hash(#block { height = Height, header_hash = HH } = B) ->
+indep_hash(#block { height = Height } = B) ->
 	case Height >= ar_fork:height_2_0() of
 		true ->
-			HH;
+			indep_hash_post_fork_2_0(B);
 		false ->
 			indep_hash_pre_fork_2_0(B)
 	end.
@@ -396,9 +385,7 @@ indep_hash_pre_fork_2_0(#block {
 		)
 	).
 
-%% @doc Create an independent hash from a block. Independent hashes
-%% verify a block's contents in isolation and are stored in a node's hash list.
-header_hash(B) ->
+indep_hash_post_fork_2_0(B) ->
 	WLH = ar_block:hash_wallet_list(B#block.wallet_list),
 	ar_deep_hash:hash([
 		B#block.hash,
