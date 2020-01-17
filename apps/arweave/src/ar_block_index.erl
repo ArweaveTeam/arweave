@@ -41,8 +41,8 @@ stop(ETSOwner) ->
 
 %% @doc Add an index for a given block to the database.
 add(B, Filename) ->
-	add(B#block.height, B#block.indep_hash, Filename),
-	add(B#block.height, B#block.header_hash, Filename).
+	add(B#block.height, B#block.indep_hash, Filename).
+
 add(Height, Hash, Filename) when is_list(Filename) ->
 	ets:insert(?MODULE, [{Height, Filename}, {Hash, Filename}]).
 
