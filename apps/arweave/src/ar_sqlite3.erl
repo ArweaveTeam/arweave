@@ -24,11 +24,7 @@
 
 %% Time to wait for the NIF thread to send back the query results.
 %% Set to 4.5s.
--define(ESQLITE_NIF_TIMEOUT, 4500).
-
-%% Copied from DEFAULT_CHUNK_SIZE in esqlite3.erl
--define(ESQLITE_CHUNK_SIZE, 5000).
-
+-define(DRIVER_TIMEOUT, 4500).
 
 %% The migration name should follow the format YYYYMMDDHHMMSS_human_readable_name
 %% where the date is picked at the time of naming the migration.
@@ -144,15 +140,16 @@ init(Opts) ->
 		ar:info([{ar_sqlite3, init}, {data_dir, DataDir}]),
 		DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
 		ok = filelib:ensure_dir(DbPath),
-		{ok, Conn} = esqlite3:open(DbPath),
+		ok = ar_sqlite3_driver:start_link(),
+		{ok, Conn} = ar_sqlite3_driver:open(DbPath, ?DRIVER_TIMEOUT),
 		ok = ensure_meta_table_created(Conn),
 		ok = ensure_schema_created(Conn),
-		{ok, InsertBlockStmt} = esqlite3:prepare(?INSERT_BLOCK_SQL, Conn),
-		{ok, InsertTxStmt} = esqlite3:prepare(?INSERT_TX_SQL, Conn),
-		{ok, InsertTagStmt} = esqlite3:prepare(?INSERT_TAG_SQL, Conn),
-		{ok, SelectTxByIdStmt} = esqlite3:prepare(?SELECT_TX_BY_ID_SQL, Conn),
-		{ok, SelectBlockByTxIdStmt} = esqlite3:prepare(?SELECT_BLOCK_BY_TX_ID_SQL, Conn),
-		{ok, SelectTagsByTxIdStmt} = esqlite3:prepare(?SELECT_TAGS_BY_TX_ID_SQL, Conn),
+		{ok, InsertBlockStmt} = ar_sqlite3_driver:prepare(Conn, ?INSERT_BLOCK_SQL, ?DRIVER_TIMEOUT),
+		{ok, InsertTxStmt} = ar_sqlite3_driver:prepare(Conn, ?INSERT_TX_SQL, ?DRIVER_TIMEOUT),
+		{ok, InsertTagStmt} = ar_sqlite3_driver:prepare(Conn, ?INSERT_TAG_SQL, ?DRIVER_TIMEOUT),
+		{ok, SelectTxByIdStmt} = ar_sqlite3_driver:prepare(Conn, ?SELECT_TX_BY_ID_SQL, ?DRIVER_TIMEOUT),
+		{ok, SelectBlockByTxIdStmt} = ar_sqlite3_driver:prepare(Conn, ?SELECT_BLOCK_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
+		{ok, SelectTagsByTxIdStmt} = ar_sqlite3_driver:prepare(Conn, ?SELECT_TAGS_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
 		{ok, #{
 			data_dir => DataDir,
 			conn => Conn,
@@ -171,13 +168,14 @@ init(Opts) ->
 
 handle_call({select_tx_by_id, ID}, _, State) ->
 	#{ select_tx_by_id_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, [ID]),
+	ok = ar_sqlite3_driver:bind(Stmt, [ID], ?DRIVER_TIMEOUT),
 	{Time, Reply} = timer:tc(fun() ->
-		case esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT) of
-			{row, Tuple} when is_tuple(Tuple) -> {ok, tx_map(Tuple)};
-			'$done' -> not_found
+		case ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT) of
+			{row, Row} -> {ok, tx_map(Row)};
+			done -> not_found
 		end
 	end),
+	ok = ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
 	ok = case Time of
 		T when T > ?LONG_QUERY_TIME ->
 			ar:warn([
@@ -201,7 +199,7 @@ handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 		" ORDER BY block.height DESC, tx.id DESC"
 	]),
 	{Time, Reply} = timer:tc(fun() ->
-		case esqlite3:q(SQL, Params, Conn, ?ESQLITE_NIF_TIMEOUT) of
+		case sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT) of
 			Rows when is_list(Rows) ->
 				lists:map(fun tx_map/1, Rows)
 		end
@@ -222,13 +220,14 @@ handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 	{reply, Reply, State};
 handle_call({select_block_by_tx_id, TXID}, _, State) ->
 	#{ select_block_by_tx_id_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, [TXID]),
+	ok = ar_sqlite3_driver:bind(Stmt, [TXID], ?DRIVER_TIMEOUT),
 	{Time, Reply} = timer:tc(fun() ->
-		case esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT) of
-			{row, Tuple} when is_tuple(Tuple) -> {ok, block_map(Tuple)};
-			'$done' -> not_found
+		case ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT) of
+			{row, Row} -> {ok, block_map(Row)};
+			done -> not_found
 		end
 	end),
+	ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
 	ok = case Time of
 		T when T > ?LONG_QUERY_TIME ->
 			ar:warn([
@@ -245,9 +244,8 @@ handle_call({select_block_by_tx_id, TXID}, _, State) ->
 	{reply, Reply, State};
 handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 	#{ select_tags_by_tx_id_stmt := Stmt } = State,
-	ok = esqlite3:bind(Stmt, [TXID]),
 	{Time, Reply} = timer:tc(fun() ->
-		case esqlite3:fetchall(Stmt, ?ESQLITE_CHUNK_SIZE, ?ESQLITE_NIF_TIMEOUT) of
+		case stmt_fetchall(Stmt, [TXID], ?DRIVER_TIMEOUT) of
 			Rows when is_list(Rows) ->
 				lists:map(fun tags_map/1, Rows)
 		end
@@ -267,7 +265,7 @@ handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 	end,
 	{reply, Reply, State};
 handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
-	{Time, {Reply, SQL, Params}} = timer:tc(fun() ->
+	{Time, {Reply, _SQL, _Params}} = timer:tc(fun() ->
 		case catch eval_legacy_arql_where_clause(Query) of
 			{WhereClause, Params} ->
 				SQL = lists:concat([
@@ -276,14 +274,9 @@ handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 					"WHERE ", WhereClause,
 					" ORDER BY block.height DESC, tx.id DESC"
 				]),
-				case catch esqlite3:q(SQL, Params, Conn, ?ESQLITE_NIF_TIMEOUT) of
+				case sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT) of
 					Rows when is_list(Rows) ->
-						{lists:map(fun({TXID}) -> TXID end, Rows), SQL, Params};
-					{error, {sqlite_error, "parser stack overflow"}} ->
-						{sqlite_parser_stack_overflow, SQL, Params};
-					Error ->
-						ar:warn([{ar_sqlite3, eval_legacy_arql}, {error, Error}]),
-						{bad_query, SQL, Params}
+						{lists:map(fun([TXID]) -> TXID end, Rows), SQL, Params}
 				end;
 			bad_query ->
 				{bad_query, 'n/a', 'n/a'}
@@ -314,24 +307,27 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 		insert_tag_stmt := InsertTagStmt
 	} = State,
 	{Time, ok} = timer:tc(fun() ->
-		ok = esqlite3:exec("BEGIN TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
-		ok = esqlite3:bind(InsertBlockStmt, BlockFields),
-		'$done' = esqlite3:step(InsertBlockStmt, ?ESQLITE_NIF_TIMEOUT),
+		ok = ar_sqlite3_driver:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3_driver:bind(InsertBlockStmt, BlockFields, ?DRIVER_TIMEOUT),
+		done = ar_sqlite3_driver:step(InsertBlockStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3_driver:reset(InsertBlockStmt, ?DRIVER_TIMEOUT),
 		lists:foreach(
 			fun(TxFields) ->
-				ok = esqlite3:bind(InsertTxStmt, TxFields),
-				'$done' = esqlite3:step(InsertTxStmt, ?ESQLITE_NIF_TIMEOUT)
+				ok = ar_sqlite3_driver:bind(InsertTxStmt, TxFields, ?DRIVER_TIMEOUT),
+				done = ar_sqlite3_driver:step(InsertTxStmt, ?DRIVER_TIMEOUT),
+				ok = ar_sqlite3_driver:reset(InsertTxStmt, ?DRIVER_TIMEOUT)
 			end,
 			TxFieldsList
 		),
 		lists:foreach(
 			fun(TagFields) ->
-				ok = esqlite3:bind(InsertTagStmt, TagFields),
-				'$done' = esqlite3:step(InsertTagStmt, ?ESQLITE_NIF_TIMEOUT)
+				ok = ar_sqlite3_driver:bind(InsertTagStmt, TagFields, ?DRIVER_TIMEOUT),
+				done = ar_sqlite3_driver:step(InsertTagStmt, ?DRIVER_TIMEOUT),
+				ok = ar_sqlite3_driver:reset(InsertTagStmt, ?DRIVER_TIMEOUT)
 			end,
 			TagFieldsList
 		),
-		ok = esqlite3:exec("COMMIT TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
+		ok = ar_sqlite3_driver:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
 		ok
 	end),
 	ok = case Time of
@@ -348,9 +344,24 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 	end,
 	{noreply, State}.
 
-terminate(Reason, #{conn := Conn}) ->
+terminate(Reason, State) ->
+	#{
+		conn := Conn,
+		insert_block_stmt := InsertBlockStmt,
+		insert_tx_stmt := InsertTxStmt,
+		insert_tag_stmt := InsertTagStmt,
+		select_tx_by_id_stmt := SelectTxByIdStmt,
+		select_block_by_tx_id_stmt := SelectBlockByTxIdStmt,
+		select_tags_by_tx_id_stmt := SelectTagsByTxIdStmt
+	} = State,
 	ar:info([{ar_sqlite3, terminate}, {reason, Reason}]),
-	case catch esqlite3:close(Conn) of
+	ar_sqlite3_driver:finalize(InsertBlockStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3_driver:finalize(InsertTxStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3_driver:finalize(InsertTagStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3_driver:finalize(SelectTxByIdStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3_driver:finalize(SelectBlockByTxIdStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3_driver:finalize(SelectTagsByTxIdStmt, ?DRIVER_TIMEOUT),
+	case catch ar_sqlite3_driver:close(Conn, ?DRIVER_TIMEOUT) of
 		ok ->
 			ok;
 		Error ->
@@ -362,45 +373,45 @@ terminate(Reason, #{conn := Conn}) ->
 %%%===================================================================
 
 ensure_meta_table_created(Conn) ->
-	case esqlite3:q("
+	case sql_fetchone(Conn, "
 		SELECT 1 FROM sqlite_master
 		WHERE type = 'table' AND name = 'migration'
-	", [], Conn, ?ESQLITE_NIF_TIMEOUT) of
-		[{1}] -> ok;
-		[] -> create_meta_table(Conn)
+	", ?DRIVER_TIMEOUT) of
+		{row, [1]} -> ok;
+		done -> create_meta_table(Conn)
 	end.
 
 create_meta_table(Conn) ->
 	ar:info([{ar_sqlite3, creating_meta_table}]),
-	ok = esqlite3:exec(?CREATE_MIGRATION_TABLE_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
+	ok = ar_sqlite3_driver:exec(Conn, ?CREATE_MIGRATION_TABLE_SQL, ?DRIVER_TIMEOUT),
 	ok.
 
 ensure_schema_created(Conn) ->
-	case esqlite3:q("
+	case sql_fetchone(Conn, "
 		SELECT 1 FROM migration
 		WHERE name = '20191009160000_schema_created'
-	", [], Conn, ?ESQLITE_NIF_TIMEOUT) of
-		[{1}] -> ok;
-		[] -> create_schema(Conn)
+	", ?DRIVER_TIMEOUT) of
+		{row, [1]} -> ok;
+		done -> create_schema(Conn)
 	end.
 
 create_schema(Conn) ->
 	ar:info([{ar_sqlite3, creating_schema}]),
-	ok = esqlite3:exec("BEGIN TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
-	ok = esqlite3:exec(?CREATE_TABLES_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
-	ok = esqlite3:exec(?CREATE_INDEXES_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
-	[] = esqlite3:q("INSERT INTO migration VALUES ('20191009160000_schema_created', ?)", [sql_now()], Conn, ?ESQLITE_NIF_TIMEOUT),
-	ok = esqlite3:exec("COMMIT TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
+	ok = ar_sqlite3_driver:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3_driver:exec(Conn, ?CREATE_TABLES_SQL, ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3_driver:exec(Conn, ?CREATE_INDEXES_SQL, ?DRIVER_TIMEOUT),
+	done = sql_fetchone(Conn, "INSERT INTO migration VALUES ('20191009160000_schema_created', ?)", [sql_now()], ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3_driver:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
 	ok.
 
 ensure_db_populated(BHL, #{ conn := Conn} = State) ->
-	case esqlite3:q("
+	case sql_fetchone(Conn, "
 		SELECT 1 FROM migration
 		WHERE name = '20191015153000_db_populated'
-	", [], Conn, ?ESQLITE_NIF_TIMEOUT) of
-		[{1}] ->
+	", ?DRIVER_TIMEOUT) of
+		{row, [1]} ->
 			ok;
-		[] ->
+		done ->
 			ar:info([{ar_sqlite3, populating_db}]),
 			{Time, ok} = timer:tc(fun() -> ok = do_populate_db(BHL, State) end),
 			ar:info([{ar_sqlite3, populated_db}, {time, Time}]),
@@ -408,27 +419,65 @@ ensure_db_populated(BHL, #{ conn := Conn} = State) ->
 	end.
 
 do_populate_db(BHL, #{ conn := Conn} = State) ->
-	ok = esqlite3:exec("BEGIN TRANSACTION", Conn, ?ESQLITE_NIF_TIMEOUT),
-	ok = esqlite3:exec(?DROP_INDEXES_SQL, Conn, ?ESQLITE_NIF_TIMEOUT),
+	ok = ar_sqlite3_driver:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3_driver:exec(Conn, ?DROP_INDEXES_SQL, ?DRIVER_TIMEOUT),
 	ok = lists:foreach(fun(BH) ->
 		ok = insert_block_json(BH, State)
 	end, BHL),
-	ok = esqlite3:exec(?CREATE_INDEXES_SQL, Conn, infinity),
-	[] = esqlite3:q("INSERT INTO migration VALUES ('20191015153000_db_populated', ?)", [sql_now()], Conn, ?ESQLITE_NIF_TIMEOUT),
-	ok = esqlite3:exec("COMMIT TRANSACTION", Conn, infinity),
+	ok = ar_sqlite3_driver:exec(Conn, ?CREATE_INDEXES_SQL, infinity),
+	done = sql_fetchone(Conn, "INSERT INTO migration VALUES ('20191015153000_db_populated', ?)", [sql_now()], ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3_driver:exec(Conn, "COMMIT TRANSACTION", infinity),
 	ok.
+
+sql_fetchone(Conn, SQL, Timeout) -> sql_fetchone(Conn, SQL, [], Timeout).
+sql_fetchone(Conn, SQL, Params, Timeout) ->
+	{ok, Stmt} = ar_sqlite3_driver:prepare(Conn, SQL, Timeout),
+	ok = ar_sqlite3_driver:bind(Stmt, Params, Timeout),
+	Result = ar_sqlite3_driver:step(Stmt, Timeout),
+	ok = ar_sqlite3_driver:finalize(Stmt, Timeout),
+	Result.
+
+sql_fetchall(Conn, SQL, Params, Timeout) ->
+	{ok, Stmt} = ar_sqlite3_driver:prepare(Conn, SQL, Timeout),
+	Results = stmt_fetchall(Stmt, Params, Timeout),
+	ar_sqlite3_driver:finalize(Stmt, Timeout),
+	Results.
+
+stmt_fetchall(Stmt, Params, Timeout) ->
+	ok = ar_sqlite3_driver:bind(Stmt, Params, Timeout),
+	From = self(),
+	Ref = make_ref(),
+	spawn_link(fun() ->
+		From ! {Ref, collect_sql_results(Stmt)}
+	end),
+	Results =
+		receive
+			{Ref, R} -> R
+		after Timeout ->
+			error(timeout)
+		end,
+	ar_sqlite3_driver:reset(Stmt, Timeout),
+	Results.
+
+collect_sql_results(Stmt) -> collect_sql_results(Stmt, []).
+collect_sql_results(Stmt, Acc) ->
+	case ar_sqlite3_driver:step(Stmt, infinity) of
+		{row, Row} -> collect_sql_results(Stmt, [Row | Acc]);
+		done -> lists:reverse(Acc)
+	end.
 
 insert_block_json(BH,  Env) ->
 	#{ data_dir := DataDir, insert_block_stmt := Stmt } = Env,
 	case read_block(BH, DataDir) of
 		{ok, BlockMap} ->
-			ok = esqlite3:bind(Stmt, [
+			ok = ar_sqlite3_driver:bind(Stmt, [
 				maps:get(<<"indep_hash">>, BlockMap),
 				maps:get(<<"previous_block">>, BlockMap),
 				maps:get(<<"height">>, BlockMap),
 				maps:get(<<"timestamp">>, BlockMap)
-			]),
-			'$done' = esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT),
+			], ?DRIVER_TIMEOUT),
+			done = ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT),
+			ok = ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
 			ok = lists:foreach(fun(TXHash) ->
 				ok = insert_tx_json(TXHash, maps:get(<<"indep_hash">>, BlockMap), Env)
 			end, maps:get(<<"txs">>, BlockMap)),
@@ -441,7 +490,7 @@ insert_tx_json(TXHash, BlockIndepHash, Env) ->
 	#{ insert_tx_stmt := Stmt, data_dir := DataDir } = Env,
 	case read_tx(TXHash, DataDir) of
 		{ok, TxMap} ->
-			ok = esqlite3:bind(Stmt, [
+			ok = ar_sqlite3_driver:bind(Stmt, [
 				maps:get(<<"id">>, TxMap),
 				BlockIndepHash,
 				maps:get(<<"last_tx">>, TxMap),
@@ -451,8 +500,9 @@ insert_tx_json(TXHash, BlockIndepHash, Env) ->
 				maps:get(<<"quantity">>, TxMap),
 				maps:get(<<"signature">>, TxMap),
 				maps:get(<<"reward">>, TxMap)
-			]),
-			'$done' = esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT),
+			], ?DRIVER_TIMEOUT),
+			done = ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT),
+			ok = ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
 			ok = lists:foreach(fun(TagMap) ->
 				ok = insert_tag_json(TagMap, maps:get(<<"id">>, TxMap), Env)
 			end, maps:get(<<"tags">>, TxMap)),
@@ -462,12 +512,13 @@ insert_tx_json(TXHash, BlockIndepHash, Env) ->
 	end.
 
 insert_tag_json(TagMap, TXID, #{ insert_tag_stmt := Stmt }) ->
-	ok = esqlite3:bind(Stmt, [
+	ok = ar_sqlite3_driver:bind(Stmt, [
 		TXID,
 		ar_util:decode(maps:get(<<"name">>, TagMap)),
 		ar_util:decode(maps:get(<<"value">>, TagMap))
-	]),
-	'$done' = esqlite3:step(Stmt, ?ESQLITE_NIF_TIMEOUT),
+	], ?DRIVER_TIMEOUT),
+	done = ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
 	ok.
 
 read_block(BH, _DataDir) ->
@@ -563,7 +614,7 @@ select_txs_by_where_clause_tags(Tags) ->
 			}
 	end, {"1", []}, Tags).
 
-tx_map({
+tx_map([
 	Id,
 	BlockIndepHash,
 	LastTx,
@@ -573,7 +624,7 @@ tx_map({
 	Quantity,
 	Signature,
 	Reward
-}) -> #{
+]) -> #{
 	id => Id,
 	block_indep_hash => BlockIndepHash,
 	last_tx => LastTx,
@@ -585,19 +636,19 @@ tx_map({
 	reward => Reward
 }.
 
-block_map({
+block_map([
 	IndepHash,
 	PreviousBlock,
 	Height,
 	Timestamp
-}) -> #{
+]) -> #{
 	indep_hash => IndepHash,
 	previous_block => PreviousBlock,
 	height => Height,
 	timestamp => Timestamp
 }.
 
-tags_map({TxId, Name, Value}) ->
+tags_map([TxId, Name, Value]) ->
 	#{
 		tx_id => TxId,
 		name => Name,

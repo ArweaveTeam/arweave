@@ -11,7 +11,7 @@ execute(_, #{ id := TXID }, <<"tags">>, #{}) ->
 execute(_, #{ id := TXID }, <<"tagValue">>, #{ <<"tagName">> := TagName }) ->
 	Tags = ar_sqlite3:select_tags_by_tx_id(TXID),
 	case lists:search(
-		fun(#{ name := Name }) -> Name == TagName end,
+		fun(#{ name := Name }) -> string:equal(Name, TagName) end,
 		prune_non_unicode_tags(Tags)
 	) of
 		{value, #{ value := Value }} -> {ok, Value};
