@@ -56,10 +56,6 @@ save_checkpoint(File, Checkpoint) ->
     JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(Checkpoint)),
     file:write_file(File, JSON).
 
--ifdef(DEBUG).
-load_checkpoint() -> [].
-load_checkpoint(_) -> [].
--else.
 load_checkpoint() ->
     load_checkpoint(ar_meta_db:get(checkpoint_location)).
 load_checkpoint(File) ->
@@ -78,4 +74,3 @@ load_checkpoint(File) ->
             io:format("Checkpoint not loaded. Starting from genesis block..."),
             []
     end.
--endif.
