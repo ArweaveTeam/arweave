@@ -261,8 +261,8 @@ get_block_index(Peer) ->
 			p2p_headers()
 		),
 	case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)) of
-		BI = [{_H, _WS}] -> BI;
-		Hs -> [ {H, 0} || H <- Hs ]
+		BI = [{_H, _WS} | _] -> BI;
+		Hashes -> [{H, 0} || H <- Hashes]
 	end.
 
 get_block_index(Peer, Hash) ->
@@ -568,17 +568,17 @@ reconstruct_full_block(Peer, Peers, Body, BI) ->
 			BBI =
 				case B#block.block_index of
 					unset ->
-						XBI =
-							case B#block.block_index of
-								Hs = [H|_] when is_binary(H) ->
-									[ {XH, 0} || XH <- Hs ];
-								_ -> B#block.block_index
-							end,
 						ar_block:generate_block_index_for_block(
-							B#block { block_index = XBI },
+							B,
 							BI
 						);
-					XBI -> XBI
+					XBI ->
+						case XBI of
+							Hashes = [H | _] when is_binary(H) ->
+								[{XH, 0} || XH <- Hashes];
+							_ ->
+								XBI
+						end
 				end,
 			MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node)),
 			case {get_txs(Peers, MempoolTXs, B), WalletList} of
