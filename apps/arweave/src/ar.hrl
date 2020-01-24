@@ -215,6 +215,8 @@
 -define(ENCRYPTED_BLOCK_DIR, "blocks/enc").
 -define(TX_DIR, "txs").
 
+-define(FORK_2_0_CHECKPOINT_FILE, "fork_2_0_checkpoint").
+
 %% @doc Backup block hash list storage directory.
 -define(HASH_LIST_DIR, "hash_lists").
 %% @doc Directory for storing miner wallets.
