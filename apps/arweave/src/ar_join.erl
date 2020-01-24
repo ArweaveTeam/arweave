@@ -205,7 +205,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, _, BlockTXPairs) when NewB#block
 	ar_storage:write_full_block(NewB),
 	PreviousBlock = ar_node:get_block(
 		Peers,
-		NewB#block.previous_block,
+		element(1, hd(NewB#block.block_index)),
 		NewB#block.block_index
 	),
 	ar_storage:write_block(PreviousBlock),
@@ -222,7 +222,7 @@ get_block_and_trail(_, _, 0, _, BlockTXPairs) ->
 get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 	PreviousBlock = ar_node_utils:get_full_block(
 		Peers,
-		NewB#block.previous_block,
+		element(1, hd(NewB#block.block_index)),
 		NewB#block.block_index
 	),
 	case ?IS_BLOCK(PreviousBlock) of
