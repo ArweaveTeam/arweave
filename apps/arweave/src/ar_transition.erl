@@ -12,73 +12,73 @@
 %%% node is prepared for the upgrade.
 
 am_i_ready() ->
-    ToGo = ar_fork:height_2_0() - length(load_checkpoint()),
-    io:format(
-        "During the Arweave 2.0 upgrade you will have to re-verify ~w blocks.~n",
-        [ToGo]
-    ),
-    io:format("In order to lower the amount of work required during the upgrade "
-        "please run `ar_transition:generate_checkpoint().`~n"),
-    ToGo.
+	ToGo = ar_fork:height_2_0() - length(load_checkpoint()),
+	io:format(
+		"During the Arweave 2.0 upgrade you will have to re-verify ~w blocks.~n",
+		[ToGo]
+	),
+	io:format("In order to lower the amount of work required during the upgrade "
+		"please run `ar_transition:generate_checkpoint().`~n"),
+	ToGo.
 
 generate_checkpoint() ->
-    generate_checkpoint(ar_node:get_block_index(whereis(entrypoint_node))).
+	generate_checkpoint(ar_node:get_block_index(whereis(entrypoint_node))).
 generate_checkpoint(BI) ->
-    Checkpoint = generate_checkpoint(BI, load_checkpoint()),
-    io:format("Generated checkpoint to height ~w. Saving...~n", [length(Checkpoint)]),
-    save_checkpoint(Checkpoint),
-    Checkpoint.
+	Checkpoint = generate_checkpoint(BI, load_checkpoint()),
+	io:format("Generated checkpoint to height ~w. Saving...~n", [length(Checkpoint)]),
+	save_checkpoint(Checkpoint),
+	Checkpoint.
 generate_checkpoint(BI, CP) ->
-    lists:reverse(do_generate_checkpoint(lists:reverse(?BI_TO_BHL(BI)), lists:reverse(CP), BI)).
+	lists:reverse(do_generate_checkpoint(lists:reverse(?BI_TO_BHL(BI)), lists:reverse(CP), BI)).
 
 do_generate_checkpoint([], [], _) -> [];
 do_generate_checkpoint([_ | HL], [CPEntry | CP], BI) ->
-    [CPEntry|do_generate_checkpoint(HL, CP, BI)];
+	[CPEntry|do_generate_checkpoint(HL, CP, BI)];
 do_generate_checkpoint([H | HL], [], BI) ->
-    RawB =
-        ar_node:get_block(
-            ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-            H,
-            BI
-        ),
-    case ar_block:verify_indep_hash(RawB) of
-        false ->
+	RawB =
+		ar_node:get_block(
+			ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+			H,
+			BI
+		),
+	case ar_block:verify_indep_hash(RawB) of
+		false ->
 			ar:err([{module, ar_transition}, {event, incorrect_indep_hash}, {hash, ar_util:encode(H)}]),
-            error;
-        true ->
-            BWithTree = ar_block:generate_tx_tree(RawB#block { txs = ar_storage:read_tx(RawB#block.txs) }),
-            B = BWithTree#block { indep_hash = ar_weave:indep_hash_post_fork_2_0(BWithTree) },
+			error;
+		true ->
+			BWithTree = ar_block:generate_tx_tree(RawB#block { txs = ar_storage:read_tx(RawB#block.txs) }),
+			B = BWithTree#block { indep_hash = ar_weave:indep_hash_post_fork_2_0(BWithTree) },
 			ar:err([transition, writing_block, ar_util:encode(ar_weave:indep_hash_post_fork_2_0(BWithTree))]),
-            ar_storage:write_block(B),
-            [{B#block.indep_hash, B#block.weave_size} | do_generate_checkpoint(HL, [], BI)]
-    end.
+			ar_storage:write_block(B),
+			[{B#block.indep_hash, B#block.weave_size} | do_generate_checkpoint(HL, [], BI)]
+	end.
 
 save_checkpoint(Checkpoint) ->
-    save_checkpoint(checkpoint_location(), Checkpoint).
+	save_checkpoint(checkpoint_location(), Checkpoint).
 
 save_checkpoint(File, Checkpoint) ->
-    JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(Checkpoint)),
-    file:write_file(File, JSON).
+	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(Checkpoint)),
+	file:write_file(File, JSON).
 
 load_checkpoint() ->
-    load_checkpoint(checkpoint_location()).
+	load_checkpoint(checkpoint_location()).
 
 load_checkpoint(File) ->
-    case file:read_file(File) of
-        {ok, Bin} ->
-            CP = ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Bin)),
-            ar:info(
-                [
-                    loaded_v2_block_index,
-                    {file, File},
-                    {cp, CP}
-                ]
-            ),
-            CP;
-        _ ->
-            io:format("Checkpoint not loaded. Starting from genesis block..."),
-            []
-    end.
+	case file:read_file(File) of
+		{ok, Bin} ->
+			CP = ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Bin)),
+			ar:info(
+				[
+					loaded_v2_block_index,
+					{file, File},
+					{cp, CP}
+				]
+			),
+			CP;
+		_ ->
+			io:format("Checkpoint not loaded. Starting from genesis block..."),
+			[]
+	end.
 
 checkpoint_location() ->
 	filename:join(ar_meta_db:get(data_dir), ?FORK_2_0_CHECKPOINT_FILE).
