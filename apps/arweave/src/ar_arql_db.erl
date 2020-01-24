@@ -135,36 +135,30 @@ insert_full_block(#block {} = FullBlock) ->
 %%%===================================================================
 
 init(Opts) ->
-	try
-		{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
-		ar:info([{ar_arql_db, init}, {data_dir, DataDir}]),
-		DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
-		ok = filelib:ensure_dir(DbPath),
-		ok = ar_sqlite3:start_link(),
-		{ok, Conn} = ar_sqlite3:open(DbPath, ?DRIVER_TIMEOUT),
-		ok = ensure_meta_table_created(Conn),
-		ok = ensure_schema_created(Conn),
-		{ok, InsertBlockStmt} = ar_sqlite3:prepare(Conn, ?INSERT_BLOCK_SQL, ?DRIVER_TIMEOUT),
-		{ok, InsertTxStmt} = ar_sqlite3:prepare(Conn, ?INSERT_TX_SQL, ?DRIVER_TIMEOUT),
-		{ok, InsertTagStmt} = ar_sqlite3:prepare(Conn, ?INSERT_TAG_SQL, ?DRIVER_TIMEOUT),
-		{ok, SelectTxByIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_TX_BY_ID_SQL, ?DRIVER_TIMEOUT),
-		{ok, SelectBlockByTxIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_BLOCK_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
-		{ok, SelectTagsByTxIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_TAGS_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
-		{ok, #{
-			data_dir => DataDir,
-			conn => Conn,
-			insert_block_stmt => InsertBlockStmt,
-			insert_tx_stmt => InsertTxStmt,
-			insert_tag_stmt => InsertTagStmt,
-			select_tx_by_id_stmt => SelectTxByIdStmt,
-			select_block_by_tx_id_stmt => SelectBlockByTxIdStmt,
-			select_tags_by_tx_id_stmt => SelectTagsByTxIdStmt
-		}}
-	catch
-		Class:Error ->
-			ar:warn([{ar_arql_db, init_failed}, {reason, {Class, Error}}]),
-			{error, {Class, Error}}
-	end.
+	{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
+	ar:info([{ar_arql_db, init}, {data_dir, DataDir}]),
+	DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
+	ok = filelib:ensure_dir(DbPath),
+	ok = ar_sqlite3:start_link(),
+	{ok, Conn} = ar_sqlite3:open(DbPath, ?DRIVER_TIMEOUT),
+	ok = ensure_meta_table_created(Conn),
+	ok = ensure_schema_created(Conn),
+	{ok, InsertBlockStmt} = ar_sqlite3:prepare(Conn, ?INSERT_BLOCK_SQL, ?DRIVER_TIMEOUT),
+	{ok, InsertTxStmt} = ar_sqlite3:prepare(Conn, ?INSERT_TX_SQL, ?DRIVER_TIMEOUT),
+	{ok, InsertTagStmt} = ar_sqlite3:prepare(Conn, ?INSERT_TAG_SQL, ?DRIVER_TIMEOUT),
+	{ok, SelectTxByIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_TX_BY_ID_SQL, ?DRIVER_TIMEOUT),
+	{ok, SelectBlockByTxIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_BLOCK_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
+	{ok, SelectTagsByTxIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_TAGS_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
+	{ok, #{
+		data_dir => DataDir,
+		conn => Conn,
+		insert_block_stmt => InsertBlockStmt,
+		insert_tx_stmt => InsertTxStmt,
+		insert_tag_stmt => InsertTagStmt,
+		select_tx_by_id_stmt => SelectTxByIdStmt,
+		select_block_by_tx_id_stmt => SelectBlockByTxIdStmt,
+		select_tags_by_tx_id_stmt => SelectTagsByTxIdStmt
+	}}.
 
 handle_call({select_tx_by_id, ID}, _, State) ->
 	#{ select_tx_by_id_stmt := Stmt } = State,
@@ -361,12 +355,7 @@ terminate(Reason, State) ->
 	ar_sqlite3:finalize(SelectTxByIdStmt, ?DRIVER_TIMEOUT),
 	ar_sqlite3:finalize(SelectBlockByTxIdStmt, ?DRIVER_TIMEOUT),
 	ar_sqlite3:finalize(SelectTagsByTxIdStmt, ?DRIVER_TIMEOUT),
-	case catch ar_sqlite3:close(Conn, ?DRIVER_TIMEOUT) of
-		ok ->
-			ok;
-		Error ->
-			ar:warn([{ar_arql_db, termination_failed}, {reason, Error}])
-	end.
+	ok = ar_sqlite3:close(Conn, ?DRIVER_TIMEOUT).
 
 %%%===================================================================
 %%% Internal functions.
