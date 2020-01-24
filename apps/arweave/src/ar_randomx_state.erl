@@ -212,22 +212,12 @@ init(Server, SwapHeight, Threads) ->
 	end.
 
 init(Server, SwapHeight, Key, Threads) ->
-	case is_fast_mode_enabled() of
-		true ->
-			ar:console(
-				"Initialising RandomX dataset for fast hashing. Swap height: ~p, Key: ~p. "
-				"The process may take several minutes.~n", [SwapHeight, ar_util:encode(Key)]
-			),
-			Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(Key, Threads)}},
-			ar:console("RandomX dataset initialisation for swap height ~p complete.", [SwapHeight]);
-		false ->
-			ar:console(
-				"Initialising RandomX cache for slow low-memory hashing. "
-				"Swap height: ~p, Key: ~p~n", [SwapHeight, ar_util:encode(Key)]
-			),
-			Server ! {add_randomx_state, SwapHeight, {light, ar_mine_randomx:init_light(Key)}},
-			ar:console("RandomX cache initialisation for swap height ~p complete.", [SwapHeight])
-	end.
+	ar:console(
+		"Initialising RandomX dataset for fast hashing. Swap height: ~p, Key: ~p. "
+		"The process may take several minutes.~n", [SwapHeight, ar_util:encode(Key)]
+	),
+	Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(Key, Threads)}},
+	ar:console("RandomX dataset initialisation for swap height ~p complete.", [SwapHeight]).
 
 %% @doc Return the key used in RandomX by key swap height. The key is the
 %% dependent hash from the block at the previous swap height. If RandomX is used
@@ -308,9 +298,3 @@ get_block(Height, BI, Peers) ->
 		B ->
 			{ok, B}
 	end.
-
--ifdef(DEBUG).
-is_fast_mode_enabled() -> false.
--else.
-is_fast_mode_enabled() -> true.
--endif.
