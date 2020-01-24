@@ -368,21 +368,6 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor)
 	end.
 
--ifdef(DEBUG).
-%% Use RandomX light-mode, where hashing is slow but initialization is fast.
-randomx_hasher(Height) ->
-	case ar_randomx_state:randomx_state_by_height(Height) of
-		{state, {light, LightState}} ->
-			Hasher = fun(Nonce, BDS, _Diff) ->
-				{ar_mine_randomx:hash_light(LightState, << Nonce/binary, BDS/binary >>), Nonce, 1}
-			end,
-			{ok, Hasher};
-		{state, {fast, _}} ->
-			not_found;
-		{key, _} ->
-			not_found
-	end.
--else.
 %% Use RandomX fast-mode, where hashing is fast but initialization is slow.
 randomx_hasher(Height) ->
 	case ar_randomx_state:randomx_state_by_height(Height) of
@@ -396,10 +381,9 @@ randomx_hasher(Height) ->
 		{key, _} ->
 			not_found
 	end.
--endif.
 
 find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
-	{BDSHash, HashNonce, HashesTried}  = Hasher(Nonce, BDS, Diff),
+	{BDSHash, HashNonce, HashesTried} = Hasher(Nonce, BDS, Diff),
 	Supervisor ! {hashes_tried, HashesTried},
 	case validate(BDSHash, Diff, Height) of
 		false ->

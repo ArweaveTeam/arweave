@@ -1,22 +1,47 @@
 -module(ar_mine_randomx).
+
 -on_load(init_nif/0).
+
 -export([init_fast/2, hash_fast/2, init_light/1, hash_light/2]).
 -export([release_state/1]).
 -export([bulk_hash_fast/4]).
 
+%% These exports are required for the DEBUG mode, where these functions are unused.
+-export([init_fast_nif/4, hash_fast_nif/5, bulk_hash_fast_nif/7]).
+
+-include("ar.hrl").
+
+-ifdef(DEBUG).
+init_fast(_Key, _Threads) ->
+	<<"state">>.
+-else.
 init_fast(Key, Threads) ->
 	{ok, FastState} = init_fast_nif(Key, jit(), large_pages(), Threads),
 	FastState.
+-endif.
 
+-ifdef(DEBUG).
+hash_fast(FastState, Data) ->
+	%% Make sure the hash is deterministic and unique, no longer than 48, and bigger than 1 (the debug difficulty).
+	Hash = binary:encode_unsigned(1 + binary:decode_unsigned(<< FastState/binary, Data/binary >>)),
+	list_to_binary(lists:sublist(binary_to_list(Hash), 48)).
+-else.
 hash_fast(FastState, Data) ->
 	{ok, Hash} =
 		hash_fast_nif(FastState, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
+-endif.
 
+-ifdef(DEBUG).
+bulk_hash_fast(FastState, Nonce, BDS, _Diff) ->
+	Hash = binary:encode_unsigned(1 + binary:decode_unsigned(<< FastState/binary, Nonce/binary, BDS/binary >>)),
+	{list_to_binary(lists:sublist(binary_to_list(Hash), 48)), Nonce, 1}.
+-else.
 bulk_hash_fast(FastState, Nonce, BDS, Diff) ->
 	{ok, Hash, HashNonce, HashesTried} =
 		bulk_hash_fast_nif(FastState, Nonce, BDS, binary:encode_unsigned(Diff, big), jit(), large_pages(), hardware_aes()),
 	{Hash, HashNonce, HashesTried}.
+-endif.
 
 init_light(Key) ->
 	{ok, LightState} = init_light_nif(Key, jit(), large_pages()),
