@@ -62,7 +62,7 @@ block_to_json_struct(
 		weave_size = WeaveSize,
 		block_size = BlockSize,
 		cumulative_diff = CDiff,
-		block_index_merkle = MR,
+		hash_list_merkle = MR,
 		poa = POA,
 		votables = Votables
 	}) ->
@@ -122,8 +122,6 @@ block_to_json_struct(
 			{weave_size, WeaveSize},
 			{block_size, BlockSize},
 			{cumulative_diff, JSONCDiff},
-			{block_index_merkle, ar_util:encode(MR)},
-			% TODO: Remove this after all nodes have upgraded to 2.0.
 			{hash_list_merkle, ar_util:encode(MR)},
 			{poa, poa_to_json_struct(POA)},
 			{votables,
@@ -136,7 +134,7 @@ block_to_json_struct(
 		],
 	case Height < ?FORK_1_6 of
 		true ->
-			KeysToDelete = [cumulative_diff, block_index_merkle],
+			KeysToDelete = [cumulative_diff, hash_list_merkle],
 			{delete_keys(KeysToDelete, JSONElements)};
 		false ->
 			{JSONElements}
@@ -199,7 +197,7 @@ json_struct_to_block({BlockStruct}) ->
 		BinaryDiff when Height >= Fork_1_8 -> binary_to_integer(BinaryDiff);
 		D -> D
 	end,
-	MR = case find_value(<<"block_index_merkle">>, BlockStruct) of
+	MR = case find_value(<<"hash_list_merkle">>, BlockStruct) of
 		_ when Height < ?FORK_1_6 -> <<>>;
 		undefined -> <<>>; % In case it's an invalid block (in the pre-fork format)
 		R -> ar_util:decode(R)
@@ -262,7 +260,7 @@ json_struct_to_block({BlockStruct}) ->
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
 		block_size = find_value(<<"block_size">>, BlockStruct),
 		cumulative_diff = CDiff,
-		block_index_merkle = MR,
+		hash_list_merkle = MR,
 		tx_root =
 			case find_value(<<"tx_root">>, BlockStruct) of
 				undefined -> <<>>;

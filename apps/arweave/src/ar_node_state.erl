@@ -36,7 +36,7 @@ start() ->
 		{last_retarget, undefined},         % timestamp at which the last difficulty retarget occurred
 		{weave_size, 0},                    % current size of the weave in bytes (only inc. data tx size)
 		{cumulative_diff, 0},               % Sum of the difficulty squared along the current weave
-		{block_index_merkle, <<>>},         % The Merkle root of the current BI
+		{hash_list_merkle, <<>>},           % The Merkle root of the current hash list
 		{block_txs_pairs, []}               % List of {BH, TXIDs} pairs for last ?MAX_TX_ANCHOR_DEPTH blocks
 	]),
 	{ok, Pid}.

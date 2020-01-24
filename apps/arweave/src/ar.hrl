@@ -282,7 +282,7 @@
 	tx_root = <<>>, % Merkle root of the tree of ordered TXs.
 	tx_tree = [], % The tree data structure of TXs. Not stored.
 	block_index = unset, % A list of all previous indep hashes.
-	block_index_merkle = <<>>, % The merkle root of the block's BI.
+	hash_list_merkle = <<>>, % The merkle root of the block's hash list.
 	wallet_list = [], % A map of wallet balances, the wallet list hash, or undefined.
     reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
     tags = [], % Miner specified tags to store with the block.

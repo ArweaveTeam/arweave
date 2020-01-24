@@ -4,7 +4,7 @@
 -export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/1]).
 -export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_index/2, verify_wallet_list/4, verify_weave_size/3]).
--export([verify_cumulative_diff/2, verify_block_index_merkle/2]).
+-export([verify_cumulative_diff/2, verify_hash_list_merkle/2]).
 -export([verify_tx_root/1]).
 -export([hash_wallet_list/1]).
 -export([encrypt_block/2, encrypt_block/3]).
@@ -364,7 +364,7 @@ generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, T
 		),
 	MR =
 		case PrecedingB#block.height >= ?FORK_1_6 of
-			true -> PrecedingB#block.block_index_merkle;
+			true -> PrecedingB#block.hash_list_merkle;
 			false -> <<>>
 		end,
 	Pieces = [
@@ -624,13 +624,13 @@ verify_cumulative_diff(NewB, OldB) ->
 		).
 
 %% @doc After 1.6 fork check that the given merkle root in a new block is valid.
-verify_block_index_merkle(NewB, CurrentB) when NewB#block.height > ?FORK_1_6 ->
-	NewB#block.block_index_merkle ==
-		ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.indep_hash);
-verify_block_index_merkle(NewB, _CurrentB) when NewB#block.height < ?FORK_1_6 ->
-	NewB#block.block_index_merkle == <<>>;
-verify_block_index_merkle(NewB, CurrentB) when NewB#block.height == ?FORK_1_6 ->
-	NewB#block.block_index_merkle ==
+verify_hash_list_merkle(NewB, CurrentB) when NewB#block.height > ?FORK_1_6 ->
+	NewB#block.hash_list_merkle ==
+		ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash);
+verify_hash_list_merkle(NewB, _CurrentB) when NewB#block.height < ?FORK_1_6 ->
+	NewB#block.hash_list_merkle == <<>>;
+verify_hash_list_merkle(NewB, CurrentB) when NewB#block.height == ?FORK_1_6 ->
+	NewB#block.hash_list_merkle ==
 		ar_unbalanced_merkle:block_index_to_merkle_root(CurrentB#block.block_index).
 
 % Block shadow functions
