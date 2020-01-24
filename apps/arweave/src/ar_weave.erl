@@ -167,29 +167,16 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 			false ->
 				0
 		end,
-	Fork_2_0 = ar_fork:height_2_0(),
-	{MR, NewBI} =
+	MR =
 		case NewHeight of
-			_ when NewHeight == Fork_2_0 ->
-				CP = [{H, _}|_] =
-					ar_transition:generate_checkpoint(
-						[{CurrentB#block.indep_hash, CurrentB#block.weave_size}|CurrentB#block.block_index]),
-				ar:info(
-					[
-						performing_v2_block_index_transition,
-						{new_block_index_root, ar_util:encode(H)}
-					]
-				),
-				{H, CP};
-			_ when NewHeight > Fork_2_0 ->
-				{ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.indep_hash), BI};
 			_ when NewHeight < ?FORK_1_6 ->
-				{<<>>, BI};
+				<<>>;
 			_ when NewHeight == ?FORK_1_6 ->
-				{ar_unbalanced_merkle:block_block_index_to_merkle_root(CurrentB#block.block_index), BI};
+				ar_unbalanced_merkle:block_block_index_to_merkle_root(CurrentB#block.block_index);
 			_ ->
-				{ar_unbalanced_merkle:root(CurrentB#block.block_index_merkle, CurrentB#block.indep_hash), BI}
+				ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash)
 		end,
+	Fork_2_0 = ar_fork:height_2_0(),
 	NewVotables =
 		case NewHeight of
 			X when X == Fork_2_0 -> ar_votable:init();
@@ -223,8 +210,8 @@ add([CurrentB|_Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, D
 			),
 			txs = TXs,
 			tx_root = TXRoot,
-			block_index = NewBI,
-			block_index_merkle = MR,
+			block_index = BI,
+			hash_list_merkle = MR,
 			wallet_list = WalletList,
 			reward_addr = RewardAddr,
 			tags = Tags,
@@ -311,7 +298,7 @@ indep_hash_pre_fork_2_0(B = #block { height = Height }) when Height >= ?FORK_1_6
 		integer_to_binary(B#block.cumulative_diff),
 		integer_to_binary(B#block.height),
 		B#block.hash,
-		B#block.block_index_merkle,
+		B#block.hash_list_merkle,
 		[tx_id(TX) || TX <- B#block.txs],
 		[[Addr, integer_to_binary(Balance), LastTX]
 			||	{Addr, Balance, LastTX} <- B#block.wallet_list],
@@ -395,7 +382,7 @@ indep_hash_post_fork_2_0(B) ->
 		integer_to_binary(B#block.last_retarget),
 		integer_to_binary(B#block.diff),
 		integer_to_binary(B#block.height),
-		B#block.block_index_merkle,
+		B#block.hash_list_merkle,
 		B#block.tx_root,
 		WLH,
 		case B#block.reward_addr of

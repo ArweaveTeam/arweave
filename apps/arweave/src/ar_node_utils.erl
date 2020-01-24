@@ -661,7 +661,7 @@ validate_post_fork_2_0(
 					{last_retarget, ar_block:verify_last_retarget(NewB, OldB)},
 					{previous_block, ar_block:verify_previous_block(NewB, OldB)},
 					{block_index, ar_block:verify_block_index(NewB, OldB)},
-					{block_index_root, ar_block:verify_block_index_merkle(NewB, OldB)},
+					{hash_list_root, ar_block:verify_hash_list_merkle(NewB, OldB)},
 					{wallet_list2, ar_block:verify_wallet_list(NewB, OldB, POA, TXs)},
 					{cumulative_difficulty, ar_block:verify_cumulative_diff(NewB, OldB)}
 				]
@@ -733,7 +733,7 @@ validate_pre_fork_2_0(
 	RetargetCheck = ar_block:verify_last_retarget(NewB, OldB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	BICheck = ar_block:verify_block_index(NewB, OldB),
-	BIMerkleCheck = ar_block:verify_block_index_merkle(NewB, OldB),
+	HLMerkleCheck = ar_block:verify_hash_list_merkle(NewB, OldB),
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
 	CumulativeDiffCheck = ar_block:verify_cumulative_diff(NewB, OldB),
 
@@ -757,7 +757,7 @@ validate_pre_fork_2_0(
 			{block_block_index, BICheck},
 			{block_wallet_list, WalletListCheck},
 			{block_cumulative_diff, CumulativeDiffCheck},
-			{block_index_merkle, BIMerkleCheck}
+			{hash_list_merkle, HLMerkleCheck}
 		]
 	),
 
@@ -788,7 +788,7 @@ validate_pre_fork_2_0(
 	case BICheck of false -> ar:info(invalid_block_index); _ -> ok end,
 	case WalletListCheck of false -> ar:info(invalid_wallet_list_rewards); _ -> ok end,
 	case CumulativeDiffCheck of false -> ar:info(invalid_cumulative_diff); _ -> ok end,
-	case BIMerkleCheck of false -> ar:info(invalid_block_index_merkle); _ -> ok end,
+	case HLMerkleCheck of false -> ar:info(invalid_hash_list_merkle); _ -> ok end,
 
 	Valid = (Mine
 		andalso Wallet
@@ -805,7 +805,7 @@ validate_pre_fork_2_0(
 		andalso BICheck
 		andalso WalletListCheck
 		andalso CumulativeDiffCheck
-		andalso BIMerkleCheck),
+		andalso HLMerkleCheck),
 	InvalidReasons = case Hash of
 		true -> [];
 		false -> [dep_hash]
