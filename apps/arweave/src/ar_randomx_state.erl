@@ -263,7 +263,7 @@ get_block_remote(BH, BI, Peers) ->
 		unavailable ->
 			unavailable;
 		{Peer, B} ->
-			case ar_weave:indep_hash(B) of
+			case indep_hash(B, BI) of
 				BH ->
 					ar_storage:write_full_block(B),
 					{ok, B};
@@ -277,6 +277,14 @@ get_block_remote(BH, BI, Peers) ->
 					]),
 					get_block_remote(BH, BI, Peers)
 			end
+	end.
+
+indep_hash(B, BI) ->
+	case length(BI) >= ar_fork:height_2_0() of
+		true ->
+			ar_weave:indep_hash_post_fork_2_0(B);
+		false ->
+			ar_weave:indep_hash(B)
 	end.
 
 randomx_key(SwapHeight, _, _) when SwapHeight < ?RANDOMX_KEY_SWAP_FREQ ->
