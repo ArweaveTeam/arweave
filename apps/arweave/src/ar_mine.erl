@@ -96,6 +96,10 @@ validate(BDSHash, Diff, Height) ->
 max_difficulty() ->
 	erlang:trunc(math:pow(2, 256)).
 
+-ifdef(DEBUG).
+min_difficulty(_Height) ->
+	1.
+-else.
 min_difficulty(Height) ->
 	Diff = case Height >= ar_fork:height_1_7() of
 		true ->
@@ -109,7 +113,12 @@ min_difficulty(Height) ->
 		false ->
 			Diff
 	end.
+-endif.
 
+-ifdef(DEBUG).
+genesis_difficulty() ->
+	1.
+-else.
 genesis_difficulty() ->
 	Diff = case ar_fork:height_1_7() of
 		0 ->
@@ -123,6 +132,7 @@ genesis_difficulty() ->
 		_ ->
 			Diff
 	end.
+-endif.
 
 sha384_diff_to_randomx_diff(Sha384Diff) ->
 	max(Sha384Diff + ?RANDOMX_DIFF_ADJUSTMENT, min_randomx_difficulty()).
@@ -368,21 +378,6 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor)
 	end.
 
--ifdef(DEBUG).
-%% Use RandomX light-mode, where hashing is slow but initialization is fast.
-randomx_hasher(Height) ->
-	case ar_randomx_state:randomx_state_by_height(Height) of
-		{state, {light, LightState}} ->
-			Hasher = fun(Nonce, BDS, _Diff) ->
-				{ar_mine_randomx:hash_light(LightState, << Nonce/binary, BDS/binary >>), Nonce, 1}
-			end,
-			{ok, Hasher};
-		{state, {fast, _}} ->
-			not_found;
-		{key, _} ->
-			not_found
-	end.
--else.
 %% Use RandomX fast-mode, where hashing is fast but initialization is slow.
 randomx_hasher(Height) ->
 	case ar_randomx_state:randomx_state_by_height(Height) of
@@ -396,10 +391,9 @@ randomx_hasher(Height) ->
 		{key, _} ->
 			not_found
 	end.
--endif.
 
 find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
-	{BDSHash, HashNonce, HashesTried}  = Hasher(Nonce, BDS, Diff),
+	{BDSHash, HashNonce, HashesTried} = Hasher(Nonce, BDS, Diff),
 	Supervisor ! {hashes_tried, HashesTried},
 	case validate(BDSHash, Diff, Height) of
 		false ->
@@ -409,8 +403,6 @@ find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
 			{HashNonce, BDSHash}
 	end.
 
-%% In DEBUG mode, we're running RandomX in light-mode, which is much slower
-%% than fast-mode we run in non-DEBUG mode.
 -ifdef(DEBUG).
 min_randomx_difficulty() -> 1.
 min_sha384_difficulty() -> 8.
@@ -458,7 +450,7 @@ start_stop_test() ->
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
 	RecallB = hd(B0),
-	VeryHighDiff = 100,
+	VeryHighDiff = trunc(math:pow(2, 1000)),
 	PID = start(B, RecallB, [], unclaimed, [], VeryHighDiff, self(), []),
 	timer:sleep(500),
 	assert_alive(PID),
@@ -468,7 +460,7 @@ start_stop_test() ->
 %% @doc Ensures a miner can be started and stopped.
 miner_start_stop_test() ->
 	[B] = ar_weave:init(),
-	S = #state{ diff = 100, current_block = B },
+	S = #state{ diff = trunc(math:pow(2, 1000)), current_block = B },
 	PID = spawn(?MODULE, mine, [S, self()]),
 	timer:sleep(500),
 	assert_alive(PID),
@@ -492,10 +484,7 @@ assert_mine_output(B, POA, TXs) ->
 				ar_weave:hash(BDS, Nonce, B#block.height),
 				Hash
 			),
-			?assertMatch(
-				<< 0:MinedDiff, _/bitstring >>,
-				Hash
-			),
+			?assert(binary:decode_unsigned(Hash) > MinedDiff),
 			{MinedDiff, Timestamp}
 	after 20000 ->
 		error(timeout)

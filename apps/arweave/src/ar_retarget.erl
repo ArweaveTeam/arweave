@@ -167,9 +167,9 @@ simple_retarget_test_() ->
 	{timeout, 300, fun() ->
 		Node = ar_node:start([], ar_weave:init([])),
 		lists:foreach(
-			fun(_) ->
+			fun(Height) ->
 				ar_node:mine(Node),
-				timer:sleep(500)
+				ar_test_node:wait_until_height(Node, Height)
 			end,
 			lists:seq(1, ?RETARGET_BLOCKS + 1)
 		),
@@ -177,7 +177,7 @@ simple_retarget_test_() ->
 			fun() ->
 				[BH|_] = ar_node:get_blocks(Node),
 				B = ar_storage:read_block(BH, ar_node:get_block_index(Node)),
-				B#block.diff > ?DEFAULT_DIFF
+				B#block.diff > ar_mine:genesis_difficulty()
 			end,
 			1000,
 			5 * 60 * 1000
