@@ -6,10 +6,10 @@
 execute(_, #{ id := TXID }, <<"id">>, #{}) ->
 	{ok, TXID};
 execute(_, #{ id := TXID }, <<"tags">>, #{}) ->
-	Tags = ar_sqlite3:select_tags_by_tx_id(TXID),
+	Tags = ar_arql_db:select_tags_by_tx_id(TXID),
 	{ok, [{ok, Tag} || Tag <- prune_non_unicode_tags(Tags)]};
 execute(_, #{ id := TXID }, <<"tagValue">>, #{ <<"tagName">> := TagName }) ->
-	Tags = ar_sqlite3:select_tags_by_tx_id(TXID),
+	Tags = ar_arql_db:select_tags_by_tx_id(TXID),
 	case lists:search(
 		fun(#{ name := Name }) -> string:equal(Name, TagName) end,
 		prune_non_unicode_tags(Tags)
@@ -18,10 +18,10 @@ execute(_, #{ id := TXID }, <<"tagValue">>, #{ <<"tagName">> := TagName }) ->
 		false -> {ok, null}
 	end;
 execute(_, #{ id := TXID }, <<"linkedToTransaction">>, #{ <<"byOwnTag">> := OwnTagName }) ->
-	Tags = ar_sqlite3:select_tags_by_tx_id(TXID),
+	Tags = ar_arql_db:select_tags_by_tx_id(TXID),
 	case lists:search(fun(#{ name := Name }) -> Name == OwnTagName end, Tags) of
 		{value, #{ value := Value }} ->
-			case ar_sqlite3:select_tx_by_id(Value) of
+			case ar_arql_db:select_tx_by_id(Value) of
 				{ok, Tx} -> {ok, Tx};
 				not_found -> {ok, null}
 			end;
@@ -52,7 +52,7 @@ execute(_, #{ id := TXID }, <<"linkedFromTransactions">>, Args) ->
 		end,
 		[{tags, [{ForeignTagName, TXID} | lists:map(fun ar_graphql_tag:to_tuple/1, Tags)]}]
 	]),
-	{ok, [{ok, TX} || TX <- ar_sqlite3:select_txs_by(Opts)]};
+	{ok, [{ok, TX} || TX <- ar_arql_db:select_txs_by(Opts)]};
 execute(Ctx, Obj, <<"countLinkedFromTransactions">>, Args) ->
 	{ok, Results} = execute(Ctx, Obj, <<"linkedFromTransactions">>, Args),
 	{ok, length(Results)}.

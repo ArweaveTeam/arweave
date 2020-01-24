@@ -1,4 +1,4 @@
--module(ar_sqlite3).
+-module(ar_arql_db).
 -behaviour(gen_server).
 
 -export([start_link/1]).
@@ -137,19 +137,19 @@ insert_full_block(#block {} = FullBlock) ->
 init(Opts) ->
 	try
 		{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
-		ar:info([{ar_sqlite3, init}, {data_dir, DataDir}]),
+		ar:info([{ar_arql_db, init}, {data_dir, DataDir}]),
 		DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
 		ok = filelib:ensure_dir(DbPath),
-		ok = ar_sqlite3_driver:start_link(),
-		{ok, Conn} = ar_sqlite3_driver:open(DbPath, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:start_link(),
+		{ok, Conn} = ar_sqlite3:open(DbPath, ?DRIVER_TIMEOUT),
 		ok = ensure_meta_table_created(Conn),
 		ok = ensure_schema_created(Conn),
-		{ok, InsertBlockStmt} = ar_sqlite3_driver:prepare(Conn, ?INSERT_BLOCK_SQL, ?DRIVER_TIMEOUT),
-		{ok, InsertTxStmt} = ar_sqlite3_driver:prepare(Conn, ?INSERT_TX_SQL, ?DRIVER_TIMEOUT),
-		{ok, InsertTagStmt} = ar_sqlite3_driver:prepare(Conn, ?INSERT_TAG_SQL, ?DRIVER_TIMEOUT),
-		{ok, SelectTxByIdStmt} = ar_sqlite3_driver:prepare(Conn, ?SELECT_TX_BY_ID_SQL, ?DRIVER_TIMEOUT),
-		{ok, SelectBlockByTxIdStmt} = ar_sqlite3_driver:prepare(Conn, ?SELECT_BLOCK_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
-		{ok, SelectTagsByTxIdStmt} = ar_sqlite3_driver:prepare(Conn, ?SELECT_TAGS_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
+		{ok, InsertBlockStmt} = ar_sqlite3:prepare(Conn, ?INSERT_BLOCK_SQL, ?DRIVER_TIMEOUT),
+		{ok, InsertTxStmt} = ar_sqlite3:prepare(Conn, ?INSERT_TX_SQL, ?DRIVER_TIMEOUT),
+		{ok, InsertTagStmt} = ar_sqlite3:prepare(Conn, ?INSERT_TAG_SQL, ?DRIVER_TIMEOUT),
+		{ok, SelectTxByIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_TX_BY_ID_SQL, ?DRIVER_TIMEOUT),
+		{ok, SelectBlockByTxIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_BLOCK_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
+		{ok, SelectTagsByTxIdStmt} = ar_sqlite3:prepare(Conn, ?SELECT_TAGS_BY_TX_ID_SQL, ?DRIVER_TIMEOUT),
 		{ok, #{
 			data_dir => DataDir,
 			conn => Conn,
@@ -162,24 +162,24 @@ init(Opts) ->
 		}}
 	catch
 		Class:Error ->
-			ar:warn([{ar_sqlite3, init_failed}, {reason, {Class, Error}}]),
+			ar:warn([{ar_arql_db, init_failed}, {reason, {Class, Error}}]),
 			{error, {Class, Error}}
 	end.
 
 handle_call({select_tx_by_id, ID}, _, State) ->
 	#{ select_tx_by_id_stmt := Stmt } = State,
-	ok = ar_sqlite3_driver:bind(Stmt, [ID], ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:bind(Stmt, [ID], ?DRIVER_TIMEOUT),
 	{Time, Reply} = timer:tc(fun() ->
-		case ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT) of
+		case ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT) of
 			{row, Row} -> {ok, tx_map(Row)};
 			done -> not_found
 		end
 	end),
-	ok = ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
 	ok = case Time of
 		T when T > ?LONG_QUERY_TIME ->
 			ar:warn([
-				{ar_sqlite3, long_query},
+				{ar_arql_db, long_query},
 				{query_type, select_tx_by_id},
 				{microseconds, T},
 				{sql, select_tx_by_id},
@@ -207,7 +207,7 @@ handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 	ok = case Time of
 		T when T > ?LONG_QUERY_TIME ->
 			ar:warn([
-				{ar_sqlite3, long_query},
+				{ar_arql_db, long_query},
 				{query_type, select_txs_by},
 				{microseconds, T},
 				{sql, SQL},
@@ -220,18 +220,18 @@ handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 	{reply, Reply, State};
 handle_call({select_block_by_tx_id, TXID}, _, State) ->
 	#{ select_block_by_tx_id_stmt := Stmt } = State,
-	ok = ar_sqlite3_driver:bind(Stmt, [TXID], ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:bind(Stmt, [TXID], ?DRIVER_TIMEOUT),
 	{Time, Reply} = timer:tc(fun() ->
-		case ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT) of
+		case ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT) of
 			{row, Row} -> {ok, block_map(Row)};
 			done -> not_found
 		end
 	end),
-	ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
 	ok = case Time of
 		T when T > ?LONG_QUERY_TIME ->
 			ar:warn([
-				{ar_sqlite3, long_query},
+				{ar_arql_db, long_query},
 				{query_type, select_block_by_tx_id},
 				{microseconds, T},
 				{sql, select_block_by_tx_id},
@@ -253,7 +253,7 @@ handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 	ok = case Time of
 		T when T > ?LONG_QUERY_TIME ->
 			ar:warn([
-				{ar_sqlite3, long_query},
+				{ar_arql_db, long_query},
 				{query_type, select_tags_by_tx_id},
 				{microseconds, T},
 				{sql, select_tags_by_tx_id},
@@ -285,7 +285,7 @@ handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 	ok = case Time of
 		T when T > ?LONG_QUERY_TIME ->
 			ar:warn([
-				{ar_sqlite3, long_query},
+				{ar_arql_db, long_query},
 				{query_type, eval_legacy_arql},
 				{microseconds, T},
 				{query, Query}
@@ -307,33 +307,33 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 		insert_tag_stmt := InsertTagStmt
 	} = State,
 	{Time, ok} = timer:tc(fun() ->
-		ok = ar_sqlite3_driver:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3_driver:bind(InsertBlockStmt, BlockFields, ?DRIVER_TIMEOUT),
-		done = ar_sqlite3_driver:step(InsertBlockStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3_driver:reset(InsertBlockStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?DRIVER_TIMEOUT),
+		done = ar_sqlite3:step(InsertBlockStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertBlockStmt, ?DRIVER_TIMEOUT),
 		lists:foreach(
 			fun(TxFields) ->
-				ok = ar_sqlite3_driver:bind(InsertTxStmt, TxFields, ?DRIVER_TIMEOUT),
-				done = ar_sqlite3_driver:step(InsertTxStmt, ?DRIVER_TIMEOUT),
-				ok = ar_sqlite3_driver:reset(InsertTxStmt, ?DRIVER_TIMEOUT)
+				ok = ar_sqlite3:bind(InsertTxStmt, TxFields, ?DRIVER_TIMEOUT),
+				done = ar_sqlite3:step(InsertTxStmt, ?DRIVER_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTxStmt, ?DRIVER_TIMEOUT)
 			end,
 			TxFieldsList
 		),
 		lists:foreach(
 			fun(TagFields) ->
-				ok = ar_sqlite3_driver:bind(InsertTagStmt, TagFields, ?DRIVER_TIMEOUT),
-				done = ar_sqlite3_driver:step(InsertTagStmt, ?DRIVER_TIMEOUT),
-				ok = ar_sqlite3_driver:reset(InsertTagStmt, ?DRIVER_TIMEOUT)
+				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?DRIVER_TIMEOUT),
+				done = ar_sqlite3:step(InsertTagStmt, ?DRIVER_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTagStmt, ?DRIVER_TIMEOUT)
 			end,
 			TagFieldsList
 		),
-		ok = ar_sqlite3_driver:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
 		ok
 	end),
 	ok = case Time of
 		T when T > ?LONG_INSERT_FULL_BLOCK_TIME ->
 			ar:warn([
-				{ar_sqlite3, long_query},
+				{ar_arql_db, long_query},
 				{query_type, insert_full_block},
 				{microseconds, T},
 				{block_indep_hash, lists:nth(1, BlockFields)}
@@ -354,18 +354,18 @@ terminate(Reason, State) ->
 		select_block_by_tx_id_stmt := SelectBlockByTxIdStmt,
 		select_tags_by_tx_id_stmt := SelectTagsByTxIdStmt
 	} = State,
-	ar:info([{ar_sqlite3, terminate}, {reason, Reason}]),
-	ar_sqlite3_driver:finalize(InsertBlockStmt, ?DRIVER_TIMEOUT),
-	ar_sqlite3_driver:finalize(InsertTxStmt, ?DRIVER_TIMEOUT),
-	ar_sqlite3_driver:finalize(InsertTagStmt, ?DRIVER_TIMEOUT),
-	ar_sqlite3_driver:finalize(SelectTxByIdStmt, ?DRIVER_TIMEOUT),
-	ar_sqlite3_driver:finalize(SelectBlockByTxIdStmt, ?DRIVER_TIMEOUT),
-	ar_sqlite3_driver:finalize(SelectTagsByTxIdStmt, ?DRIVER_TIMEOUT),
-	case catch ar_sqlite3_driver:close(Conn, ?DRIVER_TIMEOUT) of
+	ar:info([{ar_arql_db, terminate}, {reason, Reason}]),
+	ar_sqlite3:finalize(InsertBlockStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3:finalize(InsertTxStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3:finalize(InsertTagStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3:finalize(SelectTxByIdStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3:finalize(SelectBlockByTxIdStmt, ?DRIVER_TIMEOUT),
+	ar_sqlite3:finalize(SelectTagsByTxIdStmt, ?DRIVER_TIMEOUT),
+	case catch ar_sqlite3:close(Conn, ?DRIVER_TIMEOUT) of
 		ok ->
 			ok;
 		Error ->
-			ar:warn([{ar_sqlite3, termination_failed}, {reason, Error}])
+			ar:warn([{ar_arql_db, termination_failed}, {reason, Error}])
 	end.
 
 %%%===================================================================
@@ -382,8 +382,8 @@ ensure_meta_table_created(Conn) ->
 	end.
 
 create_meta_table(Conn) ->
-	ar:info([{ar_sqlite3, creating_meta_table}]),
-	ok = ar_sqlite3_driver:exec(Conn, ?CREATE_MIGRATION_TABLE_SQL, ?DRIVER_TIMEOUT),
+	ar:info([{ar_arql_db, creating_meta_table}]),
+	ok = ar_sqlite3:exec(Conn, ?CREATE_MIGRATION_TABLE_SQL, ?DRIVER_TIMEOUT),
 	ok.
 
 ensure_schema_created(Conn) ->
@@ -396,12 +396,12 @@ ensure_schema_created(Conn) ->
 	end.
 
 create_schema(Conn) ->
-	ar:info([{ar_sqlite3, creating_schema}]),
-	ok = ar_sqlite3_driver:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3_driver:exec(Conn, ?CREATE_TABLES_SQL, ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3_driver:exec(Conn, ?CREATE_INDEXES_SQL, ?DRIVER_TIMEOUT),
+	ar:info([{ar_arql_db, creating_schema}]),
+	ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:exec(Conn, ?CREATE_TABLES_SQL, ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:exec(Conn, ?CREATE_INDEXES_SQL, ?DRIVER_TIMEOUT),
 	done = sql_fetchone(Conn, "INSERT INTO migration VALUES ('20191009160000_schema_created', ?)", [sql_now()], ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3_driver:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
 	ok.
 
 ensure_db_populated(BHL, #{ conn := Conn} = State) ->
@@ -412,39 +412,39 @@ ensure_db_populated(BHL, #{ conn := Conn} = State) ->
 		{row, [1]} ->
 			ok;
 		done ->
-			ar:info([{ar_sqlite3, populating_db}]),
+			ar:info([{ar_arql_db, populating_db}]),
 			{Time, ok} = timer:tc(fun() -> ok = do_populate_db(BHL, State) end),
-			ar:info([{ar_sqlite3, populated_db}, {time, Time}]),
+			ar:info([{ar_arql_db, populated_db}, {time, Time}]),
 			ok
 	end.
 
 do_populate_db(BHL, #{ conn := Conn} = State) ->
-	ok = ar_sqlite3_driver:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3_driver:exec(Conn, ?DROP_INDEXES_SQL, ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:exec(Conn, ?DROP_INDEXES_SQL, ?DRIVER_TIMEOUT),
 	ok = lists:foreach(fun(BH) ->
 		ok = insert_block_json(BH, State)
 	end, BHL),
-	ok = ar_sqlite3_driver:exec(Conn, ?CREATE_INDEXES_SQL, infinity),
+	ok = ar_sqlite3:exec(Conn, ?CREATE_INDEXES_SQL, infinity),
 	done = sql_fetchone(Conn, "INSERT INTO migration VALUES ('20191015153000_db_populated', ?)", [sql_now()], ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3_driver:exec(Conn, "COMMIT TRANSACTION", infinity),
+	ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", infinity),
 	ok.
 
 sql_fetchone(Conn, SQL, Timeout) -> sql_fetchone(Conn, SQL, [], Timeout).
 sql_fetchone(Conn, SQL, Params, Timeout) ->
-	{ok, Stmt} = ar_sqlite3_driver:prepare(Conn, SQL, Timeout),
-	ok = ar_sqlite3_driver:bind(Stmt, Params, Timeout),
-	Result = ar_sqlite3_driver:step(Stmt, Timeout),
-	ok = ar_sqlite3_driver:finalize(Stmt, Timeout),
+	{ok, Stmt} = ar_sqlite3:prepare(Conn, SQL, Timeout),
+	ok = ar_sqlite3:bind(Stmt, Params, Timeout),
+	Result = ar_sqlite3:step(Stmt, Timeout),
+	ok = ar_sqlite3:finalize(Stmt, Timeout),
 	Result.
 
 sql_fetchall(Conn, SQL, Params, Timeout) ->
-	{ok, Stmt} = ar_sqlite3_driver:prepare(Conn, SQL, Timeout),
+	{ok, Stmt} = ar_sqlite3:prepare(Conn, SQL, Timeout),
 	Results = stmt_fetchall(Stmt, Params, Timeout),
-	ar_sqlite3_driver:finalize(Stmt, Timeout),
+	ar_sqlite3:finalize(Stmt, Timeout),
 	Results.
 
 stmt_fetchall(Stmt, Params, Timeout) ->
-	ok = ar_sqlite3_driver:bind(Stmt, Params, Timeout),
+	ok = ar_sqlite3:bind(Stmt, Params, Timeout),
 	From = self(),
 	Ref = make_ref(),
 	spawn_link(fun() ->
@@ -456,12 +456,12 @@ stmt_fetchall(Stmt, Params, Timeout) ->
 		after Timeout ->
 			error(timeout)
 		end,
-	ar_sqlite3_driver:reset(Stmt, Timeout),
+	ar_sqlite3:reset(Stmt, Timeout),
 	Results.
 
 collect_sql_results(Stmt) -> collect_sql_results(Stmt, []).
 collect_sql_results(Stmt, Acc) ->
-	case ar_sqlite3_driver:step(Stmt, infinity) of
+	case ar_sqlite3:step(Stmt, infinity) of
 		{row, Row} -> collect_sql_results(Stmt, [Row | Acc]);
 		done -> lists:reverse(Acc)
 	end.
@@ -470,14 +470,14 @@ insert_block_json(BH,  Env) ->
 	#{ data_dir := DataDir, insert_block_stmt := Stmt } = Env,
 	case read_block(BH, DataDir) of
 		{ok, BlockMap} ->
-			ok = ar_sqlite3_driver:bind(Stmt, [
+			ok = ar_sqlite3:bind(Stmt, [
 				maps:get(<<"indep_hash">>, BlockMap),
 				maps:get(<<"previous_block">>, BlockMap),
 				maps:get(<<"height">>, BlockMap),
 				maps:get(<<"timestamp">>, BlockMap)
 			], ?DRIVER_TIMEOUT),
-			done = ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT),
-			ok = ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
+			done = ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT),
+			ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
 			ok = lists:foreach(fun(TXHash) ->
 				ok = insert_tx_json(TXHash, maps:get(<<"indep_hash">>, BlockMap), Env)
 			end, maps:get(<<"txs">>, BlockMap)),
@@ -490,7 +490,7 @@ insert_tx_json(TXHash, BlockIndepHash, Env) ->
 	#{ insert_tx_stmt := Stmt, data_dir := DataDir } = Env,
 	case read_tx(TXHash, DataDir) of
 		{ok, TxMap} ->
-			ok = ar_sqlite3_driver:bind(Stmt, [
+			ok = ar_sqlite3:bind(Stmt, [
 				maps:get(<<"id">>, TxMap),
 				BlockIndepHash,
 				maps:get(<<"last_tx">>, TxMap),
@@ -501,8 +501,8 @@ insert_tx_json(TXHash, BlockIndepHash, Env) ->
 				maps:get(<<"signature">>, TxMap),
 				maps:get(<<"reward">>, TxMap)
 			], ?DRIVER_TIMEOUT),
-			done = ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT),
-			ok = ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
+			done = ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT),
+			ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
 			ok = lists:foreach(fun(TagMap) ->
 				ok = insert_tag_json(TagMap, maps:get(<<"id">>, TxMap), Env)
 			end, maps:get(<<"tags">>, TxMap)),
@@ -512,13 +512,13 @@ insert_tx_json(TXHash, BlockIndepHash, Env) ->
 	end.
 
 insert_tag_json(TagMap, TXID, #{ insert_tag_stmt := Stmt }) ->
-	ok = ar_sqlite3_driver:bind(Stmt, [
+	ok = ar_sqlite3:bind(Stmt, [
 		TXID,
 		ar_util:decode(maps:get(<<"name">>, TagMap)),
 		ar_util:decode(maps:get(<<"value">>, TagMap))
 	], ?DRIVER_TIMEOUT),
-	done = ar_sqlite3_driver:step(Stmt, ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3_driver:reset(Stmt, ?DRIVER_TIMEOUT),
+	done = ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT),
+	ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
 	ok.
 
 read_block(BH, _DataDir) ->

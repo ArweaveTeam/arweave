@@ -338,7 +338,7 @@ start(
 	ar_tx_db:start(),
 	ar_key_db:start(),
 	ar_miner_log:start(),
-	{ok, _} = ar_sqlite3_sup:start_link([{data_dir, DataDir}]),
+	{ok, _} = ar_arql_db_sup:start_link([{data_dir, DataDir}]),
 	ar_storage:start_update_used_space(),
 	%% Determine the mining address.
 	case {Addr, LoadKey, NewKey} of

@@ -1,4 +1,4 @@
-ar_sqlite3_driver
+ar_sqlite3
 =====
 
 An OTP library

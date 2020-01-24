@@ -188,7 +188,7 @@ derive_label_and_redirect(TXID, SubPath, Req, Env) ->
 	end.
 
 get_tx_block_hash(TXID) ->
-	case ar_sqlite3:select_tx_by_id(ar_util:encode(TXID)) of
+	case ar_arql_db:select_tx_by_id(ar_util:encode(TXID)) of
 		{ok, #{ block_indep_hash := EncodedBH }} ->
 			{ok, ar_util:decode(EncodedBH)};
 		not_found ->

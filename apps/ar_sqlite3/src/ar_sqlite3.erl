@@ -1,4 +1,4 @@
--module(ar_sqlite3_driver).
+-module(ar_sqlite3).
 -export([start_link/0, stop/0]).
 -export([libversion/0, libversion/1]).
 -export([open/1, open/2, close/1, close/2]).
@@ -59,7 +59,7 @@ exec(DB, SQL, Timeout) ->
 %% Process callbacks
 
 init() ->
-	PrivDir = code:priv_dir(ar_sqlite3_driver),
+	PrivDir = code:priv_dir(ar_sqlite3),
 	Executable = filename:join([PrivDir, "ar_sqlite3_driver"]),
 	Port = open_port({spawn_executable, Executable}, [{packet, 2}, binary]),
 	monitor(port, Port),

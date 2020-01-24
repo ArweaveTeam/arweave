@@ -102,7 +102,7 @@ get_txs(Pid) ->
 get_local_ipfs_txs() ->
 	lists:map(
 		fun(#{ id := ID }) -> ar_util:decode(ID) end,
-		ar_sqlite3:select_txs_by([{tags, [{<<"IPFS-Add">>, any}]}])
+		ar_arql_db:select_txs_by([{tags, [{<<"IPFS-Add">>, any}]}])
 	).
 
 add_local_ipfs_tx_data() ->
@@ -125,7 +125,7 @@ ipfs_hash_status(Hash) ->
 	Pinned = is_pinned(Hash),
 	TXIDs = lists:map(
 		fun(#{ id := ID }) -> ar_util:decode(ID) end,
-		ar_sqlite3:select_txs_by([{tags, [{<<"IPFS-Add">>, Hash}]}])
+		ar_arql_db:select_txs_by([{tags, [{<<"IPFS-Add">>, Hash}]}])
 	),
 	[{hash, Hash}, {pinned, Pinned}, {tx, TXIDs}].
 

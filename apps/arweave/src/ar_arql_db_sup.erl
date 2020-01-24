@@ -1,4 +1,4 @@
--module(ar_sqlite3_sup).
+-module(ar_arql_db_sup).
 -behaviour(supervisor).
 
 -export([start_link/1]).
@@ -17,5 +17,5 @@ start_link(Args) ->
 
 init(Args) ->
 	SupFlags = #{strategy => one_for_one, intensity => 50, period => 1},
-	ChildSpec = #{ id => ar_sqlite3, start => {ar_sqlite3, start_link, [Args]} },
+	ChildSpec = #{ id => ar_arql_db, start => {ar_arql_db, start_link, [Args]} },
 	{ok, {SupFlags, [ChildSpec]}}.
