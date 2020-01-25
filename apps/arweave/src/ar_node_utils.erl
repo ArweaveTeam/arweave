@@ -532,7 +532,7 @@ integrate_new_block(
 	}).
 
 update_block_txs_pairs(BH, TXIDs, List) ->
-	lists:sublist([{BH, TXIDs} | List], ?MAX_TX_ANCHOR_DEPTH).
+	lists:sublist([{BH, TXIDs} | List], 2 * ?MAX_TX_ANCHOR_DEPTH).
 
 log_invalid_txs_drop_reason(InvalidTXs) ->
 	lists:foreach(
