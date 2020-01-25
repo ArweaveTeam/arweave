@@ -189,15 +189,20 @@ join_peers(Peers) when is_list(Peers) ->
 join_peers(Peer) when is_pid(Peer) -> ok;
 join_peers(Peer) -> ar_http_iface_client:add_peer(Peer).
 
-%% @doc Get a block, and its ?STORE_BLOCKS_BEHIND_CURRENT previous
-%% blocks and recall blocks. Alternatively, if the blocklist is shorter than
-%% ?STORE_BLOCKS_BEHIND_CURRENT, simply get all existing blocks and recall blocks
+%% @doc Get a block, and its 2 * ?MAX_TX_ANCHOR_DEPTH previous blocks.
+%% If the block list is shorter than 2 * ?MAX_TX_ANCHOR_DEPTH, simply
+%% get all existing blocks.
+%%
+%% The node needs 2 * ?MAX_TX_ANCHOR_DEPTH block anchors so that it
+%% can validate transactions even if it enters a ?MAX_TX_ANCHOR_DEPTH-deep
+%% fork recovery (which is the deepest fork recovery possible) immediately after
+%% joining the network.
 get_block_and_trail(_Peers, NewB, []) ->
 	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
 	ar_storage:write_block(NewB#block { txs = TXIDs }),
 	[{NewB#block.indep_hash, TXIDs}];
 get_block_and_trail(Peers, NewB, BI) ->
-	get_block_and_trail(Peers, NewB, ?STORE_BLOCKS_BEHIND_CURRENT, BI, []).
+	get_block_and_trail(Peers, NewB, 2 * ?MAX_TX_ANCHOR_DEPTH, BI, []).
 
 get_block_and_trail(_, unavailable, _, _, BlockTXPairs) ->
 	BlockTXPairs;
@@ -233,11 +238,11 @@ get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 			ar:info(
 				[
 					{writing_block, NewB#block.height},
-					{blocks_written, (?STORE_BLOCKS_BEHIND_CURRENT - (BehindCurrent-1))},
-					{blocks_to_write, (BehindCurrent-1)}
+					{blocks_written, (2 * ?MAX_TX_ANCHOR_DEPTH - (BehindCurrent - 1))},
+					{blocks_to_write, (BehindCurrent - 1)}
 				]
 			),
-			get_block_and_trail(Peers, PreviousBlock, BehindCurrent-1, BI, NewBlockTXPairs);
+			get_block_and_trail(Peers, PreviousBlock, BehindCurrent - 1, BI, NewBlockTXPairs);
 		false ->
 			ar:info(
 				[
