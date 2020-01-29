@@ -411,34 +411,6 @@ medium_blockweave_multi_mine_test_() ->
 		))
 	end}.
 
-%% @doc Setup a network, mine a block, cause one node to forget that block.
-%% Ensure that the 'truncated' node can still verify and accept new blocks.
-tiny_collaborative_blockweave_mining_test_() ->
-	{timeout, 120, fun() ->
-		ar_storage:clear(),
-		B0 = ar_weave:init([]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B2
-		timer:sleep(500),
-		ar_node:truncate(Node1),
-		ar_node:mine(Node2), % Mine B3
-		?assert(ar_util:do_until(
-			fun() ->
-				B3 = ar_node:get_blocks(Node1),
-				RB3 = ar_storage:read_block(B3, B3),
-				HdRB3 = hd(RB3),
-				HdRB3#block.height == 3
-			end,
-			1000,
-			60000
-		))
-	end}.
-
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
 mining_reward_test() ->
 	ar_storage:clear(),
