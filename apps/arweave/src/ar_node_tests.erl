@@ -443,38 +443,6 @@ mine_tx_with_key_val_tags_test_() ->
 		?assertEqual([SignedTX], ar_storage:read_tx(TXs))
 	end}.
 
-%% @doc Verify the behaviour of out of order TX submission.
-%% NOTE: The current behaviour (out of order TXs get dropped)
-%% is not necessarily the behaviour we want, but we should keep
-%% track of it.
-single_wallet_double_tx_wrong_order_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		{_Priv3, Pub3} = ar_wallet:new(),
-		TX = ar_tx:new(Pub2, ?AR(1), ?AR(5000), <<>>),
-		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(4000), TX#tx.id),
-		SignedTX = ar_tx:sign_pre_fork_2_0(TX, Priv1, Pub1),
-		SignedTX2 = ar_tx:sign_pre_fork_2_0(TX2, Priv1, Pub1),
-		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:add_tx(Node1, SignedTX2),
-		timer:sleep(500),
-		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx([SignedTX]),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		receive after 200 -> ok end,
-		?AR(4999) = ar_node:get_balance(Node2, Pub1),
-		?AR(5000) = ar_node:get_balance(Node2, Pub2),
-		?AR(0) = ar_node:get_balance(Node2, Pub3),
-		CurrentB = ar_node:get_current_block(whereis(http_entrypoint_node)),
-		length(CurrentB#block.txs) == 1
-	end}.
-
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test_() ->
 	{timeout, 60, fun() ->
