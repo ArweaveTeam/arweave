@@ -18,8 +18,7 @@ get_height_test() ->
 	Node1 = ar_node:start([self()], B0),
 	0 = ar_node:get_height(Node1),
 	ar_node:mine(Node1),
-	timer:sleep(1000),
-	1 = ar_node:get_height(Node1).
+	ar_test_node:wait_until_height(Node1, 1).
 
 %% @doc Test retrieval of the current block hash.
 get_current_block_hash_test() ->
@@ -76,15 +75,12 @@ cancel_tx_test_() ->
 		Node1 = ar_node:start([], B0),
 		ar_node:add_tx(Node1, SignedAllowedTX),
 		ar_node:add_tx(Node1, SignedCancelTX),
-		timer:sleep(300),
-		ar_storage:write_tx(SignedAllowedTX),
-		ar_storage:write_tx(SignedCancelTX),
-		timer:sleep(300),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedCancelTX, SignedAllowedTX]),
 		Sig = ar_wallet:sign(Priv2, SignedCancelTX#tx.id),
 		ar_node:cancel_tx(Node1, SignedCancelTX#tx.id, Sig),
-		timer:sleep(300),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(300),
+		timer:sleep(500),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 1),
 		?AR(8999) = ar_node:get_balance(Node1, Pub1),
 		?AR(10000) = ar_node:get_balance(Node1, ar_wallet:to_address(Pub2)),
 		?AR(1000) = ar_node:get_balance(Node1, AllowedTarget),
@@ -109,13 +105,11 @@ bogus_cancel_tx_test_() ->
 			),
 		Node1 = ar_node:start([], B0),
 		ar_node:add_tx(Node1, SignedAllowedTX),
-		timer:sleep(300),
-		ar_storage:write_tx(SignedAllowedTX),
-		timer:sleep(300),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedAllowedTX]),
 		ar_node:cancel_tx(Node1, SignedAllowedTX#tx.id, crypto:strong_rand_bytes(512)),
-		timer:sleep(300),
+		timer:sleep(500),
 		ar_node:mine(Node1), % Mine B1
-		timer:sleep(300),
+		ar_test_node:wait_until_height(Node1, 1),
 		?AR(8999) = ar_node:get_balance(Node1, ar_wallet:to_address(Pub1)),
 		?AR(1000) = ar_node:get_balance(Node1, AllowedTarget)
 	end}.
@@ -129,11 +123,11 @@ tiny_network_with_reward_pool_test() ->
 	Node2 = ar_node:start([Node1], B0),
 	ar_node:set_reward_addr(Node1, << 0:256 >>),
 	ar_node:add_peers(Node1, Node2),
-	timer:sleep(1000),
 	ar_node:mine(Node1),
-	timer:sleep(1000),
+	ar_test_node:wait_until_height(Node1, 1),
 	ar_node:mine(Node1),
-	timer:sleep(1000),
+	ar_test_node:wait_until_height(Node1, 2),
+	ar_test_node:wait_until_height(Node1, 2),
 	Bs2 = ar_node:get_blocks(Node2),
 	2 = (hd(ar_storage:read_block(Bs2, Bs2)))#block.height.
 
@@ -155,9 +149,7 @@ tiny_blockweave_with_mining_test() ->
 	Node2 = ar_node:start([Node1], B0),
 	ar_node:add_peers(Node1, Node2),
 	ar_node:mine(Node1),
-	timer:sleep(2000),
-	Bs = ar_node:get_blocks(Node2),
-	1 = (hd(ar_storage:read_block(Bs, Bs)))#block.height.
+	ar_test_node:wait_until_height(Node2, 1).
 
 %% @doc Ensure that the network add data and have it mined into blocks.
 tiny_blockweave_with_added_data_test() ->
@@ -170,10 +162,10 @@ tiny_blockweave_with_added_data_test() ->
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),
-		timer:sleep(500),
 		ar_node:add_tx(Node2, TestData),
-		timer:sleep(1000),
+		ar_test_node:wait_until_receives_txs(Node1, [TestData]),
 		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 1),
 		ar_util:do_until(
 			fun() ->
 				BI = ar_node:get_blocks(Node2),
@@ -200,13 +192,15 @@ medium_blockweave_multi_mine_test_() ->
 		Nodes = [ ar_node:start([], B0) || _ <- lists:seq(1, 50) ],
 		[ ar_node:add_peers(Node, ar_util:pick_random(Nodes, 5)) || Node <- Nodes ],
 		ar_node:add_tx(ar_util:pick_random(Nodes), TestData1),
-		timer:sleep(2000),
-		ar_node:mine(ar_util:pick_random(Nodes)),
-		timer:sleep(2000),
-		B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
-		ar_node:add_tx(ar_util:pick_random(Nodes), TestData2),
-		timer:sleep(2000),
-		ar_node:mine(ar_util:pick_random(Nodes)),
+		RandomMiner = ar_util:pick_random(Nodes),
+		ar_test_node:wait_until_receives_txs(RandomMiner, [TestData1]),
+		ar_node:mine(RandomMiner),
+		ar_test_node:wait_until_height(RandomMiner, 1),
+		B1 = ar_node:get_blocks(RandomMiner),
+		SecondRandomMiner = ar_util:pick_random(Nodes),
+		ar_node:add_tx(SecondRandomMiner, TestData2),
+		ar_test_node:wait_until_receives_txs(SecondRandomMiner, [TestData2]),
+		ar_node:mine(SecondRandomMiner),
 		?assert(ar_util:do_until(
 			fun() ->
 				B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
@@ -227,7 +221,7 @@ mining_reward_test() ->
 	{_Priv1, Pub1} = ar_wallet:new(),
 	Node1 = ar_node:start([], ar_weave:init([]), 0, ar_wallet:to_address(Pub1)),
 	ar_node:mine(Node1),
-	timer:sleep(1000),
+	ar_test_node:wait_until_height(Node1, 1),
 	?assert(ar_node:get_balance(Node1, Pub1) > 0).
 
 %% @doc Check that other nodes accept a new block and associated mining reward.
@@ -238,7 +232,7 @@ multi_node_mining_reward_test_() ->
 		Node1 = ar_node:start([], B0 = ar_weave:init([])),
 		Node2 = ar_node:start([Node1], B0, 0, ar_wallet:to_address(Pub1)),
 		ar_node:mine(Node2),
-		timer:sleep(2000),
+		ar_test_node:wait_until_height(Node1, 1),
 		?assert(ar_node:get_balance(Node1, Pub1) > 0)
 	end}.
 
@@ -255,12 +249,11 @@ replay_attack_test_() ->
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),
 		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx(SignedTX),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 1),
 		ar_node:add_tx(Node1, SignedTX),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 2),
 		?assertEqual(?AR(8999), ar_node:get_balance(Node2, Pub1)),
 		?assertEqual(?AR(1000), ar_node:get_balance(Node2, Pub2))
 	end}.
@@ -278,14 +271,11 @@ last_tx_test_() ->
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),
-		timer:sleep(500),
 		ar_node:add_tx(Node1, SignedTX),
-		timer:sleep(500),
-		ar_storage:write_tx(SignedTX),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
-		?assertEqual(?OK(ar_node:get_last_tx(Node2, Pub1)), ID)
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node2, 1),
+		?assertEqual(ID, ?OK(ar_node:get_last_tx(Node2, Pub1)))
 	end}.
 
 %%%
@@ -306,10 +296,10 @@ wallet_transaction_test_() ->
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),
 		ar_node:add_tx(Node1, SignedTX),
-		timer:sleep(300),
-		ar_storage:write_tx(SignedTX),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(300),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 1),
+		ar_test_node:wait_until_height(Node2, 1),
 		?AR(999) = ar_node:get_balance(Node2, Pub1),
 		?AR(9000) = ar_node:get_balance(Node2, Pub2)
 	end}.
@@ -419,15 +409,13 @@ wallet_two_transaction_test_() ->
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),
 		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx([SignedTX]),
-		timer:sleep(300),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(1000),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 1),
 		ar_node:add_tx(Node2, SignedTX2),
-		ar_storage:write_tx([SignedTX2]),
-		timer:sleep(1000),
-		ar_node:mine(Node2), % Mine B2
-		timer:sleep(300),
+		ar_test_node:wait_until_receives_txs(Node2, [SignedTX2]),
+		ar_node:mine(Node2),
+		ar_test_node:wait_until_height(Node1, 2),
 		?AR(999) = ar_node:get_balance(Node1, Pub1),
 		?AR(8499) = ar_node:get_balance(Node1, Pub2),
 		?AR(500) = ar_node:get_balance(Node1, Pub3)
@@ -447,12 +435,12 @@ mine_tx_with_key_val_tags_test_() ->
 		ar_node:add_peers(Node1, Node2),
 		ar_storage:write_tx([SignedTX]),
 		ar_node:add_tx(Node1, SignedTX),
-		timer:sleep(300),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(1000),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node2, 1),
 		BI = [{B1Hash, _}|_] = ar_node:get_blocks(Node2),
 		#block { txs = TXs } = ar_storage:read_block(B1Hash, BI),
-		?assertEqual(ar_storage:read_tx(TXs), [SignedTX])
+		?assertEqual([SignedTX], ar_storage:read_tx(TXs))
 	end}.
 
 %% @doc Verify the behaviour of out of order TX submission.
@@ -502,14 +490,13 @@ tx_threading_test_() ->
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),
 		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx([SignedTX,SignedTX2]),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(300),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 1),
 		ar_node:add_tx(Node1, SignedTX2),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(1000),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX2]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 2),
 		?AR(7998) = ar_node:get_balance(Node2, Pub1),
 		?AR(2000) = ar_node:get_balance(Node2, Pub2)
 	end}.
@@ -529,12 +516,13 @@ bogus_tx_thread_test_() ->
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),
 		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx([SignedTX,SignedTX2]),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 1),
 		ar_node:add_tx(Node1, SignedTX2),
-		ar_node:mine(Node1), % Mine B1
-		timer:sleep(500),
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX2]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 2),
 		?AR(8999) = ar_node:get_balance(Node2, Pub1),
 		?AR(1000) = ar_node:get_balance(Node2, Pub2)
 	end}.
