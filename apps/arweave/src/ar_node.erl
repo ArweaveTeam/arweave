@@ -23,7 +23,7 @@
 -export([is_joined/1]).
 -export([get_block_txs_pairs/1]).
 
--export([mine/1, mine_at_diff/2, automine/1, truncate/1]).
+-export([mine/1, mine_at_diff/2, automine/1]).
 -export([add_tx/2]).
 -export([cancel_tx/3]).
 -export([add_peers/2]).
@@ -527,11 +527,6 @@ mine_at_diff(Node, Diff) ->
 %% @doc Trigger a node to mine continually.
 automine(Node) ->
 	Node ! automine.
-
-%% @doc Cause a node to forget all but the latest block.
-%% Used primarily for testing, simulating newly joined node.
-truncate(Node) ->
-	Node ! truncate.
 
 %% @doc Set the likelihood that a message will be dropped in transmission.
 %% Used primarily for testing, simulating packet loss.
