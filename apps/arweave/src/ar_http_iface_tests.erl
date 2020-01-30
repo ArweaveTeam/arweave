@@ -198,10 +198,10 @@ get_height_test() ->
 	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
 	Node1 = ar_node:start([self()], B0),
 	ar_http_iface_server:reregister(Node1),
-	0 = ar_http_iface_client:get_height({127,0,0,1,1984}),
+	0 = ar_http_iface_client:get_height({127, 0, 0, 1, 1984}),
 	ar_node:mine(Node1),
-	timer:sleep(1000),
-	1 = ar_http_iface_client:get_height({127,0,0,1,1984}).
+	ar_test_node:wait_until_height(Node1, 1),
+	1 = ar_http_iface_client:get_height({127, 0, 0, 1, 1984}).
 
 %% @doc Test that wallets issued in the pre-sale can be viewed.
 get_presale_balance_test() ->
@@ -249,17 +249,6 @@ get_block_by_hash_test() ->
 	ar_http_iface_server:reregister(Node1),
 	receive after 200 -> ok end,
 	?assertEqual(B0, ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash, B0#block.hash_list)).
-
-% get_recall_block_by_hash_test() ->
-%	ar_storage:clear(),
-%	  [B0] = ar_weave:init([]),
-%	  ar_storage:write_block(B0),
-%	  [B1|_] = ar_weave:add([B0], []),
-%	ar_storage:write_block(B1),
-%	Node1 = ar_node:start([], [B1, B0]),
-%	ar_http_iface_server:reregister(Node1),
-%	receive after 200 -> ok end,
-%	not_found = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
@@ -314,9 +303,9 @@ add_external_tx_test() ->
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-	receive after 1000 -> ok end,
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
+	ar_test_node:wait_until_height(Node, 1),
 	[B1|_] = ar_node:get_blocks(Node),
 	TXID = TX#tx.id,
 	?assertEqual([TXID], (ar_storage:read_block(B1, ar_node:get_hash_list(Node)))#block.txs).
@@ -340,10 +329,10 @@ add_external_tx_with_tags_test() ->
 				]
 		},
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TaggedTX),
-	receive after 1000 -> ok end,
+	ar_test_node:wait_until_receives_txs(Node, [TaggedTX]),
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
-	[B1Hash|_] = ar_node:get_blocks(Node),
+	ar_test_node:wait_until_height(Node, 1),
+	[B1Hash | _] = ar_node:get_blocks(Node),
 	B1 = ar_storage:read_block(B1Hash, ar_node:get_hash_list(Node)),
 	TXID = TaggedTX#tx.id,
 	?assertEqual([TXID], B1#block.txs),
@@ -359,9 +348,9 @@ find_external_tx_test() ->
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-	timer:sleep(1000),
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
-	timer:sleep(1000),
+	ar_test_node:wait_until_height(Node, 1),
 	% write a get_tx function like get_block
 	FoundTXID = (ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], TX#tx.id, []))#tx.id,
 	?assertEqual(FoundTXID, TX#tx.id).
@@ -374,10 +363,11 @@ fail_external_tx_test() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, ar_tx:new(<<"DATA">>)),
-	timer:sleep(1000),
+	TX = ar_tx:new(<<"DATA">>),
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
-	timer:sleep(1000),
+	ar_test_node:wait_until_height(Node, 1),
 	BadTX = ar_tx:new(<<"BADDATA">>),
 	?assertEqual(not_found, ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], BadTX#tx.id, [])).
 
@@ -589,7 +579,7 @@ add_external_block_with_tx_test_() ->
 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		TX = ar_tx:new(<<"TEST DATA">>),
 		ar_node:add_tx(Node2, TX),
-		timer:sleep(500),
+		ar_test_node:wait_until_receives_txs(Node2, [TX]),
 		ar_node:mine(Node2),
 		ar_util:do_until(
 			fun() ->
@@ -682,9 +672,9 @@ add_tx_and_get_last_test() ->
 	SignedTX = ar_tx:sign(TX, Priv1, Pub1),
 	ID = SignedTX#tx.id,
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, SignedTX),
-	timer:sleep(500),
+	ar_test_node:wait_until_receives_txs(Node, [SignedTX]),
 	ar_node:mine(Node),
-	timer:sleep(500),
+	ar_test_node:wait_until_height(Node, 1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
 			<<"GET">>,
@@ -703,9 +693,9 @@ get_subfields_of_tx_test() ->
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-	timer:sleep(1000),
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
-	timer:sleep(1000),
+	ar_test_node:wait_until_height(Node, 1),
 	%write a get_tx function like get_block
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
@@ -725,10 +715,8 @@ get_pending_tx_test() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	io:format("~p\n",[
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>))
-		]),
-	timer:sleep(1000),
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	%write a get_tx function like get_block
 	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
@@ -799,10 +787,9 @@ get_tx_body_test() ->
 	ar:d(byte_size(ar_util:encode(TX#tx.id))),
 	% Add tx to network
 	ar_node:add_tx(Node, TX),
-	% Begin mining
-	receive after 250 -> ok end,
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
+	ar_test_node:wait_until_height(Node, 1),
 	?assertEqual(<<"TEST DATA">>, ar_http_iface_client:get_tx_data({127,0,0,1,1984}, TX#tx.id)).
 
 get_txs_by_send_recv_test_() ->
@@ -820,15 +807,13 @@ get_txs_by_send_recv_test_() ->
 		Node2 = ar_node:start([Node1], B0),
 		ar_node:add_peers(Node1, Node2),
 		ar_node:add_tx(Node1, SignedTX),
-		ar_storage:write_tx([SignedTX]),
-		receive after 300 -> ok end,
-		ar_node:mine(Node1), % Mine B1
-		receive after 1000 -> ok end,
+		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
+		ar_node:mine(Node1),
+		ar_test_node:wait_until_height(Node1, 1),
 		ar_node:add_tx(Node2, SignedTX2),
-		ar_storage:write_tx([SignedTX2]),
-		receive after 1000 -> ok end,
-		ar_node:mine(Node2), % Mine B2
-		receive after 1000 -> ok end,
+		ar_test_node:wait_until_receives_txs(Node2, [SignedTX2]),
+		ar_node:mine(Node2),
+		ar_test_node:wait_until_height(Node2, 2),
 		QueryJSON = ar_serialize:jsonify(
 			ar_serialize:query_to_json_struct(
 					{'or',
@@ -874,7 +859,7 @@ get_tx_status_test() ->
 	Node = ar_node:start([], [B0]),
 	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
 	ar_node:add_tx(Node, TX),
-	receive after 250 -> ok end,
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	FetchStatus = fun() ->
 		ar_httpc:request(
 			<<"GET">>,
@@ -884,7 +869,7 @@ get_tx_status_test() ->
 	end,
 	?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
+	ar_test_node:wait_until_height(Node, 1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = FetchStatus(),
 	{Res} = ar_serialize:dejsonify(Body),
 	HashList = ar_node:get_hash_list(Node),
@@ -896,10 +881,8 @@ get_tx_status_test() ->
 		},
 		maps:from_list(Res)
 	),
-	% mine yet another block and assert the increment
-	receive after 250 -> ok end,
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
+	ar_test_node:wait_until_height(Node, 2),
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
 	{Res2} = ar_serialize:dejsonify(Body2),
 	?assertEqual(
@@ -928,7 +911,7 @@ post_unsigned_tx() ->
 	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
-	% generate a wallet and receive a wallet access code
+	%% Generate a wallet and receive a wallet access code.
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_httpc:request(
 			<<"POST">>,
@@ -958,7 +941,7 @@ post_unsigned_tx() ->
 	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
 	[WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
 	[Address] = proplists:get_all_values(<<"wallet_address">>, CreateWalletRes),
-	% top up the new wallet
+	%% Top up the new wallet.
 	TopUpTX = ar_tx:sign((ar_tx:new())#tx {
 		owner = Pub,
 		target = ar_util:decode(Address),
@@ -973,10 +956,10 @@ post_unsigned_tx() ->
 			[],
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TopUpTX))
 		),
-	receive after 250 -> ok end,
+	ar_test_node:wait_until_receives_txs(Node, [TopUpTX]),
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
-	% send an unsigned transaction to be signed with the generated key
+	ar_test_node:wait_until_height(Node, 1),
+	%% Send an unsigned transaction to be signed with the generated key.
 	TX = (ar_tx:new())#tx{reward = ?AR(1)},
 	UnsignedTXProps = [
 		{<<"last_tx">>, TX#tx.last_tx},
@@ -1014,11 +997,9 @@ post_unsigned_tx() ->
 	ar_meta_db:put(internal_api_secret, not_set),
 	{Res} = ar_serialize:dejsonify(Body),
 	TXID = proplists:get_value(<<"id">>, Res),
-	% mine it into a block
-	receive after 250 -> ok end,
+	timer:sleep(200),
 	ar_node:mine(Node),
-	receive after 1000 -> ok end,
-	% expect the transaction to be successfully mined
+	ar_test_node:wait_until_height(Node, 2),
 	{ok, {_, _, GetTXBody, _, _}} =
 		ar_httpc:request(
 			<<"GET">>,
@@ -1064,9 +1045,9 @@ get_wallet_txs_test_() ->
 				[],
 				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 			),
-		receive after 250 -> ok end,
+		ar_test_node:wait_until_receives_txs(Node, [TX]),
 		ar_node:mine(Node),
-		receive after 1000 -> ok end,
+		ar_test_node:wait_until_height(Node, 1),
 		{ok, {{<<"200">>, <<"OK">>}, _, GetOneTXBody, _, _}} =
 			ar_httpc:request(
 				<<"GET">>,
@@ -1094,9 +1075,9 @@ get_wallet_txs_test_() ->
 				[],
 				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SecondTX))
 			),
-		receive after 250 -> ok end,
+		ar_test_node:wait_until_receives_txs(Node, [SecondTX]),
 		ar_node:mine(Node),
-		receive after 1000 -> ok end,
+		ar_test_node:wait_until_height(Node, 2),
 		{ok, {{<<"200">>, <<"OK">>}, _, GetTwoTXsBody, _, _}} =
 			ar_httpc:request(
 				<<"GET">>,
@@ -1163,9 +1144,9 @@ get_wallet_deposits_test_() ->
 				)
 		end,
 		PostTX(FirstTX),
-		receive after 250 -> ok end,
+		ar_test_node:wait_until_receives_txs(Node, [FirstTX]),
 		ar_node:mine(Node),
-		receive after 1000 -> ok end,
+		ar_test_node:wait_until_height(Node, 1),
 		%% Expect the endpoint to report the received transfer
 		?assertEqual([ar_util:encode(FirstTX#tx.id)], GetTXs("")),
 		%% Send some more Winston to WalletAddressTo
@@ -1176,9 +1157,9 @@ get_wallet_deposits_test_() ->
 			quantity = 100
 		},
 		PostTX(SecondTX),
-		receive after 250 -> ok end,
+		ar_test_node:wait_until_receives_txs(Node, [SecondTX]),
 		ar_node:mine(Node),
-		receive after 1000 -> ok end,
+		ar_test_node:wait_until_height(Node, 2),
 		%% Expect the endpoint to report the received transfer
 		?assertEqual(
 			[ar_util:encode(SecondTX#tx.id), ar_util:encode(FirstTX#tx.id)],
@@ -1195,92 +1176,6 @@ get_wallet_deposits_test_() ->
 			GetTXs(ar_util:encode(SecondTX#tx.id))
 		)
 	end}.
-
-%	Node = ar_node:start([], B0),
-%	ar_http_iface_server:reregister(Node),
-%	ar_node:mine(Node),
-%	receive after 500 -> ok end,
-%	[B1|_] = ar_node:get_blocks(Node),
-%	Enc0 = ar_http_iface_client:get_encrypted_full_block({127, 0, 0, 1, 1984}, (hd(B0))#block.indep_hash),
-%	ar_storage:write_encrypted_block((hd(B0))#block.indep_hash, Enc0),
-%	ar_cleanup:remove_invalid_blocks([B1]),
-%	ar_http_iface_client:send_new_block(
-%		{127, 0, 0, 1, 1984},
-%		hd(B0),
-%		hd(B0)
-%	),
-%	receive after 1000 -> ok end,
-%	ar_node:mine(Node).
-	% ar_node:add_peers(Node, Bridge),
-	% receive after 200 -> ok end,
-	% ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
-	% receive after 200 -> ok end,
-	% ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX1 = ar_tx:new(<<"DATA2">>)),
-	% receive after 200 -> ok end,
-	% ar_node:mine(Node),
-	% receive after 200 -> ok end,
-	% [B1|_] = ar_node:get_blocks(Node),
-	% B2 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B1),
-	% ar:d(get_encrypted_full_block({127, 0, 0, 1, 1984}, B2#block.indep_hash)),
-	% B2 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B1),
-	% B3 = ar_http_iface_client:get_full_block({127, 0, 0, 1, 1984}, B1),
-	% B3 = B2#block {txs = [TX, TX1]},
-
-% get_encrypted_block_test() ->
-%	ar_storage:clear(),
-%	[B0] = ar_weave:init([]),
-%	Node1 = ar_node:start([], [B0]),
-%	ar_http_iface_server:reregister(Node1),
-%	receive after 200 -> ok end,
-%	Enc0 = ar_http_iface_client:get_encrypted_block({127, 0, 0, 1, 1984}, B0#block.indep_hash),
-%	ar_storage:write_encrypted_block(B0#block.indep_hash, Enc0),
-%	ar_cleanup:remove_invalid_blocks([]),
-%	ar_http_iface_client:send_new_block(
-%		{127, 0, 0, 1, 1984},
-%		B0,
-%		B0
-%	),
-%	receive after 500 -> ok end,
-%	B0 = ar_node:get_current_block(whereis(http_entrypoint_node)),
-%	ar_node:mine(Node1).
-
-% get_encrypted_full_block_test() ->
-%	ar_storage:clear(),
-%	B0 = ar_weave:init([]),
-%	ar_storage:write_block(B0),
-%	TX = ar_tx:new(<<"DATA1">>),
-%	TX1 = ar_tx:new(<<"DATA2">>),
-%	ar_storage:write_tx([TX, TX1]),
-%	Node = ar_node:start([], B0),
-%	ar_http_iface_server:reregister(Node),
-%	ar_node:mine(Node),
-%	receive after 500 -> ok end,
-%	[B1|_] = ar_node:get_blocks(Node),
-%	Enc0 = ar_http_iface_client:get_encrypted_full_block({127, 0, 0, 1, 1984}, (hd(B0))#block.indep_hash),
-%	ar_storage:write_encrypted_block((hd(B0))#block.indep_hash, Enc0),
-%	ar_cleanup:remove_invalid_blocks([B1]),
-%	ar_http_iface_client:send_new_block(
-%		{127, 0, 0, 1, 1984},
-%		hd(B0),
-%		hd(B0)
-%	),
-%	receive after 1000 -> ok end,
-%	ar_node:mine(Node).
-	% ar_node:add_peers(Node, Bridge),
-	% receive after 200 -> ok end,
-	% ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
-	% receive after 200 -> ok end,
-	% ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX1 = ar_tx:new(<<"DATA2">>)),
-	% receive after 200 -> ok end,
-	% ar_node:mine(Node),
-	% receive after 200 -> ok end,
-	% [B1|_] = ar_node:get_blocks(Node),
-	% B2 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B1),
-	% ar:d(ar_http_iface_client:get_encrypted_full_block({127, 0, 0, 1, 1984}, B2#block.indep_hash)),
-	% B2 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B1),
-	% B3 = ar_http_iface_client:get_full_block({127, 0, 0, 1, 1984}, B1),
-	% B3 = B2#block {txs = [TX, TX1]},
-
 
 %% Utility functions
 
