@@ -409,6 +409,7 @@ json_struct_to_tx({TXStruct}) ->
 		undefined -> [];
 		Xs -> Xs
 	end,
+	Data = ar_util:decode(find_value(<<"data">>, TXStruct)),
 	#tx {
 		format =
 			case find_value(<<"format">>, TXStruct) of
@@ -426,12 +427,12 @@ json_struct_to_tx({TXStruct}) ->
 			],
 		target = ar_util:decode(find_value(<<"target">>, TXStruct)),
 		quantity = binary_to_integer(find_value(<<"quantity">>, TXStruct)),
-		data = ar_util:decode(find_value(<<"data">>, TXStruct)),
+		data = Data,
 		reward = binary_to_integer(find_value(<<"reward">>, TXStruct)),
 		signature = ar_util:decode(find_value(<<"signature">>, TXStruct)),
 		data_size =
 			case find_value(<<"data_size">>, TXStruct) of
-				undefined -> undefined;
+				undefined -> byte_size(Data);
 				X -> binary_to_integer(X)
 			end,
 		data_tree =
@@ -441,7 +442,7 @@ json_struct_to_tx({TXStruct}) ->
 			end,
 		data_root =
 			case find_value(<<"data_root">>, TXStruct) of
-				undefined -> undefined;
+				undefined -> <<>>;
 				DR -> ar_util:decode(DR)
 			end
 	}.
