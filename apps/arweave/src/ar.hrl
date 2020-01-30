@@ -280,11 +280,22 @@
 	height = -1, % How many blocks have passed since the Genesis block?
 	hash = <<>>, % A hash of this block, the previous block and the recall block.
 	indep_hash = [], % A hash of this block JSON encoded. (TODO: Shouldn't it be a binary as it is a hash?)
-	txs = [], % A list of tx records in full blocks, or a list of tx ids in block shadows.
+	txs = [], % A list of tx records in full blocks, or a list of TX identifiers in block shadows.
 	tx_root = <<>>, % Merkle root of the tree of ordered TXs.
 	tx_tree = [], % The tree data structure of TXs. Not stored.
-	block_index = unset, % A list of all previous indep hashes.
+	%% A list of all previous independent hashes. Not returned in the /block/[hash] API endpoint.
+	%% In the block shadows only the last ?STORE_BLOCKS_BEHIND_CURRENT hashes are included.
+	%% Reconstructed on the receiving side. Not stored in the block files.
+	hash_list = unset,
+	%% A list of hashes in the v1 format used for fork recovering
+	%% through the fork 2.0 switch. Neither stored, gossiped, nor
+	%% returned in the API, only used for constructing the hash list
+	%% for a block shadow.
+	legacy_hash_list = [],
 	hash_list_merkle = <<>>, % The merkle root of the block's hash list.
+	%% A list of {address, balance, last TX ID} tuples. In the block shadows and
+	%% in the /block/[hash] API endpoint the list is replaced with a hash.
+	%% Reconstructed on the receiving side. Stored in the separate files.
 	wallet_list = [], % A map of wallet balances, the wallet list hash, or undefined.
     reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
     tags = [], % Miner specified tags to store with the block.

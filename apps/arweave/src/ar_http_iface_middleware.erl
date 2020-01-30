@@ -388,10 +388,20 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
 			{200, #{}, integer_to_binary(estimate_tx_price(SizeInBytesBinary, AddrOK)), Req}
 	end;
 
+handle(<<"GET">>, [<<"legacy_hash_list">>], Req, _Pid) ->
+	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
+	{ok, HL} = ar_node:get_legacy_hash_list(whereis(http_entrypoint_node)),
+	{200, #{},
+		ar_serialize:jsonify(
+			lists:map(fun ar_util:encode/1, HL)
+		),
+	Req};
+
 %% @doc Return the current hash list held by the node.
 %% GET request to endpoint /block_index
 handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
+
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
 	BI = ar_node:get_block_index(whereis(http_entrypoint_node)),
@@ -937,7 +947,7 @@ block_field_to_string(<<"height">>, Res) -> integer_to_list(Res);
 block_field_to_string(<<"hash">>, Res) -> Res;
 block_field_to_string(<<"indep_hash">>, Res) -> Res;
 block_field_to_string(<<"txs">>, Res) -> ar_serialize:jsonify(Res);
-block_field_to_string(<<"block_index">>, Res) -> ar_serialize:jsonify(Res);
+block_field_to_string(<<"hash_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"wallet_list">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(<<"reward_addr">>, Res) -> Res.
 
@@ -1195,8 +1205,6 @@ post_block_reject_warn(BShadow, Step, Peer, Params) ->
 
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
-	process_request(get_block, [Type, ID, <<"block_index">>], Req);
-process_request(get_block, [Type, ID, <<"block_index">>], Req) ->
 	CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
 	case is_block_known(Type, ID, CurrentBI) of
 		true ->
@@ -1210,12 +1218,10 @@ process_request(get_block, [Type, ID, <<"block_index">>], Req) ->
 						B#block.indep_hash;
 					<<"hash">> -> ID
 				end,
-			BlockBI = ar_block:generate_block_index_for_block(Hash, CurrentBI),
+			BlockHL = ar_block:generate_hash_list_for_block(Hash, CurrentBI),
 			{200, #{},
 				ar_serialize:jsonify(
-					ar_serialize:block_index_to_json_struct(
-						format_bi_for_peer(BlockBI, Req)
-					)
+					lists:map(fun ar_util:encode/1, BlockHL)
 				),
 			Req};
 		false ->
@@ -1223,22 +1229,18 @@ process_request(get_block, [Type, ID, <<"block_index">>], Req) ->
 	end;
 %% @doc Return the wallet list associated with a block (as referenced by hash
 %% or height).
-process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
-	HTTPEntryPointPid = whereis(http_entrypoint_node),
-	CurrentBI = ar_node:get_block_index(HTTPEntryPointPid),
-	case is_block_known(Type, ID, CurrentBI) of
-		false -> {404, #{}, <<"Block not found.">>, Req};
-		true ->
-			B = find_block(Type, ID, CurrentBI),
-			case ?IS_BLOCK(B) of
+process_request(get_block, [_Type, ID, <<"wallet_list">>], Req) ->
+	case ar_block_index:get_block_filename(ID) of
+		unavailable ->
+			{404, #{}, <<"Block not found.">>, Req};
+		Filename ->
+			{ok, Binary} = file:read_file(Filename),
+			B = ar_serialize:json_struct_to_block(Binary),
+			WLHash = B#block.wallet_list,
+			WLFilepath = ar_storage:wallet_list_filepath(WLHash),
+			case filelib:is_file(WLFilepath) of
 				true ->
-					{200, #{},
-						ar_serialize:jsonify(
-							ar_serialize:wallet_list_to_json_struct(
-								B#block.wallet_list
-							)
-						),
-					Req};
+					{200, #{}, sendfile(WLFilepath), Req};
 				false ->
 					{404, #{}, <<"Block not found.">>, Req}
 			end
@@ -1247,7 +1249,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 %% GET request to endpoint /block/hash/{hash|height}/{field}
 %%
 %% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%%				txs | block_index | wallet_list | reward_addr | tags | reward_pool }
+%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 process_request(get_block, [Type, ID, Field], Req) ->
 	CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),

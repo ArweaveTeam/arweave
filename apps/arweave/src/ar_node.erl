@@ -11,7 +11,7 @@
 -export([get_blocks/1, get_block/3]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
--export([get_block_index/1, get_height/1]).
+-export([get_block_index/1, get_height/1, get_legacy_hash_list/1]).
 -export([get_trusted_peers/1]).
 -export([get_balance/2]).
 -export([get_last_tx/2]).
@@ -99,7 +99,10 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin)
 	),
 	start(
 		Peers,
-		[{B#block.indep_hash, B#block.weave_size} | B#block.block_index],
+		lists:map(
+			fun(Block) -> {Block#block.indep_hash, Block#block.weave_size} end,
+			Bs
+		),
 		MiningDelay,
 		RewardAddr,AutoJoin
 	);
@@ -129,7 +132,7 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 	),
 	start(
 		Peers,
-		[{B#block.indep_hash, B#block.weave_size} | B#block.block_index],
+		lists:map(fun(Block) -> {Block#block.indep_hash, Block#block.weave_size} end),
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
@@ -137,7 +140,7 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 		LastRetarget
 	);
 start(Peers, B, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when ?IS_BLOCK(B) ->
-	start(Peers, B#block.block_index, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
+	start(Peers, [{B#block.indep_hash, B#block.weave_size}], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
 start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	% Spawns the node server process.
 	PID = spawn(
@@ -374,6 +377,14 @@ get_block_index(Node) ->
 		{Ref, blockindex, not_joined} -> [];
 		{Ref, blockindex, BI} -> BI
 		after ?LOCAL_NET_TIMEOUT -> []
+	end.
+
+get_legacy_hash_list(Node) ->
+	Ref = make_ref(),
+	Node ! {get_legacy_hash_list, self(), Ref},
+	receive
+		{Ref, legacy_hash_list, HL} -> {ok, HL}
+		after ?LOCAL_NET_TIMEOUT -> {error, timeout}
 	end.
 
 %% @doc Get the current block hash.
@@ -656,9 +667,8 @@ handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
 handle(_SPid, {new_block, Peer, Height, NewB, BDS, Recall}) ->
 	{task, {process_new_block, Peer, Height, NewB, BDS, Recall}};
-handle(_SPid, {replace_block_list, NewBL}) ->
-	% Replace the entire stored block list, regenerating the hash list.
-	{task, {replace_block_list, NewBL}};
+handle(_SPid, {replace_block_list, Blocks}) ->
+	{task, {replace_block_list, Blocks}};
 handle(_SPid, {set_delay, MaxDelay}) ->
 	{task, {set_delay, MaxDelay}};
 handle(_SPid, {set_loss_probability, Prob}) ->
@@ -722,6 +732,10 @@ handle(SPid, {get_walletlist, From, Ref}) ->
 handle(SPid, {get_blockindex, From, Ref}) ->
 	{ok, BI} = ar_node_state:lookup(SPid, block_index),
 	From ! {Ref, blockindex, BI},
+	ok;
+handle(SPid, {get_legacy_hash_list, From, Ref}) ->
+	{ok, BI} = ar_node_state:lookup(SPid, legacy_hash_list),
+	From ! {Ref, legacy_hash_list, BI},
 	ok;
 handle(SPid, {get_current_block_hash, From, Ref}) ->
 	{ok, Res} = ar_node_state:lookup(SPid, current),
@@ -799,104 +813,3 @@ handle(_Spid, {ar_node_state, _, _}) ->
 handle(_SPid, UnhandledMsg) ->
 	ar:warn([ar_node, received_unknown_message, {message, UnhandledMsg}]),
 	ok.
-
-%%%
-%%% Deprecated or unused.
-%%%
-
-%% @doc Get a specific encrypted block via the blocks indep_hash.
-%% If the block is found locally an unencrypted block will be returned.
-% get_encrypted_block(Peers, ID, BI) when is_list(Peers) ->
-% 	% check locally first, if not found ask list of external peers for
-% 	% encrypted block
-% 	case ar_storage:read_block(ID, BI) of
-% 		unavailable ->
-% 			lists:foldl(
-% 				fun(Peer, Acc) ->
-% 					case is_atom(Acc) of
-% 						false -> Acc;
-% 						true ->
-% 							B = get_encrypted_block(Peer, ID, BI),
-% 							case is_atom(B) of
-% 								true -> Acc;
-% 								false -> B
-% 							end
-% 					end
-% 				end,
-% 				unavailable,
-% 				Peers
-% 			);
-% 		Block -> Block
-% 	end;
-% get_encrypted_block(Proc, ID, BI) when is_pid(Proc) ->
-% 	% attempt to get block from local storage
-% 	% NB: if found block returned will not be encrypted
-% 	ar_storage:read_block(ID, BI);
-% get_encrypted_block(Host, ID, BI) ->
-% 	% handle external peer request
-% 	ar_http_iface_client:get_encrypted_block(Host, ID, BI).
-
-%% @doc Get a specific encrypted full block (a block containing full txs) via
-%% the blocks indep_hash.
-%% If the block is found locally an unencrypted block will be returned.
-% get_encrypted_full_block(Peers, ID, BI) when is_list(Peers) ->
-% 	% check locally first, if not found ask list of external peers for
-% 	% encrypted block
-% 	case ar_storage:read_block(ID, BI) of
-% 		unavailable ->
-% 			lists:foldl(
-% 				fun(Peer, Acc) ->
-% 					case is_atom(Acc) of
-% 						false -> Acc;
-% 						true ->
-% 							Full = get_encrypted_full_block(Peer, ID, BI),
-% 							case is_atom(Full) of
-% 								true -> Acc;
-% 								false -> Full
-% 							end
-% 					end
-% 				end,
-% 				unavailable,
-% 				Peers
-% 			);
-% 		_Block ->
-% 			% make_full_block(ID, BI)
-% 			error(block_block_index_required_in_context)
-% 	end;
-% get_encrypted_full_block(Proc, ID, BI) when is_pid(Proc) ->
-% 	% attempt to get block from local storage and make full
-% 	% NB: if found block returned will not be encrypted
-% 	make_full_block(ID, BI);
-% get_encrypted_full_block(Host, ID, BI) ->
-% 	% handle external peer request
-% 	ar_http_iface_client:get_encrypted_full_block(Host, ID, BI).
-
-%% @doc Reattempts to find a block from a node retrying up to Count times.
-%retry_block(_, _, Response, 0) ->
-%	Response;
-%retry_block(Host, ID, _, Count) ->
-%	case get_block(Host, ID) of
-%		not_found ->
-%			timer:sleep(3000),
-%			retry_block(Host, ID, not_found, Count-1);
-%		unavailable ->
-%			timer:sleep(3000),
-%			retry_block(Host, ID, unavailable, Count-1);
-%		B -> B
-%	end.
-
-%% @doc Reattempts to find an encrypted full block from a node retrying
-%% up to Count times.
-%% TODO: Nowhere used anymore.
-%retry_encrypted_full_block(_, _, Response, 0) ->
-%	Response;
-%retry_encrypted_full_block(Host, ID, _, Count) ->
-%	case get_encrypted_full_block(Host, ID) of
-%		not_found ->
-%			timer:sleep(3000),
-%			retry_encrypted_full_block(Host, ID, not_found, Count-1);
-%		unavailable ->
-%			timer:sleep(3000),
-%			retry_encrypted_full_block(Host, ID, unavailable, Count-1);
-%		B -> B
-%	end.

@@ -9,11 +9,6 @@
 height_plus_one_fork_recovery_test() ->
 	%% Mine two blocks on the same height on master and slave.
 	%% Mine the second block on slave. Expect master to fork recover.
-	%%
-	%% Isolate the nodes and mine a block with a TX on slave. Blacklist
-	%% the TX on master after the master receives it. Expect master
-	%% to reject the block. Mine another block on slave. Expect master
-	%% to accept it.
 	{SlaveNode, B0} = slave_start(no_block),
 	{MasterNode, B0} = start(B0),
 	ar_test_node:connect_to_slave(),
@@ -35,34 +30,7 @@ height_plus_one_fork_recovery_test() ->
 	?assertEqual(3, length(SlaveBI2)),
 	MasterBI2 = ar_test_node:wait_until_height(MasterNode, 2),
 	?assertEqual(3, length(MasterBI2)),
-	?assertEqual(hd(SlaveBI2), hd(MasterBI2)),
-	%% Turn off gossip and mine two competing blocks.
-	ar_test_node:slave_gossip(off, SlaveNode),
-	ar_test_node:slave_mine(SlaveNode),
-	SlaveBI3 = ar_test_node:slave_wait_until_height(SlaveNode, 3),
-	ar_node:mine(MasterNode),
-	MasterBI3 = ar_test_node:slave_wait_until_height(MasterNode, 3),
-	?assert(hd(SlaveBI3) /= hd(MasterBI3)),
-	%% Post a TX master will later reject.
-	TX = (ar_tx:new())#tx{ data = <<"BADCONTENT1">>, reward = ?AR(1) },
-	ar_test_node:assert_post_tx_to_slave(SlaveNode, TX),
-	ar_test_node:assert_slave_wait_until_receives_txs(SlaveNode, [TX]),
-	ar_test_node:assert_wait_until_receives_txs(MasterNode, [TX]),
-	%% Now ban the TX on master.
-	ar_meta_db:put(content_policy_files, [filename:dirname(?FILE) ++ "/test_sig.txt"]),
-	ar_firewall:reload(),
-	%% Turn the gossip back on and mine a block on slave.
-	ar_test_node:slave_gossip(on, SlaveNode),
-	ar_test_node:slave_mine(SlaveNode),
-	ar_test_node:slave_wait_until_height(SlaveNode, 4),
-	timer:sleep(500),
-	%% Expect the master to not recover to height + 1 block with illicit TX.
-	?assertEqual(4, length(ar_node:get_block_index(MasterNode))),
-	%% Mine another block on slave and expect master to recover.
-	ar_test_node:slave_mine(SlaveNode),
-	SlaveBI5 = ar_test_node:slave_wait_until_height(SlaveNode, 5),
-	MasterBI4 = ar_test_node:wait_until_height(MasterNode, 5),
-	?assertEqual(SlaveBI5, MasterBI4).
+	?assertEqual(hd(SlaveBI2), hd(MasterBI2)).
 
 missing_txs_fork_recovery_test() ->
 	%% Mine two blocks with transactions on the slave node but do not gossip the transactions in advance.
@@ -82,7 +50,8 @@ missing_txs_fork_recovery_test() ->
 	ar_test_node:slave_gossip(on, SlaveNode),
 	?assertEqual([], ar_node:get_pending_txs(MasterNode)),
 	ar_test_node:slave_mine(SlaveNode),
-	timer:sleep(1000),
+	ar_test_node:wait_until_height(SlaveNode, 1),
+	timer:sleep(200),
 	%% Expect the local node to reject the block.
 	?assertEqual(1, length(ar_node:get_block_index(MasterNode))),
 	%% Turn off gossip again and add the second TX.
