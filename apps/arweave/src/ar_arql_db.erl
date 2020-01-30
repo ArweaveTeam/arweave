@@ -107,8 +107,8 @@ DROP INDEX idx_tag_name_value;
 start_link(Opts) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []).
 
-populate_db(BI) ->
-	gen_server:cast(?MODULE, {populate_db, BI}).
+populate_db(BHL) ->
+	gen_server:cast(?MODULE, {populate_db, BHL}).
 
 select_tx_by_id(ID) ->
 	gen_server:call(?MODULE, {select_tx_by_id, ID}, ?SELECT_TIMEOUT).
@@ -290,8 +290,8 @@ handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 	end,
 	{reply, Reply, State}.
 
-handle_cast({populate_db, BI}, State) ->
-	ok = ensure_db_populated(BI, State),
+handle_cast({populate_db, BHL}, State) ->
+	ok = ensure_db_populated(BHL, State),
 	{noreply, State};
 handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State) ->
 	#{
@@ -393,7 +393,7 @@ create_schema(Conn) ->
 	ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
 	ok.
 
-ensure_db_populated(BI, #{ conn := Conn} = State) ->
+ensure_db_populated(BHL, #{ conn := Conn} = State) ->
 	case sql_fetchone(Conn, "
 		SELECT 1 FROM migration
 		WHERE name = '20191015153000_db_populated'
@@ -402,17 +402,17 @@ ensure_db_populated(BI, #{ conn := Conn} = State) ->
 			ok;
 		done ->
 			ar:info([{ar_arql_db, populating_db}]),
-			{Time, ok} = timer:tc(fun() -> ok = do_populate_db(BI, State) end),
+			{Time, ok} = timer:tc(fun() -> ok = do_populate_db(BHL, State) end),
 			ar:info([{ar_arql_db, populated_db}, {time, Time}]),
 			ok
 	end.
 
-do_populate_db(BI, #{ conn := Conn} = State) ->
+do_populate_db(BHL, #{ conn := Conn} = State) ->
 	ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
 	ok = ar_sqlite3:exec(Conn, ?DROP_INDEXES_SQL, ?DRIVER_TIMEOUT),
-	ok = lists:foreach(fun({BH, _}) ->
+	ok = lists:foreach(fun(BH) ->
 		ok = insert_block_json(BH, State)
-	end, BI),
+	end, BHL),
 	ok = ar_sqlite3:exec(Conn, ?CREATE_INDEXES_SQL, infinity),
 	done = sql_fetchone(Conn, "INSERT INTO migration VALUES ('20191015153000_db_populated', ?)", [sql_now()], ?DRIVER_TIMEOUT),
 	ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", infinity),

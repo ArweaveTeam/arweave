@@ -416,12 +416,26 @@ randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 %% Tests
 
 %% @doc Test that found nonces abide by the difficulty criteria.
-basic_test() ->
+basic_test_() ->
+	ar_test_fork:test_on_fork(
+		height_2_0,
+		0,
+		fun() ->
+			[B0] = ar_weave:init([]),
+			ar_node:start([], [B0]),
+			[B1 | _] = ar_weave:add([B0], []),
+			start(B1, B1#block.poa, [], unclaimed, [], self(), []),
+			assert_mine_output(B1, B1#block.poa, [])
+		end
+	).
+
+basic_pre_fork_2_0_test() ->
 	[B0] = ar_weave:init([]),
 	ar_node:start([], [B0]),
-	[B1|_] = ar_weave:add([B0], []),
-	start(B1, B1#block.poa, [], unclaimed, [], self(), []),
-	assert_mine_output(B1, B1#block.poa, []).
+	[B1 | _] = ar_weave:add([B0], []),
+	RecallB = B0,
+	start(B1, RecallB, [], unclaimed, [], self(), []),
+	assert_mine_output(B1, RecallB, []).
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
 timestamp_refresh_test_() ->

@@ -1,7 +1,7 @@
 -module(ar_transition).
 
 -export([am_i_ready/0]).
--export([generate_checkpoint/0, generate_checkpoint/1]).
+-export([generate_checkpoint/0, generate_checkpoint/1, generate_checkpoint/2]).
 -export([save_checkpoint/1, save_checkpoint/2]).
 -export([load_checkpoint/0, load_checkpoint/1]).
 
@@ -22,15 +22,22 @@ am_i_ready() ->
 	ToGo.
 
 generate_checkpoint() ->
-	generate_checkpoint(ar_node:get_block_index(whereis(entrypoint_node))).
+	generate_checkpoint(ar_node:get_block_index(whereis(entrypoint_node)), 0).
+
 generate_checkpoint(BI) ->
-	Checkpoint = generate_checkpoint(BI, load_checkpoint()),
+	generate_checkpoint(BI, 0).
+
+generate_checkpoint(BI, Offset) ->
+	CurrentCheckpoint = load_checkpoint(),
+	Checkpoint = generate_checkpoint2(BI, lists:sublist(CurrentCheckpoint, Offset + 1, length(CurrentCheckpoint))),
 	io:format("Generated checkpoint to height ~w. Saving...~n", [length(Checkpoint)]),
 	save_checkpoint(Checkpoint),
 	Checkpoint.
-generate_checkpoint(BI, CP) ->
+
+generate_checkpoint2(BI, CP) ->
 	lists:reverse(do_generate_checkpoint(lists:reverse(?BI_TO_BHL(BI)), lists:reverse(CP), BI)).
 
+%% TODO reconcile with checkpoint by hash, not by height
 do_generate_checkpoint([], [], _) -> [];
 do_generate_checkpoint([_ | HL], [CPEntry | CP], BI) ->
 	[CPEntry|do_generate_checkpoint(HL, CP, BI)];

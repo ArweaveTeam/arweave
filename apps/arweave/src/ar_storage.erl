@@ -10,7 +10,7 @@
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
 -export([enough_space/1, select_drive/2]).
 -export([calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0]).
--export([lookup_block_filename/1,lookup_tx_filename/1]).
+-export([lookup_block_filename/1,lookup_tx_filename/1, wallet_list_filepath/1]).
 -export([read_block_file/2, read_tx_file/1]).
 -export([ensure_directories/0, clear/0]).
 
@@ -197,7 +197,7 @@ read_block_file(Filename, BI) ->
 	WL = B#block.wallet_list,
 	FinalB =
 		B#block {
-			block_index = ar_block:generate_block_index_for_block(B, BI),
+			hash_list = ar_block:generate_hash_list_for_block(B, BI),
 			wallet_list =
 				case WL of
 					WL when is_list(WL) ->
@@ -513,17 +513,17 @@ store_and_retrieve_block_test() ->
 	B0s = [B0] = ar_weave:init([]),
 	ar_storage:write_block(B0),
 	?assertEqual(
-		read_block(B0#block.indep_hash, B0#block.block_index),
+		read_block(B0#block.indep_hash, block_index_from_blocks([B0])),
 		B0
 	),
-	B1s = [B1|_] = ar_weave:add(B0s, []),
+	B1s = [B1 | _] = ar_weave:add(B0s, []),
 	ar_storage:write_block(B1),
-	[B2|_] = ar_weave:add(B1s, []),
+	[B2 | _] = ar_weave:add(B1s, []),
 	ar_storage:write_block(B2),
 	write_block(B1),
 	?assertEqual(3, blocks_on_disk()),
-	B1 = read_block(B1#block.indep_hash, B2#block.block_index),
-	B1 = read_block(B1#block.height, B2#block.block_index).
+	B1 = read_block(B1#block.indep_hash, block_index_from_blocks([B1, B0])),
+	B1 = read_block(B1#block.height, block_index_from_blocks([B1, B0])).
 
 clear_blocks_test() ->
 	ar_storage:clear(),
@@ -543,7 +543,7 @@ invalidate_block_test() ->
 	write_full_block(B),
 	invalidate_block(B),
 	timer:sleep(500),
-	unavailable = read_block(B#block.indep_hash, B#block.block_index),
+	unavailable = read_block(B#block.indep_hash, block_index_from_blocks([B])),
 	TargetFile =
 		lists:flatten(
 			io_lib:format(
@@ -551,19 +551,19 @@ invalidate_block_test() ->
 				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
-	?assertEqual(B, read_block_file(TargetFile, B#block.block_index)).
+	?assertEqual(B, read_block_file(TargetFile, block_index_from_blocks([B]))).
 
 store_and_retrieve_block_block_index_test() ->
 	ID = crypto:strong_rand_bytes(32),
-	B0s = ar_weave:init([]),
-	write_block(hd(B0s)),
-	B1s = ar_weave:add(B0s, []),
-	write_block(hd(B1s)),
-	[B2|_] = ar_weave:add(B1s, []),
-	write_block_block_index(ID, B2#block.block_index),
+	[B0] = ar_weave:init([]),
+	write_block(B0),
+	[B1 | _] = ar_weave:add([B0], []),
+	write_block(B1),
+	[B2 | _] = ar_weave:add([B1, B0], []),
+	write_block_block_index(ID, block_index_from_blocks([B1, B0])),
 	receive after 500 -> ok end,
 	BI = read_block_block_index(ID),
-	BI = B2#block.block_index.
+	?assertEqual(?BI_TO_BHL(BI), B2#block.hash_list).
 
 store_and_retrieve_wallet_list_test() ->
 	[B0] = ar_weave:init(),
@@ -575,7 +575,10 @@ handle_corrupted_wallet_list_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	ar_storage:write_block(B0),
-	?assertEqual(B0, read_block(B0#block.indep_hash, B0#block.block_index)),
+	?assertEqual(B0, read_block(B0#block.indep_hash, block_index_from_blocks([B0]))),
 	WalletListHash = ar_block:hash_wallet_list(B0#block.wallet_list),
 	ok = file:write_file(wallet_list_filepath(WalletListHash), <<>>),
-	?assertEqual(unavailable, read_block(B0#block.indep_hash, B0#block.block_index)).
+	?assertEqual(unavailable, read_block(B0#block.indep_hash, block_index_from_blocks([B0]))).
+
+block_index_from_blocks(Blocks) ->
+	lists:map(fun(B) -> {B#block.indep_hash, B#block.weave_size} end, Blocks).

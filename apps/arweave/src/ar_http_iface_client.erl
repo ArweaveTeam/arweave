@@ -12,6 +12,7 @@
 -export([get_time/2, get_height/1]).
 -export([get_wallet_list/2, get_block_index/1, get_block_index/2]).
 -export([get_current_block/1, get_current_block/2]).
+-export([get_legacy_hash_list/1]).
 
 -include("ar.hrl").
 
@@ -62,22 +63,21 @@ has_tx(Peer, ID) ->
 
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Peer, NewB, BDS, Recall) ->
-	ShortBI =
-		lists:sublist(
-			NewB#block.block_index,
-			1,
-			?STORE_BLOCKS_BEHIND_CURRENT
+	ShortHashList =
+		lists:map(
+			fun ar_util:encode/1,
+			ar_block:join_v1_v2_hash_list(
+				NewB#block.height,
+				lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT),
+				lists:sublist(NewB#block.legacy_hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
+			)
 		),
 	{SmallBlockProps} =
 		ar_serialize:block_to_json_struct(
 			NewB#block { wallet_list = [] }
 		),
 	BlockShadowProps =
-		[
-			{<<"block_index">>, ar_serialize:block_index_to_json_struct(ShortBI)}
-		|
-			SmallBlockProps
-		],
+		[{<<"hash_list">>, ShortHashList} | SmallBlockProps],
 	PostProps = [
 		{<<"new_block">>, {BlockShadowProps}},
 		%% Add the P2P port field to be backwards compatible with nodes
@@ -250,6 +250,16 @@ get_wallet_list(Peer, Hash) ->
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found;
 		_ -> unavailable
 	end.
+
+get_legacy_hash_list(Peer) ->
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			"/legacy_hash_list",
+			p2p_headers()
+		),
+	lists:map(fun(H) -> ar_util:decode(H) end, ar_serialize:dejsonify(Body)).
 
 %% @doc Get a block hash list (by its hash) from the external peer.
 get_block_index(Peer) ->
@@ -565,27 +575,21 @@ reconstruct_full_block(Peer, Peers, Body, BI) ->
 								get_wallet_list(Peer, B#block.indep_hash)
 						end
 				end,
-			BBI =
-				case B#block.block_index of
+			HashList =
+				case B#block.hash_list of
 					unset ->
-						ar_block:generate_block_index_for_block(
+						ar_block:generate_hash_list_for_block(
 							B,
 							BI
 						);
-					XBI ->
-						case XBI of
-							Hashes = [H | _] when is_binary(H) ->
-								[{XH, 0} || XH <- Hashes];
-							_ ->
-								XBI
-						end
+					HL -> HL
 				end,
 			MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node)),
 			case {get_txs(Peers, MempoolTXs, B), WalletList} of
 				{{ok, TXs}, MaybeWalletList} when is_list(MaybeWalletList) ->
 					B#block {
 						txs = TXs,
-						block_index = BBI,
+						hash_list = HashList,
 						wallet_list = WalletList
 					};
 				_ ->
@@ -638,9 +642,7 @@ handle_block_field_response1({"height", {ok, {{<<"200">>, _}, _, Body, _, _}}}) 
 handle_block_field_response1({"txs", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_tx(Body);
 handle_block_field_response1({"hash_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body));
-handle_block_field_response1({"block_index", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
-	ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body));
+	lists:map(fun ar_util:decode/1, ar_serialize:dejsonify(Body));
 handle_block_field_response1({"wallet_list", {ok, {{<<"200">>, _}, _, Body, _, _}}}) ->
 	ar_serialize:json_struct_to_wallet_list(Body);
 handle_block_field_response1({_Subfield, {ok, {{<<"200">>, _}, _, Body, _, _}}}) -> Body;

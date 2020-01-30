@@ -70,7 +70,7 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 create_poa_from_data(B, no_tx, _, _BlockOffset, Option) ->
 	#poa {
 		option = Option,
-		recall_block = B#block { txs = [], block_index = [], poa = undefined },
+		recall_block = B#block { txs = [], hash_list = [], poa = undefined },
 		tx_path = <<>>,
 		data_path = <<>>,
 		chunk = <<>>,
@@ -115,7 +115,7 @@ create_poa_from_data(NoTreeB, NoTreeTX, SizeTaggedTXs, BlockOffset, Option) ->
 		recall_block =
 			B#block {
 				txs = [],
-				block_index = [],
+				hash_list = [],
 				wallet_list = ar_block:hash_wallet_list(B#block.wallet_list),
 				poa = undefined,
 				tx_tree = []

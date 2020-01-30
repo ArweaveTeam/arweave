@@ -1,18 +1,19 @@
 -module(ar_downloader).
--export([start/2, add_block/1, add_block/2, add_block/3]).
+
+-export([start/2, add_block/2, add_block/3]).
+
 -include("ar.hrl").
-%%% This module contains the core transaction and block downloader of this
-%%% Arweave protocol implementation. After the node has joined the network,
-%%% this process should be started, which continually downloads data until
-%% either the drive is full or the entire weave has been mirrored.
+
+%%% This module contains the core transaction and block downloader.
+%%% After the node has joined the network, this process should be started,
+%%% which continually downloads data until either the drive is full
+%%% or the entire weave has been mirrored.
 
 start(Peers, BI) ->
     PID = spawn(fun() -> fill_to_capacity(Peers, BI) end),
     register(?MODULE, PID).
 
-add_block(B) -> add_block(B, whereis(?MODULE)).
-add_block(B, PID) ->
-	add_block(element(1, hd(B#block.block_index)), B#block.block_index, PID).
+add_block(B, BI) -> add_block(B#block.indep_hash, BI, whereis(?MODULE)).
 add_block(BH, BI, PID) ->
 	case PID of
 		undefined ->
@@ -38,26 +39,26 @@ fill_to_capacity(Peers, [], _BI) ->
 fill_to_capacity(Peers, ToWrite, BI) ->
 	{NewBI, NewToWrite} =
 		receive
-			{block, H, XBI} -> {XBI, [H|ToWrite]}
+			{block, H, XBI} -> {XBI, [H | ToWrite]}
 		after 0 -> {BI, ToWrite}
 		end,
 	timer:sleep(250),
 	RandHash = lists:nth(rand:uniform(length(NewToWrite)), NewToWrite),
 	case ar_storage:read_block(RandHash, NewBI) of
 		unavailable ->
-			% Block is not found locally, download it and its transactions.
+			%% Block is not found locally, download it and its transactions.
 			fill_to_capacity2(Peers, RandHash, ToWrite, NewBI);
 		B ->
-			case [ T || T <- ar_storage:read_txs(B#block.txs), not is_record(T, tx) ] of
+			case [TX || TX <- ar_storage:read_tx(B#block.txs), not is_record(TX, tx)] of
 				[] ->
-					% All of the TXs are found locally. Continue...
+					%% All of the TXs are found locally. Continue...
 					fill_to_capacity(
 						Peers,
 						lists:delete(RandHash, ToWrite),
 						NewBI
 					);
 				_ ->
-					% Download the block and its TXs...
+					%% Download the block and its TXs...
 					fill_to_capacity2(Peers, RandHash, ToWrite, NewBI)
 			end
 	end.
