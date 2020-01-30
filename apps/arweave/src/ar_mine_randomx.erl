@@ -21,10 +21,16 @@ init_fast(Key, Threads) ->
 -endif.
 
 -ifdef(DEBUG).
-hash_fast(FastState, Data) ->
-	%% Make sure the hash is deterministic and unique, no longer than 48, and bigger than 1 (the debug difficulty).
-	Hash = binary:encode_unsigned(1 + binary:decode_unsigned(<< FastState/binary, Data/binary >>)),
-	list_to_binary(lists:sublist(binary_to_list(Hash), 48)).
+hash_fast(_FastState, Data) ->
+	case Data of
+		<<"bad-block-data-segment">> ->
+			<<0>>;
+		_ ->
+			%% Make sure the hash is deterministic and unique, no longer than 48,
+			%% and bigger than 1 (the debug difficulty).
+			Hash = binary:encode_unsigned(1 + binary:decode_unsigned(<< Data/binary >>)),
+			list_to_binary(lists:sublist(binary_to_list(Hash), 48))
+	end.
 -else.
 hash_fast(FastState, Data) ->
 	{ok, Hash} =
@@ -33,8 +39,8 @@ hash_fast(FastState, Data) ->
 -endif.
 
 -ifdef(DEBUG).
-bulk_hash_fast(FastState, Nonce, BDS, _Diff) ->
-	Hash = binary:encode_unsigned(1 + binary:decode_unsigned(<< FastState/binary, Nonce/binary, BDS/binary >>)),
+bulk_hash_fast(_FastState, Nonce, BDS, _Diff) ->
+	Hash = binary:encode_unsigned(1 + binary:decode_unsigned(<< Nonce/binary, BDS/binary >>)),
 	{list_to_binary(lists:sublist(binary_to_list(Hash), 48)), Nonce, 1}.
 -else.
 bulk_hash_fast(FastState, Nonce, BDS, Diff) ->

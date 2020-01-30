@@ -446,9 +446,9 @@ add_external_block_with_bad_bds_test_() ->
 			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
 			send_new_block(
 				RemotePeer,
-				B1#block{indep_hash = add_rand_suffix(<<"new-hash">>)},
+				B1#block{indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>>},
 				RecallB0,
-				add_rand_suffix(<<"bad-block-data-segment">>)
+				<<"bad-block-data-segment">> % Hardcoded in ar_mine_randomx.erl to hash to <<0>> (< 1).
 			)
 		),
 		%% Verify the IP address of self is banned in ar_blacklist_middleware.
