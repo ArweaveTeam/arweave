@@ -11,10 +11,9 @@
 -export([apply_mining_reward/4, apply_tx/3, apply_txs/3]).
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/3]).
--export([fork_recover/3]).
 -export([validate/5, validate/8, validate_wallet_list/1]).
 -export([calculate_delay/1]).
--export([update_block_txs_pairs/3]).
+-export([update_block_txs_pairs/3, update_block_index/3]).
 -export([log_invalid_txs_drop_reason/1]).
 -export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
 
@@ -89,9 +88,7 @@ get_full_block_from_remote_peers(Peers, ID, BI) ->
 			unavailable
 	end.
 
-%% @doc Search a block list for the next recall block.
-find_recall_block([B|_]) when ?IS_BLOCK(B) ->
-	find_recall_block(B#block.block_index);
+%% @doc Search a block index for the next recall block.
 find_recall_block(BI = [{Hash, _}]) ->
 	ar_storage:read_block(Hash, BI);
 find_recall_block(BI) ->
@@ -156,15 +153,15 @@ calculate_reward_pool_perpetual(OldPool, TXs, _, POA, WeaveSize, Height, Diff, T
 	NewPool = OldPool + TXsCost,
 	case Height >= ar_fork:height_2_0() of
 		true ->
-			RewardMultiplier = 1/POA#poa.option,
+			RewardMultiplier = 1 / POA#poa.option,
 			PoolMultiplier = (1 - RewardMultiplier),
 			case AR =< 0 of
-				true ->
+				true -> % BaseReward >= Burden
 					{
 						erlang:trunc(BaseReward * RewardMultiplier),
 						NewPool + erlang:trunc(BaseReward * PoolMultiplier)
 					};
-				false ->
+				false -> % Burden > BaseReward
 					{
 						erlang:trunc((BaseReward + AR) * RewardMultiplier),
 						(NewPool - AR) + erlang:trunc(BaseReward * PoolMultiplier)
@@ -292,11 +289,11 @@ start_mining(StateIn) ->
 	start_mining(StateIn, unforced).
 
 start_mining(#{block_index := not_joined} = StateIn, _) ->
-	% We don't have a block list. Wait until we have one before
-	% starting to mine.
+	%% We don't have a block index. Wait until we have one before
+	%% starting to mine.
 	StateIn;
-start_mining(#{ block_index := BI } = State, ForceDiff) ->
-	case length(BI) >= ar_fork:height_2_0() of
+start_mining(#{ height := Height } = State, ForceDiff) ->
+	case Height + 1 >= ar_fork:height_2_0() of
 		true ->
 			start_mining_post_fork_2_0(State, ForceDiff);
 		false ->
@@ -467,7 +464,8 @@ integrate_new_block(
 		#{
 			txs := TXs,
 			block_index := BI,
-			block_txs_pairs := BlockTXPairs
+			block_txs_pairs := BlockTXPairs,
+			legacy_hash_list := LegacyHL
 		} = StateIn,
 		NewB,
 		BlockTXs) ->
@@ -479,11 +477,8 @@ integrate_new_block(
 	%% up, it should be fine.
 	%% Write new block and included TXs to local storage.
 	ar_storage:write_full_block(NewB, BlockTXs),
-	NewBlockTXPairs = update_block_txs_pairs(
-		NewB#block.indep_hash,
-		[TX#tx.id || TX <- BlockTXs],
-		BlockTXPairs
-	),
+	{NewBI, NewLegacyHL} = update_block_index(NewB, BI, LegacyHL),
+	NewBlockTXPairs = update_block_txs_pairs(NewB, BlockTXPairs, NewBI),
 	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		NewBlockTXPairs,
 		TXs -- BlockTXs,
@@ -493,9 +488,9 @@ integrate_new_block(
 	),
 	log_invalid_txs_drop_reason(InvalidTXs),
 	ar_miner_log:foreign_block(NewB#block.indep_hash),
-	ar:report_console(
+	ar:info(
 		[
-			accepted_foreign_block,
+			{event, accepted_foreign_block},
 			{indep_hash, ar_util:encode(NewB#block.indep_hash)},
 			{height, NewB#block.height}
 		]
@@ -505,34 +500,76 @@ integrate_new_block(
 		PID ->
 			PID ! {parent_accepted_block, NewB}
 	end,
-	ar_downloader:add_block(NewB),
-	Fork_2_0 = ar_fork:height_2_0(),
-	NewBI2 =
-		case NewB#block.height of
-			Fork_2_0 ->
-				io:format(
-					"!!!CAUTION!!!~n"
-					"Arweave is now transitioning to version 2.0. This may take a significant time.~n"
-					"In the event of an error, please check the Arweave community's communication "
-					"channels to liasse with your fellow miners.~n"),
-				[{NewB#block.indep_hash, NewB#block.weave_size}  | ar_transition:generate_checkpoint(BI)];
-			_ ->
-				[{NewB#block.indep_hash, NewB#block.weave_size} | BI]
-		end,
+	ar_downloader:add_block(NewB, BI),
 	reset_miner(StateIn#{
-		block_index     => NewBI2,
-		current         => NewB#block.indep_hash,
-		txs             => ValidTXs,
-		height          => NewB#block.height,
-		reward_pool     => NewB#block.reward_pool,
-		diff            => NewB#block.diff,
-		last_retarget   => NewB#block.last_retarget,
-		weave_size      => NewB#block.weave_size,
-		block_txs_pairs => NewBlockTXPairs
+		block_index      => NewBI,
+		legacy_hash_list => NewLegacyHL,
+		current          => element(1, hd(NewBI)),
+		txs              => ValidTXs,
+		height           => NewB#block.height,
+		reward_pool      => NewB#block.reward_pool,
+		diff             => NewB#block.diff,
+		last_retarget    => NewB#block.last_retarget,
+		weave_size       => NewB#block.weave_size,
+		block_txs_pairs  => NewBlockTXPairs
 	}).
 
-update_block_txs_pairs(BH, TXIDs, List) ->
-	lists:sublist([{BH, TXIDs} | List], 2 * ?MAX_TX_ANCHOR_DEPTH).
+%% @doc Append a new entry to the block index after verifying the block
+%% and return {new block index, new legacy hash list}.
+%%
+%% Switching to 2.0 replaces the whole index from the checkpoint.
+%%
+%% The legacy hash list is a list of hashes where hashes before 2.0 are
+%% in the v1 format. Empty except for within the ?STORE_BLOCKS_BEHIND_FORK
+%% vicinity of 2.0.
+update_block_index(B, BI, LegacyHL) ->
+	Fork_2_0 = ar_fork:height_2_0(),
+	BH = B#block.indep_hash,
+	case B#block.height + 1 of
+		Fork_2_0 ->
+			NewLegacyHL = [BH | ?BI_TO_BHL(BI)],
+			CheckpointForkDepth = checkpoint_fork_depth(NewLegacyHL, LegacyHL),
+			Checkpoint = ar_transition:generate_checkpoint([{BH, B#block.weave_size} | BI], CheckpointForkDepth),
+			{Checkpoint, NewLegacyHL};
+		Height when Height > Fork_2_0 + ?STORE_BLOCKS_BEHIND_CURRENT ->
+			{[{BH, B#block.weave_size} | BI], []};
+		_ ->
+			{[{BH, B#block.weave_size} | BI], LegacyHL}
+	end.
+
+checkpoint_fork_depth(_, []) ->
+	0;
+checkpoint_fork_depth(New, Old) ->
+	checkpoint_fork_depth(New, Old, 0).
+
+checkpoint_fork_depth([H | _], [H | _], Depth) ->
+	Depth;
+checkpoint_fork_depth([_ | New], [_ | Old], Depth) ->
+	checkpoint_fork_depth(New, Old, Depth + 1).
+
+%% @doc Append a new entry to the block-transactions pairs after verifying the block.
+%% Switching to 2.0 replaces the whole list from the checkpoint.
+update_block_txs_pairs(B, BlockTXPairs, BI) ->
+	Fork_2_0 = ar_fork:height_2_0(),
+	TXIDs = [case TX of Record when is_record(Record, tx) -> Record#tx.id; ID -> ID end  || TX <- B#block.txs],
+	case B#block.height + 1 of
+		Fork_2_0 ->
+			Zipped = lists:zip(
+				[{ar_weave:indep_hash_post_fork_2_0(B), TXIDs} | BlockTXPairs],
+				lists:sublist(BI, length(BlockTXPairs) + 1)
+			),
+			lists:sublist(
+				lists:map(
+					fun({{_, IDs}, {H, _}}) ->
+						{H, IDs}
+					end,
+					Zipped
+				),
+				2 * ?MAX_TX_ANCHOR_DEPTH
+			);
+		_ ->
+			lists:sublist([{B#block.indep_hash, TXIDs} | BlockTXPairs], 2 * ?MAX_TX_ANCHOR_DEPTH)
+	end.
 
 log_invalid_txs_drop_reason(InvalidTXs) ->
 	lists:foreach(
@@ -551,39 +588,6 @@ log_invalid_txs_drop_reason(InvalidTXs) ->
 		InvalidTXs
 	).
 
-%% @doc Recovery from a fork.
-fork_recover(#{ node := Node, block_index := BI, block_txs_pairs := BlockTXPairs } = StateIn, Peer, NewB) ->
-	case {whereis(fork_recovery_server), whereis(join_server)} of
-		{undefined, undefined} ->
-			PrioritisedPeers = ar_util:unique(Peer) ++
-				case whereis(http_bridge_node) of
-					undefined -> [];
-					BridgePID -> ar_bridge:get_remote_peers(BridgePID)
-				end,
-			erlang:monitor(
-				process,
-				PID = ar_fork_recovery:start(
-					PrioritisedPeers,
-					maps:get(trusted_peers, StateIn),
-					NewB,
-					BI,
-					Node,
-					BlockTXPairs
-				)
-			),
-			case PID of
-				undefined -> ok;
-				_		  -> erlang:register(fork_recovery_server, PID)
-			end;
-		{undefined, _} ->
-			ok;
-		_ ->
-			whereis(fork_recovery_server) ! {update_target_block, NewB, ar_util:unique(Peer)}
-	end,
-	% TODO: Check how an unchanged state has to be returned in
-	% program flow.
-	StateIn.
-
 %% @doc Validate a block, given a node state and the dependencies.
 validate(#{ block_index := BI, wallet_list := WalletList }, B, TXs, OldB, RecallB) ->
 	validate(BI, WalletList, B, TXs, OldB, RecallB, B#block.reward_addr, B#block.tags).
@@ -595,7 +599,6 @@ validate(
 		WalletList,
 		NewB =
 			#block {
-				wallet_list = WalletList,
 				height = Height
 			},
 		TXs,
@@ -612,11 +615,10 @@ validate(
 	end.
 
 validate_post_fork_2_0(
-		_BI,
+		BI,
 		WalletList,
 		NewB =
 			#block {
-				block_index = BI = [{LastIndepHash, LastWeaveSize} | _],
 				wallet_list = WalletList,
 				nonce = Nonce,
 				diff = Diff,
@@ -625,7 +627,11 @@ validate_post_fork_2_0(
 				poa = POA
 			},
 		TXs,
-		OldB,
+		OldB =
+			#block {
+				indep_hash = LastIndepHash,
+				weave_size = LastWeaveSize
+			},
 		_,
 		RewardAddr,
 		Tags
@@ -660,8 +666,8 @@ validate_post_fork_2_0(
 					{height, ar_block:verify_height(NewB, OldB)},
 					{last_retarget, ar_block:verify_last_retarget(NewB, OldB)},
 					{previous_block, ar_block:verify_previous_block(NewB, OldB)},
-					{block_index, ar_block:verify_block_index(NewB, OldB)},
-					{hash_list_root, ar_block:verify_hash_list_merkle(NewB, OldB)},
+					{block_index, ar_block:verify_block_hash_list(NewB, OldB)},
+					{hash_list_root, ar_block:verify_block_hash_list_merkle(NewB, OldB)},
 					{wallet_list2, ar_block:verify_wallet_list(NewB, OldB, POA, TXs)},
 					{cumulative_difficulty, ar_block:verify_cumulative_diff(NewB, OldB)}
 				]
@@ -690,7 +696,7 @@ validate_post_fork_2_0(BI, _WL, NewB = #block { wallet_list = undefined }, TXs,O
 	validate_post_fork_2_0(BI, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
-	{invalid, [block_index_or_wallet_list]}.
+	{invalid, [hash_list_or_wallet_list]}.
 
 validate_pre_fork_2_0(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
 	ar:info([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),
@@ -700,7 +706,6 @@ validate_pre_fork_2_0(
 		WalletList,
 		NewB =
 			#block {
-				block_index = BI,
 				wallet_list = WalletList,
 				nonce = Nonce,
 				diff = Diff,
@@ -732,8 +737,8 @@ validate_pre_fork_2_0(
 	HeightCheck = ar_block:verify_height(NewB, OldB),
 	RetargetCheck = ar_block:verify_last_retarget(NewB, OldB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
-	BICheck = ar_block:verify_block_index(NewB, OldB),
-	HLMerkleCheck = ar_block:verify_hash_list_merkle(NewB, OldB),
+	HLCheck = ar_block:verify_block_hash_list(NewB, OldB),
+	HLMerkleCheck = ar_block:verify_block_hash_list_merkle(NewB, OldB),
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
 	CumulativeDiffCheck = ar_block:verify_cumulative_diff(NewB, OldB),
 
@@ -754,7 +759,7 @@ validate_pre_fork_2_0(
 			{block_height, HeightCheck},
 			{block_retarget_time, RetargetCheck},
 			{block_previous_check, PreviousBCheck},
-			{block_block_index, BICheck},
+			{block_hash_list, HLCheck},
 			{block_wallet_list, WalletListCheck},
 			{block_cumulative_diff, CumulativeDiffCheck},
 			{hash_list_merkle, HLMerkleCheck}
@@ -785,7 +790,7 @@ validate_pre_fork_2_0(
 	case HeightCheck of false -> ar:info(invalid_height); _ -> ok end,
 	case RetargetCheck of false -> ar:info(invalid_retarget); _ -> ok end,
 	case PreviousBCheck of false -> ar:info(invalid_previous_block); _ -> ok end,
-	case BICheck of false -> ar:info(invalid_block_index); _ -> ok end,
+	case HLCheck of false -> ar:info(invalid_hash_list); _ -> ok end,
 	case WalletListCheck of false -> ar:info(invalid_wallet_list_rewards); _ -> ok end,
 	case CumulativeDiffCheck of false -> ar:info(invalid_cumulative_diff); _ -> ok end,
 	case HLMerkleCheck of false -> ar:info(invalid_hash_list_merkle); _ -> ok end,
@@ -802,7 +807,7 @@ validate_pre_fork_2_0(
 		andalso HeightCheck
 		andalso RetargetCheck
 		andalso PreviousBCheck
-		andalso BICheck
+		andalso HLCheck
 		andalso WalletListCheck
 		andalso CumulativeDiffCheck
 		andalso HLMerkleCheck),
@@ -816,13 +821,13 @@ validate_pre_fork_2_0(
 		false ->
 			{invalid, InvalidReasons}
 	end;
-validate_pre_fork_2_0(_BI, WL, NewB = #block { block_index = unset }, TXs, OldB, RecallB, _, _) ->
+validate_pre_fork_2_0(_BI, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
 	validate_pre_fork_2_0(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate_pre_fork_2_0(BI, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
 	validate_pre_fork_2_0(BI, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate_pre_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
-	{invalid, [block_index_or_wallet_list]}.
+	{invalid, [hash_list_or_wallet_list]}.
 
 %% @doc Ensure that all wallets in the wallet list have a positive balance.
 validate_wallet_list([]) ->

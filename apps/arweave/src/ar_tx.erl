@@ -168,7 +168,7 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 verify_signature(TX, Height) ->
 	Fork_2_0 = ar_fork:height_2_0(),
 	SignatureDataSegment = case Height of
-		H when H < Fork_2_0->
+		H when H < Fork_2_0 ->
 			signature_data_segment_pre_fork_2_0(TX);
 		H when Fork_2_0 =< H ->
 			signature_data_segment(TX)
@@ -456,30 +456,36 @@ sign_tx_test() ->
 	?assert(not verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)),
 	?assert(verify(SignedTX, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)).
 
-sign_and_verify_chuncked_test() ->
-	TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
-	{Priv, Pub} = ar_wallet:new(),
-	UnsignedTX =
-		generate_chunk_tree(
-			#tx {
-				format = 2,
-				data = TXData,
-				data_size = byte_size(TXData),
-				reward = ?AR(100)
-			}
-		),
-	SignedTX = sign(UnsignedTX#tx { data = <<>> }, Priv, Pub),
-	Diff = 1,
-	Height = 0,
-	Timestamp = os:system_time(seconds),
-	?assert(
-		verify(
-			SignedTX,
-			Diff,
-			Height,
-			[{ar_wallet:to_address(Pub), ?AR(100), <<>>}],
-			Timestamp
-		)
+sign_and_verify_chunked_test_() ->
+	ar_test_fork:test_on_fork(
+		height_2_0,
+		0,
+		fun() ->
+			TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
+			{Priv, Pub} = ar_wallet:new(),
+			UnsignedTX =
+				generate_chunk_tree(
+					#tx {
+						format = 2,
+						data = TXData,
+						data_size = byte_size(TXData),
+						reward = ?AR(100)
+					}
+				),
+			SignedTX = sign(UnsignedTX#tx { data = <<>> }, Priv, Pub),
+			Diff = 1,
+			Height = 0,
+			Timestamp = os:system_time(seconds),
+			?assert(
+				verify(
+					SignedTX,
+					Diff,
+					Height,
+					[{ar_wallet:to_address(Pub), ?AR(100), <<>>}],
+					Timestamp
+				)
+			)
+		end
 	).
 
 %% @doc Ensure that a forged transaction does not pass verification.

@@ -180,11 +180,7 @@ json_struct_to_block({BlockStruct}) ->
 		end,
 	TXs = find_value(<<"txs">>, BlockStruct),
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
-	BI =
-		case {find_value(<<"block_index">>, BlockStruct), find_value(<<"hash_list">>, BlockStruct)} of
-			{false, HL} -> HL;
-			{JSONBI, _} -> JSONBI
-		end,
+	HashList = find_value(<<"hash_list">>, BlockStruct),
 	Tags = find_value(<<"tags">>, BlockStruct),
 	Fork_1_8 = ar_fork:height_1_8(),
 	CDiff = case find_value(<<"cumulative_diff">>, BlockStruct) of
@@ -224,10 +220,10 @@ json_struct_to_block({BlockStruct}) ->
 			end,
 			TXs
 		),
-		block_index =
-			case BI of
+		hash_list =
+			case HashList of
 				undefined -> unset;
-				_		  -> json_struct_to_block_index(BI)
+				_		  -> [ar_util:decode(Hash) || Hash <- HashList]
 			end,
 		wallet_list =
 			case is_binary(WalletList) of
@@ -364,7 +360,7 @@ poa_to_json_struct(POA) ->
 						ar_block:hash_wallet_list(
 							(POA#poa.recall_block)#block.wallet_list
 						),
-					block_index = []
+					hash_list = []
 				}
 			)
 		},
@@ -510,7 +506,7 @@ do_json_struct_to_query({Query}) ->
 do_json_struct_to_query(Query) ->
 	Query.
 
-%% @doc Generate a JSON structure representing a block hash list OR block index.
+%% @doc Generate a JSON structure representing a block index.
 block_index_to_json_struct(BI) ->
 	lists:map(
 		fun({BH, WeaveSize}) ->
@@ -547,7 +543,7 @@ block_roundtrip_test() ->
 	BRes = json_struct_to_block(JSONStruct),
 	?assertEqual(
 		B,
-		BRes#block { block_index = B#block.block_index }
+		BRes#block { hash_list = B#block.hash_list }
 	).
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
@@ -570,7 +566,7 @@ full_block_roundtrip_test() ->
 	BRes = json_struct_to_full_block(JsonB),
 	?assertEqual(
 		B2,
-		BRes#block { block_index = B#block.block_index }
+		BRes#block { hash_list = B#block.hash_list }
 	).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
@@ -591,23 +587,23 @@ tx_roundtrip_test() ->
 wallet_list_roundtrip_test() ->
 	[B] = ar_weave:init(),
 	WL = B#block.wallet_list,
-	JsonWL = jsonify(wallet_list_to_json_struct(WL)),
-	WL = json_struct_to_wallet_list(JsonWL).
+	JSONWL = jsonify(wallet_list_to_json_struct(WL)),
+	WL = json_struct_to_wallet_list(JSONWL).
 
 block_index_roundtrip_test() ->
 	[B] = ar_weave:init(),
 	HL = [B#block.indep_hash, B#block.indep_hash],
-	JsonHL = jsonify(block_index_to_json_struct(HL)),
-	HL = json_struct_to_block_index(dejsonify(JsonHL)),
+	JSONHL = jsonify(block_index_to_json_struct(HL)),
+	HL = json_struct_to_block_index(dejsonify(JSONHL)),
 	BI = [{B#block.indep_hash, 1}, {B#block.indep_hash, 2}],
-	JsonBI = jsonify(block_index_to_json_struct(BI)),
-	BI = json_struct_to_block_index(dejsonify(JsonBI)).
+	JSONBI = jsonify(block_index_to_json_struct(BI)),
+	BI = json_struct_to_block_index(dejsonify(JSONBI)).
 
 query_roundtrip_test() ->
 	Query = {'equals', <<"TestName">>, <<"TestVal">>},
 	QueryJSON = ar_serialize:jsonify(
 		ar_serialize:query_to_json_struct(
 			Query
-			)
-		),
+		)
+	),
 	?assertEqual({ok, Query}, ar_serialize:json_struct_to_query(QueryJSON)).

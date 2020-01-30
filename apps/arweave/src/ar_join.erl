@@ -22,16 +22,16 @@ start(Node, Peers, B) when is_atom(B) ->
 		]
 	),
 	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
-start(Node, RawPeers, NewB) ->
+start(Node, RawPeers, {NewB, BI, LegacyHL}) ->
 	case whereis(join_server) of
 		undefined ->
-			PID = spawn(fun() -> do_join(Node, RawPeers, NewB) end),
+			PID = spawn(fun() -> do_join(Node, RawPeers, NewB, BI, LegacyHL) end),
 			erlang:register(join_server, PID);
 		_ -> already_running
 	end.
 
 %% @doc Perform the joining process.
-do_join(_Node, _RawPeers, NewB) when not ?IS_BLOCK(NewB) ->
+do_join(_Node, _RawPeers, NewB, _BI, _LegacyHL) when not ?IS_BLOCK(NewB) ->
 	ar:report_console(
 		[
 			node_not_joining,
@@ -39,7 +39,7 @@ do_join(_Node, _RawPeers, NewB) when not ?IS_BLOCK(NewB) ->
 			{received_instead, NewB}
 		]
 	);
-do_join(Node, RawPeers, NewB) ->
+do_join(Node, RawPeers, NewB, BI, LegacyHL) ->
 	case verify_time_sync(RawPeers) of
 		false ->
 			ar:err(
@@ -63,17 +63,13 @@ do_join(Node, RawPeers, NewB) ->
 				]
 			),
 			ar_miner_log:joining(),
-			ar_arql_db:populate_db(NewB#block.block_index),
-			ar_randomx_state:init(NewB#block.block_index, Peers),
-			BlockTXPairs = get_block_and_trail(Peers, NewB, NewB#block.block_index),
-			Node ! {
-				fork_recovered,
-				[{NewB#block.indep_hash, NewB#block.weave_size}|NewB#block.block_index],
-				BlockTXPairs
-			},
+			ar_arql_db:populate_db(NewB#block.hash_list),
+			ar_randomx_state:init(BI, Peers),
+			BlockTXPairs = get_block_and_trail(Peers, NewB, BI),
+			Node ! {fork_recovered, {BI, LegacyHL}, BlockTXPairs},
 			join_peers(Peers),
 			ar_miner_log:joined(),
-			ar_downloader:start(ar_manage_peers:get_more_peers(Peers), NewB#block.block_index)
+			ar_downloader:start(ar_manage_peers:get_more_peers(Peers), BI)
 	end.
 
 %% @doc Verify timestamps of peers.
@@ -125,7 +121,7 @@ log_peer_clock_diff(Peer, Diff) ->
 find_current_block([]) ->
 	ar:info("Did not manage to fetch current block from any of the peers. Will retry later."),
 	unavailable;
-find_current_block([Peer|Tail]) ->
+find_current_block([Peer | Tail]) ->
 	try ar_node:get_block_index(Peer) of
 		[] ->
 			find_current_block(Tail);
@@ -137,6 +133,7 @@ find_current_block([Peer|Tail]) ->
 				{hash, Hash}
 			]),
 			MaybeB = ar_node_utils:get_full_block(Peer, Hash, BI),
+			LegacyHL = get_legacy_hash_list(Peer, length(BI) - 1),
 			case MaybeB of
 				Atom when is_atom(Atom) ->
 					ar:info([
@@ -145,7 +142,7 @@ find_current_block([Peer|Tail]) ->
 					]),
 					Atom;
 				B ->
-					B
+					{B, BI, LegacyHL}
 			end
 	catch
 		Exc:Reason ->
@@ -156,6 +153,15 @@ find_current_block([Peer|Tail]) ->
 				{reason, Reason}
 			]),
 			find_current_block(Tail)
+	end.
+
+get_legacy_hash_list(Peer, Height) ->
+	Fork_2_0 = ar_fork:height_2_0(),
+	case Height < Fork_2_0 - 1 orelse Height > Fork_2_0 + ?STORE_BLOCKS_BEHIND_CURRENT - 1 of
+		true ->
+			[];
+		false ->
+			ar_http_iface_client:get_legacy_hash_list(Peer)
 	end.
 
 %% @doc Verify peer(s) are on the same network as the client. Remove any that
@@ -206,29 +212,23 @@ get_block_and_trail(Peers, NewB, BI) ->
 
 get_block_and_trail(_, unavailable, _, _, BlockTXPairs) ->
 	BlockTXPairs;
-get_block_and_trail(Peers, NewB, BehindCurrent, _, BlockTXPairs) when NewB#block.height =< 1 ->
+get_block_and_trail(Peers, NewB, _BehindCurrent, BI, BlockTXPairs) when NewB#block.height =< 1 ->
 	ar_storage:write_full_block(NewB),
 	PreviousBlock = ar_node:get_block(
 		Peers,
-		element(1, hd(NewB#block.block_index)),
-		NewB#block.block_index
+		hd(NewB#block.hash_list),
+		BI
 	),
 	ar_storage:write_block(PreviousBlock),
 	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
-	NewBlockTXPairs = BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}],
-	case BehindCurrent of
-		0 ->
-			NewBlockTXPairs;
-		1 ->
-			NewBlockTXPairs ++ [{PreviousBlock#block.indep_hash, PreviousBlock#block.txs}]
-	end;
+	BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}];
 get_block_and_trail(_, _, 0, _, BlockTXPairs) ->
 	BlockTXPairs;
 get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 	PreviousBlock = ar_node_utils:get_full_block(
 		Peers,
-		element(1, hd(NewB#block.block_index)),
-		NewB#block.block_index
+		hd(NewB#block.hash_list),
+		BI
 	),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->

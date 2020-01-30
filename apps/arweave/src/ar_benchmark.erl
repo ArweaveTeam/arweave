@@ -67,7 +67,7 @@ mine(Diff, Algorithm) ->
 		hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
 		timestamp = os:system_time(seconds),
 		last_retarget = os:system_time(seconds),
-		block_index = [],
+		hash_list = [],
 		height = case Algorithm of randomx -> ar_fork:height_1_8(); sha384 -> ar_fork:height_1_7() - 2 end
 	},
 	ar_mine:start(B, B, [], unclaimed, [], Diff, self(), []),

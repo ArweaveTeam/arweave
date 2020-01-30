@@ -275,9 +275,9 @@ get_non_existent_block_test() ->
 	{ok, {{<<"404">>, _}, _, _, _, _}}
 		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/block_index"),
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list"),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/block_index").
+		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list").
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
@@ -380,9 +380,11 @@ add_external_block_test_() ->
 		),
 		[BH2 | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
+		BI = ar_node:get_block_index(Node2),
 		send_new_block(
 			{127, 0, 0, 1, 1984},
-			ar_storage:read_block(BH2, ar_node:get_block_index(Node2))
+			ar_storage:read_block(BH2, BI),
+			BI
 		),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
@@ -427,13 +429,13 @@ add_external_block_with_bad_bds_test_() ->
 			send_new_block(
 				RemotePeer,
 				B1,
-				RecallB0
+				BI1
 			)
 		),
 		%% Try to post the same block again
 		?assertMatch(
 			{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
-			send_new_block(RemotePeer, B1, RecallB0)
+			send_new_block(RemotePeer, B1, BI1)
 		),
 		%% Try to post the same block again, but with a different data segment
 		?assertMatch(
@@ -485,7 +487,6 @@ add_external_block_with_invalid_timestamp_test() ->
 	{BI0, RemotePeer, LocalNode} = Setup(),
 	BI1 = mine_one_block(LocalNode, BI0),
 	B1 = ar_storage:read_block(hd(BI1), BI1),
-	POA = ar_poa:generate(BI1),
 	%% Expect the timestamp too far from the future to be rejected
 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
@@ -493,11 +494,11 @@ add_external_block_with_invalid_timestamp_test() ->
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
 		send_new_block(
 			RemotePeer,
-			update_block(B1#block {
+			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = TooFarFutureTimestamp
-			}, POA),
-			POA
+			},
+			BI1
 		)
 	),
 	%% Expect the timestamp from the future within the tolerance interval to be accepted
@@ -506,11 +507,11 @@ add_external_block_with_invalid_timestamp_test() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
 			RemotePeer,
-			update_block(B1#block {
+			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = OkFutureTimestamp
-			}, POA),
-			POA
+			},
+			BI1
 		)
 	),
 	%% Expect the timestamp far from the past to be rejected
@@ -525,11 +526,11 @@ add_external_block_with_invalid_timestamp_test() ->
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
 		send_new_block(
 			RemotePeer,
-			update_block(B1#block {
+			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = TooFarPastTimestamp
-			}, POA),
-			POA
+			},
+			BI1
 		)
 	),
 	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
@@ -538,8 +539,11 @@ add_external_block_with_invalid_timestamp_test() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
 			RemotePeer,
-			update_block(B1#block { timestamp = OkPastTimestamp}, POA),
-			POA
+			B1#block {
+				indep_hash = add_rand_suffix(<<"random-hash">>),
+				timestamp = OkPastTimestamp
+			},
+			BI1
 		)
 	).
 
@@ -575,13 +579,14 @@ add_external_block_with_tx_test_() ->
 			500,
 			10 * 1000
 		),
-		[BTest|_] = ar_node:get_blocks(Node2),
+		[BTest | _] = ar_node:get_blocks(Node2),
+		BI = ar_node:get_block_index(Node2),
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
 			send_new_block(
 				{127, 0, 0, 1, 1984},
-				ar_storage:read_block(BTest, ar_node:get_block_index(Node2)),
-				BGen
+				ar_storage:read_block(BTest, BI),
+				BI
 			)
 		),
 		% Wait for test block and assert that it contains transaction.
@@ -603,23 +608,21 @@ mine_illicit_tx_test() ->
 	Node = ar_node:start([], [B0]),
 	TX = ar_tx:new(<<"BADCONTENT1">>),
 	ar_node:add_tx(Node, TX),
-	timer:sleep(500),
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_meta_db:put(content_policy_files, []),
 	ar_firewall:reload(),
 	ar_node:mine(Node),
-	timer:sleep(500),
+	ar_test_node:wait_until_height(Node, 1),
 	?assertEqual(<<"BADCONTENT1">>, (ar_storage:read_tx(TX#tx.id))#tx.data),
 	FilteredTX = ar_tx:new(<<"BADCONTENT1">>),
 	ar_node:add_tx(Node, FilteredTX),
-	timer:sleep(500),
+	ar_test_node:wait_until_receives_txs(Node, [FilteredTX]),
 	ar_meta_db:put(content_policy_files, [filename:dirname(?FILE) ++ "/../test/test_sig.txt"]),
 	ar_firewall:reload(),
 	ar_node:mine(Node),
-	timer:sleep(500),
+	ar_test_node:wait_until_height(Node, 2),
 	?assertEqual(unavailable, ar_storage:read_tx(FilteredTX#tx.id)).
 
-%% @doc Ensure that blocks can be added to a network from outside
-%% a single node.
 fork_recover_by_http_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
@@ -637,7 +640,8 @@ fork_recover_by_http_test() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
 			{127, 0, 0, 1, 1984},
-			ar_storage:read_block(hd(FullBI), FullBI)
+			ar_storage:read_block(hd(FullBI), FullBI),
+			FullBI
 		)
 	),
 	ar_test_node:wait_until_block_block_index(Node1, FullBI).
@@ -1207,17 +1211,9 @@ mine_one_block(Node, PreMineBI) ->
 	?assertMatch([_ | PreMineBI], PostMineBI),
 	PostMineBI.
 
-send_new_block(Peer, B) ->
-	POA = ar_poa:generate(B#block.block_index),
-	send_new_block(Peer, B, POA).
-
-send_new_block(Peer, B, POA) ->
-	send_new_block(
-		Peer,
-		B,
-		POA,
-		generate_block_data_segment(B, POA)
-	).
+send_new_block(Peer, B, BI) ->
+	POA = ar_poa:generate(BI),
+	send_new_block(Peer, B, POA, generate_block_data_segment(B, POA, BI)).
 
 send_new_block(Peer, B, POA, BDS) ->
 	ar_http_iface_client:send_new_block(
@@ -1236,31 +1232,12 @@ send_new_block(Peer, B, POA, BDS) ->
 		end
 	).
 
-generate_block_data_segment(B, POA) ->
+generate_block_data_segment(B, POA, BI) ->
 	ar_block:generate_block_data_segment(
-		ar_storage:read_block(B#block.previous_block, B#block.block_index),
+		ar_storage:read_block(B#block.previous_block, BI),
 		POA,
 		lists:map(fun ar_storage:read_tx/1, B#block.txs),
 		B#block.reward_addr,
 		B#block.timestamp,
 		B#block.tags
 	).
-
-%% Update the nonce, dependent hash and the independen hash.
-update_block(B, PreviousRecallB) ->
-	update_block(B, PreviousRecallB, 0).
-
-update_block(B, POA, Nonce) ->
-	NonceBinary = integer_to_binary(Nonce),
-	BDS = generate_block_data_segment(B#block { nonce = NonceBinary }, POA),
-	MinDiff = ar_mine:min_difficulty(B#block.height),
-	case ar_weave:hash(BDS, NonceBinary, B#block.height) of
-		<< 0:MinDiff, _/bitstring >> = DepHash ->
-			UpdatedB = B#block {
-				hash = DepHash,
-				nonce = NonceBinary
-			},
-			UpdatedB#block { indep_hash = ar_weave:indep_hash(UpdatedB) };
-		_ ->
-			update_block(B, POA, Nonce + 1)
-	end.
