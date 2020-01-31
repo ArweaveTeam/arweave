@@ -6,7 +6,7 @@
 -export([tx_to_binary/1, tags_to_list/1]).
 -export([calculate_min_tx_cost/4, calculate_min_tx_cost/6, check_last_tx/2]).
 -export([generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1]).
--export([verify_after_mining/1, chunk_binary/2]).
+-export([chunk_binary/2]).
 -export([chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1]).
 
 -include("ar.hrl").
@@ -317,13 +317,6 @@ tx_field_size_limit(TX, Height) ->
 %% @doc Verify that the transactions ID is a hash of its signature.
 verify_hash(#tx {signature = Sig, id = ID}) ->
 	ID == crypto:hash(?HASH_ALG, <<Sig/binary>>).
-
-%% @doc Validate the signature and the TXID, after it has been mined into
-%% a block. This check ignores whether the transaction comes from an account
-%% with a high enough balance, etc. Should only be used to validate TX 
-%% headers during proof of access.
-verify_after_mining(TX) ->
-	verify_hash(TX).
 
 %% @doc Check that the structure of the txs tag field is in the expected
 %% key value format.
