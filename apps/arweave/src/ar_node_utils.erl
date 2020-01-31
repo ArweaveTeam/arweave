@@ -645,7 +645,7 @@ validate_post_fork_2_0(
 	ar:info(
 		[
 			{validating_block, ar_util:encode(NewB#block.indep_hash)},
-			{poa_block_header, ar_util:encode(ar_weave:indep_hash_post_fork_2_0((NewB#block.poa)#poa.recall_block))}
+			{poa_block_header, ar_util:encode((NewB#block.poa)#poa.block_indep_hash)}
 		]
 	),
 	{MicroSecs, Results} =
