@@ -352,25 +352,17 @@ poa_to_json_struct(B) when is_record(B, block) -> <<"undefined">>;
 poa_to_json_struct(POA) ->
 	{[
 		{option, POA#poa.option},
-		{recall_block,
-			block_to_json_struct(
-				(POA#poa.recall_block)#block {
-					poa = undefined,
-					wallet_list =
-						ar_block:hash_wallet_list(
-							(POA#poa.recall_block)#block.wallet_list
-						),
-					hash_list = []
-				}
-			)
-		},
-		{tx_path, ar_util:encode(POA#poa.tx_path)},
-		{tx,
-			case POA#poa.tx of
+		{block_indep_hash, ar_util:encode(POA#poa.block_indep_hash)},
+		{tx_id,
+			case POA#poa.tx_id of
 				undefined -> <<"undefined">>;
-				TX -> tx_to_json_struct(TX)
+				TXID -> ar_util:encode(TXID)
 			end
 		},
+		{tx_root, ar_util:encode(POA#poa.tx_root)},
+		{tx_path, ar_util:encode(POA#poa.tx_path)},
+		{data_size, integer_to_binary(POA#poa.data_size)},
+		{data_root, ar_util:encode(POA#poa.data_root)},
 		{data_path, ar_util:encode(POA#poa.data_path)},
 		{chunk, ar_util:encode(POA#poa.chunk)}
 	]}.
@@ -379,13 +371,15 @@ json_struct_to_poa(<<"undefined">>) -> undefined;
 json_struct_to_poa({JSONStruct}) ->
 	#poa {
 		option = find_value(<<"option">>, JSONStruct),
-		recall_block = json_struct_to_block(find_value(<<"recall_block">>, JSONStruct)),
+		block_indep_hash = ar_util:decode(find_value(<<"block_indep_hash">>, JSONStruct)),
+		tx_id = case find_value(<<"tx_id">>, JSONStruct) of
+			<<"undefined">> -> undefined;
+			TXID -> ar_util:decode(TXID)
+		end,
+		tx_root = ar_util:decode(find_value(<<"tx_root">>, JSONStruct)),
 		tx_path = ar_util:decode(find_value(<<"tx_path">>, JSONStruct)),
-		tx =
-			case find_value(<<"tx">>, JSONStruct) of
-				<<"undefined">> -> undefined;
-				TXStruct -> json_struct_to_tx(TXStruct)
-			end,
+		data_size = binary_to_integer(find_value(<<"data_size">>, JSONStruct)),
+		data_root = ar_util:decode(find_value(<<"data_root">>, JSONStruct)),
 		data_path = ar_util:decode(find_value(<<"data_path">>, JSONStruct)),
 		chunk = ar_util:decode(find_value(<<"chunk">>, JSONStruct))
 	}.

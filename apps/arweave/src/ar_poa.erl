@@ -70,11 +70,14 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 create_poa_from_data(B, no_tx, _, _BlockOffset, Option) ->
 	#poa {
 		option = Option,
-		recall_block = B#block { txs = [], hash_list = [], poa = undefined },
+		block_indep_hash = B#block.indep_hash,
+		tx_id = undefined,
+		tx_root = <<>>,
 		tx_path = <<>>,
+		data_size = 0,
+		data_root = <<>>,
 		data_path = <<>>,
-		chunk = <<>>,
-		tx = undefined
+		chunk = <<>>
 	};
 create_poa_from_data(NoTreeB, NoTreeTX, SizeTaggedTXs, BlockOffset, Option) ->
 	B = ar_block:generate_tx_tree(NoTreeB, SizeTaggedTXs),
@@ -112,33 +115,25 @@ create_poa_from_data(NoTreeB, NoTreeTX, SizeTaggedTXs, BlockOffset, Option) ->
 		),
 	#poa {
 		option = Option,
-		recall_block =
-			B#block {
-				txs = [],
-				hash_list = [],
-				wallet_list = ar_block:hash_wallet_list(B#block.wallet_list),
-				poa = undefined,
-				tx_tree = []
-			},
+		block_indep_hash = B#block.indep_hash,
+		tx_id = TX#tx.id,
+		tx_root = B#block.tx_root,
 		tx_path = TXPath,
-		tx =
-			TX#tx {
-				data = <<>>,
-				data_tree = []
-			},
+		data_size = TX#tx.data_size,
+		data_root = TX#tx.data_root,
 		data_path = DataPath,
 		chunk = Chunk
 	}.
 
-search(X, [{X,_}|_]) -> 0;
-search(X, [_|R]) -> 1 + search(X, R).
+search(X, [{X, _} | _]) -> 0;
+search(X, [_ | R]) -> 1 + search(X, R).
 
 %% @doc Validate a complete proof of access object.
-validate(LastIndepHash, WeaveSize, BI, RawPOA) ->
-	POA = RawPOA#poa { recall_block = ar_storage:read_block(RawPOA#poa.recall_block, BI)}, 
+validate(LastIndepHash, WeaveSize, BI, POA) ->
+	ChallengeBlock = ar_storage:read_block(POA#poa.block_indep_hash, BI),
 	ChallengeByte = calculate_challenge_byte(LastIndepHash, WeaveSize, POA#poa.option),
-	{ChallengeBlock, BlockBase} = find_challenge_block(ChallengeByte, BI),
-	validate_recall_block(ChallengeByte - BlockBase, ChallengeBlock, POA).
+	{ExpectedChallengeBH, BlockBase} = find_challenge_block(ChallengeByte, BI),
+	validate_recall_block(ChallengeByte - BlockBase, ExpectedChallengeBH, ChallengeBlock, POA).
 
 calculate_challenge_byte(_, 0, _) -> 0;
 calculate_challenge_byte(LastIndepHash, WeaveSize, Option) ->
@@ -162,13 +157,13 @@ find_byte_in_size_tagged_list(Byte, [{ID, TXEnd} | _])
 find_byte_in_size_tagged_list(Byte, [_ | Rest]) ->
 	find_byte_in_size_tagged_list(Byte, Rest).
 
-validate_recall_block(BlockOffset, ChallengeBH, POA) ->
+validate_recall_block(BlockOffset, ExpectedChallengeBH, ChallengeBlock, POA) ->
 	ar:info([
-		{poa_validation_rb, ar_util:encode(ar_weave:indep_hash_post_fork_2_0(POA#poa.recall_block))},
-		{challenge, ar_util:encode(ChallengeBH)}
+		{poa_validation_rb, ar_util:encode(POA#poa.block_indep_hash)},
+		{challenge, ar_util:encode(ExpectedChallengeBH)}
 	]),
-	case ar_weave:indep_hash_post_fork_2_0(POA#poa.recall_block) of
-		ChallengeBH -> validate_tx_path(BlockOffset, POA);
+	case ar_weave:indep_hash_post_fork_2_0(ChallengeBlock) of
+		ExpectedChallengeBH -> validate_tx_path(BlockOffset, POA);
 		_ -> false
 	end.
 
@@ -177,7 +172,7 @@ validate_tx_path(0, _) -> true;
 validate_tx_path(BlockOffset, POA) ->
 	Validation =
 		ar_merkle:validate_path(
-			(POA#poa.recall_block)#block.tx_root,
+			POA#poa.tx_root,
 			BlockOffset,
 			POA#poa.tx_path
 		),
@@ -186,30 +181,26 @@ validate_tx_path(BlockOffset, POA) ->
 		TXID -> validate_tx(TXID, BlockOffset, POA)
 	end.
 
-validate_tx(TXID, BlockOffset, POA) when TXID == (POA#poa.tx)#tx.id ->
-	case ar_tx:verify_after_mining(POA#poa.tx) of
-		true ->
-			validate_data_path(BlockOffset, POA);
-		false -> false
-	end;
+validate_tx(TXID, BlockOffset, POA) when TXID == POA#poa.tx_id ->
+	validate_data_path(BlockOffset, POA);
 validate_tx(_, _, _) -> false.
 
 validate_data_path(BlockOffset, POA) ->
 	%% Calculate TX offsets within the block.
 	TXEndOffset = ar_merkle:extract_note(POA#poa.tx_path),
-	TXStartOffset = TXEndOffset - (POA#poa.tx)#tx.data_size,
+	TXStartOffset = TXEndOffset - POA#poa.data_size,
 	TXOffset = BlockOffset - TXStartOffset,
 	Validation =
 		ar_merkle:validate_path(
-			(POA#poa.tx)#tx.data_root,
+			POA#poa.data_root,
 			TXOffset,
 			POA#poa.data_path
 		),
 	ar:info(
 		[
 			poa_verification,
-			{block_indep_hash, ar_util:encode((POA#poa.recall_block)#block.indep_hash)},
-			{tx, ar_util:encode((POA#poa.tx)#tx.id)},
+			{block_indep_hash, ar_util:encode(POA#poa.block_indep_hash)},
+			{tx, ar_util:encode(POA#poa.tx_id)},
 			{tx_start_offset, TXStartOffset},
 			{tx_end_offset, TXEndOffset},
 			{tx_offset, TXOffset},
@@ -284,6 +275,6 @@ validate_chunking_test() ->
 	RealChunkID = ar_tx:generate_chunk_id(Chunk),
 	PathChunkID = ar_merkle:validate_path(SignedTX#tx.data_root, ChallengeLocation, DataPath),
 	?assertEqual(RealChunkID, PathChunkID),
-	% In this case, we know the chunk is valid as it is generated in the test, but in the real
-	% world, this chunk would come from the proof of access received from the network.
+	%% In this case, we know the chunk is valid as it is generated in the test, but in the real
+	%% world, this chunk would come from the proof of access received from the network.
 	?assertEqual(PathChunkID, ar_tx:generate_chunk_id(Chunk)).

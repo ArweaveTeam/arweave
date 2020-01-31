@@ -520,7 +520,6 @@ store_and_retrieve_block_test() ->
 	ar_storage:write_block(B1),
 	[B2 | _] = ar_weave:add(B1s, []),
 	ar_storage:write_block(B2),
-	write_block(B1),
 	?assertEqual(3, blocks_on_disk()),
 	B1 = read_block(B1#block.indep_hash, block_index_from_blocks([B1, B0])),
 	B1 = read_block(B1#block.height, block_index_from_blocks([B1, B0])).

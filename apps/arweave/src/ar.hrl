@@ -326,11 +326,14 @@
 
 %% @doc A succinct proof of access to a recall byte found in a TX.
 -record(poa, {
-	option, % The recall byte option chosen.
-	recall_block, % Header of the block that the TX containing the chunk is found in.
-	tx_path, % Path through the merkle tree of TXs in the block.
-	tx, % Header of the TX containing the required data chunk.
-	data_path, % Path through the merkle tree of chunk IDs to the required chunk.
+	option, % The recall byte option (a sequence number) chosen.
+	block_indep_hash, % The hash of the block that the TX containing the chunk is found in.
+	tx_id , % The ID of the transaction containing the chunk.
+	tx_root, % Root of the Merkle tree of TXs in the block.
+	tx_path, % Path through the Merkle tree of TXs in the block.
+	data_size, % The total size of data in the transaction.
+	data_root, % Root of the Merkle root of chunk IDs.
+	data_path, % Path through the Merkle tree of chunk IDs to the required chunk.
 	chunk % The required data chunk.
 }).
 
