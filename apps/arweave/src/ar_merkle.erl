@@ -31,25 +31,23 @@ generate_tree(Elements) ->
     generate_all_rows(generate_leaves(Elements)).
 
 generate_leaves(Elements) ->
-    LeavesRev =
-        lists:foldl(
-            fun({Data, Note}, Nodes) ->
-                Hash = hash([Data, note_to_binary(Note)]),
-                insert(
-                    #node {
-                        id = Hash,
-                        type = leaf,
-                        data = Data,
-                        note = Note,
-                        max = Note
-                    },
-                    Nodes
-                )
-            end,
-            new(),
-            Elements
-        ),
-    lists:reverse(LeavesRev).
+	lists:foldr(
+		fun({Data, Note}, Nodes) ->
+			Hash = hash([Data, note_to_binary(Note)]),
+			insert(
+				#node {
+					id = Hash,
+					type = leaf,
+					data = Data,
+					note = Note,
+					max = Note
+				},
+				Nodes
+			)
+		end,
+		new(),
+		Elements
+	).
 
 %% TODO: This implementation leaves some duplicates in the tree structure.
 %% The produced trees could be a little smaller if these duplicates were 
@@ -66,9 +64,9 @@ generate_all_rows(Row, Tree) ->
     generate_all_rows(NewRow, NewRow ++ Tree).
 
 generate_row([]) -> [];
-generate_row([Left]) -> [ generate_node(Left, empty) ];
+generate_row([Left]) -> [generate_node(Left, empty)];
 generate_row([L, R | Rest]) ->
-    [ generate_node(L, R) | generate_row(Rest) ].
+    [generate_node(L, R) | generate_row(Rest)].
 
 generate_node(Left, empty) ->
     Left;
@@ -90,7 +88,7 @@ generate_path(ID, Dest, Tree) ->
 generate_path_parts(ID, Dest, Tree) ->
     case get(ID, Tree) of
         N when N#node.type == leaf ->
-            [ N#node.data, note_to_binary(N#node.note) ];
+            [N#node.data, note_to_binary(N#node.note)];
         N when N#node.type == branch ->
             [
                 N#node.left, N#node.right, note_to_binary(N#node.note)
@@ -139,7 +137,7 @@ new() ->
     [].
 
 insert(Node, Map) ->
-    [Node|Map].
+    [Node | Map].
 
 get(ID, Map) ->
     case lists:keyfind(ID, #node.id, Map) of
@@ -161,7 +159,7 @@ make_tags_cumulative(L) ->
             lists:foldl(
                 fun({X, Tag}, {AccTag, AccL}) ->
                     Curr = AccTag + Tag,
-                    {Curr, [{X, Curr}|AccL]}
+                    {Curr, [{X, Curr} | AccL]}
                 end,
                 {0, []},
                 L
@@ -176,11 +174,11 @@ make_tags_cumulative(L) ->
 -define(UNEVEN_TEST_TARGET, 33271).
 
 generate_balanced_tree_test() ->
-    {_MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([ {<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE) ])),
-    ?assertEqual(length(Tree), (?TEST_SIZE*2) - 1).
+    {_MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE)])),
+    ?assertEqual(length(Tree), (?TEST_SIZE * 2) - 1).
 
 generate_and_validate_balanced_tree_path_test() ->
-    {MR, Tree} = ar_merkle:generate_tree(ar:d(make_tags_cumulative([ {<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE) ]))),
+    {MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE)])),
     RandomTarget = rand:uniform(?TEST_SIZE),
     ?assertEqual(
         RandomTarget,
@@ -193,8 +191,8 @@ generate_and_validate_balanced_tree_path_test() ->
     ).
 
 generate_and_validate_uneven_tree_path_test() ->
-    {MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([ {<<N:256>>, 1} || N <- lists:seq(1, ?UNEVEN_TEST_SIZE) ])),
-    % Make sure the target is in the 'uneven' ending of the tree.
+    {MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(1, ?UNEVEN_TEST_SIZE)])),
+    %% Make sure the target is in the 'uneven' ending of the tree.
     ?assertEqual(
         ?UNEVEN_TEST_TARGET,
         binary:decode_unsigned(
@@ -206,7 +204,7 @@ generate_and_validate_uneven_tree_path_test() ->
     ).
 
 reject_invalid_tree_path_test() ->
-    {MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([ {<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE) ])),
+    {MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE)])),
     RandomTarget = rand:uniform(?TEST_SIZE),
     ?assertEqual(
         false,
