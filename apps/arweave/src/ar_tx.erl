@@ -417,7 +417,7 @@ chunks_to_size_tagged_chunks(Chunks) ->
 	lists:reverse(
 		element(
 			2,
-			lists:foldr(
+			lists:foldl(
 				fun(Chunk, {Pos, List}) ->
 					End = Pos + byte_size(Chunk),
 					{End, [{Chunk, End} | List]}
