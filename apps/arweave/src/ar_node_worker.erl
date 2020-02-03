@@ -67,8 +67,8 @@ server(NPid, SPid) ->
 					ar:err( [ {'NodeWorkerEXIT', Term} ] ),
 					NPid ! {worker, {error, Term}},
 					server(NPid, SPid);
-				error:Term ->
-					ar:err( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
+				error:Term:Stacktrace ->
+					ar:err( [ {'NodeWorkerERROR', {Term, Stacktrace} } ]),
 					NPid ! {worker, {error, Term}},
 					server(NPid, SPid)
 			end;

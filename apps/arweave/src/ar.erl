@@ -14,6 +14,7 @@
 -export([scale_time/1, timestamp/0]).
 -export([start_link/0, start_link/1, init/1]).
 -export([start_for_tests/0]).
+-export([fixed_diff_option/0, fixed_delay_option/0]).
 
 -include("ar.hrl").
 -include("ar_config.hrl").
@@ -246,7 +247,7 @@ parse_cli_args([Arg|_Rest], _O) ->
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#config { port = Port });
 start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = MaxMiners, disable = Disable, enable = Enable }) ->
-	error_logger:logfile({open, Filename = generate_logfile_name()}),
+	error_logger:logfile({open, generate_logfile_name()}),
 	error_logger:tty(false),
 	ar_meta_db:start(),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
@@ -554,18 +555,8 @@ tests() ->
 	tests(?CORE_TEST_MODS, #config {}).
 
 tests(Mods, Config) when is_list(Mods) ->
-	case ?DEFAULT_DIFF of
-		X when X > 8 ->
-			ar:report_console(
-				[
-					diff_too_high_for_tests,
-					terminating
-				]
-			);
-		_ ->
-			start_for_tests(Config),
-			eunit:test({timeout, ?TEST_TIMEOUT, Mods}, [verbose])
-	end.
+        start_for_tests(Config),
+        eunit:test({timeout, ?TEST_TIMEOUT, Mods}, [verbose]).
 
 start_for_tests() ->
 	start_for_tests(#config { }).

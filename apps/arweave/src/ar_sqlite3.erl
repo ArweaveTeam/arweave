@@ -267,7 +267,7 @@ handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 	end,
 	{reply, Reply, State};
 handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
-	{Time, {Reply, SQL, Params}} = timer:tc(fun() ->
+	{Time, {Reply, _, _}} = timer:tc(fun() ->
 		case catch eval_legacy_arql_where_clause(Query) of
 			{WhereClause, Params} ->
 				SQL = lists:concat([

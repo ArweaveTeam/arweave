@@ -93,8 +93,6 @@ server(
 	S = #state {
 		key_file = KeyList,
 		max_tx_len = MaxTXLen,
-		max_data_len = MaxDataLen,
-		action_time = ActionTime,
 		peers = Peers
 	}) ->
 	receive
@@ -238,22 +236,6 @@ create_random_data_tx(KeyList, MaxTxLen) ->
 		),
 	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 
-create_random_data_tx({Priv, Pub}, MaxTxLen, OldTX) ->
-	% Generate and dispatch a new data transaction.
-	LastTx = OldTX#tx.id,
-	%ar:d({random_data_tx_pub, ar_util:encode(ar_wallet:to_address(Pub))}),
-	Diff = ar_node:get_diff(whereis(http_entrypoint_node)),
-	Data = << 0:(rand:uniform(MaxTxLen) * 8) >>,
-	TX = ar_tx:new(Data, 0, LastTx),
-	Cost = ar_tx:calculate_min_tx_cost(
-		byte_size(ar_tx:tx_to_binary(TX)) + 550,
-		Diff
-		),
-	Reward = Cost + ar_tx:calculate_min_tx_cost(
-		byte_size(<<Cost>>),
-		Diff
-		),
-	ar_tx:sign(TX#tx{reward = Reward}, Priv, Pub).
 %% @doc Create a random financial TX between two wallets of amount MaxAmount
 create_random_fin_tx(KeyList, MaxAmount) ->
 	{Priv, Pub} = lists:nth(rand:uniform(50), KeyList),
