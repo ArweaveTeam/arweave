@@ -88,30 +88,36 @@ verify({digest, Digest}, DigestType, Signature, PublicKey=#'RSAPublicKey'{modulu
 	SignatureSize = byte_size(Signature),
 	case PublicByteSize =:= SignatureSize of
 		true ->
-			DBLen = PrivateByteSize - DigestLen - 1,
-			EM = pad_to_key_size(PrivateByteSize, ep(Signature, PublicKey)),
-			case binary:last(EM) of
-				?PSS_TRAILER_FIELD ->
-					MaskedDB = binary:part(EM, 0, byte_size(EM) - DigestLen - 1),
-					H = binary:part(EM, byte_size(MaskedDB), DigestLen),
-					DBMask = mgf1(DigestType, H, DBLen),
-					DB = normalize_to_key_size(PublicBitSize, crypto:exor(MaskedDB, DBMask)),
-					case binary:match(DB, << 1 >>) of
-						{Pos, Len} ->
-							PS = binary:decode_unsigned(binary:part(DB, 0, Pos)),
-							case PS =:= 0 of
-								true ->
-									Salt = binary:part(DB, Pos + Len, byte_size(DB) - Pos - Len),
-									M = << 0:64, Digest/binary, Salt/binary >>,
-									HOther = crypto:hash(DigestType, M),
-									H =:= HOther;
-								false ->
+			SignatureNumber = binary:decode_unsigned(Signature, big),
+			case SignatureNumber >= 0 andalso SignatureNumber < N of
+				true ->
+					DBLen = PrivateByteSize - DigestLen - 1,
+					EM = pad_to_key_size(PrivateByteSize, ep(Signature, PublicKey)),
+					case binary:last(EM) of
+						?PSS_TRAILER_FIELD ->
+							MaskedDB = binary:part(EM, 0, byte_size(EM) - DigestLen - 1),
+							H = binary:part(EM, byte_size(MaskedDB), DigestLen),
+							DBMask = mgf1(DigestType, H, DBLen),
+							DB = normalize_to_key_size(PublicBitSize, crypto:exor(MaskedDB, DBMask)),
+							case binary:match(DB, << 1 >>) of
+								{Pos, Len} ->
+									PS = binary:decode_unsigned(binary:part(DB, 0, Pos)),
+									case PS =:= 0 of
+										true ->
+											Salt = binary:part(DB, Pos + Len, byte_size(DB) - Pos - Len),
+											M = << 0:64, Digest/binary, Salt/binary >>,
+											HOther = crypto:hash(DigestType, M),
+											H =:= HOther;
+										false ->
+											false
+									end;
+								nomatch ->
 									false
 							end;
-						nomatch ->
+						_BadTrailer ->
 							false
 					end;
-				_BadTrailer ->
+				_ ->
 					false
 			end;
 		false ->
