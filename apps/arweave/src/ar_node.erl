@@ -641,8 +641,8 @@ server(SPid, WPid, TaskQueue) ->
 				exit:Term ->
 					ar:report([ {'NodeEXIT', Term} ]),
 					server(SPid, WPid, TaskQueue);
-				error:Term ->
-					ar:report([ {'NodeERROR', {Term, erlang:get_stacktrace()}} ]),
+				error:Term:Stacktrace ->
+					ar:report([ {'NodeERROR', {Term, Stacktrace}} ]),
 					server(SPid, WPid, TaskQueue)
 			end
 	end.

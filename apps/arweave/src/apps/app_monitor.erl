@@ -17,8 +17,3 @@ start() ->
 new_block(B) ->
 	io:format("New block: ~p. Number of transactions: ~p.~n",
 		[B#block.height, length(B#block.txs)]).
-
-%% Report that a new transaction meets our criteria.
-report(T) ->
-	% Log the transaction information to the console.
-	io:format("TX ~p matches selection criteria!~n", [T#tx.id]).

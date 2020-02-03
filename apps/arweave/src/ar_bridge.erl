@@ -142,8 +142,8 @@ server(S) ->
 				exit:Term ->
 					ar:report( [ {'BridgeEXIT', Term} ]),
 					server(S);
-				error:Term ->
-					ar:report( [ {'BridgeEXIT', {Term, erlang:get_stacktrace()}} ]),
+				error:Term:Stacktrace ->
+					ar:report( [ {'BridgeEXIT', {Term, Stacktrace}} ]),
 					server(S)
 			end
 	end.

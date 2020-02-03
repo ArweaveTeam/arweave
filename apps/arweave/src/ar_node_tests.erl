@@ -4,8 +4,6 @@
 
 -module(ar_node_tests).
 
--compile(export_all).
-
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
