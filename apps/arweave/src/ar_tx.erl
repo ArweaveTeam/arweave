@@ -408,10 +408,10 @@ generate_chunk_id(Chunk) ->
 	crypto:hash(sha256, Chunk).
 
 chunk_binary(ChunkSize, Bin) when byte_size(Bin) < ChunkSize ->
-	[ Bin ];
+	[Bin];
 chunk_binary(ChunkSize, Bin) ->
-	<< ChunkBin:ChunkSize/binary, Rest/binary >> = Bin,
-	[ ChunkBin | chunk_binary(ChunkSize, Rest) ].
+	<<ChunkBin:ChunkSize/binary, Rest/binary>> = Bin,
+	[ChunkBin | chunk_binary(ChunkSize, Rest)].
 
 chunks_to_size_tagged_chunks(Chunks) ->
 	lists:reverse(
@@ -420,7 +420,7 @@ chunks_to_size_tagged_chunks(Chunks) ->
 			lists:foldr(
 				fun(Chunk, {Pos, List}) ->
 					End = Pos + byte_size(Chunk),
-					{End, [{Chunk, End}|List]}
+					{End, [{Chunk, End} | List]}
 				end,
 				{0, []},
 				Chunks
@@ -429,7 +429,7 @@ chunks_to_size_tagged_chunks(Chunks) ->
 	).
 
 sized_chunks_to_sized_chunk_ids(SizedChunks) ->
-	[ {ar_tx:generate_chunk_id(Chunk), Size} || {Chunk, Size} <- SizedChunks ].
+	[{ar_tx:generate_chunk_id(Chunk), Size} || {Chunk, Size} <- SizedChunks].
 
 %%% Tests: ar_tx
 
@@ -544,3 +544,41 @@ tx_cost_test() ->
 		calculate_min_tx_cost(Size, Diff, Height, Timestamp) + ?WALLET_GEN_FEE,
 		calculate_min_tx_cost(Size, Diff, Height, WalletList, Addr2, Timestamp)
 	).
+
+generate_and_validate_even_chunk_tree_test() ->
+	Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE * 7),
+	lists:map(
+		fun(ChallengeLocation) ->
+			test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation)
+		end,
+		[0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1, 7 * ?DATA_CHUNK_SIZE - 1]
+	).
+
+generate_and_validate_uneven_chunk_tree_test() ->
+	Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE * 4 + 10),
+	lists:map(
+		fun(ChallengeLocation) ->
+			test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation)
+		end,
+		[0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1, 4 * ?DATA_CHUNK_SIZE + 9]
+	).
+
+test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
+	ChunkStart = ChallengeLocation - ChallengeLocation rem ?DATA_CHUNK_SIZE,
+	Chunk = binary:part(Data, ChunkStart, min(?DATA_CHUNK_SIZE, byte_size(Data) - ChunkStart)),
+	#tx{ data_root = DataRoot, data_tree = DataTree } =
+		ar_tx:generate_chunk_tree(
+			#tx {
+				data = Data,
+				data_size = byte_size(Data)
+			}
+		),
+	DataPath =
+		ar_merkle:generate_path(
+			DataRoot,
+			ChallengeLocation,
+			DataTree
+		),
+	RealChunkID = ar_tx:generate_chunk_id(Chunk),
+	PathChunkID = ar_merkle:validate_path(DataRoot, ChallengeLocation, DataPath),
+	?assertEqual(RealChunkID, PathChunkID).
