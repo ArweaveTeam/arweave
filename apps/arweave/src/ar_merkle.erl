@@ -94,7 +94,7 @@ generate_path_parts(ID, Dest, Tree) ->
                 N#node.left, N#node.right, note_to_binary(N#node.note)
             |
                 generate_path_parts(
-                    case Dest =< N#node.note of
+                    case Dest < N#node.note of
                         true -> N#node.left;
                         false -> N#node.right
                     end,
@@ -114,7 +114,7 @@ validate_path(ID, Dest,
     case hash([L, R, note_to_binary(Note)]) of
         ID ->
             validate_path(
-                case Dest =< Note of
+                case Dest < Note of
                     true -> L;
                     false -> R
                 end,
@@ -174,12 +174,14 @@ make_tags_cumulative(L) ->
 -define(UNEVEN_TEST_TARGET, 33271).
 
 generate_balanced_tree_test() ->
-    {_MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE)])),
+    {_MR, Tree} =
+		ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)])),
     ?assertEqual(length(Tree), (?TEST_SIZE * 2) - 1).
 
 generate_and_validate_balanced_tree_path_test() ->
-    {MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE)])),
-    RandomTarget = rand:uniform(?TEST_SIZE),
+    {MR, Tree} =
+		ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)])),
+    RandomTarget = rand:uniform(?TEST_SIZE) - 1,
     ?assertEqual(
         RandomTarget,
         binary:decode_unsigned(
@@ -191,7 +193,8 @@ generate_and_validate_balanced_tree_path_test() ->
     ).
 
 generate_and_validate_uneven_tree_path_test() ->
-    {MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(1, ?UNEVEN_TEST_SIZE)])),
+    {MR, Tree} =
+		ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?UNEVEN_TEST_SIZE - 1)])),
     %% Make sure the target is in the 'uneven' ending of the tree.
     ?assertEqual(
         ?UNEVEN_TEST_TARGET,
@@ -204,8 +207,9 @@ generate_and_validate_uneven_tree_path_test() ->
     ).
 
 reject_invalid_tree_path_test() ->
-    {MR, Tree} = ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(1, ?TEST_SIZE)])),
-    RandomTarget = rand:uniform(?TEST_SIZE),
+    {MR, Tree} =
+		ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)])),
+    RandomTarget = rand:uniform(?TEST_SIZE) - 1,
     ?assertEqual(
         false,
         ar_merkle:validate_path(
