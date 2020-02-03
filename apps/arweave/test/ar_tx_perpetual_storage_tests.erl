@@ -6,7 +6,7 @@
 
 %% These functions serve as mocks and are exported to overcome the meck's
 %% issue with picking them up after the module is rebuilt (e.g. during debugging).
--export([zero_height/0, small_inflation/1, big_inflation/1]).
+-export([zero_height/0, small_inflation/1, big_inflation/1, calculate_reward_pool_huge_weave_size/8]).
 
 -import(ar_difficulty, [twice_smaller_diff/1]).
 -import(ar_tx_perpetual_storage, [get_cost_per_year_at_datetime/1]).
@@ -20,6 +20,8 @@
 -import(ar_test_node, [get_balance/1]).
 -import(ar_test_node, [test_with_mocked_functions/2]).
 
+-define(HUGE_WEAVE_SIZE, 1000000000000000).
+
 updates_pool_and_assigns_rewards_correctly_before_burden_test_() ->
 	%% Smaller burden is achieved by starting with a zero weave size
 	%% and setting significant inflation rewards.
@@ -32,12 +34,15 @@ updates_pool_and_assigns_rewards_correctly_before_burden_test_() ->
 	).
 
 updates_pool_and_assigns_rewards_correctly_after_burden_test_() ->
-	%% Bigger burden is achieved by starting with a huge weave size
-	%% and setting an insignificant inflation reward.
+	%% Bigger burden is achieved by mocking ar_inflation:calculate to return
+	%% an insignificant reward value and overriding ar_node_utils:calculate_reward_pool
+	%% to always accept a huge weave size.
 	test_with_mocked_functions(
 		[
 			{ar_fork, height_2_0, fun ar_tx_perpetual_storage_tests:zero_height/0},
-			{ar_inflation, calculate, fun ar_tx_perpetual_storage_tests:small_inflation/1}
+			{ar_inflation, calculate, fun ar_tx_perpetual_storage_tests:small_inflation/1},
+			{ar_node_utils, calculate_reward_pool,
+				fun ar_tx_perpetual_storage_tests:calculate_reward_pool_huge_weave_size/8}
 		],
 		fun updates_pool_and_assigns_rewards_correctly_after_burden/0
 	).
@@ -84,6 +89,9 @@ small_inflation(_) ->
 
 big_inflation(_) ->
 	10000000000000.
+
+calculate_reward_pool_huge_weave_size(OldPool, TXs, RewardAddr, POA, _WeaveSize, Height, Diff, Timestamp) ->
+	meck:passthrough([OldPool, TXs, RewardAddr, POA, ?HUGE_WEAVE_SIZE, Height, Diff, Timestamp]).
 
 updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
@@ -218,12 +226,9 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 
 updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
-	[BZeroWeaveSize] = ar_weave:init([
+	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(2000), <<>>}
 	]),
-	InitialWeaveSize = 1000000000000000,
-	BWeaveSize = BZeroWeaveSize#block { weave_size = InitialWeaveSize },
-	B0 = BWeaveSize#block { indep_hash = ar_weave:indep_hash(BWeaveSize) },
 	{_, RewardAddr} = ar_wallet:new(),
 	{Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
 	{Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
@@ -260,7 +265,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 		B1#block.reward_pool,
 		P1
 	),
-	?assertEqual(InitialWeaveSize + byte_size(TX1#tx.data), B1#block.weave_size),
+	?assertEqual(byte_size(TX1#tx.data), B1#block.weave_size),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B1#block.reward_addr),
 	Balance1 = get_balance(RewardAddr),
 	assert_almost_equal(BaseReward1 + PoolShare1, Balance1, P1),
@@ -317,7 +322,7 @@ get_miner_pool_share(Diff, Timestamp, WeaveSize, BaseReward, Height, _POA) ->
 		Diff,
 		Height
 	),
-	Burden = erlang:trunc(WeaveSize * Cost / (1024 * 1024 * 1024)),
+	Burden = erlang:trunc(?HUGE_WEAVE_SIZE * Cost / (1024 * 1024 * 1024)),
 	AR = Burden - BaseReward,
 	?assert(AR > 0),
 	AR.
