@@ -94,7 +94,7 @@ generate_path_parts(ID, Dest, Tree) ->
                 N#node.left, N#node.right, note_to_binary(N#node.note)
             |
                 generate_path_parts(
-                    case Dest =< N#node.note of
+                    case Dest < N#node.note of
                         true -> N#node.left;
                         false -> N#node.right
                     end,
@@ -114,7 +114,7 @@ validate_path(ID, Dest,
     case hash([L, R, note_to_binary(Note)]) of
         ID ->
             validate_path(
-                case Dest =< Note of
+                case Dest < Note of
                     true -> L;
                     false -> R
                 end,
