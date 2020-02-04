@@ -58,20 +58,26 @@ server(NPid, SPid) ->
 			server(NPid, SPid)
 	after 0 ->
 		receive
-			{task, Task} ->
+			{task, Task = {gossip_message, #gs_msg { data = {new_tx, _}}}} ->
 				handle_task(NPid, SPid, Task),
-				server(NPid, SPid);
-			{'DOWN', _, _, _, normal} ->
-				%% There is a hidden monitor started in ar_node_utils:fork_recover/3
-				server(NPid, SPid);
-			stop ->
-				ok;
-			{ar_node_state, _, _} ->
-				%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
-				server(NPid, SPid);
-			Other ->
-				ar:warn({ar_node_worker_unknown_msg, Other}),
 				server(NPid, SPid)
+		after 0 ->
+			receive
+				{task, Task} ->
+					handle_task(NPid, SPid, Task),
+					server(NPid, SPid);
+				{'DOWN', _, _, _, normal} ->
+					%% There is a hidden monitor started in ar_node_utils:fork_recover/3
+					server(NPid, SPid);
+				stop ->
+					ok;
+				{ar_node_state, _, _} ->
+					%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
+					server(NPid, SPid);
+				Other ->
+					ar:warn({ar_node_worker_unknown_msg, Other}),
+					server(NPid, SPid)
+			end
 		end
 	end.
 
