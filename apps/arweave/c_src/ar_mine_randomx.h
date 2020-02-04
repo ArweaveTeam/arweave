@@ -24,7 +24,7 @@ struct state {
 };
 
 const int ARWEAVE_INPUT_DATA_SIZE = 48;
-const int BULK_HASHING_ITERATIONS = 8;
+const int BULK_HASHING_ITERATIONS = 12;
 
 static int load(ErlNifEnv*, void**, ERL_NIF_TERM);
 static void state_dtor(ErlNifEnv*, void*);
@@ -46,7 +46,7 @@ static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM release_state_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
 static ERL_NIF_TERM ok_tuple(ErlNifEnv*, ERL_NIF_TERM);
-static ERL_NIF_TERM ok_tuple3(ErlNifEnv*, ERL_NIF_TERM, ERL_NIF_TERM, ERL_NIF_TERM);
+static ERL_NIF_TERM ok_tuple4(ErlNifEnv*, ERL_NIF_TERM, ERL_NIF_TERM, ERL_NIF_TERM, ERL_NIF_TERM);
 static ERL_NIF_TERM error_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM error(ErlNifEnv*, const char*);
 static ERL_NIF_TERM make_output_binary(ErlNifEnv*, char*, size_t);

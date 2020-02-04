@@ -23,6 +23,7 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 - Erlang OTP v21+
 - GCC or Clang
 - GNU Make
+- CMake
 - SQLite3 headers (libsqlite3-dev on Ubuntu)
 
 ```shell script
