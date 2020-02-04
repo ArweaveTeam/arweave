@@ -53,36 +53,49 @@ call(Pid, Task, Timeout) ->
 %% server must be sent, otherwise ar_node server might get stuck.
 server(NPid, SPid) ->
 	receive
-		{task, Task} ->
-			try handle(SPid, Task) of
-				Reply ->
-					NPid ! {worker, Reply},
-					server(NPid, SPid)
-			catch
-				throw:Term ->
-					ar:err( [ {'NodeWorkerEXCEPTION', Term } ]),
-					NPid ! {worker, {error, Term}},
-					server(NPid, SPid);
-				exit:Term ->
-					ar:err( [ {'NodeWorkerEXIT', Term} ] ),
-					NPid ! {worker, {error, Term}},
-					server(NPid, SPid);
-				error:Term ->
-					ar:err( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
-					NPid ! {worker, {error, Term}},
-					server(NPid, SPid)
-			end;
-		{'DOWN', _, _, _, normal} ->
-			%% There is a hidden monitor started in ar_node_utils:fork_recover/3
-			server(NPid, SPid);
-		stop ->
-			ok;
-		{ar_node_state, _, _} ->
-			%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
-			server(NPid, SPid);
-		Other ->
-			ar:warn({ar_node_worker_unknown_msg, Other}),
+		{task, Task = {gossip_message, #gs_msg { data = {new_block, _, _, _, _, _}}}} ->
+			handle_task(NPid, SPid, Task),
 			server(NPid, SPid)
+	after 0 ->
+		receive
+			{task, Task = {gossip_message, #gs_msg { data = {new_tx, _}}}} ->
+				handle_task(NPid, SPid, Task),
+				server(NPid, SPid)
+		after 0 ->
+			receive
+				{task, Task} ->
+					handle_task(NPid, SPid, Task),
+					server(NPid, SPid);
+				{'DOWN', _, _, _, normal} ->
+					%% There is a hidden monitor started in ar_node_utils:fork_recover/3
+					server(NPid, SPid);
+				stop ->
+					ok;
+				{ar_node_state, _, _} ->
+					%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
+					server(NPid, SPid);
+				Other ->
+					ar:warn({ar_node_worker_unknown_msg, Other}),
+					server(NPid, SPid)
+			end
+		end
+	end.
+
+%% @doc Safely handle tasks.
+handle_task(NPid, SPid, Task) ->
+	try handle(SPid, Task) of
+		Reply ->
+			NPid ! {worker, Reply}
+	catch
+		throw:Term ->
+			ar:err( [ {'NodeWorkerEXCEPTION', Term } ]),
+			NPid ! {worker, {error, Term}};
+		exit:Term ->
+			ar:err( [ {'NodeWorkerEXIT', Term} ] ),
+			NPid ! {worker, {error, Term}};
+		error:Term ->
+			ar:err( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
+			NPid ! {worker, {error, Term}}
 	end.
 
 %% @doc Handle the server tasks. Return values a sent to the caller. Simple tasks like
