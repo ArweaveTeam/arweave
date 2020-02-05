@@ -21,6 +21,9 @@
 -define(CORS_HEADERS,
 	#{<<"access-control-allow-origin">> => <<"*">>}).
 
+%% @doc Content type of content policy provider
+-define(CONTENT_POLICY_TYPE, {<<"Content-Type">>, <<"application/x.arweave-content-policy">>}).
+
 %% @doc Specifies whether the software should be run in debug mode
 %% (excuting ifdef code blocks).
 %% WARNING: Only define debug during testing.
@@ -28,10 +31,13 @@
 
 -ifdef(DEBUG).
 -define(FORK_1_6, 0).
+-define(CONTENT_POLICY_SCAN_INTERVAL, 50).
 -else.
 %%% FORK INDEX
 %%% @deprecated Fork heights from 1.7 on are defined in the ar_fork module.
 -define(FORK_1_6, 95000).
+%%% Content policy interval of scan
+-define(CONTENT_POLICY_SCAN_INTERVAL, 60000 * 60 * 2).
 -endif.
 
 %% @doc Default auto-update watch address.

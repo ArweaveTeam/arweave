@@ -198,6 +198,8 @@ parse_options([{<<"max_connections">>, MaxConnections} | Rest], Config) when is_
 	parse_options(Rest, Config#config { max_connections = MaxConnections });
 parse_options([{<<"max_gateway_connections">>, MaxGatewayConnections} | Rest], Config) when is_integer(MaxGatewayConnections) ->
 	parse_options(Rest, Config#config { max_gateway_connections = MaxGatewayConnections });
+parse_options([{<<"content_policy_provider">>, Addr} | Rest], Config) ->
+	parse_options(Rest, Config#config { content_policy_provider = ar_util:decode(Addr) });
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

@@ -44,7 +44,8 @@
 	ipfs_pin = false,
 	webhooks = [],
 	max_connections = 1024,
-	max_gateway_connections = 128
+	max_gateway_connections = 128,
+	content_policy_provider = <<>>
 }).
 
 -endif.
