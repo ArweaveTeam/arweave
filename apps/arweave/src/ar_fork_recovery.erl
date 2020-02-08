@@ -330,6 +330,7 @@ apply_next_block(State, NextB, B, POA) ->
 					{block_height, NextB#block.height}
 				]
 			),
+			ar_storage:write_full_block(NextB),
 			{NewBI, NewLegacyHL} =
 				ar_node_utils:update_block_index(NextB, BI, LegacyHL),
 			NewBlockTXPairs =
@@ -346,7 +347,6 @@ apply_next_block(State, NextB, B, POA) ->
 				_ -> do_nothing
 			end,
 			self() ! apply_next_block,
-			ar_storage:write_full_block(NextB),
 			server(
 				State#state {
 					recovered_block_index = NewBI,
