@@ -7,7 +7,7 @@
 -export([main/0, main/1, start/0, start/1]).
 -export([tests/0, tests/1, tests/2]).
 -export([test_ipfs/0]).
--export([test_with_coverage/0, test_apps/0, test_networks/0, test_slow/0]).
+-export([test_apps/0, test_networks/0, test_slow/0]).
 -export([docs/0]).
 -export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
 -export([report/1, report_console/1, d/1]).
@@ -586,10 +586,6 @@ start_for_tests(Config) ->
 tests(Mod) ->
 	ar_storage:ensure_directories(),
 	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
-
-%% @doc Run the tests, printing coverage results.
-test_with_coverage() ->
-	ar_coverage:analyse(fun tests/0).
 
 %% @doc Run tests on the apps.
 test_apps() ->
