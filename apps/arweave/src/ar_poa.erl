@@ -1,6 +1,6 @@
 -module(ar_poa).
 
--export([generate/1]).
+-export([generate/1, generate_2_0/2]).
 -export([validate/4]).
 -export([validate_data_root/2, validate_data_tree/2, validate_chunk/3]).
 
@@ -18,21 +18,24 @@ generate(B) when is_record(B, block) ->
 	generate([{B#block.indep_hash, 0}]);
 generate([B | _]) when is_record(B, block) ->
 	generate(B);
-generate([]) -> unavailable;
-generate([{Seed, WeaveSize} | _] = BI) ->
-	ar:info([{generating_poa_for_block_after, ar_util:encode(Seed)}]),
+generate([]) -> #poa{};
+generate(BI) ->
 	case length(BI) >= ar_fork:height_2_0() of
 		true ->
-			generate(
-				Seed,
-				WeaveSize,
-				BI,
-				1,
-				ar_meta_db:get(max_option_depth)
-			);
+			generate_2_0(BI, ar_meta_db:get(max_option_depth));
 		false ->
 			ar_node_utils:find_recall_block(BI)
 	end.
+
+generate_2_0([], _) -> #poa{};
+generate_2_0([{Seed, WeaveSize} | _] = BI, Depth) ->
+	generate(
+		Seed,
+		WeaveSize,
+		BI,
+		1,
+		Depth
+	).
 
 generate(_, _, _, N, N) -> unavailable;
 generate(Seed, WeaveSize, BI, Option, Limit) ->

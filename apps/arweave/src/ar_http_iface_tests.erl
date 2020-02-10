@@ -404,7 +404,7 @@ add_external_block_with_bad_bds_test_() ->
 		Setup = fun() ->
 			ar_storage:clear(),
 			ar_blacklist_middleware:reset(),
-			[B0] = ar_weave:init([]),
+			[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
 			BI0 = [{B0#block.indep_hash,0}],
 			NodeWithBridge = ar_node:start([], [B0]),
 			Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
@@ -454,7 +454,7 @@ add_external_block_with_bad_bds_test_() ->
 				RemotePeer,
 				B1#block{indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>>},
 				RecallB0,
-				<<"bad-block-data-segment">> % Hardcoded in ar_mine_randomx.erl to hash to <<0>> (< 1).
+				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
 		),
 		%% Verify the IP address of self is banned in ar_blacklist_middleware.
@@ -1212,7 +1212,12 @@ mine_one_block(Node, PreMineBI) ->
 	PostMineBI.
 
 send_new_block(Peer, B, BI) ->
-	POA = ar_poa:generate(BI),
+	POA = case B#block.height >= ar_fork:height_2_0() of
+		true ->
+			ar_poa:generate(tl(BI));
+		false ->
+			ar_node_utils:find_recall_block(tl(BI))
+	end,
 	send_new_block(Peer, B, POA, generate_block_data_segment(B, POA, BI)).
 
 send_new_block(Peer, B, POA, BDS) ->
@@ -1233,11 +1238,16 @@ send_new_block(Peer, B, POA, BDS) ->
 	).
 
 generate_block_data_segment(B, POA, BI) ->
-	ar_block:generate_block_data_segment(
-		ar_storage:read_block(B#block.previous_block, BI),
-		POA,
-		lists:map(fun ar_storage:read_tx/1, B#block.txs),
-		B#block.reward_addr,
-		B#block.timestamp,
-		B#block.tags
-	).
+	case B#block.height >= ar_fork:height_2_0() of
+		true ->
+			ar_block:generate_block_data_segment(B);
+		false ->
+			ar_block:generate_block_data_segment_pre_2_0(
+				ar_storage:read_block(B#block.previous_block, BI),
+				POA,
+				lists:map(fun ar_storage:read_tx/1, B#block.txs),
+				B#block.reward_addr,
+				B#block.timestamp,
+				B#block.tags
+			)
+	end.

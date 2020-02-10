@@ -292,7 +292,7 @@
 	%% returned in the API, only used for constructing the hash list
 	%% for a block shadow.
 	legacy_hash_list = [],
-	hash_list_merkle = <<>>, % The merkle root of the block's hash list.
+	hash_list_merkle = <<>>, % The merkle root of the block index.
 	%% A list of {address, balance, last TX ID} tuples. In the block shadows and
 	%% in the /block/[hash] API endpoint the list is replaced with a hash.
 	%% Reconstructed on the receiving side. Stored in the separate files.
@@ -326,15 +326,15 @@
 
 %% @doc A succinct proof of access to a recall byte found in a TX.
 -record(poa, {
-	option, % The recall byte option (a sequence number) chosen.
-	block_indep_hash, % The hash of the block that the TX containing the chunk is found in.
-	tx_id , % The ID of the transaction containing the chunk.
-	tx_root, % Root of the Merkle tree of TXs in the block.
-	tx_path, % Path through the Merkle tree of TXs in the block.
-	data_size, % The total size of data in the transaction.
-	data_root, % Root of the Merkle root of chunk IDs.
-	data_path, % Path through the Merkle tree of chunk IDs to the required chunk.
-	chunk % The required data chunk.
+	option = 0, % The recall byte option (a sequence number) chosen.
+	block_indep_hash = <<>>, % The hash of the block that the TX containing the chunk is found in.
+	tx_id = <<>>, % The ID of the transaction containing the chunk.
+	tx_root = <<>>, % Root of the Merkle tree of TXs in the block.
+	tx_path = <<>>, % Path through the Merkle tree of TXs in the block.
+	data_size = 0, % The total size of data in the transaction.
+	data_root = <<>>, % Root of the Merkle root of chunk IDs.
+	data_path = <<>>, % Path through the Merkle tree of chunk IDs to the required chunk.
+	chunk = <<>> % The required data chunk.
 }).
 
 %% @doc Gossip protocol state.

@@ -1,9 +1,11 @@
 -module(ar_weave).
+
 -export([init/0, init/1, init/2, init/3, add/2, add/12]).
--export([hash/3, indep_hash/1, indep_hash_post_fork_2_0/1]).
+-export([hash/3, indep_hash/1, indep_hash_post_fork_2_0/1, indep_hash_post_fork_2_0/3]).
 -export([verify_indep/2]).
 -export([is_data_on_block_list/2]).
--export([create_genesis_txs/0]).
+-export([create_genesis_txs/0, read_v1_genesis_txs/0]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -30,6 +32,7 @@ init(WalletList, StartingDiff, RewardPool) ->
 			block_size = 0,
 			reward_pool = RewardPool,
 			timestamp = os:system_time(seconds),
+			poa = #poa{},
 			votables =
 				case ar_fork:height_2_0() of
 					0 -> ar_votable:init();
@@ -45,7 +48,7 @@ init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
 	ar_randomx_state:reset(),
 	% Generate and dispatch a new data transaction.
-	TXs = read_genesis_txs(),
+	TXs = read_v1_genesis_txs(),
 	B0 =
 		#block{
 			height = 0,
@@ -59,13 +62,15 @@ init(WalletList, StartingDiff, RewardPool) ->
 			block_size = 0,
 			reward_pool = RewardPool,
 			timestamp = os:system_time(seconds),
-			votables = ar_votable:init()
+			votables = ar_votable:init(),
+			poa = #poa{}
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
 -endif.
 
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
+%% DEPRECATED - only used in tests, mine blocks in tests instead.
 add(Bs, TXs) ->
 	add(Bs, TXs, generate_block_index(Bs), []).
 add(Bs, TXs, BI, LegacyHL) ->
@@ -112,7 +117,7 @@ add([{Hash, _} | Bs], TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tag
 	);
 add(Bs, TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tags) ->
 	POA = ar_poa:generate(hd(Bs)),
-	{Nonce, Timestamp, Diff} = mine(hd(Bs), POA, TXs, RewardAddr, Tags),
+	{Nonce, Timestamp, Diff} = mine(hd(Bs), POA, TXs, RewardAddr, Tags, BI),
 	add(
 		Bs,
 		TXs,
@@ -129,7 +134,7 @@ add(Bs, TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tags) ->
 	).
 add([{Hash, _} | Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) when is_binary(Hash) ->
 	add(
-		[ar_storage:read_block(Hash, BI)|Bs],
+		[ar_storage:read_block(Hash, BI) | Bs],
 		RawTXs,
 		BI,
 		LegacyHL,
@@ -154,26 +159,12 @@ add([CurrentB | _Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, 
 		RawTXs
 	),
 	NewHeight = CurrentB#block.height + 1,
-	CDiff =
-		case NewHeight >= ?FORK_1_6 of
-			true ->
-				ar_difficulty:next_cumulative_diff(
-					CurrentB#block.cumulative_diff,
-					Diff,
-					NewHeight
-				);
-			false ->
-				0
-		end,
-	MR =
-		case NewHeight of
-			_ when NewHeight < ?FORK_1_6 ->
-				<<>>;
-			_ when NewHeight == ?FORK_1_6 ->
-				ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list);
-			_ ->
-				ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash)
-		end,
+	CDiff = ar_difficulty:next_cumulative_diff(
+		CurrentB#block.cumulative_diff,
+		Diff,
+		NewHeight
+	),
+	MR = ar_block:compute_hash_list_merkle(CurrentB, BI),
 	Fork_2_0 = ar_fork:height_2_0(),
 	NewVotables =
 		case NewHeight of
@@ -194,18 +185,6 @@ add([CurrentB | _Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, 
 			diff = Diff,
 			cumulative_diff = CDiff,
 			height = NewHeight,
-			hash = hash(
-				ar_block:generate_block_data_segment(
-					CurrentB,
-					POA,
-					RawTXs,
-					RewardAddr,
-					Timestamp,
-					Tags
-				),
-				Nonce,
-				NewHeight
-			),
 			txs = TXs,
 			tx_root = TXRoot,
 			hash_list = ?BI_TO_BHL(BI),
@@ -224,7 +203,28 @@ add([CurrentB | _Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, 
 				end,
 			votables = NewVotables
 		},
-	[NewB#block { indep_hash = indep_hash(NewB) } | BI].
+	Hash = case NewHeight >= Fork_2_0 of
+		true ->
+			hash(
+				ar_block:generate_block_data_segment(NewB),
+				NewB#block.nonce,
+				NewHeight
+			);
+		false ->
+			hash(
+				ar_block:generate_block_data_segment_pre_2_0(
+					CurrentB,
+					POA,
+					RawTXs,
+					RewardAddr,
+					Timestamp,
+					Tags
+				),
+				Nonce,
+				NewHeight
+			)
+	end,
+	[NewB#block { indep_hash = indep_hash(NewB#block { hash = Hash }), hash = Hash } | BI].
 
 %% @doc Take a complete block list and return a list of block hashes.
 %% Throws an error if the block list is not complete.
@@ -372,39 +372,11 @@ indep_hash_pre_fork_2_0(#block {
 	).
 
 indep_hash_post_fork_2_0(B) ->
-	WLH = ar_block:hash_wallet_list(B#block.wallet_list),
-	ar_deep_hash:hash([
-		B#block.hash,
-		B#block.nonce,
-		B#block.previous_block,
-		integer_to_binary(B#block.timestamp),
-		integer_to_binary(B#block.last_retarget),
-		integer_to_binary(B#block.diff),
-		integer_to_binary(B#block.height),
-		B#block.hash_list_merkle,
-		B#block.tx_root,
-		WLH,
-		case B#block.reward_addr of
-			unclaimed -> <<"unclaimed">>;
-			_ -> B#block.reward_addr
-		end,
-		ar_tx:tags_to_list(B#block.tags),
+	BDS = ar_block:generate_block_data_segment(B),
+	indep_hash_post_fork_2_0(BDS, B#block.hash, B#block.nonce).
 
-		integer_to_binary(B#block.reward_pool),
-		integer_to_binary(B#block.weave_size),
-		integer_to_binary(B#block.block_size),
-		integer_to_binary(B#block.cumulative_diff)
-	] ++
-	case B#block.height >= ar_fork:height_2_0() of
-		true ->
-			lists:map(
-				fun({Name, Value}) ->
-					[list_to_binary(Name), integer_to_binary(Value)]
-				end,
-				B#block.votables
-			);
-		false -> []
-	end).
+indep_hash_post_fork_2_0(BDS, Hash, Nonce) ->
+	ar_deep_hash:hash([BDS, Hash, Nonce]).
 
 %% @doc Returns the transaction id
 tx_id(Id) when is_binary(Id) -> Id;
@@ -412,16 +384,16 @@ tx_id(TX) -> TX#tx.id.
 
 %% @doc Spawn a miner and mine the current block synchronously. Used for testing.
 %% Returns the nonce to use to add the block to the list.
-mine(B, POA, TXs, RewardAddr, Tags) ->
-	ar_mine:start(B, POA, TXs, RewardAddr, Tags, self(), []),
+mine(B, POA, TXs, RewardAddr, Tags, BI) ->
+	ar_mine:start(B, POA, TXs, RewardAddr, Tags, self(), [], BI),
 	receive
-		{work_complete, _BH, TXs, _Hash, _POA, Diff, Nonce, Timestamp, _} ->
-			{Nonce, Timestamp, Diff}
+		{work_complete, _BH, NewB, TXs, _BDS, _POA, _HashesTried} ->
+			{NewB#block.nonce, NewB#block.timestamp, NewB#block.diff}
 	end.
 
 is_data_on_block_list(_, _) -> false.
 
-read_genesis_txs() ->
+read_v1_genesis_txs() ->
 	{ok, Files} = file:list_dir("data/genesis_txs"),
 	lists:foldl(
 		fun(F, Acc) ->

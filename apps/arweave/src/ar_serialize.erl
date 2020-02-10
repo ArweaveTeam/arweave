@@ -351,7 +351,7 @@ poa_to_json_struct(undefined) -> <<"undefined">>;
 poa_to_json_struct(B) when is_record(B, block) -> <<"undefined">>;
 poa_to_json_struct(POA) ->
 	{[
-		{option, POA#poa.option},
+		{option, integer_to_binary(POA#poa.option)},
 		{block_indep_hash, ar_util:encode(POA#poa.block_indep_hash)},
 		{tx_id,
 			case POA#poa.tx_id of
@@ -370,7 +370,7 @@ poa_to_json_struct(POA) ->
 json_struct_to_poa(<<"undefined">>) -> undefined;
 json_struct_to_poa({JSONStruct}) ->
 	#poa {
-		option = find_value(<<"option">>, JSONStruct),
+		option = binary_to_integer(find_value(<<"option">>, JSONStruct)),
 		block_indep_hash = ar_util:decode(find_value(<<"block_indep_hash">>, JSONStruct)),
 		tx_id = case find_value(<<"tx_id">>, JSONStruct) of
 			<<"undefined">> -> undefined;

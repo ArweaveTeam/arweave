@@ -23,7 +23,7 @@
 -export([is_joined/1]).
 -export([get_block_txs_pairs/1]).
 
--export([mine/1, mine_at_diff/2, automine/1]).
+-export([mine/1, automine/1]).
 -export([add_tx/2]).
 -export([cancel_tx/3]).
 -export([add_peers/2]).
@@ -529,12 +529,6 @@ print_reward_addr() ->
 mine(Node) ->
 	Node ! mine.
 
-%% @doc Trigger a node to start mining a block at a certain difficulty. This is
-%% not used in the original/upstream git repo, but supposedly partners are using
-%% it in their forks.
-mine_at_diff(Node, Diff) ->
-	Node ! {mine_at_diff, Diff}.
-
 %% @doc Trigger a node to mine continually.
 automine(Node) ->
 	Node ! automine.
@@ -679,8 +673,7 @@ handle(_SPid, {set_reward_addr, Addr}) ->
 	{task, {set_reward_addr, Addr}};
 handle(_SPid, {set_xfer_speed, Speed}) ->
 	{task, {set_xfer_speed, Speed}};
-handle(SPid, {work_complete, BH, MinedTXs, _Hash, POA, Diff, Nonce, Timestamp, _}) ->
-	% The miner thinks it has found a new block.
+handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}) ->
 	{ok, BI} = ar_node_state:lookup(SPid, block_index),
 	case BI of
 		not_joined ->
@@ -688,20 +681,17 @@ handle(SPid, {work_complete, BH, MinedTXs, _Hash, POA, Diff, Nonce, Timestamp, _
 		_ ->
 			{task, {
 				work_complete,
-				BH,
-				POA,
+				BaseBH,
+				NewB,
 				MinedTXs,
-				Diff,
-				Nonce,
-				Timestamp
+				BDS,
+				POA
 			}}
 	end;
 handle(_SPid, {fork_recovered, BI, BlockTXPairs}) ->
 	{task, {fork_recovered, BI, BlockTXPairs}};
 handle(_SPid, mine) ->
 	{task, mine};
-handle(_SPid, {mine_at_diff, Diff}) ->
-	{task, {mine_at_diff, Diff}};
 handle(_SPid, automine) ->
 	{task, automine};
 %% ----- Getters and non-state-changing actions. -----

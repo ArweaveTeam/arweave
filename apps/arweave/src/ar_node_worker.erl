@@ -135,12 +135,12 @@ handle(SPid, {process_new_block, Peer, Height, BShadow, BDS, Recall}) ->
 	GS = maps:get(gossip, StateIn),
 	ar_gossip:send(GS, {new_block, Peer, Height, BShadow, BDS, Recall}),
 	{ok, process_new_block};
-handle(SPid, {work_complete, BH, POA, MinedTXs, Diff, Nonce, Timestamp}) ->
+handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	#{ block_index := [ {CurrentBH, _ } | _] } = StateIn,
-	case BH of
+	case BaseBH of
 		CurrentBH ->
-			case integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp, POA) of
+			case integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) of
 				{ok, StateOut} ->
 					ar_node_state:update(SPid, StateOut);
 				none ->
@@ -163,11 +163,6 @@ handle(SPid, {fork_recovered, BI, BlockTXPairs}) ->
 handle(SPid, mine) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
 	StateOut = ar_node_utils:start_mining(StateIn),
-	ar_node_state:update(SPid, StateOut),
-	{ok, mine};
-handle(SPid, {mine_at_diff, Diff}) ->
-	{ok, StateIn} = ar_node_state:all(SPid),
-	StateOut = ar_node_utils:start_mining(StateIn, Diff),
 	ar_node_state:update(SPid, StateOut),
 	{ok, mine};
 handle(SPid, automine) ->
@@ -688,158 +683,60 @@ fork_recover(Node, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 	end,
 	none.
 
-%% @doc Verify a new block found by the miner, integrate it.
-integrate_block_from_miner(#{ block_index := not_joined }, _MinedTXs, _Diff, _Nonce, _Timestamp, _POA) ->
+%% @doc Integrate the block found by us.
+integrate_block_from_miner(#{ block_index := not_joined }, _NewB, _MinedTXs, _BDS, _POA) ->
 	none;
-integrate_block_from_miner(StateIn, MinedTXs, Diff, Nonce, Timestamp, POA) ->
+integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 	#{
 		id               := BinID,
 		block_index      := BI,
-		wallet_list      := RawWalletList,
 		txs              := TXs,
 		gossip           := GS,
-		reward_addr      := RewardAddr,
-		tags             := Tags,
-		reward_pool      := OldPool,
-		weave_size       := OldWeaveSize,
-		height           := Height,
 		block_txs_pairs  := BlockTXPairs,
 		legacy_hash_list := LegacyHL
 	} = StateIn,
-	WeaveSize = OldWeaveSize +
-		lists:foldl(
-			fun(TX, Acc) ->
-				Acc + byte_size(TX#tx.data)
-			end,
-			0,
-			MinedTXs
+	ar_storage:write_full_block(NewB, MinedTXs),
+	{NewBI, NewLegacyHL} = ar_node_utils:update_block_index(NewB, BI, LegacyHL),
+	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NewB, BlockTXPairs, NewBI),
+	{ValidTXs, InvalidTXs} =
+		ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+			NewBlockTXPairs,
+			TXs -- MinedTXs,
+			NewB#block.diff,
+			NewB#block.height,
+			NewB#block.wallet_list
 		),
-	{FinderReward, RewardPool} =
-		ar_node_utils:calculate_reward_pool(
-			OldPool,
-			MinedTXs,
-			RewardAddr,
-			POA,
-			WeaveSize,
-			length(BI),
-			Diff,
-			Timestamp
-		),
+	ar_node_utils:log_invalid_txs_drop_reason(InvalidTXs),
+	ar_storage:write_block_block_index(BinID, NewBI),
+	ar_miner_log:mined_block(NewB#block.indep_hash),
 	ar:info(
 		[
-			{event, calculated_reward_for_mined_block},
-			{finder_reward, FinderReward},
-			{new_reward_pool, RewardPool},
-			{reward_address, RewardAddr},
-			{old_reward_pool, OldPool},
-			{txs, length(MinedTXs)},
-			{weave_size, WeaveSize},
-			{length, length(BI)}
+			{event, mined_block},
+			{indep_hash, ar_util:encode(NewB#block.indep_hash)},
+			{txs, length(MinedTXs)}
 		]
 	),
-	WalletList =
-		ar_node_utils:apply_mining_reward(
-			ar_node_utils:apply_txs(RawWalletList, MinedTXs, Height),
-			RewardAddr,
-			FinderReward,
-			length(BI)
-		),
-	StateNew = StateIn#{ wallet_list => WalletList },
-	%% Build the block record, verify it, and gossip it to the other nodes.
-	[NextB | _] = ar_weave:add(
-		BI, MinedTXs, BI, LegacyHL, RewardAddr, RewardPool,
-		WalletList, Tags, POA, Diff, Nonce, Timestamp),
-	B = ar_util:get_head_block(BI),
-	BlockValid = ar_node_utils:validate(
-		StateNew,
-		NextB,
-		MinedTXs,
-		B,
-		POA
+	{NewGS, _} = ar_gossip:send(
+		GS,
+		{new_block, self(), NewB#block.height, NewB#block { legacy_hash_list = LegacyHL }, BDS, POA}
 	),
-	case BlockValid of
-		{invalid, _} ->
-			reject_block_from_miner(StateIn, invalid_block);
-		valid ->
-			TXReplayCheck = ar_tx_replay_pool:verify_block_txs(
-				MinedTXs,
-				Diff,
-				Height,
-				Timestamp,
-				RawWalletList,
-				BlockTXPairs
-			),
-			case TXReplayCheck of
-				invalid ->
-					reject_block_from_miner(StateIn, tx_replay);
-				valid ->
-					ar_storage:write_full_block(NextB, MinedTXs),
-					{NewBI, NewLegacyHL} = ar_node_utils:update_block_index(NextB, BI, LegacyHL),
-					NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NextB, BlockTXPairs, NewBI),
-					{ValidTXs, InvalidTXs} =
-						ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
-							NewBlockTXPairs,
-							TXs -- MinedTXs,
-							NextB#block.diff,
-							NextB#block.height,
-							NextB#block.wallet_list
-						),
-					ar_node_utils:log_invalid_txs_drop_reason(InvalidTXs),
-					ar_storage:write_block_block_index(BinID, NewBI),
-					ar_miner_log:mined_block(NextB#block.indep_hash),
-					ar:report_console(
-						[
-							{node, self()},
-							{accepted_block, NextB#block.height},
-							{indep_hash, ar_util:encode(NextB#block.indep_hash)},
-							{txs, length(MinedTXs)},
-							case is_atom(RewardAddr) of
-								true -> {reward_address, unclaimed};
-								false -> {reward_address, ar_util:encode(RewardAddr)}
-							end
-						]
-					),
-					BDS = generate_block_data_segment(NextB, POA, BI),
-					{NewGS, _} =
-						ar_gossip:send(
-							GS,
-							{new_block, self(), NextB#block.height, NextB, BDS, POA}
-						),
-					{ok, ar_node_utils:reset_miner(
-						StateNew#{
-							block_index          => NewBI,
-							current              => element(1, hd(NewBI)),
-							gossip               => NewGS,
-							txs                  => ValidTXs,
-							height               => NextB#block.height,
-							reward_pool          => RewardPool,
-							diff                 => NextB#block.diff,
-							last_retarget        => NextB#block.last_retarget,
-							weave_size           => NextB#block.weave_size,
-							block_txs_pairs      => NewBlockTXPairs,
-							legacy_hash_list     => NewLegacyHL
-						}
-					)}
-			end
-	end.
-
-reject_block_from_miner(StateIn, Reason) ->
-	ar:err([
-		ar_node_worker,
-		miner_produced_invalid_block,
-		Reason
-	]),
-	{ok, ar_node_utils:reset_miner(StateIn)}.
-
-generate_block_data_segment(NextB, POA, BI) ->
-	ar_block:generate_block_data_segment(
-		ar_storage:read_block(NextB#block.previous_block, BI),
-		POA,
-		lists:map(fun ar_storage:read_tx/1, NextB#block.txs),
-		NextB#block.reward_addr,
-		NextB#block.timestamp,
-		NextB#block.tags
-	).
+	NewState = ar_node_utils:reset_miner(
+		StateIn#{
+			block_index          => NewBI,
+			current              => element(1, hd(NewBI)),
+			gossip               => NewGS,
+			txs                  => ValidTXs,
+			height               => NewB#block.height,
+			reward_pool          => NewB#block.reward_pool,
+			diff                 => NewB#block.diff,
+			last_retarget        => NewB#block.last_retarget,
+			weave_size           => NewB#block.weave_size,
+			block_txs_pairs      => NewBlockTXPairs,
+			legacy_hash_list     => NewLegacyHL,
+			wallet_list          => NewB#block.wallet_list
+		}
+	),
+	{ok, NewState}.
 
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{id := BinID, block_index := not_joined} = StateIn, {BI, LegacyHL}, BlockTXPairs) ->
