@@ -47,7 +47,7 @@ execute_test_() ->
 
 setup() ->
 	meck:new(ar_storage),
-	meck:new(ar_sqlite3),
+	meck:new(ar_arql_db),
 	meck:new(ar_domain),
 	meck:expect(
 		ar_domain,
@@ -74,7 +74,7 @@ redirect_root_to_labeled_domain() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -96,7 +96,7 @@ redirect_root_to_labeled_domain() ->
 	>>, Location),
 	?assertEqual(301, Status),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 serve_correctly_labeled_request() ->
@@ -106,7 +106,7 @@ serve_correctly_labeled_request() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -134,7 +134,7 @@ serve_correctly_labeled_request() ->
 	?assertEqual(<<"text/plain">>, ContentType),
 	?assertEqual(<<"Some mock data">>, Body),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 forward_other_requests_to_node_api() ->
@@ -151,7 +151,7 @@ render_manifest_listing() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -179,7 +179,7 @@ render_manifest_listing() ->
 	?assertMatch({_, _}, binary:match(Body, <<"<a href=\"img/dog.jpg\">img/dog.jpg</a>">>)),
 	?assertMatch({_, _}, binary:match(Body, <<"<a href=\"&lt;script&gt;alert(&apos;XSS!&apos;);&lt;/script&gt;\">&lt;script&gt;alert(&apos;XSS!&apos;);&lt;/script&gt;</a>">>)),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 redirect_manifest_to_index() ->
@@ -189,7 +189,7 @@ redirect_manifest_to_index() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -222,7 +222,7 @@ redirect_manifest_to_index() ->
 	?assertEqual(301, Status),
 	?assertEqual(ExpectedLocation, ActualLocation),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 serve_manifest_subpath() ->
@@ -235,7 +235,7 @@ serve_manifest_subpath() ->
 		end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -268,7 +268,7 @@ serve_manifest_subpath() ->
 	?assertMatch(#{ <<"content-type">> := <<"text/html">> }, Headers),
 	?assertEqual(<<"<html><body>Some HTML</body></html>">>, Body),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 handle_multi_segment_subpaths() ->
@@ -281,7 +281,7 @@ handle_multi_segment_subpaths() ->
 		end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -314,7 +314,7 @@ handle_multi_segment_subpaths() ->
 	?assertMatch(#{ <<"content-type">> := <<"image/jpeg">> }, Headers),
 	?assertEqual(<<"some jpeg">>, Body),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 redirect_badly_labeled_manifest_subpaths() ->
@@ -324,7 +324,7 @@ redirect_badly_labeled_manifest_subpaths() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -346,7 +346,7 @@ redirect_badly_labeled_manifest_subpaths() ->
 	>>, Location),
 	?assertEqual(301, Status),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 return_421_on_bad_manifest() ->
@@ -358,7 +358,7 @@ return_421_on_bad_manifest() ->
 		end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -384,7 +384,7 @@ return_421_on_bad_manifest() ->
 		),
 	?assertEqual(421, Status),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 return_404_on_non_existent_subpath() ->
@@ -396,7 +396,7 @@ return_404_on_non_existent_subpath() ->
 		end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -422,7 +422,7 @@ return_404_on_non_existent_subpath() ->
 		),
 	?assertEqual(404, Status),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 forward_on_subpath_of_non_manifest() ->
@@ -432,7 +432,7 @@ forward_on_subpath_of_non_manifest() ->
 		fun(?MOCK_TXID) -> <<"some/mock/path">> end
 	),
 	meck:expect(
-		ar_sqlite3,
+		ar_arql_db,
 		select_tx_by_id,
 		fun(?MOCK_TXHASH) ->
 			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
@@ -456,7 +456,7 @@ forward_on_subpath_of_non_manifest() ->
 			<<"/", Hash/binary, "/some/subpath">>
 		),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 serve_manifest_subpath_on_custom_domain() ->
@@ -501,7 +501,7 @@ serve_manifest_subpath_on_custom_domain() ->
 	?assertMatch(#{ <<"content-type">> := <<"text/html">> }, Headers),
 	?assertEqual(<<"<html><body>Some HTML</body></html>">>, Body),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 forward_non_existent_subpaths_to_node_api() ->
@@ -538,7 +538,7 @@ forward_non_existent_subpaths_to_node_api() ->
 		<<"/other/path">>
 	)),
 	?assert(meck:validate(ar_storage)),
-	?assert(meck:validate(ar_sqlite3)),
+	?assert(meck:validate(ar_arql_db)),
 	?assert(meck:validate(ar_domain)).
 
 req(Scheme, Host, Path) ->

@@ -167,7 +167,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	case get_tx_filename(Hash) of
 		{ok, _} ->
-			case catch ar_sqlite3:select_block_by_tx_id(Hash) of
+			case catch ar_arql_db:select_block_by_tx_id(Hash) of
 				{ok, #{
 					height := Height,
 					indep_hash := EncodedIndepHash
@@ -189,7 +189,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 					end;
 				not_found ->
 					{404, #{}, <<"Not Found.">>, Req};
-				{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
 					{503, #{}, <<"ArQL unavailable.">>, Req}
 			end;
 		{response, {Status, Headers, Body}} ->
@@ -223,7 +223,7 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 		{ok, QueryJSON, Req2} ->
 			case ar_serialize:json_struct_to_query(QueryJSON) of
 				{ok, Query} ->
-					case catch ar_sqlite3:eval_legacy_arql(Query) of
+					case catch ar_arql_db:eval_legacy_arql(Query) of
 						EncodedTXIDs when is_list(EncodedTXIDs) ->
 							Body = ar_serialize:jsonify(EncodedTXIDs),
 							{200, #{}, Body, Req2};
@@ -231,7 +231,7 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 							{400, #{}, <<"Invalid query.">>, Req2};
 						sqlite_parser_stack_overflow ->
 							{400, #{}, <<"The query nesting depth is too big.">>, Req2};
-						{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+						{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
 							{503, #{}, <<"ArQL unavailable.">>, Req2}
 					end;
 				{error, _} ->
@@ -499,11 +499,11 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req, _Pid) ->
 %% GET request to endpoint /wallet/{wallet_address}/deposits
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	case catch ar_sqlite3:select_txs_by([{to, [Addr]}]) of
+	case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
 		TXMaps when is_list(TXMaps) ->
 			TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
 			{200, #{}, ar_serialize:jsonify(TXIDs), Req};
-		{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+		{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
 			{503, #{}, <<"ArQL unavailable.">>, Req}
 	end;
 
@@ -512,7 +512,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _Pid) ->
 %% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	case catch ar_sqlite3:select_txs_by([{to, [Addr]}]) of
+	case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
 		TXMaps when is_list(TXMaps) ->
 			TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
 			{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
@@ -523,7 +523,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _P
 					Before ++ [EarliestDeposit]
 			end,
 			{200, #{}, ar_serialize:jsonify(FilteredTXs), Req};
-		{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+		{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
 			{503, #{}, <<"ArQL unavailable.">>, Req}
 	end;
 
@@ -782,7 +782,7 @@ handle_get_wallet_txs(Addr, EarliestTXID) ->
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>};
 		{ok, _} ->
-			case catch ar_sqlite3:select_txs_by([{from, [Addr]}]) of
+			case catch ar_arql_db:select_txs_by([{from, [Addr]}]) of
 				TXMaps when is_list(TXMaps) ->
 					TXIDs = lists:map(
 						fun(#{ id := ID }) -> ar_util:decode(ID) end,
@@ -791,7 +791,7 @@ handle_get_wallet_txs(Addr, EarliestTXID) ->
 					RecentTXIDs = get_wallet_txs(EarliestTXID, TXIDs),
 					EncodedTXIDs = lists:map(fun ar_util:encode/1, RecentTXIDs),
 					{200, #{}, ar_serialize:jsonify(EncodedTXIDs)};
-				{'EXIT', {timeout, {gen_server, call, [ar_sqlite3, _]}}} ->
+				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
 					{503, #{}, <<"ArQL unavailable.">>}
 			end
 	end.

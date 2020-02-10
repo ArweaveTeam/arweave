@@ -7,12 +7,12 @@ execute(Context, Object, Field, Args) ->
 	try
 		do_execute(Context, Object, Field, Args)
 	catch
-		exit:{timeout, {gen_server, call, [ar_sqlite3, _]}} ->
+		exit:{timeout, {gen_server, call, [ar_arql_db, _]}} ->
 			{error, "ArQL unavailable."}
 	end.
 
 do_execute(_, _, <<"transaction">>, #{ <<"id">> := TXID }) ->
-	case ar_sqlite3:select_tx_by_id(TXID) of
+	case ar_arql_db:select_tx_by_id(TXID) of
 		{ok, TX} -> {ok, TX};
 		not_found -> {ok, null}
 	end;
@@ -41,7 +41,7 @@ do_execute(_, _, <<"transactions">>, Args) ->
 		end
 	]),
 	TXs = case Opts of
-		[_|_] -> ar_sqlite3:select_txs_by(Opts);
+		[_|_] -> ar_arql_db:select_txs_by(Opts);
 		[] -> []
 	end,
 	{ok, [{ok, TX} || TX <- TXs]};
