@@ -35,13 +35,12 @@ generate_checkpoint(BI, Offset) ->
 	Checkpoint.
 
 generate_checkpoint2(BI, CP) ->
-	lists:reverse(do_generate_checkpoint(lists:reverse(?BI_TO_BHL(BI)), lists:reverse(CP), BI)).
+	lists:reverse(do_generate_checkpoint(lists:reverse(?BI_TO_BHL(BI)), lists:reverse(CP), BI, [])).
 
-%% TODO reconcile with checkpoint by hash, not by height
-do_generate_checkpoint([], [], _) -> [];
-do_generate_checkpoint([_ | HL], [CPEntry | CP], BI) ->
-	[CPEntry|do_generate_checkpoint(HL, CP, BI)];
-do_generate_checkpoint([H | HL], [], BI) ->
+do_generate_checkpoint([], [], _, _) -> [];
+do_generate_checkpoint([_ | HL], [CPEntry | CP], BI, NewBI) ->
+	[CPEntry | do_generate_checkpoint(HL, CP, BI, [CPEntry | NewBI])];
+do_generate_checkpoint([H | HL], [], BI, NewBI) ->
 	RawB =
 		ar_node:get_block(
 			ar_bridge:get_remote_peers(whereis(http_bridge_node)),
@@ -53,11 +52,21 @@ do_generate_checkpoint([H | HL], [], BI) ->
 			ar:err([{module, ar_transition}, {event, incorrect_indep_hash}, {hash, ar_util:encode(H)}]),
 			error;
 		true ->
-			BWithTree = ar_block:generate_tx_tree(RawB#block { txs = ar_storage:read_tx(RawB#block.txs) }),
-			B = BWithTree#block { indep_hash = ar_weave:indep_hash_post_fork_2_0(BWithTree) },
-			ar:err([transition, writing_block, ar_util:encode(ar_weave:indep_hash_post_fork_2_0(BWithTree))]),
+			BV2 = ar_block:generate_tx_tree(
+				RawB#block{
+					txs = ar_storage:read_tx(RawB#block.txs),
+					poa = ar_poa:generate_2_0(NewBI, 2)
+				}),
+			B = BV2#block {
+				indep_hash = ar_weave:indep_hash_post_fork_2_0(BV2)
+			},
+			ar:info([
+				{event, transitioning_block},
+				{hash, ar_util:encode(B#block.indep_hash)}
+			]),
 			ar_storage:write_block(B),
-			[{B#block.indep_hash, B#block.weave_size} | do_generate_checkpoint(HL, [], BI)]
+			CPEntry = {B#block.indep_hash, B#block.weave_size},
+			[CPEntry | do_generate_checkpoint(HL, [], BI, [CPEntry | NewBI])]
 	end.
 
 save_checkpoint(Checkpoint) ->

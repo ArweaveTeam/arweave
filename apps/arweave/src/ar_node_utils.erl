@@ -285,91 +285,75 @@ wallet_list_from_wallet_map(WalletMap) ->
 	).
 
 %% @doc Force a node to start mining, update state.
-start_mining(StateIn) ->
-	start_mining(StateIn, unforced).
-
-start_mining(#{block_index := not_joined} = StateIn, _) ->
+start_mining(#{block_index := not_joined} = StateIn) ->
 	%% We don't have a block index. Wait until we have one before
 	%% starting to mine.
 	StateIn;
-start_mining(#{ height := Height } = State, ForceDiff) ->
+start_mining(#{ height := Height } = State) ->
 	case Height + 1 >= ar_fork:height_2_0() of
 		true ->
-			start_mining_post_fork_2_0(State, ForceDiff);
+			start_mining_post_fork_2_0(State);
 		false ->
-			start_mining_pre_fork_2_0(State, ForceDiff)
+			start_mining_pre_fork_2_0(State)
 	end.
 
-start_mining_post_fork_2_0(#{
+start_mining_post_fork_2_0(StateIn) ->
+	#{
 		node := Node,
 		block_index := BI,
 		txs := TXs,
 		reward_addr := RewardAddr,
 		tags := Tags,
-		block_txs_pairs := BlockTXPairs } = StateIn, ForceDiff) ->
+		block_txs_pairs := BlockTXPairs,
+		block_index := BI
+	} = StateIn,
 	case ar_poa:generate(BI) of
 		unavailable ->
 			ar:info(
 				[
-					not_mining_this_block,
+					{event, could_not_start_mining},
 					{reason, data_unavailable_to_generate_poa},
 					{generated_options_to_depth, ar_meta_db:get(max_option_depth)}
 				]
 			);
 		POA ->
 			ar_miner_log:started_hashing(),
-			ar:info([{node_starting_to_mine, Node}]),
 			B = ar_storage:read_block(element(1, hd(BI)), BI),
-			case ForceDiff of
-				unforced ->
-					Miner = ar_mine:start(
-						B,
-						POA,
-						TXs,
-						RewardAddr,
-						Tags,
-						Node,
-						BlockTXPairs
-					),
-					ar:info([{node, Node}, {started_miner, Miner}]),
-					StateIn#{ miner => Miner };
-				ForceDiff ->
-					Miner = ar_mine:start(
-						B,
-						POA,
-						TXs,
-						RewardAddr,
-						Tags,
-						ForceDiff,
-						Node,
-						BlockTXPairs
-					),
-					ar:info([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
-					StateIn#{ miner => Miner, diff => ForceDiff }
-			end
+			Miner = ar_mine:start(
+				B,
+				POA,
+				TXs,
+				RewardAddr,
+				Tags,
+				Node,
+				BlockTXPairs,
+				BI
+			),
+			ar:info([{event, started_mining}]),
+			StateIn#{ miner => Miner }
 	end.
 
-start_mining_pre_fork_2_0(#{
+start_mining_pre_fork_2_0(StateIn) ->
+	#{
 		node := Node,
 		block_index := BI,
 		txs := TXs,
 		reward_addr := RewardAddr,
 		tags := Tags,
-		block_txs_pairs := BlockTXPairs } = StateIn, ForceDiff) ->
-	% TODO REMOVE after 2.0
+		block_txs_pairs := BlockTXPairs,
+		block_index := BI
+	} = StateIn,
 	case find_recall_block(BI) of
 		unavailable ->
 			B = ar_storage:read_block(element(1, hd(BI)), BI),
 			RecallHash = ar_util:get_recall_hash(B, BI),
-			% TODO: Cleanup.
-			% FullBlock = get_encrypted_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash),
 			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BI),
 			case FullBlock of
 				X when (X == unavailable) or (X == not_found) ->
 					ar:info(
 						[
-							could_not_start_mining,
-							could_not_retrieve_recall_block
+							{event, could_not_start_mining},
+							{reason, could_not_retrieve_recall_block}
 						]
 					);
 				_ ->
@@ -378,15 +362,16 @@ start_mining_pre_fork_2_0(#{
 							ar_storage:write_full_block(FullBlock),
 							ar:info(
 								[
-									could_not_start_mining,
-									stored_recall_block_for_foreign_verification
+									{event, could_not_start_mining},
+									{reason, stored_recall_block_for_foreign_verification}
 								]
 							);
 						false ->
 							ar:info(
 								[
-									could_not_start_mining,
-									{received_invalid_recall_block, FullBlock#block.indep_hash}
+									{event,  could_not_start_mining},
+									{reason, received_invalid_recall_block},
+									{hash, ar_util:encode(FullBlock#block.indep_hash)}
 								]
 							)
 					end
@@ -395,56 +380,23 @@ start_mining_pre_fork_2_0(#{
 		RecallB ->
 			case ?IS_BLOCK(RecallB) of
 				false ->
-					ar:report_console([{erroneous_recall_block, RecallB}]);
+					ar:err([{event, got_invalid_recall_block}, {block, RecallB}]);
 				true ->
-					ar_miner_log:started_hashing(),
-					ar:info([{node_starting_miner, Node}, {recall_block, RecallB#block.height}])
-			end,
-			case make_full_block(
-				RecallB#block.indep_hash,
-				BI
-			) of
-				{ok, RecallBFull} ->
-					ar_key_db:put(
-						RecallB#block.indep_hash,
-						[
-							{
-								ar_block:generate_block_key(RecallBFull, element(1, hd(BI))),
-								binary:part(element(1, hd(BI)), 0, 16)
-							}
-						]
-					);
-				{error, _} ->
-					do_nothing
+					ar_miner_log:started_hashing()
 			end,
 			B = ar_storage:read_block(element(1, hd(BI)), BI),
-			case ForceDiff of
-				unforced ->
-					Miner = ar_mine:start(
-						B,
-						RecallB,
-						TXs,
-						RewardAddr,
-						Tags,
-						Node,
-						BlockTXPairs
-					),
-					ar:info([{node, Node}, {started_miner, Miner}]),
-					StateIn#{ miner => Miner };
-				ForceDiff ->
-					Miner = ar_mine:start(
-						B,
-						RecallB,
-						TXs,
-						RewardAddr,
-						Tags,
-						ForceDiff,
-						Node,
-						BlockTXPairs
-					),
-					ar:info([{node, Node}, {started_miner, Miner}, {forced_diff, ForceDiff}]),
-					StateIn#{ miner => Miner, diff => ForceDiff }
-			end
+			Miner = ar_mine:start(
+				B,
+				RecallB,
+				TXs,
+				RewardAddr,
+				Tags,
+				Node,
+				BlockTXPairs,
+				BI
+			),
+			ar:info([{event, started_miner}]),
+			StateIn#{ miner => Miner }
 	end.
 
 %% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
@@ -555,7 +507,7 @@ update_block_txs_pairs(B, BlockTXPairs, BI) ->
 	case B#block.height + 1 of
 		Fork_2_0 ->
 			Zipped = lists:zip(
-				[{ar_weave:indep_hash_post_fork_2_0(B), TXIDs} | BlockTXPairs],
+				[{B#block.indep_hash, TXIDs} | BlockTXPairs],
 				lists:sublist(BI, length(BlockTXPairs) + 1)
 			),
 			lists:sublist(
@@ -633,12 +585,12 @@ validate_post_fork_2_0(
 				weave_size = LastWeaveSize
 			},
 		_,
-		RewardAddr,
-		Tags
+		_RewardAddr,
+		_Tags
 	) ->
 	ar:d([performing_v2_block_validation, {height, Height}]),
 	POW = ar_weave:hash(
-		ar_block:generate_block_data_segment(OldB, POA, TXs, RewardAddr, Timestamp, Tags),
+		ar_block:generate_block_data_segment(NewB),
 		Nonce,
 		Height
 	),
@@ -667,7 +619,7 @@ validate_post_fork_2_0(
 					{last_retarget, ar_block:verify_last_retarget(NewB, OldB)},
 					{previous_block, ar_block:verify_previous_block(NewB, OldB)},
 					{block_index, ar_block:verify_block_hash_list(NewB, OldB)},
-					{hash_list_root, ar_block:verify_block_hash_list_merkle(NewB, OldB)},
+					{hash_list_root, ar_block:verify_block_hash_list_merkle(NewB, OldB, BI)},
 					{wallet_list2, ar_block:verify_wallet_list(NewB, OldB, POA, TXs)},
 					{cumulative_difficulty, ar_block:verify_cumulative_diff(NewB, OldB)}
 				]
@@ -718,9 +670,8 @@ validate_pre_fork_2_0(
 		RewardAddr,
 		Tags) ->
 	ar:d([performing_v1_block_validation, {height, Height}]),
-	% TODO: Fix names.
 	BDSHash = ar_weave:hash(
-		ar_block:generate_block_data_segment(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
+		ar_block:generate_block_data_segment_pre_2_0(OldB, RecallB, TXs, RewardAddr, Timestamp, Tags),
 		Nonce,
 		Height
 	),
@@ -733,12 +684,11 @@ validate_pre_fork_2_0(
 	Hash = ar_block:verify_dep_hash(NewB, BDSHash),
 	WeaveSize = ar_block:verify_weave_size(NewB, OldB, TXs),
 	Size = ar_block:block_field_size_limit(NewB),
-	%Time = ar_block:verify_timestamp(OldB, NewB),
 	HeightCheck = ar_block:verify_height(NewB, OldB),
 	RetargetCheck = ar_block:verify_last_retarget(NewB, OldB),
 	PreviousBCheck = ar_block:verify_previous_block(NewB, OldB),
 	HLCheck = ar_block:verify_block_hash_list(NewB, OldB),
-	HLMerkleCheck = ar_block:verify_block_hash_list_merkle(NewB, OldB),
+	HLMerkleCheck = ar_block:verify_block_hash_list_merkle(NewB, OldB, noop),
 	WalletListCheck = ar_block:verify_wallet_list(NewB, OldB, RecallB, TXs),
 	CumulativeDiffCheck = ar_block:verify_cumulative_diff(NewB, OldB),
 

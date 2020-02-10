@@ -1,25 +1,38 @@
 -module(ar_unbalanced_merkle).
 -export([root/2, root/3]).
 -export([hash_list_to_merkle_root/1, wallet_list_to_merkle_root/1]).
+-export([block_index_to_merkle_root/1, hash_block_index_entry/1]).
+
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Module for building and manipulating generic and specific unbalanced merkle trees.
 
-%% @doc Take a prior merkle root and add a new peice of data to it, optionally
+%% @doc Take a prior merkle root and add a new piece of data to it, optionally
 %% providing a conversion function prior to hashing.
 root(OldRoot, Data, Fun) -> root(OldRoot, Fun(Data)).
 root(OldRoot, Data) ->
 	crypto:hash(?MERKLE_HASH_ALG, << OldRoot/binary, Data/binary >>).
 
-%% @doc Generate a new entire merkle tree from a BI.
+%% @doc Generate a new entire merkle tree from a hash list.
 hash_list_to_merkle_root(HL) ->
 	lists:foldl(
 		fun(BH, MR) -> root(MR, BH) end,
 		<<>>,
 		lists:reverse(HL)
 	).
+
+%% @doc Generate a new entire merkle tree from a block index.
+block_index_to_merkle_root(HL) ->
+	lists:foldl(
+		fun(BIEntry, MR) -> root(MR, BIEntry, fun hash_block_index_entry/1) end,
+		<<>>,
+		lists:reverse(HL)
+	).
+
+hash_block_index_entry({BH, WeaveSize}) ->
+	ar_deep_hash:hash([BH, integer_to_binary(WeaveSize)]).
 
 %% @doc Generate a new wallet list merkle root from a WL.
 wallet_list_to_merkle_root(WL) ->

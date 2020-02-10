@@ -5,19 +5,21 @@
 -export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/1]).
 -export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
--export([verify_cumulative_diff/2, verify_block_hash_list_merkle/2]).
+-export([verify_cumulative_diff/2, verify_block_hash_list_merkle/3]).
 -export([verify_tx_root/1]).
 -export([hash_wallet_list/1]).
 -export([encrypt_block/2, encrypt_block/3]).
 -export([encrypt_full_block/2, encrypt_full_block/3]).
 -export([decrypt_block/4]).
 -export([generate_block_key/2]).
--export([generate_block_data_segment/6]).
+-export([generate_block_data_segment_pre_2_0/6]).
+-export([generate_block_data_segment/1, generate_block_data_segment/3, generate_block_data_segment_base/1]).
 -export([generate_hash_list_for_block/2]).
 -export([generate_tx_root_for_block/1, generate_size_tagged_list_from_txs/1]).
 -export([generate_block_data_segment_and_pieces/6, refresh_block_data_segment_timestamp/6]).
 -export([generate_tx_tree/1, generate_tx_tree/2]).
 -export([join_v1_v2_hash_list/3]).
+-export([compute_hash_list_merkle/2]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -299,10 +301,131 @@ block_field_size_limit(B) ->
 	end,
 	Check.
 
+compute_hash_list_merkle(B, BI) ->
+	NewHeight = B#block.height + 1,
+	Fork_2_0 = ar_fork:height_2_0(),
+	case NewHeight of
+		_ when NewHeight < ?FORK_1_6 ->
+			<<>>;
+		?FORK_1_6 ->
+			ar_unbalanced_merkle:hash_list_to_merkle_root(B#block.hash_list);
+		_ when NewHeight < Fork_2_0 ->
+			ar_unbalanced_merkle:root(B#block.hash_list_merkle, B#block.indep_hash);
+		Fork_2_0 ->
+			ar_unbalanced_merkle:block_index_to_merkle_root(BI);
+		_ ->
+			ar_unbalanced_merkle:root(
+				B#block.hash_list_merkle,
+				{B#block.indep_hash, B#block.weave_size},
+				fun ar_unbalanced_merkle:hash_block_index_entry/1
+			)
+	end.
+
+%% @doc Generate a block data segment.
+%% Block data segment is combined with a nonce to compute a PoW hash.
+%% Also, it is combined with a nonce and the corresponding PoW hash
+%% to produce the independent hash.
+generate_block_data_segment(B) ->
+	{BDSBase, RewardWallet} = generate_block_data_segment_base(B),
+	generate_block_data_segment(
+		BDSBase,
+		B#block.hash_list_merkle,
+		#{
+			timestamp => B#block.timestamp,
+			last_retarget => B#block.last_retarget,
+			diff => B#block.diff,
+			cumulative_diff => B#block.cumulative_diff,
+			reward_pool => B#block.reward_pool,
+			reward_wallet => RewardWallet
+		}
+	).
+
+generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
+	#{
+		timestamp := Timestamp,
+		last_retarget := LastRetarget,
+		diff := Diff,
+		cumulative_diff := CDiff,
+		reward_pool := RewardPool,
+		reward_wallet := RewardWallet
+	} = TimeDependentParams,
+	RewardWalletPreimage =
+		case RewardWallet of
+			not_in_the_list ->
+				<<"unclaimed">>;
+			{A, Balance, L} ->
+				[A, integer_to_binary(Balance), L]
+		end,
+	ar_deep_hash:hash([
+		BDSBase,
+		integer_to_binary(Timestamp),
+		integer_to_binary(LastRetarget),
+		integer_to_binary(Diff),
+		integer_to_binary(CDiff),
+		integer_to_binary(RewardPool),
+		RewardWalletPreimage,
+		BlockIndexMerkle
+	]).
+
+%% @doc Generate a hash, which is used to produce a block data segment
+%% when combined with the time-dependent parameters, which frequently
+%% change during mining - timestamp, last retarget timestamp, difficulty,
+%% cumulative difficulty, miner's wallet, reward pool. Also excludes
+%% the merkle root of the block index, which is hashed with the rest
+%% as the last step, to allow verifiers to quickly validate PoW against
+%% the current state.
+generate_block_data_segment_base(B) ->
+	{RewardWallet, WalletList} =
+		case lists:keytake(B#block.reward_addr, 1, B#block.wallet_list) of
+			{value, R, W} ->
+				{R, W};
+			false ->
+				{not_in_the_list, B#block.wallet_list}
+		end,
+	BDSBase = ar_deep_hash:hash([
+		integer_to_binary(B#block.height),
+		B#block.previous_block,
+		B#block.tx_root,
+		integer_to_binary(B#block.block_size),
+		integer_to_binary(B#block.weave_size),
+		[[A, integer_to_binary(Balance), L] || {A, Balance, L} <- WalletList],
+		case B#block.reward_addr of
+			unclaimed ->
+				<<"unclaimed">>;
+			_ ->
+				B#block.reward_addr
+		end,
+		ar_tx:tags_to_list(B#block.tags),
+		lists:map(
+			fun({Name, Value}) ->
+				[list_to_binary(Name), integer_to_binary(Value)]
+			end,
+			B#block.votables
+		),
+		poa_to_list(B#block.poa)
+	]),
+	{BDSBase, RewardWallet}.
+
+poa_to_list(POA) ->
+	[
+		integer_to_binary(POA#poa.option),
+		POA#poa.block_indep_hash,
+		case POA#poa.tx_id of
+			undefined -> <<>>;
+			TXID -> TXID
+		end,
+		POA#poa.tx_root,
+		POA#poa.tx_path,
+		integer_to_binary(POA#poa.data_size),
+		POA#poa.data_root,
+		POA#poa.data_path,
+		POA#poa.chunk
+	].
+
 %% @docs Generate a hashable data segment for a block from the preceding block,
 %% the preceding block's recall block, TXs to be mined, reward address and tags.
-generate_block_data_segment(PrecedingB, POA, [unavailable], RewardAddr, Time, Tags) ->
-	generate_block_data_segment(
+generate_block_data_segment_pre_2_0(PrecedingB, POA, [unavailable], RewardAddr, Time, Tags) ->
+	generate_block_data_segment_pre_2_0(
 		PrecedingB,
 		POA,
 		[],
@@ -310,8 +433,8 @@ generate_block_data_segment(PrecedingB, POA, [unavailable], RewardAddr, Time, Ta
 		Time,
 		Tags
 	);
-generate_block_data_segment(PrecedingB, POA, TXs, unclaimed, Time, Tags) ->
-	generate_block_data_segment(
+generate_block_data_segment_pre_2_0(PrecedingB, POA, TXs, unclaimed, Time, Tags) ->
+	generate_block_data_segment_pre_2_0(
 		PrecedingB,
 		POA,
 		TXs,
@@ -319,7 +442,7 @@ generate_block_data_segment(PrecedingB, POA, TXs, unclaimed, Time, Tags) ->
 		Time,
 		Tags
 	);
-generate_block_data_segment(PrecedingB, POA, TXs, RewardAddr, Time, Tags) ->
+generate_block_data_segment_pre_2_0(PrecedingB, POA, TXs, RewardAddr, Time, Tags) ->
 	{_, BDS} = generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, Tags),
 	BDS.
 
@@ -406,22 +529,18 @@ generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, T
 		<<
 			(integer_to_binary(RewardPool))/binary
 		>>,
-		case NewHeight >= ar_fork:height_2_0() of
-			true ->	<<>>;
-			false ->
-				<<
-					(block_to_binary(POA))/binary,
-					(
-						binary:list_to_bin(
-							lists:map(
-								fun ar_tx:tx_to_binary/1,
-								TXs
-							)
-						)
-					)/binary,
-					MR/binary
-				>>
-		end
+		<<
+			(block_to_binary(POA))/binary,
+			(
+				binary:list_to_bin(
+					lists:map(
+						fun ar_tx:tx_to_binary/1,
+						TXs
+					)
+				)
+			)/binary,
+			MR/binary
+		>>
 	],
 	{Pieces, crypto:hash(
 		?MINING_HASH_ALG,
@@ -510,10 +629,10 @@ verify_tx_root(B) ->
 %% correct TX merkle tree root.
 generate_tx_root_for_block(B) when is_record(B, block) ->
 	generate_tx_root_for_block(B#block.txs);
-generate_tx_root_for_block(TXIDs = [TXID|_]) when is_binary(TXID) ->
+generate_tx_root_for_block(TXIDs = [TXID | _]) when is_binary(TXID) ->
 	generate_tx_root_for_block(ar_storage:read_tx(TXIDs));
-generate_tx_root_for_block(TXs = [TX|_]) when is_record(TX, tx) ->
-	generate_tx_root_for_block([ {T#tx.id, T#tx.data_size} || T <- TXs ]);
+generate_tx_root_for_block(TXs = [TX | _]) when is_record(TX, tx) ->
+	generate_tx_root_for_block([{T#tx.id, T#tx.data_size} || T <- TXs]);
 generate_tx_root_for_block(TXSizes) ->
 	TXSizePairs = generate_size_tagged_list_from_txs(TXSizes),
 	{Root, _Tree} = ar_merkle:generate_tree(TXSizePairs),
@@ -613,8 +732,6 @@ verify_weave_size(NewB, OldB, TXs) ->
 	).
 
 %% @doc Ensure that after the 1.6 release cumulative difficulty is enforced.
-verify_cumulative_diff(NewB, _OldB) when NewB#block.height < ?FORK_1_6 ->
-	NewB#block.cumulative_diff == 0;
 verify_cumulative_diff(NewB, OldB) ->
 	NewB#block.cumulative_diff ==
 		ar_difficulty:next_cumulative_diff(
@@ -624,12 +741,25 @@ verify_cumulative_diff(NewB, OldB) ->
 		).
 
 %% @doc After 1.6 fork check that the given merkle root in a new block is valid.
-verify_block_hash_list_merkle(NewB, CurrentB) when NewB#block.height > ?FORK_1_6 ->
-	NewB#block.hash_list_merkle ==
-		ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash);
-verify_block_hash_list_merkle(NewB, _CurrentB) when NewB#block.height < ?FORK_1_6 ->
+verify_block_hash_list_merkle(NewB, CurrentB, BI) when NewB#block.height > ?FORK_1_6 ->
+	Fork_2_0 = ar_fork:height_2_0(),
+	case NewB#block.height of
+		H when H < Fork_2_0 ->
+			NewB#block.hash_list_merkle ==
+				ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash);
+		Fork_2_0 ->
+			NewB#block.hash_list_merkle == ar_unbalanced_merkle:block_index_to_merkle_root(BI);
+		_ ->
+			NewB#block.hash_list_merkle ==
+				ar_unbalanced_merkle:root(
+					CurrentB#block.hash_list_merkle,
+					{CurrentB#block.indep_hash, CurrentB#block.weave_size},
+					fun ar_unbalanced_merkle:hash_block_index_entry/1
+				)
+	end;
+verify_block_hash_list_merkle(NewB, _CurrentB, _) when NewB#block.height < ?FORK_1_6 ->
 	NewB#block.hash_list_merkle == <<>>;
-verify_block_hash_list_merkle(NewB, CurrentB) when NewB#block.height == ?FORK_1_6 ->
+verify_block_hash_list_merkle(NewB, CurrentB, _) when NewB#block.height == ?FORK_1_6 ->
 	NewB#block.hash_list_merkle == ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list).
 
 get_recall_block(OrigPeer, RecallHash, BI, Key, Nonce) ->
