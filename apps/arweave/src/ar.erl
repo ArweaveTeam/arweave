@@ -234,6 +234,8 @@ parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args(["max_propagation_peers", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_propagation_peers = list_to_integer(Num) });
+parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_connections = list_to_integer(Num) });
 parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
@@ -269,6 +271,7 @@ start(
 		mining_addr = Addr,
 		max_miners = MaxMiners,
 		max_emitters = MaxEmitters,
+		tx_propagation_parallelization = TXProp,
 		new_key = NewKey,
 		load_key = LoadKey,
 		pause = Pause,
@@ -312,6 +315,7 @@ start(
 	ar_meta_db:put(mine, Mine),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(max_emitters, MaxEmitters),
+	ar_meta_db:put(tx_propagation_parallelization, TXProp),
 	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),

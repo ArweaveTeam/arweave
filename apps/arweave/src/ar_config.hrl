@@ -25,6 +25,7 @@
 	mining_addr = false,
 	max_miners = ?NUM_MINING_PROCESSES,
 	max_emitters = ?NUM_EMITTER_PROCESSES,
+	tx_propagation_parallelization = ?TX_PROPAGATION_PARALLELIZATION,
 	new_key = false,
 	load_key = false,
 	pause = true,
