@@ -93,8 +93,8 @@ handle_task(NPid, SPid, Task) ->
 		exit:Term ->
 			ar:err( [ {'NodeWorkerEXIT', Term} ] ),
 			NPid ! {worker, {error, Term}};
-		error:Term ->
-			ar:err( [ {'NodeWorkerERROR', {Term, erlang:get_stacktrace()} } ]),
+		error:Term:Stacktrace ->
+			ar:err( [ {'NodeWorkerERROR', {Term, Stacktrace} } ]),
 			NPid ! {worker, {error, Term}}
 	end.
 

@@ -105,8 +105,8 @@ server(Tid) ->
 				exit:Term ->
 					ar:report( [ {'NodeStateEXIT', Term} ] ),
 					server(Tid);
-				error:Term ->
-					ar:report( [ {'NodeStateERROR', {Term, erlang:get_stacktrace()} } ]),
+				error:Term:Stacktrace ->
+					ar:report( [ {'NodeStateERROR', {Term, Stacktrace} } ]),
 					server(Tid)
 			end;
 		stop ->

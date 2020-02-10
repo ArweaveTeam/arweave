@@ -73,7 +73,7 @@ do_scan_and_clean_disk() ->
 				fun(File) ->
 					Filepath = filename:join(TXDir, File),
 					case scan_file(Filepath) of
-						{reject, TXID} ->
+						{reject, _} ->
 							ar:info([
 								{ar_firewall, scan_and_clean_disk},
 								{removing_file, File}

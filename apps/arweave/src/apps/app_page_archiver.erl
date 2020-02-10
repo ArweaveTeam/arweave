@@ -95,7 +95,7 @@ archive_multiple_times_test() ->
         Wallet = {_Priv1, Pub1} = ar_wallet:new(),
         Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
         Node1 = ar_node:start([], Bs),
-        Archiver = start(Node1, Wallet, "http://127.0.0.1:1984/info", 1),
+        _ = start(Node1, Wallet, "http://127.0.0.1:1984/info", 1),
         Res = lists:map(
             fun(_) ->
                 ar_node:mine(Node1),
@@ -113,7 +113,7 @@ archive_multiple_urls_at_once_test() ->
         Wallet = {_Priv1, Pub1} = ar_wallet:new(),
         Bs = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
         Node1 = ar_node:start([], Bs),
-        Archiver = start(Node1, Wallet, ["http://127.0.0.1:1984/info", "http://127.0.0.1:1984/info"], 100),
+        _ = start(Node1, Wallet, ["http://127.0.0.1:1984/info", "http://127.0.0.1:1984/info"], 100),
         Res = lists:map(
             fun(_) ->
                 ar_node:mine(Node1),
