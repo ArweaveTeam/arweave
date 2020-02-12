@@ -1,46 +1,153 @@
 -module(ar_transition).
+-behaviour(gen_server).
 
--export([am_i_ready/0]).
--export([generate_checkpoint/0, generate_checkpoint/1, generate_checkpoint/2]).
--export([save_checkpoint/1, save_checkpoint/2]).
--export([load_checkpoint/0, load_checkpoint/1]).
+-export([start_link/1, get_new_block_index/1, update_block_index/1, reset/0]).
+-export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include("ar.hrl").
 
+-define(BATCH_SIZE, 1000).
+
 %%% A module for managing the transition from Arweave v1.x to Arweave 2.x.
-%%% You can run `ar_transition:am_i_ready().` on the console to see if your
-%%% node is prepared for the upgrade.
+%%% For every historical block, it generates a transaction Merkle tree, a
+%%% proof of access, and computes the independent hash in the v2 format.
 
-am_i_ready() ->
-	ToGo = ar_fork:height_2_0() - length(load_checkpoint()),
-	io:format(
-		"During the Arweave 2.0 upgrade you will have to re-verify ~w blocks.~n",
-		[ToGo]
-	),
-	io:format("In order to lower the amount of work required during the upgrade "
-		"please run `ar_transition:generate_checkpoint().`~n"),
-	ToGo.
+start_link(Args) ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
-generate_checkpoint() ->
-	generate_checkpoint(ar_node:get_block_index(whereis(entrypoint_node)), 0).
+%% @doc Return a new block index corresponding to the given v1 block hash.
+get_new_block_index(BH) ->
+	case gen_server:call(?MODULE, get_checkpoint) of
+		[{_, _, BH} | _] = Checkpoint ->
+			[{H, WS} || {H, WS, _} <- Checkpoint];
+		_ ->
+			timer:sleep(10),
+			get_new_block_index(BH)
+	end.
 
-generate_checkpoint(BI) ->
-	generate_checkpoint(BI, 0).
+update_block_index(BI) ->
+	gen_server:cast(?MODULE, {update_block_index, BI}).
 
-generate_checkpoint(BI, Offset) ->
-	CurrentCheckpoint = load_checkpoint(),
-	Checkpoint = generate_checkpoint2(BI, lists:sublist(CurrentCheckpoint, Offset + 1, length(CurrentCheckpoint))),
-	io:format("Generated checkpoint to height ~w. Saving...~n", [length(Checkpoint)]),
-	save_checkpoint(Checkpoint),
-	Checkpoint.
+reset() ->
+	gen_server:cast(?MODULE, reset).
 
-generate_checkpoint2(BI, CP) ->
-	lists:reverse(do_generate_checkpoint(lists:reverse(?BI_TO_BHL(BI)), lists:reverse(CP), BI, [])).
+init(_Args) ->
+	ar:info([{event, ar_transition_start}]),
+	{ok, #{ block_index => not_set }}.
 
-do_generate_checkpoint([], [], _, _) -> [];
-do_generate_checkpoint([_ | HL], [CPEntry | CP], BI, NewBI) ->
-	[CPEntry | do_generate_checkpoint(HL, CP, BI, [CPEntry | NewBI])];
-do_generate_checkpoint([H | HL], [], BI, NewBI) ->
+handle_call(get_checkpoint, _From, #{ block_index := not_set } = State) ->
+	{reply, [], State};
+handle_call(get_checkpoint, _From, #{ checkpoint := Checkpoint } = State) ->
+	{reply, Checkpoint, State}.
+
+handle_cast({update_block_index, NewBI}, #{ block_index := not_set } = State) ->
+	{GH, _} = lists:last(NewBI),
+	Checkpoint = load_checkpoint(GH),
+	NewState = State#{
+		block_index => NewBI,
+		to_go => lists:reverse(NewBI),
+		checkpoint => update_checkpoint(Checkpoint, length(NewBI)),
+		genesis_hash => GH
+	},
+	gen_server:cast(?MODULE, transition_batch),
+	{noreply, NewState};
+handle_cast({update_block_index, [{H, _} | _]}, #{ block_index := [{H, _} | _] } = State) ->
+	{noreply, State};
+handle_cast({update_block_index, NewBI}, State) ->
+	#{ checkpoint := Checkpoint, block_index := BI, to_go := ToGo } = State,
+	{BaseHeight, BaseEntry, DivergedIndex} = get_diverged_index(BI, NewBI),
+	NewState = State#{
+		block_index => NewBI,
+		to_go => update_to_go(ToGo, BaseEntry, DivergedIndex),
+		checkpoint => update_checkpoint(Checkpoint, BaseHeight)
+	},
+	gen_server:cast(?MODULE, transition_batch),
+	{noreply, NewState};
+
+handle_cast(transition_batch, State) ->
+	#{ block_index := BI, to_go := ToGo, checkpoint := Checkpoint, genesis_hash := GH } = State,
+	{ok, NewCheckpoint, NewToGo} = transition_batch(ToGo, BI, Checkpoint),
+	ok = save_checkpoint(GH, NewCheckpoint),
+	case NewToGo of
+		[] ->
+			noop;
+		_ ->
+			gen_server:cast(?MODULE, transition_batch)
+	end,
+	NewState = State#{
+		to_go => NewToGo,
+		checkpoint => NewCheckpoint
+	},
+	{noreply, NewState};
+
+handle_cast(reset, State) ->
+	{noreply, State#{ block_index => not_set }}.
+
+terminate(Reason, _State) ->
+	ar:err([{event, ar_transition_terminated}, {reason, Reason}]).
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+load_checkpoint(GH) ->
+	case file:read_file(checkpoint_location(GH)) of
+		{ok, Bin} ->
+			ar_serialize:json_struct_to_v2_transition_checkpoint(ar_serialize:dejsonify(Bin));
+		_ ->
+			[]
+	end.
+
+checkpoint_location(GH) ->
+	filename:join(ar_meta_db:get(data_dir), "fork_2_0_checkpoint_" ++ binary_to_list(ar_util:encode(GH))).
+
+get_diverged_index(BI, NewBI) when length(BI) > length(NewBI) ->
+	get_diverged_index(tl(BI), NewBI);
+get_diverged_index(BI, NewBI) ->
+	get_diverged_index(BI, NewBI, []).
+
+get_diverged_index(BI, [Entry | Tail] = NewBI, DivergedIndex) when length(NewBI) > length(BI) ->
+	get_diverged_index(BI, Tail, [Entry | DivergedIndex]);
+get_diverged_index([{H, _} = Entry | _] = BI, [{H, _} | _], DivergedIndex) ->
+	{length(BI), Entry, lists:reverse(DivergedIndex)};
+get_diverged_index([_ | BI], [Entry | NewBI], DivergedIndex) ->
+	get_diverged_index(BI, NewBI, [Entry | DivergedIndex]).
+
+update_to_go([], _, DivergedIndex) ->
+	DivergedIndex;
+update_to_go(ToGo, BaseEntry, DivergedIndex) ->
+	lists:reverse(update_to_go_reversed(lists:reverse(ToGo), BaseEntry, DivergedIndex)).
+
+update_to_go_reversed([{BaseH, _} | _] = ToGoReversed, {BaseH, _}, DivergedIndex) ->
+	DivergedIndex ++ ToGoReversed;
+update_to_go_reversed([_ | ToGoReversed], BaseEntry, DivergedIndex) ->
+	update_to_go_reversed(ToGoReversed, BaseEntry, DivergedIndex);
+update_to_go_reversed([], _, DivergedIndex) ->
+	DivergedIndex.
+
+update_checkpoint(Checkpoint, BaseHeight) ->
+	N = max(0, length(Checkpoint) - BaseHeight),
+	{_, NewCheckpoint} = lists:split(N, Checkpoint),
+	NewCheckpoint.
+
+transition_batch(_ToGo, [{H, _} | _], [{_, _, H} | Checkpoint]) ->
+	{ok, Checkpoint, []};
+transition_batch([{H, _} | ToGo], BI, [{_, _, H} | Checkpoint]) ->
+	transition_batch(ToGo, BI, Checkpoint, 0);
+transition_batch(ToGo, BI, Checkpoint) ->
+	transition_batch(ToGo, BI, Checkpoint, 0).
+
+transition_batch(ToGo, _BI, Checkpoint, ?BATCH_SIZE) ->
+	ar:info([{event, transitioned_batch}, {size, ?BATCH_SIZE}]),
+	{ok, Checkpoint, ToGo};
+transition_batch([], _BI, Checkpoint, Count) ->
+	ar:info([{event, transitioned_batch}, {size, Count}]),
+	{ok, Checkpoint, []};
+transition_batch([{H, _} | Rest], BI, Checkpoint, Count) ->
+	{ok, NewEntry} = transition_block(H, BI, [{BH, WS} || {BH, WS, _} <- Checkpoint]),
+	transition_batch(Rest, BI, [NewEntry | Checkpoint], Count + 1).
+
+transition_block(H, BI, NewBI) ->
 	RawB =
 		ar_node:get_block(
 			ar_bridge:get_remote_peers(whereis(http_bridge_node)),
@@ -49,7 +156,11 @@ do_generate_checkpoint([H | HL], [], BI, NewBI) ->
 		),
 	case ar_block:verify_indep_hash(RawB) of
 		false ->
-			ar:err([{module, ar_transition}, {event, incorrect_indep_hash}, {hash, ar_util:encode(H)}]),
+			ar:err([
+				{event, transition_failed},
+				{reason, invalid_hash},
+				{hash, ar_util:encode(H)}
+			]),
 			error;
 		true ->
 			BV2 = ar_block:generate_tx_tree(
@@ -65,36 +176,21 @@ do_generate_checkpoint([H | HL], [], BI, NewBI) ->
 				{hash, ar_util:encode(B#block.indep_hash)}
 			]),
 			ar_storage:write_block(B),
-			CPEntry = {B#block.indep_hash, B#block.weave_size},
-			[CPEntry | do_generate_checkpoint(HL, [], BI, [CPEntry | NewBI])]
+			{ok, {B#block.indep_hash, B#block.weave_size, RawB#block.indep_hash}}
 	end.
 
-save_checkpoint(Checkpoint) ->
-	save_checkpoint(checkpoint_location(), Checkpoint).
+save_checkpoint(GH, Checkpoint) ->
+	save_checkpoint2(checkpoint_location(GH), Checkpoint).
 
-save_checkpoint(File, Checkpoint) ->
-	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(Checkpoint)),
-	file:write_file(File, JSON).
+save_checkpoint2(File, Checkpoint) ->
+	JSON = ar_serialize:jsonify(ar_serialize:v2_transition_checkpoint_to_json_struct(Checkpoint)),
+	write_file_atomic(File, JSON).
 
-load_checkpoint() ->
-	load_checkpoint(checkpoint_location()).
-
-load_checkpoint(File) ->
-	case file:read_file(File) of
-		{ok, Bin} ->
-			CP = ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Bin)),
-			ar:info(
-				[
-					loaded_v2_block_index,
-					{file, File},
-					{cp, CP}
-				]
-			),
-			CP;
-		_ ->
-			io:format("Checkpoint not loaded. Starting from genesis block..."),
-			[]
+write_file_atomic(Filename, Data) ->
+	SwapFilename = Filename ++ ".swp",
+	case file:write_file(SwapFilename, Data) of
+		ok ->
+			file:rename(SwapFilename, Filename);
+		Error ->
+			Error
 	end.
-
-checkpoint_location() ->
-	filename:join(ar_meta_db:get(data_dir), ?FORK_2_0_CHECKPOINT_FILE).

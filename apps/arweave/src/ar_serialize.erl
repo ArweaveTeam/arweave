@@ -1,4 +1,5 @@
 -module(ar_serialize).
+
 -export([full_block_to_json_struct/1, json_struct_to_full_block/1]).
 -export([json_struct_to_block/1, block_to_json_struct/1]).
 -export([json_struct_to_poa/1, poa_to_json_struct/1]).
@@ -7,6 +8,9 @@
 -export([block_index_to_json_struct/1, json_struct_to_block_index/1]).
 -export([jsonify/1, dejsonify/1, json_decode/1, json_decode/2]).
 -export([query_to_json_struct/1, json_struct_to_query/1]).
+-export([v2_transition_checkpoint_to_json_struct/1, json_struct_to_v2_transition_checkpoint/1]).
+
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -524,6 +528,33 @@ json_struct_to_block_index(JSONStruct) ->
 				Hash = ar_util:decode(find_value(<<"hash">>, JSON)),
 				WeaveSize = binary_to_integer(find_value(<<"weave_size">>, JSON)),
 				{Hash, WeaveSize}
+		end,
+		JSONStruct
+	).
+
+%% @doc Generate a JSON structure representing a 2.0 transition checkpoint.
+v2_transition_checkpoint_to_json_struct(Checkpoint) ->
+	lists:map(
+		fun({BH, WeaveSize, BHV1}) ->
+			{
+				[
+					{<<"hash">>, ar_util:encode(BH)},
+					{<<"weave_size">>, integer_to_binary(WeaveSize)},
+					{<<"hashv1">>, ar_util:encode(BHV1)}
+				]
+			}
+		end,
+		Checkpoint
+	).
+
+%% @doc Convert a JSON structure into a 2.0 transition checkpoint.
+json_struct_to_v2_transition_checkpoint(JSONStruct) ->
+	lists:map(
+		fun({JSON}) ->
+			Hash = ar_util:decode(find_value(<<"hash">>, JSON)),
+			WeaveSize = binary_to_integer(find_value(<<"weave_size">>, JSON)),
+			HashV1 = ar_util:decode(find_value(<<"hashv1">>, JSON)),
+			{Hash, WeaveSize, HashV1}
 		end,
 		JSONStruct
 	).

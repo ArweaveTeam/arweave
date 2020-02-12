@@ -477,33 +477,27 @@ integrate_new_block(
 update_block_index(B, BI, LegacyHL) ->
 	Fork_2_0 = ar_fork:height_2_0(),
 	BH = B#block.indep_hash,
+	NewBI = [{BH, B#block.weave_size} | BI],
 	case B#block.height + 1 of
+		Height when Height < Fork_2_0 ->
+			ar_transition:update_block_index(NewBI),
+			{NewBI, LegacyHL};
 		Fork_2_0 ->
+			ar_transition:update_block_index(NewBI),
 			NewLegacyHL = [BH | ?BI_TO_BHL(BI)],
-			CheckpointForkDepth = checkpoint_fork_depth(NewLegacyHL, LegacyHL),
-			Checkpoint = ar_transition:generate_checkpoint([{BH, B#block.weave_size} | BI], CheckpointForkDepth),
+			Checkpoint = ar_transition:get_new_block_index(BH),
 			{Checkpoint, NewLegacyHL};
 		Height when Height > Fork_2_0 + ?STORE_BLOCKS_BEHIND_CURRENT ->
-			{[{BH, B#block.weave_size} | BI], []};
+			{NewBI, []};
 		_ ->
-			{[{BH, B#block.weave_size} | BI], LegacyHL}
+			{NewBI, LegacyHL}
 	end.
-
-checkpoint_fork_depth(_, []) ->
-	0;
-checkpoint_fork_depth(New, Old) ->
-	checkpoint_fork_depth(New, Old, 0).
-
-checkpoint_fork_depth([H | _], [H | _], Depth) ->
-	Depth;
-checkpoint_fork_depth([_ | New], [_ | Old], Depth) ->
-	checkpoint_fork_depth(New, Old, Depth + 1).
 
 %% @doc Append a new entry to the block-transactions pairs after verifying the block.
 %% Switching to 2.0 replaces the whole list from the checkpoint.
 update_block_txs_pairs(B, BlockTXPairs, BI) ->
 	Fork_2_0 = ar_fork:height_2_0(),
-	TXIDs = [case TX of Record when is_record(Record, tx) -> Record#tx.id; ID -> ID end  || TX <- B#block.txs],
+	TXIDs = [case TX of Record when is_record(Record, tx) -> Record#tx.id; ID -> ID end || TX <- B#block.txs],
 	case B#block.height + 1 of
 		Fork_2_0 ->
 			Zipped = lists:zip(
