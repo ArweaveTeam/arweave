@@ -22,6 +22,14 @@ register() ->
 		{name, http_client_uploaded_bytes_total},
 		{help, "The total amount of bytes posted via HTTP, per remote endpoint"},
 		{labels, [route]}
+	]),
+	prometheus_gauge:new([
+		{name, block_height},
+		{help, "Block height"}
+	]),
+	prometheus_gauge:new([
+		{name, peer_count},
+		{help, "peer count"}
 	]).
 
 label_http_path(Path) ->
@@ -104,4 +112,4 @@ name_route([<<_Hash:43/binary, _MaybeExt/binary>>]) ->
 name_route([<<"metrics">>]) ->
 	"/metrics";
 name_route(_) ->
-	undefined.	
+	undefined.
