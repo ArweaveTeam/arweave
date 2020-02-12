@@ -132,7 +132,7 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 	),
 	start(
 		Peers,
-		lists:map(fun(Block) -> {Block#block.indep_hash, Block#block.weave_size} end),
+		lists:map(fun(Block) -> {Block#block.indep_hash, Block#block.weave_size} end, Bs),
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
