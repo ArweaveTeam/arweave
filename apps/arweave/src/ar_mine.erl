@@ -172,6 +172,7 @@ update_txs(
 		data_segment_duration = BDSGenerationDuration,
 		block_txs_pairs = BlockTXPairs,
 		reward_addr = RewardAddr,
+		poa = POA,
 		candidate_block = CandidateB
 	},
 	TXs
@@ -200,7 +201,7 @@ update_txs(
 			CurrentB#block.reward_pool,
 			ValidTXs,
 			RewardAddr,
-			CandidateB#block.poa,
+			POA,
 			NewWeaveSize,
 			CandidateB#block.height,
 			NextDiff,
