@@ -462,6 +462,7 @@ start(
 			[]
 	end,
 	{ok, _} = ar_poller_sup:start_link(PollingArgs),
+	{ok, _} = ar_transition_sup:start_link([]),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
 	case Pause of
