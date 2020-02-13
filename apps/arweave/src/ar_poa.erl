@@ -43,7 +43,7 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 	{ChallengeBlock, BlockBase} = find_challenge_block(ChallengeByte, BI),
 	ar:info(
 		[
-			{poa_validation_block_indexes, [ {ar_util:encode(BH), WVSZ} || {BH, WVSZ} <- BI ]},
+			{event, generate_poa},
 			{challenge_block, ar_util:encode(ChallengeBlock)}
 		]
 	),
@@ -94,7 +94,7 @@ create_poa_from_data(NoTreeB, NoTreeTX, SizeTaggedTXs, BlockOffset, Option) ->
 	TX = ar_tx:generate_chunk_tree(NoTreeTX, SizedChunkIDs),
 	ar:info(
 		[
-			poa_generation,
+			{event, generated_poa},
 			{weave_size, B#block.weave_size},
 			{block_offset, BlockOffset},
 			{tx_offset, BlockOffset},
@@ -161,10 +161,6 @@ find_byte_in_size_tagged_list(Byte, [_ | Rest]) ->
 	find_byte_in_size_tagged_list(Byte, Rest).
 
 validate_recall_block(BlockOffset, ExpectedChallengeBH, ChallengeBlock, POA) ->
-	ar:info([
-		{poa_validation_rb, ar_util:encode(POA#poa.block_indep_hash)},
-		{challenge, ar_util:encode(ExpectedChallengeBH)}
-	]),
 	case ar_weave:indep_hash_post_fork_2_0(ChallengeBlock) of
 		ExpectedChallengeBH -> validate_tx_path(BlockOffset, POA);
 		_ -> false
@@ -201,7 +197,7 @@ validate_data_path(BlockOffset, POA) ->
 		),
 	ar:info(
 		[
-			poa_verification,
+			{event, verify_poa},
 			{block_indep_hash, ar_util:encode(POA#poa.block_indep_hash)},
 			{tx, ar_util:encode(POA#poa.tx_id)},
 			{tx_start_offset, TXStartOffset},
