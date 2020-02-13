@@ -322,7 +322,7 @@ start_mining_post_fork_2_0(StateIn) ->
 			Miner = ar_mine:start(
 				B,
 				POA,
-				TXs,
+				sets:to_list(TXs),
 				RewardAddr,
 				Tags,
 				Node,
@@ -388,7 +388,7 @@ start_mining_pre_fork_2_0(StateIn) ->
 			Miner = ar_mine:start(
 				B,
 				RecallB,
-				TXs,
+				sets:to_list(TXs),
 				RewardAddr,
 				Tags,
 				Node,
@@ -433,7 +433,7 @@ integrate_new_block(
 	NewBlockTXPairs = update_block_txs_pairs(NewB, BlockTXPairs, NewBI),
 	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		NewBlockTXPairs,
-		TXs -- BlockTXs,
+		sets:subtract(TXs, sets:from_list(BlockTXs)),
 		NewB#block.diff,
 		NewB#block.height,
 		NewB#block.wallet_list

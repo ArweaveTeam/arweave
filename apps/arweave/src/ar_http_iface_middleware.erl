@@ -334,7 +334,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
 					Height = ar_node:get_height(whereis(http_entrypoint_node)),
 					SignedTX = case ar_fork:height_2_0() of
-						H when Height >= H ->							
+						H when Height >= H ->
 							ar_tx:sign(ar_tx:generate_chunk_tree(UnsignedTX), KeyPair);
 						_ ->
 							ar_tx:sign_pre_fork_2_0(UnsignedTX, KeyPair)
@@ -1161,7 +1161,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->
-		Recall = 
+		Recall =
 			case val_for_key(<<"recall_block">>, ReqStruct) of
 				false -> BShadow#block.poa;
 				RecallH ->

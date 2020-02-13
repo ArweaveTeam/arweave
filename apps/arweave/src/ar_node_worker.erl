@@ -293,7 +293,7 @@ add_tx(StateIn, TX, GS) ->
 	#{ txs := TXs } = StateIn,
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	{ok, [
-		{txs, TXs ++ [TX]},
+		{txs, sets:add_element(TX, TXs)},
 		{gossip, NewGS}
 	]}.
 
@@ -302,7 +302,7 @@ add_waiting_tx(StateIn, TX, GS) ->
 	#{ waiting_txs := WaitingTXs } = StateIn,
 	{NewGS, _} = ar_gossip:send(GS, {add_waiting_tx, TX}),
 	{ok, [
-		{waiting_txs, WaitingTXs ++ [TX]},
+		{waiting_txs, sets:add_element(TX, WaitingTXs)},
 		{gossip, NewGS}
 	]}.
 
@@ -314,22 +314,15 @@ move_tx_to_mining_pool(StateIn, TX, GS) ->
 	} = StateIn,
 	{NewGS, _} = ar_gossip:send(GS, {move_tx_to_mining_pool, TX}),
 	{ok, [
-		{txs, TXs ++ [TX]},
+		{txs, sets:add_element(TX, TXs)},
 		{gossip, NewGS},
-		{waiting_txs, WaitingTXs -- [TX]}
+		{waiting_txs, sets:del_element(TX, WaitingTXs)}
 	]}.
 
 drop_waiting_txs(#{ waiting_txs := WaitingTXs }, DropTXs, GS) ->
 	{NewGS, _} = ar_gossip:send(GS, {drop_waiting_txs, DropTXs}),
-	DropSet = sets:from_list(lists:map(fun(TX) -> TX#tx.id end, DropTXs)),
-	FilteredTXs = lists:filter(
-		fun(TX) ->
-			not sets:is_element(TX#tx.id, DropSet)
-		end,
-		WaitingTXs
-	),
 	{ok, [
-		{waiting_txs, FilteredTXs},
+		{waiting_txs, sets:subtract(WaitingTXs, sets:from_list(DropTXs))},
 		{gossip, NewGS}
 	]}.
 
@@ -346,7 +339,7 @@ cancel_tx(StateIn, TXID, Sig) ->
 
 %% @doc Find and remove TXs from the state if the given TXID and signature are valid.
 maybe_remove_tx(TXs, TXID, Sig) ->
-	lists:filter(
+	sets:filter(
 		fun(TX) ->
 			if TX#tx.id == TXID ->
 				% Return false (meaning filter it from the list)
@@ -575,10 +568,11 @@ generate_block_from_shadow(State, BShadow, Recall, TXs, Peer) ->
 	end.
 
 pick_txs(TXIDs, TXs) ->
+	TXsMap = sets:fold(fun(#tx{id = K} = V, Acc) -> maps:put(K, V, Acc) end, #{}, TXs),
 	lists:foldr(
 		fun(TXID, {Found, Missing}) ->
-			case [TX || TX <- TXs, TX#tx.id == TXID] of
-				[] ->
+			case maps:get(TXID, TXsMap, undefined) of
+				undefined ->
 					%% This disk read should almost never be useful. Presumably, the only reason to find some of these
 					%% transactions on disk is they had been written prior to the call, what means they are
 					%% from an orphaned fork, more than one block behind.
@@ -588,7 +582,7 @@ pick_txs(TXIDs, TXs) ->
 						TX ->
 							{[TX | Found], Missing}
 					end;
-				[TX | _] ->
+				TX ->
 					{[TX | Found], Missing}
 			end
 		end,
@@ -705,7 +699,7 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 	{ValidTXs, InvalidTXs} =
 		ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 			NewBlockTXPairs,
-			TXs -- MinedTXs,
+			sets:subtract(TXs, sets:from_list(MinedTXs)),
 			NewB#block.diff,
 			NewB#block.height,
 			NewB#block.wallet_list
@@ -840,7 +834,7 @@ is_fork_preferable(ForkB, CurrentCDiff, _) ->
 
 %% @doc Aggregates the transactions of a state to one list.
 aggregate_txs(#{txs := TXs, waiting_txs := WaitingTXs}) ->
-	TXs ++ lists:reverse(WaitingTXs).
+	sets:union(TXs, WaitingTXs).
 
 get_diverged_block_hashes_test_() ->
 	ar_test_fork:test_on_fork(
