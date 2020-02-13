@@ -367,7 +367,12 @@ write_wallet_list(WalletList) ->
 %% @doc Read a list of block hashes from the disk.
 read_block_block_index(Hash) ->
 	{ok, Binary} = file:read_file(block_index_filepath(Hash)),
-	ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Binary)).
+	case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Binary)) of
+		[H | _] = HL when is_binary(H) ->
+			[{BH, 0} || BH <- HL];
+		BI ->
+			BI
+	end.
 
 %% @doc Read a given wallet list (by hash) from the disk.
 read_wallet_list([]) -> [];
