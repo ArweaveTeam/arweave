@@ -1182,7 +1182,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->
-		Recall = 
+		Recall =
 			case val_for_key(<<"recall_block">>, ReqStruct) of
 				false -> BShadow#block.poa;
 				RecallH ->

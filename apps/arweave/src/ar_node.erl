@@ -306,13 +306,12 @@ get_pending_txs(Node, Opts) ->
 	Node ! {get_pending_txs, self(), Ref},
 	receive
 		{Ref, pending_txs, TXs} ->
-			Reply = case lists:member(id_only, Opts) of
+			case lists:member(id_only, Opts) of
 				true ->
 					[TX#tx.id || TX <- TXs];
 				false ->
 					TXs
-			end,
-			Reply
+			end
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
@@ -754,11 +753,11 @@ handle(SPid, {get_last_tx, From, Ref, Addr}) ->
 handle(SPid, {get_pending_txs, From, Ref}) ->
 	{ok, #{ txs := TXs, waiting_txs := WaitingTXs }} =
 		ar_node_state:lookup(SPid, [waiting_txs, txs]),
-	From ! {Ref, pending_txs, TXs ++ WaitingTXs},
+	From ! {Ref, pending_txs, sets:to_list(sets:union(TXs, WaitingTXs))},
 	ok;
 handle(SPid, {get_mined_txs, From, Ref}) ->
 	{ok, #{ txs := TXs }} = ar_node_state:lookup(SPid, [txs]),
-	From ! {Ref, mined_txs, TXs},
+	From ! {Ref, mined_txs, sets:to_list(TXs)},
 	ok;
 handle(SPid, {get_current_diff, From, Ref}) ->
 	{ok, #{

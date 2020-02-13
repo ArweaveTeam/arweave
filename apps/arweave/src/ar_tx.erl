@@ -404,7 +404,7 @@ generate_chunk_tree(TX, ChunkIDSizes) ->
 	TX#tx { data_tree = Tree, data_root = Root }.
 
 %% @doc Generate a chunk ID according to the specification found in the TX record.
-generate_chunk_id(Chunk) -> 
+generate_chunk_id(Chunk) ->
 	crypto:hash(sha256, Chunk).
 
 chunk_binary(ChunkSize, Bin) when byte_size(Bin) < ChunkSize ->
