@@ -7,7 +7,7 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% This module implements all mechanisms required to validate a proof of access
+%%% This module implements all mechanisms required to validate a proof of access 
 %%% for a chunk of data received from the network.
 
 %% @doc Generate a POA for the first option that we can.
