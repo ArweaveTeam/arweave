@@ -93,7 +93,7 @@ pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, WalletList, TXs) ->
 pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
 	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
-	lists:foldr(
+	sets:fold(
 		fun(TX, {ValidTXs, InvalidTXs}) ->
 			case verify_tx(
 				general_verification,
@@ -106,12 +106,12 @@ pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 				sets:new()
 			) of
 				{valid, _, _} ->
-					{[TX | ValidTXs], InvalidTXs};
+					{sets:add_element(TX, ValidTXs), InvalidTXs};
 				{invalid, Reason} ->
 					{ValidTXs, [{TX#tx.id, Reason} | InvalidTXs]}
 			end
 		end,
-		{[], []},
+		{sets:new(), []},
 		TXs
 	).
 

@@ -44,12 +44,32 @@ test_txs_broadcast_order() ->
 		200,
 		2000
 	),
-	ar_tx_queue:set_pause(false),
 	%% Expect the transactions to be received in the order
 	%% from the highest utility score to the lowest.
-	assert_wait_until_receives_txs(MasterNode, [TX1, TX2, TX3, TX4]),
-	Actual = encode_txs(ar_node:get_pending_txs(MasterNode)),
-	?assertEqual(Expected, Actual).
+	ar_tx_queue:set_pause(false),
+	ar_util:do_until(
+		fun() ->
+			TXs = encode_txs(ar_node:get_mined_txs(MasterNode)),
+			case length(TXs) of
+				4 ->
+					?assertEqual(lists:sort(Expected), lists:sort(TXs)),
+					ok;
+				3 ->
+					?assertEqual(lists:sort(encode_txs([TX4, TX3, TX2])), lists:sort(TXs)),
+					continue;
+				2 ->
+					?assertEqual(lists:sort(encode_txs([TX4, TX3])), lists:sort(TXs)),
+					continue;
+				1 ->
+					?assertEqual(encode_txs([TX4]), TXs),
+					continue;
+				0 ->
+					continue
+			end
+		end,
+		10,
+		2000
+	).
 
 drop_lowest_priority_txs_test_() ->
 	{timeout, 10, fun test_drop_lowest_priority_txs/0}.

@@ -12,11 +12,11 @@
 
 %% @doc Run all cleanup operations.
 all() ->
-	io:format("Rewriting all blocks (this may take a very long time...)~n"),	
+	io:format("Rewriting all blocks (this may take a very long time...)~n"),
 	rewrite(),
 	io:format("Removing all orphan/invalid blocks...~n"),
 	remove_invalid_blocks(ar_node:get_block_index(whereis(http_entrypoint_node))),
-	io:format("Done!~n").	
+	io:format("Done!~n").
 
 
 %% @doc Remove all blocks from blocks directory not in BI

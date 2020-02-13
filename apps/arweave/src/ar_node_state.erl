@@ -24,13 +24,13 @@ start() ->
 		{wallet_list, []},                  % current up to date walletlist
 		{height, 0},                        % current height of the blockweave
 		{gossip, undefined},                % Gossip protcol state
-		{txs, []},                          % set of new txs to be mined into the next block
+		{txs, sets:new()},                  % set of new txs to be mined into the next block
 		{miner, undefined},                 % PID of the mining process
 		{mining_delay, 0},                  % delay on mining, used for netework simulation
 		{automine, false},                  % boolean dictating if a node should automine
 		{reward_addr, unclaimed},           % reward address for mining a new block
 		{trusted_peers, []},                % set of trusted peers used to join on
-		{waiting_txs, []},                  % set of txs on timeout whilst network distribution occurs
+		{waiting_txs, sets:new()},          % set of txs on timeout whilst network distribution occurs
 		{tags, []},                         % nodes tags to apply to a block when mining
 		{reward_pool, 0},                   % current mining rewardpool of the weave
 		{diff, 0},                          % current mining difficulty of the weave (no. of preceeding zero)

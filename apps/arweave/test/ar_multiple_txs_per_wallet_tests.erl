@@ -140,8 +140,8 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	SlaveBI = assert_slave_wait_until_height(Slave, 1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
-		TXIDs,
-		(slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]))#block.txs
+		lists:sort(TXIDs),
+		lists:sort((slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]))#block.txs)
 	),
 	lists:foreach(
 		fun(TX) ->
@@ -152,8 +152,8 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Expect the block to be accepted by master.
 	BI = wait_until_height(Master, 1),
 	?assertEqual(
-		TXIDs,
-		(ar_storage:read_block(hd(BI), BI))#block.txs
+		lists:sort(TXIDs),
+		lists:sort((ar_storage:read_block(hd(BI), BI))#block.txs)
 	),
 	lists:foreach(
 		fun(TX) ->
@@ -199,7 +199,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect master to receive the block.
 	BI = wait_until_height(Master, 1),
 	SecondSetTXIDs = lists:map(fun(TX) -> TX#tx.id end, SecondTXSet),
-	?assertEqual(SecondSetTXIDs, (ar_storage:read_block(hd(BI), BI))#block.txs),
+	?assertEqual(lists:sort(SecondSetTXIDs), lists:sort((ar_storage:read_block(hd(BI), BI))#block.txs)),
 	%% Expect master to have the set difference in the mempool.
 	assert_wait_until_receives_txs(Master, FirstTXSet -- SecondTXSet),
 	%% Mine a block on master and expect both transactions to be included.
@@ -207,8 +207,8 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	BI2 = wait_until_height(Master, 2),
 	SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
 	?assertEqual(
-		SetDifferenceTXIDs,
-		(ar_storage:read_block(hd(BI2), BI2))#block.txs
+		lists:sort(SetDifferenceTXIDs),
+		lists:sort((ar_storage:read_block(hd(BI2), BI2))#block.txs)
 	).
 
 returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
@@ -445,8 +445,8 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 			SlaveBI = assert_slave_wait_until_height(Slave, Height),
 			GroupTXIDs = lists:map(fun(TX) -> TX#tx.id end, Group),
 			?assertEqual(
-				GroupTXIDs,
-				(slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]))#block.txs
+				lists:sort(GroupTXIDs),
+				lists:sort((slave_call(ar_storage, read_block, [hd(SlaveBI), SlaveBI]))#block.txs)
 			),
 			Height + 1
 		end,
@@ -777,9 +777,9 @@ grouped_txs(FirstAnchorType) ->
 		block_anchor ->
 			B0#block.indep_hash
 	end,
-	Wallet1TX1 = sign_tx_pre_fork_2_0(Key1, #{ data => Chunk1, last_tx => FirstAnchor }),
+	Wallet1TX1 = sign_tx_pre_fork_2_0(Key1, #{ reward => ?AR(2), data => Chunk1, last_tx => FirstAnchor }),
 	%% Block 2: 2 TXs from different wallets.
-	Wallet2TX1 = sign_tx_pre_fork_2_0(Key2, #{ data => Chunk2, last_tx => B0#block.indep_hash }),
+	Wallet2TX1 = sign_tx_pre_fork_2_0(Key2, #{ reward => ?AR(1), data => Chunk2, last_tx => B0#block.indep_hash }),
 	Wallet1TX2 = sign_tx_pre_fork_2_0(Key1, #{ data => Chunk3, last_tx => B0#block.indep_hash }),
 	%% Block 3: 2 TXs from the same wallet.
 	Wallet1TX3 = sign_tx_pre_fork_2_0(Key1, #{ data => Chunk4, last_tx => B0#block.indep_hash }),
