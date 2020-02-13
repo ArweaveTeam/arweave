@@ -46,7 +46,7 @@ handle_cast({update_block_index, NewBI}, #{ block_index := not_set } = State) ->
 	NewState = State#{
 		block_index => NewBI,
 		to_go => lists:reverse(NewBI),
-		checkpoint => update_checkpoint(Checkpoint, length(NewBI)),
+		checkpoint => update_checkpoint(Checkpoint, element(1, hd(NewBI))),
 		genesis_hash => GH
 	},
 	gen_server:cast(?MODULE, transition_batch),
@@ -55,14 +55,22 @@ handle_cast({update_block_index, [{H, _} | _]}, #{ block_index := [{H, _} | _] }
 	{noreply, State};
 handle_cast({update_block_index, NewBI}, State) ->
 	#{ checkpoint := Checkpoint, block_index := BI, to_go := ToGo } = State,
-	{BaseHeight, BaseEntry, DivergedIndex} = get_diverged_index(BI, NewBI),
-	NewState = State#{
-		block_index => NewBI,
-		to_go => update_to_go(ToGo, BaseEntry, DivergedIndex),
-		checkpoint => update_checkpoint(Checkpoint, BaseHeight)
-	},
-	gen_server:cast(?MODULE, transition_batch),
-	{noreply, NewState};
+	case get_diverged_index(BI, NewBI) of
+		{error, no_intersection} ->
+			ar:err([
+				{event, ar_transition_update_index_failed},
+				{reason, indexes_do_not_intersect}
+			]),
+			{noreply, State};
+		{ok, {BaseH, _} = BaseEntry, DivergedIndex} ->
+			NewState = State#{
+				block_index => NewBI,
+				to_go => update_to_go(ToGo, BaseEntry, DivergedIndex),
+				checkpoint => update_checkpoint(Checkpoint, BaseH)
+			},
+			gen_server:cast(?MODULE, transition_batch),
+			{noreply, NewState}
+	end;
 
 handle_cast(transition_batch, State) ->
 	#{ block_index := BI, to_go := ToGo, checkpoint := Checkpoint, genesis_hash := GH } = State,
@@ -108,10 +116,12 @@ get_diverged_index(BI, NewBI) ->
 
 get_diverged_index(BI, [Entry | Tail] = NewBI, DivergedIndex) when length(NewBI) > length(BI) ->
 	get_diverged_index(BI, Tail, [Entry | DivergedIndex]);
-get_diverged_index([{H, _} = Entry | _] = BI, [{H, _} | _], DivergedIndex) ->
-	{length(BI), Entry, lists:reverse(DivergedIndex)};
+get_diverged_index([{H, _} = Entry | _], [{H, _} | _], DivergedIndex) ->
+	{ok, Entry, DivergedIndex};
 get_diverged_index([_ | BI], [Entry | NewBI], DivergedIndex) ->
-	get_diverged_index(BI, NewBI, [Entry | DivergedIndex]).
+	get_diverged_index(BI, NewBI, [Entry | DivergedIndex]);
+get_diverged_index([], [], _) ->
+	{error, no_intersection}.
 
 update_to_go([], _, DivergedIndex) ->
 	DivergedIndex;
@@ -125,10 +135,12 @@ update_to_go_reversed([_ | ToGoReversed], BaseEntry, DivergedIndex) ->
 update_to_go_reversed([], _, DivergedIndex) ->
 	DivergedIndex.
 
-update_checkpoint(Checkpoint, BaseHeight) ->
-	N = max(0, length(Checkpoint) - BaseHeight),
-	{_, NewCheckpoint} = lists:split(N, Checkpoint),
-	NewCheckpoint.
+update_checkpoint([], _) ->
+	[];
+update_checkpoint([{_, _, BaseH} | _] = Checkpoint, BaseH) ->
+	Checkpoint;
+update_checkpoint([_ | Checkpoint], BaseH) ->
+	update_checkpoint(Checkpoint, BaseH).
 
 transition_batch(_ToGo, [{H, _} | _], [{_, _, H} | Checkpoint]) ->
 	{ok, Checkpoint, []};

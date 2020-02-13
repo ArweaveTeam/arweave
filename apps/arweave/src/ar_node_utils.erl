@@ -479,7 +479,7 @@ update_block_index(B, BI, LegacyHL) ->
 	BH = B#block.indep_hash,
 	NewBI = [{BH, B#block.weave_size} | BI],
 	case B#block.height + 1 of
-		Height when Height < Fork_2_0 ->
+		Height when Height < Fork_2_0 andalso Height rem 10 == 0 ->
 			ar_transition:update_block_index(NewBI),
 			{NewBI, LegacyHL};
 		Fork_2_0 ->
