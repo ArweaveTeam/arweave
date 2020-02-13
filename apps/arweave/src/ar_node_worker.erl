@@ -765,6 +765,7 @@ recovered_from_fork(#{id := BinID, block_index := not_joined} = StateIn, {BI, Le
 	),
 	ar_node_utils:log_invalid_txs_drop_reason(InvalidTXs),
 	ar_storage:write_block_block_index(BinID, BI),
+	ar_transition:update_block_index(BI),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => BI,
