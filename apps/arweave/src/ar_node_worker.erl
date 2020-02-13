@@ -489,7 +489,11 @@ generate_block_from_shadow(StateIn, BShadow, Recall, TXs, NewHashList, Peer) ->
 	end,
 	MaybeRecallB = case ar_block:get_recall_block(Peer, RecallIndepHash, NewHashList, Key, Nonce) of
 		unavailable ->
-			RecallHash = ar_util:get_recall_hash(BShadow, HashList),
+			RecallHash = ar_util:get_recall_hash(
+				BShadow#block.previous_block,
+				BShadow#block.height - 1,
+				HashList
+			),
 			FetchedRecallB = ar_node_utils:get_full_block(Peer, RecallHash, HashList),
 			case ?IS_BLOCK(FetchedRecallB) of
 				true ->
