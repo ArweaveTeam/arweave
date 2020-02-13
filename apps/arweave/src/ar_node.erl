@@ -206,7 +206,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 create_block_txs_pairs(not_joined) ->
 	[];
 create_block_txs_pairs(BI) ->
-	create_block_txs_pairs(recent_blocks, lists:sublist(BI, ?MAX_TX_ANCHOR_DEPTH)).
+	create_block_txs_pairs(recent_blocks, lists:sublist(BI, 2 * ?MAX_TX_ANCHOR_DEPTH)).
 
 create_block_txs_pairs(recent_blocks, []) ->
 	[];
