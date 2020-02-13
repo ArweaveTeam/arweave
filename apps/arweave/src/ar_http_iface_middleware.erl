@@ -1168,7 +1168,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 					RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
 					Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
 					Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
-					{RecallH, RecallSize, Key, Nonce}
+					{ar_util:decode(RecallH), RecallSize, Key, Nonce}
 			end,
 		ar:info([{
 			sending_external_block_to_bridge,
