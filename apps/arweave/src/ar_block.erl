@@ -424,29 +424,29 @@ poa_to_list(POA) ->
 
 %% @docs Generate a hashable data segment for a block from the preceding block,
 %% the preceding block's recall block, TXs to be mined, reward address and tags.
-generate_block_data_segment_pre_2_0(PrecedingB, POA, [unavailable], RewardAddr, Time, Tags) ->
+generate_block_data_segment_pre_2_0(PrecedingB, PrecedingRecallB, [unavailable], RewardAddr, Time, Tags) ->
 	generate_block_data_segment_pre_2_0(
 		PrecedingB,
-		POA,
+		PrecedingRecallB,
 		[],
 		RewardAddr,
 		Time,
 		Tags
 	);
-generate_block_data_segment_pre_2_0(PrecedingB, POA, TXs, unclaimed, Time, Tags) ->
+generate_block_data_segment_pre_2_0(PrecedingB, PrecedingRecallB, TXs, unclaimed, Time, Tags) ->
 	generate_block_data_segment_pre_2_0(
 		PrecedingB,
-		POA,
+		PrecedingRecallB,
 		TXs,
 		<<>>,
 		Time,
 		Tags
 	);
-generate_block_data_segment_pre_2_0(PrecedingB, POA, TXs, RewardAddr, Time, Tags) ->
-	{_, BDS} = generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, Tags),
+generate_block_data_segment_pre_2_0(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags) ->
+	{_, BDS} = generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags),
 	BDS.
 
-generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, Tags) ->
+generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags) ->
 	NewHeight = PrecedingB#block.height + 1,
 	Retarget =
 		case ar_retarget:is_retarget_height(NewHeight) of
@@ -472,7 +472,7 @@ generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, T
 			PrecedingB#block.reward_pool,
 			TXs,
 			RewardAddr,
-			POA,
+			PrecedingRecallB#block.block_size,
 			WeaveSize,
 			PrecedingB#block.height + 1,
 			NewDiff,
@@ -530,7 +530,7 @@ generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, T
 			(integer_to_binary(RewardPool))/binary
 		>>,
 		<<
-			(block_to_binary(POA))/binary,
+			(block_to_binary(PrecedingRecallB))/binary,
 			(
 				binary:list_to_bin(
 					lists:map(
@@ -547,7 +547,7 @@ generate_block_data_segment_and_pieces(PrecedingB, POA, TXs, RewardAddr, Time, T
 		<< Piece || Piece <- Pieces >>
 	)}.
 
-refresh_block_data_segment_timestamp(Pieces, PrecedingB, POA, TXs, RewardAddr, Time) ->
+refresh_block_data_segment_timestamp(Pieces, PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time) ->
 	NewHeight = PrecedingB#block.height + 1,
 	Retarget =
 		case ar_retarget:is_retarget_height(NewHeight) of
@@ -573,7 +573,7 @@ refresh_block_data_segment_timestamp(Pieces, PrecedingB, POA, TXs, RewardAddr, T
 			PrecedingB#block.reward_pool,
 			TXs,
 			RewardAddr,
-			POA,
+			PrecedingRecallB#block.block_size,
 			WeaveSize,
 			PrecedingB#block.height + 1,
 			NewDiff,
