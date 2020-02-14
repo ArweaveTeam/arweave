@@ -33,7 +33,7 @@ generate_tree(Elements) ->
 generate_leaves(Elements) ->
 	lists:foldr(
 		fun({Data, Note}, Nodes) ->
-			Hash = hash([Data, note_to_binary(Note)]),
+			Hash = hash([hash(Data), hash(note_to_binary(Note))]),
 			insert(
 				#node {
 					id = Hash,
@@ -72,7 +72,7 @@ generate_node(Left, empty) ->
     Left;
 generate_node(L, R) ->
     #node {
-        id = hash([L#node.id, R#node.id, note_to_binary(L#node.max)]),
+        id = hash([hash(L#node.id), hash(R#node.id), hash(note_to_binary(L#node.max))]),
         type = branch,
         left = L#node.id,
         right = R#node.id,
@@ -105,13 +105,13 @@ generate_path_parts(ID, Dest, Tree) ->
     end.
 
 validate_path(ID, _Dest, << Data:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8) >>) ->
-    case hash([Data, note_to_binary(Note)]) of
+    case hash([hash(Data), hash(note_to_binary(Note))]) of
         ID -> Data;
         _ -> false
     end;
 validate_path(ID, Dest,
         << L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>) ->
-    case hash([L, R, note_to_binary(Note)]) of
+    case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
         ID ->
             validate_path(
                 case Dest < Note of
@@ -148,8 +148,10 @@ get(ID, Map) ->
 note_to_binary(Note) ->
     << Note:(?NOTE_SIZE * 8) >>.
 
-hash(Parts) ->
-    crypto:hash(sha256, binary:list_to_bin(Parts)).
+hash(Parts) when is_list(Parts) ->
+    crypto:hash(sha256, binary:list_to_bin(Parts));
+hash(Binary) ->
+	crypto:hash(sha256, Binary).
 
 %%% Helpers
 
