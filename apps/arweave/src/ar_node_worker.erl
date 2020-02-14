@@ -720,9 +720,15 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 			{txs, length(MinedTXs)}
 		]
 	),
+	Recall = case NewB#block.height < ar_fork:height_2_0() of
+		true ->
+			{POA#block.indep_hash, POA#block.block_size, <<>>, <<>>};
+		false ->
+			no_recall
+	end,
 	{NewGS, _} = ar_gossip:send(
 		GS,
-		{new_block, self(), NewB#block.height, NewB#block { legacy_hash_list = LegacyHL }, BDS, POA}
+		{new_block, self(), NewB#block.height, NewB#block { legacy_hash_list = LegacyHL }, BDS, Recall}
 	),
 	NewState = ar_node_utils:reset_miner(
 		StateIn#{

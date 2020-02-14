@@ -93,7 +93,7 @@ send_new_block(Peer, NewB, BDS, Recall) ->
 				{<<"key">>, ar_util:encode(Key)},
 				{<<"nonce">>, ar_util:encode(Nonce)}
 			];
-		_POA -> []
+		_ -> []
 	end,
 	ar_httpc:request(
 		<<"POST">>,
