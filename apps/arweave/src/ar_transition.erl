@@ -104,7 +104,7 @@ update_to_go(BI, [], _) ->
 	{ok, [], lists:reverse(BI)};
 update_to_go([{H, _} | _], [{_, _, H} | _] = Checkpoint, ToGo) ->
 	{ok, Checkpoint, ToGo};
-update_to_go([Entry | BI], Checkpoint, ToGo) when length(BI) > Checkpoint ->
+update_to_go([Entry | BI], Checkpoint, ToGo) when length(BI) > length(Checkpoint) ->
 	update_to_go(BI, Checkpoint, [Entry | ToGo]);
 update_to_go([Entry | BI], [_ | Checkpoint], ToGo) ->
 	update_to_go(BI, Checkpoint, [Entry | ToGo]);
