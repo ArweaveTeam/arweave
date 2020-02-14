@@ -6,8 +6,6 @@
 
 -include("ar.hrl").
 
--define(BATCH_SIZE, 1000).
-
 %%% A module for managing the transition from Arweave v1.x to Arweave 2.x.
 %%% For every historical block, it generates a transaction Merkle tree, a
 %%% proof of access, and computes the independent hash in the v2 format.
@@ -49,7 +47,7 @@ handle_cast({update_block_index, NewBI}, #{ block_index := not_set } = State) ->
 		checkpoint => update_checkpoint(Checkpoint, element(1, hd(NewBI))),
 		genesis_hash => GH
 	},
-	gen_server:cast(?MODULE, transition_batch),
+	gen_server:cast(?MODULE, transition_block),
 	{noreply, NewState};
 handle_cast({update_block_index, [{H, _} | _]}, #{ block_index := [{H, _} | _] } = State) ->
 	{noreply, State};
@@ -68,19 +66,25 @@ handle_cast({update_block_index, NewBI}, State) ->
 				to_go => update_to_go(ToGo, BaseEntry, DivergedIndex),
 				checkpoint => update_checkpoint(Checkpoint, BaseH)
 			},
-			gen_server:cast(?MODULE, transition_batch),
+			gen_server:cast(?MODULE, transition_block),
 			{noreply, NewState}
 	end;
 
-handle_cast(transition_batch, State) ->
-	#{ block_index := BI, to_go := ToGo, checkpoint := Checkpoint, genesis_hash := GH } = State,
-	{ok, NewCheckpoint, NewToGo} = transition_batch(ToGo, BI, Checkpoint),
+handle_cast(transition_block, State) ->
+	#{
+		block_index := BI,
+		to_go := [{H, _} | NewToGo],
+		checkpoint := Checkpoint,
+		genesis_hash := GH
+	} = State,
+	{ok, NewEntry} = transition_block(H, BI, [{BH, WS} || {BH, WS, _} <- Checkpoint]),
+	NewCheckpoint = [NewEntry | Checkpoint],
 	ok = save_checkpoint(GH, NewCheckpoint),
 	case NewToGo of
 		[] ->
 			noop;
 		_ ->
-			gen_server:cast(?MODULE, transition_batch)
+			gen_server:cast(?MODULE, transition_block)
 	end,
 	NewState = State#{
 		to_go => NewToGo,
@@ -142,26 +146,9 @@ update_checkpoint([{_, _, BaseH} | _] = Checkpoint, BaseH) ->
 update_checkpoint([_ | Checkpoint], BaseH) ->
 	update_checkpoint(Checkpoint, BaseH).
 
-transition_batch(_ToGo, [{H, _} | _], [{_, _, H} | Checkpoint]) ->
-	{ok, Checkpoint, []};
-transition_batch([{H, _} | ToGo], BI, [{_, _, H} | Checkpoint]) ->
-	transition_batch(ToGo, BI, Checkpoint, 0);
-transition_batch(ToGo, BI, Checkpoint) ->
-	transition_batch(ToGo, BI, Checkpoint, 0).
-
-transition_batch(ToGo, _BI, Checkpoint, ?BATCH_SIZE) ->
-	ar:info([{event, transitioned_batch}, {size, ?BATCH_SIZE}]),
-	{ok, Checkpoint, ToGo};
-transition_batch([], _BI, Checkpoint, Count) ->
-	ar:info([{event, transitioned_batch}, {size, Count}]),
-	{ok, Checkpoint, []};
-transition_batch([{H, _} | Rest], BI, Checkpoint, Count) ->
-	{ok, NewEntry} = transition_block(H, BI, [{BH, WS} || {BH, WS, _} <- Checkpoint]),
-	transition_batch(Rest, BI, [NewEntry | Checkpoint], Count + 1).
-
 transition_block(H, BI, NewBI) ->
 	RawB =
-		ar_node:get_block(
+		ar_node_utils:get_full_block(
 			ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 			H,
 			BI
@@ -177,7 +164,6 @@ transition_block(H, BI, NewBI) ->
 		true ->
 			BV2 = ar_block:generate_tx_tree(
 				RawB#block{
-					txs = ar_storage:read_tx(RawB#block.txs),
 					poa = ar_poa:generate_2_0(NewBI, 2)
 				}),
 			B = BV2#block {
@@ -185,7 +171,9 @@ transition_block(H, BI, NewBI) ->
 			},
 			ar:info([
 				{event, transitioning_block},
-				{hash, ar_util:encode(B#block.indep_hash)}
+				{height, B#block.height},
+				{v1_hash, ar_util:encode(H)},
+				{v2_hash, ar_util:encode(B#block.indep_hash)}
 			]),
 			ar_storage:write_block(B),
 			{ok, {B#block.indep_hash, B#block.weave_size, RawB#block.indep_hash}}
