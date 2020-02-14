@@ -1,7 +1,7 @@
 -module(ar_transition).
 -behaviour(gen_server).
 
--export([start_link/1, get_new_block_index/1, update_block_index/1, reset/0]).
+-export([start_link/1, get_new_block_index/1, update_block_index/1, remove_checkpoint/0]).
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include("ar.hrl").
@@ -26,45 +26,32 @@ get_new_block_index(BH) ->
 update_block_index(BI) ->
 	gen_server:cast(?MODULE, {update_block_index, BI}).
 
-reset() ->
-	gen_server:cast(?MODULE, reset).
+remove_checkpoint() ->
+	gen_server:cast(?MODULE, remove_checkpoint).
 
 init(_Args) ->
 	ar:info([{event, ar_transition_start}]),
-	{ok, #{ block_index => not_set }}.
+	{ok, #{ checkpoint => load_checkpoint() }}.
 
-handle_call(get_checkpoint, _From, #{ block_index := not_set } = State) ->
-	{reply, [], State};
 handle_call(get_checkpoint, _From, #{ checkpoint := Checkpoint } = State) ->
 	{reply, Checkpoint, State}.
 
-handle_cast({update_block_index, NewBI}, #{ block_index := not_set } = State) ->
-	{GH, _} = lists:last(NewBI),
-	Checkpoint = load_checkpoint(GH),
-	NewState = State#{
-		block_index => NewBI,
-		to_go => lists:reverse(NewBI),
-		checkpoint => update_checkpoint(Checkpoint, element(1, hd(NewBI))),
-		genesis_hash => GH
-	},
-	gen_server:cast(?MODULE, transition_block),
-	{noreply, NewState};
 handle_cast({update_block_index, [{H, _} | _]}, #{ block_index := [{H, _} | _] } = State) ->
 	{noreply, State};
 handle_cast({update_block_index, NewBI}, State) ->
-	#{ checkpoint := Checkpoint, block_index := BI, to_go := ToGo } = State,
-	case get_diverged_index(BI, NewBI) of
+	#{ checkpoint := Checkpoint } = State,
+	case update_to_go(NewBI, Checkpoint, []) of
 		{error, no_intersection} ->
 			ar:err([
-				{event, ar_transition_update_index_failed},
-				{reason, indexes_do_not_intersect}
+				{event, ar_transition_update_block_index_failed},
+				{reason, hash_lists_do_not_intersect}
 			]),
 			{noreply, State};
-		{ok, {BaseH, _} = BaseEntry, DivergedIndex} ->
+		{ok, NewCheckpoint, ToGo} ->
 			NewState = State#{
 				block_index => NewBI,
-				to_go => update_to_go(ToGo, BaseEntry, DivergedIndex),
-				checkpoint => update_checkpoint(Checkpoint, BaseH)
+				to_go => ToGo,
+				checkpoint => NewCheckpoint
 			},
 			gen_server:cast(?MODULE, transition_block),
 			{noreply, NewState}
@@ -74,12 +61,11 @@ handle_cast(transition_block, State) ->
 	#{
 		block_index := BI,
 		to_go := [{H, _} | NewToGo],
-		checkpoint := Checkpoint,
-		genesis_hash := GH
+		checkpoint := Checkpoint
 	} = State,
 	{ok, NewEntry} = transition_block(H, BI, [{BH, WS} || {BH, WS, _} <- Checkpoint]),
 	NewCheckpoint = [NewEntry | Checkpoint],
-	ok = save_checkpoint(GH, NewCheckpoint),
+	ok = save_checkpoint(NewCheckpoint),
 	case NewToGo of
 		[] ->
 			noop;
@@ -92,8 +78,9 @@ handle_cast(transition_block, State) ->
 	},
 	{noreply, NewState};
 
-handle_cast(reset, State) ->
-	{noreply, State#{ block_index => not_set }}.
+handle_cast(remove_checkpoint, State) ->
+	file:delete(checkpoint_location()),
+	{noreply, State#{ checkpoint => [] }}.
 
 terminate(Reason, _State) ->
 	ar:err([{event, ar_transition_terminated}, {reason, Reason}]).
@@ -102,49 +89,27 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-load_checkpoint(GH) ->
-	case file:read_file(checkpoint_location(GH)) of
+load_checkpoint() ->
+	case file:read_file(checkpoint_location()) of
 		{ok, Bin} ->
 			ar_serialize:json_struct_to_v2_transition_checkpoint(ar_serialize:dejsonify(Bin));
 		_ ->
 			[]
 	end.
 
-checkpoint_location(GH) ->
-	filename:join(ar_meta_db:get(data_dir), "fork_2_0_checkpoint_" ++ binary_to_list(ar_util:encode(GH))).
+checkpoint_location() ->
+	filename:join(ar_meta_db:get(data_dir), "fork_2_0_checkpoint").
 
-get_diverged_index(BI, NewBI) when length(BI) > length(NewBI) ->
-	get_diverged_index(tl(BI), NewBI);
-get_diverged_index(BI, NewBI) ->
-	get_diverged_index(BI, NewBI, []).
-
-get_diverged_index(BI, [Entry | Tail] = NewBI, DivergedIndex) when length(NewBI) > length(BI) ->
-	get_diverged_index(BI, Tail, [Entry | DivergedIndex]);
-get_diverged_index([{H, _} = Entry | _], [{H, _} | _], DivergedIndex) ->
-	{ok, Entry, DivergedIndex};
-get_diverged_index([_ | BI], [Entry | NewBI], DivergedIndex) ->
-	get_diverged_index(BI, NewBI, [Entry | DivergedIndex]);
-get_diverged_index([], [], _) ->
+update_to_go(BI, [], _) ->
+	{ok, [], lists:reverse(BI)};
+update_to_go([{H, _} | _], [{_, _, H} | _] = Checkpoint, ToGo) ->
+	{ok, Checkpoint, ToGo};
+update_to_go([Entry | BI], Checkpoint, ToGo) when length(BI) > Checkpoint ->
+	update_to_go(BI, Checkpoint, [Entry | ToGo]);
+update_to_go([Entry | BI], [_ | Checkpoint], ToGo) ->
+	update_to_go(BI, Checkpoint, [Entry | ToGo]);
+update_to_go([], [], _) ->
 	{error, no_intersection}.
-
-update_to_go([], _, DivergedIndex) ->
-	DivergedIndex;
-update_to_go(ToGo, BaseEntry, DivergedIndex) ->
-	lists:reverse(update_to_go_reversed(lists:reverse(ToGo), BaseEntry, DivergedIndex)).
-
-update_to_go_reversed([{BaseH, _} | _] = ToGoReversed, {BaseH, _}, DivergedIndex) ->
-	DivergedIndex ++ ToGoReversed;
-update_to_go_reversed([_ | ToGoReversed], BaseEntry, DivergedIndex) ->
-	update_to_go_reversed(ToGoReversed, BaseEntry, DivergedIndex);
-update_to_go_reversed([], _, DivergedIndex) ->
-	DivergedIndex.
-
-update_checkpoint([], _) ->
-	[];
-update_checkpoint([{_, _, BaseH} | _] = Checkpoint, BaseH) ->
-	Checkpoint;
-update_checkpoint([_ | Checkpoint], BaseH) ->
-	update_checkpoint(Checkpoint, BaseH).
 
 transition_block(H, BI, NewBI) ->
 	RawB =
@@ -179,10 +144,10 @@ transition_block(H, BI, NewBI) ->
 			{ok, {B#block.indep_hash, B#block.weave_size, RawB#block.indep_hash}}
 	end.
 
-save_checkpoint(GH, Checkpoint) ->
-	save_checkpoint2(checkpoint_location(GH), Checkpoint).
+save_checkpoint(Checkpoint) ->
+	save_checkpoint(checkpoint_location(), Checkpoint).
 
-save_checkpoint2(File, Checkpoint) ->
+save_checkpoint(File, Checkpoint) ->
 	JSON = ar_serialize:jsonify(ar_serialize:v2_transition_checkpoint_to_json_struct(Checkpoint)),
 	write_file_atomic(File, JSON).
 
