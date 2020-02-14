@@ -48,7 +48,7 @@ slave_start(B0, RewardAddr) ->
 
 start(B0, Peer, RewardAddr) ->
 	ar_storage:clear(),
-	ar_transition:reset(),
+	ar_transition:remove_checkpoint(),
 	ar_tx_queue:stop(),
 	ok = kill_if_running([http_bridge_node, http_entrypoint_node]),
 	Node = ar_node:start([], [B0], 0, RewardAddr),
