@@ -37,51 +37,72 @@ generate_2_0([{Seed, WeaveSize} | _] = BI, Depth) ->
 		Depth
 	).
 
-generate(_, _, _, N, N) -> unavailable;
+generate(_, _, _, N, N) -> unavailable; % TODO remove limit alltogether
+generate(_, 0, _, _, _) ->
+	%% The weave does not have any data yet.
+	#poa{};
 generate(Seed, WeaveSize, BI, Option, Limit) ->
 	ChallengeByte = calculate_challenge_byte(Seed, WeaveSize, Option),
-	{ChallengeBlock, BlockBase} = find_challenge_block(ChallengeByte, BI),
+	{ChallengeBH, BlockBase} = find_challenge_block(ChallengeByte, BI),
 	ar:info(
 		[
 			{event, generate_poa},
-			{challenge_block, ar_util:encode(ChallengeBlock)}
+			{challenge_block, ar_util:encode(ChallengeBH)}
 		]
 	),
-	case ar_storage:read_block(ChallengeBlock, BI) of
+	case ar_storage:read_block(ChallengeBH, BI) of
 		unavailable ->
+			ar:info([
+				{event, ar_poa_pick_next_alternative},
+				{reason, missing_block_metadata},
+				{hash, ar_util:encode(ChallengeBH)}
+			]),
 			generate(Seed, WeaveSize, BI, Option + 1, Limit);
 		B ->
 			case B#block.txs of
-				[] -> create_poa_from_data(B, no_tx, [], ChallengeByte - BlockBase, Option);
+				[] ->
+					ar:err([
+						{event, ar_poa_empty_challenge_block},
+						{hash, ar_util:encode(ChallengeBH)}
+					]),
+					error;
 				TXIDs ->
-					TXs = ar_storage:read_tx(TXIDs),
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
-					TXID =
-						find_byte_in_size_tagged_list(
-							ChallengeByte - BlockBase,
-							SizeTaggedTXs
-						),
-					case ar_storage:read_tx(TXID) of
-						unavailable ->
-							generate(Seed, WeaveSize, BI, Option + 1, Limit);
-						NoTreeTX ->
-							create_poa_from_data(B, NoTreeTX, SizeTaggedTXs, ChallengeByte - BlockBase, Option)
+					{MissingTXIDs, TXs} = lists:foldl(
+						fun(TXID, {AccMissing, Acc}) ->
+							case ar_storage:read_tx(TXID) of
+								unavailable ->
+									{[TXID | AccMissing], Acc};
+								TX ->
+									{AccMissing, [TX | Acc]}
+							end
+						end,
+						{[], []},
+						TXIDs
+					),
+					case MissingTXIDs of
+						[] ->
+							SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+							TXID =
+								find_byte_in_size_tagged_list(
+									ChallengeByte - BlockBase,
+									SizeTaggedTXs
+								),
+							{value, TX} = lists:search(fun(T) -> T#tx.id == TXID end, TXs),
+							case byte_size(TX#tx.data) == 0 of
+								true ->
+									ar:info([
+										{event, ar_poa_pick_next_alternative},
+										{reason, missing_tx_data},
+										{tx, ar_util:encode(TXID)}
+									]),
+									generate(Seed, WeaveSize, BI, Option + 1, Limit);
+								false ->
+									create_poa_from_data(B, TX, SizeTaggedTXs, ChallengeByte - BlockBase, Option)
+							end
 					end
 			end
 	end.
 
-create_poa_from_data(B, no_tx, _, _BlockOffset, Option) ->
-	#poa {
-		option = Option,
-		block_indep_hash = B#block.indep_hash,
-		tx_id = undefined,
-		tx_root = <<>>,
-		tx_path = <<>>,
-		data_size = 0,
-		data_root = <<>>,
-		data_path = <<>>,
-		chunk = <<>>
-	};
 create_poa_from_data(NoTreeB, NoTreeTX, SizeTaggedTXs, BlockOffset, Option) ->
 	B = ar_block:generate_tx_tree(NoTreeB, SizeTaggedTXs),
 	{_TXID, TXEnd} = lists:keyfind(NoTreeTX#tx.id, 1, SizeTaggedTXs),
@@ -132,6 +153,9 @@ search(X, [{X, _} | _]) -> 0;
 search(X, [_ | R]) -> 1 + search(X, R).
 
 %% @doc Validate a complete proof of access object.
+validate(_, 0, _BI, _POA) ->
+	%% The weave does not have data yet.
+	true;
 validate(LastIndepHash, WeaveSize, BI, POA) ->
 	ChallengeBlock = ar_storage:read_block(POA#poa.block_indep_hash, BI),
 	ChallengeByte = calculate_challenge_byte(LastIndepHash, WeaveSize, POA#poa.option),

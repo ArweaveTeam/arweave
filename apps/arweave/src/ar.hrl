@@ -324,7 +324,7 @@
 
 %% @doc A succinct proof of access to a recall byte found in a TX.
 -record(poa, {
-	option = 0, % The recall byte option (a sequence number) chosen.
+	option = 1, % The recall byte option (a sequence number) chosen.
 	block_indep_hash = <<>>, % The hash of the block that the TX containing the chunk is found in.
 	tx_id = <<>>, % The ID of the transaction containing the chunk.
 	tx_root = <<>>, % Root of the Merkle tree of TXs in the block.
