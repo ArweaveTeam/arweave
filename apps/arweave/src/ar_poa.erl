@@ -3,8 +3,10 @@
 -export([generate/1, generate_2_0/2]).
 -export([validate/4]).
 -export([validate_data_root/2, validate_data_tree/2, validate_chunk/3]).
+-export([adjust_diff/2]).
 
 -include("ar.hrl").
+-include("perpetual_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% This module implements all mechanisms required to validate a proof of access
@@ -254,3 +256,9 @@ validate_data_tree(TX, Data) ->
 validate_chunk(TX, ChunkNum, Chunk) ->
 	ChunkID = lists:nth(ChunkNum, TX#tx.data_tree),
 	ChunkID == ar_tx:generate_chunk_id(TX, Chunk).
+
+%% @doc Adjust the difficulty based on the POA option.
+adjust_diff(Diff, 1) ->
+	Diff;
+adjust_diff(Diff, Option) ->
+	adjust_diff(ar_difficulty:multiply_diff(Diff, ?ALTERNATIVE_POA_DIFF_MULTIPLIER), Option - 1).

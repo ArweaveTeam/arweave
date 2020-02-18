@@ -576,6 +576,7 @@ mine(
 	#state {
 		data_segment = BDS,
 		diff = Diff,
+		poa = POA,
 		txs = TXs,
 		timestamp = Timestamp,
 		current_block = #block{ height = CurrentHeight }
@@ -583,7 +584,13 @@ mine(
 	Supervisor
 ) ->
 	process_flag(priority, low),
-	{Nonce, Hash} = find_nonce(BDS, Diff, CurrentHeight + 1, Supervisor),
+	MineDiff = case CurrentHeight + 1 >= ar_fork:height_2_0() of
+		true ->
+			ar_poa:adjust_diff(Diff, POA#poa.option);
+		false ->
+			Diff
+	end,
+	{Nonce, Hash} = find_nonce(BDS, MineDiff, CurrentHeight + 1, Supervisor),
 	Supervisor ! {solution, Hash, Nonce, TXs, Diff, Timestamp}.
 
 find_nonce(BDS, Diff, Height, Supervisor) ->
