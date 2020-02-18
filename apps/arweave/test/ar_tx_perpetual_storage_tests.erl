@@ -127,8 +127,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		2,
 		B2#block.timestamp
 	),
-	P1 = precision(0, B2),
-	assert_almost_equal(B1#block.reward_pool + RewardPoolIncrement1, B2#block.reward_pool, P1),
+	assert_almost_equal(B1#block.reward_pool + RewardPoolIncrement1, B2#block.reward_pool, 1),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B2#block.reward_addr),
 	Balance2 = get_balance(RewardAddr),
 	Reward =
@@ -141,7 +140,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		B2#block.timestamp,
 		0
 	),
-	assert_almost_equal(Balance1 + Reward, Balance2, P1),
+	assert_almost_equal(Balance1 + Reward, Balance2, 1),
 	%% Mine a block with a transaction. Expect a size-prorated data reward
 	%% and an inflation reward.
 	Data = << <<1>> || _ <- lists:seq(1, 10) >>,
@@ -156,11 +155,10 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		3,
 		B3#block.timestamp
 	),
-	P2 = precision(byte_size(Data), B3),
 	assert_almost_equal(
 		B2#block.reward_pool + RewardPoolIncrement2,
 		B3#block.reward_pool,
-		P2
+		1
 	),
 	?assertEqual(B2#block.weave_size + byte_size(TX2#tx.data), B3#block.weave_size),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B3#block.reward_addr),
@@ -175,7 +173,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		B3#block.timestamp,
 		B3#block.weave_size
 	),
-	assert_almost_equal(Balance2 + Reward2, Balance3, P2),
+	assert_almost_equal(Balance2 + Reward2, Balance3, 1),
 	%% Mine a block with four transactions from three different wallets.
 	%% Expect the totals to be correct.
 	Data2 = << <<2>> || _ <- lists:seq(1, 15) >>,
@@ -207,8 +205,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		{0, 0},
 		[Data2, Data3, Data4, Data5]
 	),
-	P3 = precision(WeaveSizeIncrement, B4),
-	assert_almost_equal(B3#block.reward_pool + RewardPoolIncrement3, B4#block.reward_pool, P3),
+	assert_almost_equal(B3#block.reward_pool + RewardPoolIncrement3, B4#block.reward_pool, 1),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B4#block.reward_addr),
 	?assertEqual(B3#block.weave_size + WeaveSizeIncrement, B4#block.weave_size),
 	Balance4 = get_balance(RewardAddr),
@@ -222,13 +219,14 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		B4#block.timestamp,
 		B4#block.weave_size
 	),
-	assert_almost_equal(Balance3 + Reward3, Balance4, P3).
+	assert_almost_equal(Balance3 + Reward3, Balance4, 5).
 
 updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
-	[B0] = ar_weave:init([
+	[BNoPool] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(2000), <<>>}
 	]),
+	B0 = BNoPool#block{ reward_pool = ?AR(10000000000000) },
 	{_, RewardAddr} = ar_wallet:new(),
 	{Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
 	{Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
@@ -241,7 +239,6 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	slave_mine(Slave),
 	BI1 = wait_until_height(Master, 1),
 	B1 = ar_storage:read_block(hd(BI1), BI1),
-	POA1 = ar_poa:generate(B0),
 	RewardPoolIncrement1 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(BigChunk),
 		twice_smaller_diff(B1#block.diff),
@@ -252,59 +249,38 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	PoolShare1 = get_miner_pool_share(
 		B1#block.diff,
 		B1#block.timestamp,
-		B1#block.weave_size,
+		?HUGE_WEAVE_SIZE,
 		BaseReward1,
-		1,
-		POA1
+		1
 	),
-	P1 = precision(byte_size(BigChunk), B1),
-	%% The amount taken from the pool is much smaller than the precision,
-	%% therefore it is asserted separately in subsequent section.
 	assert_almost_equal(
-		RewardPoolIncrement1 - PoolShare1,
+		B0#block.reward_pool + RewardPoolIncrement1 - PoolShare1,
 		B1#block.reward_pool,
-		P1
+		1
 	),
 	?assertEqual(byte_size(TX1#tx.data), B1#block.weave_size),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B1#block.reward_addr),
 	Balance1 = get_balance(RewardAddr),
-	assert_almost_equal(BaseReward1 + PoolShare1, Balance1, P1),
+	assert_almost_equal(BaseReward1 + PoolShare1, Balance1, 1),
 	%% Mine an empty block. Expect an inflation reward and a share of the pool.
 	slave_mine(Slave),
 	BI2 = wait_until_height(Master, 2),
 	B2 = ar_storage:read_block(hd(BI2), BI2),
-	POA2 = ar_poa:generate(B1),
 	BaseReward2 = ar_inflation:calculate(2),
 	PoolShare2 = get_miner_pool_share(
 		B2#block.diff,
 		B2#block.timestamp,
-		B2#block.weave_size,
+		?HUGE_WEAVE_SIZE,
 		BaseReward2,
-		2,
-		POA2
+		2
 	),
 	Balance2 = get_balance(RewardAddr),
-	assert_almost_equal(Balance1 + BaseReward2 + PoolShare2, Balance2, 0.5).
-
-precision(Size, B) ->
-	CostAtTimestamp = ar_tx_perpetual_storage:calculate_tx_cost(
-		Size,
-		twice_smaller_diff(B#block.diff),
-		B#block.height,
-		B#block.timestamp
-	),
-	CostBeforeTimestamp = ar_tx_perpetual_storage:calculate_tx_cost(
-		Size,
-		twice_smaller_diff(B#block.diff),
-		B#block.height,
-		B#block.timestamp - 5
-	),
-	max(CostBeforeTimestamp - CostAtTimestamp, 100).
+	assert_almost_equal(Balance1 + BaseReward2 + PoolShare2, Balance2, 1).
 
 assert_almost_equal(Num1, Num2, Precision) ->
 	?assert(
 		abs(Num2 - Num1) < Precision,
-		io_lib:format("Expected ~B to be almost equal ~B", [Num1, Num2])
+		io_lib:format("Expected ~B to be almost equal ~B with precision ~B", [Num1, Num2, Precision])
 	).
 
 assert_reward_bigger_than_burden(Reward, Diff, Height, Timestamp, WeaveSize) ->
@@ -316,13 +292,13 @@ assert_reward_bigger_than_burden(Reward, Diff, Height, Timestamp, WeaveSize) ->
 	Burden = erlang:trunc(WeaveSize * Cost / (1024 * 1024 * 1024)),
 	?assert(Reward > Burden).
 
-get_miner_pool_share(Diff, Timestamp, WeaveSize, BaseReward, Height, _POA) ->
+get_miner_pool_share(Diff, Timestamp, WeaveSize, BaseReward, Height) ->
 	Cost = ar_tx_perpetual_storage:usd_to_ar(
 		ar_tx_perpetual_storage:get_cost_per_block_at_timestamp(Timestamp),
 		Diff,
 		Height
 	),
-	Burden = erlang:trunc(?HUGE_WEAVE_SIZE * Cost / (1024 * 1024 * 1024)),
+	Burden = erlang:trunc(WeaveSize * Cost / (1024 * 1024 * 1024)),
 	AR = Burden - BaseReward,
 	?assert(AR > 0),
 	AR.

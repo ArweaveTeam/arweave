@@ -153,19 +153,11 @@ calculate_reward_pool_perpetual(OldPool, TXs, _, POA, WeaveSize, Height, Diff, T
 	NewPool = OldPool + TXsCost,
 	case Height >= ar_fork:height_2_0() of
 		true ->
-			RewardMultiplier = 1 / POA#poa.option,
-			PoolMultiplier = (1 - RewardMultiplier),
 			case AR =< 0 of
-				true -> % BaseReward >= Burden
-					{
-						erlang:trunc(BaseReward * RewardMultiplier),
-						NewPool + erlang:trunc(BaseReward * PoolMultiplier)
-					};
-				false -> % Burden > BaseReward
-					{
-						erlang:trunc((BaseReward + AR) * RewardMultiplier),
-						(NewPool - AR) + erlang:trunc(BaseReward * PoolMultiplier)
-					}
+				true ->
+					{BaseReward, NewPool};
+				false ->
+					{BaseReward + AR, max(NewPool - AR, 0)}
 			end;
 		false ->
 			case AR =< 0 of
@@ -598,7 +590,7 @@ validate_post_fork_2_0(
 		timer:tc(
 			fun() ->
 				[
-					{pow, ar_mine:validate(POW, Diff, Height)},
+					{pow, ar_mine:validate(POW, ar_poa:adjust_diff(Diff, POA#poa.option), Height)},
 					{poa, ar_poa:validate(LastIndepHash, LastWeaveSize, BI, POA)},
 					{votables, ar_votable:validate(NewB, OldB)},
 					{wallet_list, validate_wallet_list(WalletList)},
