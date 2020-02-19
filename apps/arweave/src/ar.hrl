@@ -209,6 +209,11 @@
 %% already has this transaction.
 -define(TX_SEND_WITHOUT_ASKING_SIZE_LIMIT, 1000).
 
+%% @doc Transaction data structure format. The main difference is that format 2
+%% doesn't contain transaction data in the #tx{} record. Format 1 has data.
+-define(TX_WITH_DATA_FORMAT, <<"1">>).
+-define(TX_WITHOUT_DATA_FORMAT, <<"2">>).
+
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
 -define(BLOCK_DIR, "blocks").
