@@ -279,6 +279,31 @@ get_non_existent_block_test() ->
 	{ok, {{<<"404">>, _}, _, _, _, _}}
 		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list").
 
+%% @doc Ensure transactions of format 2 type can be retrieved over the HTTP
+%% interface with no populated data, while retaining info on all other fields
+get_format_2_tx_with_no_data_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	ar_http_iface_server:reregister(Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
+	ar_http_iface_server:reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	TX = #tx{id = TxID} = ar_tx:new(<<"DATA">>),
+	EncodedTxID = binary_to_list(ar_util:encode(TxID)),
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+	timer:sleep(1000),
+	ar_node:mine(Node),
+	timer:sleep(1000),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/" ++ EncodedTxID,
+			[{<<"x-tx-format">>, ?TX_WITHOUT_DATA_FORMAT}]
+		),
+	?assertEqual(TX#tx{data = <<>>}, ar_serialize:json_struct_to_tx(Body)).
+
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
 	ar_storage:clear(),

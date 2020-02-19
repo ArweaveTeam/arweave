@@ -200,11 +200,29 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 % @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
-	case get_tx_filename(Hash) of
-		{ok, Filename} ->
-			{200, #{}, sendfile(Filename), Req};
-		{response, {Status, Headers, Body}} ->
-			{Status, Headers, Body, Req}
+	case cowboy_req:header(<<"x-tx-format">>, Req, ?TX_WITH_DATA_FORMAT) of
+		?TX_WITHOUT_DATA_FORMAT ->
+			case ar_util:safe_decode(Hash) of
+				{error, invalid} ->
+					{response, {400, #{}, <<"Invalid hash.">>}};
+				{ok, ID} ->
+					case ar_storage:read_tx(ID) of
+						#tx{} = TX ->
+							ReplyTX = TX#tx{data = <<>>},
+							Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ReplyTX)),
+							{200, #{}, Body, Req};
+						unavailable ->
+							maybe_tx_is_pending_response(ID)
+					end
+			end;
+		_Any ->
+			%% Legacy, pre 2.0 transaction format
+			case get_tx_filename(Hash) of
+				{ok, Filename} ->
+					{200, #{}, sendfile(Filename), Req};
+				{response, {Status, Headers, Body}} ->
+					{Status, Headers, Body, Req}
+			end
 	end;
 
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
@@ -334,7 +352,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
 					Height = ar_node:get_height(whereis(http_entrypoint_node)),
 					SignedTX = case ar_fork:height_2_0() of
-						H when Height >= H ->							
+						H when Height >= H ->
 							ar_tx:sign(ar_tx:generate_chunk_tree(UnsignedTX), KeyPair);
 						_ ->
 							ar_tx:sign_pre_fork_2_0(UnsignedTX, KeyPair)
@@ -718,20 +736,23 @@ get_tx_filename(Hash) ->
 		{error, invalid} ->
 			{response, {400, #{}, <<"Invalid hash.">>}};
 		{error, ID, unavailable} ->
-			case is_a_pending_tx(ID) of
-				true ->
-					{response, {202, #{}, <<"Pending">>}};
-				false ->
-					case ar_tx_db:get_error_codes(ID) of
-						{ok, ErrorCodes} ->
-							ErrorBody = list_to_binary(lists:join(" ", ErrorCodes)),
-							{response, {410, #{}, ErrorBody}};
-						not_found ->
-							{response, {404, #{}, <<"Not Found.">>}}
-					end
-			end;
+			maybe_tx_is_pending_response(ID);
 		{ok, Filename} ->
 			{ok, Filename}
+	end.
+
+maybe_tx_is_pending_response(ID) ->
+	case is_a_pending_tx(ID) of
+		true ->
+			{response, {202, #{}, <<"Pending">>}};
+		false ->
+			case ar_tx_db:get_error_codes(ID) of
+				{ok, ErrorCodes} ->
+					ErrorBody = list_to_binary(lists:join(" ", ErrorCodes)),
+					{response, {410, #{}, ErrorBody}};
+				not_found ->
+					{response, {404, #{}, <<"Not Found.">>}}
+			end
 	end.
 
 estimate_tx_price(SizeInBytesBinary, WalletAddr) ->
