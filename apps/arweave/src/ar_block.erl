@@ -251,15 +251,14 @@ block_field_size_limit(B) ->
 		_ ->
 			10
 	end,
-	{ChunkSize, TXPathSize, DataPathSize} =
+	{ChunkSize, DataPathSize} =
 		case B#block.poa of
 			POA when is_record(POA, poa) ->
 				{
 					byte_size((B#block.poa)#poa.chunk),
-					byte_size((B#block.poa)#poa.tx_path),
 					byte_size((B#block.poa)#poa.data_path)
 				};
-			_ -> {0, 0, 0}
+			_ -> {0, 0}
 		end,
 	Check = (byte_size(B#block.nonce) =< 512) and
 		(byte_size(B#block.previous_block) =< 48) and
@@ -274,14 +273,12 @@ block_field_size_limit(B) ->
 		(byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
 		(byte_size(integer_to_binary(B#block.block_size)) =< 64) and
 		(ChunkSize =< ?DATA_CHUNK_SIZE) and
-		(TXPathSize =< ?MAX_PATH_SIZE) and
 		(DataPathSize =< ?MAX_PATH_SIZE),
-	% Report of wrong field size.
 	case Check of
 		false ->
-			ar:report(
+			ar:info(
 				[
-					invalid_block_field_size,
+					{event, received_block_with_invalid_field_size},
 					{nonce, byte_size(B#block.nonce)},
 					{previous_block, byte_size(B#block.previous_block)},
 					{timestamp, byte_size(integer_to_binary(B#block.timestamp))},
