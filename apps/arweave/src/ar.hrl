@@ -268,9 +268,10 @@
 -define(DIFF_ADJUSTMENT_UP_LIMIT, 4).
 
 %% @doc Max size of a single data chunk, in bytes.
-%% 512KB should be enough -- future, please don't hate me.
--define(DATA_CHUNK_SIZE, (512 * 1024)).
+-define(DATA_CHUNK_SIZE, (32 * 1024)).
+%% @doc Max size of the PoA data path, in bytes.
 -define(MAX_PATH_SIZE, (256 * 1024)).
+%% @doc The size of data chunk hashes, in bytes.
 -define(CHUNK_ID_HASH_SIZE, 32).
 
 %% @doc A full block or block shadow (see more on txs field).
