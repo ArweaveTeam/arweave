@@ -284,17 +284,13 @@ get_non_existent_block_test() ->
 get_format_2_tx_with_no_data_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init(),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	TX = #tx{id = TxID} = ar_tx:new(<<"DATA">>),
 	EncodedTxID = binary_to_list(ar_util:encode(TxID)),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
-	timer:sleep(1000),
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
-	timer:sleep(1000),
+	ar_test_node:wait_until_height(Node, 1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(
 			<<"GET">>,
