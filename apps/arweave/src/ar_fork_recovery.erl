@@ -236,18 +236,24 @@ apply_next_block(State, NextB, B) ->
 	} = State,
 	case NextB#block.height >= ar_fork:height_2_0() of
 		true ->
-			POA = NextB#block.poa,
-			case is_record(POA, poa) of
-				true ->
-					apply_next_block(State, NextB, B, POA);
-				false ->
-					ar:err(
-						[
-							{event, fork_recovery_failed},
-							{reason, block_does_not_have_proof_of_access}
-						]
-					),
-					end_fork_recovery(State)
+			MaybeRecallH = (NextB#block.poa)#poa.block_indep_hash,
+			case MaybeRecallH of
+				<<>> ->
+					apply_next_block(State, NextB, B, genesis_block);
+				RecallH ->
+					case ar_node_utils:get_full_block(Peers, RecallH, BI) of
+						unavailable ->
+							ar:err(
+								[
+									{event, fork_recovery_failed},
+									{reason, did_not_find_recall_block},
+									{recall_block, ar_util:encode(RecallH)}
+								]
+							),
+							end_fork_recovery(State);
+						RecallB ->
+							apply_next_block(State, NextB, B, RecallB)
+					end
 			end;
 		false ->
 			RecallH = case B#block.height of
@@ -271,7 +277,7 @@ apply_next_block(State, NextB, B) ->
 			end
 	end.
 
-apply_next_block(State, NextB, B, POA) ->
+apply_next_block(State, NextB, B, RecallB) ->
 	#state {
 		recovered_block_index = BI,
 		legacy_hash_list = LegacyHL,
@@ -288,7 +294,7 @@ apply_next_block(State, NextB, B, POA) ->
 			},
 			TXs,
 			B,
-			POA,
+			RecallB,
 			BlockTXPairs
 		)
 	of
@@ -362,13 +368,13 @@ end_fork_recovery(_State) ->
 
 %% @doc Validate a new block (NextB) against the current block (B).
 %% Returns ok | {error, invalid_block} | {error, tx_replay}.
-validate(BI, NextB, TXs, B, POA, BlockTXPairs) ->
+validate(BI, NextB, TXs, B, RecallB, BlockTXPairs) ->
 	{FinderReward, _} =
 		ar_node_utils:calculate_reward_pool(
 			B#block.reward_pool,
 			TXs,
 			NextB#block.reward_addr,
-			POA,
+			RecallB,
 			NextB#block.weave_size,
 			NextB#block.height,
 			NextB#block.diff,
@@ -384,10 +390,10 @@ validate(BI, NextB, TXs, B, POA, BlockTXPairs) ->
 	BlockValid = ar_node_utils:validate(
 		BI,
 		WalletList,
-		NextB#block { poa = POA },
+		NextB,
 		TXs,
 		B,
-		POA,
+		RecallB,
 		NextB#block.reward_addr,
 		NextB#block.tags
 	),

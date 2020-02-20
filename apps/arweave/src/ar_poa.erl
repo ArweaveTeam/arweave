@@ -1,7 +1,7 @@
 -module(ar_poa).
 
 -export([generate/1, generate_2_0/2]).
--export([validate/4]).
+-export([validate/5]).
 -export([validate_data_root/2, validate_data_tree/2, validate_chunk/3]).
 -export([adjust_diff/2]).
 
@@ -22,9 +22,10 @@ generate([B | _]) when is_record(B, block) ->
 	generate(B);
 generate([]) -> #poa{};
 generate(BI) ->
-	case length(BI) >= ar_fork:height_2_0() of
+	Height = length(BI),
+	case Height >= ar_fork:height_2_0() of
 		true ->
-			generate_2_0(BI, ar_meta_db:get(max_option_depth));
+			generate_2_0(BI, min(ar_meta_db:get(max_option_depth), Height + 1));
 		false ->
 			ar_node_utils:find_recall_block(BI)
 	end.
@@ -39,33 +40,32 @@ generate_2_0([{Seed, WeaveSize} | _] = BI, Depth) ->
 		Depth
 	).
 
-generate(_, _, _, N, N) -> unavailable; % TODO remove limit alltogether
+generate(_, _, _, N, N) ->
+	ar:info([
+		{event, no_data_for_poa},
+		{tried_options, N - 1}
+	]),
+	unavailable;
 generate(_, 0, _, _, _) ->
-	%% The weave does not have any data yet.
 	#poa{};
 generate(Seed, WeaveSize, BI, Option, Limit) ->
-	ChallengeByte = calculate_challenge_byte(Seed, WeaveSize, Option),
-	{ChallengeBH, BlockBase} = find_challenge_block(ChallengeByte, BI),
+	RecallByte = calculate_challenge_byte(Seed, WeaveSize, Option),
+	{RecallBH, BlockBase} = find_challenge_block(RecallByte, BI),
 	ar:info(
 		[
 			{event, generate_poa},
-			{challenge_block, ar_util:encode(ChallengeBH)}
+			{challenge_block, ar_util:encode(RecallBH)}
 		]
 	),
-	case ar_storage:read_block(ChallengeBH, BI) of
+	case ar_storage:read_block(RecallBH, BI) of
 		unavailable ->
-			ar:info([
-				{event, ar_poa_pick_next_alternative},
-				{reason, missing_block_metadata},
-				{hash, ar_util:encode(ChallengeBH)}
-			]),
 			generate(Seed, WeaveSize, BI, Option + 1, Limit);
 		B ->
 			case B#block.txs of
 				[] ->
 					ar:err([
-						{event, ar_poa_empty_challenge_block},
-						{hash, ar_util:encode(ChallengeBH)}
+						{event, empty_poa_challenge_block},
+						{hash, ar_util:encode(RecallBH)}
 					]),
 					error;
 				TXIDs ->
@@ -86,20 +86,15 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 							SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
 							TXID =
 								find_byte_in_size_tagged_list(
-									ChallengeByte - BlockBase,
+									RecallByte - BlockBase,
 									SizeTaggedTXs
 								),
 							{value, TX} = lists:search(fun(T) -> T#tx.id == TXID end, TXs),
 							case byte_size(TX#tx.data) == 0 of
 								true ->
-									ar:info([
-										{event, ar_poa_pick_next_alternative},
-										{reason, missing_tx_data},
-										{tx, ar_util:encode(TXID)}
-									]),
 									generate(Seed, WeaveSize, BI, Option + 1, Limit);
 								false ->
-									create_poa_from_data(B, TX, SizeTaggedTXs, ChallengeByte - BlockBase, Option)
+									create_poa_from_data(B, TX, SizeTaggedTXs, RecallByte - BlockBase, Option)
 							end
 					end
 			end
@@ -155,14 +150,17 @@ search(X, [{X, _} | _]) -> 0;
 search(X, [_ | R]) -> 1 + search(X, R).
 
 %% @doc Validate a complete proof of access object.
-validate(_, 0, _BI, _POA) ->
+validate(_H, 0, _BI, _POA, genesis_block) ->
 	%% The weave does not have data yet.
 	true;
-validate(LastIndepHash, WeaveSize, BI, POA) ->
-	ChallengeBlock = ar_storage:read_block(POA#poa.block_indep_hash, BI),
-	ChallengeByte = calculate_challenge_byte(LastIndepHash, WeaveSize, POA#poa.option),
-	{ExpectedChallengeBH, BlockBase} = find_challenge_block(ChallengeByte, BI),
-	validate_recall_block(ChallengeByte - BlockBase, ExpectedChallengeBH, ChallengeBlock, POA).
+validate(_H, _WS, BI, #poa{ option = Option }, _RecallB) when Option > length(BI) + 1 ->
+	false;
+validate(_H, _WS, _BI, _POA, genesis_block) ->
+	false;
+validate(LastIndepHash, WeaveSize, BI, POA, RecallB) ->
+	RecallByte = calculate_challenge_byte(LastIndepHash, WeaveSize, POA#poa.option),
+	{ExpectedRecallBH, BlockBase} = find_challenge_block(RecallByte, BI),
+	validate_recall_block(RecallByte - BlockBase, ExpectedRecallBH, RecallB, POA).
 
 calculate_challenge_byte(_, 0, _) -> 0;
 calculate_challenge_byte(LastIndepHash, WeaveSize, Option) ->
@@ -186,14 +184,20 @@ find_byte_in_size_tagged_list(Byte, [{ID, TXEnd} | _])
 find_byte_in_size_tagged_list(Byte, [_ | Rest]) ->
 	find_byte_in_size_tagged_list(Byte, Rest).
 
-validate_recall_block(BlockOffset, ExpectedChallengeBH, ChallengeBlock, POA) ->
-	case ar_weave:indep_hash_post_fork_2_0(ChallengeBlock) of
-		ExpectedChallengeBH -> validate_tx_path(BlockOffset, POA);
+validate_recall_block(BlockOffset, ExpectedRecallBH, RecallB, POA) ->
+	case ar_weave:indep_hash_post_fork_2_0(RecallB) of
+		ExpectedRecallBH -> validate_tx_root(BlockOffset, RecallB, POA);
 		_ -> false
 	end.
 
-%% If we have validated the block and the challenge byte is 0, return true.
-validate_tx_path(0, _) -> true;
+validate_tx_root(BlockOffset, RecallB, POA) ->
+	case RecallB#block.tx_root == POA#poa.tx_root of
+		true ->
+			validate_tx_path(BlockOffset, POA);
+		false ->
+			false
+	end.
+
 validate_tx_path(BlockOffset, POA) ->
 	Validation =
 		ar_merkle:validate_path(
