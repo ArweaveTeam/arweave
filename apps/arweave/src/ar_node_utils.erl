@@ -533,7 +533,7 @@ validate(#{ block_index := BI, wallet_list := WalletList }, B, TXs, OldB, Recall
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
 validate(
-		_BI,
+		BI,
 		WalletList,
 		NewB =
 			#block {
@@ -541,100 +541,188 @@ validate(
 			},
 		TXs,
 		OldB,
-		_RecallB,
+		RecallB,
 		RewardAddr,
 		Tags
 	) ->
 	case Height >= ar_fork:height_2_0() of
-		true ->
-			validate_post_fork_2_0(_BI, WalletList, NewB, TXs, OldB, _RecallB, RewardAddr, Tags);
 		false ->
-			validate_pre_fork_2_0(_BI, WalletList, NewB, TXs, OldB, _RecallB, RewardAddr, Tags)
+			validate_pre_fork_2_0(BI, WalletList, NewB, TXs, OldB, RecallB, RewardAddr, Tags);
+		true ->
+			ar:info(
+				[
+					{event, validating_block},
+					{hash, ar_util:encode(NewB#block.indep_hash)},
+					{poa_block_hash, ar_util:encode((NewB#block.poa)#poa.block_indep_hash)}
+				]
+			),
+			case timer:tc(
+				fun() ->
+					validate_post_fork_2_0(BI, WalletList, NewB, TXs, OldB, RecallB)
+				end
+			) of
+				{TimeTaken, valid} ->
+					ar:info(
+						[
+							{event, block_validation_successful},
+							{hash, ar_util:encode(NewB#block.indep_hash)},
+							{time_taken_us, TimeTaken}
+						]
+					),
+					valid;
+				{TimeTaken, {invalid, Reason}} ->
+					ar:info(
+						[
+							{event, block_validation_failed},
+							{reason, Reason},
+							{hash, ar_util:encode(NewB#block.indep_hash)},
+							{time_taken_us, TimeTaken}
+						]
+					),
+					{invalid, Reason}
+			end
 	end.
 
-validate_post_fork_2_0(
+validate_post_fork_2_0(BI, WalletList, NewB = #block{ wallet_list = WalletList }, TXs, OldB, RecallB) ->
+	validate_block(height, {BI, WalletList, NewB, TXs, OldB, RecallB});
+validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB) ->
+	ar:info([
+		{event, block_not_accepted},
+		{hash, ar_util:encode(NewB#block.indep_hash)}
+	]),
+	{invalid, invalid_wallet_list}.
+
+validate_block(height, {BI, WalletList, NewB, TXs, OldB, RecallB}) ->
+	case ar_block:verify_height(NewB, OldB) of
+		false ->
+			{invalid, invalid_height};
+		true ->
+			validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB, RecallB})
+	end;
+validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB, RecallB}) ->
+	case ar_block:verify_previous_block(NewB, OldB) of
+		false ->
+			{invalid, invalid_previous_block};
+		true ->
+			validate_block(poa, {BI, WalletList, NewB, TXs, OldB, RecallB})
+	end;
+validate_block(poa, {BI, WalletList, NewB = #block{ poa = POA }, TXs, OldB, RecallB}) ->
+	case ar_poa:validate(OldB#block.indep_hash, OldB#block.weave_size, BI, POA, RecallB) of
+		false ->
+			{invalid, invalid_poa};
+		true ->
+			validate_block(difficulty, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(difficulty, {BI, WalletList, NewB, TXs, OldB}) ->
+	case ar_retarget:validate_difficulty(NewB, OldB) of
+		false ->
+			{invalid, invalid_difficulty};
+		true ->
+			validate_block(pow, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(
+	pow,
+	{
 		BI,
 		WalletList,
-		NewB =
-			#block {
-				wallet_list = WalletList,
-				nonce = Nonce,
-				diff = Diff,
-				timestamp = Timestamp,
-				height = Height,
-				poa = POA
-			},
+		NewB = #block{ nonce = Nonce, height = Height, diff = Diff, poa = POA },
 		TXs,
-		OldB =
-			#block {
-				indep_hash = LastIndepHash,
-				weave_size = LastWeaveSize
-			},
-		_,
-		_RewardAddr,
-		_Tags
-	) ->
-	ar:d([performing_v2_block_validation, {height, Height}]),
+		OldB
+	}
+) ->
 	POW = ar_weave:hash(
 		ar_block:generate_block_data_segment(NewB),
 		Nonce,
 		Height
 	),
-	ar:info(
-		[
-			{validating_block, ar_util:encode(NewB#block.indep_hash)},
-			{poa_block_header, ar_util:encode((NewB#block.poa)#poa.block_indep_hash)}
-		]
-	),
-	{MicroSecs, Results} =
-		timer:tc(
-			fun() ->
-				[
-					{pow, ar_mine:validate(POW, ar_poa:adjust_diff(Diff, POA#poa.option), Height)},
-					{poa, ar_poa:validate(LastIndepHash, LastWeaveSize, BI, POA)},
-					{votables, ar_votable:validate(NewB, OldB)},
-					{wallet_list, validate_wallet_list(WalletList)},
-					{txs, ar_tx:verify_txs(NewB, TXs, Diff, Height - 1, OldB#block.wallet_list, Timestamp)},
-					{tx_root, ar_block:verify_tx_root(NewB#block { txs = TXs })},
-					{difficulty, ar_retarget:validate_difficulty(NewB, OldB)},
-					{independent_hash, ar_weave:indep_hash_post_fork_2_0(NewB) == NewB#block.indep_hash},
-					{dependent_hash, ar_block:verify_dep_hash(NewB, POW)},
-					{weave_size, ar_block:verify_weave_size(NewB, OldB, TXs)},
-					{block_field_sizes, ar_block:block_field_size_limit(NewB)},
-					{height, ar_block:verify_height(NewB, OldB)},
-					{last_retarget, ar_block:verify_last_retarget(NewB, OldB)},
-					{previous_block, ar_block:verify_previous_block(NewB, OldB)},
-					{block_index, ar_block:verify_block_hash_list(NewB, OldB)},
-					{hash_list_root, ar_block:verify_block_hash_list_merkle(NewB, OldB, BI)},
-					{wallet_list2, ar_block:verify_wallet_list(NewB, OldB, POA, TXs)},
-					{cumulative_difficulty, ar_block:verify_cumulative_diff(NewB, OldB)}
-				]
+	case ar_mine:validate(POW, ar_poa:adjust_diff(Diff, POA#poa.option), Height) of
+		false ->
+			{invalid, invalid_pow};
+		true ->
+			case ar_block:verify_dep_hash(NewB, POW) of
+				false ->
+					{invalid, invalid_pow_hash};
+				true ->
+					validate_block(independent_hash, {BI, WalletList, NewB, TXs, OldB})
 			end
-		),
-	FailedTests = [ TestName || {TestName, Result} <- Results, Result =/= true ],
-	case FailedTests of
-		[] ->
-			ar:info(
-				[
-					{block_validation_successful, ar_util:encode(NewB#block.indep_hash)},
-					{time_taken, MicroSecs}
-				]
-			),
-			valid;
-		_ ->
-			ar:info(
-				[
-					{block_validation_failed, ar_util:encode(NewB#block.indep_hash)},
-					{time_taken, MicroSecs}
-				] ++ FailedTests
-			),
-			{invalid, FailedTests}
 	end;
-validate_post_fork_2_0(BI, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
-	validate_post_fork_2_0(BI, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
-validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
-	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),
-	{invalid, [hash_list_or_wallet_list]}.
+validate_block(independent_hash, {BI, WalletList, NewB, TXs, OldB}) ->
+	case ar_weave:indep_hash_post_fork_2_0(NewB) == NewB#block.indep_hash of
+		false ->
+			{invalid, invalid_independent_hash};
+		true ->
+			validate_block(wallet_list, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(wallet_list, {BI, WalletList, NewB = #block{ poa = POA }, TXs, OldB}) ->
+	case validate_wallet_list(WalletList) of
+		false ->
+			{invalid, invalid_wallet_list};
+		true ->
+			case ar_block:verify_wallet_list(NewB, OldB, POA, TXs) of
+				false ->
+					{invalid, invalid_wallet_list};
+				true ->
+					validate_block(block_field_sizes, {BI, WalletList, NewB, TXs, OldB})
+			end
+	end;
+validate_block(block_field_sizes, {BI, WalletList, NewB, TXs, OldB}) ->
+	case ar_block:block_field_size_limit(NewB) of
+		false ->
+			{invalid, invalid_field_size};
+		true ->
+			validate_block(votables, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(votables, {BI, WalletList, NewB, TXs, OldB}) ->
+	case ar_votable:validate(NewB, OldB) of
+		false ->
+			{invalid, invalid_votables};
+		true ->
+			validate_block(txs, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(
+	txs,
+	{
+		BI,
+		WalletList,
+		NewB = #block{ timestamp = Timestamp, height = Height, diff = Diff },
+		TXs,
+		OldB
+	}
+) ->
+	case ar_tx:verify_txs(NewB, TXs, Diff, Height - 1, OldB#block.wallet_list, Timestamp) of
+		false ->
+			{invalid, invalid_txs};
+		true ->
+			validate_block(tx_root, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(tx_root, {BI, WalletList, NewB, TXs, OldB}) ->
+	case ar_block:verify_tx_root(NewB#block { txs = TXs }) of
+		false ->
+			{invalid, invalid_txs};
+		true ->
+			validate_block(weave_size, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(weave_size, {BI, WalletList, NewB, TXs, OldB}) ->
+	case ar_block:verify_weave_size(NewB, OldB, TXs) of
+		false ->
+			{invalid, invalid_weave_size};
+		true ->
+			validate_block(block_index_root, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(block_index_root, {BI, WalletList, NewB, TXs, OldB}) ->
+	case ar_block:verify_block_hash_list_merkle(NewB, OldB, BI) of
+		false ->
+			{invalid, invalid_block_index_root};
+		true ->
+			validate_block(last_retarget, {BI, WalletList, NewB, TXs, OldB})
+	end;
+validate_block(last_retarget, {_BI, _WalletList, NewB, _TXs, OldB}) ->
+	case ar_block:verify_last_retarget(NewB, OldB) of
+		false ->
+			{invalid, invalid_last_retarget};
+		true ->
+			valid
+	end.
 
 validate_pre_fork_2_0(_, _, NewB, _, _, _RecallB = unavailable, _, _) ->
 	ar:info([{recall_block_unavailable, ar_util:encode(NewB#block.indep_hash)}]),

@@ -268,7 +268,7 @@ json_struct_to_block({BlockStruct}) ->
 			end,
 		poa =
 			case find_value(<<"poa">>, BlockStruct) of
-				undefined -> undefined;
+				undefined -> #poa{};
 				POAStruct -> json_struct_to_poa(POAStruct)
 			end,
 		tx_tree =

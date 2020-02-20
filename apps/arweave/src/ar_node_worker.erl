@@ -373,7 +373,7 @@ maybe_remove_tx(TXs, TXID, Sig) ->
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recovery as appropriate.
-process_new_block(#{ block_index := not_joined }, BShadow, _POA, _Peer) ->
+process_new_block(#{ block_index := not_joined }, BShadow, _Recall, _Peer) ->
 	ar:info([
 		ar_node_worker,
 		ignore_block,
@@ -381,7 +381,7 @@ process_new_block(#{ block_index := not_joined }, BShadow, _POA, _Peer) ->
 		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
 	]),
 	none;
-process_new_block(#{ height := Height }, BShadow, _POA, _Peer)
+process_new_block(#{ height := Height }, BShadow, _Recall, _Peer)
 		when BShadow#block.height =< Height ->
 	ar:info(
 		[
@@ -391,7 +391,7 @@ process_new_block(#{ height := Height }, BShadow, _POA, _Peer)
 		]
 	),
 	none;
-process_new_block(#{ height := Height } = State, BShadow, POA, Peer)
+process_new_block(#{ height := Height } = State, BShadow, Recall, Peer)
 		when BShadow#block.height >= Height + 1 ->
 	ShadowHeight = BShadow#block.height,
 	ShadowHL = BShadow#block.hash_list,
@@ -409,7 +409,7 @@ process_new_block(#{ height := Height } = State, BShadow, POA, Peer)
 			]),
 			none;
 		{ok, {}} ->
-			apply_new_block(State, BShadow#block { hash_list = ?BI_TO_BHL(BI) }, POA, Peer);
+			apply_new_block(State, BShadow#block { hash_list = ?BI_TO_BHL(BI) }, Recall, Peer);
 		{ok, {DivergedHashes, BIBeforeFork}} ->
 			NewBlockTXPairs =
 				prepare_block_tx_pairs_for_fork_through_2_0(Height, length(BIBeforeFork) - 1, BlockTXPairs, LegacyHL),
@@ -471,14 +471,14 @@ get_diverged_block_hashes_reversed([], []) -> {ok, []};
 get_diverged_block_hashes_reversed(DivergedHashes, _) ->
 	{ok, lists:reverse(DivergedHashes)}.
 
-apply_new_block(State, BShadow, POA, Peer) ->
+apply_new_block(State, BShadow, Recall, Peer) ->
 	#{ height := Height, block_index := BI, wallet_list := WalletList, block_txs_pairs := BlockTXPairs } = State,
-	case generate_block_from_shadow(State, BShadow, POA, Peer) of
-		{ok, {NewB, NewPOA}} ->
+	case generate_block_from_shadow(State, BShadow, Recall, Peer) of
+		{ok, {NewB, RecallB}} ->
 			B = ar_util:get_head_block(BI),
 			StateNew = State#{ wallet_list => NewB#block.wallet_list },
 			TXs = NewB#block.txs,
-			case ar_node_utils:validate(StateNew, NewB, TXs, B, NewPOA) of
+			case ar_node_utils:validate(StateNew, NewB, TXs, B, RecallB) of
 				{invalid, _Reason} ->
 					none;
 				valid ->
@@ -508,11 +508,11 @@ apply_new_block(State, BShadow, POA, Peer) ->
 			none
 	end.
 
-generate_block_from_shadow(State, BShadow, POA, Peer) ->
+generate_block_from_shadow(State, BShadow, Recall, Peer) ->
 	{TXs, MissingTXIDs} = pick_txs(BShadow#block.txs, aggregate_txs(State)),
 	case MissingTXIDs of
 		[] ->
-			generate_block_from_shadow(State, BShadow, POA, TXs, Peer);
+			generate_block_from_shadow(State, BShadow, Recall, TXs, Peer);
 		_ ->
 			ar:info([
 				ar_node_worker,
@@ -523,17 +523,34 @@ generate_block_from_shadow(State, BShadow, POA, Peer) ->
 			error
 	end.
 
-generate_block_from_shadow(State, BShadow, POA, TXs, _Peer) when is_record(POA, poa) ->
-	{ok,
-		{
-			BShadow#block {
-				wallet_list = generate_wallet_list_from_shadow(State, BShadow, POA, TXs),
+generate_block_from_shadow(State = #{ height := Height, block_index := BI }, BShadow, Recall, TXs, Peer) ->
+	case Height + 1 >= ar_fork:height_2_0() of
+		true ->
+			B = BShadow#block {
+				wallet_list = generate_wallet_list_from_shadow(State, BShadow, noop, TXs),
 				txs = TXs
 			},
-			POA
-		}
-	};
-generate_block_from_shadow(State, BShadow, Recall, TXs, Peer) ->
+			MaybeRecallH = (BShadow#block.poa)#poa.block_indep_hash,
+			case MaybeRecallH of
+				<<>> ->
+					{ok, {B, genesis_block}};
+				RecallH ->
+					case ar_node_utils:get_full_block(Peer, RecallH, BI) of
+						unavailable ->
+							ar:warn([
+								{event, did_not_find_recall_block},
+								{recall_block, ar_util:encode(RecallH)}
+							]),
+							error;
+						RecallB ->
+							{ok, {B, RecallB}}
+					end
+			end;
+		false ->
+			generate_block_from_shadow_pre_2_0(State, BShadow, Recall, TXs, Peer)
+	end.
+
+generate_block_from_shadow_pre_2_0(State, BShadow, Recall, TXs, Peer) ->
 	#{ block_index := BI } = State,
 	{RecallIndepHash, Key, Nonce} =
 		case Recall of
