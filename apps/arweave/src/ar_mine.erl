@@ -489,7 +489,8 @@ server(
 					CandidateB#block{
 						nonce = Nonce,
 						hash = Hash,
-						wallet_list = NewWalletList
+						wallet_list = NewWalletList,
+						wallet_list_hash = ar_block:hash_wallet_list(NewWalletList)
 					};
 				false ->
 					{FinderReward, RewardPool} =
@@ -524,6 +525,7 @@ server(
 						cumulative_diff = NewCDiff,
 						last_retarget = NewLastRetarget,
 						wallet_list = NewWalletList,
+						wallet_list_hash = ar_block:hash_wallet_list(NewWalletList),
 						reward_pool = RewardPool
 					}
 			end,
