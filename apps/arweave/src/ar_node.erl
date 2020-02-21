@@ -8,7 +8,7 @@
 -export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7]).
 -export([stop/1]).
 
--export([get_blocks/1, get_block/3]).
+-export([get_blocks/1, get_block/3, get_block/4]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
 -export([get_block_index/1, get_height/1, get_legacy_hash_list/1]).
@@ -17,7 +17,7 @@
 -export([get_last_tx/2]).
 -export([get_current_diff/1, get_diff/1]).
 -export([get_pending_txs/1, get_pending_txs/2, get_mined_txs/1]).
--export([get_current_block_hash/1, get_current_block/1]).
+-export([get_current_block_hash/1, get_current_block/1, get_current_block/2]).
 -export([get_reward_addr/1]).
 -export([get_reward_pool/1]).
 -export([is_joined/1]).
@@ -222,7 +222,9 @@ stop(Node) ->
 %% @doc Get the current top block.
 %% If found the result will be a block with tx references, not a full block.
 % TODO: standardize return, unavailable | not_found.
-get_current_block(Peers) when is_list(Peers) ->
+get_current_block(Peer) ->
+	get_current_block(Peer, ?WITH_TX_DATA).
+get_current_block(Peers, _TXFormat) when is_list(Peers) ->
 	% ask list of external peers for block
 	lists:foldl(
 		fun(Peer, Acc) ->
@@ -239,7 +241,7 @@ get_current_block(Peers) when is_list(Peers) ->
 		unavailable,
 		Peers
 	);
-get_current_block(Peer) when is_pid(Peer) ->
+get_current_block(Peer, _TXFormat) when is_pid(Peer) ->
 	Ref = make_ref(),
 	Peer ! {get_current_block, self(), Ref},
 	receive
@@ -247,9 +249,9 @@ get_current_block(Peer) when is_pid(Peer) ->
 	after ?LOCAL_NET_TIMEOUT ->
 		not_found
 	end;
-get_current_block(Peer) ->
+get_current_block(Peer, TXFormat) ->
 	% handle external peer request
-	ar_http_iface_client:get_current_block(Peer).
+	ar_http_iface_client:get_current_block(Peer, TXFormat).
 
 %% @doc Return the entire blockindex from a node.
 % TODO: Change references to blockindex, not blocklist.
@@ -266,6 +268,8 @@ get_blocks(Node) ->
 %% @doc Get a specific block via blocks indep_hash.
 %% If found the result will be a block with tx references, not a full block.
 get_block(Peers, ID, BI) when is_list(Peers) ->
+	get_block(Peers, ID, BI, ?WITH_TX_DATA).
+get_block(Peers, ID, BI, TXFormat) when is_list(Peers) ->
 	% ask list of external peers for block
 	% ar:d([{getting_block, ar_util:encode(ID)}, {peers, Peers}]),
 	case ar_storage:read_block(ID, BI) of
@@ -275,7 +279,7 @@ get_block(Peers, ID, BI) when is_list(Peers) ->
 					case is_atom(Acc) of
 						false -> Acc;
 						true ->
-							B = get_block(Peer, ID, BI),
+							B = get_block(Peer, ID, BI, TXFormat),
 							case is_atom(B) of
 								true -> Acc;
 								false -> B
@@ -287,12 +291,12 @@ get_block(Peers, ID, BI) when is_list(Peers) ->
 			);
 		Block -> Block
 	end;
-get_block(Proc, ID, BI) when is_pid(Proc) ->
+get_block(Proc, ID, BI, _TXFormat) when is_pid(Proc) ->
 	% attempt to get block from nodes local storage
 	ar_storage:read_block(ID, BI);
-get_block(Host, ID, BI) ->
+get_block(Host, ID, BI, TXFormat) ->
 	% handle external peer request
-	ar_http_iface_client:get_block(Host, ID, BI).
+	ar_http_iface_client:get_block(Host, ID, BI, TXFormat).
 
 %% @doc Gets the list of pending transactions. This includes:
 %% 1. The transactions currently staying in the priority queue.

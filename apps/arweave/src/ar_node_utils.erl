@@ -26,9 +26,11 @@
 
 %% @doc Get a full block (a block containing all transactions) by the independent hash.
 %%      Try to find the block locally first. If we do not have the full block on disk, try to download it from peers.
-get_full_block(Peers, ID, BI) when is_list(Peers) ->
+get_full_block(Peers, ID, BI) ->
+	get_full_block(Peers, ID, BI, ?WITH_TX_DATA).
+get_full_block(Peers, ID, BI, TXFormat) when is_list(Peers) ->
 	GetBlockFromPeersFun = fun() ->
-		get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BI)
+		get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BI, TXFormat)
 	end,
 	case ar_storage:read_block(ID, BI) of
 		unavailable ->
@@ -47,7 +49,7 @@ get_full_block(Peers, ID, BI) when is_list(Peers) ->
 					FinalB
 			end
 	end;
-get_full_block(Pid, ID, BI) when is_pid(Pid) ->
+get_full_block(Pid, ID, BI, _TXFormat) when is_pid(Pid) ->
 	%% Attempt to get block from local storage and add transactions.
 	case make_full_block(ID, BI) of
 		{ok, B} ->
@@ -55,9 +57,9 @@ get_full_block(Pid, ID, BI) when is_pid(Pid) ->
 		{error, _} ->
 			unavailable
 	end;
-get_full_block(Peer, ID, BI) ->
+get_full_block(Peer, ID, BI, TXFormat) ->
 	%% Handle external peer request.
-	case ar_http_iface_client:get_full_block([Peer], ID, BI) of
+	case ar_http_iface_client:get_full_block([Peer], ID, BI, TXFormat) of
 		{_Peer, B} ->
 			B;
 		Error ->
@@ -66,10 +68,10 @@ get_full_block(Peer, ID, BI) ->
 
 %% @doc Attempt to get a full block from a HTTP peer, picking the node to query
 %% randomly until the block is retreived.
-get_full_block_from_remote_peers([], _ID, _BI) ->
+get_full_block_from_remote_peers([], _ID, _BI, _TXFormat) ->
 	unavailable;
-get_full_block_from_remote_peers(Peers, ID, BI) ->
-	{Time, MaybeB} = timer:tc(fun() -> ar_http_iface_client:get_full_block(Peers, ID, BI) end),
+get_full_block_from_remote_peers(Peers, ID, BI, TXFormat) ->
+	{Time, MaybeB} = timer:tc(fun() -> ar_http_iface_client:get_full_block(Peers, ID, BI, TXFormat) end),
 	case MaybeB of
 		{Peer, B} when ?IS_BLOCK(B) ->
 			case ar_meta_db:get(http_logging) of

@@ -296,9 +296,30 @@ get_format_2_tx_with_no_data_test() ->
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
 			"/tx/" ++ EncodedTxID,
-			[{<<"x-tx-format">>, ?TX_WITHOUT_DATA_FORMAT}]
+			ar_tx:tx_format_to_http_header(?WITH_TX_HEADER)
 		),
 	?assertEqual(TX#tx{data = <<>>, data_size = 0}, ar_serialize:json_struct_to_tx(Body)).
+
+%% @doc Ensure unknown transaction formats fallback to WITH_TX_DATA, for
+%% backward/pre-2.0 compatibility purposes. All TX data must be retained
+get_unknown_tx_format_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	{Node, _} = ar_test_node:start(B0),
+	TX = #tx{id = TxID} = ar_tx:new(<<"DATA">>),
+	EncodedTxID = binary_to_list(ar_util:encode(TxID)),
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+	ar_test_node:wait_until_receives_txs(Node, [TX]),
+	ar_node:mine(Node),
+	ar_test_node:wait_until_height(Node, 1),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_httpc:request(
+			<<"GET">>,
+			{127, 0, 0, 1, 1984},
+			"/tx/" ++ EncodedTxID,
+			ar_tx:tx_format_to_http_header(unknown_tx_format)
+		),
+	?assertEqual(TX, ar_serialize:json_struct_to_tx(Body)).
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->

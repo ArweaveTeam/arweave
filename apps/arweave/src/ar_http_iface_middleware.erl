@@ -200,8 +200,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 % @doc Return a transaction specified via the the transaction id (hash)
 %% GET request to endpoint /tx/{hash}
 handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
-	case cowboy_req:header(<<"x-tx-format">>, Req, ?TX_WITH_DATA_FORMAT) of
-		?TX_WITHOUT_DATA_FORMAT ->
+	case cowboy_req:header(<<"x-tx-format">>, Req, ?TX_WITH_DATA_HTTP_FORMAT) of
+		?TX_WITHOUT_DATA_HTTP_FORMAT ->
 			case ar_util:safe_decode(Hash) of
 				{error, invalid} ->
 					{response, {400, #{}, <<"Invalid hash.">>}};
@@ -1235,7 +1235,8 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 						B =
 							ar_node:get_block(whereis(http_entrypoint_node),
 							ID,
-							CurrentBI),
+							CurrentBI,
+							?WITH_TX_HEADER),
 						B#block.indep_hash;
 					<<"hash">> -> ID
 				end,
@@ -1315,7 +1316,8 @@ find_block(<<"height">>, RawHeight, BI) ->
 	ar_node:get_block(
 		whereis(http_entrypoint_node),
 		binary_to_integer(RawHeight),
-		BI
+		BI,
+		?WITH_TX_HEADER
 	);
 find_block(<<"hash">>, ID, BI) ->
 	ar_storage:read_block(ID, BI).

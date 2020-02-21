@@ -4,14 +4,15 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/4, send_new_tx/2, get_block/3]).
+-export([send_new_block/4, send_new_tx/2, get_block/3, get_block/4]).
 -export([get_block_shadow/2]).
--export([get_tx/3, get_tx_data/2, get_full_block/3, get_block_subfield/3, add_peer/1]).
+-export([get_tx/3, get_tx/4, get_tx_data/2]).
+-export([get_full_block/3, get_full_block/4, get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).
 -export([get_wallet_list/2, get_block_index/1, get_block_index/2]).
--export([get_current_block/1, get_current_block/2]).
+-export([get_current_block/1, get_current_block/2, get_current_block/3]).
 -export([get_legacy_hash_list/1]).
 
 -include("ar.hrl").
@@ -48,7 +49,7 @@ has_tx(Peer, ID) ->
 			<<"GET">>,
 			Peer,
 			"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
-			p2p_headers() ++ [{<<"x-tx-format">>, ?TX_WITHOUT_DATA_FORMAT}],
+			p2p_headers() ++ ar_tx:tx_format_to_http_header(?WITH_TX_HEADER),
 			[],
 			500,
 			3 * 1000
@@ -123,9 +124,11 @@ add_peer(Peer) ->
 
 %% @doc Get a peers current, top block.
 get_current_block(Peer) ->
-	get_current_block(Peer, get_block_index(Peer)).
-get_current_block(Peer, BI) ->
-	case get_full_block([Peer], hd(BI), BI) of
+	get_current_block(Peer, ?WITH_TX_DATA).
+get_current_block(Peer, TXFormat) ->
+	get_current_block(Peer, get_block_index(Peer), TXFormat).
+get_current_block(Peer, BI, TXFormat) ->
+	case get_full_block([Peer], hd(BI), BI, TXFormat) of
 		{_Peer, B} ->
 			B;
 		Error ->
@@ -134,7 +137,9 @@ get_current_block(Peer, BI) ->
 
 %% @doc Retreive a block by height or hash from a remote peer.
 get_block(Peer, ID, BI) ->
-	case get_full_block([Peer], ID, BI) of
+	get_block(Peer, ID, BI, ?WITH_TX_DATA).
+get_block(Peer, ID, BI, TXFormat) ->
+	case get_full_block([Peer], ID, BI, TXFormat) of
 		{_Peer, B} ->
 			B;
 		Error ->
@@ -184,9 +189,11 @@ prepare_block_id(ID) when is_integer(ID) ->
 
 %% @doc Retreive a full block (full transactions included in body)
 %% by hash from remote peers.
-get_full_block([], _ID, _BI) ->
-	unavailable;
 get_full_block(Peers, ID, BI) ->
+	get_full_block(Peers, ID, BI, ?WITH_TX_DATA).
+get_full_block([], _ID, _BI, _TXFormat) ->
+	unavailable;
+get_full_block(Peers, ID, BI, TXFormat) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
 	case handle_block_response(
 		Peer,
@@ -199,7 +206,7 @@ get_full_block(Peers, ID, BI) ->
 			[],
 			10 * 1000
 		),
-		{full_block, BI}
+		{full_block, BI}, TXFormat
 	) of
 		unavailable ->
 			get_full_block(Peers -- [Peer], ID, BI);
@@ -315,24 +322,25 @@ get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
 		)
 	).
 
-get_txs(Peers, MempoolTXs, B) ->
+get_txs(_Peers, _MempoolTXs, _B, ?NO_TX) -> {ok, []};
+get_txs(Peers, MempoolTXs, B, TXFormat) ->
 	case B#block.txs of
 		TXIDs when length(TXIDs) > ?BLOCK_TX_COUNT_LIMIT ->
 			{error, txs_count_exceeds_limit};
 		TXIDs ->
-			get_txs(Peers, MempoolTXs, TXIDs, [], 0)
+			get_txs(Peers, MempoolTXs, TXIDs, [], 0, TXFormat)
 	end.
 
-get_txs(_Peers, _MempoolTXs, [], TXs, _TotalSize) ->
+get_txs(_Peers, _MempoolTXs, [], TXs, _TotalSize, _TXFormat) ->
 	{ok, lists:reverse(TXs)};
-get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
-	case get_tx(Peers, TXID, MempoolTXs) of
+get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize, TXFormat) ->
+	case get_tx(Peers, TXID, MempoolTXs, TXFormat) of
 		TX when is_record(TX, tx) ->
 			case TotalSize + byte_size(TX#tx.data) of
 				NewTotalSize when NewTotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
 					{error, txs_exceed_block_size_limit};
 				NewTotalSize ->
-					get_txs(Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
+					get_txs(Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize, TXFormat)
 			end;
 		_ ->
 			{error, tx_not_found}
@@ -340,6 +348,8 @@ get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
 
 %% @doc Retreive a tx by ID from the memory pool, disk, or a remote peer.
 get_tx(Peers, TXID, MempoolTXs) ->
+	get_tx(Peers, TXID, MempoolTXs, ?WITH_TX_DATA).
+get_tx(Peers, TXID, MempoolTXs, TXFormat) ->
 	case list_search(
 		fun(TX) ->
 			TXID == TX#tx.id
@@ -349,38 +359,38 @@ get_tx(Peers, TXID, MempoolTXs) ->
 		{value, TX} ->
 			TX;
 		false ->
-			get_tx_from_disk_or_peer(Peers, TXID)
+			get_tx_from_disk_or_peer(Peers, TXID, TXFormat)
 	end.
 
-get_tx_from_disk_or_peer(Peers, TXID) ->
+get_tx_from_disk_or_peer(Peers, TXID, TXFormat) ->
 	case ar_storage:read_tx(TXID) of
 		unavailable ->
-			get_tx_from_remote_peer(Peers, TXID);
+			get_tx_from_remote_peer(Peers, TXID, TXFormat);
 		TX ->
 			TX
 	end.
 
-get_tx_from_remote_peer([], _TXID) ->
+get_tx_from_remote_peer([], _TXID, _TXFormat) ->
 	not_found;
-get_tx_from_remote_peer(Peers, TXID) ->
+get_tx_from_remote_peer(Peers, TXID, TXFormat) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
 	case handle_tx_response(
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
 			"/tx/" ++ binary_to_list(ar_util:encode(TXID)),
-			p2p_headers(),
+			p2p_headers() ++ ar_tx:tx_format_to_http_header(TXFormat),
 			[],
 			500,
 			10 * 1000
 		)
 	) of
 		not_found ->
-			get_tx_from_remote_peer(Peers -- [Peer], TXID);
+			get_tx_from_remote_peer(Peers -- [Peer], TXID, TXFormat);
 		pending ->
-			get_tx_from_remote_peer(Peers -- [Peer], TXID);
+			get_tx_from_remote_peer(Peers -- [Peer], TXID, TXFormat);
 		gone ->
-			get_tx_from_remote_peer(Peers -- [Peer], TXID);
+			get_tx_from_remote_peer(Peers -- [Peer], TXID, TXFormat);
 		ShouldBeTX ->
 			ShouldBeTX
 	end.
@@ -544,8 +554,12 @@ handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block
 		Handled ->
 			Handled
 	end;
-handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, {full_block, BI}) ->
-	case catch reconstruct_full_block(Peer, Peers, Body, BI) of
+handle_block_response(_, _, Response, _) ->
+	ar:warn([{unexpected_block_response, Response}]),
+	unavailable.
+
+handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, {full_block, BI}, TXFormat) ->
+	case catch reconstruct_full_block(Peer, Peers, Body, BI, TXFormat) of
 		{'EXIT', Reason} ->
 			ar:info([
 				"Failed to parse block response.",
@@ -556,11 +570,10 @@ handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, {full_
 		Handled ->
 			Handled
 	end;
-handle_block_response(_, _, Response, _) ->
-	ar:warn([{unexpected_block_response, Response}]),
-	unavailable.
+handle_block_response(Peer, Peers, Response, Context, _TXFormat) ->
+	handle_block_response(Peer, Peers, Response, Context).
 
-reconstruct_full_block(Peer, Peers, Body, BI) ->
+reconstruct_full_block(Peer, Peers, Body, BI, TXFormat) ->
 	B = ar_serialize:json_struct_to_block(Body),
 	case ?IS_BLOCK(B) of
 		true ->
@@ -585,7 +598,12 @@ reconstruct_full_block(Peer, Peers, Body, BI) ->
 					HL -> HL
 				end,
 			MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node)),
-			case {get_txs(Peers, MempoolTXs, B), WalletList} of
+			TXFormatByHeight =
+				case B#block.height >= ar_fork:height_2_0() of
+					true -> TXFormat;
+					false -> ?WITH_TX_DATA
+				end,
+			case {get_txs(Peers, MempoolTXs, B, TXFormatByHeight), WalletList} of
 				{{ok, TXs}, MaybeWalletList} when is_list(MaybeWalletList) ->
 					B#block {
 						txs = TXs,
