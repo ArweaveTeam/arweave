@@ -8,6 +8,7 @@
 -export([generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1]).
 -export([chunk_binary/2]).
 -export([chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1]).
+-export([tx_format_to_http_header/1, tx_http_format/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -483,6 +484,13 @@ chunks_to_size_tagged_chunks(Chunks) ->
 
 sized_chunks_to_sized_chunk_ids(SizedChunks) ->
 	[{ar_tx:generate_chunk_id(Chunk), Size} || {Chunk, Size} <- SizedChunks].
+
+tx_format_to_http_header(TXFormat) ->
+	[{<<"x-tx-format">>, tx_http_format(TXFormat)}].
+
+tx_http_format(?WITH_TX_DATA) -> ?TX_WITH_DATA_HTTP_FORMAT;
+tx_http_format(?WITH_TX_HEADER) -> ?TX_WITHOUT_DATA_HTTP_FORMAT;
+tx_http_format(_) -> ?TX_WITH_DATA_HTTP_FORMAT.
 
 %%% Tests: ar_tx
 

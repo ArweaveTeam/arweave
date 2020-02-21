@@ -210,9 +210,15 @@
 -define(TX_SEND_WITHOUT_ASKING_SIZE_LIMIT, 1000).
 
 %% @doc Transaction data structure format. The main difference is that format 2
-%% doesn't contain transaction data in the #tx{} record. Format 1 has data.
--define(TX_WITH_DATA_FORMAT, <<"1">>).
--define(TX_WITHOUT_DATA_FORMAT, <<"2">>).
+%% doesn't contain transaction data in the HTTP payload. Format 1 has data.
+-define(TX_WITH_DATA_HTTP_FORMAT, <<"1">>).
+-define(TX_WITHOUT_DATA_HTTP_FORMAT, <<"2">>).
+
+%% @doc Transaction internal data structure format tags. These control the
+%% internal formatting of transaction records, #tx{}, in block acquisition
+-define(NO_TX, no_tx).
+-define(WITH_TX_HEADER, with_tx_header).
+-define(WITH_TX_DATA, with_tx_data).
 
 %% @doc Log output directory
 -define(LOG_DIR, "logs").
