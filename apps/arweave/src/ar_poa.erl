@@ -94,7 +94,19 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 								true ->
 									generate(Seed, WeaveSize, BI, Option + 1, Limit);
 								false ->
-									create_poa_from_data(B, TX, SizeTaggedTXs, RecallByte - BlockBase, Option)
+									POA = create_poa_from_data(B, TX, SizeTaggedTXs, RecallByte - BlockBase, Option),
+									case byte_size(POA#poa.data_path) > ?MAX_PATH_SIZE of
+										true ->
+											ar:info([
+												{event, data_path_size_exceeds_the_limit},
+												{block, ar_util:encode(POA#poa.block_indep_hash)},
+												{tx, ar_util:encode(POA#poa.tx_id)},
+												{limit, ?MAX_PATH_SIZE}
+											]),
+											generate(Seed, WeaveSize, BI, Option + 1, Limit);
+										false ->
+											POA
+									end
 							end
 					end
 			end
