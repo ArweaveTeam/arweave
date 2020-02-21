@@ -140,7 +140,7 @@ transition_block(H, BI, NewBI) ->
 				{v1_hash, ar_util:encode(H)},
 				{v2_hash, ar_util:encode(B#block.indep_hash)}
 			]),
-			ar_storage:write_block(B),
+			ar_storage:write_block(B, do_not_write_wallet_list),
 			{ok, {B#block.indep_hash, B#block.weave_size, RawB#block.indep_hash}}
 	end.
 
