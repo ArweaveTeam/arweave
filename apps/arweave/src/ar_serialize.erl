@@ -60,6 +60,7 @@ block_to_json_struct(
 		tx_root = TXRoot,
 		tx_tree = TXTree,
 		wallet_list = WalletList,
+		wallet_list_hash = WalletListHash,
 		reward_addr = RewardAddr,
 		tags = Tags,
 		reward_pool = RewardPool,
@@ -102,18 +103,23 @@ block_to_json_struct(
 				case is_binary(WalletList) of
 					true -> ar_util:encode(WalletList);
 					false ->
-						lists:map(
-							fun({Wallet, Qty, Last}) ->
-								{
-									[
-										{wallet, ar_util:encode(Wallet)},
-										{quantity, Qty},
-										{last_tx, ar_util:encode(Last)}
-									]
-								}
-							end,
-							WalletList
-						)
+						case WalletListHash of
+							not_set ->
+								lists:map(
+									fun({Wallet, Qty, Last}) ->
+										{
+											[
+												{wallet, ar_util:encode(Wallet)},
+												{quantity, Qty},
+												{last_tx, ar_util:encode(Last)}
+											]
+										}
+									end,
+									WalletList
+								);
+							WLH ->
+								ar_util:encode(WLH)
+						end
 				end
 			},
 			{reward_addr,
@@ -249,6 +255,13 @@ json_struct_to_block({BlockStruct}) ->
 						<- WalletList
 					];
 				true -> ar_util:decode(WalletList)
+			end,
+		wallet_list_hash =
+			case is_binary(WalletList) of
+				true ->
+					ar_util:decode(WalletList);
+				false ->
+					ar_block:hash_wallet_list(WalletList)
 			end,
 		reward_addr =
 			case find_value(<<"reward_addr">>, BlockStruct) of
@@ -567,7 +580,7 @@ block_roundtrip_test() ->
 	JSONStruct = jsonify(block_to_json_struct(B)),
 	BRes = json_struct_to_block(JSONStruct),
 	?assertEqual(
-		B,
+		B#block{ wallet_list = B#block.wallet_list_hash },
 		BRes#block { hash_list = B#block.hash_list }
 	).
 
@@ -586,12 +599,12 @@ block_tx_roundtrip_test() ->
 full_block_roundtrip_test() ->
 	[B] = ar_weave:init(),
 	TXBase = ar_tx:new(<<"test">>),
-	B2 = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
+	B2 = B#block{ txs = [TXBase], tags = ["hello", "world", "example"] },
 	JsonB = jsonify(full_block_to_json_struct(B2)),
 	BRes = json_struct_to_full_block(JsonB),
 	?assertEqual(
-		B2,
-		BRes#block { hash_list = B#block.hash_list }
+		B2#block{ wallet_list = B2#block.wallet_list_hash },
+		BRes#block{ hash_list = B#block.hash_list }
 	).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.

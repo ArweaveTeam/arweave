@@ -1,11 +1,11 @@
 -module(ar_storage).
 
 -export([start/0]).
--export([write_block/1, write_full_block/1, write_full_block/2, write_encrypted_block/2]).
+-export([write_block/1, write_block/2, write_full_block/1, write_full_block/2, write_encrypted_block/2]).
 -export([read_block/2, read_encrypted_block/1, read_block_shadow/1]).
 -export([invalidate_block/1, delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
--export([write_wallet_list/1, read_wallet_list/1]).
+-export([read_wallet_list/1]).
 -export([write_block_block_index/2, read_block_block_index/1]).
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
 -export([enough_space/1, select_drive/2]).
@@ -76,44 +76,35 @@ invalidate_block(B) ->
 	filelib:ensure_dir(TargetFile),
 	file:rename(block_filepath(B), TargetFile).
 
-%% @doc Write a block (with the hash.json as the filename) to disk.
-%% When debug is set, does not consider disk space. This is currently
-%% necessary because of test timings
--ifdef(DEBUG).
-write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
-write_block(RawB) ->
+write_block(Blocks) when is_list(Blocks) -> lists:foreach(fun write_block/1, Blocks);
+write_block(B) ->
+	write_block(B, write_wallet_list).
+
+write_block(B, WriteWalletList) ->
 	case ar_meta_db:get(disk_logging) of
 		true ->
-			ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]);
+			ar:info([
+				{event, writing_block_to_disk},
+				{block, ar_util:encode(B#block.indep_hash)}
+			]);
 		_ ->
 			do_nothing
 	end,
-	WalletID = write_wallet_list(RawB#block.wallet_list),
-	B = RawB#block { wallet_list = WalletID },
-	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-	file:write_file(Name = block_filepath(B), BlockToWrite),
-	ar_block_index:add(B, Name),
-	Name.
--else.
-write_block(Bs) when is_list(Bs) -> lists:foreach(fun write_block/1, Bs);
-write_block(RawB) ->
-	case ar_meta_db:get(disk_logging) of
-		true ->
-			ar:report([{writing_block_to_disk, ar_util:encode(RawB#block.indep_hash)}]);
-		_ ->
-			do_nothing
+	case WriteWalletList of
+		do_not_write_wallet_list ->
+			noop;
+		write_wallet_list ->
+			write_wallet_list(B)
 	end,
-	WalletID = write_wallet_list(RawB#block.wallet_list),
-	B = RawB#block { wallet_list = WalletID },
-	BlockToWrite = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-	case enough_space(byte_size(BlockToWrite)) of
+	BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
+	case enough_space(byte_size(BlockJSON)) of
 		true ->
-			file:write_file(Name = block_filepath(B), BlockToWrite),
+			file:write_file(Name = block_filepath(B), BlockJSON),
 			ar_block_index:add(B, Name),
 			spawn(
 				ar_meta_db,
 				increase,
-				[used_space, byte_size(BlockToWrite)]
+				[used_space, byte_size(BlockJSON)]
 			),
 			Name;
 		false ->
@@ -125,7 +116,6 @@ write_block(RawB) ->
 			),
 			{error, not_enough_space}
 	end.
--endif.
 
 write_full_block(B) ->
 	BShadow = B#block { txs = [T#tx.id || T <- B#block.txs] },
@@ -357,9 +347,15 @@ write_block_block_index(Hash, BI) ->
 	file:write_file(block_index_filepath(Hash), JSON),
 	ID.
 
-%% Write a block hash list to disk for retreival later (in emergencies).
-write_wallet_list(WalletList) ->
-	ID = ar_block:hash_wallet_list(WalletList),
+%% Write a block hash list to disk for retreival later.
+write_wallet_list(B) ->
+	WalletList = B#block.wallet_list,
+	ID = case B#block.wallet_list_hash of
+		not_set ->
+			ar_block:hash_wallet_list(WalletList);
+		WalletListHash ->
+			WalletListHash
+	end,
 	JSON = ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)),
 	file:write_file(wallet_list_filepath(ID), JSON),
 	ID.
@@ -571,7 +567,8 @@ store_and_retrieve_block_block_index_test() ->
 
 store_and_retrieve_wallet_list_test() ->
 	[B0] = ar_weave:init(),
-	write_wallet_list(WL = B0#block.wallet_list),
+	write_wallet_list(B0),
+	WL = B0#block.wallet_list,
 	receive after 500 -> ok end,
 	?assertEqual({ok, WL}, read_wallet_list(ar_block:hash_wallet_list(WL))).
 

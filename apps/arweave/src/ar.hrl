@@ -301,6 +301,9 @@
 	%% in the /block/[hash] API endpoint the list is replaced with a hash.
 	%% Reconstructed on the receiving side. Stored in the separate files.
 	wallet_list = [], % A map of wallet balances, the wallet list hash, or undefined.
+	%% A field for internal use, not serialized. Added to avoid hashing the wallet list
+	%% when the hash was known before the list was reconstructed.
+	wallet_list_hash = not_set,
     reward_addr = unclaimed, % Address to credit mining reward or unclaimed.
     tags = [], % Miner specified tags to store with the block.
 	reward_pool = 0, % Current pool of mining reward.
