@@ -7,7 +7,8 @@
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
 -export([verify_cumulative_diff/2, verify_block_hash_list_merkle/3]).
 -export([verify_tx_root/1]).
--export([hash_wallet_list/1]).
+-export([hash_wallet_list/2, hash_wallet_list/3, hash_wallet_list_without_reward_wallet/2]).
+-export([hash_wallet_list_pre_2_0/1]).
 -export([encrypt_block/2, encrypt_block/3]).
 -export([encrypt_full_block/2, encrypt_full_block/3]).
 -export([decrypt_block/4]).
@@ -24,9 +25,19 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%% @doc Generate a re-producible hash from a wallet list.
-hash_wallet_list(WalletListHash) when is_binary(WalletListHash) -> WalletListHash;
-hash_wallet_list(WalletList) ->
+hash_wallet_list(_Height, _RewardAddr, WalletListHash) when is_binary(WalletListHash) ->
+	WalletListHash;
+hash_wallet_list(Height, RewardAddr, WalletList) ->
+	case Height < ar_fork:height_2_0() of
+		true ->
+			hash_wallet_list_pre_2_0(WalletList);
+		false ->
+			{RewardWallet, NoRewardWalletListHash} =
+				hash_wallet_list_without_reward_wallet(RewardAddr, WalletList),
+			hash_wallet_list(RewardWallet, NoRewardWalletListHash)
+	end.
+
+hash_wallet_list_pre_2_0(WalletList) ->
 	Bin =
 		<<
 			<< Addr/binary, (binary:encode_unsigned(Balance))/binary, LastTX/binary >>
@@ -34,6 +45,30 @@ hash_wallet_list(WalletList) ->
 			{Addr, Balance, LastTX} <- WalletList
 		>>,
 	crypto:hash(?HASH_ALG, Bin).
+
+hash_wallet_list_without_reward_wallet(RewardAddr, WalletList) ->
+	{RewardWallet, NoRewardWalletList} =
+		case lists:keytake(RewardAddr, 1, WalletList) of
+			{value, RW, NewWalletList} ->
+				{RW, NewWalletList};
+			false ->
+				{unclaimed, WalletList}
+		end,
+	NoRewardWLH = ar_deep_hash:hash([
+		[A, binary:encode_unsigned(B), Anchor] || {A, B, Anchor} <- NoRewardWalletList
+	]),
+	{RewardWallet, NoRewardWLH}.
+
+hash_wallet_list(RewardWallet, NoRewardWalletListHash) ->
+	ar_deep_hash:hash([
+		NoRewardWalletListHash,
+		case RewardWallet of
+			unclaimed ->
+				<<"unclaimed">>;
+			{Address, Balance, Anchor} ->
+				[Address, binary:encode_unsigned(Balance), Anchor]
+		end
+	]).
 
 %% @doc Generate the TX tree and set the TX root for a block.
 generate_tx_tree(B) ->
@@ -323,9 +358,8 @@ compute_hash_list_merkle(B, BI) ->
 %% Also, it is combined with a nonce and the corresponding PoW hash
 %% to produce the independent hash.
 generate_block_data_segment(B) ->
-	{BDSBase, RewardWallet} = generate_block_data_segment_base(B),
 	generate_block_data_segment(
-		BDSBase,
+		generate_block_data_segment_base(B),
 		B#block.hash_list_merkle,
 		#{
 			timestamp => B#block.timestamp,
@@ -333,7 +367,7 @@ generate_block_data_segment(B) ->
 			diff => B#block.diff,
 			cumulative_diff => B#block.cumulative_diff,
 			reward_pool => B#block.reward_pool,
-			reward_wallet => RewardWallet
+			wallet_list_hash => B#block.wallet_list_hash
 		}
 	).
 
@@ -344,15 +378,8 @@ generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
 		diff := Diff,
 		cumulative_diff := CDiff,
 		reward_pool := RewardPool,
-		reward_wallet := RewardWallet
+		wallet_list_hash := WLH
 	} = TimeDependentParams,
-	RewardWalletPreimage =
-		case RewardWallet of
-			not_in_the_list ->
-				<<"unclaimed">>;
-			{A, Balance, L} ->
-				[A, integer_to_binary(Balance), L]
-		end,
 	ar_deep_hash:hash([
 		BDSBase,
 		integer_to_binary(Timestamp),
@@ -360,7 +387,7 @@ generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
 		integer_to_binary(Diff),
 		integer_to_binary(CDiff),
 		integer_to_binary(RewardPool),
-		RewardWalletPreimage,
+		WLH,
 		BlockIndexMerkle
 	]).
 
@@ -372,20 +399,12 @@ generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
 %% as the last step, to allow verifiers to quickly validate PoW against
 %% the current state.
 generate_block_data_segment_base(B) ->
-	{RewardWallet, WalletList} =
-		case lists:keytake(B#block.reward_addr, 1, B#block.wallet_list) of
-			{value, R, W} ->
-				{R, W};
-			false ->
-				{not_in_the_list, B#block.wallet_list}
-		end,
 	BDSBase = ar_deep_hash:hash([
 		integer_to_binary(B#block.height),
 		B#block.previous_block,
 		B#block.tx_root,
 		integer_to_binary(B#block.block_size),
 		integer_to_binary(B#block.weave_size),
-		[[A, integer_to_binary(Balance), L] || {A, Balance, L} <- WalletList],
 		case B#block.reward_addr of
 			unclaimed ->
 				<<"unclaimed">>;
@@ -401,7 +420,7 @@ generate_block_data_segment_base(B) ->
 		),
 		poa_to_list(B#block.poa)
 	]),
-	{BDSBase, RewardWallet}.
+	BDSBase.
 
 poa_to_list(POA) ->
 	[

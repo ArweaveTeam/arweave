@@ -208,6 +208,10 @@ json_struct_to_block({BlockStruct}) ->
 		undefined -> <<>>; % In case it's an invalid block (in the pre-fork format)
 		R -> ar_util:decode(R)
 	end,
+	RewardAddr = case find_value(<<"reward_addr">>, BlockStruct) of
+		<<"unclaimed">> -> unclaimed;
+		StrAddr -> ar_util:decode(StrAddr)
+	end,
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
 		previous_block =
@@ -261,13 +265,9 @@ json_struct_to_block({BlockStruct}) ->
 				true ->
 					ar_util:decode(WalletList);
 				false ->
-					ar_block:hash_wallet_list(WalletList)
+					ar_block:hash_wallet_list(Height, RewardAddr, WalletList)
 			end,
-		reward_addr =
-			case find_value(<<"reward_addr">>, BlockStruct) of
-				<<"unclaimed">> -> unclaimed;
-				StrAddr -> ar_util:decode(StrAddr)
-			end,
+		reward_addr = RewardAddr,
 		tags = Tags,
 		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
 		weave_size = find_value(<<"weave_size">>, BlockStruct),
