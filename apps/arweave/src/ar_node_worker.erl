@@ -523,28 +523,22 @@ generate_block_from_shadow(State, BShadow, Recall, Peer) ->
 			error
 	end.
 
-generate_block_from_shadow(State = #{ height := Height, block_index := BI }, BShadow, Recall, TXs, Peer) ->
+generate_block_from_shadow(State = #{ height := Height }, BShadow, Recall, TXs, Peer) ->
 	case Height + 1 >= ar_fork:height_2_0() of
 		true ->
 			B = BShadow#block {
 				wallet_list = generate_wallet_list_from_shadow(State, BShadow, noop, TXs),
 				txs = TXs
 			},
-			MaybeRecallH = (BShadow#block.poa)#poa.block_indep_hash,
-			case MaybeRecallH of
-				<<>> ->
-					{ok, {B, genesis_block}};
-				RecallH ->
-					case ar_node_utils:get_full_block(Peer, RecallH, BI) of
-						unavailable ->
-							ar:warn([
-								{event, did_not_find_recall_block},
-								{recall_block, ar_util:encode(RecallH)}
-							]),
-							error;
-						RecallB ->
-							{ok, {B, RecallB}}
-					end
+			case ar_poa:get_recall_block([Peer], BShadow#block.poa) of
+				{ok, RecallB} ->
+					{ok, {B, RecallB}};
+				unavailable ->
+					ar:warn([
+						{event, did_not_find_recall_block},
+						{recall_block, ar_util:encode((BShadow#block.poa)#poa.block_indep_hash)}
+					]),
+					error
 			end;
 		false ->
 			generate_block_from_shadow_pre_2_0(State, BShadow, Recall, TXs, Peer)
