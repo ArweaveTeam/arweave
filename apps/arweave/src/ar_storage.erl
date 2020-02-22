@@ -352,7 +352,7 @@ write_wallet_list(B) ->
 	WalletList = B#block.wallet_list,
 	ID = case B#block.wallet_list_hash of
 		not_set ->
-			ar_block:hash_wallet_list(WalletList);
+			ar_block:hash_wallet_list(B#block.height, B#block.reward_addr, WalletList);
 		WalletListHash ->
 			WalletListHash
 	end,
@@ -568,16 +568,20 @@ store_and_retrieve_block_block_index_test() ->
 store_and_retrieve_wallet_list_test() ->
 	[B0] = ar_weave:init(),
 	write_wallet_list(B0),
+	Height = B0#block.height,
+	RewardAddr = B0#block.reward_addr,
 	WL = B0#block.wallet_list,
 	receive after 500 -> ok end,
-	?assertEqual({ok, WL}, read_wallet_list(ar_block:hash_wallet_list(WL))).
+	?assertEqual({ok, WL}, read_wallet_list(ar_block:hash_wallet_list(Height, RewardAddr, WL))).
 
 handle_corrupted_wallet_list_test() ->
 	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
 	ar_storage:write_block(B0),
+	Height = B0#block.height,
+	RewardAddr = B0#block.reward_addr,
 	?assertEqual(B0, read_block(B0#block.indep_hash, block_index_from_blocks([B0]))),
-	WalletListHash = ar_block:hash_wallet_list(B0#block.wallet_list),
+	WalletListHash = ar_block:hash_wallet_list(Height, RewardAddr, B0#block.wallet_list),
 	ok = file:write_file(wallet_list_filepath(WalletListHash), <<>>),
 	?assertEqual(unavailable, read_block(B0#block.indep_hash, block_index_from_blocks([B0]))).
 

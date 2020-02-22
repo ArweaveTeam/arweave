@@ -32,6 +32,7 @@
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start
 	miners = [], % miner worker processes
 	bds_base = not_generated, % part of the block data segment not changed during mining
+	no_reward_wallet_list_hash = not_set, % wallet list hash preimage without reward wallet
 	total_hashes_tried = 0, % the number of tried hashes, used to estimate the hashrate
 	started_at = not_set % the timestamp when the mining begins, used to estimate the hashrate
 }).
@@ -222,16 +223,20 @@ update_txs(
 		weave_size = NewWeaveSize,
 		wallet_list = NewWalletList
 	},
-	{BDSBase, _RewardWallet} = case CurrentB#block.height + 1 < Fork_2_0 of
+	{BDSBase, NoRewardWLH} = case CurrentB#block.height + 1 < Fork_2_0 of
 		true ->
 			{not_generated, not_set};
 		false ->
-			ar_block:generate_block_data_segment_base(NewCandidateB)
+			{_RW, WLH} =
+				ar_block:hash_wallet_list_without_reward_wallet(RewardAddr, NewWalletList),
+			Base = ar_block:generate_block_data_segment_base(NewCandidateB),
+			{Base, WLH}
 	end,
 	update_data_segment(
 		S#state{
 			candidate_block = NewCandidateB,
-			bds_base = BDSBase
+			bds_base = BDSBase,
+			no_reward_wallet_list_hash = NoRewardWLH
 		},
 		ValidTXs,
 		NextBlockTimestamp,
@@ -332,10 +337,12 @@ update_data_segment_post_2_0(S, TXs, BlockTimestamp, Diff) ->
 		reward_addr = RewardAddr,
 		poa = POA,
 		bds_base = BDSBase,
-		previous_reward_wallet = PreviousRewardWallet
+		previous_reward_wallet = PreviousRewardWallet,
+		no_reward_wallet_list_hash = NoRewardWalletListHash
 	} = S,
+	Height = CandidateB#block.height,
 	NewLastRetarget =
-		case ar_retarget:is_retarget_height(CandidateB#block.height) of
+		case ar_retarget:is_retarget_height(Height) of
 			true -> BlockTimestamp;
 			false -> CurrentB#block.last_retarget
 		end,
@@ -346,7 +353,7 @@ update_data_segment_post_2_0(S, TXs, BlockTimestamp, Diff) ->
 			RewardAddr,
 			POA,
 			CandidateB#block.weave_size,
-			CandidateB#block.height,
+			Height,
 			Diff,
 			BlockTimestamp
 		),
@@ -357,16 +364,17 @@ update_data_segment_post_2_0(S, TXs, BlockTimestamp, Diff) ->
 			[PreviousRewardWallet]
 	end,
 	NewRewardWallet =
-		case ar_node_utils:apply_mining_reward(WL, RewardAddr, FinderReward, CandidateB#block.height) of
+		case ar_node_utils:apply_mining_reward(WL, RewardAddr, FinderReward, Height) of
 			[RW] ->
 				RW;
 			[] ->
-				not_in_the_list
+				unclaimed
 		end,
+	WalletListHash = ar_block:hash_wallet_list(NewRewardWallet, NoRewardWalletListHash),
 	CDiff = ar_difficulty:next_cumulative_diff(
 		CurrentB#block.cumulative_diff,
 		Diff,
-		CandidateB#block.height
+		Height
 	),
 	{DurationMicros, NewBDS} = timer:tc(
 		fun() ->
@@ -379,7 +387,7 @@ update_data_segment_post_2_0(S, TXs, BlockTimestamp, Diff) ->
 					diff => Diff,
 					cumulative_diff => CDiff,
 					reward_pool => RewardPool,
-					reward_wallet => NewRewardWallet
+					wallet_list_hash => WalletListHash
 				}
 			)
 		end
@@ -389,7 +397,8 @@ update_data_segment_post_2_0(S, TXs, BlockTimestamp, Diff) ->
 		last_retarget = NewLastRetarget,
 		diff = Diff,
 		cumulative_diff = CDiff,
-		reward_pool = RewardPool
+		reward_pool = RewardPool,
+		wallet_list_hash = WalletListHash
 	},
 	NewS = S#state {
 		timestamp = BlockTimestamp,
@@ -489,8 +498,7 @@ server(
 					CandidateB#block{
 						nonce = Nonce,
 						hash = Hash,
-						wallet_list = NewWalletList,
-						wallet_list_hash = ar_block:hash_wallet_list(NewWalletList)
+						wallet_list = NewWalletList
 					};
 				false ->
 					{FinderReward, RewardPool} =
@@ -525,7 +533,7 @@ server(
 						cumulative_diff = NewCDiff,
 						last_retarget = NewLastRetarget,
 						wallet_list = NewWalletList,
-						wallet_list_hash = ar_block:hash_wallet_list(NewWalletList),
+						wallet_list_hash = ar_block:hash_wallet_list_pre_2_0(NewWalletList),
 						reward_pool = RewardPool
 					}
 			end,
