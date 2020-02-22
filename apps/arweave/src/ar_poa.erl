@@ -4,6 +4,7 @@
 -export([validate/5]).
 -export([validate_data_root/2, validate_data_tree/2, validate_chunk/3]).
 -export([adjust_diff/2]).
+-export([get_recall_block/2]).
 
 -include("ar.hrl").
 -include("perpetual_storage.hrl").
@@ -160,6 +161,27 @@ create_poa_from_data(NoTreeB, NoTreeTX, SizeTaggedTXs, BlockOffset, Option) ->
 
 search(X, [{X, _} | _]) -> 0;
 search(X, [_ | R]) -> 1 + search(X, R).
+
+%% @doc Get the recall block header specified in the PoA,
+%% from the local storage or from remote peers.
+get_recall_block(Peers, POA) ->
+	MaybeRecallH = POA#poa.block_indep_hash,
+	case MaybeRecallH of
+		<<>> ->
+			{ok, genesis_block};
+		RecallH ->
+			case ar_storage:read_block_shadow(RecallH) of
+				unavailable ->
+					case ar_http_iface_client:get_block_shadow(Peers, RecallH) of
+						unavailable ->
+							unavailable;
+						{_Peer, B} ->
+							{ok, B}
+					end;
+				B ->
+					{ok, B}
+			end
+	end.
 
 %% @doc Validate a complete proof of access object.
 validate(_H, 0, _BI, _POA, genesis_block) ->

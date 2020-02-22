@@ -236,24 +236,18 @@ apply_next_block(State, NextB, B) ->
 	} = State,
 	case NextB#block.height >= ar_fork:height_2_0() of
 		true ->
-			MaybeRecallH = (NextB#block.poa)#poa.block_indep_hash,
-			case MaybeRecallH of
-				<<>> ->
-					apply_next_block(State, NextB, B, genesis_block);
-				RecallH ->
-					case ar_node_utils:get_full_block(Peers, RecallH, BI) of
-						unavailable ->
-							ar:err(
-								[
-									{event, fork_recovery_failed},
-									{reason, did_not_find_recall_block},
-									{recall_block, ar_util:encode(RecallH)}
-								]
-							),
-							end_fork_recovery(State);
-						RecallB ->
-							apply_next_block(State, NextB, B, RecallB)
-					end
+			case ar_poa:get_recall_block(Peers, NextB#block.poa) of
+				{ok, RecallB} ->
+					apply_next_block(State, NextB, B, RecallB);
+				unavailable ->
+					ar:err(
+						[
+							{event, fork_recovery_failed},
+							{reason, did_not_find_recall_block},
+							{recall_block, ar_util:encode((NextB#block.poa)#poa.block_indep_hash)}
+						]
+					),
+					end_fork_recovery(State)
 			end;
 		false ->
 			RecallH = case B#block.height of
