@@ -1220,7 +1220,7 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 							ar_node:get_block(whereis(http_entrypoint_node),
 							ID,
 							CurrentBI,
-							?WITH_TX_HEADER),
+							?WITH_TX_HEADERS),
 						B#block.indep_hash;
 					<<"hash">> -> ID
 				end,
@@ -1301,7 +1301,7 @@ find_block(<<"height">>, RawHeight, BI) ->
 		whereis(http_entrypoint_node),
 		binary_to_integer(RawHeight),
 		BI,
-		?WITH_TX_HEADER
+		?WITH_TX_HEADERS
 	);
 find_block(<<"hash">>, ID, BI) ->
 	ar_storage:read_block(ID, BI).

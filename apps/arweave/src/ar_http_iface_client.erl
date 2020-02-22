@@ -48,7 +48,7 @@ has_tx(Peer, ID) ->
 			<<"GET">>,
 			Peer,
 			"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
-			p2p_headers() ++ ar_tx:tx_format_to_http_header(?WITH_TX_HEADER),
+			p2p_headers() ++ ar_tx:tx_format_to_http_header(?WITH_TX_HEADERS),
 			[],
 			500,
 			3 * 1000
