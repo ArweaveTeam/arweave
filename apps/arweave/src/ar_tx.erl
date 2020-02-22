@@ -495,7 +495,7 @@ tx_format_to_http_header(TXFormat) ->
 	[{<<"x-tx-format">>, tx_http_format(TXFormat)}].
 
 tx_http_format(?WITH_TX_DATA) -> ?TX_WITH_DATA_HTTP_FORMAT;
-tx_http_format(?WITH_TX_HEADER) -> ?TX_WITHOUT_DATA_HTTP_FORMAT;
+tx_http_format(?WITH_TX_HEADERS) -> ?TX_WITHOUT_DATA_HTTP_FORMAT;
 tx_http_format(_) -> ?TX_WITH_DATA_HTTP_FORMAT.
 
 %%% Tests: ar_tx

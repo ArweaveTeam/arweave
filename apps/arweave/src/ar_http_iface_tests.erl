@@ -296,7 +296,7 @@ get_format_2_tx_with_no_data_test() ->
 			<<"GET">>,
 			{127, 0, 0, 1, 1984},
 			"/tx/" ++ EncodedTxID,
-			ar_tx:tx_format_to_http_header(?WITH_TX_HEADER)
+			ar_tx:tx_format_to_http_header(?WITH_TX_HEADERS)
 		),
 	?assertEqual(TX#tx{data = <<>>, data_size = 0}, ar_serialize:json_struct_to_tx(Body)).
 

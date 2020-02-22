@@ -217,7 +217,7 @@
 %% @doc Transaction internal data structure format tags. These control the
 %% internal formatting of transaction records, #tx{}, in block acquisition
 -define(NO_TX, no_tx).
--define(WITH_TX_HEADER, with_tx_header).
+-define(WITH_TX_HEADERS, with_tx_headers).
 -define(WITH_TX_DATA, with_tx_data).
 
 %% @doc Log output directory
