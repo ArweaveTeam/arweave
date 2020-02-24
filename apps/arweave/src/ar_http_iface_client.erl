@@ -7,12 +7,11 @@
 -export([send_new_block/4, send_new_tx/2, get_block/3, get_block/4]).
 -export([get_block_shadow/2]).
 -export([get_tx/3, get_tx/4, get_tx_data/2]).
--export([get_full_block/3, get_full_block/4, get_block_subfield/3, add_peer/1]).
+-export([get_block_subfield/3, add_peer/1]).
 -export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).
 -export([get_wallet_list/2, get_block_index/1, get_block_index/2]).
--export([get_current_block/1, get_current_block/2, get_current_block/3]).
 -export([get_legacy_hash_list/1]).
 
 -include("ar.hrl").
@@ -122,29 +121,36 @@ add_peer(Peer) ->
 		3 * 1000
 	).
 
-%% @doc Get a peers current, top block.
-get_current_block(Peer) ->
-	get_current_block(Peer, ?WITH_TX_DATA).
-get_current_block(Peer, TXFormat) ->
-	get_current_block(Peer, get_block_index(Peer), TXFormat).
-get_current_block(Peer, BI, TXFormat) ->
-	case get_full_block([Peer], hd(BI), BI, TXFormat) of
-		{_Peer, B} ->
-			B;
-		Error ->
-			Error
-	end.
-
 %% @doc Retreive a block by height or hash from a remote peer.
 get_block(Peer, ID, BI) ->
 	get_block(Peer, ID, BI, ?WITH_TX_DATA).
+
+get_block([], _ID, _BI, _TXFormat) ->
+	unavailable;
+get_block(Peers = [_|_], ID, BI, TXFormat) ->
+	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	case handle_block_response(
+		Peer,
+		Peers,
+		ar_httpc:request(
+			<<"GET">>,
+			Peer,
+			prepare_block_id(ID),
+			p2p_headers(),
+			[],
+			10 * 1000
+		),
+		{full_block, BI}, TXFormat
+	) of
+		unavailable ->
+			get_block(Peers -- [Peer], ID, BI, TXFormat);
+		not_found ->
+			get_block(Peers -- [Peer], ID, BI, TXFormat);
+		B ->
+			{Peer, B}
+	end;
 get_block(Peer, ID, BI, TXFormat) ->
-	case get_full_block([Peer], ID, BI, TXFormat) of
-		{_Peer, B} ->
-			B;
-		Error ->
-			Error
-	end.
+	get_block([Peer], ID, BI, TXFormat).
 
 %% @doc Get an encrypted block from a remote peer.
 %% Used when the next block is the recall block.
@@ -186,35 +192,6 @@ prepare_block_id(ID) when is_binary(ID) ->
 	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
 prepare_block_id(ID) when is_integer(ID) ->
 	"/block/height/" ++ integer_to_list(ID).
-
-%% @doc Retreive a full block (full transactions included in body)
-%% by hash from remote peers.
-get_full_block(Peers, ID, BI) ->
-	get_full_block(Peers, ID, BI, ?WITH_TX_DATA).
-get_full_block([], _ID, _BI, _TXFormat) ->
-	unavailable;
-get_full_block(Peers, ID, BI, TXFormat) ->
-	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	case handle_block_response(
-		Peer,
-		Peers,
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			prepare_block_id(ID),
-			p2p_headers(),
-			[],
-			10 * 1000
-		),
-		{full_block, BI}, TXFormat
-	) of
-		unavailable ->
-			get_full_block(Peers -- [Peer], ID, BI);
-		not_found ->
-			get_full_block(Peers -- [Peer], ID, BI);
-		B ->
-			{Peer, B}
-	end.
 
 %% @doc Retreive a block shadow by hash or height from remote peers.
 get_block_shadow([], _ID) ->

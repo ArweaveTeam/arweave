@@ -785,7 +785,7 @@ get_recall_block(OrigPeer, RecallHash, BI, Key, Nonce) ->
 				unavailable ->
 					ar:report([{downloading_recall_block, ar_util:encode(RecallHash)}]),
 					FullBlock =
-						ar_node_utils:get_full_block(OrigPeer, RecallHash, BI),
+						ar_node_utils:get_block(OrigPeer, RecallHash, BI),
 					case ?IS_BLOCK(FullBlock)  of
 						true ->
 							ar_storage:write_full_block(FullBlock),

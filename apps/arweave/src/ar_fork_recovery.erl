@@ -160,7 +160,7 @@ apply_next_block(State) ->
 		target_hashes_to_go = [NextH | _],
 		recovered_block_index = BI
 	} = State,
-	NextB = ar_node_utils:get_full_block(Peers, NextH, [{NextH, 0} | BI]),
+	NextB = ar_node_utils:get_block(Peers, NextH, [{NextH, 0} | BI]),
 	ar:info(
 		[
 			{event, applying_fork_recovery},
@@ -268,7 +268,7 @@ apply_next_block(State, NextB, B) ->
 				_ ->
 					ar_util:get_recall_hash(B, BI)
 			end,
-			case ar_node_utils:get_full_block(Peers, RecallH, BI) of
+			case ar_node_utils:get_block(Peers, RecallH, BI) of
 				RecallB when ?IS_BLOCK(RecallB) ->
 					apply_next_block(State, NextB, B, RecallB);
 				_ ->

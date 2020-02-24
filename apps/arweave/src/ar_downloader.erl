@@ -66,7 +66,7 @@ fill_to_capacity(Peers, ToWrite, BI) ->
 fill_to_capacity2(Peers, RandHash, ToWrite, BI) ->
 	B =
 		try
-			ar_node_utils:get_full_block(Peers, RandHash, BI, ?WITH_TX_DATA)
+			ar_node_utils:get_block(Peers, RandHash, BI, ?WITH_TX_DATA)
 		catch _:_ ->
 			unavailable
 		end,

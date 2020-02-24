@@ -567,7 +567,7 @@ generate_block_from_shadow_pre_2_0(State, BShadow, Recall, TXs, Peer) ->
 				BShadow#block.height - 1,
 				BI
 			),
-			FetchedRecallB = ar_node_utils:get_full_block(Peer, RecallHash, BI),
+			FetchedRecallB = ar_node_utils:get_block(Peer, RecallHash, BI),
 			case ?IS_BLOCK(FetchedRecallB) of
 				true ->
 					ar_storage:write_full_block(FetchedRecallB),
