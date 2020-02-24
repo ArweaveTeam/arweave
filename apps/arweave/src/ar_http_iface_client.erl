@@ -284,7 +284,7 @@ get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
 		)
 	).
 
-get_txs(_Peers, _MempoolTXs, _B, ?NO_TX) -> {ok, []};
+get_txs(_Peers, _MempoolTXs, _B = #block{txs = TXIDs}, ?NO_TX) -> {ok, TXIDs};
 get_txs(Peers, MempoolTXs, B, TXFormat) ->
 	case B#block.txs of
 		TXIDs when length(TXIDs) > ?BLOCK_TX_COUNT_LIMIT ->
