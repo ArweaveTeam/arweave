@@ -4,7 +4,7 @@
 
 -module(ar_node_utils).
 
--export([get_full_block/3]).
+-export([get_block/3]).
 -export([find_recall_block/1, find_block/1]).
 -export([calculate_reward/2]).
 -export([calculate_reward_pool/8]).
@@ -25,13 +25,13 @@
 %%% Public API.
 %%%
 
-%% @doc Get a full block (a block containing all transactions) by the independent hash.
-%%      Try to find the block locally first. If we do not have the full block on disk, try to download it from peers.
-get_full_block(Peers, ID, BI) ->
-	get_full_block(Peers, ID, BI, ?WITH_TX_DATA).
-get_full_block(Peers, ID, BI, TXFormat) when is_list(Peers) ->
+%% @doc Get a block by the independent hash, containing transactions acquired by transaction acquisition flags.
+%% Try to find the block locally first. If we do not have the full block on disk, try to download it from peers.
+get_block(Peers, ID, BI) ->
+	get_block(Peers, ID, BI, ?WITH_TX_DATA).
+get_block(Peers, ID, BI, TXFormat) when is_list(Peers) ->
 	GetBlockFromPeersFun = fun() ->
-		get_full_block_from_remote_peers(ar_util:unique(Peers), ID, BI, TXFormat)
+		get_block_from_remote_peers(ar_util:unique(Peers), ID, BI, TXFormat)
 	end,
 	case ar_storage:read_block(ID, BI) of
 		unavailable ->
@@ -50,7 +50,7 @@ get_full_block(Peers, ID, BI, TXFormat) when is_list(Peers) ->
 					FinalB
 			end
 	end;
-get_full_block(Pid, ID, BI, _TXFormat) when is_pid(Pid) ->
+get_block(Pid, ID, BI, _TXFormat) when is_pid(Pid) ->
 	%% Attempt to get block from local storage and add transactions.
 	case make_full_block(ID, BI) of
 		{ok, B} ->
@@ -58,9 +58,9 @@ get_full_block(Pid, ID, BI, _TXFormat) when is_pid(Pid) ->
 		{error, _} ->
 			unavailable
 	end;
-get_full_block(Peer, ID, BI, TXFormat) ->
+get_block(Peer, ID, BI, TXFormat) ->
 	%% Handle external peer request.
-	case ar_http_iface_client:get_full_block([Peer], ID, BI, TXFormat) of
+	case ar_http_iface_client:get_block([Peer], ID, BI, TXFormat) of
 		{_Peer, B} ->
 			B;
 		Error ->
@@ -69,10 +69,10 @@ get_full_block(Peer, ID, BI, TXFormat) ->
 
 %% @doc Attempt to get a full block from a HTTP peer, picking the node to query
 %% randomly until the block is retreived.
-get_full_block_from_remote_peers([], _ID, _BI, _TXFormat) ->
+get_block_from_remote_peers([], _ID, _BI, _TXFormat) ->
 	unavailable;
-get_full_block_from_remote_peers(Peers, ID, BI, TXFormat) ->
-	{Time, MaybeB} = timer:tc(fun() -> ar_http_iface_client:get_full_block(Peers, ID, BI, TXFormat) end),
+get_block_from_remote_peers(Peers, ID, BI, TXFormat) ->
+	{Time, MaybeB} = timer:tc(fun() -> ar_http_iface_client:get_block(Peers, ID, BI, TXFormat) end),
 	case MaybeB of
 		{Peer, B} when ?IS_BLOCK(B) ->
 			case ar_meta_db:get(http_logging) of
@@ -342,7 +342,7 @@ start_mining_pre_fork_2_0(StateIn) ->
 		unavailable ->
 			B = ar_storage:read_block(element(1, hd(BI)), BI),
 			RecallHash = ar_util:get_recall_hash(B, BI),
-			FullBlock = get_full_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BI),
+			FullBlock = get_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BI),
 			case FullBlock of
 				X when (X == unavailable) or (X == not_found) ->
 					ar:info(

@@ -220,14 +220,14 @@ get_block_by_hash_test() ->
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
 	receive after 200 -> ok end,
-	?assertEqual(
-		B0,
+	{_Peer, B1} =
 		ar_http_iface_client:get_block(
 			{127, 0, 0, 1, 1984},
 			B0#block.indep_hash,
-			[{B0#block.indep_hash, not_set, not_set}]
-		)
-	).
+			[{B0#block.indep_hash, not_set, not_set}],
+			?WITH_TX_HEADERS
+		),
+	?assertEqual(B0, B1).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
@@ -236,14 +236,14 @@ get_block_by_height_test() ->
 	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
-	?assertEqual(
-		B0,
+	{_Peer, B1} =
 		ar_http_iface_client:get_block(
 			{127, 0, 0, 1, 1984},
 			0,
-			[{B0#block.indep_hash, not_set, not_set}]
-		)
-	).
+			[{B0#block.indep_hash, not_set, not_set}],
+			?WITH_TX_HEADERS
+		),
+	?assertEqual(B0, B1).
 
 get_current_block_test() ->
 	ar_storage:clear(),
@@ -256,7 +256,11 @@ get_current_block_test() ->
 		100,
 		2000
 	),
-	?assertEqual(B0, ar_http_iface_client:get_current_block({127, 0, 0, 1, 1984})).
+	Peer = {127, 0, 0, 1, 1984},
+	BI = ar_http_iface_client:get_block_index(Peer),
+	{_Peer, B1} =
+		ar_http_iface_client:get_block([Peer], hd(BI), BI, ?WITH_TX_HEADERS),
+	?assertEqual(B0, B1).
 
 %% @doc Test that the various different methods of GETing a block all perform
 %% correctly if the block cannot be found.

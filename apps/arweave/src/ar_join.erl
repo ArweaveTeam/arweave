@@ -132,7 +132,7 @@ find_current_block([Peer | Tail]) ->
 				{peer, Peer},
 				{hash, Hash}
 			]),
-			MaybeB = ar_node_utils:get_full_block(Peer, Hash, BI),
+			MaybeB = ar_node_utils:get_block(Peer, Hash, BI),
 			case MaybeB of
 				Atom when is_atom(Atom) ->
 					ar:info([
@@ -215,7 +215,7 @@ get_block_and_trail(Peers, NewB, _BehindCurrent, BI, BlockTXPairs) when NewB#blo
 get_block_and_trail(_, _, 0, _, BlockTXPairs) ->
 	BlockTXPairs;
 get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
-	PreviousBlock = ar_node_utils:get_full_block(
+	PreviousBlock = ar_node_utils:get_block(
 		Peers,
 		hd(NewB#block.hash_list),
 		BI

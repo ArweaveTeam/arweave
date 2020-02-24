@@ -245,10 +245,7 @@ get_current_block(Peer, _TXFormat) when is_pid(Peer) ->
 		{Ref, block, CurrentBlock} -> CurrentBlock
 	after ?LOCAL_NET_TIMEOUT ->
 		not_found
-	end;
-get_current_block(Peer, TXFormat) ->
-	% handle external peer request
-	ar_http_iface_client:get_current_block(Peer, TXFormat).
+	end.
 
 %% @doc Return the entire blockindex from a node.
 % TODO: Change references to blockindex, not blocklist.

@@ -254,7 +254,7 @@ get_block_remote(BH, BI) ->
 get_block_remote(_, _, []) ->
 	unavailable;
 get_block_remote(BH, BI, Peers) ->
-	case ar_http_iface_client:get_full_block(Peers, BH, BI) of
+	case ar_http_iface_client:get_block(Peers, BH, BI) of
 		unavailable ->
 			unavailable;
 		{Peer, B} ->
