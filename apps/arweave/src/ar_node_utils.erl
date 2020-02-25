@@ -16,6 +16,7 @@
 -export([update_block_txs_pairs/2, update_block_index/2]).
 -export([log_invalid_txs_drop_reason/1]).
 -export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
+-export([calculate_mempool_size/1]).
 
 -include("ar.hrl").
 -include("perpetual_storage.hrl").
@@ -453,7 +454,8 @@ integrate_new_block(
 		diff             => NewB#block.diff,
 		last_retarget    => NewB#block.last_retarget,
 		weave_size       => NewB#block.weave_size,
-		block_txs_pairs  => NewBlockTXPairs
+		block_txs_pairs  => NewBlockTXPairs,
+		mempool_size     => calculate_mempool_size(ValidTXs)
 	}).
 
 update_block_index(B, BI) ->
@@ -978,3 +980,6 @@ calculate_delay(Bytes) ->
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
 	BaseDelay + NetworkDelay.
 -endif.
+
+calculate_mempool_size(TXs) ->
+	sets:fold(fun(TX, Acc) -> Acc + ?TX_SIZE_BASE + byte_size(TX#tx.data) end, 0, TXs).

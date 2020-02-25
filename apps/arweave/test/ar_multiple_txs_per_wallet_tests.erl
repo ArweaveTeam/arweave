@@ -480,7 +480,7 @@ rejects_txs_exceeding_mempool_limit_test() ->
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
 	{Slave, _} = slave_start(B0),
-	BigChunk = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT) >>,
+	BigChunk = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE) >>,
 	TXs = lists:map(
 		fun(N) ->
 			sign_tx_pre_fork_2_0(

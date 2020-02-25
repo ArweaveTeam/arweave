@@ -818,7 +818,7 @@ handle_post_tx(PeerIP, TX) ->
 	Node = whereis(http_entrypoint_node),
 	MempoolTXs = ar_node:get_pending_txs(Node),
 	Height = ar_node:get_height(Node),
-	case verify_mempool_txs_size(MempoolTXs, TX, Height) of
+	case verify_mempool_txs_size(Node, TX, Height) of
 		invalid ->
 			handle_post_tx_no_mempool_space_response();
 		valid ->
@@ -868,23 +868,16 @@ handle_post_tx(PeerIP, Node, TX, Height, MempoolTXIDs, WalletList) ->
 			handle_post_tx_accepted(PeerIP, TX)
 	end.
 
-verify_mempool_txs_size(MempoolTXs, TX, Height) ->
+verify_mempool_txs_size(Node, TX, Height) ->
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
-			verify_mempool_txs_size(MempoolTXs, TX);
+			verify_mempool_txs_size(Node, TX);
 		_ ->
 			valid
 	end.
 
-verify_mempool_txs_size(MempoolTXs, TX) ->
-	TotalSize = lists:foldl(
-		fun(MempoolTX, Sum) ->
-			Sum + byte_size(MempoolTX#tx.data)
-		end,
-		0,
-		MempoolTXs
-	),
-	case byte_size(TX#tx.data) + TotalSize of
+verify_mempool_txs_size(Node, TX) ->
+	case byte_size(TX#tx.data) + ?TX_SIZE_BASE + ar_node:get_mempool_size(Node) of
 		Size when Size > ?TOTAL_WAITING_TXS_DATA_SIZE_LIMIT ->
 			invalid;
 		_ ->
