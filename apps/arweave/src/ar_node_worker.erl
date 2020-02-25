@@ -464,14 +464,14 @@ get_diverged_block_hashes_reversed([], []) -> {ok, []};
 get_diverged_block_hashes_reversed(DivergedHashes, _) ->
 	{ok, lists:reverse(DivergedHashes)}.
 
-apply_new_block(State, BShadow, Recall, Peer) ->
+apply_new_block(State, BShadow, RecallPreimage, Peer) ->
 	#{ height := Height, block_index := BI, wallet_list := WalletList, block_txs_pairs := BlockTXPairs } = State,
-	case generate_block_from_shadow(State, BShadow, Recall, Peer) of
-		{ok, {NewB, RecallB}} ->
+	case generate_block_from_shadow(State, BShadow, RecallPreimage, Peer) of
+		{ok, {NewB, Recall}} ->
 			B = ar_util:get_head_block(BI),
 			StateNew = State#{ wallet_list => NewB#block.wallet_list },
 			TXs = NewB#block.txs,
-			case ar_node_utils:validate(StateNew, NewB, TXs, B, RecallB) of
+			case ar_node_utils:validate(StateNew, NewB, TXs, B, Recall) of
 				{invalid, _Reason} ->
 					none;
 				valid ->
@@ -525,7 +525,16 @@ generate_block_from_shadow(State = #{ height := Height }, BShadow, Recall, TXs, 
 			},
 			case ar_poa:get_recall_block([Peer], BShadow#block.poa) of
 				{ok, RecallB} ->
-					{ok, {B, RecallB}};
+					case ar_poa:get_recall_tx([Peer], BShadow#block.poa) of
+						{ok, TX} ->
+							{ok, {B, {RecallB, TX}}};
+						unavailable ->
+							ar:warn([
+								{event, did_not_find_recall_tx},
+								{recall_tx, ar_util:encode((BShadow#block.poa)#poa.tx_id)}
+							]),
+							error
+					end;
 				unavailable ->
 					ar:warn([
 						{event, did_not_find_recall_block},

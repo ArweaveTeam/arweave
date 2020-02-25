@@ -238,7 +238,19 @@ apply_next_block(State, NextB, B) ->
 		true ->
 			case ar_poa:get_recall_block(Peers, NextB#block.poa) of
 				{ok, RecallB} ->
-					apply_next_block(State, NextB, B, RecallB);
+					case ar_poa:get_recall_tx(Peers, NextB#block.poa) of
+						unavailable ->
+							ar:err(
+								[
+									{event, fork_recovery_failed},
+									{reason, did_not_find_recall_tx},
+									{recall_tx, ar_util:encode((NextB#block.poa)#poa.tx_id)}
+								]
+							),
+							end_fork_recovery(State);
+						{ok, RecallTX} ->
+							apply_next_block(State, NextB, B, {RecallB, RecallTX})
+					end;
 				unavailable ->
 					ar:err(
 						[
@@ -271,7 +283,7 @@ apply_next_block(State, NextB, B) ->
 			end
 	end.
 
-apply_next_block(State, NextB, B, RecallB) ->
+apply_next_block(State, NextB, B, Recall) ->
 	#state {
 		recovered_block_index = BI,
 		legacy_hash_list = LegacyHL,
@@ -288,7 +300,7 @@ apply_next_block(State, NextB, B, RecallB) ->
 			},
 			TXs,
 			B,
-			RecallB,
+			Recall,
 			BlockTXPairs
 		)
 	of

@@ -527,8 +527,8 @@ log_invalid_txs_drop_reason(InvalidTXs) ->
 	).
 
 %% @doc Validate a block, given a node state and the dependencies.
-validate(#{ block_index := BI, wallet_list := WalletList }, B, TXs, OldB, RecallB) ->
-	validate(BI, WalletList, B, TXs, OldB, RecallB, B#block.reward_addr, B#block.tags).
+validate(#{ block_index := BI, wallet_list := WalletList }, B, TXs, OldB, Recall) ->
+	validate(BI, WalletList, B, TXs, OldB, Recall, B#block.reward_addr, B#block.tags).
 
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
@@ -541,13 +541,13 @@ validate(
 			},
 		TXs,
 		OldB,
-		RecallB,
+		Recall,
 		RewardAddr,
 		Tags
 	) ->
 	case Height >= ar_fork:height_2_0() of
 		false ->
-			validate_pre_fork_2_0(BI, WalletList, NewB, TXs, OldB, RecallB, RewardAddr, Tags);
+			validate_pre_fork_2_0(BI, WalletList, NewB, TXs, OldB, Recall, RewardAddr, Tags);
 		true ->
 			ar:info(
 				[
@@ -556,9 +556,10 @@ validate(
 					{poa_block_hash, ar_util:encode((NewB#block.poa)#poa.block_indep_hash)}
 				]
 			),
+			{RecallB, RecallTX} = Recall,
 			case timer:tc(
 				fun() ->
-					validate_post_fork_2_0(BI, WalletList, NewB, TXs, OldB, RecallB)
+					validate_post_fork_2_0(BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX)
 				end
 			) of
 				{TimeTaken, valid} ->
@@ -583,31 +584,31 @@ validate(
 			end
 	end.
 
-validate_post_fork_2_0(BI, WalletList, NewB = #block{ wallet_list = WalletList }, TXs, OldB, RecallB) ->
-	validate_block(height, {BI, WalletList, NewB, TXs, OldB, RecallB});
-validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB) ->
+validate_post_fork_2_0(BI, WalletList, NewB = #block{ wallet_list = WalletList }, TXs, OldB, RecallB, RecallTX) ->
+	validate_block(height, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX});
+validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _RecallTX) ->
 	ar:info([
 		{event, block_not_accepted},
 		{hash, ar_util:encode(NewB#block.indep_hash)}
 	]),
 	{invalid, invalid_wallet_list}.
 
-validate_block(height, {BI, WalletList, NewB, TXs, OldB, RecallB}) ->
+validate_block(height, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX}) ->
 	case ar_block:verify_height(NewB, OldB) of
 		false ->
 			{invalid, invalid_height};
 		true ->
-			validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB, RecallB})
+			validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX})
 	end;
-validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB, RecallB}) ->
+validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX}) ->
 	case ar_block:verify_previous_block(NewB, OldB) of
 		false ->
 			{invalid, invalid_previous_block};
 		true ->
-			validate_block(poa, {BI, WalletList, NewB, TXs, OldB, RecallB})
+			validate_block(poa, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX})
 	end;
-validate_block(poa, {BI, WalletList, NewB = #block{ poa = POA }, TXs, OldB, RecallB}) ->
-	case ar_poa:validate(OldB#block.indep_hash, OldB#block.weave_size, BI, POA, RecallB) of
+validate_block(poa, {BI, WalletList, NewB = #block{ poa = POA }, TXs, OldB, RecallB, RecallTX}) ->
+	case ar_poa:validate(OldB#block.indep_hash, OldB#block.weave_size, BI, POA, RecallB, RecallTX) of
 		false ->
 			{invalid, invalid_poa};
 		true ->

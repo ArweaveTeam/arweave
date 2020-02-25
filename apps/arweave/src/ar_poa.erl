@@ -1,10 +1,10 @@
 -module(ar_poa).
 
 -export([generate/1, generate_2_0/2]).
--export([validate/5]).
+-export([validate/6]).
 -export([validate_data_root/2, validate_data_tree/2, validate_chunk/3]).
 -export([adjust_diff/2]).
--export([get_recall_block/2]).
+-export([get_recall_block/2, get_recall_tx/2]).
 
 -include("ar.hrl").
 -include("perpetual_storage.hrl").
@@ -168,7 +168,7 @@ get_recall_block(Peers, POA) ->
 	MaybeRecallH = POA#poa.block_indep_hash,
 	case MaybeRecallH of
 		<<>> ->
-			{ok, genesis_block};
+			{ok, does_not_exist};
 		RecallH ->
 			case ar_storage:read_block_shadow(RecallH) of
 				unavailable ->
@@ -183,18 +183,36 @@ get_recall_block(Peers, POA) ->
 			end
 	end.
 
+%% @doc Get the recall transaction header specified in the PoA,
+%% from the local storage or from remote peers.
+get_recall_tx(Peers, POA) ->
+	MaybeRecallID = POA#poa.tx_id,
+	case MaybeRecallID of
+		<<>> ->
+			{ok, does_not_exist};
+		RecallID ->
+			case ar_http_iface_client:get_tx(Peers, RecallID, []) of
+				unavailable ->
+					unavailable;
+				TX ->
+					{ok, TX}
+			end
+	end.
+
 %% @doc Validate a complete proof of access object.
-validate(_H, 0, _BI, _POA, genesis_block) ->
+validate(_H, 0, _BI, _POA, does_not_exist, does_not_exist) ->
 	%% The weave does not have data yet.
 	true;
-validate(_H, _WS, BI, #poa{ option = Option }, _RecallB) when Option > length(BI) + 1 ->
+validate(_H, _WS, BI, #poa{ option = Option }, _RecallB, _RecallTX) when Option > length(BI) + 1 ->
 	false;
-validate(_H, _WS, _BI, _POA, genesis_block) ->
+validate(_H, _WS, _BI, _POA, does_not_exist, _RecallTX) ->
 	false;
-validate(LastIndepHash, WeaveSize, BI, POA, RecallB) ->
+validate(_H, _WS, _BI, _POA, _RecallB, does_not_exist) ->
+	false;
+validate(LastIndepHash, WeaveSize, BI, POA, RecallB, RecallTX) ->
 	RecallByte = calculate_challenge_byte(LastIndepHash, WeaveSize, POA#poa.option),
 	{ExpectedRecallBH, BlockBase} = find_challenge_block(RecallByte, BI),
-	validate_recall_block(RecallByte - BlockBase, ExpectedRecallBH, RecallB, POA).
+	validate_recall_block(RecallByte - BlockBase, ExpectedRecallBH, RecallB, RecallTX, POA).
 
 calculate_challenge_byte(_, 0, _) -> 0;
 calculate_challenge_byte(LastIndepHash, WeaveSize, Option) ->
@@ -218,21 +236,21 @@ find_byte_in_size_tagged_list(Byte, [{ID, TXEnd} | _])
 find_byte_in_size_tagged_list(Byte, [_ | Rest]) ->
 	find_byte_in_size_tagged_list(Byte, Rest).
 
-validate_recall_block(BlockOffset, ExpectedRecallBH, RecallB, POA) ->
+validate_recall_block(BlockOffset, ExpectedRecallBH, RecallB, RecallTX, POA) ->
 	case ar_weave:indep_hash_post_fork_2_0(RecallB) of
-		ExpectedRecallBH -> validate_tx_root(BlockOffset, RecallB, POA);
+		ExpectedRecallBH -> validate_tx_root(BlockOffset, RecallB, RecallTX, POA);
 		_ -> false
 	end.
 
-validate_tx_root(BlockOffset, RecallB, POA) ->
+validate_tx_root(BlockOffset, RecallB, RecallTX, POA) ->
 	case RecallB#block.tx_root == POA#poa.tx_root of
 		true ->
-			validate_tx_path(BlockOffset, POA);
+			validate_tx_path(BlockOffset, RecallTX, POA);
 		false ->
 			false
 	end.
 
-validate_tx_path(BlockOffset, POA) ->
+validate_tx_path(BlockOffset, RecallTX, POA) ->
 	Validation =
 		ar_merkle:validate_path(
 			POA#poa.tx_root,
@@ -241,12 +259,17 @@ validate_tx_path(BlockOffset, POA) ->
 		),
 	case Validation of
 		false -> false;
-		TXID -> validate_tx(TXID, BlockOffset, POA)
+		TXID -> validate_tx(TXID, BlockOffset, RecallTX, POA)
 	end.
 
-validate_tx(TXID, BlockOffset, POA) when TXID == POA#poa.tx_id ->
+validate_tx(TXID, BlockOffset, RecallTX, POA) when TXID == POA#poa.tx_id ->
+	validate_data_root(BlockOffset, RecallTX, POA);
+validate_tx(_TXID, _BlockOffset, _RecallTX, _POA) -> false.
+
+validate_data_root(BlockOffset, RecallTX, POA) when RecallTX#tx.data_root == POA#poa.data_root ->
 	validate_data_path(BlockOffset, POA);
-validate_tx(_, _, _) -> false.
+validate_data_root(_BlockOffset, RecallTX, POA) ->
+	false.
 
 validate_data_path(BlockOffset, POA) ->
 	%% Calculate TX offsets within the block.
