@@ -8,6 +8,7 @@
 -export([generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1]).
 -export([chunk_binary/2]).
 -export([chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1]).
+-export([tx_hash/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -71,6 +72,11 @@ signature_data_segment(TX) ->
 		<<(integer_to_binary(TX#tx.data_size))/binary>>,
 		<<(TX#tx.data_root)/binary>>
 	]).
+
+%% @doc Compute TX hash. TX hash goes into the transaction merkle tree
+%% of the block that contains this transaction.
+tx_hash(TX) ->
+	crypto:hash(sha256, signature_data_segment(TX)).
 
 signature_data_segment_pre_fork_2_0(T) ->
 	<<

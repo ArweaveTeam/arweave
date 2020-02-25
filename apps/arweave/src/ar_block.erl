@@ -82,12 +82,12 @@ generate_size_tagged_list_from_txs(TXs) ->
 		element(2,
 			lists:foldl(
 				fun
-					({TXID, Size}, {Pos, List}) ->
+					({TXHash, Size}, {Pos, List}) ->
 						End = Pos + Size,
-						{End, [{TXID, End} | List]};
+						{End, [{TXHash, End} | List]};
 					(TX, {Pos, List}) ->
 						End = Pos + TX#tx.data_size,
-						{End, [{TX#tx.id, End} | List]}
+						{End, [{ar_tx:tx_hash(TX), End} | List]}
 				end,
 				{0, []},
 				TXs
@@ -648,7 +648,7 @@ generate_tx_root_for_block(B) when is_record(B, block) ->
 generate_tx_root_for_block(TXIDs = [TXID | _]) when is_binary(TXID) ->
 	generate_tx_root_for_block(ar_storage:read_tx(TXIDs));
 generate_tx_root_for_block(TXs = [TX | _]) when is_record(TX, tx) ->
-	generate_tx_root_for_block([{T#tx.id, T#tx.data_size} || T <- TXs]);
+	generate_tx_root_for_block([{ar_tx:tx_hash(T), T#tx.data_size} || T <- TXs]);
 generate_tx_root_for_block(TXSizes) ->
 	TXSizePairs = generate_size_tagged_list_from_txs(TXSizes),
 	{Root, _Tree} = ar_merkle:generate_tree(TXSizePairs),

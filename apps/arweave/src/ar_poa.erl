@@ -85,12 +85,12 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 					case MissingTXIDs of
 						[] ->
 							SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
-							TXID =
+							TXHash =
 								find_byte_in_size_tagged_list(
 									RecallByte - BlockBase,
 									SizeTaggedTXs
 								),
-							{value, TX} = lists:search(fun(T) -> T#tx.id == TXID end, TXs),
+							{value, TX} = lists:search(fun(T) -> ar_tx:tx_hash(T) == TXHash end, TXs),
 							case byte_size(TX#tx.data) == 0 of
 								true ->
 									generate(Seed, WeaveSize, BI, Option + 1, Limit);
@@ -115,7 +115,7 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 
 create_poa_from_data(NoTreeB, NoTreeTX, SizeTaggedTXs, BlockOffset, Option) ->
 	B = ar_block:generate_tx_tree(NoTreeB, SizeTaggedTXs),
-	{_TXID, TXEnd} = lists:keyfind(NoTreeTX#tx.id, 1, SizeTaggedTXs),
+	{_TXHash, TXEnd} = lists:keyfind(ar_tx:tx_hash(NoTreeTX), 1, SizeTaggedTXs),
 	TXStart = TXEnd - NoTreeTX#tx.data_size,
 	TXOffset = BlockOffset - TXStart,
 	Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, NoTreeTX#tx.data),
@@ -259,22 +259,26 @@ validate_tx_path(BlockOffset, RecallTX, POA) ->
 		),
 	case Validation of
 		false -> false;
-		TXID -> validate_tx(TXID, BlockOffset, RecallTX, POA)
+		TXHash -> validate_tx(TXHash, BlockOffset, RecallTX, POA)
 	end.
 
-validate_tx(TXID, BlockOffset, RecallTX, POA) when TXID == POA#poa.tx_id ->
-	validate_data_root(BlockOffset, RecallTX, POA);
-validate_tx(_TXID, _BlockOffset, _RecallTX, _POA) -> false.
+validate_tx(TXHash, BlockOffset, RecallTX, POA) ->
+	case ar_tx:tx_hash(RecallTX) == TXHash of
+		true ->
+			validate_data_root(BlockOffset, RecallTX, POA);
+		false ->
+			false
+	end.
 
 validate_data_root(BlockOffset, RecallTX, POA) when RecallTX#tx.data_root == POA#poa.data_root ->
-	validate_data_path(BlockOffset, POA);
-validate_data_root(_BlockOffset, RecallTX, POA) ->
+	validate_data_path(BlockOffset, RecallTX, POA);
+validate_data_root(_BlockOffset, _RecallTX, _POA) ->
 	false.
 
-validate_data_path(BlockOffset, POA) ->
+validate_data_path(BlockOffset, RecallTX, POA) ->
 	%% Calculate TX offsets within the block.
 	TXEndOffset = ar_merkle:extract_note(POA#poa.tx_path),
-	TXStartOffset = TXEndOffset - POA#poa.data_size,
+	TXStartOffset = TXEndOffset - RecallTX#tx.data_size,
 	TXOffset = BlockOffset - TXStartOffset,
 	Validation =
 		ar_merkle:validate_path(
