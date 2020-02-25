@@ -106,7 +106,7 @@ handle(SPid, {gossip_message, Msg}) ->
 	handle_gossip(SPid, ar_gossip:recv(GS, Msg));
 handle(SPid, {add_tx, TX}) ->
 	{ok, StateIn} =
-		ar_node_state:lookup(SPid, [gossip, node, txs, waiting_txs, height]),
+		ar_node_state:lookup(SPid, [gossip, node, txs, waiting_txs, height, mempool_size]),
 	case add_tx(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -231,7 +231,7 @@ handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, BShadow, _BDS, Recall}}) 
 	end,
 	{ok, process_new_block};
 handle_gossip(SPid, {NewGS, {add_tx, TX}}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [txs]),
+	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, mempool_size]),
 	case add_tx(StateIn, TX, NewGS) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -240,7 +240,7 @@ handle_gossip(SPid, {NewGS, {add_tx, TX}}) ->
 	end,
 	{ok, add_tx};
 handle_gossip(SPid, {NewGS, {add_waiting_tx, TX}}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [waiting_txs]),
+	{ok, StateIn} = ar_node_state:lookup(SPid, [waiting_txs, mempool_size]),
 	case add_waiting_tx(StateIn, TX, NewGS) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -258,7 +258,7 @@ handle_gossip(SPid, {NewGS, {move_tx_to_mining_pool, TX}}) ->
 	end,
 	{ok, move_tx_to_mining_pool};
 handle_gossip(SPid, {NewGS, {drop_waiting_txs, TXs}}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [waiting_txs]),
+	{ok, StateIn} = ar_node_state:lookup(SPid, [waiting_txs, mempool_size]),
 	case drop_waiting_txs(StateIn, TXs, NewGS) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -290,20 +290,22 @@ handle_gossip(SPid, {NewGS, UnhandledMsg}) ->
 
 %% @doc Add the new transaction to the server state.
 add_tx(StateIn, TX, GS) ->
-	#{ txs := TXs } = StateIn,
+	#{ txs := TXs, mempool_size := MS} = StateIn,
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	{ok, [
 		{txs, sets:add_element(TX, TXs)},
-		{gossip, NewGS}
+		{gossip, NewGS},
+		{mempool_size, ?TX_SIZE_BASE + byte_size(TX#tx.data) + MS}
 	]}.
 
 %% @doc Add the new waiting transaction to the server state.
 add_waiting_tx(StateIn, TX, GS) ->
-	#{ waiting_txs := WaitingTXs } = StateIn,
+	#{ waiting_txs := WaitingTXs, mempool_size := MS } = StateIn,
 	{NewGS, _} = ar_gossip:send(GS, {add_waiting_tx, TX}),
 	{ok, [
 		{waiting_txs, sets:add_element(TX, WaitingTXs)},
-		{gossip, NewGS}
+		{gossip, NewGS},
+		{mempool_size, ?TX_SIZE_BASE + byte_size(TX#tx.data) + MS}
 	]}.
 
 %% @doc Add the transaction to the mining pool, to be included in the mined block.
@@ -319,21 +321,27 @@ move_tx_to_mining_pool(StateIn, TX, GS) ->
 		{waiting_txs, sets:del_element(TX, WaitingTXs)}
 	]}.
 
-drop_waiting_txs(#{ waiting_txs := WaitingTXs }, DropTXs, GS) ->
+drop_waiting_txs(#{ waiting_txs := WaitingTXs, mempool_size := MS }, DropTXs, GS) ->
 	{NewGS, _} = ar_gossip:send(GS, {drop_waiting_txs, DropTXs}),
+	DropTXSet = sets:from_list(DropTXs),
+	TXs = sets:subtract(WaitingTXs, DropTXSet),
 	{ok, [
-		{waiting_txs, sets:subtract(WaitingTXs, sets:from_list(DropTXs))},
-		{gossip, NewGS}
+		{waiting_txs, TXs},
+		{gossip, NewGS},
+		{mempool_size, MS - ar_node_utils:calculate_mempool_size(DropTXSet)}
 	]}.
 
 %% @doc Remove a TX from the pools if the signature is valid.
 cancel_tx(StateIn, TXID, Sig) ->
 	#{txs := TXs, waiting_txs := WaitingTXs } = StateIn,
+	MTXs = maybe_remove_tx(TXs, TXID, Sig),
+	MWTXs = maybe_remove_tx(WaitingTXs, TXID, Sig),
 	{
 		ok,
 		[
-			{txs, maybe_remove_tx(TXs, TXID, Sig)},
-			{waiting_txs, maybe_remove_tx(WaitingTXs, TXID, Sig)}
+			{txs, MTXs},
+			{waiting_txs, MWTXs},
+			{mempool_size, ar_node_utils:calculate_mempool_size(sets:union(MTXs, MWTXs))}
 		]
 	}.
 
@@ -757,7 +765,8 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 			weave_size           => NewB#block.weave_size,
 			block_txs_pairs      => NewBlockTXPairs,
 			legacy_hash_list     => NewLegacyHL,
-			wallet_list          => NewB#block.wallet_list
+			wallet_list          => NewB#block.wallet_list,
+			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
 		}
 	),
 	{ok, NewState}.
@@ -803,7 +812,8 @@ recovered_from_fork(#{id := BinID, block_index := not_joined} = StateIn, {BI, Le
 			diff                 => NewB#block.diff,
 			last_retarget        => NewB#block.last_retarget,
 			weave_size           => NewB#block.weave_size,
-			block_txs_pairs      => BlockTXPairs
+			block_txs_pairs      => BlockTXPairs,
+			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
 		}
 	)};
 recovered_from_fork(#{ block_index := CurrentBI } = StateIn, {BI, LegacyHL}, BlockTXPairs) ->
@@ -852,7 +862,8 @@ do_recovered_from_fork(StateIn, NewB, {BI, LegacyHL}, BlockTXPairs) ->
 			last_retarget        => NewB#block.last_retarget,
 			weave_size           => NewB#block.weave_size,
 			cumulative_diff      => NewB#block.cumulative_diff,
-			block_txs_pairs      => BlockTXPairs
+			block_txs_pairs      => BlockTXPairs,
+			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
 		}
 	)}.
 

@@ -32,6 +32,8 @@
 -export([set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0]).
 -export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
 
+-export([get_mempool_size/1]).
+
 -include("ar.hrl").
 
 %%%
@@ -576,6 +578,17 @@ add_peers(Node, Peers) ->
 	Node ! {add_peers, Peers},
 	ok.
 
+%% @doc Return memory pool size
+get_mempool_size(Node) ->
+	Ref = make_ref(),
+	Node ! {get_mempool_size, self(), Ref},
+	receive
+		{Ref, get_mempool_size, Size} ->
+			Size
+		after ?LOCAL_NET_TIMEOUT ->
+			0
+	end.
+
 %%%
 %%% Server functions.
 %%%
@@ -791,6 +804,10 @@ handle(SPid, {get_reward_addr, From, Ref}) ->
 handle(SPid, {get_block_txs_pairs, From, Ref}) ->
 	{ok, BlockTXPairs} = ar_node_state:lookup(SPid, block_txs_pairs),
 	From ! {Ref, block_txs_pairs, BlockTXPairs},
+	ok;
+handle(SPid, {get_mempool_size, From, Ref}) ->
+	{ok, #{ mempool_size := Size }} = ar_node_state:lookup(SPid, [mempool_size]),
+	From ! {Ref, get_mempool_size, Size},
 	ok;
 %% ----- Server handling. -----
 handle(_SPid, {'DOWN', _, _, _, _}) ->
