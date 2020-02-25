@@ -256,10 +256,19 @@ sign_tx(Wallet) ->
 	sign_tx(slave, Wallet, #{}, fun ar_tx:sign/2).
 
 sign_tx(Wallet, TXParams) ->
-	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign/2).
+	sign_tx(slave, Wallet, insert_root(TXParams), fun ar_tx:sign/2).
 
 sign_tx(Node, Wallet, TXParams) ->
-	sign_tx(Node, Wallet, TXParams, fun ar_tx:sign/2).
+	sign_tx(Node, Wallet, insert_root(TXParams), fun ar_tx:sign/2).
+
+insert_root(Params) ->
+	case maps:get(data, Params, <<>>) of
+		<<>> ->
+			Params;
+		Data ->
+			TX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
+			Params#{ data_root => TX#tx.data_root }
+	end.
 
 sign_tx_pre_fork_2_0(Wallet) ->
 	sign_tx(slave, Wallet, #{}, fun ar_tx:sign_pre_fork_2_0/2).
@@ -288,7 +297,8 @@ sign_tx(Node, Wallet, TXParams, SignFun) ->
 			quantity = maps:get(quantity, TXParams, 0),
 			tags = maps:get(tags, TXParams, []),
 			last_tx = maps:get(last_tx, TXParams, <<>>),
-			data_size = byte_size(Data)
+			data_size = byte_size(Data),
+			data_root = maps:get(data_root, TXParams, <<>>)
 		},
 		Wallet
 	).
