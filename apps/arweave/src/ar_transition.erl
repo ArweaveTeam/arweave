@@ -36,11 +36,9 @@ init(_Args) ->
 handle_call(get_checkpoint, _From, #{ checkpoint := Checkpoint } = State) ->
 	{reply, Checkpoint, State}.
 
-handle_cast({update_block_index, [{H, _} | _]}, #{ block_index := [{H, _} | _] } = State) ->
-	{noreply, State};
-handle_cast({update_block_index, NewBI}, State) ->
+handle_cast({update_block_index, BI}, State) ->
 	#{ checkpoint := Checkpoint } = State,
-	case update_to_go(NewBI, Checkpoint, []) of
+	case update_to_go({BI, length(BI)}, {Checkpoint, length(Checkpoint)}, []) of
 		{error, no_intersection} ->
 			ar:err([
 				{event, ar_transition_update_block_index_failed},
@@ -49,7 +47,6 @@ handle_cast({update_block_index, NewBI}, State) ->
 			{noreply, State};
 		{ok, NewCheckpoint, ToGo} ->
 			NewState = State#{
-				block_index => NewBI,
 				to_go => ToGo,
 				checkpoint => NewCheckpoint
 			},
@@ -57,26 +54,32 @@ handle_cast({update_block_index, NewBI}, State) ->
 			{noreply, NewState}
 	end;
 
+handle_cast(transition_block, #{ to_go := [] } = State) ->
+	{noreply, State};
 handle_cast(transition_block, State) ->
 	#{
-		block_index := BI,
 		to_go := [{H, _} | NewToGo],
 		checkpoint := Checkpoint
 	} = State,
-	{ok, NewEntry} = transition_block(H, BI, [{BH, WS} || {BH, WS, _} <- Checkpoint]),
-	NewCheckpoint = [NewEntry | Checkpoint],
-	ok = save_checkpoint(NewCheckpoint),
-	case NewToGo of
-		[] ->
-			noop;
-		_ ->
-			gen_server:cast(?MODULE, transition_block)
-	end,
-	NewState = State#{
-		to_go => NewToGo,
-		checkpoint => NewCheckpoint
-	},
-	{noreply, NewState};
+	case transition_block(H, [{BH, WS} || {BH, WS, _} <- Checkpoint]) of
+		error ->
+			timer:apply_after(10, gen_server, cast, [?MODULE, transition_block]),
+			{noreply, State};
+		{ok, NewEntry} ->
+			NewCheckpoint = [NewEntry | Checkpoint],
+			ok = save_checkpoint(NewCheckpoint),
+			case NewToGo of
+				[] ->
+					noop;
+				_ ->
+					gen_server:cast(?MODULE, transition_block)
+			end,
+			NewState = State#{
+				to_go => NewToGo,
+				checkpoint => NewCheckpoint
+			},
+			{noreply, NewState}
+	end;
 
 handle_cast(remove_checkpoint, State) ->
 	file:delete(checkpoint_location()),
@@ -100,49 +103,98 @@ load_checkpoint() ->
 checkpoint_location() ->
 	filename:join(ar_meta_db:get(data_dir), "fork_2_0_checkpoint").
 
-update_to_go(BI, [], _) ->
+update_to_go({BI, _}, {[], _}, _) ->
 	{ok, [], lists:reverse(BI)};
-update_to_go([{H, _} | _], [{_, _, H} | _] = Checkpoint, ToGo) ->
+update_to_go({[{H, _} | _], _}, {[{_, _, H} | _] = Checkpoint, _}, ToGo) ->
 	{ok, Checkpoint, ToGo};
-update_to_go([Entry | Tail] = BI, Checkpoint, ToGo) when length(BI) > length(Checkpoint) ->
-	update_to_go(Tail, Checkpoint, [Entry | ToGo]);
-update_to_go([Entry | BI], [_ | Checkpoint], ToGo) ->
-	update_to_go(BI, Checkpoint, [Entry | ToGo]);
-update_to_go([], [], _) ->
+update_to_go({[Entry | BI], Height}, {Checkpoint, CheckpointHeight}, ToGo) when Height > CheckpointHeight ->
+	update_to_go({BI, Height - 1}, {Checkpoint, CheckpointHeight}, [Entry | ToGo]);
+update_to_go({BI, Height}, {[_ | Checkpoint], CheckpointHeight}, ToGo) when Height < CheckpointHeight ->
+	update_to_go({BI, Height}, {Checkpoint, CheckpointHeight - 1}, ToGo);
+update_to_go({[Entry | BI], Height}, {[_ | Checkpoint], CheckpointHeight}, ToGo) ->
+	update_to_go({BI, Height}, {Checkpoint, CheckpointHeight}, [Entry | ToGo]);
+update_to_go({[], _}, {[], _}, _) ->
 	{error, no_intersection}.
 
-transition_block(H, BI, NewBI) ->
-	RawB =
-		ar_node_utils:get_full_block(
-			ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-			H,
-			BI
-		),
-	case ar_block:verify_indep_hash(RawB) of
-		false ->
+transition_block(H, BI) ->
+	Peers = ar_node:get_trusted_peers(whereis(http_entrypoint_node)),
+	case ar_storage:read_block_shadow(H) of
+		unavailable ->
+			case ar_http_iface_client:get_block_shadow(Peers, H) of
+				unavailable ->
+					ar:err([
+						{event, transition_failed},
+						{reason, did_not_find_block},
+						{block, ar_util:encode(H)}
+					]),
+					error;
+				{_Peer, B} ->
+					transition_block(Peers, B, BI)
+			end;
+		B ->
+			transition_block(Peers, B, BI)
+	end.
+
+transition_block(Peers, B, BI) ->
+	TXs = lists:foldr(
+		fun
+			(_TXID, {unavailable, TXID}) ->
+				{unavailable, TXID};
+			(TXID, Acc) ->
+				case ar_http_iface_client:get_tx(Peers, TXID, []) of
+					unavailable ->
+						{unavailable, TXID};
+					TX ->
+						[TX | Acc]
+				end
+		end,
+		[],
+		B#block.txs
+	),
+	case TXs of
+		{unavailable, TXID} ->
 			ar:err([
 				{event, transition_failed},
-				{reason, invalid_hash},
-				{hash, ar_util:encode(H)}
+				{reason, did_not_find_transaction},
+				{block, ar_util:encode(B#block.indep_hash)},
+				{tx, ar_util:encode(TXID)}
 			]),
 			error;
-		true ->
-			BV2 = ar_block:generate_tx_tree(
-				RawB#block{
-					poa = ar_poa:generate_2_0(NewBI, 2)
-				}),
-			B = BV2#block {
-				indep_hash = ar_weave:indep_hash_post_fork_2_0(BV2)
-			},
-			ar:info([
-				{event, transitioning_block},
-				{height, B#block.height},
-				{v1_hash, ar_util:encode(H)},
-				{v2_hash, ar_util:encode(B#block.indep_hash)}
-			]),
-			ar_storage:write_block(B, do_not_write_wallet_list),
-			{ok, {B#block.indep_hash, B#block.weave_size, RawB#block.indep_hash}}
+		_ ->
+			transition_block2(B, TXs, BI)
 	end.
+
+transition_block2(B, TXs, BI) ->
+	TXsWithDataRoot = lists:map(
+		fun(TX) ->
+			DataRoot = (ar_tx:generate_chunk_tree(TX))#tx.data_root,
+			TX#tx{ data_root = DataRoot }
+		end,
+		TXs
+	),
+	lists:foreach(
+		fun(TX) ->
+			ok = ar_storage:write_tx(TX)
+		end,
+		TXsWithDataRoot
+	),
+	BV2ToHash = ar_block:generate_tx_tree(
+		B#block{
+			poa = ar_poa:generate_2_0(BI, 2)
+		},
+		ar_block:generate_size_tagged_list_from_txs(TXsWithDataRoot)
+	),
+	BV2 = BV2ToHash#block {
+		indep_hash = ar_weave:indep_hash_post_fork_2_0(BV2ToHash)
+	},
+	ok = ar_storage:write_block(BV2, do_not_write_wallet_list),
+	ar:info([
+		{event, transitioned_block},
+		{height, B#block.height},
+		{v1_hash, ar_util:encode(B#block.indep_hash)},
+		{v2_hash, ar_util:encode(BV2#block.indep_hash)}
+	]),
+	{ok, {BV2#block.indep_hash, BV2#block.weave_size, B#block.indep_hash}}.
 
 save_checkpoint(Checkpoint) ->
 	save_checkpoint(checkpoint_location(), Checkpoint).

@@ -94,24 +94,24 @@ write_block(B, WriteWalletList) ->
 		do_not_write_wallet_list ->
 			noop;
 		write_wallet_list ->
-			write_wallet_list(B)
+			ok = write_wallet_list(B)
 	end,
 	BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-	case enough_space(byte_size(BlockJSON)) of
+	ByteSize = byte_size(BlockJSON),
+	case enough_space(ByteSize) of
 		true ->
 			file:write_file(Name = block_filepath(B), BlockJSON),
 			ar_block_index:add(B, Name),
 			spawn(
 				ar_meta_db,
 				increase,
-				[used_space, byte_size(BlockJSON)]
+				[used_space, ByteSize]
 			),
-			Name;
+			ok;
 		false ->
 			ar:err(
 				[
-					{not_enough_space_to_write_block},
-					{block_not_written}
+					{event, not_enough_space_to_write_block}
 				]
 			),
 			{error, not_enough_space}
@@ -276,43 +276,30 @@ tx_exists(Hash) ->
 		{error, _} -> false
 	end.
 
-%% @doc Write a tx (with the txid.json as the filename) to disk.
-%% When debug is set, does not consider disk space. This is currently
-%% necessary because of test timings
--ifdef(DEBUG).
 write_tx(TXs) when is_list(TXs) -> lists:foreach(fun write_tx/1, TXs);
 write_tx(TX) ->
-	file:write_file(
-		Name = tx_filepath(TX),
-		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-	),
-	Name.
--else.
-write_tx(TXs) when is_list(TXs) -> lists:foreach(fun write_tx/1, TXs);
-write_tx(TX) ->
-	TXToWrite = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-	case enough_space(byte_size(TXToWrite)) of
+	TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+	ByteSize = byte_size(TXJSON),
+	case enough_space(ByteSize) of
 		true ->
 			file:write_file(
-				Name = tx_filepath(TX),
-				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+				tx_filepath(TX),
+				TXJSON
 			),
 			spawn(
 				ar_meta_db,
 				increase,
-				[used_space, byte_size(TXToWrite)]
+				[used_space, ByteSize]
 			),
-			Name;
+			ok;
 		false ->
-			ar:report(
+			ar:err(
 				[
-					{not_enough_space_to_write_tx},
-					{tx_not_written}
+					{event, not_enough_space_to_write_tx}
 				]
 			),
-			{error, enospc}
+			{error, not_enough_space}
 	end.
--endif.
 
 %% @doc Read a tx from disk, given a hash.
 read_tx(unavailable) -> unavailable;
@@ -358,7 +345,7 @@ write_wallet_list(B) ->
 	end,
 	JSON = ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)),
 	file:write_file(wallet_list_filepath(ID), JSON),
-	ID.
+	ok.
 
 %% @doc Read a list of block hashes from the disk.
 read_block_block_index(Hash) ->
