@@ -155,7 +155,7 @@ add([CurrentB | _Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, 
 	TXRoot = ar_block:generate_tx_root_for_block(RawTXs),
 	BlockSize = lists:foldl(
 		fun(TX, Acc) ->
-			Acc + byte_size(TX#tx.data)
+			Acc + TX#tx.data_size
 		end,
 		0,
 		RawTXs

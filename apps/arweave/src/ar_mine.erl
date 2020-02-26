@@ -191,7 +191,7 @@ update_txs(
 	NewBlockSize =
 		lists:foldl(
 			fun(TX, Acc) ->
-				Acc + byte_size(TX#tx.data)
+				Acc + TX#tx.data_size
 			end,
 			0,
 			ValidTXs

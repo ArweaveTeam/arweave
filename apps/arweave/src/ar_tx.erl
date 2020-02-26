@@ -1,7 +1,7 @@
 -module(ar_tx).
 
 -export([new/0, new/1, new/2, new/3, new/4]).
--export([sign/2, sign/3, verify/5, verify_txs/6, signature_data_segment/1]).
+-export([sign/2, sign/3, verify/5, verify_txs/6]).
 -export([sign_pre_fork_2_0/2, sign_pre_fork_2_0/3]).
 -export([tx_to_binary/1, tags_to_list/1]).
 -export([calculate_min_tx_cost/4, calculate_min_tx_cost/6, check_last_tx/2]).
@@ -35,7 +35,7 @@ new(Dest, Reward, Qty, Last) when bit_size(Dest) == ?HASH_SZ ->
 		reward = Reward
 	};
 new(Dest, Reward, Qty, Last) ->
-	% Convert wallets to addresses before building transactions.
+	%% Convert wallets to addresses before building transactions.
 	new(ar_wallet:to_address(Dest), Reward, Qty, Last).
 
 %% @doc A testing function used for giving transactions an ID being placed on the weave.
@@ -60,7 +60,7 @@ tx_to_binary(T) ->
 	>>.
 
 %% @doc Generate the data segment to be signed for a given TX.
-signature_data_segment(TX) ->
+signature_data_segment_v2(TX) ->
 	ar_deep_hash:hash([
 		<<(integer_to_binary(TX#tx.format))/binary>>,
 		<<(TX#tx.owner)/binary>>,
@@ -76,9 +76,9 @@ signature_data_segment(TX) ->
 %% @doc Compute TX hash. TX hash goes into the transaction merkle tree
 %% of the block that contains this transaction.
 tx_hash(TX) ->
-	crypto:hash(sha256, signature_data_segment(TX)).
+	crypto:hash(sha256, signature_data_segment_v2(TX)).
 
-signature_data_segment_pre_fork_2_0(T) ->
+signature_data_segment_v1(T) ->
 	<<
 		(T#tx.owner)/binary,
 		(T#tx.target)/binary,
@@ -92,16 +92,16 @@ signature_data_segment_pre_fork_2_0(T) ->
 %% @doc Cryptographicvally sign ('claim ownership') of a transaction.
 %% After it is signed, it can be placed into a block and verified at a later date.
 sign(TX, {PrivKey, PubKey}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey })).
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = PubKey })).
 
 sign(TX, PrivKey, PubKey) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment(TX#tx{ owner = PubKey })).
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = PubKey })).
 
 sign_pre_fork_2_0(TX, {PrivKey, PubKey}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_pre_fork_2_0(TX#tx{ owner = PubKey })).
+	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = PubKey })).
 
 sign_pre_fork_2_0(TX, PrivKey, PubKey) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_pre_fork_2_0(TX#tx{ owner = PubKey })).
+	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = PubKey })).
 
 sign(TX, PrivKey, PubKey, SignatureDataSegment) ->
 	NewTX = TX#tx{ owner = PubKey },
@@ -123,7 +123,24 @@ verify(TX, Diff, Height, Wallets, Timestamp) ->
 	do_verify(TX, Diff, Height, Wallets, Timestamp).
 -endif.
 
-do_verify(TX, Diff, Height, Wallets, Timestamp) ->
+do_verify(#tx{ format = 1 } = TX, Diff, Height, Wallets, Timestamp) ->
+	case Height >= ar_fork:height_2_0() of
+		true ->
+			collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]);
+		false ->
+			do_verify_v1(TX, Diff, Height, Wallets, Timestamp)
+	end;
+do_verify(#tx{ format = 2 } = TX, Diff, Height, Wallets, Timestamp) ->
+	case Height < ar_fork:height_2_0() of
+		true ->
+			collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]);
+		false ->
+			do_verify_v2(TX, Diff, Height, Wallets, Timestamp)
+	end;
+do_verify(TX, _Diff, _Height, _Wallets, _Timestamp) ->
+	collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]).
+
+do_verify_v1(TX, Diff, Height, Wallets, Timestamp) ->
 	Fork_1_8 = ar_fork:height_1_8(),
 	LastTXCheck = case Height of
 		H when H >= Fork_1_8 ->
@@ -139,7 +156,7 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 		{"tx_too_cheap",
 		 tx_cost_above_min(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)},
 		{"tx_fields_too_large",
-		 tx_field_size_limit(TX, Height)},
+		 tx_field_size_limit_v1(TX, Height)},
 		{"tag_field_illegally_specified",
 		 tag_field_legal(TX)},
 		{"last_tx_not_valid",
@@ -149,8 +166,36 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 		{"overspend",
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
 		{"tx_signature_not_valid",
-		 verify_signature(TX, Height)}
+		 verify_signature_v1(TX)}
 	],
+	collect_validation_results(TX#tx.id, Checks).
+
+do_verify_v2(TX, Diff, Height, Wallets, Timestamp) ->
+	Checks = [
+		{"quantity_negative",
+		 TX#tx.quantity >= 0},
+		{"same_owner_as_target",
+		 (ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target)},
+		{"tx_too_cheap",
+		 tx_cost_above_min(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)},
+		{"tx_fields_too_large",
+		 tx_field_size_limit_v2(TX)},
+		{"tag_field_illegally_specified",
+		 tag_field_legal(TX)},
+		{"tx_id_not_valid",
+		 verify_hash(TX)},
+		{"overspend",
+		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
+		{"tx_signature_not_valid",
+		 verify_signature_v2(TX)},
+		{"tx_data_size_negative",
+		 TX#tx.data_size >= 0},
+		{"tx_data_size_data_root_mismatch",
+		 (TX#tx.data_size == 0) == (TX#tx.data_root == <<>>)}
+	],
+	collect_validation_results(TX#tx.id, Checks).
+
+collect_validation_results(TXID, Checks) ->
 	KeepFailed = fun
 		({_, true}) ->
 			false;
@@ -161,24 +206,16 @@ do_verify(TX, Diff, Height, Wallets, Timestamp) ->
 		[] ->
 			true;
 		ErrorCodes ->
-			ar:d(
-				[
-					{tx_validation_failed, ar_util:encode(TX#tx.id)},
-					{reasons, ErrorCodes}
-				]
-			),
-			ar_tx_db:put_error_codes(TX#tx.id, ErrorCodes),
+			ar_tx_db:put_error_codes(TXID, ErrorCodes),
 			false
 	end.
 
-verify_signature(TX, Height) ->
-	Fork_2_0 = ar_fork:height_2_0(),
-	SignatureDataSegment = case Height of
-		H when H < Fork_2_0 ->
-			signature_data_segment_pre_fork_2_0(TX);
-		H when Fork_2_0 =< H ->
-			signature_data_segment(TX)
-	end,
+verify_signature_v1(TX) ->
+	SignatureDataSegment = signature_data_segment_v1(TX),
+	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
+
+verify_signature_v2(TX) ->
+	SignatureDataSegment = signature_data_segment_v2(TX),
 	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
 
 validate_overspend(TX, Wallets) ->
@@ -229,7 +266,7 @@ verify_txs_size(B, TXs) ->
 		_ ->
 			TotalTXSize = lists:foldl(
 				fun(TX, CurrentTotalTXSize) ->
-					CurrentTotalTXSize + byte_size(TX#tx.data)
+					CurrentTotalTXSize + TX#tx.data_size
 				end,
 				0,
 				TXs
@@ -258,7 +295,7 @@ verify_txs(B, valid_size_txs, [TX | TXs], Diff, Height, WalletMap, Timestamp) ->
 %% @doc Ensure that transaction cost above proscribed minimum.
 tx_cost_above_min(TX, Diff, Height, Wallets, Addr, Timestamp) ->
 	TX#tx.reward >=
-		calculate_min_tx_cost(byte_size(TX#tx.data), Diff, Height + 1, Wallets, Addr, Timestamp).
+		calculate_min_tx_cost(TX#tx.data_size, Diff, Height + 1, Wallets, Addr, Timestamp).
 
 %% @doc Calculate the minimum transaction cost for a TX with the given data size.
 %% Cost per byte is static unless size is bigger than 10mb, at which
@@ -298,7 +335,7 @@ min_tx_cost(DataSize, _Diff, DiffCenter) ->
 	min_tx_cost(DataSize, DiffCenter, DiffCenter).
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
-tx_field_size_limit(TX, Height) ->
+tx_field_size_limit_v1(TX, Height) ->
 	Fork_1_8 = ar_fork:height_1_8(),
 	LastTXLimit = case Height of
 		H when H >= Fork_1_8 ->
@@ -317,6 +354,22 @@ tx_field_size_limit(TX, Height) ->
 			(byte_size(TX#tx.data) =< (?TX_DATA_SIZE_LIMIT)) and
 			(byte_size(TX#tx.signature) =< 512) and
 			(byte_size(integer_to_binary(TX#tx.reward)) =< 21);
+		false -> false
+	end.
+
+tx_field_size_limit_v2(TX) ->
+	case tag_field_legal(TX) of
+		true ->
+			(byte_size(TX#tx.id) =< 32) and
+			(byte_size(TX#tx.last_tx) =< 48) and
+			(byte_size(TX#tx.owner) =< 512) and
+			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
+			(byte_size(TX#tx.target) =< 32) and
+			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
+			(byte_size(integer_to_binary(TX#tx.data_size)) =< 21) and
+			(byte_size(TX#tx.signature) =< 512) and
+			(byte_size(integer_to_binary(TX#tx.reward)) =< 21) and
+			(byte_size(TX#tx.data_root) =< 32);
 		false -> false
 	end.
 
@@ -447,7 +500,7 @@ sign_tx_test() ->
 	Timestamp = os:system_time(seconds),
 	WalletList = [{ar_wallet:to_address(Pub), ?AR(2000000), <<>>}],
 	SignedTXPreFork_2_0 = sign_pre_fork_2_0(NewTX, Priv, Pub),
-	SignedTX = sign(NewTX, Priv, Pub),
+	SignedTX = sign(generate_chunk_tree(NewTX#tx{ format = 2 }), Priv, Pub),
 	?assert(verify(SignedTXPreFork_2_0, Diff, 0, WalletList, Timestamp)),
 	?assert(not verify(SignedTX, Diff, 0, WalletList, Timestamp)),
 	?assert(not verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),

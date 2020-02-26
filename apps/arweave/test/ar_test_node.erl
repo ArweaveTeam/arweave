@@ -253,13 +253,13 @@ post_tx_to_master(Master, TX) ->
 	Reply.
 
 sign_tx(Wallet) ->
-	sign_tx(slave, Wallet, #{}, fun ar_tx:sign/2).
+	sign_tx(slave, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
 
 sign_tx(Wallet, TXParams) ->
-	sign_tx(slave, Wallet, insert_root(TXParams), fun ar_tx:sign/2).
+	sign_tx(slave, Wallet, insert_root(TXParams#{ format => 2 }), fun ar_tx:sign/2).
 
 sign_tx(Node, Wallet, TXParams) ->
-	sign_tx(Node, Wallet, insert_root(TXParams), fun ar_tx:sign/2).
+	sign_tx(Node, Wallet, insert_root(TXParams#{ format => 2 }), fun ar_tx:sign/2).
 
 insert_root(Params) ->
 	case maps:get(data, Params, <<>>) of
@@ -282,9 +282,10 @@ sign_tx_pre_fork_2_0(Node, Wallet, TXParams) ->
 sign_tx(Node, Wallet, TXParams, SignFun) ->
 	{_, Pub} = Wallet,
 	Data = maps:get(data, TXParams, <<>>),
+	DataSize = maps:get(data_size, TXParams, byte_size(Data)),
 	Reward = case maps:get(reward, TXParams, none) of
 		none ->
-			get_tx_price(Node, byte_size(Data));
+			get_tx_price(Node, DataSize);
 		AssignedReward ->
 			AssignedReward
 	end,
@@ -297,8 +298,9 @@ sign_tx(Node, Wallet, TXParams, SignFun) ->
 			quantity = maps:get(quantity, TXParams, 0),
 			tags = maps:get(tags, TXParams, []),
 			last_tx = maps:get(last_tx, TXParams, <<>>),
-			data_size = byte_size(Data),
-			data_root = maps:get(data_root, TXParams, <<>>)
+			data_size = DataSize,
+			data_root = maps:get(data_root, TXParams, <<>>),
+			format = maps:get(format, TXParams, 1)
 		},
 		Wallet
 	).
