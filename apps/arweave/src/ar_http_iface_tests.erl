@@ -298,7 +298,7 @@ get_format_2_tx_with_no_data_test() ->
 			"/tx/" ++ EncodedTxID,
 			[{<<"x-tx-format">>, ?TX_WITHOUT_DATA_FORMAT}]
 		),
-	?assertEqual(TX#tx{data = <<>>}, ar_serialize:json_struct_to_tx(Body)).
+	?assertEqual(TX#tx{data = <<>>, data_size = 0}, ar_serialize:json_struct_to_tx(Body)).
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->

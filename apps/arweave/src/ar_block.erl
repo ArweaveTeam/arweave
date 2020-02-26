@@ -472,7 +472,7 @@ generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, Reward
 	WeaveSize = PrecedingB#block.weave_size +
 		lists:foldl(
 			fun(TX, Acc) ->
-				Acc + byte_size(TX#tx.data)
+				Acc + TX#tx.data_size
 			end,
 			0,
 			TXs
@@ -573,7 +573,7 @@ refresh_block_data_segment_timestamp(Pieces, PrecedingB, PrecedingRecallB, TXs, 
 	WeaveSize = PrecedingB#block.weave_size +
 		lists:foldl(
 			fun(TX, Acc) ->
-				Acc + byte_size(TX#tx.data)
+				Acc + TX#tx.data_size
 			end,
 			0,
 			TXs
@@ -741,7 +741,7 @@ verify_wallet_list(NewB, OldB, POA, NewTXs) ->
 verify_weave_size(NewB, OldB, TXs) ->
 	NewB#block.weave_size == lists:foldl(
 		fun(TX, Acc) ->
-			Acc + byte_size(TX#tx.data)
+			Acc + TX#tx.data_size
 		end,
 		OldB#block.weave_size,
 		TXs

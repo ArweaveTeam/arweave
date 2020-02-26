@@ -335,7 +335,7 @@ tx_to_json_struct(
 	}) ->
 	{
 		[
-			{format, Format},
+			{format, case Format of undefined -> integer_to_binary(1); _ -> integer_to_binary(Format) end},
 			{id, ar_util:encode(ID)},
 			{last_tx, ar_util:encode(Last)},
 			{owner, ar_util:encode(Owner)},
@@ -417,12 +417,13 @@ json_struct_to_tx({TXStruct}) ->
 		Xs -> Xs
 	end,
 	Data = ar_util:decode(find_value(<<"data">>, TXStruct)),
+	Format =
+		case find_value(<<"format">>, TXStruct) of
+			undefined -> 1;
+			N -> binary_to_integer(N)
+		end,
 	#tx {
-		format =
-			case find_value(<<"format">>, TXStruct) of
-				undefined -> 1;
-				N -> N
-			end,
+		format = Format,
 		id = ar_util:decode(find_value(<<"id">>, TXStruct)),
 		last_tx = ar_util:decode(find_value(<<"last_tx">>, TXStruct)),
 		owner = ar_util:decode(find_value(<<"owner">>, TXStruct)),
@@ -437,11 +438,7 @@ json_struct_to_tx({TXStruct}) ->
 		data = Data,
 		reward = binary_to_integer(find_value(<<"reward">>, TXStruct)),
 		signature = ar_util:decode(find_value(<<"signature">>, TXStruct)),
-		data_size =
-			case find_value(<<"data_size">>, TXStruct) of
-				undefined -> byte_size(Data);
-				X -> binary_to_integer(X)
-			end,
+		data_size = parse_data_size(Format, TXStruct, Data),
 		data_tree =
 			case find_value(<<"data_tree">>, TXStruct) of
 				undefined -> [];
@@ -453,6 +450,11 @@ json_struct_to_tx({TXStruct}) ->
 				DR -> ar_util:decode(DR)
 			end
 	}.
+
+parse_data_size(1, _TXStruct, Data) ->
+	byte_size(Data);
+parse_data_size(_Format, TXStruct, _Data) ->
+	binary_to_integer(find_value(<<"data_size">>, TXStruct)).
 
 %% @doc Convert a wallet list into a JSON struct.
 wallet_list_to_json_struct([]) -> [];

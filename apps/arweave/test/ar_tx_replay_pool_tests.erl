@@ -198,6 +198,7 @@ make_tx_chain(Key, Diff, Height, Timestamp) ->
 tx(Key = {_, Pub}, Reward, Anchor) ->
 	ar_tx:sign(
 		#tx {
+			format = 2,
 			owner = Pub,
 			reward = Reward,
 			last_tx = Anchor

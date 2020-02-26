@@ -237,7 +237,7 @@ apply_txs(TXs, Diff, Height, Timestamp, WalletList, WeaveState, Mempool) ->
 pick_txs_under_size_limit(TXs) ->
 	{_, _, TXsUnderSizeLimit} = lists:foldl(
 		fun(TX, {TotalSize, TXCount, PickedTXs}) ->
-			TXSize = byte_size(TX#tx.data),
+			TXSize = TX#tx.data_size,
 			NewTotalSize = TXSize + TotalSize,
 			NewTXCount = TXCount + 1,
 			case {NewTotalSize, NewTXCount} of
