@@ -251,7 +251,7 @@ validate_tx_root(BlockOffset, RecallB, RecallTX, POA) ->
 	end.
 
 validate_tx_path(BlockOffset, RecallTX, POA) ->
-	Validation =
+	{Validation, _, _} =
 		ar_merkle:validate_path(
 			POA#poa.tx_root,
 			BlockOffset,
@@ -280,7 +280,7 @@ validate_data_path(BlockOffset, RecallTX, POA) ->
 	TXEndOffset = ar_merkle:extract_note(POA#poa.tx_path),
 	TXStartOffset = TXEndOffset - RecallTX#tx.data_size,
 	TXOffset = BlockOffset - TXStartOffset,
-	Validation =
+	{Validation, _, _} =
 		ar_merkle:validate_path(
 			POA#poa.data_root,
 			TXOffset,

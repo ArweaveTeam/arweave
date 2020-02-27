@@ -104,24 +104,28 @@ generate_path_parts(ID, Dest, Tree) ->
 			]
 	end.
 
-validate_path(ID, _Dest, << Data:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8) >>) ->
-	case hash([hash(Data), hash(note_to_binary(Note))]) of
-		ID -> Data;
+validate_path(ID, Dest, Path) ->
+	validate_path(ID, Dest, 0, Path).
+
+validate_path(ID, _Dest, StartOffset, << Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
+	case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
+		ID -> {Data, StartOffset, EndOffset};
 		_ -> false
 	end;
-validate_path(ID, Dest,
+validate_path(ID, Dest, StartOffset,
 		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>) ->
 	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
 		ID ->
-			validate_path(
+			{Path, NextStartOffset} =
 				case Dest < Note of
-					true -> L;
-					false -> R
+					true ->
+						{L, StartOffset};
+					false ->
+						{R, Note}
 				end,
-				Dest,
-				Rest
-			);
-		_ -> false
+			validate_path(Path, Dest, NextStartOffset, Rest);
+		_ ->
+			false
 	end.
 
 %% @doc Get the note attached to the final node from a path.
@@ -176,41 +180,41 @@ make_tags_cumulative(L) ->
 -define(UNEVEN_TEST_TARGET, 33271).
 
 generate_balanced_tree_test() ->
-	{_MR, Tree} =
-		ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)])),
+	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)]),
+	{_MR, Tree} = ar_merkle:generate_tree(Tags),
 	?assertEqual(length(Tree), (?TEST_SIZE * 2) - 1).
 
 generate_and_validate_balanced_tree_path_test() ->
-	{MR, Tree} =
-		ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)])),
-	RandomTarget = rand:uniform(?TEST_SIZE) - 1,
-	?assertEqual(
-		RandomTarget,
-		binary:decode_unsigned(
-			ar_merkle:validate_path(
-				MR, RandomTarget,
-				ar_merkle:generate_path(MR, RandomTarget, Tree)
-			)
-		)
+	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)]),
+	{MR, Tree} = ar_merkle:generate_tree(Tags),
+	lists:foreach(
+		fun(_TestCase) ->
+			RandomTarget = rand:uniform(?TEST_SIZE) - 1,
+			Path = ar_merkle:generate_path(MR, RandomTarget, Tree),
+			{Leaf, StartOffset, EndOffset} =
+				ar_merkle:validate_path(MR, RandomTarget, Path),
+			?assertEqual(RandomTarget, binary:decode_unsigned(Leaf)),
+			?assert(RandomTarget < EndOffset),
+			?assert(RandomTarget >= StartOffset)
+		end,
+		lists:seq(1, 100)
 	).
 
 generate_and_validate_uneven_tree_path_test() ->
-	{MR, Tree} =
-		ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?UNEVEN_TEST_SIZE - 1)])),
+	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?UNEVEN_TEST_SIZE - 1)]),
+	{MR, Tree} = ar_merkle:generate_tree(Tags),
 	%% Make sure the target is in the 'uneven' ending of the tree.
-	?assertEqual(
-		?UNEVEN_TEST_TARGET,
-		binary:decode_unsigned(
-			ar_merkle:validate_path(
-				MR, ?UNEVEN_TEST_TARGET,
-				ar_merkle:generate_path(MR, ?UNEVEN_TEST_TARGET, Tree)
-			)
-		)
-	).
+	Path = ar_merkle:generate_path(MR, ?UNEVEN_TEST_TARGET, Tree),
+	{Leaf, StartOffset, EndOffset} =
+		ar_merkle:validate_path(MR, ?UNEVEN_TEST_TARGET, Path),
+	?assertEqual(?UNEVEN_TEST_TARGET, binary:decode_unsigned(Leaf)),
+	?assert(?UNEVEN_TEST_TARGET < EndOffset),
+	?assert(?UNEVEN_TEST_TARGET >= StartOffset).
 
 reject_invalid_tree_path_test() ->
+	Tags = make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)]),
 	{MR, Tree} =
-		ar_merkle:generate_tree(make_tags_cumulative([{<<N:256>>, 1} || N <- lists:seq(0, ?TEST_SIZE - 1)])),
+		ar_merkle:generate_tree(Tags),
 	RandomTarget = rand:uniform(?TEST_SIZE) - 1,
 	?assertEqual(
 		false,
