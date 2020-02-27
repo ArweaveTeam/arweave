@@ -5,8 +5,9 @@
 
 -import(ar_test_node, [assert_post_tx_to_slave/2]).
 -import(ar_test_node, [assert_wait_until_receives_txs/2, wait_until_height/2]).
--import(ar_test_node, [sign_tx_pre_fork_2_0/2, get_tx_anchor/0]).
+-import(ar_test_node, [sign_tx/2, sign_tx_pre_fork_2_0/2, get_tx_anchor/0]).
 -import(ar_test_node, [get_tx_price/1, slave_mine/1, slave_call/3]).
+-import(ar_test_node, [test_with_mocked_functions/2]).
 
 txs_broadcast_order_test_() ->
 	{timeout, 60, fun test_txs_broadcast_order/0}.
@@ -151,6 +152,32 @@ test_txs_are_included_in_blocks_sorted_by_utility_test() ->
 		lists:map(fun(TX) -> TX#tx.id end, TXs),
 		SlaveB#block.txs
 	).
+
+format_2_txs_are_gossiped_test() ->
+	test_with_mocked_functions(
+		[
+			{ar_fork, height_2_0, fun() -> 0 end}
+		],
+		fun format_2_txs_are_gossiped/0
+	).
+
+format_2_txs_are_gossiped() ->
+	{MasterNode, SlaveNode, Wallet} = setup(),
+	TXParams = #{format => 2, data => <<"TXDATA">>, reward => ?AR(1)},
+	SignedTX = sign_tx(Wallet, TXParams),
+	SignedTXNoData = ar_tx:strip_data(SignedTX),
+	assert_post_tx_to_slave(SlaveNode, SignedTX),
+	assert_wait_until_receives_txs(MasterNode, [SignedTXNoData]),
+	slave_mine(SlaveNode),
+	BI = wait_until_height(MasterNode, 1),
+
+	#block{txs = [TX1]} = ar_storage:read_block(hd(BI), BI),
+	?assertEqual(TX1, SignedTXNoData#tx.id),
+	?assertEqual(ar_storage:read_tx(TX1), SignedTXNoData),
+
+	#block{txs = [TX2]} = slave_call(ar_storage, read_block, [hd(BI), BI]),
+	?assertEqual(slave_call(ar_storage, read_tx, [TX2]), SignedTX),
+	?assertEqual(TX2, SignedTX#tx.id).
 
 %%%% private
 

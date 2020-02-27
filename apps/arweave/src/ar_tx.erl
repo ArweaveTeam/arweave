@@ -10,6 +10,7 @@
 -export([chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1]).
 -export([tx_hash/1]).
 -export([tx_format_to_http_header/1, tx_http_format/1]).
+-export([strip_data/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -497,6 +498,8 @@ tx_format_to_http_header(TXFormat) ->
 tx_http_format(?WITH_TX_DATA) -> ?TX_WITH_DATA_HTTP_FORMAT;
 tx_http_format(?WITH_TX_HEADERS) -> ?TX_WITHOUT_DATA_HTTP_FORMAT;
 tx_http_format(_) -> ?TX_WITH_DATA_HTTP_FORMAT.
+
+strip_data(TX = #tx{}) -> TX#tx{data = <<>>}.
 
 %%% Tests: ar_tx
 

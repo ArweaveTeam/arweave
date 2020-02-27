@@ -208,7 +208,7 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 				{ok, ID} ->
 					case ar_storage:read_tx(ID) of
 						#tx{} = TX ->
-							ReplyTX = TX#tx{data = <<>>},
+							ReplyTX = ar_tx:strip_data(TX),
 							Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ReplyTX)),
 							{200, #{}, Body, Req};
 						unavailable ->
