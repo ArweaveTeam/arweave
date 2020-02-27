@@ -181,14 +181,19 @@ handle_cast(emitter_go, State = #state { tx_queue = Q, size = Size, emit_map = E
 	{noreply, NewState};
 
 handle_cast({emit_tx_to_peer, TX}, State = #state { emit_map = EmitMap }) ->
-	TXID = TX#tx.id,
+	#tx{id = TXID, format = TXFormat} = TX,
 	case EmitMap of
 		#{ TXID := #{ peers := [] } } ->
 			{noreply, State};
 		#{ TXID := TXIDMap = #{ peers := [Peer | Peers] } } ->
 			spawn(
 				fun() ->
-					ar_http_iface_client:send_new_tx(Peer, TX),
+					TXByFormat =
+						case TXFormat of
+							2 -> ar_tx:strip_data(TX);
+							_Any -> TX
+						end,
+					ar_http_iface_client:send_new_tx(Peer, TXByFormat),
 					gen_server:cast(?MODULE, {emitted_tx_to_peer, TX})
 				end
 			),
