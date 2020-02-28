@@ -30,8 +30,12 @@ start(ExtPeers, IntPeers, Port) ->
 	ar_firewall:start(),
 	spawn(
 		fun() ->
-			ar:report([starting_ignored_ids_db]),
-			ets:new(ignored_ids, [set, public, named_table]),
+			case ets:info(ignored_ids) of
+				undefined ->
+					ets:new(ignored_ids, [set, public, named_table]);
+				_ ->
+					do_nothing
+			end,
 			receive stop -> ok end
 		end
 	),
