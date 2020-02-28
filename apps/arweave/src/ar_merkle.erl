@@ -126,7 +126,9 @@ validate_path(ID, Dest, StartOffset,
 			validate_path(Path, Dest, NextStartOffset, Rest);
 		_ ->
 			false
-	end.
+	end;
+validate_path(_ID, _Dest, _StartOffset, _Path) ->
+	false.
 
 %% @doc Get the note attached to the final node from a path.
 extract_note(Path) ->
