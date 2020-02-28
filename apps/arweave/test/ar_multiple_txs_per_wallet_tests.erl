@@ -702,27 +702,18 @@ recovers_from_forks(ForkHeight, ForkHeight_2_0) ->
 	),
 	%% Assert the block anchored transactions from the abandoned fork can
 	%% be reposted.
-	Format2MasterPostForkTXs = lists:filter(
-		fun(#tx{ format = 2 }) -> true; (_) -> false end,
+	lists:foreach(
+		fun(TX) ->
+			{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} =
+				ar_httpc:request(
+					<<"POST">>,
+					{127, 0, 0, 1, 1984},
+					"/tx",
+					[{<<"X-P2p-Port">>, <<"1984">>}],
+					ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+				)
+		end,
 		MasterPostForkTXs
-	),
-	lists:foreach(
-		fun(TX) ->
-			assert_post_tx_to_master(Master, TX)
-		end,
-		Format2MasterPostForkTXs
-	),
-	ar_node:mine(Master),
-	wait_until_height(Master, ForkHeight_2_0 + 4),
-	forget_txs(MasterPostForkTXs),
-	lists:foreach(
-		fun(TX) ->
-			Confirmations = get_tx_confirmations(master, TX#tx.id),
-			?assertEqual(1, Confirmations),
-			{ok, {{<<"400">>, _}, _, <<"Transaction is already on the weave.">>, _, _}} =
-				post_tx_to_master(Master, TX)
-		end,
-		Format2MasterPostForkTXs
 	).
 
 one_wallet_list_one_block_anchored_txs(Key, B0) ->
