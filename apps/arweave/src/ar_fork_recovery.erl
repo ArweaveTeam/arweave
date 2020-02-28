@@ -66,6 +66,7 @@ server(#state {
 		target_hashes_to_go = [],
 		parent_pid = ParentPID
 	}) ->
+	prometheus_counter:reset(fork_recovery_depth),
 	ParentPID ! {fork_recovered, BI, BlockTXPairs};
 server(S = #state { target_height = TargetHeight }) ->
 	receive
@@ -76,8 +77,7 @@ server(S = #state { target_height = TargetHeight }) ->
 						{event, stopping_fork_recovery},
 						{reason, parent_accepted_higher_block_than_target}
 					]
-				),
-				ok;
+				);
 			true ->
 				ar:info(
 					[
@@ -171,8 +171,7 @@ apply_next_block(State) ->
 					{reason, failed_to_fetch_block},
 					{block, ar_util:encode(NextH)}
 				]
-			),
-			end_fork_recovery(State);
+			);
 		true ->
 			%% Ensure that block being applied is not the genesis block and
 			%% is within the range of fork recovery.
@@ -189,8 +188,7 @@ apply_next_block(State) ->
 							{event, fork_recovery_failed},
 							{reason, recovery_block_is_genesis_block}
 						]
-					),
-					end_fork_recovery(State);
+					);
 				%% The fetched block is too far ahead.
 				{_, true} ->
 					ar:err(
@@ -199,8 +197,7 @@ apply_next_block(State) ->
 							{reason, recovery_block_is_too_far_ahead},
 							{block_height, NextB#block.height}
 						]
-					),
-					end_fork_recovery(State);
+					);
 				%% Target block is within the accepted range.
 				{_X, _Y} ->
 					apply_next_block(State, NextB)
@@ -219,8 +216,7 @@ apply_next_block(State, NextB) ->
 					{event, fork_recovery_failed},
 					{reason, failed_to_read_current_block}
 				]
-			),
-			end_fork_recovery(State);
+			);
 		true ->
 			apply_next_block(State, NextB, B)
 	end.
@@ -250,8 +246,7 @@ apply_next_block(State, NextB, B) ->
 							{reason, failed_to_fetch_recall_block},
 							{recall_block, ar_util:encode(RecallH)}
 						]
-					),
-					end_fork_recovery(State)
+					)
 			end
 	end.
 
@@ -283,8 +278,7 @@ apply_next_block(State, NextB, B, Recall) ->
 					{block, ar_util:encode(NextB#block.indep_hash)},
 					{previous_block, ar_util:encode(B#block.indep_hash)}
 				]
-			),
-			end_fork_recovery(State);
+			);
 		{error, tx_replay} ->
 			ar:err(
 				[
@@ -303,8 +297,7 @@ apply_next_block(State, NextB, B, Recall) ->
 					},
 					{previous_block, ar_util:encode(B#block.indep_hash)}
 				]
-			),
-			end_fork_recovery(State);
+			);
 		ok ->
 			ar:info(
 				[
@@ -328,6 +321,7 @@ apply_next_block(State, NextB, B, Recall) ->
 				_ -> do_nothing
 			end,
 			self() ! apply_next_block,
+			prometheus_counter:inc(fork_recovery_depth, 1),
 			server(
 				State#state {
 					recovered_block_index = NewBI,
@@ -336,9 +330,6 @@ apply_next_block(State, NextB, B, Recall) ->
 				}
 			)
 	end.
-
-end_fork_recovery(_State) ->
-	ok.
 
 %% @doc Validate a new block (NextB) against the current block (B).
 %% Returns ok | {error, invalid_block} | {error, tx_replay}.
