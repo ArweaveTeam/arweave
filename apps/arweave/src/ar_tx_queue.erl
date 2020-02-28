@@ -119,7 +119,7 @@ handle_call(_Request, _From, State) ->
 handle_cast({add_tx, TX}, State) ->
 	#state { tx_queue = Q, max_size = MaxSize, size = Size} = State,
 	TXSize = ?TX_SIZE_BASE + byte_size(TX#tx.data),
-	U = utility(TX, TXSize),
+	U = utility(TX),
 	{NewQ, NewSize, DroppedTXs} =
 		maybe_drop(
 			gb_sets:add_element({U, {TX, TXSize}}, Q),
@@ -181,19 +181,14 @@ handle_cast(emitter_go, State = #state { tx_queue = Q, size = Size, emit_map = E
 	{noreply, NewState};
 
 handle_cast({emit_tx_to_peer, TX}, State = #state { emit_map = EmitMap }) ->
-	#tx{id = TXID, format = TXFormat} = TX,
+	#tx{ id = TXID } = TX,
 	case EmitMap of
 		#{ TXID := #{ peers := [] } } ->
 			{noreply, State};
 		#{ TXID := TXIDMap = #{ peers := [Peer | Peers] } } ->
 			spawn(
 				fun() ->
-					TXByFormat =
-						case TXFormat of
-							2 -> ar_tx:strip_data(TX);
-							_Any -> TX
-						end,
-					ar_http_iface_client:send_new_tx(Peer, TXByFormat),
+					ar_http_iface_client:send_new_tx(Peer, strip_format_2_data(TX)),
 					gen_server:cast(?MODULE, {emitted_tx_to_peer, TX})
 				end
 			),
@@ -206,7 +201,8 @@ handle_cast({emitted_tx_to_peer, TX}, State = #state { emit_map = EmitMap, tx_qu
 	TXID = TX#tx.id,
 	case EmitMap of
 		#{ TXID := #{ peers := [], started_at := StartedAt } } ->
-			log_propagation_time(TX, timer:now_diff(erlang:timestamp(), StartedAt), gb_sets:size(Q)),
+			log_propagation_time(
+				strip_format_2_data(TX), timer:now_diff(erlang:timestamp(), StartedAt), gb_sets:size(Q)),
 			gen_server:cast(?MODULE, {emitter_finished, TX}),
 			{noreply, State#state{ emit_map = maps:remove(TXID, EmitMap) }};
 		_ ->
@@ -217,7 +213,7 @@ handle_cast({emitted_tx_to_peer, TX}, State = #state { emit_map = EmitMap, tx_qu
 handle_cast({emitter_finished, TX}, State) ->
 	Bridge = whereis(http_bridge_node),
 	timer:apply_after(
-		ar_node_utils:calculate_delay(?TX_SIZE_BASE + byte_size(TX#tx.data)),
+		ar_node_utils:calculate_delay(?TX_SIZE_BASE + byte_size((strip_format_2_data(TX))#tx.data)),
 		ar_bridge,
 		move_tx_to_mining_pool,
 		[Bridge, TX]
@@ -262,11 +258,17 @@ show_queue(Q) ->
 		Q
 	).
 
-utility(TX = #tx { data = Data }) ->
-	utility(TX, ?TX_SIZE_BASE + byte_size(Data)).
+utility(TX = #tx { data_size = DataSize }) ->
+	utility(TX, ?TX_SIZE_BASE + DataSize).
 
 utility(#tx { reward = Reward }, Size) ->
 	erlang:trunc(Reward / Size).
+
+strip_format_2_data(#tx{ format = TXFormat } = TX) ->
+	case TXFormat of
+		2 -> ar_tx:strip_data(TX);
+		_Any -> TX
+	end.
 
 log_propagation_time(TX, Time, QLen) ->
 	DataSize = ?TX_SIZE_BASE + byte_size(TX#tx.data),
