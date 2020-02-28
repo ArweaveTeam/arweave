@@ -46,6 +46,7 @@
 		ar_retarget,
 		ar_weave,
 		ar_join,
+		ar_poa_tests,
 		ar_node_tests,
 		ar_fork_recovery,
 		ar_firewall_distributed_tests,

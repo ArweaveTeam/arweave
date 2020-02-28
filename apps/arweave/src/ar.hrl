@@ -273,7 +273,11 @@
 -define(DIFF_ADJUSTMENT_UP_LIMIT, 4).
 
 %% @doc Max size of a single data chunk, in bytes.
+-ifdef(DEBUG).
+-define(DATA_CHUNK_SIZE, 128).
+-else.
 -define(DATA_CHUNK_SIZE, (32 * 1024)).
+-endif.
 %% @doc Max size of the PoA data path, in bytes.
 -define(MAX_PATH_SIZE, (256 * 1024)).
 %% @doc The size of data chunk hashes, in bytes.
