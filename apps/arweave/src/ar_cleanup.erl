@@ -48,18 +48,7 @@ remove_invalid_blocks(BI) ->
 			end,
 			Files
 		)
-	),
-	EncryptedBlockDir = filename:join(DataDir, ?ENCRYPTED_BLOCK_DIR),
-	case file:list_dir(EncryptedBlockDir) of
-		{ok, FilesEnc} ->
-			lists:foreach(
-				fun(X) ->
-					file:delete(filename:join(EncryptedBlockDir, X))
-				end,
-				FilesEnc
-			);
-		_ -> do_nothing
-	end.
+	).
 
 %% @doc Rewrite every block in the hash list using the latest format.
 %% In the case of upgrading a node from 1.1 to 1.5, this dramatically reduces

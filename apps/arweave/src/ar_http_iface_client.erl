@@ -8,7 +8,6 @@
 -export([get_block_shadow/2]).
 -export([get_tx/3, get_tx/4, get_tx_data/2]).
 -export([get_block_subfield/3, add_peer/1]).
--export([get_encrypted_block/2, get_encrypted_full_block/2]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).
 -export([get_wallet_list/2, get_block_index/1, get_block_index/2]).
@@ -147,18 +146,6 @@ get_block(Peers = [_|_], ID, BI, TXFormat) ->
 get_block(Peer, ID, BI, TXFormat) ->
 	get_block([Peer], ID, BI, TXFormat).
 
-%% @doc Get an encrypted block from a remote peer.
-%% Used when the next block is the recall block.
-get_encrypted_block(Peer, Hash) when is_binary(Hash) ->
-	handle_encrypted_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/encrypted",
-			p2p_headers()
-		)
-	).
-
 %% @doc Get a specified subfield from the block with the given hash
 get_block_subfield(Peer, Hash, Subfield) when is_binary(Hash) ->
 	handle_block_field_response(
@@ -271,18 +258,6 @@ get_height(Peer) ->
 		{ok, {{<<"200">>, _}, _, Body, _, _}} -> binary_to_integer(Body);
 		{ok, {{<<"500">>, _}, _, _, _, _}} -> not_joined
 	end.
-
-%% @doc Retreive a full block (full transactions included in body)
-%% by hash from a remote peer in an encrypted form
-get_encrypted_full_block(Peer, Hash) when is_binary(Hash) ->
-	handle_encrypted_full_block_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/all/encrypted",
-			p2p_headers()
-		)
-	).
 
 get_txs(_Peers, _MempoolTXs, _B = #block{txs = TXIDs}, ?NO_TX) -> {ok, TXIDs};
 get_txs(Peers, MempoolTXs, B, TXFormat) ->
@@ -577,32 +552,6 @@ reconstruct_full_block(Peer, Peers, Body, BI, TXFormat) ->
 			end;
 		false -> B
 	end.
-
-%% @doc Process the response of a /block/.../encrypted call.
-handle_encrypted_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	case catch ar_util:decode(Body) of
-		{'EXIT', _} -> unavailable;
-		Decoded -> Decoded
-	end;
-handle_encrypted_block_response({error, _}) -> unavailable;
-handle_encrypted_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_encrypted_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable;
-handle_encrypted_block_response(Response) ->
-	ar:warn([{unexpected_encrypted_block_response, Response}]),
-	unavailable.
-
-%% @doc Process the response of a /block/.../all/encrypted call.
-handle_encrypted_full_block_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	case catch ar_util:decode(Body) of
-		{'EXIT', _} -> unavailable;
-		Decoded -> Decoded
-	end;
-handle_encrypted_full_block_response({error, _}) -> unavailable;
-handle_encrypted_full_block_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_encrypted_full_block_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> unavailable;
-handle_encrypted_full_block_response(Response) ->
-	ar:warn([{unexpected_encrypted_full_block_response, Response}]),
-	unavailable.
 
 %% @doc Process the response of a /block/[{Height}|{Hash}]/{Subfield} call.
 handle_block_field_response(Response) ->

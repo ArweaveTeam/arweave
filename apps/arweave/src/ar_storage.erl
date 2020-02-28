@@ -1,8 +1,8 @@
 -module(ar_storage).
 
 -export([start/0]).
--export([write_block/1, write_block/2, write_full_block/1, write_full_block/2, write_encrypted_block/2]).
--export([read_block/2, read_encrypted_block/1, read_block_shadow/1]).
+-export([write_block/1, write_block/2, write_full_block/1, write_full_block/2]).
+-export([read_block/2, read_block_shadow/1]).
 -export([invalidate_block/1, delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, read_tx/1]).
 -export([read_wallet_list/1]).
@@ -19,7 +19,6 @@
 -include_lib("kernel/include/file.hrl").
 
 %%% Reads and writes blocks from disk.
-
 
 -define(DIRECTORY_SIZE_TIMER, 300000).
 
@@ -45,7 +44,6 @@ ensure_directories() ->
 	%% Append "/" to every path so that filelib:ensure_dir/1 creates a directory if it does not exist.
 	filelib:ensure_dir(filename:join(DataDir, ?TX_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?ENCRYPTED_BLOCK_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?WALLET_LIST_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/").
 
@@ -138,37 +136,6 @@ write_full_block(BShadow, TXs) ->
 	write_block(BShadow),
 	ar_arql_db:insert_full_block(BShadow#block{ txs = ScannedTXs }).
 
-%% @doc Write an encrypted	block (with the hash.json as the filename) to disk.
-%% When debug is set, does not consider disk space. This is currently
-%% necessary because of test timings
--ifdef(DEBUG).
-write_encrypted_block(Hash, B) ->
-	BlockToWrite = B,
-	file:write_file(Name = encrypted_block_filepath(Hash), BlockToWrite),
-	Name.
--else.
-write_encrypted_block(Hash, B) ->
-	BlockToWrite = B,
-	case enough_space(byte_size(BlockToWrite)) of
-		true ->
-			file:write_file(Name = encrypted_block_filepath(Hash), BlockToWrite),
-			spawn(
-				ar_meta_db,
-				increase,
-				[used_space, byte_size(BlockToWrite)]
-			),
-			Name;
-		false ->
-			ar:report(
-				[
-					{not_enough_space_to_write_block},
-					{block_not_written}
-				]
-			),
-			{error, enospc}
-	end.
--endif.
-
 %% @doc Read a block from disk, given a hash.
 read_block(unavailable, _BI) -> unavailable;
 read_block(B, _BI) when is_record(B, block) -> B;
@@ -206,16 +173,6 @@ read_block_file(Filename, BI) ->
 			invalidate_block(B),
 			unavailable;
 		_ -> FinalB
-	end.
-
-%% @doc Read an encrypted block from disk, given a hash.
-read_encrypted_block(unavailable) -> unavailable;
-read_encrypted_block(ID) ->
-	case file:read_file(encrypted_block_filepath(ID)) of
-		{ok, Binary} ->
-			Binary;
-		{error, _} ->
-			unavailable
 	end.
 
 %% @doc Read block shadow from disk, given a hash.
@@ -468,9 +425,6 @@ block_filepath(B) ->
 
 invalid_block_filepath(B) ->
 	filepath([?BLOCK_DIR, "invalid", block_filename(B)]).
-
-encrypted_block_filepath(Hash) when is_binary(Hash) ->
-	filepath([?ENCRYPTED_BLOCK_DIR, iolist_to_binary(["encrypted_", ar_util:encode(Hash), ".json"])]).
 
 tx_filepath(TX) ->
 	filepath([?TX_DIR, tx_filename(TX)]).

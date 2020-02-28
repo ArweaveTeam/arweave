@@ -523,19 +523,17 @@ generate_block_from_shadow(State = #{ height := Height }, BShadow, Recall, TXs, 
 
 generate_block_from_shadow_pre_2_0(State, BShadow, Recall, TXs, Peer) ->
 	#{ block_index := BI } = State,
-	{RecallIndepHash, Key, Nonce} =
+	RecallIndepHash =
 		case Recall of
-			B when is_record(B, block) -> {B#block.indep_hash, <<>>, B#block.nonce};
+			B when is_record(B, block) ->
+				B#block.indep_hash;
 			undefined ->
-				{
-					ar_util:get_recall_hash(BShadow#block.previous_block, BShadow#block.height - 1, BI),
-					<<>>,
-					<<>>
-				};
-			{RecallH, _, K, N} ->
-				{RecallH, K, N}
+				PreviousH = BShadow#block.previous_block,
+				ar_util:get_recall_hash(PreviousH, BShadow#block.height - 1, BI);
+			{RecallH, _, _, _} ->
+				RecallH
 		end,
-	MaybeRecallB = case ar_block:get_recall_block(Peer, RecallIndepHash, BI, Key, Nonce) of
+	MaybeRecallB = case ar_block:get_recall_block(Peer, RecallIndepHash, BI) of
 		unavailable ->
 			RecallHash = ar_util:get_recall_hash(
 				BShadow#block.previous_block,

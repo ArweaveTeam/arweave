@@ -330,7 +330,6 @@ start(
 	%% Start other apps which we depend on.
 	inets:start(),
 	ar_tx_db:start(),
-	ar_key_db:start(),
 	ar_miner_log:start(),
 	{ok, _} = ar_arql_db_sup:start_link([{data_dir, DataDir}]),
 	ar_storage:start_update_used_space(),

@@ -1,7 +1,7 @@
 -module(ar_block).
 
 -export([block_to_binary/1, block_field_size_limit/1]).
--export([get_recall_block/5]).
+-export([get_recall_block/3]).
 -export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/1]).
 -export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
@@ -9,10 +9,6 @@
 -export([verify_tx_root/1]).
 -export([hash_wallet_list/2, hash_wallet_list/3, hash_wallet_list_without_reward_wallet/2]).
 -export([hash_wallet_list_pre_2_0/1]).
--export([encrypt_block/2, encrypt_block/3]).
--export([encrypt_full_block/2, encrypt_full_block/3]).
--export([decrypt_block/4]).
--export([generate_block_key/2]).
 -export([generate_block_data_segment_pre_2_0/6]).
 -export([generate_block_data_segment/1, generate_block_data_segment/3, generate_block_data_segment_base/1]).
 -export([generate_hash_list_for_block/2]).
@@ -107,135 +103,6 @@ do_generate_hash_list_for_block(_, []) ->
 do_generate_hash_list_for_block(IndepHash, [{IndepHash, _, _} | BI]) -> ?BI_TO_BHL(BI);
 do_generate_hash_list_for_block(IndepHash, [_ | Rest]) ->
 	do_generate_hash_list_for_block(IndepHash, Rest).
-
-%% @doc Encrypt a recall block. Encryption key is derived from
-%% the contents of the recall block and the hash of the current block
-encrypt_block(R, B) when ?IS_BLOCK(B) -> encrypt_block(R, B#block.indep_hash);
-encrypt_block(R, Hash) ->
-	Recall =
-		ar_serialize:jsonify(
-			ar_serialize:block_to_json_struct(R)
-		),
-	encrypt_block(
-		Recall,
-		crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
-		_Nonce = binary:part(Hash, 0, 16)
-	).
-encrypt_block(R, Key, Nonce) when ?IS_BLOCK(R) ->
-	encrypt_block(
-		ar_serialize:jsonify(
-			ar_serialize:block_to_json_struct(R)
-		),
-		Key,
-		Nonce
-	);
-encrypt_block(Recall, Key, Nonce) ->
-	PlainText = pad_to_length(Recall),
-	CipherText =
-		crypto:block_encrypt(
-			aes_cbc,
-			Key,
-			Nonce,
-			PlainText
-		),
-	CipherText.
-
-%% @doc Decrypt a recall block
-decrypt_block(B, CipherText, Key, Nonce)
-		when ?IS_BLOCK(B)->
-	decrypt_block(B#block.indep_hash, CipherText, Key, Nonce);
-decrypt_block(_Hash, CipherText, Key, Nonce) ->
-	if
-		(Key == <<>>) or (Nonce == <<>>) -> unavailable;
-		true ->
-			PaddedPlainText =
-				crypto:block_decrypt(
-					aes_cbc,
-					Key,
-					Nonce,
-					CipherText
-				),
-			PlainText = binary_to_list(unpad_binary(PaddedPlainText)),
-			RJSON = ar_serialize:dejsonify(PlainText),
-			ar_serialize:json_struct_to_block(RJSON)
-	end.
-
-%% @doc Encrypt a recall block. Encryption key is derived from
-%% the contents of the recall block and the hash of the current block
-encrypt_full_block(R, B) when ?IS_BLOCK(B) ->
-	encrypt_full_block(R, B#block.indep_hash);
-encrypt_full_block(R, Hash) ->
-	Recall =
-		ar_serialize:jsonify(
-			ar_serialize:full_block_to_json_struct(R)
-		),
-	encrypt_full_block(
-		Recall,
-		crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
-		_Nonce = binary:part(Hash, 0, 16)
-	).
-encrypt_full_block(R, Key, Nonce) when ?IS_BLOCK(R) ->
-	encrypt_full_block(
-		ar_serialize:jsonify(
-			ar_serialize:full_block_to_json_struct(R)
-		),
-		Key,
-		Nonce
-	);
-encrypt_full_block(Recall, Key, Nonce) ->
-	PlainText = pad_to_length(Recall),
-	CipherText =
-		crypto:block_encrypt(
-			aes_cbc,
-			Key,
-			Nonce,
-			PlainText
-		),
-	CipherText.
-
-%% @doc Decrypt a recall block
-decrypt_full_block(CipherText, Key, Nonce) ->
-	if
-		(Key == <<>>) or (Nonce == <<>>) -> unavailable;
-		true ->
-			PaddedPlainText =
-				crypto:block_decrypt(
-					aes_cbc,
-					Key,
-					Nonce,
-					CipherText
-				),
-			PlainText = binary_to_list(unpad_binary(PaddedPlainText)),
-			RJSON = ar_serialize:dejsonify(PlainText),
-			ar_serialize:json_struct_to_full_block(RJSON)
-	end.
-
-
-%% @doc derive the key for a given recall block, given the
-%% recall block and current block
-generate_block_key(R, B) when ?IS_BLOCK(B) ->
-	generate_block_key(R, B#block.indep_hash);
-generate_block_key(R, Hash) ->
-	Recall =
-		ar_serialize:jsonify(
-			ar_serialize:full_block_to_json_struct(R)
-		),
-	crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>).
-
-%% @doc Pad a binary to the nearest mutliple of the block
-%% cipher length (32 bytes)
-pad_to_length(Binary) ->
-	Pad = (32 - ((byte_size(Binary)+1) rem 32)),
-	<<Binary/binary, 1, 0:(Pad*8)>>.
-
-%% @doc Unpad a binary padded using the method above
-unpad_binary(Binary) ->
-	ar_util:rev_bin(do_unpad_binary(ar_util:rev_bin(Binary))).
-do_unpad_binary(Binary) ->
-	case Binary of
-		<< 0:8, Rest/binary >> -> do_unpad_binary(Rest);
-		<< 1:8, Rest/binary >> -> Rest
-	end.
 
 %% @doc Generate a hashable binary from a #block object.
 block_to_binary(B) ->
@@ -763,37 +630,19 @@ verify_block_hash_list_merkle(NewB, _CurrentB, _) when NewB#block.height < ?FORK
 verify_block_hash_list_merkle(NewB, CurrentB, _) when NewB#block.height == ?FORK_1_6 ->
 	NewB#block.hash_list_merkle == ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list).
 
-get_recall_block(OrigPeer, RecallHash, BI, Key, Nonce) ->
+get_recall_block(OrigPeer, RecallHash, BI) ->
 	case ar_storage:read_block(RecallHash, BI) of
 		unavailable ->
-			case ar_storage:read_encrypted_block(RecallHash) of
-				unavailable ->
-					ar:report([{downloading_recall_block, ar_util:encode(RecallHash)}]),
-					FullBlock =
-						ar_node_utils:get_block(OrigPeer, RecallHash, BI),
-					case ?IS_BLOCK(FullBlock)  of
-						true ->
-							ar_storage:write_full_block(FullBlock),
-							FullBlock#block {
-								txs = [ T#tx.id || T <- FullBlock#block.txs]
-							};
-						false -> unavailable
-					end;
-				EncryptedRecall ->
-					FBlock =
-						decrypt_full_block(
-							EncryptedRecall,
-							Key,
-							Nonce
-						),
-					case FBlock of
-						unavailable -> unavailable;
-						FullBlock ->
-							ar_storage:write_full_block(FullBlock),
-							FullBlock#block {
-								txs = [ T#tx.id || T <- FullBlock#block.txs]
-							}
-					end
+			ar:info([{event, downloading_recall_block}, {block, ar_util:encode(RecallHash)}]),
+			FullBlock =
+				ar_node_utils:get_block(OrigPeer, RecallHash, BI),
+			case ?IS_BLOCK(FullBlock)  of
+				true ->
+					ar_storage:write_full_block(FullBlock),
+					FullBlock#block{
+						txs = [TX#tx.id || TX <- FullBlock#block.txs]
+					};
+				false -> unavailable
 			end;
 		Recall -> Recall
 	end.
@@ -813,8 +662,3 @@ hash_list_gen_test() ->
 	HL2 = B2#block.hash_list,
 	HL1 = generate_hash_list_for_block(B1, BI),
 	HL2 = generate_hash_list_for_block(B2#block.indep_hash, BI).
-
-pad_unpad_roundtrip_test() ->
-	Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
-	UnPad = unpad_binary(Pad),
-	Pad == UnPad.

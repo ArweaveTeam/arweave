@@ -554,26 +554,6 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _P
 			{503, #{}, <<"ArQL unavailable.">>, Req}
 	end;
 
-%% @doc Return the encrypted blockshadow corresponding to the indep_hash.
-%% GET request to endpoint /block/hash/{indep_hash}/encrypted
-%handle(<<"GET">>, [<<"block">>, <<"hash">>, Hash, <<"encrypted">>], _Req) ->
-	%ar:d({resp_block_hash, Hash}),
-	%ar:report_console([{resp_getting_block_by_hash, Hash}, {path, ar_http_iface_middleware:split_path(cowboy_req:path(Req))}]),
-	%case ar_key_db:get(ar_util:decode(Hash)) of
-	%	[{Key, Nonce}] ->
-	%		return_encrypted_block(
-	%			ar_node:get_block(
-	%				whereis(http_entrypoint_node),
-	%				ar_util:decode(Hash)
-	%			),
-	%			Key,
-	%			Nonce
-	%		);
-	%	not_found ->
-	%		ar:d(not_found_block),
-	%		return_encrypted_block(unavailable)
-	% end;
-
 %% @doc Return the blockshadow corresponding to the indep_hash / height.
 %% GET request to endpoint /block/{height|hash}/{indep_hash|height}
 handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
