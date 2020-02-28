@@ -6,7 +6,7 @@
 -import(ar_test_node, [start/1, slave_start/1, slave_mine/1, connect_to_slave/0]).
 -import(ar_test_node, [assert_slave_wait_until_receives_txs/2]).
 -import(ar_test_node, [wait_until_height/2, assert_slave_wait_until_height/2]).
--import(ar_test_node, [sign_tx_pre_fork_2_0/2, assert_post_tx_to_slave/2]).
+-import(ar_test_node, [sign_v1_tx/2, assert_post_tx_to_slave/2]).
 
 node_validates_blocks_with_rejected_tx_test_() ->
 	{timeout, 60, fun test_node_validates_blocks_with_rejected_tx/0}.
@@ -19,9 +19,9 @@ test_node_validates_blocks_with_rejected_tx() ->
 	connect_to_slave(),
 	%% Post a good tx and a bad tx to the remote node. The signature
 	%% for the "bad" transaction is configured in the test fixture.
-	BadTX = sign_tx_pre_fork_2_0(Key, #{ data => <<"BADCONTENT1">> }),
+	BadTX = sign_v1_tx(Key, #{ data => <<"BADCONTENT1">> }),
 	assert_post_tx_to_slave(SlaveNode, BadTX),
-	GoodTX = sign_tx_pre_fork_2_0(
+	GoodTX = sign_v1_tx(
 		Key,
 		#{ data => <<"GOOD CONTENT">>, last_tx => B0#block.indep_hash }
 	),

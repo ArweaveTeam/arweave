@@ -704,7 +704,7 @@ add_tx_and_get_last_test() ->
 	ar_node:add_peers(Node, Bridge),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-	SignedTX = ar_tx:sign_pre_fork_2_0(TX, Priv1, Pub1),
+	SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 	ID = SignedTX#tx.id,
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, SignedTX),
 	ar_test_node:wait_until_receives_txs(Node, [SignedTX]),
@@ -772,8 +772,8 @@ get_multiple_pending_txs_test_() ->
 		W2 = ar_wallet:new(),
 		TX1 = ar_tx:new(<<"DATA1">>, ?AR(999)),
 		TX2 = ar_tx:new(<<"DATA2">>, ?AR(999)),
-		SignedTX1 = ar_tx:sign_pre_fork_2_0(TX1, W1),
-		SignedTX2 = ar_tx:sign_pre_fork_2_0(TX2, W2),
+		SignedTX1 = ar_tx:sign_v1(TX1, W1),
+		SignedTX2 = ar_tx:sign_v1(TX2, W2),
 		[B0] =
 			ar_weave:init(
 				[
@@ -865,9 +865,9 @@ get_txs_by_send_recv_test_() ->
 		{Priv2, Pub2} = ar_wallet:new(),
 		{_Priv3, Pub3} = ar_wallet:new(),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign_pre_fork_2_0(TX, Priv1, Pub1),
+		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
-		SignedTX2 = ar_tx:sign_pre_fork_2_0(TX2, Priv2, Pub2),
+		SignedTX2 = ar_tx:sign_v1(TX2, Priv2, Pub2),
 		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		Node1 = ar_node:start([], B0),
 		Node2 = ar_node:start([Node1], B0),
@@ -1008,7 +1008,7 @@ post_unsigned_tx() ->
 	[WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
 	[Address] = proplists:get_all_values(<<"wallet_address">>, CreateWalletRes),
 	%% Top up the new wallet.
-	TopUpTX = ar_tx:sign_pre_fork_2_0((ar_tx:new())#tx {
+	TopUpTX = ar_tx:sign_v1((ar_tx:new())#tx {
 		owner = Pub,
 		target = ar_util:decode(Address),
 		quantity = ?AR(1),

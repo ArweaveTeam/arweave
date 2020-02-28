@@ -14,7 +14,7 @@
 -export([post_tx_to_slave/2, post_tx_to_master/2]).
 -export([assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
 -export([sign_tx/1, sign_tx/2, sign_tx/3]).
--export([sign_tx_pre_fork_2_0/1, sign_tx_pre_fork_2_0/2, sign_tx_pre_fork_2_0/3]).
+-export([sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3]).
 -export([get_tx_anchor/0, get_tx_anchor/1]).
 -export([join/1]).
 -export([get_last_tx/1, get_last_tx/2]).
@@ -270,14 +270,14 @@ insert_root(Params) ->
 			Params#{ data_root => TX#tx.data_root }
 	end.
 
-sign_tx_pre_fork_2_0(Wallet) ->
-	sign_tx(slave, Wallet, #{}, fun ar_tx:sign_pre_fork_2_0/2).
+sign_v1_tx(Wallet) ->
+	sign_tx(slave, Wallet, #{}, fun ar_tx:sign_v1/2).
 
-sign_tx_pre_fork_2_0(Wallet, TXParams) ->
-	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign_pre_fork_2_0/2).
+sign_v1_tx(Wallet, TXParams) ->
+	sign_tx(slave, Wallet, TXParams, fun ar_tx:sign_v1/2).
 
-sign_tx_pre_fork_2_0(Node, Wallet, TXParams) ->
-	sign_tx(Node, Wallet, TXParams, fun ar_tx:sign_pre_fork_2_0/2).
+sign_v1_tx(Node, Wallet, TXParams) ->
+	sign_tx(Node, Wallet, TXParams, fun ar_tx:sign_v1/2).
 
 sign_tx(Node, Wallet, TXParams, SignFun) ->
 	{_, Pub} = Wallet,

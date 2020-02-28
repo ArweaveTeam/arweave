@@ -355,7 +355,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 						H when Height >= H ->
 							ar_tx:sign(ar_tx:generate_chunk_tree(UnsignedTX), KeyPair);
 						_ ->
-							ar_tx:sign_pre_fork_2_0(UnsignedTX, KeyPair)
+							ar_tx:sign_v1(UnsignedTX, KeyPair)
 					end,
 					{PeerIP, _Port} = cowboy_req:peer(Req),
 					case handle_post_tx(PeerIP, SignedTX) of

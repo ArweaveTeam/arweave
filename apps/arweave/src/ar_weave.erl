@@ -400,7 +400,7 @@ create_genesis_txs() ->
 			Data = unicode:characters_to_binary(M),
 			TX = ar_tx:new(Data, 0, LastTx),
 			Reward = 0,
-			SignedTX = ar_tx:sign_pre_fork_2_0(TX#tx{reward = Reward}, Priv, Pub),
+			SignedTX = ar_tx:sign_v1(TX#tx{reward = Reward}, Priv, Pub),
 			ar_storage:write_tx(SignedTX),
 			SignedTX
 		end,

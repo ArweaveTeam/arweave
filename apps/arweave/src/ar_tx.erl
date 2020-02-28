@@ -2,7 +2,7 @@
 
 -export([new/0, new/1, new/2, new/3, new/4]).
 -export([sign/2, sign/3, verify/5, verify_txs/6]).
--export([sign_pre_fork_2_0/2, sign_pre_fork_2_0/3]).
+-export([sign_v1/2, sign_v1/3]).
 -export([tx_to_binary/1, tags_to_list/1]).
 -export([calculate_min_tx_cost/4, calculate_min_tx_cost/6, check_last_tx/2]).
 -export([generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1]).
@@ -93,10 +93,10 @@ sign(TX, {PrivKey, PubKey}) ->
 sign(TX, PrivKey, PubKey) ->
 	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = PubKey })).
 
-sign_pre_fork_2_0(TX, {PrivKey, PubKey}) ->
+sign_v1(TX, {PrivKey, PubKey}) ->
 	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = PubKey })).
 
-sign_pre_fork_2_0(TX, PrivKey, PubKey) ->
+sign_v1(TX, PrivKey, PubKey) ->
 	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = PubKey })).
 
 sign(TX, PrivKey, PubKey, SignatureDataSegment) ->
@@ -501,7 +501,7 @@ sign_tx_test() ->
 	Diff = 1,
 	Timestamp = os:system_time(seconds),
 	WalletList = [{ar_wallet:to_address(Pub), ?AR(2000000), <<>>}],
-	SignedTXPreFork_2_0 = sign_pre_fork_2_0(NewTX, Priv, Pub),
+	SignedTXPreFork_2_0 = sign_v1(NewTX, Priv, Pub),
 	SignedTX = sign(generate_chunk_tree(NewTX#tx{ format = 2 }), Priv, Pub),
 	?assert(verify(SignedTXPreFork_2_0, Diff, 0, WalletList, Timestamp)),
 	?assert(not verify(SignedTX, Diff, 0, WalletList, Timestamp)),
@@ -548,7 +548,7 @@ forge_test() ->
 	{Priv, Pub} = ar_wallet:new(),
 	Diff = 1,
 	Height = 0,
-	InvalidSignTX = (sign_pre_fork_2_0(NewTX, Priv, Pub))#tx {
+	InvalidSignTX = (sign_v1(NewTX, Priv, Pub))#tx {
 		data = <<"FAKE DATA">>
 	},
 	Timestamp = os:system_time(seconds),
@@ -575,8 +575,8 @@ check_last_tx_test_() ->
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
 		TX3 = ar_tx:new(Pub1, ?AR(1), ?AR(300), TX#tx.id),
-		SignedTX2 = sign_pre_fork_2_0(TX2, Priv2, Pub2),
-		SignedTX3 = sign_pre_fork_2_0(TX3, Priv3, Pub3),
+		SignedTX2 = sign_v1(TX2, Priv2, Pub2),
+		SignedTX3 = sign_v1(TX3, Priv3, Pub3),
 		WalletList =
 			[
 				{ar_wallet:to_address(Pub1), 1000, <<>>},
