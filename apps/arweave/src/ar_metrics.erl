@@ -23,6 +23,11 @@ register() ->
 		{help, "The total amount of bytes posted via HTTP, per remote endpoint"},
 		{labels, [route]}
 	]),
+	prometheus_histogram:new([
+		{name, fork_recovery_depth},
+		{buckets, lists:seq(1, 50)},
+		{help, "Fork recovery depth metric"}
+	]),
 	prometheus_gauge:new([
 		{name, arweave_block_height},
 		{help, "Block height"}
