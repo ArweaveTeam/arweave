@@ -190,6 +190,9 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		end,
 		[TX3, TX4, TX5, TX6]
 	),
+	%% Store the previous transactions posted to slave on master
+	%% so that it has PoA data to mine.
+	ar_storage:write_tx([TX1, TX2]),
 	ar_node:mine(Master),
 	BI4 = assert_slave_wait_until_height(Slave, 4),
 	B4 = ar_storage:read_block(hd(BI4), BI4),
