@@ -23,8 +23,13 @@
 -endif.
 
 %% @doc Start the foreign block watchdog process.
+-ifdef(DEBUG).
+start() ->
+	noop.
+-else.
 start() ->
 	watchdog_start().
+-endif.
 
 watchdog_start() ->
 	watchdog_stop(),
@@ -110,6 +115,10 @@ log(Str) ->
 	end.
 
 %% @doc Start a process that checks the state of mined blocks.
+-ifdef(DEBUG).
+start_worker(_BH) ->
+	noop.
+-else.
 start_worker(BH) ->
 	spawn(fun() -> worker(BH, current_block_height()) end).
 
@@ -132,6 +141,8 @@ worker(BH, InitBlockHeight) ->
 				worker(BH, InitBlockHeight)
 			end
 	end.
+
+-endif.
 
 %% @doc Return a printable day name from a date.
 day({Year, Month, Day}) ->
@@ -233,7 +244,7 @@ mined_block_test() ->
 %% @doc Deliberately trigger and test the 'no foreign blocks' warning.
 no_foreign_blocks_test() ->
 	interception_start(),
-	start(),
+	watchdog_start(),
 	timer:sleep(?FOREIGN_BLOCK_ALERT_TIME + 1000),
 	?assert(
 		lists:any(
