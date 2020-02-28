@@ -23,6 +23,10 @@ register() ->
 		{help, "The total amount of bytes posted via HTTP, per remote endpoint"},
 		{labels, [route]}
 	]),
+	prometheus_counter:new([
+		{name, fork_recovery_depth},
+		{help, "Fork recovery depth metric"}
+	]),
 	prometheus_gauge:new([
 		{name, block_height},
 		{help, "Block height"}
