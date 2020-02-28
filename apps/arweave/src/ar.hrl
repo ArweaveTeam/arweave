@@ -274,6 +274,14 @@
 %% @doc The size of data chunk hashes, in bytes.
 -define(CHUNK_ID_HASH_SIZE, 32).
 
+%% @doc A succinct proof of access to a recall byte found in a TX.
+-record(poa, {
+	option = 1, % The recall byte option (a sequence number) chosen.
+	tx_path = <<>>, % Path through the Merkle tree of TXs in the block.
+	data_path = <<>>, % Path through the Merkle tree of chunk IDs to the required chunk.
+	chunk = <<>> % The required data chunk.
+}).
+
 %% @doc A full block or block shadow (see more on txs field).
 -record(block, {
 	nonce = <<>>, % The nonce used to satisfy the mining problem when mined.
@@ -291,11 +299,6 @@
 	%% In the block shadows only the last ?STORE_BLOCKS_BEHIND_CURRENT hashes are included.
 	%% Reconstructed on the receiving side. Not stored in the block files.
 	hash_list = unset,
-	%% A list of hashes in the v1 format used for fork recovering
-	%% through the fork 2.0 switch. Neither stored, gossiped, nor
-	%% returned in the API, only used for constructing the hash list
-	%% for a block shadow.
-	legacy_hash_list = [],
 	hash_list_merkle = <<>>, % The merkle root of the block index.
 	%% A list of {address, balance, last TX ID} tuples. In the block shadows and
 	%% in the /block/[hash] API endpoint the list is replaced with a hash.
@@ -310,7 +313,7 @@
 	weave_size = 0, % Current size of the weave in bytes (counts tx data fields).
 	block_size = 0, % The size of the transactions inside this block.
 	cumulative_diff = 0, % The sum of the squared difficulty on the branch.
-	poa = undefined, % The access proof used to generate this block.
+	poa = #poa{}, % The access proof used to generate this block.
 	votables = []
 }).
 
@@ -329,19 +332,6 @@
 	data_root = <<>>, % The hash of all of the chunk IDs.
 	signature = <<>>, % Transaction signature.
 	reward = 0 % Transaction mining reward.
-}).
-
-%% @doc A succinct proof of access to a recall byte found in a TX.
--record(poa, {
-	option = 1, % The recall byte option (a sequence number) chosen.
-	block_indep_hash = <<>>, % The hash of the block that the TX containing the chunk is found in.
-	tx_id = <<>>, % The ID of the transaction containing the chunk.
-	tx_root = <<>>, % Root of the Merkle tree of TXs in the block.
-	tx_path = <<>>, % Path through the Merkle tree of TXs in the block.
-	data_size = 0, % The total size of data in the transaction.
-	data_root = <<>>, % Root of the Merkle root of chunk IDs.
-	data_path = <<>>, % Path through the Merkle tree of chunk IDs to the required chunk.
-	chunk = <<>> % The required data chunk.
 }).
 
 %% @doc Gossip protocol state.
@@ -384,7 +374,7 @@
 -define(IS_BLOCK(X), (is_record(X, block))).
 
 %% @doc Convert a v2.0 block index into an old style block hash list.
--define(BI_TO_BHL(XBI), ([ XBH || {XBH, _} <- XBI ])).
+-define(BI_TO_BHL(BI), ([BH || {BH, _, _} <- BI])).
 
 %% @doc A Macro to return whether a value is an address.
 -define(IS_ADDR(Addr), (is_binary(Addr) and (bit_size(Addr) == ?HASH_SZ))).

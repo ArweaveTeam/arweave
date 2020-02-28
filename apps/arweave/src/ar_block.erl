@@ -19,7 +19,6 @@
 -export([generate_tx_root_for_block/1, generate_size_tagged_list_from_txs/1]).
 -export([generate_block_data_segment_and_pieces/6, refresh_block_data_segment_timestamp/6]).
 -export([generate_tx_tree/1, generate_tx_tree/2]).
--export([join_v1_v2_hash_list/3]).
 -export([compute_hash_list_merkle/2]).
 
 -include("ar.hrl").
@@ -82,12 +81,12 @@ generate_size_tagged_list_from_txs(TXs) ->
 		element(2,
 			lists:foldl(
 				fun
-					({TXHash, Size}, {Pos, List}) ->
+					({DataRoot, Size}, {Pos, List}) ->
 						End = Pos + Size,
-						{End, [{TXHash, End} | List]};
+						{End, [{DataRoot, End} | List]};
 					(TX, {Pos, List}) ->
 						End = Pos + TX#tx.data_size,
-						{End, [{ar_tx:tx_hash(TX), End} | List]}
+						{End, [{TX#tx.data_root, End} | List]}
 				end,
 				{0, []},
 				TXs
@@ -105,7 +104,7 @@ generate_hash_list_for_block(Hash, BI) ->
 
 do_generate_hash_list_for_block(_, []) ->
 	error(cannot_generate_hash_list);
-do_generate_hash_list_for_block(IndepHash, [{IndepHash, _} | BI]) -> ?BI_TO_BHL(BI);
+do_generate_hash_list_for_block(IndepHash, [{IndepHash, _, _} | BI]) -> ?BI_TO_BHL(BI);
 do_generate_hash_list_for_block(IndepHash, [_ | Rest]) ->
 	do_generate_hash_list_for_block(IndepHash, Rest).
 
@@ -348,7 +347,7 @@ compute_hash_list_merkle(B, BI) ->
 		_ ->
 			ar_unbalanced_merkle:root(
 				B#block.hash_list_merkle,
-				{B#block.indep_hash, B#block.weave_size},
+				{B#block.indep_hash, B#block.weave_size, B#block.tx_root},
 				fun ar_unbalanced_merkle:hash_block_index_entry/1
 			)
 	end.
@@ -425,15 +424,7 @@ generate_block_data_segment_base(B) ->
 poa_to_list(POA) ->
 	[
 		integer_to_binary(POA#poa.option),
-		POA#poa.block_indep_hash,
-		case POA#poa.tx_id of
-			undefined -> <<>>;
-			TXID -> TXID
-		end,
-		POA#poa.tx_root,
 		POA#poa.tx_path,
-		integer_to_binary(POA#poa.data_size),
-		POA#poa.data_root,
 		POA#poa.data_path,
 		POA#poa.chunk
 	].
@@ -648,7 +639,7 @@ generate_tx_root_for_block(B) when is_record(B, block) ->
 generate_tx_root_for_block(TXIDs = [TXID | _]) when is_binary(TXID) ->
 	generate_tx_root_for_block(ar_storage:read_tx(TXIDs));
 generate_tx_root_for_block(TXs = [TX | _]) when is_record(TX, tx) ->
-	generate_tx_root_for_block([{ar_tx:tx_hash(T), T#tx.data_size} || T <- TXs]);
+	generate_tx_root_for_block([{T#tx.data_root, T#tx.data_size} || T <- TXs]);
 generate_tx_root_for_block(TXSizes) ->
 	TXSizePairs = generate_size_tagged_list_from_txs(TXSizes),
 	{Root, _Tree} = ar_merkle:generate_tree(TXSizePairs),
@@ -769,7 +760,7 @@ verify_block_hash_list_merkle(NewB, CurrentB, BI) when NewB#block.height > ?FORK
 			NewB#block.hash_list_merkle ==
 				ar_unbalanced_merkle:root(
 					CurrentB#block.hash_list_merkle,
-					{CurrentB#block.indep_hash, CurrentB#block.weave_size},
+					{CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
 					fun ar_unbalanced_merkle:hash_block_index_entry/1
 				)
 	end;
@@ -813,23 +804,6 @@ get_recall_block(OrigPeer, RecallHash, BI, Key, Nonce) ->
 		Recall -> Recall
 	end.
 
-%% @doc Take a height, a list of preceding hashes
-%% in the v2 format, and a list of preceding hashes
-%% in the v1 format and join them in a single list
-%% so that the hashes before the fork 2.0 are in the
-%% v1 format and the hashes after the fork 2.0 are
-%% in the v2 format.
-join_v1_v2_hash_list(Height, V2HL, V1HL) ->
-	Fork_2_0 = ar_fork:height_2_0(),
-	case Height < Fork_2_0 of
-		true ->
-			V2HL;
-		false ->
-			SinceFork = Height - Fork_2_0,
-			lists:sublist(V2HL, 1, SinceFork)
-				++ lists:sublist(V1HL, 1, max(length(V2HL) - SinceFork, 0))
-	end.
-
 %% Tests: ar_block
 
 hash_list_gen_test() ->
@@ -850,22 +824,3 @@ pad_unpad_roundtrip_test() ->
 	Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
 	UnPad = unpad_binary(Pad),
 	Pad == UnPad.
-
-join_v1_v2_hash_list_test_() ->
-	ar_test_fork:test_on_fork(
-		height_2_0,
-		5,
-		fun() ->
-			%% Before 2.0.
-			?assertEqual([h1, h2, h3, h4], join_v1_v2_hash_list(4, [h1, h2, h3, h4], [])),
-			?assertEqual([h1, h2, h3, h4], join_v1_v2_hash_list(4, [h1, h2, h3, h4], [h11, h12, h13, h14])),
-			%% After 2.0.
-			?assertEqual([h1], join_v1_v2_hash_list(6, [h1], [])),
-			?assertEqual([h1], join_v1_v2_hash_list(6, [h1], [h11])),
-			?assertEqual([h1, h2], join_v1_v2_hash_list(7, [h1, h2], [])),
-			?assertEqual([h1, h2], join_v1_v2_hash_list(7, [h1, h2], [h11, h12])),
-			%% Before and after 2.0.
-			?assertEqual([h11], join_v1_v2_hash_list(5, [h1], [h11])),
-			?assertEqual([h1, h11, h12], join_v1_v2_hash_list(6, [h1, h2, h3], [h11, h12, h13]))
-		end
-	).

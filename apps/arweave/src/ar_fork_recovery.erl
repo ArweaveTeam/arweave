@@ -18,7 +18,6 @@
 	target_hashes, % All the hashes of the blocks to be applied during the fork recovery (lowest to highest).
 	target_hashes_to_go, % The hashes of the blocks left to apply (lowest to highest).
 	recovered_block_index, % The block index constructed during the fork recovery.
-	legacy_hash_list, % The v1 hash list, set after 2.0, blocks up to the fork 2.0.
 	recovered_block_txs_pairs % The block anchors required for verifying transactions, updated in process.
 }).
 
@@ -27,10 +26,9 @@
 %% Peers - the list of peers to retrieve blocks from.
 %% RecoveryHashes - the list of hashes of the blocks to apply (from highest to lowest).
 %% BI - the block index where the most recent block is the block to apply the fork on.
-%% LegacyHL - the v1 hash list.
 %% ParentPID - the PID of the parent process.
 %% BlockTXPairs - the block anchors required to verify transactions.
-start(Peers, RecoveryHashes, {BI, LegacyHL}, ParentPID, BlockTXPairs) ->
+start(Peers, RecoveryHashes, BI, ParentPID, BlockTXPairs) ->
 	TargetHashes = lists:reverse(RecoveryHashes),
 	TargetHeight = length(BI) - 1 + length(RecoveryHashes),
 	ar:info(
@@ -51,7 +49,6 @@ start(Peers, RecoveryHashes, {BI, LegacyHL}, ParentPID, BlockTXPairs) ->
 					target_hashes = TargetHashes,
 					target_hashes_to_go = TargetHashes,
 					recovered_block_index = BI,
-					legacy_hash_list = LegacyHL,
 					recovered_block_txs_pairs = BlockTXPairs
 				}
 			)
@@ -65,12 +62,11 @@ start(Peers, RecoveryHashes, {BI, LegacyHL}, ParentPID, BlockTXPairs) ->
 %% target block in turn.
 server(#state {
 		recovered_block_index = BI,
-		legacy_hash_list = LegacyHL,
 		recovered_block_txs_pairs = BlockTXPairs,
 		target_hashes_to_go = [],
 		parent_pid = ParentPID
 	}) ->
-	ParentPID ! {fork_recovered, {BI, LegacyHL}, BlockTXPairs};
+	ParentPID ! {fork_recovered, BI, BlockTXPairs};
 server(S = #state { target_height = TargetHeight }) ->
 	receive
 		{parent_accepted_block, B} ->
@@ -160,7 +156,7 @@ apply_next_block(State) ->
 		target_hashes_to_go = [NextH | _],
 		recovered_block_index = BI
 	} = State,
-	NextB = ar_node_utils:get_full_block(Peers, NextH, [{NextH, 0} | BI]),
+	NextB = ar_node_utils:get_full_block(Peers, NextH, [{NextH, not_set, not_set} | BI]),
 	ar:info(
 		[
 			{event, applying_fork_recovery},
@@ -213,7 +209,7 @@ apply_next_block(State) ->
 
 apply_next_block(State, NextB) ->
 	#state {
-		recovered_block_index = [{CurrentH, _} | _] = BI
+		recovered_block_index = [{CurrentH, _, _} | _] = BI
 	} = State,
 	B = ar_storage:read_block(CurrentH, BI),
 	case ?IS_BLOCK(B) of
@@ -236,31 +232,7 @@ apply_next_block(State, NextB, B) ->
 	} = State,
 	case NextB#block.height >= ar_fork:height_2_0() of
 		true ->
-			case ar_poa:get_recall_block(Peers, NextB#block.poa) of
-				{ok, RecallB} ->
-					case ar_poa:get_recall_tx(Peers, NextB#block.poa) of
-						unavailable ->
-							ar:err(
-								[
-									{event, fork_recovery_failed},
-									{reason, did_not_find_recall_tx},
-									{recall_tx, ar_util:encode((NextB#block.poa)#poa.tx_id)}
-								]
-							),
-							end_fork_recovery(State);
-						{ok, RecallTX} ->
-							apply_next_block(State, NextB, B, {RecallB, RecallTX})
-					end;
-				unavailable ->
-					ar:err(
-						[
-							{event, fork_recovery_failed},
-							{reason, did_not_find_recall_block},
-							{recall_block, ar_util:encode((NextB#block.poa)#poa.block_indep_hash)}
-						]
-					),
-					end_fork_recovery(State)
-			end;
+			apply_next_block(State, NextB, B, no_recall_block);
 		false ->
 			RecallH = case B#block.height of
 				0 ->
@@ -286,7 +258,6 @@ apply_next_block(State, NextB, B) ->
 apply_next_block(State, NextB, B, Recall) ->
 	#state {
 		recovered_block_index = BI,
-		legacy_hash_list = LegacyHL,
 		recovered_block_txs_pairs = BlockTXPairs,
 		parent_pid = ParentPID,
 		target_hashes_to_go = [_ | NewTargetHashesToGo]
@@ -343,10 +314,8 @@ apply_next_block(State, NextB, B, Recall) ->
 				]
 			),
 			ar_storage:write_full_block(NextB),
-			{NewBI, NewLegacyHL} =
-				ar_node_utils:update_block_index(NextB, BI, LegacyHL),
-			NewBlockTXPairs =
-				ar_node_utils:update_block_txs_pairs(NextB, BlockTXPairs, NewBI),
+			NewBI = ar_node_utils:update_block_index(NextB, BI),
+			NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NextB, BlockTXPairs),
 			case ar_meta_db:get(partial_fork_recovery) of
 				true ->
 					ar:info(
@@ -355,7 +324,7 @@ apply_next_block(State, NextB, B, Recall) ->
 							{height, NextB#block.height}
 						]
 					),
-					ParentPID ! {fork_recovered, {NewBI, NewLegacyHL}, NewBlockTXPairs};
+					ParentPID ! {fork_recovered, NewBI, NewBlockTXPairs};
 				_ -> do_nothing
 			end,
 			self() ! apply_next_block,
@@ -363,7 +332,6 @@ apply_next_block(State, NextB, B, Recall) ->
 				State#state {
 					recovered_block_index = NewBI,
 					recovered_block_txs_pairs = NewBlockTXPairs,
-					legacy_hash_list = NewLegacyHL,
 					target_hashes_to_go = NewTargetHashesToGo
 				}
 			)

@@ -12,7 +12,6 @@
 -export([get_time/2, get_height/1]).
 -export([get_wallet_list/2, get_block_index/1, get_block_index/2]).
 -export([get_current_block/1, get_current_block/2]).
--export([get_legacy_hash_list/1]).
 
 -include("ar.hrl").
 
@@ -66,15 +65,11 @@ send_new_block(Peer, NewB, BDS, Recall) ->
 	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
-			ar_block:join_v1_v2_hash_list(
-				NewB#block.height,
-				lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT),
-				lists:sublist(NewB#block.legacy_hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
-			)
+			lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
 		),
 	{SmallBlockProps} =
 		ar_serialize:block_to_json_struct(
-			NewB#block { wallet_list = [] }
+			NewB#block{ wallet_list = [] }
 		),
 	BlockShadowProps =
 		[{<<"hash_list">>, ShortHashList} | SmallBlockProps],
@@ -175,7 +170,7 @@ get_block_subfield(Peer, Height, Subfield) when is_integer(Height) ->
 	).
 
 %% @doc Generate an appropriate URL for a block by its identifier.
-prepare_block_id({ID, _}) ->
+prepare_block_id({ID, _, _}) ->
 	prepare_block_id(ID);
 prepare_block_id(ID) when is_binary(ID) ->
 	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
@@ -251,16 +246,6 @@ get_wallet_list(Peer, Hash) ->
 		_ -> unavailable
 	end.
 
-get_legacy_hash_list(Peer) ->
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/legacy_hash_list",
-			p2p_headers()
-		),
-	lists:map(fun(H) -> ar_util:decode(H) end, ar_serialize:dejsonify(Body)).
-
 %% @doc Get a block hash list (by its hash) from the external peer.
 get_block_index(Peer) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
@@ -271,8 +256,8 @@ get_block_index(Peer) ->
 			p2p_headers()
 		),
 	case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)) of
-		BI = [{_H, _WS} | _] -> BI;
-		Hashes -> [{H, 0} || H <- Hashes]
+		BI = [{_H, _WS, _TXRoot} | _] -> BI;
+		Hashes -> [{H, not_set, not_set} || H <- Hashes]
 	end.
 
 get_block_index(Peer, Hash) ->

@@ -1,8 +1,9 @@
 -module(ar_transition).
 -behaviour(gen_server).
 
--export([start_link/1, get_new_block_index/1, update_block_index/1, remove_checkpoint/0]).
+-export([start_link/1, get_checkpoint/1, update_block_index/1, remove_checkpoint/0]).
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
+-export([transition_block/2]).
 
 -include("ar.hrl").
 
@@ -13,14 +14,15 @@
 start_link(Args) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
-%% @doc Return a new block index corresponding to the given v1 block hash.
-get_new_block_index(BH) ->
+%% @doc Return checkpoint corresponding to the given block hash.
+%% Wait until one is built if it's not ready yet.
+get_checkpoint(BH) ->
 	case gen_server:call(?MODULE, get_checkpoint) of
-		[{_, _, BH} | _] = Checkpoint ->
-			[{H, WS} || {H, WS, _} <- Checkpoint];
+		[{BH, _, _} | _] = Checkpoint ->
+			Checkpoint;
 		_ ->
 			timer:sleep(10),
-			get_new_block_index(BH)
+			get_checkpoint(BH)
 	end.
 
 update_block_index(BI) ->
@@ -56,30 +58,18 @@ handle_cast({update_block_index, BI}, State) ->
 
 handle_cast(transition_block, #{ to_go := [] } = State) ->
 	{noreply, State};
-handle_cast(transition_block, State) ->
-	#{
-		to_go := [{H, _} | NewToGo],
-		checkpoint := Checkpoint
-	} = State,
-	case transition_block(H, [{BH, WS} || {BH, WS, _} <- Checkpoint]) of
+handle_cast(transition_block, #{ to_go := [{H, not_set, not_set} | NewToGo] } = State) ->
+	#{ checkpoint := Checkpoint } = State,
+	case transition_block(H) of
 		error ->
 			timer:apply_after(10, gen_server, cast, [?MODULE, transition_block]),
 			{noreply, State};
 		{ok, NewEntry} ->
-			NewCheckpoint = [NewEntry | Checkpoint],
-			ok = save_checkpoint(NewCheckpoint),
-			case NewToGo of
-				[] ->
-					noop;
-				_ ->
-					gen_server:cast(?MODULE, transition_block)
-			end,
-			NewState = State#{
-				to_go => NewToGo,
-				checkpoint => NewCheckpoint
-			},
-			{noreply, NewState}
+			update_checkpoint(NewEntry, Checkpoint, NewToGo, State)
 	end;
+handle_cast(transition_block, #{ to_go := [Entry | NewToGo] } = State) ->
+	#{ checkpoint := Checkpoint } = State,
+	update_checkpoint(Entry, Checkpoint, NewToGo, State);
 
 handle_cast(remove_checkpoint, State) ->
 	file:delete(checkpoint_location()),
@@ -95,7 +85,7 @@ terminate(Reason, _State) ->
 load_checkpoint() ->
 	case file:read_file(checkpoint_location()) of
 		{ok, Bin} ->
-			ar_serialize:json_struct_to_v2_transition_checkpoint(ar_serialize:dejsonify(Bin));
+			ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Bin));
 		_ ->
 			[]
 	end.
@@ -105,7 +95,7 @@ checkpoint_location() ->
 
 update_to_go({BI, _}, {[], _}, _) ->
 	{ok, [], lists:reverse(BI)};
-update_to_go({[{H, _} | _], _}, {[{_, _, H} | _] = Checkpoint, _}, ToGo) ->
+update_to_go({[{H, _, _} | _], _}, {[{H, _, _} | _] = Checkpoint, _}, ToGo) ->
 	{ok, Checkpoint, ToGo};
 update_to_go({[Entry | BI], Height}, {Checkpoint, CheckpointHeight}, ToGo) when Height > CheckpointHeight ->
 	update_to_go({BI, Height - 1}, {Checkpoint, CheckpointHeight}, [Entry | ToGo]);
@@ -116,9 +106,9 @@ update_to_go({[Entry | BI], Height}, {[_ | Checkpoint], CheckpointHeight}, ToGo)
 update_to_go({[], _}, {[], _}, _) ->
 	{error, no_intersection}.
 
-transition_block(H, BI) ->
+transition_block(H) ->
 	Peers = ar_node:get_trusted_peers(whereis(http_entrypoint_node)),
-	case ar_storage:read_block_shadow(H) of
+	MaybeB = case ar_storage:read_block_shadow(H) of
 		unavailable ->
 			case ar_http_iface_client:get_block_shadow(Peers, H) of
 				unavailable ->
@@ -129,14 +119,36 @@ transition_block(H, BI) ->
 					]),
 					error;
 				{_Peer, B} ->
-					transition_block(Peers, B, BI)
+					B
 			end;
 		B ->
-			transition_block(Peers, B, BI)
+			B
+	end,
+	case MaybeB of
+		error ->
+			ar:err([
+				{event, transition_failed},
+				{reason, did_not_find_block},
+				{block, ar_util:encode(H)}
+			]),
+			error;
+		_ ->
+			case get_txs(Peers, MaybeB#block.txs) of
+				{unavailable, TXID} ->
+					ar:err([
+						{event, transition_failed},
+						{reason, did_not_find_transaction},
+						{block, ar_util:encode(H)},
+						{tx, ar_util:encode(TXID)}
+					]),
+					error;
+				TXs ->
+					transition_block(MaybeB, TXs)
+			end
 	end.
 
-transition_block(Peers, B, BI) ->
-	TXs = lists:foldr(
+get_txs(Peers, TXIDs) ->
+	lists:foldr(
 		fun
 			(_TXID, {unavailable, TXID}) ->
 				{unavailable, TXID};
@@ -149,22 +161,10 @@ transition_block(Peers, B, BI) ->
 				end
 		end,
 		[],
-		B#block.txs
-	),
-	case TXs of
-		{unavailable, TXID} ->
-			ar:err([
-				{event, transition_failed},
-				{reason, did_not_find_transaction},
-				{block, ar_util:encode(B#block.indep_hash)},
-				{tx, ar_util:encode(TXID)}
-			]),
-			error;
-		_ ->
-			transition_block2(B, TXs, BI)
-	end.
+		TXIDs
+	).
 
-transition_block2(B, TXs, BI) ->
+transition_block(B, TXs) ->
 	TXsWithDataRoot = lists:map(
 		fun(TX) ->
 			DataRoot = (ar_tx:generate_chunk_tree(TX))#tx.data_root,
@@ -172,35 +172,20 @@ transition_block2(B, TXs, BI) ->
 		end,
 		TXs
 	),
-	lists:foreach(
-		fun(TX) ->
-			ok = ar_storage:write_tx(TX)
-		end,
-		TXsWithDataRoot
-	),
-	BV2ToHash = ar_block:generate_tx_tree(
-		B#block{
-			poa = ar_poa:generate_2_0(BI, 2)
-		},
-		ar_block:generate_size_tagged_list_from_txs(TXsWithDataRoot)
-	),
-	BV2 = BV2ToHash#block {
-		indep_hash = ar_weave:indep_hash_post_fork_2_0(BV2ToHash)
-	},
-	ok = ar_storage:write_block(BV2, do_not_write_wallet_list),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXsWithDataRoot),
+	{TXRoot, _} = ar_merkle:generate_tree(SizeTaggedTXs),
 	ar:info([
 		{event, transitioned_block},
 		{height, B#block.height},
-		{v1_hash, ar_util:encode(B#block.indep_hash)},
-		{v2_hash, ar_util:encode(BV2#block.indep_hash)}
+		{hash, ar_util:encode(B#block.indep_hash)}
 	]),
-	{ok, {BV2#block.indep_hash, BV2#block.weave_size, B#block.indep_hash}}.
+	{ok, {B#block.indep_hash, B#block.weave_size, TXRoot}}.
 
 save_checkpoint(Checkpoint) ->
 	save_checkpoint(checkpoint_location(), Checkpoint).
 
 save_checkpoint(File, Checkpoint) ->
-	JSON = ar_serialize:jsonify(ar_serialize:v2_transition_checkpoint_to_json_struct(Checkpoint)),
+	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(Checkpoint)),
 	write_file_atomic(File, JSON).
 
 write_file_atomic(Filename, Data) ->
@@ -211,3 +196,18 @@ write_file_atomic(Filename, Data) ->
 		Error ->
 			Error
 	end.
+
+update_checkpoint(Entry, Checkpoint, ToGo, State) ->
+	NewCheckpoint = [Entry | Checkpoint],
+	ok = save_checkpoint(NewCheckpoint),
+	case ToGo of
+		[] ->
+			noop;
+		_ ->
+			gen_server:cast(?MODULE, transition_block)
+	end,
+	NewState = State#{
+		to_go => ToGo,
+		checkpoint => NewCheckpoint
+	},
+	{noreply, NewState}.

@@ -174,7 +174,7 @@ read_block(unavailable, _BI) -> unavailable;
 read_block(B, _BI) when is_record(B, block) -> B;
 read_block(Bs, BI) when is_list(Bs) ->
 	lists:map(fun(B) -> read_block(B, BI) end, Bs);
-read_block({ID, _}, BI) -> read_block(ID, BI);
+read_block({ID, _, _}, BI) -> read_block(ID, BI);
 read_block(ID, BI) ->
 	case ar_block_index:get_block_filename(ID) of
 		unavailable -> unavailable;
@@ -352,7 +352,7 @@ read_block_block_index(Hash) ->
 	{ok, Binary} = file:read_file(block_index_filepath(Hash)),
 	case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Binary)) of
 		[H | _] = HL when is_binary(H) ->
-			[{BH, 0} || BH <- HL];
+			[{BH, not_set, not_set} || BH <- HL];
 		BI ->
 			BI
 	end.
@@ -501,7 +501,7 @@ store_and_retrieve_block_test() ->
 	B0s = [B0] = ar_weave:init([]),
 	ar_storage:write_block(B0),
 	?assertEqual(
-		read_block(B0#block.indep_hash, block_index_from_blocks([B0])),
+		read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0])),
 		B0
 	),
 	B1s = [B1 | _] = ar_weave:add(B0s, []),
@@ -509,8 +509,8 @@ store_and_retrieve_block_test() ->
 	[B2 | _] = ar_weave:add(B1s, []),
 	ar_storage:write_block(B2),
 	?assertEqual(3, blocks_on_disk()),
-	B1 = read_block(B1#block.indep_hash, block_index_from_blocks([B1, B0])),
-	B1 = read_block(B1#block.height, block_index_from_blocks([B1, B0])).
+	B1 = read_block(B1#block.indep_hash, ar_weave:generate_block_index([B1, B0])),
+	B1 = read_block(B1#block.height, ar_weave:generate_block_index([B1, B0])).
 
 clear_blocks_test() ->
 	ar_storage:clear(),
@@ -530,7 +530,7 @@ invalidate_block_test() ->
 	write_full_block(B),
 	invalidate_block(B),
 	timer:sleep(500),
-	unavailable = read_block(B#block.indep_hash, block_index_from_blocks([B])),
+	unavailable = read_block(B#block.indep_hash, ar_weave:generate_block_index([B])),
 	TargetFile =
 		lists:flatten(
 			io_lib:format(
@@ -538,7 +538,7 @@ invalidate_block_test() ->
 				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
 			)
 		),
-	?assertEqual(B, read_block_file(TargetFile, block_index_from_blocks([B]))).
+	?assertEqual(B, read_block_file(TargetFile, ar_weave:generate_block_index([B]))).
 
 store_and_retrieve_block_block_index_test() ->
 	ID = crypto:strong_rand_bytes(32),
@@ -547,7 +547,7 @@ store_and_retrieve_block_block_index_test() ->
 	[B1 | _] = ar_weave:add([B0], []),
 	write_block(B1),
 	[B2 | _] = ar_weave:add([B1, B0], []),
-	write_block_block_index(ID, block_index_from_blocks([B1, B0])),
+	write_block_block_index(ID, ar_weave:generate_block_index([B1, B0])),
 	receive after 500 -> ok end,
 	BI = read_block_block_index(ID),
 	?assertEqual(?BI_TO_BHL(BI), B2#block.hash_list).
@@ -567,10 +567,7 @@ handle_corrupted_wallet_list_test() ->
 	ar_storage:write_block(B0),
 	Height = B0#block.height,
 	RewardAddr = B0#block.reward_addr,
-	?assertEqual(B0, read_block(B0#block.indep_hash, block_index_from_blocks([B0]))),
+	?assertEqual(B0, read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))),
 	WalletListHash = ar_block:hash_wallet_list(Height, RewardAddr, B0#block.wallet_list),
 	ok = file:write_file(wallet_list_filepath(WalletListHash), <<>>),
-	?assertEqual(unavailable, read_block(B0#block.indep_hash, block_index_from_blocks([B0]))).
-
-block_index_from_blocks(Blocks) ->
-	lists:map(fun(B) -> {B#block.indep_hash, B#block.weave_size} end, Blocks).
+	?assertEqual(unavailable, read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))).

@@ -11,7 +11,7 @@
 -export([get_blocks/1, get_block/3]).
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
--export([get_block_index/1, get_height/1, get_legacy_hash_list/1]).
+-export([get_block_index/1, get_height/1]).
 -export([get_trusted_peers/1]).
 -export([get_balance/2]).
 -export([get_last_tx/2]).
@@ -99,10 +99,7 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin)
 	),
 	start(
 		Peers,
-		lists:map(
-			fun(Block) -> {Block#block.indep_hash, Block#block.weave_size} end,
-			Bs
-		),
+		lists:map(fun ar_util:block_index_entry_from_block/1, Bs),
 		MiningDelay,
 		RewardAddr,AutoJoin
 	);
@@ -132,7 +129,7 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 	),
 	start(
 		Peers,
-		lists:map(fun(Block) -> {Block#block.indep_hash, Block#block.weave_size} end, Bs),
+		lists:map(fun ar_util:block_index_entry_from_block/1, Bs),
 		MiningDelay,
 		RewardAddr,
 		AutoJoin,
@@ -140,17 +137,16 @@ start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget
 		LastRetarget
 	);
 start(Peers, B, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when ?IS_BLOCK(B) ->
-	start(Peers, [{B#block.indep_hash, B#block.weave_size}], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
+	BI = [ar_util:block_index_entry_from_block(B)],
+	start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
 start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
-	% Spawns the node server process.
 	PID = spawn(
 		fun() ->
-			% Join the node to the network.
 			case {BI, AutoJoin} of
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
 				_ ->
-					do_nothing
+					ar_transition:update_block_index(BI)
 			end,
 			Gossip =
 				ar_gossip:init(
@@ -164,17 +160,17 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			RewardPool =
 				case BI of
 					not_joined -> 0;
-					[{H, _} | _] -> (ar_storage:read_block(H, BI))#block.reward_pool
+					[{H, _, _} | _] -> (ar_storage:read_block(H, BI))#block.reward_pool
 				end,
 			WeaveSize =
 					case BI of
 						not_joined -> 0;
-						[{H2, _} | _] -> (ar_storage:read_block(H2, BI))#block.weave_size
+						[{H2, _, _} | _] -> (ar_storage:read_block(H2, BI))#block.weave_size
 					end,
 			Current =
 				case BI of
 					not_joined -> not_joined;
-					[{C, _}|_] -> C
+					[{C, _, _} | _] -> C
 				end,
 			% Start processes, init state, and start server.
 			NPid = self(),
@@ -196,7 +192,6 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{weave_size, WeaveSize},
 				{block_txs_pairs, create_block_txs_pairs(BI)}
 			]),
-
 			server(SPid, WPid, queue:new())
 		end
 	),
@@ -210,7 +205,7 @@ create_block_txs_pairs(BI) ->
 
 create_block_txs_pairs(recent_blocks, []) ->
 	[];
-create_block_txs_pairs(recent_blocks, BI = [{BH, _} | Rest]) ->
+create_block_txs_pairs(recent_blocks, BI = [{BH, _, _} | Rest]) ->
 	B = ar_storage:read_block(BH, BI),
 	[{BH, B#block.txs} | create_block_txs_pairs(Rest)].
 
@@ -376,14 +371,6 @@ get_block_index(Node) ->
 		{Ref, blockindex, not_joined} -> [];
 		{Ref, blockindex, BI} -> BI
 		after ?LOCAL_NET_TIMEOUT -> []
-	end.
-
-get_legacy_hash_list(Node) ->
-	Ref = make_ref(),
-	Node ! {get_legacy_hash_list, self(), Ref},
-	receive
-		{Ref, legacy_hash_list, HL} -> {ok, HL}
-		after ?LOCAL_NET_TIMEOUT -> {error, timeout}
 	end.
 
 %% @doc Get the current block hash.
@@ -721,10 +708,6 @@ handle(SPid, {get_walletlist, From, Ref}) ->
 handle(SPid, {get_blockindex, From, Ref}) ->
 	{ok, BI} = ar_node_state:lookup(SPid, block_index),
 	From ! {Ref, blockindex, BI},
-	ok;
-handle(SPid, {get_legacy_hash_list, From, Ref}) ->
-	{ok, BI} = ar_node_state:lookup(SPid, legacy_hash_list),
-	From ! {Ref, legacy_hash_list, BI},
 	ok;
 handle(SPid, {get_current_block_hash, From, Ref}) ->
 	{ok, Res} = ar_node_state:lookup(SPid, current),

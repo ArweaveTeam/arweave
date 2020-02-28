@@ -240,7 +240,7 @@ get_block(Height) ->
 	case ar_node:get_block_index(whereis(http_entrypoint_node)) of
 		[] -> unavailable;
 		BI ->
-			{BH, _} = lists:nth(Height + 1, lists:reverse(BI)),
+			{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
 			get_block(BH, BI)
 	end.
 
@@ -263,7 +263,7 @@ get_block_remote(BH, BI, Peers) ->
 		unavailable ->
 			unavailable;
 		{Peer, B} ->
-			case indep_hash(B, BI) of
+			case ar_weave:indep_hash(B) of
 				BH ->
 					ar_storage:write_full_block(B),
 					{ok, B};
@@ -279,14 +279,6 @@ get_block_remote(BH, BI, Peers) ->
 			end
 	end.
 
-indep_hash(B, BI) ->
-	case length(BI) >= ar_fork:height_2_0() of
-		true ->
-			ar_weave:indep_hash_post_fork_2_0(B);
-		false ->
-			ar_weave:indep_hash(B)
-	end.
-
 randomx_key(SwapHeight, _, _) when SwapHeight < ?RANDOMX_KEY_SWAP_FREQ ->
 	randomx_key(SwapHeight);
 randomx_key(SwapHeight, BI, Peers) ->
@@ -299,7 +291,7 @@ randomx_key(SwapHeight, BI, Peers) ->
 	end.
 
 get_block(Height, BI, Peers) ->
-	{BH, _} = lists:nth(Height + 1, lists:reverse(BI)),
+	{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
 	case ar_storage:read_block(BH, BI) of
 		unavailable ->
 			get_block_remote(BH, BI, Peers);

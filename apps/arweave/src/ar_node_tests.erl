@@ -438,7 +438,7 @@ mine_tx_with_key_val_tags_test_() ->
 		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
 		ar_node:mine(Node1),
 		ar_test_node:wait_until_height(Node2, 1),
-		BI = [{B1Hash, _}|_] = ar_node:get_blocks(Node2),
+		BI = [{B1Hash, _, _} | _] = ar_node:get_blocks(Node2),
 		#block { txs = TXs } = ar_storage:read_block(B1Hash, BI),
 		?assertEqual([SignedTX], ar_storage:read_tx(TXs))
 	end}.

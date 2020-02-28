@@ -53,7 +53,7 @@ start(CurrentB, POA, RawTXs, RewardAddr, Tags, Parent, BlockTXPairs, BI) ->
 		true ->
 			POA;
 		false ->
-			undefined
+			#poa{}
 	end,
 	CandidateB = #block{
 		height = CurrentB#block.height + 1,
@@ -669,7 +669,7 @@ basic_test_() ->
 			[B0] = ar_weave:init([]),
 			ar_node:start([], [B0]),
 			[B1 | _] = ar_weave:add([B0], []),
-			start(B1, B1#block.poa, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0}]),
+			start(B1, B1#block.poa, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0, <<>>}]),
 			assert_mine_output(B1, B1#block.poa, [])
 		end
 	).
@@ -679,7 +679,7 @@ basic_pre_fork_2_0_test() ->
 	ar_node:start([], [B0]),
 	[B1 | _] = ar_weave:add([B0], []),
 	RecallB = B0,
-	start(B1, RecallB, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0}]),
+	start(B1, RecallB, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0, <<>>}]),
 	assert_mine_output(B1, RecallB, []).
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.

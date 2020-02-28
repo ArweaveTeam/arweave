@@ -225,7 +225,7 @@ get_block_by_hash_test() ->
 		ar_http_iface_client:get_block(
 			{127, 0, 0, 1, 1984},
 			B0#block.indep_hash,
-			[{B0#block.indep_hash, B0#block.weave_size}]
+			[{B0#block.indep_hash, not_set, not_set}]
 		)
 	).
 
@@ -241,7 +241,7 @@ get_block_by_height_test() ->
 		ar_http_iface_client:get_block(
 			{127, 0, 0, 1, 1984},
 			0,
-			[{B0#block.indep_hash, B0#block.weave_size}]
+			[{B0#block.indep_hash, not_set, not_set}]
 		)
 	).
 
@@ -426,7 +426,7 @@ add_external_block_with_bad_bds_test_() ->
 			ar_storage:clear(),
 			ar_blacklist_middleware:reset(),
 			[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
-			BI0 = [{B0#block.indep_hash,0}],
+			BI0 = [{B0#block.indep_hash, not_set, not_set}],
 			NodeWithBridge = ar_node:start([], [B0]),
 			Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
 			OtherNode = ar_node:start([], [B0]),
@@ -496,7 +496,7 @@ add_external_block_with_invalid_timestamp_test() ->
 		ar_storage:clear(),
 		ar_blacklist_middleware:reset(),
 		[B0] = ar_weave:init([]),
-		BI0 = [{B0#block.indep_hash, 0}],
+		BI0 = [{B0#block.indep_hash, not_set, not_set}],
 		NodeWithBridge = ar_node:start([], [B0]),
 		Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
 		OtherNode = ar_node:start([], [B0]),
@@ -654,7 +654,7 @@ fork_recover_by_http_test() ->
 	Node2 = ar_node:start([], [B0]),
 	timer:sleep(500),
 	ar_http_iface_server:reregister(Node1),
-	BI0 = [{B0#block.indep_hash, 0}],
+	BI0 = [{B0#block.indep_hash, not_set, not_set}],
 	FullBI = mine_n_blocks(Node2, BI0, 10),
 	%% Send only the latest block to Node1 and let it fork recover up to it.
 	?assertMatch(

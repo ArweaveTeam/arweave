@@ -1,8 +1,8 @@
 -module(ar_unbalanced_merkle).
+
 -export([root/2, root/3]).
 -export([hash_list_to_merkle_root/1, wallet_list_to_merkle_root/1]).
 -export([block_index_to_merkle_root/1, hash_block_index_entry/1]).
-
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -31,8 +31,8 @@ block_index_to_merkle_root(HL) ->
 		lists:reverse(HL)
 	).
 
-hash_block_index_entry({BH, WeaveSize}) ->
-	ar_deep_hash:hash([BH, integer_to_binary(WeaveSize)]).
+hash_block_index_entry({BH, WeaveSize, TXRoot}) ->
+	ar_deep_hash:hash([BH, integer_to_binary(WeaveSize), TXRoot]).
 
 %% @doc Generate a new wallet list merkle root from a WL.
 wallet_list_to_merkle_root(WL) ->

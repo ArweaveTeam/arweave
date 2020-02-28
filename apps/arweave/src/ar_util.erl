@@ -18,6 +18,7 @@
 -export([rev_bin/1]).
 -export([do_until/3]).
 -export([index_of/2]).
+-export([block_index_entry_from_block/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -83,7 +84,7 @@ wallets_from_hashes(BI) ->
 %% @doc Get block list from hash list.
 blocks_from_hashes([]) -> undefined;
 blocks_from_hashes(BI) ->
-	lists:map(fun({BH, _}) -> ar_storage:read_block(BH, BI) end, BI).
+	lists:map(fun({BH, _, _}) -> ar_storage:read_block(BH, BI) end, BI).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
 hash_from_block_index(Num, BI) ->
@@ -95,7 +96,7 @@ block_from_block_index(Num, BI) ->
 
 %% @doc Fetch the head block using BI.
 get_head_block(not_joined) -> unavailable;
-get_head_block(BI = [{IndepHash, _}|_]) ->
+get_head_block(BI = [{IndepHash, _, _} | _]) ->
 	ar_storage:read_block(IndepHash, BI).
 
 %% @doc Get the hash of the recall block for the current block
@@ -244,6 +245,13 @@ index_of(_, [], _) -> not_found;
 index_of(_Subject, [_Subject | _], Counter) -> Counter;
 index_of(Subject, [_ | List], Counter) -> index_of(Subject, List, Counter + 1).
 
+block_index_entry_from_block(B) ->
+	case B#block.height + 1 < ar_fork:height_2_0() of
+		true ->
+			{B#block.indep_hash, not_set, not_set};
+		false ->
+			{B#block.indep_hash, B#block.weave_size, B#block.tx_root}
+	end.
 
 %%%
 %%% Tests.

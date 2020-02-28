@@ -1,10 +1,11 @@
 -module(ar_weave).
 
--export([init/0, init/1, init/2, init/3, add/2, add/12]).
+-export([init/0, init/1, init/2, init/3, add/2]).
 -export([hash/3, indep_hash/1, indep_hash_post_fork_2_0/1, indep_hash_post_fork_2_0/3]).
 -export([verify_indep/2]).
 -export([is_data_on_block_list/2]).
 -export([create_genesis_txs/0, read_v1_genesis_txs/0]).
+-export([generate_block_index/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -74,10 +75,10 @@ init(WalletList, StartingDiff, RewardPool) ->
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
 %% DEPRECATED - only used in tests, mine blocks in tests instead.
 add(Bs, TXs) ->
-	add(Bs, TXs, generate_block_index(Bs), []).
-add(Bs, TXs, BI, LegacyHL) ->
-	add(Bs, TXs, BI, LegacyHL, <<>>).
-add(AllBs = [B | Bs], TXs, BI, LegacyHL, RewardAddr) ->
+	add(Bs, TXs, generate_block_index(Bs)).
+add(Bs, TXs, BI) ->
+	add(Bs, TXs, BI, <<>>).
+add(AllBs = [B | Bs], TXs, BI, RewardAddr) ->
 	ar_storage:write_block([XB || XB <- AllBs, is_record(XB, block)]),
 	case length(BI) == 1 of
 		true ->
@@ -103,28 +104,26 @@ add(AllBs = [B | Bs], TXs, BI, LegacyHL, RewardAddr) ->
 		FinderReward,
 		length(BI)
 	),
-	add([B | Bs], TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList).
-add(Bs, TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList) ->
-	add(Bs, TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, []).
-add([{Hash, _} | Bs], TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tags) when is_binary(Hash) ->
+	add([B | Bs], TXs, BI, RewardAddr, RewardPool, WalletList).
+add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList) ->
+	add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList, []).
+add([{Hash, _, _} | Bs], TXs, BI, RewardAddr, RewardPool, WalletList, Tags) when is_binary(Hash) ->
 	add(
 		[ar_storage:read_block(Hash, BI) | Bs],
 		TXs,
 		BI,
-		LegacyHL,
 		RewardAddr,
 		RewardPool,
 		WalletList,
 		Tags
 	);
-add(Bs, TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tags) ->
+add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList, Tags) ->
 	POA = ar_poa:generate(hd(Bs)),
 	{Nonce, Timestamp, Diff} = mine(hd(Bs), POA, TXs, RewardAddr, Tags, BI),
 	add(
 		Bs,
 		TXs,
 		BI,
-		LegacyHL,
 		RewardAddr,
 		RewardPool,
 		WalletList,
@@ -134,12 +133,11 @@ add(Bs, TXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tags) ->
 		Nonce,
 		Timestamp
 	).
-add([{Hash, _} | Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) when is_binary(Hash) ->
+add([{Hash, _, _} | Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) when is_binary(Hash) ->
 	add(
 		[ar_storage:read_block(Hash, BI) | Bs],
 		RawTXs,
 		BI,
-		LegacyHL,
 		RewardAddr,
 		RewardPool,
 		WalletList,
@@ -149,7 +147,7 @@ add([{Hash, _} | Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, 
 		Nonce,
 		Timestamp
 	);
-add([CurrentB | _Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) ->
+add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) ->
 	NewHeight = CurrentB#block.height + 1,
 	TXs = [T#tx.id || T <- RawTXs],
 	TXRoot = ar_block:generate_tx_root_for_block(RawTXs),
@@ -190,7 +188,6 @@ add([CurrentB | _Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, 
 			txs = TXs,
 			tx_root = TXRoot,
 			hash_list = ?BI_TO_BHL(BI),
-			legacy_hash_list = LegacyHL,
 			hash_list_merkle = MR,
 			wallet_list = WalletList,
 			wallet_list_hash = ar_block:hash_wallet_list(NewHeight, RewardAddr, WalletList),
@@ -202,7 +199,7 @@ add([CurrentB | _Bs], RawTXs, BI, LegacyHL, RewardAddr, RewardPool, WalletList, 
 			poa =
 				case NewHeight >= Fork_2_0 of
 					true -> POA;
-					false -> undefined
+					false -> #poa{}
 				end,
 			votables = NewVotables
 		},
@@ -237,8 +234,9 @@ generate_block_index(Blocks) ->
 	lists:map(
 		fun
 			(B) when ?IS_BLOCK(B) ->
-				{B#block.indep_hash, B#block.weave_size};
-			({H, WS}) -> {H, WS}
+				ar_util:block_index_entry_from_block(B);
+			({H, WS, TXRoot}) ->
+				{H, WS, TXRoot}
 		end,
 		Blocks
 	).
@@ -247,7 +245,7 @@ generate_block_index(Blocks) ->
 verify_indep(#block{ height = 0 }, []) -> true;
 verify_indep(B = #block { height = Height }, BI) ->
 	ReversedBI = lists:reverse(BI),
-	{ExpectedIndepHash, _} = lists:nth(Height + 1, ReversedBI),
+	{ExpectedIndepHash, _, _} = lists:nth(Height + 1, ReversedBI),
 	ComputedIndepHash = indep_hash(B),
 	BHL = B#block.hash_list,
 	ReversedBHL = lists:reverse(BHL),

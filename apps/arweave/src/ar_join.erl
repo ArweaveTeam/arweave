@@ -22,16 +22,16 @@ start(Node, Peers, B) when is_atom(B) ->
 		]
 	),
 	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
-start(Node, RawPeers, {NewB, BI, LegacyHL}) ->
+start(Node, RawPeers, {NewB, BI}) ->
 	case whereis(join_server) of
 		undefined ->
-			PID = spawn(fun() -> do_join(Node, RawPeers, NewB, BI, LegacyHL) end),
+			PID = spawn(fun() -> do_join(Node, RawPeers, NewB, BI) end),
 			erlang:register(join_server, PID);
 		_ -> already_running
 	end.
 
 %% @doc Perform the joining process.
-do_join(_Node, _RawPeers, NewB, _BI, _LegacyHL) when not ?IS_BLOCK(NewB) ->
+do_join(_Node, _RawPeers, NewB, _BI) when not ?IS_BLOCK(NewB) ->
 	ar:report_console(
 		[
 			node_not_joining,
@@ -39,7 +39,7 @@ do_join(_Node, _RawPeers, NewB, _BI, _LegacyHL) when not ?IS_BLOCK(NewB) ->
 			{received_instead, NewB}
 		]
 	);
-do_join(Node, RawPeers, NewB, BI, LegacyHL) ->
+do_join(Node, RawPeers, NewB, BI) ->
 	case verify_time_sync(RawPeers) of
 		false ->
 			ar:err(
@@ -66,7 +66,7 @@ do_join(Node, RawPeers, NewB, BI, LegacyHL) ->
 			ar_arql_db:populate_db(NewB#block.hash_list),
 			ar_randomx_state:init(BI, Peers),
 			BlockTXPairs = get_block_and_trail(Peers, NewB, BI),
-			Node ! {fork_recovered, {BI, LegacyHL}, BlockTXPairs},
+			Node ! {fork_recovered, BI, BlockTXPairs},
 			join_peers(Peers),
 			ar_miner_log:joined(),
 			ar_downloader:start(ar_manage_peers:get_more_peers(Peers), BI)
@@ -126,14 +126,13 @@ find_current_block([Peer | Tail]) ->
 		[] ->
 			find_current_block(Tail);
 		BI ->
-			{Hash, _} = hd(BI),
+			{Hash, _, _} = hd(BI),
 			ar:info([
 				"Fetching current block.",
 				{peer, Peer},
 				{hash, Hash}
 			]),
 			MaybeB = ar_node_utils:get_full_block(Peer, Hash, BI),
-			LegacyHL = get_legacy_hash_list(Peer, length(BI) - 1),
 			case MaybeB of
 				Atom when is_atom(Atom) ->
 					ar:info([
@@ -142,7 +141,7 @@ find_current_block([Peer | Tail]) ->
 					]),
 					Atom;
 				B ->
-					{B, BI, LegacyHL}
+					{B, BI}
 			end
 	catch
 		Exc:Reason ->
@@ -153,15 +152,6 @@ find_current_block([Peer | Tail]) ->
 				{reason, Reason}
 			]),
 			find_current_block(Tail)
-	end.
-
-get_legacy_hash_list(Peer, Height) ->
-	Fork_2_0 = ar_fork:height_2_0(),
-	case Height < Fork_2_0 - 1 orelse Height > Fork_2_0 + ?STORE_BLOCKS_BEHIND_CURRENT - 1 of
-		true ->
-			[];
-		false ->
-			ar_http_iface_client:get_legacy_hash_list(Peer)
 	end.
 
 %% @doc Verify peer(s) are on the same network as the client. Remove any that
@@ -205,7 +195,7 @@ join_peers(Peer) -> ar_http_iface_client:add_peer(Peer).
 %% joining the network.
 get_block_and_trail(_Peers, NewB, []) ->
 	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
-	ar_storage:write_block(NewB#block { txs = TXIDs }),
+	ar_storage:write_block(NewB#block{ txs = TXIDs }),
 	[{NewB#block.indep_hash, TXIDs}];
 get_block_and_trail(Peers, NewB, BI) ->
 	get_block_and_trail(Peers, NewB, 2 * ?MAX_TX_ANCHOR_DEPTH, BI, []).

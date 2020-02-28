@@ -38,7 +38,7 @@ test_node_validates_blocks_with_rejected_tx() ->
 	assert_slave_wait_until_height(SlaveNode, 1),
 	wait_until_height(Node, 1),
 	%% Expect the local node to store the last block and the valid tx.
-	[{H, _} | _] = BI = ar_node:get_block_index(Node),
+	[{H, _, _} | _] = BI = ar_node:get_block_index(Node),
 	B = ar_storage:read_block(H, BI),
 	[BadTXID, GoodTXID] = B#block.txs,
 	?assertEqual(GoodTX#tx.id, (ar_storage:read_tx(GoodTXID))#tx.id),

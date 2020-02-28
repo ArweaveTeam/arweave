@@ -8,8 +8,6 @@
 -export([block_index_to_json_struct/1, json_struct_to_block_index/1]).
 -export([jsonify/1, dejsonify/1, json_decode/1, json_decode/2]).
 -export([query_to_json_struct/1, json_struct_to_query/1]).
--export([v2_transition_checkpoint_to_json_struct/1, json_struct_to_v2_transition_checkpoint/1]).
-
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -363,40 +361,18 @@ tx_to_json_struct(
 		]
 	}.
 
-%% @doc Transform proofs of access into/out of JSON format.
-poa_to_json_struct(undefined) -> <<"undefined">>;
-poa_to_json_struct(B) when is_record(B, block) -> <<"undefined">>;
 poa_to_json_struct(POA) ->
 	{[
 		{option, integer_to_binary(POA#poa.option)},
-		{block_indep_hash, ar_util:encode(POA#poa.block_indep_hash)},
-		{tx_id,
-			case POA#poa.tx_id of
-				undefined -> <<"undefined">>;
-				TXID -> ar_util:encode(TXID)
-			end
-		},
-		{tx_root, ar_util:encode(POA#poa.tx_root)},
 		{tx_path, ar_util:encode(POA#poa.tx_path)},
-		{data_size, integer_to_binary(POA#poa.data_size)},
-		{data_root, ar_util:encode(POA#poa.data_root)},
 		{data_path, ar_util:encode(POA#poa.data_path)},
 		{chunk, ar_util:encode(POA#poa.chunk)}
 	]}.
 
-json_struct_to_poa(<<"undefined">>) -> undefined;
 json_struct_to_poa({JSONStruct}) ->
 	#poa {
 		option = binary_to_integer(find_value(<<"option">>, JSONStruct)),
-		block_indep_hash = ar_util:decode(find_value(<<"block_indep_hash">>, JSONStruct)),
-		tx_id = case find_value(<<"tx_id">>, JSONStruct) of
-			<<"undefined">> -> undefined;
-			TXID -> ar_util:decode(TXID)
-		end,
-		tx_root = ar_util:decode(find_value(<<"tx_root">>, JSONStruct)),
 		tx_path = ar_util:decode(find_value(<<"tx_path">>, JSONStruct)),
-		data_size = binary_to_integer(find_value(<<"data_size">>, JSONStruct)),
-		data_root = ar_util:decode(find_value(<<"data_root">>, JSONStruct)),
 		data_path = ar_util:decode(find_value(<<"data_path">>, JSONStruct)),
 		chunk = ar_util:decode(find_value(<<"chunk">>, JSONStruct))
 	}.
@@ -522,14 +498,26 @@ do_json_struct_to_query(Query) ->
 %% @doc Generate a JSON structure representing a block index.
 block_index_to_json_struct(BI) ->
 	lists:map(
-		fun({BH, WeaveSize}) ->
-			{
-				[
-					{<<"hash">>, ar_util:encode(BH)},
-					{<<"weave_size">>, integer_to_binary(WeaveSize)}
-				]
-			};
-		   (BH) -> ar_util:encode(BH)
+		fun
+			({BH, WeaveSize, TXRoot}) ->
+				Keys1 = [{<<"hash">>, ar_util:encode(BH)}],
+				Keys2 =
+					case WeaveSize of
+						not_set ->
+							Keys1;
+						_ ->
+							[{<<"weave_size">>, integer_to_binary(WeaveSize)} | Keys1]
+					end,
+				Keys3 =
+					case TXRoot of
+						not_set ->
+							Keys2;
+						_ ->
+							[{<<"tx_root">>, ar_util:encode(TXRoot)} | Keys2]
+					end,
+				{Keys3};
+			(BH) ->
+				ar_util:encode(BH)
 		end,
 		BI
 	).
@@ -537,39 +525,26 @@ block_index_to_json_struct(BI) ->
 %% @doc Convert a JSON structure into a block index.
 json_struct_to_block_index(JSONStruct) ->
 	lists:map(
-		fun(Hash) when is_binary(Hash) ->
+		fun
+			(Hash) when is_binary(Hash) ->
 				ar_util:decode(Hash);
-		   ({JSON}) ->
+			({JSON}) ->
 				Hash = ar_util:decode(find_value(<<"hash">>, JSON)),
-				WeaveSize = binary_to_integer(find_value(<<"weave_size">>, JSON)),
-				{Hash, WeaveSize}
-		end,
-		JSONStruct
-	).
-
-%% @doc Generate a JSON structure representing a 2.0 transition checkpoint.
-v2_transition_checkpoint_to_json_struct(Checkpoint) ->
-	lists:map(
-		fun({BH, WeaveSize, BHV1}) ->
-			{
-				[
-					{<<"hash">>, ar_util:encode(BH)},
-					{<<"weave_size">>, integer_to_binary(WeaveSize)},
-					{<<"hashv1">>, ar_util:encode(BHV1)}
-				]
-			}
-		end,
-		Checkpoint
-	).
-
-%% @doc Convert a JSON structure into a 2.0 transition checkpoint.
-json_struct_to_v2_transition_checkpoint(JSONStruct) ->
-	lists:map(
-		fun({JSON}) ->
-			Hash = ar_util:decode(find_value(<<"hash">>, JSON)),
-			WeaveSize = binary_to_integer(find_value(<<"weave_size">>, JSON)),
-			HashV1 = ar_util:decode(find_value(<<"hashv1">>, JSON)),
-			{Hash, WeaveSize, HashV1}
+				WeaveSize =
+					case find_value(<<"weave_size">>, JSON) of
+						undefined ->
+							not_set;
+						WS ->
+							binary_to_integer(WS)
+					end,
+				TXRoot =
+					case find_value(<<"tx_root">>, JSON) of
+						undefined ->
+							not_set;
+						R ->
+							ar_util:decode(R)
+					end,
+				{Hash, WeaveSize, TXRoot}
 		end,
 		JSONStruct
 	).
@@ -635,7 +610,7 @@ block_index_roundtrip_test() ->
 	HL = [B#block.indep_hash, B#block.indep_hash],
 	JSONHL = jsonify(block_index_to_json_struct(HL)),
 	HL = json_struct_to_block_index(dejsonify(JSONHL)),
-	BI = [{B#block.indep_hash, 1}, {B#block.indep_hash, 2}],
+	BI = [{B#block.indep_hash, 1, <<"Root">>}, {B#block.indep_hash, 2, <<>>}],
 	JSONBI = jsonify(block_index_to_json_struct(BI)),
 	BI = json_struct_to_block_index(dejsonify(JSONBI)).
 

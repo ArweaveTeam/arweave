@@ -406,15 +406,6 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
 			{200, #{}, integer_to_binary(estimate_tx_price(SizeInBytesBinary, AddrOK)), Req}
 	end;
 
-handle(<<"GET">>, [<<"legacy_hash_list">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
-	{ok, HL} = ar_node:get_legacy_hash_list(whereis(http_entrypoint_node)),
-	{200, #{},
-		ar_serialize:jsonify(
-			lists:map(fun ar_util:encode/1, HL)
-		),
-	Req};
-
 %% @doc Return the current hash list held by the node.
 %% GET request to endpoint /block_index
 handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->

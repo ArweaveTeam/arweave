@@ -13,7 +13,7 @@
 -export([integrate_new_block/3]).
 -export([validate/5, validate/8, validate_wallet_list/1]).
 -export([calculate_delay/1]).
--export([update_block_txs_pairs/3, update_block_index/3]).
+-export([update_block_txs_pairs/2, update_block_index/2]).
 -export([log_invalid_txs_drop_reason/1]).
 -export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
 
@@ -89,7 +89,7 @@ get_full_block_from_remote_peers(Peers, ID, BI) ->
 	end.
 
 %% @doc Search a block index for the next recall block.
-find_recall_block(BI = [{Hash, _}]) ->
+find_recall_block(BI = [{Hash, _, _}]) ->
 	ar_storage:read_block(Hash, BI);
 find_recall_block(BI) ->
 	Block = ar_storage:read_block(element(1, hd(BI)), BI),
@@ -408,8 +408,7 @@ integrate_new_block(
 		#{
 			txs := TXs,
 			block_index := BI,
-			block_txs_pairs := BlockTXPairs,
-			legacy_hash_list := LegacyHL
+			block_txs_pairs := BlockTXPairs
 		} = StateIn,
 		NewB,
 		BlockTXs) ->
@@ -421,8 +420,8 @@ integrate_new_block(
 	%% up, it should be fine.
 	%% Write new block and included TXs to local storage.
 	ar_storage:write_full_block(NewB, BlockTXs),
-	{NewBI, NewLegacyHL} = update_block_index(NewB, BI, LegacyHL),
-	NewBlockTXPairs = update_block_txs_pairs(NewB, BlockTXPairs, NewBI),
+	NewBI = update_block_index(NewB#block{ txs = BlockTXs }, BI),
+	NewBlockTXPairs = update_block_txs_pairs(NewB, BlockTXPairs),
 	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		NewBlockTXPairs,
 		sets:subtract(TXs, sets:from_list(BlockTXs)),
@@ -447,7 +446,6 @@ integrate_new_block(
 	ar_downloader:add_block(NewB, BI),
 	reset_miner(StateIn#{
 		block_index      => NewBI,
-		legacy_hash_list => NewLegacyHL,
 		current          => element(1, hd(NewBI)),
 		txs              => ValidTXs,
 		height           => NewB#block.height,
@@ -458,56 +456,24 @@ integrate_new_block(
 		block_txs_pairs  => NewBlockTXPairs
 	}).
 
-%% @doc Append a new entry to the block index after verifying the block
-%% and return {new block index, new legacy hash list}.
-%%
-%% Switching to 2.0 replaces the whole index from the checkpoint.
-%%
-%% The legacy hash list is a list of hashes where hashes before 2.0 are
-%% in the v1 format. Empty except for within the ?STORE_BLOCKS_BEHIND_FORK
-%% vicinity of 2.0.
-update_block_index(B, BI, LegacyHL) ->
+update_block_index(B, BI) ->
 	Fork_2_0 = ar_fork:height_2_0(),
-	BH = B#block.indep_hash,
-	NewBI = [{BH, B#block.weave_size} | BI],
 	case B#block.height + 1 of
-		Height when Height < Fork_2_0 andalso Height rem 10 == 0 ->
-			ar_transition:update_block_index(NewBI),
-			{NewBI, LegacyHL};
+		Height when Height < Fork_2_0 ->
+			{ok, Entry} = ar_transition:transition_block(B, B#block.txs),
+			[Entry | BI];
 		Fork_2_0 ->
-			ar_transition:update_block_index(NewBI),
-			NewLegacyHL = [BH | ?BI_TO_BHL(BI)],
-			Checkpoint = ar_transition:get_new_block_index(BH),
-			{Checkpoint, NewLegacyHL};
-		Height when Height > Fork_2_0 + ?STORE_BLOCKS_BEHIND_CURRENT ->
-			{NewBI, []};
+			{ok, {BH, _, _} = Entry} = ar_transition:transition_block(B, B#block.txs),
+			ar_transition:update_block_index([Entry | BI]),
+			Checkpoint = ar_transition:get_checkpoint(BH),
+			Checkpoint;
 		_ ->
-			{NewBI, LegacyHL}
+			[{B#block.indep_hash, B#block.weave_size, B#block.tx_root} | BI]
 	end.
 
-%% @doc Append a new entry to the block-transactions pairs after verifying the block.
-%% Switching to 2.0 replaces the whole list from the checkpoint.
-update_block_txs_pairs(B, BlockTXPairs, BI) ->
-	Fork_2_0 = ar_fork:height_2_0(),
+update_block_txs_pairs(B, BlockTXPairs) ->
 	TXIDs = [case TX of Record when is_record(Record, tx) -> Record#tx.id; ID -> ID end || TX <- B#block.txs],
-	case B#block.height + 1 of
-		Fork_2_0 ->
-			Zipped = lists:zip(
-				[{B#block.indep_hash, TXIDs} | BlockTXPairs],
-				lists:sublist(BI, length(BlockTXPairs) + 1)
-			),
-			lists:sublist(
-				lists:map(
-					fun({{_, IDs}, {H, _}}) ->
-						{H, IDs}
-					end,
-					Zipped
-				),
-				2 * ?MAX_TX_ANCHOR_DEPTH
-			);
-		_ ->
-			lists:sublist([{B#block.indep_hash, TXIDs} | BlockTXPairs], 2 * ?MAX_TX_ANCHOR_DEPTH)
-	end.
+	lists:sublist([{B#block.indep_hash, TXIDs} | BlockTXPairs], 2 * ?MAX_TX_ANCHOR_DEPTH).
 
 log_invalid_txs_drop_reason(InvalidTXs) ->
 	lists:foreach(
@@ -527,8 +493,8 @@ log_invalid_txs_drop_reason(InvalidTXs) ->
 	).
 
 %% @doc Validate a block, given a node state and the dependencies.
-validate(#{ block_index := BI, wallet_list := WalletList }, B, TXs, OldB, Recall) ->
-	validate(BI, WalletList, B, TXs, OldB, Recall, B#block.reward_addr, B#block.tags).
+validate(#{ block_index := BI, wallet_list := WalletList }, B, TXs, OldB, RecallB) ->
+	validate(BI, WalletList, B, TXs, OldB, RecallB, B#block.reward_addr, B#block.tags).
 
 %% @doc Validate a new block, given a server state, a claimed new block, the last block,
 %% and the recall block.
@@ -541,25 +507,23 @@ validate(
 			},
 		TXs,
 		OldB,
-		Recall,
+		RecallB,
 		RewardAddr,
 		Tags
 	) ->
 	case Height >= ar_fork:height_2_0() of
 		false ->
-			validate_pre_fork_2_0(BI, WalletList, NewB, TXs, OldB, Recall, RewardAddr, Tags);
+			validate_pre_fork_2_0(BI, WalletList, NewB, TXs, OldB, RecallB, RewardAddr, Tags);
 		true ->
 			ar:info(
 				[
 					{event, validating_block},
-					{hash, ar_util:encode(NewB#block.indep_hash)},
-					{poa_block_hash, ar_util:encode((NewB#block.poa)#poa.block_indep_hash)}
+					{hash, ar_util:encode(NewB#block.indep_hash)}
 				]
 			),
-			{RecallB, RecallTX} = Recall,
 			case timer:tc(
 				fun() ->
-					validate_post_fork_2_0(BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX)
+					validate_post_fork_2_0(BI, WalletList, NewB, TXs, OldB)
 				end
 			) of
 				{TimeTaken, valid} ->
@@ -584,31 +548,31 @@ validate(
 			end
 	end.
 
-validate_post_fork_2_0(BI, WalletList, NewB = #block{ wallet_list = WalletList }, TXs, OldB, RecallB, RecallTX) ->
-	validate_block(height, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX});
-validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _RecallTX) ->
+validate_post_fork_2_0(BI, WalletList, NewB = #block{ wallet_list = WalletList }, TXs, OldB) ->
+	validate_block(height, {BI, WalletList, NewB, TXs, OldB});
+validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB) ->
 	ar:info([
 		{event, block_not_accepted},
 		{hash, ar_util:encode(NewB#block.indep_hash)}
 	]),
 	{invalid, invalid_wallet_list}.
 
-validate_block(height, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX}) ->
+validate_block(height, {BI, WalletList, NewB, TXs, OldB}) ->
 	case ar_block:verify_height(NewB, OldB) of
 		false ->
 			{invalid, invalid_height};
 		true ->
-			validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX})
+			validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB})
 	end;
-validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX}) ->
+validate_block(previous_block, {BI, WalletList, NewB, TXs, OldB}) ->
 	case ar_block:verify_previous_block(NewB, OldB) of
 		false ->
 			{invalid, invalid_previous_block};
 		true ->
-			validate_block(poa, {BI, WalletList, NewB, TXs, OldB, RecallB, RecallTX})
+			validate_block(poa, {BI, WalletList, NewB, TXs, OldB})
 	end;
-validate_block(poa, {BI, WalletList, NewB = #block{ poa = POA }, TXs, OldB, RecallB, RecallTX}) ->
-	case ar_poa:validate(OldB#block.indep_hash, OldB#block.weave_size, BI, POA, RecallB, RecallTX) of
+validate_block(poa, {BI, WalletList, NewB = #block{ poa = POA }, TXs, OldB}) ->
+	case ar_poa:validate(OldB#block.indep_hash, OldB#block.weave_size, BI, POA) of
 		false ->
 			{invalid, invalid_poa};
 		true ->
