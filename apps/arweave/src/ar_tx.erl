@@ -120,12 +120,7 @@ verify(TX, Diff, Height, Wallets, Timestamp) ->
 -endif.
 
 do_verify(#tx{ format = 1 } = TX, Diff, Height, Wallets, Timestamp) ->
-	case Height >= ar_fork:height_2_0() of
-		true ->
-			collect_validation_results(TX#tx.id, [{"tx_format_not_supported", false}]);
-		false ->
-			do_verify_v1(TX, Diff, Height, Wallets, Timestamp)
-	end;
+	do_verify_v1(TX, Diff, Height, Wallets, Timestamp);
 do_verify(#tx{ format = 2 } = TX, Diff, Height, Wallets, Timestamp) ->
 	case Height < ar_fork:height_2_0() of
 		true ->
@@ -260,8 +255,11 @@ verify_txs_size(TXs) ->
 			false;
 		_ ->
 			TotalTXSize = lists:foldl(
-				fun(TX, CurrentTotalTXSize) ->
-					CurrentTotalTXSize + TX#tx.data_size
+				fun
+					(#tx{ format = 1 } = TX, CurrentTotalTXSize) ->
+						CurrentTotalTXSize + TX#tx.data_size;
+					(_TX, Acc) ->
+						Acc
 				end,
 				0,
 				TXs
@@ -507,9 +505,9 @@ sign_tx_test() ->
 	SignedTX = sign(generate_chunk_tree(NewTX#tx{ format = 2 }), Priv, Pub),
 	?assert(verify(SignedTXPreFork_2_0, Diff, 0, WalletList, Timestamp)),
 	?assert(not verify(SignedTX, Diff, 0, WalletList, Timestamp)),
-	?assert(not verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),
+	?assert(verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),
 	?assert(verify(SignedTX, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),
-	?assert(not verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)),
+	?assert(verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)),
 	?assert(verify(SignedTX, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)).
 
 sign_and_verify_chunked_test_() ->
