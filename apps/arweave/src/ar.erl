@@ -133,7 +133,7 @@ show_help() ->
 				)
 			},
 			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
-			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."},
+			{"disable (feature)", "Disable a specific (normally enabled) feature."},
 			{"gateway (domain)", "Run a gateway on the specified domain"},
 			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
