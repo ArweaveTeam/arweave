@@ -89,9 +89,19 @@ generate(B, BlockOffset, Seed, WeaveSize, BI, Option, Limit) ->
 	end.
 
 generate(B, TXs, BlockOffset, Seed, WeaveSize, BI, Option, Limit) ->
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+	TXsWithDataRoot = lists:map(
+		fun
+			(#tx{ format = 2 } = TX) ->
+				TX;
+			(TX) ->
+				DataRoot = (ar_tx:generate_chunk_tree(TX))#tx.data_root,
+				TX#tx{ data_root = DataRoot }
+		end,
+		TXs
+	),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXsWithDataRoot),
 	DataRoot = find_byte_in_size_tagged_list(BlockOffset, SizeTaggedTXs),
-	{value, TX} = lists:search(fun(TX) -> TX#tx.data_root == DataRoot end, TXs),
+	{value, TX} = lists:search(fun(TX) -> TX#tx.data_root == DataRoot end, TXsWithDataRoot),
 	case byte_size(TX#tx.data) == 0 of
 		true ->
 			generate(Seed, WeaveSize, BI, Option + 1, Limit);

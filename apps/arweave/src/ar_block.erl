@@ -82,7 +82,7 @@ generate_size_tagged_list_from_txs(TXs) ->
 						{End, [{DataRoot, End} | List]};
 					(TX, {Pos, List}) ->
 						End = Pos + TX#tx.data_size,
-						{End, [{TX#tx.data_root, End} | List]}
+						{End, [{get_tx_data_root(TX), End} | List]}
 				end,
 				{0, []},
 				TXs
@@ -500,11 +500,16 @@ generate_tx_root_for_block(B) when is_record(B, block) ->
 generate_tx_root_for_block(TXIDs = [TXID | _]) when is_binary(TXID) ->
 	generate_tx_root_for_block(ar_storage:read_tx(TXIDs));
 generate_tx_root_for_block(TXs = [TX | _]) when is_record(TX, tx) ->
-	generate_tx_root_for_block([{T#tx.data_root, T#tx.data_size} || T <- TXs]);
+	generate_tx_root_for_block([{get_tx_data_root(T), T#tx.data_size} || T <- TXs]);
 generate_tx_root_for_block(TXSizes) ->
 	TXSizePairs = generate_size_tagged_list_from_txs(TXSizes),
 	{Root, _Tree} = ar_merkle:generate_tree(TXSizePairs),
 	Root.
+
+get_tx_data_root(#tx{ format = 2, data_root = DataRoot }) ->
+	DataRoot;
+get_tx_data_root(TX) ->
+	(ar_tx:generate_chunk_tree(TX))#tx.data_root.
 
 %% @doc Verify the block timestamp is not too far in the future nor too far in
 %% the past. We calculate the maximum reasonable clock difference between any
