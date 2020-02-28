@@ -174,8 +174,10 @@ handle(S, {get_peers, remote, Peer}) ->
 	Peer ! {remote_peers, S#state.external_peers},
 	S;
 handle(S, {set_peers, Peers}) ->
+	update_state_metrics(Peers),
 	S#state{ external_peers = Peers };
 handle(S, {update_peers, remote, Peers}) ->
+	update_state_metrics(Peers),
 	S#state{ external_peers = Peers };
 handle(S = #state{ gossip = GS0 }, Msg) when is_record(Msg, gs_msg) ->
 	case ar_gossip:recv(GS0, Msg) of
@@ -319,3 +321,8 @@ gossip_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
 % 	already_processed(Procd, Type, Data, undefined).
 % already_processed(_Procd, Type, Data, _IP) ->
 % 	is_id_ignored(get_id(Type, Data)).
+
+update_state_metrics(Peers) when is_list(Peers) ->
+	prometheus_gauge:set(peer_count, length(Peers));
+update_state_metrics(_) ->
+	ok.

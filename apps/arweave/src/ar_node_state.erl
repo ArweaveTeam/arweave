@@ -141,6 +141,7 @@ handle(_Tid, {update, []}) ->
 handle(Tid, {update, KeyValues}) when is_list(KeyValues) ->
 	case lists:all(fun({Key, _Value}) -> is_atom(Key) end, KeyValues) of
 		true ->
+			update_state_metrics(KeyValues),
 			ets:insert(Tid, KeyValues),
 			ok;
 		_ ->
@@ -154,3 +155,11 @@ handle(_Tid, {update, Any}) ->
 	{error, {invalid_node_state_values, Any}};
 handle(_Tid, {Command, Args}) ->
 	{error, {invalid_node_state_command, {Command, Args}}}.
+
+update_state_metrics(KeyValues) ->
+	lists:foreach(fun
+		({height, Value}) ->
+			prometheus_gauge:set(block_height, Value);
+		(_) ->
+			ok
+	end, KeyValues).
