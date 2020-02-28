@@ -570,12 +570,7 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 		unavailable ->
 			{404, #{}, <<"Block not found.">>, Req};
 		_  ->
-			case {ar_meta_db:get(api_compat), cowboy_req:header(<<"x-block-format">>, Req, <<"2">>)} of
-				{false, <<"1">>} ->
-					{426, #{}, <<"Client version incompatible.">>, Req};
-				{_, _} ->
-					{200, #{}, sendfile(Filename), Req}
-			end
+			{200, #{}, sendfile(Filename), Req}
 	end;
 
 %% @doc Return block or block field.
