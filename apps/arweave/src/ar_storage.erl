@@ -339,20 +339,12 @@ read_tx(Tx) when is_record(Tx, tx) -> Tx;
 read_tx(Txs) when is_list(Txs) ->
 	lists:map(fun read_tx/1, Txs);
 read_tx(ID) ->
-	case filelib:wildcard(tx_filepath(ID)) of
-		[] -> unavailable;
-		[Filename] -> read_tx_file(Filename);
-		Filenames ->
-			read_tx_file(hd(
-				lists:sort(
-					fun(Filename, Filename2) ->
-						{ok, Info} = file:read_file_info(Filename, [{time, posix}]),
-						{ok, Info2} = file:read_file_info(Filename2, [{time, posix}]),
-						Info#file_info.mtime >= Info2#file_info.mtime
-					end,
-					Filenames
-				)
-			))
+	Filename = tx_filepath(ID),
+	case filelib:is_file(Filename) of
+		false ->
+			unavailable;
+		true ->
+			read_tx_file(Filename)
 	end.
 
 read_tx_file(Filename) ->
