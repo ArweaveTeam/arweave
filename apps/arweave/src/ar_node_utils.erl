@@ -639,13 +639,6 @@ validate_block(block_field_sizes, {BI, WalletList, NewB, TXs, OldB}) ->
 		false ->
 			{invalid, invalid_field_size};
 		true ->
-			validate_block(votables, {BI, WalletList, NewB, TXs, OldB})
-	end;
-validate_block(votables, {BI, WalletList, NewB, TXs, OldB}) ->
-	case ar_votable:validate(NewB, OldB) of
-		false ->
-			{invalid, invalid_votables};
-		true ->
 			validate_block(txs, {BI, WalletList, NewB, TXs, OldB})
 	end;
 validate_block(

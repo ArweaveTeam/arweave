@@ -66,8 +66,7 @@ block_to_json_struct(
 		block_size = BlockSize,
 		cumulative_diff = CDiff,
 		hash_list_merkle = MR,
-		poa = POA,
-		votables = Votables
+		poa = POA
 	}) ->
 	{JSONDiff, JSONCDiff} = case ar_fork:height_1_8() of
 		H when Height >= H ->
@@ -131,14 +130,7 @@ block_to_json_struct(
 			{block_size, BlockSize},
 			{cumulative_diff, JSONCDiff},
 			{hash_list_merkle, ar_util:encode(MR)},
-			{poa, poa_to_json_struct(POA)},
-			{votables,
-				[
-					{[{name, list_to_binary(Name)}, {value, integer_to_binary(Value)}]}
-				||
-					{Name, Value} <- Votables
-				]
-			}
+			{poa, poa_to_json_struct(POA)}
 		],
 	case Height < ?FORK_1_6 of
 		true ->
@@ -172,20 +164,6 @@ json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	json_struct_to_block(dejsonify(JSONBlock));
 json_struct_to_block({BlockStruct}) ->
 	Height = find_value(<<"height">>, BlockStruct),
-	Votables =
-		case find_value(<<"votables">>, BlockStruct) of
-			undefined -> [];
-			Struct ->
-				lists:map(
-					fun({Props}) ->
-						{
-							binary_to_list(find_value(<<"name">>, Props)),
-							binary_to_integer(find_value(<<"value">>, Props))
-						}
-					end,
-					Struct
-				)
-		end,
 	TXs = find_value(<<"txs">>, BlockStruct),
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
 	HashList = find_value(<<"hash_list">>, BlockStruct),
@@ -286,8 +264,7 @@ json_struct_to_block({BlockStruct}) ->
 			case find_value(<<"tx_tree">>, BlockStruct) of
 				undefined -> [];
 				POAStruct -> json_struct_to_tree(POAStruct)
-			end,
-		votables = Votables
+			end
 	}.
 
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a

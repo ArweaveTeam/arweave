@@ -284,8 +284,7 @@ start(
 		webhooks = WebhookConfigs,
 		max_connections = MaxConnections,
 		max_gateway_connections = MaxGatewayConnections,
-		max_option_depth = MaxOptionDepth,
-		votables = Votables
+		max_option_depth = MaxOptionDepth
 	}) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -424,10 +423,6 @@ start(
 			unclaimed -> "unclaimed";
 			_ -> binary_to_list(ar_util:encode(MiningAddress))
 		end,
-    lists:foreach(
-		fun({Name, Value}) -> ar_meta_db:put({votable, Name}, Value) end,
-		Votables
-	),
 	ar:report_console(
 		[
 			starting_server,

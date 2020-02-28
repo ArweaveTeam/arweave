@@ -411,12 +411,6 @@ generate_block_data_segment_base(B) ->
 				B#block.reward_addr
 		end,
 		ar_tx:tags_to_list(B#block.tags),
-		lists:map(
-			fun({Name, Value}) ->
-				[list_to_binary(Name), integer_to_binary(Value)]
-			end,
-			B#block.votables
-		),
 		poa_to_list(B#block.poa)
 	]),
 	BDSBase.

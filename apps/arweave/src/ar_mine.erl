@@ -41,14 +41,6 @@
 start(CurrentB, POA, RawTXs, RewardAddr, Tags, Parent, BlockTXPairs, BI) ->
 	Fork_2_0 = ar_fork:height_2_0() ,
 	CurrentHeight = CurrentB#block.height,
-	NewVotables = case CurrentHeight + 1 of
-		Fork_2_0 ->
-			ar_votable:init();
-		H when H > Fork_2_0 ->
-			ar_votable:vote(CurrentB#block.votables);
-		_ ->
-			[]
-	end,
 	BlockPOA = case CurrentHeight + 1 >= Fork_2_0 of
 		true ->
 			POA;
@@ -62,7 +54,6 @@ start(CurrentB, POA, RawTXs, RewardAddr, Tags, Parent, BlockTXPairs, BI) ->
 		hash_list_merkle = ar_block:compute_hash_list_merkle(CurrentB, BI),
 		reward_addr = RewardAddr,
 		poa = BlockPOA,
-		votables = NewVotables,
 		tags = Tags
 	},
 	PreviousRewardWallet =

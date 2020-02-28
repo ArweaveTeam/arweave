@@ -244,7 +244,7 @@ verify_txs(B, TXs, Diff, Height, WalletList, Timestamp) ->
 	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
 	case ar_fork:height_1_8() of
 		H when Height >= H ->
-			case verify_txs_size(B, TXs) of
+			case verify_txs_size(TXs) of
 				true ->
 					verify_txs(B, valid_size_txs, TXs, Diff, Height, WalletMap, Timestamp);
 				false ->
@@ -254,10 +254,9 @@ verify_txs(B, TXs, Diff, Height, WalletList, Timestamp) ->
 			verify_txs(B, valid_size_txs, TXs, Diff, Height, WalletMap, Timestamp)
 	end.
 
-verify_txs_size(B, TXs) ->
-	Limit = erlang:trunc(ar_votable:get("txs_per_block", B)),
+verify_txs_size(TXs) ->
 	case length(TXs) of
-		NumTXs when NumTXs > Limit ->
+		NumTXs when NumTXs > ?BLOCK_TX_COUNT_LIMIT ->
 			false;
 		_ ->
 			TotalTXSize = lists:foldl(

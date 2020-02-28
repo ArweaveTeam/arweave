@@ -34,12 +34,7 @@ init(WalletList, StartingDiff, RewardPool) ->
 			block_size = 0,
 			reward_pool = RewardPool,
 			timestamp = os:system_time(seconds),
-			poa = #poa{},
-			votables =
-				case ar_fork:height_2_0() of
-					0 -> ar_votable:init();
-					_ -> []
-				end
+			poa = #poa{}
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
@@ -65,7 +60,6 @@ init(WalletList, StartingDiff, RewardPool) ->
 			block_size = 0,
 			reward_pool = RewardPool,
 			timestamp = os:system_time(seconds),
-			votables = ar_votable:init(),
 			poa = #poa{}
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
@@ -166,12 +160,6 @@ add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA,
 	),
 	MR = ar_block:compute_hash_list_merkle(CurrentB, BI),
 	Fork_2_0 = ar_fork:height_2_0(),
-	NewVotables =
-		case NewHeight of
-			X when X == Fork_2_0 -> ar_votable:init();
-			X when X > Fork_2_0 -> ar_votable:vote(CurrentB#block.votables);
-			_ -> []
-		end,
 	NewB =
 		#block {
 			nonce = Nonce,
@@ -200,8 +188,7 @@ add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA,
 				case NewHeight >= Fork_2_0 of
 					true -> POA;
 					false -> #poa{}
-				end,
-			votables = NewVotables
+				end
 		},
 	Hash = case NewHeight >= Fork_2_0 of
 		true ->
