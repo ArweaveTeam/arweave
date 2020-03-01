@@ -241,7 +241,12 @@ json_struct_to_block({BlockStruct}) ->
 				true ->
 					ar_util:decode(WalletList);
 				false ->
-					ar_block:hash_wallet_list(Height, RewardAddr, WalletList)
+					case WalletList of
+						[] ->
+							not_set;
+						_ ->
+							ar_block:hash_wallet_list(Height, RewardAddr, WalletList)
+					end
 			end,
 		reward_addr = RewardAddr,
 		tags = Tags,
