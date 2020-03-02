@@ -159,7 +159,7 @@ handle(_Tid, {Command, Args}) ->
 update_state_metrics(KeyValues) ->
 	lists:foreach(fun
 		({height, Value}) ->
-			prometheus_gauge:set(block_height, Value);
+			prometheus_gauge:set(arweave_block_height, Value);
 		(_) ->
 			ok
 	end, KeyValues).
