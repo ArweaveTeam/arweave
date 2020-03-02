@@ -1,5 +1,4 @@
 -module(ar_serialize).
--export([full_block_to_json_struct/1, json_struct_to_full_block/1]).
 -export([json_struct_to_block/1, block_to_json_struct/1]).
 -export([tx_to_json_struct/1, json_struct_to_tx/1]).
 -export([wallet_list_to_json_struct/1, json_struct_to_wallet_list/1]).
@@ -133,17 +132,6 @@ delete_keys([Key | Keys], Proplist) ->
 		lists:keydelete(Key, 1, Proplist)
 	).
 
-%% @doc Convert a full block record into a JSON struct.
-full_block_to_json_struct(B = #block { txs = TXs }) ->
-	{JSONElements} = block_to_json_struct(B#block { txs = [] }),
-	{
-		[
-			{txs, lists:map(fun tx_safely_to_json_struct/1, TXs)}
-		|
-			lists:keydelete(txs, 1, JSONElements)
-		]
-	}.
-
 %% @doc Convert parsed JSON blocks fields from a HTTP request into a block.
 json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	json_struct_to_block(dejsonify(JSONBlock));
@@ -229,30 +217,6 @@ json_struct_to_block({BlockStruct}) ->
 		cumulative_diff = CDiff,
 		hash_list_merkle = MR
 	}.
-
-%% @doc Convert parsed JSON blocks fields from a HTTP request into a
-%% full block record.
-json_struct_to_full_block(JSON) when is_binary(JSON) ->
-	json_struct_to_full_block(dejsonify(JSON));
-json_struct_to_full_block({BlockStruct}) ->
-	TXs = find_value(<<"txs">>, BlockStruct),
-	TempStruct =
-		{
-			[
-				{<<"txs">>, []}
-			|
-				lists:keydelete(<<"txs">>, 1, BlockStruct)
-			]
-		},
-	B = json_struct_to_block(TempStruct),
-	B#block {
-		txs = lists:map(fun json_struct_to_tx/1, TXs)
-	}.
-
-tx_safely_to_json_struct(TX) when is_record(TX, tx) ->
-	tx_to_json_struct(TX);
-tx_safely_to_json_struct(TX) when is_binary(TX) ->
-	tx_to_json_struct(ar_storage:read_tx(TX)).
 
 %% @doc Convert a transaction record into a JSON struct.
 tx_to_json_struct(
@@ -398,26 +362,6 @@ block_roundtrip_test() ->
 	JSONStruct = jsonify(block_to_json_struct(B)),
 	BRes = json_struct_to_block(JSONStruct),
 	B = BRes#block { hash_list = B#block.hash_list }.
-
-%% @doc Convert a new block into JSON and back, ensure the result is the same.
-%% Input contains transaction, output only transaction IDs.
-block_tx_roundtrip_test() ->
-	[B] = ar_weave:init(),
-	TXBase = ar_tx:new(<<"test">>),
-	B2 = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
-	JsonB = jsonify(full_block_to_json_struct(B2)),
-	BRes = json_struct_to_block(JsonB),
-	?assertEqual(TXBase#tx.id, hd(BRes#block.txs)),
-	?assertEqual(B2#block.hash, BRes#block.hash).
-
-%% @doc Convert a new block into JSON and back, ensure the result is the same.
-full_block_roundtrip_test() ->
-	[B] = ar_weave:init(),
-	TXBase = ar_tx:new(<<"test">>),
-	B2 = B#block {txs = [TXBase], tags = ["hello", "world", "example"] },
-	JsonB = jsonify(full_block_to_json_struct(B2)),
-	BRes = json_struct_to_full_block(JsonB),
-	B2 = BRes#block { hash_list = B#block.hash_list }.
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
 tx_roundtrip_test() ->
