@@ -66,7 +66,6 @@ server(#state {
 		target_hashes_to_go = [],
 		parent_pid = ParentPID
 	}) ->
-	prometheus_counter:reset(fork_recovery_depth),
 	ParentPID ! {fork_recovered, BI, BlockTXPairs};
 server(S = #state { target_height = TargetHeight }) ->
 	receive
@@ -255,7 +254,8 @@ apply_next_block(State, NextB, B, Recall) ->
 		recovered_block_index = BI,
 		recovered_block_txs_pairs = BlockTXPairs,
 		parent_pid = ParentPID,
-		target_hashes_to_go = [_ | NewTargetHashesToGo]
+		target_hashes_to_go = [_ | NewTargetHashesToGo],
+		target_hashes = TargetHashes
 	} = State,
 	TXs = NextB#block.txs,
 	case
@@ -321,7 +321,7 @@ apply_next_block(State, NextB, B, Recall) ->
 				_ -> do_nothing
 			end,
 			self() ! apply_next_block,
-			prometheus_counter:inc(fork_recovery_depth, 1),
+			prometheus_histogram:observe(fork_recovery_depth, length(TargetHashes) - length(NewTargetHashesToGo)),
 			server(
 				State#state {
 					recovered_block_index = NewBI,
