@@ -24,11 +24,11 @@ register() ->
 		{labels, [route]}
 	]),
 	prometheus_gauge:new([
-		{name, block_height},
+		{name, arweave_block_height},
 		{help, "Block height"}
 	]),
 	prometheus_gauge:new([
-		{name, peer_count},
+		{name, arweave_peer_count},
 		{help, "peer count"}
 	]).
 

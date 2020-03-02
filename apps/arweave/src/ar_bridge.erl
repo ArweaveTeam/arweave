@@ -323,6 +323,6 @@ gossip_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
 % 	is_id_ignored(get_id(Type, Data)).
 
 update_state_metrics(Peers) when is_list(Peers) ->
-	prometheus_gauge:set(peer_count, length(Peers));
+	prometheus_gauge:set(arweave_peer_count, length(Peers));
 update_state_metrics(_) ->
 	ok.
