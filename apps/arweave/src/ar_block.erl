@@ -269,6 +269,7 @@ generate_block_data_segment_base(B) ->
 		integer_to_binary(B#block.height),
 		B#block.previous_block,
 		B#block.tx_root,
+		lists:map(fun ar_weave:tx_id/1, B#block.txs),
 		integer_to_binary(B#block.block_size),
 		integer_to_binary(B#block.weave_size),
 		case B#block.reward_addr of

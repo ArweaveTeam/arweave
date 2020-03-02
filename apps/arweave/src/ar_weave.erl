@@ -6,6 +6,7 @@
 -export([is_data_on_block_list/2]).
 -export([create_genesis_txs/0, read_v1_genesis_txs/0]).
 -export([generate_block_index/1]).
+-export([tx_id/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
