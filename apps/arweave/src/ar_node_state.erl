@@ -38,7 +38,8 @@ start() ->
 		{cumulative_diff, 0},               % Sum of the difficulty squared along the current weave
 		{hash_list_merkle, <<>>},           % The Merkle root of the current hash list
 		{block_txs_pairs, []},              % List of {BH, TXIDs} pairs for last ?MAX_TX_ANCHOR_DEPTH blocks
-		{mempool_size, 0}                   % Memory pool size
+		{mempool_size, 0},                  % Memory pool size
+		{txs_pending_download, sets:new()}  % set of txs pending download (only TXIDs)
 	]),
 	{ok, Pid}.
 

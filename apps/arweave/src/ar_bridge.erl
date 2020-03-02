@@ -6,6 +6,7 @@
 -export([start_link/1]).
 -export([ignore_id/1, unignore_id/1, is_id_ignored/1]).
 -export([drop_waiting_txs/2]).
+-export([drop_downloaded_txs/2]).
 -include("ar.hrl").
 
 %%% Represents a bridge node in the internal gossip network
@@ -93,6 +94,10 @@ add_remote_peer(PID, Node) ->
 		false ->
 			PID ! {add_peer, remote, Node}
 	end.
+
+%% @doc Notify bridge of the TXs that have been downloaded
+drop_downloaded_txs(PID, DTXS) ->
+	PID ! {drop_downloaded_txs, DTXS}.
 
 -ifdef(DEBUG).
 %% Do not filter out loopback IP addresses with custom port in the debug mode
@@ -183,6 +188,9 @@ handle(S, {set_peers, Peers}) ->
 handle(S, {update_peers, remote, Peers}) ->
 	update_state_metrics(Peers),
 	S#state{ external_peers = Peers };
+handle(S = #state{ gossip = GS }, {drop_downloaded_txs, _DTXS} = Msg) ->
+	{NewGS, _} = ar_gossip:send(GS,	Msg),
+	S#state { gossip = NewGS };
 handle(S = #state{ gossip = GS0 }, Msg) when is_record(Msg, gs_msg) ->
 	case ar_gossip:recv(GS0, Msg) of
 		{_, ignore} -> S;

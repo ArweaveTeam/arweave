@@ -5,7 +5,7 @@
 
 -import(ar_test_node, [assert_post_tx_to_slave/2]).
 -import(ar_test_node, [assert_wait_until_receives_txs/2, wait_until_height/2]).
--import(ar_test_node, [sign_tx/2, sign_v1_tx/2, get_tx_anchor/0]).
+-import(ar_test_node, [sign_tx/2, sign_v1_tx/2, setup/0, get_tx_anchor/0]).
 -import(ar_test_node, [get_tx_price/1, slave_mine/1, slave_call/3]).
 -import(ar_test_node, [test_with_mocked_functions/2]).
 
@@ -180,14 +180,6 @@ format_2_txs_are_gossiped() ->
 	?assertEqual(TX2, SignedTX#tx.id).
 
 %%%% private
-
-setup() ->
-	{Pub, _} = Wallet = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(5000), <<>>}]),
-	{MasterNode, _} = ar_test_node:start(B0),
-	{SlaveNode, _} = ar_test_node:slave_start(B0),
-	ar_test_node:connect_to_slave(),
-	{MasterNode, SlaveNode, Wallet}.
 
 http_get_queue() ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =

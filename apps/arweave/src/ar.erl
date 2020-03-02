@@ -285,7 +285,8 @@ start(
 		webhooks = WebhookConfigs,
 		max_connections = MaxConnections,
 		max_gateway_connections = MaxGatewayConnections,
-		max_option_depth = MaxOptionDepth
+		max_option_depth = MaxOptionDepth,
+		active_download = ActiveDownload
 	}) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -316,6 +317,7 @@ start(
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
 	ar_meta_db:put(max_option_depth, MaxOptionDepth),
+	ar_meta_db:put(active_download, ActiveDownload),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.

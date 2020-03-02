@@ -106,7 +106,8 @@ handle(SPid, {gossip_message, Msg}) ->
 	handle_gossip(SPid, ar_gossip:recv(GS, Msg));
 handle(SPid, {add_tx, TX}) ->
 	{ok, StateIn} =
-		ar_node_state:lookup(SPid, [gossip, node, txs, waiting_txs, height, mempool_size]),
+		ar_node_state:lookup(SPid,
+			[gossip, node, txs, waiting_txs, height, mempool_size, txs_pending_download]),
 	case add_tx(StateIn, TX, maps:get(gossip, StateIn)) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -137,11 +138,16 @@ handle(SPid, {process_new_block, Peer, Height, BShadow, BDS, Recall}) ->
 	{ok, process_new_block};
 handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	#{ block_index := [{CurrentBH, _, _} | _]} = StateIn,
+	#{ block_index := [{CurrentBH, _, _} | _],
+	   txs_pending_download := TXPDSet,
+	   trusted_peers := Peers} = StateIn,
 	case BaseBH of
 		CurrentBH ->
 			case integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) of
-				{ok, StateOut} ->
+				{ok, #{ block_index := NewBI} = StateOut} ->
+					IsActiveDownload = ar_meta_db:get(active_download),
+					maybe_schedule_download(
+						Peers, NewBI, sets:is_empty(TXPDSet), IsActiveDownload),
 					ar_node_state:update(SPid, StateOut);
 				none ->
 					ok
@@ -231,7 +237,7 @@ handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, BShadow, _BDS, Recall}}) 
 	end,
 	{ok, process_new_block};
 handle_gossip(SPid, {NewGS, {add_tx, TX}}) ->
-	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, mempool_size]),
+	{ok, StateIn} = ar_node_state:lookup(SPid, [txs, mempool_size, txs_pending_download]),
 	case add_tx(StateIn, TX, NewGS) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
@@ -266,6 +272,11 @@ handle_gossip(SPid, {NewGS, {drop_waiting_txs, TXs}}) ->
 			ok
 	end,
 	{ok, drop_waiting_txs};
+handle_gossip(SPid, {_NewGS, {drop_downloaded_txs, DTXs}}) ->
+	{ok, StateIn} = ar_node_state:lookup(SPid, [txs_pending_download]),
+	{ok, StateOut} = drop_downloaded_txs(StateIn, DTXs),
+	ar_node_state:update(SPid, StateOut),
+	{ok, drop_downloaded_txs};
 handle_gossip(SPid, {NewGS, ignore}) ->
 	ar_node_state:update(SPid, [
 		{gossip, NewGS}
@@ -290,12 +301,13 @@ handle_gossip(SPid, {NewGS, UnhandledMsg}) ->
 
 %% @doc Add the new transaction to the server state.
 add_tx(StateIn, TX, GS) ->
-	#{ txs := TXs, mempool_size := MS} = StateIn,
+	#{ txs := TXs, mempool_size := MS, txs_pending_download := DTXS} = StateIn,
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	{ok, [
 		{txs, sets:add_element(TX, TXs)},
 		{gossip, NewGS},
-		{mempool_size, ?TX_SIZE_BASE + byte_size(TX#tx.data) + MS}
+		{mempool_size, ?TX_SIZE_BASE + byte_size(TX#tx.data) + MS},
+		{txs_pending_download, maybe_add_to_tx_pending_download(TX, DTXS)}
 	]}.
 
 %% @doc Add the new waiting transaction to the server state.
@@ -342,6 +354,16 @@ cancel_tx(StateIn, TXID, Sig) ->
 			{txs, MTXs},
 			{waiting_txs, MWTXs},
 			{mempool_size, ar_node_utils:calculate_mempool_size(sets:union(MTXs, MWTXs))}
+		]
+	}.
+
+drop_downloaded_txs(#{txs_pending_download := TXSPD}, NewDTXs) ->
+	NewDTXSet = sets:from_list(NewDTXs),
+	NewTXPDSet = sets:subtract(TXSPD, NewDTXSet),
+	{
+		ok,
+		[
+			{txs_pending_download, NewTXPDSet}
 		]
 	}.
 
@@ -658,7 +680,9 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 		block_index      := BI,
 		txs              := TXs,
 		gossip           := GS,
-		block_txs_pairs  := BlockTXPairs
+		block_txs_pairs  := BlockTXPairs,
+		trusted_peers	 := Peers,
+		txs_pending_download := TXPDSet
 	} = StateIn,
 	ar_storage:write_full_block(NewB, MinedTXs),
 	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = MinedTXs }, BI),
@@ -708,6 +732,19 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 		}
 	),
 	{ok, NewState}.
+
+%% @doc Schedule ar_downloader if there are TXs requiring download and only
+%% if downloading is configured to operate in 'active' mode (not passive)
+maybe_schedule_download(_Peers, _BI, true, true) -> ok;
+maybe_schedule_download(Peers, BI, false, true) ->
+	case whereis(ar_downloader) of
+		Pid when is_pid(Pid) ->
+			% trigger downloader
+			erlang:send(ar_downloader, {block, ?BI_TO_BHL(BI), BI});
+		undefined ->
+			true = ar_downloader:start(Peers, BI)
+	end;
+maybe_schedule_download(_Peers, _BI, _IsEmpty, false) -> ok.
 
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{id := BinID, block_index := not_joined} = StateIn, BI, BlockTXPairs) ->
@@ -814,6 +851,24 @@ is_fork_preferable(ForkB, CurrentCDiff, _) ->
 %% @doc Aggregates the transactions of a state to one list.
 aggregate_txs(#{txs := TXs, waiting_txs := WaitingTXs}) ->
 	sets:union(TXs, WaitingTXs).
+
+%% @doc Adds format 2 TX stripped of data to pending full download, only if
+%% downloading is configured to operate in 'active' mode (not passive)
+maybe_add_to_tx_pending_download(TX = #tx{}, DTXSet) ->
+	maybe_add_to_tx_pending_download(TX, DTXSet, ar_meta_db:get(active_download)).
+
+maybe_add_to_tx_pending_download(#tx{}, DTXSet, false) -> DTXSet;
+maybe_add_to_tx_pending_download(
+	#tx{
+		id = TXID,
+		format = 2,
+		data = <<>>,
+		data_size = TXSize
+	},
+	DTXSet,
+	true) when TXSize > 0 ->
+		sets:add_element(TXID, DTXSet);
+maybe_add_to_tx_pending_download(#tx{}, DTXSet, _IsActiveDownload) -> DTXSet.
 
 get_diverged_block_hashes_test_() ->
 	?assertEqual(

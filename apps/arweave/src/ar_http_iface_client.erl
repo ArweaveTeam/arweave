@@ -6,7 +6,7 @@
 
 -export([send_new_block/4, send_new_tx/2, get_block/3, get_block/4]).
 -export([get_block_shadow/2]).
--export([get_tx/3, get_tx/4, get_tx_data/2]).
+-export([get_tx/3, get_tx/4, get_tx_data/2, get_tx_from_remote_peer/3]).
 -export([get_block_subfield/3, add_peer/1]).
 -export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).

@@ -44,7 +44,8 @@
 	webhooks = [],
 	max_connections = 1024,
 	max_gateway_connections = 128,
-	max_option_depth = 8
+	max_option_depth = 8,
+	active_download = false
 }).
 
 -endif.

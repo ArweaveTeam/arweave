@@ -52,7 +52,8 @@ parse_config() ->
 			}
 		],
 		max_connections = 512,
-		max_gateway_connections = 64
+		max_gateway_connections = 64,
+		active_download = true
 	}, ParsedConfig).
 
 config_fixture() ->

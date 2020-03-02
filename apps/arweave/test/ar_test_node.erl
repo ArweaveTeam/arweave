@@ -22,6 +22,7 @@
 -export([get_balance/1]).
 -export([test_with_mocked_functions/2]).
 -export([get_tx_price/1]).
+-export([setup/0, setup/1]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -251,6 +252,16 @@ post_tx_to_master(Master, TX) ->
 			noop
 	end,
 	Reply.
+
+setup() ->
+	setup(5000).
+setup(AR) ->
+	{Pub, _} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(AR), <<>>}]),
+	{MasterNode, _} = ar_test_node:start(B0),
+	{SlaveNode, _} = ar_test_node:slave_start(B0),
+	ar_test_node:connect_to_slave(),
+	{MasterNode, SlaveNode, Wallet}.
 
 sign_tx(Wallet) ->
 	sign_tx(slave, Wallet, #{ format => 2 }, fun ar_tx:sign/2).

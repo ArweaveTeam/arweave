@@ -187,6 +187,12 @@ parse_options([{<<"max_gateway_connections">>, MaxGatewayConnections} | Rest], C
 	parse_options(Rest, Config#config { max_gateway_connections = MaxGatewayConnections });
 parse_options([{<<"max_option_depth">>, MaxOptionDepth} | Rest], Config) when is_integer(MaxOptionDepth) ->
 	parse_options(Rest, Config#config { max_option_depth = MaxOptionDepth });
+parse_options([{<<"active_download">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config { active_download = true });
+parse_options([{<<"active_download">>, false} | Rest], Config) ->
+	parse_options(Rest, Config);
+parse_options([{<<"active_download">>, Opt} | _], _) ->
+	{error, {bad_type, active_download, boolean}, Opt};
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
