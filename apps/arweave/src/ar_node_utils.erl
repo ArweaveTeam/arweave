@@ -428,7 +428,7 @@ integrate_new_block(
 
 update_block_index(B, BI) ->
 	Fork_2_0 = ar_fork:height_2_0(),
-	case B#block.height + 1 of
+	NewBI = case B#block.height + 1 of
 		Height when Height < Fork_2_0 ->
 			{ok, Entry} = ar_transition:transition_block(B, B#block.txs),
 			[Entry | BI];
@@ -439,7 +439,14 @@ update_block_index(B, BI) ->
 			Checkpoint;
 		_ ->
 			[{B#block.indep_hash, B#block.weave_size, B#block.tx_root} | BI]
-	end.
+	end,
+	case B#block.height rem ?STORE_BLOCKS_BEHIND_CURRENT of
+		0 ->
+			spawn(fun() -> ar_storage:write_block_index(NewBI) end);
+		_ ->
+			do_nothing
+	end,
+	NewBI.
 
 update_block_txs_pairs(B, BlockTXPairs) ->
 	TXIDs = [case TX of Record when is_record(Record, tx) -> Record#tx.id; ID -> ID end || TX <- B#block.txs],

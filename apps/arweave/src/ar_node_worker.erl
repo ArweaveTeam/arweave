@@ -673,7 +673,6 @@ integrate_block_from_miner(#{ block_index := not_joined }, _NewB, _MinedTXs, _BD
 	none;
 integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 	#{
-		id               := BinID,
 		block_index      := BI,
 		txs              := TXs,
 		gossip           := GS,
@@ -696,7 +695,6 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 			NewB#block.height,
 			NewB#block.wallet_list
 		),
-	ar_storage:write_block_block_index(BinID, NewBI),
 	ar_miner_log:mined_block(NewB#block.indep_hash),
 	ar:info(
 		[
@@ -745,7 +743,7 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 	{ok, NewState}.
 
 %% @doc Handle executed fork recovery.
-recovered_from_fork(#{id := BinID, block_index := not_joined} = StateIn, BI, BlockTXPairs) ->
+recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) ->
 	#{ txs := TXs } = StateIn,
 	NewB = ar_storage:read_block(element(1, hd(BI)), BI),
 	ar:info(
@@ -765,7 +763,6 @@ recovered_from_fork(#{id := BinID, block_index := not_joined} = StateIn, BI, Blo
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
-	ar_storage:write_block_block_index(BinID, BI),
 	case NewB#block.height + 1 < ar_fork:height_2_0() of
 		true ->
 			ar_transition:update_block_index(BI);
@@ -803,7 +800,7 @@ recovered_from_fork(_StateIn, _, _) ->
 	none.
 
 do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs) ->
-	#{ id := BinID, txs := TXs } = StateIn,
+	#{ txs := TXs } = StateIn,
 	ar:info(
 		[
 			{event, fork_recovered_successfully},
@@ -818,7 +815,6 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs) ->
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
-	ar_storage:write_block_block_index(BinID, BI),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => BI,

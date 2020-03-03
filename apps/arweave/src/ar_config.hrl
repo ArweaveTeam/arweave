@@ -31,7 +31,7 @@
 	pause = true,
 	disk_space,
 	used_space = 0,
-	start_block_index = undefined,
+	start_from_block_index = false,
 	internal_api_secret = not_set,
 	enable = [],
 	disable = [],

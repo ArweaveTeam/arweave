@@ -6,7 +6,7 @@
 -export([invalidate_block/1, delete_block/1, blocks_on_disk/0, block_exists/1]).
 -export([write_tx/1, write_tx_data/3, read_tx/1, read_tx_data/1]).
 -export([read_wallet_list/1]).
--export([write_block_block_index/2, read_block_block_index/1]).
+-export([write_block_index/1, read_block_index/0]).
 -export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
 -export([enough_space/1, select_drive/2]).
 -export([calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0]).
@@ -348,12 +348,19 @@ read_tx_data(TX) ->
 			Error
 	end.
 
-%% Write a block hash list to disk for retreival later (in emergencies).
-write_block_block_index(Hash, BI) ->
-	ar:report([{writing_block_block_index_to_disk, ID = ar_util:encode(Hash)}]),
+%% Write a block index to disk for retreival later (in emergencies).
+write_block_index(BI) ->
+	ar:info([{event, writing_block_index_to_disk}]),
 	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(BI)),
-	file:write_file(block_index_filepath(Hash), JSON),
-	ID.
+	File = block_index_filepath(),
+	SwpFile = File ++ ".swp",
+	case file:write_file(SwpFile, JSON) of
+		ok ->
+			file:rename(SwpFile, File);
+		{error, Reason} = Error ->
+			ar:err([{event, failed_to_write_block_index_to_disk}, {reason, Reason}]),
+			Error
+	end.
 
 %% Write a block hash list to disk for retreival later.
 write_wallet_list(B) ->
@@ -369,13 +376,17 @@ write_wallet_list(B) ->
 	ok.
 
 %% @doc Read a list of block hashes from the disk.
-read_block_block_index(Hash) ->
-	{ok, Binary} = file:read_file(block_index_filepath(Hash)),
-	case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Binary)) of
-		[H | _] = HL when is_binary(H) ->
-			[{BH, not_set, not_set} || BH <- HL];
-		BI ->
-			BI
+read_block_index() ->
+	case file:read_file(block_index_filepath()) of
+		{ok, Binary} ->
+			case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Binary)) of
+				[H | _] = HL when is_binary(H) ->
+					[{BH, not_set, not_set} || BH <- HL];
+				BI ->
+					BI
+			end;
+		Error ->
+			Error
 	end.
 
 %% @doc Read a given wallet list (by hash) from the disk.
@@ -507,8 +518,8 @@ tx_filename(TXID) when is_binary(TXID) ->
 tx_data_filename(TXID) ->
 	iolist_to_binary([ar_util:encode(TXID), "_data.json"]).
 
-block_index_filepath(Hash) when is_binary(Hash) ->
-	filepath([?HASH_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
+block_index_filepath() ->
+	filepath([?HASH_LIST_DIR, <<"last_block_index.json">>]).
 
 wallet_list_filepath(Hash) when is_binary(Hash) ->
 	filepath([?WALLET_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
@@ -560,15 +571,14 @@ invalidate_block_test() ->
 	?assertEqual(B, read_block_file(TargetFile, ar_weave:generate_block_index([B]))).
 
 store_and_retrieve_block_block_index_test() ->
-	ID = crypto:strong_rand_bytes(32),
 	[B0] = ar_weave:init([]),
 	write_block(B0),
 	[B1 | _] = ar_weave:add([B0], []),
 	write_block(B1),
 	[B2 | _] = ar_weave:add([B1, B0], []),
-	write_block_block_index(ID, ar_weave:generate_block_index([B1, B0])),
+	write_block_index(ar_weave:generate_block_index([B1, B0])),
 	receive after 500 -> ok end,
-	BI = read_block_block_index(ID),
+	BI = read_block_index(),
 	?assertEqual(?BI_TO_BHL(BI), B2#block.hash_list).
 
 store_and_retrieve_wallet_list_test() ->

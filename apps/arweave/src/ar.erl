@@ -102,7 +102,7 @@ show_help() ->
 		[
 			{"config_file (path)", "Load configuration from specified file."},
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_block_index (hash)", "Start the node from a given block."},
+			{"start_from_block_index", "Start the node from the latest stored block index."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -208,8 +208,8 @@ parse_cli_args(["load_mining_key", File|Rest], C) ->
 	parse_cli_args(Rest, C#config { load_key = File });
 parse_cli_args(["ipfs_pin" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_pin = true });
-parse_cli_args(["start_block_index", BIHash|Rest], C) ->
-	parse_cli_args(Rest, C#config { start_block_index = ar_util:decode(BIHash) });
+parse_cli_args(["start_from_block_index"|Rest], C) ->
+	parse_cli_args(Rest, C#config { start_from_block_index = true });
 parse_cli_args(["benchmark", Algorithm|Rest], C)->
 	parse_cli_args(Rest, C#config { benchmark = true, benchmark_algorithm = list_to_atom(Algorithm) });
 parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
@@ -277,7 +277,7 @@ start(
 		pause = Pause,
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
-		start_block_index = BI,
+		start_from_block_index = StartFromBlockIndex,
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
@@ -392,13 +392,24 @@ start(
 		[
 			[
 				Peers,
-				case BI of
-					undefined ->
+				case StartFromBlockIndex of
+					false ->
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
-					_ ->
-						ar_storage:read_block_block_index(BI)
+					true ->
+						case ar_storage:read_block_index() of
+							{error, enoent} ->
+								io:format(
+									"~n~n\tBlock index file is not found. "
+									"If you want to start from a block index copied "
+									"from another node, place it in "
+									"<data_dir>/hash_lists/last_block_index.json~n~n"
+								),
+								erlang:halt();
+							BI ->
+								BI
+						end
 				end,
 				0,
 				MiningAddress,
