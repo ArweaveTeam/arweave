@@ -786,40 +786,6 @@ get_multiple_pending_txs_test_() ->
 		2 = length(PendingTXs)
 	end}.
 
-%% @doc Spawn a network with two nodes and a chirper server.
-get_tx_by_tag_test() ->
-	ar_storage:clear(),
-	Peers = ar_network:start(10, 10),
-	% Generate the transaction.
-	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
-	% Add tx to network
-	ar_node:add_tx(hd(Peers), TX),
-	% Begin mining
-	receive after 250 -> ok end,
-	ar_node:mine(hd(Peers)),
-	receive after 1000 -> ok end,
-	QueryJSON = ar_serialize:jsonify(
-		ar_serialize:query_to_json_struct(
-			{'equals', <<"TestName">>, <<"TestVal">>}
-			)
-		),
-	{ok, {_, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/arql",
-			[],
-			QueryJSON
-		),
-	TXs = ar_serialize:dejsonify(Body),
-	?assertEqual(true, lists:member(
-			TX#tx.id,
-			lists:map(
-				fun ar_util:decode/1,
-				TXs
-			)
-	)).
-
 %% @doc Mine a transaction into a block and retrieve it's binary body via HTTP.
 get_tx_body_test() ->
 	ar_storage:clear(),
