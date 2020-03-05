@@ -3,11 +3,11 @@
 -export([start/0]).
 -export([write_block/1, write_block/2, write_full_block/1, write_full_block/2]).
 -export([read_block/2, read_block_shadow/1]).
--export([invalidate_block/1, delete_block/1, blocks_on_disk/0, block_exists/1]).
+-export([invalidate_block/1, blocks_on_disk/0]).
 -export([write_tx/1, write_tx_data/3, read_tx/1, read_tx_data/1]).
 -export([read_wallet_list/1]).
 -export([write_block_index/1, read_block_index/0]).
--export([delete_tx/1, txs_on_disk/0, tx_exists/1]).
+-export([delete_tx/1]).
 -export([enough_space/1, select_drive/2]).
 -export([calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0]).
 -export([lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1]).
@@ -54,20 +54,9 @@ clear() ->
 	lists:map(fun file:delete/1, filelib:wildcard(filename:join([ar_meta_db:get(data_dir), ?BLOCK_DIR, "*.json"]))),
 	ar_block_index:clear().
 
-%% @doc Removes a saved block.
-delete_block(Hash) ->
-	ar_block_index:remove(Hash),
-	file:delete(block_filepath(Hash)).
-
 %% @doc Returns the number of blocks stored on disk.
 blocks_on_disk() ->
 	ar_block_index:count().
-
-block_exists(Hash) ->
-	case filelib:find_file(block_filepath(Hash)) of
-		{ok, _} -> true;
-		{error, _} -> false
-	end.
 
 %% @doc Move a block into the 'invalid' block directory.
 invalidate_block(B) ->
@@ -211,18 +200,6 @@ lookup_block_filename(ID) ->
 %% @doc Delete the tx with the given hash from disk.
 delete_tx(Hash) ->
 	file:delete(tx_filepath(Hash)).
-
-%% @doc Returns the number of transactions stored on disk.
-txs_on_disk() ->
-	{ok, Files} = file:list_dir(filename:join(ar_meta_db:get(data_dir), ?TX_DIR)),
-	length(Files).
-
-%% @doc Returns whether the TX with the given hash is stored on disk.
-tx_exists(Hash) ->
-	case filelib:find_file(tx_filepath(Hash)) of
-		{ok, _} -> true;
-		{error, _} -> false
-	end.
 
 write_tx(TXs) when is_list(TXs) -> lists:foreach(fun write_tx/1, TXs);
 write_tx(#tx{ format = 1 } = TX) ->
