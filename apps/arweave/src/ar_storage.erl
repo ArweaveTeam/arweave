@@ -14,6 +14,7 @@
 -export([tx_data_filepath/1]).
 -export([read_block_file/2, read_tx_file/1]).
 -export([ensure_directories/0, clear/0]).
+-export([write_file_atomic/2]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -99,7 +100,7 @@ write_block(B, WriteWalletList) ->
 	ByteSize = byte_size(BlockJSON),
 	case enough_space(ByteSize) of
 		true ->
-			file:write_file(Name = block_filepath(B), BlockJSON),
+			write_file_atomic(Name = block_filepath(B), BlockJSON),
 			ar_block_index:add(B, Name),
 			spawn(
 				ar_meta_db,
@@ -255,7 +256,7 @@ write_tx_header_after_scan(TX) ->
 	ByteSize = byte_size(TXJSON),
 	case enough_space(ByteSize) of
 		true ->
-			file:write_file(
+			write_file_atomic(
 				tx_filepath(TX),
 				TXJSON
 			),
@@ -286,7 +287,7 @@ write_tx_data(Filepath, EncodedData) ->
 	ByteSize = byte_size(EncodedData),
 	case enough_space(ByteSize) of
 		true ->
-			file:write_file(Filepath, EncodedData),
+			write_file_atomic(Filepath, EncodedData),
 			spawn(
 				ar_meta_db,
 				increase,
@@ -353,10 +354,9 @@ write_block_index(BI) ->
 	ar:info([{event, writing_block_index_to_disk}]),
 	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(BI)),
 	File = block_index_filepath(),
-	SwpFile = File ++ ".swp",
-	case file:write_file(SwpFile, JSON) of
+	case write_file_atomic(File, JSON) of
 		ok ->
-			file:rename(SwpFile, File);
+			ok;
 		{error, Reason} = Error ->
 			ar:err([{event, failed_to_write_block_index_to_disk}, {reason, Reason}]),
 			Error
@@ -372,7 +372,7 @@ write_wallet_list(B) ->
 			WalletListHash
 	end,
 	JSON = ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)),
-	file:write_file(wallet_list_filepath(ID), JSON),
+	write_file_atomic(wallet_list_filepath(ID), JSON),
 	ok.
 
 %% @doc Read a list of block hashes from the disk.
@@ -523,6 +523,15 @@ block_index_filepath() ->
 
 wallet_list_filepath(Hash) when is_binary(Hash) ->
 	filepath([?WALLET_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
+
+write_file_atomic(Filename, Data) ->
+	SwapFilename = Filename ++ ".swp",
+	case file:write_file(SwapFilename, Data) of
+		ok ->
+			file:rename(SwapFilename, Filename);
+		Error ->
+			Error
+	end.
 
 %% @doc Test block storage.
 store_and_retrieve_block_test() ->

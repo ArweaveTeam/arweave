@@ -210,16 +210,7 @@ save_checkpoint(Checkpoint) ->
 
 save_checkpoint(File, Checkpoint) ->
 	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(Checkpoint)),
-	write_file_atomic(File, JSON).
-
-write_file_atomic(Filename, Data) ->
-	SwapFilename = Filename ++ ".swp",
-	case file:write_file(SwapFilename, Data) of
-		ok ->
-			file:rename(SwapFilename, Filename);
-		Error ->
-			Error
-	end.
+	ar_storage:write_file_atomic(File, JSON).
 
 update_checkpoint(Entry, Checkpoint, ToGo, State) ->
 	NewCheckpoint = [Entry | Checkpoint],

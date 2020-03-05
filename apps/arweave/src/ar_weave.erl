@@ -407,5 +407,8 @@ create_genesis_txs() ->
 		end,
 		?GENESIS_BLOCK_MESSAGES
 	),
-	file:write_file("genesis_wallets.csv", lists:map(fun(T) -> binary_to_list(ar_util:encode(T#tx.id)) ++ "," end, TXs)),
+	ar_storage:write_file_atomic(
+		"genesis_wallets.csv",
+		lists:map(fun(T) -> binary_to_list(ar_util:encode(T#tx.id)) ++ "," end, TXs)
+	),
 	[T#tx.id || T <- TXs].
