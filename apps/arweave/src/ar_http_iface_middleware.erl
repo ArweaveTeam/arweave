@@ -555,9 +555,23 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 					{ok, Fn}                -> Fn
 				end;
 			<<"height">> ->
+				Node = whereis(http_entrypoint_node),
+				CurrentHeight = ar_node:get_height(Node),
 				try binary_to_integer(ID) of
-					Int ->
-						ar_storage:lookup_block_filename(Int)
+					Height when Height < 0 ->
+						invalid_height;
+					Height when Height > CurrentHeight ->
+						unavailable;
+					Height ->
+						BI = ar_node:get_block_index(Node),
+						Len = length(BI),
+						case Height > Len - 1 of
+							true ->
+								unavailable;
+							false ->
+								{H, _, _} = lists:nth(Len - Height, BI),
+								ar_storage:lookup_block_filename(H)
+						end
 				catch _:_ ->
 					invalid_height
 				end
@@ -1218,18 +1232,16 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 	CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
 	case is_block_known(Type, ID, CurrentBI) of
 		true ->
-			Hash =
-				case Type of
-					<<"height">> ->
-						B =
-							ar_node:get_block(whereis(http_entrypoint_node),
-							ID,
-							CurrentBI,
-							?WITH_TX_HEADERS),
-						B#block.indep_hash;
-					<<"hash">> -> ID
-				end,
-			BlockHL = ar_block:generate_hash_list_for_block(Hash, CurrentBI),
+			BlockHL = case Type of
+				<<"height">> ->
+					{_, BI} = lists:split(
+						length(CurrentBI) - ID,
+						CurrentBI
+					),
+					[H || {H, _, _} <- BI];
+				<<"hash">> ->
+					ar_block:generate_hash_list_for_block(ID, CurrentBI)
+			end,
 			{200, #{},
 				ar_serialize:jsonify(
 					lists:map(fun ar_util:encode/1, BlockHL)
@@ -1240,8 +1252,31 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 	end;
 %% @doc Return the wallet list associated with a block (as referenced by hash
 %% or height).
-process_request(get_block, [_Type, ID, <<"wallet_list">>], Req) ->
-	case ar_block_index:get_block_filename(ID) of
+process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
+	MaybeFilename = case Type of
+		<<"height">> ->
+			Node = whereis(http_entrypoint_node),
+			CurrentHeight = ar_node:get_height(Node),
+			case ID of
+				Height when Height < 0 ->
+					unavailable;
+				Height when Height > CurrentHeight ->
+					unavailable;
+				Height ->
+					BI = ar_node:get_block_index(Node),
+					Len = length(BI),
+					case Height > Len - 1 of
+						true ->
+							unavailable;
+						false ->
+							{H, _, _} = lists:nth(Len - Height, BI),
+							ar_storage:lookup_block_filename(H)
+					end
+			end;
+		<<"hash">> ->
+			ar_storage:lookup_block_filename(ID)
+	end,
+	case MaybeFilename of
 		unavailable ->
 			{404, #{}, <<"Block not found.">>, Req};
 		Filename ->
@@ -1263,9 +1298,9 @@ process_request(get_block, [_Type, ID, <<"wallet_list">>], Req) ->
 %%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
 %%
 process_request(get_block, [Type, ID, Field], Req) ->
-	CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
 	case ar_meta_db:get(subfield_queries) of
 		true ->
+			CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
 			case find_block(Type, ID, CurrentBI) of
 				unavailable ->
 					{404, #{}, <<"Not Found.">>, Req};

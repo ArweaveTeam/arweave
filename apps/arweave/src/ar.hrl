@@ -269,6 +269,7 @@
 -define(LOG_DIR, "logs").
 -define(BLOCK_DIR, "blocks").
 -define(TX_DIR, "txs").
+-define(STORAGE_MIGRATIONS_DIR, "data/storage_migrations").
 
 %% @doc Backup block hash list storage directory.
 -define(HASH_LIST_DIR, "hash_lists").

@@ -29,7 +29,8 @@
 start() ->
 	ar_firewall:start(),
 	ensure_directories(),
-	ar_block_index:start(),
+	ok = migrate_block_filenames(),
+	count_blocks_on_disk(),
 	case ar_meta_db:get(disk_space) of
 		undefined ->
 			%% Add some margin for filesystem overhead.
@@ -40,6 +41,62 @@ start() ->
 			ok
 	end.
 
+migrate_block_filenames() ->
+	case v1_migration_file_exists() of
+		true ->
+			ok;
+		false ->
+			DataDir = ar_meta_db:get(data_dir),
+			BlockDir = filename:join(DataDir, ?BLOCK_DIR),
+			{ok, Filenames} = file:list_dir(BlockDir),
+			lists:foreach(
+				fun(Filename) ->
+					case string:split(Filename, ".json") of
+						[Height_Hash, []] ->
+							case string:split(Height_Hash, "_") of
+								[_, H] when length(H) == 64 ->
+									rename_block_file(BlockDir, Filename, H ++ ".json");
+								_ ->
+									noop
+							end;
+						_ ->
+							noop
+					end
+				end,
+				Filenames
+			),
+			complete_v1_migration()
+	end.
+
+v1_migration_file_exists() ->
+	filelib:is_file(v1_migration_file()).
+
+v1_migration_file() ->
+	filename:join([ar_meta_db:get(data_dir), ?STORAGE_MIGRATIONS_DIR, "v1"]).
+
+rename_block_file(BlockDir, Source, Dest) ->
+	file:rename(filename:join(BlockDir, Source), filename:join(BlockDir, Dest)).
+
+complete_v1_migration() ->
+	write_file_atomic(v1_migration_file(), <<>>).
+
+count_blocks_on_disk() ->
+	spawn(
+		fun() ->
+			DataDir = ar_meta_db:get(data_dir),
+			case file:list_dir(filename:join(DataDir, ?BLOCK_DIR)) of
+				{ok, List} ->
+					ar_meta_db:increase(blocks_on_disk, length(List));
+				{error, Reason} ->
+					ar:warn([
+						{event, failed_to_count_blocks_on_disk},
+						{reason, Reason}
+					]),
+					error
+			end
+		end
+	).
+
 %% @doc Ensure that all of the relevant storage directories exist.
 ensure_directories() ->
 	DataDir = ar_meta_db:get(data_dir),
@@ -47,20 +104,24 @@ ensure_directories() ->
 	filelib:ensure_dir(filename:join(DataDir, ?TX_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?WALLET_LIST_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/").
+	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?STORAGE_MIGRATIONS_DIR) ++ "/").
 
 %% @doc Clear the cache of saved blocks.
 clear() ->
-	lists:map(fun file:delete/1, filelib:wildcard(filename:join([ar_meta_db:get(data_dir), ?BLOCK_DIR, "*.json"]))),
-	ar_block_index:clear().
+	lists:map(
+		fun file:delete/1,
+		filelib:wildcard(filename:join([ar_meta_db:get(data_dir), ?BLOCK_DIR, "*.json"]))
+	),
+	ar_meta_db:put(blocks_on_disk, 0).
 
 %% @doc Returns the number of blocks stored on disk.
 blocks_on_disk() ->
-	ar_block_index:count().
+	ar_meta_db:get(blocks_on_disk).
 
 %% @doc Move a block into the 'invalid' block directory.
 invalidate_block(B) ->
-	ar_block_index:remove(B#block.indep_hash),
+	ar_meta_db:increase(blocks_on_disk, -1),
 	TargetFile = invalid_block_filepath(B),
 	filelib:ensure_dir(TargetFile),
 	file:rename(block_filepath(B), TargetFile).
@@ -89,9 +150,16 @@ write_block(B, WriteWalletList) ->
 	ByteSize = byte_size(BlockJSON),
 	case enough_space(ByteSize) of
 		true ->
-			write_file_atomic(Name = block_filepath(B), BlockJSON),
-			ar_block_index:add(B, Name),
-			ar_meta_db:increase(used_space, ByteSize),
+			Filepath = block_filepath(B),
+			IsOverwrite = filelib:is_file(Filepath),
+			write_file_atomic(Filepath, BlockJSON),
+			case not IsOverwrite of
+				true ->
+					ar_meta_db:increase(blocks_on_disk, 1),
+					ar_meta_db:increase(used_space, ByteSize);
+				false ->
+					noop
+			end,
 			ok;
 		false ->
 			ar:err(
@@ -103,7 +171,7 @@ write_block(B, WriteWalletList) ->
 	end.
 
 write_full_block(B) ->
-	BShadow = B#block { txs = [T#tx.id || T <- B#block.txs] },
+	BShadow = B#block{ txs = [T#tx.id || T <- B#block.txs] },
 	write_full_block(BShadow, B#block.txs).
 
 write_full_block(BShadow, TXs) ->
@@ -112,14 +180,27 @@ write_full_block(BShadow, TXs) ->
 	ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }),
 	app_ipfs:maybe_ipfs_add_txs(TXs).
 
-%% @doc Read a block from disk, given a hash.
-read_block(unavailable, _BI) -> unavailable;
-read_block(B, _BI) when is_record(B, block) -> B;
-read_block(Bs, BI) when is_list(Bs) ->
-	lists:map(fun(B) -> read_block(B, BI) end, Bs);
-read_block({ID, _, _}, BI) -> read_block(ID, BI);
-read_block(ID, BI) ->
-	case ar_block_index:get_block_filename(ID) of
+%% @doc Read a block from disk, given a hash, a height, or a block index entry.
+read_block(unavailable, _BI) ->
+	unavailable;
+read_block(B, _BI) when is_record(B, block) ->
+	B;
+read_block(Blocks, BI) when is_list(Blocks) ->
+	lists:map(fun(B) -> read_block(B, BI) end, Blocks);
+read_block({H, _, _}, BI) ->
+	read_block(H, BI);
+read_block(Height, BI) when is_integer(Height) ->
+	case Height of
+		_ when Height < 0 ->
+			unavailable;
+		_ when Height > length(BI) - 1 ->
+			unavailable;
+		_ ->
+			{H, _, _} = lists:nth(length(BI) - Height, BI),
+			read_block(H, BI)
+	end;
+read_block(H, BI) ->
+	case lookup_block_filename(H) of
 		unavailable -> unavailable;
 		Filename -> read_block_file(Filename, BI)
 	end.
@@ -153,25 +234,23 @@ read_block_file(Filename, BI) ->
 
 %% @doc Read block shadow from disk, given a hash.
 read_block_shadow(BH) ->
-	case ar_block_index:get_block_filename(BH) of
+	case lookup_block_filename(BH) of
 		unavailable ->
 			unavailable;
 		Filename ->
 			case file:read_file(Filename) of
 				{ok, JSON} ->
-					read_block_shadow(BH, JSON);
+					parse_block_shadow_json(JSON);
 				{error, _} ->
-					ar_block_index:remove(BH),
 					unavailable
 			end
 	end.
 
-read_block_shadow(BH, JSON) ->
+parse_block_shadow_json(JSON) ->
 	case ar_serialize:json_decode(JSON) of
 		{ok, JiffyStruct} ->
 			ar_serialize:json_struct_to_block(JiffyStruct);
 		{error, _} ->
-			ar_block_index:remove(BH),
 			unavailable
 	end.
 
@@ -190,8 +269,18 @@ start_update_used_space() ->
 		end
 	).
 
-lookup_block_filename(ID) ->
-	ar_block_index:get_block_filename(ID).
+lookup_block_filename(H) ->
+	Name = filename:join([
+		ar_meta_db:get(data_dir),
+		?BLOCK_DIR,
+		binary_to_list(ar_util:encode(H)) ++ ".json"
+	]),
+	case filelib:is_file(Name) of
+		true ->
+			Name;
+		false ->
+			unavailable
+	end.
 
 %% @doc Delete the tx with the given hash from disk.
 delete_tx(Hash) ->
@@ -457,13 +546,7 @@ to_string(String) ->
 	String.
 
 block_filename(B) when is_record(B, block) ->
-	iolist_to_binary([
-		integer_to_list(B#block.height), "_", ar_util:encode(B#block.indep_hash), ".json"
-	]);
-block_filename(Hash) when is_binary(Hash) ->
-	iolist_to_binary(["*_", ar_util:encode(Hash), ".json"]);
-block_filename(Height) when is_integer(Height) ->
-	iolist_to_binary([integer_to_list(Height), "_*.json"]).
+	iolist_to_binary([ar_util:encode(B#block.indep_hash), ".json"]).
 
 block_filepath(B) ->
 	filepath([?BLOCK_DIR, block_filename(B)]).
@@ -516,13 +599,15 @@ store_and_retrieve_block_test() ->
 	ar_storage:write_block(B1),
 	[B2 | _] = ar_weave:add(B1s, []),
 	ar_storage:write_block(B2),
-	?assertEqual(3, blocks_on_disk()),
+	ar_util:do_until(
+		fun() ->
+			3 == blocks_on_disk()
+		end,
+		100,
+		2000
+	),
 	B1 = read_block(B1#block.indep_hash, ar_weave:generate_block_index([B1, B0])),
 	B1 = read_block(B1#block.height, ar_weave:generate_block_index([B1, B0])).
-
-clear_blocks_test() ->
-	ar_storage:clear(),
-	?assertEqual(0, blocks_on_disk()).
 
 store_and_retrieve_tx_test() ->
 	Tx0 = ar_tx:new(<<"DATA1">>),
@@ -537,15 +622,13 @@ invalidate_block_test() ->
 	[B] = ar_weave:init(),
 	write_full_block(B),
 	invalidate_block(B),
-	timer:sleep(500),
 	unavailable = read_block(B#block.indep_hash, ar_weave:generate_block_index([B])),
-	TargetFile =
-		lists:flatten(
-			io_lib:format(
-				"~s/invalid/~w_~s.json",
-				[ar_meta_db:get(data_dir) ++ "/" ++ ?BLOCK_DIR, B#block.height, ar_util:encode(B#block.indep_hash)]
-			)
-		),
+	TargetFile = filename:join([
+		ar_meta_db:get(data_dir),
+		?BLOCK_DIR,
+		"invalid",
+		binary_to_list(ar_util:encode(B#block.indep_hash)) ++ ".json"
+	]),
 	?assertEqual(B, read_block_file(TargetFile, ar_weave:generate_block_index([B]))).
 
 store_and_retrieve_block_block_index_test() ->
@@ -555,7 +638,6 @@ store_and_retrieve_block_block_index_test() ->
 	write_block(B1),
 	[B2 | _] = ar_weave:add([B1, B0], []),
 	write_block_index(ar_weave:generate_block_index([B1, B0])),
-	receive after 500 -> ok end,
 	BI = read_block_index(),
 	?assertEqual(?BI_TO_BHL(BI), B2#block.hash_list).
 
@@ -565,7 +647,6 @@ store_and_retrieve_wallet_list_test() ->
 	Height = B0#block.height,
 	RewardAddr = B0#block.reward_addr,
 	WL = B0#block.wallet_list,
-	receive after 500 -> ok end,
 	?assertEqual({ok, WL}, read_wallet_list(ar_block:hash_wallet_list(Height, RewardAddr, WL))).
 
 handle_corrupted_wallet_list_test() ->
