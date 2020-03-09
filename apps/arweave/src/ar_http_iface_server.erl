@@ -186,10 +186,14 @@ cacertfile_when_present(Domain) ->
 	end.
 
 collect_http_response_metrics(Metrics) ->
-	Req = maps:get(req, Metrics),
-	prometheus_counter:inc(
-		http_server_served_bytes_total,
-		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
-		maps:get(resp_body_length, Metrics, 0)
-	),
-	prometheus_cowboy2_instrumenter:observe(Metrics).
+	case maps:get(req, Metrics, no_req) of
+		no_req ->
+			ok;
+		Req ->
+			prometheus_counter:inc(
+				http_server_served_bytes_total,
+				[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
+				maps:get(resp_body_length, Metrics, 0)
+			),
+			prometheus_cowboy2_instrumenter:observe(Metrics)
+	end.
