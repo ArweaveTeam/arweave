@@ -1,6 +1,10 @@
 #!/bin/bash
 
-set -e
+kill_slave() {
+    kill $!
+}
+
+trap "kill_slave" EXIT
 
 SCRIPT_DIR="$(dirname "$0")"
 cd "$SCRIPT_DIR/.."
@@ -19,4 +23,3 @@ ERL_TEST_OPTS="-pa `./rebar3 as test path` `./rebar3 as test path --base`/lib/ar
 
 erl $ERL_TEST_OPTS -noshell -name slave@127.0.0.1 -setcookie test -run ar main $RANDOMX_JIT port 1983 data_dir data_test_slave > /dev/null 2>&1 &
 erl $ERL_TEST_OPTS -noshell -name master@127.0.0.1 -setcookie test -run ar tests -s init stop
-kill 0
