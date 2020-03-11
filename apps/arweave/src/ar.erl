@@ -559,8 +559,13 @@ tests() ->
 	tests(?CORE_TEST_MODS, #config {}).
 
 tests(Mods, Config) when is_list(Mods) ->
-        start_for_tests(Config),
-        eunit:test({timeout, ?TEST_TIMEOUT, Mods}, [verbose]).
+	start_for_tests(Config),
+	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose]) of
+		ok ->
+			ok;
+		_ ->
+			exit(tests_failed)
+	end.
 
 start_for_tests() ->
 	start_for_tests(#config { }).

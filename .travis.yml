@@ -1,0 +1,16 @@
+language: erlang
+addons:
+    apt:
+      packages:
+      - sqlite3
+install:
+    - epmd -daemon
+otp_release:
+    - 22.2
+# blocklist
+branches:
+    except:
+    - master
+# AR UT
+script:
+    - ./bin/test
