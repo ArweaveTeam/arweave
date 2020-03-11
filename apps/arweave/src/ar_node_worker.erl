@@ -695,7 +695,7 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 			NewB#block.height,
 			NewB#block.wallet_list
 		),
-	ar_miner_log:mined_block(NewB#block.indep_hash),
+	ar_miner_log:mined_block(NewB#block.indep_hash, NewB#block.height),
 	ar:info(
 		[
 			{event, mined_block},

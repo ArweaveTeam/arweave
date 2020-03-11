@@ -427,6 +427,7 @@ integrate_new_block(
 	}).
 
 update_block_index(B, BI) ->
+	maybe_report_n_confirmations(B, BI),
 	Fork_2_0 = ar_fork:height_2_0(),
 	NewBI = case B#block.height + 1 of
 		Height when Height < Fork_2_0 ->
@@ -447,6 +448,17 @@ update_block_index(B, BI) ->
 			do_nothing
 	end,
 	NewBI.
+
+maybe_report_n_confirmations(B, BI) ->
+	N = 10,
+	LastNBlocks = lists:sublist(BI, N),
+	case length(LastNBlocks) == N of
+		true ->
+			{H, _, _} = lists:last(LastNBlocks),
+			ar_miner_log:block_received_n_confirmations(H, B#block.height - N);
+		false ->
+			do_nothing
+	end.
 
 update_block_txs_pairs(B, BlockTXPairs) ->
 	TXIDs = [case TX of Record when is_record(Record, tx) -> Record#tx.id; ID -> ID end || TX <- B#block.txs],

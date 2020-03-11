@@ -1,24 +1,24 @@
 -module(ar_miner_log).
+
 -export([start/0]).
 -export([joining/0, joined/0]).
--export([started_hashing/0, foreign_block/1, mined_block/1, fork_recovered/1]).
+-export([started_hashing/0, foreign_block/1, mined_block/2, fork_recovered/1]).
+-export([block_received_n_confirmations/2]).
+-export([log_no_foreign_blocks/0]).
+
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 
 %%% Runs a logging server that informs the operator of the activities of their
 %%% miner. In particular, as well as logging when hashing has started and when
-%%% a candidate block is mined, it will also log when candidate blocks appear
-%%% to have been accepted by the wider network.
+%%% a candidate block is mined, it will also log when mined blocks have a
+%%% certain number of confirmations.
 
 %% @doc The period to wait between checking the state of a block in the BI.
 
 -ifdef(DEBUG).
--define(BLOCK_CHECK_TIME, 100).
--define(CONFIRMATION_DEPTH, 2).
 -define(FOREIGN_BLOCK_ALERT_TIME, 3 * 1000).
 -else.
--define(BLOCK_CHECK_TIME, 60 * 1000).
--define(CONFIRMATION_DEPTH, 10).
 -define(FOREIGN_BLOCK_ALERT_TIME, 60 * 60 * 1000).
 -endif.
 
@@ -39,19 +39,52 @@ watchdog_stop() ->
 	end.
 
 %% @doc Print a log message if no foreign block is received for
-%% FOREIGN_BLOCK_ALERT_TIME ms.
+%% FOREIGN_BLOCK_ALERT_TIME ms. Also, print a log message when a mined
+%% block is confirmed.
 watchdog() ->
+	watchdog(#{ mined_blocks => maps:new(), foreign_blocks_timer => start_timer() }).
+
+watchdog(#{ mined_blocks := MinedBlocks, foreign_blocks_timer := TimerRef } = State) ->
 	receive
-		accepted_foreign_block -> watchdog();
-		fork_recovered -> watchdog();
-		stop -> ok
-	after ?FOREIGN_BLOCK_ALERT_TIME ->
-		log(
-			"WARNING: No foreign blocks received from the network or found by trusted peers. "
-			"Please check your internet connection and the logs for errors."
-		),
-		watchdog()
+		{block_received_n_confirmations, BH, Height} ->
+			UpdatedMinedBlocks = case maps:take(Height, MinedBlocks) of
+				{BH, Map} ->
+					accepted_block(BH),
+					Map;
+				{_, Map} ->
+					Map;
+				error ->
+					MinedBlocks
+			end,
+			watchdog(State#{ mined_blocks => UpdatedMinedBlocks });
+		{mined_block, BH, Height} ->
+			watchdog(State#{ mined_blocks => MinedBlocks#{ Height => BH } });
+		accepted_foreign_block ->
+			watchdog(State#{ foreign_blocks_timer => refresh_timer(TimerRef) });
+		fork_recovered ->
+			watchdog(State#{ foreign_blocks_timer => refresh_timer(TimerRef) });
+		stop ->
+			cancel_timer(TimerRef),
+			ok
 	end.
+
+start_timer() ->
+	{ok, TimerRef} =
+		timer:apply_after(?FOREIGN_BLOCK_ALERT_TIME, ?MODULE, log_no_foreign_blocks, []),
+	TimerRef.
+
+refresh_timer(TimerRef) ->
+	cancel_timer(TimerRef),
+	start_timer().
+
+cancel_timer(TimerRef) ->
+	{ok, cancel} = timer:cancel(TimerRef).
+
+log_no_foreign_blocks() ->
+	log(
+		"WARNING: No foreign blocks received from the network or found by trusted peers. "
+		"Please check your internet connection and the logs for errors."
+	).
 
 %% @doc Log the message for starting joining the network.
 joining() ->
@@ -79,10 +112,22 @@ fork_recovered(_BH) ->
 started_hashing() ->
 	log("[Stage 1/3] Successfully proved access to recall block. Starting to hash.").
 
+block_received_n_confirmations(BH, Height) ->
+	case whereis(miner_connection_watchdog) of
+		undefined -> ok;
+		PID -> PID ! {block_received_n_confirmations, BH, Height}
+	end.
+
 %% @doc Log the message a valid block was mined by the local node.
-mined_block(BH) ->
-	start_worker(BH),
-	log("[Stage 2/3] Produced candidate block ~s and dispatched to network.", [ar_util:encode(BH)]).
+mined_block(BH, Height) ->
+	case whereis(miner_connection_watchdog) of
+		undefined -> ok;
+		PID -> PID ! {mined_block, BH, Height}
+	end,
+	log(
+		"[Stage 2/3] Produced candidate block ~s and dispatched to network.",
+		[ar_util:encode(BH)]
+	).
 
 %% @doc Log the message for block mined by the local node got confirmed by the
 %% network.
@@ -109,30 +154,6 @@ log(Str) ->
 			interceptor_log(Str)
 	end.
 
-%% @doc Start a process that checks the state of mined blocks.
-start_worker(BH) ->
-	spawn(fun() -> worker(BH, current_block_height()) end).
-
-current_block_height() ->
-	length(ar_node:get_block_index(whereis(http_entrypoint_node))).
-
-%% @doc Worker process for checking the status of candidate blocks.
-worker(BH, InitBlockHeight) ->
-	BI = ar_node:get_block_index(whereis(http_entrypoint_node)),
-	case ar_util:index_of(BH, ?BI_TO_BHL(BI)) of
-		not_found when length(BI) >= InitBlockHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
-			ok;
-		Depth when is_integer(Depth) andalso Depth >= ?CONFIRMATION_DEPTH ->
-			accepted_block(BH),
-			ok;
-		_ ->
-			receive
-				stop -> ok % Not used
-			after ?BLOCK_CHECK_TIME ->
-				worker(BH, InitBlockHeight)
-			end
-	end.
-
 %% @doc Return a printable day name from a date.
 day({Year, Month, Day}) ->
 	case calendar:day_of_the_week(Year, Month, Day) of
@@ -145,112 +166,11 @@ day({Year, Month, Day}) ->
 		7 -> "Sunday"
 	end.
 
-%%% Tests
-
-%% @doc Start the miner log inception process.
-interception_start() ->
-	register(miner_log_debug, spawn(fun interceptor/0)).
-
-%% @doc Stop the miner log inception process.
-interception_stop() ->
-	Pid = whereis(miner_log_debug),
-	exit(Pid, kill),
-	true = wait_while_alive(Pid).
-
-%% @doc The inception process main function.
-interceptor() ->
-	interceptor_loop([]).
-
-%% @doc The inception process recursive loop, where the log buffer is the
-%% argument.
-interceptor_loop(Log) ->
-	receive
-		{log, Msg} ->
-			interceptor_loop(Log ++ [Msg]);
-		clear_log ->
-			interceptor_loop([]);
-		{pop_all, Sender} ->
-			Sender ! {log, Log},
-			interceptor_loop([])
-	end.
-
 %% @doc Will send the log message to the inception process if it exists.
 interceptor_log(Msg) ->
 	case whereis(miner_log_debug) of
 		undefined -> do_nothing;
 		Pid -> Pid ! {log, Msg}
-	end.
-
-%% @doc Fetch the buffered log from the inception process and than clear the
-%% buffer.
-interceptor_pop_all() ->
-	whereis(miner_log_debug) ! {pop_all, self()},
-	receive
-		{log, Log} -> Log
-	end.
-
-%% @doc Tests that the inception process can buffer manually triggered log
-%% messages.
-interception_proc_test() ->
-	interception_start(),
-	joining(),
-	joined(),
-	foreign_block("A-BLOCK-HASH"),
-	started_hashing(),
-	mined_block("A-BLOCK-HASH"),
-	accepted_block("A-BLOCK-HASH"),
-	Expected = [
-		"Joining the Arweave network...",
-		"Joined the Arweave network successfully.",
-		"[Stage 1/3] Successfully proved access to recall block. Starting to hash.",
-		"[Stage 2/3] Produced candidate block QS1CTE9DSy1IQVNI and dispatched to network.",
-		"[Stage 3/3] Your block QS1CTE9DSy1IQVNI was accepted by the network!"
-	],
-	?assertEqual(Expected, interceptor_pop_all()),
-	?assertEqual([], interceptor_pop_all()),
-	interception_stop().
-
-%% @doc Test the "worker" by asserting the log message for an accepted block
-%% exists after enough amount of confirmations.
-mined_block_test() ->
-	interception_start(),
-	ar_storage:clear(),
-	[B0] = Bs = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
-	ar_storage:write_block(B0),
-	Node = ar_node:start([], Bs),
-	ar_http_iface_server:reregister(Node),
-	timer:sleep(500),
-	ar_node:mine(Node),
-	timer:sleep(500),
-	[{MyBH,_} | _] = ar_node:get_block_index(whereis(http_entrypoint_node)),
-	MsgCheck = block_accepted_msg_check(MyBH),
-	?assert(not lists:any(MsgCheck, interceptor_pop_all())),
-	ar_node:mine(Node),
-	timer:sleep(500),
-	?assert(lists:any(MsgCheck, interceptor_pop_all())),
-	interception_stop().
-
-%% @doc Deliberately trigger and test the 'no foreign blocks' warning.
-no_foreign_blocks_test() ->
-	interception_start(),
-	start(),
-	timer:sleep(?FOREIGN_BLOCK_ALERT_TIME + 1000),
-	?assert(
-		lists:any(
-			fun ("WARNING: No foreign blocks received" ++ _) -> true;
-				(_) -> false
-			end,
-			interceptor_pop_all()
-		)
-	),
-	interception_stop().
-
-block_accepted_msg_check(BH) ->
-	AcceptedLogMsg = lists:flatten(
-		io_lib:format("[Stage 3/3] Your block ~s was accepted by the network!",
-						[ar_util:encode(BH)])),
-	fun (LogMsg) ->
-		LogMsg == AcceptedLogMsg
 	end.
 
 %% @doc Wait until the pid is not alive anymore. Returns true | {error,timeout}
