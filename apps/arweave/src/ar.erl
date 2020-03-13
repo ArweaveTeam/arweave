@@ -125,7 +125,7 @@ show_help() ->
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
 			{"disk_space (num)", "Max size (in GB) for the disk partition containing the Arweave data directory (blocks, txs, etc) when the miner stops writing files to disk."},
-			{"benchmark (algorithm)", "Run a mining performance benchmark. Pick an algorithm from sha384, randomx."},
+			{"benchmark", "Run a mining performance benchmark."},
 			{"internal_api_secret (secret)",
 				lists:flatten(
 					io_lib:format(
@@ -209,8 +209,8 @@ parse_cli_args(["ipfs_pin" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_pin = true });
 parse_cli_args(["start_from_block_index"|Rest], C) ->
 	parse_cli_args(Rest, C#config { start_from_block_index = true });
-parse_cli_args(["benchmark", Algorithm|Rest], C)->
-	parse_cli_args(Rest, C#config { benchmark = true, benchmark_algorithm = list_to_atom(Algorithm) });
+parse_cli_args(["benchmark"|Rest], C)->
+	parse_cli_args(Rest, C#config { benchmark = true });
 parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_cli_args(Rest, C#config { internal_api_secret = list_to_binary(Secret)});
 parse_cli_args(["internal_api_secret", _ | _], _) ->
@@ -246,7 +246,7 @@ parse_cli_args([Arg|_Rest], _O) ->
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#config { port = Port });
-start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = MaxMiners, disable = Disable, enable = Enable }) ->
+start(#config{ benchmark = true, max_miners = MaxMiners, disable = Disable, enable = Enable }) ->
 	error_logger:logfile({open, generate_logfile_name()}),
 	error_logger:tty(false),
 	ar_meta_db:start(),
@@ -255,7 +255,7 @@ start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = 
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(mine, true),
 	ar_randomx_state:start(),
-	ar_benchmark:run(Algorithm);
+	ar_benchmark:run();
 start(
 	#config {
 		port = Port,

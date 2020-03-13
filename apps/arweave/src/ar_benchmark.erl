@@ -1,48 +1,38 @@
 -module(ar_benchmark).
--export([run/1]).
+
+-export([run/0]).
+
 -include("src/ar.hrl").
 
 %%% Runs a never ending mining performance benchmark.
 
 %% @doc Execute the benchmark, printing the results to the terminal.
-run(Algorithm) ->
+run() ->
 	io:format(
-		"~nRunning Arweave mining benchmark with ~B miner(s). Press Control+C twice to quit.~n~n",
+		"~nRunning Arweave mining benchmark with ~B miner(s). "
+		"Press Control+C twice to quit.~n~n",
 		[ar_meta_db:get(max_miners)]
 	),
-	case Algorithm of
-		sha384 ->
-			loop({0, 0}, 20, sha384);
-		randomx ->
-			Key = crypto:strong_rand_bytes(32),
-			ar_randomx_state:init(
-				whereis(ar_randomx_state),
-				ar_randomx_state:swap_height(ar_fork:height_1_8()),
-				Key,
-				erlang:system_info(schedulers_online)
-			),
-			loop({0, 0}, initial_diff(), randomx);
-		UnknownAlgorithm ->
-			io:format("Unknown mining algorithm: ~p. Choose from sha384, randomx.~n", [UnknownAlgorithm]),
-			erlang:halt()
-	end.
+	Key = crypto:strong_rand_bytes(32),
+	ar_randomx_state:init(
+		whereis(ar_randomx_state),
+		ar_randomx_state:swap_height(ar_fork:height_2_0()),
+		Key,
+		erlang:system_info(schedulers_online)
+	),
+	loop({0, 0}, initial_diff()).
 
 initial_diff() ->
 	Diff = ar_retarget:switch_to_linear_diff(20 + ?RANDOMX_DIFF_ADJUSTMENT),
-	{_, TimeSpent} = mine(Diff, 10, randomx),
+	{_, TimeSpent} = mine(Diff, 10),
 	%% The initial difficulty might be too easy
 	%% for the machine so we mine 10 blocks and
 	%% calibrate it before reporting the first result.
 	switch_diff(Diff, TimeSpent).
 
-loop({TotalHashesTried, TotalTimeSpent}, Difficulty, Algorithm) ->
-	{HashesTried, TimeSpent} = mine(Difficulty, 10, Algorithm),
-	NewDifficulty = case Algorithm of
-		sha384 ->
-			Difficulty;
-		randomx ->
-			switch_diff(Difficulty, TimeSpent)
-	end,
+loop({TotalHashesTried, TotalTimeSpent}, Difficulty) ->
+	{HashesTried, TimeSpent} = mine(Difficulty, 10),
+	NewDifficulty = switch_diff(Difficulty, TimeSpent),
 	NewTotalHashesTried = TotalHashesTried + HashesTried,
 	NewTotalTimeSpent = TotalTimeSpent + TimeSpent,
 	io:format(
@@ -52,16 +42,16 @@ loop({TotalHashesTried, TotalTimeSpent}, Difficulty, Algorithm) ->
 			format_hashes_per_second(NewTotalHashesTried, NewTotalTimeSpent)
 		]
 	),
-	loop({NewTotalHashesTried, NewTotalTimeSpent}, NewDifficulty, Algorithm).
+	loop({NewTotalHashesTried, NewTotalTimeSpent}, NewDifficulty).
 
-mine(Diff, Rounds, Algorithm) ->
+mine(Diff, Rounds) ->
 	{Time, HashesTried} = timer:tc(fun() ->
-		Run = fun(_) -> mine(Diff, Algorithm) end,
+		Run = fun(_) -> mine(Diff) end,
 		lists:sum(lists:map(Run, lists:seq(1, Rounds)))
 	end),
 	{HashesTried, Time}.
 
-mine(Diff, Algorithm) ->
+mine(Diff) ->
 	B = #block{
 		indep_hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
 		diff = Diff,
@@ -69,9 +59,9 @@ mine(Diff, Algorithm) ->
 		timestamp = os:system_time(seconds),
 		last_retarget = os:system_time(seconds),
 		hash_list = [],
-		height = case Algorithm of randomx -> ar_fork:height_1_8(); sha384 -> ar_fork:height_1_7() - 2 end
+		height = ar_fork:height_2_0()
 	},
-	ar_mine:start(B, B, [], unclaimed, [], self(), [], []),
+	ar_mine:start(B, #poa{}, [], unclaimed, [], self(), [], []),
 	receive
 		{work_complete, _, _, _, _, _, HashesTried} ->
 			HashesTried

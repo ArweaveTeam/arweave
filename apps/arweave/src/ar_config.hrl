@@ -12,7 +12,6 @@
 %% Start options with default values.
 -record(config, {
 	benchmark = false,
-	benchmark_algorithm = not_set,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	init = false,
 	mine = false,
