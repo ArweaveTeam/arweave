@@ -8,7 +8,7 @@
 		ar_sqlite3,
 		base64url,
 		jiffy,
-		fusco,
+		gun,
 		cowboy,
 		graphql,
 		prometheus,

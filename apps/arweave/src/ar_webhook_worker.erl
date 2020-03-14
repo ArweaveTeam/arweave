@@ -46,27 +46,20 @@ do_call_webhook({EventType, Entity}, Config, N) when N < ?NUMBER_OF_TRIES ->
 		url = URL,
 		headers = Headers
 	} = Config,
-	{ok, {Scheme, _UserInfo, Host, Port, Path, Query}} = http_uri:parse(URL),
-	{ok, Client} = fusco:start(atom_to_list(Scheme) ++ "://" ++ binary_to_list(Host) ++ ":" ++ integer_to_list(Port), []),
-	Result =
-		fusco:request(
-			Client,
-			<<Path/binary, Query/binary>>,
-			<<"POST">>,
-			?BASE_HEADERS ++ Headers,
-			to_json(Entity),
-			10000
-		),
-	case Result of
-		{ok, {{<<"200">>, _}, _, _, _, _}} ->
-			ok = fusco:disconnect(Client),
+	{ok, {_Scheme, _UserInfo, Host, Port, Path, Query}} = http_uri:parse(URL),
+	{ok, Pid} = gun:open(binary_to_list(Host), Port),
+	StreamRef = gun:post(Pid, binary_to_list(<<Path/binary, Query/binary>>), ?BASE_HEADERS ++ Headers, to_json(Entity)),
+	{response, _, Code, RespHeaders} = gun:await(Pid, StreamRef, 10000),
+	case Code of
+		200 ->
+			{ok, Body} = gun:await_body(Pid, StreamRef),
 			ar:info([
 				{ar_webhook_worker, webhook_call_success},
 				{event, EventType},
 				{id, entity_id(Entity)},
 				{url, URL},
 				{headers, Headers},
-				{response, Result}
+				{response, {ok, {{integer_to_binary(Code), <<>>}, RespHeaders, Body, 0, 0}}}
 			]),
 			ok;
 		UnsuccessfulResult ->
@@ -110,4 +103,3 @@ to_json(#tx {} = TX) ->
 	JSONKVPairs3 = [{data_size, byte_size(Data)} | JSONKVPairs2],
 	JSONStruct = {JSONKVPairs3},
 	ar_serialize:jsonify({[{transaction, JSONStruct}]}).
-

@@ -19,13 +19,13 @@ node_validates_blocks_with_rejected_tx_test() ->
 	),
 	SlavePort = ar_rpc:call(slave, ar_meta_db, get, [port], 5000),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, SlavePort},
-			"/tx",
-			[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}],
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX1))
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, SlavePort},
+			path => "/tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}],
+			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX1))
+		}),
 	assert_slave_wait_until_receives_txs(SlaveNode, [TX1]),
 	%% Start a local node.
 	%% Configure the firewall to reject one of the txs submitted to the remote node.
@@ -42,13 +42,13 @@ node_validates_blocks_with_rejected_tx_test() ->
 		Key
 	),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, SlavePort},
-			"/tx",
-			[{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}],
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX2))
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, SlavePort},
+			path => "/tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(ar_meta_db:get(port))}],
+			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX2))
+		}),
 	assert_slave_wait_until_receives_txs(SlaveNode, [TX2]),
 	%% Mine the second tx into a block.
 	ar_rpc:call(slave, ar_node, mine, [SlaveNode], 5000),

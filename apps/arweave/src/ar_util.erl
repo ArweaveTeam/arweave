@@ -18,6 +18,7 @@
 -export([rev_bin/1]).
 -export([do_until/3]).
 -export([index_of/2]).
+-export([get_performance/1, update_timer/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -244,6 +245,27 @@ index_of(_, [], _) -> not_found;
 index_of(_Subject, [_Subject | _], Counter) -> Counter;
 index_of(Subject, [_ | List], Counter) -> index_of(Subject, List, Counter + 1).
 
+%% @doc Return the performance object for a node.
+get_performance(Peer = {_, _, _, _, _}) ->
+	case ar_meta_db:get({peer, Peer}) of
+		not_found -> #performance{};
+		P -> P
+	end.
+
+%% @doc Update the "last on list" timestamp of a given peer
+update_timer(Peer = {_, _, _, _, _}) ->
+	case ar_meta_db:get({peer, Peer}) of
+		not_found -> #performance{};
+		P ->
+			ar_meta_db:put({peer, Peer},
+				P#performance {
+					transfers = P#performance.transfers,
+					time = P#performance.time ,
+					bytes = P#performance.bytes,
+					timestamp = os:system_time(seconds)
+				}
+			)
+	end.
 
 %%%
 %%% Tests.

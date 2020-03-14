@@ -73,7 +73,7 @@ single_regossip_test_() ->
 post_block_to_unjoined_node_test() ->
 	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
 	{ok, {RespTup, _, Body, _, _}} =
-		ar_httpc:request(<<"POST">>, {127, 0, 0, 1, 1984}, "/block/", [], JB),
+		ar_http:req(#{method => post, peer => {127, 0, 0, 1, 1984}, path => "/block/", body => JB}),
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
@@ -185,11 +185,11 @@ get_balance_test() ->
 	Node1 = ar_node:start([], Bs),
 	ar_http_iface_server:reregister(Node1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
-		),
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
+		}),
 	?assertEqual(10000, binary_to_integer(Body)).
 
 %% @doc Test that heights are returned correctly.
@@ -211,11 +211,11 @@ get_presale_balance_test() ->
 	Node1 = ar_node:start([], Bs),
 	ar_http_iface_server:reregister(Node1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
-		),
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
+		}),
 	?assertEqual(10000, binary_to_integer(Body)).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
@@ -226,11 +226,11 @@ get_last_tx_single_test() ->
 	Node1 = ar_node:start([], Bs),
 	ar_http_iface_server:reregister(Node1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
-		),
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
+		}),
 	?assertEqual(<<"TEST_ID">>, ar_util:decode(Body)).
 
 %% @doc Check that we can qickly get the local time from the peer.
@@ -292,17 +292,17 @@ get_non_existent_block_test() ->
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/100"),
+		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/height/100"}),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd"),
+		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/hash/abcd"}),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/wallet_list"),
+		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/height/101/wallet_list"}),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/wallet_list"),
+		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/hash/abcd/wallet_list"}),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/height/101/hash_list"),
+		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/height/101/hash_list"}),
 	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/hash/abcd/hash_list").
+		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/hash/abcd/hash_list"}).
 
 %% @doc Test adding transactions to a block.
 add_external_tx_test() ->
@@ -686,11 +686,11 @@ add_tx_and_get_last_test() ->
 	ar_node:mine(Node),
 	timer:sleep(500),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
-		),
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
+		}),
 	?assertEqual(ID, ar_util:decode(Body)).
 
 %% @doc Post a tx to the network and ensure that its subfields can be gathered
@@ -708,11 +708,11 @@ get_subfields_of_tx_test() ->
 	timer:sleep(1000),
 	%write a get_tx function like get_block
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data"
-		),
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data"
+		}),
 	Orig = TX#tx.data,
 	?assertEqual(Orig, ar_util:decode(Body)).
 
@@ -731,11 +731,11 @@ get_pending_tx_test() ->
 	timer:sleep(1000),
 	%write a get_tx function like get_block
 	{ok, {{<<"202">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id))
-		),
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id))
+		}),
 	?assertEqual(<<"Pending">>, Body).
 
 %% @doc Find all pending transactions in the network
@@ -769,11 +769,11 @@ get_multiple_pending_txs_test_() ->
 		{ok, PendingTXs} = ar_util:do_until(
 			fun() ->
 				{ok, {{<<"200">>, _}, _, Body, _, _}} =
-					ar_httpc:request(
-						<<"GET">>,
-						{127, 0, 0, 1, 1984},
-						"/tx/pending"
-					),
+					ar_http:req(#{
+						method => get,
+						peer => {127, 0, 0, 1, 1984},
+						path => "/tx/pending"
+					}),
 				PendingTXs = ar_serialize:dejsonify(Body),
 				case length(PendingTXs) of
 					2 -> {ok, PendingTXs};
@@ -804,13 +804,12 @@ get_tx_by_tag_test() ->
 			)
 		),
 	{ok, {_, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/arql",
-			[],
-			QueryJSON
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/arql",
+			body => QueryJSON
+		}),
 	TXs = ar_serialize:dejsonify(Body),
 	?assertEqual(true, lists:member(
 			TX#tx.id,
@@ -876,13 +875,12 @@ get_txs_by_send_recv_test_() ->
 				)
 			),
 		{ok, {_, _, Res, _, _}} =
-			ar_httpc:request(
-				<<"POST">>,
-				{127, 0, 0, 1, 1984},
-				"/arql",
-				[],
-				QueryJSON
-			),
+			ar_http:req(#{
+				method => post,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/arql",
+				body => QueryJSON
+			}),
 		TXs = ar_serialize:dejsonify(Res),
 		?assertEqual(true,
 			lists:member(
@@ -910,11 +908,11 @@ get_tx_status_test() ->
 	ar_node:add_tx(Node, TX),
 	receive after 250 -> ok end,
 	FetchStatus = fun() ->
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
-		)
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
+		})
 	end,
 	?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
 	ar_node:mine(Node),
@@ -964,30 +962,26 @@ post_unsigned_tx() ->
 	ar_node:add_peers(Node, Bridge),
 	% generate a wallet and receive a wallet access code
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/wallet",
-			[],
-			<<>>
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet"
+		}),
 	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/wallet",
-			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
-			<<>>
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet",
+			headers => [{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}]
+		}),
 	{ok, {{<<"200">>, <<"OK">>}, _, CreateWalletBody, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/wallet",
-			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
-			<<>>
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet",
+			headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}]
+		}),
 	ar_meta_db:put(internal_api_secret, not_set),
 	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
 	[WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
@@ -1000,13 +994,12 @@ post_unsigned_tx() ->
 		reward = ?AR(1)
 	}, Wallet),
 	{ok, {{<<"200">>, _}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/tx",
-			[],
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TopUpTX))
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/tx",
+			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TopUpTX))
+		}),
 	receive after 250 -> ok end,
 	ar_node:mine(Node),
 	receive after 1000 -> ok end,
@@ -1021,30 +1014,29 @@ post_unsigned_tx() ->
 		{<<"wallet_access_code">>, WalletAccessCode}
 	],
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/unsigned_tx",
-			[],
-			ar_serialize:jsonify({UnsignedTXProps})
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/unsigned_tx",
+			body => ar_serialize:jsonify({UnsignedTXProps})
+		}),
 	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/unsigned_tx",
-			[{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
-			ar_serialize:jsonify({UnsignedTXProps})
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/unsigned_tx",
+			headers => [{<<"X-Internal-Api-Secret">>, <<"incorrect_secret">>}],
+			body => ar_serialize:jsonify({UnsignedTXProps})
+		}),
 	{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, 1984},
-			"/unsigned_tx",
-			[{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
-			ar_serialize:jsonify({UnsignedTXProps})
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/unsigned_tx",
+			headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
+			body => ar_serialize:jsonify({UnsignedTXProps})
+		}),
 	ar_meta_db:put(internal_api_secret, not_set),
 	{Res} = ar_serialize:dejsonify(Body),
 	TXID = proplists:get_value(<<"id">>, Res),
@@ -1054,11 +1046,11 @@ post_unsigned_tx() ->
 	receive after 1000 -> ok end,
 	% expect the transaction to be successfully mined
 	{ok, {_, _, GetTXBody, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, 1984},
-			"/tx/" ++ binary_to_list(TXID) ++ "/status"
-		),
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/tx/" ++ binary_to_list(TXID) ++ "/status"
+		}),
 	{GetTXRes} = ar_serialize:dejsonify(GetTXBody),
 	?assertMatch(
 		#{
@@ -1080,72 +1072,70 @@ get_wallet_txs_test_() ->
 		ar_http_iface_server:reregister(http_bridge_node, Bridge),
 		ar_node:add_peers(Node, Bridge),
 		{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/wallet/" ++ WalletAddress ++ "/txs"
-			),
+			ar_http:req(#{
+				method => get,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/wallet/" ++ WalletAddress ++ "/txs"
+			}),
 		TXs = ar_serialize:dejsonify(Body),
 		%% Expect the wallet to have no transactions
 		?assertEqual([], TXs),
 		%% Sign and post a transaction and expect it to appear in the wallet list
 		TX = (ar_tx:new())#tx{ owner = Pub },
 		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
-			ar_httpc:request(
-				<<"POST">>,
-				{127, 0, 0, 1, 1984},
-				"/tx",
-				[],
-				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-			),
+			ar_http:req(#{
+				method => post,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/tx",
+				body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+			}),
 		receive after 250 -> ok end,
 		ar_node:mine(Node),
 		receive after 1000 -> ok end,
 		{ok, {{<<"200">>, <<"OK">>}, _, GetOneTXBody, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/wallet/" ++ WalletAddress ++ "/txs"
-			),
+			ar_http:req(#{
+				method => get,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/wallet/" ++ WalletAddress ++ "/txs"
+			}),
 		OneTX = ar_serialize:dejsonify(GetOneTXBody),
 		?assertEqual([ar_util:encode(TX#tx.id)], OneTX),
 		%% Expect the same when the TX is specified as the earliest TX
 		{ok, {{<<"200">>, <<"OK">>}, _, GetOneTXAgainBody, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/wallet/" ++ WalletAddress ++ "/txs/" ++ binary_to_list(ar_util:encode(TX#tx.id))
-			),
+			ar_http:req(#{
+				method => get,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/wallet/" ++ WalletAddress ++ "/txs/" ++ binary_to_list(ar_util:encode(TX#tx.id))
+			}),
 		OneTXAgain = ar_serialize:dejsonify(GetOneTXAgainBody),
 		?assertEqual([ar_util:encode(TX#tx.id)], OneTXAgain),
 		%% Add one more TX and expect it to be appended to the wallet list
 		SecondTX = (ar_tx:new())#tx{ owner = Pub, last_tx = TX#tx.id },
 		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
-			ar_httpc:request(
-				<<"POST">>,
-				{127, 0, 0, 1, 1984},
-				"/tx",
-				[],
-				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SecondTX))
-			),
+			ar_http:req(#{
+				method => post,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/tx",
+				body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SecondTX))
+			}),
 		receive after 250 -> ok end,
 		ar_node:mine(Node),
 		receive after 1000 -> ok end,
 		{ok, {{<<"200">>, <<"OK">>}, _, GetTwoTXsBody, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/wallet/" ++ WalletAddress ++ "/txs"
-			),
+			ar_http:req(#{
+				method => get,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/wallet/" ++ WalletAddress ++ "/txs"
+			}),
 		Expected = [ar_util:encode(SecondTX#tx.id), ar_util:encode(TX#tx.id)],
 		?assertEqual(Expected, ar_serialize:dejsonify(GetTwoTXsBody)),
 		%% Specify the second TX as the earliest and expect the first one to be excluded
 		{ok, {{<<"200">>, <<"OK">>}, _, GetSecondTXBody, _, _}} =
-			ar_httpc:request(
-				<<"GET">>,
-				{127, 0, 0, 1, 1984},
-				"/wallet/" ++ WalletAddress ++ "/txs/" ++ binary_to_list(ar_util:encode(SecondTX#tx.id))
-			),
+			ar_http:req(#{
+				method => get,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/wallet/" ++ WalletAddress ++ "/txs/" ++ binary_to_list(ar_util:encode(SecondTX#tx.id))
+			}),
 		OneSecondTX = ar_serialize:dejsonify(GetSecondTXBody),
 		?assertEqual([ar_util:encode(SecondTX#tx.id)], OneSecondTX)
 	end}.
@@ -1171,11 +1161,11 @@ get_wallet_deposits_test_() ->
 			BasePath = "/wallet/" ++ WalletAddressTo ++ "/deposits",
 			Path = 	BasePath ++ "/" ++ EarliestDeposit,
 			{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
-				ar_httpc:request(
-					<<"GET">>,
-					{127, 0, 0, 1, 1984},
-					Path
-				),
+				ar_http:req(#{
+					method => get,
+					peer => {127, 0, 0, 1, 1984},
+					path => Path
+				}),
 			ar_serialize:dejsonify(Body)
 		end,
 		%% Expect the wallet to have no incoming transfers
@@ -1188,13 +1178,12 @@ get_wallet_deposits_test_() ->
 		},
 		PostTX = fun(T) ->
 			{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
-				ar_httpc:request(
-					<<"POST">>,
-					{127, 0, 0, 1, 1984},
-					"/tx",
-					[],
-					ar_serialize:jsonify(ar_serialize:tx_to_json_struct(T))
-				)
+				ar_http:req(#{
+					method => post,
+					peer => {127, 0, 0, 1, 1984},
+					path => "/tx",
+					body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(T))
+				})
 		end,
 		PostTX(FirstTX),
 		receive after 250 -> ok end,
@@ -1229,6 +1218,29 @@ get_wallet_deposits_test_() ->
 			GetTXs(ar_util:encode(SecondTX#tx.id))
 		)
 	end}.
+
+%% @doc Post a tx and try fetch data with limitation of data size
+get_error_of_data_limit_test() ->
+	ar_storage:clear(),
+	[B0] = ar_weave:init(),
+	Node = ar_node:start([], [B0]),
+	ar_http_iface_server:reregister(Node),
+	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
+	ar_http_iface_server:reregister(http_bridge_node, Bridge),
+	Limit = 1460,
+	ar_node:add_peers(Node, Bridge),
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>)),
+	timer:sleep(1000),
+	ar_node:mine(Node),
+	timer:sleep(1000),
+	Resp =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
+			limit => Limit
+		}),
+	?assertEqual({error, too_much_data}, Resp).
 
 %	Node = ar_node:start([], B0),
 %	ar_http_iface_server:reregister(Node),

@@ -300,13 +300,12 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	%% and expect the balance exceeded error.
 	slave_call(ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
 	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
-			"/tx",
-			[],
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
-		).
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+			path => "/tx",
+			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
+		}).
 
 rejects_transactions_above_the_size_limit() ->
 	%% Create a genesis block with a wallet.
@@ -433,15 +432,14 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 	assert_post_tx_to_slave(Slave, TX1),
 	slave_mine(Slave),
 	assert_slave_wait_until_height(Slave, 1),
-	SlaveIP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+	SlavePeer = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
 	GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			SlaveIP,
-			"/wallet/" ++ GetBalancePath ++ "/balance",
-			[]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => SlavePeer,
+			path => "/wallet/" ++ GetBalancePath ++ "/balance"
+		}),
 	Balance = binary_to_integer(Body),
 	TX2 = sign_tx(
 		Key2,
@@ -455,12 +453,11 @@ does_not_allow_to_replay_empty_wallet_txs() ->
 	slave_mine(Slave),
 	assert_slave_wait_until_height(Slave, 2),
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			SlaveIP,
-			"/wallet/" ++ GetBalancePath ++ "/balance",
-			[]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => SlavePeer,
+			path => "/wallet/" ++ GetBalancePath ++ "/balance"
+		}),
 	?assertEqual(0, binary_to_integer(Body2)),
 	TX3 = sign_tx(
 		Key1,
