@@ -674,8 +674,8 @@ handle(<<"GET">>, [<<Hash:43/binary, MaybeExt/binary>>], Req, Pid) ->
 handle(_, _, Req, _Pid) ->
 	not_found(Req).
 
-% Cowlib does not yet support status code 208 properly.
-% See https://github.com/ninenines/cowlib/pull/79
+%% Cowlib does not yet support status code 208 properly.
+%% See https://github.com/ninenines/cowlib/pull/79
 handle208(208) -> <<"208 Already Reported">>;
 handle208(Status) -> Status.
 

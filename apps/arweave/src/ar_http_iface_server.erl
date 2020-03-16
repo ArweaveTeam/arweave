@@ -195,5 +195,15 @@ collect_http_response_metrics(Metrics) ->
 				[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
 				maps:get(resp_body_length, Metrics, 0)
 			),
-			prometheus_cowboy2_instrumenter:observe(Metrics)
+			ResponseStatus = maps:get(resp_status, Metrics),
+			%% Convert the 208 response status binary back to the integer
+			%% so that it is picked up as a successful response by the cowboy
+			%% instrumenter. See handle208/1 in ar_http_iface_middleware for the
+			%% explanation of why 208 is converted into a binary.
+			prometheus_cowboy2_instrumenter:observe(
+				Metrics#{ resp_status => convert_208(ResponseStatus) }
+			)
 	end.
+
+convert_208(<<"208 Already Reported">>) -> 208;
+convert_208(Status) -> Status.
