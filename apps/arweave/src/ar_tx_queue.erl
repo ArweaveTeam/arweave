@@ -199,12 +199,6 @@ handle_cast(emitter_go, State) ->
 							lists:seq(1, ar_meta_db:get(tx_propagation_parallelization))
 						),
 						TXID = TX#tx.id,
-						ar:info(
-							[
-								{sending_tx_to_external_peers, ar_util:encode(TXID)},
-								{peers, length(Peers)}
-							]
-						),
 						NewEmitMap = EmitMap#{ TXID => #{ peers => Peers, started_at => erlang:timestamp() } },
 						State#state{
 							tx_queue = NewQ,
@@ -224,8 +218,8 @@ handle_cast({emit_tx_to_peer, TX}, State = #state{ emit_map = EmitMap }) ->
 		#{ TXID := TXIDMap = #{ peers := [Peer | Peers] } } ->
 			spawn(
 				fun() ->
-					ar_http_iface_client:send_new_tx(Peer, tx_to_propagated_tx(TX)),
-					gen_server:cast(?MODULE, {emitted_tx_to_peer, TX})
+					Reply = ar_http_iface_client:send_new_tx(Peer, tx_to_propagated_tx(TX)),
+					gen_server:cast(?MODULE, {emitted_tx_to_peer, {Reply, TX}})
 				end
 			),
 			{noreply, State#state{ emit_map = EmitMap#{ TXID => TXIDMap#{ peers => Peers } } }};
@@ -233,16 +227,14 @@ handle_cast({emit_tx_to_peer, TX}, State = #state{ emit_map = EmitMap }) ->
 			{noreply, State}
 	end;
 
-handle_cast({emitted_tx_to_peer, TX}, State = #state{ emit_map = EmitMap, tx_queue = Q }) ->
+handle_cast({emitted_tx_to_peer, {Reply, TX}}, State = #state{ emit_map = EmitMap, tx_queue = Q }) ->
 	TXID = TX#tx.id,
 	case EmitMap of
 		#{ TXID := #{ peers := [], started_at := StartedAt } } ->
-			log_propagation_time(
-				TXID,
-				tx_propagated_size(TX),
-				timer:now_diff(erlang:timestamp(), StartedAt),
-				gb_sets:size(Q)
-			),
+			PropagationTimeUs = timer:now_diff(erlang:timestamp(), StartedAt),
+			record_propagation_status(Reply),
+			record_propagation_rate(tx_propagated_size(TX), PropagationTimeUs),
+			record_queue_size(gb_sets:size(Q)),
 			gen_server:cast(?MODULE, {emitter_finished, TX}),
 			{noreply, State#state{ emit_map = maps:remove(TXID, EmitMap) }};
 		_ ->
@@ -324,11 +316,34 @@ tx_queue_size(#tx{ format = 1 } = TX) ->
 tx_queue_size(#tx{ format = 2, data = Data }) ->
 	{?TX_SIZE_BASE, byte_size(Data)}.
 
-log_propagation_time(TXID, PropagatedSize, Time, QLen) ->
-	ar:info([
-		{sent_tx_to_external_peers, ar_util:encode(TXID)},
-		{data_size, PropagatedSize},
-		{time_seconds, Time / 1000000},
-		{bytes_per_second, PropagatedSize * 1000000 / Time},
-		{queue_length, QLen}
-	]).
+record_propagation_status(not_sent) ->
+	ok;
+record_propagation_status({ok, {{StatusBinary, _}, _, _, _, _}}) ->
+	StatusClass = case catch binary_to_integer(StatusBinary) of
+		200 ->
+			"success";
+		208 ->
+			"already_processed";
+		Status when is_integer(Status) ->
+			prometheus_http:status_class(Status);
+		_ ->
+			"unknown"
+	end,
+	prometheus_counter:inc(propagated_transactions_total, [StatusClass]);
+record_propagation_status({error, connection_closed}) ->
+	prometheus_counter:inc(propagated_transactions_total, ["connection_closed"]);
+record_propagation_status({error, connect_timeout}) ->
+	prometheus_counter:inc(propagated_transactions_total, ["connect_timeout"]);
+record_propagation_status({error, timeout}) ->
+	prometheus_counter:inc(propagated_transactions_total, ["timeout"]);
+record_propagation_status({error, econnrefused}) ->
+	prometheus_counter:inc(propagated_transactions_total, ["econnrefused"]);
+record_propagation_status(_Reply) ->
+	prometheus_counter:inc(propagated_transactions_total, ["unknown"]).
+
+record_propagation_rate(PropagatedSize, PropagationTimeUs) ->
+	BitsPerSecond = PropagatedSize * 1000000 / PropagationTimeUs * 8,
+	prometheus_histogram:observe(tx_propagation_bits_per_second, BitsPerSecond).
+
+record_queue_size(QSize) ->
+	prometheus_gauge:set(tx_queue_size, QSize).

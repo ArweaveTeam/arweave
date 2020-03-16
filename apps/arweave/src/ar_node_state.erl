@@ -165,6 +165,12 @@ update_state_metrics(KeyValues) ->
 	lists:foreach(fun
 		({height, Value}) ->
 			prometheus_gauge:set(arweave_block_height, Value);
+		({mempool_size, MempoolSize}) ->
+			record_mempool_size(MempoolSize);
 		(_) ->
 			ok
 	end, KeyValues).
+
+record_mempool_size({HeaderSize, DataSize}) ->
+	prometheus_gauge:set(mempool_header_size_bytes, HeaderSize),
+	prometheus_gauge:set(mempool_data_size_bytes, DataSize).

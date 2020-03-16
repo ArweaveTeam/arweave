@@ -911,11 +911,6 @@ handle_post_tx_accepted(PeerIP, TX) ->
 	%% IP-based throttling, to avoid connectivity issues at the times
 	%% of excessive transaction volumes.
 	ar_blacklist_middleware:decrement_ip_addr(PeerIP),
-	ar:info([
-		ar_http_iface_handler,
-		accepted_tx,
-		{id, ar_util:encode(TX#tx.id)}
-	]),
 	ar_bridge:add_tx(whereis(http_bridge_node), TX),
 	ok.
 
