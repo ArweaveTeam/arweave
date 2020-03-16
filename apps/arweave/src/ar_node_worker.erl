@@ -67,7 +67,7 @@ server(NPid, SPid) ->
 			server(NPid, SPid)
 	after 0 ->
 		receive
-			{task, Task = {gossip_message, #gs_msg { data = {new_tx, _}}}} ->
+			{task, Task = {gossip_message, #gs_msg { data = {add_waiting_tx, _}}}} ->
 				handle_task(NPid, SPid, Task),
 				server(NPid, SPid)
 		after 0 ->
