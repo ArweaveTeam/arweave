@@ -13,6 +13,10 @@
 %% @doc Start a node state server.
 start() ->
 	Pid = spawn(fun() ->
+		%% The message queue of this process may grow big under load.
+		%% The flag makes VM store messages off heap and do not perform
+		%% expensive GC on them.
+		process_flag(message_queue_data, off_heap),
 		server(ets:new(ar_node_state, [set, private, {keypos, 1}]))
 	end),
 	% Set initial state values.

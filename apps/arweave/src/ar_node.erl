@@ -169,6 +169,10 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				end,
 			%% Start processes, init state, and start server.
 			NPid = self(),
+			%% The message queue of this process may grow big under load.
+			%% The flag makes VM store messages off heap and do not perform
+			%% expensive GC on them.
+			process_flag(message_queue_data, off_heap),
 			{ok, SPid} = ar_node_state:start(),
 			{ok, WPid} = ar_node_worker:start(NPid, SPid),
 			ok = ar_node_state:update(SPid, [

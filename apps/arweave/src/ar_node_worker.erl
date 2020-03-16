@@ -15,7 +15,15 @@
 
 %% @doc Start a node worker.
 start(NPid, SPid) ->
-	Pid = spawn(fun() -> server(NPid, SPid) end),
+	Pid = spawn(
+		fun() ->
+			%% The message queue of this process may grow big under load.
+			%% The flag makes VM store messages off heap and do not perform
+			%% expensive GC on them.
+			process_flag(message_queue_data, off_heap),
+			server(NPid, SPid)
+		end
+	),
 	{ok, Pid}.
 
 %% @doc Stop a node worker.
