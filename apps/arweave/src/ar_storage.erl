@@ -12,7 +12,7 @@
 -export([calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0]).
 -export([lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1]).
 -export([tx_data_filepath/1]).
--export([read_block_file/2, read_tx_file/1]).
+-export([read_tx_file/1]).
 -export([ensure_directories/0, clear/0]).
 -export([write_file_atomic/2]).
 
@@ -200,36 +200,30 @@ read_block(Height, BI) when is_integer(Height) ->
 			read_block(H, BI)
 	end;
 read_block(H, BI) ->
-	case lookup_block_filename(H) of
-		unavailable -> unavailable;
-		Filename -> read_block_file(Filename, BI)
-	end.
-
-read_block_file(Filename, BI) ->
-	{ok, Binary} = file:read_file(Filename),
-	B = ar_serialize:json_struct_to_block(Binary),
-	WL = B#block.wallet_list,
-	FinalB =
-		B#block {
-			hash_list = ar_block:generate_hash_list_for_block(B, BI),
-			wallet_list =
-				case WL of
-					WL when is_list(WL) ->
-						WL;
-					WL when is_binary(WL) ->
-						case read_wallet_list(WL) of
-							{ok, ReadWL} ->
-								ReadWL;
-							{error, _Type} ->
-								not_found
-						end
-				end
-		},
-	case FinalB#block.wallet_list of
-		not_found ->
-			invalidate_block(B),
+	case read_block_shadow(H) of
+		unavailable ->
 			unavailable;
-		_ -> FinalB
+		BShadow ->
+			WalletList = case BShadow#block.wallet_list of
+				WL when is_list(WL) ->
+					WL;
+				WL when is_binary(WL) ->
+					case read_wallet_list(WL) of
+						{ok, ReadWL} ->
+							ReadWL;
+						{error, _Type} ->
+							not_found
+					end
+			end,
+			case WalletList of
+				not_found ->
+					unavailable;
+				_ ->
+					BShadow#block {
+						hash_list = ar_block:generate_hash_list_for_block(BShadow, BI),
+						wallet_list = WalletList
+					}
+			end
 	end.
 
 %% @doc Read block shadow from disk, given a hash.
@@ -240,7 +234,13 @@ read_block_shadow(BH) ->
 		Filename ->
 			case file:read_file(Filename) of
 				{ok, JSON} ->
-					parse_block_shadow_json(JSON);
+					case parse_block_shadow_json(JSON) of
+						{error, _} ->
+							invalidate_block(BH),
+							unavailable;
+						{ok, B} ->
+							B
+					end;
 				{error, _} ->
 					unavailable
 			end
@@ -249,9 +249,14 @@ read_block_shadow(BH) ->
 parse_block_shadow_json(JSON) ->
 	case ar_serialize:json_decode(JSON) of
 		{ok, JiffyStruct} ->
-			ar_serialize:json_struct_to_block(JiffyStruct);
-		{error, _} ->
-			unavailable
+			case catch ar_serialize:json_struct_to_block(JiffyStruct) of
+				B when is_record(B, block) ->
+					{ok, B};
+				_ ->
+					{error, json_struct_to_block}
+			end;
+		Error ->
+			Error
 	end.
 
 %% @doc Recalculate the used space in bytes of the data directory disk.
@@ -546,7 +551,9 @@ to_string(String) ->
 	String.
 
 block_filename(B) when is_record(B, block) ->
-	iolist_to_binary([ar_util:encode(B#block.indep_hash), ".json"]).
+	block_filename(B#block.indep_hash);
+block_filename(BH) when is_binary(BH) ->
+	iolist_to_binary([ar_util:encode(BH), ".json"]).
 
 block_filepath(B) ->
 	filepath([?BLOCK_DIR, block_filename(B)]).
@@ -629,7 +636,9 @@ invalidate_block_test() ->
 		"invalid",
 		binary_to_list(ar_util:encode(B#block.indep_hash)) ++ ".json"
 	]),
-	?assertEqual(B, read_block_file(TargetFile, ar_weave:generate_block_index([B]))).
+	{ok, Binary} = file:read_file(TargetFile),
+	{ok, JSON} = ar_serialize:json_decode(Binary),
+	?assertEqual(B#block.indep_hash, (ar_serialize:json_struct_to_block(JSON))#block.indep_hash).
 
 store_and_retrieve_block_block_index_test() ->
 	[B0] = ar_weave:init([]),
