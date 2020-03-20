@@ -93,7 +93,7 @@ show_help() ->
 		fun({Opt, Desc}) ->
 			io:format("\t~s~s~n",
 				[
-					string:pad(Opt, 30, trailing, $ ),
+					string:pad(Opt, 40, trailing, $ ),
 					Desc
 				]
 			)
@@ -117,7 +117,9 @@ show_help() ->
 			{"diff (init_diff)", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
 			{"max_miners (num)", "The maximum number of mining processes."},
-			{"max_emitters (num)", "The maximum number of message emitter processes (default 8)."},
+			{"max_emitters (num)", "The maximum number of transaction propagation processes (default 2)."},
+			{"tx_propagation_parallelization (num)", "The maximum number of best peers to propagate transactions to at a time (default 4)."},
+			{"max_propagation_peers (number)", "The maximum number of best peers to propagate blocks and transactions to. Default is 50."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
@@ -139,7 +141,6 @@ show_help() ->
 			{"gateway (domain)", "Run a gateway on the specified domain"},
 			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
-			{"max_propagation_peers (number)", "How many peers to propagate blocks and transactions to. Default is 65."},
 			{"max_connections", "The number of connections to be handled concurrently. Its purpose is to prevent your system from being overloaded and ensuring all the connections are handled optimally. Default is 1024."},
 			{"max_gateway_connections", "The number of gateway connections to be handled concurrently. Default is 128."},
 			{"max_poa_option_depth", "The number of PoA alternatives to try until the recall data is found. Has to be an integer > 1. The mining difficulty increases exponentially with each subsequent option. Default is 8."}

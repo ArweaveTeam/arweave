@@ -252,13 +252,14 @@
 -endif.
 
 %% @doc The number of the best peers to send new transactions to in parallel.
--define(TX_PROPAGATION_PARALLELIZATION, 5).
+%% Can be overriden by a command line argument.
+-define(TX_PROPAGATION_PARALLELIZATION, 4).
 
 %% @doc The number of the best peers to send new blocks to in parallel.
 -define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
 
 %% @doc The maximum number of peers to propagate blocks or txs to, by default.
--define(DEFAULT_MAX_PROPAGATION_PEERS, 65).
+-define(DEFAULT_MAX_PROPAGATION_PEERS, 50).
 
 %% @doc When the transaction data size is smaller than this number of bytes,
 %% the transaction is gossiped to the peer without a prior check if the peer
@@ -289,9 +290,11 @@
 %% cost to node performance.
 -define(NUM_MINING_PROCESSES, max(1, (erlang:system_info(schedulers_online) - 1))).
 
-%% @doc Number of message emitter processes to spawn
-%% Each emitter process broadcasts TX or block messages to peers
--define(NUM_EMITTER_PROCESSES, 8).
+%% @doc Number of transaction propagation processes to spawn.
+%% Each emitter picks a transaction from the queue and propagates it
+%% to the best peers, a configured number of peers at a time.
+%% Can be overriden by a command line argument.
+-define(NUM_EMITTER_PROCESSES, 2).
 
 %% @doc Target number of blocks per year.
 -define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME/60)) ).

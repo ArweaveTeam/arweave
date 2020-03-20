@@ -190,8 +190,9 @@ handle_cast(emitter_go, State) ->
 						};
 					_ ->
 						%% Send transactions to the "max_propagation_peers" best peers,
-						%% ?TX_PROPAGATION_PARALLELIZATION peers at a time. The resulting
-						%% maximum for outbound connections is ?TX_PROPAGATION_PARALLELIZATION * num_emitters.
+						%% tx_propagation_parallelization peers at a time. The resulting
+						%% maximum for outbound connections is
+						%% tx_propagation_parallelization * num_emitters.
 						lists:foreach(
 							fun(_) ->
 								gen_server:cast(?MODULE, {emit_tx_to_peer, TX})
