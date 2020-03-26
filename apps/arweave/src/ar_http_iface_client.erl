@@ -29,28 +29,27 @@ send_new_tx(Peer, TX) ->
 
 do_send_new_tx(Peer, TX) ->
 	TXSize = byte_size(TX#tx.data),
-	ar_httpc:request(
-		<<"POST">>,
-		Peer,
-		"/tx",
-		p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TX#tx.id)}],
-		ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-		500,
-		max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
-	).
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/tx",
+		headers => p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TX#tx.id)}],
+		body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+		connect_timeout => 500,
+		timeout => max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
+	}).
 
 %% @doc Check whether a peer has a given transaction
 has_tx(Peer, ID) ->
 	case
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
-			p2p_headers(),
-			[],
-			500,
-			3 * 1000
-		)
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
+			headers => p2p_headers(),
+			connect_timeout => 500,
+			timeout => 3 * 1000
+		})
 	of
 		{ok, {{<<"200">>, _}, _, _, _, _}} -> has_tx;
 		{ok, {{<<"202">>, _}, _, _, _, _}} -> has_tx; % In the mempool
@@ -79,31 +78,25 @@ send_new_block(Peer, NewB, BDS) ->
 		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
 		{<<"block_data_segment">>, ar_util:encode(BDS)}
 	],
-	ar_httpc:request(
-		<<"POST">>,
-		Peer,
-		"/block",
-		p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
-		ar_serialize:jsonify({PostProps}),
-		3 * 1000
-	).
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/block",
+		headers => p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
+		body => ar_serialize:jsonify({PostProps}),
+		timeout => 3 * 1000
+	}).
 
 %% @doc Request to be added as a peer to a remote host.
 add_peer(Peer) ->
-	ar_httpc:request(
-		<<"POST">>,
-		Peer,
-		"/peers",
-		p2p_headers(),
-		ar_serialize:jsonify(
-			{
-				[
-					{network, list_to_binary(?NETWORK_NAME)}
-				]
-			}
-		),
-		3 * 1000
-	).
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/peers",
+		headers => p2p_headers(),
+		body => ar_serialize:jsonify({[{network, list_to_binary(?NETWORK_NAME)}]}),
+		timeout => 3 * 1000
+	}).
 
 %% @doc Retreive a block by hash from disk or a remote peer.
 get_block(Peers, H) when is_list(Peers) ->
@@ -132,15 +125,14 @@ get_block_from_remote_peers(Peers = [_ | _], H) ->
 	case handle_block_response(
 		Peer,
 		Peers,
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			prepare_block_id(H),
-			p2p_headers(),
-			[],
-			500,
-			30 * 1000
-		),
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => prepare_block_id(H),
+			headers => p2p_headers(),
+			connect_timeout => 500,
+			timeout => 30 * 1000
+		}),
 		full_block
 	) of
 		unavailable ->
@@ -167,15 +159,14 @@ get_block_shadow(Peers, ID) ->
 	case handle_block_response(
 		Peer,
 		Peers,
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			prepare_block_id(ID),
-			p2p_headers(),
-			[],
-			500,
-			30 * 1000
-		),
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => prepare_block_id(ID),
+			headers => p2p_headers(),
+			connect_timeout => 500,
+			timeout => 30 * 1000
+		}),
 		block_shadow
 	) of
 		unavailable ->
@@ -200,12 +191,12 @@ get_wallet_list([Peer | Peers], H) ->
 	end;
 get_wallet_list(Peer, H) ->
 	Response =
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(H)) ++ "/wallet_list",
-			p2p_headers()
-		),
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/block/hash/" ++ binary_to_list(ar_util:encode(H)) ++ "/wallet_list",
+			headers => p2p_headers()
+		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			ar_serialize:json_struct_to_wallet_list(Body);
@@ -216,22 +207,23 @@ get_wallet_list(Peer, H) ->
 %% @doc Get a block hash list (by its hash) from the external peer.
 get_block_index(Peer) ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/hash_list",
-			p2p_headers()
-		),
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/hash_list",
+			headers => p2p_headers()
+		}),
+	Fork_2_0 = ar_fork:height_2_0(),
 	ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)).
 
 get_block_index(Peer, Hash) ->
 	Response =
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/hash_list",
-			p2p_headers()
-		),
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/block/hash/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/hash_list",
+			headers => p2p_headers()
+		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			ar_serialize:dejsonify(ar_serialize:json_struct_to_block_index(Body));
@@ -241,12 +233,12 @@ get_block_index(Peer, Hash) ->
 %% @doc Return the current height of a remote node.
 get_height(Peer) ->
 	Response =
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/height",
-			p2p_headers()
-		),
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/height",
+			headers => p2p_headers()
+		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} -> binary_to_integer(Body);
 		{ok, {{<<"500">>, _}, _, _, _, _}} -> not_joined
@@ -301,15 +293,14 @@ get_tx_from_remote_peer([], _TXID) ->
 get_tx_from_remote_peer(Peers, TXID) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
 	case handle_tx_response(
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/tx/" ++ binary_to_list(ar_util:encode(TXID)),
-			p2p_headers(),
-			[],
-			500,
-			60 * 1000
-		)
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)),
+			headers => p2p_headers(),
+			connect_timeout => 500,
+			timeout => 60 * 1000
+		})
 	) of
 		not_found ->
 			get_tx_from_remote_peer(Peers -- [Peer], TXID);
@@ -336,15 +327,14 @@ get_tx_data(Peers, Hash) when is_list(Peers) ->
 	end;
 get_tx_data(Peer, Hash) ->
 	Reply =
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/tx/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/data",
-			p2p_headers(),
-			[],
-			500,
-			120 * 1000
-		),
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/tx/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/data",
+			headers => p2p_headers(),
+			connect_timeout => 500,
+			timeout => 120 * 1000
+		}),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
 			unavailable;
@@ -361,30 +351,15 @@ get_tx_data(Peer, Hash) ->
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
 get_time(Peer, Timeout) ->
-	Parent = self(),
-	Ref = make_ref(),
-	Child = spawn_link(
-		fun() ->
-			Resp = ar_httpc:request(<<"GET">>, Peer, "/time", p2p_headers(), <<>>, Timeout + 100),
-			Parent ! {get_time_response, Ref, Resp}
-		end
-	),
-	receive
-		{get_time_response, Ref, Response} ->
-			case Response of
-				{ok, {{<<"200">>, _}, _, Body, Start, End}} ->
-					Time = binary_to_integer(Body),
-					RequestTime = ceil((End - Start) / 1000000),
-					%% The timestamp returned by the HTTP daemon is floored second precision. Thus the
-					%% upper bound is increased by 1.
-					{ok, {Time - RequestTime, Time + RequestTime + 1}};
-				_ ->
-					{error, Response}
-			end
-		after Timeout ->
-			%% Note: the fusco client (used in ar_httpc:request) is not shutdown properly this way.
-			exit(Child, {shutdown, timeout}),
-			{error, timeout}
+	case ar_http:req(#{method => get, peer => Peer, path => "/time", headers => p2p_headers(), timeout => Timeout + 100}) of
+		{ok, {{<<"200">>, _}, _, Body, Start, End}} ->
+			Time = binary_to_integer(Body),
+			RequestTime = ceil((End - Start) / 1000000),
+			%% The timestamp returned by the HTTP daemon is floored second precision. Thus the
+			%% upper bound is increased by 1.
+			{ok, {Time - RequestTime, Time + RequestTime + 1}};
+		Other ->
+			{error, Other}
 	end.
 
 %% @doc Retreive all valid transactions held that have not yet been mined into
@@ -393,12 +368,12 @@ get_pending_txs(Peer) ->
 	try
 		begin
 			{ok, {{200, _}, _, Body, _, _}} =
-				ar_httpc:request(
-					<<"GET">>,
-					Peer,
-					"/tx/pending",
-					p2p_headers()
-				),
+				ar_http:req(#{
+					method => get,
+					peer => Peer,
+					path => "/tx/pending",
+					headers => p2p_headers()
+				}),
 			PendingTxs = ar_serialize:dejsonify(Body),
 			[list_to_binary(P) || P <- PendingTxs]
 		end
@@ -416,12 +391,12 @@ get_info(Peer, Type) ->
 	end.
 get_info(Peer) ->
 	case
-		ar_httpc:request(
-			<<"GET">>,
-			Peer,
-			"/info",
-			p2p_headers()
-		)
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/info",
+			headers => p2p_headers()
+		})
 	of
 		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> process_get_info_json(JSON);
 		_ -> info_unavailable
@@ -434,14 +409,13 @@ get_peers(Peer, Timeout) ->
 	try
 		begin
 			{ok, {{<<"200">>, _}, _, Body, _, _}} =
-				ar_httpc:request(
-					<<"GET">>,
-					Peer,
-					"/peers",
-					p2p_headers(),
-					[],
-					Timeout
-				),
+				ar_http:req(#{
+					method => get,
+					peer => Peer,
+					path => "/peers",
+					headers => p2p_headers(),
+					timeout => Timeout
+				}),
 			PeerArray = ar_serialize:dejsonify(Body),
 			lists:map(fun ar_util:parse_peer/1, PeerArray)
 		end

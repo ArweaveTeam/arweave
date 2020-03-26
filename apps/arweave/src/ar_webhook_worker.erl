@@ -46,20 +46,19 @@ do_call_webhook({EventType, Entity}, Config, N) when N < ?NUMBER_OF_TRIES ->
 		url = URL,
 		headers = Headers
 	} = Config,
-	{ok, {Scheme, _UserInfo, Host, Port, Path, Query}} = http_uri:parse(URL),
-	{ok, Client} = fusco:start(atom_to_list(Scheme) ++ "://" ++ binary_to_list(Host) ++ ":" ++ integer_to_list(Port), []),
+	{ok, {_Scheme, _UserInfo, Host, Port, Path, Query}} = http_uri:parse(URL),
 	Result =
-		fusco:request(
-			Client,
-			<<Path/binary, Query/binary>>,
-			<<"POST">>,
-			?BASE_HEADERS ++ Headers,
-			to_json(Entity),
-			10000
-		),
+		ar_http:req(#{
+			method => post,
+			peer => {binary_to_list(Host), Port},
+			path => binary_to_list(<<Path/binary, Query/binary>>),
+			headers => ?BASE_HEADERS ++ Headers,
+			body => to_json(Entity),
+			timeout => 10000,
+			is_peer_request => false
+		}),
 	case Result of
 		{ok, {{<<"200">>, _}, _, _, _, _}} ->
-			ok = fusco:disconnect(Client),
 			ar:info([
 				{ar_webhook_worker, webhook_call_success},
 				{event, EventType},

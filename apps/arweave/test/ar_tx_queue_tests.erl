@@ -213,7 +213,7 @@ setup() ->
 
 http_get_queue() ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/queue"),
+		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/queue"}),
 	ar_serialize:dejsonify(Body).
 
 import_4_txs() ->

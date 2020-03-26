@@ -14,13 +14,13 @@ stats() ->
 	stats(all_peers() -- Connected).
 stats(Peers) ->
 	lists:foreach(
-		fun(Peer) -> format_stats(Peer, ar_httpc:get_performance(Peer)) end,
+		fun(Peer) -> format_stats(Peer, ar_util:get_performance(Peer)) end,
 		Peers
 	).
 
 %% @doc Reset all performance counters and connections.
 reset() ->
-	lists:map(fun ar_httpc:reset_peer/1, All = all_peers()),
+	lists:map(fun ar_util:reset_peer/1, All = all_peers()),
 	ar_bridge:set_remote_peers(whereis(http_bridge_node), All).
 
 %% @doc Return all known peers.
@@ -60,7 +60,7 @@ update(Peers) ->
 	lists:foreach(
 		fun(P) ->
 			case lists:member(P, NewPeers) of
-				false -> ar_httpc:update_timer(P);
+				false -> ar_util:update_timer(P);
 				_ -> ok
 			end
 		end,
@@ -96,7 +96,7 @@ responds_not_stuck(Peer, Height) ->
 score(Peers) when is_list(Peers) ->
 	lists:map(fun(Peer) -> {Peer, score(Peer)} end, Peers);
 score(Peer) ->
-	case ar_httpc:get_performance(Peer) of
+	case ar_util:get_performance(Peer) of
 		P when P#performance.transfers < ?PEER_GRACE_PERIOD ->
 			newbie;
 		P -> P#performance.bytes / (P#performance.time + 1)
