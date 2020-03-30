@@ -8,7 +8,7 @@
 -export([encode/1, decode/1, safe_decode/1]).
 -export([parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
--export([block_from_hash_list/2, hash_from_hash_list/2]).
+-export([block_from_block_index/2, hash_from_block_index/2]).
 -export([get_recall_hash/2, get_recall_hash/3]).
 -export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
 -export([get_hash/1, get_head_block/1]).
@@ -18,6 +18,7 @@
 -export([rev_bin/1]).
 -export([do_until/3]).
 -export([index_of/2]).
+-export([block_index_entry_from_block/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -72,49 +73,49 @@ get_hash(B) when is_record(B, block) ->
 
 %% @doc Get block height from a hash list.
 height_from_hashes(not_joined) -> -1;
-height_from_hashes(BHL) ->
-	(get_head_block(BHL))#block.height.
+height_from_hashes(BI) ->
+	(get_head_block(BI))#block.height.
 
 %% @doc Get a wallet list from a hash list.
 wallets_from_hashes(not_joined) -> [];
-wallets_from_hashes(HashList) ->
-	(get_head_block(HashList))#block.wallet_list.
+wallets_from_hashes(BI) ->
+	(get_head_block(BI))#block.wallet_list.
 
 %% @doc Get block list from hash list.
 blocks_from_hashes([]) -> undefined;
-blocks_from_hashes(BHL) ->
-	lists:map(fun(BH) -> ar_storage:read_block(BH, BHL) end, BHL).
+blocks_from_hashes(BI) ->
+	lists:map(fun({BH, _, _}) -> ar_storage:read_block(BH, BI) end, BI).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
-hash_from_hash_list(Num, BHL) ->
-	lists:nth(Num - 1, lists:reverse(BHL)).
+hash_from_block_index(Num, BI) ->
+	element(1, lists:nth(Num - 1, lists:reverse(BI))).
 
 %% @doc Read a block at the given height from the hash list
-block_from_hash_list(Num, BHL) ->
-	ar_storage:read_block(hash_from_hash_list(Num, BHL), BHL).
+block_from_block_index(Num, BI) ->
+	ar_storage:read_block(hash_from_block_index(Num, BI), BI).
 
-%% @doc Fetch the head block using BHL.
+%% @doc Fetch the head block using BI.
 get_head_block(not_joined) -> unavailable;
-get_head_block(BHL = [IndepHash|_]) ->
-	ar_storage:read_block(IndepHash, BHL).
+get_head_block(BI = [{IndepHash, _, _} | _]) ->
+	ar_storage:read_block(IndepHash, BI).
 
 %% @doc Get the hash of the recall block for the current block
 %% and its hash list.
-get_recall_hash(B, HL) when ?IS_BLOCK(B) ->
-	get_recall_hash(B#block.indep_hash, B#block.height, HL).
+get_recall_hash(B, BI) when ?IS_BLOCK(B) ->
+	get_recall_hash(B#block.indep_hash, B#block.height, BI).
 
 %% @doc Get the hash of the recall block for the current block's
 %% hash, height, hash list.
 get_recall_hash(H, _Height, []) ->
 	H;
-get_recall_hash(H, Height, HL) ->
+get_recall_hash(H, Height, BI) ->
 	RecallIndex = case Height of
 		0 ->
 			1;
 		RecallHeight ->
 			1 + binary:decode_unsigned(H) rem RecallHeight
 	end,
-	lists:nth(RecallIndex, lists:reverse(HL)).
+	element(1, lists:nth(RecallIndex, lists:reverse(BI))).
 
 %% @doc Replace a term in a list with another term.
 replace(_, _, []) -> [];
@@ -244,6 +245,13 @@ index_of(_, [], _) -> not_found;
 index_of(_Subject, [_Subject | _], Counter) -> Counter;
 index_of(Subject, [_ | List], Counter) -> index_of(Subject, List, Counter + 1).
 
+block_index_entry_from_block(B) ->
+	case B#block.height < ar_fork:height_2_0() of
+		true ->
+			{B#block.indep_hash, not_set, not_set};
+		false ->
+			{B#block.indep_hash, B#block.weave_size, B#block.tx_root}
+	end.
 
 %%%
 %%% Tests.

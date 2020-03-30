@@ -1,24 +1,38 @@
 -module(ar_block).
+
 -export([block_to_binary/1, block_field_size_limit/1]).
--export([get_recall_block/5]).
+-export([get_recall_block/3]).
 -export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/1]).
 -export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
--export([verify_cumulative_diff/2, verify_block_hash_list_merkle/2]).
--export([hash_wallet_list/1]).
--export([encrypt_block/2, encrypt_block/3]).
--export([encrypt_full_block/2, encrypt_full_block/3]).
--export([decrypt_block/4]).
--export([generate_block_key/2]).
--export([reconstruct_hash_list_from_shadow/2, generate_block_data_segment/6]).
+-export([verify_cumulative_diff/2, verify_block_hash_list_merkle/3]).
+-export([verify_tx_root/1]).
+-export([hash_wallet_list/2, hash_wallet_list/3, hash_wallet_list_without_reward_wallet/2]).
+-export([hash_wallet_list_pre_2_0/1]).
+-export([generate_block_data_segment_pre_2_0/6]).
+-export([generate_block_data_segment/1, generate_block_data_segment/3, generate_block_data_segment_base/1]).
 -export([generate_hash_list_for_block/2]).
+-export([generate_tx_root_for_block/1, generate_size_tagged_list_from_txs/1]).
 -export([generate_block_data_segment_and_pieces/6, refresh_block_data_segment_timestamp/6]).
+-export([generate_tx_tree/1, generate_tx_tree/2]).
+-export([compute_hash_list_merkle/2]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%% @doc Generate a re-producible hash from a wallet list.
-hash_wallet_list(WalletList) ->
+hash_wallet_list(_Height, _RewardAddr, WalletListHash) when is_binary(WalletListHash) ->
+	WalletListHash;
+hash_wallet_list(Height, RewardAddr, WalletList) ->
+	case Height < ar_fork:height_2_0() of
+		true ->
+			hash_wallet_list_pre_2_0(WalletList);
+		false ->
+			{RewardWallet, NoRewardWalletListHash} =
+				hash_wallet_list_without_reward_wallet(RewardAddr, WalletList),
+			hash_wallet_list(RewardWallet, NoRewardWalletListHash)
+	end.
+
+hash_wallet_list_pre_2_0(WalletList) ->
 	Bin =
 		<<
 			<< Addr/binary, (binary:encode_unsigned(Balance))/binary, LastTX/binary >>
@@ -27,153 +41,68 @@ hash_wallet_list(WalletList) ->
 		>>,
 	crypto:hash(?HASH_ALG, Bin).
 
-%% @doc Find the appropriate block hash list for a block/indep. hash, from a
-%% block hash list further down the weave.
-generate_hash_list_for_block(_Block1IndepHash, []) -> [];
-generate_hash_list_for_block(B, CurrentB) when ?IS_BLOCK(CurrentB) ->
-	generate_hash_list_for_block(B, CurrentB#block.indep_hash);
-generate_hash_list_for_block(B, BHL) when ?IS_BLOCK(B) ->
-	generate_hash_list_for_block(B#block.indep_hash, BHL);
-generate_hash_list_for_block(IndepHash, BHL) ->
-	do_generate_hash_list_for_block(IndepHash, BHL).
+hash_wallet_list_without_reward_wallet(RewardAddr, WalletList) ->
+	{RewardWallet, NoRewardWalletList} =
+		case lists:keytake(RewardAddr, 1, WalletList) of
+			{value, RW, NewWalletList} ->
+				{RW, NewWalletList};
+			false ->
+				{unclaimed, WalletList}
+		end,
+	NoRewardWLH = ar_deep_hash:hash([
+		[A, binary:encode_unsigned(B), Anchor] || {A, B, Anchor} <- NoRewardWalletList
+	]),
+	{RewardWallet, NoRewardWLH}.
+
+hash_wallet_list(RewardWallet, NoRewardWalletListHash) ->
+	ar_deep_hash:hash([
+		NoRewardWalletListHash,
+		case RewardWallet of
+			unclaimed ->
+				<<"unclaimed">>;
+			{Address, Balance, Anchor} ->
+				[Address, binary:encode_unsigned(Balance), Anchor]
+		end
+	]).
+
+%% @doc Generate the TX tree and set the TX root for a block.
+generate_tx_tree(B) ->
+	generate_tx_tree(B, generate_size_tagged_list_from_txs(B#block.txs)).
+generate_tx_tree(B, SizeTaggedTXs) ->
+	{Root, Tree} = ar_merkle:generate_tree(SizeTaggedTXs),
+	B#block { tx_tree = Tree, tx_root = Root }.
+
+generate_size_tagged_list_from_txs(TXs) ->
+	lists:reverse(
+		element(2,
+			lists:foldl(
+				fun(TX, {Pos, List}) ->
+					End = Pos + TX#tx.data_size,
+					{End, [{get_tx_data_root(TX), End} | List]}
+				end,
+				{0, []},
+				lists:sort(TXs)
+			)
+		)
+	).
+
+%% @doc Find the appropriate block hash list for a block, from a
+%% block index.
+generate_hash_list_for_block(_BlockOrHash, []) -> [];
+generate_hash_list_for_block(B, BI) when ?IS_BLOCK(B) ->
+	generate_hash_list_for_block(B#block.indep_hash, BI);
+generate_hash_list_for_block(Hash, BI) ->
+	do_generate_hash_list_for_block(Hash, BI).
 
 do_generate_hash_list_for_block(_, []) ->
-	error(cannot_generate_block_hash_list);
-do_generate_hash_list_for_block(IndepHash, [IndepHash|BHL]) -> BHL;
-do_generate_hash_list_for_block(IndepHash, [_|Rest]) ->
+	error(cannot_generate_hash_list);
+do_generate_hash_list_for_block(IndepHash, [{IndepHash, _, _} | BI]) -> ?BI_TO_BHL(BI);
+do_generate_hash_list_for_block(IndepHash, [_ | Rest]) ->
 	do_generate_hash_list_for_block(IndepHash, Rest).
-
-%% @doc Encrypt a recall block. Encryption key is derived from
-%% the contents of the recall block and the hash of the current block
-encrypt_block(R, B) when ?IS_BLOCK(B) -> encrypt_block(R, B#block.indep_hash);
-encrypt_block(R, Hash) ->
-	Recall =
-		ar_serialize:jsonify(
-			ar_serialize:block_to_json_struct(R)
-		),
-	encrypt_block(
-		Recall,
-		crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
-		_Nonce = binary:part(Hash, 0, 16)
-	).
-encrypt_block(R, Key, Nonce) when ?IS_BLOCK(R) ->
-	encrypt_block(
-		ar_serialize:jsonify(
-			ar_serialize:block_to_json_struct(R)
-		),
-		Key,
-		Nonce
-	);
-encrypt_block(Recall, Key, Nonce) ->
-	PlainText = pad_to_length(Recall),
-	CipherText =
-		crypto:block_encrypt(
-			aes_cbc,
-			Key,
-			Nonce,
-			PlainText
-		),
-	CipherText.
-
-%% @doc Decrypt a recall block
-decrypt_block(B, CipherText, Key, Nonce)
-		when ?IS_BLOCK(B)->
-	decrypt_block(B#block.indep_hash, CipherText, Key, Nonce);
-decrypt_block(_Hash, CipherText, Key, Nonce) ->
-	if
-		(Key == <<>>) or (Nonce == <<>>) -> unavailable;
-		true ->
-			PaddedPlainText =
-				crypto:block_decrypt(
-					aes_cbc,
-					Key,
-					Nonce,
-					CipherText
-				),
-			PlainText = binary_to_list(unpad_binary(PaddedPlainText)),
-			RJSON = ar_serialize:dejsonify(PlainText),
-			ar_serialize:json_struct_to_block(RJSON)
-	end.
-
-%% @doc Encrypt a recall block. Encryption key is derived from
-%% the contents of the recall block and the hash of the current block
-encrypt_full_block(R, B) when ?IS_BLOCK(B) ->
-	encrypt_full_block(R, B#block.indep_hash);
-encrypt_full_block(R, Hash) ->
-	Recall =
-		ar_serialize:jsonify(
-			ar_serialize:full_block_to_json_struct(R)
-		),
-	encrypt_full_block(
-		Recall,
-		crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>),
-		_Nonce = binary:part(Hash, 0, 16)
-	).
-encrypt_full_block(R, Key, Nonce) when ?IS_BLOCK(R) ->
-	encrypt_full_block(
-		ar_serialize:jsonify(
-			ar_serialize:full_block_to_json_struct(R)
-		),
-		Key,
-		Nonce
-	);
-encrypt_full_block(Recall, Key, Nonce) ->
-	PlainText = pad_to_length(Recall),
-	CipherText =
-		crypto:block_encrypt(
-			aes_cbc,
-			Key,
-			Nonce,
-			PlainText
-		),
-	CipherText.
-
-%% @doc Decrypt a recall block
-decrypt_full_block(CipherText, Key, Nonce) ->
-	if
-		(Key == <<>>) or (Nonce == <<>>) -> unavailable;
-		true ->
-			PaddedPlainText =
-				crypto:block_decrypt(
-					aes_cbc,
-					Key,
-					Nonce,
-					CipherText
-				),
-			PlainText = binary_to_list(unpad_binary(PaddedPlainText)),
-			RJSON = ar_serialize:dejsonify(PlainText),
-			ar_serialize:json_struct_to_full_block(RJSON)
-	end.
-
-
-%% @doc derive the key for a given recall block, given the
-%% recall block and current block
-generate_block_key(R, B) when ?IS_BLOCK(B) ->
-	generate_block_key(R, B#block.indep_hash);
-generate_block_key(R, Hash) ->
-	Recall =
-		ar_serialize:jsonify(
-			ar_serialize:full_block_to_json_struct(R)
-		),
-	crypto:hash(?HASH_ALG,<<Hash/binary, Recall/binary>>).
-
-%% @doc Pad a binary to the nearest mutliple of the block
-%% cipher length (32 bytes)
-pad_to_length(Binary) ->
-	Pad = (32 - ((byte_size(Binary)+1) rem 32)),
-	<<Binary/binary, 1, 0:(Pad*8)>>.
-
-%% @doc Unpad a binary padded using the method above
-unpad_binary(Binary) ->
-	ar_util:rev_bin(do_unpad_binary(ar_util:rev_bin(Binary))).
-do_unpad_binary(Binary) ->
-	case Binary of
-		<< 0:8, Rest/binary >> -> do_unpad_binary(Rest);
-		<< 1:8, Rest/binary >> -> Rest
-	end.
 
 %% @doc Generate a hashable binary from a #block object.
 block_to_binary(B) ->
+	{ok, WalletList} = ar_storage:read_wallet_list(B#block.wallet_list),
 	<<
 		(B#block.nonce)/binary,
 		(B#block.previous_block)/binary,
@@ -196,7 +125,7 @@ block_to_binary(B) ->
 			binary:list_to_bin(
 				lists:map(
 					fun ar_wallet:to_binary/1,
-					B#block.wallet_list
+					WalletList
 				)
 			)
 		)/binary,
@@ -220,24 +149,34 @@ block_field_size_limit(B) ->
 		_ ->
 			10
 	end,
+	{ChunkSize, DataPathSize} =
+		case B#block.poa of
+			POA when is_record(POA, poa) ->
+				{
+					byte_size((B#block.poa)#poa.chunk),
+					byte_size((B#block.poa)#poa.data_path)
+				};
+			_ -> {0, 0}
+		end,
 	Check = (byte_size(B#block.nonce) =< 512) and
-	(byte_size(B#block.previous_block) =< 48) and
-	(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
-	(byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
-	(byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
-	(byte_size(integer_to_binary(B#block.height)) =< 20) and
-	(byte_size(B#block.hash) =< 48) and
-	(byte_size(B#block.indep_hash) =< 48) and
-	(byte_size(B#block.reward_addr) =< 32) and
-	(byte_size(list_to_binary(B#block.tags)) =< 2048) and
-	(byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
-	(byte_size(integer_to_binary(B#block.block_size)) =< 64),
-	% Report of wrong field size.
+		(byte_size(B#block.previous_block) =< 48) and
+		(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
+		(byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
+		(byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
+		(byte_size(integer_to_binary(B#block.height)) =< 20) and
+		(byte_size(B#block.hash) =< 48) and
+		(byte_size(B#block.indep_hash) =< 48) and
+		(byte_size(B#block.reward_addr) =< 32) and
+		(byte_size(list_to_binary(B#block.tags)) =< 2048) and
+		(byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
+		(byte_size(integer_to_binary(B#block.block_size)) =< 64) and
+		(ChunkSize =< ?DATA_CHUNK_SIZE) and
+		(DataPathSize =< ?MAX_PATH_SIZE),
 	case Check of
 		false ->
-			ar:report(
+			ar:info(
 				[
-					invalid_block_field_size,
+					{event, received_block_with_invalid_field_size},
 					{nonce, byte_size(B#block.nonce)},
 					{previous_block, byte_size(B#block.previous_block)},
 					{timestamp, byte_size(integer_to_binary(B#block.timestamp))},
@@ -257,10 +196,102 @@ block_field_size_limit(B) ->
 	end,
 	Check.
 
+compute_hash_list_merkle(B, BI) ->
+	NewHeight = B#block.height + 1,
+	Fork_2_0 = ar_fork:height_2_0(),
+	case NewHeight of
+		_ when NewHeight < ?FORK_1_6 ->
+			<<>>;
+		?FORK_1_6 ->
+			ar_unbalanced_merkle:hash_list_to_merkle_root(B#block.hash_list);
+		_ when NewHeight < Fork_2_0 ->
+			ar_unbalanced_merkle:root(B#block.hash_list_merkle, B#block.indep_hash);
+		Fork_2_0 ->
+			ar_unbalanced_merkle:block_index_to_merkle_root(BI);
+		_ ->
+			ar_unbalanced_merkle:root(
+				B#block.hash_list_merkle,
+				{B#block.indep_hash, B#block.weave_size, B#block.tx_root},
+				fun ar_unbalanced_merkle:hash_block_index_entry/1
+			)
+	end.
+
+%% @doc Generate a block data segment.
+%% Block data segment is combined with a nonce to compute a PoW hash.
+%% Also, it is combined with a nonce and the corresponding PoW hash
+%% to produce the independent hash.
+generate_block_data_segment(B) ->
+	generate_block_data_segment(
+		generate_block_data_segment_base(B),
+		B#block.hash_list_merkle,
+		#{
+			timestamp => B#block.timestamp,
+			last_retarget => B#block.last_retarget,
+			diff => B#block.diff,
+			cumulative_diff => B#block.cumulative_diff,
+			reward_pool => B#block.reward_pool,
+			wallet_list_hash => B#block.wallet_list_hash
+		}
+	).
+
+generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
+	#{
+		timestamp := Timestamp,
+		last_retarget := LastRetarget,
+		diff := Diff,
+		cumulative_diff := CDiff,
+		reward_pool := RewardPool,
+		wallet_list_hash := WLH
+	} = TimeDependentParams,
+	ar_deep_hash:hash([
+		BDSBase,
+		integer_to_binary(Timestamp),
+		integer_to_binary(LastRetarget),
+		integer_to_binary(Diff),
+		integer_to_binary(CDiff),
+		integer_to_binary(RewardPool),
+		WLH,
+		BlockIndexMerkle
+	]).
+
+%% @doc Generate a hash, which is used to produce a block data segment
+%% when combined with the time-dependent parameters, which frequently
+%% change during mining - timestamp, last retarget timestamp, difficulty,
+%% cumulative difficulty, miner's wallet, reward pool. Also excludes
+%% the merkle root of the block index, which is hashed with the rest
+%% as the last step, to allow verifiers to quickly validate PoW against
+%% the current state.
+generate_block_data_segment_base(B) ->
+	BDSBase = ar_deep_hash:hash([
+		integer_to_binary(B#block.height),
+		B#block.previous_block,
+		B#block.tx_root,
+		lists:map(fun ar_weave:tx_id/1, B#block.txs),
+		integer_to_binary(B#block.block_size),
+		integer_to_binary(B#block.weave_size),
+		case B#block.reward_addr of
+			unclaimed ->
+				<<"unclaimed">>;
+			_ ->
+				B#block.reward_addr
+		end,
+		ar_tx:tags_to_list(B#block.tags),
+		poa_to_list(B#block.poa)
+	]),
+	BDSBase.
+
+poa_to_list(POA) ->
+	[
+		integer_to_binary(POA#poa.option),
+		POA#poa.tx_path,
+		POA#poa.data_path,
+		POA#poa.chunk
+	].
+
 %% @docs Generate a hashable data segment for a block from the preceding block,
 %% the preceding block's recall block, TXs to be mined, reward address and tags.
-generate_block_data_segment(PrecedingB, PrecedingRecallB, [unavailable], RewardAddr, Time, Tags) ->
-	generate_block_data_segment(
+generate_block_data_segment_pre_2_0(PrecedingB, PrecedingRecallB, [unavailable], RewardAddr, Time, Tags) ->
+	generate_block_data_segment_pre_2_0(
 		PrecedingB,
 		PrecedingRecallB,
 		[],
@@ -268,8 +299,8 @@ generate_block_data_segment(PrecedingB, PrecedingRecallB, [unavailable], RewardA
 		Time,
 		Tags
 	);
-generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, unclaimed, Time, Tags) ->
-	generate_block_data_segment(
+generate_block_data_segment_pre_2_0(PrecedingB, PrecedingRecallB, TXs, unclaimed, Time, Tags) ->
+	generate_block_data_segment_pre_2_0(
 		PrecedingB,
 		PrecedingRecallB,
 		TXs,
@@ -277,7 +308,7 @@ generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, unclaimed, Time, 
 		Time,
 		Tags
 	);
-generate_block_data_segment(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags) ->
+generate_block_data_segment_pre_2_0(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags) ->
 	{_, BDS} = generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time, Tags),
 	BDS.
 
@@ -291,7 +322,7 @@ generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, Reward
 	WeaveSize = PrecedingB#block.weave_size +
 		lists:foldl(
 			fun(TX, Acc) ->
-				Acc + byte_size(TX#tx.data)
+				Acc + TX#tx.data_size
 			end,
 			0,
 			TXs
@@ -307,7 +338,7 @@ generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, Reward
 			PrecedingB#block.reward_pool,
 			TXs,
 			RewardAddr,
-			PrecedingRecallB#block.block_size,
+			PrecedingRecallB,
 			WeaveSize,
 			PrecedingB#block.height + 1,
 			NewDiff,
@@ -392,7 +423,7 @@ refresh_block_data_segment_timestamp(Pieces, PrecedingB, PrecedingRecallB, TXs, 
 	WeaveSize = PrecedingB#block.weave_size +
 		lists:foldl(
 			fun(TX, Acc) ->
-				Acc + byte_size(TX#tx.data)
+				Acc + TX#tx.data_size
 			end,
 			0,
 			TXs
@@ -408,7 +439,7 @@ refresh_block_data_segment_timestamp(Pieces, PrecedingB, PrecedingRecallB, TXs, 
 			PrecedingB#block.reward_pool,
 			TXs,
 			RewardAddr,
-			PrecedingRecallB#block.block_size,
+			PrecedingRecallB,
 			WeaveSize,
 			PrecedingB#block.height + 1,
 			NewDiff,
@@ -457,6 +488,27 @@ verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 verify_dep_hash(NewB, BDSHash) ->
 	NewB#block.hash == BDSHash.
 
+verify_tx_root(B) ->
+	B#block.tx_root == generate_tx_root_for_block(B).
+
+%% @doc Given a list of TXs in various formats, or a block, generate the
+%% correct TX merkle tree root.
+generate_tx_root_for_block(B) when is_record(B, block) ->
+	generate_tx_root_for_block(B#block.txs);
+generate_tx_root_for_block(TXIDs = [TXID | _]) when is_binary(TXID) ->
+	generate_tx_root_for_block(ar_storage:read_tx(TXIDs));
+generate_tx_root_for_block([]) ->
+	<<>>;
+generate_tx_root_for_block(TXs = [TX | _]) when is_record(TX, tx) ->
+	TXSizePairs = generate_size_tagged_list_from_txs(TXs),
+	{Root, _Tree} = ar_merkle:generate_tree(TXSizePairs),
+	Root.
+
+get_tx_data_root(#tx{ format = 2, data_root = DataRoot }) ->
+	DataRoot;
+get_tx_data_root(TX) ->
+	(ar_tx:generate_chunk_tree(TX))#tx.data_root.
+
 %% @doc Verify the block timestamp is not too far in the future nor too far in
 %% the past. We calculate the maximum reasonable clock difference between any
 %% two nodes. This is a simplification since there is a chaining effect in the
@@ -495,22 +547,22 @@ verify_last_retarget(NewB, OldB) ->
 verify_previous_block(NewB, OldB) ->
 	OldB#block.indep_hash == NewB#block.previous_block.
 
-%% @doc Verify that the new block's hash_list is the current blocks
+%% @doc Verify that the new block's hash_list is the current block's
 %% hash_list + indep_hash, until ?FORK_1_6.
 verify_block_hash_list(NewB, OldB) when NewB#block.height < ?FORK_1_6 ->
-	NewB#block.hash_list == ([OldB#block.indep_hash | OldB#block.hash_list]);
+	NewB#block.hash_list == [OldB#block.indep_hash | OldB#block.hash_list];
 verify_block_hash_list(_NewB, _OldB) -> true.
 
 %% @doc Verify that the new blocks wallet_list and reward_pool matches that
 %% generated by applying, the block miner reward and mined TXs to the current
 %% (old) blocks wallet_list and reward pool.
-verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
+verify_wallet_list(NewB, OldB, POA, NewTXs) ->
 	{FinderReward, RewardPool} =
 		ar_node_utils:calculate_reward_pool(
 			OldB#block.reward_pool,
 			NewTXs,
 			NewB#block.reward_addr,
-			RecallB#block.block_size,
+			POA,
 			NewB#block.weave_size,
 			length(NewB#block.hash_list),
 			NewB#block.diff,
@@ -528,7 +580,6 @@ verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
 			{reward_address, RewardAddress},
 			{old_reward_pool, OldB#block.reward_pool},
 			{txs, length(NewTXs)},
-			{recall_block_size, RecallB#block.block_size},
 			{weave_size, NewB#block.weave_size},
 			{length, length(NewB#block.hash_list)}
 		]
@@ -545,15 +596,13 @@ verify_wallet_list(NewB, OldB, RecallB, NewTXs) ->
 verify_weave_size(NewB, OldB, TXs) ->
 	NewB#block.weave_size == lists:foldl(
 		fun(TX, Acc) ->
-			Acc + byte_size(TX#tx.data)
+			Acc + TX#tx.data_size
 		end,
 		OldB#block.weave_size,
 		TXs
 	).
 
 %% @doc Ensure that after the 1.6 release cumulative difficulty is enforced.
-verify_cumulative_diff(NewB, _OldB) when NewB#block.height < ?FORK_1_6 ->
-	NewB#block.cumulative_diff == 0;
 verify_cumulative_diff(NewB, OldB) ->
 	NewB#block.cumulative_diff ==
 		ar_difficulty:next_cumulative_diff(
@@ -563,87 +612,43 @@ verify_cumulative_diff(NewB, OldB) ->
 		).
 
 %% @doc After 1.6 fork check that the given merkle root in a new block is valid.
-verify_block_hash_list_merkle(NewB, _CurrentB) when NewB#block.height < ?FORK_1_6 ->
+verify_block_hash_list_merkle(NewB, CurrentB, BI) when NewB#block.height > ?FORK_1_6 ->
+	Fork_2_0 = ar_fork:height_2_0(),
+	case NewB#block.height of
+		H when H < Fork_2_0 ->
+			NewB#block.hash_list_merkle ==
+				ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash);
+		Fork_2_0 ->
+			NewB#block.hash_list_merkle == ar_unbalanced_merkle:block_index_to_merkle_root(BI);
+		_ ->
+			NewB#block.hash_list_merkle ==
+				ar_unbalanced_merkle:root(
+					CurrentB#block.hash_list_merkle,
+					{CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
+					fun ar_unbalanced_merkle:hash_block_index_entry/1
+				)
+	end;
+verify_block_hash_list_merkle(NewB, _CurrentB, _) when NewB#block.height < ?FORK_1_6 ->
 	NewB#block.hash_list_merkle == <<>>;
-verify_block_hash_list_merkle(NewB, CurrentB) when NewB#block.height == ?FORK_1_6 ->
-	NewB#block.hash_list_merkle ==
-		ar_merkle:block_hash_list_to_merkle_root(CurrentB#block.hash_list);
-verify_block_hash_list_merkle(NewB, CurrentB) ->
-	NewB#block.hash_list_merkle ==
-		ar_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash).
+verify_block_hash_list_merkle(NewB, CurrentB, _) when NewB#block.height == ?FORK_1_6 ->
+	NewB#block.hash_list_merkle == ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list).
 
-% Block shadow functions
-
-reconstruct_hash_list_from_shadow(ShadowHashList, HashList) ->
-	case
-		{
-			ShadowHashList,
-			HashList
-		}
-	of
-		{[], _} ->
-			ar:err([generate_block_from_shadow, generate_hash_list, block_hash_list_empty]),
-			{error, []};
-		{ShadowHashList, []} ->
-			ar:err([generate_block_from_shadow, generate_hash_list, node_hash_list_empty]),
-			{error, ShadowHashList};
-		{ShadowHashList, OldHashList} ->
-			EarliestShadowHash = lists:last(ShadowHashList),
-			NewL =
-				lists:dropwhile(
-					fun(X) -> X =/= EarliestShadowHash end,
-					OldHashList
-				),
-			case NewL of
-				[] ->
-					OldHashListLastBlocks = lists:sublist(OldHashList, ?STORE_BLOCKS_BEHIND_CURRENT),
-					ar:warn([
-						generate_block_from_shadow,
-						hash_list_no_intersection,
-						{block_hash_list, lists:map(fun ar_util:encode/1, ShadowHashList)},
-						{node_hash_list_last_blocks, lists:map(fun ar_util:encode/1, OldHashListLastBlocks)}
-					]),
-					{error, ShadowHashList};
-				NewL ->
-					{ok, ShadowHashList ++ tl(NewL)}
-			end
-	end.
-
-get_recall_block(OrigPeer, RecallHash, BHL, Key, Nonce) ->
-	case ar_storage:read_block(RecallHash, BHL) of
+get_recall_block(OrigPeer, RecallHash, BI) ->
+	case ar_storage:read_block(RecallHash, BI) of
 		unavailable ->
-			case ar_storage:read_encrypted_block(RecallHash) of
-				unavailable ->
-					ar:report([{downloading_recall_block, ar_util:encode(RecallHash)}]),
-					FullBlock =
-						ar_node_utils:get_full_block(OrigPeer, RecallHash, BHL),
-					case ?IS_BLOCK(FullBlock)  of
-						true ->
-							ar_storage:write_full_block(FullBlock),
-							FullBlock#block {
-								txs = [ T#tx.id || T <- FullBlock#block.txs]
-							};
-						false -> unavailable
-					end;
-				EncryptedRecall ->
-					FBlock =
-						decrypt_full_block(
-							EncryptedRecall,
-							Key,
-							Nonce
-						),
-					case FBlock of
-						unavailable -> unavailable;
-						FullBlock ->
-							ar_storage:write_full_block(FullBlock),
-							FullBlock#block {
-								txs = [ T#tx.id || T <- FullBlock#block.txs]
-							}
-					end
+			ar:info([{event, downloading_recall_block}, {block, ar_util:encode(RecallHash)}]),
+			FullBlock =
+				ar_http_iface_client:get_block(OrigPeer, RecallHash, BI),
+			case ?IS_BLOCK(FullBlock)  of
+				true ->
+					ar_storage:write_full_block(FullBlock),
+					FullBlock#block{
+						txs = [TX#tx.id || TX <- FullBlock#block.txs]
+					};
+				false -> unavailable
 			end;
 		Recall -> Recall
 	end.
-
 
 %% Tests: ar_block
 
@@ -651,38 +656,12 @@ hash_list_gen_test() ->
 	ar_storage:clear(),
 	B0s = [B0] = ar_weave:init([]),
 	ar_storage:write_block(B0),
-	B1s = [B1|_] = ar_weave:add(B0s, []),
+	B1s = [B1 | _] = ar_weave:add(B0s, []),
 	ar_storage:write_block(B1),
-	B2s = [B2|_] = ar_weave:add(B1s, []),
+	B2s = [B2 | _] = ar_weave:add(B1s, []),
 	ar_storage:write_block(B2),
-	[B3|_] = ar_weave:add(B2s, []),
-	BHL1 = B1#block.hash_list,
-	BHL2 = B2#block.hash_list,
-	BHL1 = generate_hash_list_for_block(B1, B3#block.hash_list),
-	BHL2 = generate_hash_list_for_block(B2#block.indep_hash, B3#block.hash_list).
-
-pad_unpad_roundtrip_test() ->
-	Pad = pad_to_length(<<"abcdefghabcdefghabcd">>),
-	UnPad = unpad_binary(Pad),
-	Pad == UnPad.
-
-% encrypt_decrypt_block_test() ->
-%	  B0 = ar_weave:init([]),
-%	  ar_storage:write_block(B0),
-%	  B1 = ar_weave:add(B0, []),
-%	  CipherText = encrypt_block(hd(B0), hd(B1)),
-%	  Key = generate_block_key(hd(B0), hd(B1)),
-%	  B0 = [decrypt_block(hd(B1), CipherText, Key)].
-
-% encrypt_decrypt_full_block_test() ->
-%	  ar_storage:clear(),
-%	  B0 = ar_weave:init([]),
-%	  ar_storage:write_block(B0),
-%	  B1 = ar_weave:add(B0, []),
-%	TX = ar_tx:new(<<"DATA1">>),
-%	TX1 = ar_tx:new(<<"DATA2">>),
-%	ar_storage:write_tx([TX, TX1]),
-%	  B0Full = (hd(B0))#block{ txs = [TX, TX1] },
-%	  CipherText = encrypt_full_block(B0Full, hd(B1)),
-%	  Key = generate_block_key(B0Full, hd(B1)),
-%	  B0Full = decrypt_full_block(hd(B1), CipherText, Key).
+	[_ | BI] = ar_weave:add(B2s, []),
+	HL1 = B1#block.hash_list,
+	HL2 = B2#block.hash_list,
+	HL1 = generate_hash_list_for_block(B1, BI),
+	HL2 = generate_hash_list_for_block(B2#block.indep_hash, BI).

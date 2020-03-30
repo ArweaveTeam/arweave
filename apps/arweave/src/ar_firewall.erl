@@ -290,15 +290,16 @@ test_scan_and_clean_disk() ->
 	TagValue = <<"value">>,
 	Tags = [{TagName, TagValue}],
 	%% Blacklist a transaction, write it to disk and add it to the index.
-	ar_meta_db:put(transaction_blacklist_files, [fixture("test_transaction_blacklist.txt")]),
+	reset_firewall(),
 	BadTX = (ar_tx:new())#tx{ id = BadTXID, tags = Tags },
 	ar_storage:write_tx(BadTX),
 	?assertEqual(BadTXID, (ar_storage:read_tx(BadTXID))#tx.id),
+	ar_meta_db:put(transaction_blacklist_files, [fixture("test_transaction_blacklist.txt")]),
 	%% Setup a content policy, write a bad tx to disk and add it to the index.
-	ar_meta_db:put(content_policy_files, [fixture("test_sig.txt")]),
 	BadTX2 = (ar_tx:new())#tx{ id = BadDataTXID, data = <<"BADCONTENT1">>, tags = Tags },
 	ar_storage:write_tx(BadTX2),
 	?assertEqual(BadDataTXID, (ar_storage:read_tx(BadDataTXID))#tx.id),
+	ar_meta_db:put(content_policy_files, [fixture("test_sig.txt")]),
 	%% Write a good tx to disk and add it to the index.
 	GoodTX = (ar_tx:new())#tx{ id = GoodTXID, tags = Tags },
 	ar_storage:write_tx(GoodTX),
@@ -312,8 +313,8 @@ test_scan_and_clean_disk() ->
 	receive
 		{scan_complete, Ref} ->
 			do_nothing
-	after 10000 ->
-		?assert(false, "The disk scan did not complete after 10 seconds")
+	after 20000 ->
+		?assert(false, "The disk scan did not complete after 20 seconds")
 	end,
 	?assertEqual(GoodTXID, (ar_storage:read_tx(GoodTXID))#tx.id),
 	{ok, <<"not a tx">>} = file:read_file(NotTXFile),
@@ -322,3 +323,8 @@ test_scan_and_clean_disk() ->
 
 fixture(Filename) ->
 	filename:dirname(?FILE) ++ "/../test/" ++ Filename.
+
+reset_firewall() ->
+	ar_meta_db:put(transaction_blacklist_files, []),
+	ar_meta_db:put(content_policy_files, []),
+	ar_firewall:reload().

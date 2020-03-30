@@ -167,17 +167,17 @@ simple_retarget_test_() ->
 	{timeout, 300, fun() ->
 		Node = ar_node:start([], ar_weave:init([])),
 		lists:foreach(
-			fun(_) ->
+			fun(Height) ->
 				ar_node:mine(Node),
-				timer:sleep(500)
+				ar_test_node:wait_until_height(Node, Height)
 			end,
 			lists:seq(1, ?RETARGET_BLOCKS + 1)
 		),
 		true = ar_util:do_until(
 			fun() ->
 				[BH|_] = ar_node:get_blocks(Node),
-				B = ar_storage:read_block(BH, ar_node:get_hash_list(Node)),
-				B#block.diff > ?DEFAULT_DIFF
+				B = ar_storage:read_block(BH, ar_node:get_block_index(Node)),
+				B#block.diff > ar_mine:genesis_difficulty()
 			end,
 			1000,
 			5 * 60 * 1000
@@ -185,7 +185,7 @@ simple_retarget_test_() ->
 	end}.
 
 calculate_difficulty_linear_test() ->
-	Height = ar_fork:height_1_9(),
+	Height = 0,
 	Diff = switch_to_linear_diff(27),
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	%% The change is smaller than retarget tolerance.

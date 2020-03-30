@@ -272,7 +272,13 @@ get_tx_from_hash_1(TXID) ->
 	end.
 
 serve_tx(Filename, Path, Fallback, Req, Env) ->
-	TX = ar_storage:read_tx_file(Filename),
+	{ok, TXHeader} = ar_storage:read_tx_file(Filename),
+	TX = case TXHeader#tx.format of
+		2 ->
+			TXHeader#tx{ data = read_format_2_data(TXHeader) };
+		1 ->
+			TXHeader
+	end,
 	MaybeContentType = ar_http_util:get_tx_content_type(TX),
 	case {MaybeContentType, Path} of
 		{{valid, ?MANIFEST_CONTENT_TYPE}, <<>>} ->
@@ -285,6 +291,14 @@ serve_tx(Filename, Path, Fallback, Req, Env) ->
 			serve_plain_tx(TX, <<"text/html">>, Req);
 		_ ->
 			other_request(Req, Env)
+	end.
+
+read_format_2_data(TX) ->
+	case ar_storage:read_tx_data(TX) of
+		{ok, Data} ->
+			Data;
+		{error, enoent} ->
+			<<>>
 	end.
 
 serve_manifest(TX, Req) ->
@@ -371,7 +385,7 @@ serve_manifest_path_2(Hash, Req) ->
 	end.
 
 serve_manifest_path_3(SubFilename, Req) ->
-	SubTX = ar_storage:read_tx_file(SubFilename),
+	{ok, SubTX} = ar_storage:read_tx_file(SubFilename),
 	MaybeContentType = ar_http_util:get_tx_content_type(SubTX),
 	case MaybeContentType of
 		{valid, ContentType} ->
@@ -382,9 +396,22 @@ serve_manifest_path_3(SubFilename, Req) ->
 			misdirected_request(Req)
 	end.
 
-serve_plain_tx(TX, ContentType, Req) ->
+serve_plain_tx(#tx{ format = 1 } = TX, ContentType, Req) ->
 	Headers = #{ <<"content-type">> => ContentType },
-	{stop, {200, Headers, TX#tx.data, Req}}.
+	{stop, {200, Headers, TX#tx.data, Req}};
+serve_plain_tx(#tx{ format = 2, data = Data } = TX, ContentType, Req) when byte_size(Data) > 0 ->
+	Headers = #{ <<"content-type">> => ContentType },
+	{stop, {200, Headers, TX#tx.data, Req}};
+serve_plain_tx(#tx{ format = 2 } = TX, ContentType, Req) ->
+	Headers = #{ <<"content-type">> => ContentType },
+	DataFilename = ar_storage:tx_data_filepath(TX),
+	TXData = case ar_storage:read_tx_data(DataFilename) of
+		{ok, Data} ->
+			Data;
+		{error, enoent} ->
+			<<>>
+	end,
+	{stop, {200, Headers, TXData, Req}}.
 
 misdirected_request(Req) ->
 	{stop, {421, Req}}.

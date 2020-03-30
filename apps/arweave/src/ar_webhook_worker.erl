@@ -106,8 +106,7 @@ to_json(#block {} = Block) ->
 	ar_serialize:jsonify({[{block, JSONStruct}]});
 to_json(#tx {} = TX) ->
 	{JSONKVPairs1} = ar_serialize:tx_to_json_struct(TX),
-	{value, {data, Data}, JSONKVPairs2} = lists:keytake(data, 1, JSONKVPairs1),
-	JSONKVPairs3 = [{data_size, byte_size(Data)} | JSONKVPairs2],
+	JSONKVPairs2 = lists:keydelete(data, 1, JSONKVPairs1),
+	JSONKVPairs3 = [{data_size, TX#tx.data_size} | JSONKVPairs2],
 	JSONStruct = {JSONKVPairs3},
 	ar_serialize:jsonify({[{transaction, JSONStruct}]}).
-

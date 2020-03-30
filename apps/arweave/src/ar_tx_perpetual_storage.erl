@@ -54,6 +54,11 @@ usd_to_ar(USD, Diff, Height) ->
 			usd_to_ar_pre_fork_1_9(USD, Diff, Height)
 	end.
 
+-ifdef(DEBUG).
+usd_to_ar_post_fork_1_9(USD, _, _) ->
+	% If we are debugging, pretend 1 AR = 1 USD.
+	erlang:trunc(?AR(USD)).
+-else.
 usd_to_ar_post_fork_1_9(USD, Diff, Height) ->
 	InitialDiff = ar_retarget:switch_to_linear_diff(?INITIAL_USD_PER_AR_DIFF(Height)()),
 	MaxDiff = ar_mine:max_difficulty(),
@@ -63,6 +68,7 @@ usd_to_ar_post_fork_1_9(USD, Diff, Height) ->
 	erlang:trunc(
 		(USD * ?WINSTON_PER_AR * DeltaInflation) / (?INITIAL_USD_PER_AR(Height)() * DeltaP)
 	).
+-endif.
 
 %%%% Costs in USD
 

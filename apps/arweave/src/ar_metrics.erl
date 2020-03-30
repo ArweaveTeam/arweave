@@ -23,6 +23,11 @@ register() ->
 		{help, "The total amount of bytes posted via HTTP, per remote endpoint"},
 		{labels, [route]}
 	]),
+	prometheus_histogram:new([
+		{name, fork_recovery_depth},
+		{buckets, lists:seq(1, 50)},
+		{help, "Fork recovery depth metric"}
+	]),
 	prometheus_gauge:new([
 		{name, arweave_block_height},
 		{help, "Block height"}
@@ -30,6 +35,46 @@ register() ->
 	prometheus_gauge:new([
 		{name, arweave_peer_count},
 		{help, "peer count"}
+	]),
+	prometheus_gauge:new([
+		{name, downloader_queue_size},
+		{help, "The size of the downloader queue"}
+	]),
+	prometheus_gauge:new([
+		{name, tx_queue_size},
+		{help, "The size of the transaction propagation queue"}
+	]),
+	prometheus_counter:new([
+		{name, propagated_transactions_total},
+		{labels, [status_class]},
+		{
+			help,
+			"The total number of propagated transactions. Increases "
+			"with the number of peers the node propagates transactions to."
+		}
+	]),
+	prometheus_histogram:declare([
+		{name, tx_propagation_bits_per_second},
+		{buckets, [10, 100, 1000, 100000, 1000000, 100000000, 1000000000]},
+		{help, "The throughput (in bits/s) of transaction propagation."}
+	]),
+	prometheus_gauge:new([
+		{name, mempool_header_size_bytes},
+		{
+			help,
+			"The size (in bytes) of the memory pool of transaction headers. "
+			"The data fields of format=1 transactions are considered to be "
+			"parts of transaction headers."
+		}
+	]),
+	prometheus_gauge:new([
+		{name, mempool_data_size_bytes},
+		{
+			help,
+			"The size (in bytes) of the memory pool of transaction data. "
+			"The data fields of format=1 transactions are NOT considered "
+			"to be transaction data."
+		}
 	]).
 
 label_http_path(Path) ->
@@ -77,6 +122,8 @@ name_route([<<"price">>, _SizeInBytes, _Addr]) ->
 	"/price/{bytes}/{address}";
 name_route([<<"hash_list">>]) ->
 	"/hash_list";
+name_route([<<"block_index">>]) ->
+	"/block_index";
 name_route([<<"wallet_list">>]) ->
 	"/wallet_list";
 name_route([<<"wallet">>, _Addr, <<"balance">>]) ->

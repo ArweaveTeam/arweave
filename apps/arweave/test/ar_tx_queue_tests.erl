@@ -3,12 +3,11 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_fork, [test_on_fork/3]).
-
 -import(ar_test_node, [assert_post_tx_to_slave/2]).
 -import(ar_test_node, [assert_wait_until_receives_txs/2, wait_until_height/2]).
--import(ar_test_node, [sign_tx/2, get_tx_anchor/0]).
+-import(ar_test_node, [sign_tx/2, sign_v1_tx/2, get_tx_anchor/0]).
 -import(ar_test_node, [get_tx_price/1, slave_mine/1, slave_call/3]).
+-import(ar_test_node, [test_with_mocked_functions/2]).
 
 txs_broadcast_order_test_() ->
 	{timeout, 60, fun test_txs_broadcast_order/0}.
@@ -46,12 +45,32 @@ test_txs_broadcast_order() ->
 		200,
 		2000
 	),
-	ar_tx_queue:set_pause(false),
 	%% Expect the transactions to be received in the order
 	%% from the highest utility score to the lowest.
-	assert_wait_until_receives_txs(MasterNode, [TX1, TX2, TX3, TX4]),
-	Actual = encode_txs(ar_node:get_pending_txs(MasterNode)),
-	?assertEqual(Expected, Actual).
+	ar_tx_queue:set_pause(false),
+	ar_util:do_until(
+		fun() ->
+			TXs = encode_txs(ar_node:get_mined_txs(MasterNode)),
+			case length(TXs) of
+				4 ->
+					?assertEqual(lists:sort(Expected), lists:sort(TXs)),
+					ok;
+				3 ->
+					?assertEqual(lists:sort(encode_txs([TX4, TX3, TX2])), lists:sort(TXs)),
+					continue;
+				2 ->
+					?assertEqual(lists:sort(encode_txs([TX4, TX3])), lists:sort(TXs)),
+					continue;
+				1 ->
+					?assertEqual(encode_txs([TX4]), TXs),
+					continue;
+				0 ->
+					continue
+			end
+		end,
+		10,
+		2000
+	).
 
 drop_lowest_priority_txs_test_() ->
 	{timeout, 10, fun test_drop_lowest_priority_txs/0}.
@@ -59,7 +78,7 @@ drop_lowest_priority_txs_test_() ->
 test_drop_lowest_priority_txs() ->
 	setup(),
 	ar_tx_queue:set_pause(true),
-	ar_tx_queue:set_max_size(6 * ?TX_SIZE_BASE),
+	ar_tx_queue:set_max_header_size(6 * ?TX_SIZE_BASE),
 	HigherPriorityTXs = import_4_txs(),
 	LowerPriorityTXs = make_txs(4),
 	lists:foreach(
@@ -86,7 +105,28 @@ test_drop_lowest_priority_txs() ->
 		HighestPriorityTXs
 	),
 	Actual2 = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
-	?assertEqual(encode_txs(HighestPriorityTXs), Actual2).
+	?assertEqual(encode_txs(HighestPriorityTXs), Actual2),
+	%% Set max data size. Submit some lower-priority format=2 txs. Expect
+	%% those exceeding the new limit to be dropped.
+	ar_tx_queue:set_max_header_size(9 * ?TX_SIZE_BASE + 1),
+	ar_tx_queue:set_max_data_size(2),
+	LowerPriorityFormat2TXs = [
+		Format2TX1 = (ar_tx:new(<<1>>, ?AR(3)))#tx{ format = 2},
+		Format2TX2 = (ar_tx:new(<<2>>, ?AR(2)))#tx{ format = 2},
+		(ar_tx:new(<<3>>, ?AR(1)))#tx{ format = 2},
+		Format1TX = ar_tx:new(<<3>>, 10) % does not contribute to the data limit
+	],
+	lists:foreach(
+		fun(TX) ->
+			ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+		end,
+		LowerPriorityFormat2TXs
+	),
+	Actual3 = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
+	?assertEqual(
+		encode_txs(HighestPriorityTXs) ++ encode_txs([Format2TX1, Format2TX2, Format1TX]),
+		Actual3
+	).
 
 get_queue_endpoint_test_() ->
 	{timeout, 10, fun test_get_queue_endpoint/0}.
@@ -98,25 +138,18 @@ test_get_queue_endpoint() ->
 	Actual = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
 	?assertEqual(Expected, Actual).
 
-txs_are_included_in_blocks_sorted_by_utility_test_() ->
-	test_on_fork(
-		height_1_8,
-		0,
-		fun test_txs_are_included_in_blocks_sorted_by_utility/0
-	).
-
-test_txs_are_included_in_blocks_sorted_by_utility() ->
+test_txs_are_included_in_blocks_sorted_by_utility_test() ->
 	{MasterNode, SlaveNode, Wallet} = setup(),
 	TXs = [
 		%% Base size, extra reward.
-		sign_tx(Wallet, #{ reward => get_tx_price(0) + ?AR(1), last_tx => get_tx_anchor() }),
+		sign_v1_tx(Wallet, #{ reward => get_tx_price(0) + ?AR(1), last_tx => get_tx_anchor() }),
 		%% More data, same extra reward.
-		sign_tx(
+		sign_v1_tx(
 			Wallet,
 			#{ data => <<"More data">>, reward => get_tx_price(9) + ?AR(1), last_tx => get_tx_anchor() }
 		),
 		%% Base size, default reward.
-		sign_tx(Wallet, #{ last_tx => get_tx_anchor() })
+		sign_v1_tx(Wallet, #{ last_tx => get_tx_anchor() })
 	],
 	lists:foldl(
 		fun(_, ToPost) ->
@@ -129,16 +162,49 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 	),
 	assert_wait_until_receives_txs(MasterNode, TXs),
 	slave_mine(SlaveNode),
-	BHL = wait_until_height(MasterNode, 1),
-	B = ar_storage:read_block(hd(BHL), BHL),
+	BI = wait_until_height(MasterNode, 1),
+	B = ar_storage:read_block(hd(BI), BI),
 	?assertEqual(
 		lists:map(fun(TX) -> TX#tx.id end, TXs),
 		B#block.txs
 	),
-	SlaveB = slave_call(ar_storage, read_block, [hd(BHL), BHL]),
+	SlaveB = slave_call(ar_storage, read_block, [hd(BI), BI]),
 	?assertEqual(
 		lists:map(fun(TX) -> TX#tx.id end, TXs),
 		SlaveB#block.txs
+	).
+
+format_2_txs_are_gossiped_test_() ->
+	test_with_mocked_functions(
+		[
+			{ar_fork, height_2_0, fun() -> 0 end}
+		],
+		fun format_2_txs_are_gossiped/0
+	).
+
+format_2_txs_are_gossiped() ->
+	{MasterNode, SlaveNode, Wallet} = setup(),
+	TXParams = #{format => 2, data => <<"TXDATA">>, reward => ?AR(1)},
+	SignedTX = sign_tx(Wallet, TXParams),
+	SignedTXHeader = SignedTX#tx{ data = <<>> },
+	assert_post_tx_to_slave(SlaveNode, SignedTX),
+	assert_wait_until_receives_txs(MasterNode, [SignedTXHeader]),
+	slave_mine(SlaveNode),
+	BI = wait_until_height(MasterNode, 1),
+	#block{ txs = [MasterTXID] } = ar_storage:read_block(hd(BI), BI),
+	?assertEqual(SignedTXHeader#tx.id, MasterTXID),
+	?assertEqual(SignedTXHeader, ar_storage:read_tx(MasterTXID)),
+	#block{ txs = [SlaveTXID] } = slave_call(ar_storage, read_block, [hd(BI), BI]),
+	?assertEqual(SignedTXHeader, slave_call(ar_storage, read_tx, [SlaveTXID])),
+	?assertEqual(SignedTXHeader#tx.id, SlaveTXID),
+	?assertEqual({ok, <<"TXDATA">>}, slave_call(ar_storage, read_tx_data, [SlaveTXID])),
+	ar_util:do_until(
+		fun() ->
+			%% Wait until downloader fetches data.
+			{ok, <<"TXDATA">>} == ar_storage:read_tx_data(MasterTXID)
+		end,
+		100,
+		5000
 	).
 
 %%%% private

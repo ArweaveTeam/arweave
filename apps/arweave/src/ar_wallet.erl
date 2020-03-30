@@ -48,7 +48,7 @@ new_keyfile(WalletName) ->
 		),
 	Filename = wallet_filepath(WalletName, Pub),
 	filelib:ensure_dir(Filename),
-	file:write_file(Filename, Key),
+	ar_storage:write_file_atomic(Filename, Key),
 	{{Priv, Pub}, Pub}.
 
 wallet_filepath(WalletName, PubKey) ->

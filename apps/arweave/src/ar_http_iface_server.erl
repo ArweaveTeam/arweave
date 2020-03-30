@@ -11,7 +11,7 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(MAX_PARALLEL_HASH_LIST_REQUESTS, 1).
+-define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
 -define(MAX_PARALLEL_ARQL_REQUESTS, 10).
 -define(MAX_PARALLEL_GATEWAY_ARQL_REQUESTS, infinity).
 
@@ -66,7 +66,7 @@ split_path(Path) ->
 
 %% @doc Start the server
 do_start(Opts) ->
-	ok = ar_semaphore:start_link(hash_list_semaphore, ?MAX_PARALLEL_HASH_LIST_REQUESTS),
+	ok = ar_semaphore:start_link(block_index_semaphore, ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS),
 	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
 	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
 	ok = ar_blacklist_middleware:start(),
@@ -186,10 +186,24 @@ cacertfile_when_present(Domain) ->
 	end.
 
 collect_http_response_metrics(Metrics) ->
-	Req = maps:get(req, Metrics),
-	prometheus_counter:inc(
-		http_server_served_bytes_total,
-		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
-		maps:get(resp_body_length, Metrics, 0)
-	),
-	prometheus_cowboy2_instrumenter:observe(Metrics).
+	case maps:get(req, Metrics, no_req) of
+		no_req ->
+			ok;
+		Req ->
+			prometheus_counter:inc(
+				http_server_served_bytes_total,
+				[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
+				maps:get(resp_body_length, Metrics, 0)
+			),
+			ResponseStatus = maps:get(resp_status, Metrics),
+			%% Convert the 208 response status binary back to the integer
+			%% so that it is picked up as a successful response by the cowboy
+			%% instrumenter. See handle208/1 in ar_http_iface_middleware for the
+			%% explanation of why 208 is converted into a binary.
+			prometheus_cowboy2_instrumenter:observe(
+				Metrics#{ resp_status => convert_208(ResponseStatus) }
+			)
+	end.
+
+convert_208(<<"208 Already Reported">>) -> 208;
+convert_208(Status) -> Status.

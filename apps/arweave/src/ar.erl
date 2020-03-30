@@ -11,7 +11,7 @@
 -export([docs/0]).
 -export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
 -export([report/1, report_console/1, d/1]).
--export([scale_time/1, timestamp/0]).
+-export([scale_time/1]).
 -export([start_link/0, start_link/1, init/1]).
 -export([start_for_tests/0]).
 -export([fixed_diff_option/0, fixed_delay_option/0]).
@@ -27,39 +27,39 @@
 	CORE_TEST_MODS,
 	[
 		ar,
-		ar_block_index,
+		ar_unbalanced_merkle,
 		ar_config_tests,
 		ar_deep_hash,
 		ar_inflation,
-		ar_tx_queue,
-		ar_node_tests,
-		ar_util,
 		ar_cleanup,
-		ar_merkle,
+		ar_util,
 		ar_storage,
-		ar_serialize,
-		ar_tx,
-		ar_weave,
-		ar_wallet,
-		ar_firewall,
-		ar_gossip,
-		ar_mine,
-		ar_join,
-		ar_fork_recovery,
-		ar_http_iface_tests,
-		ar_retarget,
-		ar_block,
-		ar_tx_db,
-		ar_firewall_distributed_tests,
+		ar_merkle,
 		ar_semaphore_tests,
+		ar_tx_db,
+		ar_tx,
+		ar_wallet,
+		ar_gossip,
+		ar_serialize,
+		ar_block,
+		ar_difficulty_tests,
+		ar_retarget,
+		ar_weave,
+		ar_join,
+		ar_poa_tests,
+		ar_node_tests,
+		ar_fork_recovery,
+		ar_firewall_distributed_tests,
+		ar_firewall,
+		ar_mine,
 		ar_tx_replay_pool_tests,
+		ar_tx_queue,
+		ar_http_iface_tests,
 		ar_multiple_txs_per_wallet_tests,
 		ar_tx_perpetual_storage_tests,
-		ar_difficulty_tests,
 		ar_gateway_middleware_tests,
-		ar_randomx_mining_tests,
 		ar_http_util_tests,
-		% ar_meta_db must be the last in the list since it resets global configuraiton
+		% ar_meta_db must be the last in the list since it resets global configuration
 		ar_meta_db
 	]
 ).
@@ -93,7 +93,7 @@ show_help() ->
 		fun({Opt, Desc}) ->
 			io:format("\t~s~s~n",
 				[
-					string:pad(Opt, 30, trailing, $ ),
+					string:pad(Opt, 40, trailing, $ ),
 					Desc
 				]
 			)
@@ -101,7 +101,7 @@ show_help() ->
 		[
 			{"config_file (path)", "Load configuration from specified file."},
 			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
-			{"start_hash_list (hash)", "Start the node from a given block."},
+			{"start_from_block_index", "Start the node from the latest stored block index."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
@@ -117,7 +117,9 @@ show_help() ->
 			{"diff (init_diff)", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
 			{"max_miners (num)", "The maximum number of mining processes."},
-			{"max_emitters (num)", "The maximum number of message emitter processes (default 8)."},
+			{"max_emitters (num)", "The maximum number of transaction propagation processes (default 2)."},
+			{"tx_propagation_parallelization (num)", "The maximum number of best peers to propagate transactions to at a time (default 4)."},
+			{"max_propagation_peers (number)", "The maximum number of best peers to propagate blocks and transactions to. Default is 50."},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
@@ -125,8 +127,7 @@ show_help() ->
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
 			{"disk_space (num)", "Max size (in GB) for the disk partition containing the Arweave data directory (blocks, txs, etc) when the miner stops writing files to disk."},
-			{"benchmark (algorithm)", "Run a mining performance benchmark. Pick an algorithm from sha384, randomx."},
-			{"auto_update (false|addr)", "Define the auto-update watch address, or disable it with 'false'."},
+			{"benchmark", "Run a mining performance benchmark."},
 			{"internal_api_secret (secret)",
 				lists:flatten(
 					io_lib:format(
@@ -136,13 +137,13 @@ show_help() ->
 				)
 			},
 			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
-			{"disable (feature)", "Disable a specific (normally enabled) feature. For example, api_compat mode."},
+			{"disable (feature)", "Disable a specific (normally enabled) feature."},
 			{"gateway (domain)", "Run a gateway on the specified domain"},
 			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
-			{"max_propagation_peers (number)", "How many peers to propagate blocks and transactions to. Default is 65."},
 			{"max_connections", "The number of connections to be handled concurrently. Its purpose is to prevent your system from being overloaded and ensuring all the connections are handled optimally. Default is 1024."},
-			{"max_gateway_connections", "The number of gateway connections to be handled concurrently. Default is 128."}
+			{"max_gateway_connections", "The number of gateway connections to be handled concurrently. Default is 128."},
+			{"max_poa_option_depth", "The number of PoA alternatives to try until the recall data is found. Has to be an integer > 1. The mining difficulty increases exponentially with each subsequent option. Default is 8."}
 		]
 	),
 	erlang:halt().
@@ -207,14 +208,10 @@ parse_cli_args(["load_mining_key", File|Rest], C) ->
 	parse_cli_args(Rest, C#config { load_key = File });
 parse_cli_args(["ipfs_pin" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_pin = true });
-parse_cli_args(["start_hash_list", BHLHash|Rest], C) ->
-	parse_cli_args(Rest, C#config { start_hash_list = ar_util:decode(BHLHash) });
-parse_cli_args(["benchmark", Algorithm|Rest], C)->
-	parse_cli_args(Rest, C#config { benchmark = true, benchmark_algorithm = list_to_atom(Algorithm) });
-parse_cli_args(["auto_update", "false" | Rest], C) ->
-	parse_cli_args(Rest, C#config { auto_update = false });
-parse_cli_args(["auto_update", Addr | Rest], C) ->
-	parse_cli_args(Rest, C#config { auto_update = ar_util:decode(Addr) });
+parse_cli_args(["start_from_block_index"|Rest], C) ->
+	parse_cli_args(Rest, C#config { start_from_block_index = true });
+parse_cli_args(["benchmark"|Rest], C)->
+	parse_cli_args(Rest, C#config { benchmark = true });
 parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_cli_args(Rest, C#config { internal_api_secret = list_to_binary(Secret)});
 parse_cli_args(["internal_api_secret", _ | _], _) ->
@@ -241,6 +238,8 @@ parse_cli_args(["max_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_connections = list_to_integer(Num) });
 parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_gateway_connections = list_to_integer(Num) });
+parse_cli_args(["max_poa_option_depth", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { max_poa_option_depth = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -248,7 +247,7 @@ parse_cli_args([Arg|_Rest], _O) ->
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#config { port = Port });
-start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = MaxMiners, disable = Disable, enable = Enable }) ->
+start(#config{ benchmark = true, max_miners = MaxMiners, disable = Disable, enable = Enable }) ->
 	error_logger:logfile({open, generate_logfile_name()}),
 	error_logger:tty(false),
 	ar_meta_db:start(),
@@ -257,7 +256,7 @@ start(#config { benchmark = true, benchmark_algorithm = Algorithm, max_miners = 
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(mine, true),
 	ar_randomx_state:start(),
-	ar_benchmark:run(Algorithm);
+	ar_benchmark:run();
 start(
 	#config {
 		port = Port,
@@ -278,8 +277,7 @@ start(
 		pause = Pause,
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
-		start_hash_list = BHL,
-		auto_update = AutoUpdate,
+		start_from_block_index = StartFromBlockIndex,
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
@@ -292,7 +290,8 @@ start(
 		ipfs_pin = IPFSPin,
 		webhooks = WebhookConfigs,
 		max_connections = MaxConnections,
-		max_gateway_connections = MaxGatewayConnections
+		max_gateway_connections = MaxGatewayConnections,
+		max_poa_option_depth = MaxPOAOptionDepth
 	}) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -322,6 +321,7 @@ start(
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
+	ar_meta_db:put(max_poa_option_depth, MaxPOAOptionDepth),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -337,7 +337,6 @@ start(
 	%% Start other apps which we depend on.
 	inets:start(),
 	ar_tx_db:start(),
-	ar_key_db:start(),
 	ar_miner_log:start(),
 	{ok, _} = ar_arql_db_sup:start_link([{data_dir, DataDir}]),
 	ar_storage:start_update_used_space(),
@@ -393,13 +392,24 @@ start(
 		[
 			[
 				Peers,
-				case BHL of
-					undefined ->
+				case StartFromBlockIndex of
+					false ->
 						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
 						true -> not_joined
 						end;
-					_ ->
-						ar_storage:read_block_hash_list(BHL)
+					true ->
+						case ar_storage:read_block_index() of
+							{error, enoent} ->
+								io:format(
+									"~n~n\tBlock index file is not found. "
+									"If you want to start from a block index copied "
+									"from another node, place it in "
+									"<data_dir>/hash_lists/last_block_index.json~n~n"
+								),
+								erlang:halt();
+							BI ->
+								BI
+						end
 				end,
 				0,
 				MiningAddress,
@@ -423,14 +433,6 @@ start(
 		}
 	),
 	ar_node:add_peers(Node, Bridge),
-	%% Initialise the auto-updater, if enabled.
-	case AutoUpdate of
-		false ->
-			do_nothing;
-		AutoUpdateAddr ->
-			AutoUpdateNode = app_autoupdate:start(AutoUpdateAddr),
-			ar_node:add_peers(Node, AutoUpdateNode)
-	end,
 	%% Store enabled features.
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
@@ -472,6 +474,8 @@ start(
 			[]
 	end,
 	{ok, _} = ar_poller_sup:start_link(PollingArgs),
+	{ok, _} = ar_transition_sup:start_link([]),
+	{ok, _} = ar_downloader_sup:start_link([]),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case IPFSPin of
 		false -> ok;
@@ -515,7 +519,7 @@ maybe_node_postfix() ->
 warn_if_single_scheduler() ->
 	case erlang:system_info(schedulers_online) of
 		1 ->
-			console("WARNING: Running only one CPU core / Erlang scheduler may cause issues");
+			console("WARNING: Running only one CPU core / Erlang scheduler may cause issues.");
 		_ ->
 			ok
 	end.
@@ -559,6 +563,7 @@ tests() ->
 	tests(?CORE_TEST_MODS, #config {}).
 
 tests(Mods, Config) when is_list(Mods) ->
+	error_logger:tty(true),
 	start_for_tests(Config),
 	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose]) of
 		ok ->
@@ -578,10 +583,18 @@ start_for_tests(Config) ->
 		disable = [randomx_jit]
 	}).
 
-%% @doc Run the tests for a single module.
-tests(Mod) ->
-	ar_storage:ensure_directories(),
-	eunit:test({timeout, ?TEST_TIMEOUT, [Mod]}, [verbose]).
+%% @doc Run the tests for a set of module(s).
+%% Supports strings so that it can be trivially induced from a unix shell call.
+tests(Mod) when not is_list(Mod) -> tests([Mod]);
+tests(Args) ->
+	Mods =
+		lists:map(
+			fun(Mod) when is_atom(Mod) -> Mod;
+			   (Str) -> list_to_atom(Str)
+			end,
+			Args
+		),
+	tests(Mods, #config {}).
 
 %% @doc Run tests on the apps.
 test_apps() ->
@@ -696,11 +709,6 @@ scale_time(Time) ->
 -else.
 scale_time(Time) -> Time.
 -endif.
-
-%% @doc Get the unix timestamp (in seconds).
-timestamp() ->
-	{MegaSec, Sec, _MilliSec} = os:timestamp(),
-	(MegaSec * 1000000) + Sec.
 
 %% @doc Ensure that parsing of core command line options functions correctly.
 commandline_parser_test_() ->

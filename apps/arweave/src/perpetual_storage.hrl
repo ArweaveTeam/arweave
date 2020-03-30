@@ -55,3 +55,7 @@ end).
 
 %% @doc Mining reward as a proportion of tx cost.
 -define(MINING_REWARD_MULTIPLIER, 0.2).
+
+%% @doc How much harder it should be to mine each
+%% subsequent alternative POA option.
+-define(ALTERNATIVE_POA_DIFF_MULTIPLIER, 2).

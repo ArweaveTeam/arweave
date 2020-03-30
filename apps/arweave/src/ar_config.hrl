@@ -12,7 +12,6 @@
 %% Start options with default values.
 -record(config, {
 	benchmark = false,
-	benchmark_algorithm = not_set,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	init = false,
 	mine = false,
@@ -31,8 +30,7 @@
 	pause = true,
 	disk_space,
 	used_space = 0,
-	start_hash_list = undefined,
-	auto_update = ar_util:decode(?DEFAULT_UPDATE_ADDR),
+	start_from_block_index = false,
 	internal_api_secret = not_set,
 	enable = [],
 	disable = [],
@@ -45,7 +43,8 @@
 	ipfs_pin = false,
 	webhooks = [],
 	max_connections = 1024,
-	max_gateway_connections = 128
+	max_gateway_connections = 128,
+	max_poa_option_depth = 8
 }).
 
 -endif.

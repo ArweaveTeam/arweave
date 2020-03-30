@@ -79,7 +79,7 @@ tx_db_test() ->
 	?assertEqual(Expected, get_error_codes(BadTX#tx.id)),
 	%% Test good transaction
 	OrphanedTX2 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
-	SignedTX = ar_tx:sign(OrphanedTX2, Priv2, Pub2),
+	SignedTX = ar_tx:sign_v1(OrphanedTX2, Priv2, Pub2),
 	?assert(ar_tx:verify(SignedTX, 8, 1, B0#block.wallet_list, Timestamp)),
 	clear_error_codes(BadTX#tx.id),
 	clear_error_codes(SignedTX#tx.id),
