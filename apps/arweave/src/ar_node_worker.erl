@@ -771,12 +771,6 @@ recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) 
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
-	case NewB#block.height + 1 < ar_fork:height_2_0() of
-		true ->
-			ar_transition:update_block_index(BI);
-		_ ->
-			noop
-	end,
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => BI,

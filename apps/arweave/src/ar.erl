@@ -481,7 +481,6 @@ start(
 			[]
 	end,
 	{ok, _} = ar_poller_sup:start_link(PollingArgs),
-	{ok, _} = ar_transition_sup:start_link([]),
 	{ok, _} = ar_downloader_sup:start_link([]),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case IPFSPin of

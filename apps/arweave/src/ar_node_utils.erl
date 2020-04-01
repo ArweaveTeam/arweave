@@ -428,19 +428,7 @@ integrate_new_block(
 
 update_block_index(B, BI) ->
 	maybe_report_n_confirmations(B, BI),
-	Fork_2_0 = ar_fork:height_2_0(),
-	NewBI = case B#block.height + 1 of
-		Height when Height < Fork_2_0 ->
-			{ok, Entry} = ar_transition:transition_block(B, B#block.txs),
-			[Entry | BI];
-		Fork_2_0 ->
-			{ok, {BH, _, _} = Entry} = ar_transition:transition_block(B, B#block.txs),
-			ar_transition:update_block_index([Entry | BI]),
-			Checkpoint = ar_transition:get_checkpoint(BH),
-			Checkpoint;
-		_ ->
-			[{B#block.indep_hash, B#block.weave_size, B#block.tx_root} | BI]
-	end,
+	NewBI = [{B#block.indep_hash, B#block.weave_size, B#block.tx_root} | BI],
 	case B#block.height rem ?STORE_BLOCKS_BEHIND_CURRENT of
 		0 ->
 			spawn(fun() -> ar_storage:write_block_index(NewBI) end);

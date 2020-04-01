@@ -148,7 +148,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
 				_ ->
-					ar_transition:update_block_index(BI)
+					do_nothing
 			end,
 			Gossip =
 				ar_gossip:init(

@@ -109,10 +109,10 @@ mines_blocks_under_the_size_limit_test_() ->
 	].
 
 joins_network_successfully_test_() ->
-	test_on_fork(height_2_0, 10, fun() -> joins_network_successfully(10) end).
+	test_on_fork(height_2_0, 0, fun() -> joins_network_successfully() end).
 
 recovers_from_forks_test_() ->
-	test_on_fork(height_2_0, 10, fun() -> recovers_from_forks(7, 10) end).
+	test_on_fork(height_2_0, 0, fun() -> recovers_from_forks(7) end).
 
 accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Post the given transactions made from the given wallets to a node.
@@ -571,7 +571,7 @@ rejects_v2_txs_exceeding_mempool_limit() ->
 mines_format_2_txs_without_size_limit_test_() ->
 	test_on_fork(height_2_0, 0, fun mines_format_2_txs_without_size_limit/0).
 
-joins_network_successfully(ForkHeight) ->
+joins_network_successfully() ->
 	%% Start a node and mine ?MAX_TX_ANCHOR_DEPTH blocks, some of them
 	%% with transactions.
 	%%
@@ -592,40 +592,35 @@ joins_network_successfully(ForkHeight) ->
 	]),
 	{Slave, _} = slave_start(B0),
 	slave_call(ar_meta_db, put, [requests_per_minute_limit, 10000]),
-	{PreForkTXs, _} = lists:foldl(
+	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
-			TX = sign_v1_tx(Key, #{ last_tx => LastTX }),
+			{TX, AnchorType} = case rand:uniform(4) of
+				1 ->
+					{sign_v1_tx(Key, #{ last_tx => LastTX }), tx_anchor};
+				2 ->
+					{sign_v1_tx(Key,
+						#{
+							last_tx => get_tx_anchor(),
+							tags => [{<<"nonce">>, integer_to_binary(rand:uniform(100))}]
+						}
+					), block_anchor};
+				3 ->
+					{sign_tx(Key, #{ last_tx => LastTX }), tx_anchor};
+				4 ->
+					{sign_tx(Key,
+						#{
+							last_tx => get_tx_anchor(),
+							tags => [{<<"nonce">>, integer_to_binary(rand:uniform(100))}]
+						}
+					), block_anchor}
+			end,
 			assert_post_tx_to_slave(Slave, TX),
 			slave_mine(Slave),
 			assert_slave_wait_until_height(Slave, Height),
-			{TXs ++ [TX], TX#tx.id}
+			{TXs ++ [{TX, AnchorType}], TX#tx.id}
 		end,
 		{[], <<>>},
-		lists:seq(1, ForkHeight)
-	),
-	PostForkTXs = lists:foldl(
-		fun(Height, TXs) ->
-			BH = get_tx_anchor(),
-			NewTXs = lists:map(
-				fun(_) ->
-					TX = sign_tx(
-						Key,
-						#{
-							last_tx => BH,
-							tags => [{<<"nonce">>, integer_to_binary(rand:uniform(100))}]
-						}
-					),
-					assert_post_tx_to_slave(Slave, TX),
-					TX
-				end,
-				lists:seq(1, rand:uniform(5))
-			),
-			slave_mine(Slave),
-			assert_slave_wait_until_height(Slave, Height),
-			TXs ++ NewTXs
-		end,
-		[],
-		lists:seq(ForkHeight + 1, ?MAX_TX_ANCHOR_DEPTH)
+		lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)
 	),
 	Master = join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}),
 	BI = slave_call(ar_node, get_block_index, [Slave]),
@@ -637,11 +632,35 @@ joins_network_successfully(ForkHeight) ->
 	assert_post_tx_to_master(Master, TX2),
 	%% Expect transactions to be on master.
 	lists:foreach(
-		fun(TX) ->
+		fun({TX, _}) ->
 			{_, Confirmations} = get_tx_confirmations(master, TX#tx.id),
 			?assert(Confirmations > 0)
 		end,
-		PreForkTXs ++ PostForkTXs
+		TXs
+	),
+	lists:foreach(
+		fun({TX, AnchorType}) ->
+			forget_txs([TX]),
+			Reply = post_tx_to_master(Master, TX),
+			case AnchorType of
+				tx_anchor ->
+					?assertMatch({ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}}, Reply);
+				block_anchor ->
+					case lists:member(TX#tx.last_tx, lists:sublist(?BI_TO_BHL(BI), ?MAX_TX_ANCHOR_DEPTH)) of
+						true ->
+							?assertMatch(
+								{ok, {{<<"400">>, _}, _, <<"Transaction is already on the weave.">>, _, _}},
+								Reply
+							);
+						false ->
+							?assertMatch(
+								{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}},
+								Reply
+							)
+					end	
+			end
+		end,
+		TXs
 	),
 	disconnect_from_slave(),
 	TX3 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
@@ -659,10 +678,9 @@ joins_network_successfully(ForkHeight) ->
 	?assertEqual([TX4#tx.id], (ar_storage:read_block(hd(BI3), BI3))#block.txs),
 	?assertEqual([TX3#tx.id], (ar_storage:read_block(hd(BI2), BI2))#block.txs).
 
-recovers_from_forks(ForkHeight, ForkHeight_2_0) ->
+recovers_from_forks(ForkHeight) ->
 	%% Mine a number of blocks with transactions on slave and master in sync,
-	%% then mine another bunch independently. Place the 2.0 fork in the middle
-	%% of the extra bulk.
+	%% then mine another bunch independently.
 	%%
 	%% Mine an extra block on slave to make master fork recover to it.
 	%% Expect the fork recovery to be successful.
@@ -700,10 +718,10 @@ recovers_from_forks(ForkHeight, ForkHeight_2_0) ->
 	SlavePostForkTXs = lists:foldl(
 		fun(Height, TXs) ->
 			UnsignedTX = #{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] },
-			TX = case Height of
-				H when H > ForkHeight_2_0 ->
+			TX = case rand:uniform(2) of
+				1 ->
 					sign_tx(Key, UnsignedTX);
-				_ ->
+				2 ->
 					sign_v1_tx(Key, UnsignedTX)
 			end,
 			assert_post_tx_to_slave(Slave, TX),
@@ -713,17 +731,17 @@ recovers_from_forks(ForkHeight, ForkHeight_2_0) ->
 			TXs ++ [TX]
 		end,
 		[],
-		lists:seq(ForkHeight + 1, ForkHeight_2_0 + 2)
+		lists:seq(ForkHeight + 1, 10)
 	),
 	?assertEqual(ForkHeight, length(ar_node:get_blocks(Master)) - 1),
 	?assertEqual([], ar_node:get_pending_txs(Master)),
 	MasterPostForkTXs = lists:foldl(
 		fun(Height, TXs) ->
 			UnsignedTX = #{ last_tx => get_tx_anchor(master), tags => [{<<"nonce">>, random_nonce()}] },
-			TX = case Height of
-				H when H > ForkHeight_2_0 ->
+			TX = case rand:uniform(2) of
+				1 ->
 					sign_tx(master, Key, UnsignedTX);
-				_ ->
+				2 ->
 					sign_v1_tx(master, Key, UnsignedTX)
 			end,
 			assert_post_tx_to_master(Master, TX),
@@ -733,15 +751,15 @@ recovers_from_forks(ForkHeight, ForkHeight_2_0) ->
 			TXs ++ [TX]
 		end,
 		[],
-		lists:seq(ForkHeight + 1, ForkHeight_2_0 + 1)
+		lists:seq(ForkHeight + 1, 9)
 	),
 	connect_to_slave(),
 	TX2 = sign_tx(Key, #{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }),
 	assert_post_tx_to_slave(Slave, TX2),
 	assert_wait_until_receives_txs(Master, [TX2]),
 	slave_mine(Slave),
-	assert_slave_wait_until_height(Slave, ForkHeight_2_0 + 3),
-	wait_until_height(Master, ForkHeight_2_0 + 3),
+	assert_slave_wait_until_height(Slave, 11),
+	wait_until_height(Master, 11),
 	forget_txs(
 		PreForkTXs ++
 		MasterPostForkTXs ++
