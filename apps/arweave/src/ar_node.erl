@@ -628,8 +628,8 @@ handle(_SPid, {cancel_tx, TXID, Sig}) ->
 	{task, {cancel_tx, TXID, Sig}};
 handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
-handle(_SPid, {new_block, Peer, Height, NewB, BDS, Recall}) ->
-	{task, {process_new_block, Peer, Height, NewB, BDS, Recall}};
+handle(_SPid, {new_block, Peer, Height, NewB, BDS}) ->
+	{task, {process_new_block, Peer, Height, NewB, BDS}};
 handle(_SPid, {replace_block_list, Blocks}) ->
 	{task, {replace_block_list, Blocks}};
 handle(_SPid, {set_delay, MaxDelay}) ->

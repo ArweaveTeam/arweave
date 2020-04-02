@@ -223,35 +223,6 @@ apply_next_block(State, NextB) ->
 apply_next_block(State, NextB, B) ->
 	#state {
 		recovered_block_index = BI,
-		peers = Peers
-	} = State,
-	case NextB#block.height >= ar_fork:height_2_0() of
-		true ->
-			apply_next_block(State, NextB, B, no_recall_block);
-		false ->
-			RecallH = case B#block.height of
-				0 ->
-					ar_util:get_recall_hash(B, ar_weave:generate_block_index([B]));
-				_ ->
-					ar_util:get_recall_hash(B, BI)
-			end,
-			case ar_http_iface_client:get_block(Peers, RecallH, BI) of
-				RecallB when ?IS_BLOCK(RecallB) ->
-					apply_next_block(State, NextB, B, RecallB);
-				_ ->
-					ar:err(
-						[
-							{event, fork_recovery_failed},
-							{reason, failed_to_fetch_recall_block},
-							{recall_block, ar_util:encode(RecallH)}
-						]
-					)
-			end
-	end.
-
-apply_next_block(State, NextB, B, Recall) ->
-	#state {
-		recovered_block_index = BI,
 		recovered_block_txs_pairs = BlockTXPairs,
 		parent_pid = ParentPID,
 		target_hashes_to_go = [_ | NewTargetHashesToGo],
@@ -266,7 +237,6 @@ apply_next_block(State, NextB, B, Recall) ->
 			},
 			TXs,
 			B,
-			Recall,
 			BlockTXPairs
 		)
 	of
@@ -309,17 +279,12 @@ apply_next_block(State, NextB, B, Recall) ->
 			ar_storage:write_full_block(NextB),
 			NewBI = ar_node_utils:update_block_index(NextB, BI),
 			NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NextB, BlockTXPairs),
-			case NextB#block.height >= ar_fork:height_2_0() of
-				true ->
-					lists:foreach(
-						fun(TX) ->
-							ar_downloader:enqueue_random({tx_data, TX})
-						end,
-						NextB#block.txs
-					);
-				false ->
-					noop
-			end,
+			lists:foreach(
+				fun(TX) ->
+					ar_downloader:enqueue_random({tx_data, TX})
+				end,
+				NextB#block.txs
+			),
 			case ar_meta_db:get(partial_fork_recovery) of
 				true ->
 					ar:info(
@@ -344,13 +309,13 @@ apply_next_block(State, NextB, B, Recall) ->
 
 %% @doc Validate a new block (NextB) against the current block (B).
 %% Returns ok | {error, invalid_block} | {error, tx_replay}.
-validate(BI, NextB, TXs, B, RecallB, BlockTXPairs) ->
+validate(BI, NextB, TXs, B, BlockTXPairs) ->
 	{FinderReward, _} =
 		ar_node_utils:calculate_reward_pool(
 			B#block.reward_pool,
 			TXs,
 			NextB#block.reward_addr,
-			RecallB,
+			no_recall,
 			NextB#block.weave_size,
 			NextB#block.height,
 			NextB#block.diff,
@@ -368,10 +333,7 @@ validate(BI, NextB, TXs, B, RecallB, BlockTXPairs) ->
 		WalletList,
 		NextB,
 		TXs,
-		B,
-		RecallB,
-		NextB#block.reward_addr,
-		NextB#block.tags
+		B
 	),
 	case BlockValid of
 		{invalid, _} ->

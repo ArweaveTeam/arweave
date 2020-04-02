@@ -9,7 +9,6 @@
 -export([parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_block_index/2, hash_from_block_index/2]).
--export([get_recall_hash/2, get_recall_hash/3]).
 -export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
 -export([get_hash/1, get_head_block/1]).
 -export([genesis_wallets/0]).
@@ -19,6 +18,9 @@
 -export([do_until/3]).
 -export([index_of/2]).
 -export([block_index_entry_from_block/1]).
+
+%% NOT used. Exported for the historical record.
+-export([get_recall_hash/2, get_recall_hash/3]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").

@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/4, send_new_tx/2, get_block/3]).
+-export([send_new_block/3, send_new_tx/2, get_block/3]).
 -export([get_block_shadow/2]).
 -export([get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2]).
 -export([add_peer/1]).
@@ -60,7 +60,7 @@ has_tx(Peer, ID) ->
 
 
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, NewB, BDS, Recall) ->
+send_new_block(Peer, NewB, BDS) ->
 	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
@@ -78,17 +78,7 @@ send_new_block(Peer, NewB, BDS, Recall) ->
 		%% running the old version of the P2P port feature.
 		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
 		{<<"block_data_segment">>, ar_util:encode(BDS)}
-	] ++
-	case Recall of
-		{RecallIndepHash, RecallSize, Key, Nonce} ->
-			[
-				{<<"recall_block">>, ar_util:encode(RecallIndepHash)},
-				{<<"recall_size">>, RecallSize},
-				{<<"key">>, ar_util:encode(Key)},
-				{<<"nonce">>, ar_util:encode(Nonce)}
-			];
-		_ -> []
-	end,
+	],
 	ar_httpc:request(
 		<<"POST">>,
 		Peer,
@@ -232,11 +222,7 @@ get_block_index(Peer) ->
 			"/hash_list",
 			p2p_headers()
 		),
-	Fork_2_0 = ar_fork:height_2_0(),
-	case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)) of
-		BI = [{_H, _WS, _TXRoot} | _] -> BI;
-		Hashes when length(Hashes) - 1 < Fork_2_0 -> [{H, not_set, not_set} || H <- Hashes]
-	end.
+	ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)).
 
 get_block_index(Peer, Hash) ->
 	Response =

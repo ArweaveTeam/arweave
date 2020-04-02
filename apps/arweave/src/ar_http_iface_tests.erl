@@ -471,11 +471,7 @@ add_external_block_test_() ->
 		[BH2 | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
 		BI = ar_node:get_block_index(Node2),
-		send_new_block(
-			{127, 0, 0, 1, 1984},
-			ar_storage:read_block(BH2, BI),
-			BI
-		),
+		send_new_block({127, 0, 0, 1, 1984}, ar_storage:read_block(BH2, BI)),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
 			fun() ->
@@ -512,48 +508,40 @@ add_external_block_with_bad_bds_test_() ->
 		{BI0, {RemoteNode, RemotePeer}, LocalNode} = Setup(),
 		BI1 = mine_one_block(LocalNode, BI0),
 		?assertMatch(BI0, ar_node:get_blocks(RemoteNode)),
-		{_, RecallB0} = BlocksFromStorage(BI0),
 		{B1, _} = BlocksFromStorage(BI1),
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
-			send_new_block(
-				RemotePeer,
-				B1,
-				BI1
-			)
+			send_new_block(RemotePeer, B1)
 		),
 		%% Try to post the same block again
 		?assertMatch(
 			{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
-			send_new_block(RemotePeer, B1, BI1)
+			send_new_block(RemotePeer, B1)
 		),
 		%% Try to post the same block again, but with a different data segment
 		?assertMatch(
 			{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
-			send_new_block(
+			ar_http_iface_client:send_new_block(
 				RemotePeer,
 				B1,
-				RecallB0,
 				add_rand_suffix(<<"other-block-data-segment">>)
 			)
 		),
 		%% Try to post an invalid data segment. This triggers a ban in ar_blacklist_middleware.
 		?assertMatch(
 			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
-			send_new_block(
+			ar_http_iface_client:send_new_block(
 				RemotePeer,
 				B1#block{indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>>},
-				RecallB0,
 				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
 		),
 		%% Verify the IP address of self is banned in ar_blacklist_middleware.
 		?assertMatch(
 			{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
-			send_new_block(
+			ar_http_iface_client:send_new_block(
 				RemotePeer,
 				B1#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)},
-				RecallB0,
 				add_rand_suffix(<<"bad-block-data-segment">>)
 			)
 		),
@@ -587,8 +575,7 @@ add_external_block_with_invalid_timestamp_test() ->
 			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = TooFarFutureTimestamp
-			},
-			BI1
+			}
 		)
 	),
 	%% Expect the timestamp from the future within the tolerance interval to be accepted
@@ -600,8 +587,7 @@ add_external_block_with_invalid_timestamp_test() ->
 			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = OkFutureTimestamp
-			},
-			BI1
+			}
 		)
 	),
 	%% Expect the timestamp far from the past to be rejected
@@ -619,8 +605,7 @@ add_external_block_with_invalid_timestamp_test() ->
 			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = TooFarPastTimestamp
-			},
-			BI1
+			}
 		)
 	),
 	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
@@ -632,8 +617,7 @@ add_external_block_with_invalid_timestamp_test() ->
 			B1#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = OkPastTimestamp
-			},
-			BI1
+			}
 		)
 	).
 
@@ -673,11 +657,7 @@ add_external_block_with_tx_test_() ->
 		BI = ar_node:get_block_index(Node2),
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
-			send_new_block(
-				{127, 0, 0, 1, 1984},
-				ar_storage:read_block(BTest, BI),
-				BI
-			)
+			send_new_block({127, 0, 0, 1, 1984}, ar_storage:read_block(BTest, BI))
 		),
 		% Wait for test block and assert that it contains transaction.
 		?assert(ar_util:do_until(
@@ -728,11 +708,7 @@ fork_recover_by_http_test() ->
 	%% Send only the latest block to Node1 and let it fork recover up to it.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		send_new_block(
-			{127, 0, 0, 1, 1984},
-			ar_storage:read_block(hd(FullBI), FullBI),
-			FullBI
-		)
+		send_new_block({127, 0, 0, 1, 1984}, ar_storage:read_block(hd(FullBI), FullBI))
 	),
 	ar_test_node:wait_until_block_block_index(Node1, FullBI).
 
@@ -1272,14 +1248,5 @@ mine_one_block(Node, PreMineBI) ->
 	?assertMatch([_ | PreMineBI], PostMineBI),
 	PostMineBI.
 
-send_new_block(Peer, B, BI) ->
-	POA = ar_poa:generate(tl(BI)),
-	send_new_block(Peer, B, POA, ar_block:generate_block_data_segment(B)).
-
-send_new_block(Peer, B, POA, BDS) ->
-	ar_http_iface_client:send_new_block(
-		Peer,
-		B,
-		BDS,
-		POA
-	).
+send_new_block(Peer, B) ->
+	ar_http_iface_client:send_new_block(Peer, B, ar_block:generate_block_data_segment(B)).
