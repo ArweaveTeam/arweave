@@ -160,7 +160,6 @@ add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA,
 		NewHeight
 	),
 	MR = ar_block:compute_hash_list_merkle(CurrentB, BI),
-	Fork_2_0 = ar_fork:height_2_0(),
 	NewB =
 		#block {
 			nonce = Nonce,
@@ -185,33 +184,14 @@ add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA,
 			reward_pool = RewardPool,
 			weave_size = CurrentB#block.weave_size + BlockSize,
 			block_size = BlockSize,
-			poa =
-				case NewHeight >= Fork_2_0 of
-					true -> POA;
-					false -> #poa{}
-				end
+			poa = POA
 		},
-	Hash = case NewHeight >= Fork_2_0 of
-		true ->
-			hash(
-				ar_block:generate_block_data_segment(NewB),
-				NewB#block.nonce,
-				NewHeight
-			);
-		false ->
-			hash(
-				ar_block:generate_block_data_segment_pre_2_0(
-					CurrentB,
-					POA,
-					RawTXs,
-					RewardAddr,
-					Timestamp,
-					Tags
-				),
-				Nonce,
-				NewHeight
-			)
-	end,
+	Hash =
+		hash(
+			ar_block:generate_block_data_segment(NewB),
+			NewB#block.nonce,
+			NewHeight
+		),
 	[NewB#block { indep_hash = indep_hash(NewB#block { hash = Hash }), hash = Hash } | BI].
 
 %% @doc Take a complete block list and return a list of block hashes.

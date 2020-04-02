@@ -224,7 +224,7 @@ get_block_by_hash_test() ->
 		ar_http_iface_client:get_block(
 			{127, 0, 0, 1, 1984},
 			B0#block.indep_hash,
-			[{B0#block.indep_hash, not_set, not_set}]
+			[{B0#block.indep_hash, 0, <<>>}]
 		),
 	?assertEqual(B0, B1).
 
@@ -239,7 +239,7 @@ get_block_by_height_test() ->
 		ar_http_iface_client:get_block(
 			{127, 0, 0, 1, 1984},
 			0,
-			[{B0#block.indep_hash, not_set, not_set}]
+			[{B0#block.indep_hash, 0, <<>>}]
 		),
 	?assertEqual(B0, B1).
 
@@ -495,7 +495,7 @@ add_external_block_with_bad_bds_test_() ->
 			ar_storage:clear(),
 			ar_blacklist_middleware:reset(),
 			[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
-			BI0 = [{B0#block.indep_hash, not_set, not_set}],
+			BI0 = [{B0#block.indep_hash, 0, <<>>}],
 			NodeWithBridge = ar_node:start([], [B0]),
 			Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
 			OtherNode = ar_node:start([], [B0]),
@@ -565,7 +565,7 @@ add_external_block_with_invalid_timestamp_test() ->
 		ar_storage:clear(),
 		ar_blacklist_middleware:reset(),
 		[B0] = ar_weave:init([]),
-		BI0 = [{B0#block.indep_hash, not_set, not_set}],
+		BI0 = [{B0#block.indep_hash, 0, <<>>}],
 		NodeWithBridge = ar_node:start([], [B0]),
 		Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
 		OtherNode = ar_node:start([], [B0]),
@@ -723,7 +723,7 @@ fork_recover_by_http_test() ->
 	Node2 = ar_node:start([], [B0]),
 	timer:sleep(500),
 	ar_http_iface_server:reregister(Node1),
-	BI0 = [{B0#block.indep_hash, not_set, not_set}],
+	BI0 = [{B0#block.indep_hash, 0, <<>>}],
 	FullBI = mine_n_blocks(Node2, BI0, 10),
 	%% Send only the latest block to Node1 and let it fork recover up to it.
 	?assertMatch(
@@ -1273,42 +1273,13 @@ mine_one_block(Node, PreMineBI) ->
 	PostMineBI.
 
 send_new_block(Peer, B, BI) ->
-	POA = case B#block.height >= ar_fork:height_2_0() of
-		true ->
-			ar_poa:generate(tl(BI));
-		false ->
-			ar_node_utils:find_recall_block(tl(BI))
-	end,
-	send_new_block(Peer, B, POA, generate_block_data_segment(B, POA, BI)).
+	POA = ar_poa:generate(tl(BI)),
+	send_new_block(Peer, B, POA, ar_block:generate_block_data_segment(B)).
 
 send_new_block(Peer, B, POA, BDS) ->
 	ar_http_iface_client:send_new_block(
 		Peer,
 		B,
 		BDS,
-		case is_record(POA, poa) of
-			true -> POA;
-			false ->
-				{
-					POA#block.indep_hash,
-					POA#block.block_size,
-					<<>>,
-					<<>>
-				}
-		end
+		POA
 	).
-
-generate_block_data_segment(B, POA, BI) ->
-	case B#block.height >= ar_fork:height_2_0() of
-		true ->
-			ar_block:generate_block_data_segment(B);
-		false ->
-			ar_block:generate_block_data_segment_pre_2_0(
-				ar_storage:read_block(B#block.previous_block, BI),
-				POA,
-				lists:map(fun ar_storage:read_tx/1, B#block.txs),
-				B#block.reward_addr,
-				B#block.timestamp,
-				B#block.tags
-			)
-	end.

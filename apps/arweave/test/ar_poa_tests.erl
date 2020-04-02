@@ -3,8 +3,6 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_fork, [test_on_fork/3]).
-
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0]).
 -import(ar_test_node, [assert_post_tx_to_slave/2]).
 -import(ar_test_node, [slave_mine/1, slave_call/3]).
@@ -12,7 +10,7 @@
 -import(ar_test_node, [get_tx_anchor/0, sign_tx/2]).
 
 v1_transactions_after_2_0_test_() ->
-	test_on_fork(height_2_0, 0, fun test_v1_transactions_after_2_0/0).
+	{timeout, 60, fun test_v1_transactions_after_2_0/0}.
 
 test_v1_transactions_after_2_0() ->
 	Key = {_, Pub1} = ar_wallet:new(),
@@ -68,7 +66,7 @@ test_v1_transactions_after_2_0() ->
 	).
 
 v2_transactions_after_2_0_test_() ->
-	test_on_fork(height_2_0, 0, fun test_v2_transactions_after_2_0/0).
+	{timeout, 60, fun test_v2_transactions_after_2_0/0}.
 
 test_v2_transactions_after_2_0() ->
 	Key = {_, Pub1} = ar_wallet:new(),
@@ -124,7 +122,7 @@ test_v2_transactions_after_2_0() ->
 	).
 
 recall_byte_on_the_border_test_() ->
-	test_on_fork(height_2_0, 0, fun test_recall_byte_on_the_border/0).
+	{timeout, 60, fun test_recall_byte_on_the_border/0}.
 
 test_recall_byte_on_the_border() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -164,7 +162,7 @@ test_recall_byte_on_the_border() ->
 	).
 
 over_reported_tx_size_test_() ->
-	test_on_fork(height_2_0, 0, fun test_over_reported_tx_size/0).
+	{timeout, 60, fun test_over_reported_tx_size/0}.
 
 test_over_reported_tx_size() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -204,7 +202,7 @@ test_over_reported_tx_size() ->
 	).
 
 under_reported_tx_size_test_() ->
-	test_on_fork(height_2_0, 0, fun test_under_reported_tx_size/0).
+	{timeout, 60, fun test_under_reported_tx_size/0}.
 
 test_under_reported_tx_size() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -246,7 +244,7 @@ test_under_reported_tx_size() ->
 
 
 ignores_transactions_with_invalid_data_root_test_() ->
-	test_on_fork(height_2_0, 0, fun test_ignores_transactions_with_invalid_data_root/0).
+	{timeout, 60, fun test_ignores_transactions_with_invalid_data_root/0}.
 
 test_ignores_transactions_with_invalid_data_root() ->
 	Key = {_, Pub} = ar_wallet:new(),

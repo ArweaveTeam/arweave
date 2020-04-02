@@ -503,45 +503,40 @@ sign_tx_test() ->
 	Diff = 1,
 	Timestamp = os:system_time(seconds),
 	WalletList = [{ar_wallet:to_address(Pub), ?AR(2000000), <<>>}],
-	SignedTXPreFork_2_0 = sign_v1(NewTX, Priv, Pub),
+	SignedV1TX = sign_v1(NewTX, Priv, Pub),
 	SignedTX = sign(generate_chunk_tree(NewTX#tx{ format = 2 }), Priv, Pub),
-	?assert(verify(SignedTXPreFork_2_0, Diff, 0, WalletList, Timestamp)),
-	?assert(not verify(SignedTX, Diff, 0, WalletList, Timestamp)),
-	?assert(verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),
-	?assert(verify(SignedTX, Diff, ar_fork:height_2_0(), WalletList, Timestamp)),
-	?assert(verify(SignedTXPreFork_2_0, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)),
-	?assert(verify(SignedTX, Diff, ar_fork:height_2_0() + 1, WalletList, Timestamp)).
+	?assert(verify(SignedV1TX, Diff, 0, WalletList, Timestamp)),
+	?assert(verify(SignedTX, Diff, 0, WalletList, Timestamp)),
+	?assert(verify(SignedV1TX, Diff, 1, WalletList, Timestamp)),
+	?assert(verify(SignedTX, Diff, 1, WalletList, Timestamp)).
 
 sign_and_verify_chunked_test_() ->
-	ar_test_fork:test_on_fork(
-		height_2_0,
-		0,
-		fun() ->
-			TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
-			{Priv, Pub} = ar_wallet:new(),
-			UnsignedTX =
-				generate_chunk_tree(
-					#tx {
-						format = 2,
-						data = TXData,
-						data_size = byte_size(TXData),
-						reward = ?AR(100)
-					}
-				),
-			SignedTX = sign(UnsignedTX#tx { data = <<>> }, Priv, Pub),
-			Diff = 1,
-			Height = 0,
-			Timestamp = os:system_time(seconds),
-			?assert(
-				verify(
-					SignedTX,
-					Diff,
-					Height,
-					[{ar_wallet:to_address(Pub), ?AR(100), <<>>}],
-					Timestamp
-				)
-			)
-		end
+	{timeout, 60, fun test_sign_and_verify_chunked/0}.
+
+test_sign_and_verify_chunked() ->
+	TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
+	{Priv, Pub} = ar_wallet:new(),
+	UnsignedTX =
+		generate_chunk_tree(
+			#tx {
+				format = 2,
+				data = TXData,
+				data_size = byte_size(TXData),
+				reward = ?AR(100)
+			}
+		),
+	SignedTX = sign(UnsignedTX#tx { data = <<>> }, Priv, Pub),
+	Diff = 1,
+	Height = 0,
+	Timestamp = os:system_time(seconds),
+	?assert(
+		verify(
+			SignedTX,
+			Diff,
+			Height,
+			[{ar_wallet:to_address(Pub), ?AR(100), <<>>}],
+			Timestamp
+		)
 	).
 
 %% @doc Ensure that a forged transaction does not pass verification.

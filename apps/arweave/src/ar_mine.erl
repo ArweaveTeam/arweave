@@ -726,47 +726,37 @@ randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test_() ->
-	ar_test_fork:test_on_fork(
-		height_2_0,
-		0,
-		fun() ->
-			[B0] = ar_weave:init([]),
-			ar_node:start([], [B0]),
-			[B1 | _] = ar_weave:add([B0], []),
-			start(B1, B1#block.poa, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0, <<>>}]),
-			assert_mine_output(B1, B1#block.poa, [])
-		end
-	).
+	{timeout, 60, fun test_basic/0}.
 
-basic_pre_fork_2_0_test() ->
+test_basic() ->
 	[B0] = ar_weave:init([]),
 	ar_node:start([], [B0]),
 	[B1 | _] = ar_weave:add([B0], []),
-	RecallB = B0,
-	start(B1, RecallB, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0, <<>>}]),
-	assert_mine_output(B1, RecallB, []).
+	start(B1, B1#block.poa, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0, <<>>}]),
+	assert_mine_output(B1, B1#block.poa, []).
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
 timestamp_refresh_test_() ->
-	{timeout, 20, fun() ->
-		%% Start mining with a high enough difficulty, so that the block
-		%% timestamp gets refreshed at least once. Since we might be unlucky
-		%% and find the block too fast, we retry until it succeeds.
-		[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(20)),
-		B = B0,
-		RecallB = B0,
-		Run = fun(_) ->
-			TXs = [],
-			StartTime = os:system_time(seconds),
-			start(B, RecallB, TXs, unclaimed, [], self(), [], []),
-			{_, MinedTimestamp} = assert_mine_output(B, RecallB, TXs),
-			MinedTimestamp > StartTime + ?MINING_TIMESTAMP_REFRESH_INTERVAL
-		end,
-		?assert(lists:any(Run, lists:seq(1, 20)))
-	end}.
+	{timeout, 20, fun test_timestamp_refresh/0}.
+
+test_timestamp_refresh() ->
+	%% Start mining with a high enough difficulty, so that the block
+	%% timestamp gets refreshed at least once. Since we might be unlucky
+	%% and find the block too fast, we retry until it succeeds.
+	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(20)),
+	B = B0,
+	Run = fun(_) ->
+		TXs = [],
+		StartTime = os:system_time(seconds),
+		POA = #poa{},
+		start(B, POA, TXs, unclaimed, [], self(), [], []),
+		{_, MinedTimestamp} = assert_mine_output(B, POA, TXs),
+		MinedTimestamp > StartTime + ?MINING_TIMESTAMP_REFRESH_INTERVAL
+	end,
+	?assert(lists:any(Run, lists:seq(1, 20))).
 
 excludes_no_longer_valid_txs_test_() ->
-	ar_test_fork:test_on_fork(height_2_0, 0, fun test_excludes_no_longer_valid_txs/0).
+	{timeout, 60, fun test_excludes_no_longer_valid_txs/0}.
 
 test_excludes_no_longer_valid_txs() ->
 	%% Start mining with a high enough difficulty, so that the block
@@ -820,9 +810,8 @@ start_stop_test() ->
 	ar_node:start([], B0),
 	B1 = ar_weave:add(B0, []),
 	B = hd(B1),
-	RecallB = hd(B0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
-	PID = start(B#block{ diff = HighDiff }, RecallB, [], unclaimed, [], self(), [], []),
+	PID = start(B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], []),
 	timer:sleep(500),
 	assert_alive(PID),
 	stop(PID),
@@ -847,19 +836,7 @@ assert_mine_output(B, POA, TXs) ->
 		{work_complete, BH, NewB, MinedTXs, BDS, POA, _} ->
 			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
-			case NewB#block.height >= ar_fork:height_2_0() of
-				true ->
-					BDS = ar_block:generate_block_data_segment(NewB);
-				false ->
-					BDS = ar_block:generate_block_data_segment_pre_2_0(
-						B,
-						POA,
-						TXs,
-						<<>>,
-						NewB#block.timestamp,
-						[]
-					)
-			end,
+			BDS = ar_block:generate_block_data_segment(NewB),
 			?assertEqual(
 				ar_weave:hash(BDS, NewB#block.nonce, B#block.height),
 				NewB#block.hash

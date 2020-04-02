@@ -6,7 +6,7 @@
 
 %% These functions serve as mocks and are exported to overcome the meck's
 %% issue with picking them up after the module is rebuilt (e.g. during debugging).
--export([zero_height/0, small_inflation/1, big_inflation/1, calculate_reward_pool_huge_weave_size/8]).
+-export([small_inflation/1, big_inflation/1, calculate_reward_pool_huge_weave_size/8]).
 
 -import(ar_difficulty, [twice_smaller_diff/1]).
 -import(ar_tx_perpetual_storage, [get_cost_per_year_at_datetime/1]).
@@ -27,7 +27,6 @@ updates_pool_and_assigns_rewards_correctly_before_burden_test_() ->
 	%% and setting significant inflation rewards.
 	test_with_mocked_functions(
 		[
-			{ar_fork, height_2_0, fun() -> 0 end},
 			{ar_inflation, calculate, fun big_inflation/1}
 		],
 		fun updates_pool_and_assigns_rewards_correctly_before_burden/0
@@ -39,7 +38,6 @@ updates_pool_and_assigns_rewards_correctly_after_burden_test_() ->
 	%% to always accept a huge weave size.
 	test_with_mocked_functions(
 		[
-			{ar_fork, height_2_0, fun ar_tx_perpetual_storage_tests:zero_height/0},
 			{ar_inflation, calculate, fun ar_tx_perpetual_storage_tests:small_inflation/1},
 			{ar_node_utils, calculate_reward_pool,
 				fun ar_tx_perpetual_storage_tests:calculate_reward_pool_huge_weave_size/8}
@@ -80,9 +78,6 @@ get_cost_per_year_at_datetime_is_monotone_test() ->
 		InitialDT,
 		FollowingDTs
 	).
-
-zero_height() ->
-	0.
 
 small_inflation(_) ->
 	1.

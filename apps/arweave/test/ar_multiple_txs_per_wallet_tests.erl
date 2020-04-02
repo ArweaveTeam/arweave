@@ -17,8 +17,6 @@
 -import(ar_test_node, [get_tx_confirmations/2]).
 -import(ar_test_node, [disconnect_from_slave/0]).
 
--import(ar_test_fork, [test_on_fork/3]).
-
 accepts_gossips_and_mines_test_() ->
 	PrepareTestFor = fun(BuildTXSetFun) ->
 		fun() ->
@@ -109,10 +107,10 @@ mines_blocks_under_the_size_limit_test_() ->
 	].
 
 joins_network_successfully_test_() ->
-	test_on_fork(height_2_0, 0, fun() -> joins_network_successfully() end).
+	{timeout, 240, fun joins_network_successfully/0}.
 
 recovers_from_forks_test_() ->
-	test_on_fork(height_2_0, 0, fun() -> recovers_from_forks(7) end).
+	{timeout, 120, fun() -> recovers_from_forks(7) end}.
 
 accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Post the given transactions made from the given wallets to a node.
@@ -535,7 +533,7 @@ rejects_v1_txs_exceeding_mempool_limit_test() ->
 		post_tx_to_slave(Slave, lists:last(TXs)).
 
 rejects_v2_txs_exceeding_mempool_limit_test_() ->
-	test_on_fork(height_2_0, 0, fun rejects_v2_txs_exceeding_mempool_limit/0).
+	{timeout, 60, fun rejects_v2_txs_exceeding_mempool_limit/0}.
 
 rejects_v2_txs_exceeding_mempool_limit() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -569,7 +567,7 @@ rejects_v2_txs_exceeding_mempool_limit() ->
 	assert_post_tx_to_slave(Slave, (lists:last(TXs))#tx{ data = <<>> }).
 
 mines_format_2_txs_without_size_limit_test_() ->
-	test_on_fork(height_2_0, 0, fun mines_format_2_txs_without_size_limit/0).
+	{timeout, 60, fun mines_format_2_txs_without_size_limit/0}.
 
 joins_network_successfully() ->
 	%% Start a node and mine ?MAX_TX_ANCHOR_DEPTH blocks, some of them
