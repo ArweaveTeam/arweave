@@ -74,12 +74,6 @@ parse_options([{<<"no_auto_join">>, false} | Rest], Config) ->
 	parse_options(Rest, Config);
 parse_options([{<<"no_auto_join">>, Opt} | _], _) ->
 	{error, {bad_type, no_auto_join, boolean}, Opt};
-parse_options([{<<"init">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config { init = true });
-parse_options([{<<"init">>, false} | Rest], Config) ->
-	parse_options(Rest, Config);
-parse_options([{<<"init">>, Opt} | _], _) ->
-	{error, {bad_type, init, boolean}, Opt};
 parse_options([{<<"diff">>, Diff} | Rest], Config) when is_integer(Diff) ->
 	parse_options(Rest, Config#config { diff = Diff });
 parse_options([{<<"diff">>, Diff} | _], _) ->

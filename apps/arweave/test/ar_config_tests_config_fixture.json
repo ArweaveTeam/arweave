@@ -16,7 +16,6 @@
   "polling": true,
   "clean": true,
   "no_auto_join": true,
-  "init": true,
   "diff": 42,
   "mining_addr": "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
   "max_miners": 43,

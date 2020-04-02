@@ -13,11 +13,16 @@
 
 %%% Utilities for manipulating the ARK weave datastructure.
 
-%% @doc Start a new block list. Optionally takes a list of wallet values
-%% for the genesis block.
--ifdef(DEBUG).
+%% @doc Start a new weave. Optionally takes a list of wallets
+%% for the genesis block. The function was used to start the original weave.
+%% Also, it is used in tests. Currently it's not possible to start a new weave
+%% from the command line. The feature was dropped since it requires extra effort
+%% to reset the fork heights and update the inflation rewards issuance, to make the
+%% new weaves created this way function without the issues solved by the hard forks
+%% in the original weave. The genesis transactions of the original weave
+%% are defined in read_v1_genesis_txs/0.
 init() -> init(ar_util:genesis_wallets()).
-init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty(), 0).
+init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty()).
 init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
 	ar_randomx_state:reset(),
@@ -39,33 +44,6 @@ init(WalletList, StartingDiff, RewardPool) ->
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
--else.
-init() -> init(ar_util:genesis_wallets()).
-init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty()).
-init(WalletList, Diff) -> init(WalletList, Diff, 0).
-init(WalletList, StartingDiff, RewardPool) ->
-	ar_randomx_state:reset(),
-	% Generate and dispatch a new data transaction.
-	TXs = read_v1_genesis_txs(),
-	B0 =
-		#block{
-			height = 0,
-			hash = crypto:strong_rand_bytes(32),
-			nonce = crypto:strong_rand_bytes(32),
-			txs = TXs,
-			wallet_list = WalletList,
-			wallet_list_hash = ar_block:hash_wallet_list(0, unclaimed, WalletList),
-			hash_list = [],
-			diff = StartingDiff,
-			weave_size = 0,
-			block_size = 0,
-			reward_pool = RewardPool,
-			timestamp = os:system_time(seconds),
-			poa = #poa{}
-		},
-	B1 = B0#block { last_retarget = B0#block.timestamp },
-	[B1#block { indep_hash = indep_hash(B1) }].
--endif.
 
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
 %% DEPRECATED - only used in tests, mine blocks in tests instead.

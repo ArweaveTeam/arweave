@@ -13,7 +13,6 @@
 -record(config, {
 	benchmark = false,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
-	init = false,
 	mine = false,
 	peers = [],
 	data_dir = ".",
