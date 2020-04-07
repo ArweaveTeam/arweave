@@ -7,7 +7,9 @@
 -export([bulk_hash_fast/4]).
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
--export([init_fast_nif/4, hash_fast_nif/5, bulk_hash_fast_nif/7]).
+%% Also, these functions are used in ar_mine_randomx_tests.
+-export([init_fast_nif/4, hash_fast_nif/5, bulk_hash_fast_nif/8]).
+-export([init_light_nif/3, hash_light_nif/5]).
 
 -include("ar.hrl").
 
@@ -32,14 +34,14 @@ hash_fast(FastState, Data) ->
 -endif.
 
 -ifdef(DEBUG).
-bulk_hash_fast(_FastState, Nonce, BDS, _Diff) ->
+bulk_hash_fast(_FastState, {Nonce, _}, BDS, _Diff) ->
 	Hash = crypto:hash(sha256, <<Nonce/binary, BDS/binary>>),
-	{list_to_binary(lists:sublist(binary_to_list(Hash), 48)), Nonce, 1}.
+	{list_to_binary(lists:sublist(binary_to_list(Hash), 48)), Nonce, Nonce, 1}.
 -else.
-bulk_hash_fast(FastState, Nonce, BDS, Diff) ->
-	{ok, Hash, HashNonce, HashesTried} =
-		bulk_hash_fast_nif(FastState, Nonce, BDS, binary:encode_unsigned(Diff, big), jit(), large_pages(), hardware_aes()),
-	{Hash, HashNonce, HashesTried}.
+bulk_hash_fast(FastState, {Nonce1, Nonce2}, BDS, Diff) ->
+	{ok, Hash, HashNonce, ExtraNonce, HashesTried} =
+		bulk_hash_fast_nif(FastState, Nonce1, Nonce2, BDS, binary:encode_unsigned(Diff, big), jit(), large_pages(), hardware_aes()),
+	{Hash, HashNonce, ExtraNonce, HashesTried}.
 -endif.
 
 init_light(Key) ->
@@ -96,7 +98,7 @@ init_light_nif(_Key, _JIT, _LargePages) ->
 hash_fast_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
-bulk_hash_fast_nif(_State, _Nonce, _BDS, _Diff, _JIT, _LargePages, _HardwareAES) ->
+bulk_hash_fast_nif(_State, _Nonce1, _Nonce2, _BDS, _Diff, _JIT, _LargePages, _HardwareAES) ->
 	erlang:nif_error(nif_not_loaded).
 
 hash_light_nif(_State, _Data, _JIT, _LargePages, _HardwareAES) ->

@@ -669,7 +669,9 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 		true ->
 			case randomx_hasher(Height) of
 				{ok, Hasher} ->
-					StartNonce = crypto:strong_rand_bytes(256 div 8),
+					StartNonce =
+						{crypto:strong_rand_bytes(256 div 8),
+						crypto:strong_rand_bytes(256 div 8)},
 					find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor);
 				not_found ->
 					ar:info("Mining is waiting on RandomX initialization"),
@@ -680,8 +682,9 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 			%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
 			%% arbitrary size for the initial nonce.
 			StartNonce = crypto:strong_rand_bytes(384 div 8),
-			Hasher = fun(Nonce, InputBDS, _Diff) ->
-				{crypto:hash(?MINING_HASH_ALG, << Nonce/binary, InputBDS/binary >>), Nonce, 1}
+			Hasher = fun(Nonce, {InputBDS, _}, _Diff) ->
+				Hash = crypto:hash(?MINING_HASH_ALG, << Nonce/binary, InputBDS/binary >>),
+				{Hash, Nonce, Nonce, 1}
 			end,
 			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor)
 	end.
@@ -701,12 +704,12 @@ randomx_hasher(Height) ->
 	end.
 
 find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
-	{BDSHash, HashNonce, HashesTried} = Hasher(Nonce, BDS, Diff),
+	{BDSHash, HashNonce, ExtraNonce, HashesTried} = Hasher(Nonce, BDS, Diff),
 	Supervisor ! {hashes_tried, HashesTried},
 	case validate(BDSHash, Diff, Height) of
 		false ->
 			%% Re-use the hash as the next nonce, since we get it for free.
-			find_nonce(BDS, Diff, Height, BDSHash, Hasher, Supervisor);
+			find_nonce(BDS, Diff, Height, {BDSHash, ExtraNonce}, Hasher, Supervisor);
 		true ->
 			{HashNonce, BDSHash}
 	end.
