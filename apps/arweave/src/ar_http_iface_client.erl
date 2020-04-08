@@ -131,7 +131,8 @@ get_block_from_remote_peers(Peers = [_ | _], H) ->
 			path => prepare_block_id(H),
 			headers => p2p_headers(),
 			connect_timeout => 500,
-			timeout => 30 * 1000
+			timeout => 30 * 1000,
+			limit => ?MAX_BODY_SIZE
 		}),
 		full_block
 	) of
@@ -165,7 +166,8 @@ get_block_shadow(Peers, ID) ->
 			path => prepare_block_id(ID),
 			headers => p2p_headers(),
 			connect_timeout => 500,
-			timeout => 30 * 1000
+			timeout => 30 * 1000,
+			limit => ?MAX_BODY_SIZE
 		}),
 		block_shadow
 	) of
@@ -299,7 +301,8 @@ get_tx_from_remote_peer(Peers, TXID) ->
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)),
 			headers => p2p_headers(),
 			connect_timeout => 500,
-			timeout => 60 * 1000
+			timeout => 60 * 1000,
+			limit => ?MAX_BODY_SIZE
 		})
 	) of
 		not_found ->
@@ -333,7 +336,8 @@ get_tx_data(Peer, Hash) ->
 			path => "/tx/" ++ binary_to_list(ar_util:encode(Hash)) ++ "/data",
 			headers => p2p_headers(),
 			connect_timeout => 500,
-			timeout => 120 * 1000
+			timeout => 120 * 1000,
+			limit => ?MAX_BODY_SIZE
 		}),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
