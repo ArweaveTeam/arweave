@@ -2,7 +2,7 @@
 
 -export([start/0]).
 -export([write_block/1, write_block/2, write_full_block/1, write_full_block/2]).
--export([read_block/2, read_block_shadow/1]).
+-export([read_block/1, read_block/2, read_block_shadow/1]).
 -export([invalidate_block/1, blocks_on_disk/0]).
 -export([write_tx/1, write_tx_data/3, read_tx/1, read_tx_data/1]).
 -export([read_wallet_list/1]).
@@ -180,15 +180,8 @@ write_full_block(BShadow, TXs) ->
 	ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }),
 	app_ipfs:maybe_ipfs_add_txs(TXs).
 
-%% @doc Read a block from disk, given a hash, a height, or a block index entry.
-read_block(unavailable, _BI) ->
-	unavailable;
-read_block(B, _BI) when is_record(B, block) ->
-	B;
-read_block(Blocks, BI) when is_list(Blocks) ->
-	lists:map(fun(B) -> read_block(B, BI) end, Blocks);
-read_block({H, _, _}, BI) ->
-	read_block(H, BI);
+%% @doc Read a block from disk, given a height
+%% and a block index (used to determine the hash by height).
 read_block(Height, BI) when is_integer(Height) ->
 	case Height of
 		_ when Height < 0 ->
@@ -197,9 +190,21 @@ read_block(Height, BI) when is_integer(Height) ->
 			unavailable;
 		_ ->
 			{H, _, _} = lists:nth(length(BI) - Height, BI),
-			read_block(H, BI)
+			read_block(H)
 	end;
-read_block(H, BI) ->
+read_block(H, _BI) ->
+	read_block(H).
+
+%% @doc Read a block from disk, given a hash, a height, or a block index entry.
+read_block(unavailable) ->
+	unavailable;
+read_block(B) when is_record(B, block) ->
+	B;
+read_block(Blocks) when is_list(Blocks) ->
+	lists:map(fun(B) -> read_block(B) end, Blocks);
+read_block({H, _, _}) ->
+	read_block(H);
+read_block(H) ->
 	case read_block_shadow(H) of
 		unavailable ->
 			unavailable;
@@ -220,7 +225,6 @@ read_block(H, BI) ->
 					unavailable;
 				_ ->
 					BShadow#block {
-						hash_list = ar_block:generate_hash_list_for_block(BShadow, BI),
 						wallet_list = WalletList
 					}
 			end
@@ -599,8 +603,8 @@ store_and_retrieve_block_test() ->
 	B0s = [B0] = ar_weave:init([]),
 	ar_storage:write_block(B0),
 	?assertEqual(
-		read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0])),
-		B0
+		B0#block{ hash_list = unset },
+		read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))
 	),
 	B1s = [B1 | _] = ar_weave:add(B0s, []),
 	ar_storage:write_block(B1),
@@ -613,8 +617,14 @@ store_and_retrieve_block_test() ->
 		100,
 		2000
 	),
-	B1 = read_block(B1#block.indep_hash, ar_weave:generate_block_index([B1, B0])),
-	B1 = read_block(B1#block.height, ar_weave:generate_block_index([B1, B0])).
+	?assertEqual(
+		B1#block{ hash_list = unset },
+		read_block(B1#block.indep_hash)
+	),
+	?assertEqual(
+		B1#block{ hash_list = unset },
+		read_block(B1#block.height, ar_weave:generate_block_index([B1, B0]))
+	).
 
 store_and_retrieve_tx_test() ->
 	Tx0 = ar_tx:new(<<"DATA1">>),
@@ -644,11 +654,10 @@ store_and_retrieve_block_block_index_test() ->
 	[B0] = ar_weave:init([]),
 	write_block(B0),
 	[B1 | _] = ar_weave:add([B0], []),
-	write_block(B1),
-	[B2 | _] = ar_weave:add([B1, B0], []),
-	write_block_index(ar_weave:generate_block_index([B1, B0])),
-	BI = read_block_index(),
-	?assertEqual(?BI_TO_BHL(BI), B2#block.hash_list).
+	BI = ar_weave:generate_block_index([B1, B0]),
+	write_block_index(BI),
+	ReadBI = read_block_index(),
+	?assertEqual(BI, ReadBI).
 
 store_and_retrieve_wallet_list_test() ->
 	[B0] = ar_weave:init(),
@@ -664,7 +673,10 @@ handle_corrupted_wallet_list_test() ->
 	ar_storage:write_block(B0),
 	Height = B0#block.height,
 	RewardAddr = B0#block.reward_addr,
-	?assertEqual(B0, read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))),
+	?assertEqual(
+		B0#block{ hash_list = unset },
+		read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))
+	),
 	WalletListHash = ar_block:hash_wallet_list(Height, RewardAddr, B0#block.wallet_list),
 	ok = file:write_file(wallet_list_filepath(WalletListHash), <<>>),
 	?assertEqual(unavailable, read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))).

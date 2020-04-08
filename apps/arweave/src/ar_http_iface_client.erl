@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/3, send_new_tx/2, get_block/3]).
+-export([send_new_block/3, send_new_tx/2, get_block/2]).
 -export([get_block_shadow/2]).
 -export([get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2]).
 -export([add_peer/1]).
@@ -105,13 +105,13 @@ add_peer(Peer) ->
 		3 * 1000
 	).
 
-%% @doc Retreive a block by height or hash from disk or a remote peer.
-get_block(Peers, ID, BI) when is_list(Peers) ->
-	case ar_storage:read_block(ID, BI) of
+%% @doc Retreive a block by hash from disk or a remote peer.
+get_block(Peers, H) when is_list(Peers) ->
+	case ar_storage:read_block(H) of
 		unavailable ->
-			get_block_from_remote_peers(Peers, ID, BI);
+			get_block_from_remote_peers(Peers, H);
 		B ->
-			case catch reconstruct_full_block(Peers, B, BI) of
+			case catch reconstruct_full_block(Peers, B) of
 				{'EXIT', Reason} ->
 					ar:info([
 						{event, failed_to_construct_full_block_from_shadow},
@@ -122,12 +122,12 @@ get_block(Peers, ID, BI) when is_list(Peers) ->
 					Handled
 			end
 	end;
-get_block(Peer, ID, BI) ->
-	get_block([Peer], ID, BI).
+get_block(Peer, H) ->
+	get_block([Peer], H).
 
-get_block_from_remote_peers([], _ID, _BI) ->
+get_block_from_remote_peers([], _H) ->
 	unavailable;
-get_block_from_remote_peers(Peers = [_ | _], ID, BI) ->
+get_block_from_remote_peers(Peers = [_ | _], H) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
 	case handle_block_response(
 		Peer,
@@ -135,18 +135,18 @@ get_block_from_remote_peers(Peers = [_ | _], ID, BI) ->
 		ar_httpc:request(
 			<<"GET">>,
 			Peer,
-			prepare_block_id(ID),
+			prepare_block_id(H),
 			p2p_headers(),
 			[],
 			500,
 			30 * 1000
 		),
-		{full_block, BI}
+		full_block
 	) of
 		unavailable ->
-			get_block(Peers -- [Peer], ID, BI);
+			get_block_from_remote_peers(Peers -- [Peer], H);
 		not_found ->
-			get_block(Peers -- [Peer], ID, BI);
+			get_block_from_remote_peers(Peers -- [Peer], H);
 		B ->
 			B
 	end.
@@ -500,8 +500,8 @@ handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block
 			]),
 			unavailable
 	end;
-handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, {full_block, BI}) ->
-	case catch reconstruct_full_block(Peers, Body, BI) of
+handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, full_block) ->
+	case catch reconstruct_full_block(Peers, Body) of
 		{'EXIT', Reason} ->
 			ar:info([
 				"Failed to parse block response.",
@@ -516,14 +516,14 @@ handle_block_response(_, _, Response, _) ->
 	ar:warn([{unexpected_block_response, Response}]),
 	unavailable.
 
-reconstruct_full_block(Peers, Body, BI) when is_binary(Body) ->
+reconstruct_full_block(Peers, Body) when is_binary(Body) ->
 	case ar_serialize:json_struct_to_block(Body) of
 		B when is_record(B, block) ->
-			reconstruct_full_block(Peers, B, BI);
+			reconstruct_full_block(Peers, B);
 		B ->
 			B
 	end;
-reconstruct_full_block(Peers, B, BI) when is_record(B, block) ->
+reconstruct_full_block(Peers, B) when is_record(B, block) ->
 	WalletList =
 		case B#block.wallet_list of
 			WL when is_list(WL) -> WL;
@@ -535,21 +535,11 @@ reconstruct_full_block(Peers, B, BI) when is_record(B, block) ->
 						get_wallet_list(Peers, B#block.indep_hash)
 				end
 		end,
-	HashList =
-		case B#block.hash_list of
-			unset ->
-				ar_block:generate_hash_list_for_block(
-					B,
-					BI
-				);
-			HL -> HL
-		end,
 	MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node), [as_map]),
 	case {get_txs(Peers, MempoolTXs, B), WalletList} of
 		{{ok, TXs}, MaybeWalletList} when is_list(MaybeWalletList) ->
 			B#block {
 				txs = TXs,
-				hash_list = HashList,
 				wallet_list = WalletList
 			};
 		_ ->

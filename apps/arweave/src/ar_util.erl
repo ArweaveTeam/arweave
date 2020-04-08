@@ -83,7 +83,7 @@ wallets_from_hashes(BI) ->
 %% @doc Get block list from hash list.
 blocks_from_hashes([]) -> undefined;
 blocks_from_hashes(BI) ->
-	lists:map(fun({BH, _, _}) -> ar_storage:read_block(BH, BI) end, BI).
+	lists:map(fun({BH, _, _}) -> ar_storage:read_block(BH) end, BI).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
 hash_from_block_index(Num, BI) ->
@@ -91,12 +91,12 @@ hash_from_block_index(Num, BI) ->
 
 %% @doc Read a block at the given height from the hash list
 block_from_block_index(Num, BI) ->
-	ar_storage:read_block(hash_from_block_index(Num, BI), BI).
+	ar_storage:read_block(hash_from_block_index(Num, BI)).
 
 %% @doc Fetch the head block using BI.
 get_head_block(not_joined) -> unavailable;
-get_head_block(BI = [{IndepHash, _, _} | _]) ->
-	ar_storage:read_block(IndepHash, BI).
+get_head_block([{IndepHash, _, _} | _]) ->
+	ar_storage:read_block(IndepHash).
 
 %% @doc Get the hash of the recall block for the current block
 %% and its hash list.

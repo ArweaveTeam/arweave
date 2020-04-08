@@ -695,7 +695,7 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) ->
 	#{ txs := TXs } = StateIn,
-	NewB = ar_storage:read_block(element(1, hd(BI)), BI),
+	NewB = ar_storage:read_block(element(1, hd(BI))),
 	ar:info(
 		[
 			{event, node_joined_successfully},
@@ -733,7 +733,7 @@ recovered_from_fork(#{ block_index := CurrentBI } = StateIn, BI, BlockTXPairs) -
 		undefined -> ok;
 		_		  -> erlang:unregister(fork_recovery_server)
 	end,
-	NewB = ar_storage:read_block(element(1, hd(BI)), BI),
+	NewB = ar_storage:read_block(element(1, hd(BI))),
 	case is_fork_preferable(NewB, maps:get(cumulative_diff, StateIn), CurrentBI) of
 		true ->
 			do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs);

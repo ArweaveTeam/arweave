@@ -1279,8 +1279,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 process_request(get_block, [Type, ID, Field], Req) ->
 	case ar_meta_db:get(subfield_queries) of
 		true ->
-			CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
-			case find_block(Type, ID, CurrentBI) of
+			case find_block(Type, ID) of
 				unavailable ->
 					{404, #{}, <<"Not Found.">>, Req};
 				B ->
@@ -1323,10 +1322,11 @@ search_in_block_index(H, BI) ->
 	end.
 
 %% @doc Find a block, given a type and a specifier.
-find_block(<<"height">>, RawHeight, BI) ->
+find_block(<<"height">>, RawHeight) ->
+	BI = ar_node:get_block_index(whereis(http_entrypoint_node)),
 	ar_storage:read_block(binary_to_integer(RawHeight), BI);
-find_block(<<"hash">>, ID, BI) ->
-	ar_storage:read_block(ID, BI).
+find_block(<<"hash">>, ID) ->
+	ar_storage:read_block(ID).
 
 post_tx_parse_id({Req, Pid}) ->
 	post_tx_parse_id(check_header, {Req, Pid}).

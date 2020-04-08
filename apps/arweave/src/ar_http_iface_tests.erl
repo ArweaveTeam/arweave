@@ -223,10 +223,9 @@ get_block_by_hash_test() ->
 	B1 =
 		ar_http_iface_client:get_block(
 			{127, 0, 0, 1, 1984},
-			B0#block.indep_hash,
-			[{B0#block.indep_hash, 0, <<>>}]
+			B0#block.indep_hash
 		),
-	?assertEqual(B0, B1).
+	?assertEqual(B0#block{ hash_list = unset }, B1).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
@@ -235,13 +234,12 @@ get_block_by_height_test() ->
 	ar_storage:write_block(B0),
 	Node1 = ar_node:start([], [B0]),
 	ar_http_iface_server:reregister(Node1),
-	B1 =
-		ar_http_iface_client:get_block(
-			{127, 0, 0, 1, 1984},
-			0,
-			[{B0#block.indep_hash, 0, <<>>}]
+	{_, B1} =
+		ar_http_iface_client:get_block_shadow(
+			[{127, 0, 0, 1, 1984}],
+			0
 		),
-	?assertEqual(B0, B1).
+	?assertEqual(B0#block{ hash_list = unset }, B1#block{ wallet_list = [] }).
 
 get_current_block_test() ->
 	ar_storage:clear(),
@@ -257,8 +255,8 @@ get_current_block_test() ->
 	Peer = {127, 0, 0, 1, 1984},
 	BI = ar_http_iface_client:get_block_index(Peer),
 	B1 =
-		ar_http_iface_client:get_block([Peer], hd(BI), BI),
-	?assertEqual(B0, B1),
+		ar_http_iface_client:get_block([Peer], hd(BI)),
+	?assertEqual(B0#block{ hash_list = unset }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_httpc:request(<<"GET">>, {127, 0, 0, 1, 1984}, "/block/current"),
 	?assertEqual(
@@ -384,7 +382,7 @@ add_external_tx_test() ->
 	ar_test_node:wait_until_height(Node, 1),
 	[B1 | _] = ar_node:get_blocks(Node),
 	TXID = TX#tx.id,
-	?assertEqual([TXID], (ar_storage:read_block(B1, ar_node:get_block_index(Node)))#block.txs).
+	?assertEqual([TXID], (ar_storage:read_block(B1))#block.txs).
 
 %% @doc Test adding transactions to a block.
 add_external_tx_with_tags_test() ->
@@ -409,7 +407,7 @@ add_external_tx_with_tags_test() ->
 	ar_node:mine(Node),
 	ar_test_node:wait_until_height(Node, 1),
 	[B1Hash | _] = ar_node:get_blocks(Node),
-	B1 = ar_storage:read_block(B1Hash, ar_node:get_block_index(Node)),
+	B1 = ar_storage:read_block(B1Hash),
 	TXID = TaggedTX#tx.id,
 	?assertEqual([TXID], B1#block.txs),
 	?assertEqual(TaggedTX, ar_storage:read_tx(hd(B1#block.txs))).
@@ -468,10 +466,12 @@ add_external_block_test_() ->
 			100,
 			10 * 1000
 		),
-		[BH2 | _] = ar_node:get_blocks(Node2),
+		[BIEntry2 = {BH2, _, _} | _] = ar_node:get_blocks(Node2),
 		ar_http_iface_server:reregister(Node1),
-		BI = ar_node:get_block_index(Node2),
-		send_new_block({127, 0, 0, 1, 1984}, ar_storage:read_block(BH2, BI)),
+		send_new_block(
+			{127, 0, 0, 1, 1984},
+			(ar_storage:read_block(BH2))#block{ hash_list = [BGen#block.indep_hash] }
+		),
 		% Wait for test block and assert.
 		?assert(ar_util:do_until(
 			fun() ->
@@ -480,8 +480,8 @@ add_external_block_test_() ->
 			1000,
 			10 * 1000
 		)),
-		[BH1 | _] = ar_node:get_blocks(Node1),
-		?assertEqual(BH1, BH2)
+		[BIEntry1 | _] = ar_node:get_blocks(Node1),
+		?assertEqual(BIEntry1, BIEntry2)
 	end}.
 
 %% @doc POST block with bad "block_data_segment" field in json
@@ -501,9 +501,9 @@ add_external_block_with_bad_bds_test_() ->
 			{BI0, {NodeWithBridge, {127, 0, 0, 1, 1984}}, OtherNode}
 		end,
 		BlocksFromStorage = fun(BI) ->
-			B = ar_storage:read_block(element(1, hd(BI)), BI),
+			B = ar_storage:read_block(element(1, hd(BI))),
 			POA = ar_poa:generate(BI),
-			{B, POA}
+			{B#block{ hash_list = ?BI_TO_BHL(tl(BI)) }, POA}
 		end,
 		{BI0, {RemoteNode, RemotePeer}, LocalNode} = Setup(),
 		BI1 = mine_one_block(LocalNode, BI0),
@@ -564,7 +564,7 @@ add_external_block_with_invalid_timestamp_test() ->
 	end,
 	{BI0, RemotePeer, LocalNode} = Setup(),
 	BI1 = mine_one_block(LocalNode, BI0),
-	B1 = ar_storage:read_block(hd(BI1), BI1),
+	B1 = (ar_storage:read_block(hd(BI1)))#block{ hash_list = ?BI_TO_BHL(BI0) },
 	%% Expect the timestamp too far from the future to be rejected
 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
@@ -647,17 +647,17 @@ add_external_block_with_tx_test_() ->
 		ar_util:do_until(
 			fun() ->
 				[BH | _] = ar_node:get_blocks(Node2),
-				B = ar_storage:read_block(BH, ar_node:get_block_index(Node2)),
+				B = ar_storage:read_block(BH),
 				lists:member(TX#tx.id, B#block.txs)
 			end,
 			500,
 			10 * 1000
 		),
 		[BTest | _] = ar_node:get_blocks(Node2),
-		BI = ar_node:get_block_index(Node2),
+		BSend = (ar_storage:read_block(BTest))#block{ hash_list = [BGen#block.indep_hash] },
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
-			send_new_block({127, 0, 0, 1, 1984}, ar_storage:read_block(BTest, BI))
+			send_new_block({127, 0, 0, 1, 1984}, BSend)
 		),
 		% Wait for test block and assert that it contains transaction.
 		?assert(ar_util:do_until(
@@ -668,7 +668,7 @@ add_external_block_with_tx_test_() ->
 			10 * 1000
 		)),
 		[BH | _] = ar_node:get_blocks(Node1),
-		B = ar_storage:read_block(BH, ar_node:get_block_index(Node1)),
+		B = ar_storage:read_block(BH),
 		?assert(lists:member(TX#tx.id, B#block.txs))
 	end}.
 
@@ -706,9 +706,10 @@ fork_recover_by_http_test() ->
 	BI0 = [{B0#block.indep_hash, 0, <<>>}],
 	FullBI = mine_n_blocks(Node2, BI0, 10),
 	%% Send only the latest block to Node1 and let it fork recover up to it.
+	B = (ar_storage:read_block(hd(FullBI)))#block{ hash_list = ?BI_TO_BHL(tl(FullBI)) },
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		send_new_block({127, 0, 0, 1, 1984}, ar_storage:read_block(hd(FullBI), FullBI))
+		send_new_block({127, 0, 0, 1, 1984}, B)
 	),
 	ar_test_node:wait_until_block_block_index(Node1, FullBI).
 

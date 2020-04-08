@@ -162,12 +162,12 @@ test_txs_are_included_in_blocks_sorted_by_utility_test() ->
 	assert_wait_until_receives_txs(MasterNode, TXs),
 	slave_mine(SlaveNode),
 	BI = wait_until_height(MasterNode, 1),
-	B = ar_storage:read_block(hd(BI), BI),
+	B = ar_storage:read_block(hd(BI)),
 	?assertEqual(
 		lists:map(fun(TX) -> TX#tx.id end, TXs),
 		B#block.txs
 	),
-	SlaveB = slave_call(ar_storage, read_block, [hd(BI), BI]),
+	SlaveB = slave_call(ar_storage, read_block, [hd(BI)]),
 	?assertEqual(
 		lists:map(fun(TX) -> TX#tx.id end, TXs),
 		SlaveB#block.txs
@@ -185,10 +185,10 @@ format_2_txs_are_gossiped() ->
 	assert_wait_until_receives_txs(MasterNode, [SignedTXHeader]),
 	slave_mine(SlaveNode),
 	BI = wait_until_height(MasterNode, 1),
-	#block{ txs = [MasterTXID] } = ar_storage:read_block(hd(BI), BI),
+	#block{ txs = [MasterTXID] } = ar_storage:read_block(hd(BI)),
 	?assertEqual(SignedTXHeader#tx.id, MasterTXID),
 	?assertEqual(SignedTXHeader, ar_storage:read_tx(MasterTXID)),
-	#block{ txs = [SlaveTXID] } = slave_call(ar_storage, read_block, [hd(BI), BI]),
+	#block{ txs = [SlaveTXID] } = slave_call(ar_storage, read_block, [hd(BI)]),
 	?assertEqual(SignedTXHeader, slave_call(ar_storage, read_tx, [SlaveTXID])),
 	?assertEqual(SignedTXHeader#tx.id, SlaveTXID),
 	?assertEqual({ok, <<"TXDATA">>}, slave_call(ar_storage, read_tx_data, [SlaveTXID])),

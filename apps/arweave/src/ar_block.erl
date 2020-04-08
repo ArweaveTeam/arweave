@@ -497,7 +497,7 @@ verify_wallet_list(NewB, OldB, POA, NewTXs) ->
 			NewB#block.reward_addr,
 			POA,
 			NewB#block.weave_size,
-			length(NewB#block.hash_list),
+			OldB#block.height + 1,
 			NewB#block.diff,
 			NewB#block.timestamp
 		),
@@ -505,16 +505,16 @@ verify_wallet_list(NewB, OldB, POA, NewTXs) ->
 		unclaimed -> <<"unclaimed">>;
 		_         -> ar_util:encode(OldB#block.reward_addr)
 	end,
-	ar:report(
+	ar:info(
 		[
-			verifying_finder_reward,
+			{event, verifying_finder_reward},
 			{finder_reward, FinderReward},
 			{new_reward_pool, RewardPool},
 			{reward_address, RewardAddress},
 			{old_reward_pool, OldB#block.reward_pool},
 			{txs, length(NewTXs)},
 			{weave_size, NewB#block.weave_size},
-			{length, length(NewB#block.hash_list)}
+			{height, OldB#block.height + 1}
 		]
 	),
 	(NewB#block.reward_pool == RewardPool) and

@@ -104,7 +104,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	%% Mine a block without transactions. Expect an inflation reward.
 	slave_mine(Slave),
 	BI1 = wait_until_height(Master, 1),
-	B1 = ar_storage:read_block(hd(BI1), BI1),
+	B1 = ar_storage:read_block(hd(BI1)),
 	?assertEqual(0, B1#block.reward_pool),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B1#block.reward_addr),
 	Balance1 = get_balance(RewardAddr),
@@ -115,7 +115,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	assert_post_tx_to_slave(Slave, TX1),
 	slave_mine(Slave),
 	BI2 = wait_until_height(Master, 2),
-	B2 = ar_storage:read_block(hd(BI2), BI2),
+	B2 = ar_storage:read_block(hd(BI2)),
 	RewardPoolIncrement1 = ar_tx_perpetual_storage:calculate_tx_cost(
 		0,
 		twice_smaller_diff(B2#block.diff),
@@ -143,7 +143,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	assert_post_tx_to_slave(Slave, TX2),
 	slave_mine(Slave),
 	BI3 = wait_until_height(Master, 3),
-	B3 = ar_storage:read_block(hd(BI3), BI3),
+	B3 = ar_storage:read_block(hd(BI3)),
 	RewardPoolIncrement2 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(Data),
 		twice_smaller_diff(B3#block.diff),
@@ -190,7 +190,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	ar_storage:write_tx([TX1, TX2]),
 	ar_node:mine(Master),
 	BI4 = assert_slave_wait_until_height(Slave, 4),
-	B4 = ar_storage:read_block(hd(BI4), BI4),
+	B4 = ar_storage:read_block(hd(BI4)),
 	{RewardPoolIncrement3, WeaveSizeIncrement} = lists:foldl(
 		fun(Chunk, {Sum, Size}) ->
 			{Sum + ar_tx_perpetual_storage:calculate_tx_cost(
@@ -225,7 +225,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	assert_post_tx_to_master(Master, RewardWalletTX),
 	ar_node:mine(Master),
 	BI5 = assert_slave_wait_until_height(Slave, 5),
-	B5 = slave_call(ar_storage, read_block, [hd(BI5), BI5]),
+	B5 = slave_call(ar_storage, read_block, [hd(BI5)]),
 	RewardPoolIncrement4 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(RewardWalletTX#tx.data),
 		twice_smaller_diff(B5#block.diff),
@@ -260,7 +260,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	assert_post_tx_to_slave(Slave, TX1),
 	slave_mine(Slave),
 	BI1 = wait_until_height(Master, 1),
-	B1 = ar_storage:read_block(hd(BI1), BI1),
+	B1 = ar_storage:read_block(hd(BI1)),
 	RewardPoolIncrement1 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(BigChunk),
 		twice_smaller_diff(B1#block.diff),
@@ -287,7 +287,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	%% Mine an empty block. Expect an inflation reward and a share of the pool.
 	slave_mine(Slave),
 	BI2 = wait_until_height(Master, 2),
-	B2 = ar_storage:read_block(hd(BI2), BI2),
+	B2 = ar_storage:read_block(hd(BI2)),
 	BaseReward2 = ar_inflation:calculate(2),
 	PoolShare2 = get_miner_pool_share(
 		B2#block.diff,
@@ -305,7 +305,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	assert_post_tx_to_slave(Slave, RewardWalletTX),
 	slave_mine(Slave),
 	BI3 = wait_until_height(Master, 3),
-	B3 = ar_storage:read_block(hd(BI3), BI3),
+	B3 = ar_storage:read_block(hd(BI3)),
 	RewardPoolIncrement2 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(RewardWalletTX#tx.data),
 		twice_smaller_diff(B3#block.diff),

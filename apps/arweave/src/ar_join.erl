@@ -66,7 +66,7 @@ do_join(Node, RawPeers, NewB, BI) ->
 				]
 			),
 			ar_miner_log:joining(),
-			ar_arql_db:populate_db(NewB#block.hash_list),
+			ar_arql_db:populate_db(?BI_TO_BHL(BI)),
 			ar_randomx_state:init(BI, Peers),
 			BlockTXPairs = get_block_and_trail(Peers, NewB, BI),
 			Node ! {fork_recovered, BI, BlockTXPairs},
@@ -148,7 +148,7 @@ find_current_block([Peer | Tail]) ->
 				{peer, Peer},
 				{hash, Hash}
 			]),
-			MaybeB = ar_http_iface_client:get_block([Peer], Hash, BI),
+			MaybeB = ar_http_iface_client:get_block([Peer], Hash),
 			case MaybeB of
 				Atom when is_atom(Atom) ->
 					ar:info([
@@ -228,8 +228,7 @@ get_block_and_trail(_, NewB, 0, _, BlockTXPairs) ->
 get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 	PreviousBlock = ar_http_iface_client:get_block(
 		Peers,
-		NewB#block.previous_block,
-		BI
+		NewB#block.previous_block
 	),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
@@ -268,7 +267,7 @@ basic_node_join_test() ->
 		Node2 = ar_node:start([Node1]),
 		timer:sleep(1500),
 		[B|_] = ar_node:get_blocks(Node2),
-		2 = (ar_storage:read_block(B, ar_node:get_block_index(Node1)))#block.height
+		2 = (ar_storage:read_block(B))#block.height
 	end}.
 
 %% @doc Ensure that both nodes can mine after a join.
@@ -286,5 +285,5 @@ node_join_test() ->
 		ar_node:mine(Node2),
 		timer:sleep(1500),
 		[B|_] = ar_node:get_blocks(Node1),
-		3 = (ar_storage:read_block(B, ar_node:get_block_index(Node1)))#block.height
+		3 = (ar_storage:read_block(B))#block.height
 	end}.

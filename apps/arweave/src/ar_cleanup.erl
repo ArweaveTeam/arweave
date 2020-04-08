@@ -15,7 +15,7 @@ rewrite() ->
 rewrite(BI) -> rewrite(BI, BI).
 rewrite([], _BI) -> [];
 rewrite([{H, _, _} | Rest], BI) ->
-	try ar_storage:read_block(H, BI) of
+	try ar_storage:read_block(H) of
 		B when ?IS_BLOCK(B) ->
 			ar_storage:write_block(B),
 			ar:report([{rewrote_block, ar_util:encode(H)}]);

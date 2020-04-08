@@ -27,12 +27,12 @@
 %%%
 
 %% @doc Search a block index for the next recall block.
-find_recall_block(BI = [{Hash, _, _}]) ->
-	ar_storage:read_block(Hash, BI);
+find_recall_block([{Hash, _, _}]) ->
+	ar_storage:read_block(Hash);
 find_recall_block(BI) ->
-	Block = ar_storage:read_block(element(1, hd(BI)), BI),
+	Block = ar_storage:read_block(element(1, hd(BI))),
 	RecallHash = ar_util:get_recall_hash(Block, BI),
-	ar_storage:read_block(RecallHash, BI).
+	ar_storage:read_block(RecallHash).
 
 %% @doc Find a block from an ordered block list.
 find_block(Hash) when is_binary(Hash) ->
@@ -241,7 +241,7 @@ start_mining(StateIn) ->
 			);
 		POA ->
 			ar_miner_log:started_hashing(),
-			B = ar_storage:read_block(element(1, hd(BI)), BI),
+			B = ar_storage:read_block(element(1, hd(BI))),
 			Miner = ar_mine:start(
 				B,
 				POA,

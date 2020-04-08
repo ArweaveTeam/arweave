@@ -82,7 +82,7 @@ add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList) ->
 	add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList, []).
 add([{Hash, _, _} | Bs], TXs, BI, RewardAddr, RewardPool, WalletList, Tags) when is_binary(Hash) ->
 	add(
-		[ar_storage:read_block(Hash, BI) | Bs],
+		[ar_storage:read_block(Hash) | Bs],
 		TXs,
 		BI,
 		RewardAddr,
@@ -108,7 +108,7 @@ add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList, Tags) ->
 	).
 add([{Hash, _, _} | Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) when is_binary(Hash) ->
 	add(
-		[ar_storage:read_block(Hash, BI) | Bs],
+		[ar_storage:read_block(Hash) | Bs],
 		RawTXs,
 		BI,
 		RewardAddr,
@@ -153,7 +153,7 @@ add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA,
 			height = NewHeight,
 			txs = TXs,
 			tx_root = TXRoot,
-			hash_list = ?BI_TO_BHL(BI),
+			hash_list = ?BI_TO_BHL(lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)),
 			hash_list_merkle = MR,
 			wallet_list = WalletList,
 			wallet_list_hash = ar_block:hash_wallet_list(NewHeight, RewardAddr, WalletList),

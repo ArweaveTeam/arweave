@@ -152,10 +152,9 @@ apply_next_block(State) ->
 	#state {
 		peers = Peers,
 		target_height = TargetHeight,
-		target_hashes_to_go = [NextH | _],
-		recovered_block_index = BI
+		target_hashes_to_go = [NextH | _]
 	} = State,
-	NextB = ar_http_iface_client:get_block(Peers, NextH, [{NextH, not_set, not_set} | BI]),
+	NextB = ar_http_iface_client:get_block(Peers, NextH),
 	ar:info(
 		[
 			{event, applying_fork_recovery},
@@ -205,9 +204,9 @@ apply_next_block(State) ->
 
 apply_next_block(State, NextB) ->
 	#state {
-		recovered_block_index = [{CurrentH, _, _} | _] = BI
+		recovered_block_index = [{CurrentH, _, _} | _]
 	} = State,
-	B = ar_storage:read_block(CurrentH, BI),
+	B = ar_storage:read_block(CurrentH),
 	case ?IS_BLOCK(B) of
 		false ->
 			ar:err(
@@ -414,7 +413,7 @@ three_block_ahead_recovery_test() ->
 
 block_hashes_by_node(Node) ->
 	BHs = ar_node:get_blocks(Node),
-	Bs = [ar_storage:read_block(BH, ar_node:get_block_index(Node)) || BH <- BHs],
+	Bs = [ar_storage:read_block(BH) || BH <- BHs],
 	[ar_util:encode(B#block.indep_hash) || B <- Bs].
 
 %% @doc Ensure that nodes on a fork that is far behind will catchup correctly.

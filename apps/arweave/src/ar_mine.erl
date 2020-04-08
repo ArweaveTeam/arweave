@@ -42,7 +42,7 @@ start(CurrentB, POA, TXs, RewardAddr, Tags, Parent, BlockTXPairs, BI) ->
 	CurrentHeight = CurrentB#block.height,
 	CandidateB = #block{
 		height = CurrentHeight + 1,
-		hash_list = ?BI_TO_BHL(BI),
+		hash_list = ?BI_TO_BHL(lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)),
 		previous_block = CurrentB#block.indep_hash,
 		hash_list_merkle = ar_block:compute_hash_list_merkle(CurrentB, BI),
 		reward_addr = RewardAddr,

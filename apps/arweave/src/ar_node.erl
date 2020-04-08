@@ -164,7 +164,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					not_joined ->
 						{0, 0, not_joined};
 					[{H, _, _} | _] ->
-						B = ar_storage:read_block(H, BI),
+						B = ar_storage:read_block(H),
 						{B#block.reward_pool, B#block.weave_size, H}
 				end,
 			%% Start processes, init state, and start server.
@@ -204,8 +204,8 @@ create_block_txs_pairs(BI) ->
 
 create_block_txs_pairs(recent_blocks, []) ->
 	[];
-create_block_txs_pairs(recent_blocks, BI = [{BH, _, _} | Rest]) ->
-	B = ar_storage:read_block(BH, BI),
+create_block_txs_pairs(recent_blocks, [{BH, _, _} | Rest]) ->
+	B = ar_storage:read_block(BH),
 	[{BH, B#block.txs} | create_block_txs_pairs(Rest)].
 
 %% @doc Stop a node server loop and its subprocesses.
