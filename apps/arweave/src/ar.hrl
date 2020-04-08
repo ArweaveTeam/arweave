@@ -349,7 +349,7 @@
 	diff = ?DEFAULT_DIFF, % The PoW difficulty - the number a PoW hash must be greater than.
 	height = -1, % How many blocks have passed since the genesis block.
 	hash = <<>>, % PoW hash of the block, must satisfy the block's difficulty.
-	indep_hash = [], % The hash of the block, including `hash` and `nonce`, the block identifier.
+	indep_hash = <<>>, % The hash of the block, including `hash` and `nonce`, the block identifier.
 	txs = [], % A list of tx records in full blocks, or a list of TX identifiers in block shadows.
 	tx_root = <<>>, % Merkle root of the tree of transactions' data roots.
 	tx_tree = [], % Merkle tree of transactions' data roots. Not stored.

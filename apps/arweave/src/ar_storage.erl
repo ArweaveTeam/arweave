@@ -2,7 +2,7 @@
 
 -export([start/0]).
 -export([write_block/1, write_block/2, write_full_block/1, write_full_block/2]).
--export([read_block/2, read_block_shadow/1]).
+-export([read_block/2, read_block_shadow/1, read_block_shadow/2]).
 -export([invalidate_block/1, blocks_on_disk/0]).
 -export([write_tx/1, write_tx_data/3, read_tx/1, read_tx_data/1]).
 -export([read_wallet_list/1]).
@@ -223,6 +223,20 @@ read_block(H, BI) ->
 						hash_list = ar_block:generate_hash_list_for_block(BShadow, BI),
 						wallet_list = WalletList
 					}
+			end
+	end.
+
+%% @doc Read black shadow from memory, given a hash.
+read_block_shadow(Node, BH) ->
+	case ar_node:get_blocks_shadows(Node) of
+		unavailable ->
+			unavailable;
+		BSS ->
+			case maps:get(BH, BSS) of
+				undefined ->
+					unavailable;
+				BS ->
+					binary_to_term(BS)
 			end
 	end.
 

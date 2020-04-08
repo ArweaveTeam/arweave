@@ -37,7 +37,7 @@ test_v1_transactions_after_2_0() ->
 			BI = wait_until_height(Master, Height),
 			case Height of
 				1 ->
-					assert_txs_mined(TXs, BI);
+					assert_txs_mined(Master, TXs, BI);
 				_ ->
 					noop
 			end,
@@ -58,7 +58,7 @@ test_v1_transactions_after_2_0() ->
 			BI = wait_until_height(Master, Height),
 			case Height of
 				11 ->
-					assert_txs_mined(MoreTXs, BI);
+					assert_txs_mined(Master, MoreTXs, BI);
 				_ ->
 					noop
 			end,
@@ -93,7 +93,7 @@ test_v2_transactions_after_2_0() ->
 			BI = wait_until_height(Master, Height),
 			case Height of
 				1 ->
-					assert_txs_mined(TXs, BI);
+					assert_txs_mined(Master, TXs, BI);
 				_ ->
 					noop
 			end,
@@ -114,7 +114,7 @@ test_v2_transactions_after_2_0() ->
 			BI = wait_until_height(Master, Height),
 			case Height of
 				11 ->
-					assert_txs_mined(MoreTXs, BI);
+					assert_txs_mined(Master, MoreTXs, BI);
 				_ ->
 					noop
 			end,
@@ -154,7 +154,7 @@ test_recall_byte_on_the_border() ->
 			BI = wait_until_height(Master, Height),
 			case Height of
 				1 ->
-					assert_txs_mined(TXs, BI);
+					assert_txs_mined(Master, TXs, BI);
 				_ ->
 					noop
 			end,
@@ -194,7 +194,7 @@ test_over_reported_tx_size() ->
 			BI = wait_until_height(Master, Height),
 			case Height of
 				1 ->
-					assert_txs_mined(TXs, BI);
+					assert_txs_mined(Master, TXs, BI);
 				_ ->
 					noop
 			end,
@@ -234,7 +234,7 @@ test_under_reported_tx_size() ->
 			BI = wait_until_height(Master, Height),
 			case Height of
 				1 ->
-					assert_txs_mined(TXs, BI);
+					assert_txs_mined(Master, TXs, BI);
 				_ ->
 					noop
 			end,
@@ -292,7 +292,7 @@ test_ignores_transactions_with_invalid_data_root() ->
 			BI = wait_until_height(Master, Height),
 			case Height of
 				1 ->
-					assert_txs_mined(TXs, BI);
+					assert_txs_mined(Master, TXs, BI);
 				_ ->
 					noop
 			end,
@@ -347,8 +347,8 @@ generate_txs(Key, SignFun) ->
 random_nonce() ->
 	{<<"nonce">>, integer_to_binary(rand:uniform(1000000))}.
 
-assert_txs_mined(TXs, [{H, _, _} | _]) ->
-	B = ar_storage:read_block_shadow(H),
+assert_txs_mined(Node, TXs, [{H, _, _} | _]) ->
+	B = ar_storage:read_block_shadow(Node, H),
 	TXIDs = [TX#tx.id || TX <- TXs],
 	?assertEqual(length(TXIDs), length(B#block.txs)),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).

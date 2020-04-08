@@ -34,6 +34,8 @@
 
 -export([get_mempool_size/1]).
 
+-export([get_blocks_shadows/1]).
+
 -include("ar.hrl").
 
 %%%
@@ -233,6 +235,16 @@ get_blocks(Node) ->
 		{Ref, blocks, Node, Bs} -> Bs
 	after ?LOCAL_NET_TIMEOUT ->
 		not_found
+	end.
+
+get_blocks_shadows(Node) ->
+	Ref = make_ref(),
+	Node ! {get_blocks_shadows, self(), Ref},
+	receive
+		{Ref, blocks_shadows, Node, BSS} ->
+			BSS
+	after ?LOCAL_NET_TIMEOUT ->
+		unavailable
 	end.
 
 %% @doc Gets the list of pending transactions. This includes:
@@ -671,6 +683,10 @@ handle(SPid, {get_current_block, From, Ref}) ->
 handle(SPid, {get_blocks, From, Ref}) ->
 	{ok, BI} = ar_node_state:lookup(SPid, block_index),
 	From ! {Ref, blocks, self(), BI},
+	ok;
+handle(SPid, {get_blocks_shadows, From, Ref}) ->
+	{ok, BSS} = ar_node_state:lookup(SPid, blocks_shadows),
+	From ! {Ref, blocks_shadows, self(), BSS},
 	ok;
 handle(SPid, {get_block, From, Ref}) ->
 	{ok, BI} = ar_node_state:lookup(SPid, block_index),

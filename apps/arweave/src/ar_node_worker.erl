@@ -229,9 +229,10 @@ handle(_SPid, Msg) ->
 %% @doc Handle the gossip receive results.
 handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, BShadow, _BDS, Recall}}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
+	#{blocks_shadows := BSS} = StateIn,
 	case process_new_block(StateIn#{ gossip => NewGS }, BShadow, Recall, Peer) of
 		{ok, StateOut} ->
-			ar_node_state:update(SPid, StateOut);
+			ar_node_state:update(SPid, StateOut#{blocks_shadows => BSS#{BShadow#block.indep_hash => term_to_binary(BShadow)}});
 		none ->
 			ar_node_state:update(SPid, [{gossip, NewGS}])
 	end,
