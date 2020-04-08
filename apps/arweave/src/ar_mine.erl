@@ -548,28 +548,15 @@ mine(
 	Supervisor ! {solution, Hash, Nonce, Timestamp}.
 
 find_nonce(BDS, Diff, Height, Supervisor) ->
-	case Height >= ar_fork:height_1_7() of
-		true ->
-			case randomx_hasher(Height) of
-				{ok, Hasher} ->
-					StartNonce =
-						{crypto:strong_rand_bytes(256 div 8),
-						crypto:strong_rand_bytes(256 div 8)},
-					find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor);
-				not_found ->
-					ar:info("Mining is waiting on RandomX initialization"),
-					timer:sleep(30 * 1000),
-					find_nonce(BDS, Diff, Height, Supervisor)
-			end;
-		false ->
-			%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
-			%% arbitrary size for the initial nonce.
-			StartNonce = crypto:strong_rand_bytes(384 div 8),
-			Hasher = fun(Nonce, {InputBDS, _}, _Diff) ->
-				Hash = crypto:hash(?MINING_HASH_ALG, << Nonce/binary, InputBDS/binary >>),
-				{Hash, Nonce, Nonce, 1}
-			end,
-			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor)
+	case randomx_hasher(Height) of
+		{ok, Hasher} ->
+			StartNonce =
+				{crypto:strong_rand_bytes(256 div 8), crypto:strong_rand_bytes(256 div 8)},
+			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor);
+		not_found ->
+			ar:info("Mining is waiting on RandomX initialization"),
+			timer:sleep(30 * 1000),
+			find_nonce(BDS, Diff, Height, Supervisor)
 	end.
 
 %% Use RandomX fast-mode, where hashing is fast but initialization is slow.

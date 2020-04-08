@@ -477,7 +477,7 @@ mines_format_2_txs_without_size_limit() ->
 		lists:seq(1, ?BLOCK_TX_COUNT_LIMIT + 1)
 	),
 	ar_node:mine(Master),
-	[{H, _, _} | _] = BI = wait_until_height(Master, 1),
+	[{H, _, _} | _] = wait_until_height(Master, 1),
 	B = ar_storage:read_block(H),
 	?assertEqual(?BLOCK_TX_COUNT_LIMIT, length(B#block.txs)),
 	TotalSize = lists:sum([(ar_storage:read_tx(TXID))#tx.data_size || TXID <- B#block.txs]),

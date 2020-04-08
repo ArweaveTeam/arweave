@@ -78,12 +78,7 @@ pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, WalletList, TXs) ->
 		WeaveState,
 		maps:new()
 	),
-	case ar_fork:height_1_8() of
-		H when Height >= H ->
-			pick_txs_under_size_limit(VerifiedTXs);
-		_ ->
-			VerifiedTXs
-	end.
+	pick_txs_under_size_limit(VerifiedTXs).
 
 %% @doc Choose transactions to keep in the mempool after a new block is
 %% accepted. Transactions are verified independently from each other

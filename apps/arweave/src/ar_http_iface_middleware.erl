@@ -825,11 +825,11 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 
 handle_post_tx(PeerIP, TX) ->
 	Node = whereis(http_entrypoint_node),
-	Height = ar_node:get_height(Node),
-	case verify_mempool_txs_size(Node, TX, Height) of
+	case verify_mempool_txs_size(Node, TX) of
 		invalid ->
 			handle_post_tx_no_mempool_space_response();
 		valid ->
+			Height = ar_node:get_height(Node),
 			handle_post_tx(PeerIP, Node, TX, Height)
 	end.
 
@@ -875,14 +875,6 @@ handle_post_tx(PeerIP, Node, TX, Height, WalletList) ->
 			handle_post_tx_already_in_mempool_response();
 		{valid, _, _} ->
 			handle_post_tx_accepted(PeerIP, TX)
-	end.
-
-verify_mempool_txs_size(Node, TX, Height) ->
-	case ar_fork:height_1_8() of
-		H when Height >= H ->
-			verify_mempool_txs_size(Node, TX);
-		_ ->
-			valid
 	end.
 
 verify_mempool_txs_size(Node, TX) ->

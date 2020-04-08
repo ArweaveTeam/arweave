@@ -253,12 +253,7 @@ index_of(_Subject, [_Subject | _], Counter) -> Counter;
 index_of(Subject, [_ | List], Counter) -> index_of(Subject, List, Counter + 1).
 
 block_index_entry_from_block(B) ->
-	case B#block.height < ar_fork:height_2_0() of
-		true ->
-			{B#block.indep_hash, not_set, not_set};
-		false ->
-			{B#block.indep_hash, B#block.weave_size, B#block.tx_root}
-	end.
+	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
 
 %%%
 %%% Tests.
