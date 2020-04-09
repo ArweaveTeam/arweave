@@ -159,9 +159,9 @@ handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA}) ->
 			ar:info([{event, ignore_mined_block}, {reason, accepted_foreign_block}]),
 			{ok, ignore}
 	end;
-handle(SPid, {fork_recovered, BI, BlockTXPairs}) ->
+handle(SPid, {fork_recovered, BI, BlockTXPairs, BShadows}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	case recovered_from_fork(StateIn, BI, BlockTXPairs) of
+	case recovered_from_fork(StateIn#{block_shadows => BShadows}, BI, BlockTXPairs) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
@@ -181,11 +181,13 @@ handle(SPid, automine) ->
 handle(SPid, {replace_block_list, [Block | _] = Blocks}) ->
 	BI = lists:map(fun ar_util:block_index_entry_from_block/1, Blocks),
 	BlockTXPairs = lists:map(fun(B) -> {B#block.indep_hash, B#block.txs} end, Blocks),
+	{ok, BShadows} = ar_node_state:lookup(SPid, block_shadows),
 	ar_node_state:update(SPid, [
 		{block_index, BI},
 		{block_txs_pairs, BlockTXPairs},
 		{wallet_list, Block#block.wallet_list},
-		{height, Block#block.height}
+		{height, Block#block.height},
+		{block_shadows, ar_node_utils:collect_block_shadows(Blocks, BShadows)}
 	]),
 	{ok, replace_block_list};
 handle(SPid, {set_reward_addr, Addr}) ->
@@ -405,7 +407,7 @@ process_new_block(#{ height := Height }, BShadow, _Peer)
 		]
 	),
 	none;
-process_new_block(#{ height := Height } = State, BShadow, Peer)
+process_new_block(#{ height := Height, block_shadows := BShadows } = State, BShadow, Peer)
 		when BShadow#block.height >= Height + 1 ->
 	ShadowHeight = BShadow#block.height,
 	ShadowHL = BShadow#block.hash_list,
@@ -422,11 +424,12 @@ process_new_block(#{ height := Height } = State, BShadow, Peer)
 			none;
 		{ok, {}} ->
 			apply_new_block(State, BShadow#block{ hash_list = ?BI_TO_BHL(BI) });
-		{ok, {DivergedHashes, BIBase}} ->
+		{ok, {DivergedHashes, [{BIH, _, _} | _] = BIBase}} ->
 			HeightBase = length(BIBase) - 1,
 			{_, BlockTXPairsBase} = lists:split(Height - HeightBase, BlockTXPairs),
 			RecoveryHashes = [BShadow#block.indep_hash | DivergedHashes],
-			maybe_fork_recover(State, BShadow, Peer, RecoveryHashes, BIBase, BlockTXPairsBase)
+			CleanedBShadows = ar_node_utils:cleanup_block_shadows(BShadows, BIH),
+			maybe_fork_recover(State, CleanedBShadows, BShadow, Peer, RecoveryHashes, BIBase, BlockTXPairsBase)
 	end.
 
 %% Take a block shadow and the hashes of the recent blocks and return
@@ -587,7 +590,7 @@ generate_wallet_list_from_shadow(StateIn, BShadow, TXs) ->
 	WalletListHash = ar_block:hash_wallet_list(NewHeight, RewardAddr, NewWalletList),
 	{WalletListHash, NewWalletList}.
 
-maybe_fork_recover(State, BShadow, Peer, RecoveryHashes, BI, BlockTXPairs) ->
+maybe_fork_recover(State, BShadows, BShadow, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 	#{
 		block_index := StateBI,
 		cumulative_diff := CDiff,
@@ -597,10 +600,10 @@ maybe_fork_recover(State, BShadow, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 		false ->
 			none;
 		true ->
-			{ok, fork_recover(Node, Peer, RecoveryHashes, BI, BlockTXPairs)}
+			{ok, fork_recover(BShadows, Node, Peer, RecoveryHashes, BI, BlockTXPairs)}
 	end.
 
-fork_recover(Node, Peer, RecoveryHashes, BI, BlockTXPairs) ->
+fork_recover(BShadows, Node, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 	case {whereis(fork_recovery_server), whereis(join_server)} of
 		{undefined, undefined} ->
 			PrioritisedPeers = ar_util:unique(Peer) ++
@@ -611,6 +614,7 @@ fork_recover(Node, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 			erlang:monitor(
 				process,
 				PID = ar_fork_recovery:start(
+					BShadows,
 					PrioritisedPeers,
 					RecoveryHashes,
 					BI,
@@ -637,7 +641,8 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 		block_index      := BI,
 		txs              := TXs,
 		gossip           := GS,
-		block_txs_pairs  := BlockTXPairs
+		block_txs_pairs  := BlockTXPairs,
+		block_shadows    := BShadows
 	} = StateIn,
 	ar_storage:write_full_block(NewB, MinedTXs),
 	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = MinedTXs }, BI),
@@ -687,25 +692,22 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 			weave_size           => NewB#block.weave_size,
 			block_txs_pairs      => NewBlockTXPairs,
 			wallet_list          => NewB#block.wallet_list,
-			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
+			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs),
+			block_shadows        => ar_node_utils:update_block_shadows(BShadows, NewB)
 		}
 	),
 	{ok, NewState}.
 
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) ->
-	#{ txs := TXs } = StateIn,
-	NewB = ar_storage:read_block(element(1, hd(BI))),
+	#{ txs := TXs, block_shadows := [{_, NewB} | _]  } = StateIn,
 	ar:info(
 		[
 			{event, node_joined_successfully},
 			{height, NewB#block.height}
 		]
 	),
-	case whereis(fork_recovery_server) of
-		undefined -> ok;
-		_		  -> erlang:unregister(fork_recovery_server)
-	end,
+	unreg_fork_recovery_server(),
 	ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		BlockTXPairs,
 		TXs,
@@ -728,12 +730,9 @@ recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) 
 			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
 		}
 	)};
-recovered_from_fork(#{ block_index := CurrentBI } = StateIn, BI, BlockTXPairs) ->
-	case whereis(fork_recovery_server) of
-		undefined -> ok;
-		_		  -> erlang:unregister(fork_recovery_server)
-	end,
-	NewB = ar_storage:read_block(element(1, hd(BI))),
+
+recovered_from_fork(#{ block_index := CurrentBI, block_shadows := [{_, NewB} | _] } = StateIn, BI, BlockTXPairs) ->
+	unreg_fork_recovery_server(),
 	case is_fork_preferable(NewB, maps:get(cumulative_diff, StateIn), CurrentBI) of
 		true ->
 			do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs);
@@ -775,6 +774,14 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs) ->
 			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
 		}
 	)}.
+
+unreg_fork_recovery_server() ->
+	case whereis(fork_recovery_server) of
+		undefined ->
+			ok;
+		_ ->
+			erlang:unregister(fork_recovery_server)
+	end.
 
 %% @doc Test whether a new fork is 'preferable' to the current one.
 %% The highest cumulated diff is the one with most work performed and should

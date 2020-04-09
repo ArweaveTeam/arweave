@@ -344,7 +344,7 @@
 	diff = ?DEFAULT_DIFF, % The PoW difficulty - the number a PoW hash must be greater than.
 	height = -1, % How many blocks have passed since the genesis block.
 	hash = <<>>, % PoW hash of the block, must satisfy the block's difficulty.
-	indep_hash = [], % The hash of the block, including `hash` and `nonce`, the block identifier.
+	indep_hash = <<>>, % The hash of the block, including `hash` and `nonce`, the block identifier.
 	txs = [], % A list of tx records in full blocks, or a list of TX identifiers in block shadows.
 	tx_root = <<>>, % Merkle root of the tree of transactions' data roots.
 	tx_tree = [], % Merkle tree of transactions' data roots. Not stored.
@@ -360,8 +360,8 @@
 	%% A field for internal use, not serialized. Added to avoid hashing the wallet list
 	%% when the hash was known before the list was reconstructed.
 	wallet_list_hash = not_set,
-    reward_addr = unclaimed, % Address to credit mining reward or the unclaimed atom.
-    tags = [], % Miner specified tags to store with the block.
+	reward_addr = unclaimed, % Address to credit mining reward or the unclaimed atom.
+	tags = [], % Miner specified tags to store with the block.
 	reward_pool = 0, % Current pool of mining rewards.
 	weave_size = 0, % Current size of the weave in bytes (counts tx data fields).
 	block_size = 0, % The total size of transaction data inside this block.

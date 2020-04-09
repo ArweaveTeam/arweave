@@ -159,13 +159,13 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				),
 			Wallets = ar_util:wallets_from_hashes(BI),
 			Height = ar_util:height_from_hashes(BI),
-			{RewardPool, WeaveSize, Current} =
+			{BShadows, RewardPool, WeaveSize, Current} =
 				case BI of
 					not_joined ->
-						{0, 0, not_joined};
+						{[], 0, 0, not_joined};
 					[{H, _, _} | _] ->
 						B = ar_storage:read_block(H),
-						{B#block.reward_pool, B#block.weave_size, H}
+						{ar_node_utils:collect_block_shadows(BI, []), B#block.reward_pool, B#block.weave_size, H}
 				end,
 			%% Start processes, init state, and start server.
 			NPid = self(),
@@ -189,7 +189,8 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{diff, Diff},
 				{last_retarget, LastRetarget},
 				{weave_size, WeaveSize},
-				{block_txs_pairs, create_block_txs_pairs(BI)}
+				{block_txs_pairs, create_block_txs_pairs(BI)},
+				{block_shadows, BShadows}
 			]),
 			server(SPid, WPid, queue:new())
 		end
@@ -657,8 +658,8 @@ handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}) ->
 				POA
 			}}
 	end;
-handle(_SPid, {fork_recovered, BI, BlockTXPairs}) ->
-	{task, {fork_recovered, BI, BlockTXPairs}};
+handle(_SPid, {fork_recovered, BI, BlockTXPairs, BShadows}) ->
+	{task, {fork_recovered, BI, BlockTXPairs, BShadows}};
 handle(_SPid, mine) ->
 	{task, mine};
 handle(_SPid, automine) ->

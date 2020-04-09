@@ -15,6 +15,7 @@
 -export([update_block_txs_pairs/2, update_block_index/2]).
 -export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
 -export([tx_mempool_size/1, increase_mempool_size/2, calculate_mempool_size/1]).
+-export([update_block_shadows/2, collect_block_shadows/2, cleanup_block_shadows/2]).
 
 %% NOT used. Exported for the historical record.
 -export([validate_pre_fork_2_0/8]).
@@ -228,7 +229,8 @@ start_mining(StateIn) ->
 		reward_addr := RewardAddr,
 		tags := Tags,
 		block_txs_pairs := BlockTXPairs,
-		block_index := BI
+		block_index := BI,
+		block_shadows := BShadows
 	} = StateIn,
 	case ar_poa:generate(BI) of
 		unavailable ->
@@ -242,7 +244,7 @@ start_mining(StateIn) ->
 			StateIn;
 		POA ->
 			ar_miner_log:started_hashing(),
-			B = ar_storage:read_block(element(1, hd(BI))),
+			B = proplists:get_value(element(1, hd(BI)), BShadows),
 			Miner = ar_mine:start(
 				B,
 				POA,
@@ -283,7 +285,8 @@ integrate_new_block(
 		#{
 			txs := TXs,
 			block_index := BI,
-			block_txs_pairs := BlockTXPairs
+			block_txs_pairs := BlockTXPairs,
+			block_shadows := BShadows
 		} = StateIn,
 		NewB,
 		BlockTXs) ->
@@ -339,7 +342,8 @@ integrate_new_block(
 		last_retarget    => NewB#block.last_retarget,
 		weave_size       => NewB#block.weave_size,
 		block_txs_pairs  => NewBlockTXPairs,
-		mempool_size     => calculate_mempool_size(ValidTXs)
+		mempool_size     => calculate_mempool_size(ValidTXs),
+		block_shadows    => update_block_shadows(BShadows, NewB)
 	}).
 
 update_block_index(B, BI) ->
@@ -818,3 +822,25 @@ calculate_mempool_size(TXs) ->
 		{0, 0},
 		TXs
 	).
+
+update_block_shadows(BShadows, Block) ->
+	Shadows = case length(BShadows) of
+		?STORE_BLOCKS_BEHIND_CURRENT ->
+			{LastKey, _} = lists:last(BShadows),
+			proplists:delete(LastKey, BShadows);
+		_ ->
+			BShadows
+	end,
+	[{Block#block.indep_hash, Block} | Shadows].
+
+collect_block_shadows([], BShadows) ->
+	lists:reverse(BShadows);
+collect_block_shadows([{H, _, _} | T], BShadows) ->
+	collect_block_shadows(T, update_block_shadows(BShadows, ar_storage:read_block(H)));
+collect_block_shadows([Block | T], BShadows) ->
+	collect_block_shadows(T, update_block_shadows(BShadows, Block)).
+
+cleanup_block_shadows([{H, _} | _] = BShadows, H) ->
+	BShadows;
+cleanup_block_shadows([_ | BShadows], BIH) ->
+	cleanup_block_shadows(BShadows, BIH).
