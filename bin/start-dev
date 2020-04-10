@@ -22,7 +22,7 @@ while true; do
     echo Launching Erlang Virtual Machine...
     if
         erl -pa `./rebar3 path` \
-            -config config/sys.config -args_file config/vm.args \
+            -config config/sys.config -args_file config/vm.args.dev \
             -run ar main $RANDOMX_JIT "$@"
     then
         echo "Arweave Heartbeat: Server terminated safely."

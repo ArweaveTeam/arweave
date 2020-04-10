@@ -1,0 +1,10 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+
+export ERL_EPMD_ADDRESS=127.0.0.1
+export NODE_NAME='cleanup-script@127.0.0.1'
+
+"$SCRIPT_DIR/arweave" foreground -run ar_cleanup remove_old_wallet_lists
