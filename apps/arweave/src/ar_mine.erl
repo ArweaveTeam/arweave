@@ -488,7 +488,7 @@ server(
 		%% Count the number of hashes tried by all workers.
 		{hashes_tried, HashesTried} ->
 			server(S#state { total_hashes_tried = TotalHashesTried + HashesTried });
-		{solution, Hash, Nonce, MinedTXs, Diff, Timestamp} ->
+		{solution, Hash, Nonce, Timestamp} ->
 			case filter_by_valid_tx_fee(MinedTXs, Diff, Height, WL, Timestamp) of
 				MinedTXs ->
 					process_solution(S, Hash, Nonce, MinedTXs, Diff, Timestamp);
@@ -610,12 +610,29 @@ log_performance(TotalHashesTried, StartedAt) ->
 	]).
 
 %% @doc Start the workers and return the new state.
-start_miners(S = #state {max_miners = MaxMiners}) ->
-	Miners =
-		lists:map(
-			fun(_) -> spawn(?MODULE, mine, [S, self()]) end,
-			lists:seq(1, MaxMiners)
-		),
+start_miners(
+	S = #state{
+		max_miners = MaxMiners,
+		candidate_block = #block{ height = Height },
+		poa = POA,
+		diff = Diff,
+		data_segment = BDS,
+		timestamp = Timestamp
+	}
+) ->
+	ModifiedDiff = case Height >= ar_fork:height_2_0() of
+		true ->
+			ar_poa:modify_diff(Diff, POA#poa.option);
+		false ->
+			Diff
+	end,
+	WorkerState = #{
+		data_segment => BDS,
+		diff => ModifiedDiff,
+		timestamp => Timestamp,
+		height => Height
+	},
+	Miners = [spawn(?MODULE, mine, [WorkerState, self()]) || _ <- lists:seq(1, MaxMiners)],
 	S#state {miners = Miners}.
 
 %% @doc Stop all workers.
@@ -635,32 +652,26 @@ restart_miners(S) ->
 %% @doc A worker process to hash the data segment searching for a solution
 %% for the given diff.
 mine(
-	#state {
-		data_segment = BDS,
-		diff = Diff,
-		poa = POA,
-		txs = TXs,
-		timestamp = Timestamp,
-		current_block = #block{ height = CurrentHeight }
+	#{
+		data_segment := BDS,
+		diff := Diff,
+		timestamp := Timestamp,
+		height := Height
 	},
 	Supervisor
 ) ->
 	process_flag(priority, low),
-	MineDiff = case CurrentHeight + 1 >= ar_fork:height_2_0() of
-		true ->
-			ar_poa:modify_diff(Diff, POA#poa.option);
-		false ->
-			Diff
-	end,
-	{Nonce, Hash} = find_nonce(BDS, MineDiff, CurrentHeight + 1, Supervisor),
-	Supervisor ! {solution, Hash, Nonce, TXs, Diff, Timestamp}.
+	{Nonce, Hash} = find_nonce(BDS, Diff, Height, Supervisor),
+	Supervisor ! {solution, Hash, Nonce, Timestamp}.
 
 find_nonce(BDS, Diff, Height, Supervisor) ->
 	case Height >= ar_fork:height_1_7() of
 		true ->
 			case randomx_hasher(Height) of
 				{ok, Hasher} ->
-					StartNonce = crypto:strong_rand_bytes(256 div 8),
+					StartNonce =
+						{crypto:strong_rand_bytes(256 div 8),
+						crypto:strong_rand_bytes(256 div 8)},
 					find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor);
 				not_found ->
 					ar:info("Mining is waiting on RandomX initialization"),
@@ -671,8 +682,9 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 			%% The subsequent nonces will be 384 bits, so that's a pretty nice but still
 			%% arbitrary size for the initial nonce.
 			StartNonce = crypto:strong_rand_bytes(384 div 8),
-			Hasher = fun(Nonce, InputBDS, _Diff) ->
-				{crypto:hash(?MINING_HASH_ALG, << Nonce/binary, InputBDS/binary >>), Nonce, 1}
+			Hasher = fun(Nonce, {InputBDS, _}, _Diff) ->
+				Hash = crypto:hash(?MINING_HASH_ALG, << Nonce/binary, InputBDS/binary >>),
+				{Hash, Nonce, Nonce, 1}
 			end,
 			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor)
 	end.
@@ -692,12 +704,12 @@ randomx_hasher(Height) ->
 	end.
 
 find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
-	{BDSHash, HashNonce, HashesTried} = Hasher(Nonce, BDS, Diff),
+	{BDSHash, HashNonce, ExtraNonce, HashesTried} = Hasher(Nonce, BDS, Diff),
 	Supervisor ! {hashes_tried, HashesTried},
 	case validate(BDSHash, Diff, Height) of
 		false ->
 			%% Re-use the hash as the next nonce, since we get it for free.
-			find_nonce(BDS, Diff, Height, BDSHash, Hasher, Supervisor);
+			find_nonce(BDS, Diff, Height, {BDSHash, ExtraNonce}, Hasher, Supervisor);
 		true ->
 			{HashNonce, BDSHash}
 	end.
@@ -818,8 +830,12 @@ start_stop_test() ->
 
 %% @doc Ensures a miner can be started and stopped.
 miner_start_stop_test() ->
-	[B] = ar_weave:init(),
-	S = #state{ diff = trunc(math:pow(2, 1000)), current_block = B },
+	S = #{
+		diff => trunc(math:pow(2, 1000)),
+		timestamp => os:system_time(seconds),
+		data_segment => <<>>,
+		height => 1
+	},
 	PID = spawn(?MODULE, mine, [S, self()]),
 	timer:sleep(500),
 	assert_alive(PID),
