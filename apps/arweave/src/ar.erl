@@ -31,7 +31,6 @@
 		ar_config_tests,
 		ar_deep_hash,
 		ar_inflation,
-		ar_cleanup,
 		ar_util,
 		ar_base64_compatibility_tests,
 		ar_storage,
