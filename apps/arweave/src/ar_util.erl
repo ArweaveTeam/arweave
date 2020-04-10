@@ -39,15 +39,12 @@ pick_random(Xs) ->
 
 %% @doc Encode a binary to URL safe base64.
 encode(Bin) ->
-	base64url:encode(Bin).
+	b64fast:encode(Bin).
 
 %% @doc Try to decode a URL safe base64 into a binary or throw an error when
 %% invalid.
-decode([]) -> [];
-decode(List) when is_list(List) ->
-	decode(list_to_binary(List));
-decode(Bin) when is_binary(Bin) ->
-	base64url:decode(Bin).
+decode(Input) ->
+	b64fast:decode(Input).
 
 %% @doc Safely decode a URL safe base64 into a binary returning an ok or error
 %% tuple.

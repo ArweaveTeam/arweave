@@ -6,7 +6,7 @@
 		stdlib,
 		os_mon,
 		ar_sqlite3,
-		base64url,
+		b64fast,
 		jiffy,
 		fusco,
 		cowboy,
