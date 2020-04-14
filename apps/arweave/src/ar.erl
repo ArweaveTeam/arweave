@@ -33,6 +33,7 @@
 		ar_inflation,
 		ar_cleanup,
 		ar_util,
+		ar_base64_compatibility_tests,
 		ar_storage,
 		ar_merkle,
 		ar_semaphore_tests,

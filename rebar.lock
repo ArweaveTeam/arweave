@@ -1,6 +1,9 @@
 {"1.1.0",
 [{<<"accept">>,{pkg,<<"accept">>,<<"0.3.5">>},2},
- {<<"base64url">>,{pkg,<<"base64url">>,<<"1.0.1">>},0},
+ {<<"b64fast">>,
+  {git,"https://github.com/ArweaveTeam/b64fast.git",
+       {ref,"a0ef55ec66ecf705848716c195bf45665f78818a"}},
+  0},
  {<<"cowboy">>,{pkg,<<"cowboy">>,<<"2.7.0">>},0},
  {<<"cowlib">>,{pkg,<<"cowlib">>,<<"2.8.0">>},1},
  {<<"fusco">>,{pkg,<<"fusco">>,<<"0.1.0">>},0},
@@ -22,7 +25,6 @@
 [
 {pkg_hash,[
  {<<"accept">>, <<"B33B127ABCA7CC948BBE6CAA4C263369ABF1347CFA9D8E699C6D214660F10CD1">>},
- {<<"base64url">>, <<"F8C7F2DA04CA9A5D0F5F50258F055E1D699F0E8BF4CFDB30B750865368403CF6">>},
  {<<"cowboy">>, <<"91ED100138A764355F43316B1D23D7FF6BDB0DE4EA618CB5D8677C93A7A2F115">>},
  {<<"cowlib">>, <<"FD0FF1787DB84AC415B8211573E9A30A3EBE71B5CBFF7F720089972B2319C8A4">>},
  {<<"fusco">>, <<"9E37B660A55690F687ACE2143316F7998587529BE2580F1AE54245ACD1AD3D40">>},
