@@ -334,6 +334,8 @@ get_tx_from_remote_peer(Peers, TXID) ->
 	end.
 
 %% @doc Retreive only the data associated with a transaction.
+%% The function must only be used when it is known that the transaction
+%% has data.
 get_tx_data([], _Hash) ->
 	unavailable;
 get_tx_data(Peers, Hash) when is_list(Peers) ->
@@ -356,6 +358,8 @@ get_tx_data(Peer, Hash) ->
 			120 * 1000
 		),
 	case Reply of
+		{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
+			unavailable;
 		{ok, {{<<"200">>, _}, _, EncodedData, _, _}} ->
 			case ar_util:safe_decode(EncodedData) of
 				{ok, Data} ->

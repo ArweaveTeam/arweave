@@ -289,12 +289,6 @@ download_transaction_data(ID, DataRoot) ->
 				{tx, ar_util:encode(ID)}
 			]),
 			{error, tx_data_unavailable};
-		<<>> ->
-			ar:warn([
-				{event, downloader_got_empty_data},
-				{tx, ar_util:encode(ID)}
-			]),
-			{error, tx_data_empty};
 		Data when byte_size(Data) > 20000000 ->
 			ar:warn([
 				{event, downloader_got_big_data_blob},
