@@ -124,11 +124,12 @@ parse_peer("") -> throw(empty_peer_string);
 parse_peer(BitStr) when is_bitstring(BitStr) ->
 	parse_peer(bitstring_to_list(BitStr));
 parse_peer(Str) when is_list(Str) ->
-	case io_lib:fread("~d.~d.~d.~d", Str) of
-		{ok, [A, B, C, D], PortStr} ->
+    [Addr, PortStr] = parse_port_split(Str),
+    case inet:getaddr(Addr, inet) of
+		{ok, {A, B, C, D}} ->
 			{A, B, C, D, parse_port(PortStr)};
-		{error, _} ->
-			throw({invalid_peer_string, Str})
+		{error, Reason} ->
+			throw({invalid_peer_string, Str, Reason})
 	end;
 parse_peer({IP, Port}) ->
 	{A, B, C, D} = parse_peer(IP),
@@ -138,8 +139,15 @@ parse_peer({IP, Port}) ->
 parse_port(Int) when is_integer(Int) -> Int;
 parse_port("") -> ?DEFAULT_HTTP_IFACE_PORT;
 parse_port(PortStr) ->
-	{ok, [Port], ""} = io_lib:fread(":~d", PortStr),
+	{ok, [Port], ""} = io_lib:fread("~d", PortStr),
 	Port.
+
+parse_port_split(Str) ->
+    case string:tokens(Str, ":") of
+        [Addr] -> [Addr, ?DEFAULT_HTTP_IFACE_PORT];
+        [Addr, Port] -> [Addr, Port];
+        _ -> throw({invalid_peer_string, Str})
+    end.
 
 safe_parse_peer(Peer) ->
 	try
