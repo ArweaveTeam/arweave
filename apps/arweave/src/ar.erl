@@ -178,7 +178,13 @@ parse_cli_args(["init"|Rest], C) ->
 parse_cli_args(["mine"|Rest], C) ->
 	parse_cli_args(Rest, C#config { mine = true });
 parse_cli_args(["peer", Peer|Rest], C = #config { peers = Ps }) ->
-	parse_cli_args(Rest, C#config { peers = [ar_util:parse_peer(Peer)|Ps] });
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ValidPeer} ->
+			parse_cli_args(Rest, C#config { peers = [ValidPeer|Ps] });
+		{error, _} ->
+			io:format("Peer ~p invalid ~n", [Peer]),
+			parse_cli_args(Rest, C)
+	end;
 parse_cli_args(["content_policy", File|Rest], C = #config { content_policy_files = Files }) ->
 	parse_cli_args(Rest, C#config { content_policy_files = [File|Files] });
 parse_cli_args(["transaction_blacklist", File|Rest], C = #config { transaction_blacklist_files = Files } ) ->
