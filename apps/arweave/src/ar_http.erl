@@ -2,7 +2,7 @@
 
 -module(ar_http).
 
--export([req/1]).
+-export([req/1, gun_total_metric/1]).
 
 -include("ar.hrl").
 
@@ -27,20 +27,24 @@ req(#{peer := Peer} = Opts) ->
 				is_peer_request => maps:get(is_peer_request, Opts, true)
 			},
 			Resp = get_reponse(maps:merge(Opts, RespOpts)),
+			gun_total_metric(Opts#{ response => Resp }),
 			gun:close(Pid),
 			inet:stop_timer(Timer),
 			Resp;
 		{error, timeout} ->
 			Resp = {error, connect_timeout},
 			gun:close(Pid),
+			gun_total_metric(Opts#{ response => Resp }),
 			log(warn, http_connect_timeout, Opts, Resp),
 			Resp;
 		{error, Reason} = Resp when is_tuple(Reason) ->
 			gun:close(Pid),
+			gun_total_metric(Opts#{ response => erlang:element(1, Reason) }),
 			log(warn, gun_await_up_process_down, Opts, Reason),
 			Resp;
 		Unknown ->
 			gun:close(Pid),
+			gun_total_metric(Opts#{ response => Unknown }),
 			log(warn, gun_await_up_unknown, Opts, Unknown),
 			Unknown
 	end.
@@ -91,18 +95,26 @@ get_reponse(#{pid := Pid, stream_ref := SR, timer := T, start := S, limit := L, 
 			store_data_time(Opts, FinData, End - S),
 			{ok, {gen_code_rest(maps:get(status, Opts)), maps:get(headers, Opts), FinData, S, End}};
 		{error, timeout} = Resp ->
+			gun_total_metric(Opts#{ response => Resp }),
 			log(warn, gun_await_process_down, Opts, Resp),
 			Resp;
 		{error, Reason} = Resp when is_tuple(Reason) ->
+			gun_total_metric(Opts#{ response => erlang:element(1, Reason) }),
 			log(warn, gun_await_process_down, Opts, Reason),
 			Resp;
 		Unknown ->
+			gun_total_metric(Opts#{ response => Unknown }),
 			log(warn, gun_await_unknown, Opts, Unknown),
 			Unknown
 	end.
 
 log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
-	ar:Type([{event, Event}, {http_method, Method}, {peer, ar_util:format_peer(Peer)}, {path, Path}, {reason, Reason}]).
+	case ar_meta_db:get(http_logging) of
+		true ->
+			ar:Type([{event, Event}, {http_method, Method}, {peer, ar_util:format_peer(Peer)}, {path, Path}, {reason, Reason}]);
+		_ ->
+			ok
+	end.
 
 gen_code_rest(200) ->
 	{<<"200">>, <<"OK">>};
@@ -135,6 +147,12 @@ download_metric(Data, #{path := Path}) ->
 		byte_size(Data)
 	).
 
+gun_total_metric(#{method := M, path := P, response := Resp}) ->
+	prometheus_counter:inc(
+		gun_requests_total,
+		[method_to_list(M), ar_metrics:label_http_path(list_to_binary(P)), ar_metrics:get_status_class(Resp)]
+	).
+
 store_data_time(#{ is_peer_request := true, peer:= Peer }, Data, MicroSecs) ->
 	P =
 		case ar_meta_db:get({peer, Peer}) of
@@ -153,6 +171,27 @@ store_data_time(_, _, _) ->
 
 merge_headers(HeadersA, HeadersB) ->
 	lists:ukeymerge(1, lists:keysort(1, HeadersB), lists:keysort(1, HeadersA)).
+
+method_to_list(get) ->
+	"GET";
+method_to_list(post) ->
+	"POST";
+method_to_list(put) ->
+	"PUT";
+method_to_list(head) ->
+	"HEAD";
+method_to_list(delete) ->
+	"DELETE";
+method_to_list(connect) ->
+	"CONNECT";
+method_to_list(options) ->
+	"OPTIONS";
+method_to_list(trace) ->
+	"TRACE";
+method_to_list(patch) ->
+	"PATCH";
+method_to_list(_) ->
+	"unknown".
 
 get_ip_port({_, _} = Peer) ->
 	Peer;

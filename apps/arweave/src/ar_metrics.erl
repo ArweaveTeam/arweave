@@ -1,6 +1,6 @@
 -module(ar_metrics).
 
--export([register/0, label_http_path/1]).
+-export([register/0, label_http_path/1, get_status_class/1]).
 
 register() ->
 	prometheus_counter:new([
@@ -51,6 +51,14 @@ register() ->
 			help,
 			"The total number of propagated transactions. Increases "
 			"with the number of peers the node propagates transactions to."
+		}
+	]),
+	prometheus_counter:new([
+		{name, gun_requests_total},
+		{labels, [http_method, route, status_class]},
+		{
+			help,
+			"The total number of GUN requests."
 		}
 	]),
 	prometheus_histogram:declare([
@@ -160,3 +168,29 @@ name_route([<<"metrics">>]) ->
 	"/metrics";
 name_route(_) ->
 	undefined.
+
+get_status_class({ok, {{Status, _}, _, _, _, _}}) ->
+	get_status_class(Status);
+get_status_class({error, connection_closed}) ->
+	"connection_closed";
+get_status_class({error, connect_timeout}) ->
+	"connect_timeout";
+get_status_class({error, timeout}) ->
+	"timeout";
+get_status_class({error, econnrefused}) ->
+	"econnrefused";
+get_status_class(208) ->
+	"already_processed";
+get_status_class(Data) when is_integer(Data), Data > 0 ->
+	prometheus_http:status_class(Data);
+get_status_class(Data) when is_binary(Data) ->
+	case catch binary_to_integer(Data) of
+		{_, _} ->
+			"unknown";
+		Status ->
+			get_status_class(Status)
+	end;
+get_status_class(Data) when is_atom(Data) ->
+	atom_to_list(Data);
+get_status_class(_) ->
+	"unknown".

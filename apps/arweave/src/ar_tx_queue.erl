@@ -319,28 +319,8 @@ tx_queue_size(#tx{ format = 2, data = Data }) ->
 
 record_propagation_status(not_sent) ->
 	ok;
-record_propagation_status({ok, {{StatusBinary, _}, _, _, _, _}}) ->
-	StatusClass = case catch binary_to_integer(StatusBinary) of
-		200 ->
-			"success";
-		208 ->
-			"already_processed";
-		Status when is_integer(Status) ->
-			prometheus_http:status_class(Status);
-		_ ->
-			"unknown"
-	end,
-	prometheus_counter:inc(propagated_transactions_total, [StatusClass]);
-record_propagation_status({error, connection_closed}) ->
-	prometheus_counter:inc(propagated_transactions_total, ["connection_closed"]);
-record_propagation_status({error, connect_timeout}) ->
-	prometheus_counter:inc(propagated_transactions_total, ["connect_timeout"]);
-record_propagation_status({error, timeout}) ->
-	prometheus_counter:inc(propagated_transactions_total, ["timeout"]);
-record_propagation_status({error, econnrefused}) ->
-	prometheus_counter:inc(propagated_transactions_total, ["econnrefused"]);
-record_propagation_status(_Reply) ->
-	prometheus_counter:inc(propagated_transactions_total, ["unknown"]).
+record_propagation_status(Data) ->
+	prometheus_counter:inc(propagated_transactions_total, [ar_metrics:get_status_class(Data)]).
 
 record_propagation_rate(PropagatedSize, PropagationTimeUs) ->
 	BitsPerSecond = PropagatedSize * 1000000 / PropagationTimeUs * 8,

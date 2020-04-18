@@ -215,7 +215,6 @@ get_block_index(Peer) ->
 			path => "/hash_list",
 			headers => p2p_headers()
 		}),
-	Fork_2_0 = ar_fork:height_2_0(),
 	ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)).
 
 get_block_index(Peer, Hash) ->
