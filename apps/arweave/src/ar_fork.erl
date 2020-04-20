@@ -32,5 +32,10 @@ height_1_9() ->
 	315700. % Targeting 2019-11-04 UTC
 -endif.
 
+-ifdef(DEBUG).
+height_2_0() ->
+	0.
+-else.
 height_2_0() ->
 	422250. % Targeting 2020-04-09 10:00 UTC
+-endif.

@@ -1,6 +1,8 @@
 -module(ar_gossip).
+
 -export([init/0, init/1, peers/1, add_peers/2, send/2, recv/2]).
 -export([set_loss_probability/2, set_delay/2, set_xfer_speed/2]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -71,7 +73,7 @@ send(S, Msg) ->
 
 %% @doc Potentially send a message to a node, depending on state.
 %% No warning is issued for messages that cannot be sent to network peers!
-possibly_send(_S, Peer, #gs_msg { data = {new_block, _Node, _Height, _NewB, _BSD, _Recall} })
+possibly_send(_S, Peer, #gs_msg { data = {new_block, _Node, _Height, _NewB, _BSD} })
 		when (not is_pid(Peer)) ->
 	ignore;
 possibly_send(_S, Peer, #gs_msg { data = {add_tx, _TX} }) when not is_pid(Peer) ->

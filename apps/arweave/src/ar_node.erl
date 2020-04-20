@@ -148,7 +148,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{not_joined, true} ->
 					ar_join:start(self(), Peers);
 				_ ->
-					ar_transition:update_block_index(BI)
+					do_nothing
 			end,
 			Gossip =
 				ar_gossip:init(
@@ -164,7 +164,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					not_joined ->
 						{0, 0, not_joined};
 					[{H, _, _} | _] ->
-						B = ar_storage:read_block(H, BI),
+						B = ar_storage:read_block(H),
 						{B#block.reward_pool, B#block.weave_size, H}
 				end,
 			%% Start processes, init state, and start server.
@@ -204,8 +204,8 @@ create_block_txs_pairs(BI) ->
 
 create_block_txs_pairs(recent_blocks, []) ->
 	[];
-create_block_txs_pairs(recent_blocks, BI = [{BH, _, _} | Rest]) ->
-	B = ar_storage:read_block(BH, BI),
+create_block_txs_pairs(recent_blocks, [{BH, _, _} | Rest]) ->
+	B = ar_storage:read_block(BH),
 	[{BH, B#block.txs} | create_block_txs_pairs(Rest)].
 
 %% @doc Stop a node server loop and its subprocesses.
@@ -628,8 +628,8 @@ handle(_SPid, {cancel_tx, TXID, Sig}) ->
 	{task, {cancel_tx, TXID, Sig}};
 handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
-handle(_SPid, {new_block, Peer, Height, NewB, BDS, Recall}) ->
-	{task, {process_new_block, Peer, Height, NewB, BDS, Recall}};
+handle(_SPid, {new_block, Peer, Height, NewB, BDS}) ->
+	{task, {process_new_block, Peer, Height, NewB, BDS}};
 handle(_SPid, {replace_block_list, Blocks}) ->
 	{task, {replace_block_list, Blocks}};
 handle(_SPid, {set_delay, MaxDelay}) ->

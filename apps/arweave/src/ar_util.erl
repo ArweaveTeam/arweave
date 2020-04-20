@@ -9,7 +9,6 @@
 -export([parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_block_index/2, hash_from_block_index/2]).
--export([get_recall_hash/2, get_recall_hash/3]).
 -export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
 -export([get_hash/1, get_head_block/1]).
 -export([genesis_wallets/0]).
@@ -19,6 +18,9 @@
 -export([do_until/3]).
 -export([index_of/2]).
 -export([block_index_entry_from_block/1]).
+
+%% NOT used. Exported for the historical record.
+-export([get_recall_hash/2, get_recall_hash/3]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -81,7 +83,7 @@ wallets_from_hashes(BI) ->
 %% @doc Get block list from hash list.
 blocks_from_hashes([]) -> undefined;
 blocks_from_hashes(BI) ->
-	lists:map(fun({BH, _, _}) -> ar_storage:read_block(BH, BI) end, BI).
+	lists:map(fun({BH, _, _}) -> ar_storage:read_block(BH) end, BI).
 
 %% @doc Fetch a block hash by number from a block hash list (and disk).
 hash_from_block_index(Num, BI) ->
@@ -89,12 +91,12 @@ hash_from_block_index(Num, BI) ->
 
 %% @doc Read a block at the given height from the hash list
 block_from_block_index(Num, BI) ->
-	ar_storage:read_block(hash_from_block_index(Num, BI), BI).
+	ar_storage:read_block(hash_from_block_index(Num, BI)).
 
 %% @doc Fetch the head block using BI.
 get_head_block(not_joined) -> unavailable;
-get_head_block(BI = [{IndepHash, _, _} | _]) ->
-	ar_storage:read_block(IndepHash, BI).
+get_head_block([{IndepHash, _, _} | _]) ->
+	ar_storage:read_block(IndepHash).
 
 %% @doc Get the hash of the recall block for the current block
 %% and its hash list.
@@ -251,12 +253,7 @@ index_of(_Subject, [_Subject | _], Counter) -> Counter;
 index_of(Subject, [_ | List], Counter) -> index_of(Subject, List, Counter + 1).
 
 block_index_entry_from_block(B) ->
-	case B#block.height < ar_fork:height_2_0() of
-		true ->
-			{B#block.indep_hash, not_set, not_set};
-		false ->
-			{B#block.indep_hash, B#block.weave_size, B#block.tx_root}
-	end.
+	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
 
 %%%
 %%% Tests.

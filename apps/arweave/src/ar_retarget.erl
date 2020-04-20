@@ -176,7 +176,7 @@ simple_retarget_test_() ->
 		true = ar_util:do_until(
 			fun() ->
 				[BH|_] = ar_node:get_blocks(Node),
-				B = ar_storage:read_block(BH, ar_node:get_block_index(Node)),
+				B = ar_storage:read_block(BH),
 				B#block.diff > ar_mine:genesis_difficulty()
 			end,
 			1000,

@@ -325,27 +325,21 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					),
 					KeyPair = ar_wallet:load_keyfile(ar_wallet:wallet_filepath(WalletAccessCode)),
 					UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
-					Height = ar_node:get_height(whereis(http_entrypoint_node)),
-					SignedTX = case ar_fork:height_2_0() of
-						H when Height >= H ->
-							Data = UnsignedTX#tx.data,
-							DataSize = byte_size(Data),
-							DataRoot = case DataSize > 0 of
-								true ->
-									TreeTX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
-									TreeTX#tx.data_root;
-								false ->
-									<<>>
-							end,
-							Format2TX = UnsignedTX#tx{
-								format = 2,
-								data_size = DataSize,
-								data_root = DataRoot
-							},
-							ar_tx:sign(Format2TX, KeyPair);
-						_ ->
-							ar_tx:sign_v1(UnsignedTX, KeyPair)
+					Data = UnsignedTX#tx.data,
+					DataSize = byte_size(Data),
+					DataRoot = case DataSize > 0 of
+						true ->
+							TreeTX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
+							TreeTX#tx.data_root;
+						false ->
+							<<>>
 					end,
+					Format2TX = UnsignedTX#tx{
+						format = 2,
+						data_size = DataSize,
+						data_root = DataRoot
+					},
+					SignedTX = ar_tx:sign(Format2TX, KeyPair),
 					{PeerIP, _Port} = cowboy_req:peer(Req),
 					case handle_post_tx(PeerIP, SignedTX) of
 						ok ->
@@ -831,11 +825,11 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 
 handle_post_tx(PeerIP, TX) ->
 	Node = whereis(http_entrypoint_node),
-	Height = ar_node:get_height(Node),
-	case verify_mempool_txs_size(Node, TX, Height) of
+	case verify_mempool_txs_size(Node, TX) of
 		invalid ->
 			handle_post_tx_no_mempool_space_response();
 		valid ->
+			Height = ar_node:get_height(Node),
 			handle_post_tx(PeerIP, Node, TX, Height)
 	end.
 
@@ -881,14 +875,6 @@ handle_post_tx(PeerIP, Node, TX, Height, WalletList) ->
 			handle_post_tx_already_in_mempool_response();
 		{valid, _, _} ->
 			handle_post_tx_accepted(PeerIP, TX)
-	end.
-
-verify_mempool_txs_size(Node, TX, Height) ->
-	case ar_fork:height_1_8() of
-		H when Height >= H ->
-			verify_mempool_txs_size(Node, TX);
-		_ ->
-			valid
 	end.
 
 verify_mempool_txs_size(Node, TX) ->
@@ -1106,29 +1092,29 @@ post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 				true ->
 					{208, #{}, <<"Block Data Segment already processed.">>, Req};
 				false ->
-					post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+					post_block(check_indep_hash_processed, {BShadow, OrigPeer, BDS}, Req)
 			end;
 		false ->
 			post_block_reject_warn(BShadow, block_data_segment_missing, OrigPeer),
 			{400, #{}, <<"block_data_segment missing.">>, Req}
 	end;
-post_block(check_indep_hash_processed, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_indep_hash_processed, {BShadow, OrigPeer, BDS}, Req) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		true ->
 			{208, <<"Block already processed.">>, Req};
 		false ->
 			ar_bridge:ignore_id(BShadow#block.indep_hash),
-			post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+			post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req)
 	end;
-post_block(check_is_joined, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req) ->
 	% Check if node is joined.
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			{503, #{}, <<"Not joined.">>, Req};
 		true ->
-			post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+			post_block(check_height, {BShadow, OrigPeer, BDS}, Req)
 	end;
-post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_height, {BShadow, OrigPeer, BDS}, Req) ->
 	CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
 	case BShadow#block.height of
 		H when H < CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT ->
@@ -1136,22 +1122,22 @@ post_block(check_height, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 		H when H > CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
 			{400, #{}, <<"Height is too far ahead">>, Req};
 		_ ->
-			post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+			post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req)
 	end;
 %% The min difficulty check is filtering out blocks from smaller networks, e.g.
 %% testnets. Therefor, we don't want to log when this check or any check above
 %% rejects the block because there are potentially a lot of rejections.
-post_block(check_difficulty, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req) ->
 	case BShadow#block.diff >= ar_mine:min_difficulty(BShadow#block.height) of
 		true ->
-			post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req);
+			post_block(check_pow, {BShadow, OrigPeer, BDS}, Req);
 		_ ->
 			{400, #{}, <<"Difficulty too low">>, Req}
 	end;
 %% Note! Checking PoW should be as cheap as possible. All slow steps should
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
-post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_pow, {BShadow, OrigPeer, BDS}, Req) ->
 	case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
 		{invalid, _} ->
 			post_block_reject_warn(BShadow, check_pow, OrigPeer),
@@ -1159,9 +1145,9 @@ post_block(check_pow, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
 		{valid, _} ->
 			ar_bridge:ignore_id(BDS),
-			post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+			post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req)
 	end;
-post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req) ->
 	%% Verify the timestamp of the block shadow.
 	case ar_block:verify_timestamp(BShadow) of
 		false ->
@@ -1174,21 +1160,12 @@ post_block(check_timestamp, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			),
 			{400, #{}, <<"Invalid timestamp.">>, Req};
 		true ->
-			post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req)
+			post_block(post_block, {BShadow, OrigPeer, BDS}, Req)
 	end;
-post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
+post_block(post_block, {BShadow, OrigPeer, BDS}, Req) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->
-		Recall =
-			case val_for_key(<<"recall_block">>, ReqStruct) of
-				false -> BShadow#block.poa;
-				RecallH ->
-					RecallSize = val_for_key(<<"recall_size">>, ReqStruct),
-					Key = ar_util:decode(val_for_key(<<"key">>, ReqStruct)),
-					Nonce = ar_util:decode(val_for_key(<<"nonce">>, ReqStruct)),
-					{ar_util:decode(RecallH), RecallSize, Key, Nonce}
-			end,
 		ar:info([{
 			sending_external_block_to_bridge,
 			ar_util:encode(BShadow#block.indep_hash)
@@ -1202,8 +1179,7 @@ post_block(post_block, {ReqStruct, BShadow, OrigPeer, BDS}, Req) ->
 			whereis(http_bridge_node),
 			OrigPeer,
 			BShadow,
-			BDS,
-			Recall
+			BDS
 		)
 	end),
 	{200, #{}, <<"OK">>, Req}.
@@ -1295,8 +1271,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 process_request(get_block, [Type, ID, Field], Req) ->
 	case ar_meta_db:get(subfield_queries) of
 		true ->
-			CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
-			case find_block(Type, ID, CurrentBI) of
+			case find_block(Type, ID) of
 				unavailable ->
 					{404, #{}, <<"Not Found.">>, Req};
 				B ->
@@ -1339,10 +1314,11 @@ search_in_block_index(H, BI) ->
 	end.
 
 %% @doc Find a block, given a type and a specifier.
-find_block(<<"height">>, RawHeight, BI) ->
+find_block(<<"height">>, RawHeight) ->
+	BI = ar_node:get_block_index(whereis(http_entrypoint_node)),
 	ar_storage:read_block(binary_to_integer(RawHeight), BI);
-find_block(<<"hash">>, ID, BI) ->
-	ar_storage:read_block(ID, BI).
+find_block(<<"hash">>, ID) ->
+	ar_storage:read_block(ID).
 
 post_tx_parse_id({Req, Pid}) ->
 	post_tx_parse_id(check_header, {Req, Pid}).

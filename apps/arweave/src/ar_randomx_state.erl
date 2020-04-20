@@ -247,7 +247,7 @@ get_block(Height, BI, Peers) when is_integer(Height) ->
 	{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
 	get_block(BH, BI, Peers);
 get_block(BH, BI, Peers) ->
-	case ar_http_iface_client:get_block(Peers, BH, BI) of
+	case ar_http_iface_client:get_block(Peers, BH) of
 		unavailable ->
 			unavailable;
 		B ->

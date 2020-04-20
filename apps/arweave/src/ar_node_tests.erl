@@ -129,7 +129,7 @@ tiny_network_with_reward_pool_test() ->
 	ar_test_node:wait_until_height(Node1, 2),
 	ar_test_node:wait_until_height(Node1, 2),
 	Bs2 = ar_node:get_blocks(Node2),
-	2 = (hd(ar_storage:read_block(Bs2, Bs2)))#block.height.
+	2 = (hd(ar_storage:read_block(Bs2)))#block.height.
 
 %% @doc Check the current block can be retrieved
 get_current_block_test() ->
@@ -138,7 +138,7 @@ get_current_block_test() ->
 	[B0] = ar_weave:init(),
 	Node = ar_node:start([], [B0]),
 	B1 = ar_node:get_current_block(Node),
-	?assertEqual(B0, B1).
+	?assertEqual(B0#block{ hash_list = unset }, B1).
 
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_blockweave_with_mining_test() ->
@@ -169,7 +169,7 @@ tiny_blockweave_with_added_data_test() ->
 		ar_util:do_until(
 			fun() ->
 				BI = ar_node:get_blocks(Node2),
-				BL = ar_storage:read_block(BI, BI),
+				BL = ar_storage:read_block(BI),
 				BHead = hd(BL),
 				TXs = BHead#block.txs,
 				TestDataID = TestData#tx.id,
@@ -207,9 +207,8 @@ medium_blockweave_multi_mine_test_() ->
 				B2 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 				TestDataID1 = TestData1#tx.id,
 				TestDataID2 = TestData2#tx.id,
-				BI = ar_node:get_block_index(ar_util:pick_random(Nodes)),
-				[TestDataID1] == (hd(ar_storage:read_block(B1, BI)))#block.txs andalso
-				[TestDataID2] == (hd(ar_storage:read_block(B2, BI)))#block.txs
+				[TestDataID1] == (hd(ar_storage:read_block(B1)))#block.txs andalso
+				[TestDataID2] == (hd(ar_storage:read_block(B2)))#block.txs
 			end,
 			1000,
 			30000
@@ -322,7 +321,7 @@ large_blockweave_with_data_test_() ->
 			fun() ->
 				B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 				TestDataID = TestData#tx.id,
-				[TestDataID] == (hd(ar_storage:read_block(B1, B1)))#block.txs
+				[TestDataID] == (hd(ar_storage:read_block(B1)))#block.txs
 			end,
 			1000,
 			30000
@@ -346,7 +345,7 @@ large_weakly_connected_blockweave_with_data_test_() ->
 			fun() ->
 				B1 = ar_node:get_blocks(ar_util:pick_random(Nodes)),
 				TestDataID = TestData#tx.id,
-				[TestDataID] == (ar_storage:read_block(hd(B1), B1))#block.txs
+				[TestDataID] == (ar_storage:read_block(hd(B1)))#block.txs
 			end,
 			1000,
 			30000
@@ -381,12 +380,12 @@ medium_blockweave_mine_multiple_data_test_() ->
 				true ==
 					lists:member(
 						SignedTX#tx.id,
-						(hd(ar_storage:read_block(B1, B1)))#block.txs
+						(hd(ar_storage:read_block(B1)))#block.txs
 					) andalso
 				true ==
 					lists:member(
 						SignedTX2#tx.id,
-						(hd(ar_storage:read_block(B1, B1)))#block.txs
+						(hd(ar_storage:read_block(B1)))#block.txs
 					)
 			end,
 			1000,
@@ -439,8 +438,8 @@ mine_tx_with_key_val_tags_test_() ->
 		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
 		ar_node:mine(Node1),
 		ar_test_node:wait_until_height(Node2, 1),
-		BI = [{B1Hash, _, _} | _] = ar_node:get_blocks(Node2),
-		#block { txs = TXs } = ar_storage:read_block(B1Hash, BI),
+		[{B1Hash, _, _} | _] = ar_node:get_blocks(Node2),
+		#block { txs = TXs } = ar_storage:read_block(B1Hash),
 		?assertEqual([SignedTX], ar_storage:read_tx(TXs))
 	end}.
 

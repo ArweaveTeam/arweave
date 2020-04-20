@@ -1,7 +1,6 @@
 -module(ar_block).
 
 -export([block_to_binary/1, block_field_size_limit/1]).
--export([get_recall_block/3]).
 -export([verify_dep_hash/2, verify_indep_hash/1, verify_timestamp/1]).
 -export([verify_height/2, verify_last_retarget/2, verify_previous_block/2]).
 -export([verify_block_hash_list/2, verify_wallet_list/4, verify_weave_size/3]).
@@ -9,13 +8,14 @@
 -export([verify_tx_root/1]).
 -export([hash_wallet_list/2, hash_wallet_list/3, hash_wallet_list_without_reward_wallet/2]).
 -export([hash_wallet_list_pre_2_0/1]).
--export([generate_block_data_segment_pre_2_0/6]).
 -export([generate_block_data_segment/1, generate_block_data_segment/3, generate_block_data_segment_base/1]).
 -export([generate_hash_list_for_block/2]).
 -export([generate_tx_root_for_block/1, generate_size_tagged_list_from_txs/1]).
--export([generate_block_data_segment_and_pieces/6, refresh_block_data_segment_timestamp/6]).
 -export([generate_tx_tree/1, generate_tx_tree/2]).
 -export([compute_hash_list_merkle/2]).
+
+%% NOT used. Exported for the historical record.
+-export([generate_block_data_segment_pre_2_0/6]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -288,7 +288,7 @@ poa_to_list(POA) ->
 		POA#poa.chunk
 	].
 
-%% @docs Generate a hashable data segment for a block from the preceding block,
+%% @doc Generate a hashable data segment for a block from the preceding block,
 %% the preceding block's recall block, TXs to be mined, reward address and tags.
 generate_block_data_segment_pre_2_0(PrecedingB, PrecedingRecallB, [unavailable], RewardAddr, Time, Tags) ->
 	generate_block_data_segment_pre_2_0(
@@ -413,73 +413,6 @@ generate_block_data_segment_and_pieces(PrecedingB, PrecedingRecallB, TXs, Reward
 		<< Piece || Piece <- Pieces >>
 	)}.
 
-refresh_block_data_segment_timestamp(Pieces, PrecedingB, PrecedingRecallB, TXs, RewardAddr, Time) ->
-	NewHeight = PrecedingB#block.height + 1,
-	Retarget =
-		case ar_retarget:is_retarget_height(NewHeight) of
-			true -> Time;
-			false -> PrecedingB#block.last_retarget
-		end,
-	WeaveSize = PrecedingB#block.weave_size +
-		lists:foldl(
-			fun(TX, Acc) ->
-				Acc + TX#tx.data_size
-			end,
-			0,
-			TXs
-		),
-	NewDiff = ar_retarget:maybe_retarget(
-		PrecedingB#block.height + 1,
-		PrecedingB#block.diff,
-		Time,
-		PrecedingB#block.last_retarget
-	),
-	{FinderReward, RewardPool} =
-		ar_node_utils:calculate_reward_pool(
-			PrecedingB#block.reward_pool,
-			TXs,
-			RewardAddr,
-			PrecedingRecallB,
-			WeaveSize,
-			PrecedingB#block.height + 1,
-			NewDiff,
-			Time
-		),
-	NewWalletList =
-		ar_node_utils:apply_mining_reward(
-			ar_node_utils:apply_txs(PrecedingB#block.wallet_list, TXs, PrecedingB#block.height),
-			RewardAddr,
-			FinderReward,
-			length(PrecedingB#block.hash_list) - 1
-		),
-	NewPieces = [
-		lists:nth(1, Pieces),
-		<<
-			(integer_to_binary(Time))/binary,
-			(integer_to_binary(Retarget))/binary
-		>>,
-		lists:nth(3, Pieces),
-		<<
-			(
-				binary:list_to_bin(
-					lists:map(
-						fun ar_wallet:to_binary/1,
-						NewWalletList
-					)
-				)
-			)/binary
-		>>,
-		lists:nth(5, Pieces),
-		<<
-			(integer_to_binary(RewardPool))/binary
-		>>,
-		lists:nth(7, Pieces)
-	],
-	{NewPieces, crypto:hash(
-		?MINING_HASH_ALG,
-		<< Piece || Piece <- NewPieces >>
-	)}.
-
 %% @doc Verify the independant hash of a given block is valid
 verify_indep_hash(Block = #block { indep_hash = Indep }) ->
 	Indep == ar_weave:indep_hash(Block).
@@ -564,7 +497,7 @@ verify_wallet_list(NewB, OldB, POA, NewTXs) ->
 			NewB#block.reward_addr,
 			POA,
 			NewB#block.weave_size,
-			length(NewB#block.hash_list),
+			OldB#block.height + 1,
 			NewB#block.diff,
 			NewB#block.timestamp
 		),
@@ -572,16 +505,16 @@ verify_wallet_list(NewB, OldB, POA, NewTXs) ->
 		unclaimed -> <<"unclaimed">>;
 		_         -> ar_util:encode(OldB#block.reward_addr)
 	end,
-	ar:report(
+	ar:info(
 		[
-			verifying_finder_reward,
+			{event, verifying_finder_reward},
 			{finder_reward, FinderReward},
 			{new_reward_pool, RewardPool},
 			{reward_address, RewardAddress},
 			{old_reward_pool, OldB#block.reward_pool},
 			{txs, length(NewTXs)},
 			{weave_size, NewB#block.weave_size},
-			{length, length(NewB#block.hash_list)}
+			{height, OldB#block.height + 1}
 		]
 	),
 	(NewB#block.reward_pool == RewardPool) and
@@ -632,23 +565,6 @@ verify_block_hash_list_merkle(NewB, _CurrentB, _) when NewB#block.height < ?FORK
 	NewB#block.hash_list_merkle == <<>>;
 verify_block_hash_list_merkle(NewB, CurrentB, _) when NewB#block.height == ?FORK_1_6 ->
 	NewB#block.hash_list_merkle == ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list).
-
-get_recall_block(OrigPeer, RecallHash, BI) ->
-	case ar_storage:read_block(RecallHash, BI) of
-		unavailable ->
-			ar:info([{event, downloading_recall_block}, {block, ar_util:encode(RecallHash)}]),
-			FullBlock =
-				ar_http_iface_client:get_block(OrigPeer, RecallHash, BI),
-			case ?IS_BLOCK(FullBlock)  of
-				true ->
-					ar_storage:write_full_block(FullBlock),
-					FullBlock#block{
-						txs = [TX#tx.id || TX <- FullBlock#block.txs]
-					};
-				false -> unavailable
-			end;
-		Recall -> Recall
-	end.
 
 %% Tests: ar_block
 

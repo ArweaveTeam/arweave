@@ -11,7 +11,6 @@ parse_config() ->
 	?assertMatch(#config{
 		benchmark = true,
 		port = 1985,
-		init = true,
 		mine = true,
 		peers = [
 			{188,166,200,45,1984},

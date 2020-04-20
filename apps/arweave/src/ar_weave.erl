@@ -13,11 +13,16 @@
 
 %%% Utilities for manipulating the ARK weave datastructure.
 
-%% @doc Start a new block list. Optionally takes a list of wallet values
-%% for the genesis block.
--ifdef(DEBUG).
+%% @doc Start a new weave. Optionally takes a list of wallets
+%% for the genesis block. The function was used to start the original weave.
+%% Also, it is used in tests. Currently it's not possible to start a new weave
+%% from the command line. The feature was dropped since it requires extra effort
+%% to reset the fork heights and update the inflation rewards issuance, to make the
+%% new weaves created this way function without the issues solved by the hard forks
+%% in the original weave. The genesis transactions of the original weave
+%% are defined in read_v1_genesis_txs/0.
 init() -> init(ar_util:genesis_wallets()).
-init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty(), 0).
+init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty()).
 init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
 	ar_randomx_state:reset(),
@@ -39,33 +44,6 @@ init(WalletList, StartingDiff, RewardPool) ->
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].
--else.
-init() -> init(ar_util:genesis_wallets()).
-init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty()).
-init(WalletList, Diff) -> init(WalletList, Diff, 0).
-init(WalletList, StartingDiff, RewardPool) ->
-	ar_randomx_state:reset(),
-	% Generate and dispatch a new data transaction.
-	TXs = read_v1_genesis_txs(),
-	B0 =
-		#block{
-			height = 0,
-			hash = crypto:strong_rand_bytes(32),
-			nonce = crypto:strong_rand_bytes(32),
-			txs = TXs,
-			wallet_list = WalletList,
-			wallet_list_hash = ar_block:hash_wallet_list(0, unclaimed, WalletList),
-			hash_list = [],
-			diff = StartingDiff,
-			weave_size = 0,
-			block_size = 0,
-			reward_pool = RewardPool,
-			timestamp = os:system_time(seconds),
-			poa = #poa{}
-		},
-	B1 = B0#block { last_retarget = B0#block.timestamp },
-	[B1#block { indep_hash = indep_hash(B1) }].
--endif.
 
 %% @doc Add a new block to the weave, with assiocated TXs and archive data.
 %% DEPRECATED - only used in tests, mine blocks in tests instead.
@@ -104,7 +82,7 @@ add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList) ->
 	add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList, []).
 add([{Hash, _, _} | Bs], TXs, BI, RewardAddr, RewardPool, WalletList, Tags) when is_binary(Hash) ->
 	add(
-		[ar_storage:read_block(Hash, BI) | Bs],
+		[ar_storage:read_block(Hash) | Bs],
 		TXs,
 		BI,
 		RewardAddr,
@@ -130,7 +108,7 @@ add(Bs, TXs, BI, RewardAddr, RewardPool, WalletList, Tags) ->
 	).
 add([{Hash, _, _} | Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA, Diff, Nonce, Timestamp) when is_binary(Hash) ->
 	add(
-		[ar_storage:read_block(Hash, BI) | Bs],
+		[ar_storage:read_block(Hash) | Bs],
 		RawTXs,
 		BI,
 		RewardAddr,
@@ -160,7 +138,6 @@ add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA,
 		NewHeight
 	),
 	MR = ar_block:compute_hash_list_merkle(CurrentB, BI),
-	Fork_2_0 = ar_fork:height_2_0(),
 	NewB =
 		#block {
 			nonce = Nonce,
@@ -176,7 +153,7 @@ add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA,
 			height = NewHeight,
 			txs = TXs,
 			tx_root = TXRoot,
-			hash_list = ?BI_TO_BHL(BI),
+			hash_list = ?BI_TO_BHL(lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)),
 			hash_list_merkle = MR,
 			wallet_list = WalletList,
 			wallet_list_hash = ar_block:hash_wallet_list(NewHeight, RewardAddr, WalletList),
@@ -185,33 +162,14 @@ add([CurrentB | _Bs], RawTXs, BI, RewardAddr, RewardPool, WalletList, Tags, POA,
 			reward_pool = RewardPool,
 			weave_size = CurrentB#block.weave_size + BlockSize,
 			block_size = BlockSize,
-			poa =
-				case NewHeight >= Fork_2_0 of
-					true -> POA;
-					false -> #poa{}
-				end
+			poa = POA
 		},
-	Hash = case NewHeight >= Fork_2_0 of
-		true ->
-			hash(
-				ar_block:generate_block_data_segment(NewB),
-				NewB#block.nonce,
-				NewHeight
-			);
-		false ->
-			hash(
-				ar_block:generate_block_data_segment_pre_2_0(
-					CurrentB,
-					POA,
-					RawTXs,
-					RewardAddr,
-					Timestamp,
-					Tags
-				),
-				Nonce,
-				NewHeight
-			)
-	end,
+	Hash =
+		hash(
+			ar_block:generate_block_data_segment(NewB),
+			NewB#block.nonce,
+			NewHeight
+		),
 	[NewB#block { indep_hash = indep_hash(NewB#block { hash = Hash }), hash = Hash } | BI].
 
 %% @doc Take a complete block list and return a list of block hashes.

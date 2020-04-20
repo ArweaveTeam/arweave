@@ -24,20 +24,15 @@ generate([B | _]) when is_record(B, block) ->
 generate([]) -> #poa{};
 generate(BI) ->
 	Height = length(BI),
-	case Height >= ar_fork:height_2_0() of
-		true ->
-			%% Find locally available data to generate a PoA. Do not go
-			%% deeeper than the configured depth - the PoW difficulty increases
-			%% exponentially so it does not make sense to go too deep.
-			%% There is a hard limit based on the weave height to keep
-			%% validation cheap. The minimum maximum depth of ?MIN_MAX_OPTION_DEPTH
-			%% is made for small weaves (useful in tests).
-			ConfiguredDepth = ar_meta_db:get(max_poa_option_depth) + 1,
-			Depth = min(ConfiguredDepth, max(Height + 1, ?MIN_MAX_OPTION_DEPTH + 1)),
-			generate(BI, Depth);
-		false ->
-			ar_node_utils:find_recall_block(BI)
-	end.
+	%% Find locally available data to generate a PoA. Do not go
+	%% deeeper than the configured depth - the PoW difficulty increases
+	%% exponentially so it does not make sense to go too deep.
+	%% There is a hard limit based on the weave height to keep
+	%% validation cheap. The minimum maximum depth of ?MIN_MAX_OPTION_DEPTH
+	%% is made for small weaves (useful in tests).
+	ConfiguredDepth = ar_meta_db:get(max_poa_option_depth) + 1,
+	Depth = min(ConfiguredDepth, max(Height + 1, ?MIN_MAX_OPTION_DEPTH + 1)),
+	generate(BI, Depth).
 
 generate([], _) -> #poa{};
 generate([{Seed, WeaveSize, _TXRoot} | _] = BI, Depth) ->

@@ -10,11 +10,14 @@
 -export([apply_mining_reward/4, apply_tx/3, apply_txs/3]).
 -export([start_mining/1, reset_miner/1]).
 -export([integrate_new_block/3]).
--export([validate/5, validate/8, validate_wallet_list/1]).
+-export([validate/5, validate_wallet_list/1]).
 -export([calculate_delay/1]).
 -export([update_block_txs_pairs/2, update_block_index/2]).
 -export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
 -export([tx_mempool_size/1, increase_mempool_size/2, calculate_mempool_size/1]).
+
+%% NOT used. Exported for the historical record.
+-export([validate_pre_fork_2_0/8]).
 
 -include("ar.hrl").
 -include("perpetual_storage.hrl").
@@ -24,12 +27,12 @@
 %%%
 
 %% @doc Search a block index for the next recall block.
-find_recall_block(BI = [{Hash, _, _}]) ->
-	ar_storage:read_block(Hash, BI);
+find_recall_block([{Hash, _, _}]) ->
+	ar_storage:read_block(Hash);
 find_recall_block(BI) ->
-	Block = ar_storage:read_block(element(1, hd(BI)), BI),
+	Block = ar_storage:read_block(element(1, hd(BI))),
 	RecallHash = ar_util:get_recall_hash(Block, BI),
-	ar_storage:read_block(RecallHash, BI).
+	ar_storage:read_block(RecallHash).
 
 %% @doc Find a block from an ordered block list.
 find_block(Hash) when is_binary(Hash) ->
@@ -217,15 +220,7 @@ start_mining(#{block_index := not_joined} = StateIn) ->
 	%% We don't have a block index. Wait until we have one before
 	%% starting to mine.
 	StateIn;
-start_mining(#{ height := Height } = State) ->
-	case Height + 1 >= ar_fork:height_2_0() of
-		true ->
-			start_mining_post_fork_2_0(State);
-		false ->
-			start_mining_pre_fork_2_0(State)
-	end.
-
-start_mining_post_fork_2_0(StateIn) ->
+start_mining(StateIn) ->
 	#{
 		node := Node,
 		block_index := BI,
@@ -246,7 +241,7 @@ start_mining_post_fork_2_0(StateIn) ->
 			);
 		POA ->
 			ar_miner_log:started_hashing(),
-			B = ar_storage:read_block(element(1, hd(BI)), BI),
+			B = ar_storage:read_block(element(1, hd(BI))),
 			Miner = ar_mine:start(
 				B,
 				POA,
@@ -267,81 +262,6 @@ start_mining_post_fork_2_0(StateIn) ->
 				BI
 			),
 			ar:info([{event, started_mining}]),
-			StateIn#{ miner => Miner }
-	end.
-
-start_mining_pre_fork_2_0(StateIn) ->
-	#{
-		node := Node,
-		block_index := BI,
-		txs := TXs,
-		reward_addr := RewardAddr,
-		tags := Tags,
-		block_txs_pairs := BlockTXPairs,
-		block_index := BI
-	} = StateIn,
-	case find_recall_block(BI) of
-		unavailable ->
-			B = ar_storage:read_block(element(1, hd(BI)), BI),
-			RecallHash = ar_util:get_recall_hash(B, BI),
-			FullBlock = ar_http_iface_client:get_block(ar_bridge:get_remote_peers(whereis(http_bridge_node)), RecallHash, BI),
-			case FullBlock of
-				X when (X == unavailable) or (X == not_found) ->
-					ar:info(
-						[
-							{event, could_not_start_mining},
-							{reason, could_not_retrieve_recall_block}
-						]
-					);
-				_ ->
-					case ar_weave:verify_indep(FullBlock, BI) of
-						true ->
-							ar_storage:write_full_block(FullBlock),
-							ar:info(
-								[
-									{event, could_not_start_mining},
-									{reason, stored_recall_block_for_foreign_verification}
-								]
-							);
-						false ->
-							ar:info(
-								[
-									{event,  could_not_start_mining},
-									{reason, received_invalid_recall_block},
-									{hash, ar_util:encode(FullBlock#block.indep_hash)}
-								]
-							)
-					end
-			end,
-			StateIn;
-		RecallB ->
-			case ?IS_BLOCK(RecallB) of
-				false ->
-					ar:err([{event, got_invalid_recall_block}, {block, RecallB}]);
-				true ->
-					ar_miner_log:started_hashing()
-			end,
-			B = ar_storage:read_block(element(1, hd(BI)), BI),
-			Miner = ar_mine:start(
-				B,
-				RecallB,
-				maps:fold(
-					fun
-						(_, {TX, ready_for_mining}, Acc) ->
-							[TX | Acc];
-						(_, _, Acc) ->
-							Acc
-					end,
-					[],
-					TXs
-				),
-				RewardAddr,
-				Tags,
-				Node,
-				BlockTXPairs,
-				BI
-			),
-			ar:info([{event, started_miner}]),
 			StateIn#{ miner => Miner }
 	end.
 
@@ -402,17 +322,12 @@ integrate_new_block(
 		PID ->
 			PID ! {parent_accepted_block, NewB}
 	end,
-	case NewB#block.height >= ar_fork:height_2_0() of
-		true ->
-			lists:foreach(
-				fun(TX) ->
-					ar_downloader:enqueue_random({tx_data, TX})
-				end,
-				BlockTXs
-			);
-		false ->
-			noop
-	end,
+	lists:foreach(
+		fun(TX) ->
+			ar_downloader:enqueue_random({tx_data, TX})
+		end,
+		BlockTXs
+	),
 	reset_miner(StateIn#{
 		block_index      => NewBI,
 		current          => element(1, hd(NewBI)),
@@ -428,19 +343,7 @@ integrate_new_block(
 
 update_block_index(B, BI) ->
 	maybe_report_n_confirmations(B, BI),
-	Fork_2_0 = ar_fork:height_2_0(),
-	NewBI = case B#block.height + 1 of
-		Height when Height < Fork_2_0 ->
-			{ok, Entry} = ar_transition:transition_block(B, B#block.txs),
-			[Entry | BI];
-		Fork_2_0 ->
-			{ok, {BH, _, _} = Entry} = ar_transition:transition_block(B, B#block.txs),
-			ar_transition:update_block_index([Entry | BI]),
-			Checkpoint = ar_transition:get_checkpoint(BH),
-			Checkpoint;
-		_ ->
-			[{B#block.indep_hash, B#block.weave_size, B#block.tx_root} | BI]
-	end,
+	NewBI = [{B#block.indep_hash, B#block.weave_size, B#block.tx_root} | BI],
 	case B#block.height rem ?STORE_BLOCKS_BEHIND_CURRENT of
 		0 ->
 			spawn(fun() -> ar_storage:write_block_index(NewBI) end);
@@ -464,65 +367,43 @@ update_block_txs_pairs(B, BlockTXPairs) ->
 	TXIDs = [case TX of Record when is_record(Record, tx) -> Record#tx.id; ID -> ID end || TX <- B#block.txs],
 	lists:sublist([{B#block.indep_hash, TXIDs} | BlockTXPairs], 2 * ?MAX_TX_ANCHOR_DEPTH).
 
-%% @doc Validate a block, given a node state and the dependencies.
-validate(#{ block_index := BI, wallet_list := WalletList }, B, TXs, OldB, RecallB) ->
-	validate(BI, WalletList, B, TXs, OldB, RecallB, B#block.reward_addr, B#block.tags).
-
-%% @doc Validate a new block, given a server state, a claimed new block, the last block,
-%% and the recall block.
-validate(
-		BI,
-		WalletList,
-		NewB =
-			#block {
-				height = Height
-			},
-		TXs,
-		OldB,
-		RecallB,
-		RewardAddr,
-		Tags
-	) ->
-	case Height >= ar_fork:height_2_0() of
-		false ->
-			validate_pre_fork_2_0(BI, WalletList, NewB, TXs, OldB, RecallB, RewardAddr, Tags);
-		true ->
+%% @doc Validate a new block, given a server state, a claimed new block and the last block.
+validate(BI, WalletList, NewB, TXs, B) ->
+	ar:info(
+		[
+			{event, validating_block},
+			{hash, ar_util:encode(NewB#block.indep_hash)}
+		]
+	),
+	case timer:tc(
+		fun() ->
+			do_validate(BI, WalletList, NewB, TXs, B)
+		end
+	) of
+		{TimeTaken, valid} ->
 			ar:info(
 				[
-					{event, validating_block},
-					{hash, ar_util:encode(NewB#block.indep_hash)}
+					{event, block_validation_successful},
+					{hash, ar_util:encode(NewB#block.indep_hash)},
+					{time_taken_us, TimeTaken}
 				]
 			),
-			case timer:tc(
-				fun() ->
-					validate_post_fork_2_0(BI, WalletList, NewB, TXs, OldB)
-				end
-			) of
-				{TimeTaken, valid} ->
-					ar:info(
-						[
-							{event, block_validation_successful},
-							{hash, ar_util:encode(NewB#block.indep_hash)},
-							{time_taken_us, TimeTaken}
-						]
-					),
-					valid;
-				{TimeTaken, {invalid, Reason}} ->
-					ar:info(
-						[
-							{event, block_validation_failed},
-							{reason, Reason},
-							{hash, ar_util:encode(NewB#block.indep_hash)},
-							{time_taken_us, TimeTaken}
-						]
-					),
-					{invalid, Reason}
-			end
+			valid;
+		{TimeTaken, {invalid, Reason}} ->
+			ar:info(
+				[
+					{event, block_validation_failed},
+					{reason, Reason},
+					{hash, ar_util:encode(NewB#block.indep_hash)},
+					{time_taken_us, TimeTaken}
+				]
+			),
+			{invalid, Reason}
 	end.
 
-validate_post_fork_2_0(BI, WalletList, NewB = #block{ wallet_list = WalletList }, TXs, OldB) ->
+do_validate(BI, WalletList, NewB = #block{ wallet_list = WalletList }, TXs, OldB) ->
 	validate_block(height, {BI, WalletList, NewB, TXs, OldB});
-validate_post_fork_2_0(_BI, _WL, NewB, _TXs, _OldB) ->
+do_validate(_BI, _WL, NewB, _TXs, _OldB) ->
 	ar:info([
 		{event, block_not_accepted},
 		{hash, ar_util:encode(NewB#block.indep_hash)}
@@ -777,7 +658,7 @@ validate_pre_fork_2_0(
 	end;
 validate_pre_fork_2_0(_BI, WL, NewB = #block { hash_list = unset }, TXs, OldB, RecallB, _, _) ->
 	validate_pre_fork_2_0(unset, WL, NewB, TXs, OldB, RecallB, unclaimed, []);
-validate_pre_fork_2_0(BI, _WL, NewB = #block { wallet_list = undefined }, TXs,OldB, RecallB, _, _) ->
+validate_pre_fork_2_0(BI, _WL, NewB = #block { wallet_list = undefined }, TXs, OldB, RecallB, _, _) ->
 	validate_pre_fork_2_0(BI, undefined, NewB, TXs, OldB, RecallB, unclaimed, []);
 validate_pre_fork_2_0(_BI, _WL, NewB, _TXs, _OldB, _RecallB, _, _) ->
 	ar:info([{block_not_accepted, ar_util:encode(NewB#block.indep_hash)}]),

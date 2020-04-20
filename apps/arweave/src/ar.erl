@@ -114,8 +114,6 @@ show_help() ->
 						"if it does not receive blocks for a minute."},
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
-			{"init", "Start a new blockweave."},
-			{"diff (init_diff)", "(For use with 'init':) New blockweave starting difficulty."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
 			{"max_miners (num)", "The maximum number of mining processes."},
 			{"max_emitters (num)", "The maximum number of transaction propagation processes (default 2)."},
@@ -173,8 +171,6 @@ read_config_from_file(Path) ->
 	end.
 
 parse_cli_args([], C) -> C;
-parse_cli_args(["init"|Rest], C) ->
-	parse_cli_args(Rest, C#config { init = true });
 parse_cli_args(["mine"|Rest], C) ->
 	parse_cli_args(Rest, C#config { mine = true });
 parse_cli_args(["peer", Peer|Rest], C = #config { peers = Ps }) ->
@@ -193,8 +189,6 @@ parse_cli_args(["port", Port|Rest], C) ->
 	parse_cli_args(Rest, C#config { port = list_to_integer(Port) });
 parse_cli_args(["data_dir", DataDir|Rest], C) ->
 	parse_cli_args(Rest, C#config { data_dir = DataDir });
-parse_cli_args(["diff", Diff|Rest], C) ->
-	parse_cli_args(Rest, C#config { diff = list_to_integer(Diff) });
 parse_cli_args(["polling"|Rest], C) ->
 	parse_cli_args(Rest, C#config { polling = true });
 parse_cli_args(["clean"|Rest], C) ->
@@ -268,7 +262,6 @@ start(
 	#config {
 		port = Port,
 		data_dir = DataDir,
-		init = Init,
 		peers = Peers,
 		mine = Mine,
 		polling = Polling,
@@ -401,9 +394,7 @@ start(
 				Peers,
 				case StartFromBlockIndex of
 					false ->
-						if Init -> ar_weave:init(ar_util:genesis_wallets(), Diff);
-						true -> not_joined
-						end;
+						not_joined;
 					true ->
 						case ar_storage:read_block_index() of
 							{error, enoent} ->
@@ -452,7 +443,6 @@ start(
 			starting_server,
 			{session_log, Filename},
 			{port, Port},
-			{init_new_blockweave, Init},
 			{automine, Mine},
 			{miner, Node},
 			{mining_address, PrintMiningAddress},
@@ -481,7 +471,6 @@ start(
 			[]
 	end,
 	{ok, _} = ar_poller_sup:start_link(PollingArgs),
-	{ok, _} = ar_transition_sup:start_link([]),
 	{ok, _} = ar_downloader_sup:start_link([]),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case IPFSPin of

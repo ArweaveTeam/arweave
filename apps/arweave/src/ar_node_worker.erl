@@ -62,7 +62,7 @@ call(Pid, Task, Timeout) ->
 %% server must be sent, otherwise ar_node server might get stuck.
 server(NPid, SPid) ->
 	receive
-		{task, Task = {gossip_message, #gs_msg { data = {new_block, _, _, _, _, _}}}} ->
+		{task, Task = {gossip_message, #gs_msg { data = {new_block, _, _, _, _}}}} ->
 			handle_task(NPid, SPid, Task),
 			server(NPid, SPid)
 	after 0 ->
@@ -136,12 +136,12 @@ handle(SPid, {cancel_tx, TXID, Sig}) ->
 	{ok, StateOut} = cancel_tx(StateIn, TXID, Sig),
 	ar_node_state:update(SPid, StateOut),
 	{ok, cancel_tx};
-handle(SPid, {process_new_block, Peer, Height, BShadow, BDS, Recall}) ->
+handle(SPid, {process_new_block, Peer, Height, BShadow, BDS}) ->
 	%% We have a new block. Distribute it to the gossip network. This is only
 	%% triggered in the polling mode.
 	{ok, StateIn} = ar_node_state:all(SPid),
 	GS = maps:get(gossip, StateIn),
-	ar_gossip:send(GS, {new_block, Peer, Height, BShadow, BDS, Recall}),
+	ar_gossip:send(GS, {new_block, Peer, Height, BShadow, BDS}),
 	{ok, process_new_block};
 handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
@@ -227,9 +227,9 @@ handle(_SPid, Msg) ->
 	{error, {unknown_node_worker_message, Msg}}.
 
 %% @doc Handle the gossip receive results.
-handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, BShadow, _BDS, Recall}}) ->
+handle_gossip(SPid, {NewGS, {new_block, Peer, _Height, BShadow, _BDS}}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	case process_new_block(StateIn#{ gossip => NewGS }, BShadow, Recall, Peer) of
+	case process_new_block(StateIn#{ gossip => NewGS }, BShadow, Peer) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
@@ -387,7 +387,7 @@ maybe_remove_tx(TXs, RemoveTXID, Sig) ->
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recovery as appropriate.
-process_new_block(#{ block_index := not_joined }, BShadow, _Recall, _Peer) ->
+process_new_block(#{ block_index := not_joined }, BShadow, _Peer) ->
 	ar:info([
 		ar_node_worker,
 		ignore_block,
@@ -395,7 +395,7 @@ process_new_block(#{ block_index := not_joined }, BShadow, _Recall, _Peer) ->
 		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
 	]),
 	none;
-process_new_block(#{ height := Height }, BShadow, _Recall, _Peer)
+process_new_block(#{ height := Height }, BShadow, _Peer)
 		when BShadow#block.height =< Height ->
 	ar:info(
 		[
@@ -405,7 +405,7 @@ process_new_block(#{ height := Height }, BShadow, _Recall, _Peer)
 		]
 	),
 	none;
-process_new_block(#{ height := Height } = State, BShadow, Recall, Peer)
+process_new_block(#{ height := Height } = State, BShadow, Peer)
 		when BShadow#block.height >= Height + 1 ->
 	ShadowHeight = BShadow#block.height,
 	ShadowHL = BShadow#block.hash_list,
@@ -421,7 +421,7 @@ process_new_block(#{ height := Height } = State, BShadow, Recall, Peer)
 			]),
 			none;
 		{ok, {}} ->
-			apply_new_block(State, BShadow#block{ hash_list = ?BI_TO_BHL(BI) }, Recall, Peer);
+			apply_new_block(State, BShadow#block{ hash_list = ?BI_TO_BHL(BI) });
 		{ok, {DivergedHashes, BIBase}} ->
 			HeightBase = length(BIBase) - 1,
 			{_, BlockTXPairsBase} = lists:split(Height - HeightBase, BlockTXPairs),
@@ -470,14 +470,19 @@ get_diverged_block_hashes_reversed([], []) -> {ok, []};
 get_diverged_block_hashes_reversed(DivergedHashes, _) ->
 	{ok, lists:reverse(DivergedHashes)}.
 
-apply_new_block(State, BShadow, RecallPreimage, Peer) ->
-	#{ height := Height, block_index := BI, wallet_list := WalletList, block_txs_pairs := BlockTXPairs } = State,
-	case generate_block_from_shadow(State, BShadow, RecallPreimage, Peer) of
-		{ok, {NewB, RecallB}} ->
+apply_new_block(State, BShadow) ->
+	#{
+		height := Height,
+		block_index := BI,
+		wallet_list := WalletList,
+		block_txs_pairs := BlockTXPairs
+	} = State,
+	case generate_block_from_shadow(State, BShadow) of
+		{ok, NewB} ->
 			B = ar_util:get_head_block(BI),
 			StateNew = State#{ wallet_list => NewB#block.wallet_list },
 			TXs = NewB#block.txs,
-			case ar_node_utils:validate(StateNew, NewB, TXs, B, RecallB) of
+			case ar_node_utils:validate(BI, NewB#block.wallet_list, NewB, TXs, B) of
 				{invalid, _Reason} ->
 					none;
 				valid ->
@@ -507,11 +512,11 @@ apply_new_block(State, BShadow, RecallPreimage, Peer) ->
 			none
 	end.
 
-generate_block_from_shadow(#{ txs := MempoolTXs } = State, BShadow, Recall, Peer) ->
+generate_block_from_shadow(#{ txs := MempoolTXs } = State, BShadow) ->
 	{TXs, MissingTXIDs} = pick_txs(BShadow#block.txs, MempoolTXs),
 	case MissingTXIDs of
 		[] ->
-			generate_block_from_shadow(State, BShadow, Recall, TXs, Peer);
+			generate_block_from_shadow(State, BShadow, TXs);
 		_ ->
 			ar:info([
 				ar_node_worker,
@@ -522,67 +527,15 @@ generate_block_from_shadow(#{ txs := MempoolTXs } = State, BShadow, Recall, Peer
 			error
 	end.
 
-generate_block_from_shadow(State = #{ height := Height }, BShadow, Recall, TXs, Peer) ->
-	case Height + 1 >= ar_fork:height_2_0() of
-		true ->
-			{WalletListHash, WalletList} =
-				generate_wallet_list_from_shadow(State, BShadow, noop, TXs),
-			B = BShadow#block {
-				wallet_list = WalletList,
-				wallet_list_hash = WalletListHash,
-				txs = TXs
-			},
-			{ok, {B, no_recall_block}};
-		false ->
-			generate_block_from_shadow_pre_2_0(State, BShadow, Recall, TXs, Peer)
-	end.
-
-generate_block_from_shadow_pre_2_0(State, BShadow, Recall, TXs, Peer) ->
-	#{ block_index := BI } = State,
-	RecallIndepHash =
-		case Recall of
-			B when is_record(B, block) ->
-				B#block.indep_hash;
-			undefined ->
-				PreviousH = BShadow#block.previous_block,
-				ar_util:get_recall_hash(PreviousH, BShadow#block.height - 1, BI);
-			{RecallH, _, _, _} ->
-				RecallH
-		end,
-	MaybeRecallB = case ar_block:get_recall_block(Peer, RecallIndepHash, BI) of
-		unavailable ->
-			RecallHash = ar_util:get_recall_hash(
-				BShadow#block.previous_block,
-				BShadow#block.height - 1,
-				BI
-			),
-			FetchedRecallB = ar_http_iface_client:get_block(Peer, RecallHash, BI),
-			case ?IS_BLOCK(FetchedRecallB) of
-				true ->
-					ar_storage:write_full_block(FetchedRecallB),
-					FetchedRecallB;
-				false ->
-					ar:warn(failed_to_get_recall_block),
-					unavailable
-			end;
-		LocalRecallB ->
-			LocalRecallB
-	end,
-	case MaybeRecallB of
-		unavailable ->
-			error;
-		RecallB ->
-			{WalletListHash, NewWalletList} =
-				generate_wallet_list_from_shadow(State, BShadow, RecallB, TXs),
-			{ok, {
-				BShadow#block{
-					wallet_list = NewWalletList,
-					wallet_list_hash = WalletListHash,
-					txs = TXs
-				},
-				RecallB
-			}}
-	end.
+generate_block_from_shadow(State, BShadow, TXs) ->
+	{WalletListHash, WalletList} =
+		generate_wallet_list_from_shadow(State, BShadow, TXs),
+	B = BShadow#block {
+		wallet_list = WalletList,
+		wallet_list_hash = WalletListHash,
+		txs = TXs
+	},
+	{ok, B}.
 
 pick_txs(TXIDs, TXs) ->
 	lists:foldr(
@@ -606,7 +559,7 @@ pick_txs(TXIDs, TXs) ->
 		TXIDs
 	).
 
-generate_wallet_list_from_shadow(StateIn, BShadow, POA, TXs) ->
+generate_wallet_list_from_shadow(StateIn, BShadow, TXs) ->
 	#{
 		reward_pool := RewardPool,
 		wallet_list := WalletList,
@@ -619,7 +572,7 @@ generate_wallet_list_from_shadow(StateIn, BShadow, POA, TXs) ->
 			RewardPool,
 			TXs,
 			RewardAddr,
-			POA,
+			no_recall,
 			BShadow#block.weave_size,
 			NewHeight,
 			BShadow#block.diff,
@@ -679,7 +632,7 @@ fork_recover(Node, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 %% @doc Integrate the block found by us.
 integrate_block_from_miner(#{ block_index := not_joined }, _NewB, _MinedTXs, _BDS, _POA) ->
 	none;
-integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
+integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 	#{
 		block_index      := BI,
 		txs              := TXs,
@@ -711,27 +664,16 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 			{txs, length(MinedTXs)}
 		]
 	),
-	Recall = case NewB#block.height < ar_fork:height_2_0() of
-		true ->
-			{POA#block.indep_hash, POA#block.block_size, <<>>, <<>>};
-		false ->
-			no_recall
-	end,
 	{NewGS, _} = ar_gossip:send(
 		GS,
-		{new_block, self(), NewB#block.height, NewB, BDS, Recall}
+		{new_block, self(), NewB#block.height, NewB, BDS}
 	),
-	case NewB#block.height >= ar_fork:height_2_0() of
-		true ->
-			lists:foreach(
-				fun(TX) ->
-					ar_downloader:enqueue_random({tx_data, TX})
-				end,
-				MinedTXs
-			);
-		false ->
-			noop
-	end,
+	lists:foreach(
+		fun(TX) ->
+			ar_downloader:enqueue_random({tx_data, TX})
+		end,
+		MinedTXs
+	),
 	NewState = ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => NewBI,
@@ -753,7 +695,7 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, POA) ->
 %% @doc Handle executed fork recovery.
 recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) ->
 	#{ txs := TXs } = StateIn,
-	NewB = ar_storage:read_block(element(1, hd(BI)), BI),
+	NewB = ar_storage:read_block(element(1, hd(BI))),
 	ar:info(
 		[
 			{event, node_joined_successfully},
@@ -771,12 +713,6 @@ recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) 
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
-	case NewB#block.height + 1 < ar_fork:height_2_0() of
-		true ->
-			ar_transition:update_block_index(BI);
-		_ ->
-			noop
-	end,
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => BI,
@@ -797,7 +733,7 @@ recovered_from_fork(#{ block_index := CurrentBI } = StateIn, BI, BlockTXPairs) -
 		undefined -> ok;
 		_		  -> erlang:unregister(fork_recovery_server)
 	end,
-	NewB = ar_storage:read_block(element(1, hd(BI)), BI),
+	NewB = ar_storage:read_block(element(1, hd(BI))),
 	case is_fork_preferable(NewB, maps:get(cumulative_diff, StateIn), CurrentBI) of
 		true ->
 			do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs);
