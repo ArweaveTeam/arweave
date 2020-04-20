@@ -255,6 +255,7 @@ get_height(Peer) ->
 get_txs(Peers, MempoolTXs, B) ->
 	case B#block.txs of
 		TXIDs when length(TXIDs) > ?BLOCK_TX_COUNT_LIMIT ->
+			ar:err([{event, downloaded_txs_count_exceeds_limit}]),
 			{error, txs_count_exceeds_limit};
 		TXIDs ->
 			get_txs(Peers, MempoolTXs, TXIDs, [], 0)
@@ -264,11 +265,12 @@ get_txs(_Peers, _MempoolTXs, [], TXs, _TotalSize) ->
 	{ok, lists:reverse(TXs)};
 get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
 	case get_tx(Peers, TXID, MempoolTXs) of
-		TX when is_record(TX, tx) ->
-			%% The byte size of the data field is used instead of the data_size
-			%% field because data for format=2 transactions is not fetched here.
-			case TotalSize + byte_size(TX#tx.data) of
+		#tx{ format = 2 } = TX ->
+			get_txs(Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
+		#tx{ format = 1 } = TX ->
+			case TotalSize + TX#tx.data_size of
 				NewTotalSize when NewTotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
+					ar:err([{event, downloaded_txs_exceed_block_size_limit}]),
 					{error, txs_exceed_block_size_limit};
 				NewTotalSize ->
 					get_txs(Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
