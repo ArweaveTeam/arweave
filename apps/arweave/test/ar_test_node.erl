@@ -90,20 +90,20 @@ connect_to_slave() ->
 	slave_call(ar_meta_db, reset_peer, [{127, 0, 0, 1, MasterPort}]),
 	SlavePort = slave_call(ar_meta_db, get, [port]),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, SlavePort},
-			"/info",
-			[{<<"X-P2p-Port">>, integer_to_binary(MasterPort)}]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, SlavePort},
+			path => "/info",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(MasterPort)}]
+		}),
 	ar_meta_db:reset_peer({127, 0, 0, 1, SlavePort}),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			{127, 0, 0, 1, MasterPort},
-			"/info",
-			[{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}]
-		).
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, MasterPort},
+			path => "/info",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}]
+		}).
 
 disconnect_from_slave() ->
 	%% Disconnects master from slave so that they do not share blocks
@@ -204,13 +204,13 @@ post_tx_to_slave(Slave, TX) ->
 	SlavePort = slave_call(ar_meta_db, get, [port]),
 	SlaveIP = {127, 0, 0, 1, SlavePort},
 	Reply =
-		ar_httpc:request(
-			<<"POST">>,
-			SlaveIP,
-			"/tx",
-			[{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}],
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-		),
+		ar_http:req(#{
+			method => post,
+			peer => SlaveIP,
+			path => "/tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}],
+			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+		}),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			assert_slave_wait_until_receives_txs(Slave, [TX]);
@@ -233,13 +233,13 @@ post_tx_to_master(Master, TX) ->
 	Port = ar_meta_db:get(port),
 	MasterIP = {127, 0, 0, 1, Port},
 	Reply =
-		ar_httpc:request(
-			<<"POST">>,
-			MasterIP,
-			"/tx",
-			[{<<"X-P2p-Port">>, integer_to_binary(Port)}],
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-		),
+		ar_http:req(#{
+			method => post,
+			peer => MasterIP,
+			path => "/tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}],
+			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+		}),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			assert_wait_until_receives_txs(Master, [TX]);
@@ -314,23 +314,23 @@ get_tx_anchor(slave) ->
 	SlavePort = slave_call(ar_meta_db, get, [port]),
 	IP = {127, 0, 0, 1, SlavePort},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			IP,
-			"/tx_anchor",
-			[{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => IP,
+			path => "/tx_anchor",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}]
+		}),
 	ar_util:decode(Reply);
 get_tx_anchor(master) ->
 	Port = ar_meta_db:get(port),
 	IP = {127, 0, 0, 1, Port},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			IP,
-			"/tx_anchor",
-			[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => IP,
+			path => "/tx_anchor",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
 	ar_util:decode(Reply).
 
 get_last_tx(Key) ->
@@ -340,35 +340,35 @@ get_last_tx(slave, {_, Pub}) ->
 	Port = slave_call(ar_meta_db, get, [port]),
 	IP = {127, 0, 0, 1, Port},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			IP,
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/last_tx",
-			[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => IP,
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/last_tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
 	ar_util:decode(Reply);
 get_last_tx(master, {_, Pub}) ->
 	Port = ar_meta_db:get(port),
 	IP = {127, 0, 0, 1, Port},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			IP,
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/last_tx",
-			[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => IP,
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/last_tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
 	ar_util:decode(Reply).
 
 get_tx_confirmations(slave, TXID) ->
 	Port = slave_call(ar_meta_db, get, [port]),
 	IP = {127, 0, 0, 1, Port},
 	Response =
-		ar_httpc:request(
-			<<"GET">>,
-			IP,
-			"/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status",
-			[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => IP,
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Reply, _, _}} ->
 			{Status} = ar_serialize:dejsonify(Reply),
@@ -380,12 +380,12 @@ get_tx_confirmations(master, TXID) ->
 	Port = ar_meta_db:get(port),
 	IP = {127, 0, 0, 1, Port},
 	Response =
-		ar_httpc:request(
-			<<"GET">>,
-			IP,
-			"/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status",
-			[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => IP,
+			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Reply, _, _}} ->
 			{Status} = ar_serialize:dejsonify(Reply),
@@ -398,12 +398,12 @@ get_balance(Pub) ->
 	Port = slave_call(ar_meta_db, get, [port]),
 	IP = {127, 0, 0, 1, Port},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			IP,
-			"/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/balance",
-			[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => IP,
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/balance",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
 	binary_to_integer(Reply).
 
 test_with_mocked_functions(Functions, TestFun) ->
@@ -457,18 +457,18 @@ get_tx_price(Node, DataSize) ->
 	end,
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} = case Node of
 		slave ->
-			ar_httpc:request(
-				<<"GET">>,
-				IP,
-				"/price/" ++ integer_to_binary(DataSize),
-				[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-			);
+			ar_http:req(#{
+				method => get,
+				peer => IP,
+				path => "/price/" ++ integer_to_binary(DataSize),
+				headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			});
 		master ->
-			ar_httpc:request(
-				<<"GET">>,
-				IP,
-				"/price/" ++ integer_to_binary(DataSize),
-				[{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-			)
+			ar_http:req(#{
+				method => get,
+				peer => IP,
+				path => "/price/" ++ integer_to_binary(DataSize),
+				headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			})
 	end,
 	binary_to_integer(Reply).

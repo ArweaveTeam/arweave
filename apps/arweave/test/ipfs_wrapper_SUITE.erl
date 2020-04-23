@@ -2,7 +2,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--export([all/0, 
+-export([all/0,
 	init_per_suite/1, end_per_suite/1,
 	init_per_testcase/2, end_per_testcase/2
 	]).
@@ -41,7 +41,7 @@ end_per_testcase(_, _Config) ->
 
 %%% tests
 
-adt_simple_callback_gets_blocks(Config) ->
+adt_simple_callback_gets_blocks(_Config) ->
 	Node = ar_node_init(),
 	{ok, Pid} = app_ipfs:start(),
 	% TODO start adt callback module with gossip peers
@@ -74,4 +74,3 @@ mine_n_blocks_on_node(N, Node) ->
 		end, lists:seq(1,N)),
 	timer:sleep(1000),
 	ar_node:get_blocks(Node).
-

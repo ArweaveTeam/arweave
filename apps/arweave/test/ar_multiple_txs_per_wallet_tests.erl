@@ -242,13 +242,12 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	%% and expect the balance exceeded error.
 	slave_call(ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
 	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} =
-		ar_httpc:request(
-			<<"POST">>,
-			{127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
-			"/tx",
-			[],
-			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
-		).
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+			path => "/tx",
+			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
+		}).
 
 rejects_transactions_above_the_size_limit_test() ->
 	%% Create a genesis block with a wallet.
@@ -378,12 +377,11 @@ does_not_allow_to_replay_empty_wallet_txs_test() ->
 	SlaveIP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
 	GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			SlaveIP,
-			"/wallet/" ++ GetBalancePath ++ "/balance",
-			[]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => SlaveIP,
+			path => "/wallet/" ++ GetBalancePath ++ "/balance"
+		}),
 	Balance = binary_to_integer(Body),
 	TX2 = sign_v1_tx(
 		Key2,
@@ -397,12 +395,11 @@ does_not_allow_to_replay_empty_wallet_txs_test() ->
 	slave_mine(Slave),
 	assert_slave_wait_until_height(Slave, 2),
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
-		ar_httpc:request(
-			<<"GET">>,
-			SlaveIP,
-			"/wallet/" ++ GetBalancePath ++ "/balance",
-			[]
-		),
+		ar_http:req(#{
+			method => get,
+			peer => SlaveIP,
+			path => "/wallet/" ++ GetBalancePath ++ "/balance"
+		}),
 	?assertEqual(0, binary_to_integer(Body2)),
 	TX3 = sign_v1_tx(
 		Key1,
@@ -789,13 +786,13 @@ recovers_from_forks(ForkHeight) ->
 	lists:foreach(
 		fun(TX) ->
 			{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} =
-				ar_httpc:request(
-					<<"POST">>,
-					{127, 0, 0, 1, 1984},
-					"/tx",
-					[{<<"X-P2p-Port">>, <<"1984">>}],
-					ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-				)
+				ar_http:req(#{
+					method => post,
+					peer => {127, 0, 0, 1, 1984},
+					path => "/tx",
+					headers => [{<<"X-P2p-Port">>, <<"1984">>}],
+					body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+				})
 		end,
 		MasterPostForkTXs
 	).

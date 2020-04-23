@@ -4,7 +4,14 @@
 
 -module(ar_node_state_SUITE).
 
--compile(export_all).
+-export([
+	all/0,
+	groups/0,
+	update_success/1,
+	update_and_all_success/1,
+	update_and_lookup_success/1,
+	update_fail/1, lookup_fail/1
+]).
 
 -include_lib("common_test/include/ct.hrl").
 

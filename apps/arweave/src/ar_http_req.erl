@@ -8,7 +8,7 @@
 body(Req) ->
 	case maps:get(?AR_HTTP_REQ_BODY, Req, not_set) of
 		not_set ->
-			read_complete_body(Req, <<>>);
+			read_complete_body(Req, #{ acc => [], counter => 0 });
 		Body ->
 			{ok, Body, Req}
 	end.
@@ -22,22 +22,23 @@ read_body_chunk(Req, Size, Timeout) ->
 	),
 	Reply.
 
-read_complete_body(Req, Acc) ->
+read_complete_body(Req, #{ acc := Acc, counter := C } = Opts) ->
 	{MoreOrOk, Data, ReadReq} = cowboy_req:read_body(Req),
+	DataSize = byte_size(Data),
 	prometheus_counter:inc(
 		http_server_accepted_bytes_total,
 		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
-		byte_size(Data)
+		DataSize
 	),
-	NewAcc = <<Acc/binary, Data/binary>>,
-	read_complete_body(MoreOrOk, NewAcc, ReadReq).
+	read_complete_body(MoreOrOk, Opts#{ acc := [Acc | Data],  counter := C + DataSize }, ReadReq).
 
-read_complete_body(_, Data, _Req) when byte_size(Data) > ?MAX_BODY_SIZE ->
+read_complete_body(_, #{ counter := C }, _) when C > ?MAX_BODY_SIZE ->
 	{error, body_size_too_large};
 read_complete_body(more, Data, Req) ->
 	read_complete_body(Req, Data);
-read_complete_body(ok, Data, Req) ->
-	{ok, Data, with_body_req_field(Req, Data)}.
+read_complete_body(ok, #{ acc := Acc }, Req) ->
+	Body = iolist_to_binary(Acc),
+	{ok, Body, with_body_req_field(Req, Body)}.
 
 with_body_req_field(Req, Body) ->
 	Req#{ ?AR_HTTP_REQ_BODY => Body }.

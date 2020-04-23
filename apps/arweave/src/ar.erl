@@ -332,6 +332,7 @@ start(
 	prometheus_registry:register_collector(ar_metrics_collector),
 	% Register custom metrics.
 	ar_metrics:register(),
+	{ok, _} = application:ensure_all_started(gun),
 	%% Start Cowboy and its dependencies
 	{ok, _} = application:ensure_all_started(cowboy),
 	%% Start other apps which we depend on.

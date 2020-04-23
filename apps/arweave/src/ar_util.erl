@@ -18,6 +18,7 @@
 -export([do_until/3]).
 -export([index_of/2]).
 -export([block_index_entry_from_block/1]).
+-export([reset_peer/1, get_performance/1, update_timer/1]).
 
 %% NOT used. Exported for the historical record.
 -export([get_recall_hash/2, get_recall_hash/3]).
@@ -254,6 +255,32 @@ index_of(Subject, [_ | List], Counter) -> index_of(Subject, List, Counter + 1).
 
 block_index_entry_from_block(B) ->
 	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
+
+%% @doc Reset the performance data for a given peer.
+reset_peer(Peer = {_, _, _, _, _}) ->
+	ar_meta_db:put({peer, Peer}, #performance{}).
+
+%% @doc Return the performance object for a node.
+get_performance(Peer = {_, _, _, _, _}) ->
+	case ar_meta_db:get({peer, Peer}) of
+		not_found -> #performance{};
+		P -> P
+	end.
+
+%% @doc Update the "last on list" timestamp of a given peer
+update_timer(Peer = {_, _, _, _, _}) ->
+	case ar_meta_db:get({peer, Peer}) of
+		not_found -> #performance{};
+		P ->
+			ar_meta_db:put({peer, Peer},
+				P#performance {
+					transfers = P#performance.transfers,
+					time = P#performance.time ,
+					bytes = P#performance.bytes,
+					timestamp = os:system_time(seconds)
+				}
+			)
+	end.
 
 %%%
 %%% Tests.

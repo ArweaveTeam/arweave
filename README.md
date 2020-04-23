@@ -26,10 +26,10 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 - CMake
 - SQLite3 headers (libsqlite3-dev on Ubuntu)
 
-```shell script
-git clone --recursive https://github.com/ArweaveTeam/arweave.git
-cd arweave
-./rebar3 as prod tar
+```sh
+$ git clone --recursive https://github.com/ArweaveTeam/arweave.git
+$ cd arweave
+$ ./rebar3 as prod tar
 ```
 
 You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z.tar.gz`.
@@ -43,33 +43,26 @@ To run a gateway, consult the [gateway setup guide](doc/gateway_setup_guide.md).
 Make sure to have the build requirements installed.
 
 Clone the repo and initialize the Git submodules:
-```shell script
-git clone --recursive https://github.com/ArweaveTeam/arweave.git
+```sh
+$ git clone --recursive https://github.com/ArweaveTeam/arweave.git
 ```
 
 ## Running a node locally
 
-```shell
-bin/start-dev
+```sh
+$ bin/start-dev
 ```
 
 ## Running the tests
 
-To run the tests, uncomment this line in ar.hrl:
-```
-%-define(DEBUG, debug).
-```
-
-Then run the following command:
-
-```
-bin/test
+```sh
+$ bin/test
 ```
 
 ## Running a shell
 
-```
-bin/shell
+```sh
+$ bin/shell
 ```
 
 `bin/test` and `bin/shell` launch two connected Erlang VMs in distributed mode. The
@@ -98,4 +91,3 @@ or have a look at our [yellow paper](https://www.arweave.org/files/arweave-yello
 
 The Arweave project is released under GNU General Public License v2.0.
 See [LICENSE](LICENSE.md) for full license conditions.
-
