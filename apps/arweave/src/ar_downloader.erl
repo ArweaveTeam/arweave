@@ -12,6 +12,8 @@
 -define(INITIAL_BACKOFF_INTERVAL_S, 30).
 %% The maximum exponential backoff interval for failing requests.
 -define(MAX_BACKOFF_INTERVAL_S, 2 * 60 * 60).
+%% The data above this size is synced chunk by chunk in ar_data_sync.
+-define(SYNC_DATA_BELOW_SIZE, 10 * 1024 * 1024).
 
 %%% This module contains the core transaction and block downloader.
 %%% After the node has joined the network, this process is started,
@@ -99,6 +101,8 @@ has_item({tx_data, {ID, _DataRoot}}) when is_binary(ID) ->
 tx_needs_data(#tx{ format = 1 }) ->
 	false;
 tx_needs_data(#tx{ format = 2, data_size = 0 }) ->
+	false;
+tx_needs_data(#tx{ format = 2, data_size = DataSize }) when DataSize > ?SYNC_DATA_BELOW_SIZE ->
 	false;
 tx_needs_data(#tx{ format = 2 } = TX) ->
 	not filelib:is_file(ar_storage:tx_data_filepath(TX)).

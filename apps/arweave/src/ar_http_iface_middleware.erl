@@ -254,6 +254,14 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 			serve_tx_html_data(Req, TX)
 	end;
 
+handle(<<"GET">>, [<<"chunk">>, Offset], Req, _Pid) ->
+	%% Fetch chunk if any via ar_sync_data:get_chunk/1.
+	{200, #{}, <<>>, Req}.
+
+handle(<<"POST">>, [<<"chunk">>], Req, _Pid) ->
+	%% Parse the proof and the chunk out of body. Try to add chunk via ar_data_sync:add_chunk/3.
+	{200, #{}, <<>>, Req}.
+
 %% @doc Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block
 %% as specified in ar_serialize.
@@ -619,6 +627,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 				true ->
 					{202, #{}, <<"Pending">>, Req};
 				false ->
+					%% If tx index flag is set, try to fetch
+					%% tx data via ar_data_sync:get_tx_data/1.
 					{404, #{}, <<"Not Found.">>, Req}
 			end;
 		{ok, Filename} ->
@@ -730,6 +740,8 @@ serve_tx_data(Req, #tx{ format = 2 } = TX) ->
 		true ->
 			{200, #{}, sendfile(DataFilename), Req};
 		false ->
+			%% If tx index flag is set, try to fetch
+			%% tx data via ar_data_sync:get_tx_data/1.
 			{200, #{}, <<>>, Req}
 	end.
 

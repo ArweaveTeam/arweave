@@ -639,6 +639,7 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 		gossip           := GS,
 		block_txs_pairs  := BlockTXPairs
 	} = StateIn,
+	%% Update the sync record via ar_data_sync:add_block/3.
 	ar_storage:write_full_block(NewB, MinedTXs),
 	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = MinedTXs }, BI),
 	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NewB, BlockTXPairs),
@@ -713,6 +714,7 @@ recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) 
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
+	%% Update the sync record via ar_data_sync:add_block/3.
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => BI,

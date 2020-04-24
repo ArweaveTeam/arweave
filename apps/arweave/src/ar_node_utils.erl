@@ -293,6 +293,8 @@ integrate_new_block(
 	%% for the next block because even if the next difficulty makes the price go
 	%% up, it should be fine.
 	%% Write new block and included TXs to local storage.
+
+	%% Update the sync record via ar_data_sync:add_block/3.
 	ar_storage:write_full_block(NewB, BlockTXs),
 	NewBI = update_block_index(NewB#block{ txs = BlockTXs }, BI),
 	NewBlockTXPairs = update_block_txs_pairs(NewB, BlockTXPairs),

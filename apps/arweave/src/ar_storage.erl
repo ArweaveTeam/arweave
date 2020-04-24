@@ -349,6 +349,7 @@ write_tx_header_after_scan(TX) ->
 write_tx_data(ID, ExpectedDataRoot, Data) ->
 	case (ar_tx:generate_chunk_tree(#tx{ data = Data }))#tx.data_root of
 		ExpectedDataRoot ->
+			%% Add all chunks to the sync record via ar_data_sync:add_chunk/3.
 			write_tx_data(tx_data_filepath(ID), ar_util:encode(Data));
 		_ ->
 			{error, invalid_data_root}

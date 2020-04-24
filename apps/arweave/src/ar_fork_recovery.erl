@@ -284,6 +284,7 @@ apply_next_block(State, NextB, B) ->
 				end,
 				NextB#block.txs
 			),
+			%% Update the sync record via ar_data_sync:add_block/3.
 			case ar_meta_db:get(partial_fork_recovery) of
 				true ->
 					ar:info(
