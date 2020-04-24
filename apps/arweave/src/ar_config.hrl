@@ -2,6 +2,7 @@
 -define(AR_CONFIG_HRL, true).
 
 -include("ar.hrl").
+-include("ar_data_sync.hrl").
 
 -record(config_webhook, {
 	events = [],
@@ -16,6 +17,7 @@
 	mine = false,
 	peers = [],
 	data_dir = ".",
+	metrics_dir = ?METRICS_DIR,
 	polling = false,
 	auto_join = true,
 	clean = false,
@@ -43,7 +45,10 @@
 	webhooks = [],
 	max_connections = 1024,
 	max_gateway_connections = 128,
-	max_poa_option_depth = 8
+	max_poa_option_depth = 8,
+	disk_pool_data_root_expiration_time = ?DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
+	max_disk_pool_buffer_mb = ?MAX_DISK_POOL_BUFFER_MB,
+	max_disk_pool_data_root_buffer_mb = ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB
 }).
 
 -endif.

@@ -18,7 +18,8 @@
 	target_hashes, % All the hashes of the blocks to be applied during the fork recovery (lowest to highest).
 	target_hashes_to_go, % The hashes of the blocks left to apply (lowest to highest).
 	recovered_block_index, % The block index constructed during the fork recovery.
-	recovered_block_txs_pairs % The block anchors required for verifying transactions, updated in process.
+	recovered_block_txs_pairs, % The block anchors required for verifying transactions, updated in process.
+	base_hash % The hash of the base block.
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
@@ -49,7 +50,8 @@ start(Peers, RecoveryHashes, BI, ParentPID, BlockTXPairs) ->
 					target_hashes = TargetHashes,
 					target_hashes_to_go = TargetHashes,
 					recovered_block_index = BI,
-					recovered_block_txs_pairs = BlockTXPairs
+					recovered_block_txs_pairs = BlockTXPairs,
+					base_hash = element(1, hd(BI))
 				}
 			)
 		end
@@ -64,9 +66,10 @@ server(#state {
 		recovered_block_index = BI,
 		recovered_block_txs_pairs = BlockTXPairs,
 		target_hashes_to_go = [],
-		parent_pid = ParentPID
+		parent_pid = ParentPID,
+		base_hash = BaseH
 	}) ->
-	ParentPID ! {fork_recovered, BI, BlockTXPairs};
+	ParentPID ! {fork_recovered, BI, BlockTXPairs, BaseH};
 server(S = #state { target_height = TargetHeight }) ->
 	receive
 		{parent_accepted_block, B} ->
@@ -225,7 +228,8 @@ apply_next_block(State, NextB, B) ->
 		recovered_block_txs_pairs = BlockTXPairs,
 		parent_pid = ParentPID,
 		target_hashes_to_go = [_ | NewTargetHashesToGo],
-		target_hashes = TargetHashes
+		target_hashes = TargetHashes,
+		base_hash = BaseH
 	} = State,
 	TXs = NextB#block.txs,
 	case
@@ -258,7 +262,8 @@ apply_next_block(State, NextB, B) ->
 					{
 						block_txs_pairs,
 						lists:map(
-							fun({BH, TXIDs}) ->
+							fun({BH, SizeTaggedTXs}) ->
+								TXIDs = [TXID || {{TXID, _}, _} <- SizeTaggedTXs],
 								{ar_util:encode(BH), lists:map(fun ar_util:encode/1, TXIDs)}
 							end,
 							BlockTXPairs
@@ -277,7 +282,10 @@ apply_next_block(State, NextB, B) ->
 			),
 			ar_storage:write_full_block(NextB),
 			NewBI = ar_node_utils:update_block_index(NextB, BI),
-			NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NextB, BlockTXPairs),
+			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NextB#block.txs),
+			BH = NextB#block.indep_hash,
+			NewBlockTXPairs =
+				ar_node_utils:update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),
 			lists:foreach(
 				fun(TX) ->
 					ar_downloader:enqueue_random({tx_data, TX}),
@@ -293,7 +301,7 @@ apply_next_block(State, NextB, B) ->
 							{height, NextB#block.height}
 						]
 					),
-					ParentPID ! {fork_recovered, NewBI, NewBlockTXPairs};
+					ParentPID ! {fork_recovered, NewBI, NewBlockTXPairs, BaseH};
 				_ -> do_nothing
 			end,
 			self() ! apply_next_block,

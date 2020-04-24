@@ -12,14 +12,16 @@
 -export([integrate_new_block/3]).
 -export([validate/5, validate_wallet_list/1]).
 -export([calculate_delay/1]).
--export([update_block_txs_pairs/2, update_block_index/2]).
+-export([update_block_txs_pairs/3, update_block_index/2]).
 -export([get_wallet_by_address/2, wallet_map_from_wallet_list/1]).
 -export([tx_mempool_size/1, increase_mempool_size/2, calculate_mempool_size/1]).
+-export([drop_invalid_txs/1]).
 
 %% NOT used. Exported for the historical record.
 -export([validate_pre_fork_2_0/8]).
 
 -include("ar.hrl").
+-include("ar_data_sync.hrl").
 -include("perpetual_storage.hrl").
 
 %%%
@@ -283,21 +285,18 @@ integrate_new_block(
 		#{
 			txs := TXs,
 			block_index := BI,
-			block_txs_pairs := BlockTXPairs
+			block_txs_pairs := BlockTXPairs,
+			weave_size := WeaveSize
 		} = StateIn,
 		NewB,
 		BlockTXs) ->
-	%% Filter completed TXs from the pending list. The mining reward for TXs is
-	%% supposed to be pessimistic (see the /price/[bytes] endpoint) by taking
-	%% into account the difficulty may change 1 step before the TX is mined into
-	%% a block. Therefore, we re-use the difficulty from NewB when verifying TXs
-	%% for the next block because even if the next difficulty makes the price go
-	%% up, it should be fine.
-	%% Write new block and included TXs to local storage.
-	ar_storage:write_full_block(NewB, BlockTXs),
 	NewBI = update_block_index(NewB#block{ txs = BlockTXs }, BI),
-	NewBlockTXPairs = update_block_txs_pairs(NewB, BlockTXPairs),
-	ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(BlockTXs),
+	ar_data_sync:add_block(SizeTaggedTXs, lists:sublist(NewBI, ?TRACK_CONFIRMATIONS), WeaveSize),
+	ar_storage:write_full_block(NewB, BlockTXs),
+	BH = NewB#block.indep_hash,
+	NewBlockTXPairs = update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),
+	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		NewBlockTXPairs,
 		lists:foldl(
 			fun(TX, Acc) ->
@@ -310,6 +309,7 @@ integrate_new_block(
 		NewB#block.height,
 		NewB#block.wallet_list
 	),
+	drop_invalid_txs(InvalidTXs),
 	ar_miner_log:foreign_block(NewB#block.indep_hash),
 	ar:info(
 		[
@@ -330,9 +330,10 @@ integrate_new_block(
 		end,
 		BlockTXs
 	),
+	BH = element(1, hd(NewBI)),
 	reset_miner(StateIn#{
 		block_index      => NewBI,
-		current          => element(1, hd(NewBI)),
+		current          => BH,
 		txs              => ValidTXs,
 		height           => NewB#block.height,
 		reward_pool      => NewB#block.reward_pool,
@@ -365,9 +366,8 @@ maybe_report_n_confirmations(B, BI) ->
 			do_nothing
 	end.
 
-update_block_txs_pairs(B, BlockTXPairs) ->
-	TXIDs = [case TX of Record when is_record(Record, tx) -> Record#tx.id; ID -> ID end || TX <- B#block.txs],
-	lists:sublist([{B#block.indep_hash, TXIDs} | BlockTXPairs], 2 * ?MAX_TX_ANCHOR_DEPTH).
+update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs) ->
+	lists:sublist([{BH, SizeTaggedTXs} | BlockTXPairs], 2 * ?MAX_TX_ANCHOR_DEPTH).
 
 %% @doc Validate a new block, given a server state, a claimed new block and the last block.
 validate(BI, WalletList, NewB, TXs, B) ->
@@ -817,5 +817,29 @@ calculate_mempool_size(TXs) ->
 			{HeaderSize + HeaderAcc, DataSize + DataAcc}
 		end,
 		{0, 0},
+		TXs
+	).
+
+drop_invalid_txs(TXs) ->
+	lists:foreach(
+		fun ({_, tx_already_in_weave}) ->
+				ok;
+			({TX, Reason}) ->
+				ar:info([
+					{event, dropped_tx},
+					{id, ar_util:encode(TX#tx.id)},
+					{reason, Reason}
+				]),
+				case TX#tx.format == 2 of
+					true ->
+						ar_data_sync:maybe_drop_data_root_from_disk_pool(
+							TX#tx.data_root,
+							TX#tx.data_size,
+							TX#tx.id
+						);
+					false ->
+						nothing_to_drop_from_disk_pool
+				end
+		end,
 		TXs
 	).

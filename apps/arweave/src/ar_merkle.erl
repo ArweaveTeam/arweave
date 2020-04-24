@@ -1,7 +1,8 @@
 -module(ar_merkle).
+
 -export([generate_tree/1, generate_path/3]).
--export([validate_path/3]).
--export([extract_note/1]).
+-export([validate_path/4]).
+-export([extract_note/1, extract_root/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -20,7 +21,6 @@
 }).
 
 -define(HASH_SIZE, ?CHUNK_ID_HASH_SIZE).
--define(NOTE_SIZE, 32).
 
 %%% Tree generation.
 %%% Returns the merkle root and the tree data structure.
@@ -104,30 +104,43 @@ generate_path_parts(ID, Dest, Tree) ->
 			]
 	end.
 
-validate_path(ID, Dest, Path) ->
-	validate_path(ID, Dest, 0, Path).
+validate_path(ID, Dest, RightBound, _Path) when RightBound =< 0 ->
+	ar:err([
+		{event, validate_path_called_with_not_positive_right_bound},
+		{root, ar_util:encode(ID)},
+		{dest, Dest},
+		{right_bound, RightBound}
+	]),
+	throw(invalid_right_bound);
+validate_path(ID, Dest, RightBound, Path) when Dest >= RightBound ->
+	validate_path(ID, RightBound - 1, RightBound, Path);
+validate_path(ID, Dest, RightBound, Path) when Dest < 0 ->
+	validate_path(ID, 0, RightBound, Path);
+validate_path(ID, Dest, RightBound, Path) ->
+	validate_path(ID, Dest, 0, RightBound, Path).
 
-validate_path(ID, _Dest, StartOffset, << Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
+validate_path(ID, _Dest, LeftBound, RightBound,
+		<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
 	case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
-		ID -> {Data, StartOffset, EndOffset};
+		ID -> {Data, LeftBound, max(min(RightBound, EndOffset), LeftBound + 1)};
 		_ -> false
 	end;
-validate_path(ID, Dest, StartOffset,
+validate_path(ID, Dest, LeftBound, RightBound,
 		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>) ->
 	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
 		ID ->
-			{Path, NextStartOffset} =
+			{Path, NextLeftBound, NextRightBound} =
 				case Dest < Note of
 					true ->
-						{L, StartOffset};
+						{L, LeftBound, min(RightBound, Note)};
 					false ->
-						{R, Note}
+						{R, max(LeftBound, Note), RightBound}
 				end,
-			validate_path(Path, Dest, NextStartOffset, Rest);
+			validate_path(Path, Dest, NextLeftBound, NextRightBound, Rest);
 		_ ->
 			false
 	end;
-validate_path(_ID, _Dest, _StartOffset, _Path) ->
+validate_path(_ID, _Dest, _LeftBound, _RightBound, _Path) ->
 	false.
 
 %% @doc Get the note attached to the final node from a path.
@@ -135,6 +148,13 @@ extract_note(Path) ->
 	binary:decode_unsigned(
 		binary:part(Path, byte_size(Path) - ?NOTE_SIZE, ?NOTE_SIZE)
 	).
+
+extract_root(<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
+	{ok, hash([hash(Data), hash(note_to_binary(EndOffset))])};
+extract_root(<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), _/binary >>) ->
+	{ok, hash([hash(L), hash(R), hash(note_to_binary(Note))])};
+extract_root(_) ->
+	{error, invalid_proof}.
 
 %%% Helper functions for managing the tree data structure.
 %%% Abstracted so that the concrete data type can be replaced later.
@@ -194,7 +214,7 @@ generate_and_validate_balanced_tree_path_test() ->
 			RandomTarget = rand:uniform(?TEST_SIZE) - 1,
 			Path = ar_merkle:generate_path(MR, RandomTarget, Tree),
 			{Leaf, StartOffset, EndOffset} =
-				ar_merkle:validate_path(MR, RandomTarget, Path),
+				ar_merkle:validate_path(MR, RandomTarget, ?TEST_SIZE, Path),
 			?assertEqual(RandomTarget, binary:decode_unsigned(Leaf)),
 			?assert(RandomTarget < EndOffset),
 			?assert(RandomTarget >= StartOffset)
@@ -208,7 +228,7 @@ generate_and_validate_uneven_tree_path_test() ->
 	%% Make sure the target is in the 'uneven' ending of the tree.
 	Path = ar_merkle:generate_path(MR, ?UNEVEN_TEST_TARGET, Tree),
 	{Leaf, StartOffset, EndOffset} =
-		ar_merkle:validate_path(MR, ?UNEVEN_TEST_TARGET, Path),
+		ar_merkle:validate_path(MR, ?UNEVEN_TEST_TARGET, ?UNEVEN_TEST_SIZE, Path),
 	?assertEqual(?UNEVEN_TEST_TARGET, binary:decode_unsigned(Leaf)),
 	?assert(?UNEVEN_TEST_TARGET < EndOffset),
 	?assert(?UNEVEN_TEST_TARGET >= StartOffset).
@@ -222,6 +242,7 @@ reject_invalid_tree_path_test() ->
 		false,
 		ar_merkle:validate_path(
 			MR, RandomTarget,
+			?TEST_SIZE,
 			ar_merkle:generate_path(MR, 1000, Tree)
 		)
 	).

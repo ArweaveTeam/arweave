@@ -150,9 +150,25 @@ handle_cast({add_tx, TX}, State) ->
 		[] ->
 			noop;
 		_ ->
+			DroppedIDs = lists:map(
+				fun(DroppedTX) ->
+					case TX#tx.format of
+						2 ->
+							ar_data_sync:maybe_drop_data_root_from_disk_pool(
+								DroppedTX#tx.data_root,
+								DroppedTX#tx.data_size,
+								DroppedTX#tx.id
+							);
+						_ ->
+							nothing_to_drop_from_disk_pool
+					end,
+					ar_util:encode(DroppedTX#tx.id)
+				end,
+				DroppedTXs
+			),
 			ar:info([
 				{event, drop_txs_from_queue},
-				{dropped_txs, lists:map(fun(T) -> ar_util:encode(T#tx.id) end, DroppedTXs)}
+				{dropped_txs, DroppedIDs}
 			]),
 			ar_bridge:drop_waiting_txs(whereis(http_bridge_node), DroppedTXs)
 	end,

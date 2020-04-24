@@ -21,7 +21,11 @@
  {<<"prometheus_process_collector">>,
   {pkg,<<"prometheus_process_collector">>,<<"1.4.5">>},
   0},
- {<<"ranch">>,{pkg,<<"ranch">>,<<"1.7.1">>},1}]}.
+ {<<"ranch">>,{pkg,<<"ranch">>,<<"1.7.1">>},1},
+ {<<"rocksdb">>,
+  {git,"https://gitlab.com/barrel-db/erlang-rocksdb.git",
+       {ref,"edabdc409ad729213deea25f5eb427bc5fada97d"}},
+  0}]}.
 [
 {pkg_hash,[
  {<<"accept">>, <<"B33B127ABCA7CC948BBE6CAA4C263369ABF1347CFA9D8E699C6D214660F10CD1">>},

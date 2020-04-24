@@ -47,7 +47,7 @@ execute_test_() ->
 	]}.
 
 setup() ->
-	meck:new(ar_storage),
+	meck:new(ar_storage, [passthrough]),
 	meck:new(ar_arql_db),
 	meck:new(ar_domain),
 	meck:expect(

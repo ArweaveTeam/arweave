@@ -206,7 +206,9 @@ create_block_txs_pairs(recent_blocks, []) ->
 	[];
 create_block_txs_pairs(recent_blocks, [{BH, _, _} | Rest]) ->
 	B = ar_storage:read_block(BH),
-	[{BH, B#block.txs} | create_block_txs_pairs(Rest)].
+	TXs = ar_storage:read_tx(B#block.txs),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+	[{BH, SizeTaggedTXs} | create_block_txs_pairs(Rest)].
 
 %% @doc Stop a node server loop and its subprocesses.
 stop(Node) ->
@@ -332,10 +334,6 @@ get_wallet_list(Node) ->
 		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
-%% @doc Get the current hash list held by the node.
-%% This hash list is up to date to the latest block held.
-get_block_index(IP) when not is_pid(IP) ->
-	ar_http_iface_client:get_block_index(IP);
 get_block_index(Node) ->
 	Ref = make_ref(),
 	Node ! {get_blockindex, self(), Ref},
@@ -657,8 +655,8 @@ handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}) ->
 				POA
 			}}
 	end;
-handle(_SPid, {fork_recovered, BI, BlockTXPairs}) ->
-	{task, {fork_recovered, BI, BlockTXPairs}};
+handle(_SPid, {fork_recovered, BI, BlockTXPairs, BaseH}) ->
+	{task, {fork_recovered, BI, BlockTXPairs, BaseH}};
 handle(_SPid, mine) ->
 	{task, mine};
 handle(_SPid, automine) ->

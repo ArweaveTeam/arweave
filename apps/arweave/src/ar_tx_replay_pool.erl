@@ -88,7 +88,7 @@ pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
 	WalletMap = ar_node_utils:wallet_map_from_wallet_list(WalletList),
 	InvalidTXs = maps:fold(
-		fun(TXID, {TX, _}, InvalidTXs) ->
+		fun(_, {TX, _}, InvalidTXs) ->
 			case verify_tx(
 				general_verification,
 				TX,
@@ -102,34 +102,28 @@ pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, WalletList) ->
 			) of
 				{valid, _, _} ->
 					InvalidTXs;
-				{invalid, tx_already_in_weave} ->
-					[TX | InvalidTXs];
 				{invalid, Reason} ->
-					ar:info([
-						{event, dropped_tx},
-						{id, ar_util:encode(TXID)},
-						{reason, Reason}
-					]),
-					[TX | InvalidTXs]
+					[{TX, Reason} | InvalidTXs]
 			end
 		end,
 		[],
 		TXs
 	),
-	lists:foldl(
-		fun(TX, ValidTXs) ->
+	{lists:foldl(
+		fun({TX, _}, ValidTXs) ->
 			maps:remove(TX#tx.id, ValidTXs)
 		end,
 		TXs,
 		InvalidTXs
-	).
+	), InvalidTXs}.
 
 %% PRIVATE
 
 create_state(BlockTXPairs) ->
 	MaxDepthTXs = lists:sublist(BlockTXPairs, ?MAX_TX_ANCHOR_DEPTH),
 	{BHL, Map} = lists:foldr(
-		fun({BH, TXIDs}, {BHL, Map}) ->
+		fun({BH, SizeTaggedTXs}, {BHL, Map}) ->
+			TXIDs = [TXID || {{TXID, _}, _} <- SizeTaggedTXs],
 			{[BH | BHL], maps:put(BH, sets:from_list(TXIDs), Map)}
 		end,
 		{[], maps:new()},

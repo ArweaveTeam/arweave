@@ -126,7 +126,10 @@ verify_block_txs_test() ->
 			block_txs_pairs =>
 				[
 					{<<"hash">>, []},
-					{<<"otherhash">>, [<<"txid">>, <<"txid2">>, BlockAnchorTXAtForkHeight#tx.id]}
+					{<<"otherhash">>, [
+						{{<<"txid">>, <<>>}, 1},
+						{{<<"txid2">>, <<>>}, 2},
+						{{BlockAnchorTXAtForkHeight#tx.id, <<>>}, 3}]}
 				],
 			expected_result => invalid
 		},
@@ -138,7 +141,10 @@ verify_block_txs_test() ->
 			block_txs_pairs =>
 				[
 					{<<"hash">>, []},
-					{<<"otherhash">>, [<<"txid">>, <<"txid2">>, BlockAnchorTXAfterForkHeight#tx.id]}
+					{<<"otherhash">>, [
+						{{<<"txid">>, <<>>}, 1},
+						{{<<"txid2">>, <<>>}, 2},
+						{{BlockAnchorTXAfterForkHeight#tx.id, <<>>}, 3}]}
 				],
 			expected_result => invalid
 		}

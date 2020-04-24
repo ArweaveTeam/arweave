@@ -111,15 +111,21 @@ server(State) ->
 
 poll_new_blocks(State) ->
 	NodePid = whereis(http_entrypoint_node),
-	case ar_node:get_height(NodePid) of
-		-1 ->
-			%% Add an extra poll soon
+	case NodePid of
+		undefined ->
 			timer:send_after(1000, poll_new_blocks),
 			State;
-		Height ->
-			NewState = handle_new_height(State, Height),
-			timer:send_after(?RANDOMX_STATE_POLL_INTERVAL * 1000, poll_new_blocks),
-			NewState
+		_ ->
+			case ar_node:get_height(NodePid) of
+				-1 ->
+					%% Add an extra poll soon
+					timer:send_after(1000, poll_new_blocks),
+					State;
+				Height ->
+					NewState = handle_new_height(State, Height),
+					timer:send_after(?RANDOMX_STATE_POLL_INTERVAL * 1000, poll_new_blocks),
+					NewState
+			end
 	end.
 
 handle_new_height(State, CurrentHeight) ->

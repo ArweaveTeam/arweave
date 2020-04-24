@@ -54,12 +54,25 @@ generate(_, 0, _, _, _) ->
 	#poa{};
 generate(Seed, WeaveSize, BI, Option, Limit) ->
 	RecallByte = calculate_challenge_byte(Seed, WeaveSize, Option),
-	{TXRoot, BlockBase, RecallBH} = find_challenge_block(RecallByte, BI),
-	case ar_storage:read_block_shadow(RecallBH) of
-		unavailable ->
-			generate(Seed, WeaveSize, BI, Option + 1, Limit);
-		B ->
-			generate(B, RecallByte - BlockBase, Seed, WeaveSize, BI, TXRoot, Option, Limit)
+	{TXRoot, BlockBase, _BlockTop, RecallBH} = find_challenge_block(RecallByte, BI),
+	case ar_data_sync:get_chunk(RecallByte + 1) of
+		{ok, #{ tx_root := TXRoot, chunk := Chunk, tx_path := TXPath, data_path := DataPath }} ->
+			ar:info(
+				[
+					{event, generated_poa_from_v2_index},
+					{weave_size, WeaveSize},
+					{recall_byte, RecallByte},
+					{option, Option}
+				]
+			),
+			#poa{ option = Option, chunk = Chunk, tx_path = TXPath, data_path = DataPath };
+		_ ->	
+			case ar_storage:read_block_shadow(RecallBH) of
+				unavailable ->
+					generate(Seed, WeaveSize, BI, Option + 1, Limit);
+				B ->
+					generate(B, RecallByte - BlockBase, Seed, WeaveSize, BI, TXRoot, Option, Limit)
+			end
 	end.
 
 generate(B, BlockOffset, Seed, WeaveSize, BI, TXRoot, Option, Limit) ->
@@ -95,12 +108,12 @@ generate(B, BlockOffset, Seed, WeaveSize, BI, TXRoot, Option, Limit) ->
 
 generate(B, TXs, BlockOffset, Seed, WeaveSize, BI, TXRoot, Option, Limit) ->
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
-	{DataRoot, TXEnd} = find_byte_in_size_tagged_list(BlockOffset, SizeTaggedTXs),
-	{value, {TX, _}} = lists:search(
-		fun({_, {_, End}}) ->
-			TXEnd == End
+	{{TXID, DataRoot}, TXEnd} = find_byte_in_size_tagged_list(BlockOffset, SizeTaggedTXs),
+	{value, TX} = lists:search(
+		fun(#tx{ id = ID }) ->
+			ID == TXID
 		end,
-		lists:zip(lists:sort(TXs), SizeTaggedTXs)
+		TXs
 	),
 	TXStart = TXEnd - TX#tx.data_size,
 	TXData = get_tx_data(TX),
@@ -168,7 +181,8 @@ get_tx_data(#tx{ format = 2 } = TX) ->
 	end.
 
 create_poa_from_data(NoTreeB, TXRoot, TXStart, TXData, DataRoot, SizeTaggedTXs, BlockOffset, Option) ->
-	B = ar_block:generate_tx_tree(NoTreeB, SizeTaggedTXs),
+	SizeTaggedDataRoots = [{Root, Offset} || {{_TXID, Root}, Offset} <- SizeTaggedTXs],
+	B = ar_block:generate_tx_tree(NoTreeB, SizeTaggedDataRoots),
 	case B#block.tx_root == TXRoot of
 		true ->
 			create_poa_from_data(B, TXStart, TXData, DataRoot, BlockOffset, Option);
@@ -235,8 +249,8 @@ validate(_H, _WS, BI, #poa{ option = Option })
 	false;
 validate(LastIndepHash, WeaveSize, BI, POA) ->
 	RecallByte = calculate_challenge_byte(LastIndepHash, WeaveSize, POA#poa.option),
-	{TXRoot, BlockBase, _BH} = find_challenge_block(RecallByte, BI),
-	validate_tx_path(RecallByte - BlockBase, TXRoot, POA).
+	{TXRoot, BlockBase, BlockTop, _BH} = find_challenge_block(RecallByte, BI),
+	validate_tx_path(RecallByte - BlockBase, TXRoot, BlockTop - BlockBase, POA).
 
 calculate_challenge_byte(_, 0, _) -> 0;
 calculate_challenge_byte(LastIndepHash, WeaveSize, Option) ->
@@ -249,7 +263,7 @@ multihash(X, Remaining) ->
 %% @doc The base of the block is the weave_size tag of the _previous_ block.
 %% Traverse the block index until the challenge block is inside the block's bounds.
 find_challenge_block(Byte, [{BH, BlockTop, TXRoot}, {_, BlockBase, _} | _])
-	when (Byte >= BlockBase) andalso (Byte < BlockTop) -> {TXRoot, BlockBase, BH};
+	when (Byte >= BlockBase) andalso (Byte < BlockTop) -> {TXRoot, BlockBase, BlockTop, BH};
 find_challenge_block(Byte, [_ | BI]) ->
 	find_challenge_block(Byte, BI).
 
@@ -260,25 +274,27 @@ find_byte_in_size_tagged_list(Byte, [_ | Rest]) ->
 find_byte_in_size_tagged_list(_Byte, []) ->
 	{error, not_found}.
 
-validate_tx_path(BlockOffset, TXRoot, POA) ->
+validate_tx_path(BlockOffset, TXRoot, BlockEndOffset, POA) ->
 	Validation =
 		ar_merkle:validate_path(
 			TXRoot,
 			BlockOffset,
+			BlockEndOffset,
 			POA#poa.tx_path
 		),
 	case Validation of
 		false -> false;
-		{DataRoot, StartOffset, _EndOffset} ->
+		{DataRoot, StartOffset, EndOffset} ->
 			TXOffset = BlockOffset - StartOffset,
-			validate_data_path(DataRoot, TXOffset, POA)
+			validate_data_path(DataRoot, TXOffset, EndOffset - StartOffset, POA)
 	end.
 
-validate_data_path(DataRoot, TXOffset, POA) ->
+validate_data_path(DataRoot, TXOffset, EndOffset, POA) ->
 	Validation =
 		ar_merkle:validate_path(
 			DataRoot,
 			TXOffset,
+			EndOffset,
 			POA#poa.data_path
 		),
 	case Validation of

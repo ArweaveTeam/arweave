@@ -1,8 +1,16 @@
 -module(ar_metrics).
 
--export([register/0, label_http_path/1, get_status_class/1]).
+-export([
+	register/0,
+	store/1,
+	label_http_path/1,
+	get_status_class/1
+]).
+
+-include("ar.hrl").
 
 register() ->
+	filelib:ensure_dir(ar_meta_db:get(metrics_dir) ++ "/"),
 	prometheus_counter:new([
 		{name, http_server_accepted_bytes_total},
 		{help, "The total amount of bytes accepted by the HTTP server, per endpoint"},
@@ -90,7 +98,52 @@ register() ->
 			help,
 			"The size of the weave (in bytes)."
 		}
+	]),
+	prometheus_gauge:new([
+		{name, v2_index_data_size},
+		{
+			help,
+			"The size (in bytes) of the data stored and indexed in 2.1 chunk index."
+		}
+	]),
+	prometheus_gauge:new([
+		{name, pending_chunks_size},
+		{
+			help,
+			"The total size in bytes of stored pending chunks."
+		}
+	]),
+	prometheus_gauge:new([
+		{name, disk_pool_chunks_count},
+		{
+			help,
+			"The approximate number of chunks in the disk pool."
+			"The disk pool includes pending, recent, and orphaned chunks."
+		}
+	]),
+	load_gauge(disk_pool_chunks_count),
+	prometheus_counter:new([
+		{name, disk_pool_processed_chunks},
+		{
+			help,
+			"The counter is incremented every time the periodic process"
+			" looks up a chunk from the disk pool and decides whether to"
+			" remove it, include it in the weave, or keep in the disk pool."
+		}
 	]).
+
+load_gauge(Name) ->
+	case ar_storage:read_term(ar_meta_db:get(metrics_dir), Name) of
+		{ok, Value} ->
+			prometheus_gauge:set(Name, Value);
+		not_found ->
+			nothing_is_stored;
+		{error, Reason} ->
+			ar:err([{event, failed_to_load_metric}, {error, Reason}])
+	end.
+
+store(Name) ->
+	ar_storage:write_term(ar_meta_db:get(metrics_dir), Name, prometheus_gauge:value(Name)).
 
 label_http_path(Path) ->
 	name_route(split_path(Path)).
@@ -123,8 +176,18 @@ name_route([<<"tx">>, _Hash, <<"status">>]) ->
 	"/tx/{hash}/status";
 name_route([<<"tx">>, _Hash]) ->
 	"/tx/{hash}";
+name_route([<<"tx">>, _Hash, << "data" >>]) ->
+	"/tx/{hash}/data";
 name_route([<<"tx">>, _Hash, << "data.", _/binary >>]) ->
 	"/tx/{hash}/data.{ext}";
+name_route([<<"tx">>, _Hash, << "offset" >>]) ->
+	"/tx/{hash}/offset";
+name_route([<<"chunk">>, _Offset]) ->
+	"/chunk/{offset}";
+name_route([<<"chunk">>]) ->
+	"/chunk";
+name_route([<<"data_sync_record">>]) ->
+	"/data_sync_record";
 name_route([<<"wallet">>]) ->
 	"/wallet";
 name_route([<<"unsigned_tx">>]) ->
