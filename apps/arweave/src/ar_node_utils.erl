@@ -238,7 +238,8 @@ start_mining(StateIn) ->
 					{reason, data_unavailable_to_generate_poa},
 					{generated_options_to_depth, ar_meta_db:get(max_poa_option_depth)}
 				]
-			);
+			),
+			StateIn;
 		POA ->
 			ar_miner_log:started_hashing(),
 			B = ar_storage:read_block(element(1, hd(BI))),
