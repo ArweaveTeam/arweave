@@ -256,11 +256,11 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 
 handle(<<"GET">>, [<<"chunk">>, Offset], Req, _Pid) ->
 	%% Fetch chunk if any via ar_sync_data:get_chunk/1.
-	{200, #{}, <<>>, Req}.
+	{200, #{}, <<>>, Req};
 
 handle(<<"POST">>, [<<"chunk">>], Req, _Pid) ->
 	%% Parse the proof and the chunk out of body. Try to add chunk via ar_data_sync:add_chunk/3.
-	{200, #{}, <<>>, Req}.
+	{200, #{}, <<>>, Req};
 
 %% @doc Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block
