@@ -5,6 +5,7 @@
 
 -export([add_block/4, add_chunk/3, get_chunk/1, get_tx_data/1]).
 
+-include("ar.hrl").
 -include("ar_data_sync.hrl").
 
 %%%===================================================================
@@ -75,3 +76,60 @@ init(#{ block_index := BI, maintain_tx_index := MaintainTXIndex }) ->
 	%% block index. Store the new state.
 	State = #state{},
 	{ok, State}.
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+sync_record_from_block_index(BI) ->
+	Intervals = sync_record_from_block_index([], BI),
+	compact_intervals(Intervals).
+
+sync_record_from_block_index(SyncRecord, [{BH, WeaveSize, _} | BI]) ->
+	case ar_storage:read_block_shadow(BH) of
+		unavailable ->
+			sync_record_from_block_index(SyncRecord, BI);
+		#block{ txs = TXIDs } ->
+			SortedTXIDs = lists:reverse(lists:sort(TXIDs)),
+			UpdatedSyncRecord = lists:foldr(
+				fun(Interval, Acc) ->
+					[Interval | Acc]
+				end,
+				SyncRecord,
+				sync_record_from_txs(SortedTXIDs, WeaveSize)
+			),
+			sync_record_from_block_index(UpdatedSyncRecord, BI)
+	end;
+sync_record_from_block_index(SyncRecord, []) ->
+	SyncRecord.
+
+sync_record_from_txs(TXIDs, WeaveSize) ->
+	sync_record_from_txs(TXIDs, [], WeaveSize).
+
+sync_record_from_txs([TXID | TXIDs], SyncRecord, Offset) ->
+	case ar_storage:read_tx(TXID) of
+		unavailable ->
+			SyncRecord;
+		#tx{ format = 1, data_size = DataSize } when DataSize > 0 ->
+			sync_record_from_txs(
+				TXIDs, [{Offset - DataSize, Offset} | SyncRecord], Offset - DataSize);
+		#tx{ format = 2, data_size = DataSize, id = ID } when DataSize > 0 ->
+			case filelib:is_file(ar_storage:tx_data_filepath(ID)) of
+				true ->
+					sync_record_from_txs(
+						TXIDs, [{Offset - DataSize, Offset} | SyncRecord], Offset - DataSize);
+				false ->
+					sync_record_from_txs(TXIDs, SyncRecord, Offset - DataSize)
+			end;
+		#tx{ data_size = 0 } ->
+			sync_record_from_txs(TXIDs, SyncRecord, Offset)
+	end;
+sync_record_from_txs([], SyncRecord, _Offset) ->
+	SyncRecord.
+
+compact_intervals([{Start, End}, {End, NextStart} | Rest]) ->
+	compact_intervals([{Start, NextStart} | Rest]);
+compact_intervals([Interval | Rest]) ->
+	[Interval | compact_intervals(Rest)];
+compact_intervals([]) ->
+	[].
