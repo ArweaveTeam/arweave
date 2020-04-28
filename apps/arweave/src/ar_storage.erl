@@ -327,6 +327,7 @@ write_tx_header_after_scan(TX) ->
 	ByteSize = byte_size(TXJSON),
 	case enough_space(ByteSize) of
 		true ->
+			%% Add all v1 chunks to the sync record via ar_data_sync:add_chunk/3.
 			write_file_atomic(
 				tx_filepath(TX),
 				TXJSON

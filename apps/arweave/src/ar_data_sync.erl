@@ -32,12 +32,13 @@ add_block(TXRoot, Height, SizeTaggedTXIDs, WeaveSize) ->
 
 add_chunk(ChunkID, Chunk, Proof) ->
 	%% If the transaction root (part of the proof) is found in
-	%% #sync_tip.unconfirmed_tx_roots, update sync_tip:
+	%% #sync_tip.unconfirmed_tx_roots, validate proof; if valid, update sync_tip:
 	%% - chunk_ids_by_tx_root
 	%% - tx_roots_with_proofs_by_chunk_id
 	%% - chunk_ids_by_tx_id (if maintain_tx_index is true)
 	%% - size_tagged_tx_ids_by_tx_root (if maintain_tx_index is true)
-	%% Else if the transaction root is found in #state.tx_root_index, update:
+	%% If proof is not valid, return {error, invalid_proof}.
+	%% Else if the transaction root is found in #state.tx_root_index, validate proof; update:
 	%% - #state.sync_record
 	%% - #state.chunks_index
 	%% Otherwise return {error, tx_root_not_found}.
@@ -62,7 +63,7 @@ get_tx_data(TXID) ->
 	ok.
 
 %% Pick a random [start, end) half-closed interval of
-%% ?SYNC_CHUNK_SIZE which is not synced and sync it. The
+%% ?SYNC_CHUNK_SIZE or smaller which is not synced and sync it. The
 %% intervals are chosen from [0, confirmed weave size).
 sync_random_chunk() ->
 	ok.
@@ -126,6 +127,11 @@ sync_record_from_txs([TXID | TXIDs], SyncRecord, Offset) ->
 	end;
 sync_record_from_txs([], SyncRecord, _Offset) ->
 	SyncRecord.
+
+tx_root_index_and_block_offset_index_from_block_index([{_, WeaveSize, TXRoot} | BI]) ->
+	ok;
+tx_root_index_and_block_offset_index_from_block_index([]) ->
+	ok.
 
 compact_intervals([{Start, End}, {End, NextStart} | Rest]) ->
 	compact_intervals([{Start, NextStart} | Rest]);

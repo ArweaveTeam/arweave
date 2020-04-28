@@ -34,9 +34,17 @@
 	%% Chunks are identified by offset. A proof is stored
 	%% along with every chunk. Only confirmed chunks are stored.
 	chunks_index,
-	%% A reference to the on-disk key-value storage of offsets of
-	%% all confirmed transaction roots.
+	%% A reference to the on-disk key-value storage mapping
+	%% block end offsets (keys) to their transaction roots (values).
+	%% Used when syncing a random chunk of the weave. A transaction root
+	%% is looked up and used in proof verification.
 	tx_root_index,
+	%% A reference to the on-disk key-value storage mapping
+	%% transaction roots (keys) to their block end offsets (values).
+	%% Used when accepting a chunk. Users do not need to look up
+	%% block offsets to submit data so when a node accepts a chunk,
+	%% it needs to lookup the block end offset for the given transaction root.
+	block_offset_index,
 	%% A reference to the on-disk key value storage of the offsets
 	%% of synced transaction identifiers. Only confirmed transactions
 	%% are stored. Consulted by GET /tx/<id>/data. The index is not
