@@ -85,5 +85,6 @@
 	%% Each time the confirmed height is advanced, the transaction identifiers
 	%% from the orphaned blocks are removed from chunk_ids_by_tx_id, if the
 	%% mapping is maintained.
-	size_tagged_tx_ids_by_tx_root
+	size_tagged_tx_ids_by_tx_root,
+	block_offset_by_tx_root
 }).

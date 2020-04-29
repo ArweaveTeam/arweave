@@ -259,7 +259,12 @@ handle(<<"GET">>, [<<"chunk">>, Offset], Req, _Pid) ->
 	{200, #{}, <<>>, Req};
 
 handle(<<"POST">>, [<<"chunk">>], Req, _Pid) ->
-	%% Parse the proof and the chunk out of body. Try to add chunk via ar_data_sync:add_chunk/3.
+	%% The body must contain:
+	%% - a data_path
+	%% - a chunk
+	%% - an offset (of the chunk, relative to the block)
+	%% - a tx_path
+	%% Try to add chunk via ar_data_sync:add_chunk/4.
 	{200, #{}, <<>>, Req};
 
 %% @doc Share a new block to a peer.

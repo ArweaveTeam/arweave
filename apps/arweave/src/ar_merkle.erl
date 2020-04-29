@@ -1,7 +1,8 @@
 -module(ar_merkle).
+
 -export([generate_tree/1, generate_path/3]).
 -export([validate_path/3]).
--export([extract_note/1]).
+-export([extract_note/1, extract_root/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -135,6 +136,13 @@ extract_note(Path) ->
 	binary:decode_unsigned(
 		binary:part(Path, byte_size(Path) - ?NOTE_SIZE, ?NOTE_SIZE)
 	).
+
+extract_root(<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
+	{ok, hash([hash(Data), hash(note_to_binary(EndOffset))])};
+extract_root(<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), _/binary >>) ->
+	{ok, hash([hash(L), hash(R), hash(note_to_binary(Note))])};
+extract_root(_) ->
+	{error, invalid_proof}.
 
 %%% Helper functions for managing the tree data structure.
 %%% Abstracted so that the concrete data type can be replaced later.

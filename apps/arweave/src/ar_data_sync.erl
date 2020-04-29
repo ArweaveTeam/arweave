@@ -3,7 +3,7 @@
 
 -export([start_link/1]).
 
--export([add_block/4, add_chunk/3, get_chunk/1, get_tx_data/1]).
+-export([add_block/4, add_chunk/4, get_chunk/1, get_tx_data/1]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
@@ -23,6 +23,7 @@ add_block(TXRoot, Height, SizeTaggedTXIDs, WeaveSize) ->
 	%%   - confirmed_tx_root (if unconfirmed_tx_roots grows enough)
 	%%   - unconfirmed_tx_roots
 	%%   - size_tagged_tx_ids_by_tx_root (if maintain_tx_index is true)
+	%%   - block_offset_by_tx_root
 	%% - #state.confirmed_size
 	%% - #state.sync_record (if #sync_tip.confirmed_height is advanced)
 	%% - #state.tx_root_index (if #sync_tip.confirmed_height is advanced)
@@ -30,19 +31,33 @@ add_block(TXRoot, Height, SizeTaggedTXIDs, WeaveSize) ->
 	%% - #state.tx_index (if #sync_tip.confirmed_height is advanced & there are new txs)
 	ok.
 
-add_chunk(ChunkID, Chunk, Proof) ->
-	%% If the transaction root (part of the proof) is found in
-	%% #sync_tip.unconfirmed_tx_roots, validate proof; if valid, update sync_tip:
-	%% - chunk_ids_by_tx_root
-	%% - tx_roots_with_proofs_by_chunk_id
-	%% - chunk_ids_by_tx_id (if maintain_tx_index is true)
-	%% - size_tagged_tx_ids_by_tx_root (if maintain_tx_index is true)
-	%% If proof is not valid, return {error, invalid_proof}.
-	%% Else if the transaction root is found in #state.tx_root_index, validate proof; update:
-	%% - #state.sync_record
-	%% - #state.chunks_index
-	%% Otherwise return {error, tx_root_not_found}.
-	ok.
+add_chunk(ChunkID, Chunk, Offset, #poa{ tx_path = TXPath } = POA) ->
+	case ar_merkle:extract_root(TXPath) of
+		{error, invalid_proof} ->
+			{error, invalid_proof};
+		{ok, TXRoot} ->
+			add_chunk(ChunkID, Chunk, Offset, TXRoot, POA)
+	end.
+
+add_chunk(ChunkID, Chunk, Offset, TXRoot, POA) ->
+	%% If TXRoot is not in #sync_tip.block_offset_by_tx_root and
+	%% not in #state.block_offset_index, return {error, tx_root_not_found}.
+	%% The global offset for the chunk is Offset + BlockOffset.
+	case validate_proof(POA, TXRoot, Offset) of
+		invalid ->
+			{error, invalid_proof};
+		valid ->
+			%% Update #sync_tip or #state.
+			%% In #sync_tip, update:
+			%% - chunk_ids_by_tx_root
+			%% - tx_roots_with_proofs_by_chunk_id
+			%% - chunk_ids_by_tx_id (if maintain_tx_index is true)
+			%% - size_tagged_tx_ids_by_tx_root (if maintain_tx_index is true)
+			%% In #state, update:
+			%% - #state.sync_record
+			%% - #state.chunks_index
+			ok
+	end.
 
 get_chunk(Offset) ->
 	%% Look if the offset is synced in #state.sync_record.
@@ -66,6 +81,17 @@ get_tx_data(TXID) ->
 %% ?SYNC_CHUNK_SIZE or smaller which is not synced and sync it. The
 %% intervals are chosen from [0, confirmed weave size).
 sync_random_chunk() ->
+	%% Pick a random not synced interval =< ?SYNC_CHUNK_SIZE.
+
+	%% Starting from its upper bound, request chunks until the interval is synced.
+	%%
+	%% To request a chunk for the chosen offset:
+	%% - lookup the transaction root for the given offset in #state.tx_root_index;
+	%% - download chunk via GET /chunk/<offset>;
+	%% - compute the chunk offset relative to the block by subtracting block offset
+	%%   from the chosen byte;
+	%% - validate the proof via validate_proof/3;
+	%% - update #state.chunk_index.
 	ok.
 
 %%%===================================================================
@@ -139,3 +165,21 @@ compact_intervals([Interval | Rest]) ->
 	[Interval | compact_intervals(Rest)];
 compact_intervals([]) ->
 	[].
+
+validate_proof(#poa{ tx_path = TXPath, data_path = DataPath }, TXRoot, Offset) ->
+	case ar_merkle:validate_path(TXRoot, Offset, TXPath) of
+		false ->
+			{error, invalid_proof};
+		{TXRoot, StartOffset, _} ->
+			case ar_merkle:extract_root(DataPath) of
+				{error, invalid_proof} ->
+					{error, invalid_proof};
+				{ok, DataRoot} ->
+					case ar_merkle:validate_path(DataRoot, Offset - StartOffset, DataPath) of
+						false ->
+							{error, invalid_proof};
+						{DataRoot, _, _} ->
+							valid
+					end
+			end
+	end.
