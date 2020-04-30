@@ -1,5 +1,13 @@
+-ifdef(DEBUG).
+-define(TRACK_CONFIRMATIONS, 5).
+-else.
 -define(TRACK_CONFIRMATIONS, ?STORE_BLOCKS_BEHIND_CURRENT).
+-endif.
+
 -define(SYNC_CHUNK_SIZE, 20 * 1024 * 1024).
+
+-define(MAX_SERIALIZED_CHUNK_PROOF_SIZE,
+	?MAX_PATH_SIZE * 2 + ?DATA_CHUNK_SIZE + ?NOTE_SIZE + 200). % Extra space for special chars.
 
 -record(state, {
 	%% An end offset -> start offset mapping sorted

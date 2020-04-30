@@ -21,7 +21,6 @@
 }).
 
 -define(HASH_SIZE, ?CHUNK_ID_HASH_SIZE).
--define(NOTE_SIZE, 32).
 
 %%% Tree generation.
 %%% Returns the merkle root and the tree data structure.

@@ -326,6 +326,7 @@
 -define(MAX_PATH_SIZE, (256 * 1024)).
 %% @doc The size of data chunk hashes, in bytes.
 -define(CHUNK_ID_HASH_SIZE, 32).
+-define(NOTE_SIZE, 32).
 
 %% @doc A succinct proof of access to a recall byte found in a TX.
 -record(poa, {
