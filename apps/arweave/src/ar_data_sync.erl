@@ -42,7 +42,7 @@ add_chunk(ChunkID, Chunk, Offset, #poa{ tx_path = TXPath } = POA) ->
 add_chunk(ChunkID, Chunk, Offset, TXRoot, POA) ->
 	%% If TXRoot is not in #sync_tip.block_offset_by_tx_root and
 	%% not in #state.block_offset_index, return {error, tx_root_not_found}.
-	%% The global offset for the chunk is Offset + BlockOffset.
+	%% The global offset for the chunk is Offset + BlockStartOffset.
 	case validate_proof(POA, TXRoot, Offset) of
 		invalid ->
 			{error, invalid_proof};
@@ -77,9 +77,9 @@ get_tx_data(TXID) ->
 	%%   If not, return tx data.
 	ok.
 
-%% Pick a random [start, end) half-closed interval of
+%% Pick a random (start, end] half-closed interval of
 %% ?SYNC_CHUNK_SIZE or smaller which is not synced and sync it. The
-%% intervals are chosen from [0, confirmed weave size).
+%% intervals are chosen from (0, confirmed weave size].
 sync_random_chunk() ->
 	%% Pick a random not synced interval =< ?SYNC_CHUNK_SIZE.
 

@@ -4,7 +4,7 @@
 -record(state, {
 	%% An end offset -> start offset mapping sorted
 	%% by end offset. Every such pair denotes a synced
-	%% half-closed interval on the [0, confirmed weave size)
+	%% half-closed interval on the (0, confirmed weave size]
 	%% half-closed interval. The confirmed weave size is
 	%% from the block with ?TRACK_CONFIRMATIONS confirmations.
 	%%
@@ -35,15 +35,15 @@
 	%% along with every chunk. Only confirmed chunks are stored.
 	chunks_index,
 	%% A reference to the on-disk key-value storage mapping
-	%% block end offsets (keys) to their transaction roots (values).
+	%% block start offsets (keys) to their transaction roots (values).
 	%% Used when syncing a random chunk of the weave. A transaction root
 	%% is looked up and used in proof verification.
 	tx_root_index,
 	%% A reference to the on-disk key-value storage mapping
-	%% transaction roots (keys) to their block end offsets (values).
+	%% transaction roots (keys) to their block start offsets (values).
 	%% Used when accepting a chunk. Users do not need to look up
 	%% block offsets to submit data so when a node accepts a chunk,
-	%% it needs to lookup the block end offset for the given transaction root.
+	%% it needs to lookup the block start offset for the given transaction root.
 	block_offset_index,
 	%% A reference to the on-disk key value storage of the offsets
 	%% of synced transaction identifiers. Only confirmed transactions
@@ -68,7 +68,7 @@
 	chunk_ids_by_tx_root,
 	tx_roots_with_proofs_by_chunk_id,
 	%% The confirmed height is advanced each time unconfirmed_tx_roots
-	%% grows longer than ?TRACK_CONFIRMATIONS.
+	%% grows longer than ?TRACK_CONFIRMATIONS - 1.
 	%% Each time the confirmed height is advanced, the synced data
 	%% from the orphaned transaction roots is erased, the synced
 	%% data from the new confirmed transaction root is recorded in sync_record.
@@ -76,7 +76,7 @@
 	%% Must be updated every time the confirmed height is updated.
 	confirmed_tx_root,
 	%% The list of unconfirmed transaction roots ordered from most recent
-	%% to least recent, no longer than ?TRACK_CONFIRMATIONS.
+	%% to least recent, no longer than ?TRACK_CONFIRMATIONS - 1.
 	unconfirmed_tx_roots,
 	%% Keeps track of the transaction identifiers of the unconfirmed synced
 	%% chunks. Consulted by GET /tx/<id>/data. The mapping is not maintained
