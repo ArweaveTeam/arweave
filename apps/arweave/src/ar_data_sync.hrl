@@ -6,8 +6,12 @@
 
 -define(SYNC_CHUNK_SIZE, 20 * 1024 * 1024).
 
--define(MAX_SERIALIZED_CHUNK_PROOF_SIZE,
-	?MAX_PATH_SIZE * 2 + ?DATA_CHUNK_SIZE + ?NOTE_SIZE + 200). % Extra space for special chars.
+%% 2 * ?MAX_PATH_SIZE
+%% + DATA_CHUNK_SIZE
+%% + log10(2 ^ (NOTE_SIZE * 8))
+%% + some space for JSON special chars
+%% multiplied by ~1.4 to account for Base64.
+-define(MAX_SERIALIZED_CHUNK_PROOF_SIZE, 1100000).
 
 -record(state, {
 	%% An end offset -> start offset mapping sorted
