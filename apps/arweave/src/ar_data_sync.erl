@@ -166,20 +166,24 @@ compact_intervals([Interval | Rest]) ->
 compact_intervals([]) ->
 	[].
 
-validate_proof(#poa{ tx_path = TXPath, data_path = DataPath }, TXRoot, Offset) ->
+validate_proof(
+	#poa{ tx_path = TXPath, data_path = DataPath, chunk = Chunk },
+	TXRoot,
+	Offset
+) ->
 	case ar_merkle:validate_path(TXRoot, Offset, TXPath) of
 		false ->
 			{error, invalid_proof};
-		{TXRoot, StartOffset, _} ->
-			case ar_merkle:extract_root(DataPath) of
-				{error, invalid_proof} ->
+		{DataRoot, StartOffset, _} ->
+			case ar_merkle:validate_path(DataRoot, Offset - StartOffset, DataPath) of
+				false ->
 					{error, invalid_proof};
-				{ok, DataRoot} ->
-					case ar_merkle:validate_path(DataRoot, Offset - StartOffset, DataPath) of
+				{ChunkID, _, _} ->
+					case ChunkID == ar_tx:generate_chunk_id(Chunk) of
+						true ->
+							valid;
 						false ->
-							{error, invalid_proof};
-						{DataRoot, _, _} ->
-							valid
+							{error, invalid_proof}
 					end
 			end
 	end.
