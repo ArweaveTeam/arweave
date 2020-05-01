@@ -47,8 +47,8 @@ loop(TimeoutRef) ->
 			CowboyStatus = handle208(Status),
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
 			{stop, RepliedReq};
-		{read_complete_body, From, Req} ->
-			Term = ar_http_req:body(Req),
+		{read_complete_body, From, Req, SizeLimit} ->
+			Term = ar_http_req:body(Req, SizeLimit),
 			From ! {read_complete_body, Term},
 			loop(TimeoutRef);
 		{read_body_chunk, From, Req, Size, Timeout} ->
@@ -1395,7 +1395,10 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	end.
 
 read_complete_body(Req, Pid) ->
-	Pid ! {read_complete_body, self(), Req},
+	read_complete_body(Req, Pid, ?MAX_BODY_SIZE).
+
+read_complete_body(Req, Pid, SizeLimit) ->
+	Pid ! {read_complete_body, self(), Req, SizeLimit},
 	receive
 		{read_complete_body, Term} -> Term
 	end.
