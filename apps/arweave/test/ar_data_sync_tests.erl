@@ -6,8 +6,9 @@
 -include("src/ar_data_sync.hrl").
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, sign_tx/2, sign_v1_tx/2]).
--import(ar_test_node, [assert_post_tx_to_master/2]).
+-import(ar_test_node, [assert_post_tx_to_master/2, assert_post_tx_to_slave/2]).
 -import(ar_test_node, [wait_until_height/2, assert_slave_wait_until_height/2]).
+-import(ar_test_node, [get_tx_anchor/0, slave_mine/1]).
 
 rejects_invalid_chunks_test() ->
 	?assertMatch(
@@ -48,17 +49,22 @@ accepts_confirmed_chunk_test_() ->
 	{timeout, 60, fun test_accepts_confirmed_chunk/0}.
 
 test_accepts_confirmed_chunk() ->
-	{Master, Wallet} = setup_node(),
+	{Master, Slave, Wallet} = setup_nodes(),
+	%% TODO turn syncing off on master, we are going to submit chunks through API here
 	{TX, Chunks} = tx(Wallet, #{ chunks => 2 }),
-	B = post_and_wait_until_confirmed(Master, TX#tx{ data = <<>> }, ?TRACK_CONFIRMATIONS),
+	B = post_and_wait_until_confirmed(Master, Slave, TX, ?TRACK_CONFIRMATIONS),
 	[FirstProof, SecondProof] = build_proofs(B, TX, Chunks),
+	EndOffset = B#block.weave_size - B#block.block_size + binary_to_integer(maps:get(offset, FirstProof)),
+	?assertMatch(
+		{ok, {{<<"404">>, _}, _, _, _, _}},
+		get_chunk(EndOffset)
+	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk(jiffy:encode(FirstProof))
 	),
 	%% Expect the chunk to be retrieved by any offset within
 	%% (EndOffset - ChunkSize, EndOffset], but not outside of it.
-	EndOffset = B#block.weave_size - B#block.block_size + binary_to_integer(maps:get(offset, FirstProof)),
 	FirstChunk = maps:get(chunk, FirstProof),
 	FirstChunkSize = byte_size(FirstChunk),
 	ExpectedProof = jiiffy:encode(#{
@@ -116,9 +122,10 @@ accepts_unconfirmed_chunks_test_() ->
 	{timeout, 60, fun test_accepts_unconfirmed_chunks/0}.
 
 test_accepts_unconfirmed_chunks() ->
-	{Master, Wallet} = setup_node(),
+	{Master, Slave, Wallet} = setup_nodes(),
+	%% TODO turn syncing off on master, we are going to submit chunks through API here
 	{TX, Chunks} = tx(Wallet, #{ chunks => 3 }),
-	B = post_and_wait_until_confirmed(Master, TX#tx{ data = <<>> }, ?TRACK_CONFIRMATIONS - 1),
+	B = post_and_wait_until_confirmed(Master, Slave, TX, ?TRACK_CONFIRMATIONS - 1),
 	[FirstProof, SecondProof, ThirdProof] = build_proofs(B, TX, Chunks),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -150,7 +157,7 @@ test_accepts_unconfirmed_chunks() ->
 	?assertEqual(ar_util:encode(TX#tx.data), Data).
 
 syncs_data_test_() ->
-	{timeout, 120, fun test_syncs_data/0}.
+	{timeout, 180, fun test_syncs_data/0}.
 
 test_syncs_data() ->
 	{Master, Slave, Wallet} = setup_nodes(),
@@ -173,7 +180,7 @@ test_syncs_data() ->
 	lists:foreach(
 		fun({B, _, Proof}) ->
 			EndOffset = B#block.weave_size - B#block.block_size + binary_to_integer(maps:get(offset, Proof)),
-			ExpectedProof = jiiffy:encode(#{
+			ExpectedProof = jiffy:encode(#{
 				data_path => maps:get(data_path, Proof),
 				tx_path => maps:get(tx_path, Proof),
 				chunk => maps:get(chunk, Proof)
@@ -215,12 +222,6 @@ post_chunk(Body) ->
 		body => Body
 	}).
 
-setup_node() ->
-	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	{Master, _} = start(B0),
-	{Master, Wallet}.
-
 setup_nodes() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
@@ -248,22 +249,23 @@ tx(Wallet, #{ chunks := ChunkCount }, Format) ->
 	),
 	TX = case Format of
 		v1 ->
-			sign_v1_tx(Wallet, #{ data => Data });
+			sign_v1_tx(Wallet, #{ data => Data, last_tx => get_tx_anchor() });
 		v2 ->
-			sign_tx(Wallet, #{ data => Data })
+			sign_tx(Wallet, #{ data => Data, last_tx => get_tx_anchor() })
 	end,
 	{TX, Chunks}.
 
-post_and_wait_until_confirmed(Master, TX, Confirmations) ->
-	assert_post_tx_to_master(Master, TX),
+post_and_wait_until_confirmed(Master, Slave, TX, Confirmations) ->
+	assert_post_tx_to_slave(Slave, TX),
 	lists:foreach(
 		fun(Height) ->
-			ar_node:mine(Master),
+			slave_mine(Slave),
 			wait_until_height(Master, Height)
 		end,
 		lists:seq(1, Confirmations)
 	),
-	[{H, _, _} | _] = ar_node:get_block_index(Master),
+	BI = ar_node:get_block_index(Master),
+	H = element(1, lists:nth(length(BI) - 1, BI)),
 	BShadow = ar_storage:read_block(H),
 	BShadow#block{ txs = ar_storage:read_tx(BShadow#block.txs) }.
 
@@ -277,12 +279,13 @@ build_proofs(B, TX, Chunks) ->
 	lists:foldl(
 		fun({Chunk, ChunkOffset}, Proofs) ->
 			Proof = #{
-				tx_path => TXPath,
-				data_path => ar_merkle:generate_path(DataRoot, ChunkOffset, DataTree),
-				chunk => Chunk,
+				tx_path => ar_util:encode(TXPath),
+				data_path =>
+					ar_util:encode(ar_merkle:generate_path(DataRoot, ChunkOffset, DataTree)),
+				chunk => ar_util:encode(Chunk),
 				offset => integer_to_binary(TXOffset + ChunkOffset)
 			},
-			Proofs ++ Proof
+			Proofs ++ [Proof]
 		end,
 		[],
 		SizeTaggedChunks
@@ -360,8 +363,8 @@ post_random_blocks(Master, Slave, Wallet) ->
 				lists:foreach(
 					fun
 						({#tx{ format = 2 } = TX, _}) ->
-							assert_post_tx_to_master(Master, TX#tx{ data = <<>> });
-						(TX) ->
+							assert_post_tx_to_master(Master, TX);
+						({TX, _}) ->
 							assert_post_tx_to_master(Master, TX)
 					end,
 					TXsWithChunks
