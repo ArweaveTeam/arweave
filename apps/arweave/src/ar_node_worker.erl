@@ -644,7 +644,7 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 	ar_data_sync:add_block(
 		NewB#block.tx_root,
 		NewB#block.height,
-		ar_block:generate_size_tagged_tx_ids(NewB#block.txs),
+		ar_block:generate_size_tagged_tx_ids(MinedTXs),
 		NewB#block.weave_size,
 		NewBI,
 		NewB#block.poa),

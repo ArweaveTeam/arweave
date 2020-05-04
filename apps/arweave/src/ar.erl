@@ -242,8 +242,6 @@ parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_gateway_connections = list_to_integer(Num) });
 parse_cli_args(["max_poa_option_depth", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_poa_option_depth = list_to_integer(Num) });
-parse_cli_args(["kv_engine", KVEngine | Rest], C) ->
-	parse_cli_args(Rest, C#config { kv_engine = list_to_atom(KVEngine) });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -294,8 +292,7 @@ start(
 		webhooks = WebhookConfigs,
 		max_connections = MaxConnections,
 		max_gateway_connections = MaxGatewayConnections,
-		max_poa_option_depth = MaxPOAOptionDepth,
-		kv_engine = KVEngine
+		max_poa_option_depth = MaxPOAOptionDepth
 	}) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -326,7 +323,7 @@ start(
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
 	ar_meta_db:put(max_poa_option_depth, MaxPOAOptionDepth),
-	ar_meta_db:put(kv_engine, KVEngine),
+	ar_meta_db:put(kv_engine, ar_kv_rocksdb),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.

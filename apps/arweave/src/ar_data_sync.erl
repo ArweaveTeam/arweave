@@ -142,8 +142,9 @@ handle_call({add_block, TXRoot, Height, SizeTaggedTXIDs, WeaveSize, BI, POA}, _F
 	SyncTip3 = if length(UnConfirmedTXRoots0) >= ?TRACK_CONFIRMATIONS ->
 			%% 1. Erase synched data from 'orphaned' TX roots
 			%% 2. Update 'confirmed_height' and 'confirmed_tx_root'
-			SyncTip2#sync_tip{confirmed_height = Height,
-							  confirmed_tx_root = TXRoot};
+			SyncTip2#sync_tip{
+				confirmed_height = Height,
+				confirmed_tx_root = TXRoot};
 		true ->
 			SyncTip2
 	end,
@@ -200,8 +201,10 @@ handle_call({add_chunk, ChunkID, Chunk, Offset, TXRoot, POA}, _From, State) ->
 		chunks_index = ChunksIndex} = State,
 
 	{Reply, FinalState} =
-		case map:get(TXRoot, BlockOffsetByTXRoot) of
-			true ->
+		case map:get(TXRoot, BlockOffsetByTXRoot, undefined) of
+			undefined ->
+				{{error, tx_root_not_found}, State};
+			Offset when is_number(Offset) ->
 				%% update 'chunk_ids_by_tx_root'
 				TXRootChunkIDs = map:get(TXRoot, ChunkIDsByTXRoot, []),
 				ChunkIDsByTXRoot0 = map:put(TXRoot, [ChunkID | TXRootChunkIDs], ChunkIDsByTXRoot),
@@ -236,9 +239,7 @@ handle_call({add_chunk, ChunkID, Chunk, Offset, TXRoot, POA}, _From, State) ->
 				end,
 				ar_kv:put(ChunksIndex, Offset, NewChunksIndexEntry),
 
-				{ok, State#state{sync_record = SyncRecord0, sync_tip = SyncTip3}};
-			{_, _} ->
-				{{error, tx_root_not_found}, State}
+				{ok, State#state{sync_record = SyncRecord0, sync_tip = SyncTip3}}
 		end,
 	{reply, Reply, FinalState};
 

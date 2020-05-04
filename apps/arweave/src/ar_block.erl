@@ -93,11 +93,8 @@ generate_size_tagged_tx_ids(TXs) ->
 			2,
 			lists:foldl(
 				fun(TX = #tx{id = TXID}, {Pos, List}) ->
-						End = Pos + get_tx_data_size(TX),
-						{End, [{TXID, End} | List]};
-				   (TXID, {Pos, List}) when is_binary(TXID) ->
-						End = Pos + get_tx_data_size(TXID),
-						{End, [{TXID, End} | List]}
+					End = Pos + TX#tx.data_size,
+					{End, [{TXID, End} | List]}
 				end,
 				{0, []},
 				TXs
@@ -460,20 +457,6 @@ get_tx_data_root(#tx{ format = 2, data_root = DataRoot }) ->
 	DataRoot;
 get_tx_data_root(TX) ->
 	(ar_tx:generate_chunk_tree(TX))#tx.data_root.
-
-get_tx_data_size(#tx{ format = 1, data_size = DataSize }) when DataSize > 0 ->
-	DataSize;
-get_tx_data_size(#tx{ format = 2, data_size = DataSize, id = ID }) when DataSize > 0 ->
-	case filelib:is_file(ar_storage:tx_data_filepath(ID)) of
-		true ->
-			DataSize;
-		false ->
-			{error, not_found}
-	end;
-get_tx_data_size(#tx{ id = ID, data_size = 0 }) ->
-	get_tx_data_size(ID);
-get_tx_data_size(ID) when is_binary(ID) ->
-	(ar_storage:read_tx(ID))#tx.data_size.
 
 %% @doc Verify the block timestamp is not too far in the future nor too far in
 %% the past. We calculate the maximum reasonable clock difference between any

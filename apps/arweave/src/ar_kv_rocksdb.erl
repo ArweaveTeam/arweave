@@ -22,19 +22,19 @@ put(Ref, Key, Value) ->
 
 %% @doc Get an item from rocksdb
 get(Ref, Key) ->
-    rocksdb:get(Ref, binary_to_term(binary_to_term(Key)), []).
+    rocksdb:get(Ref, term_to_binary(Key), []).
 
 %% @doc Seek an item from rocksdb
-seek(Itr, Key) ->
-    handle_itr(rocksdb:iterator_move(Itr, {seek, binary_to_term(binary_to_term(Key))})).
+seek(Itr, Key) when is_reference(Itr) ->
+    handle_itr(rocksdb:iterator_move(Itr, {seek, term_to_binary(Key)})).
 
 %% @doc Seek next an item from rocksdb
-seek_next(Itr) ->
+seek_next(Itr) when is_reference(Itr) ->
     handle_itr(rocksdb:iterator_move(Itr, next)).
 
 %% @doc Erase an item from rocksdb
 erase(Ref, Key) ->
-    rocksdb:delete(Ref, binary_to_term(Key), []),
+    rocksdb:delete(Ref, term_to_binary(Key), []),
     ok.
 
 %% @doc Erase an item from rocksdb
