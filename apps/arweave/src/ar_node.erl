@@ -672,10 +672,6 @@ handle(SPid, {get_blocks, From, Ref}) ->
 	{ok, BI} = ar_node_state:lookup(SPid, block_index),
 	From ! {Ref, blocks, self(), BI},
 	ok;
-handle(SPid, {get_block, From, Ref}) ->
-	{ok, BI} = ar_node_state:lookup(SPid, block_index),
-	From ! {Ref, block, self(), ar_node_utils:find_block(BI)},
-	ok;
 handle(SPid, {get_peers, From, Ref}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
 	From ! {Ref, peers, ar_gossip:peers(GS)},
