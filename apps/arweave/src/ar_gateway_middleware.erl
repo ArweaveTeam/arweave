@@ -404,8 +404,7 @@ serve_plain_tx(#tx{ format = 2, data = Data } = TX, ContentType, Req) when byte_
 	{stop, {200, Headers, TX#tx.data, Req}};
 serve_plain_tx(#tx{ format = 2 } = TX, ContentType, Req) ->
 	Headers = #{ <<"content-type">> => ContentType },
-	DataFilename = ar_storage:tx_data_filepath(TX),
-	TXData = case ar_storage:read_tx_data(DataFilename) of
+	TXData = case ar_storage:read_tx_data(TX) of
 		{ok, Data} ->
 			Data;
 		{error, enoent} ->
