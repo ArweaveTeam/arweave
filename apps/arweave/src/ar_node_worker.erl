@@ -639,9 +639,15 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 		gossip           := GS,
 		block_txs_pairs  := BlockTXPairs
 	} = StateIn,
-	%% Update the sync record via ar_data_sync:add_block/3.
 	ar_storage:write_full_block(NewB, MinedTXs),
 	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = MinedTXs }, BI),
+	ar_data_sync:add_block(
+		NewB#block.tx_root,
+		NewB#block.height,
+		ar_block:generate_size_tagged_tx_ids(NewB#block.txs),
+		NewB#block.weave_size,
+		NewBI,
+		NewB#block.poa),
 	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NewB, BlockTXPairs),
 	ValidTXs =
 		ar_tx_replay_pool:pick_txs_to_keep_in_mempool(

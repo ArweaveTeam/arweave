@@ -11,6 +11,7 @@
 -export([generate_block_data_segment/1, generate_block_data_segment/3, generate_block_data_segment_base/1]).
 -export([generate_hash_list_for_block/2]).
 -export([generate_tx_root_for_block/1, generate_size_tagged_list_from_txs/1]).
+-export([generate_size_tagged_tx_ids/1]).
 -export([generate_tx_tree/1, generate_tx_tree/2]).
 -export([compute_hash_list_merkle/2]).
 
@@ -82,6 +83,24 @@ generate_size_tagged_list_from_txs(TXs) ->
 				end,
 				{0, []},
 				lists:sort(TXs)
+			)
+		)
+	).
+
+generate_size_tagged_tx_ids(TXs) ->
+	lists:reverse(
+		element(
+			2,
+			lists:foldl(
+				fun(TX = #tx{id = TXID}, {Pos, List}) ->
+						End = Pos + get_tx_data_size(TX),
+						{End, [{TXID, End} | List]};
+				   (TXID, {Pos, List}) when is_binary(TXID) ->
+						End = Pos + get_tx_data_size(TXID),
+						{End, [{TXID, End} | List]}
+				end,
+				{0, []},
+				TXs
 			)
 		)
 	).
@@ -441,6 +460,20 @@ get_tx_data_root(#tx{ format = 2, data_root = DataRoot }) ->
 	DataRoot;
 get_tx_data_root(TX) ->
 	(ar_tx:generate_chunk_tree(TX))#tx.data_root.
+
+get_tx_data_size(#tx{ format = 1, data_size = DataSize }) when DataSize > 0 ->
+	DataSize;
+get_tx_data_size(#tx{ format = 2, data_size = DataSize, id = ID }) when DataSize > 0 ->
+	case filelib:is_file(ar_storage:tx_data_filepath(ID)) of
+		true ->
+			DataSize;
+		false ->
+			{error, not_found}
+	end;
+get_tx_data_size(#tx{ id = ID, data_size = 0 }) ->
+	get_tx_data_size(ID);
+get_tx_data_size(ID) when is_binary(ID) ->
+	(ar_storage:read_tx(ID))#tx.data_size.
 
 %% @doc Verify the block timestamp is not too far in the future nor too far in
 %% the past. We calculate the maximum reasonable clock difference between any

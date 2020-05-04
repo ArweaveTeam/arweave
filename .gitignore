@@ -11,3 +11,8 @@ apps/arweave/c_src/*.o
 data_test_master
 data_test_slave
 erl_crash.dump
+rocksdb
+kv-tx-index
+kv-data-sync
+kv-tx-root-index
+kv-block-offset-index

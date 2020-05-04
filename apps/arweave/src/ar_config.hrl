@@ -43,7 +43,8 @@
 	webhooks = [],
 	max_connections = 1024,
 	max_gateway_connections = 128,
-	max_poa_option_depth = 8
+	max_poa_option_depth = 8,
+	kv_engine = ar_kv_rocksdb
 }).
 
 -endif.

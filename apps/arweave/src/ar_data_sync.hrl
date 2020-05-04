@@ -61,7 +61,9 @@
 	%% of synced transaction identifiers. Only confirmed transactions
 	%% are stored. Consulted by GET /tx/<id>/data. The index is not
 	%% maintained by default as miners do not need it.
-	tx_index
+	tx_index,
+	maintain_tx_index,
+	db
 }).
 
 %% The record keeps track of all the unconfirmed synced
