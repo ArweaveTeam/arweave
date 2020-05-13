@@ -175,6 +175,7 @@ write_full_block(B) ->
 	write_full_block(BShadow, B#block.txs).
 
 write_full_block(BShadow, TXs) ->
+	ar_cleanup:cleanup_blocks_on_disck(BShadow),
 	write_tx(TXs),
 	write_block(BShadow),
 	ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }),

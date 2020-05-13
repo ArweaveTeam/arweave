@@ -1,6 +1,6 @@
 -module(ar_cleanup).
 
--export([rewrite/0, rewrite/1, remove_old_wallet_lists/0]).
+-export([rewrite/0, rewrite/1, remove_old_wallet_lists/0, cleanup_blocks_on_disck/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -71,3 +71,30 @@ remove_old_wallet_lists(Filepaths) ->
 	),
 	io:format("~nCleanup complete.~n~n"),
 	erlang:halt(0).
+
+cleanup_blocks_on_disck(Block) ->
+	case ar_meta_db:get(used_space) >= ar_meta_db:get(disk_space) of
+		true ->
+			ReverseBI = lists:reverse(ar_node:get_block_index(whereis(http_entrypoint_node))),
+			BlockSize = byte_size(ar_serialize:jsonify(ar_serialize:block_to_json_struct(Block))),
+			BlocksToDel = collect_blocks_for_del(ReverseBI, [], BlockSize, 0),
+			[file:delete(Path) || Path <- BlocksToDel],
+			ok;
+		false ->
+			ok
+	end.
+
+collect_blocks_for_del([], Acc, _, _) ->
+	Acc;
+collect_blocks_for_del([{BH, _, _}|T], Acc, CurrentSize, Size) ->
+	case {CurrentSize > Size, CurrentSize < Size} of
+		{true, _} ->
+			case ar_storage:lookup_block_filename(BH) of
+				unavailable ->
+					collect_blocks_for_del(T, Acc, CurrentSize, Size);
+				BlockPath ->
+					collect_blocks_for_del(T, [BlockPath|Acc], CurrentSize, Size + filelib:file_size(BlockPath))
+			end;
+		{_, false} ->
+			Acc
+	end.
