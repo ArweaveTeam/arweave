@@ -77,7 +77,7 @@ cleanup_blocks_on_disck(Block) ->
 		true ->
 			ReverseBI = lists:reverse(ar_node:get_block_index(whereis(http_entrypoint_node))),
 			BlockSize = byte_size(ar_serialize:jsonify(ar_serialize:block_to_json_struct(Block))),
-			ok = cleanup_by_paths(ReverseBI, BlockSize, 0).%;
+			ok = cleanup_by_paths(ReverseBI, BlockSize, 0);
 		false ->
 			ok
 	end.
