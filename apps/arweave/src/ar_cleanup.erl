@@ -95,9 +95,9 @@ cleanup_by_paths([{BH, _, _}|T], CurrentSize, Size) ->
 						unavailable ->
 							cleanup_by_paths(T, CurrentSize, Size);
 						#block{ txs = TXs, wallet_list_hash = WalletListHash } ->
-							_ = [file:delete(ar_storage:lookup_tx_filename(TX)) || TX <- TXs],
-							ok = file:delete(ar_storage:wallet_list_filepath(WalletListHash)),
-							ok = file:delete(BlockPath),
+							[file:delete(ar_storage:lookup_tx_filename(TX)) || TX <- TXs],
+							file:delete(ar_storage:wallet_list_filepath(WalletListHash)),
+							file:delete(BlockPath),
 							cleanup_by_paths(T, CurrentSize, Size + filelib:file_size(BlockPath))
 					end
 				end;
