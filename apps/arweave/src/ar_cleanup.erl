@@ -77,24 +77,30 @@ cleanup_blocks_on_disck(Block) ->
 		true ->
 			ReverseBI = lists:reverse(ar_node:get_block_index(whereis(http_entrypoint_node))),
 			BlockSize = byte_size(ar_serialize:jsonify(ar_serialize:block_to_json_struct(Block))),
-			BlocksToDel = collect_blocks_for_del(ReverseBI, [], BlockSize, 0),
-			[file:delete(Path) || Path <- BlocksToDel],
-			ok;
+			ok = cleanup_by_paths(ReverseBI, BlockSize, 0).%;
 		false ->
 			ok
 	end.
 
-collect_blocks_for_del([], Acc, _, _) ->
-	Acc;
-collect_blocks_for_del([{BH, _, _}|T], Acc, CurrentSize, Size) ->
-	case {CurrentSize > Size, CurrentSize < Size} of
-		{true, _} ->
+cleanup_by_paths([], _, _) ->
+	ok;
+cleanup_by_paths([{BH, _, _}|T], CurrentSize, Size) ->
+	case CurrentSize > Size of
+		true ->
 			case ar_storage:lookup_block_filename(BH) of
 				unavailable ->
-					collect_blocks_for_del(T, Acc, CurrentSize, Size);
+					cleanup_by_paths(T, CurrentSize, Size);
 				BlockPath ->
-					collect_blocks_for_del(T, [BlockPath|Acc], CurrentSize, Size + filelib:file_size(BlockPath))
-			end;
-		{_, false} ->
-			Acc
+					case ar_storage:read_block(BH) of
+						unavailable ->
+							cleanup_by_paths(T, CurrentSize, Size);
+						#block{ txs = TXs, wallet_list_hash = WalletListHash } ->
+							_ = [file:delete(ar_storage:lookup_tx_filename(TX)) || TX <- TXs],
+							ok = file:delete(ar_storage:wallet_list_filepath(WalletListHash)),
+							ok = file:delete(BlockPath),
+							cleanup_by_paths(T, CurrentSize, Size + filelib:file_size(BlockPath))
+					end
+				end;
+		false ->
+			ok
 	end.
