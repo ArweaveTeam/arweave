@@ -1,6 +1,6 @@
 -module(ar_cleanup).
 
--export([rewrite/0, rewrite/1, remove_old_wallet_lists/0, cleanup_blocks_on_disck/1]).
+-export([rewrite/0, rewrite/1, remove_old_wallet_lists/0, cleanup_disck/0, is_cleanup_disc_space/0]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -72,35 +72,47 @@ remove_old_wallet_lists(Filepaths) ->
 	io:format("~nCleanup complete.~n~n"),
 	erlang:halt(0).
 
-cleanup_blocks_on_disck(Block) ->
-	case ar_meta_db:get(used_space) >= ar_meta_db:get(disk_space) of
+cleanup_disck() ->
+	case is_cleanup_disc_space() of
 		true ->
 			ReverseBI = lists:reverse(ar_node:get_block_index(whereis(http_entrypoint_node))),
-			BlockSize = byte_size(ar_serialize:jsonify(ar_serialize:block_to_json_struct(Block))),
-			ok = cleanup_by_paths(ReverseBI, BlockSize, 0);
+			ok = cleanup_by_paths(ReverseBI, 200 * 1000 * 1000, 0);
 		false ->
 			ok
 	end.
 
 cleanup_by_paths([], _, _) ->
 	ok;
-cleanup_by_paths([{BH, _, _}|T], CurrentSize, Size) ->
-	case CurrentSize > Size of
+cleanup_by_paths([{BH, _, _}|T], Size, CurrentSize) ->
+	case Size > CurrentSize of
 		true ->
 			case ar_storage:lookup_block_filename(BH) of
 				unavailable ->
-					cleanup_by_paths(T, CurrentSize, Size);
+					cleanup_by_paths(T, Size, CurrentSize);
 				BlockPath ->
 					case ar_storage:read_block(BH) of
 						unavailable ->
-							cleanup_by_paths(T, CurrentSize, Size);
+							cleanup_by_paths(T, Size, CurrentSize);
 						#block{ txs = TXs, wallet_list_hash = WalletListHash } ->
-							[file:delete(ar_storage:lookup_tx_filename(TX)) || TX <- TXs],
-							file:delete(ar_storage:wallet_list_filepath(WalletListHash)),
-							file:delete(BlockPath),
-							cleanup_by_paths(T, CurrentSize, Size + filelib:file_size(BlockPath))
+							WalletLisPath = ar_storage:wallet_list_filepath(WalletListHash),
+							WalletBlockSum = lists:foldr(fun(Path, Acc) ->
+								NewAcc = Acc + filelib:file_size(Path),
+								file:delete(Path),
+								NewAcc
+							end, 0, [WalletLisPath, BlockPath]),
+							TXsSum = lists:foldr(fun(TX, Acc) ->
+								TXPath = ar_storage:lookup_tx_filename(TX),
+								NewAcc = Acc + filelib:file_size(TXPath),
+								file:delete(TXPath),
+								NewAcc
+							end, 0, TXs),
+							cleanup_by_paths(T, Size, CurrentSize + TXsSum + WalletBlockSum)
 					end
 				end;
 		false ->
 			ok
 	end.
+
+is_cleanup_disc_space() ->
+	[{_, DiscKBsSpase, _}] = ar_storage:select_drive(disksup:get_disk_data(), "/" ++ ?BLOCK_DIR),
+	DiscKBsSpase * 1000 - ar_meta_db:get(used_space) >= ar_meta_db:get(disk_space).
