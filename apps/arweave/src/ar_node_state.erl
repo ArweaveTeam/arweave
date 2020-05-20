@@ -167,6 +167,8 @@ update_state_metrics(KeyValues) ->
 			prometheus_gauge:set(arweave_block_height, Value);
 		({mempool_size, MempoolSize}) ->
 			record_mempool_size(MempoolSize);
+		({weave_size, WeaveSize}) ->
+			prometheus_gauge:set(weave_size, WeaveSize);
 		(_) ->
 			ok
 	end, KeyValues).

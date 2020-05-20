@@ -83,6 +83,13 @@ register() ->
 			"The data fields of format=1 transactions are NOT considered "
 			"to be transaction data."
 		}
+	]),
+	prometheus_gauge:new([
+		{name, weave_size},
+		{
+			help,
+			"The size of the weave (in bytes)."
+		}
 	]).
 
 label_http_path(Path) ->
