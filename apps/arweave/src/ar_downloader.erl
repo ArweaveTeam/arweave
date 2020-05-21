@@ -57,18 +57,18 @@ handle_cast({enqueue_random, Item}, #{ queue := Queue } = State) ->
 handle_cast(process_item, #{ queue := Queue } = State) ->
 	case ar_cleanup:is_full_disc() of
 		true ->
-				ar:warn([
-					{event, downloader_process_item_disc_space_is_full},
-					{state, State}
-				]),
-				gen_server:cast(?MODULE, cleanup),
-				timer:apply_after(?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [?MODULE, process_item]),
-				{noreply, State};
+			ar:warn([
+				{event, downloader_process_item_disc_space_is_full},
+				{state, State}
+			]),
+			gen_server:cast(?MODULE, cleanup),
+			timer:apply_after(?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [?MODULE, process_item]),
+			{noreply, State};
 		false ->
-				prometheus_gauge:set(downloader_queue_size, queue:len(Queue)),
-				UpdatedQueue = process_item(Queue),
-				timer:apply_after(?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [?MODULE, process_item]),
-				{noreply, State#{ queue => UpdatedQueue}}
+			prometheus_gauge:set(downloader_queue_size, queue:len(Queue)),
+			UpdatedQueue = process_item(Queue),
+			timer:apply_after(?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [?MODULE, process_item]),
+			{noreply, State#{ queue => UpdatedQueue}}
 	end;
 
 handle_cast(cleanup, State) ->
