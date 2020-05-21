@@ -55,13 +55,24 @@ handle_cast({enqueue_random, Item}, #{ queue := Queue } = State) ->
 	{noreply, State#{ queue => maybe_enqueue(Item, random, Queue) }};
 
 handle_cast(process_item, #{ queue := Queue } = State) ->
-	prometheus_gauge:set(downloader_queue_size, queue:len(Queue)),
-	UpdatedQueue = process_item(Queue),
-	timer:apply_after(?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [?MODULE, process_item]),
-	{noreply, State#{ queue => UpdatedQueue}};
+	case ar_cleanup:is_full_disc() of
+		true ->
+				ar:warn([
+					{event, downloader_process_item_disc_space_is_full},
+					{state, State}
+				]),
+				gen_server:cast(?MODULE, cleanup),
+				timer:apply_after(?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [?MODULE, process_item]),
+				{noreply, State};
+		false ->
+				prometheus_gauge:set(downloader_queue_size, queue:len(Queue)),
+				UpdatedQueue = process_item(Queue),
+				timer:apply_after(?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [?MODULE, process_item]),
+				{noreply, State#{ queue => UpdatedQueue}}
+	end;
 
 handle_cast(cleanup, State) ->
-	ar_cleanup:cleanup_disck(),
+	ar_cleanup:cleanup_disc(),
 	timer:apply_after(?INTERVAL_IN_MINUTE(10), gen_server, cast, [?MODULE, cleanup]),
 	{noreply, State};
 
@@ -133,7 +144,7 @@ process_item(Queue) ->
 				when BackoffTimestamp > Now ->
 			enqueue_random(Item, Backoff, UpdatedQueue);
 		{{value, {{block, {H, TXRoot}}, Backoff}}, UpdatedQueue} ->
-			case download_block(#{ hash => H, tx_root => TXRoot, is_cleanup => ar_cleanup:is_cleanup_disc_space() }) of
+			case download_block(H, TXRoot) of
 				{error, _Reason} ->
 					UpdatedBackoff = update_backoff(Now, Backoff),
 					enqueue_random({block, {H, TXRoot}}, UpdatedBackoff, UpdatedQueue);
@@ -148,7 +159,7 @@ process_item(Queue) ->
 					)
 			end;
 		{{value, {{tx, {ID, BH}}, Backoff}}, UpdatedQueue} ->
-			case download_tx(#{ id => ID, hash => BH, is_cleanup => ar_cleanup:is_cleanup_disc_space() }) of
+			case download_tx(ID, BH) of
 				{error, _Reason} ->
 					UpdatedBackoff = update_backoff(Now, Backoff),
 					enqueue_random({tx, {ID, BH}}, UpdatedBackoff, UpdatedQueue);
@@ -156,7 +167,7 @@ process_item(Queue) ->
 					maybe_enqueue({tx_data, TX}, front, UpdatedQueue)
 			end;
 		{{value, {{tx_data, {ID, DataRoot}}, Backoff}}, UpdatedQueue} when is_binary(ID) ->
-			case download_transaction_data(#{ id => ID, data_root => DataRoot, is_cleanup => ar_cleanup:is_cleanup_disc_space() }) of
+			case download_transaction_data(ID, DataRoot) of
 				{error, _Reason} ->
 					UpdatedBackoff = update_backoff(Now, Backoff),
 					enqueue_random({tx_data, {ID, DataRoot}}, UpdatedBackoff, UpdatedQueue);
@@ -165,22 +176,14 @@ process_item(Queue) ->
 			end
 	end.
 
-download_block(#{ hash := H, tx_root := TXRoot, is_cleanup := false }) ->
+download_block(H, TXRoot) ->
 	case ar_storage:read_block_shadow(H) of
 		unavailable ->
 			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 			download_block(Peers, H, TXRoot);
 		B ->
 			{ok, B#block.txs}
-	end;
-download_block(#{ hash := H, tx_root := TXRoot, is_cleanup := true }) ->
-	ar:warn([
-		{event, downloader_block_failed_disc_space_is_full},
-		{block, ar_util:encode(H)},
-		{tx_root, TXRoot}
-	]),
-	gen_server:cast(?MODULE, cleanup),
-	{error, disc_space_is_full}.
+	end.
 
 update_backoff(Now, {_Timestamp, Interval}) ->
 	UpdatedInterval = min(?MAX_BACKOFF_INTERVAL_S, Interval * 2),
@@ -257,7 +260,7 @@ write_block(B) ->
 			Error
 	end.
 
-download_tx(#{ id := ID, hash := BH, is_cleanup := false }) ->
+download_tx(ID, BH) ->
 	case ar_storage:read_tx(ID) of
 		unavailable ->
 			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
@@ -293,17 +296,9 @@ download_tx(#{ id := ID, hash := BH, is_cleanup := false }) ->
 			end;
 		TX ->
 			{ok, TX}
-	end;
-download_tx(#{ id := ID, hash := BH, is_cleanup := true }) ->
-	ar:warn([
-		{event, downloader_tx_failed_disc_space_is_full},
-		{id, ar_util:encode(ID)},
-		{hash, ar_util:encode(BH)}
-	]),
-	gen_server:cast(?MODULE, cleanup),
-	{error, disc_space_is_full}.
+	end.
 
-download_transaction_data(#{ id := ID, data_root := DataRoot, is_cleanup := false }) ->
+download_transaction_data(ID, DataRoot) ->
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 	case ar_http_iface_client:get_tx_data(Peers, ID) of
 		unavailable ->
@@ -336,12 +331,4 @@ download_transaction_data(#{ id := ID, data_root := DataRoot, is_cleanup := fals
 					]),
 					Error
 			end
-	end;
-download_transaction_data(#{ id := ID, data_root := DataRoot, is_cleanup := true }) ->
-	ar:warn([
-		{event, downloader_tx_data_failed_disc_space_is_full},
-		{id, ID},
-		{data_root, DataRoot}
-	]),
-	gen_server:cast(?MODULE, cleanup),
-	{error, disc_space_is_full}.
+	end.
