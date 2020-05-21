@@ -76,7 +76,8 @@ cleanup_disk() ->
 	case is_full_disk() of
 		true ->
 			ReverseBI = lists:reverse(ar_node:get_block_index(whereis(http_entrypoint_node))),
-			ok = cleanup_by_paths(ReverseBI, 200 * 1000 * 1000, 0);
+			ok = cleanup_by_paths(ReverseBI, 200 * 1000 * 1000, 0),
+			ar_storage:update_used_space();
 		false ->
 			ok
 	end.
@@ -114,5 +115,4 @@ cleanup_by_paths([{BH, _, _}|T], Size, CurrentSize) ->
 	end.
 
 is_full_disk() ->
-	ar_storage:start_update_used_space(),
 	ar_meta_db:get(used_space) + (100 * 1024 * 1024) >= ar_meta_db:get(disk_space).
