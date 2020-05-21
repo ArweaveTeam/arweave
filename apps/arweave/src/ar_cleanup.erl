@@ -76,8 +76,7 @@ cleanup_disk() ->
 	case is_full_disk() of
 		true ->
 			ReverseBI = lists:reverse(ar_node:get_block_index(whereis(http_entrypoint_node))),
-			ok = cleanup_by_paths(ReverseBI, 200 * 1000 * 1000, 0),
-			ar_storage:update_used_space();
+			ok = cleanup_by_paths(ReverseBI, 200 * 1000 * 1000, 0);
 		false ->
 			ok
 	end.

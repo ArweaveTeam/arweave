@@ -9,7 +9,7 @@
 -export([write_block_index/1, read_block_index/0]).
 -export([delete_tx/1]).
 -export([enough_space/1, select_drive/2]).
--export([calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0, update_used_space/0]).
+-export([calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0]).
 -export([lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1]).
 -export([tx_data_filepath/1]).
 -export([read_tx_file/1]).
@@ -267,7 +267,8 @@ parse_block_shadow_json(JSON) ->
 start_update_used_space() ->
 	spawn(
 		fun() ->
-			catch update_used_space(),
+			UsedSpace = ar_meta_db:get(used_space),
+			catch ar_meta_db:put(used_space, max(calculate_used_space(), UsedSpace)),
 			timer:apply_after(
 				?DIRECTORY_SIZE_TIMER,
 				?MODULE,
@@ -276,10 +277,6 @@ start_update_used_space() ->
 			)
 		end
 	).
-
-update_used_space() ->
-	UsedSpace = ar_meta_db:get(used_space),
-	ar_meta_db:put(used_space, max(calculate_used_space(), UsedSpace)).
 
 lookup_block_filename(H) ->
 	Name = filename:join([
