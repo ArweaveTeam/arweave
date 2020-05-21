@@ -293,6 +293,7 @@ integrate_new_block(
 	NewBI = update_block_index(NewB#block{ txs = BlockTXs }, BI),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(BlockTXs),
 	ar_data_sync:add_block(SizeTaggedTXs, lists:sublist(NewBI, ?TRACK_CONFIRMATIONS), WeaveSize),
+	ar_downloader:store_height_hash_index(NewB),
 	ar_storage:write_full_block(NewB, BlockTXs),
 	BH = NewB#block.indep_hash,
 	NewBlockTXPairs = update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),

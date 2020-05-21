@@ -95,10 +95,10 @@ start(Peers, BI, MiningDelay, RewardAddr) ->
 	).
 start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin)
 		when is_record(B, block) ->
-	lists:map(
-		fun ar_storage:write_block/1,
-		Bs
-	),
+	lists:foreach(fun(Block) ->
+		ar_downloader:store_height_hash_index(Block),
+		ar_storage:write_block(Block)
+	end, Bs),
 	start(
 		Peers,
 		lists:map(fun ar_util:block_index_entry_from_block/1, Bs),
@@ -165,6 +165,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 						{0, 0, not_joined};
 					[{H, _, _} | _] ->
 						B = ar_storage:read_block(H),
+						ar_downloader:store_height_hash_index(B),
 						{B#block.reward_pool, B#block.weave_size, H}
 				end,
 			%% Start processes, init state, and start server.

@@ -23,6 +23,7 @@
 -export([test_with_mocked_functions/2]).
 -export([get_tx_price/1]).
 -export([post_and_mine/2]).
+-export([start_without_clear/2]).
 
 -include("src/ar.hrl").
 -include("src/ar_config.hrl").
@@ -61,6 +62,19 @@ start(B0, RewardAddr) ->
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	{whereis(http_entrypoint_node), B0}.
+
+start_without_clear(B0, RewardAddr) ->
+	ar_storage:write_full_block(B0),
+	ar_tx_queue:stop(),
+	ar_downloader:reset(),
+	Peer = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+	Node = ar_node:start([], [B0], 0, RewardAddr),
+	ar_http_iface_server:reregister(http_entrypoint_node, Node),
+	ar_meta_db:reset_peer(Peer),
+	Bridge = ar_bridge:start([], Node, ar_meta_db:get(port)),
+	ar_http_iface_server:reregister(http_bridge_node, Bridge),
+	ar_node:add_peers(Node, Bridge),
+	{Node, B0}.
 
 join_on_slave() ->
 	join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).

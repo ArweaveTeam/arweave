@@ -280,6 +280,7 @@ apply_next_block(State, NextB, B) ->
 					{block_height, NextB#block.height}
 				]
 			),
+			ar_downloader:store_height_hash_index(NextB),
 			ar_storage:write_full_block(NextB),
 			NewBI = ar_node_utils:update_block_index(NextB, BI),
 			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NextB#block.txs),

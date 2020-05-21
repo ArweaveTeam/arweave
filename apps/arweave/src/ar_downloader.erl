@@ -2,8 +2,10 @@
 -behaviour(gen_server).
 
 -export([start_link/1, enqueue_front/1, enqueue_random/1]).
--export([init/1, handle_cast/2, handle_call/3]).
+-export([init/1, handle_cast/2, handle_call/3, terminate/2]).
 -export([reset/0]).
+
+-export([store_height_hash_index/1]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
@@ -15,7 +17,11 @@
 -define(MAX_BACKOFF_INTERVAL_S, 2 * 60 * 60).
 %% The data above this size is synced chunk by chunk in ar_data_sync.
 -define(SYNC_DATA_BELOW_SIZE, ?MAX_SERVED_TX_DATA_SIZE).
-
+-ifdef(DEBUG).
+-define(INTERVAL_IN_MINUTE(_), 50).
+-else.
+-define(INTERVAL_IN_MINUTE(Minutes), 1000 * 60 * Minutes).
+-endif.
 %%% This module contains the core transaction and block downloader.
 %%% After the node has joined the network, this process is started,
 %%% which continually downloads data until either the drive is full
@@ -37,6 +43,12 @@ enqueue_random(Item) ->
 reset() ->
 	gen_server:cast(?MODULE, reset).
 
+store_height_hash_index(#block{ height = Height, indep_hash = IH }) ->
+	gen_server:cast(?MODULE, {store_height_hash_index, {integer_to_binary(Height), IH}}),
+	ok;
+store_height_hash_index(_) ->
+	{error, invalid_block}.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -48,6 +60,9 @@ init(_Args) ->
 	%% heap and do not perform expensive GC on them.
 	process_flag(message_queue_data, off_heap),
 	gen_server:cast(?MODULE, process_item),
+	gen_server:cast(?MODULE, init_stored_height_hash_index),
+	gen_server:cast(?MODULE, stored_block_index),
+	gen_server:cast(?MODULE, cleanup),
 	{ok, #{ queue => queue:new() }}.
 
 handle_cast({enqueue_front, Item}, #{ queue := Queue } = State) ->
@@ -57,15 +72,64 @@ handle_cast({enqueue_random, Item}, #{ queue := Queue } = State) ->
 
 handle_cast(process_item, #{ queue := Queue } = State) ->
 	prometheus_gauge:set(downloader_queue_size, queue:len(Queue)),
-	UpdatedQueue = process_item(Queue),
+	UpdatedQueue = case is_full_disk() of
+		true ->
+			ar:warn([
+				{event, downloader_process_item_disc_space_is_full},
+				{state, State}
+			]),
+			Queue;
+		false ->
+			process_item(Queue)
+	end,
 	timer:apply_after(?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [?MODULE, process_item]),
-	{noreply, State#{ queue => UpdatedQueue}};
+	{noreply, State#{ queue => UpdatedQueue }};
+
+handle_cast(cleanup, #{ stored_height_hash_index := DB } = State) ->
+	start_cleanup(is_full_disk(), DB),
+	timer:apply_after(?INTERVAL_IN_MINUTE(10), gen_server, cast, [?MODULE, cleanup]),
+	{noreply, State};
+
+handle_cast(init_stored_height_hash_index, State) ->
+	Name = "stored_height_hash_index",
+	RocksDBDir = filename:join(ar_meta_db:get(data_dir), ?ROCKS_DB_DIR),
+	Filename = filename:join(RocksDBDir, Name),
+	ok = filelib:ensure_dir(Filename ++ "/"),
+	{ok, DB} = rocksdb:open(Filename, [{create_if_missing, true}, {max_open_files, 100000}]),
+	{noreply, State#{ stored_height_hash_index => DB }};
+
+handle_cast(stored_block_index, #{ stored_height_hash_index := DB } = State) ->
+	case ar_node:get_block_index(whereis(http_entrypoint_node)) of
+		[] ->
+			timer:apply_after(500, gen_server, cast, [?MODULE, stored_block_index]);
+		BI ->
+			lists:foreach(fun({BH, _, _}) ->
+				case ar_storage:read_block(BH) of
+					#block{ height = Height, indep_hash = IH } ->
+						rocksdb:put(DB, integer_to_binary(Height), IH, []);
+					_ ->
+						ok
+				end
+			end, BI)
+	end,
+	{noreply, State};
+
+handle_cast({store_height_hash_index, {Key, Value}}, #{ stored_height_hash_index := DB } = State) ->
+	rocksdb:put(DB, Key, Value, []),
+	{noreply, State};
 
 handle_cast(reset, State) ->
 	{noreply, State#{ queue => queue:new() }}.
 
-handle_call(_, _, _) ->
-	not_implemented.
+handle_call(get_stored_height_hash_index, _, #{ stored_height_hash_index := DB } = State) ->
+	{reply, DB, State};
+
+handle_call(_, _, State) ->
+	{reply, not_implemented, State}.
+
+terminate(Reason, #{ stored_height_hash_index := DB }) ->
+	ar:info([{event, ar_downloader_terminate}, {reason, Reason}]),
+	ar_kv:close(DB).
 
 %%%===================================================================
 %%% Private functions.
@@ -319,3 +383,86 @@ download_transaction_data(ID, DataRoot) ->
 					Error
 			end
 	end.
+
+start_cleanup(true, DB) ->
+	{ok, Iterator} = rocksdb:iterator(DB, []),
+	TillHeight = get_till_height(rocksdb:iterator_move(Iterator, last)),
+	case rocksdb:iterator_move(Iterator, {seek, <<>>}) of
+		{error,invalid_iterator} ->
+			ok;
+		{ok, Key, BH} ->
+			KeepClean = 200 * 1000 * 1000,
+			case ar_storage:lookup_block_filename(BH) of
+				unavailable ->
+					rocksdb:delete(DB, Key, []),
+					cleanup(rocksdb:iterator_move(Iterator, next), DB, Iterator, KeepClean, 0, TillHeight);
+				BlockPath ->
+					case ar_storage:read_block(BH) of
+						unavailable ->
+							rocksdb:delete(DB, Key, []),
+							cleanup(rocksdb:iterator_move(Iterator, next), DB, Iterator, KeepClean, 0, TillHeight);
+						Block ->
+							DeletedSize = cleanup_all(BlockPath, Block),
+							rocksdb:delete(DB, Key, []),
+							cleanup(rocksdb:iterator_move(Iterator, next), DB, Iterator, KeepClean, DeletedSize, TillHeight)
+					end
+			end
+	end;
+start_cleanup(_, _) ->
+	ok.
+
+cleanup({error,invalid_iterator}, _, _, _, _, _) ->
+	ok;
+cleanup({ok, Key, _}, _, _, _, _, Key) ->
+	ok;
+cleanup({ok, Key, BH}, Iterator, DB, Size, CurrentSize, TillHeight) ->
+	case Size > CurrentSize of
+		true ->
+			case ar_storage:lookup_block_filename(BH) of
+				unavailable ->
+					rocksdb:delete(DB, Key, []),
+					cleanup(rocksdb:iterator_move(Iterator, next), Iterator, DB, Size, CurrentSize, TillHeight);
+				BlockPath ->
+					case ar_storage:read_block(BH) of
+						unavailable ->
+							rocksdb:delete(DB, Key, []),
+							cleanup(rocksdb:iterator_move(Iterator, next), Iterator, DB, Size, CurrentSize, TillHeight);
+						Block ->
+							DeletedSize = cleanup_all(BlockPath, Block),
+							NewCurrentSize = CurrentSize + DeletedSize,
+							rocksdb:delete(DB, Key, []),
+							cleanup(rocksdb:iterator_move(Iterator, next), Iterator, DB, Size, NewCurrentSize, TillHeight)
+					end
+				end;
+		false ->
+			ok
+	end.
+
+cleanup_all(BlockPath, #block{ txs = TXs, wallet_list_hash = WalletListHash }) ->
+	WalletLisPath = ar_storage:wallet_list_filepath(WalletListHash),
+	WalletBlockSum = lists:foldr(fun(Path, Acc) ->
+		NewAcc = Acc + filelib:file_size(Path),
+		file:delete(Path),
+		NewAcc
+	end, 0, [WalletLisPath, BlockPath]),
+	TXsSum = lists:foldr(fun(TX, Acc) ->
+		TXPath = ar_storage:lookup_tx_filename(TX),
+		NewAcc = Acc + filelib:file_size(TXPath),
+		file:delete(TXPath),
+		NewAcc
+	end, 0, TXs),
+	TXsSum + WalletBlockSum.
+
+is_full_disk() ->
+	{US, DS} = case {ar_meta_db:get(used_space), ar_meta_db:get(disk_space)} of
+		{not_found, not_found} ->
+			{0, 0};
+		Res ->
+			Res
+	end,
+	US + (100 * 1024 * 1024) >= DS.
+
+get_till_height({ok, Height, _}) ->
+	integer_to_binary(binary_to_integer(Height) - ?STORE_BLOCKS_BEHIND);
+get_till_height(_) ->
+	<<>>.
