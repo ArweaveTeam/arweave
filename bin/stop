@@ -1,0 +1,15 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+cd "$SCRIPT_DIR/.."
+
+export ERL_EPMD_ADDRESS=127.0.0.1
+
+erl -pa `./rebar3 path` \
+    -noshell \
+    -config config/sys.config \
+    -name stopper@127.0.0.1 \
+    -setcookie arweave \
+    -s ar stop arweave@127.0.0.1 -s init stop

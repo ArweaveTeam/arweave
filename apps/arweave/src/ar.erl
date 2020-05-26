@@ -15,6 +15,7 @@
 -export([start_link/0, start_link/1, init/1]).
 -export([start_for_tests/0]).
 -export([fixed_diff_option/0, fixed_delay_option/0]).
+-export([stop/1]).
 
 -include("ar.hrl").
 -include("ar_config.hrl").
@@ -479,13 +480,19 @@ start(
 		true  -> app_ipfs:start_pinning()
 	end,
 	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
+	garbage_collect(),
 	case Pause of
 		false ->
 			ok;
-		_ ->
-			garbage_collect(),
-			receive after infinity -> ok end
+		true ->
+			receive
+				{'EXIT', _, shutdown} ->
+					ok
+			end
 	end.
+
+stop([NodeName]) ->
+	rpc:cast(NodeName, init, stop, []).
 
 start_graphql() ->
 	ok = application:ensure_started(graphql),
