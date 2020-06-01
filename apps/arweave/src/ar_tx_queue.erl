@@ -6,6 +6,7 @@
 -export([set_max_emitters/1, set_max_header_size/1, set_max_data_size/1, set_pause/1]).
 -export([add_tx/1, show_queue/0]).
 -export([utility/1]).
+-export([drop_tx/1]).
 
 %% gen_server callbacks
 -export([
@@ -73,6 +74,9 @@ add_tx(TX) ->
 
 show_queue() ->
 	gen_server:call(?MODULE, show_queue).
+
+drop_tx(TX) ->
+	gen_server:cast(?MODULE, {drop_tx, TX}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -158,6 +162,26 @@ handle_cast({add_tx, TX}, State) ->
 		data_size = NewDataSize
 	},
 	{noreply, NewState};
+
+handle_cast({drop_tx, TX}, State) ->
+	#state{
+		tx_queue = Q,
+		header_size = HeaderSize,
+		data_size = DataSize
+	} = State,
+	{TXHeaderSize, TXDataSize} = tx_queue_size(TX),
+	U = utility(TX),
+	Item = {U, {TX, {TXHeaderSize, TXDataSize}}},
+	case gb_sets:is_element(Item, Q) of
+		true ->
+			{noreply, State#state{
+				tx_queue = gb_sets:del_element(Item, Q),
+				header_size = HeaderSize - TXHeaderSize,
+				data_size = DataSize - TXDataSize
+			}};
+		false ->
+			{noreply, State}
+	end;
 
 handle_cast(emitter_go, State = #state{ paused = true }) ->
 	timer:apply_after(?EMITTER_START_WAIT, gen_server, cast, [?MODULE, emitter_go]),

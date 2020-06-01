@@ -11,7 +11,7 @@
 -export([wait_until_receives_txs/2]).
 -export([assert_wait_until_receives_txs/2]).
 -export([assert_slave_wait_until_receives_txs/2]).
--export([post_tx_to_slave/2, post_tx_to_master/2]).
+-export([post_tx_to_slave/2, post_tx_to_master/2, post_tx_to_master/3]).
 -export([assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
 -export([sign_tx/1, sign_tx/2, sign_tx/3]).
 -export([sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3]).
@@ -230,6 +230,9 @@ assert_post_tx_to_master(Master, TX) ->
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(Master, TX).
 
 post_tx_to_master(Master, TX) ->
+	post_tx_to_master(Master, TX, true).
+
+post_tx_to_master(Master, TX, Wait) ->
 	Port = ar_meta_db:get(port),
 	MasterIP = {127, 0, 0, 1, Port},
 	Reply =
@@ -242,7 +245,12 @@ post_tx_to_master(Master, TX) ->
 		}),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
-			assert_wait_until_receives_txs(Master, [TX]);
+			case Wait of
+				true ->
+					assert_wait_until_receives_txs(Master, [TX]);
+				false ->
+					ok
+			end;
 		_ ->
 			ar:console(
 				"Failed to post transaction. Error DB entries: ~p~n",

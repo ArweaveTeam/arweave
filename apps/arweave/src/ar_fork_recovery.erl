@@ -280,7 +280,8 @@ apply_next_block(State, NextB, B) ->
 			NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NextB, BlockTXPairs),
 			lists:foreach(
 				fun(TX) ->
-					ar_downloader:enqueue_random({tx_data, TX})
+					ar_downloader:enqueue_random({tx_data, TX}),
+					ar_tx_queue:drop_tx(TX)
 				end,
 				NextB#block.txs
 			),

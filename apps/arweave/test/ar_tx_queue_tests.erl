@@ -3,10 +3,11 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [assert_post_tx_to_slave/2]).
+-import(ar_test_node, [assert_post_tx_to_slave/2, disconnect_from_slave/0]).
 -import(ar_test_node, [assert_wait_until_receives_txs/2, wait_until_height/2]).
 -import(ar_test_node, [sign_tx/2, sign_v1_tx/2, get_tx_anchor/0]).
--import(ar_test_node, [get_tx_price/1, slave_mine/1, slave_call/3]).
+-import(ar_test_node, [get_tx_price/1, slave_mine/1, slave_call/3, connect_to_slave/0]).
+-import(ar_test_node, [post_tx_to_master/3]).
 
 txs_broadcast_order_test_() ->
 	{timeout, 60, fun test_txs_broadcast_order/0}.
@@ -199,6 +200,51 @@ format_2_txs_are_gossiped() ->
 		end,
 		100,
 		5000
+	).
+
+tx_is_dropped_after_it_is_included_test_() ->
+	{timeout, 60, fun test_tx_is_dropped_after_it_is_included/0}.
+
+test_tx_is_dropped_after_it_is_included() ->
+	{Master, Slave, _Wallet} = setup(),
+	CommittedTXs = [
+		ar_tx:new(<<"DATA1">>, ?AR(1)),
+		(ar_tx:new(<<"DATA3">>, ?AR(10)))#tx{ format = 2, data_size = 5, data_root = <<"r">> },
+		ar_tx:new(<<>>, ?AR(100)),
+		(ar_tx:new(<<>>, ?AR(1000)))#tx{ format = 2, data_size = 0 }
+	],
+	ar_tx_queue:set_pause(true),
+	lists:foreach(
+		fun(TX) ->
+			assert_post_tx_to_slave(Slave, TX)
+		end,
+		CommittedTXs
+	),
+	disconnect_from_slave(),
+	NotCommittedTXs = [
+		ar_tx:new(<<"DATA2">>, ?AR(1)),
+		(ar_tx:new(<<"DATA4">>, ?AR(10)))#tx{ format = 2, data_size = 5, data_root = <<"r">> },
+		ar_tx:new(<<>>, ?AR(10)),
+		(ar_tx:new(<<>>, ?AR(1)))#tx{ format = 2, data_size = 0 }
+	],
+	lists:foreach(
+		fun(TX) ->
+			post_tx_to_master(Master, TX, false)
+		end,
+		NotCommittedTXs
+	),
+	TXIDs = [TX#tx.id || TX <- CommittedTXs ++ NotCommittedTXs],
+	?assertEqual(
+		lists:sort([ar_util:encode(TXID) || TXID <- TXIDs]),
+		lists:sort([TXID || {[{_, TXID}, _, _]} <- http_get_queue()])
+	),
+	connect_to_slave(),
+	slave_mine(Slave),
+	wait_until_height(Master, 1),
+	NotCommittedTXIDs = [TX#tx.id || TX <- NotCommittedTXs],
+	?assertEqual(
+		lists:sort([ar_util:encode(TXID) || TXID <- NotCommittedTXIDs]),
+		lists:sort([TXID || {[{_, TXID}, _, _]} <- http_get_queue()])
 	).
 
 %%%% private
