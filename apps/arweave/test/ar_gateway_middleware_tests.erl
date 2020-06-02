@@ -36,6 +36,7 @@ execute_test_() ->
 		{"render manifest listing", fun render_manifest_listing/0},
 		{"redirect manifest to index", fun redirect_manifest_to_index/0},
 		{"serve manifest subpath", fun serve_manifest_subpath/0},
+		{"serve manifest subpath v2", fun serve_manifest_subpath_v2/0},
 		{"handle multi-segment subpaths", fun handle_multi_segment_subpaths/0},
 		{"redirect badly labeled manifest subpaths", fun redirect_badly_labeled_manifest_subpaths/0},
 		{"return 421 on bad manifest", fun return_421_on_bad_manifest/0},
@@ -255,6 +256,64 @@ serve_manifest_subpath() ->
 					tags = [{<<"Content-Type">>, <<"text/html">>}],
 					data = <<"<html><body>Some HTML</body></html>">>
 				}}
+		end
+	),
+	Hash = ar_util:encode(?MOCK_TXID),
+	{ok, Status, Headers, Body} =
+		req(
+			<<"https">>,
+			<<?MOCK_TXLABEL/binary, ".", ?MOCK_DOMAIN/binary>>,
+			<<"/", Hash/binary, "/index.html">>
+		),
+	?assertEqual(200, Status),
+	?assertMatch(#{ <<"content-type">> := <<"text/html">> }, Headers),
+	?assertEqual(<<"<html><body>Some HTML</body></html>">>, Body),
+	?assert(meck:validate(ar_storage)),
+	?assert(meck:validate(ar_arql_db)),
+	?assert(meck:validate(ar_domain)).
+
+serve_manifest_subpath_v2() ->
+	meck:expect(
+		ar_storage,
+		lookup_tx_filename,
+		fun
+			(?MOCK_TXID) -> <<"path/to/manifest">>;
+			(?MANIFEST_INDEX_TXID) -> <<"path/to/index">>
+		end
+	),
+	meck:expect(
+		ar_arql_db,
+		select_tx_by_id,
+		fun(?MOCK_TXHASH) ->
+			{ok, #{ block_indep_hash => ?MOCK_BLOCKHASH }}
+		end
+	),
+	meck:expect(
+		ar_storage,
+		read_tx_file,
+		fun
+			(<<"path/to/manifest">>) ->
+				{ok, #tx {
+					id = ?MOCK_TXID,
+					format = 2,
+					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}]
+				}};
+			(<<"path/to/index">>) ->
+				{ok, #tx {
+					id = ?MANIFEST_INDEX_TXID,
+					format = 2,
+					tags = [{<<"Content-Type">>, <<"text/html">>}]
+				}}
+		end
+	),
+	meck:expect(
+		ar_storage,
+		read_tx_data,
+		fun
+			(#tx{ id = ?MOCK_TXID }) ->
+				{ok, index_manifest_fixture()};
+			(#tx{ id = ?MANIFEST_INDEX_TXID }) ->
+				{ok, <<"<html><body>Some HTML</body></html>">>}
 		end
 	),
 	Hash = ar_util:encode(?MOCK_TXID),
