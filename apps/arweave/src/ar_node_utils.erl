@@ -325,7 +325,8 @@ integrate_new_block(
 	end,
 	lists:foreach(
 		fun(TX) ->
-			ar_downloader:enqueue_random({tx_data, TX})
+			ar_downloader:enqueue_random({tx_data, TX}),
+			ar_tx_queue:drop_tx(TX)
 		end,
 		BlockTXs
 	),

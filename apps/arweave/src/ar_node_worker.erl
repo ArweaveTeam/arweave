@@ -670,7 +670,8 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 	),
 	lists:foreach(
 		fun(TX) ->
-			ar_downloader:enqueue_random({tx_data, TX})
+			ar_downloader:enqueue_random({tx_data, TX}),
+			ar_tx_queue:drop_tx(TX)
 		end,
 		MinedTXs
 	),
