@@ -8,7 +8,7 @@
 -export([get_block_shadow/2]).
 -export([get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2]).
 -export([add_peer/1]).
--export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
+-export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).
 -export([get_block_index/1, get_block_index/2]).
 
@@ -406,9 +406,7 @@ get_info(Peer) ->
 	end.
 
 %% @doc Return a list of parsed peer IPs for a remote server.
-get_peers(Peer) -> get_peers(Peer, default_timeout).
-
-get_peers(Peer, Timeout) ->
+get_peers(Peer) ->
 	try
 		begin
 			{ok, {{<<"200">>, _}, _, Body, _, _}} =
@@ -416,8 +414,7 @@ get_peers(Peer, Timeout) ->
 					method => get,
 					peer => Peer,
 					path => "/peers",
-					headers => p2p_headers(),
-					timeout => Timeout
+					headers => p2p_headers()
 				}),
 			PeerArray = ar_serialize:dejsonify(Body),
 			lists:map(fun ar_util:parse_peer/1, PeerArray)
