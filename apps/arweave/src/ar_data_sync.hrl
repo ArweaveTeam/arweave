@@ -98,6 +98,8 @@
 	sync_record,
 	%% @doc The mapping peer -> sync_record containing sync records of the best peers.
 	peer_sync_records,
+	%% @doc The mapping content policy records what must be deleted
+	black_listed_record,
 	%% @doc The last ?TRACK_CONFIRMATIONS entries of the block index.
 	%% Used to determine orphaned data upon startup or chain reorg.
 	block_index,

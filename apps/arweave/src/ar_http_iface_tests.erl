@@ -677,7 +677,6 @@ mine_illicit_tx_test() ->
 	ar_node:add_tx(Node, TX),
 	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_meta_db:put(content_policy_files, []),
-	ar_firewall:reload(),
 	ar_node:mine(Node),
 	ar_test_node:wait_until_height(Node, 1),
 	?assertEqual(<<"BADCONTENT1">>, (ar_storage:read_tx(TX#tx.id))#tx.data),
@@ -685,7 +684,6 @@ mine_illicit_tx_test() ->
 	ar_node:add_tx(Node, FilteredTX),
 	ar_test_node:wait_until_receives_txs(Node, [FilteredTX]),
 	ar_meta_db:put(content_policy_files, [filename:dirname(?FILE) ++ "/../test/test_sig.txt"]),
-	ar_firewall:reload(),
 	ar_node:mine(Node),
 	ar_test_node:wait_until_height(Node, 2),
 	?assertEqual(unavailable, ar_storage:read_tx(FilteredTX#tx.id)).

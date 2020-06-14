@@ -329,6 +329,13 @@
 -define(CHUNK_ID_HASH_SIZE, 32).
 -define(NOTE_SIZE, 32).
 
+%% @doc Content policy interval of scan
+-ifdef(DEBUG).
+-define(CONTENT_POLICY_SCAN_INTERVAL, 2000).
+-else.
+-define(CONTENT_POLICY_SCAN_INTERVAL, 60000 * 60 * 2).
+-endif.
+
 %% @doc A succinct proof of access to a recall byte found in a TX.
 -record(poa, {
 	option = 1, % The recall byte option (a sequence number) chosen.

@@ -14,7 +14,7 @@
 %% API
 -export([start_link/0, stop/0, stop/1]).
 -export([reset/0, reset_peer/1]).
--export([get/1, put/2, keys/0, purge_peer_performance/0, increase/2]).
+-export([get/1, get/2, put/2, keys/0, purge_peer_performance/0, increase/2]).
 
 %% Behaviour callbacks
 -export([
@@ -64,6 +64,14 @@ get(Key) ->
 	case ets:lookup(?MODULE, Key) of
 		[{Key, Obj}] -> Obj;
 		[] -> not_found
+	end.
+
+%% @doc Retrieve value for key if key exist
+%% Return default value if key don't exist
+get(Key, Default) ->
+	case get(Key) of
+		not_found -> Default;
+		Obj -> Obj
 	end.
 
 %% @doc Increase the value associated with Key by Val. If the key

@@ -12,10 +12,12 @@
 	maybe_drop_data_root_from_disk_pool/3,
 	get_chunk/1,
 	get_tx_data/1,
+	delete_tx_data/1,
 	get_tx_offset/1,
 	get_sync_record_etf/0,
 	get_sync_record_json/0,
-	add_historical_block/1
+	add_historical_block/1,
+	reset_black_listed_record/0
 ]).
 
 -include("ar.hrl").
@@ -98,6 +100,12 @@ get_chunk(Offset) ->
 get_tx_data(TXID) ->
 	gen_server:call(?MODULE, {get_tx_data, TXID}).
 
+delete_tx_data(TXID) ->
+	gen_server:cast(?MODULE, {delete_tx_data, TXID}).
+
+reset_black_listed_record() ->
+	gen_server:cast(?MODULE, reset_black_listed_record).
+
 get_tx_offset(TXID) ->
 	gen_server:call(?MODULE, {get_tx_offset, TXID}).
 
@@ -167,6 +175,7 @@ init([]) ->
 		block_index = not_set,
 		weave_size = not_set,
 		sync_record = ar_intervals:new(),
+		black_listed_record = ar_intervals:new(),
 		peer_sync_records = #{},
 		block_queue = queue:new(),
 		disk_pool_cursor = first,
@@ -409,10 +418,11 @@ handle_cast({sync_random_interval, RecentlyFailedPeers}, State) ->
 	#sync_data_state{
 		sync_record = SyncRecord,
 		weave_size = WeaveSize,
-		peer_sync_records = PeerSyncRecords
+		peer_sync_records = PeerSyncRecords,
+		black_listed_record = BlackListedRecord
 	} = State,
 	FilteredPeerSyncRecords = maps:without(RecentlyFailedPeers, PeerSyncRecords),
-	case get_random_interval(SyncRecord, FilteredPeerSyncRecords, WeaveSize) of
+	case get_random_interval(SyncRecord, FilteredPeerSyncRecords, WeaveSize, BlackListedRecord) of
 		none ->
 			timer:apply_after(
 				?PAUSE_AFTER_COULD_NOT_FIND_CHUNK_MS,
@@ -578,7 +588,58 @@ handle_cast(update_disk_pool_data_roots, State) ->
 	{noreply, State#sync_data_state{
 		disk_pool_data_roots = UpdatedDiskPoolDataRoots,
 		disk_pool_size = DiskPoolSize
-	}}.
+	}};
+
+handle_cast({delete_tx_data, TXID}, State) ->
+	#sync_data_state{
+		tx_index = TXIndex,
+		chunks_index = ChunksIndex
+	} = State,
+	case catch ar_kv:get(TXIndex, TXID) of
+		not_found ->
+			ok;
+		{error, Reason} ->
+			ar:err([{event, failed_to_delete_tx_data}, {reason, Reason}]);
+		{ok, Value} ->
+			{Offset, Size} = binary_to_term(Value),
+			gen_server:cast(?MODULE, {delete_chunks, ChunksIndex, Offset, Size});
+		_ ->
+			ok
+	end,
+	{noreply, State};
+
+handle_cast({delete_chunks, ChunksIndex, Offset, Size}, State) ->
+	#sync_data_state{
+		sync_record = SyncRecord,
+		black_listed_record = BlackListedRecord
+	} = State,
+	Key = << Offset:?OFFSET_KEY_BITSIZE >>,
+	UpdatedState = case catch {Size, ar_kv:get_next(ChunksIndex, Key)} of
+		{0, _} ->
+			State;
+		{Size, {ok, _, Value}} ->
+			{DataPathHash, _, _, _, _, ChunkSize} = binary_to_term(Value),
+			ok = ar_kv:delete(ChunksIndex, Key),
+			case ar_storage:delete_chunk(DataPathHash) of
+				ok ->
+					NewOffset = Offset - ChunkSize,
+					EndStart = {Offset, NewOffset},
+					gen_server:cast(?MODULE, {delete_chunks, ChunksIndex, NewOffset, Size - ChunkSize}),
+					State#sync_data_state{
+						sync_record = ar_intervals:outerjoin(gb_sets:from_list([EndStart]), SyncRecord),
+						black_listed_record = gb_sets:add_element(EndStart, BlackListedRecord)
+					};
+				{error, Reason} ->
+					ar:err([{event, failed_to_delete_chunks}, {reason, Reason}]),
+					State
+			end;
+		_ ->
+			State
+	end,
+	{noreply, UpdatedState};
+
+handle_cast(reset_black_listed_record, State) ->
+	{noreply, State#sync_data_state{ black_listed_record = ar_intervals:new() }}.
 
 handle_call({add_chunk, DataRoot, DataPath, Chunk, Offset, TXSize}, _From, State) ->
 	#sync_data_state{
@@ -832,7 +893,7 @@ data_root_offset_index_from_reversed_block_index(
 			Error
 	end;
 data_root_offset_index_from_reversed_block_index(_Index, [], _StartOffset) ->
-	ok.	
+	ok.
 
 remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	ok = remove_orphaned_txs(State, BlockStartOffset, WeaveSize),
@@ -913,7 +974,7 @@ remove_orphaned_data_roots(State, BlockStartOffset) ->
 				end,
 				{ok, sets:new()},
 				Map
-			);	
+			);
 		Error ->
 			Error
 	end.
@@ -1162,7 +1223,7 @@ pick_random_peers(Peers, N, M) ->
 		N
 	).
 
-get_random_interval(SyncRecord, PeerSyncRecords, WeaveSize) ->
+get_random_interval(SyncRecord, PeerSyncRecords, WeaveSize, BlackListedRecord) ->
 	%% Try keeping no more than ?MAX_SHARED_SYNCED_INTERVALS_COUNT intervals
 	%% in the sync record by choosing the appropriate size of continuous
 	%% intervals to sync. The motivation is to keep the record size small for
@@ -1174,7 +1235,7 @@ get_random_interval(SyncRecord, PeerSyncRecords, WeaveSize) ->
 				{ok, {Peer, L, R}};
 			(Peer, PeerSyncRecord, none) ->
 				PeerSyncRecordBelowWeaveSize = ar_intervals:cut(PeerSyncRecord, WeaveSize),
-				I = ar_intervals:outerjoin(SyncRecord, PeerSyncRecordBelowWeaveSize),
+				I = ar_intervals:outerjoin(BlackListedRecord, ar_intervals:outerjoin(SyncRecord, PeerSyncRecordBelowWeaveSize)),
 				Sum = ar_intervals:sum(I),
 				case Sum of
 					0 ->

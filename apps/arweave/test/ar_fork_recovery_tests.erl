@@ -13,7 +13,6 @@ height_plus_one_fork_recovery_test() ->
 	{MasterNode, B0} = start(B0),
 	ar_test_node:connect_to_slave(),
 	ar_meta_db:put(content_policy_files, []),
-	ar_firewall:reload(),
 	%% Turn off gossip.
 	ar_test_node:slave_gossip(off, SlaveNode),
 	ar_test_node:slave_mine(SlaveNode),

@@ -62,7 +62,13 @@ make_request(Pid, #{method := post, path := P} = Opts) ->
 	end,
 	gun:post(Pid, P, Headers, maps:get(body, Opts, <<>>));
 make_request(Pid, #{method := get, path := P} = Opts) ->
-	gun:get(Pid, P, merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []))).
+	Headers = case maps:get(is_peer_request, Opts, true) of
+		true ->
+			merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []));
+		_ ->
+			maps:get(headers, Opts, [])
+	end,
+	gun:get(Pid, P, Headers).
 
 get_reponse(#{pid := Pid, stream_ref := SR, timer := T, start := S, limit := L, counter := C, acc := Acc} = Opts) ->
 	case gun:await(Pid, SR, inet:timeout(T)) of

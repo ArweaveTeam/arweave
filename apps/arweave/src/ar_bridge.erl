@@ -29,7 +29,6 @@ start_link([_, _, _] = Args) ->
 
 %% @doc Launch a bridge node.
 start(ExtPeers, IntPeers, Port) ->
-	ar_firewall:start(),
 	spawn(
 		fun() ->
 			case ets:info(ignored_ids) of
@@ -219,7 +218,7 @@ maybe_send_tx(S, TX) ->
 		gossip = GS,
 		processed = Procd
 	} = S,
-	case ar_firewall:scan_tx(TX) of
+	case ar_tx_blacklist:scan_tx(TX) of
 		reject ->
 			S;
 		accept ->

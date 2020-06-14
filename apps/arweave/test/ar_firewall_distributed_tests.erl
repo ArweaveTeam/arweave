@@ -32,7 +32,6 @@ test_node_validates_blocks_with_rejected_tx() ->
 		content_policy_files,
 		[filename:dirname(?FILE) ++ "/test_sig.txt"]
 	),
-	ar_firewall:reload(),
 	%% Mine the txs into a block on the remote node.
 	slave_mine(SlaveNode),
 	assert_slave_wait_until_height(SlaveNode, 1),

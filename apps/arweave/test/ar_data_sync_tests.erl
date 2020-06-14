@@ -24,6 +24,13 @@
 	slave_mine/1
 ]).
 
+-export([
+	setup_nodes/0,
+	post_chunk/1,
+	post_chunk/2,
+	get_chunk/1
+]).
+
 rejects_invalid_chunks_test_() ->
 	{timeout, 20, fun test_rejects_invalid_chunks/0}.
 

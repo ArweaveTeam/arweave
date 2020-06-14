@@ -48,7 +48,8 @@
 	disk_pool_data_root_expiration_time = ?DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
 	max_disk_pool_buffer_mb = ?MAX_DISK_POOL_BUFFER_MB,
 	max_disk_pool_data_root_buffer_mb = ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
-	randomx_bulk_hashing_iterations = 12
+	randomx_bulk_hashing_iterations = 12,
+	content_policy_provider_urls = []
 }).
 
 -endif.

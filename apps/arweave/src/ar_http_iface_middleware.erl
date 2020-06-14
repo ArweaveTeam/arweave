@@ -212,6 +212,26 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
+% @doc Return data for mock tests
+%% GET request to endpoint /mock/{filename}
+%% GET request to endpoint /mock/auth/{filename}
+handle(<<"GET">>, [<<"mock">> | T], Req, _Pid) ->
+	case T of
+		[<<"policy_content">>, <<"auth">> | Filename] ->
+			case cowboy_req:parse_header(<<"authorization">>, Req) of
+				{basic, <<"user">>, <<"pass">>} ->
+					JoinFilename = lists:join(<<"/">>, Filename),
+					{200, #{}, sendfile(lists:flatten([binary_to_list(F) || F <- JoinFilename])), Req};
+				_ ->
+					{403, #{}, <<"Forbidden">>, Req}
+			end;
+		[<<"policy_content">> | Filename] ->
+			JoinFilename = lists:join(<<"/">>, Filename),
+			{200, #{}, sendfile(lists:flatten([binary_to_list(F) || F <- JoinFilename])), Req};
+		_ ->
+			{400, #{}, <<"Not Implemented">>, Req}
+	end;
+
 %% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
 %% POST request to endpoint /arql with body of request being a logical expression valid in ar_parser.
 %%

@@ -52,7 +52,6 @@
 		ar_node_tests,
 		ar_fork_recovery,
 		ar_firewall_distributed_tests,
-		ar_firewall,
 		ar_mine,
 		ar_tx_replay_pool_tests,
 		ar_tx_queue,
@@ -62,6 +61,7 @@
 		ar_gateway_middleware_tests,
 		ar_http_util_tests,
 		ar_mine_randomx_tests,
+		ar_tx_blacklist_tests,
 		% ar_meta_db must be the last in the list since it resets global configuration
 		ar_meta_db
 	]
@@ -267,6 +267,8 @@ parse_cli_args(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["randomx_bulk_hashing_iterations", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { randomx_bulk_hashing_iterations = list_to_integer(Num) });
+parse_cli_args(["content_policy_provider_url", URL|Rest], C = #config { content_policy_provider_urls = URLs }) ->
+	parse_cli_args(Rest, C#config { content_policy_provider_urls = [URL|URLs] });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -338,7 +340,8 @@ start(normal, _Args) ->
 		disk_pool_data_root_expiration_time = DiskPoolExpirationTime,
 		max_disk_pool_buffer_mb = MaxDiskPoolBuffer,
 		max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer,
-		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
+		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations,
+		content_policy_provider_urls = ContentPolicyProviderUrls
 	}} = application:get_env(arweave, config),
 	%% Verify port collisions when gateway enabled
 	case {Port, GatewayDomain} of
@@ -375,6 +378,7 @@ start(normal, _Args) ->
 	ar_meta_db:put(max_disk_pool_buffer_mb, MaxDiskPoolBuffer),
 	ar_meta_db:put(max_disk_pool_data_root_buffer_mb, MaxDiskPoolDataRootBuffer),
 	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
+	ar_meta_db:put(content_policy_provider_urls, ContentPolicyProviderUrls),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -389,6 +393,7 @@ start(normal, _Args) ->
 	ar_miner_log:start(),
 	{ok, _} = ar_arql_db_sup:start_link([{data_dir, DataDir}]),
 	ar_storage:start_update_used_space(),
+	{ok, _} = ar_tx_blacklist_sup:start_link(),
 	%% Determine the mining address.
 	case {Addr, LoadKey, NewKey} of
 		{false, false, false} ->

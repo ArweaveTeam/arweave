@@ -29,7 +29,6 @@
 %% @doc Ready the system for block/tx reading and writing.
 %% %% This function should block.
 start() ->
-	ar_firewall:start(),
 	ensure_directories(),
 	ok = migrate_block_filenames(),
 	count_blocks_on_disk(),
@@ -329,7 +328,7 @@ write_tx(_TX) ->
 
 write_tx_header(TX) ->
 	%% Only store data that passes the firewall configured by the miner.
-	case ar_firewall:scan_tx(TX) of
+	case ar_tx_blacklist:scan_tx(TX) of
 		accept ->
 			write_tx_header_after_scan(TX);
 		reject ->
