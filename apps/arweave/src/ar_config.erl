@@ -54,6 +54,8 @@ parse_options([{<<"port">>, Port} | _], _) ->
 	{error, {bad_type, port, number}, Port};
 parse_options([{<<"data_dir">>, DataDir} | Rest], Config) when is_binary(DataDir) ->
 	parse_options(Rest, Config#config { data_dir = binary_to_list(DataDir) });
+parse_options([{<<"metrics_dir">>, MetricsDir} | Rest], Config) when is_binary(MetricsDir) ->
+	parse_options(Rest, Config#config { metrics_dir = binary_to_list(MetricsDir) });
 parse_options([{<<"data_dir">>, DataDir} | _], _) ->
 	{error, {bad_type, data_dir, string}, DataDir};
 parse_options([{<<"polling">>, true} | Rest], Config) ->
@@ -184,6 +186,12 @@ parse_options([{<<"max_gateway_connections">>, MaxGatewayConnections} | Rest], C
 	parse_options(Rest, Config#config { max_gateway_connections = MaxGatewayConnections });
 parse_options([{<<"max_poa_option_depth">>, MaxPOAOptionDepth} | Rest], Config) when is_integer(MaxPOAOptionDepth) ->
 	parse_options(Rest, Config#config { max_poa_option_depth = MaxPOAOptionDepth });
+parse_options([{<<"disk_pool_data_root_expiration_time">>, D} | Rest], Config) when is_integer(D) ->
+	parse_options(Rest, Config#config { disk_pool_data_root_expiration_time = D });
+parse_options([{<<"max_disk_pool_buffer_mb">>, D} | Rest], Config) when is_integer(D) ->
+	parse_options(Rest, Config#config { max_disk_pool_buffer_mb= D });
+parse_options([{<<"max_disk_pool_data_root_buffer_mb">>, D} | Rest], Config) when is_integer(D) ->
+	parse_options(Rest, Config#config { max_disk_pool_data_root_buffer_mb = D });
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

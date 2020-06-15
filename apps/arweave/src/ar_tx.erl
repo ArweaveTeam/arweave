@@ -639,7 +639,7 @@ test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
 		),
 	RealChunkID = ar_tx:generate_chunk_id(Chunk),
 	{PathChunkID, StartOffset, EndOffset} =
-		ar_merkle:validate_path(DataRoot, ChallengeLocation, DataPath),
+		ar_merkle:validate_path(DataRoot, ChallengeLocation, byte_size(Data), DataPath),
 	?assertEqual(RealChunkID, PathChunkID),
 	?assert(ChallengeLocation >= StartOffset),
 	?assert(ChallengeLocation < EndOffset).

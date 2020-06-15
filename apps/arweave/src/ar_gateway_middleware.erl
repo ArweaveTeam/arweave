@@ -298,7 +298,12 @@ read_format_2_data(TX) ->
 		{ok, Data} ->
 			Data;
 		{error, enoent} ->
-			<<>>
+			case catch ar_data_sync:get_tx_data(TX#tx.id) of
+				{ok, Data} ->
+					Data;
+				_ ->
+					<<>>
+			end
 	end.
 
 serve_manifest(TX, Req) ->
@@ -404,13 +409,23 @@ serve_plain_tx(#tx{ format = 2, data = Data } = TX, ContentType, Req) when byte_
 	{stop, {200, Headers, TX#tx.data, Req}};
 serve_plain_tx(#tx{ format = 2 } = TX, ContentType, Req) ->
 	Headers = #{ <<"content-type">> => ContentType },
-	TXData = case ar_storage:read_tx_data(TX) of
+	case ar_storage:read_tx_data(TX) of
 		{ok, Data} ->
-			Data;
+			{stop, {200, Headers, Data, Req}};
 		{error, enoent} ->
-			<<>>
-	end,
-	{stop, {200, Headers, TXData, Req}}.
+			case catch ar_data_sync:get_tx_data(TX#tx.id) of
+				{ok, Data} ->
+					{stop, {200, Headers, Data, Req}};
+				{error, tx_data_too_big} ->
+					{stop, {400, Headers, jiffy:encode(#{ error => tx_data_too_big }), Req}};
+				{error, not_found} ->
+					{stop, {200, Headers, <<>>, Req}};
+				{error, not_joined} ->
+					{stop, {400, Headers, jiffy:encode(#{ error => not_joined }), Req}};
+				{'EXIT', {timeout, {gen_server, call, _}}} ->
+					{stop, {503, Headers, jiffy:encode(#{ error => timeout }), Req}}
+			end
+	end.
 
 misdirected_request(Req) ->
 	{stop, {421, Req}}.

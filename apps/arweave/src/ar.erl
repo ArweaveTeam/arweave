@@ -15,6 +15,7 @@
 -export([start_link/0, start_link/1, init/1]).
 -export([start_for_tests/0]).
 -export([fixed_diff_option/0, fixed_delay_option/0]).
+-export([stop/1]).
 
 -include("ar.hrl").
 -include("ar_config.hrl").
@@ -46,6 +47,7 @@
 		ar_retarget,
 		ar_weave,
 		ar_join,
+		ar_data_sync_tests,
 		ar_poa_tests,
 		ar_node_tests,
 		ar_fork_recovery,
@@ -107,6 +109,7 @@ show_help() ->
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
 			{"data_dir", "The directory for storing the weave and the wallets (when generated)."},
+			{"metrics_dir", "The directory for persisted metrics."},
 			{"polling", "Poll peers for new blocks every 10 seconds. "
 						"Useful in environments where "
 						"port forwarding is not possible. "
@@ -142,7 +145,16 @@ show_help() ->
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
 			{"max_connections", "The number of connections to be handled concurrently. Its purpose is to prevent your system from being overloaded and ensuring all the connections are handled optimally. Default is 1024."},
 			{"max_gateway_connections", "The number of gateway connections to be handled concurrently. Default is 128."},
-			{"max_poa_option_depth", "The number of PoA alternatives to try until the recall data is found. Has to be an integer > 1. The mining difficulty increases exponentially with each subsequent option. Default is 8."}
+			{"max_poa_option_depth", "The number of PoA alternatives to try until the recall data is found. Has to be an integer > 1. The mining difficulty increases exponentially with each subsequent option. Default is 8."},
+			{"disk_pool_data_root_expiration_time",
+				"The time in seconds of how long a pending or orphaned data root is kept in the disk pool. The
+				default is 2 * 60 * 60 (2 hours)."},
+			{"max_disk_pool_buffer_mb",
+				"The max total size in mebibytes of the pending chunks in the disk pool."
+				"The default is 2000 (2 GiB)."},
+			{"max_disk_pool_data_root_buffer_mb",
+				"The max size in mebibytes per data root of the pending chunks in the disk"
+				" pool. The default is 50."}
 		]
 	),
 	erlang:halt().
@@ -189,6 +201,8 @@ parse_cli_args(["port", Port|Rest], C) ->
 	parse_cli_args(Rest, C#config { port = list_to_integer(Port) });
 parse_cli_args(["data_dir", DataDir|Rest], C) ->
 	parse_cli_args(Rest, C#config { data_dir = DataDir });
+parse_cli_args(["metrics_dir", MetricsDir|Rest], C) ->
+	parse_cli_args(Rest, C#config { metrics_dir = MetricsDir });
 parse_cli_args(["polling"|Rest], C) ->
 	parse_cli_args(Rest, C#config { polling = true });
 parse_cli_args(["clean"|Rest], C) ->
@@ -241,6 +255,12 @@ parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_gateway_connections = list_to_integer(Num) });
 parse_cli_args(["max_poa_option_depth", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_poa_option_depth = list_to_integer(Num) });
+parse_cli_args(["disk_pool_data_root_expiration_time", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { disk_pool_data_root_expiration_time = list_to_integer(Num) });
+parse_cli_args(["max_disk_pool_buffer_mb", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { max_disk_pool_buffer_mb = list_to_integer(Num) });
+parse_cli_args(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -262,6 +282,7 @@ start(
 	#config {
 		port = Port,
 		data_dir = DataDir,
+		metrics_dir = MetricsDir,
 		peers = Peers,
 		mine = Mine,
 		polling = Polling,
@@ -291,7 +312,10 @@ start(
 		webhooks = WebhookConfigs,
 		max_connections = MaxConnections,
 		max_gateway_connections = MaxGatewayConnections,
-		max_poa_option_depth = MaxPOAOptionDepth
+		max_poa_option_depth = MaxPOAOptionDepth,
+		disk_pool_data_root_expiration_time = DiskPoolExpirationTime,
+		max_disk_pool_buffer_mb = MaxDiskPoolBuffer,
+		max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer
 	}) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -309,6 +333,7 @@ start(
 	%% Fill up ar_meta_db.
 	ar_meta_db:start(),
 	ar_meta_db:put(data_dir, DataDir),
+	ar_meta_db:put(metrics_dir, MetricsDir),
 	ar_meta_db:put(port, Port),
 	ar_meta_db:put(disk_space, DiskSpace),
 	ar_meta_db:put(used_space, UsedSpace),
@@ -322,6 +347,9 @@ start(
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
 	ar_meta_db:put(max_poa_option_depth, MaxPOAOptionDepth),
+	ar_meta_db:put(disk_pool_data_root_expiration_time_us, DiskPoolExpirationTime * 1000000),
+	ar_meta_db:put(max_disk_pool_buffer_mb, MaxDiskPoolBuffer),
+	ar_meta_db:put(max_disk_pool_data_root_buffer_mb, MaxDiskPoolDataRootBuffer),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -473,19 +501,26 @@ start(
 	end,
 	{ok, _} = ar_poller_sup:start_link(PollingArgs),
 	{ok, _} = ar_downloader_sup:start_link([]),
+	{ok, _} = ar_data_sync_sup:start_link([]),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case IPFSPin of
 		false -> ok;
 		true  -> app_ipfs:start_pinning()
 	end,
 	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
+	garbage_collect(),
 	case Pause of
 		false ->
 			ok;
-		_ ->
-			garbage_collect(),
-			receive after infinity -> ok end
+		true ->
+			receive
+				{'EXIT', _, shutdown} ->
+					ok
+			end
 	end.
+
+stop([NodeName]) ->
+	rpc:cast(NodeName, init, stop, []).
 
 start_graphql() ->
 	ok = application:ensure_started(graphql),
@@ -577,6 +612,7 @@ start_for_tests(Config) ->
 		peers = [],
 		pause = false,
 		data_dir = "data_test_master",
+		metrics_dir = "metrics_master",
 		disable = [randomx_jit]
 	}).
 

@@ -1,18 +1,17 @@
 -module(ar_blacklist_middleware).
+
 -behaviour(cowboy_middleware).
 
 %% cowboy_middleware callbacks
 -export([execute/2]).
 -export([start/0]).
--export([reset/0, reset_rate_limit/1]).
+-export([reset/0, reset_rate_limit/2]).
 -export([ban_peer/2, is_peer_banned/1, cleanup_ban/0]).
--export([decrement_ip_addr/1]).
+-export([decrement_ip_addr/2]).
 
 -include("ar.hrl").
+-include("ar_blacklist_middleware.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
--define(THROTTLE_PERIOD, 30000).
--define(BAN_CLEANUP_INTERVAL, 60000).
 
 execute(Req, Env) ->
 	IpAddr = requesting_ip_addr(Req),
@@ -20,7 +19,7 @@ execute(Req, Env) ->
 		false ->
 			{ok, Req, Env};
 		_ ->
-			case increment_ip_addr(IpAddr) of
+			case increment_ip_addr(IpAddr, Req) of
 				block -> {stop, blacklisted(Req)};
 				pass -> {ok, Req, Env}
 			end
@@ -71,22 +70,24 @@ reset() ->
 	true = ets:delete_all_objects(?MODULE),
 	ok.
 
-reset_rate_limit(IpAddr) ->
-	ets:delete(?MODULE, {rate_limit, IpAddr}),
+reset_rate_limit(IpAddr, Path) ->
+	ets:delete(?MODULE, {rate_limit, IpAddr, Path}),
 	ok.
 
-increment_ip_addr(IpAddr) ->
-	update_ip_addr(IpAddr, 1).
+increment_ip_addr(IpAddr, Req) ->
+	update_ip_addr(IpAddr, Req, 1).
 
-decrement_ip_addr(IpAddr) ->
-	update_ip_addr(IpAddr, -1).
+decrement_ip_addr(IpAddr, Req) ->
+	update_ip_addr(IpAddr, Req, -1).
 
-update_ip_addr(IpAddr, Diff) ->
-	RequestLimit = ar_meta_db:get(requests_per_minute_limit) div 2, % Dividing by 2 as throttle period is 30 seconds.
-	Key = {rate_limit, IpAddr},
+update_ip_addr(IpAddr, Req, Diff) ->
+	{PathKey, Limit}  = get_key_limit(Req),
+	%% Divide by 2 as the throttle period is 30 seconds.
+	RequestLimit = Limit div 2,
+	Key = {rate_limit, IpAddr, PathKey},
 	case ets:update_counter(?MODULE, Key, {2, Diff}, {Key, 0}) of
 		1 ->
-			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_rate_limit, [IpAddr]),
+			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_rate_limit, [IpAddr, PathKey]),
 			pass;
 		Count when Count =< RequestLimit ->
 			pass;
@@ -99,3 +100,7 @@ requesting_ip_addr(Req) ->
 	IpAddr.
 
 peer_to_ip_addr({A, B, C, D, _}) -> {A, B, C, D}.
+
+get_key_limit(Req) ->
+	Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
+	?RPM_BY_PATH(Path)().

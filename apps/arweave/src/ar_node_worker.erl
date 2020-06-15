@@ -7,6 +7,7 @@
 -export([start/2, stop/1, cast/2, call/2, call/3]).
 
 -include("ar.hrl").
+-include("ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%
@@ -159,9 +160,9 @@ handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA}) ->
 			ar:info([{event, ignore_mined_block}, {reason, accepted_foreign_block}]),
 			{ok, ignore}
 	end;
-handle(SPid, {fork_recovered, BI, BlockTXPairs}) ->
+handle(SPid, {fork_recovered, BI, BlockTXPairs, BaseH}) ->
 	{ok, StateIn} = ar_node_state:all(SPid),
-	case recovered_from_fork(StateIn, BI, BlockTXPairs) of
+	case recovered_from_fork(StateIn, BI, BlockTXPairs, BaseH) of
 		{ok, StateOut} ->
 			ar_node_state:update(SPid, StateOut);
 		none ->
@@ -180,7 +181,13 @@ handle(SPid, automine) ->
 	{ok, automine};
 handle(SPid, {replace_block_list, [Block | _] = Blocks}) ->
 	BI = lists:map(fun ar_util:block_index_entry_from_block/1, Blocks),
-	BlockTXPairs = lists:map(fun(B) -> {B#block.indep_hash, B#block.txs} end, Blocks),
+	BlockTXPairs = lists:map(
+		fun(B) ->
+			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs),
+			{B#block.indep_hash, SizeTaggedTXs}
+		end,
+		Blocks
+	),
 	ar_node_state:update(SPid, [
 		{block_index, BI},
 		{block_txs_pairs, BlockTXPairs},
@@ -637,12 +644,16 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 		block_index      := BI,
 		txs              := TXs,
 		gossip           := GS,
-		block_txs_pairs  := BlockTXPairs
+		block_txs_pairs  := BlockTXPairs,
+		weave_size       := WeaveSize
 	} = StateIn,
-	ar_storage:write_full_block(NewB, MinedTXs),
 	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = MinedTXs }, BI),
-	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(NewB, BlockTXPairs),
-	ValidTXs =
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(MinedTXs),
+	ar_data_sync:add_block(SizeTaggedTXs, lists:sublist(NewBI, ?TRACK_CONFIRMATIONS), WeaveSize),
+	ar_storage:write_full_block(NewB, MinedTXs),
+	BH = NewB#block.indep_hash,
+	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),
+	{ValidTXs, InvalidTXs} =
 		ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 			NewBlockTXPairs,
 			lists:foldl(
@@ -656,6 +667,7 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 			NewB#block.height,
 			NewB#block.wallet_list
 		),
+	ar_node_utils:drop_invalid_txs(InvalidTXs),
 	ar_miner_log:mined_block(NewB#block.indep_hash, NewB#block.height),
 	ar:info(
 		[
@@ -675,10 +687,11 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 		end,
 		MinedTXs
 	),
+	BH = element(1, hd(NewBI)),
 	NewState = ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => NewBI,
-			current              => element(1, hd(NewBI)),
+			current              => BH,
 			gossip               => NewGS,
 			txs                  => ValidTXs,
 			height               => NewB#block.height,
@@ -694,9 +707,10 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 	{ok, NewState}.
 
 %% @doc Handle executed fork recovery.
-recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) ->
+recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs, _BaseH) ->
 	#{ txs := TXs } = StateIn,
 	NewB = ar_storage:read_block(element(1, hd(BI))),
+	{_, SizeTaggedTXs} = hd(BlockTXPairs),
 	ar:info(
 		[
 			{event, node_joined_successfully},
@@ -707,12 +721,18 @@ recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) 
 		undefined -> ok;
 		_		  -> erlang:unregister(fork_recovery_server)
 	end,
-	ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		BlockTXPairs,
 		TXs,
 		NewB#block.diff,
 		NewB#block.height,
 		NewB#block.wallet_list
+	),
+	ar_node_utils:drop_invalid_txs(InvalidTXs),
+	ar_data_sync:add_block(
+		SizeTaggedTXs,
+		lists:sublist(BI, ?TRACK_CONFIRMATIONS),
+		NewB#block.weave_size - NewB#block.block_size
 	),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
@@ -729,7 +749,7 @@ recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs) 
 			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
 		}
 	)};
-recovered_from_fork(#{ block_index := CurrentBI } = StateIn, BI, BlockTXPairs) ->
+recovered_from_fork(#{ block_index := CurrentBI } = StateIn, BI, BlockTXPairs, BaseH) ->
 	case whereis(fork_recovery_server) of
 		undefined -> ok;
 		_		  -> erlang:unregister(fork_recovery_server)
@@ -737,14 +757,12 @@ recovered_from_fork(#{ block_index := CurrentBI } = StateIn, BI, BlockTXPairs) -
 	NewB = ar_storage:read_block(element(1, hd(BI))),
 	case is_fork_preferable(NewB, maps:get(cumulative_diff, StateIn), CurrentBI) of
 		true ->
-			do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs);
+			do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH);
 		false ->
 			none
-	end;
-recovered_from_fork(_StateIn, _, _) ->
-	none.
+	end.
 
-do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs) ->
+do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH) ->
 	#{ txs := TXs } = StateIn,
 	ar:info(
 		[
@@ -753,12 +771,29 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs) ->
 		]
 	),
 	ar_miner_log:fork_recovered(NewB#block.indep_hash),
-	ValidTXs = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		BlockTXPairs,
 		TXs,
 		NewB#block.diff,
 		NewB#block.height,
 		NewB#block.wallet_list
+	),
+	ar_node_utils:drop_invalid_txs(InvalidTXs),
+	AppliedBlockTXPairs = lists:takewhile(fun({BH, _}) -> BH /= BaseH end, BlockTXPairs),
+	lists:foreach(
+		fun({BH, SizeTaggedTXs}) ->
+			BaseBI = lists:sublist(
+				lists:dropwhile(fun({H, _, _}) -> BH /= H end, BI),
+				?TRACK_CONFIRMATIONS
+			),
+			[_, {_, StartOffset, _} | _] = BaseBI,
+			ar_data_sync:add_block(
+				SizeTaggedTXs,
+				BaseBI,
+				StartOffset
+			)
+		end,
+		lists:reverse(AppliedBlockTXPairs)
 	),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{

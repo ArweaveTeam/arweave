@@ -23,6 +23,7 @@ parse_config() ->
 			{46,101,67,172,1984}
 		],
 		data_dir = "some_data_dir",
+		metrics_dir = "metrics_dir",
 		polling = true,
 		auto_join = false,
 		clean = true,
@@ -50,7 +51,10 @@ parse_config() ->
 			}
 		],
 		max_connections = 512,
-		max_gateway_connections = 64
+		max_gateway_connections = 64,
+		disk_pool_data_root_expiration_time = 10000,
+		max_disk_pool_buffer_mb = 100000,
+		max_disk_pool_data_root_buffer_mb = 100000000
 	}, ParsedConfig).
 
 config_fixture() ->

@@ -109,11 +109,7 @@
 
 %% @doc The maximum allowed size in bytes for the data field of
 %% a format=1 transaction.
--ifdef(DEBUG).
--define(TX_DATA_SIZE_LIMIT, 10 * 1024).
--else.
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
--endif.
 
 %% @doc The maximum allowed size in bytes for the combined data fields of
 %% the format=1 transactions included in a block.
@@ -145,7 +141,7 @@
 %% The data field of a format=1 transaction is considered to be part of
 %% its headers.
 -ifdef(DEBUG).
--define(MEMPOOL_HEADER_SIZE_LIMIT, 50 * 1024).
+-define(MEMPOOL_HEADER_SIZE_LIMIT, 50 * 1024 * 1024).
 -else.
 -define(MEMPOOL_HEADER_SIZE_LIMIT, 250 * 1024 * 1024).
 -endif.
@@ -154,7 +150,7 @@
 %% The format=1 transactions are not counted as their data is considered
 %% to be part of the header.
 -ifdef(DEBUG).
--define(MEMPOOL_DATA_SIZE_LIMIT, 50 * 1024).
+-define(MEMPOOL_DATA_SIZE_LIMIT, 50 * 1024 * 1024).
 -else.
 -define(MEMPOOL_DATA_SIZE_LIMIT, 500 * 1024 * 1024).
 -endif.
@@ -261,20 +257,29 @@
 %% already has this transaction.
 -define(TX_SEND_WITHOUT_ASKING_SIZE_LIMIT, 1000).
 
-%% @doc Log output directory
--define(LOG_DIR, "logs").
+%% @doc Block headers directory, relative to the data dir.
 -define(BLOCK_DIR, "blocks").
+%% @doc Transaction headers directory, relative to the data dir.
 -define(TX_DIR, "txs").
+%% @doc Directory with files indicating completed storage migrations, relative to the data dir.
 -define(STORAGE_MIGRATIONS_DIR, "data/storage_migrations").
-
-%% @doc Backup block hash list storage directory.
+%% @doc Backup block hash list storage directory, relative to the data dir.
 -define(HASH_LIST_DIR, "hash_lists").
-%% @doc Directory for storing miner wallets.
+%% @doc Directory for storing miner wallets, relative to the data dir.
 -define(WALLET_DIR, "wallets").
-%% @doc Directory for storing unique wallet lists.
+%% @doc Directory for storing unique wallet lists, relative to the data dir.
 -define(WALLET_LIST_DIR, "wallet_lists").
-%% @doc Directory for storing the ArQL v2 index.
+%% @doc Directory for storing the ArQL v2 index, relative to the data dir.
 -define(SQLITE3_DIR, "data/sqlite3").
+%% @doc Directory for storing data chunks, relative to the data dir.
+-define(DATA_CHUNK_DIR, "data_chunks").
+%% @doc Directory for RocksDB key-value storages, relative to the data dir.
+-define(ROCKS_DB_DIR, "rocksdb").
+
+%% @doc Log output directory, NOT relative to the data dir.
+-define(LOG_DIR, "logs").
+%% @doc The directory for persisted metrics, NOT relative to the data dir.
+-define(METRICS_DIR, "metrics").
 
 %% @doc Port to use for cross-machine message transfer.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).
@@ -317,15 +322,12 @@
 -define(DIFF_ADJUSTMENT_UP_LIMIT, 4).
 
 %% @doc Max size of a single data chunk, in bytes.
--ifdef(DEBUG).
--define(DATA_CHUNK_SIZE, 128).
--else.
 -define(DATA_CHUNK_SIZE, (256 * 1024)).
--endif.
 %% @doc Max size of the PoA data path, in bytes.
 -define(MAX_PATH_SIZE, (256 * 1024)).
 %% @doc The size of data chunk hashes, in bytes.
 -define(CHUNK_ID_HASH_SIZE, 32).
+-define(NOTE_SIZE, 32).
 
 %% @doc A succinct proof of access to a recall byte found in a TX.
 -record(poa, {

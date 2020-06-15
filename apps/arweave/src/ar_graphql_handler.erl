@@ -39,7 +39,7 @@ handle_graphql_request(Req, #{ arql_semaphore := Semaphore } = State) ->
 	end.
 
 gather_query_params(Req) ->
-	case ar_http_req:body(Req) of
+	case ar_http_req:body(Req, ?MAX_BODY_SIZE) of
 		{ok, Body, Req2} ->
 			Params = maps:from_list(cowboy_req:parse_qs(Req)),
 			case bin_to_json(Body) of

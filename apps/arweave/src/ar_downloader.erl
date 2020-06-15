@@ -6,12 +6,15 @@
 -export([reset/0]).
 
 -include("ar.hrl").
+-include("ar_data_sync.hrl").
 
 %% The frequency of processing items in the queue.
 -define(PROCESS_ITEM_INTERVAL_MS, 150).
 -define(INITIAL_BACKOFF_INTERVAL_S, 30).
 %% The maximum exponential backoff interval for failing requests.
 -define(MAX_BACKOFF_INTERVAL_S, 2 * 60 * 60).
+%% The data above this size is synced chunk by chunk in ar_data_sync.
+-define(SYNC_DATA_BELOW_SIZE, ?MAX_SERVED_TX_DATA_SIZE).
 
 %%% This module contains the core transaction and block downloader.
 %%% After the node has joined the network, this process is started,
@@ -99,6 +102,8 @@ has_item({tx_data, {ID, _DataRoot}}) when is_binary(ID) ->
 tx_needs_data(#tx{ format = 1 }) ->
 	false;
 tx_needs_data(#tx{ format = 2, data_size = 0 }) ->
+	false;
+tx_needs_data(#tx{ format = 2, data_size = DataSize }) when DataSize > ?SYNC_DATA_BELOW_SIZE ->
 	false;
 tx_needs_data(#tx{ format = 2 } = TX) ->
 	not filelib:is_file(ar_storage:tx_data_filepath(TX)).
@@ -289,22 +294,16 @@ download_transaction_data(ID, DataRoot) ->
 				{tx, ar_util:encode(ID)}
 			]),
 			{error, tx_data_unavailable};
-		Data when byte_size(Data) > 20000000 ->
-			ar:warn([
-				{event, downloader_got_big_data_blob},
-				{tx, ar_util:encode(ID)}
-			]),
-			{error, tx_data_too_big};
 		Data ->
-			case ar_storage:write_tx_data(ID, DataRoot, Data) of
+			case ar_storage:write_tx_data(DataRoot, Data) of
 				ok ->
 					ok;
 				{error, invalid_data_root} ->
-					ar:warn([
-						{event, downloader_got_invalid_data},
-						{tx, ar_util:encode(ID)}
-					]),
-					{error, invalid_data_root};
+					%% Ignore this case as we could have gotten a TX with
+					%% a custom split. Its data can be synced by ar_data_sync.
+					%% ar_downloader is currently syncing data only to ensure
+					%% a smooth migration to 2.1.
+					ok;
 				{error, Reason} = Error ->
 					ar:warn([
 						{event, downloader_failed_to_write_tx_data},

@@ -12,7 +12,7 @@
 -import(ar_test_node, [assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
 -import(ar_test_node, [sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2]).
 -import(ar_test_node, [sign_v1_tx/3]).
--import(ar_test_node, [get_tx_anchor/0, get_tx_anchor/1, join/1]).
+-import(ar_test_node, [get_tx_anchor/0, get_tx_anchor/1, join_on_slave/0]).
 -import(ar_test_node, [assert_wait_until_block_block_index/2]).
 -import(ar_test_node, [get_tx_confirmations/2]).
 -import(ar_test_node, [disconnect_from_slave/0]).
@@ -249,7 +249,10 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}).
 
-rejects_transactions_above_the_size_limit_test() ->
+rejects_transactions_above_the_size_limit_test_() ->
+	{timeout, 60, fun test_rejects_transactions_above_the_size_limit/0}.
+
+test_rejects_transactions_above_the_size_limit() ->
 	%% Create a genesis block with a wallet.
 	Key1 = {_, Pub1} = ar_wallet:new(),
 	Key2 = {_, Pub2} = ar_wallet:new(),
@@ -260,15 +263,18 @@ rejects_transactions_above_the_size_limit_test() ->
 	%% Start the node.
 	{Slave, _} = slave_start(B0),
 	connect_to_slave(),
-	SmallData = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT) >>,
-	BigData = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT + 1) >>,
+	SmallData = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT),
+	BigData = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT + 1),
 	GoodTX = sign_v1_tx(Key1, #{ data => SmallData }),
 	assert_post_tx_to_slave(Slave, GoodTX),
 	BadTX = sign_v1_tx(Key2, #{ data => BigData }),
 	{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}} = post_tx_to_slave(Slave, BadTX),
 	{ok, ["tx_fields_too_large"]} = slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id]).
 
-accepts_at_most_one_wallet_list_anchored_tx_per_block_test() ->
+accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
+	{timeout, 60, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
+
+test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	%% Post a TX, mine a block.
 	%% Post another TX referencing the first one.
 	%% Post the third TX referencing the second one.
@@ -299,7 +305,10 @@ accepts_at_most_one_wallet_list_anchored_tx_per_block_test() ->
 	B2 = slave_call(ar_storage, read_block, [hd(SlaveBI)]),
 	?assertEqual([TX2#tx.id, TX4#tx.id], B2#block.txs).
 
-does_not_allow_to_spend_mempool_tokens_test() ->
+does_not_allow_to_spend_mempool_tokens_test_() ->
+	{timeout, 60, fun test_does_not_allow_to_spend_mempool_tokens/0}.
+
+test_does_not_allow_to_spend_mempool_tokens() ->
 	%% Post a transaction sending tokens to a wallet with few tokens.
 	%% Post the second transaction spending the new tokens.
 	%%
@@ -350,7 +359,10 @@ does_not_allow_to_spend_mempool_tokens_test() ->
 	B2 = slave_call(ar_storage, read_block, [hd(SlaveBI2)]),
 	?assertEqual([TX3#tx.id], B2#block.txs).
 
-does_not_allow_to_replay_empty_wallet_txs_test() ->
+does_not_allow_to_replay_empty_wallet_txs_test_() ->
+	{timeout, 60, fun test_does_not_allow_to_replay_empty_wallet_txs/0}.
+
+test_does_not_allow_to_replay_empty_wallet_txs() ->
 	%% Create a new wallet by sending some tokens to it. Mine a block.
 	%% Send the tokens back so that the wallet balance is back to zero. Mine a block.
 	%% Send the same amount of tokens to the same wallet again. Mine a block.
@@ -497,7 +509,10 @@ rejects_txs_with_outdated_anchors_test_() ->
 			post_tx_to_slave(Slave, TX1)
 	end}.
 
-rejects_v1_txs_exceeding_mempool_limit_test() ->
+rejects_v1_txs_exceeding_mempool_limit_test_() ->
+	{timeout, 60, fun test_rejects_v1_txs_exceeding_mempool_limit/0}.
+
+test_rejects_v1_txs_exceeding_mempool_limit() ->
 	%% Post transactions which exceed the mempool size limit.
 	%%
 	%% Expect the exceeding transaction to be rejected.
@@ -506,7 +521,7 @@ rejects_v1_txs_exceeding_mempool_limit_test() ->
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
 	{Slave, _} = slave_start(B0),
-	BigChunk = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE) >>,
+	BigChunk = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE),
 	TXs = lists:map(
 		fun(N) ->
 			sign_v1_tx(
@@ -538,7 +553,7 @@ rejects_v2_txs_exceeding_mempool_limit() ->
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
 	{Slave, _} = slave_start(B0),
-	BigChunk = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT) >>,
+	BigChunk = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT),
 	TXs = lists:map(
 		fun(N) ->
 			sign_tx(
@@ -617,7 +632,8 @@ joins_network_successfully() ->
 		{[], <<>>},
 		lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)
 	),
-	Master = join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}),
+	ar_data_sync:reset(),
+	Master = join_on_slave(),
 	BI = slave_call(ar_node, get_block_index, [Slave]),
 	assert_wait_until_block_block_index(Master, BI),
 	TX1 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
@@ -841,11 +857,11 @@ grouped_txs(FirstAnchorType) ->
 	],
 	[B0] = ar_weave:init(Wallets),
 	%% Expect transactions to be chosen from biggest to smallest.
-	Chunk1 = << <<1>> || _ <- lists:seq(1, ?TX_DATA_SIZE_LIMIT) >>,
-	Chunk2 = << <<1>> || _ <- lists:seq(1, (?TX_DATA_SIZE_LIMIT) - 1) >>,
+	Chunk1 = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT),
+	Chunk2 = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT - 1),
 	Chunk3 = <<1>>,
-	Chunk4 = << <<1>> || _ <- lists:seq(1, (?TX_DATA_SIZE_LIMIT) - 5) >>,
-	Chunk5 = << <<1>> || _ <- lists:seq(1, 5) >>,
+	Chunk4 = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT - 5),
+	Chunk5 = crypto:strong_rand_bytes(5),
 	%% Block 1: 1 TX.
 	FirstAnchor = case FirstAnchorType of
 		wallet_list_anchor ->

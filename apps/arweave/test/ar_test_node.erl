@@ -16,12 +16,13 @@
 -export([sign_tx/1, sign_tx/2, sign_tx/3]).
 -export([sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3]).
 -export([get_tx_anchor/0, get_tx_anchor/1]).
--export([join/1]).
+-export([join/1, join_on_slave/0, join_on_master/0]).
 -export([get_last_tx/1, get_last_tx/2]).
 -export([get_tx_confirmations/2]).
 -export([get_balance/1]).
 -export([test_with_mocked_functions/2]).
 -export([get_tx_price/1]).
+-export([post_and_mine/2]).
 
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -46,11 +47,16 @@ slave_start(B0, RewardAddr) ->
 	slave_call(ar_storage, write_full_block, [B0]),
 	slave_call(?MODULE, start, [B0, {127, 0, 0, 1, ar_meta_db:get(port)}, RewardAddr]).
 
-start(B0, Peer, RewardAddr) ->
-	ar_storage:clear(),
+stop_node() ->
 	ar_tx_queue:stop(),
 	ar_downloader:reset(),
 	ok = kill_if_running([http_bridge_node, http_entrypoint_node]),
+	ok = gen_server:stop(ar_data_sync).
+
+start(B0, Peer, RewardAddr) ->
+	ar_storage:clear(),
+	stop_node(),
+	ar_data_sync:reset(),
 	Node = ar_node:start([], [B0], 0, RewardAddr),
 	ar_http_iface_server:reregister(http_entrypoint_node, Node),
 	ar_meta_db:reset_peer(Peer),
@@ -70,7 +76,11 @@ kill_if_running([Name | Names]) ->
 kill_if_running([]) ->
 	ok.
 
+join_on_slave() ->
+	join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).
+
 join(Peer) ->
+	stop_node(),
 	Node = ar_node:start([Peer]),
 	ar_http_iface_server:reregister(http_entrypoint_node, Node),
 	ar_meta_db:reset_peer(Peer),
@@ -78,6 +88,9 @@ join(Peer) ->
 	ar_http_iface_server:reregister(http_bridge_node, Bridge),
 	ar_node:add_peers(Node, Bridge),
 	Node.
+
+join_on_master() ->
+	slave_call(ar_test_node, join, [{127, 0, 0, 1, ar_meta_db:get(port)}]).
 
 connect_to_slave() ->
 	%% Connect the nodes by making two HTTP calls.
@@ -480,3 +493,29 @@ get_tx_price(Node, DataSize) ->
 			})
 	end,
 	binary_to_integer(Reply).
+
+post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
+	CurrentHeight = case Miner of
+		{slave, MiningNode} ->
+			Height = slave_call(ar_node, get_height, [MiningNode]),
+			lists:foreach(fun(TX) -> assert_post_tx_to_slave(MiningNode, TX) end, TXs),
+			slave_mine(MiningNode),
+			Height;
+		{master, MiningNode} ->
+			Height = ar_node:get_height(MiningNode),
+			lists:foreach(fun(TX) -> assert_post_tx_to_master(MiningNode, TX) end, TXs),
+			ar_node:mine(MiningNode),
+			Height
+	end,
+	case AwaitOn of
+		{master, AwaitNode} ->
+			wait_until_height(AwaitNode, CurrentHeight + 1),
+			H = ar_node:get_current_block_hash(AwaitNode),
+			BShadow = ar_storage:read_block(H),
+			BShadow#block{ txs = ar_storage:read_tx(BShadow#block.txs) };
+		{slave, AwaitNode} ->
+			slave_wait_until_height(AwaitNode, CurrentHeight + 1),
+			H = slave_call(ar_node, get_current_block_hash, [AwaitNode]),
+			BShadow = slave_call(ar_storage, read_block, [H]),
+			BShadow#block{ txs = slave_call(ar_storage, read_tx, [BShadow#block.txs]) }
+	end.

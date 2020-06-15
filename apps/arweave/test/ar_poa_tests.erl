@@ -173,6 +173,13 @@ test_over_reported_tx_size() ->
 	{Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	TXs = [
+		%% Post a transaction with some data and correctly reported size
+		%% so that we do not get stuck picking a recall byte.
+		sign_tx(Key, #{
+			data => crypto:strong_rand_bytes(100),
+			tags => [random_nonce()],
+			last_tx => get_tx_anchor()
+		}),
 		sign_tx(Key, #{
 			data => <<"A">>,
 			tags => [random_nonce()],
@@ -213,6 +220,13 @@ test_under_reported_tx_size() ->
 	{Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	TXs = [
+		%% Post a transaction with some data and correctly reported size
+		%% so that we do not get stuck picking a recall byte.
+		sign_tx(Key, #{
+			data => crypto:strong_rand_bytes(100),
+			tags => [random_nonce()],
+			last_tx => get_tx_anchor()
+		}),
 		sign_tx(Key, #{
 			data => <<"ABCDE">>,
 			tags => [random_nonce()],
@@ -240,8 +254,6 @@ test_under_reported_tx_size() ->
 		end,
 		lists:seq(1, 4)
 	).
-
-
 
 ignores_transactions_with_invalid_data_root_test_() ->
 	{timeout, 60, fun test_ignores_transactions_with_invalid_data_root/0}.

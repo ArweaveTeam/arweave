@@ -147,6 +147,9 @@ insert_tx(BH, TX) ->
 init(Opts) ->
 	{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
 	ar:info([{ar_arql_db, init}, {data_dir, DataDir}]),
+	%% Very occasionally the port fails to be reopened immediately after
+	%% a crash so we give it a little time here.
+	timer:sleep(1000),
 	DbPath = filename:join([DataDir, ?SQLITE3_DIR, "arql.db"]),
 	ok = filelib:ensure_dir(DbPath),
 	ok = ar_sqlite3:start_link(),

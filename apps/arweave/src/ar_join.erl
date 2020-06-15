@@ -1,5 +1,7 @@
 -module(ar_join).
+
 -export([start/2, start/3]).
+
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -69,7 +71,7 @@ do_join(Node, RawPeers, NewB, BI) ->
 			ar_arql_db:populate_db(?BI_TO_BHL(BI)),
 			ar_randomx_state:init(BI, Peers),
 			BlockTXPairs = get_block_and_trail(Peers, NewB, BI),
-			Node ! {fork_recovered, BI, BlockTXPairs},
+			Node ! {fork_recovered, BI, BlockTXPairs, none},
 			join_peers(Peers),
 			ar_miner_log:joined(),
 			{Recent, Rest} =
@@ -138,7 +140,7 @@ find_current_block([]) ->
 	ar:info("Did not manage to fetch current block from any of the peers. Will retry later."),
 	unavailable;
 find_current_block([Peer | Tail]) ->
-	try ar_node:get_block_index(Peer) of
+	try ar_http_iface_client:get_block_index(Peer) of
 		[] ->
 			find_current_block(Tail);
 		BI ->
@@ -213,18 +215,18 @@ get_block_and_trail(_Peers, NewB, []) ->
 	%% Joining on the genesis block.
 	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
 	ar_storage:write_block(NewB#block{ txs = TXIDs }),
-	[{NewB#block.indep_hash, TXIDs}];
+	[{NewB#block.indep_hash, ar_block:generate_size_tagged_list_from_txs(NewB#block.txs)}];
 get_block_and_trail(Peers, NewB, BI) ->
 	get_block_and_trail(Peers, NewB, 2 * ?MAX_TX_ANCHOR_DEPTH, BI, []).
 
 get_block_and_trail(_Peers, NewB, _BehindCurrent, _BI, BlockTXPairs)
 		when NewB#block.height == 0 ->
 	ar_storage:write_full_block(NewB),
-	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
-	BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}];
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
+	BlockTXPairs ++ [{NewB#block.indep_hash, SizeTaggedTXs}];
 get_block_and_trail(_, NewB, 0, _, BlockTXPairs) ->
-	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
-	BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}];
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
+	BlockTXPairs ++ [{NewB#block.indep_hash, SizeTaggedTXs}];
 get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 	PreviousBlock = ar_http_iface_client:get_block(
 		Peers,
@@ -233,8 +235,8 @@ get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
 			ar_storage:write_full_block(NewB),
-			TXIDs = [TX#tx.id || TX <- NewB#block.txs],
-			NewBlockTXPairs = BlockTXPairs ++ [{NewB#block.indep_hash, TXIDs}],
+			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
+			NewBlockTXPairs = BlockTXPairs ++ [{NewB#block.indep_hash, SizeTaggedTXs}],
 			ar:info(
 				[
 					{writing_block, NewB#block.height},

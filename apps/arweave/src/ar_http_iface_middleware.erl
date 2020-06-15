@@ -1,7 +1,12 @@
 -module(ar_http_iface_middleware).
+
 -behaviour(cowboy_middleware).
+
 -export([execute/2]).
+
 -include("ar.hrl").
+-include("ar_data_sync.hrl").
+
 -define(HANDLER_TIMEOUT, 55000).
 
 %%%===================================================================
@@ -47,8 +52,8 @@ loop(TimeoutRef) ->
 			CowboyStatus = handle208(Status),
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
 			{stop, RepliedReq};
-		{read_complete_body, From, Req} ->
-			Term = ar_http_req:body(Req),
+		{read_complete_body, From, Req, SizeLimit} ->
+			Term = ar_http_req:body(Req, SizeLimit),
 			From ! {read_complete_body, Term},
 			loop(TimeoutRef);
 		{read_body_chunk, From, Req, Size, Timeout} ->
@@ -254,6 +259,87 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 			serve_tx_html_data(Req, TX)
 	end;
 
+handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
+	Fn = case cowboy_req:header(<<"content-type">>, Req) of
+		<<"application/json">> -> get_sync_record_json;
+		<<"application/etf">> -> get_sync_record_etf;
+		_ -> get_sync_record_etf
+	end,
+	case catch ar_data_sync:Fn() of
+		{ok, Binary} ->
+			{200, #{}, Binary, Req};
+		{error, not_joined} ->
+			{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+	end;
+
+handle(<<"GET">>, [<<"chunk">>, OffsetBinary], Req, _Pid) ->
+	ok = ar_semaphore:acquire(get_chunk_semaphore, infinity),
+	case catch binary_to_integer(OffsetBinary) of
+		Offset when is_integer(Offset) ->
+			case << Offset:(?NOTE_SIZE * 8) >> of
+				%% A positive number represented by =< ?NOTE_SIZE bytes.
+				<< Offset:(?NOTE_SIZE * 8) >> ->
+					case ar_data_sync:get_chunk(Offset) of
+						{ok, Proof} ->
+							Reply = jiffy:encode(ar_serialize:chunk_proof_to_json_map(Proof)),
+							{200, #{}, Reply, Req};
+						{error, chunk_not_found} ->
+							{404, #{}, <<>>, Req};
+						{error, failed_to_read_chunk} ->
+							{500, #{}, <<>>, Req};
+						{error, not_joined} ->
+							{400, #{}, jiffy:encode(#{ error => not_joined }), Req}
+					end;
+				_ ->
+					{400, #{}, jiffy:encode(#{ error => offset_out_of_bounds }), Req}
+			end;
+		_ ->
+			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
+	end;
+
+handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
+	case ar_util:safe_decode(EncodedID) of
+		{error, invalid} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
+		{ok, ID} ->
+			case catch ar_data_sync:get_tx_offset(ID) of
+				{ok, {Offset, Size}} ->
+					ResponseBody = jiffy:encode(#{
+						offset => integer_to_binary(Offset),
+						size => integer_to_binary(Size)
+					}),
+					{200, #{}, ResponseBody, Req};
+				{error, not_found} ->
+					{404, #{}, <<>>, Req};
+				{error, failed_to_read_offset} ->
+					{500, #{}, <<>>, Req};
+				{error, not_joined} ->
+					{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
+				{'EXIT', {timeout, {gen_server, call, _}}} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			end
+	end;
+
+handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
+	case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
+		{ok, Body, Req2} ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					case catch ar_serialize:json_map_to_chunk_proof(JSON) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+						Proof ->
+							handle_post_chunk(Proof, Req2)
+					end;
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
+	end;
+
 %% @doc Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block
 %% as specified in ar_serialize.
@@ -292,7 +378,7 @@ handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
 			{413, #{}, <<"Payload too large">>, Req2};
 		{ok, TX} ->
 			{PeerIP, _Port} = cowboy_req:peer(Req),
-			case handle_post_tx(PeerIP, TX) of
+			case handle_post_tx(Req, PeerIP, TX) of
 				ok ->
 					{200, #{}, <<"OK">>, Req};
 				{error_response, {Status, Headers, Body}} ->
@@ -341,7 +427,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					},
 					SignedTX = ar_tx:sign(Format2TX, KeyPair),
 					{PeerIP, _Port} = cowboy_req:peer(Req),
-					case handle_post_tx(PeerIP, SignedTX) of
+					case handle_post_tx(Req2, PeerIP, SignedTX) of
 						ok ->
 							{200, #{}, ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}), Req2};
 						{error_response, {Status, Headers, ErrBody}} ->
@@ -724,13 +810,24 @@ maybe_tx_is_pending_response(ID) ->
 
 serve_tx_data(Req, #tx{ format = 1 } = TX) ->
 	{200, #{}, ar_util:encode(TX#tx.data), Req};
-serve_tx_data(Req, #tx{ format = 2 } = TX) ->
+serve_tx_data(Req, #tx{ format = 2, id = ID } = TX) ->
 	DataFilename = ar_storage:tx_data_filepath(TX),
 	case filelib:is_file(DataFilename) of
 		true ->
 			{200, #{}, sendfile(DataFilename), Req};
 		false ->
-			{200, #{}, <<>>, Req}
+			case catch ar_data_sync:get_tx_data(ID) of
+				{ok, Data} ->
+					{200, #{}, ar_util:encode(Data), Req};
+				{error, tx_data_too_big} ->
+					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
+				{error, not_found} ->
+					{200, #{}, <<>>, Req};
+				{error, not_joined} ->
+					{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
+				{'EXIT', {timeout, {gen_server, call, _}}} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			end
 	end.
 
 serve_tx_html_data(Req, TX) ->
@@ -752,7 +849,18 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 		{ok, Data} ->
 			{200, #{ <<"content-type">> => ContentType }, Data, Req};
 		{error, enoent} ->
-			{200, #{ <<"content-type">> => ContentType }, <<>>, Req}
+			case catch ar_data_sync:get_tx_data(TX#tx.id) of
+				{ok, Data} ->
+					{200, #{ <<"content-type">> => ContentType }, Data, Req};
+				{error, tx_data_too_big} ->
+					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
+				{error, not_found} ->
+					{200, #{ <<"content-type">> => ContentType }, <<>>, Req};
+				{error, not_joined} ->
+					{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
+				{'EXIT', {timeout, {gen_server, call, _}}} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			end
 	end.
 
 estimate_tx_price(SizeInBytesBinary, WalletAddr) ->
@@ -823,17 +931,17 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 			get_wallet_txs(EarliestTXID, TXIDs, [TXID | Acc])
 	end.
 
-handle_post_tx(PeerIP, TX) ->
+handle_post_tx(Req, PeerIP, TX) ->
 	Node = whereis(http_entrypoint_node),
 	case verify_mempool_txs_size(Node, TX) of
 		invalid ->
 			handle_post_tx_no_mempool_space_response();
 		valid ->
 			Height = ar_node:get_height(Node),
-			handle_post_tx(PeerIP, Node, TX, Height)
+			handle_post_tx(Req, PeerIP, Node, TX, Height)
 	end.
 
-handle_post_tx(PeerIP, Node, TX, Height) ->
+handle_post_tx(Req, PeerIP, Node, TX, Height) ->
 	WalletList = ar_node:get_wallet_list(Node),
 	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
 	case lists:keyfind(OwnerAddr, 1, WalletList) of
@@ -846,10 +954,10 @@ handle_post_tx(PeerIP, Node, TX, Height) ->
 			]),
 			handle_post_tx_exceed_balance_response();
 		_ ->
-			handle_post_tx(PeerIP, Node, TX, Height, WalletList)
+			handle_post_tx(Req, PeerIP, Node, TX, Height, WalletList)
 	end.
 
-handle_post_tx(PeerIP, Node, TX, Height, WalletList) ->
+handle_post_tx(Req, PeerIP, Node, TX, Height, WalletList) ->
 	Diff = ar_node:get_current_diff(Node),
 	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
 	MempoolTXs = ar_node:get_pending_txs(Node, [as_map]),
@@ -874,7 +982,7 @@ handle_post_tx(PeerIP, Node, TX, Height, WalletList) ->
 		{invalid, tx_already_in_mempool} ->
 			handle_post_tx_already_in_mempool_response();
 		{valid, _, _} ->
-			handle_post_tx_accepted(PeerIP, TX)
+			handle_post_tx_accepted(Req, PeerIP, TX)
 	end.
 
 verify_mempool_txs_size(Node, TX) ->
@@ -892,13 +1000,18 @@ verify_mempool_txs_size(Node, TX) ->
 			end
 	end.
 
-handle_post_tx_accepted(PeerIP, TX) ->
+handle_post_tx_accepted(Req, PeerIP, TX) ->
 	%% Exclude successful requests with valid transactions from the
 	%% IP-based throttling, to avoid connectivity issues at the times
 	%% of excessive transaction volumes.
-	ar_blacklist_middleware:decrement_ip_addr(PeerIP),
+	ar_blacklist_middleware:decrement_ip_addr(PeerIP, Req),
 	ar_bridge:add_tx(whereis(http_bridge_node), TX),
-	ok.
+	case TX#tx.format of
+		2 ->
+			ar_data_sync:add_data_root_to_disk_pool(TX#tx.data_root, TX#tx.data_size, TX#tx.id);
+		1 ->
+			ok
+	end.
 
 handle_post_tx_exceed_balance_response() ->
 	{error_response, {400, #{}, <<"Waiting TXs exceed balance for wallet.">>}}.
@@ -921,6 +1034,64 @@ handle_post_tx_already_in_weave_response() ->
 
 handle_post_tx_already_in_mempool_response() ->
 	{error_response, {400, #{}, <<"Transaction is already in the mempool.">>}}.
+
+handle_post_chunk(Proof, Req) ->
+	handle_post_chunk(check_data_size, Proof, Req).
+
+handle_post_chunk(check_data_size, Proof, Req) ->
+	case maps:get(data_size, Proof) > trunc(math:pow(2, ?NOTE_SIZE * 8)) - 1 of
+		true ->
+			{400, #{}, jiffy:encode(#{ error => data_size_too_big }), Req};
+		false ->
+			handle_post_chunk(check_chunk_size, Proof, Req)
+	end;
+handle_post_chunk(check_chunk_size, Proof, Req) ->
+	case byte_size(maps:get(chunk, Proof)) > ?DATA_CHUNK_SIZE of
+		true ->
+			{400, #{}, jiffy:encode(#{ error => chunk_too_big }), Req};
+		false ->
+			handle_post_chunk(check_data_path_size, Proof, Req)
+	end;
+handle_post_chunk(check_data_path_size, Proof, Req) ->
+	case byte_size(maps:get(data_path, Proof)) > ?MAX_PATH_SIZE of
+		true ->
+			{400, #{}, jiffy:encode(#{ error => data_path_too_big }), Req};
+		false ->
+			handle_post_chunk(check_offset_size, Proof, Req)
+	end;
+handle_post_chunk(check_offset_size, Proof, Req) ->
+	case maps:get(offset, Proof) > trunc(math:pow(2, ?NOTE_SIZE * 8)) - 1 of
+		true ->
+			{400, #{}, jiffy:encode(#{ error => offset_too_big }), Req};
+		false ->
+			handle_post_chunk(check_chunk_proof_ratio, Proof, Req)
+	end;
+handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
+	DataPath = maps:get(data_path, Proof),
+	Chunk = maps:get(chunk, Proof),
+	case ?IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, DataPath) of
+		true ->
+			{400, #{}, jiffy:encode(#{ error => chunk_proof_ratio_not_attractive }), Req};
+		false ->
+			handle_post_chunk(validate_proof, Proof, Req)
+	end;
+handle_post_chunk(validate_proof, Proof, Req) ->
+	case catch ar_data_sync:add_chunk(Proof) of
+		ok ->
+			{200, #{}, <<>>, Req};
+		{error, data_root_not_found} ->
+			{400, #{}, jiffy:encode(#{ error => data_root_not_found }), Req};
+		{error, exceeds_disk_pool_size_limit} ->
+			{400, #{}, jiffy:encode(#{ error => exceeds_disk_pool_size_limit }), Req};
+		{error, failed_to_store_chunk} ->
+			{500, #{}, <<>>, Req};
+		{error, invalid_proof} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req};
+		{error, not_joined} ->
+			{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+	end.
 
 check_internal_api_secret(Req) ->
 	Reject = fun(Msg) ->
@@ -1395,7 +1566,10 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	end.
 
 read_complete_body(Req, Pid) ->
-	Pid ! {read_complete_body, self(), Req},
+	read_complete_body(Req, Pid, ?MAX_BODY_SIZE).
+
+read_complete_body(Req, Pid, SizeLimit) ->
+	Pid ! {read_complete_body, self(), Req, SizeLimit},
 	receive
 		{read_complete_body, Term} -> Term
 	end.

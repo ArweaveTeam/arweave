@@ -13,6 +13,7 @@
 		graphql,
 		prometheus,
 		prometheus_process_collector,
-		prometheus_cowboy
+		prometheus_cowboy,
+		rocksdb
 	]}
 ]}.

@@ -7,6 +7,7 @@
 -export([block_index_to_json_struct/1, json_struct_to_block_index/1]).
 -export([jsonify/1, dejsonify/1, json_decode/1, json_decode/2]).
 -export([query_to_json_struct/1, json_struct_to_query/1]).
+-export([chunk_proof_to_json_map/1, json_map_to_chunk_proof/1]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -491,6 +492,28 @@ json_struct_to_block_index(JSONStruct) ->
 		end,
 		JSONStruct
 	).
+
+chunk_proof_to_json_map(#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath }) ->
+	#{
+		chunk => ar_util:encode(Chunk),
+		tx_path => ar_util:encode(TXPath),
+		data_path => ar_util:encode(DataPath)
+	}.
+
+json_map_to_chunk_proof(JSON) ->
+	Map = #{
+		data_root => ar_util:decode(maps:get(<<"data_root">>, JSON, <<>>)),
+		chunk => ar_util:decode(maps:get(<<"chunk">>, JSON)),
+		data_path => ar_util:decode(maps:get(<<"data_path">>, JSON)),
+		tx_path => ar_util:decode(maps:get(<<"tx_path">>, JSON, <<>>)),
+		data_size => binary_to_integer(maps:get(<<"data_size">>, JSON, <<"0">>))
+	},
+	case maps:get(<<"offset">>, JSON, none) of
+		none ->
+			Map;
+		Offset ->
+			Map#{ offset => binary_to_integer(Offset) }
+	end.
 
 %%% Tests: ar_serialize
 

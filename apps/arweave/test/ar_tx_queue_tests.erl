@@ -192,11 +192,11 @@ format_2_txs_are_gossiped() ->
 	#block{ txs = [SlaveTXID] } = slave_call(ar_storage, read_block, [hd(BI)]),
 	?assertEqual(SignedTXHeader, slave_call(ar_storage, read_tx, [SlaveTXID])),
 	?assertEqual(SignedTXHeader#tx.id, SlaveTXID),
-	?assertEqual({ok, <<"TXDATA">>}, slave_call(ar_storage, read_tx_data, [SlaveTXID])),
+	?assertEqual({ok, <<"TXDATA">>}, slave_call(ar_data_sync, get_tx_data, [SlaveTXID])),
 	ar_util:do_until(
 		fun() ->
 			%% Wait until downloader fetches data.
-			{ok, <<"TXDATA">>} == ar_storage:read_tx_data(MasterTXID)
+			{ok, <<"TXDATA">>} == ar_data_sync:get_tx_data(MasterTXID)
 		end,
 		100,
 		5000

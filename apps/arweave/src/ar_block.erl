@@ -67,7 +67,9 @@ hash_wallet_list(RewardWallet, NoRewardWalletListHash) ->
 
 %% @doc Generate the TX tree and set the TX root for a block.
 generate_tx_tree(B) ->
-	generate_tx_tree(B, generate_size_tagged_list_from_txs(B#block.txs)).
+	SizeTaggedTXs = generate_size_tagged_list_from_txs(B#block.txs),
+	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+	generate_tx_tree(B, SizeTaggedDataRoots).
 generate_tx_tree(B, SizeTaggedTXs) ->
 	{Root, Tree} = ar_merkle:generate_tree(SizeTaggedTXs),
 	B#block { tx_tree = Tree, tx_root = Root }.
@@ -78,7 +80,7 @@ generate_size_tagged_list_from_txs(TXs) ->
 			lists:foldl(
 				fun(TX, {Pos, List}) ->
 					End = Pos + TX#tx.data_size,
-					{End, [{get_tx_data_root(TX), End} | List]}
+					{End, [{{TX#tx.id, get_tx_data_root(TX)}, End} | List]}
 				end,
 				{0, []},
 				lists:sort(TXs)
@@ -433,8 +435,9 @@ generate_tx_root_for_block(TXIDs = [TXID | _]) when is_binary(TXID) ->
 generate_tx_root_for_block([]) ->
 	<<>>;
 generate_tx_root_for_block(TXs = [TX | _]) when is_record(TX, tx) ->
-	TXSizePairs = generate_size_tagged_list_from_txs(TXs),
-	{Root, _Tree} = ar_merkle:generate_tree(TXSizePairs),
+	SizeTaggedTXs = generate_size_tagged_list_from_txs(TXs),
+	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+	{Root, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	Root.
 
 get_tx_data_root(#tx{ format = 2, data_root = DataRoot }) ->

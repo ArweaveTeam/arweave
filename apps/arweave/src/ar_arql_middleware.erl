@@ -14,7 +14,7 @@ execute(Req, Env) ->
 	end.
 
 handle_arql_request_1(Req, Env) ->
-	case ar_http_req:body(Req) of
+	case ar_http_req:body(Req, ?MAX_BODY_SIZE) of
 		{ok, Body, Req2} ->
 			case bin_to_json(Body) of
 				{ok, JSON} -> handle_arql_request_2(JSON, Req2, Env);

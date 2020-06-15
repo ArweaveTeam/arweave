@@ -8,11 +8,13 @@
 -export([get_block_shadow/2]).
 -export([get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2]).
 -export([add_peer/1]).
--export([get_info/1, get_info/2, get_peers/1, get_peers/2, get_pending_txs/1]).
+-export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
 -export([get_time/2, get_height/1]).
 -export([get_block_index/1, get_block_index/2]).
+-export([get_sync_record/1, get_chunk/2]).
 
 -include("ar.hrl").
+-include("ar_data_sync.hrl").
 
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
@@ -231,6 +233,43 @@ get_block_index(Peer, Hash) ->
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found
 	end.
 
+get_sync_record(Peer) ->
+	handle_sync_record_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/data_sync_record",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
+		headers => [{<<"Content-Type">>, <<"application/etf">>} | p2p_headers()]
+	})).
+
+get_chunk(Peer, Offset) ->
+	handle_chunk_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/chunk/" ++ integer_to_binary(Offset),
+		timeout => 30 * 1000,
+		connect_timeout => 500,
+		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
+		headers => p2p_headers()
+	})).
+
+handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	ar_intervals:safe_from_etf(Body);
+handle_sync_record_response(_) ->
+	{error, not_found}.
+
+handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch ar_serialize:json_map_to_chunk_proof(jiffy:decode(Body, [return_maps])) of
+		{'EXIT', Reason} ->
+			{error, Reason};
+		Proof ->
+			{ok, Proof}
+	end;
+handle_chunk_response(Response) ->
+	{error, Response}.
+
 %% @doc Return the current height of a remote node.
 get_height(Peer) ->
 	Response =
@@ -406,9 +445,7 @@ get_info(Peer) ->
 	end.
 
 %% @doc Return a list of parsed peer IPs for a remote server.
-get_peers(Peer) -> get_peers(Peer, default_timeout).
-
-get_peers(Peer, Timeout) ->
+get_peers(Peer) ->
 	try
 		begin
 			{ok, {{<<"200">>, _}, _, Body, _, _}} =
@@ -416,8 +453,7 @@ get_peers(Peer, Timeout) ->
 					method => get,
 					peer => Peer,
 					path => "/peers",
-					headers => p2p_headers(),
-					timeout => Timeout
+					headers => p2p_headers()
 				}),
 			PeerArray = ar_serialize:dejsonify(Body),
 			lists:map(fun ar_util:parse_peer/1, PeerArray)
