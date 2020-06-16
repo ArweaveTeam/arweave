@@ -26,6 +26,9 @@
 %% Set to 4.5s.
 -define(DRIVER_TIMEOUT, 4500).
 
+%% Time to wait until an operation (bind, step, etc) required for inserting an entity is complete.
+-define(INSERT_STEP_TIMEOUT, 60000).
+
 %% The migration name should follow the format YYYYMMDDHHMMSS_human_readable_name
 %% where the date is picked at the time of naming the migration.
 -define(CREATE_MIGRATION_TABLE_SQL, "
@@ -314,27 +317,27 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 		insert_tag_stmt := InsertTagStmt
 	} = State,
 	{Time, ok} = timer:tc(fun() ->
-		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?DRIVER_TIMEOUT),
-		done = ar_sqlite3:step(InsertBlockStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:reset(InsertBlockStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?INSERT_STEP_TIMEOUT),
+		done = ar_sqlite3:step(InsertBlockStmt, ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertBlockStmt, ?INSERT_STEP_TIMEOUT),
 		lists:foreach(
 			fun(TxFields) ->
-				ok = ar_sqlite3:bind(InsertTxStmt, TxFields, ?DRIVER_TIMEOUT),
-				done = ar_sqlite3:step(InsertTxStmt, ?DRIVER_TIMEOUT),
-				ok = ar_sqlite3:reset(InsertTxStmt, ?DRIVER_TIMEOUT)
+				ok = ar_sqlite3:bind(InsertTxStmt, TxFields, ?INSERT_STEP_TIMEOUT),
+				done = ar_sqlite3:step(InsertTxStmt, ?INSERT_STEP_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTxStmt, ?INSERT_STEP_TIMEOUT)
 			end,
 			TxFieldsList
 		),
 		lists:foreach(
 			fun(TagFields) ->
-				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?DRIVER_TIMEOUT),
-				done = ar_sqlite3:step(InsertTagStmt, ?DRIVER_TIMEOUT),
-				ok = ar_sqlite3:reset(InsertTagStmt, ?DRIVER_TIMEOUT)
+				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?INSERT_STEP_TIMEOUT),
+				done = ar_sqlite3:step(InsertTagStmt, ?INSERT_STEP_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTagStmt, ?INSERT_STEP_TIMEOUT)
 			end,
 			TagFieldsList
 		),
-		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
 	ok = case Time of
@@ -356,11 +359,11 @@ handle_cast({insert_block, BlockFields}, State) ->
 		insert_block_stmt := InsertBlockStmt
 	} = State,
 	{Time, ok} = timer:tc(fun() ->
-		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?DRIVER_TIMEOUT),
-		done = ar_sqlite3:step(InsertBlockStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:reset(InsertBlockStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?INSERT_STEP_TIMEOUT),
+		done = ar_sqlite3:step(InsertBlockStmt, ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertBlockStmt, ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
 	ok = case Time of
@@ -383,19 +386,19 @@ handle_cast({insert_tx, TXFields, TagFieldsList}, State) ->
 		insert_tag_stmt := InsertTagStmt
 	} = State,
 	{Time, ok} = timer:tc(fun() ->
-		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-	    ok = ar_sqlite3:bind(InsertTxStmt, TXFields, ?DRIVER_TIMEOUT),
-		done = ar_sqlite3:step(InsertTxStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:reset(InsertTxStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:bind(InsertTxStmt, TXFields, ?INSERT_STEP_TIMEOUT),
+		done = ar_sqlite3:step(InsertTxStmt, ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertTxStmt, ?INSERT_STEP_TIMEOUT),
 		lists:foreach(
 			fun(TagFields) ->
-				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?DRIVER_TIMEOUT),
-				done = ar_sqlite3:step(InsertTagStmt, ?DRIVER_TIMEOUT),
-				ok = ar_sqlite3:reset(InsertTagStmt, ?DRIVER_TIMEOUT)
+				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?INSERT_STEP_TIMEOUT),
+				done = ar_sqlite3:step(InsertTagStmt, ?INSERT_STEP_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTagStmt, ?INSERT_STEP_TIMEOUT)
 			end,
 			TagFieldsList
 		),
-		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
 	ok = case Time of
