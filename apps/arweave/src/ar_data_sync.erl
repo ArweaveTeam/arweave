@@ -370,17 +370,7 @@ handle_cast({sync_chunk, Peer, LeftBound, RightBound}, State) ->
 						Self,
 						{store_fetched_chunk, Peer, LeftBound, RightBound, Proof}
 					);
-				{error, {ok, {{<<"503">>, _}, _, <<"{\"error\":\"timeout\"}">>, _, _}}} ->
-					gen_server:cast(Self, {sync_random_interval, [Peer]});
-				{error, {ok, {{<<"404">>, _}, _, _, _, _}}} ->
-					gen_server:cast(Self, {sync_random_interval, [Peer]});
-				{error, E} ->
-					ar:err([
-						{event, failed_to_fetch_chunk},
-						{peer, ar_util:format_peer(Peer)},
-						{offset, LeftBound + 1},
-						{reason, E}
-					]),
+				{error, _} ->
 					gen_server:cast(Self, {sync_random_interval, [Peer]})
 			end
 		end
