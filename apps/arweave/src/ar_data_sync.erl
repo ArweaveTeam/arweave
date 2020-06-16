@@ -237,10 +237,12 @@ handle_cast({maybe_drop_data_root_from_disk_pool, {DataRoot, TXSize, TXID}}, Sta
 		disk_pool_size = DiskPoolSize
 	} = State,
 	Key = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	{UpdatedDiskPoolDataRoots, UpdatedDiskPoolSize} = case maps:get(Key, DiskPoolDataRoots) of
+	{UpdatedDiskPoolDataRoots, UpdatedDiskPoolSize} = case maps:get(Key, DiskPoolDataRoots, not_found) of
+		not_found ->
+			{DiskPoolDataRoots, DiskPoolSize};
 		{_, _, not_set} ->
 			{DiskPoolDataRoots, DiskPoolSize};
-		{Size, _, TXIDs} ->
+		{Size, T, TXIDs} ->
 			case sets:subtract(TXIDs, sets:from_list([TXID])) of
 				TXIDs ->
 					{DiskPoolDataRoots, DiskPoolSize};
@@ -249,7 +251,7 @@ handle_cast({maybe_drop_data_root_from_disk_pool, {DataRoot, TXSize, TXID}}, Sta
 						0 ->
 							{maps:remove(Key, DiskPoolDataRoots), DiskPoolSize - Size};
 						_ ->
-							{maps:put(Key, UpdatedSet, DiskPoolDataRoots), DiskPoolSize}
+							{DiskPoolDataRoots#{ Key => {Size, T, UpdatedSet} }, DiskPoolSize}
 					end
 			end
 	end,
@@ -709,7 +711,16 @@ do_init([{_, WeaveSize, _} | _] = BI, BlockQueue) ->
 		status = joined
 	},
 	{UpdatedState, NewBI, CurrentWeaveSize} = case ar_storage:read_term(data_sync_state) of
-		{ok, {SyncRecord, LastStoredBI, DiskPoolDataRoots, DiskPoolSize}} ->
+		{ok, {SyncRecord, LastStoredBI, RawDiskPoolDataRoots, DiskPoolSize}} ->
+			%% Filter out the keys with the invalid values, if any, produced by a bug in 2.1.0.0.
+			DiskPoolDataRoots = maps:filter(
+				fun (_, {_, _, _}) ->
+						true;
+					(_, _) ->
+						false
+				end,
+				RawDiskPoolDataRoots
+			),
 			case get_intersection(BI, LastStoredBI) of
 				{ok, full_intersection, ExtraBI} ->
 					State2 = State#sync_data_state{
