@@ -179,7 +179,13 @@ write_full_block(B) ->
 write_full_block(BShadow, TXs) ->
 	write_tx(TXs),
 	write_block(BShadow),
-	ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }),
+	StoreTags = case ar_meta_db:get(arql_tags_index) of
+		true ->
+			store_tags;
+		_ ->
+			do_not_store_tags
+	end,
+	ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags),
 	app_ipfs:maybe_ipfs_add_txs(TXs).
 
 %% @doc Read a block from disk, given a height
