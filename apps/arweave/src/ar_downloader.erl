@@ -263,7 +263,13 @@ download_tx(ID, BH) ->
 						true ->
 							case ar_storage:write_tx(TX) of
 								ok ->
-									ar_arql_db:insert_tx(BH, TX),
+									StoreTags = case ar_meta_db:get(arql_tags_index) of
+										true ->
+											store_tags;
+										_ ->
+											do_not_store_tags
+									end,
+									ar_arql_db:insert_tx(BH, TX, StoreTags),
 									{ok, TX};
 								{error, Reason} = Error ->
 									ar:warn([

@@ -6,7 +6,7 @@
 -export([select_tx_by_id/1, select_txs_by/1]).
 -export([select_block_by_tx_id/1, select_tags_by_tx_id/1]).
 -export([eval_legacy_arql/1]).
--export([insert_full_block/1, insert_block/1, insert_tx/2]).
+-export([insert_full_block/1, insert_full_block/2, insert_block/1, insert_tx/2, insert_tx/3]).
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include("ar.hrl").
@@ -25,6 +25,9 @@
 %% Time to wait for the NIF thread to send back the query results.
 %% Set to 4.5s.
 -define(DRIVER_TIMEOUT, 4500).
+
+%% Time to wait until an operation (bind, step, etc) required for inserting an entity is complete.
+-define(INSERT_STEP_TIMEOUT, 60000).
 
 %% The migration name should follow the format YYYYMMDDHHMMSS_human_readable_name
 %% where the date is picked at the time of naming the migration.
@@ -125,20 +128,38 @@ select_tags_by_tx_id(TXID) ->
 eval_legacy_arql(Query) ->
 	gen_server:call(?MODULE, {eval_legacy_arql, Query}, ?SELECT_TIMEOUT).
 
-insert_full_block(#block {} = FullBlock) ->
-	{BlockFields, TxFieldsList, TagFieldsList} = full_block_to_fields(FullBlock),
+insert_full_block(FullBlock) ->
+	insert_full_block(FullBlock, store_tags).
+
+insert_full_block(#block {} = FullBlock, StoreTags) ->
+	{BlockFields, TxFieldsList} = full_block_to_fields(FullBlock),
+	TagFieldsList = case StoreTags of
+		store_tags ->
+			block_to_tag_fields_list(FullBlock);
+		_ ->
+			[]
+	end,
 	gen_server:cast(?MODULE, {insert_full_block, BlockFields, TxFieldsList, TagFieldsList}),
 	ok.
 
 insert_block(B) ->
-    BlockFields = block_to_fields(B),
-    gen_server:cast(?MODULE, {insert_block, BlockFields}),
-    ok.
+	BlockFields = block_to_fields(B),
+	gen_server:cast(?MODULE, {insert_block, BlockFields}),
+	ok.
 
 insert_tx(BH, TX) ->
-    {TXFields, TagFieldsList} = tx_to_fields(BH, TX),
-    gen_server:cast(?MODULE, {insert_tx, TXFields, TagFieldsList}),
-    ok.
+	insert_tx(BH, TX, store_tags).
+
+insert_tx(BH, TX, StoreTags) ->
+	TXFields = tx_to_fields(BH, TX),
+	TagFieldsList = case StoreTags of
+		store_tags ->
+			tx_to_tag_fields_list(TX);
+		_ ->
+			[]
+	end,
+	gen_server:cast(?MODULE, {insert_tx, TXFields, TagFieldsList}),
+	ok.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -314,27 +335,27 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 		insert_tag_stmt := InsertTagStmt
 	} = State,
 	{Time, ok} = timer:tc(fun() ->
-		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?DRIVER_TIMEOUT),
-		done = ar_sqlite3:step(InsertBlockStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:reset(InsertBlockStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?INSERT_STEP_TIMEOUT),
+		done = ar_sqlite3:step(InsertBlockStmt, ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertBlockStmt, ?INSERT_STEP_TIMEOUT),
 		lists:foreach(
 			fun(TxFields) ->
-				ok = ar_sqlite3:bind(InsertTxStmt, TxFields, ?DRIVER_TIMEOUT),
-				done = ar_sqlite3:step(InsertTxStmt, ?DRIVER_TIMEOUT),
-				ok = ar_sqlite3:reset(InsertTxStmt, ?DRIVER_TIMEOUT)
+				ok = ar_sqlite3:bind(InsertTxStmt, TxFields, ?INSERT_STEP_TIMEOUT),
+				done = ar_sqlite3:step(InsertTxStmt, ?INSERT_STEP_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTxStmt, ?INSERT_STEP_TIMEOUT)
 			end,
 			TxFieldsList
 		),
 		lists:foreach(
 			fun(TagFields) ->
-				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?DRIVER_TIMEOUT),
-				done = ar_sqlite3:step(InsertTagStmt, ?DRIVER_TIMEOUT),
-				ok = ar_sqlite3:reset(InsertTagStmt, ?DRIVER_TIMEOUT)
+				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?INSERT_STEP_TIMEOUT),
+				done = ar_sqlite3:step(InsertTagStmt, ?INSERT_STEP_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTagStmt, ?INSERT_STEP_TIMEOUT)
 			end,
 			TagFieldsList
 		),
-		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
 	ok = case Time of
@@ -356,11 +377,11 @@ handle_cast({insert_block, BlockFields}, State) ->
 		insert_block_stmt := InsertBlockStmt
 	} = State,
 	{Time, ok} = timer:tc(fun() ->
-		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?DRIVER_TIMEOUT),
-		done = ar_sqlite3:step(InsertBlockStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:reset(InsertBlockStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:bind(InsertBlockStmt, BlockFields, ?INSERT_STEP_TIMEOUT),
+		done = ar_sqlite3:step(InsertBlockStmt, ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertBlockStmt, ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
 	ok = case Time of
@@ -383,19 +404,19 @@ handle_cast({insert_tx, TXFields, TagFieldsList}, State) ->
 		insert_tag_stmt := InsertTagStmt
 	} = State,
 	{Time, ok} = timer:tc(fun() ->
-		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-	    ok = ar_sqlite3:bind(InsertTxStmt, TXFields, ?DRIVER_TIMEOUT),
-		done = ar_sqlite3:step(InsertTxStmt, ?DRIVER_TIMEOUT),
-		ok = ar_sqlite3:reset(InsertTxStmt, ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:bind(InsertTxStmt, TXFields, ?INSERT_STEP_TIMEOUT),
+		done = ar_sqlite3:step(InsertTxStmt, ?INSERT_STEP_TIMEOUT),
+		ok = ar_sqlite3:reset(InsertTxStmt, ?INSERT_STEP_TIMEOUT),
 		lists:foreach(
 			fun(TagFields) ->
-				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?DRIVER_TIMEOUT),
-				done = ar_sqlite3:step(InsertTagStmt, ?DRIVER_TIMEOUT),
-				ok = ar_sqlite3:reset(InsertTagStmt, ?DRIVER_TIMEOUT)
+				ok = ar_sqlite3:bind(InsertTagStmt, TagFields, ?INSERT_STEP_TIMEOUT),
+				done = ar_sqlite3:step(InsertTagStmt, ?INSERT_STEP_TIMEOUT),
+				ok = ar_sqlite3:reset(InsertTagStmt, ?INSERT_STEP_TIMEOUT)
 			end,
 			TagFieldsList
 		),
-		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
+		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
 	ok = case Time of
@@ -767,8 +788,8 @@ eval_legacy_arql_where_clause(_) ->
 
 full_block_to_fields(FullBlock) ->
 	BlockFields = block_to_fields(FullBlock),
-    BlockIndepHash = lists:nth(1, BlockFields),
-    TxFieldsList = lists:map(fun(TX) -> [
+	BlockIndepHash = lists:nth(1, BlockFields),
+	TxFieldsList = lists:map(fun(TX) -> [
 		ar_util:encode(TX#tx.id),
 		BlockIndepHash,
 		ar_util:encode(TX#tx.last_tx),
@@ -779,18 +800,20 @@ full_block_to_fields(FullBlock) ->
 		ar_util:encode(TX#tx.signature),
 		TX#tx.reward
 	] end, FullBlock#block.txs),
-	TagFieldsList = lists:flatmap(fun(TX) ->
+	{BlockFields, TxFieldsList}.
+
+block_to_tag_fields_list(B) ->
+	lists:flatmap(fun(TX) ->
 		EncodedTXID = ar_util:encode(TX#tx.id),
 		lists:map(fun({Name, Value}) -> [
 			EncodedTXID,
 			Name,
 			Value
 		] end, TX#tx.tags)
-	end, FullBlock#block.txs),
-	{BlockFields, TxFieldsList, TagFieldsList}.
+	end, B#block.txs).
 
 block_to_fields(B) ->
-    [
+	[
 		ar_util:encode(B#block.indep_hash),
 		ar_util:encode(B#block.previous_block),
 		B#block.height,
@@ -798,7 +821,7 @@ block_to_fields(B) ->
 	].
 
 tx_to_fields(BH, TX) ->
-    TXFields =  [
+	[
 		ar_util:encode(TX#tx.id),
 		ar_util:encode(BH),
 		ar_util:encode(TX#tx.last_tx),
@@ -808,12 +831,13 @@ tx_to_fields(BH, TX) ->
 		TX#tx.quantity,
 		ar_util:encode(TX#tx.signature),
 		TX#tx.reward
-	],
-    EncodedTXID = ar_util:encode(TX#tx.id),
-	TagFieldsList = lists:map(
-        fun({Name, Value}) ->
-            [EncodedTXID, Name, Value]
-        end,
-        TX#tx.tags
-    ),
-    {TXFields, TagFieldsList}.
+	].
+
+tx_to_tag_fields_list(TX) ->
+	EncodedTXID = ar_util:encode(TX#tx.id),
+	lists:map(
+		fun({Name, Value}) ->
+			[EncodedTXID, Name, Value]
+		end,
+		TX#tx.tags
+	).
