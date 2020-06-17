@@ -673,6 +673,17 @@ do_init([{_, WeaveSize, _} | _] = BI, BlockQueue) ->
 		"disk_pool_chunks_index"
 	],
 	ColumnFamilyDescriptors = [{Name, Opts} || Name <- ColumnFamilies],
+	case ar_meta_db:get(automatic_rocksdb_repair) of
+		true ->
+			case ar_kv:repair("ar_data_sync_db") of
+				{error, E} ->
+					ar:err([{event, ar_kv_repair_reported_error}, {error, E}]);
+				ok ->
+					repair_was_not_needed_or_was_successful
+			end;
+		_ ->
+			do_not_attempt_to_repair
+	end,
 	{ok, DB, [_, CF1, CF2, CF3, CF4, CF5, CF6]} =
 		ar_kv:open("ar_data_sync_db", ColumnFamilyDescriptors),
 	ChunksIndex = {DB, CF1},
