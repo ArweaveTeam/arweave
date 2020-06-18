@@ -1541,6 +1541,14 @@ post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 					ar_bridge:unignore_id(TXID)
 			end,
 			{error, invalid_json, Req};
+		{error, _} ->
+			case TXID of
+				not_set ->
+					noop;
+				_ ->
+					ar_bridge:unignore_id(TXID)
+			end,
+			{error, invalid_json, Req};
 		TX ->
 			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
 	end;
