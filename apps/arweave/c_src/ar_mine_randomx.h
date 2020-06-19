@@ -24,7 +24,6 @@ struct state {
 };
 
 const int ARWEAVE_INPUT_DATA_SIZE = 48;
-const int BULK_HASHING_ITERATIONS = 12;
 
 static int load(ErlNifEnv*, void**, ERL_NIF_TERM);
 static void state_dtor(ErlNifEnv*, void*);

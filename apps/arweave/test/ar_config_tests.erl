@@ -54,7 +54,8 @@ parse_config() ->
 		max_gateway_connections = 64,
 		disk_pool_data_root_expiration_time = 10000,
 		max_disk_pool_buffer_mb = 100000,
-		max_disk_pool_data_root_buffer_mb = 100000000
+		max_disk_pool_data_root_buffer_mb = 100000000,
+		randomx_bulk_hashing_iterations = 40
 	}, ParsedConfig).
 
 config_fixture() ->

@@ -10,7 +10,7 @@ static ErlNifFunc nif_funcs[] = {
 	{"init_light_nif", 3, init_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"hash_fast_nif", 5, hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"hash_light_nif", 5, hash_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"bulk_hash_fast_nif", 8, bulk_hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"bulk_hash_fast_nif", 9, bulk_hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"release_state_nif", 1, release_state_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND}
 };
 
@@ -295,9 +295,9 @@ static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	char nonce[RANDOMX_HASH_SIZE];
 	char prevNonce[RANDOMX_HASH_SIZE];
 	char segment[RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE];
-	int hashesTried;
+	int hashingIterations, hashesTried;
 
-	if (argc != 8) {
+	if (argc != 9) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
@@ -336,6 +336,9 @@ static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	if (!enif_get_int(envPtr, argv[7], &hardwareAESEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
+	if (!enif_get_int(envPtr, argv[8], &hashingIterations)) {
+		return enif_make_badarg(envPtr);
+	}
 
 	enif_rwlock_rlock(statePtr->lockPtr);
 	if (statePtr->isRandomxReleased != 0) {
@@ -363,14 +366,14 @@ static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	memcpy(segment + RANDOMX_HASH_SIZE, inputData.data, ARWEAVE_INPUT_DATA_SIZE);
 
 	randomx_calculate_hash_first(vmPtr, segment, RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE);
-	for (int i = 0; i < BULK_HASHING_ITERATIONS; i++) {
+	for (int i = 0; i < hashingIterations; i++) {
 		memcpy(prevNonce, nonce, RANDOMX_HASH_SIZE);
 		if (i == 0) {
 			memcpy(nonce, secondNonceBinary.data, RANDOMX_HASH_SIZE);
 		} else {
 			memcpy(nonce, hashPtr, RANDOMX_HASH_SIZE);
 		}
-		if (i == BULK_HASHING_ITERATIONS - 1) {
+		if (i == hashingIterations - 1) {
 			randomx_calculate_hash_last(vmPtr, hashPtr);
 		} else {
 			memcpy(segment, nonce, RANDOMX_HASH_SIZE);

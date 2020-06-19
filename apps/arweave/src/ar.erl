@@ -154,7 +154,11 @@ show_help() ->
 				"The default is 2000 (2 GiB)."},
 			{"max_disk_pool_data_root_buffer_mb",
 				"The max size in mebibytes per data root of the pending chunks in the disk"
-				" pool. The default is 50."}
+				" pool. The default is 50."},
+			{"randomx_bulk_hashing_iterations",
+				"The number of hashes RandomX generates before reporting the result back"
+				" to the Arweave miner. The faster CPU hashes, the higher this value should be."
+			}
 		]
 	),
 	erlang:halt().
@@ -261,6 +265,8 @@ parse_cli_args(["max_disk_pool_buffer_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_disk_pool_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
+parse_cli_args(["randomx_bulk_hashing_iterations", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { randomx_bulk_hashing_iterations = list_to_integer(Num) });
 parse_cli_args([Arg|_Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
@@ -268,7 +274,13 @@ parse_cli_args([Arg|_Rest], _O) ->
 %% @doc Start an Arweave node on this BEAM.
 start() -> start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) -> start(#config { port = Port });
-start(#config{ benchmark = true, max_miners = MaxMiners, disable = Disable, enable = Enable }) ->
+start(#config{
+		benchmark = true,
+		max_miners = MaxMiners,
+		disable = Disable,
+		enable = Enable,
+		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
+	}) ->
 	error_logger:logfile({open, generate_logfile_name()}),
 	error_logger:tty(false),
 	ar_meta_db:start(),
@@ -276,6 +288,7 @@ start(#config{ benchmark = true, max_miners = MaxMiners, disable = Disable, enab
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(mine, true),
+	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
 	ar_randomx_state:start(),
 	ar_benchmark:run();
 start(
@@ -315,7 +328,8 @@ start(
 		max_poa_option_depth = MaxPOAOptionDepth,
 		disk_pool_data_root_expiration_time = DiskPoolExpirationTime,
 		max_disk_pool_buffer_mb = MaxDiskPoolBuffer,
-		max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer
+		max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer,
+		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
 	}) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -350,6 +364,7 @@ start(
 	ar_meta_db:put(disk_pool_data_root_expiration_time_us, DiskPoolExpirationTime * 1000000),
 	ar_meta_db:put(max_disk_pool_buffer_mb, MaxDiskPoolBuffer),
 	ar_meta_db:put(max_disk_pool_data_root_buffer_mb, MaxDiskPoolDataRootBuffer),
+	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
