@@ -12,7 +12,7 @@
 
 req(#{peer := Peer} = Opts) ->
 	{IpOrHost, Port} = get_ip_port(Peer),
-	{ok, Pid} = gun:open(IpOrHost, Port),
+	{ok, Pid} = gun:open(IpOrHost, Port, #{ http_opts => #{ keepalive => infinity } }),
 	case gun:await_up(Pid, maps:get(connect_timeout, Opts, maps:get(timeout, Opts, ?HTTP_REQUEST_CONNECT_TIMEOUT))) of
 		{ok, _} ->
 			Timer = inet:start_timer(maps:get(timeout, Opts, ?HTTP_REQUEST_SEND_TIMEOUT)),
