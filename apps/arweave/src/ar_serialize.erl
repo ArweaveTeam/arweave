@@ -31,16 +31,10 @@ json_decode(JSON) ->
 	json_decode(JSON, []).
 
 json_decode(JSON, Opts) ->
-	ReturnMaps = proplists:get_bool(return_maps, Opts),
-	JiffyOpts =
-		case ReturnMaps of
-			true -> [return_maps];
-			false -> []
-		end,
-	try
-		{ok, jiffy:decode(JSON, JiffyOpts)}
-	catch
-		{error, Reason} -> {error, Reason}
+	case catch jiffy:decode(JSON, Opts) of
+		{{_, truncated_json}, _} -> {error, truncated_json};
+		{'EXIT', _} -> {error, invalid_json};
+		DecJSON -> {ok, DecJSON}
 	end.
 
 %% @doc Convert a block record into a JSON struct.

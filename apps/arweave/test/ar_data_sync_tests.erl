@@ -354,7 +354,7 @@ test_accepts_chunks() ->
 	%% (EndOffset - ChunkSize, EndOffset], but not outside of it.
 	FirstChunk = ar_util:decode(maps:get(chunk, FirstProof)),
 	FirstChunkSize = byte_size(FirstChunk),
-	ExpectedProof = jiffy:encode(#{
+	ExpectedProof = ar_serialize:jsonify(#{
 		data_path => maps:get(data_path, FirstProof),
 		tx_path => maps:get(tx_path, FirstProof),
 		chunk => ar_util:encode(FirstChunk)
@@ -397,7 +397,7 @@ test_accepts_chunks() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk(jiffy:encode(SecondProof))
 	),
-	ExpectedSecondProof = jiffy:encode(#{
+	ExpectedSecondProof = ar_serialize:jsonify(#{
 		data_path => maps:get(data_path, SecondProof),
 		tx_path => maps:get(tx_path, SecondProof),
 		chunk => maps:get(chunk, SecondProof)
@@ -416,7 +416,7 @@ test_accepts_chunks() ->
 		500,
 		10 * 1000
 	),
-	ExpectedThirdProof = jiffy:encode(#{
+	ExpectedThirdProof = ar_serialize:jsonify(#{
 		data_path => maps:get(data_path, ThirdProof),
 		tx_path => maps:get(tx_path, ThirdProof),
 		chunk => maps:get(chunk, ThirdProof)

@@ -11,20 +11,17 @@
        {ref,"fc76a2df7d1ddcf8bcc3bb46363e7ca8fca80939"}},
   0},
  {<<"gun">>,{pkg,<<"gun">>,<<"1.3.2">>},0},
- {<<"jiffy">>,{pkg,<<"jiffy">>,<<"0.15.2">>},0},
+ {<<"jiffy">>,{pkg,<<"jiffy">>,<<"1.0.5">>},0},
  {<<"prometheus">>,{pkg,<<"prometheus">>,<<"4.4.1">>},0},
- {<<"prometheus_cowboy">>,
-  {git,"https://github.com/ArweaveTeam/prometheus-cowboy.git",
-       {ref,"3386d21191527831fd4480178633d1bb5aed253b"}},
-  0},
+ {<<"prometheus_cowboy">>,{pkg,<<"prometheus_cowboy">>,<<"0.1.8">>},0},
  {<<"prometheus_httpd">>,{pkg,<<"prometheus_httpd">>,<<"2.1.11">>},1},
  {<<"prometheus_process_collector">>,
-  {pkg,<<"prometheus_process_collector">>,<<"1.4.5">>},
+  {pkg,<<"prometheus_process_collector">>,<<"1.6.0">>},
   0},
  {<<"ranch">>,{pkg,<<"ranch">>,<<"1.7.1">>},1},
  {<<"rocksdb">>,
-  {git,"https://gitlab.com/barrel-db/erlang-rocksdb.git",
-       {ref,"edabdc409ad729213deea25f5eb427bc5fada97d"}},
+  {git,"https://gitlab.com/tonpa/erlang-rocksdb.git",
+       {ref,"d45d326e7d3da4947153bc0179525408ce8afaf9"}},
   0}]}.
 [
 {pkg_hash,[
@@ -32,9 +29,10 @@
  {<<"cowboy">>, <<"91ED100138A764355F43316B1D23D7FF6BDB0DE4EA618CB5D8677C93A7A2F115">>},
  {<<"cowlib">>, <<"FD0FF1787DB84AC415B8211573E9A30A3EBE71B5CBFF7F720089972B2319C8A4">>},
  {<<"gun">>, <<"542064CBB9F613650B8A8100B3A927505F364FBE198B7A5A112868FF43F3E477">>},
- {<<"jiffy">>, <<"DE266C390111FD4EA28B9302F0BC3D7472468F3B8E0ACEABFBEFA26D08CD73B7">>},
+ {<<"jiffy">>, <<"A69B58FAF7123534C20E1B0B7AE97AC52079CA02ED4B6989B4B380179CD63A54">>},
  {<<"prometheus">>, <<"1E96073B3ED7788053768FEA779CBC896DDC3BDD9BA60687F2AD50B252AC87D6">>},
+ {<<"prometheus_cowboy">>, <<"CFCE0BC7B668C5096639084FCD873826E6220EA714BF60A716F5BD080EF2A99C">>},
  {<<"prometheus_httpd">>, <<"F616ED9B85B536B195D94104063025A91F904A4CFC20255363F49A197D96C896">>},
- {<<"prometheus_process_collector">>, <<"9BAEA93F5D8C2758DBAD0DE021EF74438D2F81A01D1F24F5EF0BB949A7B4191D">>},
+ {<<"prometheus_process_collector">>, <<"B169E224337497CD858DA16F9361EDABC5931B9D12201A97EE15D88EF5A6FCAA">>},
  {<<"ranch">>, <<"6B1FAB51B49196860B733A49C07604465A47BDB78AA10C1C16A3D199F7F8C881">>}]}
 ].

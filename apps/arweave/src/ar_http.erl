@@ -60,7 +60,7 @@ make_request(Pid, #{method := post, path := P} = Opts) ->
 		_ ->
 			maps:get(headers, Opts, [])
 	end,
-	gun:post(Pid, P, Headers, maps:get(body, Opts, <<>>));
+	gun:post(Pid, P, Headers, iolist_to_binary(maps:get(body, Opts, <<>>)));
 make_request(Pid, #{method := get, path := P} = Opts) ->
 	gun:get(Pid, P, merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []))).
 
@@ -135,7 +135,7 @@ upload_metric(#{method := post, path := Path, body := Body}) ->
 	prometheus_counter:inc(
 		http_client_uploaded_bytes_total,
 		[ar_metrics:label_http_path(list_to_binary(Path))],
-		byte_size(Body)
+		byte_size(iolist_to_binary(Body))
 	);
 upload_metric(_) ->
 	ok.

@@ -325,7 +325,7 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 	case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
 		{ok, Body, Req2} ->
-			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
 					case catch ar_serialize:json_map_to_chunk_proof(JSON) of
 						{'EXIT', _} ->
