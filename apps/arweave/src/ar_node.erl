@@ -1,146 +1,45 @@
-%%%
-%%% @doc Blockweave maintaining nodes in the Arweave system.
-%%%
-
 -module(ar_node).
 
--export([start_link/1]).
--export([start/0, start/1, start/2, start/3, start/4, start/5, start/6, start/7]).
--export([stop/1]).
-
--export([get_blocks/1]).
--export([get_peers/1]).
--export([get_wallet_list/1]).
--export([get_block_index/1, get_height/1]).
--export([get_trusted_peers/1, set_trusted_peers/2]).
--export([get_balance/2]).
--export([get_last_tx/2]).
--export([get_current_diff/1, get_diff/1]).
--export([get_pending_txs/1, get_pending_txs/2, get_mined_txs/1, is_a_pending_tx/2]).
--export([get_current_block_hash/1, get_current_block/1]).
--export([get_reward_addr/1]).
--export([get_reward_pool/1]).
--export([is_joined/1]).
--export([get_block_txs_pairs/1]).
-
--export([mine/1, automine/1]).
--export([add_tx/2]).
--export([cancel_tx/3]).
--export([add_peers/2]).
--export([print_reward_addr/0]).
-
--export([set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0]).
--export([set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2]).
-
--export([get_mempool_size/1]).
+-export([
+	start_link/1, start/7,
+	stop/1,
+	get_blocks/1,
+	get_peers/1,
+	get_block_index/1, get_height/1,
+	get_trusted_peers/1, set_trusted_peers/2,
+	get_balance/2,
+	get_last_tx/2,
+	get_wallets/2,
+	get_wallet_list_chunk/3,
+	get_current_diff/1, get_diff/1,
+	get_pending_txs/1, get_pending_txs/2, get_mined_txs/1, is_a_pending_tx/2,
+	get_current_block_hash/1, get_current_block/1,
+	get_reward_addr/1,
+	get_reward_pool/1,
+	is_joined/1,
+	get_block_txs_pairs/1,
+	mine/1, automine/1,
+	add_tx/2,
+	cancel_tx/3,
+	add_peers/2,
+	print_reward_addr/0,
+	set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0,
+	set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2,
+	get_mempool_size/1
+]).
 
 -include("ar.hrl").
 
-%%%
-%%% Macros.
-%%%
-
-%% @doc Maximum number of blocks to hold at any time.
-%% NOTE: This value should be greater than ?RETARGET_BLOCKS + 1
-%% in order for the TNT test suite to pass.
--define(MAX_BLOCKS, ?RETARGET_BLOCKS).
-
-%% @doc Ensure this number of the last blocks are not dropped.
--define(KEEP_LAST_BLOCKS, 5).
-
-%%%
-%%% Public API.
-%%%
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
 %% @doc Start a node, linking to a supervisor process
 start_link(Args) ->
 	PID = erlang:apply(ar_node, start, Args),
 	{ok, PID}.
 
-%% @doc Start a node server loop with a set of optional parameters.
-% Peers: the set of PID/IP that the node communicates with
-% Blocks: the initial blocks to spawn with, if none, not_joined atom
-% MiningDelay: delay in mining, used primarily for network simulation
-% RewardAddr: the address in which mining rewards will be attributed with
-% AutoJoin: boolean stating if a node should automatically attempt to join
-% Diff: starting diff of the network
-% LastRetarget: timestamp (seconds) stating when difficulty was last changed
-start() ->
-	start([]).
-start(Peers) ->
-	start(
-		Peers,
-		not_joined
-	).
-start(Peers, Bs) ->
-	start(
-		Peers,
-		Bs,
-		0
-	).
-start(Peers, Bs, MiningDelay) ->
-	start(
-		Peers,
-		Bs,
-		MiningDelay,
-		unclaimed
-	).
-start(Peers, BI, MiningDelay, RewardAddr) ->
-	start(
-		Peers,
-		BI,
-		MiningDelay,
-		RewardAddr,
-		true
-	).
-start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin)
-		when is_record(B, block) ->
-	lists:map(
-		fun ar_storage:write_block/1,
-		Bs
-	),
-	start(
-		Peers,
-		lists:map(fun ar_util:block_index_entry_from_block/1, Bs),
-		MiningDelay,
-		RewardAddr,AutoJoin
-	);
-start(Peers, BI, MiningDelay, RewardAddr, AutoJoin) ->
-	start(
-		Peers,
-		BI,
-		MiningDelay,
-		RewardAddr,
-		AutoJoin,
-		ar_mine:genesis_difficulty()
-	).
-start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff) ->
-	start(
-		Peers,
-		BI,
-		MiningDelay,
-		RewardAddr,
-		AutoJoin,
-		Diff,
-		os:system_time(seconds)
-	).
-start(Peers, Bs = [B | _], MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when is_record(B, block) ->
-	lists:map(
-		fun ar_storage:write_block/1,
-		Bs
-	),
-	start(
-		Peers,
-		lists:map(fun ar_util:block_index_entry_from_block/1, Bs),
-		MiningDelay,
-		RewardAddr,
-		AutoJoin,
-		Diff,
-		LastRetarget
-	);
-start(Peers, B, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when ?IS_BLOCK(B) ->
-	BI = [ar_util:block_index_entry_from_block(B)],
-	start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
+%% @doc Start a node server.
 start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	PID = spawn_link(
 		fun() ->
@@ -157,15 +56,20 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 						Peers
 					)
 				),
-			Wallets = ar_util:wallets_from_hashes(BI),
 			Height = ar_util:height_from_hashes(BI),
-			{RewardPool, WeaveSize, Current} =
+			{RewardPool, WeaveSize, Current, WalletList} =
 				case BI of
 					not_joined ->
-						{0, 0, not_joined};
+						{0, 0, not_joined, not_set};
 					[{H, _, _} | _] ->
 						B = ar_storage:read_block(H),
-						{B#block.reward_pool, B#block.weave_size, H}
+						RecentBlockIndex = lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT),
+						{ok, _} =
+							ar_wallets:start_link([
+								{recent_block_index, RecentBlockIndex},
+								{peers, Peers}
+							]),
+						{B#block.reward_pool, B#block.weave_size, H, B#block.wallet_list}
 				end,
 			%% Start processes, init state, and start server.
 			NPid = self(),
@@ -181,7 +85,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 				{gossip, Gossip},
 				{block_index, BI},
 				{current, Current},
-				{wallet_list, Wallets},
+				{wallet_list, WalletList},
 				{mining_delay, MiningDelay},
 				{reward_addr, RewardAddr},
 				{reward_pool, RewardPool},
@@ -197,19 +101,6 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	),
 	ar_http_iface_server:reregister(http_entrypoint_node, PID),
 	PID.
-
-create_block_txs_pairs(not_joined) ->
-	[];
-create_block_txs_pairs(BI) ->
-	create_block_txs_pairs(recent_blocks, lists:sublist(BI, 2 * ?MAX_TX_ANCHOR_DEPTH)).
-
-create_block_txs_pairs(recent_blocks, []) ->
-	[];
-create_block_txs_pairs(recent_blocks, [{BH, _, _} | Rest]) ->
-	B = ar_storage:read_block(BH),
-	TXs = ar_storage:read_tx(B#block.txs),
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
-	[{BH, SizeTaggedTXs} | create_block_txs_pairs(Rest)].
 
 %% @doc Stop a node server loop and its subprocesses.
 stop(Node) ->
@@ -233,7 +124,7 @@ get_blocks(Node) ->
 	Ref = make_ref(),
 	Node ! {get_blocks, self(), Ref},
 	receive
-		{Ref, blocks, Node, Bs} -> Bs
+		{Ref, blocks, Bs} -> Bs
 	after ?LOCAL_NET_TIMEOUT ->
 		not_found
 	end.
@@ -321,16 +212,6 @@ get_peers(Host) ->
 		Peers -> Peers
 	end.
 
-%% @doc Get the current wallet list from the node.
-%% This wallet list is up to date to the latest block held.
-get_wallet_list(Node) ->
-	Ref = make_ref(),
-	Node ! {get_walletlist, self(), Ref},
-	receive
-		{Ref, walletlist, WalletList} -> WalletList
-		after ?LOCAL_NET_TIMEOUT -> []
-	end.
-
 get_block_index(Node) ->
 	Ref = make_ref(),
 	Node ! {get_blockindex, self(), Ref},
@@ -374,10 +255,7 @@ is_joined(Node) ->
 get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
 	Ref = make_ref(),
 	Node ! {get_balance, self(), Ref, Addr},
-	receive
-		{Ref, balance, Addr, B} -> B
-		after ?LOCAL_NET_TIMEOUT -> node_unavailable
-	end;
+	receive {Ref, balance, B} -> B end;
 get_balance(Node, WalletID) ->
 	get_balance(Node, ar_wallet:to_address(WalletID)).
 
@@ -386,14 +264,19 @@ get_balance(Node, WalletID) ->
 get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
 	Ref = make_ref(),
 	Node ! {get_last_tx, self(), Ref, Addr},
-	receive
-		{Ref, last_tx, Addr, LastTX} ->
-			{ok, LastTX}
-	after ?LOCAL_NET_TIMEOUT ->
-		timeout
-	end;
+	receive {Ref, last_tx, LastTX} -> {ok, LastTX} end;
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
+
+get_wallets(Node, Addresses) ->
+	Ref = make_ref(),
+	Node ! {get_wallets, self(), Ref, Addresses},
+	receive {Ref, wallets, Wallets} -> Wallets end.
+
+get_wallet_list_chunk(Node, RootHash, Cursor) ->
+	Ref = make_ref(),
+	Node ! {get_wallet_list_chunk, self(), Ref, RootHash, Cursor},
+	receive {Ref, wallet_list_chunk, Reply} -> Reply end.
 
 %% @doc Returns the new difficulty of next mined block.
 % TODO: Function name is confusing, returns the new difficulty being mined on,
@@ -515,6 +398,9 @@ add_tx(GS, TX) when is_record(GS, gs_state) ->
 add_tx(Node, TX) when is_pid(Node) ->
 	Node ! {add_tx, TX},
 	ok;
+add_tx({Node, Name} = Peer, TX) when is_atom(Node) andalso is_atom(Name) ->
+	Peer ! {add_tx, TX},
+	ok;
 add_tx(Host, TX) ->
 	ar_http_iface_client:send_new_tx(Host, TX).
 
@@ -541,9 +427,22 @@ get_mempool_size(Node) ->
 			0
 	end.
 
-%%%
-%%% Server functions.
-%%%
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+create_block_txs_pairs(not_joined) ->
+	[];
+create_block_txs_pairs(BI) ->
+	create_block_txs_pairs(recent_blocks, lists:sublist(BI, 2 * ?MAX_TX_ANCHOR_DEPTH)).
+
+create_block_txs_pairs(recent_blocks, []) ->
+	[];
+create_block_txs_pairs(recent_blocks, [{BH, _, _} | Rest]) ->
+	B = ar_storage:read_block(BH),
+	TXs = ar_storage:read_tx(B#block.txs),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+	[{BH, SizeTaggedTXs} | create_block_txs_pairs(Rest)].
 
 %% @doc Main server loop.
 server(SPid, WPid, TaskQueue) ->
@@ -627,8 +526,6 @@ handle(_SPid, {add_peers, Peers}) ->
 	{task, {add_peers, Peers}};
 handle(_SPid, {new_block, Peer, Height, NewB, BDS}) ->
 	{task, {process_new_block, Peer, Height, NewB, BDS}};
-handle(_SPid, {replace_block_list, Blocks}) ->
-	{task, {replace_block_list, Blocks}};
 handle(_SPid, {set_delay, MaxDelay}) ->
 	{task, {set_delay, MaxDelay}};
 handle(_SPid, {set_loss_probability, Prob}) ->
@@ -654,7 +551,17 @@ handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}) ->
 				POA
 			}}
 	end;
-handle(_SPid, {fork_recovered, BI, BlockTXPairs, BaseH}) ->
+handle(SPid, {fork_recovered, BI, BlockTXPairs, BaseH}) ->
+	case BaseH of
+		none ->
+			{ok, Peers} = ar_node_state:lookup(SPid, trusted_peers),
+			{ok, _} = ar_wallets:start_link([
+				{recent_block_index, lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)},
+				{peers, Peers}
+			]);
+		_ ->
+			do_nothing
+	end,
 	{task, {fork_recovered, BI, BlockTXPairs, BaseH}};
 handle(_SPid, mine) ->
 	{task, mine};
@@ -667,7 +574,7 @@ handle(SPid, {get_current_block, From, Ref}) ->
 	ok;
 handle(SPid, {get_blocks, From, Ref}) ->
 	{ok, BI} = ar_node_state:lookup(SPid, block_index),
-	From ! {Ref, blocks, self(), BI},
+	From ! {Ref, blocks, BI},
 	ok;
 handle(SPid, {get_peers, From, Ref}) ->
 	{ok, GS} = ar_node_state:lookup(SPid, gossip),
@@ -679,10 +586,6 @@ handle(SPid, {get_trusted_peers, From, Ref}) ->
 	ok;
 handle(SPid, {set_trusted_peers, Peers}) ->
 	ar_node_state:update(SPid, [{trusted_peers, Peers}]);
-handle(SPid, {get_walletlist, From, Ref}) ->
-	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
-	From ! {Ref, walletlist, WalletList},
-	ok;
 handle(SPid, {get_blockindex, From, Ref}) ->
 	{ok, BI} = ar_node_state:lookup(SPid, block_index),
 	From ! {Ref, blockindex, BI},
@@ -695,21 +598,20 @@ handle(SPid, {get_height, From, Ref}) ->
 	{ok, Height} = ar_node_state:lookup(SPid, height),
 	From ! {Ref, height, Height},
 	ok;
-handle(SPid, {get_balance, From, Ref, WalletID}) ->
-	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
-	From ! {Ref, balance, WalletID,
-		case lists:keyfind(WalletID, 1, WalletList) of
-			{WalletID, Balance, _Last} -> Balance;
-			false					   -> 0
-		end},
+handle(_SPid, {get_balance, From, Ref, WalletID}) ->
+	Balance = ar_wallets:get_balance(WalletID),
+	From ! {Ref, balance, Balance},
 	ok;
-handle(SPid, {get_last_tx, From, Ref, Addr}) ->
-	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
-	From ! {Ref, last_tx, Addr,
-		case lists:keyfind(Addr, 1, WalletList) of
-			{Addr, _Balance, Last} -> Last;
-			false				   -> <<>>
-		end},
+handle(_SPid, {get_last_tx, From, Ref, Addr}) ->
+	LastTX = ar_wallets:get_last_tx(Addr),
+	From ! {Ref, last_tx, LastTX},
+	ok;
+handle(_SPid, {get_wallets, From, Ref, Addresses}) ->
+	Wallets = ar_wallets:get(Addresses),
+	From ! {Ref, wallets, Wallets},
+	ok;
+handle(_SPid, {get_wallet_list_chunk, From, Ref, RootHash, Cursor}) ->
+	From ! {Ref, wallet_list_chunk, ar_wallets:get_chunk(RootHash, Cursor)},
 	ok;
 handle(SPid, {get_pending_txs, From, Ref}) ->
 	{ok, #{ txs := TXs }} = ar_node_state:lookup(SPid, [txs]),

@@ -489,12 +489,19 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 %% GET request to endpoint /wallet_list
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
 	Node = whereis(http_entrypoint_node),
-	WalletList = ar_node:get_wallet_list(Node),
-	{200, #{},
-		ar_serialize:jsonify(
-			ar_serialize:wallet_list_to_json_struct(WalletList)
-		),
-	Req};
+	H = ar_node:get_current_block_hash(Node),
+	process_request(get_block, [<<"hash">>, H, <<"wallet_list">>], Req);
+
+%% @doc Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
+%% the given root hash. The wallet addresses are picked in the ascending alphabetical order.
+handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash], Req, _Pid) ->
+	process_get_wallet_list_chunk(EncodedRootHash, first, Req);
+
+%% @doc Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
+%% the given root hash, starting with the provided cursor, taken the wallet addresses
+%% are picked in the ascending alphabetical order.
+handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid) ->
+	process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req);
 
 %% @doc Share your nodes IP with another peer.
 %% POST request to endpoint /peers with the body of the request being your
@@ -883,7 +890,7 @@ estimate_tx_price(SizeInBytes, Diff, Height, WalletAddr, Timestamp) ->
 				SizeInBytes,
 				Diff,
 				Height,
-				ar_node:get_wallet_list(whereis(http_entrypoint_node)),
+				ar_node:get_wallets(whereis(http_entrypoint_node), [Addr]),
 				Addr,
 				Timestamp
 			)
@@ -934,10 +941,10 @@ handle_post_tx(Req, PeerIP, TX) ->
 	end.
 
 handle_post_tx(Req, PeerIP, Node, TX, Height) ->
-	WalletList = ar_node:get_wallet_list(Node),
+	Wallets = ar_node:get_wallets(Node, ar_tx:get_addresses([TX])),
 	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
-	case lists:keyfind(OwnerAddr, 1, WalletList) of
-		{_, Balance, _} when (TX#tx.reward + TX#tx.quantity) > Balance ->
+	case maps:get(OwnerAddr, Wallets, not_found) of
+		{Balance, _} when (TX#tx.reward + TX#tx.quantity) > Balance ->
 			ar:info([
 				submitted_txs_exceed_balance,
 				{owner, ar_util:encode(OwnerAddr)},
@@ -946,10 +953,10 @@ handle_post_tx(Req, PeerIP, Node, TX, Height) ->
 			]),
 			handle_post_tx_exceed_balance_response();
 		_ ->
-			handle_post_tx(Req, PeerIP, Node, TX, Height, WalletList)
+			handle_post_tx(Req, PeerIP, Node, TX, Height, Wallets)
 	end.
 
-handle_post_tx(Req, PeerIP, Node, TX, Height, WalletList) ->
+handle_post_tx(Req, PeerIP, Node, TX, Height, Wallets) ->
 	Diff = ar_node:get_current_diff(Node),
 	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
 	MempoolTXs = ar_node:get_pending_txs(Node, [as_map]),
@@ -959,7 +966,7 @@ handle_post_tx(Req, PeerIP, Node, TX, Height, WalletList) ->
 		Height,
 		BlockTXPairs,
 		MempoolTXs,
-		WalletList
+		Wallets
 	) of
 		{invalid, tx_verification_failed} ->
 			handle_post_tx_verification_response();
@@ -1414,13 +1421,29 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 		Filename ->
 			{ok, Binary} = file:read_file(Filename),
 			B = ar_serialize:json_struct_to_block(Binary),
-			WLHash = B#block.wallet_list_hash,
-			WLFilepath = ar_storage:wallet_list_filepath(WLHash),
-			case filelib:is_file(WLFilepath) of
-				true ->
-					{200, #{}, sendfile(WLFilepath), Req};
-				false ->
-					{404, #{}, <<"Block not found.">>, Req}
+			case {B#block.height >= ar_fork:height_2_2(), ar_meta_db:get(serve_wallet_lists)} of
+				{true, false} ->
+					{400, #{},
+						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }), Req};
+				{true, _} ->
+					ok = ar_semaphore:acquire(wallet_list_semaphore, infinity),
+					case ar_storage:read_wallet_list(B#block.wallet_list) of
+						{ok, Tree} ->
+							{200, #{}, ar_serialize:jsonify(
+								ar_serialize:wallet_list_to_json_struct(
+									B#block.reward_addr, false, Tree
+								)), Req};
+						_ ->
+							{404, #{}, <<"Block not found.">>, Req}
+					end;
+				_ ->
+					WLFilepath = ar_storage:wallet_list_filepath(B#block.wallet_list),
+					case filelib:is_file(WLFilepath) of
+						true ->
+							{200, #{}, sendfile(WLFilepath), Req};
+						false ->
+							{404, #{}, <<"Block not found.">>, Req}
+					end
 			end
 	end;
 %% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
@@ -1443,6 +1466,50 @@ process_request(get_block, [Type, ID, Field], Req) ->
 			end;
 		_ ->
 			{421, #{}, <<"Subfield block querying is disabled on this node.">>, Req}
+	end.
+
+process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
+	DecodeCursorResult =
+		case EncodedCursor of
+			first ->
+				{ok, first};
+			_ ->
+				ar_util:safe_decode(EncodedCursor)
+		end,
+	case {ar_util:safe_decode(EncodedRootHash), DecodeCursorResult} of
+		{{error, invalid}, _} ->
+			{400, #{}, <<"Invalid root hash.">>, Req};
+		{_, {error, invalid}} ->
+			{400, #{}, <<"Invalid root hash.">>, Req};
+		{{ok, RootHash}, {ok, Cursor}} ->
+			Node = whereis(http_entrypoint_node),
+			case ar_node:get_wallet_list_chunk(Node, RootHash, Cursor) of
+				{ok, {NextCursor, Wallets}} ->
+					SerializeFn = case cowboy_req:header(<<"content-type">>, Req) of
+						<<"application/json">> -> fun wallet_list_chunk_to_json/1;
+						<<"application/etf">> -> fun erlang:term_to_binary/1;
+						_ -> fun erlang:term_to_binary/1
+					end,
+					Reply = SerializeFn(#{ next_cursor => NextCursor, wallets => Wallets }),
+					{200, #{}, Reply, Req};
+				{error, root_hash_not_found} ->
+					{404, #{}, <<"Root hash not found.">>, Req}
+			end
+	end.
+
+wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
+	SerializedWallets =
+		lists:map(
+			fun({Addr, {Balance, LastTX}}) ->
+				ar_serialize:wallet_to_json_struct({Addr, Balance, LastTX})
+			end,
+			Wallets
+		),
+	case NextCursor of
+		last ->
+			jiffy:encode(#{ wallets => SerializedWallets });
+		Cursor when is_binary(Cursor) ->
+			jiffy:encode(#{ next_cursor => ar_util:encode(Cursor), wallets => SerializedWallets })
 	end.
 
 validate_get_block_type_id(<<"height">>, ID) ->

@@ -1,13 +1,27 @@
 -module(ar_serialize).
 
--export([json_struct_to_block/1, block_to_json_struct/1]).
--export([json_struct_to_poa/1, poa_to_json_struct/1]).
--export([tx_to_json_struct/1, json_struct_to_tx/1]).
--export([wallet_list_to_json_struct/1, json_struct_to_wallet_list/1]).
--export([block_index_to_json_struct/1, json_struct_to_block_index/1]).
--export([jsonify/1, dejsonify/1, json_decode/1, json_decode/2]).
--export([query_to_json_struct/1, json_struct_to_query/1]).
--export([chunk_proof_to_json_map/1, json_map_to_chunk_proof/1]).
+-export([
+	json_struct_to_block/1,
+	block_to_json_struct/1,
+	json_struct_to_poa/1,
+	poa_to_json_struct/1,
+	tx_to_json_struct/1,
+	json_struct_to_tx/1,
+	etf_to_wallet_chunk_response/1,
+	wallet_list_to_json_struct/3,
+	wallet_to_json_struct/1,
+	json_struct_to_wallet_list/1,
+	block_index_to_json_struct/1,
+	json_struct_to_block_index/1,
+	jsonify/1,
+	dejsonify/1,
+	json_decode/1,
+	json_decode/2,
+	query_to_json_struct/1,
+	json_struct_to_query/1,
+	chunk_proof_to_json_map/1,
+	json_map_to_chunk_proof/1
+]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -58,7 +72,6 @@ block_to_json_struct(
 		tx_root = TXRoot,
 		tx_tree = TXTree,
 		wallet_list = WalletList,
-		wallet_list_hash = WalletListHash,
 		reward_addr = RewardAddr,
 		tags = Tags,
 		reward_pool = RewardPool,
@@ -96,19 +109,7 @@ block_to_json_struct(
 			},
 			{tx_root, ar_util:encode(TXRoot)},
 			{tx_tree, tree_to_json_struct(TXTree)},
-			{wallet_list,
-				case is_binary(WalletList) of
-					true -> ar_util:encode(WalletList);
-					false ->
-						case WalletListHash of
-							not_set ->
-								ar_util:encode(
-									ar_block:hash_wallet_list(Height, RewardAddr, WalletList));
-							WLH ->
-								ar_util:encode(WLH)
-						end
-				end
-			},
+			{wallet_list, ar_util:encode(WalletList)},
 			{reward_addr,
 				if RewardAddr == unclaimed -> list_to_binary("unclaimed");
 				true -> ar_util:encode(RewardAddr)
@@ -194,39 +195,7 @@ json_struct_to_block({BlockStruct}) ->
 				undefined -> unset;
 				_		  -> [ar_util:decode(Hash) || Hash <- HashList]
 			end,
-		wallet_list =
-			case is_binary(WalletList) of
-				false ->
-					[
-						{
-							ar_util:decode(Wallet),
-							Qty,
-							ar_util:decode(Last)
-						}
-					||
-						{
-							[
-								{<<"wallet">>, Wallet},
-								{<<"quantity">>, Qty},
-								{<<"last_tx">>, Last}
-							]
-						}
-						<- WalletList
-					];
-				true -> ar_util:decode(WalletList)
-			end,
-		wallet_list_hash =
-			case is_binary(WalletList) of
-				true ->
-					ar_util:decode(WalletList);
-				false ->
-					case WalletList of
-						[] ->
-							not_set;
-						_ ->
-							ar_block:hash_wallet_list(Height, RewardAddr, WalletList)
-					end
-			end,
+		wallet_list = ar_util:decode(WalletList),
 		reward_addr = RewardAddr,
 		tags = Tags,
 		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
@@ -376,11 +345,48 @@ parse_data_size(1, _TXStruct, Data) ->
 parse_data_size(_Format, TXStruct, _Data) ->
 	binary_to_integer(find_value(<<"data_size">>, TXStruct)).
 
+etf_to_wallet_chunk_response(ETF) ->
+	catch etf_to_wallet_chunk_response_unsafe(ETF).
+
+etf_to_wallet_chunk_response_unsafe(ETF) ->
+	#{ next_cursor := NextCursor, wallets := Wallets } = binary_to_term(ETF, [safe]),
+	true = is_binary(NextCursor) orelse NextCursor == last,
+	lists:foreach(
+		fun({Addr, {Balance, LastTX}})
+				when is_binary(Addr), is_binary(LastTX), is_integer(Balance) ->
+			ok
+		end,
+		Wallets
+	),
+	{ok, #{ next_cursor => NextCursor, wallets => Wallets }}.
+
 %% @doc Convert a wallet list into a JSON struct.
-wallet_list_to_json_struct([]) -> [];
-wallet_list_to_json_struct([Wallet | WalletList]) ->
-	EncWallet = wallet_to_json_struct(Wallet),
-	[EncWallet | wallet_list_to_json_struct(WalletList)].
+%% The order of the wallets is somewhat weird for historical reasons. If the reward address,
+%% appears in the list for the first time, it is placed on the first position. Except for that,
+%% wallets are sorted in the alphabetical order.
+wallet_list_to_json_struct(RewardAddr, IsRewardAddrNew, WL) ->
+	List = ar_patricia_tree:foldr(
+		fun(Addr, {Balance, LastTX}, Acc) ->
+			case Addr == RewardAddr andalso IsRewardAddrNew of
+				true ->
+					Acc;
+				false ->
+					[wallet_to_json_struct({Addr, Balance, LastTX}) | Acc]
+			end
+		end,
+		[],
+		WL
+	),
+	case {ar_patricia_tree:get(RewardAddr, WL), IsRewardAddrNew} of
+		{not_found, _} ->
+			List;
+		{_, false} ->
+			List;
+		{{Balance, LastTX}, true} ->
+			%% Place the reward wallet first, for backwards-compatibility.
+			[wallet_to_json_struct({RewardAddr, Balance, LastTX}) | List]
+	end.
+
 wallet_to_json_struct({Address, Balance, Last}) ->
 	{
 		[
@@ -394,7 +400,14 @@ wallet_to_json_struct({Address, Balance, Last}) ->
 json_struct_to_wallet_list(JSON) when is_binary(JSON) ->
 	json_struct_to_wallet_list(dejsonify(JSON));
 json_struct_to_wallet_list(WalletsStruct) ->
-	lists:map(fun json_struct_to_wallet/1, WalletsStruct).
+	lists:foldl(
+		fun(WalletStruct, Acc) ->
+			{Address, Balance, LastTX} = json_struct_to_wallet(WalletStruct),
+			ar_patricia_tree:insert(Address, {Balance, LastTX}, Acc)
+		end,
+		ar_patricia_tree:new(),
+		WalletsStruct
+	).
 
 json_struct_to_wallet({Wallet}) ->
 	Address = ar_util:decode(find_value(<<"address">>, Wallet)),
@@ -522,10 +535,7 @@ block_roundtrip_test() ->
 	[B] = ar_weave:init(),
 	JSONStruct = jsonify(block_to_json_struct(B)),
 	BRes = json_struct_to_block(JSONStruct),
-	?assertEqual(
-		B#block{ wallet_list = B#block.wallet_list_hash },
-		BRes#block { hash_list = B#block.hash_list }
-	).
+	?assertEqual(B, BRes#block { hash_list = B#block.hash_list }).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
 tx_roundtrip_test() ->
@@ -544,9 +554,13 @@ tx_roundtrip_test() ->
 
 wallet_list_roundtrip_test() ->
 	[B] = ar_weave:init(),
-	WL = B#block.wallet_list,
-	JSONWL = jsonify(wallet_list_to_json_struct(WL)),
-	WL = json_struct_to_wallet_list(JSONWL).
+	{ok, WL} = ar_storage:read_wallet_list(B#block.wallet_list),
+	JSONWL = jsonify(wallet_list_to_json_struct(B#block.reward_addr, false, WL)),
+	ExpectedWL = ar_patricia_tree:foldr(fun(K, V, Acc) -> [{K, V} | Acc] end, [], WL),
+	ActualWL = ar_patricia_tree:foldr(
+		fun(K, V, Acc) -> [{K, V} | Acc] end, [], json_struct_to_wallet_list(JSONWL)
+	),
+	?assertEqual(ExpectedWL, ActualWL).
 
 block_index_roundtrip_test() ->
 	[B] = ar_weave:init(),

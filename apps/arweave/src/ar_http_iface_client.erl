@@ -4,17 +4,34 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/3, send_new_tx/2, get_block/2]).
--export([get_block_shadow/2]).
--export([get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2]).
--export([add_peer/1]).
--export([get_info/1, get_info/2, get_peers/1, get_pending_txs/1]).
--export([get_time/2, get_height/1]).
--export([get_block_index/1, get_block_index/2]).
--export([get_sync_record/1, get_chunk/2]).
+-export([
+	send_new_block/3,
+	send_new_tx/2,
+	get_block/2,
+	get_block_shadow/2,
+	get_tx/3,
+	get_txs/3,
+	get_tx_from_remote_peer/2,
+	get_tx_data/2,
+	get_wallet_list_chunk/2,
+	get_wallet_list_chunk/3,
+	get_wallet_list/2,
+	add_peer/1,
+	get_info/1,
+	get_info/2,
+	get_peers/1,
+	get_pending_txs/1,
+	get_time/2,
+	get_height/1,
+	get_block_index/1,
+	get_block_index/2,
+	get_sync_record/1,
+	get_chunk/2
+]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
+-include("ar_wallets.hrl").
 
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
@@ -67,12 +84,8 @@ send_new_block(Peer, NewB, BDS) ->
 			fun ar_util:encode/1,
 			lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
 		),
-	{SmallBlockProps} =
-		ar_serialize:block_to_json_struct(
-			NewB#block{ wallet_list = [] }
-		),
-	BlockShadowProps =
-		[{<<"hash_list">>, ShortHashList} | SmallBlockProps],
+	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
+	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | BlockProps],
 	PostProps = [
 		{<<"new_block">>, {BlockShadowProps}},
 		%% Add the P2P port field to be backwards compatible with nodes
@@ -181,7 +194,46 @@ get_block_shadow(Peers, ID) ->
 			{Peer, B}
 	end.
 
-%% @doc Get a wallet list by its hash from external peers.
+%% @doc Get a bunch of wallets by the given root hash from external peers.
+get_wallet_list_chunk(Peers, H) ->
+	get_wallet_list_chunk(Peers, H, start).
+
+get_wallet_list_chunk([], _H, _Cursor) ->
+	{error, not_found};
+get_wallet_list_chunk([Peer | Peers], H, Cursor) ->
+	BasePath = "/wallet_list/" ++ binary_to_list(ar_util:encode(H)),
+	Path =
+		case Cursor of
+			start ->
+				BasePath;
+			_ ->
+				BasePath ++ "/" ++ binary_to_list(ar_util:encode(Cursor))
+		end,
+	Response =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => Path,
+			headers => p2p_headers(),
+			limit => ?MAX_SERIALIZED_WALLET_LIST_CHUNK_SIZE
+		}),
+	case Response of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			case ar_serialize:etf_to_wallet_chunk_response(Body) of
+				{ok, #{ next_cursor := NextCursor, wallets := Wallets }} ->
+					{ok, {NextCursor, Wallets}};
+				DeserializationResult ->
+					ar:err([
+						{event, got_unexpected_wallet_list_chunk_deserialization_result},
+						{deserialization_result, DeserializationResult}
+					]),
+					get_wallet_list_chunk(Peers, H, Cursor)
+			end;
+		Response ->
+			get_wallet_list_chunk(Peers, H, Cursor)
+	end.
+
+%% @doc Get a wallet list by the given block hash from external peers.
 get_wallet_list([], _H) ->
 	not_found;
 get_wallet_list([Peer | Peers], H) ->
@@ -203,7 +255,7 @@ get_wallet_list(Peer, H) ->
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			ar_serialize:json_struct_to_wallet_list(Body);
+			{ok, ar_serialize:json_struct_to_wallet_list(Body)};
 		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found;
 		_ -> unavailable
 	end.
@@ -539,23 +591,11 @@ reconstruct_full_block(Peers, Body) when is_binary(Body) ->
 			B
 	end;
 reconstruct_full_block(Peers, B) when is_record(B, block) ->
-	WalletList =
-		case B#block.wallet_list of
-			WL when is_list(WL) -> WL;
-			WL when is_binary(WL) ->
-				case ar_storage:read_wallet_list(WL) of
-					{ok, ReadWL} ->
-						ReadWL;
-					{error, _} ->
-						get_wallet_list(Peers, B#block.indep_hash)
-				end
-		end,
 	MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node), [as_map]),
-	case {get_txs(Peers, MempoolTXs, B), WalletList} of
-		{{ok, TXs}, MaybeWalletList} when is_list(MaybeWalletList) ->
+	case get_txs(Peers, MempoolTXs, B) of
+		{ok, TXs} ->
 			B#block {
-				txs = TXs,
-				wallet_list = WalletList
+				txs = TXs
 			};
 		_ ->
 			unavailable

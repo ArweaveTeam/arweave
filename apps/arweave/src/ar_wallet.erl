@@ -1,12 +1,16 @@
-%%%
 %%% @doc Utilities for manipulating wallets.
-%%%
-
 -module(ar_wallet).
 
--export([new/0, sign/2, verify/3, to_address/1, load_keyfile/1, to_binary/1]).
--export([new_keyfile/0, new_keyfile/1]).
--export([wallet_filepath/1]).
+-export([
+	new/0,
+	sign/2,
+	verify/3,
+	to_address/1,
+	load_keyfile/1,
+	new_keyfile/0,
+	new_keyfile/1,
+	wallet_filepath/1
+]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -105,13 +109,6 @@ to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
 	crypto:hash(?HASH_ALG, PubKey).
 
-to_binary({Addr, Quantity, LastTx}) ->
-	<<
-		(Addr)/binary,
-		(integer_to_binary(Quantity))/binary,
-		(LastTx)/binary
-	>>.
-
 %%%
 %%% Tests.
 %%%
@@ -144,8 +141,8 @@ generate_keyfile_test() ->
 assign_wallet_test() ->
 	{_, Pub} = new_keyfile(),
 	Address = to_address(Pub),
-	B0 = ar_weave:init([{Address, ?AR(0), <<>>}]),
-	Node1 = ar_node:start([], B0, 0, Address),
+	[B0] = ar_weave:init([{Address, ?AR(0), <<>>}]),
+	{Node1, _} = ar_test_node:start(B0),
 	ar_node:mine(Node1), % Mine B1
 	ar_util:do_until(
 		fun() ->

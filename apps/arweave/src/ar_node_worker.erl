@@ -1,7 +1,4 @@
-%%%
 %%% @doc Server to queue ar_node state-changing tasks.
-%%%
-
 -module(ar_node_worker).
 
 -export([start/2, stop/1, cast/2, call/2, call/3]).
@@ -179,22 +176,6 @@ handle(SPid, automine) ->
 	StateOut = ar_node_utils:start_mining(StateIn#{ automine => true }),
 	ar_node_state:update(SPid, StateOut),
 	{ok, automine};
-handle(SPid, {replace_block_list, [Block | _] = Blocks}) ->
-	BI = lists:map(fun ar_util:block_index_entry_from_block/1, Blocks),
-	BlockTXPairs = lists:map(
-		fun(B) ->
-			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs),
-			{B#block.indep_hash, SizeTaggedTXs}
-		end,
-		Blocks
-	),
-	ar_node_state:update(SPid, [
-		{block_index, BI},
-		{block_txs_pairs, BlockTXPairs},
-		{wallet_list, Block#block.wallet_list},
-		{height, Block#block.height}
-	]),
-	{ok, replace_block_list};
 handle(SPid, {set_reward_addr, Addr}) ->
 	ar_node_state:update(SPid, [
 		{reward_addr, Addr}
@@ -477,6 +458,13 @@ get_diverged_block_hashes_reversed([], []) -> {ok, []};
 get_diverged_block_hashes_reversed(DivergedHashes, _) ->
 	{ok, lists:reverse(DivergedHashes)}.
 
+apply_new_block(_State, #block{ txs = TXs }, Peer) when length(TXs) > ?BLOCK_TX_COUNT_LIMIT ->
+	ar:err([
+		{event, received_invalid_block},
+		{validation_error, tx_count_exceeds_limit},
+		{peer, ar_util:format_peer(Peer)}
+	]),
+	none;
 apply_new_block(State, BShadow, Peer) ->
 	#{
 		txs := MempoolTXs,
@@ -499,58 +487,58 @@ apply_new_block(State, BShadow, Peer) ->
 
 apply_new_block(State, NewB) ->
 	#{
-		height := Height,
-		wallet_list := WalletList,
 		block_txs_pairs := BlockTXPairs,
 		block_index := BI
 	} = State,
 	B = ar_util:get_head_block(BI),
-	StateNew = State#{ wallet_list => NewB#block.wallet_list },
 	TXs = NewB#block.txs,
-	case ar_node_utils:validate(BI, NewB#block.wallet_list, NewB, TXs, B) of
-		{invalid, _Reason} ->
+	Wallets = ar_wallets:get(
+		B#block.wallet_list,
+		[NewB#block.reward_addr | ar_tx:get_addresses(NewB#block.txs)]
+	),
+	case ar_node_utils:validate(BI, NewB, B, Wallets, BlockTXPairs) of
+		{invalid, Reason} ->
+			ar:err([
+				{event, received_invalid_block},
+				{validation_error, Reason}
+			]),
 			none;
 		valid ->
-			TXReplayCheck = ar_tx_replay_pool:verify_block_txs(
-				TXs,
-				NewB#block.diff,
-				Height,
-				NewB#block.timestamp,
-				WalletList,
-				BlockTXPairs
-			),
-			case TXReplayCheck of
-				invalid ->
-					ar:warn([
-						ar_node_worker,
-						process_new_block,
-						transaction_replay_detected,
-						{block_indep_hash, ar_util:encode(NewB#block.indep_hash)},
-						{txs, lists:map(fun(TX) -> ar_util:encode(TX#tx.id) end, TXs)}
-					]),
-					none;
-				valid ->
-					{ok, ar_node_utils:integrate_new_block(StateNew, NewB, TXs)}
-			end
+			{ok, ar_node_utils:integrate_new_block(State, NewB, TXs)}
 	end.
 
 generate_block_from_shadow(State, BShadow, TXs) ->
-	{WalletListHash, WalletList} =
-		generate_wallet_list_from_shadow(State, BShadow, TXs),
-	B = BShadow#block {
-		wallet_list = WalletList,
-		wallet_list_hash = WalletListHash,
-		txs = TXs
-	},
-	{ok, B}.
+	#{
+		reward_pool := RewardPool,
+		wallet_list := WalletList,
+		height := Height
+	} = State,
+	B = BShadow#block{ txs = TXs },
+	case ar_wallets:apply_block(B, WalletList, RewardPool, Height) of
+		{error, invalid_reward_pool} ->
+			ar:err([
+				{event, received_invalid_block},
+				{validation_error, invalid_reward_pool}
+			]),
+			error;
+		{error, invalid_wallet_list} ->
+			ar:err([
+				{event, received_invalid_block},
+				{validation_error, invalid_wallet_list}
+			]),
+			error;
+		{ok, RootHash} ->
+			{ok, B#block{ wallet_list = RootHash }}
+	end.
 
 pick_txs(TXIDs, TXs) ->
 	lists:foldr(
 		fun(TXID, {Found, Missing}) ->
 			case maps:get(TXID, TXs, tx_not_in_mempool) of
 				tx_not_in_mempool ->
-					%% This disk read should almost never be useful. Presumably, the only reason to find some of these
-					%% transactions on disk is they had been written prior to the call, what means they are
+					%% This disk read should almost never be useful. Presumably,
+					%% the only reason to find some of these transactions on disk
+					%% is they had been written prior to the call, what means they are
 					%% from an orphaned fork, more than one block behind.
 					case ar_storage:read_tx(TXID) of
 						unavailable ->
@@ -565,34 +553,6 @@ pick_txs(TXIDs, TXs) ->
 		{[], []},
 		TXIDs
 	).
-
-generate_wallet_list_from_shadow(StateIn, BShadow, TXs) ->
-	#{
-		reward_pool := RewardPool,
-		wallet_list := WalletList,
-		height := Height
-	} = StateIn,
-	RewardAddr = BShadow#block.reward_addr,
-	NewHeight = BShadow#block.height,
-	{FinderReward, _} =
-		ar_node_utils:calculate_reward_pool(
-			RewardPool,
-			TXs,
-			RewardAddr,
-			no_recall,
-			BShadow#block.weave_size,
-			NewHeight,
-			BShadow#block.diff,
-			BShadow#block.timestamp
-		),
-	NewWalletList = ar_node_utils:apply_mining_reward(
-		ar_node_utils:apply_txs(WalletList, TXs, Height),
-		RewardAddr,
-		FinderReward,
-		NewHeight
-	),
-	WalletListHash = ar_block:hash_wallet_list(NewHeight, RewardAddr, NewWalletList),
-	{WalletListHash, NewWalletList}.
 
 maybe_fork_recover(State, BShadow, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 	#{
@@ -645,7 +605,8 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 		txs              := TXs,
 		gossip           := GS,
 		block_txs_pairs  := BlockTXPairs,
-		weave_size       := WeaveSize
+		weave_size       := WeaveSize,
+		wallet_list      := WalletList
 	} = StateIn,
 	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = MinedTXs }, BI),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(MinedTXs),
@@ -665,7 +626,10 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 			),
 			NewB#block.diff,
 			NewB#block.height,
-			NewB#block.wallet_list
+			ar_wallets:get(
+				NewB#block.wallet_list,
+				ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
+			)
 		),
 	ar_node_utils:drop_invalid_txs(InvalidTXs),
 	ar_miner_log:mined_block(NewB#block.indep_hash, NewB#block.height),
@@ -688,6 +652,8 @@ integrate_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 		MinedTXs
 	),
 	BH = element(1, hd(NewBI)),
+	RewardAddr = NewB#block.reward_addr,
+	ar_wallets:set_current(WalletList, NewB#block.wallet_list, RewardAddr, NewB#block.height),
 	NewState = ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => NewBI,
@@ -726,7 +692,10 @@ recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs, 
 		TXs,
 		NewB#block.diff,
 		NewB#block.height,
-		NewB#block.wallet_list
+		ar_wallets:get(
+			NewB#block.wallet_list,
+			ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
+		)
 	),
 	ar_node_utils:drop_invalid_txs(InvalidTXs),
 	ar_data_sync:add_block(
@@ -776,7 +745,10 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH) ->
 		TXs,
 		NewB#block.diff,
 		NewB#block.height,
-		NewB#block.wallet_list
+		ar_wallets:get(
+			NewB#block.wallet_list,
+			ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
+		)
 	),
 	ar_node_utils:drop_invalid_txs(InvalidTXs),
 	AppliedBlockTXPairs = lists:takewhile(fun({BH, _}) -> BH /= BaseH end, BlockTXPairs),
@@ -795,6 +767,9 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH) ->
 		end,
 		lists:reverse(AppliedBlockTXPairs)
 	),
+	WalletList = (ar_storage:read_block(NewB#block.previous_block))#block.wallet_list,
+	RewardAddr = NewB#block.reward_addr,
+	ar_wallets:set_current(WalletList, NewB#block.wallet_list, RewardAddr, NewB#block.height),
 	{ok, ar_node_utils:reset_miner(
 		StateIn#{
 			block_index          => BI,

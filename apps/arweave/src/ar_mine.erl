@@ -25,14 +25,12 @@
 	data_segment_duration, % duration in seconds of the last generation of the data segment
 	reward_addr, % the mining reward address
 	reward_wallet_before_mining_reward = not_in_the_list,
-	reward_wallet = not_set, % the mining reward wallet, for the mined block
 	tags, % the block tags
 	diff, % the current network difficulty
 	delay = 0, % hashing delay used for testing
 	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start
 	miners = [], % miner worker processes
 	bds_base = not_generated, % part of the block data segment not changed during mining
-	no_reward_wallet_list_hash = not_set, % wallet list hash preimage without reward wallet
 	total_hashes_tried = 0, % the number of tried hashes, used to estimate the hashrate
 	started_at = not_set % the timestamp when the mining begins, used to estimate the hashrate
 }).
@@ -150,7 +148,7 @@ update_txs(
 		block_txs_pairs = BlockTXPairs,
 		reward_addr = RewardAddr,
 		poa = POA,
-		candidate_block = CandidateB,
+		candidate_block = #block{ height = Height } = CandidateB,
 		txs = TXs
 	}
 ) ->
@@ -161,7 +159,7 @@ update_txs(
 		CurrentB#block.height,
 		NextDiff,
 		NextBlockTimestamp,
-		CurrentB#block.wallet_list,
+		ar_wallets:get(CurrentB#block.wallet_list, ar_tx:get_addresses(TXs)),
 		TXs
 	),
 	NewBlockSize =
@@ -184,37 +182,42 @@ update_txs(
 			NextDiff,
 			NextBlockTimestamp
 		),
-	AppliedTXsWalletList =
-			ar_node_utils:apply_txs(CurrentB#block.wallet_list, ValidTXs, CurrentB#block.height),
+	Addresses = [RewardAddr | ar_tx:get_addresses(ValidTXs)],
+	Wallets = ar_wallets:get(CurrentB#block.wallet_list, Addresses),
+	AppliedTXsWallets = ar_node_utils:apply_txs(Wallets, ValidTXs, CurrentB#block.height),
 	RewardWalletBeforeMiningReward =
-		case lists:keytake(RewardAddr, 1, AppliedTXsWalletList) of
-			false ->
+		case maps:get(RewardAddr, AppliedTXsWallets, not_found) of
+			not_found ->
 				not_in_the_list;
-			{value, W, _} ->
-				W
+			{Balance, LastTX} ->
+				{RewardAddr, Balance, LastTX}
 		end,
-	NewWalletList =
+	UpdatedWallets =
 		ar_node_utils:apply_mining_reward(
-			AppliedTXsWalletList,
+			AppliedTXsWallets,
 			RewardAddr,
 			FinderReward,
 			CandidateB#block.height
+		),
+	{ok, UpdatedRootHash} =
+		ar_wallets:add_wallets(
+			CurrentB#block.wallet_list,
+			UpdatedWallets,
+			RewardAddr,
+			Height
 		),
 	NewCandidateB = CandidateB#block{
 		txs = [TX#tx.id || TX <- ValidTXs],
 		tx_root = ar_block:generate_tx_root_for_block(ValidTXs),
 		block_size = NewBlockSize,
 		weave_size = NewWeaveSize,
-		wallet_list = NewWalletList
+		wallet_list = UpdatedRootHash
 	},
-	{_RW, NoRewardWLH} =
-		ar_block:hash_wallet_list_without_reward_wallet(RewardAddr, NewWalletList),
 	BDSBase = ar_block:generate_block_data_segment_base(NewCandidateB),
 	update_data_segment(
 		S#state{
 			candidate_block = NewCandidateB,
 			bds_base = BDSBase,
-			no_reward_wallet_list_hash = NoRewardWLH,
 			reward_wallet_before_mining_reward = RewardWalletBeforeMiningReward,
 			txs = ValidTXs
 		},
@@ -250,7 +253,7 @@ calc_diff(CurrentB, NextBlockTimestamp) ->
 %% valid, regenerate a data segment with the new transactions.
 update_txs_or_data_segment(
 	S = #state{
-		current_block = #block{ height = Height, wallet_list = WalletList },
+		current_block = #block{ height = Height, wallet_list = RootHash },
 		txs = TXs,
 		diff = Diff,
 		timestamp = Timestamp
@@ -260,7 +263,8 @@ update_txs_or_data_segment(
 		false ->
 			update_data_segment(S);
 		true ->
-			case filter_by_valid_tx_fee(TXs, Diff, Height, WalletList, Timestamp) of
+			Wallets = ar_wallets:get(RootHash, ar_tx:get_addresses(TXs)),
+			case filter_by_valid_tx_fee(TXs, Diff, Height, Wallets, Timestamp) of
 				TXs ->
 					update_data_segment(S);
 				ValidTXs ->
@@ -287,7 +291,6 @@ update_data_segment(S, BlockTimestamp, Diff) ->
 		poa = POA,
 		bds_base = BDSBase,
 		reward_wallet_before_mining_reward = RewardWalletBeforeMiningReward,
-		no_reward_wallet_list_hash = NoRewardWalletListHash,
 		txs = TXs
 	} = S,
 	Height = CandidateB#block.height,
@@ -307,20 +310,30 @@ update_data_segment(S, BlockTimestamp, Diff) ->
 			Diff,
 			BlockTimestamp
 		),
-	WL = case RewardWalletBeforeMiningReward of
+	RewardWallet = case RewardWalletBeforeMiningReward of
 		not_in_the_list ->
-			[];
-		_ ->
-			[RewardWalletBeforeMiningReward]
+			#{};
+		{Addr, Balance, LastTX} ->
+			#{ Addr => {Balance, LastTX} }
 	end,
 	NewRewardWallet =
-		case ar_node_utils:apply_mining_reward(WL, RewardAddr, FinderReward, Height) of
-			[RW] ->
-				RW;
-			[] ->
-				unclaimed
+		case maps:get(
+			RewardAddr,
+			ar_node_utils:apply_mining_reward(RewardWallet, RewardAddr, FinderReward, Height),
+			not_found
+		) of
+			not_found ->
+				#{};
+			WalletData ->
+				#{ RewardAddr => WalletData }
 		end,
-	WalletListHash = ar_block:hash_wallet_list(NewRewardWallet, NoRewardWalletListHash),
+	{ok, UpdatedRootHash} =
+		ar_wallets:update_wallets(
+			CandidateB#block.wallet_list,
+			NewRewardWallet,
+			RewardAddr,
+			Height
+		),
 	CDiff = ar_difficulty:next_cumulative_diff(
 		CurrentB#block.cumulative_diff,
 		Diff,
@@ -337,7 +350,7 @@ update_data_segment(S, BlockTimestamp, Diff) ->
 					diff => Diff,
 					cumulative_diff => CDiff,
 					reward_pool => RewardPool,
-					wallet_list_hash => WalletListHash
+					wallet_list => UpdatedRootHash
 				}
 			)
 		end
@@ -348,15 +361,14 @@ update_data_segment(S, BlockTimestamp, Diff) ->
 		diff = Diff,
 		cumulative_diff = CDiff,
 		reward_pool = RewardPool,
-		wallet_list_hash = WalletListHash
+		wallet_list = UpdatedRootHash
 	},
 	NewS = S#state {
 		timestamp = BlockTimestamp,
 		diff = Diff,
 		data_segment = NewBDS,
 		data_segment_duration = round(DurationMicros / 1000000),
-		candidate_block = NewCandidateB,
-		reward_wallet = NewRewardWallet
+		candidate_block = NewCandidateB
 	},
 	reschedule_timestamp_refresh(NewS).
 
@@ -400,7 +412,7 @@ server(
 		miners = Miners,
 		current_block = #block{
 			height = Height,
-			wallet_list = WL
+			wallet_list = RootHash
 		},
 		total_hashes_tried = TotalHashesTried,
 		started_at = StartedAt,
@@ -423,7 +435,8 @@ server(
 		{hashes_tried, HashesTried} ->
 			server(S#state { total_hashes_tried = TotalHashesTried + HashesTried });
 		{solution, Hash, Nonce, Timestamp} ->
-			case filter_by_valid_tx_fee(MinedTXs, Diff, Height, WL, Timestamp) of
+			Wallets = ar_wallets:get(RootHash, ar_tx:get_addresses(MinedTXs)),
+			case filter_by_valid_tx_fee(MinedTXs, Diff, Height, Wallets, Timestamp) of
 				MinedTXs ->
 					process_solution(S, Hash, Nonce, MinedTXs, Diff, Timestamp);
 				ValidTXs ->
@@ -435,21 +448,21 @@ server(
 	end.
 
 -ifdef(DEBUG).
-filter_by_valid_tx_fee(TXs, Diff, Height, WalletList, Timestamp) ->
+filter_by_valid_tx_fee(TXs, Diff, Height, Wallets, Timestamp) ->
 	lists:filter(
 		fun
 			(#tx{ signature = <<>> }) ->
 				true;
 			(TX) ->
-				ar_tx:tx_cost_above_min(TX, Diff, Height, WalletList, TX#tx.target, Timestamp)
+				ar_tx:tx_cost_above_min(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)
 		end,
 		TXs
 	).
 -else.
-filter_by_valid_tx_fee(TXs, Diff, Height, WalletList, Timestamp) ->
+filter_by_valid_tx_fee(TXs, Diff, Height, Wallets, Timestamp) ->
 	lists:filter(
 		fun(TX) ->
-			ar_tx:tx_cost_above_min(TX, Diff, Height, WalletList, TX#tx.target, Timestamp)
+			ar_tx:tx_cost_above_min(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)
 		end,
 		TXs
 	).
@@ -464,25 +477,11 @@ process_solution(S, Hash, Nonce, MinedTXs, Diff, Timestamp) ->
 		total_hashes_tried = TotalHashesTried,
 		started_at = StartedAt,
 		data_segment = BDS,
-		reward_addr = RewardAddr,
-		reward_wallet = RewardWallet,
 		candidate_block = #block { diff = Diff, timestamp = Timestamp } = CandidateB
 	} = S,
-	NewWalletList = case RewardAddr of
-		unclaimed ->
-			CandidateB#block.wallet_list;
-		_ ->
-			lists:keyreplace(
-				RewardAddr,
-				1,
-				CandidateB#block.wallet_list,
-				RewardWallet
-			)
-	end,
 	NewBBeforeHash = CandidateB#block{
 		nonce = Nonce,
-		hash = Hash,
-		wallet_list = NewWalletList
+		hash = Hash
 	},
 	IndepHash = ar_weave:indep_hash_post_fork_2_0(BDS, Hash, Nonce),
 	NewB = NewBBeforeHash#block{ indep_hash = IndepHash },
@@ -596,12 +595,14 @@ randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 
 %% @doc Test that found nonces abide by the difficulty criteria.
 basic_test_() ->
-	{timeout, 60, fun test_basic/0}.
+	{timeout, 20, fun test_basic/0}.
 
 test_basic() ->
 	[B0] = ar_weave:init([]),
-	ar_node:start([], [B0]),
-	[B1 | _] = ar_weave:add([B0], []),
+	{Node, _} = ar_test_node:start(B0),
+	ar_node:mine(Node),
+	BI = ar_test_node:wait_until_height(Node, 1),
+	B1 = ar_storage:read_block(hd(BI)),
 	start(B1, B1#block.poa, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0, <<>>}]),
 	assert_mine_output(B1, B1#block.poa, []).
 
@@ -637,6 +638,8 @@ test_excludes_no_longer_valid_txs() ->
 	Address = ar_wallet:to_address(Pub),
 	Wallets = [{Address, ?AR(1000000000000), <<>>}],
 	[B] = ar_weave:init(Wallets, Diff),
+	{Node, _} = ar_test_node:start(B),
+	ar_test_node:wait_until_height(Node, 0),
 	Run = fun() ->
 		Now = os:system_time(seconds),
 		%% The transaction is invalid because its fee is based on a timestamp from the future.
@@ -676,10 +679,9 @@ run_until(Pred, Fun) ->
 
 %% @doc Ensures ar_mine can be started and stopped.
 start_stop_test() ->
-	B0 = ar_weave:init(),
-	ar_node:start([], B0),
-	B1 = ar_weave:add(B0, []),
-	B = hd(B1),
+	[B] = ar_weave:init(),
+	{Node, _} = ar_test_node:start(B),
+	ar_test_node:wait_until_height(Node, 0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
 	PID = start(B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], []),
 	timer:sleep(500),

@@ -13,11 +13,14 @@
 %% @doc Initial $/AR exchange rate.
 -define(INITIAL_USD_PER_AR(Height), fun() ->
 	Forks = {
-		ar_fork:height_1_9()
+		ar_fork:height_1_9(),
+		ar_fork:height_2_2()
 	},
 	case Forks of
-		{Fork_1_9} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2} when Height < Fork_1_9 ->
 			1.5;
+		{_Fork_1_9, Fork_2_2} when Height >= Fork_2_2 ->
+			4;
 		_ ->
 			1.2
 	end
@@ -29,11 +32,14 @@ end).
 %% to the linear diff for price calculations.
 -define(INITIAL_USD_PER_AR_DIFF(Height), fun() ->
 	Forks = {
-		ar_fork:height_1_9()
+		ar_fork:height_1_9(),
+		ar_fork:height_2_2()
 	},
 	case Forks of
-		{Fork_1_9} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2} when Height < Fork_1_9 ->
 			28;
+		{_Fork_1_9, Fork_2_2} when Height >= Fork_2_2 ->
+			34;
 		_ ->
 			29
 	end
@@ -43,12 +49,15 @@ end).
 %% the $/AR exchange rate was ?INITIAL_USD_PER_AR.
 -define(INITIAL_USD_PER_AR_HEIGHT(Height), fun() ->
 	Forks = {
-		ar_fork:height_1_9()
+		ar_fork:height_1_9(),
+		ar_fork:height_2_2()
 	},
 	case Forks of
-		{Fork_1_9} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2} when Height < Fork_1_9 ->
 			ar_fork:height_1_8();
-		{Fork_1_9} ->
+		{_Fork_1_9, Fork_2_2} when Height >= Fork_2_2 ->
+			Fork_2_2;
+		{Fork_1_9, _Fork_2_2} ->
 			Fork_1_9
 	end
 end).

@@ -453,7 +453,8 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 			GroupTXIDs = lists:map(fun(TX) -> TX#tx.id end, Group),
 			?assertEqual(
 				lists:sort(GroupTXIDs),
-				lists:sort((slave_call(ar_storage, read_block, [hd(SlaveBI)]))#block.txs)
+				lists:sort((slave_call(ar_storage, read_block, [hd(SlaveBI)]))#block.txs),
+				io_lib:format("Height ~B", [Height])
 			),
 			Height + 1
 		end,
@@ -598,7 +599,9 @@ joins_network_successfully() ->
 	%% Expect master to fork recover successfully.
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([
-		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
+		{ar_wallet:to_address(Pub), ?AR(20), <<>>},
+		{Addr = crypto:strong_rand_bytes(32), ?AR(20), <<>>},
+		{crypto:strong_rand_bytes(32), ?AR(20), <<>>}
 	]),
 	{Slave, _} = slave_start(B0),
 	{TXs, _} = lists:foldl(
@@ -614,7 +617,7 @@ joins_network_successfully() ->
 						}
 					), block_anchor};
 				3 ->
-					{sign_tx(Key, #{ last_tx => LastTX }), tx_anchor};
+					{sign_tx(Key, #{ last_tx => LastTX, target => Addr }), tx_anchor};
 				4 ->
 					{sign_tx(Key,
 						#{
@@ -681,8 +684,8 @@ joins_network_successfully() ->
 	slave_mine(Slave),
 	BI2 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 1),
 	ar_node:mine(Master),
-	wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 1),
 	connect_to_slave(),
+	wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 1),
 	TX4 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
 	assert_post_tx_to_slave(Slave, TX4),
 	assert_wait_until_receives_txs(Master, [TX4]),
@@ -872,13 +875,36 @@ grouped_txs(FirstAnchorType) ->
 		block_anchor ->
 			B0#block.indep_hash
 	end,
-	Wallet1TX1 = sign_v1_tx(Key1, #{ reward => ?AR(2), data => Chunk1, last_tx => FirstAnchor }),
+	Diff = B0#block.diff,
+	Timestamp = B0#block.timestamp,
+	RewardFun = fun(Size) -> ar_tx:calculate_min_tx_cost(Size, Diff, 1, Timestamp) end,
+	Wallet1TX1 = sign_v1_tx(Key1, #{
+		reward => RewardFun(10 * ?TX_DATA_SIZE_LIMIT), % make it the most expensive tx
+		data => Chunk1,
+		last_tx => FirstAnchor
+	}),
 	%% Block 2: 2 TXs from different wallets.
-	Wallet2TX1 = sign_v1_tx(Key2, #{ reward => ?AR(1), data => Chunk2, last_tx => B0#block.indep_hash }),
-	Wallet1TX2 = sign_v1_tx(Key1, #{ data => Chunk3, last_tx => B0#block.indep_hash }),
+	Wallet2TX1 = sign_v1_tx(Key2, #{
+		reward => RewardFun(9 * ?TX_DATA_SIZE_LIMIT), % make it the second most expensive tx
+		data => Chunk2,
+		last_tx => B0#block.indep_hash
+	}),
+	Wallet1TX2 = sign_v1_tx(Key1, #{
+		reward => RewardFun(byte_size(Chunk3)),
+		data => Chunk3,
+		last_tx => B0#block.indep_hash
+	}),
 	%% Block 3: 2 TXs from the same wallet.
-	Wallet1TX3 = sign_v1_tx(Key1, #{ data => Chunk4, last_tx => B0#block.indep_hash }),
-	Wallet1TX4 = sign_v1_tx(Key1, #{ data => Chunk5, last_tx => B0#block.indep_hash }),
+	Wallet1TX3 = sign_v1_tx(Key1, #{
+		reward => RewardFun(byte_size(Chunk4)),
+		data => Chunk4,
+		last_tx => B0#block.indep_hash
+	}),
+	Wallet1TX4 = sign_v1_tx(Key1, #{
+		reward => RewardFun(byte_size(Chunk5)),
+		data => Chunk5,
+		last_tx => B0#block.indep_hash
+	}),
 	{B0, [[Wallet1TX1], [Wallet2TX1, Wallet1TX2], [Wallet1TX3, Wallet1TX4]]}.
 
 slave_mine_blocks(Slave, TargetHeight) ->

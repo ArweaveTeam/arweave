@@ -1,6 +1,9 @@
 -module(ar_join).
 
--export([start/2, start/3]).
+-export([
+	start/2,
+	start/3
+]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -257,32 +260,27 @@ get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 basic_node_join_test() ->
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
-		Node1 = ar_node:start([], _B0 = ar_weave:init([])),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(300),
-		ar_node:mine(Node1),
-		timer:sleep(600),
-		Node2 = ar_node:start([Node1]),
-		timer:sleep(1500),
-		[B|_] = ar_node:get_blocks(Node2),
-		2 = (ar_storage:read_block(B))#block.height
+		[B0] = ar_weave:init([]),
+		{Node, _} = ar_test_node:start(B0),
+		ar_node:mine(Node),
+		ar_test_node:wait_until_height(Node, 1),
+		ar_node:mine(Node),
+		ar_test_node:wait_until_height(Node, 2),
+		Node2 = ar_test_node:join_on_master(),
+		ar_test_node:assert_slave_wait_until_height(Node2, 2)
 	end}.
 
 %% @doc Ensure that both nodes can mine after a join.
 node_join_test() ->
 	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		Node1 = ar_node:start([], _B0 = ar_weave:init([])),
-		timer:sleep(300),
+		[B0] = ar_weave:init([]),
+		Node1 = ar_test_node:start(B0),
 		ar_node:mine(Node1),
-		timer:sleep(300),
+		ar_test_node:wait_until_height(Node1, 1),
 		ar_node:mine(Node1),
-		timer:sleep(300),
-		Node2 = ar_node:start([Node1]),
-		timer:sleep(600),
-		ar_node:mine(Node2),
-		timer:sleep(1500),
-		[B|_] = ar_node:get_blocks(Node1),
-		3 = (ar_storage:read_block(B))#block.height
+		ar_test_node:wait_until_height(Node1, 2),
+		Node2 = ar_test_node:join_on_master(),
+		ar_test_node:assert_slave_wait_until_height(Node2, 2),
+		ar_test_node:slave_mine(Node2),
+		ar_test_node:wait_until_height(Node1, 3)
 	end}.

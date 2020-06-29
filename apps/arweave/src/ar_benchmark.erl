@@ -14,9 +14,10 @@ run() ->
 		[ar_meta_db:get(max_miners)]
 	),
 	Key = crypto:strong_rand_bytes(32),
+	{ok, _} = ar_wallets:start_link([{recent_block_index, []}, {peers, []}]),
 	ar_randomx_state:init(
 		whereis(ar_randomx_state),
-		ar_randomx_state:swap_height(ar_fork:height_2_0()),
+		ar_randomx_state:swap_height(ar_fork:height_2_2()),
 		Key,
 		erlang:system_info(schedulers_online)
 	),
@@ -58,7 +59,8 @@ mine(Diff) ->
 			timestamp = os:system_time(seconds),
 			last_retarget = os:system_time(seconds),
 			hash_list = [],
-			height = ar_fork:height_2_0()
+			height = ar_fork:height_2_2(),
+			wallet_list = <<>>
 		},
 		ar_mine:start(B, #poa{}, [], unclaimed, [], self(), [], []),
 		receive

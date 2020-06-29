@@ -1,16 +1,19 @@
 -module(ar_retarget).
--export([is_retarget_height/1]).
--export([maybe_retarget/4]).
--export([calculate_difficulty/4]).
--export([validate_difficulty/2]).
--export([switch_to_linear_diff/1]).
+
+-export([
+	is_retarget_height/1,
+	maybe_retarget/4,
+	calculate_difficulty/4,
+	validate_difficulty/2,
+	switch_to_linear_diff/1
+]).
+
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 
 %%% A helper module for deciding when and which blocks will be retarget
 %%% blocks, that is those in which change the current mining difficulty
 %%% on the weave to maintain a constant block time.
-
 
 %% @doc A macro for checking if the given block is a retarget block.
 %% Returns true if so, otherwise returns false.
@@ -165,7 +168,8 @@ validate_difficulty(NewB, OldB) ->
 %% @doc Ensure that after a series of very fast mines, the diff increases.
 simple_retarget_test_() ->
 	{timeout, 300, fun() ->
-		Node = ar_node:start([], ar_weave:init([])),
+		[B0] = ar_weave:init([]),
+		{Node, _} = ar_test_node:start(B0),
 		lists:foreach(
 			fun(Height) ->
 				ar_node:mine(Node),

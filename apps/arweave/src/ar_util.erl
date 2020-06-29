@@ -1,7 +1,3 @@
-%%%
-%%% @doc Useful helpers for the work in Arweave.
-%%%
-
 -module(ar_util).
 
 -export([pick_random/1, pick_random/2]).
@@ -9,7 +5,7 @@
 -export([parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2]).
 -export([replace/3]).
 -export([block_from_block_index/2, hash_from_block_index/2]).
--export([height_from_hashes/1, wallets_from_hashes/1, blocks_from_hashes/1]).
+-export([height_from_hashes/1, blocks_from_hashes/1]).
 -export([get_hash/1, get_head_block/1]).
 -export([genesis_wallets/0]).
 -export([pmap/2]).
@@ -19,9 +15,6 @@
 -export([index_of/2]).
 -export([block_index_entry_from_block/1]).
 -export([reset_peer/1, get_performance/1, update_timer/1]).
-
-%% NOT used. Exported for the historical record.
--export([get_recall_hash/2, get_recall_hash/3]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -76,11 +69,6 @@ height_from_hashes(not_joined) -> -1;
 height_from_hashes(BI) ->
 	(get_head_block(BI))#block.height.
 
-%% @doc Get a wallet list from a hash list.
-wallets_from_hashes(not_joined) -> [];
-wallets_from_hashes(BI) ->
-	(get_head_block(BI))#block.wallet_list.
-
 %% @doc Get block list from hash list.
 blocks_from_hashes([]) -> undefined;
 blocks_from_hashes(BI) ->
@@ -98,24 +86,6 @@ block_from_block_index(Num, BI) ->
 get_head_block(not_joined) -> unavailable;
 get_head_block([{IndepHash, _, _} | _]) ->
 	ar_storage:read_block(IndepHash).
-
-%% @doc Get the hash of the recall block for the current block
-%% and its hash list.
-get_recall_hash(B, BI) when ?IS_BLOCK(B) ->
-	get_recall_hash(B#block.indep_hash, B#block.height, BI).
-
-%% @doc Get the hash of the recall block for the current block's
-%% hash, height, hash list.
-get_recall_hash(H, _Height, []) ->
-	H;
-get_recall_hash(H, Height, BI) ->
-	RecallIndex = case Height of
-		0 ->
-			1;
-		RecallHeight ->
-			1 + binary:decode_unsigned(H) rem RecallHeight
-	end,
-	element(1, lists:nth(RecallIndex, lists:reverse(BI))).
 
 %% @doc Replace a term in a list with another term.
 replace(_, _, []) -> [];
@@ -317,18 +287,6 @@ pmap_test() ->
 		X * 2
 	end,
 	?assertEqual([6, 2, 4], pmap(Mapper, [3, 1, 2])).
-
-recall_block_test() ->
-	ar_storage:clear(),
-	Node = ar_node:start(),
-	B0 = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	Node ! {replace_block_list, B0},
-	receive after 300 -> ok end,
-	ar_node:mine(Node),
-	receive after 300 -> ok end,
-	B3 = ar_node:get_current_block(Node),
-	B3#block.wallet_list.
 
 %% @doc Test finding the index of an element in a list.
 index_of_test() ->

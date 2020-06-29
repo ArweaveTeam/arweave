@@ -358,7 +358,7 @@ random_nonce() ->
 	{<<"nonce">>, integer_to_binary(rand:uniform(1000000))}.
 
 assert_txs_mined(TXs, [{H, _, _} | _]) ->
-	B = ar_storage:read_block_shadow(H),
+	B = ar_storage:read_block(H),
 	TXIDs = [TX#tx.id || TX <- TXs],
 	?assertEqual(length(TXIDs), length(B#block.txs)),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).

@@ -154,10 +154,11 @@ verify_block_txs_test() ->
 			title := Title,
 			txs := TXs,
 			height := Height,
-			wallet_list := WalletList,
+			wallet_list := WL,
 			block_txs_pairs := BlockTXPairs,
 			expected_result := ExpectedResult
 		}) ->
+			Wallets = maps:from_list([{A, {B, LTX}} || {A, B, LTX} <- WL]),
 			?assertEqual(
 				ExpectedResult,
 				ar_tx_replay_pool:verify_block_txs(
@@ -165,7 +166,7 @@ verify_block_txs_test() ->
 					Diff,
 					Height,
 					Timestamp,
-					WalletList,
+					Wallets,
 					BlockTXPairs
 				),
 				Title
@@ -175,7 +176,7 @@ verify_block_txs_test() ->
 				Height,
 				Diff,
 				Timestamp,
-				WalletList,
+				Wallets,
 				TXs
 			),
 			?assertEqual(
@@ -185,7 +186,7 @@ verify_block_txs_test() ->
 					Diff,
 					Height,
 					Timestamp,
-					WalletList,
+					Wallets,
 					BlockTXPairs
 				),
 				lists:flatten(

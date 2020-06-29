@@ -335,7 +335,7 @@ handle_cast({add_historical_block, BH}, State) ->
 		tx_index = TXIndex,
 		tx_offset_index = TXOffsetIndex
 	} = State,
-	case ar_storage:read_block_shadow(BH) of
+	case ar_storage:read_block(BH) of
 		unavailable ->
 			ar:err([
 				{event, ar_data_sync_did_not_find_block},

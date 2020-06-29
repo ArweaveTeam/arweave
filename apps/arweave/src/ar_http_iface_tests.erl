@@ -1,7 +1,3 @@
-%%%
-%%% @doc Tests for ar_http_iface_* modules.
-%%%
-
 -module(ar_http_iface_tests).
 
 -include("ar.hrl").
@@ -10,11 +6,7 @@
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
-	BridgeNode = ar_bridge:start([], [], ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, BridgeNode),
+	ar_test_node:start(no_block),
 	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, name)),
 	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, release)),
 	?assertEqual(?CLIENT_VERSION, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, version)),
@@ -22,24 +14,18 @@ get_info_test() ->
 	?assertEqual(1, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, blocks)),
 	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, height)).
 
-%% @doc Ensure that objects are only re-gossiped once.
-single_regossip_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[B0] = ar_weave:init([]),
-		Node1 = ar_node:start([], [B0]),
-		ar_http_iface_server:reregister(Node1),
-		TX = ar_tx:new(),
-		Responses =
-			lists:map(
-				fun(_) ->
-					timer:sleep(rand:uniform(100)),
-					ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
-				end,
-				lists:seq(1, 10)
-			),
-		?assertEqual(1, length([ processed || {ok, {{<<"200">>, _}, _, _, _, _}} <- Responses ]))
-	end}.
+%% @doc Ensure that transactions are only accepted once.
+single_regossip_test() ->
+	ar_test_node:start(no_block),
+	TX = ar_tx:new(),
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+	),
+	?assertMatch(
+		{ok, {{<<"208">>, _}, _, _, _, _}},
+		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+	).
 
 %% @doc Unjoined nodes should not accept blocks
 post_block_to_unjoined_node_test() ->
@@ -134,72 +120,40 @@ group(Grouper, [Item | List], Acc) ->
 	NewAcc = maps:update_with(Key, Updater, [Item], Acc),
 	group(Grouper, List, NewAcc).
 
-%% @doc Ensure that server info can be retreived via the HTTP interface.
-get_unjoined_info_test() ->
-	ar_storage:clear(),
-	Node1 = ar_node:start([]),
-	ar_http_iface_server:reregister(Node1),
-	BridgeNode = ar_bridge:start([], [], ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, BridgeNode),
-	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, name)),
-	?assertEqual(?CLIENT_VERSION, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, version)),
-	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, peers)),
-	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, blocks)),
-	?assertEqual(-1, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, height)).
-
 %% @doc Check that balances can be retreived over the network.
 get_balance_test() ->
-	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
-	Node1 = ar_node:start([], Bs),
-	ar_http_iface_server:reregister(Node1),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
+	ar_test_node:start(B0),
+	Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => {127, 0, 0, 1, 1984},
-			path => "/wallet/"++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
+			path => "/wallet/" ++ Addr ++ "/balance"
 		}),
 	?assertEqual(10000, binary_to_integer(Body)).
 
 %% @doc Test that heights are returned correctly.
 get_height_test() ->
-	ar_storage:clear(),
-	B0 = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
-	Node1 = ar_node:start([self()], B0),
-	ar_http_iface_server:reregister(Node1),
+	[B0] = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
+	{Node, _} = ar_test_node:start(B0),
 	0 = ar_http_iface_client:get_height({127, 0, 0, 1, 1984}),
-	ar_node:mine(Node1),
-	ar_test_node:wait_until_height(Node1, 1),
+	ar_node:mine(Node),
+	ar_test_node:wait_until_height(Node, 1),
 	1 = ar_http_iface_client:get_height({127, 0, 0, 1, 1984}).
-
-%% @doc Test that wallets issued in the pre-sale can be viewed.
-get_presale_balance_test() ->
-	ar_storage:clear(),
-	{_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
-	Node1 = ar_node:start([], Bs),
-	ar_http_iface_server:reregister(Node1),
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => {127, 0, 0, 1, 1984},
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/balance"
-		}),
-	?assertEqual(10000, binary_to_integer(Body)).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
 get_last_tx_single_test() ->
-	ar_storage:clear(),
 	{_Priv1, Pub1} = ar_wallet:new(),
-	Bs = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<"TEST_ID">>}]),
-	Node1 = ar_node:start([], Bs),
-	ar_http_iface_server:reregister(Node1),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<"TEST_ID">>}]),
+	ar_test_node:start(B0),
+	Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => {127, 0, 0, 1, 1984},
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
+			path => "/wallet/" ++ Addr ++ "/last_tx"
 		}),
 	?assertEqual(<<"TEST_ID">>, ar_util:decode(Body)).
 
@@ -212,48 +166,36 @@ get_time_test() ->
 
 %% @doc Ensure that blocks can be received via a hash.
 get_block_by_hash_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
-	receive after 200 -> ok end,
-	B1 =
-		ar_http_iface_client:get_block(
-			{127, 0, 0, 1, 1984},
-			B0#block.indep_hash
-		),
+	ar_test_node:start(B0),
+	B1 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash),
 	?assertEqual(B0#block{ hash_list = unset }, B1).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
-	{_, B1} =
-		ar_http_iface_client:get_block_shadow(
-			[{127, 0, 0, 1, 1984}],
-			0
-		),
-	?assertEqual(B0#block{ hash_list = unset }, B1#block{ wallet_list = [] }).
+	[B0] = ar_weave:init(),
+	{Node, _} = ar_test_node:start(B0),
+	ar_test_node:wait_until_height(Node, 0),
+	{_, B1} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}], 0),
+	?assertEqual(
+		B0#block{ hash_list = unset, wallet_list = not_set },
+		B1#block{ wallet_list = not_set }
+	).
 
-get_current_block_test() ->
-	ar_storage:clear(),
+get_current_block_test_() ->
+	{timeout, 10, fun test_get_current_block/0}.
+
+test_get_current_block() ->
 	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
+	{Node, _} = ar_test_node:start(B0),
 	ar_util:do_until(
-		fun() -> B0 == ar_node:get_current_block(Node1) end,
+		fun() -> B0 == ar_node:get_current_block(Node) end,
 		100,
 		2000
 	),
 	Peer = {127, 0, 0, 1, 1984},
 	BI = ar_http_iface_client:get_block_index(Peer),
-	B1 =
-		ar_http_iface_client:get_block([Peer], hd(BI)),
+	B1 = ar_http_iface_client:get_block([Peer], hd(BI)),
 	?assertEqual(B0#block{ hash_list = unset }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/current"}),
@@ -265,27 +207,39 @@ get_current_block_test() ->
 %% @doc Test that the various different methods of GETing a block all perform
 %% correctly if the block cannot be found.
 get_non_existent_block_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	Node1 = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node1),
-	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/height/100"}),
-	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/hash/abcd"}),
-	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/height/101/wallet_list"}),
-	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/hash/abcd/wallet_list"}),
-	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/height/101/hash_list"}),
-	{ok, {{<<"404">>, _}, _, _, _, _}}
-		= ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/hash/abcd/hash_list"}).
+	ar_test_node:start(B0),
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
+		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/height/100"}),
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
+		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/hash/abcd"}),
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/block/height/101/wallet_list"
+		}),
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/block/hash/abcd/wallet_list"
+		}),
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/block/height/101/hash_list"
+		}),
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/block/hash/abcd/hash_list"
+		}).
 
 %% @doc A test for retrieving format=2 transactions from HTTP API.
 get_format_2_tx_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	{Node, _} = ar_test_node:start(B0),
 	DataRoot = (ar_tx:generate_chunk_tree(#tx{ data = <<"DATA">> }))#tx.data_root,
@@ -347,7 +301,6 @@ get_format_2_tx_test() ->
 	).
 
 get_format_1_tx_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	{Node, _} = ar_test_node:start(B0),
 	TX = #tx{ id = TXID } = ar_tx:new(<<"DATA">>),
@@ -365,31 +318,9 @@ get_format_1_tx_test() ->
 	?assertEqual(TX, ar_serialize:json_struct_to_tx(Body)).
 
 %% @doc Test adding transactions to a block.
-add_external_tx_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
-	[B1 | _] = ar_node:get_blocks(Node),
-	TXID = TX#tx.id,
-	?assertEqual([TXID], (ar_storage:read_block(B1))#block.txs).
-
-%% @doc Test adding transactions to a block.
 add_external_tx_with_tags_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	TX = ar_tx:new(<<"DATA">>),
 	TaggedTX =
 		TX#tx {
@@ -411,29 +342,18 @@ add_external_tx_with_tags_test() ->
 
 %% @doc Test getting transactions
 find_external_tx_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init(),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
 	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
 	ar_test_node:wait_until_height(Node, 1),
-	% write a get_tx function like get_block
 	FoundTXID = (ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], TX#tx.id, maps:new()))#tx.id,
 	?assertEqual(FoundTXID, TX#tx.id).
 
 fail_external_tx_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init(),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	TX = ar_tx:new(<<"DATA">>),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
 	ar_test_node:wait_until_receives_txs(Node, [TX]),
@@ -442,134 +362,79 @@ fail_external_tx_test() ->
 	BadTX = ar_tx:new(<<"BADDATA">>),
 	?assertEqual(not_found, ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], BadTX#tx.id, maps:new())).
 
-%% @doc Ensure that blocks can be added to a network from outside
-%% a single node.
-add_external_block_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		[BGen] = ar_weave:init([]),
-		Node1 = ar_node:start([], [BGen]),
-		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
-		timer:sleep(500),
-		Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
-		ar_http_iface_server:reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node1, Bridge),
-		Node2 = ar_node:start([], [BGen]),
-		ar_node:mine(Node2),
-		ar_util:do_until(
-			fun() ->
-				length(ar_node:get_blocks(Node2)) == 2
-			end,
-			100,
-			10 * 1000
-		),
-		[BIEntry2 = {BH2, _, _} | _] = ar_node:get_blocks(Node2),
-		ar_http_iface_server:reregister(Node1),
-		send_new_block(
-			{127, 0, 0, 1, 1984},
-			(ar_storage:read_block(BH2))#block{ hash_list = [BGen#block.indep_hash] }
-		),
-		% Wait for test block and assert.
-		?assert(ar_util:do_until(
-			fun() ->
-				length(ar_node:get_blocks(Node1)) > 1
-			end,
-			1000,
-			10 * 1000
-		)),
-		[BIEntry1 | _] = ar_node:get_blocks(Node1),
-		?assertEqual(BIEntry1, BIEntry2)
-	end}.
-
 %% @doc POST block with bad "block_data_segment" field in json
 add_external_block_with_bad_bds_test_() ->
-	{timeout, 20, fun() ->
-		Setup = fun() ->
-			ar_storage:clear(),
-			ar_blacklist_middleware:reset(),
-			[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
-			BI0 = [{B0#block.indep_hash, 0, <<>>}],
-			NodeWithBridge = ar_node:start([], [B0]),
-			Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
-			OtherNode = ar_node:start([], [B0]),
-			timer:sleep(500),
-			ar_http_iface_server:reregister(http_bridge_node, Bridge),
-			ar_http_iface_server:reregister(http_entrypoint_node, NodeWithBridge),
-			{BI0, {NodeWithBridge, {127, 0, 0, 1, 1984}}, OtherNode}
-		end,
-		BlocksFromStorage = fun(BI) ->
-			B = ar_storage:read_block(element(1, hd(BI))),
-			POA = ar_poa:generate(BI),
-			{B#block{ hash_list = ?BI_TO_BHL(tl(BI)) }, POA}
-		end,
-		{BI0, {RemoteNode, RemotePeer}, LocalNode} = Setup(),
-		BI1 = mine_one_block(LocalNode, BI0),
-		?assertMatch(BI0, ar_node:get_blocks(RemoteNode)),
-		{B1, _} = BlocksFromStorage(BI1),
-		?assertMatch(
-			{ok, {{<<"200">>, _}, _, _, _, _}},
-			send_new_block(RemotePeer, B1)
-		),
-		%% Try to post the same block again
-		?assertMatch(
-			{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
-			send_new_block(RemotePeer, B1)
-		),
-		%% Try to post the same block again, but with a different data segment
-		?assertMatch(
-			{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
-			ar_http_iface_client:send_new_block(
-				RemotePeer,
-				B1,
-				add_rand_suffix(<<"other-block-data-segment">>)
-			)
-		),
-		%% Try to post an invalid data segment. This triggers a ban in ar_blacklist_middleware.
-		?assertMatch(
-			{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
-			ar_http_iface_client:send_new_block(
-				RemotePeer,
-				B1#block{indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>>},
-				add_rand_suffix(<<"bad-block-data-segment">>)
-			)
-		),
-		%% Verify the IP address of self is banned in ar_blacklist_middleware.
-		?assertMatch(
-			{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
-			ar_http_iface_client:send_new_block(
-				RemotePeer,
-				B1#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)},
-				add_rand_suffix(<<"bad-block-data-segment">>)
-			)
-		),
-		ar_blacklist_middleware:reset()
-	end}.
+	{timeout, 20, fun test_add_external_block_with_bad_bds/0}.
+
+test_add_external_block_with_bad_bds() ->
+	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
+	ar_test_node:start(B0),
+	{Slave, _} = ar_test_node:slave_start(B0),
+	ar_test_node:slave_mine(Slave),
+	BI = ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	Peer = {127, 0, 0, 1, 1984},
+	B1Shadow =
+		(ar_test_node:slave_call(ar_storage, read_block, [hd(BI)]))#block{
+			hash_list = [B0#block.indep_hash]
+		},
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		send_new_block(Peer, B1Shadow)
+	),
+	%% Try to post the same block again
+	?assertMatch(
+		{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
+		send_new_block(Peer, B1Shadow)
+	),
+	%% Try to post the same block again, but with a different data segment
+	?assertMatch(
+		{ok, {{<<"208">>, _}, _, <<"Block already processed.">>, _, _}},
+		ar_http_iface_client:send_new_block(
+			Peer,
+			B1Shadow,
+			add_rand_suffix(<<"other-block-data-segment">>)
+		)
+	),
+	%% Try to post an invalid data segment. This triggers a ban in ar_blacklist_middleware.
+	?assertMatch(
+		{ok, {{<<"400">>, _}, _, <<"Invalid Block Proof of Work">>, _, _}},
+		ar_http_iface_client:send_new_block(
+			Peer,
+			B1Shadow#block{indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>>},
+			add_rand_suffix(<<"bad-block-data-segment">>)
+		)
+	),
+	%% Verify the IP address of self is banned in ar_blacklist_middleware.
+	?assertMatch(
+		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
+		ar_http_iface_client:send_new_block(
+			Peer,
+			B1Shadow#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)},
+			add_rand_suffix(<<"bad-block-data-segment">>)
+		)
+	),
+	ar_blacklist_middleware:reset().
 
 add_external_block_with_invalid_timestamp_test() ->
-	Setup = fun() ->
-		ar_storage:clear(),
-		ar_blacklist_middleware:reset(),
-		[B0] = ar_weave:init([]),
-		BI0 = [{B0#block.indep_hash, 0, <<>>}],
-		NodeWithBridge = ar_node:start([], [B0]),
-		Bridge = ar_bridge:start([], NodeWithBridge, ?DEFAULT_HTTP_IFACE_PORT),
-		OtherNode = ar_node:start([], [B0]),
-		timer:sleep(500),
-		ar_http_iface_server:reregister(http_bridge_node, Bridge),
-		ar_http_iface_server:reregister(http_entrypoint_node, NodeWithBridge),
-		{BI0, {127, 0, 0, 1, 1984}, OtherNode}
-	end,
-	{BI0, RemotePeer, LocalNode} = Setup(),
-	BI1 = mine_one_block(LocalNode, BI0),
-	B1 = (ar_storage:read_block(hd(BI1)))#block{ hash_list = ?BI_TO_BHL(BI0) },
+	ar_blacklist_middleware:reset(),
+	[B0] = ar_weave:init([]),
+	ar_test_node:start(B0),
+	{Slave, _} = ar_test_node:slave_start(B0),
+	ar_test_node:slave_mine(Slave),
+	BI = ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	Peer = {127, 0, 0, 1, 1984},
+	B1Shadow =
+		(ar_test_node:slave_call(ar_storage, read_block, [hd(BI)]))#block{
+			hash_list = [B0#block.indep_hash]
+		},
 	%% Expect the timestamp too far from the future to be rejected
 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
 		send_new_block(
-			RemotePeer,
-			B1#block {
+			Peer,
+			B1Shadow#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = TooFarFutureTimestamp
 			}
@@ -580,8 +445,8 @@ add_external_block_with_invalid_timestamp_test() ->
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
-			RemotePeer,
-			B1#block {
+			Peer,
+			B1Shadow#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = OkFutureTimestamp
 			}
@@ -598,8 +463,8 @@ add_external_block_with_invalid_timestamp_test() ->
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
 		send_new_block(
-			RemotePeer,
-			B1#block {
+			Peer,
+			B1Shadow#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = TooFarPastTimestamp
 			}
@@ -610,8 +475,8 @@ add_external_block_with_invalid_timestamp_test() ->
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(
-			RemotePeer,
-			B1#block {
+			Peer,
+			B1Shadow#block {
 				indep_hash = add_rand_suffix(<<"random-hash">>),
 				timestamp = OkPastTimestamp
 			}
@@ -622,57 +487,9 @@ add_rand_suffix(Bin) ->
 	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
 	iolist_to_binary([Bin, " - ", Suffix]).
 
-%% @doc Ensure that blocks with tx can be added to a network from outside
-%% a single node.
-add_external_block_with_tx_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		ar_blacklist_middleware:reset(),
-		[BGen] = ar_weave:init([]),
-		Node1 = ar_node:start([], [BGen]),
-		timer:sleep(500),
-		Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
-		ar_node:add_peers(Node1, Bridge),
-		% Start node 2, add transaction, and wait until mined.
-		Node2 = ar_node:start([], [BGen]),
-		ar_http_iface_server:reregister(http_entrypoint_node, Node1),
-		ar_http_iface_server:reregister(http_bridge_node, Bridge),
-		TX = ar_tx:new(<<"TEST DATA">>),
-		ar_node:add_tx(Node2, TX),
-		ar_test_node:wait_until_receives_txs(Node2, [TX]),
-		ar_node:mine(Node2),
-		ar_util:do_until(
-			fun() ->
-				[BH | _] = ar_node:get_blocks(Node2),
-				B = ar_storage:read_block(BH),
-				lists:member(TX#tx.id, B#block.txs)
-			end,
-			500,
-			10 * 1000
-		),
-		[BTest | _] = ar_node:get_blocks(Node2),
-		BSend = (ar_storage:read_block(BTest))#block{ hash_list = [BGen#block.indep_hash] },
-		?assertMatch(
-			{ok, {{<<"200">>, _}, _, _, _, _}},
-			send_new_block({127, 0, 0, 1, 1984}, BSend)
-		),
-		% Wait for test block and assert that it contains transaction.
-		?assert(ar_util:do_until(
-			fun() ->
-				length(ar_node:get_blocks(Node1)) > 1
-			end,
-			500,
-			10 * 1000
-		)),
-		[BH | _] = ar_node:get_blocks(Node1),
-		B = ar_storage:read_block(BH),
-		?assert(lists:member(TX#tx.id, B#block.txs))
-	end}.
-
 mine_illicit_tx_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
-	Node = ar_node:start([], [B0]),
+	{Node, _} = ar_test_node:start(B0),
 	TX = ar_tx:new(<<"BADCONTENT1">>),
 	ar_node:add_tx(Node, TX),
 	ar_test_node:wait_until_receives_txs(Node, [TX]),
@@ -690,36 +507,11 @@ mine_illicit_tx_test() ->
 	ar_test_node:wait_until_height(Node, 2),
 	?assertEqual(unavailable, ar_storage:read_tx(FilteredTX#tx.id)).
 
-fork_recover_by_http_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	Node1 = ar_node:start([], [B0]),
-	Bridge = ar_bridge:start([], Node1, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node1, Bridge),
-	Node2 = ar_node:start([], [B0]),
-	timer:sleep(500),
-	ar_http_iface_server:reregister(Node1),
-	BI0 = [{B0#block.indep_hash, 0, <<>>}],
-	FullBI = mine_n_blocks(Node2, BI0, 10),
-	%% Send only the latest block to Node1 and let it fork recover up to it.
-	B = (ar_storage:read_block(hd(FullBI)))#block{ hash_list = ?BI_TO_BHL(tl(FullBI)) },
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		send_new_block({127, 0, 0, 1, 1984}, B)
-	),
-	ar_test_node:wait_until_block_block_index(Node1, FullBI).
-
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
-	ar_storage:clear(),
 	{Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
@@ -738,13 +530,8 @@ add_tx_and_get_last_test() ->
 
 %% @doc Post a tx to the network and ensure that its subfields can be gathered
 get_subfields_of_tx_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init(),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
 	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
@@ -761,13 +548,8 @@ get_subfields_of_tx_test() ->
 
 %% @doc Correctly check the status of pending is returned for a pending transaction
 get_pending_tx_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init(),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
 	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	%write a get_tx function like get_block
@@ -779,63 +561,10 @@ get_pending_tx_test() ->
 		}),
 	?assertEqual(<<"Pending">>, Body).
 
-%% @doc Find all pending transactions in the network
-%% TODO: Fix test to send txs from different wallets
-get_multiple_pending_txs_test_() ->
-	%% TODO: faulty test: having multiple txs against a single wallet
-	%% in a single block is problematic.
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		W1 = ar_wallet:new(),
-		W2 = ar_wallet:new(),
-		TX1 = ar_tx:new(<<"DATA1">>, ?AR(999)),
-		TX2 = ar_tx:new(<<"DATA2">>, ?AR(999)),
-		SignedTX1 = ar_tx:sign_v1(TX1, W1),
-		SignedTX2 = ar_tx:sign_v1(TX2, W2),
-		[B0] =
-			ar_weave:init(
-				[
-					{ar_wallet:to_address(W1), ?AR(1000), <<>>},
-					{ar_wallet:to_address(W2), ?AR(1000), <<>>}
-				]
-			),
-		Node = ar_node:start([], [B0]),
-		ar_http_iface_server:reregister(Node),
-		Bridge = ar_bridge:start([], [Node], ?DEFAULT_HTTP_IFACE_PORT),
-		ar_http_iface_server:reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1,1984}, SignedTX1),
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1,1984}, SignedTX2),
-		% Wait for pending blocks.
-		{ok, PendingTXs} = ar_util:do_until(
-			fun() ->
-				{ok, {{<<"200">>, _}, _, Body, _, _}} =
-					ar_http:req(#{
-						method => get,
-						peer => {127, 0, 0, 1, 1984},
-						path => "/tx/pending"
-					}),
-				PendingTXs = ar_serialize:dejsonify(Body),
-				case length(PendingTXs) of
-					2 -> {ok, PendingTXs};
-					_ -> false
-				end
-			end,
-			1000,
-			45000
-		),
-		2 = length(PendingTXs)
-	end}.
-
 %% @doc Mine a transaction into a block and retrieve it's binary body via HTTP.
 get_tx_body_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init(),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	TX = ar_tx:new(<<"TEST DATA">>),
 	% Add tx to network
 	ar_node:add_tx(Node, TX),
@@ -849,7 +578,6 @@ get_tx_body_test() ->
 
 get_txs_by_send_recv_test_() ->
 	{timeout, 60, fun() ->
-		ar_storage:clear(),
 		{Priv1, Pub1} = ar_wallet:new(),
 		{Priv2, Pub2} = ar_wallet:new(),
 		{_Priv3, Pub3} = ar_wallet:new(),
@@ -857,18 +585,16 @@ get_txs_by_send_recv_test_() ->
 		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 		SignedTX2 = ar_tx:sign_v1(TX2, Priv2, Pub2),
-		B0 = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		Node1 = ar_node:start([], B0),
-		Node2 = ar_node:start([Node1], B0),
-		ar_node:add_peers(Node1, Node2),
-		ar_node:add_tx(Node1, SignedTX),
-		ar_test_node:wait_until_receives_txs(Node1, [SignedTX]),
-		ar_node:mine(Node1),
-		ar_test_node:wait_until_height(Node1, 1),
-		ar_node:add_tx(Node2, SignedTX2),
-		ar_test_node:wait_until_receives_txs(Node2, [SignedTX2]),
-		ar_node:mine(Node2),
-		ar_test_node:wait_until_height(Node2, 2),
+		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+		{Node, _} = ar_test_node:start(B0),
+		ar_node:add_tx(Node, SignedTX),
+		ar_test_node:wait_until_receives_txs(Node, [SignedTX]),
+		ar_node:mine(Node),
+		ar_test_node:wait_until_height(Node, 1),
+		ar_node:add_tx(Node, SignedTX2),
+		ar_test_node:wait_until_receives_txs(Node, [SignedTX2]),
+		ar_node:mine(Node),
+		ar_test_node:wait_until_height(Node, 2),
 		QueryJSON = ar_serialize:jsonify(
 			ar_serialize:query_to_json_struct(
 					{'or',
@@ -908,10 +634,9 @@ get_txs_by_send_recv_test_() ->
 	end}.
 
 get_tx_status_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init([]),
-	Node = ar_node:start([], [B0]),
-	TX = (ar_tx:new())#tx {tags = [{<<"TestName">>, <<"TestVal">>}]},
+	{Node, _} = ar_test_node:start(B0),
+	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
 	ar_node:add_tx(Node, TX),
 	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	FetchStatus = fun() ->
@@ -947,24 +672,24 @@ get_tx_status_test() ->
 		},
 		maps:from_list(Res2)
 	),
-	%% Emulate fork recovering to a fork where the TX doesn't exist
-	[ForkB0] = ar_weave:init([]),
-	Node ! {replace_block_list, [ForkB0]},
-	receive after 50 -> ok end,
+	%% Create a fork where the TX doesn't exist.
+	{Slave, _} = ar_test_node:slave_start(B0),
+	ar_test_node:connect_to_slave(),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 2),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:wait_until_height(Node, 3),
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, FetchStatus()).
 
 post_unsigned_tx_test_() ->
 	{timeout, 20, fun post_unsigned_tx/0}.
 
 post_unsigned_tx() ->
-	ar_storage:clear(),
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(5000), <<>>}]),
-	Node = ar_node:start([], [B0]),
-	ar_http_iface_server:reregister(Node),
-	Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
+	{Node, _} = ar_test_node:start(B0),
 	%% Generate a wallet and receive a wallet access code.
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
@@ -1064,16 +789,10 @@ post_unsigned_tx() ->
 
 get_wallet_txs_test_() ->
 	{timeout, 10, fun() ->
-		ar_storage:clear(),
-		%% Create a wallet
 		{_, Pub} = ar_wallet:new(),
 		WalletAddress = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub), 10000, <<>>}]),
-		Node = ar_node:start([], [B0]),
-		ar_http_iface_server:reregister(Node),
-		Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-		ar_http_iface_server:reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
+		{Node, _} = ar_test_node:start(B0),
 		{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
 			ar_http:req(#{
 				method => get,
@@ -1145,7 +864,6 @@ get_wallet_txs_test_() ->
 
 get_wallet_deposits_test_() ->
 	{timeout, 10, fun() ->
-		ar_storage:clear(),
 		%% Create a wallet to transfer tokens to
 		{_, PubTo} = ar_wallet:new(),
 		WalletAddressTo = binary_to_list(ar_util:encode(ar_wallet:to_address(PubTo))),
@@ -1155,11 +873,7 @@ get_wallet_deposits_test_() ->
 			{ar_wallet:to_address(PubTo), 0, <<>>},
 			{ar_wallet:to_address(PubFrom), 200, <<>>}
 		]),
-		Node = ar_node:start([], [B0]),
-		ar_http_iface_server:reregister(Node),
-		Bridge = ar_bridge:start([], Node, ?DEFAULT_HTTP_IFACE_PORT),
-		ar_http_iface_server:reregister(http_bridge_node, Bridge),
-		ar_node:add_peers(Node, Bridge),
+		{Node, _} = ar_test_node:start(B0),
 		GetTXs = fun(EarliestDeposit) ->
 			BasePath = "/wallet/" ++ WalletAddressTo ++ "/deposits",
 			Path = 	BasePath ++ "/" ++ EarliestDeposit,
@@ -1222,13 +936,16 @@ get_wallet_deposits_test_() ->
 		)
 	end}.
 
-%% @doc Post a tx and try fetch data with limitation of data size
+%% @doc Ensure the HTTP client stops fetching data from an endpoint when its data size
+%% limit is exceeded.
 get_error_of_data_limit_test() ->
-	ar_storage:clear(),
 	[B0] = ar_weave:init(),
 	{Node, _} = ar_test_node:start(B0),
 	Limit = 1460,
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>)),
+	ar_http_iface_client:send_new_tx(
+		{127, 0, 0, 1, 1984},
+		TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>)
+	),
 	ar_test_node:wait_until_receives_txs(Node, [TX]),
 	ar_node:mine(Node),
 	ar_test_node:wait_until_height(Node, 1),
@@ -1240,20 +957,6 @@ get_error_of_data_limit_test() ->
 			limit => Limit
 		}),
 	?assertEqual({error, too_much_data}, Resp).
-
-%% Utility functions
-
-mine_n_blocks(_, BI, 0) ->
-	BI;
-mine_n_blocks(Node, PreMineBI, N) ->
-	PostMineBI = mine_one_block(Node, PreMineBI),
-	mine_n_blocks(Node, PostMineBI, N - 1).
-
-mine_one_block(Node, PreMineBI) ->
-	ar_node:mine(Node),
-	PostMineBI = ar_test_node:wait_until_height(Node, length(PreMineBI)),
-	?assertMatch([_ | PreMineBI], PostMineBI),
-	PostMineBI.
 
 send_new_block(Peer, B) ->
 	ar_http_iface_client:send_new_block(Peer, B, ar_block:generate_block_data_segment(B)).

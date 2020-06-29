@@ -138,7 +138,10 @@ test_get_queue_endpoint() ->
 	Actual = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
 	?assertEqual(Expected, Actual).
 
-test_txs_are_included_in_blocks_sorted_by_utility_test() ->
+test_txs_are_included_in_blocks_sorted_by_utility_test_() ->
+	{timeout, 20, fun test_txs_are_included_in_blocks_sorted_by_utility/0}.
+
+test_txs_are_included_in_blocks_sorted_by_utility() ->
 	{MasterNode, SlaveNode, Wallet} = setup(),
 	TXs = [
 		%% Base size, extra reward.
