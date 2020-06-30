@@ -169,6 +169,8 @@ update_state_metrics(KeyValues) ->
 			record_mempool_size(MempoolSize);
 		({weave_size, WeaveSize}) ->
 			prometheus_gauge:set(weave_size, WeaveSize);
+		({wallet_list, WalletList}) ->
+			prometheus_gauge:set(wallet_list_size, length(WalletList));
 		(_) ->
 			ok
 	end, KeyValues).
