@@ -15,8 +15,7 @@
 	get_tx_offset/1,
 	get_sync_record_etf/0,
 	get_sync_record_json/0,
-	add_historical_block/1,
-	reset/0
+	add_historical_block/1
 ]).
 
 -include("ar.hrl").
@@ -110,10 +109,6 @@ get_sync_record_json() ->
 
 add_historical_block(BH) ->
 	gen_server:cast(?MODULE, {add_historical_block, BH}).
-
-reset() ->
-	ar_storage:delete_term(data_sync_state),
-	ar_kv:destroy("ar_data_sync_db").
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -642,6 +637,18 @@ handle_call(get_sync_record_json, _From, #sync_data_state{ sync_record = SyncRec
 	Limit = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
 	{reply, {ok, ar_intervals:to_json(SyncRecord, Limit)}, State}.
 
+-ifdef(DEBUG).
+terminate(_Reason, #sync_data_state{ status = not_joined }) ->
+	ar_storage:delete_term(data_sync_state),
+	ar_kv:destroy("ar_data_sync_db");
+terminate(_Reason, State) ->
+	#sync_data_state{
+		chunks_index = {DB, _}
+	} = State,
+	ar_kv:close(DB),
+	ar_storage:delete_term(data_sync_state),
+	ar_kv:destroy("ar_data_sync_db").
+-else.
 terminate(_Reason, #sync_data_state{ status = not_joined }) ->
 	ok;
 terminate(Reason, State) ->
@@ -650,6 +657,7 @@ terminate(Reason, State) ->
 		chunks_index = {DB, _}
 	} = State,
 	ar_kv:close(DB).
+-endif.
 
 %%%===================================================================
 %%% Private functions.

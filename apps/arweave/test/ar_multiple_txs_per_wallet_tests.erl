@@ -601,7 +601,7 @@ joins_network_successfully() ->
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
 	{Slave, _} = slave_start(B0),
-	slave_call(ar_meta_db, put, [requests_per_minute_limit, 10000]),
+	disconnect_from_slave(),
 	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
 			{TX, AnchorType} = case rand:uniform(4) of
@@ -632,13 +632,13 @@ joins_network_successfully() ->
 		{[], <<>>},
 		lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)
 	),
-	ar_data_sync:reset(),
 	Master = join_on_slave(),
 	BI = slave_call(ar_node, get_block_index, [Slave]),
 	assert_wait_until_block_block_index(Master, BI),
 	TX1 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		post_tx_to_master(Master, TX1),
+	disconnect_from_slave(),
 	TX2 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
 	assert_post_tx_to_master(Master, TX2),
 	%% Expect transactions to be on master.
@@ -651,16 +651,20 @@ joins_network_successfully() ->
 	),
 	lists:foreach(
 		fun({TX, AnchorType}) ->
-			forget_txs([TX]),
 			Reply = post_tx_to_master(Master, TX),
 			case AnchorType of
 				tx_anchor ->
-					?assertMatch({ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}}, Reply);
+					?assertMatch(
+						{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}},
+						Reply
+					);
 				block_anchor ->
-					case lists:member(TX#tx.last_tx, lists:sublist(?BI_TO_BHL(BI), ?MAX_TX_ANCHOR_DEPTH)) of
+					RecentBHL = lists:sublist(?BI_TO_BHL(BI), ?MAX_TX_ANCHOR_DEPTH),
+					case lists:member(TX#tx.last_tx, RecentBHL) of
 						true ->
 							?assertMatch(
-								{ok, {{<<"400">>, _}, _, <<"Transaction is already on the weave.">>, _, _}},
+								{ok, {{<<"400">>, _}, _,
+									<<"Transaction is already on the weave.">>, _, _}},
 								Reply
 							);
 						false ->
@@ -673,12 +677,12 @@ joins_network_successfully() ->
 		end,
 		TXs
 	),
-	disconnect_from_slave(),
 	TX3 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
 	assert_post_tx_to_slave(Slave, TX3),
 	slave_mine(Slave),
 	BI2 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 1),
 	ar_node:mine(Master),
+	wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 1),
 	connect_to_slave(),
 	TX4 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
 	assert_post_tx_to_slave(Slave, TX4),

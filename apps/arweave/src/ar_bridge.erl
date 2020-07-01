@@ -43,7 +43,7 @@ start(ExtPeers, IntPeers, Port) ->
 	),
 	receive after 250 -> ok end,
     PID =
-		spawn(
+		spawn_link(
 			fun() ->
 				ok = ar_tx_queue:start_link(),
 				server(

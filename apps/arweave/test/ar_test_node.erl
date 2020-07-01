@@ -1,6 +1,6 @@
 -module(ar_test_node).
 
--export([start/1, start/2, start/3, slave_start/1, slave_start/2]).
+-export([start/1, start/2, slave_start/1, slave_start/2]).
 -export([connect_to_slave/0, disconnect_from_slave/0]).
 -export([slave_call/3, slave_call/4]).
 -export([gossip/2, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
@@ -25,6 +25,7 @@
 -export([post_and_mine/2]).
 
 -include("src/ar.hrl").
+-include("src/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 start(no_block) ->
@@ -33,10 +34,6 @@ start(no_block) ->
 start(B0) ->
 	start(B0, unclaimed).
 
-start(B0, RewardAddr) ->
-	ar_storage:write_full_block(B0),
-	start(B0, {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, RewardAddr).
-
 slave_start(no_block) ->
 	[B0] = slave_call(ar_weave, init, [[]]),
 	slave_start(B0, unclaimed);
@@ -44,50 +41,37 @@ slave_start(B0) ->
 	slave_start(B0, unclaimed).
 
 slave_start(B0, RewardAddr) ->
-	slave_call(ar_storage, write_full_block, [B0]),
-	slave_call(?MODULE, start, [B0, {127, 0, 0, 1, ar_meta_db:get(port)}, RewardAddr]).
+	slave_call(?MODULE, start, [B0, RewardAddr]).
 
-stop_node() ->
-	ar_tx_queue:stop(),
-	ar_downloader:reset(),
-	ok = kill_if_running([http_bridge_node, http_entrypoint_node]),
-	ok = gen_server:stop(ar_data_sync).
+stop() ->
+	{ok, Config} = application:get_env(arweave, config),
+	ok = application:stop(arweave),
+	ok = ar:stop_dependencies(),
+	Config.
 
-start(B0, Peer, RewardAddr) ->
-	ar_storage:clear(),
-	stop_node(),
-	ar_data_sync:reset(),
-	Node = ar_node:start([], [B0], 0, RewardAddr),
-	ar_http_iface_server:reregister(http_entrypoint_node, Node),
-	ar_meta_db:reset_peer(Peer),
-	Bridge = ar_bridge:start([], Node, ar_meta_db:get(port)),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
-	{Node, B0}.
-
-kill_if_running([Name | Names]) ->
-	case whereis(Name) of
-		undefined ->
-			do_nothing;
-		PID ->
-			exit(PID, kill)
-	end,
-	kill_if_running(Names);
-kill_if_running([]) ->
-	ok.
+start(B0, RewardAddr) ->
+	ar_storage:write_full_block(B0),
+	ok = ar_storage:write_block_index([ar_util:block_index_entry_from_block(B0)]),
+	Config = stop(),
+	ok = application:set_env(arweave, config, Config#config{
+		start_from_block_index = true,
+		peers = [],
+		mining_addr = RewardAddr
+	}),
+	{ok, _} = application:ensure_all_started(arweave, permanent),
+	{whereis(http_entrypoint_node), B0}.
 
 join_on_slave() ->
 	join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).
 
 join(Peer) ->
-	stop_node(),
-	Node = ar_node:start([Peer]),
-	ar_http_iface_server:reregister(http_entrypoint_node, Node),
-	ar_meta_db:reset_peer(Peer),
-	Bridge = ar_bridge:start([], Node, ar_meta_db:get(port)),
-	ar_http_iface_server:reregister(http_bridge_node, Bridge),
-	ar_node:add_peers(Node, Bridge),
-	Node.
+	Config = stop(),
+	ok = application:set_env(arweave, config, Config#config{
+		start_from_block_index = false,
+		peers = [Peer]
+	}),
+	{ok, _} = application:ensure_all_started(arweave, permanent),
+	whereis(http_entrypoint_node).
 
 join_on_master() ->
 	slave_call(ar_test_node, join, [{127, 0, 0, 1, ar_meta_db:get(port)}]).
@@ -128,7 +112,10 @@ disconnect_from_slave() ->
 	SlaveBridge = slave_call(erlang, whereis, [http_bridge_node]),
 	slave_call(ar_bridge, set_remote_peers, [SlaveBridge, []]),
 	MasterBridge = whereis(http_bridge_node),
-	ar_bridge:set_remote_peers(MasterBridge, []).
+	ar_bridge:set_remote_peers(MasterBridge, []),
+	ar_node:set_trusted_peers(whereis(http_entrypoint_node), []),
+	SlaveNode = slave_call(erlang, whereis, [http_entrypoint_node]),
+	slave_call(ar_node, set_trusted_peers, [SlaveNode, []]).
 
 gossip(off, Node) ->
 	ar_node:set_loss_probability(Node, 1);

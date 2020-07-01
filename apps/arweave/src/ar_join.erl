@@ -14,9 +14,10 @@
 %% @doc Start a process that will attempt to join a network from the last
 %% sync block.
 start(Peers, NewB) when is_record(NewB, block) ->
-	start(self(), Peers, NewB);
+	spawn(fun() -> start(self(), Peers, NewB) end);
 start(Node, Peers) ->
-	start(Node, Peers, find_current_block(Peers)).
+	spawn(fun() -> start(Node, Peers, find_current_block(Peers)) end).
+
 start(_, [], _) ->
 	ar:report_console([not_joining, {reason, no_peers}]);
 start(Node, Peers, B) when is_atom(B) ->
@@ -28,12 +29,7 @@ start(Node, Peers, B) when is_atom(B) ->
 	),
 	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
 start(Node, RawPeers, {NewB, BI}) ->
-	case whereis(join_server) of
-		undefined ->
-			PID = spawn(fun() -> do_join(Node, RawPeers, NewB, BI) end),
-			erlang:register(join_server, PID);
-		_ -> already_running
-	end.
+	do_join(Node, RawPeers, NewB, BI).
 
 %% @doc Perform the joining process.
 do_join(_Node, _RawPeers, NewB, _BI) when not ?IS_BLOCK(NewB) ->
@@ -45,6 +41,7 @@ do_join(_Node, _RawPeers, NewB, _BI) when not ?IS_BLOCK(NewB) ->
 		]
 	);
 do_join(Node, RawPeers, NewB, BI) ->
+	register(join_server, self()),
 	case verify_time_sync(RawPeers) of
 		false ->
 			ar:err(

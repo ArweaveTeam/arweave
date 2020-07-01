@@ -56,7 +56,6 @@ post_block_to_unjoined_node_test() ->
 	end.
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
--spec node_blacklisting_get_spammer_test() -> ok.
 node_blacklisting_get_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
 	node_blacklisting_test_frame(
@@ -67,7 +66,6 @@ node_blacklisting_get_spammer_test() ->
 	).
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
--spec node_blacklisting_post_spammer_test() -> ok.
 node_blacklisting_post_spammer_test() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
 	NErrors = 11,

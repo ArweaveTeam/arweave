@@ -5,8 +5,8 @@
 %% cowboy_middleware callbacks
 -export([execute/2]).
 -export([start/0]).
--export([reset/0, reset_rate_limit/2]).
--export([ban_peer/2, is_peer_banned/1, cleanup_ban/0]).
+-export([reset/0, reset_rate_limit/3]).
+-export([ban_peer/2, is_peer_banned/1, cleanup_ban/1]).
 -export([decrement_ip_addr/2]).
 
 -include("ar.hrl").
@@ -26,9 +26,15 @@ execute(Req, Env) ->
 	end.
 
 start() ->
-	ar:report([{?MODULE, start}]),
+	ar:info([{event, ar_blacklist_middleware_start}]),
 	ets:new(?MODULE, [set, public, named_table]),
-	{ok, _} = timer:apply_interval(?BAN_CLEANUP_INTERVAL, ?MODULE, cleanup_ban, []),
+	{ok, _} =
+		timer:apply_after(
+			?BAN_CLEANUP_INTERVAL,
+			?MODULE,
+			cleanup_ban,
+			[ets:whereis(?MODULE)]
+		),
 	ok.
 
 %% Ban a peer completely for TTLSeconds seoncds. Since we cannot trust the port,
@@ -45,17 +51,29 @@ is_peer_banned(Peer) ->
 		[_] -> banned
 	end.
 
-cleanup_ban() ->
-	Now = os:system_time(seconds),
-	Folder = fun
-		({{ban, _} = Key, Expires}, Acc) when Expires < Now ->
-			[Key | Acc];
-		(_, Acc) ->
-			Acc
-	end,
-	RemoveKeys = ets:foldl(Folder, [], ?MODULE),
-	Delete = fun(Key) -> ets:delete(?MODULE, Key) end,
-	lists:foreach(Delete, RemoveKeys).
+cleanup_ban(TableID) ->
+	case ets:whereis(?MODULE) of
+		TableID ->
+			Now = os:system_time(seconds),
+			Folder = fun
+				({{ban, _} = Key, Expires}, Acc) when Expires < Now ->
+					[Key | Acc];
+				(_, Acc) ->
+					Acc
+			end,
+			RemoveKeys = ets:foldl(Folder, [], ?MODULE),
+			Delete = fun(Key) -> ets:delete(?MODULE, Key) end,
+			lists:foreach(Delete, RemoveKeys),
+			{ok, _} =
+				timer:apply_after(
+					?BAN_CLEANUP_INTERVAL,
+					?MODULE,
+					cleanup_ban,
+					[TableID]
+				);
+		_ ->
+			table_owner_died
+	end.
 
 %private functions
 blacklisted(Req) ->
@@ -70,9 +88,13 @@ reset() ->
 	true = ets:delete_all_objects(?MODULE),
 	ok.
 
-reset_rate_limit(IpAddr, Path) ->
-	ets:delete(?MODULE, {rate_limit, IpAddr, Path}),
-	ok.
+reset_rate_limit(TableID, IpAddr, Path) ->
+	case ets:whereis(?MODULE) of
+		TableID ->
+			ets:delete(?MODULE, {rate_limit, IpAddr, Path});
+		_ ->
+			table_owner_died
+	end.
 
 increment_ip_addr(IpAddr, Req) ->
 	update_ip_addr(IpAddr, Req, 1).
@@ -87,7 +109,12 @@ update_ip_addr(IpAddr, Req, Diff) ->
 	Key = {rate_limit, IpAddr, PathKey},
 	case ets:update_counter(?MODULE, Key, {2, Diff}, {Key, 0}) of
 		1 ->
-			timer:apply_after(?THROTTLE_PERIOD, ?MODULE, reset_rate_limit, [IpAddr, PathKey]),
+			timer:apply_after(
+				?THROTTLE_PERIOD,
+				?MODULE,
+				reset_rate_limit,
+				[ets:whereis(?MODULE), IpAddr, PathKey]
+			),
 			pass;
 		Count when Count =< RequestLimit ->
 			pass;
