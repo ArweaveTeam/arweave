@@ -47,6 +47,7 @@ stop() ->
 	{ok, Config} = application:get_env(arweave, config),
 	ok = application:stop(arweave),
 	ok = ar:stop_dependencies(),
+	file:delete(filename:join(Config#config.data_dir, "mempool")),
 	Config.
 
 start(B0, RewardAddr) ->

@@ -420,8 +420,6 @@ serve_plain_tx(#tx{ format = 2 } = TX, ContentType, Req) ->
 					{stop, {400, Headers, jiffy:encode(#{ error => tx_data_too_big }), Req}};
 				{error, not_found} ->
 					{stop, {200, Headers, <<>>, Req}};
-				{error, not_joined} ->
-					{stop, {400, Headers, jiffy:encode(#{ error => not_joined }), Req}};
 				{'EXIT', {timeout, {gen_server, call, _}}} ->
 					{stop, {503, Headers, jiffy:encode(#{ error => timeout }), Req}}
 			end

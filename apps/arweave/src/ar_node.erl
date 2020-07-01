@@ -173,7 +173,8 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			%% The flag makes VM store messages off heap and do not perform
 			%% expensive GC on them.
 			process_flag(message_queue_data, off_heap),
-			{ok, SPid} = ar_node_state:start(),
+			process_flag(trap_exit, true),
+			{ok, SPid} = ar_node_state:start_link(),
 			{ok, WPid} = ar_node_worker:start(NPid, SPid),
 			ok = ar_node_state:update(SPid, [
 				{node, NPid},
@@ -266,13 +267,6 @@ get_pending_txs(Node, Opts) ->
 							)
 					end
 			end
-		after ?LOCAL_NET_TIMEOUT ->
-			case lists:member(as_map, Opts) of
-				true ->
-					#{};
-				false ->
-					[]
-			end
 	end.
 
 is_a_pending_tx(Node, TXID) ->
@@ -281,7 +275,6 @@ is_a_pending_tx(Node, TXID) ->
 	receive
 		{Ref, pending_txs, TXs} ->
 			maps:is_key(TXID, TXs)
-		after ?LOCAL_NET_TIMEOUT -> false
 	end.
 
 %% @doc Gets the list of mined or ready to be mined transactions.
@@ -588,6 +581,8 @@ server(SPid, WPid, TaskQueue) ->
 					ar_node_worker:cast(WPid, Task),
 					server(SPid, WPid, NewTaskQueue)
 			end;
+		{'EXIT', _, _} ->
+			ar_node_state:stop(SPid);
 		Msg ->
 			try handle(SPid, Msg) of
 				{task, Task} ->
@@ -771,13 +766,9 @@ handle(SPid, {get_mempool_size, From, Ref}) ->
 	{ok, #{ mempool_size := Size }} = ar_node_state:lookup(SPid, [mempool_size]),
 	From ! {Ref, get_mempool_size, Size},
 	ok;
-%% ----- Server handling. -----
-handle(_SPid, {'DOWN', _, _, _, _}) ->
-	% Ignore DOWN message.
-	ok;
 handle(_Spid, {ar_node_state, _, _}) ->
 	%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
 	ok;
 handle(_SPid, UnhandledMsg) ->
-	ar:warn([ar_node, received_unknown_message, {message, UnhandledMsg}]),
+	ar:warn([{event, ar_node_received_unknown_message}, {message, UnhandledMsg}]),
 	ok.

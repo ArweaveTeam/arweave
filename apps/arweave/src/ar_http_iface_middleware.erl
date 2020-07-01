@@ -268,8 +268,6 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 	case catch ar_data_sync:Fn() of
 		{ok, Binary} ->
 			{200, #{}, Binary, Req};
-		{error, not_joined} ->
-			{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end;
@@ -287,10 +285,10 @@ handle(<<"GET">>, [<<"chunk">>, OffsetBinary], Req, _Pid) ->
 							{200, #{}, Reply, Req};
 						{error, chunk_not_found} ->
 							{404, #{}, <<>>, Req};
-						{error, failed_to_read_chunk} ->
-							{500, #{}, <<>>, Req};
 						{error, not_joined} ->
-							{400, #{}, jiffy:encode(#{ error => not_joined }), Req}
+							{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
+						{error, failed_to_read_chunk} ->
+							{500, #{}, <<>>, Req}
 					end;
 				_ ->
 					{400, #{}, jiffy:encode(#{ error => offset_out_of_bounds }), Req}
@@ -315,8 +313,6 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 					{404, #{}, <<>>, Req};
 				{error, failed_to_read_offset} ->
 					{500, #{}, <<>>, Req};
-				{error, not_joined} ->
-					{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
 				{'EXIT', {timeout, {gen_server, call, _}}} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
@@ -823,8 +819,6 @@ serve_tx_data(Req, #tx{ format = 2, id = ID } = TX) ->
 					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
 				{error, not_found} ->
 					{200, #{}, <<>>, Req};
-				{error, not_joined} ->
-					{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
 				{'EXIT', {timeout, {gen_server, call, _}}} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
@@ -856,8 +850,6 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
 				{error, not_found} ->
 					{200, #{ <<"content-type">> => ContentType }, <<>>, Req};
-				{error, not_joined} ->
-					{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
 				{'EXIT', {timeout, {gen_server, call, _}}} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
@@ -1087,8 +1079,6 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 			{500, #{}, <<>>, Req};
 		{error, invalid_proof} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req};
-		{error, not_joined} ->
-			{400, #{}, jiffy:encode(#{ error => not_joined }), Req};
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
