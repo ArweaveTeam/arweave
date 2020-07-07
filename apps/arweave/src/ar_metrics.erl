@@ -130,6 +130,13 @@ register() ->
 			" looks up a chunk from the disk pool and decides whether to"
 			" remove it, include it in the weave, or keep in the disk pool."
 		}
+	]),
+	prometheus_gauge:new([
+		{name, wallet_list_size},
+		{
+			help,
+			"The total number of wallets in the system."
+		}
 	]).
 
 load_gauge(Name) ->
