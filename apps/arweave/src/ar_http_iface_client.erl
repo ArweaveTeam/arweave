@@ -215,6 +215,7 @@ get_block_index(Peer) ->
 			method => get,
 			peer => Peer,
 			path => "/hash_list",
+			timeout => 120 * 1000,
 			headers => p2p_headers()
 		}),
 	ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)).
