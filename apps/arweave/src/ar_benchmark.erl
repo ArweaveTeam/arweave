@@ -24,14 +24,19 @@ run() ->
 
 initial_diff() ->
 	Diff = ar_retarget:switch_to_linear_diff(20 + ?RANDOMX_DIFF_ADJUSTMENT),
-	{_, TimeSpent} = mine(Diff, 10),
+	initial_diff(Diff, 0).
+
+initial_diff(Diff, 2) ->
+	Diff;
+initial_diff(Diff, N) ->
+	{_, TimeSpent} = mine(Diff),
 	%% The initial difficulty might be too easy
-	%% for the machine so we mine 10 blocks and
+	%% for the machine so we mine some blocks and
 	%% calibrate it before reporting the first result.
-	switch_diff(Diff, TimeSpent).
+	initial_diff(switch_diff(Diff, TimeSpent), N + 1).
 
 loop({TotalHashesTried, TotalTimeSpent}, Difficulty) ->
-	{HashesTried, TimeSpent} = mine(Difficulty, 10),
+	{HashesTried, TimeSpent} = mine(Difficulty),
 	NewDifficulty = switch_diff(Difficulty, TimeSpent),
 	NewTotalHashesTried = TotalHashesTried + HashesTried,
 	NewTotalTimeSpent = TotalTimeSpent + TimeSpent,
@@ -44,28 +49,24 @@ loop({TotalHashesTried, TotalTimeSpent}, Difficulty) ->
 	),
 	loop({NewTotalHashesTried, NewTotalTimeSpent}, NewDifficulty).
 
-mine(Diff, Rounds) ->
+mine(Diff) ->
 	{Time, HashesTried} = timer:tc(fun() ->
-		Run = fun(_) -> mine(Diff) end,
-		lists:sum(lists:map(Run, lists:seq(1, Rounds)))
+		B = #block{
+			indep_hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
+			diff = Diff,
+			hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
+			timestamp = os:system_time(seconds),
+			last_retarget = os:system_time(seconds),
+			hash_list = [],
+			height = ar_fork:height_2_0()
+		},
+		ar_mine:start(B, #poa{}, [], unclaimed, [], self(), [], []),
+		receive
+			{work_complete, _, _, _, _, _, HashesTried} ->
+				HashesTried
+		end
 	end),
 	{HashesTried, Time}.
-
-mine(Diff) ->
-	B = #block{
-		indep_hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
-		diff = Diff,
-		hash = crypto:hash(sha384, crypto:strong_rand_bytes(40)),
-		timestamp = os:system_time(seconds),
-		last_retarget = os:system_time(seconds),
-		hash_list = [],
-		height = ar_fork:height_2_0()
-	},
-	ar_mine:start(B, #poa{}, [], unclaimed, [], self(), [], []),
-	receive
-		{work_complete, _, _, _, _, _, HashesTried} ->
-			HashesTried
-	end.
 
 switch_diff(Diff, Time) ->
 	MaxDiff = ar_mine:max_difficulty(),
