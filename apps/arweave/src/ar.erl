@@ -1,10 +1,11 @@
 %%%
 %%% @doc Arweave server entrypoint and basic utilities.
 %%%
-
 -module(ar).
 
--export([main/0, main/1, start/0, start/1]).
+-behaviour(application).
+
+-export([main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0]).
 -export([tests/0, tests/1, tests/2]).
 -export([test_ipfs/0]).
 -export([test_apps/0, test_networks/0, test_slow/0]).
@@ -12,10 +13,9 @@
 -export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
 -export([report/1, report_console/1, d/1]).
 -export([scale_time/1]).
--export([start_link/0, start_link/1, init/1]).
 -export([start_for_tests/0]).
 -export([fixed_diff_option/0, fixed_delay_option/0]).
--export([stop/1]).
+-export([shutdown/1]).
 
 -include("ar.hrl").
 -include("ar_config.hrl").
@@ -283,7 +283,7 @@ start(#config{
 	}) ->
 	error_logger:logfile({open, generate_logfile_name()}),
 	error_logger:tty(false),
-	ar_meta_db:start(),
+	ar_meta_db:start_link(),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
 	ar_meta_db:put(max_miners, MaxMiners),
@@ -291,8 +291,18 @@ start(#config{
 	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
 	ar_randomx_state:start(),
 	ar_benchmark:run();
-start(
-	#config {
+start(Config) ->
+	%% Start the logging system.
+	filelib:ensure_dir(?LOG_DIR ++ "/"),
+	error_logger:logfile({open, Filename = generate_logfile_name()}),
+	error_logger:tty(false),
+	warn_if_single_scheduler(),
+	ok = application:set_env(arweave, config, Config),
+	ok = application:set_env(arweave, logfile, Filename),
+	{ok, _} = application:ensure_all_started(arweave, permanent).
+
+start(normal, _Args) ->
+	{ok, #config {
 		port = Port,
 		data_dir = DataDir,
 		metrics_dir = MetricsDir,
@@ -308,7 +318,6 @@ start(
 		tx_propagation_parallelization = TXProp,
 		new_key = NewKey,
 		load_key = LoadKey,
-		pause = Pause,
 		disk_space = DiskSpace,
 		used_space = UsedSpace,
 		start_from_block_index = StartFromBlockIndex,
@@ -330,12 +339,7 @@ start(
 		max_disk_pool_buffer_mb = MaxDiskPoolBuffer,
 		max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer,
 		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
-	}) ->
-	%% Start the logging system.
-	filelib:ensure_dir(?LOG_DIR ++ "/"),
-	error_logger:logfile({open, Filename = generate_logfile_name()}),
-	error_logger:tty(false),
-	warn_if_single_scheduler(),
+	}} = application:get_env(arweave, config),
 	%% Verify port collisions when gateway enabled
 	case {Port, GatewayDomain} of
 		{P, D} when is_binary(D) andalso (P == 80 orelse P == 443) ->
@@ -344,8 +348,14 @@ start(
 		_ ->
 			do_nothing
 	end,
+	{ok, Supervisor} = ar_sup:start_link(),
 	%% Fill up ar_meta_db.
-	ar_meta_db:start(),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_meta_db,
+		start => {ar_meta_db, start_link, []},
+		type => worker,
+		shutdown => infinity
+	}),
 	ar_meta_db:put(data_dir, DataDir),
 	ar_meta_db:put(metrics_dir, MetricsDir),
 	ar_meta_db:put(port, Port),
@@ -369,15 +379,10 @@ start(
 	ar_storage:start(),
 	%% Optionally clear the block cache.
 	if Clean -> ar_storage:clear(); true -> do_nothing end,
-	ok = application:ensure_started(prometheus),
-	{ok, _} = application:ensure_all_started(prometheus_cowboy),
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
 	% Register custom metrics.
 	ar_metrics:register(),
-	{ok, _} = application:ensure_all_started(gun),
-	%% Start Cowboy and its dependencies
-	{ok, _} = application:ensure_all_started(cowboy),
 	%% Start other apps which we depend on.
 	inets:start(),
 	ar_tx_db:start(),
@@ -432,9 +437,11 @@ start(
 			)
 	end,
 	ar_randomx_state:start(),
-	{ok, Supervisor} = start_link(
-		[
-			[
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_node,
+		shutdown => infinity,
+		start => {ar_node, start_link,
+			[[
 				Peers,
 				case StartFromBlockIndex of
 					false ->
@@ -458,8 +465,8 @@ start(
 				AutoJoin,
 				Diff,
 				os:system_time(seconds)
-			]
-		]
+			]]}
+		}
 	),
 	Node = whereis(http_entrypoint_node),
 	%% Start a bridge, add it to the node's peer list.
@@ -469,7 +476,7 @@ start(
 			ar_bridge,
 			{ar_bridge, start_link, [[Peers, [Node], Port]]},
 			permanent,
-			brutal_kill,
+			infinity,
 			worker,
 			[ar_bridge]
 		}
@@ -482,10 +489,11 @@ start(
 			unclaimed -> "unclaimed";
 			_ -> binary_to_list(ar_util:encode(MiningAddress))
 		end,
-	ar:report_console(
+	{ok, Logfile} = application:get_env(arweave, logfile),
+	ar:info(
 		[
-			starting_server,
-			{session_log, Filename},
+			{event, starting_server},
+			{session_log, Logfile},
 			{port, Port},
 			{automine, Mine},
 			{miner, Node},
@@ -496,7 +504,7 @@ start(
 			{retarget_blocks, ?RETARGET_BLOCKS}
 		]
 	),
-	ok = start_graphql(),
+	ok = prepare_graphql(),
 	%% Start the first node in the gossip network (with HTTP interface).
 	ok = ar_http_iface_server:start([
 		{http_entrypoint_node, Node},
@@ -514,31 +522,43 @@ start(
 		false ->
 			[]
 	end,
-	{ok, _} = ar_poller_sup:start_link(PollingArgs),
-	{ok, _} = ar_downloader_sup:start_link([]),
-	{ok, _} = ar_data_sync_sup:start_link([]),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_poller,
+		start => {ar_poller_sup, start_link, [PollingArgs]},
+		type => supervisor,
+		shutdown => infinity
+	}),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_downloader_sup,
+		start => {ar_downloader_sup, start_link, [[]]},
+		type => supervisor,
+		shutdown => infinity
+	}),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_data_sync_sup,
+		start => {ar_data_sync_sup, start_link, [[]]},
+		type => supervisor,
+		shutdown => infinity
+	}),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case IPFSPin of
 		false -> ok;
 		true  -> app_ipfs:start_pinning()
 	end,
 	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
-	garbage_collect(),
-	case Pause of
-		false ->
-			ok;
-		true ->
-			receive
-				{'EXIT', _, shutdown} ->
-					ok
-			end
-	end.
+	{ok, Supervisor}.
 
-stop([NodeName]) ->
+shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
 
-start_graphql() ->
-	ok = application:ensure_started(graphql),
+stop(_State) ->
+	ok.
+
+stop_dependencies() ->
+	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
+	lists:foreach(fun(Dep) -> ok = application:stop(Dep) end, Deps).
+
+prepare_graphql() ->
 	ok = ar_graphql:load_schema(),
 	ok.
 
@@ -583,28 +603,6 @@ fixed_delay_option() -> [{d, 'FIXED_DELAY', ?FIXED_DELAY}].
 fixed_delay_option() -> [].
 -endif.
 
-%% @doc passthrough to supervisor start_link
-start_link() ->
-	supervisor:start_link(?MODULE, []).
-start_link(Args) ->
-	supervisor:start_link(?MODULE, Args).
-
-%% @doc init function for supervisor
-init(Args) ->
-	SupFlags = {one_for_one, 5, 30},
-	ChildSpecs =
-		[
-			{
-				ar_node,
-				{ar_node, start_link, Args},
-				permanent,
-				brutal_kill,
-				worker,
-				[ar_node]
-			}
-		],
-	{ok, {SupFlags, ChildSpecs}}.
-
 %% @doc Run all of the tests associated with the core project.
 tests() ->
 	tests(?CORE_TEST_MODS, #config {}).
@@ -625,7 +623,6 @@ start_for_tests() ->
 start_for_tests(Config) ->
 	start(Config#config {
 		peers = [],
-		pause = false,
 		data_dir = "data_test_master",
 		metrics_dir = "metrics_master",
 		disable = [randomx_jit]

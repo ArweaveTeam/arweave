@@ -4,22 +4,32 @@
 
 -module(ar_node_state).
 
--export([start/0, stop/1, all/1, lookup/2, update/2]).
+-export([start_link/0, stop/1, all/1, lookup/2, update/2]).
 
 %%%
 %%% Public API.
 %%%
 
 %% @doc Start a node state server.
-start() ->
-	Pid = spawn(fun() ->
+start_link() ->
+	Pid = spawn_link(fun() ->
 		%% The message queue of this process may grow big under load.
 		%% The flag makes VM store messages off heap and do not perform
 		%% expensive GC on them.
 		process_flag(message_queue_data, off_heap),
 		server(ets:new(ar_node_state, [set, private, {keypos, 1}]))
 	end),
-	% Set initial state values.
+	{TXs, MempoolSize} =
+		case load_mempool() of
+			{ok, Mempool} ->
+				Mempool;
+			not_found ->
+				{#{}, {0, 0}};
+			{error, Error} ->
+				ar:err([{event, failed_to_load_mempool}, {reason, Error}]),
+				{#{}, {0, 0}}
+		end,
+	%% Set initial state values.
 	update(Pid, [
 		{id, crypto:strong_rand_bytes(32)}, % unique id of the ar_node
 		{block_index, not_joined},          % current full block index
@@ -27,8 +37,8 @@ start() ->
 		{wallet_list, []},                  % current up to date walletlist
 		{height, 0},                        % current height of the blockweave
 		{gossip, undefined},                % Gossip protcol state
-		% a map TXID -> {TX, waiting | ready_for_mining} of memory pool transactions
-		{txs, maps:new()},
+		%% A map TXID -> {TX, waiting | ready_for_mining} of memory pool transactions.
+		{txs, TXs},
 		{miner, undefined},                 % PID of the mining process
 		{mining_delay, 0},                  % delay on mining, used for netework simulation
 		{automine, false},                  % boolean dictating if a node should automine
@@ -42,14 +52,14 @@ start() ->
 		{cumulative_diff, 0},               % Sum of the difficulty squared along the current weave
 		{hash_list_merkle, <<>>},           % The Merkle root of the current hash list
 		{block_txs_pairs, []},              % List of {BH, TXIDs} pairs for last ?MAX_TX_ANCHOR_DEPTH blocks
-		{mempool_size, {0, 0}}              % Memory pool size
+		{mempool_size, MempoolSize}         % Memory pool size
 	]),
 	{ok, Pid}.
 
 %% @doc Stop a node worker.
 stop(Pid) ->
-	Pid ! stop,
-	ok.
+	Pid ! {stop, self()},
+	receive done -> ok end.
 
 %% @doc Get all values from state, the return is a map of the keys
 %% and values. The operation is atomic, all needed values must be
@@ -74,6 +84,9 @@ update(Pid, KeyValues) ->
 %%%
 %%% Server functions.
 %%%
+
+load_mempool() ->
+	ar_storage:read_term(mempool).
 
 %% @doc Send a message to the server and wait for the result.
 send(Pid, Msg) ->
@@ -105,17 +118,27 @@ server(Tid) ->
 					server(Tid)
 			catch
 				throw:Term ->
-					ar:report( [ {'NodeStateEXCEPTION', Term } ]),
+					ar:err([
+						{event, ar_node_state_exception},
+						{exception, Term}
+					]),
 					server(Tid);
 				exit:Term ->
-					ar:report( [ {'NodeStateEXIT', Term} ] ),
+					ar:err([
+						{event, ar_node_state_exit},
+						{reason, Term}
+					]),
 					server(Tid);
 				error:Term:Stacktrace ->
-					ar:report( [ {'NodeStateERROR', {Term, Stacktrace} } ]),
+					ar:err([
+						{event, ar_node_state_exception},
+						{exception, {Term, Stacktrace}}
+					]),
 					server(Tid)
 			end;
-		stop ->
-			ok
+		{stop, From} ->
+			dump_mempool(Tid),
+			From ! done
 	end.
 
 %% @doc Handle the individual server commands. Starving ets table has to be
@@ -178,3 +201,17 @@ update_state_metrics(KeyValues) ->
 record_mempool_size({HeaderSize, DataSize}) ->
 	prometheus_gauge:set(mempool_header_size_bytes, HeaderSize),
 	prometheus_gauge:set(mempool_data_size_bytes, DataSize).
+
+dump_mempool(Tid) ->
+	case ets:lookup(Tid, txs) of
+		[{_Key, TXs}] ->
+			[{_, MempoolSize}] = ets:lookup(Tid, mempool_size),
+			case ar_storage:write_term(mempool, {TXs, MempoolSize}) of
+				ok ->
+					ok;
+				{error, Reason} ->
+					ar:err([{event, failed_to_persist_mempool}, {reason, Reason}])
+			end;
+		[] ->
+			ok
+	end.

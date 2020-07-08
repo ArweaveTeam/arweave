@@ -32,7 +32,6 @@ parse_config() ->
 		max_miners = 43,
 		new_key = true,
 		load_key = "some_key_file",
-		pause = true,
 		disk_space = 44*1024*1024*1024,
 		used_space = _,
 		start_from_block_index = true,

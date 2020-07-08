@@ -15,8 +15,7 @@
 	get_tx_offset/1,
 	get_sync_record_etf/0,
 	get_sync_record_json/0,
-	add_historical_block/1,
-	reset/0
+	add_historical_block/1
 ]).
 
 -include("ar.hrl").
@@ -111,10 +110,6 @@ get_sync_record_json() ->
 add_historical_block(BH) ->
 	gen_server:cast(?MODULE, {add_historical_block, BH}).
 
-reset() ->
-	ar_storage:delete_term(data_sync_state),
-	ar_kv:destroy("ar_data_sync_db").
-
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -122,10 +117,85 @@ reset() ->
 init([]) ->
 	ar:info([{event, ar_data_sync_start}]),
 	process_flag(trap_exit, true),
+	Opts = [
+		{cache_index_and_filter_blocks, true},
+		{bloom_filter_policy, 10}, % ~1% false positive probability
+		{prefix_extractor, {capped_prefix_transform, 28}},
+		{optimize_filters_for_hits, true},
+		{max_open_files, 100000}
+	],
+	ColumnFamilies = [
+		"default",
+		"chunks_index",
+		"data_root_index",
+		"data_root_offset_index",
+		"tx_index",
+		"tx_offset_index",
+		"disk_pool_chunks_index"
+	],
+	ColumnFamilyDescriptors = [{Name, Opts} || Name <- ColumnFamilies],
+	case ar_meta_db:get(automatic_rocksdb_repair) of
+		true ->
+			case ar_kv:repair("ar_data_sync_db") of
+				{error, E} ->
+					ar:err([{event, ar_kv_repair_reported_error}, {error, E}]);
+				ok ->
+					repair_was_not_needed_or_was_successful
+			end;
+		_ ->
+			do_not_attempt_to_repair
+	end,
+	{ok, DB, [_, CF1, CF2, CF3, CF4, CF5, CF6]} =
+		ar_kv:open("ar_data_sync_db", ColumnFamilyDescriptors),
+	ChunksIndex = {DB, CF1},
+	DataRootIndex = {DB, CF2},
+	DataRootOffsetIndex = {DB, CF3},
+	TXIndex = {DB, CF4},
+	TXOffsetIndex = {DB, CF5},
+	DiskPoolChunksIndex = {DB, CF6},
+	ets:new(?MODULE, [set, named_table, {read_concurrency, true}]),
+	ets:insert(?MODULE, {chunks_index, ChunksIndex}),
+	State = #sync_data_state{
+		chunks_index = ChunksIndex,
+		data_root_index = DataRootIndex,
+		data_root_offset_index = DataRootOffsetIndex,
+		tx_index = TXIndex,
+		tx_offset_index = TXOffsetIndex,
+		disk_pool_chunks_index = DiskPoolChunksIndex,
+		disk_pool_data_roots = #{},
+		disk_pool_size = 0,
+		block_index = not_set,
+		weave_size = not_set,
+		sync_record = ar_intervals:new(),
+		peer_sync_records = #{},
+		block_queue = queue:new(),
+		disk_pool_cursor = first,
+		status = not_joined
+	},
 	gen_server:cast(self(), init),
-	{ok, #sync_data_state{ status = not_joined, block_queue = queue:new() }}.
+	case ar_storage:read_term(data_sync_state) of
+		{ok, {SyncRecord, LastStoredBI, RawDiskPoolDataRoots, DiskPoolSize}} ->
+			%% Filter out the keys with the invalid values, if any, produced by a bug in 2.1.0.0.
+			DiskPoolDataRoots = maps:filter(
+				fun (_, {_, _, _}) ->
+						true;
+					(_, _) ->
+						false
+				end,
+				RawDiskPoolDataRoots
+			),
+			{ok, State#sync_data_state{
+				disk_pool_data_roots = DiskPoolDataRoots,
+				sync_record = SyncRecord,
+				block_index = LastStoredBI,
+				disk_pool_size = DiskPoolSize,
+				weave_size = hd(LastStoredBI)
+			}};
+		_ ->
+			{ok, State}
+	end.
 
-handle_cast(init, #sync_data_state{ block_queue = Q } = State) ->
+handle_cast(init, State) ->
 	case whereis(http_entrypoint_node) of
 		undefined ->
 			timer:sleep(200),
@@ -138,7 +208,7 @@ handle_cast(init, #sync_data_state{ block_queue = Q } = State) ->
 					gen_server:cast(self(), init),
 					{noreply, State};
 				BI ->
-					do_init(BI, Q)
+					do_init(BI, State)
 			end
 	end;
 
@@ -510,9 +580,6 @@ handle_cast(update_disk_pool_data_roots, State) ->
 		disk_pool_size = DiskPoolSize
 	}}.
 
-handle_call(_Msg, _From, #sync_data_state{ status = not_joined } = State) ->
-	{reply, {error, not_joined}, State};
-
 handle_call({add_chunk, DataRoot, DataPath, Chunk, Offset, TXSize}, _From, State) ->
 	#sync_data_state{
 		data_root_index = DataRootIndex,
@@ -642,117 +709,67 @@ handle_call(get_sync_record_json, _From, #sync_data_state{ sync_record = SyncRec
 	Limit = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
 	{reply, {ok, ar_intervals:to_json(SyncRecord, Limit)}, State}.
 
-terminate(_Reason, #sync_data_state{ status = not_joined }) ->
-	ok;
+-ifdef(DEBUG).
+terminate(_Reason, State) ->
+	#sync_data_state{
+		chunks_index = {DB, _}
+	} = State,
+	ar_kv:close(DB),
+	ar_storage:delete_term(data_sync_state),
+	ar_kv:destroy("ar_data_sync_db").
+-else.
 terminate(Reason, State) ->
 	ar:info([{event, ar_data_sync_terminate}, {reason, Reason}]),
 	#sync_data_state{
 		chunks_index = {DB, _}
 	} = State,
 	ar_kv:close(DB).
+-endif.
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
-do_init([{_, WeaveSize, _} | _] = BI, BlockQueue) ->
-	Opts = [
-		{cache_index_and_filter_blocks, true},
-		{bloom_filter_policy, 10}, % ~1% false positive probability
-		{prefix_extractor, {capped_prefix_transform, 28}},
-		{optimize_filters_for_hits, true},
-		{max_open_files, 100000}
-	],
-	ColumnFamilies = [
-		"default",
-		"chunks_index",
-		"data_root_index",
-		"data_root_offset_index",
-		"tx_index",
-		"tx_offset_index",
-		"disk_pool_chunks_index"
-	],
-	ColumnFamilyDescriptors = [{Name, Opts} || Name <- ColumnFamilies],
-	case ar_meta_db:get(automatic_rocksdb_repair) of
-		true ->
-			case ar_kv:repair("ar_data_sync_db") of
-				{error, E} ->
-					ar:err([{event, ar_kv_repair_reported_error}, {error, E}]);
-				ok ->
-					repair_was_not_needed_or_was_successful
-			end;
-		_ ->
-			do_not_attempt_to_repair
-	end,
-	{ok, DB, [_, CF1, CF2, CF3, CF4, CF5, CF6]} =
-		ar_kv:open("ar_data_sync_db", ColumnFamilyDescriptors),
-	ChunksIndex = {DB, CF1},
-	DataRootIndex = {DB, CF2},
-	DataRootOffsetIndex = {DB, CF3},
-	TXIndex = {DB, CF4},
-	TXOffsetIndex = {DB, CF5},
-	DiskPoolChunksIndex = {DB, CF6},
-	ets:new(?MODULE, [set, named_table, {read_concurrency, true}]),
-	ets:insert(?MODULE, {chunks_index, ChunksIndex}),
-	State = #sync_data_state{
-		chunks_index = ChunksIndex,
-		data_root_index = DataRootIndex,
+do_init([{_, WeaveSize, _} | _] = BI, State) ->
+	#sync_data_state{
 		data_root_offset_index = DataRootOffsetIndex,
-		tx_index = TXIndex,
-		tx_offset_index = TXOffsetIndex,
-		disk_pool_chunks_index = DiskPoolChunksIndex,
-		disk_pool_data_roots = #{},
-		disk_pool_size = 0,
-		block_index = lists:sublist(BI, ?TRACK_CONFIRMATIONS),
+		sync_record = SyncRecord,
+		block_index = LastStoredBI,
+		disk_pool_data_roots = DiskPoolDataRoots,
+		block_queue = BlockQueue
+	} = State,
+	State2 = State#sync_data_state{
 		weave_size = WeaveSize,
-		sync_record = ar_intervals:new(),
-		peer_sync_records = #{},
-		block_queue = BlockQueue,
-		disk_pool_cursor = first,
+		block_index = lists:sublist(BI, ?TRACK_CONFIRMATIONS),
 		status = joined
 	},
-	{UpdatedState, NewBI, CurrentWeaveSize} = case ar_storage:read_term(data_sync_state) of
-		{ok, {SyncRecord, LastStoredBI, RawDiskPoolDataRoots, DiskPoolSize}} ->
-			%% Filter out the keys with the invalid values, if any, produced by a bug in 2.1.0.0.
-			DiskPoolDataRoots = maps:filter(
-				fun (_, {_, _, _}) ->
-						true;
-					(_, _) ->
-						false
-				end,
-				RawDiskPoolDataRoots
-			),
-			case get_intersection(BI, LastStoredBI) of
-				{ok, full_intersection, ExtraBI} ->
-					State2 = State#sync_data_state{
-						sync_record = SyncRecord,
-						disk_pool_data_roots = DiskPoolDataRoots,
-						disk_pool_size = DiskPoolSize
-					},
-					{State2, ExtraBI, element(2, hd(LastStoredBI))};
-				{ok, no_intersection} ->
-					throw(last_stored_block_index_has_no_intersection_with_the_new_one);
-				{ok, Offset, ExtraBI} ->
-					PreviousWeaveSize = element(2, hd(LastStoredBI)),
-					{ok, OrphanedDataRoots} =
-						remove_orphaned_data(State, Offset, PreviousWeaveSize),
-					UpdatedDiskPoolDataRoots =
-						reset_orphaned_data_roots_disk_pool_timestamps(
-							DiskPoolDataRoots,
-							OrphanedDataRoots
-						),
-					State2 = State#sync_data_state{
-						sync_record = ar_intervals:cut(SyncRecord, Offset),
-						disk_pool_data_roots = UpdatedDiskPoolDataRoots,
-						disk_pool_size = DiskPoolSize
-					},
-					{State2, ExtraBI, Offset}
-			end;
-		not_found ->
-			{State, BI, 0}
-	end,
+	{State3, NewBI, CurrentWeaveSize} =
+		case LastStoredBI of
+			not_set ->
+				{State2, BI, 0};
+			_ ->
+				case get_intersection(BI, LastStoredBI) of
+					{ok, full_intersection, ExtraBI} ->
+						{State2, ExtraBI, element(2, hd(LastStoredBI))};
+					{ok, no_intersection} ->
+						throw(last_stored_block_index_has_no_intersection_with_the_new_one);
+					{ok, Offset, ExtraBI} ->
+						PreviousWeaveSize = element(2, hd(LastStoredBI)),
+						{ok, OrphanedDataRoots} =
+							remove_orphaned_data(State, Offset, PreviousWeaveSize),
+						UpdatedDiskPoolDataRoots =
+							reset_orphaned_data_roots_disk_pool_timestamps(
+								DiskPoolDataRoots,
+								OrphanedDataRoots
+							),
+						{State2#sync_data_state{
+							sync_record = ar_intervals:cut(SyncRecord, Offset),
+							disk_pool_data_roots = UpdatedDiskPoolDataRoots
+						}, ExtraBI, Offset}
+				end
+		end,
 	ok = data_root_offset_index_from_block_index(DataRootOffsetIndex, NewBI, CurrentWeaveSize),
-	ok = store_sync_state(UpdatedState),
+	ok = store_sync_state(State3),
 	gen_server:cast(self(), update_peer_sync_records),
 	gen_server:cast(self(), {sync_random_interval, []}),
 	gen_server:cast(self(), update_disk_pool_data_roots),
@@ -763,7 +780,7 @@ do_init([{_, WeaveSize, _} | _] = BI, BlockQueue) ->
 		true ->
 			will_be_scheduled_by_next_add_block
 	end,
-	{noreply, UpdatedState}.
+	{noreply, State3}.
 
 get_intersection(BI, [{BH, _, _} | LastStoredBI]) ->
 	case block_index_contains_block(BI, BH) of

@@ -43,7 +43,7 @@ start(ExtPeers, IntPeers, Port) ->
 	),
 	receive after 250 -> ok end,
     PID =
-		spawn(
+		spawn_link(
 			fun() ->
 				ok = ar_tx_queue:start_link(),
 				server(
@@ -55,6 +55,15 @@ start(ExtPeers, IntPeers, Port) ->
 				)
 			end
 		),
+	%% Add pending transactions from the persisted mempool to the propagation queue.
+	maps:map(
+		fun (_TXID, {_TX, ready_for_mining}) ->
+				ok;
+			(_TXID, {TX, waiting}) ->
+				add_tx(PID, TX)
+		end,
+		ar_node:get_pending_txs(whereis(http_entrypoint_node), [as_map])
+	),
 	reset_timer(PID, get_more_peers),
 	PID.
 

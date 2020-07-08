@@ -19,6 +19,7 @@ init(Args) ->
 	SupFlags = #{strategy => one_for_one, intensity => 100, period => 60},
 	ChildSpec = #{
 		id => ar_data_sync,
-		start => {ar_data_sync, start_link, [Args]}
+		start => {ar_data_sync, start_link, [Args]},
+		shutdown => infinity
 	},
 	{ok, {SupFlags, [ChildSpec]}}.

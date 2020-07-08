@@ -1,19 +1,18 @@
 {application, arweave, [
 	{description, "Arweave"},
 	{vsn, "2.1.0.1"},
+	{mod, {ar, []}},
 	{applications, [
 		kernel,
 		stdlib,
+		sasl,
 		os_mon,
-		ar_sqlite3,
-		b64fast,
-		jiffy,
 		gun,
+		cowlib,
+		ranch,
 		cowboy,
-		graphql,
 		prometheus,
-		prometheus_process_collector,
 		prometheus_cowboy,
-		rocksdb
+		graphql
 	]}
 ]}.

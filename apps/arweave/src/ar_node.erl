@@ -12,7 +12,7 @@
 -export([get_peers/1]).
 -export([get_wallet_list/1]).
 -export([get_block_index/1, get_height/1]).
--export([get_trusted_peers/1]).
+-export([get_trusted_peers/1, set_trusted_peers/2]).
 -export([get_balance/2]).
 -export([get_last_tx/2]).
 -export([get_current_diff/1, get_diff/1]).
@@ -142,7 +142,7 @@ start(Peers, B, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) when ?IS_
 	BI = [ar_util:block_index_entry_from_block(B)],
 	start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget);
 start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
-	PID = spawn(
+	PID = spawn_link(
 		fun() ->
 			case {BI, AutoJoin} of
 				{not_joined, true} ->
@@ -173,7 +173,8 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			%% The flag makes VM store messages off heap and do not perform
 			%% expensive GC on them.
 			process_flag(message_queue_data, off_heap),
-			{ok, SPid} = ar_node_state:start(),
+			process_flag(trap_exit, true),
+			{ok, SPid} = ar_node_state:start_link(),
 			{ok, WPid} = ar_node_worker:start(NPid, SPid),
 			ok = ar_node_state:update(SPid, [
 				{node, NPid},
@@ -266,13 +267,6 @@ get_pending_txs(Node, Opts) ->
 							)
 					end
 			end
-		after ?LOCAL_NET_TIMEOUT ->
-			case lists:member(as_map, Opts) of
-				true ->
-					#{};
-				false ->
-					[]
-			end
 	end.
 
 is_a_pending_tx(Node, TXID) ->
@@ -281,7 +275,6 @@ is_a_pending_tx(Node, TXID) ->
 	receive
 		{Ref, pending_txs, TXs} ->
 			maps:is_key(TXID, TXs)
-		after ?LOCAL_NET_TIMEOUT -> false
 	end.
 
 %% @doc Gets the list of mined or ready to be mined transactions.
@@ -307,6 +300,10 @@ get_trusted_peers(Proc) when is_pid(Proc) ->
 	end;
 get_trusted_peers(_) ->
 	unavailable.
+
+%% @doc Set trusted peers.
+set_trusted_peers(Proc, Peers) when is_pid(Proc) ->
+	Proc ! {set_trusted_peers, Peers}.
 
 %% @doc Get the list of peers from the nodes gossip state.
 %% This is the list of peers that node will request blocks/txs from and will
@@ -584,6 +581,8 @@ server(SPid, WPid, TaskQueue) ->
 					ar_node_worker:cast(WPid, Task),
 					server(SPid, WPid, NewTaskQueue)
 			end;
+		{'EXIT', _, _} ->
+			ar_node_state:stop(SPid);
 		Msg ->
 			try handle(SPid, Msg) of
 				{task, Task} ->
@@ -678,6 +677,8 @@ handle(SPid, {get_trusted_peers, From, Ref}) ->
 	{ok, TrustedPeers} = ar_node_state:lookup(SPid, trusted_peers),
 	From ! {Ref, peers, TrustedPeers},
 	ok;
+handle(SPid, {set_trusted_peers, Peers}) ->
+	ar_node_state:update(SPid, [{trusted_peers, Peers}]);
 handle(SPid, {get_walletlist, From, Ref}) ->
 	{ok, WalletList} = ar_node_state:lookup(SPid, wallet_list),
 	From ! {Ref, walletlist, WalletList},
@@ -765,13 +766,9 @@ handle(SPid, {get_mempool_size, From, Ref}) ->
 	{ok, #{ mempool_size := Size }} = ar_node_state:lookup(SPid, [mempool_size]),
 	From ! {Ref, get_mempool_size, Size},
 	ok;
-%% ----- Server handling. -----
-handle(_SPid, {'DOWN', _, _, _, _}) ->
-	% Ignore DOWN message.
-	ok;
 handle(_Spid, {ar_node_state, _, _}) ->
 	%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
 	ok;
 handle(_SPid, UnhandledMsg) ->
-	ar:warn([ar_node, received_unknown_message, {message, UnhandledMsg}]),
+	ar:warn([{event, ar_node_received_unknown_message}, {message, UnhandledMsg}]),
 	ok.

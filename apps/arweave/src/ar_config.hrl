@@ -28,7 +28,6 @@
 	tx_propagation_parallelization = ?TX_PROPAGATION_PARALLELIZATION,
 	new_key = false,
 	load_key = false,
-	pause = true,
 	disk_space,
 	used_space = 0,
 	start_from_block_index = false,

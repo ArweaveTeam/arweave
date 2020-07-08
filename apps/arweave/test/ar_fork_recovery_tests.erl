@@ -66,7 +66,10 @@ missing_txs_fork_recovery_test() ->
 	%% Expect the local node to fork recover.
 	ar_test_node:wait_until_height(MasterNode, 2).
 
-recall_block_missing_multiple_txs_fork_recovery_test() ->
+recall_block_missing_multiple_txs_fork_recovery_test_() ->
+	{timeout, 30, fun test_recall_block_missing_multiple_txs_fork_recovery/0}.
+
+test_recall_block_missing_multiple_txs_fork_recovery() ->
 	%% Create a genesis block with two transactions but do not store them on the master node.
 	%% Mine a block with two transactions on the slave node without gossiping them.
 	%% Mine an empty block on the slave and gossip it.
