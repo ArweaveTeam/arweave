@@ -219,7 +219,8 @@ handle_cast(emitter_go, State) ->
 			false ->
 				{{_, {TX, {TXHeaderSize, TXDataSize}}}, NewQ} = gb_sets:take_largest(Q),
 				Bridge = whereis(http_bridge_node),
-				Peers = lists:sublist(ar_bridge:get_remote_peers(Bridge), ar_meta_db:get(max_propagation_peers)),
+				Node = whereis(http_entrypoint_node),
+				{Peers, TrustedPeers} = get_peers(Bridge, Node),
 				case Peers of
 					[] ->
 						gen_server:cast(?MODULE, {emitter_finished, TX}),
@@ -240,7 +241,12 @@ handle_cast(emitter_go, State) ->
 							lists:seq(1, ar_meta_db:get(tx_propagation_parallelization))
 						),
 						TXID = TX#tx.id,
-						NewEmitMap = EmitMap#{ TXID => #{ peers => Peers, started_at => erlang:timestamp() } },
+						NewEmitMap = EmitMap#{
+							TXID => #{
+								peers => Peers,
+								started_at => erlang:timestamp(),
+								trusted_peers => TrustedPeers
+							}},
 						State#state{
 							tx_queue = NewQ,
 							header_size = HeaderSize - TXHeaderSize,
@@ -256,10 +262,11 @@ handle_cast({emit_tx_to_peer, TX}, State = #state{ emit_map = EmitMap }) ->
 	case EmitMap of
 		#{ TXID := #{ peers := [] } } ->
 			{noreply, State};
-		#{ TXID := TXIDMap = #{ peers := [Peer | Peers] } } ->
+		#{ TXID := TXIDMap = #{ peers := [Peer | Peers], trusted_peers := TrustedPeers } } ->
 			spawn(
 				fun() ->
-					Reply = ar_http_iface_client:send_new_tx(Peer, tx_to_propagated_tx(TX)),
+					PropagatedTX = tx_to_propagated_tx(TX, Peer, TrustedPeers),
+					Reply = ar_http_iface_client:send_new_tx(Peer, PropagatedTX),
 					gen_server:cast(?MODULE, {emitted_tx_to_peer, {Reply, TX}})
 				end
 			),
@@ -327,6 +334,22 @@ maybe_drop(Q, {HeaderSize, DataSize} = Size, {MaxHeaderSize, MaxDataSize} = MaxS
 			{Q, Size, lists:filter(fun(TX) -> TX /= none end, DroppedTXs)}
 	end.
 
+get_peers(Bridge, Node) ->
+	Peers =
+		lists:sublist(ar_bridge:get_remote_peers(Bridge), ar_meta_db:get(max_propagation_peers)),
+	TrustedPeers = ar_node:get_trusted_peers(Node),
+	{join_peers(Peers, TrustedPeers), TrustedPeers}.
+
+join_peers(Peers, [TrustedPeer | TrustedPeers]) ->
+	case lists:member(TrustedPeer, Peers) of
+		true ->
+			join_peers(Peers, TrustedPeers);
+		false ->
+			join_peers([TrustedPeer | Peers], TrustedPeers)
+	end;
+join_peers(Peers, []) ->
+	Peers.
+
 show_queue(Q) ->
 	gb_sets:fold(
 		fun({_, {TX, _}}, Acc) ->
@@ -347,10 +370,15 @@ tx_propagated_size(#tx{ format = 2 }) ->
 tx_propagated_size(#tx{ format = 1, data = Data }) ->
 	?TX_SIZE_BASE + byte_size(Data).
 
-tx_to_propagated_tx(#tx{ format = 1 } = TX) ->
+tx_to_propagated_tx(#tx{ format = 1 } = TX, _Peer, _TrustedPeers) ->
 	TX;
-tx_to_propagated_tx(#tx{ format = 2 } = TX) ->
-	TX#tx{ data = <<>> }.
+tx_to_propagated_tx(#tx{ format = 2 } = TX, Peer, TrustedPeers) ->
+	case lists:member(Peer, TrustedPeers) of
+		true ->
+			TX;
+		false ->
+			TX#tx{ data = <<>> }
+	end.
 
 tx_queue_size(#tx{ format = 1 } = TX) ->
 	{tx_propagated_size(TX), 0};
