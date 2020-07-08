@@ -24,7 +24,7 @@ test_randomx_backwards_compatibility() ->
     ?assertEqual(ExpectedHash, Hash),
     Diff = binary:encode_unsigned(ar_mine:max_difficulty() - 1, big),
     {ok, _, TenthHash, _, _} =
-        ar_mine_randomx:bulk_hash_fast_nif(State, Nonce, Nonce, Segment, Diff, 0, 0, 0),
+        ar_mine_randomx:bulk_hash_fast_nif(State, Nonce, Nonce, Segment, Diff, 0, 0, 0, 12),
     ExpectedTenthHash = ar_util:decode(?ENCODED_TENTH_HASH),
     ?assertEqual(ExpectedTenthHash, TenthHash),
     {ok, LightState} = ar_mine_randomx:init_light_nif(Key, 0, 0),
