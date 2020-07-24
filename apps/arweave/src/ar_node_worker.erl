@@ -428,7 +428,7 @@ process_new_block(#{ height := Height } = State, BShadow, Peer)
 			]),
 			none;
 		{ok, {}} ->
-			apply_new_block(State, BShadow#block{ hash_list = ?BI_TO_BHL(BI) });
+			apply_new_block(State, BShadow#block{ hash_list = ?BI_TO_BHL(BI) }, Peer);
 		{ok, {DivergedHashes, BIBase}} ->
 			HeightBase = length(BIBase) - 1,
 			{_, BlockTXPairsBase} = lists:split(Height - HeightBase, BlockTXPairs),
@@ -477,61 +477,61 @@ get_diverged_block_hashes_reversed([], []) -> {ok, []};
 get_diverged_block_hashes_reversed(DivergedHashes, _) ->
 	{ok, lists:reverse(DivergedHashes)}.
 
-apply_new_block(State, BShadow) ->
+apply_new_block(State, BShadow, Peer) ->
 	#{
-		height := Height,
+		txs := MempoolTXs,
+		node := Node,
 		block_index := BI,
-		wallet_list := WalletList,
 		block_txs_pairs := BlockTXPairs
 	} = State,
-	case generate_block_from_shadow(State, BShadow) of
-		{ok, NewB} ->
-			B = ar_util:get_head_block(BI),
-			StateNew = State#{ wallet_list => NewB#block.wallet_list },
-			TXs = NewB#block.txs,
-			case ar_node_utils:validate(BI, NewB#block.wallet_list, NewB, TXs, B) of
-				{invalid, _Reason} ->
-					none;
-				valid ->
-					TXReplayCheck = ar_tx_replay_pool:verify_block_txs(
-						TXs,
-						NewB#block.diff,
-						Height,
-						NewB#block.timestamp,
-						WalletList,
-						BlockTXPairs
-					),
-					case TXReplayCheck of
-						invalid ->
-							ar:warn([
-								ar_node_worker,
-								process_new_block,
-								transaction_replay_detected,
-								{block_indep_hash, ar_util:encode(NewB#block.indep_hash)},
-								{txs, lists:map(fun(TX) -> ar_util:encode(TX#tx.id) end, TXs)}
-							]),
-							none;
-						valid ->
-							{ok, ar_node_utils:integrate_new_block(StateNew, NewB, TXs)}
-					end
-				end;
-		error ->
-			none
-	end.
-
-generate_block_from_shadow(#{ txs := MempoolTXs } = State, BShadow) ->
 	{TXs, MissingTXIDs} = pick_txs(BShadow#block.txs, MempoolTXs),
 	case MissingTXIDs of
 		[] ->
-			generate_block_from_shadow(State, BShadow, TXs);
+			case generate_block_from_shadow(State, BShadow, TXs) of
+				error ->
+					none;
+				{ok, NewB} ->
+					apply_new_block(State, NewB)
+			end;
 		_ ->
-			ar:info([
-				ar_node_worker,
-				block_not_accepted,
-				{transactions_missing_in_mempool_for_block, ar_util:encode(BShadow#block.indep_hash)},
-				{missing_txs, lists:map(fun ar_util:encode/1, MissingTXIDs)}
-			]),
-			error
+			{ok, fork_recover(Node, Peer, [BShadow#block.indep_hash], BI, BlockTXPairs)}
+	end.
+
+apply_new_block(State, NewB) ->
+	#{
+		height := Height,
+		wallet_list := WalletList,
+		block_txs_pairs := BlockTXPairs,
+		block_index := BI
+	} = State,
+	B = ar_util:get_head_block(BI),
+	StateNew = State#{ wallet_list => NewB#block.wallet_list },
+	TXs = NewB#block.txs,
+	case ar_node_utils:validate(BI, NewB#block.wallet_list, NewB, TXs, B) of
+		{invalid, _Reason} ->
+			none;
+		valid ->
+			TXReplayCheck = ar_tx_replay_pool:verify_block_txs(
+				TXs,
+				NewB#block.diff,
+				Height,
+				NewB#block.timestamp,
+				WalletList,
+				BlockTXPairs
+			),
+			case TXReplayCheck of
+				invalid ->
+					ar:warn([
+						ar_node_worker,
+						process_new_block,
+						transaction_replay_detected,
+						{block_indep_hash, ar_util:encode(NewB#block.indep_hash)},
+						{txs, lists:map(fun(TX) -> ar_util:encode(TX#tx.id) end, TXs)}
+					]),
+					none;
+				valid ->
+					{ok, ar_node_utils:integrate_new_block(StateNew, NewB, TXs)}
+			end
 	end.
 
 generate_block_from_shadow(State, BShadow, TXs) ->

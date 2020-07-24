@@ -195,7 +195,7 @@ wait_until_receives_txs(Node, TXs) ->
 			end
 		end,
 		100,
-		10 * 1000
+		60 * 1000
 	).
 
 assert_slave_wait_until_receives_txs(Node, TXs) ->
