@@ -106,10 +106,16 @@ connect_to_slave() ->
 disconnect_from_slave() ->
 	%% Disconnects master from slave so that they do not share blocks
 	%% and transactions unless they were bound by ar_node:add_peers/2.
-	%% All HTTP requests made in this module are made with the
+	%% The peers are added in ar_meta_db so that they do not start adding each other
+	%% to their peer lists after disconnect.
+	%% Also, all HTTP requests made in this module are made with the
 	%% x-p2p-port HTTP header corresponding to the listening port of
-	%% the receiving node so that nodes do not start peering with each
-	%% other again without an explicit request.
+	%% the receiving node so that freshly started nodes do not start peering
+	%% unless connect_to_slave/0 is called.
+	SlavePort = slave_call(ar_meta_db, get, [port]),
+	ar_meta_db:put({peer, {127, 0, 0, 1, SlavePort}}, #performance{}),
+	MasterPort = ar_meta_db:get(port),
+	slave_call(ar_meta_db, put, [{peer, {127, 0, 0, 1, MasterPort}}]),
 	SlaveBridge = slave_call(erlang, whereis, [http_bridge_node]),
 	slave_call(ar_bridge, set_remote_peers, [SlaveBridge, []]),
 	MasterBridge = whereis(http_bridge_node),
