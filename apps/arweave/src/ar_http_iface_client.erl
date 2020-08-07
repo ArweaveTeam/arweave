@@ -528,8 +528,7 @@ handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, full_b
 		Handled ->
 			Handled
 	end;
-handle_block_response(_, _, Response, _) ->
-	ar:warn([{unexpected_block_response, Response}]),
+handle_block_response(_, _, _, _) ->
 	unavailable.
 
 reconstruct_full_block(Peers, Body) when is_binary(Body) ->
@@ -572,8 +571,7 @@ handle_tx_response({ok, {{<<"202">>, _}, _, _, _, _}}) -> pending;
 handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
 handle_tx_response({ok, {{<<"410">>, _}, _, _, _, _}}) -> gone;
 handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found;
-handle_tx_response(Response) ->
-	ar:warn([{unexpected_tx_response, Response}]),
+handle_tx_response(_Response) ->
 	not_found.
 
 p2p_headers() ->
