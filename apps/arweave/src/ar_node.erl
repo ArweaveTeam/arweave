@@ -240,14 +240,13 @@ get_height(Node) ->
 	after ?LOCAL_NET_TIMEOUT -> -1
 	end.
 
-%% @doc Check whether self node has joined the weave.
-%% Uses blockindex value not_joined as witness.
+%% @doc Check whether the node has joined the network.
 is_joined(Node) ->
 	Ref = make_ref(),
-	Node ! {get_blockindex, self(), Ref},
+	Node ! {get_current_block_hash, self(), Ref},
 	receive
-		{Ref, blockindex, not_joined} -> false;
-		{Ref, blockindex, _} -> true
+		{Ref, current_block_hash, not_joined} -> false;
+		{Ref, current_block_hash, _} -> true
 	end.
 
 %% @doc Get the current balance of a given wallet address.
