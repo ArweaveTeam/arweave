@@ -33,10 +33,8 @@ height_plus_one_fork_recovery_test() ->
 	?assertEqual(hd(SlaveBI2), hd(MasterBI2)).
 
 missing_txs_fork_recovery_test() ->
-	%% Mine two blocks with transactions on the slave node but do not gossip the transactions in advance.
-	%% The master node should reject the first block, but accept the second one and fork recover.
-	%%
-	%% Start a remote node.
+	%% Mine two blocks with transactions on the slave node but do not gossip the transactions
+	%% in advance. The master node is expected fetch the missing transactions and apply the block.
 	{SlaveNode, B0} = slave_start(no_block),
 	%% Start a local node and connect to slave.
 	{MasterNode, B0} = start(B0),
@@ -50,21 +48,7 @@ missing_txs_fork_recovery_test() ->
 	ar_test_node:slave_gossip(on, SlaveNode),
 	?assertEqual([], ar_node:get_pending_txs(MasterNode)),
 	ar_test_node:slave_mine(SlaveNode),
-	ar_test_node:wait_until_height(SlaveNode, 1),
-	timer:sleep(200),
-	%% Expect the local node to reject the block.
-	?assertEqual(1, length(ar_node:get_block_index(MasterNode))),
-	%% Turn off gossip again and add the second TX.
-	ar_test_node:slave_gossip(off, SlaveNode),
-	TX2 = ar_tx:new(),
-	ar_test_node:slave_add_tx(SlaveNode, TX2),
-	assert_slave_wait_until_receives_txs(SlaveNode, [TX2]),
-	%% Turn on gossip and mine a block.
-	ar_test_node:slave_gossip(on, SlaveNode),
-	?assertEqual([], ar_node:get_pending_txs(MasterNode)),
-	ar_test_node:slave_mine(SlaveNode),
-	%% Expect the local node to fork recover.
-	ar_test_node:wait_until_height(MasterNode, 2).
+	ar_test_node:wait_until_height(MasterNode, 1).
 
 recall_block_missing_multiple_txs_fork_recovery_test_() ->
 	{timeout, 30, fun test_recall_block_missing_multiple_txs_fork_recovery/0}.
@@ -73,10 +57,8 @@ test_recall_block_missing_multiple_txs_fork_recovery() ->
 	%% Create a genesis block with two transactions but do not store them on the master node.
 	%% Mine a block with two transactions on the slave node without gossiping them.
 	%% Mine an empty block on the slave and gossip it.
-	%% The master is expected to reject the first block and successfully fork recover
+	%% The master is expected to accept the blocks and successfully fork recover
 	%% to the second although the recall block misses transactions in this scenario.
-	%%
-	%% Create a genesis block with two transactions.
 	GenesisTXs = [ar_tx:new(), ar_tx:new()],
 	[EmptyB] = ar_weave:init([]),
 	B = EmptyB#block{ txs = GenesisTXs },
@@ -104,8 +86,6 @@ test_recall_block_missing_multiple_txs_fork_recovery() ->
 	ar_test_node:slave_gossip(on, SlaveNode),
 	ar_test_node:slave_mine(SlaveNode),
 	ar_test_node:slave_wait_until_height(SlaveNode, 1),
-	%% Expect it to reject the block since it misses transactions.
-	?assertEqual([B0#block.indep_hash], ?BI_TO_BHL(ar_node:get_block_index(MasterNode))),
 	%% Mine another one. Its recall block would be either 0 or 1 - both have two txs,
 	%% neither of those txs are known by master.
 	ar_test_node:slave_mine(SlaveNode),

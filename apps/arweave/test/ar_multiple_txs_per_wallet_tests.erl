@@ -601,7 +601,6 @@ joins_network_successfully() ->
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
 	{Slave, _} = slave_start(B0),
-	disconnect_from_slave(),
 	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
 			{TX, AnchorType} = case rand:uniform(4) of
