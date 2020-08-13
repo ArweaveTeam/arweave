@@ -251,7 +251,6 @@ apply_next_block(State, NextB, B) ->
 		recovered_block_txs_pairs = BlockTXPairs,
 		parent_pid = ParentPID,
 		target_hashes_to_go = [_ | NewTargetHashesToGo],
-		target_hashes = TargetHashes,
 		base_hash = BaseH
 	} = State,
 	Wallets = ar_wallets:get(
@@ -302,8 +301,6 @@ apply_next_block(State, NextB, B) ->
 				_ -> do_nothing
 			end,
 			self() ! apply_next_block,
-			prometheus_histogram:observe(
-				fork_recovery_depth, length(TargetHashes) - length(NewTargetHashesToGo)),
 			server(
 				State#state {
 					recovered_block_index = NewBI,

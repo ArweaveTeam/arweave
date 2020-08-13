@@ -608,6 +608,13 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH) ->
 		]
 	),
 	ar_miner_log:fork_recovered(NewB#block.indep_hash),
+	case fork_depth(BaseH, BI) of
+		1 ->
+			%% The recovery process was initiated to fetch missing transactions. It is not a fork.
+			do_not_record_fork_depth_metric;
+		Depth ->
+			prometheus_histogram:observe(fork_recovery_depth, Depth)
+	end,
 	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
 		BlockTXPairs,
 		TXs,
@@ -656,6 +663,14 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH) ->
 	),
 	Node ! {sync_state, NewState},
 	{noreply, NewState}.
+
+fork_depth(H, BI) ->
+	fork_depth(H, BI, 1).
+
+fork_depth(H, [{H, _, _} | _], Depth) ->
+	Depth;
+fork_depth(H, [_ | BI], Depth) ->
+	fork_depth(H, BI, Depth + 1).
 
 %% @doc Test whether a new fork is 'preferable' to the current one.
 %% The highest cumulated diff is the one with most work performed and should
