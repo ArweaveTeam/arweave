@@ -189,7 +189,7 @@ test_get_current_block() ->
 	[B0] = ar_weave:init([]),
 	{Node, _} = ar_test_node:start(B0),
 	ar_util:do_until(
-		fun() -> B0 == ar_node:get_current_block(Node) end,
+		fun() -> B0#block.indep_hash == ar_node:get_current_block_hash(Node) end,
 		100,
 		2000
 	),

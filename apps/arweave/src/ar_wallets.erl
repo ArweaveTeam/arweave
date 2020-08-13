@@ -20,7 +20,8 @@
 -export([
 	init/1,
 	handle_call/3,
-	handle_cast/2
+	handle_cast/2,
+	terminate/2
 ]).
 
 -include("ar.hrl").
@@ -87,6 +88,7 @@ init([{recent_block_index, []}, {peers, _Peers}]) ->
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
 	{ok, DAG};
 init([{recent_block_index, RecentBlockIndex}, {peers, Peers}]) ->
+	process_flag(trap_exit, true),
 	{LastDAG, LastB, PrevWalletList} = lists:foldl(
 		fun ({BH, _, _}, start) ->
 				B = ar_storage:read_block(BH),
@@ -216,6 +218,9 @@ handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
 			ok
 	end,
 	{noreply, DAG}.
+
+terminate(Reason, _State) ->
+	ar:info([{event, ar_wallets_terminated}, {reason, Reason}]).
 
 %%%===================================================================
 %%% Private functions.

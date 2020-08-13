@@ -73,7 +73,6 @@ get_remote_peers(PID) ->
 	receive
 		{remote_peers, ExternalPeers} ->
 			ExternalPeers
-	after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
 %% @doc Reset the remote peers list to a specific set.

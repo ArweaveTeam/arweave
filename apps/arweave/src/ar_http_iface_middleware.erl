@@ -883,12 +883,12 @@ handle_get_tx_status(Hash, Req) ->
 						{<<"block_height">>, Height},
 						{<<"block_indep_hash">>, EncodedIndepHash}
 					],
-					CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
-					case search_in_block_index(ar_util:decode(EncodedIndepHash), CurrentBI) of
+					Node = whereis(http_entrypoint_node),
+					case ar_node:is_in_block_index(Node, ar_util:decode(EncodedIndepHash)) of
 						false ->
 							{404, #{}, <<"Not Found.">>, Req};
 						true ->
-							CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+							CurrentHeight = ar_node:get_height(Node),
 							%% First confirmation is when the TX is in the latest block.
 							NumberOfConfirmations = CurrentHeight - Height + 1,
 							Status = PseudoTags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
@@ -1076,7 +1076,7 @@ handle_post_tx(Req, PeerIP, Node, TX, Height) ->
 handle_post_tx(Req, PeerIP, Node, TX, Height, Wallets) ->
 	Diff = ar_node:get_current_diff(Node),
 	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
-	MempoolTXs = ar_node:get_pending_txs(Node, [as_map]),
+	MempoolTXs = ar_node:get_pending_txs(Node, [as_map, id_only]),
 	case ar_tx_replay_pool:verify_tx(
 		TX,
 		Diff,

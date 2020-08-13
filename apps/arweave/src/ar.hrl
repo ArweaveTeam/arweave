@@ -194,9 +194,6 @@
 %%      when making an HTTP request.
 -define(HTTP_REQUEST_SEND_TIMEOUT, 60 * 1000).
 
-%% @doc Default timeout value for local requests
--define(LOCAL_NET_TIMEOUT, 30 * 1000).
-
 %% @doc Default time to wait after a failed join to retry
 -define(REJOIN_TIMEOUT, 3 * 1000).
 
