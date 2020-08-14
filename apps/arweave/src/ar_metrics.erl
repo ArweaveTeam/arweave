@@ -137,6 +137,14 @@ register() ->
 			help,
 			"The total number of wallets in the system."
 		}
+	]),
+	prometheus_histogram:new([
+		{name, block_processing_time},
+		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20]},
+		{help,
+			"The time in seconds passed since a block is received (the HTTP body is not read yet) "
+			"until the block is accepted. If a block fails validation or triggers a fork recovery "
+			"process, this metric is not updated."}
 	]).
 
 load_gauge(Name) ->

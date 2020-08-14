@@ -101,11 +101,11 @@ handle_task({add_tx, TX}, State) ->
 handle_task({move_tx_to_mining_pool, TX}, State) ->
 	handle_move_tx_to_mining_pool(State, TX, maps:get(gossip, State));
 
-handle_task({process_new_block, Peer, Height, BShadow, BDS}, State) ->
+handle_task({process_new_block, Peer, Height, BShadow, BDS, ReceiveTimestamp}, State) ->
 	%% We have a new block. Distribute it to the gossip network. This is only
 	%% triggered in the polling mode.
 	GS = maps:get(gossip, State),
-	ar_gossip:send(GS, {new_block, Peer, Height, BShadow, BDS}),
+	ar_gossip:send(GS, {new_block, Peer, Height, BShadow, BDS, ReceiveTimestamp}),
 	{noreply, State};
 
 handle_task({work_complete, BaseBH, NewB, MinedTXs, BDS, POA}, State) ->
@@ -150,8 +150,8 @@ handle_task(Msg, State) ->
 	{noreply, State}.
 
 %% @doc Handle the gossip receive results.
-handle_gossip({_NewGS, {new_block, Peer, _Height, BShadow, _BDS}}, State) ->
-	handle_new_block(State, BShadow, Peer);
+handle_gossip({_NewGS, {new_block, Peer, _Height, BShadow, _BDS, ReceiveTimestamp}}, State) ->
+	handle_new_block(State, BShadow, Peer, ReceiveTimestamp);
 
 handle_gossip({NewGS, {add_tx, TX}}, State) ->
 	handle_add_tx(State, TX, NewGS);
@@ -236,14 +236,14 @@ handle_drop_waiting_txs(State, DroppedTXs, GS) ->
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recovery as appropriate.
-handle_new_block(#{ block_index := not_joined } = State, BShadow, _Peer) ->
+handle_new_block(#{ block_index := not_joined } = State, BShadow, _Peer, _ReceiveTimestamp) ->
 	ar:info([
 		{event, ar_node_worker_ignored_block},
 		{reason, not_joined},
 		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
 	]),
 	{noreply, State};
-handle_new_block(#{ height := Height } = State, BShadow, _Peer)
+handle_new_block(#{ height := Height } = State, BShadow, _Peer, _ReceiveTimestamp)
 		when BShadow#block.height =< Height ->
 	ar:info([
 		{event, ar_node_worker_ignored_block},
@@ -251,7 +251,7 @@ handle_new_block(#{ height := Height } = State, BShadow, _Peer)
 		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
 	]),
 	{noreply, State};
-handle_new_block(#{ height := Height } = State, BShadow, Peer)
+handle_new_block(#{ height := Height } = State, BShadow, Peer, ReceiveTimestamp)
 		when BShadow#block.height >= Height + 1 ->
 	ShadowHeight = BShadow#block.height,
 	ShadowHL = BShadow#block.hash_list,
@@ -273,7 +273,12 @@ handle_new_block(#{ height := Height } = State, BShadow, Peer)
 			]),
 			{noreply, State};
 		{ok, {}} ->
-			apply_new_block(State, BShadow#block{ hash_list = ?BI_TO_BHL(BI) }, Peer);
+			apply_new_block(
+				State,
+				BShadow#block{ hash_list = ?BI_TO_BHL(BI) },
+				Peer,
+				ReceiveTimestamp
+			);
 		{ok, {DivergedHashes, BIBase}} ->
 			HeightBase = length(BIBase) - 1,
 			{_, BlockTXPairsBase} = lists:split(Height - HeightBase, BlockTXPairs),
@@ -322,14 +327,14 @@ get_diverged_block_hashes_reversed([], []) -> {ok, []};
 get_diverged_block_hashes_reversed(DivergedHashes, _) ->
 	{ok, lists:reverse(DivergedHashes)}.
 
-apply_new_block(State, #block{ txs = TXs }, Peer) when length(TXs) > ?BLOCK_TX_COUNT_LIMIT ->
+apply_new_block(State, #block{ txs = TXs }, Peer, _TS) when length(TXs) > ?BLOCK_TX_COUNT_LIMIT ->
 	ar:err([
 		{event, received_invalid_block},
 		{validation_error, tx_count_exceeds_limit},
 		{peer, ar_util:format_peer(Peer)}
 	]),
 	{noreply, State};
-apply_new_block(State, BShadow, Peer) ->
+apply_new_block(State, BShadow, Peer, ReceiveTimestamp) ->
 	#{
 		txs := MempoolTXs,
 		node := Node,
@@ -343,13 +348,13 @@ apply_new_block(State, BShadow, Peer) ->
 				error ->
 					{noreply, State};
 				{ok, NewB} ->
-					apply_new_block(State, NewB)
+					apply_new_block(State, NewB, ReceiveTimestamp)
 			end;
 		_ ->
 			fork_recover(State, Node, Peer, [BShadow#block.indep_hash], BI, BlockTXPairs)
 	end.
 
-apply_new_block(State, NewB) ->
+apply_new_block(State, NewB, ReceiveTimestamp) ->
 	#{
 		node := Node,
 		block_txs_pairs := BlockTXPairs,
@@ -370,6 +375,8 @@ apply_new_block(State, NewB) ->
 			{noreply, State};
 		valid ->
 			NewState = ar_node_utils:integrate_new_block(State, NewB, TXs),
+			ProcessingTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000000,
+			prometheus_histogram:observe(block_processing_time, ProcessingTime),
 			Node ! {sync_state, NewState},
 			{noreply, NewState}
 	end.
@@ -507,7 +514,7 @@ handle_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 	),
 	{NewGS, _} = ar_gossip:send(
 		GS,
-		{new_block, self(), NewB#block.height, NewB, BDS}
+		{new_block, self(), NewB#block.height, NewB, BDS, erlang:timestamp()}
 	),
 	lists:foreach(
 		fun(TX) ->
@@ -681,7 +688,7 @@ is_fork_preferable(ForkB, CurrentCDiff, _) ->
 	ForkB#block.cumulative_diff > CurrentCDiff.
 
 %% @doc Assign a priority to the task. 0 corresponds to the highest priority.
-priority({gossip_message, #gs_msg{ data = {new_block, _, _, _, _} }}) ->
+priority({gossip_message, #gs_msg{ data = {new_block, _, _, _, _, _} }}) ->
 	0;
 priority({fork_recovered, _, _, _}) ->
 	1;

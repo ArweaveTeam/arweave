@@ -346,7 +346,7 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 %% POST request to endpoint /block with the body of the request being a JSON encoded block
 %% as specified in ar_serialize.
 handle(<<"POST">>, [<<"block">>], Req, Pid) ->
-	post_block(request, {Req, Pid});
+	post_block(request, {Req, Pid}, erlang:timestamp());
 
 %% @doc Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
@@ -1332,15 +1332,15 @@ val_for_key(K, L) ->
 
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
-post_block(request, {Req, Pid}) ->
+post_block(request, {Req, Pid}, ReceiveTimestamp) ->
 	OrigPeer = arweave_peer(Req),
 	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
 		not_banned ->
-			post_block(read_blockshadow, OrigPeer, {Req, Pid});
+			post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp);
 		banned ->
 			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
 	end.
-post_block(read_blockshadow, OrigPeer, {Req, Pid}) ->
+post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp) ->
 	HeaderBlockHashKnown = case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
 		not_set ->
 			false;
@@ -1362,13 +1362,18 @@ post_block(read_blockshadow, OrigPeer, {Req, Pid}) ->
 						{error, {_, _}, ReadReq} ->
 							{400, #{}, <<"Invalid block.">>, ReadReq};
 						{ok, {ReqStruct, BShadow}, ReadReq} ->
-							post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, ReadReq)
+							post_block(
+								check_data_segment_processed,
+								{ReqStruct, BShadow, OrigPeer},
+								ReadReq,
+								ReceiveTimestamp
+							)
 					end;
 				{error, body_size_too_large} ->
 					{413, #{}, <<"Payload too large">>, Req}
 			end
 	end;
-post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
+post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 	% Check if block is already known.
 	case lists:keyfind(<<"block_data_segment">>, 1, ReqStruct) of
 		{_, BDSEncoded} ->
@@ -1377,29 +1382,34 @@ post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req) ->
 				true ->
 					{208, #{}, <<"Block Data Segment already processed.">>, Req};
 				false ->
-					post_block(check_indep_hash_processed, {BShadow, OrigPeer, BDS}, Req)
+					post_block(
+						check_indep_hash_processed,
+						{BShadow, OrigPeer, BDS},
+						Req,
+						ReceiveTimestamp
+					)
 			end;
 		false ->
 			post_block_reject_warn(BShadow, block_data_segment_missing, OrigPeer),
 			{400, #{}, <<"block_data_segment missing.">>, Req}
 	end;
-post_block(check_indep_hash_processed, {BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_indep_hash_processed, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	case ar_bridge:is_id_ignored(BShadow#block.indep_hash) of
 		true ->
 			{208, <<"Block already processed.">>, Req};
 		false ->
 			ar_bridge:ignore_id(BShadow#block.indep_hash),
-			post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req)
+			post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
 	end;
-post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	% Check if node is joined.
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			{503, #{}, <<"Not joined.">>, Req};
 		true ->
-			post_block(check_height, {BShadow, OrigPeer, BDS}, Req)
+			post_block(check_height, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
 	end;
-post_block(check_height, {BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_height, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
 	case BShadow#block.height of
 		H when H < CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT ->
@@ -1407,22 +1417,22 @@ post_block(check_height, {BShadow, OrigPeer, BDS}, Req) ->
 		H when H > CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
 			{400, #{}, <<"Height is too far ahead">>, Req};
 		_ ->
-			post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req)
+			post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
 	end;
 %% The min difficulty check is filtering out blocks from smaller networks, e.g.
 %% testnets. Therefor, we don't want to log when this check or any check above
 %% rejects the block because there are potentially a lot of rejections.
-post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	case BShadow#block.diff >= ar_mine:min_difficulty(BShadow#block.height) of
 		true ->
-			post_block(check_pow, {BShadow, OrigPeer, BDS}, Req);
+			post_block(check_pow, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp);
 		_ ->
 			{400, #{}, <<"Difficulty too low">>, Req}
 	end;
 %% Note! Checking PoW should be as cheap as possible. All slow steps should
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
-post_block(check_pow, {BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_pow, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
 		{invalid, _} ->
 			post_block_reject_warn(BShadow, check_pow, OrigPeer),
@@ -1430,9 +1440,9 @@ post_block(check_pow, {BShadow, OrigPeer, BDS}, Req) ->
 			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
 		{valid, _} ->
 			ar_bridge:ignore_id(BDS),
-			post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req)
+			post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
 	end;
-post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req) ->
+post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	%% Verify the timestamp of the block shadow.
 	case ar_block:verify_timestamp(BShadow) of
 		false ->
@@ -1445,9 +1455,9 @@ post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req) ->
 			),
 			{400, #{}, <<"Invalid timestamp.">>, Req};
 		true ->
-			post_block(post_block, {BShadow, OrigPeer, BDS}, Req)
+			post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
 	end;
-post_block(post_block, {BShadow, OrigPeer, BDS}, Req) ->
+post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
 	%% all validation steps already passed, we can do the rest in a separate
 	spawn(fun() ->
@@ -1464,7 +1474,8 @@ post_block(post_block, {BShadow, OrigPeer, BDS}, Req) ->
 			whereis(http_bridge_node),
 			OrigPeer,
 			BShadow,
-			BDS
+			BDS,
+			ReceiveTimestamp
 		)
 	end),
 	{200, #{}, <<"OK">>, Req}.

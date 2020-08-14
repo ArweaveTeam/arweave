@@ -91,16 +91,17 @@ poll_block_step(download_block_shadow, {Peers, Height}) ->
 		unavailable ->
 			{error, block_not_found};
 		{Peer, BShadow} ->
-			poll_block_step(check_ignore_list, {Peer, BShadow})
-	end;
-poll_block_step(check_ignore_list, {Peer, BShadow}) ->
+			poll_block_step(check_ignore_list, {Peer, BShadow}, erlang:timestamp())
+	end.
+
+poll_block_step(check_ignore_list, {Peer, BShadow}, ReceiveTimestamp) ->
 	BH = BShadow#block.indep_hash,
 	case ar_bridge:is_id_ignored(BH) of
 		true ->
 			{error, block_already_received};
 		false ->
 			ar_bridge:ignore_id(BH),
-			case catch poll_block_step(construct_hash_list, {Peer, BShadow}) of
+			case catch poll_block_step(construct_hash_list, {Peer, BShadow}, ReceiveTimestamp) of
 				ok ->
 					ok;
 				Error ->
@@ -108,20 +109,24 @@ poll_block_step(check_ignore_list, {Peer, BShadow}) ->
 					Error
 			end
 	end;
-poll_block_step(construct_hash_list, {Peer, BShadow}) ->
+poll_block_step(construct_hash_list, {Peer, BShadow}, ReceiveTimestamp) ->
 	Node = whereis(http_entrypoint_node),
 	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(Node),
 	HL = lists:map(fun({BH, _}) -> BH end, BlockTXsPairs),
 	case reconstruct_block_hash_list(Peer, BShadow, HL) of
 		{ok, BHL} ->
-			poll_block_step(accept_block, {Peer, BShadow#block{ hash_list = BHL }});
+			poll_block_step(
+				accept_block,
+				{Peer, BShadow#block{ hash_list = BHL }},
+				ReceiveTimestamp
+			);
 		{error, _} = Error ->
 			Error
 	end;
-poll_block_step(accept_block, {Peer, BShadow}) ->
+poll_block_step(accept_block, {Peer, BShadow}, ReceiveTimestamp) ->
 	Node = whereis(http_entrypoint_node),
 	BShadowHeight = BShadow#block.height,
-	Node ! {new_block, Peer, BShadowHeight, BShadow, no_data_segment},
+	Node ! {new_block, Peer, BShadowHeight, BShadow, no_data_segment, ReceiveTimestamp},
 	ok.
 
 reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL) ->

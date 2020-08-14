@@ -375,8 +375,8 @@ handle({add_peers, Peers}, WPid, State) ->
 	gen_server:cast(WPid, {add_peers, Peers}),
 	State;
 
-handle({new_block, Peer, Height, NewB, BDS}, WPid, State) ->
-	gen_server:cast(WPid, {process_new_block, Peer, Height, NewB, BDS}),
+handle({new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}, WPid, State) ->
+	gen_server:cast(WPid, {process_new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}),
 	State;
 
 handle({set_loss_probability, Prob}, WPid, State) ->

@@ -1,7 +1,7 @@
 -module(ar_bridge).
 
 -export([start/3]).
--export([add_tx/2, move_tx_to_mining_pool/2, add_block/4]).
+-export([add_tx/2, move_tx_to_mining_pool/2, add_block/5]).
 -export([add_remote_peer/2, add_local_peer/2]).
 -export([get_remote_peers/1, set_remote_peers/2]).
 -export([start_link/1]).
@@ -80,8 +80,8 @@ set_remote_peers(PID, Peers) ->
 	PID ! {set_peers, Peers}.
 
 %% @doc Notify the bridge of a new external block.
-add_block(PID, OriginPeer, Block, BDS) ->
-	PID ! {add_block, OriginPeer, Block, BDS}.
+add_block(PID, OriginPeer, Block, BDS, ReceiveTimestamp) ->
+	PID ! {add_block, OriginPeer, Block, BDS, ReceiveTimestamp}.
 
 %% @doc Notify the bridge of a new external transaction.
 add_tx(PID, TX) ->
@@ -171,8 +171,8 @@ handle(S = #state{ gossip = GS }, {drop_waiting_txs, _TXs} = Msg) ->
 handle(S = #state{ gossip = GS }, {move_tx_to_mining_pool, _TX} = Msg) ->
 	{NewGS, _} = ar_gossip:send(GS,	Msg),
 	S#state { gossip = NewGS };
-handle(S, {add_block, OriginPeer, B, BDS}) ->
-	send_block(S, OriginPeer, B, BDS);
+handle(S, {add_block, OriginPeer, B, BDS, ReceiveTimestamp}) ->
+	send_block(S, OriginPeer, B, BDS, ReceiveTimestamp);
 handle(S = #state{ external_peers = ExtPeers }, {add_peer, remote, Peer}) ->
 	case {lists:member(Peer, ?PEER_PERMANENT_BLACKLIST), lists:member(Peer, ExtPeers)} of
 		{true, _} ->
@@ -230,13 +230,13 @@ maybe_send_tx(S, TX) ->
 	end.
 
 %% @doc Send the block to internal processes and to peers.
-send_block(S, OriginPeer, B, BDS) ->
+send_block(S, OriginPeer, B, BDS, ReceiveTimestamp) ->
 	#state {
 		gossip = GS,
 		processed = Procd,
 		external_peers = ExternalPeers
 	} = S,
-	Msg = {new_block, OriginPeer, B#block.height, B, BDS},
+	Msg = {new_block, OriginPeer, B#block.height, B, BDS, ReceiveTimestamp},
 	{NewGS, _} = ar_gossip:send(GS, Msg),
 	send_block_to_external(ExternalPeers, B, BDS),
 	add_processed(block, B, Procd),
@@ -247,7 +247,7 @@ send_block(S, OriginPeer, B, BDS) ->
 %% @doc Add the ID of a new TX/block to a processed list.
 add_processed({add_tx, TX}, Procd) ->
 	add_processed(tx, TX, Procd);
-add_processed({new_block, _, _, B, _}, Procd) ->
+add_processed({new_block, _, _, B, _, _}, Procd) ->
 	add_processed(block, B, Procd);
 add_processed(X, _Procd) ->
 	ar:report(
@@ -269,9 +269,9 @@ add_processed(X, Y, _Procd) ->
 	ok.
 
 %% @doc Send an internal message externally.
-send_to_external(S, {new_block, _, _Height, _NewB, no_data_segment}) ->
+send_to_external(S, {new_block, _, _Height, _NewB, no_data_segment, _Timestamp}) ->
 	S;
-send_to_external(S, {new_block, _, _Height, NewB, BDS}) ->
+send_to_external(S, {new_block, _, _Height, NewB, BDS, _Timestamp}) ->
 	send_block_to_external(
 		S#state.external_peers,
 		NewB,
