@@ -71,7 +71,7 @@ do_join(Node, RawPeers, NewB, BI) ->
 			ar_arql_db:populate_db(?BI_TO_BHL(BI)),
 			ar_randomx_state:init(BI, Peers),
 			BlockTXPairs = get_block_and_trail(Peers, NewB, BI),
-			Node ! {fork_recovered, BI, BlockTXPairs, none},
+			Node ! {fork_recovered, BI, BlockTXPairs, no_base_hash, no_timestamp},
 			join_peers(Peers),
 			ar_miner_log:joined(),
 			{Recent, Rest} =

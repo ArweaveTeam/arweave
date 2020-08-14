@@ -118,8 +118,8 @@ handle_task({work_complete, BaseBH, NewB, MinedTXs, BDS, POA}, State) ->
 			{noreply, State}
 	end;
 
-handle_task({fork_recovered, BI, BlockTXPairs, BaseH}, State) ->
-	handle_recovered_from_fork(State, BI, BlockTXPairs, BaseH);
+handle_task({fork_recovered, BI, BlockTXPairs, BaseH, Timestamp}, State) ->
+	handle_recovered_from_fork(State, BI, BlockTXPairs, BaseH, Timestamp);
 
 handle_task(mine, State) ->
 	{noreply, ar_node_utils:start_mining(State)};
@@ -546,7 +546,7 @@ handle_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 	{noreply, NewState}.
 
 %% @doc Handle executed fork recovery.
-handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs, _BaseH) ->
+handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs, _H, _TS) ->
 	#{ node := Node, txs := TXs } = StateIn,
 	NewB = ar_storage:read_block(element(1, hd(BI))),
 	{_, SizeTaggedTXs} = hd(BlockTXPairs),
@@ -593,7 +593,8 @@ handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTX
 	),
 	Node ! {sync_state, NewState},
 	{noreply, NewState};
-handle_recovered_from_fork(#{ block_index := CurrentBI } = StateIn, BI, BlockTXPairs, BaseH) ->
+handle_recovered_from_fork(StateIn, BI, BlockTXPairs, BaseH, StartTimestamp) ->
+	#{ block_index := CurrentBI } = StateIn,
 	case whereis(fork_recovery_server) of
 		undefined -> ok;
 		_ -> erlang:unregister(fork_recovery_server)
@@ -601,13 +602,13 @@ handle_recovered_from_fork(#{ block_index := CurrentBI } = StateIn, BI, BlockTXP
 	NewB = ar_storage:read_block(element(1, hd(BI))),
 	case is_fork_preferable(NewB, maps:get(cumulative_diff, StateIn), CurrentBI) of
 		true ->
-			do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH);
+			do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp);
 		false ->
 			{noreply, StateIn}
 	end.
 
-do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH) ->
-	#{ node := Node, txs := TXs } = StateIn,
+do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp) ->
+	#{ block_index := CurrentBI, node := Node, txs := TXs } = StateIn,
 	ar:info(
 		[
 			{event, fork_recovered_successfully},
@@ -615,7 +616,7 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH) ->
 		]
 	),
 	ar_miner_log:fork_recovered(NewB#block.indep_hash),
-	case fork_depth(BaseH, BI) of
+	case fork_depth(BaseH, CurrentBI) of
 		1 ->
 			%% The recovery process was initiated to fetch missing transactions. It is not a fork.
 			do_not_record_fork_depth_metric;
@@ -668,6 +669,8 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH) ->
 			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
 		}
 	),
+	ForkRecoveryTime = timer:now_diff(erlang:timestamp(), StartTimestamp) / 1000000,
+	prometheus_histogram:observe(fork_recovery_time, ForkRecoveryTime),
 	Node ! {sync_state, NewState},
 	{noreply, NewState}.
 
@@ -690,7 +693,7 @@ is_fork_preferable(ForkB, CurrentCDiff, _) ->
 %% @doc Assign a priority to the task. 0 corresponds to the highest priority.
 priority({gossip_message, #gs_msg{ data = {new_block, _, _, _, _, _} }}) ->
 	0;
-priority({fork_recovered, _, _, _}) ->
+priority({fork_recovered, _, _, _, _}) ->
 	1;
 priority({work_complete, _, _, _, _, _}) ->
 	2;

@@ -404,9 +404,9 @@ handle({work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}, WPid, St
 	end,
 	State;
 
-handle({fork_recovered, BI, BlockTXPairs, BaseH}, WPid, State) ->
+handle({fork_recovered, BI, BlockTXPairs, BaseH, Timestamp}, WPid, State) ->
 	case BaseH of
-		none ->
+		no_base_hash ->
 			#{ trusted_peers := Peers } = State,
 			{ok, _} = ar_wallets:start_link([
 				{recent_block_index, lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)},
@@ -415,7 +415,7 @@ handle({fork_recovered, BI, BlockTXPairs, BaseH}, WPid, State) ->
 		_ ->
 			do_nothing
 	end,
-	gen_server:cast(WPid, {fork_recovered, BI, BlockTXPairs, BaseH}),
+	gen_server:cast(WPid, {fork_recovered, BI, BlockTXPairs, BaseH, Timestamp}),
 	State;
 
 handle(mine, WPid, State) ->

@@ -12,14 +12,15 @@
 %%% new state to its parent.
 
 -record(state, {
-	parent_pid, % The parent process, sends new verified blocks, if any, and awaits a recovered state.
-	peers, % The list of peers to retrieve blocks from.
+	parent_pid, % The parent process, sends new blocks, if any, and awaits a recovered state.
+	peers, % The list of peers to retrieve missing blocks and transactions from.
 	target_height, % The height of the last (most recent) block to apply.
-	target_hashes, % All the hashes of the blocks to be applied during the fork recovery (lowest to highest).
+	target_hashes, % The hashes of the blocks to be applied during the fork recovery (lowest to highest).
 	target_hashes_to_go, % The hashes of the blocks left to apply (lowest to highest).
 	recovered_block_index, % The block index constructed during the fork recovery.
 	recovered_block_txs_pairs, % The block anchors required for verifying transactions, updated in process.
-	base_hash % The hash of the base block.
+	base_hash, % The hash of the base block.
+	start_timestamp % The timestamp of when the process has started.
 }).
 
 %% @doc Start the fork recovery 'catch up' server.
@@ -43,7 +44,7 @@ start(Peers, RecoveryHashes, BI, ParentPID, BlockTXPairs) ->
 	PID = spawn(
 		fun() ->
 			server(
-				#state {
+				#state{
 					parent_pid = ParentPID,
 					target_height = TargetHeight,
 					peers = Peers,
@@ -51,7 +52,8 @@ start(Peers, RecoveryHashes, BI, ParentPID, BlockTXPairs) ->
 					target_hashes_to_go = TargetHashes,
 					recovered_block_index = BI,
 					recovered_block_txs_pairs = BlockTXPairs,
-					base_hash = element(1, hd(BI))
+					base_hash = element(1, hd(BI)),
+					start_timestamp = erlang:timestamp()
 				}
 			)
 		end
@@ -62,15 +64,16 @@ start(Peers, RecoveryHashes, BI, ParentPID, BlockTXPairs) ->
 %% @doc Start the fork recovery server loop. Attempt to catch up to the
 %% target block by applying each block between the current block and the
 %% target block in turn.
-server(#state {
+server(#state{
 		recovered_block_index = BI,
 		recovered_block_txs_pairs = BlockTXPairs,
 		target_hashes_to_go = [],
 		parent_pid = ParentPID,
-		base_hash = BaseH
+		base_hash = BaseH,
+		start_timestamp = StartTimestamp
 	}) ->
-	ParentPID ! {fork_recovered, BI, BlockTXPairs, BaseH};
-server(S = #state { target_height = TargetHeight }) ->
+	ParentPID ! {fork_recovered, BI, BlockTXPairs, BaseH, StartTimestamp};
+server(S = #state{ target_height = TargetHeight }) ->
 	receive
 		{parent_accepted_block, B} ->
 			if B#block.height > TargetHeight ->
@@ -251,7 +254,8 @@ apply_next_block(State, NextB, B) ->
 		recovered_block_txs_pairs = BlockTXPairs,
 		parent_pid = ParentPID,
 		target_hashes_to_go = [_ | NewTargetHashesToGo],
-		base_hash = BaseH
+		base_hash = BaseH,
+		start_timestamp = StartTimestamp
 	} = State,
 	Wallets = ar_wallets:get(
 		B#block.wallet_list,
@@ -297,7 +301,7 @@ apply_next_block(State, NextB, B) ->
 							{height, NextB#block.height}
 						]
 					),
-					ParentPID ! {fork_recovered, NewBI, NewBlockTXPairs, BaseH};
+					ParentPID ! {fork_recovered, NewBI, NewBlockTXPairs, BaseH, StartTimestamp};
 				_ -> do_nothing
 			end,
 			self() ! apply_next_block,
