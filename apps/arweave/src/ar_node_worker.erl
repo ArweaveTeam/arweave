@@ -5,7 +5,7 @@
 
 -export([start_link/1]).
 
--export([init/1, handle_cast/2, terminate/2]).
+-export([init/1, handle_cast/2, terminate/2, tx_mempool_size/1]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
@@ -122,10 +122,10 @@ handle_task({fork_recovered, BI, BlockTXPairs, BaseH, Timestamp}, State) ->
 	handle_recovered_from_fork(State, BI, BlockTXPairs, BaseH, Timestamp);
 
 handle_task(mine, State) ->
-	{noreply, ar_node_utils:start_mining(State)};
+	{noreply, start_mining(State)};
 
 handle_task(automine, State) ->
-	{noreply, ar_node_utils:start_mining(State#{ automine => true })};
+	{noreply, start_mining(State#{ automine => true })};
 
 handle_task({set_reward_addr, Addr}, #{ node := Node } = State) ->
 	Node ! {sync_reward_addr, Addr},
@@ -179,7 +179,7 @@ handle_gossip({_NewGS, UnknownMessage}, State) ->
 handle_add_tx(State, TX, GS) ->
 	#{ node := Node, txs := TXs, mempool_size := MS} = State,
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-	IncreasedMempoolSize = ar_node_utils:increase_mempool_size(MS, TX),
+	IncreasedMempoolSize = increase_mempool_size(MS, TX),
 	Node ! {sync_mempool_tx, TX#tx.id, {TX, ready_for_mining}, IncreasedMempoolSize},
 	{noreply, State#{
 		txs => maps:put(TX#tx.id, {TX, ready_for_mining}, TXs),
@@ -187,11 +187,20 @@ handle_add_tx(State, TX, GS) ->
 		mempool_size => IncreasedMempoolSize
 	}}.
 
+increase_mempool_size({MempoolHeaderSize, MempoolDataSize}, TX) ->
+	{HeaderSize, DataSize} = tx_mempool_size(TX),
+	{MempoolHeaderSize + HeaderSize, MempoolDataSize + DataSize}.
+
+tx_mempool_size(#tx{ format = 1, data = Data }) ->
+	{?TX_SIZE_BASE + byte_size(Data), 0};
+tx_mempool_size(#tx{ format = 2, data = Data }) ->
+	{?TX_SIZE_BASE, byte_size(Data)}.
+
 %% @doc Add the new waiting transaction to the server state.
 handle_add_waiting_tx(State, TX, GS) ->
 	#{ node := Node, txs := WaitingTXs, mempool_size := MS } = State,
 	{NewGS, _} = ar_gossip:send(GS, {add_waiting_tx, TX}),
-	IncreasedMempoolSize = ar_node_utils:increase_mempool_size(MS, TX),
+	IncreasedMempoolSize = increase_mempool_size(MS, TX),
 	Node ! {sync_mempool_tx, TX#tx.id, {TX, waiting}, IncreasedMempoolSize},
 	{noreply, State#{
 		txs => maps:put(TX#tx.id, {TX, waiting}, WaitingTXs),
@@ -224,7 +233,7 @@ handle_drop_waiting_txs(State, DroppedTXs, GS) ->
 		{TXs, maps:new()},
 		DroppedTXs
 	),
-	{DroppedHeaderSize, DroppedDataSize} = ar_node_utils:calculate_mempool_size(DroppedTXMap),
+	{DroppedHeaderSize, DroppedDataSize} = calculate_mempool_size(DroppedTXMap),
 	DecreasedMempoolSize =
 		{MempoolHeaderSize - DroppedHeaderSize, MempoolDataSize - DroppedDataSize},
 	Node ! {sync_dropped_mempool_txs, DroppedTXMap, DecreasedMempoolSize},
@@ -273,7 +282,7 @@ handle_new_block(#{ height := Height } = State, BShadow, Peer, ReceiveTimestamp)
 			]),
 			{noreply, State};
 		{ok, {}} ->
-			apply_new_block(
+			handle_new_block2(
 				State,
 				BShadow#block{ hash_list = ?BI_TO_BHL(BI) },
 				Peer,
@@ -327,14 +336,15 @@ get_diverged_block_hashes_reversed([], []) -> {ok, []};
 get_diverged_block_hashes_reversed(DivergedHashes, _) ->
 	{ok, lists:reverse(DivergedHashes)}.
 
-apply_new_block(State, #block{ txs = TXs }, Peer, _TS) when length(TXs) > ?BLOCK_TX_COUNT_LIMIT ->
+handle_new_block2(State, #block{ txs = TXs }, Peer, _TS)
+		when length(TXs) > ?BLOCK_TX_COUNT_LIMIT ->
 	ar:err([
 		{event, received_invalid_block},
 		{validation_error, tx_count_exceeds_limit},
 		{peer, ar_util:format_peer(Peer)}
 	]),
 	{noreply, State};
-apply_new_block(State, BShadow, Peer, ReceiveTimestamp) ->
+handle_new_block2(State, BShadow, Peer, ReceiveTimestamp) ->
 	#{
 		txs := MempoolTXs,
 		node := Node,
@@ -348,13 +358,13 @@ apply_new_block(State, BShadow, Peer, ReceiveTimestamp) ->
 				error ->
 					{noreply, State};
 				{ok, NewB} ->
-					apply_new_block(State, NewB, ReceiveTimestamp)
+					handle_new_block2(State, NewB, ReceiveTimestamp)
 			end;
 		_ ->
 			fork_recover(State, Node, Peer, [BShadow#block.indep_hash], BI, BlockTXPairs)
 	end.
 
-apply_new_block(State, NewB, ReceiveTimestamp) ->
+handle_new_block2(State, NewB, ReceiveTimestamp) ->
 	#{
 		node := Node,
 		block_txs_pairs := BlockTXPairs,
@@ -374,7 +384,21 @@ apply_new_block(State, NewB, ReceiveTimestamp) ->
 			]),
 			{noreply, State};
 		valid ->
-			NewState = ar_node_utils:integrate_new_block(State, NewB, TXs),
+			NewState = apply_block(State, NewB, TXs),
+			ar_miner_log:foreign_block(NewB#block.indep_hash),
+			ar:info(
+				[
+					{event, accepted_foreign_block},
+					{indep_hash, ar_util:encode(NewB#block.indep_hash)},
+					{height, NewB#block.height}
+				]
+			),
+			case whereis(fork_recovery_server) of
+				undefined ->
+					do_not_notify_fork_recovery_process;
+				PID ->
+					PID ! {parent_accepted_block, NewB}
+			end,
 			ProcessingTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000000,
 			prometheus_histogram:observe(block_processing_time, ProcessingTime),
 			Node ! {sync_state, NewState},
@@ -467,43 +491,162 @@ fork_recover(State, Node, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 	end,
 	{noreply, State}.
 
+apply_block(State, NewB, BlockTXs) ->
+	#{
+		txs := TXs,
+		block_index := BI,
+		block_txs_pairs := BlockTXPairs,
+		weave_size := WeaveSize,
+		wallet_list := WalletList
+	} = State,
+	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = BlockTXs }, BI),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(BlockTXs),
+	ar_data_sync:add_block(SizeTaggedTXs, lists:sublist(NewBI, ?TRACK_CONFIRMATIONS), WeaveSize),
+	ar_storage:write_full_block(NewB, BlockTXs),
+	BH = NewB#block.indep_hash,
+	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),
+	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
+		NewBlockTXPairs,
+		lists:foldl(
+			fun(TX, Acc) ->
+				maps:remove(TX#tx.id, Acc)
+			end,
+			TXs,
+			BlockTXs
+		),
+		NewB#block.diff,
+		NewB#block.height,
+		ar_wallets:get(
+			NewB#block.wallet_list,
+			ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
+		)
+	),
+	drop_invalid_txs(InvalidTXs),
+	lists:foreach(
+		fun(TX) ->
+			ar_downloader:enqueue_random({tx_data, TX}),
+			ar_tx_queue:drop_tx(TX)
+		end,
+		BlockTXs
+	),
+	BH = element(1, hd(NewBI)),
+	RewardAddr = NewB#block.reward_addr,
+	ar_wallets:set_current(WalletList, NewB#block.wallet_list, RewardAddr, NewB#block.height),
+	reset_miner(State#{
+		block_index      => NewBI,
+		current          => BH,
+		txs              => ValidTXs,
+		height           => NewB#block.height,
+		reward_pool      => NewB#block.reward_pool,
+		diff             => NewB#block.diff,
+		last_retarget    => NewB#block.last_retarget,
+		weave_size       => NewB#block.weave_size,
+		block_txs_pairs  => NewBlockTXPairs,
+		mempool_size     => calculate_mempool_size(ValidTXs),
+		wallet_list      => NewB#block.wallet_list
+	}).
+
+drop_invalid_txs(TXs) ->
+	lists:foreach(
+		fun ({_, tx_already_in_weave}) ->
+				ok;
+			({TX, Reason}) ->
+				ar:info([
+					{event, dropped_tx},
+					{id, ar_util:encode(TX#tx.id)},
+					{reason, Reason}
+				]),
+				case TX#tx.format == 2 of
+					true ->
+						ar_data_sync:maybe_drop_data_root_from_disk_pool(
+							TX#tx.data_root,
+							TX#tx.data_size,
+							TX#tx.id
+						);
+					false ->
+						nothing_to_drop_from_disk_pool
+				end
+		end,
+		TXs
+	).
+
+%% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
+reset_miner(#{ miner := undefined, automine := false } = StateIn) ->
+	StateIn;
+reset_miner(#{ miner := undefined, automine := true } = StateIn) ->
+	start_mining(StateIn);
+reset_miner(#{ miner := Pid, automine := false } = StateIn) ->
+	ar_mine:stop(Pid),
+	StateIn#{ miner => undefined };
+reset_miner(#{ miner := Pid, automine := true } = StateIn) ->
+	ar_mine:stop(Pid),
+	start_mining(StateIn#{ miner => undefined }).
+
+%% @doc Force a node to start mining, update state.
+start_mining(#{block_index := not_joined} = StateIn) ->
+	%% We don't have a block index. Wait until we have one before
+	%% starting to mine.
+	StateIn;
+start_mining(StateIn) ->
+	#{
+		node := Node,
+		block_index := BI,
+		txs := TXs,
+		reward_addr := RewardAddr,
+		tags := Tags,
+		block_txs_pairs := BlockTXPairs,
+		block_index := BI
+	} = StateIn,
+	case ar_poa:generate(BI) of
+		unavailable ->
+			ar:info(
+				[
+					{event, could_not_start_mining},
+					{reason, data_unavailable_to_generate_poa},
+					{generated_options_to_depth, ar_meta_db:get(max_poa_option_depth)}
+				]
+			),
+			StateIn;
+		POA ->
+			ar_miner_log:started_hashing(),
+			B = ar_storage:read_block(element(1, hd(BI))),
+			Miner = ar_mine:start(
+				B,
+				POA,
+				maps:fold(
+					fun
+						(_, {TX, ready_for_mining}, Acc) ->
+							[TX | Acc];
+						(_, _, Acc) ->
+							Acc
+					end,
+					[],
+					TXs
+				),
+				RewardAddr,
+				Tags,
+				Node,
+				BlockTXPairs,
+				BI
+			),
+			ar:info([{event, started_mining}]),
+			StateIn#{ miner => Miner }
+	end.
+
+calculate_mempool_size(TXs) ->
+	maps:fold(
+		fun(_TXID, {TX, _}, {HeaderAcc, DataAcc}) ->
+			{HeaderSize, DataSize} = tx_mempool_size(TX),
+			{HeaderSize + HeaderAcc, DataSize + DataAcc}
+		end,
+		{0, 0},
+		TXs
+	).
+
 %% @doc Integrate the block found by us.
 handle_block_from_miner(#{ block_index := not_joined } = State, _NewB, _TXs, _BDS, _POA) ->
 	{noreply, State};
-handle_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
-	#{
-		node             := Node,
-		block_index      := BI,
-		txs              := TXs,
-		gossip           := GS,
-		block_txs_pairs  := BlockTXPairs,
-		weave_size       := WeaveSize,
-		wallet_list      := WalletList
-	} = StateIn,
-	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = MinedTXs }, BI),
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(MinedTXs),
-	ar_data_sync:add_block(SizeTaggedTXs, lists:sublist(NewBI, ?TRACK_CONFIRMATIONS), WeaveSize),
-	ar_storage:write_full_block(NewB, MinedTXs),
-	BH = NewB#block.indep_hash,
-	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),
-	{ValidTXs, InvalidTXs} =
-		ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
-			NewBlockTXPairs,
-			lists:foldl(
-				fun(TX, Acc) ->
-					maps:remove(TX#tx.id, Acc)
-				end,
-				TXs,
-				MinedTXs
-			),
-			NewB#block.diff,
-			NewB#block.height,
-			ar_wallets:get(
-				NewB#block.wallet_list,
-				ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
-			)
-		),
-	ar_node_utils:drop_invalid_txs(InvalidTXs),
+handle_block_from_miner(#{ node := Node, gossip := GS } = State, NewB, MinedTXs, BDS, _POA) ->
 	ar_miner_log:mined_block(NewB#block.indep_hash, NewB#block.height),
 	ar:info(
 		[
@@ -516,32 +659,7 @@ handle_block_from_miner(StateIn, NewB, MinedTXs, BDS, _POA) ->
 		GS,
 		{new_block, self(), NewB#block.height, NewB, BDS, erlang:timestamp()}
 	),
-	lists:foreach(
-		fun(TX) ->
-			ar_downloader:enqueue_random({tx_data, TX}),
-			ar_tx_queue:drop_tx(TX)
-		end,
-		MinedTXs
-	),
-	BH = element(1, hd(NewBI)),
-	RewardAddr = NewB#block.reward_addr,
-	ar_wallets:set_current(WalletList, NewB#block.wallet_list, RewardAddr, NewB#block.height),
-	NewState = ar_node_utils:reset_miner(
-		StateIn#{
-			block_index          => NewBI,
-			current              => BH,
-			gossip               => NewGS,
-			txs                  => ValidTXs,
-			height               => NewB#block.height,
-			reward_pool          => NewB#block.reward_pool,
-			diff                 => NewB#block.diff,
-			last_retarget        => NewB#block.last_retarget,
-			weave_size           => NewB#block.weave_size,
-			block_txs_pairs      => NewBlockTXPairs,
-			wallet_list          => NewB#block.wallet_list,
-			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
-		}
-	),
+	NewState = reset_miner((apply_block(State, NewB, MinedTXs))#{ gossip => NewGS }),
 	Node ! {sync_state, NewState},
 	{noreply, NewState}.
 
@@ -570,13 +688,13 @@ handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTX
 			ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
 		)
 	),
-	ar_node_utils:drop_invalid_txs(InvalidTXs),
+	drop_invalid_txs(InvalidTXs),
 	ar_data_sync:add_block(
 		SizeTaggedTXs,
 		lists:sublist(BI, ?TRACK_CONFIRMATIONS),
 		NewB#block.weave_size - NewB#block.block_size
 	),
-	NewState = ar_node_utils:reset_miner(
+	NewState = reset_miner(
 		StateIn#{
 			block_index          => BI,
 			current              => element(1, hd(BI)),
@@ -588,7 +706,7 @@ handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTX
 			last_retarget        => NewB#block.last_retarget,
 			weave_size           => NewB#block.weave_size,
 			block_txs_pairs      => BlockTXPairs,
-			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
+			mempool_size         => calculate_mempool_size(ValidTXs)
 		}
 	),
 	Node ! {sync_state, NewState},
@@ -633,7 +751,7 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp) -
 			ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
 		)
 	),
-	ar_node_utils:drop_invalid_txs(InvalidTXs),
+	drop_invalid_txs(InvalidTXs),
 	AppliedBlockTXPairs = lists:takewhile(fun({BH, _}) -> BH /= BaseH end, BlockTXPairs),
 	lists:foreach(
 		fun({BH, SizeTaggedTXs}) ->
@@ -653,7 +771,7 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp) -
 	WalletList = (ar_storage:read_block(NewB#block.previous_block))#block.wallet_list,
 	RewardAddr = NewB#block.reward_addr,
 	ar_wallets:set_current(WalletList, NewB#block.wallet_list, RewardAddr, NewB#block.height),
-	NewState = ar_node_utils:reset_miner(
+	NewState = reset_miner(
 		StateIn#{
 			block_index          => BI,
 			current              => element(1, hd(BI)),
@@ -666,7 +784,7 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp) -
 			weave_size           => NewB#block.weave_size,
 			cumulative_diff      => NewB#block.cumulative_diff,
 			block_txs_pairs      => BlockTXPairs,
-			mempool_size         => ar_node_utils:calculate_mempool_size(ValidTXs)
+			mempool_size         => calculate_mempool_size(ValidTXs)
 		}
 	),
 	ForkRecoveryTime = timer:now_diff(erlang:timestamp(), StartTimestamp) / 1000000,

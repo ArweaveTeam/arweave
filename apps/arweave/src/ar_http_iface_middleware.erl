@@ -1102,7 +1102,7 @@ handle_post_tx(Req, PeerIP, Node, TX, Height, Wallets) ->
 	end.
 
 verify_mempool_txs_size(Node, TX) ->
-	{HeaderSize, DataSize} = ar_node_utils:tx_mempool_size(TX),
+	{HeaderSize, DataSize} = ar_node_worker:tx_mempool_size(TX),
 	{MempoolHeaderSize, MempoolDataSize} = ar_node:get_mempool_size(Node),
 	case MempoolHeaderSize + HeaderSize > ?MEMPOOL_HEADER_SIZE_LIMIT of
 		true ->
