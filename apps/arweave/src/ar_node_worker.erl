@@ -17,6 +17,8 @@
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 200).
 -endif.
 
+-define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -142,6 +144,64 @@ handle_task({add_peers, Peers}, #{ gossip := GS } = State) ->
 handle_task({set_loss_probability, Prob}, #{ gossip := GS } = State) ->
 	{noreply, State#{ gossip => ar_gossip:set_loss_probability(GS, Prob) }};
 
+handle_task({filter_mempool, Iterator}, State) ->
+	#{
+		node := Node,
+		txs := TXs,
+		diff := Diff,
+		height := Height,
+		wallet_list := WalletList,
+		block_txs_pairs := BlockTXPairs,
+		mempool_size := MempoolSize
+	} = State,
+	{ok, List, NextIterator} = take_mempool_chunk(Iterator, ?FILTER_MEMPOOL_CHUNK_SIZE),
+	case List of
+		[] ->
+			{noreply, State};
+		_ ->
+			Wallets = ar_wallets:get(WalletList, ar_tx:get_addresses(List)),
+			InvalidTXs =
+				lists:foldl(
+					fun(TX, Acc) ->
+						case ar_tx_replay_pool:verify_tx(
+							TX,
+							Diff,
+							Height,
+							BlockTXPairs,
+							#{},
+							Wallets
+						) of
+							valid ->
+								Acc;
+							{invalid, _Reason} ->
+								case TX#tx.format == 2 of
+									true ->
+										ar_data_sync:maybe_drop_data_root_from_disk_pool(
+											TX#tx.data_root,
+											TX#tx.data_size,
+											TX#tx.id
+										);
+								false ->
+									nothing_to_drop_from_disk_pool
+								end,
+								[TX | Acc]
+						end
+					end,
+					[],
+					List
+				),
+			{TXs2, DroppedTXMap, DecreasedMempoolSize} = drop_txs(InvalidTXs, TXs, MempoolSize),
+			NewState = State#{ txs => TXs2, mempool_size => DecreasedMempoolSize },
+			case NextIterator of
+				none ->
+					scan_complete;
+				_ ->
+					gen_server:cast(self(), {filter_mempool, NextIterator})
+			end,
+			Node ! {sync_dropped_mempool_txs, DroppedTXMap},
+			{noreply, NewState}
+	end;
+
 handle_task(Msg, State) ->
 	ar:err([
 		{event, ar_node_worker_received_unknown_message},
@@ -180,7 +240,7 @@ handle_add_tx(State, TX, GS) ->
 	#{ node := Node, txs := TXs, mempool_size := MS} = State,
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	IncreasedMempoolSize = increase_mempool_size(MS, TX),
-	Node ! {sync_mempool_tx, TX#tx.id, {TX, ready_for_mining}, IncreasedMempoolSize},
+	Node ! {sync_mempool_tx, TX#tx.id, {TX, ready_for_mining}},
 	{noreply, State#{
 		txs => maps:put(TX#tx.id, {TX, ready_for_mining}, TXs),
 		gossip => NewGS,
@@ -197,30 +257,53 @@ tx_mempool_size(#tx{ format = 2, data = Data }) ->
 	{?TX_SIZE_BASE, byte_size(Data)}.
 
 %% @doc Add the new waiting transaction to the server state.
-handle_add_waiting_tx(State, TX, GS) ->
+handle_add_waiting_tx(State, #tx{ id = TXID } = TX, GS) ->
 	#{ node := Node, txs := WaitingTXs, mempool_size := MS } = State,
 	{NewGS, _} = ar_gossip:send(GS, {add_waiting_tx, TX}),
-	IncreasedMempoolSize = increase_mempool_size(MS, TX),
-	Node ! {sync_mempool_tx, TX#tx.id, {TX, waiting}, IncreasedMempoolSize},
-	{noreply, State#{
-		txs => maps:put(TX#tx.id, {TX, waiting}, WaitingTXs),
-		gossip => NewGS,
-		mempool_size => IncreasedMempoolSize
-	}}.
+	case maps:is_key(TXID, WaitingTXs) of
+		false ->
+			IncreasedMempoolSize = increase_mempool_size(MS, TX),
+			Node ! {sync_mempool_tx, TXID, {TX, waiting}},
+			{noreply, State#{
+				txs => maps:put(TXID, {TX, waiting}, WaitingTXs),
+				gossip => NewGS,
+				mempool_size => IncreasedMempoolSize
+			}};
+		true ->
+			{noreply, State}
+	end.
 
 %% @doc Add the transaction to the mining pool, to be included in the mined block.
-handle_move_tx_to_mining_pool(State, TX, GS) ->
-	#{ node := Node, txs := TXs } = State,
+handle_move_tx_to_mining_pool(State, #tx{ id = TXID } = TX, GS) ->
+	#{ node := Node, txs := TXs, mempool_size := MempoolSize } = State,
 	{NewGS, _} = ar_gossip:send(GS, {move_tx_to_mining_pool, TX}),
 	Node ! {sync_mempool_tx, TX#tx.id, {TX, ready_for_mining}},
-	{noreply, State#{
-		txs => maps:put(TX#tx.id, {TX, ready_for_mining}, TXs),
-		gossip => NewGS
-	}}.
+	case maps:get(TXID, TXs, not_found) of
+		not_found ->
+			{noreply, State#{
+				txs => maps:put(TX#tx.id, {TX, ready_for_mining}, TXs),
+				mempool_size => increase_mempool_size(MempoolSize, TX),
+				gossip => NewGS
+			}};
+		{ExistingTX, _Status} ->
+			{noreply, State#{
+				txs => maps:put(TXID, {ExistingTX, ready_for_mining}, TXs),
+				gossip => NewGS
+			}}
+	end.
 
 handle_drop_waiting_txs(State, DroppedTXs, GS) ->
-	#{ node := Node, txs := TXs, mempool_size := {MempoolHeaderSize, MempoolDataSize} } = State,
+	#{ node := Node, txs := TXs, mempool_size := MempoolSize } = State,
 	{NewGS, _} = ar_gossip:send(GS, {drop_waiting_txs, DroppedTXs}),
+	{UpdatedTXs, DroppedTXMap, DecreasedMempoolSize} = drop_txs(DroppedTXs, TXs, MempoolSize),
+	Node ! {sync_dropped_mempool_txs, DroppedTXMap},
+	{noreply, State#{
+		txs => UpdatedTXs,
+		gossip => NewGS,
+		mempool_size => DecreasedMempoolSize
+	}}.
+
+drop_txs(DroppedTXs, TXs, MempoolSize) ->
 	{UpdatedTXs, DroppedTXMap} = lists:foldl(
 		fun(TX, {Acc, DroppedAcc}) ->
 			case maps:take(TX#tx.id, Acc) of
@@ -234,14 +317,23 @@ handle_drop_waiting_txs(State, DroppedTXs, GS) ->
 		DroppedTXs
 	),
 	{DroppedHeaderSize, DroppedDataSize} = calculate_mempool_size(DroppedTXMap),
+	{MempoolHeaderSize, MempoolDataSize} = MempoolSize,
 	DecreasedMempoolSize =
 		{MempoolHeaderSize - DroppedHeaderSize, MempoolDataSize - DroppedDataSize},
-	Node ! {sync_dropped_mempool_txs, DroppedTXMap, DecreasedMempoolSize},
-	{noreply, State#{
-		txs => UpdatedTXs,
-		gossip => NewGS,
-		mempool_size => DecreasedMempoolSize
-	}}.
+	{UpdatedTXs, DroppedTXMap, DecreasedMempoolSize}.
+
+take_mempool_chunk(Iterator, Size) ->
+	take_mempool_chunk(Iterator, Size, []).
+
+take_mempool_chunk(Iterator, 0, Taken) ->
+	{ok, Taken, Iterator};
+take_mempool_chunk(Iterator, Size, Taken) ->
+	case maps:next(Iterator) of
+		none ->
+			{ok, Taken, none};
+		{_, {TX, _}, NextIterator} ->
+			take_mempool_chunk(NextIterator, Size - 1, [TX | Taken])
+	end.
 
 %% @doc Validate whether a new block is legitimate, then handle it, optionally
 %% dropping or starting a fork recovery as appropriate.
@@ -494,6 +586,7 @@ fork_recover(State, Node, Peer, RecoveryHashes, BI, BlockTXPairs) ->
 apply_block(State, NewB, BlockTXs) ->
 	#{
 		txs := TXs,
+		mempool_size := MempoolSize,
 		block_index := BI,
 		block_txs_pairs := BlockTXPairs,
 		weave_size := WeaveSize,
@@ -502,30 +595,16 @@ apply_block(State, NewB, BlockTXs) ->
 	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = BlockTXs }, BI),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(BlockTXs),
 	ar_data_sync:add_block(SizeTaggedTXs, lists:sublist(NewBI, ?TRACK_CONFIRMATIONS), WeaveSize),
-	ar_storage:write_full_block(NewB, BlockTXs),
+	ar_storage:write_block(NewB),
+	spawn(fun() -> write_txs(NewB, BlockTXs) end),
 	BH = NewB#block.indep_hash,
 	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),
-	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
-		NewBlockTXPairs,
-		lists:foldl(
-			fun(TX, Acc) ->
-				maps:remove(TX#tx.id, Acc)
-			end,
-			TXs,
-			BlockTXs
-		),
-		NewB#block.diff,
-		NewB#block.height,
-		ar_wallets:get(
-			NewB#block.wallet_list,
-			ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
-		)
-	),
-	drop_invalid_txs(InvalidTXs),
+	{TXs2, _DroppedTXMap, DecreasedMempoolSize} = drop_txs(BlockTXs, TXs, MempoolSize),
+	gen_server:cast(self(), {filter_mempool, maps:iterator(TXs2)}),
 	lists:foreach(
 		fun(TX) ->
-			ar_downloader:enqueue_random({tx_data, TX}),
-			ar_tx_queue:drop_tx(TX)
+			ar_tx_queue:drop_tx(TX),
+			ar_downloader:enqueue_random({tx_data, TX})
 		end,
 		BlockTXs
 	),
@@ -535,40 +614,27 @@ apply_block(State, NewB, BlockTXs) ->
 	reset_miner(State#{
 		block_index      => NewBI,
 		current          => BH,
-		txs              => ValidTXs,
+		txs              => TXs2,
+		mempool_size     => DecreasedMempoolSize,
 		height           => NewB#block.height,
 		reward_pool      => NewB#block.reward_pool,
 		diff             => NewB#block.diff,
 		last_retarget    => NewB#block.last_retarget,
 		weave_size       => NewB#block.weave_size,
 		block_txs_pairs  => NewBlockTXPairs,
-		mempool_size     => calculate_mempool_size(ValidTXs),
 		wallet_list      => NewB#block.wallet_list
 	}).
 
-drop_invalid_txs(TXs) ->
-	lists:foreach(
-		fun ({_, tx_already_in_weave}) ->
-				ok;
-			({TX, Reason}) ->
-				ar:info([
-					{event, dropped_tx},
-					{id, ar_util:encode(TX#tx.id)},
-					{reason, Reason}
-				]),
-				case TX#tx.format == 2 of
-					true ->
-						ar_data_sync:maybe_drop_data_root_from_disk_pool(
-							TX#tx.data_root,
-							TX#tx.data_size,
-							TX#tx.id
-						);
-					false ->
-						nothing_to_drop_from_disk_pool
-				end
-		end,
-		TXs
-	).
+write_txs(BShadow, TXs) ->
+	ar_storage:write_tx(TXs),
+	StoreTags = case ar_meta_db:get(arql_tags_index) of
+		true ->
+			store_tags;
+		_ ->
+			do_not_store_tags
+	end,
+	ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags),
+	app_ipfs:maybe_ipfs_add_txs(TXs).
 
 %% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
 reset_miner(#{ miner := undefined, automine := false } = StateIn) ->
@@ -678,17 +744,7 @@ handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTX
 		undefined -> ok;
 		_ -> erlang:unregister(fork_recovery_server)
 	end,
-	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
-		BlockTXPairs,
-		TXs,
-		NewB#block.diff,
-		NewB#block.height,
-		ar_wallets:get(
-			NewB#block.wallet_list,
-			ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
-		)
-	),
-	drop_invalid_txs(InvalidTXs),
+	gen_server:cast(self(), {filter_mempool, maps:iterator(TXs)}),
 	ar_data_sync:add_block(
 		SizeTaggedTXs,
 		lists:sublist(BI, ?TRACK_CONFIRMATIONS),
@@ -701,12 +757,10 @@ handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTX
 			wallet_list          => NewB#block.wallet_list,
 			height               => NewB#block.height,
 			reward_pool          => NewB#block.reward_pool,
-			txs                  => ValidTXs,
 			diff                 => NewB#block.diff,
 			last_retarget        => NewB#block.last_retarget,
 			weave_size           => NewB#block.weave_size,
-			block_txs_pairs      => BlockTXPairs,
-			mempool_size         => calculate_mempool_size(ValidTXs)
+			block_txs_pairs      => BlockTXPairs
 		}
 	),
 	Node ! {sync_state, NewState},
@@ -741,17 +795,6 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp) -
 		Depth ->
 			prometheus_histogram:observe(fork_recovery_depth, Depth)
 	end,
-	{ValidTXs, InvalidTXs} = ar_tx_replay_pool:pick_txs_to_keep_in_mempool(
-		BlockTXPairs,
-		TXs,
-		NewB#block.diff,
-		NewB#block.height,
-		ar_wallets:get(
-			NewB#block.wallet_list,
-			ar_tx:get_addresses([TX || {TX, _} <- maps:values(TXs)])
-		)
-	),
-	drop_invalid_txs(InvalidTXs),
 	AppliedBlockTXPairs = lists:takewhile(fun({BH, _}) -> BH /= BaseH end, BlockTXPairs),
 	lists:foreach(
 		fun({BH, SizeTaggedTXs}) ->
@@ -768,6 +811,7 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp) -
 		end,
 		lists:reverse(AppliedBlockTXPairs)
 	),
+	gen_server:cast(self(), {filter_mempool, maps:iterator(TXs)}),
 	WalletList = (ar_storage:read_block(NewB#block.previous_block))#block.wallet_list,
 	RewardAddr = NewB#block.reward_addr,
 	ar_wallets:set_current(WalletList, NewB#block.wallet_list, RewardAddr, NewB#block.height),
@@ -778,13 +822,11 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp) -
 			wallet_list          => NewB#block.wallet_list,
 			height               => NewB#block.height,
 			reward_pool          => NewB#block.reward_pool,
-			txs                  => ValidTXs,
 			diff                 => NewB#block.diff,
 			last_retarget        => NewB#block.last_retarget,
 			weave_size           => NewB#block.weave_size,
 			cumulative_diff      => NewB#block.cumulative_diff,
-			block_txs_pairs      => BlockTXPairs,
-			mempool_size         => calculate_mempool_size(ValidTXs)
+			block_txs_pairs      => BlockTXPairs
 		}
 	),
 	ForkRecoveryTime = timer:now_diff(erlang:timestamp(), StartTimestamp) / 1000000,

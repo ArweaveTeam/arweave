@@ -329,21 +329,45 @@ create_block_txs_pairs(recent_blocks, [{BH, _, _} | Rest]) ->
 	[{BH, SizeTaggedTXs} | create_block_txs_pairs(Rest)].
 
 %% @doc Main server loop.
-server(WPid, #{ txs := TXs} = State) ->
+server(WPid, #{ txs := TXs, mempool_size := {MempoolHeaderSize, MempoolDataSize} } = State) ->
 	receive
 		stop ->
 			dump_mempool(State);
 		{'EXIT', _, Reason} ->
 			dump_mempool(State),
 			ar:info([{event, ar_node_terminated}, {reason, Reason}]);
-		{sync_mempool_tx, TXID, Value, MempoolSize} ->
-			State2 = State#{ txs => maps:put(TXID, Value, TXs), mempool_size => MempoolSize },
-			server(WPid, State2);
-		{sync_mempool_tx, TXID, Value} ->
-			server(WPid, State#{ txs => maps:put(TXID, Value, TXs) });
-		{sync_dropped_mempool_txs, Map, MempoolSize} ->
-			TXs2 = maps:fold(fun(TXID, _V, Acc) -> maps:remove(TXID, Acc) end, TXs, Map),
-			server(WPid, State#{ txs => TXs2, mempool_size => MempoolSize });
+		{sync_mempool_tx, TXID, {TX, Status} = Value} ->
+			case maps:get(TXID, TXs, not_found) of
+				{ExistingTX, _Status} ->
+					UpdatedTXs = maps:put(TXID, {ExistingTX, Status}, TXs),
+					server(WPid, State#{ txs => UpdatedTXs });
+				not_found ->
+					UpdatedTXs = maps:put(TXID, Value, TXs),
+					{AddHeaderSize, AddDataSize} = ar_node_worker:tx_mempool_size(TX),
+					UpdatedMempoolSize =
+						{MempoolHeaderSize + AddHeaderSize, MempoolDataSize + AddDataSize},
+					server(WPid, State#{ txs => UpdatedTXs, mempool_size => UpdatedMempoolSize })
+			end;
+		{sync_dropped_mempool_txs, Map} ->
+			{UpdatedTXs, UpdatedMempoolSize} =
+				maps:fold(
+					fun(TXID, {TX, _Status}, {MapAcc, MempoolSizeAcc} = Acc) ->
+						case maps:is_key(TXID, MapAcc) of
+							true ->
+								{DroppedHeaderSize, DroppedDataSize} =
+									ar_node_worker:tx_mempool_size(TX),
+								{HeaderSize, DataSize} = MempoolSizeAcc,
+								UpdatedMempoolSizeAcc =
+									{HeaderSize - DroppedHeaderSize, DataSize - DroppedDataSize},
+								{maps:remove(TXID, MapAcc), UpdatedMempoolSizeAcc};
+							false ->
+								Acc
+						end
+					end,
+					{TXs, {MempoolHeaderSize, MempoolDataSize}},
+					Map
+				),
+			server(WPid, State#{ txs => UpdatedTXs, mempool_size => UpdatedMempoolSize });
 		{sync_reward_addr, Addr} ->
 			server(WPid, State#{ reward_addr => Addr });
 		{sync_trusted_peers, Peers} ->

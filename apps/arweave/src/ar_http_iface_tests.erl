@@ -662,15 +662,18 @@ get_tx_status_test() ->
 	),
 	ar_node:mine(Node),
 	ar_test_node:wait_until_height(Node, 2),
-	{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
-	{Res2} = ar_serialize:dejsonify(Body2),
-	?assertEqual(
-		#{
-			<<"block_height">> => length(BI) - 1,
-			<<"block_indep_hash">> => ar_util:encode(element(1, hd(BI))),
-			<<"number_of_confirmations">> => 2
-		},
-		maps:from_list(Res2)
+	ar_util:do_until(
+		fun() ->
+			{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
+			{Res2} = ar_serialize:dejsonify(Body2),
+			#{
+				<<"block_height">> => length(BI) - 1,
+				<<"block_indep_hash">> => ar_util:encode(element(1, hd(BI))),
+				<<"number_of_confirmations">> => 2
+			} == maps:from_list(Res2)
+		end,
+		200,
+		5000
 	),
 	%% Create a fork where the TX doesn't exist.
 	{Slave, _} = ar_test_node:slave_start(B0),

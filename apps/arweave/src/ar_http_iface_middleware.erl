@@ -1097,7 +1097,7 @@ handle_post_tx(Req, PeerIP, Node, TX, Height, Wallets) ->
 			handle_post_tx_already_in_weave_response();
 		{invalid, tx_already_in_mempool} ->
 			handle_post_tx_already_in_mempool_response();
-		{valid, _, _} ->
+		valid  ->
 			handle_post_tx_accepted(Req, PeerIP, TX)
 	end.
 
