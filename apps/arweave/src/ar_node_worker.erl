@@ -815,8 +815,6 @@ priority({fork_recovered, _, _, _, _}) ->
 	1;
 priority({work_complete, _, _, _, _, _}) ->
 	2;
-priority({gossip_message, #gs_msg{ data = {add_waiting_tx, _} }}) ->
-	3;
 priority(_) ->
 	os:system_time(second).
 
