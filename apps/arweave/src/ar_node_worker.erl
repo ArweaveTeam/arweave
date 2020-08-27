@@ -602,13 +602,7 @@ apply_block(State, NewB, BlockTXs) ->
 	NewBlockTXPairs = ar_node_utils:update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),
 	{TXs2, _DroppedTXMap, DecreasedMempoolSize} = drop_txs(BlockTXs, TXs, MempoolSize),
 	gen_server:cast(self(), {filter_mempool, maps:iterator(TXs2)}),
-	lists:foreach(
-		fun(TX) ->
-			ar_tx_queue:drop_tx(TX),
-			ar_header_sync:enqueue_random({tx_data, TX})
-		end,
-		BlockTXs
-	),
+	lists:foreach(fun(TX) -> ar_tx_queue:drop_tx(TX) end, BlockTXs),
 	BH = element(1, hd(NewBI)),
 	RewardAddr = NewB#block.reward_addr,
 	ar_wallets:set_current(WalletList, NewB#block.wallet_list, RewardAddr, NewB#block.height),

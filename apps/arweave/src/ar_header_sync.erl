@@ -43,7 +43,7 @@ reset() ->
 %%%===================================================================
 
 init(_Args) ->
-	ar:info([{event, ar_downloader_start}]),
+	ar:info([{event, ar_header_sync_start}]),
 	%% The message queue of this process is expected to be huge
 	%% when the node joins. The flag makes VM store messages off
 	%% heap and do not perform expensive GC on them.
@@ -75,17 +75,11 @@ handle_call(_, _, _) ->
 maybe_enqueue(Item, Place, Queue) ->
 	case has_item(Item) of
 		false ->
-			InsertedItem = case Item of
-				{tx_data, TX} when is_record(TX, tx) ->
-					{tx_data, {TX#tx.id, TX#tx.data_root}};
-				_ ->
-					Item
-			end,
 			case Place of
 				front ->
-					enqueue_front(InsertedItem, Queue);
+					enqueue_front(Item, Queue);
 				random ->
-					enqueue_random(InsertedItem, Queue)
+					enqueue_random(Item, Queue)
 			end;
 		true ->
 			Queue
@@ -94,20 +88,7 @@ maybe_enqueue(Item, Place, Queue) ->
 has_item({block, {H, _TXRoot}}) ->
 	ar_storage:lookup_block_filename(H) /= unavailable;
 has_item({tx, {ID, _BH}}) ->
-	ar_storage:lookup_tx_filename(ID) /= unavailable;
-has_item({tx_data, TX}) when is_record(TX, tx) ->
-	not tx_needs_data(TX);
-has_item({tx_data, {ID, _DataRoot}}) when is_binary(ID) ->
-	filelib:is_file(ar_storage:tx_data_filepath(ID)).
-
-tx_needs_data(#tx{ format = 1 }) ->
-	false;
-tx_needs_data(#tx{ format = 2, data_size = 0 }) ->
-	false;
-tx_needs_data(#tx{ format = 2, data_size = DataSize }) when DataSize > ?SYNC_DATA_BELOW_SIZE ->
-	false;
-tx_needs_data(#tx{ format = 2 } = TX) ->
-	not filelib:is_file(ar_storage:tx_data_filepath(TX)).
+	ar_storage:lookup_tx_filename(ID) /= unavailable.
 
 enqueue_front(Item, Queue) ->
 	queue:in_r({Item, initial_backoff()}, Queue).
@@ -151,14 +132,6 @@ process_item(Queue) ->
 				{error, _Reason} ->
 					UpdatedBackoff = update_backoff(Now, Backoff),
 					enqueue_random({tx, {ID, BH}}, UpdatedBackoff, UpdatedQueue);
-				{ok, TX} ->
-					maybe_enqueue({tx_data, TX}, front, UpdatedQueue)
-			end;
-		{{value, {{tx_data, {ID, DataRoot}}, Backoff}}, UpdatedQueue} when is_binary(ID) ->
-			case download_transaction_data(ID, DataRoot) of
-				{error, _Reason} ->
-					UpdatedBackoff = update_backoff(Now, Backoff),
-					enqueue_random({tx_data, {ID, DataRoot}}, UpdatedBackoff, UpdatedQueue);
 				ok ->
 					UpdatedQueue
 			end
@@ -271,7 +244,7 @@ download_tx(ID, BH) ->
 											do_not_store_tags
 									end,
 									ar_arql_db:insert_tx(BH, TX, StoreTags),
-									{ok, TX};
+									ok;
 								{error, Reason} = Error ->
 									ar:warn([
 										{event, downloader_failed_to_write_tx},
@@ -289,30 +262,5 @@ download_tx(ID, BH) ->
 					{error, tx_header_unavailable}
 			end;
 		TX ->
-			{ok, TX}
-	end.
-
-download_transaction_data(ID, DataRoot) ->
-	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-	case ar_http_iface_client:get_tx_data(Peers, ID) of
-		unavailable ->
-			{error, tx_data_unavailable};
-		Data ->
-			case ar_storage:write_tx_data(DataRoot, Data) of
-				ok ->
-					ok;
-				{error, invalid_data_root} ->
-					%% Ignore this case as we could have gotten a TX with
-					%% a custom split. Its data can be synced by ar_data_sync.
-					%% ar_downloader is currently syncing data only to ensure
-					%% a smooth migration to 2.1.
-					ok;
-				{error, Reason} = Error ->
-					ar:warn([
-						{event, downloader_failed_to_write_tx_data},
-						{tx, ar_util:encode(ID)},
-						{reason, Reason}
-					]),
-					Error
-			end
+			ok
 	end.

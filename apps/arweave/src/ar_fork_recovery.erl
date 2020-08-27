@@ -286,13 +286,7 @@ apply_next_block(State, NextB, B) ->
 			BH = NextB#block.indep_hash,
 			NewBlockTXPairs =
 				ar_node_utils:update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs),
-			lists:foreach(
-				fun(TX) ->
-					ar_header_sync:enqueue_random({tx_data, TX}),
-					ar_tx_queue:drop_tx(TX)
-				end,
-				NextB#block.txs
-			),
+			lists:foreach(fun(TX) -> ar_tx_queue:drop_tx(TX) end, NextB#block.txs),
 			case ar_meta_db:get(partial_fork_recovery) of
 				true ->
 					ar:info(
