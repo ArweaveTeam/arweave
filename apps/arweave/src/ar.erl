@@ -533,8 +533,8 @@ start(normal, _Args) ->
 		shutdown => infinity
 	}),
 	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_downloader_sup,
-		start => {ar_downloader_sup, start_link, [[]]},
+		id => ar_header_sync_sup,
+		start => {ar_header_sync_sup, start_link, [[]]},
 		type => supervisor,
 		shutdown => infinity
 	}),

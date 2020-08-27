@@ -1,4 +1,4 @@
--module(ar_downloader_sup).
+-module(ar_header_sync_sup).
 -behaviour(supervisor).
 
 -export([start_link/1]).
@@ -18,7 +18,7 @@ start_link(Args) ->
 init(Args) ->
 	SupFlags = #{strategy => one_for_one, intensity => 10, period => 1},
 	ChildSpec = #{
-		id => ar_downloader,
-		start => {ar_downloader, start_link, [Args]}
+		id => ar_header_sync,
+		start => {ar_header_sync, start_link, [Args]}
 	},
 	{ok, {SupFlags, [ChildSpec]}}.

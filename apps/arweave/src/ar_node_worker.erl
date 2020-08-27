@@ -605,7 +605,7 @@ apply_block(State, NewB, BlockTXs) ->
 	lists:foreach(
 		fun(TX) ->
 			ar_tx_queue:drop_tx(TX),
-			ar_downloader:enqueue_random({tx_data, TX})
+			ar_header_sync:enqueue_random({tx_data, TX})
 		end,
 		BlockTXs
 	),
