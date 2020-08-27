@@ -271,19 +271,29 @@ delete_tx(Hash) ->
 	file:delete(tx_filepath(Hash)).
 
 write_tx(TXs) when is_list(TXs) -> lists:foreach(fun write_tx/1, TXs);
-write_tx(#tx{ format = 1 } = TX) ->
-	write_tx_header(TX);
-write_tx(#tx{ format = 2 } = TX) ->
-	case write_tx_header(TX#tx{ data = <<>> }) of
+write_tx(#tx{ format = Format, data = Data } = TX) ->
+	DataStoredWithHeader =
+		case Format of
+			2 ->
+				<<>>;
+			1 ->
+				Data
+		end,
+	case write_tx_header(TX#tx{ data = DataStoredWithHeader }) of
 		ok ->
 			DataSize = byte_size(TX#tx.data),
 			case DataSize > 0 of
 				true ->
 					case DataSize == TX#tx.data_size of
 						true ->
-							write_tx_data(TX#tx.data_root, TX#tx.data);
+							case TX#tx.data_root of
+								<<>> ->
+									write_tx_data(TX#tx.data);
+								DataRoot ->
+									write_tx_data(DataRoot, TX#tx.data)
+							end;
 						false ->
-							ar:err([{event, failed_to_store_v2_data}, {reason, size_mismatch}])
+							ar:err([{event, failed_to_store_tx_data}, {reason, size_mismatch}])
 					end;
 				false ->
 					ok
@@ -327,57 +337,65 @@ write_tx_header_after_scan(TX) ->
 			{error, not_enough_space}
 	end.
 
+write_tx_data(Data) ->
+	write_tx_data(no_expected_data_root, Data).
+
 write_tx_data(ExpectedDataRoot, Data) ->
 	Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, Data),
 	SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
 	SizeTaggedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks),
-	case ar_merkle:generate_tree(SizeTaggedChunkIDs) of
-		{ExpectedDataRoot, DataTree} ->
-			lists:foreach(
-				fun
-					({<<>>, _}) ->
-						%% Empty chunks are produced by ar_tx:chunk_binary/2, when
-						%% the data is evenly split by the given chunk size. They are
-						%% the last chunks of the corresponding transactions and have
-						%% the same end offsets as their preceding chunks. They are never
-						%% picked as recall chunks because recall byte has to be strictly
-						%% smaller than the end offset. They are an artifact of the original
-						%% chunking implementation. There is no value in storing them.
-						ignore_empty_chunk;
-					({Chunk, Offset}) ->
-							DataPath =
-								ar_merkle:generate_path(ExpectedDataRoot, Offset - 1, DataTree),
-							Proof = #{
-								data_root => ExpectedDataRoot,
-								chunk => Chunk,
-								offset => Offset - 1,
-								data_path => DataPath,
-								data_size => byte_size(Data)
-							},
-							spawn(
-								fun() ->
-									case catch ar_data_sync:add_chunk(Proof) of
-										ok ->
-											ok;
-										{error, data_root_not_found} ->
-											ok;
-										{'EXIT', {timeout, {gen_server, call, _}}} ->
-											ok;
-										Error ->
-											ar:err([
-												{event, failed_to_store_v2_chunk},
-												{reason, Error}
-											])
-									end
-								end
-							),
-							ok
-				end,
-				SizeTaggedChunks
-			);
+	case {ExpectedDataRoot, ar_merkle:generate_tree(SizeTaggedChunkIDs)} of
+		{no_expected_data_root, {DataRoot, DataTree}} ->
+			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks);
+		{_, {ExpectedDataRoot, DataTree}} ->
+			write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks);
 		_ ->
 			{error, invalid_data_root}
 	end.
+
+write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
+	lists:foreach(
+		fun
+			({<<>>, _}) ->
+				%% Empty chunks are produced by ar_tx:chunk_binary/2, when
+				%% the data is evenly split by the given chunk size. They are
+				%% the last chunks of the corresponding transactions and have
+				%% the same end offsets as their preceding chunks. They are never
+				%% picked as recall chunks because recall byte has to be strictly
+				%% smaller than the end offset. They are an artifact of the original
+				%% chunking implementation. There is no value in storing them.
+				ignore_empty_chunk;
+			({Chunk, Offset}) ->
+					DataPath =
+						ar_merkle:generate_path(ExpectedDataRoot, Offset - 1, DataTree),
+					Proof = #{
+						data_root => ExpectedDataRoot,
+						chunk => Chunk,
+						offset => Offset - 1,
+						data_path => DataPath,
+						data_size => byte_size(Data)
+					},
+					spawn(
+						fun() ->
+							case catch ar_data_sync:add_chunk(Proof) of
+								ok ->
+									ok;
+								{error, data_root_not_found} ->
+									ok;
+								{'EXIT', {timeout, {gen_server, call, _}}} ->
+									ok;
+								Error ->
+									ar:err([
+										{event, failed_to_store_v2_chunk},
+										{reason, Error}
+									])
+							end
+						end
+					),
+					ok
+		end,
+		SizeTaggedChunks
+	).
 
 %% @doc Read a tx from disk, given a hash.
 read_tx(unavailable) -> unavailable;
