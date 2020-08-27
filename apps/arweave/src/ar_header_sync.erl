@@ -1,4 +1,5 @@
--module(ar_downloader).
+-module(ar_header_sync).
+
 -behaviour(gen_server).
 
 -export([start_link/1, enqueue_front/1, enqueue_random/1]).

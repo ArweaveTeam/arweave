@@ -78,13 +78,13 @@ do_join(Node, RawPeers, NewB, BI) ->
 				lists:split(min(length(BI), ?DOWNLOAD_TOP_PRIORITY_BLOCKS_COUNT), BI),
 			lists:foreach(
 				fun({H, _, TXRoot}) ->
-					ar_downloader:enqueue_front({block, {H, TXRoot}})
+					ar_header_sync:enqueue_front({block, {H, TXRoot}})
 				end,
 				lists:sort(fun(_, _) -> rand:uniform(2) == 1 end, Rest)
 			),
 			lists:foreach(
 				fun({H, _, TXRoot}) ->
-					ar_downloader:enqueue_front({block, {H, TXRoot}})
+					ar_header_sync:enqueue_front({block, {H, TXRoot}})
 				end,
 				lists:reverse(Recent)
 			)
