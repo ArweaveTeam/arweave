@@ -1004,5 +1004,11 @@ get_error_of_data_limit_test() ->
 	?assertEqual({error, too_much_data}, Resp).
 
 send_new_block(Peer, B) ->
-	BDS = ar_block:generate_block_data_segment(B),
+	BDS =
+		case B#block.height >= ar_fork:height_2_3() of
+			true ->
+				ar_block:generate_block_data_segment_base(B);
+			false ->
+				ar_block:generate_block_data_segment(B)
+		end,
 	ar_http_iface_client:send_new_block(Peer, B, BDS).

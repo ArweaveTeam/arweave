@@ -23,10 +23,12 @@
 	set_reward_addr/2,
 	set_loss_probability/2,
 	get_mempool_size/1,
-	get_block_shadow_from_cache/2
+	get_block_shadow_from_cache/2,
+	get_search_space_upper_bound/2
 ]).
 
 -include("ar.hrl").
+-include("ar_mine.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -636,6 +638,25 @@ handle({get_mempool_size, From, Ref}, _WPid, #{ mempool_size := Size } = State) 
 handle({get_block_shadow_from_cache, From, Ref, H}, _WPid, State) ->
 	#{ block_cache := BlockCache } = State,
 	From ! {Ref, block_shadow_from_cache, ar_block_cache:get(BlockCache, H)},
+	State;
+
+handle({get_search_space_upper_bound, From, Ref, Height}, _WPid, State) ->
+	#{ block_index := BI, height := CurrentHeight } = State,
+	TargetHeight = Height - ?SEARCH_SPACE_UPPER_BOUND_DEPTH(Height),
+	WeaveSize =
+		case TargetHeight > CurrentHeight of
+			true ->
+				{error, height_out_of_range};
+			false ->
+				Index = CurrentHeight - TargetHeight + 1,
+				case Index > length(BI) of
+					true ->
+						element(2, lists:last(BI));
+					false ->
+						element(2, lists:nth(CurrentHeight - TargetHeight + 1, BI))
+				end
+		end,
+	From ! {Ref, search_space_upper_bound, WeaveSize},
 	State;
 
 handle(UnknownMsg, _WPid, State) ->

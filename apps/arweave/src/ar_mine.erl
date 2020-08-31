@@ -1,17 +1,21 @@
 -module(ar_mine).
 
--export([start/8, stop/1, mine/2]).
--export([validate/4, validate/3]).
--export([min_difficulty/1, max_difficulty/0]).
--export([sha384_diff_to_randomx_diff/1]).
+-export([
+	start/8, stop/1,
+	mine/2, mine_spora/2,
+	validate/4, validate/3, validate_spora/8,
+	min_difficulty/1, max_difficulty/0,
+	min_spora_difficulty/1,
+	sha384_diff_to_randomx_diff/1,
+	spora_solution_hash/2,
+	pick_recall_byte/4,
+	get_search_space_upper_bound/2
+]).
 
 -include("ar.hrl").
-
+-include("ar_mine.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% A module for managing mining of blocks on the weave,
-
-%% State record for miners
 -record(state, {
 	parent, % miners parent process (initiator)
 	current_block, % current block held by node
@@ -32,8 +36,17 @@
 	miners = [], % miner worker processes
 	bds_base = not_generated, % part of the block data segment not changed during mining
 	total_hashes_tried = 0, % the number of tried hashes, used to estimate the hashrate
-	started_at = not_set % the timestamp when the mining begins, used to estimate the hashrate
+	started_at = not_set, % the timestamp when the mining begins, used to estimate the hashrate
+	total_sporas_tried = 0, % the number of Succinct Proofs of Random Access checked during mining
+	%% The number of Succinct Proofs of Random Access discovered but not neccessarily
+	%% checked (because they are not present locally) during mining.
+	total_sporas_discovered = 0,
+	block_index = not_set % the latest block index
 }).
+
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
 %% @doc Spawns a new mining process and returns its PID.
 start(CurrentB, POA, TXs, RewardAddr, Tags, Parent, BlockTXPairs, BI) ->
@@ -59,7 +72,14 @@ start(CurrentB, POA, TXs, RewardAddr, Tags, Parent, BlockTXPairs, BI) ->
 			block_txs_pairs = BlockTXPairs,
 			started_at = erlang:timestamp(),
 			candidate_block = CandidateB,
-			txs = TXs
+			txs = TXs,
+			block_index =
+				case CurrentHeight + 1 >= ar_fork:height_2_3() of
+					true ->
+						BI;
+					false ->
+						not_set
+				end
 		}
 	).
 
@@ -91,6 +111,32 @@ validate(BDSHash, Diff, Height) ->
 			end
 	end.
 
+%% @doc Validate Succinct Proof of Random Access.
+validate_spora(BDS, Nonce, Height, Diff, PrevH, SearchSpaceUpperBound, SPoA, BI) ->
+	RXHash = ar_weave:hash(BDS, Nonce, Height),
+	case validate(RXHash, ?SPORA_SLOW_HASH_DIFF(Height), Height) of
+		false ->
+			false;
+		true ->
+			SolutionHash = spora_solution_hash(RXHash, SPoA),
+			case validate(SolutionHash, Diff, Height) of
+				false ->
+					false;
+				true ->
+					case pick_recall_byte(RXHash, PrevH, SearchSpaceUpperBound, Height) of
+						{error, weave_size_too_small} ->
+							SPoA == #poa{};
+						{ok, RecallByte} ->
+							case ar_poa:validate(RecallByte, BI, SPoA) of
+								false ->
+									false;
+								true ->
+									{true, SolutionHash}
+							end
+					end
+			end
+	end.
+
 %% @doc Maximum linear difficulty.
 %% Assumes using 256 bit RandomX hashes.
 max_difficulty() ->
@@ -103,7 +149,12 @@ min_difficulty(_Height) ->
 min_difficulty(Height) ->
 	Diff = case Height >= ar_fork:height_1_7() of
 		true ->
-			min_randomx_difficulty();
+			case Height >= ar_fork:height_2_3() of
+				true ->
+					min_spora_difficulty(Height);
+				false ->
+					min_randomx_difficulty()
+			end;
 		false ->
 			min_sha384_difficulty()
 	end,
@@ -118,7 +169,9 @@ min_difficulty(Height) ->
 sha384_diff_to_randomx_diff(Sha384Diff) ->
 	max(Sha384Diff + ?RANDOMX_DIFF_ADJUSTMENT, min_randomx_difficulty()).
 
-%% PRIVATE
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
 
 %% @doc Takes a state and a set of transactions and return a new state with the
 %% new set of transactions.
@@ -398,15 +451,21 @@ server(
 		total_hashes_tried = TotalHashesTried,
 		started_at = StartedAt,
 		txs = MinedTXs,
-		candidate_block = #block { diff = Diff, timestamp = Timestamp }
+		candidate_block = #block { diff = Diff, timestamp = Timestamp },
+		total_sporas_tried = TotalSPoRAsTried,
+		total_sporas_discovered = TotalSPoRAsDiscovered
 	}
 ) ->
 	receive
 		%% Stop the mining process and all the workers.
 		stop ->
 			stop_miners(Miners),
-			log_performance(TotalHashesTried, StartedAt),
-			ok;
+			case Height + 1 >= ar_fork:height_2_3() of
+				true ->
+					log_spora_performance(TotalSPoRAsTried, TotalSPoRAsDiscovered, StartedAt);
+				false ->
+					log_performance(TotalHashesTried, StartedAt)
+			end;
 		%% The block timestamp must be reasonable fresh since it's going to be
 		%% validated on the remote nodes when it's propagated to them. Only blocks
 		%% with a timestamp close to current time will be accepted in the propagation.
@@ -425,7 +484,31 @@ server(
 			end;
 		{solution, _, _, _, _, _} ->
 			%% A stale solution.
-			server(S)
+			server(S);
+		{sporas_tried, SPoRAsTried} ->
+			server(
+				S#state{
+					total_sporas_tried = TotalSPoRAsTried + SPoRAsTried,
+					total_sporas_discovered = TotalSPoRAsDiscovered + SPoRAsTried
+				}
+			);
+		{sporas_discovered, SPoRAsDiscovered} ->
+			server(
+				S#state{
+					total_sporas_discovered = TotalSPoRAsDiscovered + SPoRAsDiscovered
+				}
+			);
+		{spora_solution, Hash, Nonce, SPoA, Timestamp} ->
+			Wallets = ar_wallets:get(RootHash, ar_tx:get_addresses(MinedTXs)),
+			case filter_by_valid_tx_fee(MinedTXs, Diff, Height, Wallets, Timestamp) of
+				MinedTXs ->
+					process_spora_solution(S, Hash, Nonce, SPoA, MinedTXs, Diff, Timestamp);
+				ValidTXs ->
+					server(restart_miners(update_txs(S#state{ txs = ValidTXs })))
+			end;
+		{spora_solution, _, _, _, _} ->
+			%% A stale solution.
+			ok
 	end.
 
 -ifdef(DEBUG).
@@ -479,26 +562,77 @@ log_performance(TotalHashesTried, StartedAt) ->
 		{miner_hashes_per_second, Rate}
 	]).
 
+process_spora_solution(S, Hash, Nonce, SPoA, MinedTXs, Diff, Timestamp) ->
+	#state {
+		parent = Parent,
+		miners = Miners,
+		current_block = #block{ indep_hash = CurrentBH },
+		total_sporas_tried = TotalSPoRAsTried,
+		total_sporas_discovered = TotalSPoRAsDiscovered,
+		started_at = StartedAt,
+		data_segment = BDS,
+		bds_base = BDSBase,
+		candidate_block = #block { diff = Diff, timestamp = Timestamp } = CandidateB
+	} = S,
+	NewBBeforeHash = CandidateB#block{
+		nonce = Nonce,
+		hash = Hash,
+		poa = SPoA
+	},
+	IndepHash = ar_weave:indep_hash_post_fork_2_3(BDS, Hash, Nonce, SPoA),
+	NewB = NewBBeforeHash#block{ indep_hash = IndepHash },
+	Parent ! {work_complete, CurrentBH, NewB, MinedTXs, BDSBase, SPoA, TotalSPoRAsTried},
+	log_spora_performance(TotalSPoRAsTried, TotalSPoRAsDiscovered, StartedAt),
+	stop_miners(Miners).
+
+log_spora_performance(TotalSPoRAsTried, TotalSPoRAsDiscovered, StartedAt) ->
+	Time = timer:now_diff(erlang:timestamp(), StartedAt),
+	Rate = TotalSPoRAsTried / (Time / 1000000),
+	prometheus_histogram:observe(mining_rate, Rate),
+	DiscoverRate = TotalSPoRAsDiscovered / (Time / 1000000),
+	ar:console([
+		{event, stopped_mining},
+		{miner_sporas_per_second, Rate},
+		{miner_discovered_sporas_per_second, DiscoverRate}
+	]).
+
 %% @doc Start the workers and return the new state.
 start_miners(
 	S = #state{
 		max_miners = MaxMiners,
-		candidate_block = #block{ height = Height },
+		candidate_block = #block{ height = Height, previous_block = PrevH },
 		poa = POA,
 		diff = Diff,
+		block_index = BI,
 		data_segment = BDS,
 		timestamp = Timestamp
 	}
 ) ->
-	ModifiedDiff = ar_poa:modify_diff(Diff, POA#poa.option),
-	WorkerState = #{
-		data_segment => BDS,
-		diff => ModifiedDiff,
-		timestamp => Timestamp,
-		height => Height
-	},
-	Miners = [spawn(?MODULE, mine, [WorkerState, self()]) || _ <- lists:seq(1, MaxMiners)],
-	S#state {miners = Miners}.
+	Miners =
+		case Height >= ar_fork:height_2_3() of
+			true ->
+				SearchSpaceUpperBound = get_search_space_upper_bound(BI, Height),
+				WorkerState = #{
+					data_segment => BDS,
+					diff => Diff,
+					timestamp => Timestamp,
+					height => Height,
+					prev_h => PrevH,
+					search_space_upper_bound => SearchSpaceUpperBound,
+					stats => #{}
+				},
+				[spawn(?MODULE, mine_spora, [WorkerState, self()])];
+			false ->
+				ModifiedDiff = ar_poa:modify_diff(Diff, POA#poa.option),
+				WorkerState = #{
+					data_segment => BDS,
+					diff => ModifiedDiff,
+					timestamp => Timestamp,
+					height => Height
+				},
+				[spawn(?MODULE, mine, [WorkerState, self()]) || _ <- lists:seq(1, MaxMiners)]
+		end,
+	S#state{ miners = Miners }.
 
 %% @doc Stop all workers.
 stop_miners(Miners) ->
@@ -529,8 +663,17 @@ mine(
 	{Nonce, Hash} = find_nonce(BDS, Diff, Height, Supervisor),
 	Supervisor ! {solution, Hash, Nonce, Timestamp}.
 
+get_search_space_upper_bound(BI, Height) ->
+	SearchSpaceUpperBoundDepth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH(Height),
+	case length(BI) < SearchSpaceUpperBoundDepth of
+		true ->
+			element(2, lists:last(BI));
+		false ->
+			element(2, lists:nth(SearchSpaceUpperBoundDepth, BI))
+	end.
+
 find_nonce(BDS, Diff, Height, Supervisor) ->
-	case randomx_hasher(Height) of
+	case randomx_bulk_hasher(Height) of
 		{ok, Hasher} ->
 			StartNonce =
 				{crypto:strong_rand_bytes(256 div 8), crypto:strong_rand_bytes(256 div 8)},
@@ -541,10 +684,10 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 			find_nonce(BDS, Diff, Height, Supervisor)
 	end.
 
-%% Use RandomX fast-mode, where hashing is fast but initialization is slow.
-randomx_hasher(Height) ->
+randomx_bulk_hasher(Height) ->
 	case ar_randomx_state:randomx_state_by_height(Height) of
 		{state, {fast, FastState}} ->
+			%% Use RandomX fast-mode, where hashing is fast but initialization is slow.
 			Hasher = fun(Nonce, BDS, Diff) ->
 				ar_mine_randomx:bulk_hash_fast(FastState, Nonce, BDS, Diff)
 			end,
@@ -566,12 +709,116 @@ find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
 			{HashNonce, BDSHash}
 	end.
 
+%% @doc Search for a Succinct Proof of Random Access.
+mine_spora(
+	#{
+		data_segment := BDS,
+		diff := Diff,
+		timestamp := Timestamp,
+		height := Height,
+		prev_h := PrevH,
+		search_space_upper_bound := SearchSpaceUpperBound,
+		stats := Stats
+	} = WorkerState,
+	Supervisor
+) ->
+	case randomx_hasher(Height) of
+		{ok, Hasher} ->
+			StartNonce = crypto:strong_rand_bytes(256 div 8),
+			{Nonce, RXHash} = find_rx_hash(Hasher, StartNonce, BDS, Height),
+			{FetchTime, SPoA} =
+				case pick_recall_byte(RXHash, PrevH, SearchSpaceUpperBound, Height) of
+					{error, weave_size_too_small} ->
+						{0, #poa{}};
+					{ok, RecallByte} ->
+						timer:tc(fun() -> ar_poa:get_poa_from_v2_index(RecallByte) end)
+				end,
+			case SPoA of
+				not_found ->
+					Supervisor ! {sporas_discovered, 1},
+					mine_spora(WorkerState, Supervisor);
+				_ ->
+					UpdatedStats = update_mining_stats(Stats, FetchTime, SPoA),
+					SolutionHash = spora_solution_hash(RXHash, SPoA),
+					case validate(SolutionHash, Diff, Height) of
+						false ->
+							Supervisor ! {sporas_tried, 1},
+							mine_spora(WorkerState#{ stats => UpdatedStats }, Supervisor);
+						true ->
+							log_mining_stats(UpdatedStats),
+							Supervisor ! {spora_solution, SolutionHash, Nonce, SPoA, Timestamp}
+					end
+			end;
+		not_found ->
+			ar:info("Mining is waiting on RandomX initialization"),
+			timer:sleep(30 * 1000),
+			mine_spora(WorkerState, Supervisor)
+	end.
+
+randomx_hasher(Height) ->
+	case ar_randomx_state:randomx_state_by_height(Height) of
+		{state, {fast, FastState}} ->
+			%% Use RandomX fast-mode, where hashing is fast but initialization is slow.
+			Hasher = fun(Nonce, BDS) ->
+				ar_mine_randomx:hash_fast(FastState, << Nonce/binary, BDS/binary >>)
+			end,
+			{ok, Hasher};
+		{state, {light, _}} ->
+			not_found;
+		{key, _} ->
+			not_found
+	end.
+
+find_rx_hash(Hasher, Nonce, BDS, Height) ->
+	H = Hasher(Nonce, BDS),
+	case validate(H, ?SPORA_SLOW_HASH_DIFF(Height), Height) of
+		true ->
+			{Nonce, H};
+		false ->
+			find_rx_hash(Hasher, H, BDS, Height)
+	end.
+
+pick_recall_byte(H, PrevH, SearchSpaceUpperBound, Height) ->
+	Subspaces = ?SPORA_SEARCH_SPACE_SUBSPACES_COUNT(Height),
+	case SearchSpaceUpperBound < Subspaces of
+		true ->
+			{error, weave_size_too_small};
+		false ->
+			SubspaceNumber = binary:decode_unsigned(H, big) rem Subspaces,
+			EvenSubspaceSize = SearchSpaceUpperBound div Subspaces,
+			AbsoluteSubspaceStart = SubspaceNumber * EvenSubspaceSize,
+			SubspaceSize = min(SearchSpaceUpperBound - AbsoluteSubspaceStart, EvenSubspaceSize),
+			EncodedSubspaceNumber = binary:encode_unsigned(SubspaceNumber),
+			SearchSubspaceSeed =
+				binary:decode_unsigned(ar_deep_hash:hash([PrevH, EncodedSubspaceNumber]), big),
+			SearchSubspaceStart = SearchSubspaceSeed rem SubspaceSize,
+			SubspaceByteSeed = binary:decode_unsigned(crypto:hash(sha256, H), big),
+			SubspaceByte = SubspaceByteSeed rem SubspaceSize,
+			{ok, AbsoluteSubspaceStart + (SearchSubspaceStart + SubspaceByte) rem SubspaceSize}
+	end.
+
+update_mining_stats(Stats, _Time, SPoA) when SPoA == #poa{} ->
+	Stats;
+update_mining_stats(Stats, Time, SPoA) ->
+	ChunkSize = byte_size(SPoA#poa.chunk),
+	{_RunningAverage, Sum, Count} = maps:get(ChunkSize, Stats, {0, 0, 0}),
+	maps:put(ChunkSize, {(Sum + Time) div (Count + 1), Sum + Time, Count + 1}, Stats).
+
+spora_solution_hash(H, SPoA) ->
+	crypto:hash(sha256, ar_deep_hash:hash([H, SPoA#poa.chunk])).
+
+log_mining_stats(Stats) ->
+	ar:info([{event, mining_stats} | maps:to_list(Stats)]).
+
 -ifdef(DEBUG).
 min_randomx_difficulty() -> 1.
 -else.
 min_randomx_difficulty() -> min_sha384_difficulty() + ?RANDOMX_DIFF_ADJUSTMENT.
 min_sha384_difficulty() -> 31.
 -endif.
+
+min_spora_difficulty(Height) ->
+	?SPORA_MIN_DIFFICULTY(Height).
 
 %% Tests
 
@@ -687,14 +934,25 @@ miner_start_stop_test() ->
 
 assert_mine_output(B, POA, TXs) ->
 	receive
-		{work_complete, BH, NewB, MinedTXs, BDS, POA, _} ->
+		{work_complete, BH, NewB, MinedTXs, BDSOrBDSBase, POA, _} ->
 			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
 			BDS = ar_block:generate_block_data_segment(NewB),
-			?assertEqual(
-				ar_weave:hash(BDS, NewB#block.nonce, B#block.height),
-				NewB#block.hash
-			),
+			case NewB#block.height >= ar_fork:height_2_3() of
+				true ->
+					BDSOrBDSBase = ar_block:generate_block_data_segment_base(NewB),
+					?assertEqual(
+						spora_solution_hash(
+							ar_weave:hash(BDS, NewB#block.nonce, B#block.height), POA),
+						NewB#block.hash
+					);
+				false ->
+					BDSOrBDSBase = BDS,
+					?assertEqual(
+						ar_weave:hash(BDS, NewB#block.nonce, B#block.height),
+						NewB#block.hash
+					)
+			end,
 			?assert(binary:decode_unsigned(NewB#block.hash) > NewB#block.diff),
 			{NewB#block.diff, NewB#block.timestamp}
 	after 20000 ->

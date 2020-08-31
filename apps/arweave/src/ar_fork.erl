@@ -4,7 +4,7 @@
 
 -module(ar_fork).
 
--export([height_1_7/0, height_1_8/0, height_1_9/0, height_2_0/0, height_2_2/0]).
+-export([height_1_7/0, height_1_8/0, height_1_9/0, height_2_0/0, height_2_2/0, height_2_3/0]).
 
 -include("ar.hrl").
 
@@ -42,8 +42,16 @@ height_2_0() ->
 
 -ifdef(FORKS_RESET).
 height_2_2() ->
-	5.
+	0.
 -else.
 height_2_2() ->
 	552180. % Targeting 2020-10-21 13:00 UTC
+-endif.
+
+-ifdef(FORKS_RESET).
+height_2_3() ->
+	0.
+-else.
+height_2_3() ->
+	infinity.
 -endif.

@@ -6,6 +6,7 @@
 	indep_hash/1,
 	indep_hash_post_fork_2_0/1,
 	indep_hash_post_fork_2_0/3,
+	indep_hash_post_fork_2_3/4,
 	create_genesis_txs/0,
 	read_v1_genesis_txs/0,
 	generate_block_index/1,
@@ -177,10 +178,18 @@ indep_hash_pre_fork_2_0(#block {
 
 indep_hash_post_fork_2_0(B) ->
 	BDS = ar_block:generate_block_data_segment(B),
-	indep_hash_post_fork_2_0(BDS, B#block.hash, B#block.nonce).
+	case B#block.height >= ar_fork:height_2_3() of
+		true ->
+			indep_hash_post_fork_2_3(BDS, B#block.hash, B#block.nonce, B#block.poa);
+		false ->
+			indep_hash_post_fork_2_0(BDS, B#block.hash, B#block.nonce)
+	end.
 
 indep_hash_post_fork_2_0(BDS, Hash, Nonce) ->
 	ar_deep_hash:hash([BDS, Hash, Nonce]).
+
+indep_hash_post_fork_2_3(BDS, Hash, Nonce, SPoA) ->
+	ar_deep_hash:hash([BDS, Hash, Nonce, ar_block:poa_to_list(SPoA)]).
 
 %% @doc Returns the transaction id
 tx_id(Id) when is_binary(Id) -> Id;

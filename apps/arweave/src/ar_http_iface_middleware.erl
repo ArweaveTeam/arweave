@@ -5,6 +5,7 @@
 -export([execute/2]).
 
 -include("ar.hrl").
+-include("ar_mine.hrl").
 -include("ar_data_sync.hrl").
 
 -define(HANDLER_TIMEOUT, 55000).
@@ -1412,7 +1413,7 @@ post_block(check_indep_hash, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 			{400, #{}, <<"Invalid Block Hash">>, Req}
 	end;
 post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
-	% Check if node is joined.
+	%% Check if node is joined.
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
 			%% The node is not ready to validate and accept blocks.
@@ -1435,7 +1436,7 @@ post_block(check_height, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 			post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
 	end;
 %% The min difficulty check is filtering out blocks from smaller networks, e.g.
-%% testnets. Therefor, we don't want to log when this check or any check above
+%% testnets. Therefore, we don't want to log when this check or any check above
 %% rejects the block because there are potentially a lot of rejections.
 post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	case BShadow#block.diff >= ar_mine:min_difficulty(BShadow#block.height) of
@@ -1462,12 +1463,31 @@ post_block(check_pow, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 				%% this block, ar_poller will catch up.
 				ar_bridge:unignore_id(BShadow#block.indep_hash),
 				{false, {412, #{}, <<>>, Req}};
-			#block{} ->
-				case ar_mine:validate(BDS, Nonce, BShadow#block.diff, Height) of
-					{invalid, _} ->
-						false;
-					{valid, _} ->
-						true
+			#block{ height = PrevHeight } = PrevB ->
+				case Height >= ar_fork:height_2_3() of
+					true ->
+						UpperBound = ar_node:get_search_space_upper_bound(Node, PrevHeight + 1),
+						case validate_spora_pow(BShadow, PrevB, BDS, UpperBound) of
+							tx_root_not_found ->
+								%% The part of the weave with the given recall byte
+								%% has not been indexed yet. The node should have just
+								%% joined the network. Do not ban the peer as the block
+								%% might be valid. If the network adopts the block,
+								%% ar_poller will catch up.
+								ar_bridge:unignore_id(BShadow#block.indep_hash),
+								{false, {412, #{}, <<>>, Req}};
+							true ->
+								true;
+							false ->
+								false
+						end;
+					false ->
+						case ar_mine:validate(BDS, Nonce, BShadow#block.diff, Height) of
+							{invalid, _} ->
+								false;
+							{valid, _} ->
+								true
+						end
 				end
 		end,
 	case MaybeValid of
@@ -1478,10 +1498,7 @@ post_block(check_pow, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 		false ->
 			post_block_reject_warn(BShadow, check_pow, OrigPeer),
 			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
-			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
-		{valid, _} ->
-			ar_bridge:ignore_id(BDS),
-			post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
+			{400, #{}, <<"Invalid Block Proof of Work">>, Req}
 	end;
 post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	%% Verify the timestamp of the block shadow.
@@ -1521,8 +1538,56 @@ post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	),
 	{200, #{}, <<"OK">>, Req}.
 
-compute_hash(B, BDSOrBDSBase) ->
-	ar_weave:indep_hash_post_fork_2_0(BDSOrBDSBase, B#block.hash, B#block.nonce).
+compute_hash(#block{ height = Height } = B, BDSOrBDSBase) ->
+	case Height >= ar_fork:height_2_3() of
+		true ->
+			BDS = ar_block:generate_block_data_segment(BDSOrBDSBase, B),
+			ar_weave:indep_hash_post_fork_2_3(BDS, B#block.hash, B#block.nonce, B#block.poa);
+		false ->
+			ar_weave:indep_hash_post_fork_2_0(BDSOrBDSBase, B#block.hash, B#block.nonce)
+	end.
+
+validate_spora_pow(B, #block{ height = PrevHeight } = PrevB, BDSBase, SearchSpaceUpperBound) ->
+	Root = ar_block:compute_hash_list_merkle(PrevB),
+	Height = B#block.height,
+	case {Root, PrevHeight + 1} == {B#block.hash_list_merkle, Height} of
+		false ->
+			false;
+		true ->
+			Nonce = B#block.nonce,
+			BDS = ar_block:generate_block_data_segment(BDSBase, B),
+			RXHash = ar_weave:hash(BDS, Nonce, Height),
+			case ar_mine:validate(RXHash, ?SPORA_SLOW_HASH_DIFF(Height), Height) of
+				false ->
+					false;
+				true ->
+					SolutionHash = ar_mine:spora_solution_hash(RXHash, B#block.poa),
+					case ar_mine:validate(SolutionHash, B#block.diff, Height) of
+						false ->
+							false;
+						true ->
+							#block{ indep_hash = PrevH } = PrevB,
+							POA = B#block.poa,
+							case ar_mine:pick_recall_byte(
+								RXHash,
+								PrevH,
+								SearchSpaceUpperBound,
+								Height
+							) of
+								{error, weave_size_too_small} ->
+									POA == #poa{};
+								{ok, RecallByte} ->
+									case ar_data_sync:get_tx_root(RecallByte) of
+										not_found ->
+											tx_root_not_found;
+										{ok, TXRoot, BlockBase, BlockSize} ->
+											BlockOffset = RecallByte - BlockBase,
+											ar_poa:validate2(BlockOffset, TXRoot, BlockSize, POA)
+									end
+							end
+					end
+			end
+	end.
 
 post_block_reject_warn(BShadow, Step, Peer) ->
 	ar:warn([
