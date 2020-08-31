@@ -80,12 +80,18 @@ has_tx(Peer, ID) ->
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Peer, NewB, BDS) ->
 	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
-	ShortHashList =
-		lists:map(
-			fun ar_util:encode/1,
-			lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
-		),
-	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | BlockProps],
+	BlockShadowProps =
+		case NewB#block.height >= ar_fork:height_2_3() of
+			true ->
+				BlockProps;
+			false ->
+				ShortHashList =
+					lists:map(
+						fun ar_util:encode/1,
+						lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
+					),
+				[{<<"hash_list">>, ShortHashList} | BlockProps]
+		end,
 	PostProps = [
 		{<<"new_block">>, {BlockShadowProps}},
 		%% Add the P2P port field to be backwards compatible with nodes

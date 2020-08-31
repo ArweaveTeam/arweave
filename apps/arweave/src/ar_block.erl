@@ -24,7 +24,8 @@
 	generate_size_tagged_list_from_txs/1,
 	generate_tx_tree/1, generate_tx_tree/2,
 	compute_hash_list_merkle/2, compute_hash_list_merkle/1,
-	test_wallet_list_performance/1
+	test_wallet_list_performance/1,
+	poa_to_list/1
 ]).
 
 -include("ar.hrl").
@@ -255,23 +256,41 @@ generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
 %% as the last step, to allow verifiers to quickly validate PoW against
 %% the current state.
 generate_block_data_segment_base(B) ->
-	BDSBase = ar_deep_hash:hash([
-		integer_to_binary(B#block.height),
-		B#block.previous_block,
-		B#block.tx_root,
-		lists:map(fun ar_weave:tx_id/1, B#block.txs),
-		integer_to_binary(B#block.block_size),
-		integer_to_binary(B#block.weave_size),
-		case B#block.reward_addr of
-			unclaimed ->
-				<<"unclaimed">>;
-			_ ->
-				B#block.reward_addr
-		end,
-		ar_tx:tags_to_list(B#block.tags),
-		poa_to_list(B#block.poa)
-	]),
-	BDSBase.
+	case B#block.height >= ar_fork:height_2_3() of
+		true ->
+			ar_deep_hash:hash([
+				integer_to_binary(B#block.height),
+				B#block.previous_block,
+				B#block.tx_root,
+				lists:map(fun ar_weave:tx_id/1, B#block.txs),
+				integer_to_binary(B#block.block_size),
+				integer_to_binary(B#block.weave_size),
+				case B#block.reward_addr of
+					unclaimed ->
+						<<"unclaimed">>;
+					_ ->
+						B#block.reward_addr
+				end,
+				ar_tx:tags_to_list(B#block.tags)
+			]);
+		false ->
+			ar_deep_hash:hash([
+				integer_to_binary(B#block.height),
+				B#block.previous_block,
+				B#block.tx_root,
+				lists:map(fun ar_weave:tx_id/1, B#block.txs),
+				integer_to_binary(B#block.block_size),
+				integer_to_binary(B#block.weave_size),
+				case B#block.reward_addr of
+					unclaimed ->
+						<<"unclaimed">>;
+					_ ->
+						B#block.reward_addr
+				end,
+				ar_tx:tags_to_list(B#block.tags),
+				poa_to_list(B#block.poa)
+			])
+	end.
 
 poa_to_list(POA) ->
 	[

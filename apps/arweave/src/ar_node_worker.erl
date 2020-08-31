@@ -732,9 +732,17 @@ start_mining(StateIn) ->
 		tags := Tags,
 		block_txs_pairs := BlockTXPairs,
 		current := Current,
-		block_cache := BlockCache
+		block_cache := BlockCache,
+		height := Height
 	} = StateIn,
-	case ar_poa:generate(BI) of
+	POA =
+		case Height + 1 >= ar_fork:height_2_3() of
+			true ->
+				not_set;
+			false ->
+				ar_poa:generate(BI)
+		end,
+	case POA of
 		unavailable ->
 			ar:info(
 				[
@@ -744,7 +752,7 @@ start_mining(StateIn) ->
 				]
 			),
 			StateIn;
-		POA ->
+		_ ->
 			ar_miner_log:started_hashing(),
 			B = ar_block_cache:get(BlockCache, Current),
 			Miner = ar_mine:start(
