@@ -73,18 +73,7 @@ is_tx_blacklisted(TXID) ->
 
 %% @doc Check whether the byte with the given global offset is blacklisted.
 is_byte_blacklisted(Offset) ->
-	case ets:next(ar_tx_blacklist_offsets, Offset - 1) of
-		'$end_of_table' ->
-			false;
-		NextOffset ->
-			case ets:lookup(ar_tx_blacklist_offsets, NextOffset) of
-				[{NextOffset, Start}] ->
-					Offset > Start;
-				[] ->
-					%% The key should have been just removed, unlucky timing.
-					is_byte_blacklisted(Offset)
-			end
-	end.
+	ar_ets_intervals:is_inside(ar_tx_blacklist_offsets, Offset).
 
 %% @doc
 %% Return the smallest not blacklisted byte bigger than or equal to
@@ -481,81 +470,14 @@ store_state() ->
 	).
 
 restore_offsets(End, Start) ->
-	case ets:next(ar_tx_blacklist_offsets, Start) of
-		'$end_of_table' ->
-			ok;
-		End2 ->
-			case ets:lookup(ar_tx_blacklist_offsets, End2) of
-				[{_End2, Start2}] when Start2 >= End ->
-					ok;
-				[{End2, Start2}] ->
-					Insert =
-						case Start2 < Start of
-							true ->
-								[{Start, Start2}];
-							false ->
-								[]
-						end,
-					Insert2 =
-						case End2 > End of
-							true ->
-								[{End2, End} | Insert];
-							false ->
-								Insert
-						end,
-					ets:insert(ar_tx_blacklist_offsets, Insert2),
-					case End2 =< End of
-						true ->
-							ets:delete(ar_tx_blacklist_offsets, End2),
-							case End2 < End of
-								true ->
-									restore_offsets(End, End2);
-								false ->
-									ok
-							end;
-						false ->
-							ok
-					end
-			end
-	end.
+	ar_ets_intervals:delete(ar_tx_blacklist_offsets, End, Start).
 
 blacklist_offsets(TXID, End, Start, State) ->
-	{MaxEnd, MinStart, MiddleEnds} = collect_offsets(End, Start),
-	ets:insert(ar_tx_blacklist_offsets, [{MaxEnd, MinStart}]),
-	lists:foreach(
-		fun	(MiddleEnd) when MiddleEnd == MaxEnd ->
-				ok;
-			(MiddleEnd) ->
-				ets:delete(ar_tx_blacklist_offsets, MiddleEnd)
-		end,
-		MiddleEnds
-	),
+	ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
 	ar_data_sync:request_tx_data_removal(TXID),
 	State#ar_tx_blacklist_state{
 		data_takedown_request_timestamp = os:system_time(millisecond)
 	}.
-
-collect_offsets(End, Start) ->
-	collect_offsets(End, Start, End, Start, []).
-
-collect_offsets(End, Start, MaxEnd, MinStart, MiddleEnds) ->
-	case ets:next(ar_tx_blacklist_offsets, Start - 1) of
-		'$end_of_table' ->
-			{MaxEnd, MinStart, MiddleEnds};
-		End2 ->
-			case ets:lookup(ar_tx_blacklist_offsets, End2) of
-				[{_End2, Start2}] when Start2 > End ->
-					{MaxEnd, MinStart, MiddleEnds};
-				[{End2, Start2}] ->
-					collect_offsets(
-						End,
-						End2 + 1,
-						max(MaxEnd, End2),
-						min(MinStart, Start2),
-						[End2 | MiddleEnds]
-					)
-			end
-	end.
 
 close_dets() ->
 	Names = [

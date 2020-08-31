@@ -15,6 +15,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -42,6 +43,8 @@ init([]) ->
 	%% Initialize RandomX.
 	ar_randomx_state:start(),
 	ar_randomx_state:start_block_polling(),
+	%% Read persisted mempool.
+	load_mempool(),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
 	BI =
@@ -85,8 +88,6 @@ init([]) ->
 		ar_webhook:start(Config#config.webhooks)
 	]),
 	ar_bridge:add_local_peer(self()),
-	%% Read persisted mempool.
-	load_mempool(),
 	%% Add pending transactions from the persisted mempool to the propagation queue.
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	maps:map(
@@ -207,12 +208,6 @@ handle_info(wallets_ready, State) ->
 	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
 	ar_header_sync:join(BI, Blocks),
 	ar_data_sync:join(BI),
-	case Blocks of
-		[Block] ->
-			ar_header_sync:add_block(Block);
-		_ ->
-			ok
-	end,
 	Current = element(1, hd(BI)),
 	B = hd(Blocks),
 	ets:insert(node_state, [
@@ -564,6 +559,7 @@ take_mempool_chunk(Iterator, Size, Taken) ->
 
 %% @doc Record the block in the block cache. Schedule an application of the
 %% earliest not validated block from the longest chain, if any.
+%% @end
 handle_new_block(State, #block{ indep_hash = H, txs = TXs })
 		when length(TXs) > ?BLOCK_TX_COUNT_LIMIT ->
 	?LOG_WARNING([
@@ -582,11 +578,13 @@ handle_new_block(State, BShadow) ->
 					{noreply, State};
 				_ ->
 					BlockCache2 = ar_block_cache:add(BlockCache, BShadow),
+					ar_ignore_registry:add(BShadow#block.indep_hash),
 					gen_server:cast(self(), apply_block),
 					ets:insert(node_state, {block_cache, BlockCache2}),
 					{noreply, State}
 			end;
 		_ ->
+			ar_ignore_registry:add(BShadow#block.indep_hash),
 			%% The block's already received from a different peer or
 			%% fetched by ar_poller.
 			{noreply, State}
@@ -668,6 +666,7 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 				end
 			end;
 		_ ->
+			?LOG_INFO([{event, missing_txs_for_block}, {count, length(MissingTXIDs)}]),
 			Self = self(),
 			monitor(
 				process,
@@ -897,11 +896,19 @@ start_mining(StateIn) ->
 		tags := Tags
 	} = StateIn,
 	[{block_index, BI}] = ets:lookup(node_state, block_index),
+	[{height, Height}] = ets:lookup(node_state, height),
 	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 	[{current, Current}] = ets:lookup(node_state, current),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	case ar_poa:generate(BI) of
+	POA =
+		case Height + 1 >= ar_fork:height_2_4() of
+			true ->
+				not_set;
+			false ->
+				ar_poa:generate(BI)
+		end,
+	case POA of
 		unavailable ->
 			?LOG_INFO(
 				[
@@ -911,10 +918,10 @@ start_mining(StateIn) ->
 				]
 			),
 			StateIn;
-		POA ->
+		_ ->
 			ar_watchdog:started_hashing(),
 			B = ar_block_cache:get(BlockCache, Current),
-			Miner = ar_mine:start(
+			Miner = ar_mine:start({
 				B,
 				POA,
 				maps:fold(
@@ -933,7 +940,7 @@ start_mining(StateIn) ->
 				ar_node_worker,
 				BlockTXPairs,
 				BI
-			),
+			}),
 			?LOG_INFO([{event, started_mining}]),
 			StateIn#{ miner => Miner }
 	end.
@@ -974,6 +981,7 @@ handle_block_from_miner(State, BShadow, MinedTXs, BDS, _POA) ->
 	BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
 	State2 = State#{ block_cache => ar_block_cache:add(BlockCache, B) },
 	State3 = apply_validated_block(State2, B, PrevBlocks, BI2, BlockTXPairs2),
+	ar_ignore_registry:add(B#block.indep_hash),
 	{noreply, State3#{ gossip => NewGS }}.
 
 %% @doc Assign a priority to the task. 0 corresponds to the highest priority.

@@ -24,10 +24,12 @@
 	generate_size_tagged_list_from_txs/1,
 	generate_tx_tree/1, generate_tx_tree/2,
 	compute_hash_list_merkle/2, compute_hash_list_merkle/1,
-	test_wallet_list_performance/1
+	test_wallet_list_performance/1,
+	poa_to_list/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_block.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 hash_wallet_list(Height, RewardAddr, WalletList) ->
@@ -109,8 +111,7 @@ generate_size_tagged_list_from_txs(TXs) ->
 		)
 	).
 
-%% @doc Find the appropriate block hash list for a block, from a
-%% block index.
+%% @doc Find the appropriate block hash list for a block, from a block index.
 generate_hash_list_for_block(_BlockOrHash, []) -> [];
 generate_hash_list_for_block(B, BI) when ?IS_BLOCK(B) ->
 	generate_hash_list_for_block(B#block.indep_hash, BI);
@@ -144,8 +145,8 @@ block_field_size_limit(B) ->
 		end,
 	Check = (byte_size(B#block.nonce) =< 512) and
 		(byte_size(B#block.previous_block) =< 48) and
-		(byte_size(integer_to_binary(B#block.timestamp)) =< 12) and
-		(byte_size(integer_to_binary(B#block.last_retarget)) =< 12) and
+		(byte_size(integer_to_binary(B#block.timestamp)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
+		(byte_size(integer_to_binary(B#block.last_retarget)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
 		(byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
 		(byte_size(integer_to_binary(B#block.height)) =< 20) and
 		(byte_size(B#block.hash) =< 48) and
@@ -207,6 +208,7 @@ compute_hash_list_merkle(B) ->
 %% Block data segment is combined with a nonce to compute a PoW hash.
 %% Also, it is combined with a nonce and the corresponding PoW hash
 %% to produce the independent hash.
+%% @end
 generate_block_data_segment(B) ->
 	generate_block_data_segment(
 		generate_block_data_segment_base(B),
@@ -254,24 +256,43 @@ generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
 %% the merkle root of the block index, which is hashed with the rest
 %% as the last step, to allow verifiers to quickly validate PoW against
 %% the current state.
+%% @end
 generate_block_data_segment_base(B) ->
-	BDSBase = ar_deep_hash:hash([
-		integer_to_binary(B#block.height),
-		B#block.previous_block,
-		B#block.tx_root,
-		lists:map(fun ar_weave:tx_id/1, B#block.txs),
-		integer_to_binary(B#block.block_size),
-		integer_to_binary(B#block.weave_size),
-		case B#block.reward_addr of
-			unclaimed ->
-				<<"unclaimed">>;
-			_ ->
-				B#block.reward_addr
-		end,
-		ar_tx:tags_to_list(B#block.tags),
-		poa_to_list(B#block.poa)
-	]),
-	BDSBase.
+	case B#block.height >= ar_fork:height_2_4() of
+		true ->
+			ar_deep_hash:hash([
+				integer_to_binary(B#block.height),
+				B#block.previous_block,
+				B#block.tx_root,
+				lists:map(fun ar_weave:tx_id/1, B#block.txs),
+				integer_to_binary(B#block.block_size),
+				integer_to_binary(B#block.weave_size),
+				case B#block.reward_addr of
+					unclaimed ->
+						<<"unclaimed">>;
+					_ ->
+						B#block.reward_addr
+				end,
+				ar_tx:tags_to_list(B#block.tags)
+			]);
+		false ->
+			ar_deep_hash:hash([
+				integer_to_binary(B#block.height),
+				B#block.previous_block,
+				B#block.tx_root,
+				lists:map(fun ar_weave:tx_id/1, B#block.txs),
+				integer_to_binary(B#block.block_size),
+				integer_to_binary(B#block.weave_size),
+				case B#block.reward_addr of
+					unclaimed ->
+						<<"unclaimed">>;
+					_ ->
+						B#block.reward_addr
+				end,
+				ar_tx:tags_to_list(B#block.tags),
+				poa_to_list(B#block.poa)
+			])
+	end.
 
 poa_to_list(POA) ->
 	[
@@ -290,6 +311,7 @@ verify_tx_root(B) ->
 
 %% @doc Given a list of TXs in various formats, or a block, generate the
 %% correct TX merkle tree root.
+%% @end
 generate_tx_root_for_block(B) when is_record(B, block) ->
 	generate_tx_root_for_block(B#block.txs);
 generate_tx_root_for_block(TXIDs = [TXID | _]) when is_binary(TXID) ->
@@ -313,6 +335,7 @@ get_tx_data_root(TX) ->
 %% network which we don't take into account. Instead, we assume two nodes can
 %% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
 %% other.
+%% @end
 verify_timestamp(B) ->
 	CurrentTime = os:system_time(seconds),
 	MaxNodesClockDeviation = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
@@ -326,8 +349,7 @@ verify_timestamp(B) ->
 		])
 	).
 
-%% @doc Verify the height of the new block is the one higher than the
-%% current height.
+%% @doc Verify the height of the new block is the one higher than the current height.
 verify_height(NewB, OldB) ->
 	NewB#block.height == (OldB#block.height + 1).
 
@@ -342,11 +364,13 @@ verify_last_retarget(NewB, OldB) ->
 
 %% @doc Verify that the previous_block hash of the new block is the indep_hash
 %% of the current block.
+%% @end
 verify_previous_block(NewB, OldB) ->
 	OldB#block.indep_hash == NewB#block.previous_block.
 
 %% @doc Verify that the new block's hash_list is the current block's
 %% hash_list + indep_hash, until ?FORK_1_6.
+%% @end
 verify_block_hash_list(NewB, OldB) when NewB#block.height < ?FORK_1_6 ->
 	NewB#block.hash_list == [OldB#block.indep_hash | OldB#block.hash_list];
 verify_block_hash_list(_NewB, _OldB) -> true.
@@ -375,21 +399,29 @@ verify_block_hash_list_merkle(NewB, CurrentB, BI) when NewB#block.height > ?FORK
 	case NewB#block.height of
 		H when H < Fork_2_0 ->
 			NewB#block.hash_list_merkle ==
-				ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle, CurrentB#block.indep_hash);
+				ar_unbalanced_merkle:root(
+					CurrentB#block.hash_list_merkle,
+					CurrentB#block.indep_hash
+				);
 		Fork_2_0 ->
 			NewB#block.hash_list_merkle == ar_unbalanced_merkle:block_index_to_merkle_root(BI);
 		_ ->
 			NewB#block.hash_list_merkle ==
 				ar_unbalanced_merkle:root(
 					CurrentB#block.hash_list_merkle,
-					{CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
+					{
+						CurrentB#block.indep_hash,
+						CurrentB#block.weave_size,
+						CurrentB#block.tx_root
+					},
 					fun ar_unbalanced_merkle:hash_block_index_entry/1
 				)
 	end;
 verify_block_hash_list_merkle(NewB, _CurrentB, _) when NewB#block.height < ?FORK_1_6 ->
 	NewB#block.hash_list_merkle == <<>>;
 verify_block_hash_list_merkle(NewB, CurrentB, _) when NewB#block.height == ?FORK_1_6 ->
-	NewB#block.hash_list_merkle == ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list).
+	NewB#block.hash_list_merkle ==
+		ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list).
 
 %% Tests: ar_block
 
@@ -423,7 +455,9 @@ test_wallet_list_performance(Length) ->
 	{Time2, Binary} =
 		timer:tc(
 			fun() ->
-				ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(unclaimed, false, T1))
+				ar_serialize:jsonify(
+					ar_serialize:wallet_list_to_json_struct(unclaimed, false, T1)
+				)
 			end
 		),
 	io:format("serialization                   | ~f seconds~n", [Time2 / 1000000]),

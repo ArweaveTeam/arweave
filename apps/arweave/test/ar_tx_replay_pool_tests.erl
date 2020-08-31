@@ -1,7 +1,7 @@
 -module(ar_tx_replay_pool_tests).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/perpetual_storage.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 verify_block_txs_test() ->
@@ -12,7 +12,8 @@ verify_block_txs_test() ->
 	Timestamp = os:system_time(seconds),
 	Diff = random_diff(),
 	BlockAnchorTXAtForkHeight = tx(Key1, fee(Diff, ar_fork:height_2_0(), Timestamp), <<"hash">>),
-	BlockAnchorTXAfterForkHeight = tx(Key1, fee(Diff, ar_fork:height_2_0() + 1, Timestamp), <<"hash">>),
+	BlockAnchorTXAfterForkHeight =
+		tx(Key1, fee(Diff, ar_fork:height_2_0() + 1, Timestamp), <<"hash">>),
 	TestCases = [
 		#{
 			title => "Fork height 2.0 accepts block anchors",
@@ -98,7 +99,8 @@ verify_block_txs_test() ->
 				tx(Key1, fee(Diff, ar_fork:height_2_0(), Timestamp), <<>>)
 			],
 			height => ar_fork:height_2_0(),
-			wallet_list => [wallet(Key1, erlang:trunc(1.5 * fee(Diff, ar_fork:height_2_0(), Timestamp)))],
+			wallet_list =>
+				[wallet(Key1, erlang:trunc(1.5 * fee(Diff, ar_fork:height_2_0(), Timestamp)))],
 			block_txs_pairs => [],
 			expected_result => invalid
 		},
@@ -233,7 +235,7 @@ block_txs_pairs(Hashes) ->
 	).
 
 fee(Diff, Height, Timestamp) ->
-	ar_tx_perpetual_storage:calculate_tx_fee(?TX_SIZE_BASE, Diff, Height, Timestamp).
+	ar_tx:get_tx_fee(?TX_SIZE_BASE, Diff, Height, Timestamp).
 
 random_diff() ->
 	MinDiff = ar_mine:min_difficulty(ar_fork:height_2_0()),

@@ -9,25 +9,24 @@
 	headers = []
 }).
 
-%% @doc The polling frequency in seconds.
+%% The polling frequency in seconds.
 -ifdef(DEBUG).
 -define(DEFAULT_POLLING_INTERVAL, 5).
 -else.
 -define(DEFAULT_POLLING_INTERVAL, 60).
 -endif.
 
-%% @doc The number of data sync jobs to run. Each job periodically picks a range
+%% The number of data sync jobs to run. Each job periodically picks a range
 %% and downloads it from peers.
-%% @end
 -define(DEFAULT_SYNC_JOBS, 2).
 
-%% @doc The default expiration time for a data root in the disk pool.
+%% The default expiration time for a data root in the disk pool.
 -define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 2 * 60 * 60).
 
-%% @doc The default size limit for unconfirmed chunks, per data root.
+%% The default size limit for unconfirmed chunks, per data root.
 -define(DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 50).
 
-%% @doc The default total size limit for unconfirmed chunks.
+%% The default total size limit for unconfirmed chunks.
 -ifdef(DEBUG).
 -define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 100).
 -else.
@@ -37,7 +36,7 @@
 %% The default frequency of checking for the available disk space.
 -define(DISK_SPACE_CHECK_FREQUENCY_MS, 5 * 60 * 1000).
 
-%% Start options with default values.
+%% @doc Startup options with default values.
 -record(config, {
 	init = false,
 	port = ?DEFAULT_HTTP_IFACE_PORT,

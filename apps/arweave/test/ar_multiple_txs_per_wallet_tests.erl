@@ -95,14 +95,10 @@ mines_blocks_under_the_size_limit_test_() ->
 		end
 	end,
 	[
-		{timeout, 120, {
+		{
 			"Five transactions with block anchors",
-			PrepareTestFor(fun() -> grouped_txs(block_anchor) end)
-		}},
-		{timeout, 120, {
-			"Five transactions with mixed anchors",
-			PrepareTestFor(fun() -> grouped_txs(wallet_list_anchor) end)
-		}}
+			{timeout, 30, PrepareTestFor(fun() -> grouped_txs() end)}
+		}
 	].
 
 joins_network_successfully_test_() ->
@@ -263,13 +259,19 @@ test_rejects_transactions_above_the_size_limit() ->
 	%% Start the node.
 	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
-	SmallData = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT),
-	BigData = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT + 1),
+	SmallData = random_v1_data(?TX_DATA_SIZE_LIMIT),
+	BigData = random_v1_data(?TX_DATA_SIZE_LIMIT + 1),
 	GoodTX = sign_v1_tx(Key1, #{ data => SmallData }),
 	assert_post_tx_to_slave(GoodTX),
 	BadTX = sign_v1_tx(Key2, #{ data => BigData }),
-	{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}} = post_tx_to_slave(BadTX),
-	{ok, ["tx_fields_too_large"]} = slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id]).
+	?assertMatch(
+		{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}},
+		post_tx_to_slave(BadTX)
+	),
+	?assertMatch(
+		{ok, ["tx_fields_too_large"]},
+		slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id])
+	).
 
 accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
 	{timeout, 60, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
@@ -534,7 +536,7 @@ test_rejects_v1_txs_exceeding_mempool_limit() ->
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
 	{_Slave, _} = slave_start(B0),
-	BigChunk = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE),
+	BigChunk = random_v1_data(?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE),
 	TXs = lists:map(
 		fun(N) ->
 			sign_v1_tx(
@@ -873,7 +875,12 @@ empty_tx_set(_Key, _B0) ->
 block_anchor_txs_spending_balance_plus_one_more() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	TX1 = sign_v1_tx(Key, #{ quantity => ?AR(4), reward => ?AR(6), last_tx => B0#block.indep_hash }),
+	TX1 = sign_v1_tx(Key, #{
+		quantity => ?AR(4),
+		target => crypto:strong_rand_bytes(32),
+		reward => ?AR(6),
+		last_tx => B0#block.indep_hash
+	}),
 	TX2 = sign_v1_tx(Key, #{ reward => ?AR(10), last_tx => B0#block.indep_hash }),
 	ExceedBalanceTX = sign_v1_tx(Key, #{ reward => ?AR(1), last_tx => B0#block.indep_hash }),
 	{B0, [TX1, TX2], ExceedBalanceTX}.
@@ -881,14 +888,18 @@ block_anchor_txs_spending_balance_plus_one_more() ->
 mixed_anchor_txs_spending_balance_plus_one_more() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	TX1 = sign_v1_tx(Key, #{ quantity => ?AR(4), reward => ?AR(6) }),
+	TX1 = sign_v1_tx(Key, #{
+		quantity => ?AR(4),
+		reward => ?AR(6),
+		target => crypto:strong_rand_bytes(32)
+	}),
 	TX2 = sign_v1_tx(Key, #{ reward => ?AR(5), last_tx => B0#block.indep_hash }),
 	TX3 = sign_v1_tx(Key, #{ reward => ?AR(2), last_tx => B0#block.indep_hash }),
 	TX4 = sign_v1_tx(Key, #{ reward => ?AR(3), last_tx => B0#block.indep_hash }),
 	ExceedBalanceTX = sign_v1_tx(Key, #{ reward => ?AR(1), last_tx => B0#block.indep_hash }),
 	{B0, [TX1, TX2, TX3, TX4], ExceedBalanceTX}.
 
-grouped_txs(FirstAnchorType) ->
+grouped_txs() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
 	Key2 = {_, Pub2} = ar_wallet:new(),
 	Wallets = [
@@ -896,50 +907,23 @@ grouped_txs(FirstAnchorType) ->
 		{ar_wallet:to_address(Pub2), ?AR(100), <<>>}
 	],
 	[B0] = ar_weave:init(Wallets),
-	%% Expect transactions to be chosen from biggest to smallest.
-	Chunk1 = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT),
-	Chunk2 = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT - 1),
-	Chunk3 = <<1>>,
-	Chunk4 = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT - 5),
-	Chunk5 = crypto:strong_rand_bytes(5),
-	%% Block 1: 1 TX.
-	FirstAnchor = case FirstAnchorType of
-		wallet_list_anchor ->
-			<<>>;
-		block_anchor ->
-			B0#block.indep_hash
-	end,
-	Diff = B0#block.diff,
-	Timestamp = B0#block.timestamp,
-	RewardFun = fun(Size) -> ar_tx:calculate_min_tx_cost(Size, Diff, 1, Timestamp) end,
-	Wallet1TX1 = sign_v1_tx(Key1, #{
-		reward => RewardFun(10 * ?TX_DATA_SIZE_LIMIT), % make it the most expensive tx
-		data => Chunk1,
-		last_tx => FirstAnchor
-	}),
-	%% Block 2: 2 TXs from different wallets.
-	Wallet2TX1 = sign_v1_tx(Key2, #{
-		reward => RewardFun(9 * ?TX_DATA_SIZE_LIMIT), % make it the second most expensive tx
-		data => Chunk2,
-		last_tx => B0#block.indep_hash
-	}),
-	Wallet1TX2 = sign_v1_tx(Key1, #{
-		reward => RewardFun(byte_size(Chunk3)),
-		data => Chunk3,
-		last_tx => B0#block.indep_hash
-	}),
-	%% Block 3: 2 TXs from the same wallet.
-	Wallet1TX3 = sign_v1_tx(Key1, #{
-		reward => RewardFun(byte_size(Chunk4)),
-		data => Chunk4,
-		last_tx => B0#block.indep_hash
-	}),
-	Wallet1TX4 = sign_v1_tx(Key1, #{
-		reward => RewardFun(byte_size(Chunk5)),
-		data => Chunk5,
-		last_tx => B0#block.indep_hash
-	}),
-	{B0, [[Wallet1TX1], [Wallet2TX1, Wallet1TX2], [Wallet1TX3, Wallet1TX4]]}.
+	Chunk1 = random_v1_data(?TX_DATA_SIZE_LIMIT),
+	Chunk2 = <<"a">>,
+	TX1 =
+		sign_v1_tx(Key1, #{
+			reward => ar_tx:get_tx_fee(byte_size(Chunk1), B0#block.diff, 0, B0#block.timestamp),
+			data => Chunk1,
+			last_tx => <<>>
+		}),
+	TX2 =
+		sign_v1_tx(Key2, #{
+			reward => ar_tx:get_tx_fee(byte_size(Chunk2), B0#block.diff, 0, B0#block.timestamp),
+			data => Chunk2,
+			last_tx => B0#block.indep_hash
+		}),
+	%% TX1 is expected to be mined first because wallet list anchors are mined first while
+	%% the price per byte should be the same since we assigned the minimum required fees.
+	{B0, [[TX1], [TX2]]}.
 
 slave_mine_blocks(TargetHeight) ->
 	slave_mine_blocks(1, TargetHeight).
@@ -971,3 +955,7 @@ assert_block_txs(TXs, BI) ->
 
 random_nonce() ->
 	integer_to_binary(rand:uniform(1000000)).
+
+random_v1_data(Size) ->
+	%% Make sure v1 txs do not end with a digit, otherwise they are malleable.
+	<< (crypto:strong_rand_bytes(Size - 1))/binary, <<"a">>/binary >>.

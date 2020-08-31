@@ -36,11 +36,15 @@ start_link(Args) ->
 
 %% @doc Return the map mapping the given addresses to the corresponding wallets
 %% from the latest wallet tree.
+get(Address) when is_binary(Address) ->
+	ar_wallets:get([Address]);
 get(Addresses) ->
 	gen_server:call(?MODULE, {get, Addresses}, infinity).
 
 %% @doc Return the map mapping the given addresses to the corresponding wallets
 %% from the wallet tree with the given root hash.
+get(RootHash, Address) when is_binary(Address) ->
+	get(RootHash, [Address]);
 get(RootHash, Addresses) ->
 	gen_server:call(?MODULE, {get, RootHash, Addresses}, infinity).
 
@@ -71,12 +75,12 @@ apply_block(NewB, RootHash, RewardPool, Height) ->
 %% @doc Cache the wallets to be upserted into the tree with the given root hash. Return
 %% the root hash of the new wallet tree.
 add_wallets(RootHash, Wallets, RewardAddr, Height) ->
-	gen_server:call(?MODULE, {add_wallets, RootHash, Wallets, RewardAddr, Height}).
+	gen_server:call(?MODULE, {add_wallets, RootHash, Wallets, RewardAddr, Height}, infinity).
 
 %% @doc Update the wallets in the tree with the given root hash. Effectively, erase
 %% the given root hash from cache. Return the root hash of the updated wallet tree.
 update_wallets(RootHash, Wallets, RewardAddr, Height) ->
-	gen_server:call(?MODULE, {update_wallets, RootHash, Wallets, RewardAddr, Height}).
+	gen_server:call(?MODULE, {update_wallets, RootHash, Wallets, RewardAddr, Height}, infinity).
 
 %% @doc Make the wallet tree with the given root hash "the current tree". The current tree
 %% is used by get/1, get_balance/1, and get_last_tx/1.

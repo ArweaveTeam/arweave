@@ -71,7 +71,6 @@ block_to_json_struct(
 		indep_hash = IndepHash,
 		txs = TXs,
 		tx_root = TXRoot,
-		tx_tree = TXTree,
 		wallet_list = WalletList,
 		reward_addr = RewardAddr,
 		tags = Tags,
@@ -82,11 +81,20 @@ block_to_json_struct(
 		hash_list_merkle = MR,
 		poa = POA
 	}) ->
-	{JSONDiff, JSONCDiff} = case ar_fork:height_1_8() of
-		H when Height >= H ->
-			{integer_to_binary(Diff), integer_to_binary(CDiff)};
-		_ ->
-			{Diff, CDiff}
+	{JSONDiff, JSONCDiff} =
+		case Height >= ar_fork:height_1_8() of
+			true ->
+				{integer_to_binary(Diff), integer_to_binary(CDiff)};
+			false ->
+				{Diff, CDiff}
+	end,
+	{JSONRewardPool, JSONBlockSize, JSONWeaveSize} =
+		case Height >= ar_fork:height_2_4() of
+			true ->
+				{integer_to_binary(RewardPool), integer_to_binary(BlockSize),
+					integer_to_binary(WeaveSize)};
+			false ->
+				{RewardPool, BlockSize, WeaveSize}
 	end,
 	JSONElements =
 		[
@@ -109,7 +117,7 @@ block_to_json_struct(
 				)
 			},
 			{tx_root, ar_util:encode(TXRoot)},
-			{tx_tree, tree_to_json_struct(TXTree)},
+			{tx_tree, []},
 			{wallet_list, ar_util:encode(WalletList)},
 			{reward_addr,
 				if RewardAddr == unclaimed -> list_to_binary("unclaimed");
@@ -117,20 +125,29 @@ block_to_json_struct(
 				end
 			},
 			{tags, Tags},
-			{reward_pool, RewardPool},
-			{weave_size, WeaveSize},
-			{block_size, BlockSize},
+			{reward_pool, JSONRewardPool},
+			{weave_size, JSONWeaveSize},
+			{block_size, JSONBlockSize},
 			{cumulative_diff, JSONCDiff},
 			{hash_list_merkle, ar_util:encode(MR)},
 			{poa, poa_to_json_struct(POA)}
 		],
-	case Height < ?FORK_1_6 of
-		true ->
-			KeysToDelete = [cumulative_diff, hash_list_merkle],
-			{delete_keys(KeysToDelete, JSONElements)};
-		false ->
-			{JSONElements}
-	end.
+	JSONElements2 =
+		case Height < ?FORK_1_6 of
+			true ->
+				KeysToDelete = [cumulative_diff, hash_list_merkle],
+				delete_keys(KeysToDelete, JSONElements);
+			false ->
+				JSONElements
+		end,
+	JSONElements3 =
+		case Height >= ar_fork:height_2_4() of
+			true ->
+				delete_keys([tx_tree], JSONElements2);
+			false ->
+				JSONElements2
+		end,
+	{JSONElements3}.
 
 delete_keys([], Proplist) ->
 	Proplist;
@@ -145,30 +162,49 @@ json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	json_struct_to_block(dejsonify(JSONBlock));
 json_struct_to_block({BlockStruct}) ->
 	Height = find_value(<<"height">>, BlockStruct),
-	TXs = find_value(<<"txs">>, BlockStruct),
+	TXIDs = find_value(<<"txs">>, BlockStruct),
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
 	HashList = find_value(<<"hash_list">>, BlockStruct),
 	Tags = find_value(<<"tags">>, BlockStruct),
 	Fork_1_8 = ar_fork:height_1_8(),
-	CDiff = case find_value(<<"cumulative_diff">>, BlockStruct) of
-		_ when Height < ?FORK_1_6 -> 0;
-		undefined -> 0; % In case it's an invalid block (in the pre-fork format)
-		BinaryCDiff when Height >= Fork_1_8 -> binary_to_integer(BinaryCDiff);
-		CD -> CD
-	end,
-	Diff = case find_value(<<"diff">>, BlockStruct) of
-		BinaryDiff when Height >= Fork_1_8 -> binary_to_integer(BinaryDiff);
-		D -> D
-	end,
-	MR = case find_value(<<"hash_list_merkle">>, BlockStruct) of
-		_ when Height < ?FORK_1_6 -> <<>>;
-		undefined -> <<>>; % In case it's an invalid block (in the pre-fork format)
-		R -> ar_util:decode(R)
-	end,
-	RewardAddr = case find_value(<<"reward_addr">>, BlockStruct) of
-		<<"unclaimed">> -> unclaimed;
-		StrAddr -> ar_util:decode(StrAddr)
-	end,
+	CDiff =
+		case find_value(<<"cumulative_diff">>, BlockStruct) of
+			_ when Height < ?FORK_1_6 -> 0;
+			undefined -> 0; % In case it's an invalid block (in the pre-fork format).
+			BinaryCDiff when Height >= Fork_1_8 -> binary_to_integer(BinaryCDiff);
+			CD -> CD
+		end,
+	Diff =
+		case find_value(<<"diff">>, BlockStruct) of
+			BinaryDiff when Height >= Fork_1_8 -> binary_to_integer(BinaryDiff);
+			D -> D
+		end,
+	MR =
+		case find_value(<<"hash_list_merkle">>, BlockStruct) of
+			_ when Height < ?FORK_1_6 -> <<>>;
+			undefined -> <<>>; % In case it's an invalid block (in the pre-fork format).
+			R -> ar_util:decode(R)
+		end,
+	RewardAddr =
+		case find_value(<<"reward_addr">>, BlockStruct) of
+			<<"unclaimed">> -> unclaimed;
+			AddrBinary -> ar_util:decode(AddrBinary)
+		end,
+	{RewardPool, BlockSize, WeaveSize} =
+		case Height >= ar_fork:height_2_4() of
+			true ->
+				{
+					binary_to_integer(find_value(<<"reward_pool">>, BlockStruct)),
+					binary_to_integer(find_value(<<"block_size">>, BlockStruct)),
+					binary_to_integer(find_value(<<"weave_size">>, BlockStruct))
+				};
+			false ->
+				{
+					find_value(<<"reward_pool">>, BlockStruct),
+					find_value(<<"block_size">>, BlockStruct),
+					find_value(<<"weave_size">>, BlockStruct)
+				}
+		end,
 	#block {
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
 		previous_block =
@@ -181,16 +217,7 @@ json_struct_to_block({BlockStruct}) ->
 		height = Height,
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
 		indep_hash = ar_util:decode(find_value(<<"indep_hash">>, BlockStruct)),
-		txs =
-			lists:map(
-			fun (TX) when is_binary(TX) ->
-					ar_util:decode(TX);
-				(TX) ->
-					Temp = json_struct_to_tx(TX),
-					Temp#tx.id
-			end,
-			TXs
-		),
+		txs = [ar_util:decode(TXID) || TXID <- TXIDs],
 		hash_list =
 			case HashList of
 				undefined -> unset;
@@ -199,9 +226,9 @@ json_struct_to_block({BlockStruct}) ->
 		wallet_list = ar_util:decode(WalletList),
 		reward_addr = RewardAddr,
 		tags = Tags,
-		reward_pool = find_value(<<"reward_pool">>, BlockStruct),
-		weave_size = find_value(<<"weave_size">>, BlockStruct),
-		block_size = find_value(<<"block_size">>, BlockStruct),
+		reward_pool = RewardPool,
+		weave_size = WeaveSize,
+		block_size = BlockSize,
 		cumulative_diff = CDiff,
 		hash_list_merkle = MR,
 		tx_root =
@@ -213,11 +240,6 @@ json_struct_to_block({BlockStruct}) ->
 			case find_value(<<"poa">>, BlockStruct) of
 				undefined -> #poa{};
 				POAStruct -> json_struct_to_poa(POAStruct)
-			end,
-		tx_tree =
-			case find_value(<<"tx_tree">>, BlockStruct) of
-				undefined -> [];
-				POAStruct -> json_struct_to_tree(POAStruct)
 			end
 	}.
 
@@ -235,7 +257,6 @@ tx_to_json_struct(
 		reward = Reward,
 		signature = Sig,
 		data_size = DataSize,
-		data_tree = DataTree,
 		data_root = DataRoot
 	}) ->
 	{
@@ -267,7 +288,7 @@ tx_to_json_struct(
 			{quantity, integer_to_binary(Quantity)},
 			{data, ar_util:encode(Data)},
 			{data_size, integer_to_binary(DataSize)},
-			{data_tree, tree_to_json_struct(DataTree)},
+			{data_tree, []},
 			{data_root, ar_util:encode(DataRoot)},
 			{reward, integer_to_binary(Reward)},
 			{signature, ar_util:encode(Sig)}
@@ -289,12 +310,6 @@ json_struct_to_poa({JSONStruct}) ->
 		data_path = ar_util:decode(find_value(<<"data_path">>, JSONStruct)),
 		chunk = ar_util:decode(find_value(<<"chunk">>, JSONStruct))
 	}.
-
-%% @doc Transform merkle trees to and from JSON objects.
-%% At the moment, just drop it.
-tree_to_json_struct(_) -> [].
-
-json_struct_to_tree(_) -> [].
 
 %% @doc Convert parsed JSON tx fields from a HTTP request into a
 %% transaction record.
@@ -336,11 +351,6 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 		reward = binary_to_integer(find_value(<<"reward">>, TXStruct)),
 		signature = ar_util:decode(find_value(<<"signature">>, TXStruct)),
 		data_size = parse_data_size(Format, TXStruct, Data, ComputeDataSize),
-		data_tree =
-			case find_value(<<"data_tree">>, TXStruct) of
-				undefined -> [];
-				T -> json_struct_to_tree(T)
-			end,
 		data_root =
 			case find_value(<<"data_root">>, TXStruct) of
 				undefined -> <<>>;

@@ -5,19 +5,17 @@
 	sign/2, sign/3, verify/5, verify/6,
 	sign_v1/2, sign_v1/3,
 	tx_to_binary/1, tags_to_list/1,
-	calculate_min_tx_cost/4, calculate_min_tx_cost/6, check_last_tx/2,
+	get_tx_fee/4, get_tx_fee/6,
+	check_last_tx/2,
 	generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
-	chunk_binary/2,
-	chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
+	chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
 	verify_tx_id/2,
-	tx_cost_above_min/6,
+	is_tx_fee_sufficient/6,
 	get_addresses/1
 ]).
 
--export([calculate_wallet_fee/2]).
-
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/perpetual_storage.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Transaction creation, signing and verification for Arweave.
@@ -154,7 +152,7 @@ do_verify_v1(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 		{"same_owner_as_target",
 		 (ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target)},
 		{"tx_too_cheap",
-		 tx_cost_above_min(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)},
+		 is_tx_fee_sufficient(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)},
 		{"tx_fields_too_large",
 		 tx_field_size_limit_v1(TX, Height)},
 		{"tag_field_illegally_specified",
@@ -166,7 +164,9 @@ do_verify_v1(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 		{"overspend",
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
 		{"tx_signature_not_valid",
-		 verify_signature_v1(TX, VerifySignature)}
+		 verify_signature_v1(TX, VerifySignature)},
+		{"tx_malleable",
+		 verify_malleability(TX, Diff, Height, Wallets, Timestamp)}
 	],
 	collect_validation_results(TX#tx.id, Checks).
 
@@ -177,7 +177,7 @@ do_verify_v2(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 		{"same_owner_as_target",
 		 (ar_wallet:to_address(TX#tx.owner) =/= TX#tx.target)},
 		{"tx_too_cheap",
-		 tx_cost_above_min(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)},
+		 is_tx_fee_sufficient(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)},
 		{"tx_fields_too_large",
 		 tx_field_size_limit_v2(TX)},
 		{"tag_field_illegally_specified",
@@ -216,6 +216,51 @@ verify_signature_v1(TX, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v1(TX),
 	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
 
+verify_malleability(TX, Diff, Height, Wallets, Timestamp) ->
+	case Height + 1 >= ar_fork:height_2_4() of
+		false ->
+			true;
+		true ->
+			Target = TX#tx.target,
+			case {byte_size(Target), TX#tx.quantity > 0} of
+				{TargetSize, true} when TargetSize /= 32 ->
+					false;
+				{TargetSize, false} when TargetSize > 0 ->
+					false;
+				_ ->
+					case ends_with_digit(TX#tx.data) of
+						true ->
+							false;
+						false ->
+							Fee = TX#tx.reward,
+							case Fee < 10 of
+								true ->
+									true;
+								false ->
+									not is_tx_fee_sufficient(
+										TX#tx{
+											reward =
+												list_to_integer(
+													tl(integer_to_list(TX#tx.reward))
+												)
+										},
+										Diff,
+										Height,
+										Wallets,
+										Target,
+										Timestamp
+									)
+							end
+					end
+			end
+	end.
+
+ends_with_digit(<<>>) ->
+	false;
+ends_with_digit(Data) ->
+	LastByte = binary:last(Data),
+	LastByte >= 48 andalso LastByte =< 57.
+
 verify_signature_v2(_TX, do_not_verify_signature) ->
 	true;
 verify_signature_v2(TX, verify_signature) ->
@@ -246,61 +291,49 @@ validate_overspend(TX, Wallets) ->
 		Addresses
 	).
 
-%% @doc Ensure that transaction cost above proscribed minimum.
-tx_cost_above_min(TX, Diff, Height, Wallets, Addr, Timestamp) ->
-	TX#tx.reward >=
-		calculate_min_tx_cost(TX#tx.data_size, Diff, Height + 1, Wallets, Addr, Timestamp).
+%% @doc Ensure that transaction fee is sufficiently big.
+is_tx_fee_sufficient(TX, Diff, Height, Wallets, Addr, Timestamp) ->
+	TX#tx.reward >= get_tx_fee(TX#tx.data_size, Diff, Height + 1, Wallets, Addr, Timestamp).
 
-%% @doc Calculate the minimum transaction cost for a TX with the given data size.
-%% Cost per byte is static unless size is bigger than 10mb, at which
-%% point cost per byte starts increasing.
-calculate_min_tx_cost(DataSize, Diff, Height, Timestamp) ->
-	case ar_fork:height_1_8() of
-		H when Height >= H ->
-			ar_tx_perpetual_storage:calculate_tx_fee(DataSize, Diff, Height, Timestamp);
-		_ ->
-			DiffCenter = case ar_fork:height_1_7() of
-				ForkHeight when Height >= ForkHeight ->
-					?DIFF_CENTER + ?RANDOMX_DIFF_ADJUSTMENT;
-				_ ->
-					?DIFF_CENTER
-			end,
-			min_tx_cost(DataSize, Diff, DiffCenter)
+%% @doc Calculate the minimum required transaction fee, including a wallet fee,
+%% if `Addr` is not in `Wallets`.
+get_tx_fee(DataSize, Diff, Height, Wallets, Addr, Timestamp) ->
+	IncludesWalletFee = Addr /= <<>> andalso maps:get(Addr, Wallets, not_found) == not_found,
+	case {Height >= ar_fork:height_2_4(), IncludesWalletFee} of
+		{true, true} ->
+			WalletFee = ar_pricing:usd_to_ar(?WALLET_GEN_FEE_USD, Height),
+			WalletFee + ar_pricing:get_tx_fee(DataSize, Timestamp, Height);
+		{true, false} ->
+			ar_pricing:get_tx_fee(DataSize, Timestamp, Height);
+		{false, true} ->
+			WalletFee = get_wallet_fee_pre_fork_2_4(Diff, Height),
+			WalletFee + ar_pricing:get_tx_fee_pre_fork_2_4(DataSize, Diff, Height, Timestamp);
+		{false, false} ->
+			ar_pricing:get_tx_fee_pre_fork_2_4(DataSize, Diff, Height, Timestamp)
 	end.
 
-calculate_min_tx_cost(DataSize, Diff, Height, _, undefined, Timestamp) ->
-	calculate_min_tx_cost(DataSize, Diff, Height, Timestamp);
-calculate_min_tx_cost(DataSize, Diff, Height, _, <<>>, Timestamp) ->
-	calculate_min_tx_cost(DataSize, Diff, Height, Timestamp);
-calculate_min_tx_cost(DataSize, Diff, Height, Wallets, Addr, Timestamp) ->
-	case maps:get(Addr, Wallets, not_found) of
-		not_found ->
-			WalletFee = calculate_wallet_fee(Diff, Height),
-			calculate_min_tx_cost(DataSize, Diff, Height, Timestamp) + WalletFee;
-		{_Balance, _LastTX} ->
-			calculate_min_tx_cost(DataSize, Diff, Height, Timestamp)
+%% @doc Calculate the minimum required transaction fee, assuming no wallet fee.
+get_tx_fee(DataSize, Diff, Height, Timestamp) ->
+	case Height >= ar_fork:height_2_4() of
+		true ->
+			ar_pricing:get_tx_fee(DataSize, Timestamp, Height);
+		false ->
+			ar_pricing:get_tx_fee_pre_fork_2_4(DataSize, Diff, Height, Timestamp)
 	end.
 
-calculate_wallet_fee(Diff, Height) ->
+get_wallet_fee_pre_fork_2_4(Diff, Height) ->
 	case Height >= ar_fork:height_2_2() of
 		true ->
-			%% Scale the wallet fee so that is is always roughly 0.25$.
-			ar_tx_perpetual_storage:usd_to_ar(
-				?WALLET_GEN_FEE_USD,
+			%% Scale the wallet fee so that is is always roughly 0.1$.
+			{Dividend, Divisor} = ?WALLET_GEN_FEE_USD,
+			ar_pricing:usd_to_ar_pre_fork_2_4(
+				Dividend / Divisor,
 				Diff,
 				Height
 			);
 		false ->
 			?WALLET_GEN_FEE
 	end.
-
-min_tx_cost(DataSize, Diff, DiffCenter) when Diff >= DiffCenter ->
-	Size = ?TX_SIZE_BASE + DataSize,
-	CurveSteepness = 2,
-	BaseCost = CurveSteepness*(Size*?COST_PER_BYTE) / (Diff - (DiffCenter - CurveSteepness)),
-	erlang:trunc(BaseCost * math:pow(1.2, Size/(1024*1024)));
-min_tx_cost(DataSize, _Diff, DiffCenter) ->
-	min_tx_cost(DataSize, DiffCenter, DiffCenter).
 
 %% @doc Get a list of unique source and destination addresses from the given list of txs.
 get_addresses(TXs) ->
@@ -461,8 +494,10 @@ sized_chunks_to_sized_chunk_ids(SizedChunks) ->
 
 %%% Tests: ar_tx
 
-%% @doc Ensure that a public and private key pair can be used to sign and verify data.
-sign_tx_test() ->
+sign_tx_pre_fork_2_4_test() ->
+	ar_test_fork:test_on_fork(height_2_4, 10, fun test_sign_tx/0).
+
+test_sign_tx() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(1)),
 	{Priv, Pub} = ar_wallet:new(),
 	Diff = 1,
@@ -490,8 +525,55 @@ sign_tx_test() ->
 		]
 	).
 
+sign_tx_test() ->
+	NewTX = new(<<"TEST DATA">>, ?AR(1)),
+	{Priv, Pub} = ar_wallet:new(),
+	Diff = 1,
+	Timestamp = os:system_time(seconds),
+	ValidTXs = [
+		sign_v1(NewTX, Priv, Pub),
+		sign(generate_chunk_tree(NewTX#tx{ format = 2 }), Priv, Pub)
+	],
+	lists:foreach(
+		fun(TX) ->
+			Wallets =
+				lists:foldl(
+					fun(Addr, Acc) ->
+						maps:put(Addr, {?AR(10), <<>>}, Acc)
+					end,
+					#{},
+					ar_tx:get_addresses([TX])
+				),
+			?assert(verify(TX, Diff, 0, Wallets, Timestamp), ar_util:encode(TX#tx.id)),
+			?assert(verify(TX, Diff, 1, Wallets, Timestamp), ar_util:encode(TX#tx.id))
+		end,
+		ValidTXs
+	),
+	InvalidTXs = [
+		sign(generate_chunk_tree( % a quantity with empty target
+				NewTX#tx{ format = 2, quantity = 1 }), Priv, Pub)
+	],
+	lists:foreach(
+		fun(TX) ->
+			Wallets =
+				lists:foldl(
+					fun(Addr, Acc) ->
+						maps:put(Addr, {?AR(10), <<>>}, Acc)
+					end,
+					#{},
+					ar_tx:get_addresses([TX])
+				),
+			?assert(not verify(TX, Diff, 0, Wallets, Timestamp), ar_util:encode(TX#tx.id)),
+			?assert(not verify(TX, Diff, 1, Wallets, Timestamp), ar_util:encode(TX#tx.id))
+		end,
+		InvalidTXs
+	).
+
 sign_and_verify_chunked_test_() ->
 	{timeout, 60, fun test_sign_and_verify_chunked/0}.
+
+sign_and_verify_chunked_pre_fork_2_4_test_() ->
+	ar_test_fork:test_on_fork(height_2_4, infinity, fun test_sign_and_verify_chunked/0).
 
 test_sign_and_verify_chunked() ->
 	TXData = crypto:strong_rand_bytes(trunc(?DATA_CHUNK_SIZE * 5.5)),
@@ -505,9 +587,9 @@ test_sign_and_verify_chunked() ->
 				reward = ?AR(100)
 			}
 		),
-	SignedTX = sign(UnsignedTX#tx { data = <<>> }, Priv, Pub),
-	Diff = 1,
+	SignedTX = sign(UnsignedTX#tx{ data = <<>> }, Priv, Pub),
 	Height = 0,
+	Diff = ar_retarget:switch_to_linear_diff(?INITIAL_USD_PER_AR_DIFF(Height)()),
 	Timestamp = os:system_time(seconds),
 	Address = ar_wallet:to_address(Pub),
 	?assert(
@@ -520,7 +602,7 @@ test_sign_and_verify_chunked() ->
 		)
 	).
 
-%% @doc Ensure that a forged transaction does not pass verification.
+%% Ensure that a forged transaction does not pass verification.
 forge_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),
@@ -532,44 +614,47 @@ forge_test() ->
 	Timestamp = os:system_time(seconds),
 	?assert(not verify(InvalidSignTX, Diff, Height, #{}, Timestamp)).
 
-%% @doc Ensure that transactions above the minimum tx cost are accepted.
-tx_cost_above_min_test() ->
+%% Ensure that transactions above the minimum tx cost are accepted.
+is_tx_fee_sufficient_test() ->
 	ValidTX = new(<<"TEST DATA">>, ?AR(10)),
 	InvalidTX = new(<<"TEST DATA">>, 1),
 	Diff = 10,
 	Height = 123,
 	Timestamp = os:system_time(seconds),
-	?assert(tx_cost_above_min(ValidTX, 1, Height, #{}, <<"non-existing-addr">>, Timestamp)),
+	?assert(is_tx_fee_sufficient(ValidTX, 1, Height, #{}, <<"non-existing-addr">>, Timestamp)),
 	?assert(
-		not tx_cost_above_min(InvalidTX, Diff, Height, #{}, <<"non-existing-addr">>, Timestamp)
+		not is_tx_fee_sufficient(InvalidTX, Diff, Height, #{}, <<"non-existing-addr">>, Timestamp)
 	).
 
-%% @doc Ensure that the check_last_tx function only validates transactions in which
+%% Ensure that the check_last_tx function only validates transactions in which
 %% last tx field matches that expected within the wallet list.
 check_last_tx_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{_Priv1, Pub1} = ar_wallet:new(),
-		{Priv2, Pub2} = ar_wallet:new(),
-		{Priv3, Pub3} = ar_wallet:new(),
-		TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
-		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
-		TX3 = ar_tx:new(Pub1, ?AR(1), ?AR(300), TX#tx.id),
-		SignedTX2 = sign_v1(TX2, Priv2, Pub2),
-		SignedTX3 = sign_v1(TX3, Priv3, Pub3),
-		WalletList =
-			maps:from_list(
-				[
-					{ar_wallet:to_address(Pub1), {1000, <<>>}},
-					{ar_wallet:to_address(Pub2), {2000, TX#tx.id}},
-					{ar_wallet:to_address(Pub3), {3000, <<>>}}
-				]
-			),
-		false = check_last_tx(WalletList, SignedTX3),
-		true = check_last_tx(WalletList, SignedTX2)
-	end}.
+	{timeout, 60, fun test_check_last_tx/0}.
 
-tx_cost_test() ->
+check_last_tx_pre_fork_2_4_test_() ->
+	ar_test_fork:test_on_fork(height_2_4, infinity, fun test_check_last_tx/0).
+
+test_check_last_tx() ->
+	{_Priv1, Pub1} = ar_wallet:new(),
+	{Priv2, Pub2} = ar_wallet:new(),
+	{Priv3, Pub3} = ar_wallet:new(),
+	TX = ar_tx:new(Pub2, ?AR(1), ?AR(500), <<>>),
+	TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(400), TX#tx.id),
+	TX3 = ar_tx:new(Pub1, ?AR(1), ?AR(300), TX#tx.id),
+	SignedTX2 = sign_v1(TX2, Priv2, Pub2),
+	SignedTX3 = sign_v1(TX3, Priv3, Pub3),
+	WalletList =
+		maps:from_list(
+			[
+				{ar_wallet:to_address(Pub1), {1000, <<>>}},
+				{ar_wallet:to_address(Pub2), {2000, TX#tx.id}},
+				{ar_wallet:to_address(Pub3), {3000, <<>>}}
+			]
+		),
+	false = check_last_tx(WalletList, SignedTX3),
+	true = check_last_tx(WalletList, SignedTX2).
+
+tx_fee_test() ->
 	{_, Pub1} = ar_wallet:new(),
 	{_, Pub2} = ar_wallet:new(),
 	Addr1 = ar_wallet:to_address(Pub1),
@@ -577,16 +662,11 @@ tx_cost_test() ->
 	WalletList = maps:from_list([{Addr1, {1000, <<>>}}]),
 	Size = 1000,
 	Diff = 20,
-	Height = 123,
+	Height = ar_fork:height_2_4(),
 	Timestamp = os:system_time(seconds),
-	?assertEqual(
-		calculate_min_tx_cost(Size, Diff, Height, Timestamp),
-		calculate_min_tx_cost(Size, Diff, Height, WalletList, Addr1, Timestamp)
-	),
-	?assertEqual(
-		calculate_min_tx_cost(Size, Diff, Height, Timestamp) + calculate_wallet_fee(Diff, Height),
-		calculate_min_tx_cost(Size, Diff, Height, WalletList, Addr2, Timestamp)
-	).
+	TXFee = get_tx_fee(Size, Diff, Height, Timestamp),
+	?assertEqual(TXFee, get_tx_fee(Size, Diff, Height, WalletList, Addr1, Timestamp)),
+	?assert(get_tx_fee(Size, Diff, Height, WalletList, Addr2, Timestamp) > TXFee).
 
 generate_and_validate_even_chunk_tree_test() ->
 	Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE * 7),
@@ -594,7 +674,10 @@ generate_and_validate_even_chunk_tree_test() ->
 		fun(ChallengeLocation) ->
 			test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation)
 		end,
-		[0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1, 7 * ?DATA_CHUNK_SIZE - 1]
+		[
+			0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1,
+			7 * ?DATA_CHUNK_SIZE - 1
+		]
 	).
 
 generate_and_validate_uneven_chunk_tree_test() ->
@@ -603,7 +686,10 @@ generate_and_validate_uneven_chunk_tree_test() ->
 		fun(ChallengeLocation) ->
 			test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation)
 		end,
-		[0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1, 4 * ?DATA_CHUNK_SIZE + 9]
+		[
+			0, 1, 10, ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE + 1, 2 * ?DATA_CHUNK_SIZE - 1,
+			4 * ?DATA_CHUNK_SIZE + 9
+		]
 	).
 
 test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->

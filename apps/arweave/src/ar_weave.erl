@@ -3,9 +3,7 @@
 -export([
 	init/0, init/1, init/2, init/3, init/4,
 	hash/3,
-	indep_hash/1,
-	indep_hash_post_fork_2_0/1,
-	indep_hash_post_fork_2_0/3,
+	indep_hash/1, indep_hash/3, indep_hash/4,
 	create_genesis_txs/0,
 	read_v1_genesis_txs/0,
 	generate_block_index/1,
@@ -41,12 +39,16 @@ init(WalletList, StartingDiff, RewardPool, TXs) ->
 		#block{
 			height = 0,
 			hash = crypto:strong_rand_bytes(32),
-			nonce = crypto:strong_rand_bytes(32),
+			nonce = <<>>,
+			previous_block = <<>>,
+			hash_list_merkle = <<>>,
 			txs = TXs,
 			tx_root = TXRoot,
 			wallet_list = WLH,
 			hash_list = [],
+			tags = [],
 			diff = StartingDiff,
+			cumulative_diff = ar_difficulty:next_cumulative_diff(0, StartingDiff, 0),
 			weave_size = BlockSize,
 			block_size = BlockSize,
 			reward_pool = RewardPool,
@@ -59,6 +61,7 @@ init(WalletList, StartingDiff, RewardPool, TXs) ->
 
 %% @doc Take a complete block list and return a list of block hashes.
 %% Throws an error if the block list is not complete.
+%% @end
 generate_block_index(undefined) -> [];
 generate_block_index([]) -> [];
 generate_block_index(Blocks) ->
@@ -74,115 +77,26 @@ generate_block_index(Blocks) ->
 
 %% @doc Create the hash of the next block in the list, given a previous block,
 %% and the TXs and the nonce.
+%% @end
 hash(BDS, Nonce, Height) ->
 	HashData = << Nonce/binary, BDS/binary >>,
-	case Height >= ar_fork:height_1_7() of
-		true ->
-			ar_randomx_state:hash(Height, HashData);
-		false ->
-			crypto:hash(?MINING_HASH_ALG, HashData)
-	end.
+	true = Height >= ar_fork:height_1_7(),
+	ar_randomx_state:hash(Height, HashData).
 
-%% @doc Create an independent hash from a block. Independent hashes
-%% verify a block's contents in isolation and are stored in a node's hash list.
-indep_hash(#block { height = Height } = B) ->
-	case Height >= ar_fork:height_2_0() of
-		true ->
-			indep_hash_post_fork_2_0(B);
-		false ->
-			indep_hash_pre_fork_2_0(B)
-	end.
-
-indep_hash_pre_fork_2_0(B = #block { height = Height }) when Height >= ?FORK_1_6 ->
-	ar_deep_hash:hash([
-		B#block.nonce,
-		B#block.previous_block,
-		integer_to_binary(B#block.timestamp),
-		integer_to_binary(B#block.last_retarget),
-		integer_to_binary(B#block.diff),
-		integer_to_binary(B#block.cumulative_diff),
-		integer_to_binary(B#block.height),
-		B#block.hash,
-		B#block.hash_list_merkle,
-		[tx_id(TX) || TX <- B#block.txs],
-		[[Addr, integer_to_binary(Balance), LastTX]
-			||	{Addr, Balance, LastTX} <- B#block.wallet_list],
-		case B#block.reward_addr of
-			unclaimed -> <<"unclaimed">>;
-			_ -> B#block.reward_addr
-		end,
-		ar_tx:tags_to_list(B#block.tags),
-		integer_to_binary(B#block.reward_pool),
-		integer_to_binary(B#block.weave_size),
-		integer_to_binary(B#block.block_size)
-	]);
-indep_hash_pre_fork_2_0(#block {
-		nonce = Nonce,
-		previous_block = PrevHash,
-		timestamp = TimeStamp,
-		last_retarget = LastRetarget,
-		diff = Diff,
-		height = Height,
-		hash = Hash,
-		hash_list = HL,
-		txs = TXs,
-		wallet_list = WalletList,
-		reward_addr = RewardAddr,
-		tags = Tags,
-		reward_pool = RewardPool,
-		weave_size = WeaveSize,
-		block_size = BlockSize
-	}) ->
-	EncodeTX = fun (TX) -> ar_util:encode(tx_id(TX)) end,
-	crypto:hash(
-		?MINING_HASH_ALG,
-		ar_serialize:jsonify(
-			{
-				[
-					{nonce, ar_util:encode(Nonce)},
-					{previous_block, ar_util:encode(PrevHash)},
-					{timestamp, TimeStamp},
-					{last_retarget, LastRetarget},
-					{diff, Diff},
-					{height, Height},
-					{hash, ar_util:encode(Hash)},
-					{indep_hash, ar_util:encode(<<>>)},
-					{txs, lists:map(EncodeTX, TXs)},
-					{hash_list, lists:map(fun ar_util:encode/1, HL)},
-					{wallet_list,
-						ar_patricia_tree:foldr(
-							fun({Wallet, Qty, Last}, WL) ->
-								[{
-									[
-										{wallet, ar_util:encode(Wallet)},
-										{quantity, Qty},
-										{last_tx, ar_util:encode(Last)}
-									]
-								} | WL]
-							end,
-							[],
-							WalletList
-						)
-					},
-					{reward_addr,
-						if RewardAddr == unclaimed -> list_to_binary("unclaimed");
-						true -> ar_util:encode(RewardAddr)
-						end
-					},
-					{tags, Tags},
-					{reward_pool, RewardPool},
-					{weave_size, WeaveSize},
-					{block_size, BlockSize}
-				]
-			}
-		)
-	).
-
-indep_hash_post_fork_2_0(B) ->
+%% @doc Compute the block identifier (also referred to as "independent hash").
+indep_hash(B) ->
 	BDS = ar_block:generate_block_data_segment(B),
-	indep_hash_post_fork_2_0(BDS, B#block.hash, B#block.nonce).
+	case B#block.height >= ar_fork:height_2_4() of
+		true ->
+			indep_hash(BDS, B#block.hash, B#block.nonce, B#block.poa);
+		false ->
+			indep_hash(BDS, B#block.hash, B#block.nonce)
+	end.
 
-indep_hash_post_fork_2_0(BDS, Hash, Nonce) ->
+indep_hash(BDS, Hash, Nonce, POA) ->
+	ar_deep_hash:hash([BDS, Hash, Nonce, ar_block:poa_to_list(POA)]).
+
+indep_hash(BDS, Hash, Nonce) ->
 	ar_deep_hash:hash([BDS, Hash, Nonce]).
 
 %% @doc Returns the transaction id
@@ -193,7 +107,10 @@ read_v1_genesis_txs() ->
 	{ok, Files} = file:list_dir("data/genesis_txs"),
 	lists:foldl(
 		fun(F, Acc) ->
-			file:copy("data/genesis_txs/" ++ F, ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR ++ "/" ++ F),
+			file:copy(
+				"data/genesis_txs/" ++ F,
+				ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR ++ "/" ++ F
+			),
 			[ar_util:decode(hd(string:split(F, ".")))|Acc]
 		end,
 		[],

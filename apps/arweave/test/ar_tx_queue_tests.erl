@@ -145,15 +145,28 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 	{_MasterNode, _SlaveNode, Wallet} = setup(),
 	TXs = [
 		%% Base size, extra reward.
-		sign_v1_tx(Wallet, #{ reward => get_tx_price(0) + ?AR(1), last_tx => get_tx_anchor() }),
-		%% More data, same extra reward.
+		sign_v1_tx(Wallet, #{
+			reward => get_tx_price(0) + 100000, last_tx => get_tx_anchor()
+		}),
+		%% More data, extra reward.
 		sign_v1_tx(
 			Wallet,
-			#{ data => <<"More data">>, reward => get_tx_price(9) + ?AR(1), last_tx => get_tx_anchor() }
-		),
+			#{
+				data => crypto:strong_rand_bytes(1000),
+				reward => get_tx_price(1000) + 100000,
+				last_tx => get_tx_anchor()
+			}),
 		%% Base size, default reward.
 		sign_v1_tx(Wallet, #{ last_tx => get_tx_anchor() })
 	],
+	SortedTXs = lists:sort(
+		fun(#tx{ reward = Reward1, data = Data1 }, #tx{ reward = Reward2, data = Data2 }) ->
+			DataSize1 = byte_size(Data1) + ?TX_SIZE_BASE,
+			DataSize2 = byte_size(Data2) + ?TX_SIZE_BASE,
+			erlang:trunc(Reward1 / DataSize1) > erlang:trunc(Reward2 / DataSize2)
+		end,
+		TXs
+	),
 	lists:foldl(
 		fun(_, ToPost) ->
 			TX = ar_util:pick_random(ToPost),
@@ -168,12 +181,12 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 	BI = wait_until_height(1),
 	B = read_block_when_stored(hd(BI)),
 	?assertEqual(
-		lists:map(fun(TX) -> TX#tx.id end, TXs),
+		lists:map(fun(TX) -> TX#tx.id end, SortedTXs),
 		B#block.txs
 	),
 	SlaveB = slave_call(ar_storage, read_block, [hd(BI)]),
 	?assertEqual(
-		lists:map(fun(TX) -> TX#tx.id end, TXs),
+		lists:map(fun(TX) -> TX#tx.id end, SortedTXs),
 		SlaveB#block.txs
 	).
 

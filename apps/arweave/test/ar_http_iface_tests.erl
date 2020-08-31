@@ -420,11 +420,10 @@ fail_external_tx_test() ->
 	BadTX = ar_tx:new(<<"BADDATA">>),
 	?assertEqual(not_found, ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], BadTX#tx.id, maps:new())).
 
-%% @doc POST block with bad "block_data_segment" field in json
-add_external_block_with_bad_bds_test_() ->
-	{timeout, 20, fun test_add_external_block_with_bad_bds/0}.
+add_block_with_invalid_hash_test_() ->
+	{timeout, 20, fun test_add_block_with_invalid_hash/0}.
 
-test_add_external_block_with_bad_bds() ->
+test_add_block_with_invalid_hash() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
 	ar_test_node:start(B0),
 	{_Slave, _} = ar_test_node:slave_start(B0),
@@ -435,22 +434,20 @@ test_add_external_block_with_bad_bds() ->
 		(ar_test_node:slave_call(ar_storage, read_block, [hd(BI)]))#block{
 			hash_list = [B0#block.indep_hash]
 		},
-	%% Try to post an invalid data segment. This triggers a ban in ar_blacklist_middleware.
+	%% Try to post an invalid block. This triggers a ban in ar_blacklist_middleware.
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid Block Hash">>, _, _}},
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			Peer,
-			B1Shadow#block{indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>>},
-			add_rand_suffix(<<"bad-block-data-segment">>)
+			B1Shadow#block{ indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>> }
 		)
 	),
 	%% Verify the IP address of self is banned in ar_blacklist_middleware.
 	?assertMatch(
 		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			Peer,
-			B1Shadow#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)},
-			add_rand_suffix(<<"bad-block-data-segment">>)
+			B1Shadow#block{ indep_hash = add_rand_suffix(<<"new-hash-again">>) }
 		)
 	),
 	ar_blacklist_middleware:reset(),
@@ -475,10 +472,9 @@ test_add_external_block_with_bad_bds() ->
 	),
 	?assertMatch(
 		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
-		ar_http_iface_client:send_new_block(
+		send_new_block(
 			Peer,
-			B1Shadow#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)},
-			add_rand_suffix(<<"bad-block-data-segment">>)
+			B1Shadow#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)}
 		)
 	),
 	ar_blacklist_middleware:reset().
@@ -495,28 +491,22 @@ add_external_block_with_invalid_timestamp_test() ->
 		(ar_test_node:slave_call(ar_storage, read_block, [hd(BI)]))#block{
 			hash_list = [B0#block.indep_hash]
 		},
-	%% Expect the timestamp too far from the future to be rejected
+	%% Expect the timestamp too far from the future to be rejected.
 	FutureTimestampTolerance = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
 	TooFarFutureTimestamp = os:system_time(second) + FutureTimestampTolerance + 3,
-	B2Shadow = B1Shadow#block{ timestamp = TooFarFutureTimestamp },
+	B2Shadow = update_block_timestamp(B1Shadow, TooFarFutureTimestamp),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
-		send_new_block(
-			Peer,
-			B2Shadow#block{ indep_hash = ar_weave:indep_hash(B2Shadow) }
-		)
+		send_new_block(Peer, B2Shadow)
 	),
-	%% Expect the timestamp from the future within the tolerance interval to be accepted
+	%% Expect the timestamp from the future within the tolerance interval to be accepted.
 	OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
-	B3Shadow = B1Shadow#block{ timestamp = OkFutureTimestamp },
+	B3Shadow = update_block_timestamp(B1Shadow, OkFutureTimestamp),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		send_new_block(
-			Peer,
-			B3Shadow#block{ indep_hash = ar_weave:indep_hash(B3Shadow) }
-		)
+		send_new_block(Peer, B3Shadow)
 	),
-	%% Expect the timestamp far from the past to be rejected
+	%% Expect the timestamp far from the past to be rejected.
 	PastTimestampTolerance = lists:sum([
 		?JOIN_CLOCK_TOLERANCE * 2,
 		?CLOCK_DRIFT_MAX,
@@ -524,28 +514,36 @@ add_external_block_with_invalid_timestamp_test() ->
 		?MAX_BLOCK_PROPAGATION_TIME
 	]),
 	TooFarPastTimestamp = os:system_time(second) - PastTimestampTolerance - 3,
-	B4Shadow = B1Shadow#block{ timestamp = TooFarPastTimestamp },
+	B4Shadow = update_block_timestamp(B1Shadow, TooFarPastTimestamp),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"Invalid timestamp.">>, _, _}},
-		send_new_block(
-			Peer,
-			B4Shadow#block{ indep_hash = ar_weave:indep_hash(B4Shadow) }
-		)
+		send_new_block(Peer, B4Shadow)
 	),
-	%% Expect the block with a timestamp from the past within the tolerance interval to be accepted
+	%% Expect the block with a timestamp from the past within the tolerance interval
+	%% to be accepted.
 	OkPastTimestamp = os:system_time(second) - PastTimestampTolerance + 3,
-	B5Shadow = B1Shadow#block{ timestamp = OkPastTimestamp },
+	B5Shadow = update_block_timestamp(B1Shadow, OkPastTimestamp),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		send_new_block(
-			Peer,
-			B5Shadow#block{ indep_hash = ar_weave:indep_hash(B5Shadow) }
-		)
+		send_new_block(Peer, B5Shadow)
 	).
 
 add_rand_suffix(Bin) ->
 	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
 	iolist_to_binary([Bin, " - ", Suffix]).
+
+update_block_timestamp(B, Timestamp) ->
+	#block{
+		height = Height,
+		nonce = Nonce,
+		previous_block = PrevH,
+		poa = #poa{ chunk = Chunk }
+	} = B,
+	B2 = B#block{ timestamp = Timestamp },
+	BDS = ar_block:generate_block_data_segment(B2),
+	H0 = ar_weave:hash(BDS, Nonce, Height),
+	B3 = B2#block{ hash = ar_mine:spora_solution_hash(PrevH, Timestamp, H0, Chunk, Height) },
+	B3#block{ indep_hash = ar_weave:indep_hash(B3) }.
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->

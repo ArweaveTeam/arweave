@@ -1,16 +1,26 @@
-%% @doc Macros for perpetual storage calculations.
+%%% @doc Pricing macros.
 
-%% @doc Assumed number of replications in the long term.
+%% The original USD to AR conversion rate, defined as a fraction. Set up at fork 2.4.
+-define(USD_TO_AR_INITIAL_RATE, {1, 5}).
+
+%% @deprecated Base wallet generation fee. Used until fork 2.2.
+-define(WALLET_GEN_FEE, 250000000000).
+
+%% The base wallet generation fee in USD, defined as a fraction.
+%% The amount in AR depends on the current difficulty and height.
+-define(WALLET_GEN_FEE_USD, {1, 10}).
+
+%% Assumed number of replications in the long term.
 -define(N_REPLICATIONS, 10).
 
-%% @doc Decay rate of the storage cost in GB/year.
--define(USD_PER_GBY_DECAY_ANNUAL, 0.995). % i.e., 0.5% annual decay rate
+%% Decay rate of the storage cost in GB/year.
+-define(USD_PER_GBY_DECAY_ANNUAL, 0.995). % I.e., 0.5% annual decay rate.
 
-%% @doc Figures taken from the date-GBh spreadsheet.
+%% The estimated historical price of storing 1GB of data for a year.
 -define(USD_PER_GBY_2018, 0.001045).
 -define(USD_PER_GBY_2019, 0.000925).
 
-%% @doc Initial $/AR exchange rate.
+%% Initial $/AR exchange rate. Used until the fork 2.4.
 -define(INITIAL_USD_PER_AR(Height), fun() ->
 	Forks = {
 		ar_fork:height_1_9(),
@@ -26,10 +36,10 @@
 	end
 end).
 
-%% @doc The difficulty of the network at the time when
+%% The difficulty of the network at the time when
 %% the $/AR exchange rate was ?INITIAL_USD_PER_AR.
 %% This is an old-style diff - needs to be converted
-%% to the linear diff for price calculations.
+%% to the linear diff in price calculations.
 -define(INITIAL_USD_PER_AR_DIFF(Height), fun() ->
 	Forks = {
 		ar_fork:height_1_9(),

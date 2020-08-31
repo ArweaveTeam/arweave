@@ -29,6 +29,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_mine.hrl").
 
 %%%===================================================================
 %%% API
@@ -52,6 +53,7 @@ get_block_index() ->
 %% 1. The transactions currently staying in the priority queue.
 %% 2. The transactions on timeout waiting to be distributed around the network.
 %% 3. The transactions ready to be and being mined.
+%% @end
 get_pending_txs() ->
 	get_pending_txs([]).
 
@@ -92,6 +94,7 @@ is_a_pending_tx(TXID) ->
 %% @doc Get the list of mined or ready to be mined transactions.
 %% The list does _not_ include transactions in the priority queue or
 %% those on timeout waiting for network propagation.
+%% @end
 get_mined_txs() ->
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	maps:fold(
@@ -133,8 +136,16 @@ get_block_index_entry(Height) ->
 		[{_, false}] ->
 			not_joined;
 		[{_, true}] ->
-			[{height, CurrentHeight}] = ets:lookup(node_state, height),
-			[{block_index, BI}] = ets:lookup(node_state, block_index),
+			Props =
+				ets:select(
+					node_state,
+					[{{'$1', '$2'},
+						[{'or',
+							{'==', '$1', height},
+							{'==', '$1', block_index}}], ['$_']}]
+				),
+			CurrentHeight = proplists:get_value(height, Props),
+			BI = proplists:get_value(block_index, Props),
 			case Height > CurrentHeight of
 				true ->
 					not_found;
@@ -149,6 +160,7 @@ get_block_index_entry(Height) ->
 %% and a hash list for every historical block to verify it belongs to
 %% the weave is very costly. Therefore, a list of 2.0 hashes for 1.0
 %% blocks was computed and stored along with the network client.
+%% @end
 get_2_0_hash_of_1_0_block(Height) ->
 	[{hash_list_2_0_for_1_0_blocks, HL}] = ets:lookup(node_state, hash_list_2_0_for_1_0_blocks),
 	Fork_2_0 = ar_fork:height_2_0(),
@@ -179,10 +191,20 @@ is_joined() ->
 
 %% @doc Returns the estimated future difficulty of the currently mined block.
 %% The function name is confusing and needs to be changed.
+%% @end
 get_current_diff() ->
-	[{height, Height}] = ets:lookup(node_state, height),
-	[{diff, Diff}] = ets:lookup(node_state, diff),
-	[{last_retarget, LastRetarget}] = ets:lookup(node_state, last_retarget),
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', height},
+					{'==', '$1', last_retarget},
+					{'==', '$1', diff}}], ['$_']}]
+		),
+	Height = proplists:get_value(height, Props),
+	Diff = proplists:get_value(diff, Props),
+	LastRetarget = proplists:get_value(last_retarget, Props),
 	ar_retarget:maybe_retarget(
 		Height + 1,
 		Diff,
@@ -197,6 +219,7 @@ get_diff() ->
 
 %% @doc Returns transaction identifiers from the last ?MAX_TX_ANCHOR_DEPTH
 %% blocks grouped by block hash.
+%% @end
 get_block_txs_pairs() ->
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 	BlockTXPairs.
@@ -213,6 +236,7 @@ get_block_shadow_from_cache(H) ->
 
 %% @doc Get the current balance of a given wallet address.
 %% The balance returned is in relation to the nodes current wallet list.
+%% @end
 get_balance(Addr) when ?IS_ADDR(Addr) ->
 	ar_wallets:get_balance(Addr);
 get_balance(WalletID) ->
@@ -220,6 +244,7 @@ get_balance(WalletID) ->
 
 %% @doc Get the last tx id associated with a given wallet address.
 %% Should the wallet not have made a tx the empty binary will be returned.
+%% @end
 get_last_tx(Addr) when ?IS_ADDR(Addr) ->
 	{ok, ar_wallets:get_last_tx(Addr)};
 get_last_tx(WalletID) ->
@@ -231,6 +256,7 @@ get_wallets(Addresses) ->
 
 %% @doc Return a chunk of wallets from the tree with the given root hash starting
 %% from the Cursor address.
+%% @end
 get_wallet_list_chunk(RootHash, Cursor) ->
 	ar_wallets:get_chunk(RootHash, Cursor).
 
@@ -241,6 +267,7 @@ mine() ->
 %% @doc Add a transaction to the node server loop.
 %% If accepted the tx will enter the waiting pool before being mined into the
 %% the next block.
+%% @end
 add_tx(TX)->
 	gen_server:cast(ar_node_worker, {add_tx, TX}).
 
@@ -252,5 +279,6 @@ add_peers(Peers) ->
 
 %% @doc Set the likelihood that a message will be dropped in transmission.
 %% Used primarily for testing, simulating packet loss.
+%% @end
 set_loss_probability(Prob) ->
 	gen_server:cast(ar_node_worker, {set_loss_probability, Prob}).

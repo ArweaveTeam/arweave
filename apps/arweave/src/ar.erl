@@ -33,6 +33,7 @@
 		ar_block_cache,
 		ar_unbalanced_merkle,
 		ar_intervals,
+		ar_ets_intervals,
 		ar_patricia_tree,
 		ar_diff_dag,
 		ar_config_tests,
@@ -64,7 +65,7 @@
 		ar_tx_queue,
 		ar_http_iface_tests,
 		ar_multiple_txs_per_wallet_tests,
-		ar_tx_perpetual_storage_tests,
+		ar_pricing,
 		ar_gateway_middleware_tests,
 		ar_http_util_tests,
 		ar_mine_randomx_tests
@@ -120,7 +121,11 @@ show_help() ->
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
-			{"max_miners (num)", "The maximum number of mining processes."},
+			{"max_miners (num)",
+				io_lib:format(
+					"The maximum number of mining processes. Default: ~B.",
+					[?NUM_MINING_PROCESSES]
+				)},
 			{"max_emitters (num)", "The maximum number of transaction propagation processes (default 2)."},
 			{"tx_propagation_parallelization (num)", "The maximum number of best peers to propagate transactions to at a time (default 4)."},
 			{"max_propagation_peers (num)", "The maximum number of best peers to propagate blocks and transactions to. Default is 50."},

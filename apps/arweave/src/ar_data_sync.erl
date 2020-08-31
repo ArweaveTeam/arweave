@@ -105,12 +105,17 @@ maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
 %% @doc Fetch the chunk containing the given global offset, including right bound,
 %% excluding left bound.
 get_chunk(Offset) ->
-	case ets:lookup(?MODULE, chunks_index) of
-		[] ->
-			{error, not_joined};
-		[{_, ChunksIndex}] ->
-			[{_, ChunkDataDB}] = ets:lookup(?MODULE, chunk_data_db),
-			get_chunk(ChunksIndex, ChunkDataDB, Offset)
+	case ar_ets_intervals:is_inside(data_sync_record, Offset) of
+		false ->
+			{error, chunk_not_found};
+		true ->
+			case ets:lookup(?MODULE, chunks_index) of
+				[] ->
+					{error, not_joined};
+				[{_, ChunksIndex}] ->
+					[{_, ChunkDataDB}] = ets:lookup(?MODULE, chunk_data_db),
+					get_chunk(ChunksIndex, ChunkDataDB, Offset)
+			end
 	end.
 
 get_chunk(ChunksIndex, ChunkDataDB, Offset) ->
@@ -266,6 +271,7 @@ init([]) ->
 	State = init_kv(),
 	{SyncRecord, CurrentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize} =
 		read_data_sync_state(),
+	ar_ets_intervals:init_from_gb_set(data_sync_record, SyncRecord),
 	State2 = State#sync_data_state{
 		sync_record = SyncRecord,
 		peer_sync_records = #{},
@@ -354,10 +360,15 @@ handle_cast({join, BI}, State) ->
 					lists:takewhile(fun({BH, _, _}) -> BH /= H end, BI),
 					Offset
 				),
-				{reset_orphaned_data_roots_disk_pool_timestamps(
+				ar_ets_intervals:cut(data_sync_record, Offset),
+				SyncRecord3 = ar_intervals:cut(SyncRecord, Offset),
+				{
+					reset_orphaned_data_roots_disk_pool_timestamps(
 						DiskPoolDataRoots,
 						OrphanedDataRoots
-					), ar_intervals:cut(SyncRecord, Offset)}
+					),
+					SyncRecord3
+				}
 		end,
 	State2 =
 		State#sync_data_state{
@@ -381,7 +392,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	} = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),
 	{ok, OrphanedDataRoots} = remove_orphaned_data(State, BlockStartOffset, CurrentWeaveSize),
-	{WeaveSize, AddedDataRoots, UpdatedDiskPoolSize} = lists:foldl(
+	{WeaveSize, AddedDataRoots, DiskPoolSize2} = lists:foldl(
 		fun ({_BH, []}, Acc) ->
 				Acc;
 			({_BH, SizeTaggedTXs}, {StartOffset, CurrentAddedDataRoots, CurrentDiskPoolSize}) ->
@@ -400,20 +411,22 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		{BlockStartOffset, sets:new(), DiskPoolSize},
 		Blocks
 	),
-	UpdatedDiskPoolDataRoots =
+	DiskPoolDataRoots2 =
 		reset_orphaned_data_roots_disk_pool_timestamps(
 			add_block_data_roots_to_disk_pool(DiskPoolDataRoots, AddedDataRoots),
 			OrphanedDataRoots
 		),
-	UpdatedState = State#sync_data_state{
+	ar_ets_intervals:cut(data_sync_record, BlockStartOffset),
+	SyncRecord2 = ar_intervals:cut(SyncRecord, BlockStartOffset),
+	State2 = State#sync_data_state{
 		weave_size = WeaveSize,
-		sync_record = ar_intervals:cut(SyncRecord, BlockStartOffset),
+		sync_record = SyncRecord2,
 		block_index = BI,
-		disk_pool_data_roots = UpdatedDiskPoolDataRoots,
-		disk_pool_size = UpdatedDiskPoolSize
+		disk_pool_data_roots = DiskPoolDataRoots2,
+		disk_pool_size = DiskPoolSize2
 	},
-	ok = store_sync_state(UpdatedState),
-	{noreply, UpdatedState};
+	ok = store_sync_state(State2),
+	{noreply, State2};
 
 handle_cast({add_data_root_to_disk_pool, {DataRoot, TXSize, TXID}}, State) ->
 	#sync_data_state{ disk_pool_data_roots = DiskPoolDataRoots } = State,
@@ -734,7 +747,7 @@ handle_cast({remove_tx_data, TXID}, State) ->
 			gen_server:cast(?MODULE, {remove_tx_data, TXID, Size, End, Start + 1}),
 			{noreply, State};
 		not_found ->
-			?LOG_ERROR([
+			?LOG_WARNING([
 				{event, tx_offset_not_found},
 				{tx, ar_util:encode(TXID)}
 			]),
@@ -765,8 +778,14 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 					ar_tx_blacklist:notify_about_removed_tx_data(TXID, End, End - TXSize),
 					{noreply, State};
 				false ->
-					{ChunkDataKey, _, DataRoot, _, ChunkOffset, ChunkSize} = binary_to_term(Chunk),
+					{ChunkDataKey, _, DataRoot, _, ChunkOffset, ChunkSize} =
+						binary_to_term(Chunk),
 					AbsoluteStartOffset = AbsoluteEndOffset - ChunkSize,
+					ar_ets_intervals:delete(
+						data_sync_record,
+						AbsoluteEndOffset,
+						AbsoluteStartOffset
+					),
 					SyncRecord2 =
 						ar_intervals:delete(SyncRecord, AbsoluteEndOffset, AbsoluteStartOffset),
 					State2 =
@@ -1026,14 +1045,18 @@ migrate_chunk(ChunkKey, ChunkValue, State) ->
 				not_found ->
 					case ar_kv:delete(ChunksIndex, ChunkKey) of
 						ok ->
-							{ok,
-								State#sync_data_state{
-									sync_record = ar_intervals:delete(
-										SyncRecord,
-										AbsoluteEndOffset,
-										AbsoluteEndOffset - ChunkSize
-									)
-								}};
+							ar_ets_intervals:delete(
+								data_sync_record,
+								AbsoluteEndOffset,
+								AbsoluteEndOffset - ChunkSize
+							),
+							SyncRecord2 =
+								ar_intervals:delete(
+									SyncRecord,
+									AbsoluteEndOffset,
+									AbsoluteEndOffset - ChunkSize
+								),
+							{ok, State#sync_data_state{ sync_record = SyncRecord2 }};
 						Error ->
 							Error
 					end;
@@ -1929,6 +1952,7 @@ update_chunks_index2(
 		ok ->
 			StartOffset = AbsoluteChunkOffset - ChunkSize,
 			SyncRecord2 = ar_intervals:add(SyncRecord, AbsoluteChunkOffset, StartOffset),
+			ar_ets_intervals:add(data_sync_record, AbsoluteChunkOffset, StartOffset),
 			{updated, SyncRecord2};
 		{error, Reason} ->
 			?LOG_ERROR([

@@ -29,9 +29,10 @@ init([]) ->
 	%% These ETS tables should belong to the supervisor.
 	ets:new(ar_meta_db, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(blacklist, [set, public, named_table]),
-	ets:new(ignored_ids, [set, public, named_table]),
+	ets:new(ignored_ids, [bag, public, named_table]),
 	ets:new(ar_tx_db, [set, public, named_table]),
 	ets:new(ar_data_sync, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(data_sync_record, [ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist,
 		[set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist_pending_headers,

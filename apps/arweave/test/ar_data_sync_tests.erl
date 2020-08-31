@@ -621,7 +621,8 @@ tx(Wallet, SplitType, Format) ->
 				last_tx => get_tx_anchor(master)
 			}), Chunks};
 		{original_split, v1} ->
-			Data = crypto:strong_rand_bytes(10 * 1024),
+			%% Make sure v1 data does not end with a digit, otherwise it's malleable.
+			Data = << (crypto:strong_rand_bytes(10 * 1024 - 1))/binary, <<"a">>/binary >>,
 			{_, Chunks} = original_split(Data),
 			{sign_v1_tx(Wallet, #{ data => Data, last_tx => get_tx_anchor(master) }), Chunks};
 		{{custom_split, ChunkNumber}, v2} ->
@@ -808,17 +809,6 @@ post_blocks(Wallet, BlockMap) ->
 				B = post_and_mine(
 					#{ miner => {master, "master"}, await_on => {master, "master"} },
 					[TX || {{TX, _}, _} <- TXsWithChunks]
-				),
-				lists:foreach(
-					fun
-						({{#tx{ format = 2 } = TX, Chunks}, Format})
-								when Format == v2 orelse Format == v2_original_split
-									orelse Format == fixed_data ->
-							post_proofs_to_master(B, TX, Chunks);
-						(_) ->
-							ok
-					end,
-					TXsWithChunks
 				),
 				Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
 						Type /= v2_no_data, Type /= empty_tx]

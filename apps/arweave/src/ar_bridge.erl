@@ -15,7 +15,6 @@
 	add_tx/1, move_tx_to_mining_pool/1, add_block/4,
 	add_remote_peer/1, add_local_peer/1,
 	get_remote_peers/0, set_remote_peers/1,
-	ignore_id/1, unignore_id/1, is_id_ignored/1,
 	drop_waiting_txs/1
 ]).
 
@@ -33,12 +32,9 @@
 
 %% Internal state definition.
 -record(state, {
-	protocol = http, % Interface to bridge across
-	gossip, % Gossip state
-	external_peers, % Peers to send message to ordered by best to worst.
-	processed = [], % IDs to ignore.
-	updater = undefined, % spawned process for updating peer list
-	port
+	gossip,				% The internal gossip state.
+	external_peers,		% External peers ordered by best to worst.
+	updater = undefined	% Spawned process for updating peer list.
 }).
 
 %%%===================================================================
@@ -82,19 +78,6 @@ set_remote_peers(Peers) ->
 drop_waiting_txs(TXs) ->
 	gen_server:cast(?MODULE, {drop_waiting_txs, TXs}).
 
-%% @doc Ignore messages matching the given ID.
-ignore_id(ID) ->
-	ets:insert(ignored_ids, {ID, ignored}).
-
-unignore_id(ID) ->
-	ets:delete_object(ignored_ids, {ID, ignored}).
-
-is_id_ignored(ID) ->
-	case ets:lookup(ignored_ids, ID) of
-		[{ID, ignored}] -> true;
-		[] -> false
-	end.
-
 %%--------------------------------------------------------------------
 %% @doc
 %% Starts the server
@@ -128,8 +111,7 @@ init([]) ->
 	erlang:send_after(0, self(), get_more_peers),
 	State = #state {
 		gossip = ar_gossip:init([]),
-		external_peers = Config#config.peers,
-		port = Config#config.port
+		external_peers = Config#config.peers
 	},
 	{ok, State}.
 
@@ -167,15 +149,11 @@ handle_call(Request, _From, State) ->
 
 %% Send the transaction to internal processes.
 handle_cast({add_tx, TX}, State) ->
-	#state {
-		gossip = GS,
-		processed = Procd
-	} = State,
-
+	#state{ gossip = GS } = State,
 	Msg = {add_waiting_tx, TX},
 	{NewGS, _} = ar_gossip:send(GS, Msg),
 	ar_tx_queue:add_tx(TX),
-	add_processed(tx, TX, Procd),
+	ar_ignore_registry:add(TX#tx.id),
 	{noreply, State#state { gossip = NewGS }};
 
 handle_cast({move_tx_to_mining_pool, _TX} = Msg, State) ->
@@ -186,13 +164,11 @@ handle_cast({move_tx_to_mining_pool, _TX} = Msg, State) ->
 handle_cast({add_block, OriginPeer, B, BDS, ReceiveTimestamp}, State) ->
 	#state {
 		gossip = GS,
-		processed = Procd,
 		external_peers = ExternalPeers
 	} = State,
 	Msg = {new_block, OriginPeer, B#block.height, B, BDS, ReceiveTimestamp},
 	{NewGS, _} = ar_gossip:send(GS, Msg),
 	send_block_to_external(ExternalPeers, B, BDS),
-	add_processed(block, B, Procd),
 	{noreply, State#state { gossip = NewGS }};
 
 handle_cast({add_peer, remote, Peer}, State) ->
@@ -304,8 +280,11 @@ code_change(_OldVsn, State, _Extra) ->
 -ifdef(DEBUG).
 %% Do not filter out loopback IP addresses with custom port in the debug mode
 %% to allow multiple local VMs to peer with each other.
-is_loopback_ip({127, _, _, _, Port}) -> Port == ar_meta_db:get(port);
-is_loopback_ip({_, _, _, _, _}) -> false.
+is_loopback_ip({127, _, _, _, Port}) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Port == Config#config.port;
+is_loopback_ip({_, _, _, _, _}) ->
+	false.
 -else.
 %% @doc Is the IP address in question a loopback ('us') address?
 is_loopback_ip({A, B, C, D, _Port}) -> is_loopback_ip({A, B, C, D});
@@ -315,32 +294,6 @@ is_loopback_ip({169, 254, _, _}) -> true;
 is_loopback_ip({255, 255, 255, 255}) -> true;
 is_loopback_ip({_, _, _, _}) -> false.
 -endif.
-
-%%% INTERNAL FUNCTIONS
-
-%% @doc Add the ID of a new TX/block to a processed list.
-add_processed({add_tx, TX}, Procd) ->
-	add_processed(tx, TX, Procd);
-add_processed({new_block, _, _, B, _, _}, Procd) ->
-	add_processed(block, B, Procd);
-add_processed(X, _Procd) ->
-	?LOG_INFO(
-		[
-			{could_not_ignore, X},
-			{record, X}
-		]),
-	ok.
-add_processed(tx, #tx { id = ID }, _Procd) ->
-	ignore_id(ID);
-add_processed(block, #block { indep_hash = Hash }, _Procd) ->
-	ignore_id(Hash);
-add_processed(X, Y, _Procd) ->
-	?LOG_INFO(
-		[
-			{could_not_ignore, X},
-			{record, Y}
-		]),
-	ok.
 
 %% @doc Send an internal message externally.
 send_to_external(S, {new_block, _, _Height, _NewB, no_data_segment, _Timestamp}) ->
@@ -388,10 +341,8 @@ send_block_to_external_parallel(Peers, NewB, BDS) ->
 	lists:foreach(Send, PeersSequential).
 
 %% @doc Possibly send a new message to external peers.
-gossip_to_external(S = #state { processed = Procd }, {NewGS, Msg}) ->
-	NewS = send_to_external(S#state { gossip = NewGS }, Msg),
-	add_processed(Msg, Procd),
-	NewS.
+gossip_to_external(S, {NewGS, Msg}) ->
+	send_to_external(S#state { gossip = NewGS }, Msg).
 
 update_state_metrics(Peers) when is_list(Peers) ->
 	prometheus_gauge:set(arweave_peer_count, length(Peers));

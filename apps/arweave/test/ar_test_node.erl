@@ -61,8 +61,7 @@ start(B0, RewardAddr, Config) ->
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_block_index = true,
 		peers = [],
-		mining_addr = RewardAddr,
-		max_poa_option_depth = 20
+		mining_addr = RewardAddr
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),

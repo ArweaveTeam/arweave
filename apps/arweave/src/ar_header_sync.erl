@@ -67,7 +67,8 @@ init([]) ->
 			last_height => LastHeight,
 			block_index => CurrentBI,
 			queue => queue:new(),
-			last_picked => LastHeight
+			last_picked => LastHeight,
+			cleanup_started => false
 		}}.
 
 handle_cast({join, BI, Blocks}, State) ->
@@ -156,23 +157,29 @@ handle_cast(check_space_alarm, State) ->
 	cast_after(ar_disksup:get_disk_space_check_frequency(), check_space_alarm),
 	{noreply, State};
 
-handle_cast(check_space_process_item, State) ->
+handle_cast(check_space_process_item, #{ cleanup_started := CleanupStarted } = State) ->
 	FreeSpace = ar_storage:get_free_space(),
 	case FreeSpace > ?DISK_HEADERS_BUFFER_SIZE of
 		true ->
 			gen_server:cast(self(), process_item),
-			{noreply, State};
+			{noreply, State#{ cleanup_started => false }};
 		false ->
-			cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, check_space_process_item),
 			case FreeSpace < ?DISK_HEADERS_CLEANUP_THRESHOLD of
 				true ->
-					?LOG_INFO(
-						"Removing older block and transaction headers to free up"
-						" space for the new headers."
-					),
-					{noreply, remove_oldest_headers(State)};
+					case CleanupStarted of
+						true ->
+							ok;
+						false ->
+							?LOG_INFO(
+								"Removing older block and transaction headers to free up"
+								" space for the new headers."
+							)
+					end,
+					gen_server:cast(?MODULE, check_space_process_item),
+					{noreply, remove_oldest_headers(State#{ cleanup_started => true })};
 				false ->
-					{noreply, State}
+					cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, check_space_process_item),
+					{noreply, State#{ cleanup_started => false }}
 			end
 	end;
 
@@ -242,6 +249,12 @@ handle_cast(Msg, State) ->
 handle_call(_Msg, _From, State) ->
 	{reply, not_implemented, State}.
 
+handle_info({_Ref, _Atom}, State) ->
+	%% Some older versions of Erlang OTP have a bug where gen_tcp:close may leak
+	%% a message. https://github.com/ninenines/gun/issues/193,
+	%% https://bugs.erlang.org/browse/ERL-1049.
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
 	{noreply, State}.
@@ -301,7 +314,9 @@ remove_oldest_headers(#{ db := DB, sync_record := SyncRecord } = State) ->
 			Height2 = Height + 1,
 			case ar_kv:get(DB, << Height2:256 >>) of
 				not_found ->
-					State;
+					State#{
+						sync_record => ar_intervals:delete(SyncRecord, Height2, Height2 - 1)
+					};
 				{ok, Value} ->
 					BH = element(1, binary_to_term(Value)),
 					{ok, _BytesRemoved} = ar_storage:delete_full_block(BH),
@@ -391,9 +406,9 @@ download_block(Peers, H, H2, TXRoot) ->
 			BH =
 				case Height >= Fork_2_0 of
 					true ->
-						ar_weave:indep_hash_post_fork_2_0(B);
+						ar_weave:indep_hash(B);
 					false ->
-						ar_weave:indep_hash_post_fork_2_0(
+						ar_weave:indep_hash(
 							B#block{ tx_root = TXRoot, txs = lists:sort(B#block.txs) }
 						)
 				end,

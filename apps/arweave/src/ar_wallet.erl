@@ -24,12 +24,13 @@ new() ->
 		= crypto:generate_key(?SIGN_ALG, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
 	{{Priv, Pub}, Pub}.
 
-%% @doc Generates a new wallet public and private key, with a corresponding keyfile.
+%% @doc Generate a new wallet public and private key, with a corresponding keyfile.
 new_keyfile() ->
 	new_keyfile(wallet_address).
 
-%% @doc Generates a new wallet public and private key, with a corresponding keyfile.
+%% @doc Generate a new wallet public and private key, with a corresponding keyfile.
 %% The provided key is used as part of the file name.
+%% @end
 new_keyfile(WalletName) ->
 	{[Expnt, Pub], [Expnt, Pub, Priv, P1, P2, E1, E2, C]} =
 		crypto:generate_key(rsa, {?PRIV_KEY_SZ, ?PUBLIC_EXPNT}),
@@ -67,7 +68,7 @@ wallet_name(wallet_address, PubKey) ->
 wallet_name(WalletName, _) ->
 	WalletName.
 
-%% @doc Extracts the public and private key from a keyfile
+%% @doc Extract the public and private key from a keyfile.
 load_keyfile(File) ->
 	{ok, Body} = file:read_file(File),
 	{Key} = ar_serialize:dejsonify(Body),
@@ -109,9 +110,9 @@ to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
 	crypto:hash(?HASH_ALG, PubKey).
 
-%%%
+%%%===================================================================
 %%% Tests.
-%%%
+%%%===================================================================
 
 wallet_sign_verify_test() ->
 	TestData = <<"TEST DATA">>,
@@ -131,25 +132,8 @@ address_double_encode_test() ->
 	Addr = to_address(Pub),
 	Addr = to_address(Addr).
 
-%%doc Check generated keyfiles can be retrieved
+%% @doc Check generated keyfiles can be retrieved.
 generate_keyfile_test() ->
 	{Priv, Pub} = new_keyfile(),
 	FileName = wallet_filepath(ar_util:encode(to_address(Pub))),
 	{Priv, Pub} = load_keyfile(FileName).
-
-%% @doc Check keyfile generation
-assign_wallet_test() ->
-	{_, Pub} = new_keyfile(),
-	Address = to_address(Pub),
-	[B0] = ar_weave:init([{Address, ?AR(0), <<>>}]),
-	ar_test_node:start(B0),
-	ar_node:mine(), % Mine B1
-	ar_util:do_until(
-		fun() ->
-			R1 = erlang:trunc(ar_node_utils:calculate_reward(1, 0)),
-			R2 = ar_node:get_balance(Pub),
-			R1 == R2
-		end,
-		500,
-		4000
-	).

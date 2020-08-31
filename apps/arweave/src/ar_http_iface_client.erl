@@ -77,16 +77,26 @@ has_tx(Peer, ID) ->
 		_ -> error
 	end.
 
-
 %% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, NewB, BDS) ->
+send_new_block(Peer, #block{ height = Height } = NewB, BDS) ->
 	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
-	ShortHashList =
-		lists:map(
-			fun ar_util:encode/1,
-			lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
-		),
-	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | BlockProps],
+	BlockShadowProps =
+		case Height >= ar_fork:height_2_4() of
+			true ->
+				BlockProps;
+			false ->
+				case NewB#block.hash_list of
+					unset ->
+						BlockProps;
+					_ ->
+						ShortHashList =
+							lists:map(
+								fun ar_util:encode/1,
+								lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
+							),
+						[{<<"hash_list">>, ShortHashList} | BlockProps]
+				end
+		end,
 	PostProps = [
 		{<<"new_block">>, {BlockShadowProps}},
 		%% Add the P2P port field to be backwards compatible with nodes
@@ -98,7 +108,8 @@ send_new_block(Peer, NewB, BDS) ->
 		method => post,
 		peer => Peer,
 		path => "/block",
-		headers => p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
+		headers =>
+			p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
 		body => ar_serialize:jsonify({PostProps}),
 		timeout => 3 * 1000
 	}).
@@ -430,6 +441,7 @@ get_tx_from_remote_peer(Peers, TXID) ->
 %% @doc Retreive only the data associated with a transaction.
 %% The function must only be used when it is known that the transaction
 %% has data.
+%% @end
 get_tx_data([], _Hash) ->
 	unavailable;
 get_tx_data(Peers, Hash) when is_list(Peers) ->
@@ -480,6 +492,7 @@ get_time(Peer, Timeout) ->
 
 %% @doc Retreive all valid transactions held that have not yet been mined into
 %% a block from a remote peer.
+%% @end
 get_pending_txs(Peer) ->
 	try
 		begin
@@ -498,6 +511,7 @@ get_pending_txs(Peer) ->
 
 %% @doc Retreive information from a peer. Optionally, filter the resulting
 %% keyval list for required information.
+%% @end
 get_info(Peer, Type) ->
 	case get_info(Peer) of
 		info_unavailable -> info_unavailable;
@@ -575,30 +589,27 @@ handle_block_response(_, _, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailabl
 handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block_shadow) ->
 	case catch ar_serialize:json_struct_to_block(Body) of
 		{'EXIT', Reason} ->
-			?LOG_INFO([
-				"Failed to parse block response.",
-				{peer, Peer},
-				{reason, Reason}
-			]),
+			?LOG_INFO(
+				"event: failed_to_parse_block_response, peer: ~s, reason: ~p",
+				[ar_util:format_peer(Peer), Reason]
+			),
 			unavailable;
 		B when is_record(B, block) ->
 			B;
 		Error ->
-			?LOG_INFO([
-				"Failed to parse block response.",
-				{peer, Peer},
-				{error, Error}
-			]),
+			?LOG_INFO(
+				"event: failed_to_parse_block_response, peer: ~s, error: ~p",
+				[ar_util:format_peer(Peer), Error]
+			),
 			unavailable
 	end;
 handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, full_block) ->
 	case catch reconstruct_full_block(Peers, Body) of
 		{'EXIT', Reason} ->
-			?LOG_INFO([
-				"Failed to parse block response.",
-				{peer, Peer},
-				{reason, Reason}
-			]),
+			?LOG_INFO(
+				"event: failed_to_parse_block_response, peer: ~s, reason: ~p",
+				[ar_util:format_peer(Peer), Reason]
+			),
 			unavailable;
 		Handled ->
 			Handled

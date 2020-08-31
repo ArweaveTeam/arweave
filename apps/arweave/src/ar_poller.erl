@@ -62,10 +62,7 @@ handle_cast(poll_block, State) ->
 		case NeedPoll of
 			true ->
 				{ok, Config} = application:get_env(arweave, config),
-				case poll_block(Config#config.peers, NewLastSeenHeight + 1) of
-					{error, block_already_received} ->
-						{ok, _} = schedule_polling(Interval * 1000),
-						State#{ last_seen_height => NewLastSeenHeight + 1 };
+				case fetch_block(Config#config.peers, NewLastSeenHeight + 1) of
 					ok ->
 						%% Check if we have missed more than one block.
 						%% For instance, we could have missed several blocks
@@ -93,84 +90,62 @@ handle_call(_Request, _From, State) ->
 schedule_polling(Interval) ->
 	timer:apply_after(Interval, gen_server, cast, [self(), poll_block]).
 
-poll_block(Peers, Height) ->
-	poll_block_step(download_block_shadow, {Peers, Height}).
-
-poll_block_step(download_block_shadow, {Peers, Height}) ->
+fetch_block(Peers, Height) ->
 	case ar_http_iface_client:get_block_shadow(Peers, Height) of
 		unavailable ->
 			{error, block_not_found};
 		{Peer, BShadow} ->
-			poll_block_step(check_ignore_list, {Peer, BShadow}, erlang:timestamp())
-	end.
-
-poll_block_step(check_ignore_list, {Peer, BShadow}, Timestamp) ->
-	BH = BShadow#block.indep_hash,
-	case ar_bridge:is_id_ignored(BH) of
-		true ->
-			{error, block_already_received};
-		false ->
-			ar_bridge:ignore_id(BH),
-			case catch poll_block_step(construct_hash_list, {Peer, BShadow}, Timestamp) of
+			Timestamp = erlang:timestamp(),
+			case fetch_previous_blocks(Peer, BShadow, Timestamp) of
 				ok ->
 					ok;
 				Error ->
-					ar_bridge:unignore_id(BH),
 					Error
 			end
-	end;
-poll_block_step(construct_hash_list, {Peer, BShadow}, ReceiveTimestamp) ->
-	BlockTXsPairs = ar_node:get_block_txs_pairs(),
-	HL = lists:map(fun({BH, _}) -> BH end, BlockTXsPairs),
-	case reconstruct_block_hash_list(Peer, BShadow, HL) of
-		{ok, FetchedBlocks, BHL} ->
-			lists:foreach(
-				fun(B) ->
-					?LOG_INFO([
-						{event, ar_poller_fetched_block},
-						{block, ar_util:encode(B#block.indep_hash)},
-						{height, B#block.height}
-					]),
-					Message =
-						{new_block, Peer, B#block.height, B, no_data_segment, ReceiveTimestamp},
-					ar_node_worker ! Message
-				end,
-				FetchedBlocks
-			),
-			BShadowHeight = BShadow#block.height,
-			BShadow2 = BShadow#block{ hash_list = BHL },
-			?LOG_INFO([
-				{event, ar_poller_fetched_block},
-				{block, ar_util:encode(BShadow2#block.indep_hash)},
-				{height, BShadowHeight}
-			]),
-			Message2 =
-				{new_block, Peer, BShadowHeight, BShadow2, no_data_segment, ReceiveTimestamp},
-			ar_node_worker ! Message2,
-			ok;
+	end.
+
+fetch_previous_blocks(Peer, BShadow, ReceiveTimestamp) ->
+	HL = [BH || {BH, _} <- ar_node:get_block_txs_pairs()],
+	case fetch_previous_blocks2(Peer, BShadow, HL) of
+		{ok, FetchedBlocks} ->
+			submit_fetched_blocks(FetchedBlocks, Peer, ReceiveTimestamp),
+			submit_fetched_blocks([BShadow], Peer, ReceiveTimestamp);
 		{error, _} = Error ->
 			Error
 	end.
 
-reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL) ->
-	reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL, []).
+fetch_previous_blocks2(Peer, FetchedBShadow, BehindCurrentHL) ->
+	fetch_previous_blocks2(Peer, FetchedBShadow, BehindCurrentHL, []).
 
-reconstruct_block_hash_list(_Peer, _FetchedBShadow, _BehindCurrentHL, FetchedBlocks)
+fetch_previous_blocks2(_Peer, _FetchedBShadow, _BehindCurrentHL, FetchedBlocks)
 		when length(FetchedBlocks) >= ?STORE_BLOCKS_BEHIND_CURRENT ->
 	{error, failed_to_reconstruct_block_hash_list};
-reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL, FetchedBlocks) ->
+fetch_previous_blocks2(Peer, FetchedBShadow, BehindCurrentHL, FetchedBlocks) ->
 	PrevH = FetchedBShadow#block.previous_block,
 	case lists:dropwhile(fun(H) -> H /= PrevH end, BehindCurrentHL) of
-		[PrevH | _] = L ->
-			FetchedHL = [B#block.indep_hash || B <- FetchedBlocks],
-			{ok, FetchedBlocks,
-				lists:sublist(lists:reverse(FetchedHL) ++ L, ?STORE_BLOCKS_BEHIND_CURRENT)};
+		[PrevH | _] ->
+			{ok, FetchedBlocks};
 		_ ->
 			case ar_http_iface_client:get_block_shadow([Peer], PrevH) of
 				unavailable ->
 					{error, previous_block_not_found};
 				{_, PrevBShadow} ->
-					reconstruct_block_hash_list(
-						Peer, PrevBShadow, BehindCurrentHL, [PrevBShadow | FetchedBlocks])
+					fetch_previous_blocks2(
+						Peer,
+						PrevBShadow,
+						BehindCurrentHL,
+						[PrevBShadow | FetchedBlocks]
+					)
 			end
 	end.
+
+submit_fetched_blocks([B | Blocks], Peer, ReceiveTimestamp) ->
+	?LOG_INFO([
+		{event, ar_poller_fetched_block},
+		{block, ar_util:encode(B#block.indep_hash)},
+		{height, B#block.height}
+	]),
+	ar_node_worker ! {new_block, Peer, B#block.height, B, no_data_segment, ReceiveTimestamp},
+	submit_fetched_blocks(Blocks, Peer, ReceiveTimestamp);
+submit_fetched_blocks([], _Peer, _ReceiveTimestamp) ->
+	ok.

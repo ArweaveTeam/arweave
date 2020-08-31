@@ -1,14 +1,14 @@
+%%% @doc This module contains functions for transaction verification. It relies on
+%%% some verification helpers from the ar_tx and ar_node_utils modules.
+%%% The module should be used to verify transactions on-edge, validate
+%%% new blocks' transactions, pick transactions to include into a block, and
+%%% remove no longer valid transactions from the mempool after accepting a new block.
+%%% @end
 -module(ar_tx_replay_pool).
 
 -export([verify_tx/6, verify_block_txs/6, pick_txs_to_mine/6]).
 
 -include_lib("arweave/include/ar.hrl").
-
-%%% This module contains functions for transaction verification. It relies on
-%%% some verification helpers from the ar_tx and ar_node_utils modules.
-%%% The module should be used to verify transactions on-edge, validate
-%%% new blocks' transactions, pick transactions to include into a block, and
-%%% remove no longer valid transactions from the mempool after accepting a new block.
 
 -record(state, {
 	%% Maps block hash to the set of TX IDs included in it.
@@ -25,6 +25,7 @@
 %% wallet list references, and data size. Therefore, the function is suitable
 %% for on-edge verification where we want to accept potentially conflicting
 %% transactions to avoid consensus issues later.
+%% @end
 verify_tx(TX, Diff, Height, BlockTXPairs, Mempool, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
 	verify_tx(
@@ -40,6 +41,7 @@ verify_tx(TX, Diff, Height, BlockTXPairs, Mempool, WalletList) ->
 %% @doc Verify the transactions are valid for the block taken into account
 %% the given current difficulty and height, the previous blocks' wallet list,
 %% and recent weave transactions.
+%% @end
 verify_block_txs(TXs, Diff, Height, Timestamp, WalletList, BlockTXPairs) ->
 	WeaveState = create_state(BlockTXPairs),
 	verify_block_txs(TXs, Diff, Height, Timestamp, WalletList, WeaveState, maps:new(), 0, 0).
@@ -99,6 +101,7 @@ verify_block_txs([TX | TXs], Diff, Height, Timestamp, Wallets, WeaveState, Mempo
 %% exceed the block size limit. Before a valid subset of transactions is chosen,
 %% transactions are sorted from highest to lowest utility and then from oldest
 %% block anchors to newest.
+%% @end
 pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, Wallets, TXs) ->
 	WeaveState = create_state(BlockTXPairs),
 	pick_txs_under_size_limit(
