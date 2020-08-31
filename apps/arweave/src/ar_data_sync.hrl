@@ -187,10 +187,5 @@
 	%% @doc A reference to the on-disk key value storage mapping
 	%% absolute_tx_start_offset -> tx_id. It is used to cleanup orphaned
 	%% transactions from tx_index.
-	tx_offset_index,
-	%% @doc not_joined | joined. Not stored.
-	status,
-	%% @doc The queue of new blocks to be processed. We can't use the message queue
-	%% of the process because blocks may arrive before the initialization is complete.
-	block_queue
+	tx_offset_index
 }).

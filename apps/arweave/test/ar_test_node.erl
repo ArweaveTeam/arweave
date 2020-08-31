@@ -60,6 +60,8 @@ stop() ->
 	ok = application:stop(arweave),
 	ok = ar:stop_dependencies(),
 	file:delete(filename:join(Config#config.data_dir, "mempool")),
+	file:delete(filename:join(Config#config.data_dir, "data_sync_state")),
+	rocksdb:destroy(filename:join([Config#config.data_dir, ?ROCKS_DB_DIR, "ar_data_sync_db"]), []),
 	Config.
 
 start(B0, RewardAddr) ->

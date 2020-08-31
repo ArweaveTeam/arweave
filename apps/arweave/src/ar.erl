@@ -537,12 +537,6 @@ start(normal, _Args) ->
 		type => supervisor,
 		shutdown => infinity
 	}),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_data_sync_sup,
-		start => {ar_data_sync_sup, start_link, [[]]},
-		type => supervisor,
-		shutdown => infinity
-	}),
 	if Mine -> ar_node:automine(Node); true -> do_nothing end,
 	case IPFSPin of
 		false -> ok;

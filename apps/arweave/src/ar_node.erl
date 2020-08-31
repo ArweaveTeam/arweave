@@ -83,6 +83,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 						ar:err([{event, failed_to_load_mempool}, {reason, Error}]),
 						{#{}, {0, 0}}
 				end,
+			{ok, _} = ar_data_sync_sup:start_link([{node, self()}]),
 			State = #{
 				id => crypto:strong_rand_bytes(32),
 				node => NPid,
