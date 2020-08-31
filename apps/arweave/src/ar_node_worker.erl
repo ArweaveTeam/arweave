@@ -594,7 +594,8 @@ apply_block(State, NewB, BlockTXs) ->
 	} = State,
 	NewBI = ar_node_utils:update_block_index(NewB#block{ txs = BlockTXs }, BI),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(BlockTXs),
-	ar_data_sync:add_block(SizeTaggedTXs, lists:sublist(NewBI, ?TRACK_CONFIRMATIONS), WeaveSize),
+	ok = ar_data_sync:add_block
+		(SizeTaggedTXs, lists:sublist(NewBI, ?TRACK_CONFIRMATIONS), WeaveSize),
 	ar_storage:write_block(NewB),
 	spawn(fun() -> write_txs(NewB, BlockTXs) end),
 	BH = NewB#block.indep_hash,
@@ -733,7 +734,6 @@ handle_block_from_miner(#{ node := Node, gossip := GS } = State, NewB, MinedTXs,
 handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTXPairs, _H, _TS) ->
 	#{ node := Node, txs := TXs } = StateIn,
 	NewB = ar_storage:read_block(element(1, hd(BI))),
-	{_, SizeTaggedTXs} = hd(BlockTXPairs),
 	ar:info(
 		[
 			{event, node_joined_successfully},
@@ -745,11 +745,6 @@ handle_recovered_from_fork(#{ block_index := not_joined } = StateIn, BI, BlockTX
 		_ -> erlang:unregister(fork_recovery_server)
 	end,
 	gen_server:cast(self(), {filter_mempool, maps:iterator(TXs)}),
-	ar_data_sync:add_block(
-		SizeTaggedTXs,
-		lists:sublist(BI, ?TRACK_CONFIRMATIONS),
-		NewB#block.weave_size - NewB#block.block_size
-	),
 	NewState = reset_miner(
 		StateIn#{
 			block_index          => BI,
@@ -803,11 +798,7 @@ do_recovered_from_fork(StateIn, NewB, BI, BlockTXPairs, BaseH, StartTimestamp) -
 				?TRACK_CONFIRMATIONS
 			),
 			[_, {_, StartOffset, _} | _] = BaseBI,
-			ar_data_sync:add_block(
-				SizeTaggedTXs,
-				BaseBI,
-				StartOffset
-			)
+			ok = ar_data_sync:add_block(SizeTaggedTXs, BaseBI, StartOffset)
 		end,
 		lists:reverse(AppliedBlockTXPairs)
 	),
