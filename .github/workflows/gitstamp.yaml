@@ -1,0 +1,16 @@
+# See: https://github.com/weavery/gitstamp-action
+---
+name: Gitstamp
+on: [push]
+jobs:
+  gitstamp:
+    runs-on: ubuntu-latest
+    name: Timestamp commit with Gitstamp
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v2
+      - name: Submit Gitstamp transaction
+        uses: weavery/gitstamp-action@v1
+        with:
+          wallet-key: ${{ secrets.GITSTAMP_KEYFILE }}
+          commit-link: true
