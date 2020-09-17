@@ -158,6 +158,13 @@ register() ->
 			help,
 			"The total number of synced block headers."
 		}
+	]),
+	prometheus_histogram:new([
+		{name, mining_rate},
+		{buckets, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 1000]},
+		{help,
+			"The per second average rate of the number of tried solution candidates "
+			"computed over the last block time."}
 	]).
 
 load_gauge(Name) ->
