@@ -655,8 +655,7 @@ tx(Wallet, SplitType, Format) ->
 			TX = sign_tx(Wallet, #{
 				data_size => byte_size(Data),
 				last_tx => get_tx_anchor(master),
-				data_root => DataRoot,
-				quantity => 1
+				data_root => DataRoot
 			}),
 			{TX, Chunks}
 	end.

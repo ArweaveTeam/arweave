@@ -166,9 +166,20 @@ do_verify_v1(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 		{"tx_signature_not_valid",
 		 verify_signature_v1(TX, VerifySignature)},
 		{"tx_malleable",
-		 verify_malleability(TX, Diff, Height, Wallets, Timestamp)}
+		 verify_malleability(TX, Diff, Height, Wallets, Timestamp)},
+		{"no_target",
+		 verify_target_length(TX, Height)}
 	],
 	collect_validation_results(TX#tx.id, Checks).
+
+verify_target_length(TX, Height) ->
+	case Height >= ar_fork:height_2_4() of
+		true ->
+			(TX#tx.quantity == 0 andalso byte_size(TX#tx.target) =< 32)
+				orelse byte_size(TX#tx.target) == 32;
+		false ->
+			byte_size(TX#tx.target) =< 32
+	end.
 
 do_verify_v2(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 	Checks = [
@@ -191,7 +202,9 @@ do_verify_v2(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 		{"tx_data_size_negative",
 		 TX#tx.data_size >= 0},
 		{"tx_data_size_data_root_mismatch",
-		 (TX#tx.data_size == 0) == (TX#tx.data_root == <<>>)}
+		 (TX#tx.data_size == 0) == (TX#tx.data_root == <<>>)},
+		{"no_target",
+		 verify_target_length(TX, Height)}
 	],
 	collect_validation_results(TX#tx.id, Checks).
 
@@ -349,20 +362,19 @@ get_addresses([TX | TXs], Addresses) ->
 
 %% @doc Check whether each field in a transaction is within the given byte size limits.
 tx_field_size_limit_v1(TX, Height) ->
-	Fork_1_8 = ar_fork:height_1_8(),
-	LastTXLimit = case Height of
-		H when H >= Fork_1_8 ->
-			48;
-		_ ->
-			32
-	end,
+	LastTXLimit =
+		case Height >= ar_fork:height_1_8() of
+			true ->
+				48;
+			false ->
+				32
+		end,
 	case tag_field_legal(TX) of
 		true ->
 			(byte_size(TX#tx.id) =< 32) and
 			(byte_size(TX#tx.last_tx) =< LastTXLimit) and
 			(byte_size(TX#tx.owner) =< 512) and
 			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
-			(byte_size(TX#tx.target) =< 32) and
 			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
 			(byte_size(TX#tx.data) =< (?TX_DATA_SIZE_LIMIT)) and
 			(byte_size(TX#tx.signature) =< 512) and
@@ -377,7 +389,6 @@ tx_field_size_limit_v2(TX) ->
 			(byte_size(TX#tx.last_tx) =< 48) and
 			(byte_size(TX#tx.owner) =< 512) and
 			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
-			(byte_size(TX#tx.target) =< 32) and
 			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
 			(byte_size(integer_to_binary(TX#tx.data_size)) =< 21) and
 			(byte_size(TX#tx.signature) =< 512) and
