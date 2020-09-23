@@ -215,7 +215,9 @@ get_wallet_list_chunk([Peer | Peers], H, Cursor) ->
 			peer => Peer,
 			path => Path,
 			headers => p2p_headers(),
-			limit => ?MAX_SERIALIZED_WALLET_LIST_CHUNK_SIZE
+			limit => ?MAX_SERIALIZED_WALLET_LIST_CHUNK_SIZE,
+			timeout => 10 * 1000,
+			connect_timeout => 1000
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
