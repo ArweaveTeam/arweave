@@ -73,21 +73,7 @@ do_join(Node, RawPeers, NewB, BI) ->
 			Blocks = get_block_and_trail(Peers, NewB, BI),
 			Node ! {join, BI, Blocks},
 			join_peers(Peers),
-			ar_miner_log:joined(),
-			{Recent, Rest} =
-				lists:split(min(length(BI), ?DOWNLOAD_TOP_PRIORITY_BLOCKS_COUNT), BI),
-			lists:foreach(
-				fun({H, _, TXRoot}) ->
-					ar_header_sync:enqueue_front({block, {H, TXRoot}})
-				end,
-				lists:sort(fun(_, _) -> rand:uniform(2) == 1 end, Rest)
-			),
-			lists:foreach(
-				fun({H, _, TXRoot}) ->
-					ar_header_sync:enqueue_front({block, {H, TXRoot}})
-				end,
-				lists:reverse(Recent)
-			)
+			ar_miner_log:joined()
 	end.
 
 %% @doc Verify timestamps of peers.
@@ -225,15 +211,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, BI) ->
 	),
 	case ?IS_BLOCK(PreviousBlock) of
 		true ->
-			ar_storage:write_full_block(NewB),
 			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
-			ar:info(
-				[
-					{writing_block, NewB#block.height},
-					{blocks_written, (2 * ?MAX_TX_ANCHOR_DEPTH - (BehindCurrent - 1))},
-					{blocks_to_write, (BehindCurrent - 1)}
-				]
-			),
 			[NewB#block{ size_tagged_txs = SizeTaggedTXs } |
 				get_block_and_trail(Peers, PreviousBlock, BehindCurrent - 1, BI)];
 		false ->

@@ -5,15 +5,15 @@
 	write_block/1, write_full_block/1, write_full_block/2,
 	read_block/1, read_block/2,
 	invalidate_block/1, blocks_on_disk/0,
-	write_tx/1, write_tx_data/2, read_tx/1, read_tx_data/1,
+	write_tx/1, write_tx_data/1, write_tx_data/2, read_tx/1, read_tx_data/1,
 	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/4,
 	write_block_index/1, read_block_index/0,
 	delete_tx/1,
 	enough_space/1, select_drive/2,
 	calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0,
 	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
-	tx_data_filepath/1,
-	read_tx_file/1,
+	tx_filepath/1, tx_data_filepath/1,
+	read_tx_file/1, read_migrated_v1_tx_file/1,
 	ensure_directories/0, clear/0,
 	write_file_atomic/2,
 	has_chunk/1, write_chunk/3, read_chunk/1, delete_chunk/1,
@@ -110,7 +110,8 @@ ensure_directories() ->
 	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?WALLET_LIST_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?STORAGE_MIGRATIONS_DIR) ++ "/").
+	filelib:ensure_dir(filename:join(DataDir, ?STORAGE_MIGRATIONS_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join([DataDir, ?TX_DIR, "migrated_v1"]) ++ "/").
 
 %% @doc Clear the cache of saved blocks.
 clear() ->
@@ -131,7 +132,16 @@ invalidate_block(B) ->
 	filelib:ensure_dir(TargetFile),
 	file:rename(block_filepath(B), TargetFile).
 
-write_block(Blocks) when is_list(Blocks) -> lists:foreach(fun write_block/1, Blocks);
+write_block(Blocks) when is_list(Blocks) ->
+	lists:foldl(
+		fun	(B, ok) ->
+				write_block(B);
+			(_B, Acc) ->
+				Acc
+		end,
+		ok,
+		Blocks
+	);
 write_block(B) ->
 	case ar_meta_db:get(disk_logging) of
 		true ->
@@ -142,28 +152,30 @@ write_block(B) ->
 		_ ->
 			do_nothing
 	end,
-	BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-	ByteSize = byte_size(BlockJSON),
-	case enough_space(ByteSize) of
+	Filepath = block_filepath(B),
+	case filelib:is_file(Filepath) of
 		true ->
-			Filepath = block_filepath(B),
-			IsOverwrite = filelib:is_file(Filepath),
-			write_file_atomic(Filepath, BlockJSON),
-			case not IsOverwrite of
-				true ->
-					ar_meta_db:increase(blocks_on_disk, 1),
-					ar_meta_db:increase(used_space, ByteSize);
-				false ->
-					noop
-			end,
 			ok;
 		false ->
-			ar:err(
-				[
-					{event, not_enough_space_to_write_block}
-				]
-			),
-			{error, not_enough_space}
+			BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
+			ByteSize = byte_size(BlockJSON),
+			case enough_space(ByteSize) of
+				true ->
+					case write_file_atomic(Filepath, BlockJSON) of
+						ok ->
+							ar_meta_db:increase(blocks_on_disk, 1),
+							ar_meta_db:increase(used_space, ByteSize);
+						Error ->
+							Error
+					end;
+				false ->
+					ar:err(
+						[
+							{event, not_enough_space_to_write_block}
+						]
+					),
+					{error, not_enough_space}
+			end
 	end.
 
 write_full_block(B) ->
@@ -171,16 +183,25 @@ write_full_block(B) ->
 	write_full_block(BShadow, B#block.txs).
 
 write_full_block(BShadow, TXs) ->
-	write_tx(TXs),
-	write_block(BShadow),
-	StoreTags = case ar_meta_db:get(arql_tags_index) of
-		true ->
-			store_tags;
-		_ ->
-			do_not_store_tags
-	end,
-	ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags),
-	app_ipfs:maybe_ipfs_add_txs(TXs).
+	case write_tx(TXs) of
+		Response when Response == ok orelse Response == {error, firewall_check} ->
+			case write_block(BShadow) of
+				ok ->
+					StoreTags = case ar_meta_db:get(arql_tags_index) of
+						true ->
+							store_tags;
+						_ ->
+							do_not_store_tags
+					end,
+					ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags),
+					app_ipfs:maybe_ipfs_add_txs(TXs),
+					ok;
+				Error ->
+					Error
+			end;
+		Error ->
+			Error
+	end.
 
 %% @doc Read a block from disk, given a height
 %% and a block index (used to determine the hash by height).
@@ -268,41 +289,61 @@ lookup_block_filename(H) ->
 
 %% @doc Delete the tx with the given hash from disk.
 delete_tx(Hash) ->
-	file:delete(tx_filepath(Hash)).
+	case lookup_tx_filename(Hash) of
+		{_, Filename} ->
+			file:delete(Filename);
+		unavailable ->
+			{error, enoent}
+	end.
 
-write_tx(TXs) when is_list(TXs) -> lists:foreach(fun write_tx/1, TXs);
-write_tx(#tx{ format = Format, data = Data } = TX) ->
-	DataStoredWithHeader =
-		case Format of
-			2 ->
-				<<>>;
-			1 ->
-				Data
+write_tx(TXs) when is_list(TXs) ->
+	lists:foldl(
+		fun (TX, ok) ->
+				write_tx(TX);
+			(TX, {error, firewall_check}) ->
+				write_tx(TX);
+			(_TX, Acc) ->
+				Acc
 		end,
-	case write_tx_header(TX#tx{ data = DataStoredWithHeader }) of
+		ok,
+		TXs
+	);
+write_tx(#tx{ format = Format } = TX) ->
+	case write_tx_header(TX) of
 		ok ->
 			DataSize = byte_size(TX#tx.data),
 			case DataSize > 0 of
 				true ->
-					case DataSize == TX#tx.data_size of
-						true ->
-							case TX#tx.data_root of
-								<<>> ->
-									write_tx_data(TX#tx.data);
-								DataRoot ->
-									write_tx_data(DataRoot, TX#tx.data)
-							end;
-						false ->
-							ar:err([{event, failed_to_store_tx_data}, {reason, size_mismatch}])
+					case {DataSize == TX#tx.data_size, Format} of
+						{false, 2} ->
+							ar:err([{event, failed_to_store_tx_data}, {reason, size_mismatch}]),
+							ok;
+						{true, 1} ->
+							%% v1 data is considered to be a part of the header therefore
+							%% if we fail to store it, we return an error here.
+							write_tx_data(TX#tx.data);
+						{true, 2} ->
+							case write_tx_data(TX#tx.data_root, TX#tx.data) of
+								ok ->
+									ok;
+								{error, Reason} ->
+									%% v2 data is not part of the header. We have to
+									%% report success here even if we failed to store
+									%% the attached data.
+									ar:warn([
+										{event, failed_to_store_tx_data},
+										{reason, Reason},
+										{tx, ar_util:encode(TX#tx.id)}
+									]),
+									ok
+							end
 					end;
 				false ->
 					ok
 			end;
 		NotOk ->
 			NotOk
-	end;
-write_tx(_TX) ->
-	{error, unsupported_tx_format}.
+	end.
 
 write_tx_header(TX) ->
 	%% Only store data that passes the firewall configured by the miner.
@@ -314,27 +355,32 @@ write_tx_header(TX) ->
 	end.
 
 write_tx_header_after_scan(TX) ->
-	TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+	TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX#tx{ data = <<>> })),
 	ByteSize = byte_size(TXJSON),
-	case enough_space(ByteSize) of
+	Filepath =
+		case {TX#tx.format, byte_size(TX#tx.data) > 0} of
+			{1, true} ->
+				filepath([?TX_DIR, "migrated_v1", tx_filename(TX)]);
+			_ ->
+				tx_filepath(TX)
+		end,
+	case filelib:is_file(Filepath) of
 		true ->
-			write_file_atomic(
-				tx_filepath(TX),
-				TXJSON
-			),
-			spawn(
-				ar_meta_db,
-				increase,
-				[used_space, ByteSize]
-			),
 			ok;
 		false ->
-			ar:err(
-				[
-					{event, not_enough_space_to_write_tx}
-				]
-			),
-			{error, not_enough_space}
+			case enough_space(ByteSize) of
+				true ->
+					case write_file_atomic(Filepath, TXJSON) of
+						ok ->
+							spawn(ar_meta_db, increase, [used_space, ByteSize]),
+							ok;
+						Error ->
+							Error
+					end;
+				false ->
+					ar:err([{event, not_enough_space_to_write_tx}]),
+					{error, not_enough_space}
+			end
 	end.
 
 write_tx_data(Data) ->
@@ -350,13 +396,13 @@ write_tx_data(ExpectedDataRoot, Data) ->
 		{_, {ExpectedDataRoot, DataTree}} ->
 			write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks);
 		_ ->
-			{error, invalid_data_root}
+			{error, [invalid_data_root]}
 	end.
 
 write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
-	lists:foreach(
+	Errors = lists:foldl(
 		fun
-			({<<>>, _}) ->
+			({<<>>, _}, Acc) ->
 				%% Empty chunks are produced by ar_tx:chunk_binary/2, when
 				%% the data is evenly split by the given chunk size. They are
 				%% the last chunks of the corresponding transactions and have
@@ -364,38 +410,33 @@ write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
 				%% picked as recall chunks because recall byte has to be strictly
 				%% smaller than the end offset. They are an artifact of the original
 				%% chunking implementation. There is no value in storing them.
-				ignore_empty_chunk;
-			({Chunk, Offset}) ->
-					DataPath =
-						ar_merkle:generate_path(ExpectedDataRoot, Offset - 1, DataTree),
-					Proof = #{
-						data_root => ExpectedDataRoot,
-						chunk => Chunk,
-						offset => Offset - 1,
-						data_path => DataPath,
-						data_size => byte_size(Data)
-					},
-					spawn(
-						fun() ->
-							case catch ar_data_sync:add_chunk(Proof) of
-								ok ->
-									ok;
-								{error, data_root_not_found} ->
-									ok;
-								{'EXIT', {timeout, {gen_server, call, _}}} ->
-									ok;
-								Error ->
-									ar:err([
-										{event, failed_to_store_v2_chunk},
-										{reason, Error}
-									])
-							end
-						end
-					),
-					ok
+				Acc;
+			({Chunk, Offset}, Acc) ->
+				DataPath =
+					ar_merkle:generate_path(ExpectedDataRoot, Offset - 1, DataTree),
+				Proof = #{
+					data_root => ExpectedDataRoot,
+					chunk => Chunk,
+					offset => Offset - 1,
+					data_path => DataPath,
+					data_size => byte_size(Data)
+				},
+				case ar_data_sync:add_chunk(Proof, infinity) of
+					ok ->
+						Acc;
+					{error, Reason} ->
+						[Reason | Acc]
+				end
 		end,
+		[],
 		SizeTaggedChunks
-	).
+	),
+	case Errors of
+		[] ->
+			ok;
+		_ ->
+			{error, Errors}
+	end.
 
 %% @doc Read a tx from disk, given a hash.
 read_tx(unavailable) -> unavailable;
@@ -403,10 +444,22 @@ read_tx(TX) when is_record(TX, tx) -> TX;
 read_tx(TXs) when is_list(TXs) ->
 	lists:map(fun read_tx/1, TXs);
 read_tx(ID) ->
-	case read_tx_file(tx_filepath(ID)) of
-		{ok, TX} ->
-			TX;
-		_Error ->
+	case lookup_tx_filename(ID) of
+		{ok, Filename} ->
+			case read_tx_file(Filename) of
+				{ok, TX} ->
+					TX;
+				_Error ->
+					unavailable
+			end;
+		{migrated_v1, Filename} ->
+			case read_migrated_v1_tx_file(Filename) of
+				{ok, TX} ->
+					TX;
+				_Error ->
+					unavailable
+			end;
+		unavailable ->
 			unavailable
 	end.
 
@@ -430,6 +483,26 @@ read_tx_file(Filename) ->
 						{filename, Filename}
 					]),
 					{error, failed_to_parse_tx}
+			end;
+		Error ->
+			Error
+	end.
+
+read_migrated_v1_tx_file(Filename) ->
+	case file:read_file(Filename) of
+		{ok, Binary} ->
+			case catch ar_serialize:json_struct_to_v1_tx(Binary) of
+				#tx{ id = ID } = TX ->
+					case catch ar_data_sync:get_tx_data(ID) of
+						{ok, Data} ->
+							{ok, TX#tx{ data = Data }};
+						{error, not_found} ->
+							{error, data_unavailable};
+						{'EXIT', {timeout, {gen_server, call, _}}} ->
+							{error, data_fetch_timeout};
+						Error ->
+							Error
+					end
 			end;
 		Error ->
 			Error
@@ -572,18 +645,18 @@ read_wallet_chunk(RootHash, Cursor, Tree) ->
 					_ ->
 						{Cursor + ?WALLET_LIST_CHUNK_SIZE, Chunk}
 				end,
-				Tree2 =
-					lists:foldl(
-						fun({K, V}, Acc) -> ar_patricia_tree:insert(K, V, Acc) end,
-						Tree,
-						Wallets
-					),
-				case NextCursor of
-					last ->
-						{ok, Tree2};
-					_ ->
-						read_wallet_chunk(RootHash, NextCursor, Tree2)
-				end;
+			Tree2 =
+				lists:foldl(
+					fun({K, V}, Acc) -> ar_patricia_tree:insert(K, V, Acc) end,
+					Tree,
+					Wallets
+				),
+			case NextCursor of
+				last ->
+					{ok, Tree2};
+				_ ->
+					read_wallet_chunk(RootHash, NextCursor, Tree2)
+			end;
 		{error, Reason} = Error ->
 			ar:err([
 				{event, failed_to_read_wallet_chunk},
@@ -603,12 +676,18 @@ parse_wallet_list_json(JSON) ->
 	end.
 
 lookup_tx_filename(ID) ->
-	Filename = tx_filepath(ID),
-	case filelib:is_file(Filename) of
-		false ->
-			unavailable;
+	Filepath = tx_filepath(ID),
+	case filelib:is_file(Filepath) of
 		true ->
-			Filename
+			{ok, Filepath};
+		false ->
+			MigratedV1Path = filepath([?TX_DIR, "migrated_v1", tx_filename(ID)]),
+			case filelib:is_file(MigratedV1Path) of
+				true ->
+					{migrated_v1, MigratedV1Path};
+				false ->
+					unavailable
+			end
 	end.
 
 % @doc Check that there is enough space to write Bytes bytes of data
@@ -821,13 +900,6 @@ store_and_retrieve_block_test() ->
 	BH1 = element(1, hd(BI1)),
 	?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(BH1)),
 	?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(2, BI1)).
-
-store_and_retrieve_tx_test() ->
-	Tx0 = ar_tx:new(<<"DATA1">>),
-	write_tx(Tx0),
-	Tx0 = read_tx(Tx0),
-	Tx0 = read_tx(Tx0#tx.id),
-	file:delete(tx_filepath(Tx0)).
 
 %% @doc Ensure blocks can be written to disk, then moved into the 'invalid'
 %% block directory.

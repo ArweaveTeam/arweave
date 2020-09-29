@@ -345,22 +345,25 @@ get_txs(Peers, MempoolTXs, B) ->
 			ar:err([{event, downloaded_txs_count_exceeds_limit}]),
 			{error, txs_count_exceeds_limit};
 		TXIDs ->
-			get_txs(Peers, MempoolTXs, TXIDs, [], 0)
+			get_txs(B#block.height, Peers, MempoolTXs, TXIDs, [], 0)
 	end.
 
-get_txs(_Peers, _MempoolTXs, [], TXs, _TotalSize) ->
+get_txs(_Height, _Peers, _MempoolTXs, [], TXs, _TotalSize) ->
 	{ok, lists:reverse(TXs)};
-get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
+get_txs(Height, Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
+	Fork_2_0 = ar_fork:height_2_0(),
 	case get_tx(Peers, TXID, MempoolTXs) of
 		#tx{ format = 2 } = TX ->
-			get_txs(Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
+			get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
+		#tx{} = TX when Height < Fork_2_0 ->
+			get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
 		#tx{ format = 1 } = TX ->
 			case TotalSize + TX#tx.data_size of
 				NewTotalSize when NewTotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
 					ar:err([{event, downloaded_txs_exceed_block_size_limit}]),
 					{error, txs_exceed_block_size_limit};
 				NewTotalSize ->
-					get_txs(Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
+					get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
 			end;
 		_ ->
 			{error, tx_not_found}
