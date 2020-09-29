@@ -855,7 +855,9 @@ get_wallet_txs_test_() ->
 			}),
 		ar_test_node:wait_until_receives_txs(Node, [TX]),
 		ar_node:mine(Node),
-		ar_test_node:wait_until_height(Node, 1),
+		[{H, _, _} | _] = ar_test_node:wait_until_height(Node, 1),
+		%% Wait until the storage is updated before querying for wallet's transactions.
+		ar_test_node:read_block_when_stored(H),
 		{ok, {{<<"200">>, <<"OK">>}, _, GetOneTXBody, _, _}} =
 			ar_http:req(#{
 				method => get,

@@ -151,6 +151,13 @@ register() ->
 		{help,
 			"The time in seconds taken to validate the block and apply it on top of "
 			"the current state, possibly involving a chain reorganisation."}
+	]),
+	prometheus_gauge:new([
+		{name, synced_blocks},
+		{
+			help,
+			"The total number of synced block headers."
+		}
 	]).
 
 load_gauge(Name) ->

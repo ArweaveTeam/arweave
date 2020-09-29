@@ -296,7 +296,7 @@ test_scan_and_clean_disk() ->
 	?assertEqual(BadTXID, (ar_storage:read_tx(BadTXID))#tx.id),
 	ar_meta_db:put(transaction_blacklist_files, [fixture("test_transaction_blacklist.txt")]),
 	%% Setup a content policy, write a bad tx to disk and add it to the index.
-	BadTX2 = (ar_tx:new())#tx{ id = BadDataTXID, data = <<"BADCONTENT1">>, tags = Tags },
+	BadTX2 = (ar_tx:new())#tx{ id = BadDataTXID, tags = [{<<"name">>, <<"BADCONTENT1">>}] },
 	ar_storage:write_tx(BadTX2),
 	?assertEqual(BadDataTXID, (ar_storage:read_tx(BadDataTXID))#tx.id),
 	ar_meta_db:put(content_policy_files, [fixture("test_sig.txt")]),

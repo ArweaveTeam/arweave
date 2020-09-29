@@ -21,7 +21,8 @@
 	assert_post_tx_to_slave/2,
 	assert_post_tx_to_master/2,
 	wait_until_receives_txs/2,
-	slave_mine/1
+	slave_mine/1,
+	read_block_when_stored/1
 ]).
 
 rejects_invalid_chunks_test_() ->
@@ -346,7 +347,7 @@ test_accepts_chunks() ->
 	),
 	slave_mine(Slave),
 	[{BH, _, _} | _] = wait_until_height(Master, 1),
-	B = ar_storage:read_block(BH),
+	B = read_block_when_stored(BH),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(EndOffset)

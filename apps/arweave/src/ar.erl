@@ -376,6 +376,9 @@ start(normal, _Args) ->
 	ar_meta_db:put(max_disk_pool_buffer_mb, MaxDiskPoolBuffer),
 	ar_meta_db:put(max_disk_pool_data_root_buffer_mb, MaxDiskPoolDataRootBuffer),
 	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
+	%% Store enabled features.
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -439,6 +442,18 @@ start(normal, _Args) ->
 	end,
 	ar_randomx_state:start(),
 	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_data_sync,
+		start => {ar_data_sync_sup, start_link, [[]]},
+		type => supervisor,
+		shutdown => infinity
+	}),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_header_sync,
+		start => {ar_header_sync_sup, start_link, [[]]},
+		type => supervisor,
+		shutdown => infinity
+	}),
+	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_node,
 		shutdown => infinity,
 		start => {ar_node, start_link,
@@ -483,9 +498,6 @@ start(normal, _Args) ->
 		}
 	),
 	ar_node:add_peers(Node, Bridge),
-	%% Store enabled features.
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	PrintMiningAddress = case MiningAddress of
 			unclaimed -> "unclaimed";
 			_ -> binary_to_list(ar_util:encode(MiningAddress))
@@ -526,12 +538,6 @@ start(normal, _Args) ->
 	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_poller,
 		start => {ar_poller_sup, start_link, [PollingArgs]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_header_sync_sup,
-		start => {ar_header_sync_sup, start_link, [[]]},
 		type => supervisor,
 		shutdown => infinity
 	}),
