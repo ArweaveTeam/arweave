@@ -16,14 +16,14 @@
 	hash_wallet_list/3,
 	hash_wallet_list_without_reward_wallet/2,
 	generate_block_data_segment/1,
+	generate_block_data_segment/2,
 	generate_block_data_segment/3,
 	generate_block_data_segment_base/1,
 	generate_hash_list_for_block/2,
 	generate_tx_root_for_block/1,
 	generate_size_tagged_list_from_txs/1,
-	generate_tx_tree/1,
-	generate_tx_tree/2,
-	compute_hash_list_merkle/2,
+	generate_tx_tree/1, generate_tx_tree/2,
+	compute_hash_list_merkle/2, compute_hash_list_merkle/1,
 	test_wallet_list_performance/1
 ]).
 
@@ -193,12 +193,15 @@ compute_hash_list_merkle(B, BI) ->
 		Fork_2_0 ->
 			ar_unbalanced_merkle:block_index_to_merkle_root(BI);
 		_ ->
-			ar_unbalanced_merkle:root(
-				B#block.hash_list_merkle,
-				{B#block.indep_hash, B#block.weave_size, B#block.tx_root},
-				fun ar_unbalanced_merkle:hash_block_index_entry/1
-			)
+			compute_hash_list_merkle(B)
 	end.
+
+compute_hash_list_merkle(B) ->
+	ar_unbalanced_merkle:root(
+		B#block.hash_list_merkle,
+		{B#block.indep_hash, B#block.weave_size, B#block.tx_root},
+		fun ar_unbalanced_merkle:hash_block_index_entry/1
+	).
 
 %% @doc Generate a block data segment.
 %% Block data segment is combined with a nonce to compute a PoW hash.
@@ -207,6 +210,12 @@ compute_hash_list_merkle(B, BI) ->
 generate_block_data_segment(B) ->
 	generate_block_data_segment(
 		generate_block_data_segment_base(B),
+		B
+	).
+
+generate_block_data_segment(BDSBase, B) ->
+	generate_block_data_segment(
+		BDSBase,
 		B#block.hash_list_merkle,
 		#{
 			timestamp => B#block.timestamp,

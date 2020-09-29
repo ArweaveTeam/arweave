@@ -1,21 +1,21 @@
+%%% @doc Runs a logging server that informs the operator of the activities of their
+%%% miner. In particular, as well as logging when hashing has started and when
+%%% a candidate block is mined, it will also log when mined blocks have a
+%%% certain number of confirmations.
 -module(ar_miner_log).
 
--export([start/0]).
--export([joining/0, joined/0]).
--export([started_hashing/0, foreign_block/1, mined_block/2, fork_recovered/1]).
--export([block_received_n_confirmations/2]).
--export([log_no_foreign_blocks/0]).
+-export([
+	start/0,
+	joining/0, joined/0,
+	started_hashing/0, foreign_block/1, mined_block/2,
+	block_received_n_confirmations/2,
+	log_no_foreign_blocks/0
+]).
 
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 
-%%% Runs a logging server that informs the operator of the activities of their
-%%% miner. In particular, as well as logging when hashing has started and when
-%%% a candidate block is mined, it will also log when mined blocks have a
-%%% certain number of confirmations.
-
 %% @doc The period to wait between checking the state of a block in the BI.
-
 -ifdef(DEBUG).
 -define(FOREIGN_BLOCK_ALERT_TIME, 3 * 1000).
 -else.
@@ -61,8 +61,6 @@ watchdog(#{ mined_blocks := MinedBlocks, foreign_blocks_timer := TimerRef } = St
 			watchdog(State#{ mined_blocks => MinedBlocks#{ Height => BH } });
 		accepted_foreign_block ->
 			watchdog(State#{ foreign_blocks_timer => refresh_timer(TimerRef) });
-		fork_recovered ->
-			watchdog(State#{ foreign_blocks_timer => refresh_timer(TimerRef) });
 		stop ->
 			cancel_timer(TimerRef),
 			ok
@@ -99,13 +97,6 @@ foreign_block(_BH) ->
 	case whereis(miner_connection_watchdog) of
 		undefined -> ok;
 		PID -> PID ! accepted_foreign_block
-	end.
-
-%% @doc React to a fork recovery event.
-fork_recovered(_BH) ->
-	case whereis(miner_connection_watchdog) of
-		undefined -> ok;
-		PID -> PID ! fork_recovered
 	end.
 
 %% @doc Log the message for hasing started.

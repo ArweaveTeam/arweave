@@ -3,92 +3,74 @@
 -include("src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, slave_call/3]).
--import(ar_test_node, [assert_slave_wait_until_receives_txs/2]).
+-import(ar_test_node, [
+	start/1, slave_start/1, connect_to_slave/0, disconnect_from_slave/0,
+	slave_mine/1, mine_until_fork/3,
+	wait_until_height/2, slave_wait_until_height/2,
+	sign_tx/2, slave_add_tx/2, assert_slave_wait_until_receives_txs/2,
+	read_block_when_stored/1
+]).
 
-height_plus_one_fork_recovery_test() ->
-	%% Mine two blocks on the same height on master and slave.
-	%% Mine the second block on slave. Expect master to fork recover.
+height_plus_one_fork_recovery_test_() ->
+	{timeout, 20, fun test_height_plus_one_fork_recovery/0}.
+
+test_height_plus_one_fork_recovery() ->
+	%% Mine on two nodes until they fork. Mine an extra block on one of them.
+	%% Expect the other one to recover. Repeat.
 	{SlaveNode, B0} = slave_start(no_block),
 	{MasterNode, B0} = start(B0),
-	ar_test_node:connect_to_slave(),
-	ar_meta_db:put(content_policy_files, []),
-	ar_firewall:reload(),
-	%% Turn off gossip.
-	ar_test_node:slave_gossip(off, SlaveNode),
-	ar_test_node:slave_mine(SlaveNode),
-	SlaveBI = ar_test_node:slave_wait_until_height(SlaveNode, 1),
-	?assertEqual(2, length(SlaveBI)),
+	connect_to_slave(),
+	Height = mine_until_fork(MasterNode, SlaveNode, 0),
 	ar_node:mine(MasterNode),
-	MasterBI = ar_test_node:wait_until_height(MasterNode, 1),
-	?assertEqual(2, length(MasterBI)),
-	?assert(hd(SlaveBI) /= hd(MasterBI)),
-	%% Turn off gossip again and mine the second block on slave.
-	ar_test_node:slave_gossip(on, SlaveNode),
-	ar_test_node:slave_mine(SlaveNode),
-	SlaveBI2 = ar_test_node:slave_wait_until_height(SlaveNode, 2),
-	?assertEqual(3, length(SlaveBI2)),
-	MasterBI2 = ar_test_node:wait_until_height(MasterNode, 2),
-	?assertEqual(3, length(MasterBI2)),
-	?assertEqual(hd(SlaveBI2), hd(MasterBI2)).
+	MasterBI = wait_until_height(MasterNode, Height + 1),
+	?assertEqual(MasterBI, slave_wait_until_height(SlaveNode, Height + 1)),
+	Height2 = mine_until_fork(MasterNode, SlaveNode, Height + 1),
+	slave_mine(SlaveNode),
+	SlaveBI = ar_test_node:slave_wait_until_height(SlaveNode, Height2 + 1),
+	?assertEqual(SlaveBI, wait_until_height(MasterNode, Height2 + 1)).
 
-missing_txs_fork_recovery_test() ->
-	%% Mine two blocks with transactions on the slave node but do not gossip the transactions
-	%% in advance. The master node is expected fetch the missing transactions and apply the block.
+height_plus_three_fork_recovery_test_() ->
+	{timeout, 20, fun test_height_plus_three_fork_recovery/0}.
+
+test_height_plus_three_fork_recovery() ->
+	%% Mine on two nodes until they fork. Mine three extra blocks on one of them.
+	%% Expect the other one to recover.
 	{SlaveNode, B0} = slave_start(no_block),
-	%% Start a local node and connect to slave.
 	{MasterNode, B0} = start(B0),
-	ar_test_node:connect_to_slave(),
-	%% Turn off gossip and add a TX to the slave.
-	ar_test_node:slave_gossip(off, SlaveNode),
-	TX1 = ar_tx:new(),
-	ar_test_node:slave_add_tx(SlaveNode, TX1),
-	assert_slave_wait_until_receives_txs(SlaveNode, [TX1]),
-	%% Turn on gossip and mine a block.
-	ar_test_node:slave_gossip(on, SlaveNode),
-	?assertEqual([], ar_node:get_pending_txs(MasterNode)),
-	ar_test_node:slave_mine(SlaveNode),
-	ar_test_node:wait_until_height(MasterNode, 1).
+	connect_to_slave(),
+	Height = mine_until_fork(MasterNode, SlaveNode, 0),
+	disconnect_from_slave(),
+	slave_mine(SlaveNode),
+	slave_wait_until_height(SlaveNode, Height + 1),
+	connect_to_slave(),
+	ar_node:mine(MasterNode),
+	wait_until_height(MasterNode, Height + 1),
+	disconnect_from_slave(),
+	slave_mine(SlaveNode),
+	slave_wait_until_height(SlaveNode, Height + 2),
+	connect_to_slave(),
+	ar_node:mine(MasterNode),
+	wait_until_height(MasterNode, Height + 2),
+	ar_node:mine(MasterNode),
+	MasterBI = wait_until_height(MasterNode, Height + 3),
+	?assertEqual(MasterBI, slave_wait_until_height(SlaveNode, Height + 3)).
 
-recall_block_missing_multiple_txs_fork_recovery_test_() ->
-	{timeout, 30, fun test_recall_block_missing_multiple_txs_fork_recovery/0}.
+missing_txs_fork_recovery_test_() ->
+	{timeout, 20, fun test_missing_txs_fork_recovery/0}.
 
-test_recall_block_missing_multiple_txs_fork_recovery() ->
-	%% Create a genesis block with two transactions but do not store them on the master node.
-	%% Mine a block with two transactions on the slave node without gossiping them.
-	%% Mine an empty block on the slave and gossip it.
-	%% The master is expected to accept the blocks and successfully fork recover
-	%% to the second although the recall block misses transactions in this scenario.
-	GenesisTXs = [ar_tx:new(), ar_tx:new()],
-	[EmptyB] = ar_weave:init([]),
-	B = EmptyB#block{ txs = GenesisTXs },
-	B0 = B#block { indep_hash = ar_weave:indep_hash(B) },
-	%% Start a remote node.
+test_missing_txs_fork_recovery() ->
+	%% Mine two blocks with transactions on the slave node
+	%% but do not gossip the transactions. The master node
+	%% is expected fetch the missing transactions and apply the block.
+	Key = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
 	{SlaveNode, _} = slave_start(B0),
-	%% Start a local node and connect to slave. Do not use start/1 to avoid writing txs to disk.
 	{MasterNode, _} = start(B0),
-	ar_test_node:connect_to_slave(),
-	%% Turn the gossip off and add two transactions to the slave node.
-	ar_test_node:slave_gossip(off, SlaveNode),
-	{_, Pub} = ar_wallet:new(),
-	ar_test_node:slave_add_tx(
-		SlaveNode,
-		TX1 = (ar_tx:new())#tx{ owner = ar_wallet:to_address(Pub) }
-	),
-	{_, AnotherPub} = ar_wallet:new(),
-	ar_test_node:slave_add_tx(
-		SlaveNode,
-		TX2 = (ar_tx:new())#tx{ owner = ar_wallet:to_address(AnotherPub) }
-	),
-	ar_test_node:wait_until_receives_txs(SlaveNode, [TX1, TX2]),
-	?assertEqual(2, length(slave_call(ar_node, get_pending_txs, [SlaveNode]))),
-	%% Turn the gossip back on and mine a block on the slave.
-	ar_test_node:slave_gossip(on, SlaveNode),
-	ar_test_node:slave_mine(SlaveNode),
-	ar_test_node:slave_wait_until_height(SlaveNode, 1),
-	%% Mine another one. Its recall block would be either 0 or 1 - both have two txs,
-	%% neither of those txs are known by master.
-	ar_test_node:slave_mine(SlaveNode),
-	FinalBI = ar_test_node:slave_wait_until_height(SlaveNode, 2),
-	%% Expect the master node to recover.
-	ar_test_node:assert_wait_until_block_block_index(MasterNode, FinalBI).
+	TX1 = sign_tx(Key, #{}),
+	slave_add_tx(SlaveNode, TX1),
+	assert_slave_wait_until_receives_txs(SlaveNode, [TX1]),
+	connect_to_slave(),
+	?assertEqual([], ar_node:get_pending_txs(MasterNode)),
+	slave_mine(SlaveNode),
+	[{H1, _, _} | _] = wait_until_height(MasterNode, 1),
+	?assertEqual(1, length((read_block_when_stored(H1))#block.txs)).

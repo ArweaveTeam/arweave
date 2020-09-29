@@ -22,7 +22,8 @@
 	get_balance/1,
 	test_with_mocked_functions/2,
 	get_tx_price/1,
-	post_and_mine/2
+	post_and_mine/2,
+	mine_until_fork/3
 ]).
 
 -include("src/ar.hrl").
@@ -526,4 +527,15 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 			H = slave_call(ar_node, get_current_block_hash, [AwaitNode]),
 			BShadow = slave_call(ar_storage, read_block, [H]),
 			BShadow#block{ txs = slave_call(ar_storage, read_tx, [BShadow#block.txs]) }
+	end.
+
+mine_until_fork(Master, Slave, CurrentHeight) ->
+	ar_node:mine(Master),
+	slave_mine(Slave),
+	[{MasterTip, _, _} | _ ] = wait_until_height(Master, CurrentHeight + 1),
+	case slave_wait_until_height(Slave, CurrentHeight + 1) of
+		[{MasterTip, _, _} | _] ->
+			CurrentHeight + 1;
+		_ ->
+			mine_until_fork(Master, Slave, CurrentHeight + 1)
 	end.

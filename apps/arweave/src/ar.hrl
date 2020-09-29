@@ -375,6 +375,7 @@
 	block_size = 0, % The total size of transaction data inside this block.
 	%% The sum of average number of hashes tried to mine blocks over all previous blocks.
 	cumulative_diff = 0,
+	size_tagged_txs = unset, % The list of {{TXID, DataRoot}, Offset}.
 	poa = #poa{} % The access proof used to generate this block.
 }).
 

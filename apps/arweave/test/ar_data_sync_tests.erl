@@ -516,6 +516,13 @@ test_fork_recovery() ->
 		#{ miner => {slave, Slave}, await_on => {slave, Slave} },
 		[SlaveTX2, SlaveTX3]
 	),
+	connect_to_slave(),
+	{MasterTX2, MasterChunks2} = tx(Wallet, {custom_split, 4}),
+	MasterB2 = post_and_mine(
+		#{ miner => {master, Master}, await_on => {master, Master} },
+		[MasterTX2]
+	),
+	disconnect_from_slave(),
 	_SlaveProofs2 = post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2),
 	_SlaveProofs3 = post_proofs_to_slave(SlaveB2, SlaveTX3, SlaveChunks3),
 	{SlaveTX4, SlaveChunks4} = tx(Wallet, {custom_split, 2}),
@@ -523,17 +530,12 @@ test_fork_recovery() ->
 		#{ miner => {slave, Slave}, await_on => {slave, Slave} },
 		[SlaveTX4]
 	),
-	{MasterTX2, MasterChunks2} = tx(Wallet, {custom_split, 4}),
-	MasterB2 = post_and_mine(
-		#{ miner => {master, Master}, await_on => {master, Master} },
-		[MasterTX2]
-	),
-	MasterProofs2 = post_proofs_to_master(MasterB2, MasterTX2, MasterChunks2),
+	connect_to_slave(),
 	post_and_mine(
 		#{ miner => {master, Master}, await_on => {master, Master} },
 		[]
 	),
-	connect_to_slave(),
+	MasterProofs2 = post_proofs_to_master(MasterB2, MasterTX2, MasterChunks2),
 	{MasterTX3, MasterChunks3} = tx(Wallet, {custom_split, 6}),
 	MasterB3 = post_and_mine(
 		#{ miner => {master, Master}, await_on => {master, Master} },

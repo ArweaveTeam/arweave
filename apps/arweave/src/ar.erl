@@ -8,7 +8,7 @@
 -export([
 	main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0,
 	tests/0, tests/1, tests/2,
-	test_ipfs/0, test_apps/0,
+	test_ipfs/0,
 	docs/0,
 	err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2,
 	report/1, report_console/1, d/1,
@@ -30,6 +30,7 @@
 	[
 		ar,
 		ar_meta_db,
+		ar_block_cache,
 		ar_unbalanced_merkle,
 		ar_intervals,
 		ar_patricia_tree,
@@ -55,7 +56,7 @@
 		ar_data_sync_tests,
 		ar_poa_tests,
 		ar_node_tests,
-		ar_fork_recovery,
+		ar_fork_recovery_tests,
 		ar_firewall_distributed_tests,
 		ar_firewall,
 		ar_mine,
@@ -75,12 +76,8 @@
 % disk_logging (false)
 % miner_logging (true)
 % subfield_queries (false)
-% partial_fork_recovery (false)
 % blacklist (true)
 % time_syncing (true)
-
-%% All of the apps that have tests associated with them
--define(APP_TEST_MODS, [app_chirper]).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
 main() ->
@@ -637,10 +634,6 @@ tests(Args) ->
 			Args
 		),
 	tests(Mods, #config {}).
-
-%% @doc Run tests on the apps.
-test_apps() ->
-	tests(?APP_TEST_MODS, #config {}).
 
 %% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
 test_ipfs() ->

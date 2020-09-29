@@ -51,7 +51,7 @@ tiny_network_with_reward_pool_test() ->
 	ar_test_node:wait_until_height(Node1, 1),
 	ar_node:mine(Node1),
 	ar_test_node:wait_until_height(Node1, 2),
-	ar_test_node:wait_until_height(Node1, 2),
+	ar_test_node:wait_until_height(Node2, 2),
 	Bs2 = ar_test_node:slave_call(ar_node, get_blocks, [Node2]),
 	2 = (hd(ar_storage:read_block(Bs2)))#block.height.
 
