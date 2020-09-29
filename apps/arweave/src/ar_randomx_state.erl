@@ -1,6 +1,13 @@
 -module(ar_randomx_state).
--export([start/0, start_block_polling/0, reset/0, hash/2, randomx_state_by_height/1, debug_server/0]).
+
+-export([
+	start/0, start_block_polling/0, reset/0,
+	hash/2,
+	randomx_state_by_height/1,
+	debug_server/0
+]).
 -export([init/2, init/4, swap_height/1]).
+
 -include("ar.hrl").
 
 -record(state, {
@@ -259,7 +266,9 @@ get_block(BH, BI, Peers) ->
 		B ->
 			case ar_weave:indep_hash(B) of
 				BH ->
-					ar_storage:write_full_block(B),
+					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs),
+					ar_data_sync:add_block(B, SizeTaggedTXs),
+					ar_header_sync:add_block(B),
 					{ok, B};
 				InvalidBH ->
 					ar:warn([

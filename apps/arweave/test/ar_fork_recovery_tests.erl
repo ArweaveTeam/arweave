@@ -5,7 +5,7 @@
 
 -import(ar_test_node, [
 	start/1, slave_start/1, connect_to_slave/0, disconnect_from_slave/0,
-	slave_mine/1, mine_until_fork/3,
+	slave_mine/1,
 	wait_until_height/2, slave_wait_until_height/2,
 	sign_tx/2, slave_add_tx/2, assert_slave_wait_until_receives_txs/2,
 	read_block_when_stored/1
@@ -16,18 +16,26 @@ height_plus_one_fork_recovery_test_() ->
 
 test_height_plus_one_fork_recovery() ->
 	%% Mine on two nodes until they fork. Mine an extra block on one of them.
-	%% Expect the other one to recover. Repeat.
+	%% Expect the other one to recover.
 	{SlaveNode, B0} = slave_start(no_block),
 	{MasterNode, B0} = start(B0),
-	connect_to_slave(),
-	Height = mine_until_fork(MasterNode, SlaveNode, 0),
-	ar_node:mine(MasterNode),
-	MasterBI = wait_until_height(MasterNode, Height + 1),
-	?assertEqual(MasterBI, slave_wait_until_height(SlaveNode, Height + 1)),
-	Height2 = mine_until_fork(MasterNode, SlaveNode, Height + 1),
 	slave_mine(SlaveNode),
-	SlaveBI = ar_test_node:slave_wait_until_height(SlaveNode, Height2 + 1),
-	?assertEqual(SlaveBI, wait_until_height(MasterNode, Height2 + 1)).
+	slave_wait_until_height(SlaveNode, 1),
+	connect_to_slave(),
+	ar_node:mine(MasterNode),
+	wait_until_height(MasterNode, 1),
+	ar_node:mine(MasterNode),
+	MasterBI = wait_until_height(MasterNode, 2),
+	?assertEqual(MasterBI, slave_wait_until_height(SlaveNode, 2)),
+	disconnect_from_slave(),
+	ar_node:mine(MasterNode),
+	wait_until_height(MasterNode, 3),
+	connect_to_slave(),
+	slave_mine(SlaveNode),
+	slave_wait_until_height(SlaveNode, 3),
+	slave_mine(SlaveNode),
+	SlaveBI = slave_wait_until_height(SlaveNode, 4),
+	?assertEqual(SlaveBI, wait_until_height(MasterNode, 4)).
 
 height_plus_three_fork_recovery_test_() ->
 	{timeout, 20, fun test_height_plus_three_fork_recovery/0}.
@@ -37,26 +45,29 @@ test_height_plus_three_fork_recovery() ->
 	%% Expect the other one to recover.
 	{SlaveNode, B0} = slave_start(no_block),
 	{MasterNode, B0} = start(B0),
+	slave_mine(SlaveNode),
+	slave_wait_until_height(SlaveNode, 1),
 	connect_to_slave(),
-	Height = mine_until_fork(MasterNode, SlaveNode, 0),
+	ar_node:mine(MasterNode),
+	wait_until_height(MasterNode, 1),
 	disconnect_from_slave(),
 	slave_mine(SlaveNode),
-	slave_wait_until_height(SlaveNode, Height + 1),
+	slave_wait_until_height(SlaveNode, 2),
 	connect_to_slave(),
 	ar_node:mine(MasterNode),
-	wait_until_height(MasterNode, Height + 1),
+	wait_until_height(MasterNode, 2),
 	disconnect_from_slave(),
 	slave_mine(SlaveNode),
-	slave_wait_until_height(SlaveNode, Height + 2),
+	slave_wait_until_height(SlaveNode, 3),
 	connect_to_slave(),
 	ar_node:mine(MasterNode),
-	wait_until_height(MasterNode, Height + 2),
+	wait_until_height(MasterNode, 3),
 	ar_node:mine(MasterNode),
-	MasterBI = wait_until_height(MasterNode, Height + 3),
-	?assertEqual(MasterBI, slave_wait_until_height(SlaveNode, Height + 3)).
+	MasterBI = wait_until_height(MasterNode, 4),
+	?assertEqual(MasterBI, slave_wait_until_height(SlaveNode, 4)).
 
 missing_txs_fork_recovery_test_() ->
-	{timeout, 20, fun test_missing_txs_fork_recovery/0}.
+	{timeout, 120, fun test_missing_txs_fork_recovery/0}.
 
 test_missing_txs_fork_recovery() ->
 	%% Mine two blocks with transactions on the slave node

@@ -7,7 +7,7 @@
 -import(ar_test_node, [assert_post_tx_to_slave/2]).
 -import(ar_test_node, [slave_mine/1, slave_call/3]).
 -import(ar_test_node, [wait_until_height/2, assert_slave_wait_until_height/2]).
--import(ar_test_node, [get_tx_anchor/0, sign_tx/2]).
+-import(ar_test_node, [get_tx_anchor/0, sign_tx/2, read_block_when_stored/1]).
 
 v1_transactions_after_2_0_test_() ->
 	{timeout, 60, fun test_v1_transactions_after_2_0/0}.
@@ -358,7 +358,7 @@ random_nonce() ->
 	{<<"nonce">>, integer_to_binary(rand:uniform(1000000))}.
 
 assert_txs_mined(TXs, [{H, _, _} | _]) ->
-	B = ar_storage:read_block(H),
+	B = read_block_when_stored(H),
 	TXIDs = [TX#tx.id || TX <- TXs],
 	?assertEqual(length(TXIDs), length(B#block.txs)),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).

@@ -272,7 +272,7 @@ get_tx_from_hash_1(TXID) ->
 	end.
 
 serve_tx(Filename, Path, Fallback, Req, Env) ->
-	{ok, TXHeader} = ar_storage:read_tx_file(Filename),
+	{ok, TXHeader} = read_tx_file(Filename),
 	TX = case TXHeader#tx.format of
 		2 ->
 			TXHeader#tx{ data = read_format_2_data(TXHeader) };
@@ -292,6 +292,11 @@ serve_tx(Filename, Path, Fallback, Req, Env) ->
 		_ ->
 			other_request(Req, Env)
 	end.
+
+read_tx_file({ok, Filename}) ->
+	ar_storage:read_tx_file(Filename);
+read_tx_file({migrated_v1, Filename}) ->
+	ar_storage:read_migrated_v1_tx_file(Filename).
 
 read_format_2_data(TX) ->
 	case ar_storage:read_tx_data(TX) of
@@ -390,7 +395,7 @@ serve_manifest_path_2(Hash, Req) ->
 	end.
 
 serve_manifest_path_3(SubFilename, Req) ->
-	{ok, SubTX} = ar_storage:read_tx_file(SubFilename),
+	{ok, SubTX} = read_tx_file(SubFilename),
 	MaybeContentType = ar_http_util:get_tx_content_type(SubTX),
 	case MaybeContentType of
 		{valid, ContentType} ->

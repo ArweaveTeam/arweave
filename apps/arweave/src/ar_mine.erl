@@ -608,7 +608,7 @@ test_basic() ->
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
 timestamp_refresh_test_() ->
-	{timeout, 20, fun test_timestamp_refresh/0}.
+	{timeout, 60, fun test_timestamp_refresh/0}.
 
 test_timestamp_refresh() ->
 	%% Start mining with a high enough difficulty, so that the block
