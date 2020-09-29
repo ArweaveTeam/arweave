@@ -73,9 +73,7 @@ loop(TimeoutRef) ->
 	end.
 
 handle(Req, Pid) ->
-	%% Inform ar_bridge about new peer, performance rec will be updated from cowboy_metrics_h
-	%% (this is leftover from update_performance_list)
-	Peer = arweave_peer(Req),
+	Peer = ar_http_util:arweave_peer(Req),
 	handle(Peer, Req, Pid).
 
 handle(Peer, Req, Pid) ->
@@ -83,20 +81,12 @@ handle(Peer, Req, Pid) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	case ar_meta_db:get(http_logging) of
 		true ->
-			ar:info(
-				[
-					http_request,
-					{method, Method},
-					{path, SplitPath},
-					{peer, Peer}
-				]
-			);
-		_ ->
-			do_nothing
-	end,
-	case ar_meta_db:get({peer, Peer}) of
-		not_found ->
-			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
+			ar:info([
+				{event, http_request},
+				{method, Method},
+				{path, SplitPath},
+				{peer, ar_util:format_peer(Peer)}
+			]);
 		_ ->
 			do_nothing
 	end,
@@ -473,7 +463,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 				list_to_binary(ar_util:format_peer(P))
 			||
 				P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-				P /= arweave_peer(Req)
+				P /= ar_http_util:arweave_peer(Req)
 			]
 		),
 	Req};
@@ -591,33 +581,10 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">
 			end
 	end;
 
-%% @doc Share your nodes IP with another peer.
-%% POST request to endpoint /peers with the body of the request being your
-%% nodes network information JSON encoded as specified in ar_serialize.
-% NOTE: Consider returning remaining timeout on a failed request
-handle(<<"POST">>, [<<"peers">>], Req, Pid) ->
-	case read_complete_body(Req, Pid) of
-		{ok, BlockJSON, Req2} ->
-			case ar_serialize:dejsonify(BlockJSON) of
-				{Struct} ->
-					{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-					case (NetworkName == <<?NETWORK_NAME>>) of
-						false ->
-							{400, #{}, <<"Wrong network.">>, Req2};
-						true ->
-							Peer = arweave_peer(Req2),
-							case ar_meta_db:get({peer, Peer}) of
-								not_found ->
-									ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
-								X -> X
-							end,
-							{200, #{}, [], Req2}
-					end;
-				_ -> {400, #{}, "Wrong network", Req2}
-			end;
-		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
-	end;
+%% @doc Share your IP with another peer.
+%% @deprecated To make a node learn your IP, you can make any request to it.
+handle(<<"POST">>, [<<"peers">>], Req, _Pid) ->
+	{200, #{}, <<>>, Req};
 
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
@@ -884,15 +851,6 @@ handle(_, _, Req, _Pid) ->
 %% See https://github.com/ninenines/cowlib/pull/79
 handle208(208) -> <<"208 Already Reported">>;
 handle208(Status) -> Status.
-
-arweave_peer(Req) ->
-	{{IpV4_1, IpV4_2, IpV4_3, IpV4_4}, _TcpPeerPort} = cowboy_req:peer(Req),
-	ArweavePeerPort =
-		case cowboy_req:header(<<"x-p2p-port">>, Req) of
-			undefined -> ?DEFAULT_HTTP_IFACE_PORT;
-			Binary -> binary_to_integer(Binary)
-		end,
-	{IpV4_1, IpV4_2, IpV4_3, IpV4_4, ArweavePeerPort}.
 
 format_bi_for_peer(BI, Req) ->
 	case cowboy_req:header(<<"x-block-format">>, Req, <<"2">>) of
@@ -1376,7 +1334,7 @@ val_for_key(K, L) ->
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
 post_block(request, {Req, Pid}, ReceiveTimestamp) ->
-	OrigPeer = arweave_peer(Req),
+	OrigPeer = ar_http_util:arweave_peer(Req),
 	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
 		not_banned ->
 			post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp);

@@ -4,9 +4,12 @@
 %%% A collection of record structures used throughout the Arweave server.
 
 %% @doc How nodes identify they are on the same network.
+-ifndef(NETWORK_NAME).
 -define(NETWORK_NAME, "arweave.N.1").
+-endif.
 
 %% @doc Current release number of the arweave client software.
+%% @deprecated Not used apart from being included in the /info response.
 -define(CLIENT_VERSION, 5).
 
 %% @doc The current build number -- incremented for every release.
@@ -14,6 +17,7 @@
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
+		{<<"X-Network">>, ?NETWORK_NAME},
 		{<<"X-Version">>, <<"8">>},
 		{<<"X-Block-Format">>, <<"3">>}
 	]).

@@ -1,5 +1,6 @@
 -module(ar_http_util).
--export([get_tx_content_type/1]).
+
+-export([get_tx_content_type/1, arweave_peer/1]).
 
 -include("ar.hrl").
 
@@ -19,6 +20,15 @@ get_tx_content_type(#tx { tags = Tags }) ->
 		false ->
 			none
 	end.
+
+arweave_peer(Req) ->
+	{{IpV4_1, IpV4_2, IpV4_3, IpV4_4}, _TcpPeerPort} = cowboy_req:peer(Req),
+	ArweavePeerPort =
+		case cowboy_req:header(<<"x-p2p-port">>, Req) of
+			undefined -> ?DEFAULT_HTTP_IFACE_PORT;
+			Binary -> binary_to_integer(Binary)
+		end,
+	{IpV4_1, IpV4_2, IpV4_3, IpV4_4, ArweavePeerPort}.
 
 %%%===================================================================
 %%% Private functions.
