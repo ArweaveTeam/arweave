@@ -20,7 +20,8 @@
 	add_peers/2,
 	set_reward_addr/2,
 	set_loss_probability/2,
-	get_mempool_size/1
+	get_mempool_size/1,
+	get_block_shadow_from_cache/2
 ]).
 
 -include("ar.hrl").
@@ -52,26 +53,28 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 					)
 				),
 			Height = ar_util:height_from_hashes(BI),
-			{RewardPool, WeaveSize, Current, WalletList} =
+			B =
 				case BI of
 					not_joined ->
-						{0, 0, not_joined, not_set};
+						#block{
+							reward_pool = 0,
+							weave_size = 0,
+							indep_hash = not_joined,
+							wallet_list = not_set,
+							diff = Diff,
+							last_retarget = LastRetarget
+						};
 					[{H, _, _} | _] ->
-						B = ar_storage:read_block(H),
 						RecentBlockIndex = lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT),
 						{ok, _} =
 							ar_wallets:start_link([
 								{recent_block_index, RecentBlockIndex},
 								{peers, Peers}
 							]),
-						{B#block.reward_pool, B#block.weave_size, H, B#block.wallet_list}
+						ar_storage:read_block(H)
 				end,
 			%% Start processes, init state, and start server.
 			NPid = self(),
-			%% The message queue of this process may grow big under load.
-			%% The flag makes VM store messages off heap and do not perform
-			%% expensive GC on them.
-			process_flag(message_queue_data, off_heap),
 			process_flag(trap_exit, true),
 			{TXs, MempoolSize} =
 				case ar_storage:read_term(mempool) of
@@ -84,29 +87,32 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 						{#{}, {0, 0}}
 				end,
 			{ok, _} = ar_data_sync_sup:start_link([{node, self()}]),
+			RecentBlocks = read_recent_blocks(BI),
 			State = #{
 				id => crypto:strong_rand_bytes(32),
 				node => NPid,
 				gossip => Gossip,
 				block_index => BI,
-				current => Current,
-				wallet_list => WalletList,
+				current => B#block.indep_hash,
+				wallet_list => B#block.wallet_list,
 				mining_delay => MiningDelay,
 				reward_addr => RewardAddr,
-				reward_pool => RewardPool,
+				reward_pool => B#block.reward_pool,
 				height => Height,
 				trusted_peers => Peers,
-				diff => Diff,
-				cumulative_diff => 0,
-				hash_list_merkle => <<>>,
+				diff => B#block.diff,
+				cumulative_diff => B#block.cumulative_diff,
 				tags => [],
 				miner => undefined,
 				automine => false,
-				last_retarget => LastRetarget,
-				weave_size => WeaveSize,
-				block_txs_pairs => create_block_txs_pairs(BI),
+				last_retarget => B#block.last_retarget,
+				weave_size => B#block.weave_size,
+				block_txs_pairs => [block_txs_pair(RecentB) || RecentB <- RecentBlocks],
+				block_cache => initialize_block_cache(RecentBlocks),
 				txs => TXs,
-				mempool_size => MempoolSize
+				mempool_size => MempoolSize,
+				blocks_missing_txs => sets:new(),
+				missing_txs_lookup_processes => #{}
 			},
 			{ok, WPid} = ar_node_worker:start_link(State),
 			server(WPid, State)
@@ -312,22 +318,55 @@ get_mempool_size(Node) ->
 			Size
 	end.
 
+%% @doc Get the block shadow from the block cache.
+get_block_shadow_from_cache(Node, H) ->
+	Ref = make_ref(),
+	Node ! {get_block_shadow_from_cache, self(), Ref, H},
+	receive
+		{Ref, block_shadow_from_cache, Reply} ->
+			Reply
+	end.
+
+%% @doc Get the upper bound of the SPoRA search space of the block of the given height.
+get_search_space_upper_bound(Node, Height) ->
+	Ref = make_ref(),
+	Node ! {get_search_space_upper_bound, self(), Ref, Height},
+	receive
+		{Ref, search_space_upper_bound, Reply} ->
+			Reply
+	end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
-create_block_txs_pairs(not_joined) ->
+read_recent_blocks(not_joined) ->
 	[];
-create_block_txs_pairs(BI) ->
-	create_block_txs_pairs(recent_blocks, lists:sublist(BI, 2 * ?MAX_TX_ANCHOR_DEPTH)).
+read_recent_blocks(BI) ->
+	read_recent_blocks2(lists:sublist(BI, 2 * ?MAX_TX_ANCHOR_DEPTH)).
 
-create_block_txs_pairs(recent_blocks, []) ->
+read_recent_blocks2([]) ->
 	[];
-create_block_txs_pairs(recent_blocks, [{BH, _, _} | Rest]) ->
+read_recent_blocks2([{BH, _, _} | BI]) ->
 	B = ar_storage:read_block(BH),
 	TXs = ar_storage:read_tx(B#block.txs),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
-	[{BH, SizeTaggedTXs} | create_block_txs_pairs(Rest)].
+	[B#block{ size_tagged_txs = SizeTaggedTXs } | read_recent_blocks2(BI)].
+
+block_txs_pair(#block{ indep_hash = H, size_tagged_txs = SizeTaggedTXs }) ->
+	{H, SizeTaggedTXs}.
+
+initialize_block_cache(Blocks) ->
+	initialize_block_cache(lists:reverse(Blocks), not_set).
+
+initialize_block_cache([B | Blocks], not_set) ->
+	initialize_block_cache(Blocks, ar_block_cache:new(B));
+initialize_block_cache([B | Blocks], BlockCache) ->
+	BH = B#block.indep_hash,
+	initialize_block_cache(Blocks,
+		ar_block_cache:mark_tip(ar_block_cache:add_validated(BlockCache, B), BH));
+initialize_block_cache([], BlockCache) ->
+	BlockCache.
 
 %% @doc Main server loop.
 server(WPid, #{ txs := TXs, mempool_size := {MempoolHeaderSize, MempoolDataSize} } = State) ->
@@ -373,6 +412,8 @@ server(WPid, #{ txs := TXs, mempool_size := {MempoolHeaderSize, MempoolDataSize}
 			server(WPid, State#{ reward_addr => Addr });
 		{sync_trusted_peers, Peers} ->
 			server(WPid, State#{ trusted_peers => Peers });
+		{sync_block_cache, BlockCache} ->
+			server(WPid, State#{ block_cache => BlockCache });
 		{sync_state, NewState} ->
 			server(WPid, NewState);
 		Message ->
@@ -429,18 +470,15 @@ handle({work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}, WPid, St
 	end,
 	State;
 
-handle({fork_recovered, BI, BlockTXPairs, BaseH, Timestamp}, WPid, State) ->
-	case BaseH of
-		no_base_hash ->
-			#{ trusted_peers := Peers } = State,
-			{ok, _} = ar_wallets:start_link([
-				{recent_block_index, lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)},
-				{peers, Peers}
-			]);
-		_ ->
-			do_nothing
-	end,
-	gen_server:cast(WPid, {fork_recovered, BI, BlockTXPairs, BaseH, Timestamp}),
+handle({join, BI, Blocks}, WPid, State) ->
+	#{ trusted_peers := Peers } = State,
+	{ok, _} = ar_wallets:start_link([
+		{recent_block_index, lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)},
+		{peers, Peers}
+	]),
+	BlockTXPairs = [block_txs_pair(B) || B <- Blocks],
+	BlockCache = initialize_block_cache(Blocks),
+	gen_server:cast(WPid, {join, BI, BlockTXPairs, BlockCache}),
 	State;
 
 handle(mine, WPid, State) ->
@@ -550,6 +588,11 @@ handle({get_block_txs_pairs, From, Ref}, _WPid, State) ->
 
 handle({get_mempool_size, From, Ref}, _WPid, #{ mempool_size := Size } = State) ->
 	From ! {Ref, get_mempool_size, Size},
+	State;
+
+handle({get_block_shadow_from_cache, From, Ref, H}, _WPid, State) ->
+	#{ block_cache := BlockCache } = State,
+	From ! {Ref, block_shadow_from_cache, ar_block_cache:get(BlockCache, H)},
 	State;
 
 handle(UnknownMsg, _WPid, State) ->

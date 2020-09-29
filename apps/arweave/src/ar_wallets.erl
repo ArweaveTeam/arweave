@@ -14,7 +14,7 @@
 	apply_block/4,
 	add_wallets/4,
 	update_wallets/4,
-	set_current/4
+	set_current/5
 ]).
 
 -export([
@@ -80,8 +80,9 @@ update_wallets(RootHash, Wallets, RewardAddr, Height) ->
 
 %% @doc Make the wallet tree with the given root hash "the current tree". The current tree
 %% is used by get/1, get_balance/1, and get_last_tx/1.
-set_current(PrevRootHash, RootHash, RewardAddr, Height) when is_binary(RootHash) ->
-	gen_server:cast(?MODULE, {set_current, PrevRootHash, RootHash, RewardAddr, Height}).
+set_current(PrevRootHash, RootHash, RewardAddr, Height, PruneDepth) when is_binary(RootHash) ->
+	Call = {set_current, PrevRootHash, RootHash, RewardAddr, Height, PruneDepth},
+	gen_server:call(?MODULE, Call, infinity).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -119,7 +120,9 @@ init([{recent_block_index, RecentBlockIndex}, {peers, Peers}]) ->
 	),
 	RewardAddr = LastB#block.reward_addr,
 	WalletList = LastB#block.wallet_list,
-	{ok, set_current(LastDAG, PrevWalletList, WalletList, RewardAddr, LastB#block.height)}.
+	LastHeight = LastB#block.height,
+	PruneDepth = length(RecentBlockIndex),
+	{ok, set_current(LastDAG, PrevWalletList, WalletList, RewardAddr, LastHeight, PruneDepth)}.
 
 handle_call({get, Addresses}, _From, DAG) ->
 	{reply, get_map(ar_diff_dag:get_sink(DAG), Addresses), DAG};
@@ -224,10 +227,10 @@ handle_call({update_wallets, RootHash, Wallets, RewardAddr, Height}, _From, DAG)
 						)
 				end,
 			{reply, {ok, UpdatedRootHash}, UpdatedDAG}
-	end.
+	end;
 
-handle_cast({set_current, PrevRootHash, RootHash, RewardAddr, Height}, DAG) ->
-	{noreply, set_current(DAG, PrevRootHash, RootHash, RewardAddr, Height)};
+handle_call({set_current, PrevRootHash, RootHash, RewardAddr, Height, PruneDepth}, _From, DAG) ->
+	{reply, ok, set_current(DAG, PrevRootHash, RootHash, RewardAddr, Height, PruneDepth)}.
 
 handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
 	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
@@ -309,7 +312,7 @@ apply_block(DAG, NewB, RootHash, RewardPool, Height) ->
 			{{error, invalid_reward_pool}, DAG}
 	end.
 
-set_current(DAG, PrevRootHash, RootHash, RewardAddr, Height) ->
+set_current(DAG, PrevRootHash, RootHash, RewardAddr, Height, PruneDepth) ->
 	UpdatedDAG = ar_diff_dag:update_sink(
 		ar_diff_dag:move_sink(DAG, RootHash, fun apply_diff/2, fun reverse_diff/2),
 		RootHash,
@@ -335,7 +338,7 @@ set_current(DAG, PrevRootHash, RootHash, RewardAddr, Height) ->
 			ok = ar_storage:write_wallet_list(RootHash, RewardAddr, IsRewardAddrNew, Tree)
 	end,
 	prometheus_gauge:set(wallet_list_size, ar_patricia_tree:size(Tree)),
-	ar_diff_dag:filter(UpdatedDAG, ?STORE_BLOCKS_BEHIND_CURRENT * 2).
+	ar_diff_dag:filter(UpdatedDAG, PruneDepth).
 
 apply_diff(Diff, Tree) ->
 	maps:fold(

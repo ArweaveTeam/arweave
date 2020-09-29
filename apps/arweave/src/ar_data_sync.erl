@@ -10,7 +10,7 @@
 	add_chunk/1,
 	add_data_root_to_disk_pool/3,
 	maybe_drop_data_root_from_disk_pool/3,
-	get_chunk/1,
+	get_chunk/1, get_tx_root/1,
 	get_tx_data/1,
 	get_tx_offset/1,
 	get_sync_record_etf/0,
@@ -95,6 +95,23 @@ get_chunk(Offset) ->
 			{error, not_joined}
 	end.
 
+get_tx_root(Offset) ->
+	case catch ets:lookup(?MODULE, data_root_offset_index) of
+		[{_, DataRootOffsetIndex}] ->
+			case catch ar_kv:get_prev(DataRootOffsetIndex, << Offset:?OFFSET_KEY_BITSIZE >>) of
+				{'EXIT', _} ->
+					{error, not_joined};
+				{error, _} ->
+					{error, not_found};
+				{ok, Key, Value} ->
+					<< BlockStartOffset:?OFFSET_KEY_BITSIZE >> = Key,
+					{TXRoot, BlockSize, _DataRootIndexKeySet} = binary_to_term(Value),
+					{ok, TXRoot, BlockStartOffset, BlockSize}
+			end;
+		_ ->
+			{error, not_joined}
+	end.
+
 get_tx_data(TXID) ->
 	gen_server:call(?MODULE, {get_tx_data, TXID}).
 
@@ -155,6 +172,7 @@ init([{node, Node}]) ->
 	DiskPoolChunksIndex = {DB, CF6},
 	ets:new(?MODULE, [set, named_table, {read_concurrency, true}]),
 	ets:insert(?MODULE, {chunks_index, ChunksIndex}),
+	ets:insert(?MODULE, {data_root_offset_index, DataRootOffsetIndex}),
 	State = #sync_data_state{
 		chunks_index = ChunksIndex,
 		data_root_index = DataRootIndex,

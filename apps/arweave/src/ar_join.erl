@@ -70,8 +70,8 @@ do_join(Node, RawPeers, NewB, BI) ->
 			ar_miner_log:joining(),
 			ar_arql_db:populate_db(?BI_TO_BHL(BI)),
 			ar_randomx_state:init(BI, Peers),
-			BlockTXPairs = get_block_and_trail(Peers, NewB, BI),
-			Node ! {fork_recovered, BI, BlockTXPairs, no_base_hash, no_timestamp},
+			Blocks = get_block_and_trail(Peers, NewB, BI),
+			Node ! {join, BI, Blocks},
 			join_peers(Peers),
 			ar_miner_log:joined(),
 			{Recent, Rest} =
@@ -211,23 +211,14 @@ join_peers(Peer) -> ar_http_iface_client:add_peer(Peer).
 %% can validate transactions even if it enters a ?MAX_TX_ANCHOR_DEPTH-deep
 %% fork recovery (which is the deepest fork recovery possible) immediately after
 %% joining the network.
-get_block_and_trail(_Peers, NewB, []) ->
-	%% Joining on the genesis block.
-	TXIDs = [TX#tx.id || TX <- NewB#block.txs],
-	ar_storage:write_block(NewB#block{ txs = TXIDs }),
-	[{NewB#block.indep_hash, ar_block:generate_size_tagged_list_from_txs(NewB#block.txs)}];
 get_block_and_trail(Peers, NewB, BI) ->
-	get_block_and_trail(Peers, NewB, 2 * ?MAX_TX_ANCHOR_DEPTH, BI, []).
+	get_block_and_trail(Peers, NewB, 2 * ?MAX_TX_ANCHOR_DEPTH, BI).
 
-get_block_and_trail(_Peers, NewB, _BehindCurrent, _BI, BlockTXPairs)
-		when NewB#block.height == 0 ->
-	ar_storage:write_full_block(NewB),
+get_block_and_trail(_Peers, NewB, BehindCurrent, _BI)
+		when NewB#block.height == 0 orelse BehindCurrent == 0 ->
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
-	BlockTXPairs ++ [{NewB#block.indep_hash, SizeTaggedTXs}];
-get_block_and_trail(_, NewB, 0, _, BlockTXPairs) ->
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
-	BlockTXPairs ++ [{NewB#block.indep_hash, SizeTaggedTXs}];
-get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
+	[NewB#block{ size_tagged_txs = SizeTaggedTXs }];
+get_block_and_trail(Peers, NewB, BehindCurrent, BI) ->
 	PreviousBlock = ar_http_iface_client:get_block(
 		Peers,
 		NewB#block.previous_block
@@ -236,7 +227,6 @@ get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 		true ->
 			ar_storage:write_full_block(NewB),
 			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
-			NewBlockTXPairs = BlockTXPairs ++ [{NewB#block.indep_hash, SizeTaggedTXs}],
 			ar:info(
 				[
 					{writing_block, NewB#block.height},
@@ -244,7 +234,8 @@ get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 					{blocks_to_write, (BehindCurrent - 1)}
 				]
 			),
-			get_block_and_trail(Peers, PreviousBlock, BehindCurrent - 1, BI, NewBlockTXPairs);
+			[NewB#block{ size_tagged_txs = SizeTaggedTXs } |
+				get_block_and_trail(Peers, PreviousBlock, BehindCurrent - 1, BI)];
 		false ->
 			ar:info(
 				[
@@ -253,7 +244,7 @@ get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs) ->
 				]
 			),
 			timer:sleep(3000),
-			get_block_and_trail(Peers, NewB, BehindCurrent, BI, BlockTXPairs)
+			get_block_and_trail(Peers, NewB, BehindCurrent, BI)
 	end.
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
