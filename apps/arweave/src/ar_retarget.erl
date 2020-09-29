@@ -181,7 +181,7 @@ simple_retarget_test_() ->
 			fun() ->
 				[BH|_] = ar_node:get_blocks(Node),
 				B = ar_storage:read_block(BH),
-				B#block.diff > ar_mine:genesis_difficulty()
+				B#block.diff > B0#block.diff
 			end,
 			1000,
 			5 * 60 * 1000

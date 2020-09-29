@@ -1,5 +1,7 @@
 -module(ar_config).
+
 -export([parse/1]).
+
 -include("ar.hrl").
 -include("ar_config.hrl").
 
@@ -127,12 +129,12 @@ parse_options([{<<"ipfs_pin">>, false} | Rest], Config) ->
 	parse_options(Rest, Config);
 parse_options([{<<"ipfs_pin">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config { ipfs_pin = true });
-parse_options([{<<"benchmark">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config { benchmark = true });
-parse_options([{<<"benchmark">>, false} | Rest], Config) ->
-	parse_options(Rest, Config);
-parse_options([{<<"benchmark">>, Opt} | _], _) ->
-	{error, {bad_type, benchmark, boolean}, Opt};
+parse_options([{<<"init">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config { init = true });
+parse_options([{<<"init">>, false} | Rest], Config) ->
+	parse_options(Rest, Config#config { init = false });
+parse_options([{<<"init">>, Opt} | _], _) ->
+	{error, {bad_type, init, boolean}, Opt};
 parse_options([{<<"internal_api_secret">>, Secret} | Rest], Config)
 		when is_binary(Secret), byte_size(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_options(Rest, Config#config { internal_api_secret = Secret });
