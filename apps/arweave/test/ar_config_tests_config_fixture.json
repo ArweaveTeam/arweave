@@ -31,7 +31,7 @@
     "some_blacklist_2"
   ],
   "disk_space": 44,
-  "benchmark": true,
+  "init": true,
   "internal_api_secret": "some_very_very_long_secret",
   "enable": [
     "feature_1",

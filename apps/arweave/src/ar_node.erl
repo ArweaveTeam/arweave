@@ -104,7 +104,12 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	ar_http_iface_server:reregister(http_entrypoint_node, PID),
 	PID.
 
+start_from_block_index(Node, [#block{} = GenesisB]) ->
+    BI = [ar_util:block_index_entry_from_block(GenesisB)],
+	ar_randomx_state:init(BI, []),
+	Node ! {join, BI, [GenesisB]};
 start_from_block_index(Node, BI) ->
+	ar_randomx_state:init(BI, []),
 	Node ! {join, BI, read_recent_blocks(BI)}.
 
 read_hash_list_2_0_for_1_0_blocks() ->
@@ -483,6 +488,12 @@ handle({join, BI, Blocks}, WPid, State) ->
 	ar_header_sync:join(BI, Blocks),
 	ar_data_sync:join(BI),
 	gen_server:cast(WPid, {join, BI, Blocks}),
+    case Blocks of
+        [B] ->
+            ar_header_sync:add_block(B);
+        _ ->
+            ok
+    end,
 	State;
 
 handle(mine, WPid, State) ->
