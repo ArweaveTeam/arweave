@@ -206,7 +206,7 @@ get_block_by_hash_test() ->
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
 	B1 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash),
-	?assertEqual(B0#block{ hash_list = unset }, B1).
+	?assertEqual(B0#block{ hash_list = unset, size_tagged_txs = unset }, B1).
 
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
@@ -215,7 +215,7 @@ get_block_by_height_test() ->
 	ar_test_node:wait_until_height(Node, 0),
 	{_, B1} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}], 0),
 	?assertEqual(
-		B0#block{ hash_list = unset, wallet_list = not_set },
+		B0#block{ hash_list = unset, wallet_list = not_set, size_tagged_txs = unset },
 		B1#block{ wallet_list = not_set }
 	).
 
@@ -233,7 +233,7 @@ test_get_current_block() ->
 	Peer = {127, 0, 0, 1, 1984},
 	BI = ar_http_iface_client:get_block_index(Peer),
 	B1 = ar_http_iface_client:get_block([Peer], hd(BI)),
-	?assertEqual(B0#block{ hash_list = unset }, B1),
+	?assertEqual(B0#block{ hash_list = unset, size_tagged_txs = unset }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/current"}),
 	?assertEqual(

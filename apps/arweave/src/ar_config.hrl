@@ -12,7 +12,7 @@
 
 %% Start options with default values.
 -record(config, {
-	benchmark = false,
+	init = false,
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	mine = false,
 	peers = [],

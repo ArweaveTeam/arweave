@@ -1,0 +1,30 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(dirname "$0")"
+cd "$SCRIPT_DIR/.."
+
+bin/check-nofile
+
+echo Building dependencies...
+./rebar3 as debug compile
+
+if [ `uname -s` == "Darwin" ]; then
+    RANDOMX_JIT="disable randomx_jit"
+else
+    RANDOMX_JIT=
+fi
+
+OPTS="-pa `./rebar3 as debug path`"
+
+echo Moving the benchmark folder to benchmark.old...
+rm -rf benchmark.old
+if [ -d benchmark ]; then
+    mv -i benchmark benchmark.old;
+fi
+
+echo Launching Erlang Virtual Machine...
+erl $OPTS \
+    -config config/sys.config -args_file config/vm.args.dev \
+    -run ar main $RANDOMX_JIT data_dir benchmark init mine

@@ -9,7 +9,7 @@ parse_config() ->
 	ExpectedMiningAddr = ar_util:decode(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>),
 	{ok, ParsedConfig} = ar_config:parse(config_fixture()),
 	?assertMatch(#config{
-		benchmark = true,
+		init = true,
 		port = 1985,
 		mine = true,
 		peers = [

@@ -2,7 +2,7 @@
 
 -export([start/8, stop/1, mine/2]).
 -export([validate/4, validate/3]).
--export([min_difficulty/1, genesis_difficulty/0, max_difficulty/0]).
+-export([min_difficulty/1, max_difficulty/0]).
 -export([sha384_diff_to_randomx_diff/1]).
 
 -include("ar.hrl").
@@ -111,25 +111,6 @@ min_difficulty(Height) ->
 		true ->
 			ar_retarget:switch_to_linear_diff(Diff);
 		false ->
-			Diff
-	end.
--endif.
-
--ifdef(DEBUG).
-genesis_difficulty() ->
-	1.
--else.
-genesis_difficulty() ->
-	Diff = case ar_fork:height_1_7() of
-		0 ->
-			randomx_genesis_difficulty();
-		_ ->
-			?DEFAULT_DIFF
-	end,
-	case ar_fork:height_1_8() of
-		0 ->
-			ar_retarget:switch_to_linear_diff(Diff);
-		_ ->
 			Diff
 	end.
 -endif.
@@ -491,7 +472,7 @@ process_solution(S, Hash, Nonce, MinedTXs, Diff, Timestamp) ->
 
 log_performance(TotalHashesTried, StartedAt) ->
 	Time = timer:now_diff(erlang:timestamp(), StartedAt),
-	ar:info([
+	ar:console([
 		{event, stopped_mining},
 		{miner_hashes_per_second, TotalHashesTried / (Time / 1000000)}
 	]).
@@ -588,7 +569,6 @@ min_randomx_difficulty() -> 1.
 -else.
 min_randomx_difficulty() -> min_sha384_difficulty() + ?RANDOMX_DIFF_ADJUSTMENT.
 min_sha384_difficulty() -> 31.
-randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 -endif.
 
 %% Tests

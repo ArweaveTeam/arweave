@@ -130,7 +130,7 @@ show_help() ->
 			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
 			{"disk_space (num)", "Max size (in GB) for the disk partition containing the Arweave data directory (blocks, txs, etc) when the miner stops writing files to disk."},
-			{"benchmark", "Run a mining performance benchmark."},
+			{"init", "Start a new weave."},
 			{"internal_api_secret (secret)",
 				lists:flatten(
 					io_lib:format(
@@ -230,8 +230,8 @@ parse_cli_args(["ipfs_pin" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_pin = true });
 parse_cli_args(["start_from_block_index"|Rest], C) ->
 	parse_cli_args(Rest, C#config { start_from_block_index = true });
-parse_cli_args(["benchmark"|Rest], C)->
-	parse_cli_args(Rest, C#config { benchmark = true });
+parse_cli_args(["init"|Rest], C)->
+	parse_cli_args(Rest, C#config { init = true });
 parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_cli_args(Rest, C#config { internal_api_secret = list_to_binary(Secret)});
 parse_cli_args(["internal_api_secret", _ | _], _) ->
@@ -273,25 +273,10 @@ parse_cli_args([Arg|_Rest], _O) ->
 	show_help().
 
 %% @doc Start an Arweave node on this BEAM.
-start() -> start(?DEFAULT_HTTP_IFACE_PORT).
-start(Port) when is_integer(Port) -> start(#config { port = Port });
-start(#config{
-		benchmark = true,
-		max_miners = MaxMiners,
-		disable = Disable,
-		enable = Enable,
-		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
-	}) ->
-	error_logger:logfile({open, generate_logfile_name()}),
-	error_logger:tty(false),
-	ar_meta_db:start_link(),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
-	ar_meta_db:put(max_miners, MaxMiners),
-	ar_meta_db:put(mine, true),
-	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
-	ar_randomx_state:start(),
-	ar_benchmark:run();
+start() ->
+	start(?DEFAULT_HTTP_IFACE_PORT).
+start(Port) when is_integer(Port) ->
+	start(#config { port = Port });
 start(Config) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -304,6 +289,7 @@ start(Config) ->
 
 start(normal, _Args) ->
 	{ok, #config {
+		init = Init,
 		port = Port,
 		data_dir = DataDir,
 		metrics_dir = MetricsDir,
@@ -471,10 +457,10 @@ start(normal, _Args) ->
 		start => {ar_node, start_link,
 			[[
 				ValidPeers,
-				case StartFromBlockIndex of
-					false ->
+				case {StartFromBlockIndex, Init} of
+					{false, false} ->
 						not_joined;
-					true ->
+					{true, _} ->
 						case ar_storage:read_block_index() of
 							{error, enoent} ->
 								io:format(
@@ -486,7 +472,14 @@ start(normal, _Args) ->
 								erlang:halt();
 							BI ->
 								BI
-						end
+						end;
+					{false, true} ->
+						ar_weave:init(
+							ar_util:genesis_wallets(),
+							ar_retarget:switch_to_linear_diff(Diff),
+							0,
+							ar_storage:read_tx(ar_weave:read_v1_genesis_txs())
+						)
 				end,
 				0,
 				MiningAddress,
