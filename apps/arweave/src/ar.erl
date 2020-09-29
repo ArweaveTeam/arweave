@@ -453,12 +453,24 @@ start(normal, _Args) ->
 		type => supervisor,
 		shutdown => infinity
 	}),
+	ValidPeers = ar_join:filter_peer_list(Peers),
+	case {Peers, ValidPeers} of
+		{[_Peer | _], []} ->
+			io:format(
+				"~n\tInvalid peers. A valid peer must be part of the"
+				" network ~s and its clock must deviate from ours by no"
+				" more than ~B seconds.~n", [?NETWORK_NAME, ?JOIN_CLOCK_TOLERANCE]
+			),
+			erlang:halt();
+		_ ->
+			ok
+	end,
 	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_node,
 		shutdown => infinity,
 		start => {ar_node, start_link,
 			[[
-				Peers,
+				ValidPeers,
 				case StartFromBlockIndex of
 					false ->
 						not_joined;
@@ -490,7 +502,7 @@ start(normal, _Args) ->
 		Supervisor,
 		{
 			ar_bridge,
-			{ar_bridge, start_link, [[Peers, [Node], Port]]},
+			{ar_bridge, start_link, [[ValidPeers, [Node], Port]]},
 			permanent,
 			infinity,
 			worker,
@@ -511,7 +523,7 @@ start(normal, _Args) ->
 			{automine, Mine},
 			{miner, Node},
 			{mining_address, PrintMiningAddress},
-			{peers, Peers},
+			{peers, [ar_util:format_peer(Peer) || Peer <- ValidPeers]},
 			{polling, Polling},
 			{target_time, ?TARGET_TIME},
 			{retarget_blocks, ?RETARGET_BLOCKS}
@@ -529,7 +541,7 @@ start(normal, _Args) ->
 		{max_gateway_connections, MaxGatewayConnections}
 	]),
 	ar_randomx_state:start_block_polling(),
-	PollingArgs = [{trusted_peers, Peers}] ++ case Polling of
+	PollingArgs = [{trusted_peers, ValidPeers}] ++ case Polling of
 		true ->
 			[{polling_interval, 10 * 1000}];
 		false ->
