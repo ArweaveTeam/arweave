@@ -139,20 +139,18 @@ register() ->
 		}
 	]),
 	prometheus_histogram:new([
-		{name, block_processing_time},
-		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20]},
+		{name, block_pre_validation_time},
+		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 50, 100, 1000, 2000, 5000, 10000]},
 		{help,
-			"The time in seconds passed since a block is received (the HTTP body is not read yet) "
-			"until the block is accepted. If a block fails validation or triggers a fork recovery "
-			"process, this metric is not updated."}
+			"The time in milliseconds taken to parse the POST /block input and perform a "
+			"preliminary validation before relaying the block to peers."}
 	]),
 	prometheus_histogram:new([
-		{name, fork_recovery_time},
-		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20]},
+		{name, block_processing_time},
+		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60]},
 		{help,
-			"The time in seconds passed since a fork recovery process is launched until blocks "
-			"from the alternative fork are applied. If the process fails or the alternative fork "
-			"ends up less preferrable than the current one, this metric is not updated."}
+			"The time in seconds taken to validate the block and apply it on top of "
+			"the current state, possibly involving a chain reorganisation."}
 	]).
 
 load_gauge(Name) ->

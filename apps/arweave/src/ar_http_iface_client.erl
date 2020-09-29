@@ -79,12 +79,12 @@ has_tx(Peer, ID) ->
 
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Peer, NewB, BDS) ->
+	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
 	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
 			lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
 		),
-	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
 	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | BlockProps],
 	PostProps = [
 		{<<"new_block">>, {BlockShadowProps}},
@@ -404,8 +404,18 @@ get_tx_from_remote_peer(Peers, TXID) ->
 			get_tx_from_remote_peer(Peers -- [Peer], TXID);
 		gone ->
 			get_tx_from_remote_peer(Peers -- [Peer], TXID);
-		ShouldBeTX ->
-			ShouldBeTX
+		#tx{} = TX ->
+			case ar_tx:verify_tx_id(TXID, TX) of
+				false ->
+					ar:warn([
+						{event, peer_served_invalid_tx},
+						{peer, ar_util:format_peer(Peer)},
+						{tx, ar_util:encode(TXID)}
+					]),
+					get_tx_from_remote_peer(Peers -- [Peer], TXID);
+				true ->
+					TX
+			end
 	end.
 
 %% @doc Retreive only the data associated with a transaction.
