@@ -25,7 +25,7 @@
 -define(CORS_HEADERS,
 	#{<<"access-control-allow-origin">> => <<"*">>}).
 
--ifdef(DEBUG).
+-ifdef(FORKS_RESET).
 -define(FORK_1_6, 0).
 -else.
 %%% FORK INDEX
@@ -48,7 +48,7 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
 
-%% @doc NB: Setting the default difficulty high will cause TNT to fail.
+%% @doc The difficulty used to start a new weave by default.
 -define(DEFAULT_DIFF, 8).
 
 -ifndef(TARGET_TIME).
@@ -107,10 +107,6 @@
 
 %% @doc Length of time to wait before giving up on test(s).
 -define(TEST_TIMEOUT, 15 * 60).
-
-%% @doc Calculate MS to wait in order to hit target block time.
--define(DEFAULT_MINING_DELAY,
-    ((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 
 %% @doc The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).
