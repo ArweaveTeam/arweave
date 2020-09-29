@@ -12,7 +12,9 @@
 	to_etf/2,
 	to_json/2,
 	safe_from_etf/1,
-	count/1
+	count/1,
+	is_empty/1,
+	take_largest/1
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -112,6 +114,15 @@ safe_from_etf(Binary) ->
 %% @doc Return the number of intervals in the set.
 count(Intervals) ->
 	gb_sets:size(Intervals).
+
+%% @doc Return true if the set of intervals is empty, false otherwise.
+is_empty(Intervals) ->
+	gb_sets:is_empty(Intervals).
+
+%% @doc Return {Interval, Intervals2} when Interval is the interval with the largest
+%% right bound and Intervals2 is the set of intervals with this interval removed.
+take_largest(Intervals) ->
+	gb_sets:take_largest(Intervals).
 
 %%%===================================================================
 %%% Private functions.

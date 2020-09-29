@@ -88,25 +88,22 @@ set_current(PrevRootHash, RootHash, RewardAddr, Height, PruneDepth) when is_bina
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([{recent_block_index, []}, {peers, _Peers}]) ->
+init([{blocks, []}, {peers, _Peers}]) ->
 	process_flag(trap_exit, true),
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
 	{ok, DAG};
-init([{recent_block_index, RecentBlockIndex}, {peers, Peers}]) ->
+init([{blocks, Blocks}, {peers, Peers}]) ->
 	process_flag(trap_exit, true),
+	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	{LastDAG, LastB, PrevWalletList} = lists:foldl(
-		fun ({BH, _, _}, start) ->
-				B = ar_storage:read_block(BH),
+		fun (B, start) ->
 				Tree = get_tree(B, Peers),
 				{RootHash, UpdatedTree} =
 					ar_block:hash_wallet_list(B#block.height, B#block.reward_addr, Tree),
 				RootHash = B#block.wallet_list,
 				DAG = ar_diff_dag:new(RootHash, UpdatedTree, not_set),
 				{DAG, B, <<>>};
-			({BH, _, _}, {DAG, PreviousB, _}) ->
-				BShadow = ar_storage:read_block(BH),
-				TXs = ar_storage:read_tx(BShadow#block.txs),
-				B = BShadow#block{ txs = TXs },
+			(B, {DAG, PreviousB, _}) ->
 				RewardPool = PreviousB#block.reward_pool,
 				Height = PreviousB#block.height,
 				RootHash = PreviousB#block.wallet_list,
@@ -116,13 +113,12 @@ init([{recent_block_index, RecentBlockIndex}, {peers, Peers}]) ->
 				{UpdatedDAG, B, PreviousB#block.wallet_list}
 		end,
 		start,
-		lists:reverse(RecentBlockIndex)
+		lists:reverse(lists:sublist(Blocks, InitialDepth))
 	),
 	RewardAddr = LastB#block.reward_addr,
 	WalletList = LastB#block.wallet_list,
 	LastHeight = LastB#block.height,
-	PruneDepth = length(RecentBlockIndex),
-	{ok, set_current(LastDAG, PrevWalletList, WalletList, RewardAddr, LastHeight, PruneDepth)}.
+	{ok, set_current(LastDAG, PrevWalletList, WalletList, RewardAddr, LastHeight, InitialDepth)}.
 
 handle_call({get, Addresses}, _From, DAG) ->
 	{reply, get_map(ar_diff_dag:get_sink(DAG), Addresses), DAG};

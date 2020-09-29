@@ -103,9 +103,9 @@ record_mempool_size_metrics({HeaderSize, DataSize}) ->
 	prometheus_gauge:set(mempool_header_size_bytes, HeaderSize),
 	prometheus_gauge:set(mempool_data_size_bytes, DataSize).
 
-handle_task({join, BI, BlockTXPairs, BlockCache}, #{ node := Node } = State) ->
+handle_task({join, BI, Blocks}, #{ node := Node } = State) ->
 	Current = element(1, hd(BI)),
-	B = ar_block_cache:get(BlockCache, Current),
+	B = hd(Blocks),
 	UpdatedState = reset_miner(
 		State#{
 			block_index          => BI,
@@ -117,8 +117,8 @@ handle_task({join, BI, BlockTXPairs, BlockCache}, #{ node := Node } = State) ->
 			cumulative_diff      => B#block.cumulative_diff,
 			last_retarget        => B#block.last_retarget,
 			weave_size           => B#block.weave_size,
-			block_txs_pairs      => BlockTXPairs,
-			block_cache          => BlockCache
+			block_txs_pairs      => [block_txs_pair(Block) || Block <- Blocks],
+			block_cache          => ar_block_cache:from_list(Blocks)
 		}
 	),
 	Node ! {sync_state, UpdatedState},
@@ -588,7 +588,6 @@ apply_validated_block(#{ cumulative_diff := CDiff } = State, B, _Blocks, _BI, _B
 	UpdatedBlockCache = ar_block_cache:add_validated(BlockCache, B),
 	gen_server:cast(self(), apply_block),
 	log_applied_block(B),
-	ar_storage:write_full_block(B),
 	Node ! {sync_block_cache, UpdatedBlockCache},
 	State#{ block_cache => UpdatedBlockCache };
 apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
@@ -626,23 +625,27 @@ apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
 		fun (CurrentB, start) ->
 				CurrentB;
 			(CurrentB, CurrentPrevB) ->
-				H = CurrentB#block.indep_hash,
-				CurrentBI = lists:dropwhile(fun({Hash, _, _}) -> Hash /= H end, BI2),
-				RecentBI = lists:sublist(CurrentBI, ?TRACK_CONFIRMATIONS),
-				BlockStartOffset = CurrentPrevB#block.weave_size,
-				SizeTaggedTXs = CurrentB#block.size_tagged_txs,
-				ok = ar_data_sync:add_block(SizeTaggedTXs, RecentBI, BlockStartOffset),
 				PrevWallets = CurrentPrevB#block.wallet_list,
 				Wallets = CurrentB#block.wallet_list,
 				Addr = CurrentB#block.reward_addr,
 				Height = CurrentB#block.height,
-				ok = ar_wallets:set_current(PrevWallets, Wallets, Addr, Height, PruneDepth),
+				%% Use a twice bigger depth than the depth requested on join to serve
+				%% the wallet trees to the joining nodes.
+				ok = ar_wallets:set_current(PrevWallets, Wallets, Addr, Height, PruneDepth * 2),
 				CurrentB
 		end,
 		start,
 		lists:reverse([B | PrevBlocks])
 	),
-	ar_storage:write_full_block(B),
+	RecentBI = lists:sublist(BI2, ?STORE_BLOCKS_BEHIND_CURRENT * 2),
+	ar_data_sync:add_tip_block(BlockTXPairs2, RecentBI),
+	ar_header_sync:add_tip_block(B, RecentBI),
+	lists:foreach(
+		fun(PrevB) ->
+			ar_header_sync:add_block(PrevB)
+		end,
+		tl(lists:reverse(PrevBlocks))
+	),
 	BlockTXs = B#block.txs,
 	{TXs2, _DroppedTXMap, DecreasedMempoolSize} = drop_txs(BlockTXs, TXs, MempoolSize),
 	gen_server:cast(self(), {filter_mempool, maps:iterator(TXs2)}),
@@ -716,7 +719,7 @@ reset_miner(#{ miner := Pid, automine := true } = StateIn) ->
 	start_mining(StateIn#{ miner => undefined }).
 
 %% @doc Force a node to start mining, update state.
-start_mining(#{block_index := not_joined} = StateIn) ->
+start_mining(#{ block_index := not_joined } = StateIn) ->
 	%% We don't have a block index. Wait until we have one before
 	%% starting to mine.
 	StateIn;
