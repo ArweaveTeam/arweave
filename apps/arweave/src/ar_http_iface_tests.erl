@@ -124,7 +124,7 @@ group(Grouper, [Item | List], Acc) ->
 get_balance_test() ->
 	{_Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
-	ar_test_node:start(B0),
+	{Node, _} = ar_test_node:start(B0),
 	Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
@@ -132,7 +132,44 @@ get_balance_test() ->
 			peer => {127, 0, 0, 1, 1984},
 			path => "/wallet/" ++ Addr ++ "/balance"
 		}),
-	?assertEqual(10000, binary_to_integer(Body)).
+	?assertEqual(10000, binary_to_integer(Body)),
+	RootHash = binary_to_list(ar_util:encode(B0#block.wallet_list)),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
+		}),
+	ar_node:mine(Node),
+	ar_test_node:wait_until_height(Node, 1),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
+		}).
+
+get_wallet_list_in_chunks_test() ->
+	{_Priv1, Pub1} = ar_wallet:new(),
+	[B0] = ar_weave:init([{Addr = ar_wallet:to_address(Pub1), 10000, <<>>}]),
+	{_Node, _} = ar_test_node:start(B0),
+	NonExistentRootHash = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32))),
+	{ok, {{<<"404">>, _}, _, <<"Root hash not found.">>, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet_list/" ++ NonExistentRootHash
+		}),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet_list/" ++ binary_to_list(ar_util:encode(B0#block.wallet_list))
+		}),
+	?assertEqual(
+		#{ next_cursor => last, wallets => [{Addr, {10000, <<>>}}] },
+		binary_to_term(Body)
+	).
 
 %% @doc Test that heights are returned correctly.
 get_height_test() ->

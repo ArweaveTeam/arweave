@@ -9,7 +9,7 @@
 	get/1,
 	get/2,
 	get_chunk/2,
-	get_balance/1,
+	get_balance/1, get_balance/2,
 	get_last_tx/1,
 	apply_block/4,
 	add_wallets/4,
@@ -53,6 +53,10 @@ get_chunk(RootHash, Cursor) ->
 %% @doc Return balance of the given wallet in the latest wallet tree.
 get_balance(Address) ->
 	gen_server:call(?MODULE, {get_balance, Address}, infinity).
+
+%% @doc Return balance of the given wallet in the given wallet tree.
+get_balance(RootHash, Address) ->
+	gen_server:call(?MODULE, {get_balance, RootHash, Address}, infinity).
 
 %% @doc Return the anchor (last_tx) of the given wallet in the latest wallet tree.
 get_last_tx(Address) ->
@@ -121,12 +125,16 @@ handle_call({get, Addresses}, _From, DAG) ->
 	{reply, get_map(ar_diff_dag:get_sink(DAG), Addresses), DAG};
 
 handle_call({get, RootHash, Addresses}, _From, DAG) ->
-	Tree = ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2),
-	{reply, get_map(Tree, Addresses), DAG};
+	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
+		{error, _} = Error ->
+			{reply, Error, DAG};
+		Tree ->
+			{reply, get_map(Tree, Addresses), DAG}
+	end;
 
 handle_call({get_chunk, RootHash, Cursor}, _From, DAG) ->
-	case catch ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
-		{'EXIT', _} ->
+	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
+		{error, not_found} ->
 			{reply, {error, root_hash_not_found}, DAG};
 		Tree ->
 			Range =
@@ -155,6 +163,21 @@ handle_call({get_balance, Address}, _From, DAG) ->
 				B
 		end,
 	DAG};
+
+handle_call({get_balance, RootHash, Address}, _From, DAG) ->
+	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
+		{error, _} = Error ->
+			{reply, Error, DAG};
+		Tree ->
+			{reply,
+				case ar_patricia_tree:get(Address, Tree) of
+					not_found ->
+						0;
+					{B, _LastTX} ->
+						B
+				end,
+			DAG}
+	end;
 
 handle_call({get_last_tx, Address}, _From, DAG) ->
 	{reply,
@@ -207,15 +230,21 @@ handle_cast({set_current, PrevRootHash, RootHash, RewardAddr, Height}, DAG) ->
 	{noreply, set_current(DAG, PrevRootHash, RootHash, RewardAddr, Height)};
 
 handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
-	Tree = ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2),
-	case ar_storage:write_wallet_list_chunk(RootHash, Tree, Cursor, Position) of
-		{ok, NextCursor, NextPosition} ->
-			Cast = {write_wallet_list_chunk, RootHash, NextCursor, NextPosition},
-			gen_server:cast(self(), Cast);
-		{ok, complete} ->
+	case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
+		{error, not_found} ->
+			%% Blocks were mined too fast or IO is too slow - the root hash has been
+			%% pruned from DAG.
 			ok;
-		{error, _Reason} ->
-			ok
+		Tree ->
+			case ar_storage:write_wallet_list_chunk(RootHash, Tree, Cursor, Position) of
+				{ok, NextCursor, NextPosition} ->
+					Cast = {write_wallet_list_chunk, RootHash, NextCursor, NextPosition},
+					gen_server:cast(self(), Cast);
+				{ok, complete} ->
+					ok;
+				{error, _Reason} ->
+					ok
+			end
 	end,
 	{noreply, DAG}.
 

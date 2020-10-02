@@ -46,7 +46,7 @@ is_node({Sinks, _Sink, _Sources}, ID) ->
 
 %% @doc Create a node with an edge connecting the given source and sink identifiers,
 %% directed towards the given sink identifier.
-%% If the node with given sink identifier does not exist or the node with the given source
+%% If the node with the given sink identifier does not exist or the node with the given source
 %% identifier already exists, the call fails with a badkey exception.
 add_node(DAG, SourceID, SinkID, Diff, Metadata) when SourceID /= SinkID ->
 	assert_exists(SinkID, DAG),
@@ -109,22 +109,27 @@ update_sink(_DAG, ID, _Fun) ->
 	error({badkey, ID}).
 
 %% @doc Return metadata stored at the given node.
-%% If the node with given identifier does not exist, the call fails with a badkey exception.
+%% If the node with the given identifier does not exist, the call fails with a badkey exception.
 get_metadata(DAG, ID) ->
 	element(2, element(3, maps:get(ID, element(1, DAG)))).
 
 %% @doc Reconstruct the entity corresponding to the given node using
 %% the given diff application function - a function of a diff and an entity.
-%% If the node with given identifier does not exist, the call fails with a badkey exception.
+%% If the node with the given identifier does not exist, returns {error, not_found}.
 reconstruct(DAG, ID, ApplyDiffFun) ->
-	assert_exists(ID, DAG),
-	reconstruct(DAG, ID, ApplyDiffFun, []).
+	Sinks = element(1, DAG),
+	case maps:is_key(ID, Sinks) of
+		true ->
+			reconstruct(DAG, ID, ApplyDiffFun, []);
+		false ->
+			{error, not_found}
+	end.
 
 %% @doc Make the given node the sink node. The diffs are reversed
 %% according to the given function of a diff and an entity.
 %% The new entity is constructed by applying the diffs on the path from the previous
 %% sink to the new one using the given diff application function of a diff and an entity.
-%% If the node with given identifier does not exist, the call fails with a badkey exception.
+%% If the node with the given identifier does not exist, the call fails with a badkey exception.
 move_sink(DAG, ID, ApplyDiffFun, ReverseDiffFun) ->
 	assert_exists(ID, DAG),
 	move_sink(DAG, ID, ApplyDiffFun, ReverseDiffFun, []).
@@ -255,6 +260,10 @@ diff_dag_test() ->
 	?assertEqual(DAG1, filter(DAG1, 1)),
 	?assertEqual(DAG1, filter(DAG1, 2)),
 	?assertEqual(0, reconstruct(DAG1, "node-1", fun(_Diff, _E) -> not_called end)),
+	?assertEqual(
+		{error, not_found},
+		reconstruct(DAG1, "node-2", fun(_Diff, _E) -> not_called end)
+	),
 	?assertEqual(meta_1, get_metadata(DAG1, "node-1")),
 	%% node-1: {0, meta_1} <- node-2-1: {1, meta_2_1}
 	DAG2 = add_node(DAG1, "node-2-1", "node-1", 1, meta_2_1),

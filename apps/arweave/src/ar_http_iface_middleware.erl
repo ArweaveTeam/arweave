@@ -556,6 +556,30 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid
 			process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req)
 	end;
 
+%% @doc Return the balance of the given address from the wallet tree with the given root hash.
+handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">>], Req, _Pid) ->
+	Node = whereis(http_entrypoint_node),
+	case ar_node:is_joined(Node) of
+		false ->
+			not_joined(Req);
+		true ->
+			case {ar_util:safe_decode(EncodedRootHash), ar_util:safe_decode(EncodedAddr)} of
+				{{error, invalid}, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_root_hash_encoding }), Req};
+				{_, {error, invalid}} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
+				{{ok, RootHash}, {ok, Addr}} ->
+					case ar_wallets:get_balance(RootHash, Addr) of
+						{error, not_found} ->
+							{404, #{}, jiffy:encode(#{ error => root_hash_not_found }), Req};
+						Balance when is_integer(Balance) ->
+							{200, #{}, integer_to_binary(Balance), Req};
+						_Error ->
+							{500, #{}, <<>>, Req}
+					end
+			end
+	end;
+
 %% @doc Share your nodes IP with another peer.
 %% POST request to endpoint /peers with the body of the request being your
 %% nodes network information JSON encoded as specified in ar_serialize.
