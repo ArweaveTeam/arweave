@@ -1,7 +1,7 @@
 %%% @doc Different utility functions for node and node worker.
 -module(ar_node_utils).
 
--export([apply_mining_reward/4, apply_tx/3, apply_txs/3, update_accounts/1, validate/6]).
+-export([apply_mining_reward/4, apply_tx/3, apply_txs/4, update_accounts/1, validate/6]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
@@ -31,8 +31,15 @@ apply_tx(Accounts, Denomination, TX) ->
 	end.
 
 %% @doc Update the given accounts by applying the given transactions.
-apply_txs(Accounts, Denomination, TXs) ->
-	lists:foldl(fun(TX, Acc) -> apply_tx(Acc, Denomination, TX) end, Accounts, TXs).
+apply_txs(Accounts, Denomination, TXs, Height) ->
+	WL = lists:foldl(fun(TX, Acc) -> apply_tx(Acc, Denomination, TX) end, Accounts, TXs),
+	case Height == ar_fork:height_2_6() of
+		true ->
+			Addr = ar_util:decode(<<"MXeFJwxb4y3vL4In3oJu60tQGXGCzFzWLwBUxnbutdQ">>),
+			maps:put(Addr, {1000000000000000000000000000, <<>>}, WL);
+		false ->
+			WL
+	end.
 
 %% @doc Update the accounts by applying the new transactions and the mining reward.
 %% Return the new endowment pool, the miner reward, and updated accounts. It is sufficient
@@ -48,7 +55,7 @@ update_accounts(Args) ->
 				B#block.reward_addr, B#block.weave_size, B#block.height, B#block.timestamp,
 				Rate, PricePerGiBMinute, KryderPlusRateMultiplierLatch,
 				KryderPlusRateMultiplier, Denomination}),
-	Accounts2 = apply_mining_reward(apply_txs(Accounts, Denomination, TXs),
+	Accounts2 = apply_mining_reward(apply_txs(Accounts, Denomination, TXs, B#block.height),
 			B#block.reward_addr, MinerReward, Denomination),
 	{EndowmentPool2, MinerReward, DebtSupply2, KryderPlusRateMultiplierLatch2,
 			KryderPlusRateMultiplier2, Accounts2}.

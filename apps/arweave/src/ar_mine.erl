@@ -295,7 +295,7 @@ update_txs(
 	Addresses = [RewardAddr | ar_tx:get_addresses(ValidTXs)],
 	Wallets = ar_wallets:get(CurrentB#block.wallet_list, Addresses),
 	%% The denomination is always 1 before the fork 2.6.
-	AppliedTXsWallets = ar_node_utils:apply_txs(Wallets, 1, ValidTXs),
+	AppliedTXsWallets = ar_node_utils:apply_txs(Wallets, 1, ValidTXs, Height),
 	RewardWalletBeforeMiningReward =
 		case maps:get(RewardAddr, AppliedTXsWallets, not_found) of
 			not_found ->

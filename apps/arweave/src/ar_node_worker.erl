@@ -1150,7 +1150,7 @@ pack_block_with_transactions(#block{ height = Height, diff = Diff } = B, PrevB) 
 	RewardAddr = B#block.reward_addr,
 	Addresses = [RewardAddr | ar_tx:get_addresses(ValidTXs)],
 	Accounts2 = ar_wallets:get(PrevB#block.wallet_list, Addresses),
-	Accounts3 = ar_node_utils:apply_txs(Accounts2, Denomination, ValidTXs),
+	Accounts3 = ar_node_utils:apply_txs(Accounts2, Denomination, ValidTXs, Height),
 	Accounts4 = ar_node_utils:apply_mining_reward(Accounts3, RewardAddr, Reward, Denomination),
 	{ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts4, Height,
 			Denomination2),
