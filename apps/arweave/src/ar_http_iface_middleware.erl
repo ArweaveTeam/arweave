@@ -249,14 +249,19 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 %% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
-	case hash_to_filename(tx, Hash) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid hash.">>, Req};
-		{error, _, unavailable} ->
-			{404, #{}, sendfile("data/not_found.html"), Req};
-		{ok, Filename} ->
-			{ok, TX} = ar_storage:read_tx_file(Filename),
-			serve_tx_html_data(Req, TX)
+	case ar_meta_db:get(http_content_html) of
+		true ->
+			case hash_to_filename(tx, Hash) of
+				{error, invalid} ->
+					{400, #{}, <<"Invalid hash.">>, Req};
+				{error, _, unavailable} ->
+					{404, #{}, sendfile("data/not_found.html"), Req};
+				{ok, Filename} ->
+					{ok, TX} = ar_storage:read_tx_file(Filename),
+					serve_tx_html_data(Req, TX)
+			end;
+		_ ->
+			{500, #{}, <<"The content unavailable.">>, Req}
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
