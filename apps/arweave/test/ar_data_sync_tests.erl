@@ -28,6 +28,8 @@ rejects_invalid_chunks_test_() ->
 	{timeout, 20, fun test_rejects_invalid_chunks/0}.
 
 test_rejects_invalid_chunks() ->
+	{Master, _, _Wallet} = setup_nodes(),
+	ar_util:do_until(fun() -> ar_node:is_joined(Master) end, 100, 10000),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_too_big\"}">>, _, _}},
 		post_chunk(jiffy:encode(#{
@@ -655,7 +657,8 @@ tx(Wallet, SplitType, Format) ->
 			TX = sign_tx(Wallet, #{
 				data_size => byte_size(Data),
 				last_tx => get_tx_anchor(master),
-				data_root => DataRoot
+				data_root => DataRoot,
+				quantity => 1
 			}),
 			{TX, Chunks}
 	end.

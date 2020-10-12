@@ -1,24 +1,27 @@
 -module(ar_storage).
 
--export([start/0]).
--export([write_block/1, write_block/2, write_full_block/1, write_full_block/2]).
--export([read_block/1, read_block/2, read_block_shadow/1]).
--export([invalidate_block/1, blocks_on_disk/0]).
--export([write_tx/1, write_tx_data/2, read_tx/1, read_tx_data/1]).
--export([read_wallet_list/1]).
--export([write_block_index/1, read_block_index/0]).
--export([delete_tx/1]).
--export([enough_space/1, select_drive/2]).
--export([calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0]).
--export([lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1]).
--export([tx_data_filepath/1]).
--export([read_tx_file/1]).
--export([ensure_directories/0, clear/0]).
--export([write_file_atomic/2]).
--export([has_chunk/1, write_chunk/3, read_chunk/1, delete_chunk/1]).
--export([write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1]).
+-export([
+	start/0,
+	write_block/1, write_full_block/1, write_full_block/2,
+	read_block/1, read_block/2,
+	invalidate_block/1, blocks_on_disk/0,
+	write_tx/1, write_tx_data/2, read_tx/1, read_tx_data/1,
+	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/4,
+	write_block_index/1, read_block_index/0,
+	delete_tx/1,
+	enough_space/1, select_drive/2,
+	calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0,
+	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
+	tx_data_filepath/1,
+	read_tx_file/1,
+	ensure_directories/0, clear/0,
+	write_file_atomic/2,
+	has_chunk/1, write_chunk/3, read_chunk/1, delete_chunk/1,
+	write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1
+]).
 
 -include("ar.hrl").
+-include("ar_wallets.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
@@ -88,7 +91,7 @@ count_blocks_on_disk() ->
 			DataDir = ar_meta_db:get(data_dir),
 			case file:list_dir(filename:join(DataDir, ?BLOCK_DIR)) of
 				{ok, List} ->
-					ar_meta_db:increase(blocks_on_disk, length(List));
+					ar_meta_db:put(blocks_on_disk, length(List) - 1); %% - the "invalid" folder
 				{error, Reason} ->
 					ar:warn([
 						{event, failed_to_count_blocks_on_disk},
@@ -130,9 +133,6 @@ invalidate_block(B) ->
 
 write_block(Blocks) when is_list(Blocks) -> lists:foreach(fun write_block/1, Blocks);
 write_block(B) ->
-	write_block(B, write_wallet_list).
-
-write_block(B, WriteWalletList) ->
 	case ar_meta_db:get(disk_logging) of
 		true ->
 			ar:info([
@@ -141,12 +141,6 @@ write_block(B, WriteWalletList) ->
 			]);
 		_ ->
 			do_nothing
-	end,
-	case WriteWalletList of
-		do_not_write_wallet_list ->
-			noop;
-		write_wallet_list ->
-			ok = write_wallet_list(B)
 	end,
 	BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
 	ByteSize = byte_size(BlockJSON),
@@ -212,34 +206,7 @@ read_block(Blocks) when is_list(Blocks) ->
 	lists:map(fun(B) -> read_block(B) end, Blocks);
 read_block({H, _, _}) ->
 	read_block(H);
-read_block(H) ->
-	case read_block_shadow(H) of
-		unavailable ->
-			unavailable;
-		BShadow ->
-			WalletList = case BShadow#block.wallet_list of
-				WL when is_list(WL) ->
-					WL;
-				WL when is_binary(WL) ->
-					case read_wallet_list(WL) of
-						{ok, ReadWL} ->
-							ReadWL;
-						{error, _Type} ->
-							not_found
-					end
-			end,
-			case WalletList of
-				not_found ->
-					unavailable;
-				_ ->
-					BShadow#block {
-						wallet_list = WalletList
-					}
-			end
-	end.
-
-%% @doc Read block shadow from disk, given a hash.
-read_block_shadow(BH) ->
+read_block(BH) ->
 	case lookup_block_filename(BH) of
 		unavailable ->
 			unavailable;
@@ -471,16 +438,64 @@ write_block_index(BI) ->
 			Error
 	end.
 
-%% Write a block hash list to disk for retreival later.
-write_wallet_list(B) ->
-	WalletList = B#block.wallet_list,
-	ID = case B#block.wallet_list_hash of
-		not_set ->
-			ar_block:hash_wallet_list(B#block.height, B#block.reward_addr, WalletList);
-		WalletListHash ->
-			WalletListHash
-	end,
-	JSON = ar_serialize:jsonify(ar_serialize:wallet_list_to_json_struct(WalletList)),
+write_wallet_list(RootHash, Tree) ->
+	write_wallet_list_chunks(RootHash, Tree, first, 0).
+
+write_wallet_list_chunks(RootHash, Tree, Cursor, Position) ->
+	case write_wallet_list_chunk(RootHash, Tree, Cursor, Position) of
+		{ok, complete} ->
+			ok;
+		{ok, NextCursor, NextPosition} ->
+			write_wallet_list_chunks(RootHash, Tree, NextCursor, NextPosition);
+		{error, _Reason} = Error ->
+			Error
+	end.
+
+write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
+	Range =
+		case Cursor of
+			first ->
+				ar_patricia_tree:get_range(?WALLET_LIST_CHUNK_SIZE + 1, Tree);
+			_ ->
+				ar_patricia_tree:get_range(Cursor, ?WALLET_LIST_CHUNK_SIZE + 1, Tree)
+		end,
+	{NextCursor, NextPosition, Range2} =
+		case length(Range) of
+			?WALLET_LIST_CHUNK_SIZE + 1 ->
+				{element(1, hd(Range)), Position + ?WALLET_LIST_CHUNK_SIZE, tl(Range)};
+			_ ->
+				{last, none, [last | Range]}
+		end,
+	Name = binary_to_list(iolist_to_binary([
+		?WALLET_LIST_DIR,
+		"/",
+		ar_util:encode(RootHash),
+		"-",
+		integer_to_binary(Position),
+		"-",
+		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
+	])),
+	case write_term(Name, Range2) of
+		ok ->
+			case NextCursor of
+				last ->
+					{ok, complete};
+				_ ->
+					{ok, NextCursor, NextPosition}
+			end;
+		{error, Reason} = Error ->
+			ar:err([
+				{event, failed_to_write_wallet_list_chunk},
+				{reason, Reason}
+			]),
+			Error
+	end.
+
+%% Write a block hash list to disk for retrieval later.
+write_wallet_list(ID, RewardAddr, IsRewardAddrNew, WalletList) ->
+	JSON = ar_serialize:jsonify(
+		ar_serialize:wallet_list_to_json_struct(RewardAddr, IsRewardAddrNew, WalletList)
+	),
 	write_file_atomic(wallet_list_filepath(ID), JSON),
 	ok.
 
@@ -499,15 +514,66 @@ read_block_index() ->
 	end.
 
 %% @doc Read a given wallet list (by hash) from the disk.
-read_wallet_list([]) -> {ok, []};
-read_wallet_list(WL = [{_, _, _} | _]) -> {ok, WL};
-read_wallet_list(WalletListHash) ->
-	Filename = wallet_list_filepath(WalletListHash),
-	case file:read_file(Filename) of
-		{ok, JSON} ->
-			parse_wallet_list_json(JSON);
-		{error, Reason} ->
-			{error, {failed_reading_file, Filename, Reason}}
+read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
+	case read_wallet_chunk(WalletListHash) of
+		not_found ->
+			Filename = wallet_list_filepath(WalletListHash),
+			case file:read_file(Filename) of
+				{ok, JSON} ->
+					parse_wallet_list_json(JSON);
+				{error, Reason} ->
+					{error, {failed_reading_file, Filename, Reason}}
+			end;
+		{ok, Tree} ->
+			{ok, Tree};
+		{error, _Reason} = Error ->
+			Error
+	end;
+read_wallet_list(WL) when is_list(WL) ->
+	{ok, ar_patricia_tree:from_proplist([{A, {B, LTX}} || {A, B, LTX} <- WL])}.
+
+read_wallet_chunk(RootHash) ->
+	read_wallet_chunk(RootHash, 0, ar_patricia_tree:new()).
+
+read_wallet_chunk(RootHash, Cursor, Tree) ->
+	Name = binary_to_list(iolist_to_binary([
+		?WALLET_LIST_DIR,
+		"/",
+		ar_util:encode(RootHash),
+		"-",
+		integer_to_binary(Cursor),
+		"-",
+		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
+	])),
+	case read_term(Name) of
+		{ok, Chunk} ->
+			{NextCursor, Wallets} =
+				case Chunk of
+					[last | Tail] ->
+						{last, Tail};
+					_ ->
+						{Cursor + ?WALLET_LIST_CHUNK_SIZE, Chunk}
+				end,
+				Tree2 =
+					lists:foldl(
+						fun({K, V}, Acc) -> ar_patricia_tree:insert(K, V, Acc) end,
+						Tree,
+						Wallets
+					),
+				case NextCursor of
+					last ->
+						{ok, Tree2};
+					_ ->
+						read_wallet_chunk(RootHash, NextCursor, Tree2)
+				end;
+		{error, Reason} = Error ->
+			ar:err([
+				{event, failed_to_read_wallet_chunk},
+				{reason, Reason}
+			]),
+			Error;
+		not_found ->
+			not_found
 	end.
 
 parse_wallet_list_json(JSON) ->
@@ -680,8 +746,10 @@ delete_chunk(DataPathHash) ->
 write_term(Name, Term) ->
 	write_term(ar_meta_db:get(data_dir), Name, Term).
 
+write_term(Dir, Name, Term) when is_atom(Name) ->
+	write_term(Dir, atom_to_list(Name), Term);
 write_term(Dir, Name, Term) ->
-	case write_file_atomic(filename:join(Dir, atom_to_list(Name)), term_to_binary(Term)) of
+	case write_file_atomic(filename:join(Dir, Name), term_to_binary(Term)) of
 		ok ->
 			ok;
 		{error, Reason} = Error ->
@@ -693,8 +761,10 @@ read_term(Name) ->
 	DataDir = ar_meta_db:get(data_dir),
 	read_term(DataDir, Name).
 
+read_term(Dir, Name) when is_atom(Name) ->
+	read_term(Dir, atom_to_list(Name));
 read_term(Dir, Name) ->
-	case file:read_file(filename:join(Dir, atom_to_list(Name))) of
+	case file:read_file(filename:join(Dir, Name)) of
 		{ok, Binary} ->
 			{ok, binary_to_term(Binary)};
 		{error, enoent} ->
@@ -712,16 +782,17 @@ delete_term(Name) ->
 store_and_retrieve_block_test() ->
 	ar_storage:clear(),
 	?assertEqual(0, blocks_on_disk()),
-	B0s = [B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
+	BI0 = [B0] = ar_weave:init([]),
+	{Node, _} = ar_test_node:start(B0),
+	?assertEqual(B0#block{ hash_list = unset }, read_block(B0#block.indep_hash)),
 	?assertEqual(
 		B0#block{ hash_list = unset },
-		read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))
+		read_block(B0#block.height, ar_weave:generate_block_index(BI0))
 	),
-	B1s = [B1 | _] = ar_weave:add(B0s, []),
-	ar_storage:write_block(B1),
-	[B2 | _] = ar_weave:add(B1s, []),
-	ar_storage:write_block(B2),
+	ar_node:mine(Node),
+	ar_test_node:wait_until_height(Node, 1),
+	ar_node:mine(Node),
+	BI1 = ar_test_node:wait_until_height(Node, 2),
 	ar_util:do_until(
 		fun() ->
 			3 == blocks_on_disk()
@@ -729,14 +800,9 @@ store_and_retrieve_block_test() ->
 		100,
 		2000
 	),
-	?assertEqual(
-		B1#block{ hash_list = unset },
-		read_block(B1#block.indep_hash)
-	),
-	?assertEqual(
-		B1#block{ hash_list = unset },
-		read_block(B1#block.height, ar_weave:generate_block_index([B1, B0]))
-	).
+	BH1 = element(1, hd(BI1)),
+	?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(BH1)),
+	?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(2, BI1)).
 
 store_and_retrieve_tx_test() ->
 	Tx0 = ar_tx:new(<<"DATA1">>),
@@ -763,32 +829,56 @@ invalidate_block_test() ->
 	?assertEqual(B#block.indep_hash, (ar_serialize:json_struct_to_block(JSON))#block.indep_hash).
 
 store_and_retrieve_block_block_index_test() ->
-	[B0] = ar_weave:init([]),
-	write_block(B0),
-	[B1 | _] = ar_weave:add([B0], []),
-	BI = ar_weave:generate_block_index([B1, B0]),
+	RandomEntry =
+		fun() ->
+			{crypto:strong_rand_bytes(32), rand:uniform(10000), crypto:strong_rand_bytes(32)}
+		end,
+	BI = [RandomEntry() || _ <- lists:seq(1, 100)],
 	write_block_index(BI),
 	ReadBI = read_block_index(),
 	?assertEqual(BI, ReadBI).
 
 store_and_retrieve_wallet_list_test() ->
 	[B0] = ar_weave:init(),
-	write_wallet_list(B0),
+	write_block(B0),
 	Height = B0#block.height,
 	RewardAddr = B0#block.reward_addr,
-	WL = B0#block.wallet_list,
-	?assertEqual({ok, WL}, read_wallet_list(ar_block:hash_wallet_list(Height, RewardAddr, WL))).
+	ExpectedWL =
+		ar_patricia_tree:from_proplist([{A, {B, T}} || {A, B, T} <- ar_util:genesis_wallets()]),
+	{WalletListHash, _} = ar_block:hash_wallet_list(Height, RewardAddr, ExpectedWL),
+	{ok, ActualWL} = read_wallet_list(WalletListHash),
+	assert_wallet_trees_equal(ExpectedWL, ActualWL).
+
+assert_wallet_trees_equal(Expected, Actual) ->
+	?assertEqual(
+		ar_patricia_tree:foldr(fun(K, V, Acc) -> [{K, V} | Acc] end, [], Expected),
+		ar_patricia_tree:foldr(fun(K, V, Acc) -> [{K, V} | Acc] end, [], Actual)
+	).
+
+read_wallet_list_chunks_test() ->
+	TestCases = [
+		[],
+		[random_wallet()], % < chunk size
+		[random_wallet() || _ <- lists:seq(1, ?WALLET_LIST_CHUNK_SIZE)], % == chunk size
+		[random_wallet() || _ <- lists:seq(1, ?WALLET_LIST_CHUNK_SIZE + 1)], % > chunk size
+		[random_wallet() || _ <- lists:seq(1, 10 * ?WALLET_LIST_CHUNK_SIZE)],
+		[random_wallet() || _ <- lists:seq(1, 10 * ?WALLET_LIST_CHUNK_SIZE + 1)]
+	],
+	lists:foreach(
+		fun(TestCase) ->
+			Tree = ar_patricia_tree:from_proplist(TestCase),
+			{RootHash, _} = ar_block:hash_wallet_list(ar_fork:height_2_2(), unclaimed, Tree),
+			ok = write_wallet_list(RootHash, Tree),
+			{ok, ReadTree} = ar_storage:read_wallet_list(RootHash),
+			assert_wallet_trees_equal(Tree, ReadTree)
+		end,
+		TestCases
+	).
+
+random_wallet() ->
+	{crypto:strong_rand_bytes(32), {rand:uniform(1000000000), crypto:strong_rand_bytes(32)}}.
 
 handle_corrupted_wallet_list_test() ->
-	ar_storage:clear(),
-	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	Height = B0#block.height,
-	RewardAddr = B0#block.reward_addr,
-	?assertEqual(
-		B0#block{ hash_list = unset },
-		read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))
-	),
-	WalletListHash = ar_block:hash_wallet_list(Height, RewardAddr, B0#block.wallet_list),
-	ok = file:write_file(wallet_list_filepath(WalletListHash), <<>>),
-	?assertEqual(unavailable, read_block(B0#block.indep_hash, ar_weave:generate_block_index([B0]))).
+	H = crypto:strong_rand_bytes(32),
+	ok = file:write_file(wallet_list_filepath(H), <<>>),
+	?assertMatch({error, _}, read_wallet_list(H)).

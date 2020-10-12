@@ -15,6 +15,7 @@
 -define(MAX_PARALLEL_ARQL_REQUESTS, 10).
 -define(MAX_PARALLEL_GATEWAY_ARQL_REQUESTS, infinity).
 -define(MAX_PARALLEL_GET_CHUNK_REQUESTS, 100).
+-define(MAX_PARALLEL_WALLET_LIST_REQUESTS, 1).
 
 -define(HTTP_IFACE_MIDDLEWARES, [
 	ar_blacklist_middleware,
@@ -71,6 +72,7 @@ do_start(Opts) ->
 	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
 	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
 	ok = ar_semaphore:start_link(get_chunk_semaphore, ?MAX_PARALLEL_GET_CHUNK_REQUESTS),
+	ok = ar_semaphore:start_link(wallet_list_semaphore, ?MAX_PARALLEL_WALLET_LIST_REQUESTS),
 	ok = ar_blacklist_middleware:start(),
 	ok = start_http_iface_listener(Opts),
 	ok = start_gateway_listeners(Opts),

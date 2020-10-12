@@ -164,7 +164,7 @@ process_item(Queue) ->
 	end.
 
 download_block(H, TXRoot) ->
-	case ar_storage:read_block_shadow(H) of
+	case ar_storage:read_block(H) of
 		unavailable ->
 			Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 			download_block(Peers, H, TXRoot);
@@ -234,7 +234,7 @@ download_block(Peers, H, TXRoot) when is_binary(H) ->
 	end.
 
 write_block(B) ->
-	case ar_storage:write_block(B, do_not_write_wallet_list) of
+	case ar_storage:write_block(B) of
 		ok ->
 			ar_arql_db:insert_block(B),
 			{ok, B#block.txs};

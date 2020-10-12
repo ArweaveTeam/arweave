@@ -153,6 +153,23 @@ update_target_hashes(State, NewRecoveryHashes, Peer) ->
 
 apply_next_block(State) ->
 	#state {
+		recovered_block_index = [{CurrentH, _, _} | _]
+	} = State,
+	B = ar_storage:read_block(CurrentH),
+	case ?IS_BLOCK(B) of
+		false ->
+			ar:err(
+				[
+					{event, fork_recovery_failed},
+					{reason, failed_to_read_current_block}
+				]
+			);
+		true ->
+			apply_next_block(State, B)
+	end.
+
+apply_next_block(State, B) ->
+	#state {
 		peers = Peers,
 		target_height = TargetHeight,
 		target_hashes_to_go = [NextH | _]
@@ -201,25 +218,31 @@ apply_next_block(State) ->
 					);
 				%% Target block is within the accepted range.
 				{_X, _Y} ->
-					apply_next_block(State, NextB)
+					RewardPool = B#block.reward_pool,
+					Height = B#block.height,
+					case ar_wallets:apply_block(NextB, B#block.wallet_list, RewardPool, Height) of
+						{error, invalid_reward_pool} ->
+							ar:err(
+								[
+									{event, fork_recovery_failed},
+									{reason, got_block_with_invalid_reward_pool},
+									{block_height, NextB#block.height},
+									{block_hash, ar_util:encode(NextB#block.indep_hash)}
+								]
+							);
+						{error, invalid_wallet_list} ->
+							ar:err(
+								[
+									{event, fork_recovery_failed},
+									{reason, got_block_with_invalid_wallet_list},
+									{block_height, NextB#block.height},
+									{block_hash, ar_util:encode(NextB#block.indep_hash)}
+								]
+							);
+						{ok, RootHash} ->
+							apply_next_block(State, NextB#block{ wallet_list = RootHash }, B)
+					end
 			end
-	end.
-
-apply_next_block(State, NextB) ->
-	#state {
-		recovered_block_index = [{CurrentH, _, _} | _]
-	} = State,
-	B = ar_storage:read_block(CurrentH),
-	case ?IS_BLOCK(B) of
-		false ->
-			ar:err(
-				[
-					{event, fork_recovery_failed},
-					{reason, failed_to_read_current_block}
-				]
-			);
-		true ->
-			apply_next_block(State, NextB, B)
 	end.
 
 apply_next_block(State, NextB, B) ->
@@ -231,48 +254,22 @@ apply_next_block(State, NextB, B) ->
 		target_hashes = TargetHashes,
 		base_hash = BaseH
 	} = State,
-	TXs = NextB#block.txs,
-	case
-		validate(
-			BI,
-			NextB#block {
-				txs = [TX#tx.id || TX <- TXs]
-			},
-			TXs,
-			B,
-			BlockTXPairs
-		)
-	of
-		{error, invalid_block} ->
+	Wallets = ar_wallets:get(
+		B#block.wallet_list,
+		[NextB#block.reward_addr | ar_tx:get_addresses(NextB#block.txs)]
+	),
+	case ar_node_utils:validate(BI, NextB, B, Wallets, BlockTXPairs) of
+		{invalid, Reason} ->
 			ar:err(
 				[
 					{event, fork_recovery_failed},
 					{reason, invalid_block},
+					{validation_error, Reason},
 					{block, ar_util:encode(NextB#block.indep_hash)},
 					{previous_block, ar_util:encode(B#block.indep_hash)}
 				]
 			);
-		{error, tx_replay} ->
-			ar:err(
-				[
-					{event, fork_recovery_failed},
-					{reason, tx_replay},
-					{block, ar_util:encode(NextB#block.indep_hash)},
-					{block_txs, lists:map(fun(TX) -> ar_util:encode(TX#tx.id) end, TXs)},
-					{
-						block_txs_pairs,
-						lists:map(
-							fun({BH, SizeTaggedTXs}) ->
-								TXIDs = [TXID || {{TXID, _}, _} <- SizeTaggedTXs],
-								{ar_util:encode(BH), lists:map(fun ar_util:encode/1, TXIDs)}
-							end,
-							BlockTXPairs
-						)
-					},
-					{previous_block, ar_util:encode(B#block.indep_hash)}
-				]
-			);
-		ok ->
+		valid ->
 			ar:info(
 				[
 					{event, applied_fork_recovery_block},
@@ -305,7 +302,8 @@ apply_next_block(State, NextB, B) ->
 				_ -> do_nothing
 			end,
 			self() ! apply_next_block,
-			prometheus_histogram:observe(fork_recovery_depth, length(TargetHashes) - length(NewTargetHashesToGo)),
+			prometheus_histogram:observe(
+				fork_recovery_depth, length(TargetHashes) - length(NewTargetHashesToGo)),
 			server(
 				State#state {
 					recovered_block_index = NewBI,
@@ -315,215 +313,134 @@ apply_next_block(State, NextB, B) ->
 			)
 	end.
 
-%% @doc Validate a new block (NextB) against the current block (B).
-%% Returns ok | {error, invalid_block} | {error, tx_replay}.
-validate(BI, NextB, TXs, B, BlockTXPairs) ->
-	{FinderReward, _} =
-		ar_node_utils:calculate_reward_pool(
-			B#block.reward_pool,
-			TXs,
-			NextB#block.reward_addr,
-			no_recall,
-			NextB#block.weave_size,
-			NextB#block.height,
-			NextB#block.diff,
-			NextB#block.timestamp
-		),
-	WalletList =
-		ar_node_utils:apply_mining_reward(
-			ar_node_utils:apply_txs(B#block.wallet_list, TXs, B#block.height),
-			NextB#block.reward_addr,
-			FinderReward,
-			NextB#block.height
-		),
-	BlockValid = ar_node_utils:validate(
-		BI,
-		WalletList,
-		NextB,
-		TXs,
-		B
-	),
-	case BlockValid of
-		{invalid, _} ->
-			{error, invalid_block};
-		valid ->
-			TXReplayCheck = ar_tx_replay_pool:verify_block_txs(
-				TXs,
-				NextB#block.diff,
-				B#block.height,
-				NextB#block.timestamp,
-				B#block.wallet_list,
-				BlockTXPairs
-			),
-			case TXReplayCheck of
-				invalid ->
-					{error, tx_replay};
-				valid ->
-					ok
-			end
-	end.
-
-%%%
-%%% Tests: ar_fork_recovery
-%%%
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
 
 %% @doc Ensure forks that are one block behind will resolve.
-one_block_ahead_recovery_test() ->
-	ar_storage:clear(),
-	Node1 = ar_node:start(),
-	Node2 = ar_node:start(),
-	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	[B1 | _] = ar_weave:add([B0], []),
-	ar_storage:write_block(B1),
-	[B2 | _] = ar_weave:add([B1, B0], []),
-	ar_storage:write_block(B2),
-	[B3 | _] = ar_weave:add([B2, B1, B0], []),
-	ar_storage:write_block(B3),
-	Node1 ! Node2 ! {replace_block_list, [B3, B2, B1, B0]},
-	timer:sleep(500),
-	ar_node:mine(Node1),
-	timer:sleep(500),
-	ar_node:add_peers(Node1, Node2),
-	ar_node:mine(Node1),
-	timer:sleep(1000),
-	?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
-	?assertEqual(6, length(block_hashes_by_node(Node2))).
+one_block_ahead_recovery_test_() ->
+	{timeout, 20, fun test_one_block_ahead_recovery/0}.
+
+test_one_block_ahead_recovery() ->
+	[B0] = ar_weave:init(),
+	{Master, _} = ar_test_node:start(B0),
+	{Slave, _} = ar_test_node:slave_start(B0),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 1),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 2),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 3),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 2),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 3),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 4),
+	ar_test_node:connect_to_slave(),
+	ar_node:mine(Master),
+	ar_test_node:assert_slave_wait_until_height(Slave, 5),
+	?assertEqual(block_hashes_by_node(Master), slave_block_hashes_by_node(Slave)),
+	?assertEqual(6, length(block_hashes_by_node(Slave))).
 
 %% @doc Ensure forks that are three block behind will resolve.
-three_block_ahead_recovery_test() ->
-	ar_storage:clear(),
-	Node1 = ar_node:start(),
-	Node2 = ar_node:start(),
-	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	[B1 | _] = ar_weave:add([B0], []),
-	ar_storage:write_block(B1),
-	[B2 | _] = ar_weave:add([B1, B0], []),
-	ar_storage:write_block(B2),
-	[B3 | _] = ar_weave:add([B2, B1, B0], []),
-	ar_storage:write_block(B3),
-	Node1 ! Node2 ! {replace_block_list, [B3, B2, B1, B0]},
-	timer:sleep(500),
-	ar_node:mine(Node1),
-	timer:sleep(500),
-	ar_node:mine(Node2),
-	timer:sleep(500),
-	ar_node:mine(Node1),
-	timer:sleep(500),
-	ar_node:mine(Node1),
-	timer:sleep(500),
-	ar_node:add_peers(Node1, Node2),
-	timer:sleep(500),
-	ar_node:mine(Node1),
-	timer:sleep(1000),
-	?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
-	?assertEqual(8, length(block_hashes_by_node(Node2))).
+three_block_ahead_recovery_test_() ->
+	{timeout, 20, fun test_three_block_ahead_recovery/0}.
+
+test_three_block_ahead_recovery() ->
+	[B0] = ar_weave:init(),
+	{Master, _} = ar_test_node:start(B0),
+	{Slave, _} = ar_test_node:slave_start(B0),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 1),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 2),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 3),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 2),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 3),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 4),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 5),
+	ar_test_node:connect_to_slave(),
+	ar_node:mine(Master),
+	ar_test_node:assert_slave_wait_until_height(Slave, 6),
+	?assertEqual(block_hashes_by_node(Master), slave_block_hashes_by_node(Slave)),
+	?assertEqual(7, length(block_hashes_by_node(Slave))).
 
 block_hashes_by_node(Node) ->
 	BHs = ar_node:get_blocks(Node),
 	Bs = [ar_storage:read_block(BH) || BH <- BHs],
 	[ar_util:encode(B#block.indep_hash) || B <- Bs].
 
-%% @doc Ensure that nodes on a fork that is far behind will catchup correctly.
-multiple_blocks_ahead_recovery_test() ->
-	ar_storage:clear(),
-	Node1 = ar_node:start(),
-	Node2 = ar_node:start(),
-	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	[B1 | _] = ar_weave:add([B0], []),
-	ar_storage:write_block(B1),
-	[B2 | _] = ar_weave:add([B1, B0], []),
-	ar_storage:write_block(B2),
-	[B3 | _] = ar_weave:add([B2, B1, B0], []),
-	ar_storage:write_block(B3),
-	Node1 ! Node2 ! {replace_block_list, [B3, B2, B1, B0]},
-	ar_node:mine(Node1),
-	ar_node:mine(Node2),
-	timer:sleep(300),
-	ar_node:mine(Node1),
-	timer:sleep(300),
-	ar_node:mine(Node1),
-	timer:sleep(300),
-	ar_node:mine(Node1),
-	timer:sleep(300),
-	ar_node:mine(Node1),
-	timer:sleep(300),
-	ar_node:add_peers(Node1, Node2),
-	ar_node:mine(Node1),
-	timer:sleep(1500),
-	?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
-	?assertEqual(10, length(block_hashes_by_node(Node2))).
-
-%% @doc Ensure that nodes on a fork that is far behind blocks that contain
-%% transactions will catchup correctly.
-multiple_blocks_ahead_with_transaction_recovery_test_() ->
-	{timeout, 60, fun() ->
-		ar_storage:clear(),
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
-		Node1 = ar_node:start(),
-		Node2 = ar_node:start(),
-		[B0] = ar_weave:init([]),
-		ar_storage:write_block(B0),
-		[B1 | _] = ar_weave:add([B0], []),
-		ar_storage:write_block(B1),
-		[B2 | _] = ar_weave:add([B1, B0], []),
-		ar_storage:write_block(B2),
-		[B3 | _] = ar_weave:add([B2, B1, B0], []),
-		ar_storage:write_block(B3),
-		Node1 ! Node2 ! {replace_block_list, [B3, B2, B1, B0]},
-		ar_node:mine(Node1),
-		ar_node:mine(Node2),
-		receive after 300 -> ok end,
-		ar_node:add_tx(Node1, SignedTX),
-		ar_node:mine(Node1),
-		receive after 300 -> ok end,
-		ar_node:mine(Node1),
-		receive after 300 -> ok end,
-		ar_node:mine(Node1),
-		receive after 300 -> ok end,
-		ar_node:mine(Node1),
-		receive after 300 -> ok end,
-		ar_node:add_peers(Node1, Node2),
-		ar_node:mine(Node1),
-		receive after 1500 -> ok end,
-		?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
-		?assertEqual(10, length(block_hashes_by_node(Node2)))
-	end}.
+slave_block_hashes_by_node(Node) ->
+	BHs = ar_test_node:slave_call(ar_node, get_blocks, [Node]),
+	Bs = [ar_test_node:slave_call(ar_storage, read_block, [BH]) || BH <- BHs],
+	[ar_util:encode(B#block.indep_hash) || B <- Bs].
 
 %% @doc Ensure that nodes that have diverged by multiple blocks each can
 %% reconcile.
-multiple_blocks_since_fork_test() ->
-	ar_storage:clear(),
-	Node1 = ar_node:start(),
-	Node2 = ar_node:start(),
+multiple_blocks_since_fork_test_() ->
+	{timeout, 20, fun test_multiple_blocks_since_fork/0}.
+
+test_multiple_blocks_since_fork() ->
 	[B0] = ar_weave:init([]),
-	ar_storage:write_block(B0),
-	[B1 | _] = ar_weave:add([B0], []),
-	ar_storage:write_block(B1),
-	[B2 | _] = ar_weave:add([B1, B0], []),
-	ar_storage:write_block(B2),
-	[B3 | _] = ar_weave:add([B2, B1, B0], []),
-	ar_storage:write_block(B3),
-	Node1 ! Node2 ! {replace_block_list, [B3, B2, B1, B0]},
-	ar_node:mine(Node1),
-	ar_node:mine(Node2),
-	timer:sleep(300),
-	ar_node:mine(Node1),
-	ar_node:mine(Node2),
-	timer:sleep(300),
-	ar_node:mine(Node1),
-	timer:sleep(300),
-	ar_node:mine(Node1),
-	timer:sleep(300),
-	ar_node:mine(Node1),
-	timer:sleep(300),
-	ar_node:add_peers(Node1, Node2),
-	ar_node:mine(Node1),
-	timer:sleep(1500),
-	?assertEqual(block_hashes_by_node(Node1), block_hashes_by_node(Node2)),
-	?assertEqual(10, length(block_hashes_by_node(Node2))).
+	{Master, _} = ar_test_node:start(B0),
+	{Slave, _} = ar_test_node:slave_start(B0),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 1),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 2),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 3),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 2),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 3),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 4),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 5),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 4),
+	ar_test_node:slave_mine(Slave),
+	ar_test_node:assert_slave_wait_until_height(Slave, 5),
+	ar_test_node:connect_to_slave(),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 6),
+	ar_node:mine(Master),
+	ar_test_node:assert_slave_wait_until_height(Slave, 7),
+	?assertEqual(block_hashes_by_node(Master), slave_block_hashes_by_node(Slave)),
+	?assertEqual(8, length(block_hashes_by_node(Slave))).
+
+second_path_fork_recovery_test_() ->
+	{timeout, 20, fun test_second_path_fork_recovery/0}.
+
+test_second_path_fork_recovery() ->
+	{_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{RewardAddr = ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	{Master, _} = ar_test_node:start(B0, RewardAddr),
+	{Slave, _} = ar_test_node:slave_start(B0),
+	ar_node:mine(Master),
+	ar_test_node:wait_until_height(Master, 1),
+	ar_test_node:connect_to_slave(),
+	ar_node:mine(Master),
+	ar_test_node:assert_slave_wait_until_height(Slave, 2),
+	ar_test_node:disconnect_from_slave(),
+	{Master2, _} = ar_test_node:start(B0, RewardAddr),
+	ar_node:mine(Master2),
+	ar_test_node:wait_until_height(Master2, 1),
+	ar_node:mine(Master2),
+	ar_test_node:wait_until_height(Master2, 2),
+	ar_test_node:connect_to_slave(),
+	ar_node:mine(Master2),
+	ar_test_node:assert_slave_wait_until_height(Slave, 3).

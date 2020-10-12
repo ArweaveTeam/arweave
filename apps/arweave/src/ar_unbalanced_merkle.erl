@@ -1,8 +1,11 @@
 -module(ar_unbalanced_merkle).
 
--export([root/2, root/3]).
--export([hash_list_to_merkle_root/1, wallet_list_to_merkle_root/1]).
--export([block_index_to_merkle_root/1, hash_block_index_entry/1]).
+-export([
+	root/2, root/3,
+	hash_list_to_merkle_root/1,
+	block_index_to_merkle_root/1,
+	hash_block_index_entry/1
+]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -33,26 +36,6 @@ block_index_to_merkle_root(HL) ->
 
 hash_block_index_entry({BH, WeaveSize, TXRoot}) ->
 	ar_deep_hash:hash([BH, integer_to_binary(WeaveSize), TXRoot]).
-
-%% @doc Generate a new wallet list merkle root from a WL.
-wallet_list_to_merkle_root(WL) ->
-	lists:foldl(
-		fun(Wallet, MR) ->
-			root(
-				MR,
-				Wallet,
-				fun wallet_to_binary/1
-			)
-		end,
-		<<>>,
-		lists:reverse(WL)
-	).
-
-%%% Helper functions
-
-%% @doc Turn a wallet into a binary, for addition to a Merkle tree.
-wallet_to_binary({Addr, Balance, LastTX}) ->
-	<< Addr/binary, (integer_to_binary(Balance))/binary, LastTX/binary >>.
 
 %%% TESTS
 

@@ -66,21 +66,22 @@ tx_db_test() ->
 	ar_storage:clear(),
 	{_, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
-	[B0] = ar_weave:init([
+	Wallets = [
 		{ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(10000), <<>>}
-	]),
+	],
+	WL = maps:from_list([{A, {B, LTX}} || {A, B, LTX} <- Wallets]),
 	%% Test bad transaction
 	OrphanedTX1 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
 	BadTX = OrphanedTX1#tx { owner = Pub1, signature = <<"BAD">> },
 	Timestamp = os:system_time(seconds),
-	?assert(not ar_tx:verify(BadTX, 8, 1, B0#block.wallet_list, Timestamp)),
+	?assert(not ar_tx:verify(BadTX, 8, 1, WL, Timestamp)),
 	Expected = {ok, ["same_owner_as_target", "tx_id_not_valid", "tx_signature_not_valid"]},
 	?assertEqual(Expected, get_error_codes(BadTX#tx.id)),
 	%% Test good transaction
 	OrphanedTX2 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
 	SignedTX = ar_tx:sign_v1(OrphanedTX2, Priv2, Pub2),
-	?assert(ar_tx:verify(SignedTX, 8, 1, B0#block.wallet_list, Timestamp)),
+	?assert(ar_tx:verify(SignedTX, 8, 1, WL, Timestamp)),
 	clear_error_codes(BadTX#tx.id),
 	clear_error_codes(SignedTX#tx.id),
 	ok.

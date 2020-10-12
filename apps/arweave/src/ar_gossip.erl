@@ -1,46 +1,52 @@
+%%% @doc The internal gossip network. The modules can subscribe to it to listen
+%%% for new blocks, new transactions, and other events (e.g., webhooks), or
+%%% input new data to sidestep the HTTP interface (e.g., blocks fetched in the polling mode).
 -module(ar_gossip).
 
--export([init/0, init/1, peers/1, add_peers/2, send/2, recv/2]).
--export([set_loss_probability/2, set_delay/2, set_xfer_speed/2]).
+-export([
+	init/0, init/1,
+	peers/1,
+	add_peers/2,
+	send/2, recv/2,
+	set_loss_probability/2, set_delay/2, set_xfer_speed/2
+]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% The ArkChain gossip protocol implementation.
-%%% Can be plugged into processes by receiving
-%%% #gs_msg records and running them through the recv function.
-%%% The state object is changed and returned as the first element
-%%% of a two element tuple for every library call.
-
 %% @doc Create a new gossip node state. Optionally, with peer list.
-init() -> init([]).
-init(PID) when is_pid(PID) -> init([PID]);
+init() ->
+	init([]).
+init(PID) when is_pid(PID) ->
+	init([PID]);
 init(Peers) when is_list(Peers) ->
-    #gs_state { peers = Peers };
+    #gs_state{ peers = Peers };
 init(PacketLossP) when is_float(PacketLossP) ->
-	#gs_state { loss_probability = PacketLossP };
+	#gs_state{ loss_probability = PacketLossP };
 init(MaxDelayMS) when is_integer(MaxDelayMS) ->
-	#gs_state { delay = MaxDelayMS }.
+	#gs_state{ delay = MaxDelayMS }.
 
 %% @doc Update a gossip protocol state with new peers.
-add_peers(S, []) -> S;
-add_peers(S, [Peer|Peers]) when self() == Peer -> add_peers(S, Peers);
-add_peers(S, [Peer|Peers]) ->
+add_peers(S, []) ->
+	S;
+add_peers(S, [Peer | Peers]) when self() == Peer ->
+	add_peers(S, Peers);
+add_peers(S, [Peer | Peers]) ->
 	case lists:member(Peer, S#gs_state.peers) of
-		false -> add_peers(S#gs_state { peers = [Peer|S#gs_state.peers] }, Peers);
-		true -> add_peers(S, Peers)
+		false ->
+			add_peers(S#gs_state { peers = [Peer | S#gs_state.peers] }, Peers);
+		true ->
+			add_peers(S, Peers)
 	end.
 
 %% @doc Take a gossip state, return the contained peers.
 peers(S) -> S#gs_state.peers.
 
-%% @doc Update the probability that a packet will be loss.
+%% @doc Update the probability that a packet will be lost.
 set_loss_probability(S, Prob) ->
 	S#gs_state { loss_probability = Prob }.
 
-%% @doc Adjust the maximum network delay length.
-%% Note: This is the /maximum/ delay in milliseconds.
-%% All messages will be delayed for a random number of
+%% @doc Set a network delay: all messages will be delayed for a random number of
 %% milliseconds between 0 and this value.
 set_delay(S, Delay) ->
 	S#gs_state { delay = Delay }.
@@ -73,12 +79,14 @@ send(S, Msg) ->
 
 %% @doc Potentially send a message to a node, depending on state.
 %% No warning is issued for messages that cannot be sent to network peers!
-possibly_send(_S, Peer, #gs_msg { data = {new_block, _Node, _Height, _NewB, _BSD} })
-		when (not is_pid(Peer)) ->
-	ignore;
-possibly_send(_S, Peer, #gs_msg { data = {add_tx, _TX} }) when not is_pid(Peer) ->
-	ignore;
 possibly_send(S, Peer, Msg) when is_pid(Peer) ->
+	do_send(S, Peer, Msg);
+possibly_send(S, {Name, Node} = Peer, Msg) when is_atom(Name) andalso is_atom(Node) ->
+	do_send(S, Peer, Msg);
+possibly_send(_S, _NotValidPeer, _Msg) ->
+	ignore.
+
+do_send(S, Peer, Msg) ->
 	case rand:uniform() >= S#gs_state.loss_probability of
 		true ->
 			case S#gs_state.delay of
@@ -94,9 +102,7 @@ possibly_send(S, Peer, Msg) when is_pid(Peer) ->
 					)
 			end;
 		false -> not_sent
-	end;
-possibly_send(_S, _NetworkPeer, _Msg) ->
-	not_sent.
+	end.
 
 %% @doc Returns a number of milliseconds to wait in order to simulate transfer time.
 calculate_xfer_time(#gs_state { xfer_speed = undefined }, _) -> 0;
@@ -120,7 +126,9 @@ already_heard(S, Msg) when is_record(Msg, gs_msg) ->
 already_heard(S, Hash) ->
 	lists:member(Hash, S#gs_state.heard).
 
-%%% Gossip protocol tests.
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
 
 %% @doc Ensure single message receipt on every process in a fully
 %% connected network of gossipers.
@@ -143,10 +151,10 @@ fully_connected_test_() ->
 					{peers, Peers} -> Server(add_peers(S, Peers))
 				end
 			end,
-		% Start the gossip servers and send them the complete list of peers.
+		%% Start the gossip servers and send them the complete list of peers.
 		Servers = [ spawn(fun() -> BasicServer(init()) end) || _ <- lists:seq(1, 100) ],
 		[ Serv ! {peers, Servers} || Serv <- Servers ],
-		% Start a local gossip node.
+		%% Start a local gossip node.
 		State = init([lists:last(Servers)]),
 		send(State, test_message),
 		100 = count_receipts(test_message, 1000)
@@ -172,15 +180,13 @@ partially_connected_test() ->
 				{peers, Peers} -> Server(add_peers(S, Peers))
 			end
 		end,
-	% Start the gossip servers and send them the complete list of peers.
+	%% Start the gossip servers and send them the complete list of peers.
 	Servers = [ spawn(fun() -> BasicServer(init()) end) || _ <- lists:seq(1, 1000) ],
 	[ Serv ! {peers, ar_util:pick_random(Servers, 20)} || Serv <- Servers ],
-	% Start a local gossip node.
+	%% Start a local gossip node.
 	State = init([lists:last(Servers)]),
 	send(State, test_message),
 	1000 = count_receipts(test_message, 1000).
-
-%%% Testing utility functions
 
 %% @doc Count the number of times a message is received before the timeout is hit.
 count_receipts(Msg, Timeout) -> count_receipts(Msg, Timeout, 0).

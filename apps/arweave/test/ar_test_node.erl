@@ -1,28 +1,29 @@
 -module(ar_test_node).
 
--export([start/1, start/2, slave_start/1, slave_start/2]).
--export([connect_to_slave/0, disconnect_from_slave/0]).
--export([slave_call/3, slave_call/4]).
--export([gossip/2, slave_gossip/2, slave_add_tx/2, slave_mine/1]).
--export([wait_until_height/2, slave_wait_until_height/2]).
--export([assert_slave_wait_until_height/2]).
--export([wait_until_block_block_index/2]).
--export([assert_wait_until_block_block_index/2]).
--export([wait_until_receives_txs/2]).
--export([assert_wait_until_receives_txs/2]).
--export([assert_slave_wait_until_receives_txs/2]).
--export([post_tx_to_slave/2, post_tx_to_master/2, post_tx_to_master/3]).
--export([assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
--export([sign_tx/1, sign_tx/2, sign_tx/3]).
--export([sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3]).
--export([get_tx_anchor/0, get_tx_anchor/1]).
--export([join/1, join_on_slave/0, join_on_master/0]).
--export([get_last_tx/1, get_last_tx/2]).
--export([get_tx_confirmations/2]).
--export([get_balance/1]).
--export([test_with_mocked_functions/2]).
--export([get_tx_price/1]).
--export([post_and_mine/2]).
+-export([
+	start/1, start/2, slave_start/1, slave_start/2,
+	connect_to_slave/0, disconnect_from_slave/0,
+	slave_call/3, slave_call/4,
+	gossip/2, slave_gossip/2,
+	slave_add_tx/2,
+	slave_mine/1,
+	wait_until_height/2, slave_wait_until_height/2, assert_slave_wait_until_height/2,
+	wait_until_block_block_index/2, assert_wait_until_block_block_index/2,
+	wait_until_receives_txs/2, assert_wait_until_receives_txs/2,
+	assert_slave_wait_until_receives_txs/2,
+	post_tx_to_slave/2, post_tx_to_master/2, post_tx_to_master/3,
+	assert_post_tx_to_slave/2, assert_post_tx_to_master/2,
+	sign_tx/1, sign_tx/2, sign_tx/3,
+	sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
+	get_tx_anchor/0, get_tx_anchor/1,
+	join/1, join_on_slave/0, join_on_master/0,
+	get_last_tx/1, get_last_tx/2,
+	get_tx_confirmations/2,
+	get_balance/1,
+	test_with_mocked_functions/2,
+	get_tx_price/1,
+	post_and_mine/2
+]).
 
 -include("src/ar.hrl").
 -include("src/ar_config.hrl").
@@ -41,6 +42,17 @@ slave_start(B0) ->
 	slave_start(B0, unclaimed).
 
 slave_start(B0, RewardAddr) ->
+	case ar_storage:read_wallet_list(B0#block.wallet_list) of
+		{ok, WL} ->
+			ok =
+				slave_call(
+					ar_storage,
+					write_wallet_list,
+					[B0#block.wallet_list, WL]
+				);
+		_ ->
+			wallet_list_initialized_on_slave
+	end,
 	slave_call(?MODULE, start, [B0, RewardAddr]).
 
 stop() ->

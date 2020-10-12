@@ -5,17 +5,18 @@
 
 -behaviour(application).
 
--export([main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0]).
--export([tests/0, tests/1, tests/2]).
--export([test_ipfs/0]).
--export([test_apps/0, test_networks/0, test_slow/0]).
--export([docs/0]).
--export([err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2]).
--export([report/1, report_console/1, d/1]).
--export([scale_time/1]).
--export([start_for_tests/0]).
--export([fixed_diff_option/0, fixed_delay_option/0]).
--export([shutdown/1]).
+-export([
+	main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0,
+	tests/0, tests/1, tests/2,
+	test_ipfs/0, test_apps/0,
+	docs/0,
+	err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2,
+	report/1, report_console/1, d/1,
+	scale_time/1,
+	start_for_tests/0,
+	fixed_diff_option/0, fixed_delay_option/0,
+	shutdown/1
+]).
 
 -include("ar.hrl").
 -include("ar_config.hrl").
@@ -29,6 +30,8 @@
 	[
 		ar,
 		ar_unbalanced_merkle,
+		ar_patricia_tree,
+		ar_diff_dag,
 		ar_config_tests,
 		ar_deep_hash,
 		ar_inflation,
@@ -644,25 +647,6 @@ tests(Args) ->
 %% @doc Run tests on the apps.
 test_apps() ->
 	tests(?APP_TEST_MODS, #config {}).
-
-test_networks() ->
-	error_logger:tty(false),
-	ar_test_sup:start().
-
-test_slow() ->
-	ar_node_test:wallet_transaction_test_slow(),
-	ar_node_test:wallet_two_transaction_test_slow(),
-	ar_node_test:single_wallet_double_tx_before_mine_test_slow(),
-	ar_node_test:single_wallet_double_tx_wrong_order_test_slow(),
-	ar_node_test:tx_threading_test_slow(),
-	ar_node_test:bogus_tx_thread_test_slow(),
-	ar_node_test:large_weakly_connected_blockweave_with_data_test_slow(),
-	ar_node_test:large_blockweave_with_data_test_slow(),
-	ar_node_test:medium_blockweave_mine_multiple_data_test_slow(),
-	ar_http_iface_client:get_txs_by_send_recv_test_slow(),
-	ar_http_iface_client:get_full_block_by_hash_test_slow(),
-	ar_fork_recovery:multiple_blocks_ahead_with_transaction_recovery_test_slow(),
-	ar_tx:check_last_tx_test_slow().
 
 %% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
 test_ipfs() ->

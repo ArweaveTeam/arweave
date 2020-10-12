@@ -1,7 +1,4 @@
-%%%
 %%% @doc Server to maintain a node state.
-%%%
-
 -module(ar_node_state).
 
 -export([start_link/0, stop/1, all/1, lookup/2, update/2]).
@@ -34,7 +31,7 @@ start_link() ->
 		{id, crypto:strong_rand_bytes(32)}, % unique id of the ar_node
 		{block_index, not_joined},          % current full block index
 		{current, not_joined},              % current block hash
-		{wallet_list, []},                  % current up to date walletlist
+		{wallet_list, not_set},             % root hash of the latest wallet tree
 		{height, 0},                        % current height of the blockweave
 		{gossip, undefined},                % Gossip protcol state
 		%% A map TXID -> {TX, waiting | ready_for_mining} of memory pool transactions.
@@ -192,8 +189,6 @@ update_state_metrics(KeyValues) ->
 			record_mempool_size(MempoolSize);
 		({weave_size, WeaveSize}) ->
 			prometheus_gauge:set(weave_size, WeaveSize);
-		({wallet_list, WalletList}) ->
-			prometheus_gauge:set(wallet_list_size, length(WalletList));
 		(_) ->
 			ok
 	end, KeyValues).

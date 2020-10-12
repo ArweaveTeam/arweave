@@ -1,17 +1,18 @@
+%%% @doc This module implements all mechanisms required to validate a proof of access
+%%% for a chunk of data received from the network.
 -module(ar_poa).
 
--export([generate/1]).
--export([validate/4]).
--export([modify_diff/2]).
+-export([
+	generate/1,
+	validate/4,
+	modify_diff/2
+]).
 
 -include("ar.hrl").
 -include("perpetual_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(MIN_MAX_OPTION_DEPTH, 100).
-
-%%% This module implements all mechanisms required to validate a proof of access
-%%% for a chunk of data received from the network.
 
 %% @doc Generate a POA for the first option that we can.
 generate([B]) when is_record(B, block) ->
@@ -67,7 +68,7 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 			),
 			#poa{ option = Option, chunk = Chunk, tx_path = TXPath, data_path = DataPath };
 		_ ->	
-			case ar_storage:read_block_shadow(RecallBH) of
+			case ar_storage:read_block(RecallBH) of
 				unavailable ->
 					generate(Seed, WeaveSize, BI, Option + 1, Limit);
 				B ->
