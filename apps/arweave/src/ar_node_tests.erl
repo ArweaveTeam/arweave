@@ -39,69 +39,6 @@ single_tx_regossip_test() ->
 		ok
 	end.
 
-%% @doc Cancel a pending tx.
-%% Sends two TXs, from two different wallets, cancels one, then checks that
-%% the other progressed correctly.
-cancel_tx_test_() ->
-	{timeout, 60, fun() ->
-		{Priv1, Pub1} = ar_wallet:new(),
-		{Priv2, Pub2} = ar_wallet:new(),
-		AllowedTarget = crypto:strong_rand_bytes(32),
-		CancelTarget = crypto:strong_rand_bytes(32),
-		AllowedTX = ar_tx:new(AllowedTarget, ?AR(1), ?AR(1000), <<>>),
-		CancelTX = ar_tx:new(CancelTarget, ?AR(1), ?AR(9000), <<>>),
-		% 1000 AR from Wallet1 -> AllowedTarget, 1 AR fee.
-		SignedAllowedTX = ar_tx:sign_v1(AllowedTX, Priv1, Pub1),
-		% 9000 AR from Wallet2 -> CANCELLED.
-		SignedCancelTX = ar_tx:sign_v1(CancelTX, Priv2, Pub2),
-		[B0] =
-			ar_weave:init(
-				[
-					{ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
-					{ar_wallet:to_address(Pub2), ?AR(10000), <<>>}
-				]
-			),
-		{Node1, _} = ar_test_node:start(B0),
-		ar_node:add_tx(Node1, SignedAllowedTX),
-		ar_node:add_tx(Node1, SignedCancelTX),
-		ar_test_node:wait_until_receives_txs(Node1, [SignedCancelTX, SignedAllowedTX]),
-		Sig = ar_wallet:sign(Priv2, SignedCancelTX#tx.id),
-		ar_node:cancel_tx(Node1, SignedCancelTX#tx.id, Sig),
-		timer:sleep(500),
-		ar_node:mine(Node1),
-		ar_test_node:wait_until_height(Node1, 1),
-		?AR(8999) = ar_node:get_balance(Node1, Pub1),
-		?AR(10000) = ar_node:get_balance(Node1, ar_wallet:to_address(Pub2)),
-		?AR(1000) = ar_node:get_balance(Node1, AllowedTarget),
-		?AR(0) = ar_node:get_balance(Node1, CancelTarget)
-	end}.
-
-
-%% @doc Ensure bogus TX cancellation requests are ignored.
-bogus_cancel_tx_test_() ->
-	{timeout, 60, fun() ->
-		{Priv1, Pub1} = ar_wallet:new(),
-		AllowedTarget = crypto:strong_rand_bytes(32),
-		AllowedTX = ar_tx:new(AllowedTarget, ?AR(1), ?AR(1000), <<>>),
-		% 1000 AR from Wallet1 -> AllowedTarget, 1 AR fee.
-		SignedAllowedTX = ar_tx:sign_v1(AllowedTX, Priv1, Pub1),
-		[B0] =
-			ar_weave:init(
-				[
-					{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}
-				]
-			),
-		{Node1, _} = ar_test_node:start(B0),
-		ar_node:add_tx(Node1, SignedAllowedTX),
-		ar_test_node:wait_until_receives_txs(Node1, [SignedAllowedTX]),
-		ar_node:cancel_tx(Node1, SignedAllowedTX#tx.id, crypto:strong_rand_bytes(512)),
-		timer:sleep(500),
-		ar_node:mine(Node1), % Mine B1
-		ar_test_node:wait_until_height(Node1, 1),
-		?AR(8999) = ar_node:get_balance(Node1, ar_wallet:to_address(Pub1)),
-		?AR(1000) = ar_node:get_balance(Node1, AllowedTarget)
-	end}.
-
 %% @doc Run a small, non-auto-mining blockweave. Mine blocks.
 tiny_network_with_reward_pool_test() ->
 	[B0] = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
@@ -117,13 +54,6 @@ tiny_network_with_reward_pool_test() ->
 	ar_test_node:wait_until_height(Node1, 2),
 	Bs2 = ar_test_node:slave_call(ar_node, get_blocks, [Node2]),
 	2 = (hd(ar_storage:read_block(Bs2)))#block.height.
-
-%% @doc Check the current block can be retrieved
-get_current_block_test() ->
-	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
-	B1 = ar_node:get_current_block(Node),
-	?assertEqual(B0#block{ hash_list = unset }, B1).
 
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
 mining_reward_test() ->

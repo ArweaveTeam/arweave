@@ -295,10 +295,6 @@ download_transaction_data(ID, DataRoot) ->
 	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
 	case ar_http_iface_client:get_tx_data(Peers, ID) of
 		unavailable ->
-			ar:warn([
-				{event, downloader_failed_to_download_tx_data},
-				{tx, ar_util:encode(ID)}
-			]),
 			{error, tx_data_unavailable};
 		Data ->
 			case ar_storage:write_tx_data(DataRoot, Data) of

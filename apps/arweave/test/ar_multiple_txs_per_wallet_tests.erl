@@ -456,10 +456,20 @@ mines_blocks_under_the_size_limit(B0, TXGroups) ->
 				lists:sort((slave_call(ar_storage, read_block, [hd(SlaveBI)]))#block.txs),
 				io_lib:format("Height ~B", [Height])
 			),
+			assert_slave_wait_until_txs_are_stored(GroupTXIDs),
 			Height + 1
 		end,
 		1,
 		TXGroups
+	).
+
+assert_slave_wait_until_txs_are_stored(TXIDs) ->
+	ar_util:do_until(
+		fun() ->
+			lists:all(fun(TX) -> is_record(TX, tx) end, ar_storage:read_tx(TXIDs))
+		end,
+		200,
+		2000
 	).
 
 mines_format_2_txs_without_size_limit() ->
@@ -629,6 +639,13 @@ joins_network_successfully() ->
 			assert_post_tx_to_slave(Slave, TX),
 			slave_mine(Slave),
 			assert_slave_wait_until_height(Slave, Height),
+			ar_util:do_until(
+				fun() ->
+					slave_call(ar_node, get_pending_txs, [Slave]) == []
+				end,
+				200,
+				1000
+			),
 			{TXs ++ [{TX, AnchorType}], TX#tx.id}
 		end,
 		{[], <<>>},

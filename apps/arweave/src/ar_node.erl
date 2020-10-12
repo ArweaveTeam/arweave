@@ -4,8 +4,7 @@
 	start_link/1, start/7,
 	stop/1,
 	get_blocks/1,
-	get_peers/1,
-	get_block_index/1, get_height/1,
+	get_block_index/1, is_in_block_index/2, get_height/1,
 	get_trusted_peers/1, set_trusted_peers/2,
 	get_balance/2,
 	get_last_tx/2,
@@ -13,18 +12,14 @@
 	get_wallet_list_chunk/3,
 	get_current_diff/1, get_diff/1,
 	get_pending_txs/1, get_pending_txs/2, get_mined_txs/1, is_a_pending_tx/2,
-	get_current_block_hash/1, get_current_block/1,
-	get_reward_addr/1,
-	get_reward_pool/1,
+	get_current_block_hash/1,
 	is_joined/1,
 	get_block_txs_pairs/1,
 	mine/1, automine/1,
 	add_tx/2,
-	cancel_tx/3,
 	add_peers/2,
-	print_reward_addr/0,
-	set_reward_addr/2, set_reward_addr_from_file/1, generate_and_set_reward_addr/0,
-	set_loss_probability/2, set_delay/2, set_mining_delay/2, set_xfer_speed/2,
+	set_reward_addr/2,
+	set_loss_probability/2,
 	get_mempool_size/1
 ]).
 
@@ -34,7 +29,7 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Start a node, linking to a supervisor process
+%% @doc Start a node, linking to a supervisor process.
 start_link(Args) ->
 	PID = erlang:apply(ar_node, start, Args),
 	{ok, PID}.
@@ -78,25 +73,42 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			%% expensive GC on them.
 			process_flag(message_queue_data, off_heap),
 			process_flag(trap_exit, true),
-			{ok, SPid} = ar_node_state:start_link(),
-			{ok, WPid} = ar_node_worker:start(NPid, SPid),
-			ok = ar_node_state:update(SPid, [
-				{node, NPid},
-				{gossip, Gossip},
-				{block_index, BI},
-				{current, Current},
-				{wallet_list, WalletList},
-				{mining_delay, MiningDelay},
-				{reward_addr, RewardAddr},
-				{reward_pool, RewardPool},
-				{height, Height},
-				{trusted_peers, Peers},
-				{diff, Diff},
-				{last_retarget, LastRetarget},
-				{weave_size, WeaveSize},
-				{block_txs_pairs, create_block_txs_pairs(BI)}
-			]),
-			server(SPid, WPid, queue:new())
+			{TXs, MempoolSize} =
+				case ar_storage:read_term(mempool) of
+					{ok, Mempool} ->
+						Mempool;
+					not_found ->
+						{#{}, {0, 0}};
+					{error, Error} ->
+						ar:err([{event, failed_to_load_mempool}, {reason, Error}]),
+						{#{}, {0, 0}}
+				end,
+			State = #{
+				id => crypto:strong_rand_bytes(32),
+				node => NPid,
+				gossip => Gossip,
+				block_index => BI,
+				current => Current,
+				wallet_list => WalletList,
+				mining_delay => MiningDelay,
+				reward_addr => RewardAddr,
+				reward_pool => RewardPool,
+				height => Height,
+				trusted_peers => Peers,
+				diff => Diff,
+				cumulative_diff => 0,
+				hash_list_merkle => <<>>,
+				tags => [],
+				miner => undefined,
+				automine => false,
+				last_retarget => LastRetarget,
+				weave_size => WeaveSize,
+				block_txs_pairs => create_block_txs_pairs(BI),
+				txs => TXs,
+				mempool_size => MempoolSize
+			},
+			{ok, WPid} = ar_node_worker:start_link(State),
+			server(WPid, State)
 		end
 	),
 	ar_http_iface_server:reregister(http_entrypoint_node, PID),
@@ -107,29 +119,11 @@ stop(Node) ->
 	Node ! stop,
 	ok.
 
-%% @doc Get the current top block.
-get_current_block(PID) ->
-	Ref = make_ref(),
-	PID ! {get_current_block, self(), Ref},
-	receive
-		{Ref, block, CurrentBlock} -> CurrentBlock
-	after ?LOCAL_NET_TIMEOUT ->
-		not_found
-	end.
-
-%% @doc Return the entire blockindex from a node.
-% TODO: Change references to blockindex, not blocklist.
-% Code duplication against get_blockindex function.
+%% @doc Get the current block index (the list of {block hash, weave size, tx root} triplets).
 get_blocks(Node) ->
-	Ref = make_ref(),
-	Node ! {get_blocks, self(), Ref},
-	receive
-		{Ref, blocks, Bs} -> Bs
-	after ?LOCAL_NET_TIMEOUT ->
-		not_found
-	end.
+	get_block_index(Node).
 
-%% @doc Gets the list of pending transactions. This includes:
+%% @doc Get pending transactions. This includes:
 %% 1. The transactions currently staying in the priority queue.
 %% 2. The transactions on timeout waiting to be distributed around the network.
 %% 3. The transactions ready to be and being mined.
@@ -138,37 +132,22 @@ get_pending_txs(Node) ->
 
 get_pending_txs(Node, Opts) ->
 	Ref = make_ref(),
-	Node ! {get_pending_txs, self(), Ref},
+	Node ! {get_pending_txs, Opts, self(), Ref},
 	receive
-		{Ref, pending_txs, TXs} ->
-			case lists:member(as_map, Opts) of
-				true ->
-					TXs;
-				false ->
-					case lists:member(id_only, Opts) of
-						true ->
-							maps:keys(TXs);
-						false ->
-							maps:fold(
-								fun(_, {TX, _}, Acc) ->
-									[TX | Acc]
-								end,
-								[],
-								TXs
-							)
-					end
-			end
+		{Ref, pending_txs, Reply} ->
+			Reply
 	end.
 
+%% @doc Return true if a tx with the given identifier is pending.
 is_a_pending_tx(Node, TXID) ->
 	Ref = make_ref(),
-	Node ! {get_pending_txs, self(), Ref},
+	Node ! {is_a_pending_tx, TXID, self(), Ref},
 	receive
-		{Ref, pending_txs, TXs} ->
-			maps:is_key(TXID, TXs)
+		{Ref, is_a_pending_tx, Reply} ->
+			Reply
 	end.
 
-%% @doc Gets the list of mined or ready to be mined transactions.
+%% @doc Get the list of mined or ready to be mined transactions.
 %% The list does _not_ include transactions in the priority queue or
 %% those on timeout waiting for network propagation.
 get_mined_txs(Node) ->
@@ -177,48 +156,35 @@ get_mined_txs(Node) ->
 	receive
 		{Ref, mined_txs, TXs} ->
 			TXs
-		after ?LOCAL_NET_TIMEOUT -> []
 	end.
 
-%% @doc Get the set of trusted peers.
-%% The set of trusted peers is that in whcih where joined on.
-get_trusted_peers(Proc) when is_pid(Proc) ->
+%% @doc Get trusted peers.
+get_trusted_peers(Node) ->
 	Ref = make_ref(),
-	Proc ! {get_trusted_peers, self(), Ref},
+	Node ! {get_trusted_peers, self(), Ref},
 	receive
 		{Ref, peers, Ps} -> Ps
-		after ?LOCAL_NET_TIMEOUT -> []
-	end;
-get_trusted_peers(_) ->
-	unavailable.
+	end.
 
 %% @doc Set trusted peers.
 set_trusted_peers(Proc, Peers) when is_pid(Proc) ->
 	Proc ! {set_trusted_peers, Peers}.
 
-%% @doc Get the list of peers from the nodes gossip state.
-%% This is the list of peers that node will request blocks/txs from and will
-%% distribute its mined blocks to.
-get_peers(Proc) when is_pid(Proc) ->
-	Ref = make_ref(),
-	Proc ! {get_peers, self(), Ref},
-	receive
-		{Ref, peers, Ps} -> Ps
-		after ?LOCAL_NET_TIMEOUT -> []
-	end;
-get_peers(Host) ->
-	case ar_http_iface_client:get_peers(Host) of
-		unavailable -> [];
-		Peers -> Peers
-	end.
-
+%% @doc Get the current block index (the list of {block hash, weave size, tx root} triplets).
 get_block_index(Node) ->
 	Ref = make_ref(),
 	Node ! {get_blockindex, self(), Ref},
 	receive
 		{Ref, blockindex, not_joined} -> [];
 		{Ref, blockindex, BI} -> BI
-		after ?LOCAL_NET_TIMEOUT -> []
+	end.
+
+%% @doc Return true if the given block hash is found in the block index.
+is_in_block_index(Node, H) ->
+	Ref = make_ref(),
+	Node ! {is_in_block_index, H, self(), Ref},
+	receive
+		{Ref, is_in_block_index, Reply} -> Reply
 	end.
 
 %% @doc Get the current block hash.
@@ -228,7 +194,6 @@ get_current_block_hash(Node) ->
 	receive
 		{Ref, current_block_hash, not_joined} -> not_joined;
 		{Ref, current_block_hash, Current} -> Current
-		after ?LOCAL_NET_TIMEOUT -> unavailable
 	end.
 
 %% @doc Return the current height of the blockweave.
@@ -237,7 +202,6 @@ get_height(Node) ->
 	Node ! {get_height, self(), Ref},
 	receive
 		{Ref, height, H} -> H
-	after ?LOCAL_NET_TIMEOUT -> -1
 	end.
 
 %% @doc Check whether the node has joined the network.
@@ -251,60 +215,42 @@ is_joined(Node) ->
 
 %% @doc Get the current balance of a given wallet address.
 %% The balance returned is in relation to the nodes current wallet list.
-get_balance(Node, Addr) when ?IS_ADDR(Addr) ->
-	Ref = make_ref(),
-	Node ! {get_balance, self(), Ref, Addr},
-	receive {Ref, balance, B} -> B end;
+get_balance(_Node, Addr) when ?IS_ADDR(Addr) ->
+	ar_wallets:get_balance(Addr);
 get_balance(Node, WalletID) ->
 	get_balance(Node, ar_wallet:to_address(WalletID)).
 
 %% @doc Get the last tx id associated with a given wallet address.
 %% Should the wallet not have made a tx the empty binary will be returned.
-get_last_tx(Node, Addr) when ?IS_ADDR(Addr) ->
-	Ref = make_ref(),
-	Node ! {get_last_tx, self(), Ref, Addr},
-	receive {Ref, last_tx, LastTX} -> {ok, LastTX} end;
+get_last_tx(_Node, Addr) when ?IS_ADDR(Addr) ->
+	{ok, ar_wallets:get_last_tx(Addr)};
 get_last_tx(Node, WalletID) ->
 	get_last_tx(Node, ar_wallet:to_address(WalletID)).
 
-get_wallets(Node, Addresses) ->
-	Ref = make_ref(),
-	Node ! {get_wallets, self(), Ref, Addresses},
-	receive {Ref, wallets, Wallets} -> Wallets end.
+%% @doc Return a map address => {balance, last tx} for the given addresses.
+get_wallets(_Node, Addresses) ->
+	ar_wallets:get(Addresses).
 
-get_wallet_list_chunk(Node, RootHash, Cursor) ->
-	Ref = make_ref(),
-	Node ! {get_wallet_list_chunk, self(), Ref, RootHash, Cursor},
-	receive {Ref, wallet_list_chunk, Reply} -> Reply end.
+%% @doc Return a chunk of wallets from the tree with the given root hash starting
+%% from the Cursor address.
+get_wallet_list_chunk(_Node, RootHash, Cursor) ->
+	ar_wallets:get_chunk(RootHash, Cursor).
 
-%% @doc Returns the new difficulty of next mined block.
-% TODO: Function name is confusing, returns the new difficulty being mined on,
-% not the 'current' diff (that of the latest block)
+%% @doc Returns the estimated future difficulty of the currently mined block.
+%% The function name is confusing and needs to be changed.
 get_current_diff(Node) ->
 	Ref = make_ref(),
 	Node ! {get_current_diff, self(), Ref},
 	receive
 		{Ref, current_diff, Diff} -> Diff
-		after ?LOCAL_NET_TIMEOUT -> 1
 	end.
 
-%% @doc Returns the difficulty of the last successfully mined block.
-%% Returns the difficulty of the current block (not of that being mined).
+%% @doc Returns the difficulty of the current block (the last applied one).
 get_diff(Node) ->
 	Ref = make_ref(),
 	Node ! {get_diff, self(), Ref},
 	receive
 		{Ref, diff, Diff} -> Diff
-		after ?LOCAL_NET_TIMEOUT -> 1
-	end.
-
-%% @doc Get the current rewardpool from the node.
-get_reward_pool(Node) ->
-	Ref = make_ref(),
-	Node ! {get_reward_pool, self(), Ref},
-	receive
-		{Ref, reward_pool, RewardPool} -> RewardPool
-		after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
 %% @doc Returns transaction identifiers from the last ?MAX_TX_ANCHOR_DEPTH
@@ -314,51 +260,12 @@ get_block_txs_pairs(Node) ->
 	Node ! {get_block_txs_pairs, self(), Ref},
 	receive
 		{Ref, block_txs_pairs, BlockTXPairs} -> {ok, BlockTXPairs}
-		after ?LOCAL_NET_TIMEOUT -> {error, timeout}
-	end.
-
-%% @doc Get the reward address attributed to the node.
-%% This is the wallet address that should the node successfully mine a block
-%% the reward will be credited to.
-get_reward_addr(Node) ->
-	Ref = make_ref(),
-	Node ! {get_reward_addr, self(), Ref},
-	receive
-		{Ref, reward_addr, Addr} -> Addr
-	after ?LOCAL_NET_TIMEOUT -> 0
 	end.
 
 %% @doc Set the reward address of the node.
 %% This is the address mining rewards will be credited to.
 set_reward_addr(Node, Addr) ->
 	Node ! {set_reward_addr, Addr}.
-
-%% @doc Set the reward address of the node from an Arweave keyfile.
-%% This is the address mining rewards will be credited to.
-set_reward_addr_from_file(Filepath) ->
-	{_Priv, Pub} = ar_wallet:load(Filepath),
-	set_reward_addr(whereis(http_entrypoint_node), ar_wallet:to_address(Pub)),
-	ar:report(
-		[
-			{new_reward_address, ar_wallet:to_address(Pub)}
-		]
-	).
-
-%% @doc Generate a new keyfile and set the reward address of the node to the
-%% wallets address.
-%% This is the address mining rewards wiwll be credited to.
-generate_and_set_reward_addr() ->
-	{_Priv, Pub} = ar_wallet:new(),
-	set_reward_addr(whereis(http_entrypoint_node), ar_wallet:to_address(Pub)),
-	ar:report(
-		[
-			{new_reward_address, ar_wallet:to_address(Pub)}
-		]
-	).
-
-%% @doc Pretty print the reward address of the node.
-print_reward_addr() ->
-	ar_util:encode(get_reward_addr(whereis(http_entrypoint_node))).
 
 %% @doc Trigger a node to start mining a block.
 mine(Node) ->
@@ -372,21 +279,6 @@ automine(Node) ->
 %% Used primarily for testing, simulating packet loss.
 set_loss_probability(Node, Prob) ->
 	Node ! {set_loss_probability, Prob}.
-
-%% @doc Set the max network latency delay for a node.
-%% Used primarily for testing, simulating transmission delays.
-set_delay(Node, MaxDelay) ->
-	Node ! {set_delay, MaxDelay}.
-
-%% @doc Set the number of milliseconds to wait between hashes.
-%% Used primarily for testing, simulating lower hasing power machine.
-set_mining_delay(Node, Delay) ->
-	Node ! {set_mining_delay, Delay}.
-
-%% @doc Set the number of bytes the node can transfer in a second.
-%% Used primarily for testing, simulating node connection strengths.
-set_xfer_speed(Node, Speed) ->
-	Node ! {set_xfer_speed, Speed}.
 
 %% @doc Add a transaction to the node server loop.
 %% If accepted the tx will enter the waiting pool before being mined into the
@@ -403,15 +295,10 @@ add_tx({Node, Name} = Peer, TX) when is_atom(Node) andalso is_atom(Name) ->
 add_tx(Host, TX) ->
 	ar_http_iface_client:send_new_tx(Host, TX).
 
-%% @doc remove a TX from the waiting queues, with permission from the owner.
-cancel_tx(Node, TXID, Sig) ->
-	Node ! {cancel_tx, TXID, Sig}.
-
 %% @doc Request to add a list of peers to the node server loop.
 add_peers(Node, Peer) when not is_list(Peer) ->
 	add_peers(Node, [Peer]);
 add_peers(Node, Peers) ->
-	%ar:d([{node, self()}, {requesting_add_peers, Peers}]),
 	Node ! {add_peers, Peers},
 	ok.
 
@@ -422,8 +309,6 @@ get_mempool_size(Node) ->
 	receive
 		{Ref, get_mempool_size, Size} ->
 			Size
-		after ?LOCAL_NET_TIMEOUT ->
-			0
 	end.
 
 %%%===================================================================
@@ -444,116 +329,109 @@ create_block_txs_pairs(recent_blocks, [{BH, _, _} | Rest]) ->
 	[{BH, SizeTaggedTXs} | create_block_txs_pairs(Rest)].
 
 %% @doc Main server loop.
-server(SPid, WPid, TaskQueue) ->
+server(WPid, #{ txs := TXs, mempool_size := {MempoolHeaderSize, MempoolDataSize} } = State) ->
 	receive
 		stop ->
-			% Stop the node server. First handle all open tasks
-			% in the queue synchronously.
-			% TODO mue: Possible race condition if worker is
-			% currently processing one task! Also check order.
-			{ok, Miner} = ar_node_state:lookup(SPid, miner),
-			lists:foreach(fun(Task) ->
-				ar_node_worker:call(WPid, Task)
-			end, queue:to_list(TaskQueue)),
-			case Miner of
-				undefined -> do_nothing;
-				PID		  -> ar_mine:stop(PID)
-			end,
-			ar_node_worker:stop(WPid),
-			ar_node_state:stop(SPid),
-			ok;
-		{worker, Response} ->
-			% Worker finished a task w/o errors.
-			case Response of
-				{error, Error} ->
-					ar:err([{node_worker_error, {error, Error}}]);
-				{ok, _} ->
-					noop
-			end,
-			case queue:out(TaskQueue) of
-				{empty, TaskQueue} ->
-					% Empty queue, nothing to cast.
-					server(SPid, WPid, TaskQueue);
-				{{value, Task}, NewTaskQueue} ->
-					% At least one task in queue, cast it to worker.
-					ar_node_worker:cast(WPid, Task),
-					server(SPid, WPid, NewTaskQueue)
+			dump_mempool(State);
+		{'EXIT', _, Reason} ->
+			dump_mempool(State),
+			ar:info([{event, ar_node_terminated}, {reason, Reason}]);
+		{sync_mempool_tx, TXID, {TX, Status} = Value} ->
+			case maps:get(TXID, TXs, not_found) of
+				{ExistingTX, _Status} ->
+					UpdatedTXs = maps:put(TXID, {ExistingTX, Status}, TXs),
+					server(WPid, State#{ txs => UpdatedTXs });
+				not_found ->
+					UpdatedTXs = maps:put(TXID, Value, TXs),
+					{AddHeaderSize, AddDataSize} = ar_node_worker:tx_mempool_size(TX),
+					UpdatedMempoolSize =
+						{MempoolHeaderSize + AddHeaderSize, MempoolDataSize + AddDataSize},
+					server(WPid, State#{ txs => UpdatedTXs, mempool_size => UpdatedMempoolSize })
 			end;
-		{'EXIT', _, _} ->
-			ar_node_state:stop(SPid);
-		Msg ->
-			try handle(SPid, Msg) of
-				{task, Task} ->
-					% Handler returns worker task to do.
-					case queue:is_empty(TaskQueue) of
-						true ->
-							% Queue is empty, directly cast task to worker.
-							ar_node_worker:cast(WPid, Task),
-							server(SPid, WPid, TaskQueue);
-						false ->
-							% Queue contains tasks, so add it.
-							NewTaskQueue = queue:in(Task, TaskQueue),
-							server(SPid, WPid, NewTaskQueue)
-					end;
-				ok ->
-					% Handler is fine.
-					server(SPid, WPid, TaskQueue)
-			catch
-				throw:Term ->
-					ar:report([ {'NodeEXCEPTION', Term} ]),
-					server(SPid, WPid, TaskQueue);
-				exit:Term ->
-					ar:report([ {'NodeEXIT', Term} ]),
-					server(SPid, WPid, TaskQueue);
-				error:Term:Stacktrace ->
-					ar:report([ {'NodeERROR', {Term, Stacktrace}} ]),
-					server(SPid, WPid, TaskQueue)
-			end
+		{sync_dropped_mempool_txs, Map} ->
+			{UpdatedTXs, UpdatedMempoolSize} =
+				maps:fold(
+					fun(TXID, {TX, _Status}, {MapAcc, MempoolSizeAcc} = Acc) ->
+						case maps:is_key(TXID, MapAcc) of
+							true ->
+								{DroppedHeaderSize, DroppedDataSize} =
+									ar_node_worker:tx_mempool_size(TX),
+								{HeaderSize, DataSize} = MempoolSizeAcc,
+								UpdatedMempoolSizeAcc =
+									{HeaderSize - DroppedHeaderSize, DataSize - DroppedDataSize},
+								{maps:remove(TXID, MapAcc), UpdatedMempoolSizeAcc};
+							false ->
+								Acc
+						end
+					end,
+					{TXs, {MempoolHeaderSize, MempoolDataSize}},
+					Map
+				),
+			server(WPid, State#{ txs => UpdatedTXs, mempool_size => UpdatedMempoolSize });
+		{sync_reward_addr, Addr} ->
+			server(WPid, State#{ reward_addr => Addr });
+		{sync_trusted_peers, Peers} ->
+			server(WPid, State#{ trusted_peers => Peers });
+		{sync_state, NewState} ->
+			server(WPid, NewState);
+		Message ->
+			server(WPid, handle(Message, WPid, State))
 	end.
 
-%% @doc Handle the server messages. Returns {task, Task} or ok. First block
-%% countains the state changing handler, second block the reading handlers.
-handle(_SPid, Msg) when is_record(Msg, gs_msg) ->
-	% We have received a gossip mesage. Gossip state manipulation
-	% is always a worker task.
-	{task, {gossip_message, Msg}};
-handle(_SPid, {add_tx, TX}) ->
-	{task, {add_tx, TX}};
-handle(_SPid, {cancel_tx, TXID, Sig}) ->
-	{task, {cancel_tx, TXID, Sig}};
-handle(_SPid, {add_peers, Peers}) ->
-	{task, {add_peers, Peers}};
-handle(_SPid, {new_block, Peer, Height, NewB, BDS}) ->
-	{task, {process_new_block, Peer, Height, NewB, BDS}};
-handle(_SPid, {set_delay, MaxDelay}) ->
-	{task, {set_delay, MaxDelay}};
-handle(_SPid, {set_loss_probability, Prob}) ->
-	{task, {set_loss_probability, Prob}};
-handle(_SPid, {set_mining_delay, Delay}) ->
-	{task, {set_mining_delay, Delay}};
-handle(_SPid, {set_reward_addr, Addr}) ->
-	{task, {set_reward_addr, Addr}};
-handle(_SPid, {set_xfer_speed, Speed}) ->
-	{task, {set_xfer_speed, Speed}};
-handle(SPid, {work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}) ->
-	{ok, BI} = ar_node_state:lookup(SPid, block_index),
+dump_mempool(#{ txs := TXs, mempool_size := MempoolSize }) ->
+	case ar_storage:write_term(mempool, {TXs, MempoolSize}) of
+		ok ->
+			ok;
+		{error, Reason} ->
+			ar:err([{event, failed_to_persist_mempool}, {reason, Reason}])
+	end.
+
+handle(Msg, WPid, State) when is_record(Msg, gs_msg) ->
+	%% We have received a gossip mesage. Gossip state manipulation is always a worker task.
+	gen_server:cast(WPid, {gossip_message, Msg}),
+	State;
+
+handle({add_tx, TX}, WPid, State) ->
+	gen_server:cast(WPid, {add_tx, TX}),
+	State;
+
+handle({add_peers, Peers}, WPid, State) ->
+	gen_server:cast(WPid, {add_peers, Peers}),
+	State;
+
+handle({new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}, WPid, State) ->
+	gen_server:cast(WPid, {process_new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}),
+	State;
+
+handle({set_loss_probability, Prob}, WPid, State) ->
+	gen_server:cast(WPid, {set_loss_probability, Prob}),
+	State;
+
+handle({set_reward_addr, Addr}, WPid, State) ->
+	gen_server:cast(WPid, {set_reward_addr, Addr}),
+	State;
+
+handle({work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}, WPid, State) ->
+	#{ block_index := BI } = State,
 	case BI of
 		not_joined ->
-			ok;
+			do_not_cast;
 		_ ->
-			{task, {
+			gen_server:cast(WPid, {
 				work_complete,
 				BaseBH,
 				NewB,
 				MinedTXs,
 				BDS,
 				POA
-			}}
-	end;
-handle(SPid, {fork_recovered, BI, BlockTXPairs, BaseH}) ->
+			})
+	end,
+	State;
+
+handle({fork_recovered, BI, BlockTXPairs, BaseH, Timestamp}, WPid, State) ->
 	case BaseH of
-		none ->
-			{ok, Peers} = ar_node_state:lookup(SPid, trusted_peers),
+		no_base_hash ->
+			#{ trusted_peers := Peers } = State,
 			{ok, _} = ar_wallets:start_link([
 				{recent_block_index, lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)},
 				{peers, Peers}
@@ -561,63 +439,74 @@ handle(SPid, {fork_recovered, BI, BlockTXPairs, BaseH}) ->
 		_ ->
 			do_nothing
 	end,
-	{task, {fork_recovered, BI, BlockTXPairs, BaseH}};
-handle(_SPid, mine) ->
-	{task, mine};
-handle(_SPid, automine) ->
-	{task, automine};
-%% ----- Getters and non-state-changing actions. -----
-handle(SPid, {get_current_block, From, Ref}) ->
-	{ok, BI} = ar_node_state:lookup(SPid, block_index),
-	From ! {Ref, block, ar_util:get_head_block(BI)},
-	ok;
-handle(SPid, {get_blocks, From, Ref}) ->
-	{ok, BI} = ar_node_state:lookup(SPid, block_index),
-	From ! {Ref, blocks, BI},
-	ok;
-handle(SPid, {get_peers, From, Ref}) ->
-	{ok, GS} = ar_node_state:lookup(SPid, gossip),
-	From ! {Ref, peers, ar_gossip:peers(GS)},
-	ok;
-handle(SPid, {get_trusted_peers, From, Ref}) ->
-	{ok, TrustedPeers} = ar_node_state:lookup(SPid, trusted_peers),
+	gen_server:cast(WPid, {fork_recovered, BI, BlockTXPairs, BaseH, Timestamp}),
+	State;
+
+handle(mine, WPid, State) ->
+	gen_server:cast(WPid, mine),
+	State;
+
+handle(automine, WPid, State) ->
+	gen_server:cast(WPid, automine),
+	State;
+
+handle({get_trusted_peers, From, Ref}, _WPid, #{ trusted_peers := TrustedPeers } = State) ->
 	From ! {Ref, peers, TrustedPeers},
-	ok;
-handle(SPid, {set_trusted_peers, Peers}) ->
-	ar_node_state:update(SPid, [{trusted_peers, Peers}]);
-handle(SPid, {get_blockindex, From, Ref}) ->
-	{ok, BI} = ar_node_state:lookup(SPid, block_index),
+	State;
+
+handle({set_trusted_peers, Peers}, WPid, State) ->
+	gen_server:cast(WPid, {set_trusted_peers, Peers}),
+	State;
+
+handle({get_blockindex, From, Ref}, _WPid, #{ block_index := BI } = State) ->
 	From ! {Ref, blockindex, BI},
-	ok;
-handle(SPid, {get_current_block_hash, From, Ref}) ->
-	{ok, Res} = ar_node_state:lookup(SPid, current),
-	From ! {Ref, current_block_hash, Res},
-	ok;
-handle(SPid, {get_height, From, Ref}) ->
-	{ok, Height} = ar_node_state:lookup(SPid, height),
+	State;
+
+handle({is_in_block_index, H, From, Ref}, _WPid, #{ block_index := BI } = State) ->
+	Reply =
+		case lists:search(fun({BH, _, _}) -> BH == H end, BI) of
+			{value, _} ->
+				true;
+			false ->
+				false
+		end,
+	From ! {Ref, is_in_block_index, Reply},
+	State;
+
+handle({get_current_block_hash, From, Ref}, _WPid, #{ current := H } = State) ->
+	From ! {Ref, current_block_hash, H},
+	State;
+
+handle({get_height, From, Ref}, _WPid, #{ height := Height } = State) ->
 	From ! {Ref, height, Height},
-	ok;
-handle(_SPid, {get_balance, From, Ref, WalletID}) ->
-	Balance = ar_wallets:get_balance(WalletID),
-	From ! {Ref, balance, Balance},
-	ok;
-handle(_SPid, {get_last_tx, From, Ref, Addr}) ->
-	LastTX = ar_wallets:get_last_tx(Addr),
-	From ! {Ref, last_tx, LastTX},
-	ok;
-handle(_SPid, {get_wallets, From, Ref, Addresses}) ->
-	Wallets = ar_wallets:get(Addresses),
-	From ! {Ref, wallets, Wallets},
-	ok;
-handle(_SPid, {get_wallet_list_chunk, From, Ref, RootHash, Cursor}) ->
-	From ! {Ref, wallet_list_chunk, ar_wallets:get_chunk(RootHash, Cursor)},
-	ok;
-handle(SPid, {get_pending_txs, From, Ref}) ->
-	{ok, #{ txs := TXs }} = ar_node_state:lookup(SPid, [txs]),
-	From ! {Ref, pending_txs, TXs},
-	ok;
-handle(SPid, {get_mined_txs, From, Ref}) ->
-	{ok, #{ txs := TXs }} = ar_node_state:lookup(SPid, [txs]),
+	State;
+
+handle({get_pending_txs, Opts, From, Ref}, _WPid, #{ txs := TXs } = State) ->
+	Reply =
+		case {lists:member(as_map, Opts), lists:member(id_only, Opts)} of
+			{true, false} ->
+				TXs;
+			{true, true} ->
+				maps:map(fun(_TXID, _Value) -> no_tx end, TXs);
+			{false, true} ->
+				maps:keys(TXs);
+			{false, false} ->
+				maps:fold(
+					fun(_, {TX, _}, Acc) ->
+						[TX | Acc]
+					end,
+					[],
+					TXs
+				)
+		end,
+	From ! {Ref, pending_txs, Reply},
+	State;
+
+handle({is_a_pending_tx, TXID, From, Ref}, _WPid, #{ txs := TXs } = State) ->
+	From ! {Ref, is_a_pending_tx, maps:is_key(TXID, TXs)},
+	State;
+
+handle({get_mined_txs, From, Ref}, _WPid, #{ txs := TXs } = State) ->
 	MinedTXs = maps:fold(
 		fun
 			(_, {TX, ready_for_mining}, Acc) ->
@@ -629,13 +518,14 @@ handle(SPid, {get_mined_txs, From, Ref}) ->
 		TXs
 	),
 	From ! {Ref, mined_txs, MinedTXs},
-	ok;
-handle(SPid, {get_current_diff, From, Ref}) ->
-	{ok, #{
+	State;
+
+handle({get_current_diff, From, Ref}, _WPid, State) ->
+	#{
 		height        := Height,
 		diff          := Diff,
 		last_retarget := LastRetarget
-	}} = ar_node_state:lookup(SPid, [height, diff, last_retarget]),
+	} = State,
 	From ! {
 		Ref,
 		current_diff,
@@ -646,30 +536,21 @@ handle(SPid, {get_current_diff, From, Ref}) ->
 			LastRetarget
 		)
 	},
-	ok;
-handle(SPid, {get_diff, From, Ref}) ->
-	{ok, Diff} = ar_node_state:lookup(SPid, diff),
+	State;
+
+handle({get_diff, From, Ref}, _WPid, #{ diff := Diff } = State) ->
 	From ! {Ref, diff, Diff},
-	ok;
-handle(SPid, {get_reward_pool, From, Ref}) ->
-	{ok, RewardPool} = ar_node_state:lookup(SPid, reward_pool),
-	From ! {Ref, reward_pool, RewardPool},
-	ok;
-handle(SPid, {get_reward_addr, From, Ref}) ->
-	{ok, RewardAddr} = ar_node_state:lookup(SPid, reward_addr),
-	From ! {Ref, reward_addr,RewardAddr},
-	ok;
-handle(SPid, {get_block_txs_pairs, From, Ref}) ->
-	{ok, BlockTXPairs} = ar_node_state:lookup(SPid, block_txs_pairs),
+	State;
+
+handle({get_block_txs_pairs, From, Ref}, _WPid, State) ->
+	#{ block_txs_pairs := BlockTXPairs } = State,
 	From ! {Ref, block_txs_pairs, BlockTXPairs},
-	ok;
-handle(SPid, {get_mempool_size, From, Ref}) ->
-	{ok, #{ mempool_size := Size }} = ar_node_state:lookup(SPid, [mempool_size]),
+	State;
+
+handle({get_mempool_size, From, Ref}, _WPid, #{ mempool_size := Size } = State) ->
 	From ! {Ref, get_mempool_size, Size},
-	ok;
-handle(_Spid, {ar_node_state, _, _}) ->
-	%% When an ar_node_state call times out its message may leak here. It can be huge so we avoid logging it.
-	ok;
-handle(_SPid, UnhandledMsg) ->
-	ar:warn([{event, ar_node_received_unknown_message}, {message, UnhandledMsg}]),
-	ok.
+	State;
+
+handle(UnknownMsg, _WPid, State) ->
+	ar:warn([{event, ar_node_received_unknown_message}, {message, UnknownMsg}]),
+	State.

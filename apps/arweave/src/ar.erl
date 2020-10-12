@@ -30,6 +30,7 @@
 	[
 		ar,
 		ar_unbalanced_merkle,
+		ar_intervals,
 		ar_patricia_tree,
 		ar_diff_dag,
 		ar_config_tests,

@@ -124,7 +124,7 @@ group(Grouper, [Item | List], Acc) ->
 get_balance_test() ->
 	{_Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
-	ar_test_node:start(B0),
+	{Node, _} = ar_test_node:start(B0),
 	Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
@@ -132,7 +132,44 @@ get_balance_test() ->
 			peer => {127, 0, 0, 1, 1984},
 			path => "/wallet/" ++ Addr ++ "/balance"
 		}),
-	?assertEqual(10000, binary_to_integer(Body)).
+	?assertEqual(10000, binary_to_integer(Body)),
+	RootHash = binary_to_list(ar_util:encode(B0#block.wallet_list)),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
+		}),
+	ar_node:mine(Node),
+	ar_test_node:wait_until_height(Node, 1),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
+		}).
+
+get_wallet_list_in_chunks_test() ->
+	{_Priv1, Pub1} = ar_wallet:new(),
+	[B0] = ar_weave:init([{Addr = ar_wallet:to_address(Pub1), 10000, <<>>}]),
+	{_Node, _} = ar_test_node:start(B0),
+	NonExistentRootHash = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32))),
+	{ok, {{<<"404">>, _}, _, <<"Root hash not found.">>, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet_list/" ++ NonExistentRootHash
+		}),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/wallet_list/" ++ binary_to_list(ar_util:encode(B0#block.wallet_list))
+		}),
+	?assertEqual(
+		#{ next_cursor => last, wallets => [{Addr, {10000, <<>>}}] },
+		binary_to_term(Body)
+	).
 
 %% @doc Test that heights are returned correctly.
 get_height_test() ->
@@ -189,7 +226,7 @@ test_get_current_block() ->
 	[B0] = ar_weave:init([]),
 	{Node, _} = ar_test_node:start(B0),
 	ar_util:do_until(
-		fun() -> B0 == ar_node:get_current_block(Node) end,
+		fun() -> B0#block.indep_hash == ar_node:get_current_block_hash(Node) end,
 		100,
 		2000
 	),
@@ -662,15 +699,18 @@ get_tx_status_test() ->
 	),
 	ar_node:mine(Node),
 	ar_test_node:wait_until_height(Node, 2),
-	{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
-	{Res2} = ar_serialize:dejsonify(Body2),
-	?assertEqual(
-		#{
-			<<"block_height">> => length(BI) - 1,
-			<<"block_indep_hash">> => ar_util:encode(element(1, hd(BI))),
-			<<"number_of_confirmations">> => 2
-		},
-		maps:from_list(Res2)
+	ar_util:do_until(
+		fun() ->
+			{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
+			{Res2} = ar_serialize:dejsonify(Body2),
+			#{
+				<<"block_height">> => length(BI) - 1,
+				<<"block_indep_hash">> => ar_util:encode(element(1, hd(BI))),
+				<<"number_of_confirmations">> => 2
+			} == maps:from_list(Res2)
+		end,
+		200,
+		5000
 	),
 	%% Create a fork where the TX doesn't exist.
 	{Slave, _} = ar_test_node:slave_start(B0),

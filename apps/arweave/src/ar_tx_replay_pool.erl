@@ -1,7 +1,6 @@
 -module(ar_tx_replay_pool).
 
 -export([verify_tx/6, verify_block_txs/6, pick_txs_to_mine/6]).
--export([pick_txs_to_keep_in_mempool/5]).
 
 -include("ar.hrl").
 
@@ -29,7 +28,6 @@
 verify_tx(TX, Diff, Height, BlockTXPairs, Mempool, WalletList) ->
 	WeaveState = create_state(BlockTXPairs),
 	verify_tx(
-		general_verification,
 		TX,
 		Diff,
 		Height,
@@ -50,7 +48,6 @@ verify_block_txs([], _Diff, _Height, _Timestamp, _Wallets, _WeaveState, _Mempool
 	valid;
 verify_block_txs([TX | TXs], Diff, Height, Timestamp, Wallets, WeaveState, Mempool, C, Size) ->
 	case verify_tx(
-		general_verification,
 		TX,
 		Diff,
 		Height,
@@ -59,7 +56,9 @@ verify_block_txs([TX | TXs], Diff, Height, Timestamp, Wallets, WeaveState, Mempo
 		WeaveState,
 		Mempool
 	) of
-		{valid, NewWallets, NewMempool} ->
+		valid ->
+			NewMempool = maps:put(TX#tx.id, no_tx, Mempool),
+			NewWallets = ar_node_utils:apply_tx(Wallets, TX, Height),
 			NewSize =
 				case TX of
 					#tx{ format = 1 } ->
@@ -114,42 +113,6 @@ pick_txs_to_mine(BlockTXPairs, Height, Diff, Timestamp, Wallets, TXs) ->
 		0
 	).
 
-%% @doc Choose transactions to keep in the mempool after a new block is
-%% accepted. Transactions are verified independently from each other
-%% taking into account the given difficulty and height of the new block,
-%% the new recent weave transactions, the new wallet list, and the current time.
-pick_txs_to_keep_in_mempool(BlockTXPairs, TXs, Diff, Height, Wallets) ->
-	WeaveState = create_state(BlockTXPairs),
-	InvalidTXs = maps:fold(
-		fun(_, {TX, _}, InvalidTXs) ->
-			case verify_tx(
-				general_verification,
-				TX,
-				Diff,
-				Height,
-				os:system_time(seconds),
-				Wallets,
-				WeaveState,
-				maps:new(),
-				do_not_verify_signature
-			) of
-				{valid, _, _} ->
-					InvalidTXs;
-				{invalid, Reason} ->
-					[{TX, Reason} | InvalidTXs]
-			end
-		end,
-		[],
-		TXs
-	),
-	{lists:foldl(
-		fun({TX, _}, ValidTXs) ->
-			maps:remove(TX#tx.id, ValidTXs)
-		end,
-		TXs,
-		InvalidTXs
-	), InvalidTXs}.
-
 %% PRIVATE
 
 create_state(BlockTXPairs) ->
@@ -167,18 +130,15 @@ create_state(BlockTXPairs) ->
 		bhl = BHL
 	}.
 
-verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool) ->
-	verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool, verify_signature).
-
-verify_tx(general_verification, TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool, VerifySignature) ->
-	case ar_tx:verify(TX, Diff, Height, FloatingWallets, Timestamp, VerifySignature) of
+verify_tx(TX, Diff, Height, Timestamp, FloatingWallets, WeaveState, Mempool) ->
+	case ar_tx:verify(TX, Diff, Height, FloatingWallets, Timestamp) of
 		true ->
-			verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool);
+			verify_anchor(TX, Height, FloatingWallets, WeaveState, Mempool);
 		false ->
 			{invalid, tx_verification_failed}
 	end.
 
-verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
+verify_anchor(TX, Height, FloatingWallets, WeaveState, Mempool) ->
 	ShouldContinue = case ar_fork:height_1_8() of
 		H when Height >= H ->
 			%% Only verify after fork 1.8 otherwise it causes a soft fork
@@ -196,49 +156,41 @@ verify_tx(last_tx_in_mempool, TX, Diff, Height, FloatingWallets, WeaveState, Mem
 	end,
 	case ShouldContinue of
 		continue ->
-			verify_tx(
-				last_tx,
-				TX,
-				Diff,
-				Height,
-				FloatingWallets,
-				WeaveState,
-				Mempool
-			);
+			verify_last_tx(TX, FloatingWallets, WeaveState, Mempool);
 		{invalid, Reason} ->
 			{invalid, Reason}
-	end;
-verify_tx(last_tx, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
+	end.
+
+verify_last_tx(TX, FloatingWallets, WeaveState, Mempool) ->
 	case ar_tx:check_last_tx(FloatingWallets, TX) of
 		true ->
-			NewMempool = maps:put(TX#tx.id, no_tx, Mempool),
-			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
-			{valid, NewFW, NewMempool};
+			valid;
 		false ->
-			verify_tx(anchor_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
-	end;
-verify_tx(anchor_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
+			verify_block_anchor(TX, WeaveState, Mempool)
+	end.
+
+verify_block_anchor(TX, WeaveState, Mempool) ->
 	case lists:member(TX#tx.last_tx, WeaveState#state.bhl) of
 		false ->
 			{invalid, tx_bad_anchor};
 		true ->
-			verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
-	end;
-verify_tx(weave_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool) ->
+			verify_tx_in_weave(TX, WeaveState, Mempool)
+	end.
+
+verify_tx_in_weave(TX, WeaveState, Mempool) ->
 	case weave_map_contains_tx(TX#tx.id, WeaveState#state.weave_map) of
 		true ->
 			{invalid, tx_already_in_weave};
 		false ->
-			verify_tx(mempool_check, TX, Diff, Height, FloatingWallets, WeaveState, Mempool)
-	end;
-verify_tx(mempool_check, TX, _Diff, Height, FloatingWallets, _WeaveState, Mempool) ->
+			verify_tx_in_mempool(TX, Mempool)
+	end.
+
+verify_tx_in_mempool(TX, Mempool) ->
 	case maps:is_key(TX#tx.id, Mempool) of
 		true ->
 			{invalid, tx_already_in_mempool};
 		false ->
-			NewMempool = maps:put(TX#tx.id, no_tx, Mempool),
-			NewFW = ar_node_utils:apply_tx(FloatingWallets, TX, Height),
-			{valid, NewFW, NewMempool}
+			valid
 	end.
 
 weave_map_contains_tx(TXID, WeaveMap) ->
@@ -257,7 +209,6 @@ pick_txs_under_size_limit(
 	[TX | TXs], Diff, Height, Timestamp, Wallets, WeaveState, Mempool, Size, Count
 ) ->
 	case verify_tx(
-		general_verification,
 		TX,
 		Diff,
 		Height,
@@ -266,7 +217,9 @@ pick_txs_under_size_limit(
 		WeaveState,
 		Mempool
 	) of
-		{valid, NewWallets, NewMempool} ->
+		valid ->
+			NewMempool = maps:put(TX#tx.id, no_tx, Mempool),
+			NewWallets = ar_node_utils:apply_tx(Wallets, TX, Height),
 			NewSize =
 				case TX of
 					#tx{ format = 1 } ->

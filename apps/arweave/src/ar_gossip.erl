@@ -8,7 +8,7 @@
 	peers/1,
 	add_peers/2,
 	send/2, recv/2,
-	set_loss_probability/2, set_delay/2, set_xfer_speed/2
+	set_loss_probability/2
 ]).
 
 -include("ar.hrl").
@@ -45,15 +45,6 @@ peers(S) -> S#gs_state.peers.
 %% @doc Update the probability that a packet will be lost.
 set_loss_probability(S, Prob) ->
 	S#gs_state { loss_probability = Prob }.
-
-%% @doc Set a network delay: all messages will be delayed for a random number of
-%% milliseconds between 0 and this value.
-set_delay(S, Delay) ->
-	S#gs_state { delay = Delay }.
-
-%% @doc Set the number of bytes transferred from a node per second.
-set_xfer_speed(S, Speed) ->
-	S#gs_state { xfer_speed = Speed }.
 
 %% @doc Send a message to your peers in the gossip network,
 %% if the message has not already been sent.
