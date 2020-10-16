@@ -91,7 +91,7 @@ server(S = #state { gossip = GS }) ->
 						)
 					);
 				% New block and confirmed txs callback.
-				{NewGS, {new_block, _, _, B, _}} ->
+				{NewGS, {new_block, _, _, B, _, _}} ->
 					S1 =
 						apply_callback(
 							S#state { gossip = NewGS },
