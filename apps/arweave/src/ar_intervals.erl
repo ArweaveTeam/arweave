@@ -14,7 +14,9 @@
 	safe_from_etf/1,
 	count/1,
 	is_empty/1,
-	take_largest/1
+	take_largest/1,
+	compact/2,
+	fold/3
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -27,9 +29,8 @@
 new() ->
 	gb_sets:new().
 
-%% @doc Add a new interval. Fail with an overlap exception if the given interval intersects
-%% an interval from the set. Intervals are compacted - e.g., (2, 1) and (1, 0) are joined
-%% into (2, 0).
+%% @doc Add a new interval. Intervals are compacted - e.g., (2, 1) and (1, 0) are joined
+%% into (2, 0). Also, if two intervals intersect each other, they are joined.
 add(Intervals, End, Start) when End > Start ->
 	Iter = gb_sets:iterator_from({Start - 1, Start - 1}, Intervals),
 	add2(Iter, Intervals, End, Start).
@@ -124,6 +125,46 @@ is_empty(Intervals) ->
 take_largest(Intervals) ->
 	gb_sets:take_largest(Intervals).
 
+%% @doc Join the neighboring intervals so that the number of intervals is equal to Limit.
+%% The intervals with the smallest distance apart from each other are joined first.
+%% Return {Compacted, Intervals2} where Compacted is the list of freshly included intervals,
+%% Intervals2 is the new set of Limit intervals. If the set contains less intervals than
+%% Limit, return {[], Intervals}.
+compact(Intervals, Limit) when Limit > 0 ->
+	Excess = count(Intervals) - Limit,
+	case Excess =< 0 of
+		true ->
+			{[], Intervals};
+		false ->
+			{{infinity, _End}, I} =
+				gb_sets:take_largest(inverse(Intervals)),
+			I2 =
+				case gb_sets:take_smallest(I) of
+					{{_, 0}, I3} ->
+						I3;
+					_ ->
+						I
+				end,
+			L = gb_sets:to_list(I2),
+			Sorted =
+				lists:sort(
+					fun({End1, Start1}, {End2, Start2}) ->
+						End1 - Start1 =< End2 - Start2
+					end,
+					L
+				),
+			lists:foldl(
+				fun({End, Start}, {Compacted, Joined}) ->
+					{[{End, Start} | Compacted], add(Joined, End, Start)}
+				end,
+				{[], Intervals},
+				lists:sublist(Sorted, Excess)
+			)
+	end.
+
+fold(Fun, Acc, Intervals) ->
+	gb_sets:fold(Fun, Acc, Intervals).
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -132,12 +173,10 @@ add2(Iter, Intervals, End, Start) ->
 	case gb_sets:next(Iter) of
 		none ->
 			gb_sets:add_element({End, Start}, Intervals);
-		{{Start, Start2}, Iter2} ->
-			add2(Iter2, gb_sets:del_element({Start, Start2}, Intervals), End, Start2);
-		{{End2, End}, _Iter} ->
-			gb_sets:add_element({End2, Start}, gb_sets:del_element({End2, End}, Intervals));
-		{{End2, Start2}, _Iter} when End > Start2 andalso Start < End2 ->
-			error(overlap);
+		{{End2, Start2}, Iter2} when End >= Start2 andalso Start =< End2 ->
+			End3 = max(End, End2),
+			Start3 = min(Start, Start2),
+			add2(Iter2, gb_sets:del_element({End2, Start2}, Intervals), End3, Start3);
 		_ ->
 			gb_sets:add_element({End, Start}, Intervals)
 	end.
@@ -261,6 +300,8 @@ intervals_test() ->
 	?assertEqual(new(), outerjoin(I, I)),
 	?assertException(error, none, get_interval_by_nth_inner_number(I, 0)),
 	?assertException(error, none, get_interval_by_nth_inner_number(I, 2)),
+	{[], CI} = compact(I, 1),
+	?assertEqual(new(), CI),
 	I2 = add(I, 2, 1),
 	?assertEqual(1, count(I2)),
 	?assertEqual(1, sum(I2)),
@@ -278,12 +319,14 @@ intervals_test() ->
 	compare(I2, cut(I2, 3)),
 	?assertEqual(<<"[{\"2\":\"1\"}]">>, to_json(I2, 1)),
 	?assertEqual(<<"[]">>, to_json(I2, 0)),
+	{[], CI2_2} = compact(I2, 2),
+	compare(I2, CI2_2),
 	{ok, I2_FromETF} = safe_from_etf(to_etf(I2, 1)),
 	compare(I2, I2_FromETF),
 	?assertEqual({ok, new()}, safe_from_etf(to_etf(I2, 0))),
-	?assertException(error, overlap, add(I2, 2, 1)),
-	?assertException(error, overlap, add(I2, 3, 1)),
-	?assertException(error, overlap, add(I2, 2, 0)),
+	compare(I2, add(I2, 2, 1)),
+	compare(add(new(), 3, 1), add(I2, 3, 1)),
+	compare(add(new(), 2, 0), add(I2, 2, 0)),
 	I3 = add(I2, 6, 3),
 	?assertEqual(2, count(I3)),
 	?assertEqual(4, sum(I3)),
@@ -299,6 +342,10 @@ intervals_test() ->
 	?assertEqual({3, 4, 6}, get_interval_by_nth_inner_number(I3, 2)),
 	?assertEqual({3, 5, 6}, get_interval_by_nth_inner_number(I3, 3)),
 	?assertException(error, none, get_interval_by_nth_inner_number(I3, 4)),
+	{[], CI3} = compact(I3, 2),
+	compare(I3, CI3),
+	{[{3, 2}], CI3_2} = compact(I3, 1),
+	compare(add(new(), 6, 1), CI3_2),
 	I3_2 = add(new(), 7, 5),
 	compare(add(new(), 7, 5), outerjoin(I2, I3_2)),
 	compare(add(new(), 7, 6), outerjoin(I3, I3_2)),
@@ -313,8 +360,8 @@ intervals_test() ->
 	?assertEqual(<<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>, to_json(I3, 10)),
 	{ok, I3_FromETF} = safe_from_etf(to_etf(I3, 10)),
 	compare(I3, I3_FromETF),
-	?assertException(error, overlap, add(I3, 4, 3)),
-	?assertException(error, overlap, add(I3, 3, 1)),
+	compare(I3, add(I3, 4, 3)),
+	compare(add(new(), 6, 1), add(I3, 3, 1)),
 	I4 = add(I3, 7, 6),
 	?assertEqual(2, count(I4)),
 	?assertEqual(5, sum(I4)),
@@ -335,15 +382,35 @@ intervals_test() ->
 	?assertEqual(new(), cut(I4, 0)),
 	compare(add(I2, 5, 3), cut(I4, 5)),
 	compare(I4, cut(I4, 7)),
+	{[], CI4} = compact(I4, 2),
+	compare(I4, CI4),
+	{[{3, 2}], CI4_2} = compact(I4, 1),
+	compare(add(new(), 7, 1), CI4_2),
 	?assertEqual(<<"[{\"7\":\"3\"},{\"2\":\"1\"}]">>, to_json(I4, 10)),
 	{ok, I4_FromETF} = safe_from_etf(to_etf(I4, count(I4))),
 	compare(I4, I4_FromETF),
 	I5 = add(I4, 3, 2),
 	?assertEqual(1, count(I5)),
 	?assertEqual(6, sum(I5)),
-	?assertException(error, overlap, add(I5, 3, 2)),
-	?assertException(error, overlap, add(I5, 2, 1)),
-	?assertException(error, overlap, add(I5, 8, 6)).
+	compare(I5, add(I5, 3, 2)),
+	compare(I5, add(I5, 2, 1)),
+	compare(add(new(), 8, 1), add(I5, 8, 6)),
+	{[{9, 2}], C} = compact(add(add(new(), 2, 0), 10, 9), 1),
+	compare(add(new(), 10, 0), C),
+	I6 = add(add(add(add(new(), 3, 1), 12, 8), 25, 22), 27, 26),
+	{[], CI6} = compact(I6, 10),
+	compare(I6, CI6),
+	{[], CI6_2} = compact(I6, 4),
+	compare(I6, CI6_2),
+	{[{26, 25}], CI6_3} = compact(I6, 3),
+	compare(add(add(add(new(), 3, 1), 12, 8), 27, 22), CI6_3),
+	{[{8, 3}, {26, 25}], CI6_4} = compact(I6, 2),
+	compare(add(add(new(), 12, 1), 27, 22), CI6_4),
+	{[{22, 12}, {8, 3}, {26, 25}], CI6_5} = compact(I6, 1),
+	compare(add(new(), 27, 1), CI6_5),
+	I8 = add(add(new(), 5, 3), 10, 9),
+	{[{9, 5}], I8_2} = compact(I8, 1),
+	compare(add(new(), 10, 3), I8_2).
 
 compare(I1, I2) ->
 	?assertEqual(to_json(I1, count(I1)), to_json(I2, count(I2))),

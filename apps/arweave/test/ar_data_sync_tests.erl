@@ -453,11 +453,122 @@ test_syncs_data() ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
 				post_chunk(jiffy:encode(Proof))
+			),
+			?assertMatch(
+				{ok, {{<<"200">>, _}, _, _, _, _}},
+				post_chunk(jiffy:encode(Proof))
 			)
 		end,
 		RecordsWithProofs
 	),
 	slave_wait_until_syncs_chunks([Proof || {_, _, _, Proof} <- RecordsWithProofs]),
+	lists:foreach(
+		fun({B, #tx{ id = TXID }, Chunks, {_, Proof}}) ->
+			TXSize = byte_size(binary:list_to_bin(Chunks)),
+			TXOffset = ar_merkle:extract_note(ar_util:decode(maps:get(tx_path, Proof))),
+			AbsoluteTXOffset = B#block.weave_size - B#block.block_size + TXOffset,
+			ExpectedOffsetInfo = jiffy:encode(#{
+				offset => integer_to_binary(AbsoluteTXOffset),
+				size => integer_to_binary(TXSize)
+			}),
+			true = ar_util:do_until(
+				fun() ->
+					case get_tx_offset_from_slave(TXID) of
+						{ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}} ->
+							true;
+						_ ->
+							false
+					end
+				end,
+				100,
+				60 * 1000
+			)
+		end,
+		RecordsWithProofs
+	),
+	lists:foreach(
+		fun({_, #tx{ id = TXID }, Chunks, _}) ->
+			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
+			true = ar_util:do_until(
+				fun() ->
+					case get_tx_data_from_slave(TXID) of
+						{ok, {{<<"200">>, _}, _, ExpectedData, _, _}} ->
+							true;
+						_ ->
+							false
+					end
+				end,
+				100,
+				60 * 1000
+			)
+		end,
+		RecordsWithProofs
+	).
+
+syncs_missing_data_test_() ->
+	{timeout, 180, fun test_syncs_missing_data/0}.
+
+test_syncs_missing_data() ->
+	{Master, _Slave, Wallet} = setup_nodes(),
+	Records = post_blocks(Master, Wallet,
+		[[v2, v2_no_data], [v2, fixed_data, v2_original_split], [v2, v2, v2, v2]]),
+	RecordsWithProofs = lists:flatmap(
+		fun({B, TX, Chunks}) ->
+			[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)]
+		end,
+		Records
+	),
+	%% Make sure we have enough chunks to create enough intervals in the sync record
+	%% so that the node would start creating false positives.
+	?assert(length(RecordsWithProofs) > ?MAX_SHARED_SYNCED_INTERVALS_COUNT * 2),
+	{RecordsWithProofs1, RecordsWithProofs2} =
+		lists:foldl(
+			fun(Proof, {Acc1, Acc2}) ->
+				%% Put every second chunk in the second list.
+				case length(Acc1) == length(Acc2)
+						andalso length(Acc1) < ?MAX_SHARED_SYNCED_INTERVALS_COUNT + 1 of
+					true ->
+						{[Proof | Acc1], Acc2};
+					false ->
+						{Acc1, [Proof | Acc2]}
+				end
+			end,
+			{[], []},
+			RecordsWithProofs
+		),
+	?assertEqual(0, ar_intervals:count(slave_get_sync_record())),
+	lists:foreach(
+		fun({_, _, _, {_, Proof}}) ->
+			?assertMatch(
+				{ok, {{<<"200">>, _}, _, _, _, _}},
+				post_chunk(jiffy:encode(Proof))
+			)
+		end,
+		tl(RecordsWithProofs1)
+	),
+	slave_wait_until_syncs_chunks([Proof || {_, _, _, Proof} <- tl(RecordsWithProofs1)]),
+	?assertEqual(?MAX_SHARED_SYNCED_INTERVALS_COUNT, ar_intervals:count(slave_get_sync_record())),
+	%% After this chunk, the intervals will be compacted.
+	{_, _, _, {_, P}} = hd(RecordsWithProofs1),
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		post_chunk({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, jiffy:encode(P))
+	),
+	slave_wait_until_syncs_chunks([element(4, hd(RecordsWithProofs1))]),
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		post_chunk(jiffy:encode(P))
+	),
+	lists:foreach(
+		fun({_, _, _, {_, Proof}}) ->
+			?assertMatch(
+				{ok, {{<<"200">>, _}, _, _, _, _}},
+				post_chunk(jiffy:encode(Proof))
+			)
+		end,
+		RecordsWithProofs2
+	),
+	slave_wait_until_syncs_chunks([Proof || {_, _, _, Proof} <- RecordsWithProofs2]),
 	lists:foreach(
 		fun({B, #tx{ id = TXID }, Chunks, {_, Proof}}) ->
 			TXSize = byte_size(binary:list_to_bin(Chunks)),
@@ -771,28 +882,32 @@ get_tx_data_from_slave(TXID) ->
 	}).
 
 post_random_blocks(Master, Wallet) ->
+	post_blocks(Master, Wallet,
+		[
+			[v1],
+			empty,
+			[v2, v1, fixed_data, v2_no_data],
+			[v2, v2_original_split, v2],
+			empty,
+			[v1, v2, v2, empty_tx, v2_original_split],
+			[v2, v2_no_data, v2_no_data, v2_no_data],
+			[empty_tx],
+			empty,
+			[v2_original_split, v2_no_data, v2, v1, v2],
+			empty,
+			[fixed_data, fixed_data],
+			empty,
+			[fixed_data, fixed_data] % same tx_root as in the block before the previous one
+		]
+	).
+
+post_blocks(Master, Wallet, BlockMap) ->
 	FixedChunks = [crypto:strong_rand_bytes(200 * 1024) || _ <- lists:seq(1, 4)],
 	Data = iolist_to_binary(lists:foldl(fun(Chunk, Acc) -> [Acc | Chunk] end, [], FixedChunks)),
 	SizedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
 		ar_tx:chunks_to_size_tagged_chunks(FixedChunks)
 	),
 	{DataRoot, _} = ar_merkle:generate_tree(SizedChunkIDs),
-	BlockMap = [
-		[v1],
-		empty,
-		[v2, v1, fixed_data],
-		[v2, v2_original_split, v2],
-		empty,
-		[v1, v2, v2, empty_tx, v2_original_split],
-		[v2],
-		[empty_tx],
-		empty,
-		[v2_original_split, v2_no_data, v2, v1, v2],
-		empty,
-		[fixed_data, fixed_data],
-		empty,
-		[fixed_data, fixed_data] % same tx_root as in the block before the previous one
-	],
 	lists:foldl(
 		fun
 			({empty, Height}, Acc) ->
@@ -821,19 +936,8 @@ post_random_blocks(Master, Wallet) ->
 					#{ miner => {master, Master}, await_on => {master, Master} },
 					[TX || {{TX, _}, _} <- TXsWithChunks]
 				),
-				lists:foreach(
-					fun
-						({{#tx{ format = 2 } = TX, Chunks}, Format})
-								when Format == v2 orelse Format == v2_original_split
-									orelse Format == fixed_data ->
-							post_proofs_to_master(B, TX, Chunks);
-						(_) ->
-							ok
-					end,
-					TXsWithChunks
-				),
-				[{B, TX, C} || {{TX, C}, Type} <- TXsWithChunks,
-				Type /= v2_no_data, Type /= empty_tx] ++ Acc
+				Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
+						Type /= v2_no_data, Type /= empty_tx]
 		end,
 		[],
 		lists:zip(BlockMap, lists:seq(1, length(BlockMap)))
@@ -883,7 +987,7 @@ wait_until_syncs_chunks(Peer, Proofs) ->
 					end
 				end,
 				5 * 1000,
-				20 * 1000
+				120 * 1000
 			)
 		end,
 		Proofs
@@ -901,3 +1005,6 @@ hash(Parts) when is_list(Parts) ->
 	crypto:hash(sha256, binary:list_to_bin(Parts));
 hash(Binary) ->
 	crypto:hash(sha256, Binary).
+
+slave_get_sync_record() ->
+	(slave_call(sys, get_state, [ar_data_sync]))#sync_data_state.sync_record.
