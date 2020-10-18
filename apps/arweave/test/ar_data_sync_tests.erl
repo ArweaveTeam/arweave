@@ -453,6 +453,10 @@ test_syncs_data() ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
 				post_chunk(jiffy:encode(Proof))
+			),
+			?assertMatch(
+				{ok, {{<<"200">>, _}, _, _, _, _}},
+				post_chunk(jiffy:encode(Proof))
 			)
 		end,
 		RecordsWithProofs
@@ -771,28 +775,32 @@ get_tx_data_from_slave(TXID) ->
 	}).
 
 post_random_blocks(Master, Wallet) ->
+	post_blocks(Master, Wallet,
+		[
+			[v1],
+			empty,
+			[v2, v1, fixed_data, v2_no_data],
+			[v2, v2_original_split, v2],
+			empty,
+			[v1, v2, v2, empty_tx, v2_original_split],
+			[v2, v2_no_data, v2_no_data, v2_no_data],
+			[empty_tx],
+			empty,
+			[v2_original_split, v2_no_data, v2, v1, v2],
+			empty,
+			[fixed_data, fixed_data],
+			empty,
+			[fixed_data, fixed_data] % same tx_root as in the block before the previous one
+		]
+	).
+
+post_blocks(Master, Wallet, BlockMap) ->
 	FixedChunks = [crypto:strong_rand_bytes(200 * 1024) || _ <- lists:seq(1, 4)],
 	Data = iolist_to_binary(lists:foldl(fun(Chunk, Acc) -> [Acc | Chunk] end, [], FixedChunks)),
 	SizedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
 		ar_tx:chunks_to_size_tagged_chunks(FixedChunks)
 	),
 	{DataRoot, _} = ar_merkle:generate_tree(SizedChunkIDs),
-	BlockMap = [
-		[v1],
-		empty,
-		[v2, v1, fixed_data],
-		[v2, v2_original_split, v2],
-		empty,
-		[v1, v2, v2, empty_tx, v2_original_split],
-		[v2],
-		[empty_tx],
-		empty,
-		[v2_original_split, v2_no_data, v2, v1, v2],
-		empty,
-		[fixed_data, fixed_data],
-		empty,
-		[fixed_data, fixed_data] % same tx_root as in the block before the previous one
-	],
 	lists:foldl(
 		fun
 			({empty, Height}, Acc) ->
@@ -821,19 +829,8 @@ post_random_blocks(Master, Wallet) ->
 					#{ miner => {master, Master}, await_on => {master, Master} },
 					[TX || {{TX, _}, _} <- TXsWithChunks]
 				),
-				lists:foreach(
-					fun
-						({{#tx{ format = 2 } = TX, Chunks}, Format})
-								when Format == v2 orelse Format == v2_original_split
-									orelse Format == fixed_data ->
-							post_proofs_to_master(B, TX, Chunks);
-						(_) ->
-							ok
-					end,
-					TXsWithChunks
-				),
-				[{B, TX, C} || {{TX, C}, Type} <- TXsWithChunks,
-				Type /= v2_no_data, Type /= empty_tx] ++ Acc
+				Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
+						Type /= v2_no_data, Type /= empty_tx]
 		end,
 		[],
 		lists:zip(BlockMap, lists:seq(1, length(BlockMap)))
@@ -883,7 +880,7 @@ wait_until_syncs_chunks(Peer, Proofs) ->
 					end
 				end,
 				5 * 1000,
-				20 * 1000
+				120 * 1000
 			)
 		end,
 		Proofs

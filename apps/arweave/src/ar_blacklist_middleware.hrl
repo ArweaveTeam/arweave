@@ -17,7 +17,7 @@ end).
 -define(RPM_BY_PATH(Path, DefaultPathLimit), fun() ->
 	case Path of
 		[<<"chunk">> | _]            -> {chunk,            6000};
-		[<<"data_sync_record">> | _] -> {data_sync_record, 50};
+		[<<"data_sync_record">> | _] -> {data_sync_record, 200};
 		_ ->                            {default,          DefaultPathLimit}
 	end
 end).
