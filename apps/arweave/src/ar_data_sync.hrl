@@ -1,11 +1,3 @@
-%% @doc The time to wait after the whole weave is synced
-%% before looking for new chunks.
--ifdef(DEBUG).
--define(PAUSE_AFTER_COULD_NOT_FIND_CHUNK_MS, 2000).
--else.
--define(PAUSE_AFTER_COULD_NOT_FIND_CHUNK_MS, 30000).
--endif.
-
 %% @doc The number of peer sync records to consult each time we look for an interval to sync.
 -define(CONSULT_PEER_RECORDS_COUNT, 5).
 %% @doc The number of best peers to pick ?CONSULT_PEER_RECORDS_COUNT from, to fetch the
@@ -14,7 +6,7 @@
 
 %% @doc The frequency of updating best peers' sync records.
 -ifdef(DEBUG).
--define(PEER_SYNC_RECORDS_FREQUENCY_MS, 2000).
+-define(PEER_SYNC_RECORDS_FREQUENCY_MS, 500).
 -else.
 -define(PEER_SYNC_RECORDS_FREQUENCY_MS, 2 * 60 * 1000).
 -endif.
@@ -29,11 +21,7 @@
 -define(TRACK_CONFIRMATIONS, ?STORE_BLOCKS_BEHIND_CURRENT * 2).
 
 %% @doc The maximum number of synced intervals shared with peers.
--ifdef(DEBUG).
--define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 100).
--else.
 -define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 10000).
--endif.
 
 %% @doc The upper limit for the size of a sync record serialized using Erlang Term Format.
 -define(MAX_ETF_SYNC_RECORD_SIZE, 80 * ?MAX_SHARED_SYNCED_INTERVALS_COUNT).
@@ -174,11 +162,12 @@
 	%% @doc The sum of sizes of all pending chunks. When it reaches
 	%% ?MAX_DISK_POOL_BUFFER_MB, new chunks with these data roots are rejected.
 	disk_pool_size,
-	%% @doc One of the keys from disk_pool_chunks_index. The disk pool is processed
-	%% chunk by chunk going from the oldest entry to the newest, trying not to block the
-	%% syncing process if the disk pool accumulates a lot of orphaned and pending chunks.
-	%% The cursor remembers the key after the last processed on the previous iteration.
-	%% After reaching the last key in the storage, we go back to the first one. Not stored.
+	%% @doc One of the keys from disk_pool_chunks_index or the atom "first".
+	%% The disk pool is processed chunk by chunk going from the oldest entry to the newest,
+	%% trying not to block the syncing process if the disk pool accumulates a lot of orphaned
+	%% and pending chunks. The cursor remembers the key after the last processed on the
+	%% previous iteration. After reaching the last key in the storage, we go back to
+	%% the first one. Not stored.
 	disk_pool_cursor,
 	%% @doc A reference to the on-disk key value storage mapping
 	%% tx_id -> {absolute_end_offset, tx_size}.

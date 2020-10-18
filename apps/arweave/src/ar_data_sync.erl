@@ -139,23 +139,7 @@ init([]) ->
 	process_flag(trap_exit, true),
 	State = init_kv(),
 	{SyncRecord, CurrentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize} =
-		case ar_storage:read_term(data_sync_state) of
-			{ok, {StoredSyncRecord, StoredRecentBI, RawDiskPoolDataRoots, StoredDiskPoolSize}} ->
-				%% Filter out the keys with the invalid values, if any,
-				%% produced by a bug in 2.1.0.0.
-				StoredDiskPoolDataRoots = maps:filter(
-					fun (_, {_, _, _}) ->
-							true;
-						(_, _) ->
-							false
-					end,
-					RawDiskPoolDataRoots
-				),
-				{StoredSyncRecord, StoredRecentBI, StoredDiskPoolDataRoots, StoredDiskPoolSize,
-					element(2, hd(StoredRecentBI))};
-			not_found ->
-				{ar_intervals:new(), [], #{}, 0, 0}
-		end,
+		read_data_sync_state(),
 	State2 = State#sync_data_state{
 		sync_record = SyncRecord,
 		peer_sync_records = #{},
@@ -351,13 +335,14 @@ handle_cast({sync_random_interval, RecentlyFailedPeers}, State) ->
 	#sync_data_state{
 		sync_record = SyncRecord,
 		weave_size = WeaveSize,
-		peer_sync_records = PeerSyncRecords
+		peer_sync_records = PeerSyncRecords,
+		chunks_index = ChunksIndex
 	} = State,
 	FilteredPeerSyncRecords = maps:without(RecentlyFailedPeers, PeerSyncRecords),
 	case get_random_interval(SyncRecord, FilteredPeerSyncRecords, WeaveSize) of
 		none ->
 			timer:apply_after(
-				?PAUSE_AFTER_COULD_NOT_FIND_CHUNK_MS,
+				?PEER_SYNC_RECORDS_FREQUENCY_MS,
 				gen_server,
 				cast,
 				[self(), {sync_random_interval, []}]
@@ -368,19 +353,19 @@ handle_cast({sync_random_interval, RecentlyFailedPeers}, State) ->
 			{noreply, State#sync_data_state{ peer_sync_records = FilteredPeerSyncRecords }}
 	end;
 
-handle_cast({sync_chunk, _, LeftBound, RightBound}, State) when LeftBound >= RightBound ->
-	gen_server:cast(self(), {sync_random_interval, []}),
-	ok = store_sync_state(State),
+handle_cast({sync_chunk, _, Byte, RightBound}, State) when Byte >= RightBound ->
+	gen_server:cast(self(), sync_random_interval),
+	record_v2_index_data_size(State),
 	{noreply, State};
-handle_cast({sync_chunk, Peer, LeftBound, RightBound}, State) ->
+handle_cast({sync_chunk, Peer, Byte, RightBound}, State) ->
 	Self = self(),
 	spawn(
 		fun() ->
-			case ar_http_iface_client:get_chunk(Peer, LeftBound + 1) of
+			case ar_http_iface_client:get_chunk(Peer, Byte + 1) of
 				{ok, Proof} ->
 					gen_server:cast(
 						Self,
-						{store_fetched_chunk, Peer, LeftBound, RightBound, Proof}
+						{store_fetched_chunk, Peer, Byte, RightBound, Proof}
 					);
 				{error, _} ->
 					gen_server:cast(Self, {sync_random_interval, [Peer]})
@@ -389,8 +374,9 @@ handle_cast({sync_chunk, Peer, LeftBound, RightBound}, State) ->
 	),
 	{noreply, State};
 
-handle_cast({store_fetched_chunk, Peer, _, _, #{ data_path := Path, chunk := Chunk }}, State)
-		when ?IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, Path) ->
+handle_cast(
+	{store_fetched_chunk, Peer, _, _, #{ data_path := Path, chunk := Chunk }}, State
+) when ?IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, Path) ->
 	#sync_data_state{
 		peer_sync_records = PeerSyncRecords
 	} = State,
@@ -398,17 +384,17 @@ handle_cast({store_fetched_chunk, Peer, _, _, #{ data_path := Path, chunk := Chu
 	{noreply, State#sync_data_state{
 		peer_sync_records = maps:remove(Peer, PeerSyncRecords)
 	}};
-handle_cast({store_fetched_chunk, Peer, LeftBound, RightBound, Proof}, State) ->
+handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof}, State) ->
 	#sync_data_state{
 		data_root_offset_index = DataRootOffsetIndex,
 		data_root_index = DataRootIndex,
 		peer_sync_records = PeerSyncRecords
 	} = State,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk } = Proof,
-	{ok, Key, Value} = ar_kv:get_prev(DataRootOffsetIndex, << LeftBound:?OFFSET_KEY_BITSIZE >>),
+	{ok, Key, Value} = ar_kv:get_prev(DataRootOffsetIndex, << Byte:?OFFSET_KEY_BITSIZE >>),
 	<< BlockStartOffset:?OFFSET_KEY_BITSIZE >> = Key,
 	{TXRoot, BlockSize, DataRootIndexKeySet} = binary_to_term(Value),
-	Offset = LeftBound - BlockStartOffset,
+	Offset = Byte - BlockStartOffset,
 	case validate_proof(TXRoot, TXPath, DataPath, Offset, Chunk, BlockSize) of
 		false ->
 			gen_server:cast(self(), {sync_random_interval, []}),
@@ -442,7 +428,8 @@ handle_cast({store_fetched_chunk, Peer, LeftBound, RightBound, Proof}, State) ->
 					)
 			end,
 			ChunkSize = byte_size(Chunk),
-			gen_server:cast(self(), {sync_chunk, Peer, LeftBound + ChunkSize, RightBound}),
+			Byte2 = Byte + ChunkSize,
+			gen_server:cast(self(), {sync_chunk, Peer, Byte2, RightBound}),
 			case store_chunk(
 				State,
 				AbsoluteTXStartOffset + ChunkEndOffset,
@@ -605,6 +592,7 @@ handle_info(_Message, State) ->
 terminate(Reason, State) ->
 	#sync_data_state{ chunks_index = {DB, _} } = State,
 	ar:info([{event, ar_data_sync_terminate}, {reason, Reason}]),
+	ok = store_sync_state(State),
 	ar_kv:close(DB).
 
 %%%===================================================================
@@ -654,6 +642,28 @@ init_kv() ->
 	ets:insert(?MODULE, {chunks_index, {DB, CF1}}),
 	ets:insert(?MODULE, {data_root_offset_index, {DB, CF3}}),
 	State.
+
+read_data_sync_state() ->
+	case ar_storage:read_term(data_sync_state) of
+		{ok, {SyncRecord, RecentBI, RawDiskPoolDataRoots, DiskPoolSize}} ->
+			DiskPoolDataRoots = filter_invalid_data_roots(RawDiskPoolDataRoots),
+			WeaveSize = case RecentBI of [] -> 0; _ -> element(2, hd(RecentBI)) end,
+			{SyncRecord, RecentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize};
+		not_found ->
+			{ar_intervals:new(), [], #{}, 0, 0}
+	end.
+
+filter_invalid_data_roots(DiskPoolDataRoots) ->
+	%% Filter out the keys with the invalid values, if any,
+	%% produced by a bug in 2.1.0.0.
+	maps:filter(
+		fun (_, {_, _, _}) ->
+				true;
+			(_, _) ->
+				false
+		end,
+		DiskPoolDataRoots
+	).
 
 data_root_offset_index_from_block_index(Index, BI, StartOffset) ->
 	data_root_offset_index_from_reversed_block_index(Index, lists:reverse(BI), StartOffset).
@@ -966,8 +976,8 @@ update_chunks_index(
 		true ->
 			not_updated;
 		false ->
-			Value = {DataPathHash, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize},
 			Key = << AbsoluteChunkOffset:?OFFSET_KEY_BITSIZE >>,
+			Value = {DataPathHash, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize},
 			case ar_kv:put(ChunksIndex, Key, term_to_binary(Value)) of
 				ok ->
 					DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
@@ -991,7 +1001,8 @@ update_chunks_index(
 							do_not_update_disk_pool
 					end,
 					StartOffset = AbsoluteChunkOffset - ChunkSize,
-					{ok, ar_intervals:add(SyncRecord, AbsoluteChunkOffset, StartOffset)};
+					SyncRecord2 = ar_intervals:add(SyncRecord, AbsoluteChunkOffset, StartOffset),
+					{ok, SyncRecord2};
 				{error, Reason} ->
 					ar:err([
 						{event, failed_to_update_chunk_index},
@@ -1009,9 +1020,12 @@ store_sync_state(
 		block_index = BI
 	}
 ) ->
-	prometheus_gauge:set(v2_index_data_size, ar_intervals:sum(SyncRecord)),
 	ar_metrics:store(disk_pool_chunks_count),
 	ar_storage:write_term(data_sync_state, {SyncRecord, BI, DiskPoolDataRoots, DiskPoolSize}).
+
+record_v2_index_data_size(State) ->
+	#sync_data_state{ sync_record = SyncRecord } = State,
+	prometheus_gauge:set(v2_index_data_size, ar_intervals:sum(SyncRecord)).
 
 pick_random_peers(Peers, N, M) ->
 	lists:sublist(
@@ -1025,7 +1039,8 @@ get_random_interval(SyncRecord, PeerSyncRecords, WeaveSize) ->
 	%% intervals to sync. The motivation is to keep the record size small for
 	%% low traffic overhead. When the size increases ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
 	%% a random subset of the intervals is served to peers.
-	SyncSize = WeaveSize div ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
+	%% Include at least one byte - relevant for tests where the weave can be very small.
+	SyncSize = max(1, WeaveSize div ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
 	maps:fold(
 		fun (_, _, {ok, {Peer, L, R}}) ->
 				{ok, {Peer, L, R}};
@@ -1041,7 +1056,7 @@ get_random_interval(SyncRecord, PeerSyncRecords, WeaveSize) ->
 						{L, Byte, R} =
 							ar_intervals:get_interval_by_nth_inner_number(I, RelativeByte),
 						LeftBound = max(L, Byte - SyncSize div 2),
-						{ok, {Peer, LeftBound, min(R, LeftBound + SyncSize div 2)}}
+						{ok, {Peer, LeftBound, min(R, LeftBound + SyncSize)}}
 				end
 		end,
 		none,
@@ -1186,7 +1201,7 @@ store_chunk(State, DataRootIndexIterator, DataRoot, DataPath, Chunk, EndOffset, 
 				TXSize
 			) of
 				{updated, UpdatedState} ->
-					ok = store_sync_state(UpdatedState),
+					record_v2_index_data_size(UpdatedState),
 					store_chunk(
 						UpdatedState,
 						UpdatedDataRootIndexIterator,
@@ -1247,15 +1262,13 @@ store_chunk(
 			not_updated;
 		{error, _Reason} = Error ->
 			Error;
-		{ok, UpdatedSyncRecord} ->
+		{ok, SyncRecord2} ->
 			case write_chunk(DataPathHash, Chunk, DataPath) of
 				{error, _Reason} = Error ->
 					Error;
 				ok ->
-					UpdatedState = State#sync_data_state{
-						sync_record = UpdatedSyncRecord
-					},
-					{updated, UpdatedState}
+					State2 = State#sync_data_state{ sync_record = SyncRecord2 },
+					{updated, State2}
 			end
 	end.
 
@@ -1307,17 +1320,17 @@ process_disk_pool_item(State, Key, Value, NextCursor) ->
 			ar_storage:delete_chunk(DataPathHash),
 			{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{{ok, DataRootIndexValue}, _} ->
-			{IsUpdated, UpdatedSyncRecord} = maps:fold(
+			{IsUpdated, SyncRecord2} = maps:fold(
 				fun(TXRoot, OffsetMap, Acc) ->
 					maps:fold(
-						fun(AbsoluteTXStartOffset, TXPath, {_, SR} = Acc2) ->
-							AbsoluteChunkOffset = AbsoluteTXStartOffset + Offset,
+						fun(TXStartOffset, TXPath, {_, SyncRecord3} = Acc2) ->
+							AbsoluteChunkOffset = TXStartOffset + Offset,
 							case update_chunks_index(
 								ChunksIndex,
 								DiskPoolChunksIndex,
 								DiskPoolDataRoots,
 								TXSize,
-								SR,
+								SyncRecord3,
 								AbsoluteChunkOffset,
 								Offset,
 								DataPathHash,
@@ -1328,8 +1341,8 @@ process_disk_pool_item(State, Key, Value, NextCursor) ->
 							) of
 								not_updated ->
 									Acc2;
-								{ok, UpdatedSR} ->
-									{updated, UpdatedSR}
+								{ok, SyncRecord4} ->
+									{updated, SyncRecord4}
 							end
 						end,
 						Acc,
@@ -1346,15 +1359,17 @@ process_disk_pool_item(State, Key, Value, NextCursor) ->
 				true ->
 					do_not_remove_from_disk_pool_chunks_index
 			end,
-			UpdatedState = case IsUpdated of
+			State2 = case IsUpdated of
 				updated ->
-					U = State#sync_data_state{ sync_record = UpdatedSyncRecord },
-					ok = store_sync_state(U),
-					U;
+					State3 = State#sync_data_state{
+						sync_record = SyncRecord2
+					},
+					record_v2_index_data_size(State3),
+					State3;
 				not_updated ->
 					State
 			end,
-			{noreply, UpdatedState#sync_data_state{ disk_pool_cursor = NextCursor }}
+			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }}
 	end.
 
 get_tx_data_from_chunks(Offset, Size, Map) ->

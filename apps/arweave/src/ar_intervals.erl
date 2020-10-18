@@ -27,9 +27,8 @@
 new() ->
 	gb_sets:new().
 
-%% @doc Add a new interval. Fail with an overlap exception if the given interval intersects
-%% an interval from the set. Intervals are compacted - e.g., (2, 1) and (1, 0) are joined
-%% into (2, 0).
+%% @doc Add a new interval. Intervals are compacted - e.g., (2, 1) and (1, 0) are joined
+%% into (2, 0). Also, if two intervals intersect each other, they are joined.
 add(Intervals, End, Start) when End > Start ->
 	Iter = gb_sets:iterator_from({Start - 1, Start - 1}, Intervals),
 	add2(Iter, Intervals, End, Start).
@@ -132,12 +131,10 @@ add2(Iter, Intervals, End, Start) ->
 	case gb_sets:next(Iter) of
 		none ->
 			gb_sets:add_element({End, Start}, Intervals);
-		{{Start, Start2}, Iter2} ->
-			add2(Iter2, gb_sets:del_element({Start, Start2}, Intervals), End, Start2);
-		{{End2, End}, _Iter} ->
-			gb_sets:add_element({End2, Start}, gb_sets:del_element({End2, End}, Intervals));
-		{{End2, Start2}, _Iter} when End > Start2 andalso Start < End2 ->
-			error(overlap);
+		{{End2, Start2}, Iter2} when End >= Start2 andalso Start =< End2 ->
+			End3 = max(End, End2),
+			Start3 = min(Start, Start2),
+			add2(Iter2, gb_sets:del_element({End2, Start2}, Intervals), End3, Start3);
 		_ ->
 			gb_sets:add_element({End, Start}, Intervals)
 	end.
@@ -281,9 +278,9 @@ intervals_test() ->
 	{ok, I2_FromETF} = safe_from_etf(to_etf(I2, 1)),
 	compare(I2, I2_FromETF),
 	?assertEqual({ok, new()}, safe_from_etf(to_etf(I2, 0))),
-	?assertException(error, overlap, add(I2, 2, 1)),
-	?assertException(error, overlap, add(I2, 3, 1)),
-	?assertException(error, overlap, add(I2, 2, 0)),
+	compare(I2, add(I2, 2, 1)),
+	compare(add(new(), 3, 1), add(I2, 3, 1)),
+	compare(add(new(), 2, 0), add(I2, 2, 0)),
 	I3 = add(I2, 6, 3),
 	?assertEqual(2, count(I3)),
 	?assertEqual(4, sum(I3)),
@@ -313,8 +310,8 @@ intervals_test() ->
 	?assertEqual(<<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>, to_json(I3, 10)),
 	{ok, I3_FromETF} = safe_from_etf(to_etf(I3, 10)),
 	compare(I3, I3_FromETF),
-	?assertException(error, overlap, add(I3, 4, 3)),
-	?assertException(error, overlap, add(I3, 3, 1)),
+	compare(I3, add(I3, 4, 3)),
+	compare(add(new(), 6, 1), add(I3, 3, 1)),
 	I4 = add(I3, 7, 6),
 	?assertEqual(2, count(I4)),
 	?assertEqual(5, sum(I4)),
@@ -341,9 +338,9 @@ intervals_test() ->
 	I5 = add(I4, 3, 2),
 	?assertEqual(1, count(I5)),
 	?assertEqual(6, sum(I5)),
-	?assertException(error, overlap, add(I5, 3, 2)),
-	?assertException(error, overlap, add(I5, 2, 1)),
-	?assertException(error, overlap, add(I5, 8, 6)).
+	compare(I5, add(I5, 3, 2)),
+	compare(I5, add(I5, 2, 1)),
+	compare(add(new(), 8, 1), add(I5, 8, 6)).
 
 compare(I1, I2) ->
 	?assertEqual(to_json(I1, count(I1)), to_json(I2, count(I2))),
