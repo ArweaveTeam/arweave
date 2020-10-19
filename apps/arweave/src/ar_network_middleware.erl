@@ -27,7 +27,7 @@ execute(Req, Env) ->
 maybe_add_peer(Peer) ->
 	case ar_meta_db:get({peer, Peer}) of
 		not_found ->
-			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
+			ar_bridge:add_remote_peer(Peer);
 		_ ->
 			ok
 	end.

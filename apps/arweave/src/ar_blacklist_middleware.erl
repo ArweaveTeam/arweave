@@ -10,6 +10,7 @@
 -export([decrement_ip_addr/2]).
 
 -include("ar.hrl").
+-include("common.hrl").
 -include("ar_blacklist_middleware.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -26,7 +27,7 @@ execute(Req, Env) ->
 	end.
 
 start() ->
-	ar:info([{event, ar_blacklist_middleware_start}]),
+	?LOG_INFO([{event, ar_blacklist_middleware_start}]),
 	ets:new(?MODULE, [set, public, named_table]),
 	{ok, _} =
 		timer:apply_after(

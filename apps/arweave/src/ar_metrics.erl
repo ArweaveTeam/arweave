@@ -1,16 +1,17 @@
 -module(ar_metrics).
 
 -export([
-	register/0,
+	register/1,
 	store/1,
 	label_http_path/1,
 	get_status_class/1
 ]).
 
 -include("ar.hrl").
+-include("common.hrl").
 
-register() ->
-	filelib:ensure_dir(ar_meta_db:get(metrics_dir) ++ "/"),
+register(MetricsDir) ->
+	filelib:ensure_dir(MetricsDir ++ "/"),
 	prometheus_counter:new([
 		{name, http_server_accepted_bytes_total},
 		{help, "The total amount of bytes accepted by the HTTP server, per endpoint"},
@@ -121,7 +122,7 @@ register() ->
 			"The disk pool includes pending, recent, and orphaned chunks."
 		}
 	]),
-	load_gauge(disk_pool_chunks_count),
+	load_gauge(MetricsDir, disk_pool_chunks_count),
 	prometheus_counter:new([
 		{name, disk_pool_processed_chunks},
 		{
@@ -167,14 +168,14 @@ register() ->
 			"computed over the last block time."}
 	]).
 
-load_gauge(Name) ->
-	case ar_storage:read_term(ar_meta_db:get(metrics_dir), Name) of
+load_gauge(MetricsDir, Name) ->
+	case ar_storage:read_term(MetricsDir, Name) of
 		{ok, Value} ->
 			prometheus_gauge:set(Name, Value);
 		not_found ->
 			nothing_is_stored;
 		{error, Reason} ->
-			ar:err([{event, failed_to_load_metric}, {error, Reason}])
+			?LOG_ERROR([{event, failed_to_load_metric}, {error, Reason}])
 	end.
 
 store(Name) ->

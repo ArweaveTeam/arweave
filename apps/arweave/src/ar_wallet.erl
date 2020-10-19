@@ -142,12 +142,12 @@ assign_wallet_test() ->
 	{_, Pub} = new_keyfile(),
 	Address = to_address(Pub),
 	[B0] = ar_weave:init([{Address, ?AR(0), <<>>}]),
-	{Node1, _} = ar_test_node:start(B0),
-	ar_node:mine(Node1), % Mine B1
+	ar_test_node:start(B0),
+	ar_node:mine(), % Mine B1
 	ar_util:do_until(
 		fun() ->
 			R1 = erlang:trunc(ar_node_utils:calculate_reward(1, 0)),
-			R2 = ar_node:get_balance(Node1, Pub),
+			R2 = ar_node:get_balance(Pub),
 			R1 == R2
 		end,
 		500,

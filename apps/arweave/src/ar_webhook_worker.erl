@@ -4,6 +4,7 @@
 -export([start_link/1, cast_webhook/2]).
 -export([init/1, handle_call/3, handle_cast/2]).
 
+-include("common.hrl").
 -include("ar_config.hrl").
 
 -define(NUMBER_OF_TRIES, 10).
@@ -59,7 +60,7 @@ do_call_webhook({EventType, Entity}, Config, N) when N < ?NUMBER_OF_TRIES ->
 		}),
 	case Result of
 		{ok, {{<<"200">>, _}, _, _, _, _}} ->
-			ar:info([
+			?LOG_INFO([
 				{ar_webhook_worker, webhook_call_success},
 				{event, EventType},
 				{id, entity_id(Entity)},
@@ -69,7 +70,7 @@ do_call_webhook({EventType, Entity}, Config, N) when N < ?NUMBER_OF_TRIES ->
 			]),
 			ok;
 		UnsuccessfulResult ->
-			ar:warn([
+			?LOG_WARNING([
 				{ar_webhook_worker, webhook_call_failure},
 				{event, EventType},
 				{id, entity_id(Entity)},
@@ -86,7 +87,7 @@ do_call_webhook({EventType, Entity}, Config, _) ->
 		url = URL,
 		headers = Headers
 	} = Config,
-	ar:warn([gave_up_webhook_call,
+	?LOG_WARNING([gave_up_webhook_call,
 		{event, EventType},
 		{id, entity_id(Entity)},
 		{url, URL},

@@ -21,6 +21,7 @@
 -export([init/1, handle_cast/2, handle_call/3, terminate/2]).
 
 -include("ar.hrl").
+-include("common.hrl").
 
 %% @doc The frequency of refreshing the blacklist.
 -ifdef(DEBUG).
@@ -290,7 +291,7 @@ load_from_file(File) ->
 			{file, File},
 			{exception, {Type, Pattern}}
 		],
-		ar:console(Warning),
+		?LOG_WARNING(Warning),
 		[]
 	end.
 

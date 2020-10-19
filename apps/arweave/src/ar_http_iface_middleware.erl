@@ -5,6 +5,7 @@
 -export([execute/2]).
 
 -include("ar.hrl").
+-include("common.hrl").
 -include("ar_mine.hrl").
 -include("ar_data_sync.hrl").
 
@@ -64,7 +65,7 @@ loop(TimeoutRef) ->
 		{timeout, HandlerPid, InitialReq} ->
 			unlink(HandlerPid),
 			exit(HandlerPid, handler_timeout),
-			ar:warn([
+			?LOG_WARNING([
 				handler_timeout,
 				{method, cowboy_req:method(InitialReq)},
 				{path, cowboy_req:path(InitialReq)}
@@ -82,7 +83,7 @@ handle(Peer, Req, Pid) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	case ar_meta_db:get(http_logging) of
 		true ->
-			ar:info([
+			?LOG_INFO([
 				{event, http_request},
 				{method, Method},
 				{path, SplitPath},
@@ -116,16 +117,16 @@ handle(<<"HEAD">>, [<<"info">>], Req, _Pid) ->
 %% @doc Return permissive CORS headers for all endpoints
 handle(<<"OPTIONS">>, [<<"block">>], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
-		    <<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
+			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
 handle(<<"OPTIONS">>, [<<"tx">>], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
-		    <<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
+			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
 handle(<<"OPTIONS">>, [<<"peer">>|_], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
-		    <<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
+			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
 handle(<<"OPTIONS">>, [<<"arql">>], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
-		    <<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
+			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
 handle(<<"OPTIONS">>, _, Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET">>}, <<"OK">>, Req};
 
@@ -136,8 +137,7 @@ handle(<<"GET">>, [<<"time">>], Req, _Pid) ->
 %% @doc Return all mempool transactions.
 %% GET request to endpoint /tx/pending.
 handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -146,7 +146,7 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _Pid) ->
 						%% Should encode
 						lists:map(
 							fun ar_util:encode/1,
-							ar_node:get_pending_txs(Node, [id_only])
+							ar_node:get_pending_txs([id_only])
 						)
 					),
 			Req}
@@ -167,8 +167,7 @@ handle(<<"GET">>, [<<"queue">>], Req, _Pid) ->
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -205,8 +204,7 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 %%
 handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -250,8 +248,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -294,8 +291,7 @@ handle(<<"GET">>, [<<"chunk">>, OffsetBinary], Req, _Pid) ->
 	end;
 
 handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -321,8 +317,7 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 	end;
 
 handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -371,8 +366,7 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
 handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -402,8 +396,7 @@ handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
 handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case {ar_node:is_joined(Node), check_internal_api_secret(Req)} of
+	case {ar_node:is_joined(), check_internal_api_secret(Req)} of
 		{false, _} ->
 			not_joined(Req);
 		{true, pass} ->
@@ -463,7 +456,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 			[
 				list_to_binary(ar_util:format_peer(P))
 			||
-				P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+				P <- ar_bridge:get_remote_peers(),
 				P /= ar_http_util:arweave_peer(Req)
 			]
 		),
@@ -475,8 +468,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 %% to estimate the price.
 %% GET request to endpoint /price/{bytes}
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -489,8 +481,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary], Req, _Pid) ->
 %% to estimate the price.
 %% GET request to endpoint /price/{bytes}/{address}
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -510,12 +501,11 @@ handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			BI = ar_node:get_block_index(Node),
+			BI = ar_node:get_block_index(),
 			{200, #{},
 				ar_serialize:jsonify(
 					ar_serialize:block_index_to_json_struct(format_bi_for_peer(BI, Req))
@@ -526,20 +516,18 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 %% @doc Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			H = ar_node:get_current_block_hash(Node),
+			H = ar_node:get_current_block_hash(),
 			process_request(get_block, [<<"hash">>, H, <<"wallet_list">>], Req)
 	end;
 
 %% @doc Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
 %% the given root hash. The wallet addresses are picked in the ascending alphabetical order.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -550,8 +538,7 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash], Req, _Pid) ->
 %% the given root hash, starting with the provided cursor, taken the wallet addresses
 %% are picked in the ascending alphabetical order.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -560,8 +547,7 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid
 
 %% @doc Return the balance of the given address from the wallet tree with the given root hash.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">>], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -590,8 +576,7 @@ handle(<<"POST">>, [<<"peers">>], Req, _Pid) ->
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -602,7 +587,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
 					%% ar_node:get_balance/2 can time out which is not suitable for this
 					%% use-case. It would be better if it never timed out so that Cowboy
 					%% would handle the timeout instead.
-					case ar_node:get_balance(Node, AddrOK) of
+					case ar_node:get_balance(AddrOK) of
 						node_unavailable ->
 							{503, #{}, <<"Internal timeout.">>, Req};
 						Balance ->
@@ -614,8 +599,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
 %% @doc Return the last transaction ID (hash) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/last_tx
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -625,7 +609,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
 				{ok, AddrOK} ->
 					{200, #{},
 						ar_util:encode(
-							?OK(ar_node:get_last_tx(Node, AddrOK))
+							?OK(ar_node:get_last_tx(AddrOK))
 						),
 					Req}
 			end
@@ -633,12 +617,11 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
 
 %% @doc Return a block anchor to use for building transactions.
 handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			{ok, List} = ar_node:get_block_txs_pairs(Node),
+			List = ar_node:get_block_txs_pairs(),
 			SuggestedAnchor =
 				element(1, lists:nth(min(length(List), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, List)),
 			{200, #{}, ar_util:encode(SuggestedAnchor), Req}
@@ -698,17 +681,16 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 		case Type of
 			<<"hash">> ->
 				case hash_to_filename(block, ID) of
-					{error, invalid}        -> invalid_hash;
+					{error, invalid}		-> invalid_hash;
 					{error, _, unavailable} -> unavailable;
-					{ok, Fn}                -> Fn
+					{ok, Fn}				-> Fn
 				end;
 			<<"height">> ->
-				Node = whereis(http_entrypoint_node),
-				case ar_node:is_joined(Node) of
+				case ar_node:is_joined() of
 					false ->
 						not_joined;
 					true ->
-						CurrentHeight = ar_node:get_height(Node),
+						CurrentHeight = ar_node:get_height(),
 						try binary_to_integer(ID) of
 							Height when Height < 0 ->
 								invalid_height;
@@ -716,7 +698,7 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 								unavailable;
 							Height ->
 								ok = ar_semaphore:acquire(block_index_semaphore, infinity),
-								BI = ar_node:get_block_index(Node),
+								BI = ar_node:get_block_index(),
 								Len = length(BI),
 								case Height > Len - 1 of
 									true ->
@@ -745,8 +727,7 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 
 %% @doc Return block or block field.
 handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -762,7 +743,7 @@ handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req, _Pid) ->
 %% GET request to endpoint /current_block
 %% GET request to endpoint /block/current
 handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid) ->
-	case ar_node:get_current_block_hash(whereis(http_entrypoint_node)) of
+	case ar_node:get_current_block_hash() of
 		not_joined ->
 			not_joined(Req);
 		H when is_binary(H) ->
@@ -779,8 +760,7 @@ handle(<<"GET">>, [<<"current_block">>], Req, Pid) ->
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 %%
 handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
-	Node = whereis(http_entrypoint_node),
-	case ar_node:is_joined(Node) of
+	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
@@ -832,7 +812,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 %% @doc Return the current block hieght, or 500
 handle(Method, [<<"height">>], Req, _Pid)
 		when (Method == <<"GET">>) or (Method == <<"HEAD">>) ->
-	case ar_node:get_height(whereis(http_entrypoint_node)) of
+	case ar_node:get_height() of
 		-1 -> not_joined(Req);
 		H -> {200, #{}, integer_to_binary(H), Req}
 	end;
@@ -883,12 +863,11 @@ handle_get_tx_status(Hash, Req) ->
 						{<<"block_height">>, Height},
 						{<<"block_indep_hash">>, EncodedIndepHash}
 					],
-					Node = whereis(http_entrypoint_node),
-					case ar_node:is_in_block_index(Node, ar_util:decode(EncodedIndepHash)) of
+					case ar_node:is_in_block_index(ar_util:decode(EncodedIndepHash)) of
 						false ->
 							{404, #{}, <<"Not Found.">>, Req};
 						true ->
-							CurrentHeight = ar_node:get_height(Node),
+							CurrentHeight = ar_node:get_height(),
 							%% First confirmation is when the TX is in the latest block.
 							NumberOfConfirmations = CurrentHeight - Height + 1,
 							Status = PseudoTags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
@@ -981,9 +960,8 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 
 estimate_tx_price(SizeInBytesBinary, WalletAddr) ->
 	SizeInBytes = binary_to_integer(SizeInBytesBinary),
-	Node = whereis(http_entrypoint_node),
-	Height = ar_node:get_height(Node),
-	CurrentDiff = ar_node:get_diff(Node),
+	Height = ar_node:get_height(),
+	CurrentDiff = ar_node:get_diff(),
 	%% Add a safety buffer to prevent transactions
 	%% from being rejected after a retarget when the
 	%% difficulty drops
@@ -1007,7 +985,7 @@ estimate_tx_price(SizeInBytes, Diff, Height, WalletAddr, Timestamp) ->
 				SizeInBytes,
 				Diff,
 				Height,
-				ar_node:get_wallets(whereis(http_entrypoint_node), [Addr]),
+				ar_node:get_wallets([Addr]),
 				Addr,
 				Timestamp
 			)
@@ -1048,21 +1026,20 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 	end.
 
 handle_post_tx(Req, PeerIP, TX) ->
-	Node = whereis(http_entrypoint_node),
-	case verify_mempool_txs_size(Node, TX) of
+	case verify_mempool_txs_size(TX) of
 		invalid ->
 			handle_post_tx_no_mempool_space_response();
 		valid ->
-			Height = ar_node:get_height(Node),
-			handle_post_tx(Req, PeerIP, Node, TX, Height)
+			Height = ar_node:get_height(),
+			handle_post_tx(Req, PeerIP, TX, Height)
 	end.
 
-handle_post_tx(Req, PeerIP, Node, TX, Height) ->
-	Wallets = ar_node:get_wallets(Node, ar_tx:get_addresses([TX])),
+handle_post_tx(Req, PeerIP, TX, Height) ->
+	Wallets = ar_node:get_wallets(ar_tx:get_addresses([TX])),
 	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
 	case maps:get(OwnerAddr, Wallets, not_found) of
 		{Balance, _} when (TX#tx.reward + TX#tx.quantity) > Balance ->
-			ar:info([
+			?LOG_INFO([
 				submitted_txs_exceed_balance,
 				{owner, ar_util:encode(OwnerAddr)},
 				{balance, Balance},
@@ -1070,13 +1047,13 @@ handle_post_tx(Req, PeerIP, Node, TX, Height) ->
 			]),
 			handle_post_tx_exceed_balance_response();
 		_ ->
-			handle_post_tx(Req, PeerIP, Node, TX, Height, Wallets)
+			handle_post_tx(Req, PeerIP, TX, Height, Wallets)
 	end.
 
-handle_post_tx(Req, PeerIP, Node, TX, Height, Wallets) ->
-	Diff = ar_node:get_current_diff(Node),
-	{ok, BlockTXPairs} = ar_node:get_block_txs_pairs(Node),
-	MempoolTXs = ar_node:get_pending_txs(Node, [as_map, id_only]),
+handle_post_tx(Req, PeerIP, TX, Height, Wallets) ->
+	Diff = ar_node:get_current_diff(),
+	BlockTXPairs = ar_node:get_block_txs_pairs(),
+	MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
 	case ar_tx_replay_pool:verify_tx(
 		TX,
 		Diff,
@@ -1101,9 +1078,9 @@ handle_post_tx(Req, PeerIP, Node, TX, Height, Wallets) ->
 			handle_post_tx_accepted(Req, PeerIP, TX)
 	end.
 
-verify_mempool_txs_size(Node, TX) ->
+verify_mempool_txs_size(TX) ->
 	{HeaderSize, DataSize} = ar_node_worker:tx_mempool_size(TX),
-	{MempoolHeaderSize, MempoolDataSize} = ar_node:get_mempool_size(Node),
+	{MempoolHeaderSize, MempoolDataSize} = ar_node:get_mempool_size(),
 	case MempoolHeaderSize + HeaderSize > ?MEMPOOL_HEADER_SIZE_LIMIT of
 		true ->
 			invalid;
@@ -1121,7 +1098,7 @@ handle_post_tx_accepted(Req, PeerIP, TX) ->
 	%% IP-based throttling, to avoid connectivity issues at the times
 	%% of excessive transaction volumes.
 	ar_blacklist_middleware:decrement_ip_addr(PeerIP, Req),
-	ar_bridge:add_tx(whereis(http_bridge_node), TX),
+	ar_bridge:add_tx(TX),
 	case TX#tx.format of
 		2 ->
 			ar_data_sync:add_data_root_to_disk_pool(TX#tx.data_root, TX#tx.data_size, TX#tx.id);
@@ -1139,7 +1116,7 @@ handle_post_tx_last_tx_in_mempool_response() ->
 	{error_response, {400, #{}, <<"Invalid anchor (last_tx from mempool).">>}}.
 
 handle_post_tx_no_mempool_space_response() ->
-	ar:err([ar_http_iface_middleware, rejected_transaction, {reason, mempool_is_full}]),
+	?LOG_ERROR([ar_http_iface_middleware, rejected_transaction, {reason, mempool_is_full}]),
 	{error_response, {400, #{}, <<"Mempool is full.">>}}.
 
 handle_post_tx_bad_anchor_response() ->
@@ -1236,7 +1213,7 @@ log_internal_api_reject(Msg, Req) ->
 		Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 		{IpAddr, _Port} = cowboy_req:peer(Req),
 		BinIpAddr = list_to_binary(inet:ntoa(IpAddr)),
-		ar:warn("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
+		?LOG_WARNING("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
 	end).
 
 %% @doc Convert a blocks field with the given label into a string
@@ -1273,7 +1250,7 @@ hash_to_filename(Type, Hash) ->
 
 %% @doc Return true if ID is a pending tx.
 is_a_pending_tx(ID) ->
-	ar_node:is_a_pending_tx(whereis(http_entrypoint_node), ID).
+	ar_node:is_a_pending_tx(ID).
 
 %% @doc Given a request, returns a blockshadow.
 request_to_struct_with_blockshadow(Req, BlockJSON) ->
@@ -1291,9 +1268,9 @@ request_to_struct_with_blockshadow(Req, BlockJSON) ->
 %% the state of the node.
 return_info(Req) ->
 	{Time, Current} =
-		timer:tc(fun() -> ar_node:get_current_block_hash(whereis(http_entrypoint_node)) end),
+		timer:tc(fun() -> ar_node:get_current_block_hash() end),
 	{Time2, Height} =
-		timer:tc(fun() -> ar_node:get_height(whereis(http_entrypoint_node)) end),
+		timer:tc(fun() -> ar_node:get_height() end),
 	{200, #{},
 		ar_serialize:jsonify(
 			{
@@ -1314,11 +1291,11 @@ return_info(Req) ->
 						end
 					},
 					{blocks, ar_storage:blocks_on_disk()},
-					{peers, length(ar_bridge:get_remote_peers(whereis(http_bridge_node)))},
+					{peers, length(ar_bridge:get_remote_peers())},
 					{queue_length,
 						element(
 							2,
-							erlang:process_info(whereis(http_entrypoint_node), message_queue_len)
+							erlang:process_info(whereis(ar_node), message_queue_len)
 						)
 					},
 					{node_state_latency, (Time + Time2) div 2}
@@ -1421,7 +1398,7 @@ post_block(check_indep_hash, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	end;
 post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	%% Check if node is joined.
-	case ar_node:is_joined(whereis(http_entrypoint_node)) of
+	case ar_node:is_joined() of
 		false ->
 			%% The node is not ready to validate and accept blocks.
 			%% If the network adopts this block, ar_poller will catch up.
@@ -1431,7 +1408,7 @@ post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 			post_block(check_height, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
 	end;
 post_block(check_height, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
-	CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
+	CurrentHeight = ar_node:get_height(),
 	case BShadow#block.height of
 		H when H < CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT ->
 			ar_bridge:unignore_id(BShadow#block.indep_hash),
@@ -1459,10 +1436,9 @@ post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 post_block(check_pow, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	Nonce = BShadow#block.nonce,
 	Height = BShadow#block.height,
-	Node = whereis(http_entrypoint_node),
 	PrevH = BShadow#block.previous_block,
 	MaybeValid =
-		case ar_node:get_block_shadow_from_cache(Node, PrevH) of
+		case ar_node:get_block_shadow_from_cache(PrevH) of
 			not_found ->
 				%% We have not seen the previous block yet - might happen if two
 				%% successive blocks are distributed at the same time. Do not
@@ -1473,7 +1449,7 @@ post_block(check_pow, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 			#block{ height = PrevHeight } = PrevB ->
 				case Height >= ar_fork:height_2_3() of
 					true ->
-						UpperBound = ar_node:get_search_space_upper_bound(Node, PrevHeight + 1),
+						UpperBound = ar_node:get_search_space_upper_bound(PrevHeight + 1),
 						case validate_spora_pow(BShadow, PrevB, BDS, UpperBound) of
 							tx_root_not_found ->
 								%% The part of the weave with the given recall byte
@@ -1527,17 +1503,16 @@ post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	end;
 post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	record_block_pre_validation_time(ReceiveTimestamp),
-	ar:info([{
+	?LOG_INFO([{
 		sending_external_block_to_bridge,
 		ar_util:encode(BShadow#block.indep_hash)
 	}]),
-	ar:info([
+	?LOG_INFO([
 		ar_http_iface_handler,
 		accepted_block,
 		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
 	]),
 	ar_bridge:add_block(
-		whereis(http_bridge_node),
 		OrigPeer,
 		BShadow,
 		BDS,
@@ -1597,14 +1572,14 @@ validate_spora_pow(B, #block{ height = PrevHeight } = PrevB, BDSBase, SearchSpac
 	end.
 
 post_block_reject_warn(BShadow, Step, Peer) ->
-	ar:warn([
+	?LOG_WARNING([
 		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
 		Step,
 		{peer, ar_util:format_peer(Peer)}
 	]).
 
 post_block_reject_warn(BShadow, Step, Peer, Params) ->
-	ar:warn([
+	?LOG_WARNING([
 		{post_block_rejected, ar_util:encode(BShadow#block.indep_hash)},
 		{Step, Params},
 		{peer, ar_util:format_peer(Peer)}
@@ -1617,7 +1592,7 @@ record_block_pre_validation_time(ReceiveTimestamp) ->
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
-	CurrentBI = ar_node:get_block_index(whereis(http_entrypoint_node)),
+	CurrentBI = ar_node:get_block_index(),
 	case is_block_known(Type, ID, CurrentBI) of
 		true ->
 			BlockHL = case Type of
@@ -1643,15 +1618,14 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 	MaybeFilename = case Type of
 		<<"height">> ->
-			Node = whereis(http_entrypoint_node),
-			CurrentHeight = ar_node:get_height(Node),
+			CurrentHeight = ar_node:get_height(),
 			case ID of
 				Height when Height < 0 ->
 					unavailable;
 				Height when Height > CurrentHeight ->
 					unavailable;
 				Height ->
-					BI = ar_node:get_block_index(Node),
+					BI = ar_node:get_block_index(),
 					Len = length(BI),
 					case Height > Len - 1 of
 						true ->
@@ -1731,8 +1705,7 @@ process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
 		{_, {error, invalid}} ->
 			{400, #{}, <<"Invalid root hash.">>, Req};
 		{{ok, RootHash}, {ok, Cursor}} ->
-			Node = whereis(http_entrypoint_node),
-			case ar_node:get_wallet_list_chunk(Node, RootHash, Cursor) of
+			case ar_node:get_wallet_list_chunk(RootHash, Cursor) of
 				{ok, {NextCursor, Wallets}} ->
 					SerializeFn = case cowboy_req:header(<<"content-type">>, Req) of
 						<<"application/json">> -> fun wallet_list_chunk_to_json/1;
@@ -1792,7 +1765,7 @@ search_in_block_index(H, BI) ->
 
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight) ->
-	BI = ar_node:get_block_index(whereis(http_entrypoint_node)),
+	BI = ar_node:get_block_index(),
 	ar_storage:read_block(binary_to_integer(RawHeight), BI);
 find_block(<<"hash">>, ID) ->
 	ar_storage:read_block(ID).

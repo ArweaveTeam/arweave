@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/1,
+	start_link/0,
 	join/2,
 	add_tip_block/2, add_block/1,
 	request_tx_removal/1
@@ -13,6 +13,7 @@
 
 -include("ar.hrl").
 -include("ar_header_sync.hrl").
+-include("common.hrl").
 -include("ar_data_sync.hrl").
 
 %%% This module syncs block and transaction headers and maintains a persisted record of synced
@@ -23,8 +24,8 @@
 %%% Public interface.
 %%%===================================================================
 
-start_link(Args) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Update the tip after the node joins the network.
 join(BI, Blocks) ->
@@ -47,7 +48,7 @@ request_tx_removal(TXID) ->
 %%%===================================================================
 
 init([]) ->
-	ar:info([{event, ar_header_sync_start}]),
+	?LOG_INFO([{event, ar_header_sync_start}]),
 	process_flag(trap_exit, true),
 	{ok, DB} = ar_kv:open("ar_header_sync_db"),
 	{SyncRecord, LastHeight, CurrentBI} =
@@ -193,14 +194,13 @@ handle_cast(process_item, State) ->
 			{noreply, State#{ queue => UpdatedQueue, last_picked => LastPicked2 }};
 		Height ->
 			cast_after(?PROCESS_ITEM_INTERVAL_MS, check_space_process_item),
-			Node = whereis(http_entrypoint_node),
-			case Node == undefined orelse ar_node:get_block_index_entry(Node, Height) of
+			case ar_node:get_block_index_entry(Height) of
 				true ->
 					{noreply, State#{ queue => UpdatedQueue }};
 				not_joined ->
 					{noreply, State#{ queue => UpdatedQueue }};
 				not_found ->
-					ar:err([
+					?LOG_ERROR([
 						{event, ar_header_sync_block_index_entry_not_found},
 						{height, Height},
 						{sync_record, SyncRecord}
@@ -215,7 +215,7 @@ handle_cast(process_item, State) ->
 					H2 =
 						case Height < ar_fork:height_2_0() of
 							true ->
-								ar_node:get_2_0_hash_of_1_0_block(Node, Height);
+								ar_node:get_2_0_hash_of_1_0_block(Height);
 							false ->
 								not_set
 						end,
@@ -238,7 +238,7 @@ handle_info(_Message, State) ->
 	{noreply, State}.
 
 terminate(Reason, State) ->
-	ar:info([{event, ar_header_sync_terminate}, {reason, Reason}]),
+	?LOG_INFO([{event, ar_header_sync_terminate}, {reason, Reason}]),
 	#{ db := DB } = State,
 	ar_kv:close(DB).
 
@@ -274,7 +274,7 @@ add_block(B, State) ->
 					State#{ sync_record => UpdatedSyncRecord }
 			end;
 		{error, Reason} ->
-			ar:warn([
+			?LOG_WARNING([
 				{event, failed_to_store_block},
 				{block, ar_util:encode(H)},
 				{height, Height},
@@ -361,7 +361,7 @@ update_backoff({_Timestamp, Interval}) ->
 	{os:system_time(second) + UpdatedInterval, UpdatedInterval}.
 
 download_block(H, H2, TXRoot) ->
-	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	Peers = ar_bridge:get_remote_peers(),
 	case ar_storage:read_block(H) of
 		unavailable ->
 			download_block(Peers, H, H2, TXRoot);
@@ -373,7 +373,7 @@ download_block(Peers, H, H2, TXRoot) ->
 	Fork_2_0 = ar_fork:height_2_0(),
 	case ar_http_iface_client:get_block_shadow(Peers, H) of
 		unavailable ->
-			ar:warn([
+			?LOG_WARNING([
 				{event, ar_header_sync_failed_to_download_block_header},
 				{block, ar_util:encode(H)}
 			]),
@@ -385,7 +385,7 @@ download_block(Peers, H, H2, TXRoot) ->
 				H2 when Height < Fork_2_0 ->
 					download_txs(Peers, B, TXRoot);
 				_ ->
-					ar:warn([
+					?LOG_WARNING([
 						{event, ar_header_sync_block_hash_mismatch},
 						{block, ar_util:encode(H)},
 						{peer, ar_util:format_peer(Peer)}
@@ -410,7 +410,7 @@ download_txs(Peers, B, TXRoot) ->
 						ok ->
 							{ok, B#block{ txs = TXs }};
 						{error, Reason} = Error ->
-							ar:warn([
+							?LOG_WARNING([
 								{event, ar_header_sync_failed_to_migrate_v1_txs},
 								{block, ar_util:encode(B#block.indep_hash)},
 								{reason, Reason}
@@ -418,26 +418,26 @@ download_txs(Peers, B, TXRoot) ->
 							Error
 					end;
 				_ ->
-						ar:warn([
+						?LOG_WARNING([
 							{event, ar_header_sync_block_tx_root_mismatch},
 							{block, ar_util:encode(B#block.indep_hash)}
 						]),
 						{error, block_tx_root_mismatch}
 			end;
 		{error, txs_exceed_block_size_limit} ->
-			ar:warn([
+			?LOG_WARNING([
 				{event, ar_header_sync_block_txs_exceed_block_size_limit},
 				{block, ar_util:encode(B#block.indep_hash)}
 			]),
 			{error, txs_exceed_block_size_limit};
 		{error, txs_count_exceeds_limit} ->
-			ar:warn([
+			?LOG_WARNING([
 				{event, ar_header_sync_block_txs_count_exceeds_limit},
 				{block, ar_util:encode(B#block.indep_hash)}
 			]),
 			{error, txs_count_exceeds_limit};
 		{error, tx_not_found} ->
-			ar:warn([
+			?LOG_WARNING([
 				{event, ar_header_sync_block_tx_not_found},
 				{block, ar_util:encode(B#block.indep_hash)}
 			]),

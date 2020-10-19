@@ -5,6 +5,7 @@
 -export([extract_note/1, extract_root/1]).
 
 -include("ar.hrl").
+-include("common.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Generates annotated merkle trees, paths inside those trees, as well 
@@ -105,7 +106,7 @@ generate_path_parts(ID, Dest, Tree) ->
 	end.
 
 validate_path(ID, Dest, RightBound, _Path) when RightBound =< 0 ->
-	ar:err([
+	?LOG_ERROR([
 		{event, validate_path_called_with_not_positive_right_bound},
 		{root, ar_util:encode(ID)},
 		{dest, Dest},

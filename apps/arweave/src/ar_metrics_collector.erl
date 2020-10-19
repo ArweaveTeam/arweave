@@ -41,10 +41,10 @@ metrics() ->
 		ar_storage:blocks_on_disk()},
 	 {arnode_queue_len, gauge,
 		"Size of message queuee on ar_node",
-		element(2, erlang:process_info(whereis(http_entrypoint_node), message_queue_len))},
+		element(2, erlang:process_info(whereis(ar_node), message_queue_len))},
 	 {arbridge_queue_len, gauge,
 		"Size of message queuee on ar_bridge",
-		element(2, erlang:process_info(whereis(http_bridge_node), message_queue_len))},
+		element(2, erlang:process_info(whereis(ar_bridge), message_queue_len))},
 	 {ignored_ids_len, gauge,
 		"Size of table of Ignored/already seen IDs:",
 		ets:info(ignored_ids, size)}

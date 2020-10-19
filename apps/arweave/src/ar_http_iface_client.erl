@@ -30,6 +30,7 @@
 ]).
 
 -include("ar.hrl").
+-include("common.hrl").
 -include("ar_data_sync.hrl").
 -include("ar_wallets.hrl").
 
@@ -127,7 +128,7 @@ get_block(Peers, H) when is_list(Peers) ->
 		B ->
 			case catch reconstruct_full_block(Peers, B) of
 				{'EXIT', Reason} ->
-					ar:info([
+					?LOG_INFO([
 						{event, failed_to_construct_full_block_from_shadow},
 						{reason, Reason}
 					]),
@@ -231,7 +232,7 @@ get_wallet_list_chunk([Peer | Peers], H, Cursor) ->
 				{ok, #{ next_cursor := NextCursor, wallets := Wallets }} ->
 					{ok, {NextCursor, Wallets}};
 				DeserializationResult ->
-					ar:err([
+					?LOG_ERROR([
 						{event, got_unexpected_wallet_list_chunk_deserialization_result},
 						{deserialization_result, DeserializationResult}
 					]),
@@ -348,7 +349,7 @@ get_height(Peer) ->
 get_txs(Peers, MempoolTXs, B) ->
 	case B#block.txs of
 		TXIDs when length(TXIDs) > ?BLOCK_TX_COUNT_LIMIT ->
-			ar:err([{event, downloaded_txs_count_exceeds_limit}]),
+			?LOG_ERROR([{event, downloaded_txs_count_exceeds_limit}]),
 			{error, txs_count_exceeds_limit};
 		TXIDs ->
 			get_txs(B#block.height, Peers, MempoolTXs, TXIDs, [], 0)
@@ -366,7 +367,7 @@ get_txs(Height, Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
 		#tx{ format = 1 } = TX ->
 			case TotalSize + TX#tx.data_size of
 				NewTotalSize when NewTotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
-					ar:err([{event, downloaded_txs_exceed_block_size_limit}]),
+					?LOG_ERROR([{event, downloaded_txs_exceed_block_size_limit}]),
 					{error, txs_exceed_block_size_limit};
 				NewTotalSize ->
 					get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
@@ -416,7 +417,7 @@ get_tx_from_remote_peer(Peers, TXID) ->
 		#tx{} = TX ->
 			case ar_tx:verify_tx_id(TXID, TX) of
 				false ->
-					ar:warn([
+					?LOG_WARNING([
 						{event, peer_served_invalid_tx},
 						{peer, ar_util:format_peer(Peer)},
 						{tx, ar_util:encode(TXID)}
@@ -573,7 +574,7 @@ handle_block_response(_, _, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailabl
 handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block_shadow) ->
 	case catch ar_serialize:json_struct_to_block(Body) of
 		{'EXIT', Reason} ->
-			ar:info([
+			?LOG_INFO([
 				"Failed to parse block response.",
 				{peer, Peer},
 				{reason, Reason}
@@ -582,7 +583,7 @@ handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block
 		B when is_record(B, block) ->
 			B;
 		Error ->
-			ar:info([
+			?LOG_INFO([
 				"Failed to parse block response.",
 				{peer, Peer},
 				{error, Error}
@@ -592,7 +593,7 @@ handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block
 handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, full_block) ->
 	case catch reconstruct_full_block(Peers, Body) of
 		{'EXIT', Reason} ->
-			ar:info([
+			?LOG_INFO([
 				"Failed to parse block response.",
 				{peer, Peer},
 				{reason, Reason}
@@ -612,7 +613,7 @@ reconstruct_full_block(Peers, Body) when is_binary(Body) ->
 			B
 	end;
 reconstruct_full_block(Peers, B) when is_record(B, block) ->
-	MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node), [as_map]),
+	MempoolTXs = ar_node:get_pending_txs([as_map]),
 	case get_txs(Peers, MempoolTXs, B) of
 		{ok, TXs} ->
 			B#block {

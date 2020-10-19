@@ -4,10 +4,11 @@
 
 -module(ar_http_iface_server).
 
--export([start/1]).
+-export([start/0]).
 -export([split_path/1]).
 
 -include("ar.hrl").
+-include("ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
@@ -34,18 +35,6 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Start the Arweave HTTP API.
-start(Opts) ->
-	ok = ar_semaphore:start_link(block_index_semaphore, ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS),
-	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
-	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
-	ok = ar_semaphore:start_link(get_chunk_semaphore, ?MAX_PARALLEL_GET_CHUNK_REQUESTS),
-	ok = ar_semaphore:start_link(wallet_list_semaphore, ?MAX_PARALLEL_WALLET_LIST_REQUESTS),
-	ok = ar_blacklist_middleware:start(),
-	ok = start_http_iface_listener(Opts),
-	ok = start_gateway_listeners(Opts),
-	ok.
-
 split_path(Path) ->
 	binary:split(Path, <<"/">>, [global, trim_all]).
 
@@ -53,30 +42,44 @@ split_path(Path) ->
 %%% Private functions.
 %%%===================================================================
 
-start_http_iface_listener(Opts) ->
+%% @doc Start the server
+start() ->
+	ok = ar_semaphore:start_link(block_index_semaphore, ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS),
+	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
+	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
+	ok = ar_semaphore:start_link(get_chunk_semaphore, ?MAX_PARALLEL_GET_CHUNK_REQUESTS),
+	ok = ar_semaphore:start_link(wallet_list_semaphore, ?MAX_PARALLEL_WALLET_LIST_REQUESTS),
+	ok = ar_blacklist_middleware:start(),
+
+    {ok, Config} = application:get_env(arweave, config),
+	ok = start_http_iface_listener(Config),
+	ok = start_gateway_listeners(Config),
+	ok.
+
+start_http_iface_listener(Config) ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	HttpIfaceEnv = #{ dispatch => Dispatch },
 	TransportOpts = #{
-		max_connections => proplists:get_value(max_connections, Opts),
-		socket_opts => [{port, proplists:get_value(port, Opts)}]
+		max_connections => Config#config.max_connections,
+		socket_opts => [{port, Config#config.port}]
 	},
 	ProtocolOpts = protocol_opts([{http_iface, HttpIfaceEnv}]),
 	{ok, _} = cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts),
 	ok.
 
-start_gateway_listeners(Opts) ->
-	case proplists:get_value(gateway_domain, Opts) of
+start_gateway_listeners(Config) ->
+	case Config#config.gateway_domain of
 		Domain when is_binary(Domain) ->
-			ok = start_http_gateway_listener(Opts),
-			ok = start_https_gateway_listener(Opts),
+			ok = start_http_gateway_listener(Config),
+			ok = start_https_gateway_listener(Config),
 			ok;
 		not_set ->
 			ok
 	end.
 
-start_http_gateway_listener(Opts) ->
-	Domain = proplists:get_value(gateway_domain, Opts),
-	CustomDomains = proplists:get_value(gateway_custom_domains, Opts),
+start_http_gateway_listener(Config) ->
+	Domain = Config#config.gateway_domain,
+	CustomDomains = Config#config.gateway_custom_domains,
 	TransportOpts = #{
 		max_connections => 10,
 		socket_opts => [{port, 80}]
@@ -85,15 +88,15 @@ start_http_gateway_listener(Opts) ->
 	{ok, _} = cowboy:start_clear(ar_http_gateway_listener, TransportOpts, ProtocolOpts),
 	ok.
 
-start_https_gateway_listener(Opts) ->
+start_https_gateway_listener(Config) ->
 	PrivDir = code:priv_dir(arweave),
-	Domain = proplists:get_value(gateway_domain, Opts),
-	CustomDomains = proplists:get_value(gateway_custom_domains, Opts),
+	Domain = Config#config.gateway_domain,
+	CustomDomains = Config#config.gateway_custom_domains,
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	HttpIfaceEnv = #{ dispatch => Dispatch },
 	SniHosts = derive_sni_hosts(CustomDomains),
 	TransportOpts = #{
-		max_connections => proplists:get_value(max_gateway_connections, Opts),
+		max_connections => Config#config.max_gateway_connections,
 		socket_opts => [
 			{port, 443},
 			{certfile, filename:join([PrivDir, "tls/cert.pem"])},

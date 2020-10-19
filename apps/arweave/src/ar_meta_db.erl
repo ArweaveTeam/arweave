@@ -5,11 +5,13 @@
 
 -module(ar_meta_db).
 -behaviour(gen_server).
--define(SERVER, ?MODULE).
 
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
+
 -include("ar.hrl").
+-include("common.hrl").
+-include("ar_config.hrl").
 
 %% API
 -export([start_link/0, stop/0, stop/1]).
@@ -32,27 +34,27 @@
 
 %% @doc Starts the server
 start_link() ->
-	gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Stops the server
 stop() ->
-	gen_server:stop(?SERVER).
+	gen_server:stop(?MODULE).
 
 %% @doc Stops the server with a reason
 stop(Reason) ->
 	StopTimeout = 5000, %% milliseconds
-	gen_server:stop(?SERVER, Reason, StopTimeout).
+	gen_server:stop(?MODULE, Reason, StopTimeout).
 
 %% @doc Deletes all objects in db
 reset() ->
-	gen_server:call(?SERVER, reset).
+	gen_server:call(?MODULE, reset).
 
 reset_peer(Peer) ->
-	gen_server:call(?SERVER, {reset_peer, Peer}).
+	gen_server:call(?MODULE, {reset_peer, Peer}).
 
 %% @doc Insert key-value-pair into db
 put(Key, Value) ->
-	gen_server:call(?SERVER, {put, Key, Value}).
+	gen_server:call(?MODULE, {put, Key, Value}).
 
 %% @doc Retreive value for key
 %% We don't want to serialize reads. So, we let
@@ -69,15 +71,15 @@ get(Key) ->
 %% @doc Increase the value associated with Key by Val. If the key
 %% is not set, set it to Val.
 increase(Key, Val) ->
-	gen_server:cast(?SERVER, {increase, Key, Val}).
+	gen_server:cast(?MODULE, {increase, Key, Val}).
 
 %% @doc Remove entries from the performance database older than ?PEER_TMEOUT
 purge_peer_performance() ->
-	gen_server:call(?SERVER, purge_peer_performance).
+	gen_server:call(?MODULE, purge_peer_performance).
 
 %% @doc Return all of the keys available in the database.
 keys() ->
-	gen_server:call(?SERVER, keys).
+	gen_server:call(?MODULE, keys).
 
 %%------------------------------------------------------------------------------
 %% Behaviour callbacks
@@ -85,10 +87,50 @@ keys() ->
 
 %% @hidden
 init(_) ->
+	?LOG_INFO("starting meta db"),
+
 	%% Initialise the metadata storage service.
-	ar:report([starting_meta_db]),
-	ets:new(?MODULE, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(blacklist, [set, public, named_table]),
+    {ok, Config} = application:get_env(arweave, config),
+	ets:insert(?MODULE, {data_dir, Config#config.data_dir}),
+	ets:insert(?MODULE, {metrics_dir, Config#config.metrics_dir}),
+	ets:insert(?MODULE, {port, Config#config.port}),
+	ets:insert(?MODULE, {disk_space, Config#config.disk_space}),
+	ets:insert(?MODULE, {used_space, Config#config.used_space}),
+	ets:insert(?MODULE, {mine, Config#config.mine}),
+	ets:insert(?MODULE, {max_miners, Config#config.max_miners}),
+	ets:insert(?MODULE, {max_emitters, Config#config.max_emitters}),
+	ets:insert(?MODULE, {tx_propagation_parallelization, Config#config.tx_propagation_parallelization}),
+	ets:insert(?MODULE, {content_policy_files, Config#config.content_policy_files}),
+	ets:insert(?MODULE, {transaction_blacklist_files, Config#config.transaction_blacklist_files}),
+	ets:insert(?MODULE, {internal_api_secret, Config#config.internal_api_secret}),
+	ets:insert(?MODULE, {requests_per_minute_limit, Config#config.requests_per_minute_limit}),
+	ets:insert(?MODULE, {max_propagation_peers, Config#config.max_propagation_peers}),
+	ets:insert(?MODULE, {max_poa_option_depth, Config#config.max_poa_option_depth}),
+	ets:insert(?MODULE, {disk_pool_data_root_expiration_time_us, 
+                         Config#config.disk_pool_data_root_expiration_time * 1000000}),
+	ets:insert(?MODULE, {max_disk_pool_buffer_mb, Config#config.max_disk_pool_buffer_mb}),
+	ets:insert(?MODULE, {max_disk_pool_data_root_buffer_mb, Config#config.max_disk_pool_data_root_buffer_mb}),
+	ets:insert(?MODULE, {randomx_bulk_hashing_iterations, Config#config.randomx_bulk_hashing_iterations}),
+
+	%% Store enabled features.
+	lists:foreach(fun(Feature) -> 
+	                ets:insert(?MODULE, {Feature, true})
+                  end, Config#config.enable),
+	lists:foreach(fun(Feature) -> 
+	                ets:insert(?MODULE, {Feature, false})
+                  end, Config#config.disable),
+
+    %FIXME rewrite ar_storage using OTP
+    spawn(fun() ->
+	        %% Prepare the storage for operation.
+	        ar_storage:init(),
+
+	        %% Optionally clear the block cache.
+	        if Config#config.clean -> ar_storage:clear(); true -> do_nothing end,
+
+	        ar_storage:start_update_used_space()
+          end),
+
 	{ok, #{}}.
 
 %% @hidden

@@ -26,6 +26,7 @@
 
 -include("ar.hrl").
 -include("ar_wallets.hrl").
+-include("common.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -248,7 +249,7 @@ handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
 	{noreply, DAG}.
 
 terminate(Reason, _State) ->
-	ar:info([{event, ar_wallets_terminated}, {reason, Reason}]).
+	?LOG_INFO([{event, ar_wallets_terminated}, {reason, Reason}]).
 
 %%%===================================================================
 %%% Private functions.

@@ -18,6 +18,7 @@
 ]).
 
 -include("ar.hrl").
+-include("common.hrl").
 
 -ifdef(DEBUG).
 init_fast(Key, _Threads) ->
@@ -76,10 +77,10 @@ release_state(_State) ->
 release_state(State) ->
 	case release_state_nif(State) of
 		ok ->
-			ar:info([ar_mine_randomx, succeeded_releasing_randomx_state]),
+			?LOG_INFO([ar_mine_randomx, succeeded_releasing_randomx_state]),
 			ok;
 		{error, Reason} ->
-			ar:warn([ar_mine_randomx, failed_to_release_randomx_state, {reason, Reason}]),
+			?LOG_WARNING([ar_mine_randomx, failed_to_release_randomx_state, {reason, Reason}]),
 			error
 	end.
 -endif.

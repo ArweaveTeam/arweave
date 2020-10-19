@@ -1,8 +1,7 @@
 -ifndef(AR_CONFIG_HRL).
 -define(AR_CONFIG_HRL, true).
 
--include("ar.hrl").
--include("ar_data_sync.hrl").
+-include_lib("ar.hrl").
 
 -record(config_webhook, {
 	events = [],
@@ -18,7 +17,7 @@
 	peers = [],
 	data_dir = ".",
 	metrics_dir = ?METRICS_DIR,
-	polling = false,
+	polling = 0, %% period of time in seconds
 	auto_join = true,
 	clean = false,
 	diff = ?DEFAULT_DIFF,

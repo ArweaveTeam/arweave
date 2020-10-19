@@ -15,6 +15,7 @@
 ]).
 
 -include("ar.hrl").
+-include("common.hrl").
 -include("ar_data_sync.hrl").
 -include("perpetual_storage.hrl").
 
@@ -193,7 +194,7 @@ apply_txs(WalletList, TXs, Height) ->
 %% the source and destination addresses and the reward wallet from the previous block,
 %% and the mapping between block hashes and transaction identifiers of the recent blocks.
 validate(BI, NewB, B, Wallets, BlockTXPairs) ->
-	ar:info(
+	?LOG_INFO(
 		[
 			{event, validating_block},
 			{hash, ar_util:encode(NewB#block.indep_hash)}
@@ -205,7 +206,7 @@ validate(BI, NewB, B, Wallets, BlockTXPairs) ->
 		end
 	) of
 		{TimeTaken, valid} ->
-			ar:info(
+			?LOG_INFO(
 				[
 					{event, block_validation_successful},
 					{hash, ar_util:encode(NewB#block.indep_hash)},
@@ -214,7 +215,7 @@ validate(BI, NewB, B, Wallets, BlockTXPairs) ->
 			),
 			valid;
 		{TimeTaken, {invalid, Reason}} ->
-			ar:info(
+			?LOG_INFO(
 				[
 					{event, block_validation_failed},
 					{reason, Reason},
