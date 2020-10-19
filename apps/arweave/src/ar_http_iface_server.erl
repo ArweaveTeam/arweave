@@ -5,7 +5,6 @@
 -module(ar_http_iface_server).
 
 -export([start/1]).
--export([reregister/1, reregister/2]).
 -export([split_path/1]).
 
 -include("ar.hrl").
@@ -35,40 +34,8 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Start the Arweave HTTP API and returns a process ID.
+%% @doc Start the Arweave HTTP API.
 start(Opts) ->
-	reregister_from_proplist([
-		http_entrypoint_node,
-		http_service_node,
-		http_bridge_node
-	], Opts),
-	do_start(Opts).
-
-reregister_from_proplist(Names, Opts) ->
-	lists:foreach(fun(Name) ->
-		reregister(Name, proplists:get_value(Name, Opts))
-	end, Names).
-
-%% @doc Helper function : registers a new node as the entrypoint.
-reregister(Node) ->
-	reregister(http_entrypoint_node, Node).
-reregister(_, undefined) -> not_registering;
-reregister(Name, Node) ->
-	case erlang:whereis(Name) of
-		undefined -> do_nothing;
-		_ -> erlang:unregister(Name)
-	end,
-	erlang:register(Name, Node).
-
-split_path(Path) ->
-	binary:split(Path, <<"/">>, [global, trim_all]).
-
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
-
-%% @doc Start the server
-do_start(Opts) ->
 	ok = ar_semaphore:start_link(block_index_semaphore, ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS),
 	ok = ar_semaphore:start_link(arql_semaphore, ?MAX_PARALLEL_ARQL_REQUESTS),
 	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
@@ -78,6 +45,13 @@ do_start(Opts) ->
 	ok = start_http_iface_listener(Opts),
 	ok = start_gateway_listeners(Opts),
 	ok.
+
+split_path(Path) ->
+	binary:split(Path, <<"/">>, [global, trim_all]).
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
 
 start_http_iface_listener(Opts) ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
