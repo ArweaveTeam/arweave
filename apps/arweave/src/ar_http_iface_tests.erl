@@ -83,6 +83,7 @@ get_fun_msg_pair(send_new_tx) ->
 %% to an ar_util:pmap/2 call fails the tests currently.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
+	ar_test_node:disconnect_from_slave(),
 	ar_blacklist_middleware:reset(),
 	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
