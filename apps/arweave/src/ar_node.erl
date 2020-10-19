@@ -101,7 +101,7 @@ start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 			server(WPid, State)
 		end
 	),
-	ar_http_iface_server:reregister(http_entrypoint_node, PID),
+	erlang:register(http_entrypoint_node, PID),
 	PID.
 
 start_from_block_index(Node, [#block{} = GenesisB]) ->
