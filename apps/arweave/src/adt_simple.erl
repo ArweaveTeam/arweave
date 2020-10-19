@@ -1,7 +1,8 @@
 -module(adt_simple).
 -export([start/1, start/2, start/3, stop/1]).
 -export([report/1]).
--include("ar.hrl").
+
+-include_lib("arweave/include/ar.hrl").
 
 %%% A simple abstraction for building Arweave apps.
 %%% Provides a simple method (using a callback module) for interacting with

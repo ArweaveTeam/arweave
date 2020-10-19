@@ -1,5 +1,6 @@
 -module(ar_config_tests).
--include("src/ar_config.hrl").
+
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 parse_test_() ->
@@ -24,7 +25,7 @@ parse_config() ->
 		],
 		data_dir = "some_data_dir",
 		metrics_dir = "metrics_dir",
-		polling = true,
+		polling = 10,
 		auto_join = false,
 		clean = true,
 		diff = 42,

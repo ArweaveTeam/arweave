@@ -2,7 +2,7 @@
 
 -export([next_cumulative_diff/3, twice_smaller_diff/1, multiply_diff/2]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 %% @doc Calculate the cumulative difficulty for the next block.
 next_cumulative_diff(OldCDiff, NewDiff, Height) ->
@@ -29,8 +29,7 @@ twice_smaller_diff(Diff) ->
 	MaxDiff = ar_mine:max_difficulty(),
 	MaxDiff - 2 * (MaxDiff - Diff).
 
-%% @doc Get a difficulty that makes it harder to mine
-%% by `Multiplier` number of times.
+%% @doc Get a difficulty that makes it harder to mine by Multiplier number of times.
 multiply_diff(Diff, Multiplier) ->
 	MaxDiff = ar_mine:max_difficulty(),
 	MaxDiff - erlang:trunc(1 / Multiplier * (MaxDiff - Diff)).

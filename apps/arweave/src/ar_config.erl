@@ -2,8 +2,8 @@
 
 -export([parse/1]).
 
--include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -70,12 +70,10 @@ parse_options([{<<"metrics_dir">>, MetricsDir} | Rest], Config) when is_binary(M
 parse_options([{<<"metrics_dir">>, MetricsDir} | _], _) ->
 	{error, {bad_type, metrics_dir, string}, MetricsDir};
 
-parse_options([{<<"polling">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config{ polling = true });
-parse_options([{<<"polling">>, false} | Rest], Config) ->
-	parse_options(Rest, Config);
+parse_options([{<<"polling">>, Frequency} | Rest], Config) when is_integer(Frequency) ->
+	parse_options(Rest, Config#config{ polling = Frequency });
 parse_options([{<<"polling">>, Opt} | _], _) ->
-	{error, {bad_type, polling, boolean}, Opt};
+	{error, {bad_type, polling, number}, Opt};
 
 parse_options([{<<"clean">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ clean = true });

@@ -1,7 +1,7 @@
 -module(ar_gateway_middleware_tests).
 
 -include_lib("eunit/include/eunit.hrl").
--include("src/ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -define(MOCK_DOMAIN, <<"gateway.test">>).
 -define(MOCK_CUSTOM_DOMAIN, <<"custom.domain.test">>).

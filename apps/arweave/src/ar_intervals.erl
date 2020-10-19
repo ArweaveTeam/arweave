@@ -85,7 +85,7 @@ outerjoin(I1, I2) ->
 	intersection(inverse(I1), I2).
 
 %% @doc Return {start, n, end} where {start, end} is the interval from the set
-%% containing the found point n, n >= start, n < end, and n is the Nth (starting from 0) point
+%% containing the found point n, from [start, end), and n is the Nth (starting from 0) point
 %% contained in the set of intervals when counted starting from the smallest interval, including
 %% the left bounds and excluding the right bounds.
 %% Raises a none exception, if the set does not contain enough points to find N.

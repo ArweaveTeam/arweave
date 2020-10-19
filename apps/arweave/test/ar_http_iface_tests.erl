@@ -1,11 +1,13 @@
 -module(ar_http_iface_tests).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	ar_storage:clear(),
+	ar_test_node:disconnect_from_slave(),
+
 	ar_test_node:start(no_block),
 	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, name)),
 	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, release)),
@@ -38,7 +40,7 @@ post_block_to_unjoined_node_test() ->
 	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
 	{ok, {RespTup, _, Body, _, _}} =
 		ar_http:req(#{method => post, peer => {127, 0, 0, 1, 1984}, path => "/block/", body => JB}),
-	case ar_node:is_joined(whereis(http_entrypoint_node)) of
+	case ar_node:is_joined() of
 		false ->
 			?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
 			?assertEqual(<<"Not joined.">>, Body);
@@ -131,7 +133,7 @@ group(Grouper, [Item | List], Acc) ->
 get_balance_test() ->
 	{_Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
@@ -147,8 +149,8 @@ get_balance_test() ->
 			peer => {127, 0, 0, 1, 1984},
 			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
 		}),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -181,10 +183,10 @@ get_wallet_list_in_chunks_test() ->
 %% @doc Test that heights are returned correctly.
 get_height_test() ->
 	[B0] = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	0 = ar_http_iface_client:get_height({127, 0, 0, 1, 1984}),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	1 = ar_http_iface_client:get_height({127, 0, 0, 1, 1984}).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
@@ -218,8 +220,8 @@ get_block_by_hash_test() ->
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
-	ar_test_node:wait_until_height(Node, 0),
+	{_Node, _} = ar_test_node:start(B0),
+	ar_test_node:wait_until_height(0),
 	{_, B1} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}], 0),
 	?assertEqual(
 		B0#block{ hash_list = unset, wallet_list = not_set, size_tagged_txs = unset },
@@ -231,9 +233,9 @@ get_current_block_test_() ->
 
 test_get_current_block() ->
 	[B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	ar_util:do_until(
-		fun() -> B0#block.indep_hash == ar_node:get_current_block_hash(Node) end,
+		fun() -> B0#block.indep_hash == ar_node:get_current_block_hash() end,
 		100,
 		2000
 	),
@@ -285,7 +287,7 @@ get_non_existent_block_test() ->
 %% @doc A test for retrieving format=2 transactions from HTTP API.
 get_format_2_tx_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	DataRoot = (ar_tx:generate_chunk_tree(#tx{ data = <<"DATA">> }))#tx.data_root,
 	ValidTX = #tx{ id = TXID } = (ar_tx:new(<<"DATA">>))#tx{ format = 2, data_root = DataRoot },
 	InvalidDataRootTX = #tx{ id = InvalidTXID } = (ar_tx:new(<<"DATA">>))#tx{ format = 2 },
@@ -296,9 +298,9 @@ get_format_2_tx_test() ->
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, ValidTX),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, InvalidDataRootTX),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, EmptyTX),
-	ar_test_node:wait_until_receives_txs(Node, [ValidTX, EmptyTX, InvalidDataRootTX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:wait_until_receives_txs([ValidTX, EmptyTX, InvalidDataRootTX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	%% Ensure format=2 transactions can be retrieved over the HTTP
 	%% interface with no populated data, while retaining info on all other fields.
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
@@ -346,13 +348,13 @@ get_format_2_tx_test() ->
 
 get_format_1_tx_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	TX = #tx{ id = TXID } = ar_tx:new(<<"DATA">>),
 	EncodedTXID = binary_to_list(ar_util:encode(TXID)),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:wait_until_receives_txs([TX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -364,7 +366,7 @@ get_format_1_tx_test() ->
 %% @doc Test adding transactions to a block.
 add_external_tx_with_tags_test() ->
 	[B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	TX = ar_tx:new(<<"DATA">>),
 	TaggedTX =
 		TX#tx {
@@ -375,10 +377,10 @@ add_external_tx_with_tags_test() ->
 				]
 		},
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TaggedTX),
-	ar_test_node:wait_until_receives_txs(Node, [TaggedTX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
-	[B1Hash | _] = ar_node:get_blocks(Node),
+	ar_test_node:wait_until_receives_txs([TaggedTX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
+	[B1Hash | _] = ar_node:get_blocks(),
 	B1 = ar_storage:read_block(B1Hash),
 	TXID = TaggedTX#tx.id,
 	?assertEqual([TXID], B1#block.txs),
@@ -387,22 +389,34 @@ add_external_tx_with_tags_test() ->
 %% @doc Test getting transactions
 find_external_tx_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
-	FoundTXID = (ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], TX#tx.id, maps:new()))#tx.id,
+	ar_test_node:wait_until_receives_txs([TX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
+	{ok, FoundTXID} =
+		ar_util:do_until(
+			fun() ->
+				case ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], TX#tx.id, maps:new()) of
+					not_found ->
+						false;
+					TX ->
+						{ok, TX#tx.id}
+				end
+			end,
+			100,
+			1000
+		),
 	?assertEqual(FoundTXID, TX#tx.id).
 
 fail_external_tx_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	TX = ar_tx:new(<<"DATA">>),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:wait_until_receives_txs([TX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	BadTX = ar_tx:new(<<"BADDATA">>),
 	?assertEqual(not_found, ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], BadTX#tx.id, maps:new())).
 
@@ -413,9 +427,9 @@ add_external_block_with_bad_bds_test_() ->
 test_add_external_block_with_bad_bds() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(10)),
 	ar_test_node:start(B0),
-	{Slave, _} = ar_test_node:slave_start(B0),
-	ar_test_node:slave_mine(Slave),
-	BI = ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	{_Slave, _} = ar_test_node:slave_start(B0),
+	ar_test_node:slave_mine(),
+	BI = ar_test_node:assert_slave_wait_until_height(1),
 	Peer = {127, 0, 0, 1, 1984},
 	B1Shadow =
 		(ar_test_node:slave_call(ar_storage, read_block, [hd(BI)]))#block{
@@ -473,9 +487,9 @@ add_external_block_with_invalid_timestamp_test() ->
 	ar_blacklist_middleware:reset(),
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
-	{Slave, _} = ar_test_node:slave_start(B0),
-	ar_test_node:slave_mine(Slave),
-	BI = ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	{_Slave, _} = ar_test_node:slave_start(B0),
+	ar_test_node:slave_mine(),
+	BI = ar_test_node:assert_slave_wait_until_height(1),
 	Peer = {127, 0, 0, 1, 1984},
 	B1Shadow =
 		(ar_test_node:slave_call(ar_storage, read_block, [hd(BI)]))#block{
@@ -537,15 +551,15 @@ add_rand_suffix(Bin) ->
 add_tx_and_get_last_test() ->
 	{Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	{_Priv2, Pub2} = ar_wallet:new(),
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 	ID = SignedTX#tx.id,
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, SignedTX),
-	ar_test_node:wait_until_receives_txs(Node, [SignedTX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:wait_until_receives_txs([SignedTX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -557,11 +571,11 @@ add_tx_and_get_last_test() ->
 %% @doc Post a tx to the network and ensure that its subfields can be gathered
 get_subfields_of_tx_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:wait_until_receives_txs([TX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	%write a get_tx function like get_block
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
@@ -575,9 +589,9 @@ get_subfields_of_tx_test() ->
 %% @doc Correctly check the status of pending is returned for a pending transaction
 get_pending_tx_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
+	ar_test_node:wait_until_receives_txs([TX]),
 	%write a get_tx function like get_block
 	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
@@ -590,13 +604,13 @@ get_pending_tx_test() ->
 %% @doc Mine a transaction into a block and retrieve it's binary body via HTTP.
 get_tx_body_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	TX = ar_tx:new(<<"TEST DATA">>),
 	% Add tx to network
-	ar_node:add_tx(Node, TX),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_node:add_tx(TX),
+	ar_test_node:wait_until_receives_txs([TX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	?assertEqual(
 		<<"TEST DATA">>,
 		ar_http_iface_client:get_tx_data({127,0,0,1,1984}, TX#tx.id)
@@ -612,15 +626,15 @@ get_txs_by_send_recv_test_() ->
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 		SignedTX2 = ar_tx:sign_v1(TX2, Priv2, Pub2),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		{Node, _} = ar_test_node:start(B0),
-		ar_node:add_tx(Node, SignedTX),
-		ar_test_node:wait_until_receives_txs(Node, [SignedTX]),
-		ar_node:mine(Node),
-		ar_test_node:wait_until_height(Node, 1),
-		ar_node:add_tx(Node, SignedTX2),
-		ar_test_node:wait_until_receives_txs(Node, [SignedTX2]),
-		ar_node:mine(Node),
-		ar_test_node:wait_until_height(Node, 2),
+		{_Node, _} = ar_test_node:start(B0),
+		ar_node:add_tx(SignedTX),
+		ar_test_node:wait_until_receives_txs([SignedTX]),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(1),
+		ar_node:add_tx(SignedTX2),
+		ar_test_node:wait_until_receives_txs([SignedTX2]),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(2),
 		QueryJSON = ar_serialize:jsonify(
 			ar_serialize:query_to_json_struct(
 					{'or',
@@ -661,10 +675,10 @@ get_txs_by_send_recv_test_() ->
 
 get_tx_status_test() ->
 	[B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
-	ar_node:add_tx(Node, TX),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
+	ar_node:add_tx(TX),
+	ar_test_node:wait_until_receives_txs([TX]),
 	FetchStatus = fun() ->
 		ar_http:req(#{
 			method => get,
@@ -673,11 +687,11 @@ get_tx_status_test() ->
 		})
 	end,
 	?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = FetchStatus(),
 	{Res} = ar_serialize:dejsonify(Body),
-	BI = ar_node:get_block_index(Node),
+	BI = ar_node:get_block_index(),
 	?assertEqual(
 		#{
 			<<"block_height">> => length(BI) - 1,
@@ -686,8 +700,8 @@ get_tx_status_test() ->
 		},
 		maps:from_list(Res)
 	),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 2),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(2),
 	ar_util:do_until(
 		fun() ->
 			{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
@@ -702,14 +716,14 @@ get_tx_status_test() ->
 		5000
 	),
 	%% Create a fork where the TX doesn't exist.
-	{Slave, _} = ar_test_node:slave_start(B0),
+	{_Slave, _} = ar_test_node:slave_start(B0),
 	ar_test_node:connect_to_slave(),
-	ar_test_node:slave_mine(Slave),
-	ar_test_node:assert_slave_wait_until_height(Slave, 1),
-	ar_test_node:slave_mine(Slave),
-	ar_test_node:assert_slave_wait_until_height(Slave, 2),
-	ar_test_node:slave_mine(Slave),
-	ar_test_node:wait_until_height(Node, 3),
+	ar_test_node:slave_mine(),
+	ar_test_node:assert_slave_wait_until_height(1),
+	ar_test_node:slave_mine(),
+	ar_test_node:assert_slave_wait_until_height(2),
+	ar_test_node:slave_mine(),
+	ar_test_node:wait_until_height(3),
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, FetchStatus()).
 
 post_unsigned_tx_test_() ->
@@ -718,7 +732,7 @@ post_unsigned_tx_test_() ->
 post_unsigned_tx() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(5000), <<>>}]),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	%% Generate a wallet and receive a wallet access code.
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
@@ -759,9 +773,9 @@ post_unsigned_tx() ->
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TopUpTX))
 		}),
-	ar_test_node:wait_until_receives_txs(Node, [TopUpTX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:wait_until_receives_txs([TopUpTX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	%% Send an unsigned transaction to be signed with the generated key.
 	TX = (ar_tx:new())#tx{reward = ?AR(1)},
 	UnsignedTXProps = [
@@ -800,8 +814,8 @@ post_unsigned_tx() ->
 	{Res} = ar_serialize:dejsonify(Body),
 	TXID = proplists:get_value(<<"id">>, Res),
 	timer:sleep(200),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 2),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(2),
 	{ok, {_, _, GetTXBody, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -821,7 +835,7 @@ get_wallet_txs_test_() ->
 		{_, Pub} = ar_wallet:new(),
 		WalletAddress = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub), 10000, <<>>}]),
-		{Node, _} = ar_test_node:start(B0),
+		{_Node, _} = ar_test_node:start(B0),
 		{ok, {{<<"200">>, <<"OK">>}, _, Body, _, _}} =
 			ar_http:req(#{
 				method => get,
@@ -840,9 +854,9 @@ get_wallet_txs_test_() ->
 				path => "/tx",
 				body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
 			}),
-		ar_test_node:wait_until_receives_txs(Node, [TX]),
-		ar_node:mine(Node),
-		[{H, _, _} | _] = ar_test_node:wait_until_height(Node, 1),
+		ar_test_node:wait_until_receives_txs([TX]),
+		ar_node:mine(),
+		[{H, _, _} | _] = ar_test_node:wait_until_height(1),
 		%% Wait until the storage is updated before querying for wallet's transactions.
 		ar_test_node:read_block_when_stored(H),
 		{ok, {{<<"200">>, <<"OK">>}, _, GetOneTXBody, _, _}} =
@@ -871,9 +885,9 @@ get_wallet_txs_test_() ->
 				path => "/tx",
 				body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(SecondTX))
 			}),
-		ar_test_node:wait_until_receives_txs(Node, [SecondTX]),
-		ar_node:mine(Node),
-		ar_test_node:wait_until_height(Node, 2),
+		ar_test_node:wait_until_receives_txs([SecondTX]),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(2),
 		{ok, {{<<"200">>, <<"OK">>}, _, GetTwoTXsBody, _, _}} =
 			ar_http:req(#{
 				method => get,
@@ -904,7 +918,7 @@ get_wallet_deposits_test_() ->
 			{ar_wallet:to_address(PubTo), 0, <<>>},
 			{ar_wallet:to_address(PubFrom), 200, <<>>}
 		]),
-		{Node, _} = ar_test_node:start(B0),
+		{_Node, _} = ar_test_node:start(B0),
 		GetTXs = fun(EarliestDeposit) ->
 			BasePath = "/wallet/" ++ WalletAddressTo ++ "/deposits",
 			Path = 	BasePath ++ "/" ++ EarliestDeposit,
@@ -934,9 +948,9 @@ get_wallet_deposits_test_() ->
 				})
 		end,
 		PostTX(FirstTX),
-		ar_test_node:wait_until_receives_txs(Node, [FirstTX]),
-		ar_node:mine(Node),
-		ar_test_node:wait_until_height(Node, 1),
+		ar_test_node:wait_until_receives_txs([FirstTX]),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(1),
 		%% Expect the endpoint to report the received transfer
 		?assertEqual([ar_util:encode(FirstTX#tx.id)], GetTXs("")),
 		%% Send some more Winston to WalletAddressTo
@@ -947,9 +961,9 @@ get_wallet_deposits_test_() ->
 			quantity = 100
 		},
 		PostTX(SecondTX),
-		ar_test_node:wait_until_receives_txs(Node, [SecondTX]),
-		ar_node:mine(Node),
-		ar_test_node:wait_until_height(Node, 2),
+		ar_test_node:wait_until_receives_txs([SecondTX]),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(2),
 		%% Expect the endpoint to report the received transfer
 		?assertEqual(
 			[ar_util:encode(SecondTX#tx.id), ar_util:encode(FirstTX#tx.id)],
@@ -971,15 +985,15 @@ get_wallet_deposits_test_() ->
 %% limit is exceeded.
 get_error_of_data_limit_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	Limit = 1460,
 	ar_http_iface_client:send_new_tx(
 		{127, 0, 0, 1, 1984},
 		TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>)
 	),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:wait_until_receives_txs([TX]),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	Resp =
 		ar_http:req(#{
 			method => get,

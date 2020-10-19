@@ -1,6 +1,3 @@
-%%% @doc The server is a modified version of disksup from Erlang OTP - it periodically
-%%% checks for available disk space and returns it in bytes (disksup only serves it in %).
-
 %% Erlang OTP disksup copyright note:
 %%
 %% %CopyrightBegin%
@@ -22,6 +19,9 @@
 %% %CopyrightEnd%
 %%
 
+%%% @doc The server is a modified version of disksup from Erlang OTP - it periodically
+%%% checks for available disk space and returns it in bytes (disksup only serves it in %).
+%%% @end
 -module(ar_disksup).
 -behaviour(gen_server).
 
@@ -38,7 +38,7 @@
 	terminate/2
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -record(state, {timeout, os, diskdata = [], port}).
 

@@ -4,7 +4,7 @@
 -export([validate_path/4]).
 -export([extract_note/1, extract_root/1]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Generates annotated merkle trees, paths inside those trees, as well 
@@ -27,6 +27,7 @@
 
 %% @doc Generate a tree from a list of pairs of IDs (of length 32 bytes)
 %% and labels -- most often sizes.
+%% @end
 generate_tree(Elements) ->
 	generate_all_rows(generate_leaves(Elements)).
 
@@ -51,7 +52,7 @@ generate_leaves(Elements) ->
 
 %% TODO: This implementation leaves some duplicates in the tree structure.
 %% The produced trees could be a little smaller if these duplicates were 
-%% not present, but removing them with `ar_util:unique` takes far too long.
+%% not present, but removing them with ar_util:unique takes far too long.
 generate_all_rows([]) ->
 	{<<>>, []};
 generate_all_rows(Leaves) ->
@@ -105,7 +106,7 @@ generate_path_parts(ID, Dest, Tree) ->
 	end.
 
 validate_path(ID, Dest, RightBound, _Path) when RightBound =< 0 ->
-	ar:err([
+	?LOG_ERROR([
 		{event, validate_path_called_with_not_positive_right_bound},
 		{root, ar_util:encode(ID)},
 		{dest, Dest},

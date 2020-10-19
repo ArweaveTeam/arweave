@@ -1,7 +1,7 @@
 -module(ar_tx_replay_pool_tests).
 
--include("src/ar.hrl").
--include("src/perpetual_storage.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/perpetual_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 verify_block_txs_test() ->

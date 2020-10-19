@@ -1,14 +1,15 @@
+%%% @doc Module responsible for managing and testing the inflation schedule of 
+%%% the Arweave main network.
+%%% @end
 -module(ar_inflation).
 -export([calculate/1, calculate_post_15_y1_extra/0]).
 
--include("ar_inflation.hrl").
+-include_lib("arweave/include/ar_inflation.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
-%%% @doc Module responsible for managing and testing the inflation schedule of 
-%%% the Arweave main network.
 
 %% @doc Calculate the static reward received for mining a given block.
 %% This reward portion depends only on block height, not the number of transactions.
+%% @end
 calculate(Height) when Height =< ?FORK_15_HEIGHT ->
 	pre_15_calculate(Height);
 calculate(Height) when Height =< ?BLOCKS_PER_YEAR ->
@@ -59,6 +60,7 @@ sum_rewards(Fun, Start, End) ->
 
 %% @doc Calculate the value used in the ?POST_15_Y1_EXTRA macro.
 %% The value is memoized to avoid frequent large computational load.
+%% @end
 calculate_post_15_y1_extra() ->
     Pre15 = erlang:trunc(sum_rewards(fun calculate/1, 0, ?FORK_15_HEIGHT)),
     Base = erlang:trunc(sum_rewards(fun calculate_base/1, 0, ?FORK_15_HEIGHT)),

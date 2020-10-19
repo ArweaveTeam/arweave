@@ -6,7 +6,7 @@
 	DefaultPathLimit =
 		case ar_meta_db:get(requests_per_minute_limit) of
 			not_found ->
-				900;
+				?DEFAULT_REQUESTS_PER_MINUTE_LIMIT;
 			Limit ->
 				Limit
 		end,
@@ -16,7 +16,7 @@ end).
 -ifdef(DEBUG).
 -define(RPM_BY_PATH(Path, DefaultPathLimit), fun() ->
 	case Path of
-		[<<"chunk">> | _]            -> {chunk,            6000};
+		[<<"chunk">> | _]            -> {chunk,            120000};
 		[<<"data_sync_record">> | _] -> {data_sync_record, 200};
 		_ ->                            {default,          DefaultPathLimit}
 	end

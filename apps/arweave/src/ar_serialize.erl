@@ -23,7 +23,7 @@
 	json_map_to_chunk_proof/1
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Module containing serialisation/deserialisation utility functions

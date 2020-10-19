@@ -14,9 +14,9 @@
 	calculate_delay/1
 ]).
 
--include("ar.hrl").
--include("ar_data_sync.hrl").
--include("perpetual_storage.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_data_sync.hrl").
+-include_lib("arweave/include/perpetual_storage.hrl").
 
 %%%
 %%% Public API.
@@ -193,7 +193,7 @@ apply_txs(WalletList, TXs, Height) ->
 %% the source and destination addresses and the reward wallet from the previous block,
 %% and the mapping between block hashes and transaction identifiers of the recent blocks.
 validate(BI, NewB, B, Wallets, BlockTXPairs) ->
-	ar:info(
+	?LOG_INFO(
 		[
 			{event, validating_block},
 			{hash, ar_util:encode(NewB#block.indep_hash)}
@@ -205,7 +205,7 @@ validate(BI, NewB, B, Wallets, BlockTXPairs) ->
 		end
 	) of
 		{TimeTaken, valid} ->
-			ar:info(
+			?LOG_INFO(
 				[
 					{event, block_validation_successful},
 					{hash, ar_util:encode(NewB#block.indep_hash)},
@@ -214,7 +214,7 @@ validate(BI, NewB, B, Wallets, BlockTXPairs) ->
 			),
 			valid;
 		{TimeTaken, {invalid, Reason}} ->
-			ar:info(
+			?LOG_INFO(
 				[
 					{event, block_validation_failed},
 					{reason, Reason},
@@ -492,10 +492,6 @@ calculate_tx_reward(#tx { reward = Reward }) ->
 	% TDOD mue: Calculation is not calculated, only returned.
 	Reward.
 
--ifdef(FIXED_DELAY).
-calculate_delay(_Bytes) ->
-	?FIXED_DELAY.
--else.
 %% Returns a delay in milliseconds to wait before including a transaction into a block.
 %% The delay is computed as base delay + a function of data size with a conservative
 %% estimation of the network speed.
@@ -503,4 +499,3 @@ calculate_delay(Bytes) ->
 	BaseDelay = (?BASE_TX_PROPAGATION_DELAY) * 1000,
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
 	BaseDelay + NetworkDelay.
--endif.

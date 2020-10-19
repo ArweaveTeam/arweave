@@ -1,5 +1,8 @@
 -module(ar_webhook).
+
 -export([start/1, new_block/2, new_transaction/2]).
+
+-include_lib("arweave/include/ar.hrl").
 
 start(Configs) ->
 	Workers = lists:map(

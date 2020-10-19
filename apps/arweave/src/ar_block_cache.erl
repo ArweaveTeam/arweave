@@ -8,7 +8,7 @@
 	remove/2, prune/2
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================

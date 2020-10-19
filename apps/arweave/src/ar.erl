@@ -10,16 +10,13 @@
 	tests/0, tests/1, tests/2,
 	test_ipfs/0,
 	docs/0,
-	err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2,
-	report/1, report_console/1, d/1,
-	scale_time/1,
 	start_for_tests/0,
-	fixed_diff_option/0, fixed_delay_option/0,
-	shutdown/1
+	shutdown/1,
+	console/1, console/2
 ]).
 
--include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% A list of the modules to test.
@@ -30,6 +27,8 @@
 	[
 		ar,
 		ar_meta_db,
+		ar_webhook_tests,
+		ar_poller_tests,
 		ar_kv,
 		ar_block_cache,
 		ar_unbalanced_merkle,
@@ -111,11 +110,13 @@ show_help() ->
 						"This port must be accessible by remote peers."},
 			{"data_dir", "The directory for storing the weave and the wallets (when generated)."},
 			{"metrics_dir", "The directory for persisted metrics."},
-			{"polling", "Poll peers for new blocks every 10 seconds. "
-						"Useful in environments where "
-						"port forwarding is not possible. "
-						"When the flag is not set, the node still polls "
-						"if it does not receive blocks for a minute."},
+			{"polling (num)", lists:flatten(
+					io_lib:format(
+						"Poll peers for new blocks every N seconds. Default is ~p. "
+						"Useful in environments where port forwarding is not possible.",
+						[?DEFAULT_POLLING_INTERVAL]
+					)
+			)},
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
@@ -227,8 +228,8 @@ parse_cli_args(["data_dir", DataDir|Rest], C) ->
 	parse_cli_args(Rest, C#config { data_dir = DataDir });
 parse_cli_args(["metrics_dir", MetricsDir|Rest], C) ->
 	parse_cli_args(Rest, C#config { metrics_dir = MetricsDir });
-parse_cli_args(["polling"|Rest], C) ->
-	parse_cli_args(Rest, C#config { polling = true });
+parse_cli_args(["polling", Frequency|Rest], C) ->
+	parse_cli_args(Rest, C#config { polling = list_to_integer(Frequency) });
 parse_cli_args(["clean"|Rest], C) ->
 	parse_cli_args(Rest, C#config { clean = true });
 parse_cli_args(["no_auto_join"|Rest], C) ->
@@ -301,308 +302,149 @@ start(Port) when is_integer(Port) ->
 start(Config) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
-	error_logger:logfile({open, Filename = generate_logfile_name()}),
-	error_logger:tty(false),
 	warn_if_single_scheduler(),
 	ok = application:set_env(arweave, config, Config),
-	ok = application:set_env(arweave, logfile, Filename),
 	{ok, _} = application:ensure_all_started(arweave, permanent).
 
 start(normal, _Args) ->
-	{ok, #config {
-		init = Init,
-		port = Port,
-		data_dir = DataDir,
-		metrics_dir = MetricsDir,
-		peers = Peers,
-		mine = Mine,
-		polling = Polling,
-		clean = Clean,
-		auto_join = AutoJoin,
-		diff = Diff,
-		mining_addr = Addr,
-		max_miners = MaxMiners,
-		max_emitters = MaxEmitters,
-		tx_propagation_parallelization = TXProp,
-		new_key = NewKey,
-		load_key = LoadKey,
-		disk_space = DiskSpace,
-		used_space = UsedSpace,
-		start_from_block_index = StartFromBlockIndex,
-		internal_api_secret = InternalApiSecret,
-		enable = Enable,
-		disable = Disable,
-		transaction_blacklist_files = TransactionBlacklistFiles,
-		transaction_blacklist_urls = TransactionBlacklistURLs,
-		transaction_whitelist_files = TransactionWhitelistFiles,
-		transaction_whitelist_urls = TransactionWhitelistURLs,
-		gateway_domain = GatewayDomain,
-		gateway_custom_domains = GatewayCustomDomains,
-		requests_per_minute_limit = RequestsPerMinuteLimit,
-		max_propagation_peers = MaxPropagationPeers,
-		ipfs_pin = IPFSPin,
-		webhooks = WebhookConfigs,
-		max_connections = MaxConnections,
-		max_gateway_connections = MaxGatewayConnections,
-		max_poa_option_depth = MaxPOAOptionDepth,
-		disk_pool_data_root_expiration_time = DiskPoolExpirationTime,
-		max_disk_pool_buffer_mb = MaxDiskPoolBuffer,
-		max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer,
-		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
-	}} = application:get_env(arweave, config),
-	%% Verify port collisions when gateway enabled
-	case {Port, GatewayDomain} of
+	{ok, Config} = application:get_env(arweave, config),
+	%% Configure logging for console output.
+	LoggerFormatterConsole = #{
+		legacy_header => false,
+		single_line => true,
+		chars_limit => 512,
+		max_size => 512,
+		depth => 16,
+		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
+	},
+	logger:set_handler_config(default, formatter, {logger_formatter, LoggerFormatterConsole}),
+	logger:set_handler_config(default, level, error),
+	%% Configure logging to the logfile.
+	LoggerConfigDisk = #{
+		file => lists:flatten("logs/" ++ atom_to_list(node())),
+		type => wrap,
+		max_no_files => 10,
+		max_no_bytes => 51418800 % 10 x 5MB
+	},
+	logger:add_handler(
+		disk_log,
+		logger_disk_log_h,
+		#{ config => LoggerConfigDisk, level => info }
+	),
+	LoggerFormatterDisk = #{
+		chars_limit => 512,
+		max_size => 512,
+		depth => 32,
+		legacy_header => false,
+		single_line => true,
+		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
+	},
+	logger:set_handler_config(disk_log, formatter, {logger_formatter, LoggerFormatterDisk}),
+	logger:set_application_level(arweave, info),
+	%% Start the Prometheus metrics subsystem.
+	prometheus_registry:register_collector(prometheus_process_collector),
+	prometheus_registry:register_collector(ar_metrics_collector),
+	%% Register custom metrics.
+	ar_metrics:register(Config#config.metrics_dir),
+	%% Verify port collisions when gateway is enabled.
+	case {Config#config.port, Config#config.gateway_domain} of
 		{P, D} when is_binary(D) andalso (P == 80 orelse P == 443) ->
-			io:format("~nThe port must be different than 80 or 443 when the gateway is enabled.~n~n"),
+			io:format(
+				"~nThe port must be different than 80 or 443 when the gateway is enabled.~n~n"),
 			erlang:halt();
 		_ ->
 			do_nothing
 	end,
-	ets:new(ar_data_sync, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(
-		ar_tx_blacklist_pending_headers,
-		[set, public, named_table, {read_concurrency, true}]
-	),
-	ets:new(ar_tx_blacklist_pending_data,
-		[set, public, named_table, {read_concurrency, true}]
-	),
-	ets:new(ar_tx_blacklist_offsets,
-		[ordered_set, public, named_table, {read_concurrency, true}]
-	),
-	{ok, Supervisor} = ar_sup:start_link(),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_disksup,
-		start => {ar_disksup, start_link, []},
-		type => worker,
-		shutdown => infinity
-	}),
-	%% Fill up ar_meta_db.
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_meta_db,
-		start => {ar_meta_db, start_link, []},
-		type => worker,
-		shutdown => infinity
-	}),
-	ar_meta_db:put(data_dir, DataDir),
-	ar_meta_db:put(metrics_dir, MetricsDir),
-	ar_meta_db:put(port, Port),
-	ar_meta_db:put(disk_space, DiskSpace),
-	ar_meta_db:put(used_space, UsedSpace),
-	ar_meta_db:put(mine, Mine),
-	ar_meta_db:put(max_miners, MaxMiners),
-	ar_meta_db:put(max_emitters, MaxEmitters),
-	ar_meta_db:put(tx_propagation_parallelization, TXProp),
-	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
-	ar_meta_db:put(transaction_blacklist_urls, TransactionBlacklistURLs),
-	ar_meta_db:put(transaction_whitelist_files, TransactionWhitelistFiles),
-	ar_meta_db:put(transaction_whitelist_urls, TransactionWhitelistURLs),
-	ar_meta_db:put(internal_api_secret, InternalApiSecret),
-	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
-	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
-	ar_meta_db:put(max_poa_option_depth, MaxPOAOptionDepth),
-	ar_meta_db:put(disk_pool_data_root_expiration_time_us, DiskPoolExpirationTime * 1000000),
-	ar_meta_db:put(max_disk_pool_buffer_mb, MaxDiskPoolBuffer),
-	ar_meta_db:put(max_disk_pool_data_root_buffer_mb, MaxDiskPoolDataRootBuffer),
-	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
-	%% Store enabled features.
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
-	%% Prepare the storage for operation.
-	ar_storage:start(),
-	%% Optionally clear the block cache.
-	if Clean -> ar_storage:clear(); true -> do_nothing end,
-	prometheus_registry:register_collector(prometheus_process_collector),
-	prometheus_registry:register_collector(ar_metrics_collector),
-	% Register custom metrics.
-	ar_metrics:register(),
+	validate_trusted_peers(Config),
 	%% Start other apps which we depend on.
-	inets:start(),
-	ar_tx_db:start(),
-	ar_miner_log:start(),
-	{ok, _} = ar_arql_db_sup:start_link([{data_dir, DataDir}]),
-	ar_storage:start_update_used_space(),
-	%% Determine the mining address.
-	case {Addr, LoadKey, NewKey} of
-		{false, false, false} ->
-			{_, Pub} = ar_wallet:new_keyfile(),
-			MiningAddress = ar_wallet:to_address(Pub),
-			ar:report_console(
-				[
-					mining_address_generated,
-					{address, MiningAddress}
-				]
-			);
-		{false, false, true} ->
-			{_, Pub} = ar_wallet:new_keyfile(),
-			MiningAddress = ar_wallet:to_address(Pub),
-			ar:report_console(
-				[
-					mining_address,
-					{address, MiningAddress}
-				]
-			);
-		{false, Load, false} ->
-			{_, Pub} = ar_wallet:load_keyfile(Load),
-			MiningAddress = ar_wallet:to_address(Pub),
-			ar:report_console(
-				[
-					mining_address,
-					{address, MiningAddress}
-				]
-			);
-		{Address, false, false} ->
-			MiningAddress = Address,
-			ar:report_console(
-				[
-					mining_address,
-					{address, MiningAddress}
-				]
-			);
-		_ ->
-			{_, Pub} = ar_wallet:new_keyfile(),
-			MiningAddress = ar_wallet:to_address(Pub),
-			ar:report_console(
-				[
-					mining_address_generated,
-					{address, MiningAddress}
-				]
-			)
+	ok = prepare_graphql(),
+	case Config#config.ipfs_pin of
+		false -> ok;
+		true  -> app_ipfs:start_pinning()
 	end,
-	ar_randomx_state:start(),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_tx_blacklist,
-		start => {ar_tx_blacklist_sup, start_link, [[]]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_data_sync,
-		start => {ar_data_sync_sup, start_link, [[]]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_header_sync,
-		start => {ar_header_sync_sup, start_link, [[]]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	ValidPeers = ar_join:filter_peer_list(Peers),
-	case {Peers, ValidPeers} of
-		{[_Peer | _], []} ->
+	%% Start Arweave.
+	ar_sup:start_link().
+
+validate_trusted_peers(Config) ->
+	Peers = Config#config.peers,
+	validate_network(Config#config.peers),
+	case lists:member(time_syncing, Config#config.disable) of
+		false ->
+			validate_clock_sync(Peers);
+		true ->
+			ok
+	end.
+
+%% @doc Verify peers are on the same network as us.
+validate_network(Peers) ->
+	lists:foreach(
+		fun(Peer) ->
+			case ar_http_iface_client:get_info(Peer, name) of
+				info_unavailable ->
+					io:format("~n\tPeer ~s is not available.~n~n", [ar_util:format_peer(Peer)]),
+					erlang:halt();
+				<<?NETWORK_NAME>> ->
+					ok;
+				_ ->
+					io:format(
+						"~n\tPeer ~s does not belong to the network ~s.~n~n",
+						[ar_util:format_peer(Peer), ?NETWORK_NAME]
+					),
+					erlang:halt()
+			end
+		end,
+		Peers
+	).
+
+%% @doc Validate our clocks are in sync with the trusted peers' clocks.
+validate_clock_sync(Peers) ->
+	ValidatePeerClock = fun(Peer) ->
+		case ar_http_iface_client:get_time(Peer, 5 * 1000) of
+			{ok, {RemoteTMin, RemoteTMax}} ->
+				LocalT = os:system_time(second),
+				Tolerance = ?JOIN_CLOCK_TOLERANCE,
+				case LocalT of
+					T when T < RemoteTMin - Tolerance ->
+						log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
+						false;
+					T when T < RemoteTMin - Tolerance div 2 ->
+						log_peer_clock_diff(Peer, RemoteTMin - T),
+						true;
+					T when T > RemoteTMax + Tolerance ->
+						log_peer_clock_diff(Peer, T - RemoteTMax - Tolerance),
+						false;
+					T when T > RemoteTMax + Tolerance div 2 ->
+						log_peer_clock_diff(Peer, T - RemoteTMax),
+						true;
+					_ ->
+						true
+				end;
+			{error, Err} ->
+				ar:console(
+					"Failed to get time from peer ~s: ~p.",
+					[ar_util:format_peer(Peer), Err]
+				),
+				false
+		end
+	end,
+	Responses = ar_util:pmap(ValidatePeerClock, [P || P <- Peers, not is_pid(P)]),
+	case lists:all(fun(R) -> R end, Responses) of
+		true ->
+			ok;
+		false ->
 			io:format(
 				"~n\tInvalid peers. A valid peer must be part of the"
 				" network ~s and its clock must deviate from ours by no"
 				" more than ~B seconds.~n", [?NETWORK_NAME, ?JOIN_CLOCK_TOLERANCE]
 			),
-			erlang:halt();
-		_ ->
-			ok
-	end,
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_node,
-		shutdown => infinity,
-		start => {ar_node, start_link,
-			[[
-				ValidPeers,
-				case {StartFromBlockIndex, Init} of
-					{false, false} ->
-						not_joined;
-					{true, _} ->
-						case ar_storage:read_block_index() of
-							{error, enoent} ->
-								io:format(
-									"~n~n\tBlock index file is not found. "
-									"If you want to start from a block index copied "
-									"from another node, place it in "
-									"<data_dir>/hash_lists/last_block_index.json~n~n"
-								),
-								erlang:halt();
-							BI ->
-								BI
-						end;
-					{false, true} ->
-						ar_weave:init(
-							ar_util:genesis_wallets(),
-							ar_retarget:switch_to_linear_diff(Diff),
-							0,
-							ar_storage:read_tx(ar_weave:read_v1_genesis_txs())
-						)
-				end,
-				0,
-				MiningAddress,
-				AutoJoin,
-				Diff,
-				os:system_time(seconds)
-			]]}
-		}
-	),
-	Node = whereis(http_entrypoint_node),
-	%% Start a bridge, add it to the node's peer list.
-	{ok, Bridge} = supervisor:start_child(
-		Supervisor,
-		{
-			ar_bridge,
-			{ar_bridge, start_link, [[ValidPeers, [Node], Port]]},
-			permanent,
-			infinity,
-			worker,
-			[ar_bridge]
-		}
-	),
-	ar_node:add_peers(Node, Bridge),
-	PrintMiningAddress = case MiningAddress of
-			unclaimed -> "unclaimed";
-			_ -> binary_to_list(ar_util:encode(MiningAddress))
-		end,
-	{ok, Logfile} = application:get_env(arweave, logfile),
-	ar:info(
-		[
-			{event, starting_server},
-			{session_log, Logfile},
-			{port, Port},
-			{automine, Mine},
-			{miner, Node},
-			{mining_address, PrintMiningAddress},
-			{peers, [ar_util:format_peer(Peer) || Peer <- ValidPeers]},
-			{polling, Polling},
-			{target_time, ?TARGET_TIME},
-			{retarget_blocks, ?RETARGET_BLOCKS}
-		]
-	),
-	ok = prepare_graphql(),
-	%% Start the first node in the gossip network (with HTTP interface).
-	ok = ar_http_iface_server:start([
-		{http_entrypoint_node, Node},
-		{http_bridge_node, Bridge},
-		{port, Port},
-		{gateway_domain, GatewayDomain},
-		{gateway_custom_domains, GatewayCustomDomains},
-		{max_connections, MaxConnections},
-		{max_gateway_connections, MaxGatewayConnections}
-	]),
-	ar_randomx_state:start_block_polling(),
-	PollingArgs = [{trusted_peers, ValidPeers}] ++ case Polling of
-		true ->
-			[{polling_interval, 10 * 1000}];
-		false ->
-			[]
-	end,
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_poller,
-		start => {ar_poller_sup, start_link, [PollingArgs]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	if Mine -> ar_node:automine(Node); true -> do_nothing end,
-	case IPFSPin of
-		false -> ok;
-		true  -> app_ipfs:start_pinning()
-	end,
-	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
-	{ok, Supervisor}.
+			erlang:halt()
+	end.
 
+log_peer_clock_diff(Peer, Diff) ->
+	Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
+	WarningArgs = [ar_util:format_peer(Peer), Diff],
+	io:format(Warning, WarningArgs),
+	?LOG_WARNING(Warning, WarningArgs).
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
 
@@ -617,53 +459,23 @@ prepare_graphql() ->
 	ok = ar_graphql:load_schema(),
 	ok.
 
-%% @doc Create a name for a session log file.
-generate_logfile_name() ->
-	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
-	lists:flatten(
-		io_lib:format(
-			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b~s.log",
-			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se, maybe_node_postfix()]
-		)
-	).
-
-maybe_node_postfix() ->
-	case init:get_argument(name) of
-		{ok, [[Name]]} ->
-			"-" ++ Name;
-		_ ->
-			""
-	end.
-
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,
 %% which takes minutes.
 warn_if_single_scheduler() ->
 	case erlang:system_info(schedulers_online) of
 		1 ->
-			console("WARNING: Running only one CPU core / Erlang scheduler may cause issues.");
+			?LOG_WARNING(
+				"WARNING: Running only one CPU core / Erlang scheduler may cause issues.");
 		_ ->
 			ok
 	end.
-
--ifdef(FIXED_DIFF).
-fixed_diff_option() -> [{d, 'FIXED_DIFF', ?FIXED_DIFF}].
--else.
-fixed_diff_option() -> [].
--endif.
-
--ifdef(FIXED_DELAY).
-fixed_delay_option() -> [{d, 'FIXED_DELAY', ?FIXED_DELAY}].
--else.
-fixed_delay_option() -> [].
--endif.
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
 	tests(?CORE_TEST_MODS, #config {}).
 
 tests(Mods, Config) when is_list(Mods) ->
-	error_logger:tty(true),
 	start_for_tests(Config),
 	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose]) of
 		ok ->
@@ -699,93 +511,16 @@ tests(Args) ->
 %% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
 test_ipfs() ->
 	Mods = [app_ipfs_tests],
-	tests(Mods, #config {}).
+	tests(Mods, #config{}).
 
 %% @doc Generate the project documentation.
 docs() ->
 	Mods =
 		lists:filter(
-			fun(File) -> string:str(File, ".erl") > 0 end,
-			element(2, file:list_dir("../src"))
+			fun(File) -> filename:extension(File) == ".erl" end,
+			element(2, file:list_dir("apps/arweave/src"))
 		),
-	edoc:files([ "../src/" ++ Mod || Mod <- Mods ]).
-
-%% @doc Print an informational message to the log file.
-report(X) ->
-	error_logger:info_report(X).
-
-%% @deprecated
-report_console(X) -> info(X).
-
-%% @doc Report a value and return it.
-d(X) ->
-	info(X),
-	X.
-
-%% @doc Print an information message to the log file (log level INFO) and console.
--ifdef(DEBUG).
-console(Report) -> info(Report).
--else.
-console(Report) ->
-	io:format("~P~n", [Report, 30]),
-	info(Report).
--endif.
-
--ifdef(DEBUG).
-console(Format, Data) -> info(Format, Data).
--else.
-console(Format, Data) ->
-	WithNewLine = iolist_to_binary([Format, "~n"]),
-	io:format(WithNewLine, Data),
-	info(Format, Data).
--endif.
-
-%% @doc Print an INFO message to the log file.
-info(Report) ->
-	error_logger:info_report(Report).
-
-info(Format, Data) ->
-	info(io_lib:format(Format, Data)).
-
-%% @doc Print a WARNING message to the log file.
-warn(Report) ->
-	error_logger:warning_report(Report).
-
-warn(Format, Data) ->
-	warn(io_lib:format(Format, Data)).
-
-%% @doc Print an error message to the log file (log level ERROR) and console.
-err(Report) ->
-	case is_list(Report) andalso is_tuple_list(Report) of
-		true ->
-			io:format("ERROR: ~n" ++ format_list_msg(Report) ++ "~n");
-		false ->
-			io:format("ERROR: ~n~p~n", [Report])
-	end,
-	error_logger:error_report(Report).
-
-err(Format, Data) ->
-	err(io_lib:format(Format, Data)).
-
-is_tuple_list(List) ->
-	lists:all(fun is_tuple/1, List).
-
-format_list_msg(List) ->
-	FormatRow = fun
-		({Key, Value}) ->
-			io_lib:format("\s\s\s\s~p: ~p", [Key, Value]);
-		(Item) ->
-			io_lib:format("\s\s\s\s~p", [Item])
-	end,
-	lists:flatten(lists:join("~n", lists:map(FormatRow, List))).
-
-%% @doc A multiplier applied to all simulated time elements in the system.
--ifdef(DEBUG).
-scale_time(Time) ->
-	erlang:trunc(?DEBUG_TIME_SCALAR * Time).
--else.
-scale_time(Time) -> Time.
--endif.
+	edoc:files(["apps/arweave/src/" ++ Mod || Mod <- Mods], [{dir, "source_code_docs"}]).
 
 %% @doc Ensure that parsing of core command line options functions correctly.
 commandline_parser_test_() ->
@@ -796,7 +531,8 @@ commandline_parser_test_() ->
 				{"peer 1.2.3.4 peer 5.6.7.8:9", #config.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
 				{"mine", #config.mine, true},
 				{"port 22", #config.port, 22},
-				{"mining_addr " ++ binary_to_list(ar_util:encode(Addr)), #config.mining_addr, Addr}
+				{"mining_addr "
+					++ binary_to_list(ar_util:encode(Addr)), #config.mining_addr, Addr}
 			],
 		X = string:split(string:join([ L || {L, _, _} <- Tests ], " "), " ", all),
 		C = parse_cli_args(X, #config{}),
@@ -807,3 +543,17 @@ commandline_parser_test_() ->
 			Tests
 		)
 	end}.
+
+-ifdef(DEBUG).
+console(_) ->
+	ok.
+
+console(_, _) ->
+	ok.
+-else.
+console(Format) ->
+	io:format(Format).
+
+console(Format, Params) ->
+	io:format(Format, Params).
+-endif.

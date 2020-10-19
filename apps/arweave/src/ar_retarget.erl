@@ -1,3 +1,7 @@
+%%% @doc A helper module for deciding when and which blocks will be retarget
+%%% blocks, that is those in which change the current mining difficulty
+%%% on the weave to maintain a constant block time.
+%%% @end
 -module(ar_retarget).
 
 -export([
@@ -9,13 +13,9 @@
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
-%%% A helper module for deciding when and which blocks will be retarget
-%%% blocks, that is those in which change the current mining difficulty
-%%% on the weave to maintain a constant block time.
-
-%% @doc A macro for checking if the given block is a retarget block.
+%% A macro for checking if the given block is a retarget block.
 %% Returns true if so, otherwise returns false.
 -define(IS_RETARGET_BLOCK(X),
 		(
@@ -24,7 +24,7 @@
 		)
 	).
 
-%% @doc A macro for checking if the given height is a retarget height.
+%% A macro for checking if the given height is a retarget height.
 %% Returns true if so, otherwise returns false.
 -define(IS_RETARGET_HEIGHT(Height),
 		(
@@ -35,11 +35,13 @@
 
 %% @doc Checls if the given height is a retarget height.
 %% Reteurns true if so, otherwise returns false.
+%% @end
 is_retarget_height(Height) ->
 	?IS_RETARGET_HEIGHT(Height).
 
 %% @doc Maybe set a new difficulty and last retarget, if the block is at
 %% an appropriate retarget height, else returns the current diff
+%% @end
 maybe_retarget(Height, CurDiff, TS, Last) when ?IS_RETARGET_HEIGHT(Height) ->
 	calculate_difficulty(
 		CurDiff,
@@ -52,10 +54,7 @@ maybe_retarget(_Height, CurDiff, _TS, _Last) ->
 
 %% @doc Calculate a new difficulty, given an old difficulty and the period
 %% since the last retarget occcurred.
--ifdef(FIXED_DIFF).
-calculate_difficulty(_OldDiff, _TS, _Last, _Height) ->
-	?FIXED_DIFF.
--else.
+%% @end
 calculate_difficulty(OldDiff, TS, Last, Height) ->
 	case {ar_fork:height_1_7(), ar_fork:height_1_8()} of
 		{Height, _} ->
@@ -129,7 +128,6 @@ calculate_difficulty_linear2(OldDiff, TS, Last, Height) ->
 				MaxDiff
 			)
 	end.
--endif.
 
 between(N, Min, _) when N < Min -> Min;
 between(N, _, Max) when N > Max -> Max;
@@ -137,6 +135,7 @@ between(N, _, _) -> N.
 
 %% @doc The number a hash must be greater than, to give the same odds of success
 %% as the old-style Diff (number of leading zeros in the bitstring).
+%% @end
 switch_to_linear_diff(Diff) ->
 	erlang:trunc(math:pow(2, 256)) - erlang:trunc(math:pow(2, 256 - Diff)).
 
@@ -169,17 +168,17 @@ validate_difficulty(NewB, OldB) ->
 simple_retarget_test_() ->
 	{timeout, 300, fun() ->
 		[B0] = ar_weave:init([]),
-		{Node, _} = ar_test_node:start(B0),
+		ar_test_node:start(B0),
 		lists:foreach(
 			fun(Height) ->
-				ar_node:mine(Node),
-				ar_test_node:wait_until_height(Node, Height)
+				ar_node:mine(),
+				ar_test_node:wait_until_height(Height)
 			end,
 			lists:seq(1, ?RETARGET_BLOCKS + 1)
 		),
 		true = ar_util:do_until(
 			fun() ->
-				[BH|_] = ar_node:get_blocks(Node),
+				[BH|_] = ar_node:get_blocks(),
 				B = ar_storage:read_block(BH),
 				B#block.diff > B0#block.diff
 			end,

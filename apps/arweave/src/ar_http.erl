@@ -4,7 +4,8 @@
 
 -export([req/1, gun_total_metric/1]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 %%% ==================================================================
 %%% API
@@ -13,7 +14,9 @@
 req(#{peer := Peer} = Opts) ->
 	{IpOrHost, Port} = get_ip_port(Peer),
 	{ok, Pid} = gun:open(IpOrHost, Port, #{ http_opts => #{ keepalive => infinity } }),
-	case gun:await_up(Pid, maps:get(connect_timeout, Opts, maps:get(timeout, Opts, ?HTTP_REQUEST_CONNECT_TIMEOUT))) of
+	ConnectTimeout =
+		maps:get(connect_timeout, Opts, maps:get(timeout, Opts, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
+	case gun:await_up(Pid, ConnectTimeout) of
 		{ok, _} ->
 			Timer = inet:start_timer(maps:get(timeout, Opts, ?HTTP_REQUEST_SEND_TIMEOUT)),
 			RespOpts = #{
@@ -64,7 +67,16 @@ make_request(Pid, #{method := post, path := P} = Opts) ->
 make_request(Pid, #{method := get, path := P} = Opts) ->
 	gun:get(Pid, P, merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []))).
 
-get_reponse(#{pid := Pid, stream_ref := SR, timer := T, start := S, limit := L, counter := C, acc := Acc} = Opts) ->
+get_reponse(Opts) ->
+	#{
+		pid := Pid,
+		stream_ref := SR,
+		timer := T,
+		start := S,
+		limit := L,
+		counter := C,
+		acc := Acc
+	} = Opts,
 	case gun:await(Pid, SR, inet:timeout(T)) of
 		{response, fin, Status, Headers} ->
 			End = os:system_time(microsecond),
@@ -83,7 +95,12 @@ get_reponse(#{pid := Pid, stream_ref := SR, timer := T, start := S, limit := L, 
 						true ->
 							get_reponse(Opts#{counter := NewCounter, acc := [Acc | Data]});
 						false ->
-							log(err, http_fetched_too_much_data, Opts, <<"Fetched too much data">>),
+							log(
+								err,
+								http_fetched_too_much_data,
+								Opts,
+								<<"Fetched too much data">>
+							),
 							{error, too_much_data}
 					end
 			end;
@@ -109,9 +126,24 @@ get_reponse(#{pid := Pid, stream_ref := SR, timer := T, start := S, limit := L, 
 	end.
 
 log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
-	case ar_meta_db:get(http_logging) of
-		true ->
-			ar:Type([{event, Event}, {http_method, Method}, {peer, ar_util:format_peer(Peer)}, {path, Path}, {reason, Reason}]);
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(http_logging, Config#config.enable) of
+		true when Type == warn ->
+			?LOG_WARNING([
+				{event, Event},
+				{http_method, Method},
+				{peer, ar_util:format_peer(Peer)},
+				{path, Path},
+				{reason, Reason}
+			]);
+		true when Type == err ->
+			?LOG_ERROR([
+				{event, Event},
+				{http_method, Method},
+				{peer, ar_util:format_peer(Peer)},
+				{path, Path},
+				{reason, Reason}
+			]);
 		_ ->
 			ok
 	end.
@@ -154,18 +186,7 @@ gun_total_metric(#{method := M, path := P, response := Resp}) ->
 	).
 
 store_data_time(#{ is_peer_request := true, peer:= Peer }, Data, MicroSecs) ->
-	P =
-		case ar_meta_db:get({peer, Peer}) of
-			not_found -> #performance{};
-			X -> X
-		end,
-	ar_meta_db:put({peer, Peer},
-		P#performance {
-			transfers = P#performance.transfers + 1,
-			time = P#performance.time + MicroSecs,
-			bytes = P#performance.bytes + size(Data)
-		}
-	);
+	ar_meta_db:update_peer_performance(Peer, MicroSecs, size(Data));
 store_data_time(_, _, _) ->
 	ok.
 

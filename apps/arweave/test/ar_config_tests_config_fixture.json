@@ -14,7 +14,7 @@
   "port": 1985,
   "data_dir": "some_data_dir",
   "metrics_dir": "metrics_dir",
-  "polling": true,
+  "polling": 10,
   "clean": true,
   "no_auto_join": true,
   "diff": 42,

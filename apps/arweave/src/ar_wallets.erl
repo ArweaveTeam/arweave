@@ -24,8 +24,8 @@
 	terminate/2
 ]).
 
--include("ar.hrl").
--include("ar_wallets.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_wallets.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -91,34 +91,13 @@ set_current(PrevRootHash, RootHash, RewardAddr, Height, PruneDepth) when is_bina
 init([{blocks, []}, {peers, _Peers}]) ->
 	process_flag(trap_exit, true),
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
+	ar_node_worker ! wallets_ready,
 	{ok, DAG};
 init([{blocks, Blocks}, {peers, Peers}]) ->
 	process_flag(trap_exit, true),
-	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
-	{LastDAG, LastB, PrevWalletList} = lists:foldl(
-		fun (B, start) ->
-				Tree = get_tree(B, Peers),
-				{RootHash, UpdatedTree} =
-					ar_block:hash_wallet_list(B#block.height, B#block.reward_addr, Tree),
-				RootHash = B#block.wallet_list,
-				DAG = ar_diff_dag:new(RootHash, UpdatedTree, not_set),
-				{DAG, B, <<>>};
-			(B, {DAG, PreviousB, _}) ->
-				RewardPool = PreviousB#block.reward_pool,
-				Height = PreviousB#block.height,
-				RootHash = PreviousB#block.wallet_list,
-				ExpectedRootHash = B#block.wallet_list,
-				{{ok, ExpectedRootHash}, UpdatedDAG} =
-					apply_block(DAG, B, RootHash, RewardPool, Height),
-				{UpdatedDAG, B, PreviousB#block.wallet_list}
-		end,
-		start,
-		lists:reverse(lists:sublist(Blocks, InitialDepth))
-	),
-	RewardAddr = LastB#block.reward_addr,
-	WalletList = LastB#block.wallet_list,
-	LastHeight = LastB#block.height,
-	{ok, set_current(LastDAG, PrevWalletList, WalletList, RewardAddr, LastHeight, InitialDepth)}.
+	gen_server:cast(?MODULE, {init, Blocks, Peers}), 
+	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
+	{ok, DAG}.
 
 handle_call({get, Addresses}, _From, DAG) ->
 	{reply, get_map(ar_diff_dag:get_sink(DAG), Addresses), DAG};
@@ -245,10 +224,43 @@ handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
 					ok
 			end
 	end,
+	{noreply, DAG};
+
+handle_cast({init, Blocks, Peers}, _) ->
+	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
+	{DAG3, LastB, PrevWalletList} = lists:foldl(
+		fun (B, start) ->
+				Tree = get_tree(B, Peers),
+				{RootHash, UpdatedTree} =
+					ar_block:hash_wallet_list(B#block.height, B#block.reward_addr, Tree),
+				RootHash = B#block.wallet_list,
+				DAG = ar_diff_dag:new(RootHash, UpdatedTree, not_set),
+				{DAG, B, <<>>};
+			(B, {DAG, PreviousB, _}) ->
+				RewardPool = PreviousB#block.reward_pool,
+				Height = PreviousB#block.height,
+				RootHash = PreviousB#block.wallet_list,
+				ExpectedRootHash = B#block.wallet_list,
+				{{ok, ExpectedRootHash}, DAG2} =
+					apply_block(DAG, B, RootHash, RewardPool, Height),
+				{DAG2, B, PreviousB#block.wallet_list}
+		end,
+		start,
+		lists:reverse(lists:sublist(Blocks, InitialDepth))
+	),
+	RewardAddr = LastB#block.reward_addr,
+	WalletList = LastB#block.wallet_list,
+	LastHeight = LastB#block.height,
+	DAG4 = set_current(DAG3, PrevWalletList, WalletList, RewardAddr, LastHeight, InitialDepth),
+	ar_node_worker ! wallets_ready,
+	{noreply, DAG4};
+
+handle_cast(Msg, DAG) ->
+	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, DAG}.
 
 terminate(Reason, _State) ->
-	ar:info([{event, ar_wallets_terminated}, {reason, Reason}]).
+	?LOG_INFO([{event, ar_wallets_terminated}, {reason, Reason}]).
 
 %%%===================================================================
 %%% Private functions.

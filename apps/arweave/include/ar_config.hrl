@@ -1,13 +1,20 @@
 -ifndef(AR_CONFIG_HRL).
 -define(AR_CONFIG_HRL, true).
 
--include("ar.hrl").
+-include_lib("ar.hrl").
 
 -record(config_webhook, {
 	events = [],
 	url = undefined,
 	headers = []
 }).
+
+%% @doc The polling frequency in seconds.
+-ifdef(DEBUG).
+-define(DEFAULT_POLLING_INTERVAL, 5).
+-else.
+-define(DEFAULT_POLLING_INTERVAL, 60).
+-endif.
 
 %% @doc The number of data sync jobs to run. Each job periodically picks a range
 %% and downloads it from peers.
@@ -35,7 +42,7 @@
 	peers = [],
 	data_dir = ".",
 	metrics_dir = ?METRICS_DIR,
-	polling = false,
+	polling = ?DEFAULT_POLLING_INTERVAL, % Polling frequency in seconds.
 	auto_join = true,
 	clean = false,
 	diff = ?DEFAULT_DIFF,

@@ -12,7 +12,7 @@
 	bytes_to_mb_string/1
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc Pick a list of random elements from a given list.

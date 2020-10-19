@@ -11,7 +11,7 @@
 	set_loss_probability/2
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc Create a new gossip node state. Optionally, with peer list.
@@ -85,9 +85,7 @@ do_send(S, Peer, Msg) ->
 					Peer ! Msg;
 				MaxDelay ->
 					erlang:send_after(
-						ar:scale_time(
-							rand:uniform(MaxDelay) + calculate_xfer_time(S, Msg)
-						),
+						rand:uniform(MaxDelay) + calculate_xfer_time(S, Msg),
 						Peer,
 						Msg
 					)

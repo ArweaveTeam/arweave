@@ -3,14 +3,14 @@
 -behaviour(cowboy_middleware).
 
 %% cowboy_middleware callbacks
--export([execute/2]).
 -export([start/0]).
+-export([execute/2]).
 -export([reset/0, reset_rate_limit/3]).
 -export([ban_peer/2, is_peer_banned/1, cleanup_ban/1]).
 -export([decrement_ip_addr/2]).
 
--include("ar.hrl").
--include("ar_blacklist_middleware.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_blacklist_middleware.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 execute(Req, Env) ->
@@ -26,8 +26,8 @@ execute(Req, Env) ->
 	end.
 
 start() ->
-	ar:info([{event, ar_blacklist_middleware_start}]),
-	ets:new(?MODULE, [set, public, named_table]),
+	?LOG_INFO([{event, ar_blacklist_middleware_start}]),
+	ets:new(ar_blacklist_middleware, [set, public, named_table]),
 	{ok, _} =
 		timer:apply_after(
 			?BAN_CLEANUP_INTERVAL,
@@ -97,10 +97,16 @@ reset_rate_limit(TableID, IpAddr, Path) ->
 	end.
 
 increment_ip_addr(IpAddr, Req) ->
-	update_ip_addr(IpAddr, Req, 1).
+	case ets:whereis(?MODULE) of 
+		undefined -> pass;
+		_ -> update_ip_addr(IpAddr, Req, 1)
+	end.
 
 decrement_ip_addr(IpAddr, Req) ->
-	update_ip_addr(IpAddr, Req, -1).
+	case ets:whereis(?MODULE) of 
+		undefined -> pass;
+		_ -> update_ip_addr(IpAddr, Req, -1)
+	end.
 
 update_ip_addr(IpAddr, Req, Diff) ->
 	{PathKey, Limit}  = get_key_limit(Req),

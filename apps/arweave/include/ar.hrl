@@ -109,9 +109,6 @@
 %% @doc The frequency of checking for the available disk space.
 -define(DISK_SPACE_CHECK_FREQUENCY_MS, 5 * 60 * 1000).
 
-%% Speed to run the network at when simulating.
--define(DEBUG_TIME_SCALAR, 1.0).
-
 %% @doc Length of time to wait before giving up on test(s).
 -define(TEST_TIMEOUT, 15 * 60).
 
@@ -458,5 +455,16 @@
 
 %% @doc Minimum number of characters for internal API secret.
 -define(INTERNAL_API_SECRET_MIN_LEN, 16).
+
+%% @doc The period to wait between checking the state of a block in the BI.
+-ifdef(DEBUG).
+-define(FOREIGN_BLOCK_ALERT_TIME, 3 * 1000).
+-else.
+-define(FOREIGN_BLOCK_ALERT_TIME, 60 * 60 * 1000).
+-endif.
+
+%% Use a standard way of logging.
+%% For more details see https://erlang.org/doc/man/logger.html#macros.
+-include_lib("kernel/include/logger.hrl").
 
 -endif.
