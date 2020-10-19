@@ -165,7 +165,6 @@ collect_keys({Key, _Value}, Acc) ->
 
 %% @doc Store and retreieve a test value.
 basic_storage_test() ->
-	reset(),
 	?assertEqual(not_found, get(test_key)),
 	put(test_key, test_value),
 	?assertEqual(test_value, get(test_key)),

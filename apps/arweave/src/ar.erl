@@ -29,6 +29,7 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_meta_db,
 		ar_unbalanced_merkle,
 		ar_intervals,
 		ar_patricia_tree,
@@ -65,9 +66,7 @@
 		ar_tx_perpetual_storage_tests,
 		ar_gateway_middleware_tests,
 		ar_http_util_tests,
-		ar_mine_randomx_tests,
-		% ar_meta_db must be the last in the list since it resets global configuration
-		ar_meta_db
+		ar_mine_randomx_tests
 	]
 ).
 
