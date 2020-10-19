@@ -65,6 +65,7 @@ start(ExtPeers, IntPeers, Port) ->
 		ar_node:get_pending_txs(whereis(http_entrypoint_node), [as_map])
 	),
 	reset_timer(PID, get_more_peers),
+	erlang:register(http_bridge_node, PID),
 	PID.
 
 %% @doc Get a list of remote peers
