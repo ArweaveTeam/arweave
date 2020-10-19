@@ -6,7 +6,7 @@
 
 -export([height_1_7/0, height_1_8/0, height_1_9/0, height_2_0/0, height_2_2/0, height_2_3/0]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -ifdef(FORKS_RESET).
 height_1_7() ->

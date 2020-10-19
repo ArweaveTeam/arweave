@@ -1,19 +1,18 @@
 -module(ar_multiple_txs_per_wallet_tests).
 
--include("src/ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0]).
--import(ar_test_node, [slave_mine/1]).
--import(ar_test_node, [assert_wait_until_receives_txs/2]).
--import(ar_test_node, [wait_until_height/2, assert_slave_wait_until_height/2]).
--import(ar_test_node, [slave_call/3]).
--import(ar_test_node, [post_tx_to_slave/2, post_tx_to_master/2]).
--import(ar_test_node, [assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
+-import(ar_test_node, [slave_mine/0, join_on_slave/0]).
+-import(ar_test_node, [assert_wait_until_receives_txs/1]).
+-import(ar_test_node, [wait_until_height/1, assert_slave_wait_until_height/1]).
+-import(ar_test_node, [slave_call/3, assert_wait_until_block_block_index/1 ]).
+-import(ar_test_node, [post_tx_to_slave/1, post_tx_to_master/1]).
+-import(ar_test_node, [assert_post_tx_to_slave/1, assert_post_tx_to_master/1]).
 -import(ar_test_node, [sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2]).
 -import(ar_test_node, [sign_v1_tx/3]).
--import(ar_test_node, [get_tx_anchor/0, get_tx_anchor/1, join_on_slave/0]).
--import(ar_test_node, [assert_wait_until_block_block_index/2]).
+-import(ar_test_node, [get_tx_anchor/0, get_tx_anchor/1]).
 -import(ar_test_node, [get_tx_confirmations/2]).
 -import(ar_test_node, [disconnect_from_slave/0, read_block_when_stored/1]).
 
@@ -117,8 +116,8 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%%
 	%% Expect them to be accepted, gossiped to the peer and included into the block.
 	%% Expect the block to be accepted by the peer.
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
@@ -126,16 +125,16 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 	%% Post the transactions to slave.
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX),
+			assert_post_tx_to_slave(TX),
 			%% Expect transactions to be gossiped to master.
-			assert_wait_until_receives_txs(Master, [TX])
+			assert_wait_until_receives_txs([TX])
 		end,
 		TXs
 	),
 	%% Mine a block.
-	slave_mine(Slave),
+	slave_mine(),
 	%% Expect both transactions to be included into block.
-	SlaveBI = assert_slave_wait_until_height(Slave, 1),
+	SlaveBI = assert_slave_wait_until_height(1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
 		lists:sort(TXIDs),
@@ -148,7 +147,7 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 		TXs
 	),
 	%% Expect the block to be accepted by master.
-	BI = wait_until_height(Master, 1),
+	BI = wait_until_height(1),
 	?assertEqual(
 		lists:sort(TXIDs),
 		lists:sort((read_block_when_stored(hd(BI)))#block.txs)
@@ -169,8 +168,8 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect the block to be accepted.
 	%% Expect transactions from the difference between the two sets to be kept in the mempool.
 	%% Mine a block on the first node, expect the difference to be included into the block.
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	%% Sign here after the node has started to get the correct price
 	%% estimation from it.
 	FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
@@ -179,30 +178,30 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Post transactions from the first set to master.
 	lists:foreach(
 		fun(TX) ->
-			post_tx_to_master(Master, TX)
+			post_tx_to_master(TX)
 		end,
 		SecondTXSet ++ FirstTXSet
 	),
-	?assertEqual([], slave_call(ar_node, get_pending_txs, [Slave])),
+	?assertEqual([], slave_call(ar_node, get_pending_txs, [])),
 	%% Post transactions from the second set to slave.
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		SecondTXSet
 	),
 	%% Connect the nodes and mine a block on slave.
 	connect_to_slave(),
-	slave_mine(Slave),
+	slave_mine(),
 	%% Expect master to receive the block.
-	BI = wait_until_height(Master, 1),
+	BI = wait_until_height(1),
 	SecondSetTXIDs = lists:map(fun(TX) -> TX#tx.id end, SecondTXSet),
 	?assertEqual(lists:sort(SecondSetTXIDs), lists:sort((read_block_when_stored(hd(BI)))#block.txs)),
 	%% Expect master to have the set difference in the mempool.
-	assert_wait_until_receives_txs(Master, FirstTXSet -- SecondTXSet),
+	assert_wait_until_receives_txs(FirstTXSet -- SecondTXSet),
 	%% Mine a block on master and expect both transactions to be included.
-	ar_node:mine(Master),
-	BI2 = wait_until_height(Master, 2),
+	ar_node:mine(),
+	BI2 = wait_until_height(2),
 	SetDifferenceTXIDs = lists:map(fun(TX) -> TX#tx.id end, FirstTXSet -- SecondTXSet),
 	?assertEqual(
 		lists:sort(SetDifferenceTXIDs),
@@ -210,30 +209,30 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	).
 
 returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	%% Post the given transactions that do not exceed the balance.
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		TXs
 	),
 	%% Expect the balance exceeding transactions to be included
 	%% into the mempool cause it can be potentially included by
 	%% other nodes.
-	assert_post_tx_to_slave(Slave, ExceedBalanceTX),
-	assert_wait_until_receives_txs(Master, TXs),
+	assert_post_tx_to_slave(ExceedBalanceTX),
+	assert_wait_until_receives_txs(TXs),
 	%% Expect only the first two to be included into the block.
-	slave_mine(Slave),
-	SlaveBI = assert_slave_wait_until_height(Slave, 1),
+	slave_mine(),
+	SlaveBI = assert_slave_wait_until_height(1),
 	TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
 	?assertEqual(
 		lists:sort(TXIDs),
 		lists:sort((slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]))#block.txs)
 	),
-	BI = wait_until_height(Master, 1),
+	BI = wait_until_height(1),
 	?assertEqual(
 		lists:sort(TXIDs),
 		lists:sort((read_block_when_stored(hd(BI)))#block.txs)
@@ -261,14 +260,14 @@ test_rejects_transactions_above_the_size_limit() ->
 		{ar_wallet:to_address(Pub2), ?AR(20), <<>>}
 	]),
 	%% Start the node.
-	{Slave, _} = slave_start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	SmallData = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT),
 	BigData = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT + 1),
 	GoodTX = sign_v1_tx(Key1, #{ data => SmallData }),
-	assert_post_tx_to_slave(Slave, GoodTX),
+	assert_post_tx_to_slave(GoodTX),
 	BadTX = sign_v1_tx(Key2, #{ data => BigData }),
-	{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}} = post_tx_to_slave(Slave, BadTX),
+	{ok, {{<<"400">>, _}, _, <<"Transaction verification failed.">>, _, _}} = post_tx_to_slave(BadTX),
 	{ok, ["tx_fields_too_large"]} = slave_call(ar_tx_db, get_error_codes, [BadTX#tx.id]).
 
 accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
@@ -288,20 +287,20 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{Slave, _} = slave_start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	TX1 = sign_v1_tx(Key),
-	assert_post_tx_to_slave(Slave, TX1),
-	slave_mine(Slave),
-	assert_slave_wait_until_height(Slave, 1),
+	assert_post_tx_to_slave(TX1),
+	slave_mine(),
+	assert_slave_wait_until_height(1),
 	TX2 = sign_v1_tx(Key, #{ last_tx => TX1#tx.id }),
-	assert_post_tx_to_slave(Slave, TX2),
+	assert_post_tx_to_slave(TX2),
 	TX3 = sign_v1_tx(Key, #{ last_tx => TX2#tx.id }),
-	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = post_tx_to_slave(Slave, TX3),
+	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = post_tx_to_slave(TX3),
 	TX4 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
-	assert_post_tx_to_slave(Slave, TX4),
-	slave_mine(Slave),
-	SlaveBI = assert_slave_wait_until_height(Slave, 2),
+	assert_post_tx_to_slave(TX4),
+	slave_mine(),
+	SlaveBI = assert_slave_wait_until_height(2),
 	B2 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
 	?assertEqual([TX2#tx.id, TX4#tx.id], B2#block.txs).
 
@@ -324,10 +323,10 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 		{ar_wallet:to_address(Pub1), ?AR(20), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(0), <<>>}
 	]),
-	{Slave, _} = slave_start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	TX1 = sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1), quantity => ?AR(2) }),
-	assert_post_tx_to_slave(Slave, TX1),
+	assert_post_tx_to_slave(TX1),
 	TX2 = sign_v1_tx(
 		Key2,
 		#{
@@ -338,9 +337,9 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 			tags => [{<<"nonce">>, <<"1">>}]
 		}
 	),
-	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} = post_tx_to_slave(Slave, TX2),
-	slave_mine(Slave),
-	SlaveBI = assert_slave_wait_until_height(Slave, 1),
+	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} = post_tx_to_slave(TX2),
+	slave_mine(),
+	SlaveBI = assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]),
 	?assertEqual([TX1#tx.id], B1#block.txs),
 	TX3 = sign_v1_tx(
@@ -353,9 +352,9 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 			tags => [{<<"nonce">>, <<"3">>}]
 		}
 	),
-	assert_post_tx_to_slave(Slave, TX3),
-	slave_mine(Slave),
-	SlaveBI2 = assert_slave_wait_until_height(Slave, 2),
+	assert_post_tx_to_slave(TX3),
+	slave_mine(),
+	SlaveBI2 = assert_slave_wait_until_height(2),
 	B2 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI2)]),
 	?assertEqual([TX3#tx.id], B2#block.txs).
 
@@ -374,7 +373,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(50), <<>>}
 	]),
-	{Slave, _} = slave_start(B0),
+	{_Slave, _} = slave_start(B0),
 	TX1 = sign_v1_tx(
 		Key1,
 		#{
@@ -383,9 +382,9 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 			quantity => ?AR(2)
 		}
 	),
-	assert_post_tx_to_slave(Slave, TX1),
-	slave_mine(Slave),
-	assert_slave_wait_until_height(Slave, 1),
+	assert_post_tx_to_slave(TX1),
+	slave_mine(),
+	assert_slave_wait_until_height(1),
 	SlaveIP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
 	GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
@@ -403,9 +402,9 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 			quantity => ?AR(1)
 		}
 	),
-	assert_post_tx_to_slave(Slave, TX2),
-	slave_mine(Slave),
-	assert_slave_wait_until_height(Slave, 2),
+	assert_post_tx_to_slave(TX2),
+	slave_mine(),
+	assert_slave_wait_until_height(2),
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -422,34 +421,34 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 			last_tx => TX1#tx.id
 		}
 	),
-	assert_post_tx_to_slave(Slave, TX3),
-	slave_mine(Slave),
-	assert_slave_wait_until_height(Slave, 3),
+	assert_post_tx_to_slave(TX3),
+	slave_mine(),
+	assert_slave_wait_until_height(3),
 	%% Remove the replay TX from the ingnore list (to simulate e.g. a node restart).
 	slave_call(ets, delete, [ignored_ids, TX2#tx.id]),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-		post_tx_to_slave(Slave, TX2).
+		post_tx_to_slave(TX2).
 
 mines_blocks_under_the_size_limit(B0, TXGroups) ->
 	%% Post the given transactions grouped by block size to a node.
 	%%
 	%% Expect them to be mined into the corresponding number of blocks so that
 	%% each block fits under the limit.
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX),
-			assert_wait_until_receives_txs(Master, [TX])
+			assert_post_tx_to_slave(TX),
+			assert_wait_until_receives_txs([TX])
 		end,
 		lists:flatten(TXGroups)
 	),
 	%% Mine blocks, expect the transactions there.
 	lists:foldl(
 		fun(Group, Height) ->
-			slave_mine(Slave),
-			SlaveBI = assert_slave_wait_until_height(Slave, Height),
+			slave_mine(),
+			SlaveBI = assert_slave_wait_until_height(Height),
 			GroupTXIDs = lists:map(fun(TX) -> TX#tx.id end, Group),
 			?assertEqual(
 				lists:sort(GroupTXIDs),
@@ -479,8 +478,8 @@ mines_format_2_txs_without_size_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	ChunkSize = ?MEMPOOL_DATA_SIZE_LIMIT div (?BLOCK_TX_COUNT_LIMIT + 1),
 	lists:foreach(
@@ -493,13 +492,13 @@ mines_format_2_txs_without_size_limit() ->
 					tags => [{<<"nonce">>, integer_to_binary(N)}]
 				}
 			),
-			assert_post_tx_to_slave(Slave, TX),
-			assert_wait_until_receives_txs(Master, [TX])
+			assert_post_tx_to_slave(TX),
+			assert_wait_until_receives_txs([TX])
 		end,
 		lists:seq(1, ?BLOCK_TX_COUNT_LIMIT + 1)
 	),
-	ar_node:mine(Master),
-	[{H, _, _} | _] = wait_until_height(Master, 1),
+	ar_node:mine(),
+	[{H, _, _} | _] = wait_until_height(1),
 	B = read_block_when_stored(H),
 	?assertEqual(?BLOCK_TX_COUNT_LIMIT, length(B#block.txs)),
 	TotalSize = lists:sum([(ar_storage:read_tx(TXID))#tx.data_size || TXID <- B#block.txs]),
@@ -514,12 +513,12 @@ rejects_txs_with_outdated_anchors_test_() ->
 		[B0] = ar_weave:init([
 			{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 		]),
-		{Slave, _} = slave_start(B0),
-		slave_mine_blocks(Slave, ?MAX_TX_ANCHOR_DEPTH),
-		assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH),
+		{_Slave, _} = slave_start(B0),
+		slave_mine_blocks(?MAX_TX_ANCHOR_DEPTH),
+		assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH),
 		TX1 = sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
 		{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-			post_tx_to_slave(Slave, TX1)
+			post_tx_to_slave(TX1)
 	end}.
 
 rejects_v1_txs_exceeding_mempool_limit_test_() ->
@@ -533,7 +532,7 @@ test_rejects_v1_txs_exceeding_mempool_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{Slave, _} = slave_start(B0),
+	{_Slave, _} = slave_start(B0),
 	BigChunk = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT - ?TX_SIZE_BASE),
 	TXs = lists:map(
 		fun(N) ->
@@ -550,12 +549,12 @@ test_rejects_v1_txs_exceeding_mempool_limit() ->
 	),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		lists:sublist(TXs, 5)
 	),
 	{ok, {{<<"400">>, _}, _, <<"Mempool is full.">>, _, _}} =
-		post_tx_to_slave(Slave, lists:last(TXs)).
+		post_tx_to_slave(lists:last(TXs)).
 
 rejects_v2_txs_exceeding_mempool_limit_test_() ->
 	{timeout, 60, fun rejects_v2_txs_exceeding_mempool_limit/0}.
@@ -565,7 +564,7 @@ rejects_v2_txs_exceeding_mempool_limit() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{Slave, _} = slave_start(B0),
+	{_Slave, _} = slave_start(B0),
 	BigChunk = crypto:strong_rand_bytes(?TX_DATA_SIZE_LIMIT),
 	TXs = lists:map(
 		fun(N) ->
@@ -582,14 +581,14 @@ rejects_v2_txs_exceeding_mempool_limit() ->
 	),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		lists:sublist(TXs, 5)
 	),
 	{ok, {{<<"400">>, _}, _, <<"Mempool is full.">>, _, _}} =
-		post_tx_to_slave(Slave, lists:last(TXs)),
+		post_tx_to_slave(lists:last(TXs)),
 	%% Strip the data out. Expect the header to be accepted.
-	assert_post_tx_to_slave(Slave, (lists:last(TXs))#tx{ data = <<>> }).
+	assert_post_tx_to_slave((lists:last(TXs))#tx{ data = <<>> }).
 
 mines_format_2_txs_without_size_limit_test_() ->
 	{timeout, 60, fun mines_format_2_txs_without_size_limit/0}.
@@ -615,7 +614,7 @@ joins_network_successfully() ->
 		{Addr = crypto:strong_rand_bytes(32), ?AR(20), <<>>},
 		{crypto:strong_rand_bytes(32), ?AR(20), <<>>}
 	]),
-	{Slave, _} = slave_start(B0),
+	{_Slave, _} = slave_start(B0),
 	{TXs, _} = lists:foldl(
 		fun(Height, {TXs, LastTX}) ->
 			{TX, AnchorType} = case rand:uniform(4) of
@@ -638,12 +637,12 @@ joins_network_successfully() ->
 						}
 					), block_anchor}
 			end,
-			assert_post_tx_to_slave(Slave, TX),
-			slave_mine(Slave),
-			assert_slave_wait_until_height(Slave, Height),
+			assert_post_tx_to_slave(TX),
+			slave_mine(),
+			assert_slave_wait_until_height(Height),
 			ar_util:do_until(
 				fun() ->
-					slave_call(ar_node, get_pending_txs, [Slave]) == []
+					slave_call(ar_node, get_pending_txs, []) == []
 				end,
 				200,
 				1000
@@ -653,12 +652,12 @@ joins_network_successfully() ->
 		{[], <<>>},
 		lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)
 	),
-	Master = join_on_slave(),
-	BI = slave_call(ar_node, get_block_index, [Slave]),
-	assert_wait_until_block_block_index(Master, BI),
+	_Master = join_on_slave(),
+	BI = slave_call(ar_node, get_block_index, []),
+	assert_wait_until_block_block_index(BI),
 	TX1 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
-		post_tx_to_master(Master, TX1),
+		post_tx_to_master(TX1),
 	%% Expect transactions to be on master.
 	lists:foreach(
 		fun({TX, _}) ->
@@ -676,7 +675,7 @@ joins_network_successfully() ->
 	),
 	lists:foreach(
 		fun({TX, AnchorType}) ->
-			Reply = post_tx_to_master(Master, TX),
+			Reply = post_tx_to_master(TX),
 			case AnchorType of
 				tx_anchor ->
 					?assertMatch(
@@ -704,20 +703,20 @@ joins_network_successfully() ->
 	),
 	disconnect_from_slave(),
 	TX2 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
-	assert_post_tx_to_master(Master, TX2),
-	ar_node:mine(Master),
-	wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 1),
+	assert_post_tx_to_master(TX2),
+	ar_node:mine(),
+	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
 	connect_to_slave(),
 	TX3 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
-	assert_post_tx_to_slave(Slave, TX3),
-	slave_mine(Slave),
-	BI2 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 1),
+	assert_post_tx_to_slave(TX3),
+	slave_mine(),
+	BI2 = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
 	TX4 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
-	assert_post_tx_to_slave(Slave, TX4),
-	assert_wait_until_receives_txs(Master, [TX4]),
-	slave_mine(Slave),
-	BI3 = assert_slave_wait_until_height(Slave, ?MAX_TX_ANCHOR_DEPTH + 2),
-	BI3 = wait_until_height(Master, ?MAX_TX_ANCHOR_DEPTH + 2),
+	assert_post_tx_to_slave(TX4),
+	assert_wait_until_receives_txs([TX4]),
+	slave_mine(),
+	BI3 = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 2),
+	BI3 = wait_until_height(?MAX_TX_ANCHOR_DEPTH + 2),
 	?assertEqual([TX4#tx.id], (read_block_when_stored(hd(BI3)))#block.txs),
 	?assertEqual([TX3#tx.id], (read_block_when_stored(hd(BI2)))#block.txs).
 
@@ -736,8 +735,8 @@ recovers_from_forks(ForkHeight) ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 	]),
-	{Slave, _} = slave_start(B0),
-	{Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
 	connect_to_slave(),
 	PreForkTXs = lists:foldl(
 		fun(Height, TXs) ->
@@ -745,11 +744,11 @@ recovers_from_forks(ForkHeight) ->
 				Key,
 				#{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }
 			),
-			assert_post_tx_to_slave(Slave, TX),
-			assert_wait_until_receives_txs(Master, [TX]),
-			slave_mine(Slave),
-			BI = assert_slave_wait_until_height(Slave, Height),
-			BI = wait_until_height(Master, Height),
+			assert_post_tx_to_slave(TX),
+			assert_wait_until_receives_txs([TX]),
+			slave_mine(),
+			BI = assert_slave_wait_until_height(Height),
+			BI = wait_until_height(Height),
 			slave_assert_block_txs([TX], BI),
 			assert_block_txs([TX], BI),
 			TXs ++ [TX]
@@ -766,7 +765,7 @@ recovers_from_forks(ForkHeight) ->
 				2 ->
 					sign_v1_tx(master, Key, UnsignedTX)
 			end,
-			assert_post_tx_to_master(Master, TX),
+			assert_post_tx_to_master(TX),
 			[TX]
 		end,
 	PostTXToSlave =
@@ -778,20 +777,20 @@ recovers_from_forks(ForkHeight) ->
 				2 ->
 					sign_v1_tx(Key, UnsignedTX)
 			end,
-			assert_post_tx_to_slave(Slave, TX),
+			assert_post_tx_to_slave(TX),
 			[TX]
 		end,
 	{MasterPostForkTXs, SlavePostForkTXs} = lists:foldl(
 		fun(Height, {MasterTXs, SlaveTXs}) ->
 			disconnect_from_slave(),
 			UpdatedMasterTXs = MasterTXs ++ ([NewMasterTX] = PostTXToMaster()),
-			ar_node:mine(Master),
-			BI = wait_until_height(Master, Height),
+			ar_node:mine(),
+			BI = wait_until_height(Height),
 			assert_block_txs([NewMasterTX], BI),
 			UpdatedSlaveTXs = SlaveTXs ++ ([NewSlaveTX] = PostTXToSlave()),
 			connect_to_slave(),
-			slave_mine(Slave),
-			SlaveBI = assert_slave_wait_until_height(Slave, Height),
+			slave_mine(),
+			SlaveBI = assert_slave_wait_until_height(Height),
 			slave_assert_block_txs([NewSlaveTX], SlaveBI),
 			{UpdatedMasterTXs, UpdatedSlaveTXs}
 		end,
@@ -799,11 +798,11 @@ recovers_from_forks(ForkHeight) ->
 		lists:seq(ForkHeight + 1, 9)
 	),
 	TX2 = sign_tx(Key, #{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }),
-	assert_post_tx_to_slave(Slave, TX2),
-	assert_wait_until_receives_txs(Master, [TX2]),
-	slave_mine(Slave),
-	assert_slave_wait_until_height(Slave, 10),
-	wait_until_height(Master, 10),
+	assert_post_tx_to_slave(TX2),
+	assert_wait_until_receives_txs([TX2]),
+	slave_mine(),
+	assert_slave_wait_until_height(10),
+	wait_until_height(10),
 	forget_txs(
 		PreForkTXs ++
 		MasterPostForkTXs ++
@@ -825,7 +824,7 @@ recovers_from_forks(ForkHeight) ->
 				)
 			),
 			{ok, {{<<"400">>, _}, _, _, _, _}} =
-				post_tx_to_master(Master, TX)
+				post_tx_to_master(TX)
 		end,
 		PreForkTXs ++ SlavePostForkTXs ++ [TX2]
 	),
@@ -941,15 +940,15 @@ grouped_txs(FirstAnchorType) ->
 	}),
 	{B0, [[Wallet1TX1], [Wallet2TX1, Wallet1TX2], [Wallet1TX3, Wallet1TX4]]}.
 
-slave_mine_blocks(Slave, TargetHeight) ->
-	slave_mine_blocks(Slave, 1, TargetHeight).
+slave_mine_blocks(TargetHeight) ->
+	slave_mine_blocks(1, TargetHeight).
 
-slave_mine_blocks(_Slave, Height, TargetHeight) when Height == TargetHeight + 1 ->
+slave_mine_blocks(Height, TargetHeight) when Height == TargetHeight + 1 ->
 	ok;
-slave_mine_blocks(Slave, Height, TargetHeight) ->
-	slave_mine(Slave),
-	assert_slave_wait_until_height(Slave, Height),
-	slave_mine_blocks(Slave, Height + 1, TargetHeight).
+slave_mine_blocks(Height, TargetHeight) ->
+	slave_mine(),
+	assert_slave_wait_until_height(Height),
+	slave_mine_blocks(Height + 1, TargetHeight).
 
 forget_txs(TXs) ->
 	lists:foreach(

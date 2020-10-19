@@ -4,17 +4,17 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("src/ar.hrl").
--include("src/ar_config.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 -import(ar_test_node, [
 	slave_start/1, start/3, connect_to_slave/0,
 	get_tx_anchor/1,
 	sign_tx/2,
 	slave_call/3,
-	assert_post_tx_to_slave/2, assert_post_tx_to_master/2,
-	slave_mine/1,
-	wait_until_height/2, assert_slave_wait_until_height/2,
+	assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
+	slave_mine/0,
+	wait_until_height/1, assert_slave_wait_until_height/1,
 	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
 	disconnect_from_slave/0
 ]).
@@ -47,7 +47,6 @@ test_uses_blacklists() ->
 		BlacklistFiles,
 		B0,
 		Wallet,
-		SlaveNode,
 		TXs,
 		GoodTXIDs,
 		BadTXIDs,
@@ -57,7 +56,7 @@ test_uses_blacklists() ->
 	} = setup(),
 	WhitelistFile = random_filename(),
 	ok = file:write_file(WhitelistFile, <<>>),
-	{MasterNode, _} =
+	{_, _} =
 		start(B0, unclaimed, (element(2, application:get_env(arweave, config)))#config{
 			transaction_blacklist_files = BlacklistFiles,
 			transaction_whitelist_files = [WhitelistFile],
@@ -74,10 +73,10 @@ test_uses_blacklists() ->
 	connect_to_slave(),
 	lists:foreach(
 		fun({TX, Height}) ->
-			assert_post_tx_to_slave(SlaveNode, TX),
-			slave_mine(SlaveNode),
+			assert_post_tx_to_slave(TX),
+			slave_mine(),
 			upload_data([TX], GoodTXIDs, DataTrees),
-			wait_until_height(MasterNode, Height)
+			wait_until_height(Height)
 		end,
 		lists:zip(TXs, lists:seq(1, length(TXs)))
 	),
@@ -115,9 +114,9 @@ test_uses_blacklists() ->
 			last_tx => get_tx_anchor(slave)
 		}
 	),
-	assert_post_tx_to_master(MasterNode, TX),
-	ar_node:mine(MasterNode),
-	[{_, WeaveSize, _} | _] = wait_until_height(MasterNode, length(TXs) + 1),
+	assert_post_tx_to_master(TX),
+	ar_node:mine(),
+	[{_, WeaveSize, _} | _] = wait_until_height(length(TXs) + 1),
 	assert_present_offsets([[WeaveSize]]),
 	ok = file:write_file(lists:nth(3, BlacklistFiles), ar_util:encode(TX#tx.id)),
 	assert_removed_offsets([[WeaveSize]]),
@@ -130,19 +129,19 @@ test_uses_blacklists() ->
 			last_tx => get_tx_anchor(slave)
 		}
 	),
-	assert_post_tx_to_slave(SlaveNode, TX2),
-	slave_mine(SlaveNode),
-	assert_slave_wait_until_height(SlaveNode, length(TXs) + 1),
-	assert_post_tx_to_slave(SlaveNode, TX),
-	slave_mine(SlaveNode),
-	assert_slave_wait_until_height(SlaveNode, length(TXs) + 2),
-	[{_, WeaveSize2, _} | _] = wait_until_height(MasterNode, length(TXs) + 2),
+	assert_post_tx_to_slave(TX2),
+	slave_mine(),
+	assert_slave_wait_until_height(length(TXs) + 1),
+	assert_post_tx_to_slave(TX),
+	slave_mine(),
+	assert_slave_wait_until_height(length(TXs) + 2),
+	[{_, WeaveSize2, _} | _] = wait_until_height(length(TXs) + 2),
 	assert_removed_offsets([[WeaveSize2]]),
 	assert_present_offsets([[WeaveSize]]),
 	teardown().
 
 setup() ->
-	{B0, Wallet, Node} = setup_slave(),
+	{B0, Wallet} = setup_slave(),
 	{TXs, DataTrees} = create_txs(Wallet),
 	TXIDs = [TX#tx.id || TX <- TXs],
 	BadTXIDs = [lists:nth(1, TXIDs), lists:nth(3, TXIDs)],
@@ -185,7 +184,6 @@ setup() ->
 		BlacklistFiles,
 		B0,
 		Wallet,
-		Node,
 		TXs,
 		GoodTXIDs,
 		BadTXIDs ++ BadTXIDs2,
@@ -197,8 +195,8 @@ setup() ->
 setup_slave() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
-	{Node, _} = slave_start(B0),
-	{B0, Wallet, Node}.
+	slave_start(B0),
+	{B0, Wallet}.
 
 create_txs(Wallet) ->
 	lists:foldl(

@@ -12,7 +12,7 @@
 	tx_id/1
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc Create a genesis block.

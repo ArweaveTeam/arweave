@@ -1,5 +1,5 @@
 -module(app_ipfs_tests).
--include("../ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -export([timestamp_data/1]).

@@ -8,9 +8,9 @@
 	usd_to_ar/3,
 	get_cost_per_year_at_datetime/1
 ]).
--include("ar.hrl").
--include("ar_inflation.hrl").
--include("perpetual_storage.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_inflation.hrl").
+-include_lib("arweave/include/perpetual_storage.hrl").
 
 %% types
 -type nonegint() :: non_neg_integer().

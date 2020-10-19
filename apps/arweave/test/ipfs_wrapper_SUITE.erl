@@ -42,11 +42,11 @@ end_per_testcase(_, _Config) ->
 %%% tests
 
 adt_simple_callback_gets_blocks(_Config) ->
-	Node = ar_node_init(),
+	_Node = ar_node_init(),
 	{ok, Pid} = app_ipfs:start(),
 	% TODO start adt callback module with gossip peers
 	% TODO ... which does something testable on recv block
-	Expected = mine_n_blocks_on_node(3, Node),
+	Expected = mine_n_blocks_on_node(3),
 	ct:pal("Expected hashes: ~p", [Expected]),
 	Actual = app_ipfs:get_block_hashes(Pid),
 	?assertEqual(Expected, Actual).
@@ -67,10 +67,10 @@ ar_node_init() ->
 	timer:sleep(1000),
 	Pid.
 
-mine_n_blocks_on_node(N, Node) ->
+mine_n_blocks_on_node(N) ->
 	lists:foreach(fun(_) ->
-			ar_node:mine(Node),
+			ar_node:mine(),
 			timer:sleep(500)
 		end, lists:seq(1,N)),
 	timer:sleep(1000),
-	ar_node:get_blocks(Node).
+	ar_node:get_blocks().

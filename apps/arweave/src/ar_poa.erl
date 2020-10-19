@@ -8,8 +8,8 @@
 	modify_diff/3
 ]).
 
--include("ar.hrl").
--include("perpetual_storage.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/perpetual_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(MIN_MAX_OPTION_DEPTH, 100).
@@ -46,7 +46,7 @@ generate([{Seed, WeaveSize, _TXRoot} | _] = BI, Depth) ->
 	).
 
 generate(_, _, _, N, N) ->
-	ar:info([
+    ?LOG_INFO([
 		{event, no_data_for_poa},
 		{tried_options, N - 1}
 	]),
@@ -58,7 +58,7 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 	{TXRoot, BlockBase, _BlockTop, RecallBH} = find_challenge_block(RecallByte, BI),
 	case ar_data_sync:get_chunk(RecallByte + 1) of
 		{ok, #{ tx_root := TXRoot, chunk := Chunk, tx_path := TXPath, data_path := DataPath }} ->
-			ar:info(
+			?LOG_INFO(
 				[
 					{event, generated_poa_from_v2_index},
 					{weave_size, WeaveSize},
@@ -79,7 +79,7 @@ generate(Seed, WeaveSize, BI, Option, Limit) ->
 generate(B, BlockOffset, Seed, WeaveSize, BI, TXRoot, Option, Limit) ->
 	case B#block.txs of
 		[] ->
-			ar:err([
+			?LOG_ERROR([
 				{event, empty_poa_challenge_block},
 				{hash, ar_util:encode(B#block.indep_hash)}
 			]),
@@ -126,7 +126,7 @@ generate(B, TXs, BlockOffset, Seed, WeaveSize, BI, TXRoot, Option, Limit) ->
 				{ok, POA} ->
 					case byte_size(POA#poa.data_path) > ?MAX_PATH_SIZE of
 						true ->
-							ar:info([
+							?LOG_INFO([
 								{event, data_path_size_exceeds_the_limit},
 								{block, ar_util:encode(B#block.indep_hash)},
 								{tx, ar_util:encode(TX#tx.id)},
@@ -136,7 +136,7 @@ generate(B, TXs, BlockOffset, Seed, WeaveSize, BI, TXRoot, Option, Limit) ->
 						false ->
 							case byte_size(POA#poa.tx_path) > ?MAX_PATH_SIZE of
 								true ->
-									ar:info([
+									?LOG_INFO([
 										{event, tx_path_size_exceeds_the_limit},
 										{block, ar_util:encode(B#block.indep_hash)},
 										{tx, ar_util:encode(TX#tx.id)},
@@ -147,21 +147,21 @@ generate(B, TXs, BlockOffset, Seed, WeaveSize, BI, TXRoot, Option, Limit) ->
 							end
 					end;
 				{error, invalid_data_root} ->
-					ar:warn([
+					?LOG_WARNING([
 						{event, invalid_data_root},
 						{block, ar_util:encode(B#block.indep_hash)},
 						{tx, ar_util:encode(TX#tx.id)}
 					]),
 					generate(Seed, WeaveSize, BI, Option + 1, Limit);
 				{error, invalid_root} ->
-					ar:warn([
+					?LOG_WARNING([
 						{event, invalid_transaction_root},
 						{block, ar_util:encode(B#block.indep_hash)},
 						{tx, ar_util:encode(TX#tx.id)}
 					]),
 					generate(Seed, WeaveSize, BI, Option + 1, Limit);
 				{error, invalid_tx_size} ->
-					ar:warn([
+					?LOG_WARNING([
 						{event, invalid_transaction_size},
 						{block, ar_util:encode(B#block.indep_hash)},
 						{tx, ar_util:encode(TX#tx.id)}
@@ -202,7 +202,7 @@ create_poa_from_data(B, TXStart, TXData, DataRoot, BlockOffset, Option) ->
 			SizedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(SizedChunks),
 			case ar_merkle:generate_tree(SizedChunkIDs) of
 				{DataRoot, DataTree} ->
-					ar:info(
+					?LOG_INFO(
 						[
 							{event, generated_poa},
 							{weave_size, B#block.weave_size},

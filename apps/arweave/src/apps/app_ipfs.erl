@@ -11,7 +11,8 @@
 	maybe_ipfs_add_txs/1,
 	report/1]).
 -export([confirmed_transaction/2]).
--include("../ar.hrl").
+
+-include_lib("arweave/include/ar.hrl").
 
 -record(state,{
 	adt_pid,
@@ -28,7 +29,7 @@
 
 %% @doc Start pinning incoming tagged TXs to a local IPFS node.
 start_pinning() ->
-	Node = whereis(http_entrypoint_node),
+	Node = whereis(ar_node),
 	Wallet = undefined,
 	Name = "",
 	{ok, _Pid} = start([Node], Wallet, Name),
@@ -189,7 +190,7 @@ server(State=#state{
 			app_queue:add(Q, UnsignedTX),
 			server(State);
 		{recv_new_tx, TX=#tx{tags=Tags}} ->
-			ar:d({app_ipfs, recv_new_tx, TX#tx.id}),
+			?LOG_DEBUG({app_ipfs, recv_new_tx, TX#tx.id}),
 			case lists:keyfind(<<"IPFS-Add">>, 1, Tags) of
 				{<<"IPFS-Add">>, Hash} ->
 					{ok, _Hash2} = add_ipfs_data(TX, Hash),
@@ -204,7 +205,7 @@ server(State=#state{
 			end,
 			server(State);
 		{recv_new_tx, X} ->
-			ar:d({app_ipfs, recv_new_tx, X}),
+			?LOG_DEBUG({app_ipfs, recv_new_tx, X}),
 			server(State)
 	end.
 
@@ -212,15 +213,15 @@ server(State=#state{
 
 add_ipfs_data(TX, Hash) ->
 	%% version 0.1, no validation
-	ar:d({recv_tx_ipfs_add, TX#tx.id, Hash}),
+	?LOG_DEBUG({recv_tx_ipfs_add, TX#tx.id, Hash}),
 	{ok, _Hash2} = ar_ipfs:add_data(TX#tx.data, Hash).
 
 get_hash_and_queue(Hash, Queue) ->
-	ar:d({fetching, Hash}),
+	?LOG_DEBUG({fetching, Hash}),
 	case ar_ipfs:cat_data_by_hash(Hash) of
 		{ok, Data} ->
 			{ok, Hash2} = ar_ipfs:add_data(Data, Hash),
-			ar:d({added, Hash, Hash2}),
+			?LOG_DEBUG({added, Hash, Hash2}),
 			UnsignedTX = #tx{tags=[{<<"IPFS-Add">>, Hash}], data=Data},
 			app_queue:add(Queue, UnsignedTX),
 			ok;

@@ -2,8 +2,8 @@
 
 -export([parse/1]).
 
--include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
 %%% Public interface.

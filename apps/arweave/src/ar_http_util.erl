@@ -2,7 +2,7 @@
 
 -export([get_tx_content_type/1, arweave_peer/1]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -define(PRINTABLE_ASCII_REGEX, "^[ -~]*$").
 

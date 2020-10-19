@@ -2,7 +2,7 @@
 -behaviour(cowboy_middleware).
 -export([execute/2]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -define(MANIFEST_CONTENT_TYPE, <<"application/x.arweave-manifest+json">>).
 

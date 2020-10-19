@@ -11,7 +11,7 @@
 	set_loss_probability/2
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc Create a new gossip node state. Optionally, with peer list.

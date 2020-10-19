@@ -1,7 +1,7 @@
 -module(ar_inflation).
 -export([calculate/1, calculate_post_15_y1_extra/0]).
 
--include("ar_inflation.hrl").
+-include_lib("arweave/include/ar_inflation.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% @doc Module responsible for managing and testing the inflation schedule of 

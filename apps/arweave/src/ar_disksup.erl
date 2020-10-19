@@ -38,7 +38,7 @@
 	terminate/2
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -record(state, {timeout, os, diskdata = [], port}).
 

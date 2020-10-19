@@ -1,5 +1,6 @@
 -module(ar_config_tests).
--include("src/ar_config.hrl").
+
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 parse_test_() ->

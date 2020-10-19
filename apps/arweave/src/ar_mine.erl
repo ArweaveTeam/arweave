@@ -1,13 +1,16 @@
 -module(ar_mine).
 
--export([start/8, stop/1, mine/2]).
--export([validate/4, validate/3]).
--export([min_difficulty/1, max_difficulty/0]).
--export([sha384_diff_to_randomx_diff/1]).
-
--include("ar.hrl").
+-export([
+	start/8, stop/1,
+	mine/2,
+	validate/4, validate/3,
+	min_difficulty/1, max_difficulty/0,
+	sha384_diff_to_randomx_diff/1
+]).
 
 -include_lib("eunit/include/eunit.hrl").
+
+-include_lib("arweave/include/ar.hrl").
 
 %%% A module for managing mining of blocks on the weave,
 
@@ -362,7 +365,7 @@ reschedule_timestamp_refresh(S = #state{
 	case ?MINING_TIMESTAMP_REFRESH_INTERVAL - BDSGenerationDuration  of
 		TimeoutSeconds when TimeoutSeconds =< 0 ->
 			TXIDs = lists:map(fun(TX) -> TX#tx.id end, TXs),
-			ar:warn([
+			?LOG_WARNING([
 				ar_mine,
 				slow_data_segment_generation,
 				{duration, BDSGenerationDuration},
@@ -376,7 +379,7 @@ reschedule_timestamp_refresh(S = #state{
 				{ok, Ref} ->
 					S#state{ timestamp_refresh_timer = Ref };
 				{error, Reason} ->
-					ar:err("ar_mine: Reschedule timestamp refresh failed: ~p", [Reason]),
+					?LOG_ERROR("ar_mine: Reschedule timestamp refresh failed: ~p", [Reason]),
 					S
 			end
 	end.
@@ -474,7 +477,7 @@ log_performance(TotalHashesTried, StartedAt) ->
 	Time = timer:now_diff(erlang:timestamp(), StartedAt),
 	Rate = TotalHashesTried / (Time / 1000000),
 	prometheus_histogram:observe(mining_rate, Rate),
-	ar:console([
+	?LOG_INFO([
 		{event, stopped_mining},
 		{miner_hashes_per_second, Rate}
 	]).
@@ -536,7 +539,7 @@ find_nonce(BDS, Diff, Height, Supervisor) ->
 				{crypto:strong_rand_bytes(256 div 8), crypto:strong_rand_bytes(256 div 8)},
 			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor);
 		not_found ->
-			ar:info("Mining is waiting on RandomX initialization"),
+			?LOG_INFO("Mining is waiting on RandomX initialization"),
 			timer:sleep(30 * 1000),
 			find_nonce(BDS, Diff, Height, Supervisor)
 	end.
@@ -581,9 +584,9 @@ basic_test_() ->
 
 test_basic() ->
 	[B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
-	ar_node:mine(Node),
-	BI = ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:start(B0),
+	ar_node:mine(),
+	BI = ar_test_node:wait_until_height(1),
 	B1 = ar_storage:read_block(hd(BI)),
 	start(B1, B1#block.poa, [], unclaimed, [], self(), [], BI),
 	assert_mine_output(B1, B1#block.poa, []).
@@ -620,8 +623,8 @@ test_excludes_no_longer_valid_txs() ->
 	Address = ar_wallet:to_address(Pub),
 	Wallets = [{Address, ?AR(1000000000000), <<>>}],
 	[B] = ar_weave:init(Wallets, Diff),
-	{Node, _} = ar_test_node:start(B),
-	BI = ar_test_node:wait_until_height(Node, 0),
+	{_Node, _} = ar_test_node:start(B),
+	BI = ar_test_node:wait_until_height(0),
 	Run = fun() ->
 		Now = os:system_time(seconds),
 		%% The transaction is invalid because its fee is based on a timestamp from the future.
@@ -662,8 +665,8 @@ run_until(Pred, Fun) ->
 %% @doc Ensures ar_mine can be started and stopped.
 start_stop_test() ->
 	[B] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B),
-	BI = ar_test_node:wait_until_height(Node, 0),
+	{_Node, _} = ar_test_node:start(B),
+	BI = ar_test_node:wait_until_height(0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
 	PID = start(B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], BI),
 	timer:sleep(500),

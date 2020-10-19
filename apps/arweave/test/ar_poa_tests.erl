@@ -1,12 +1,12 @@
 -module(ar_poa_tests).
 
--include("src/ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0]).
--import(ar_test_node, [assert_post_tx_to_slave/2]).
--import(ar_test_node, [slave_mine/1, slave_call/3]).
--import(ar_test_node, [wait_until_height/2, assert_slave_wait_until_height/2]).
+-import(ar_test_node, [assert_post_tx_to_slave/1]).
+-import(ar_test_node, [slave_mine/0, slave_call/3]).
+-import(ar_test_node, [wait_until_height/1, assert_slave_wait_until_height/1]).
 -import(ar_test_node, [get_tx_anchor/0, sign_tx/2, read_block_when_stored/1]).
 
 v1_transactions_after_2_0_test_() ->
@@ -19,48 +19,48 @@ test_v1_transactions_after_2_0() ->
 		{ar_wallet:to_address(Pub1), ?AR(100), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(100), <<>>}
 	]),
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	TXs = generate_txs(Key, fun ar_test_node:sign_v1_tx/2),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		TXs
 	),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(Slave),
-			BI = wait_until_height(Master, Height),
+			slave_mine(),
+			BI = wait_until_height(Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_slave_wait_until_height(Slave, Height)
+			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(1, 10)
 	),
 	MoreTXs = generate_txs(Key2, fun ar_test_node:sign_v1_tx/2),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		MoreTXs
 	),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(Slave),
-			BI = wait_until_height(Master, Height),
+			slave_mine(),
+			BI = wait_until_height(Height),
 			case Height of
 				11 ->
 					assert_txs_mined(MoreTXs, BI);
 				_ ->
 					noop
 			end,
-			assert_slave_wait_until_height(Slave, Height)
+			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(11, 20)
 	).
@@ -75,48 +75,48 @@ test_v2_transactions_after_2_0() ->
 		{ar_wallet:to_address(Pub1), ?AR(100), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(100), <<>>}
 	]),
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	TXs = generate_txs(Key, fun ar_test_node:sign_tx/2),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		TXs
 	),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(Slave),
-			BI = wait_until_height(Master, Height),
+			slave_mine(),
+			BI = wait_until_height(Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_slave_wait_until_height(Slave, Height)
+			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(1, 10)
 	),
 	MoreTXs = generate_txs(Key2, fun ar_test_node:sign_tx/2),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		MoreTXs
 	),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(Slave),
-			BI = wait_until_height(Master, Height),
+			slave_mine(),
+			BI = wait_until_height(Height),
 			case Height of
 				11 ->
 					assert_txs_mined(MoreTXs, BI);
 				_ ->
 					noop
 			end,
-			assert_slave_wait_until_height(Slave, Height)
+			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(11, 20)
 	).
@@ -129,8 +129,8 @@ test_recall_byte_on_the_border() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
 	]),
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	%% Generate one-byte transactions so that recall byte is often on the
 	%% the border between two transactions.
@@ -142,21 +142,21 @@ test_recall_byte_on_the_border() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		TXs
 	),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(Slave),
-			BI = wait_until_height(Master, Height),
+			slave_mine(),
+			BI = wait_until_height(Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_slave_wait_until_height(Slave, Height)
+			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(1, 10)
 	).
@@ -169,8 +169,8 @@ test_over_reported_tx_size() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
 	]),
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	TXs = [
 		%% Post a transaction with some data and correctly reported size
@@ -189,21 +189,21 @@ test_over_reported_tx_size() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		TXs
 	),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(Slave),
-			BI = wait_until_height(Master, Height),
+			slave_mine(),
+			BI = wait_until_height(Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_slave_wait_until_height(Slave, Height)
+			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(1, 4)
 	).
@@ -216,8 +216,8 @@ test_under_reported_tx_size() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
 	]),
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	TXs = [
 		%% Post a transaction with some data and correctly reported size
@@ -236,21 +236,21 @@ test_under_reported_tx_size() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		TXs
 	),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(Slave),
-			BI = wait_until_height(Master, Height),
+			slave_mine(),
+			BI = wait_until_height(Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_slave_wait_until_height(Slave, Height)
+			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(1, 4)
 	).
@@ -263,8 +263,8 @@ test_ignores_transactions_with_invalid_data_root() ->
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
 	]),
-	{Master, _} = start(B0),
-	{Slave, _} = slave_start(B0),
+	{_Master, _} = start(B0),
+	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
 	Default = slave_call(ar_meta_db, get, [max_poa_option_depth]),
 	slave_call(ar_meta_db, put, [max_poa_option_depth, 100]),
@@ -292,21 +292,21 @@ test_ignores_transactions_with_invalid_data_root() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		TXs
 	),
 	lists:foreach(
 		fun(Height) ->
-			slave_mine(Slave),
-			BI = wait_until_height(Master, Height),
+			slave_mine(),
+			BI = wait_until_height(Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_slave_wait_until_height(Slave, Height)
+			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(1, 10)
 	),

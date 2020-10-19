@@ -2,7 +2,7 @@
 
 -export([next_cumulative_diff/3, twice_smaller_diff/1, multiply_diff/2]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 %% @doc Calculate the cumulative difficulty for the next block.
 next_cumulative_diff(OldCDiff, NewDiff, Height) ->

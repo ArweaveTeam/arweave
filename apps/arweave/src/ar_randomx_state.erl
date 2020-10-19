@@ -8,7 +8,7 @@
 ]).
 -export([init/2, init/4, swap_height/1]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -record(state, {
 	randomx_states,
@@ -120,13 +120,13 @@ server(State) ->
 	server(NewState).
 
 poll_new_blocks(State) ->
-	NodePid = whereis(http_entrypoint_node),
+	NodePid = whereis(ar_node),
 	case NodePid of
 		undefined ->
 			timer:send_after(1000, poll_new_blocks),
 			State;
 		_ ->
-			case ar_node:get_height(NodePid) of
+			case ar_node:get_height() of
 				-1 ->
 					%% Add an extra poll soon
 					timer:send_after(1000, poll_new_blocks),
@@ -217,18 +217,18 @@ init(Server, SwapHeight, Threads) ->
 		{ok, Key} ->
 			init(Server, SwapHeight, Key, Threads);
 		unavailable ->
-			ar:warn([ar_randomx_state, failed_to_read_or_download_key_block, {swap_height, SwapHeight}]),
+			?LOG_WARNING([ar_randomx_state, failed_to_read_or_download_key_block, {swap_height, SwapHeight}]),
 			timer:sleep(5000),
 			init(Server, SwapHeight, Threads)
 	end.
 
 init(Server, SwapHeight, Key, Threads) ->
-	ar:console(
+	?LOG_INFO(
 		"Initialising RandomX dataset for fast hashing. Swap height: ~p, Key: ~p. "
 		"The process may take several minutes.~n", [SwapHeight, ar_util:encode(Key)]
 	),
 	Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(Key, Threads)}},
-	ar:console("RandomX dataset initialisation for swap height ~p complete.", [SwapHeight]).
+	?LOG_INFO("RandomX dataset initialisation for swap height ~p complete.", [SwapHeight]).
 
 %% @doc Return the key used in RandomX by key swap height. The key is the
 %% dependent hash from the block at the previous swap height. If RandomX is used
@@ -248,7 +248,7 @@ randomx_key(SwapHeight) ->
 	end.
 
 get_block(Height) ->
-	case ar_node:get_block_index(whereis(http_entrypoint_node)) of
+	case ar_node:get_block_index() of
 		[] -> unavailable;
 		BI ->
 			{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
@@ -256,7 +256,7 @@ get_block(Height) ->
 	end.
 
 get_block(BH, BI) ->
-	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	Peers = ar_bridge:get_remote_peers(),
 	get_block(BH, BI, Peers).
 
 get_block(Height, BI, Peers) when is_integer(Height) ->
@@ -274,7 +274,7 @@ get_block(BH, BI, Peers) ->
 					ar_header_sync:add_block(B),
 					{ok, B};
 				InvalidBH ->
-					ar:warn([
+					?LOG_WARNING([
 						ar_randomx_state,
 						get_block_remote_got_invalid_block,
 						{requested_block_hash, ar_util:encode(BH)},

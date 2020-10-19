@@ -1,7 +1,7 @@
 -ifndef(AR_INFLATION_HRL).
 -define(AR_INFLATION_HRL, true).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 %% How many blocks are created in a year?
 -define(BLOCKS_PER_YEAR, (30 * 24 * 365)).

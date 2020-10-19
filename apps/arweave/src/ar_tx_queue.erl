@@ -14,7 +14,7 @@
 	terminate/2, code_change/3, format_status/2
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -record(state, {
 	tx_queue,
@@ -43,7 +43,7 @@ start_link() ->
 			{error, {already_started, _Pid}} ->
 				ok;
 			Error ->
-				ar:err({?MODULE, error_on_start_link, Error}),
+				?LOG_ERROR({?MODULE, error_on_start_link, Error}),
 				error
 		end,
 	case Resp of
@@ -166,11 +166,11 @@ handle_cast({add_tx, TX}, State) ->
 				end,
 				DroppedTXs
 			),
-			ar:info([
+			?LOG_INFO([
 				{event, drop_txs_from_queue},
 				{dropped_txs, DroppedIDs}
 			]),
-			ar_bridge:drop_waiting_txs(whereis(http_bridge_node), DroppedTXs)
+			ar_bridge:drop_waiting_txs(DroppedTXs)
 	end,
 	NewState = State#state{
 		tx_queue = NewQ,
@@ -218,9 +218,7 @@ handle_cast(emitter_go, State) ->
 				State;
 			false ->
 				{{_, {TX, {TXHeaderSize, TXDataSize}}}, NewQ} = gb_sets:take_largest(Q),
-				Bridge = whereis(http_bridge_node),
-				Node = whereis(http_entrypoint_node),
-				{Peers, TrustedPeers} = get_peers(Bridge, Node),
+				{Peers, TrustedPeers} = get_peers(),
 				case Peers of
 					[] ->
 						gen_server:cast(?MODULE, {emitter_finished, TX}),
@@ -291,12 +289,11 @@ handle_cast({emitted_tx_to_peer, {Reply, TX}}, State = #state{ emit_map = EmitMa
 	end;
 
 handle_cast({emitter_finished, TX}, State) ->
-	Bridge = whereis(http_bridge_node),
 	timer:apply_after(
 		ar_node_utils:calculate_delay(tx_propagated_size(TX)),
 		ar_bridge,
 		move_tx_to_mining_pool,
-		[Bridge, TX]
+		[TX]
 	),
 	timer:apply_after(?EMITTER_INTER_WAIT, gen_server, cast, [?MODULE, emitter_go]),
 	{noreply, State};
@@ -334,10 +331,10 @@ maybe_drop(Q, {HeaderSize, DataSize} = Size, {MaxHeaderSize, MaxDataSize} = MaxS
 			{Q, Size, lists:filter(fun(TX) -> TX /= none end, DroppedTXs)}
 	end.
 
-get_peers(Bridge, Node) ->
+get_peers() ->
 	Peers =
-		lists:sublist(ar_bridge:get_remote_peers(Bridge), ar_meta_db:get(max_propagation_peers)),
-	TrustedPeers = ar_node:get_trusted_peers(Node),
+		lists:sublist(ar_bridge:get_remote_peers(), ar_meta_db:get(max_propagation_peers)),
+	TrustedPeers = ar_node:get_trusted_peers(),
 	{join_peers(Peers, TrustedPeers), TrustedPeers}.
 
 join_peers(Peers, [TrustedPeer | TrustedPeers]) ->

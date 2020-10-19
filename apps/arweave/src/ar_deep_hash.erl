@@ -1,7 +1,7 @@
 -module(ar_deep_hash).
 -export([hash/1]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 hash(List) when is_list(List) -> hash_bin_or_list(List).

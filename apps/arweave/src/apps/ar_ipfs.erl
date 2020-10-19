@@ -9,6 +9,8 @@
 -export([ep_get_ipfs_hashes/2, hashes_only/1]).
 -export([rfc3339_timestamp/0, rfc3339_timestamp/1]).
 
+-include_lib("arweave/include/ar.hrl").
+
 -define(BOUNDARY, "------------qwerasdfzxcv").
 -define(IPFS_HOST, "127.0.0.1").
 -define(IPFS_PORT, "5001").
@@ -124,7 +126,7 @@ dht_provide_hash(IPFSHash) ->
 dht_provide_hash(IP, Port, IPFSHash) ->
     URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/dht/provide?arg="
 		++ thing_to_list(IPFSHash),
-	ar:d({ar_ipfs, dht_provide_hash, IPFSHash}),
+	?LOG_DEBUG({ar_ipfs, dht_provide_hash, IPFSHash}),
 	request(get, {URL, []}).
 
 -spec key_gen(string()) -> {ok, hash()} | {error, list()}.

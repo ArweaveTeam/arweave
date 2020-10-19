@@ -2,7 +2,7 @@
 
 -export([verify_tx/6, verify_block_txs/6, pick_txs_to_mine/6]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 %%% This module contains functions for transaction verification. It relies on
 %%% some verification helpers from the ar_tx and ar_node_utils modules.

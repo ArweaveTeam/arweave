@@ -16,8 +16,8 @@
 
 -export([calculate_wallet_fee/2]).
 
--include("ar.hrl").
--include("perpetual_storage.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/perpetual_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Transaction creation, signing and verification for Arweave.

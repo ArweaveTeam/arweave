@@ -1,6 +1,6 @@
 -module(ar_kv).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -export([

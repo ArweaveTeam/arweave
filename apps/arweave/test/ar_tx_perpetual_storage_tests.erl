@@ -1,7 +1,7 @@
 -module(ar_tx_perpetual_storage_tests).
 
--include("src/ar.hrl").
--include("src/perpetual_storage.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/perpetual_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% These functions serve as mocks and are exported to overcome the meck's
@@ -12,10 +12,10 @@
 -import(ar_tx_perpetual_storage, [get_cost_per_year_at_datetime/1]).
 
 -import(ar_test_node, [start/2, slave_start/2, connect_to_slave/0, slave_call/3]).
--import(ar_test_node, [slave_mine/1]).
+-import(ar_test_node, [slave_mine/0]).
 -import(ar_test_node, [sign_tx/1, sign_tx/2]).
--import(ar_test_node, [assert_post_tx_to_slave/2, assert_post_tx_to_master/2]).
--import(ar_test_node, [wait_until_height/2, assert_slave_wait_until_height/2]).
+-import(ar_test_node, [assert_post_tx_to_slave/1, assert_post_tx_to_master/1]).
+-import(ar_test_node, [wait_until_height/1, assert_slave_wait_until_height/1]).
 -import(ar_test_node, [get_tx_anchor/0, get_tx_anchor/1]).
 -import(ar_test_node, [get_balance/1]).
 -import(ar_test_node, [test_with_mocked_functions/2]).
@@ -98,12 +98,12 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		{ar_wallet:to_address(Pub3), ?AR(2000), <<>>}
 	]),
 	RewardKey = {_, RewardAddr} = ar_wallet:new(),
-	{Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
-	{Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
+	{_Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
+	{_Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
 	connect_to_slave(),
 	%% Mine a block without transactions. Expect an inflation reward.
-	slave_mine(Slave),
-	BI1 = wait_until_height(Master, 1),
+	slave_mine(),
+	BI1 = wait_until_height(1),
 	B1 = ar_storage:read_block(hd(BI1)),
 	?assertEqual(0, B1#block.reward_pool),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B1#block.reward_addr),
@@ -112,9 +112,9 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	%% Mine a block with an empty transaction. Expect an inflation reward and
 	%% data reward for the base tx size.
 	TX1 = sign_tx(Key1),
-	assert_post_tx_to_slave(Slave, TX1),
-	slave_mine(Slave),
-	BI2 = wait_until_height(Master, 2),
+	assert_post_tx_to_slave(TX1),
+	slave_mine(),
+	BI2 = wait_until_height(2),
 	B2 = ar_storage:read_block(hd(BI2)),
 	RewardPoolIncrement1 = ar_tx_perpetual_storage:calculate_tx_cost(
 		0,
@@ -140,9 +140,9 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	%% and an inflation reward.
 	Data = << <<1>> || _ <- lists:seq(1, 10) >>,
 	TX2 = sign_tx(Key2, #{ data => Data }),
-	assert_post_tx_to_slave(Slave, TX2),
-	slave_mine(Slave),
-	BI3 = wait_until_height(Master, 3),
+	assert_post_tx_to_slave(TX2),
+	slave_mine(),
+	BI3 = wait_until_height(3),
 	B3 = ar_storage:read_block(hd(BI3)),
 	RewardPoolIncrement2 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(Data),
@@ -181,15 +181,15 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	TX6 = sign_tx(Key2, #{ data => Data5, last_tx => get_tx_anchor(master) }),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_master(Master, TX)
+			assert_post_tx_to_master(TX)
 		end,
 		[TX3, TX4, TX5, TX6]
 	),
 	%% Store the previous transactions posted to slave on master
 	%% so that it has PoA data to mine.
 	ar_storage:write_tx([TX1, TX2]),
-	ar_node:mine(Master),
-	BI4 = assert_slave_wait_until_height(Slave, 4),
+	ar_node:mine(),
+	BI4 = assert_slave_wait_until_height(4),
 	B4 = ar_storage:read_block(hd(BI4)),
 	{RewardPoolIncrement3, WeaveSizeIncrement} = lists:foldl(
 		fun(Chunk, {Sum, Size}) ->
@@ -222,9 +222,9 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	%% inflation reward minus what goes to the pool because the size-prorated
 	%% data reward is paid to the same wallet.
 	RewardWalletTX = sign_tx(RewardKey, #{ data => << <<1>> || _ <- lists:seq(1, 11) >> }),
-	assert_post_tx_to_master(Master, RewardWalletTX),
-	ar_node:mine(Master),
-	BI5 = assert_slave_wait_until_height(Slave, 5),
+	assert_post_tx_to_master(RewardWalletTX),
+	ar_node:mine(),
+	BI5 = assert_slave_wait_until_height(5),
 	B5 = slave_call(ar_storage, read_block, [hd(BI5)]),
 	RewardPoolIncrement4 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(RewardWalletTX#tx.data),
@@ -250,16 +250,16 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	]),
 	B0 = BNoPool#block{ reward_pool = ?AR(10000000000000) },
 	RewardKey = {_, RewardAddr} = ar_wallet:new(),
-	{Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
-	{Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
+	{_Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
+	{_Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
 	connect_to_slave(),
 	%% Mine a block with a transaction. Expect the reward to contain inflation, data reward,
 	%% and the correct portion of the pool.
 	BigChunk = << <<3>> || _ <- lists:seq(1, 10000) >>,
 	TX1 = sign_tx(Key1, #{ data => BigChunk, last_tx => get_tx_anchor() }),
-	assert_post_tx_to_slave(Slave, TX1),
-	slave_mine(Slave),
-	BI1 = wait_until_height(Master, 1),
+	assert_post_tx_to_slave(TX1),
+	slave_mine(),
+	BI1 = wait_until_height(1),
 	B1 = ar_storage:read_block(hd(BI1)),
 	RewardPoolIncrement1 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(BigChunk),
@@ -285,8 +285,8 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	Balance1 = get_balance(RewardAddr),
 	assert_almost_equal(BaseReward1 + PoolShare1, Balance1, 1),
 	%% Mine an empty block. Expect an inflation reward and a share of the pool.
-	slave_mine(Slave),
-	BI2 = wait_until_height(Master, 2),
+	slave_mine(),
+	BI2 = wait_until_height(2),
 	B2 = ar_storage:read_block(hd(BI2)),
 	BaseReward2 = ar_inflation:calculate(2),
 	PoolShare2 = get_miner_pool_share(
@@ -302,9 +302,9 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	%% inflation reward minus what goes to the pool because the size-prorated
 	%% data reward is paid to the same wallet.
 	RewardWalletTX = sign_tx(RewardKey, #{ data => << <<1>> || _ <- lists:seq(1, 11) >> }),
-	assert_post_tx_to_slave(Slave, RewardWalletTX),
-	slave_mine(Slave),
-	BI3 = wait_until_height(Master, 3),
+	assert_post_tx_to_slave(RewardWalletTX),
+	slave_mine(),
+	BI3 = wait_until_height(3),
 	B3 = ar_storage:read_block(hd(BI3)),
 	RewardPoolIncrement2 = ar_tx_perpetual_storage:calculate_tx_cost(
 		byte_size(RewardWalletTX#tx.data),

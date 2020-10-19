@@ -7,7 +7,7 @@
 	hash_block_index_entry/1
 ]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Module for building and manipulating generic and specific unbalanced merkle trees.

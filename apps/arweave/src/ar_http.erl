@@ -4,7 +4,7 @@
 
 -export([req/1, gun_total_metric/1]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 %%% ==================================================================
 %%% API
@@ -110,8 +110,10 @@ get_reponse(#{pid := Pid, stream_ref := SR, timer := T, start := S, limit := L, 
 
 log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
 	case ar_meta_db:get(http_logging) of
-		true ->
-			ar:Type([{event, Event}, {http_method, Method}, {peer, ar_util:format_peer(Peer)}, {path, Path}, {reason, Reason}]);
+		true when Type == warn ->
+			?LOG_WARNING([{event, Event}, {http_method, Method}, {peer, ar_util:format_peer(Peer)}, {path, Path}, {reason, Reason}]);
+		true when Type == err ->
+			?LOG_ERROR([{event, Event}, {http_method, Method}, {peer, ar_util:format_peer(Peer)}, {path, Path}, {reason, Reason}]);
 		_ ->
 			ok
 	end.

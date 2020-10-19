@@ -9,7 +9,7 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/1,
+	start_link/0,
 	is_tx_blacklisted/1,
 	is_byte_blacklisted/1,
 	get_next_not_blacklisted_byte/1,
@@ -22,7 +22,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 %% @doc The frequency of refreshing the blacklist.
 -ifdef(DEBUG).
@@ -68,8 +68,8 @@
 %%% Public interface.
 %%%===================================================================
 
-start_link(Args) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Check whether the given transaction is blacklisted.
 is_tx_blacklisted(TXID) ->
@@ -141,8 +141,9 @@ init([]) ->
 	{ok, _} = timer:apply_interval(?STORE_STATE_FREQUENCY_MS, ?MODULE, store_state, []),
 	{ok, #ar_tx_blacklist_state{}}.
 
-handle_call(_Message, _From, _State) ->
-	not_implemented.
+handle_call(Request, _From, State) ->
+	?LOG_ERROR([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+	{reply, ok, State}.
 
 handle_cast(refresh_blacklist, State) ->
 	case refresh_blacklist() of
@@ -234,16 +235,16 @@ handle_cast({added_tx, TXID, End, Start}, State) ->
 			{noreply, State}
 	end;
 
-handle_cast(_Message, State) ->
-	% unhandled cast message. log it.
+handle_cast(Msg, State) ->
+	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
-handle_info(_Info, State) ->
-	%unhandled info message. log it.
+handle_info(Info, State) ->
+	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
 	{noreply, State}.
 
 terminate(Reason, _State) ->
-	ar:info([{event, ar_tx_blacklist_terminate}, {reason, Reason}]),
+	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]),
 	store_state(),
 	close_dets().
 
@@ -373,7 +374,7 @@ load_from_file(File) ->
 			{file, File},
 			{exception, {Type, Pattern}}
 		],
-		ar:console(Warning),
+		?LOG_WARNING(Warning),
 		error
 	end.
 
@@ -421,16 +422,16 @@ load_from_url(URL) ->
 			{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 				parse_binary(Body);
 			_ ->
-				ar:console([
-					{event, failed_to_download_tx_list},
+				?LOG_INFO([
+					{event, failed_to_download_tx_blacklist},
 					{url, URL},
 					{reply, Reply}
 				]),
 				error
 		end
 	catch Type:Pattern ->
-		ar:console([
-			{event, failed_to_load_and_parse_tx_list},
+		?LOG_INFO([
+			{event, failed_to_load_and_parse_tx_blacklist},
 			{url, URL},
 			{exception, {Type, Pattern}}
 		]),
@@ -574,7 +575,7 @@ close_dets() ->
 					ok ->
 						ok;
 					{error, Reason} ->
-						ar:err([
+						?LOG_ERROR([
 							{event, failed_to_close_dets_table},
 							{name, Name},
 							{reason, Reason}

@@ -3,13 +3,13 @@
 -export([update/1, stats/0, reset/0]).
 -export([get_more_peers/1]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 %%% Manage and update peer lists.
 
 %% @doc Print statistics about the current peers.
 stats() ->
-	Connected = ar_bridge:get_remote_peers(http_bridge_node),
+	Connected = ar_bridge:get_remote_peers(),
 	io:format("Connected peers, in preference order:~n"),
 	stats(Connected),
 	io:format("Other known peers:~n"),
@@ -23,7 +23,7 @@ stats(Peers) ->
 %% @doc Reset all performance counters and connections.
 reset() ->
 	lists:map(fun ar_util:reset_peer/1, All = all_peers()),
-	ar_bridge:set_remote_peers(whereis(http_bridge_node), All).
+	ar_bridge:set_remote_peers(All).
 
 %% @doc Return all known peers.
 all_peers() ->
@@ -44,7 +44,7 @@ format_stats(Peer, Perf) ->
 %% Peers who have behaved well in the past are favoured in ranking.
 %% New, unknown peers are given 100 blocks of grace.
 update(Peers) ->
-	Height = ar_node:get_height(whereis(http_entrypoint_node)),
+	Height = ar_node:get_height(),
 	ar_meta_db:purge_peer_performance(),
 	{Rankable, Newbies} =
 		partition_newbies(

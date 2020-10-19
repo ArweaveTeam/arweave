@@ -2,7 +2,7 @@
 
 -export([remove_old_wallet_lists/0]).
 
--include("ar.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(KEEP_WALLET_LISTS, 1000).

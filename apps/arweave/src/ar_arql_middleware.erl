@@ -1,7 +1,9 @@
 -module(ar_arql_middleware).
 -behavior(cowboy_middleware).
--include("ar.hrl").
+
 -export([execute/2]).
+
+-include_lib("arweave/include/ar.hrl").
 
 %%%===================================================================
 %%% Cowboy middleware callback.

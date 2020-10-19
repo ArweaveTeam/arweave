@@ -1,6 +1,7 @@
 -module(ar_graphql_handler).
 -behaviour(cowboy_handler).
--include("ar.hrl").
+
+-include_lib("arweave/include/ar.hrl").
 
 -define(PREFLIGHT_RESPONSE_HEADERS, #{
 	<<"access-control-allow-methods">> => <<"GET, POST">>,

@@ -1,7 +1,7 @@
 -module(ar_storage).
 
 -export([
-	start/0,
+	init/0,
 	write_block/1, write_full_block/1, write_full_block/2,
 	read_block/1, read_block/2,
 	invalidate_block/1, blocks_on_disk/0,
@@ -20,10 +20,11 @@
 	write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1
 ]).
 
--include("ar.hrl").
--include("ar_wallets.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_wallets.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
+
 
 %%% Reads and writes blocks from disk.
 
@@ -31,7 +32,7 @@
 
 %% @doc Ready the system for block/tx reading and writing.
 %% %% This function should block.
-start() ->
+init() ->
 	ensure_directories(),
 	ok = migrate_block_filenames(),
 	count_blocks_on_disk(),
@@ -90,7 +91,7 @@ count_blocks_on_disk() ->
 				{ok, List} ->
 					ar_meta_db:put(blocks_on_disk, length(List) - 1); %% - the "invalid" folder
 				{error, Reason} ->
-					ar:warn([
+					?LOG_WARNING([
 						{event, failed_to_count_blocks_on_disk},
 						{reason, Reason}
 					]),
@@ -131,7 +132,7 @@ invalidate_block(B) ->
 
 write_block(Blocks) when is_list(Blocks) ->
 	lists:foldl(
-		fun	(B, ok) ->
+		fun (B, ok) ->
 				write_block(B);
 			(_B, Acc) ->
 				Acc
@@ -142,7 +143,7 @@ write_block(Blocks) when is_list(Blocks) ->
 write_block(B) ->
 	case ar_meta_db:get(disk_logging) of
 		true ->
-			ar:info([
+			?LOG_INFO([
 				{event, writing_block_to_disk},
 				{block, ar_util:encode(B#block.indep_hash)}
 			]);
@@ -435,7 +436,7 @@ write_tx(#tx{ format = Format } = TX) ->
 				true ->
 					case {DataSize == TX#tx.data_size, Format} of
 						{false, 2} ->
-							ar:err([
+							?LOG_ERROR([
 								{event, failed_to_store_tx_data},
 								{reason, size_mismatch},
 								{tx, ar_util:encode(TX#tx.id)}
@@ -457,7 +458,7 @@ write_tx(#tx{ format = Format } = TX) ->
 									%% v2 data is not part of the header. We have to
 									%% report success here even if we failed to store
 									%% the attached data.
-									ar:warn([
+									?LOG_WARNING([
 										{event, failed_to_store_tx_data},
 										{reason, Reason},
 										{tx, ar_util:encode(TX#tx.id)}
@@ -586,7 +587,7 @@ read_tx_file(Filename) ->
 	case file:read_file(Filename) of
 		{ok, <<>>} ->
 			file:delete(Filename),
-			ar:err([
+			?LOG_ERROR([
 				{event, empty_tx_file},
 				{filename, Filename}
 			]),
@@ -597,7 +598,7 @@ read_tx_file(Filename) ->
 					{ok, TX};
 				_ ->
 					file:delete(Filename),
-					ar:err([
+					?LOG_ERROR([
 						{event, failed_to_parse_tx},
 						{filename, Filename}
 					]),
@@ -637,14 +638,14 @@ read_tx_data(TX) ->
 
 %% Write a block index to disk for retreival later (in emergencies).
 write_block_index(BI) ->
-	ar:info([{event, writing_block_index_to_disk}]),
+	?LOG_INFO([{event, writing_block_index_to_disk}]),
 	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(BI)),
 	File = block_index_filepath(),
 	case write_file_atomic(File, JSON) of
 		ok ->
 			ok;
 		{error, Reason} = Error ->
-			ar:err([{event, failed_to_write_block_index_to_disk}, {reason, Reason}]),
+			?LOG_ERROR([{event, failed_to_write_block_index_to_disk}, {reason, Reason}]),
 			Error
 	end.
 
@@ -686,7 +687,7 @@ write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
 					{ok, NextCursor, NextPosition}
 			end;
 		{error, Reason} = Error ->
-			ar:err([
+			?LOG_ERROR([
 				{event, failed_to_write_wallet_list_chunk},
 				{reason, Reason}
 			]),
@@ -774,7 +775,7 @@ read_wallet_chunk(RootHash, Cursor, Tree) ->
 					read_wallet_chunk(RootHash, NextCursor, Tree2)
 			end;
 		{error, Reason} = Error ->
-			ar:err([
+			?LOG_ERROR([
 				{event, failed_to_read_wallet_chunk},
 				{reason, Reason}
 			]),
@@ -989,7 +990,7 @@ write_term(Dir, Name, Term, Override) ->
 				ok ->
 					ok;
 				{error, Reason} = Error ->
-					ar:err([{event, failed_to_write_term}, {name, Name}, {reason, Reason}]),
+					?LOG_ERROR([{event, failed_to_write_term}, {name, Name}, {reason, Reason}]),
 					Error
 			end
 	end.
@@ -1007,7 +1008,7 @@ read_term(Dir, Name) ->
 		{error, enoent} ->
 			not_found;
 		{error, Reason} = Error ->
-			ar:err([{event, failed_to_read_term}, {name, Name}, {reason, Reason}]),
+			?LOG_ERROR([{event, failed_to_read_term}, {name, Name}, {reason, Reason}]),
 			Error
 	end.
 
@@ -1023,20 +1024,20 @@ test_store_and_retrieve_block() ->
 	ar_storage:clear(),
 	?assertEqual(0, blocks_on_disk()),
 	BI0 = [B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
+	ar_test_node:start(B0),
 	?assertEqual(
-        B0#block{
-            hash_list = unset,
-            size_tagged_txs = unset
-        }, read_block(B0#block.indep_hash)),
+		B0#block{
+			hash_list = unset,
+			size_tagged_txs = unset
+		}, read_block(B0#block.indep_hash)),
 	?assertEqual(
 		B0#block{ hash_list = unset, size_tagged_txs = unset },
 		read_block(B0#block.height, ar_weave:generate_block_index(BI0))
 	),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
-	ar_node:mine(Node),
-	BI1 = ar_test_node:wait_until_height(Node, 2),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
+	ar_node:mine(),
+	BI1 = ar_test_node:wait_until_height(2),
 	ar_util:do_until(
 		fun() ->
 			3 == blocks_on_disk()
