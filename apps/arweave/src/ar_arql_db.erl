@@ -10,6 +10,7 @@
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include("ar.hrl").
+-include("ar_config.hrl").
 
 %% Duration after which to consider the query time unusually long.
 %% Set to 100ms.
@@ -166,7 +167,8 @@ insert_tx(BH, TX, StoreTags) ->
 %%%===================================================================
 
 init(Opts) ->
-	{data_dir, DataDir} = proplists:lookup(data_dir, Opts),
+    {ok, Config} = application:get_env(arweave, config),
+    DataDir = Config#config.data_dir,
 	ar:info([{ar_arql_db, init}, {data_dir, DataDir}]),
 	%% Very occasionally the port fails to be reopened immediately after
 	%% a crash so we give it a little time here.

@@ -10,6 +10,7 @@
 -compile({no_auto_import, [{get, 1}, {put, 2}]}).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
+-include("ar_config.hrl").
 
 %% API
 -export([start_link/0, stop/0, stop/1]).
@@ -85,10 +86,30 @@ keys() ->
 
 %% @hidden
 init(_) ->
-	%% Initialise the metadata storage service.
 	ar:report([starting_meta_db]),
-	ets:new(?MODULE, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(blacklist, [set, public, named_table]),
+
+	%% Initialise the metadata storage service.
+    {ok, Config} = application:get_env(arweave, config),
+	ets:insert(?MODULE, {data_dir, Config#config.data_dir}),
+	ets:insert(?MODULE, {metrics_dir, Config#config.metrics_dir}),
+	ets:insert(?MODULE, {port, Config#config.port}),
+	ets:insert(?MODULE, {disk_space, Config#config.dist_space}),
+	ets:insert(?MODULE, {used_space, Config#config.used_space}),
+	ets:insert(?MODULE, {mine, Config#config.mine}),
+	ets:insert(?MODULE, {max_miners, Config#config.max_miners}),
+	ets:insert(?MODULE, {max_emitters, Config#config.max_emitters}),
+	ets:insert(?MODULE, {tx_propagation_parallelization, Config#config.tx_propagation_parallelization}),
+	ets:insert(?MODULE, {content_policy_files, Config#config.content_policy_files}),
+	ets:insert(?MODULE, {transaction_blacklist_files, Config#config.transaction_blacklist_files}),
+	ets:insert(?MODULE, {internal_api_secret, Config#config.internal_api_secret}),
+	ets:insert(?MODULE, {requests_per_minute_limit, Config#config.requests_per_minute_limit}),
+	ets:insert(?MODULE, {max_propagation_peers, Config#config.max_propagation_peers}),
+	ets:insert(?MODULE, {max_poa_option_depth, Config#config.max_poa_option_depth}),
+	ets:insert(?MODULE, {disk_pool_data_root_expiration_time_us, 
+                         Config#config.disk_pool_data_root_expiration_time_us * 1000000}),
+	ets:insert(?MODULE, {max_disk_pool_buffer_mb, Config#config.max_disk_pool_buffer_mb}),
+	ets:insert(?MODULE, {max_disk_pool_data_root_buffer_mb, Config#config.max_disk_pool_data_root_buffer_mb}),
+	ets:insert(?MODULE, {randomx_bulk_hashing_iterations, Config#config.randomx_bulk_hashing_iterations}),
 	{ok, #{}}.
 
 %% @hidden

@@ -1,8 +1,31 @@
+%% This Source Code Form is subject to the terms of the GNU General 
+%% Public License, v. 2.0. If a copy of the GPLv2 was not distributed 
+%% with this file, You can obtain one at 
+%% https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
+%%
+%% @author Sam Williams <sam@arweave.org>
+%% @author Lev Berman <lev@arweave.org>
+%% @author Taras Halturin <taras@arweave.org>
+%%
+
 -module(ar_node).
+-behavior(gen_server).
+
+-export([start_link/1]).
+
+-export([init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
 
 -export([
-	start_link/1, start/7,
-	stop/1,
+
+    % have to be removed
+    % start/7,
+	% stop/1,
+
 	get_blocks/1,
 	get_block_index/1, is_in_block_index/2, get_height/1,
 	get_trusted_peers/1, set_trusted_peers/2,
@@ -29,80 +52,174 @@
 
 -include("ar.hrl").
 -include("ar_mine.hrl").
+-include("common.hrl").
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
 %% @doc Start a node, linking to a supervisor process.
-start_link(Args) ->
-	PID = erlang:apply(ar_node, start, Args),
-	{ok, PID}.
+start_link(I) ->
+    gen_server:start_link(?MODULE, [I], []).
+
+%%% gen_server callbacks
+%%%===================================================================
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Initializes the server
+%%
+%% @spec init(Args) -> {ok, State} |
+%%                     {ok, State, Timeout} |
+%%                     ignore |
+%%                     {stop, Reason}
+%% @end
+%%--------------------------------------------------------------------
+init([Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget]) ->
+    process_flag(trap_exit, true),
+	case {BI, AutoJoin} of
+		{not_joined, true} ->
+			ar_join:start(self(), Peers);
+		{BI, true} ->
+			Self = self(),
+			spawn(fun() -> start_from_block_index(Self, BI) end);
+		{_, false} ->
+			do_nothing
+	end,
+	Gossip =
+		ar_gossip:init(
+			lists:filter(
+				fun is_pid/1,
+				Peers
+			)
+		),
+	{TXs, MempoolSize} =
+		case ar_storage:read_term(mempool) of
+			{ok, Mempool} ->
+				Mempool;
+			not_found ->
+				{#{}, {0, 0}};
+			{error, Error} ->
+				ar:err([{event, failed_to_load_mempool}, {reason, Error}]),
+				{#{}, {0, 0}}
+		end,
+
+	State = #{
+		id => crypto:strong_rand_bytes(32),
+		node => self(),
+		gossip => Gossip,
+		block_index => not_joined,
+		hash_list_2_0_for_1_0_blocks => read_hash_list_2_0_for_1_0_blocks(),
+		current => not_joined,
+		wallet_list => not_joined,
+		mining_delay => MiningDelay,
+		reward_addr => RewardAddr,
+		reward_pool => -1,
+		height => -1,
+		trusted_peers => Peers,
+		diff => Diff,
+		cumulative_diff => -1,
+		tags => [],
+		miner => undefined,
+		automine => false,
+		last_retarget => LastRetarget,
+		weave_size => -1,
+		block_txs_pairs => not_joined,
+		block_cache => not_joined,
+		txs => TXs,
+		mempool_size => MempoolSize,
+		blocks_missing_txs => sets:new(),
+		missing_txs_lookup_processes => #{}
+	},
+
+
+    {ok, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling call messages
+%%
+%% @spec handle_call(Request, From, State) ->
+%%                                   {reply, Reply, State} |
+%%                                   {reply, Reply, State, Timeout} |
+%%                                   {noreply, State} |
+%%                                   {noreply, State, Timeout} |
+%%                                   {stop, Reason, Reply, State} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_call(Request, _From, State) ->
+    ?LOG_ERROR("unhandled call: ~p", [Request]),
+    {reply, ok, State}.
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling cast messages
+%%
+%% @spec handle_cast(Msg, State) -> {noreply, State} |
+%%                                  {noreply, State, Timeout} |
+%%                                  {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+
+handle_cast(Msg, State) ->
+    ?LOG_ERROR("unhandled cast: ~p", [Msg]),
+    {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling all non call/cast messages
+%%
+%% @spec handle_info(Info, State) -> {noreply, State} |
+%%                                   {noreply, State, Timeout} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_info(Info, State) ->
+    ?LOG_ERROR("unhandled info: ~p", [Info]),
+    {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% This function is called by a gen_server when it is about to
+%% terminate. It should be the opposite of Module:init/1 and do any
+%% necessary cleaning up. When it returns, the gen_server terminates
+%% with Reason. The return value is ignored.
+%%
+%% @spec terminate(Reason, State) -> void()
+%% @end
+%%--------------------------------------------------------------------
+terminate(_Reason, _State) ->
+    ok.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Convert process state when code is changed
+%%
+%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
+%% @end
+%%--------------------------------------------------------------------
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
 
 %% @doc Start a node server.
 start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
 	PID = spawn_link(
 		fun() ->
-			case {BI, AutoJoin} of
-				{not_joined, true} ->
-					ar_join:start(self(), Peers);
-				{BI, true} ->
-					Self = self(),
-					spawn(fun() -> start_from_block_index(Self, BI) end);
-				{_, false} ->
-					do_nothing
-			end,
-			Gossip =
-				ar_gossip:init(
-					lists:filter(
-						fun is_pid/1,
-						Peers
-					)
-				),
 			%% Start processes, init state, and start server.
-			NPid = self(),
-			process_flag(trap_exit, true),
-			{TXs, MempoolSize} =
-				case ar_storage:read_term(mempool) of
-					{ok, Mempool} ->
-						Mempool;
-					not_found ->
-						{#{}, {0, 0}};
-					{error, Error} ->
-						ar:err([{event, failed_to_load_mempool}, {reason, Error}]),
-						{#{}, {0, 0}}
-				end,
-			State = #{
-				id => crypto:strong_rand_bytes(32),
-				node => NPid,
-				gossip => Gossip,
-				block_index => not_joined,
-				hash_list_2_0_for_1_0_blocks => read_hash_list_2_0_for_1_0_blocks(),
-				current => not_joined,
-				wallet_list => not_joined,
-				mining_delay => MiningDelay,
-				reward_addr => RewardAddr,
-				reward_pool => -1,
-				height => -1,
-				trusted_peers => Peers,
-				diff => Diff,
-				cumulative_diff => -1,
-				tags => [],
-				miner => undefined,
-				automine => false,
-				last_retarget => LastRetarget,
-				weave_size => -1,
-				block_txs_pairs => not_joined,
-				block_cache => not_joined,
-				txs => TXs,
-				mempool_size => MempoolSize,
-				blocks_missing_txs => sets:new(),
-				missing_txs_lookup_processes => #{}
-			},
 			{ok, WPid} = ar_node_worker:start_link(State),
 			server(WPid, State)
 		end
 	),
+
+    %% keep it for the backward capabilities
 	ar_http_iface_server:reregister(http_entrypoint_node, PID),
 	PID.
 

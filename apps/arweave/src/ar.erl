@@ -288,87 +288,65 @@ start(Config) ->
 	{ok, _} = application:ensure_all_started(arweave, permanent).
 
 start(normal, _Args) ->
-	{ok, #config {
-		init = Init,
-		port = Port,
-		data_dir = DataDir,
-		metrics_dir = MetricsDir,
-		peers = Peers,
-		mine = Mine,
-		polling = Polling,
-		clean = Clean,
-		auto_join = AutoJoin,
-		diff = Diff,
-		mining_addr = Addr,
-		max_miners = MaxMiners,
-		max_emitters = MaxEmitters,
-		tx_propagation_parallelization = TXProp,
-		new_key = NewKey,
-		load_key = LoadKey,
-		disk_space = DiskSpace,
-		used_space = UsedSpace,
-		start_from_block_index = StartFromBlockIndex,
-		internal_api_secret = InternalApiSecret,
-		enable = Enable,
-		disable = Disable,
-		content_policy_files = ContentPolicyFiles,
-		transaction_blacklist_files = TransactionBlacklistFiles,
-		gateway_domain = GatewayDomain,
-		gateway_custom_domains = GatewayCustomDomains,
-		requests_per_minute_limit = RequestsPerMinuteLimit,
-		max_propagation_peers = MaxPropagationPeers,
-		ipfs_pin = IPFSPin,
-		webhooks = WebhookConfigs,
-		max_connections = MaxConnections,
-		max_gateway_connections = MaxGatewayConnections,
-		max_poa_option_depth = MaxPOAOptionDepth,
-		disk_pool_data_root_expiration_time = DiskPoolExpirationTime,
-		max_disk_pool_buffer_mb = MaxDiskPoolBuffer,
-		max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer,
-		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
-	}} = application:get_env(arweave, config),
+    ar_sup:start_link(),
+	%{ok, #config {
+	%	init = Init,
+	%	port = Port,
+	%	data_dir = DataDir,
+	%	metrics_dir = MetricsDir,
+	%	peers = Peers,
+	%	mine = Mine,
+	%	polling = Polling,
+	%	clean = Clean,
+	%	auto_join = AutoJoin,
+	%	diff = Diff,
+	%	mining_addr = Addr,
+	%	max_miners = MaxMiners,
+	%	max_emitters = MaxEmitters,
+	%	tx_propagation_parallelization = TXProp,
+	%	new_key = NewKey,
+	%	load_key = LoadKey,
+	%	disk_space = DiskSpace,
+	%	used_space = UsedSpace,
+	%	start_from_block_index = StartFromBlockIndex,
+	%	internal_api_secret = InternalApiSecret,
+	%	enable = Enable,
+	%	disable = Disable,
+	%	content_policy_files = ContentPolicyFiles,
+	%	transaction_blacklist_files = TransactionBlacklistFiles,
+	%	gateway_domain = GatewayDomain,
+	%	gateway_custom_domains = GatewayCustomDomains,
+	%	requests_per_minute_limit = RequestsPerMinuteLimit,
+	%	max_propagation_peers = MaxPropagationPeers,
+	%	ipfs_pin = IPFSPin,
+	%	webhooks = WebhookConfigs,
+	%	max_connections = MaxConnections,
+	%	max_gateway_connections = MaxGatewayConnections,
+	%	max_poa_option_depth = MaxPOAOptionDepth,
+	%	disk_pool_data_root_expiration_time = DiskPoolExpirationTime,
+	%	max_disk_pool_buffer_mb = MaxDiskPoolBuffer,
+	%	max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer,
+	%	randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
+	%}} = application:get_env(arweave, config),
 	%% Verify port collisions when gateway enabled
-	case {Port, GatewayDomain} of
+    {ok, Config} = application:get_env(arweave, config),
+	case {Config#config.port, Config#config.gateway_domain} of
 		{P, D} when is_binary(D) andalso (P == 80 orelse P == 443) ->
 			io:format("~nThe port must be different than 80 or 443 when the gateway is enabled.~n~n"),
 			erlang:halt();
 		_ ->
 			do_nothing
 	end,
-	{ok, Supervisor} = ar_sup:start_link(),
-	%% Fill up ar_meta_db.
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_meta_db,
-		start => {ar_meta_db, start_link, []},
-		type => worker,
-		shutdown => infinity
-	}),
-	ar_meta_db:put(data_dir, DataDir),
-	ar_meta_db:put(metrics_dir, MetricsDir),
-	ar_meta_db:put(port, Port),
-	ar_meta_db:put(disk_space, DiskSpace),
-	ar_meta_db:put(used_space, UsedSpace),
-	ar_meta_db:put(mine, Mine),
-	ar_meta_db:put(max_miners, MaxMiners),
-	ar_meta_db:put(max_emitters, MaxEmitters),
-	ar_meta_db:put(tx_propagation_parallelization, TXProp),
-	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
-	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
-	ar_meta_db:put(internal_api_secret, InternalApiSecret),
-	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
-	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
-	ar_meta_db:put(max_poa_option_depth, MaxPOAOptionDepth),
-	ar_meta_db:put(disk_pool_data_root_expiration_time_us, DiskPoolExpirationTime * 1000000),
-	ar_meta_db:put(max_disk_pool_buffer_mb, MaxDiskPoolBuffer),
-	ar_meta_db:put(max_disk_pool_data_root_buffer_mb, MaxDiskPoolDataRootBuffer),
-	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
+
 	%% Store enabled features.
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Config#config.enable),
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Config#config.disable),
+
 	%% Prepare the storage for operation.
 	ar_storage:start(),
+
 	%% Optionally clear the block cache.
-	if Clean -> ar_storage:clear(); true -> do_nothing end,
+	if Config#config.clean -> ar_storage:clear(); true -> do_nothing end,
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
 	% Register custom metrics.
@@ -376,21 +354,11 @@ start(normal, _Args) ->
 	%% Start other apps which we depend on.
 	inets:start(),
 	ar_tx_db:start(),
-	ar_miner_log:start(),
-	{ok, _} = ar_arql_db_sup:start_link([{data_dir, DataDir}]),
+	%%FIXME: remove this line later... ar_miner_log:start(),
 	ar_storage:start_update_used_space(),
 	%% Determine the mining address.
-	case {Addr, LoadKey, NewKey} of
-		{false, false, false} ->
-			{_, Pub} = ar_wallet:new_keyfile(),
-			MiningAddress = ar_wallet:to_address(Pub),
-			ar:report_console(
-				[
-					mining_address_generated,
-					{address, MiningAddress}
-				]
-			);
-		{false, false, true} ->
+	case {Config#config.mining_addr, Config#config.load_key, Config#config.new_key} of
+		{false, false, _} ->
 			{_, Pub} = ar_wallet:new_keyfile(),
 			MiningAddress = ar_wallet:to_address(Pub),
 			ar:report_console(
@@ -427,20 +395,8 @@ start(normal, _Args) ->
 			)
 	end,
 	ar_randomx_state:start(),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_data_sync,
-		start => {ar_data_sync_sup, start_link, [[]]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_header_sync,
-		start => {ar_header_sync_sup, start_link, [[]]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	ValidPeers = ar_join:filter_peer_list(Peers),
-	case {Peers, ValidPeers} of
+	ValidPeers = ar_join:filter_peer_list(Config#config.peers),
+	case {Config#config.peers, ValidPeers} of
 		{[_Peer | _], []} ->
 			io:format(
 				"~n\tInvalid peers. A valid peer must be part of the"
@@ -489,20 +445,7 @@ start(normal, _Args) ->
 			]]}
 		}
 	),
-	Node = whereis(http_entrypoint_node),
-	%% Start a bridge, add it to the node's peer list.
-	{ok, Bridge} = supervisor:start_child(
-		Supervisor,
-		{
-			ar_bridge,
-			{ar_bridge, start_link, [[ValidPeers, [Node], Port]]},
-			permanent,
-			infinity,
-			worker,
-			[ar_bridge]
-		}
-	),
-	ar_node:add_peers(Node, Bridge),
+	
 	PrintMiningAddress = case MiningAddress of
 			unclaimed -> "unclaimed";
 			_ -> binary_to_list(ar_util:encode(MiningAddress))
@@ -525,13 +468,13 @@ start(normal, _Args) ->
 	ok = prepare_graphql(),
 	%% Start the first node in the gossip network (with HTTP interface).
 	ok = ar_http_iface_server:start([
-		{http_entrypoint_node, Node},
+		{http_entrypoint_node, whereis(http_entrypoint_hode)},
 		{http_bridge_node, Bridge},
-		{port, Port},
-		{gateway_domain, GatewayDomain},
-		{gateway_custom_domains, GatewayCustomDomains},
-		{max_connections, MaxConnections},
-		{max_gateway_connections, MaxGatewayConnections}
+		{port, Config#config.port},
+		{gateway_domain, Config#config.gateway_domain},
+		{gateway_custom_domains, Config#config.gateway_custom_domains},
+		{max_connections, Config#config.max_connections},
+		{max_gateway_connections, Config#config.max_gateway_connections}
 	]),
 	ar_randomx_state:start_block_polling(),
 	PollingArgs = [{trusted_peers, ValidPeers}] ++ case Polling of

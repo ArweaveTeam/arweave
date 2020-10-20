@@ -1,6 +1,13 @@
-%%% @doc The server responsible for processing blocks and transactions and
-%%% maintaining the node state. Blocks are prioritized over transactions.
-%%% The state is synchronized with the ar_node process for non-blocking reads.
+%% This Source Code Form is subject to the terms of the GNU General 
+%% Public License, v. 2.0. If a copy of the GPLv2 was not distributed 
+%% with this file, You can obtain one at 
+%% https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
+%%
+%% @author Lev Berman <lev@arweave.org> 
+%% 
+%% @doc The server responsible for processing blocks and transactions and
+%% maintaining the node state. Blocks are prioritized over transactions.
+%% The state is synchronized with the ar_node process for non-blocking reads.
 -module(ar_node_worker).
 
 -export([start_link/1]).

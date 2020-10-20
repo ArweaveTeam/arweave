@@ -4,7 +4,7 @@
 -include("ar.hrl").
 %%% Database for storing error codes for failed transactions, so that a user
 %%% can get the error reason when polling the status of a transaction. The entries
-%%% has a TTL. The DB is a singleton.
+%%% have a TTL. The DB is a singleton.
 
 %% @doc Create a DB. This will fail if the DB already exists.
 start() ->

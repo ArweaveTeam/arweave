@@ -8,19 +8,12 @@
 	start/0,
 	joining/0, joined/0,
 	started_hashing/0, foreign_block/1, mined_block/2,
-	block_received_n_confirmations/2,
 	log_no_foreign_blocks/0
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 
-%% @doc The period to wait between checking the state of a block in the BI.
--ifdef(DEBUG).
--define(FOREIGN_BLOCK_ALERT_TIME, 3 * 1000).
--else.
--define(FOREIGN_BLOCK_ALERT_TIME, 60 * 60 * 1000).
--endif.
 
 %% @doc Start the foreign block watchdog process.
 start() ->

@@ -25,6 +25,12 @@
 %% @doc Start a node, linking to a supervisor process
 start_link([_, _, _] = Args) ->
 	PID = erlang:apply(ar_bridge, start, Args),
+
+
+	%% Start a bridge, add it to the node's peer list.
+    Node = whereis(http_entrypoint_node),
+	ar_node:add_peers(Node, PID),
+
 	{ok, PID}.
 
 %% @doc Launch a bridge node.
