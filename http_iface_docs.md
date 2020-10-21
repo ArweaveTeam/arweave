@@ -287,7 +287,7 @@ A JSON array detailing the block.
 
 ```javascript
 var node = 'http://127.0.0.1:1984';
-var path = '/block/hash/-3-oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs';
+var path = '/block/hash/oyxTcYAgbbNoFyDz8hqs7KCJHI4qb4VdER9Jotbs';//Use "indep_hash" above,not hash
 var url = node + path;
 var xhr = new XMLHttpRequest();
 
