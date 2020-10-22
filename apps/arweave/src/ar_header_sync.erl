@@ -10,28 +10,8 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+-include("ar_header_sync.hrl").
 -include("ar_data_sync.hrl").
-
-%% @doc The number of recent blocks tracked, used for erasing the orphans.
--define(HEADER_SYNC_TRACK_CONFIRMATIONS, 100).
-
-%% @doc The frequency of processing items in the queue.
--ifdef(DEBUG).
--define(PROCESS_ITEM_INTERVAL_MS, 1000).
--else.
--define(PROCESS_ITEM_INTERVAL_MS, 100).
--endif.
-
-%% @doc The frequency of checking if there are headers to sync after everything
-%% is synced. Also applies to a fresh node without any data waiting for a block index.
-%% Another case is when the process misses a few blocks (e.g. blocks were sent while the
-%% supervisor was restarting it after a crash).
--define(CHECK_AFTER_SYNCED_INTERVAL_MS, 5000).
-
-%% @doc The initial value for the exponential backoff for failing requests.
--define(INITIAL_BACKOFF_INTERVAL_S, 30).
-%% @doc The maximum exponential backoff interval for failing requests.
--define(MAX_BACKOFF_INTERVAL_S, 2 * 60 * 60).
 
 %%% This module syncs block and transaction headers and maintains a persisted record of synced
 %%% headers. Headers are synced from latest to earliest. Includes a migration process that
@@ -71,7 +51,8 @@ init([]) ->
 			{ok, StoredState} ->
 				StoredState
 		end,
-	gen_server:cast(self(), process_item),
+	gen_server:cast(self(), check_space_alarm),
+	gen_server:cast(self(), check_space_process_item),
 	{ok,
 		#{
 			db => DB,
@@ -149,6 +130,45 @@ handle_cast({add_block, B}, State) ->
 	store_sync_state(State2),
 	{noreply, State2};
 
+handle_cast(check_space_alarm, State) ->
+	FreeSpace = ar_storage:get_free_space(),
+	case FreeSpace < ?DISK_HEADERS_BUFFER_SIZE of
+		true ->
+			Msg =
+				"The node has stopped syncing headers - the available disk space is"
+				" less than ~s. Add more disk space if you wish to store more data."
+				" When it is less than ~s, the node will remove some of the old block"
+				" and transaction headers, consider adding some disk space.",
+			ar:console(Msg, [
+				ar_util:bytes_to_mb_string(?DISK_HEADERS_BUFFER_SIZE),
+				ar_util:bytes_to_mb_string(?DISK_HEADERS_CLEANUP_THRESHOLD)
+			]);
+		false ->
+			ok
+	end,
+	cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_alarm),
+	{noreply, State};
+
+handle_cast(check_space_process_item, State) ->
+	FreeSpace = ar_storage:get_free_space(),
+	case FreeSpace > ?DISK_HEADERS_BUFFER_SIZE of
+		true ->
+			gen_server:cast(self(), process_item),
+			{noreply, State};
+		false ->
+			cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, check_space_process_item),
+			case FreeSpace < ?DISK_HEADERS_CLEANUP_THRESHOLD of
+				true ->
+					ar:console(
+						"Removing older block and transaction headers to free up"
+						" space for the new headers."
+					),
+					{noreply, remove_oldest_headers(State)};
+				false ->
+					{noreply, State}
+			end
+	end;
+
 handle_cast(process_item, State) ->
 	#{
 		queue := Queue,
@@ -160,8 +180,7 @@ handle_cast(process_item, State) ->
 	UpdatedQueue = process_item(Queue),
 	case pick_unsynced_block(LastPicked, SyncRecord) of
 		nothing_to_sync ->
-			timer:apply_after(
-				?CHECK_AFTER_SYNCED_INTERVAL_MS, gen_server, cast, [self(), process_item]),
+			cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, check_space_process_item),
 			LastPicked2 =
 				case queue:is_empty(UpdatedQueue) of
 					true ->
@@ -171,8 +190,7 @@ handle_cast(process_item, State) ->
 				end,
 			{noreply, State#{ queue => UpdatedQueue, last_picked => LastPicked2 }};
 		Height ->
-			timer:apply_after(
-				?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [self(), process_item]),
+			cast_after(?PROCESS_ITEM_INTERVAL_MS, check_space_process_item),
 			Node = whereis(http_entrypoint_node),
 			case Node == undefined orelse ar_node:get_block_index_entry(Node, Height) of
 				true ->
@@ -256,6 +274,28 @@ add_block(B, State) ->
 			]),
 			State
 	end.
+
+remove_oldest_headers(#{ db := DB, sync_record := SyncRecord } = State) ->
+	case ar_intervals:count(SyncRecord) == 0 of
+		true ->
+			State;
+		false ->
+			{{_, Height}, _} = ar_intervals:take_smallest(SyncRecord),
+			Height2 = Height + 1,
+			case ar_kv:get(DB, << Height2:256 >>) of
+				not_found ->
+					State;
+				{ok, Value} ->
+					BH = element(1, binary_to_term(Value)),
+					{ok, _BytesRemoved} = ar_storage:delete_full_block(BH),
+					SyncRecord2 = ar_intervals:delete(SyncRecord, Height2, Height2 - 1),
+					ok = ar_kv:delete(DB, << Height2:256 >>),
+					State#{ sync_record => SyncRecord2 }
+			end
+	end.
+
+cast_after(Delay, Message) ->
+	timer:apply_after(Delay, gen_server, cast, [self(), Message]).
 
 %% @doc Pick the biggest height smaller than LastPicked from outside the sync record.
 pick_unsynced_block(LastPicked, SyncRecord) ->
@@ -412,7 +452,11 @@ move_data_to_v2_index(TXs) ->
 					{error, enoent} ->
 						ok;
 					{ok, Data} ->
-						case ar_storage:write_tx_data(Data) of
+						case ar_storage:write_tx_data(
+									no_expected_data_root,
+									Data,
+									write_to_free_space_buffer
+								) of
 							ok ->
 								file:delete(ar_storage:tx_data_filepath(TX));
 							Error ->

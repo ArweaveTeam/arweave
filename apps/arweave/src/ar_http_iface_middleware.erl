@@ -1198,6 +1198,8 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 			{400, #{}, jiffy:encode(#{ error => data_root_not_found }), Req};
 		{error, exceeds_disk_pool_size_limit} ->
 			{400, #{}, jiffy:encode(#{ error => exceeds_disk_pool_size_limit }), Req};
+		{error, disk_full} ->
+			{400, #{}, jiffy:encode(#{ error => disk_full }), Req};
 		{error, failed_to_store_chunk} ->
 			{500, #{}, <<>>, Req};
 		{error, invalid_proof} ->

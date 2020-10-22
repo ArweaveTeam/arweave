@@ -54,6 +54,7 @@
 		ar_weave,
 		ar_join,
 		ar_data_sync_tests,
+		ar_header_sync_tests,
 		ar_poa_tests,
 		ar_node_tests,
 		ar_fork_recovery_tests,
@@ -335,6 +336,12 @@ start(normal, _Args) ->
 			do_nothing
 	end,
 	{ok, Supervisor} = ar_sup:start_link(),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_disksup,
+		start => {ar_disksup, start_link, []},
+		type => worker,
+		shutdown => infinity
+	}),
 	%% Fill up ar_meta_db.
 	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_meta_db,
