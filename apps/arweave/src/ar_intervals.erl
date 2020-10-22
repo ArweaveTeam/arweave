@@ -4,6 +4,7 @@
 -export([
 	new/0,
 	add/3,
+	delete/3,
 	cut/2,
 	is_inside/2,
 	sum/1,
@@ -14,6 +15,7 @@
 	safe_from_etf/1,
 	count/1,
 	is_empty/1,
+	take_smallest/1,
 	take_largest/1
 ]).
 
@@ -32,6 +34,11 @@ new() ->
 add(Intervals, End, Start) when End > Start ->
 	Iter = gb_sets:iterator_from({Start - 1, Start - 1}, Intervals),
 	add2(Iter, Intervals, End, Start).
+
+%% @doc Remove the given interval from the set.
+delete(Intervals, End, Start) ->
+	Iter = gb_sets:iterator_from({Start - 1, Start - 1}, Intervals),
+	delete2(Iter, Intervals, End, Start).
 
 %% @doc Remove the interval above the given cut. If there is an interval containing
 %% the cut, replace it with its part up to the cut.
@@ -118,6 +125,11 @@ count(Intervals) ->
 is_empty(Intervals) ->
 	gb_sets:is_empty(Intervals).
 
+%% @doc Return {Interval, Intervals2} when Interval is the interval with the smallest
+%% right bound and Intervals2 is the set of intervals with this interval removed.
+take_smallest(Intervals) ->
+	gb_sets:take_smallest(Intervals).
+
 %% @doc Return {Interval, Intervals2} when Interval is the interval with the largest
 %% right bound and Intervals2 is the set of intervals with this interval removed.
 take_largest(Intervals) ->
@@ -137,6 +149,31 @@ add2(Iter, Intervals, End, Start) ->
 			add2(Iter2, gb_sets:del_element({End2, Start2}, Intervals), End3, Start3);
 		_ ->
 			gb_sets:add_element({End, Start}, Intervals)
+	end.
+
+delete2(Iter, Intervals, End, Start) ->
+	case gb_sets:next(Iter) of
+		none ->
+			Intervals;
+		{{End2, Start2}, Iter2} when End >= Start2 andalso Start =< End2 ->
+			Intervals2 = gb_sets:del_element({End2, Start2}, Intervals),
+			Intervals3 =
+				case End2 > End of
+					true ->
+						gb_sets:insert({End2, End}, Intervals2);
+					false ->
+						Intervals2
+				end,
+			Intervals4 =
+				case Start > Start2 of
+					true ->
+						gb_sets:insert({Start, Start2}, Intervals3);
+					false ->
+						Intervals3
+				end,
+			delete2(Iter2, Intervals4, End, Start);
+		_ ->
+			Intervals
 	end.
 
 inverse(Intervals) ->
@@ -256,6 +293,7 @@ intervals_test() ->
 	?assertEqual(<<"[]">>, to_json(I, 1)),
 	?assertEqual({ok, new()}, safe_from_etf(to_etf(I, 1))),
 	?assertEqual(new(), outerjoin(I, I)),
+	?assertEqual(new(), delete(I, 2, 1)),
 	?assertException(error, none, get_interval_by_nth_inner_number(I, 0)),
 	?assertException(error, none, get_interval_by_nth_inner_number(I, 2)),
 	I2 = add(I, 2, 1),
@@ -269,6 +307,10 @@ intervals_test() ->
 	?assertException(error, none, get_interval_by_nth_inner_number(I2, 1)),
 	?assertEqual(new(), outerjoin(I2, I)),
 	compare(add(add(new(), 1, 0), 3, 2), outerjoin(I2, add(new(), 3, 0))),
+	?assertEqual(new(), delete(I2, 2, 1)),
+	?assertEqual(new(), delete(I2, 2, 0)),
+	?assertEqual(new(), delete(I2, 3, 1)),
+	?assertEqual(new(), delete(I2, 3, 0)),
 	?assertEqual(new(), cut(I2, 1)),
 	?assertEqual(new(), cut(I2, 0)),
 	compare(I2, cut(I2, 2)),
@@ -300,6 +342,9 @@ intervals_test() ->
 	compare(add(new(), 7, 5), outerjoin(I2, I3_2)),
 	compare(add(new(), 7, 6), outerjoin(I3, I3_2)),
 	compare(add(add(add(new(), 1, 0), 3, 2), 8, 6), outerjoin(I3, add(new(), 8, 0))),
+	compare(add(add(add(new(), 2, 1), 6, 5), 4, 3), delete(I3, 5, 4)),
+	compare(add(new(), 6, 5), delete(I3, 5, 1)),
+	compare(add(new(), 10, 0), add(I3, 10, 0)),
 	?assertEqual(new(), cut(I3, 1)),
 	?assertEqual(new(), cut(I3, 0)),
 	?assertEqual(I2, cut(I3, 2)),
@@ -340,7 +385,7 @@ intervals_test() ->
 	?assertEqual(6, sum(I5)),
 	compare(I5, add(I5, 3, 2)),
 	compare(I5, add(I5, 2, 1)),
-	compare(add(new(), 8, 1), add(I5, 8, 6)).
+	compare(add(add(new(), 3, 2), 8, 7), delete(add(add(new(), 4, 2), 8, 6), 7, 3)).
 
 compare(I1, I2) ->
 	?assertEqual(to_json(I1, count(I1)), to_json(I2, count(I2))),

@@ -98,6 +98,13 @@ get_next({DB, CF}, OffsetBinary) ->
 			rocksdb:iterator_move(Iterator, {seek, OffsetBinary});
 		Error ->
 			Error
+	end;
+get_next(DB, OffsetBinary) ->
+	case rocksdb:iterator(DB, []) of
+		{ok, Iterator} ->
+			rocksdb:iterator_move(Iterator, {seek, OffsetBinary});
+		Error ->
+			Error
 	end.
 
 cyclic_iterator_move({DB, CF}, Cursor) ->
@@ -168,7 +175,9 @@ get_range({DB, CF}, StartOffsetBinary, EndOffsetBinary) ->
 	end.
 
 delete({DB, CF}, Key) ->
-	rocksdb:delete(DB, CF, Key, []).
+	rocksdb:delete(DB, CF, Key, []);
+delete(DB, Key) ->
+	rocksdb:delete(DB, Key, []).
 
 delete_range({DB, CF}, StartKey, EndKey) ->
 	rocksdb:delete_range(DB, CF, StartKey, EndKey, []);

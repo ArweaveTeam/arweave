@@ -5,12 +5,12 @@
 	write_block/1, write_full_block/1, write_full_block/2,
 	read_block/1, read_block/2,
 	invalidate_block/1, blocks_on_disk/0,
-	write_tx/1, write_tx_data/1, write_tx_data/2, read_tx/1, read_tx_data/1,
+	write_tx/1, write_tx_data/1, write_tx_data/2, write_tx_data/3, read_tx/1, read_tx_data/1,
 	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/4,
 	write_block_index/1, read_block_index/0,
-	delete_tx/1,
-	enough_space/1, select_drive/2,
-	calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0,
+	delete_full_block/1, delete_tx/1, delete_block/1,
+	select_drive/2,
+	calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0, get_free_space/0,
 	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
 	tx_filepath/1, tx_data_filepath/1,
 	read_tx_file/1, read_migrated_v1_tx_file/1,
@@ -38,9 +38,7 @@ start() ->
 	count_blocks_on_disk(),
 	case ar_meta_db:get(disk_space) of
 		undefined ->
-			%% Add some margin for filesystem overhead.
-			DiskSpaceWithMargin = round(calculate_disk_space() * 0.98),
-			ar_meta_db:put(disk_space, DiskSpaceWithMargin),
+			ar_meta_db:put(disk_space, calculate_disk_space()),
 			ok;
 		_ ->
 			ok
@@ -158,23 +156,12 @@ write_block(B) ->
 			ok;
 		false ->
 			BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-			ByteSize = byte_size(BlockJSON),
-			case enough_space(ByteSize) of
-				true ->
-					case write_file_atomic(Filepath, BlockJSON) of
-						ok ->
-							ar_meta_db:increase(blocks_on_disk, 1),
-							ar_meta_db:increase(used_space, ByteSize);
-						Error ->
-							Error
-					end;
-				false ->
-					ar:err(
-						[
-							{event, not_enough_space_to_write_block}
-						]
-					),
-					{error, not_enough_space}
+			case write_file_atomic(Filepath, BlockJSON) of
+				ok ->
+					ar_meta_db:increase(blocks_on_disk, 1),
+					ok;
+				Error ->
+					Error
 			end
 	end.
 
@@ -263,8 +250,7 @@ parse_block_shadow_json(JSON) ->
 start_update_used_space() ->
 	spawn(
 		fun() ->
-			UsedSpace = ar_meta_db:get(used_space),
-			catch ar_meta_db:put(used_space, max(calculate_used_space(), UsedSpace)),
+			catch ar_meta_db:put(used_space, calculate_used_space()),
 			timer:apply_after(
 				?DIRECTORY_SIZE_TIMER,
 				?MODULE,
@@ -273,6 +259,10 @@ start_update_used_space() ->
 			)
 		end
 	).
+
+%% @doc Return available disk space, in bytes.
+get_free_space() ->
+	max(0, ar_meta_db:get(disk_space) - ar_meta_db:get(used_space)).
 
 lookup_block_filename(H) ->
 	Name = filename:join([
@@ -287,13 +277,135 @@ lookup_block_filename(H) ->
 			unavailable
 	end.
 
-%% @doc Delete the tx with the given hash from disk.
+%% @doc Remove the block header, its transaction headers, and its wallet list.
+%% Return {ok, BytesRemoved} if everything was removed successfully or either
+%% of the files has been already removed.
+delete_full_block(H) ->
+	case read_block(H) of
+		unavailable ->
+			{ok, 0};
+		B ->
+			DeleteTXsResult =
+				lists:foldl(
+					fun (TXID, {ok, Bytes}) ->
+							case delete_tx(TXID) of
+								{ok, BytesRemoved} ->
+									{ok, Bytes + BytesRemoved};
+								Error ->
+									Error
+							end;
+						(_TXID, Acc) ->
+							Acc
+					end,
+					{ok, 0},
+					B#block.txs
+				),
+			case DeleteTXsResult of
+				{ok, TXBytesRemoved} ->
+					case delete_wallet_list(B#block.wallet_list) of
+						{ok, WalletListBytesRemoved} ->
+							case delete_block(H) of
+								{ok, BlockBytesRemoved} ->
+									BytesRemoved =
+										TXBytesRemoved +
+										WalletListBytesRemoved +
+										BlockBytesRemoved,
+									{ok, BytesRemoved};
+								Error ->
+									Error
+							end;
+						Error ->
+							Error
+					end;
+				Error ->
+					Error
+			end
+	end.
+
+delete_wallet_list(RootHash) ->
+	WalletListFile = wallet_list_filepath(RootHash),
+	case filelib:is_file(WalletListFile) of
+		true ->
+			case file:read_file_info(WalletListFile) of
+				{ok, FileInfo} ->
+					case file:delete(WalletListFile) of
+						ok ->
+							ar_meta_db:increase(used_space, -FileInfo#file_info.size),
+							{ok, FileInfo#file_info.size};
+						Error ->
+							Error
+					end;
+				Error ->
+					Error
+			end;
+		false ->
+			delete_wallet_list_chunks(0, RootHash, 0)
+	end.
+
+delete_wallet_list_chunks(Position, RootHash, BytesRemoved) ->
+	WalletListChunkFile = wallet_list_chunk_filepath(Position, RootHash),
+	case filelib:is_file(WalletListChunkFile) of
+		true ->
+			case file:read_file_info(WalletListChunkFile) of
+				{ok, FileInfo} ->
+					case file:delete(WalletListChunkFile) of
+						ok ->
+							ar_meta_db:increase(used_space, -FileInfo#file_info.size),
+							delete_wallet_list_chunks(
+								Position + ?WALLET_LIST_CHUNK_SIZE,
+								RootHash,
+								BytesRemoved + FileInfo#file_info.size
+							);
+						Error ->
+							Error
+					end;
+				Error ->
+					Error
+			end;
+		false ->
+			{ok, BytesRemoved}
+	end.
+
+%% @doc Delete the tx with the given hash from disk. Return {ok, BytesRemoved} if
+%% the removal is successful or the file does not exist.
 delete_tx(Hash) ->
 	case lookup_tx_filename(Hash) of
 		{_, Filename} ->
-			file:delete(Filename);
+			case file:read_file_info(Filename) of
+				{ok, FileInfo} ->
+					case file:delete(Filename) of
+						ok ->
+							ar_meta_db:increase(used_space, -FileInfo#file_info.size),
+							{ok, FileInfo#file_info.size};
+						Error ->
+							Error
+					end;
+				Error ->
+					Error
+			end;
 		unavailable ->
-			{error, enoent}
+			{ok, 0}
+	end.
+
+%% @doc Delete the block with the given hash from disk. Return {ok, BytesRemoved} if
+%% the removal is successful or the file does not exist.
+delete_block(H) ->
+	case lookup_block_filename(H) of
+		unavailable ->
+			{ok, 0};
+		Filename ->
+			case file:read_file_info(Filename) of
+				{ok, FileInfo} ->
+					case file:delete(Filename) of
+						ok ->
+							ar_meta_db:increase(used_space, -FileInfo#file_info.size),
+							{ok, FileInfo#file_info.size};
+						Error ->
+							Error
+					end;
+				Error ->
+					Error
+			end
 	end.
 
 write_tx(TXs) when is_list(TXs) ->
@@ -321,7 +433,11 @@ write_tx(#tx{ format = Format } = TX) ->
 						{true, 1} ->
 							%% v1 data is considered to be a part of the header therefore
 							%% if we fail to store it, we return an error here.
-							write_tx_data(TX#tx.data);
+							write_tx_data(
+								no_expected_data_root,
+								TX#tx.data,
+								write_to_free_space_buffer
+							);
 						{true, 2} ->
 							case write_tx_data(TX#tx.data_root, TX#tx.data) of
 								ok ->
@@ -356,7 +472,6 @@ write_tx_header(TX) ->
 
 write_tx_header_after_scan(TX) ->
 	TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX#tx{ data = <<>> })),
-	ByteSize = byte_size(TXJSON),
 	Filepath =
 		case {TX#tx.format, byte_size(TX#tx.data) > 0} of
 			{1, true} ->
@@ -368,38 +483,35 @@ write_tx_header_after_scan(TX) ->
 		true ->
 			ok;
 		false ->
-			case enough_space(ByteSize) of
-				true ->
-					case write_file_atomic(Filepath, TXJSON) of
-						ok ->
-							spawn(ar_meta_db, increase, [used_space, ByteSize]),
-							ok;
-						Error ->
-							Error
-					end;
-				false ->
-					ar:err([{event, not_enough_space_to_write_tx}]),
-					{error, not_enough_space}
-			end
+			write_file_atomic(Filepath, TXJSON)
 	end.
 
 write_tx_data(Data) ->
-	write_tx_data(no_expected_data_root, Data).
+	write_tx_data(no_expected_data_root, Data, do_not_write_to_free_space_buffer).
 
 write_tx_data(ExpectedDataRoot, Data) ->
+	write_tx_data(ExpectedDataRoot, Data, do_not_write_to_free_space_buffer).
+
+write_tx_data(ExpectedDataRoot, Data, WriteToFreeSpaceBuffer) ->
 	Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, Data),
 	SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
 	SizeTaggedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks),
 	case {ExpectedDataRoot, ar_merkle:generate_tree(SizeTaggedChunkIDs)} of
 		{no_expected_data_root, {DataRoot, DataTree}} ->
-			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks);
+			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpaceBuffer);
 		{_, {ExpectedDataRoot, DataTree}} ->
-			write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks);
+			write_tx_data(
+				ExpectedDataRoot,
+				DataTree,
+				Data,
+				SizeTaggedChunks,
+				WriteToFreeSpaceBuffer
+			);
 		_ ->
 			{error, [invalid_data_root]}
 	end.
 
-write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
+write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpaceBuffer) ->
 	Errors = lists:foldl(
 		fun
 			({<<>>, _}, Acc) ->
@@ -421,8 +533,13 @@ write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
 					data_path => DataPath,
 					data_size => byte_size(Data)
 				},
-				case ar_data_sync:add_chunk(Proof, infinity) of
+				case ar_data_sync:add_chunk(Proof, 10000, WriteToFreeSpaceBuffer) of
 					ok ->
+						%% Pessimistically (because some of the writes are overrides and
+						%% because RocksDB compresses data) increase the used disk space count.
+						%% The value is corrected periodically when the new data arrives from
+						%% ar_disksup.
+						ar_meta_db:increase(used_space, byte_size(Chunk)),
 						Acc;
 					{error, Reason} ->
 						[Reason | Acc]
@@ -557,15 +674,7 @@ write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
 			_ ->
 				{last, none, [last | Range]}
 		end,
-	Name = binary_to_list(iolist_to_binary([
-		?WALLET_LIST_DIR,
-		"/",
-		ar_util:encode(RootHash),
-		"-",
-		integer_to_binary(Position),
-		"-",
-		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
-	])),
+	Name = wallet_list_chunk_relative_filepath(Position, RootHash),
 	case write_term(Name, Range2) of
 		ok ->
 			case NextCursor of
@@ -690,10 +799,6 @@ lookup_tx_filename(ID) ->
 			end
 	end.
 
-% @doc Check that there is enough space to write Bytes bytes of data
-enough_space(Bytes) ->
-	(ar_meta_db:get(disk_space)) >= (Bytes + ar_meta_db:get(used_space)).
-
 %% @doc Calculate the available space in bytes on the data directory disk.
 calculate_disk_space() ->
 	{_, KByteSize, _} = get_data_dir_disk_data(),
@@ -701,14 +806,12 @@ calculate_disk_space() ->
 
 %% @doc Calculate the used space in bytes on the data directory disk.
 calculate_used_space() ->
-	{_, KByteSize, UsedPercentage} = get_data_dir_disk_data(),
-	math:ceil(KByteSize * UsedPercentage / 100 * 1024).
+	{_, KByteSize, CapacityKByteSize} = get_data_dir_disk_data(),
+	(KByteSize - CapacityKByteSize) * 1024.
 
 get_data_dir_disk_data() ->
-	application:ensure_started(sasl),
-	application:ensure_started(os_mon),
 	DataDir = filename:absname(ar_meta_db:get(data_dir)),
-	[DiskData | _] = select_drive(disksup:get_disk_data(), DataDir),
+	[DiskData | _] = select_drive(ar_disksup:get_disk_data(), DataDir),
 	DiskData.
 
 %% @doc Calculate the root drive in which the Arweave server resides
@@ -792,10 +895,31 @@ block_index_filepath() ->
 wallet_list_filepath(Hash) when is_binary(Hash) ->
 	filepath([?WALLET_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
 
+wallet_list_chunk_filepath(Position, RootHash) when is_binary(RootHash) ->
+	filename:join(
+		ar_meta_db:get(data_dir),
+		wallet_list_chunk_relative_filepath(Position, RootHash)
+	).
+
+wallet_list_chunk_relative_filepath(Position, RootHash) ->
+	binary_to_list(iolist_to_binary([
+		?WALLET_LIST_DIR,
+		"/",
+		ar_util:encode(RootHash),
+		"-",
+		integer_to_binary(Position),
+		"-",
+		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
+	])).
+
 write_file_atomic(Filename, Data) ->
 	SwapFilename = Filename ++ ".swp",
 	case file:write_file(SwapFilename, Data) of
 		ok ->
+			%% Pessimistically (because some of the writes are overrides)
+			%% increase the used disk space count. The value is corrected
+			%% periodically when the new data arrives from ar_disksup.
+			ar_meta_db:increase(used_space, byte_size(Data)),
 			file:rename(SwapFilename, Filename);
 		Error ->
 			Error
@@ -962,9 +1086,25 @@ read_wallet_list_chunks_test() ->
 		fun(TestCase) ->
 			Tree = ar_patricia_tree:from_proplist(TestCase),
 			{RootHash, _} = ar_block:hash_wallet_list(ar_fork:height_2_2(), unclaimed, Tree),
+			%% Chunked write.
 			ok = write_wallet_list(RootHash, Tree),
-			{ok, ReadTree} = ar_storage:read_wallet_list(RootHash),
-			assert_wallet_trees_equal(Tree, ReadTree)
+			{ok, ReadTree} = read_wallet_list(RootHash),
+			assert_wallet_trees_equal(Tree, ReadTree),
+			?assertEqual(true, filelib:is_file(wallet_list_chunk_filepath(0, RootHash))),
+			?assertMatch({ok, _}, delete_wallet_list(RootHash)),
+			?assertEqual({ok, 0}, delete_wallet_list(RootHash)),
+			?assertMatch({error, {failed_reading_file, _, enoent}}, read_wallet_list(RootHash)),
+			?assertEqual(false, filelib:is_file(wallet_list_chunk_filepath(0, RootHash))),
+			%% Not chunked write - wallets before the fork 2.2.
+			ok = write_wallet_list(RootHash, unclaimed, false, Tree),
+			?assertEqual(false, filelib:is_file(wallet_list_chunk_filepath(0, RootHash))),
+			?assertEqual(true, filelib:is_file(wallet_list_filepath(RootHash))),
+			{ok, ReadTree2} = read_wallet_list(RootHash),
+			assert_wallet_trees_equal(Tree, ReadTree2),
+			?assertMatch({ok, _}, delete_wallet_list(RootHash)),
+			?assertEqual({ok, 0}, delete_wallet_list(RootHash)),
+			?assertEqual(false, filelib:is_file(wallet_list_filepath(RootHash))),
+			?assertMatch({error, {failed_reading_file, _, enoent}}, read_wallet_list(RootHash))
 		end,
 		TestCases
 	).
