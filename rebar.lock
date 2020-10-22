@@ -24,7 +24,7 @@
  {<<"ranch">>,{pkg,<<"ranch">>,<<"1.7.1">>},1},
  {<<"rocksdb">>,
   {git,"https://gitlab.com/barrel-db/erlang-rocksdb.git",
-       {ref,"edabdc409ad729213deea25f5eb427bc5fada97d"}},
+       {ref,"44ef7ad82058c77433b8a5d921085f8aa529a492"}},
   0}]}.
 [
 {pkg_hash,[

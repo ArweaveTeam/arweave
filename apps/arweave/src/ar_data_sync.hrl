@@ -5,6 +5,11 @@
 -define(SCAN_MISSING_CHUNKS_INDEX_FREQUENCY_MS, 2000).
 -endif.
 
+%% @doc The size in bytes of a portion of the disk space reserved to account for the lag
+%% between getting close to no available space and receiving the information about it.
+%% The node would only sync data if it has at least so much of the available space.
+-define(DISK_DATA_BUFFER_SIZE, 15 * 1024 * 1024 * 1024). % 15 GiB, 5 mins of syncing at 60 MiB/s
+
 %% @doc The number of peer sync records to consult each time we look for an interval to sync.
 -define(CONSULT_PEER_RECORDS_COUNT, 5).
 %% @doc The number of best peers to pick ?CONSULT_PEER_RECORDS_COUNT from, to fetch the

@@ -100,7 +100,14 @@
 
 %% @doc The number of blocks behind the most recent block to store.
 %% The maximum lag when fork recovery is still possible.
+-ifdef(DEBUG).
+-define(STORE_BLOCKS_BEHIND_CURRENT, 10).
+-else.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
+-endif.
+
+%% @doc The frequency of checking for the available disk space.
+-define(DISK_SPACE_CHECK_FREQUENCY_MS, 5 * 60 * 1000).
 
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).

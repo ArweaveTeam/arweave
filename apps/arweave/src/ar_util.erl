@@ -8,7 +8,8 @@
 	pmap/2,
 	do_until/3,
 	block_index_entry_from_block/1, get_block_index_intersection/2,
-	reset_peer/1, get_performance/1, update_timer/1
+	reset_peer/1, get_performance/1, update_timer/1,
+	bytes_to_mb_string/1
 ]).
 
 -include("ar.hrl").
@@ -215,6 +216,10 @@ update_timer(Peer = {_, _, _, _, _}) ->
 				}
 			)
 	end.
+
+%% @doc Convert the given number of bytes into the "%s MiB" string.
+bytes_to_mb_string(Bytes) ->
+	integer_to_list(Bytes div 1024 div 1024) ++ " MiB".
 
 %%%
 %%% Tests.
