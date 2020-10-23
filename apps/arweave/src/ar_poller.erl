@@ -1,3 +1,14 @@
+%% This Source Code Form is subject to the terms of the GNU General 
+%% Public License, v. 2.0. If a copy of the GPLv2 was not distributed 
+%% with this file, You can obtain one at 
+%% https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
+%%
+%% @author Jon Sherry
+%% @author Martin Torhage
+%% @author Lev Berman <lev@arweave.org>
+%% @author Taras Halturin <taras@arweave.org>
+%%
+
 -module(ar_poller).
 -behaviour(gen_server).
 
@@ -9,12 +20,11 @@
 ]).
 
 -include("ar.hrl").
+-include("ar_config.hrl").
 
 %%% This module fetches blocks from trusted peers in case the node is not in the
 %%% public network or hasn't received blocks for some other reason.
 
-%% The polling frequency in seconds.
--define(DEFAULT_POLLING_INTERVAL, 60 * 1000).
 
 %%%===================================================================
 %%% Public API.
@@ -27,14 +37,15 @@ start_link(Args) ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init(Args) ->
+init(_Args) ->
 	ar:info([{event, ar_poller_start}]),
-	I = proplists:get_value(polling_interval, Args, ?DEFAULT_POLLING_INTERVAL),
-	{ok, _} = schedule_polling(I),
+
+    {ok, Config} = application:get_env(arweave, config),
+	
 	{ok, #{
-		trusted_peers => proplists:get_value(trusted_peers, Args, []),
+		trusted_peers => ar_join:filter_peer_list(Config#config.peers),
 		last_seen_height => -1,
-		interval => I
+		interval => schedule_polling(Config#config.polling * 1000)
 	}}.
 
 handle_cast(poll_block, State) ->
@@ -88,8 +99,11 @@ handle_call(_Request, _From, State) ->
 %%% Internal functions.
 %%%===================================================================
 
+schedule_polling(0) ->
+    schedule_polling(?DEFAULT_POLLING_INTERVAL);
 schedule_polling(Interval) ->
-	timer:apply_after(Interval, gen_server, cast, [self(), poll_block]).
+	timer:apply_after(Interval, gen_server, cast, [self(), poll_block]),
+    Interval.
 
 poll_block(Peers, Height) ->
 	poll_block_step(download_block_shadow, {Peers, Height}).

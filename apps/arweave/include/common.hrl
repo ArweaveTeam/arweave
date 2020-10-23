@@ -14,5 +14,7 @@
 -include_lib("kernel/include/logger.hrl").
 
 
+%% The polling frequency in seconds.
+-define(DEFAULT_POLLING_INTERVAL, 60 * 1000).
 -endif. % COMMON_HRL
 

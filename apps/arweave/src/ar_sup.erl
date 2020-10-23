@@ -29,17 +29,19 @@ start_link() ->
 %% Supervisor callbacks
 %% ===================================================================
 init([]) ->
-    %% this ETS tables should belong to the supervisor
+    %% these ETS tables should belong to the supervisor
 	ets:new(ar_meta_db, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(blacklist, [set, public, named_table]),
-
+	ets:new(ignored_ids, [set, public, named_table]),
     {ok, { {one_for_one, 5, 10}, [
         ?CHILD(ar_meta_db, worker),
         ?CHILD(ar_arql_db, worker),
-        ?CHILD(ar_watchdog, worker)
-        ?CHILD(ar_data_sync, worker)
-        ?CHILD(ar_header_sync, worker)
-        ?CHILD(ar_bridge, worker)
+        ?CHILD(ar_watchdog, worker),
+        ?CHILD(ar_data_sync, worker),
+        ?CHILD(ar_header_sync, worker),
+        ?CHILD(ar_bridge, worker),
+        ?CHILD(ar_poller, worker),
+        ?CHILD(ar_node, worker)
     ]}}.
 
 

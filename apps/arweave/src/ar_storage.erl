@@ -1,7 +1,7 @@
 -module(ar_storage).
 
 -export([
-	start/0,
+	init/0,
 	write_block/1, write_full_block/1, write_full_block/2,
 	read_block/1, read_block/2,
 	invalidate_block/1, blocks_on_disk/0,
@@ -31,7 +31,7 @@
 
 %% @doc Ready the system for block/tx reading and writing.
 %% %% This function should block.
-start() ->
+init() ->
 	ar_firewall:start(),
 	ensure_directories(),
 	ok = migrate_block_filenames(),

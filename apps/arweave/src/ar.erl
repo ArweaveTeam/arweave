@@ -111,11 +111,14 @@ show_help() ->
 						"This port must be accessible by remote peers."},
 			{"data_dir", "The directory for storing the weave and the wallets (when generated)."},
 			{"metrics_dir", "The directory for persisted metrics."},
-			{"polling", "Poll peers for new blocks every 10 seconds. "
-						"Useful in environments where "
-						"port forwarding is not possible. "
-						"When the flag is not set, the node still polls "
-						"if it does not receive blocks for a minute."},
+			{"polling", lists:flatten(
+                          io_lib:format(
+                        "Poll peers for new blocks every N seconds. Default is ~B." 
+						"Useful in environments where port forwarding is not possible. ", 
+                        [?DEFAULT_POLLING_INTERVAL/1000]
+                          )
+                        )
+                        },
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
@@ -209,7 +212,7 @@ parse_cli_args(["data_dir", DataDir|Rest], C) ->
 parse_cli_args(["metrics_dir", MetricsDir|Rest], C) ->
 	parse_cli_args(Rest, C#config { metrics_dir = MetricsDir });
 parse_cli_args(["polling"|Rest], C) ->
-	parse_cli_args(Rest, C#config { polling = true });
+	parse_cli_args(Rest, C#config { polling = 0});
 parse_cli_args(["clean"|Rest], C) ->
 	parse_cli_args(Rest, C#config { clean = true });
 parse_cli_args(["no_auto_join"|Rest], C) ->
@@ -288,113 +291,9 @@ start(Config) ->
 	{ok, _} = application:ensure_all_started(arweave, permanent).
 
 start(normal, _Args) ->
-    ar_sup:start_link(),
-	%{ok, #config {
-	%	init = Init,
-	%	port = Port,
-	%	data_dir = DataDir,
-	%	metrics_dir = MetricsDir,
-	%	peers = Peers,
-	%	mine = Mine,
-	%	polling = Polling,
-	%	clean = Clean,
-	%	auto_join = AutoJoin,
-	%	diff = Diff,
-	%	mining_addr = Addr,
-	%	max_miners = MaxMiners,
-	%	max_emitters = MaxEmitters,
-	%	tx_propagation_parallelization = TXProp,
-	%	new_key = NewKey,
-	%	load_key = LoadKey,
-	%	disk_space = DiskSpace,
-	%	used_space = UsedSpace,
-	%	start_from_block_index = StartFromBlockIndex,
-	%	internal_api_secret = InternalApiSecret,
-	%	enable = Enable,
-	%	disable = Disable,
-	%	content_policy_files = ContentPolicyFiles,
-	%	transaction_blacklist_files = TransactionBlacklistFiles,
-	%	gateway_domain = GatewayDomain,
-	%	gateway_custom_domains = GatewayCustomDomains,
-	%	requests_per_minute_limit = RequestsPerMinuteLimit,
-	%	max_propagation_peers = MaxPropagationPeers,
-	%	ipfs_pin = IPFSPin,
-	%	webhooks = WebhookConfigs,
-	%	max_connections = MaxConnections,
-	%	max_gateway_connections = MaxGatewayConnections,
-	%	max_poa_option_depth = MaxPOAOptionDepth,
-	%	disk_pool_data_root_expiration_time = DiskPoolExpirationTime,
-	%	max_disk_pool_buffer_mb = MaxDiskPoolBuffer,
-	%	max_disk_pool_data_root_buffer_mb = MaxDiskPoolDataRootBuffer,
-	%	randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
-	%}} = application:get_env(arweave, config),
-	%% Verify port collisions when gateway enabled
     {ok, Config} = application:get_env(arweave, config),
-	case {Config#config.port, Config#config.gateway_domain} of
-		{P, D} when is_binary(D) andalso (P == 80 orelse P == 443) ->
-			io:format("~nThe port must be different than 80 or 443 when the gateway is enabled.~n~n"),
-			erlang:halt();
-		_ ->
-			do_nothing
-	end,
 
-	%% Store enabled features.
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Config#config.enable),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Config#config.disable),
-
-	%% Prepare the storage for operation.
-	ar_storage:start(),
-
-	%% Optionally clear the block cache.
-	if Config#config.clean -> ar_storage:clear(); true -> do_nothing end,
-	prometheus_registry:register_collector(prometheus_process_collector),
-	prometheus_registry:register_collector(ar_metrics_collector),
-	% Register custom metrics.
-	ar_metrics:register(),
-	%% Start other apps which we depend on.
-	inets:start(),
-	ar_tx_db:start(),
-	%%FIXME: remove this line later... ar_miner_log:start(),
-	ar_storage:start_update_used_space(),
-	%% Determine the mining address.
-	case {Config#config.mining_addr, Config#config.load_key, Config#config.new_key} of
-		{false, false, _} ->
-			{_, Pub} = ar_wallet:new_keyfile(),
-			MiningAddress = ar_wallet:to_address(Pub),
-			ar:report_console(
-				[
-					mining_address,
-					{address, MiningAddress}
-				]
-			);
-		{false, Load, false} ->
-			{_, Pub} = ar_wallet:load_keyfile(Load),
-			MiningAddress = ar_wallet:to_address(Pub),
-			ar:report_console(
-				[
-					mining_address,
-					{address, MiningAddress}
-				]
-			);
-		{Address, false, false} ->
-			MiningAddress = Address,
-			ar:report_console(
-				[
-					mining_address,
-					{address, MiningAddress}
-				]
-			);
-		_ ->
-			{_, Pub} = ar_wallet:new_keyfile(),
-			MiningAddress = ar_wallet:to_address(Pub),
-			ar:report_console(
-				[
-					mining_address_generated,
-					{address, MiningAddress}
-				]
-			)
-	end,
-	ar_randomx_state:start(),
+    % Check whether we have list of valid peers
 	ValidPeers = ar_join:filter_peer_list(Config#config.peers),
 	case {Config#config.peers, ValidPeers} of
 		{[_Peer | _], []} ->
@@ -407,95 +306,62 @@ start(normal, _Args) ->
 		_ ->
 			ok
 	end,
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_node,
-		shutdown => infinity,
-		start => {ar_node, start_link,
-			[[
-				ValidPeers,
-				case {StartFromBlockIndex, Init} of
-					{false, false} ->
-						not_joined;
-					{true, _} ->
-						case ar_storage:read_block_index() of
-							{error, enoent} ->
-								io:format(
-									"~n~n\tBlock index file is not found. "
-									"If you want to start from a block index copied "
-									"from another node, place it in "
-									"<data_dir>/hash_lists/last_block_index.json~n~n"
-								),
-								erlang:halt();
-							BI ->
-								BI
-						end;
-					{false, true} ->
-						ar_weave:init(
-							ar_util:genesis_wallets(),
-							ar_retarget:switch_to_linear_diff(Diff),
-							0,
-							ar_storage:read_tx(ar_weave:read_v1_genesis_txs())
-						)
-				end,
-				0,
-				MiningAddress,
-				AutoJoin,
-				Diff,
-				os:system_time(seconds)
-			]]}
-		}
-	),
-	
-	PrintMiningAddress = case MiningAddress of
-			unclaimed -> "unclaimed";
-			_ -> binary_to_list(ar_util:encode(MiningAddress))
-		end,
-	{ok, Logfile} = application:get_env(arweave, logfile),
-	ar:info(
-		[
-			{event, starting_server},
-			{session_log, Logfile},
-			{port, Port},
-			{automine, Mine},
-			{miner, Node},
-			{mining_address, PrintMiningAddress},
-			{peers, [ar_util:format_peer(Peer) || Peer <- ValidPeers]},
-			{polling, Polling},
-			{target_time, ?TARGET_TIME},
-			{retarget_blocks, ?RETARGET_BLOCKS}
-		]
-	),
-	ok = prepare_graphql(),
-	%% Start the first node in the gossip network (with HTTP interface).
-	ok = ar_http_iface_server:start([
-		{http_entrypoint_node, whereis(http_entrypoint_hode)},
-		{http_bridge_node, Bridge},
-		{port, Config#config.port},
-		{gateway_domain, Config#config.gateway_domain},
-		{gateway_custom_domains, Config#config.gateway_custom_domains},
-		{max_connections, Config#config.max_connections},
-		{max_gateway_connections, Config#config.max_gateway_connections}
-	]),
-	ar_randomx_state:start_block_polling(),
-	PollingArgs = [{trusted_peers, ValidPeers}] ++ case Polling of
-		true ->
-			[{polling_interval, 10 * 1000}];
-		false ->
-			[]
+
+	%% Verify port collisions when gateway enabled
+	case {Config#config.port, Config#config.gateway_domain} of
+		{P, D} when is_binary(D) andalso (P == 80 orelse P == 443) ->
+			io:format("~nThe port must be different than 80 or 443 when the gateway is enabled.~n~n"),
+			erlang:halt();
+		_ ->
+			do_nothing
 	end,
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_poller,
-		start => {ar_poller_sup, start_link, [PollingArgs]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	if Mine -> ar_node:automine(Node); true -> do_nothing end,
-	case IPFSPin of
+
+
+    %% Starting Prometheus metrics subsystem
+	prometheus_registry:register_collector(prometheus_process_collector),
+	prometheus_registry:register_collector(ar_metrics_collector),
+	% Register custom metrics.
+	ar_metrics:register(),
+
+    %% RandomX initializing
+	ar_randomx_state:start(),
+	ar_randomx_state:start_block_polling(),
+
+	%% Start other apps which we depend on.
+	inets:start(), % FIXME: should be removed (we already have http client - gun)
+
+	ar_tx_db:start(),
+
+	%%FIXME: remove this line later... ar_miner_log:start(),
+	
+    % remove it later. 
+    %ar:info(
+	%	[
+	%		{event, starting_server},
+	%		{session_log, Logfile},
+	%		{port, Config#config.port},
+	%		{automine, Config#config.mine},
+	%		{miner, Node},
+	%		{mining_address, PrintMiningAddress},
+	%		{peers, [ar_util:format_peer(Peer) || Peer <- ValidPeers]},
+	%		{polling, Polling},
+	%		{target_time, ?TARGET_TIME},
+	%		{retarget_blocks, ?RETARGET_BLOCKS}
+	%	]
+	%),
+	ok = prepare_graphql(),
+
+	%% Start the first node in the gossip network (with HTTP interface).
+	ok = ar_http_iface_server:start(),
+
+	case Config#config.ipfs_pin of
 		false -> ok;
 		true  -> app_ipfs:start_pinning()
 	end,
-	ar_node:add_peers(Node, ar_webhook:start(WebhookConfigs)),
-	{ok, Supervisor}.
+
+
+    %% Starting Arweave
+    ar_sup:start_link().
 
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
@@ -701,3 +567,5 @@ commandline_parser_test_() ->
 			Tests
 		)
 	end}.
+
+

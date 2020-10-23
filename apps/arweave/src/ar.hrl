@@ -452,4 +452,7 @@
 %% @doc Minimum number of characters for internal API secret.
 -define(INTERNAL_API_SECRET_MIN_LEN, 16).
 
+%% @doc The polling frequency in seconds.
+-define(DEFAULT_POLLING_INTERVAL, 60 * 1000).
+
 -endif.

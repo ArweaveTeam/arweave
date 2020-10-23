@@ -18,7 +18,7 @@
 	peers = [],
 	data_dir = ".",
 	metrics_dir = ?METRICS_DIR,
-	polling = false,
+	polling = 0, %% period of time in seconds
 	auto_join = true,
 	clean = false,
 	diff = ?DEFAULT_DIFF,

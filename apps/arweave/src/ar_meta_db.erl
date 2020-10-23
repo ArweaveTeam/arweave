@@ -93,7 +93,7 @@ init(_) ->
 	ets:insert(?MODULE, {data_dir, Config#config.data_dir}),
 	ets:insert(?MODULE, {metrics_dir, Config#config.metrics_dir}),
 	ets:insert(?MODULE, {port, Config#config.port}),
-	ets:insert(?MODULE, {disk_space, Config#config.dist_space}),
+	ets:insert(?MODULE, {disk_space, Config#config.disk_space}),
 	ets:insert(?MODULE, {used_space, Config#config.used_space}),
 	ets:insert(?MODULE, {mine, Config#config.mine}),
 	ets:insert(?MODULE, {max_miners, Config#config.max_miners}),
@@ -106,10 +106,23 @@ init(_) ->
 	ets:insert(?MODULE, {max_propagation_peers, Config#config.max_propagation_peers}),
 	ets:insert(?MODULE, {max_poa_option_depth, Config#config.max_poa_option_depth}),
 	ets:insert(?MODULE, {disk_pool_data_root_expiration_time_us, 
-                         Config#config.disk_pool_data_root_expiration_time_us * 1000000}),
+                         Config#config.disk_pool_data_root_expiration_time * 1000000}),
 	ets:insert(?MODULE, {max_disk_pool_buffer_mb, Config#config.max_disk_pool_buffer_mb}),
 	ets:insert(?MODULE, {max_disk_pool_data_root_buffer_mb, Config#config.max_disk_pool_data_root_buffer_mb}),
 	ets:insert(?MODULE, {randomx_bulk_hashing_iterations, Config#config.randomx_bulk_hashing_iterations}),
+
+	%% Store enabled features.
+	lists:foreach(fun(Feature) -> put(Feature, true) end, Config#config.enable),
+	lists:foreach(fun(Feature) -> put(Feature, false) end, Config#config.disable),
+
+	%% Prepare the storage for operation.
+	ar_storage:init(),
+
+	%% Optionally clear the block cache.
+	if Config#config.clean -> ar_storage:clear(); true -> do_nothing end,
+
+	ar_storage:start_update_used_space(),
+
 	{ok, #{}}.
 
 %% @hidden

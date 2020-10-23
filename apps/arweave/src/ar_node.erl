@@ -21,11 +21,6 @@
          code_change/3]).
 
 -export([
-
-    % have to be removed
-    % start/7,
-	% stop/1,
-
 	get_blocks/1,
 	get_block_index/1, is_in_block_index/2, get_height/1,
 	get_trusted_peers/1, set_trusted_peers/2,
@@ -40,7 +35,7 @@
 	get_2_0_hash_of_1_0_block/2,
 	is_joined/1,
 	get_block_txs_pairs/1,
-	mine/1, automine/1,
+	mine/1, 
 	add_tx/2,
 	add_peers/2,
 	set_reward_addr/2,
@@ -52,6 +47,7 @@
 
 -include("ar.hrl").
 -include("ar_mine.hrl").
+-include("ar_config.hrl").
 -include("common.hrl").
 
 %%%===================================================================
@@ -78,12 +74,41 @@ start_link(I) ->
 %%--------------------------------------------------------------------
 init([Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget]) ->
     process_flag(trap_exit, true),
-	case {BI, AutoJoin} of
+    {ok, Config} = application:get_env(arweave, config),
+    Peers = ar_join:filter_peer_list(Config#config.peers),
+
+	BI = case {Config#config.start_from_block_index, Config#config.init} of
+			{false, false} ->
+				not_joined;
+			{true, _} ->
+				case ar_storage:read_block_index() of
+					{error, enoent} ->
+						io:format(
+							"~n~n\tBlock index file is not found. "
+							"If you want to start from a block index copied "
+							"from another node, place it in "
+							"<data_dir>/hash_lists/last_block_index.json~n~n"
+						),
+						erlang:halt();
+					BI ->
+						BI
+				end;
+			{false, true} ->
+				ar_weave:init(
+					ar_util:genesis_wallets(),
+					ar_retarget:switch_to_linear_diff(Diff),
+					0,
+					ar_storage:read_tx(ar_weave:read_v1_genesis_txs())
+				),
+               Config1 = Config#config{init = false}, 
+               application:set_env(arweave, config, Config1)
+		end,
+                
+	case {BI, Config#config.auto_join} of
 		{not_joined, true} ->
 			ar_join:start(self(), Peers);
 		{BI, true} ->
-			Self = self(),
-			spawn(fun() -> start_from_block_index(Self, BI) end);
+			spawn(fun() -> start_from_block_index(self(), BI) end);
 		{_, false} ->
 			do_nothing
 	end,
@@ -105,6 +130,9 @@ init([Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget]) ->
 				{#{}, {0, 0}}
 		end,
 
+	%% Determine the mining address.
+    MiningAddress = determine_mining_address(Config),
+
 	State = #{
 		id => crypto:strong_rand_bytes(32),
 		node => self(),
@@ -113,17 +141,17 @@ init([Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget]) ->
 		hash_list_2_0_for_1_0_blocks => read_hash_list_2_0_for_1_0_blocks(),
 		current => not_joined,
 		wallet_list => not_joined,
-		mining_delay => MiningDelay,
-		reward_addr => RewardAddr,
+		mining_delay => 0,
+		reward_addr => MiningdAddr,
 		reward_pool => -1,
 		height => -1,
 		trusted_peers => Peers,
-		diff => Diff,
+		diff => Config#config.diff,
 		cumulative_diff => -1,
 		tags => [],
 		miner => undefined,
 		automine => false,
-		last_retarget => LastRetarget,
+		last_retarget => os:system_time(seconds),
 		weave_size => -1,
 		block_txs_pairs => not_joined,
 		block_cache => not_joined,
@@ -133,6 +161,26 @@ init([Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget]) ->
 		missing_txs_lookup_processes => #{}
 	},
 
+	PID = spawn_link(
+		fun() ->
+			%% Start processes, init state, and start server.
+			{ok, WPid} = ar_node_worker:start_link(State),
+			server(WPid, State)
+		end
+	),
+
+	case Config#config.mine of 
+        true -> 
+	        gen_server:cast(WPid, automine);
+        _ -> 
+            do_nothing
+    end,
+
+    %% keep it for the backward capabilities
+	ar_http_iface_server:reregister(http_entrypoint_node, self()),
+
+
+	add_peers(self(), ar_webhook:start(Config#config.webhooks)),
 
     {ok, State}.
 
@@ -210,19 +258,6 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% @doc Start a node server.
-start(Peers, BI, MiningDelay, RewardAddr, AutoJoin, Diff, LastRetarget) ->
-	PID = spawn_link(
-		fun() ->
-			%% Start processes, init state, and start server.
-			{ok, WPid} = ar_node_worker:start_link(State),
-			server(WPid, State)
-		end
-	),
-
-    %% keep it for the backward capabilities
-	ar_http_iface_server:reregister(http_entrypoint_node, PID),
-	PID.
-
 start_from_block_index(Node, [#block{} = GenesisB]) ->
     BI = [ar_util:block_index_entry_from_block(GenesisB)],
 	ar_randomx_state:init(BI, []),
@@ -424,10 +459,6 @@ set_reward_addr(Node, Addr) ->
 mine(Node) ->
 	Node ! mine.
 
-%% @doc Trigger a node to mine continually.
-automine(Node) ->
-	Node ! automine.
-
 %% @doc Set the likelihood that a message will be dropped in transmission.
 %% Used primarily for testing, simulating packet loss.
 set_loss_probability(Node, Prob) ->
@@ -619,10 +650,6 @@ handle(mine, WPid, State) ->
 	gen_server:cast(WPid, mine),
 	State;
 
-handle(automine, WPid, State) ->
-	gen_server:cast(WPid, automine),
-	State;
-
 handle({get_trusted_peers, From, Ref}, _WPid, #{ trusted_peers := TrustedPeers } = State) ->
 	From ! {Ref, peers, TrustedPeers},
 	State;
@@ -779,3 +806,20 @@ handle({get_search_space_upper_bound, From, Ref, Height}, _WPid, State) ->
 handle(UnknownMsg, _WPid, State) ->
 	ar:warn([{event, ar_node_received_unknown_message}, {message, UnknownMsg}]),
 	State.
+
+determine_mining_address(Config) ->
+	case {Config#config.mining_addr, Config#config.load_key, Config#config.new_key} of
+		{false, false, _} ->
+			{_, Pub} = ar_wallet:new_keyfile(),
+			ar_wallet:to_address(Pub);
+
+		{false, Load, false} ->
+			{_, Pub} = ar_wallet:load_keyfile(Load),
+			ar_wallet:to_address(Pub);
+
+		{Address, false, false} ->
+			Address;
+		_ ->
+			{_, Pub} = ar_wallet:new_keyfile(),
+			ar_wallet:to_address(Pub)
+	end.
