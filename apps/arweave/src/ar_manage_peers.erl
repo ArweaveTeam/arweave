@@ -9,7 +9,7 @@
 
 %% @doc Print statistics about the current peers.
 stats() ->
-	Connected = ar_bridge:get_remote_peers(http_bridge_node),
+	Connected = ar_bridge:get_remote_peers(),
 	io:format("Connected peers, in preference order:~n"),
 	stats(Connected),
 	io:format("Other known peers:~n"),
@@ -23,7 +23,7 @@ stats(Peers) ->
 %% @doc Reset all performance counters and connections.
 reset() ->
 	lists:map(fun ar_util:reset_peer/1, All = all_peers()),
-	ar_bridge:set_remote_peers(whereis(http_bridge_node), All).
+	ar_bridge:set_remote_peers(All).
 
 %% @doc Return all known peers.
 all_peers() ->

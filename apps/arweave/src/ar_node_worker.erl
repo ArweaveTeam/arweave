@@ -10,11 +10,12 @@
 %% The state is synchronized with the ar_node process for non-blocking reads.
 -module(ar_node_worker).
 
--export([start_link/1]).
+-export([start_link/0]).
 
 -export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1]).
 
 -include("ar.hrl").
+-include("ar_config.hrl").
 -include("ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -30,16 +31,110 @@
 %%% Public interface.
 %%%===================================================================
 
-start_link(Args) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init(State) ->
+init([]) ->
 	process_flag(trap_exit, true),
+
+    {ok, Config} = application:get_env(arweave, config),
+    Peers = ar_join:filter_peer_list(Config#config.peers),
+
+    BI = case {Config#config.start_from_block_index, Config#config.init} of
+            {false, false} ->
+                not_joined;
+            {true, _} ->
+                case ar_storage:read_block_index() of
+                    {error, enoent} ->
+                        io:format(
+                            "~n~n\tBlock index file is not found. "
+                            "If you want to start from a block index copied "
+                            "from another node, place it in "
+                            "<data_dir>/hash_lists/last_block_index.json~n~n"
+                        ),
+                        erlang:halt();
+                    BIvalue ->
+                        BIvalue
+                end;
+            {false, true} ->
+                ar_weave:init(
+                    ar_util:genesis_wallets(),
+                    ar_retarget:switch_to_linear_diff(Config#config.diff),
+                    0,
+                    ar_storage:read_tx(ar_weave:read_v1_genesis_txs())
+                ),
+               Config1 = Config#config{init = false}, 
+               application:set_env(arweave, config, Config1)
+        end,
+
+    case {BI, Config#config.auto_join} of
+        {not_joined, true} ->
+            ar_join:start(self(), Peers);
+        {BI, true} ->
+            spawn(fun() -> start_from_block_index(self(), BI) end);
+        {_, false} ->
+            do_nothing
+    end,
+
+    Gossip =
+        ar_gossip:init(
+            lists:filter(
+                fun is_pid/1,
+                Peers
+            )
+        ),
+
+    {TXs, MempoolSize} =
+        case ar_storage:read_term(mempool) of
+            {ok, Mempool} ->
+                Mempool;
+            not_found ->
+                {#{}, {0, 0}};
+            {error, Error} ->
+                ar:err([{event, failed_to_load_mempool}, {reason, Error}]),
+                {#{}, {0, 0}}
+        end,
+
+    case Config#config.mine of 
+        true -> 
+            gen_server:cast(self(), automine);
+        _ -> 
+            do_nothing
+    end,
+
 	gen_server:cast(self(), process_task_queue),
+
+    State = #{
+        id => crypto:strong_rand_bytes(32),
+        node => self(),
+        gossip => Gossip,
+        block_index => not_joined,
+        hash_list_2_0_for_1_0_blocks => read_hash_list_2_0_for_1_0_blocks(),
+        current => not_joined,
+        wallet_list => not_joined,
+        mining_delay => 0,
+        reward_addr => determine_mining_address(Config),
+        reward_pool => -1,
+        height => -1,
+        trusted_peers => Peers,
+        diff => Config#config.diff,
+        cumulative_diff => -1,
+        tags => [],
+        miner => undefined,
+        automine => false,
+        last_retarget => os:system_time(seconds),
+        weave_size => -1,
+        block_txs_pairs => not_joined,
+        block_cache => not_joined,
+        txs => TXs,
+        mempool_size => MempoolSize,
+        blocks_missing_txs => sets:new(),
+        missing_txs_lookup_processes => #{}
+    },
 	{ok, State#{ task_queue => gb_sets:new() }}.
 
 handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
@@ -569,20 +664,15 @@ validate_wallet_list(B, WalletList, RewardPool, Height) ->
 	end.
 
 get_missing_txs_and_retry(BShadow, Mempool, Worker) ->
-	case whereis(http_bridge_node) of
-		undefined ->
-			ok;
-		BridgePID ->
-			Peers = ar_bridge:get_remote_peers(BridgePID),
-			case ar_http_iface_client:get_txs(Peers, Mempool, BShadow) of
-				{ok, TXs} ->
-					gen_server:cast(Worker, {cache_missing_txs, BShadow#block.indep_hash, TXs});
-				_ ->
-					ar:warn([
-						{event, ar_node_worker_could_not_find_block_txs},
-						{block, ar_util:encode(BShadow#block.indep_hash)}
-					])
-			end
+	Peers = ar_bridge:get_remote_peers(),
+	case ar_http_iface_client:get_txs(Peers, Mempool, BShadow) of
+		{ok, TXs} ->
+			gen_server:cast(Worker, {cache_missing_txs, BShadow#block.indep_hash, TXs});
+		_ ->
+			ar:warn([
+				{event, ar_node_worker_could_not_find_block_txs},
+				{block, ar_util:encode(BShadow#block.indep_hash)}
+			])
 	end.
 
 apply_validated_block(#{ cumulative_diff := CDiff } = State, B, _Blocks, _BI, _BlockTXs)
@@ -838,3 +928,56 @@ priority({cache_missing_txs, _, _}) ->
 	3;
 priority(_) ->
 	os:system_time(second).
+
+determine_mining_address(Config) ->
+    case {Config#config.mining_addr, Config#config.load_key, Config#config.new_key} of
+        {false, false, _} ->
+            {_, Pub} = ar_wallet:new_keyfile(),
+            ar_wallet:to_address(Pub);
+
+        {false, Load, false} ->
+            {_, Pub} = ar_wallet:load_keyfile(Load),
+            ar_wallet:to_address(Pub);
+
+        {Address, false, false} ->
+            Address;
+        _ ->
+            {_, Pub} = ar_wallet:new_keyfile(),
+            ar_wallet:to_address(Pub)
+    end.
+
+
+read_hash_list_2_0_for_1_0_blocks() ->
+    Fork_2_0 = ar_fork:height_2_0(),
+    case Fork_2_0 > 0 of
+        true ->
+            File = filename:join(["data", "hash_list_1_0"]),
+            {ok, Binary} = file:read_file(File),
+            HL = lists:map(fun ar_util:decode/1, jiffy:decode(Binary)),
+            Fork_2_0 = length(HL),
+            HL;
+        false ->
+            []
+    end.
+
+
+start_from_block_index(Node, [#block{} = GenesisB]) ->
+    BI = [ar_util:block_index_entry_from_block(GenesisB)],
+    ar_randomx_state:init(BI, []),
+    Node ! {join, BI, [GenesisB]};
+start_from_block_index(Node, BI) ->
+    ar_randomx_state:init(BI, []),
+    Node ! {join, BI, read_recent_blocks(BI)}.
+
+read_recent_blocks(not_joined) ->
+    [];
+read_recent_blocks(BI) ->
+    read_recent_blocks2(lists:sublist(BI, 2 * ?MAX_TX_ANCHOR_DEPTH)).
+
+read_recent_blocks2([]) ->
+    [];
+read_recent_blocks2([{BH, _, _} | BI]) ->
+    B = ar_storage:read_block(BH),
+    TXs = ar_storage:read_tx(B#block.txs),
+    SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+    [B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | read_recent_blocks2(BI)].

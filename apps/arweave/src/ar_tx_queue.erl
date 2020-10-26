@@ -170,7 +170,7 @@ handle_cast({add_tx, TX}, State) ->
 				{event, drop_txs_from_queue},
 				{dropped_txs, DroppedIDs}
 			]),
-			ar_bridge:drop_waiting_txs(whereis(http_bridge_node), DroppedTXs)
+			ar_bridge:drop_waiting_txs(DroppedTXs)
 	end,
 	NewState = State#state{
 		tx_queue = NewQ,
@@ -218,9 +218,8 @@ handle_cast(emitter_go, State) ->
 				State;
 			false ->
 				{{_, {TX, {TXHeaderSize, TXDataSize}}}, NewQ} = gb_sets:take_largest(Q),
-				Bridge = whereis(http_bridge_node),
 				Node = whereis(http_entrypoint_node),
-				{Peers, TrustedPeers} = get_peers(Bridge, Node),
+				{Peers, TrustedPeers} = get_peers(Node),
 				case Peers of
 					[] ->
 						gen_server:cast(?MODULE, {emitter_finished, TX}),
@@ -334,9 +333,9 @@ maybe_drop(Q, {HeaderSize, DataSize} = Size, {MaxHeaderSize, MaxDataSize} = MaxS
 			{Q, Size, lists:filter(fun(TX) -> TX /= none end, DroppedTXs)}
 	end.
 
-get_peers(Bridge, Node) ->
+get_peers(Node) ->
 	Peers =
-		lists:sublist(ar_bridge:get_remote_peers(Bridge), ar_meta_db:get(max_propagation_peers)),
+		lists:sublist(ar_bridge:get_remote_peers(), ar_meta_db:get(max_propagation_peers)),
 	TrustedPeers = ar_node:get_trusted_peers(Node),
 	{join_peers(Peers, TrustedPeers), TrustedPeers}.
 

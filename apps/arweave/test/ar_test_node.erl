@@ -26,8 +26,8 @@
 	read_block_when_stored/1
 ]).
 
--include("src/ar.hrl").
--include("src/ar_config.hrl").
+-include_lib("arweave/src/ar.hrl").
+-include_lib("arweave/src/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 start(no_block) ->

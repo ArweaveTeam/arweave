@@ -313,7 +313,7 @@ update_backoff({_Timestamp, Interval}) ->
 	{os:system_time(second) + UpdatedInterval, UpdatedInterval}.
 
 download_block(H, H2, TXRoot) ->
-	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	Peers = ar_bridge:get_remote_peers(),
 	case ar_storage:read_block(H) of
 		unavailable ->
 			download_block(Peers, H, H2, TXRoot);

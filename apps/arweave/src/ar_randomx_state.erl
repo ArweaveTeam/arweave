@@ -253,7 +253,7 @@ get_block(Height) ->
 	end.
 
 get_block(BH, BI) ->
-	Peers = ar_bridge:get_remote_peers(whereis(http_bridge_node)),
+	Peers = ar_bridge:get_remote_peers(),
 	get_block(BH, BI, Peers).
 
 get_block(Height, BI, Peers) when is_integer(Height) ->
