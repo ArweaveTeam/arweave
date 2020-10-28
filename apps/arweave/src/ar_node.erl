@@ -25,7 +25,7 @@
 -export([
     get_blocks/0,
     get_block_index/0, is_in_block_index/1, get_height/0,
-    get_trusted_peers/0, set_trusted_peers/2,
+    get_trusted_peers/0, set_trusted_peers/1,
     get_balance/1,
     get_last_tx/1,
     get_wallets/1,
@@ -38,10 +38,10 @@
     is_joined/0,
     get_block_txs_pairs/0,
     mine/0, 
-    add_tx/2,
-    add_peers/2,
-    set_reward_addr/2,
-    set_loss_probability/2,
+    add_tx/1,
+    add_peers/1,
+    set_reward_addr/1,
+    set_loss_probability/1,
     get_mempool_size/0,
     get_block_shadow_from_cache/1,
     get_search_space_upper_bound/1
@@ -65,7 +65,9 @@
     last_retarget,
     block_txs_pairs,
     block_cache,
-    mempool_size
+    mempool_size,
+    reward_addr,
+    reward_pool
 }).
 
 %%%===================================================================
@@ -204,8 +206,33 @@ get_wallet_list_chunk(RootHash, Cursor) ->
 %% @doc Trigger a node to start mining a block.
 mine() ->
     gen_server:cast(ar_node_worker, mine).
-    
 
+%% @doc Add a transaction to the node server loop.
+%% If accepted the tx will enter the waiting pool before being mined into the
+%% the next block.
+add_tx(TX)->
+    gen_server:cast(ar_node_worker, {add_tx, TX}).
+
+
+%% @doc Request to add a list of peers to the node server loop.
+add_peers(Peer) when not is_list(Peer) ->
+    add_peers([Peer]);
+add_peers(Peers) ->
+    gen_server:cast(ar_node_worker, {add_peers, Peers}).
+
+%% @doc Set the likelihood that a message will be dropped in transmission.
+%% Used primarily for testing, simulating packet loss.
+set_loss_probability(Prob) ->
+    gen_server:cast(ar_node_worker, {set_loss_probability, Prob}).
+
+%% @doc Set the reward address of the node.
+%% This is the address mining rewards will be credited to.
+set_reward_addr(Addr) ->
+    gen_server:cast(ar_node_worker, {set_reward_addr, Addr}).
+
+%% @doc Set trusted peers.
+set_trusted_peers(Peers) ->
+    gen_server:cast(ar_node_worker, {set_trusted_peers, Peers}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -236,7 +263,7 @@ init([]) ->
 
     {ok, Config} = application:get_env(arweave, config),
 
-    add_peers(self(), ar_webhook:start(Config#config.webhooks)),
+    add_peers(ar_webhook:start(Config#config.webhooks)),
 
     %% keep it for the backward capabilities (legacy)
     ar_http_iface_server:reregister(http_entrypoint_node, self()),
@@ -422,6 +449,147 @@ handle_cast(Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_info({sync_mempool_tx, TXID, {TX, Status} = Value}, State) ->
+    {MempoolHeaderSize, MempoolDataSize} = State#state.mempool_size,
+    TXs = State#state.txs,
+
+    case maps:get(TXID, TXs, not_found) of
+
+        {ExistingTX, _Status} ->
+            UpdatedTXs = maps:put(TXID, {ExistingTX, Status}, TXs),
+            {noreply, State#state{ txs = UpdatedTXs }};
+
+        not_found ->
+            UpdatedTXs = maps:put(TXID, Value, TXs),
+            {AddHeaderSize, AddDataSize} = ar_node_worker:tx_mempool_size(TX),
+
+            UpdatedMempoolSize = {
+                MempoolHeaderSize + AddHeaderSize, 
+                MempoolDataSize + AddDataSize
+            },
+
+            State1 = State#state{
+                       txs = UpdatedTXs,
+                       mempool_size = UpdatedMempoolSize
+                     },
+
+            {noreply, State1}
+    end;
+
+handle_info({sync_dropped_mempool_txs, Map}, State) ->
+    {MempoolHeaderSize, MempoolDataSize} = State#state.mempool_size,
+    TXs = State#state.txs,
+
+    {UpdatedTXs, UpdatedMempoolSize} =
+        maps:fold(
+            fun(TXID, {TX, _Status}, {MapAcc, MempoolSizeAcc} = Acc) ->
+                case maps:is_key(TXID, MapAcc) of
+                    true ->
+                        {DroppedHeaderSize, DroppedDataSize} =
+                            ar_node_worker:tx_mempool_size(TX),
+                        {HeaderSize, DataSize} = MempoolSizeAcc,
+                        UpdatedMempoolSizeAcc =
+                            {HeaderSize - DroppedHeaderSize, DataSize - DroppedDataSize},
+                        {maps:remove(TXID, MapAcc), UpdatedMempoolSizeAcc};
+                    false ->
+                        Acc
+                end
+            end,
+            {TXs, {MempoolHeaderSize, MempoolDataSize}},
+            Map
+        ),
+
+    State1 = State#state{
+        txs = UpdatedTXs,
+        mempool_size = UpdatedMempoolSize 
+    },
+
+    {noreply, State1};
+
+handle_info({sync_reward_addr, Addr}, State) ->
+    {noreply, State#state{ reward_addr = Addr}};
+
+handle_info({sync_trusted_peers, Peers}, State) ->
+    {noreply, State#state{ trusted_peers = Peers }};
+
+handle_info({sync_block_cache, BlockCache}, State) ->
+    {noreply, State#state{ block_cache = BlockCache }};
+
+handle_info({sync_state, NewStateValues}, State) ->
+    #{
+        block_index     := BI,
+        current         := Current,
+        txs             := TXs,
+        mempool_size    := MemPoolSize,
+        height          := Height,
+        reward_pool     := RewardPool,
+        diff            := Diff,
+        last_retarget   := LastRetarget,
+        block_txs_pairs := BlockTXsPairs,
+        block_cache     := BlockCache
+     } = NewStateValues,
+
+    State1 = State#state{
+                block_index = BI,
+                txs = TXs,
+                current = Current,
+                height = Height,
+                diff = Diff,
+                last_retarget = LastRetarget,
+                block_txs_pairs = BlockTXsPairs,
+                block_cache = BlockCache,
+                mempool_size = MemPoolSize,
+                reward_pool = RewardPool
+
+              },
+
+    {noreply, State1};
+
+handle_info(Info, State) when is_record(Info, gs_msg) ->
+    %% We have received a gossip mesage. Gossip state manipulation is always a worker task.
+    gen_server:cast(ar_node_worker, {gossip_message, Info}),
+    {noreply, State};
+
+handle_info({new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}, State) ->
+    gen_server:cast(ar_node_worker, {process_new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}),
+    {noreply, State};
+
+handle_info({work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}, State) ->
+    case State#state.joined of
+        true ->
+            gen_server:cast(ar_node_worker, {
+                work_complete,
+                BaseBH,
+                NewB,
+                MinedTXs,
+                BDS,
+                POA
+            }),
+
+            {noreply, State};
+        _ ->
+            {noreply, State}
+    end;
+
+handle_info({join, BI, Blocks}, State) ->
+    Peers = State#state.trusted_peers,
+
+    %FIXME we should move this gen_server under the supervisor
+    {ok, _} = ar_wallets:start_link([{blocks, Blocks}, {peers, Peers}]),
+
+    ar_header_sync:join(BI, Blocks),
+    ar_data_sync:join(BI),
+    gen_server:cast(ar_node_worker, {join, BI, Blocks}),
+
+    case Blocks of
+        [B] ->
+            ar_header_sync:add_block(B);
+        _ ->
+            ok
+    end,
+
+    {noreply, State};
+
 handle_info(Info, State) ->
     ?LOG_ERROR("unhandled info: ~p", [Info]),
     {noreply, State}.
@@ -437,8 +605,12 @@ handle_info(Info, State) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _State) ->
-    ok.
+terminate(normal, State) ->
+    dump_mempool(State#state.txs, State#state.mempool_size);
+
+terminate(Reason, State) ->
+    ?LOG_WARNING("~p has been terminated with reason: ~p", [?MODULE, Reason]),
+    terminate(normal, State).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -452,168 +624,20 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-%% @doc Set trusted peers.
-set_trusted_peers(Proc, Peers) when is_pid(Proc) ->
-    Proc ! {set_trusted_peers, Peers}.
-
-%% @doc Set the reward address of the node.
-%% This is the address mining rewards will be credited to.
-set_reward_addr(Node, Addr) ->
-    Node ! {set_reward_addr, Addr}.
-
-
-%% @doc Set the likelihood that a message will be dropped in transmission.
-%% Used primarily for testing, simulating packet loss.
-set_loss_probability(Node, Prob) ->
-    Node ! {set_loss_probability, Prob}.
-
-%% @doc Add a transaction to the node server loop.
-%% If accepted the tx will enter the waiting pool before being mined into the
-%% the next block.
-add_tx(GS, TX) when is_record(GS, gs_state) ->
-    {NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-    NewGS;
-add_tx(Node, TX) when is_pid(Node) ->
-    Node ! {add_tx, TX},
-    ok;
-add_tx({Node, Name} = Peer, TX) when is_atom(Node) andalso is_atom(Name) ->
-    Peer ! {add_tx, TX},
-    ok;
-add_tx(Host, TX) ->
-    ar_http_iface_client:send_new_tx(Host, TX).
-
-%% @doc Request to add a list of peers to the node server loop.
-add_peers(Node, Peer) when not is_list(Peer) ->
-    add_peers(Node, [Peer]);
-add_peers(Node, Peers) ->
-    Node ! {add_peers, Peers},
-    ok.
-
-
-
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
-%% @doc Main server loop.
-server(WPid, #{ txs := TXs, mempool_size := {MempoolHeaderSize, MempoolDataSize} } = State) ->
-    receive
-        stop ->
-            dump_mempool(State);
-        {'EXIT', _, Reason} ->
-            dump_mempool(State),
-            ar:info([{event, ar_node_terminated}, {reason, Reason}]);
-        {sync_mempool_tx, TXID, {TX, Status} = Value} ->
-            case maps:get(TXID, TXs, not_found) of
-                {ExistingTX, _Status} ->
-                    UpdatedTXs = maps:put(TXID, {ExistingTX, Status}, TXs),
-                    server(WPid, State#{ txs => UpdatedTXs });
-                not_found ->
-                    UpdatedTXs = maps:put(TXID, Value, TXs),
-                    {AddHeaderSize, AddDataSize} = ar_node_worker:tx_mempool_size(TX),
-                    UpdatedMempoolSize =
-                        {MempoolHeaderSize + AddHeaderSize, MempoolDataSize + AddDataSize},
-                    server(WPid, State#{ txs => UpdatedTXs, mempool_size => UpdatedMempoolSize })
-            end;
-        {sync_dropped_mempool_txs, Map} ->
-            {UpdatedTXs, UpdatedMempoolSize} =
-                maps:fold(
-                    fun(TXID, {TX, _Status}, {MapAcc, MempoolSizeAcc} = Acc) ->
-                        case maps:is_key(TXID, MapAcc) of
-                            true ->
-                                {DroppedHeaderSize, DroppedDataSize} =
-                                    ar_node_worker:tx_mempool_size(TX),
-                                {HeaderSize, DataSize} = MempoolSizeAcc,
-                                UpdatedMempoolSizeAcc =
-                                    {HeaderSize - DroppedHeaderSize, DataSize - DroppedDataSize},
-                                {maps:remove(TXID, MapAcc), UpdatedMempoolSizeAcc};
-                            false ->
-                                Acc
-                        end
-                    end,
-                    {TXs, {MempoolHeaderSize, MempoolDataSize}},
-                    Map
-                ),
-            server(WPid, State#{ txs => UpdatedTXs, mempool_size => UpdatedMempoolSize });
-        {sync_reward_addr, Addr} ->
-            server(WPid, State#{ reward_addr => Addr });
-        {sync_trusted_peers, Peers} ->
-            server(WPid, State#{ trusted_peers => Peers });
-        {sync_block_cache, BlockCache} ->
-            server(WPid, State#{ block_cache => BlockCache });
-        {sync_state, NewState} ->
-            server(WPid, NewState);
-        Message ->
-            server(WPid, handle(Message, WPid, State))
-    end.
-
-dump_mempool(#{ txs := TXs, mempool_size := MempoolSize }) ->
+dump_mempool(TXs, MempoolSize) ->
     case ar_storage:write_term(mempool, {TXs, MempoolSize}) of
         ok ->
             ok;
         {error, Reason} ->
-            ar:err([{event, failed_to_persist_mempool}, {reason, Reason}])
+            ?LOG_ERROR("failed to dump mempool: ~p", [Reason])
     end.
 
-handle(Msg, WPid, State) when is_record(Msg, gs_msg) ->
-    %% We have received a gossip mesage. Gossip state manipulation is always a worker task.
-    gen_server:cast(WPid, {gossip_message, Msg}),
-    State;
-
-handle({add_tx, TX}, WPid, State) ->
-    gen_server:cast(WPid, {add_tx, TX}),
-    State;
-
-handle({add_peers, Peers}, WPid, State) ->
-    gen_server:cast(WPid, {add_peers, Peers}),
-    State;
-
-handle({new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}, WPid, State) ->
-    gen_server:cast(WPid, {process_new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}),
-    State;
-
-handle({set_loss_probability, Prob}, WPid, State) ->
-    gen_server:cast(WPid, {set_loss_probability, Prob}),
-    State;
-
-handle({set_reward_addr, Addr}, WPid, State) ->
-    gen_server:cast(WPid, {set_reward_addr, Addr}),
-    State;
-
-handle({work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}, WPid, State) ->
-    #{ block_index := BI } = State,
-    case BI of
-        not_joined ->
-            do_not_cast;
-        _ ->
-            gen_server:cast(WPid, {
-                work_complete,
-                BaseBH,
-                NewB,
-                MinedTXs,
-                BDS,
-                POA
-            })
-    end,
-    State;
-
-handle({join, BI, Blocks}, WPid, State) ->
-    #{ trusted_peers := Peers } = State,
-    {ok, _} = ar_wallets:start_link([{blocks, Blocks}, {peers, Peers}]),
-    ar_header_sync:join(BI, Blocks),
-    ar_data_sync:join(BI),
-    gen_server:cast(WPid, {join, BI, Blocks}),
-    case Blocks of
-        [B] ->
-            ar_header_sync:add_block(B);
-        _ ->
-            ok
-    end,
-    State;
 
 
-handle({set_trusted_peers, Peers}, WPid, State) ->
-    gen_server:cast(WPid, {set_trusted_peers, Peers}),
-    State;
+
 
