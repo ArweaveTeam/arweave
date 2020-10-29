@@ -21,15 +21,9 @@
          terminate/2,
          code_change/3]).
 
- 
-%% @doc The period to wait between checking the state of a block in the BI.
--ifdef(DEBUG).
--define(FOREIGN_BLOCK_ALERT_TIME, 3 * 1000).
--else.
--define(FOREIGN_BLOCK_ALERT_TIME, 60 * 60 * 1000).
--endif.
 
 %% includes
+-include_lib("ar.hrl").
 -include_lib("common.hrl").
 
 

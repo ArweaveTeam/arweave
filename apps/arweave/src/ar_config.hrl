@@ -1,8 +1,7 @@
 -ifndef(AR_CONFIG_HRL).
 -define(AR_CONFIG_HRL, true).
 
--include("ar.hrl").
--include("ar_data_sync.hrl").
+-include_lib("ar.hrl").
 
 -record(config_webhook, {
 	events = [],

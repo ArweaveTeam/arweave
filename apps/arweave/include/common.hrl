@@ -9,12 +9,10 @@
 
 -ifndef(COMMON_HRL).
 -define(COMMON_HRL, true).
+
 %% we should use a standart way of logging.
 %% for more details see here https://erlang.org/doc/man/logger.html#macros
 -include_lib("kernel/include/logger.hrl").
 
 
-%% The polling frequency in seconds.
--define(DEFAULT_POLLING_INTERVAL, 60 * 1000).
 -endif. % COMMON_HRL
-

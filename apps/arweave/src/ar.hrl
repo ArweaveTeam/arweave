@@ -455,4 +455,24 @@
 %% @doc The polling frequency in seconds.
 -define(DEFAULT_POLLING_INTERVAL, 60 * 1000).
 
+%% @doc The period to wait between checking the state of a block in the BI.
+-ifdef(DEBUG).
+-define(FOREIGN_BLOCK_ALERT_TIME, 3 * 1000).
+-else.
+-define(FOREIGN_BLOCK_ALERT_TIME, 60 * 60 * 1000).
+-endif.
+
+%% @doc The default expiration time for a data root in the disk pool.
+-define(DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 2 * 60 * 60).
+
+%% @doc The default size limit for unconfirmed chunks, per data root.
+-define(MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 50).
+
+%% @doc The default total size limit for unconfirmed chunks.
+-ifdef(DEBUG).
+-define(MAX_DISK_POOL_BUFFER_MB, 100).
+-else.
+-define(MAX_DISK_POOL_BUFFER_MB, 2000).
+-endif.
+
 -endif.

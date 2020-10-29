@@ -14,9 +14,9 @@
 
 -export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1]).
 
--include("ar.hrl").
--include("ar_config.hrl").
--include("ar_data_sync.hrl").
+-include_lib("ar_config.hrl").
+-include_lib("ar_data_sync.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(DEBUG).
