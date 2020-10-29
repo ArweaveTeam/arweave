@@ -675,7 +675,7 @@ write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
 				{last, none, [last | Range]}
 		end,
 	Name = wallet_list_chunk_relative_filepath(Position, RootHash),
-	case write_term(Name, Range2) of
+	case write_term(ar_meta_db:get(data_dir), Name, Range2, do_not_override) of
 		ok ->
 			case NextCursor of
 				last ->
@@ -696,8 +696,13 @@ write_wallet_list(ID, RewardAddr, IsRewardAddrNew, WalletList) ->
 	JSON = ar_serialize:jsonify(
 		ar_serialize:wallet_list_to_json_struct(RewardAddr, IsRewardAddrNew, WalletList)
 	),
-	write_file_atomic(wallet_list_filepath(ID), JSON),
-	ok.
+	Filepath = wallet_list_filepath(ID),
+	case filelib:is_file(Filepath) of
+		true ->
+			ok;
+		false ->
+			write_file_atomic(Filepath, JSON)
+	end.
 
 %% @doc Read a list of block hashes from the disk.
 read_block_index() ->
@@ -965,17 +970,26 @@ delete_chunk(DataPathHash) ->
 	file:delete(filename:join(ChunkDir, ar_util:encode(DataPathHash))).
 
 write_term(Name, Term) ->
-	write_term(ar_meta_db:get(data_dir), Name, Term).
+	write_term(ar_meta_db:get(data_dir), Name, Term, override).
 
 write_term(Dir, Name, Term) when is_atom(Name) ->
-	write_term(Dir, atom_to_list(Name), Term);
+	write_term(Dir, atom_to_list(Name), Term, override);
 write_term(Dir, Name, Term) ->
-	case write_file_atomic(filename:join(Dir, Name), term_to_binary(Term)) of
-		ok ->
+	write_term(Dir, Name, Term, override).
+
+write_term(Dir, Name, Term, Override) ->
+	Filepath = filename:join(Dir, Name),
+	case Override == do_not_override andalso filelib:is_file(Filepath) of
+		true ->
 			ok;
-		{error, Reason} = Error ->
-			ar:err([{event, failed_to_write_term}, {name, Name}, {reason, Reason}]),
-			Error
+		false ->
+			case write_file_atomic(Filepath, term_to_binary(Term)) of
+				ok ->
+					ok;
+				{error, Reason} = Error ->
+					ar:err([{event, failed_to_write_term}, {name, Name}, {reason, Reason}]),
+					Error
+			end
 	end.
 
 read_term(Name) ->
