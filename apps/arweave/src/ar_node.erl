@@ -59,7 +59,7 @@
     trusted_peers,
     joined = false,
     current,
-    height,
+    height = -1,
     hash_list_2_0_for_1_0_blocks,
     diff,
     last_retarget,
@@ -261,6 +261,11 @@ init([]) ->
 
     add_peers(ar_webhook:start(Config#config.webhooks)),
 
+    % FIXME remove it once it become gen_server
+    %% RandomX initializing
+    ar_randomx_state:start(),
+    ar_randomx_state:start_block_polling(),
+
     {ok, #state{}}.
 
 %%--------------------------------------------------------------------
@@ -277,12 +282,6 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-
-handle_call(_Request, _From, #state{joined = false} = State) ->
-    {reply, not_joined, State};
-
-handle_call(get_blockindex, _From, State) ->
-    {reply, State#state.block_index, State};
 
 handle_call({get_pending_txs, Opts}, _From, State) ->
     Reply =
@@ -303,6 +302,16 @@ handle_call({get_pending_txs, Opts}, _From, State) ->
                 )
         end,
     {reply, Reply, State};
+
+handle_call(get_height, _From, State) ->
+    {reply, State#state.height, State};
+
+handle_call(_Request, _From, #state{joined = false} = State) ->
+    {reply, not_joined, State};
+
+handle_call(get_blockindex, _From, State) ->
+    {reply, State#state.block_index, State};
+
 
 handle_call(get_mined_txs, _From, State) ->
     MinedTXs = maps:fold(
@@ -361,8 +370,6 @@ handle_call({get_2_0_hash_of_1_0_block, Height}, _From, State) ->
         end,
     {reply, Reply, State};
 
-handle_call(get_height, _From, State) ->
-    {reply, State#state.height, State};
 
 handle_call(get_current_diff, _From, State) ->
     Height = State#state.height,

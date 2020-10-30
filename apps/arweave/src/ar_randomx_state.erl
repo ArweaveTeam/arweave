@@ -123,7 +123,7 @@ poll_new_blocks(State) ->
 			timer:send_after(1000, poll_new_blocks),
 			State;
 		_ ->
-			case ar_node:get_height(NodePid) of
+			case ar_node:get_height() of
 				-1 ->
 					%% Add an extra poll soon
 					timer:send_after(1000, poll_new_blocks),

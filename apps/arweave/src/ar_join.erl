@@ -116,11 +116,7 @@ find_current_block([Peer | Tail]) ->
 			find_current_block(Tail);
 		BI ->
 			{Hash, _, _} = hd(BI),
-			ar:info([
-				"Fetching current block.",
-				{peer, Peer},
-				{hash, Hash}
-			]),
+			ar:info("Fetching current block. ~p ~p", [{peer, Peer},{hash, Hash}]),
 			MaybeB = ar_http_iface_client:get_block([Peer], Hash),
 			case MaybeB of
 				Atom when is_atom(Atom) ->

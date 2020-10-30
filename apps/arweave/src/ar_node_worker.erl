@@ -16,7 +16,7 @@
 
 -include_lib("ar_config.hrl").
 -include_lib("ar_data_sync.hrl").
-
+-include_lib("common.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(DEBUG).
@@ -107,7 +107,6 @@ init([]) ->
     end,
 
 	gen_server:cast(self(), process_task_queue),
-
     State = #{
         id => crypto:strong_rand_bytes(32),
         node => self(),

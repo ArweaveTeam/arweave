@@ -75,8 +75,7 @@ add_local_peer(Node) ->
 
 %% @doc Get a list of remote peers
 get_remote_peers() ->
-    {ok, ExternalPeers} = gen_server:call(?MODULE, {get_peers, remote}),
-    ExternalPeers.
+    gen_server:call(?MODULE, {get_peers, remote}).
 
 %% @doc Reset the remote peers list to a specific set.
 set_remote_peers(Peers) ->
@@ -168,7 +167,7 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call({get_peers, remote}, _From, State) ->
-    {reply, ok, State#state.external_peers};
+    {reply, State#state.external_peers, State};
 
 handle_call(Request, _From, State) ->
     ?LOG_ERROR("unhandled call: ~p", [Request]),
