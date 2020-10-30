@@ -8,6 +8,7 @@
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include("common.hrl").
 
 %%% Represents a process that handles creating an initial, minimal
 %%% block list to be used by a node joining a network already in progress.
@@ -58,49 +59,52 @@ do_join(Node, Peers, NewB, BI) ->
 	ar_miner_log:joined().
 
 %% @doc Verify timestamps of peers.
-verify_time_sync(Peers) ->
-	%% Ignore this check if time syncing is disabled.
-	case ar_meta_db:get(time_syncing) of
-		false -> true;
-		_ ->
-			VerifyPeerClock = fun(Peer) ->
-				case ar_http_iface_client:get_time(Peer, 5 * 1000) of
-					{ok, {RemoteTMin, RemoteTMax}} ->
-						LocalT = os:system_time(second),
-						Tolerance = ?JOIN_CLOCK_TOLERANCE,
-						case LocalT of
-							T when T < RemoteTMin - Tolerance ->
-								log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
-								false;
-							T when T < RemoteTMin - Tolerance div 2 ->
-								log_peer_clock_diff(Peer, RemoteTMin - T),
-								true;
-							T when T > RemoteTMax + Tolerance ->
-								log_peer_clock_diff(Peer, T - RemoteTMax - Tolerance),
-								false;
-							T when T > RemoteTMax + Tolerance div 2 ->
-								log_peer_clock_diff(Peer, T - RemoteTMax),
-								true;
-							_ ->
-								true
-						end;
-					{error, Err} ->
-						ar:info(
-							"Failed to get time from peer ~s: ~p.",
-							[ar_util:format_peer(Peer), Err]
-						),
-						true
-				end
-			end,
-			Responses = ar_util:pmap(VerifyPeerClock, [P || P <- Peers, not is_pid(P)]),
-			lists:all(fun(R) -> R end, Responses)
-	end.
+%%
+%% FIXME seems code below is the legacy. remove it later
+%%
+%verify_time_sync(Peers) ->
+%	%% Ignore this check if time syncing is disabled.
+%	case ar_meta_db:get(time_syncing) of
+%		false -> true;
+%		_ ->
+%			VerifyPeerClock = fun(Peer) ->
+%				case ar_http_iface_client:get_time(Peer, 5 * 1000) of
+%					{ok, {RemoteTMin, RemoteTMax}} ->
+%						LocalT = os:system_time(second),
+%						Tolerance = ?JOIN_CLOCK_TOLERANCE,
+%						case LocalT of
+%							T when T < RemoteTMin - Tolerance ->
+%								log_peer_clock_diff(Peer, RemoteTMin - Tolerance - T),
+%								false;
+%							T when T < RemoteTMin - Tolerance div 2 ->
+%								log_peer_clock_diff(Peer, RemoteTMin - T),
+%								true;
+%							T when T > RemoteTMax + Tolerance ->
+%								log_peer_clock_diff(Peer, T - RemoteTMax - Tolerance),
+%								false;
+%							T when T > RemoteTMax + Tolerance div 2 ->
+%								log_peer_clock_diff(Peer, T - RemoteTMax),
+%								true;
+%							_ ->
+%								true
+%						end;
+%					{error, Err} ->
+%						ar:info(
+%							"Failed to get time from peer ~s: ~p.",
+%							[ar_util:format_peer(Peer), Err]
+%						),
+%						true
+%				end
+%			end,
+%			Responses = ar_util:pmap(VerifyPeerClock, [P || P <- Peers, not is_pid(P)]),
+%			lists:all(fun(R) -> R end, Responses)
+%	end.
 
-log_peer_clock_diff(Peer, Diff) ->
-	Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
-	WarningArgs = [ar_util:format_peer(Peer), Diff],
-	ar:console(Warning, WarningArgs),
-	ar:warn(Warning, WarningArgs).
+%log_peer_clock_diff(Peer, Diff) ->
+%	Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
+%	WarningArgs = [ar_util:format_peer(Peer), Diff],
+%	ar:console(Warning, WarningArgs),
+%	ar:warn(Warning, WarningArgs).
 
 %% @doc Return the current block from a list of peers.
 find_current_block([]) ->
@@ -120,40 +124,33 @@ find_current_block([Peer | Tail]) ->
 			MaybeB = ar_http_iface_client:get_block([Peer], Hash),
 			case MaybeB of
 				Atom when is_atom(Atom) ->
-					ar:info([
-						"Failed to fetch block from peer. Will retry using a different one.",
-						{reply, Atom}
-					]),
+					?LOG_ERROR("Failed to fetch block from peer. Will retry using a different one."),
 					Atom;
 				B ->
 					{B, BI}
 			end
 	catch
 		Exc:Reason ->
-			ar:info([
-				"Failed to fetch block from peer. Will retry using a different one.",
-				{peer, Peer},
-				{exception, Exc},
-				{reason, Reason}
-			]),
+			Details = [{peer, Peer}, {exception, Exc}, {reason, Reason}],
+			?LOG_ERROR("Failed to fetch block from peer. Will retry using a different one. ~p", [Details] ),
 			find_current_block(Tail)
 	end.
 
 %% @doc Verify peers are on the same network as us and the clocks are in sync.
 filter_peer_list(Peers) ->
-	SameNetworkPeers =
+	%SameNetworkPeers =
 		lists:filter(
 			fun(Peer) ->
 				ar_http_iface_client:get_info(Peer, name) == <<?NETWORK_NAME>>
 			end,
 			Peers
-		),
-	case verify_time_sync(SameNetworkPeers) of
-		false ->
-			[];
-		true ->
-			SameNetworkPeers
-	end.
+		).
+	%case verify_time_sync(SameNetworkPeers) of
+	%	false ->
+	%		[];
+	%	true ->
+	%		SameNetworkPeers
+	%end.
 
 join_peers(Peers) ->
 	lists:foreach(

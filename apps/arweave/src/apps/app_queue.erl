@@ -1,6 +1,7 @@
 -module(app_queue).
--export([start/1, start/2, start/3, add/2, stop/1]).
--include("ar.hrl").
+-export([start/1, start/2, add/2, stop/1]).
+
+-include("../ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Starts a server that takes, signs and submits transactions to a node.
@@ -13,7 +14,6 @@
 %%% transactions.
 
 -record(state, {
-	node,
 	wallet,
 	previous_tx = none,
 	previous_tx_tag_name = undefined
@@ -30,17 +30,14 @@
 
 %% @doc Takes a wallet, and optionally a node (if none is supplied, the local node
 %% is used).
+
 start(Wallet) ->
-	start(whereis(http_entrypoint_node), Wallet).
+	start(Wallet, undefined).
 
-start(Node, Wallet) ->
-	start(Node, Wallet, undefined).
-
-start(Node, Wallet, PreviousTXTagName) ->
+start(Wallet, PreviousTXTagName) ->
 	spawn(
 		fun() ->
 			server(#state {
-				node = Node,
 				wallet = Wallet,
 				previous_tx_tag_name = PreviousTXTagName
 			})
@@ -65,14 +62,13 @@ server(S) ->
 %% @doc Send a tx to the network and wait for it to be confirmed.
 send_tx(S, TX) ->
 	Addr = ar_wallet:to_address(S#state.wallet),
-	case ar_node:get_last_tx(S#state.node, Addr) of
+	case ar_node:get_last_tx(Addr) of
 		{ok, LastTXid} ->
 			Price =
 				ar_tx:calculate_min_tx_cost(
 					byte_size(TX#tx.data),
-					ar_node:get_current_diff(S#state.node),
-					ar_node:get_height(S#state.node),
-					ar_node:get_wallet_list(S#state.node),
+					ar_node:get_current_diff(),
+					ar_node:get_height(),
 					TX#tx.target
 				),
 			Tags = tx_tags(TX, S#state.previous_tx, S#state.previous_tx_tag_name),
@@ -85,7 +81,7 @@ send_tx(S, TX) ->
 					},
 					S#state.wallet
 				),
-			ar_node:add_tx(S#state.node, SignedTX),
+			ar_node:add_tx(SignedTX),
 			ar:report(
 				[
 					{app, ?MODULE},
@@ -95,7 +91,7 @@ send_tx(S, TX) ->
 				]
 			),
 			timer:sleep(ar_node_utils:calculate_delay(byte_size(TX#tx.data))),
-			StartHeight = get_current_height(S),
+			StartHeight = ar_node:get_height(),
 			wait_for_block(
 				S#state { previous_tx = SignedTX#tx.id },
 				StartHeight + ?CONFIRMATION_DEPTH
@@ -114,16 +110,12 @@ tx_tags(TX, PreviousTXID, PreviousTXTagName) ->
 
 %% @doc Wait until a given block height has been reached.
 wait_for_block(S, TargetH) ->
-   CurrentH = get_current_height(S),
+   CurrentH = ar_node:get_height(),
    if CurrentH >= TargetH -> S;
    true ->
 	   timer:sleep(?POLL_INTERVAL_MS),
 	   wait_for_block(S, TargetH)
 	end.
-
-%% @doc Take a server state and return the current block height.
-get_current_height(S) ->
-	ar_node:get_height(S#state.node).
 
 %%% TESTS
 
@@ -140,12 +132,12 @@ queue_single_tx_test_() ->
 		receive after 500 -> ok end,
 		lists:foreach(
 			fun(_) ->
-				ar_node:mine(Node1),
+				ar_node:mine(),
 				receive after 500 -> ok end
 			end,
 			lists:seq(1, ?CONFIRMATION_DEPTH)
 		),
-		?assertEqual(?AR(1000), ar_node:get_balance(Node1, Addr))
+		?assertEqual(?AR(1000), ar_node:get_balance(Addr))
 	end}.
 
 queue_double_tx_test_() ->

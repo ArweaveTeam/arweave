@@ -612,7 +612,7 @@ reconstruct_full_block(Peers, Body) when is_binary(Body) ->
 			B
 	end;
 reconstruct_full_block(Peers, B) when is_record(B, block) ->
-	MempoolTXs = ar_node:get_pending_txs(whereis(http_entrypoint_node), [as_map]),
+	MempoolTXs = ar_node:get_pending_txs([as_map]),
 	case get_txs(Peers, MempoolTXs, B) of
 		{ok, TXs} ->
 			B#block {

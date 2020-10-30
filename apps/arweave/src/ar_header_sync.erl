@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/1,
+	start_link/0,
 	join/2, add_tip_block/2, add_block/1
 ]).
 
@@ -41,8 +41,8 @@
 %%% Public interface.
 %%%===================================================================
 
-start_link(Args) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Update the tip after the node joins the network.
 join(BI, Blocks) ->
@@ -173,10 +173,7 @@ handle_cast(process_item, State) ->
 		Height ->
 			timer:apply_after(
 				?PROCESS_ITEM_INTERVAL_MS, gen_server, cast, [self(), process_item]),
-			Node = whereis(http_entrypoint_node),
-			case Node == undefined orelse ar_node:get_block_index_entry(Node, Height) of
-				true ->
-					{noreply, State#{ queue => UpdatedQueue }};
+			case ar_node:get_block_index_entry(Height) of
 				not_joined ->
 					{noreply, State#{ queue => UpdatedQueue }};
 				not_found ->
@@ -195,7 +192,7 @@ handle_cast(process_item, State) ->
 					H2 =
 						case Height < ar_fork:height_2_0() of
 							true ->
-								ar_node:get_2_0_hash_of_1_0_block(Node, Height);
+								ar_node:get_2_0_hash_of_1_0_block(Height);
 							false ->
 								not_set
 						end,

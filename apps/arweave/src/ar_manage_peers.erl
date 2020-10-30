@@ -44,7 +44,7 @@ format_stats(Peer, Perf) ->
 %% Peers who have behaved well in the past are favoured in ranking.
 %% New, unknown peers are given 100 blocks of grace.
 update(Peers) ->
-	Height = ar_node:get_height(whereis(http_entrypoint_node)),
+	Height = ar_node:get_height(),
 	ar_meta_db:purge_peer_performance(),
 	{Rankable, Newbies} =
 		partition_newbies(

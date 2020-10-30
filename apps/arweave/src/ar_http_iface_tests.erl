@@ -32,7 +32,7 @@ post_block_to_unjoined_node_test() ->
 	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
 	{ok, {RespTup, _, Body, _, _}} =
 		ar_http:req(#{method => post, peer => {127, 0, 0, 1, 1984}, path => "/block/", body => JB}),
-	case ar_node:is_joined(whereis(http_entrypoint_node)) of
+	case ar_node:is_joined() of
 		false ->
 			?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
 			?assertEqual(<<"Not joined.">>, Body);

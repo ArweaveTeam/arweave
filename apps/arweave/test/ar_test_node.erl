@@ -89,7 +89,7 @@ start(B0, RewardAddr) ->
 		mining_addr = RewardAddr
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
-	{whereis(http_entrypoint_node), B0}.
+	{whereis(ar_node), B0}.
 
 join_on_slave() ->
 	join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).
@@ -101,7 +101,7 @@ join(Peer) ->
 		peers = [Peer]
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
-	whereis(http_entrypoint_node).
+	whereis(ar_node).
 
 join_on_master() ->
 	slave_call(ar_test_node, join, [{127, 0, 0, 1, ar_meta_db:get(port)}]).
@@ -145,12 +145,12 @@ disconnect_from_slave() ->
 	ar_meta_db:put({peer, {127, 0, 0, 1, SlavePort}}, #performance{}),
 	MasterPort = ar_meta_db:get(port),
 	slave_call(ar_meta_db, put, [{peer, {127, 0, 0, 1, MasterPort}}]),
-	SlaveBridge = slave_call(erlang, whereis, [http_bridge_node]),
+	SlaveBridge = slave_call(erlang, whereis, [ar_bridge]),
 	slave_call(ar_bridge, set_remote_peers, [SlaveBridge, []]),
-	MasterBridge = whereis(http_bridge_node),
+	MasterBridge = whereis(ar_bridge),
 	ar_bridge:set_remote_peers(MasterBridge, []),
-	ar_node:set_trusted_peers(whereis(http_entrypoint_node), []),
-	SlaveNode = slave_call(erlang, whereis, [http_entrypoint_node]),
+	ar_node:set_trusted_peers(whereis(ar_node), []),
+	SlaveNode = slave_call(erlang, whereis, [ar_node]),
 	slave_call(ar_node, set_trusted_peers, [SlaveNode, []]).
 
 gossip(off, Node) ->

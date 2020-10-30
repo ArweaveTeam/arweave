@@ -128,19 +128,12 @@ init([]) ->
     process_flag(trap_exit, true),
     {ok, Config} = application:get_env(arweave, config),
 
-    Node = whereis(http_entrypoint_node),
-
     %% Start a bridge, add it to the node's peer list.
-    ar_node:add_peers(Node, [self()]),
-
-    %% FIXME: support legacy way of communication. remove it later
-    ar_http_iface_server:reregister(http_bridge_node, self()),
-
+    ar_node:add_peers([self()]),
 
     ok = ar_tx_queue:start_link(),
 
     ar_firewall:start(),
-
     %% Add pending transactions from the persisted mempool to the propagation queue.
     maps:map(
         fun (_TXID, {_TX, ready_for_mining}) ->
@@ -148,13 +141,13 @@ init([]) ->
             (_TXID, {TX, waiting}) ->
                 add_tx(TX)
         end,
-        ar_node:get_pending_txs(Node, [as_map])
+        ar_node:get_pending_txs([as_map])
     ),
 
     erlang:send_after(0, self(), get_more_peers),
 
     State = #state {
-        gossip = ar_gossip:init(Node),
+        gossip = ar_gossip:init(whereis(ar_node)),
         external_peers = ar_join:filter_peer_list(Config#config.peers),
         port = Config#config.port
     },
@@ -282,7 +275,7 @@ handle_info(Info, State) when is_record(Info, gs_msg) ->
             {noreply, State1}
     end;
 
-handle_info(get_more_peers, {updater = undefined} = State) ->
+handle_info(get_more_peers, #state{updater = undefined} = State) ->
     Self = self(),
     erlang:send_after(?GET_MORE_PEERS_TIME, Self, get_more_peers),
     Updater = spawn(

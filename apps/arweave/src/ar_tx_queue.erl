@@ -218,7 +218,7 @@ handle_cast(emitter_go, State) ->
 				State;
 			false ->
 				{{_, {TX, {TXHeaderSize, TXDataSize}}}, NewQ} = gb_sets:take_largest(Q),
-				Node = whereis(http_entrypoint_node),
+				Node = whereis(ar_node),
 				{Peers, TrustedPeers} = get_peers(Node),
 				case Peers of
 					[] ->
@@ -290,7 +290,7 @@ handle_cast({emitted_tx_to_peer, {Reply, TX}}, State = #state{ emit_map = EmitMa
 	end;
 
 handle_cast({emitter_finished, TX}, State) ->
-	Bridge = whereis(http_bridge_node),
+	Bridge = whereis(ar_bridge),
 	timer:apply_after(
 		ar_node_utils:calculate_delay(tx_propagated_size(TX)),
 		ar_bridge,

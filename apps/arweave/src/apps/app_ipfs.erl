@@ -28,7 +28,7 @@
 
 %% @doc Start pinning incoming tagged TXs to a local IPFS node.
 start_pinning() ->
-	Node = whereis(http_entrypoint_node),
+	Node = whereis(ar_node),
 	Wallet = undefined,
 	Name = "",
 	{ok, _Pid} = start([Node], Wallet, Name),

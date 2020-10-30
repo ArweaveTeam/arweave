@@ -117,7 +117,7 @@ server(State) ->
 	server(NewState).
 
 poll_new_blocks(State) ->
-	NodePid = whereis(http_entrypoint_node),
+	NodePid = whereis(ar_node),
 	case NodePid of
 		undefined ->
 			timer:send_after(1000, poll_new_blocks),
@@ -245,7 +245,7 @@ randomx_key(SwapHeight) ->
 	end.
 
 get_block(Height) ->
-	case ar_node:get_block_index(whereis(http_entrypoint_node)) of
+	case ar_node:get_block_index() of
 		[] -> unavailable;
 		BI ->
 			{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),

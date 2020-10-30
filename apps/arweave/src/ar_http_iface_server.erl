@@ -5,7 +5,6 @@
 -module(ar_http_iface_server).
 
 -export([start/0]).
--export([reregister/1, reregister/2]).
 -export([split_path/1]).
 
 -include("ar.hrl").
@@ -35,17 +34,6 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
-
-%% @doc Helper function : registers a new node as the entrypoint.
-reregister(Node) ->
-	reregister(http_entrypoint_node, Node).
-reregister(_, undefined) -> not_registering;
-reregister(Name, Node) ->
-	case erlang:whereis(Name) of
-		undefined -> do_nothing;
-		_ -> erlang:unregister(Name)
-	end,
-	erlang:register(Name, Node).
 
 split_path(Path) ->
 	binary:split(Path, <<"/">>, [global, trim_all]).

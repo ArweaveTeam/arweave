@@ -37,9 +37,9 @@ init([]) ->
         ?CHILD(ar_meta_db, worker),
         ?CHILD(ar_arql_db, worker),
         ?CHILD(ar_watchdog, worker),
+        ?CHILD(ar_node_sup, supervisor),
         ?CHILD(ar_bridge, worker),
         ?CHILD(ar_poller, worker),
-        ?CHILD(ar_node_sup, supervisor),
         ?CHILD(ar_data_sync, worker),
         ?CHILD(ar_header_sync, worker)
     ]}}.

@@ -20,6 +20,7 @@
 
 -include("ar.hrl").
 -include("ar_config.hrl").
+-include_lib("common.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% A list of the modules to test.
@@ -283,29 +284,41 @@ start(Port) when is_integer(Port) ->
 start(Config) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
-	error_logger:logfile({open, Filename = generate_logfile_name()}),
-	error_logger:tty(false),
+	%error_logger:logfile({open, Filename = generate_logfile_name()}),
+	%error_logger:tty(false),
 	warn_if_single_scheduler(),
 	ok = application:set_env(arweave, config, Config),
-	ok = application:set_env(arweave, logfile, Filename),
 	{ok, _} = application:ensure_all_started(arweave, permanent).
 
 start(normal, _Args) ->
     {ok, Config} = application:get_env(arweave, config),
+    %% set single line logging
+    FormatterConsole = #{ 
+        legacy_header => false, 
+        single_line => true,
+        %chars_limit => 100, % max length of term2string 
+        %depth => 3,
+        %max_size => 500, % max length of logging message
+        %template => [time," ",file,":",line," [",level,"] ",msg,"\n"]
+        template => [time," [",level,"] ",msg,"\n"]
+    },
+
+    logger:set_handler_config(default, formatter, {logger_formatter, FormatterConsole}),
+    logger:set_application_level(arweave, info),
 
     % Check whether we have list of valid peers
-	ValidPeers = ar_join:filter_peer_list(Config#config.peers),
-	case {Config#config.peers, ValidPeers} of
-		{[_Peer | _], []} ->
-			io:format(
-				"~n\tInvalid peers. A valid peer must be part of the"
-				" network ~s and its clock must deviate from ours by no"
-				" more than ~B seconds.~n", [?NETWORK_NAME, ?JOIN_CLOCK_TOLERANCE]
-			),
-			erlang:halt();
-		_ ->
-			ok
-	end,
+	%ValidPeers = ar_join:filter_peer_list(Config#config.peers),
+	%case {Config#config.peers, ValidPeers} of
+	%	{[_Peer | _], []} ->
+	%		io:format(
+	%			"~n\tInvalid peers. A valid peer must be part of the"
+	%			" network ~s and its clock must deviate from ours by no"
+	%			" more than ~B seconds.~n", [?NETWORK_NAME, ?JOIN_CLOCK_TOLERANCE]
+	%		),
+	%		erlang:halt();
+	%	_ ->
+	%		ok
+	%end,
 
 	%% Verify port collisions when gateway enabled
 	case {Config#config.port, Config#config.gateway_domain} of
@@ -321,7 +334,7 @@ start(normal, _Args) ->
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
 	% Register custom metrics.
-	ar_metrics:register(),
+	ar_metrics:register(Config#config.metrics_dir),
 
     %% RandomX initializing
 	ar_randomx_state:start(),
@@ -377,23 +390,23 @@ prepare_graphql() ->
 	ok = ar_graphql:load_schema(),
 	ok.
 
-%% @doc Create a name for a session log file.
-generate_logfile_name() ->
-	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
-	lists:flatten(
-		io_lib:format(
-			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b~s.log",
-			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se, maybe_node_postfix()]
-		)
-	).
-
-maybe_node_postfix() ->
-	case init:get_argument(name) of
-		{ok, [[Name]]} ->
-			"-" ++ Name;
-		_ ->
-			""
-	end.
+%FIXME remove it later 
+%% @doc Create a name for a session log file. 
+%generate_logfile_name() ->
+%	{{Yr, Mo, Da}, {Hr, Mi, Se}} = erlang:universaltime(),
+%	lists:flatten(
+%		io_lib:format(
+%			"~s/session_~4..0b-~2..0b-~2..0b_~2..0b-~2..0b-~2..0b~s.log",
+%			[?LOG_DIR, Yr, Mo, Da, Hr, Mi, Se, maybe_node_postfix()]
+%		)
+%	).
+%maybe_node_postfix() ->
+%	case init:get_argument(name) of
+%		{ok, [[Name]]} ->
+%			"-" ++ Name;
+%		_ ->
+%			""
+%	end.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,
@@ -472,10 +485,10 @@ docs() ->
 
 %% @doc Print an informational message to the log file.
 report(X) ->
-	error_logger:info_report(X).
+	info("report: ~p", [X]).
 
 %% @deprecated
-report_console(X) -> info(X).
+report_console(X) -> report(X).
 
 %% @doc Report a value and return it.
 d(X) ->
@@ -501,43 +514,25 @@ console(Format, Data) ->
 -endif.
 
 %% @doc Print an INFO message to the log file.
-info(Report) ->
-	error_logger:info_report(Report).
+info(Message) ->
+    ?LOG_INFO(Message).
 
 info(Format, Data) ->
-	info(io_lib:format(Format, Data)).
+    ?LOG_INFO(Format, Data).
 
 %% @doc Print a WARNING message to the log file.
 warn(Report) ->
-	error_logger:warning_report(Report).
+	?LOG_WARNING(Report).
 
 warn(Format, Data) ->
-	warn(io_lib:format(Format, Data)).
+    ?LOG_WARNING(Format, Data).
 
 %% @doc Print an error message to the log file (log level ERROR) and console.
 err(Report) ->
-	case is_list(Report) andalso is_tuple_list(Report) of
-		true ->
-			io:format("ERROR: ~n" ++ format_list_msg(Report) ++ "~n");
-		false ->
-			io:format("ERROR: ~n~p~n", [Report])
-	end,
-	error_logger:error_report(Report).
+    ?LOG_ERROR(Report).
 
 err(Format, Data) ->
-	err(io_lib:format(Format, Data)).
-
-is_tuple_list(List) ->
-	lists:all(fun is_tuple/1, List).
-
-format_list_msg(List) ->
-	FormatRow = fun
-		({Key, Value}) ->
-			io_lib:format("\s\s\s\s~p: ~p", [Key, Value]);
-		(Item) ->
-			io_lib:format("\s\s\s\s~p", [Item])
-	end,
-	lists:flatten(lists:join("~n", lists:map(FormatRow, List))).
+    ?LOG_ERROR(Format, Data).
 
 %% @doc A multiplier applied to all simulated time elements in the system.
 -ifdef(DEBUG).

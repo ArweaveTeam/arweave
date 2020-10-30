@@ -12,7 +12,7 @@
 -module(ar_poller).
 -behaviour(gen_server).
 
--export([start_link/1]).
+-export([start_link/0]).
 
 -export([
 	init/1,
@@ -30,14 +30,14 @@
 %%% Public API.
 %%%===================================================================
 
-start_link(Args) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init(_Args) ->
+init([]) ->
 	ar:info([{event, ar_poller_start}]),
 
     {ok, Config} = application:get_env(arweave, config),
@@ -55,7 +55,7 @@ handle_cast(poll_block, State) ->
 		interval := Interval
 	} = State,
 	{NewLastSeenHeight, NeedPoll} =
-		case ar_node:get_height(whereis(http_entrypoint_node)) of
+		case ar_node:get_height() of
 			-1 ->
 				%% Wait until the node joins the network or starts from a hash list.
 				{-1, false};
@@ -132,20 +132,19 @@ poll_block_step(check_ignore_list, {Peer, BShadow}, Timestamp) ->
 			end
 	end;
 poll_block_step(construct_hash_list, {Peer, BShadow}, ReceiveTimestamp) ->
-	Node = whereis(http_entrypoint_node),
-	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(Node),
+	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(),
 	HL = lists:map(fun({BH, _}) -> BH end, BlockTXsPairs),
 	case reconstruct_block_hash_list(Peer, BShadow, HL) of
 		{ok, FetchedBlocks, BHL} ->
 			lists:foreach(
 				fun(B) ->
-					Node ! {new_block, Peer, B#block.height, B, no_data_segment, ReceiveTimestamp}
+					ar_node ! {new_block, Peer, B#block.height, B, no_data_segment, ReceiveTimestamp}
 				end,
 				FetchedBlocks
 			),
 			BShadowHeight = BShadow#block.height,
 			BShadow2 = BShadow#block{ hash_list = BHL },
-			Node ! {new_block, Peer, BShadowHeight, BShadow2, no_data_segment, ReceiveTimestamp},
+			ar_node ! {new_block, Peer, BShadowHeight, BShadow2, no_data_segment, ReceiveTimestamp},
 			ok;
 		{error, _} = Error ->
 			Error

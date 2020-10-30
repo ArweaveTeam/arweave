@@ -10,7 +10,7 @@
 start() ->
 	spawn(
 		fun() ->
-			ar:report([starting_tx_db]),
+			ar:info("starting tx db"),
 			ets:new(?MODULE, [set, public, named_table]),
 			receive stop -> ok end
 		end

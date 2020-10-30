@@ -71,12 +71,6 @@ init([]) ->
     %% dont forget to clean (via timer:cancel) this timer on terminate 
     %% callback and move the handling into the handle_info in that case
     
-    %% set single line logging
-    Formatter = #{ legacy_header => false, 
-                   single_line => true, 
-                   template => [time," ",file,":",line," ",level,": ",msg,"\n"]
-                 },
-    logger:set_handler_config(default, formatter, {logger_formatter, Formatter}),
 
     {ok, #state{ mined_blocks = maps:new() }}.
 

@@ -81,12 +81,10 @@ get_blocks() ->
 %% @doc Get the current block index (the list of {block hash, weave size, tx root} triplets).
 get_block_index() ->
     case gen_server:call(?MODULE, get_blockindex) of 
-        {ok, BI} ->
-            BI;
-        {ok, not_joined} ->
+        not_joined ->
             [];
-        E ->
-            ?LOG_ERROR("got unexpected value: ~w", [E])
+        BI ->
+            BI
     end.
 
 
@@ -99,12 +97,10 @@ get_pending_txs() ->
 
 get_pending_txs(Opts) ->
     case gen_server:call(?MODULE, {get_pending_txs, Opts}) of 
-        {ok, TXs} ->
-            TXs;
-        {ok, not_joined} ->
+        not_joined ->
             [];
-        E ->
-            ?LOG_ERROR("got unexpected value: ~w", [E])
+        TXs ->
+            TXs
     end.
 
 %% @doc Return true if a tx with the given identifier is pending.
@@ -264,9 +260,6 @@ init([]) ->
     {ok, Config} = application:get_env(arweave, config),
 
     add_peers(ar_webhook:start(Config#config.webhooks)),
-
-    %% keep it for the backward capabilities (legacy)
-    ar_http_iface_server:reregister(http_entrypoint_node, self()),
 
     {ok, #state{}}.
 
