@@ -2,20 +2,26 @@
 
 -on_load(init_nif/0).
 
--export([init_fast/2, hash_fast/2, init_light/1, hash_light/2]).
--export([release_state/1]).
--export([bulk_hash_fast/4]).
+-export([
+	init_fast/2, hash_fast/2,
+	init_light/1, hash_light/2,
+	release_state/1,
+	bulk_hash_fast/4
+]).
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
-%% Also, these functions are used in ar_mine_randomx_tests.
--export([init_fast_nif/4, hash_fast_nif/5, bulk_hash_fast_nif/9]).
--export([init_light_nif/3, hash_light_nif/5]).
+%% Also, some of these functions are used in ar_mine_randomx_tests.
+-export([
+	init_light_nif/3, hash_light_nif/5,
+	init_fast_nif/4, hash_fast_nif/5, bulk_hash_fast_nif/9,
+	release_state_nif/1, jit/0, large_pages/0, hardware_aes/0
+]).
 
 -include("ar.hrl").
 
 -ifdef(DEBUG).
-init_fast(_Key, _Threads) ->
-	<<"state">>.
+init_fast(Key, _Threads) ->
+	Key.
 -else.
 init_fast(Key, Threads) ->
 	{ok, FastState} = init_fast_nif(Key, jit(), large_pages(), Threads),
@@ -23,8 +29,8 @@ init_fast(Key, Threads) ->
 -endif.
 
 -ifdef(DEBUG).
-hash_fast(_FastState, Data) ->
-	Hash = crypto:hash(sha256, Data),
+hash_fast(FastState, Data) ->
+	Hash = crypto:hash(sha256, << FastState/binary, Data/binary >>),
 	list_to_binary(lists:sublist(binary_to_list(Hash), 48)).
 -else.
 hash_fast(FastState, Data) ->
@@ -34,8 +40,8 @@ hash_fast(FastState, Data) ->
 -endif.
 
 -ifdef(DEBUG).
-bulk_hash_fast(_FastState, {Nonce, _}, BDS, _Diff) ->
-	Hash = crypto:hash(sha256, <<Nonce/binary, BDS/binary>>),
+bulk_hash_fast(FastState, {Nonce, _}, BDS, _Diff) ->
+	Hash = crypto:hash(sha256, << FastState/binary, Nonce/binary, BDS/binary >>),
 	{list_to_binary(lists:sublist(binary_to_list(Hash), 48)), Nonce, Nonce, 1}.
 -else.
 bulk_hash_fast(FastState, {Nonce1, Nonce2}, BDS, Diff) ->
@@ -44,15 +50,29 @@ bulk_hash_fast(FastState, {Nonce1, Nonce2}, BDS, Diff) ->
 	{Hash, HashNonce, ExtraNonce, HashesTried}.
 -endif.
 
+-ifdef(DEBUG).
+init_light(Key) ->
+	Key.
+-else.
 init_light(Key) ->
 	{ok, LightState} = init_light_nif(Key, jit(), large_pages()),
 	LightState.
+-endif.
 
+-ifdef(DEBUG).
+hash_light(LightState, Data) ->
+	hash_fast(LightState, Data).
+-else.
 hash_light(LightState, Data) ->
 	{ok, Hash} =
 		hash_light_nif(LightState, Data, jit(), large_pages(), hardware_aes()),
 	Hash.
+-endif.
 
+-ifdef(DEBUG).
+release_state(_State) ->
+	ok.
+-else.
 release_state(State) ->
 	case release_state_nif(State) of
 		ok ->
@@ -62,6 +82,7 @@ release_state(State) ->
 			ar:warn([ar_mine_randomx, failed_to_release_randomx_state, {reason, Reason}]),
 			error
 	end.
+-endif.
 
 %% Internal
 
