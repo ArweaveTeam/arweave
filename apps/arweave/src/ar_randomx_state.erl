@@ -39,15 +39,16 @@ hash(Height, Data) ->
 	end.
 
 randomx_state_by_height(Height) when is_integer(Height) andalso Height >= 0 ->
-	whereis(?MODULE) ! {get_state_by_height, Height, self()},
+	Ref = make_ref(),
+	whereis(?MODULE) ! {get_state_by_height, Height, Ref, self()},
 	receive
-		{state_by_height, {ok, State}} ->
+		{Ref, {state_by_height, {ok, State}}} ->
 			{state, State};
-		{state_by_height, {state_not_found, key_not_found}} ->
+		{Ref, {state_by_height, {state_not_found, key_not_found}}} ->
 			SwapHeight = swap_height(Height),
 			{ok, Key} = randomx_key(SwapHeight),
 			{key, Key};
-		{state_by_height, {state_not_found, Key}} ->
+		{Ref, {state_by_height, {state_not_found, Key}}} ->
 			{key, Key}
 	end.
 
@@ -96,14 +97,16 @@ server(State) ->
 			State#state{
 				randomx_states = maps:put(SwapHeight, RandomxState, State#state.randomx_states)
 			};
-		{get_state_by_height, Height, From} ->
+		{get_state_by_height, Height, Ref, From} ->
 			case maps:find(swap_height(Height), State#state.randomx_states) of
 				error ->
-					From ! {state_by_height, {state_not_found, get_key_from_cache(State, Height)}};
+					Key = get_key_from_cache(State, Height),
+					From ! {Ref, {state_by_height, {state_not_found, Key}}};
 				{ok, initializing} ->
-					From ! {state_by_height, {state_not_found, get_key_from_cache(State, Height)}};
+					Key = get_key_from_cache(State, Height),
+					From ! {Ref, {state_by_height, {state_not_found, Key}}};
 				{ok, RandomxState} ->
-					From ! {state_by_height, {ok, RandomxState}}
+					From ! {Ref, {state_by_height, {ok, RandomxState}}}
 			end,
 			State;
 		{get_state, From} ->
