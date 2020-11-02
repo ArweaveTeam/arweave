@@ -279,8 +279,10 @@ handle_info(get_more_peers, #state{updater = undefined} = State) ->
     erlang:send_after(?GET_MORE_PEERS_TIME, Self, get_more_peers),
     Updater = spawn(
         fun() ->
+            ?LOG_INFO("spawn peers external_peers", State#state.external_peers),
             Peers = ar_manage_peers:update(State#state.external_peers),
             lists:map(fun ar_http_iface_client:add_peer/1, Peers),
+            ?LOG_INFO("spawn peers update", Peers),
             Self ! {update_peers, remote, Peers}
         end
     ),

@@ -44,19 +44,22 @@ do_join(_Node, _RawPeers, NewB, _BI) when not ?IS_BLOCK(NewB) ->
 		{received_instead, NewB}
 	]);
 do_join(Node, Peers, NewB, BI) ->
-	ar:report_console([
-		{event, joining_network},
-		{node, Node},
-		{peers, [ar_util:format_peer(Peer) || Peer <- Peers]},
-		{height, NewB#block.height}
-	]),
-	ar_miner_log:joining(),
+    %FIXME lets use the common way of logging via ?LOG_[INFO|ERROR|WARNING|NOTICE]
+	%ar:report_console([
+	%	{event, joining_network},
+	%	{node, Node},
+	%	{peers, [ar_util:format_peer(Peer) || Peer <- Peers]},
+	%	{height, NewB#block.height}
+	%]),
+	?LOG_INFO("Joining the Arweave network..."),
+
 	ar_arql_db:populate_db(?BI_TO_BHL(BI)),
 	ar_randomx_state:init(BI, Peers),
 	Blocks = get_block_and_trail(Peers, NewB, BI),
 	Node ! {join, BI, Blocks},
 	join_peers(Peers),
-	ar_miner_log:joined().
+
+	?LOG_INFO("Joined the Arweave network successfully.").
 
 %% @doc Verify timestamps of peers.
 %%

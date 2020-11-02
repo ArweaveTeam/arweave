@@ -111,8 +111,12 @@ init(_) ->
 	ets:insert(?MODULE, {randomx_bulk_hashing_iterations, Config#config.randomx_bulk_hashing_iterations}),
 
 	%% Store enabled features.
-	lists:foreach(fun(Feature) -> put(Feature, true) end, Config#config.enable),
-	lists:foreach(fun(Feature) -> put(Feature, false) end, Config#config.disable),
+	lists:foreach(fun(Feature) -> 
+	                ets:insert(?MODULE, {Feature, true})
+                  end, Config#config.enable),
+	lists:foreach(fun(Feature) -> 
+	                ets:insert(?MODULE, {Feature, false})
+                  end, Config#config.disable),
 
     %FIXME rewrite ar_storage using OTP
     spawn(fun() ->

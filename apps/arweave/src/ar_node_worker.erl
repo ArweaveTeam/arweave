@@ -582,7 +582,7 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 						valid ->
 							UpdatedState =
 								apply_validated_block(State, B2, PrevBlocks, BI2, BlockTXPairs2),
-							ar_miner_log:foreign_block(B#block.indep_hash),
+							ar_watchdog:foreign_block(B#block.indep_hash),
 							record_processing_time(Timestamp),
 							{noreply, UpdatedState}
 				end
@@ -784,7 +784,7 @@ maybe_report_n_confirmations(B, BI) ->
 	case length(LastNBlocks) == N of
 		true ->
 			{H, _, _} = lists:last(LastNBlocks),
-			ar_miner_log:block_received_n_confirmations(H, B#block.height - N);
+			ar_watchdog:block_received_n_confirmations(H, B#block.height - N);
 		false ->
 			do_nothing
 	end.
@@ -849,7 +849,7 @@ start_mining(StateIn) ->
 			),
 			StateIn;
 		_ ->
-			ar_miner_log:started_hashing(),
+            ar_watchdog:started_hashing(),
 			B = ar_block_cache:get(BlockCache, Current),
 			Miner = ar_mine:start(
 				B,
@@ -901,7 +901,7 @@ handle_block_from_miner(State, BShadow, MinedTXs, BDS, _POA) ->
 	} = State,
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(MinedTXs),
 	B = BShadow#block{ txs = MinedTXs, size_tagged_txs = SizeTaggedTXs },
-	ar_miner_log:mined_block(B#block.indep_hash, B#block.height),
+	ar_watchdog:mined_block(B#block.indep_hash, B#block.height),
 	ar:info([
 		{event, mined_block},
 		{indep_hash, ar_util:encode(B#block.indep_hash)},

@@ -21,6 +21,10 @@
          terminate/2,
          code_change/3]).
 
+-export([started_hashing/0,
+         block_received_n_confirmations/2,
+         mined_block/2,
+         foreign_block/1]).
 
 %% includes
 -include_lib("ar.hrl").
@@ -29,13 +33,26 @@
 
 %% records
 -record(state, {
-   mined_blocks 
+    mined_blocks,
+    last_foreign_block = 0,
+    miner_logging = false
 }).
 
 
 %%%===================================================================
 %%% API
 %%%===================================================================
+started_hashing() ->
+    gen_server:cast(?MODULE, started_hashing).
+
+block_received_n_confirmations(BH, Height) ->
+    gen_server:cast(?MODULE, {block_received_n_confirmations, BH, Height}).
+
+mined_block(BH, Height) ->
+    gen_server:cast(?MODULE, {mined_block, BH, Height}).
+
+foreign_block(BH) ->
+    gen_server:cast(?MODULE, {foreign_block, BH}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -63,16 +80,18 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
     process_flag(trap_exit, true),
+    MinerLogging = case ar_meta_db:get(miner_logging) of 
+        true -> true;
+        _ -> false
+    end,
+
+    State = #state{ 
+        mined_blocks = maps:new(),
+        miner_logging = MinerLogging
+    },
+
     erlang:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), process),
-
-    %% FIXME: there might be a reason to run handling routine every certain 
-    %% period of time like:
-    %%    timer:send_interval(?FOREIGN_BLOCK_ALERT_TIME, process),
-    %% dont forget to clean (via timer:cancel) this timer on terminate 
-    %% callback and move the handling into the handle_info in that case
-    
-
-    {ok, #state{ mined_blocks = maps:new() }}.
+    {ok, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -103,8 +122,45 @@ handle_call(Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(process, State) ->
+handle_cast(started_hashing, State) when State#state.miner_logging == true ->
+    ?LOG_INFO("[Stage 1/3] Successfully proved access to recall block. Starting to hash."),
     {noreply, State};
+
+handle_cast(started_hashing, State) -> 
+    {noreply, State};
+
+handle_cast({block_received_n_confirmations, BH, Height}, State) ->
+    MinedBlocks = State#state.mined_blocks,
+    UpdatedMinedBlocks = case maps:take(Height, MinedBlocks) of
+        {BH, Map} when State#state.miner_logging == true ->
+            %Log the message for block mined by the local node 
+            %got confirmed by the network
+            ?LOG_INFO("[Stage 3/3] Your block ~s was accepted by the network!", 
+                      [ar_util:encode(BH)]),
+            Map;
+        {_, Map} ->
+            Map;
+        error ->
+            MinedBlocks
+    end,
+    {noreply, State#state{mined_blocks = UpdatedMinedBlocks}};
+
+handle_cast({mined_block, BH, Height}, State) when State#state.miner_logging == true ->
+    ?LOG_INFO(
+        "[Stage 2/3] Produced candidate block ~s and dispatched to network.",
+        [ar_util:encode(BH)]
+    ),
+    MinedBlocks = State#state.mined_blocks,
+    State1 = State#state{mined_blocks = MinedBlocks#{ Height => BH }},
+    {noreply, State1};
+
+handle_cast({mined_block, BH, Height}, State) ->
+    MinedBlocks = State#state.mined_blocks,
+    State1 = State#state{mined_blocks = MinedBlocks#{ Height => BH }},
+    {noreply, State1};
+
+handle_cast({foreign_block, BH}, State) ->
+    {noreply, State#state{last_foreign_block = BH}};
 
 handle_cast(Msg, State) ->
     ?LOG_ERROR("unhandled cast: ~p", [Msg]),
@@ -120,6 +176,17 @@ handle_cast(Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_info(process, State) when State#state.last_foreign_block > 0 ->
+    erlang:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), process),
+    {noreply, State#state{last_foreign_block = 0}};
+
+handle_info(process, State) ->
+    ?LOG_WARNING(
+        "No foreign blocks received from the network or found by trusted peers."
+        "Please check your internet connection and the logs for errors."
+    ),
+    erlang:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), process),
+    {noreply, State};
 
 handle_info(Info, State) ->
     ?LOG_ERROR("unhandled info: ~p", [Info]),

@@ -294,7 +294,7 @@ start(normal, _Args) ->
     FormatterConsole = #{ 
         legacy_header => false, 
         single_line => true,
-        template => [time," [",level,"] ",msg,"\n"]
+        template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
     },
     logger:set_handler_config(default, formatter, {logger_formatter, FormatterConsole}),
     logger:set_application_level(arweave, info),
@@ -335,8 +335,7 @@ start(normal, _Args) ->
 
     ar_tx_db:start(),
 
-    %%FIXME: remove this line later... ar_miner_log:start(),
-    % remove it later. 
+    % FIXME remove it later. 
     %ar:info(
     %   [
     %       {event, starting_server},

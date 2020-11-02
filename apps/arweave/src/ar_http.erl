@@ -5,6 +5,7 @@
 -export([req/1, gun_total_metric/1]).
 
 -include("ar.hrl").
+-include("common.hrl").
 
 %%% ==================================================================
 %%% API
