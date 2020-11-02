@@ -828,9 +828,9 @@ basic_test_() ->
 
 test_basic() ->
 	[B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
-	ar_node:mine(Node),
-	BI = ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:start(B0),
+	ar_node:mine(),
+	BI = ar_test_node:wait_until_height(1),
 	B1 = ar_storage:read_block(hd(BI)),
 	start(B1, B1#block.poa, [], unclaimed, [], self(), [], BI),
 	assert_mine_output(B1, B1#block.poa, []).

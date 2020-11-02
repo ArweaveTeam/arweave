@@ -414,12 +414,12 @@ verify_block_hash_list_merkle(NewB, CurrentB, _) when NewB#block.height == ?FORK
 
 hash_list_gen_test() ->
 	[B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
-	ar_node:mine(Node),
-	BI1 = ar_test_node:wait_until_height(Node, 1),
+	ar_test_node:start(B0),
+	ar_node:mine(),
+	BI1 = ar_test_node:wait_until_height(1),
 	B1 = ar_storage:read_block(hd(BI1)),
-	ar_node:mine(Node),
-	BI2 = ar_test_node:wait_until_height(Node, 2),
+	ar_node:mine(),
+	BI2 = ar_test_node:wait_until_height(2),
 	B2 = ar_storage:read_block(hd(BI2)),
 	?assertEqual([B0#block.indep_hash], generate_hash_list_for_block(B1, BI2)),
 	?assertEqual([H || {H, _, _} <- BI1], generate_hash_list_for_block(B2#block.indep_hash, BI2)).

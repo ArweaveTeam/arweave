@@ -172,17 +172,17 @@ validate_difficulty(NewB, OldB) ->
 simple_retarget_test_() ->
 	{timeout, 300, fun() ->
 		[B0] = ar_weave:init([]),
-		{Node, _} = ar_test_node:start(B0),
+		ar_test_node:start(B0),
 		lists:foreach(
 			fun(Height) ->
-				ar_node:mine(Node),
-				ar_test_node:wait_until_height(Node, Height)
+				ar_node:mine(),
+				ar_test_node:wait_until_height(Height)
 			end,
 			lists:seq(1, ?RETARGET_BLOCKS + 1)
 		),
 		true = ar_util:do_until(
 			fun() ->
-				[BH|_] = ar_node:get_blocks(Node),
+				[BH|_] = ar_node:get_blocks(),
 				B = ar_storage:read_block(BH),
 				B#block.diff > B0#block.diff
 			end,

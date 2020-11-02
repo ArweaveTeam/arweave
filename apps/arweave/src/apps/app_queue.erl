@@ -154,10 +154,10 @@ queue_double_tx_test_() ->
 		receive after 500 -> ok end,
 		lists:foreach(
 			fun(_) ->
-				ar_node:mine(Node1),
+				ar_node:mine(),
 				receive after 500 -> ok end
 			end,
 			lists:seq(1, ?CONFIRMATION_DEPTH * 4)
 		),
-		?assertEqual(?AR(2000), ar_node:get_balance(Node1, Addr))
+		?assertEqual(?AR(2000), ar_node:get_balance(Addr))
 	end}.

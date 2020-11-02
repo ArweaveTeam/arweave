@@ -182,7 +182,7 @@ handle_info(process, State) when State#state.last_foreign_block > 0 ->
 
 handle_info(process, State) ->
     ?LOG_WARNING(
-        "No foreign blocks received from the network or found by trusted peers."
+        "No foreign blocks received from the network or found by trusted peers. "
         "Please check your internet connection and the logs for errors."
     ),
     erlang:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), process),

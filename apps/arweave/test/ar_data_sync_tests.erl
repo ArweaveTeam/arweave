@@ -334,10 +334,10 @@ accepts_chunks_test_() ->
 	{timeout, 60, fun test_accepts_chunks/0}.
 
 test_accepts_chunks() ->
-	{Master, Slave, Wallet} = setup_nodes(),
+	{_Master, _Slave, Wallet} = setup_nodes(),
 	{TX, Chunks} = tx(Wallet, {custom_split, 3}),
-	assert_post_tx_to_slave(Slave, TX),
-	wait_until_receives_txs(Master, [TX]),
+	assert_post_tx_to_slave(TX),
+	wait_until_receives_txs([TX]),
 	[{EndOffset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] =
 		build_proofs(TX, Chunks, [TX], 0),
 	%% Post the third proof to the disk pool.
@@ -346,7 +346,7 @@ test_accepts_chunks() ->
 		post_chunk(jiffy:encode(ThirdProof))
 	),
 	slave_mine(Slave),
-	[{BH, _, _} | _] = wait_until_height(Master, 1),
+	[{BH, _, _} | _] = wait_until_height(1),
 	B = read_block_when_stored(BH),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
@@ -440,8 +440,8 @@ syncs_data_test_() ->
 	{timeout, 180, fun test_syncs_data/0}.
 
 test_syncs_data() ->
-	{Master, _Slave, Wallet} = setup_nodes(),
-	Records = post_random_blocks(Master, Wallet),
+	{_Master, _Slave, Wallet} = setup_nodes(),
+	Records = post_random_blocks(Wallet),
 	RecordsWithProofs = lists:flatmap(
 		fun({B, TX, Chunks}) ->
 			[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)]
@@ -770,7 +770,7 @@ get_tx_data_from_slave(TXID) ->
 		path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
 	}).
 
-post_random_blocks(Master, Wallet) ->
+post_random_blocks(Wallet) ->
 	FixedChunks = [crypto:strong_rand_bytes(200 * 1024) || _ <- lists:seq(1, 4)],
 	Data = iolist_to_binary(lists:foldl(fun(Chunk, Acc) -> [Acc | Chunk] end, [], FixedChunks)),
 	SizedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
@@ -796,8 +796,8 @@ post_random_blocks(Master, Wallet) ->
 	lists:foldl(
 		fun
 			({empty, Height}, Acc) ->
-				ar_node:mine(Master),
-				wait_until_height(Master, Height),
+				ar_node:mine(),
+				wait_until_height(Height),
 				Acc;
 			({TXMap, _Height}, Acc) ->
 				TXsWithChunks = lists:map(
@@ -818,7 +818,7 @@ post_random_blocks(Master, Wallet) ->
 					TXMap
 				),
 				B = post_and_mine(
-					#{ miner => {master, Master}, await_on => {master, Master} },
+					#{ miner => {master, "master"}, await_on => {master, "master"} },
 					[TX || {{TX, _}, _} <- TXsWithChunks]
 				),
 				lists:foreach(

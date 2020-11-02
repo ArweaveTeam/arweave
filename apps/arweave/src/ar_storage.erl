@@ -855,7 +855,7 @@ store_and_retrieve_block_test() ->
     ar_storage:clear(),
     ?assertEqual(0, blocks_on_disk()),
     BI0 = [B0] = ar_weave:init([]),
-    {Node, _} = ar_test_node:start(B0),
+    ar_test_node:start(B0),
     ?assertEqual(
         B0#block{
             hash_list = unset,
@@ -865,10 +865,10 @@ store_and_retrieve_block_test() ->
         B0#block{ hash_list = unset, size_tagged_txs = unset },
         read_block(B0#block.height, ar_weave:generate_block_index(BI0))
     ),
-    ar_node:mine(Node),
-    ar_test_node:wait_until_height(Node, 1),
-    ar_node:mine(Node),
-    BI1 = ar_test_node:wait_until_height(Node, 2),
+    ar_node:mine(),
+    ar_test_node:wait_until_height(1),
+    ar_node:mine(),
+    BI1 = ar_test_node:wait_until_height(2),
     ar_util:do_until(
         fun() ->
             3 == blocks_on_disk()

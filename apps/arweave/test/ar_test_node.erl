@@ -4,15 +4,15 @@
 	start/1, start/2, slave_start/1, slave_start/2,
 	connect_to_slave/0, disconnect_from_slave/0,
 	slave_call/3, slave_call/4,
-	gossip/2, slave_gossip/2,
-	slave_add_tx/2,
-	slave_mine/1,
-	wait_until_height/2, slave_wait_until_height/2, assert_slave_wait_until_height/2,
-	wait_until_block_block_index/2, assert_wait_until_block_block_index/2,
-	wait_until_receives_txs/2, assert_wait_until_receives_txs/2,
-	assert_slave_wait_until_receives_txs/2,
-	post_tx_to_slave/2, post_tx_to_master/2, post_tx_to_master/3,
-	assert_post_tx_to_slave/2, assert_post_tx_to_master/2,
+	gossip/1, slave_gossip/1,
+	slave_add_tx/1,
+	slave_mine/0,
+	wait_until_height/1, slave_wait_until_height/1, assert_slave_wait_until_height/1,
+	wait_until_block_block_index/1, assert_wait_until_block_block_index/1,
+	wait_until_receives_txs/1, assert_wait_until_receives_txs/1,
+	assert_slave_wait_until_receives_txs/1,
+	post_tx_to_slave/1, post_tx_to_master/1, post_tx_to_master/2,
+	assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
 	sign_tx/1, sign_tx/2, sign_tx/3,
 	sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 	get_tx_anchor/0, get_tx_anchor/1,
@@ -149,14 +149,14 @@ disconnect_from_slave() ->
 	slave_call(ar_bridge, set_remote_peers, [SlaveBridge, []]),
 	MasterBridge = whereis(ar_bridge),
 	ar_bridge:set_remote_peers(MasterBridge, []),
-	ar_node:set_trusted_peers(whereis(ar_node), []),
+	ar_node:set_trusted_peers([]),
 	SlaveNode = slave_call(erlang, whereis, [ar_node]),
 	slave_call(ar_node, set_trusted_peers, [SlaveNode, []]).
 
-gossip(off, Node) ->
-	ar_node:set_loss_probability(Node, 1);
-gossip(on, Node) ->
-	ar_node:set_loss_probability(Node, 0).
+gossip(off) ->
+	ar_node:set_loss_probability(1);
+gossip(on) ->
+	ar_node:set_loss_probability(0).
 
 slave_call(Module, Function, Args) ->
 	slave_call(Module, Function, Args, 60000).
@@ -164,21 +164,21 @@ slave_call(Module, Function, Args) ->
 slave_call(Module, Function, Args, Timeout) ->
 	ar_rpc:call(slave, Module, Function, Args, Timeout).
 
-slave_gossip(off, Node) ->
-	slave_call(?MODULE, gossip, [off, Node]);
-slave_gossip(on, Node) ->
-	slave_call(?MODULE, gossip, [on, Node]).
+slave_gossip(off) ->
+	slave_call(?MODULE, gossip, [off]);
+slave_gossip(on) ->
+	slave_call(?MODULE, gossip, [on]).
 
-slave_add_tx(Node, TX) ->
-	slave_call(ar_node, add_tx, [Node, TX]).
+slave_add_tx(TX) ->
+	slave_call(ar_node, add_tx, [TX]).
 
-slave_mine(Node) ->
-	slave_call(ar_node, mine, [Node]).
+slave_mine() ->
+	slave_call(ar_node, mine, []).
 
-wait_until_height(Node, TargetHeight) ->
+wait_until_height(TargetHeight) ->
 	{ok, BI} = ar_util:do_until(
 		fun() ->
-			case ar_node:get_blocks(Node) of
+			case ar_node:get_blocks() of
 				BI when length(BI) - 1 == TargetHeight ->
 					{ok, BI};
 				_ ->
@@ -190,21 +190,21 @@ wait_until_height(Node, TargetHeight) ->
 	),
 	BI.
 
-slave_wait_until_height(Node, TargetHeight) ->
-	slave_call(?MODULE, wait_until_height, [Node, TargetHeight]).
+slave_wait_until_height(TargetHeight) ->
+	slave_call(?MODULE, wait_until_height, [TargetHeight]).
 
-assert_slave_wait_until_height(Node, TargetHeight) ->
-	BI = slave_call(?MODULE, wait_until_height, [Node, TargetHeight]),
+assert_slave_wait_until_height(TargetHeight) ->
+	BI = slave_call(?MODULE, wait_until_height, [TargetHeight]),
 	?assert(is_list(BI)),
 	BI.
 
-assert_wait_until_block_block_index(Node, BI) ->
-	?assertEqual(ok, wait_until_block_block_index(Node, BI)).
+assert_wait_until_block_block_index(BI) ->
+	?assertEqual(ok, wait_until_block_block_index(BI)).
 
-wait_until_block_block_index(Node, BI) ->
+wait_until_block_block_index(BI) ->
 	ar_util:do_until(
 		fun() ->
-			case ar_node:get_blocks(Node) of
+			case ar_node:get_blocks() of
 				BI ->
 					ok;
 				_ ->
@@ -215,13 +215,13 @@ wait_until_block_block_index(Node, BI) ->
 		60 * 1000
 	).
 
-assert_wait_until_receives_txs(Node, TXs) ->
-	?assertEqual(ok, wait_until_receives_txs(Node, TXs)).
+assert_wait_until_receives_txs(TXs) ->
+	?assertEqual(ok, wait_until_receives_txs(TXs)).
 
-wait_until_receives_txs(Node, TXs) ->
+wait_until_receives_txs(TXs) ->
 	ar_util:do_until(
 		fun() ->
-			MinedTXIDs = [TX#tx.id || TX <- ar_node:get_mined_txs(Node)],
+			MinedTXIDs = [TX#tx.id || TX <- ar_node:get_mined_txs()],
 			case lists:all(fun(TX) -> lists:member(TX#tx.id, MinedTXIDs) end, TXs) of
 				true ->
 					ok;
@@ -233,10 +233,10 @@ wait_until_receives_txs(Node, TXs) ->
 		60 * 1000
 	).
 
-assert_slave_wait_until_receives_txs(Node, TXs) ->
-	?assertEqual(ok, slave_call(?MODULE, wait_until_receives_txs, [Node, TXs])).
+assert_slave_wait_until_receives_txs(TXs) ->
+	?assertEqual(ok, slave_call(?MODULE, wait_until_receives_txs, [TXs])).
 
-post_tx_to_slave(Slave, TX) ->
+post_tx_to_slave(TX) ->
 	SlavePort = slave_call(ar_meta_db, get, [port]),
 	SlaveIP = {127, 0, 0, 1, SlavePort},
 	Reply =
@@ -249,7 +249,7 @@ post_tx_to_slave(Slave, TX) ->
 		}),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
-			assert_slave_wait_until_receives_txs(Slave, [TX]);
+			assert_slave_wait_until_receives_txs([TX]);
 		_ ->
 			ar:console(
 				"Failed to post transaction. Error DB entries: ~p~n",
@@ -259,16 +259,16 @@ post_tx_to_slave(Slave, TX) ->
 	end,
 	Reply.
 
-assert_post_tx_to_slave(Slave, TX) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(Slave, TX).
+assert_post_tx_to_slave(TX) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(TX).
 
-assert_post_tx_to_master(Master, TX) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(Master, TX).
+assert_post_tx_to_master(TX) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(TX).
 
-post_tx_to_master(Master, TX) ->
-	post_tx_to_master(Master, TX, true).
+post_tx_to_master(TX) ->
+	post_tx_to_master(TX, true).
 
-post_tx_to_master(Master, TX, Wait) ->
+post_tx_to_master(TX, Wait) ->
 	Port = ar_meta_db:get(port),
 	MasterIP = {127, 0, 0, 1, Port},
 	Reply =
@@ -283,7 +283,7 @@ post_tx_to_master(Master, TX, Wait) ->
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			case Wait of
 				true ->
-					assert_wait_until_receives_txs(Master, [TX]);
+					assert_wait_until_receives_txs([TX]);
 				false ->
 					ok
 			end;
@@ -519,26 +519,26 @@ get_tx_price(Node, DataSize) ->
 
 post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 	CurrentHeight = case Miner of
-		{slave, MiningNode} ->
-			Height = slave_call(ar_node, get_height, [MiningNode]),
-			lists:foreach(fun(TX) -> assert_post_tx_to_slave(MiningNode, TX) end, TXs),
-			slave_mine(MiningNode),
+		{slave, _MiningNode} ->
+			Height = slave_call(ar_node, get_height, []),
+			lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, TXs),
+			slave_mine(),
 			Height;
-		{master, MiningNode} ->
-			Height = ar_node:get_height(MiningNode),
-			lists:foreach(fun(TX) -> assert_post_tx_to_master(MiningNode, TX) end, TXs),
-			ar_node:mine(MiningNode),
+		{master, _MiningNode} ->
+			Height = ar_node:get_height(),
+			lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+			ar_node:mine(),
 			Height
 	end,
 	case AwaitOn of
-		{master, AwaitNode} ->
-			wait_until_height(AwaitNode, CurrentHeight + 1),
-			H = ar_node:get_current_block_hash(AwaitNode),
+		{master, _AwaitNode} ->
+			wait_until_height(CurrentHeight + 1),
+			H = ar_node:get_current_block_hash(),
 			BShadow = read_block_when_stored(H),
 			BShadow#block{ txs = ar_storage:read_tx(BShadow#block.txs) };
-		{slave, AwaitNode} ->
-			slave_wait_until_height(AwaitNode, CurrentHeight + 1),
-			H = slave_call(ar_node, get_current_block_hash, [AwaitNode]),
+		{slave, _AwaitNode} ->
+			slave_wait_until_height(CurrentHeight + 1),
+			H = slave_call(ar_node, get_current_block_hash, []),
 			BShadow = slave_call(ar_test_node, read_block_when_stored, [H]),
 			BShadow#block{ txs = slave_call(ar_storage, read_tx, [BShadow#block.txs]) }
 	end.

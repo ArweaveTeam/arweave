@@ -200,26 +200,26 @@ basic_node_join_test() ->
 	{timeout, 60, fun() ->
 		ar_storage:clear(),
 		[B0] = ar_weave:init([]),
-		{Node, _} = ar_test_node:start(B0),
-		ar_node:mine(Node),
-		ar_test_node:wait_until_height(Node, 1),
-		ar_node:mine(Node),
-		ar_test_node:wait_until_height(Node, 2),
-		Node2 = ar_test_node:join_on_master(),
-		ar_test_node:assert_slave_wait_until_height(Node2, 2)
+		ar_test_node:start(B0),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(1),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(2),
+		ar_test_node:join_on_master(),
+		ar_test_node:assert_slave_wait_until_height(2)
 	end}.
 
 %% @doc Ensure that both nodes can mine after a join.
 node_join_test() ->
 	{timeout, 60, fun() ->
 		[B0] = ar_weave:init([]),
-		Node1 = ar_test_node:start(B0),
-		ar_node:mine(Node1),
-		ar_test_node:wait_until_height(Node1, 1),
-		ar_node:mine(Node1),
-		ar_test_node:wait_until_height(Node1, 2),
-		Node2 = ar_test_node:join_on_master(),
-		ar_test_node:assert_slave_wait_until_height(Node2, 2),
-		ar_test_node:slave_mine(Node2),
-		ar_test_node:wait_until_height(Node1, 3)
+		ar_test_node:start(B0),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(1),
+		ar_node:mine(),
+		ar_test_node:wait_until_height(2),
+		ar_test_node:join_on_master(),
+		ar_test_node:assert_slave_wait_until_height(2),
+		ar_test_node:slave_mine(),
+		ar_test_node:wait_until_height(3)
 	end}.
