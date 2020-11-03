@@ -339,6 +339,7 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
+			ok = ar_semaphore:acquire(post_chunk_semaphore, 200),
 			case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
 				{ok, Body, Req2} ->
 					case ar_serialize:json_decode(Body, [{return_maps, true}]) of

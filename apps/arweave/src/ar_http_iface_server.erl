@@ -16,6 +16,7 @@
 -define(MAX_PARALLEL_GATEWAY_ARQL_REQUESTS, infinity).
 -define(MAX_PARALLEL_GET_CHUNK_REQUESTS, 100).
 -define(MAX_PARALLEL_WALLET_LIST_REQUESTS, 1).
+-define(MAX_PARALLEL_POST_CHUNK_REQUESTS, 100).
 
 -define(HTTP_IFACE_MIDDLEWARES, [
 	ar_blacklist_middleware,
@@ -49,6 +50,7 @@ start() ->
 	ok = ar_semaphore:start_link(gateway_arql_semaphore, ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS),
 	ok = ar_semaphore:start_link(get_chunk_semaphore, ?MAX_PARALLEL_GET_CHUNK_REQUESTS),
 	ok = ar_semaphore:start_link(wallet_list_semaphore, ?MAX_PARALLEL_WALLET_LIST_REQUESTS),
+	ok = ar_semaphore:start_link(post_chunk_semaphore, ?MAX_PARALLEL_POST_CHUNK_REQUESTS),
 	ok = ar_blacklist_middleware:start(),
 	{ok, Config} = application:get_env(arweave, config),
 	ok = start_http_iface_listener(Config),
