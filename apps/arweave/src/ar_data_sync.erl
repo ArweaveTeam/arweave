@@ -11,7 +11,8 @@
 	add_chunk/1, add_chunk/2,
 	add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 	get_chunk/1, get_tx_root/1, get_tx_data/1, get_tx_offset/1,
-	get_sync_record_etf/0, get_sync_record_json/0
+	get_sync_record_etf/0, get_sync_record_json/0,
+	request_tx_data_removal/1
 ]).
 
 -include("ar.hrl").
@@ -24,15 +25,19 @@
 start_link(Args) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
+%% @doc Notify the server the node has joined the network on the given block index.
 join(BI) ->
 	gen_server:cast(?MODULE, {join, BI}).
 
+%% @doc Notify the server about the new tip block.
 add_tip_block(BlockTXPairs, RecentBI) ->
 	gen_server:cast(?MODULE, {add_tip_block, BlockTXPairs, RecentBI}).
 
+%% @doc Store the given chunk if the proof is valid.
 add_chunk(Proof) ->
 	add_chunk(Proof, 5000).
 
+%% @doc Store the given chunk if the proof is valid.
 add_chunk(
 	#{
 		data_root := DataRoot,
@@ -43,8 +48,17 @@ add_chunk(
 	},
 	Timeout
 ) ->
-	gen_server:call(?MODULE, {add_chunk, DataRoot, DataPath, Chunk, Offset, TXSize}, Timeout).
+	Command = {add_chunk, DataRoot, DataPath, Chunk, Offset, TXSize},
+	case catch gen_server:call(?MODULE, Command, Timeout) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
+%% @doc Notify the server about the new pending data root (added to mempool).
+%% The server may accept pending chunks and store them in the disk pool.
+%% @end
 add_data_root_to_disk_pool(<<>>, _, _) ->
 	ok;
 add_data_root_to_disk_pool(_, 0, _) ->
@@ -52,6 +66,7 @@ add_data_root_to_disk_pool(_, 0, _) ->
 add_data_root_to_disk_pool(DataRoot, TXSize, TXID) ->
 	gen_server:cast(?MODULE, {add_data_root_to_disk_pool, {DataRoot, TXSize, TXID}}).
 
+%% @doc Notify the server the given data root has been removed from the mempool.
 maybe_drop_data_root_from_disk_pool(<<>>, _, _) ->
 	ok;
 maybe_drop_data_root_from_disk_pool(_, 0, _) ->
@@ -59,76 +74,155 @@ maybe_drop_data_root_from_disk_pool(_, 0, _) ->
 maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
 	gen_server:cast(?MODULE, {maybe_drop_data_root_from_disk_pool, {DataRoot, TXSize, TXID}}).
 
+%% @doc Fetch the chunk containing the given global offset, including right bound,
+%% excluding left bound.
 get_chunk(Offset) ->
-	case catch ets:lookup(?MODULE, chunks_index) of
+	case ets:lookup(?MODULE, chunks_index) of
+		[] ->
+			{error, not_joined};
 		[{_, ChunksIndex}] ->
-			case catch ar_kv:get_next(ChunksIndex, << Offset:?OFFSET_KEY_BITSIZE >>) of
-				{'EXIT', _} ->
-					{error, not_joined};
-				{error, _} ->
+			get_chunk(ChunksIndex, Offset)
+	end.
+
+get_chunk(ChunksIndex, Offset) ->
+	case ar_kv:get_next(ChunksIndex, << Offset:?OFFSET_KEY_BITSIZE >>) of
+		{error, _} ->
+			{error, chunk_not_found};
+		{ok, Key, Value} ->
+			<< ChunkOffset:?OFFSET_KEY_BITSIZE >> = Key,
+			{DataPathHash, TXRoot, _, TXPath, _, ChunkSize} = binary_to_term(Value),
+			case ChunkOffset - Offset >= ChunkSize of
+				true ->
 					{error, chunk_not_found};
-				{ok, Key, Value} ->
-					<< ChunkOffset:?OFFSET_KEY_BITSIZE >> = Key,
-					{DataPathHash, TXRoot, _, TXPath, _, ChunkSize} = binary_to_term(Value),
-					case ChunkOffset - Offset >= ChunkSize of
-						true ->
+				false ->
+					case ar_storage:read_chunk(DataPathHash) of
+						{ok, {Chunk, DataPath}} ->
+							Proof = #{
+								tx_root => TXRoot,
+								chunk => Chunk,
+								data_path => DataPath,
+								tx_path => TXPath
+							},
+							{ok, Proof};
+						not_found ->
 							{error, chunk_not_found};
-						false ->
-							case ar_storage:read_chunk(DataPathHash) of
-								{ok, {Chunk, DataPath}} ->
-									Proof = #{
-										tx_root => TXRoot,
-										chunk => Chunk,
-										data_path => DataPath,
-										tx_path => TXPath
-									},
-									{ok, Proof};
-								not_found ->
-									{error, chunk_not_found};
-								{error, Reason} ->
-									ar:err([
-										{event, failed_to_read_chunk},
-										{reason, Reason}
-									]),
-									{error, failed_to_read_chunk}
-							end
+						{error, Reason} ->
+							ar:err([
+								{event, failed_to_read_chunk},
+								{reason, Reason}
+							]),
+							{error, failed_to_read_chunk}
 					end
-			end;
-		_ ->
-			{error, not_joined}
+			end
 	end.
 
+%% @doc Fetch the transaction root containing the given global offset, including left bound,
+%% excluding right bound.
 get_tx_root(Offset) ->
-	case catch ets:lookup(?MODULE, data_root_offset_index) of
+	case ets:lookup(?MODULE, data_root_offset_index) of
+		[] ->
+			{error, not_joined};
 		[{_, DataRootOffsetIndex}] ->
-			case catch ar_kv:get_prev(DataRootOffsetIndex, << Offset:?OFFSET_KEY_BITSIZE >>) of
-				{'EXIT', _} ->
-					{error, not_joined};
-				{error, _} ->
-					{error, not_found};
-				{ok, Key, Value} ->
-					<< BlockStartOffset:?OFFSET_KEY_BITSIZE >> = Key,
-					{TXRoot, BlockSize, _DataRootIndexKeySet} = binary_to_term(Value),
-					{ok, TXRoot, BlockStartOffset, BlockSize}
-			end;
-		_ ->
-			{error, not_joined}
+			get_tx_root(DataRootOffsetIndex, Offset)
 	end.
 
+get_tx_root(DataRootOffsetIndex, Offset) ->
+	case ar_kv:get_prev(DataRootOffsetIndex, << Offset:?OFFSET_KEY_BITSIZE >>) of
+		{error, _} ->
+			{error, not_found};
+		{ok, Key, Value} ->
+			<< BlockStartOffset:?OFFSET_KEY_BITSIZE >> = Key,
+			{TXRoot, BlockSize, _DataRootIndexKeySet} = binary_to_term(Value),
+			{ok, TXRoot, BlockStartOffset, BlockSize}
+	end.
+
+%% @doc Fetch the transaction data.
 get_tx_data(TXID) ->
-	gen_server:call(?MODULE, {get_tx_data, TXID}).
+	case ets:lookup(?MODULE, tx_index) of
+		[] ->
+			{error, not_joined};
+		[{_, TXIndex}] ->
+			[{_, ChunksIndex}] = ets:lookup(?MODULE, chunks_index),
+			get_tx_data(TXIndex, ChunksIndex, TXID)
+	end.
 
+get_tx_data(TXIndex, ChunksIndex, TXID) ->
+	case ar_kv:get(TXIndex, TXID) of
+		not_found ->
+			{error, not_found};
+		{error, Reason} ->
+			ar:err([{event, failed_to_get_tx_data}, {reason, Reason}]),
+			{error, failed_to_get_tx_data};
+		{ok, Value} ->
+			{Offset, Size} = binary_to_term(Value),
+			case Size > ?MAX_SERVED_TX_DATA_SIZE of
+				true ->
+					{error, tx_data_too_big};
+				false ->
+					StartKey = << (Offset - Size):?OFFSET_KEY_BITSIZE >>,
+					EndKey = << Offset:?OFFSET_KEY_BITSIZE >>,
+					case ar_kv:get_range(ChunksIndex, StartKey, EndKey) of
+						{error, Reason} ->
+							ar:err([
+								{event, failed_to_get_chunks_for_tx_data},
+								{reason, Reason}
+							]),
+							{error, not_found};
+						{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
+							{error, not_found};
+						{ok, Map} ->
+							get_tx_data_from_chunks(Offset, Size, Map)
+					end
+			end
+	end.
+
+%% @doc Return the global end offset and size for the given transaction.
 get_tx_offset(TXID) ->
-	gen_server:call(?MODULE, {get_tx_offset, TXID}).
+	case ets:lookup(?MODULE, tx_index) of
+		[] ->
+			{error, not_joined};
+		[{_, TXIndex}] ->
+			get_tx_offset(TXIndex, TXID)
+	end.
 
+get_tx_offset(TXIndex, TXID) ->
+	case ar_kv:get(TXIndex, TXID) of
+		{ok, Value} ->
+			{ok, binary_to_term(Value)};
+		not_found ->
+			{error, not_found};
+		{error, Reason} ->
+			ar:err([{event, failed_to_read_tx_offset}, {reason, Reason}]),
+			{error, failed_to_read_offset}
+	end.
+
+%% @doc Return a set of intervals of synced byte global offsets (with false positives), up
+%% to ?MAX_SHARED_SYNCED_INTERVALS_COUNT intervals, serialized as Erlang Term Format.
 get_sync_record_etf() ->
-	gen_server:call(?MODULE, get_sync_record_etf).
+	case catch gen_server:call(?MODULE, get_sync_record_etf) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
+%% @doc Return a set of intervals of synced byte global offsets (with false positives), up
+%% to MAX_SHARED_SYNCED_INTERVALS_COUNT, serialized as JSON.
 get_sync_record_json() ->
-	gen_server:call(?MODULE, get_sync_record_json).
+	case catch gen_server:call(?MODULE, get_sync_record_json) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
+%% @doc Record the metadata of the given block.
 add_block(B, SizeTaggedTXs) ->
 	gen_server:cast(?MODULE, {add_block, B, SizeTaggedTXs}).
+
+%% @doc Request the removal of the transaction data.
+request_tx_data_removal(TXID) ->
+	gen_server:cast(?MODULE, {remove_tx_data, TXID}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -519,21 +613,41 @@ handle_cast({sync_chunk, Peer, LeftBound, LByte, RByte, RightBound}, State) ->
 	Self = self(),
 	spawn(
 		fun() ->
+			RByte2 = ar_tx_blacklist:get_next_not_blacklisted_byte(RByte),
 			Byte =
-				case RByte < RightBound of
+				case RByte2 < RightBound of
 					true ->
-						RByte + 1;
+						RByte2 + 1;
 					false ->
-						LeftBound + 1
+						LeftBound2 = ar_tx_blacklist:get_next_not_blacklisted_byte(LeftBound),
+						case LByte >= LeftBound2 of
+							true ->
+								LeftBound2 + 1;
+							false ->
+								no_byte
+						end
 				end,
-			case ar_http_iface_client:get_chunk(Peer, Byte) of
-				{ok, Proof} ->
-					gen_server:cast(
-						Self,
-						{store_fetched_chunk, Peer, LeftBound, LByte, RByte, RightBound, Proof}
-					);
-				{error, _} ->
-					gen_server:cast(Self, {sync_random_interval, [Peer]})
+			case Byte of
+				no_byte ->
+					gen_server:cast(Self, check_space_sync_random_interval);
+				_ ->
+					case ar_http_iface_client:get_chunk(Peer, Byte) of
+						{ok, Proof} ->
+							gen_server:cast(
+								Self,
+								{
+									store_fetched_chunk,
+									Peer,
+									LeftBound,
+									LByte,
+									RByte,
+									RightBound,
+									Proof
+								}
+							);
+						{error, _} ->
+							gen_server:cast(Self, {sync_random_interval, [Peer]})
+					end
 			end
 		end
 	),
@@ -678,67 +792,58 @@ handle_cast(update_disk_pool_data_roots, State) ->
 	{noreply, State#sync_data_state{
 		disk_pool_data_roots = UpdatedDiskPoolDataRoots,
 		disk_pool_size = DiskPoolSize
-	}}.
+	}};
 
-handle_call({get_tx_data, TXID}, _From, State) ->
-	#sync_data_state{
-		tx_index = TXIndex,
-		chunks_index = ChunksIndex
-	} =
-		case State of
-			{not_joined, KVRefs} ->
-				KVRefs;
-			_ ->
-				State
-		end,
+handle_cast({remove_tx_data, TXID}, State) ->
+	#sync_data_state{ tx_index = TXIndex } = State,
 	case ar_kv:get(TXIndex, TXID) of
-		not_found ->
-			{reply, {error, not_found}, State};
-		{error, Reason} ->
-			ar:err([{event, failed_to_get_tx_data}, {reason, Reason}]),
-			{reply, {error, failed_to_get_tx_data}, State};
 		{ok, Value} ->
-			{Offset, Size} = binary_to_term(Value),
-			case Size > ?MAX_SERVED_TX_DATA_SIZE of
+			{End, Size} = binary_to_term(Value),
+			Start = End - Size,
+			gen_server:cast(?MODULE, {remove_tx_data, TXID, End, Start + 1}),
+			{noreply, State};
+		not_found ->
+			ar:err([
+				{event, blacklisted_tx_offset_not_found},
+				{tx, ar_util:encode(TXID)}
+			]),
+			{noreply, State};
+		{error, Reason} ->
+			ar:err([
+				{event, failed_to_fetch_blacklisted_tx_offset},
+				{tx, ar_util:encode(TXID)},
+				{reason, Reason}
+			]),
+			{noreply, State}
+	end;
+
+handle_cast({remove_tx_data, TXID, End, Cursor}, State) when Cursor > End ->
+	ar_tx_blacklist:notify_about_removed_tx_data(TXID),
+	{noreply, State};
+handle_cast({remove_tx_data, TXID, End, Cursor}, State) ->
+	#sync_data_state{ chunks_index = ChunksIndex, sync_record = SyncRecord } = State,
+	case ar_kv:get_next(ChunksIndex, << Cursor:?OFFSET_KEY_BITSIZE >>) of
+		{ok, Key, Chunk} ->
+			<< ChunkEnd:?OFFSET_KEY_BITSIZE >> = Key,
+			case ChunkEnd > End of
 				true ->
-					{reply, {error, tx_data_too_big}, State};
+					ar_tx_blacklist:notify_about_removed_tx_data(TXID),
+					{noreply, State};
 				false ->
-					StartKey = << (Offset - Size):?OFFSET_KEY_BITSIZE >>,
-					EndKey = << Offset:?OFFSET_KEY_BITSIZE >>,
-					case ar_kv:get_range(ChunksIndex, StartKey, EndKey) of
-						{error, Reason} ->
-							ar:err([
-								{event, failed_to_get_chunks_for_tx_data},
-								{reason, Reason}
-							]),
-							{reply, {error, not_found}, State};
-						{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
-							{reply, {error, not_found}, State};
-						{ok, Map} ->
-							{reply, get_tx_data_from_chunks(Offset, Size, Map), State}
-					end
-			end
-	end;
-
-handle_call({get_tx_offset, TXID}, _From, State) ->
-	#sync_data_state{
-		tx_index = TXIndex
-	} =
-		case State of
-			{not_joined, KVRefs} ->
-				KVRefs;
-			_ ->
-				State
-		end,
-	case ar_kv:get(TXIndex, TXID) of
-		{ok, Value} ->
-			{reply,  {ok, binary_to_term(Value)}, State};
-		not_found ->
-			{reply, {error, not_found}, State};
-		{error, Reason} ->
-			ar:err([{event, failed_to_read_tx_offset}, {reason, Reason}]),
-			{reply, {error, failed_to_read_offset}, State}
-	end;
+					ok = ar_kv:delete(ChunksIndex, Key),
+					{_, _, _, _, _, ChunkSize} = binary_to_term(Chunk),
+					ChunkStart = ChunkEnd - ChunkSize,
+					SyncRecord2 = ar_intervals:delete(SyncRecord, ChunkEnd, ChunkStart),
+					State2 =
+						State#sync_data_state{
+							sync_record = SyncRecord2
+						},
+					gen_server:cast(?MODULE, {remove_tx_data, TXID, End, ChunkEnd + 1}),
+					{noreply, State2}
+			end;
+		_ ->
+			{noreply, State}
+	end.
 
 handle_call({add_chunk, DataRoot, DataPath, Chunk, Offset, TXSize}, _From, State) ->
 	case have_free_space() of
@@ -816,9 +921,15 @@ init_kv() ->
 		tx_offset_index = {DB, CF6},
 		disk_pool_chunks_index = {DB, CF7}
 	},
-	ets:new(?MODULE, [set, named_table, {read_concurrency, true}]),
-	ets:insert(?MODULE, {chunks_index, {DB, CF1}}),
-	ets:insert(?MODULE, {data_root_offset_index, {DB, CF3}}),
+	ets:insert(?MODULE, [
+		{chunks_index, {DB, CF1}},
+		{missing_chunks_index, {DB, CF2}},
+		{data_root_index, {DB, CF3}},
+		{data_root_offset_index, {DB, CF4}},
+		{tx_index, {DB, CF5}},
+		{tx_offset_index, {DB, CF6}},
+		{disk_pool_chunks_index, {DB, CF7}}
+	]),
 	State.
 
 read_data_sync_state() ->
@@ -1170,55 +1281,92 @@ update_chunks_index(
 		false ->
 			not_updated;
 		true ->
-			Value = {DataPathHash, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize},
-			case ar_kv:put(ChunksIndex, Key, term_to_binary(Value)) of
-				ok ->
-					DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-					case maps:get(DataRootKey, DiskPoolDataRoots, not_found) of
-						{_, Timestamp, _} ->
-							DiskPoolChunkKey = << Timestamp:256, DataPathHash/binary >>,
-							case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
-								not_found ->
-									ok = ar_kv:put(
-										DiskPoolChunksIndex,
-										DiskPoolChunkKey,
-										term_to_binary(
-											{ChunkOffset, ChunkSize, DataRoot, TXSize}
-										)
-									),
-									prometheus_gauge:inc(disk_pool_chunks_count);
-								_ ->
-									do_not_update_disk_pool
-							end;
-						not_found ->
-							do_not_update_disk_pool
-					end,
-					StartOffset = AbsoluteChunkOffset - ChunkSize,
-					SyncRecord2 = ar_intervals:add(SyncRecord, AbsoluteChunkOffset, StartOffset),
-					MaxSharedIntervals = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
-					ExtraIntervalsBeforeCompaction = ?EXTRA_INTERVALS_BEFORE_COMPACTION,
-					Count = ar_intervals:count(SyncRecord2),
-					case Count > MaxSharedIntervals + ExtraIntervalsBeforeCompaction of
-						true ->
-							gen_server:cast(self(), compact_intervals);
-						false ->
-							ok
-					end,
-					CompactedSize2 =
-						case ar_intervals:is_inside(SyncRecord, AbsoluteChunkOffset) of
-							true ->
-								CompactedSize - ChunkSize;
-							false ->
-								CompactedSize
-						end,
-					{ok, SyncRecord2, CompactedSize2};
-				{error, Reason} ->
-					ar:err([
-						{event, failed_to_update_chunk_index},
-						{reason, Reason}
-					]),
-					{error, Reason}
+			case ar_tx_blacklist:is_byte_blacklisted(AbsoluteChunkOffset) of
+				true ->
+					not_updated;
+				false ->
+					update_chunks_index2(
+						ChunksIndex,
+						DiskPoolChunksIndex,
+						DiskPoolDataRoots,
+						TXSize,
+						SyncRecord,
+						CompactedSize,
+						AbsoluteChunkOffset,
+						ChunkOffset,
+						DataPathHash,
+						TXRoot,
+						DataRoot,
+						TXPath,
+						ChunkSize
+					)
 			end
+	end.
+
+update_chunks_index2(
+	ChunksIndex,
+	DiskPoolChunksIndex,
+	DiskPoolDataRoots,
+	TXSize,
+	SyncRecord,
+	CompactedSize,
+	AbsoluteChunkOffset,
+	ChunkOffset,
+	DataPathHash,
+	TXRoot,
+	DataRoot,
+	TXPath,
+	ChunkSize
+) ->
+	Key = << AbsoluteChunkOffset:?OFFSET_KEY_BITSIZE >>,
+	Value = {DataPathHash, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize},
+	case ar_kv:put(ChunksIndex, Key, term_to_binary(Value)) of
+		ok ->
+			DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
+			case maps:get(DataRootKey, DiskPoolDataRoots, not_found) of
+				{_, Timestamp, _} ->
+					DiskPoolChunkKey = << Timestamp:256, DataPathHash/binary >>,
+					case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
+						not_found ->
+							ok = ar_kv:put(
+								DiskPoolChunksIndex,
+								DiskPoolChunkKey,
+								term_to_binary(
+									{ChunkOffset, ChunkSize, DataRoot, TXSize}
+								)
+							),
+							prometheus_gauge:inc(disk_pool_chunks_count);
+						_ ->
+							do_not_update_disk_pool
+					end;
+				not_found ->
+					do_not_update_disk_pool
+			end,
+			StartOffset = AbsoluteChunkOffset - ChunkSize,
+			SyncRecord2 = ar_intervals:add(SyncRecord, AbsoluteChunkOffset, StartOffset),
+			MaxSharedIntervals = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,
+			ExtraIntervalsBeforeCompaction = ?EXTRA_INTERVALS_BEFORE_COMPACTION,
+			Count = ar_intervals:count(SyncRecord2),
+			case Count > MaxSharedIntervals + ExtraIntervalsBeforeCompaction of
+				true ->
+					gen_server:cast(self(), compact_intervals);
+				false ->
+					ok
+			end,
+			CompactedSize2 =
+				case ar_intervals:is_inside(SyncRecord, AbsoluteChunkOffset) of
+					true ->
+						CompactedSize - ChunkSize;
+					false ->
+						CompactedSize
+				end,
+			{ok, SyncRecord2, CompactedSize2};
+		{error, Reason} ->
+			ar:err([
+				{event, failed_to_update_chunk_index},
+				{reason, Reason}
+			]),
+			{error, Reason}
 	end.
 
 store_sync_state(

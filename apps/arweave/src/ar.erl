@@ -53,13 +53,12 @@
 		ar_retarget,
 		ar_weave,
 		ar_join,
+		ar_tx_blacklist_tests,
 		ar_data_sync_tests,
 		ar_header_sync_tests,
 		ar_poa_tests,
 		ar_node_tests,
 		ar_fork_recovery_tests,
-		ar_firewall_distributed_tests,
-		ar_firewall,
 		ar_mine,
 		ar_tx_replay_pool_tests,
 		ar_tx_queue,
@@ -126,9 +125,13 @@ show_help() ->
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
-			{"content_policy (file)", "Load a content policy file for the node."},
-			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
+			{"transaction_blacklist (file)", "A file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
+			{"transaction_blacklist_url", "An HTTP endpoint serving a transaction blacklist."},
+			{"transaction_whitelist (file)", "A file containing whitelisted transactions. "
+											 "One Base64 encoded transaction ID per line. "
+											 "If a transaction is in both lists, it is "
+											 "considered whitelisted."},
 			{"disk_space (num)", "Max size (in GB) for the disk partition containing the Arweave data directory (blocks, txs, etc) when the miner stops writing files to disk."},
 			{"init", "Start a new weave."},
 			{"internal_api_secret (secret)",
@@ -198,10 +201,12 @@ parse_cli_args(["peer", Peer|Rest], C = #config { peers = Ps }) ->
 			io:format("Peer ~p invalid ~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
-parse_cli_args(["content_policy", File|Rest], C = #config { content_policy_files = Files }) ->
-	parse_cli_args(Rest, C#config { content_policy_files = [File|Files] });
 parse_cli_args(["transaction_blacklist", File|Rest], C = #config { transaction_blacklist_files = Files } ) ->
 	parse_cli_args(Rest, C#config { transaction_blacklist_files = [File|Files] });
+parse_cli_args(["transaction_blacklist_url", URL | Rest], C = #config { transaction_blacklist_urls = URLs} ) ->
+	parse_cli_args(Rest, C#config{ transaction_blacklist_urls = [URL | URLs] });
+parse_cli_args(["transaction_whitelist", File|Rest], C = #config { transaction_whitelist_files = Files } ) ->
+	parse_cli_args(Rest, C#config { transaction_whitelist_files = [File|Files] });
 parse_cli_args(["port", Port|Rest], C) ->
 	parse_cli_args(Rest, C#config { port = list_to_integer(Port) });
 parse_cli_args(["data_dir", DataDir|Rest], C) ->
@@ -311,8 +316,9 @@ start(normal, _Args) ->
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
-		content_policy_files = ContentPolicyFiles,
 		transaction_blacklist_files = TransactionBlacklistFiles,
+		transaction_blacklist_urls = TransactionBlacklistURLs,
+		transaction_whitelist_files = TransactionWhitelistFiles,
 		gateway_domain = GatewayDomain,
 		gateway_custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
@@ -335,6 +341,18 @@ start(normal, _Args) ->
 		_ ->
 			do_nothing
 	end,
+	ets:new(ar_data_sync, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(
+		ar_tx_blacklist_pending_headers,
+		[set, public, named_table, {read_concurrency, true}]
+	),
+	ets:new(ar_tx_blacklist_pending_data,
+		[set, public, named_table, {read_concurrency, true}]
+	),
+	ets:new(ar_tx_blacklist_offsets,
+		[ordered_set, public, named_table, {read_concurrency, true}]
+	),
 	{ok, Supervisor} = ar_sup:start_link(),
 	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_disksup,
@@ -358,8 +376,9 @@ start(normal, _Args) ->
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(max_emitters, MaxEmitters),
 	ar_meta_db:put(tx_propagation_parallelization, TXProp),
-	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
+	ar_meta_db:put(transaction_blacklist_urls, TransactionBlacklistURLs),
+	ar_meta_db:put(transaction_whitelist_files, TransactionWhitelistFiles),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
@@ -433,6 +452,12 @@ start(normal, _Args) ->
 			)
 	end,
 	ar_randomx_state:start(),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_tx_blacklist,
+		start => {ar_tx_blacklist_sup, start_link, [[]]},
+		type => supervisor,
+		shutdown => infinity
+	}),
 	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_data_sync,
 		start => {ar_data_sync_sup, start_link, [[]]},

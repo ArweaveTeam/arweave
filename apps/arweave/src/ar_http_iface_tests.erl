@@ -11,7 +11,13 @@ get_info_test() ->
 	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, release)),
 	?assertEqual(?CLIENT_VERSION, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, version)),
 	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, peers)),
-	?assertEqual(1, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, blocks)),
+	ar_util:do_until(
+		fun() ->
+			1 == ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, blocks)
+		end,
+		100,
+		2000
+	),
 	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, height)).
 
 %% @doc Ensure that transactions are only accepted once.
@@ -526,26 +532,6 @@ add_external_block_with_invalid_timestamp_test() ->
 add_rand_suffix(Bin) ->
 	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
 	iolist_to_binary([Bin, " - ", Suffix]).
-
-mine_illicit_tx_test() ->
-	[B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
-	TX = ar_tx:new(<<"BADCONTENT1">>),
-	ar_node:add_tx(Node, TX),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
-	ar_meta_db:put(content_policy_files, []),
-	ar_firewall:reload(),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
-	?assertEqual(<<"BADCONTENT1">>, (ar_storage:read_tx(TX#tx.id))#tx.data),
-	FilteredTX = ar_tx:new(<<"BADCONTENT1">>),
-	ar_node:add_tx(Node, FilteredTX),
-	ar_test_node:wait_until_receives_txs(Node, [FilteredTX]),
-	ar_meta_db:put(content_policy_files, [filename:dirname(?FILE) ++ "/../test/test_sig.txt"]),
-	ar_firewall:reload(),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 2),
-	?assertEqual(unavailable, ar_storage:read_tx(FilteredTX#tx.id)).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->

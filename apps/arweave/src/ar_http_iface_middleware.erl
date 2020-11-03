@@ -260,10 +260,10 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 				<<"application/etf">> -> get_sync_record_etf;
 				_ -> get_sync_record_etf
 			end,
-			case catch ar_data_sync:Fn() of
+			case ar_data_sync:Fn() of
 				{ok, Binary} ->
 					{200, #{}, Binary, Req};
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
+				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
 	end;
@@ -303,7 +303,7 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 				{error, invalid} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
 				{ok, ID} ->
-					case catch ar_data_sync:get_tx_offset(ID) of
+					case ar_data_sync:get_tx_offset(ID) of
 						{ok, {Offset, Size}} ->
 							ResponseBody = jiffy:encode(#{
 								offset => integer_to_binary(Offset),
@@ -314,7 +314,7 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 							{404, #{}, <<>>, Req};
 						{error, failed_to_read_offset} ->
 							{500, #{}, <<>>, Req};
-						{'EXIT', {timeout, {gen_server, call, _}}} ->
+						{error, timeout} ->
 							{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 					end
 			end
@@ -936,14 +936,14 @@ serve_tx_data(Req, #tx{ format = 2, id = ID } = TX) ->
 		true ->
 			{200, #{}, sendfile(DataFilename), Req};
 		false ->
-			case catch ar_data_sync:get_tx_data(ID) of
+			case ar_data_sync:get_tx_data(ID) of
 				{ok, Data} ->
 					{200, #{}, ar_util:encode(Data), Req};
 				{error, tx_data_too_big} ->
 					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
 				{error, not_found} ->
 					{200, #{}, <<>>, Req};
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
+				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
 	end.
@@ -967,14 +967,14 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 		{ok, Data} ->
 			{200, #{ <<"content-type">> => ContentType }, Data, Req};
 		{error, enoent} ->
-			case catch ar_data_sync:get_tx_data(TX#tx.id) of
+			case ar_data_sync:get_tx_data(TX#tx.id) of
 				{ok, Data} ->
 					{200, #{ <<"content-type">> => ContentType }, Data, Req};
 				{error, tx_data_too_big} ->
 					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
 				{error, not_found} ->
 					{200, #{ <<"content-type">> => ContentType }, <<>>, Req};
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
+				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
 	end.
@@ -1173,6 +1173,13 @@ handle_post_chunk(check_data_path_size, Proof, Req) ->
 		true ->
 			{400, #{}, jiffy:encode(#{ error => data_path_too_big }), Req};
 		false ->
+			handle_post_chunk(check_offset_field, Proof, Req)
+	end;
+handle_post_chunk(check_offset_field, Proof, Req) ->
+	case maps:is_key(offset, Proof) of
+		false ->
+			{400, #{}, jiffy:encode(#{ error => offset_field_required }), Req};
+		true ->
 			handle_post_chunk(check_offset_size, Proof, Req)
 	end;
 handle_post_chunk(check_offset_size, Proof, Req) ->
@@ -1192,7 +1199,7 @@ handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
 			handle_post_chunk(validate_proof, Proof, Req)
 	end;
 handle_post_chunk(validate_proof, Proof, Req) ->
-	case catch ar_data_sync:add_chunk(Proof) of
+	case ar_data_sync:add_chunk(Proof) of
 		ok ->
 			{200, #{}, <<>>, Req};
 		{error, data_root_not_found} ->
@@ -1205,7 +1212,7 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 			{500, #{}, <<>>, Req};
 		{error, invalid_proof} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req};
-		{'EXIT', {timeout, {gen_server, call, _}}} ->
+		{error, timeout} ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 

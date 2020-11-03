@@ -4,7 +4,9 @@
 
 -export([
 	start_link/1,
-	join/2, add_tip_block/2, add_block/1
+	join/2,
+	add_tip_block/2, add_block/1,
+	request_tx_removal/1
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -35,6 +37,10 @@ add_tip_block(B, RecentBI) ->
 %% @doc Add a block to the index and storage.
 add_block(B) ->
 	gen_server:cast(?MODULE, {add_block, B}).
+
+%% @doc Remove the given transaction.
+request_tx_removal(TXID) ->
+	gen_server:cast(?MODULE, {remove_tx, TXID}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -218,7 +224,12 @@ handle_cast(process_item, State) ->
 						last_picked => Height
 					}}
 			end
-	end.
+	end;
+
+handle_cast({remove_tx, TXID}, State) ->
+	{ok, _Size} = ar_storage:delete_tx(TXID),
+	ar_tx_blacklist:notify_about_removed_tx(TXID),
+	{noreply, State}.
 
 handle_call(_Msg, _From, State) ->
 	{reply, not_implemented, State}.
@@ -251,7 +262,8 @@ get_base_height([{H, _, _} | CurrentBI], CurrentHeight, RecentBI) ->
 add_block(B, State) ->
 	#{ db := DB, sync_record := SyncRecord } = State,
 	#block{ indep_hash = H, previous_block = PrevH, height = Height } = B,
-	case ar_storage:write_full_block(B) of
+	TXs = [TX || TX <- B#block.txs, not ar_tx_blacklist:is_tx_blacklisted(TX#tx.id)],
+	case ar_storage:write_full_block(B, TXs) of
 		ok ->
 			case ar_intervals:is_inside(SyncRecord, Height) of
 				true ->

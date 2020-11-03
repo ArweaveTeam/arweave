@@ -95,18 +95,17 @@
 
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
-	%% @doc The mapping absolute_end_offset -> absolute_start_offset
-	%% sorted by absolute_end_offset.
+	%% @doc A set of non-overlapping intervals of global byte offsets ((end, start))
+	%% denoting the synced data. End offsets are defined on [1, weave size], start
+	%% offsets are defined on [0, weave size).
 	%%
-	%% Every such pair denotes a synced interval on the [0, weave size]
-	%% interval. This mapping serves as a compact map of what is synced
-	%% by the node. No matter how big the weave is or how much of it
-	%% the node stores, this record can remain very small, compared to
-	%% storing all chunk and transaction identifiers, whose number can
-	%% effectively grow unlimited with time.
+	%% The set serves as a compact map of what is synced by the node. No matter
+	%% how big the weave is or how much of it the node stores, this record
+	%% can remain very small, compared to storing all chunk and transaction identifiers,
+	%% whose number can effectively grow unlimited with time.
 	%%
-	%% Every time a chunk is written to sync_record, it is also
-	%% written to the chunks_index.
+	%% The record may contain false positives. See the documentation of the
+	%% missing_chunks_index and missing_data_cursor fields for more details.
 	sync_record,
 	%% @doc The mapping peer -> sync_record containing sync records of the best peers.
 	peer_sync_records,
