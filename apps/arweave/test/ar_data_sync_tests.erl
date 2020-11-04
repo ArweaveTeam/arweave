@@ -2,8 +2,8 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("src/ar.hrl").
--include("src/ar_data_sync.hrl").
+-include_lib("arweave/src/ar.hrl").
+-include_lib("arweave/src/ar_data_sync.hrl").
 
 -import(ar_test_node, [
 	start/1,
@@ -11,17 +11,17 @@
 	connect_to_slave/0,
 	sign_tx/2,
 	sign_v1_tx/2,
-	wait_until_height/2,
-	slave_wait_until_height/2,
+	wait_until_height/1,
+	slave_wait_until_height/1,
 	post_and_mine/2,
 	get_tx_anchor/1,
 	slave_call/3,
 	disconnect_from_slave/0,
 	join_on_master/0,
-	assert_post_tx_to_slave/2,
-	assert_post_tx_to_master/2,
-	wait_until_receives_txs/2,
-	slave_mine/1,
+	assert_post_tx_to_slave/1,
+	assert_post_tx_to_master/1,
+	wait_until_receives_txs/1,
+	slave_mine/0,
 	read_block_when_stored/1
 ]).
 
@@ -233,7 +233,7 @@ rejects_chunks_exceeding_disk_pool_limit_test_() ->
 	{timeout, 60, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
 
 test_rejects_chunks_exceeding_disk_pool_limit() ->
-	{Master, Slave, Wallet} = setup_nodes(),
+	{_Master, _Slave, Wallet} = setup_nodes(),
 	Data1 = crypto:strong_rand_bytes(
 		(?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024) + 1
 	),
@@ -244,7 +244,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		)
 	),
 	{TX1, Chunks1} = tx(Wallet, {fixed_data, Data1, DataRoot1, Chunks1}),
-	assert_post_tx_to_master(Master, TX1),
+	assert_post_tx_to_master(TX1),
 	[{_, FirstProof1} | Proofs1] = build_proofs(TX1, Chunks1, [TX1], 0),
 	lists:foreach(
 		fun({_, Proof}) ->
@@ -272,7 +272,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		)
 	),
 	{TX2, Chunks2} = tx(Wallet, {fixed_data, Data2, DataRoot2, Chunks2}),
-	assert_post_tx_to_master(Master, TX2),
+	assert_post_tx_to_master(TX2),
 	Proofs2 = build_proofs(TX2, Chunks2, [TX2], 0),
 	lists:foreach(
 		fun({_, Proof}) ->
@@ -296,7 +296,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		)
 	),
 	{TX3, Chunks3} = tx(Wallet, {fixed_data, Data3, DataRoot3, Chunks3}),
-	assert_post_tx_to_master(Master, TX3),
+	assert_post_tx_to_master(TX3),
 	[{_, FirstProof3} | Proofs3] = build_proofs(TX3, Chunks3, [TX3], 0),
 	lists:foreach(
 		fun({_, Proof}) ->
@@ -311,7 +311,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
 		post_chunk(jiffy:encode(FirstProof3))
 	),
-	slave_mine(Slave),
+	slave_mine(),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -345,7 +345,7 @@ test_accepts_chunks() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk(jiffy:encode(ThirdProof))
 	),
-	slave_mine(Slave),
+	slave_mine(),
 	[{BH, _, _} | _] = wait_until_height(1),
 	B = read_block_when_stored(BH),
 	?assertMatch(
@@ -586,8 +586,8 @@ test_syncs_after_joining() ->
 	),
 	SlaveProofs2 = post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2),
 	slave_wait_until_syncs_chunks(SlaveProofs2),
-	Slave2 = join_on_master(),
-	slave_wait_until_height(Slave2, 3),
+	_Slave2 = join_on_master(),
+	slave_wait_until_height(3),
 	connect_to_slave(),
 	slave_wait_until_syncs_chunks(MasterProofs2),
 	slave_wait_until_syncs_chunks(MasterProofs3),

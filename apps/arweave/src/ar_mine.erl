@@ -15,6 +15,7 @@
 -include("ar.hrl").
 -include("ar_mine.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include("common.hrl").
 
 -record(state, {
 	parent, % miners parent process (initiator)

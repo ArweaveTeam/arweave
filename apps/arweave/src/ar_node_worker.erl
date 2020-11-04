@@ -75,7 +75,8 @@ init([]) ->
         {not_joined, true} ->
             ar_join:start(self(), Peers);
         {BI, true} ->
-            spawn(fun() -> start_from_block_index(self(), BI) end);
+            %spawn(fun() -> start_from_block_index(self(), BI) end);
+            start_from_block_index(BI);
         {_, false} ->
             do_nothing
     end,
@@ -173,7 +174,8 @@ handle_info({'DOWN', _Ref, process, PID, _Info}, State) ->
 		blocks_missing_txs => sets:del_element(BH, Set)
 	}};
 
-handle_info(_Message, State) ->
+handle_info(Info, State) ->
+    ?LOG_ERROR("unhandled info: ~p", [Info]),
 	{noreply, State}.
 
 terminate(Reason, #{ miner := Miner }) ->
@@ -204,7 +206,7 @@ record_mempool_size_metrics({HeaderSize, DataSize}) ->
 	prometheus_gauge:set(mempool_header_size_bytes, HeaderSize),
 	prometheus_gauge:set(mempool_data_size_bytes, DataSize).
 
-handle_task({join, BI, Blocks}, #{ node := Node } = State) ->
+handle_task({join, BI, Blocks}, State) ->
 	Current = element(1, hd(BI)),
 	B = hd(Blocks),
 	UpdatedState = reset_miner(
@@ -222,7 +224,7 @@ handle_task({join, BI, Blocks}, #{ node := Node } = State) ->
 			block_cache          => ar_block_cache:from_list(Blocks)
 		}
 	),
-	Node ! {sync_state, UpdatedState},
+	ar_node ! {sync_state, UpdatedState},
 	{noreply, UpdatedState};
 
 handle_task({gossip_message, Msg}, #{ gossip := GS } = State) ->
@@ -276,12 +278,12 @@ handle_task(mine, State) ->
 handle_task(automine, State) ->
 	{noreply, start_mining(State#{ automine => true })};
 
-handle_task({set_reward_addr, Addr}, #{ node := Node } = State) ->
-	Node ! {sync_reward_addr, Addr},
+handle_task({set_reward_addr, Addr}, State) ->
+	ar_node ! {sync_reward_addr, Addr},
 	{noreply, State#{ reward_addr => Addr }};
 
-handle_task({set_trusted_peers, Peers}, #{ node := Node } = State) ->
-	Node ! {sync_trusted_peers, Peers},
+handle_task({set_trusted_peers, Peers}, State) ->
+	ar_node ! {sync_trusted_peers, Peers},
 	{noreply, State#{ trusted_peers => Peers }};
 
 handle_task({add_peers, Peers}, #{ gossip := GS } = State) ->
@@ -293,7 +295,6 @@ handle_task({set_loss_probability, Prob}, #{ gossip := GS } = State) ->
 
 handle_task({filter_mempool, Iterator}, State) ->
 	#{
-		node := Node,
 		txs := TXs,
 		diff := Diff,
 		height := Height,
@@ -345,7 +346,7 @@ handle_task({filter_mempool, Iterator}, State) ->
 				_ ->
 					gen_server:cast(self(), {filter_mempool, NextIterator})
 			end,
-			Node ! {sync_dropped_mempool_txs, DroppedTXMap},
+			ar_node ! {sync_dropped_mempool_txs, DroppedTXMap},
 			{noreply, NewState}
 	end;
 
@@ -384,10 +385,10 @@ handle_gossip({_NewGS, UnknownMessage}, State) ->
 
 %% @doc Add the new transaction to the server state.
 handle_add_tx(State, TX, GS) ->
-	#{ node := Node, txs := TXs, mempool_size := MS} = State,
+	#{ txs := TXs, mempool_size := MS} = State,
 	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
 	IncreasedMempoolSize = increase_mempool_size(MS, TX),
-	Node ! {sync_mempool_tx, TX#tx.id, {TX, ready_for_mining}},
+	ar_node ! {sync_mempool_tx, TX#tx.id, {TX, ready_for_mining}},
 	{noreply, State#{
 		txs => maps:put(TX#tx.id, {TX, ready_for_mining}, TXs),
 		gossip => NewGS,
@@ -405,12 +406,12 @@ tx_mempool_size(#tx{ format = 2, data = Data }) ->
 
 %% @doc Add the new waiting transaction to the server state.
 handle_add_waiting_tx(State, #tx{ id = TXID } = TX, GS) ->
-	#{ node := Node, txs := WaitingTXs, mempool_size := MS } = State,
+	#{ txs := WaitingTXs, mempool_size := MS } = State,
 	{NewGS, _} = ar_gossip:send(GS, {add_waiting_tx, TX}),
 	case maps:is_key(TXID, WaitingTXs) of
 		false ->
 			IncreasedMempoolSize = increase_mempool_size(MS, TX),
-			Node ! {sync_mempool_tx, TXID, {TX, waiting}},
+			ar_node ! {sync_mempool_tx, TXID, {TX, waiting}},
 			{noreply, State#{
 				txs => maps:put(TXID, {TX, waiting}, WaitingTXs),
 				gossip => NewGS,
@@ -422,9 +423,9 @@ handle_add_waiting_tx(State, #tx{ id = TXID } = TX, GS) ->
 
 %% @doc Add the transaction to the mining pool, to be included in the mined block.
 handle_move_tx_to_mining_pool(State, #tx{ id = TXID } = TX, GS) ->
-	#{ node := Node, txs := TXs, mempool_size := MempoolSize } = State,
+	#{ txs := TXs, mempool_size := MempoolSize } = State,
 	{NewGS, _} = ar_gossip:send(GS, {move_tx_to_mining_pool, TX}),
-	Node ! {sync_mempool_tx, TX#tx.id, {TX, ready_for_mining}},
+	ar_node ! {sync_mempool_tx, TX#tx.id, {TX, ready_for_mining}},
 	case maps:get(TXID, TXs, not_found) of
 		not_found ->
 			{noreply, State#{
@@ -440,10 +441,10 @@ handle_move_tx_to_mining_pool(State, #tx{ id = TXID } = TX, GS) ->
 	end.
 
 handle_drop_waiting_txs(State, DroppedTXs, GS) ->
-	#{ node := Node, txs := TXs, mempool_size := MempoolSize } = State,
+	#{ txs := TXs, mempool_size := MempoolSize } = State,
 	{NewGS, _} = ar_gossip:send(GS, {drop_waiting_txs, DroppedTXs}),
 	{UpdatedTXs, DroppedTXMap, DecreasedMempoolSize} = drop_txs(DroppedTXs, TXs, MempoolSize),
-	Node ! {sync_dropped_mempool_txs, DroppedTXMap},
+	ar_node ! {sync_dropped_mempool_txs, DroppedTXMap},
 	{noreply, State#{
 		txs => UpdatedTXs,
 		gossip => NewGS,
@@ -500,7 +501,7 @@ handle_new_block(State, #block{ indep_hash = H, txs = TXs })
 	]),
 	{noreply, State};
 handle_new_block(State, BShadow) ->
-	#{ node := Node, block_cache := BlockCache } = State,
+	#{ block_cache := BlockCache } = State,
 	case ar_block_cache:get(BlockCache, BShadow#block.indep_hash) of
 		not_found ->
 			case ar_block_cache:get(BlockCache, BShadow#block.previous_block) of
@@ -510,7 +511,7 @@ handle_new_block(State, BShadow) ->
 				_ ->
 					UpdatedBlockCache = ar_block_cache:add(BlockCache, BShadow),
 					gen_server:cast(self(), apply_block),
-					Node ! {sync_block_cache, UpdatedBlockCache},
+					ar_node ! {sync_block_cache, UpdatedBlockCache},
 					{noreply, State#{ block_cache => UpdatedBlockCache }}
 			end;
 		_ ->
@@ -537,7 +538,6 @@ apply_block(#{ block_cache := BlockCache, blocks_missing_txs := BlocksMissingTXs
 
 apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 	#{
-		node := Node,
 		txs := Mempool,
 		block_cache := BlockCache,
 		block_index := BI,
@@ -558,7 +558,7 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 				error ->
 					BH = B#block.indep_hash,
 					UpdatedBlockCache = ar_block_cache:remove(BlockCache, BH),
-					Node ! {sync_block_cache, UpdatedBlockCache},
+					ar_node ! {sync_block_cache, UpdatedBlockCache},
 					{noreply, State#{ block_cache => UpdatedBlockCache }};
 				{ok, RootHash} ->
 					B2 = B#block{ wallet_list = RootHash },
@@ -577,7 +577,7 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 							]),
 							BH = B#block.indep_hash,
 							UpdatedBlockCache = ar_block_cache:remove(BlockCache, BH),
-							Node ! {sync_block_cache, UpdatedBlockCache},
+							ar_node ! {sync_block_cache, UpdatedBlockCache},
 							{noreply, State#{ block_cache => UpdatedBlockCache }};
 						valid ->
 							UpdatedState =
@@ -678,17 +678,15 @@ apply_validated_block(#{ cumulative_diff := CDiff } = State, B, _Blocks, _BI, _B
 		when B#block.cumulative_diff =< CDiff ->
 	%% The block is from the longest fork, but not the latest known block from there.
 	#{
-		node := Node,
 		block_cache := BlockCache
 	} = State,
 	UpdatedBlockCache = ar_block_cache:add_validated(BlockCache, B),
 	gen_server:cast(self(), apply_block),
 	log_applied_block(B),
-	Node ! {sync_block_cache, UpdatedBlockCache},
+	ar_node ! {sync_block_cache, UpdatedBlockCache},
 	State#{ block_cache => UpdatedBlockCache };
 apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
 	#{
-		node := Node,
 		block_cache := BlockCache,
 		txs := TXs,
 		mempool_size := MempoolSize
@@ -761,7 +759,7 @@ apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
 		wallet_list      => B#block.wallet_list,
 		block_cache      => UpdatedBlockCache
 	}),
-	Node ! {sync_state, UpdatedState},
+	ar_node ! {sync_state, UpdatedState},
 	UpdatedState.
 
 log_applied_block(B) ->
@@ -821,7 +819,6 @@ start_mining(#{ block_index := not_joined } = StateIn) ->
 	StateIn;
 start_mining(StateIn) ->
 	#{
-		node := Node,
 		block_index := BI,
 		txs := TXs,
 		reward_addr := RewardAddr,
@@ -866,7 +863,7 @@ start_mining(StateIn) ->
 				),
 				RewardAddr,
 				Tags,
-				Node,
+				ar_node,
 				BlockTXPairs,
 				BI
 			),
@@ -960,13 +957,14 @@ read_hash_list_2_0_for_1_0_blocks() ->
     end.
 
 
-start_from_block_index(Node, [#block{} = GenesisB]) ->
+start_from_block_index([#block{} = GenesisB]) ->
     BI = [ar_util:block_index_entry_from_block(GenesisB)],
     ar_randomx_state:init(BI, []),
-    Node ! {join, BI, [GenesisB]};
-start_from_block_index(Node, BI) ->
+    ar_node ! {join, BI, [GenesisB]};
+
+start_from_block_index(BI) ->
     ar_randomx_state:init(BI, []),
-    Node ! {join, BI, read_recent_blocks(BI)}.
+    ar_node ! {join, BI, read_recent_blocks(BI)}.
 
 read_recent_blocks(not_joined) ->
     [];

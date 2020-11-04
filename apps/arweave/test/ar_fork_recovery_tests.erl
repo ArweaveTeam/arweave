@@ -1,12 +1,12 @@
 -module(ar_fork_recovery_tests).
 
--include("src/ar.hrl").
+-include_lib("arweave/src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
 	start/1, slave_start/1, connect_to_slave/0, disconnect_from_slave/0,
 	slave_mine/0,
-	wait_until_height/1, slave_wait_until_height/1,
+	wait_until_height/1, slave_wait_until_height/1, assert_slave_wait_until_receives_txs/1,
 	sign_tx/2, slave_add_tx/1,
 	read_block_when_stored/1
 ]).

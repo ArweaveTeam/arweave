@@ -29,6 +29,7 @@
 -include_lib("arweave/src/ar.hrl").
 -include_lib("arweave/src/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("common.hrl").
 
 start(no_block) ->
 	[B0] = ar_weave:init([]),

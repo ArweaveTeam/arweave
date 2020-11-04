@@ -54,11 +54,10 @@
 
 %% Internal state definition.
 -record(state, {
-    block_index,
+    block_index = not_joined,
     txs = maps:new(),
     trusted_peers,
-    joined = false,
-    current,
+    current = not_joined,
     height = -1,
     hash_list_2_0_for_1_0_blocks,
     diff,
@@ -306,7 +305,7 @@ handle_call({get_pending_txs, Opts}, _From, State) ->
 handle_call(get_height, _From, State) ->
     {reply, State#state.height, State};
 
-handle_call(_Request, _From, #state{joined = false} = State) ->
+handle_call(_Request, _From, #state{current = not_joined} = State) ->
     {reply, not_joined, State};
 
 handle_call(get_blockindex, _From, State) ->
@@ -555,8 +554,10 @@ handle_info({new_block, Peer, Height, NewB, BDS, ReceiveTimestamp}, State) ->
     {noreply, State};
 
 handle_info({work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}, State) ->
-    case State#state.joined of
-        true ->
+    case State#state.current of
+        not_joined ->
+            {noreply, State};
+        _ ->
             gen_server:cast(ar_node_worker, {
                 work_complete,
                 BaseBH,
@@ -566,8 +567,6 @@ handle_info({work_complete, BaseBH, NewB, MinedTXs, BDS, POA, _HashesTried}, Sta
                 POA
             }),
 
-            {noreply, State};
-        _ ->
             {noreply, State}
     end;
 

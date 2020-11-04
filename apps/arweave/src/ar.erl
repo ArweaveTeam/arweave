@@ -297,7 +297,7 @@ start(normal, _Args) ->
         template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
     },
     logger:set_handler_config(default, formatter, {logger_formatter, FormatterConsole}),
-    logger:set_application_level(arweave, info),
+    logger:set_application_level(arweave, error),
 
     % Check whether we have list of valid peers
     %ValidPeers = ar_join:filter_peer_list(Config#config.peers),

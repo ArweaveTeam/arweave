@@ -25,6 +25,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
+-include("common.hrl").
+
 %%% Reads and writes blocks from disk.
 
 -define(DIRECTORY_SIZE_TIMER, 300000).
