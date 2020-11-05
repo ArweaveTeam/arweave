@@ -620,7 +620,7 @@ handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
         false ->
             not_joined(Req);
         true ->
-            {ok, List} = ar_node:get_block_txs_pairs(),
+            List = ar_node:get_block_txs_pairs(),
             SuggestedAnchor =
                 element(1, lists:nth(min(length(List), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, List)),
             {200, #{}, ar_util:encode(SuggestedAnchor), Req}
@@ -1051,7 +1051,7 @@ handle_post_tx(Req, PeerIP, TX, Height) ->
 
 handle_post_tx(Req, PeerIP, TX, Height, Wallets) ->
     Diff = ar_node:get_current_diff(),
-    {ok, BlockTXPairs} = ar_node:get_block_txs_pairs(),
+    BlockTXPairs = ar_node:get_block_txs_pairs(),
     MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
     case ar_tx_replay_pool:verify_tx(
         TX,

@@ -90,6 +90,7 @@ start(B0, RewardAddr) ->
 		mining_addr = RewardAddr
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
+    wait_until_joined(),
 	{whereis(ar_node), B0}.
 
 join_on_slave() ->
@@ -146,13 +147,13 @@ disconnect_from_slave() ->
 	ar_meta_db:put({peer, {127, 0, 0, 1, SlavePort}}, #performance{}),
 	MasterPort = ar_meta_db:get(port),
 	slave_call(ar_meta_db, put, [{peer, {127, 0, 0, 1, MasterPort}}]),
-	SlaveBridge = slave_call(erlang, whereis, [ar_bridge]),
-	slave_call(ar_bridge, set_remote_peers, [SlaveBridge, []]),
-	MasterBridge = whereis(ar_bridge),
-	ar_bridge:set_remote_peers(MasterBridge, []),
+	_SlaveBridge = slave_call(erlang, whereis, [ar_bridge]),
+	slave_call(ar_bridge, set_remote_peers, [[]]),
+	_MasterBridge = whereis(ar_bridge),
+	ar_bridge:set_remote_peers([]),
 	ar_node:set_trusted_peers([]),
-	SlaveNode = slave_call(erlang, whereis, [ar_node]),
-	slave_call(ar_node, set_trusted_peers, [SlaveNode, []]).
+	_SlaveNode = slave_call(erlang, whereis, [ar_node]),
+	slave_call(ar_node, set_trusted_peers, [[]]).
 
 gossip(off) ->
 	ar_node:set_loss_probability(1);
@@ -175,6 +176,13 @@ slave_add_tx(TX) ->
 
 slave_mine() ->
 	slave_call(ar_node, mine, []).
+
+wait_until_joined() ->
+    ar_util:do_until(
+        fun() -> ar_node:is_joined() end,
+        100,
+        60*1000
+     ).
 
 wait_until_height(TargetHeight) ->
 	{ok, BI} = ar_util:do_until(

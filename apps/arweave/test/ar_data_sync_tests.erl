@@ -29,8 +29,8 @@ rejects_invalid_chunks_test_() ->
 	{timeout, 20, fun test_rejects_invalid_chunks/0}.
 
 test_rejects_invalid_chunks() ->
-	{Master, _, _Wallet} = setup_nodes(),
-	ar_util:do_until(fun() -> ar_node:is_joined(Master) end, 100, 10000),
+	{_Master, _, _Wallet} = setup_nodes(),
+	ar_util:do_until(fun() -> ar_node:is_joined() end, 100, 10000),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_too_big\"}">>, _, _}},
 		post_chunk(jiffy:encode(#{

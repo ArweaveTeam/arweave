@@ -10,6 +10,7 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+-include("common.hrl").
 -include("ar_data_sync.hrl").
 
 %% @doc The number of recent blocks tracked, used for erasing the orphans.

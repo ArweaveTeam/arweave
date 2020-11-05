@@ -15,6 +15,7 @@
 ]).
 
 -include("ar.hrl").
+-include("common.hrl").
 -include("ar_data_sync.hrl").
 
 %%%===================================================================
@@ -304,30 +305,35 @@ handle_cast({add_block, B, SizeTaggedTXs}, State) ->
 	{noreply, State};
 
 handle_cast(update_peer_sync_records, State) ->
-	Peers = ar_bridge:get_remote_peers(),
-	BestPeers = pick_random_peers(
-		Peers,
-		?CONSULT_PEER_RECORDS_COUNT,
-		?PICK_PEERS_OUT_OF_RANDOM_N
-	),
-	Self = self(),
-	spawn(
-		fun() ->
-			PeerSyncRecords = lists:foldl(
-				fun(Peer, Acc) ->
-					case ar_http_iface_client:get_sync_record(Peer) of
-						{ok, SyncRecord} ->
-							maps:put(Peer, SyncRecord, Acc);
-						_ ->
-							Acc
-					end
-				end,
-				#{},
-				BestPeers
-			),
-			gen_server:cast(Self, {update_peer_sync_records, PeerSyncRecords})
-		end
-	),
+	case whereis(ar_bridge) of
+		undefined ->
+			timer:apply_after(500, gen_server, cast, [self(), update_peer_sync_records]);
+		_ ->
+	        Peers = ar_bridge:get_remote_peers(),
+	        BestPeers = pick_random_peers(
+	        	Peers,
+	        	?CONSULT_PEER_RECORDS_COUNT,
+	        	?PICK_PEERS_OUT_OF_RANDOM_N
+	        ),
+	        Self = self(),
+	        spawn(
+	        	fun() ->
+	        		PeerSyncRecords = lists:foldl(
+	        			fun(Peer, Acc) ->
+	        				case ar_http_iface_client:get_sync_record(Peer) of
+	        					{ok, SyncRecord} ->
+	        						maps:put(Peer, SyncRecord, Acc);
+	        					_ ->
+	        						Acc
+	        				end
+	        			end,
+	        			#{},
+	        			BestPeers
+	        		),
+	        		gen_server:cast(Self, {update_peer_sync_records, PeerSyncRecords})
+	        	end
+	        )
+    end,
 	{noreply, State};
 
 handle_cast({update_peer_sync_records, PeerSyncRecords}, State) ->

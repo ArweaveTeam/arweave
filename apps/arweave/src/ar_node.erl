@@ -257,6 +257,7 @@ init([]) ->
     process_flag(trap_exit, true),
 
     {ok, Config} = application:get_env(arweave, config),
+    Peers = ar_join:filter_peer_list(Config#config.peers),
 
     add_peers(ar_webhook:start(Config#config.webhooks)),
 
@@ -265,7 +266,7 @@ init([]) ->
     ar_randomx_state:start(),
     ar_randomx_state:start_block_polling(),
 
-    {ok, #state{}}.
+    {ok, #state{trusted_peers = Peers}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -539,7 +540,6 @@ handle_info({sync_state, NewStateValues}, State) ->
                 block_cache = BlockCache,
                 mempool_size = MemPoolSize,
                 reward_pool = RewardPool
-
               },
 
     {noreply, State1};
@@ -578,7 +578,6 @@ handle_info({join, BI, Blocks}, State) ->
 
     ar_header_sync:join(BI, Blocks),
     ar_data_sync:join(BI),
-    gen_server:cast(ar_node_worker, {join, BI, Blocks}),
 
     case Blocks of
         [B] ->
@@ -587,6 +586,7 @@ handle_info({join, BI, Blocks}, State) ->
             ok
     end,
 
+    gen_server:cast(ar_node_worker, {join, BI, Blocks}),
     {noreply, State};
 
 handle_info(Info, State) ->

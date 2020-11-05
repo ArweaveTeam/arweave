@@ -124,7 +124,7 @@ group(Grouper, [Item | List], Acc) ->
 get_balance_test() ->
 	{_Priv1, Pub1} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), 10000, <<>>}]),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
@@ -140,8 +140,8 @@ get_balance_test() ->
 			peer => {127, 0, 0, 1, 1984},
 			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
 		}),
-	ar_node:mine(Node),
-	ar_test_node:wait_until_height(Node, 1),
+	ar_node:mine(),
+	ar_test_node:wait_until_height(1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -211,8 +211,8 @@ get_block_by_hash_test() ->
 %% @doc Ensure that blocks can be received via a height.
 get_block_by_height_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
-	ar_test_node:wait_until_height(Node, 0),
+	{_Node, _} = ar_test_node:start(B0),
+	ar_test_node:wait_until_height(0),
 	{_, B1} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}], 0),
 	?assertEqual(
 		B0#block{ hash_list = unset, wallet_list = not_set, size_tagged_txs = unset },
@@ -224,9 +224,9 @@ get_current_block_test_() ->
 
 test_get_current_block() ->
 	[B0] = ar_weave:init([]),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	ar_util:do_until(
-		fun() -> B0#block.indep_hash == ar_node:get_current_block_hash(Node) end,
+		fun() -> B0#block.indep_hash == ar_node:get_current_block_hash() end,
 		100,
 		2000
 	),
@@ -588,9 +588,9 @@ get_subfields_of_tx_test() ->
 %% @doc Correctly check the status of pending is returned for a pending transaction
 get_pending_tx_test() ->
 	[B0] = ar_weave:init(),
-	{Node, _} = ar_test_node:start(B0),
+	{_Node, _} = ar_test_node:start(B0),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
-	ar_test_node:wait_until_receives_txs(Node, [TX]),
+	ar_test_node:wait_until_receives_txs([TX]),
 	%write a get_tx function like get_block
 	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_http:req(#{

@@ -218,8 +218,7 @@ handle_cast(emitter_go, State) ->
 				State;
 			false ->
 				{{_, {TX, {TXHeaderSize, TXDataSize}}}, NewQ} = gb_sets:take_largest(Q),
-				Node = whereis(ar_node),
-				{Peers, TrustedPeers} = get_peers(Node),
+				{Peers, TrustedPeers} = get_peers(),
 				case Peers of
 					[] ->
 						gen_server:cast(?MODULE, {emitter_finished, TX}),
@@ -290,12 +289,11 @@ handle_cast({emitted_tx_to_peer, {Reply, TX}}, State = #state{ emit_map = EmitMa
 	end;
 
 handle_cast({emitter_finished, TX}, State) ->
-	Bridge = whereis(ar_bridge),
 	timer:apply_after(
 		ar_node_utils:calculate_delay(tx_propagated_size(TX)),
 		ar_bridge,
 		move_tx_to_mining_pool,
-		[Bridge, TX]
+		[TX]
 	),
 	timer:apply_after(?EMITTER_INTER_WAIT, gen_server, cast, [?MODULE, emitter_go]),
 	{noreply, State};
@@ -333,10 +331,10 @@ maybe_drop(Q, {HeaderSize, DataSize} = Size, {MaxHeaderSize, MaxDataSize} = MaxS
 			{Q, Size, lists:filter(fun(TX) -> TX /= none end, DroppedTXs)}
 	end.
 
-get_peers(Node) ->
+get_peers() ->
 	Peers =
 		lists:sublist(ar_bridge:get_remote_peers(), ar_meta_db:get(max_propagation_peers)),
-	TrustedPeers = ar_node:get_trusted_peers(Node),
+	TrustedPeers = ar_node:get_trusted_peers(),
 	{join_peers(Peers, TrustedPeers), TrustedPeers}.
 
 join_peers(Peers, [TrustedPeer | TrustedPeers]) ->

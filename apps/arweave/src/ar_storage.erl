@@ -879,6 +879,7 @@ store_and_retrieve_block_test() ->
         2000
     ),
     BH1 = element(1, hd(BI1)),
+    receive after 1000 -> ok end,
     ?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(BH1)),
     ?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(2, BI1)).
 
