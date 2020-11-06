@@ -76,7 +76,8 @@ test_uses_blacklists() ->
 				%% Serves some valid TX IDs (from the BadTXIDs list) and a line
 				%% with invalid Base64URL.
 				"http://localhost:1985/bad/and/good"
-			]
+			],
+			requests_per_minute_limit = 5000
 		}),
 	connect_to_slave(),
 	lists:foreach(
@@ -299,5 +300,6 @@ teardown() ->
 	application:set_env(arweave, config, Config#config{
 		transaction_blacklist_files = [],
 		transaction_blacklist_urls = [],
-		transaction_whitelist_files = []
+		transaction_whitelist_files = [],
+		requests_per_minute_limit = ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT
 	}).
