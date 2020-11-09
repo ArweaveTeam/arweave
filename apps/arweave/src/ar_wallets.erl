@@ -26,6 +26,7 @@
 
 -include("ar.hrl").
 -include("ar_wallets.hrl").
+-include("common.hrl").
 
 %%%===================================================================
 %%% Public interface.
