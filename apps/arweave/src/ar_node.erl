@@ -266,6 +266,9 @@ init([]) ->
     ar_randomx_state:start(),
     ar_randomx_state:start_block_polling(),
 
+    %% Start the first node in the gossip network (with HTTP interface).
+    ok = ar_http_iface_server:start(),
+
     {ok, #state{trusted_peers = Peers}}.
 
 %%--------------------------------------------------------------------

@@ -1,23 +1,10 @@
 -module(ar_tx_db).
--export([start/0, get_error_codes/1, put_error_codes/2, ensure_error/1, clear_error_codes/1]).
+-export([get_error_codes/1, put_error_codes/2, ensure_error/1, clear_error_codes/1]).
 -include_lib("eunit/include/eunit.hrl").
 -include("ar.hrl").
 %%% Database for storing error codes for failed transactions, so that a user
 %%% can get the error reason when polling the status of a transaction. The entries
 %%% have a TTL. The DB is a singleton.
-
-%% @doc Create a DB. This will fail if the DB already exists.
-start() ->
-	spawn(
-		fun() ->
-			ar:info("starting tx db"),
-			ets:new(?MODULE, [set, public, named_table]),
-			receive stop -> ok end
-		end
-	),
-	% Add a short wait to ensure that the table has been created
-	% before returning.
-	receive after 250 -> ok end.
 
 %% @doc Put an Erlang term into the meta DB. Typically these are
 %% write-once values.

@@ -3,6 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/src/ar.hrl").
+-include_lib("arweave/include/common.hrl").
 -include_lib("arweave/src/ar_data_sync.hrl").
 
 -import(ar_test_node, [
@@ -30,7 +31,7 @@ rejects_invalid_chunks_test_() ->
 
 test_rejects_invalid_chunks() ->
 	{_Master, _, _Wallet} = setup_nodes(),
-	ar_util:do_until(fun() -> ar_node:is_joined() end, 100, 10000),
+	%ar_util:do_until(fun() -> ar_node:is_joined() end, 100, 10000),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_too_big\"}">>, _, _}},
 		post_chunk(jiffy:encode(#{
@@ -336,6 +337,7 @@ accepts_chunks_test_() ->
 test_accepts_chunks() ->
 	{_Master, _Slave, Wallet} = setup_nodes(),
 	{TX, Chunks} = tx(Wallet, {custom_split, 3}),
+
 	assert_post_tx_to_slave(TX),
 	wait_until_receives_txs([TX]),
 	[{EndOffset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] =
@@ -507,6 +509,7 @@ fork_recovery_test_() ->
 test_fork_recovery() ->
 	{Master, Slave, Wallet} = setup_nodes(),
 	{TX1, Chunks1} = tx(Wallet, {custom_split, 3}),
+
 	B1 = post_and_mine(#{ miner => {master, Master}, await_on => {slave, Slave} }, [TX1]),
 	Proofs1 = post_proofs_to_master(B1, TX1, Chunks1),
 	slave_wait_until_syncs_chunks(Proofs1),
@@ -867,6 +870,7 @@ wait_until_syncs_chunks(Peer, Proofs) ->
 		fun({EndOffset, Proof}) ->
 			true = ar_util:do_until(
 				fun() ->
+                        
 					case get_chunk(Peer, EndOffset) of
 						{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
 							FetchedProof = ar_serialize:json_map_to_chunk_proof(

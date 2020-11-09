@@ -43,7 +43,7 @@ do_join(_Node, _RawPeers, NewB, _BI) when not ?IS_BLOCK(NewB) ->
 		{reason, cannot_get_full_block_from_peer},
 		{received_instead, NewB}
 	]);
-do_join(Node, Peers, NewB, BI) ->
+do_join(_Node, Peers, NewB, BI) ->
     %FIXME lets use the common way of logging via ?LOG_[INFO|ERROR|WARNING|NOTICE]
 	%ar:report_console([
 	%	{event, joining_network},
@@ -56,7 +56,7 @@ do_join(Node, Peers, NewB, BI) ->
 	ar_arql_db:populate_db(?BI_TO_BHL(BI)),
 	ar_randomx_state:init(BI, Peers),
 	Blocks = get_block_and_trail(Peers, NewB, BI),
-	Node ! {join, BI, Blocks},
+	ar_node ! {join, BI, Blocks},
 	join_peers(Peers),
 
 	?LOG_INFO("Joined the Arweave network successfully.").

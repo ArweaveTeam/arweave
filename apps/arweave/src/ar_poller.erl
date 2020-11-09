@@ -42,12 +42,12 @@ init([]) ->
     ar:info([{event, ar_poller_start}]),
 
     {ok, Config} = application:get_env(arweave, config),
+    {ok, _} = schedule_polling(Config#config.polling * 1000),
 
     {ok, #{
         trusted_peers => ar_join:filter_peer_list(Config#config.peers),
         last_seen_height => -1,
-        interval => schedule_polling(Config#config.polling * 1000)
-    }}.
+        interval => Config#config.polling }}.
 
 handle_cast(poll_block, State) ->
     #{

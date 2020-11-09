@@ -322,18 +322,14 @@ start(normal, _Args) ->
             do_nothing
     end,
 
-
     %% Starting Prometheus metrics subsystem
     prometheus_registry:register_collector(prometheus_process_collector),
     prometheus_registry:register_collector(ar_metrics_collector),
     % Register custom metrics.
     ar_metrics:register(Config#config.metrics_dir),
 
-
     %% Start other apps which we depend on.
     inets:start(), % FIXME: should be removed (we already have http client - gun)
-
-    ar_tx_db:start(),
 
     % FIXME remove it later. 
     %ar:info(
@@ -352,8 +348,6 @@ start(normal, _Args) ->
     %),
     ok = prepare_graphql(),
 
-    %% Start the first node in the gossip network (with HTTP interface).
-    ok = ar_http_iface_server:start(),
 
     case Config#config.ipfs_pin of
         false -> ok;

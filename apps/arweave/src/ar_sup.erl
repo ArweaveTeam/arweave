@@ -33,6 +33,8 @@ init([]) ->
 	ets:new(ar_meta_db, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(blacklist, [set, public, named_table]),
 	ets:new(ignored_ids, [set, public, named_table]),
+    ets:new(ar_tx_db, [set, public, named_table]),
+
     {ok, { {one_for_one, 5, 10}, [
         ?CHILD(ar_meta_db, worker),
         ?CHILD(ar_arql_db, worker),

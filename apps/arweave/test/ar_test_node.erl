@@ -55,7 +55,9 @@ slave_start(B0, RewardAddr) ->
 		_ ->
 			wallet_list_initialized_on_slave
 	end,
-	slave_call(?MODULE, start, [B0, RewardAddr]).
+	Slave = slave_call(?MODULE, start, [B0, RewardAddr]),
+    slave_wait_until_joined(),
+    Slave.
 
 stop() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -147,12 +149,9 @@ disconnect_from_slave() ->
 	ar_meta_db:put({peer, {127, 0, 0, 1, SlavePort}}, #performance{}),
 	MasterPort = ar_meta_db:get(port),
 	slave_call(ar_meta_db, put, [{peer, {127, 0, 0, 1, MasterPort}}]),
-	_SlaveBridge = slave_call(erlang, whereis, [ar_bridge]),
 	slave_call(ar_bridge, set_remote_peers, [[]]),
-	_MasterBridge = whereis(ar_bridge),
 	ar_bridge:set_remote_peers([]),
 	ar_node:set_trusted_peers([]),
-	_SlaveNode = slave_call(erlang, whereis, [ar_node]),
 	slave_call(ar_node, set_trusted_peers, [[]]).
 
 gossip(off) ->
@@ -180,6 +179,13 @@ slave_mine() ->
 wait_until_joined() ->
     ar_util:do_until(
         fun() -> ar_node:is_joined() end,
+        100,
+        60*1000
+     ).
+
+slave_wait_until_joined() ->
+    ar_util:do_until(
+        fun() -> slave_call(ar_node, is_joined, []) end,
         100,
         60*1000
      ).
