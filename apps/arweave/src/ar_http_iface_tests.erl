@@ -466,9 +466,9 @@ add_external_block_with_invalid_timestamp_test() ->
 	ar_blacklist_middleware:reset(),
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
-	{Slave, _} = ar_test_node:slave_start(B0),
-	ar_test_node:slave_mine(Slave),
-	BI = ar_test_node:assert_slave_wait_until_height(Slave, 1),
+	{_Slave, _} = ar_test_node:slave_start(B0),
+	ar_test_node:slave_mine(),
+	BI = ar_test_node:assert_slave_wait_until_height(1),
 	Peer = {127, 0, 0, 1, 1984},
 	B1Shadow =
 		(ar_test_node:slave_call(ar_storage, read_block, [hd(BI)]))#block{

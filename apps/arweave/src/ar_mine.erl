@@ -868,8 +868,8 @@ test_excludes_no_longer_valid_txs() ->
 	Address = ar_wallet:to_address(Pub),
 	Wallets = [{Address, ?AR(1000000000000), <<>>}],
 	[B] = ar_weave:init(Wallets, Diff),
-	{Node, _} = ar_test_node:start(B),
-	BI = ar_test_node:wait_until_height(Node, 0),
+	{_Node, _} = ar_test_node:start(B),
+	BI = ar_test_node:wait_until_height(0),
 	Run = fun() ->
 		Now = os:system_time(seconds),
 		%% The transaction is invalid because its fee is based on a timestamp from the future.
@@ -911,7 +911,7 @@ run_until(Pred, Fun) ->
 start_stop_test() ->
 	[B] = ar_weave:init(),
 	{Node, _} = ar_test_node:start(B),
-	BI = ar_test_node:wait_until_height(Node, 0),
+	BI = ar_test_node:wait_until_height(0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
 	PID = start(B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], BI),
 	timer:sleep(500),

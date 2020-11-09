@@ -1,20 +1,20 @@
 -module(ar_tx_queue_tests).
 
--include("src/ar.hrl").
+-include_lib("arweave/src/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [assert_post_tx_to_slave/2, disconnect_from_slave/0]).
--import(ar_test_node, [assert_wait_until_receives_txs/2, wait_until_height/2]).
+-import(ar_test_node, [assert_post_tx_to_slave/1, disconnect_from_slave/0]).
+-import(ar_test_node, [assert_wait_until_receives_txs/1, wait_until_height/1]).
 -import(ar_test_node, [sign_tx/2, sign_v1_tx/2, get_tx_anchor/0]).
--import(ar_test_node, [get_tx_price/1, slave_mine/1, slave_call/3, connect_to_slave/0]).
--import(ar_test_node, [post_tx_to_master/3, read_block_when_stored/1]).
+-import(ar_test_node, [get_tx_price/1, slave_mine/0, slave_call/3, connect_to_slave/0]).
+-import(ar_test_node, [post_tx_to_master/2, read_block_when_stored/1]).
 
 txs_broadcast_order_test_() ->
 	{timeout, 60, fun test_txs_broadcast_order/0}.
 
 test_txs_broadcast_order() ->
 	%% Set up two nodes with HTTP.
-	{MasterNode, SlaveNode, _} = setup(),
+	{_MasterNode, _SlaveNode, _} = setup(),
 	%% Create 4 transactions with the same size
 	%% but different rewards.
 	TX1 = ar_tx:new(<<"DATA1">>, ?AR(1)),
@@ -29,10 +29,10 @@ test_txs_broadcast_order() ->
 	%% the order in which transactions are
 	%% received by the node can be asserted.
 	ar_tx_queue:set_max_emitters(1),
-	assert_post_tx_to_slave(SlaveNode, TX1),
-	assert_post_tx_to_slave(SlaveNode, TX2),
-	assert_post_tx_to_slave(SlaveNode, TX3),
-	assert_post_tx_to_slave(SlaveNode, TX4),
+	assert_post_tx_to_slave(TX1),
+	assert_post_tx_to_slave(TX2),
+	assert_post_tx_to_slave(TX3),
+	assert_post_tx_to_slave(TX4),
 	ar_util:do_until(
 		fun() ->
 			case length(ar_tx_queue:show_queue()) of
@@ -50,7 +50,7 @@ test_txs_broadcast_order() ->
 	ar_tx_queue:set_pause(false),
 	ar_util:do_until(
 		fun() ->
-			TXs = encode_txs(ar_node:get_mined_txs(MasterNode)),
+			TXs = encode_txs(ar_node:get_mined_txs()),
 			case length(TXs) of
 				4 ->
 					?assertEqual(lists:sort(Expected), lists:sort(TXs)),
@@ -142,7 +142,7 @@ test_txs_are_included_in_blocks_sorted_by_utility_test_() ->
 	{timeout, 20, fun test_txs_are_included_in_blocks_sorted_by_utility/0}.
 
 test_txs_are_included_in_blocks_sorted_by_utility() ->
-	{MasterNode, SlaveNode, Wallet} = setup(),
+	{_MasterNode, _SlaveNode, Wallet} = setup(),
 	TXs = [
 		%% Base size, extra reward.
 		sign_v1_tx(Wallet, #{ reward => get_tx_price(0) + ?AR(1), last_tx => get_tx_anchor() }),
@@ -157,15 +157,15 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 	lists:foldl(
 		fun(_, ToPost) ->
 			TX = ar_util:pick_random(ToPost),
-			assert_post_tx_to_slave(SlaveNode, TX),
+			assert_post_tx_to_slave(TX),
 			ToPost -- [TX]
 		end,
 		TXs,
 		TXs
 	),
-	assert_wait_until_receives_txs(MasterNode, TXs),
-	slave_mine(SlaveNode),
-	BI = wait_until_height(MasterNode, 1),
+	assert_wait_until_receives_txs(TXs),
+	slave_mine(),
+	BI = wait_until_height(1),
 	B = read_block_when_stored(hd(BI)),
 	?assertEqual(
 		lists:map(fun(TX) -> TX#tx.id end, TXs),
@@ -181,14 +181,14 @@ format_2_txs_are_gossiped_test_() ->
 	{timeout, 60, fun format_2_txs_are_gossiped/0}.
 
 format_2_txs_are_gossiped() ->
-	{MasterNode, SlaveNode, Wallet} = setup(),
+	{_MasterNode, _SlaveNode, Wallet} = setup(),
 	TXParams = #{format => 2, data => <<"TXDATA">>, reward => ?AR(1)},
 	SignedTX = sign_tx(Wallet, TXParams),
 	SignedTXHeader = SignedTX#tx{ data = <<>> },
-	assert_post_tx_to_slave(SlaveNode, SignedTX),
-	assert_wait_until_receives_txs(MasterNode, [SignedTXHeader]),
-	slave_mine(SlaveNode),
-	BI = wait_until_height(MasterNode, 1),
+	assert_post_tx_to_slave(SignedTX),
+	assert_wait_until_receives_txs([SignedTXHeader]),
+	slave_mine(),
+	BI = wait_until_height(1),
 	#block{ txs = [MasterTXID] } = ar_storage:read_block(hd(BI)),
 	?assertEqual(SignedTXHeader#tx.id, MasterTXID),
 	?assertEqual(SignedTXHeader, ar_storage:read_tx(MasterTXID)),
@@ -209,7 +209,7 @@ tx_is_dropped_after_it_is_included_test_() ->
 	{timeout, 60, fun test_tx_is_dropped_after_it_is_included/0}.
 
 test_tx_is_dropped_after_it_is_included() ->
-	{Master, Slave, _Wallet} = setup(),
+	{_Master, _Slave, _Wallet} = setup(),
 	CommittedTXs = [
 		ar_tx:new(<<"DATA1">>, ?AR(1)),
 		(ar_tx:new(<<"DATA3">>, ?AR(10)))#tx{ format = 2, data_size = 5, data_root = <<"r">> },
@@ -219,7 +219,7 @@ test_tx_is_dropped_after_it_is_included() ->
 	ar_tx_queue:set_pause(true),
 	lists:foreach(
 		fun(TX) ->
-			assert_post_tx_to_slave(Slave, TX)
+			assert_post_tx_to_slave(TX)
 		end,
 		CommittedTXs
 	),
@@ -232,7 +232,7 @@ test_tx_is_dropped_after_it_is_included() ->
 	],
 	lists:foreach(
 		fun(TX) ->
-			post_tx_to_master(Master, TX, false)
+			post_tx_to_master(TX, false)
 		end,
 		NotCommittedTXs
 	),
@@ -242,8 +242,8 @@ test_tx_is_dropped_after_it_is_included() ->
 		lists:sort([TXID || {[{_, TXID}, _, _]} <- http_get_queue()])
 	),
 	connect_to_slave(),
-	slave_mine(Slave),
-	wait_until_height(Master, 1),
+	slave_mine(),
+	wait_until_height(1),
 	NotCommittedTXIDs = [TX#tx.id || TX <- NotCommittedTXs],
 	?assertEqual(
 		lists:sort([ar_util:encode(TXID) || TXID <- NotCommittedTXIDs]),
