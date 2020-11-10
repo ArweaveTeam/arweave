@@ -30,6 +30,7 @@
 	[
 		ar,
 		ar_meta_db,
+		ar_kv,
 		ar_block_cache,
 		ar_unbalanced_merkle,
 		ar_intervals,
