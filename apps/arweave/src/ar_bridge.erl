@@ -132,7 +132,6 @@ init([]) ->
 
 	ok = ar_tx_queue:start_link(),
 
-	ar_firewall:start(),
 	%% Add pending transactions from the persisted mempool to the propagation queue.
 	maps:map(
 		fun (_TXID, {_TX, ready_for_mining}) ->
@@ -191,16 +190,11 @@ handle_cast({add_tx, TX}, State) ->
 		processed = Procd
 	} = State,
 
-	case ar_firewall:scan_tx(TX) of
-		reject ->
-			{noreply, State};
-		accept ->
-			Msg = {add_waiting_tx, TX},
-			{NewGS, _} = ar_gossip:send(GS, Msg),
-			ar_tx_queue:add_tx(TX),
-			add_processed(tx, TX, Procd),
-			{noreply, State#state { gossip = NewGS }}
-	end;
+	Msg = {add_waiting_tx, TX},
+	{NewGS, _} = ar_gossip:send(GS, Msg),
+	ar_tx_queue:add_tx(TX),
+	add_processed(tx, TX, Procd),
+	{noreply, State#state { gossip = NewGS }};
 
 handle_cast({move_tx_to_mining_pool, _TX} = Msg, State) ->
 	#state { gossip = GS } = State,

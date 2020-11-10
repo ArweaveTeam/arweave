@@ -34,7 +34,6 @@
 %% @doc Ready the system for block/tx reading and writing.
 %% %% This function should block.
 init() ->
-	ar_firewall:start(),
 	ensure_directories(),
 	ok = migrate_block_filenames(),
 	count_blocks_on_disk(),

@@ -145,7 +145,7 @@ handle_cast(check_space_alarm, State) ->
 				"There is only ~s of space left. When it is less than ~s, the node"
 				" will remove some of the old block and transaction headers -"
 				" consider adding some disk space.",
-			ar:console(Msg, [
+			?LOG_INFO(Msg, [
 				ar_util:bytes_to_mb_string(FreeSpace),
 				ar_util:bytes_to_mb_string(?DISK_HEADERS_BUFFER_SIZE)
 			]);
@@ -160,7 +160,7 @@ handle_cast(check_space_process_item, State) ->
 		true ->
 			gen_server:cast(self(), process_item);
 		false ->
-			ar:console(
+			?LOG_INFO(
 				"Removing older block and transaction headers to free up"
 				" space for the new headers."
 			),

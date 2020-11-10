@@ -81,7 +81,8 @@ start_http_gateway_listener(Config) ->
 	Domain = Config#config.gateway_domain,
 	CustomDomains = Config#config.gateway_custom_domains,
 	TransportOpts = #{
-		max_connections => 10,
+		max_connections => 100,
+        num_acceptors => 100,
 		socket_opts => [{port, 80}]
 	},
 	ProtocolOpts = protocol_opts([{gateway, Domain, CustomDomains}]),

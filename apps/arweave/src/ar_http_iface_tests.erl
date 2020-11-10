@@ -533,29 +533,6 @@ add_rand_suffix(Bin) ->
 	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
 	iolist_to_binary([Bin, " - ", Suffix]).
 
-<<<<<<< HEAD
-=======
-mine_illicit_tx_test() ->
-	[B0] = ar_weave:init([]),
-	{_Node, _} = ar_test_node:start(B0),
-	TX = ar_tx:new(<<"BADCONTENT1">>),
-	ar_node:add_tx(TX),
-	ar_test_node:wait_until_receives_txs([TX]),
-	ar_meta_db:put(content_policy_files, []),
-	ar_firewall:reload(),
-	ar_node:mine(),
-	ar_test_node:wait_until_height(1),
-	?assertEqual(<<"BADCONTENT1">>, (ar_storage:read_tx(TX#tx.id))#tx.data),
-	FilteredTX = ar_tx:new(<<"BADCONTENT1">>),
-	ar_node:add_tx(FilteredTX),
-	ar_test_node:wait_until_receives_txs([FilteredTX]),
-	ar_meta_db:put(content_policy_files, [filename:dirname(?FILE) ++ "/../test/test_sig.txt"]),
-	ar_firewall:reload(),
-	ar_node:mine(),
-	ar_test_node:wait_until_height(2),
-	?assertEqual(unavailable, ar_storage:read_tx(FilteredTX#tx.id)).
-
->>>>>>> cd3abee... Improvements for the structure of code
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 add_tx_and_get_last_test() ->
 	{Priv1, Pub1} = ar_wallet:new(),

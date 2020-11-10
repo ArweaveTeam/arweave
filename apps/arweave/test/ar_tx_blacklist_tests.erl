@@ -4,17 +4,18 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("src/ar.hrl").
--include("src/ar_config.hrl").
+-include_lib("arweave/src/ar.hrl").
+-include_lib("arweave/src/ar_config.hrl").
+-include_lib("common.hrl").
 
 -import(ar_test_node, [
 	slave_start/1, start/3, connect_to_slave/0,
 	get_tx_anchor/1,
 	sign_tx/2,
 	slave_call/3,
-	assert_post_tx_to_slave/2,
-	slave_mine/1,
-	wait_until_height/2,
+	assert_post_tx_to_slave/1,
+	slave_mine/0,
+	wait_until_height/1,
 	get_chunk/1, get_chunk/2, post_chunk/1
 ]).
 
@@ -51,14 +52,14 @@ test_uses_blacklists() ->
 	{
 		BlacklistFiles,
 		B0,
-		SlaveNode,
+		_SlaveNode,
 		TXs,
 		GoodTXIDs,
 		BadTXIDs,
 		GoodOffsets,
 		BadOffsets
 	} = setup(),
-	{MasterNode, _} =
+	{_, _} =
 		start(B0, unclaimed, (element(2, application:get_env(arweave, config)))#config{
 			transaction_blacklist_files = BlacklistFiles,
 			transaction_whitelist_files = [WhitelistFile = random_filename()],
@@ -82,9 +83,9 @@ test_uses_blacklists() ->
 	connect_to_slave(),
 	lists:foreach(
 		fun({TX, Height}) ->
-			assert_post_tx_to_slave(SlaveNode, TX),
-			slave_mine(SlaveNode),
-			wait_until_height(MasterNode, Height)
+			assert_post_tx_to_slave(TX),
+			slave_mine(),
+			wait_until_height(Height)
 		end,
 		lists:zip(TXs, lists:seq(1, length(TXs)))
 	),

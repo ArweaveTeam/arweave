@@ -152,7 +152,7 @@ get_tx_data(TXIndex, ChunksIndex, TXID) ->
 		not_found ->
 			{error, not_found};
 		{error, Reason} ->
-			ar:err([{event, failed_to_get_tx_data}, {reason, Reason}]),
+			?LOG_ERROR([{event, failed_to_get_tx_data}, {reason, Reason}]),
 			{error, failed_to_get_tx_data};
 		{ok, Value} ->
 			{Offset, Size} = binary_to_term(Value),
@@ -164,7 +164,7 @@ get_tx_data(TXIndex, ChunksIndex, TXID) ->
 					EndKey = << Offset:?OFFSET_KEY_BITSIZE >>,
 					case ar_kv:get_range(ChunksIndex, StartKey, EndKey) of
 						{error, Reason} ->
-							ar:err([
+							?LOG_ERROR([
 								{event, failed_to_get_chunks_for_tx_data},
 								{reason, Reason}
 							]),
@@ -193,7 +193,7 @@ get_tx_offset(TXIndex, TXID) ->
 		not_found ->
 			{error, not_found};
 		{error, Reason} ->
-			ar:err([{event, failed_to_read_tx_offset}, {reason, Reason}]),
+			?LOG_ERROR([{event, failed_to_read_tx_offset}, {reason, Reason}]),
 			{error, failed_to_read_offset}
 	end.
 
@@ -446,7 +446,7 @@ handle_cast(check_space_sync_random_interval, State) ->
 			Msg =
 				"The node has stopped syncing data - the available disk space is"
 				" less than ~s. Add more disk space if you wish to store more data.",
-			ar:console(Msg, [ar_util:bytes_to_mb_string(?DISK_DATA_BUFFER_SIZE)]),
+			?LOG_INFO(Msg, [ar_util:bytes_to_mb_string(?DISK_DATA_BUFFER_SIZE)]),
 			cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_sync_random_interval)
 	end,
 	{noreply, State};

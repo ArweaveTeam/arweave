@@ -1,10 +1,4 @@
-<<<<<<< HEAD
 %% @doc The frequency of trying to download one of the chunks we could not download in the past.
-=======
-%% @doc The time to wait after the whole weave is synced
-%% before looking for new chunks.
-
->>>>>>> cd3abee... Improvements for the structure of code
 -ifdef(DEBUG).
 -define(SCAN_MISSING_CHUNKS_INDEX_FREQUENCY_MS, 500).
 -else.
