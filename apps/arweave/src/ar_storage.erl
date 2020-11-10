@@ -537,7 +537,7 @@ write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpa
 					data_path => DataPath,
 					data_size => byte_size(Data)
 				},
-				case ar_data_sync:add_chunk(Proof, 10000, WriteToFreeSpaceBuffer) of
+				case ar_data_sync:add_chunk(Proof, 30000, WriteToFreeSpaceBuffer) of
 					ok ->
 						%% Pessimistically (because some of the writes are overrides and
 						%% because RocksDB compresses data) increase the used disk space count.

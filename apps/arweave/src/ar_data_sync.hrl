@@ -21,7 +21,16 @@
 -endif.
 
 %% @doc The size in bits of the offset key in kv databases.
--define(OFFSET_KEY_BITSIZE, (?NOTE_SIZE * 8)).
+-define(OFFSET_KEY_BITSIZE, 256).
+
+%% @doc The size in bits of the key prefix used in prefix bloom filter
+%% when looking up chunks by offsets from kv database.
+%% 29 bytes of the prefix correspond to the 16777216 (16 Mib) max distance
+%% between the keys with the same prefix. The prefix should be bigger than
+%% max chunk size (256 KiB) so that the chunk in question is likely to be
+%% found in the filter and smaller than an SST table (200 MiB) so that the
+%% filter lookup can narrow the search down to a single table. @end
+-define(OFFSET_KEY_PREFIX_BITSIZE, 232).
 
 %% @doc The number of block confirmations to track. When the node
 %% joins the network or a chain reorg occurs, it uses its record about
@@ -78,20 +87,21 @@
 -define(IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, DataPath),
 	byte_size(DataPath) == 0 orelse byte_size(DataPath) > byte_size(Chunk)).
 
+%% @doc Time to wait before retrying a failed migration step.
+-define(MIGRATION_RETRY_DELAY_MS, 10000).
+
+%% @doc The frequency of storing the server state on disk.
+-define(STORE_STATE_FREQUENCY_MS, 30000).
+
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
 	%% @doc The mapping absolute_end_offset -> absolute_start_offset
 	%% sorted by absolute_end_offset.
 	%%
-	%% Every such pair denotes a synced interval on the [0, weave size]
-	%% interval. This mapping serves as a compact map of what is synced
-	%% by the node. No matter how big the weave is or how much of it
-	%% the node stores, this record can remain very small, compared to
-	%% storing all chunk and transaction identifiers, whose number can
-	%% effectively grow unlimited with time.
-	%%
-	%% Every time a chunk is written to sync_record, it is also
-	%% written to the chunks_index.
+	%% The set serves as a compact map of what is synced by the node. No matter
+	%% how big the weave is or how much of it the node stores, this record
+	%% can remain very small, compared to storing all chunk and transaction identifiers,
+	%% whose number can effectively grow unlimited with time.
 	sync_record,
 	%% @doc The mapping peer -> sync_record containing sync records of the best peers.
 	peer_sync_records,
@@ -101,7 +111,7 @@
 	%% @doc The current weave size. The upper limit for the absolute chunk end offsets.
 	weave_size,
 	%% @doc A reference to the on-disk key-value storage mapping
-	%% absolute_chunk_end_offset -> {data_path_hash, tx_root, data_root, tx_path, chunk_size}
+	%% absolute_chunk_end_offset -> {chunk_data_index_key, tx_root, data_root, tx_path, chunk_size}
 	%% for all synced chunks.
 	%%
 	%% Chunks themselves and their data_paths are stored separately
@@ -159,8 +169,8 @@
 	%% is set to not_set - from this point on, the key can't be dropped after a mempool drop.
 	disk_pool_data_roots,
 	%% @doc A reference to the on-disk key value storage mapping
-	%% << data_root_timestamp, data_path_hash >> ->
-	%%     {relative_chunk_end_offset, chunk_size, data_root, tx_size}.
+	%% << data_root_timestamp, chunk_data_index_key >> ->
+	%%     {relative_chunk_end_offset, chunk_size, data_root, tx_size, chunk_data_index_key}.
 	%%
 	%% The index is used to keep track of pending, orphaned, and recent chunks.
 	%% A periodic process iterates over chunks from earliest to latest, consults
@@ -185,5 +195,16 @@
 	%% @doc A reference to the on-disk key value storage mapping
 	%% absolute_tx_start_offset -> tx_id. It is used to cleanup orphaned
 	%% transactions from tx_index.
-	tx_offset_index
+	tx_offset_index,
+	%% @doc A reference to the on-disk key value storage mapping
+	%% << timestamp, data_path_hash >> of the chunks to chunk data.
+	%% The motivation to not store chunk data directly in the chunks_index is to save the
+	%% space by not storing identical chunks placed under different offsets several time
+	%% and to be able to quickly move chunks from the disk pool to the on-chain storage.
+	%% The timestamp prefix is used to make the written entries sorted from the start,
+	%% to minimize the compaction overhead.
+	chunk_data_db,
+	%% @doc A reference to the on-disk key value storage mapping migration names to their
+	%% stages.
+	migrations_index
 }).
