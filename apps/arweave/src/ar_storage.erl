@@ -367,10 +367,18 @@ delete_wallet_list_chunks(Position, RootHash, BytesRemoved) ->
 	end.
 
 %% @doc Delete the tx with the given hash from disk. Return {ok, BytesRemoved} if
-%% the removal is successful or the file does not exist.
+%% the removal is successful or the file does not exist. The reported number of removed
+%% bytes does not include the migrated v1 data. The removal of migrated v1 data is requested
+%% from ar_data_sync asynchronously.
 delete_tx(Hash) ->
 	case lookup_tx_filename(Hash) of
-		{_, Filename} ->
+		{Status, Filename} ->
+			case Status of
+				migrated_v1 ->
+					ar_data_sync:request_tx_data_removal(Hash);
+				_ ->
+					ok
+			end,
 			case file:read_file_info(Filename) of
 				{ok, FileInfo} ->
 					case file:delete(Filename) of
