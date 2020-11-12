@@ -31,40 +31,8 @@ open(Name, CFDescriptors) ->
 	Filename = filename:join(RocksDBDir, Name),
 	ok = filelib:ensure_dir(Filename ++ "/"),
 	Opts = [{create_if_missing, true}, {create_missing_column_families, true}],
-	%% The repair process drops unflushed non-default column families.
-	%% https://github.com/facebook/rocksdb/issues/5073,
-	%% https://github.com/facebook/rocksdb/wiki/RocksDB-Repairer.
-	%%
-	%% To support automatic repairs and avoid losing data if the node restarts before
-	%% the first flush, we make sure the new column families are
-	%% recorded in the manifest file. To achieve that, we write a special key to
-	%% every empty CF (because they are only recorded in the manifest when they are not empty),
-	%% flush the column families, and remove the key from where we inserted it.
 	case rocksdb:open(Filename, Opts, CFDescriptors) of
 		{ok, DB, CFs} ->
-			lists:foreach(
-				fun(CF) ->
-					Key = <<"flush-column-family-key">>,
-					{ok, Iterator} = rocksdb:iterator(DB, CF, []),
-					case rocksdb:iterator_move(Iterator, first) of
-						{error, invalid_iterator} ->
-							ok = rocksdb:put(DB, CF, Key, <<>>, []),
-							ok = rocksdb:flush(DB, CF, []),
-							ok = rocksdb:delete(DB, CF, Key, []);
-						{ok, Key, <<>>} ->
-							case rocksdb:iterator_move(Iterator, next) of
-								{error, invalid_iterator} ->
-									ok = rocksdb:flush(DB, CF, []),
-									ok = rocksdb:delete(DB, CF, Key, []);
-								_ ->
-									ok = rocksdb:flush(DB, CF, [])
-							end;
-						{ok, _, _} ->
-							ok = rocksdb:flush(DB, CF, [])
-					end
-				end,
-				tl(CFs)
-			),
 			{ok, DB, CFs};
 		Error ->
 			Error
