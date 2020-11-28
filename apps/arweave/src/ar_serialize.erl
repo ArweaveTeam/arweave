@@ -235,7 +235,9 @@ tx_to_json_struct(
 		signature = Sig,
 		data_size = DataSize,
 		data_tree = DataTree,
-		data_root = DataRoot
+		data_root = DataRoot,
+		script = Script,
+		input = Input
 	}) ->
 	{
 		[
@@ -269,7 +271,9 @@ tx_to_json_struct(
 			{data_tree, tree_to_json_struct(DataTree)},
 			{data_root, ar_util:encode(DataRoot)},
 			{reward, integer_to_binary(Reward)},
-			{signature, ar_util:encode(Sig)}
+			{signature, ar_util:encode(Sig)},
+			{script, ar_script:encode_script(Script)},
+			{input, ar_script:encode_input(Input)}
 		]
 	}.
 
@@ -337,7 +341,9 @@ json_struct_to_tx({TXStruct}) ->
 			case find_value(<<"data_root">>, TXStruct) of
 				undefined -> <<>>;
 				DR -> ar_util:decode(DR)
-			end
+			end,
+		script = ar_script:decode_script(find_value(<<"script">>, TXStruct)),
+		input = ar_script:decode_input(find_value(<<"input">>, TXStruct))
 	}.
 
 parse_data_size(1, _TXStruct, Data) ->

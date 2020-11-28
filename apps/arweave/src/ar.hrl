@@ -394,7 +394,9 @@
 	data_tree = [], % The merkle tree of data chunks, the field is not signed.
 	data_root = <<>>, % The merkle root of the merkle tree of data chunks.
 	signature = <<>>, % Transaction signature.
-	reward = 0 % Transaction fee, in Winston.
+	reward = 0, % Transaction fee, in Winston.
+	script = undefined, % Script opcodes, if appropriate.
+	input = undefined % Script inputs, if appropriate.
 }).
 
 %% @doc Gossip protocol state.
@@ -451,4 +453,7 @@
 %% @doc Minimum number of characters for internal API secret.
 -define(INTERNAL_API_SECRET_MIN_LEN, 16).
 
+%% The maximum size of Arweave scripts and inputs.
+-define(ARSCRIPT_MAX_SZ, 2048).
+-define(ARSCRIPT_MAX_REDS, 512 * 1024).
 -endif.

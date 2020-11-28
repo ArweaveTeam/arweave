@@ -11,7 +11,8 @@
 	chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
 	verify_tx_id/2,
 	tx_cost_above_min/6,
-	get_addresses/1
+	get_addresses/1,
+	get_owner_address/1
 ]).
 
 -export([calculate_wallet_fee/2]).
@@ -170,6 +171,7 @@ do_verify_v1(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 	],
 	collect_validation_results(TX#tx.id, Checks).
 
+%% TODO: Pass block, not components.
 do_verify_v2(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 	Checks = [
 		{"quantity_negative",
@@ -186,8 +188,9 @@ do_verify_v2(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 		 verify_hash(TX)},
 		{"overspend",
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
-		{"tx_signature_not_valid",
-		 verify_signature_v2(TX, VerifySignature)},
+		{"activation",
+		%% TODO: Pass real block!
+		 activation(TX, #block {}, VerifySignature)},
 		{"tx_data_size_negative",
 		 TX#tx.data_size >= 0},
 		{"tx_data_size_data_root_mismatch",
@@ -210,6 +213,18 @@ collect_validation_results(TXID, Checks) ->
 			false
 	end.
 
+%% Check whether the transaction has valid 'activation'.
+%% Activation is valid IIF the owner is not the target, or the Arweave script
+%% executes successfully.
+activation(TX, _B, VerifySignature) when TX#tx.owner =/= undefined ->
+	verify_signature_v2(TX, VerifySignature);
+activation(_, _, false) -> false;
+activation(TX, B, _VerifySignature) ->
+	case B#block.height >= ar_fork:height_2_3() of
+		true -> ar_script:run(TX, B);
+		false -> false
+	end.
+
 verify_signature_v1(_TX, do_not_verify_signature) ->
 	true;
 verify_signature_v1(TX, verify_signature) ->
@@ -222,8 +237,17 @@ verify_signature_v2(TX, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
 	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
 
+get_owner_address(TX) ->
+	case TX#tx.owner of
+		undefined ->
+			% TODO: Block fork height check here?
+			ar_script:address(TX);
+		Owner ->
+			 ar_wallet:to_address(Owner)
+	end.
+
 validate_overspend(TX, Wallets) ->
-	From = ar_wallet:to_address(TX#tx.owner),
+	From = get_owner_address(TX),
 	Addresses = case TX#tx.target of
 		<<>> ->
 			[From];

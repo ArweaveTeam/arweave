@@ -387,11 +387,10 @@ validate_block(last_retarget, {NewB, OldB}) ->
 do_apply_tx(
 		Wallets,
 		TX = #tx {
-			last_tx = Last,
-			owner = From
+			last_tx = Last
 		},
 		Height) ->
-	Addr = ar_wallet:to_address(From),
+	Addr = ar_tx:get_owner_address(TX),
 	Fork_1_8 = ar_fork:height_1_8(),
 	case {Height, maps:get(Addr, Wallets, not_found)} of
 		{H, {_Balance, _LastTX}} when H >= Fork_1_8 ->
@@ -451,8 +450,8 @@ alter_wallet(Wallets, Target, Adjustment) ->
 -ifdef(DEBUG).
 is_wallet_invalid(#tx{ signature = <<>> }, _Wallets) ->
 	false;
-is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
-	Address = ar_wallet:to_address(Owner),
+is_wallet_invalid(TX, Wallets) ->
+	Address = ar_tx:get_owner_address(TX),
 	case maps:get(Address, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
 			case Balance of
@@ -465,8 +464,8 @@ is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
 			true
 	end.
 -else.
-is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
-	Address = ar_wallet:to_address(Owner),
+is_wallet_invalid(TX, Wallets) ->
+	Address = ar_tx:get_owner_address(TX),
 	case maps:get(Address, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
 			case Balance of
