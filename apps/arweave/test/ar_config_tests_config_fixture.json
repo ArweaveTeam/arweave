@@ -22,13 +22,20 @@
   "max_miners": 43,
   "new_mining_key": true,
   "load_mining_key": "some_key_file",
-  "content_policies": [
-    "some_content_policy_1",
-    "some_content_policy_2"
-  ],
   "transaction_blacklists": [
     "some_blacklist_1",
     "some_blacklist_2"
+  ],
+  "transaction_blacklist_urls": [
+    "http://some_blacklist_1",
+    "http://some_blacklist_2/x"
+  ],
+  "transaction_whitelists": [
+    "some_whitelist_1",
+    "some_whitelist_2"
+  ],
+  "transaction_whitelist_urls": [
+    "http://some_whitelist"
   ],
   "disk_space": 44,
   "init": true,

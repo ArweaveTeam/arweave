@@ -92,8 +92,9 @@
 
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
-	%% @doc The mapping absolute_end_offset -> absolute_start_offset
-	%% sorted by absolute_end_offset.
+	%% @doc A set of non-overlapping intervals of global byte offsets ((end, start))
+	%% denoting the synced data. End offsets are defined on [1, weave size], start
+	%% offsets are defined on [0, weave size).
 	%%
 	%% The set serves as a compact map of what is synced by the node. No matter
 	%% how big the weave is or how much of it the node stores, this record
