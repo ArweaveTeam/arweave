@@ -166,6 +166,12 @@ register() ->
 		{help,
 			"The per second average rate of the number of tried solution candidates "
 			"computed over the last block time."}
+	]),
+	prometheus_histogram:new([
+		{name, sqlite_query_time},
+		{buckets, [1, 10, 100, 500, 1000, 2000, 10000, 30000]},
+		{labels, [query_type]},
+		{help, "The time in milliseconds of SQLite queries."}
 	]).
 
 load_gauge(Name) ->
