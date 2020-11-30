@@ -38,8 +38,10 @@ parse_config() ->
 		internal_api_secret = <<"some_very_very_long_secret">>,
 		enable = [feature_1, feature_2],
 		disable = [feature_3, feature_4],
-		content_policy_files = ["some_content_policy_1", "some_content_policy_2"],
 		transaction_blacklist_files = ["some_blacklist_1", "some_blacklist_2"],
+		transaction_blacklist_urls = ["http://some_blacklist_1", "http://some_blacklist_2/x"],
+		transaction_whitelist_files = ["some_whitelist_1", "some_whitelist_2"],
+		transaction_whitelist_urls = ["http://some_whitelist"],
 		gateway_domain = <<"gateway.localhost">>,
 		gateway_custom_domains = [<<"domain1.example">>, <<"domain2.example">>],
 		webhooks = [

@@ -15,14 +15,14 @@
 	slave_wait_until_height/2,
 	post_and_mine/2,
 	get_tx_anchor/1,
-	slave_call/3,
 	disconnect_from_slave/0,
 	join_on_master/0,
 	assert_post_tx_to_slave/2,
 	assert_post_tx_to_master/2,
 	wait_until_receives_txs/2,
 	slave_mine/1,
-	read_block_when_stored/1
+	read_block_when_stored/1,
+	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2
 ]).
 
 rejects_invalid_chunks_test_() ->
@@ -597,17 +597,6 @@ test_syncs_after_joining() ->
 	slave_wait_until_syncs_chunks(MasterProofs3),
 	slave_wait_until_syncs_chunks(Proofs1).
 
-post_chunk(Body) ->
-	post_chunk({127, 0, 0, 1, ar_meta_db:get(port)}, Body).
-
-post_chunk(Peer, Body) ->
-	ar_http:req(#{
-		method => post,
-		peer => Peer,
-		path => "/chunk",
-		body => Body
-	}).
-
 setup_nodes() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
@@ -736,16 +725,6 @@ build_proofs(TX, Chunks, TXs, BlockStartOffset) ->
 		SizeTaggedChunks
 	).
 
-get_chunk(Offset) ->
-	get_chunk({127, 0, 0, 1, ar_meta_db:get(port)}, Offset).
-
-get_chunk(Peer, Offset) ->
-	ar_http:req(#{
-		method => get,
-		peer => Peer,
-		path => "/chunk/" ++ integer_to_list(Offset)
-	}).
-
 get_tx_offset(TXID) ->
 	ar_http:req(#{
 		method => get,
@@ -829,6 +808,17 @@ post_blocks(Master, Wallet, BlockMap) ->
 					#{ miner => {master, Master}, await_on => {master, Master} },
 					[TX || {{TX, _}, _} <- TXsWithChunks]
 				),
+				lists:foreach(
+					fun
+						({{#tx{ format = 2 } = TX, Chunks}, Format})
+								when Format == v2 orelse Format == v2_original_split
+									orelse Format == fixed_data ->
+							post_proofs_to_master(B, TX, Chunks);
+						(_) ->
+							ok
+					end,
+					TXsWithChunks
+				),
 				Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
 						Type /= v2_no_data, Type /= empty_tx]
 		end,
@@ -837,10 +827,10 @@ post_blocks(Master, Wallet, BlockMap) ->
 	).
 
 post_proofs_to_master(B, TX, Chunks) ->
-	post_proofs({127, 0, 0, 1, ar_meta_db:get(port)}, B, TX, Chunks).
+	post_proofs(master, B, TX, Chunks).
 
 post_proofs_to_slave(B, TX, Chunks) ->
-	post_proofs({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, B, TX, Chunks).
+	post_proofs(slave, B, TX, Chunks).
 
 post_proofs(Peer, B, TX, Chunks) ->
 	Proofs = build_proofs(B, TX, Chunks),
@@ -854,10 +844,10 @@ post_proofs(Peer, B, TX, Chunks) ->
 	Proofs.
 
 wait_until_syncs_chunks(Proofs) ->
-	wait_until_syncs_chunks({127, 0, 0, 1, ar_meta_db:get(port)}, Proofs).
+	wait_until_syncs_chunks(master, Proofs).
 
 slave_wait_until_syncs_chunks(Proofs) ->
-	wait_until_syncs_chunks({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, Proofs).
+	wait_until_syncs_chunks(slave, Proofs).
 
 wait_until_syncs_chunks(Peer, Proofs) ->
 	lists:foreach(

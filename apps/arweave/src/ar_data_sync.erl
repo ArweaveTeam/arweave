@@ -526,11 +526,18 @@ handle_cast({sync_chunk, Peer, Byte, RightBound}, State) ->
 	Self = self(),
 	spawn(
 		fun() ->
-			case ar_http_iface_client:get_chunk(Peer, Byte + 1) of
+			Byte2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Byte + 1),
+			case ar_http_iface_client:get_chunk(Peer, Byte2) of
 				{ok, Proof} ->
 					gen_server:cast(
 						Self,
-						{store_fetched_chunk, Peer, Byte, RightBound, Proof}
+						{
+							store_fetched_chunk,
+							Peer,
+							Byte2 - 1,
+							RightBound,
+							Proof
+						}
 					);
 				{error, _} ->
 					gen_server:cast(Self, {sync_random_interval, [Peer]})
@@ -757,6 +764,7 @@ handle_cast({remove_tx_data, TXID}, State) ->
 	end;
 
 handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) when Cursor > End ->
+	ar_tx_blacklist:notify_about_removed_tx_data(TXID, End, End - TXSize),
 	{noreply, State};
 handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 	#sync_data_state{
@@ -769,6 +777,7 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 			<< AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >> = Key,
 			case AbsoluteEndOffset > End of
 				true ->
+					ar_tx_blacklist:notify_about_removed_tx_data(TXID, End, End - TXSize),
 					{noreply, State};
 				false ->
 					{ChunkDataKey, _, DataRoot, _, ChunkOffset, ChunkSize} = binary_to_term(Chunk),
@@ -1192,7 +1201,8 @@ remove_orphaned_txs(State, BlockStartOffset, WeaveSize) ->
 					(_, _Value, {error, _} = Error) ->
 						Error;
 					(_, TXID, ok) ->
-						ar_kv:delete(TXIndex, TXID)
+						ar_kv:delete(TXIndex, TXID),
+						ar_tx_blacklist:norify_about_orphaned_tx(TXID)
 				end,
 				ok,
 				Map
@@ -1339,6 +1349,11 @@ update_tx_index(TXIndex, TXOffsetIndex, SizeTaggedTXs, BlockStartOffset) ->
 							term_to_binary({AbsoluteEndOffset, TXSize})
 						) of
 							ok ->
+								ar_tx_blacklist:notify_about_added_tx(
+									TXID,
+									AbsoluteEndOffset,
+									AbsoluteStartOffset
+								),
 								TXEndOffset;
 							{error, Reason} ->
 								ar:err([{event, failed_to_update_tx_index}, {reason, Reason}]),

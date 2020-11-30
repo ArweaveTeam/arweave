@@ -32,7 +32,6 @@
 %% @doc Ready the system for block/tx reading and writing.
 %% %% This function should block.
 start() ->
-	ar_firewall:start(),
 	ensure_directories(),
 	ok = migrate_block_filenames(),
 	count_blocks_on_disk(),
@@ -474,15 +473,6 @@ write_tx(#tx{ format = Format } = TX) ->
 	end.
 
 write_tx_header(TX) ->
-	%% Only store data that passes the firewall configured by the miner.
-	case ar_firewall:scan_tx(TX) of
-		accept ->
-			write_tx_header_after_scan(TX);
-		reject ->
-			{error, firewall_check}
-	end.
-
-write_tx_header_after_scan(TX) ->
 	TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX#tx{ data = <<>> })),
 	Filepath =
 		case {TX#tx.format, byte_size(TX#tx.data) > 0} of
@@ -622,12 +612,12 @@ read_migrated_v1_tx_file(Filename) ->
 		{ok, Binary} ->
 			case catch ar_serialize:json_struct_to_v1_tx(Binary) of
 				#tx{ id = ID } = TX ->
-					case catch ar_data_sync:get_tx_data(ID) of
+					case ar_data_sync:get_tx_data(ID) of
 						{ok, Data} ->
 							{ok, TX#tx{ data = Data }};
 						{error, not_found} ->
 							{error, data_unavailable};
-						{'EXIT', {timeout, {gen_server, call, _}}} ->
+						{error, timeout} ->
 							{error, data_fetch_timeout};
 						Error ->
 							Error
@@ -1026,7 +1016,10 @@ delete_term(Name) ->
 	file:delete(filename:join(DataDir, atom_to_list(Name))).
 
 %% @doc Test block storage.
-store_and_retrieve_block_test() ->
+store_and_retrieve_block_test_() ->
+	{timeout, 20, fun test_store_and_retrieve_block/0}.
+
+test_store_and_retrieve_block() ->
 	ar_storage:clear(),
 	?assertEqual(0, blocks_on_disk()),
 	BI0 = [B0] = ar_weave:init([]),
@@ -1101,7 +1094,6 @@ assert_wallet_trees_equal(Expected, Actual) ->
 
 read_wallet_list_chunks_test() ->
 	TestCases = [
-		[],
 		[random_wallet()], % < chunk size
 		[random_wallet() || _ <- lists:seq(1, ?WALLET_LIST_CHUNK_SIZE)], % == chunk size
 		[random_wallet() || _ <- lists:seq(1, ?WALLET_LIST_CHUNK_SIZE + 1)], % > chunk size

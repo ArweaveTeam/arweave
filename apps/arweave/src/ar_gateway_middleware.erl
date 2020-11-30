@@ -303,7 +303,7 @@ read_format_2_data(TX) ->
 		{ok, Data} ->
 			Data;
 		{error, enoent} ->
-			case catch ar_data_sync:get_tx_data(TX#tx.id) of
+			case ar_data_sync:get_tx_data(TX#tx.id) of
 				{ok, Data} ->
 					Data;
 				_ ->
@@ -418,14 +418,14 @@ serve_plain_tx(#tx{ format = 2 } = TX, ContentType, Req) ->
 		{ok, Data} ->
 			{stop, {200, Headers, Data, Req}};
 		{error, enoent} ->
-			case catch ar_data_sync:get_tx_data(TX#tx.id) of
+			case ar_data_sync:get_tx_data(TX#tx.id) of
 				{ok, Data} ->
 					{stop, {200, Headers, Data, Req}};
 				{error, tx_data_too_big} ->
 					{stop, {400, Headers, jiffy:encode(#{ error => tx_data_too_big }), Req}};
 				{error, not_found} ->
 					{stop, {200, Headers, <<>>, Req}};
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
+				{error, timeout} ->
 					{stop, {503, Headers, jiffy:encode(#{ error => timeout }), Req}}
 			end
 	end.

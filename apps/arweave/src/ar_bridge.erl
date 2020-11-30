@@ -29,7 +29,6 @@ start_link([_, _, _] = Args) ->
 
 %% @doc Launch a bridge node.
 start(ExtPeers, IntPeers, Port) ->
-	ar_firewall:start(),
 	spawn(
 		fun() ->
 			case ets:info(ignored_ids) of
@@ -219,16 +218,11 @@ maybe_send_tx(S, TX) ->
 		gossip = GS,
 		processed = Procd
 	} = S,
-	case ar_firewall:scan_tx(TX) of
-		reject ->
-			S;
-		accept ->
-			Msg = {add_waiting_tx, TX},
-			{NewGS, _} = ar_gossip:send(GS,	Msg),
-			ar_tx_queue:add_tx(TX),
-			add_processed(tx, TX, Procd),
-			S#state { gossip = NewGS }
-	end.
+	Msg = {add_waiting_tx, TX},
+	{NewGS, _} = ar_gossip:send(GS,	Msg),
+	ar_tx_queue:add_tx(TX),
+	add_processed(tx, TX, Procd),
+	S#state { gossip = NewGS }.
 
 %% @doc Send the block to internal processes and to peers.
 send_block(S, OriginPeer, B, BDS, ReceiveTimestamp) ->
