@@ -11,13 +11,6 @@
 
 -include("ar.hrl").
 
-%% Duration after which to consider the query time unusually long.
-%% Set to 100ms.
--define(LONG_QUERY_TIME, 100000).
-%% Duration after which to consider the full block metadata insert
-%% time unusually long.
--define(LONG_INSERT_TIME, 1000000).
-
 %% Timeout passed to gen_server:call when running SELECTs.
 %% Set to 5s.
 -define(SELECT_TIMEOUT, 5000).
@@ -204,19 +197,7 @@ handle_call({select_tx_by_id, ID}, _, State) ->
 		end
 	end),
 	ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
-	ok = case Time of
-		T when T > ?LONG_QUERY_TIME ->
-			ar:warn([
-				{ar_arql_db, long_query},
-				{query_type, select_tx_by_id},
-				{microseconds, T},
-				{sql, select_tx_by_id},
-				{txid, ID}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
+	record_query_time(select_tx_by_id, Time),
 	{reply, Reply, State};
 handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 	{WhereClause, Params} = select_txs_by_where_clause(Opts),
@@ -232,19 +213,7 @@ handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
 				lists:map(fun tx_map/1, Rows)
 		end
 	end),
-	ok = case Time of
-		T when T > ?LONG_QUERY_TIME ->
-			ar:warn([
-				{ar_arql_db, long_query},
-				{query_type, select_txs_by},
-				{microseconds, T},
-				{sql, SQL},
-				{params, Params}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
+	record_query_time(select_txs_by, Time),
 	{reply, Reply, State};
 handle_call({select_block_by_tx_id, TXID}, _, State) ->
 	#{ select_block_by_tx_id_stmt := Stmt } = State,
@@ -256,19 +225,7 @@ handle_call({select_block_by_tx_id, TXID}, _, State) ->
 		end
 	end),
 	ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
-	ok = case Time of
-		T when T > ?LONG_QUERY_TIME ->
-			ar:warn([
-				{ar_arql_db, long_query},
-				{query_type, select_block_by_tx_id},
-				{microseconds, T},
-				{sql, select_block_by_tx_id},
-				{txid, TXID}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
+	record_query_time(select_block_by_tx_id, Time),
 	{reply, Reply, State};
 handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 	#{ select_tags_by_tx_id_stmt := Stmt } = State,
@@ -278,19 +235,7 @@ handle_call({select_tags_by_tx_id, TXID}, _, State) ->
 				lists:map(fun tags_map/1, Rows)
 		end
 	end),
-	ok = case Time of
-		T when T > ?LONG_QUERY_TIME ->
-			ar:warn([
-				{ar_arql_db, long_query},
-				{query_type, select_tags_by_tx_id},
-				{microseconds, T},
-				{sql, select_tags_by_tx_id},
-				{txid, TXID}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
+	record_query_time(select_tags_by_tx_id, Time),
 	{reply, Reply, State};
 handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 	{Time, {Reply, _SQL, _Params}} = timer:tc(fun() ->
@@ -310,18 +255,7 @@ handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 				{bad_query, 'n/a', 'n/a'}
 		end
 	end),
-	ok = case Time of
-		T when T > ?LONG_QUERY_TIME ->
-			ar:warn([
-				{ar_arql_db, long_query},
-				{query_type, eval_legacy_arql},
-				{microseconds, T},
-				{query, Query}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
+	record_query_time(eval_legacy_arql, Time),
 	{reply, Reply, State}.
 
 handle_cast({populate_db, BHL}, State) ->
@@ -358,18 +292,7 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
-	ok = case Time of
-		T when T > ?LONG_INSERT_TIME ->
-			ar:warn([
-				{ar_arql_db, long_query},
-				{query_type, insert_full_block},
-				{microseconds, T},
-				{block_indep_hash, lists:nth(1, BlockFields)}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
+	record_query_time(insert_full_block, Time),
 	{noreply, State};
 handle_cast({insert_block, BlockFields}, State) ->
 	#{
@@ -384,18 +307,7 @@ handle_cast({insert_block, BlockFields}, State) ->
 		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
-	ok = case Time of
-		T when T > ?LONG_INSERT_TIME ->
-			ar:warn([
-				{ar_arql_db, long_query},
-				{query_type, insert_block},
-				{microseconds, T},
-				{block_indep_hash, lists:nth(1, BlockFields)}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
+	record_query_time(insert_block, Time),
 	{noreply, State};
 handle_cast({insert_tx, TXFields, TagFieldsList}, State) ->
 	#{
@@ -419,18 +331,7 @@ handle_cast({insert_tx, TXFields, TagFieldsList}, State) ->
 		ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?INSERT_STEP_TIMEOUT),
 		ok
 	end),
-	ok = case Time of
-		T when T > ?LONG_INSERT_TIME ->
-			ar:warn([
-				{ar_arql_db, long_query},
-				{query_type, insert_tx},
-				{microseconds, T},
-				{block_indep_hash, lists:nth(2, TXFields)}
-			]),
-			ok;
-		_ ->
-			ok
-	end,
+	record_query_time(insert_tx, Time),
 	{noreply, State}.
 
 terminate(Reason, State) ->
@@ -841,3 +742,6 @@ tx_to_tag_fields_list(TX) ->
 		end,
 		TX#tx.tags
 	).
+
+record_query_time(Label, TimeUs) ->
+	prometheus_histogram:observe(sqlite_query_time, [Label], TimeUs div 1000).
