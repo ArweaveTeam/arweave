@@ -255,7 +255,7 @@ init([]) ->
 	gen_server:cast(?MODULE, update_disk_pool_data_roots),
 	gen_server:cast(?MODULE, process_disk_pool_item),
 	gen_server:cast(?MODULE, store_sync_state),
-	migrate_index(State),
+	migrate_index(State2),
 	{ok, State2}.
 
 handle_cast({migrate, Key = <<"store_data_in_v2_index">>, Cursor}, State) ->
@@ -634,20 +634,40 @@ handle_cast(process_disk_pool_item, State) ->
 		disk_pool_cursor = Cursor,
 		disk_pool_chunks_index = DiskPoolChunksIndex
 	} = State,
-	case ar_kv:cyclic_iterator_move(DiskPoolChunksIndex, Cursor) of
+	{Cursor2, SkipTimestamp} =
+		case Cursor of
+			{skip_timestamp, SkipTimestamp2} ->
+				{{seek, << (SkipTimestamp2 + 1):256 >>}, SkipTimestamp2};
+			_ ->
+				{Cursor, none}
+		end,
+	case ar_kv:cyclic_iterator_move(DiskPoolChunksIndex, Cursor2) of
 		{ok, Key, Value, NextCursor} ->
-			timer:apply_after(
-				case NextCursor of
-					first ->
-						?DISK_POOL_SCAN_FREQUENCY_MS;
-					_ ->
-						0
-				end,
-				gen_server,
-				cast,
-				[self(), process_disk_pool_item]
-			),
-			process_disk_pool_item(State, Key, Value, NextCursor);
+			<< Timestamp:256, _/binary >> = Key,
+			case Timestamp of
+				SkipTimestamp ->
+					%% There is only one timestamp in the disk pool, stop scanning.
+					timer:apply_after(
+						?DISK_POOL_SCAN_FREQUENCY_MS,
+						gen_server,
+						cast,
+						[self(), process_disk_pool_item]
+					),
+					{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
+				_ ->
+					timer:apply_after(
+						case NextCursor of
+							first ->
+								?DISK_POOL_SCAN_FREQUENCY_MS;
+							_ ->
+								0
+						end,
+						gen_server,
+						cast,
+						[self(), process_disk_pool_item]
+					),
+					process_disk_pool_item(State, Key, Value, NextCursor)
+			end;
 		none ->
 			%% Since we are not persisting the number of chunks in the disk pool metric on
 			%% every update, it can go out of sync with the actual value. Here is one place
@@ -1624,7 +1644,6 @@ store_chunk(Args, State) ->
 				DataRoot,
 				TXSize,
 				EndOffset,
-				check_disk_pool,
 				data_root_index_iterator(DataRootMap)
 			},
 			State
@@ -1692,7 +1711,6 @@ find_or_generate_chunk_data_key(Args, State) ->
 		DataRoot,
 		TXSize,
 		Offset,
-		CheckDiskPool,
 		Iterator
 	} = Args,
 	#sync_data_state{
@@ -1701,12 +1719,7 @@ find_or_generate_chunk_data_key(Args, State) ->
 	} = State,
 	case next(Iterator) of
 		none ->
-			case CheckDiskPool of
-				check_disk_pool ->
-					find_or_generate_chunk_data_key2(DataPathHash, DataRoot, TXSize, State);
-				do_not_check_disk_pool ->
-					{generated, generate_chunk_data_db_key(DataPathHash)}
-			end;
+			find_or_generate_chunk_data_key2(DataPathHash, DataRoot, TXSize, State);
 		{{_, TXStartOffset, _}, Iterator2} ->
 			AbsoluteEndOffset = TXStartOffset + Offset,
 			case ar_intervals:is_inside(SyncRecord, AbsoluteEndOffset) of
@@ -1721,7 +1734,6 @@ find_or_generate_chunk_data_key(Args, State) ->
 									DataRoot,
 									TXSize,
 									Offset,
-									CheckDiskPool,
 									Iterator2
 								},
 								State
@@ -1734,7 +1746,6 @@ find_or_generate_chunk_data_key(Args, State) ->
 							DataRoot,
 							TXSize,
 							Offset,
-							CheckDiskPool,
 							Iterator2
 						},
 						State
@@ -1957,86 +1968,183 @@ process_disk_pool_item(State, Key, Value, NextCursor) ->
 				DiskPoolChunk
 		end,
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	InDataRootIndex = ar_kv:get(DataRootIndex, DataRootKey),
+	InDataRootIndex =
+		case ar_kv:get(DataRootIndex, DataRootKey) of
+			not_found ->
+				not_found;
+			{ok, DataRootIndexValue} ->
+				binary_to_term(DataRootIndexValue)
+		end,
 	InDiskPool = maps:is_key(DataRootKey, DiskPoolDataRoots),
-	case {InDataRootIndex, InDiskPool} of
-		{not_found, true} ->
+	InChunksIndex =
+		case InDataRootIndex of
+			not_found ->
+				false;
+			DataRootMap2 ->
+				has_synced_chunk(Offset, data_root_index_iterator(DataRootMap2), State)
+		end,
+	case {InDataRootIndex, InDiskPool, InChunksIndex} of
+		{_, true, true} ->
 			%% Increment the timestamp by one (microsecond), so that the new cursor is
 			%% a prefix of the first key of the next data root. We want to quickly skip
-			%% all chunks belonging to the same data root for now.
-			{noreply, State#sync_data_state{
-				disk_pool_cursor = {seek, << (Timestamp + 1):256 >>}
-			}};
-		{not_found, false} ->
+			%% all chunks belonging to the same data root because the chunks are already
+			%% in the index.
+			{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
+		{not_found, true, _} ->
+			%% Increment the timestamp by one (microsecond), so that the new cursor is
+			%% a prefix of the first key of the next data root. We want to quickly skip
+			%% all chunks belonging to the same data root because the data root is not
+			%% yet on chain.
+			{noreply, State#sync_data_state{ disk_pool_cursor = {skip_timestamp, Timestamp} }};
+		{not_found, false, _} ->
+			%% The chunk never made it to the chain, the data root has expired in disk pool.
+			ok = ar_kv:delete(DiskPoolChunksIndex, Key),
+			prometheus_gauge:dec(disk_pool_chunks_count),
 			ok = delete_chunk(ChunkDataKey, State),
+			{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
+		{_, false, true} ->
+			%% The data root has expired in disk pool and the chunk is already in the index.
 			ok = ar_kv:delete(DiskPoolChunksIndex, Key),
 			prometheus_gauge:dec(disk_pool_chunks_count),
 			{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
-		{{ok, DataRootIndexValue}, _} ->
-			DataRootMap = binary_to_term(DataRootIndexValue),
-			{_Status, ExistingChunkDataKey} =
-				find_or_generate_chunk_data_key(
+		{DataRootMap, false, false} ->
+			%% The data root has expired in disk pool, but we can still record the chunk
+			%% in the index.
+			case move_chunk_from_disk_pool(
 					{
-						DataPathHash,
-						DataRoot,
+						ChunkDataKey,
+						Key,
+						Offset,
+						ChunkSize,
 						TXSize,
-						Offset,
-						do_not_check_disk_pool,
-						data_root_index_iterator(DataRootMap)
-					},
-					State
-				),
-			ChunkDataKey2 =
-				case {ChunkDataKey == ExistingChunkDataKey, byte_size(ChunkDataKey)} of
-					{true, _} ->
-						ChunkDataKey;
-					{false, 32} ->
-						ok = ar_kv:put(
-							DiskPoolChunksIndex,
-							Key,
-							term_to_binary({
-								Offset,
-								ChunkSize,
-								DataRoot,
-								TXSize,
-								ExistingChunkDataKey
-							})
-						),
-						ok = delete_chunk(ChunkDataKey, State),
-						ExistingChunkDataKey;
-					{false, 64} ->
-						ok = delete_chunk(ExistingChunkDataKey, State),
-						ChunkDataKey
-				end,
-			State2 =
-				case mupdate_chunks_index(
-					{
-						data_root_index_iterator(DataRootMap),
 						DataRoot,
-						Offset,
-						ChunkDataKey2,
-						ChunkSize
+						DataRootMap
 					},
 					State
 				) of
-					{ok, State3} ->
-						case InDiskPool of
-							false ->
-								ok = ar_kv:delete(DiskPoolChunksIndex, Key),
-								prometheus_gauge:dec(disk_pool_chunks_count);
-							true ->
-								do_not_remove_from_disk_pool_chunks_index
-						end,
-						State3;
-					{{error, Reason}, State3} ->
+					{ok, State2} ->
+						ok = ar_kv:delete(DiskPoolChunksIndex, Key),
+						prometheus_gauge:dec(disk_pool_chunks_count),
+						{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
+					{error, Reason} ->
 						ar:err([
-							{event, failed_to_record_disk_pool_chunk_offsets},
-							{reason, Reason},
-							{chunk, ar_util:encode(ChunkDataKey)}
+							{event, failed_to_move_chunk_from_disk_pool_to_index},
+							{disk_pool_key, ar_util:encode(Key)},
+							{reason, Reason}
 						]),
-						State3
-				end,
-			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }}
+						{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }}
+			end;
+		{DataRootMap, true, false} ->
+			%% Record the chunk in the index.
+			case move_chunk_from_disk_pool(
+					{
+						ChunkDataKey,
+						Key,
+						Offset,
+						ChunkSize,
+						TXSize,
+						DataRoot,
+						DataRootMap
+					},
+					State
+				) of
+					{ok, State2} ->
+						{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
+					{error, Reason} ->
+						ar:err([
+							{event, failed_to_move_chunk_from_disk_pool_to_index},
+							{disk_pool_key, ar_util:encode(Key)},
+							{reason, Reason}
+						]),
+						{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }}
+			end
+	end.
+
+has_synced_chunk(Offset, DataRootIndexIterator, State) ->
+	#sync_data_state{
+		sync_record = SyncRecord
+	} = State,
+	case next(DataRootIndexIterator) of
+		none ->
+			false;
+		{{_, TXStartOffset, _}, DataRootIndexIterator2} ->
+			AbsoluteEndOffset = TXStartOffset + Offset,
+			case ar_intervals:is_inside(SyncRecord, AbsoluteEndOffset) of
+				true ->
+					true;
+				false ->
+					has_synced_chunk(Offset, DataRootIndexIterator2, State)
+			end
+	end.
+
+move_chunk_from_disk_pool(Args, State) ->
+	{
+		ChunkDataKey,
+		DiskPoolChunksIndexKey,
+		Offset,
+		ChunkSize,
+		TXSize,
+		DataRoot,
+		DataRootMap
+	} = Args,
+	#sync_data_state{
+		chunk_data_db = ChunkDataDB,
+		disk_pool_chunks_index = DiskPoolChunksIndex
+	} = State,
+	GetChunkDataKeyResult =
+		case byte_size(ChunkDataKey) of
+			64 ->
+				{ok, ChunkDataKey};
+			32 ->
+				ChunkDataKey2 = generate_chunk_data_db_key(ChunkDataKey),
+				case ar_storage:read_chunk(ChunkDataKey) of
+					not_found ->
+						{error, no_chunk_found_in_storage_for_disk_pool_key};
+					{error, _} = Error ->
+						Error;
+					{ok, Chunk} ->
+						case ar_kv:put(
+							ChunkDataDB,
+							ChunkDataKey2,
+							binary_to_term(Chunk)
+						) of
+							{error, _} = Error ->
+								Error;
+							ok ->
+								case ar_kv:put(
+									DiskPoolChunksIndex,
+									DiskPoolChunksIndexKey,
+									term_to_binary({
+										Offset,
+										ChunkSize,
+										DataRoot,
+										TXSize,
+										ChunkDataKey2
+									})
+								) of
+									{error, _} = Error ->
+										Error;
+									ok ->
+										delete_chunk(ChunkDataKey, State),
+										{ok, ChunkDataKey2}
+								end
+						end
+				end
+		end,
+	case GetChunkDataKeyResult of
+		{error, _} = Error2 ->
+			Error2;
+		{ok, ChunkDataKey3} ->
+			mupdate_chunks_index(
+				{
+					data_root_index_iterator(DataRootMap),
+					DataRoot,
+					Offset,
+					ChunkDataKey3,
+					ChunkSize
+				},
+				State
+			)
 	end.
 
 get_absolute_chunk_offsets(EndOffset, DataRootIndexIterator, State) ->
