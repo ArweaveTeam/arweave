@@ -90,6 +90,9 @@
 %% @doc Time to wait before retrying a failed migration step.
 -define(MIGRATION_RETRY_DELAY_MS, 10000).
 
+%% @doc The frequency of storing the server state on disk.
+-define(STORE_STATE_FREQUENCY_MS, 30000).
+
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
 	%% @doc A set of non-overlapping intervals of global byte offsets ((end, start))

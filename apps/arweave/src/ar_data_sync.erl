@@ -250,12 +250,12 @@ init([]) ->
 		disk_pool_size = DiskPoolSize,
 		disk_pool_cursor = first
 	},
-	gen_server:cast(self(), check_space_update_peer_sync_records),
-	gen_server:cast(self(), check_space_sync_random_interval),
-	gen_server:cast(self(), update_disk_pool_data_roots),
-	gen_server:cast(self(), process_disk_pool_item),
+	gen_server:cast(?MODULE, check_space_update_peer_sync_records),
+	gen_server:cast(?MODULE, check_space_sync_random_interval),
+	gen_server:cast(?MODULE, update_disk_pool_data_roots),
+	gen_server:cast(?MODULE, process_disk_pool_item),
+	gen_server:cast(?MODULE, store_sync_state),
 	migrate_index(State),
-	record_v2_index_data_size(State2),
 	{ok, State2}.
 
 handle_cast({migrate, Key = <<"store_data_in_v2_index">>, Cursor}, State) ->
@@ -617,7 +617,6 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof}, State) ->
 					State
 				) of
 					{ok, State2} ->
-						record_v2_index_data_size(State2),
 						{noreply, State2};
 					{error, Reason} ->
 						ar:err([
@@ -795,7 +794,12 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 				{reason, Reason}
 			]),
 			{noreply, State}
-	end.
+	end;
+
+handle_cast(store_sync_state, State) ->
+	ok = store_sync_state(State),
+	cast_after(?STORE_STATE_FREQUENCY_MS, store_sync_state),
+	{noreply, State}.
 
 handle_call({add_chunk, _, _, _, _, _, _} = Msg, _From, State) ->
 	{add_chunk, DataRoot, DataPath, Chunk, Offset, TXSize, WriteToFreeSpaceBuffer} = Msg,
@@ -1397,14 +1401,14 @@ reset_orphaned_data_roots_disk_pool_timestamps(DataRoots, DataRootIndexKeySet) -
 	),
 	U.
 
-store_sync_state(
+store_sync_state(State) ->
 	#sync_data_state{
 		sync_record = SyncRecord,
 		disk_pool_data_roots = DiskPoolDataRoots,
 		disk_pool_size = DiskPoolSize,
 		block_index = BI
-	}
-) ->
+	} = State,
+	record_v2_index_data_size(State),
 	ar_metrics:store(disk_pool_chunks_count),
 	ar_storage:write_term(data_sync_state, {SyncRecord, BI, DiskPoolDataRoots, DiskPoolSize}).
 
@@ -1799,7 +1803,6 @@ mupdate_chunks_index(Args, State) ->
 						State#sync_data_state{
 							sync_record = SyncRecord
 						},
-					record_v2_index_data_size(State2),
 					mupdate_chunks_index(
 						{
 							DataRootIndexIterator2,
