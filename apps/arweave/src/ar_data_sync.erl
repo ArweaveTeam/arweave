@@ -768,13 +768,13 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 								get_absolute_chunk_offsets(
 									ChunkOffset,
 									data_root_index_iterator(DataRootMap),
-									State
+									State2
 								),
 							case AbsoluteEndOffsets of
 								[AbsoluteEndOffset] ->
 									%% The removed offset is the only reference to
 									%% the chunk so we can remove the chunk itself.
-									delete_chunk(ChunkDataKey, State);
+									delete_chunk(ChunkDataKey, State2);
 								_ ->
 									do_not_remove_chunk
 							end;

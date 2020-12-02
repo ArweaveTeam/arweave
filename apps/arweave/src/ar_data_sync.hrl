@@ -39,7 +39,11 @@
 -define(TRACK_CONFIRMATIONS, ?STORE_BLOCKS_BEHIND_CURRENT * 2).
 
 %% @doc The maximum number of synced intervals shared with peers.
+-ifdef(DEBUG).
+-define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 20).
+-else.
 -define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 10000).
+-endif.
 
 %% @doc The upper limit for the size of a sync record serialized using Erlang Term Format.
 -define(MAX_ETF_SYNC_RECORD_SIZE, 80 * ?MAX_SHARED_SYNCED_INTERVALS_COUNT).
