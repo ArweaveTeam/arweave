@@ -603,12 +603,11 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof}, State) ->
 								DataRootMap2
 						end;
 					false ->
+						DataRootMap2 = #{ TXRoot => #{ AbsoluteTXStartOffset => TXPath } },
 						ok = ar_kv:put(
 							DataRootIndex,
 							DataRootKey,
-							term_to_binary(
-								#{ TXRoot => #{ AbsoluteTXStartOffset => TXPath } }
-							)
+							term_to_binary(DataRootMap2)
 						),
 						UpdatedValue =
 							term_to_binary({
@@ -620,7 +619,8 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof}, State) ->
 							DataRootOffsetIndex,
 							Key,
 							UpdatedValue
-						)
+						),
+						DataRootMap2
 				end,
 			ChunkSize = byte_size(Chunk),
 			Byte2 = Byte + ChunkSize,
