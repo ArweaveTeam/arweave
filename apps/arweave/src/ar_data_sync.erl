@@ -576,35 +576,65 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof}, State) ->
 		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize} ->
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-			case sets:is_element(DataRootKey, DataRootIndexKeySet) of
-				true ->
-					do_not_update_data_root_index;
-				false ->
-					UpdatedValue =
-						term_to_binary({
-							TXRoot,
-							BlockSize,
-							sets:add_element(DataRootKey, DataRootIndexKeySet)
-						}),
-					ok = ar_kv:put(
-						DataRootOffsetIndex,
-						Key,
-						UpdatedValue
-					),
-					ok = ar_kv:put(
-						DataRootIndex,
-						DataRootKey,
-						term_to_binary(
-							#{ TXRoot => #{ AbsoluteTXStartOffset => TXPath } }
+			%% The data_root_offset_index and data_root_index are updated in case
+			%% we have not synced the corresponding blocks yet (in ar_header_sync).
+			DataRootMap =
+				case sets:is_element(DataRootKey, DataRootIndexKeySet) of
+					true ->
+						{ok, DataRootIndexValue} = ar_kv:get(DataRootIndex, DataRootKey),
+						DataRootMap2 = binary_to_term(DataRootIndexValue),
+						TXRootMap = maps:get(TXRoot, DataRootMap2, #{}),
+						case maps:is_key(AbsoluteTXStartOffset, TXRootMap) of
+							false ->
+								DataRootMap3 =
+									maps:put(
+										TXRoot,
+										TXRootMap#{ AbsoluteTXStartOffset => TXPath },
+										DataRootMap2
+									),
+								ok =
+									ar_kv:put(
+										DataRootIndex,
+										DataRootKey,
+										term_to_binary(DataRootMap3)
+									),
+								DataRootMap3;
+							true ->
+								DataRootMap2
+						end;
+					false ->
+						ok = ar_kv:put(
+							DataRootIndex,
+							DataRootKey,
+							term_to_binary(
+								#{ TXRoot => #{ AbsoluteTXStartOffset => TXPath } }
+							)
+						),
+						UpdatedValue =
+							term_to_binary({
+								TXRoot,
+								BlockSize,
+								sets:add_element(DataRootKey, DataRootIndexKeySet)
+							}),
+						ok = ar_kv:put(
+							DataRootOffsetIndex,
+							Key,
+							UpdatedValue
 						)
-					)
-			end,
+				end,
 			ChunkSize = byte_size(Chunk),
 			Byte2 = Byte + ChunkSize,
 			gen_server:cast(self(), {sync_chunk, Peer, Byte2, RightBound}),
-			{ok, DataRootIndexValue} = ar_kv:get(DataRootIndex, DataRootKey),
-			DataRootMap = binary_to_term(DataRootIndexValue),
 			case
+				%% Here we do not just store the chunk under the single offset we fetched it by,
+				%% but check whether we already have chunks with the same proof under other
+				%% offsets (the case when the same data is uploaded by multiple transactions).
+				%% The main motivation is to have a single key for the chunk in the blob storage
+				%% so that we can count references when removing a chunk from a particular offset.
+				%% For example, a chunk can be removed for being blacklisted while the same
+				%% data was uploaded in a whitelisted transaction - in this case the blacklisted
+				%% offset is removed but the chunk is kept in the storage because it is referenced
+				%% by the whitelisted transaction.
 				store_chunk(
 					{
 						DataRootMap,
@@ -644,9 +674,9 @@ handle_cast(process_disk_pool_item, State) ->
 	case ar_kv:cyclic_iterator_move(DiskPoolChunksIndex, Cursor2) of
 		{ok, Key, Value, NextCursor} ->
 			<< Timestamp:256, _/binary >> = Key,
-			case Timestamp of
-				SkipTimestamp ->
-					%% There is only one timestamp in the disk pool, stop scanning.
+			case SkipTimestamp /= none andalso Timestamp =< SkipTimestamp of
+				true ->
+					%% We completed the full scan, make a break.
 					timer:apply_after(
 						?DISK_POOL_SCAN_FREQUENCY_MS,
 						gen_server,
