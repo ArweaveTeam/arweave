@@ -12,7 +12,7 @@
 	add_chunk/1, add_chunk/2, add_chunk/3,
 	add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 	get_chunk/1, get_tx_root/1, get_tx_data/1, get_tx_offset/1,
-	get_sync_record_etf/0, get_sync_record_json/0,
+	get_sync_record/1,
 	request_tx_data_removal/1
 ]).
 
@@ -225,20 +225,22 @@ get_tx_offset(TXIndex, TXID) ->
 			{error, failed_to_read_offset}
 	end.
 
-%% @doc Return a set of intervals of synced byte global offsets (with false positives), up
-%% to ?MAX_SHARED_SYNCED_INTERVALS_COUNT intervals, serialized as Erlang Term Format.
-get_sync_record_etf() ->
-	case catch gen_server:call(?MODULE, get_sync_record_etf) of
-		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			{error, timeout};
-		Reply ->
-			Reply
-	end.
-
-%% @doc Return a set of intervals of synced byte global offsets (with false positives), up
-%% to MAX_SHARED_SYNCED_INTERVALS_COUNT, serialized as JSON.
-get_sync_record_json() ->
-	case catch gen_server:call(?MODULE, get_sync_record_json) of
+%% @doc Return a set of intervals of synced data ranges.
+%%
+%% Args is a map with he following keys:
+%%
+%% | ------------- | -------- | ------------ | -------------------------------------------------- |
+%% | format        | required | `etf | json` | serialize in Erlang Term Format or JSON            |
+%% | random_subset | optional | any()        | pick a random subset if the key is present         |
+%% | start         | optional | integer()    | pick intervals with right bound >= start           |
+%% | limit         | optional | integer()    | the number of intervals to pick                    |
+%%
+%% ?MAX_SHARED_SYNCED_INTERVALS_COUNT is both the default and the maximum value for limit.
+%% If random_subset key is present, a random subset of intervals is picked, the start key is
+%% ignored. If random_subset key is not present, the start key must be provided.
+%% @end
+get_sync_record(Args) ->
+	case catch gen_server:call(?MODULE, {get_sync_record, Args}) of
 		{'EXIT', {timeout, {gen_server, call, _}}} ->
 			{error, timeout};
 		Reply ->
@@ -827,6 +829,17 @@ handle_call({add_chunk, _, _, _, _, _, _} = Msg, _From, State) ->
 					{reply, {error, Reason}, MaybeUpdatedState}
 			end
 	end;
+
+handle_call({get_sync_record, Args}, _From, State) ->
+	#sync_data_state{
+		sync_record = SyncRecord
+	} = State,
+	Limit =
+		min(
+			maps:get(limit, Args, ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
+			?MAX_SHARED_SYNCED_INTERVALS_COUNT
+		),
+	{reply, {ok, ar_intervals:serialize(Args#{ limit => Limit }, SyncRecord)}, State};
 
 handle_call(get_sync_record_etf, _From, #sync_data_state{ sync_record = SyncRecord } = State) ->
 	Limit = ?MAX_SHARED_SYNCED_INTERVALS_COUNT,

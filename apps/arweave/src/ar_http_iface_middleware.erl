@@ -254,16 +254,36 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			Fn = case cowboy_req:header(<<"content-type">>, Req) of
-				<<"application/json">> -> get_sync_record_json;
-				<<"application/etf">> -> get_sync_record_etf;
-				_ -> get_sync_record_etf
+			Format =
+				case cowboy_req:header(<<"content-type">>, Req) of
+					<<"application/json">> ->
+						json;
+					_ ->
+						etf
 			end,
-			case ar_data_sync:Fn() of
+			case ar_data_sync:get_sync_record(#{ format => Format, random_subset => true }) of
 				{ok, Binary} ->
 					{200, #{}, Binary, Req};
 				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			end
+	end;
+
+handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pid) ->
+	case catch binary_to_integer(EncodedStart) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_start_encoding }), Req};
+		Start ->
+			case catch binary_to_integer(EncodedLimit) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_limit_encoding }), Req};
+				Limit ->
+					case Limit > ?MAX_SHARED_SYNCED_INTERVALS_COUNT of
+						true ->
+							{400, #{}, jiffy:encode(#{ error => limit_too_big }), Req};
+						false ->
+							handle_get_data_sync_record(Start, Limit, Req)
+					end
 			end
 	end;
 
@@ -1149,6 +1169,21 @@ handle_post_tx_already_in_weave_response() ->
 
 handle_post_tx_already_in_mempool_response() ->
 	{error_response, {400, #{}, <<"Transaction is already in the mempool.">>}}.
+
+handle_get_data_sync_record(Start, Limit, Req) ->
+	Format =
+		case cowboy_req:header(<<"content-type">>, Req) of
+			<<"application/json">> ->
+				json;
+			_ ->
+				etf
+		end,
+	case ar_data_sync:get_sync_record(#{ start => Start, limit => Limit, format => Format }) of
+		{ok, Binary} ->
+			{200, #{}, Binary, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+	end.
 
 handle_post_chunk(Proof, Req) ->
 	handle_post_chunk(check_data_size, Proof, Req).
