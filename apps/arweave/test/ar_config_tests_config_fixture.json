@@ -20,6 +20,10 @@
   "diff": 42,
   "mining_addr": "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
   "max_miners": 43,
+  "max_emitters": 2,
+  "max_propagation_peers": 8,
+  "tx_propagation_parallelization": 4,
+  "sync_jobs": 10,
   "new_mining_key": true,
   "load_mining_key": "some_key_file",
   "transaction_blacklists": [

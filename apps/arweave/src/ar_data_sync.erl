@@ -16,6 +16,7 @@
 ]).
 
 -include("ar.hrl").
+-include("ar_config.hrl").
 -include("ar_data_sync.hrl").
 
 %%%===================================================================
@@ -253,7 +254,13 @@ init([]) ->
 		disk_pool_cursor = first
 	},
 	gen_server:cast(?MODULE, check_space_update_peer_sync_records),
-	gen_server:cast(?MODULE, check_space_sync_random_interval),
+	{ok, Config} = application:get_env(arweave, config),
+	lists:foreach(
+		fun(_SyncingJobNumber) ->
+			gen_server:cast(?MODULE, check_space_sync_random_interval)
+		end,
+		lists:seq(1, Config#config.sync_jobs)
+	),
 	gen_server:cast(?MODULE, update_disk_pool_data_roots),
 	gen_server:cast(?MODULE, process_disk_pool_item),
 	gen_server:cast(?MODULE, store_sync_state),

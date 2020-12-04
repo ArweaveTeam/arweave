@@ -122,7 +122,13 @@ show_help() ->
 			{"max_miners (num)", "The maximum number of mining processes."},
 			{"max_emitters (num)", "The maximum number of transaction propagation processes (default 2)."},
 			{"tx_propagation_parallelization (num)", "The maximum number of best peers to propagate transactions to at a time (default 4)."},
-			{"max_propagation_peers (number)", "The maximum number of best peers to propagate blocks and transactions to. Default is 50."},
+			{"max_propagation_peers (num)", "The maximum number of best peers to propagate blocks and transactions to. Default is 50."},
+			{"sync_jobs (num)",
+				io_lib:format(
+					"The number of data syncing jobs to run. Default: ~B."
+					" Each job periodically picks a range and downloads it from peers.",
+					[?DEFAULT_SYNC_JOBS]
+				)},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
@@ -261,6 +267,8 @@ parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args(["max_propagation_peers", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_propagation_peers = list_to_integer(Num) });
+parse_cli_args(["sync_jobs", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { sync_jobs = list_to_integer(Num) });
 parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->

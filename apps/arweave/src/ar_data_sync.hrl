@@ -63,9 +63,6 @@
 %% such data should fetch it chunk by chunk.
 -define(MAX_SERVED_TX_DATA_SIZE, 12 * 1024 * 1024).
 
-%% @doc The default expiration time for a data root in the disk pool.
--define(DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 2 * 60 * 60).
-
 %% @doc The time to wait until the next full disk pool scan.
 -ifdef(DEBUG).
 -define(DISK_POOL_SCAN_FREQUENCY_MS, 2000).
@@ -75,16 +72,6 @@
 
 %% @doc The frequency of removing expired data roots from the disk pool.
 -define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
-
-%% @doc The default size limit for unconfirmed chunks, per data root.
--define(MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 50).
-
-%% @doc The default total size limit for unconfirmed chunks.
--ifdef(DEBUG).
--define(MAX_DISK_POOL_BUFFER_MB, 100).
--else.
--define(MAX_DISK_POOL_BUFFER_MB, 2000).
--endif.
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification.
@@ -163,8 +150,8 @@
 	%% Unconfirmed chunks can be accepted only after their data roots end up in this set.
 	%% Each time a pending data root is added to the map the size is set to 0. New chunks
 	%% for these data roots are accepted until the corresponding size reaches
-	%% ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB or the total size of added pending chunks
-	%% reaches ?MAX_DISK_POOL_BUFFER_MB. When a data root is orphaned, it's timestamp
+	%% config.max_disk_pool_data_root_buffer_mb or the total size of added pending chunks
+	%% reaches config.max_disk_pool_buffer_mb. When a data root is orphaned, it's timestamp
 	%% is refreshed so that the chunks have chance to be reincluded later.
 	%% After a data root expires, the corresponding chunks are removed from
 	%% disk_pool_chunks_index and if they are not in data_root_index - from storage.
