@@ -1429,10 +1429,15 @@ update_data_root_index(State, DataRootKey, TXRoot, AbsoluteTXStartOffset, TXPath
 			binary_to_term(Value)
 	end,
 	OffsetMap = maps:get(TXRoot, TXRootMap, #{}),
-	UpdatedValue = term_to_binary(
-		TXRootMap#{ TXRoot => OffsetMap#{ AbsoluteTXStartOffset => TXPath } }
-	),
-	ar_kv:put(DataRootIndex, DataRootKey, UpdatedValue).
+	case maps:is_key(AbsoluteTXStartOffset, OffsetMap) of
+		true ->
+			ok;
+		false ->
+			UpdatedValue = term_to_binary(
+				TXRootMap#{ TXRoot => OffsetMap#{ AbsoluteTXStartOffset => TXPath } }
+			),
+			ar_kv:put(DataRootIndex, DataRootKey, UpdatedValue)
+	end.
 
 add_block_data_roots_to_disk_pool(DataRoots, DataRootIndexKeySet) ->
 	{U, _} = sets:fold(
