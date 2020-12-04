@@ -10,8 +10,7 @@
 	sum/1,
 	outerjoin/2,
 	get_interval_by_nth_inner_number/2,
-	to_etf/2,
-	to_json/2,
+	serialize/2,
 	safe_from_etf/1,
 	count/1,
 	is_empty/1,
@@ -31,6 +30,7 @@ new() ->
 
 %% @doc Add a new interval. Intervals are compacted - e.g., (2, 1) and (1, 0) are joined
 %% into (2, 0). Also, if two intervals intersect each other, they are joined.
+%% @end
 add(Intervals, End, Start) when End > Start ->
 	Iter = gb_sets:iterator_from({Start - 1, Start - 1}, Intervals),
 	add2(Iter, Intervals, End, Start).
@@ -42,6 +42,7 @@ delete(Intervals, End, Start) ->
 
 %% @doc Remove the interval above the given cut. If there is an interval containing
 %% the cut, replace it with its part up to the cut.
+%% @end
 cut(Intervals, Cut) ->
 	case gb_sets:size(Intervals) of
 		0 ->
@@ -59,6 +60,7 @@ cut(Intervals, Cut) ->
 
 %% @doc Return true if the given number is inside one of the intervals, false otherwise.
 %% The left bounds of the intervals are excluded from search, the right bounds are included.
+%% @end
 is_inside(Intervals, Number) ->
 	Iter = gb_sets:iterator_from({Number - 1, Number - 1}, Intervals),
 	case gb_sets:next(Iter) of
@@ -78,6 +80,7 @@ sum(Intervals) ->
 
 %% @doc Return a set of intervals containing the points from the second given set of
 %% intervals and excluding the points from the first given set of intervals.
+%% @end
 outerjoin(I1, I2) ->
 	intersection(inverse(I1), I2).
 
@@ -86,29 +89,24 @@ outerjoin(I1, I2) ->
 %% contained in the set of intervals when counted starting from the smallest interval, including
 %% the left bounds and excluding the right bounds.
 %% Raises a none exception, if the set does not contain enough points to find N.
+%% @end
 get_interval_by_nth_inner_number(Intervals, N) ->
 	get_interval_by_nth_inner_number2(gb_sets:iterator(Intervals), N).
 
-%% @doc Serialize the given set of intervals to a binary that can be converted back
-%% to the original set of intervals via safe_from_etf/1. If the given limit is greater than
-%% or equal to the number of intervals, serialize all the intervals. If the given limit
-%% is smaller, include at most so many intervals in the output where the probability of
-%% including an interval is proportional to the ratio between the limit and the number
-%% of intervals.
-to_etf(Intervals, Limit) ->
-	serialize(Intervals, Limit, etf).
-
-%% @doc Serialize the given set of intervals to a JSON list of objects {"end": "start"}.
-%% If the given limit is greater tha or equal to the number of intervals, serialize all
-%% the intervals. If the given limit is smaller, include at most so many intervals in
-%% the output where the probability of including an interval is proportional to the ratio
-%% between the limit and the number of intervals.
-to_json(Intervals, Limit) ->
-	serialize(Intervals, Limit, json).
+%% @doc Serialize a subset of the intervals using the requested format, etf | json.
+%% The subset is always smaller than or equal to Limit. If random_subset key is present,
+%% the chosen subset is random. Otherwise, the right bound of the first interval is
+%% greater than or equal to start.
+%% @end
+serialize(#{ random_subset := _, limit := Limit, format := Format }, Intervals) ->
+	serialize_random_subset(Intervals, Limit, Format);
+serialize(#{ start := Start, limit := Limit, format := Format }, Intervals) ->
+	serialize_subset(Intervals, Start, Limit, Format).
 
 %% @doc Convert the binary produced by to_etf/2 into the set of intervals.
 %% Return {error, invalid} if the binary is not a valid ETF representation of the
 %% non-overlapping intervals.
+%% @end
 safe_from_etf(Binary) ->
 	case catch from_etf(Binary) of
 		{ok, Intervals} ->
@@ -127,11 +125,13 @@ is_empty(Intervals) ->
 
 %% @doc Return {Interval, Intervals2} when Interval is the interval with the smallest
 %% right bound and Intervals2 is the set of intervals with this interval removed.
+%% @end
 take_smallest(Intervals) ->
 	gb_sets:take_smallest(Intervals).
 
 %% @doc Return {Interval, Intervals2} when Interval is the interval with the largest
 %% right bound and Intervals2 is the set of intervals with this interval removed.
+%% @end
 take_largest(Intervals) ->
 	gb_sets:take_largest(Intervals).
 
@@ -223,13 +223,14 @@ get_interval_by_nth_inner_number2(Iterator, N) ->
 			{Start, Start + N, End}
 	end.
 
-serialize(Intervals, Limit, Format) ->
+serialize_random_subset(Intervals, Limit, Format) ->
 	case gb_sets:is_empty(Intervals) of
 		true ->
 			serialize_empty(Format);
 		false ->
 			Iterator = gb_sets:iterator(Intervals),
-			serialize(Iterator, min(Limit / gb_sets:size(Intervals), 1), [], 0, Limit, Format)
+			InclusionProbability = min(Limit / gb_sets:size(Intervals), 1),
+			serialize_random_subset(Iterator, InclusionProbability, [], 0, Limit, Format)
 	end.
 
 serialize_empty(etf) ->
@@ -237,25 +238,26 @@ serialize_empty(etf) ->
 serialize_empty(json) ->
 	jiffy:encode([]).
 
-serialize(_Iterator, _Probability, L, Count, Limit, Format) when Count == Limit ->
+serialize_random_subset(_Iterator, _Probability, L, Count, Limit, Format) when Count == Limit ->
 	serialize_list(L, Format);
-serialize(Iterator, Probability, L, Count, Limit, Format) ->
+serialize_random_subset(Iterator, Probability, L, Count, Limit, Format) ->
 	case gb_sets:next(Iterator) of
 		none ->
 			serialize_list(L, Format);
-		{{End, Start}, UpdatedIterator} ->
-			PickItem = case Probability < 1 of
-				true ->
-					rand:uniform() < Probability;
-				false ->
-					true
-			end,
+		{{End, Start}, Iterator2} ->
+			PickItem =
+				case Probability < 1 of
+					true ->
+						rand:uniform() < Probability;
+					false ->
+						true
+				end,
 			case PickItem of
 				false ->
-					serialize(UpdatedIterator, Probability, L, Count, Limit, Format);
+					serialize_random_subset(Iterator2, Probability, L, Count, Limit, Format);
 				true ->
-					UpdatedL = [serialize_item(End, Start, Format) | L],
-					serialize(UpdatedIterator, Probability, UpdatedL, Count + 1, Limit, Format)
+					L2 = [serialize_item(End, Start, Format) | L],
+					serialize_random_subset(Iterator2, Probability, L2, Count + 1, Limit, Format)
 			end
 	end.
 
@@ -268,6 +270,26 @@ serialize_item(End, Start, etf) ->
 	{<< End:256 >>, << Start:256 >>};
 serialize_item(End, Start, json) ->
 	#{ integer_to_binary(End) => integer_to_binary(Start) }.
+
+serialize_subset(Intervals, Start, Limit, Format) ->
+	case gb_sets:is_empty(Intervals) of
+		true ->
+			serialize_empty(Format);
+		false ->
+			Iterator = gb_sets:iterator_from({Start, 0}, Intervals),
+			serialize_subset(Iterator, [], 0, Limit, Format)
+	end.
+
+serialize_subset(_Iterator, L, Count, Limit, Format) when Count == Limit ->
+	serialize_list(L, Format);
+serialize_subset(Iterator, L, Count, Limit, Format) ->
+	case gb_sets:next(Iterator) of
+		none ->
+			serialize_list(L, Format);
+		{{End, Start}, Iterator2} ->
+			L2 = [serialize_item(End, Start, Format) | L],
+			serialize_subset(Iterator2, L2, Count + 1, Limit, Format)
+	end.
 
 from_etf(Binary) ->
 	L = binary_to_term(Binary, [safe]),
@@ -290,8 +312,13 @@ intervals_test() ->
 	?assert(not is_inside(I, 0)),
 	?assert(not is_inside(I, 1)),
 	?assertEqual(new(), outerjoin(I, I)),
-	?assertEqual(<<"[]">>, to_json(I, 1)),
-	?assertEqual({ok, new()}, safe_from_etf(to_etf(I, 1))),
+	?assertEqual(<<"[]">>, serialize(#{ random_subset => true, format => json, limit => 1 }, I)),
+	?assertEqual(<<"[]">>, serialize(#{ start => 0, format => json, limit => 1 }, I)),
+	?assertEqual(<<"[]">>, serialize(#{ start => 1, format => json, limit => 1 }, I)),
+	?assertEqual(
+		{ok, new()},
+		safe_from_etf(serialize(#{ random_subset => true, format => etf, limit => 1 }, I))
+	),
 	?assertEqual(new(), outerjoin(I, I)),
 	?assertEqual(new(), delete(I, 2, 1)),
 	?assertException(error, none, get_interval_by_nth_inner_number(I, 0)),
@@ -315,11 +342,33 @@ intervals_test() ->
 	?assertEqual(new(), cut(I2, 0)),
 	compare(I2, cut(I2, 2)),
 	compare(I2, cut(I2, 3)),
-	?assertEqual(<<"[{\"2\":\"1\"}]">>, to_json(I2, 1)),
-	?assertEqual(<<"[]">>, to_json(I2, 0)),
-	{ok, I2_FromETF} = safe_from_etf(to_etf(I2, 1)),
+	?assertEqual(
+		<<"[{\"2\":\"1\"}]">>,
+		serialize(#{ random_subset => true, limit => 1, format => json }, I2)
+	),
+	?assertEqual(
+		<<"[]">>,
+		serialize(#{ random_subset => true, limit => 0, format => json }, I2)
+	),
+	?assertEqual(
+		<<"[{\"2\":\"1\"}]">>,
+		serialize(#{ start => 2, limit => 1, format => json }, I2)
+	),
+	?assertEqual(
+		<<"[]">>,
+		serialize(#{ start => 3, limit => 1, format => json }, I2)
+	),
+	?assertEqual(
+		<<"[]">>,
+		serialize(#{ start => 2, limit => 0, format => json }, I2)
+	),
+	{ok, I2_FromETF} =
+		safe_from_etf(serialize(#{ format => etf, limit => 1, random_subset => true }, I2)),
 	compare(I2, I2_FromETF),
-	?assertEqual({ok, new()}, safe_from_etf(to_etf(I2, 0))),
+	?assertEqual(
+		{ok, new()},
+		safe_from_etf(serialize(#{ format => etf, limit => 0, random_subset => true }, I2))
+	),
 	compare(I2, add(I2, 2, 1)),
 	compare(add(new(), 3, 1), add(I2, 3, 1)),
 	compare(add(new(), 2, 0), add(I2, 2, 0)),
@@ -352,8 +401,24 @@ intervals_test() ->
 	compare(add(I2, 4, 3), cut(I3, 4)),
 	compare(add(I2, 5, 3), cut(I3, 5)),
 	compare(I3, cut(I3, 6)),
-	?assertEqual(<<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>, to_json(I3, 10)),
-	{ok, I3_FromETF} = safe_from_etf(to_etf(I3, 10)),
+	?assertEqual(
+		<<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>,
+		serialize(#{ random_subset => true, limit => 10, format => json }, I3)
+	),
+	?assertEqual(
+		<<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>,
+		serialize(#{ start => 1, limit => 10, format => json }, I3)
+	),
+	?assertEqual(
+		<<"[{\"2\":\"1\"}]">>,
+		serialize(#{ start => 1, limit => 1, format => json }, I3)
+	),
+	?assertEqual(
+		<<"[{\"6\":\"3\"}]">>,
+		serialize(#{ start => 3, limit => 10, format => json }, I3)
+	),
+	{ok, I3_FromETF} =
+		safe_from_etf(serialize(#{ format => etf, limit => 10, random_subset => true }, I3)),
 	compare(I3, I3_FromETF),
 	compare(I3, add(I3, 4, 3)),
 	compare(add(new(), 6, 1), add(I3, 3, 1)),
@@ -377,8 +442,12 @@ intervals_test() ->
 	?assertEqual(new(), cut(I4, 0)),
 	compare(add(I2, 5, 3), cut(I4, 5)),
 	compare(I4, cut(I4, 7)),
-	?assertEqual(<<"[{\"7\":\"3\"},{\"2\":\"1\"}]">>, to_json(I4, 10)),
-	{ok, I4_FromETF} = safe_from_etf(to_etf(I4, count(I4))),
+	?assertEqual(
+		<<"[{\"7\":\"3\"},{\"2\":\"1\"}]">>,
+		serialize(#{ format => json, limit => 10, random_subset => true }, I4)
+	),
+	{ok, I4_FromETF} =
+		safe_from_etf(serialize(#{ limit => count(I4), random_subset => true, format => etf }, I4)),
 	compare(I4, I4_FromETF),
 	I5 = add(I4, 3, 2),
 	?assertEqual(1, count(I5)),
@@ -388,7 +457,10 @@ intervals_test() ->
 	compare(add(add(new(), 3, 2), 8, 7), delete(add(add(new(), 4, 2), 8, 6), 7, 3)).
 
 compare(I1, I2) ->
-	?assertEqual(to_json(I1, count(I1)), to_json(I2, count(I2))),
+	?assertEqual(
+		serialize(#{ format => json, limit => count(I1), start => 0 }, I1),
+		serialize(#{ format => json, limit => count(I2), start => 0 }, I2)
+	),
 	Folded1 = gb_sets:fold(fun({K, V}, Acc) -> [{K, V} | Acc] end, [], I1),
 	Folded2 = gb_sets:fold(fun({K, V}, Acc) -> [{K, V} | Acc] end, [], I2),
 	?assertEqual(Folded1, Folded2).
