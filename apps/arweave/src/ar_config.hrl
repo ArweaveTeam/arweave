@@ -2,13 +2,30 @@
 -define(AR_CONFIG_HRL, true).
 
 -include("ar.hrl").
--include("ar_data_sync.hrl").
 
 -record(config_webhook, {
 	events = [],
 	url = undefined,
 	headers = []
 }).
+
+%% @doc The number of data sync jobs to run. Each job periodically picks a range
+%% and downloads it from peers.
+%% @end
+-define(DEFAULT_SYNC_JOBS, 2).
+
+%% @doc The default expiration time for a data root in the disk pool.
+-define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 2 * 60 * 60).
+
+%% @doc The default size limit for unconfirmed chunks, per data root.
+-define(DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 50).
+
+%% @doc The default total size limit for unconfirmed chunks.
+-ifdef(DEBUG).
+-define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 100).
+-else.
+-define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 2000).
+-endif.
 
 %% Start options with default values.
 -record(config, {
@@ -26,6 +43,7 @@
 	max_miners = ?NUM_MINING_PROCESSES,
 	max_emitters = ?NUM_EMITTER_PROCESSES,
 	tx_propagation_parallelization = ?TX_PROPAGATION_PARALLELIZATION,
+	sync_jobs = ?DEFAULT_SYNC_JOBS,
 	new_key = false,
 	load_key = false,
 	disk_space,
@@ -47,9 +65,9 @@
 	max_connections = 1024,
 	max_gateway_connections = 128,
 	max_poa_option_depth = 8,
-	disk_pool_data_root_expiration_time = ?DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
-	max_disk_pool_buffer_mb = ?MAX_DISK_POOL_BUFFER_MB,
-	max_disk_pool_data_root_buffer_mb = ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
+	disk_pool_data_root_expiration_time = ?DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
+	max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB,
+	max_disk_pool_data_root_buffer_mb = ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
 	randomx_bulk_hashing_iterations = 12
 }).
 

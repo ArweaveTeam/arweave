@@ -3,6 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("src/ar.hrl").
+-include("src/ar_config.hrl").
 -include("src/ar_data_sync.hrl").
 
 -import(ar_test_node, [
@@ -235,7 +236,7 @@ rejects_chunks_exceeding_disk_pool_limit_test_() ->
 test_rejects_chunks_exceeding_disk_pool_limit() ->
 	{Master, Slave, Wallet} = setup_nodes(),
 	Data1 = crypto:strong_rand_bytes(
-		(?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024) + 1
+		(?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024) + 1
 	),
 	Chunks1 = split(?DATA_CHUNK_SIZE, Data1),
 	{DataRoot1, _} = ar_merkle:generate_tree(
@@ -261,8 +262,8 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	),
 	Data2 = crypto:strong_rand_bytes(
 		min(
-			?MAX_DISK_POOL_BUFFER_MB - ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
-			?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB - 1
+			?DEFAULT_MAX_DISK_POOL_BUFFER_MB - ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
+			?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB - 1
 		) * 1024 * 1024
 	),
 	Chunks2 = split(Data2),
@@ -284,10 +285,10 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		Proofs2
 	),
 	Left =
-		?MAX_DISK_POOL_BUFFER_MB * 1024 * 1024 -
+		?DEFAULT_MAX_DISK_POOL_BUFFER_MB * 1024 * 1024 -
 		lists:sum([byte_size(Chunk) || Chunk <- tl(Chunks1)]) -
 		byte_size(Data2),
-	?assert(Left < ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024),
+	?assert(Left < ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024),
 	Data3 = crypto:strong_rand_bytes(Left + 1),
 	Chunks3 = split(Data3),
 	{DataRoot3, _} = ar_merkle:generate_tree(

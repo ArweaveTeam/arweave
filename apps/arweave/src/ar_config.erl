@@ -109,6 +109,29 @@ parse_options([{<<"max_miners">>, MaxMiners} | Rest], Config) when is_integer(Ma
 parse_options([{<<"max_miners">>, MaxMiners} | _], _) ->
 	{error, {bad_type, max_miners, number}, MaxMiners};
 
+parse_options([{<<"max_emitters">>, Value} | Rest], Config) when is_integer(Value) ->
+	parse_options(Rest, Config#config{ max_emitters = Value });
+parse_options([{<<"max_emitters">>, Value} | _], _) ->
+	{error, {bad_type, max_emitters, number}, Value};
+
+parse_options([{<<"tx_propagation_parallelization">>, Value} | Rest], Config)
+		when is_integer(Value) ->
+	parse_options(Rest, Config#config{ tx_propagation_parallelization = Value });
+parse_options([{<<"tx_propagation_parallelization">>, Value} | _], _) ->
+	{error, {bad_type, tx_propagation_parallelization, number}, Value};
+
+parse_options([{<<"max_propagation_peers">>, Value} | Rest], Config)
+		when is_integer(Value) ->
+	parse_options(Rest, Config#config{ max_propagation_peers = Value });
+parse_options([{<<"max_propagation_peers">>, Value} | _], _) ->
+	{error, {bad_type, max_propagation_peers, number}, Value};
+
+parse_options([{<<"sync_jobs">>, Value} | Rest], Config)
+		when is_integer(Value) ->
+	parse_options(Rest, Config#config{ sync_jobs = Value });
+parse_options([{<<"sync_jobs">>, Value} | _], _) ->
+	{error, {bad_type, sync_jobs, number}, Value};
+
 parse_options([{<<"new_mining_key">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ new_key = true });
 parse_options([{<<"new_mining_key">>, false} | Rest], Config) ->
