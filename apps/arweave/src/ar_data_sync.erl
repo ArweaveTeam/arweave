@@ -261,6 +261,7 @@ init([]) ->
 		end,
 		lists:seq(1, Config#config.sync_jobs)
 	),
+	gen_server:cast(?MODULE, check_space_warning),
 	gen_server:cast(?MODULE, update_disk_pool_data_roots),
 	gen_server:cast(?MODULE, process_disk_pool_item),
 	gen_server:cast(?MODULE, store_sync_state),
@@ -492,16 +493,26 @@ handle_cast({update_peer_sync_records, PeerSyncRecords}, State) ->
 		peer_sync_records = PeerSyncRecords
 	}};
 
+handle_cast(check_space_warning, State) ->
+	FreeSpace = ar_storage:get_free_space(),
+	case FreeSpace > ?DISK_DATA_BUFFER_SIZE of
+		false ->
+			Msg =
+				"The node has stopped syncing data - the available disk space is"
+				" less than ~s. Add more disk space if you wish to store more data.",
+			ar:console(Msg, [ar_util:bytes_to_mb_string(?DISK_DATA_BUFFER_SIZE)]);
+		true ->
+			ok
+	end,
+	cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_sync_random_interval),
+	{noreply, State};
+
 handle_cast(check_space_sync_random_interval, State) ->
 	FreeSpace = ar_storage:get_free_space(),
 	case FreeSpace > ?DISK_DATA_BUFFER_SIZE of
 		true ->
 			gen_server:cast(self(), {sync_random_interval, []});
 		false ->
-			Msg =
-				"The node has stopped syncing data - the available disk space is"
-				" less than ~s. Add more disk space if you wish to store more data.",
-			ar:console(Msg, [ar_util:bytes_to_mb_string(?DISK_DATA_BUFFER_SIZE)]),
 			cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_sync_random_interval)
 	end,
 	{noreply, State};
