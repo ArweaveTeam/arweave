@@ -383,11 +383,18 @@ download_block(Peers, H, H2, TXRoot) ->
 			]),
 			{error, block_header_unavailable};
 		{Peer, #block{ height = Height } = B} ->
-			case ar_weave:indep_hash_post_fork_2_0(B) of
+			B2 =
+				case Height >= Fork_2_0 of
+					true ->
+						B;
+					false ->
+						B#block{ tx_root = TXRoot }
+				end,
+			case ar_weave:indep_hash_post_fork_2_0(B2) of
 				H when Height >= Fork_2_0 ->
-					download_txs(Peers, B, TXRoot);
+					download_txs(Peers, B2, TXRoot);
 				H2 when Height < Fork_2_0 ->
-					download_txs(Peers, B, TXRoot);
+					download_txs(Peers, B2, TXRoot);
 				_ ->
 					ar:warn([
 						{event, ar_header_sync_block_hash_mismatch},
@@ -395,9 +402,7 @@ download_block(Peers, H, H2, TXRoot) ->
 						{peer, ar_util:format_peer(Peer)}
 					]),
 					{error, block_hash_mismatch}
-			end;
-		{_Peer, B} ->
-			download_txs(Peers, B, TXRoot)
+			end
 	end.
 
 download_txs(Peers, B, TXRoot) ->
