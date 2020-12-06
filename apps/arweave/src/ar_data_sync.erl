@@ -2172,7 +2172,7 @@ move_chunk_from_disk_pool(Args, State) ->
 						case ar_kv:put(
 							ChunkDataDB,
 							ChunkDataKey2,
-							binary_to_term(Chunk)
+							term_to_binary(Chunk)
 						) of
 							{error, _} = Error ->
 								Error;
