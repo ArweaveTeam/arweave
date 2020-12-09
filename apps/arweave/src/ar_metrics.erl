@@ -161,7 +161,8 @@ register() ->
 	]),
 	prometheus_histogram:new([
 		{name, mining_rate},
-		{buckets, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 1000]},
+		{buckets,
+			[1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 1000, 2000, 5000, 10000, 20000]},
 		{help,
 			"The per second average rate of the number of tried solution candidates "
 			"computed over the last block time."}
