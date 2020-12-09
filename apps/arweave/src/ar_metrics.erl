@@ -147,7 +147,7 @@ register() ->
 	]),
 	prometheus_histogram:new([
 		{name, block_processing_time},
-		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20]},
+		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60]},
 		{help,
 			"The time in seconds taken to validate the block and apply it on top of "
 			"the current state, possibly involving a chain reorganisation."}
