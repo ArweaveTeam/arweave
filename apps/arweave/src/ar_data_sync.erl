@@ -703,7 +703,7 @@ handle_cast(process_disk_pool_item, State) ->
 						cast,
 						[self(), process_disk_pool_item]
 					),
-					{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
+					{noreply, State#sync_data_state{ disk_pool_cursor = first }};
 				_ ->
 					timer:apply_after(
 						case NextCursor of
