@@ -263,6 +263,8 @@ multihash(X, Remaining) ->
 
 %% @doc The base of the block is the weave_size tag of the _previous_ block.
 %% Traverse the block index until the challenge block is inside the block's bounds.
+find_challenge_block(Byte, [{BH, BlockTop, TXRoot}]) when Byte < BlockTop ->
+	{TXRoot, 0, BlockTop, BH};
 find_challenge_block(Byte, [{BH, BlockTop, TXRoot}, {_, BlockBase, _} | _])
 	when (Byte >= BlockBase) andalso (Byte < BlockTop) -> {TXRoot, BlockBase, BlockTop, BH};
 find_challenge_block(Byte, [_ | BI]) ->
