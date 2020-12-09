@@ -35,12 +35,15 @@ init(WalletList, StartingDiff, RewardPool, TXs) ->
 			_ ->
 				element(2, lists:last(SizeTaggedTXs))
 		end,
+	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+	{TXRoot, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	B0 =
 		#block{
 			height = 0,
 			hash = crypto:strong_rand_bytes(32),
 			nonce = crypto:strong_rand_bytes(32),
 			txs = TXs,
+			tx_root = TXRoot,
 			wallet_list = WLH,
 			hash_list = [],
 			diff = StartingDiff,
