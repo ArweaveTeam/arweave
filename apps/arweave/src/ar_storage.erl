@@ -435,7 +435,11 @@ write_tx(#tx{ format = Format } = TX) ->
 				true ->
 					case {DataSize == TX#tx.data_size, Format} of
 						{false, 2} ->
-							ar:err([{event, failed_to_store_tx_data}, {reason, size_mismatch}]),
+							ar:err([
+								{event, failed_to_store_tx_data},
+								{reason, size_mismatch},
+								{tx, ar_util:encode(TX#tx.id)}
+							]),
 							ok;
 						{true, 1} ->
 							%% v1 data is considered to be a part of the header therefore
