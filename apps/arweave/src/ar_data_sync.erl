@@ -504,7 +504,7 @@ handle_cast(check_space_warning, State) ->
 		true ->
 			ok
 	end,
-	cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_sync_random_interval),
+	cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_warning),
 	{noreply, State};
 
 handle_cast(check_space_sync_random_interval, State) ->
