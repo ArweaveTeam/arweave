@@ -140,7 +140,7 @@ register() ->
 	]),
 	prometheus_histogram:new([
 		{name, block_pre_validation_time},
-		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 100, 1000]},
+		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 50, 100, 1000, 2000, 5000, 10000]},
 		{help,
 			"The time in milliseconds taken to parse the POST /block input and perform a "
 			"preliminary validation before relaying the block to peers."}
