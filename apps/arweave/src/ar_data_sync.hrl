@@ -86,11 +86,6 @@
 -define(MAX_DISK_POOL_BUFFER_MB, 2000).
 -endif.
 
-%% @doc The condition which is true if the chunk is too small compared to the proof.
-%% Small chunks make syncing slower and increase space amplification.
--define(IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, DataPath),
-	byte_size(DataPath) == 0 orelse byte_size(DataPath) > byte_size(Chunk)).
-
 %% @doc Time to wait before retrying a failed migration step.
 -define(MIGRATION_RETRY_DELAY_MS, 10000).
 

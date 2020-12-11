@@ -8,6 +8,7 @@
 -export([
 	join/1,
 	add_tip_block/2, add_block/2,
+	is_chunk_proof_ratio_attractive/3,
 	add_chunk/1, add_chunk/2, add_chunk/3,
 	add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 	get_chunk/1, get_tx_root/1, get_tx_data/1, get_tx_offset/1,
@@ -32,6 +33,27 @@ join(BI) ->
 %% @doc Notify the server about the new tip block.
 add_tip_block(BlockTXPairs, RecentBI) ->
 	gen_server:cast(?MODULE, {add_tip_block, BlockTXPairs, RecentBI}).
+
+%% @doc The condition which is true if the chunk is too small compared to the proof.
+%% Small chunks make syncing slower and increase space amplification. A small chunk
+%% is accepted if it is the last chunk of the corresponding transaction - such chunks
+%% may be produced by ar_tx:chunk_binary/1, the legacy splitting method used to split
+%% v1 data or determine the data root of a v2 tx when data is uploaded via the data field.
+%% Due to the block limit we can only get up to 1k such chunks per block.
+%% @end
+is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) ->
+	DataPathSize = byte_size(DataPath),
+	case DataPathSize of
+		0 ->
+			false;
+		_ ->
+			case catch ar_merkle:extract_note(DataPath) of
+				{'EXIT', _} ->
+					false;
+				Offset ->
+					Offset == TXSize orelse DataPathSize =< ChunkSize
+			end
+	end.
 
 %% @doc Store the given chunk if the proof is valid.
 add_chunk(Proof) ->
@@ -546,20 +568,9 @@ handle_cast({sync_chunk, Peer, Byte, RightBound}, State) ->
 	),
 	{noreply, State};
 
-handle_cast(
-	{store_fetched_chunk, Peer, _, _, #{ data_path := Path, chunk := Chunk }}, State
-) when ?IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, Path) ->
-	#sync_data_state{
-		peer_sync_records = PeerSyncRecords
-	} = State,
-	gen_server:cast(self(), {sync_random_interval, []}),
-	{noreply, State#sync_data_state{
-		peer_sync_records = maps:remove(Peer, PeerSyncRecords)
-	}};
 handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof}, State) ->
 	#sync_data_state{
 		data_root_offset_index = DataRootOffsetIndex,
-		data_root_index = DataRootIndex,
 		peer_sync_records = PeerSyncRecords
 	} = State,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk } = Proof,
@@ -576,86 +587,33 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof}, State) ->
 		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize} ->
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-			%% The data_root_offset_index and data_root_index are updated in case
-			%% we have not synced the corresponding blocks yet (in ar_header_sync).
-			DataRootMap =
-				case sets:is_element(DataRootKey, DataRootIndexKeySet) of
-					true ->
-						{ok, DataRootIndexValue} = ar_kv:get(DataRootIndex, DataRootKey),
-						DataRootMap2 = binary_to_term(DataRootIndexValue),
-						TXRootMap = maps:get(TXRoot, DataRootMap2, #{}),
-						case maps:is_key(AbsoluteTXStartOffset, TXRootMap) of
-							false ->
-								DataRootMap3 =
-									maps:put(
-										TXRoot,
-										TXRootMap#{ AbsoluteTXStartOffset => TXPath },
-										DataRootMap2
-									),
-								ok =
-									ar_kv:put(
-										DataRootIndex,
-										DataRootKey,
-										term_to_binary(DataRootMap3)
-									),
-								DataRootMap3;
-							true ->
-								DataRootMap2
-						end;
-					false ->
-						DataRootMap2 = #{ TXRoot => #{ AbsoluteTXStartOffset => TXPath } },
-						ok = ar_kv:put(
-							DataRootIndex,
-							DataRootKey,
-							term_to_binary(DataRootMap2)
-						),
-						UpdatedValue =
-							term_to_binary({
-								TXRoot,
-								BlockSize,
-								sets:add_element(DataRootKey, DataRootIndexKeySet)
-							}),
-						ok = ar_kv:put(
-							DataRootOffsetIndex,
-							Key,
-							UpdatedValue
-						),
-						DataRootMap2
-				end,
 			ChunkSize = byte_size(Chunk),
-			Byte2 = Byte + ChunkSize,
-			gen_server:cast(self(), {sync_chunk, Peer, Byte2, RightBound}),
-			case
-				%% Here we do not just store the chunk under the single offset we fetched it by,
-				%% but check whether we already have chunks with the same proof under other
-				%% offsets (the case when the same data is uploaded by multiple transactions).
-				%% The main motivation is to have a single key for the chunk in the blob storage
-				%% so that we can count references when removing a chunk from a particular offset.
-				%% For example, a chunk can be removed for being blacklisted while the same
-				%% data was uploaded in a whitelisted transaction - in this case the blacklisted
-				%% offset is removed but the chunk is kept in the storage because it is referenced
-				%% by the whitelisted transaction.
-				store_chunk(
-					{
-						DataRootMap,
-						DataRoot,
-						ChunkEndOffset,
-						TXSize,
-						DataPath,
-						Chunk
-					},
-					State
-				) of
-					{ok, State2} ->
-						{noreply, State2};
-					{error, Reason} ->
-						ar:err([
-							{event, failed_to_store_fetched_chunk},
-							{reason, Reason},
-							{byte, Byte},
-							{absolute_tx_start_offset, AbsoluteTXStartOffset}
-						]),
-						{noreply, State}
+			case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
+				false ->
+					gen_server:cast(self(), {sync_random_interval, []}),
+					{noreply, State#sync_data_state{
+						peer_sync_records = maps:remove(Peer, PeerSyncRecords)
+					}};
+				true ->
+					Byte2 = Byte + ChunkSize,
+					gen_server:cast(self(), {sync_chunk, Peer, Byte2, RightBound}),
+					store_fetched_chunk(
+						{
+							DataRoot,
+							DataRootKey,
+							Key,
+							DataRootIndexKeySet,
+							AbsoluteTXStartOffset,
+							TXPath,
+							TXRoot,
+							TXSize,
+							BlockSize,
+							DataPath,
+							ChunkEndOffset,
+							Chunk
+						},
+						State
+					)
 			end
 	end;
 
@@ -1988,6 +1946,105 @@ pick_missing_blocks([{H, WeaveSize, _} | CurrentBI], BlockTXPairs) ->
 
 cast_after(Delay, Message) ->
 	timer:apply_after(Delay, gen_server, cast, [self(), Message]).
+
+store_fetched_chunk(Args, State) ->
+	{
+		DataRoot,
+		DataRootKey,
+		DataRootOffsetKey,
+		DataRootIndexKeySet,
+		AbsoluteTXStartOffset,
+		TXPath,
+		TXRoot,
+		TXSize,
+		BlockSize,
+		DataPath,
+		ChunkEndOffset,
+		Chunk
+	} = Args,
+	#sync_data_state{
+		data_root_offset_index = DataRootOffsetIndex,
+		data_root_index = DataRootIndex
+	} = State,
+	%% The data_root_offset_index and data_root_index are updated in case
+	%% we have not synced the corresponding blocks yet (in ar_header_sync).
+	DataRootMap =
+		case sets:is_element(DataRootKey, DataRootIndexKeySet) of
+			true ->
+				{ok, DataRootIndexValue} = ar_kv:get(DataRootIndex, DataRootKey),
+				DataRootMap2 = binary_to_term(DataRootIndexValue),
+				TXRootMap = maps:get(TXRoot, DataRootMap2, #{}),
+				case maps:is_key(AbsoluteTXStartOffset, TXRootMap) of
+					false ->
+						DataRootMap3 =
+							maps:put(
+								TXRoot,
+								TXRootMap#{ AbsoluteTXStartOffset => TXPath },
+								DataRootMap2
+							),
+						ok =
+							ar_kv:put(
+								DataRootIndex,
+								DataRootKey,
+								term_to_binary(DataRootMap3)
+							),
+						DataRootMap3;
+					true ->
+						DataRootMap2
+				end;
+			false ->
+				DataRootMap2 = #{ TXRoot => #{ AbsoluteTXStartOffset => TXPath } },
+				ok = ar_kv:put(
+					DataRootIndex,
+					DataRootKey,
+					term_to_binary(DataRootMap2)
+				),
+				UpdatedValue =
+					term_to_binary({
+						TXRoot,
+						BlockSize,
+						sets:add_element(DataRootKey, DataRootIndexKeySet)
+					}),
+				ok = ar_kv:put(
+					DataRootOffsetIndex,
+					DataRootOffsetKey,
+					UpdatedValue
+				),
+				DataRootMap2
+		end,
+	case
+		%% Here we do not just store the chunk under the single offset we fetched it by,
+		%% but check whether we already have chunks with the same proof under other
+		%% offsets (the case when the same data is uploaded by multiple transactions).
+		%% The main motivation is to have a single key for the chunk in the blob storage
+		%% so that we can count references when removing a chunk from a particular offset.
+		%% For example, a chunk can be removed for being blacklisted while the same
+		%% data was uploaded in a whitelisted transaction - in this case the blacklisted
+		%% offset is removed but the chunk is kept in the storage because it is referenced
+		%% by the whitelisted transaction.
+		store_chunk(
+			{
+				DataRootMap,
+				DataRoot,
+				ChunkEndOffset,
+				TXSize,
+				DataPath,
+				Chunk
+			},
+			State
+		) of
+			{ok, State2} ->
+				{noreply, State2};
+			{error, Reason} ->
+				ar:err([
+					{event, failed_to_store_fetched_chunk},
+					{reason, Reason},
+					{relative_chunk_offset, ChunkEndOffset},
+					{tx_size, TXSize},
+					{data_root, ar_util:encode(DataRoot)}
+				]),
+				{noreply, State}
+	end.
 
 process_disk_pool_item(State, Key, Value, NextCursor) ->
 	#sync_data_state{

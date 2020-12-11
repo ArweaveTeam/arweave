@@ -1191,10 +1191,11 @@ handle_post_chunk(check_offset_size, Proof, Req) ->
 handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
 	DataPath = maps:get(data_path, Proof),
 	Chunk = maps:get(chunk, Proof),
-	case ?IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, DataPath) of
-		true ->
-			{400, #{}, jiffy:encode(#{ error => chunk_proof_ratio_not_attractive }), Req};
+	DataSize = maps:get(data_size, Proof),
+	case ar_data_sync:is_chunk_proof_ratio_attractive(byte_size(Chunk), DataSize, DataPath) of
 		false ->
+			{400, #{}, jiffy:encode(#{ error => chunk_proof_ratio_not_attractive }), Req};
+		true ->
 			handle_post_chunk(validate_proof, Proof, Req)
 	end;
 handle_post_chunk(validate_proof, Proof, Req) ->
