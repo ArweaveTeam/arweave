@@ -1,10 +1,7 @@
 -module(ar_weave).
 
 -export([
-	init/0,
-	init/1,
-	init/2,
-	init/3,
+	init/0, init/1, init/2, init/3, init/4,
 	hash/3,
 	indep_hash/1,
 	indep_hash_post_fork_2_0/1,
@@ -18,36 +15,44 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%% @doc Start a new weave. Optionally takes a list of wallets
-%% for the genesis block. The function was used to start the original weave.
-%% Also, it is used in tests. Currently it's not possible to start a new weave
-%% from the command line. The feature was dropped since it requires extra effort
-%% to reset the fork heights and update the inflation rewards issuance, to make the
-%% new weaves created this way function without the issues solved by the hard forks
-%% in the original weave. The genesis transactions of the original weave
-%% are defined in read_v1_genesis_txs/0.
+%% @doc Create a genesis block.
 init() -> init(ar_util:genesis_wallets()).
-init(WalletList) -> init(WalletList, ar_mine:genesis_difficulty()).
+init(WalletList) -> init(WalletList, 1).
 init(WalletList, Diff) -> init(WalletList, Diff, 0).
 init(WalletList, StartingDiff, RewardPool) ->
+	init(WalletList, StartingDiff, RewardPool, []).
+
+init(WalletList, StartingDiff, RewardPool, TXs) ->
 	ar_randomx_state:reset(),
 	WL = ar_patricia_tree:from_proplist([{A, {B, LTX}} || {A, B, LTX} <- WalletList]),
 	WLH = element(1, ar_block:hash_wallet_list(0, unclaimed, WL)),
 	ok = ar_storage:write_wallet_list(WLH, WL),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+	BlockSize =
+		case SizeTaggedTXs of
+			[] ->
+				0;
+			_ ->
+				element(2, lists:last(SizeTaggedTXs))
+		end,
+	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+	{TXRoot, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	B0 =
 		#block{
 			height = 0,
 			hash = crypto:strong_rand_bytes(32),
 			nonce = crypto:strong_rand_bytes(32),
-			txs = [],
+			txs = TXs,
+			tx_root = TXRoot,
 			wallet_list = WLH,
 			hash_list = [],
 			diff = StartingDiff,
-			weave_size = 0,
-			block_size = 0,
+			weave_size = BlockSize,
+			block_size = BlockSize,
 			reward_pool = RewardPool,
 			timestamp = os:system_time(seconds),
-			poa = #poa{}
+			poa = #poa{},
+			size_tagged_txs = SizeTaggedTXs
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	[B1#block { indep_hash = indep_hash(B1) }].

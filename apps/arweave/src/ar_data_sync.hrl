@@ -1,9 +1,10 @@
-%% @doc The time to wait after the whole weave is synced
-%% before looking for new chunks.
+%% @doc The size in bytes of a portion of the disk space reserved to account for the lag
+%% between getting close to no available space and receiving the information about it.
+%% The node would only sync data if it has at least so much of the available space.
 -ifdef(DEBUG).
--define(PAUSE_AFTER_COULD_NOT_FIND_CHUNK_MS, 2000).
+-define(DISK_DATA_BUFFER_SIZE, 30 * 1024 * 1024).
 -else.
--define(PAUSE_AFTER_COULD_NOT_FIND_CHUNK_MS, 30000).
+-define(DISK_DATA_BUFFER_SIZE, 20 * 1024 * 1024 * 1024). % >15 GiB ~5 mins of syncing at 60 MiB/s
 -endif.
 
 %% @doc The number of peer sync records to consult each time we look for an interval to sync.
@@ -14,13 +15,22 @@
 
 %% @doc The frequency of updating best peers' sync records.
 -ifdef(DEBUG).
--define(PEER_SYNC_RECORDS_FREQUENCY_MS, 2000).
+-define(PEER_SYNC_RECORDS_FREQUENCY_MS, 500).
 -else.
 -define(PEER_SYNC_RECORDS_FREQUENCY_MS, 2 * 60 * 1000).
 -endif.
 
 %% @doc The size in bits of the offset key in kv databases.
--define(OFFSET_KEY_BITSIZE, (?NOTE_SIZE * 8)).
+-define(OFFSET_KEY_BITSIZE, 256).
+
+%% @doc The size in bits of the key prefix used in prefix bloom filter
+%% when looking up chunks by offsets from kv database.
+%% 29 bytes of the prefix correspond to the 16777216 (16 Mib) max distance
+%% between the keys with the same prefix. The prefix should be bigger than
+%% max chunk size (256 KiB) so that the chunk in question is likely to be
+%% found in the filter and smaller than an SST table (200 MiB) so that the
+%% filter lookup can narrow the search down to a single table. @end
+-define(OFFSET_KEY_PREFIX_BITSIZE, 232).
 
 %% @doc The number of block confirmations to track. When the node
 %% joins the network or a chain reorg occurs, it uses its record about
@@ -30,7 +40,7 @@
 
 %% @doc The maximum number of synced intervals shared with peers.
 -ifdef(DEBUG).
--define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 100).
+-define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 20).
 -else.
 -define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 10000).
 -endif.
@@ -53,9 +63,6 @@
 %% such data should fetch it chunk by chunk.
 -define(MAX_SERVED_TX_DATA_SIZE, 12 * 1024 * 1024).
 
-%% @doc The default expiration time for a data root in the disk pool.
--define(DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 2 * 60 * 60).
-
 %% @doc The time to wait until the next full disk pool scan.
 -ifdef(DEBUG).
 -define(DISK_POOL_SCAN_FREQUENCY_MS, 2000).
@@ -66,35 +73,22 @@
 %% @doc The frequency of removing expired data roots from the disk pool.
 -define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
 
-%% @doc The default size limit for unconfirmed chunks, per data root.
--define(MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 50).
+%% @doc Time to wait before retrying a failed migration step.
+-define(MIGRATION_RETRY_DELAY_MS, 10000).
 
-%% @doc The default total size limit for unconfirmed chunks.
--ifdef(DEBUG).
--define(MAX_DISK_POOL_BUFFER_MB, 100).
--else.
--define(MAX_DISK_POOL_BUFFER_MB, 2000).
--endif.
-
-%% @doc The condition which is true if the chunk is too small compared to the proof.
-%% Small chunks make syncing slower and increase space amplification.
--define(IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, DataPath),
-	byte_size(DataPath) == 0 orelse byte_size(DataPath) > byte_size(Chunk)).
+%% @doc The frequency of storing the server state on disk.
+-define(STORE_STATE_FREQUENCY_MS, 30000).
 
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
-	%% @doc The mapping absolute_end_offset -> absolute_start_offset
-	%% sorted by absolute_end_offset.
+	%% @doc A set of non-overlapping intervals of global byte offsets ((end, start))
+	%% denoting the synced data. End offsets are defined on [1, weave size], start
+	%% offsets are defined on [0, weave size).
 	%%
-	%% Every such pair denotes a synced interval on the [0, weave size]
-	%% interval. This mapping serves as a compact map of what is synced
-	%% by the node. No matter how big the weave is or how much of it
-	%% the node stores, this record can remain very small, compared to
-	%% storing all chunk and transaction identifiers, whose number can
-	%% effectively grow unlimited with time.
-	%%
-	%% Every time a chunk is written to sync_record, it is also
-	%% written to the chunks_index.
+	%% The set serves as a compact map of what is synced by the node. No matter
+	%% how big the weave is or how much of it the node stores, this record
+	%% can remain very small, compared to storing all chunk and transaction identifiers,
+	%% whose number can effectively grow unlimited with time.
 	sync_record,
 	%% @doc The mapping peer -> sync_record containing sync records of the best peers.
 	peer_sync_records,
@@ -104,7 +98,7 @@
 	%% @doc The current weave size. The upper limit for the absolute chunk end offsets.
 	weave_size,
 	%% @doc A reference to the on-disk key-value storage mapping
-	%% absolute_chunk_end_offset -> {data_path_hash, tx_root, data_root, tx_path, chunk_size}
+	%% absolute_chunk_end_offset -> {chunk_data_index_key, tx_root, data_root, tx_path, chunk_size}
 	%% for all synced chunks.
 	%%
 	%% Chunks themselves and their data_paths are stored separately
@@ -151,8 +145,8 @@
 	%% Unconfirmed chunks can be accepted only after their data roots end up in this set.
 	%% Each time a pending data root is added to the map the size is set to 0. New chunks
 	%% for these data roots are accepted until the corresponding size reaches
-	%% ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB or the total size of added pending chunks
-	%% reaches ?MAX_DISK_POOL_BUFFER_MB. When a data root is orphaned, it's timestamp
+	%% config.max_disk_pool_data_root_buffer_mb or the total size of added pending chunks
+	%% reaches config.max_disk_pool_buffer_mb. When a data root is orphaned, it's timestamp
 	%% is refreshed so that the chunks have chance to be reincluded later.
 	%% After a data root expires, the corresponding chunks are removed from
 	%% disk_pool_chunks_index and if they are not in data_root_index - from storage.
@@ -162,8 +156,8 @@
 	%% is set to not_set - from this point on, the key can't be dropped after a mempool drop.
 	disk_pool_data_roots,
 	%% @doc A reference to the on-disk key value storage mapping
-	%% << data_root_timestamp, data_path_hash >> ->
-	%%     {relative_chunk_end_offset, chunk_size, data_root, tx_size}.
+	%% << data_root_timestamp, chunk_data_index_key >> ->
+	%%     {relative_chunk_end_offset, chunk_size, data_root, tx_size, chunk_data_index_key}.
 	%%
 	%% The index is used to keep track of pending, orphaned, and recent chunks.
 	%% A periodic process iterates over chunks from earliest to latest, consults
@@ -174,11 +168,12 @@
 	%% @doc The sum of sizes of all pending chunks. When it reaches
 	%% ?MAX_DISK_POOL_BUFFER_MB, new chunks with these data roots are rejected.
 	disk_pool_size,
-	%% @doc One of the keys from disk_pool_chunks_index. The disk pool is processed
-	%% chunk by chunk going from the oldest entry to the newest, trying not to block the
-	%% syncing process if the disk pool accumulates a lot of orphaned and pending chunks.
-	%% The cursor remembers the key after the last processed on the previous iteration.
-	%% After reaching the last key in the storage, we go back to the first one. Not stored.
+	%% @doc One of the keys from disk_pool_chunks_index or the atom "first".
+	%% The disk pool is processed chunk by chunk going from the oldest entry to the newest,
+	%% trying not to block the syncing process if the disk pool accumulates a lot of orphaned
+	%% and pending chunks. The cursor remembers the key after the last processed on the
+	%% previous iteration. After reaching the last key in the storage, we go back to
+	%% the first one. Not stored.
 	disk_pool_cursor,
 	%% @doc A reference to the on-disk key value storage mapping
 	%% tx_id -> {absolute_end_offset, tx_size}.
@@ -188,9 +183,15 @@
 	%% absolute_tx_start_offset -> tx_id. It is used to cleanup orphaned
 	%% transactions from tx_index.
 	tx_offset_index,
-	%% @doc not_joined | joined. Not stored.
-	status,
-	%% @doc The queue of new blocks to be processed. We can't use the message queue
-	%% of the process because blocks may arrive before the initialization is complete.
-	block_queue
+	%% @doc A reference to the on-disk key value storage mapping
+	%% << timestamp, data_path_hash >> of the chunks to chunk data.
+	%% The motivation to not store chunk data directly in the chunks_index is to save the
+	%% space by not storing identical chunks placed under different offsets several time
+	%% and to be able to quickly move chunks from the disk pool to the on-chain storage.
+	%% The timestamp prefix is used to make the written entries sorted from the start,
+	%% to minimize the compaction overhead.
+	chunk_data_db,
+	%% @doc A reference to the on-disk key value storage mapping migration names to their
+	%% stages.
+	migrations_index
 }).

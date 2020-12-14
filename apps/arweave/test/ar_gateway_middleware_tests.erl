@@ -72,7 +72,7 @@ redirect_root_to_labeled_domain() ->
 	meck:expect(
 		ar_storage,
 		lookup_tx_filename,
-		fun(?MOCK_TXID) -> <<"some/mock/path">> end
+		fun(?MOCK_TXID) -> {ok, <<"some/mock/path">>} end
 	),
 	meck:expect(
 		ar_arql_db,
@@ -104,7 +104,7 @@ serve_correctly_labeled_request() ->
 	meck:expect(
 		ar_storage,
 		lookup_tx_filename,
-		fun(?MOCK_TXID) -> <<"some/mock/path">> end
+		fun(?MOCK_TXID) -> {migrated_v1, <<"some/mock/path">>} end
 	),
 	meck:expect(
 		ar_arql_db,
@@ -115,7 +115,7 @@ serve_correctly_labeled_request() ->
 	),
 	meck:expect(
 		ar_storage,
-		read_tx_file,
+		read_migrated_v1_tx_file,
 		fun(<<"some/mock/path">>) ->
 			{ok, #tx {
 				tags = [{<<"Content-Type">>, <<"text/plain">>}],
@@ -149,7 +149,7 @@ render_manifest_listing() ->
 	meck:expect(
 		ar_storage,
 		lookup_tx_filename,
-		fun(?MOCK_TXID) -> <<"some/mock/path">> end
+		fun(?MOCK_TXID) -> {migrated_v1, <<"some/mock/path">>} end
 	),
 	meck:expect(
 		ar_arql_db,
@@ -160,7 +160,7 @@ render_manifest_listing() ->
 	),
 	meck:expect(
 		ar_storage,
-		read_tx_file,
+		read_migrated_v1_tx_file,
 		fun(<<"some/mock/path">>) ->
 			{ok, #tx {
 				tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
@@ -187,7 +187,7 @@ redirect_manifest_to_index() ->
 	meck:expect(
 		ar_storage,
 		lookup_tx_filename,
-		fun(?MOCK_TXID) -> <<"some/mock/path">> end
+		fun(?MOCK_TXID) -> {ok, <<"some/mock/path">>} end
 	),
 	meck:expect(
 		ar_arql_db,
@@ -231,8 +231,8 @@ serve_manifest_subpath() ->
 		ar_storage,
 		lookup_tx_filename,
 		fun
-			(?MOCK_TXID) -> <<"path/to/manifest">>;
-			(?MANIFEST_INDEX_TXID) -> <<"path/to/index">>
+			(?MOCK_TXID) -> {migrated_v1, <<"path/to/manifest">>};
+			(?MANIFEST_INDEX_TXID) -> {ok, <<"path/to/index">>}
 		end
 	),
 	meck:expect(
@@ -244,13 +244,19 @@ serve_manifest_subpath() ->
 	),
 	meck:expect(
 		ar_storage,
-		read_tx_file,
+		read_migrated_v1_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
 				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
 					data = index_manifest_fixture()
-				}};
+				}}
+		end
+	),
+	meck:expect(
+		ar_storage,
+		read_tx_file,
+		fun
 			(<<"path/to/index">>) ->
 				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"text/html">>}],
@@ -277,8 +283,8 @@ serve_manifest_subpath_v2() ->
 		ar_storage,
 		lookup_tx_filename,
 		fun
-			(?MOCK_TXID) -> <<"path/to/manifest">>;
-			(?MANIFEST_INDEX_TXID) -> <<"path/to/index">>
+			(?MOCK_TXID) -> {ok, <<"path/to/manifest">>};
+			(?MANIFEST_INDEX_TXID) -> {migrated_v1, <<"path/to/index">>}
 		end
 	),
 	meck:expect(
@@ -297,7 +303,13 @@ serve_manifest_subpath_v2() ->
 					id = ?MOCK_TXID,
 					format = 2,
 					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}]
-				}};
+				}}
+		end
+	),
+	meck:expect(
+		ar_storage,
+		read_migrated_v1_tx_file,
+		fun
 			(<<"path/to/index">>) ->
 				{ok, #tx {
 					id = ?MANIFEST_INDEX_TXID,
@@ -335,8 +347,8 @@ handle_multi_segment_subpaths() ->
 		ar_storage,
 		lookup_tx_filename,
 		fun
-			(?MOCK_TXID) -> <<"path/to/manifest">>;
-			(?MANIFEST_DOG_TXID) -> <<"path/to/dog">>
+			(?MOCK_TXID) -> {ok, <<"path/to/manifest">>};
+			(?MANIFEST_DOG_TXID) -> {ok, <<"path/to/dog">>}
 		end
 	),
 	meck:expect(
@@ -380,7 +392,7 @@ redirect_badly_labeled_manifest_subpaths() ->
 	meck:expect(
 		ar_storage,
 		lookup_tx_filename,
-		fun(?MOCK_TXID) -> <<"some/mock/path">> end
+		fun(?MOCK_TXID) -> {ok, <<"some/mock/path">>} end
 	),
 	meck:expect(
 		ar_arql_db,
@@ -413,7 +425,7 @@ return_421_on_bad_manifest() ->
 		ar_storage,
 		lookup_tx_filename,
 		fun
-			(?MOCK_TXID) -> <<"path/to/manifest">>
+			(?MOCK_TXID) -> {migrated_v1, <<"path/to/manifest">>}
 		end
 	),
 	meck:expect(
@@ -425,7 +437,7 @@ return_421_on_bad_manifest() ->
 	),
 	meck:expect(
 		ar_storage,
-		read_tx_file,
+		read_migrated_v1_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
 				{ok, #tx {
@@ -451,7 +463,7 @@ return_404_on_non_existent_subpath() ->
 		ar_storage,
 		lookup_tx_filename,
 		fun
-			(?MOCK_TXID) -> <<"path/to/manifest">>
+			(?MOCK_TXID) -> {migrated_v1, <<"path/to/manifest">>}
 		end
 	),
 	meck:expect(
@@ -463,7 +475,7 @@ return_404_on_non_existent_subpath() ->
 	),
 	meck:expect(
 		ar_storage,
-		read_tx_file,
+		read_migrated_v1_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
 				{ok, #tx {
@@ -488,7 +500,7 @@ forward_on_subpath_of_non_manifest() ->
 	meck:expect(
 		ar_storage,
 		lookup_tx_filename,
-		fun(?MOCK_TXID) -> <<"some/mock/path">> end
+		fun(?MOCK_TXID) -> {ok, <<"some/mock/path">>} end
 	),
 	meck:expect(
 		ar_arql_db,
@@ -523,19 +535,25 @@ serve_manifest_subpath_on_custom_domain() ->
 		ar_storage,
 		lookup_tx_filename,
 		fun
-			(?MOCK_TXID) -> <<"path/to/manifest">>;
-			(?MANIFEST_INDEX_TXID) -> <<"path/to/index">>
+			(?MOCK_TXID) -> {migrated_v1, <<"path/to/manifest">>};
+			(?MANIFEST_INDEX_TXID) -> {ok, <<"path/to/index">>}
+		end
+	),
+	meck:expect(
+		ar_storage,
+		read_migrated_v1_tx_file,
+		fun
+			(<<"path/to/manifest">>) ->
+				{ok, #tx {
+					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
+					data = index_manifest_fixture()
+				}}
 		end
 	),
 	meck:expect(
 		ar_storage,
 		read_tx_file,
 		fun
-			(<<"path/to/manifest">>) ->
-				{ok, #tx {
-					tags = [{<<"Content-Type">>, <<"application/x.arweave-manifest+json">>}],
-					data = index_manifest_fixture()
-				}};
 			(<<"path/to/index">>) ->
 				{ok, #tx {
 					tags = [{<<"Content-Type">>, <<"text/html">>}],
@@ -568,13 +586,13 @@ forward_non_existent_subpaths_to_node_api() ->
 		ar_storage,
 		lookup_tx_filename,
 		fun
-			(?MOCK_TXID) -> <<"path/to/manifest">>;
-			(?MANIFEST_INDEX_TXID) -> <<"path/to/index">>
+			(?MOCK_TXID) -> {migrated_v1, <<"path/to/manifest">>};
+			(?MANIFEST_INDEX_TXID) -> {migrated_v1, <<"path/to/index">>}
 		end
 	),
 	meck:expect(
 		ar_storage,
-		read_tx_file,
+		read_migrated_v1_tx_file,
 		fun
 			(<<"path/to/manifest">>) ->
 				{ok, #tx {

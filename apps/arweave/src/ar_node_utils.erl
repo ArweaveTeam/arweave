@@ -11,9 +11,7 @@
 	apply_txs/3,
 	update_wallets/4,
 	validate/5,
-	calculate_delay/1,
-	update_block_txs_pairs/3,
-	update_block_index/2
+	calculate_delay/1
 ]).
 
 -include("ar.hrl").
@@ -191,31 +189,6 @@ apply_txs(WalletList, TXs, Height) ->
 		TXs
 	).
 
-update_block_index(B, BI) ->
-	maybe_report_n_confirmations(B, BI),
-	NewBI = [{B#block.indep_hash, B#block.weave_size, B#block.tx_root} | BI],
-	case B#block.height rem ?STORE_BLOCKS_BEHIND_CURRENT of
-		0 ->
-			spawn(fun() -> ar_storage:write_block_index(NewBI) end);
-		_ ->
-			do_nothing
-	end,
-	NewBI.
-
-maybe_report_n_confirmations(B, BI) ->
-	N = 10,
-	LastNBlocks = lists:sublist(BI, N),
-	case length(LastNBlocks) == N of
-		true ->
-			{H, _, _} = lists:last(LastNBlocks),
-			ar_miner_log:block_received_n_confirmations(H, B#block.height - N);
-		false ->
-			do_nothing
-	end.
-
-update_block_txs_pairs(BH, SizeTaggedTXs, BlockTXPairs) ->
-	lists:sublist([{BH, SizeTaggedTXs} | BlockTXPairs], 2 * ?MAX_TX_ANCHOR_DEPTH).
-
 %% @doc Validate a new block, given the previous block, the block index, the wallets of
 %% the source and destination addresses and the reward wallet from the previous block,
 %% and the mapping between block hashes and transaction identifiers of the recent blocks.
@@ -298,7 +271,7 @@ validate_block(
 		Nonce,
 		Height
 	),
-	case ar_mine:validate(POW, ar_poa:modify_diff(Diff, POA#poa.option), Height) of
+	case ar_mine:validate(POW, ar_poa:modify_diff(Diff, POA#poa.option, Height), Height) of
 		false ->
 			{invalid, invalid_pow};
 		true ->

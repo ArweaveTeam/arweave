@@ -1,26 +1,19 @@
 -module(ar_util).
 
--export([pick_random/1, pick_random/2]).
--export([encode/1, decode/1, safe_decode/1]).
--export([parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2]).
--export([replace/3]).
--export([block_from_block_index/2, hash_from_block_index/2]).
--export([height_from_hashes/1, blocks_from_hashes/1]).
--export([get_hash/1, get_head_block/1]).
--export([genesis_wallets/0]).
--export([pmap/2]).
--export([time_difference/2]).
--export([rev_bin/1]).
--export([do_until/3]).
--export([index_of/2]).
--export([block_index_entry_from_block/1]).
--export([reset_peer/1, get_performance/1, update_timer/1]).
+-export([
+	pick_random/1, pick_random/2,
+	encode/1, decode/1, safe_decode/1,
+	parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2,
+	genesis_wallets/0,
+	pmap/2,
+	do_until/3,
+	block_index_entry_from_block/1, get_block_index_intersection/2,
+	reset_peer/1, get_performance/1, update_timer/1,
+	bytes_to_mb_string/1
+]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
-%%% General misc. utility functions. Most of these should probably
-%%% have been in the Erlang standard library...
 
 %% @doc Pick a list of random elements from a given list.
 pick_random(_, 0) -> [];
@@ -52,45 +45,6 @@ safe_decode(E) ->
 		_:_ ->
 			{error, invalid}
 	end.
-
-%% @doc Reverse a binary
-rev_bin(Bin) ->
-    rev_bin(Bin, <<>>).
-rev_bin(<<>>, Acc) -> Acc;
-rev_bin(<<H:1/binary, Rest/binary>>, Acc) ->
-    rev_bin(Rest, <<H/binary, Acc/binary>>).
-
-%% @doc Get a block's hash.
-get_hash(B) when is_record(B, block) ->
-	B#block.indep_hash.
-
-%% @doc Get block height from a hash list.
-height_from_hashes(not_joined) -> -1;
-height_from_hashes(BI) ->
-	(get_head_block(BI))#block.height.
-
-%% @doc Get block list from hash list.
-blocks_from_hashes([]) -> undefined;
-blocks_from_hashes(BI) ->
-	lists:map(fun({BH, _, _}) -> ar_storage:read_block(BH) end, BI).
-
-%% @doc Fetch a block hash by number from a block hash list (and disk).
-hash_from_block_index(Num, BI) ->
-	element(1, lists:nth(Num - 1, lists:reverse(BI))).
-
-%% @doc Read a block at the given height from the hash list
-block_from_block_index(Num, BI) ->
-	ar_storage:read_block(hash_from_block_index(Num, BI)).
-
-%% @doc Fetch the head block using BI.
-get_head_block(not_joined) -> unavailable;
-get_head_block([{IndepHash, _, _} | _]) ->
-	ar_storage:read_block(IndepHash).
-
-%% @doc Replace a term in a list with another term.
-replace(_, _, []) -> [];
-replace(X, Y, [X|T]) -> [Y|replace(X, Y, T)];
-replace(X, Y, [H|T]) -> [H|replace(X, Y, T)].
 
 %% @doc Parse a string representing a remote host into our internal format.
 parse_peer("") -> throw(empty_peer_string);
@@ -188,12 +142,6 @@ genesis_wallets() ->
 		string:tokens(binary_to_list(Bin), [10])
 	).
 
-%% @doc Generates the difference in microseconds between two erlang time tuples
-time_difference({M1, S1, U1}, {M2, S2, U2}) ->
-	((M1-M2) * 1000000000000) + ((S1-S2) * 1000000) + (U1 - U2);
-time_difference(_,_) ->
-	bad_time_format.
-
 %% @doc Perform a function until it returns {ok, Value} | ok | true | {error, Error}.
 %% That term will be returned, others will be ignored. Interval and timeout have to
 %% be passed in milliseconds.
@@ -216,15 +164,32 @@ do_until(DoFun, Interval, Timeout) ->
 			do_until(DoFun, Interval, Timeout - (Now - Start))
 	end.
 
-index_of(Elem, List) ->
-	index_of(Elem, List, 1).
-
-index_of(_, [], _) -> not_found;
-index_of(_Subject, [_Subject | _], Counter) -> Counter;
-index_of(Subject, [_ | List], Counter) -> index_of(Subject, List, Counter + 1).
-
 block_index_entry_from_block(B) ->
 	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
+
+%% @doc Find the latest block from the given block index (the second argument) that
+%% is inside the other given block index (the first argument). Return none if no entry
+%% from the second list belongs to the first list.
+get_block_index_intersection(BI, CurrentBI) ->
+	Height = length(BI) - 1,
+	get_block_index_intersection(BI, CurrentBI, Height).
+
+get_block_index_intersection(BI, [{BH, _WeaveSize, _TXRoot} = Entry | CurrentBI], Height) ->
+	case block_index_contains_block(BI, BH, Height) of
+		{true, TipHeight} ->
+			{Entry, TipHeight};
+		false ->
+			get_block_index_intersection(BI, CurrentBI, Height)
+	end;
+get_block_index_intersection(_BI, [], _Height) ->
+	none.
+
+block_index_contains_block([{BH, _, _} | _], BH, Height) ->
+	{true, Height};
+block_index_contains_block([_ | BI], BH, Height) ->
+	block_index_contains_block(BI, BH, Height - 1);
+block_index_contains_block([], _BH, _Height) ->
+	false.
 
 %% @doc Reset the performance data for a given peer.
 reset_peer(Peer = {_, _, _, _, _}) ->
@@ -251,6 +216,10 @@ update_timer(Peer = {_, _, _, _, _}) ->
 				}
 			)
 	end.
+
+%% @doc Convert the given number of bytes into the "%s MiB" string.
+bytes_to_mb_string(Bytes) ->
+	integer_to_list(Bytes div 1024 div 1024) ++ " MiB".
 
 %%%
 %%% Tests.
@@ -287,10 +256,3 @@ pmap_test() ->
 		X * 2
 	end,
 	?assertEqual([6, 2, 4], pmap(Mapper, [3, 1, 2])).
-
-%% @doc Test finding the index of an element in a list.
-index_of_test() ->
-	?assertEqual(1, index_of(a, [a, b, c])),
-	?assertEqual(2, index_of(b, [a, b, c])),
-	?assertEqual(3, index_of(c, [a, b, c])),
-	?assertEqual(not_found, index_of(d, [a, b, c])).

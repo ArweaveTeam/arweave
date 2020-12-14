@@ -1,7 +1,7 @@
 -module(ar_test_node).
 
 -export([
-	start/1, start/2, slave_start/1, slave_start/2,
+	start/1, start/2, start/3, slave_start/1, slave_start/2,
 	connect_to_slave/0, disconnect_from_slave/0,
 	slave_call/3, slave_call/4,
 	gossip/2, slave_gossip/2,
@@ -22,63 +22,105 @@
 	get_balance/1,
 	test_with_mocked_functions/2,
 	get_tx_price/1,
-	post_and_mine/2
+	post_and_mine/2,
+	read_block_when_stored/1,
+	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2
 ]).
 
 -include("src/ar.hrl").
 -include("src/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-start(no_block) ->
-	[B0] = ar_weave:init([]),
-	start(B0, unclaimed);
-start(B0) ->
-	start(B0, unclaimed).
-
-slave_start(no_block) ->
-	[B0] = slave_call(ar_weave, init, [[]]),
-	slave_start(B0, unclaimed);
-slave_start(B0) ->
-	slave_start(B0, unclaimed).
+slave_start(MaybeB) ->
+	slave_call(?MODULE, start, [MaybeB]).
 
 slave_start(B0, RewardAddr) ->
-	case ar_storage:read_wallet_list(B0#block.wallet_list) of
-		{ok, WL} ->
-			ok =
-				slave_call(
-					ar_storage,
-					write_wallet_list,
-					[B0#block.wallet_list, WL]
-				);
-		_ ->
-			wallet_list_initialized_on_slave
-	end,
 	slave_call(?MODULE, start, [B0, RewardAddr]).
+
+start(no_block) ->
+	[B0] = ar_weave:init([]),
+	start(B0, unclaimed, element(2, application:get_env(arweave, config)));
+start(B0) ->
+	start(B0, unclaimed, element(2, application:get_env(arweave, config))).
+
+start(B0, RewardAddr) ->
+	start(B0, RewardAddr, element(2, application:get_env(arweave, config))).
+
+start(B0, RewardAddr, Config) ->
+	%% Currently, ar_weave:init stores the wallet tree on disk. Tests call ar_weave:init,
+	%% it returns the block header (which does not contain the wallet tree), the block header
+	%% is passed here where we want to erase the previous storage and at the same time
+	%% keep the genesis data to start a new weave.
+	WalletList = read_wallet_list(B0#block.wallet_list),
+	stop(),
+	write_genesis_files(Config#config.data_dir, B0, WalletList),
+	ok = application:set_env(arweave, config, Config#config{
+		start_from_block_index = true,
+		peers = [],
+		mining_addr = RewardAddr,
+		max_poa_option_depth = 20
+	}),
+	{ok, _} = application:ensure_all_started(arweave, permanent),
+	{whereis(http_entrypoint_node), B0}.
+
+read_wallet_list(RootHash) ->
+	case ar_rpc:call(master, ar_storage, read_wallet_list, [RootHash], 10000) of
+		{ok, Tree} ->
+			Tree;
+		_ ->
+			%% The tree is supposed to be stored by either of the nodes - the one
+			%% where ar_weave:init was called.
+			{ok, Tree} = slave_call(ar_storage, read_wallet_list, [RootHash]),
+			Tree
+	end.
 
 stop() ->
 	{ok, Config} = application:get_env(arweave, config),
 	ok = application:stop(arweave),
 	ok = ar:stop_dependencies(),
-	file:delete(filename:join(Config#config.data_dir, "mempool")),
-	Config.
+	os:cmd("rm -r " ++ Config#config.data_dir ++ "/*").
 
-start(B0, RewardAddr) ->
-	ar_storage:write_full_block(B0),
-	ok = ar_storage:write_block_index([ar_util:block_index_entry_from_block(B0)]),
-	Config = stop(),
-	ok = application:set_env(arweave, config, Config#config{
-		start_from_block_index = true,
-		peers = [],
-		mining_addr = RewardAddr
-	}),
-	{ok, _} = application:ensure_all_started(arweave, permanent),
-	{whereis(http_entrypoint_node), B0}.
+write_genesis_files(DataDir, B0, WalletList) ->
+	BH = B0#block.indep_hash,
+	BlockDir = filename:join(DataDir, ?BLOCK_DIR),
+	ok = filelib:ensure_dir(BlockDir ++ "/"),
+	BlockFilepath = filename:join(BlockDir, binary_to_list(ar_util:encode(BH)) ++ ".json"),
+	BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B0)),
+	ok = file:write_file(BlockFilepath, BlockJSON),
+	TXDir = filename:join(DataDir, ?TX_DIR),
+	ok = filelib:ensure_dir(TXDir ++ "/"),
+	lists:foreach(
+		fun(TX) ->
+			TXID = TX#tx.id,
+			TXFilepath = filename:join(TXDir, binary_to_list(ar_util:encode(TXID)) ++ ".json"),
+			TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+			ok = file:write_file(TXFilepath, TXJSON)
+		end,
+		B0#block.txs
+	),
+	BI = [ar_util:block_index_entry_from_block(B0)],
+	BIJSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(BI)),
+	HashListDir = filename:join(DataDir, ?HASH_LIST_DIR),
+	ok = filelib:ensure_dir(HashListDir ++ "/"),
+	BIFilepath = filename:join(HashListDir, <<"last_block_index.json">>),
+	ok = file:write_file(BIFilepath, BIJSON),
+	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
+	ok = filelib:ensure_dir(WalletListDir ++ "/"),
+	RootHash = B0#block.wallet_list,
+	WalletListFilepath =
+		filename:join(WalletListDir, binary_to_list(ar_util:encode(RootHash)) ++ ".json"),
+	WalletListJSON =
+		ar_serialize:jsonify(
+			ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false, WalletList)
+		),
+	ok = file:write_file(WalletListFilepath, WalletListJSON).
 
 join_on_slave() ->
 	join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).
 
 join(Peer) ->
-	Config = stop(),
+	{ok, Config} = application:get_env(arweave, config),
+	stop(),
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_block_index = false,
 		peers = [Peer]
@@ -399,7 +441,7 @@ get_tx_confirmations(slave, TXID) ->
 	case Response of
 		{ok, {{<<"200">>, _}, _, Reply, _, _}} ->
 			{Status} = ar_serialize:dejsonify(Reply),
-			lists:keyfind(<<"number_of_confirmations">>, 1, Status);
+			element(2, lists:keyfind(<<"number_of_confirmations">>, 1, Status));
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
 			-1
 	end;
@@ -517,11 +559,64 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 		{master, AwaitNode} ->
 			wait_until_height(AwaitNode, CurrentHeight + 1),
 			H = ar_node:get_current_block_hash(AwaitNode),
-			BShadow = ar_storage:read_block(H),
+			BShadow = read_block_when_stored(H),
 			BShadow#block{ txs = ar_storage:read_tx(BShadow#block.txs) };
 		{slave, AwaitNode} ->
 			slave_wait_until_height(AwaitNode, CurrentHeight + 1),
 			H = slave_call(ar_node, get_current_block_hash, [AwaitNode]),
-			BShadow = slave_call(ar_storage, read_block, [H]),
+			BShadow = slave_call(ar_test_node, read_block_when_stored, [H]),
 			BShadow#block{ txs = slave_call(ar_storage, read_tx, [BShadow#block.txs]) }
 	end.
+
+read_block_when_stored(H) ->
+	MaybeB = ar_util:do_until(
+		fun() ->
+			case ar_storage:read_block(H) of
+				unavailable ->
+					unavailable;
+				B ->
+					{ok, B}
+			end
+		end,
+		100,
+		5000
+	),
+	case MaybeB of
+		{ok, B} ->
+			B;
+		_ ->
+			MaybeB
+	end.
+
+get_chunk(Offset) ->
+	get_chunk(master, Offset).
+
+get_chunk(master, Offset) ->
+	get_chunk2({127, 0, 0, 1, ar_meta_db:get(port)}, Offset);
+
+get_chunk(slave, Offset) ->
+	get_chunk2({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, Offset).
+
+get_chunk2(Peer, Offset) ->
+	ar_http:req(#{
+		method => get,
+		peer => Peer,
+		path => "/chunk/" ++ integer_to_list(Offset)
+	}).
+
+post_chunk(Proof) ->
+	post_chunk(master, Proof).
+
+post_chunk(master, Proof) ->
+	post_chunk2({127, 0, 0, 1, ar_meta_db:get(port)}, Proof);
+
+post_chunk(slave, Proof) ->
+	post_chunk2({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, Proof).
+
+post_chunk2(Peer, Proof) ->
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/chunk",
+		body => Proof
+	}).

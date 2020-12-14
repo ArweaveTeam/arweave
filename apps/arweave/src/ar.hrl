@@ -4,9 +4,12 @@
 %%% A collection of record structures used throughout the Arweave server.
 
 %% @doc How nodes identify they are on the same network.
+-ifndef(NETWORK_NAME).
 -define(NETWORK_NAME, "arweave.N.1").
+-endif.
 
 %% @doc Current release number of the arweave client software.
+%% @deprecated Not used apart from being included in the /info response.
 -define(CLIENT_VERSION, 5).
 
 %% @doc The current build number -- incremented for every release.
@@ -14,6 +17,7 @@
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
+		{<<"X-Network">>, ?NETWORK_NAME},
 		{<<"X-Version">>, <<"8">>},
 		{<<"X-Block-Format">>, <<"3">>}
 	]).
@@ -21,7 +25,7 @@
 -define(CORS_HEADERS,
 	#{<<"access-control-allow-origin">> => <<"*">>}).
 
--ifdef(DEBUG).
+-ifdef(FORKS_RESET).
 -define(FORK_1_6, 0).
 -else.
 %%% FORK INDEX
@@ -44,7 +48,7 @@
 -define(SIGN_ALG, rsa).
 -define(PRIV_KEY_SZ, 4096).
 
-%% @doc NB: Setting the default difficulty high will cause TNT to fail.
+%% @doc The difficulty used to start a new weave by default.
 -define(DEFAULT_DIFF, 8).
 
 -ifndef(TARGET_TIME).
@@ -96,17 +100,20 @@
 
 %% @doc The number of blocks behind the most recent block to store.
 %% The maximum lag when fork recovery is still possible.
+-ifdef(DEBUG).
+-define(STORE_BLOCKS_BEHIND_CURRENT, 10).
+-else.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
+-endif.
+
+%% @doc The frequency of checking for the available disk space.
+-define(DISK_SPACE_CHECK_FREQUENCY_MS, 5 * 60 * 1000).
 
 %% Speed to run the network at when simulating.
 -define(DEBUG_TIME_SCALAR, 1.0).
 
 %% @doc Length of time to wait before giving up on test(s).
 -define(TEST_TIMEOUT, 15 * 60).
-
-%% @doc Calculate MS to wait in order to hit target block time.
--define(DEFAULT_MINING_DELAY,
-    ((?TARGET_TIME * 1000) div erlang:trunc(math:pow(2, ?DEFAULT_DIFF - 1)))).
 
 %% @doc The maximum size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).
@@ -375,6 +382,7 @@
 	block_size = 0, % The total size of transaction data inside this block.
 	%% The sum of average number of hashes tried to mine blocks over all previous blocks.
 	cumulative_diff = 0,
+	size_tagged_txs = unset, % The list of {{TXID, DataRoot}, Offset}.
 	poa = #poa{} % The access proof used to generate this block.
 }).
 

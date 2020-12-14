@@ -2,9 +2,11 @@
 -behaviour(gen_server).
 
 -export([start_link/1]).
--export([init/1]).
--export([handle_cast/2, handle_call/3]).
--export([handle_info/2]).
+
+-export([
+	init/1,
+	handle_cast/2, handle_call/3
+]).
 
 -include("ar.hrl").
 
@@ -36,44 +38,50 @@ init(Args) ->
 	}}.
 
 handle_cast(poll_block, State) ->
-	#{ trusted_peers := TrustedPeers, last_seen_height := LastSeenHeight, interval := Interval } = State,
-	{NewLastSeenHeight, NeedPoll} = case ar_node:get_height(whereis(http_entrypoint_node)) of
-		-1 ->
-			%% Wait until the node joins the network or starts from a hash list.
-			{-1, false};
-		Height when LastSeenHeight == -1 ->
-			{Height, true};
-		Height when Height > LastSeenHeight ->
-			%% Skip this poll if the block has been already received by other means.
-			{Height, false};
-		_ ->
-			{LastSeenHeight, true}
-	end,
-	NewState = case NeedPoll of
-		true ->
-			case poll_block(TrustedPeers, NewLastSeenHeight + 1) of
-				{error, block_already_received} ->
-					State#{ last_seen_height => NewLastSeenHeight + 1 };
-				ok ->
-					State#{ last_seen_height => NewLastSeenHeight + 1 };
-				{error, _} ->
-					State#{ last_seen_height => NewLastSeenHeight }
-			end;
-		false ->
-			State#{ last_seen_height => NewLastSeenHeight }
-	end,
-	{ok, _} = schedule_polling(Interval),
+	#{
+		trusted_peers := TrustedPeers,
+		last_seen_height := LastSeenHeight,
+		interval := Interval
+	} = State,
+	{NewLastSeenHeight, NeedPoll} =
+		case ar_node:get_height(whereis(http_entrypoint_node)) of
+			-1 ->
+				%% Wait until the node joins the network or starts from a hash list.
+				{-1, false};
+			Height when LastSeenHeight == -1 ->
+				{Height, true};
+			Height when Height > LastSeenHeight ->
+				%% Skip this poll if the block has been already received by other means.
+				%% Under normal circumstances, we never poll.
+				{Height, false};
+			_ ->
+				{LastSeenHeight, true}
+		end,
+	NewState =
+		case NeedPoll of
+			true ->
+				case poll_block(TrustedPeers, NewLastSeenHeight + 1) of
+					{error, block_already_received} ->
+						{ok, _} = schedule_polling(Interval),
+						State#{ last_seen_height => NewLastSeenHeight + 1 };
+					ok ->
+						%% Check if we have missed more than one block.
+						%% For instance, we could have missed several blocks
+						%% if it took some time to join the network.
+						{ok, _} = schedule_polling(0),
+						State#{ last_seen_height => NewLastSeenHeight + 1 };
+					{error, _} ->
+						{ok, _} = schedule_polling(Interval),
+						State#{ last_seen_height => NewLastSeenHeight }
+				end;
+			false ->
+				Delay = case NewLastSeenHeight of -1 -> 200; _ -> Interval end,
+				{ok, _} = schedule_polling(Delay),
+				State#{ last_seen_height => NewLastSeenHeight }
+		end,
 	{noreply, NewState}.
 
 handle_call(_Request, _From, State) ->
-	{noreply, State}.
-
-handle_info(_Info, State) ->
-	%% Ignore unexpected messages. Some unexpected messages are received
-	%% during startup (and sometimes later on) from ar_node
-	%% after the get function times out, but the reply still arrives then.
-	%% This handler only avoids a few warnings in the logs -
-	%% the ar_node functions have to be changed to address the problem.
 	{noreply, State}.
 
 %%%===================================================================
@@ -81,7 +89,7 @@ handle_info(_Info, State) ->
 %%%===================================================================
 
 schedule_polling(Interval) ->
-	timer:apply_after(Interval, gen_server, cast, [?MODULE, poll_block]).
+	timer:apply_after(Interval, gen_server, cast, [self(), poll_block]).
 
 poll_block(Peers, Height) ->
 	poll_block_step(download_block_shadow, {Peers, Height}).
@@ -94,14 +102,14 @@ poll_block_step(download_block_shadow, {Peers, Height}) ->
 			poll_block_step(check_ignore_list, {Peer, BShadow}, erlang:timestamp())
 	end.
 
-poll_block_step(check_ignore_list, {Peer, BShadow}, ReceiveTimestamp) ->
+poll_block_step(check_ignore_list, {Peer, BShadow}, Timestamp) ->
 	BH = BShadow#block.indep_hash,
 	case ar_bridge:is_id_ignored(BH) of
 		true ->
 			{error, block_already_received};
 		false ->
 			ar_bridge:ignore_id(BH),
-			case catch poll_block_step(construct_hash_list, {Peer, BShadow}, ReceiveTimestamp) of
+			case catch poll_block_step(construct_hash_list, {Peer, BShadow}, Timestamp) of
 				ok ->
 					ok;
 				Error ->
@@ -114,37 +122,40 @@ poll_block_step(construct_hash_list, {Peer, BShadow}, ReceiveTimestamp) ->
 	{ok, BlockTXsPairs} = ar_node:get_block_txs_pairs(Node),
 	HL = lists:map(fun({BH, _}) -> BH end, BlockTXsPairs),
 	case reconstruct_block_hash_list(Peer, BShadow, HL) of
-		{ok, BHL} ->
-			poll_block_step(
-				accept_block,
-				{Peer, BShadow#block{ hash_list = BHL }},
-				ReceiveTimestamp
-			);
+		{ok, FetchedBlocks, BHL} ->
+			lists:foreach(
+				fun(B) ->
+					Node ! {new_block, Peer, B#block.height, B, no_data_segment, ReceiveTimestamp}
+				end,
+				FetchedBlocks
+			),
+			BShadowHeight = BShadow#block.height,
+			BShadow2 = BShadow#block{ hash_list = BHL },
+			Node ! {new_block, Peer, BShadowHeight, BShadow2, no_data_segment, ReceiveTimestamp},
+			ok;
 		{error, _} = Error ->
 			Error
-	end;
-poll_block_step(accept_block, {Peer, BShadow}, ReceiveTimestamp) ->
-	Node = whereis(http_entrypoint_node),
-	BShadowHeight = BShadow#block.height,
-	Node ! {new_block, Peer, BShadowHeight, BShadow, no_data_segment, ReceiveTimestamp},
-	ok.
+	end.
 
 reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL) ->
 	reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL, []).
 
-reconstruct_block_hash_list(_Peer, _FetchedBShadow, _BehindCurrentHL, FetchedHL)
-		when length(FetchedHL) >= ?STORE_BLOCKS_BEHIND_CURRENT ->
+reconstruct_block_hash_list(_Peer, _FetchedBShadow, _BehindCurrentHL, FetchedBlocks)
+		when length(FetchedBlocks) >= ?STORE_BLOCKS_BEHIND_CURRENT ->
 	{error, failed_to_reconstruct_block_hash_list};
-reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL, FetchedHL) ->
+reconstruct_block_hash_list(Peer, FetchedBShadow, BehindCurrentHL, FetchedBlocks) ->
 	PrevH = FetchedBShadow#block.previous_block,
 	case lists:dropwhile(fun(H) -> H /= PrevH end, BehindCurrentHL) of
 		[PrevH | _] = L ->
-			{ok, lists:sublist(lists:reverse(FetchedHL) ++ L, ?STORE_BLOCKS_BEHIND_CURRENT)};
+			FetchedHL = [B#block.indep_hash || B <- FetchedBlocks],
+			{ok, FetchedBlocks,
+				lists:sublist(lists:reverse(FetchedHL) ++ L, ?STORE_BLOCKS_BEHIND_CURRENT)};
 		_ ->
 			case ar_http_iface_client:get_block_shadow([Peer], PrevH) of
 				unavailable ->
 					{error, previous_block_not_found};
 				{_, PrevBShadow} ->
-					reconstruct_block_hash_list(Peer, PrevBShadow, BehindCurrentHL, [PrevH | FetchedHL])
+					reconstruct_block_hash_list(
+						Peer, PrevBShadow, BehindCurrentHL, [PrevBShadow | FetchedBlocks])
 			end
 	end.

@@ -73,9 +73,7 @@ loop(TimeoutRef) ->
 	end.
 
 handle(Req, Pid) ->
-	%% Inform ar_bridge about new peer, performance rec will be updated from cowboy_metrics_h
-	%% (this is leftover from update_performance_list)
-	Peer = arweave_peer(Req),
+	Peer = ar_http_util:arweave_peer(Req),
 	handle(Peer, Req, Pid).
 
 handle(Peer, Req, Pid) ->
@@ -83,20 +81,12 @@ handle(Peer, Req, Pid) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	case ar_meta_db:get(http_logging) of
 		true ->
-			ar:info(
-				[
-					http_request,
-					{method, Method},
-					{path, SplitPath},
-					{peer, Peer}
-				]
-			);
-		_ ->
-			do_nothing
-	end,
-	case ar_meta_db:get({peer, Peer}) of
-		not_found ->
-			ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
+			ar:info([
+				{event, http_request},
+				{method, Method},
+				{path, SplitPath},
+				{peer, ar_util:format_peer(Peer)}
+			]);
 		_ ->
 			do_nothing
 	end,
@@ -190,6 +180,14 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 	case get_tx_filename(Hash) of
 		{ok, Filename} ->
 			{200, #{}, sendfile(Filename), Req};
+		{migrated_v1, Filename} ->
+			case ar_storage:read_migrated_v1_tx_file(Filename) of
+				{ok, TX} ->
+					Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+					{200, #{}, Body, Req};
+				_ ->
+					{404, #{}, <<>>, Req}
+			end;
 		{response, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;
@@ -244,6 +242,9 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 			{404, #{}, sendfile("data/not_found.html"), Req};
 		{ok, Filename} ->
 			{ok, TX} = ar_storage:read_tx_file(Filename),
+			serve_tx_html_data(Req, TX);
+		{migrated_v1, Filename} ->
+			{ok, TX} = ar_storage:read_migrated_v1_tx_file(Filename),
 			serve_tx_html_data(Req, TX)
 	end;
 
@@ -253,16 +254,36 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			Fn = case cowboy_req:header(<<"content-type">>, Req) of
-				<<"application/json">> -> get_sync_record_json;
-				<<"application/etf">> -> get_sync_record_etf;
-				_ -> get_sync_record_etf
+			Format =
+				case cowboy_req:header(<<"content-type">>, Req) of
+					<<"application/json">> ->
+						json;
+					_ ->
+						etf
 			end,
-			case catch ar_data_sync:Fn() of
+			case ar_data_sync:get_sync_record(#{ format => Format, random_subset => true }) of
 				{ok, Binary} ->
 					{200, #{}, Binary, Req};
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
+				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			end
+	end;
+
+handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pid) ->
+	case catch binary_to_integer(EncodedStart) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_start_encoding }), Req};
+		Start ->
+			case catch binary_to_integer(EncodedLimit) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_limit_encoding }), Req};
+				Limit ->
+					case Limit > ?MAX_SHARED_SYNCED_INTERVALS_COUNT of
+						true ->
+							{400, #{}, jiffy:encode(#{ error => limit_too_big }), Req};
+						false ->
+							handle_get_data_sync_record(Start, Limit, Req)
+					end
 			end
 	end;
 
@@ -301,7 +322,7 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 				{error, invalid} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
 				{ok, ID} ->
-					case catch ar_data_sync:get_tx_offset(ID) of
+					case ar_data_sync:get_tx_offset(ID) of
 						{ok, {Offset, Size}} ->
 							ResponseBody = jiffy:encode(#{
 								offset => integer_to_binary(Offset),
@@ -312,7 +333,7 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 							{404, #{}, <<>>, Req};
 						{error, failed_to_read_offset} ->
 							{500, #{}, <<>>, Req};
-						{'EXIT', {timeout, {gen_server, call, _}}} ->
+						{error, timeout} ->
 							{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 					end
 			end
@@ -462,7 +483,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 				list_to_binary(ar_util:format_peer(P))
 			||
 				P <- ar_bridge:get_remote_peers(whereis(http_bridge_node)),
-				P /= arweave_peer(Req)
+				P /= ar_http_util:arweave_peer(Req)
 			]
 		),
 	Req};
@@ -580,33 +601,10 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">
 			end
 	end;
 
-%% @doc Share your nodes IP with another peer.
-%% POST request to endpoint /peers with the body of the request being your
-%% nodes network information JSON encoded as specified in ar_serialize.
-% NOTE: Consider returning remaining timeout on a failed request
-handle(<<"POST">>, [<<"peers">>], Req, Pid) ->
-	case read_complete_body(Req, Pid) of
-		{ok, BlockJSON, Req2} ->
-			case ar_serialize:dejsonify(BlockJSON) of
-				{Struct} ->
-					{<<"network">>, NetworkName} = lists:keyfind(<<"network">>, 1, Struct),
-					case (NetworkName == <<?NETWORK_NAME>>) of
-						false ->
-							{400, #{}, <<"Wrong network.">>, Req2};
-						true ->
-							Peer = arweave_peer(Req2),
-							case ar_meta_db:get({peer, Peer}) of
-								not_found ->
-									ar_bridge:add_remote_peer(whereis(http_bridge_node), Peer);
-								X -> X
-							end,
-							{200, #{}, [], Req2}
-					end;
-				_ -> {400, #{}, "Wrong network", Req2}
-			end;
-		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
-	end;
+%% @doc Share your IP with another peer.
+%% @deprecated To make a node learn your IP, you can make any request to it.
+handle(<<"POST">>, [<<"peers">>], Req, _Pid) ->
+	{200, #{}, <<>>, Req};
 
 %% @doc Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance
@@ -815,7 +813,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 						false ->
 							{404, #{}, <<"Not Found.">>, Req}
 					end;
-				{ok, Filename} ->
+				{Status, Filename} ->
 					case Field of
 						<<"tags">> ->
 							{ok, TX} = ar_storage:read_tx_file(Filename),
@@ -833,7 +831,13 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 								)
 							), Req};
 						<<"data">> ->
-							{ok, TX} = ar_storage:read_tx_file(Filename),
+							{ok, TX} =
+								case Status of
+									ok ->
+										ar_storage:read_tx_file(Filename);
+									migrated_v1 ->
+										ar_storage:read_migrated_v1_tx_file(Filename)
+								end,
 							serve_tx_data(Req, TX);
 						_ ->
 							{ok, JSONBlock} = file:read_file(Filename),
@@ -868,15 +872,6 @@ handle(_, _, Req, _Pid) ->
 handle208(208) -> <<"208 Already Reported">>;
 handle208(Status) -> Status.
 
-arweave_peer(Req) ->
-	{{IpV4_1, IpV4_2, IpV4_3, IpV4_4}, _TcpPeerPort} = cowboy_req:peer(Req),
-	ArweavePeerPort =
-		case cowboy_req:header(<<"x-p2p-port">>, Req) of
-			undefined -> ?DEFAULT_HTTP_IFACE_PORT;
-			Binary -> binary_to_integer(Binary)
-		end,
-	{IpV4_1, IpV4_2, IpV4_3, IpV4_4, ArweavePeerPort}.
-
 format_bi_for_peer(BI, Req) ->
 	case cowboy_req:header(<<"x-block-format">>, Req, <<"2">>) of
 		<<"2">> -> ?BI_TO_BHL(BI);
@@ -897,7 +892,7 @@ not_joined(Req) ->
 
 handle_get_tx_status(Hash, Req) ->
 	case get_tx_filename(Hash) of
-		{ok, _} ->
+		{Source, _} when Source == ok orelse Source == migrated_v1 ->
 			case catch ar_arql_db:select_block_by_tx_id(Hash) of
 				{ok, #{
 					height := Height,
@@ -934,8 +929,8 @@ get_tx_filename(Hash) ->
 			{response, {400, #{}, <<"Invalid hash.">>}};
 		{error, ID, unavailable} ->
 			maybe_tx_is_pending_response(ID);
-		{ok, Filename} ->
-			{ok, Filename}
+		{Status, Filename} ->
+			{Status, Filename}
 	end.
 
 maybe_tx_is_pending_response(ID) ->
@@ -960,14 +955,14 @@ serve_tx_data(Req, #tx{ format = 2, id = ID } = TX) ->
 		true ->
 			{200, #{}, sendfile(DataFilename), Req};
 		false ->
-			case catch ar_data_sync:get_tx_data(ID) of
+			case ar_data_sync:get_tx_data(ID) of
 				{ok, Data} ->
 					{200, #{}, ar_util:encode(Data), Req};
 				{error, tx_data_too_big} ->
 					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
 				{error, not_found} ->
 					{200, #{}, <<>>, Req};
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
+				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
 	end.
@@ -991,14 +986,14 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 		{ok, Data} ->
 			{200, #{ <<"content-type">> => ContentType }, Data, Req};
 		{error, enoent} ->
-			case catch ar_data_sync:get_tx_data(TX#tx.id) of
+			case ar_data_sync:get_tx_data(TX#tx.id) of
 				{ok, Data} ->
 					{200, #{ <<"content-type">> => ContentType }, Data, Req};
 				{error, tx_data_too_big} ->
 					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
 				{error, not_found} ->
 					{200, #{ <<"content-type">> => ContentType }, <<>>, Req};
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
+				{error, timeout} ->
 					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
 	end.
@@ -1175,6 +1170,21 @@ handle_post_tx_already_in_weave_response() ->
 handle_post_tx_already_in_mempool_response() ->
 	{error_response, {400, #{}, <<"Transaction is already in the mempool.">>}}.
 
+handle_get_data_sync_record(Start, Limit, Req) ->
+	Format =
+		case cowboy_req:header(<<"content-type">>, Req) of
+			<<"application/json">> ->
+				json;
+			_ ->
+				etf
+		end,
+	case ar_data_sync:get_sync_record(#{ start => Start, limit => Limit, format => Format }) of
+		{ok, Binary} ->
+			{200, #{}, Binary, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+	end.
+
 handle_post_chunk(Proof, Req) ->
 	handle_post_chunk(check_data_size, Proof, Req).
 
@@ -1197,6 +1207,13 @@ handle_post_chunk(check_data_path_size, Proof, Req) ->
 		true ->
 			{400, #{}, jiffy:encode(#{ error => data_path_too_big }), Req};
 		false ->
+			handle_post_chunk(check_offset_field, Proof, Req)
+	end;
+handle_post_chunk(check_offset_field, Proof, Req) ->
+	case maps:is_key(offset, Proof) of
+		false ->
+			{400, #{}, jiffy:encode(#{ error => offset_field_required }), Req};
+		true ->
 			handle_post_chunk(check_offset_size, Proof, Req)
 	end;
 handle_post_chunk(check_offset_size, Proof, Req) ->
@@ -1209,25 +1226,28 @@ handle_post_chunk(check_offset_size, Proof, Req) ->
 handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
 	DataPath = maps:get(data_path, Proof),
 	Chunk = maps:get(chunk, Proof),
-	case ?IS_CHUNK_PROOF_RATIO_NOT_ATTRACTIVE(Chunk, DataPath) of
-		true ->
-			{400, #{}, jiffy:encode(#{ error => chunk_proof_ratio_not_attractive }), Req};
+	DataSize = maps:get(data_size, Proof),
+	case ar_data_sync:is_chunk_proof_ratio_attractive(byte_size(Chunk), DataSize, DataPath) of
 		false ->
+			{400, #{}, jiffy:encode(#{ error => chunk_proof_ratio_not_attractive }), Req};
+		true ->
 			handle_post_chunk(validate_proof, Proof, Req)
 	end;
 handle_post_chunk(validate_proof, Proof, Req) ->
-	case catch ar_data_sync:add_chunk(Proof) of
+	case ar_data_sync:add_chunk(Proof) of
 		ok ->
 			{200, #{}, <<>>, Req};
 		{error, data_root_not_found} ->
 			{400, #{}, jiffy:encode(#{ error => data_root_not_found }), Req};
 		{error, exceeds_disk_pool_size_limit} ->
 			{400, #{}, jiffy:encode(#{ error => exceeds_disk_pool_size_limit }), Req};
+		{error, disk_full} ->
+			{400, #{}, jiffy:encode(#{ error => disk_full }), Req};
 		{error, failed_to_store_chunk} ->
 			{500, #{}, <<>>, Req};
 		{error, invalid_proof} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req};
-		{'EXIT', {timeout, {gen_server, call, _}}} ->
+		{error, timeout} ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
@@ -1279,8 +1299,10 @@ hash_to_filename(Type, Hash) ->
 			case F of
 				unavailable ->
 					{error, ID, unavailable};
-				Filename ->
-					{ok, Filename}
+				Filename when Type == block ->
+					{ok, Filename};
+				Response ->
+					Response
 			end
 	end.
 
@@ -1357,7 +1379,7 @@ val_for_key(K, L) ->
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
 post_block(request, {Req, Pid}, ReceiveTimestamp) ->
-	OrigPeer = arweave_peer(Req),
+	OrigPeer = ar_http_util:arweave_peer(Req),
 	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
 		not_banned ->
 			post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp);
@@ -1387,7 +1409,7 @@ post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp) ->
 							{400, #{}, <<"Invalid block.">>, ReadReq};
 						{ok, {ReqStruct, BShadow}, ReadReq} ->
 							post_block(
-								check_data_segment_processed,
+								extract_data_segment,
 								{ReqStruct, BShadow, OrigPeer},
 								ReadReq,
 								ReceiveTimestamp
@@ -1397,22 +1419,16 @@ post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp) ->
 					{413, #{}, <<"Payload too large">>, Req}
 			end
 	end;
-post_block(check_data_segment_processed, {ReqStruct, BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
-	% Check if block is already known.
+post_block(extract_data_segment, {ReqStruct, BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 	case lists:keyfind(<<"block_data_segment">>, 1, ReqStruct) of
 		{_, BDSEncoded} ->
 			BDS = ar_util:decode(BDSEncoded),
-			case ar_bridge:is_id_ignored(BDS) of
-				true ->
-					{208, #{}, <<"Block Data Segment already processed.">>, Req};
-				false ->
-					post_block(
-						check_indep_hash_processed,
-						{BShadow, OrigPeer, BDS},
-						Req,
-						ReceiveTimestamp
-					)
-			end;
+			post_block(
+			   check_indep_hash_processed,
+			   {BShadow, OrigPeer, BDS},
+			   Req,
+			   ReceiveTimestamp
+			);
 		false ->
 			post_block_reject_warn(BShadow, block_data_segment_missing, OrigPeer),
 			{400, #{}, <<"block_data_segment missing.">>, Req}
@@ -1423,12 +1439,28 @@ post_block(check_indep_hash_processed, {BShadow, OrigPeer, BDS}, Req, ReceiveTim
 			{208, <<"Block already processed.">>, Req};
 		false ->
 			ar_bridge:ignore_id(BShadow#block.indep_hash),
-			post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
+			post_block(check_indep_hash, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
+	end;
+post_block(check_indep_hash, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
+	BH = BShadow#block.indep_hash,
+	case catch compute_hash(BShadow, BDS) of
+		BH ->
+			post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp);
+		_ ->
+			%% Remove the identifier from the ignore registry. The attacker
+			%% may have put a hash of a valid block inside the invalid one.
+			ar_bridge:unignore_id(BH),
+			post_block_reject_warn(BShadow, check_indep_hash, OrigPeer),
+			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
+			{400, #{}, <<"Invalid Block Hash">>, Req}
 	end;
 post_block(check_is_joined, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	% Check if node is joined.
 	case ar_node:is_joined(whereis(http_entrypoint_node)) of
 		false ->
+			%% The node is not ready to validate and accept blocks.
+			%% If the network adopts this block, ar_poller will catch up.
+			ar_bridge:unignore_id(BShadow#block.indep_hash),
 			{503, #{}, <<"Not joined.">>, Req};
 		true ->
 			post_block(check_height, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
@@ -1437,8 +1469,10 @@ post_block(check_height, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 	CurrentHeight = ar_node:get_height(whereis(http_entrypoint_node)),
 	case BShadow#block.height of
 		H when H < CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT ->
+			ar_bridge:unignore_id(BShadow#block.indep_hash),
 			{400, #{}, <<"Height is too far behind">>, Req};
 		H when H > CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT ->
+			ar_bridge:unignore_id(BShadow#block.indep_hash),
 			{400, #{}, <<"Height is too far ahead">>, Req};
 		_ ->
 			post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
@@ -1451,14 +1485,40 @@ post_block(check_difficulty, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 		true ->
 			post_block(check_pow, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp);
 		_ ->
+			ar_bridge:unignore_id(BShadow#block.indep_hash),
 			{400, #{}, <<"Difficulty too low">>, Req}
 	end;
 %% Note! Checking PoW should be as cheap as possible. All slow steps should
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
 post_block(check_pow, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
-	case ar_mine:validate(BDS, BShadow#block.nonce, BShadow#block.diff, BShadow#block.height) of
-		{invalid, _} ->
+	Nonce = BShadow#block.nonce,
+	Height = BShadow#block.height,
+	Node = whereis(http_entrypoint_node),
+	PrevH = BShadow#block.previous_block,
+	MaybeValid =
+		case ar_node:get_block_shadow_from_cache(Node, PrevH) of
+			not_found ->
+				%% We have not seen the previous block yet - might happen if two
+				%% successive blocks are distributed at the same time. Do not
+				%% ban the peer as the block might be valid. If the network adopts
+				%% this block, ar_poller will catch up.
+				ar_bridge:unignore_id(BShadow#block.indep_hash),
+				{false, {412, #{}, <<>>, Req}};
+			#block{} ->
+				case ar_mine:validate(BDS, Nonce, BShadow#block.diff, Height) of
+					{invalid, _} ->
+						false;
+					{valid, _} ->
+						true
+				end
+		end,
+	case MaybeValid of
+		{false, Response} ->
+			Response;
+		true ->
+			post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp);
+		false ->
 			post_block_reject_warn(BShadow, check_pow, OrigPeer),
 			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 			{400, #{}, <<"Invalid Block Proof of Work">>, Req};
@@ -1477,32 +1537,35 @@ post_block(check_timestamp, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
 				[{block_time, BShadow#block.timestamp},
 				 {current_time, os:system_time(seconds)}]
 			),
+			%% If the network actually applies this block, but we received it
+			%% late for some reason, ar_poller will fetch and apply it.
+			ar_bridge:unignore_id(BShadow#block.indep_hash),
 			{400, #{}, <<"Invalid timestamp.">>, Req};
 		true ->
 			post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp)
 	end;
 post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
-	%% The ar_block:generate_block_from_shadow/2 call is potentially slow. Since
-	%% all validation steps already passed, we can do the rest in a separate
-	spawn(fun() ->
-		ar:info([{
-			sending_external_block_to_bridge,
-			ar_util:encode(BShadow#block.indep_hash)
-		}]),
-		ar:info([
-			ar_http_iface_handler,
-			accepted_block,
-			{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
-		]),
-		ar_bridge:add_block(
-			whereis(http_bridge_node),
-			OrigPeer,
-			BShadow,
-			BDS,
-			ReceiveTimestamp
-		)
-	end),
+	record_block_pre_validation_time(ReceiveTimestamp),
+	ar:info([{
+		sending_external_block_to_bridge,
+		ar_util:encode(BShadow#block.indep_hash)
+	}]),
+	ar:info([
+		ar_http_iface_handler,
+		accepted_block,
+		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
+	]),
+	ar_bridge:add_block(
+		whereis(http_bridge_node),
+		OrigPeer,
+		BShadow,
+		BDS,
+		ReceiveTimestamp
+	),
 	{200, #{}, <<"OK">>, Req}.
+
+compute_hash(B, BDSOrBDSBase) ->
+	ar_weave:indep_hash_post_fork_2_0(BDSOrBDSBase, B#block.hash, B#block.nonce).
 
 post_block_reject_warn(BShadow, Step, Peer) ->
 	ar:warn([
@@ -1517,6 +1580,10 @@ post_block_reject_warn(BShadow, Step, Peer, Params) ->
 		{Step, Params},
 		{peer, ar_util:format_peer(Peer)}
 	]).
+
+record_block_pre_validation_time(ReceiveTimestamp) ->
+	TimeMs = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000,
+	prometheus_histogram:observe(block_pre_validation_time, TimeMs).
 
 %% @doc Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->

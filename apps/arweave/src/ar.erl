@@ -8,7 +8,7 @@
 -export([
 	main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0,
 	tests/0, tests/1, tests/2,
-	test_ipfs/0, test_apps/0,
+	test_ipfs/0,
 	docs/0,
 	err/1, err/2, info/1, info/2, warn/1, warn/2, console/1, console/2,
 	report/1, report_console/1, d/1,
@@ -29,6 +29,9 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_meta_db,
+		ar_kv,
+		ar_block_cache,
 		ar_unbalanced_merkle,
 		ar_intervals,
 		ar_patricia_tree,
@@ -51,12 +54,12 @@
 		ar_retarget,
 		ar_weave,
 		ar_join,
+		ar_tx_blacklist_tests,
 		ar_data_sync_tests,
+		ar_header_sync_tests,
 		ar_poa_tests,
 		ar_node_tests,
-		ar_fork_recovery,
-		ar_firewall_distributed_tests,
-		ar_firewall,
+		ar_fork_recovery_tests,
 		ar_mine,
 		ar_tx_replay_pool_tests,
 		ar_tx_queue,
@@ -65,9 +68,7 @@
 		ar_tx_perpetual_storage_tests,
 		ar_gateway_middleware_tests,
 		ar_http_util_tests,
-		ar_mine_randomx_tests,
-		% ar_meta_db must be the last in the list since it resets global configuration
-		ar_meta_db
+		ar_mine_randomx_tests
 	]
 ).
 
@@ -76,12 +77,8 @@
 % disk_logging (false)
 % miner_logging (true)
 % subfield_queries (false)
-% partial_fork_recovery (false)
 % blacklist (true)
 % time_syncing (true)
-
-%% All of the apps that have tests associated with them
--define(APP_TEST_MODS, [app_chirper]).
 
 %% @doc Command line program entrypoint. Takes a list of arguments.
 main() ->
@@ -125,15 +122,26 @@ show_help() ->
 			{"max_miners (num)", "The maximum number of mining processes."},
 			{"max_emitters (num)", "The maximum number of transaction propagation processes (default 2)."},
 			{"tx_propagation_parallelization (num)", "The maximum number of best peers to propagate transactions to at a time (default 4)."},
-			{"max_propagation_peers (number)", "The maximum number of best peers to propagate blocks and transactions to. Default is 50."},
+			{"max_propagation_peers (num)", "The maximum number of best peers to propagate blocks and transactions to. Default is 50."},
+			{"sync_jobs (num)",
+				io_lib:format(
+					"The number of data syncing jobs to run. Default: ~B."
+					" Each job periodically picks a range and downloads it from peers.",
+					[?DEFAULT_SYNC_JOBS]
+				)},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
-			{"content_policy (file)", "Load a content policy file for the node."},
-			{"transaction_blacklist (file)", "A .txt file containing blacklisted transactions. "
+			{"transaction_blacklist (file)", "A file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
+			{"transaction_blacklist_url", "An HTTP endpoint serving a transaction blacklist."},
+			{"transaction_whitelist (file)", "A file containing whitelisted transactions. "
+											 "One Base64 encoded transaction ID per line. "
+											 "If a transaction is in both lists, it is "
+											 "considered whitelisted."},
+			{"transaction_whitelist_url", "An HTTP endpoint serving a transaction whitelist."},
 			{"disk_space (num)", "Max size (in GB) for the disk partition containing the Arweave data directory (blocks, txs, etc) when the miner stops writing files to disk."},
-			{"benchmark", "Run a mining performance benchmark."},
+			{"init", "Start a new weave."},
 			{"internal_api_secret (secret)",
 				lists:flatten(
 					io_lib:format(
@@ -149,7 +157,11 @@ show_help() ->
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
 			{"max_connections", "The number of connections to be handled concurrently. Its purpose is to prevent your system from being overloaded and ensuring all the connections are handled optimally. Default is 1024."},
 			{"max_gateway_connections", "The number of gateway connections to be handled concurrently. Default is 128."},
-			{"max_poa_option_depth", "The number of PoA alternatives to try until the recall data is found. Has to be an integer > 1. The mining difficulty increases exponentially with each subsequent option. Default is 8."},
+			{"max_poa_option_depth",
+				"The number of PoA alternatives to try until the recall data is "
+				"found. Has to be an integer > 1. The mining difficulty grows linearly "
+				"as a function of the alternative as (0.75 + 0.25 * number) * diff, "
+				"up to (0.75 + 0.25 * max_poa_option_depth) * diff. Default is 500."},
 			{"disk_pool_data_root_expiration_time",
 				"The time in seconds of how long a pending or orphaned data root is kept in the disk pool. The
 				default is 2 * 60 * 60 (2 hours)."},
@@ -201,10 +213,14 @@ parse_cli_args(["peer", Peer|Rest], C = #config { peers = Ps }) ->
 			io:format("Peer ~p invalid ~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
-parse_cli_args(["content_policy", File|Rest], C = #config { content_policy_files = Files }) ->
-	parse_cli_args(Rest, C#config { content_policy_files = [File|Files] });
 parse_cli_args(["transaction_blacklist", File|Rest], C = #config { transaction_blacklist_files = Files } ) ->
 	parse_cli_args(Rest, C#config { transaction_blacklist_files = [File|Files] });
+parse_cli_args(["transaction_blacklist_url", URL | Rest], C = #config { transaction_blacklist_urls = URLs} ) ->
+	parse_cli_args(Rest, C#config{ transaction_blacklist_urls = [URL | URLs] });
+parse_cli_args(["transaction_whitelist", File|Rest], C = #config { transaction_whitelist_files = Files } ) ->
+	parse_cli_args(Rest, C#config { transaction_whitelist_files = [File|Files] });
+parse_cli_args(["transaction_whitelist_url", URL | Rest], C = #config { transaction_whitelist_urls = URLs} ) ->
+	parse_cli_args(Rest, C#config { transaction_whitelist_urls = [URL | URLs] });
 parse_cli_args(["port", Port|Rest], C) ->
 	parse_cli_args(Rest, C#config { port = list_to_integer(Port) });
 parse_cli_args(["data_dir", DataDir|Rest], C) ->
@@ -233,8 +249,8 @@ parse_cli_args(["ipfs_pin" | Rest], C) ->
 	parse_cli_args(Rest, C#config { ipfs_pin = true });
 parse_cli_args(["start_from_block_index"|Rest], C) ->
 	parse_cli_args(Rest, C#config { start_from_block_index = true });
-parse_cli_args(["benchmark"|Rest], C)->
-	parse_cli_args(Rest, C#config { benchmark = true });
+parse_cli_args(["init"|Rest], C)->
+	parse_cli_args(Rest, C#config { init = true });
 parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_cli_args(Rest, C#config { internal_api_secret = list_to_binary(Secret)});
 parse_cli_args(["internal_api_secret", _ | _], _) ->
@@ -255,6 +271,8 @@ parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args(["max_propagation_peers", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_propagation_peers = list_to_integer(Num) });
+parse_cli_args(["sync_jobs", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { sync_jobs = list_to_integer(Num) });
 parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->
@@ -276,25 +294,10 @@ parse_cli_args([Arg|_Rest], _O) ->
 	show_help().
 
 %% @doc Start an Arweave node on this BEAM.
-start() -> start(?DEFAULT_HTTP_IFACE_PORT).
-start(Port) when is_integer(Port) -> start(#config { port = Port });
-start(#config{
-		benchmark = true,
-		max_miners = MaxMiners,
-		disable = Disable,
-		enable = Enable,
-		randomx_bulk_hashing_iterations = RandomXBulkHashingIterations
-	}) ->
-	error_logger:logfile({open, generate_logfile_name()}),
-	error_logger:tty(false),
-	ar_meta_db:start_link(),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
-	ar_meta_db:put(max_miners, MaxMiners),
-	ar_meta_db:put(mine, true),
-	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
-	ar_randomx_state:start(),
-	ar_benchmark:run();
+start() ->
+	start(?DEFAULT_HTTP_IFACE_PORT).
+start(Port) when is_integer(Port) ->
+	start(#config { port = Port });
 start(Config) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -307,6 +310,7 @@ start(Config) ->
 
 start(normal, _Args) ->
 	{ok, #config {
+		init = Init,
 		port = Port,
 		data_dir = DataDir,
 		metrics_dir = MetricsDir,
@@ -328,8 +332,10 @@ start(normal, _Args) ->
 		internal_api_secret = InternalApiSecret,
 		enable = Enable,
 		disable = Disable,
-		content_policy_files = ContentPolicyFiles,
 		transaction_blacklist_files = TransactionBlacklistFiles,
+		transaction_blacklist_urls = TransactionBlacklistURLs,
+		transaction_whitelist_files = TransactionWhitelistFiles,
+		transaction_whitelist_urls = TransactionWhitelistURLs,
 		gateway_domain = GatewayDomain,
 		gateway_custom_domains = GatewayCustomDomains,
 		requests_per_minute_limit = RequestsPerMinuteLimit,
@@ -352,7 +358,25 @@ start(normal, _Args) ->
 		_ ->
 			do_nothing
 	end,
+	ets:new(ar_data_sync, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(
+		ar_tx_blacklist_pending_headers,
+		[set, public, named_table, {read_concurrency, true}]
+	),
+	ets:new(ar_tx_blacklist_pending_data,
+		[set, public, named_table, {read_concurrency, true}]
+	),
+	ets:new(ar_tx_blacklist_offsets,
+		[ordered_set, public, named_table, {read_concurrency, true}]
+	),
 	{ok, Supervisor} = ar_sup:start_link(),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_disksup,
+		start => {ar_disksup, start_link, []},
+		type => worker,
+		shutdown => infinity
+	}),
 	%% Fill up ar_meta_db.
 	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_meta_db,
@@ -369,8 +393,10 @@ start(normal, _Args) ->
 	ar_meta_db:put(max_miners, MaxMiners),
 	ar_meta_db:put(max_emitters, MaxEmitters),
 	ar_meta_db:put(tx_propagation_parallelization, TXProp),
-	ar_meta_db:put(content_policy_files, ContentPolicyFiles),
 	ar_meta_db:put(transaction_blacklist_files, TransactionBlacklistFiles),
+	ar_meta_db:put(transaction_blacklist_urls, TransactionBlacklistURLs),
+	ar_meta_db:put(transaction_whitelist_files, TransactionWhitelistFiles),
+	ar_meta_db:put(transaction_whitelist_urls, TransactionWhitelistURLs),
 	ar_meta_db:put(internal_api_secret, InternalApiSecret),
 	ar_meta_db:put(requests_per_minute_limit, RequestsPerMinuteLimit),
 	ar_meta_db:put(max_propagation_peers, MaxPropagationPeers),
@@ -379,6 +405,9 @@ start(normal, _Args) ->
 	ar_meta_db:put(max_disk_pool_buffer_mb, MaxDiskPoolBuffer),
 	ar_meta_db:put(max_disk_pool_data_root_buffer_mb, MaxDiskPoolDataRootBuffer),
 	ar_meta_db:put(randomx_bulk_hashing_iterations, RandomXBulkHashingIterations),
+	%% Store enabled features.
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
+	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	%% Prepare the storage for operation.
 	ar_storage:start(),
 	%% Optionally clear the block cache.
@@ -442,15 +471,45 @@ start(normal, _Args) ->
 	end,
 	ar_randomx_state:start(),
 	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_tx_blacklist,
+		start => {ar_tx_blacklist_sup, start_link, [[]]},
+		type => supervisor,
+		shutdown => infinity
+	}),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_data_sync,
+		start => {ar_data_sync_sup, start_link, [[]]},
+		type => supervisor,
+		shutdown => infinity
+	}),
+	{ok, _} = supervisor:start_child(Supervisor, #{
+		id => ar_header_sync,
+		start => {ar_header_sync_sup, start_link, [[]]},
+		type => supervisor,
+		shutdown => infinity
+	}),
+	ValidPeers = ar_join:filter_peer_list(Peers),
+	case {Peers, ValidPeers} of
+		{[_Peer | _], []} ->
+			io:format(
+				"~n\tInvalid peers. A valid peer must be part of the"
+				" network ~s and its clock must deviate from ours by no"
+				" more than ~B seconds.~n", [?NETWORK_NAME, ?JOIN_CLOCK_TOLERANCE]
+			),
+			erlang:halt();
+		_ ->
+			ok
+	end,
+	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_node,
 		shutdown => infinity,
 		start => {ar_node, start_link,
 			[[
-				Peers,
-				case StartFromBlockIndex of
-					false ->
+				ValidPeers,
+				case {StartFromBlockIndex, Init} of
+					{false, false} ->
 						not_joined;
-					true ->
+					{true, _} ->
 						case ar_storage:read_block_index() of
 							{error, enoent} ->
 								io:format(
@@ -462,7 +521,14 @@ start(normal, _Args) ->
 								erlang:halt();
 							BI ->
 								BI
-						end
+						end;
+					{false, true} ->
+						ar_weave:init(
+							ar_util:genesis_wallets(),
+							ar_retarget:switch_to_linear_diff(Diff),
+							0,
+							ar_storage:read_tx(ar_weave:read_v1_genesis_txs())
+						)
 				end,
 				0,
 				MiningAddress,
@@ -478,7 +544,7 @@ start(normal, _Args) ->
 		Supervisor,
 		{
 			ar_bridge,
-			{ar_bridge, start_link, [[Peers, [Node], Port]]},
+			{ar_bridge, start_link, [[ValidPeers, [Node], Port]]},
 			permanent,
 			infinity,
 			worker,
@@ -486,9 +552,6 @@ start(normal, _Args) ->
 		}
 	),
 	ar_node:add_peers(Node, Bridge),
-	%% Store enabled features.
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, true) end, Enable),
-	lists:foreach(fun(Feature) -> ar_meta_db:put(Feature, false) end, Disable),
 	PrintMiningAddress = case MiningAddress of
 			unclaimed -> "unclaimed";
 			_ -> binary_to_list(ar_util:encode(MiningAddress))
@@ -502,7 +565,7 @@ start(normal, _Args) ->
 			{automine, Mine},
 			{miner, Node},
 			{mining_address, PrintMiningAddress},
-			{peers, Peers},
+			{peers, [ar_util:format_peer(Peer) || Peer <- ValidPeers]},
 			{polling, Polling},
 			{target_time, ?TARGET_TIME},
 			{retarget_blocks, ?RETARGET_BLOCKS}
@@ -520,7 +583,7 @@ start(normal, _Args) ->
 		{max_gateway_connections, MaxGatewayConnections}
 	]),
 	ar_randomx_state:start_block_polling(),
-	PollingArgs = [{trusted_peers, Peers}] ++ case Polling of
+	PollingArgs = [{trusted_peers, ValidPeers}] ++ case Polling of
 		true ->
 			[{polling_interval, 10 * 1000}];
 		false ->
@@ -529,18 +592,6 @@ start(normal, _Args) ->
 	{ok, _} = supervisor:start_child(Supervisor, #{
 		id => ar_poller,
 		start => {ar_poller_sup, start_link, [PollingArgs]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_downloader_sup,
-		start => {ar_downloader_sup, start_link, [[]]},
-		type => supervisor,
-		shutdown => infinity
-	}),
-	{ok, _} = supervisor:start_child(Supervisor, #{
-		id => ar_data_sync_sup,
-		start => {ar_data_sync_sup, start_link, [[]]},
 		type => supervisor,
 		shutdown => infinity
 	}),
@@ -644,10 +695,6 @@ tests(Args) ->
 			Args
 		),
 	tests(Mods, #config {}).
-
-%% @doc Run tests on the apps.
-test_apps() ->
-	tests(?APP_TEST_MODS, #config {}).
 
 %% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
 test_ipfs() ->

@@ -20,18 +20,29 @@
   "diff": 42,
   "mining_addr": "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",
   "max_miners": 43,
+  "max_emitters": 2,
+  "max_propagation_peers": 8,
+  "tx_propagation_parallelization": 4,
+  "sync_jobs": 10,
   "new_mining_key": true,
   "load_mining_key": "some_key_file",
-  "content_policies": [
-    "some_content_policy_1",
-    "some_content_policy_2"
-  ],
   "transaction_blacklists": [
     "some_blacklist_1",
     "some_blacklist_2"
   ],
+  "transaction_blacklist_urls": [
+    "http://some_blacklist_1",
+    "http://some_blacklist_2/x"
+  ],
+  "transaction_whitelists": [
+    "some_whitelist_1",
+    "some_whitelist_2"
+  ],
+  "transaction_whitelist_urls": [
+    "http://some_whitelist"
+  ],
   "disk_space": 44,
-  "benchmark": true,
+  "init": true,
   "internal_api_secret": "some_very_very_long_secret",
   "enable": [
     "feature_1",

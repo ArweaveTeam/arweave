@@ -6,7 +6,7 @@
 	json_struct_to_poa/1,
 	poa_to_json_struct/1,
 	tx_to_json_struct/1,
-	json_struct_to_tx/1,
+	json_struct_to_tx/1, json_struct_to_v1_tx/1,
 	etf_to_wallet_chunk_response/1,
 	wallet_list_to_json_struct/3,
 	wallet_to_json_struct/1,
@@ -300,6 +300,13 @@ json_struct_to_tree(_) -> [].
 json_struct_to_tx(JSONTX) when is_binary(JSONTX) ->
 	json_struct_to_tx(dejsonify(JSONTX));
 json_struct_to_tx({TXStruct}) ->
+	json_struct_to_tx(TXStruct, true).
+
+json_struct_to_v1_tx(JSONTX) when is_binary(JSONTX) ->
+	{TXStruct} = dejsonify(JSONTX),
+	json_struct_to_tx(TXStruct, false).
+
+json_struct_to_tx(TXStruct, ComputeDataSize) ->
 	Tags = case find_value(<<"tags">>, TXStruct) of
 		undefined -> [];
 		Xs -> Xs
@@ -327,7 +334,7 @@ json_struct_to_tx({TXStruct}) ->
 		data = Data,
 		reward = binary_to_integer(find_value(<<"reward">>, TXStruct)),
 		signature = ar_util:decode(find_value(<<"signature">>, TXStruct)),
-		data_size = parse_data_size(Format, TXStruct, Data),
+		data_size = parse_data_size(Format, TXStruct, Data, ComputeDataSize),
 		data_tree =
 			case find_value(<<"data_tree">>, TXStruct) of
 				undefined -> [];
@@ -340,9 +347,9 @@ json_struct_to_tx({TXStruct}) ->
 			end
 	}.
 
-parse_data_size(1, _TXStruct, Data) ->
+parse_data_size(1, _TXStruct, Data, true) ->
 	byte_size(Data);
-parse_data_size(_Format, TXStruct, _Data) ->
+parse_data_size(_Format, TXStruct, _Data, _ComputeDataSize) ->
 	binary_to_integer(find_value(<<"data_size">>, TXStruct)).
 
 etf_to_wallet_chunk_response(ETF) ->
@@ -535,7 +542,7 @@ block_roundtrip_test() ->
 	[B] = ar_weave:init(),
 	JSONStruct = jsonify(block_to_json_struct(B)),
 	BRes = json_struct_to_block(JSONStruct),
-	?assertEqual(B, BRes#block { hash_list = B#block.hash_list }).
+	?assertEqual(B, BRes#block { hash_list = B#block.hash_list, size_tagged_txs = [] }).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
 tx_roundtrip_test() ->

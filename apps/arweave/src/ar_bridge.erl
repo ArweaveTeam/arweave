@@ -29,7 +29,6 @@ start_link([_, _, _] = Args) ->
 
 %% @doc Launch a bridge node.
 start(ExtPeers, IntPeers, Port) ->
-	ar_firewall:start(),
 	spawn(
 		fun() ->
 			case ets:info(ignored_ids) of
@@ -65,6 +64,7 @@ start(ExtPeers, IntPeers, Port) ->
 		ar_node:get_pending_txs(whereis(http_entrypoint_node), [as_map])
 	),
 	reset_timer(PID, get_more_peers),
+	erlang:register(http_bridge_node, PID),
 	PID.
 
 %% @doc Get a list of remote peers
@@ -218,16 +218,11 @@ maybe_send_tx(S, TX) ->
 		gossip = GS,
 		processed = Procd
 	} = S,
-	case ar_firewall:scan_tx(TX) of
-		reject ->
-			S;
-		accept ->
-			Msg = {add_waiting_tx, TX},
-			{NewGS, _} = ar_gossip:send(GS,	Msg),
-			ar_tx_queue:add_tx(TX),
-			add_processed(tx, TX, Procd),
-			S#state { gossip = NewGS }
-	end.
+	Msg = {add_waiting_tx, TX},
+	{NewGS, _} = ar_gossip:send(GS,	Msg),
+	ar_tx_queue:add_tx(TX),
+	add_processed(tx, TX, Procd),
+	S#state { gossip = NewGS }.
 
 %% @doc Send the block to internal processes and to peers.
 send_block(S, OriginPeer, B, BDS, ReceiveTimestamp) ->

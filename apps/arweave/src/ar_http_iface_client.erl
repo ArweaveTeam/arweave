@@ -79,12 +79,12 @@ has_tx(Peer, ID) ->
 
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Peer, NewB, BDS) ->
+	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
 	ShortHashList =
 		lists:map(
 			fun ar_util:encode/1,
 			lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
 		),
-	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
 	BlockShadowProps = [{<<"hash_list">>, ShortHashList} | BlockProps],
 	PostProps = [
 		{<<"new_block">>, {BlockShadowProps}},
@@ -215,7 +215,9 @@ get_wallet_list_chunk([Peer | Peers], H, Cursor) ->
 			peer => Peer,
 			path => Path,
 			headers => p2p_headers(),
-			limit => ?MAX_SERIALIZED_WALLET_LIST_CHUNK_SIZE
+			limit => ?MAX_SERIALIZED_WALLET_LIST_CHUNK_SIZE,
+			timeout => 10 * 1000,
+			connect_timeout => 1000
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
@@ -343,22 +345,25 @@ get_txs(Peers, MempoolTXs, B) ->
 			ar:err([{event, downloaded_txs_count_exceeds_limit}]),
 			{error, txs_count_exceeds_limit};
 		TXIDs ->
-			get_txs(Peers, MempoolTXs, TXIDs, [], 0)
+			get_txs(B#block.height, Peers, MempoolTXs, TXIDs, [], 0)
 	end.
 
-get_txs(_Peers, _MempoolTXs, [], TXs, _TotalSize) ->
+get_txs(_Height, _Peers, _MempoolTXs, [], TXs, _TotalSize) ->
 	{ok, lists:reverse(TXs)};
-get_txs(Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
+get_txs(Height, Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
+	Fork_2_0 = ar_fork:height_2_0(),
 	case get_tx(Peers, TXID, MempoolTXs) of
 		#tx{ format = 2 } = TX ->
-			get_txs(Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
+			get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
+		#tx{} = TX when Height < Fork_2_0 ->
+			get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], TotalSize);
 		#tx{ format = 1 } = TX ->
 			case TotalSize + TX#tx.data_size of
 				NewTotalSize when NewTotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
 					ar:err([{event, downloaded_txs_exceed_block_size_limit}]),
 					{error, txs_exceed_block_size_limit};
 				NewTotalSize ->
-					get_txs(Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
+					get_txs(Height, Peers, MempoolTXs, Rest, [TX | TXs], NewTotalSize)
 			end;
 		_ ->
 			{error, tx_not_found}
@@ -402,8 +407,18 @@ get_tx_from_remote_peer(Peers, TXID) ->
 			get_tx_from_remote_peer(Peers -- [Peer], TXID);
 		gone ->
 			get_tx_from_remote_peer(Peers -- [Peer], TXID);
-		ShouldBeTX ->
-			ShouldBeTX
+		#tx{} = TX ->
+			case ar_tx:verify_tx_id(TXID, TX) of
+				false ->
+					ar:warn([
+						{event, peer_served_invalid_tx},
+						{peer, ar_util:format_peer(Peer)},
+						{tx, ar_util:encode(TXID)}
+					]),
+					get_tx_from_remote_peer(Peers -- [Peer], TXID);
+				true ->
+					TX
+			end
 	end.
 
 %% @doc Retreive only the data associated with a transaction.

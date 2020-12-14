@@ -3,6 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("src/ar.hrl").
+-include("src/ar_config.hrl").
 -include("src/ar_data_sync.hrl").
 
 -import(ar_test_node, [
@@ -15,13 +16,14 @@
 	slave_wait_until_height/2,
 	post_and_mine/2,
 	get_tx_anchor/1,
-	slave_call/3,
 	disconnect_from_slave/0,
 	join_on_master/0,
 	assert_post_tx_to_slave/2,
 	assert_post_tx_to_master/2,
 	wait_until_receives_txs/2,
-	slave_mine/1
+	slave_mine/1,
+	read_block_when_stored/1,
+	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2
 ]).
 
 rejects_invalid_chunks_test_() ->
@@ -234,7 +236,7 @@ rejects_chunks_exceeding_disk_pool_limit_test_() ->
 test_rejects_chunks_exceeding_disk_pool_limit() ->
 	{Master, Slave, Wallet} = setup_nodes(),
 	Data1 = crypto:strong_rand_bytes(
-		(?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024) + 1
+		(?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024) + 1
 	),
 	Chunks1 = split(?DATA_CHUNK_SIZE, Data1),
 	{DataRoot1, _} = ar_merkle:generate_tree(
@@ -260,8 +262,8 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	),
 	Data2 = crypto:strong_rand_bytes(
 		min(
-			?MAX_DISK_POOL_BUFFER_MB - ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
-			?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB - 1
+			?DEFAULT_MAX_DISK_POOL_BUFFER_MB - ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
+			?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB - 1
 		) * 1024 * 1024
 	),
 	Chunks2 = split(Data2),
@@ -283,10 +285,10 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		Proofs2
 	),
 	Left =
-		?MAX_DISK_POOL_BUFFER_MB * 1024 * 1024 -
+		?DEFAULT_MAX_DISK_POOL_BUFFER_MB * 1024 * 1024 -
 		lists:sum([byte_size(Chunk) || Chunk <- tl(Chunks1)]) -
 		byte_size(Data2),
-	?assert(Left < ?MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024),
+	?assert(Left < ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024),
 	Data3 = crypto:strong_rand_bytes(Left + 1),
 	Chunks3 = split(Data3),
 	{DataRoot3, _} = ar_merkle:generate_tree(
@@ -346,7 +348,7 @@ test_accepts_chunks() ->
 	),
 	slave_mine(Slave),
 	[{BH, _, _} | _] = wait_until_height(Master, 1),
-	B = ar_storage:read_block(BH),
+	B = read_block_when_stored(BH),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(EndOffset)
@@ -452,6 +454,10 @@ test_syncs_data() ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
 				post_chunk(jiffy:encode(Proof))
+			),
+			?assertMatch(
+				{ok, {{<<"200">>, _}, _, _, _, _}},
+				post_chunk(jiffy:encode(Proof))
 			)
 		end,
 		RecordsWithProofs
@@ -516,6 +522,13 @@ test_fork_recovery() ->
 		#{ miner => {slave, Slave}, await_on => {slave, Slave} },
 		[SlaveTX2, SlaveTX3]
 	),
+	connect_to_slave(),
+	{MasterTX2, MasterChunks2} = tx(Wallet, {custom_split, 4}),
+	MasterB2 = post_and_mine(
+		#{ miner => {master, Master}, await_on => {master, Master} },
+		[MasterTX2]
+	),
+	disconnect_from_slave(),
 	_SlaveProofs2 = post_proofs_to_slave(SlaveB2, SlaveTX2, SlaveChunks2),
 	_SlaveProofs3 = post_proofs_to_slave(SlaveB2, SlaveTX3, SlaveChunks3),
 	{SlaveTX4, SlaveChunks4} = tx(Wallet, {custom_split, 2}),
@@ -523,17 +536,12 @@ test_fork_recovery() ->
 		#{ miner => {slave, Slave}, await_on => {slave, Slave} },
 		[SlaveTX4]
 	),
-	{MasterTX2, MasterChunks2} = tx(Wallet, {custom_split, 4}),
-	MasterB2 = post_and_mine(
-		#{ miner => {master, Master}, await_on => {master, Master} },
-		[MasterTX2]
-	),
-	MasterProofs2 = post_proofs_to_master(MasterB2, MasterTX2, MasterChunks2),
+	connect_to_slave(),
 	post_and_mine(
 		#{ miner => {master, Master}, await_on => {master, Master} },
 		[]
 	),
-	connect_to_slave(),
+	MasterProofs2 = post_proofs_to_master(MasterB2, MasterTX2, MasterChunks2),
 	{MasterTX3, MasterChunks3} = tx(Wallet, {custom_split, 6}),
 	MasterB3 = post_and_mine(
 		#{ miner => {master, Master}, await_on => {master, Master} },
@@ -589,17 +597,6 @@ test_syncs_after_joining() ->
 	slave_wait_until_syncs_chunks(MasterProofs2),
 	slave_wait_until_syncs_chunks(MasterProofs3),
 	slave_wait_until_syncs_chunks(Proofs1).
-
-post_chunk(Body) ->
-	post_chunk({127, 0, 0, 1, ar_meta_db:get(port)}, Body).
-
-post_chunk(Peer, Body) ->
-	ar_http:req(#{
-		method => post,
-		peer => Peer,
-		path => "/chunk",
-		body => Body
-	}).
 
 setup_nodes() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
@@ -729,16 +726,6 @@ build_proofs(TX, Chunks, TXs, BlockStartOffset) ->
 		SizeTaggedChunks
 	).
 
-get_chunk(Offset) ->
-	get_chunk({127, 0, 0, 1, ar_meta_db:get(port)}, Offset).
-
-get_chunk(Peer, Offset) ->
-	ar_http:req(#{
-		method => get,
-		peer => Peer,
-		path => "/chunk/" ++ integer_to_list(Offset)
-	}).
-
 get_tx_offset(TXID) ->
 	ar_http:req(#{
 		method => get,
@@ -768,28 +755,32 @@ get_tx_data_from_slave(TXID) ->
 	}).
 
 post_random_blocks(Master, Wallet) ->
+	post_blocks(Master, Wallet,
+		[
+			[v1],
+			empty,
+			[v2, v1, fixed_data, v2_no_data],
+			[v2, v2_original_split, v2],
+			empty,
+			[v1, v2, v2, empty_tx, v2_original_split],
+			[v2, v2_no_data, v2_no_data, v2_no_data],
+			[empty_tx],
+			empty,
+			[v2_original_split, v2_no_data, v2, v1, v2],
+			empty,
+			[fixed_data, fixed_data],
+			empty,
+			[fixed_data, fixed_data] % same tx_root as in the block before the previous one
+		]
+	).
+
+post_blocks(Master, Wallet, BlockMap) ->
 	FixedChunks = [crypto:strong_rand_bytes(200 * 1024) || _ <- lists:seq(1, 4)],
 	Data = iolist_to_binary(lists:foldl(fun(Chunk, Acc) -> [Acc | Chunk] end, [], FixedChunks)),
 	SizedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
 		ar_tx:chunks_to_size_tagged_chunks(FixedChunks)
 	),
 	{DataRoot, _} = ar_merkle:generate_tree(SizedChunkIDs),
-	BlockMap = [
-		[v1],
-		empty,
-		[v2, v1, fixed_data],
-		[v2, v2_original_split, v2],
-		empty,
-		[v1, v2, v2, empty_tx, v2_original_split],
-		[v2],
-		[empty_tx],
-		empty,
-		[v2_original_split, v2_no_data, v2, v1, v2],
-		empty,
-		[fixed_data, fixed_data],
-		empty,
-		[fixed_data, fixed_data] % same tx_root as in the block before the previous one
-	],
 	lists:foldl(
 		fun
 			({empty, Height}, Acc) ->
@@ -829,18 +820,18 @@ post_random_blocks(Master, Wallet) ->
 					end,
 					TXsWithChunks
 				),
-				[{B, TX, C} || {{TX, C}, Type} <- TXsWithChunks,
-				Type /= v2_no_data, Type /= empty_tx] ++ Acc
+				Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
+						Type /= v2_no_data, Type /= empty_tx]
 		end,
 		[],
 		lists:zip(BlockMap, lists:seq(1, length(BlockMap)))
 	).
 
 post_proofs_to_master(B, TX, Chunks) ->
-	post_proofs({127, 0, 0, 1, ar_meta_db:get(port)}, B, TX, Chunks).
+	post_proofs(master, B, TX, Chunks).
 
 post_proofs_to_slave(B, TX, Chunks) ->
-	post_proofs({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, B, TX, Chunks).
+	post_proofs(slave, B, TX, Chunks).
 
 post_proofs(Peer, B, TX, Chunks) ->
 	Proofs = build_proofs(B, TX, Chunks),
@@ -854,10 +845,10 @@ post_proofs(Peer, B, TX, Chunks) ->
 	Proofs.
 
 wait_until_syncs_chunks(Proofs) ->
-	wait_until_syncs_chunks({127, 0, 0, 1, ar_meta_db:get(port)}, Proofs).
+	wait_until_syncs_chunks(master, Proofs).
 
 slave_wait_until_syncs_chunks(Proofs) ->
-	wait_until_syncs_chunks({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, Proofs).
+	wait_until_syncs_chunks(slave, Proofs).
 
 wait_until_syncs_chunks(Peer, Proofs) ->
 	lists:foreach(
@@ -880,7 +871,7 @@ wait_until_syncs_chunks(Peer, Proofs) ->
 					end
 				end,
 				5 * 1000,
-				20 * 1000
+				120 * 1000
 			)
 		end,
 		Proofs

@@ -1,6 +1,13 @@
 -module(ar_randomx_state).
--export([start/0, start_block_polling/0, reset/0, hash/2, randomx_state_by_height/1, debug_server/0]).
+
+-export([
+	start/0, start_block_polling/0, reset/0,
+	hash/2,
+	randomx_state_by_height/1,
+	debug_server/0
+]).
 -export([init/2, init/4, swap_height/1]).
+
 -include("ar.hrl").
 
 -record(state, {
@@ -32,15 +39,16 @@ hash(Height, Data) ->
 	end.
 
 randomx_state_by_height(Height) when is_integer(Height) andalso Height >= 0 ->
-	whereis(?MODULE) ! {get_state_by_height, Height, self()},
+	Ref = make_ref(),
+	whereis(?MODULE) ! {get_state_by_height, Height, Ref, self()},
 	receive
-		{state_by_height, {ok, State}} ->
+		{Ref, {state_by_height, {ok, State}}} ->
 			{state, State};
-		{state_by_height, {state_not_found, key_not_found}} ->
+		{Ref, {state_by_height, {state_not_found, key_not_found}}} ->
 			SwapHeight = swap_height(Height),
 			{ok, Key} = randomx_key(SwapHeight),
 			{key, Key};
-		{state_by_height, {state_not_found, Key}} ->
+		{Ref, {state_by_height, {state_not_found, Key}}} ->
 			{key, Key}
 	end.
 
@@ -89,14 +97,16 @@ server(State) ->
 			State#state{
 				randomx_states = maps:put(SwapHeight, RandomxState, State#state.randomx_states)
 			};
-		{get_state_by_height, Height, From} ->
+		{get_state_by_height, Height, Ref, From} ->
 			case maps:find(swap_height(Height), State#state.randomx_states) of
 				error ->
-					From ! {state_by_height, {state_not_found, get_key_from_cache(State, Height)}};
+					Key = get_key_from_cache(State, Height),
+					From ! {Ref, {state_by_height, {state_not_found, Key}}};
 				{ok, initializing} ->
-					From ! {state_by_height, {state_not_found, get_key_from_cache(State, Height)}};
+					Key = get_key_from_cache(State, Height),
+					From ! {Ref, {state_by_height, {state_not_found, Key}}};
 				{ok, RandomxState} ->
-					From ! {state_by_height, {ok, RandomxState}}
+					From ! {Ref, {state_by_height, {ok, RandomxState}}}
 			end,
 			State;
 		{get_state, From} ->
@@ -259,7 +269,9 @@ get_block(BH, BI, Peers) ->
 		B ->
 			case ar_weave:indep_hash(B) of
 				BH ->
-					ar_storage:write_full_block(B),
+					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs),
+					ar_data_sync:add_block(B, SizeTaggedTXs),
+					ar_header_sync:add_block(B),
 					{ok, B};
 				InvalidBH ->
 					ar:warn([

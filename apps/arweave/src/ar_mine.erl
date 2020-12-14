@@ -2,7 +2,7 @@
 
 -export([start/8, stop/1, mine/2]).
 -export([validate/4, validate/3]).
--export([min_difficulty/1, genesis_difficulty/0, max_difficulty/0]).
+-export([min_difficulty/1, max_difficulty/0]).
 -export([sha384_diff_to_randomx_diff/1]).
 
 -include("ar.hrl").
@@ -111,25 +111,6 @@ min_difficulty(Height) ->
 		true ->
 			ar_retarget:switch_to_linear_diff(Diff);
 		false ->
-			Diff
-	end.
--endif.
-
--ifdef(DEBUG).
-genesis_difficulty() ->
-	1.
--else.
-genesis_difficulty() ->
-	Diff = case ar_fork:height_1_7() of
-		0 ->
-			randomx_genesis_difficulty();
-		_ ->
-			?DEFAULT_DIFF
-	end,
-	case ar_fork:height_1_8() of
-		0 ->
-			ar_retarget:switch_to_linear_diff(Diff);
-		_ ->
 			Diff
 	end.
 -endif.
@@ -491,9 +472,11 @@ process_solution(S, Hash, Nonce, MinedTXs, Diff, Timestamp) ->
 
 log_performance(TotalHashesTried, StartedAt) ->
 	Time = timer:now_diff(erlang:timestamp(), StartedAt),
-	ar:info([
+	Rate = TotalHashesTried / (Time / 1000000),
+	prometheus_histogram:observe(mining_rate, Rate),
+	ar:console([
 		{event, stopped_mining},
-		{miner_hashes_per_second, TotalHashesTried / (Time / 1000000)}
+		{miner_hashes_per_second, Rate}
 	]).
 
 %% @doc Start the workers and return the new state.
@@ -507,7 +490,7 @@ start_miners(
 		timestamp = Timestamp
 	}
 ) ->
-	ModifiedDiff = ar_poa:modify_diff(Diff, POA#poa.option),
+	ModifiedDiff = ar_poa:modify_diff(Diff, POA#poa.option, Height),
 	WorkerState = #{
 		data_segment => BDS,
 		diff => ModifiedDiff,
@@ -588,7 +571,6 @@ min_randomx_difficulty() -> 1.
 -else.
 min_randomx_difficulty() -> min_sha384_difficulty() + ?RANDOMX_DIFF_ADJUSTMENT.
 min_sha384_difficulty() -> 31.
-randomx_genesis_difficulty() -> ?DEFAULT_DIFF.
 -endif.
 
 %% Tests
@@ -603,24 +585,24 @@ test_basic() ->
 	ar_node:mine(Node),
 	BI = ar_test_node:wait_until_height(Node, 1),
 	B1 = ar_storage:read_block(hd(BI)),
-	start(B1, B1#block.poa, [], unclaimed, [], self(), [], [{B0#block.indep_hash, 0, <<>>}]),
+	start(B1, B1#block.poa, [], unclaimed, [], self(), [], BI),
 	assert_mine_output(B1, B1#block.poa, []).
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
 timestamp_refresh_test_() ->
-	{timeout, 20, fun test_timestamp_refresh/0}.
+	{timeout, 60, fun test_timestamp_refresh/0}.
 
 test_timestamp_refresh() ->
 	%% Start mining with a high enough difficulty, so that the block
 	%% timestamp gets refreshed at least once. Since we might be unlucky
 	%% and find the block too fast, we retry until it succeeds.
-	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(20)),
+	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(18)),
 	B = B0,
 	Run = fun(_) ->
 		TXs = [],
 		StartTime = os:system_time(seconds),
 		POA = #poa{},
-		start(B, POA, TXs, unclaimed, [], self(), [], []),
+		start(B, POA, TXs, unclaimed, [], self(), [], [ar_util:block_index_entry_from_block(B0)]),
 		{_, MinedTimestamp} = assert_mine_output(B, POA, TXs),
 		MinedTimestamp > StartTime + ?MINING_TIMESTAMP_REFRESH_INTERVAL
 	end,
@@ -633,13 +615,13 @@ test_excludes_no_longer_valid_txs() ->
 	%% Start mining with a high enough difficulty, so that the block
 	%% timestamp gets refreshed at least once. Since we might be unlucky
 	%% and find the block too fast, we retry until it succeeds.
-	Diff = ar_retarget:switch_to_linear_diff(20),
+	Diff = ar_retarget:switch_to_linear_diff(18),
 	Key = {_, Pub} = ar_wallet:new(),
 	Address = ar_wallet:to_address(Pub),
 	Wallets = [{Address, ?AR(1000000000000), <<>>}],
 	[B] = ar_weave:init(Wallets, Diff),
 	{Node, _} = ar_test_node:start(B),
-	ar_test_node:wait_until_height(Node, 0),
+	BI = ar_test_node:wait_until_height(Node, 0),
 	Run = fun() ->
 		Now = os:system_time(seconds),
 		%% The transaction is invalid because its fee is based on a timestamp from the future.
@@ -652,7 +634,7 @@ test_excludes_no_longer_valid_txs() ->
 			reward => ar_tx:calculate_min_tx_cost(0, Diff, 10, Wallets, <<>>, Now)
 		}),
 		TXs = [ValidTX, InvalidTX],
-		start(B, #poa{}, TXs, unclaimed, [], self(), [{B#block.indep_hash, []}], []),
+		start(B, #poa{}, TXs, unclaimed, [], self(), [{B#block.indep_hash, []}], BI),
 		receive
 			{work_complete, _BH, MinedB, MinedTXs, _BDS, _POA, _} ->
 				{ValidTX, Now, MinedB#block.timestamp, MinedTXs}
@@ -681,9 +663,9 @@ run_until(Pred, Fun) ->
 start_stop_test() ->
 	[B] = ar_weave:init(),
 	{Node, _} = ar_test_node:start(B),
-	ar_test_node:wait_until_height(Node, 0),
+	BI = ar_test_node:wait_until_height(Node, 0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
-	PID = start(B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], []),
+	PID = start(B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], BI),
 	timer:sleep(500),
 	assert_alive(PID),
 	stop(PID),
