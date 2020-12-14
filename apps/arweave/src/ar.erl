@@ -157,7 +157,11 @@ show_help() ->
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
 			{"max_connections", "The number of connections to be handled concurrently. Its purpose is to prevent your system from being overloaded and ensuring all the connections are handled optimally. Default is 1024."},
 			{"max_gateway_connections", "The number of gateway connections to be handled concurrently. Default is 128."},
-			{"max_poa_option_depth", "The number of PoA alternatives to try until the recall data is found. Has to be an integer > 1. The mining difficulty increases exponentially with each subsequent option. Default is 8."},
+			{"max_poa_option_depth",
+				"The number of PoA alternatives to try until the recall data is "
+				"found. Has to be an integer > 1. The mining difficulty grows linearly "
+				"as a function of the alternative as (0.75 + 0.25 * number) * diff, "
+				"up to (0.75 + 0.25 * max_poa_option_depth) * diff. Default is 500."},
 			{"disk_pool_data_root_expiration_time",
 				"The time in seconds of how long a pending or orphaned data root is kept in the disk pool. The
 				default is 2 * 60 * 60 (2 hours)."},

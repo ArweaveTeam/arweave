@@ -490,7 +490,7 @@ start_miners(
 		timestamp = Timestamp
 	}
 ) ->
-	ModifiedDiff = ar_poa:modify_diff(Diff, POA#poa.option),
+	ModifiedDiff = ar_poa:modify_diff(Diff, POA#poa.option, Height),
 	WorkerState = #{
 		data_segment => BDS,
 		diff => ModifiedDiff,

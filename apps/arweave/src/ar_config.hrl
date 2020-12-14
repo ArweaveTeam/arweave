@@ -64,7 +64,7 @@
 	webhooks = [],
 	max_connections = 1024,
 	max_gateway_connections = 128,
-	max_poa_option_depth = 8,
+	max_poa_option_depth = 500,
 	disk_pool_data_root_expiration_time = ?DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
 	max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB,
 	max_disk_pool_data_root_buffer_mb = ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,

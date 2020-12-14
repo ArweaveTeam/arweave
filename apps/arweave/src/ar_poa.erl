@@ -5,7 +5,7 @@
 -export([
 	generate/1,
 	validate/4,
-	modify_diff/2
+	modify_diff/3
 ]).
 
 -include("ar.hrl").
@@ -27,7 +27,7 @@ generate(BI) ->
 	Height = length(BI),
 	%% Find locally available data to generate a PoA. Do not go
 	%% deeeper than the configured depth - the PoW difficulty increases
-	%% exponentially so it does not make sense to go too deep.
+	%% with every try so it does not make sense to go too deep.
 	%% There is a hard limit based on the weave height to keep
 	%% validation cheap. The minimum maximum depth of ?MIN_MAX_OPTION_DEPTH
 	%% is made for small weaves (useful in tests).
@@ -310,7 +310,16 @@ validate_chunk(ChunkID, POA) ->
 	ChunkID == ar_tx:generate_chunk_id(POA#poa.chunk).
 
 %% @doc Adjust the difficulty based on the POA option.
-modify_diff(Diff, 1) ->
+modify_diff(Diff, 1, _Height) ->
 	Diff;
-modify_diff(Diff, Option) ->
-	modify_diff(ar_difficulty:multiply_diff(Diff, ?ALTERNATIVE_POA_DIFF_MULTIPLIER), Option - 1).
+modify_diff(Diff, Option, Height) ->
+	case Height >= ar_fork:height_2_3() of
+		true ->
+			ar_difficulty:multiply_diff(Diff, 0.75 + 0.25 * Option);
+		false ->
+			modify_diff(
+				ar_difficulty:multiply_diff(Diff, ?ALTERNATIVE_POA_DIFF_MULTIPLIER),
+				Option - 1,
+				Height
+			)
+	end.

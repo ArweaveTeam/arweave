@@ -271,7 +271,7 @@ validate_block(
 		Nonce,
 		Height
 	),
-	case ar_mine:validate(POW, ar_poa:modify_diff(Diff, POA#poa.option), Height) of
+	case ar_mine:validate(POW, ar_poa:modify_diff(Diff, POA#poa.option, Height), Height) of
 		false ->
 			{invalid, invalid_pow};
 		true ->
