@@ -53,5 +53,5 @@ height_2_3() ->
 	5.
 -else.
 height_2_3() ->
-	infinity.
+	591140. % Targeting 2020-12-21 11:00 UTC
 -endif.
