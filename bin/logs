@@ -6,6 +6,6 @@ SCRIPT_DIR="$(dirname "$0")"
 LOGS_DIR="$(cd $SCRIPT_DIR/../logs && pwd -P)"
 
 ls -1 -t $LOGS_DIR \
-    | grep -P '(?!.*(idx|siz))slave' \
+    | grep -F -v '(?!.*(idx|siz))slave' \
     | head -1 \
     | xargs -I % tail -n 500 "$@" "$LOGS_DIR/%"

@@ -61,14 +61,14 @@ init([]) ->
                         BIvalue
                 end;
             {false, true} ->
+               Config1 = Config#config{init = false},
+               application:set_env(arweave, config, Config1),
                 ar_weave:init(
                     ar_util:genesis_wallets(),
                     ar_retarget:switch_to_linear_diff(Config#config.diff),
                     0,
                     ar_storage:read_tx(ar_weave:read_v1_genesis_txs())
-                ),
-               Config1 = Config#config{init = false}, 
-               application:set_env(arweave, config, Config1)
+                )
         end,
 
     case {BI, Config#config.auto_join} of

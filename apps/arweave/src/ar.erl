@@ -328,7 +328,7 @@ start(normal, _Args) ->
 	},
 	logger:add_handler(disk_log, logger_disk_log_h, 
 					   #{config => LoggerConfigDisk,
-						 level => error}),
+						 level => info}),
 	LoggerFormatterDisk = #{
 		chars_limit => 512,
 		depth => 16,
@@ -337,7 +337,7 @@ start(normal, _Args) ->
 		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
 	},
 	logger:set_handler_config(disk_log, formatter, {logger_formatter, LoggerFormatterDisk}),
-	logger:set_application_level(arweave, error),
+	logger:set_application_level(arweave, info),
 
 	% Check whether we have list of valid peers
 	%ValidPeers = ar_join:filter_peer_list(Config#config.peers),

@@ -599,7 +599,7 @@ terminate(normal, State) ->
 	dump_mempool(State#state.txs, State#state.mempool_size);
 
 terminate(Reason, State) ->
-	?LOG_ERROR([{event, terminate}, {module, ?MODULE}, {reason, Reason}]),
+	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]),
 	terminate(normal, State).
 
 %%--------------------------------------------------------------------
