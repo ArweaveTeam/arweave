@@ -1,16 +1,34 @@
+os: linux
+dist: focal
 language: erlang
+
+otp_release:
+    - 22.2.4
+
 addons:
     apt:
       packages:
       - sqlite3
+
 install:
     - epmd -daemon
-otp_release:
-    - 22.2
-# blocklist
-branches:
-    except:
-    - master
-# AR UT
-script:
-    - ./bin/test
+
+jobs:
+    include:
+        - name: arweave-docker
+          services:
+              - docker
+          script:
+              - sudo apt-get update
+              - sudo apt-get install apt-utils build-essential g++ clang gcc -y
+              - docker build -t arweave .
+
+        - name: arweave-source
+          script:
+              - sudo apt-get update
+              - sudo apt-get install apt-utils build-essential g++ clang gcc -y 
+              - sudo apt-get cmake make -y
+              - git submodule init
+              - git submodule update
+              - ./rebar3 as prod tar
+              - ./bin/test

@@ -34,6 +34,40 @@ $ ./rebar3 as prod tar
 
 You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z.tar.gz`.
 
+##  Building with Docker
+
+As an alternative you can build the project with Docker. In order to compile the project, you will need to run.
+
+```bash
+docker build -t arweave .
+```
+
+If the build is successful, you can then start a new Docker container. In order for Arweave to work, you **must** specify the `--network host` flag.
+
+Furthermore, you will need to specify a volume. The volume should be on a disk that can hold several TB worth of data. Ideally any NAS or SSD with +5TB worth of storage. This will require specifying a volume with the `--mount` or `-v` flag.
+
+If you need to configre your volume differently, check out the documentation on [Docker Volumes](https://docs.docker.com/storage/volumes/) here.
+
+The following is an example command you can run to start an Arweave instance.
+
+```bash
+docker run \
+--it \
+--network host arweave \
+--mount 'type=volume,src=arweave-volume,dst=[your/drive/folder],volume-driver=local,volume-opt=type=nfs,volume-opt=device=<nfs-server>:<nfs-path>,"volume-opt=o=addr=<nfs-address>,vers=4,soft,timeo=180,bg,tcp,rw"' \
+--name arweave-instance
+```
+
+Once completed, you can then start interacting with the project in both the production and development environments.
+
+```bash
+# For development
+./bin/start-dev --help
+
+# For production
+./_build/prod/rel/arweave/bin/start --help
+```
+
 # Running a gateway
 
 To run a gateway, consult the [gateway setup guide](doc/gateway_setup_guide.md).
