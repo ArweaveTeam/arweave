@@ -55,7 +55,7 @@ sign({digest, Digest}, DigestType, Salt, PrivateKey=#'RSAPrivateKey'{modulus=N})
 	DigestLen = byte_size(Digest),
 	SaltLen = byte_size(Salt),
 	PublicBitSize = int_to_bit_size(N),
-	PrivateByteSize = PublicBitSize div 8,
+	PrivateByteSize = (PublicBitSize+7) div 8,
 	PublicByteSize = int_to_byte_size(N),
 	case PublicByteSize < (DigestLen + SaltLen + 2) of
 		false ->
@@ -83,7 +83,7 @@ verify(Message, DigestType, Signature, PublicKey) when is_binary(Message) ->
 verify({digest, Digest}, DigestType, Signature, PublicKey=#'RSAPublicKey'{modulus=N}) ->
 	DigestLen = byte_size(Digest),
 	PublicBitSize = int_to_bit_size(N),
-	PrivateByteSize = PublicBitSize div 8,
+	PrivateByteSize = (PublicBitSize+7) div 8,
 	PublicByteSize = int_to_byte_size(N),
 	SignatureSize = byte_size(Signature),
 	case PublicByteSize =:= SignatureSize of
