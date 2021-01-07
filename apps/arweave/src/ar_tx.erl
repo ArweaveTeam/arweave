@@ -164,7 +164,7 @@ do_verify_v1(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 		{"overspend",
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
 		{"tx_signature_not_valid",
-		 verify_signature_v1(TX, VerifySignature)},
+		 verify_signature_v1(TX, VerifySignature, Height)},
 		{"tx_malleable",
 		 verify_malleability(TX, Diff, Height, Wallets, Timestamp)},
 		{"no_target",
@@ -198,7 +198,7 @@ do_verify_v2(TX, Diff, Height, Wallets, Timestamp, VerifySignature) ->
 		{"overspend",
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
 		{"tx_signature_not_valid",
-		 verify_signature_v2(TX, VerifySignature)},
+		 verify_signature_v2(TX, VerifySignature, Height)},
 		{"tx_data_size_negative",
 		 TX#tx.data_size >= 0},
 		{"tx_data_size_data_root_mismatch",
@@ -228,6 +228,17 @@ verify_signature_v1(_TX, do_not_verify_signature) ->
 verify_signature_v1(TX, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v1(TX),
 	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
+
+verify_signature_v1(_TX, do_not_verify_signature, _Height) ->
+	true;
+verify_signature_v1(TX, verify_signature, Height) ->
+	SignatureDataSegment = signature_data_segment_v1(TX),
+	case Height >= ar_fork:height_2_4() of
+		true ->
+			ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature);
+		false ->
+			ar_wallet:verify_pre_fork_2_4(TX#tx.owner, SignatureDataSegment, TX#tx.signature)
+	end.
 
 verify_malleability(TX, Diff, Height, Wallets, Timestamp) ->
 	case Height + 1 >= ar_fork:height_2_4() of
@@ -279,6 +290,17 @@ verify_signature_v2(_TX, do_not_verify_signature) ->
 verify_signature_v2(TX, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
 	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
+
+verify_signature_v2(_TX, do_not_verify_signature, _Height) ->
+	true;
+verify_signature_v2(TX, verify_signature, Height) ->
+	SignatureDataSegment = signature_data_segment_v2(TX),
+	case Height >= ar_fork:height_2_4() of
+		true ->
+			ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature);
+		false ->
+			ar_wallet:verify_pre_fork_2_4(TX#tx.owner, SignatureDataSegment, TX#tx.signature)
+	end.
 
 validate_overspend(TX, Wallets) ->
 	From = ar_wallet:to_address(TX#tx.owner),

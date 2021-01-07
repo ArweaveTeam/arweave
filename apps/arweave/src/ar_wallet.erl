@@ -4,7 +4,7 @@
 -export([
 	new/0,
 	sign/2,
-	verify/3,
+	verify/3, verify_pre_fork_2_4/3,
 	to_address/1,
 	load_keyfile/1,
 	new_keyfile/0,
@@ -90,10 +90,26 @@ sign({Priv, Pub}, Data) ->
 		}
 	).
 
-
 %% @doc Verify that a signature is correct.
 verify(Key, Data, Sig) ->
 	rsa_pss:verify(
+		Data,
+		sha256,
+		Sig,
+		#'RSAPublicKey'{
+			publicExponent = ?PUBLIC_EXPNT,
+			modulus = binary:decode_unsigned(Key)
+		}
+	).
+
+%% @doc Verify that a signature is correct. The function was used to verify
+%% transactions until the fork 2.4. It rejects a valid transaction when the
+%% key modulus bit size is less than 4096. The new method (verify/3) successfully
+%% verifies all the historical transactions so this function is not used anywhere
+%% after the fork 2.4.
+%% @end
+verify_pre_fork_2_4(Key, Data, Sig) ->
+	rsa_pss:verify_legacy(
 		Data,
 		sha256,
 		Sig,

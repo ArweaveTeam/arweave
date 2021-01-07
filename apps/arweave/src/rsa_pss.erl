@@ -25,6 +25,8 @@
 
 -define(PSS_TRAILER_FIELD, 16#BC).
 
+-export([verify_legacy/4]).
+
 %%====================================================================
 %% API functions
 %%====================================================================
@@ -55,7 +57,7 @@ sign({digest, Digest}, DigestType, Salt, PrivateKey=#'RSAPrivateKey'{modulus=N})
 	DigestLen = byte_size(Digest),
 	SaltLen = byte_size(Salt),
 	PublicBitSize = int_to_bit_size(N),
-	PrivateByteSize = PublicBitSize div 8,
+	PrivateByteSize = (PublicBitSize + 7) div 8,
 	PublicByteSize = int_to_byte_size(N),
 	case PublicByteSize < (DigestLen + SaltLen + 2) of
 		false ->
@@ -81,6 +83,52 @@ sign({digest, Digest}, DigestType, Salt, PrivateKey=#'RSAPrivateKey'{modulus=N})
 verify(Message, DigestType, Signature, PublicKey) when is_binary(Message) ->
 	verify({digest, crypto:hash(DigestType, Message)}, DigestType, Signature, PublicKey);
 verify({digest, Digest}, DigestType, Signature, PublicKey=#'RSAPublicKey'{modulus=N}) ->
+	DigestLen = byte_size(Digest),
+	PublicBitSize = int_to_bit_size(N),
+	PrivateByteSize = (PublicBitSize + 7) div 8,
+	PublicByteSize = int_to_byte_size(N),
+	SignatureSize = byte_size(Signature),
+	case PublicByteSize =:= SignatureSize of
+		true ->
+			SignatureNumber = binary:decode_unsigned(Signature, big),
+			case SignatureNumber >= 0 andalso SignatureNumber < N of
+				true ->
+					DBLen = PrivateByteSize - DigestLen - 1,
+					EM = pad_to_key_size(PrivateByteSize, ep(Signature, PublicKey)),
+					case binary:last(EM) of
+						?PSS_TRAILER_FIELD ->
+							MaskedDB = binary:part(EM, 0, byte_size(EM) - DigestLen - 1),
+							H = binary:part(EM, byte_size(MaskedDB), DigestLen),
+							DBMask = mgf1(DigestType, H, DBLen),
+							DB = normalize_to_key_size(PublicBitSize, crypto:exor(MaskedDB, DBMask)),
+							case binary:match(DB, << 1 >>) of
+								{Pos, Len} ->
+									PS = binary:decode_unsigned(binary:part(DB, 0, Pos)),
+									case PS =:= 0 of
+										true ->
+											Salt = binary:part(DB, Pos + Len, byte_size(DB) - Pos - Len),
+											M = << 0:64, Digest/binary, Salt/binary >>,
+											HOther = crypto:hash(DigestType, M),
+											H =:= HOther;
+										false ->
+											false
+									end;
+								nomatch ->
+									false
+							end;
+						_BadTrailer ->
+							false
+					end;
+				_ ->
+					false
+			end;
+		false ->
+			false
+	end.
+
+verify_legacy(Message, DigestType, Signature, PublicKey) when is_binary(Message) ->
+	verify_legacy({digest, crypto:hash(DigestType, Message)}, DigestType, Signature, PublicKey);
+verify_legacy({digest, Digest}, DigestType, Signature, PublicKey=#'RSAPublicKey'{modulus=N}) ->
 	DigestLen = byte_size(Digest),
 	PublicBitSize = int_to_bit_size(N),
 	PrivateByteSize = PublicBitSize div 8,
