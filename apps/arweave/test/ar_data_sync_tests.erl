@@ -855,7 +855,6 @@ wait_until_syncs_chunks(Peer, Proofs) ->
 		fun({EndOffset, Proof}) ->
 			true = ar_util:do_until(
 				fun() ->
-                        
 					case get_chunk(Peer, EndOffset) of
 						{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
 							FetchedProof = ar_serialize:json_map_to_chunk_proof(

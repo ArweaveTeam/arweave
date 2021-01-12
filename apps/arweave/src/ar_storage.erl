@@ -14,13 +14,14 @@
 	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
 	tx_filepath/1, tx_data_filepath/1,
 	read_tx_file/1, read_migrated_v1_tx_file/1,
-	ensure_directories/0, clear/0,
+	ensure_directories/1, clear/0,
 	write_file_atomic/2,
 	has_chunk/1, write_chunk/3, read_chunk/1, delete_chunk/1,
 	write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -33,7 +34,8 @@
 %% @doc Ready the system for block/tx reading and writing.
 %% %% This function should block.
 init() ->
-	ensure_directories(),
+	{ok, Config} = application:get_env(arweave, config),
+	ensure_directories(Config#config.data_dir),
 	ok = migrate_block_filenames(),
 	count_blocks_on_disk(),
 	case ar_meta_db:get(disk_space) of
@@ -101,8 +103,7 @@ count_blocks_on_disk() ->
 	).
 
 %% @doc Ensure that all of the relevant storage directories exist.
-ensure_directories() ->
-	DataDir = ar_meta_db:get(data_dir),
+ensure_directories(DataDir) ->
 	%% Append "/" to every path so that filelib:ensure_dir/1 creates a directory if it does not exist.
 	filelib:ensure_dir(filename:join(DataDir, ?TX_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
@@ -663,6 +664,7 @@ write_wallet_list_chunks(RootHash, Tree, Cursor, Position) ->
 	end.
 
 write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
+	{ok, Config} = application:get_env(arweave, config),
 	Range =
 		case Cursor of
 			first ->
@@ -678,7 +680,7 @@ write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
 				{last, none, [last | Range]}
 		end,
 	Name = wallet_list_chunk_relative_filepath(Position, RootHash),
-	case write_term(ar_meta_db:get(data_dir), Name, Range2, do_not_override) of
+	case write_term(Config#config.data_dir, Name, Range2, do_not_override) of
 		ok ->
 			case NextCursor of
 				last ->
@@ -744,6 +746,7 @@ read_wallet_chunk(RootHash) ->
 	read_wallet_chunk(RootHash, 0, ar_patricia_tree:new()).
 
 read_wallet_chunk(RootHash, Cursor, Tree) ->
+	{ok, Config} = application:get_env(arweave, config),
 	Name = binary_to_list(iolist_to_binary([
 		?WALLET_LIST_DIR,
 		"/",
@@ -753,7 +756,7 @@ read_wallet_chunk(RootHash, Cursor, Tree) ->
 		"-",
 		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
 	])),
-	case read_term(Name) of
+	case read_term(Config#config.data_dir, Name) of
 		{ok, Chunk} ->
 			{NextCursor, Wallets} =
 				case Chunk of
@@ -863,7 +866,8 @@ select_drive(Disks, CWD) ->
 	end.
 
 filepath(PathComponents) ->
-	to_string(filename:join([ar_meta_db:get(data_dir) | PathComponents])).
+	{ok, Config} = application:get_env(arweave, config),
+	to_string(filename:join([Config#config.data_dir | PathComponents])).
 
 to_string(Bin) when is_binary(Bin) ->
 	binary_to_list(Bin);
@@ -924,10 +928,6 @@ write_file_atomic(Filename, Data) ->
 	SwapFilename = Filename ++ ".swp",
 	case file:write_file(SwapFilename, Data) of
 		ok ->
-			%% Pessimistically (because some of the writes are overrides)
-			%% increase the used disk space count. The value is corrected
-			%% periodically when the new data arrives from ar_disksup.
-			ar_meta_db:increase(used_space, byte_size(Data)),
 			file:rename(SwapFilename, Filename);
 		Error ->
 			Error

@@ -50,7 +50,7 @@ test_txs_broadcast_order() ->
 	ar_tx_queue:set_pause(false),
 	ar_util:do_until(
 		fun() ->
-			TXs = encode_txs(ar_node:get_mined_txs()),
+			TXs = encode_txs(ar_node:get_ready_for_mining_txs()),
 			case length(TXs) of
 				4 ->
 					?assertEqual(lists:sort(Expected), lists:sort(TXs)),

@@ -23,7 +23,6 @@ init(WalletList, StartingDiff, RewardPool) ->
 	init(WalletList, StartingDiff, RewardPool, []).
 
 init(WalletList, StartingDiff, RewardPool, TXs) ->
-	ar_randomx_state:reset(),
 	WL = ar_patricia_tree:from_proplist([{A, {B, LTX}} || {A, B, LTX} <- WalletList]),
 	WLH = element(1, ar_block:hash_wallet_list(0, unclaimed, WL)),
 	ok = ar_storage:write_wallet_list(WLH, WL),
@@ -55,7 +54,8 @@ init(WalletList, StartingDiff, RewardPool, TXs) ->
 			size_tagged_txs = SizeTaggedTXs
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
-	[B1#block { indep_hash = indep_hash(B1) }].
+	B2 = B1#block { indep_hash = indep_hash(B1) },
+	[B2].
 
 %% @doc Take a complete block list and return a list of block hashes.
 %% Throws an error if the block list is not complete.
