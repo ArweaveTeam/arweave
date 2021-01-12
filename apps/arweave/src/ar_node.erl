@@ -13,7 +13,7 @@
 	get_wallets/1,
 	get_wallet_list_chunk/2,
 	get_current_diff/0, get_diff/0,
-	get_pending_txs/0, get_pending_txs/1, get_mined_txs/0, is_a_pending_tx/1,
+	get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
 	get_current_block_hash/0,
 	get_block_index_entry/1,
 	get_2_0_hash_of_1_0_block/1,
@@ -91,11 +91,11 @@ is_a_pending_tx(TXID) ->
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	maps:is_key(TXID, Map).
 
-%% @doc Get the list of mined or ready to be mined transactions.
+%% @doc Get the list of being mined or ready to be mined transactions.
 %% The list does _not_ include transactions in the priority queue or
 %% those on timeout waiting for network propagation.
 %% @end
-get_mined_txs() ->
+get_ready_for_mining_txs() ->
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	maps:fold(
 		fun

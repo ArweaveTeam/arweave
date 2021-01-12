@@ -263,7 +263,7 @@ assert_wait_until_receives_txs(TXs) ->
 wait_until_receives_txs(TXs) ->
 	ar_util:do_until(
 		fun() ->
-			MinedTXIDs = [TX#tx.id || TX <- ar_node:get_mined_txs()],
+			MinedTXIDs = [TX#tx.id || TX <- ar_node:get_ready_for_mining_txs()],
 			case lists:all(fun(TX) -> lists:member(TX#tx.id, MinedTXIDs) end, TXs) of
 				true ->
 					ok;

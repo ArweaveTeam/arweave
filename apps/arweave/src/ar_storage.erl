@@ -14,13 +14,14 @@
 	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
 	tx_filepath/1, tx_data_filepath/1,
 	read_tx_file/1, read_migrated_v1_tx_file/1,
-	ensure_directories/0, clear/0,
+	ensure_directories/1, clear/0,
 	write_file_atomic/2,
 	has_chunk/1, write_chunk/3, read_chunk/1, delete_chunk/1,
 	write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -31,9 +32,9 @@
 -define(DIRECTORY_SIZE_TIMER, 300000).
 
 %% @doc Ready the system for block/tx reading and writing.
-%% %% This function should block.
 init() ->
-	ensure_directories(),
+	{ok, Config} = application:get_env(arweave, config),
+	ensure_directories(Config#config.data_dir),
 	ok = migrate_block_filenames(),
 	count_blocks_on_disk(),
 	case ar_meta_db:get(disk_space) of
@@ -49,7 +50,8 @@ migrate_block_filenames() ->
 		true ->
 			ok;
 		false ->
-			DataDir = ar_meta_db:get(data_dir),
+			{ok, Config} = application:get_env(arweave, config),
+			DataDir = Config#config.data_dir,
 			BlockDir = filename:join(DataDir, ?BLOCK_DIR),
 			{ok, Filenames} = file:list_dir(BlockDir),
 			lists:foreach(
@@ -75,7 +77,9 @@ v1_migration_file_exists() ->
 	filelib:is_file(v1_migration_file()).
 
 v1_migration_file() ->
-	filename:join([ar_meta_db:get(data_dir), ?STORAGE_MIGRATIONS_DIR, "v1"]).
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
+	filename:join([DataDir, ?STORAGE_MIGRATIONS_DIR, "v1"]).
 
 rename_block_file(BlockDir, Source, Dest) ->
 	file:rename(filename:join(BlockDir, Source), filename:join(BlockDir, Dest)).
@@ -86,7 +90,8 @@ complete_v1_migration() ->
 count_blocks_on_disk() ->
 	spawn(
 		fun() ->
-			DataDir = ar_meta_db:get(data_dir),
+			{ok, Config} = application:get_env(arweave, config),
+			DataDir = Config#config.data_dir,
 			case file:list_dir(filename:join(DataDir, ?BLOCK_DIR)) of
 				{ok, List} ->
 					ar_meta_db:put(blocks_on_disk, length(List) - 1); %% - the "invalid" folder
@@ -101,8 +106,7 @@ count_blocks_on_disk() ->
 	).
 
 %% @doc Ensure that all of the relevant storage directories exist.
-ensure_directories() ->
-	DataDir = ar_meta_db:get(data_dir),
+ensure_directories(DataDir) ->
 	%% Append "/" to every path so that filelib:ensure_dir/1 creates a directory if it does not exist.
 	filelib:ensure_dir(filename:join(DataDir, ?TX_DIR) ++ "/"),
 	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
@@ -113,9 +117,11 @@ ensure_directories() ->
 
 %% @doc Clear the cache of saved blocks.
 clear() ->
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	lists:map(
 		fun file:delete/1,
-		filelib:wildcard(filename:join([ar_meta_db:get(data_dir), ?BLOCK_DIR, "*.json"]))
+		filelib:wildcard(filename:join([DataDir, ?BLOCK_DIR, "*.json"]))
 	),
 	ar_meta_db:put(blocks_on_disk, 0).
 
@@ -265,8 +271,9 @@ get_free_space() ->
 	max(0, ar_meta_db:get(disk_space) - ar_meta_db:get(used_space)).
 
 lookup_block_filename(H) ->
+	{ok, Config} = application:get_env(arweave, config),
 	Name = filename:join([
-		ar_meta_db:get(data_dir),
+		Config#config.data_dir,
 		?BLOCK_DIR,
 		binary_to_list(ar_util:encode(H)) ++ ".json"
 	]),
@@ -663,6 +670,7 @@ write_wallet_list_chunks(RootHash, Tree, Cursor, Position) ->
 	end.
 
 write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
+	{ok, Config} = application:get_env(arweave, config),
 	Range =
 		case Cursor of
 			first ->
@@ -678,7 +686,7 @@ write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
 				{last, none, [last | Range]}
 		end,
 	Name = wallet_list_chunk_relative_filepath(Position, RootHash),
-	case write_term(ar_meta_db:get(data_dir), Name, Range2, do_not_override) of
+	case write_term(Config#config.data_dir, Name, Range2, do_not_override) of
 		ok ->
 			case NextCursor of
 				last ->
@@ -744,6 +752,7 @@ read_wallet_chunk(RootHash) ->
 	read_wallet_chunk(RootHash, 0, ar_patricia_tree:new()).
 
 read_wallet_chunk(RootHash, Cursor, Tree) ->
+	{ok, Config} = application:get_env(arweave, config),
 	Name = binary_to_list(iolist_to_binary([
 		?WALLET_LIST_DIR,
 		"/",
@@ -753,7 +762,7 @@ read_wallet_chunk(RootHash, Cursor, Tree) ->
 		"-",
 		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
 	])),
-	case read_term(Name) of
+	case read_term(Config#config.data_dir, Name) of
 		{ok, Chunk} ->
 			{NextCursor, Wallets} =
 				case Chunk of
@@ -818,7 +827,8 @@ calculate_used_space() ->
 	(KByteSize - CapacityKByteSize) * 1024.
 
 get_data_dir_disk_data() ->
-	DataDir = filename:absname(ar_meta_db:get(data_dir)),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = filename:absname(Config#config.data_dir),
 	[DiskData | _] = select_drive(ar_disksup:get_disk_data(), DataDir),
 	DiskData.
 
@@ -863,7 +873,8 @@ select_drive(Disks, CWD) ->
 	end.
 
 filepath(PathComponents) ->
-	to_string(filename:join([ar_meta_db:get(data_dir) | PathComponents])).
+	{ok, Config} = application:get_env(arweave, config),
+	to_string(filename:join([Config#config.data_dir | PathComponents])).
 
 to_string(Bin) when is_binary(Bin) ->
 	binary_to_list(Bin);
@@ -904,8 +915,9 @@ wallet_list_filepath(Hash) when is_binary(Hash) ->
 	filepath([?WALLET_LIST_DIR, iolist_to_binary([ar_util:encode(Hash), ".json"])]).
 
 wallet_list_chunk_filepath(Position, RootHash) when is_binary(RootHash) ->
+	{ok, Config} = application:get_env(arweave, config),
 	filename:join(
-		ar_meta_db:get(data_dir),
+		Config#config.data_dir,
 		wallet_list_chunk_relative_filepath(Position, RootHash)
 	).
 
@@ -934,12 +946,14 @@ write_file_atomic(Filename, Data) ->
 	end.
 
 has_chunk(DataPathHash) ->
-	DataDir = ar_meta_db:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	ChunkDir = filename:join(DataDir, ?DATA_CHUNK_DIR),
 	filelib:is_file(filename:join(ChunkDir, ar_util:encode(DataPathHash))).
 
 write_chunk(DataPathHash, Chunk, DataPath) ->
-	DataDir = ar_meta_db:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	Data = term_to_binary({Chunk, DataPath}),
 	ChunkDir = filename:join(DataDir, ?DATA_CHUNK_DIR),
 	case filelib:ensure_dir(ChunkDir ++ "/") of
@@ -956,7 +970,8 @@ write_chunk(DataPathHash, Chunk, DataPath) ->
 	end.
 
 read_chunk(DataPathHash) ->
-	DataDir = ar_meta_db:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	ChunkDir = filename:join(DataDir, ?DATA_CHUNK_DIR),
 	case file:read_file(filename:join(ChunkDir, ar_util:encode(DataPathHash))) of
 		{error, enoent} ->
@@ -968,12 +983,15 @@ read_chunk(DataPathHash) ->
 	end.
 
 delete_chunk(DataPathHash) ->
-	DataDir = ar_meta_db:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	ChunkDir = filename:join(DataDir, ?DATA_CHUNK_DIR),
 	file:delete(filename:join(ChunkDir, ar_util:encode(DataPathHash))).
 
 write_term(Name, Term) ->
-	write_term(ar_meta_db:get(data_dir), Name, Term, override).
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
+	write_term(DataDir, Name, Term, override).
 
 write_term(Dir, Name, Term) when is_atom(Name) ->
 	write_term(Dir, atom_to_list(Name), Term, override);
@@ -996,7 +1014,8 @@ write_term(Dir, Name, Term, Override) ->
 	end.
 
 read_term(Name) ->
-	DataDir = ar_meta_db:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	read_term(DataDir, Name).
 
 read_term(Dir, Name) when is_atom(Name) ->
@@ -1013,7 +1032,8 @@ read_term(Dir, Name) ->
 	end.
 
 delete_term(Name) ->
-	DataDir = ar_meta_db:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	file:delete(filename:join(DataDir, atom_to_list(Name))).
 
 %% @doc Test block storage.
@@ -1056,8 +1076,10 @@ invalidate_block_test() ->
 	write_full_block(B),
 	invalidate_block(B),
 	unavailable = read_block(B#block.indep_hash, ar_weave:generate_block_index([B])),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	TargetFile = filename:join([
-		ar_meta_db:get(data_dir),
+		DataDir,
 		?BLOCK_DIR,
 		"invalid",
 		binary_to_list(ar_util:encode(B#block.indep_hash)) ++ ".json"

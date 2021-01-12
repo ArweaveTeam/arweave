@@ -17,7 +17,7 @@
 }).
 
 start() ->
-	Pid = spawn(fun server/0),
+	Pid = spawn_link(fun server/0),
 	register(?MODULE, Pid),
 	Pid.
 
