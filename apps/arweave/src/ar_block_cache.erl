@@ -89,13 +89,19 @@ get(Cache, H) ->
 %% the longest chain, which has not been validated yet. The previous block shadows are
 %% sorted from newest to oldest. The last one is a block shadow from the current fork.
 get_earliest_not_validated_from_longest_chain(Cache) ->
-	{Map, {_CDiff, H}, _Set, _Tip} = Cache,
-	{B, Status, _Children} = maps:get(H, Map),
-	case Status of
-		not_validated ->
-			get_earliest_not_validated(B, Map);
-		_ ->
-			not_found
+	{Map, {CDiff, H}, _Set, Tip} = Cache,
+	{#block{ cumulative_diff = TipCDiff }, _, _} = maps:get(Tip, Map),
+	case TipCDiff >= CDiff of
+		true ->
+			not_found;
+		false ->
+			{B, Status, _Children} = maps:get(H, Map),
+			case Status of
+				not_validated ->
+					get_earliest_not_validated(B, Map);
+				_ ->
+					not_found
+			end
 	end.
 
 %% @doc Get the block shadow and its status from cache.
@@ -306,7 +312,14 @@ block_cache_test() ->
 	?assertEqual(B2_2, get(prune(C10, 1), block_id(B2_2))),
 	?assertEqual(B2_3, get(prune(C10, 1), block_id(B2_3))),
 	?assertEqual(not_found, get(remove(C10, block_id(B3)), block_id(B3))),
-	?assertEqual(not_found, get(remove(C10, block_id(B3)), block_id(B4))).
+	?assertEqual(not_found, get(remove(C10, block_id(B3)), block_id(B4))),
+	C11 = new(B11 = random_block(0)),
+	C12 = add(C11, on_top(random_block(1), B11)),
+	C13 = add_validated(C12, B13 = on_top(random_block(1), B11)),
+	C14 = mark_tip(C13, block_id(B13)),
+	%% Although the first block at height 1 was the one added in C12, B13 then
+	%% became the tip so we should not reorganize.
+	?assertEqual(not_found, get_earliest_not_validated_from_longest_chain(C14)).
 
 random_block(CDiff) ->
 	#block{ indep_hash = crypto:strong_rand_bytes(32), height = 0, cumulative_diff = CDiff }.
