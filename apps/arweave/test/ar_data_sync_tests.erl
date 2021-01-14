@@ -33,7 +33,7 @@ test_rejects_invalid_chunks() ->
 	{_Master, _, _Wallet} = setup_nodes(),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_too_big\"}">>, _, _}},
-		post_chunk(jiffy:encode(#{
+		post_chunk(ar_serialize:jsonify(#{
 			chunk => ar_util:encode(crypto:strong_rand_bytes(?DATA_CHUNK_SIZE + 1)),
 			data_path => <<>>,
 			offset => <<"0">>,
@@ -42,7 +42,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_path_too_big\"}">>, _, _}},
-		post_chunk(jiffy:encode(#{
+		post_chunk(ar_serialize:jsonify(#{
 			data_path => ar_util:encode(crypto:strong_rand_bytes(?MAX_PATH_SIZE + 1)),
 			chunk => <<>>,
 			offset => <<"0">>,
@@ -51,7 +51,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"offset_too_big\"}">>, _, _}},
-		post_chunk(jiffy:encode(#{
+		post_chunk(ar_serialize:jsonify(#{
 			offset => integer_to_binary(trunc(math:pow(2, 256))),
 			data_path => <<>>,
 			chunk => <<>>,
@@ -60,7 +60,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_size_too_big\"}">>, _, _}},
-		post_chunk(jiffy:encode(#{
+		post_chunk(ar_serialize:jsonify(#{
 			data_size => integer_to_binary(trunc(math:pow(2, 256))),
 			data_path => <<>>,
 			chunk => <<>>,
@@ -69,7 +69,7 @@ test_rejects_invalid_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_proof_ratio_not_attractive\"}">>, _, _}},
-		post_chunk(jiffy:encode(#{
+		post_chunk(ar_serialize:jsonify(#{
 			chunk => ar_util:encode(<<"a">>),
 			data_path => ar_util:encode(<<"bb">>),
 			offset => <<"0">>,
@@ -85,7 +85,7 @@ test_rejects_invalid_chunks() ->
 	DataPath = ar_merkle:generate_path(DataRoot, 0, DataTree),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_root_not_found\"}">>, _, _}},
-		post_chunk(jiffy:encode(#{
+		post_chunk(ar_serialize:jsonify(#{
 			data_root => ar_util:encode(DataRoot),
 			chunk => ar_util:encode(Chunk),
 			data_path => ar_util:encode(DataPath),
@@ -122,7 +122,7 @@ test_accepts_chunk_with_out_of_outer_bounds_offset() ->
 	},
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		post_chunk(jiffy:encode(Proof))
+		post_chunk(ar_serialize:jsonify(Proof))
 	),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
@@ -166,7 +166,7 @@ test_accepts_chunk_with_out_of_inner_bounds_offset() ->
 	},
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		post_chunk(jiffy:encode(InvalidProof))
+		post_chunk(ar_serialize:jsonify(InvalidProof))
 	),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
@@ -206,7 +206,7 @@ test_accepts_chunk_with_out_of_inner_bounds_offset() ->
 	},
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		post_chunk(jiffy:encode(InvalidProof2))
+		post_chunk(ar_serialize:jsonify(InvalidProof2))
 	),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
@@ -250,14 +250,14 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		fun({_, Proof}) ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				post_chunk(jiffy:encode(Proof))
+				post_chunk(ar_serialize:jsonify(Proof))
 			)
 		end,
 		Proofs1
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
-		post_chunk(jiffy:encode(FirstProof1))
+		post_chunk(ar_serialize:jsonify(FirstProof1))
 	),
 	Data2 = crypto:strong_rand_bytes(
 		min(
@@ -278,7 +278,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		fun({_, Proof}) ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				post_chunk(jiffy:encode(Proof))
+				post_chunk(ar_serialize:jsonify(Proof))
 			)
 		end,
 		Proofs2
@@ -302,21 +302,21 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		fun({_, Proof}) ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				post_chunk(jiffy:encode(Proof))
+				post_chunk(ar_serialize:jsonify(Proof))
 			)
 		end,
 		Proofs3
 	),
 	?assertMatch(
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
-		post_chunk(jiffy:encode(FirstProof3))
+		post_chunk(ar_serialize:jsonify(FirstProof3))
 	),
 	slave_mine(),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
 				fun(Proof) ->
-					case post_chunk(jiffy:encode(Proof)) of
+					case post_chunk(ar_serialize:jsonify(Proof)) of
 						{ok, {{<<"200">>, _}, _, _, _, _}} ->
 							true;
 						_ ->
@@ -344,7 +344,7 @@ test_accepts_chunks() ->
 	%% Post the third proof to the disk pool.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		post_chunk(jiffy:encode(ThirdProof))
+		post_chunk(ar_serialize:jsonify(ThirdProof))
 	),
 	slave_mine(),
 	[{BH, _, _} | _] = wait_until_height(1),
@@ -355,13 +355,13 @@ test_accepts_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		post_chunk(jiffy:encode(FirstProof))
+		post_chunk(ar_serialize:jsonify(FirstProof))
 	),
 	%% Expect the chunk to be retrieved by any offset within
 	%% (EndOffset - ChunkSize, EndOffset], but not outside of it.
 	FirstChunk = ar_util:decode(maps:get(chunk, FirstProof)),
 	FirstChunkSize = byte_size(FirstChunk),
-	ExpectedProof = jiffy:encode(#{
+	ExpectedProof = ar_serialize:jsonify(#{
 		data_path => maps:get(data_path, FirstProof),
 		tx_path => maps:get(tx_path, FirstProof),
 		chunk => ar_util:encode(FirstChunk)
@@ -387,7 +387,7 @@ test_accepts_chunks() ->
 		get_chunk(EndOffset + 1)
 	),
 	TXSize = byte_size(binary:list_to_bin(Chunks)),
-	ExpectedOffsetInfo = jiffy:encode(#{
+	ExpectedOffsetInfo = ar_serialize:jsonify(#{
 		offset => integer_to_binary(TXSize),
 		size => integer_to_binary(TXSize)
 	}),
@@ -402,9 +402,9 @@ test_accepts_chunks() ->
 	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		post_chunk(jiffy:encode(SecondProof))
+		post_chunk(ar_serialize:jsonify(SecondProof))
 	),
-	ExpectedSecondProof = jiffy:encode(#{
+	ExpectedSecondProof = ar_serialize:jsonify(#{
 		data_path => maps:get(data_path, SecondProof),
 		tx_path => maps:get(tx_path, SecondProof),
 		chunk => maps:get(chunk, SecondProof)
@@ -423,7 +423,7 @@ test_accepts_chunks() ->
 		500,
 		10 * 1000
 	),
-	ExpectedThirdProof = jiffy:encode(#{
+	ExpectedThirdProof = ar_serialize:jsonify(#{
 		data_path => maps:get(data_path, ThirdProof),
 		tx_path => maps:get(tx_path, ThirdProof),
 		chunk => maps:get(chunk, ThirdProof)
@@ -453,11 +453,11 @@ test_syncs_data() ->
 		fun({_, _, _, {_, Proof}}) ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				post_chunk(jiffy:encode(Proof))
+				post_chunk(ar_serialize:jsonify(Proof))
 			),
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				post_chunk(jiffy:encode(Proof))
+				post_chunk(ar_serialize:jsonify(Proof))
 			)
 		end,
 		RecordsWithProofs
@@ -468,7 +468,7 @@ test_syncs_data() ->
 			TXSize = byte_size(binary:list_to_bin(Chunks)),
 			TXOffset = ar_merkle:extract_note(ar_util:decode(maps:get(tx_path, Proof))),
 			AbsoluteTXOffset = B#block.weave_size - B#block.block_size + TXOffset,
-			ExpectedOffsetInfo = jiffy:encode(#{
+			ExpectedOffsetInfo = ar_serialize:jsonify(#{
 				offset => integer_to_binary(AbsoluteTXOffset),
 				size => integer_to_binary(TXSize)
 			}),
@@ -838,7 +838,7 @@ post_proofs(Peer, B, TX, Chunks) ->
 	lists:foreach(
 		fun({_, Proof}) ->
 			{ok, {{<<"200">>, _}, _, _, _, _}} =
-				post_chunk(Peer, jiffy:encode(Proof))
+				post_chunk(Peer, ar_serialize:jsonify(Proof))
 		end,
 		Proofs
 	),

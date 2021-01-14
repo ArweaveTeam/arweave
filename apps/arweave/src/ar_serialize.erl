@@ -51,10 +51,11 @@ json_decode(JSON, Opts) ->
 			true -> [return_maps];
 			false -> []
 		end,
-	try
-		{ok, jiffy:decode(JSON, JiffyOpts)}
-	catch
-		{error, Reason} -> {error, Reason}
+	case catch jiffy:decode(JSON, JiffyOpts) of
+		{'EXIT', {Reason, _Stacktrace}} ->
+			{error, Reason};
+		DecodedJSON ->
+			{ok, DecodedJSON}
 	end.
 
 %% @doc Convert a block record into a JSON struct.

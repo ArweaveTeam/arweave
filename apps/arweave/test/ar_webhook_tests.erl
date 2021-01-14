@@ -87,7 +87,7 @@ test_webhooks() ->
 							Expected =
 								maps:remove(
 									<<"wallet_list">>,
-									jiffy:decode(jiffy:encode(Struct), [return_maps])
+									jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
 								),
 							?assertEqual(Expected, B),
 							true;	
@@ -106,7 +106,7 @@ test_webhooks() ->
 							Expected =
 								maps:remove(
 									<<"data">>,
-									jiffy:decode(jiffy:encode(Struct), [return_maps])
+									jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
 								),
 							?assertEqual(Expected, TX2),
 							true;
@@ -128,7 +128,7 @@ test_webhooks() ->
 					Expected =
 						maps:remove(
 							<<"data">>,
-							jiffy:decode(jiffy:encode(Struct), [return_maps])
+							jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
 						),
 					?assertEqual(Expected, TX),
 					true;
