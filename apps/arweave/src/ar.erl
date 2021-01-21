@@ -318,7 +318,7 @@ start(normal, _Args) ->
 		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
 	},
 	logger:set_handler_config(default, formatter, {logger_formatter, LoggerFormatterConsole}),
-	logger:set_handler_config(default, level, error),
+	logger:set_handler_config(default, level, info),
 	%% Configure logging to the logfile.
 	LoggerConfigDisk = #{
 		file => lists:flatten("logs/" ++ atom_to_list(node())),

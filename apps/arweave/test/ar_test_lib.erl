@@ -97,10 +97,9 @@ post_tx(TX) ->
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			ok;
-		_ ->
-			?LOG_INFO(
-				"Failed to post transaction. Error DB entries: ~p~n",
-				[ar_tx_db:get_error_codes(TX#tx.id)]
+		E ->
+			ct:log( "Failed to post transaction. Error DB entries: ~p - ~p ~n",
+				[ar_tx_db:get_error_codes(TX#tx.id), E]
 			),
 			noop
 	end.
@@ -224,12 +223,13 @@ leave(Peer) ->
 	{ok, Config} = application:get_env(arweave, config),
 	Port = Config#config.port,
 	PeerPort = ct_rpc:call(Peer, ar_meta_db, get, [port]),
-	ar_meta_db:put({peer, {127, 0, 0, 1, PeerPort}}, #performance{}),
-	ct_rpc:call(Peer, ar_meta_db, put, [{peer, {127, 0, 0, 1, Port}}]),
-	ct_rpc:call(Peer, ar_bridge, set_remote_peers, [[]]),
+	true = ar_meta_db:put({peer, {127, 0, 0, 1, PeerPort}}, #performance{}),
+	true = ct_rpc:call(Peer, ar_meta_db, put, [{peer, {127, 0, 0, 1, Port}}, #performance{}]),
 	ar_bridge:set_remote_peers([]),
-	ar_node:set_trusted_peers([]),
-	ct_rpc:call(Peer, ar_node, set_trusted_peers, [[]]).
+	ct_rpc:call(Peer, ar_bridge, set_remote_peers, [[]]),
+	application:set_env(arweave, config, Config#config{peers = []}),
+	{ok, SlaveConfig} = ct_rpc:call(Peer, application, get_env, [arweave, config]),
+	ok = ct_rpc:call(Peer, application, set_env, [arweave, config, SlaveConfig#config{peers = []}]).
 
 get_tx_anchor() ->
 	{ok, Config} = application:get_env(arweave, config),
