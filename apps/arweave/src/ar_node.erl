@@ -231,8 +231,7 @@ get_mempool_size() ->
 
 %% @doc Get the block shadow from the block cache.
 get_block_shadow_from_cache(H) ->
-	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
-	ar_block_cache:get(BlockCache, H).
+	ar_block_cache:get(block_cache, H).
 
 %% @doc Get the current balance of a given wallet address.
 %% The balance returned is in relation to the nodes current wallet list.

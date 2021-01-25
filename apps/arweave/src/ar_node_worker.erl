@@ -210,6 +210,7 @@ handle_info(wallets_ready, State) ->
 	ar_data_sync:join(BI),
 	Current = element(1, hd(BI)),
 	B = hd(Blocks),
+	ar_block_cache:initialize_from_list(block_cache, Blocks),
 	ets:insert(node_state, [
 		{is_joined,				true},
 		{block_index,			BI},
@@ -221,8 +222,7 @@ handle_info(wallets_ready, State) ->
 		{cumulative_diff,		B#block.cumulative_diff},
 		{last_retarget,			B#block.last_retarget},
 		{weave_size,			B#block.weave_size},
-		{block_txs_pairs,		[block_txs_pair(Block) || Block <- Blocks]},
-		{block_cache,			ar_block_cache:from_list(Blocks)}
+		{block_txs_pairs,		[block_txs_pair(Block) || Block <- Blocks]}
 	]),
 	{noreply, reset_miner(State)};
 
@@ -314,15 +314,13 @@ handle_task(apply_block, State) ->
 	apply_block(State);
 
 handle_task({cache_missing_txs, BH, TXs}, State) ->
-	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
-	case ar_block_cache:get_block_and_status(BlockCache, BH) of
+	case ar_block_cache:get_block_and_status(block_cache, BH) of
 		not_found ->
 			%% The block should have been pruned while we were fetching the missing txs.
 			{noreply, State};
 		{B, not_validated} ->
-			BlockCache2 = ar_block_cache:add(BlockCache, B#block{ txs = TXs }),
+			ar_block_cache:add(block_cache, B#block{ txs = TXs }),
 			gen_server:cast(self(), apply_block),
-			ets:insert(node_state, [{block_cache, BlockCache2}]),
 			{noreply, State};
 		{_B, _AnotherStatus} ->
 			%% The transactions should have been received and the block validated while
@@ -569,18 +567,16 @@ handle_new_block(State, #block{ indep_hash = H, txs = TXs })
 	]),
 	{noreply, State};
 handle_new_block(State, BShadow) ->
-	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
-	case ar_block_cache:get(BlockCache, BShadow#block.indep_hash) of
+	case ar_block_cache:get(block_cache, BShadow#block.indep_hash) of
 		not_found ->
-			case ar_block_cache:get(BlockCache, BShadow#block.previous_block) of
+			case ar_block_cache:get(block_cache, BShadow#block.previous_block) of
 				not_found ->
 					%% The cache should have been just pruned and this block is old.
 					{noreply, State};
 				_ ->
-					BlockCache2 = ar_block_cache:add(BlockCache, BShadow),
+					ar_block_cache:add(block_cache, BShadow),
 					ar_ignore_registry:add(BShadow#block.indep_hash),
 					gen_server:cast(self(), apply_block),
-					ets:insert(node_state, {block_cache, BlockCache2}),
 					{noreply, State}
 			end;
 		_ ->
@@ -591,8 +587,7 @@ handle_new_block(State, BShadow) ->
 	end.
 
 apply_block(#{ blocks_missing_txs := BlocksMissingTXs } = State) ->
-	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
-	case ar_block_cache:get_earliest_not_validated_from_longest_chain(BlockCache) of
+	case ar_block_cache:get_earliest_not_validated_from_longest_chain(block_cache) of
 		not_found ->
 			%% Nothing to do - we are at the longest known chain already.
 			{noreply, State};
@@ -612,7 +607,6 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 		blocks_missing_txs := BlocksMissingTXs,
 		missing_txs_lookup_processes := MissingTXsLookupProcesses
 	} = State,
-	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 	[{block_index, BI}] = ets:lookup(node_state, block_index),
 	[{tx_statuses, Mempool}] = ets:lookup(node_state, tx_statuses),
@@ -628,8 +622,7 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 			case validate_wallet_list(B, PrevWalletList, PrevRewardPool, PrevHeight) of
 				error ->
 					BH = B#block.indep_hash,
-					BlockCache2 = ar_block_cache:remove(BlockCache, BH),
-					ets:insert(node_state, {block_cache, BlockCache2}),
+					ar_block_cache:remove(block_cache, BH),
 					{noreply, State};
 				{ok, RootHash} ->
 					B2 = B#block{ wallet_list = RootHash },
@@ -648,8 +641,7 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 								{validation_error, Reason}
 							]),
 							BH = B#block.indep_hash,
-							BlockCache2 = ar_block_cache:remove(BlockCache, BH),
-							ets:insert(node_state, {block_cache, BlockCache2}),
+							ar_block_cache:remove(block_cache, BH),
 							{noreply, State};
 						valid ->
 							State2 =
@@ -757,31 +749,21 @@ get_missing_txs_and_retry(BShadow, Mempool, Worker) ->
 apply_validated_block(#{ cumulative_diff := CDiff } = State, B, _Blocks, _BI, _BlockTXs)
 		when B#block.cumulative_diff =< CDiff ->
 	%% The block is from the longest fork, but not the latest known block from there.
-	#{
-		block_cache := BlockCache
-	} = State,
-	BlockCache2 = ar_block_cache:add_validated(BlockCache, B),
+	ar_block_cache:add_validated(block_cache, B),
 	gen_server:cast(self(), apply_block),
 	log_applied_block(B),
-	ets:insert(node_state, [{block_cache, BlockCache2}]),
 	State;
 apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
-	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	PruneDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	BH = B#block.indep_hash,
-	BlockCache2 =
-		ar_block_cache:prune(
-			ar_block_cache:mark_tip(
-				%% Overwrite the block to store computed size tagged txs - they
-				%% may be needed for reconstructing block_txs_pairs if there is a reorg
-				%% off and then back on this fork.
-				ar_block_cache:add(BlockCache, B),
-				BH
-			),
-			PruneDepth
-		),
+	%% Overwrite the block to store computed size tagged txs - they
+	%% may be needed for reconstructing block_txs_pairs if there is a reorg
+	%% off and then back on this fork.
+	ar_block_cache:add(block_cache, B),
+	ar_block_cache:mark_tip(block_cache, BH),
+	ar_block_cache:prune(block_cache, PruneDepth),
 	%% We could have missed a few blocks due to networking issues, which would then
 	%% be picked by ar_poller and end up waiting for missing transactions to be fetched.
 	%% Thefore, it is possible (although not likely) that there are blocks above the new tip,
@@ -834,8 +816,7 @@ apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
 		{cumulative_diff,		B#block.cumulative_diff},
 		{last_retarget,			B#block.last_retarget},
 		{weave_size,			B#block.weave_size},
-		{block_txs_pairs,		BlockTXPairs2},
-		{block_cache,			BlockCache2}
+		{block_txs_pairs,		BlockTXPairs2}
 	]),
 	reset_miner(State).
 
@@ -897,7 +878,6 @@ start_mining(StateIn) ->
 	} = StateIn,
 	[{block_index, BI}] = ets:lookup(node_state, block_index),
 	[{height, Height}] = ets:lookup(node_state, height),
-	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 	[{current, Current}] = ets:lookup(node_state, current),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
@@ -920,7 +900,7 @@ start_mining(StateIn) ->
 			StateIn;
 		_ ->
 			ar_watchdog:started_hashing(),
-			B = ar_block_cache:get(BlockCache, Current),
+			B = ar_block_cache:get(block_cache, Current),
 			Miner = ar_mine:start({
 				B,
 				POA,
@@ -964,7 +944,6 @@ handle_block_from_miner(State, BShadow, MinedTXs, BDS, _POA) ->
 	#{ gossip := GS } = State,
 	[{block_index, BI}] = ets:lookup(node_state, block_index),
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
-	[{block_cache, BlockCache}] = ets:lookup(node_state, block_cache),
 	[{current, Current}] = ets:lookup(node_state, current),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(MinedTXs),
 	B = BShadow#block{ txs = MinedTXs, size_tagged_txs = SizeTaggedTXs },
@@ -976,25 +955,25 @@ handle_block_from_miner(State, BShadow, MinedTXs, BDS, _POA) ->
 	]),
 	GossipMessage = {new_block, self(), B#block.height, B, BDS, erlang:timestamp()},
 	{NewGS, _} = ar_gossip:send(GS, GossipMessage),
-	PrevBlocks = [ar_block_cache:get(BlockCache, Current)],
+	PrevBlocks = [ar_block_cache:get(block_cache, Current)],
 	BI2 = [block_index_entry(B) | BI],
 	BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
-	State2 = State#{ block_cache => ar_block_cache:add(BlockCache, B) },
-	State3 = apply_validated_block(State2, B, PrevBlocks, BI2, BlockTXPairs2),
+	ar_block_cache:add(block_cache, B),
 	ar_ignore_registry:add(B#block.indep_hash),
-	{noreply, State3#{ gossip => NewGS }}.
+	State2 = apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2),
+	{noreply, State2#{ gossip => NewGS }}.
 
 %% @doc Assign a priority to the task. 0 corresponds to the highest priority.
+priority({gossip_message, #gs_msg{ data = {new_block, _, Height, _, _, _} }}) ->
+	{0, Height};
 priority(apply_block) ->
-	0;
-priority({gossip_message, #gs_msg{ data = {new_block, _, _, _, _, _} }}) ->
-	1;
+	{1, 1};
 priority({work_complete, _, _, _, _, _}) ->
-	2;
+	{2, 1};
 priority({cache_missing_txs, _, _}) ->
-	3;
+	{3, 1};
 priority(_) ->
-	os:system_time(second).
+	{os:system_time(second), 1}.
 
 determine_mining_address(Config) ->
 	case {Config#config.mining_addr, Config#config.load_key, Config#config.new_key} of

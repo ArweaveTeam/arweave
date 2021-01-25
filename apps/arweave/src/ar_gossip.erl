@@ -1,6 +1,7 @@
 %%% @doc The internal gossip network. The modules can subscribe to it to listen
 %%% for new blocks, new transactions, and other events (e.g., webhooks), or
 %%% input new data to sidestep the HTTP interface (e.g., blocks fetched in the polling mode).
+%%% @end
 -module(ar_gossip).
 
 -export([
@@ -48,9 +49,10 @@ set_loss_probability(S, Prob) ->
 
 %% @doc Send a message to your peers in the gossip network,
 %% if the message has not already been sent.
+%% @end
 send(S, Data) when not is_record(Data, gs_msg) ->
 	send(S,
-		#gs_msg {
+		#gs_msg{
 			hash = (crypto:hash(?HASH_ALG, term_to_binary(Data))),
 			data = Data
 		}
@@ -64,12 +66,13 @@ send(S, Msg) ->
 				end,
 				S#gs_state.peers
 			),
-			{S#gs_state { heard = [Msg#gs_msg.hash|S#gs_state.heard] }, sent};
+			{S#gs_state{ heard = [Msg#gs_msg.hash|S#gs_state.heard] }, sent};
 		true -> {S, ignored}
 	end.
 
 %% @doc Potentially send a message to a node, depending on state.
 %% No warning is issued for messages that cannot be sent to network peers!
+%% @end
 possibly_send(S, Peer, Msg) when is_pid(Peer) ->
 	do_send(S, Peer, Msg);
 possibly_send(S, {Name, Node} = Peer, Msg) when is_atom(Name) andalso is_atom(Node) ->
@@ -98,8 +101,7 @@ calculate_xfer_time(#gs_state { xfer_speed = undefined }, _) -> 0;
 calculate_xfer_time(S, Msg) ->
 	erlang:byte_size(term_to_binary(Msg)) div S#gs_state.xfer_speed.
 
-%% @doc Takes a gs_msg and gs_state, returning the message, if it needs to
-%% be processed.
+%% @doc Takes a gs_msg and gs_state, returning the message, if it needs to be processed.
 recv(S, Msg) ->
 	case already_heard(S, Msg) of
 		false ->
@@ -121,6 +123,7 @@ already_heard(S, Hash) ->
 
 %% @doc Ensure single message receipt on every process in a fully
 %% connected network of gossipers.
+%% @end
 fully_connected_test_() ->
 	{timeout, 20, fun() ->
 		TestPID = self(),
@@ -151,6 +154,7 @@ fully_connected_test_() ->
 
 %% @doc Ensure single message receipt on every process in a partially
 %% connected network of gossipers.
+%% @end
 partially_connected_test() ->
 	TestPID = self(),
 	BasicServer =
