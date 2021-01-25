@@ -82,7 +82,7 @@ find_current_block([Peer | Tail]) ->
 		Exc:Reason ->
 			ar:console(
 				"Failed to fetch block from peer ~s. Will retry using a different one.~n",
-				[ar_util:format_peer(peer)]
+				[ar_util:format_peer(Peer)]
 			),
 			?LOG_WARNING([{event, failed_to_fetch_block}, {exception, Exc}, {reason, Reason}]),
 			find_current_block(Tail)
