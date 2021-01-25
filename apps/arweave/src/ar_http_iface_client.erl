@@ -511,7 +511,9 @@ get_info(Peer) ->
 			method => get,
 			peer => Peer,
 			path => "/info",
-			headers => p2p_headers()
+			headers => p2p_headers(),
+			connect_timeout => 500,
+			timeout => 2 * 1000
 		})
 	of
 		{ok, {{<<"200">>, _}, _, JSON, _, _}} -> process_get_info_json(JSON);
