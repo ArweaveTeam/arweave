@@ -352,9 +352,9 @@ start(normal, _Args) ->
 		#{ config => LoggerConfigDisk, level => info }
 	),
 	LoggerFormatterDisk = #{
-		chars_limit => 512,
-		max_size => 512,
-		depth => 32,
+		%chars_limit => 512,
+		%max_size => 512,
+		%depth => 32,
 		legacy_header => false,
 		single_line => true,
 		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]

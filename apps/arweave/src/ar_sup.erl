@@ -43,10 +43,13 @@ init([]) ->
 		[ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(block_cache, [set, public, named_table]),
 	ets:new(node_state, [set, public, named_table]),
+	ets:new(ar_rating, [set, public, named_table]),
 	{ok, {{one_for_one, 5, 10}, [
 		?CHILD(ar_disksup, worker),
 		?CHILD(ar_meta_db, worker),
 		?CHILD(ar_arql_db, worker),
+		?CHILD(ar_events_sup, supervisor),
+		?CHILD(ar_rating, worker),
 		?CHILD(ar_watchdog, worker),
 		?CHILD(ar_tx_blacklist, worker),
 		?CHILD(ar_bridge, worker),
