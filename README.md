@@ -26,6 +26,8 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 - CMake
 - SQLite3 headers (libsqlite3-dev on Ubuntu)
 
+Install all of these in one line on Ubuntu with `sudo apt install erlang build-essential clang cmake libsqlite3-dev`
+
 ```sh
 $ git clone --recursive https://github.com/ArweaveTeam/arweave.git
 $ cd arweave
