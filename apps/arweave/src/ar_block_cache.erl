@@ -348,6 +348,7 @@ block_cache_test() ->
 	?assertEqual({B2_2, [B2]}, get_earliest_not_validated_from_longest_chain(bcache_test)),
 	?assertException(error, invalid_tip, mark_tip(bcache_test, block_id(B2_3))),
 	add_validated(bcache_test, B2_2),
+	?assertEqual({B2_2, validated}, get_block_and_status(bcache_test, B2_2#block.indep_hash)),
 	?assertEqual({B2_3, [B2_2, B2]}, get_earliest_not_validated_from_longest_chain(bcache_test)),
 	B3 = on_top(random_block(4), B2),
 	B3ID = block_id(B3),

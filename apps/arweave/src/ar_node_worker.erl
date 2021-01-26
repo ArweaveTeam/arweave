@@ -746,14 +746,20 @@ get_missing_txs_and_retry(BShadow, Mempool, Worker) ->
 			])
 	end.
 
-apply_validated_block(#{ cumulative_diff := CDiff } = State, B, _Blocks, _BI, _BlockTXs)
-		when B#block.cumulative_diff =< CDiff ->
-	%% The block is from the longest fork, but not the latest known block from there.
-	ar_block_cache:add_validated(block_cache, B),
-	gen_server:cast(self(), apply_block),
-	log_applied_block(B),
-	State;
-apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
+apply_validated_block(State, B, PrevBlocks, BI, BlockTXPairs) ->
+	[{_, CDiff}] = ets:lookup(node_state, cumulative_diff),
+	case B#block.cumulative_diff =< CDiff of
+		true ->
+			%% The block is from the longest fork, but not the latest known block from there.
+			ar_block_cache:add_validated(block_cache, B),
+			gen_server:cast(self(), apply_block),
+			log_applied_block(B),
+			State;
+		false ->
+			apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs)
+	end.
+
+apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	PruneDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
@@ -772,8 +778,8 @@ apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
 	gen_server:cast(self(), apply_block),
 	log_applied_block(B),
 	log_tip(B),
-	maybe_report_n_confirmations(B, BI2),
-	maybe_store_block_index(B, BI2),
+	maybe_report_n_confirmations(B, BI),
+	maybe_store_block_index(B, BI),
 	record_fork_depth(length(PrevBlocks) - 1),
 	lists:foldl(
 		fun (CurrentB, start) ->
@@ -792,8 +798,8 @@ apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
 		start,
 		lists:reverse([B | PrevBlocks])
 	),
-	RecentBI = lists:sublist(BI2, ?STORE_BLOCKS_BEHIND_CURRENT * 2),
-	ar_data_sync:add_tip_block(BlockTXPairs2, RecentBI),
+	RecentBI = lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 2),
+	ar_data_sync:add_tip_block(BlockTXPairs, RecentBI),
 	ar_header_sync:add_tip_block(B, RecentBI),
 	lists:foreach(
 		fun(PrevB) ->
@@ -807,7 +813,7 @@ apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
 	gen_server:cast(self(), {filter_mempool, maps:iterator(Map2)}),
 	lists:foreach(fun(TX) -> ar_tx_queue:drop_tx(TX) end, BlockTXs),
 	ets:insert(node_state, [
-		{block_index,			BI2},
+		{block_index,			BI},
 		{current,				B#block.indep_hash},
 		{wallet_list,			B#block.wallet_list},
 		{height,				B#block.height},
@@ -816,7 +822,7 @@ apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2) ->
 		{cumulative_diff,		B#block.cumulative_diff},
 		{last_retarget,			B#block.last_retarget},
 		{weave_size,			B#block.weave_size},
-		{block_txs_pairs,		BlockTXPairs2}
+		{block_txs_pairs,		BlockTXPairs}
 	]),
 	reset_miner(State).
 
