@@ -195,9 +195,15 @@ parse_options([{<<"transaction_whitelist_urls">>, TransactionWhitelistURLs} | _]
 	{error, {bad_type, transaction_whitelist_urls, array}, TransactionWhitelistURLs};
 
 parse_options([{<<"disk_space">>, DiskSpace} | Rest], Config) when is_integer(DiskSpace) ->
-	parse_options(Rest, Config#config{ disk_space = DiskSpace*1024*1024*1024 });
+	parse_options(Rest, Config#config{ disk_space = DiskSpace * 1024 * 1024 * 1024 });
 parse_options([{<<"disk_space">>, DiskSpace} | _], _) ->
 	{error, {bad_type, disk_space, number}, DiskSpace};
+
+parse_options([{<<"disk_space_check_frequency">>, Frequency} | Rest], Config)
+		when is_integer(Frequency) ->
+	parse_options(Rest, Config#config{ disk_space_check_frequency = Frequency * 1000 });
+parse_options([{<<"disk_space_check_frequency">>, Frequency} | _], _) ->
+	{error, {bad_type, disk_space_check_frequency, number}, Frequency};
 
 parse_options([{<<"ipfs_pin">>, false} | Rest], Config) ->
 	parse_options(Rest, Config);

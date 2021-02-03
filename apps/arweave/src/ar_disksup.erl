@@ -27,6 +27,7 @@
 
 -export([
 	start_link/0,
+	get_disk_space_check_frequency/0,
 	get_disk_data/0
 ]).
 
@@ -38,7 +39,7 @@
 	terminate/2
 ]).
 
--include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 -record(state, {timeout, os, diskdata = [], port}).
 
@@ -48,6 +49,10 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+get_disk_space_check_frequency() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.disk_space_check_frequency.
 
 get_disk_data() ->
 	gen_server:call(?MODULE, get_disk_data, infinity).
@@ -80,7 +85,7 @@ init([]) ->
 		end,
 	%% Initiate the first check.
 	self() ! timeout,
-	{ok, #state{ port = Port, os = OS, timeout = ?DISK_SPACE_CHECK_FREQUENCY_MS }}.
+	{ok, #state{ port = Port, os = OS, timeout = get_disk_space_check_frequency() }}.
 
 handle_call(get_disk_data, _From, State) ->
 	{reply, State#state.diskdata, State}.

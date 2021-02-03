@@ -12,6 +12,7 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_header_sync.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
@@ -152,7 +153,7 @@ handle_cast(check_space_alarm, State) ->
 		false ->
 			ok
 	end,
-	cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_alarm),
+	cast_after(ar_disksup:get_disk_space_check_frequency(), check_space_alarm),
 	{noreply, State};
 
 handle_cast(check_space_process_item, State) ->

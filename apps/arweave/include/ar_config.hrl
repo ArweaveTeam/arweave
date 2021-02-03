@@ -34,6 +34,9 @@
 -define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 2000).
 -endif.
 
+%% The default frequency of checking for the available disk space.
+-define(DISK_SPACE_CHECK_FREQUENCY_MS, 5 * 60 * 1000).
+
 %% Start options with default values.
 -record(config, {
 	init = false,
@@ -55,6 +58,7 @@
 	load_key = false,
 	disk_space,
 	used_space = 0,
+	disk_space_check_frequency = ?DISK_SPACE_CHECK_FREQUENCY_MS,
 	start_from_block_index = false,
 	internal_api_secret = not_set,
 	enable = [],

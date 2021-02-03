@@ -141,7 +141,18 @@ show_help() ->
 											 "If a transaction is in both lists, it is "
 											 "considered whitelisted."},
 			{"transaction_whitelist_url", "An HTTP endpoint serving a transaction whitelist."},
-			{"disk_space (num)", "Max size (in GB) for the disk partition containing the Arweave data directory (blocks, txs, etc) when the miner stops writing files to disk."},
+			{"disk_space (num)",
+				"Max size (in GB) for the disk partition containing "
+				"the Arweave data directory (blocks, txs, etc) when "
+				"the miner stops writing files to disk."},
+			{"disk_space_check_frequency (num)",
+				io_lib:format(
+					"The frequency in seconds of requesting the information "
+					"about the available disk space from the operating system, "
+					"used to decide on whether to continue syncing the historical "
+					"data or clean up some space. Default is ~B.",
+					[?DISK_SPACE_CHECK_FREQUENCY_MS div 1000]
+				)},
 			{"init", "Start a new weave."},
 			{"internal_api_secret (secret)",
 				lists:flatten(
@@ -243,7 +254,11 @@ parse_cli_args(["max_emitters", Num|Rest], C) ->
 parse_cli_args(["new_mining_key"|Rest], C)->
 	parse_cli_args(Rest, C#config { new_key = true });
 parse_cli_args(["disk_space", Size|Rest], C) ->
-	parse_cli_args(Rest, C#config { disk_space = (list_to_integer(Size)*1024*1024*1024) });
+	parse_cli_args(Rest, C#config { disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
+parse_cli_args(["disk_space_check_frequency", Frequency|Rest], C) ->
+	parse_cli_args(Rest, C#config{
+		disk_space_check_frequency = list_to_integer(Frequency) * 1000
+	});
 parse_cli_args(["load_mining_key", File|Rest], C) ->
 	parse_cli_args(Rest, C#config { load_key = File });
 parse_cli_args(["ipfs_pin" | Rest], C) ->

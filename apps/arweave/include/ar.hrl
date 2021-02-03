@@ -106,9 +106,6 @@
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
 -endif.
 
-%% @doc The frequency of checking for the available disk space.
--define(DISK_SPACE_CHECK_FREQUENCY_MS, 5 * 60 * 1000).
-
 %% @doc Length of time to wait before giving up on test(s).
 -define(TEST_TIMEOUT, 15 * 60).
 

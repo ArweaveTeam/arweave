@@ -42,6 +42,7 @@
     "http://some_whitelist"
   ],
   "disk_space": 44,
+  "disk_space_check_frequency": 10,
   "init": true,
   "internal_api_secret": "some_very_very_long_secret",
   "enable": [

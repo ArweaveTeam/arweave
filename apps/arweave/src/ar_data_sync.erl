@@ -468,7 +468,10 @@ handle_cast(check_space_update_peer_sync_records, State) ->
 		true ->
 			gen_server:cast(self(), update_peer_sync_records);
 		false ->
-			cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_update_peer_sync_records)
+			cast_after(
+				ar_disksup:get_disk_space_check_frequency(),
+				check_space_update_peer_sync_records
+			)
 	end,
 	{noreply, State};
 
@@ -527,7 +530,7 @@ handle_cast(check_space_warning, State) ->
 		true ->
 			ok
 	end,
-	cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_warning),
+	cast_after(ar_disksup:get_disk_space_check_frequency(), check_space_warning),
 	{noreply, State};
 
 handle_cast(check_space_sync_random_interval, State) ->
@@ -536,7 +539,10 @@ handle_cast(check_space_sync_random_interval, State) ->
 		true ->
 			gen_server:cast(self(), {sync_random_interval, []});
 		false ->
-			cast_after(?DISK_SPACE_CHECK_FREQUENCY_MS, check_space_sync_random_interval)
+			cast_after(
+				ar_disksup:get_disk_space_check_frequency(),
+				check_space_sync_random_interval
+			)
 	end,
 	{noreply, State};
 
