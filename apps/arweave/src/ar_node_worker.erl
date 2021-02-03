@@ -846,7 +846,7 @@ maybe_report_n_confirmations(B, BI) ->
 	case length(LastNBlocks) == N of
 		true ->
 			{H, _, _} = lists:last(LastNBlocks),
-			ar_watchdog:block_received_n_confirmations(H, B#block.height - N);
+			ar_watchdog:block_received_n_confirmations(H, B#block.height - N + 1);
 		false ->
 			do_nothing
 	end.
