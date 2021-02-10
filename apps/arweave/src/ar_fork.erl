@@ -69,5 +69,5 @@ height_2_4() ->
 	0.
 -else.
 height_2_4() ->
-	infinity.
+	633720. % Targeting 2021-02-24 11:50 UTC
 -endif.
