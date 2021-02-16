@@ -252,15 +252,16 @@ generate_block_data_segment(BDSBase, BlockIndexMerkle, TimeDependentParams) ->
 %% @doc Generate a hash, which is used to produce a block data segment
 %% when combined with the time-dependent parameters, which frequently
 %% change during mining - timestamp, last retarget timestamp, difficulty,
-%% cumulative difficulty, miner's wallet, reward pool. Also excludes
-%% the merkle root of the block index, which is hashed with the rest
-%% as the last step, to allow verifiers to quickly validate PoW against
-%% the current state.
+%% cumulative difficulty, (before the fork 2.4, also miner's wallet, reward pool).
+%% Also excludes the merkle root of the block index, which is hashed with the rest
+%% as the last step - it was used before the fork 2.4 to allow verifiers to quickly
+%% validate PoW against the current state. After the fork 2.4, the hash of the
+%% previous block prefixes the solution hash preimage of the new block.
 %% @end
 generate_block_data_segment_base(B) ->
 	case B#block.height >= ar_fork:height_2_4() of
 		true ->
-			ar_deep_hash:hash([
+			Props = [
 				integer_to_binary(B#block.height),
 				B#block.previous_block,
 				B#block.tx_root,
@@ -274,7 +275,24 @@ generate_block_data_segment_base(B) ->
 						B#block.reward_addr
 				end,
 				ar_tx:tags_to_list(B#block.tags)
-			]);
+			],
+			Props2 =
+				case B#block.height >= ar_fork:height_2_5() of
+					true ->
+						{RateDividend, RateDivisor} = B#block.usd_to_ar_rate,
+						{ScheduledRateDividend, ScheduledRateDivisor} =
+							B#block.scheduled_usd_to_ar_rate,
+						[
+							integer_to_binary(RateDividend),
+							integer_to_binary(RateDivisor),
+							integer_to_binary(ScheduledRateDividend),
+							integer_to_binary(ScheduledRateDivisor)
+							| Props
+						];
+					false ->
+						Props
+				end,
+			ar_deep_hash:hash(Props2);
 		false ->
 			ar_deep_hash:hash([
 				integer_to_binary(B#block.height),

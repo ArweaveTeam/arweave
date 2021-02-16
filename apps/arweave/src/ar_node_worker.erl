@@ -233,6 +233,13 @@ handle_info(wallets_ready, State) ->
 	ar_block_cache:initialize_from_list(block_cache, Blocks),
 	BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
+	{Rate, ScheduledRate} =
+		case B#block.height >= ar_fork:height_2_5() of
+			true ->
+				{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
+			false ->
+				{?USD_TO_AR_INITIAL_RATE, ?USD_TO_AR_INITIAL_RATE}
+		end,
 	ets:insert(node_state, [
 		{is_joined,				true},
 		{block_index,			BI},
@@ -246,7 +253,9 @@ handle_info(wallets_ready, State) ->
 		{weave_size,			B#block.weave_size},
 		{block_txs_pairs,		BlockTXPairs},
 		{block_anchors,			BlockAnchors},
-		{recent_txs_map,		RecentTXMap}
+		{recent_txs_map,		RecentTXMap},
+		{usd_to_ar_rate,		Rate},
+		{scheduled_usd_to_ar_rate, ScheduledRate}
 	]),
 	{noreply, reset_miner(State)};
 
@@ -386,7 +395,7 @@ handle_task({filter_mempool, Iterator}, State) ->
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	[{wallet_list, WalletList}] = ets:lookup(node_state, wallet_list),
 	[{height, Height}] = ets:lookup(node_state, height),
-	[{diff, Diff}] = ets:lookup(node_state, diff),
+	[{usd_to_ar_rate, Rate}] = ets:lookup(node_state, usd_to_ar_rate),
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
 	[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
@@ -401,7 +410,7 @@ handle_task({filter_mempool, Iterator}, State) ->
 					fun(TX, Acc) ->
 						case ar_tx_replay_pool:verify_tx({
 							TX,
-							Diff,
+							Rate,
 							Height,
 							BlockAnchors,
 							RecentTXMap,
@@ -670,7 +679,14 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 			PrevWalletList = PrevB#block.wallet_list,
 			PrevRewardPool = PrevB#block.reward_pool,
 			PrevHeight = PrevB#block.height,
-			case validate_wallet_list(B, PrevWalletList, PrevRewardPool, PrevHeight) of
+			Rate =
+				case PrevHeight >= ar_fork:height_2_5() of
+					true ->
+						PrevB#block.usd_to_ar_rate;
+					false ->
+						?USD_TO_AR_INITIAL_RATE
+				end,
+			case validate_wallet_list(B, PrevWalletList, PrevRewardPool, Rate, PrevHeight) of
 				error ->
 					BH = B#block.indep_hash,
 					ar_block_cache:remove(block_cache, BH),
@@ -770,8 +786,8 @@ update_block_txs_pairs2(B, [#block{ indep_hash = H }], BP) ->
 block_txs_pair(B) ->
 	{B#block.indep_hash, B#block.size_tagged_txs}.
 
-validate_wallet_list(B, WalletList, RewardPool, Height) ->
-	case ar_wallets:apply_block(B, WalletList, RewardPool, Height) of
+validate_wallet_list(B, WalletList, RewardPool, Rate, Height) ->
+	case ar_wallets:apply_block(B, WalletList, RewardPool, Rate, Height) of
 		{error, invalid_reward_pool} ->
 			?LOG_WARNING([
 				{event, received_invalid_block},
@@ -867,6 +883,13 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	gen_server:cast(self(), {filter_mempool, maps:iterator(Map2)}),
 	lists:foreach(fun(TX) -> ar_tx_queue:drop_tx(TX) end, BlockTXs),
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
+	{Rate, ScheduledRate} =
+		case B#block.height >= ar_fork:height_2_5() of
+			true ->
+				{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
+			false ->
+				{?USD_TO_AR_INITIAL_RATE, ?USD_TO_AR_INITIAL_RATE}
+		end,
 	ets:insert(node_state, [
 		{block_index,			BI},
 		{current,				B#block.indep_hash},
@@ -879,7 +902,9 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 		{weave_size,			B#block.weave_size},
 		{block_txs_pairs,		BlockTXPairs},
 		{block_anchors,			BlockAnchors},
-		{recent_txs_map,		RecentTXMap}
+		{recent_txs_map,		RecentTXMap},
+		{usd_to_ar_rate,		Rate},
+		{scheduled_usd_to_ar_rate, ScheduledRate}
 	]),
 	reset_miner(State).
 

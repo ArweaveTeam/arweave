@@ -1029,59 +1029,33 @@ estimate_tx_fee(Size, Addr) ->
 				[{'or',
 					{'==', '$1', height},
 					{'==', '$1', wallet_list},
-					{'==', '$1', diff}}], ['$_']}]
+					{'==', '$1', usd_to_ar_rate},
+					{'==', '$1', scheduled_usd_to_ar_rate}}], ['$_']}]
 		),
 	Height = proplists:get_value(height, Props),
-	Diff = proplists:get_value(diff, Props),
+	{Dividend, Divisor} = proplists:get_value(usd_to_ar_rate, Props),
+	{ScheduledDividend, ScheduledDivisor} = proplists:get_value(scheduled_usd_to_ar_rate, Props),
+	%% Of the two rates - the currently active one and the one scheduled to be
+	%% used soon - pick the one that leads to a higher fee in AR to make sure the
+	%% transaction does not become underpaid.
+	Rate =
+		case Dividend * ScheduledDivisor =< Divisor * ScheduledDividend of
+			true ->
+				{Dividend, Divisor};
+			false ->
+				{ScheduledDividend, ScheduledDivisor}
+		end,
 	RootHash = proplists:get_value(wallet_list, Props),
-	case Height + 1 >= ar_fork:height_2_4() of
-		true ->
-			estimate_tx_fee(Size, Diff, Height + 1, Addr, RootHash);
-		false ->
-			estimate_tx_fee_pre_fork_2_4(Size, Addr, RootHash, Height + 1, Diff)
-	end.
+	estimate_tx_fee(Size, Rate, Height + 1, Addr, RootHash).
 
-estimate_tx_fee(Size, Diff, Height, Addr, RootHash) ->
+estimate_tx_fee(Size, Rate, Height, Addr, RootHash) ->
 	Timestamp = os:system_time(second),
 	case Addr of
 		no_wallet ->
-			ar_tx:get_tx_fee(Size, Diff, Height, Timestamp);
+			ar_tx:get_tx_fee(Size, Rate, Height, Timestamp);
 		_ ->
 			Wallets = ar_wallets:get(RootHash, Addr),
-			ar_tx:get_tx_fee(Size, Diff, Height, Wallets, Addr, Timestamp)
-	end.
-
-estimate_tx_fee_pre_fork_2_4(Size, Addr, RootHash, Height, Diff) ->
-	%% Add a safety buffer to prevent transactions
-	%% from being rejected after a retarget when the
-	%% difficulty drops.
-	NextDiff = ar_difficulty:twice_smaller_diff(Diff),
-	Timestamp  = os:system_time(seconds),
-	Args = {Size, Diff, Height, Addr, RootHash, Timestamp},
-	CurrentDiffPrice = estimate_tx_fee_pre_fork_2_4(Args),
-	Args2 = {Size, NextDiff, Height, Addr, RootHash, Timestamp},
-	NextDiffPrice = estimate_tx_fee_pre_fork_2_4(Args2),
-	max(NextDiffPrice, CurrentDiffPrice).
-
-estimate_tx_fee_pre_fork_2_4(Args) ->
-	{Size, Diff, Height, Addr, RootHash, Timestamp} = Args,
-	case Addr of
-		no_wallet ->
-			ar_tx:get_tx_fee(
-				Size,
-				Diff,
-				Height,
-				Timestamp
-			);
-		Addr ->
-			ar_tx:get_tx_fee(
-				Size,
-				Diff,
-				Height,
-				ar_wallets:get(RootHash, Addr),
-				Addr,
-				Timestamp
-			)
+			ar_tx:get_tx_fee(Size, Rate, Height, Wallets, Addr, Timestamp)
 	end.
 
 handle_get_wallet_txs(Addr, EarliestTXID) ->
@@ -1129,14 +1103,13 @@ handle_post_tx(Req, PeerIP, TX) ->
 	end.
 
 handle_post_tx(Req, PeerIP, TX, Height) ->
-	Diff = ar_node:get_current_diff(),
 	RecentTXMap = ar_node:get_recent_txs_map(),
 	BlockAnchors = ar_node:get_block_anchors(),
 	MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
 	Wallets = ar_node:get_wallets(ar_tx:get_addresses([TX])),
 	case ar_tx_replay_pool:verify_tx({
 		TX,
-		Diff,
+		ar_node:get_current_usd_to_ar_rate(),
 		Height,
 		BlockAnchors,
 		RecentTXMap,

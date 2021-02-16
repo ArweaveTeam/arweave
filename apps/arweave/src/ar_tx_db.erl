@@ -1,12 +1,14 @@
--module(ar_tx_db).
--export([get_error_codes/1, put_error_codes/2, ensure_error/1, clear_error_codes/1]).
-
--include_lib("eunit/include/eunit.hrl").
--include_lib("arweave/include/ar.hrl").
-
-%%% Database for storing error codes for failed transactions, so that a user
+%%% @doc Database for storing error codes for failed transactions, so that a user
 %%% can get the error reason when polling the status of a transaction. The entries
 %%% have a TTL. The DB is a singleton.
+%%% @end
+-module(ar_tx_db).
+
+-export([get_error_codes/1, put_error_codes/2, ensure_error/1, clear_error_codes/1]).
+
+-include_lib("arweave/include/ar.hrl").
+
+-include_lib("eunit/include/eunit.hrl").
 
 %% @doc Put an Erlang term into the meta DB. Typically these are
 %% write-once values.
@@ -34,7 +36,9 @@ ensure_error(TXID) ->
 clear_error_codes(TXID) ->
 	ets:delete(?MODULE, TXID).
 
-%%% Test
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
 
 read_write_test() ->
 	put_error_codes(mocked_txid1, mocked_error),
@@ -60,17 +64,15 @@ tx_db_test() ->
 		{ar_wallet:to_address(Pub2), ?AR(10000), <<>>}
 	],
 	WL = maps:from_list([{A, {B, LTX}} || {A, B, LTX} <- Wallets]),
-	%% Test bad transaction
 	OrphanedTX1 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
-	BadTX = OrphanedTX1#tx { owner = Pub1, signature = <<"BAD">> },
+	BadTX = OrphanedTX1#tx{ owner = Pub1, signature = <<"BAD">> },
 	Timestamp = os:system_time(seconds),
-	?assert(not ar_tx:verify(BadTX, 8, 1, WL, Timestamp)),
+	?assert(not ar_tx:verify(BadTX, {1, 4}, 1, WL, Timestamp)),
 	Expected = {ok, ["same_owner_as_target", "tx_id_not_valid", "tx_signature_not_valid"]},
 	?assertEqual(Expected, get_error_codes(BadTX#tx.id)),
-	%% Test good transaction
 	OrphanedTX2 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
 	SignedTX = ar_tx:sign_v1(OrphanedTX2, Priv2, Pub2),
-	?assert(ar_tx:verify(SignedTX, 8, 1, WL, Timestamp)),
+	?assert(ar_tx:verify(SignedTX, {1, 4}, 1, WL, Timestamp)),
 	clear_error_codes(BadTX#tx.id),
 	clear_error_codes(SignedTX#tx.id),
 	ok.

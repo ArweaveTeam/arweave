@@ -1,10 +1,12 @@
 -module(ar_pricing).
 
 -export([
-	get_tx_fee/3,
+	get_tx_fee/4,
 	get_miner_reward_and_endowment_pool/1,
 	get_tx_fee_pre_fork_2_4/4,
-	usd_to_ar/2, usd_to_ar_pre_fork_2_4/3,
+	usd_to_ar/3,
+	recalculate_usd_to_ar_rate/1,
+	usd_to_ar_pre_fork_2_4/3,
 	get_miner_reward_and_endowment_pool_pre_fork_2_4/1
 ]).
 
@@ -29,9 +31,14 @@
 %%%===================================================================
 
 %% @doc Calculate the transaction fee.
-get_tx_fee(DataSize, Timestamp, Height) ->
+get_tx_fee(DataSize, Timestamp, Rate, Height) ->
 	Size = ?TX_SIZE_BASE + DataSize,
-	PerpetualGBStorageCost = usd_to_ar(get_perpetual_gb_cost_at_timestamp(Timestamp), Height),
+	PerpetualGBStorageCost =
+		usd_to_ar(
+			get_perpetual_gb_cost_at_timestamp(Timestamp),
+			Rate,
+			Height
+		),
 	StorageCost = max(1, PerpetualGBStorageCost div (1024 * 1024 * 1024)) * Size,
 	HashingCost = StorageCost,
 	MaintenanceCost = StorageCost + HashingCost,
@@ -39,14 +46,19 @@ get_tx_fee(DataSize, Timestamp, Height) ->
 	MaintenanceCost + MinerFeeShare.
 
 %% @doc Return the miner reward and the new endowment pool.
-get_miner_reward_and_endowment_pool({Pool, TXs, unclaimed, _, _, _}) ->
+get_miner_reward_and_endowment_pool({Pool, TXs, unclaimed, _, _, _, _}) ->
 	{0, Pool + lists:sum([TX#tx.reward || TX <- TXs])};
 get_miner_reward_and_endowment_pool(Args) ->
-	{Pool, TXs, _Addr, WeaveSize, Height, Timestamp} = Args,
+	{Pool, TXs, _Addr, WeaveSize, Height, Timestamp, Rate} = Args,
 	Inflation = trunc(ar_inflation:calculate(Height)),
 	{PoolFeeShare, MinerFeeShare} = distribute_transaction_fees(TXs),
 	BaseReward = Inflation + MinerFeeShare,
-	StorageCostPerGBPerBlock = usd_to_ar(get_gb_cost_per_block_at_timestamp(Timestamp), Height),
+	StorageCostPerGBPerBlock =
+		usd_to_ar(
+			get_gb_cost_per_block_at_timestamp(Timestamp),
+			Rate,
+			Height
+		),
 	Burden = WeaveSize * StorageCostPerGBPerBlock div (1024 * 1024 * 1024),
 	Pool2 = Pool + PoolFeeShare,
 	case BaseReward >= Burden of
@@ -94,12 +106,12 @@ get_miner_reward_and_endowment_pool_pre_fork_2_4(Args) ->
 	end.
 
 %% @doc Return the amount of AR the given number of USD is worth.
-usd_to_ar(USD, Height) when is_number(USD) ->
-	usd_to_ar({USD, 1}, Height);
-usd_to_ar({Dividend, Divisor}, Height) ->
-	InitialInflation = trunc(ar_inflation:calculate(?INITIAL_USD_PER_AR_HEIGHT(Height)())),
+usd_to_ar(USD, Rate, Height) when is_number(USD) ->
+	usd_to_ar({USD, 1}, Rate, Height);
+usd_to_ar({Dividend, Divisor}, Rate, Height) ->
+	InitialInflation = trunc(ar_inflation:calculate(?INITIAL_USD_TO_AR_HEIGHT(Height)())),
 	CurrentInflation = trunc(ar_inflation:calculate(Height)),
-	{InitialRateDividend, InitialRateDivisor} = ?USD_TO_AR_INITIAL_RATE,
+	{InitialRateDividend, InitialRateDivisor} = Rate,
 	trunc(	Dividend
 			* ?WINSTON_PER_AR
 			* CurrentInflation
@@ -108,12 +120,24 @@ usd_to_ar({Dividend, Divisor}, Height) ->
 		div InitialInflation
 		div InitialRateDivisor.
 
+recalculate_usd_to_ar_rate(#block{ height = PrevHeight } = B) ->
+	Height = PrevHeight + 1,
+	Fork_2_5 = ar_fork:height_2_5(),
+	true = Height >= Fork_2_5,
+	case Height == Fork_2_5 of
+		true ->
+			Rate = ?INITIAL_USD_TO_AR(Height),
+			{Rate, Rate};
+		false ->
+			recalculate_usd_to_ar_rate2(B)
+	end.
+
 %% @doc Return the amount of AR the given number of USD is worth.
 usd_to_ar_pre_fork_2_4(USD, Diff, Height) ->
-	InitialDiff = ar_retarget:switch_to_linear_diff(?INITIAL_USD_PER_AR_DIFF(Height)()),
+	InitialDiff = ar_retarget:switch_to_linear_diff(?INITIAL_USD_TO_AR_DIFF(Height)()),
 	MaxDiff = ar_mine:max_difficulty(),
 	DeltaP = (MaxDiff - InitialDiff) / (MaxDiff - Diff),
-	InitialInflation = ar_inflation:calculate(?INITIAL_USD_PER_AR_HEIGHT(Height)()),
+	InitialInflation = ar_inflation:calculate(?INITIAL_USD_TO_AR_HEIGHT(Height)()),
 	DeltaInflation = ar_inflation:calculate(Height) / InitialInflation,
 	erlang:trunc(
 		(USD * ?WINSTON_PER_AR * DeltaInflation) / (?INITIAL_USD_PER_AR(Height)() * DeltaP)
@@ -219,6 +243,26 @@ system_time_to_universal_time(Time, TimeUnit) ->
 	DaysFrom0To1970 = 719528,
 	SecondsPerDay = 86400,
 	calendar:gregorian_seconds_to_datetime(Seconds + (DaysFrom0To1970 * SecondsPerDay)).
+
+recalculate_usd_to_ar_rate2(#block{ height = PrevHeight } = B) ->
+	case is_usd_to_ar_rate_adjustment_height(PrevHeight + 1) of
+		false ->
+			{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
+		true ->
+			recalculate_usd_to_ar_rate3(B)
+	end.
+
+is_usd_to_ar_rate_adjustment_height(Height) ->
+	Height rem ?USD_TO_AR_ADJUSTMENT_FREQUENCY == 0.
+
+recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
+	Height = PrevHeight + 1,
+	InitialDiff = ar_retarget:switch_to_linear_diff(?INITIAL_USD_TO_AR_DIFF(Height)()),
+	MaxDiff = ar_mine:max_difficulty(),
+	InitialRate = ?INITIAL_USD_TO_AR(Height),
+	{Dividend, Divisor} = InitialRate,
+	ScheduledRate = {Dividend * (MaxDiff - Diff), Divisor * (MaxDiff - InitialDiff)},
+	{B#block.scheduled_usd_to_ar_rate, ScheduledRate}.
 
 %%%===================================================================
 %%% Tests.
