@@ -85,3 +85,52 @@ test_missing_txs_fork_recovery() ->
 	slave_mine(),
 	[{H1, _, _} | _] = wait_until_height(1),
 	?assertEqual(1, length((read_block_when_stored(H1))#block.txs)).
+
+invalid_block_with_high_cumulative_difficulty_test_() ->
+	{timeout, 20, fun test_invalid_block_with_high_cumulative_difficulty/0}.
+
+test_invalid_block_with_high_cumulative_difficulty() ->
+	%% Submit an alternative fork with valid blocks weaker than the tip and
+	%% an invalid block on top, much stronger than the tip. Make sure the node
+	%% ignores the invalid block and continues to build on top of the valid fork.
+	{_SlaveNode, B0} = slave_start(no_block),
+	{_MasterNode, B0} = start(B0),
+	disconnect_from_slave(),
+	slave_mine(),
+	[{H1, _, _} | _] = slave_wait_until_height(1),
+	connect_to_slave(),
+	ar_node:mine(),
+	[{H2, _, _} | _] = wait_until_height(1),
+	?assertNotEqual(H2, H1),
+	B1 = read_block_when_stored(H2),
+	{B2, BDS} = fake_block_with_strong_cumulative_difficulty(B1, 10000000000000000),
+	?assertMatch(
+	    {ok, {{<<"200">>, _}, _, _, _, _}},
+	    ar_http_iface_client:send_new_block({127, 0, 0, 1, 1984}, B2, BDS)
+	),
+	ar_node:mine(),
+	%% Assert the nodes have continued building on the original fork.
+	[{H3, _, _} | _] = slave_wait_until_height(2),
+	?assertNotEqual(B2#block.indep_hash, H3),
+	{_, B3} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1983}], 1),
+	?assertEqual(H2, B3#block.indep_hash).
+
+fake_block_with_strong_cumulative_difficulty(B, CDiff) ->
+	#block{
+	    indep_hash = H,
+	    height = Height,
+	    timestamp = Timestamp,
+	    nonce = Nonce,
+	    poa = #poa{ chunk = Chunk }
+	} = B,
+	B2 =
+	    B#block{
+	        height = Height + 1,
+	        cumulative_diff = CDiff,
+	        previous_block = H,
+	        hash_list_merkle = ar_block:compute_hash_list_merkle(B)
+	    },
+	BDS = ar_block:generate_block_data_segment(B2),
+	H0 = ar_weave:hash(BDS, Nonce, Height + 1),
+	B3 = B2#block{ hash = ar_mine:spora_solution_hash(H, Timestamp, H0, Chunk, Height + 1) },
+	{B3#block{ indep_hash = ar_weave:indep_hash(B3) }, BDS}.

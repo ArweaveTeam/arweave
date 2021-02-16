@@ -11,7 +11,8 @@
 	height_2_0/0,
 	height_2_2/0,
 	height_2_3/0,
-	height_2_4/0
+	height_2_4/0,
+	height_2_5/0
 ]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -70,4 +71,12 @@ height_2_4() ->
 -else.
 height_2_4() ->
 	633720. % Targeting 2021-02-24 11:50 UTC
+-endif.
+
+-ifdef(FORKS_RESET).
+height_2_5() ->
+	0.
+-else.
+height_2_5() ->
+	infinity.
 -endif.

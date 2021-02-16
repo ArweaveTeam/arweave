@@ -11,6 +11,8 @@
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc Create a genesis block.
@@ -53,7 +55,9 @@ init(WalletList, StartingDiff, RewardPool, TXs) ->
 			reward_pool = RewardPool,
 			timestamp = os:system_time(seconds),
 			poa = #poa{},
-			size_tagged_txs = SizeTaggedTXs
+			size_tagged_txs = SizeTaggedTXs,
+			usd_to_ar_rate = ?NEW_WEAVE_USD_TO_AR_RATE,
+			scheduled_usd_to_ar_rate = ?NEW_WEAVE_USD_TO_AR_RATE
 		},
 	B1 = B0#block { last_retarget = B0#block.timestamp },
 	B2 = B1#block { indep_hash = indep_hash(B1) },

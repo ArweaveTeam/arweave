@@ -14,6 +14,7 @@
 	get_wallet_list_chunk/2,
 	get_current_diff/0, get_diff/0,
 	get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
+	get_current_usd_to_ar_rate/0,
 	get_current_block_hash/0,
 	get_block_index_entry/1,
 	get_2_0_hash_of_1_0_block/1,
@@ -211,6 +212,11 @@ get_current_diff() ->
 		os:system_time(seconds),
 		LastRetarget
 	).
+
+%% @doc Get the currently estimated USD to AR exchange rate.
+get_current_usd_to_ar_rate() ->
+	[{_, Rate}] = ets:lookup(node_state, usd_to_ar_rate),
+	Rate.
 
 %% @doc Returns the difficulty of the current block (the last applied one).
 get_diff() ->

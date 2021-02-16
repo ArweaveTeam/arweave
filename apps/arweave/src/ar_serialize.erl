@@ -60,7 +60,7 @@ json_decode(JSON, Opts) ->
 
 %% @doc Convert a block record into a JSON struct.
 block_to_json_struct(
-	#block {
+	#block{
 		nonce = Nonce,
 		previous_block = PrevHash,
 		timestamp = TimeStamp,
@@ -80,7 +80,7 @@ block_to_json_struct(
 		cumulative_diff = CDiff,
 		hash_list_merkle = MR,
 		poa = POA
-	}) ->
+	} = B) ->
 	{JSONDiff, JSONCDiff} =
 		case Height >= ar_fork:height_1_8() of
 			true ->
@@ -147,7 +147,23 @@ block_to_json_struct(
 			false ->
 				JSONElements2
 		end,
-	{JSONElements3}.
+	JSONElements4 =
+		case Height >= ar_fork:height_2_5() of
+			true ->
+				{RateDividend, RateDivisor} = B#block.usd_to_ar_rate,
+				{ScheduledRateDividend, ScheduledRateDivisor} = B#block.scheduled_usd_to_ar_rate,
+				[
+					{usd_to_ar_rate,
+						[integer_to_binary(RateDividend), integer_to_binary(RateDivisor)]},
+					{scheduled_usd_to_ar_rate,
+						[integer_to_binary(ScheduledRateDividend),
+							integer_to_binary(ScheduledRateDivisor)]}
+					| JSONElements3
+				];
+			false ->
+				JSONElements3
+		end,
+	{JSONElements4}.
 
 delete_keys([], Proplist) ->
 	Proplist;
@@ -205,7 +221,20 @@ json_struct_to_block({BlockStruct}) ->
 					find_value(<<"weave_size">>, BlockStruct)
 				}
 		end,
-	#block {
+	{Rate, ScheduledRate} =
+		case Height >= ar_fork:height_2_5() of
+			true ->
+				[RateDividendBinary, RateDivisorBinary] =
+					find_value(<<"usd_to_ar_rate">>, BlockStruct),
+				[ScheduledRateDividendBinary, ScheduledRateDivisorBinary] =
+					find_value(<<"scheduled_usd_to_ar_rate">>, BlockStruct),
+				{{binary_to_integer(RateDividendBinary), binary_to_integer(RateDivisorBinary)},
+					{binary_to_integer(ScheduledRateDividendBinary),
+						binary_to_integer(ScheduledRateDivisorBinary)}};
+			false ->
+				{undefined, undefined}
+		end,
+	#block{
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
 		previous_block =
 			ar_util:decode(
@@ -240,7 +269,9 @@ json_struct_to_block({BlockStruct}) ->
 			case find_value(<<"poa">>, BlockStruct) of
 				undefined -> #poa{};
 				POAStruct -> json_struct_to_poa(POAStruct)
-			end
+			end,
+		usd_to_ar_rate = Rate,
+		scheduled_usd_to_ar_rate = ScheduledRate
 	}.
 
 %% @doc Convert a transaction record into a JSON struct.
@@ -553,7 +584,7 @@ block_roundtrip_test() ->
 	[B] = ar_weave:init(),
 	JSONStruct = jsonify(block_to_json_struct(B)),
 	BRes = json_struct_to_block(JSONStruct),
-	?assertEqual(B, BRes#block { hash_list = B#block.hash_list, size_tagged_txs = [] }).
+	?assertEqual(B, BRes#block{ hash_list = B#block.hash_list, size_tagged_txs = [] }).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
 tx_roundtrip_test() ->

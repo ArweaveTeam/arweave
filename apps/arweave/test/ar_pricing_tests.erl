@@ -41,8 +41,8 @@ unclaimed_rewards_go_to_endowment_pool_test_() ->
 	{timeout, 20, fun test_unclaimed_rewards_go_to_endowment_pool/0}.
 
 get_miner_reward_and_endowment_pool(Args) ->
-	{Pool, TXs, Addr, _WeaveSize, Height, Timestamp} = Args,
-	meck:passthrough([{Pool, TXs, Addr, ?HUGE_WEAVE_SIZE, Height, Timestamp}]).
+	{Pool, TXs, Addr, _WeaveSize, Height, Timestamp, Rate} = Args,
+	meck:passthrough([{Pool, TXs, Addr, ?HUGE_WEAVE_SIZE, Height, Timestamp, Rate}]).
 
 updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
@@ -73,7 +73,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	BI2 = wait_until_height(2),
 	B2 = ar_storage:read_block(hd(BI2)),
 	RewardPoolIncrement = B2#block.reward_pool - B1#block.reward_pool,
-	TXFee = ar_pricing:get_tx_fee(0, B2#block.timestamp, 2),
+	TXFee = ar_pricing:get_tx_fee(0, B2#block.timestamp, B1#block.usd_to_ar_rate, 2),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B2#block.reward_addr),
 	Balance2 = get_balance(RewardAddr),
 	MinerReward = Balance2 - Balance,
@@ -91,7 +91,8 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	BI3 = wait_until_height(3),
 	B3 = ar_storage:read_block(hd(BI3)),
 	RewardPoolIncrement2 = B3#block.reward_pool - B2#block.reward_pool,
-	TXFee2 = ar_pricing:get_tx_fee(byte_size(Data), B2#block.timestamp, 2),
+	TXFee2 =
+		ar_pricing:get_tx_fee(byte_size(Data), B2#block.timestamp, B1#block.usd_to_ar_rate, 2),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B3#block.reward_addr),
 	Balance3 = get_balance(RewardAddr),
 	MinerReward2 = Balance3 - Balance2,
@@ -129,7 +130,8 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	TXFee3 =
 		lists:foldl(
 			fun(Chunk, Sum) ->
-				Sum + ar_pricing:get_tx_fee(byte_size(Chunk), B4#block.timestamp, 4)
+				Rate = B3#block.usd_to_ar_rate,
+				Sum + ar_pricing:get_tx_fee(byte_size(Chunk), B4#block.timestamp, Rate, 4)
 			end,
 			0,
 			[Data2, Data3, Data4, Data5]
@@ -151,7 +153,12 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	B5 = slave_call(ar_storage, read_block, [hd(BI5)]),
 	RewardPoolIncrement4 = B5#block.reward_pool - B4#block.reward_pool,
 	TXFee4 =
-		ar_pricing:get_tx_fee(byte_size(RewardWalletTX#tx.data), B5#block.timestamp, 5),
+		ar_pricing:get_tx_fee(
+			byte_size(RewardWalletTX#tx.data),
+			B5#block.timestamp,
+			B4#block.usd_to_ar_rate,
+			5
+		),
 	?assertEqual(B4#block.weave_size + byte_size(RewardWalletTX#tx.data), B5#block.weave_size),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B5#block.reward_addr),
 	Balance5 = get_balance(RewardAddr),
@@ -183,7 +190,13 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	BI1 = wait_until_height(1),
 	B1 = ar_storage:read_block(hd(BI1)),
 	RewardPoolIncrement = B1#block.reward_pool - B0#block.reward_pool,
-	TXFee = ar_pricing:get_tx_fee(byte_size(BigChunk), B1#block.timestamp, 1),
+	TXFee =
+		ar_pricing:get_tx_fee(
+			byte_size(BigChunk),
+			B1#block.timestamp,
+			B0#block.usd_to_ar_rate,
+			1
+		),
 	Balance2 = get_balance(RewardAddr),
 	MinerReward = Balance2 - Balance,
 	?assertEqual(TXFee + trunc(ar_inflation:calculate(1)), MinerReward + RewardPoolIncrement),
@@ -211,7 +224,13 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	BI3 = wait_until_height(3),
 	B3 = ar_storage:read_block(hd(BI3)),
 	RewardPoolIncrement3 = B3#block.reward_pool - B2#block.reward_pool,
-	TXFee2 = ar_pricing:get_tx_fee(RewardWalletTX#tx.data_size, B3#block.timestamp, 3),
+	TXFee2 =
+		ar_pricing:get_tx_fee(
+			RewardWalletTX#tx.data_size,
+			B3#block.timestamp,
+			B2#block.usd_to_ar_rate,
+			3
+		),
 	Balance4 = get_balance(RewardAddr),
 	MinerReward3 = Balance4 - Balance3,
 	?assertEqual(
@@ -242,7 +261,7 @@ test_unclaimed_rewards_go_to_endowment_pool() ->
 	BI2 = wait_until_height(2),
 	B2 = ar_storage:read_block(hd(BI2)),
 	RewardPoolIncrement = B2#block.reward_pool - B1#block.reward_pool,
-	TXFee = ar_pricing:get_tx_fee(0, B2#block.timestamp, 2),
+	TXFee = ar_pricing:get_tx_fee(0, B2#block.timestamp, B1#block.usd_to_ar_rate, 2),
 	?assertEqual(TX1#tx.reward, TXFee),
 	?assertEqual(TXFee, RewardPoolIncrement),
 	%% Mine a block with four transactions. Expect the endowment pool

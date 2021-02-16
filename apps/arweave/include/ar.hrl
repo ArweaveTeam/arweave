@@ -374,7 +374,14 @@
 											% this one.
 	size_tagged_txs = unset,				% The list of {{`tx_id`, `data_root`}, `offset`}.
 											% Used internally, not gossiped.
-	poa = #poa{}							% The proof of access.
+	poa = #poa{},							% The proof of access.
+	usd_to_ar_rate,							% The estimated USD to AR conversion rate used
+											% in the pricing calculations.
+											% A tuple {Dividend, Divisor}.
+	scheduled_usd_to_ar_rate				% The estimated USD to AR conversion rate scheduled
+											% to be used a bit later, used to compute the
+											% necessary fee for the currently signed txs.
+											% A tuple {Dividend, Divisor}.
 }).
 
 %% @doc A transaction.
