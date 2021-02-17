@@ -3,7 +3,7 @@
 -export([
 	start/1, stop/1, io_thread/1,
 	validate/4, validate/3, validate_spora/9,
-	min_difficulty/1, max_difficulty/0,
+	min_difficulty/1,
 	min_spora_difficulty/1,
 	sha384_diff_to_randomx_diff/1,
 	spora_solution_hash/5,
@@ -144,31 +144,31 @@ validate_spora(BDS, Nonce, Timestamp, Height, Diff, PrevH, SearchSpaceUpperBound
 			end
 	end.
 
-%% @doc Maximum linear difficulty.
-%% Assumes 256 bit RandomX hashes.
-%% @end
-max_difficulty() ->
-	erlang:trunc(math:pow(2, 256)).
-
 -ifdef(DEBUG).
 min_difficulty(_Height) ->
 	1.
 -else.
 min_difficulty(Height) ->
-	Diff = case Height >= ar_fork:height_1_7() of
-		true ->
-			case Height >= ar_fork:height_2_4() of
-				true ->
-					min_spora_difficulty(Height);
-				false ->
-					min_randomx_difficulty()
-			end;
-		false ->
-			min_sha384_difficulty()
-	end,
+	Diff =
+		case Height >= ar_fork:height_1_7() of
+			true ->
+				case Height >= ar_fork:height_2_4() of
+					true ->
+						min_spora_difficulty(Height);
+					false ->
+						min_randomx_difficulty()
+				end;
+			false ->
+				min_sha384_difficulty()
+		end,
 	case Height >= ar_fork:height_1_8() of
 		true ->
-			ar_retarget:switch_to_linear_diff(Diff);
+			case Height >= ar_fork:height_2_5() of
+				true ->
+					ar_retarget:switch_to_linear_diff(Diff);
+				false ->
+					ar_retarget:switch_to_linear_diff_pre_fork_2_5(Diff)
+			end;
 		false ->
 			Diff
 	end.

@@ -20,7 +20,6 @@
 	get_info/1,
 	get_info/2,
 	get_peers/1,
-	get_pending_txs/1,
 	get_time/2,
 	get_height/1,
 	get_block_index/1,
@@ -511,25 +510,6 @@ get_time(Peer, Timeout) ->
 			{ok, {Time - RequestTime, Time + RequestTime + 1}};
 		Other ->
 			{error, Other}
-	end.
-
-%% @doc Retreive all valid transactions held that have not yet been mined into
-%% a block from a remote peer.
-%% @end
-get_pending_txs(Peer) ->
-	try
-		begin
-			{ok, {{200, _}, _, Body, _, _}} =
-				ar_http:req(#{
-					method => get,
-					peer => Peer,
-					path => "/tx/pending",
-					headers => p2p_headers()
-				}),
-			PendingTxs = ar_serialize:dejsonify(Body),
-			[list_to_binary(P) || P <- PendingTxs]
-		end
-	catch _:_ -> []
 	end.
 
 %% @doc Retreive information from a peer. Optionally, filter the resulting

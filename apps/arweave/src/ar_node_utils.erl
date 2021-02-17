@@ -14,6 +14,8 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 
+-include_lib("eunit/include/eunit.hrl").
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -467,3 +469,181 @@ is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
 			true
 	end.
 -endif.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+block_validation_test_() ->
+	{timeout, 20, fun test_block_validation/0}.
+
+test_block_validation() ->
+	Wallet = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
+	ar_test_node:start(B0),
+	BI0 = ar_node:get_block_index(),
+	BlockAnchors = ar_node:get_block_anchors(),
+	RecentTXMap = ar_node:get_recent_txs_map(),
+	TX =
+		ar_test_node:sign_tx(
+			Wallet,
+			#{
+				reward => ?AR(1),
+				data => crypto:strong_rand_bytes(10 * 1024 * 1024)
+			}
+		),
+	ar_test_node:assert_post_tx_to_master(TX),
+	ar_node:mine(),
+	[{H, _, _} | _] = ar_test_node:wait_until_height(1),
+	BShadow = ar_test_node:read_block_when_stored(H),
+	B = BShadow#block{ txs = ar_storage:read_tx(BShadow#block.txs) },
+	Wallets = #{ ar_wallet:to_address(Pub) => {?AR(200), <<>>} },
+	?assertEqual(valid, validate(BI0, B, B0, Wallets, BlockAnchors, RecentTXMap)),
+	?assertEqual(
+		{invalid, invalid_height},
+		validate(BI0, B#block{ height = 2 }, B0, Wallets, BlockAnchors, RecentTXMap)
+	),
+	?assertEqual(
+		{invalid, invalid_weave_size},
+		validate(
+			BI0,
+			B#block{ weave_size = B0#block.weave_size + 1 },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	?assertEqual(
+		{invalid, invalid_previous_block},
+		validate(
+			BI0,
+			B#block{ previous_block = B#block.indep_hash },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	?assertEqual(
+		{invalid, invalid_difficulty},
+		validate(
+			BI0,
+			B#block{ diff = B0#block.diff - 1 },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	?assertEqual(
+		{invalid, invalid_independent_hash},
+		validate(
+			BI0,
+			B#block{ tags = [{<<"N">>, <<"V">>}] },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	?assertEqual(
+		{invalid, invalid_wallet_list},
+		validate(
+			BI0,
+			B#block{ txs = [TX#tx{ reward = ?AR(201) }] },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	InvDataRootB = B#block{ tx_root = crypto:strong_rand_bytes(32) },
+	?assertEqual(
+		{invalid, invalid_tx_root},
+		validate(
+			BI0,
+			InvDataRootB#block{ indep_hash = ar_weave:indep_hash(InvDataRootB) },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	InvLastRetargetB = B#block{ last_retarget = B#block.timestamp },
+	?assertEqual(
+		{invalid, invalid_difficulty},
+		validate(
+			BI0,
+			InvLastRetargetB#block{ indep_hash = ar_weave:indep_hash(InvLastRetargetB) },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	InvBlockIndexRootB = B#block{ hash_list_merkle = crypto:strong_rand_bytes(32) },
+	?assertEqual(
+		{invalid, invalid_block_index_root},
+		validate(
+			BI0,
+			InvBlockIndexRootB#block{ indep_hash = ar_weave:indep_hash(InvBlockIndexRootB) },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	InvCDiffB = B#block{ cumulative_diff = B0#block.cumulative_diff * 1000 },
+	?assertEqual(
+		{invalid, invalid_cumulative_difficulty},
+		validate(
+			BI0,
+			InvCDiffB#block{ indep_hash = ar_weave:indep_hash(InvCDiffB) },
+			B0,
+			Wallets,
+			BlockAnchors,
+			RecentTXMap
+		)
+	),
+	BI1 = ar_node:get_block_index(),
+	BlockAnchors2 = ar_node:get_block_anchors(),
+	RecentTXMap2 = ar_node:get_recent_txs_map(),
+	ar_node:mine(),
+	[{H2, _, _} | _ ] = ar_test_node:wait_until_height(2),
+	BShadow2 = ar_test_node:read_block_when_stored(H2),
+	B2 = BShadow2#block{ txs = ar_storage:read_tx(BShadow2#block.txs) },
+	?assertEqual(valid, validate(BI1, B2, B, Wallets, BlockAnchors2, RecentTXMap2)),
+	?assertEqual(
+		{invalid, invalid_spora},
+		validate(BI1, B2#block{ poa = #poa{} }, B, Wallets, BlockAnchors2, RecentTXMap2)
+	),
+	?assertEqual(
+		{invalid, invalid_spora_hash},
+		validate(BI1, B2#block{ hash = <<>> }, B, Wallets, BlockAnchors2, RecentTXMap2)
+	),
+	?assertEqual(
+		{invalid, invalid_spora_hash},
+		validate(BI1, B2#block{ hash = B#block.hash }, B, Wallets, BlockAnchors2, RecentTXMap2)
+	),
+	PoA = B2#block.poa,
+	FakePoA =
+		case get_chunk(1) of
+			P when P#poa.chunk == PoA#poa.chunk ->
+				get_chunk(1 + 256 * 1024);
+			P ->
+				P
+		end,
+	?assertEqual(
+		{invalid, invalid_spora},
+		validate(BI1, B2#block{ poa = FakePoA }, B, Wallets, BlockAnchors2, RecentTXMap2)
+	).
+
+get_chunk(Byte) ->
+	{ok, {{<<"200">>, _}, _, JSON, _, _}} = ar_test_node:get_chunk(Byte),
+	#{
+		chunk := Chunk,
+		data_path := DataPath,
+		tx_path := TXPath
+	} = ar_serialize:json_map_to_chunk_proof(jiffy:decode(JSON, [return_maps])),
+	#poa{ chunk = Chunk, data_path = DataPath, tx_path = TXPath, option = 1 }.

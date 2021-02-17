@@ -57,6 +57,19 @@
 -define(RETARGET_BLOCKS, 10).
 -endif.
 
+%% We only do retarget if the time it took to mine ?RETARGET_BLOCKS is bigger than
+%% or equal to ?RETARGET_TOLERANCE_UPPER_BOUND or smaller than or equal to
+%% ?RETARGET_TOLERANCE_LOWER_BOUND.
+-define(RETARGET_TOLERANCE_UPPER_BOUND, ((?TARGET_TIME * ?RETARGET_BLOCKS) + ?TARGET_TIME)).
+
+%% We only do retarget if the time it took to mine ?RETARGET_BLOCKS is bigger than
+%% or equal to ?RETARGET_TOLERANCE_UPPER_BOUND or smaller than or equal to
+%% ?RETARGET_TOLERANCE_LOWER_BOUND.
+-define(RETARGET_TOLERANCE_LOWER_BOUND, ((?TARGET_TIME * ?RETARGET_BLOCKS) - ?TARGET_TIME)).
+
+%% We only do retarget if the time it took to mine ?RETARGET_BLOCKS is more than
+%% 1.1 times bigger or smaller than ?TARGET_TIME * ?RETARGET_BLOCKS. Was used before
+%% the fork 2.5 where we got rid of the floating point calculations.
 -define(RETARGET_TOLERANCE, 0.1).
 
 -define(JOIN_CLOCK_TOLERANCE, 15).
@@ -289,7 +302,7 @@
 -define(NUM_EMITTER_PROCESSES, 2).
 
 %% Target number of blocks per year.
--define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME/60)) ).
+-define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME / 60))).
 
 %% The adjustment of difficutly going from SHA-384 to RandomX.
 -define(RANDOMX_DIFF_ADJUSTMENT, (-14)).

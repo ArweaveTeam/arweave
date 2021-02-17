@@ -16,7 +16,8 @@
 	wait_until_height/1, assert_slave_wait_until_height/1,
 	get_tx_anchor/0, get_tx_anchor/1,
 	get_balance/1,
-	test_with_mocked_functions/2
+	test_with_mocked_functions/2,
+	read_block_when_stored/1
 ]).
 
 -define(HUGE_WEAVE_SIZE, 1000000000000000).
@@ -60,7 +61,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	%% Mine a block without transactions. Expect an inflation reward.
 	slave_mine(),
 	BI1 = wait_until_height(1),
-	B1 = ar_storage:read_block(hd(BI1)),
+	B1 = read_block_when_stored(hd(BI1)),
 	?assertEqual(0, B1#block.reward_pool),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B1#block.reward_addr),
 	Balance = get_balance(RewardAddr),
@@ -71,15 +72,16 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	assert_post_tx_to_slave(TX1),
 	slave_mine(),
 	BI2 = wait_until_height(2),
-	B2 = ar_storage:read_block(hd(BI2)),
+	B2 = read_block_when_stored(hd(BI2)),
 	RewardPoolIncrement = B2#block.reward_pool - B1#block.reward_pool,
 	TXFee = ar_pricing:get_tx_fee(0, B2#block.timestamp, B1#block.usd_to_ar_rate, 2),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B2#block.reward_addr),
 	Balance2 = get_balance(RewardAddr),
 	MinerReward = Balance2 - Balance,
 	?assertEqual(TXFee + trunc(ar_inflation:calculate(2)), MinerReward + RewardPoolIncrement),
+	{MultiplierDividend, MultiplierDivisor} = ?MINING_REWARD_MULTIPLIER,
 	?assertEqual(
-		trunc(?MINING_REWARD_MULTIPLIER * RewardPoolIncrement),
+		MultiplierDividend * RewardPoolIncrement div MultiplierDivisor,
 		MinerReward - trunc(ar_inflation:calculate(2))
 	),
 	%% Mine a block with a transaction. Expect a size-prorated data reward
@@ -89,7 +91,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	assert_post_tx_to_slave(TX2),
 	slave_mine(),
 	BI3 = wait_until_height(3),
-	B3 = ar_storage:read_block(hd(BI3)),
+	B3 = read_block_when_stored(hd(BI3)),
 	RewardPoolIncrement2 = B3#block.reward_pool - B2#block.reward_pool,
 	TXFee2 =
 		ar_pricing:get_tx_fee(byte_size(Data), B2#block.timestamp, B1#block.usd_to_ar_rate, 2),
@@ -101,7 +103,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		MinerReward2 + RewardPoolIncrement2
 	),
 	?assertEqual(
-		trunc(?MINING_REWARD_MULTIPLIER * RewardPoolIncrement2),
+		MultiplierDividend * RewardPoolIncrement2 div MultiplierDivisor,
 		MinerReward2 - trunc(ar_inflation:calculate(3))
 	),
 	%% Mine a block with four transactions from three different wallets.
@@ -125,7 +127,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	ar_storage:write_tx([TX1, TX2]),
 	ar_node:mine(),
 	BI4 = assert_slave_wait_until_height(4),
-	B4 = ar_storage:read_block(hd(BI4)),
+	B4 = read_block_when_stored(hd(BI4)),
 	RewardPoolIncrement3 = B4#block.reward_pool - B3#block.reward_pool,
 	TXFee3 =
 		lists:foldl(
@@ -150,7 +152,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	assert_post_tx_to_master(RewardWalletTX),
 	ar_node:mine(),
 	BI5 = assert_slave_wait_until_height(5),
-	B5 = slave_call(ar_storage, read_block, [hd(BI5)]),
+	B5 = slave_call(ar_test_node, read_block_when_stored, [hd(BI5)]),
 	RewardPoolIncrement4 = B5#block.reward_pool - B4#block.reward_pool,
 	TXFee4 =
 		ar_pricing:get_tx_fee(
@@ -166,7 +168,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		Balance4
 			- TXFee4
 			+ trunc(ar_inflation:calculate(5))
-			+ trunc(?MINING_REWARD_MULTIPLIER * RewardPoolIncrement4),
+			+ MultiplierDividend * RewardPoolIncrement4 div MultiplierDivisor,
 		Balance5
 	).
 
@@ -188,7 +190,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	assert_post_tx_to_slave(TX1),
 	slave_mine(),
 	BI1 = wait_until_height(1),
-	B1 = ar_storage:read_block(hd(BI1)),
+	B1 = read_block_when_stored(hd(BI1)),
 	RewardPoolIncrement = B1#block.reward_pool - B0#block.reward_pool,
 	TXFee =
 		ar_pricing:get_tx_fee(
@@ -200,16 +202,17 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	Balance2 = get_balance(RewardAddr),
 	MinerReward = Balance2 - Balance,
 	?assertEqual(TXFee + trunc(ar_inflation:calculate(1)), MinerReward + RewardPoolIncrement),
+	{MultiplierDividend, MultiplierDivisor} = ?MINING_REWARD_MULTIPLIER,
 	?assert(
 		MinerReward >
 			trunc(ar_inflation:calculate(1))
-			+ erlang:trunc(?MINING_REWARD_MULTIPLIER * RewardPoolIncrement)
+			+ MultiplierDividend * RewardPoolIncrement div MultiplierDivisor
 	),
 	?assertEqual(byte_size(TX1#tx.data), B1#block.weave_size),
 	%% Mine an empty block. Expect an inflation reward and a share of the endowment pool.
 	slave_mine(),
 	BI2 = wait_until_height(2),
-	B2 = ar_storage:read_block(hd(BI2)),
+	B2 = read_block_when_stored(hd(BI2)),
 	RewardPoolIncrement2 = B2#block.reward_pool - B1#block.reward_pool,
 	?assert(RewardPoolIncrement2 < 0),
 	Balance3 = get_balance(RewardAddr),
@@ -222,7 +225,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	assert_post_tx_to_slave(RewardWalletTX),
 	slave_mine(),
 	BI3 = wait_until_height(3),
-	B3 = ar_storage:read_block(hd(BI3)),
+	B3 = read_block_when_stored(hd(BI3)),
 	RewardPoolIncrement3 = B3#block.reward_pool - B2#block.reward_pool,
 	TXFee2 =
 		ar_pricing:get_tx_fee(
@@ -240,7 +243,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	?assert(
 		MinerReward3 >
 			trunc(ar_inflation:calculate(3))
-			+ erlang:trunc(?MINING_REWARD_MULTIPLIER * RewardPoolIncrement3)
+			+ MultiplierDividend * RewardPoolIncrement3 div MultiplierDivisor
 			- TXFee2
 	).
 
@@ -251,7 +254,7 @@ test_unclaimed_rewards_go_to_endowment_pool() ->
 	%% Mine a block without transactions. Expect no endowment pool increase.
 	ar_node:mine(),
 	BI1 = wait_until_height(1),
-	B1 = ar_storage:read_block(hd(BI1)),
+	B1 = read_block_when_stored(hd(BI1)),
 	?assertEqual(0, B1#block.reward_pool),
 	%% Mine a block with an empty transaction. Expect the endowment pool
 	%% to receive the data reward for the base tx size.
@@ -285,6 +288,6 @@ test_unclaimed_rewards_go_to_endowment_pool() ->
 		),
 	ar_node:mine(),
 	BI3 = wait_until_height(3),
-	B3 = ar_storage:read_block(hd(BI3)),
+	B3 = read_block_when_stored(hd(BI3)),
 	RewardPoolIncrement2 = B3#block.reward_pool - B2#block.reward_pool,
 	?assertEqual(TotalFee, RewardPoolIncrement2).

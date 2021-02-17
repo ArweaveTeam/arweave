@@ -7,12 +7,24 @@
 %% Assumed number of replications in the long term.
 -define(N_REPLICATIONS, 10).
 
-%% Decay rate of the storage cost in GB/year.
--define(USD_PER_GBY_DECAY_ANNUAL, 0.995). % I.e., 0.5% annual decay rate.
+%% An approximation of the natural logarithm of ?USD_PER_GBY_DECAY_ANNUAL (0.995),
+%% expressed as a decimal fraction, with the precision of math:log.
+-define(LN_USD_PER_GBY_DECAY_ANNUAL, {-5012541823544286, 1000000000000000000}).
 
-%% The estimated historical price of storing 1GB of data for a year.
--define(USD_PER_GBY_2018, 0.001045).
--define(USD_PER_GBY_2019, 0.000925).
+%% Decay rate of the storage cost in GB/year, expressed as a decimal fraction.
+-define(USD_PER_GBY_DECAY_ANNUAL, {995, 1000}). % 0.995, i.e., 0.5% annual decay rate.
+
+%% The estimated historical price of storing 1 GB of data for the year 2018,
+%% expressed as a decimal fraction.
+-define(USD_PER_GBY_2018, {1045, 1000000}). % 0.001045
+
+%% The estimated historical price of storing 1 GB of data for the year 2019,
+%% expressed as a decimal fraction.
+-define(USD_PER_GBY_2019, {925, 1000000}). % 0.000925
+
+%% The precision of computing the natural exponent as a decimal fraction,
+%% expressed as the maximal power of the argument in the Taylor series.
+-define(TX_PRICE_NATURAL_EXPONENT_DECIMAL_FRACTION_PRECISION, 9).
 
 %% USD to AR exchange rates by height defined together with INITIAL_USD_TO_AR_HEIGHT
 %% and INITIAL_USD_TO_AR_DIFF. The protocol uses these constants to estimate the
@@ -73,8 +85,9 @@ end).
 %% The USD to AR rate is re-estimated every so many blocks.
 -define(USD_TO_AR_ADJUSTMENT_FREQUENCY, 50).
 
-%% Mining reward as a proportion of the estimated transaction storage costs.
--define(MINING_REWARD_MULTIPLIER, 0.2).
+%% Mining reward as a proportion of the estimated transaction storage costs,
+%% defined as a fraction.
+-define(MINING_REWARD_MULTIPLIER, {2, 10}).
 
 %% The USD to AR exchange rate for a new chain, e.g. a testnet.
 -define(NEW_WEAVE_USD_TO_AR_RATE, {1, 4}).
