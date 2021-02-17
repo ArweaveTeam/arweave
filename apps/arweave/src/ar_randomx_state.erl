@@ -1,12 +1,13 @@
 -module(ar_randomx_state).
 
 -export([
+	init/2, init/4,
 	start/0, start_block_polling/0, reset/0,
 	hash/2,
 	randomx_state_by_height/1,
+	swap_height/1,
 	debug_server/0
 ]).
--export([init/2, init/4, swap_height/1]).
 
 -include_lib("arweave/include/ar.hrl").
 
@@ -15,6 +16,30 @@
 	key_cache,
 	next_key_gen_ahead
 }).
+
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
+
+init(BI, Peers) ->
+	CurrentHeight = length(BI) - 1,
+	SwapHeights = lists:usort([
+		swap_height(CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT),
+		swap_height(max(0, CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT))
+	]),
+	Init = fun(SwapHeight) ->
+		{ok, Key} = randomx_key(SwapHeight, BI, Peers),
+		init(whereis(?MODULE), SwapHeight, Key, erlang:system_info(schedulers_online))
+	end,
+	lists:foreach(Init, SwapHeights).
+
+init(Server, SwapHeight, Key, Threads) ->
+	ar:console(
+		"Initialising RandomX dataset for fast hashing. Swap height: ~p, Key: ~p. "
+		"The process may take several minutes.~n", [SwapHeight, ar_util:encode(Key)]
+	),
+	Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(Key, Threads)}},
+	ar:console("RandomX dataset initialisation for swap height ~p complete.~n", [SwapHeight]).
 
 start() ->
 	Pid = spawn_link(fun server/0),
@@ -52,25 +77,18 @@ randomx_state_by_height(Height) when is_integer(Height) andalso Height >= 0 ->
 			{key, Key}
 	end.
 
+swap_height(Height) ->
+	(Height div ?RANDOMX_KEY_SWAP_FREQ) * ?RANDOMX_KEY_SWAP_FREQ.
+
 debug_server() ->
 	whereis(?MODULE) ! {get_state, self()},
 	receive
 		{state, State} -> State
 	end.
 
-init(BI, Peers) ->
-	CurrentHeight = length(BI) - 1,
-	SwapHeights = lists:usort([
-		swap_height(CurrentHeight + ?STORE_BLOCKS_BEHIND_CURRENT),
-		swap_height(max(0, CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT))
-	]),
-	Init = fun(SwapHeight) ->
-		{ok, Key} = randomx_key(SwapHeight, BI, Peers),
-		init(whereis(?MODULE), SwapHeight, Key, erlang:system_info(schedulers_online))
-	end,
-	lists:foreach(Init, SwapHeights).
-
-%% PRIVATE
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
 
 server() ->
 	server(init_state()).
@@ -151,10 +169,11 @@ remove_old_randomx_states(State, CurrentHeight) ->
 		IsOutdated,
 		maps:keys(RandomxStates)
 	),
-	%% RandomX allocates the memory for the dataset internally, bypassing enif_alloc. This presumably causes
-	%% GC to be very reluctant to release the memory. Here we explicitly trigger the release. It is scheduled
-	%% to happen after some time to account for other processes possibly still using it. In case some process
-	%% is still using it, the release call will fail, leaving it for GC to handle.
+	%% RandomX allocates the memory for the dataset internally, bypassing enif_alloc.
+	%% This presumably causes GC to be very reluctant to release the memory. Here we
+	%% explicitly trigger the release. It is scheduled to happen after some time to account
+	%% for other processes possibly still using it. In case some process is still using it,
+	%% the release call will fail, leaving it for GC to handle.
 	lists:foreach(
 		fun(Key) ->
 			{_, S} = maps:get(Key, RandomxStates),
@@ -182,9 +201,6 @@ maybe_init_next(State, CurrentHeight) ->
 		_ ->
 			State
 	end.
-
-swap_height(Height) ->
-	(Height div ?RANDOMX_KEY_SWAP_FREQ) * ?RANDOMX_KEY_SWAP_FREQ.
 
 ensure_initialized(State, SwapHeight) ->
 	case maps:find(SwapHeight, State#state.randomx_states) of
@@ -219,18 +235,11 @@ init(Server, SwapHeight, Threads) ->
 			init(Server, SwapHeight, Threads)
 	end.
 
-init(Server, SwapHeight, Key, Threads) ->
-	ar:console(
-		"Initialising RandomX dataset for fast hashing. Swap height: ~p, Key: ~p. "
-		"The process may take several minutes.~n", [SwapHeight, ar_util:encode(Key)]
-	),
-	Server ! {add_randomx_state, SwapHeight, {fast, ar_mine_randomx:init_fast(Key, Threads)}},
-	ar:console("RandomX dataset initialisation for swap height ~p complete.~n", [SwapHeight]).
-
 %% @doc Return the key used in RandomX by key swap height. The key is the
 %% dependent hash from the block at the previous swap height. If RandomX is used
 %% already by the first ?RANDOMX_KEY_SWAP_FREQ blocks, then a hardcoded key is
 %% used since there is no old enough block to fetch the key from.
+%% @end
 randomx_key(SwapHeight) when SwapHeight < ?RANDOMX_KEY_SWAP_FREQ ->
 	{ok, <<"Arweave Genesis RandomX Key">>};
 randomx_key(SwapHeight) ->

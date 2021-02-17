@@ -322,10 +322,10 @@ modify_diff(Diff, 1, _Height) ->
 modify_diff(Diff, Option, Height) ->
 	case Height >= ar_fork:height_2_3() of
 		true ->
-			ar_difficulty:multiply_diff(Diff, 0.75 + 0.25 * Option);
+			ar_difficulty:multiply_diff_pre_fork_2_5(Diff, 0.75 + 0.25 * Option);
 		false ->
 			modify_diff(
-				ar_difficulty:multiply_diff(Diff, ?ALTERNATIVE_POA_DIFF_MULTIPLIER),
+				ar_difficulty:multiply_diff_pre_fork_2_5(Diff, ?ALTERNATIVE_POA_DIFF_MULTIPLIER),
 				Option - 1,
 				Height
 			)
