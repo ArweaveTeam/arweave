@@ -100,12 +100,34 @@ handle(Peer, Req, Pid) ->
 		_ ->
 			do_nothing
 	end,
-	case handle(Method, SplitPath, Req, Pid) of
+	case handle4(Method, SplitPath, Req, Pid) of
 		{Status, Hdrs, Body, HandledReq} ->
 			{Status, maps:merge(?CORS_HEADERS, Hdrs), Body, HandledReq};
 		{Status, Body, HandledReq} ->
 			{Status, ?CORS_HEADERS, Body, HandledReq}
 	end.
+
+-ifdef(TESTNET).
+handle4(<<"POST">>, [<<"mine">>], Req, _Pid) ->
+	ar_node:mine(),
+	{200, #{}, <<>>, Req};
+
+handle4(<<"GET">>, [<<"tx">>, <<"ready_for_mining">>], Req, _Pid) ->
+	{200, #{},
+			ar_serialize:jsonify(
+				lists:map(
+					fun ar_util:encode/1,
+					ar_node:get_ready_for_mining_txs([id_only])
+				)
+			),
+	Req};
+
+handle4(Method, SplitPath, Req, Pid) ->
+	handle(Method, SplitPath, Req, Pid).
+-else.
+handle4(Method, SplitPath, Req, Pid) ->
+	handle(Method, SplitPath, Req, Pid).
+-endif.
 
 %% Return network information from a given node.
 %% GET request to endpoint /info.

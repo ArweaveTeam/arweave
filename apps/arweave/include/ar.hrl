@@ -47,7 +47,7 @@
 -define(PRIV_KEY_SZ, 4096).
 
 %% The difficulty a new weave is started with.
--define(DEFAULT_DIFF, 8).
+-define(DEFAULT_DIFF, 6).
 
 -ifndef(TARGET_TIME).
 -define(TARGET_TIME, 120).
@@ -184,7 +184,9 @@
 -ifdef(DEBUG).
 -define(BASE_TX_PROPAGATION_DELAY, 0).
 -else.
+-ifndef(BASE_TX_PROPAGATION_DELAY).
 -define(BASE_TX_PROPAGATION_DELAY, 30).
+-endif.
 -endif.
 
 %% A conservative assumption of the network speed used to
