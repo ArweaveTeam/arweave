@@ -13,3 +13,10 @@ data_test_slave
 erl_crash.dump
 tags
 metrics
+blocks
+txs
+hash_lists
+wallet_lists
+wallets
+logs
+ebin
