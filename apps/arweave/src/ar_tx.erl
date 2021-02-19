@@ -331,7 +331,7 @@ is_tx_fee_sufficient(TX, Diff, Height, Wallets, Addr, Timestamp) ->
 	TX#tx.reward >= get_tx_fee(TX#tx.data_size, Diff, Height + 1, Wallets, Addr, Timestamp).
 
 %% @doc Calculate the minimum required transaction fee, including a wallet fee,
-%% if `Addr` is not in `Wallets`.
+%% if Addr is not in Wallets.
 get_tx_fee(DataSize, Diff, Height, Wallets, Addr, Timestamp) ->
 	IncludesWalletFee = Addr /= <<>> andalso maps:get(Addr, Wallets, not_found) == not_found,
 	case {Height >= ar_fork:height_2_4(), IncludesWalletFee} of

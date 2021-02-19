@@ -19,7 +19,7 @@
 
 %%% A module for managing mining of blocks on the weave,
 
-%% State record for miners
+%% State record for miners.
 -record(state, {
 	parent, % miners parent process (initiator)
 	current_block, % current block held by node

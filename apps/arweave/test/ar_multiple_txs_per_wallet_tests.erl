@@ -237,13 +237,14 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	%% Post the balance exceeding transaction again
 	%% and expect the balance exceeded error.
 	slave_call(ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
-	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} =
+	{ok, {{<<"400">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
 			peer => {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
-		}).
+		}),
+	?assertEqual({ok, ["overspend"]}, ar_tx_db:get_error_codes(ExceedBalanceTX#tx.id)).
 
 rejects_transactions_above_the_size_limit_test_() ->
 	{timeout, 60, fun test_rejects_transactions_above_the_size_limit/0}.
@@ -340,7 +341,8 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 			tags => [{<<"nonce">>, <<"1">>}]
 		}
 	),
-	{ok, {{<<"400">>, _}, _, <<"Waiting TXs exceed balance for wallet.">>, _, _}} = post_tx_to_slave(TX2),
+	{ok, {{<<"400">>, _}, _, _, _, _}} = post_tx_to_slave(TX2),
+	?assertEqual({ok, ["overspend"]}, slave_call(ar_tx_db, get_error_codes, [TX2#tx.id])),
 	slave_mine(),
 	SlaveBI = assert_slave_wait_until_height(1),
 	B1 = slave_call(ar_test_node, read_block_when_stored, [hd(SlaveBI)]),

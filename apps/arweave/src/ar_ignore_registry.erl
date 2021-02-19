@@ -15,12 +15,12 @@
 	member/1
 ]).
 
-%% @doc Put a permanent `ID` record into the registry.
+%% @doc Put a permanent ID record into the registry.
 add(ID) ->
 	ets:insert(ignored_ids, {ID, permanent}).
 
-%% @doc Put a temporary `ID` record into the registry.
-%% The record expires after `Timeout` milliseconds.
+%% @doc Put a temporary ID record into the registry.
+%% The record expires after Timeout milliseconds.
 %% @end
 add_temporary(ID, Timeout) ->
 	ets:insert(ignored_ids, {ID, temporary}),

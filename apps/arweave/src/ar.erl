@@ -540,7 +540,14 @@ docs() ->
 			fun(File) -> filename:extension(File) == ".erl" end,
 			element(2, file:list_dir("apps/arweave/src"))
 		),
-	edoc:files(["apps/arweave/src/" ++ Mod || Mod <- Mods], [{dir, "source_code_docs"}]).
+	edoc:files(
+		["apps/arweave/src/" ++ Mod || Mod <- Mods],
+		[
+			{dir, "source_code_docs"},
+			{hidden, true},
+			{private, true}
+		]
+	).
 
 %% @doc Ensure that parsing of core command line options functions correctly.
 commandline_parser_test_() ->

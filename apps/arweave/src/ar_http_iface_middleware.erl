@@ -47,6 +47,7 @@ with_arql_semaphore_req_field(Req, #{ arql_semaphore := Name }) ->
 %% reading the request's body from a process other than its handler's.
 %% This following loop function allows us to work around this
 %% limitation. (see https://github.com/ninenines/cowboy/issues/1374)
+%% @end
 loop(TimeoutRef) ->
 	receive
 		{handled, {Status, Headers, Body, HandledReq}} ->
@@ -99,22 +100,22 @@ handle(Peer, Req, Pid) ->
 			{Status, ?CORS_HEADERS, Body, HandledReq}
 	end.
 
-%% @doc Return network information from a given node.
-%% GET request to endpoint /info
+%% Return network information from a given node.
+%% GET request to endpoint /info.
 handle(<<"GET">>, [], Req, _Pid) ->
 	return_info(Req);
 
 handle(<<"GET">>, [<<"info">>], Req, _Pid) ->
 	return_info(Req);
 
-%% @doc Some load balancers use 'HEAD's rather than 'GET's to tell if a node
+%% Some load balancers use 'HEAD's rather than 'GET's to tell if a node
 %% is alive. Appease them.
 handle(<<"HEAD">>, [], Req, _Pid) ->
 	{200, #{}, <<>>, Req};
 handle(<<"HEAD">>, [<<"info">>], Req, _Pid) ->
 	{200, #{}, <<>>, Req};
 
-%% @doc Return permissive CORS headers for all endpoints
+%% Return permissive CORS headers for all endpoints.
 handle(<<"OPTIONS">>, [<<"block">>], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
@@ -130,11 +131,11 @@ handle(<<"OPTIONS">>, [<<"arql">>], Req, _Pid) ->
 handle(<<"OPTIONS">>, _, Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET">>}, <<"OK">>, Req};
 
-%% @doc Return the current universal time in seconds.
+%% Return the current universal time in seconds.
 handle(<<"GET">>, [<<"time">>], Req, _Pid) ->
 	{200, #{}, integer_to_binary(os:system_time(second)), Req};
 
-%% @doc Return all mempool transactions.
+%% Return all mempool transactions.
 %% GET request to endpoint /tx/pending.
 handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _Pid) ->
 	case ar_node:is_joined() of
@@ -152,7 +153,7 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _Pid) ->
 			Req}
 	end;
 
-%% @doc Return outgoing transaction priority queue.
+%% Return outgoing transaction priority queue.
 %% GET request to endpoint /queue.
 handle(<<"GET">>, [<<"queue">>], Req, _Pid) ->
 	{200, #{}, ar_serialize:jsonify(
@@ -163,7 +164,7 @@ handle(<<"GET">>, [<<"queue">>], Req, _Pid) ->
 			ar_tx_queue:show_queue())),
 	Req};
 
-%% @doc Return additional information about the transaction with the given identifier (hash).
+%% Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
@@ -174,8 +175,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 			handle_get_tx_status(Hash, Req)
 	end;
 
-% @doc Return a transaction specified via the the transaction id (hash)
-%% GET request to endpoint /tx/{hash}
+%% Return a transaction specified via the the transaction id (hash).
+%% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 	case get_tx_filename(Hash) of
 		{ok, Filename} ->
@@ -192,8 +193,9 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
-%% @doc Return the transaction IDs of all txs where the tags in post match the given set of key value pairs.
-%% POST request to endpoint /arql with body of request being a logical expression valid in ar_parser.
+%% Return the transaction IDs of all txs where the tags in post match the given set
+%% of key value pairs. POST request to endpoint /arql with body of request being a logical
+%% expression valid in ar_parser.
 %%
 %% Example logical expression.
 %%	{
@@ -201,7 +203,6 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 %%		expr1:	{ string | logical expression }
 %%		expr2:	{ string | logical expression }
 %%	}
-%%
 handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	case ar_node:is_joined() of
@@ -231,7 +232,8 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 			end
 	end;
 
-%% @doc Return the data field of the transaction specified via the transaction ID (hash) served as HTML.
+%% Return the data field of the transaction specified via the transaction ID (hash)
+%% served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 	case hash_to_filename(tx, Hash) of
@@ -243,8 +245,14 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 			{ok, TX} = ar_storage:read_tx_file(Filename),
 			serve_tx_html_data(Req, TX);
 		{migrated_v1, Filename} ->
-			{ok, TX} = ar_storage:read_migrated_v1_tx_file(Filename),
-			serve_tx_html_data(Req, TX)
+			case ar_storage:read_migrated_v1_tx_file(Filename) of
+				{ok, TX} ->
+					serve_tx_html_data(Req, TX);
+				{error, data_unavailable} ->
+					{404, #{}, <<>>, Req};
+				_ ->
+					{500, #{}, <<>>, Req}
+			end
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
@@ -360,13 +368,13 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 			end
 	end;
 
-%% @doc Share a new block to a peer.
+%% Share a new block to a peer.
 %% POST request to endpoint /block with the body of the request being a JSON encoded block
 %% as specified in ar_serialize.
 handle(<<"POST">>, [<<"block">>], Req, Pid) ->
 	post_block(request, {Req, Pid}, erlang:timestamp());
 
-%% @doc Generate a wallet and receive a secret key identifying it.
+%% Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
 handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
@@ -383,7 +391,7 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
-%% @doc Share a new transaction with a peer.
+%% Share a new transaction with a peer.
 %% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
 %% specified in ar_serialize.
 handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
@@ -412,7 +420,7 @@ handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
 			end
 	end;
 
-%% @doc Sign and send a tx to the network.
+%% Sign and send a tx to the network.
 %% Fetches the wallet by the provided key generated via POST /wallet.
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
@@ -469,8 +477,8 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
-%% @doc Return the list of peers held by the node.
-%% GET request to endpoint /peers
+%% Return the list of peers held by the node.
+%% GET request to endpoint /peers.
 handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 	{200, #{},
 		ar_serialize:jsonify(
@@ -483,19 +491,23 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 		),
 	Req};
 
-%% @doc Return the estimated transaction fee not including a new wallet fee.
+%% Return the estimated transaction fee not including a new wallet fee.
 %% GET request to endpoint /price/{bytes}.
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
 		true ->
-			Size = binary_to_integer(SizeInBytesBinary),
-			Fee = estimate_tx_fee(Size, no_wallet),
-			{200, #{}, integer_to_binary(Fee), Req}
+			case catch binary_to_integer(SizeInBytesBinary) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+				Size ->
+					Fee = estimate_tx_fee(Size, no_wallet),
+					{200, #{}, integer_to_binary(Fee), Req}
+			end
 	end;
 
-%% @doc Return the estimated transaction fee not including a new wallet fee.
+%% Return the estimated transaction fee not including a new wallet fee.
 %% GET request to endpoint /price/{bytes}/{address}.
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
 	case ar_node:is_joined() of
@@ -506,14 +518,18 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
 				{error, invalid} ->
 					{400, #{}, <<"Invalid address.">>, Req};
 				{ok, AddrOK} ->
-					Size = binary_to_integer(SizeInBytesBinary),
-					Fee = estimate_tx_fee(Size, AddrOK),
-					{200, #{}, integer_to_binary(Fee), Req}
+					case catch binary_to_integer(SizeInBytesBinary) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+						Size ->
+							Fee = estimate_tx_fee(Size, AddrOK),
+							{200, #{}, integer_to_binary(Fee), Req}
+					end
 			end
 	end;
 
-%% @doc Return the current hash list held by the node.
-%% GET request to endpoint /block_index
+%% Return the current hash list held by the node.
+%% GET request to endpoint /block_index.
 handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
 
@@ -531,8 +547,8 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 			Req}
 	end;
 
-%% @doc Return the current wallet list held by the node.
-%% GET request to endpoint /wallet_list
+%% Return the current wallet list held by the node.
+%% GET request to endpoint /wallet_list.
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
@@ -542,7 +558,7 @@ handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
 			process_request(get_block, [<<"hash">>, H, <<"wallet_list">>], Req)
 	end;
 
-%% @doc Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
+%% Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
 %% the given root hash. The wallet addresses are picked in the ascending alphabetical order.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash], Req, _Pid) ->
 	case ar_node:is_joined() of
@@ -552,7 +568,7 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash], Req, _Pid) ->
 			process_get_wallet_list_chunk(EncodedRootHash, first, Req)
 	end;
 
-%% @doc Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
+%% Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
 %% the given root hash, starting with the provided cursor, taken the wallet addresses
 %% are picked in the ascending alphabetical order.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid) ->
@@ -563,7 +579,7 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid
 			process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req)
 	end;
 
-%% @doc Return the balance of the given address from the wallet tree with the given root hash.
+%% Return the balance of the given address from the wallet tree with the given root hash.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
@@ -586,13 +602,13 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">
 			end
 	end;
 
-%% @doc Share your IP with another peer.
+%% Share your IP with another peer.
 %% @deprecated To make a node learn your IP, you can make any request to it.
 handle(<<"POST">>, [<<"peers">>], Req, _Pid) ->
 	{200, #{}, <<>>, Req};
 
-%% @doc Return the balance of the wallet specified via wallet_address.
-%% GET request to endpoint /wallet/{wallet_address}/balance
+%% Return the balance of the wallet specified via wallet_address.
+%% GET request to endpoint /wallet/{wallet_address}/balance.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
@@ -614,8 +630,8 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
 			end
 	end;
 
-%% @doc Return the last transaction ID (hash) for the wallet specified via wallet_address.
-%% GET request to endpoint /wallet/{wallet_address}/last_tx
+%% Return the last transaction ID (hash) for the wallet specified via wallet_address.
+%% GET request to endpoint /wallet/{wallet_address}/last_tx.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
@@ -633,7 +649,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
 			end
 	end;
 
-%% @doc Return a block anchor to use for building transactions.
+%% Return a block anchor to use for building transactions.
 handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
@@ -645,23 +661,24 @@ handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
 			{200, #{}, ar_util:encode(SuggestedAnchor), Req}
 	end;
 
-%% @doc Return transaction identifiers (hashes) for the wallet specified via wallet_address.
-%% GET request to endpoint /wallet/{wallet_address}/txs
+%% Return transaction identifiers (hashes) for the wallet specified via wallet_address.
+%% GET request to endpoint /wallet/{wallet_address}/txs.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	{Status, Headers, Body} = handle_get_wallet_txs(Addr, none),
 	{Status, Headers, Body, Req};
 
-%% @doc Return transaction identifiers (hashes) starting from the earliest_tx for the wallet
+%% Return transaction identifiers (hashes) starting from the earliest_tx for the wallet
 %% specified via wallet_address.
-%% GET request to endpoint /wallet/{wallet_address}/txs/{earliest_tx}
+%% GET request to endpoint /wallet/{wallet_address}/txs/{earliest_tx}.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	{Status, Headers, Body} = handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX)),
 	{Status, Headers, Body, Req};
 
-%% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address.
-%% GET request to endpoint /wallet/{wallet_address}/deposits
+%% Return identifiers (hashes) of transfer transactions depositing to the given
+%% wallet_address.
+%% GET request to endpoint /wallet/{wallet_address}/deposits.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
@@ -672,9 +689,9 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _Pid) ->
 			{503, #{}, <<"ArQL unavailable.">>, Req}
 	end;
 
-%% @doc Return identifiers (hashes) of transfer transactions depositing to the given wallet_address
-%% starting from the earliest_deposit.
-%% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}
+%% Return identifiers (hashes) of transfer transactions depositing to the given
+%% wallet_address starting from the earliest_deposit.
+%% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _Pid) ->
 	ar_semaphore:acquire(arql_semaphore(Req), 5000),
 	case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
@@ -692,9 +709,10 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _P
 			{503, #{}, <<"ArQL unavailable.">>, Req}
 	end;
 
-%% @doc Return the blockshadow corresponding to the indep_hash / height.
-%% GET request to endpoint /block/{height|hash}/{indep_hash|height}
-handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
+%% Return the block with the given height or hash.
+%% GET request to endpoint /block/{height|hash}/{height|hash}.
+handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid)
+		when Type == <<"height">> orelse Type == <<"hash">> ->
 	Filename =
 		case Type of
 			<<"hash">> ->
@@ -732,9 +750,9 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 		end,
 	case Filename of
 		invalid_hash ->
-			{400, #{}, <<"Invalid height.">>, Req};
-		invalid_height ->
 			{400, #{}, <<"Invalid hash.">>, Req};
+		invalid_height ->
+			{400, #{}, <<"Invalid height.">>, Req};
 		unavailable ->
 			{404, #{}, <<"Block not found.">>, Req};
 		not_joined ->
@@ -743,8 +761,9 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid) ->
 			{200, #{}, sendfile(Filename), Req}
 	end;
 
-%% @doc Return block or block field.
-handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req, _Pid) ->
+%% Return block or block field.
+handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req, _Pid)
+		when Type == <<"height">> orelse Type == <<"hash">> ->
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -757,9 +776,8 @@ handle(<<"GET">>, [<<"block">>, Type, IDBin, Field], Req, _Pid) ->
 			end
 	end;
 
-%% @doc Return the current block.
-%% GET request to endpoint /current_block
-%% GET request to endpoint /block/current
+%% Return the current block.
+%% GET request to endpoint /block/current.
 handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid) ->
 	case ar_node:get_current_block_hash() of
 		not_joined ->
@@ -772,11 +790,10 @@ handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid) ->
 handle(<<"GET">>, [<<"current_block">>], Req, Pid) ->
 	handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid);
 
-%% @doc Return a given field of the transaction specified by the transaction ID (hash).
+%% Return a given field of the transaction specified by the transaction ID (hash).
 %% GET request to endpoint /tx/{hash}/{field}
 %%
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
-%%
 handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
@@ -795,39 +812,60 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 				{Status, Filename} ->
 					case Field of
 						<<"tags">> ->
-							{ok, TX} = ar_storage:read_tx_file(Filename),
-							{200, #{}, ar_serialize:jsonify(
-								lists:map(
-									fun({Name, Value}) ->
-										{
-											[
-												{name, ar_util:encode(Name)},
-												{value, ar_util:encode(Value)}
-											]
-										}
-									end,
-									TX#tx.tags
-								)
-							), Req};
+							case ar_storage:read_tx_file(Filename) of
+								{ok, TX} ->
+									{200, #{}, ar_serialize:jsonify(
+										lists:map(
+											fun({Name, Value}) ->
+												{
+													[
+														{name, ar_util:encode(Name)},
+														{value, ar_util:encode(Value)}
+													]
+												}
+											end,
+											TX#tx.tags
+										)
+									), Req};
+								{error, enoent} ->
+									{404, #{}, <<>>, Req};
+								_ ->
+									{500, #{}, <<>>, Req}
+							end;
 						<<"data">> ->
-							{ok, TX} =
+							Result =
 								case Status of
 									ok ->
 										ar_storage:read_tx_file(Filename);
 									migrated_v1 ->
 										ar_storage:read_migrated_v1_tx_file(Filename)
 								end,
-							serve_tx_data(Req, TX);
+							case Result of
+								{ok, TX} ->
+									serve_tx_data(Req, TX);
+								{error, enoent} ->
+									{404, #{}, <<>>, Req};
+								{error, data_unavailable} ->
+									{404, #{}, <<>>, Req};
+								_ ->
+									{500, #{}, <<>>, Req}
+							end;
 						_ ->
-							{ok, JSONBlock} = file:read_file(Filename),
-							{TXJSON} = ar_serialize:dejsonify(JSONBlock),
-							Res = val_for_key(Field, TXJSON),
-							{200, #{}, Res, Req}
+							case file:read_file(Filename) of
+								{ok, JSONBlock} ->
+									{TXJSON} = ar_serialize:dejsonify(JSONBlock),
+									Res = val_for_key(Field, TXJSON),
+									{200, #{}, Res, Req};
+								{error, enoent} ->
+									{404, #{}, <<>>, Req};
+								_ ->
+									{500, #{}, <<>>, Req}
+							end
 					end
 			end
 	end;
 
-%% @doc Return the current block hieght, or 500
+%% Return the current block hieght, or 500.
 handle(Method, [<<"height">>], Req, _Pid)
 		when (Method == <<"GET">>) or (Method == <<"HEAD">>) ->
 	case ar_node:get_height() of
@@ -835,13 +873,13 @@ handle(Method, [<<"height">>], Req, _Pid)
 		H -> {200, #{}, integer_to_binary(H), Req}
 	end;
 
-%% @doc If we are given a hash with no specifier (block, tx, etc), assume that
+%% If we are given a hash with no specifier (block, tx, etc), assume that
 %% the user is requesting the data from the TX associated with that hash.
 %% Optionally allow a file extension.
 handle(<<"GET">>, [<<Hash:43/binary, MaybeExt/binary>>], Req, Pid) ->
 	handle(<<"GET">>, [<<"tx">>, Hash, <<"data.", MaybeExt/binary>>], Req, Pid);
 
-%% @doc Catch case for requests made to unknown endpoints.
+%% Catch case for requests made to unknown endpoints.
 %% Returns error code 400 - Request type not found.
 handle(_, _, Req, _Pid) ->
 	not_found(Req).
@@ -888,7 +926,9 @@ handle_get_tx_status(Hash, Req) ->
 							CurrentHeight = ar_node:get_height(),
 							%% First confirmation is when the TX is in the latest block.
 							NumberOfConfirmations = CurrentHeight - Height + 1,
-							Status = PseudoTags ++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
+							Status =
+								PseudoTags
+								++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
 							{200, #{}, ar_serialize:jsonify({Status}), Req}
 					end;
 				not_found ->
@@ -1060,6 +1100,7 @@ handle_get_wallet_txs(Addr, EarliestTXID) ->
 
 %% @doc Returns a list of all TX IDs starting with the last one to EarliestTXID (inclusive)
 %% for the same wallet.
+%% @end
 get_wallet_txs(EarliestTXID, TXIDs) ->
 	lists:reverse(get_wallet_txs(EarliestTXID, TXIDs, [])).
 
@@ -1083,25 +1124,10 @@ handle_post_tx(Req, PeerIP, TX) ->
 	end.
 
 handle_post_tx(Req, PeerIP, TX, Height) ->
-	Wallets = ar_node:get_wallets(ar_tx:get_addresses([TX])),
-	OwnerAddr = ar_wallet:to_address(TX#tx.owner),
-	case maps:get(OwnerAddr, Wallets, not_found) of
-		{Balance, _} when (TX#tx.reward + TX#tx.quantity) > Balance ->
-			?LOG_INFO([
-				{event, submitted_txs_exceed_balance},
-				{owner, ar_util:encode(OwnerAddr)},
-				{balance, Balance},
-				{tx_cost, TX#tx.reward + TX#tx.quantity}
-			]),
-			handle_post_tx_exceed_balance_response();
-		_ ->
-			handle_post_tx(Req, PeerIP, TX, Height, Wallets)
-	end.
-
-handle_post_tx(Req, PeerIP, TX, Height, Wallets) ->
 	Diff = ar_node:get_current_diff(),
 	BlockTXPairs = ar_node:get_block_txs_pairs(),
 	MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
+	Wallets = ar_node:get_wallets(ar_tx:get_addresses([TX])),
 	case ar_tx_replay_pool:verify_tx(
 		TX,
 		Diff,
@@ -1153,9 +1179,6 @@ handle_post_tx_accepted(Req, PeerIP, TX) ->
 		1 ->
 			ok
 	end.
-
-handle_post_tx_exceed_balance_response() ->
-	{error_response, {400, #{}, <<"Waiting TXs exceed balance for wallet.">>}}.
 
 handle_post_tx_verification_response() ->
 	{error_response, {400, #{}, <<"Transaction verification failed.">>}}.
@@ -1263,10 +1286,13 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 check_internal_api_secret(Req) ->
 	Reject = fun(Msg) ->
 		log_internal_api_reject(Msg, Req),
-		timer:sleep(rand:uniform(1000) + 1000), % Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
-		{reject, {421, #{}, <<"Internal API disabled or invalid internal API secret in request.">>}}
+		%% Reduce efficiency of timing attacks by sleeping randomly between 1-2s.
+		timer:sleep(rand:uniform(1000) + 1000),
+		{reject,
+			{421, #{}, <<"Internal API disabled or invalid internal API secret in request.">>}}
 	end,
-	case {ar_meta_db:get(internal_api_secret), cowboy_req:header(<<"x-internal-api-secret">>, Req)} of
+	case {ar_meta_db:get(internal_api_secret),
+			cowboy_req:header(<<"x-internal-api-secret">>, Req)} of
 		{not_set, _} ->
 			Reject("Request to disabled internal API");
 		{_Secret, _Secret} when is_binary(_Secret) ->
@@ -1283,7 +1309,7 @@ log_internal_api_reject(Msg, Req) ->
 		?LOG_WARNING("~s: IP address: ~s Path: ~p", [Msg, BinIpAddr, Path])
 	end).
 
-%% @doc Convert a blocks field with the given label into a string
+%% @doc Convert a blocks field with the given label into a string.
 block_field_to_string(<<"nonce">>, Res) -> Res;
 block_field_to_string(<<"previous_block">>, Res) -> Res;
 block_field_to_string(<<"timestamp">>, Res) -> integer_to_list(Res);
@@ -1330,8 +1356,7 @@ request_to_struct_with_blockshadow(Req, BlockJSON) ->
 			{error, {Exception, Reason}, Req}
 	end.
 
-%% @doc Generate and return an informative JSON object regarding
-%% the state of the node.
+%% @doc Generate and return an informative JSON object regarding the state of the node.
 return_info(Req) ->
 	{Time, Current} =
 		timer:tc(fun() -> ar_node:get_current_block_hash() end),
@@ -1376,8 +1401,7 @@ type_to_mf({tx, lookup_filename}) ->
 type_to_mf({block, lookup_filename}) ->
 	{ar_storage, lookup_block_filename}.
 
-%% @doc Convenience function for lists:keyfind(Key, 1, List).
-%% returns Value not {Key, Value}.
+%% @doc Convenience function for lists:keyfind(Key, 1, List). Returns Value, not {Key, Value}.
 val_for_key(K, L) ->
 	case lists:keyfind(K, 1, L) of
 		false -> false;
@@ -1386,6 +1410,7 @@ val_for_key(K, L) ->
 
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
+%% @end
 post_block(request, {Req, Pid}, ReceiveTimestamp) ->
 	OrigPeer = ar_http_util:arweave_peer(Req),
 	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
@@ -1608,22 +1633,25 @@ record_block_pre_validation_time(ReceiveTimestamp) ->
 	TimeMs = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000,
 	prometheus_histogram:observe(block_pre_validation_time, TimeMs).
 
-%% @doc Return the block hash list associated with a block.
+%% Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
 	CurrentBI = ar_node:get_block_index(),
 	case is_block_known(Type, ID, CurrentBI) of
+		{error, height_not_integer} ->
+			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
 		true ->
-			BlockHL = case Type of
-				<<"height">> ->
-					{_, BI} = lists:split(
-						length(CurrentBI) - ID,
-						CurrentBI
-					),
-					[H || {H, _, _} <- BI];
-				<<"hash">> ->
-					ar_block:generate_hash_list_for_block(ID, CurrentBI)
-			end,
+			BlockHL =
+				case Type of
+					<<"height">> ->
+						{_, BI} = lists:split(
+							length(CurrentBI) - ID,
+							CurrentBI
+						),
+						[H || {H, _, _} <- BI];
+					<<"hash">> ->
+						ar_block:generate_hash_list_for_block(ID, CurrentBI)
+				end,
 			{200, #{},
 				ar_serialize:jsonify(
 					lists:map(fun ar_util:encode/1, BlockHL)
@@ -1632,8 +1660,7 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 		false ->
 			{404, #{}, <<"Block not found.">>, Req}
 	end;
-%% @doc Return the wallet list associated with a block (as referenced by hash
-%% or height).
+%% @doc Return the wallet list associated with a block.
 process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 	MaybeFilename = case Type of
 		<<"height">> ->
@@ -1688,23 +1715,29 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 					end
 			end
 	end;
-%% @doc Return a given field for the the blockshadow corresponding to the block height, 'height'.
-%% GET request to endpoint /block/hash/{hash|height}/{field}
+%% Return a requested field of a given block.
+%% GET request to endpoint /block/hash/{hash|height}/{field}.
 %%
-%% {field} := { nonce | previous_block | timestamp | last_retarget | diff | height | hash | indep_hash
-%%				txs | hash_list | wallet_list | reward_addr | tags | reward_pool }
-%%
+%% field :: nonce | previous_block | timestamp | last_retarget | diff | height | hash |
+%%			indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
 process_request(get_block, [Type, ID, Field], Req) ->
 	case ar_meta_db:get(subfield_queries) of
 		true ->
 			case find_block(Type, ID) of
+				{error, height_not_integer} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
 				unavailable ->
 					{404, #{}, <<"Not Found.">>, Req};
 				B ->
 					{BLOCKJSON} = ar_serialize:block_to_json_struct(B),
-					{_, Res} = lists:keyfind(list_to_existing_atom(binary_to_list(Field)), 1, BLOCKJSON),
-					Result = block_field_to_string(Field, Res),
-					{200, #{}, Result, Req}
+					case catch list_to_existing_atom(binary_to_list(Field)) of
+						{'EXIT', _} ->
+							{404, #{}, <<"Not Found.">>, Req};
+						Atom ->
+							{_, Res} = lists:keyfind(Atom, 1, BLOCKJSON),
+							Result = block_field_to_string(Field, Res),
+							{200, #{}, Result, Req}
+					end
 			end;
 		_ ->
 			{421, #{}, <<"Subfield block querying is disabled on this node.">>, Req}
@@ -1750,7 +1783,10 @@ wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
 		last ->
 			jiffy:encode(#{ wallets => SerializedWallets });
 		Cursor when is_binary(Cursor) ->
-			jiffy:encode(#{ next_cursor => ar_util:encode(Cursor), wallets => SerializedWallets })
+			jiffy:encode(#{
+				next_cursor => ar_util:encode(Cursor),
+				wallets => SerializedWallets
+			})
 	end.
 
 validate_get_block_type_id(<<"height">>, ID) ->
@@ -1767,8 +1803,14 @@ validate_get_block_type_id(<<"hash">>, ID) ->
 
 %% @doc Take a block type specifier, an ID, and a BI, returning whether the
 %% given block is part of the BI.
+%% @end
 is_block_known(<<"height">>, RawHeight, BI) when is_binary(RawHeight) ->
-	is_block_known(<<"height">>, binary_to_integer(RawHeight), BI);
+	case catch binary_to_integer(RawHeight) of
+		{'EXIT', _} ->
+			{error, height_not_integer};
+		Height ->
+			is_block_known(<<"height">>, Height, BI)
+	end;
 is_block_known(<<"height">>, Height, BI) ->
 	Height < length(BI);
 is_block_known(<<"hash">>, ID, BI) ->
@@ -1785,7 +1827,12 @@ search_in_block_index(H, BI) ->
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight) ->
 	BI = ar_node:get_block_index(),
-	ar_storage:read_block(binary_to_integer(RawHeight), BI);
+	case catch binary_to_integer(RawHeight) of
+		{'EXIT', _} ->
+			{error, height_not_integer};
+		Height ->
+			ar_storage:read_block(Height, BI)
+	end;
 find_block(<<"hash">>, ID) ->
 	ar_storage:read_block(ID).
 
