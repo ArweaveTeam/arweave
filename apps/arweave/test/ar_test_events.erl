@@ -12,11 +12,12 @@ subscribe_send_cancel(Config) ->
 	% Check whether all the 'event'-processes are alive.
 	% This list should be aligned with the total number
 	% of running gen_servers by ar_events_sup
-	Processes = [network, attack, peer, mining, block, txs, access],
+	Processes = [network, attack, peer, mining, blocks, txs, chunks, access],
 	true = lists:all(fun(P) -> whereis(ar_events:event_to_process(P)) /= undefined end, Processes),
 	EventNetworkStateOnStart = sys:get_state(ar_events:event_to_process(network)),
 	ok = ar_events:subscribe(network),
 	already_subscribed = ar_events:subscribe(network),
+	[ok, ok, ok, already_subscribed] = ar_events:subscribe([peer, blocks, txs, network]),
 	ok = ar_events:send(network, 12345),
 	receive
 		{event, network, 12345} ->
