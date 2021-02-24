@@ -13,14 +13,7 @@
 ]).
 
 peer_join_leave_rejoin(_Config) ->
-	{state, Joined, _Changed, Rates, _Triggers, RatingDB} = sys:get_state(ar_rating),
-	case Joined of
-		false ->
-			true = check_network_join(),
-			{state, true, _Changed, Rates, _Triggers, RatingDB} = sys:get_state(ar_rating);
-		_ ->
-			ok
-	end,
+	{state, _Changed, _Rates, _Triggers, RatingDB} = sys:get_state(ar_rating),
 	Peer = peer1,
 	case ar_kv:get(RatingDB, term_to_binary(Peer)) of
 		not_found ->
@@ -38,8 +31,8 @@ peer_join_leave_rejoin(_Config) ->
 	Rating = case ar_kv:get(RatingDB, term_to_binary(Peer)) of
 		not_found ->
 			ct:fail("Peer is not found");
-		{ok, _} ->
-			ok;
+		{ok, RR} ->
+			binary_to_term(RR);
 		{error, E2} ->
 			ct:fail("Something went wrong ~p", [E2]);
 		WTF2 ->
@@ -53,7 +46,6 @@ peer_join_leave_rejoin(_Config) ->
 		WTF3 ->
 			ct:fail("expecting {Rating, History}. got ~p", [WTF3])
 	end,
-
 
 	% restart ar_rating process to clear the state
 	gen_server:stop(ar_rating),
@@ -69,8 +61,7 @@ peer_join_leave_rejoin(_Config) ->
 		WTF4 ->
 			ct:fail("expecting {Rating, History}. got ~p", [WTF4])
 	end,
-	% restarting process shouldn't affect 'joined' state.
-	{state, true, _Changed1, _Rates1, _Triggers1, RatingDB1} = sys:get_state(ar_rating),
+	{state, _Changed1, _Rates1, _Triggers1, RatingDB1} = sys:get_state(ar_rating),
 	% test peer leaving
 	ok = ar_events:send(peer, {left, Peer}),
 	timer:sleep(100),
@@ -89,13 +80,15 @@ peer_join_leave_rejoin(_Config) ->
 	Rating = case ar_kv:get(RatingDB1, term_to_binary(Peer)) of
 		not_found ->
 			ct:fail("Peer is not found");
-		{ok, _} ->
-			ok;
+		{ok, RR1} ->
+			binary_to_term(RR1);
 		{error, E3} ->
 			ct:fail("Something went wrong ~p", [E3]);
 		WTF6 ->
 			ct:fail("WTF ~p", [WTF6])
-	end.
+	end,
+	ok = ar_kv:delete(RatingDB1, term_to_binary(Peer)),
+	ets:delete(ar_rating, {peer, Peer}).
 
 check_rate_and_triggers(_Config) ->
 	Rates = #{
@@ -128,14 +121,7 @@ check_rate_and_triggers(_Config) ->
 	ar_rating:set_triggers(Triggers),
 	ar_rating:set_rates(Rates),
 
-	{state, Joined, _Changed, Rates, _Triggers, RatingDB} = sys:get_state(ar_rating),
-	case Joined of
-		false ->
-			true = check_network_join(),
-			{state, true, _Changed, Rates, _Triggers, RatingDB} = sys:get_state(ar_rating);
-		_ ->
-			ok
-	end,
+	{state, _Changed, Rates, _Triggers, RatingDB} = sys:get_state(ar_rating),
 	% ========================================================================================
 	% CASE accounting income requests (positive) : join peer, do some requests, check rating
 	% make sure if this peer was joined. otherwise all the events will be ignored
@@ -340,17 +326,11 @@ check_rate_and_triggers(_Config) ->
 		_ ->
 			ct:fail("peer is still online")
 	end,
+	ok = ar_kv:delete(RatingDB, term_to_binary(PeerIncReq)),
 	ok.
 
 check_get_top_n_get_banned(_Config) ->
-	{state, Joined, _Changed, Rates, _Triggers, RatingDB} = sys:get_state(ar_rating),
-	case Joined of
-		false ->
-			true = check_network_join(),
-			{state, true, _Changed, Rates, _Triggers, RatingDB} = sys:get_state(ar_rating);
-		_ ->
-			ok
-	end,
+	{state, _Changed, _Rates, _Triggers, RatingDB} = sys:get_state(ar_rating),
 
 	RateSamples = [{peerA,100,false}, {peerB,1,false}, {peerC,1,true},
 				   {peerD,200,false}, {peerE,300,true}, {peerF,250, false},
@@ -406,26 +386,12 @@ check_get_top_n_get_banned(_Config) ->
 	[{peerM,8,undefined,1984},{peerI,1000,undefined,1984},
 	 {peerE,300,undefined,1984},{peerC,1,undefined,1984}] = ar_rating:get_banned(),
 
-	% get peer info {Rating, Banned, Host, Port}.
-	{100, 0, undefined, 1984} = ar_rating:get(peerA),
+	% get peer info {Rating, Banned, Host, Port, online|offline}.
+	{100, 0, undefined, 1984, online} = ar_rating:get(peerA),
 	ok.
 
 
 %% Private functions
-
-check_network_join() ->
-	{state, Joined, _Changed, _Rates, _Triggers, _RatingDB} = sys:get_state(ar_rating),
-	check_network_join(Joined).
-check_network_join(false) ->
-	% emulate event that we joined to the arweave network. otherwise everything
-	% will be ignored
-	ar_events:send(network, joined),
-	% should be enough
-	timer:sleep(100),
-	{state, Joined, _Changed, _Rates, _Triggers, _RatingDB} = sys:get_state(ar_rating),
-	Joined;
-check_network_join(true) ->
-	true.
 
 wait_ban(Peer) ->
 	receive

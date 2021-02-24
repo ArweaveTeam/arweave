@@ -358,14 +358,13 @@ handle_info({event, peer, {Act, Kind, Request}}, State)
 handle_info({event, peer, {joined, Peer, Host, Port}}, State) ->
 	% check whether we had a peering with this Peer
 	BinPeer = term_to_binary(Peer),
-	Rating= case ar_kv:get(State#state.db, BinPeer) of
+	Rating = case ar_kv:get(State#state.db, BinPeer) of
 		not_found ->
 			R = #rating{host = Host, port = Port},
 			ok = ar_kv:put(State#state.db, BinPeer, term_to_binary(R)),
 			R;
 		{ok, R} ->
-			R1 = R#rating{host = Host, port = Port},
-			binary_to_term(R1)
+			binary_to_term(R)
 	end,
 	ets:insert(?MODULE, {{peer, Peer}, Rating}),
 	{noreply, State};
