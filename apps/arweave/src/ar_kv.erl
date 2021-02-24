@@ -197,8 +197,10 @@ select_iterator(Iterator, Filter, Result, Cmd) ->
 				_ ->
 					select_iterator(Iterator, Filter, Result, next)
 			end;
-		_ ->
-			Result
+		{error, invalid_iterator} ->
+			Result;
+		{error, Reason} ->
+			{error, Reason}
 	end.
 
 count(DB) ->

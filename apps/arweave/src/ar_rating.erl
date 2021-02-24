@@ -230,8 +230,9 @@ start_link() ->
 init([]) ->
 	State = #state{},
 	{ok, Config} = application:get_env(arweave, config),
-	Triggers = maps:merge(State#state.triggers, Config#config.triggers),
-	Rates = maps:merge(State#state.rates, Config#config.rates),
+	{RatesConfig, TriggersConfig} = Config#config.wildfire,
+	Rates = maps:merge(State#state.rates, RatesConfig),
+	Triggers = maps:merge(State#state.triggers, TriggersConfig),
 	{ok, Ref} = ar_kv:open("ratings"),
 	State1 = State#state{
 				db = Ref,
