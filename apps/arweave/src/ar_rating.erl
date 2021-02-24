@@ -71,20 +71,11 @@
 
 %% Internal state definition.
 -record(state, {
-	% Are we connected to the arweave network?
-	joined = false,
-
 	% Recompute ratings for the peers who got updates
 	% and write them into the RocksDB
 	peers_got_changes = #{},
 
 	% Rating map defines a rate for the action.
-	% Key must be a tuple with two values
-	% 	{Action, ActionType}
-	% Value just a number. Use macro definition along with 'bor' operator
-	% to enable variative value.
-	% 	MINUS_TIME - result will be decreased on a number of ms
-	% 	PLUS_TIME - result will be increased on a number of ms
 	rates = #{
 		% bonuses for incoming requests
 		{request, tx} => 10,
@@ -249,14 +240,7 @@ init([]) ->
 			},
 	ar_events:subscribe([network, peer, blocks, txs, chunks, attack]),
 	erlang:send_after(?COMPUTE_RATING_PERIOD, ?MODULE, {'$gen_cast', compute_ratings}),
-	% having at least 1 record means this process has been restarted (due to process fail)
-	% and we already joined to the arweave network
-	case ets:info(?MODULE, size) of
-		0 ->
-			{ok, State1};
-		_ ->
-			{ok, State1#state{joined = true}}
-	end.
+	{ok, State1}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -319,15 +303,6 @@ handle_cast(Msg, State) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-
-handle_info({event, network, joined}, State) ->
-	{noreply, State#state{joined = true}};
-% uncomment these lines once we implement join/leave arweave network event
-%handle_info({event, _, _}, State) when State#state.joined == false ->
-%	% ignore everything until node has joined to the arweave network
-%	{noreply, State};
-handle_info({event, network, left}, State) ->
-	{noreply, State#state{joined = false}};
 
 handle_info({event, peer, {Act, Kind, Request}}, State)
 	when is_record(Request, event_peer) ->

@@ -12,15 +12,6 @@
 	time = 0 :: non_neg_integer() % response time or request timestamp
 }).
 
--define(BASE_SHIFT, 32).
-% variative values
--define(MINUS_TIME, (1 bsl ?BASE_SHIFT)).
--define(PLUS_TIME, (1 bsl (?BASE_SHIFT+1))).
-% if you want to add yet another variative value
-% you should define it here like:
-% 	-define(YET_ANOTHER1, (1 bsl (?BASE_SHIFT+2))).
-% 	-define(YET_ANOTHER2, (1 bsl (?BASE_SHIFT+3))).
-
 % This record is using as a data structure for the 'rating' database (RocksDB)
 -record(rating, {
 	% rating value
