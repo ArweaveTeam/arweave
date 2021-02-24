@@ -374,16 +374,7 @@ handle_info({event, peer, {joined, Peer, Host, Port}}, State) ->
 handle_info({event, peer, {left, Peer}}, State) ->
 	update_rating(Peer, State#state.db),
 	ets:delete(?MODULE, {peer, Peer}),
-	case ets:info(?MODULE, size) of
-		0 ->
-			% it was the last one. now we are disconnected from
-			% the arweave network and should initiate the joining
-			% process again
-			ar_events:send(network, left),
-			{noreply, State};
-		_ ->
-			{noreply, State}
-	end;
+	{noreply, State};
 
 handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {info, Info}]),
