@@ -102,12 +102,12 @@ check_rate_and_triggers(_Config) ->
 		{request, tx} => 10,
 		{request, block} => 20,
 		{request, chunk} => 30,
-		{push, tx} => {1000, ar_rating:set_flags([?MINUS_TIME])},
-		{push, block} => {2000, ar_rating:set_flags([?MINUS_TIME])},
-		{response, tx} => {1000, ar_rating:set_flags([?MINUS_TIME])},
-		{response, block} => {2000, ar_rating:set_flags([?MINUS_TIME])},
-		{response, chunk} => {3000, ar_rating:set_flags([?MINUS_TIME])},
-		{response, any} => {1000, ar_rating:set_flags([?MINUS_TIME])},
+		{push, tx} => 1000,
+		{push, block} => 2000,
+		{response, tx} => 1000,
+		{response, block} => 2000,
+		{response, chunk} => 3000,
+		{response, any} => 1000,
 		{request, malformed} => -1000,
 		{response, malformed} => -10000,
 		{response, request_timeout} => -1000,
@@ -166,9 +166,9 @@ check_rate_and_triggers(_Config) ->
 	RateRequestTX = maps:get({request, tx}, Rates, 0),
 	RateRequestBlock = maps:get({request, block}, Rates, 0),
 	RateRequestChunk = maps:get({request, chunk}, Rates, 0),
-	PeerIncReq_rating = ar_rating:rate_with_flags(RateRequestTX, 0)
-				+ ar_rating:rate_with_flags(RateRequestBlock, 0)
-				+ ar_rating:rate_with_flags(RateRequestChunk, 0),
+	PeerIncReq_rating = ar_rating:rate_with_parameters(RateRequestTX, [{time, 0}])
+				+ ar_rating:rate_with_parameters(RateRequestBlock, [{time, 0}])
+				+ ar_rating:rate_with_parameters(RateRequestChunk, [{time, 0}]),
 	case ets:lookup(ar_rating, {peer, PeerIncReq}) of
 		[{_, Rating2}] ->
 			Influence = ar_rating:influence(Rating2),
@@ -189,7 +189,7 @@ check_rate_and_triggers(_Config) ->
 	gen_server:cast(ar_rating, compute_ratings),
 	timer:sleep(100),
 	RateMalformedRequest = maps:get({request, malformed}, Rates, 0),
-	PeerIncReqMalformed_rating = ar_rating:rate_with_flags(RateMalformedRequest, 0),
+	PeerIncReqMalformed_rating = ar_rating:rate_with_parameters(RateMalformedRequest, [{time, 0}]),
 	case ets:lookup(ar_rating, {peer, PeerIncReq}) of
 		[{_, Rating3}] ->
 			Influence1 = ar_rating:influence(Rating3),
@@ -225,9 +225,9 @@ check_rate_and_triggers(_Config) ->
 	gen_server:cast(ar_rating, compute_ratings),
 	timer:sleep(100),
 	RatePushTX = maps:get({push, tx}, Rates, 0),
-	PeerIncReqPushTX_rating = ar_rating:rate_with_flags(RatePushTX, 100)
-								+ ar_rating:rate_with_flags(RatePushTX, 1000)
-								+ ar_rating:rate_with_flags(RatePushTX, 2000),
+	PeerIncReqPushTX_rating = ar_rating:rate_with_parameters(RatePushTX, [{time, 100}])
+								+ ar_rating:rate_with_parameters(RatePushTX, [{time, 1000}])
+								+ ar_rating:rate_with_parameters(RatePushTX, [{time, 2000}]),
 	case ets:lookup(ar_rating, {peer, PeerIncReq}) of
 		[{_, Rating4}] ->
 			Influence2 = ar_rating:influence(Rating4),

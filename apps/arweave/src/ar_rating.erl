@@ -54,10 +54,9 @@
 	get/1,
 	get_banned/0,
 	get_top/1,
-	rate_with_flags/2,
+	rate_with_parameters/2,
 	get_top_joined/1,
 	influence/1,
-	set_flags/1,
 
 	set_triggers/1,
 	set_rates/1
@@ -92,12 +91,12 @@
 		{request, block} => 20,
 		{request, chunk} => 30,
 		% Rate for the push/response = Bonus - T (in ms). longer time could make this value negative
-		{push, tx} => {1000, set_flags([?MINUS_TIME])},
-		{push, block} => {2000, set_flags([?MINUS_TIME])},
-		{response, tx} => {1000, set_flags([?MINUS_TIME])},
-		{response, block} => {2000, set_flags([?MINUS_TIME])},
-		{response, chunk} => {3000, set_flags([?MINUS_TIME])},
-		{response, any} => {1000, set_flags([?MINUS_TIME])},
+		{push, tx} => 1000,
+		{push, block} => 2000,
+		{response, tx} => 1000,
+		{response, block} => 2000,
+		{response, chunk} => 3000,
+		{response, any} => 1000,
 		% penalties
 		{request, malformed} => -1000,
 		{response, malformed} => -10000,
@@ -334,10 +333,9 @@ handle_info({event, peer, {Act, Kind, Request}}, State)
 	when is_record(Request, event_peer) ->
 	Peer = Request#event_peer.peer,
 	Time = Request#event_peer.time,
-	ActRateFlags = maps:get({Act, Kind}, State#state.rates, 0),
-	Rate = rate_with_flags(ActRateFlags, Time),
+	ActRate = maps:get({Act, Kind}, State#state.rates, 0),
+	Rate = rate_with_parameters(ActRate, [{time, Time}]),
 	Trigger = maps:get({Act, Kind}, State#state.triggers, undefined),
-	?LOG_ERROR("TRIGGER T ~p", [{Trigger}]),
 	T = os:system_time(second),
 	case ets:lookup(?MODULE, {peer, Peer}) of
 		[] ->
@@ -509,24 +507,14 @@ trigger({N, P, Trigger, V}, Peer, History, T) ->
 			{0, offline}
 	end.
 
-rate_with_flags({X, F}, T) ->
-	X
-	- T*is_flag_set(F, ?MINUS_TIME)
-	+ T*is_flag_set(F, ?PLUS_TIME);
-rate_with_flags(X, _T) ->
-	% no flags
-	X.
 
-set_flags([F]) ->
-	F;
-set_flags([F|Flags]) ->
-	F band set_flags(Flags).
+rate_with_parameters(X, []) ->
+	X;
+rate_with_parameters(X, [{time, T}|Parameters]) ->
+	rate_with_parameters(X - T, Parameters);
+rate_with_parameters(X, [_Unknown | Parameters]) ->
+	rate_with_parameters(X, Parameters).
 
-is_flag_set(X, F) ->
-	case  X band F of
-		0 -> 0;
-		_ -> 1
-	end.
 
 influence(Rating) when is_record(Rating, rating) ->
 	% Compute age in days
@@ -573,31 +561,5 @@ trigger_cut_the_tail_events_test() ->
 	?assertMatch(
 		{0, [26,25,20]},
 		trigger({3, 4, test, 0}, peer1, [25,20,15,10,5,1], 26)
-	).
-
-rate_with_enabled_variative_time_test() ->
-	R0 = 100,
-	R1 = {200, set_flags([?PLUS_TIME])},
-	R2 = {300, set_flags([?MINUS_TIME])},
-	R3 = {400, set_flags([?PLUS_TIME, ?MINUS_TIME])},
-	% rate has no enabled time influence
-	?assertMatch(
-		100,
-		rate_with_flags(R0, 100)
-	),
-	% should be increased by 100
-	?assertMatch(
-		300,
-		rate_with_flags(R1, 100)
-	),
-	% should be decreased by 500
-	?assertMatch(
-		-200,
-		rate_with_flags(R2, 500)
-	),
-	% shouldn't be affected
-	?assertMatch(
-		400,
-		rate_with_flags(R3, 100)
 	).
 
