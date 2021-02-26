@@ -655,9 +655,9 @@ handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			List = ar_node:get_block_txs_pairs(),
+			List = ar_node:get_block_anchors(),
 			SuggestedAnchor =
-				element(1, lists:nth(min(length(List), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, List)),
+				lists:nth(min(length(List), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, List),
 			{200, #{}, ar_util:encode(SuggestedAnchor), Req}
 	end;
 
@@ -1125,17 +1125,19 @@ handle_post_tx(Req, PeerIP, TX) ->
 
 handle_post_tx(Req, PeerIP, TX, Height) ->
 	Diff = ar_node:get_current_diff(),
-	BlockTXPairs = ar_node:get_block_txs_pairs(),
+	RecentTXMap = ar_node:get_recent_txs_map(),
+	BlockAnchors = ar_node:get_block_anchors(),
 	MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
 	Wallets = ar_node:get_wallets(ar_tx:get_addresses([TX])),
-	case ar_tx_replay_pool:verify_tx(
+	case ar_tx_replay_pool:verify_tx({
 		TX,
 		Diff,
 		Height,
-		BlockTXPairs,
+		BlockAnchors,
+		RecentTXMap,
 		MempoolTXs,
 		Wallets
-	) of
+	}) of
 		{invalid, tx_verification_failed} ->
 			handle_post_tx_verification_response();
 		{invalid, last_tx_in_mempool} ->

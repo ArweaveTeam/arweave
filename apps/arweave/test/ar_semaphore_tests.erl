@@ -59,10 +59,10 @@ wait_for_two_processes_at_a_time_test_() ->
 		end),
 		?assert(receive _ -> false after 100 -> true end),
 		?assert(receive p1_done -> true after 150 -> false end),
-		?assert(receive p2_done -> true after 50 -> false end),
+		?assert(receive p2_done -> true after 100 -> false end),
 		?assert(receive _ -> false after 100 -> true end),
 		?assert(receive p3_done -> true after 150 -> false end),
-		?assert(receive p4_done -> true after 50 -> false end)
+		?assert(receive p4_done -> true after 100 -> false end)
 	end).
 
 with_semaphore_(Name, Value, Fun) ->

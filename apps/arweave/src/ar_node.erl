@@ -18,7 +18,7 @@
 	get_block_index_entry/1,
 	get_2_0_hash_of_1_0_block/1,
 	is_joined/0,
-	get_block_txs_pairs/0,
+	get_block_anchors/0, get_recent_txs_map/0,
 	mine/0,
 	add_tx/1,
 	add_peers/1,
@@ -217,12 +217,19 @@ get_diff() ->
 	[{diff, Diff}] = ets:lookup(node_state, diff),
 	Diff.
 
-%% @doc Returns transaction identifiers from the last ?MAX_TX_ANCHOR_DEPTH
-%% blocks grouped by block hash.
+%% @doc Returns a list of block anchors corrsponding to the current state -
+%% the hashes of the recent blocks that can be used in transactions as anchors.
 %% @end
-get_block_txs_pairs() ->
-	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
-	BlockTXPairs.
+get_block_anchors() ->
+	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
+	BlockAnchors.
+
+%% @doc Return a map TXID -> ok containing all the recent transaction identifiers.
+%% Used for preventing replay attacks.
+%% @end
+get_recent_txs_map() ->
+	[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
+	RecentTXMap.
 
 %% @doc Return memory pool size
 get_mempool_size() ->

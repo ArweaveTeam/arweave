@@ -211,6 +211,8 @@ handle_info(wallets_ready, State) ->
 	Current = element(1, hd(BI)),
 	B = hd(Blocks),
 	ar_block_cache:initialize_from_list(block_cache, Blocks),
+	BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
+	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
 	ets:insert(node_state, [
 		{is_joined,				true},
 		{block_index,			BI},
@@ -222,7 +224,9 @@ handle_info(wallets_ready, State) ->
 		{cumulative_diff,		B#block.cumulative_diff},
 		{last_retarget,			B#block.last_retarget},
 		{weave_size,			B#block.weave_size},
-		{block_txs_pairs,		[block_txs_pair(Block) || Block <- Blocks]}
+		{block_txs_pairs,		BlockTXPairs},
+		{block_anchors,			BlockAnchors},
+		{recent_txs_map,		RecentTXMap}
 	]),
 	{noreply, reset_miner(State)};
 
@@ -357,7 +361,8 @@ handle_task({filter_mempool, Iterator}, State) ->
 	[{height, Height}] = ets:lookup(node_state, height),
 	[{diff, Diff}] = ets:lookup(node_state, diff),
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
+	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
+	[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 	{ok, List, NextIterator} = take_mempool_chunk(Iterator, ?FILTER_MEMPOOL_CHUNK_SIZE),
 	case List of
 		[] ->
@@ -367,14 +372,15 @@ handle_task({filter_mempool, Iterator}, State) ->
 			InvalidTXs =
 				lists:foldl(
 					fun(TX, Acc) ->
-						case ar_tx_replay_pool:verify_tx(
+						case ar_tx_replay_pool:verify_tx({
 							TX,
 							Diff,
 							Height,
-							BlockTXPairs,
+							BlockAnchors,
+							RecentTXMap,
 							#{},
 							Wallets
-						) of
+						}) of
 							valid ->
 								Acc;
 							{invalid, _Reason} ->
@@ -410,6 +416,24 @@ handle_task(Msg, State) ->
 		{message, Msg}
 	]),
 	{noreply, State}.
+
+get_block_anchors_and_recent_txs_map(BlockTXPairs) ->
+	lists:foldr(
+		fun({BH, L}, {Acc1, Acc2}) ->
+			Acc3 =
+				lists:foldl(
+					fun({{TXID, _}, _}, Acc4) ->
+						%% We use a map instead of a set here because it is faster.
+						maps:put(TXID, ok, Acc4)
+					end,
+					Acc2,
+					L
+				),
+			{[BH | Acc1], Acc3}
+		end,
+		{[], #{}},
+		lists:sublist(BlockTXPairs, ?MAX_TX_ANCHOR_DEPTH)
+	).
 
 %% @doc Handle the gossip receive results.
 handle_gossip({_NewGS, {new_block, _Peer, _Height, BShadow, _BDS, _Timestamp}}, State) ->
@@ -634,7 +658,10 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 					BI2 = update_block_index(B, PrevBlocks, BI),
 					BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
 					BlockTXPairs3 = tl(BlockTXPairs2),
-					case ar_node_utils:validate(tl(BI2), B2, PrevB, Wallets, BlockTXPairs3) of
+					{BlockAnchors, RecentTXMap} =
+						get_block_anchors_and_recent_txs_map(BlockTXPairs3),
+					case ar_node_utils:validate(
+							tl(BI2), B2, PrevB, Wallets, BlockAnchors, RecentTXMap) of
 						{invalid, Reason} ->
 							?LOG_WARNING([
 								{event, received_invalid_block},
@@ -812,6 +839,7 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	[{tx_statuses, Map2}] = ets:lookup(node_state, tx_statuses),
 	gen_server:cast(self(), {filter_mempool, maps:iterator(Map2)}),
 	lists:foreach(fun(TX) -> ar_tx_queue:drop_tx(TX) end, BlockTXs),
+	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
 	ets:insert(node_state, [
 		{block_index,			BI},
 		{current,				B#block.indep_hash},
@@ -822,7 +850,9 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 		{cumulative_diff,		B#block.cumulative_diff},
 		{last_retarget,			B#block.last_retarget},
 		{weave_size,			B#block.weave_size},
-		{block_txs_pairs,		BlockTXPairs}
+		{block_txs_pairs,		BlockTXPairs},
+		{block_anchors,			BlockAnchors},
+		{recent_txs_map,		RecentTXMap}
 	]),
 	reset_miner(State).
 
@@ -884,7 +914,8 @@ start_mining(StateIn) ->
 	} = StateIn,
 	[{block_index, BI}] = ets:lookup(node_state, block_index),
 	[{height, Height}] = ets:lookup(node_state, height),
-	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
+	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
+	[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 	[{current, Current}] = ets:lookup(node_state, current),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	POA =
@@ -924,7 +955,8 @@ start_mining(StateIn) ->
 				RewardAddr,
 				Tags,
 				ar_node_worker,
-				BlockTXPairs,
+				BlockAnchors,
+				RecentTXMap,
 				BI
 			}),
 			?LOG_INFO([{event, started_mining}]),

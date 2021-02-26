@@ -105,7 +105,7 @@ fetch_block(Peers, Height) ->
 	end.
 
 fetch_previous_blocks(Peer, BShadow, ReceiveTimestamp) ->
-	HL = [BH || {BH, _} <- ar_node:get_block_txs_pairs()],
+	HL = ar_node:get_block_anchors(),
 	case fetch_previous_blocks2(Peer, BShadow, HL) of
 		{ok, FetchedBlocks} ->
 			submit_fetched_blocks(FetchedBlocks, Peer, ReceiveTimestamp),

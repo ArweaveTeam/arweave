@@ -7,7 +7,7 @@
 	apply_txs/3,
 	update_wallets/4,
 	get_miner_reward_and_endowment_pool/1,
-	validate/5,
+	validate/6,
 	calculate_delay/1
 ]).
 
@@ -102,7 +102,7 @@ get_miner_reward_and_endowment_pool(Args) ->
 %% the source and destination addresses and the reward wallet from the previous block,
 %% and the mapping between block hashes and transaction identifiers of the recent blocks.
 %% @end
-validate(BI, NewB, B, Wallets, BlockTXPairs) ->
+validate(BI, NewB, B, Wallets, BlockAnchors, RecentTXMap) ->
 	?LOG_INFO(
 		[
 			{event, validating_block},
@@ -111,7 +111,7 @@ validate(BI, NewB, B, Wallets, BlockTXPairs) ->
 	),
 	case timer:tc(
 		fun() ->
-			do_validate(BI, NewB, B, Wallets, BlockTXPairs)
+			do_validate(BI, NewB, B, Wallets, BlockAnchors, RecentTXMap)
 		end
 	) of
 		{TimeTaken, valid} ->
@@ -211,36 +211,39 @@ update_recipient_balance(
 			maps:put(To, {OldBalance + Qty, LastTX}, Wallets)
 	end.
 
-do_validate(BI, NewB, OldB, Wallets, BlockTXPairs) ->
-	validate_block(height, {BI, NewB, OldB, Wallets, BlockTXPairs}).
+do_validate(BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap) ->
+	validate_block(height, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}).
 
-validate_block(height, {BI, NewB, OldB, Wallets, BlockTXPairs}) ->
+validate_block(height, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	case ar_block:verify_height(NewB, OldB) of
 		false ->
 			{invalid, invalid_height};
 		true ->
-			validate_block(weave_size, {BI, NewB, OldB, Wallets, BlockTXPairs})
+			validate_block(weave_size, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
-validate_block(weave_size, {BI, #block{ txs = TXs } = NewB, OldB, Wallets, BlockTXPairs}) ->
+validate_block(
+	weave_size,
+	{BI, #block{ txs = TXs } = NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
+) ->
 	case ar_block:verify_weave_size(NewB, OldB, TXs) of
 		false ->
 			{invalid, invalid_weave_size};
 		true ->
-			validate_block(previous_block, {BI, NewB, OldB, Wallets, BlockTXPairs})
+			validate_block(previous_block, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
-validate_block(previous_block, {BI, NewB, OldB, Wallets, BlockTXPairs}) ->
+validate_block(previous_block, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	case ar_block:verify_previous_block(NewB, OldB) of
 		false ->
 			{invalid, invalid_previous_block};
 		true ->
 			case NewB#block.height >= ar_fork:height_2_4() of
 				true ->
-					validate_block(spora, {BI, NewB, OldB, Wallets, BlockTXPairs});
+					validate_block(spora, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
 				false ->
-					validate_block(poa, {BI, NewB, OldB, Wallets, BlockTXPairs})
+					validate_block(poa, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 			end
 	end;
-validate_block(spora, {BI, NewB, OldB, Wallets, BlockTXPairs}) ->
+validate_block(spora, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	BDS = ar_block:generate_block_data_segment(NewB),
 	#block{
 		nonce = Nonce,
@@ -257,30 +260,36 @@ validate_block(spora, {BI, NewB, OldB, Wallets, BlockTXPairs}) ->
 		false ->
 			{invalid, invalid_spora};
 		{true, Hash} ->
-			validate_block(difficulty, {BI, NewB, OldB, Wallets, BlockTXPairs});
+			validate_block(difficulty, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
 		{true, _} ->
 			{invalid, invalid_spora_hash};
 		true ->
 			%% The weave is small so far, no solution hash yet.
-			validate_block(difficulty, {BI, NewB, OldB, Wallets, BlockTXPairs})
+			validate_block(difficulty, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
-validate_block(poa, {BI, NewB = #block{ poa = POA }, OldB, Wallets, BlockTXPairs}) ->
+validate_block(
+	poa,
+	{BI, NewB = #block{ poa = POA }, OldB, Wallets, BlockAnchors, RecentTXMap}
+) ->
 	case ar_poa:validate(OldB#block.indep_hash, OldB#block.weave_size, BI, POA) of
 		false ->
 			{invalid, invalid_poa};
 		true ->
-			validate_block(difficulty, {BI, NewB, OldB, Wallets, BlockTXPairs})
+			validate_block(difficulty, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
-validate_block(difficulty, {BI, NewB, OldB, Wallets, BlockTXPairs}) ->
+validate_block(difficulty, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	case ar_retarget:validate_difficulty(NewB, OldB) of
 		false ->
 			{invalid, invalid_difficulty};
 		true ->
 			case NewB#block.height >= ar_fork:height_2_4() of
 				false ->
-					validate_block(pow, {BI, NewB, OldB, Wallets, BlockTXPairs});
+					validate_block(pow, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
 				true ->
-					validate_block(independent_hash, {BI,  NewB, OldB, Wallets, BlockTXPairs})
+					validate_block(
+						independent_hash,
+						{BI,  NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
+					)
 			end
 	end;
 validate_block(
@@ -290,7 +299,8 @@ validate_block(
 		NewB = #block{ nonce = Nonce, height = Height, diff = Diff, poa = POA },
 		OldB,
 		Wallets,
-		BlockTXPairs
+		BlockAnchors,
+		RecentTXMap
 	}
 ) ->
 	POW = ar_weave:hash(
@@ -306,19 +316,22 @@ validate_block(
 				false ->
 					{invalid, invalid_pow_hash};
 				true ->
-					validate_block(independent_hash, {BI,  NewB, OldB, Wallets, BlockTXPairs})
+					validate_block(
+						independent_hash,
+						{BI,  NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
+					)
 			end
 	end;
-validate_block(independent_hash, {BI, NewB, OldB, Wallets, BlockTXPairs}) ->
+validate_block(independent_hash, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	case ar_weave:indep_hash(NewB) == NewB#block.indep_hash of
 		false ->
 			{invalid, invalid_independent_hash};
 		true ->
-			validate_block(wallet_list, {BI, NewB, OldB, Wallets, BlockTXPairs})
+			validate_block(wallet_list, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
 validate_block(
 	wallet_list,
-	{BI, #block{ txs = TXs } = NewB, OldB, Wallets, BlockTXPairs}
+	{BI, #block{ txs = TXs } = NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
 ) ->
 	RewardPool = OldB#block.reward_pool,
 	Height = OldB#block.height,
@@ -327,14 +340,17 @@ validate_block(
 		true ->
 			{invalid, invalid_wallet_list};
 		false ->
-			validate_block(block_field_sizes, {BI, NewB, OldB, Wallets, BlockTXPairs})
+			validate_block(
+				block_field_sizes,
+				{BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
+			)
 	end;
-validate_block(block_field_sizes, {BI, NewB, OldB, Wallets, BlockTXPairs}) ->
+validate_block(block_field_sizes, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	case ar_block:block_field_size_limit(NewB) of
 		false ->
 			{invalid, invalid_field_size};
 		true ->
-			validate_block(txs, {BI, NewB, OldB, Wallets, BlockTXPairs})
+			validate_block(txs, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
 validate_block(
 	txs,
@@ -343,12 +359,12 @@ validate_block(
 		NewB = #block{ timestamp = Timestamp, height = Height, diff = Diff, txs = TXs },
 		OldB,
 		Wallets,
-		BlockTXPairs
+		BlockAnchors,
+		RecentTXMap
 	}
 ) ->
-	case ar_tx_replay_pool:verify_block_txs(
-		TXs, Diff, Height - 1, Timestamp, Wallets, BlockTXPairs
-	) of
+	Args = {TXs, Diff, Height - 1, Timestamp, Wallets, BlockAnchors, RecentTXMap},
+	case ar_tx_replay_pool:verify_block_txs(Args) of
 		invalid ->
 			{invalid, invalid_txs};
 		valid ->

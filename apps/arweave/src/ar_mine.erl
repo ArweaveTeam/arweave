@@ -24,7 +24,8 @@
 	parent, % miners parent process (initiator)
 	current_block, % current block held by node
 	candidate_block = not_set, % the product of mining
-	block_txs_pairs, % list of {BH, TXIDs} pairs for latest ?MAX_TX_ANCHOR_DEPTH blocks
+	block_anchors, % list of block hashes of the latest ?MAX_TX_ANCHOR_DEPTH blocks
+	recent_txs_map, % a map TXID -> ok of the txs of the latest ?MAX_TX_ANCHOR_DEPTH blocks
 	poa, % proof of access
 	txs, % the set of txs to be mined
 	timestamp, % the block timestamp used for the mining
@@ -54,7 +55,7 @@
 
 %% @doc Spawns a new mining process and returns its PID.
 start(Args) ->
-	{CurrentB, POA, TXs, RewardAddr, Tags, Parent, BlockTXPairs, BI} = Args,
+	{CurrentB, POA, TXs, RewardAddr, Tags, Parent, BlockAnchors, RecentTXMap, BI} = Args,
 	CurrentHeight = CurrentB#block.height,
 	CandidateB = #block{
 		height = CurrentHeight + 1,
@@ -74,7 +75,8 @@ start(Args) ->
 			reward_addr = RewardAddr,
 			tags = Tags,
 			max_miners = ar_meta_db:get(max_miners),
-			block_txs_pairs = BlockTXPairs,
+			block_anchors = BlockAnchors,
+			recent_txs_map = RecentTXMap,
 			started_at = erlang:timestamp(),
 			candidate_block = CandidateB,
 			txs = TXs,
@@ -184,7 +186,8 @@ update_txs(
 	S = #state {
 		current_block = CurrentB,
 		data_segment_duration = BDSGenerationDuration,
-		block_txs_pairs = BlockTXPairs,
+		block_anchors = BlockAnchors,
+		recent_txs_map = RecentTXMap,
 		reward_addr = RewardAddr,
 		candidate_block = #block{ height = Height } = CandidateB,
 		txs = TXs
@@ -193,14 +196,15 @@ update_txs(
 	NextBlockTimestamp = next_block_timestamp(BDSGenerationDuration),
 	NextDiff = calc_diff(CurrentB, NextBlockTimestamp),
 	ValidTXs =
-		ar_tx_replay_pool:pick_txs_to_mine(
-			BlockTXPairs,
+		ar_tx_replay_pool:pick_txs_to_mine({
+			BlockAnchors,
+			RecentTXMap,
 			CurrentB#block.height,
 			NextDiff,
 			NextBlockTimestamp,
 			ar_wallets:get(CurrentB#block.wallet_list, ar_tx:get_addresses(TXs)),
 			TXs
-		),
+		}),
 	NewBlockSize =
 		lists:foldl(
 			fun(TX, Acc) ->
@@ -846,7 +850,7 @@ test_basic() ->
 	ar_node:mine(),
 	BI = ar_test_node:wait_until_height(1),
 	B1 = ar_storage:read_block(hd(BI)),
-	start({B1, B1#block.poa, [], unclaimed, [], self(), [], BI}),
+	start({B1, B1#block.poa, [], unclaimed, [], self(), [], #{}, BI}),
 	assert_mine_output(B1, B1#block.poa, []).
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
@@ -871,6 +875,7 @@ test_timestamp_refresh() ->
 			[],
 			self(),
 			[],
+			#{},
 			[ar_util:block_index_entry_from_block(B0)]
 		}),
 		{_, MinedTimestamp} = assert_mine_output(B, POA, TXs),
@@ -904,7 +909,7 @@ test_excludes_no_longer_valid_txs() ->
 			reward => ar_tx:get_tx_fee(0, Diff, 10, Wallets, <<>>, Now)
 		}),
 		TXs = [ValidTX, InvalidTX],
-		start({B, #poa{}, TXs, unclaimed, [], self(), [{B#block.indep_hash, []}], BI}),
+		start({B, #poa{}, TXs, unclaimed, [], self(), [B#block.indep_hash], #{}, BI}),
 		receive
 			{work_complete, _BH, MinedB, MinedTXs, _BDS, _POA} ->
 				{ValidTX, Now, MinedB#block.timestamp, MinedTXs}
@@ -935,7 +940,7 @@ start_stop_test() ->
 	{_Node, _} = ar_test_node:start(B),
 	BI = ar_test_node:wait_until_height(0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
-	PID = start({B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], BI}),
+	PID = start({B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], #{}, BI}),
 	timer:sleep(500),
 	assert_alive(PID),
 	stop(PID),

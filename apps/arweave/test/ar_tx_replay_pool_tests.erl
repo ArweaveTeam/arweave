@@ -7,8 +7,8 @@
 verify_block_txs_test() ->
 	Key1 = ar_wallet:new(),
 	Key2 = ar_wallet:new(),
-	Hashes = generate_hashes(),
-	EmptyBlockTXPairs = block_txs_pairs(Hashes),
+	RandomBlockAnchors =
+		[crypto:strong_rand_bytes(32) || _ <- lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)],
 	Timestamp = os:system_time(seconds),
 	Diff = random_diff(),
 	BlockAnchorTXAtForkHeight = tx(Key1, fee(Diff, ar_fork:height_2_0(), Timestamp), <<"hash">>),
@@ -20,7 +20,8 @@ verify_block_txs_test() ->
 			txs => [tx(Key1, fee(Diff, ar_fork:height_2_0(), Timestamp), <<"hash">>)],
 			height => ar_fork:height_2_0(),
 			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_2_0(), Timestamp))],
-			block_txs_pairs => [{<<"hash">>, []}],
+			block_anchors => [<<"hash">>],
+			recent_txs_map => #{},
 			expected_result => valid
 		},
 		#{
@@ -28,7 +29,8 @@ verify_block_txs_test() ->
 			txs => [tx(Key1, fee(Diff, ar_fork:height_2_0() + 1, Timestamp), <<"hash">>)],
 			height => ar_fork:height_2_0() + 1,
 			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_2_0() + 1, Timestamp))],
-			block_txs_pairs => [{<<"hash">>, []}],
+			block_anchors => [<<"hash">>],
+			recent_txs_map => #{},
 			expected_result => valid
 		},
 		#{
@@ -37,12 +39,13 @@ verify_block_txs_test() ->
 				tx(
 					Key1,
 					fee(Diff, ar_fork:height_2_0(), Timestamp),
-					lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, Hashes)
+					crypto:strong_rand_bytes(32)
 				)
 			],
 			height => ar_fork:height_2_0(),
 			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_2_0(), Timestamp))],
-			block_txs_pairs => EmptyBlockTXPairs,
+			block_anchors => RandomBlockAnchors,
+			recent_txs_map => #{},
 			expected_result => invalid
 		},
 		#{
@@ -56,7 +59,8 @@ verify_block_txs_test() ->
 				wallet(Key1, fee(Diff, ar_fork:height_2_0(), Timestamp)),
 				wallet(Key2, fee(Diff, ar_fork:height_2_0(), Timestamp))
 			],
-			block_txs_pairs => [],
+			block_anchors => [],
+			recent_txs_map => #{},
 			expected_result => valid
 		},
 		#{
@@ -70,7 +74,8 @@ verify_block_txs_test() ->
 				wallet(Key1, fee(Diff, ar_fork:height_2_0() + 1, Timestamp)),
 				wallet(Key2, fee(Diff, ar_fork:height_2_0() + 1, Timestamp))
 			],
-			block_txs_pairs => [],
+			block_anchors => [],
+			recent_txs_map => #{},
 			expected_result => valid
 		},
 		#{
@@ -81,7 +86,8 @@ verify_block_txs_test() ->
 			],
 			height => ar_fork:height_2_0(),
 			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_2_0(), Timestamp))],
-			block_txs_pairs => [],
+			block_anchors => [],
+			recent_txs_map => #{},
 			expected_result => invalid
 		},
 		#{
@@ -89,7 +95,8 @@ verify_block_txs_test() ->
 			txs => make_tx_chain(Key1, Diff, ar_fork:height_2_0(), Timestamp),
 			height => ar_fork:height_2_0(),
 			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_2_0(), Timestamp))],
-			block_txs_pairs => [],
+			block_anchors => [],
+			recent_txs_map => #{},
 			expected_result => invalid
 		},
 		#{
@@ -101,7 +108,8 @@ verify_block_txs_test() ->
 			height => ar_fork:height_2_0(),
 			wallet_list =>
 				[wallet(Key1, erlang:trunc(1.5 * fee(Diff, ar_fork:height_2_0(), Timestamp)))],
-			block_txs_pairs => [],
+			block_anchors => [],
+			recent_txs_map => #{},
 			expected_result => invalid
 		},
 		#{
@@ -109,7 +117,8 @@ verify_block_txs_test() ->
 			txs => [BlockAnchorTXAtForkHeight, BlockAnchorTXAtForkHeight],
 			height => ar_fork:height_2_0(),
 			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_2_0(), Timestamp))],
-			block_txs_pairs => [],
+			block_anchors => [],
+			recent_txs_map => #{},
 			expected_result => invalid
 		},
 		#{
@@ -117,7 +126,8 @@ verify_block_txs_test() ->
 			txs => [BlockAnchorTXAfterForkHeight, BlockAnchorTXAfterForkHeight],
 			height => ar_fork:height_2_0() + 1,
 			wallet_list => [wallet(Key1, 2 * fee(Diff, ar_fork:height_2_0() + 1, Timestamp))],
-			block_txs_pairs => [],
+			block_anchors => [],
+			recent_txs_map => #{},
 			expected_result => invalid
 		},
 		#{
@@ -125,14 +135,12 @@ verify_block_txs_test() ->
 			txs => [BlockAnchorTXAtForkHeight],
 			height => ar_fork:height_2_0(),
 			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_2_0(), Timestamp))],
-			block_txs_pairs =>
-				[
-					{<<"hash">>, []},
-					{<<"otherhash">>, [
-						{{<<"txid">>, <<>>}, 1},
-						{{<<"txid2">>, <<>>}, 2},
-						{{BlockAnchorTXAtForkHeight#tx.id, <<>>}, 3}]}
-				],
+			block_anchors => [<<"hash">>, <<"otherhash">>],
+			recent_txs_map => #{
+				<<"txid">> => ok,
+				<<"txid2">> => ok,
+				BlockAnchorTXAtForkHeight#tx.id => ok
+			},
 			expected_result => invalid
 		},
 		#{
@@ -140,14 +148,12 @@ verify_block_txs_test() ->
 			txs => [BlockAnchorTXAfterForkHeight],
 			height => ar_fork:height_2_0() + 1,
 			wallet_list => [wallet(Key1, fee(Diff, ar_fork:height_2_0() + 1, Timestamp))],
-			block_txs_pairs =>
-				[
-					{<<"hash">>, []},
-					{<<"otherhash">>, [
-						{{<<"txid">>, <<>>}, 1},
-						{{<<"txid2">>, <<>>}, 2},
-						{{BlockAnchorTXAfterForkHeight#tx.id, <<>>}, 3}]}
-				],
+			block_anchors => [<<"hash">>, <<"otherhash">>],
+			recent_txs_map => #{
+				<<"txid">> => ok,
+				<<"txid2">> => ok,
+				BlockAnchorTXAfterForkHeight#tx.id => ok
+			},
 			expected_result => invalid
 		}
 	],
@@ -157,40 +163,44 @@ verify_block_txs_test() ->
 			txs := TXs,
 			height := Height,
 			wallet_list := WL,
-			block_txs_pairs := BlockTXPairs,
+			block_anchors := BlockAnchors,
+			recent_txs_map := RecentTXMap,
 			expected_result := ExpectedResult
 		}) ->
 			Wallets = maps:from_list([{A, {B, LTX}} || {A, B, LTX} <- WL]),
 			?assertEqual(
 				ExpectedResult,
-				ar_tx_replay_pool:verify_block_txs(
+				ar_tx_replay_pool:verify_block_txs({
 					TXs,
 					Diff,
 					Height,
 					Timestamp,
 					Wallets,
-					BlockTXPairs
-				),
+					BlockAnchors,
+					RecentTXMap
+				}),
 				Title
 			),
-			PickedTXs = ar_tx_replay_pool:pick_txs_to_mine(
-				BlockTXPairs,
+			PickedTXs = ar_tx_replay_pool:pick_txs_to_mine({
+				BlockAnchors,
+				RecentTXMap,
 				Height,
 				Diff,
 				Timestamp,
 				Wallets,
 				TXs
-			),
+			}),
 			?assertEqual(
 				valid,
-				ar_tx_replay_pool:verify_block_txs(
+				ar_tx_replay_pool:verify_block_txs({
 					PickedTXs,
 					Diff,
 					Height,
 					Timestamp,
 					Wallets,
-					BlockTXPairs
-				),
+					BlockAnchors,
+					RecentTXMap
+				}),
 				lists:flatten(
 					io_lib:format("Verifyng after picking_txs_to_mine: ~s:", [Title])
 				)
@@ -217,22 +227,6 @@ tx(Key = {_, Pub}, Reward, Anchor) ->
 
 wallet({_, Pub}, Balance) ->
 	{ar_wallet:to_address(Pub), Balance, <<>>}.
-
-generate_hashes() ->
-	lists:map(
-		fun(_) ->
-			integer_to_binary(rand:uniform(1000000))
-		end,
-		lists:seq(1, (?MAX_TX_ANCHOR_DEPTH) * 2)
-	).
-
-block_txs_pairs(Hashes) ->
-	lists:map(
-		fun(H) ->
-			{H, []}
-		end,
-		Hashes
-	).
 
 fee(Diff, Height, Timestamp) ->
 	ar_tx:get_tx_fee(?TX_SIZE_BASE, Diff, Height, Timestamp).
