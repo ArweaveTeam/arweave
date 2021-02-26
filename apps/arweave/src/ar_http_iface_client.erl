@@ -157,7 +157,7 @@ get_block_from_remote_peers(Peers = [_ | _], H) ->
 			peer => Peer,
 			path => prepare_block_id(H),
 			headers => p2p_headers(),
-			connect_timeout => 500,
+			connect_timeout => 2000,
 			timeout => 30 * 1000,
 			limit => ?MAX_BODY_SIZE
 		}),
@@ -413,7 +413,7 @@ get_tx_from_remote_peer(Peers, TXID) ->
 			peer => Peer,
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)),
 			headers => p2p_headers(),
-			connect_timeout => 500,
+			connect_timeout => 2000,
 			timeout => 60 * 1000,
 			limit => ?MAX_BODY_SIZE
 		})
