@@ -539,11 +539,14 @@ handle_cast(check_space_warning, State) ->
 				"The node has stopped syncing data - the available disk space is"
 				" less than ~s. Add more disk space if you wish to store more data.~n",
 			ar:console(Msg, [ar_util:bytes_to_mb_string(?DISK_DATA_BUFFER_SIZE)]),
-			?LOG_INFO([{event, ar_data_sync_stopped_syncing}, {reason, little_disk_space_left}]);
+			?LOG_INFO([
+				{event, ar_data_sync_stopped_syncing},
+				{reason, little_disk_space_left}
+			]);
 		true ->
 			ok
 	end,
-	cast_after(ar_disksup:get_disk_space_check_frequency(), check_space_warning),
+	cast_after(?DISK_SPACE_WARNING_FREQUENCY, check_space_warning),
 	{noreply, State};
 
 handle_cast(check_space_sync_random_interval, State) ->

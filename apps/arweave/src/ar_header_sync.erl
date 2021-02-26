@@ -144,17 +144,16 @@ handle_cast(check_space_alarm, State) ->
 		true ->
 			Msg =
 				"The node has stopped syncing headers - the available disk space is"
-				" less than ~s. Add more disk space if you wish to store more data."
-				" When it is less than ~s, the node will remove some of the old block"
-				" and transaction headers, consider adding some disk space.",
-			?LOG_INFO(Msg, [
-				ar_util:bytes_to_mb_string(?DISK_HEADERS_BUFFER_SIZE),
-				ar_util:bytes_to_mb_string(?DISK_HEADERS_CLEANUP_THRESHOLD)
+				" less than ~s. Add more disk space if you wish to store more headers.",
+			ar:console(Msg, [ar_util:bytes_to_mb_string(?DISK_HEADERS_BUFFER_SIZE)]),
+			?LOG_INFO([
+				{event, ar_header_sync_stopped_syncing},
+				{reason, little_disk_space_left}
 			]);
 		false ->
 			ok
 	end,
-	cast_after(ar_disksup:get_disk_space_check_frequency(), check_space_alarm),
+	cast_after(?DISK_SPACE_WARNING_FREQUENCY, check_space_alarm),
 	{noreply, State};
 
 handle_cast(check_space_process_item, #{ cleanup_started := CleanupStarted } = State) ->
@@ -170,10 +169,10 @@ handle_cast(check_space_process_item, #{ cleanup_started := CleanupStarted } = S
 						true ->
 							ok;
 						false ->
-							?LOG_INFO(
-								"Removing older block and transaction headers to free up"
-								" space for the new headers."
-							)
+							?LOG_INFO([
+								{event, ar_header_sync_removing_oldest_headers},
+								{reason, little_disk_space_left}
+							])
 					end,
 					gen_server:cast(?MODULE, check_space_process_item),
 					{noreply, remove_oldest_headers(State#{ cleanup_started => true })};
