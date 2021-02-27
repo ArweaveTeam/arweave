@@ -240,7 +240,7 @@ test_get_current_block() ->
 		2000
 	),
 	Peer = {127, 0, 0, 1, 1984},
-	BI = ar_http_iface_client:get_block_index(Peer),
+	BI = ar_http_iface_client:get_block_index([Peer]),
 	B1 = ar_http_iface_client:get_block([Peer], hd(BI)),
 	?assertEqual(B0#block{ hash_list = unset, size_tagged_txs = unset }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =

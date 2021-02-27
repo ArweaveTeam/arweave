@@ -275,8 +275,11 @@ get_wallet_list(Peer, H) ->
 	end.
 
 %% @doc Get a block hash list (by its hash) from the external peer.
-get_block_index(Peer) ->
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+get_block_index([]) ->
+	unavailable;
+get_block_index(Peers) ->
+	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	Reply =
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
@@ -284,7 +287,27 @@ get_block_index(Peer) ->
 			timeout => 120 * 1000,
 			headers => p2p_headers()
 		}),
-	ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)).
+	case Reply of
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			case catch ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)) of
+				{'EXIT', Reason} ->
+					?LOG_WARNING([
+						{event, failed_to_parse_block_index_from_peer},
+						{peer, ar_util:format_peer(Peer)},
+						{reason, io_lib:format("~p", [Reason])}
+					]),
+					get_block_index(Peers -- [Peer]);
+				BI ->
+					BI
+			end;
+		_ ->
+			?LOG_WARNING([
+				{event, failed_to_fetch_block_index_from_peer},
+				{peer, ar_util:format_peer(Peer)},
+				{reply, io_lib:format("~p", [Reply])}
+			]),
+			get_block_index(Peers -- [Peer])
+	end.
 
 get_block_index(Peer, Hash) ->
 	Response =

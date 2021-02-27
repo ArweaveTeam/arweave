@@ -177,8 +177,13 @@
 %% when making an HTTP request.
 -define(HTTP_REQUEST_SEND_TIMEOUT, 60 * 1000).
 
-%% The time in milliseconds to wait before retrying a failed join attempt.
--define(REJOIN_TIMEOUT, 3 * 1000).
+%% The time in milliseconds to wait before retrying
+%% a failed join (block index download) attempt.
+-define(REJOIN_TIMEOUT, 10 * 1000).
+
+%% How many times to retry fetching the block index from each of
+%% the peers before giving up.
+-define(REJOIN_RETRIES, 3).
 
 %% The frequency in milliseconds of asking peers for their peers.
 -define(GET_MORE_PEERS_TIME,  240 * 1000).

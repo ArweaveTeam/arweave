@@ -1,100 +1,135 @@
 -module(ar_join).
 
 -export([
-	start/2,
-	start/3
+	start/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Represents a process that handles creating an initial, minimal
-%%% block list to be used by a node joining a network already in progress.
+%%% Represents a process that handles downloading the block index and the latest
+%%% blocks from the trusted peers, to initialize the node state.
 
-%%% Define how many recent blocks should have syncing priority.
--define(DOWNLOAD_TOP_PRIORITY_BLOCKS_COUNT, 1000).
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
-%% @doc Start a process that will attempt to join a network from the last
-%% sync block.
-start(Peers, NewB) when is_record(NewB, block) ->
-	spawn(fun() -> start(self(), Peers, NewB) end);
-start(Node, Peers) ->
-	spawn(fun() -> start(Node, Peers, find_current_block(Peers)) end).
 
-start(_, [], _) ->
-	?LOG_INFO([{event, not_joining}, {reason, no_peers}]);
-start(Node, Peers, B) when is_atom(B) ->
-	?LOG_INFO(
-		[
-			{event, could_not_retrieve_current_block},
-			{trying_again_in, ?REJOIN_TIMEOUT}
-		]
-	),
-	timer:apply_after(?REJOIN_TIMEOUT, ar_join, start, [Node, Peers]);
-start(Node, RawPeers, {NewB, BI}) ->
-	do_join(Node, RawPeers, NewB, BI).
+%% @doc Start a process that will attempt to download the block index and the latest blocks.
+start(Peers) ->
+	spawn(fun() -> start2(Peers) end).
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+start2([]) ->
+	?LOG_WARNING([{event, not_joining}, {reason, no_peers}]);
+start2(Peers) ->
+	[{H, _, _} | _ ] = BI = get_block_index(Peers, ?REJOIN_RETRIES),
+	B = get_block(Peers, H),
+	do_join(Peers, B, BI).
+
+get_block_index(Peers, Retries) ->
+	case ar_http_iface_client:get_block_index(Peers) of
+		unavailable ->
+			case Retries > 0 of
+				true ->
+					ar:console(
+						"Failed to fetch the block index from any of the peers."
+						" Retrying..~n"
+					),
+					?LOG_WARNING([{event, failed_to_fetch_block_index}]),
+					timer:sleep(?REJOIN_TIMEOUT),
+					get_block_index(Peers, Retries - 1);
+				false ->
+					ar:console(
+						"Failed to fetch the block index from any of the peers. Giving up.."
+						" Consider changing the peers.~n"
+					),
+					?LOG_ERROR([{event, failed_to_fetch_block_index}]),
+					application:stop(arweave)
+			end;
+		BI ->
+			BI
+	end.
+
+get_block(Peers, H) ->
+	get_block(Peers, H, 10).
+
+get_block(Peers, H, Retries) ->
+	case ar_http_iface_client:get_block_shadow(Peers, H) of
+		{_, #block{} = BShadow} ->
+			Mempool = ar_node:get_pending_txs([as_map, id_only]),
+			get_block(Peers, BShadow, Mempool, BShadow#block.txs, [], Retries);
+		_ ->
+			case Retries > 0 of
+				true ->
+					ar:console(
+						"Failed to fetch a joining block from any of the peers."
+						" Retrying..~n"
+					),
+					?LOG_WARNING([
+						{event, failed_to_fetch_joining_block},
+						{block, ar_util:encode(H)}
+					]),
+					timer:sleep(1000),
+					get_block(Peers, H, Retries - 1);
+				false ->
+					ar:console(
+						"Failed to fetch a joining block from any of the peers. Giving up.."
+						" Consider changing the peers.~n"
+					),
+					?LOG_ERROR([
+						{event, failed_to_fetch_joining_block},
+						{block, ar_util:encode(H)}
+					]),
+					application:stop(arweave)
+			end
+	end.
+
+get_block(_Peers, BShadow, _Mempool, [], TXs, _Retries) ->
+	BShadow#block{ txs = lists:reverse(TXs) };
+get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries) ->
+	case ar_http_iface_client:get_tx(Peers, TXID, Mempool) of
+		#tx{} = TX ->
+			get_block(Peers, BShadow, Mempool, TXIDs, [TX | TXs], Retries);
+		_ ->
+			case Retries > 0 of
+				true ->
+					ar:console(
+						"Failed to fetch a joining transaction from any of the peers."
+						" Retrying..~n"
+					),
+					?LOG_WARNING([
+						{event, failed_to_fetch_joining_tx},
+						{tx, ar_util:encode(TXID)}
+					]),
+					timer:sleep(1000),
+					get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries - 1);
+				false ->
+					ar:console(
+						"Failed to fetch a joining tx from any of the peers. Giving up.."
+						" Consider changing the peers.~n"
+					),
+					?LOG_ERROR([
+						{event, failed_to_fetch_joining_tx},
+						{block, ar_util:encode(TXID)}
+					]),
+					application:stop(arweave)
+			end
+	end.
 
 %% @doc Perform the joining process.
-do_join(_Node, _RawPeers, NewB, _BI) when not ?IS_BLOCK(NewB) ->
-	?LOG_INFO([
-		{event, node_not_joining},
-		{reason, cannot_get_full_block_from_peer},
-		{received_instead, NewB}
-	]);
-do_join(_Node, Peers, NewB, BI) ->
+do_join(Peers, B, BI) ->
 	ar:console("Joining the Arweave network...~n"),
 	ar_arql_db:populate_db(?BI_TO_BHL(BI)),
 	ar_randomx_state:init(BI, Peers),
-	Blocks = get_block_and_trail(Peers, NewB, BI),
+	Blocks = get_block_and_trail(Peers, B, BI),
 	ar_node_worker ! {join, BI, Blocks},
 	join_peers(Peers),
 	ar:console("Joined the Arweave network successfully.~n"),
 	?LOG_INFO([{event, joined_the_network}]).
-
-%% @doc Return the current block from a list of peers.
-find_current_block([]) ->
-	ar:console(
-		"Did not manage to fetch current block from any of the peers. Will retry later.~n"
-	),
-	unavailable;
-find_current_block([Peer | Tail]) ->
-	try ar_http_iface_client:get_block_index(Peer) of
-		[] ->
-			find_current_block(Tail);
-		BI ->
-			{Hash, _, _} = hd(BI),
-			ar:console(
-				"Fetching current block. ~p ~p~n",
-				[{peer, ar_util:format_peer(Peer)}, {hash, ar_util:encode(Hash)}]
-			),
-			MaybeB = ar_http_iface_client:get_block([Peer], Hash),
-			case MaybeB of
-				Atom when is_atom(Atom) ->
-					ar:console(
-						"Failed to fetch block from peer. Will retry using a different one.~n"
-					),
-					?LOG_WARNING([{event, failed_to_fetch_block}]),
-					Atom;
-				B ->
-					{B, BI}
-			end
-	catch
-		Exc:Reason ->
-			ar:console(
-				"Failed to fetch block from peer ~s. Will retry using a different one.~n",
-				[ar_util:format_peer(Peer)]
-			),
-			?LOG_WARNING([{event, failed_to_fetch_block}, {exception, Exc}, {reason, Reason}]),
-			find_current_block(Tail)
-	end.
-
-join_peers(Peers) ->
-	lists:foreach(
-		fun(Peer) ->
-			ar_http_iface_client:add_peer(Peer)
-		end,
-		Peers
-	).
 
 %% @doc Get a block, and its 2 * ?MAX_TX_ANCHOR_DEPTH previous blocks.
 %% If the block list is shorter than 2 * ?MAX_TX_ANCHOR_DEPTH, simply
@@ -113,22 +148,22 @@ get_block_and_trail(_Peers, NewB, BehindCurrent, _BI)
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
 	[NewB#block{ size_tagged_txs = SizeTaggedTXs }];
 get_block_and_trail(Peers, NewB, BehindCurrent, BI) ->
-	PreviousBlock = ar_http_iface_client:get_block(
-		Peers,
-		NewB#block.previous_block
-	),
-	case ?IS_BLOCK(PreviousBlock) of
-		true ->
-			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
-			[NewB#block{ size_tagged_txs = SizeTaggedTXs } |
-				get_block_and_trail(Peers, PreviousBlock, BehindCurrent - 1, BI)];
-		false ->
-			?LOG_INFO(
-				[{event, could_not_retrieve_joining_block}]
-			),
-			timer:sleep(3000),
-			get_block_and_trail(Peers, NewB, BehindCurrent, BI)
-	end.
+	PreviousBlock = get_block(Peers, NewB#block.previous_block),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(NewB#block.txs),
+	[NewB#block{ size_tagged_txs = SizeTaggedTXs } |
+		get_block_and_trail(Peers, PreviousBlock, BehindCurrent - 1, BI)].
+
+join_peers(Peers) ->
+	lists:foreach(
+		fun(Peer) ->
+			ar_http_iface_client:add_peer(Peer)
+		end,
+		Peers
+	).
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->

@@ -76,7 +76,7 @@ init([]) ->
 		end,
 	case {BI, Config#config.auto_join} of
 		{not_joined, true} ->
-			ar_join:start(self(), Config#config.peers);
+			ar_join:start(Config#config.peers);
 		{BI, true} ->
 			start_from_block_index(BI);
 		{_, false} ->
