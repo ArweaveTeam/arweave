@@ -1608,15 +1608,10 @@ validate_spora_pow(B, PrevB, BDS) ->
 			false;
 		true ->
 			H0 = ar_weave:hash(BDS, Nonce, Height),
-			case ar_mine:validate(H0, ?SPORA_SLOW_HASH_DIFF(Height), Height) of
-				false ->
-					false;
-				true ->
-					SolutionHash =
-						ar_mine:spora_solution_hash(PrevH, Timestamp, H0, Chunk, Height),
-					ar_mine:validate(SolutionHash, B#block.diff, Height)
-						andalso SolutionHash == B#block.hash
-			end
+			SolutionHash =
+				ar_mine:spora_solution_hash(PrevH, Timestamp, H0, Chunk, Height),
+			ar_mine:validate(SolutionHash, B#block.diff, Height)
+				andalso SolutionHash == B#block.hash
 	end.
 
 post_block_reject_warn(BShadow, Step, Peer) ->

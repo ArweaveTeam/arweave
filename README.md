@@ -20,11 +20,12 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 
 ## Requirements
 
-- Erlang OTP v21+
+- Erlang OTP v21+, with OpenSSL support
 - GCC or Clang
 - GNU Make
 - CMake
 - SQLite3 headers (libsqlite3-dev on Ubuntu)
+- GNU MP (libgmp-dev on Ubuntu)
 
 ```sh
 $ git clone --recursive https://github.com/ArweaveTeam/arweave.git

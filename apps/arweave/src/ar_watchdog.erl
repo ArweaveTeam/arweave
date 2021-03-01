@@ -118,7 +118,7 @@ handle_call(Request, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(started_hashing, State) when State#state.miner_logging == true ->
-	Message = "[Stage 1/3] Successfully proved access to recall block. Starting to hash",
+	Message = "[Stage 1/3] Starting to hash",
 	?LOG_INFO(Message),
 	ar:console("~s~n", [Message]),
 	{noreply, State};

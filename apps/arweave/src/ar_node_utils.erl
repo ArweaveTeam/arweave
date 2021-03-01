@@ -254,7 +254,7 @@ validate_block(spora, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 		poa = POA,
 		hash = Hash
 	} = NewB,
-	UpperBound = ar_mine:get_search_space_upper_bound(BI, Height),
+	UpperBound = ar_mine:get_search_space_upper_bound(BI),
 	case ar_mine:validate_spora(BDS, Nonce, Timestamp, Height, Diff, PrevH, UpperBound, POA, BI)
 	of
 		false ->

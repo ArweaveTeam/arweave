@@ -622,7 +622,7 @@ tx(Wallet, SplitType, Format) ->
 			}), Chunks};
 		{original_split, v1} ->
 			%% Make sure v1 data does not end with a digit, otherwise it's malleable.
-			Data = << (crypto:strong_rand_bytes(10 * 1024 - 1))/binary, <<"a">>/binary >>,
+			Data = << (crypto:strong_rand_bytes(1024 * 1024 - 1))/binary, <<"a">>/binary >>,
 			{_, Chunks} = original_split(Data),
 			{sign_v1_tx(Wallet, #{ data => Data, last_tx => get_tx_anchor(master) }), Chunks};
 		{{custom_split, ChunkNumber}, v2} ->
@@ -760,10 +760,10 @@ post_random_blocks(Wallet) ->
 			[v1],
 			empty,
 			[v2, v1, fixed_data, v2_no_data],
-			[v2, v2_original_split, v2],
+			[v2, v2_original_split, v1, v2],
 			empty,
 			[v1, v2, v2, empty_tx, v2_original_split],
-			[v2, v2_no_data, v2_no_data, v2_no_data],
+			[v2, v2_no_data, v2_no_data, v1, v2_no_data],
 			[empty_tx],
 			empty,
 			[v2_original_split, v2_no_data, v2, v1, v2],
@@ -785,7 +785,7 @@ post_blocks(Wallet, BlockMap) ->
 		fun
 			({empty, Height}, Acc) ->
 				ar_node:mine(),
-				wait_until_height(Height),
+				slave_wait_until_height(Height),
 				Acc;
 			({TXMap, _Height}, Acc) ->
 				TXsWithChunks = lists:map(

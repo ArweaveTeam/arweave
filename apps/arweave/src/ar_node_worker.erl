@@ -100,12 +100,14 @@ init([]) ->
 		Map
 	),
 	%% May be start mining.
-	case Config#config.mine of
-		true ->
-			gen_server:cast(self(), automine);
-		_ ->
-			do_nothing
-	end,
+	IOThreads =
+		case Config#config.mine of
+			true ->
+				gen_server:cast(self(), automine),
+				start_io_threads();
+			_ ->
+				[]
+		end,
 	gen_server:cast(self(), process_task_queue),
 	ets:insert(node_state, [
 		{is_joined,						false},
@@ -121,7 +123,8 @@ init([]) ->
 		reward_addr => determine_mining_address(Config),
 		blocks_missing_txs => sets:new(),
 		missing_txs_lookup_processes => #{},
-		task_queue => gb_sets:new()
+		task_queue => gb_sets:new(),
+		io_threads => IOThreads
 	}}.
 
 load_mempool() ->
@@ -151,6 +154,23 @@ load_mempool() ->
 				{tx_statuses, #{}}
 			])
 	end.
+
+start_io_threads() ->
+	%% Start the IO mining processes. The mining server and the hashing
+	%% processes are historically restarted every round, but the IO
+	%% processes keep the database files open for better performance so
+	%% we do not want to restart them.
+	{ok, Config} = application:get_env(arweave, config),
+	ets:insert(mining_state, {session, {make_ref(), os:system_time(second)}}),
+	SearchInRocksDB = lists:member(search_in_rocksdb_when_mining, Config#config.enable),
+	[spawn_link(
+		fun() ->
+			process_flag(trap_exit, true),
+			process_flag(message_queue_data, off_heap),
+			ar_chunk_storage:open_files(),
+			ar_mine:io_thread(SearchInRocksDB)
+		end)
+		|| _ <- lists:seq(1, Config#config.io_threads)].
 
 handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
 	RunTask =
@@ -342,8 +362,15 @@ handle_task({work_complete, BaseBH, NewB, MinedTXs, BDS, POA}, State) ->
 			{noreply, State}
 	end;
 
-handle_task(mine, State) ->
-	{noreply, start_mining(State)};
+handle_task(mine, #{ io_threads := IOThreads } = State) ->
+	IOThreads2 =
+		case IOThreads of
+			[] ->
+				start_io_threads();
+			_ ->
+				IOThreads
+		end,
+	{noreply, start_mining(State#{ io_threads => IOThreads2 })};
 
 handle_task(automine, State) ->
 	{noreply, start_mining(State#{ automine => true })};
@@ -910,58 +937,39 @@ reset_miner(#{ miner := Pid, automine := true } = StateIn) ->
 start_mining(StateIn) ->
 	#{
 		reward_addr := RewardAddr,
-		tags := Tags
+		tags := Tags,
+		io_threads := IOThreads
 	} = StateIn,
 	[{block_index, BI}] = ets:lookup(node_state, block_index),
-	[{height, Height}] = ets:lookup(node_state, height),
 	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
 	[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 	[{current, Current}] = ets:lookup(node_state, current),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	POA =
-		case Height + 1 >= ar_fork:height_2_4() of
-			true ->
-				not_set;
-			false ->
-				ar_poa:generate(BI)
-		end,
-	case POA of
-		unavailable ->
-			?LOG_INFO(
-				[
-					{event, could_not_start_mining},
-					{reason, data_unavailable_to_generate_poa},
-					{generated_options_to_depth, ar_meta_db:get(max_poa_option_depth)}
-				]
-			),
-			StateIn;
-		_ ->
-			ar_watchdog:started_hashing(),
-			B = ar_block_cache:get(block_cache, Current),
-			Miner = ar_mine:start({
-				B,
-				POA,
-				maps:fold(
-					fun
-						(TXID, ready_for_mining, Acc) ->
-							[{_, TX}] = ets:lookup(node_state, {tx, TXID}),
-							[TX | Acc];
-						(_, _, Acc) ->
-							Acc
-					end,
-					[],
-					Map
-				),
-				RewardAddr,
-				Tags,
-				ar_node_worker,
-				BlockAnchors,
-				RecentTXMap,
-				BI
-			}),
-			?LOG_INFO([{event, started_mining}]),
-			StateIn#{ miner => Miner }
-	end.
+	ar_watchdog:started_hashing(),
+	B = ar_block_cache:get(block_cache, Current),
+	Miner = ar_mine:start({
+		B,
+		maps:fold(
+			fun
+				(TXID, ready_for_mining, Acc) ->
+					[{_, TX}] = ets:lookup(node_state, {tx, TXID}),
+					[TX | Acc];
+				(_, _, Acc) ->
+					Acc
+			end,
+			[],
+			Map
+		),
+		RewardAddr,
+		Tags,
+		ar_node_worker,
+		BlockAnchors,
+		RecentTXMap,
+		BI,
+		IOThreads
+	}),
+	?LOG_INFO([{event, started_mining}]),
+	StateIn#{ miner => Miner }.
 
 record_processing_time(StartTimestamp) ->
 	ProcessingTime = timer:now_diff(erlang:timestamp(), StartTimestamp) / 1000000,

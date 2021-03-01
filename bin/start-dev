@@ -21,7 +21,7 @@ export ERL_EPMD_ADDRESS=127.0.0.1
 while true; do
     echo Launching Erlang Virtual Machine...
     if
-        erl +Bi -pa `./rebar3 path` \
+        erl +A100 +SDio100 +Bi -pa `./rebar3 path` \
             -config config/sys.config -args_file config/vm.args.dev \
             -run ar main $RANDOMX_JIT "$@"
     then

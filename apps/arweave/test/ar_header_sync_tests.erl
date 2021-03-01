@@ -23,9 +23,9 @@ test_syncs_headers() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
 	{ok, Config} = application:get_env(arweave, config),
 	{_Master, _} = start(B0, unclaimed, Config#config{ disk_space_check_frequency = 1 }),
-	post_random_blocks(Wallet, 2 * ?MAX_TX_ANCHOR_DEPTH + 5, B0),
+	post_random_blocks(Wallet, ?MAX_TX_ANCHOR_DEPTH + 5, B0),
 	join_on_master(),
-	BI = assert_slave_wait_until_height(2 * ?MAX_TX_ANCHOR_DEPTH + 5),
+	BI = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 5),
 	lists:foreach(
 		fun(Height) ->
 			{ok, B} = ar_util:do_until(

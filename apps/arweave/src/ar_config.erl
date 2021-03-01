@@ -107,6 +107,23 @@ parse_options([{<<"max_miners">>, MaxMiners} | Rest], Config) when is_integer(Ma
 parse_options([{<<"max_miners">>, MaxMiners} | _], _) ->
 	{error, {bad_type, max_miners, number}, MaxMiners};
 
+parse_options([{<<"io_threads">>, IOThreads} | Rest], Config) when is_integer(IOThreads) ->
+	parse_options(Rest, Config#config{ io_threads = IOThreads });
+parse_options([{<<"io_threads">>, IOThreads} | _], _) ->
+	{error, {bad_type, io_threads, number}, IOThreads};
+
+parse_options([{<<"stage_one_hashing_threads">>, HashingThreads} | Rest], Config)
+		when is_integer(HashingThreads) ->
+	parse_options(Rest, Config#config{ stage_one_hashing_threads = HashingThreads });
+parse_options([{<<"stage_one_hashing_threads">>, HashingThreads} | _], _) ->
+	{error, {bad_type, stage_one_hashing_threads, number}, HashingThreads};
+
+parse_options([{<<"stage_two_hashing_threads">>, HashingThreads} | Rest], Config)
+		when is_integer(HashingThreads) ->
+	parse_options(Rest, Config#config{ stage_two_hashing_threads = HashingThreads });
+parse_options([{<<"stage_two_hashing_threads">>, HashingThreads} | _], _) ->
+	{error, {bad_type, stage_two_hashing_threads, number}, HashingThreads};
+
 parse_options([{<<"max_emitters">>, Value} | Rest], Config) when is_integer(Value) ->
 	parse_options(Rest, Config#config{ max_emitters = Value });
 parse_options([{<<"max_emitters">>, Value} | _], _) ->

@@ -18,7 +18,7 @@
 
 %% The number of data sync jobs to run. Each job periodically picks a range
 %% and downloads it from peers.
--define(DEFAULT_SYNC_JOBS, 2).
+-define(DEFAULT_SYNC_JOBS, 20).
 
 %% The default expiration time for a data root in the disk pool.
 -define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 2 * 60 * 60).
@@ -36,6 +36,14 @@
 %% The default frequency of checking for the available disk space.
 -define(DISK_SPACE_CHECK_FREQUENCY_MS, 5 * 60 * 1000).
 
+-define(NUM_STAGE_ONE_HASHING_PROCESSES,
+	max(1, (erlang:system_info(schedulers_online) div 2))).
+
+-define(NUM_STAGE_TWO_HASHING_PROCESSES,
+	max(1, (3 * erlang:system_info(schedulers_online) div 4))).
+
+-define(NUM_IO_MINING_THREADS, 10).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -49,7 +57,10 @@
 	clean = false,
 	diff = ?DEFAULT_DIFF,
 	mining_addr = false,
-	max_miners = ?NUM_MINING_PROCESSES,
+	max_miners = 0, % DEPRECATED.
+	io_threads = ?NUM_IO_MINING_THREADS,
+	stage_one_hashing_threads = ?NUM_STAGE_ONE_HASHING_PROCESSES,
+	stage_two_hashing_threads = ?NUM_STAGE_TWO_HASHING_PROCESSES,
 	max_emitters = ?NUM_EMITTER_PROCESSES,
 	tx_propagation_parallelization = ?TX_PROPAGATION_PARALLELIZATION,
 	sync_jobs = ?DEFAULT_SYNC_JOBS,
@@ -77,7 +88,7 @@
 	disk_pool_data_root_expiration_time = ?DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
 	max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB,
 	max_disk_pool_data_root_buffer_mb = ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
-	randomx_bulk_hashing_iterations = 12
+	randomx_bulk_hashing_iterations = 8
 }).
 
 -endif.

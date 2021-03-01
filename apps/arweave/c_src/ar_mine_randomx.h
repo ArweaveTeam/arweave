@@ -7,6 +7,9 @@ typedef enum {
 	HASHING_MODE_LIGHT = 1,
 } hashing_mode;
 
+const int BIG_NUM_SIZE = 32;
+typedef unsigned char bigInt[32];
+
 struct workerThread {
 	ErlNifTid threadId;
 	ErlNifThreadOpts *optsPtr;
@@ -24,6 +27,9 @@ struct state {
 };
 
 const int ARWEAVE_INPUT_DATA_SIZE = 48;
+const int ARWEAVE_HASH_SIZE = 48;
+const int SPORA_SUBSPACES_COUNT = 1024;
+const int SPORA_SEARCH_SPACE_SHARE = 10;
 
 static int load(ErlNifEnv*, void**, ERL_NIF_TERM);
 static void state_dtor(ErlNifEnv*, void*);
@@ -38,15 +44,17 @@ static ERL_NIF_TERM init_failed(ErlNifEnv*, struct state*, const char*);
 
 static ERL_NIF_TERM hash_fast_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 static ERL_NIF_TERM hash_light_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
-static ERL_NIF_TERM hash_nif(ErlNifEnv*, int, const ERL_NIF_TERM [], hashing_mode);
+static ERL_NIF_TERM randomx_hash_nif(ErlNifEnv*, int, const ERL_NIF_TERM [], hashing_mode);
 
 static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
+static ERL_NIF_TERM hash_fast_verify_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
 static ERL_NIF_TERM release_state_nif(ErlNifEnv*, int, const ERL_NIF_TERM []);
 
+static ERL_NIF_TERM solution_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM ok_tuple(ErlNifEnv*, ERL_NIF_TERM);
-static ERL_NIF_TERM ok_tuple4(ErlNifEnv*, ERL_NIF_TERM, ERL_NIF_TERM, ERL_NIF_TERM, ERL_NIF_TERM);
+static ERL_NIF_TERM ok_tuple2(ErlNifEnv*, ERL_NIF_TERM, ERL_NIF_TERM);
 static ERL_NIF_TERM error_tuple(ErlNifEnv*, ERL_NIF_TERM);
 static ERL_NIF_TERM error(ErlNifEnv*, const char*);
-static ERL_NIF_TERM make_output_binary(ErlNifEnv*, char*, size_t);
-static int validate_hash(char[RANDOMX_HASH_SIZE], unsigned char[RANDOMX_HASH_SIZE]);
+static ERL_NIF_TERM make_output_binary(ErlNifEnv*, unsigned char*, size_t);
+static int validate_hash(unsigned char[RANDOMX_HASH_SIZE], unsigned char[RANDOMX_HASH_SIZE]);

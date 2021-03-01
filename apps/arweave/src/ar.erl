@@ -27,6 +27,7 @@
 	[
 		ar,
 		ar_meta_db,
+		ar_chunk_storage,
 		ar_webhook_tests,
 		ar_poller_tests,
 		ar_kv,
@@ -109,7 +110,8 @@ show_help() ->
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
 						"This port must be accessible by remote peers."},
-			{"data_dir", "The directory for storing the weave and the wallets (when generated)."},
+			{"data_dir",
+				"The directory for storing the weave and the wallets (when generated)."},
 			{"metrics_dir", "The directory for persisted metrics."},
 			{"polling (num)", lists:flatten(
 					io_lib:format(
@@ -121,14 +123,37 @@ show_help() ->
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
-			{"max_miners (num)",
+			{"stage_one_hashing_threads (num)",
 				io_lib:format(
-					"The maximum number of mining processes. Default: ~B.",
-					[?NUM_MINING_PROCESSES]
+					"The number of mining processes searching for the SPoRA chunks to read."
+					"Default: ~B. If the total number of stage one and stage two processes "
+					"exceeds the number of available CPU cores, the excess processes will be "
+					"hashing chunks when anything gets queued, and search for chunks "
+					"otherwise.",
+					[?NUM_STAGE_ONE_HASHING_PROCESSES]
 				)},
-			{"max_emitters (num)", "The maximum number of transaction propagation processes (default 2)."},
-			{"tx_propagation_parallelization (num)", "The maximum number of best peers to propagate transactions to at a time (default 4)."},
-			{"max_propagation_peers (num)", "The maximum number of best peers to propagate blocks and transactions to. Default is 50."},
+			{"io_threads (num)",
+				io_lib:format(
+					"The number of processes reading SPoRA chunks during mining. Default: ~B.",
+					[?NUM_IO_MINING_THREADS]
+				)},
+			{"stage_two_hashing_threads (num)",
+				io_lib:format(
+					"The number of mining processes hashing SPoRA chunks."
+					"Default: ~B. If the total number of stage one and stage two processes "
+					"exceeds the number of available CPU cores, the excess processes will be "
+					"hashing chunks when anything gets queued, and search for chunks "
+					"otherwise.",
+					[?NUM_STAGE_TWO_HASHING_PROCESSES]
+				)},
+			{"max_emitters (num)",
+				"The maximum number of transaction propagation processes (default 2)."},
+			{"tx_propagation_parallelization (num)",
+				"The maximum number of best peers to propagate transactions to at a time "
+				"(default 4)."},
+			{"max_propagation_peers (num)",
+				"The maximum number of best peers to propagate blocks and transactions to. "
+				"Default is 50."},
 			{"sync_jobs (num)",
 				io_lib:format(
 					"The number of data syncing jobs to run. Default: ~B."
@@ -136,7 +161,8 @@ show_help() ->
 					[?DEFAULT_SYNC_JOBS]
 				)},
 			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
-			{"load_mining_key (file)", "Load the address that mining rewards should be credited to from file."},
+			{"load_mining_key (file)",
+				"Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
 			{"transaction_blacklist (file)", "A file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
@@ -254,6 +280,12 @@ parse_cli_args(["mining_addr", Addr|Rest], C) ->
 	parse_cli_args(Rest, C#config { mining_addr = ar_util:decode(Addr) });
 parse_cli_args(["max_miners", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_miners = list_to_integer(Num) });
+parse_cli_args(["io_threads", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { io_threads = list_to_integer(Num) });
+parse_cli_args(["stage_one_hashing_threads", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { stage_one_hashing_threads = list_to_integer(Num) });
+parse_cli_args(["stage_two_hashing_threads", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { stage_two_hashing_threads = list_to_integer(Num) });
 parse_cli_args(["max_emitters", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_emitters = list_to_integer(Num) });
 parse_cli_args(["new_mining_key"|Rest], C)->

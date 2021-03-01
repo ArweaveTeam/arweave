@@ -3,6 +3,7 @@ addons:
     apt:
       packages:
       - sqlite3
+      - libgmp-dev
 install:
     - epmd -daemon
 otp_release:

@@ -35,7 +35,7 @@ handle([<<"block">>], Req, State) ->
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
 
 webhooks_test_() ->
-	{timeout, 10, fun test_webhooks/0}.
+	{timeout, 30, fun test_webhooks/0}.
 
 test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),

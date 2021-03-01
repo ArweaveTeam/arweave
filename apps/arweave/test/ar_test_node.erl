@@ -61,7 +61,8 @@ start(B0, RewardAddr, Config) ->
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_block_index = true,
 		peers = [],
-		mining_addr = RewardAddr
+		mining_addr = RewardAddr,
+		enable = [search_in_rocksdb_when_mining]
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
@@ -574,36 +575,29 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 	end,
 	case AwaitOn of
 		{master, _AwaitNode} ->
-			wait_until_height(CurrentHeight + 1),
-			H = ar_node:get_current_block_hash(),
+			[{H, _, _} | _] = wait_until_height(CurrentHeight + 1),
 			BShadow = read_block_when_stored(H),
 			BShadow#block{ txs = ar_storage:read_tx(BShadow#block.txs) };
 		{slave, _AwaitNode} ->
-			slave_wait_until_height(CurrentHeight + 1),
-			H = slave_call(ar_node, get_current_block_hash, []),
+			[{H, _, _} | _] = slave_wait_until_height(CurrentHeight + 1),
 			BShadow = slave_call(ar_test_node, read_block_when_stored, [H]),
 			BShadow#block{ txs = slave_call(ar_storage, read_tx, [BShadow#block.txs]) }
 	end.
 
 read_block_when_stored(H) ->
-	MaybeB = ar_util:do_until(
+	{ok, B} = ar_util:do_until(
 		fun() ->
 			case ar_storage:read_block(H) of
 				unavailable ->
 					unavailable;
-				B ->
-					{ok, B}
+				B2 ->
+					{ok, B2}
 			end
 		end,
 		100,
 		20000
 	),
-	case MaybeB of
-		{ok, B} ->
-			B;
-		_ ->
-			MaybeB
-	end.
+	B.
 
 get_chunk(Offset) ->
 	get_chunk(master, Offset).

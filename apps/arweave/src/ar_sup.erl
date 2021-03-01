@@ -43,6 +43,10 @@ init([]) ->
 		[ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(block_cache, [set, public, named_table]),
 	ets:new(node_state, [set, public, named_table]),
+	ets:new(chunk_storage_sync_record,
+		[ordered_set, public, named_table, {read_concurrency, true}]),
+	ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
 	{ok, {{one_for_one, 5, 10}, [
 		?CHILD(ar_disksup, worker),
 		?CHILD(ar_meta_db, worker),
@@ -50,6 +54,7 @@ init([]) ->
 		?CHILD(ar_watchdog, worker),
 		?CHILD(ar_tx_blacklist, worker),
 		?CHILD(ar_bridge, worker),
+		?CHILD(ar_chunk_storage, worker),
 		?CHILD(ar_header_sync, worker),
 		?CHILD(ar_data_sync, worker),
 		?CHILD(ar_node_sup, supervisor),

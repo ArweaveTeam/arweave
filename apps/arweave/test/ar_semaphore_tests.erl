@@ -26,12 +26,12 @@ wait_for_one_process_at_a_time_test_() ->
 			timer:sleep(200),
 			TestPid ! p3_done
 		end),
-		?assert(receive _ -> false after 100 -> true end),
-		?assert(receive p1_done -> true after 150 -> false end),
-		?assert(receive _ -> false after 100 -> true end),
-		?assert(receive p2_done -> true after 150 -> false end),
-		?assert(receive _ -> false after 100 -> true end),
-		?assert(receive p3_done -> true after 150 -> false end)
+		?assert(receive _ -> false after 200 -> true end),
+		?assert(receive p1_done -> true after 250 -> false end),
+		?assert(receive _ -> false after 200 -> true end),
+		?assert(receive p2_done -> true after 250 -> false end),
+		?assert(receive _ -> false after 200 -> true end),
+		?assert(receive p3_done -> true after 250 -> false end)
 	end).
 
 wait_for_two_processes_at_a_time_test_() ->
@@ -57,12 +57,12 @@ wait_for_two_processes_at_a_time_test_() ->
 			timer:sleep(200),
 			TestPid ! p4_done
 		end),
-		?assert(receive _ -> false after 100 -> true end),
-		?assert(receive p1_done -> true after 150 -> false end),
-		?assert(receive p2_done -> true after 100 -> false end),
-		?assert(receive _ -> false after 100 -> true end),
-		?assert(receive p3_done -> true after 150 -> false end),
-		?assert(receive p4_done -> true after 100 -> false end)
+		?assert(receive _ -> false after 200 -> true end),
+		?assert(receive p1_done -> true after 250 -> false end),
+		?assert(receive p2_done -> true after 200 -> false end),
+		?assert(receive _ -> false after 200 -> true end),
+		?assert(receive p3_done -> true after 250 -> false end),
+		?assert(receive p4_done -> true after 200 -> false end)
 	end).
 
 with_semaphore_(Name, Value, Fun) ->

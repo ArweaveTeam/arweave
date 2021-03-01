@@ -1,19 +1,19 @@
 -module(ar_mine).
 
 -export([
-	start/1, stop/1,
-	mine/2, mine_spora/2,
+	start/1, stop/1, io_thread/1,
 	validate/4, validate/3, validate_spora/9,
 	min_difficulty/1, max_difficulty/0,
 	min_spora_difficulty/1,
 	sha384_diff_to_randomx_diff/1,
 	spora_solution_hash/5,
-	pick_recall_byte/4,
-	get_search_space_upper_bound/2
+	pick_recall_byte/3,
+	get_search_space_upper_bound/1
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_block.hrl").
 -include_lib("arweave/include/ar_mine.hrl").
 
@@ -21,32 +21,30 @@
 
 %% State record for miners.
 -record(state, {
-	parent, % miners parent process (initiator)
-	current_block, % current block held by node
-	candidate_block = not_set, % the product of mining
-	block_anchors, % list of block hashes of the latest ?MAX_TX_ANCHOR_DEPTH blocks
-	recent_txs_map, % a map TXID -> ok of the txs of the latest ?MAX_TX_ANCHOR_DEPTH blocks
-	poa, % proof of access
-	txs, % the set of txs to be mined
-	timestamp, % the block timestamp used for the mining
-	timestamp_refresh_timer, % reference for timer for updating the timestamp
-	data_segment = <<>>, % the data segment generated for mining
-	data_segment_duration, % duration in seconds of the last generation of the data segment
-	reward_addr, % the mining reward address
+	parent,
+	current_block,
+	candidate_block,
+	block_anchors,	% List of block hashes of the latest ?MAX_TX_ANCHOR_DEPTH blocks.
+	recent_txs_map, % A map TXID -> ok of the txs of the latest ?MAX_TX_ANCHOR_DEPTH blocks.
+	txs,
+	timestamp,
+	timestamp_refresh_timer,
+	data_segment,
+	data_segment_duration,
+	reward_addr,
 	reward_wallet_before_mining_reward = not_in_the_list,
-	tags, % the block tags
-	diff, % the current network difficulty
-	delay = 0, % hashing delay used for testing
-	max_miners = ?NUM_MINING_PROCESSES, % max mining process to start
-	miners = [], % miner worker processes
-	bds_base = not_generated, % part of the block data segment not changed during mining
-	total_hashes_tried = 0, % the number of tried hashes, used to estimate the hashrate
-	started_at = not_set, % the timestamp when the mining begins, used to estimate the hashrate
-	total_sporas_tried = 0, % the number of Succinct Proofs of Random Access checked during mining
-	%% The number of Succinct Proofs of Random Access discovered but not neccessarily
-	%% checked (because they are not present locally) during mining.
-	total_sporas_discovered = 0,
-	block_index = not_set % the latest block index
+	tags,
+	diff,
+	bds_base = not_generated,
+	small_weave_hasher,
+	stage_one_hasher,
+	stage_two_hasher,
+	search_space_upper_bound,
+	blocks_by_timestamp = #{},
+	block_index,
+	io_threads,
+	hashing_threads,
+	session_ref
 }).
 
 %%%===================================================================
@@ -55,7 +53,7 @@
 
 %% @doc Spawns a new mining process and returns its PID.
 start(Args) ->
-	{CurrentB, POA, TXs, RewardAddr, Tags, Parent, BlockAnchors, RecentTXMap, BI} = Args,
+	{CurrentB, TXs, RewardAddr, Tags, Parent, BlockAnchors, RecentTXMap, BI, IOThreads} = Args,
 	CurrentHeight = CurrentB#block.height,
 	CandidateB = #block{
 		height = CurrentHeight + 1,
@@ -63,30 +61,23 @@ start(Args) ->
 		previous_block = CurrentB#block.indep_hash,
 		hash_list_merkle = ar_block:compute_hash_list_merkle(CurrentB, BI),
 		reward_addr = RewardAddr,
-		poa = POA,
 		tags = Tags
 	},
 	start_server(
 		#state {
 			parent = Parent,
 			current_block = CurrentB,
-			poa = POA,
 			data_segment_duration = 0,
 			reward_addr = RewardAddr,
 			tags = Tags,
-			max_miners = ar_meta_db:get(max_miners),
 			block_anchors = BlockAnchors,
 			recent_txs_map = RecentTXMap,
-			started_at = erlang:timestamp(),
 			candidate_block = CandidateB,
 			txs = TXs,
-			block_index =
-				case CurrentHeight + 1 >= ar_fork:height_2_4() of
-					true ->
-						BI;
-					false ->
-						not_set
-				end
+			search_space_upper_bound = get_search_space_upper_bound(BI),
+			io_threads = IOThreads,
+			block_index = BI,
+			session_ref = make_ref()
 		}
 	).
 
@@ -121,25 +112,20 @@ validate(BDSHash, Diff, Height) ->
 %% @doc Validate Succinct Proof of Random Access.
 validate_spora(BDS, Nonce, Timestamp, Height, Diff, PrevH, SearchSpaceUpperBound, SPoA, BI) ->
 	H0 = ar_weave:hash(BDS, Nonce, Height),
-	case validate(H0, ?SPORA_SLOW_HASH_DIFF(Height), Height) of
+	SolutionHash = spora_solution_hash(PrevH, Timestamp, H0, SPoA#poa.chunk, Height),
+	case validate(SolutionHash, Diff, Height) of
 		false ->
 			false;
 		true ->
-			SolutionHash = spora_solution_hash(PrevH, Timestamp, H0, SPoA#poa.chunk, Height),
-			case validate(SolutionHash, Diff, Height) of
-				false ->
-					false;
-				true ->
-					case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound, Height) of
-						{error, weave_size_too_small} ->
-							SPoA == #poa{};
-						{ok, RecallByte} ->
-							case ar_poa:validate(RecallByte, BI, SPoA) of
-								false ->
-									false;
-								true ->
-									{true, SolutionHash}
-							end
+			case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
+				{error, weave_size_too_small} ->
+					SPoA == #poa{};
+				{ok, RecallByte} ->
+					case ar_poa:validate(RecallByte, BI, SPoA) of
+						false ->
+							false;
+						true ->
+							{true, SolutionHash}
 					end
 			end
 	end.
@@ -180,6 +166,43 @@ sha384_diff_to_randomx_diff(Sha384Diff) ->
 %%% Private functions.
 %%%===================================================================
 
+get_search_space_upper_bound(BI) ->
+	SearchSpaceUpperBoundDepth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
+	case length(BI) < SearchSpaceUpperBoundDepth of
+		true ->
+			element(2, lists:last(BI));
+		false ->
+			element(2, lists:nth(SearchSpaceUpperBoundDepth, BI))
+	end.
+
+%% @doc Start the main mining server.
+start_server(#state{ candidate_block = #block{ height = Height } } = S) ->
+	case prepare_randomx(Height) of
+		{ok, {StageOneHasher, StageTwoHasher, SmallWeaveHasher}} ->
+			spawn(fun() ->
+				try
+					process_flag(message_queue_data, off_heap),
+					S2 =
+						S#state{
+							stage_one_hasher = StageOneHasher,
+							stage_two_hasher = StageTwoHasher,
+							small_weave_hasher = SmallWeaveHasher
+						},
+					server(start_miners(update_txs(S2)))
+				catch Type:Exception:StackTrace ->
+					?LOG_ERROR(
+						"event: mining_server_exception, type: ~p, exception: ~p,"
+						" stacktrace: ~p",
+						[Type, Exception, StackTrace]
+					)
+				end
+			end);
+		not_found ->
+			?LOG_INFO([{event, mining_waiting_on_randomx_initialization}]),
+			timer:sleep(10 * 1000),
+			start_server(S)
+	end.
+
 %% @doc Takes a state and a set of transactions and return a new state with the
 %% new set of transactions.
 update_txs(
@@ -190,10 +213,11 @@ update_txs(
 		recent_txs_map = RecentTXMap,
 		reward_addr = RewardAddr,
 		candidate_block = #block{ height = Height } = CandidateB,
-		txs = TXs
+		txs = TXs,
+		blocks_by_timestamp = BlocksByTimestamp
 	}
 ) ->
-	NextBlockTimestamp = next_block_timestamp(BDSGenerationDuration),
+	NextBlockTimestamp = next_block_timestamp(BlocksByTimestamp, BDSGenerationDuration),
 	NextDiff = calc_diff(CurrentB, NextBlockTimestamp),
 	ValidTXs =
 		ar_tx_replay_pool:pick_txs_to_mine({
@@ -265,8 +289,14 @@ update_txs(
 %% @doc Generate a new timestamp to be used in the next block. To compensate for
 %% the time it takes to generate the block data segment, adjust the timestamp
 %% with the same time it took to generate the block data segment the last time.
-next_block_timestamp(BDSGenerationDuration) ->
-	os:system_time(seconds) + BDSGenerationDuration.
+next_block_timestamp(BlocksByTimestamp, BDSGenerationDuration) ->
+	Timestamp = os:system_time(seconds) + BDSGenerationDuration,
+	case maps:get(Timestamp, BlocksByTimestamp, not_found) of
+		not_found ->
+			Timestamp;
+		_ ->
+			Timestamp + 1
+	end.
 
 %% @doc Given a block calculate the difficulty to mine on for the next block.
 %% Difficulty is retargeted each ?RETARGET_BlOCKS blocks, specified in ar.hrl
@@ -280,51 +310,15 @@ calc_diff(CurrentB, NextBlockTimestamp) ->
 		CurrentB#block.last_retarget
 	).
 
-%% @doc Generate a new data segment and update the timestamp, recompute timestamp-dependent
-%% parameters.
-%% @end
-update_txs_or_data_segment(
-	S = #state{
-		current_block = #block{ height = Height, wallet_list = RootHash },
-		txs = TXs,
-		diff = Diff,
-		timestamp = Timestamp
-	}
-) ->
-	case Height + 1 >= ar_fork:height_2_4() of
-		true ->
-			update_data_segment(S);
-		false ->
-			%% Re-validate transaction prices if we are mining a retarget block.
-			%% If the block is not a retarget block, the difficulty does not change
-			%% so the requried transaction fees should only go down, so we can
-			%% optimistically skip additional validation. If the block is a retarget block,
-			%% validate transaction fees again and if some of the transactions are no longer
-			%% valid, regenerate a data segment with the new transactions. Not relevant
-			%% after the fork 2.4 since every block after the fork has the pre-computed
-			%% USD to AR conversion rate.
-			case ar_retarget:is_retarget_height(Height + 1) of
-				false ->
-					update_data_segment(S);
-				true ->
-					Wallets = ar_wallets:get(RootHash, ar_tx:get_addresses(TXs)),
-					case filter_by_valid_tx_fee(TXs, Diff, Height, Wallets, Timestamp) of
-						TXs ->
-							update_data_segment(S);
-						ValidTXs ->
-							update_txs(S#state{ txs = ValidTXs })
-					end
-			end
-	end.
-
 %% @doc Generate a new data_segment and update the timestamp and diff.
 update_data_segment(
 	S = #state {
 		data_segment_duration = BDSGenerationDuration,
-		current_block = CurrentB
+		current_block = CurrentB,
+		blocks_by_timestamp = BlocksByTimestamp
 	}
 ) ->
-	BlockTimestamp = next_block_timestamp(BDSGenerationDuration),
+	BlockTimestamp = next_block_timestamp(BlocksByTimestamp, BDSGenerationDuration),
 	Diff = calc_diff(CurrentB, BlockTimestamp),
 	update_data_segment(S, BlockTimestamp, Diff).
 
@@ -335,7 +329,9 @@ update_data_segment(S, BlockTimestamp, Diff) ->
 		reward_addr = RewardAddr,
 		bds_base = BDSBase,
 		reward_wallet_before_mining_reward = RewardWalletBeforeMiningReward,
-		txs = TXs
+		txs = TXs,
+		blocks_by_timestamp = BlocksByTimestamp,
+		session_ref = SessionRef
 	} = S,
 	Height = CandidateB#block.height,
 	NewLastRetarget =
@@ -406,13 +402,22 @@ update_data_segment(S, BlockTimestamp, Diff) ->
 		reward_pool = RewardPool,
 		wallet_list = UpdatedRootHash
 	},
+	BlocksByTimestamp2 =
+		maps:filter(
+			fun(Timestamp, _) ->
+				Timestamp + 20 > BlockTimestamp
+			end,
+			maps:put(BlockTimestamp, {NewCandidateB, NewBDS}, BlocksByTimestamp)
+		),
 	NewS = S#state {
 		timestamp = BlockTimestamp,
 		diff = Diff,
 		data_segment = NewBDS,
 		data_segment_duration = round(DurationMicros / 1000000),
-		candidate_block = NewCandidateB
+		candidate_block = NewCandidateB,
+		blocks_by_timestamp = BlocksByTimestamp2
 	},
+	ets:insert(mining_state, {session, {SessionRef, BlockTimestamp}}),
 	reschedule_timestamp_refresh(NewS).
 
 reschedule_timestamp_refresh(S = #state{
@@ -443,88 +448,177 @@ reschedule_timestamp_refresh(S = #state{
 			end
 	end.
 
-%% @doc Start the main mining server.
-start_server(S) ->
-	spawn(fun() ->
-		try
-			server(start_miners(update_txs(S)))
-		catch Type:Exception ->
-			?LOG_ERROR(
-				"event: mining_server_exception, type: ~p, exception: ~p",
-				[Type, Exception]
-			)
-		end
-	end).
+%% @doc Start the workers and return the new state.
+start_miners(S) ->
+	ets:insert(mining_state, [
+		{started_at, os:timestamp()},
+		{sporas, 0},
+		{kibs, 0},
+		{recall_bytes_computed, 0}
+	]),
+	start_hashing_threads(S).
+
+start_hashing_threads(S) ->
+	#state{
+		candidate_block = #block{ timestamp = Timestamp, diff = Diff },
+		current_block = #block{ indep_hash = PrevH },
+		data_segment = BDS,
+		small_weave_hasher = SmallWeaveHasher,
+		stage_two_hasher = StageTwoHasher,
+		search_space_upper_bound = SearchSpaceUpperBound,
+		session_ref = SessionRef
+	} = S,
+	Subspaces = ?SPORA_SEARCH_SPACE_SUBSPACES_COUNT,
+	SearchSubspaceSize = ?SPORA_SEARCH_SPACE_SIZE(SearchSpaceUpperBound) div Subspaces,
+	case SearchSubspaceSize of
+		0 ->
+			Parent = self(),
+			Thread = spawn(
+				fun() ->
+					small_weave_hashing_thread({
+						Timestamp,
+						Diff,
+						BDS,
+						PrevH,
+						SearchSpaceUpperBound,
+						SmallWeaveHasher,
+						StageTwoHasher,
+						Parent,
+						SessionRef
+					})
+				end
+			),
+			S#state{ hashing_threads = [Thread] };
+		_ ->
+			start_hashing_threads2(S)
+	end.
+
+start_hashing_threads2(S) ->
+	#state{
+		current_block = #block{ indep_hash = PrevH },
+		candidate_block = #block{ timestamp = Timestamp, diff = Diff, height = Height },
+		data_segment = BDS,
+		io_threads = IOThreads,
+		stage_one_hasher = Hasher,
+		stage_two_hasher = StageTwoHasher,
+		search_space_upper_bound = SearchSpaceUpperBound,
+		session_ref = SessionRef
+	} = S,
+	{ok, Config} = application:get_env(arweave, config),
+	Parent = self(),
+	Schedulers = erlang:system_info(schedulers_online),
+	%% Keep one scheduler free to make sure the VM continues to compute file offsets from
+	%% recall bytes, schedule new chunk reads, and pass fetched chunks to the hashing processors
+	%% while all the dirty CPU schedulers are busy.
+	StageOneThreadCount = max(0, min(Schedulers - 1, Config#config.stage_one_hashing_threads)),
+	StageTwoThreadCount = Config#config.stage_two_hashing_threads,
+	ThreadCount = max(0, min(Schedulers - 1, StageOneThreadCount + StageTwoThreadCount)),
+	HashingThreads =
+		[spawn(
+			fun() ->
+				process_flag(message_queue_data, off_heap),
+				ShuffledIOThreads =
+					lists:sort(fun(_, _) -> rand:uniform() > 0.5 end, IOThreads),
+				Type =
+					case N =< StageOneThreadCount of
+						true ->
+							stage_one_thread;
+						_ ->
+							stage_two_thread
+					end,
+				hashing_thread({
+					Parent,
+					PrevH,
+					SearchSpaceUpperBound,
+					Height,
+					Timestamp,
+					Diff,
+					BDS,
+					Hasher,
+					StageTwoHasher,
+					[],
+					ShuffledIOThreads,
+					Config#config.randomx_bulk_hashing_iterations,
+					ar_mine_randomx:jit(),
+					ar_mine_randomx:large_pages(),
+					ar_mine_randomx:hardware_aes(),
+					SessionRef
+				}, Type)
+			end)
+			|| N <- lists:seq(1, ThreadCount)],
+	S#state{ hashing_threads = HashingThreads }.
 
 %% @doc The main mining server.
 server(
-	S = #state {
-		miners = Miners,
-		current_block = #block{
-			height = Height,
-			wallet_list = RootHash
-		},
-		total_hashes_tried = TotalHashesTried,
-		started_at = StartedAt,
+	S = #state{
 		txs = MinedTXs,
-		candidate_block = #block { diff = Diff, timestamp = Timestamp },
-		total_sporas_tried = TotalSPoRAsTried,
-		total_sporas_discovered = TotalSPoRAsDiscovered
+		current_block = #block{ indep_hash = PrevH },
+		candidate_block = #block{ height = Height },
+		search_space_upper_bound = SearchSpaceUpperBound,
+		blocks_by_timestamp = BlocksByTimestamp,
+		block_index = BI
 	}
 ) ->
 	receive
 		%% Stop the mining process and all the workers.
 		stop ->
-			stop_miners(Miners),
-			case Height + 1 >= ar_fork:height_2_4() of
-				true ->
-					log_spora_performance(TotalSPoRAsTried, TotalSPoRAsDiscovered, StartedAt);
-				false ->
-					log_performance(TotalHashesTried, StartedAt)
+			stop_miners(S),
+			log_spora_performance();
+		{solution, Nonce, H0, Timestamp, Hash} ->
+			case maps:get(Timestamp, BlocksByTimestamp, not_found) of
+				not_found ->
+					%% A stale solution.
+					server(S);
+				{#block{ timestamp = Timestamp } = B, BDS} ->
+					case get_spoa(H0, PrevH, SearchSpaceUpperBound) of
+						not_found ->
+							?LOG_WARNING([
+								{event, found_chunk_but_no_proofs},
+								{previous_block, ar_util:encode(PrevH)},
+								{h0, ar_util:encode(H0)}
+							]),
+							server(S);
+						SPoA ->
+							case validate_spora(
+								BDS,
+								Nonce,
+								Timestamp,
+								Height,
+								B#block.diff,
+								PrevH,
+								SearchSpaceUpperBound,
+								SPoA,
+								BI
+							) of
+								Result when Result == true orelse Result == {true, Hash} ->
+									B2 =
+										B#block{
+											poa = SPoA,
+											hash = Hash,
+											nonce = Nonce
+										},
+									stop_miners(S),
+									process_spora_solution(BDS, B2, MinedTXs, S);
+								_ ->
+									?LOG_ERROR([
+										{event, miner_produced_invalid_spora},
+										{hash, ar_util:encode(Hash)},
+										{nonce, ar_util:encode(Nonce)},
+										{prev_block, ar_util:encode(PrevH)},
+										{segment, ar_util:encode(BDS)},
+										{timestamp, Timestamp},
+										{height, Height},
+										{search_space_upper_bound, SearchSpaceUpperBound}
+									]),
+									server(S)
+							end
+					end
 			end;
 		%% The block timestamp must be reasonable fresh since it's going to be
 		%% validated on the remote nodes when it's propagated to them. Only blocks
 		%% with a timestamp close to current time will be accepted in the propagation.
 		refresh_timestamp ->
-			server(restart_miners(update_txs_or_data_segment(S)));
-		%% Count the number of hashes tried by all workers.
-		{hashes_tried, HashesTried} ->
-			server(S#state { total_hashes_tried = TotalHashesTried + HashesTried });
-		{solution, Hash, Nonce, Timestamp} ->
-			Wallets = ar_wallets:get(RootHash, ar_tx:get_addresses(MinedTXs)),
-			case filter_by_valid_tx_fee(MinedTXs, Diff, Height, Wallets, Timestamp) of
-				MinedTXs ->
-					process_solution(S, Hash, Nonce, MinedTXs, Diff, Timestamp);
-				ValidTXs ->
-					server(restart_miners(update_txs(S#state{ txs = ValidTXs })))
-			end;
-		{solution, _, _, _} ->
-			%% A stale solution.
-			server(S);
-		{sporas_tried, SPoRAsTried} ->
-			server(
-				S#state{
-					total_sporas_tried = TotalSPoRAsTried + SPoRAsTried,
-					total_sporas_discovered = TotalSPoRAsDiscovered + SPoRAsTried
-				}
-			);
-		{sporas_discovered, SPoRAsDiscovered} ->
-			server(
-				S#state{
-					total_sporas_discovered = TotalSPoRAsDiscovered + SPoRAsDiscovered
-				}
-			);
-		{spora_solution, Hash, Nonce, SPoA, Timestamp} ->
-			Wallets = ar_wallets:get(RootHash, ar_tx:get_addresses(MinedTXs)),
-			case filter_by_valid_tx_fee(MinedTXs, Diff, Height, Wallets, Timestamp) of
-				MinedTXs ->
-					process_spora_solution(S, Hash, Nonce, SPoA, MinedTXs, Diff, Timestamp);
-				ValidTXs ->
-					server(restart_miners(update_txs(S#state{ txs = ValidTXs })))
-			end;
-		{spora_solution, _, _, _, _} ->
-			%% A stale solution.
-			server(S);
+			server(notify_hashing_threads(update_data_segment(S)));
 		UnexpectedMessage ->
 			?LOG_WARNING(
 				"event: mining_server_got_unexpected_message, message: ~p",
@@ -533,277 +627,322 @@ server(
 			server(S)
 	end.
 
--ifdef(DEBUG).
-filter_by_valid_tx_fee(TXs, Diff, Height, Wallets, Timestamp) ->
-	lists:filter(
-		fun
-			(#tx{ signature = <<>> }) ->
-				true;
-			(TX) ->
-				ar_tx:is_tx_fee_sufficient(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)
-		end,
-		TXs
-	).
--else.
-filter_by_valid_tx_fee(TXs, Diff, Height, Wallets, Timestamp) ->
-	lists:filter(
-		fun(TX) ->
-			ar_tx:is_tx_fee_sufficient(TX, Diff, Height, Wallets, TX#tx.target, Timestamp)
-		end,
-		TXs
-	).
--endif.
+stop_miners(S) ->
+	ets:insert(mining_state, {session, {make_ref(), os:system_time(second)}}),
+	stop_hashing_threads(S).
 
-process_solution(S, Hash, Nonce, MinedTXs, Diff, Timestamp) ->
-	#state {
-		parent = Parent,
-		miners = Miners,
-		current_block = #block{ indep_hash = CurrentBH },
-		poa = POA,
-		total_hashes_tried = TotalHashesTried,
-		started_at = StartedAt,
+stop_hashing_threads(#state{ hashing_threads = Threads }) ->
+	lists:foreach(fun(Thread) -> exit(Thread, stop) end, Threads).
+
+notify_hashing_threads(S) ->
+	#state{
+		hashing_threads = Threads,
+		candidate_block = #block{ timestamp = Timestamp, diff = Diff },
 		data_segment = BDS,
-		candidate_block = #block { diff = Diff, timestamp = Timestamp } = CandidateB
+		session_ref = SessionRef
 	} = S,
-	NewBBeforeHash = CandidateB#block{
-		nonce = Nonce,
-		hash = Hash
-	},
-	IndepHash = ar_weave:indep_hash(BDS, Hash, Nonce),
-	NewB = NewBBeforeHash#block{ indep_hash = IndepHash },
-	Parent ! {work_complete, CurrentBH, NewB, MinedTXs, BDS, POA},
-	log_performance(TotalHashesTried, StartedAt),
-	stop_miners(Miners).
-
-log_performance(TotalHashesTried, StartedAt) ->
-	Time = timer:now_diff(erlang:timestamp(), StartedAt),
-	Rate = TotalHashesTried / (Time / 1000000),
-	prometheus_histogram:observe(mining_rate, Rate),
-	?LOG_INFO([
-		{event, stopped_mining},
-		{miner_hashes_per_second, Rate}
-	]),
-	ar:console("Miner hashrate: ~B h/s.~n", [erlang:trunc(Rate)]).
-
-process_spora_solution(S, Hash, Nonce, SPoA, MinedTXs, Diff, Timestamp) ->
-	#state {
-		parent = Parent,
-		miners = Miners,
-		current_block = #block{ indep_hash = CurrentBH },
-		total_sporas_tried = TotalSPoRAsTried,
-		total_sporas_discovered = TotalSPoRAsDiscovered,
-		started_at = StartedAt,
-		data_segment = BDS,
-		candidate_block = #block { diff = Diff, timestamp = Timestamp } = CandidateB
-	} = S,
-	NewBBeforeHash = CandidateB#block{
-		nonce = Nonce,
-		hash = Hash,
-		poa = SPoA
-	},
-	IndepHash = ar_weave:indep_hash(BDS, Hash, Nonce, SPoA),
-	NewB = NewBBeforeHash#block{ indep_hash = IndepHash },
-	Parent ! {work_complete, CurrentBH, NewB, MinedTXs, BDS, SPoA},
-	log_spora_performance(TotalSPoRAsTried, TotalSPoRAsDiscovered, StartedAt),
-	stop_miners(Miners).
-
-log_spora_performance(TotalSPoRAsTried, TotalSPoRAsDiscovered, StartedAt) ->
-	Time = timer:now_diff(erlang:timestamp(), StartedAt),
-	Rate = TotalSPoRAsTried / (Time / 1000000),
-	prometheus_histogram:observe(mining_rate, Rate),
-	DiscoverRate = TotalSPoRAsDiscovered / (Time / 1000000),
-	?LOG_INFO([
-		{event, stopped_mining},
-		{miner_sporas_per_second, Rate},
-		{miner_discovered_sporas_per_second, DiscoverRate}
-	]),
-	ar:console("Miner spora rate: ~B h/s.~n", [erlang:trunc(Rate)]).
-
-%% @doc Start the workers and return the new state.
-start_miners(
-	S = #state{
-		max_miners = MaxMiners,
-		candidate_block = #block{ height = Height, previous_block = PrevH },
-		poa = POA,
-		diff = Diff,
-		block_index = BI,
-		data_segment = BDS,
-		timestamp = Timestamp
-	}
-) ->
-	Miners =
-		case Height >= ar_fork:height_2_4() of
-			true ->
-				SearchSpaceUpperBound = get_search_space_upper_bound(BI, Height),
-				WorkerState = #{
-					data_segment => BDS,
-					diff => Diff,
-					timestamp => Timestamp,
-					height => Height,
-					prev_h => PrevH,
-					search_space_upper_bound => SearchSpaceUpperBound
-				},
-				[spawn(?MODULE, mine_spora, [WorkerState, self()])
-					|| _ <- lists:seq(1, MaxMiners)];
-			false ->
-				ModifiedDiff = ar_poa:modify_diff(Diff, POA#poa.option, Height),
-				WorkerState = #{
-					data_segment => BDS,
-					diff => ModifiedDiff,
-					timestamp => Timestamp,
-					height => Height
-				},
-				[spawn(?MODULE, mine, [WorkerState, self()]) || _ <- lists:seq(1, MaxMiners)]
-		end,
-	S#state{ miners = Miners }.
-
-%% @doc Stop all workers.
-stop_miners(Miners) ->
+	{ok, Config} = application:get_env(arweave, config),
+	StageTwoThreadCount = Config#config.stage_two_hashing_threads,
+	StageTwoThreads = lists:sublist(Threads, StageTwoThreadCount),
 	lists:foreach(
-		fun(PID) ->
-			exit(PID, stop)
+		fun(Thread) ->
+			Thread ! {update_state, Timestamp, Diff, BDS, StageTwoThreads, SessionRef}
 		end,
-		Miners
-	).
+		Threads
+	),
+	S.
 
-%% @doc Stop and then start the workers again and return the new state.
-restart_miners(S) ->
-	stop_miners(S#state.miners),
-	start_miners(S).
-
-%% @doc A worker process to hash the data segment searching for a solution
-%% for the given diff.
-mine(
-	#{
-		data_segment := BDS,
-		diff := Diff,
-		timestamp := Timestamp,
-		height := Height
-	},
-	Supervisor
-) ->
-	process_flag(priority, low),
-	{Nonce, Hash} = find_nonce(BDS, Diff, Height, Supervisor),
-	Supervisor ! {solution, Hash, Nonce, Timestamp}.
-
-get_search_space_upper_bound(BI, Height) ->
-	SearchSpaceUpperBoundDepth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH(Height),
-	case length(BI) < SearchSpaceUpperBoundDepth of
-		true ->
-			element(2, lists:last(BI));
-		false ->
-			element(2, lists:nth(SearchSpaceUpperBoundDepth, BI))
-	end.
-
-find_nonce(BDS, Diff, Height, Supervisor) ->
-	case randomx_bulk_hasher(Height) of
-		{ok, Hasher} ->
-			StartNonce =
-				{crypto:strong_rand_bytes(256 div 8), crypto:strong_rand_bytes(256 div 8)},
-			find_nonce(BDS, Diff, Height, StartNonce, Hasher, Supervisor);
-		not_found ->
-			?LOG_INFO("Mining is waiting on RandomX initialization"),
-			timer:sleep(30 * 1000),
-			find_nonce(BDS, Diff, Height, Supervisor)
-	end.
-
-randomx_bulk_hasher(Height) ->
-	case ar_randomx_state:randomx_state_by_height(Height) of
-		{state, {fast, FastState}} ->
-			%% Use RandomX fast-mode, where hashing is fast but initialization is slow.
-			Hasher = fun(Nonce, BDS, Diff) ->
-				ar_mine_randomx:bulk_hash_fast(FastState, Nonce, BDS, Diff)
-			end,
-			{ok, Hasher};
-		{state, {light, _}} ->
-			not_found;
-		{key, _} ->
-			not_found
-	end.
-
-find_nonce(BDS, Diff, Height, Nonce, Hasher, Supervisor) ->
-	{BDSHash, HashNonce, ExtraNonce, HashesTried} = Hasher(Nonce, BDS, Diff),
-	Supervisor ! {hashes_tried, HashesTried},
-	case validate(BDSHash, Diff, Height) of
-		false ->
-			%% Re-use the hash as the next nonce, since we get it for free.
-			find_nonce(BDS, Diff, Height, {BDSHash, ExtraNonce}, Hasher, Supervisor);
-		true ->
-			{HashNonce, BDSHash}
-	end.
-
-%% @doc Search for a Succinct Proof of Random Access.
-mine_spora(
-	#{
-		data_segment := BDS,
-		diff := Diff,
-		timestamp := Timestamp,
-		height := Height,
-		prev_h := PrevH,
-		search_space_upper_bound := SearchSpaceUpperBound
-	} = WorkerState,
-	Supervisor
-) ->
-	case randomx_hasher(Height) of
-		{ok, Hasher} ->
-			StartNonce = crypto:strong_rand_bytes(256 div 8),
-			{Nonce, H0} = find_rx_hash(Hasher, StartNonce, BDS, Height),
-			SPoA =
-				case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound, Height) of
-					{error, weave_size_too_small} ->
-						#poa{};
-					{ok, RecallByte} ->
-						ar_poa:get_poa_from_v2_index(RecallByte)
-				end,
-			case SPoA of
+io_thread(SearchInRocksDB) ->
+	[{_, {SessionRef, SessionTimestamp}}] = ets:lookup(mining_state, session),
+	receive
+		{EncodedByte, H0, Nonce, HashingThread, {Timestamp, Diff, SessionRef}}
+				when Timestamp + 19 > SessionTimestamp ->
+			Byte = binary:decode_unsigned(EncodedByte, big),
+			case read_chunk(Byte, SearchInRocksDB) of
 				not_found ->
-					Supervisor ! {sporas_discovered, 1},
-					mine_spora(WorkerState, Supervisor);
-				_ ->
-					SolutionHash =
-						spora_solution_hash(PrevH, Timestamp, H0, SPoA#poa.chunk, Height),
-					case validate(SolutionHash, Diff, Height) of
-						false ->
-							Supervisor ! {sporas_tried, 1},
-							mine_spora(WorkerState, Supervisor);
-						true ->
-							Supervisor ! {spora_solution, SolutionHash, Nonce, SPoA, Timestamp}
-					end
+					io_thread(SearchInRocksDB);
+				Chunk ->
+					HashingThread ! {chunk, H0, Nonce, Timestamp, Diff, Chunk, SessionRef},
+					io_thread(SearchInRocksDB)
 			end;
-		not_found ->
-			?LOG_INFO([{event, mining_waiting_on_randomx_initialization}]),
-			timer:sleep(30 * 1000),
-			mine_spora(WorkerState, Supervisor)
+		{'EXIT', _From, _Reason} ->
+			ar_chunk_storage:close_files();
+		_ ->
+			io_thread(SearchInRocksDB)
+	after 200 ->
+		io_thread(SearchInRocksDB)
 	end.
 
-randomx_hasher(Height) ->
+read_chunk(Byte, SearchInRocksDB) ->
+	case ar_chunk_storage:get(Byte) of
+		not_found ->
+			case SearchInRocksDB of
+				true ->
+					case ar_data_sync:get_chunk(Byte + 1) of
+						{ok, #{ chunk := C }} ->
+							ets:update_counter(mining_state, kibs, (byte_size(C) div 1024)),
+							C;
+						_ ->
+							not_found
+					end;
+				false ->
+					not_found
+			end;
+		Reply ->
+			ets:update_counter(mining_state, kibs, 256),
+			Reply
+	end.
+
+small_weave_hashing_thread(Args) ->
+	{
+		Timestamp,
+		Diff,
+		BDS,
+		PrevH,
+		SearchSpaceUpperBound,
+		Hasher,
+		StageTwoHasher,
+		Parent,
+		SessionRef
+	} = Args,
+	receive
+		{update_state, Timestamp2, Diff2, BDS2, _Threads, SessionRef} ->
+			small_weave_hashing_thread({
+				Timestamp2,
+				Diff2,
+				BDS2,
+				PrevH,
+				SearchSpaceUpperBound,
+				Hasher,
+				StageTwoHasher,
+				Parent,
+				SessionRef
+			})
+	after 0 ->
+		Nonce = crypto:strong_rand_bytes(32),
+		H0 = Hasher(<< Nonce/binary, BDS/binary >>),
+		TimestampBinary = << Timestamp:(?TIMESTAMP_FIELD_SIZE_LIMIT * 8) >>,
+		Preimage = [H0, PrevH, TimestampBinary, <<>>],
+		case StageTwoHasher(Diff, Preimage) of
+			{true, Hash} ->
+				ets:update_counter(mining_state, sporas, 1),
+				Parent ! {solution, Nonce, H0, Timestamp, Hash},
+				small_weave_hashing_thread(Args);
+			false ->
+				small_weave_hashing_thread(Args)
+		end
+	end.
+
+hashing_thread(S, Type) ->
+	{
+		Parent,
+		PrevH,
+		SearchSpaceUpperBound,
+		Height,
+		Timestamp,
+		Diff,
+		BDS,
+		Hasher,
+		StageTwoHasher,
+		StageTwoThreads,
+		IOThreads,
+		HashingIterations,
+		JIT,
+		LargePages,
+		HardwareAES,
+		SessionRef
+	} = S,
+	T = case Type of stage_one_thread -> 0; stage_two_thread -> 200 end,
+	receive
+		{chunk, H0, Nonce, Timestamp2, Diff2, Chunk, SessionRef}
+				when Timestamp2 + 19 > Timestamp ->
+			TimestampBinary = << Timestamp2:(?TIMESTAMP_FIELD_SIZE_LIMIT * 8) >>,
+			Preimage = [H0, PrevH, TimestampBinary, Chunk],
+			case StageTwoHasher(Diff2, Preimage) of
+				{true, Hash} ->
+					Parent ! {solution, Nonce, H0, Timestamp2, Hash};
+				false ->
+					ok
+			end,
+			ets:update_counter(mining_state, sporas, 1),
+			hashing_thread(S, Type);
+		{update_state, Timestamp2, Diff2, BDS2, StageTwoThreads2, SessionRef} ->
+			hashing_thread({
+				Parent,
+				PrevH,
+				SearchSpaceUpperBound,
+				Height,
+				Timestamp2,
+				Diff2,
+				BDS2,
+				Hasher,
+				StageTwoHasher,
+				StageTwoThreads2,
+				IOThreads,
+				HashingIterations,
+				JIT,
+				LargePages,
+				HardwareAES,
+				SessionRef
+			}, Type);
+		_ ->
+			hashing_thread(S, Type)
+	after T ->
+		case Type of
+			stage_one_thread when StageTwoThreads /= [] ->
+				Nonce1 = crypto:strong_rand_bytes(256 div 8),
+				Nonce2 = crypto:strong_rand_bytes(256 div 8),
+				Ref = {Timestamp, Diff, SessionRef},
+				ok = Hasher(
+					Nonce1,
+					Nonce2,
+					BDS,
+					PrevH,
+					SearchSpaceUpperBound,
+					IOThreads,
+					StageTwoThreads,
+					HashingIterations,
+					JIT,
+					LargePages,
+					HardwareAES,
+					Ref
+				),
+				ets:update_counter(mining_state, recall_bytes_computed, HashingIterations);
+			_ ->
+				ok
+		end,
+		hashing_thread({
+			Parent,
+			PrevH,
+			SearchSpaceUpperBound,
+			Height,
+			Timestamp,
+			Diff,
+			BDS,
+			Hasher,
+			StageTwoHasher,
+			StageTwoThreads,
+			IOThreads,
+			HashingIterations,
+			JIT,
+			LargePages,
+			HardwareAES,
+			SessionRef
+		}, Type)
+	end.
+
+get_spoa(H0, PrevH, SearchSpaceUpperBound) ->
+	case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
+		{error, weave_size_too_small} ->
+			#poa{};
+		{ok, RecallByte} ->
+			case ar_poa:get_poa_from_v2_index(RecallByte) of
+				not_found ->
+					not_found;
+				SPoA ->
+					SPoA
+			end
+	end.
+
+log_spora_performance() ->
+	[{_, StartedAt}] = ets:lookup(mining_state, started_at),
+	Time = timer:now_diff(os:timestamp(), StartedAt),
+	case Time < 10000000 of
+		true ->
+			ar:console("Skipping hashrate report, the round lasted less than 10 seconds.~n"),
+			?LOG_INFO([
+				{event, stopped_mining},
+				{round_time_seconds, Time div 1000000}
+			]),
+			ok;
+		false ->
+			[{_, RecallBytes}] = ets:lookup(mining_state, recall_bytes_computed),
+			[{_, KiBs}] = ets:lookup(mining_state, kibs),
+			[{_, SPoRAs}] = ets:lookup(mining_state, sporas),
+			RecallByteRate = RecallBytes / (Time / 1000000),
+			Rate = SPoRAs / (Time / 1000000),
+			ReadRate = KiBs / 1024 / (Time / 1000000),
+			prometheus_histogram:observe(mining_rate, Rate),
+			?LOG_INFO([
+				{event, stopped_mining},
+				{recall_bytes_computed, RecallByteRate},
+				{miner_sporas_per_second, Rate},
+				{miner_read_mibibytes_per_second, ReadRate},
+				{round_time_seconds, Time div 1000000}
+			]),
+			ar:console(
+				"Miner spora rate: ~B h/s, recall bytes computed/s: ~B, MiB/s read: ~B,"
+				" the round lasted ~B seconds.~n",
+				[trunc(Rate), trunc(RecallByteRate), trunc(ReadRate), Time div 1000000]
+			)
+	end.
+
+process_spora_solution(BDS, B, MinedTXs, S) ->
+	#state {
+		parent = Parent,
+		current_block = #block{ indep_hash = CurrentBH }
+	} = S,
+	SPoA = B#block.poa,
+	IndepHash = ar_weave:indep_hash(BDS, B#block.hash, B#block.nonce, SPoA),
+	B2 = B#block{ indep_hash = IndepHash },
+	Parent ! {work_complete, CurrentBH, B2, MinedTXs, BDS, SPoA},
+	log_spora_performance().
+
+prepare_randomx(Height) ->
 	case ar_randomx_state:randomx_state_by_height(Height) of
 		{state, {fast, FastState}} ->
 			%% Use RandomX fast-mode, where hashing is fast but initialization is slow.
-			Hasher = fun(Nonce, BDS) ->
-				ar_mine_randomx:hash_fast(FastState, << Nonce/binary, BDS/binary >>)
-			end,
-			{ok, Hasher};
+			StageOneHasher =
+				fun(
+					Nonce1,
+					Nonce2,
+					BDS,
+					PrevH,
+					UpperBound,
+					PIDs,
+					ProxyPIDs,
+					Iterations,
+					JIT,
+					LargePages,
+					HardwareAES,
+					Ref
+				) ->
+					ar_mine_randomx:bulk_hash_fast(
+						FastState,
+						Nonce1,
+						Nonce2,
+						BDS,
+						PrevH,
+						UpperBound,
+						PIDs,
+						ProxyPIDs,
+						Iterations,
+						JIT,
+						LargePages,
+						HardwareAES,
+						Ref
+					)
+				end,
+			StageTwoHasher =
+				fun(Diff, Preimage) ->
+					ar_mine_randomx:hash_fast_verify(FastState, Diff, Preimage)
+				end,
+			SmallWeaveHasher =
+				fun(Preimage) ->
+					ar_mine_randomx:hash_fast(FastState, Preimage)
+				end,
+			{ok, {StageOneHasher, StageTwoHasher, SmallWeaveHasher}};
 		{state, {light, _}} ->
 			not_found;
 		{key, _} ->
 			not_found
 	end.
 
-find_rx_hash(Hasher, Nonce, BDS, Height) ->
-	H = Hasher(Nonce, BDS),
-	case validate(H, ?SPORA_SLOW_HASH_DIFF(Height), Height) of
-		true ->
-			{Nonce, H};
-		false ->
-			find_rx_hash(Hasher, H, BDS, Height)
-	end.
-
-pick_recall_byte(H, PrevH, SearchSpaceUpperBound, Height) ->
-	Subspaces = ?SPORA_SEARCH_SPACE_SUBSPACES_COUNT(Height),
+pick_recall_byte(H, PrevH, SearchSpaceUpperBound) ->
+	Subspaces = ?SPORA_SEARCH_SPACE_SUBSPACES_COUNT,
 	SubspaceNumber = binary:decode_unsigned(H, big) rem Subspaces,
 	EvenSubspaceSize = SearchSpaceUpperBound div Subspaces,
-	SearchSubspaceSize = ?SPORA_SEARCH_SPACE_SIZE(Height, SearchSpaceUpperBound) div Subspaces,
+	SearchSubspaceSize = ?SPORA_SEARCH_SPACE_SIZE(SearchSpaceUpperBound) div Subspaces,
 	case SearchSubspaceSize of
 		0 ->
 			{error, weave_size_too_small};
@@ -849,8 +988,9 @@ test_basic() ->
 	ar_test_node:start(B0),
 	ar_node:mine(),
 	BI = ar_test_node:wait_until_height(1),
-	B1 = ar_storage:read_block(hd(BI)),
-	start({B1, B1#block.poa, [], unclaimed, [], self(), [], #{}, BI}),
+	B1 = ar_test_node:read_block_when_stored(hd(BI)),
+	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
+	start({B1, [], unclaimed, [], self(), [], #{}, BI, Threads}),
 	assert_mine_output(B1, B1#block.poa, []).
 
 %% @doc Ensure that the block timestamp gets updated regularly while mining.
@@ -862,102 +1002,43 @@ test_timestamp_refresh() ->
 	%% timestamp gets refreshed at least once. Since we might be unlucky
 	%% and find the block too fast, we retry until it succeeds.
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(18)),
+	ar_test_node:start(B0),
 	B = B0,
+	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
 	Run = fun(_) ->
 		TXs = [],
 		StartTime = os:system_time(seconds),
 		POA = #poa{},
 		start({
 			B,
-			POA,
 			TXs,
 			unclaimed,
 			[],
 			self(),
 			[],
 			#{},
-			[ar_util:block_index_entry_from_block(B0)]
+			[ar_util:block_index_entry_from_block(B0)],
+			Threads
 		}),
 		{_, MinedTimestamp} = assert_mine_output(B, POA, TXs),
 		MinedTimestamp > StartTime + ?MINING_TIMESTAMP_REFRESH_INTERVAL
 	end,
 	?assert(lists:any(Run, lists:seq(1, 20))).
 
-excludes_no_longer_valid_txs_test_() ->
-	ar_test_fork:test_on_fork(height_2_4, infinity, fun test_excludes_no_longer_valid_txs/0).
-
-test_excludes_no_longer_valid_txs() ->
-	%% Start mining with a high enough difficulty, so that the block
-	%% timestamp gets refreshed at least once. Since we might be unlucky
-	%% and find the block too fast, we retry until it succeeds.
-	Diff = ar_retarget:switch_to_linear_diff(18),
-	Key = {_, Pub} = ar_wallet:new(),
-	Address = ar_wallet:to_address(Pub),
-	Wallets = [{Address, ?AR(1000000000000), <<>>}],
-	[B] = ar_weave:init(Wallets, Diff),
-	{_Node, _} = ar_test_node:start(B),
-	BI = ar_test_node:wait_until_height(0),
-	Run = fun() ->
-		Now = os:system_time(seconds),
-		%% The transaction is invalid because its fee is based on a timestamp from the future.
-		InvalidTX = ar_test_node:sign_tx(Key, #{
-			last_tx => B#block.indep_hash,
-			reward => ar_tx:get_tx_fee(0, Diff, 10, Wallets, <<>>, Now + 10000)
-		}),
-		ValidTX = ar_test_node:sign_tx(Key, #{
-			last_tx => B#block.indep_hash,
-			reward => ar_tx:get_tx_fee(0, Diff, 10, Wallets, <<>>, Now)
-		}),
-		TXs = [ValidTX, InvalidTX],
-		start({B, #poa{}, TXs, unclaimed, [], self(), [B#block.indep_hash], #{}, BI}),
-		receive
-			{work_complete, _BH, MinedB, MinedTXs, _BDS, _POA} ->
-				{ValidTX, Now, MinedB#block.timestamp, MinedTXs}
-		after 120000 ->
-			error(timeout)
-		end
-	end,
-	{ValidTX, _, _, MinedTXs} = run_until(
-		fun({_, StartMineTimestamp, Timestamp, _}) ->
-			Timestamp > StartMineTimestamp + ?MINING_TIMESTAMP_REFRESH_INTERVAL
-		end,
-		Run
-	),
-	?assertEqual([ValidTX#tx.id], [TX#tx.id || TX <- MinedTXs]).
-
-run_until(Pred, Fun) ->
-	Run = Fun(),
-	case Pred(Run) of
-		true ->
-			Run;
-		false ->
-			run_until(Pred, Fun)
-	end.
-
 %% @doc Ensures ar_mine can be started and stopped.
-start_stop_test() ->
+start_stop_test_() ->
+	{timeout, 20, fun test_start_stop/0}.
+
+test_start_stop() ->
 	[B] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B),
 	BI = ar_test_node:wait_until_height(0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
-	PID = start({B#block{ diff = HighDiff }, #poa{}, [], unclaimed, [], self(), [], #{}, BI}),
+	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
+	PID = start({B#block{ diff = HighDiff }, [], unclaimed, [], self(), [], #{}, BI, Threads}),
 	timer:sleep(500),
 	assert_alive(PID),
 	stop(PID),
-	assert_not_alive(PID, 3000).
-
-%% @doc Ensures a miner can be started and stopped.
-miner_start_stop_test() ->
-	S = #{
-		diff => trunc(math:pow(2, 1000)),
-		timestamp => os:system_time(seconds),
-		data_segment => <<>>,
-		height => 1
-	},
-	PID = spawn(?MODULE, mine, [S, self()]),
-	timer:sleep(500),
-	assert_alive(PID),
-	stop_miners([PID]),
 	assert_not_alive(PID, 3000).
 
 assert_mine_output(B, POA, TXs) ->

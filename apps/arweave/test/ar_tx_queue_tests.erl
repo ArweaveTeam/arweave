@@ -152,7 +152,8 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 		sign_v1_tx(
 			Wallet,
 			#{
-				data => crypto:strong_rand_bytes(1000),
+				% Make sure v1 tx is not malleable.
+				data => << (crypto:strong_rand_bytes(1000))/binary, <<"a">>/binary >>,
 				reward => get_tx_price(1000) + 100000,
 				last_tx => get_tx_anchor()
 			}),

@@ -12,7 +12,8 @@
 	add/3,
 	delete/3,
 	cut/2,
-	is_inside/2
+	is_inside/2,
+	get_interval_with_byte/2
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -120,6 +121,28 @@ is_inside(Table, Offset) ->
 				[] ->
 					%% The key should have been just removed, unlucky timing.
 					is_inside(Table, Offset)
+			end
+	end.
+
+%% @doc Return the interval containing the given offset, including the right bound,
+%% excluding the right bound, or not_found.
+%% @end
+get_interval_with_byte(Table, Offset) ->
+	case ets:next(Table, Offset - 1) of
+		'$end_of_table' ->
+			not_found;
+		NextOffset ->
+			case ets:lookup(Table, NextOffset) of
+				[{NextOffset, Start}] ->
+					case Offset > Start of
+						true ->
+							{NextOffset, Start};
+						false ->
+							not_found
+					end;
+				[] ->
+					%% The key should have been just removed, unlucky timing.
+					get_interval_with_byte(Table, Offset)
 			end
 	end.
 

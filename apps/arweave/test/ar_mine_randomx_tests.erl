@@ -21,11 +21,38 @@ test_randomx_backwards_compatibility() ->
     Segment = ar_util:decode(?ENCODED_SEGMENT),
     Input = << Nonce/binary, Segment/binary >>,
     {ok, Hash} = ar_mine_randomx:hash_fast_nif(State, Input, 0, 0, 0),
-    ?assertEqual(ExpectedHash, Hash),
-    Diff = binary:encode_unsigned(ar_mine:max_difficulty() - 1, big),
-    {ok, _, TenthHash, _, _} =
-        ar_mine_randomx:bulk_hash_fast_nif(State, Nonce, Nonce, Segment, Diff, 0, 0, 0, 12),
-    ExpectedTenthHash = ar_util:decode(?ENCODED_TENTH_HASH),
-    ?assertEqual(ExpectedTenthHash, TenthHash),
+	?assertEqual(ExpectedHash, Hash),
+	PrevH = crypto:strong_rand_bytes(48),
+	SearchSpaceUpperBound = 123456789,
+	{ok, ExpectedByte} = ar_mine:pick_recall_byte(Hash, PrevH, SearchSpaceUpperBound),
+	Ref = make_ref(),
+	PIDs = [spawn_link(
+		fun() ->
+			receive {EncodedByte, ExpectedHash, Nonce, Thread, Ref} ->
+				Byte = binary:decode_unsigned(EncodedByte),
+				?assertEqual(ExpectedByte, Byte),
+				?assertEqual(self(), Thread)
+			after 10000 ->
+				?assert(false, "Did not hear from NIF for too long.")
+			end
+		end) || _ <- [1, 2]],
+	ok = ar_mine_randomx:bulk_hash_fast_nif(
+		State,
+		Nonce,
+		Nonce,
+		Segment,
+		PrevH,
+		binary:encode_unsigned(SearchSpaceUpperBound, big),
+		PIDs,
+		PIDs,
+		Ref,
+		2,
+		0,
+		0,
+		0
+	),
+	Diff = binary:encode_unsigned(binary:decode_unsigned(Hash, big) - 1),
+    {true, Hash} = ar_mine_randomx:hash_fast_verify_nif(State, Diff, Input, 0, 0, 0),
+    false = ar_mine_randomx:hash_fast_verify_nif(State, Hash, Input, 0, 0, 0),
     {ok, LightState} = ar_mine_randomx:init_light_nif(Key, 0, 0),
     ?assertEqual({ok, ExpectedHash}, ar_mine_randomx:hash_light_nif(LightState, Input, 0, 0, 0)).
