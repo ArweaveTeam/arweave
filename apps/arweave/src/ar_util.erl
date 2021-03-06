@@ -205,7 +205,8 @@ get_performance(Peer = {_, _, _, _, _}) ->
 %% @doc Update the "last on list" timestamp of a given peer
 update_timer(Peer = {_, _, _, _, _}) ->
 	case ar_meta_db:get({peer, Peer}) of
-		not_found -> #performance{};
+		not_found ->
+			ok;
 		P ->
 			ar_meta_db:put({peer, Peer},
 				P#performance {

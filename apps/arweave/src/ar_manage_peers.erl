@@ -62,8 +62,10 @@ update(Peers) ->
 	lists:foreach(
 		fun(P) ->
 			case lists:member(P, NewPeers) of
-				false -> ar_util:update_timer(P);
-				_ -> ok
+				false ->
+					ar_util:update_timer(P);
+				_ ->
+					ok
 			end
 		end,
 		Peers
@@ -75,7 +77,7 @@ get_more_peers(Peers) ->
 	ar_util:unique(
 		lists:flatten(
 			[
-				ar_util:pmap(fun get_peers/1, Peers),
+				ar_util:pmap(fun get_peers/1, lists:sublist(Peers, 10)),
 				Peers
 			]
 		)
@@ -101,7 +103,8 @@ score(Peer) ->
 	case ar_util:get_performance(Peer) of
 		P when P#performance.transfers < ?PEER_GRACE_PERIOD ->
 			newbie;
-		P -> P#performance.bytes / (P#performance.time + 1)
+		P ->
+			P#performance.bytes / (P#performance.time + 1)
 	end.
 
 %% @doc Given a set of peers, returns a tuple containing peers that
@@ -117,13 +120,14 @@ rank_peers(ScoredPeers) ->
 
 %% @doc Probabalistically drop peers based on their rank. Highly ranked peers are
 %% less likely to be dropped than lower ranked ones.
-maybe_drop_peers(Peers) -> maybe_drop_peers(1, length(Peers), Peers).
+maybe_drop_peers(Peers) ->
+	maybe_drop_peers(1, length(Peers), Peers).
 maybe_drop_peers(_, _, []) -> [];
 maybe_drop_peers(Rank, NumPeers, [Peer|Peers]) when Rank =< ?MINIMUM_PEERS ->
-	[Peer|maybe_drop_peers(Rank + 1, NumPeers, Peers)];
+	[Peer | maybe_drop_peers(Rank + 1, NumPeers, Peers)];
 maybe_drop_peers(Rank, NumPeers, [Peer|Peers]) ->
 	case roll(Rank, NumPeers) of
-		true -> [Peer|maybe_drop_peers(Rank + 1, NumPeers, Peers)];
+		true -> [Peer | maybe_drop_peers(Rank + 1, NumPeers, Peers)];
 		false -> maybe_drop_peers(Rank + 1, NumPeers, Peers)
 	end.
 
