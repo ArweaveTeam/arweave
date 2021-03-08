@@ -236,22 +236,27 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 %% served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
-	case hash_to_filename(tx, Hash) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid hash.">>, Req};
-		{error, _, unavailable} ->
-			{404, #{}, sendfile("data/not_found.html"), Req};
-		{ok, Filename} ->
-			{ok, TX} = ar_storage:read_tx_file(Filename),
-			serve_tx_html_data(Req, TX);
-		{migrated_v1, Filename} ->
-			case ar_storage:read_migrated_v1_tx_file(Filename) of
-				{ok, TX} ->
+	case ar_meta_db:get(serve_html_data) of
+		false ->
+			{421, #{}, <<"Serving HTML data is disabled on this node.">>, Req};
+		_ ->
+			case hash_to_filename(tx, Hash) of
+				{error, invalid} ->
+					{400, #{}, <<"Invalid hash.">>, Req};
+				{error, _, unavailable} ->
+					{404, #{}, sendfile("data/not_found.html"), Req};
+				{ok, Filename} ->
+					{ok, TX} = ar_storage:read_tx_file(Filename),
 					serve_tx_html_data(Req, TX);
-				{error, data_unavailable} ->
-					{404, #{}, <<>>, Req};
-				_ ->
-					{500, #{}, <<>>, Req}
+				{migrated_v1, Filename} ->
+					case ar_storage:read_migrated_v1_tx_file(Filename) of
+						{ok, TX} ->
+							serve_tx_html_data(Req, TX);
+						{error, data_unavailable} ->
+							{404, #{}, <<>>, Req};
+						_ ->
+							{500, #{}, <<>>, Req}
+					end
 			end
 	end;
 
