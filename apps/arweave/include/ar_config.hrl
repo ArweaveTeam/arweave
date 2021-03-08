@@ -56,7 +56,6 @@
 	new_key = false,
 	load_key = false,
 	disk_space,
-	used_space = 0,
 	disk_space_check_frequency = ?DISK_SPACE_CHECK_FREQUENCY_MS,
 	start_from_block_index = false,
 	internal_api_secret = not_set,

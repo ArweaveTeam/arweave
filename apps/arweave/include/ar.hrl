@@ -459,7 +459,7 @@
 
 %% The frequency of issuing a reminder to the console and the logfile
 %% about the insufficient disk space, in milliseconds.
--define(DISK_SPACE_WARNING_FREQUENCY, 120 * 1000).
+-define(DISK_SPACE_WARNING_FREQUENCY, 24 * 60 * 60 * 1000).
 
 %% Use a standard way of logging.
 %% For more details see https://erlang.org/doc/man/logger.html#macros.

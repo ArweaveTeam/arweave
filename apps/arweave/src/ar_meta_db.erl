@@ -100,8 +100,6 @@ init(_) ->
 	ets:insert(?MODULE, {data_dir, Config#config.data_dir}),
 	ets:insert(?MODULE, {metrics_dir, Config#config.metrics_dir}),
 	ets:insert(?MODULE, {port, Config#config.port}),
-	ets:insert(?MODULE, {disk_space, Config#config.disk_space}),
-	ets:insert(?MODULE, {used_space, Config#config.used_space}),
 	ets:insert(?MODULE, {mine, Config#config.mine}),
 	ets:insert(?MODULE, {max_miners, Config#config.max_miners}),
 	ets:insert(?MODULE, {max_emitters, Config#config.max_emitters}),
@@ -142,7 +140,6 @@ init(_) ->
 	spawn(fun() -> ar_storage:init() end),
 	%% Optionally clear the block cache.
 	if Config#config.clean -> ar_storage:clear(); true -> do_nothing end,
-	ar_storage:start_update_used_space(),
 	{ok, #{}}.
 
 handle_call(reset, _From, State) ->

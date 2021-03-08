@@ -38,7 +38,6 @@ parse_config() ->
 		new_key = true,
 		load_key = "some_key_file",
 		disk_space = 44 * 1024 * 1024 * 1024,
-		used_space = _,
 		disk_space_check_frequency = 10 * 1000,
 		start_from_block_index = true,
 		internal_api_secret = <<"some_very_very_long_secret">>,

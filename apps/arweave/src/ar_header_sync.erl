@@ -15,6 +15,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_header_sync.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
+-include_lib("arweave/include/ar_chunk_storage.hrl").
 
 %%% This module syncs block and transaction headers and maintains a persisted record of synced
 %%% headers. Headers are synced from latest to earliest. Includes a migration process that
@@ -139,9 +140,8 @@ handle_cast({add_block, B}, State) ->
 	{noreply, State2};
 
 handle_cast(check_space_alarm, State) ->
-	FreeSpace = ar_storage:get_free_space(),
-	case FreeSpace < ?DISK_HEADERS_BUFFER_SIZE of
-		true ->
+	case have_free_space() of
+		false ->
 			Msg =
 				"The node has stopped syncing headers - the available disk space is"
 				" less than ~s. Add more disk space if you wish to store more headers.",
@@ -150,20 +150,19 @@ handle_cast(check_space_alarm, State) ->
 				{event, ar_header_sync_stopped_syncing},
 				{reason, little_disk_space_left}
 			]);
-		false ->
+		true ->
 			ok
 	end,
 	cast_after(?DISK_SPACE_WARNING_FREQUENCY, check_space_alarm),
 	{noreply, State};
 
 handle_cast(check_space_process_item, #{ cleanup_started := CleanupStarted } = State) ->
-	FreeSpace = ar_storage:get_free_space(),
-	case FreeSpace > ?DISK_HEADERS_BUFFER_SIZE of
+	case have_free_space() of
 		true ->
 			gen_server:cast(self(), process_item),
 			{noreply, State#{ cleanup_started => false }};
 		false ->
-			case FreeSpace < ?DISK_HEADERS_CLEANUP_THRESHOLD of
+			case should_cleanup() of
 				true ->
 					case CleanupStarted of
 						true ->
@@ -303,6 +302,18 @@ add_block(B, State) ->
 			]),
 			State
 	end.
+
+have_free_space() ->
+	ar_storage:get_free_space(".") > ?DISK_HEADERS_BUFFER_SIZE
+		%% RocksDB and the chunk storage contain v1 data, which is part of the headers.
+		andalso ar_storage:get_free_space(?ROCKS_DB_DIR) > ?DISK_HEADERS_BUFFER_SIZE
+			andalso ar_storage:get_free_space(?CHUNK_DIR) > ?DISK_HEADERS_BUFFER_SIZE.
+
+should_cleanup() ->
+	ar_storage:get_free_space(".") < ?DISK_HEADERS_CLEANUP_THRESHOLD
+		%% RocksDB and the chunk storage contain v1 data, which is part of the headers.
+		orelse ar_storage:get_free_space(?ROCKS_DB_DIR) < ?DISK_HEADERS_CLEANUP_THRESHOLD
+			orelse ar_storage:get_free_space(?CHUNK_DIR) < ?DISK_HEADERS_CLEANUP_THRESHOLD.
 
 remove_oldest_headers(#{ db := DB, sync_record := SyncRecord } = State) ->
 	case ar_intervals:count(SyncRecord) == 0 of

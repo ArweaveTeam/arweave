@@ -9,8 +9,7 @@
 	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/4,
 	write_block_index/1, read_block_index/0,
 	delete_full_block/1, delete_tx/1, delete_block/1,
-	select_drive/2,
-	calculate_disk_space/0, calculate_used_space/0, start_update_used_space/0, get_free_space/0,
+	get_free_space/1,
 	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
 	tx_filepath/1, tx_data_filepath/1,
 	read_tx_file/1, read_migrated_v1_tx_file/1,
@@ -29,21 +28,13 @@
 
 %%% Reads and writes blocks from disk.
 
--define(DIRECTORY_SIZE_TIMER, 300000).
-
 %% @doc Ready the system for block/tx reading and writing.
 init() ->
 	{ok, Config} = application:get_env(arweave, config),
 	ensure_directories(Config#config.data_dir),
 	ok = migrate_block_filenames(),
 	count_blocks_on_disk(),
-	case ar_meta_db:get(disk_space) of
-		undefined ->
-			ar_meta_db:put(disk_space, calculate_disk_space()),
-			ok;
-		_ ->
-			ok
-	end.
+	ok.
 
 migrate_block_filenames() ->
 	case v1_migration_file_exists() of
@@ -252,23 +243,17 @@ parse_block_shadow_json(JSON) ->
 			Error
 	end.
 
-%% @doc Recalculate the used space in bytes of the data directory disk.
-start_update_used_space() ->
-	spawn(
-		fun() ->
-			catch ar_meta_db:put(used_space, calculate_used_space()),
-			timer:apply_after(
-				?DIRECTORY_SIZE_TIMER,
-				?MODULE,
-				start_update_used_space,
-				[]
-			)
-		end
-	).
-
 %% @doc Return available disk space, in bytes.
-get_free_space() ->
-	max(0, ar_meta_db:get(disk_space) - ar_meta_db:get(used_space)).
+get_free_space(Dir) ->
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
+	{_, KByteSize, CapacityKByteSize} = get_disk_data(filename:join(DataDir, Dir)),
+	case Config#config.disk_space of
+		undefined ->
+			CapacityKByteSize * 1024;
+		Limit ->
+			max(0, Limit - (KByteSize - CapacityKByteSize) * 1024)
+	end.
 
 lookup_block_filename(H) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -337,7 +322,6 @@ delete_wallet_list(RootHash) ->
 				{ok, FileInfo} ->
 					case file:delete(WalletListFile) of
 						ok ->
-							ar_meta_db:increase(used_space, -FileInfo#file_info.size),
 							{ok, FileInfo#file_info.size};
 						Error ->
 							Error
@@ -357,7 +341,6 @@ delete_wallet_list_chunks(Position, RootHash, BytesRemoved) ->
 				{ok, FileInfo} ->
 					case file:delete(WalletListChunkFile) of
 						ok ->
-							ar_meta_db:increase(used_space, -FileInfo#file_info.size),
 							delete_wallet_list_chunks(
 								Position + ?WALLET_LIST_CHUNK_SIZE,
 								RootHash,
@@ -390,7 +373,6 @@ delete_tx(Hash) ->
 				{ok, FileInfo} ->
 					case file:delete(Filename) of
 						ok ->
-							ar_meta_db:increase(used_space, -FileInfo#file_info.size),
 							{ok, FileInfo#file_info.size};
 						Error ->
 							Error
@@ -413,7 +395,6 @@ delete_block(H) ->
 				{ok, FileInfo} ->
 					case file:delete(Filename) of
 						ok ->
-							ar_meta_db:increase(used_space, -FileInfo#file_info.size),
 							{ok, FileInfo#file_info.size};
 						Error ->
 							Error
@@ -545,11 +526,6 @@ write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpa
 				},
 				case ar_data_sync:add_chunk(Proof, 30000, WriteToFreeSpaceBuffer) of
 					ok ->
-						%% Pessimistically (because some of the writes are overrides and
-						%% because RocksDB compresses data) increase the used disk space count.
-						%% The value is corrected periodically when the new data arrives from
-						%% ar_disksup.
-						ar_meta_db:increase(used_space, byte_size(Chunk)),
 						Acc;
 					{error, Reason} ->
 						[Reason | Acc]
@@ -816,23 +792,10 @@ lookup_tx_filename(ID) ->
 			end
 	end.
 
-%% @doc Calculate the available space in bytes on the data directory disk.
-calculate_disk_space() ->
-	{_, KByteSize, _} = get_data_dir_disk_data(),
-	KByteSize * 1024.
-
-%% @doc Calculate the used space in bytes on the data directory disk.
-calculate_used_space() ->
-	{_, KByteSize, CapacityKByteSize} = get_data_dir_disk_data(),
-	(KByteSize - CapacityKByteSize) * 1024.
-
-get_data_dir_disk_data() ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = filename:absname(Config#config.data_dir),
-	[DiskData | _] = select_drive(ar_disksup:get_disk_data(), DataDir),
+get_disk_data(Dir) ->
+	[DiskData | _] = select_drive(ar_disksup:get_disk_data(), filename:absname(Dir)),
 	DiskData.
 
-%% @doc Calculate the root drive in which the Arweave server resides
 select_drive(Disks, []) ->
 	CWD = "/",
 	case
@@ -936,10 +899,6 @@ write_file_atomic(Filename, Data) ->
 	SwapFilename = Filename ++ ".swp",
 	case file:write_file(SwapFilename, Data) of
 		ok ->
-			%% Pessimistically (because some of the writes are overrides)
-			%% increase the used disk space count. The value is corrected
-			%% periodically when the new data arrives from ar_disksup.
-			ar_meta_db:increase(used_space, byte_size(Data)),
 			file:rename(SwapFilename, Filename);
 		Error ->
 			Error

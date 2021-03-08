@@ -532,8 +532,7 @@ handle_cast({update_peer_sync_records, PeerSyncRecords}, State) ->
 	}};
 
 handle_cast(check_space_warning, State) ->
-	FreeSpace = ar_storage:get_free_space(),
-	case FreeSpace > ?DISK_DATA_BUFFER_SIZE of
+	case have_free_space() of
 		false ->
 			Msg =
 				"The node has stopped syncing data - the available disk space is"
@@ -550,8 +549,7 @@ handle_cast(check_space_warning, State) ->
 	{noreply, State};
 
 handle_cast(check_space_sync_random_interval, State) ->
-	FreeSpace = ar_storage:get_free_space(),
-	case FreeSpace > ?DISK_DATA_BUFFER_SIZE of
+	case have_free_space() of
 		true ->
 			gen_server:cast(self(), {sync_random_interval, []});
 		false ->
@@ -1338,7 +1336,8 @@ remove_orphaned_data_root_offsets(State, BlockStartOffset, WeaveSize) ->
 	).
 
 have_free_space() ->
-	ar_storage:get_free_space() > ?DISK_DATA_BUFFER_SIZE.
+	ar_storage:get_free_space(?ROCKS_DB_DIR) > ?DISK_DATA_BUFFER_SIZE
+		andalso ar_storage:get_free_space(?CHUNK_DIR) > ?DISK_DATA_BUFFER_SIZE.
 
 add_block(B, SizeTaggedTXs, State) ->
 	#sync_data_state{
