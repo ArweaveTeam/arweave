@@ -337,7 +337,16 @@ send_block_to_external_parallel(Peers, NewB, BDS) ->
 	Send = fun(Peer) ->
 		ar_http_iface_client:send_new_block(Peer, NewB, BDS)
 	end,
-	ar_util:pmap(Send, PeersParallel),
+	SendRetry = fun(Peer) ->
+		case ar_http_iface_client:send_new_block(Peer, NewB, BDS) of
+			{ok, {{<<"412">>, _}, _, _, _, _}} ->
+				timer:sleep(5000),
+				Send(Peer);
+			_ ->
+				ok
+		end
+	end,
+	ar_util:pmap(SendRetry, PeersParallel),
 	lists:foreach(Send, PeersSequential).
 
 %% @doc Possibly send a new message to external peers.
