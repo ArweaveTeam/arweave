@@ -6,7 +6,7 @@ addons:
 install:
     - epmd -daemon
 otp_release:
-    - 22.2
+    - 23.1.2
 # blocklist
 branches:
     except:

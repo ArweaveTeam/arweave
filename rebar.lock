@@ -12,19 +12,16 @@
   0},
  {<<"gun">>,{pkg,<<"gun">>,<<"1.3.2">>},0},
  {<<"jiffy">>,{pkg,<<"jiffy">>,<<"1.0.8">>},0},
- {<<"prometheus">>,{pkg,<<"prometheus">>,<<"4.4.1">>},0},
- {<<"prometheus_cowboy">>,
-  {git,"https://github.com/ArweaveTeam/prometheus-cowboy.git",
-       {ref,"3386d21191527831fd4480178633d1bb5aed253b"}},
-  0},
+ {<<"prometheus">>,{pkg,<<"prometheus">>,<<"4.6.0">>},0},
+ {<<"prometheus_cowboy">>,{pkg,<<"prometheus_cowboy">>,<<"0.1.8">>},0},
  {<<"prometheus_httpd">>,{pkg,<<"prometheus_httpd">>,<<"2.1.11">>},1},
  {<<"prometheus_process_collector">>,
-  {pkg,<<"prometheus_process_collector">>,<<"1.4.5">>},
+  {pkg,<<"prometheus_process_collector">>,<<"1.6.0">>},
   0},
  {<<"ranch">>,{pkg,<<"ranch">>,<<"1.7.1">>},1},
  {<<"rocksdb">>,
   {git,"https://gitlab.com/arweave1/erlang-rocksdb.git",
-       {ref,"09ba3a9016528ae7466a824d04a3d6ff479537b1"}},
+       {ref,"cba9ec42255862196bec35b7ddcbdf8feedf4277"}},
   0}]}.
 [
 {pkg_hash,[
@@ -33,8 +30,9 @@
  {<<"cowlib">>, <<"FD0FF1787DB84AC415B8211573E9A30A3EBE71B5CBFF7F720089972B2319C8A4">>},
  {<<"gun">>, <<"542064CBB9F613650B8A8100B3A927505F364FBE198B7A5A112868FF43F3E477">>},
  {<<"jiffy">>, <<"60E36F00BE35E5AC6E6CF2D4CAF3BDF3103D4460AFF385F543A8D7DF2D6D9613">>},
- {<<"prometheus">>, <<"1E96073B3ED7788053768FEA779CBC896DDC3BDD9BA60687F2AD50B252AC87D6">>},
+ {<<"prometheus">>, <<"20510F381DB1CCAB818B4CF2FAC5FA6AB5CC91BC364A154399901C001465F46F">>},
+ {<<"prometheus_cowboy">>, <<"CFCE0BC7B668C5096639084FCD873826E6220EA714BF60A716F5BD080EF2A99C">>},
  {<<"prometheus_httpd">>, <<"F616ED9B85B536B195D94104063025A91F904A4CFC20255363F49A197D96C896">>},
- {<<"prometheus_process_collector">>, <<"9BAEA93F5D8C2758DBAD0DE021EF74438D2F81A01D1F24F5EF0BB949A7B4191D">>},
+ {<<"prometheus_process_collector">>, <<"B169E224337497CD858DA16F9361EDABC5931B9D12201A97EE15D88EF5A6FCAA">>},
  {<<"ranch">>, <<"6B1FAB51B49196860B733A49C07604465A47BDB78AA10C1C16A3D199F7F8C881">>}]}
 ].
