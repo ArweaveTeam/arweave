@@ -14,7 +14,7 @@
 	start_link/0,
 	add_tx/1, move_tx_to_mining_pool/1, add_block/4,
 	add_remote_peer/1, add_local_peer/1,
-	get_remote_peers/0, set_remote_peers/1,
+	get_remote_peers/0, get_remote_peers/1, set_remote_peers/1,
 	drop_waiting_txs/1
 ]).
 
@@ -65,7 +65,11 @@ add_remote_peer(Node) ->
 add_local_peer(Node) ->
 	gen_server:cast(?MODULE, {add_peer, local, Node}).
 
-%% @doc Get a list of remote peers
+%% @doc Get a list of remote peers.
+get_remote_peers(Timeout) ->
+	gen_server:call(?MODULE, {get_peers, remote}, Timeout).
+
+%% @doc Get a list of remote peers.
 get_remote_peers() ->
 	gen_server:call(?MODULE, {get_peers, remote}).
 
@@ -105,8 +109,6 @@ start_link() ->
 init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
-	%% Start the transaction distribution priority queue.
-	ok = ar_tx_queue:start_link(),
 	%% Start asking peers about their peers.
 	erlang:send_after(0, self(), get_more_peers),
 	State = #state {

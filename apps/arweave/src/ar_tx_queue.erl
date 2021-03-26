@@ -38,23 +38,10 @@
 %%%===================================================================
 
 start_link() ->
-	Resp =
-		case gen_server:start_link({local, ?MODULE}, ?MODULE, [], []) of
-			{ok, _Pid} ->
-				ok;
-			{error, {already_started, _Pid}} ->
-				ok;
-			Error ->
-				?LOG_ERROR({?MODULE, error_on_start_link, Error}),
-				error
-		end,
-	case Resp of
-		ok -> start_emitters();
-		_  -> pass
-	end.
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 start_emitters() ->
-	gen_server:call(?MODULE, start_emitters).
+	gen_server:cast(?MODULE, start_emitters).
 
 stop() ->
 	gen_server:stop(?MODULE).
@@ -90,6 +77,7 @@ init([]) ->
 			not_found -> ?NUM_EMITTER_PROCESSES;
 			X -> X
 		end,
+	start_emitters(),
 	{ok, #state{
 		tx_queue = gb_sets:new(),
 		emitters_running = 0,
@@ -118,7 +106,10 @@ handle_call(show_queue, _From, State = #state{ tx_queue = Q }) ->
 	Reply = show_queue(Q),
 	{reply, Reply, State};
 
-handle_call(start_emitters, _From, State) ->
+handle_call(_Request, _From, State) ->
+	{noreply, State}.
+
+handle_cast(start_emitters, State) ->
 	#state{ max_emitters = MaxEmitters, emitters_running = EmittersRunning } = State,
 	lists:foreach(
 		fun(N) ->
@@ -127,10 +118,7 @@ handle_call(start_emitters, _From, State) ->
 		end,
 		lists:seq(1, max(MaxEmitters - EmittersRunning, 0))
 	),
-	{reply, ok, State#state{ emitters_running = MaxEmitters, paused = false }};
-
-handle_call(_Request, _From, State) ->
-	{noreply, State}.
+	{noreply, State#state{ emitters_running = MaxEmitters, paused = false }};
 
 handle_cast({add_tx, TX}, State) ->
 	#state{
@@ -335,7 +323,7 @@ maybe_drop(Q, {HeaderSize, DataSize} = Size, {MaxHeaderSize, MaxDataSize} = MaxS
 
 get_peers() ->
 	Peers =
-		lists:sublist(ar_bridge:get_remote_peers(), ar_meta_db:get(max_propagation_peers)),
+		lists:sublist(ar_bridge:get_remote_peers(10000), ar_meta_db:get(max_propagation_peers)),
 	{ok, Config} = application:get_env(arweave, config),
 	TrustedPeers = Config#config.peers,
 	{join_peers(Peers, TrustedPeers), TrustedPeers}.

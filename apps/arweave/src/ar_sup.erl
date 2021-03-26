@@ -54,6 +54,7 @@ init([]) ->
 		?CHILD(ar_watchdog, worker),
 		?CHILD(ar_tx_blacklist, worker),
 		?CHILD(ar_bridge, worker),
+		?CHILD(ar_tx_queue, worker),
 		?CHILD(ar_chunk_storage, worker),
 		?CHILD(ar_header_sync, worker),
 		?CHILD(ar_data_sync, worker),
