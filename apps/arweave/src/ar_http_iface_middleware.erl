@@ -279,7 +279,9 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 					_ ->
 						etf
 			end,
-			case ar_data_sync:get_sync_record(#{ format => Format, random_subset => true }) of
+			ok = ar_semaphore:acquire(get_sync_record, infinity),
+			Options = #{ format => Format, random_subset => true },
+			case ar_sync_record:get_record(Options, ar_data_sync) of
 				{ok, Binary} ->
 					{200, #{}, Binary, Req};
 				{error, timeout} ->
@@ -300,28 +302,60 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pi
 						true ->
 							{400, #{}, jiffy:encode(#{ error => limit_too_big }), Req};
 						false ->
+							ok = ar_semaphore:acquire(get_sync_record, infinity),
 							handle_get_data_sync_record(Start, Limit, Req)
 					end
 			end
 	end;
 
 handle(<<"GET">>, [<<"chunk">>, OffsetBinary], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_chunk_semaphore, infinity),
 	case catch binary_to_integer(OffsetBinary) of
 		Offset when is_integer(Offset) ->
 			case << Offset:(?NOTE_SIZE * 8) >> of
 				%% A positive number represented by =< ?NOTE_SIZE bytes.
 				<< Offset:(?NOTE_SIZE * 8) >> ->
-					case ar_data_sync:get_chunk(Offset) of
-						{ok, Proof} ->
-							Reply = jiffy:encode(ar_serialize:chunk_proof_to_json_map(Proof)),
-							{200, #{}, Reply, Req};
-						{error, chunk_not_found} ->
-							{404, #{}, <<>>, Req};
-						{error, not_joined} ->
-							not_joined(Req);
-						{error, failed_to_read_chunk} ->
-							{500, #{}, <<>>, Req}
+					Type =
+						case cowboy_req:header(<<"x-packing-key">>, Req, not_set) of
+							not_set ->
+								unpacked;
+							<<"aes_256_cbc">> ->
+								aes_256_cbc;
+							_ ->
+								aes_256_cbc
+						end,
+					CheckRecords =
+						case ar_sync_record:is_recorded(Offset, Type, ar_data_sync) of
+							true ->
+								ok = ar_semaphore:acquire(get_chunk, infinity),
+								ok;
+							false ->
+								case ar_sync_record:is_recorded(Offset, ar_data_sync) of
+									{true, _} ->
+										ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
+										ok;
+									false ->
+										{reply, {404, #{}, <<>>, Req}}
+								end
+						end,
+					case CheckRecords of
+						{reply, Reply} ->
+							Reply;
+						ok ->
+							case ar_data_sync:get_chunk(Offset, #{ packing => Type }) of
+								{ok, Proof} ->
+									Proof2 = Proof#{ packing => Type },
+									Reply =
+										jiffy:encode(
+											ar_serialize:chunk_proof_to_json_map(Proof2)
+										),
+									{200, #{}, Reply, Req};
+								{error, chunk_not_found} ->
+									{404, #{}, <<>>, Req};
+								{error, not_joined} ->
+									not_joined(Req);
+								{error, failed_to_read_chunk} ->
+									{500, #{}, <<>>, Req}
+							end
 					end;
 				_ ->
 					{400, #{}, jiffy:encode(#{ error => offset_out_of_bounds }), Req}
@@ -361,7 +395,7 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			ok = ar_semaphore:acquire(post_chunk_semaphore, 200),
+			ok = ar_semaphore:acquire(post_chunk, infinity),
 			case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
 				{ok, Body, Req2} ->
 					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
@@ -546,7 +580,7 @@ handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
 
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
+	ok = ar_semaphore:acquire(get_block_index, infinity),
 	case ar_node:is_joined() of
 		false ->
 			not_joined(Req);
@@ -769,7 +803,7 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, _Pid)
 							Height when Height > CurrentHeight ->
 								unavailable;
 							Height ->
-								ok = ar_semaphore:acquire(block_index_semaphore, infinity),
+								ok = ar_semaphore:acquire(get_block_index, infinity),
 								BI = ar_node:get_block_index(),
 								Len = length(BI),
 								case Height > Len - 1 of
@@ -1009,6 +1043,7 @@ serve_tx_data(Req, #tx{ format = 2, id = ID } = TX) ->
 		true ->
 			{200, #{}, sendfile(DataFilename), Req};
 		false ->
+			ok = ar_semaphore:acquire(get_tx_data, infinity),
 			case ar_data_sync:get_tx_data(ID) of
 				{ok, Data} ->
 					{200, #{}, ar_util:encode(Data), Req};
@@ -1040,6 +1075,7 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 		{ok, Data} ->
 			{200, #{ <<"content-type">> => ContentType }, Data, Req};
 		{error, enoent} ->
+			ok = ar_semaphore:acquire(get_tx_data, infinity),
 			case ar_data_sync:get_tx_data(TX#tx.id) of
 				{ok, Data} ->
 					{200, #{ <<"content-type">> => ContentType }, Data, Req};
@@ -1221,7 +1257,8 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 			_ ->
 				etf
 		end,
-	case ar_data_sync:get_sync_record(#{ start => Start, limit => Limit, format => Format }) of
+	Options = #{ start => Start, limit => Limit, format => Format },
+	case ar_sync_record:get_record(Options, ar_data_sync) of
 		{ok, Binary} ->
 			{200, #{}, Binary, Req};
 		{error, timeout} ->
@@ -1641,7 +1678,7 @@ record_block_pre_validation_time(ReceiveTimestamp) ->
 
 %% Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
-	ok = ar_semaphore:acquire(block_index_semaphore, infinity),
+	ok = ar_semaphore:acquire(get_block_index, infinity),
 	CurrentBI = ar_node:get_block_index(),
 	case is_block_known(Type, ID, CurrentBI) of
 		{error, height_not_integer} ->
@@ -1701,7 +1738,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 					{400, #{},
 						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }), Req};
 				{true, _} ->
-					ok = ar_semaphore:acquire(wallet_list_semaphore, infinity),
+					ok = ar_semaphore:acquire(get_wallet_list, infinity),
 					case ar_storage:read_wallet_list(B#block.wallet_list) of
 						{ok, Tree} ->
 							{200, #{}, ar_serialize:jsonify(
@@ -1858,7 +1895,7 @@ post_tx_parse_id(check_header, {Req, Pid}) ->
 			end
 	end;
 post_tx_parse_id(check_body, {Req, Pid}) ->
-	{_, Chunk, Req2} = read_body_chunk(Req, Pid, 100, 10),
+	{_, Chunk, Req2} = read_body_chunk(Req, Pid, 100, 500),
 	case re:run(Chunk, <<"\"id\":\s*\"(?<ID>[A-Za-z0-9_-]{43})\"">>, [{capture, ['ID']}]) of
 		{match, [Part]} ->
 			TXID = ar_util:decode(binary:part(Chunk, Part)),

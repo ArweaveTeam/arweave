@@ -40,3 +40,6 @@
 -define(INITIAL_BACKOFF_INTERVAL_S, 30).
 %% @doc The maximum exponential backoff interval for failing requests.
 -define(MAX_BACKOFF_INTERVAL_S, 2 * 60 * 60).
+
+%% @doc The frequency of storing the server state on disk.
+-define(STORE_HEADER_STATE_FREQUENCY_MS, 30000).

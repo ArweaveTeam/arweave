@@ -8,6 +8,7 @@
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 register(MetricsDir) ->
 	filelib:ensure_dir(MetricsDir ++ "/"),

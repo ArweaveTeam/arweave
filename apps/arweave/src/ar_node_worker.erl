@@ -120,7 +120,7 @@ init([]) ->
 		automine => false,
 		tags => [],
 		gossip => Gossip,
-		reward_addr => determine_mining_address(Config),
+		reward_addr => Config#config.mining_addr,
 		blocks_missing_txs => sets:new(),
 		missing_txs_lookup_processes => #{},
 		task_queue => gb_sets:new(),
@@ -161,7 +161,7 @@ start_io_threads() ->
 	%% processes keep the database files open for better performance so
 	%% we do not want to restart them.
 	{ok, Config} = application:get_env(arweave, config),
-	ets:insert(mining_state, {session, {make_ref(), os:system_time(second)}}),
+	ets:insert(mining_state, {session, {make_ref(), os:system_time(second), not_set}}),
 	SearchInRocksDB = lists:member(search_in_rocksdb_when_mining, Config#config.enable),
 	[spawn_link(
 		fun() ->
@@ -568,6 +568,7 @@ drop_txs(DroppedTXs, TXs, MempoolSize) ->
 			fun(TX, {Acc, DroppedAcc}) ->
 				case maps:take(TX#tx.id, Acc) of
 					{_Value, Map} ->
+						ar_tx_queue:drop_tx(TX),
 						{Map, maps:put(TX#tx.id, TX, DroppedAcc)};
 					error ->
 						{Acc, DroppedAcc}
@@ -863,7 +864,7 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 		lists:reverse([B | PrevBlocks])
 	),
 	RecentBI = lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 2),
-	ar_data_sync:add_tip_block(BlockTXPairs, RecentBI),
+	ar_data_sync:add_tip_block(B#block.height, BlockTXPairs, RecentBI),
 	ar_header_sync:add_tip_block(B, RecentBI),
 	lists:foreach(
 		fun(PrevB) ->
@@ -1048,21 +1049,6 @@ priority({cache_missing_txs, _, _}) ->
 	{3, 1};
 priority(_) ->
 	{os:system_time(second), 1}.
-
-determine_mining_address(Config) ->
-	case {Config#config.mining_addr, Config#config.load_key, Config#config.new_key} of
-		{false, false, _} ->
-			{_, Pub} = ar_wallet:new_keyfile(),
-			ar_wallet:to_address(Pub);
-		{false, Load, false} ->
-			{_, Pub} = ar_wallet:load_keyfile(Load),
-			ar_wallet:to_address(Pub);
-		{Address, false, false} ->
-			Address;
-		_ ->
-			{_, Pub} = ar_wallet:new_keyfile(),
-			ar_wallet:to_address(Pub)
-	end.
 
 read_hash_list_2_0_for_1_0_blocks() ->
 	Fork_2_0 = ar_fork:height_2_0(),

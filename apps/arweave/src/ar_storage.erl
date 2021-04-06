@@ -166,23 +166,28 @@ write_full_block(B) ->
 	BShadow = B#block{ txs = [T#tx.id || T <- B#block.txs] },
 	write_full_block(BShadow, B#block.txs).
 
+write_full_block(#block{ height = 0 } = BShadow, TXs) when ?NETWORK_NAME == "arweave.N.1" ->
+	write_full_block2(BShadow, TXs);
 write_full_block(BShadow, TXs) ->
 	case write_tx(TXs) of
 		Response when Response == ok orelse Response == {error, firewall_check} ->
-			case write_block(BShadow) of
-				ok ->
-					StoreTags = case ar_meta_db:get(arql_tags_index) of
-						true ->
-							store_tags;
-						_ ->
-							do_not_store_tags
-					end,
-					ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags),
-					app_ipfs:maybe_ipfs_add_txs(TXs),
-					ok;
-				Error ->
-					Error
-			end;
+			write_full_block2(BShadow, TXs);
+		Error ->
+			Error
+	end.
+
+write_full_block2(BShadow, TXs) ->
+	case write_block(BShadow) of
+		ok ->
+			StoreTags = case ar_meta_db:get(arql_tags_index) of
+				true ->
+					store_tags;
+				_ ->
+					do_not_store_tags
+			end,
+			ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags),
+			app_ipfs:maybe_ipfs_add_txs(TXs),
+			ok;
 		Error ->
 			Error
 	end.

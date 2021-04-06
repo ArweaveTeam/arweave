@@ -260,7 +260,10 @@ simple_retarget_test_() ->
 		)
 	end}.
 
-calculate_difficulty_linear_test() ->
+calculate_difficulty_linear_test_() ->
+	ar_test_fork:test_on_fork(height_2_5, 0, fun test_calculate_difficulty_linear/0).
+
+test_calculate_difficulty_linear() ->
 	Diff = switch_to_linear_diff(27),
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	Timestamp = os:system_time(seconds),
@@ -268,19 +271,19 @@ calculate_difficulty_linear_test() ->
 	Retarget1 = Timestamp - TargetTime - ?TARGET_TIME + 1,
 	?assertEqual(
 		Diff,
-		calculate_difficulty(Diff, Timestamp, Retarget1, 0)
+		calculate_difficulty(Diff, Timestamp, Retarget1, 1)
 	),
 	Retarget2 = Timestamp - TargetTime + ?TARGET_TIME - 1,
 	?assertEqual(
 		Diff,
-		calculate_difficulty(Diff, Timestamp, Retarget2, 0)
+		calculate_difficulty(Diff, Timestamp, Retarget2, 1)
 	),
 	%% The change is not capped by ?DIFF_ADJUSTMENT_UP_LIMIT anymore.
 	Retarget3 = Timestamp - TargetTime div (?DIFF_ADJUSTMENT_UP_LIMIT + 1),
 	?assertEqual(
 		(?DIFF_ADJUSTMENT_UP_LIMIT + 1) * hashes(Diff),
 		hashes(
-			calculate_difficulty(Diff, Timestamp, Retarget3, 0)
+			calculate_difficulty(Diff, Timestamp, Retarget3, 1)
 		)
 	),
 	%% The change is not capped by ?DIFF_ADJUSTMENT_DOWN_LIMIT anymore.
@@ -288,7 +291,7 @@ calculate_difficulty_linear_test() ->
 	?assertEqual(
 		hashes(Diff),
 		(?DIFF_ADJUSTMENT_DOWN_LIMIT + 2) * hashes(
-			calculate_difficulty(Diff, Timestamp, Retarget4, 0)
+			calculate_difficulty(Diff, Timestamp, Retarget4, 1)
 		)
 	),
 	%% The actual time is three times smaller.
@@ -296,13 +299,13 @@ calculate_difficulty_linear_test() ->
 	?assert(
 		3.001 * hashes(Diff)
 			> hashes(
-				calculate_difficulty(Diff, Timestamp, Retarget5, 0)
+				calculate_difficulty(Diff, Timestamp, Retarget5, 1)
 			)
 	),
 	?assert(
 		2.999 * hashes(Diff)
 			< hashes(
-				calculate_difficulty(Diff, Timestamp, Retarget5, 0)
+				calculate_difficulty(Diff, Timestamp, Retarget5, 1)
 			)
 	),
 	%% The actual time is two times bigger.
@@ -310,13 +313,13 @@ calculate_difficulty_linear_test() ->
 	?assert(
 		hashes(Diff)
 			> 1.999 * hashes(
-				calculate_difficulty(Diff, Timestamp, Retarget6, 0)
+				calculate_difficulty(Diff, Timestamp, Retarget6, 1)
 			)
 	),
 	?assert(
 		hashes(Diff)
 			< 2.001 * hashes(
-				calculate_difficulty(Diff, Timestamp, Retarget6, 0)
+				calculate_difficulty(Diff, Timestamp, Retarget6, 1)
 			)
 	).
 

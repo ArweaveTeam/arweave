@@ -6,8 +6,3 @@
 -define(CHUNK_DIR, "chunk_storage").
 
 -define(STORE_CHUNK_STORAGE_STATE_FREQUENCY_MS, 120000).
-
--record(state, {
-	sync_record,
-	file_index
-}).

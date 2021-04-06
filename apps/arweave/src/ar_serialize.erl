@@ -555,11 +555,20 @@ json_struct_to_block_index(JSONStruct) ->
 		JSONStruct
 	).
 
-chunk_proof_to_json_map(#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath }) ->
+chunk_proof_to_json_map(Map) ->
+	#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath, packing := Packing } = Map,
+	SerializedPacking =
+		case Packing of
+			unpacked ->
+				<<"unpacked">>;
+			aes_256_cbc ->
+				<<"aes_256_cbc">>
+		end,
 	#{
 		chunk => ar_util:encode(Chunk),
 		tx_path => ar_util:encode(TXPath),
-		data_path => ar_util:encode(DataPath)
+		data_path => ar_util:encode(DataPath),
+		packing => SerializedPacking
 	}.
 
 json_map_to_chunk_proof(JSON) ->
@@ -570,11 +579,18 @@ json_map_to_chunk_proof(JSON) ->
 		tx_path => ar_util:decode(maps:get(<<"tx_path">>, JSON, <<>>)),
 		data_size => binary_to_integer(maps:get(<<"data_size">>, JSON, <<"0">>))
 	},
+	Map2 =
+		case maps:get(<<"packing">>, JSON, <<"unpacked">>) of
+			<<"unpacked">> ->
+				maps:put(packing, unpacked, Map);
+			<<"aes_256_cbc">> ->
+				maps:put(packing, aes_256_cbc, Map)
+		end,
 	case maps:get(<<"offset">>, JSON, none) of
 		none ->
-			Map;
+			Map2;
 		Offset ->
-			Map#{ offset => binary_to_integer(Offset) }
+			Map2#{ offset => binary_to_integer(Offset) }
 	end.
 
 %%% Tests: ar_serialize

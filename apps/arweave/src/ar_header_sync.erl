@@ -59,8 +59,9 @@ init([]) ->
 			{ok, StoredState} ->
 				StoredState
 		end,
-	gen_server:cast(self(), check_space_alarm),
-	gen_server:cast(self(), check_space_process_item),
+	gen_server:cast(?MODULE, check_space_alarm),
+	gen_server:cast(?MODULE, check_space_process_item),
+	gen_server:cast(?MODULE, store_sync_state),
 	{ok,
 		#{
 			db => DB,
@@ -69,7 +70,8 @@ init([]) ->
 			block_index => CurrentBI,
 			queue => queue:new(),
 			last_picked => LastHeight,
-			cleanup_started => false
+			cleanup_started => false,
+			disk_full => false
 		}}.
 
 handle_cast({join, BI, Blocks}, State) ->
@@ -94,7 +96,7 @@ handle_cast({join, BI, Blocks}, State) ->
 				throw(last_stored_block_index_has_no_intersection_with_the_new_one);
 			{_CurrentBI, {_Entry, Height}} ->
 				S = State2#{ sync_record => ar_intervals:cut(SyncRecord, Height) },
-				store_sync_state(S),
+				ok = store_sync_state(S),
 				%% Delete from the kv store only after the sync record is saved - no matter
 				%% what happens to the process, if a height is in the record, it must be present
 				%% in the kv store.
@@ -110,7 +112,7 @@ handle_cast({join, BI, Blocks}, State) ->
 			State3,
 			Blocks
 		),
-	store_sync_state(State4),
+	ok = store_sync_state(State4),
 	{noreply, State4};
 
 handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
@@ -127,16 +129,22 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 		last_height => Height
 	},
 	State3 = add_block(B, State2),
-	store_sync_state(State3),
-	%% Delete from the kv store only after the sync record is saved - no matter
-	%% what happens to the process, if a height is in the record, it must be present
-	%% in the kv store.
-	ok = ar_kv:delete_range(DB, << (BaseHeight + 1):256 >>, << (CurrentHeight + 1):256 >>),
-	{noreply, State3};
+	case store_sync_state(State3) of
+		ok ->
+			%% Delete from the kv store only after the sync record is saved - no matter
+			%% what happens to the process, if a height is in the record, it must be present
+			%% in the kv store.
+			ok = ar_kv:delete_range(DB, << (BaseHeight + 1):256 >>, << (CurrentHeight + 1):256 >>),
+			{noreply, State3#{ disk_full => false }};
+		{error, enospc} ->
+			{noreply, State#{ disk_full => true }}
+	end;
 
+handle_cast({add_block, _} = Cast, #{ disk_full := true } = State) ->
+	cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, Cast),
+	{noreply, State};
 handle_cast({add_block, B}, State) ->
 	State2 = add_block(B, State),
-	store_sync_state(State2),
 	{noreply, State2};
 
 handle_cast(check_space_alarm, State) ->
@@ -240,6 +248,15 @@ handle_cast({remove_tx, TXID}, State) ->
 	ar_tx_blacklist:notify_about_removed_tx(TXID),
 	{noreply, State};
 
+handle_cast(store_sync_state, State) ->
+	cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, store_sync_state),
+	case store_sync_state(State) of
+		ok ->
+			{noreply, State#{ disk_full => false }};
+		{error, enospc} ->
+			{noreply, State#{ disk_full => true }}
+	end;
+
 handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
@@ -269,7 +286,7 @@ terminate(Reason, State) ->
 store_sync_state(State) ->
 	#{ sync_record := SyncRecord, last_height := LastHeight, block_index := BI } = State,
 	prometheus_gauge:set(synced_blocks, ar_intervals:sum(SyncRecord)),
-	ok = ar_storage:write_term(header_sync_state, {SyncRecord, LastHeight, BI}).
+	ar_storage:write_term(header_sync_state, {SyncRecord, LastHeight, BI}).
 
 get_base_height([{H, _, _} | CurrentBI], CurrentHeight, RecentBI) ->
 	case lists:search(fun({BH, _, _}) -> BH == H end, RecentBI) of
@@ -329,10 +346,12 @@ remove_oldest_headers(#{ db := DB, sync_record := SyncRecord } = State) ->
 					};
 				{ok, Value} ->
 					BH = element(1, binary_to_term(Value)),
-					{ok, _BytesRemoved} = ar_storage:delete_full_block(BH),
 					SyncRecord2 = ar_intervals:delete(SyncRecord, Height2, Height2 - 1),
+					State2 = State#{ sync_record => SyncRecord2 },
+					ok = store_sync_state(State2),
+					{ok, _BytesRemoved} = ar_storage:delete_full_block(BH),
 					ok = ar_kv:delete(DB, << Height2:256 >>),
-					State#{ sync_record => SyncRecord2 }
+					State2
 			end
 	end.
 
@@ -446,17 +465,22 @@ download_txs(Peers, B, TXRoot) ->
 			{Root, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 			case Root of
 				TXRoot ->
-					ar_data_sync:add_block(B, SizeTaggedTXs),
-					case move_data_to_v2_index(TXs) of
-						ok ->
+					case B#block.height == 0 andalso ?NETWORK_NAME == "arweave.N.1" of
+						true ->
 							{ok, B#block{ txs = TXs }};
-						{error, Reason} = Error ->
-							?LOG_WARNING([
-								{event, ar_header_sync_failed_to_migrate_v1_txs},
-								{block, ar_util:encode(B#block.indep_hash)},
-								{reason, Reason}
-							]),
-							Error
+						false ->
+							ar_data_sync:add_block(B, SizeTaggedTXs),
+							case move_data_to_v2_index(TXs) of
+								ok ->
+									{ok, B#block{ txs = TXs }};
+								{error, Reason} = Error ->
+									?LOG_WARNING([
+										{event, ar_header_sync_failed_to_migrate_v1_txs},
+										{block, ar_util:encode(B#block.indep_hash)},
+										{reason, Reason}
+									]),
+									Error
+							end
 					end;
 				_ ->
 						?LOG_WARNING([

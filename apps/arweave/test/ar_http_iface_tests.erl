@@ -311,12 +311,7 @@ get_format_2_tx_test() ->
 		}),
 	?assertEqual(ValidTX#tx{ data = <<>>, data_size = 4 }, ar_serialize:json_struct_to_tx(Body)),
 	%% Ensure data can be fetched for format=2 transactions via /tx/[ID]/data.
-	{ok, {{<<"200">>, _}, _, Data, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => {127, 0, 0, 1, 1984},
-			path => "/tx/" ++ EncodedTXID ++ "/data"
-		}),
+	{ok, Data} = wait_until_syncs_tx_data(TXID),
 	?assertEqual(ar_util:encode(<<"DATA">>), Data),
 	%% Ensure no data is stored when it does not match the data root.
 	{ok, {{<<"200">>, _}, _, InvalidData, _, _}} =
@@ -355,12 +350,23 @@ get_format_1_tx_test() ->
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => {127, 0, 0, 1, 1984},
-			path => "/tx/" ++ EncodedTXID
-		}),
+	{ok, Body} =
+		ar_util:do_until(
+			fun() ->
+				case ar_http:req(#{
+					method => get,
+					peer => {127, 0, 0, 1, 1984},
+					path => "/tx/" ++ EncodedTXID
+				}) of
+					{ok, {{<<"404">>, _}, _, _, _, _}} ->
+						false;
+					{ok, {{<<"200">>, _}, _, Payload, _, _}} ->
+						{ok, Payload}
+				end
+			end,
+			100,
+			2000
+		),
 	?assertEqual(TX, ar_serialize:json_struct_to_tx(Body)).
 
 %% @doc Test adding transactions to a block.
@@ -381,7 +387,7 @@ add_external_tx_with_tags_test() ->
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
 	[B1Hash | _] = ar_node:get_blocks(),
-	B1 = ar_storage:read_block(B1Hash),
+	B1 = ar_test_node:read_block_when_stored(B1Hash),
 	TXID = TaggedTX#tx.id,
 	?assertEqual([TXID], B1#block.txs),
 	?assertEqual(TaggedTX, ar_storage:read_tx(hd(B1#block.txs))).
@@ -574,13 +580,7 @@ get_subfields_of_tx_test() ->
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
-	%write a get_tx function like get_block
-	{ok, {{<<"200">>, _}, _, Body, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => {127, 0, 0, 1, 1984},
-			path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data"
-		}),
+	{ok, Body} = wait_until_syncs_tx_data(TX#tx.id),
 	Orig = TX#tx.data,
 	?assertEqual(Orig, ar_util:decode(Body)).
 
@@ -609,10 +609,8 @@ get_tx_body_test() ->
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
-	?assertEqual(
-		<<"TEST DATA">>,
-		ar_http_iface_client:get_tx_data({127,0,0,1,1984}, TX#tx.id)
-	).
+	{ok, Data} = wait_until_syncs_tx_data(TX#tx.id),
+	?assertEqual(<<"TEST DATA">>, ar_util:decode(Data)).
 
 get_txs_by_send_recv_test_() ->
 	{timeout, 60, fun() ->
@@ -992,6 +990,7 @@ get_error_of_data_limit_test() ->
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
+	{ok, _} = wait_until_syncs_tx_data(TX#tx.id),
 	Resp =
 		ar_http:req(#{
 			method => get,
@@ -1004,3 +1003,23 @@ get_error_of_data_limit_test() ->
 send_new_block(Peer, B) ->
 	BDS = ar_block:generate_block_data_segment(B),
 	ar_http_iface_client:send_new_block(Peer, B, BDS).
+
+wait_until_syncs_tx_data(TXID) ->
+	ar_util:do_until(
+		fun() ->
+			case ar_http:req(#{
+				method => get,
+				peer => {127, 0, 0, 1, 1984},
+				path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
+			}) of
+				{ok, {{<<"404">>, _}, _, _, _, _}} ->
+					false;
+				{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
+					false;
+				{ok, {{<<"200">>, _}, _, Payload, _, _}} ->
+					{ok, Payload}
+			end
+		end,
+		100,
+		2000
+	).

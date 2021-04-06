@@ -13,6 +13,8 @@
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
@@ -60,8 +62,9 @@ wallet_filepath(WalletName, PubKey) ->
 	wallet_filepath(wallet_name(WalletName, PubKey)).
 
 wallet_filepath(Wallet) ->
+	{ok, Config} = application:get_env(arweave, config),
 	Filename = lists:flatten(["arweave_keyfile_", binary_to_list(Wallet), ".json"]),
-	filename:join([ar_meta_db:get(data_dir), ?WALLET_DIR, Filename]).
+	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
 wallet_name(wallet_address, PubKey) ->
 	ar_util:encode(to_address(PubKey));

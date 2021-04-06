@@ -2,7 +2,7 @@
 
 -export([
 	start/1, stop/1, io_thread/1,
-	validate/4, validate/3, validate_spora/9,
+	validate/4, validate/3, validate_spora/1,
 	min_difficulty/1,
 	min_spora_difficulty/1,
 	sha384_diff_to_randomx_diff/1,
@@ -124,7 +124,18 @@ validate(BDSHash, Diff, Height) ->
 	end.
 
 %% @doc Validate Succinct Proof of Random Access.
-validate_spora(BDS, Nonce, Timestamp, Height, Diff, PrevH, SearchSpaceUpperBound, SPoA, BI) ->
+validate_spora(Args) ->
+	{
+		BDS,
+		Nonce,
+		Timestamp,
+		Height,
+		Diff,
+		PrevH,
+		SearchSpaceUpperBound,
+		SPoA,
+		BI
+	} = Args,
 	H0 = ar_weave:hash(BDS, Nonce, Height),
 	SolutionHash = spora_solution_hash(PrevH, Timestamp, H0, SPoA#poa.chunk, Height),
 	case validate(SolutionHash, Diff, Height) of
@@ -135,11 +146,21 @@ validate_spora(BDS, Nonce, Timestamp, Height, Diff, PrevH, SearchSpaceUpperBound
 				{error, weave_size_too_small} ->
 					SPoA == #poa{};
 				{ok, RecallByte} ->
-					case ar_poa:validate(RecallByte, BI, SPoA) of
-						false ->
-							false;
+					case Height >= ar_fork:height_2_5() of
 						true ->
-							{true, SolutionHash}
+							case ar_poa:validate(RecallByte, BI, SPoA) of
+								false ->
+									false;
+								true ->
+									{true, SolutionHash}
+							end;
+						false ->
+							case ar_poa:validate_pre_fork_2_5(RecallByte, BI, SPoA) of
+								false ->
+									false;
+								true ->
+									{true, SolutionHash}
+							end
 					end
 			end
 	end.
@@ -418,7 +439,7 @@ update_data_segment2(State, Timestamp, Diff) ->
 			candidate_block = CandidateB2,
 			blocks_by_timestamp = BlocksByTimestamp2
 		},
-	ets:insert(mining_state, {session, {SessionRef, Timestamp}}),
+	ets:insert(mining_state, {session, {SessionRef, Timestamp, Height}}),
 	reschedule_timestamp_refresh(State2).
 
 update_data_segment_pre_fork_2_5(S, BlockTimestamp, Diff) ->
@@ -518,7 +539,7 @@ update_data_segment_pre_fork_2_5(S, BlockTimestamp, Diff) ->
 			candidate_block = CandidateB2,
 			blocks_by_timestamp = BlocksByTimestamp2
 		},
-	ets:insert(mining_state, {session, {SessionRef, BlockTimestamp}}),
+	ets:insert(mining_state, {session, {SessionRef, BlockTimestamp, Height}}),
 	reschedule_timestamp_refresh(S2).
 
 reschedule_timestamp_refresh(S = #state{
@@ -670,16 +691,17 @@ server(
 					%% A stale solution.
 					server(S);
 				{#block{ timestamp = Timestamp } = B, BDS} ->
-					case get_spoa(H0, PrevH, SearchSpaceUpperBound) of
-						not_found ->
+					case get_spoa(H0, PrevH, SearchSpaceUpperBound, Height) of
+						{not_found, RecallByte} ->
 							?LOG_WARNING([
 								{event, found_chunk_but_no_proofs},
 								{previous_block, ar_util:encode(PrevH)},
-								{h0, ar_util:encode(H0)}
+								{h0, ar_util:encode(H0)},
+								{byte, RecallByte}
 							]),
 							server(S);
 						SPoA ->
-							case validate_spora(
+							case validate_spora({
 								BDS,
 								Nonce,
 								Timestamp,
@@ -689,7 +711,7 @@ server(
 								SearchSpaceUpperBound,
 								SPoA,
 								BI
-							) of
+							}) of
 								Result when Result == true orelse Result == {true, Hash} ->
 									B2 =
 										B#block{
@@ -728,7 +750,10 @@ server(
 	end.
 
 stop_miners(S) ->
-	ets:insert(mining_state, {session, {make_ref(), os:system_time(second)}}),
+	ets:insert(
+		mining_state,
+		{session, {make_ref(), os:system_time(second), not_set}}
+	),
 	stop_hashing_threads(S).
 
 stop_hashing_threads(#state{ hashing_threads = Threads }) ->
@@ -753,15 +778,18 @@ notify_hashing_threads(S) ->
 	S.
 
 io_thread(SearchInRocksDB) ->
-	[{_, {SessionRef, SessionTimestamp}}] = ets:lookup(mining_state, session),
+	[{_, {SessionRef, SessionTimestamp, Height}}] = ets:lookup(mining_state, session),
 	receive
 		{EncodedByte, H0, Nonce, HashingThread, {Timestamp, Diff, SessionRef}}
 				when Timestamp + 19 > SessionTimestamp ->
 			Byte = binary:decode_unsigned(EncodedByte, big),
-			case read_chunk(Byte, SearchInRocksDB) of
-				not_found ->
+			case read_chunk(Byte, SearchInRocksDB, Height) of
+				{error, _} ->
 					io_thread(SearchInRocksDB);
-				Chunk ->
+				{ok, #{ chunk := Chunk }} ->
+					HashingThread ! {chunk, H0, Nonce, Timestamp, Diff, Chunk, SessionRef},
+					io_thread(SearchInRocksDB);
+				{ok, Chunk} ->
 					HashingThread ! {chunk, H0, Nonce, Timestamp, Diff, Chunk, SessionRef},
 					io_thread(SearchInRocksDB)
 			end;
@@ -773,24 +801,22 @@ io_thread(SearchInRocksDB) ->
 		io_thread(SearchInRocksDB)
 	end.
 
-read_chunk(Byte, SearchInRocksDB) ->
-	case ar_chunk_storage:get(Byte) of
-		not_found ->
-			case SearchInRocksDB of
-				true ->
-					case ar_data_sync:get_chunk(Byte + 1) of
-						{ok, #{ chunk := C }} ->
-							ets:update_counter(mining_state, kibs, (byte_size(C) div 1024)),
-							C;
-						_ ->
-							not_found
-					end;
-				false ->
-					not_found
-			end;
-		Reply ->
-			ets:update_counter(mining_state, kibs, 256),
-			Reply
+read_chunk(Byte, SearchInRocksDB, Height) ->
+	case Height >= ar_fork:height_2_5() of
+		true ->
+			Options = #{
+				packing => aes_256_cbc,
+				pack => false,
+				search_fast_storage_only => not SearchInRocksDB
+			},
+			ar_data_sync:get_chunk(Byte + 1, Options);
+		false ->
+			Options = #{
+				packing => unpacked,
+				pack => false,
+				search_fast_storage_only => not SearchInRocksDB
+			},
+			ar_data_sync:get_chunk(Byte + 1, Options)
 	end.
 
 small_weave_hashing_thread(Args) ->
@@ -931,16 +957,24 @@ hashing_thread(S, Type) ->
 		}, Type)
 	end.
 
-get_spoa(H0, PrevH, SearchSpaceUpperBound) ->
+get_spoa(H0, PrevH, SearchSpaceUpperBound, Height) ->
 	case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
 		{error, weave_size_too_small} ->
 			#poa{};
 		{ok, RecallByte} ->
-			case ar_poa:get_poa_from_v2_index(RecallByte) of
-				not_found ->
-					not_found;
-				SPoA ->
-					SPoA
+			Packing =
+				case Height >= ar_fork:height_2_5() of
+					true ->
+						aes_256_cbc;
+					false ->
+						unpacked
+				end,
+			Options = #{ pack => true, packing => Packing },
+			case ar_data_sync:get_chunk(RecallByte + 1, Options) of
+				{ok, #{ chunk := Chunk, tx_path := TXPath, data_path := DataPath }} ->
+					#poa{ option = 1, chunk = Chunk, tx_path = TXPath, data_path = DataPath };
+				_ ->
+					{not_found, RecallByte}
 			end
 	end.
 
@@ -1103,7 +1137,7 @@ test_timestamp_refresh() ->
 	%% Start mining with a high enough difficulty, so that the block
 	%% timestamp gets refreshed at least once. Since we might be unlucky
 	%% and find the block too fast, we retry until it succeeds.
-	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(18)),
+	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(20)),
 	ar_test_node:start(B0),
 	B = B0,
 	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),

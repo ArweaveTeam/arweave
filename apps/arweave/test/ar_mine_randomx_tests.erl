@@ -13,7 +13,7 @@
 -define(ENCODED_TENTH_HASH, <<"DmwCVUMtDnUCwxcTClAOhNjxk1am6030OwGDSHfaOh4">>).
 
 randomx_backwards_compatibility_test_() ->
-    {timeout, 240, fun test_randomx_backwards_compatibility/0}.
+    {timeout, 300, fun test_randomx_backwards_compatibility/0}.
 
 test_randomx_backwards_compatibility() ->
     Key = ar_util:decode(?ENCODED_KEY), 

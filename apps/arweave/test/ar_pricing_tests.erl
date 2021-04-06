@@ -20,26 +20,32 @@
 	read_block_when_stored/1
 ]).
 
+-import(ar_test_fork, [
+	test_on_fork/3
+]).
+
 -define(HUGE_WEAVE_SIZE, 1000000000000000).
 
 updates_pool_and_assigns_rewards_correctly_before_burden_test_() ->
-	{timeout, 30, fun updates_pool_and_assigns_rewards_correctly_before_burden/0}.
+	test_on_fork(height_2_5, 0, fun updates_pool_and_assigns_rewards_correctly_before_burden/0).
 
 updates_pool_and_assigns_rewards_correctly_after_burden_test_() ->
 	%% Bigger burden is achieved by mocking `ar_pricing:get_miner_reward_and_endowment_pool/1`
 	%% so that it considers the weave size really big. Otherwise, we cannot start a big
 	%% weave without storing a significant share of the data - test nodes won't be able to
 	%% mine blocks.
-	test_with_mocked_functions(
-		[
-			{ar_pricing, get_miner_reward_and_endowment_pool,
-				fun ar_pricing_tests:get_miner_reward_and_endowment_pool/1}
-		],
-		fun updates_pool_and_assigns_rewards_correctly_after_burden/0
+	test_on_fork(height_2_5, 0,
+		test_with_mocked_functions(
+			[
+				{ar_pricing, get_miner_reward_and_endowment_pool,
+					fun ar_pricing_tests:get_miner_reward_and_endowment_pool/1}
+			],
+			fun updates_pool_and_assigns_rewards_correctly_after_burden/0
+		)
 	).
 
 unclaimed_rewards_go_to_endowment_pool_test_() ->
-	{timeout, 20, fun test_unclaimed_rewards_go_to_endowment_pool/0}.
+	test_on_fork(height_2_5, 0, fun test_unclaimed_rewards_go_to_endowment_pool/0).
 
 get_miner_reward_and_endowment_pool(Args) ->
 	{Pool, TXs, Addr, _WeaveSize, Height, Timestamp, Rate} = Args,

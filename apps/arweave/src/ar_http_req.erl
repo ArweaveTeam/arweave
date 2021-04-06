@@ -14,7 +14,11 @@ body(Req, SizeLimit) ->
 	end.
 
 read_body_chunk(Req, Size, Timeout) ->
-	Reply = cowboy_req:read_body(Req, #{ length => Size, period => Timeout }),
+	Reply = cowboy_req:read_body(Req, #{
+		length => Size,
+		period => Timeout,
+		timeout => Timeout + 100
+	}),
 	prometheus_counter:inc(
 		http_server_accepted_bytes_total,
 		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],

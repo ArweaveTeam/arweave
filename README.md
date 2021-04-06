@@ -20,7 +20,7 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 
 ## Requirements
 
-- Erlang OTP v21+, with OpenSSL support
+- Erlang OTP v23+, with OpenSSL support
 - GCC or Clang
 - GNU Make
 - CMake

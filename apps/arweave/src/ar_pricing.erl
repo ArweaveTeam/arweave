@@ -129,13 +129,12 @@ usd_to_ar({Dividend, Divisor}, Rate, Height) ->
 
 recalculate_usd_to_ar_rate(#block{ height = PrevHeight } = B) ->
 	Height = PrevHeight + 1,
-	Fork_2_5 = ar_fork:height_2_5(),
-	true = Height >= Fork_2_5,
-	case Height == Fork_2_5 of
-		true ->
-			Rate = ?INITIAL_USD_TO_AR(Height),
-			{Rate, Rate};
+	true = Height >= ar_fork:height_2_5(),
+	case Height > ar_fork:height_2_6() of
 		false ->
+			Rate = ?INITIAL_USD_TO_AR(Height)(),
+			{Rate, Rate};
+		true ->
 			recalculate_usd_to_ar_rate2(B)
 	end.
 
@@ -346,7 +345,7 @@ recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
 	Height = PrevHeight + 1,
 	InitialDiff = ar_retarget:switch_to_linear_diff(?INITIAL_USD_TO_AR_DIFF(Height)()),
 	MaxDiff = ?MAX_DIFF,
-	InitialRate = ?INITIAL_USD_TO_AR(Height),
+	InitialRate = ?INITIAL_USD_TO_AR(Height)(),
 	{Dividend, Divisor} = InitialRate,
 	ScheduledRate = {Dividend * (MaxDiff - Diff), Divisor * (MaxDiff - InitialDiff)},
 	{B#block.scheduled_usd_to_ar_rate, ScheduledRate}.

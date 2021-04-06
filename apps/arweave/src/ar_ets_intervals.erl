@@ -13,7 +13,8 @@
 	delete/3,
 	cut/2,
 	is_inside/2,
-	get_interval_with_byte/2
+	get_interval_with_byte/2,
+	get_next_interval_outside/3
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -125,7 +126,7 @@ is_inside(Table, Offset) ->
 	end.
 
 %% @doc Return the interval containing the given offset, including the right bound,
-%% excluding the right bound, or not_found.
+%% excluding the left bound, or not_found.
 %% @end
 get_interval_with_byte(Table, Offset) ->
 	case ets:next(Table, Offset - 1) of
@@ -143,6 +144,24 @@ get_interval_with_byte(Table, Offset) ->
 				[] ->
 					%% The key should have been just removed, unlucky timing.
 					get_interval_with_byte(Table, Offset)
+			end
+	end.
+
+%% @doc Return the lowest interval outside the recorded set of intervals,
+%% strictly above the given Offset, and with the right bound at most RightBound.
+%% Return not_found if there are no such intervals.
+get_next_interval_outside(_Table, Offset, RightBound) when Offset >= RightBound ->
+	not_found;
+get_next_interval_outside(Table, Offset, RightBound) ->
+	case ets:next(Table, Offset) of
+		'$end_of_table' ->
+			{RightBound, Offset};
+		NextOffset ->
+			case ets:lookup(Table, NextOffset) of
+				[{NextOffset, Start}] when Start > Offset ->
+					{Start, Offset};
+				_ ->
+					get_next_interval_outside(Table, NextOffset, RightBound)
 			end
 	end.
 

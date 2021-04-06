@@ -8,14 +8,16 @@
 	cut/2,
 	is_inside/2,
 	sum/1,
-	outerjoin/2,
-	get_interval_by_nth_inner_number/2,
+	union/2,
 	serialize/2,
 	safe_from_etf/1,
 	count/1,
 	is_empty/1,
 	take_smallest/1,
-	take_largest/1
+	take_largest/1,
+	largest/1,
+	iterator_from/2,
+	next/1
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -78,20 +80,22 @@ is_inside(Intervals, Number) ->
 sum(Intervals) ->
 	gb_sets:fold(fun({End, Start}, Acc) -> Acc + End - Start end, 0, Intervals).
 
-%% @doc Return a set of intervals containing the points from the second given set of
-%% intervals and excluding the points from the first given set of intervals.
-%% @end
-outerjoin(I1, I2) ->
-	intersection(inverse(I1), I2).
-
-%% @doc Return {start, n, end} where {start, end} is the interval from the set
-%% containing the found point n, from [start, end), and n is the Nth (starting from 0) point
-%% contained in the set of intervals when counted starting from the smallest interval, including
-%% the left bounds and excluding the right bounds.
-%% Raises a none exception, if the set does not contain enough points to find N.
-%% @end
-get_interval_by_nth_inner_number(Intervals, N) ->
-	get_interval_by_nth_inner_number2(gb_sets:iterator(Intervals), N).
+%% @doc Return the set of intervals consisting of the points of intervals from both sets.
+union(I1, I2) ->
+	{Longer, Shorter} =
+		case gb_sets:size(I1) > gb_sets:size(I2) of
+			true ->
+				{I1, I2};
+			false ->
+				{I2, I1}
+		end,
+	gb_sets:fold(
+		fun({End, Start}, Acc) ->
+			add(Acc, End, Start)
+		end,
+		Longer,
+		Shorter
+	).
 
 %% @doc Serialize a subset of the intervals using the requested format, etf | json.
 %% The subset is always smaller than or equal to Limit. If random_subset key is present,
@@ -135,6 +139,18 @@ take_smallest(Intervals) ->
 take_largest(Intervals) ->
 	gb_sets:take_largest(Intervals).
 
+%% @doc A proxy for gb_sets:largest/1.
+largest(Intervals) ->
+	gb_sets:largest(Intervals).
+
+%% @doc A proxy for gb_sets:iterator_from/2.
+iterator_from(Interval, Intervals) ->
+	gb_sets:iterator_from(Interval, Intervals).
+
+%% @doc A proxy for gb_sets:next/1.
+next(Iterator) ->
+	gb_sets:next(Iterator).
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -174,53 +190,6 @@ delete2(Iter, Intervals, End, Start) ->
 			delete2(Iter2, Intervals4, End, Start);
 		_ ->
 			Intervals
-	end.
-
-inverse(Intervals) ->
-	inverse(gb_sets:iterator(Intervals), 0, new()).
-
-inverse(Iterator, L, G) ->
-	case gb_sets:next(Iterator) of
-		none ->
-			gb_sets:add_element({infinity, L}, G);
-		{{End1, Start1}, I1} ->
-			G2 = case Start1 > L of true -> gb_sets:add_element({Start1, L}, G); _ -> G end,
-			L2 = End1,
-			case gb_sets:next(I1) of
-				none ->
-					gb_sets:add_element({infinity, L2}, G2);
-				{{End2, Start2}, I2} ->
-					inverse(I2, End2, gb_sets:add_element({Start2, End1}, G2))
-			end
-	end.
-
-intersection(I1, I2) ->
-	intersection(gb_sets:iterator(I1), gb_sets:iterator(I2), new()).
-
-intersection(I1, I2, G) ->
-	case {gb_sets:next(I1), gb_sets:next(I2)} of
-		{none, _} ->
-			G;
-		{_, none} ->
-			G;
-		{{{End1, _Start1}, UpdatedI1}, {{_End2, Start2}, _UpdatedI2}} when Start2 >= End1 ->
-			intersection(UpdatedI1, I2, G);
-		{{{_End1, Start1}, _UpdatedI1}, {{End2, _Start2}, UpdatedI2}} when Start1 >= End2 ->
-			intersection(I1, UpdatedI2, G);
-		{{{End1, Start1}, UpdatedI1}, {{End2, Start2}, _UpdatedI2}} when End2 >= End1 ->
-			intersection(UpdatedI1, I2, gb_sets:add_element({End1, max(Start1, Start2)}, G));
-		{{{End1, Start1}, _UpdatedI1}, {{End2, Start2}, UpdatedI2}} when End1 > End2 ->
-			intersection(I1, UpdatedI2, gb_sets:add_element({End2, max(Start1, Start2)}, G))
-	end.
-
-get_interval_by_nth_inner_number2(Iterator, N) ->
-	case gb_sets:next(Iterator) of
-		none ->
-			error(none);
-		{{End, Start}, UpdatedIterator} when N >= End - Start ->
-			get_interval_by_nth_inner_number2(UpdatedIterator, N - End + Start);
-		{{End, Start}, _UpdatedIterator} ->
-			{Start, Start + N, End}
 	end.
 
 serialize_random_subset(Intervals, Limit, Format) ->
@@ -311,7 +280,6 @@ intervals_test() ->
 	?assertEqual(0, sum(I)),
 	?assert(not is_inside(I, 0)),
 	?assert(not is_inside(I, 1)),
-	?assertEqual(new(), outerjoin(I, I)),
 	?assertEqual(<<"[]">>, serialize(#{ random_subset => true, format => json, limit => 1 }, I)),
 	?assertEqual(<<"[]">>, serialize(#{ start => 0, format => json, limit => 1 }, I)),
 	?assertEqual(<<"[]">>, serialize(#{ start => 1, format => json, limit => 1 }, I)),
@@ -319,10 +287,7 @@ intervals_test() ->
 		{ok, new()},
 		safe_from_etf(serialize(#{ random_subset => true, format => etf, limit => 1 }, I))
 	),
-	?assertEqual(new(), outerjoin(I, I)),
 	?assertEqual(new(), delete(I, 2, 1)),
-	?assertException(error, none, get_interval_by_nth_inner_number(I, 0)),
-	?assertException(error, none, get_interval_by_nth_inner_number(I, 2)),
 	I2 = add(I, 2, 1),
 	?assertEqual(1, count(I2)),
 	?assertEqual(1, sum(I2)),
@@ -330,10 +295,6 @@ intervals_test() ->
 	?assert(not is_inside(I2, 1)),
 	?assert(is_inside(I2, 2)),
 	?assert(not is_inside(I2, 3)),
-	?assertEqual({1, 1, 2}, get_interval_by_nth_inner_number(I2, 0)),
-	?assertException(error, none, get_interval_by_nth_inner_number(I2, 1)),
-	?assertEqual(new(), outerjoin(I2, I)),
-	compare(add(add(new(), 1, 0), 3, 2), outerjoin(I2, add(new(), 3, 0))),
 	?assertEqual(new(), delete(I2, 2, 1)),
 	?assertEqual(new(), delete(I2, 2, 0)),
 	?assertEqual(new(), delete(I2, 3, 1)),
@@ -382,15 +343,6 @@ intervals_test() ->
 	?assert(is_inside(I3, 4)),
 	?assert(is_inside(I3, 5)),
 	?assert(is_inside(I3, 6)),
-	?assertEqual({1, 1, 2}, get_interval_by_nth_inner_number(I3, 0)),
-	?assertEqual({3, 3, 6}, get_interval_by_nth_inner_number(I3, 1)),
-	?assertEqual({3, 4, 6}, get_interval_by_nth_inner_number(I3, 2)),
-	?assertEqual({3, 5, 6}, get_interval_by_nth_inner_number(I3, 3)),
-	?assertException(error, none, get_interval_by_nth_inner_number(I3, 4)),
-	I3_2 = add(new(), 7, 5),
-	compare(add(new(), 7, 5), outerjoin(I2, I3_2)),
-	compare(add(new(), 7, 6), outerjoin(I3, I3_2)),
-	compare(add(add(add(new(), 1, 0), 3, 2), 8, 6), outerjoin(I3, add(new(), 8, 0))),
 	compare(add(add(add(new(), 2, 1), 6, 5), 4, 3), delete(I3, 5, 4)),
 	compare(add(new(), 6, 5), delete(I3, 5, 1)),
 	compare(add(new(), 10, 0), add(I3, 10, 0)),
@@ -434,10 +386,6 @@ intervals_test() ->
 	?assert(is_inside(I4, 6)),
 	?assert(is_inside(I4, 7)),
 	?assert(not is_inside(I4, 8)),
-	?assertEqual({1, 1, 2}, get_interval_by_nth_inner_number(I4, 0)),
-	?assertEqual({3, 3, 7}, get_interval_by_nth_inner_number(I4, 1)),
-	?assertEqual({3, 6, 7}, get_interval_by_nth_inner_number(I4, 4)),
-	compare(add(add(new(), 1, 0), 3, 2), outerjoin(I4, add(new(), 6, 0))),
 	?assertEqual(new(), cut(I4, 1)),
 	?assertEqual(new(), cut(I4, 0)),
 	compare(add(I2, 5, 3), cut(I4, 5)),

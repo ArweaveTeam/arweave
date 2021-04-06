@@ -1,6 +1,7 @@
 -module(ar_multiple_txs_per_wallet_tests).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0]).
@@ -911,7 +912,7 @@ grouped_txs() ->
 	[B0] = ar_weave:init(Wallets),
 	Chunk1 = random_v1_data(?TX_DATA_SIZE_LIMIT),
 	Chunk2 = <<"a">>,
-	Rate = B0#block.usd_to_ar_rate,
+	Rate = ?USD_TO_AR_INITIAL_RATE,
 	TX1 =
 		sign_v1_tx(Key1, #{
 			reward => ar_tx:get_tx_fee(byte_size(Chunk1), Rate, 0, B0#block.timestamp),

@@ -124,13 +124,34 @@ test_accepts_chunk_with_out_of_outer_bounds_offset() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk(ar_serialize:jsonify(Proof))
 	),
+	wait_until_syncs_chunk(DataSize),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(DataSize + 1)
 	),
+	BigOutOfBoundsOffsetChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	BigChunkID = ar_tx:generate_chunk_id(BigOutOfBoundsOffsetChunk),
+	{BigDataRoot, BigDataTree} = ar_merkle:generate_tree([{BigChunkID, ?DATA_CHUNK_SIZE + 1}]),
+	BigTX = sign_tx(
+		Wallet,
+		#{
+			last_tx => get_tx_anchor(master),
+			data_size => ?DATA_CHUNK_SIZE,
+			data_root => BigDataRoot
+		}
+	),
+	post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, [BigTX]),
+	BigDataPath = ar_merkle:generate_path(BigDataRoot, 0, BigDataTree),
+	BigProof = #{
+		data_root => ar_util:encode(BigDataRoot),
+		data_path => ar_util:encode(BigDataPath),
+		chunk => ar_util:encode(BigOutOfBoundsOffsetChunk),
+		offset => <<"0">>,
+		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
+	},
 	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		get_chunk(DataSize)
+		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"invalid_proof\"}">>, _, _}},
+		post_chunk(ar_serialize:jsonify(BigProof))
 	).
 
 accepts_chunk_with_out_of_inner_bounds_offset_test_() ->
@@ -168,6 +189,7 @@ test_accepts_chunk_with_out_of_inner_bounds_offset() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk(ar_serialize:jsonify(InvalidProof))
 	),
+	wait_until_syncs_chunk(ChunkSize),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(ChunkSize + 1)
@@ -175,10 +197,6 @@ test_accepts_chunk_with_out_of_inner_bounds_offset() ->
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(ChunkSize + 400)
-	),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		get_chunk(ChunkSize)
 	),
 	Chunk2 = crypto:strong_rand_bytes(2 * ChunkSize),
 	FirstChunkID2 = ar_tx:generate_chunk_id(Chunk2),
@@ -208,6 +226,8 @@ test_accepts_chunk_with_out_of_inner_bounds_offset() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk(ar_serialize:jsonify(InvalidProof2))
 	),
+	wait_until_syncs_chunk(B1#block.weave_size + 2 * ChunkSize),
+	wait_until_syncs_chunk(B1#block.weave_size + 1),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(B1#block.weave_size + 2 * ChunkSize + 1)
@@ -216,17 +236,34 @@ test_accepts_chunk_with_out_of_inner_bounds_offset() ->
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(B1#block.weave_size + 2 * ChunkSize + 400)
 	),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		get_chunk(B1#block.weave_size + 2 * ChunkSize)
+	BigChunk = crypto:strong_rand_bytes(ChunkSize),
+	BigChunkID = ar_tx:generate_chunk_id(BigChunk),
+	BigFirstHash = hash([hash(BigChunkID), hash(<< (ChunkSize + ?DATA_CHUNK_SIZE):256 >>)]),
+	BigSecondHash = crypto:strong_rand_bytes(32),
+	BigInvalidDataPath = iolist_to_binary([
+		<< BigFirstHash/binary, BigSecondHash/binary, ChunkSize:256>> |
+		<< BigChunkID/binary, (ChunkSize + ?DATA_CHUNK_SIZE):256 >>
+	]),
+	BigDataRoot = hash([hash(BigFirstHash), hash(BigSecondHash), hash(<< ChunkSize:256 >>)]),
+	BigTX = sign_tx(
+		Wallet,
+		#{
+			last_tx => get_tx_anchor(master),
+			data_root => BigDataRoot,
+			data_size => 2 * ?DATA_CHUNK_SIZE
+		}
 	),
+	post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, [BigTX]),
+	BigInvalidProof = #{
+		data_root => ar_util:encode(BigDataRoot),
+		data_path => ar_util:encode(BigInvalidDataPath),
+		chunk => ar_util:encode(BigChunk),
+		offset => <<"0">>,
+		data_size => integer_to_binary(2 * ?DATA_CHUNK_SIZE)
+	},
 	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		get_chunk(B1#block.weave_size + 1)
-	),
-	?assertMatch(
-		{ok, {{<<"404">>, _}, _, _, _, _}},
-		get_chunk(B1#block.weave_size)
+		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"invalid_proof\"}">>, _, _}},
+		post_chunk(ar_serialize:jsonify(BigInvalidProof))
 	).
 
 rejects_chunks_exceeding_disk_pool_limit_test_() ->
@@ -336,7 +373,6 @@ accepts_chunks_test_() ->
 test_accepts_chunks() ->
 	{_Master, _Slave, Wallet} = setup_nodes(),
 	{TX, Chunks} = tx(Wallet, {custom_split, 3}),
-
 	assert_post_tx_to_slave(TX),
 	wait_until_receives_txs([TX]),
 	[{EndOffset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] =
@@ -361,23 +397,14 @@ test_accepts_chunks() ->
 	%% (EndOffset - ChunkSize, EndOffset], but not outside of it.
 	FirstChunk = ar_util:decode(maps:get(chunk, FirstProof)),
 	FirstChunkSize = byte_size(FirstChunk),
-	ExpectedProof = ar_serialize:jsonify(#{
+	ExpectedProof = #{
 		data_path => maps:get(data_path, FirstProof),
 		tx_path => maps:get(tx_path, FirstProof),
 		chunk => ar_util:encode(FirstChunk)
-	}),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, ExpectedProof, _, _}},
-		get_chunk(EndOffset)
-	),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, ExpectedProof, _, _}},
-		get_chunk(EndOffset - rand:uniform(FirstChunkSize - 2))
-	),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, ExpectedProof, _, _}},
-		get_chunk(EndOffset - FirstChunkSize + 1)
-	),
+	},
+	wait_until_syncs_chunk(EndOffset, ExpectedProof),
+	wait_until_syncs_chunk(EndOffset - rand:uniform(FirstChunkSize - 2), ExpectedProof),
+	wait_until_syncs_chunk(EndOffset - FirstChunkSize + 1, ExpectedProof),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(EndOffset - FirstChunkSize)
@@ -404,17 +431,14 @@ test_accepts_chunks() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk(ar_serialize:jsonify(SecondProof))
 	),
-	ExpectedSecondProof = ar_serialize:jsonify(#{
+	ExpectedSecondProof = #{
 		data_path => maps:get(data_path, SecondProof),
 		tx_path => maps:get(tx_path, SecondProof),
 		chunk => maps:get(chunk, SecondProof)
-	}),
+	},
 	SecondChunk = ar_util:decode(maps:get(chunk, SecondProof)),
 	SecondChunkOffset = FirstChunkSize + byte_size(SecondChunk),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, ExpectedSecondProof, _, _}},
-		get_chunk(SecondChunkOffset)
-	),
+	wait_until_syncs_chunk(SecondChunkOffset, ExpectedSecondProof),
 	true = ar_util:do_until(
 		fun() ->
 			{ok, {{<<"200">>, _}, _, Data, _, _}} = get_tx_data(TX#tx.id),
@@ -423,15 +447,12 @@ test_accepts_chunks() ->
 		500,
 		10 * 1000
 	),
-	ExpectedThirdProof = ar_serialize:jsonify(#{
+	ExpectedThirdProof = #{
 		data_path => maps:get(data_path, ThirdProof),
 		tx_path => maps:get(tx_path, ThirdProof),
 		chunk => maps:get(chunk, ThirdProof)
-	}),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, ExpectedThirdProof, _, _}},
-		get_chunk(B#block.weave_size)
-	),
+	},
+	wait_until_syncs_chunk(B#block.weave_size, ExpectedThirdProof),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
 		get_chunk(B#block.weave_size + 1)
@@ -832,6 +853,43 @@ post_proofs(Peer, B, TX, Chunks) ->
 		Proofs
 	),
 	Proofs.
+
+wait_until_syncs_chunk(Offset) ->
+	true = ar_util:do_until(
+		fun() ->
+			case get_chunk(Offset) of
+				{ok, {{<<"200">>, _}, _, _, _, _}} ->
+					true;
+				_ ->
+					false
+			end
+		end,
+		100,
+		5000
+	).
+
+wait_until_syncs_chunk(Offset, ExpectedProof) ->
+	true = ar_util:do_until(
+		fun() ->
+			case get_chunk(Offset) of
+				{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} ->
+					Proof = jiffy:decode(ProofJSON, [return_maps]),
+					maps:fold(
+						fun	(_Key, _Value, false) ->
+								false;
+							(Key, Value, true) ->
+								maps:get(atom_to_binary(Key), Proof, not_set) == Value
+						end,
+						true,
+						ExpectedProof
+					);
+				_ ->
+					false
+			end
+		end,
+		100,
+		5000
+	).
 
 wait_until_syncs_chunks(Proofs) ->
 	wait_until_syncs_chunks(master, Proofs).

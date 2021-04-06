@@ -38,7 +38,6 @@ parse_config() ->
 		max_propagation_peers = 8,
 		tx_propagation_parallelization = 4,
 		sync_jobs = 10,
-		new_key = true,
 		load_key = "some_key_file",
 		disk_space = 44 * 1024 * 1024 * 1024,
 		disk_space_check_frequency = 10 * 1000,
@@ -64,7 +63,18 @@ parse_config() ->
 		disk_pool_data_root_expiration_time = 10000,
 		max_disk_pool_buffer_mb = 100000,
 		max_disk_pool_data_root_buffer_mb = 100000000,
-		randomx_bulk_hashing_iterations = 40
+		randomx_bulk_hashing_iterations = 40,
+		semaphores = #{
+			get_chunk := 1,
+			get_and_pack_chunk := 2,
+			get_tx_data := 3,
+			post_chunk := 999,
+			get_block_index := 1,
+			get_wallet_list := 2,
+			arql := 3,
+			gateway_arql := 3,
+			get_sync_record := 10
+		}
 	}, ParsedConfig).
 
 config_fixture() ->

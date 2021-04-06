@@ -262,8 +262,16 @@ get_block(Height) ->
 	end.
 
 get_block(BH, BI) ->
-	Peers = ar_bridge:get_remote_peers(),
-	get_block(BH, BI, Peers).
+	try
+		Peers = ar_bridge:get_remote_peers(),
+		get_block(BH, BI, Peers)
+	catch Type:Exception:StackTrace ->
+		?LOG_ERROR([
+			{event, randomx_state_server_failed_to_fetch_peers},
+			{error, io_lib:format("~p ~p ~p", [Type, Exception, StackTrace])}
+		]),
+		get_block(BH, BI)
+	end.
 
 get_block(Height, BI, Peers) when is_integer(Height) ->
 	{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),

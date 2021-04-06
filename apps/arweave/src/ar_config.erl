@@ -94,6 +94,8 @@ parse_options([{<<"diff">>, Diff} | Rest], Config) when is_integer(Diff) ->
 parse_options([{<<"diff">>, Diff} | _], _) ->
 	{error, {bad_type, diff, number}, Diff};
 
+parse_options([{<<"mining_addr">>, <<"unclaimed">>} | Rest], Config) ->
+	parse_options(Rest, Config#config{ mining_addr = unclaimed });
 parse_options([{<<"mining_addr">>, Addr} | Rest], Config) when is_binary(Addr) ->
 	case ar_util:safe_decode(Addr) of
 		{ok, D} -> parse_options(Rest, Config#config{ mining_addr = D });
@@ -146,13 +148,6 @@ parse_options([{<<"sync_jobs">>, Value} | Rest], Config)
 	parse_options(Rest, Config#config{ sync_jobs = Value });
 parse_options([{<<"sync_jobs">>, Value} | _], _) ->
 	{error, {bad_type, sync_jobs, number}, Value};
-
-parse_options([{<<"new_mining_key">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config{ new_key = true });
-parse_options([{<<"new_mining_key">>, false} | Rest], Config) ->
-	parse_options(Rest, Config);
-parse_options([{<<"new_mining_key">>, Opt} | _], _) ->
-	{error, {bad_type, new_mining_key, boolean}, Opt};
 
 parse_options([{<<"load_mining_key">>, DataDir} | Rest], Config) when is_binary(DataDir) ->
 	parse_options(Rest, Config#config{ load_key = binary_to_list(DataDir) });
@@ -288,6 +283,16 @@ parse_options([{<<"webhooks">>, WebhookConfigs} | Rest], Config) when is_list(We
 parse_options([{<<"webhooks">>, Webhooks} | _], _) ->
 	{error, {bad_type, webhooks, array}, Webhooks};
 
+parse_options([{<<"semaphores">>, Semaphores} | Rest], Config) when is_tuple(Semaphores) ->
+	case parse_semaphores(Semaphores, Config#config.semaphores) of
+		{ok, ParsedSemaphores} ->
+			parse_options(Rest, Config#config{ semaphores = ParsedSemaphores });
+		error ->
+			{error, bad_semaphores, Semaphores}
+	end;
+parse_options([{<<"semaphores">>, Semaphores} | _], _) ->
+	{error, {bad_type, semaphores, object}, Semaphores};
+
 parse_options([{<<"max_connections">>, MaxConnections} | Rest], Config)
 		when is_integer(MaxConnections) ->
 	parse_options(Rest, Config#config{ max_connections = MaxConnections });
@@ -371,3 +376,20 @@ parse_webhook_events([Event | Rest], Events) ->
 	end;
 parse_webhook_events([], Events) ->
 	{ok, lists:reverse(Events)}.
+
+parse_semaphores({[Semaphore | Semaphores]}, ParsedSemaphores) when is_tuple(Semaphore) ->
+	parse_semaphores({Semaphores}, parse_semaphore(Semaphore, ParsedSemaphores));
+parse_semaphores({[]}, ParsedSemaphores) ->
+	{ok, ParsedSemaphores};
+parse_semaphores(_, _) ->
+	error.
+
+parse_semaphore({Name, Number}, ParsedSemaphores)
+		when is_binary(Name), is_number(Number) ->
+	maps:put(binary_to_existing_atom(Name), Number, ParsedSemaphores);
+parse_semaphore({Unknown, _N}, ParsedSemaphores) ->
+	?LOG_WARNING([
+		{event, configured_semaphore_bad_type},
+		{semaphore, io_lib:format("~p", [Unknown])}
+	]),
+	ParsedSemaphores.

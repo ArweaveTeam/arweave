@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 limit="$(ulimit -n)"
-recommendation="10000"
+recommendation="1000000"
 
 if [ "$limit" -lt "$recommendation" ]; then
   echo "WARN: ************************************************************************"

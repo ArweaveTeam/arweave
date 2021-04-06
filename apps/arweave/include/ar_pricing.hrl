@@ -36,7 +36,7 @@
 	},
 	case Forks of
 		{Fork_2_5} when Height >= Fork_2_5 ->
-			{1, 6} % TODO
+			{1, 20}
 	end
 end).
 
@@ -47,14 +47,14 @@ end).
 	Forks = {
 		ar_fork:height_1_9(),
 		ar_fork:height_2_2(),
-		ar_fork:height_2_5()
+		ar_fork:height_2_6()
 	},
 	case Forks of
-		{_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
-			30; % TODO
-		{_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
+		{_Fork_1_9, _Fork_2_2, Fork_2_6} when Height >= Fork_2_6 ->
+			not_set;
+		{_Fork_1_9, Fork_2_2, _Fork_2_6} when Height >= Fork_2_2 ->
 			34;
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_6} when Height < Fork_1_9 ->
 			28;
 		_ ->
 			29

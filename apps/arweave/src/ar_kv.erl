@@ -11,6 +11,7 @@
 	put/3,
 	get/2,
 	get_next_by_prefix/4,
+	get_next/2,
 	cyclic_iterator_move/2,
 	get_prev/2,
 	get_range/2,
@@ -85,6 +86,19 @@ get_next_by_prefix({DB, CF}, PrefixBitSize, KeyBitSize, OffsetBinary) ->
 					<< Prefix:PrefixBitSize, _:SuffixBitSize >> = OffsetBinary,
 					NextPrefixSmallestBytes = << (Prefix + 1):PrefixBitSize, 0:SuffixBitSize >>,
 					rocksdb:iterator_move(Iterator, {seek, NextPrefixSmallestBytes});
+				Reply ->
+					Reply
+			end;
+		Error ->
+			Error
+	end.
+
+get_next({DB, CF}, Cursor) ->
+	case rocksdb:iterator(DB, CF, [{total_order_seek, true}]) of
+		{ok, Iterator} ->
+			case rocksdb:iterator_move(Iterator, Cursor) of
+				{error, invalid_iterator} ->
+					none;
 				Reply ->
 					Reply
 			end;

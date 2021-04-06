@@ -259,8 +259,9 @@ validate_block(spora, {BI, NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 		hash = Hash
 	} = NewB,
 	UpperBound = ar_mine:get_search_space_upper_bound(BI),
-	case ar_mine:validate_spora(BDS, Nonce, Timestamp, Height, Diff, PrevH, UpperBound, POA, BI)
-	of
+	case ar_mine:validate_spora({
+		BDS, Nonce, Timestamp, Height, Diff, PrevH, UpperBound, POA, BI
+	}) of
 		false ->
 			{invalid, invalid_spora};
 		{true, Hash} ->
@@ -275,7 +276,7 @@ validate_block(
 	poa,
 	{BI, NewB = #block{ poa = POA }, OldB, Wallets, BlockAnchors, RecentTXMap}
 ) ->
-	case ar_poa:validate(OldB#block.indep_hash, OldB#block.weave_size, BI, POA) of
+	case ar_poa:validate_pre_fork_2_4(OldB#block.indep_hash, OldB#block.weave_size, BI, POA) of
 		false ->
 			{invalid, invalid_poa};
 		true ->

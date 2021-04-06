@@ -44,6 +44,16 @@
 
 -define(NUM_IO_MINING_THREADS, 10).
 
+-define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
+-define(MAX_PARALLEL_ARQL_REQUESTS, 10).
+-define(MAX_PARALLEL_GATEWAY_ARQL_REQUESTS, infinity).
+-define(MAX_PARALLEL_GET_CHUNK_REQUESTS, 100).
+-define(MAX_PARALLEL_GET_AND_PACK_CHUNK_REQUESTS, 2).
+-define(MAX_PARALLEL_GET_TX_DATA_REQUESTS, 2).
+-define(MAX_PARALLEL_WALLET_LIST_REQUESTS, 1).
+-define(MAX_PARALLEL_POST_CHUNK_REQUESTS, 100).
+-define(MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS, 10).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -56,7 +66,7 @@
 	auto_join = true,
 	clean = false,
 	diff = ?DEFAULT_DIFF,
-	mining_addr = false,
+	mining_addr = not_set,
 	max_miners = 0, % DEPRECATED.
 	io_threads = ?NUM_IO_MINING_THREADS,
 	stage_one_hashing_threads = ?NUM_STAGE_ONE_HASHING_PROCESSES,
@@ -64,8 +74,7 @@
 	max_emitters = ?NUM_EMITTER_PROCESSES,
 	tx_propagation_parallelization = ?TX_PROPAGATION_PARALLELIZATION,
 	sync_jobs = ?DEFAULT_SYNC_JOBS,
-	new_key = false,
-	load_key = false,
+	load_key = not_set,
 	disk_space,
 	disk_space_check_frequency = ?DISK_SPACE_CHECK_FREQUENCY_MS,
 	start_from_block_index = false,
@@ -88,7 +97,18 @@
 	disk_pool_data_root_expiration_time = ?DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
 	max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB,
 	max_disk_pool_data_root_buffer_mb = ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
-	randomx_bulk_hashing_iterations = 8
+	randomx_bulk_hashing_iterations = 8,
+	semaphores = #{
+		get_chunk => ?MAX_PARALLEL_GET_CHUNK_REQUESTS,
+		get_and_pack_chunk => ?MAX_PARALLEL_GET_AND_PACK_CHUNK_REQUESTS,
+		get_tx_data => ?MAX_PARALLEL_GET_TX_DATA_REQUESTS,
+		post_chunk => ?MAX_PARALLEL_POST_CHUNK_REQUESTS,
+		get_block_index => ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS,
+		get_wallet_list => ?MAX_PARALLEL_WALLET_LIST_REQUESTS,
+		arql => ?MAX_PARALLEL_ARQL_REQUESTS,
+		gateway_arql => ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS,
+		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS
+	}
 }).
 
 -endif.

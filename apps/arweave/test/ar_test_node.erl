@@ -592,7 +592,19 @@ read_block_when_stored(H) ->
 				unavailable ->
 					unavailable;
 				B2 ->
-					{ok, B2}
+					ar_util:do_until(
+						fun() ->
+							TXs = ar_storage:read_tx(B2#block.txs),
+							case lists:any(fun(TX) -> TX == unavailable end, TXs) of
+								true ->
+									false;
+								false ->
+									{ok, B2}
+							end
+						end,
+						100,
+						5000
+					)
 			end
 		end,
 		100,

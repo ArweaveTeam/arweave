@@ -26,9 +26,10 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_chunk_storage,
+		ar_poa,
 		ar_node_utils,
 		ar_meta_db,
-		ar_chunk_storage,
 		ar_webhook_tests,
 		ar_poller_tests,
 		ar_kv,
@@ -58,7 +59,6 @@
 		ar_tx_blacklist_tests,
 		ar_data_sync_tests,
 		ar_header_sync_tests,
-		ar_poa_tests,
 		ar_node_tests,
 		ar_fork_recovery_tests,
 		ar_mine,
@@ -123,7 +123,9 @@ show_help() ->
 			)},
 			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
-			{"mining_addr (addr)", "The address that mining rewards should be credited to."},
+			{"mining_addr (addr)",
+				"The address that mining rewards should be credited to."
+				" Set 'unclaimed' to send all the rewards to the endowment pool."},
 			{"stage_one_hashing_threads (num)",
 				io_lib:format(
 					"The number of mining processes searching for the SPoRA chunks to read."
@@ -161,7 +163,6 @@ show_help() ->
 					" Each job periodically picks a range and downloads it from peers.",
 					[?DEFAULT_SYNC_JOBS]
 				)},
-			{"new_mining_key", "Generate a new keyfile, apply it as the reward address"},
 			{"load_mining_key (file)",
 				"Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
@@ -277,6 +278,8 @@ parse_cli_args(["clean"|Rest], C) ->
 	parse_cli_args(Rest, C#config { clean = true });
 parse_cli_args(["no_auto_join"|Rest], C) ->
 	parse_cli_args(Rest, C#config { auto_join = false });
+parse_cli_args(["mining_addr", "unclaimed"|Rest], C) ->
+	parse_cli_args(Rest, C#config { mining_addr = unclaimed });
 parse_cli_args(["mining_addr", Addr|Rest], C) ->
 	parse_cli_args(Rest, C#config { mining_addr = ar_util:decode(Addr) });
 parse_cli_args(["max_miners", Num|Rest], C) ->
@@ -289,8 +292,6 @@ parse_cli_args(["stage_two_hashing_threads", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { stage_two_hashing_threads = list_to_integer(Num) });
 parse_cli_args(["max_emitters", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_emitters = list_to_integer(Num) });
-parse_cli_args(["new_mining_key"|Rest], C)->
-	parse_cli_args(Rest, C#config { new_key = true });
 parse_cli_args(["disk_space", Size|Rest], C) ->
 	parse_cli_args(Rest, C#config { disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
 parse_cli_args(["disk_space_check_frequency", Frequency|Rest], C) ->
@@ -365,9 +366,9 @@ start(normal, _Args) ->
 	LoggerFormatterConsole = #{
 		legacy_header => false,
 		single_line => true,
-		chars_limit => 512,
+		chars_limit => 2048,
 		max_size => 512,
-		depth => 16,
+		depth => 64,
 		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
 	},
 	logger:set_handler_config(default, formatter, {logger_formatter, LoggerFormatterConsole}),
@@ -415,6 +416,7 @@ start(normal, _Args) ->
 		false -> ok;
 		true  -> app_ipfs:start_pinning()
 	end,
+	set_mining_address(Config),
 	%% Start Arweave.
 	ar_sup:start_link().
 
@@ -506,6 +508,23 @@ log_peer_clock_diff(Peer, Diff) ->
 	WarningArgs = [ar_util:format_peer(Peer), Diff],
 	io:format(Warning, WarningArgs),
 	?LOG_WARNING(Warning, WarningArgs).
+
+set_mining_address(Config) ->
+	MiningAddr =
+		case {Config#config.mining_addr, Config#config.load_key} of
+			{not_set, not_set} ->
+				{_, Pub} = ar_wallet:new_keyfile(),
+				ar_wallet:to_address(Pub);
+			{unclaimed, not_set} ->
+				unclaimed;
+			{Address, _} when is_binary(Address) ->
+				Address;
+			{_, Path} when is_binary(Path) ->
+				{_, Pub} = ar_wallet:load_keyfile(Path),
+				ar_wallet:to_address(Pub)
+		end,
+	application:set_env(arweave, config, Config#config{ mining_addr = MiningAddr }).
+
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
 
