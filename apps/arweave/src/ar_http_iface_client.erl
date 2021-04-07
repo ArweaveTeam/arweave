@@ -278,6 +278,7 @@ get_block_index([]) ->
 	unavailable;
 get_block_index(Peers) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	ar:console("Downloading block index from ~s.~n", [ar_util:format_peer(Peer)]),
 	Reply =
 		ar_http:req(#{
 			method => get,
@@ -290,6 +291,7 @@ get_block_index(Peers) ->
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
 			case catch ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)) of
 				{'EXIT', Reason} ->
+					ar:console("Failed to parse block index.~n", []),
 					?LOG_WARNING([
 						{event, failed_to_parse_block_index_from_peer},
 						{peer, ar_util:format_peer(Peer)},
@@ -297,9 +299,11 @@ get_block_index(Peers) ->
 					]),
 					get_block_index(Peers -- [Peer]);
 				BI ->
+					ar:console("Downloaded block index successfully.~n", []),
 					BI
 			end;
 		_ ->
+			ar:console("Failed to download block index.~n", []),
 			?LOG_WARNING([
 				{event, failed_to_fetch_block_index_from_peer},
 				{peer, ar_util:format_peer(Peer)},

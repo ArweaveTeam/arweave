@@ -240,6 +240,8 @@ handle_info(wallets_ready, State) ->
 			false ->
 				{?USD_TO_AR_INITIAL_RATE, ?USD_TO_AR_INITIAL_RATE}
 		end,
+	ar:console("Joined the Arweave network successfully.~n"),
+	?LOG_INFO([{event, joined_the_network}]),
 	ets:insert(node_state, [
 		{is_joined,				true},
 		{block_index,			BI},

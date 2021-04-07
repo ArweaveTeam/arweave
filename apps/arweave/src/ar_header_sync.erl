@@ -144,7 +144,7 @@ handle_cast(check_space_alarm, State) ->
 		false ->
 			Msg =
 				"The node has stopped syncing headers - the available disk space is"
-				" less than ~s. Add more disk space if you wish to store more headers.",
+				" less than ~s. Add more disk space if you wish to store more headers.~n",
 			ar:console(Msg, [ar_util:bytes_to_mb_string(?DISK_HEADERS_BUFFER_SIZE)]),
 			?LOG_INFO([
 				{event, ar_header_sync_stopped_syncing},

@@ -291,28 +291,45 @@ get_tree(B, Peers) ->
 		{ok, Tree} ->
 			Tree;
 		_ ->
-			case B#block.height >= ar_fork:height_2_2() of
-				true ->
-					{ok, {Cursor, Chunk}} = ar_http_iface_client:get_wallet_list_chunk(Peers, ID),
+			ar:console("Downloading the wallet tree, chunk 1.~n", []),
+			case ar_http_iface_client:get_wallet_list_chunk(Peers, ID) of
+				{ok, {Cursor, Chunk}} ->
 					{ok, Tree} = load_wallet_tree_from_peers(
 						ID,
 						Peers,
 						ar_patricia_tree:from_proplist(Chunk),
-						Cursor
+						Cursor,
+						2
 					),
+					ar:console("Downloaded the wallet tree successfully.~n", []),
 					Tree;
-				false ->
-					{ok, Tree} = ar_http_iface_client:get_wallet_list(Peers, B#block.indep_hash),
-					Tree
+				_ ->
+					ar:console("Failed to download wallet tree chunk, retrying...~n", []),
+					timer:sleep(1000),
+					get_tree(B, Peers)
 			end
 	end.
 
-load_wallet_tree_from_peers(_ID, _Peers, Acc, last) ->
+load_wallet_tree_from_peers(_ID, _Peers, Acc, last, _) ->
 	{ok, Acc};
-load_wallet_tree_from_peers(ID, Peers, Acc, Cursor) ->
-	{ok, {NextCursor, Chunk}} = ar_http_iface_client:get_wallet_list_chunk(Peers, ID, Cursor),
-	Acc3 = lists:foldl(fun({K, V}, Acc2) -> ar_patricia_tree:insert(K, V, Acc2) end, Acc, Chunk),
-	load_wallet_tree_from_peers(ID, Peers, Acc3, NextCursor).
+load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N) ->
+	io:format(os:cmd(clear)),
+	ar:console("Downloading the wallet tree, chunk ~B.~n", [N]),
+	case ar_http_iface_client:get_wallet_list_chunk(Peers, ID, Cursor) of
+		{ok, {NextCursor, Chunk}} ->
+			Acc3 =
+				lists:foldl(
+					fun({K, V}, Acc2) -> ar_patricia_tree:insert(K, V, Acc2)
+					end,
+					Acc,
+					Chunk
+				),
+			load_wallet_tree_from_peers(ID, Peers, Acc3, NextCursor, N + 1);
+		_ ->
+			ar:console("Failed to download wallet tree chunk, retrying...~n", []),
+			timer:sleep(1000),
+			load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N)
+	end.
 
 apply_block(DAG, NewB, RootHash, RewardPool, Rate, Height) ->
 	Tree = ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2),
