@@ -8,7 +8,8 @@
 	slave_mine/0,
 	wait_until_height/1, slave_wait_until_height/1, assert_slave_wait_until_receives_txs/1,
 	sign_tx/2, slave_add_tx/1,
-	read_block_when_stored/1
+	read_block_when_stored/1,
+	slave_call/3
 ]).
 
 height_plus_one_fork_recovery_test_() ->
@@ -85,6 +86,36 @@ test_missing_txs_fork_recovery() ->
 	slave_mine(),
 	[{H1, _, _} | _] = wait_until_height(1),
 	?assertEqual(1, length((read_block_when_stored(H1))#block.txs)).
+
+orphaned_txs_are_remined_after_fork_recovery_test_() ->
+	{timeout, 120, fun test_orphaned_txs_are_remined_after_fork_recovery/0}.
+
+test_orphaned_txs_are_remined_after_fork_recovery() ->
+	%% Mine a transaction on slave, mine two blocks on master to
+	%% make the transaction orphaned. Mine a block on slave and
+	%% assert the transaction is re-mined.
+	Key = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
+	{_SlaveNode, _} = slave_start(B0),
+	{_MasterNode, _} = start(B0),
+	disconnect_from_slave(),
+	TX = #tx{ id = TXID } = sign_tx(Key, #{}),
+	slave_add_tx(TX),
+	assert_slave_wait_until_receives_txs([TX]),
+	slave_mine(),
+	[{H1, _, _} | _] = slave_wait_until_height(1),
+	H1TXIDs = (slave_call(ar_test_node, read_block_when_stored, [H1]))#block.txs,
+	?assertEqual([TXID], H1TXIDs),
+	connect_to_slave(),
+	ar_node:mine(),
+	[{H2, _, _} | _] = wait_until_height(1),
+	ar_node:mine(),
+	[{H3, _, _}, {H2, _, _}, {_, _, _}] = wait_until_height(2),
+	?assertMatch([{H3, _, _}, {H2, _, _}, {_, _, _}], slave_wait_until_height(2)),
+	slave_mine(),
+	[{H4, _, _} | _] = slave_wait_until_height(3),
+	H4TXIDs = (slave_call(ar_test_node, read_block_when_stored, [H4]))#block.txs,
+	?assertEqual([TXID], H4TXIDs).
 
 invalid_block_with_high_cumulative_difficulty_test_() ->
 	{timeout, 20, fun test_invalid_block_with_high_cumulative_difficulty/0}.

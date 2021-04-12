@@ -841,11 +841,11 @@ recovers_from_forks(ForkHeight) ->
 		end,
 		MasterPostForkTXs
 	),
-	%% Assert the block anchored transactions from the abandoned fork can
-	%% be reposted.
+	%% Assert the block anchored transactions from the abandoned fork are
+	%% back in the memory pool.
 	lists:foreach(
 		fun(TX) ->
-			{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} =
+			{ok, {{<<"400">>, _}, _, <<"Transaction is already in the mempool.">>, _, _}} =
 				ar_http:req(#{
 					method => post,
 					peer => {127, 0, 0, 1, 1984},

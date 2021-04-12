@@ -501,16 +501,26 @@ handle_gossip({_NewGS, UnknownMessage}, State) ->
 
 %% @doc Add the new transaction to the server state.
 handle_add_tx(State, TX, GS) ->
+	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
+	add_tx_to_mempool(TX, ready_for_mining),
+	{noreply, State#{ gossip => NewGS }}.
+
+add_tx_to_mempool(#tx{ id = TXID } = TX, Status) ->
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	{NewGS, _} = ar_gossip:send(GS, {add_tx, TX}),
-	Map2 = maps:put(TX#tx.id, ready_for_mining, Map),
+	MempoolSize2 =
+		case maps:is_key(TXID, Map) of
+			false ->
+				increase_mempool_size(MempoolSize, TX);
+			true ->
+				MempoolSize
+		end,
 	ets:insert(node_state, [
 		{{tx, TX#tx.id}, TX},
-		{tx_statuses, Map2},
-		{mempool_size, increase_mempool_size(MempoolSize, TX)}
+		{tx_statuses, maps:put(TX#tx.id, Status, Map)},
+		{mempool_size, MempoolSize2}
 	]),
-	{noreply, State#{ gossip => NewGS }}.
+	ok.
 
 increase_mempool_size({MempoolHeaderSize, MempoolDataSize}, TX) ->
 	{HeaderSize, DataSize} = tx_mempool_size(TX),
@@ -540,28 +550,10 @@ handle_add_waiting_tx(State, #tx{ id = TXID } = TX, GS) ->
 	end.
 
 %% @doc Add the transaction to the mining pool, to be included in the mined block.
-handle_move_tx_to_mining_pool(State, #tx{ id = TXID } = TX, GS) ->
+handle_move_tx_to_mining_pool(State, TX, GS) ->
 	{NewGS, _} = ar_gossip:send(GS, {move_tx_to_mining_pool, TX}),
-	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	case maps:get(TXID, Map, not_found) of
-		not_found ->
-			Map2 = maps:put(TX#tx.id, ready_for_mining, Map),
-			ets:insert(node_state, [
-				{{tx, TX#tx.id}, TX},
-				{tx_statuses, Map2},
-				{mempool_size, increase_mempool_size(MempoolSize, TX)}
-			]),
-			{noreply, State#{ gossip => NewGS }};
-		ready_for_mining ->
-			{noreply, State#{ gossip => NewGS }};
-		_ ->
-			Map2 = maps:put(TX#tx.id, ready_for_mining, Map),
-			ets:insert(node_state, [
-				{tx_statuses, Map2}
-			]),
-			{noreply, State#{ gossip => NewGS }}
-	end.
+	add_tx_to_mempool(TX, ready_for_mining),
+	{noreply, State#{ gossip => NewGS }}.
 
 handle_drop_waiting_txs(State, DroppedTXs, GS) ->
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
@@ -832,8 +824,7 @@ apply_validated_block(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	end.
 
 apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
-	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
+	[{current, CurrentH}] = ets:lookup(node_state, current),
 	PruneDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	BH = B#block.indep_hash,
 	%% Overwrite the block to store computed size tagged txs - they
@@ -853,6 +844,7 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	maybe_report_n_confirmations(B, BI),
 	maybe_store_block_index(B, BI),
 	record_fork_depth(length(PrevBlocks) - 1),
+	return_orphaned_txs_to_mempool(CurrentH, (lists:last(PrevBlocks))#block.indep_hash),
 	lists:foldl(
 		fun (CurrentB, start) ->
 				CurrentB;
@@ -880,6 +872,8 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 		tl(lists:reverse(PrevBlocks))
 	),
 	BlockTXs = B#block.txs,
+	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
+	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	drop_txs(BlockTXs, Map, MempoolSize),
 	[{tx_statuses, Map2}] = ets:lookup(node_state, tx_statuses),
 	gen_server:cast(self(), {filter_mempool, maps:iterator(Map2)}),
@@ -947,6 +941,13 @@ record_fork_depth(0) ->
 	ok;
 record_fork_depth(Depth) ->
 	prometheus_histogram:observe(fork_recovery_depth, Depth).
+
+return_orphaned_txs_to_mempool(H, H) ->
+	ok;
+return_orphaned_txs_to_mempool(H, BaseH) ->
+	#block{ txs = TXs, previous_block = PrevH } = ar_block_cache:get(block_cache, H),
+	lists:foreach(fun(TX) -> add_tx_to_mempool(TX, ready_for_mining) end, TXs),
+	return_orphaned_txs_to_mempool(PrevH, BaseH).
 
 %% @doc Kill the old miner, optionally start a new miner, depending on the automine setting.
 reset_miner(#{ miner := undefined, automine := false } = StateIn) ->
