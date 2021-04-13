@@ -3,11 +3,13 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [assert_post_tx_to_slave/1, disconnect_from_slave/0]).
--import(ar_test_node, [assert_wait_until_receives_txs/1, wait_until_height/1]).
--import(ar_test_node, [sign_tx/2, sign_v1_tx/2, get_tx_anchor/0]).
--import(ar_test_node, [get_tx_price/1, slave_mine/0, slave_call/3, connect_to_slave/0]).
--import(ar_test_node, [post_tx_to_master/2, read_block_when_stored/1]).
+-import(ar_test_node, [
+	assert_post_tx_to_slave/1, disconnect_from_slave/0,
+	assert_wait_until_receives_txs/1, wait_until_height/1,
+	sign_tx/2, get_tx_anchor/0,
+	get_tx_price/1, slave_mine/0, slave_call/3, connect_to_slave/0,
+	post_tx_to_master/2, read_block_when_stored/1
+]).
 
 txs_broadcast_order_test_() ->
 	{timeout, 60, fun test_txs_broadcast_order/0}.
@@ -78,55 +80,41 @@ drop_lowest_priority_txs_test_() ->
 test_drop_lowest_priority_txs() ->
 	setup(),
 	ar_tx_queue:set_pause(true),
-	ar_tx_queue:set_max_header_size(6 * ?TX_SIZE_BASE),
-	HigherPriorityTXs = import_4_txs(),
-	LowerPriorityTXs = make_txs(4),
-	lists:foreach(
-		fun(TX) ->
-			ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
-		end,
-		LowerPriorityTXs
-	),
+	ar_tx_queue:set_max_header_size(6 * ?TX_SIZE_BASE + 1000),
+	HigherPriorityTXs = [
+		import_tx(1, 200, ?AR(50)),
+		import_tx(1, 250, ?AR(50)),
+		import_tx(1, 200, ?AR(40)),
+		import_tx(1, 250, ?AR(40))
+	],
+	LowerPriorityTXs = [
+		import_tx(1, 200, ?AR(10)),
+		import_tx(1, 250, ?AR(10))
+	],
 	Actual = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
+	%% Only 5 fit into 6 * ?TX_SIZE_BASE + 1000.
 	?assertEqual(5, length(Actual)),
-	[TX1, TX2, TX3, TX4, TX5] = Actual,
-	?assert(lists:member(TX5, encode_txs(LowerPriorityTXs))),
-	?assertEqual(HigherPriorityTXs, [TX1, TX2, TX3, TX4]),
+	[TXID1, TXID2, TXID3, TXID4, TXID5] = Actual,
+	?assert(lists:member(TXID5, encode_txs(LowerPriorityTXs))),
+	?assertEqual([TXID1, TXID2, TXID3, TXID4], encode_txs(HigherPriorityTXs)),
 	%% Post 2 transactions bigger than the queue size limit.
 	%% Expect all transactions but these two to be dropped from the queue.
 	HighestPriorityTXs = [
-		ar_tx:new(<< <<0>> || _ <- lists:seq(1, 2 * ?TX_SIZE_BASE) >>, ?AR(2000)),
-		ar_tx:new(<< <<0>> || _ <- lists:seq(1, 2 * ?TX_SIZE_BASE) >>, ?AR(1000))
+		import_tx(1, 2 * ?TX_SIZE_BASE, ?AR(2000)),
+		import_tx(1, 2 * ?TX_SIZE_BASE, ?AR(1000))
 	],
-	lists:foreach(
-		fun(TX) ->
-			ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
-		end,
-		HighestPriorityTXs
-	),
 	Actual2 = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
 	?assertEqual(encode_txs(HighestPriorityTXs), Actual2),
-	%% Set max data size. Submit some lower-priority format=2 txs. Expect
-	%% those exceeding the new limit to be dropped.
+	%% Set max data size. Submit some format=2 txs.
+	%% Expect those exceeding the new limit to be dropped.
 	ar_tx_queue:set_max_header_size(9 * ?TX_SIZE_BASE + 1),
 	ar_tx_queue:set_max_data_size(2),
-	LowerPriorityFormat2TXs = [
-		Format2TX1 = (ar_tx:new(<<1>>, ?AR(3)))#tx{ format = 2},
-		Format2TX2 = (ar_tx:new(<<2>>, ?AR(2)))#tx{ format = 2},
-		(ar_tx:new(<<3>>, ?AR(1)))#tx{ format = 2},
-		Format1TX = ar_tx:new(<<3>>, 10) % does not contribute to the data limit
-	],
-	lists:foreach(
-		fun(TX) ->
-			ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
-		end,
-		LowerPriorityFormat2TXs
-	),
+	Format2TX1 = import_tx(2, 1, ?AR(3)),
+	Format2TX2 = import_tx(2, 1, ?AR(2)),
+	import_tx(2, 1, ?AR(1)), % This one does not fit into the limit.
+	Format1TX = import_tx(1, 1, 10), % v1, does not contribute to the data limit.
 	Actual3 = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
-	?assertEqual(
-		encode_txs(HighestPriorityTXs) ++ encode_txs([Format2TX1, Format2TX2, Format1TX]),
-		Actual3
-	).
+	?assertEqual(encode_txs([Format2TX1, Format2TX2, Format1TX]), Actual3).
 
 get_queue_endpoint_test_() ->
 	{timeout, 10, fun test_get_queue_endpoint/0}.
@@ -134,7 +122,13 @@ get_queue_endpoint_test_() ->
 test_get_queue_endpoint() ->
 	setup(),
 	ar_tx_queue:set_pause(true),
-	Expected = import_4_txs(),
+	Expected = encode_txs([
+		import_tx(1, 0, ?AR(1)),
+		import_tx(2, 200, ?AR(1)),
+		import_tx(2, 400, ?AR(1)),
+		import_tx(1, 10, 10),
+		import_tx(1, 200, ?AR(100)) %% Big v1 txs are prioritized below all else.
+	]),
 	Actual = [TXID || {[{_, TXID}, _, _]} <- http_get_queue()],
 	?assertEqual(Expected, Actual).
 
@@ -145,20 +139,20 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 	{_MasterNode, _SlaveNode, Wallet} = setup(),
 	TXs = [
 		%% Base size, extra reward.
-		sign_v1_tx(Wallet, #{
+		sign_tx(Wallet, #{
 			reward => get_tx_price(0) + 100000, last_tx => get_tx_anchor()
 		}),
 		%% More data, extra reward.
-		sign_v1_tx(
+		sign_tx(
 			Wallet,
 			#{
-				% Make sure v1 tx is not malleable.
+				%% Make sure v1 tx is not malleable.
 				data => << (crypto:strong_rand_bytes(1000))/binary, <<"a">>/binary >>,
 				reward => get_tx_price(1000) + 100000,
 				last_tx => get_tx_anchor()
 			}),
 		%% Base size, default reward.
-		sign_v1_tx(Wallet, #{ last_tx => get_tx_anchor() })
+		sign_tx(Wallet, #{ last_tx => get_tx_anchor() })
 	],
 	SortedTXs = lists:sort(
 		fun(#tx{ reward = Reward1, data = Data1 }, #tx{ reward = Reward2, data = Data2 }) ->
@@ -264,8 +258,6 @@ test_tx_is_dropped_after_it_is_included() ->
 		lists:sort([TXID || {[{_, TXID}, _, _]} <- http_get_queue()])
 	).
 
-%%%% private
-
 setup() ->
 	{Pub, _} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(5000), <<>>}]),
@@ -279,28 +271,10 @@ http_get_queue() ->
 		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/queue"}),
 	ar_serialize:dejsonify(Body).
 
-import_4_txs() ->
-	TX1 = ar_tx:new(<<"DATA1">>, ?AR(50)),
-	TX2 = ar_tx:new(<<"DATA2">>, ?AR(10)),
-	TX3 = ar_tx:new(<<"DATA3">>, ?AR(80)),
-	TX4 = ar_tx:new(<<"DATA4data4">>, ?AR(80)),
-	lists:foreach(
-		fun(TX) ->
-			ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
-		end,
-		[TX1, TX2, TX3, TX4]
-	),
-	[
-		ar_util:encode(TX3#tx.id), % score = 80 / (base size + 5)  ~ 0.02488
-		ar_util:encode(TX4#tx.id), % score = 80 / (base size + 10) ~ 0.02484
-		ar_util:encode(TX1#tx.id), % score = 50 / (base size + 5)  ~ 0.15
-		ar_util:encode(TX2#tx.id)  % score = 10 / (base size + 5   ~ 0.03
-	].
-
-make_txs(0) -> [];
-make_txs(N) ->
-	B = integer_to_binary(N),
-	[ar_tx:new(<<"DATA", B/binary>>, ?AR(1)) | make_txs(N-1)].
+import_tx(Format, Size, Fee) ->
+	TX = (ar_tx:new(crypto:strong_rand_bytes(Size), Fee))#tx{ format = Format },
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+	TX.
 
 encode_txs(TXs) ->
 	lists:map(fun(TX) -> ar_util:encode(TX#tx.id) end, TXs).

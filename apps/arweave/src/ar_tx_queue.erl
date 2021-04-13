@@ -35,6 +35,13 @@
 -define(EMITTER_START_WAIT, 150).
 -define(EMITTER_INTER_WAIT, 5).
 
+%% Prioritize format=1 transactions with data size bigger than this
+%% value (in bytes) lower than every other transaction. The motivation
+%% is to encourage people uploading data to use the new v2 transaction
+%% format. Large v1 transactions may significantly slow down the rate
+%% of acceptance of transactions into the weave.
+-define(DEPRIORITIZE_V1_TX_SIZE_THRESHOLD, 100).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -355,11 +362,14 @@ show_queue(Q) ->
 		Q
 	).
 
-utility(TX = #tx { data_size = DataSize }) ->
+utility(TX = #tx{ data_size = DataSize }) ->
 	utility(TX, ?TX_SIZE_BASE + DataSize).
 
-utility(#tx { reward = Reward }, Size) ->
-	erlang:trunc(Reward / Size).
+utility(#tx{ format = 1, reward = Reward, data_size = DataSize }, Size)
+		when DataSize > ?DEPRIORITIZE_V1_TX_SIZE_THRESHOLD ->
+	{1, erlang:trunc(Reward / Size)};
+utility(#tx{ reward = Reward }, Size) ->
+	{2, erlang:trunc(Reward / Size)}.
 
 tx_propagated_size(#tx{ format = 2 }) ->
 	?TX_SIZE_BASE;
