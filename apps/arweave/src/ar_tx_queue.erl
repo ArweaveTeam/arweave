@@ -3,11 +3,13 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, stop/0]).
--export([set_max_emitters/1, set_max_header_size/1, set_max_data_size/1, set_pause/1]).
--export([add_tx/1, show_queue/0]).
--export([utility/1]).
--export([drop_tx/1]).
+-export([
+	start_link/0, stop/0,
+	set_max_emitters/1, set_max_header_size/1, set_max_data_size/1, set_pause/1,
+	add_tx/1, show_queue/0,
+	utility/1,
+	drop_tx/1
+]).
 
 %% gen_server callbacks
 -export([
@@ -130,44 +132,50 @@ handle_cast({add_tx, TX}, State) ->
 	} = State,
 	{TXHeaderSize, TXDataSize} = tx_queue_size(TX),
 	U = utility(TX),
-	{NewQ, {NewHeaderSize, NewDataSize}, DroppedTXs} =
-		maybe_drop(
-			gb_sets:add_element({U, {TX, {TXHeaderSize, TXDataSize}}}, Q),
-			{HeaderSize + TXHeaderSize, DataSize + TXDataSize},
-			{MaxHeaderSize, MaxDataSize}
-		),
-	case DroppedTXs of
-		[] ->
-			noop;
-		_ ->
-			DroppedIDs = lists:map(
-				fun(DroppedTX) ->
-					case TX#tx.format of
-						2 ->
-							ar_data_sync:maybe_drop_data_root_from_disk_pool(
-								DroppedTX#tx.data_root,
-								DroppedTX#tx.data_size,
-								DroppedTX#tx.id
-							);
-						_ ->
-							nothing_to_drop_from_disk_pool
-					end,
-					ar_util:encode(DroppedTX#tx.id)
-				end,
-				DroppedTXs
-			),
-			?LOG_INFO([
-				{event, drop_txs_from_queue},
-				{dropped_txs, DroppedIDs}
-			]),
-			ar_bridge:drop_waiting_txs(DroppedTXs)
-	end,
-	NewState = State#state{
-		tx_queue = NewQ,
-		header_size = NewHeaderSize,
-		data_size = NewDataSize
-	},
-	{noreply, NewState};
+	Item = {U, {TX, {TXHeaderSize, TXDataSize}}},
+	case gb_sets:is_element(Item, Q) of
+		true ->
+			{noreply, State};
+		false ->
+			{NewQ, {NewHeaderSize, NewDataSize}, DroppedTXs} =
+				maybe_drop(
+					gb_sets:add_element(Item, Q),
+					{HeaderSize + TXHeaderSize, DataSize + TXDataSize},
+					{MaxHeaderSize, MaxDataSize}
+				),
+			case DroppedTXs of
+				[] ->
+					noop;
+				_ ->
+					DroppedIDs = lists:map(
+						fun(DroppedTX) ->
+							case TX#tx.format of
+								2 ->
+									ar_data_sync:maybe_drop_data_root_from_disk_pool(
+										DroppedTX#tx.data_root,
+										DroppedTX#tx.data_size,
+										DroppedTX#tx.id
+									);
+								_ ->
+									nothing_to_drop_from_disk_pool
+							end,
+							ar_util:encode(DroppedTX#tx.id)
+						end,
+						DroppedTXs
+					),
+					?LOG_INFO([
+						{event, drop_txs_from_queue},
+						{dropped_txs, DroppedIDs}
+					]),
+					ar_bridge:drop_waiting_txs(DroppedTXs)
+			end,
+			NewState = State#state{
+				tx_queue = NewQ,
+				header_size = NewHeaderSize,
+				data_size = NewDataSize
+			},
+			{noreply, NewState}
+	end;
 
 handle_cast({drop_tx, TX}, State) ->
 	#state{
