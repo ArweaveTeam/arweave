@@ -418,32 +418,40 @@ start(normal, _Args) ->
 	%% Start Arweave.
 	ar_sup:start_link().
 
+validate_trusted_peers(#config{ peers = [] }) ->
+	ok;
 validate_trusted_peers(Config) ->
 	Peers = Config#config.peers,
-	validate_network(Config#config.peers),
-	case lists:member(time_syncing, Config#config.disable) of
-		false ->
-			validate_clock_sync(Peers);
-		true ->
-			ok
+	ValidPeers = filter_valid_peers(Peers),
+	case ValidPeers of
+		[] ->
+			erlang:halt();
+		_ ->
+			application:set_env(arweave, config, Config#config{ peers = ValidPeers }),
+			case lists:member(time_syncing, Config#config.disable) of
+				false ->
+					validate_clock_sync(ValidPeers);
+				true ->
+					ok
+			end
 	end.
 
 %% @doc Verify peers are on the same network as us.
-validate_network(Peers) ->
-	lists:foreach(
+filter_valid_peers(Peers) ->
+	lists:filter(
 		fun(Peer) ->
 			case ar_http_iface_client:get_info(Peer, name) of
 				info_unavailable ->
 					io:format("~n\tPeer ~s is not available.~n~n", [ar_util:format_peer(Peer)]),
-					erlang:halt();
+					false;
 				<<?NETWORK_NAME>> ->
-					ok;
+					true;
 				_ ->
 					io:format(
 						"~n\tPeer ~s does not belong to the network ~s.~n~n",
 						[ar_util:format_peer(Peer), ?NETWORK_NAME]
 					),
-					erlang:halt()
+					false
 			end
 		end,
 		Peers
