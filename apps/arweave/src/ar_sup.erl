@@ -31,6 +31,8 @@ init([]) ->
 	ets:new(ar_storage, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(blacklist, [set, public, named_table]),
 	ets:new(ignored_ids, [bag, public, named_table]),
+	ets:new(peer_txid, [set, public, named_table, {write_concurrency, true}]),
+	ets:new(timestamp_peer_txid, [ordered_set, public, named_table, {write_concurrency, true}]),
 	ets:new(ar_tx_db, [set, public, named_table]),
 	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),

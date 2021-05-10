@@ -35,45 +35,21 @@
 
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
-	case byte_size(TX#tx.data) of
-		_Size when _Size < ?TX_SEND_WITHOUT_ASKING_SIZE_LIMIT ->
-			do_send_new_tx(Peer, TX);
-		_ ->
-			case has_tx(Peer, TX#tx.id) of
-				doesnt_have_tx -> do_send_new_tx(Peer, TX);
-				has_tx -> not_sent;
-				error -> not_sent
-			end
-	end.
-
-do_send_new_tx(Peer, TX) ->
-	TXSize = byte_size(TX#tx.data),
-	ar_http:req(#{
-		method => post,
-		peer => Peer,
-		path => "/tx",
-		headers => p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TX#tx.id)}],
-		body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-		connect_timeout => 500,
-		timeout => max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
-	}).
-
-%% @doc Check whether a peer has a given transaction
-has_tx(Peer, ID) ->
-	case
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => "/tx/" ++ binary_to_list(ar_util:encode(ID)) ++ "/id",
-			headers => p2p_headers(),
-			connect_timeout => 500,
-			timeout => 3 * 1000
-		})
-	of
-		{ok, {{<<"200">>, _}, _, _, _, _}} -> has_tx;
-		{ok, {{<<"202">>, _}, _, _, _, _}} -> has_tx; % In the mempool
-		{ok, {{<<"404">>, _}, _, _, _, _}} -> doesnt_have_tx;
-		_ -> error
+	TXID = TX#tx.id,
+	case ets:member(peer_txid, {Peer, TXID}) of
+		true ->
+			not_sent;
+		false ->
+			TXSize = byte_size(TX#tx.data),
+			ar_http:req(#{
+				method => post,
+				peer => Peer,
+				path => "/tx",
+				headers => p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TXID)}],
+				body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+				connect_timeout => 500,
+				timeout => max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
+			})
 	end.
 
 %% @doc Distribute a newly found block to remote nodes.

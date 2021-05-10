@@ -58,7 +58,7 @@ test_syncs_headers() ->
 	timer:sleep(Config#config.disk_space_check_frequency),
 	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
 	NoSpaceTX = sign_v1_tx(master, Wallet,
-		#{ data => crypto:strong_rand_bytes(10 * 1024), last_tx => get_tx_anchor() }),
+		#{ data => random_v1_data(10 * 1024), last_tx => get_tx_anchor() }),
 	assert_post_tx_to_master(NoSpaceTX),
 	ar_node:mine(),
 	[{NoSpaceH, _, _} | _] = wait_until_height(NoSpaceHeight),

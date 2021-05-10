@@ -23,14 +23,20 @@ get_info_test() ->
 %% @doc Ensure that transactions are only accepted once.
 single_regossip_test() ->
 	ar_test_node:start(no_block),
+	ar_test_node:slave_start(no_block),
 	TX = ar_tx:new(),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
 	),
 	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
+	),
+	?assertEqual(not_sent, ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)),
+	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
 	).
 
 %% @doc Unjoined nodes should not accept blocks
