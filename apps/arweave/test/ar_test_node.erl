@@ -62,7 +62,8 @@ start(B0, RewardAddr, Config) ->
 		start_from_block_index = true,
 		peers = [],
 		mining_addr = RewardAddr,
-		enable = [search_in_rocksdb_when_mining]
+		enable = [search_in_rocksdb_when_mining, serve_arql, serve_wallet_txs,
+			serve_wallet_deposits]
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),

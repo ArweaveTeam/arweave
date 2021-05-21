@@ -5,6 +5,7 @@
 -export([execute/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_mine.hrl").
@@ -204,32 +205,38 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 %%		expr2:	{ string | logical expression }
 %%	}
 handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
-	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_arql, Config#config.enable) of
 		true ->
-			case read_complete_body(Req, Pid) of
-				{ok, QueryJSON, Req2} ->
-					case ar_serialize:json_struct_to_query(QueryJSON) of
-						{ok, Query} ->
-							case catch ar_arql_db:eval_legacy_arql(Query) of
-								EncodedTXIDs when is_list(EncodedTXIDs) ->
-									Body = ar_serialize:jsonify(EncodedTXIDs),
-									{200, #{}, Body, Req2};
-								bad_query ->
-									{400, #{}, <<"Invalid query.">>, Req2};
-								sqlite_parser_stack_overflow ->
-									{400, #{}, <<"The query nesting depth is too big.">>, Req2};
-								{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-									{503, #{}, <<"ArQL unavailable.">>, Req2}
+			ar_semaphore:acquire(arql_semaphore(Req), 5000),
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					case read_complete_body(Req, Pid) of
+						{ok, QueryJSON, Req2} ->
+							case ar_serialize:json_struct_to_query(QueryJSON) of
+								{ok, Query} ->
+									case catch ar_arql_db:eval_legacy_arql(Query) of
+										EncodedTXIDs when is_list(EncodedTXIDs) ->
+											Body = ar_serialize:jsonify(EncodedTXIDs),
+											{200, #{}, Body, Req2};
+										bad_query ->
+											{400, #{}, <<"Invalid query.">>, Req2};
+										sqlite_parser_stack_overflow ->
+											{400, #{}, <<"The query nesting depth is too big.">>, Req2};
+										{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
+											{503, #{}, <<"ArQL unavailable.">>, Req2}
+									end;
+								{error, _} ->
+									{400, #{}, <<"Invalid ARQL query.">>, Req2}
 							end;
-						{error, _} ->
-							{400, #{}, <<"Invalid ARQL query.">>, Req2}
-					end;
-				{error, body_size_too_large} ->
-					{413, #{}, <<"Payload too large">>, Req}
-			end
+						{error, body_size_too_large} ->
+							{413, #{}, <<"Payload too large">>, Req}
+					end
+			end;
+		false ->
+			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
 	end;
 
 %% Return the data field of the transaction specified via the transaction ID (hash)
@@ -669,49 +676,73 @@ handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
 %% Return transaction identifiers (hashes) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>], Req, _Pid) ->
-	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	{Status, Headers, Body} = handle_get_wallet_txs(Addr, none),
-	{Status, Headers, Body, Req};
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_wallet_txs, Config#config.enable) of
+		true ->
+			ar_semaphore:acquire(arql_semaphore(Req), 5000),
+			{Status, Headers, Body} = handle_get_wallet_txs(Addr, none),
+			{Status, Headers, Body, Req};
+		false ->
+			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
+	end;
 
 %% Return transaction identifiers (hashes) starting from the earliest_tx for the wallet
 %% specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/txs/{earliest_tx}.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"txs">>, EarliestTX], Req, _Pid) ->
-	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	{Status, Headers, Body} = handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX)),
-	{Status, Headers, Body, Req};
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_wallet_txs, Config#config.enable) of
+		true ->
+			ar_semaphore:acquire(arql_semaphore(Req), 5000),
+			{Status, Headers, Body} = handle_get_wallet_txs(Addr, ar_util:decode(EarliestTX)),
+			{Status, Headers, Body, Req};
+		false ->
+			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
+	end;
 
 %% Return identifiers (hashes) of transfer transactions depositing to the given
 %% wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/deposits.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>], Req, _Pid) ->
-	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
-		TXMaps when is_list(TXMaps) ->
-			TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
-			{200, #{}, ar_serialize:jsonify(TXIDs), Req};
-		{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-			{503, #{}, <<"ArQL unavailable.">>, Req}
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_wallet_deposits, Config#config.enable) of
+		true ->
+			ar_semaphore:acquire(arql_semaphore(Req), 5000),
+			case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
+				TXMaps when is_list(TXMaps) ->
+					TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
+					{200, #{}, ar_serialize:jsonify(TXIDs), Req};
+				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
+					{503, #{}, <<"ArQL unavailable.">>, Req}
+			end;
+		false ->
+			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
 	end;
 
 %% Return identifiers (hashes) of transfer transactions depositing to the given
 %% wallet_address starting from the earliest_deposit.
 %% GET request to endpoint /wallet/{wallet_address}/deposits/{earliest_deposit}.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _Pid) ->
-	ar_semaphore:acquire(arql_semaphore(Req), 5000),
-	case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
-		TXMaps when is_list(TXMaps) ->
-			TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
-			{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
-			FilteredTXs = case After of
-				[] ->
-					Before;
-				[EarliestDeposit | _] ->
-					Before ++ [EarliestDeposit]
-			end,
-			{200, #{}, ar_serialize:jsonify(FilteredTXs), Req};
-		{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-			{503, #{}, <<"ArQL unavailable.">>, Req}
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_wallet_deposits, Config#config.enable) of
+		true ->
+			ar_semaphore:acquire(arql_semaphore(Req), 5000),
+			case catch ar_arql_db:select_txs_by([{to, [Addr]}]) of
+				TXMaps when is_list(TXMaps) ->
+					TXIDs = lists:map(fun(#{ id := ID }) -> ID end, TXMaps),
+					{Before, After} = lists:splitwith(fun(T) -> T /= EarliestDeposit end, TXIDs),
+					FilteredTXs = case After of
+						[] ->
+							Before;
+						[EarliestDeposit | _] ->
+							Before ++ [EarliestDeposit]
+					end,
+					{200, #{}, ar_serialize:jsonify(FilteredTXs), Req};
+				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
+					{503, #{}, <<"ArQL unavailable.">>, Req}
+			end;
+		false ->
+			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
 	end;
 
 %% Return the block with the given height or hash.

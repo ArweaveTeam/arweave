@@ -4,6 +4,7 @@
 -export([execute/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
 %%% Cowboy middleware callback.
@@ -16,14 +17,21 @@ execute(Req, Env) ->
 	end.
 
 handle_arql_request_1(Req, Env) ->
-	case ar_http_req:body(Req, ?MAX_BODY_SIZE) of
-		{ok, Body, Req2} ->
-			case bin_to_json(Body) of
-				{ok, JSON} -> handle_arql_request_2(JSON, Req2, Env);
-				error -> use_graphql_handler(Req2, Env)
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_arql, Config#config.enable) of
+		true ->
+			case ar_http_req:body(Req, ?MAX_BODY_SIZE) of
+				{ok, Body, Req2} ->
+					case bin_to_json(Body) of
+						{ok, JSON} -> handle_arql_request_2(JSON, Req2, Env);
+						error -> use_graphql_handler(Req2, Env)
+					end;
+				{error, body_size_too_large} ->
+					{stop, cowboy_req:reply(413, #{}, <<"Payload too large">>, Req)}
 			end;
-		{error, body_size_too_large} ->
-			{stop, cowboy_req:reply(413, #{}, <<"Payload too large">>, Req)}
+		false ->
+			ErrorJSON = jiffy:encode(#{ error => endpoint_not_enabled }),
+			{stop, cowboy_req:reply(421, #{}, ErrorJSON, Req)}
 	end.
 
 handle_arql_request_2(#{<<"op">> := _}, Req, Env) ->
