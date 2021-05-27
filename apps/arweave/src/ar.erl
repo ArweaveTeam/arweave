@@ -163,6 +163,13 @@ show_help() ->
 					" Each job periodically picks a range and downloads it from peers.",
 					[?DEFAULT_SYNC_JOBS]
 				)},
+			{"header_sync_jobs (num)",
+				io_lib:format(
+					"The number of header syncing jobs to run. Default: ~B."
+					" Each job periodically picks the latest not synced block header"
+					" and downloads it from peers.",
+					[?DEFAULT_HEADER_SYNC_JOBS]
+				)},
 			{"load_mining_key (file)",
 				"Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
@@ -328,6 +335,8 @@ parse_cli_args(["max_propagation_peers", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_propagation_peers = list_to_integer(Num) });
 parse_cli_args(["sync_jobs", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { sync_jobs = list_to_integer(Num) });
+parse_cli_args(["header_sync_jobs", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { header_sync_jobs = list_to_integer(Num) });
 parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->

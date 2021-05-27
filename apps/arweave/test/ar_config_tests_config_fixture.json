@@ -27,6 +27,7 @@
   "max_propagation_peers": 8,
   "tx_propagation_parallelization": 4,
   "sync_jobs": 10,
+  "header_sync_jobs": 1,
   "load_mining_key": "some_key_file",
   "transaction_blacklists": [
     "some_blacklist_1",

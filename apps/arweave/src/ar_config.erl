@@ -149,6 +149,12 @@ parse_options([{<<"sync_jobs">>, Value} | Rest], Config)
 parse_options([{<<"sync_jobs">>, Value} | _], _) ->
 	{error, {bad_type, sync_jobs, number}, Value};
 
+parse_options([{<<"header_sync_jobs">>, Value} | Rest], Config)
+		when is_integer(Value) ->
+	parse_options(Rest, Config#config{ header_sync_jobs = Value });
+parse_options([{<<"header_sync_jobs">>, Value} | _], _) ->
+	{error, {bad_type, header_sync_jobs, number}, Value};
+
 parse_options([{<<"load_mining_key">>, DataDir} | Rest], Config) when is_binary(DataDir) ->
 	parse_options(Rest, Config#config{ load_key = binary_to_list(DataDir) });
 parse_options([{<<"load_mining_key">>, DataDir} | _], _) ->

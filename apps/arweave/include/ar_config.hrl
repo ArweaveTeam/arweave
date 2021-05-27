@@ -20,6 +20,10 @@
 %% and downloads it from peers.
 -define(DEFAULT_SYNC_JOBS, 20).
 
+%% The number of header sync jobs to run. Each job picks the latest not synced
+%% block header and downloads it from peers.
+-define(DEFAULT_HEADER_SYNC_JOBS, 1).
+
 %% The default expiration time for a data root in the disk pool.
 -define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 2 * 60 * 60).
 
@@ -34,7 +38,7 @@
 -endif.
 
 %% The default frequency of checking for the available disk space.
--define(DISK_SPACE_CHECK_FREQUENCY_MS, 5 * 60 * 1000).
+-define(DISK_SPACE_CHECK_FREQUENCY_MS, 30 * 1000).
 
 -define(NUM_STAGE_ONE_HASHING_PROCESSES,
 	max(1, (erlang:system_info(schedulers_online) div 2))).
@@ -74,6 +78,7 @@
 	max_emitters = ?NUM_EMITTER_PROCESSES,
 	tx_propagation_parallelization = ?TX_PROPAGATION_PARALLELIZATION,
 	sync_jobs = ?DEFAULT_SYNC_JOBS,
+	header_sync_jobs = ?DEFAULT_HEADER_SYNC_JOBS,
 	load_key = not_set,
 	disk_space,
 	disk_space_check_frequency = ?DISK_SPACE_CHECK_FREQUENCY_MS,

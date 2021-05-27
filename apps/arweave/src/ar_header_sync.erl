@@ -51,6 +51,7 @@ request_tx_removal(TXID) ->
 init([]) ->
 	?LOG_INFO([{event, ar_header_sync_start}]),
 	process_flag(trap_exit, true),
+	{ok, Config} = application:get_env(arweave, config),
 	{ok, DB} = ar_kv:open("ar_header_sync_db"),
 	{SyncRecord, LastHeight, CurrentBI} =
 		case ar_storage:read_term(header_sync_state) of
@@ -60,7 +61,13 @@ init([]) ->
 				StoredState
 		end,
 	gen_server:cast(?MODULE, check_space_alarm),
-	gen_server:cast(?MODULE, check_space_process_item),
+	gen_server:cast(?MODULE, check_space),
+	lists:foreach(
+		fun(_) ->
+			gen_server:cast(?MODULE, process_item)
+		end,
+		lists:seq(1, Config#config.header_sync_jobs)
+	),
 	gen_server:cast(?MODULE, store_sync_state),
 	{ok,
 		#{
@@ -70,8 +77,8 @@ init([]) ->
 			block_index => CurrentBI,
 			queue => queue:new(),
 			last_picked => LastHeight,
-			cleanup_started => false,
-			disk_full => false
+			disk_full => false,
+			sync_disk_space => have_free_space()
 		}}.
 
 handle_cast({join, BI, Blocks}, State) ->
@@ -164,31 +171,38 @@ handle_cast(check_space_alarm, State) ->
 	cast_after(?DISK_SPACE_WARNING_FREQUENCY, check_space_alarm),
 	{noreply, State};
 
-handle_cast(check_space_process_item, #{ cleanup_started := CleanupStarted } = State) ->
+handle_cast(check_space, State) ->
 	case have_free_space() of
 		true ->
-			gen_server:cast(self(), process_item),
-			{noreply, State#{ cleanup_started => false }};
+			cast_after(ar_disksup:get_disk_space_check_frequency(), check_space),
+			{noreply, State#{ sync_disk_space => true }};
 		false ->
 			case should_cleanup() of
 				true ->
-					case CleanupStarted of
-						true ->
-							ok;
-						false ->
-							?LOG_INFO([
-								{event, ar_header_sync_removing_oldest_headers},
-								{reason, little_disk_space_left}
-							])
-					end,
-					gen_server:cast(?MODULE, check_space_process_item),
-					{noreply, remove_oldest_headers(State#{ cleanup_started => true })};
+					?LOG_INFO([
+						{event, ar_header_sync_removing_oldest_headers},
+						{reason, little_disk_space_left}
+					]),
+					gen_server:cast(?MODULE, cleanup_oldest);
 				false ->
-					cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, check_space_process_item),
-					{noreply, State#{ cleanup_started => false }}
-			end
+					cast_after(ar_disksup:get_disk_space_check_frequency(), check_space)
+			end,
+			{noreply, State#{ sync_disk_space => false }}
 	end;
 
+handle_cast(cleanup_oldest, State) ->
+	case have_free_space() of
+		true ->
+			cast_after(ar_disksup:get_disk_space_check_frequency(), check_space),
+			{noreply, State#{ sync_disk_space => true }};
+		false ->
+			gen_server:cast(?MODULE, cleanup_oldest),
+			{noreply, remove_oldest_headers(State)}
+	end;
+
+handle_cast(process_item, #{ sync_disk_space := false } = State) ->
+	cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, process_item),
+	{noreply, State};
 handle_cast(process_item, State) ->
 	#{
 		queue := Queue,
@@ -200,7 +214,6 @@ handle_cast(process_item, State) ->
 	UpdatedQueue = process_item(Queue),
 	case pick_unsynced_block(LastPicked, SyncRecord) of
 		nothing_to_sync ->
-			cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, check_space_process_item),
 			LastPicked2 =
 				case queue:is_empty(UpdatedQueue) of
 					true ->
@@ -210,18 +223,8 @@ handle_cast(process_item, State) ->
 				end,
 			{noreply, State#{ queue => UpdatedQueue, last_picked => LastPicked2 }};
 		Height ->
-			cast_after(?PROCESS_ITEM_INTERVAL_MS, check_space_process_item),
 			case ar_node:get_block_index_entry(Height) of
-				true ->
-					{noreply, State#{ queue => UpdatedQueue }};
 				not_joined ->
-					{noreply, State#{ queue => UpdatedQueue }};
-				not_found ->
-					?LOG_ERROR([
-						{event, ar_header_sync_block_index_entry_not_found},
-						{height, Height},
-						{sync_record, SyncRecord}
-					]),
 					{noreply, State#{ queue => UpdatedQueue }};
 				{H, _WeaveSize, TXRoot} ->
 					%% Before 2.0, to compute a block hash, the complete wallet list
@@ -243,6 +246,12 @@ handle_cast(process_item, State) ->
 			end
 	end;
 
+handle_cast({failed_to_get_block, H, H2, TXRoot, Backoff}, #{ queue := Queue } = State) ->
+	Backoff2 = update_backoff(Backoff),
+	Queue2 = enqueue({block, {H, H2, TXRoot}}, Backoff2, Queue),
+	gen_server:cast(?MODULE, process_item),
+	{noreply, State#{ queue => Queue2 }};
+
 handle_cast({remove_tx, TXID}, State) ->
 	{ok, _Size} = ar_storage:delete_tx(TXID),
 	ar_tx_blacklist:notify_about_removed_tx(TXID),
@@ -263,6 +272,19 @@ handle_cast(Msg, State) ->
 
 handle_call(_Msg, _From, State) ->
 	{reply, not_implemented, State}.
+
+handle_info({'DOWN', _,  process, _, normal}, State) ->
+	{noreply, State};
+handle_info({'DOWN', _,  process, _, noproc}, State) ->
+	{noreply, State};
+handle_info({'DOWN', _,  process, _, Reason}, State) ->
+	?LOG_WARNING([
+		{event, header_sync_job_failed},
+		{reason, io_lib:format("~p", [Reason])},
+		{action, spawning_another_one}
+	]),
+	gen_server:cast(?MODULE, process_item),
+	{noreply, State};
 
 handle_info({_Ref, _Atom}, State) ->
 	%% Some older versions of Erlang OTP have a bug where gen_tcp:close may leak
@@ -356,7 +378,9 @@ remove_oldest_headers(#{ db := DB, sync_record := SyncRecord } = State) ->
 	end.
 
 cast_after(Delay, Message) ->
-	timer:apply_after(Delay, gen_server, cast, [self(), Message]).
+	%% Not using timer:apply_after here because send_after is more efficient:
+	%% http://erlang.org/doc/efficiency_guide/commoncaveats.html#timer-module.
+	erlang:send_after(Delay, ?MODULE, {'$gen_cast', Message}).
 
 %% @doc Pick the biggest height smaller than LastPicked from outside the sync record.
 pick_unsynced_block(LastPicked, SyncRecord) ->
@@ -391,19 +415,25 @@ process_item(Queue) ->
 	Now = os:system_time(second),
 	case queue:out(Queue) of
 		{empty, _Queue} ->
+			cast_after(?PROCESS_ITEM_INTERVAL_MS, process_item),
 			Queue;
 		{{value, {Item, {BackoffTimestamp, _} = Backoff}}, UpdatedQueue}
 				when BackoffTimestamp > Now ->
+			cast_after(?PROCESS_ITEM_INTERVAL_MS, process_item),
 			enqueue(Item, Backoff, UpdatedQueue);
 		{{value, {{block, {H, H2, TXRoot}}, Backoff}}, UpdatedQueue} ->
-			case download_block(H, H2, TXRoot) of
-				{error, _Reason} ->
-					UpdatedBackoff = update_backoff(Backoff),
-					enqueue({block, {H, H2, TXRoot}}, UpdatedBackoff, UpdatedQueue);
-				{ok, B} ->
-					gen_server:cast(self(), {add_block, B}),
-					UpdatedQueue
-			end
+			monitor(process, spawn(
+				fun() ->
+					case download_block(H, H2, TXRoot) of
+						{error, _Reason} ->
+							gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot, Backoff});
+						{ok, B} ->
+							gen_server:cast(?MODULE, {add_block, B}),
+							cast_after(?PROCESS_ITEM_INTERVAL_MS, process_item)
+					end
+				end
+			)),
+			UpdatedQueue
 	end.
 
 enqueue(Item, Backoff, Queue) ->
@@ -483,11 +513,11 @@ download_txs(Peers, B, TXRoot) ->
 							end
 					end;
 				_ ->
-						?LOG_WARNING([
-							{event, ar_header_sync_block_tx_root_mismatch},
-							{block, ar_util:encode(B#block.indep_hash)}
-						]),
-						{error, block_tx_root_mismatch}
+					?LOG_WARNING([
+						{event, ar_header_sync_block_tx_root_mismatch},
+						{block, ar_util:encode(B#block.indep_hash)}
+					]),
+					{error, block_tx_root_mismatch}
 			end;
 		{error, txs_exceed_block_size_limit} ->
 			?LOG_WARNING([

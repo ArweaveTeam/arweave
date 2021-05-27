@@ -38,6 +38,7 @@ parse_config() ->
 		max_propagation_peers = 8,
 		tx_propagation_parallelization = 4,
 		sync_jobs = 10,
+		header_sync_jobs = 1,
 		load_key = "some_key_file",
 		disk_space = 44 * 1024 * 1024 * 1024,
 		disk_space_check_frequency = 10 * 1000,

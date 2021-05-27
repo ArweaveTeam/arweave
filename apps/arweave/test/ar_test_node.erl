@@ -62,6 +62,8 @@ start(B0, RewardAddr, Config) ->
 		start_from_block_index = true,
 		peers = [],
 		mining_addr = RewardAddr,
+		disk_space_check_frequency = 1000,
+		header_sync_jobs = 4,
 		enable = [search_in_rocksdb_when_mining, serve_arql, serve_wallet_txs,
 			serve_wallet_deposits]
 	}),
