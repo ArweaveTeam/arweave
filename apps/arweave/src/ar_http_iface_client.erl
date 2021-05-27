@@ -121,7 +121,8 @@ add_peer(Peer) ->
 		path => "/peers",
 		headers => p2p_headers(),
 		body => ar_serialize:jsonify({[{network, list_to_binary(?NETWORK_NAME)}]}),
-		timeout => 3 * 1000
+		timeout => 3 * 1000,
+		connect_timeout => 500
 	}).
 
 %% @doc Retreive a block by hash from disk or a remote peer.

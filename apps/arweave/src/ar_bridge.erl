@@ -71,7 +71,7 @@ get_remote_peers(Timeout) ->
 
 %% @doc Get a list of remote peers.
 get_remote_peers() ->
-	gen_server:call(?MODULE, {get_peers, remote}).
+	gen_server:call(?MODULE, {get_peers, remote}, 10000).
 
 %% @doc Reset the remote peers list to a specific set.
 set_remote_peers(Peers) ->
@@ -229,7 +229,7 @@ handle_info(get_more_peers, #state{ updater = undefined } = State) ->
 	Updater = spawn(
 		fun() ->
 			Peers = ar_manage_peers:update(State#state.external_peers),
-			lists:map(fun ar_http_iface_client:add_peer/1, Peers),
+			ping_peers(Peers),
 			Self ! {update_peers, remote, Peers}
 		end
 	),
@@ -354,6 +354,13 @@ send_block_to_external_parallel(Peers, NewB, BDS) ->
 %% @doc Possibly send a new message to external peers.
 gossip_to_external(S, {NewGS, Msg}) ->
 	send_to_external(S#state { gossip = NewGS }, Msg).
+
+ping_peers(Peers) when length(Peers) < 10 ->
+	ar_util:pmap(fun ar_http_iface_client:add_peer/1, Peers);
+ping_peers(Peers) ->
+	{Send, Rest} = lists:split(10, Peers),
+	ar_util:pmap(fun ar_http_iface_client:add_peer/1, Send),
+	ping_peers(Rest).
 
 update_state_metrics(Peers) when is_list(Peers) ->
 	prometheus_gauge:set(arweave_peer_count, length(Peers));

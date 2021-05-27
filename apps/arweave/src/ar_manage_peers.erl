@@ -49,12 +49,7 @@ update(Peers) ->
 	{Rankable, Newbies} =
 		partition_newbies(
 			score(
-				lists:filter(
-					fun(P) ->
-						(not lists:member(P, ?PEER_PERMANENT_BLACKLIST)) and responds_not_stuck(P, Height)
-					end,
-					get_more_peers(Peers)
-				)
+				filter_peers(get_more_peers(Peers), Height)
 			)
 		),
 	NewPeers = (lists:sublist(maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ]), ?MAXIMUM_PEERS)
@@ -88,6 +83,16 @@ get_peers(Peer) ->
 		unavailable -> [];
 		Peers -> Peers
 	end.
+
+filter_peers(Peers, Height) when length(Peers) < 10 ->
+	ar_util:pfilter(fun(Peer) -> is_good_peer(Peer, Height) end, Peers);
+filter_peers(Peers, Height) ->
+	{Chunk, Rest} = lists:split(10, Peers),
+	Filtered2 = ar_util:pfilter(fun(Peer) -> is_good_peer(Peer, Height) end, Chunk),
+	Filtered2 ++ filter_peers(Rest, Height).
+
+is_good_peer(Peer, Height) ->
+	not lists:member(Peer, ?PEER_PERMANENT_BLACKLIST) andalso responds_not_stuck(Peer, Height).
 
 responds_not_stuck(Peer, Height) ->
 	case ar_http_iface_client:get_info(Peer, height) of
