@@ -4,7 +4,7 @@
   {git,"https://github.com/ArweaveTeam/b64fast.git",
        {ref,"a0ef55ec66ecf705848716c195bf45665f78818a"}},
   0},
- {<<"cowboy">>,{pkg,<<"cowboy">>,<<"2.7.0">>},0},
+ {<<"cowboy">>,{pkg,<<"cowboy">>,<<"2.9.0">>},0},
  {<<"cowlib">>,{pkg,<<"cowlib">>,<<"2.8.0">>},1},
  {<<"graphql">>,
   {git,"https://github.com/shopgun/graphql-erlang.git",
@@ -18,7 +18,7 @@
  {<<"prometheus_process_collector">>,
   {pkg,<<"prometheus_process_collector">>,<<"1.6.0">>},
   0},
- {<<"ranch">>,{pkg,<<"ranch">>,<<"1.7.1">>},1},
+ {<<"ranch">>,{pkg,<<"ranch">>,<<"1.8.0">>},1},
  {<<"rocksdb">>,
   {git,"https://gitlab.com/arweave1/erlang-rocksdb.git",
        {ref,"cba9ec42255862196bec35b7ddcbdf8feedf4277"}},
@@ -26,7 +26,7 @@
 [
 {pkg_hash,[
  {<<"accept">>, <<"B33B127ABCA7CC948BBE6CAA4C263369ABF1347CFA9D8E699C6D214660F10CD1">>},
- {<<"cowboy">>, <<"91ED100138A764355F43316B1D23D7FF6BDB0DE4EA618CB5D8677C93A7A2F115">>},
+ {<<"cowboy">>, <<"865DD8B6607E14CF03282E10E934023A1BD8BE6F6BACF921A7E2A96D800CD452">>},
  {<<"cowlib">>, <<"FD0FF1787DB84AC415B8211573E9A30A3EBE71B5CBFF7F720089972B2319C8A4">>},
  {<<"gun">>, <<"542064CBB9F613650B8A8100B3A927505F364FBE198B7A5A112868FF43F3E477">>},
  {<<"jiffy">>, <<"60E36F00BE35E5AC6E6CF2D4CAF3BDF3103D4460AFF385F543A8D7DF2D6D9613">>},
@@ -34,5 +34,5 @@
  {<<"prometheus_cowboy">>, <<"CFCE0BC7B668C5096639084FCD873826E6220EA714BF60A716F5BD080EF2A99C">>},
  {<<"prometheus_httpd">>, <<"F616ED9B85B536B195D94104063025A91F904A4CFC20255363F49A197D96C896">>},
  {<<"prometheus_process_collector">>, <<"B169E224337497CD858DA16F9361EDABC5931B9D12201A97EE15D88EF5A6FCAA">>},
- {<<"ranch">>, <<"6B1FAB51B49196860B733A49C07604465A47BDB78AA10C1C16A3D199F7F8C881">>}]}
+ {<<"ranch">>, <<"8C7A100A139FD57F17327B6413E4167AC559FBC04CA7448E9BE9057311597A1D">>}]}
 ].
