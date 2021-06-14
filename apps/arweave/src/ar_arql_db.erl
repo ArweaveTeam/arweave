@@ -136,8 +136,13 @@ insert_full_block(#block {} = FullBlock, StoreTags) ->
 		_ ->
 			[]
 	end,
-	gen_server:cast(?MODULE, {insert_full_block, BlockFields, TxFieldsList, TagFieldsList}),
-	ok.
+	Call = {insert_full_block, BlockFields, TxFieldsList, TagFieldsList},
+	case catch gen_server:call(?MODULE, Call, 30000) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, sqlite_timeout};
+		Reply ->
+			Reply
+	end.
 
 insert_block(B) ->
 	BlockFields = block_to_fields(B),
@@ -192,81 +197,7 @@ init([]) ->
 		select_tags_by_tx_id_stmt => SelectTagsByTxIdStmt
 	}}.
 
-handle_call({select_tx_by_id, ID}, _, State) ->
-	#{ select_tx_by_id_stmt := Stmt } = State,
-	ok = ar_sqlite3:bind(Stmt, [ID], ?DRIVER_TIMEOUT),
-	{Time, Reply} = timer:tc(fun() ->
-		case ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT) of
-			{row, Row} -> {ok, tx_map(Row)};
-			done -> not_found
-		end
-	end),
-	ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
-	record_query_time(select_tx_by_id, Time),
-	{reply, Reply, State};
-handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
-	{WhereClause, Params} = select_txs_by_where_clause(Opts),
-	SQL = lists:concat([
-		"SELECT tx.* FROM tx ",
-		"JOIN block on tx.block_indep_hash = block.indep_hash ",
-		"WHERE ", WhereClause,
-		" ORDER BY block.height DESC, tx.id DESC"
-	]),
-	{Time, Reply} = timer:tc(fun() ->
-		case sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT) of
-			Rows when is_list(Rows) ->
-				lists:map(fun tx_map/1, Rows)
-		end
-	end),
-	record_query_time(select_txs_by, Time),
-	{reply, Reply, State};
-handle_call({select_block_by_tx_id, TXID}, _, State) ->
-	#{ select_block_by_tx_id_stmt := Stmt } = State,
-	ok = ar_sqlite3:bind(Stmt, [TXID], ?DRIVER_TIMEOUT),
-	{Time, Reply} = timer:tc(fun() ->
-		case ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT) of
-			{row, Row} -> {ok, block_map(Row)};
-			done -> not_found
-		end
-	end),
-	ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
-	record_query_time(select_block_by_tx_id, Time),
-	{reply, Reply, State};
-handle_call({select_tags_by_tx_id, TXID}, _, State) ->
-	#{ select_tags_by_tx_id_stmt := Stmt } = State,
-	{Time, Reply} = timer:tc(fun() ->
-		case stmt_fetchall(Stmt, [TXID], ?DRIVER_TIMEOUT) of
-			Rows when is_list(Rows) ->
-				lists:map(fun tags_map/1, Rows)
-		end
-	end),
-	record_query_time(select_tags_by_tx_id, Time),
-	{reply, Reply, State};
-handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
-	{Time, {Reply, _SQL, _Params}} = timer:tc(fun() ->
-		case catch eval_legacy_arql_where_clause(Query) of
-			{WhereClause, Params} ->
-				SQL = lists:concat([
-					"SELECT tx.id FROM tx ",
-					"JOIN block ON tx.block_indep_hash = block.indep_hash ",
-					"WHERE ", WhereClause,
-					" ORDER BY block.height DESC, tx.id DESC"
-				]),
-				case sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT) of
-					Rows when is_list(Rows) ->
-						{lists:map(fun([TXID]) -> TXID end, Rows), SQL, Params}
-				end;
-			bad_query ->
-				{bad_query, 'n/a', 'n/a'}
-		end
-	end),
-	record_query_time(eval_legacy_arql, Time),
-	{reply, Reply, State}.
-
-handle_cast({populate_db, BHL}, State) ->
-	ok = ensure_db_populated(BHL, State),
-	{noreply, State};
-handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State) ->
+handle_call({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, _From, State) ->
 	#{
 		conn := Conn,
 		insert_block_stmt := InsertBlockStmt,
@@ -298,7 +229,87 @@ handle_cast({insert_full_block, BlockFields, TxFieldsList, TagFieldsList}, State
 		ok
 	end),
 	record_query_time(insert_full_block, Time),
+	{reply, ok, State};
+
+handle_call({select_tx_by_id, ID}, _, State) ->
+	#{ select_tx_by_id_stmt := Stmt } = State,
+	ok = ar_sqlite3:bind(Stmt, [ID], ?DRIVER_TIMEOUT),
+	{Time, Reply} = timer:tc(fun() ->
+		case ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT) of
+			{row, Row} -> {ok, tx_map(Row)};
+			done -> not_found
+		end
+	end),
+	ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
+	record_query_time(select_tx_by_id, Time),
+	{reply, Reply, State};
+
+handle_call({select_txs_by, Opts}, _, #{ conn := Conn } = State) ->
+	{WhereClause, Params} = select_txs_by_where_clause(Opts),
+	SQL = lists:concat([
+		"SELECT tx.* FROM tx ",
+		"JOIN block on tx.block_indep_hash = block.indep_hash ",
+		"WHERE ", WhereClause,
+		" ORDER BY block.height DESC, tx.id DESC"
+	]),
+	{Time, Reply} = timer:tc(fun() ->
+		case sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT) of
+			Rows when is_list(Rows) ->
+				lists:map(fun tx_map/1, Rows)
+		end
+	end),
+	record_query_time(select_txs_by, Time),
+	{reply, Reply, State};
+
+handle_call({select_block_by_tx_id, TXID}, _, State) ->
+	#{ select_block_by_tx_id_stmt := Stmt } = State,
+	ok = ar_sqlite3:bind(Stmt, [TXID], ?DRIVER_TIMEOUT),
+	{Time, Reply} = timer:tc(fun() ->
+		case ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT) of
+			{row, Row} -> {ok, block_map(Row)};
+			done -> not_found
+		end
+	end),
+	ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
+	record_query_time(select_block_by_tx_id, Time),
+	{reply, Reply, State};
+
+handle_call({select_tags_by_tx_id, TXID}, _, State) ->
+	#{ select_tags_by_tx_id_stmt := Stmt } = State,
+	{Time, Reply} = timer:tc(fun() ->
+		case stmt_fetchall(Stmt, [TXID], ?DRIVER_TIMEOUT) of
+			Rows when is_list(Rows) ->
+				lists:map(fun tags_map/1, Rows)
+		end
+	end),
+	record_query_time(select_tags_by_tx_id, Time),
+	{reply, Reply, State};
+
+handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
+	{Time, {Reply, _SQL, _Params}} = timer:tc(fun() ->
+		case catch eval_legacy_arql_where_clause(Query) of
+			{WhereClause, Params} ->
+				SQL = lists:concat([
+					"SELECT tx.id FROM tx ",
+					"JOIN block ON tx.block_indep_hash = block.indep_hash ",
+					"WHERE ", WhereClause,
+					" ORDER BY block.height DESC, tx.id DESC"
+				]),
+				case sql_fetchall(Conn, SQL, Params, ?DRIVER_TIMEOUT) of
+					Rows when is_list(Rows) ->
+						{lists:map(fun([TXID]) -> TXID end, Rows), SQL, Params}
+				end;
+			bad_query ->
+				{bad_query, 'n/a', 'n/a'}
+		end
+	end),
+	record_query_time(eval_legacy_arql, Time),
+	{reply, Reply, State}.
+
+handle_cast({populate_db, BHL}, State) ->
+	ok = ensure_db_populated(BHL, State),
 	{noreply, State};
+
 handle_cast({insert_block, BlockFields}, State) ->
 	#{
 		conn := Conn,
@@ -314,6 +325,7 @@ handle_cast({insert_block, BlockFields}, State) ->
 	end),
 	record_query_time(insert_block, Time),
 	{noreply, State};
+
 handle_cast({insert_tx, TXFields, TagFieldsList}, State) ->
 	#{
 		conn := Conn,

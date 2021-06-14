@@ -185,9 +185,13 @@ write_full_block2(BShadow, TXs) ->
 				_ ->
 					do_not_store_tags
 			end,
-			ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags),
-			app_ipfs:maybe_ipfs_add_txs(TXs),
-			ok;
+			case ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags) of
+				ok ->
+					app_ipfs:maybe_ipfs_add_txs(TXs),
+					ok;
+				SQLiteError ->
+					SQLiteError
+			end;
 		Error ->
 			Error
 	end.
