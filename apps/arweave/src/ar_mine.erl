@@ -788,8 +788,10 @@ io_thread(SearchInRocksDB) ->
 					io_thread(SearchInRocksDB);
 				{ok, #{ chunk := Chunk }} ->
 					HashingThread ! {chunk, H0, Nonce, Timestamp, Diff, Chunk, SessionRef},
+					ets:update_counter(mining_state, kibs, (byte_size(Chunk) div 1024)),
 					io_thread(SearchInRocksDB);
 				{ok, Chunk} ->
+					ets:update_counter(mining_state, kibs, 256),
 					HashingThread ! {chunk, H0, Nonce, Timestamp, Diff, Chunk, SessionRef},
 					io_thread(SearchInRocksDB)
 			end;
