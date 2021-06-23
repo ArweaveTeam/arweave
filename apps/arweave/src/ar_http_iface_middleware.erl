@@ -396,21 +396,27 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 			not_joined(Req);
 		true ->
 			ok = ar_semaphore:acquire(post_chunk, infinity),
-			case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
-				{ok, Body, Req2} ->
-					case ar_serialize:json_decode(Body, [{return_maps, true}]) of
-						{ok, JSON} ->
-							case catch ar_serialize:json_map_to_chunk_proof(JSON) of
-								{'EXIT', _} ->
-									{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-								Proof ->
-									handle_post_chunk(Proof, Req2)
+			case check_if_chunk_data_root_exists(Req) of
+				{reply, Reply} ->
+					Reply;
+				continue ->
+					case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
+						{ok, Body, Req2} ->
+							case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+								{ok, JSON} ->
+									case catch ar_serialize:json_map_to_chunk_proof(JSON) of
+										{'EXIT', _} ->
+											{400, #{},
+												jiffy:encode(#{ error => invalid_json }), Req2};
+										Proof ->
+											handle_post_chunk(Proof, Req2)
+									end;
+								{error, _} ->
+									{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 							end;
-						{error, _} ->
-							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
-					end;
-				{error, body_size_too_large} ->
-					{413, #{}, <<"Payload too large">>, Req}
+						{error, body_size_too_large} ->
+							{413, #{}, <<"Payload too large">>, Req}
+					end
 			end
 	end;
 
@@ -1263,6 +1269,40 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 			{200, #{}, Binary, Req};
 		{error, timeout} ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+	end.
+
+check_if_chunk_data_root_exists(Req) ->
+	case cowboy_req:header(<<"arweave-data-root">>, Req, not_set) of
+		EncodedDataRoot when byte_size(EncodedDataRoot) == 43 ->
+			case cowboy_req:header(<<"arweave-data-size">>, Req, not_set) of
+				not_set ->
+					continue;
+				MaybeNumber ->
+					case catch binary_to_integer(MaybeNumber) of
+						DataSize when is_integer(DataSize) ->
+							case ar_util:safe_decode(EncodedDataRoot) of
+								{ok, DataRoot} ->
+									case ar_data_sync:has_data_root(DataRoot, DataSize) of
+										true ->
+											continue;
+										false ->
+											{reply, {400, #{},
+												jiffy:encode(#{
+													error => data_root_not_found }), Req}};
+										{error, timeout} ->
+											{reply,
+												{503, #{},
+													jiffy:encode(#{ error => timeout }), Req}}
+									end;
+								_ ->
+									continue
+							end;
+						_ ->
+							continue
+					end
+			end;
+		_ ->
+			continue
 	end.
 
 handle_post_chunk(Proof, Req) ->

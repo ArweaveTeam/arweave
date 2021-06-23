@@ -11,6 +11,7 @@
 	add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
 	get_chunk/2,
 	get_tx_data/1, get_tx_data/2, get_tx_offset/1,
+	has_data_root/2,
 	request_tx_data_removal/1,
 	sync_interval/2
 ]).
@@ -161,6 +162,25 @@ get_tx_offset(TXID) ->
 			{error, not_joined};
 		[{_, TXIndex}] ->
 			get_tx_offset(TXIndex, TXID)
+	end.
+
+%% @doc Return true if the given {DataRoot, DataSize} is in the mempool
+%% or in the index.
+has_data_root(DataRoot, DataSize) ->
+	DataRootKey = << DataRoot/binary, DataSize:256 >>,
+	case catch gen_server:call(?MODULE, {is_data_root_in_mempool, DataRootKey}) of
+		true ->
+			true;
+		false ->
+			[{_, DataRootIndex}] = ets:lookup(ar_data_sync_state, data_root_index),
+			case ar_kv:get(DataRootIndex, DataRootKey) of
+				not_found ->
+					false;
+				_ ->
+					true
+			end;
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout}
 	end.
 
 %% @doc Record the metadata of the given block.
@@ -894,6 +914,12 @@ handle_call({add_chunk, _, _, _, _, _, _} = Msg, _From, State) ->
 		true ->
 			add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State)
 	end;
+
+handle_call({is_data_root_in_mempool, DataRootKey}, _From, State) ->
+	#sync_data_state{
+		disk_pool_data_roots = DiskPoolDataRoots
+	} = State,
+	{reply, maps:is_key(DataRootKey, DiskPoolDataRoots), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
