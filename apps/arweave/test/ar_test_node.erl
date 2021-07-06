@@ -372,7 +372,7 @@ sign_v1_tx(Node, Wallet, TXParams) ->
 	sign_tx(Node, Wallet, TXParams, fun ar_tx:sign_v1/2).
 
 sign_tx(Node, Wallet, TXParams, SignFun) ->
-	{_, Pub} = Wallet,
+	{_, {_, Owner}} = Wallet,
 	Data = maps:get(data, TXParams, <<>>),
 	DataSize = maps:get(data_size, TXParams, byte_size(Data)),
 	Reward = case maps:get(reward, TXParams, none) of
@@ -383,7 +383,7 @@ sign_tx(Node, Wallet, TXParams, SignFun) ->
 	end,
 	SignFun(
 		(ar_tx:new())#tx {
-			owner = Pub,
+			owner = Owner,
 			reward = Reward,
 			data = Data,
 			target = maps:get(target, TXParams, <<>>),

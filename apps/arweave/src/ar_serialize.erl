@@ -20,7 +20,9 @@
 	query_to_json_struct/1,
 	json_struct_to_query/1,
 	chunk_proof_to_json_map/1,
-	json_map_to_chunk_proof/1
+	json_map_to_chunk_proof/1,
+	signature_type_to_list/1,
+	list_to_signature_type/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -287,6 +289,7 @@ tx_to_json_struct(
 		data = Data,
 		reward = Reward,
 		signature = Sig,
+		signature_type = SigType,
 		data_size = DataSize,
 		data_root = DataRoot
 	}) ->
@@ -322,7 +325,8 @@ tx_to_json_struct(
 			{data_tree, []},
 			{data_root, ar_util:encode(DataRoot)},
 			{reward, integer_to_binary(Reward)},
-			{signature, ar_util:encode(Sig)}
+			{signature, ar_util:encode(Sig)},
+			{signature_type, signature_type_to_list(SigType)}
 		]
 	}.
 
@@ -381,6 +385,7 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 		data = Data,
 		reward = binary_to_integer(find_value(<<"reward">>, TXStruct)),
 		signature = ar_util:decode(find_value(<<"signature">>, TXStruct)),
+		signature_type = list_to_signature_type(find_value(<<"signature_type">>, TXStruct)),
 		data_size = parse_data_size(Format, TXStruct, Data, ComputeDataSize),
 		data_root =
 			case find_value(<<"data_root">>, TXStruct) of
@@ -593,6 +598,23 @@ json_map_to_chunk_proof(JSON) ->
 			Map2#{ offset => binary_to_integer(Offset) }
 	end.
 
+signature_type_to_list(SigType) ->
+	case SigType of
+		undefined -> null;
+		?DEFAULT_KEY_TYPE -> <<"rsa_pss_65537">>;
+		{?ECDSA_SIGN_ALG, secp256k1} -> <<"ecdsa_secp256k1">>;
+		{?EDDSA_SIGN_ALG, ed25519} -> <<"eddsa_ed25519">>
+	end.
+
+list_to_signature_type(List) ->
+	case List of
+		undefined -> undefined;
+		null -> undefined;
+		<<"rsa_pss_65537">> -> ?DEFAULT_KEY_TYPE;
+		<<"ecdsa_secp256k1">> -> {?ECDSA_SIGN_ALG, secp256k1};
+		<<"eddsa_ed25519">> -> {?EDDSA_SIGN_ALG, ed25519}
+	end.
+
 %%% Tests: ar_serialize
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
@@ -609,7 +631,8 @@ tx_roundtrip_test() ->
 		TXBase#tx {
 			format = 2,
 			tags = [{<<"Name1">>, <<"Value1">>}],
-			data_root = << 0:256 >>
+			data_root = << 0:256 >>,
+			signature_type = ?DEFAULT_KEY_TYPE
 		},
 	JsonTX = jsonify(tx_to_json_struct(TX)),
 	?assertEqual(

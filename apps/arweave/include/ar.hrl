@@ -42,9 +42,15 @@
 
 -define(HASH_SZ, 256).
 
--define(SIGN_ALG, rsa).
+-define(RSA_SIGN_ALG, rsa).
+-define(RSA_PRIV_KEY_SZ, 4096).
 
--define(PRIV_KEY_SZ, 4096).
+-define(ECDSA_SIGN_ALG, ecdsa).
+
+-define(EDDSA_SIGN_ALG, eddsa).
+
+%% The default key type used by transactions that do not specify a signature type.
+-define(DEFAULT_KEY_TYPE, {?RSA_SIGN_ALG, 65537}).
 
 %% The difficulty a new weave is started with.
 -define(DEFAULT_DIFF, 8).
@@ -399,22 +405,23 @@
 
 %% @doc A transaction.
 -record(tx, {
-	format = 1,			% 1 or 2.
-	id = <<>>,			% The transaction identifier.
-	last_tx = <<>>,		% Either the identifier of the previous transaction from the same
-						% wallet or the identifier of one of the last ?MAX_TX_ANCHOR_DEPTH blocks.
-	owner =	<<>>,		% The public key the transaction is signed with.
-	tags = [],			% A list of arbitrary key-value pairs. Keys and values are binaries.
-	target = <<>>,		% The address of the recipient, if any. The SHA2-256 hash of the public key.
-	quantity = 0,		% The amount of Winstons to send to the recipient, if any.
-	data = <<>>,		% The data to upload, if any. For v2 transactions, the field is
-						% optional - a fee is charged based on the `data_size` field,
-						% data may be uploaded any time later in chunks.
-	data_size = 0,		% Size in bytes of the transaction data.
-	data_tree = [],		% The Merkle tree of data chunks. Used internally, not gossiped.
-	data_root = <<>>,	% The Merkle root of the Merkle tree of data chunks.
-	signature = <<>>,	% The signature.
-	reward = 0			% The fee in Winstons.
+	format = 1,					% 1 or 2.
+	id = <<>>,					% The transaction identifier.
+	last_tx = <<>>,				% Either the identifier of the previous transaction from the same
+								% wallet or the identifier of one of the last ?MAX_TX_ANCHOR_DEPTH blocks.
+	owner =	<<>>,				% The public key the transaction is signed with.
+	tags = [],					% A list of arbitrary key-value pairs. Keys and values are binaries.
+	target = <<>>,				% The address of the recipient, if any. The SHA2-256 hash of the public key.
+	quantity = 0,				% The amount of Winstons to send to the recipient, if any.
+	data = <<>>,				% The data to upload, if any. For v2 transactions, the field is
+								% optional - a fee is charged based on the `data_size` field,
+								% data may be uploaded any time later in chunks.
+	data_size = 0,				% Size in bytes of the transaction data.
+	data_tree = [],				% The Merkle tree of data chunks. Used internally, not gossiped.
+	data_root = <<>>,			% The Merkle root of the Merkle tree of data chunks.
+	signature = <<>>,			% The signature.
+	signature_type = undefined, % The type of signature this transaction was signed with.
+	reward = 0					% The fee in Winstons.
 }).
 
 %% Gossip protocol state.
