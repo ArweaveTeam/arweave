@@ -454,9 +454,9 @@ ends_with_digit(Data) ->
 	LastByte = binary:last(Data),
 	LastByte >= 48 andalso LastByte =< 57.
 
-verify_signature_type(#tx { signature_type = TXSigType }, Height) ->
-	case Height >= ar_fork:height_2_5() of
-		true -> true;
+verify_signature_type(#tx { format = Format, signature_type = TXSigType }, Height) ->
+	case Height < ar_fork:height_2_5() of
+		true -> Format > 1;
 		false -> TXSigType == undefined
 	end.
 
@@ -478,7 +478,7 @@ verify_signature_v2(TX = #tx { signature_type = TXSigType }, verify_signature, H
 	case Height >= ar_fork:height_2_4() of
 		true ->
 			SigType =
-				case Height >= ar_fork:height_2_5() of
+				case Height < ar_fork:height_2_5() of
 					true ->
 						case TXSigType of
 							undefined -> ?DEFAULT_KEY_TYPE;
