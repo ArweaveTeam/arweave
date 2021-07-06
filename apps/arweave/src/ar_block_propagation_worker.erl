@@ -57,17 +57,17 @@ handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From},
 							{Peer, block_announcement, Reason}}),
 					From ! {worker_sent_block, self()};
 				{ok, #block_announcement_response{ missing_tx_indices = L,
-						missing_chunk = MissingChunk }} ->
-					case SendFun(MissingChunk, L) of
+						missing_chunk = MissingChunk, missing_chunk2 = MissingChunk2 }} ->
+					case SendFun(MissingChunk, MissingChunk2, L) of
 						{ok, {{<<"418">>, _}, _, Bin, _, _}} when RetryCount > 0 ->
 							case parse_txids(Bin) of
 								error ->
 									ok;
 								{ok, TXIDs} ->
-									SendFun(MissingChunk, TXIDs)
+									SendFun(MissingChunk, MissingChunk2, TXIDs)
 							end;
 						{ok, {{<<"419">>, _}, _, _, _, _}} when RetryCount > 0 ->
-							SendFun(true, L);
+							SendFun(true, true, L);
 						_ ->
 							ok
 					end,

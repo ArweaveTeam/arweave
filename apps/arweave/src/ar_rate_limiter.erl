@@ -54,6 +54,7 @@ on() ->
 %%%===================================================================
 
 init([]) ->
+	process_flag(trap_exit, true),
 	{ok, #state{ traces = #{}, off = false }}.
 
 handle_call({throttle, _Peer, _Path}, _From, #state{ off = true } = State) ->

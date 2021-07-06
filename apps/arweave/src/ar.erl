@@ -5,11 +5,12 @@
 
 -behaviour(application).
 
--export([main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0,
-		tests/0, tests/1, tests/2, test_ipfs/0, docs/0, start_for_tests/0, shutdown/1,
+-export([main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0, tests/0,
+		tests/1, tests/2, test_ipfs/0, docs/0, start_for_tests/0, shutdown/1,
 		console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -20,15 +21,15 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_node,
+		ar_mine_vdf_tests,
+		ar_vdf_tests,
+		ar_nonce_limiter,
+		ar_mining_server,
+		ar_http_util_tests,
+		ar_inflation,
 		ar_sync_buckets,
-		ar_chunk_storage,
-		ar_poa,
-		ar_packing_server,
-		ar_node_utils,
-		ar_peers,
-		ar_webhook_tests,
-		ar_poller_tests,
-		ar_kv,
+		ar_wallet_tests,
 		ar_block_cache,
 		ar_unbalanced_merkle,
 		ar_intervals,
@@ -44,26 +45,29 @@
 		ar_semaphore_tests,
 		ar_tx_db,
 		ar_tx,
-		ar_wallet,
 		ar_serialize,
 		ar_block,
 		ar_difficulty_tests,
 		ar_retarget,
 		ar_weave,
+		ar_peers,
+		ar_node_utils,
+		ar_packing_server,
 		ar_join,
-		ar_tx_blacklist_tests,
-		ar_data_sync_tests,
-		ar_header_sync_tests,
-		ar_node_tests,
-		ar_fork_recovery_tests,
-		ar_mine,
 		ar_tx_replay_pool_tests,
+		ar_pricing,
+		ar_fork_recovery_tests,
+		ar_webhook_tests,
+		ar_poller_tests,
+		ar_kv,
+		ar_chunk_storage,
 		ar_http_iface_tests,
 		ar_multiple_txs_per_wallet_tests,
-		ar_pricing,
+		ar_tx_blacklist_tests,
+		ar_header_sync_tests,
+		ar_poa,
+		ar_data_sync_tests,
 		ar_gateway_middleware_tests,
-		ar_http_util_tests,
-		ar_inflation,
 		ar_mine_randomx_tests
 	]
 ).
@@ -118,40 +122,61 @@ show_help() ->
 			{"data_dir",
 				"The directory for storing the weave and the wallets (when generated)."},
 			{"metrics_dir", "The directory for persisted metrics."},
+			{"storage_module", "A storage module is responsible for syncronizing and storing "
+					"a particular data range. The data and metadata related to the module "
+					"are stored in a dedicated folder "
+					"([data_dir]/storage_module_[partition_number]_[packing]/) where "
+					"packing is either a mining address or \"unpacked\"."
+					" Example: storage_module 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI."},
 			{"polling (num)", lists:flatten(
 					io_lib:format(
-						"Poll peers for new blocks every N seconds. Default is ~p. "
-						"Useful in environments where port forwarding is not possible.",
+						"Ask some peers about new blocks every N seconds. Default is ~p.",
 						[?DEFAULT_POLLING_INTERVAL]
 					)
 			)},
+			{"block_pollers (num)", io_lib:format(
+					"How many peer polling jobs to run. Default is ~p.",
+					[?DEFAULT_BLOCK_POLLERS])},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"mining_addr (addr)",
-				"The address that mining rewards should be credited to."
-				" Set 'unclaimed' to send all the rewards to the endowment pool."},
+				io_lib:format(
+				"The address mining rewards should be credited to. If the \"mine\" flag"
+				" is set but no mining_addr is specified, an RSA PSS key is created"
+				" and stored in the [data_dir]/~s directory. If the directory already"
+				" contains such keys, the one written later is picked, no new files are"
+				" created. After the fork 2.6, the specified address is also a packing key, "
+				"so it is used to pack synced data even if the \"mine\" flag is not "
+				"specified. The data already packed with different addresses is not repacked.",
+				[?WALLET_DIR])},
 			{"stage_one_hashing_threads (num)",
 				io_lib:format(
 					"The number of mining processes searching for the SPoRA chunks to read."
 					"Default: ~B. If the total number of stage one and stage two processes "
 					"exceeds the number of available CPU cores, the excess processes will be "
 					"hashing chunks when anything gets queued, and search for chunks "
-					"otherwise.",
+					"otherwise. Only takes affect until the 2.6 fork when "
+					"packing_2_6_threshold reaches 0.",
 					[?NUM_STAGE_ONE_HASHING_PROCESSES]
 				)},
+			{"hashing_threads (num)", io_lib:format("The number of hashing processes to spawn."
+					" Takes effect since the 2.6 fork, once packing_2_6_threshold reaches 0."
+					" Default is ~B.", [?NUM_HASHING_PROCESSES])},
+			{"mining_server_chunk_cache_size_limit (num)", "The mining server will not read "
+					"new data unless the number of already fetched unprocessed chunks does "
+					"not exceed this number. When omitted, it is determined based on the "
+					"number of mining partitions and available RAM."},
 			{"io_threads (num)",
-				io_lib:format(
-					"The number of processes reading SPoRA chunks during mining. Default: ~B.",
-					[?NUM_IO_MINING_THREADS]
-				)},
+				io_lib:format("The number of processes reading SPoRA chunks during mining. "
+					"Default: ~B. Only takes affect until the 2.6 fork when "
+					"packing_2_6_threshold reaches 0.", [?NUM_IO_MINING_THREADS])},
 			{"stage_two_hashing_threads (num)",
 				io_lib:format(
 					"The number of mining processes hashing SPoRA chunks."
 					"Default: ~B. If the total number of stage one and stage two processes "
 					"exceeds the number of available CPU cores, the excess processes will be "
 					"hashing chunks when anything gets queued, and search for chunks "
-					"otherwise.",
-					[?NUM_STAGE_TWO_HASHING_PROCESSES]
-				)},
+					"otherwise. Only takes affect until the 2.6 fork when "
+					"packing_2_6_threshold reaches 0.", [?NUM_STAGE_TWO_HASHING_PROCESSES])},
 			{"max_emitters (num)", io_lib:format("The number of transaction propagation "
 				"processes to spawn. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
 			{"tx_validators (num)", "Ignored. Set the post_tx key in the semaphores object"
@@ -167,7 +192,7 @@ show_help() ->
 			{"max_propagation_peers", io_lib:format(
 				"The maximum number of peers to propagate transactions to. "
 				"Default is ~B.", [?DEFAULT_MAX_PROPAGATION_PEERS])},
-			{"max_block_propagation_peers", io_lib:format("max_block_propagation_peers (num)"
+			{"max_block_propagation_peers", io_lib:format(
 				"The maximum number of best peers to propagate blocks to. "
 				"Default is ~B.", [?DEFAULT_MAX_BLOCK_PROPAGATION_PEERS])},
 			{"sync_jobs (num)",
@@ -191,9 +216,7 @@ show_help() ->
 					" number of confirmations and remove abandoned chunks.",
 					[?DEFAULT_DISK_POOL_JOBS]
 				)},
-			{"load_mining_key (file)",
-				"Load the address that mining rewards should be credited to from file."},
-			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},
+			{"load_mining_key (file)", "DEPRECATED. Does not take effect anymore."},
 			{"transaction_blacklist (file)", "A file containing blacklisted transactions. "
 											 "One Base64 encoded transaction ID per line."},
 			{"transaction_blacklist_url", "An HTTP endpoint serving a transaction blacklist."},
@@ -216,28 +239,21 @@ show_help() ->
 				)},
 			{"init", "Start a new weave."},
 			{"internal_api_secret (secret)",
-				lists:flatten(
-					io_lib:format(
-						"Enables the internal API endpoints, only accessible with this secret. Min. ~B chars.",
-						[?INTERNAL_API_SECRET_MIN_LEN]
-					)
-				)
-			},
-			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, subfield_queries."},
+				lists:flatten(io_lib:format(
+						"Enables the internal API endpoints, only accessible with this secret."
+						" Min. ~B chars.",
+						[?INTERNAL_API_SECRET_MIN_LEN]))},
+			{"enable (feature)", "Enable a specific (normally disabled) feature. For example, "
+					"subfield_queries."},
 			{"disable (feature)", "Disable a specific (normally enabled) feature."},
-			{"gateway (domain)", "Run a gateway on the specified domain"},
-			{"custom_domain (domain)", "Add a domain to the list of supported custom domains."},
-			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP requests per IP address per minute. Default is 900."},
-			{"max_connections", "The number of connections to be handled concurrently. Its purpose is to prevent your system from being overloaded and ensuring all the connections are handled optimally. Default is 1024."},
-			{"max_gateway_connections", "The number of gateway connections to be handled concurrently. Default is 128."},
-			{"max_poa_option_depth",
-				"The number of PoA alternatives to try until the recall data is "
-				"found. Has to be an integer > 1. The mining difficulty grows linearly "
-				"as a function of the alternative as (0.75 + 0.25 * number) * diff, "
-				"up to (0.75 + 0.25 * max_poa_option_depth) * diff. Default is 500."},
+			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP "
+					"requests per IP address per minute. Default is 900."},
+			{"max_connections", "The number of connections to be handled concurrently. "
+					"Its purpose is to prevent your system from being overloaded and ensuring "
+					"all the connections are handled optimally. Default is 1024."},
 			{"disk_pool_data_root_expiration_time",
-				"The time in seconds of how long a pending or orphaned data root is kept in the disk pool. The
-				default is 2 * 60 * 60 (2 hours)."},
+				"The time in seconds of how long a pending or orphaned data root is kept in "
+				"the disk pool. The default is 2 * 60 * 60 (2 hours)."},
 			{"max_disk_pool_buffer_mb",
 				"The max total size in mebibytes of the pending chunks in the disk pool."
 				"The default is 2000 (2 GiB)."},
@@ -258,6 +274,13 @@ show_help() ->
 			{"packing_rate", io_lib:format(
 				"The maximum number of chunks per second to pack or unpack. "
 				"Default: ~B.", [?DEFAULT_PACKING_RATE])},
+			{"max_nonce_limiter_validation_thread_count", io_lib:format("\tThe maximum number "
+					"of threads used for nonce limiter validation. Default: ~B",
+					[?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT])},
+			{"max_nonce_limiter_last_step_validation_thread_count", io_lib:format(
+					"\tThe maximum number of threads used for nonce limiter last step "
+					"validation. Default: ~B",
+					[?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT])},
 			{"debug",
 				"Enable extended logging."
 			}
@@ -289,14 +312,14 @@ read_config_from_file(Path) ->
 	end.
 
 parse_cli_args([], C) -> C;
-parse_cli_args(["mine"|Rest], C) ->
-	parse_cli_args(Rest, C#config { mine = true });
-parse_cli_args(["peer", Peer|Rest], C = #config { peers = Ps }) ->
+parse_cli_args(["mine" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ mine = true });
+parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config { peers = [ValidPeer|Ps] });
+			parse_cli_args(Rest, C#config{ peers = [ValidPeer|Ps] });
 		{error, _} ->
-			io:format("Peer ~p invalid ~n", [Peer]),
+			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
 parse_cli_args(["block_gossip_peer", Peer | Rest],
@@ -308,105 +331,140 @@ parse_cli_args(["block_gossip_peer", Peer | Rest],
 			io:format("Peer ~p invalid ~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
-parse_cli_args(["transaction_blacklist", File|Rest], C = #config { transaction_blacklist_files = Files } ) ->
-	parse_cli_args(Rest, C#config { transaction_blacklist_files = [File|Files] });
-parse_cli_args(["transaction_blacklist_url", URL | Rest], C = #config { transaction_blacklist_urls = URLs} ) ->
+parse_cli_args(["transaction_blacklist", File | Rest],
+		C = #config{ transaction_blacklist_files = Files } ) ->
+	parse_cli_args(Rest, C#config{ transaction_blacklist_files = [File | Files] });
+parse_cli_args(["transaction_blacklist_url", URL | Rest],
+		C = #config{ transaction_blacklist_urls = URLs} ) ->
 	parse_cli_args(Rest, C#config{ transaction_blacklist_urls = [URL | URLs] });
-parse_cli_args(["transaction_whitelist", File|Rest], C = #config { transaction_whitelist_files = Files } ) ->
-	parse_cli_args(Rest, C#config { transaction_whitelist_files = [File|Files] });
-parse_cli_args(["transaction_whitelist_url", URL | Rest], C = #config { transaction_whitelist_urls = URLs} ) ->
-	parse_cli_args(Rest, C#config { transaction_whitelist_urls = [URL | URLs] });
-parse_cli_args(["port", Port|Rest], C) ->
-	parse_cli_args(Rest, C#config { port = list_to_integer(Port) });
-parse_cli_args(["data_dir", DataDir|Rest], C) ->
-	parse_cli_args(Rest, C#config { data_dir = DataDir });
-parse_cli_args(["metrics_dir", MetricsDir|Rest], C) ->
-	parse_cli_args(Rest, C#config { metrics_dir = MetricsDir });
-parse_cli_args(["polling", Frequency|Rest], C) ->
-	parse_cli_args(Rest, C#config { polling = list_to_integer(Frequency) });
-parse_cli_args(["no_auto_join"|Rest], C) ->
-	parse_cli_args(Rest, C#config { auto_join = false });
-parse_cli_args(["mining_addr", "unclaimed"|Rest], C) ->
-	parse_cli_args(Rest, C#config { mining_addr = unclaimed });
-parse_cli_args(["mining_addr", Addr|Rest], C) ->
-	parse_cli_args(Rest, C#config { mining_addr = ar_util:decode(Addr) });
-parse_cli_args(["max_miners", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { max_miners = list_to_integer(Num) });
-parse_cli_args(["io_threads", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { io_threads = list_to_integer(Num) });
-parse_cli_args(["stage_one_hashing_threads", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { stage_one_hashing_threads = list_to_integer(Num) });
-parse_cli_args(["stage_two_hashing_threads", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { stage_two_hashing_threads = list_to_integer(Num) });
-parse_cli_args(["max_emitters", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { max_emitters = list_to_integer(Num) });
-parse_cli_args(["disk_space", Size|Rest], C) ->
-	parse_cli_args(Rest, C#config { disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
-parse_cli_args(["disk_space_check_frequency", Frequency|Rest], C) ->
+parse_cli_args(["transaction_whitelist", File | Rest],
+		C = #config{ transaction_whitelist_files = Files } ) ->
+	parse_cli_args(Rest, C#config{ transaction_whitelist_files = [File | Files] });
+parse_cli_args(["transaction_whitelist_url", URL | Rest],
+		C = #config{ transaction_whitelist_urls = URLs} ) ->
+	parse_cli_args(Rest, C#config{ transaction_whitelist_urls = [URL | URLs] });
+parse_cli_args(["port", Port | Rest], C) ->
+	parse_cli_args(Rest, C#config{ port = list_to_integer(Port) });
+parse_cli_args(["data_dir", DataDir | Rest], C) ->
+	parse_cli_args(Rest, C#config{ data_dir = DataDir });
+parse_cli_args(["metrics_dir", MetricsDir | Rest], C) ->
+	parse_cli_args(Rest, C#config{ metrics_dir = MetricsDir });
+parse_cli_args(["storage_module", StorageModuleString | Rest], C) ->
+	StorageModules = C#config.storage_modules,
+	try
+		StorageModule = ar_config:parse_storage_module(StorageModuleString),
+		parse_cli_args(Rest, C#config{ storage_modules = [StorageModule | StorageModules] })
+	catch _:_ ->
+		io:format("~nstorage_module value must be in the [number],[address] format.~n~n"),
+		erlang:halt()
+	end;
+parse_cli_args(["polling", Frequency | Rest], C) ->
+	parse_cli_args(Rest, C#config{ polling = list_to_integer(Frequency) });
+parse_cli_args(["block_pollers", N | Rest], C) ->
+	parse_cli_args(Rest, C#config{ block_pollers = list_to_integer(N) });
+parse_cli_args(["no_auto_join" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ auto_join = false });
+parse_cli_args(["mining_addr", Addr | Rest], C) ->
+	case C#config.mining_addr of
+		not_set ->
+			case ar_util:safe_decode(Addr) of
+				{ok, DecodedAddr} when byte_size(DecodedAddr) == 32 ->
+					parse_cli_args(Rest, C#config{ mining_addr = DecodedAddr });
+				_ ->
+					io:format("~nmining_addr must be a valid Base64Url string, 43"
+							" characters long.~n~n"),
+					erlang:halt()
+			end;
+		_ ->
+			io:format("~nYou may specify at most one mining_addr.~n~n"),
+			erlang:halt()
+	end;
+parse_cli_args(["max_miners", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ max_miners = list_to_integer(Num) });
+parse_cli_args(["io_threads", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ io_threads = list_to_integer(Num) });
+parse_cli_args(["hashing_threads", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ hashing_threads = list_to_integer(Num) });
+parse_cli_args(["mining_server_chunk_cache_size_limit", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{
+			mining_server_chunk_cache_size_limit = list_to_integer(Num) });
+parse_cli_args(["stage_one_hashing_threads", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ stage_one_hashing_threads = list_to_integer(Num) });
+parse_cli_args(["stage_two_hashing_threads", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ stage_two_hashing_threads = list_to_integer(Num) });
+parse_cli_args(["max_emitters", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ max_emitters = list_to_integer(Num) });
+parse_cli_args(["disk_space", Size | Rest], C) ->
+	parse_cli_args(Rest, C#config{ disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
+parse_cli_args(["disk_space_check_frequency", Frequency | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 		disk_space_check_frequency = list_to_integer(Frequency) * 1000
 	});
-parse_cli_args(["load_mining_key", File|Rest], C) ->
-	parse_cli_args(Rest, C#config { load_key = File });
 parse_cli_args(["ipfs_pin" | Rest], C) ->
-	parse_cli_args(Rest, C#config { ipfs_pin = true });
-parse_cli_args(["start_from_block_index"|Rest], C) ->
-	parse_cli_args(Rest, C#config { start_from_block_index = true });
-parse_cli_args(["init"|Rest], C)->
-	parse_cli_args(Rest, C#config { init = true });
-parse_cli_args(["internal_api_secret", Secret | Rest], C) when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
-	parse_cli_args(Rest, C#config { internal_api_secret = list_to_binary(Secret)});
+	parse_cli_args(Rest, C#config{ ipfs_pin = true });
+parse_cli_args(["start_from_block_index" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ start_from_block_index = true });
+parse_cli_args(["init" | Rest], C)->
+	parse_cli_args(Rest, C#config{ init = true });
+parse_cli_args(["internal_api_secret", Secret | Rest], C)
+		when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+	parse_cli_args(Rest, C#config{ internal_api_secret = list_to_binary(Secret)});
 parse_cli_args(["internal_api_secret", _ | _], _) ->
-	io:format(
-		"~nThe internal_api_secret must be at least ~B characters long.~n~n",
-		[?INTERNAL_API_SECRET_MIN_LEN]
-	),
+	io:format("~nThe internal_api_secret must be at least ~B characters long.~n~n",
+			[?INTERNAL_API_SECRET_MIN_LEN]),
 	erlang:halt();
-parse_cli_args(["enable", Feature | Rest ], C = #config { enable = Enabled }) ->
-	parse_cli_args(Rest, C#config { enable = [ list_to_atom(Feature) | Enabled ] });
-parse_cli_args(["disable", Feature | Rest ], C = #config { disable = Disabled }) ->
-	parse_cli_args(Rest, C#config { disable = [ list_to_atom(Feature) | Disabled ] });
+parse_cli_args(["enable", Feature | Rest ], C = #config{ enable = Enabled }) ->
+	parse_cli_args(Rest, C#config{ enable = [ list_to_atom(Feature) | Enabled ] });
+parse_cli_args(["disable", Feature | Rest ], C = #config{ disable = Disabled }) ->
+	parse_cli_args(Rest, C#config{ disable = [ list_to_atom(Feature) | Disabled ] });
 parse_cli_args(["gateway", Domain | Rest ], C) ->
-	parse_cli_args(Rest, C#config { gateway_domain = list_to_binary(Domain) });
-parse_cli_args(["custom_domain", Domain|Rest], C = #config { gateway_custom_domains = Ds }) ->
-	parse_cli_args(Rest, C#config { gateway_custom_domains = [ list_to_binary(Domain) | Ds ] });
-parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
-parse_cli_args(["max_propagation_peers", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { max_propagation_peers = list_to_integer(Num) });
-parse_cli_args(["max_block_propagation_peers", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { max_block_propagation_peers = list_to_integer(Num) });
-parse_cli_args(["sync_jobs", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { sync_jobs = list_to_integer(Num) });
-parse_cli_args(["header_sync_jobs", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { header_sync_jobs = list_to_integer(Num) });
-parse_cli_args(["tx_validators", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { tx_validators = list_to_integer(Num) });
-parse_cli_args(["post_tx_timeout", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config{ gateway_domain = list_to_binary(Domain) });
+parse_cli_args(["custom_domain", Domain | Rest], C = #config{ gateway_custom_domains = Ds }) ->
+	parse_cli_args(Rest, C#config{ gateway_custom_domains = [ list_to_binary(Domain) | Ds ] });
+parse_cli_args(["requests_per_minute_limit", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ requests_per_minute_limit = list_to_integer(Num) });
+parse_cli_args(["max_propagation_peers", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ max_propagation_peers = list_to_integer(Num) });
+parse_cli_args(["max_block_propagation_peers", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ max_block_propagation_peers = list_to_integer(Num) });
+parse_cli_args(["sync_jobs", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ sync_jobs = list_to_integer(Num) });
+parse_cli_args(["header_sync_jobs", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ header_sync_jobs = list_to_integer(Num) });
+parse_cli_args(["tx_validators", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ tx_validators = list_to_integer(Num) });
+parse_cli_args(["post_tx_timeout", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { post_tx_timeout = list_to_integer(Num) });
 parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config { tx_propagation_parallelization = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { max_connections = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ max_connections = list_to_integer(Num) });
 parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { max_gateway_connections = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ max_gateway_connections = list_to_integer(Num) });
 parse_cli_args(["max_poa_option_depth", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { max_poa_option_depth = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ max_poa_option_depth = list_to_integer(Num) });
 parse_cli_args(["disk_pool_data_root_expiration_time", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { disk_pool_data_root_expiration_time = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{
+			disk_pool_data_root_expiration_time = list_to_integer(Num) });
 parse_cli_args(["max_disk_pool_buffer_mb", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { max_disk_pool_buffer_mb = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ max_disk_pool_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["randomx_bulk_hashing_iterations", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { randomx_bulk_hashing_iterations = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ randomx_bulk_hashing_iterations = list_to_integer(Num) });
 parse_cli_args(["disk_cache_size_mb", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { disk_cache_size = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ disk_cache_size = list_to_integer(Num) });
 parse_cli_args(["packing_rate", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config { packing_rate = list_to_integer(Num) });
+	parse_cli_args(Rest, C#config{ packing_rate = list_to_integer(Num) });
+parse_cli_args(["max_nonce_limiter_validation_thread_count", Num | Rest], C) ->
+	parse_cli_args(Rest,
+			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
+parse_cli_args(["max_nonce_limiter_last_step_validation_thread_count", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{
+			max_nonce_limiter_last_step_validation_thread_count = list_to_integer(Num) });
 parse_cli_args(["debug" | Rest], C) ->
-	parse_cli_args(Rest, C#config { debug = true });
-parse_cli_args([Arg|_Rest], _O) ->
+	parse_cli_args(Rest, C#config{ debug = true });
+parse_cli_args([Arg | _Rest], _O) ->
 	io:format("~nUnknown argument: ~s.~n", [Arg]),
 	show_help().
 
@@ -414,7 +472,7 @@ parse_cli_args([Arg|_Rest], _O) ->
 start() ->
 	start(?DEFAULT_HTTP_IFACE_PORT).
 start(Port) when is_integer(Port) ->
-	start(#config { port = Port });
+	start(#config{ port = Port });
 start(Config) ->
 	%% Start the logging system.
 	filelib:ensure_dir(?LOG_DIR ++ "/"),
@@ -428,9 +486,9 @@ start(normal, _Args) ->
 	LoggerFormatterConsole = #{
 		legacy_header => false,
 		single_line => true,
-		chars_limit => 2048,
-		max_size => 512,
-		depth => 64,
+		chars_limit => 16256,
+		max_size => 8128,
+		depth => 256,
 		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
 	},
 	logger:set_handler_config(default, formatter, {logger_formatter, LoggerFormatterConsole}),
@@ -442,13 +500,27 @@ start(normal, _Args) ->
 		max_no_files => 10,
 		max_no_bytes => 51418800 % 10 x 5MB
 	},
-	Level = case Config#config.debug of false -> info; _ -> debug end,
 	logger:add_handler(disk_log, logger_disk_log_h,
-			#{ config => LoggerConfigDisk, level => Level }),
+			#{ config => LoggerConfigDisk, level => info }),
+	Level =
+		case Config#config.debug of
+			false ->
+				info;
+			true ->
+				DebugLoggerConfigDisk = #{
+					file => lists:flatten("debug_logs/" ++ atom_to_list(node())),
+					type => wrap,
+					max_no_files => 20,
+					max_no_bytes => 51418800 % 10 x 5MB
+				},
+				logger:add_handler(disk_debug_log, logger_disk_log_h,
+						#{ config => DebugLoggerConfigDisk, level => debug }),
+				debug
+		end,
 	LoggerFormatterDisk = #{
-		chars_limit => 512,
-		max_size => 512,
-		depth => 32,
+		chars_limit => 16256,
+		max_size => 8128,
+		depth => 256,
 		legacy_header => false,
 		single_line => true,
 		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
@@ -456,6 +528,7 @@ start(normal, _Args) ->
 	logger:set_handler_config(disk_log, formatter, {logger_formatter, LoggerFormatterDisk}),
 	logger:set_application_level(arweave, Level),
 	%% Start the Prometheus metrics subsystem.
+	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
 	%% Register custom metrics.
 	ar_metrics:register(Config#config.metrics_dir),
@@ -569,21 +642,26 @@ log_peer_clock_diff(Peer, Diff) ->
 	io:format(Warning, WarningArgs),
 	?LOG_WARNING(Warning, WarningArgs).
 
-set_mining_address(Config) ->
-	MiningAddr =
-		case {Config#config.mining_addr, Config#config.load_key} of
-			{not_set, not_set} ->
-				{_, Pub} = ar_wallet:new_keyfile(),
-				ar_wallet:to_address(Pub);
-			{unclaimed, not_set} ->
-				unclaimed;
-			{Address, _} when is_binary(Address) ->
-				Address;
-			{_, Path} when is_binary(Path) ->
-				{_, Pub} = ar_wallet:load_keyfile(Path),
-				ar_wallet:to_address(Pub)
-		end,
-	application:set_env(arweave, config, Config#config{ mining_addr = MiningAddr }).
+set_mining_address(#config{ mining_addr = not_set } = C) ->
+	W = ar_wallet:get_or_create_wallet([{?RSA_SIGN_ALG, 65537}]),
+	Addr = ar_wallet:to_address(W),
+	ar:console("Setting the mining address to ~s.~n", [ar_util:encode(Addr)]),
+	C2 = C#config{ mining_addr = Addr },
+	application:set_env(arweave, config, C2),
+	set_mining_address(C2);
+set_mining_address(#config{ mine = false }) ->
+	ok;
+set_mining_address(#config{ mining_addr = Addr }) ->
+	case ar_wallet:load_key(Addr) of
+		not_found ->
+			ar:console("~nThe mining key for the address ~s was not found."
+				" Make sure you placed the file in [data_dir]/~s."
+				" Do not specify \"mining_addr\" if you want one to be generated.~n~n",
+				[ar_util:encode(Addr), ?WALLET_DIR]),
+			erlang:halt();
+		_Key ->
+			ok
+	end.
 
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
@@ -593,7 +671,7 @@ stop(_State) ->
 
 stop_dependencies() ->
 	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
-	lists:foreach(fun(Dep) -> ok = application:stop(Dep) end, Deps).
+	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
 
 prepare_graphql() ->
 	ok = ar_graphql:load_schema(),
@@ -617,7 +695,7 @@ tests() ->
 
 tests(Mods, Config) when is_list(Mods) ->
 	start_for_tests(Config),
-	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose]) of
+	case eunit:test({timeout, ?TEST_TIMEOUT, [Mods]}, [verbose, {print_depth, 100}]) of
 		ok ->
 			ok;
 		_ ->
@@ -625,10 +703,10 @@ tests(Mods, Config) when is_list(Mods) ->
 	end.
 
 start_for_tests() ->
-	start_for_tests(#config { }).
+	start_for_tests(#config{}).
 
 start_for_tests(Config) ->
-	start(Config#config {
+	start(Config#config{
 		peers = [],
 		data_dir = "data_test_master",
 		metrics_dir = "metrics_master",
@@ -646,7 +724,7 @@ tests(Args) ->
 			end,
 			Args
 		),
-	tests(Mods, #config {}).
+	tests(Mods, #config{}).
 
 %% @doc Run the tests for the IPFS integration. Requires a running local IPFS node.
 test_ipfs() ->

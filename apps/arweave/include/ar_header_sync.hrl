@@ -28,10 +28,18 @@
 -endif.
 
 %% The initial value for the exponential backoff for failing requests.
+-ifdef(DEBUG).
+-define(INITIAL_BACKOFF_INTERVAL_S, 1).
+-else.
 -define(INITIAL_BACKOFF_INTERVAL_S, 30).
+-endif.
 
 %% The maximum exponential backoff interval for failing requests.
+-ifdef(DEBUG).
+-define(MAX_BACKOFF_INTERVAL_S, 2).
+-else.
 -define(MAX_BACKOFF_INTERVAL_S, 2 * 60 * 60).
+-endif.
 
 %% The frequency of storing the server state on disk.
 -define(STORE_HEADER_STATE_FREQUENCY_MS, 30000).

@@ -2,38 +2,38 @@
 
 -on_load(init_nif/0).
 
--export([
-	init_fast/2, hash_fast/2,
-	init_light/1, hash_light/2,
-	release_state/1,
-	bulk_hash_fast/13,
-	hash_fast_verify/3,
-	randomx_encrypt_chunk/3,
-	randomx_decrypt_chunk/4,
-	hash_fast_long_with_entropy/2,
-	hash_light_long_with_entropy/2,
-	bulk_hash_fast_long_with_entropy/13
-]).
+-export([init_fast/2, hash_fast/2, init_light/1, hash_light/2, release_state/1,
+		bulk_hash_fast/13, hash_fast_verify/3,
+		randomx_encrypt_chunk/3, randomx_encrypt_chunk_2_6/3,
+		randomx_decrypt_chunk/4, randomx_decrypt_chunk_2_6/4,
+		hash_fast_long_with_entropy/2, hash_light_long_with_entropy/2,
+		bulk_hash_fast_long_with_entropy/13,
+		vdf_sha2/2, vdf_parallel_sha_verify_no_reset/4, vdf_parallel_sha_verify/6]).
 
 %% These exports are required for the DEBUG mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
--export([
-	init_light_nif/3, hash_light_nif/5,
-	init_fast_nif/4, hash_fast_nif/5,
-	release_state_nif/1, jit/0, large_pages/0, hardware_aes/0,
-	bulk_hash_fast_nif/13,
-	hash_fast_verify_nif/6,
-	randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
-	hash_fast_long_with_entropy_nif/6, hash_light_long_with_entropy_nif/6,
-		bulk_hash_fast_long_with_entropy_nif/14
-]).
+-export([init_light_nif/3, hash_light_nif/5, init_fast_nif/4, hash_fast_nif/5,
+		release_state_nif/1, jit/0, large_pages/0, hardware_aes/0, bulk_hash_fast_nif/13,
+		hash_fast_verify_nif/6, randomx_encrypt_chunk_nif/7, randomx_decrypt_chunk_nif/8,
+		hash_fast_long_with_entropy_nif/6, hash_light_long_with_entropy_nif/6,
+		bulk_hash_fast_long_with_entropy_nif/14,
+		vdf_sha2_nif/5, vdf_parallel_sha_verify_nif/8,
+		vdf_parallel_sha_verify_with_reset_nif/10]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_mine.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave/include/ar_vdf.hrl").
 
 -define(RANDOMX_WITH_ENTROPY_ROUNDS, 8).
+
 -define(RANDOMX_PACKING_ROUNDS, 8 * (?PACKING_DIFFICULTY)).
+
+-define(RANDOMX_PACKING_ROUNDS_2_6, 8 * (?PACKING_DIFFICULTY_2_6)).
+
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
 -ifdef(DEBUG).
 init_fast(Key, _Threads) ->
@@ -55,25 +55,25 @@ hash_fast(FastState, Data) ->
 -endif.
 
 -ifdef(DEBUG).
-bulk_hash_fast(FastState, Nonce1, Nonce2, BDS, PrevH, SearchSpaceUpperBound, PIDs, ProxyPIDs,
+bulk_hash_fast(FastState, Nonce1, Nonce2, BDS, PrevH, PartitionUpperBound, PIDs, ProxyPIDs,
 		_HashingIterations, _JIT, _LargePages, _HardwareAES, Ref) ->
 	%% A simple mock of the NIF function with hashingIterations == 2.
 	H1 = crypto:hash(sha256, << FastState/binary, Nonce1/binary, BDS/binary >>),
 	H2 = crypto:hash(sha256, << FastState/binary, Nonce2/binary, BDS/binary >>),
 	[PID1 | OtherPIDs] = PIDs,
-	{ok, Byte1} = ar_mine:pick_recall_byte(H1, PrevH, SearchSpaceUpperBound),
+	{ok, Byte1} = ar_mine:pick_recall_byte(H1, PrevH, PartitionUpperBound),
 	[ProxyPID1 | OtherProxyPIDs] = ProxyPIDs,
 	PID1 ! {binary:encode_unsigned(Byte1), H1, Nonce1, ProxyPID1, Ref},
 	[PID2 | _] = OtherPIDs ++ [PID1],
-	{ok, Byte2} = ar_mine:pick_recall_byte(H2, PrevH, SearchSpaceUpperBound),
+	{ok, Byte2} = ar_mine:pick_recall_byte(H2, PrevH, PartitionUpperBound),
 	[ProxyPID2 | _] = OtherProxyPIDs ++ [ProxyPID1],
 	PID2 ! {binary:encode_unsigned(Byte2), H2, Nonce2, ProxyPID2, Ref},
 	ok.
 -else.
-bulk_hash_fast(FastState, Nonce1, Nonce2, BDS, PrevH, SearchSpaceUpperBound, PIDs, ProxyPIDs,
+bulk_hash_fast(FastState, Nonce1, Nonce2, BDS, PrevH, PartitionUpperBound, PIDs, ProxyPIDs,
 		HashingIterations, JIT, LargePages, HardwareAES, Ref) ->
 	bulk_hash_fast_nif(FastState, Nonce1, Nonce2, BDS, PrevH,
-			binary:encode_unsigned(SearchSpaceUpperBound, big), PIDs, ProxyPIDs, Ref,
+			binary:encode_unsigned(PartitionUpperBound, big), PIDs, ProxyPIDs, Ref,
 			HashingIterations, JIT, LargePages, HardwareAES).
 -endif.
 
@@ -136,6 +136,30 @@ randomx_decrypt_chunk(RandomxState, Key, Chunk, Size) ->
 -endif.
 
 -ifdef(DEBUG).
+randomx_encrypt_chunk_2_6(_State, Key, Chunk) ->
+	Options = [{encrypt, true}, {padding, zero}],
+	IV = binary:part(Key, {0, 16}),
+	crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options).
+
+randomx_decrypt_chunk_2_6(_State, Key, Chunk, _Size) ->
+	Options = [{encrypt, false}],
+	IV = binary:part(Key, {0, 16}),
+	crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options).
+-else.
+randomx_encrypt_chunk_2_6(RandomxState, Key, Chunk) ->
+	{ok, OutChunk} =
+		randomx_encrypt_chunk_nif(RandomxState, Key, Chunk, ?RANDOMX_PACKING_ROUNDS_2_6, jit(),
+				large_pages(), hardware_aes()),
+	OutChunk.
+
+randomx_decrypt_chunk_2_6(RandomxState, Key, Chunk, Size) ->
+	{ok, OutChunk} =
+		randomx_decrypt_chunk_nif(RandomxState, Key, Chunk, Size, ?RANDOMX_PACKING_ROUNDS_2_6,
+				jit(), large_pages(), hardware_aes()),
+	OutChunk.
+-endif.
+
+-ifdef(DEBUG).
 hash_fast_long_with_entropy(FastState, Data) ->
 	Hash = crypto:hash(sha256, << FastState/binary, Data/binary >>),
 	%% 256 bytes of entropy for tests (in practice we generate 256 KiB of entropy).
@@ -161,7 +185,7 @@ hash_light_long_with_entropy(LightState, Data) ->
 -endif.
 
 -ifdef(DEBUG).
-bulk_hash_fast_long_with_entropy(FastState, Nonce1, Nonce2, BDS, PrevH, SearchSpaceUpperBound,
+bulk_hash_fast_long_with_entropy(FastState, Nonce1, Nonce2, BDS, PrevH, PartitionUpperBound,
 		PIDs, ProxyPIDs, _HashingIterations, _JIT, _LargePages, _HardwareAES, Ref) ->
 	%% A simple mock of the NIF function with hashingIterations == 2.
 	H1 = crypto:hash(sha256, << FastState/binary, Nonce1/binary, BDS/binary >>),
@@ -169,19 +193,19 @@ bulk_hash_fast_long_with_entropy(FastState, Nonce1, Nonce2, BDS, PrevH, SearchSp
 	H2 = crypto:hash(sha256, << FastState/binary, Nonce2/binary, BDS/binary >>),
 	Entropy2 = iolist_to_binary([H2 || _ <- lists:seq(1, 8)]),
 	[PID1 | OtherPIDs] = PIDs,
-	{ok, Byte1} = ar_mine:pick_recall_byte(H1, PrevH, SearchSpaceUpperBound),
+	{ok, Byte1} = ar_mine:pick_recall_byte(H1, PrevH, PartitionUpperBound),
 	[ProxyPID1 | OtherProxyPIDs] = ProxyPIDs,
 	PID1 ! {binary:encode_unsigned(Byte1), H1, Entropy1, Nonce1, ProxyPID1, Ref},
 	[PID2 | _] = OtherPIDs ++ [PID1],
-	{ok, Byte2} = ar_mine:pick_recall_byte(H2, PrevH, SearchSpaceUpperBound),
+	{ok, Byte2} = ar_mine:pick_recall_byte(H2, PrevH, PartitionUpperBound),
 	[ProxyPID2 | _] = OtherProxyPIDs ++ [ProxyPID1],
 	PID2 ! {binary:encode_unsigned(Byte2), H2, Entropy2, Nonce2, ProxyPID2, Ref},
 	ok.
 -else.
-bulk_hash_fast_long_with_entropy(FastState, Nonce1, Nonce2, BDS, PrevH, SearchSpaceUpperBound,
+bulk_hash_fast_long_with_entropy(FastState, Nonce1, Nonce2, BDS, PrevH, PartitionUpperBound,
 		PIDs, ProxyPIDs, HashingIterations, JIT, LargePages, HardwareAES, Ref) ->
 	bulk_hash_fast_long_with_entropy_nif(FastState, Nonce1, Nonce2, BDS, PrevH,
-			binary:encode_unsigned(SearchSpaceUpperBound, big), PIDs, ProxyPIDs, Ref,
+			binary:encode_unsigned(PartitionUpperBound, big), PIDs, ProxyPIDs, Ref,
 			HashingIterations, ?RANDOMX_WITH_ENTROPY_ROUNDS, JIT, LargePages, HardwareAES).
 -endif.
 
@@ -200,7 +224,115 @@ release_state(RandomxState) ->
 	end.
 -endif.
 
-%% Internal
+%% @doc An Erlang implementation of ar_vdf:compute2/3. Used in tests.
+vdf_sha2(StepNumber, Output) ->
+	{Output2, Checkpoints} =
+		lists:foldl(
+			fun(I, {Acc, L}) ->
+				StepNumberBinary = << (StepNumber + I):256 >>,
+				H = hash(?VDF_DIFFICULTY, StepNumberBinary, Acc),
+				{H, [H | L]}
+			end,
+			{Output, []},
+			lists:seq(0, 25 - 1)
+		),
+	timer:sleep(500),
+	{ok, Output2, Checkpoints}.
+
+hash(0, _Salt, Input) ->
+	Input;
+hash(N, Salt, Input) ->
+	hash(N - 1, Salt, crypto:hash(sha256, << Salt/binary, Input/binary >>)).
+
+%% @doc An Erlang implementation of ar_vdf:verify/7. Used in tests.
+vdf_parallel_sha_verify_no_reset(StepNumber, Output, Groups, _TheadCount) ->
+	vdf_debug_verify_no_reset(StepNumber, Output, lists:reverse(Groups), []).
+
+vdf_debug_verify_no_reset(_StepNumber, _Output, [], Steps) ->
+	{true, Steps};
+vdf_debug_verify_no_reset(StepNumber, Output, [{Size, N, Buffer} | Groups], Steps) ->
+	true = Size == 1 orelse Size rem 25 == 0,
+	{NextOutput, Steps2} =
+		lists:foldl(
+			fun(I, {Acc, S}) ->
+				Salt = << (StepNumber + I):256 >>,
+				O2 = hash(?VDF_DIFFICULTY, Salt, Acc),
+				S2 = case (StepNumber + I) rem 25 of 0 -> [O2 | S]; _ -> S end,
+				{O2, S2}
+			end,
+			{Output, []},
+			lists:seq(0, Size - 1)
+		),
+	StepNumber2 = StepNumber + Size,
+	case Buffer of
+		<< NextOutput/binary >> when N == 1 ->
+			vdf_debug_verify_no_reset(StepNumber2, NextOutput, Groups, Steps2 ++ Steps);
+		<< NextOutput:32/binary, Rest/binary >> when N > 0 ->
+			vdf_debug_verify_no_reset(StepNumber2, NextOutput, [{Size, N - 1, Rest} | Groups],
+					Steps2 ++ Steps);
+		_ ->
+			false
+	end.
+
+%% @doc An Erlang implementation of ar_vdf:verify/7. Used in tests.
+vdf_parallel_sha_verify(StepNumber, Output, Groups, ResetStepNumber, ResetSeed,
+		_ThreadCount) ->
+	vdf_debug_verify(StepNumber, Output, lists:reverse(Groups), ResetStepNumber, ResetSeed,
+			[]).
+
+vdf_debug_verify(_StepNumber, _Output, [], _ResetStepNumber, _ResetSeed, Steps) ->
+	{true, Steps};
+vdf_debug_verify(StepNumber, Output, [{Size, N, Buffer} | Groups], ResetStepNumber,
+		ResetSeed, Steps) ->
+	true = Size rem 25 == 0,
+	{NextOutput, Steps2} =
+		lists:foldl(
+			fun(I, {Acc, S}) ->
+				Salt = << (StepNumber + I):256 >>,
+				case I rem 25 /= 0 of
+					true ->
+						H = hash(?VDF_DIFFICULTY, Salt, Acc),
+						case (StepNumber + I) rem 25 of
+							0 ->
+								{H, [H | S]};
+							_ ->
+								{H, S}
+						end;
+					false ->
+						Acc2 =
+							case StepNumber + I == ResetStepNumber of
+								true ->
+									crypto:hash(sha256, << Acc/binary, ResetSeed/binary >>);
+								false ->
+									Acc
+							end,
+						H = hash(?VDF_DIFFICULTY, Salt, Acc2),
+						case (StepNumber + I) rem 25 of
+							0 ->
+								{H, [H | S]};
+							_ ->
+								{H, S}
+						end
+				end
+			end,
+			{Output, []},
+			lists:seq(0, Size - 1)
+		),
+	case Buffer of
+		<< NextOutput/binary >> when N == 1 ->
+			vdf_debug_verify(StepNumber + Size, NextOutput, Groups, ResetStepNumber,
+					ResetSeed, Steps2 ++ Steps);
+		<< NextOutput:32/binary, Rest/binary >> when N > 0 ->
+			vdf_debug_verify(StepNumber + Size, NextOutput,
+					[{Size, N - 1, Rest} | Groups], ResetStepNumber, ResetSeed,
+					Steps2 ++ Steps);
+		_ ->
+			false
+	end.
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
 
 jit() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -244,7 +376,7 @@ bulk_hash_fast_nif(
 	_Nonce2,
 	_BDS,
 	_PrevH,
-	_SearchSpaceUpperBound,
+	_PartitionUpperBound,
 	_PIDs,
 	_ProxyPIDs,
 	_Ref,
@@ -280,7 +412,7 @@ bulk_hash_fast_long_with_entropy_nif(
 	_Nonce2,
 	_BDS,
 	_PrevH,
-	_SearchSpaceUpperBound,
+	_PartitionUpperBound,
 	_PIDs,
 	_ProxyPIDs,
 	_Ref,
@@ -293,6 +425,16 @@ bulk_hash_fast_long_with_entropy_nif(
 	erlang:nif_error(nif_not_loaded).
 
 release_state_nif(_State) ->
+	erlang:nif_error(nif_not_loaded).
+
+vdf_sha2_nif(_Salt, _PrevState, _CheckpointCount, _skipCheckpointCount, _Iterations) ->
+	erlang:nif_error(nif_not_loaded).
+vdf_parallel_sha_verify_nif(_Salt, _PrevState, _CheckpointCount, _skipCheckpointCount,
+		_Iterations, _InCheckpoint, _InRes, _MaxThreadCount) ->
+	erlang:nif_error(nif_not_loaded).
+vdf_parallel_sha_verify_with_reset_nif(_Salt, _PrevState, _CheckpointCount,
+		_skipCheckpointCount, _Iterations, _InCheckpoint, _InRes, _ResetSalt, _ResetSeed,
+		_MaxThreadCount) ->
 	erlang:nif_error(nif_not_loaded).
 
 init_nif() ->

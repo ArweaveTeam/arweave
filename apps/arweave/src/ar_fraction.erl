@@ -34,6 +34,8 @@ pow(X, N) ->
 %% @doc Compute the X's power of e by summing up the terms of the Taylor series where
 %% the last term is a multiple of X to the power of P.
 -spec natural_exponent(X::fraction(), P::integer()) -> fraction().
+natural_exponent({0, _Divisor}, _P) ->
+	{1, 1};
 natural_exponent(X, P) ->
 	{natural_exponent_dividend(X, P, 0, 1), natural_exponent_divisor(X, P)}.
 
@@ -65,6 +67,8 @@ multiply({Dividend1, Divisor1}, {Dividend2, Divisor2}) ->
 %% @doc Reduce the fraction until both the divisor and dividend are smaller than
 %% or equal to Max. Return at most Max or at least 1 / Max.
 -spec reduce(D::fraction(), Max::integer()) -> fraction().
+reduce({0, Divisor}, _Max) ->
+	{0, Divisor};
 reduce({Dividend, Divisor}, Max) ->
 	GCD = gcd(Dividend, Divisor),
 	reduce2({Dividend div GCD, Divisor div GCD}, Max).

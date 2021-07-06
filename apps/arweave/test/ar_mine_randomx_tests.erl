@@ -2,7 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include_lib("arweave/include/ar_mine.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 
 -define(ENCODED_KEY, <<"UbkeSd5Det8s6uLyuNJwCDFOZMQFa2zvsdKJ0k694LM">>).
 -define(ENCODED_HASH, <<"QQYWA46qnFENL4OTQdGU8bWBj5OKZ2OOPyynY3izung">>).
@@ -33,8 +33,8 @@ test_pick_recall_byte() ->
 			<<"NYdaNPNU3Nyp74gzKT4JdC5j9aoSrwFlIFUPdOqy7vPtvwBgFle4rLfuyKwhfHlh">>),
 	{ok, ExpectedH0} = ar_mine_randomx:hash_fast_nif(State,
 			<< ExpectedNonce/binary, Segment/binary >>, 0, 0, 0),
-	SearchSpaceUpperBound = 24063907917401,
-	{ok, ExpectedByte} = ar_mine:pick_recall_byte(ExpectedH0, PrevH, SearchSpaceUpperBound),
+	PartitionUpperBound = 24063907917401,
+	{ok, ExpectedByte} = ar_mine:pick_recall_byte(ExpectedH0, PrevH, PartitionUpperBound),
 	Ref = make_ref(),
 	[PID1, PID2] = [spawn_link(
 		fun() ->
@@ -49,9 +49,9 @@ test_pick_recall_byte() ->
 			end
 		end) || _ <- [1, 2]],
 	ok = ar_mine_randomx:bulk_hash_fast_nif(State, ExpectedNonce, ExpectedNonce, Segment, PrevH,
-			binary:encode_unsigned(SearchSpaceUpperBound, big), [PID1], [PID1], Ref, 1, 0, 0, 0),
+			binary:encode_unsigned(PartitionUpperBound, big), [PID1], [PID1], Ref, 1, 0, 0, 0),
 	ok = ar_mine_randomx:bulk_hash_fast_long_with_entropy_nif(State, ExpectedNonce, ExpectedNonce,
-			Segment, PrevH, binary:encode_unsigned(SearchSpaceUpperBound, big), [PID2], [PID2],
+			Segment, PrevH, binary:encode_unsigned(PartitionUpperBound, big), [PID2], [PID2],
 			Ref, 1, 8, 0, 0, 0).
 
 test_randomx_backwards_compatibility(State, Key) ->
@@ -62,14 +62,14 @@ test_randomx_backwards_compatibility(State, Key) ->
     {ok, Hash} = ar_mine_randomx:hash_fast_nif(State, Input, 0, 0, 0),
 	?assertEqual(ExpectedHash, Hash),
 	PrevH = crypto:strong_rand_bytes(48),
-	SearchSpaceUpperBound = 123456789,
+	PartitionUpperBound = 123456789,
 	Ref = make_ref(),
 	PIDs = [spawn_link(
 		fun() ->
 			receive {EncodedByte, HashLocal, NonceLocal, Thread, Ref} ->
 				Byte = binary:decode_unsigned(EncodedByte),
 				{ok, ExpectedByte} = ar_mine:pick_recall_byte(HashLocal, PrevH,
-						SearchSpaceUpperBound),
+						PartitionUpperBound),
 				?assertEqual(ExpectedByte, Byte),
 				?assertEqual(self(), Thread),
 				InputLocal = << NonceLocal/binary, Segment/binary >>,
@@ -81,7 +81,7 @@ test_randomx_backwards_compatibility(State, Key) ->
 			end
 		end) || _ <- [1, 2]],
 	ok = ar_mine_randomx:bulk_hash_fast_nif(State, Nonce, Nonce, Segment, PrevH,
-			binary:encode_unsigned(SearchSpaceUpperBound, big), PIDs, PIDs, Ref, 2, 0, 0, 0),
+			binary:encode_unsigned(PartitionUpperBound, big), PIDs, PIDs, Ref, 2, 0, 0, 0),
 	Diff = binary:encode_unsigned(binary:decode_unsigned(Hash, big) - 1),
     {true, Hash} = ar_mine_randomx:hash_fast_verify_nif(State, Diff, Input, 0, 0, 0),
     false = ar_mine_randomx:hash_fast_verify_nif(State, Hash, Input, 0, 0, 0),
@@ -110,14 +110,14 @@ test_randomx_long(State) ->
 	?assertEqual(ExpectedEntropy, OutEntropy),
 	%% Assert bulk_hash_fast_long_with_entropy_nif produces the same hash.
 	PrevH = crypto:strong_rand_bytes(48),
-	SearchSpaceUpperBound = 123456789,
+	PartitionUpperBound = 123456789,
 	Ref = make_ref(),
 	PIDs = [spawn_link(
 		fun() ->
 			receive {EncodedByte, HashLocal, EntropyLocal, NonceLocal, Thread, Ref} ->
 				Byte = binary:decode_unsigned(EncodedByte),
 				{ok, ExpectedByte} = ar_mine:pick_recall_byte(HashLocal, PrevH,
-						SearchSpaceUpperBound),
+						PartitionUpperBound),
 				?assertEqual(ExpectedByte, Byte),
 				?assertEqual(self(), Thread),
 				InputLocal = << NonceLocal/binary, Segment/binary >>,
@@ -131,7 +131,7 @@ test_randomx_long(State) ->
 			end
 		end) || _ <- [1, 2]],
 	ok = ar_mine_randomx:bulk_hash_fast_long_with_entropy_nif(State, Nonce, Nonce, Segment,
-			PrevH, binary:encode_unsigned(SearchSpaceUpperBound, big), PIDs, PIDs, Ref, 2,
+			PrevH, binary:encode_unsigned(PartitionUpperBound, big), PIDs, PIDs, Ref, 2,
 			8, 0, 0, 0).
 
 test_randomx_pack_unpack(State) ->

@@ -1,7 +1,7 @@
 -module(ar_block_index).
 
 -export([init/1, update/2, member/1, get_list/1, get_list_by_hash/1, get_element_by_height/1,
-		get_block_bounds/1, get_block_bounds/2, get_intersection/2, get_intersection/1]).
+		get_block_bounds/1, get_intersection/2, get_intersection/1]).
 
 %%%===================================================================
 %%% Public interface.
@@ -48,18 +48,6 @@ get_element_by_height(Height) ->
 
 %% @doc Return {BlockStartOffset, BlockEndOffset, TXRoot} where Offset >= BlockStartOffset,
 %% Offset < BlockEndOffset.
-get_block_bounds(Offset, BI) ->
-	%% The get_block_bounds2 check is not strictly necessary on mainnet because
-	%% the given Offset is below the threshold which may be reorganized by construction.
-	%% In tests, however, we set SEARCH_SPACE_UPPER_BOUND_DEPTH=2 and have reorgs that
-	%% are deeper than that.
-	case get_block_bounds2(Offset, BI) of
-		not_found ->
-			get_block_bounds(Offset);
-		Element ->
-			Element
-	end.
-
 get_block_bounds(Offset) ->
 	{WeaveSize, Height, _H, TXRoot} = Key = ets:next(block_index, {Offset, n, n, n}),
 	case Height of
@@ -70,12 +58,21 @@ get_block_bounds(Offset) ->
 			{PrevWeaveSize, WeaveSize, TXRoot}
 	end.
 
-%% @doc Return {Height, {H, WeaveSize, TXRoot}} with the  triplet present in both
+%% @doc Return {Height, {H, WeaveSize, TXRoot}} with the triplet present in both
 %% the cached block index and the given BI or no_intersection.
 get_intersection(Height, _BI) when Height < 0 ->
 	no_intersection;
+get_intersection(_Height, []) ->
+	no_intersection;
 get_intersection(Height, BI) ->
-	get_intersection(Height, BI, catch ets:slot(block_index, Height)).
+	ReverseBI = lists:reverse(BI),
+	[{H, _, _} = Elem | ReverseBI2] = ReverseBI,
+	case catch ets:slot(block_index, Height) of
+		[{{_, Height, H, _} = Entry}] ->
+			get_intersection(Height + 1, Elem, ReverseBI2, ets:next(block_index, Entry));
+		_ ->
+			no_intersection
+	end.
 
 %% @doc Return the {H, WeaveSize, TXRoot} triplet present in both
 %% the cached block index and the given BI or no_intersection.
@@ -137,28 +134,14 @@ get_list_by_hash(_BI, _Key, _Height, H) ->
 	%% right before we reached the end of the table.
 	get_list_by_hash(H).
 
-get_block_bounds2(Offset, [{_, WeaveSize2, TXRoot}, {_, WeaveSize1, _} | _])
-		when Offset >= WeaveSize1, Offset < WeaveSize2 ->
-	{WeaveSize1, WeaveSize2, TXRoot};
-get_block_bounds2(Offset, [_, Element | BI]) ->
-	get_block_bounds2(Offset, [Element | BI]);
-get_block_bounds2(_Offset, _BI) ->
-	not_found.
-
-get_intersection(Height, BI, {'EXIT', _}) ->
-	get_intersection(Height - 1, BI, catch ets:slot(block_index, Height - 1));
-get_intersection(_Height, _BI, '$end_of_table') ->
-	no_intersection;
-get_intersection(Height, [{H, _, _} = Elem | _], {_, Height, H, _}) ->
-	{Height, Elem};
-get_intersection(Height, [{H, _, _} = Elem | _], [{{_, Height, H, _}}]) ->
-	{Height, Elem};
-get_intersection(Height, [_ | BI], [{Elem}]) ->
-	get_intersection(Height - 1, BI, ets:prev(block_index, Elem));
-get_intersection(Height, [_ | BI], Elem) ->
-	get_intersection(Height - 1, BI, ets:prev(block_index, Elem));
-get_intersection(_Height, [], _Elem) ->
-	no_intersection.
+get_intersection(Height, Entry, _ReverseBI, '$end_of_table') ->
+	{Height - 1, Entry};
+get_intersection(Height, Entry, [], _Entry) ->
+	{Height - 1, Entry};
+get_intersection(Height, _Entry, [{H, _, _} = Elem | ReverseBI], {_, Height, H, _} = Entry) ->
+	get_intersection(Height + 1, Elem, ReverseBI, ets:next(block_index, Entry));
+get_intersection(Height, Entry, _ReverseBI, _TableEntry) ->
+	{Height - 1, Entry}.
 
 get_intersection2(_, _, '$end_of_table') ->
 	no_intersection;

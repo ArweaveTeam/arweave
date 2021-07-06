@@ -6,18 +6,21 @@
 -module(ar_node).
 
 -export([get_recent_block_hash_by_height/1, get_blocks/0, get_block_index/0,
-		is_in_block_index/1, get_block_index_and_height/0,
+		get_current_block/0, is_in_block_index/1, get_block_index_and_height/0,
 		get_height/0, get_balance/1, get_last_tx/1, get_wallets/1, get_wallet_list_chunk/2,
 		get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
-		get_ready_for_mining_txs/1,
-		get_current_usd_to_ar_rate/0, get_current_block_hash/0, get_block_index_entry/1,
-		get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0, get_recent_txs_map/0,
-		mine/0, add_tx/1, get_mempool_size/0, get_block_shadow_from_cache/1,
-		get_recent_search_space_upper_bound_by_prev_h/1, get_block_txs_pairs/0]).
+		get_ready_for_mining_txs/1, get_current_usd_to_ar_rate/0, get_current_block_hash/0,
+		get_block_index_entry/1, get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0,
+		get_recent_txs_map/0, mine/0, add_tx/1, get_mempool_size/0,
+		get_block_shadow_from_cache/1, get_recent_partition_upper_bound_by_prev_h/1,
+		get_block_txs_pairs/0, get_partition_upper_bound/1,
+		get_block_from_cache_by_solution_hash/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_mine.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
+
+-include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
 %%% API
@@ -55,6 +58,12 @@ get_block_index() ->
 		_ ->
 			[]
 	end.
+
+%% @doc Return the current tip block. Assume the node has joined the network and
+%% initialized the state.
+get_current_block() ->
+	[{_, Current}] = ets:lookup(node_state, current),
+	ar_block_cache:get(block_cache, Current).
 
 get_block_index_and_height() ->
 	Props =
@@ -244,19 +253,23 @@ get_block_shadow_from_cache(H) ->
 
 %% @doc Get the current balance of a given wallet address.
 %% The balance returned is in relation to the nodes current wallet list.
-%% @end
-get_balance(Addr) when ?IS_ADDR(Addr) ->
-	ar_wallets:get_balance(Addr);
-get_balance(WalletID) ->
-	get_balance(ar_wallet:to_address(WalletID)).
+get_balance({SigType, PubKey}) ->
+	get_balance(ar_wallet:to_address(PubKey, SigType));
+get_balance(MaybeRSAPub) when byte_size(MaybeRSAPub) == 512 ->
+	%% A legacy feature where we may search the public key instead of address.
+	ar_wallets:get_balance(ar_wallet:to_rsa_address(MaybeRSAPub));
+get_balance(Addr) ->
+	ar_wallets:get_balance(Addr).
 
 %% @doc Get the last tx id associated with a given wallet address.
 %% Should the wallet not have made a tx the empty binary will be returned.
-%% @end
-get_last_tx(Addr) when ?IS_ADDR(Addr) ->
-	{ok, ar_wallets:get_last_tx(Addr)};
-get_last_tx(WalletID) ->
-	get_last_tx(ar_wallet:to_address(WalletID)).
+get_last_tx({SigType, PubKey}) ->
+	get_last_tx(ar_wallet:to_address(PubKey, SigType));
+get_last_tx(MaybeRSAPub) when byte_size(MaybeRSAPub) == 512 ->
+	%% A legacy feature where we may search the public key instead of address.
+	get_last_tx(ar_wallet:to_rsa_address(MaybeRSAPub));
+get_last_tx(Addr) ->
+	{ok, ar_wallets:get_last_tx(Addr)}.
 
 %% @doc Return a map address => {balance, last tx} for the given addresses.
 get_wallets(Addresses) ->
@@ -276,46 +289,109 @@ mine() ->
 add_tx(TX)->
 	ar_events:send(tx, {ready_for_mining, TX}).
 
-%% @doc Return the search space upper bound for the block following the block with the
-%% given hash. Only works for the recent ?STORE_BLOCKS_BEHIND_CURRENT blocks.
-%% Return not_found if the given hash is not found in the block cache.
-get_recent_search_space_upper_bound_by_prev_h(H) ->
-	get_recent_search_space_upper_bound_by_prev_h(H, 0).
+get_recent_partition_upper_bound_by_prev_h(H) ->
+	get_recent_partition_upper_bound_by_prev_h(H, 0).
 
 %% @doc Get the list of the recent {H, TXIDs} pairs sorted from latest to earliest.
 get_block_txs_pairs() ->
 	[{_, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 	BlockTXPairs.
 
-get_recent_search_space_upper_bound_by_prev_h(H, Diff) ->
+get_partition_upper_bound(BI) ->
+	PartitionUpperBoundDepth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
+	case length(BI) < PartitionUpperBoundDepth of
+		true ->
+			element(2, lists:last(BI));
+		false ->
+			element(2, lists:nth(PartitionUpperBoundDepth, BI))
+	end.
+
+%% @doc Return a block from the block cache with the given solution hash.
+%% Return not_found if one is not found. If there are several blocks with the
+%% same solution hash, one of them is returned, the choice is not defined.
+get_block_from_cache_by_solution_hash(H) ->
+	ar_block_cache:get_by_solution_hash(block_cache, H).
+
+get_recent_partition_upper_bound_by_prev_h(H, Diff) ->
 	case ar_block_cache:get_block_and_status(block_cache, H) of
 		{_B, on_chain} ->
 			[{_, BI}] = ets:lookup(node_state, recent_block_index),
-			get_recent_search_space_upper_bound_by_prev_h(H, Diff, BI);
-		{#block{ previous_block = PrevH, weave_size = WeaveSize }, _} ->
+			Genesis = length(BI) =< ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
+			get_recent_partition_upper_bound_by_prev_h(H, Diff, BI, Genesis);
+		{#block{ indep_hash = H2, previous_block = PrevH, weave_size = WeaveSize }, _} ->
 			case Diff == ?SEARCH_SPACE_UPPER_BOUND_DEPTH - 1 of
 				true ->
-					WeaveSize;
+					{H2, WeaveSize};
 				false ->
-					get_recent_search_space_upper_bound_by_prev_h(PrevH, Diff + 1)
+					get_recent_partition_upper_bound_by_prev_h(PrevH, Diff + 1)
 			end;
 		not_found ->
 			?LOG_INFO([{event, prev_block_not_found}, {h, ar_util:encode(H)}, {depth, Diff}]),
 			not_found
 	end.
 
-get_recent_search_space_upper_bound_by_prev_h(H, Diff, [{H, _, _} | _] = BI) ->
-	SearchSpaceUpperBoundDepth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
-	Depth = SearchSpaceUpperBoundDepth - Diff,
+get_recent_partition_upper_bound_by_prev_h(H, Diff, [{H, _, _} | _] = BI, Genesis) ->
+	PartitionUpperBoundDepth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
+	Depth = PartitionUpperBoundDepth - Diff,
 	case length(BI) < Depth of
 		true ->
-			element(2, lists:last(BI));
+			case Genesis of
+				true ->
+					{H2, PartitionUpperBound, _TXRoot} = lists:last(BI),
+					{H2, PartitionUpperBound};
+				false ->
+					not_found
+			end;
 		false ->
-			element(2, lists:nth(Depth, BI))
+			{H2, PartitionUpperBound, _TXRoot} = lists:nth(Depth, BI),
+			{H2, PartitionUpperBound}
 	end;
-get_recent_search_space_upper_bound_by_prev_h(H, Diff, [_ | BI]) ->
-	get_recent_search_space_upper_bound_by_prev_h(H, Diff, BI);
-get_recent_search_space_upper_bound_by_prev_h(H, Diff, []) ->
+get_recent_partition_upper_bound_by_prev_h(H, Diff, [_ | BI], Genesis) ->
+	get_recent_partition_upper_bound_by_prev_h(H, Diff, BI, Genesis);
+get_recent_partition_upper_bound_by_prev_h(H, Diff, [], _Genesis) ->
 	?LOG_INFO([{event, prev_block_not_found_when_scanning_recent_block_index},
 			{h, ar_util:encode(H)}, {depth, Diff}]),
 	not_found.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+get_recent_partition_upper_bound_by_prev_h_short_cache_test() ->
+	ar_block_cache:new(block_cache, B0 = test_block(1, 1, <<>>)),
+	H0 = B0#block.indep_hash,
+	BI = lists:reverse([{H0, 20, <<>>}
+			| [{crypto:strong_rand_bytes(48), 20, <<>>} || _ <- lists:seq(1, 99)]]),
+	ets:insert(node_state, {recent_block_index, BI}),
+	?assertEqual(not_found, get_recent_partition_upper_bound_by_prev_h(B0#block.indep_hash)),
+	?assertEqual(not_found,
+			get_recent_partition_upper_bound_by_prev_h(crypto:strong_rand_bytes(48))),
+	{HPrev, _, _} = lists:nth(length(BI) - ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 2, BI),
+	?assertEqual(not_found, get_recent_partition_upper_bound_by_prev_h(HPrev)),
+	{H, _, _} = lists:nth(length(BI) - ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1, BI),
+	?assertEqual(not_found, get_recent_partition_upper_bound_by_prev_h(H)),
+	add_blocks(tl(lists:reverse(BI)), 2, 2, H0),
+	?assertEqual(not_found, get_recent_partition_upper_bound_by_prev_h(HPrev)),
+	?assertEqual({H0, 20}, get_recent_partition_upper_bound_by_prev_h(H)),
+	{HNext, _, _} = lists:nth(length(BI) - ?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI),
+	{H1, _, _} = lists:nth(99, BI),
+	?assertEqual({H1, 20}, get_recent_partition_upper_bound_by_prev_h(HNext)).
+
+get_recent_partition_upper_bound_by_prev_h_genesis_test() ->
+	ar_block_cache:new(block_cache, B0 = test_block(0, 1, <<>>)),
+	H0 = B0#block.indep_hash,
+	ets:insert(node_state, {recent_block_index, [{H0, 20, <<>>}]}),
+	?assertEqual({H0, 20}, get_recent_partition_upper_bound_by_prev_h(H0)).
+
+test_block(Height, CDiff, PrevH) ->
+	test_block(crypto:strong_rand_bytes(48), Height, CDiff, PrevH).
+
+test_block(H, Height, CDiff, PrevH) ->
+	#block{ indep_hash = H, height = Height, cumulative_diff = CDiff, previous_block = PrevH }.
+
+add_blocks([{H, _, _} | BI], Height, CDiff, PrevH) ->
+	ar_block_cache:add_validated(block_cache, test_block(H, Height, CDiff, PrevH)),
+	ar_block_cache:mark_tip(block_cache, H),
+	add_blocks(BI, Height + 1, CDiff + 1, H);
+add_blocks([], _Height, _CDiff, _PrevH) ->
+	ok.

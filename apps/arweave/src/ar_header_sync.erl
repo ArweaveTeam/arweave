@@ -63,7 +63,7 @@ init([]) ->
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(tx),
 	{ok, Config} = application:get_env(arweave, config),
-	{ok, DB} = ar_kv:open("ar_header_sync_db"),
+	{ok, DB} = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_header_sync_db")),
 	{SyncRecord, Height, CurrentBI} =
 		case ar_storage:read_term(header_sync_state) of
 			not_found ->
@@ -86,7 +86,7 @@ init([]) ->
 			db = DB,
 			sync_record = SyncRecord,
 			height = Height,
-			block_index = CurrentBI,
+			block_index = lists:sublist(CurrentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS),
 			retry_queue = queue:new(),
 			retry_record = ar_intervals:new(),
 			sync_disk_space = have_free_space()
@@ -100,8 +100,15 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 			height = Height,
 			block_index = lists:sublist(RecentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS)
 		},
+	StartHeight =
+		case length(CurrentBI) < ?HEADER_SYNC_TRACK_CONFIRMATIONS of
+			true ->
+				0;
+			false ->
+				PrevHeight - ?HEADER_SYNC_TRACK_CONFIRMATIONS + 1
+		end,
 	State3 =
-		case {CurrentBI, ar_block_index:get_intersection(PrevHeight, CurrentBI)} of
+		case {CurrentBI, ar_block_index:get_intersection(StartHeight, CurrentBI)} of
 			{[], _} ->
 				State2;
 			{_, {PrevHeight, _}} ->
@@ -114,8 +121,8 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 						retry_record = ar_intervals:cut(RetryRecord, IntersectionHeight) },
 				ok = store_sync_state(S),
 				%% Delete from the kv store only after the sync record is saved - no matter
-				%% what happens to the process, if a height is in the record, it must be present
-				%% in the kv store.
+				%% what happens to the process, if a height is in the record, it must be
+				%% present in the kv store.
 				ok = ar_kv:delete_range(DB, << (IntersectionHeight + 1):256 >>,
 						<< (PrevHeight + 1):256 >>),
 				S
@@ -138,7 +145,7 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 	State2 = State#state{
 		sync_record = ar_intervals:cut(SyncRecord, BaseHeight),
 		retry_record = ar_intervals:cut(RetryRecord, BaseHeight),
-		block_index = RecentBI,
+		block_index = lists:sublist(RecentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS),
 		height = Height
 	},
 	State3 = element(2, add_block(B, State2)),
@@ -489,9 +496,9 @@ download_block(Peers, H, H2, TXRoot) ->
 			BH =
 				case Height >= Fork_2_0 of
 					true ->
-						ar_weave:indep_hash(B);
+						ar_block:indep_hash(B);
 					false ->
-						ar_weave:indep_hash(
+						ar_block:indep_hash(
 							B#block{ tx_root = TXRoot, txs = lists:sort(B#block.txs) }
 						)
 				end,

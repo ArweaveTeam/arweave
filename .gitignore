@@ -20,3 +20,5 @@ wallet_lists
 wallets
 logs
 ebin
+metrics_master
+metrics_slave

@@ -3,14 +3,14 @@
 -behaviour(gen_server).
 
 -export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
-		write_tx_data/1, write_tx_data/2, read_tx/1, read_tx_data/1,
-		update_confirmation_index/1, get_tx_confirmation_data/1, get_wallet_list_range/2,
-		read_wallet_list/1, write_wallet_list/4, write_wallet_list/2,
+		read_tx/1, read_tx_data/1, update_confirmation_index/1, get_tx_confirmation_data/1,
+		get_wallet_list_range/2, read_wallet_list/1, write_wallet_list/4, write_wallet_list/2,
 		write_wallet_list_chunk/3, write_block_index/1, read_block_index/0,
 		delete_blacklisted_tx/1, get_free_space/1, lookup_tx_filename/1,
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
 		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
-		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1]).
+		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1,
+		migrate_tx_record/1, migrate_block_record/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -118,10 +118,10 @@ read_block({H, _, _}) ->
 	read_block(H);
 read_block(BH) ->
 	case ar_disk_cache:lookup_block_filename(BH) of
-		{ok, Filename} ->
+		{ok, {Filename, Encoding}} ->
 			%% The cache keeps a rotated number of recent headers when the
 			%% node is out of disk space.
-			read_block_from_file(Filename);
+			read_block_from_file(Filename, Encoding);
 		_ ->
 			case catch ets:lookup(?MODULE, block_db) of
 				[{_, DB}] ->
@@ -130,11 +130,11 @@ read_block(BH) ->
 							case lookup_block_filename(BH) of
 								unavailable ->
 									unavailable;
-								Filename ->
-									read_block_from_file(Filename)
+								{Filename, Encoding} ->
+									read_block_from_file(Filename, Encoding)
 							end;
 						{ok, V} ->
-							binary_to_term(V);
+							parse_block_kv_binary(V);
 						{error, Reason} ->
 							?LOG_WARNING([{event, error_reading_block_from_kv_storage},
 									{block, ar_util:encode(BH)},
@@ -162,16 +162,20 @@ get_free_space(Dir) ->
 
 lookup_block_filename(H) ->
 	{ok, Config} = application:get_env(arweave, config),
-	Name = filename:join([
-		Config#config.data_dir,
-		?BLOCK_DIR,
-		binary_to_list(ar_util:encode(H)) ++ ".json"
-	]),
-	case is_file(Name) of
+	Name = filename:join([Config#config.data_dir, ?BLOCK_DIR,
+			binary_to_list(ar_util:encode(H))]),
+	NameJSON = iolist_to_binary([Name, ".json"]),
+	case is_file(NameJSON) of
 		true ->
-			Name;
+			{NameJSON, json};
 		false ->
-			unavailable
+			NameBin = iolist_to_binary([Name, ".bin"]),
+			case is_file(NameBin) of
+				true ->
+					{NameBin, binary};
+				false ->
+					unavailable
+			end
 	end.
 
 delete_wallet_list(RootHash) ->
@@ -225,7 +229,7 @@ delete_blacklisted_tx(Hash) ->
 		[{_, DB}] ->
 			case ar_kv:get(DB, Hash) of
 				{ok, V} ->
-					TX = binary_to_term(V),
+					TX = parse_tx_kv_binary(V),
 					case TX#tx.format == 1 andalso TX#tx.data_size > 0 of
 						true ->
 							ar_data_sync:request_tx_data_removal(Hash),
@@ -266,6 +270,59 @@ delete_blacklisted_tx(Hash) ->
 			end
 	end.
 
+parse_tx_kv_binary(Bin) ->
+	case catch ar_serialize:binary_to_tx(Bin) of
+		{ok, TX} ->
+			TX;
+		_ ->
+			migrate_tx_record(binary_to_term(Bin))
+	end.
+
+%% Convert the stored tx record to its latest state in the code
+%% (assign the default values to all missing fields). Since the version introducing
+%% the fork 2.6, the transactions are serialized via ar_serialize:tx_to_binary/1, which
+%% is maintained compatible with all past versions, so this code is only used
+%% on the nodes synced before the corresponding release.
+migrate_tx_record(#tx{} = TX) ->
+	TX;
+migrate_tx_record({tx, Format, ID, LastTX, Owner, Tags, Target, Quantity, Data,
+		DataSize, DataTree, DataRoot, Signature, Reward}) ->
+	#tx{ format = Format, id = ID, last_tx = LastTX,
+			owner = Owner, tags = Tags, target = Target, quantity = Quantity,
+			data = Data, data_size = DataSize, data_root = DataRoot,
+			signature = Signature, signature_type = ?DEFAULT_KEY_TYPE,
+			reward = Reward, data_tree = DataTree }.
+
+parse_block_kv_binary(Bin) ->
+	case catch ar_serialize:binary_to_block(Bin) of
+		{ok, B} ->
+			B;
+		_ ->
+			migrate_block_record(binary_to_term(Bin))
+	end.
+
+%% Convert the stored block record to its latest state in the code
+%% (assign the default values to all missing fields). Since the version introducing
+%% the fork 2.6, the blocks are serialized via ar_serialize:block_to_binary/1, which
+%% is maintained compatible with all past block versions, so this code is only used
+%% on the nodes synced before the corresponding release.
+migrate_block_record(#block{} = B) ->
+	B;
+migrate_block_record({block, Nonce, PrevH, TS, Last, Diff, Height, Hash, H,
+		TXs, TXRoot, TXTree, HL, HLMerkle, WL, RewardAddr, Tags, RewardPool,
+		WeaveSize, BlockSize, CDiff, SizeTaggedTXs, PoA, Rate, ScheduledRate,
+		Packing_2_5_Threshold, StrictDataSplitThreshold}) ->
+	#block{ nonce = Nonce, previous_block = PrevH, timestamp = TS,
+			last_retarget = Last, diff = Diff, height = Height, hash = Hash,
+			indep_hash = H, txs = TXs, tx_root = TXRoot, tx_tree = TXTree,
+			hash_list = HL, hash_list_merkle = HLMerkle, wallet_list = WL,
+			reward_addr = RewardAddr, tags = Tags, reward_pool = RewardPool,
+			weave_size = WeaveSize, block_size = BlockSize, cumulative_diff = CDiff,
+			size_tagged_txs = SizeTaggedTXs, poa = PoA, usd_to_ar_rate = Rate,
+			scheduled_usd_to_ar_rate = ScheduledRate,
+			packing_2_5_threshold = Packing_2_5_Threshold,
+			strict_data_split_threshold = StrictDataSplitThreshold }.
+
 write_tx(TXs) when is_list(TXs) ->
 	lists:foldl(
 		fun (TX, ok) ->
@@ -276,7 +333,7 @@ write_tx(TXs) when is_list(TXs) ->
 		ok,
 		TXs
 	);
-write_tx(#tx{ format = Format } = TX) ->
+write_tx(#tx{ format = Format, id = TXID } = TX) ->
 	case write_tx_header(TX) of
 		ok ->
 			DataSize = byte_size(TX#tx.data),
@@ -284,35 +341,35 @@ write_tx(#tx{ format = Format } = TX) ->
 				true ->
 					case {DataSize == TX#tx.data_size, Format} of
 						{false, 2} ->
-							?LOG_ERROR([
-								{event, failed_to_store_tx_data},
-								{reason, size_mismatch},
-								{tx, ar_util:encode(TX#tx.id)}
-							]),
+							?LOG_ERROR([{event, failed_to_store_tx_data},
+									{reason, size_mismatch}, {tx, ar_util:encode(TX#tx.id)}]),
 							ok;
 						{true, 1} ->
-							%% v1 data is considered to be a part of the header therefore
-							%% if we fail to store it, we return an error here.
-							%% We have already checked whether the transaction is blacklisted
-							%% prior to calling this function, see is_blacklisted/1.
-							write_tx_data(no_expected_data_root, TX#tx.data);
+							case write_tx_data(no_expected_data_root, TX#tx.data, TXID) of
+								ok ->
+									ok;
+								{error, Reason} ->
+									?LOG_WARNING([{event, failed_to_store_tx_data},
+											{reason, Reason}, {tx, ar_util:encode(TX#tx.id)}]),
+									%% We have stored the data in the tx_db table
+									%% so we return ok here.
+									ok
+							end;
 						{true, 2} ->
 							case ar_tx_blacklist:is_tx_blacklisted(TX#tx.id) of
 								true ->
 									ok;
 								false ->
-									case write_tx_data(TX#tx.data_root, TX#tx.data) of
+									case write_tx_data(TX#tx.data_root, TX#tx.data, TXID) of
 										ok ->
 											ok;
 										{error, Reason} ->
 											%% v2 data is not part of the header. We have to
 											%% report success here even if we failed to store
 											%% the attached data.
-											?LOG_WARNING([
-												{event, failed_to_store_tx_data},
-												{reason, Reason},
-												{tx, ar_util:encode(TX#tx.id)}
-											]),
+											?LOG_WARNING([{event, failed_to_store_tx_data},
+													{reason, Reason},
+													{tx, ar_util:encode(TX#tx.id)}]),
 											ok
 									end
 							end
@@ -327,28 +384,32 @@ write_tx(#tx{ format = Format } = TX) ->
 write_tx_header(TX) ->
 	case ets:lookup(?MODULE, tx_db) of
 		[{_, DB}] ->
-			ar_kv:put(DB, TX#tx.id, term_to_binary(TX#tx{ data = <<>> }));
+			TX2 =
+				case TX#tx.format of
+					1 ->
+						TX;
+					_ ->
+						TX#tx{ data = <<>> }
+				end,
+			ar_kv:put(DB, TX#tx.id, ar_serialize:tx_to_binary(TX2));
 		_ ->
 			{error, not_initialized}
 	end.
 
-write_tx_data(Data) ->
-	write_tx_data(no_expected_data_root, Data).
-
-write_tx_data(ExpectedDataRoot, Data) ->
+write_tx_data(ExpectedDataRoot, Data, TXID) ->
 	Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, Data),
 	SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
 	SizeTaggedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks),
 	case {ExpectedDataRoot, ar_merkle:generate_tree(SizeTaggedChunkIDs)} of
 		{no_expected_data_root, {DataRoot, DataTree}} ->
-			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks);
+			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, TXID);
 		{_, {ExpectedDataRoot, DataTree}} ->
-			write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks);
+			write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, TXID);
 		_ ->
 			{error, [invalid_data_root]}
 	end.
 
-write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
+write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, TXID) ->
 	Errors = lists:foldl(
 		fun
 			({<<>>, _}, Acc) ->
@@ -374,6 +435,9 @@ write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
 					ok ->
 						Acc;
 					{error, Reason} ->
+						?LOG_WARNING([{event, failed_to_write_tx_chunk},
+								{tx, ar_util:encode(TXID)},
+								{reason, io_lib:format("~p", [Reason])}]),
 						[Reason | Acc]
 				end
 		end,
@@ -409,18 +473,15 @@ read_tx2(ID) ->
 				not_found ->
 					read_tx_from_file(ID);
 				{ok, Binary} ->
-					TX = binary_to_term(Binary),
-					case TX#tx.format == 1 andalso TX#tx.data_size > 0 of
+					TX = parse_tx_kv_binary(Binary),
+					case TX#tx.format == 1 andalso TX#tx.data_size > 0
+							andalso byte_size(TX#tx.data) == 0 of
 						true ->
 							case read_tx_data_from_kv_storage(TX#tx.id) of
 								{ok, Data} ->
 									TX#tx{ data = Data };
 								Error ->
-									%% When a v1 tx is written its data is submitted
-									%% to ar_data_sync where it first enters the disk pool.
-									%% It is expected we may not yet find the data here
-									%% as it may still be in the disk pool.
-									?LOG_DEBUG([{event, error_reading_tx_from_kv_storage},
+									?LOG_ERROR([{event, error_reading_tx_from_kv_storage},
 											{tx, ar_util:encode(ID)},
 											{error, io_lib:format("~p", [Error])}]),
 									unavailable
@@ -430,8 +491,7 @@ read_tx2(ID) ->
 					end
 			end;
 		_ ->
-			?LOG_WARNING([{event, cannot_read_transaction},
-					{tx, ar_util:encode(ID)},
+			?LOG_WARNING([{event, cannot_read_transaction}, {tx, ar_util:encode(ID)},
 					{reason, kv_storage_not_initialized}]),
 			unavailable
 	end.
@@ -632,6 +692,8 @@ get_wallet_list_range(Tree, Cursor) ->
 	end.
 
 %% @doc Read a given wallet list (by hash) from the disk.
+read_wallet_list(<<>>) ->
+	{ok, ar_patricia_tree:new()};
 read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
 	case read_wallet_list_chunk(WalletListHash) of
 		not_found ->
@@ -746,9 +808,12 @@ init([]) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	ensure_directories(Config#config.data_dir),
-	{ok, DB} = ar_kv:open_without_column_families("ar_storage_tx_confirmation_db", []),
-	{ok, TXDB} = ar_kv:open_without_column_families("ar_storage_tx_db", []),
-	{ok, BlockDB} = ar_kv:open_without_column_families("ar_storage_block_db", []),
+	{ok, DB} = ar_kv:open_without_column_families(
+			filename:join(?ROCKS_DB_DIR, "ar_storage_tx_confirmation_db"), []),
+	{ok, TXDB} = ar_kv:open_without_column_families(
+			filename:join(?ROCKS_DB_DIR, "ar_storage_tx_db"), []),
+	{ok, BlockDB} = ar_kv:open_without_column_families(
+			filename:join(?ROCKS_DB_DIR, "ar_storage_block_db"), []),
 	ets:insert(?MODULE, [{tx_confirmation_db, DB}, {tx_db, TXDB}, {block_db, BlockDB}]),
 	{ok, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = BlockDB }}.
 
@@ -787,8 +852,8 @@ write_block(B) ->
 		[{_, DB}] ->
 			TXIDs = lists:map(fun(TXID) when is_binary(TXID) -> TXID;
 					(#tx{ id = TXID }) -> TXID end, B#block.txs),
-			ar_kv:put(DB, B#block.indep_hash, term_to_binary(B#block{
-					hash_list = unset, size_tagged_txs = unset, txs = TXIDs }));
+			ar_kv:put(DB, B#block.indep_hash, ar_serialize:block_to_binary(B#block{
+					txs = TXIDs }));
 		_ ->
 			{error, not_initialized}
 	end.
@@ -807,10 +872,15 @@ write_full_block2(BShadow, TXs) ->
 			Error
 	end.
 
-read_block_from_file(Filename) ->
+read_block_from_file(Filename, Encoding) ->
 	case read_file_raw(Filename) of
-		{ok, JSON} ->
-			parse_block_json(JSON);
+		{ok, Bin} ->
+			case Encoding of
+				json ->
+					parse_block_json(Bin);
+				binary ->
+					parse_block_binary(Bin)
+			end;
 		{error, Reason} ->
 			?LOG_WARNING([{event, error_reading_block},
 					{error, io_lib:format("~p", [Reason])}]),
@@ -830,6 +900,16 @@ parse_block_json(JSON) ->
 			end;
 		Error ->
 			?LOG_WARNING([{event, error_parsing_block_json},
+					{error, io_lib:format("~p", [Error])}]),
+			unavailable
+	end.
+
+parse_block_binary(Bin) ->
+	case catch ar_serialize:binary_to_block(Bin) of
+		{ok, B} ->
+			B;
+		Error ->
+			?LOG_WARNING([{event, error_parsing_block_bin},
 					{error, io_lib:format("~p", [Error])}]),
 			unavailable
 	end.
@@ -1009,17 +1089,16 @@ store_and_retrieve_block_test_() ->
 	{timeout, 20, fun test_store_and_retrieve_block/0}.
 
 test_store_and_retrieve_block() ->
-	BI0 = [B0] = ar_weave:init([]),
+	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
-	?assertEqual(
-		B0#block{
-			hash_list = unset,
-			size_tagged_txs = unset
-		}, read_block(B0#block.indep_hash)),
-	?assertEqual(
-		B0#block{ hash_list = unset, size_tagged_txs = unset },
-		read_block(B0#block.height, ar_weave:generate_block_index(BI0))
-	),
+	TXIDs = [TX#tx.id || TX <- B0#block.txs],
+	FetchedB0 = read_block(B0#block.indep_hash),
+	FetchedB01 = FetchedB0#block{ txs = [tx_id(TX) || TX <- FetchedB0#block.txs] },
+	FetchedB02 = read_block(B0#block.height, [{B0#block.indep_hash, B0#block.weave_size,
+			B0#block.tx_root}]),
+	FetchedB03 = FetchedB02#block{ txs = [tx_id(TX) || TX <- FetchedB02#block.txs] },
+	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs }, FetchedB01),
+	?assertEqual(B0#block{ size_tagged_txs = unset, txs = TXIDs }, FetchedB03),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
 	ar_node:mine(),
@@ -1036,6 +1115,11 @@ test_store_and_retrieve_block() ->
 	?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(BH1)),
 	?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(2, BI1)).
 
+tx_id(#tx{ id = TXID }) ->
+	TXID;
+tx_id(TXID) ->
+	TXID.
+
 store_and_retrieve_block_block_index_test() ->
 	RandomEntry =
 		fun() ->
@@ -1049,11 +1133,12 @@ store_and_retrieve_block_block_index_test() ->
 
 store_and_retrieve_wallet_list_test() ->
 	[B0] = ar_weave:init(),
+	[TX] = B0#block.txs,
+	Addr = ar_wallet:to_address(TX#tx.owner, {?RSA_SIGN_ALG, 65537}),
 	write_block(B0),
 	Height = B0#block.height,
 	RewardAddr = B0#block.reward_addr,
-	ExpectedWL =
-		ar_patricia_tree:from_proplist([{A, {B, T}} || {A, B, T} <- ar_util:genesis_wallets()]),
+	ExpectedWL = ar_patricia_tree:from_proplist([{Addr, {0, TX#tx.id}}]),
 	{WalletListHash, _} = ar_block:hash_wallet_list(Height, RewardAddr, ExpectedWL),
 	{ok, ActualWL} = read_wallet_list(WalletListHash),
 	assert_wallet_trees_equal(ExpectedWL, ActualWL).

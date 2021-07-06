@@ -6,6 +6,7 @@
 extern "C" {
 #endif
 
+RANDOMX_EXPORT void randomx_calculate_hash_long(randomx_vm *machine, const unsigned char *input, const size_t inputSize, unsigned char *output, const int randomxProgramCount);
 RANDOMX_EXPORT void randomx_calculate_hash_long_with_entropy(randomx_vm *machine, const unsigned char *input, const size_t inputSize, unsigned char *output, unsigned char *outputEntropy, const int randomxProgramCount);
 RANDOMX_EXPORT void randomx_calculate_hash_long_with_entropy_first(randomx_vm* machine, const void* input, size_t inputSize);
 RANDOMX_EXPORT void randomx_calculate_hash_long_with_entropy_next(randomx_vm* machine, const void* nextInput, size_t nextInputSize, void* output, void *outputEntropy, const int randomxProgramCount);

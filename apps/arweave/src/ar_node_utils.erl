@@ -1,12 +1,10 @@
 %%% @doc Different utility functions for node and node worker.
 -module(ar_node_utils).
 
--export([apply_mining_reward/3, apply_tx/3, apply_txs/3, update_wallets/5, validate/7]).
+-export([apply_mining_reward/3, apply_tx/3, apply_txs/3, update_wallets/5, validate/6]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_mine.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -36,10 +34,10 @@ apply_txs(WalletList, TXs, Height) ->
 		TXs
 	).
 
-%% @doc Update the wallets by applying the new transactions and the mining reward.
-%% Return the new reward pool and wallets. It is sufficient to provide the source
-%% and the destination wallets of the transactions and the reward wallet.
-%% @end
+%% @doc Update the wallets (accounts) by applying the new transactions and the mining reward.
+%% Return the new endowment pool, the miner reward, and updated accounts. It is sufficient
+%% to provide the source and the destination accounts of the transactions and the miner's
+%% account.
 update_wallets(NewB, Wallets, RewardPool, Rate, Height) ->
 	TXs = NewB#block.txs,
 	{FinderReward, NewRewardPool} =
@@ -59,18 +57,17 @@ update_wallets(NewB, Wallets, RewardPool, Rate, Height) ->
 			NewB#block.reward_addr,
 			FinderReward
 		),
-	{NewRewardPool, UpdatedWallets}.
+	{NewRewardPool, FinderReward, UpdatedWallets}.
 
-%% @doc Validate a new block, given the previous block, the wallets of the source
-%% and destination addresses and the reward wallet from the previous block,
-%% the mapping between block hashes and transaction identifiers of the recent blocks,
-%% and the search space upper bound.
-validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, RecentBI, SearchSpaceUpperBound) ->
+%% @doc Validate a block. The block has been already partially validated before gossip so
+%% we only validate here what we did not validate then. Also, we do not validate the
+%% nonce limiter chain here. Finally, the 'wallet_list', 'reward_pool', and 'reward' fields
+%% are validated in ar_node_worker:validate_wallet_list/5.
+validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 	?LOG_INFO([{event, validating_block}, {hash, ar_util:encode(NewB#block.indep_hash)}]),
 	case timer:tc(
 		fun() ->
-			do_validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, RecentBI,
-					SearchSpaceUpperBound)
+			do_validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)
 		end
 	) of
 		{TimeTaken, valid} ->
@@ -99,12 +96,13 @@ alter_wallet(Wallets, Target, Adjustment) ->
 
 do_apply_tx(
 		Wallets,
-		TX = #tx {
+		TX = #tx{
 			last_tx = Last,
-			owner = From
+			owner = From,
+			signature_type = SigType
 		},
 		Height) ->
-	Addr = ar_wallet:to_address(From),
+	Addr = ar_wallet:to_address(From, SigType),
 	Fork_1_8 = ar_fork:height_1_8(),
 	case {Height, maps:get(Addr, Wallets, not_found)} of
 		{H, {_Balance, _LastTX}} when H >= Fork_1_8 ->
@@ -126,10 +124,11 @@ update_sender_balance(
 		#tx {
 			id = ID,
 			owner = From,
+			signature_type = SigType,
 			quantity = Qty,
 			reward = Reward
 		}) ->
-	Addr = ar_wallet:to_address(From),
+	Addr = ar_wallet:to_address(From, SigType),
 	case maps:get(Addr, Wallets, not_found) of
 		{Balance, _LastTX} ->
 			maps:put(Addr, {Balance - (Qty + Reward), ID}, Wallets);
@@ -152,76 +151,53 @@ update_recipient_balance(
 			maps:put(To, {OldBalance + Qty, LastTX}, Wallets)
 	end.
 
-do_validate(NewB, OldB, Wallets, BlockAnchors, RecentTXMap, RecentBI, SearchSpaceUpperBound) ->
-	validate_block(height, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap, RecentBI,
-			SearchSpaceUpperBound}).
+do_validate(NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
+	validate_block(weave_size, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
+			PartitionUpperBound}).
 
 %% @doc Return the miner reward and the new endowment pool.
 get_miner_reward_and_endowment_pool(Args) ->
-	{
-		RewardPool,
-		TXs,
-		RewardAddr,
-		WeaveSize,
-		Height,
-		Diff,
-		Timestamp,
-		Rate
-	} = Args,
-	case Height >= ar_fork:height_2_4() of
-		true ->
-			ar_pricing:get_miner_reward_and_endowment_pool({
-				RewardPool,
-				TXs,
-				RewardAddr,
-				WeaveSize,
-				Height,
-				Timestamp,
-				Rate
-			});
-		false ->
-			ar_pricing:get_miner_reward_and_endowment_pool_pre_fork_2_4({
-				RewardPool,
-				TXs,
-				RewardAddr,
-				WeaveSize,
-				Height,
-				Diff,
-				Timestamp
-			})
-	end.
+	{RewardPool, TXs, RewardAddr, WeaveSize, Height, _Diff, Timestamp, Rate} = Args,
+	true = Height >= ar_fork:height_2_4(),
+	ar_pricing:get_miner_reward_and_endowment_pool({RewardPool, TXs, RewardAddr, WeaveSize,
+			Height, Timestamp, Rate}).
 
-validate_block(height, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
-		RecentBI, SearchSpaceUpperBound}) ->
-	case ar_block:verify_height(NewB, OldB) of
-		false ->
-			{invalid, invalid_height};
-		true ->
-			validate_block(weave_size, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
-					RecentBI, SearchSpaceUpperBound})
-	end;
 validate_block(weave_size, {#block{ txs = TXs } = NewB, OldB, Wallets, BlockAnchors,
-		RecentTXMap, RecentBI, SearchSpaceUpperBound}) ->
+		RecentTXMap, PartitionUpperBound}) ->
 	case ar_block:verify_weave_size(NewB, OldB, TXs) of
 		false ->
 			{invalid, invalid_weave_size};
 		true ->
 			validate_block(previous_block, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
-					RecentBI, SearchSpaceUpperBound})
+					PartitionUpperBound})
 	end;
 validate_block(previous_block, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
-		RecentBI, SearchSpaceUpperBound}) ->
-	case ar_block:verify_previous_block(NewB, OldB) of
+		PartitionUpperBound}) ->
+	case OldB#block.indep_hash == NewB#block.previous_block of
 		false ->
 			{invalid, invalid_previous_block};
 		true ->
-			validate_block(packing_2_5_threshold,
-				{NewB, OldB, Wallets, BlockAnchors, RecentTXMap, RecentBI,
-				SearchSpaceUpperBound})
+			validate_block(previous_solution_hash,
+				{NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound})
+	end;
+validate_block(previous_solution_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
+		PartitionUpperBound}) ->
+	case NewB#block.height >= ar_fork:height_2_7() of
+		true ->
+			case NewB#block.previous_solution_hash == OldB#block.hash of
+				false ->
+					{invalid, invalid_previous_solution_hash};
+				true ->
+					validate_block(packing_2_5_threshold, {NewB, OldB, Wallets, BlockAnchors,
+							RecentTXMap, PartitionUpperBound})
+			end;
+		false ->
+			validate_block(packing_2_5_threshold, {NewB, OldB, Wallets, BlockAnchors,
+					RecentTXMap, PartitionUpperBound})
 	end;
 validate_block(packing_2_5_threshold, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
-		RecentBI, SearchSpaceUpperBound}) ->
-	ExpectedPackingThreshold = ar_block:get_packing_threshold(OldB, SearchSpaceUpperBound),
+		PartitionUpperBound}) ->
+	ExpectedPackingThreshold = ar_block:get_packing_threshold(OldB, PartitionUpperBound),
 	Valid =
 		case ExpectedPackingThreshold of
 			undefined ->
@@ -231,14 +207,30 @@ validate_block(packing_2_5_threshold, {NewB, OldB, Wallets, BlockAnchors, Recent
 		end,
 	case Valid of
 		true ->
-			validate_block(strict_data_split_threshold,
-					{NewB, OldB, Wallets, BlockAnchors, RecentTXMap, RecentBI,
-					SearchSpaceUpperBound});
+			validate_block(packing_2_6_threshold,
+					{NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound});
 		false ->
 			{error, invalid_packing_2_5_threshold}
 	end;
+validate_block(packing_2_6_threshold, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
+		PartitionUpperBound}) ->
+	ExpectedPackingThreshold = ar_block:get_packing_2_6_threshold(OldB),
+	Valid =
+		case ExpectedPackingThreshold of
+			undefined ->
+				true;
+			_ ->
+				NewB#block.packing_2_6_threshold == ExpectedPackingThreshold
+		end,
+	case Valid of
+		true ->
+			validate_block(strict_data_split_threshold,
+					{NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound});
+		false ->
+			{error, invalid_packing_2_6_threshold}
+	end;
 validate_block(strict_data_split_threshold,
-		{NewB, OldB, Wallets, BlockAnchors, RecentTXMap, RecentBI, SearchSpaceUpperBound}) ->
+		{NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound}) ->
 	Height = NewB#block.height,
 	Fork_2_5 = ar_fork:height_2_5(),
 	Valid =
@@ -256,34 +248,32 @@ validate_block(strict_data_split_threshold,
 		end,
 	case Valid of
 		true ->
-			validate_block(spora,
-					{NewB, OldB, Wallets, BlockAnchors, RecentTXMap, RecentBI,
-					SearchSpaceUpperBound});
+			case NewB#block.height >= ar_fork:height_2_7() of
+				false ->
+					validate_block(spora, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
+							PartitionUpperBound});
+				true ->
+					validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors,
+							RecentTXMap})
+			end;
 		false ->
 			{error, invalid_strict_data_split_threshold}
 	end;
 validate_block(spora, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
-		RecentBI, SearchSpaceUpperBound}) ->
+		PartitionUpperBound}) ->
 	BDS = ar_block:generate_block_data_segment(NewB),
-	#block{
-		nonce = Nonce,
-		height = Height,
-		timestamp = Timestamp,
-		diff = Diff,
-		previous_block = PrevH,
-		poa = POA,
-		hash = Hash
-	} = NewB,
-	PackingThreshold = NewB#block.packing_2_5_threshold,
+	#block{ nonce = Nonce, height = Height, timestamp = Timestamp, diff = Diff,
+			previous_block = PrevH, poa = POA, hash = Hash, reward_addr = RewardAddr } = NewB,
+	Packing_2_6_Threshold = NewB#block.packing_2_6_threshold,
 	StrictDataSplitThreshold = NewB#block.strict_data_split_threshold,
 	case ar_mine:validate_spora({BDS, Nonce, Timestamp, Height, Diff, PrevH,
-			SearchSpaceUpperBound, PackingThreshold, RecentBI, StrictDataSplitThreshold,
+			PartitionUpperBound, Packing_2_6_Threshold, StrictDataSplitThreshold, RewardAddr,
 			POA}) of
 		{false, Hash} ->
 			{invalid, invalid_spora};
 		{false, _} ->
 			{invalid, invalid_spora_hash};
-		{true, _, Hash} ->
+		{true, Hash, _} ->
 			validate_block(difficulty, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
 		{true, _, _} ->
 			{invalid, invalid_spora_hash}
@@ -293,60 +283,16 @@ validate_block(difficulty, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 		false ->
 			{invalid, invalid_difficulty};
 		true ->
-			case NewB#block.height >= ar_fork:height_2_4() of
-				false ->
-					validate_block(pow, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
-				true ->
-					validate_block(
-						independent_hash,
-						{NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
-					)
-			end
+			validate_block(may_be_usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors,
+					RecentTXMap})
 	end;
-validate_block(
-	pow,
-	{
-		NewB = #block{ nonce = Nonce, height = Height, diff = Diff, poa = POA },
-		OldB,
-		Wallets,
-		BlockAnchors,
-		RecentTXMap
-	}
-) ->
-	BDS = ar_block:generate_block_data_segment(NewB),
-	POW = ar_randomx_state:hash(Height, << Nonce/binary, BDS/binary >>),
-	case ar_mine:validate(POW, ar_poa:modify_diff(Diff, POA#poa.option, Height), Height) of
-		false ->
-			{invalid, invalid_pow};
+validate_block(may_be_usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
+	#block{ height = Height } = NewB,
+	case Height >= ar_fork:height_2_5() of
 		true ->
-			case ar_block:verify_dep_hash(NewB, POW) of
-				false ->
-					{invalid, invalid_pow_hash};
-				true ->
-					validate_block(
-						independent_hash,
-						{NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
-					)
-			end
-	end;
-validate_block(independent_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
-	case ar_weave:indep_hash(NewB) == NewB#block.indep_hash of
+			validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
 		false ->
-			{invalid, invalid_independent_hash};
-		true ->
-			#block{ height = Height } = NewB,
-			case Height >= ar_fork:height_2_5() of
-				true ->
-					validate_block(
-						usd_to_ar_rate,
-						{NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
-					);
-				false ->
-					validate_block(
-						wallet_list,
-						{NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
-					)
-			end
+			validate_block(wallet_list, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
 validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	{USDToARRate, ScheduledUSDToARRate} = ar_pricing:recalculate_usd_to_ar_rate(OldB),
@@ -357,22 +303,25 @@ validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 		true ->
 			validate_block(wallet_list, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
-validate_block(
-	wallet_list,
-	{#block{ txs = TXs } = NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
-) ->
+validate_block(wallet_list, {#block{ txs = TXs } = NewB, OldB, Wallets, BlockAnchors,
+		RecentTXMap}) ->
 	RewardPool = OldB#block.reward_pool,
 	Height = OldB#block.height,
 	Rate = ar_pricing:usd_to_ar_rate(OldB),
-	{_, UpdatedWallets} = update_wallets(NewB, Wallets, RewardPool, Rate, Height),
+	{_, _, UpdatedWallets} = update_wallets(NewB, Wallets, RewardPool, Rate, Height),
 	case lists:any(fun(TX) -> is_wallet_invalid(TX, UpdatedWallets) end, TXs) of
 		true ->
 			{invalid, invalid_wallet_list};
 		false ->
-			validate_block(
-				block_field_sizes,
-				{NewB, OldB, Wallets, BlockAnchors, RecentTXMap}
-			)
+			case Height + 1 >= ar_fork:height_2_6() of
+				true ->
+					%% The field size limits in 2.6 are naturally asserted in
+					%% ar_serialize:binary_to_block/1.
+					validate_block(txs, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
+				false ->
+					validate_block(block_field_sizes, {NewB, OldB, Wallets, BlockAnchors,
+							RecentTXMap})
+			end
 	end;
 validate_block(block_field_sizes, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	case ar_block:block_field_size_limit(NewB) of
@@ -381,16 +330,8 @@ validate_block(block_field_sizes, {NewB, OldB, Wallets, BlockAnchors, RecentTXMa
 		true ->
 			validate_block(txs, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 	end;
-validate_block(
-	txs,
-	{
-		NewB = #block{ timestamp = Timestamp, height = Height, txs = TXs },
-		OldB,
-		Wallets,
-		BlockAnchors,
-		RecentTXMap
-	}
-) ->
+validate_block(txs, {NewB = #block{ timestamp = Timestamp, height = Height, txs = TXs },
+		OldB, Wallets, BlockAnchors, RecentTXMap}) ->
 	Rate = ar_pricing:usd_to_ar_rate(OldB),
 	Args = {TXs, Rate, Height - 1, Timestamp, Wallets, BlockAnchors, RecentTXMap},
 	case ar_tx_replay_pool:verify_block_txs(Args) of
@@ -431,8 +372,8 @@ validate_block(cumulative_diff, {NewB, OldB}) ->
 -ifdef(DEBUG).
 is_wallet_invalid(#tx{ signature = <<>> }, _Wallets) ->
 	false;
-is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
-	Address = ar_wallet:to_address(Owner),
+is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
+	Address = ar_wallet:to_address(Owner, SigType),
 	case maps:get(Address, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
 			case Balance of
@@ -445,8 +386,8 @@ is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
 			true
 	end.
 -else.
-is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
-	Address = ar_wallet:to_address(Owner),
+is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
+	Address = ar_wallet:to_address(Owner, SigType),
 	case maps:get(Address, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
 			case Balance of
@@ -464,10 +405,26 @@ is_wallet_invalid(#tx{ owner = Owner }, Wallets) ->
 %%% Tests.
 %%%===================================================================
 
-block_validation_test_() ->
-	{timeout, 20, fun test_block_validation/0}.
+block_validation_test_pre_fork_2_6_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			{ar_fork, height_2_6, fun() -> infinity end},
+			{ar_fork, height_2_7, fun() -> infinity end}],
+		fun() -> test_block_validation(fork_2_5) end).
 
-test_block_validation() ->
+block_validation_test_pre_fork_2_7_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			{ar_fork, height_2_6, fun() -> 0 end},
+			{ar_fork, height_2_7, fun() -> infinity end}],
+		fun() -> test_block_validation(fork_2_6) end).
+
+block_validation_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			{ar_fork, height_2_6, fun() -> 0 end},
+			{ar_fork, height_2_7, fun() -> 0 end}],
+		fun() -> test_block_validation(fork_2_7) end).
+
+test_block_validation(Fork) ->
+	?debugFmt("Testing on fork: ~p", [Fork]),
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200), <<>>}]),
 	ar_test_node:start(B0),
@@ -482,7 +439,7 @@ test_block_validation() ->
 	[{PrevH, _, _} | _ ] = ar_test_node:wait_until_height(2),
 	PrevB = ar_node:get_block_shadow_from_cache(PrevH),
 	BI = ar_node:get_block_index(),
-	SearchSpaceUpperBound = ar_mine:get_search_space_upper_bound(BI),
+	PartitionUpperBound = ar_node:get_partition_upper_bound(BI),
 	BlockAnchors = ar_node:get_block_anchors(),
 	RecentTXMap = ar_node:get_recent_txs_map(),
 	TX = ar_test_node:sign_tx(Wallet, #{ reward => ?AR(1),
@@ -493,107 +450,125 @@ test_block_validation() ->
 	B = ar_node:get_block_shadow_from_cache(H),
 	Wallets = #{ ar_wallet:to_address(Pub) => {?AR(200), <<>>} },
 	?assertEqual(valid, validate(B, PrevB, Wallets, BlockAnchors, RecentTXMap,
-			BI, SearchSpaceUpperBound)),
-	?assertEqual({invalid, invalid_height},
-		validate(B#block{ height = 4 }, PrevB, Wallets,
-			BlockAnchors, RecentTXMap, BI, SearchSpaceUpperBound)),
+			PartitionUpperBound)),
 	?assertEqual({invalid, invalid_weave_size},
 			validate(B#block{ weave_size = PrevB#block.weave_size + 1 }, PrevB, Wallets,
-					BlockAnchors, RecentTXMap, BI, SearchSpaceUpperBound)),
+					BlockAnchors, RecentTXMap, PartitionUpperBound)),
 	?assertEqual({invalid, invalid_previous_block},
 			validate(B#block{ previous_block = B#block.indep_hash }, PrevB, Wallets,
-					BlockAnchors, RecentTXMap, BI, SearchSpaceUpperBound)),
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(B#block{ diff = PrevB#block.diff - 1 }, PrevB, Wallets, BlockAnchors,
-					RecentTXMap, BI, SearchSpaceUpperBound)),
+					BlockAnchors, RecentTXMap, PartitionUpperBound)),
+	InvLastRetargetB = B#block{ last_retarget = B#block.timestamp },
+	InvDataRootB = B#block{ tx_root = crypto:strong_rand_bytes(32) },
+	InvBlockIndexRootB = B#block{ hash_list_merkle = crypto:strong_rand_bytes(32) },
+	InvCDiffB = B#block{ cumulative_diff = PrevB#block.cumulative_diff * 1000 },
+	case Fork of
+		fork_2_7 ->
+			ok;
+		_ ->
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(B#block{ diff = PrevB#block.diff - 1 }, PrevB, Wallets,
+							BlockAnchors, RecentTXMap, PartitionUpperBound)),
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(B#block{ tags = [<<"N">>, <<"V">>] }, PrevB, Wallets,
+							BlockAnchors, RecentTXMap, PartitionUpperBound)),
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(InvDataRootB#block{
+							indep_hash = ar_block:indep_hash(InvDataRootB) },
+						PrevB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)),
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(InvLastRetargetB#block{
+							indep_hash = ar_block:indep_hash(InvLastRetargetB) },
+					PrevB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)),
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(
+						InvBlockIndexRootB#block{
+							indep_hash = ar_block:indep_hash(InvBlockIndexRootB) },
+						PrevB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)),
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(InvCDiffB#block{ indep_hash = ar_block:indep_hash(InvCDiffB) },
+							PrevB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound))
+	end,
 	?assertEqual({invalid, invalid_difficulty},
 			validate_block(difficulty, {
 					B#block{ diff = PrevB#block.diff - 1 }, PrevB, Wallets, BlockAnchors,
 					RecentTXMap})),
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(B#block{ tags = [<<"N">>, <<"V">>] }, PrevB, Wallets, BlockAnchors,
-					RecentTXMap, BI, SearchSpaceUpperBound)),
-	?assertEqual({invalid, invalid_independent_hash},
-		validate_block(independent_hash, {
-				B#block{ tags = [<<"N">>, <<"V">>] }, PrevB, Wallets, BlockAnchors,
-				RecentTXMap})),
+	?assertEqual({invalid, invalid_usd_to_ar_rate},
+			validate_block(may_be_usd_to_ar_rate, {
+					B#block{ usd_to_ar_rate = {0, 0} }, PrevB, Wallets, BlockAnchors,
+					RecentTXMap})),
+	?assertEqual({invalid, invalid_usd_to_ar_rate},
+			validate_block(may_be_usd_to_ar_rate, {
+					B#block{ scheduled_usd_to_ar_rate = {0, 0} }, PrevB, Wallets, BlockAnchors,
+					RecentTXMap})),
+	?assertEqual({invalid, invalid_txs},
+			validate_block(txs, {B#block{ txs = [#tx{ signature = <<1>> }] }, PrevB, Wallets,
+					BlockAnchors, RecentTXMap})),
 	?assertEqual({invalid, invalid_wallet_list},
 			validate(B#block{ txs = [TX#tx{ reward = ?AR(201) }] }, PrevB, Wallets,
-					BlockAnchors, RecentTXMap, BI, SearchSpaceUpperBound)),
-	InvDataRootB = B#block{ tx_root = crypto:strong_rand_bytes(32) },
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(InvDataRootB#block{ indep_hash = ar_weave:indep_hash(InvDataRootB) },
-					PrevB, Wallets, BlockAnchors, RecentTXMap, BI, SearchSpaceUpperBound)),
+					BlockAnchors, RecentTXMap, PartitionUpperBound)),
 	?assertEqual({invalid, invalid_tx_root},
 			validate_block(tx_root, {
-				InvDataRootB#block{ indep_hash = ar_weave:indep_hash(InvDataRootB) }, PrevB})),
-	InvLastRetargetB = B#block{ last_retarget = B#block.timestamp },
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(
-				InvLastRetargetB#block{ indep_hash = ar_weave:indep_hash(InvLastRetargetB) },
-				PrevB, Wallets, BlockAnchors, RecentTXMap, BI, SearchSpaceUpperBound)),
+				InvDataRootB#block{ indep_hash = ar_block:indep_hash(InvDataRootB) }, PrevB})),
 	?assertEqual({invalid, invalid_difficulty},
 			validate_block(difficulty, {
 					InvLastRetargetB#block{
-						indep_hash = ar_weave:indep_hash(InvLastRetargetB) },
+						indep_hash = ar_block:indep_hash(InvLastRetargetB) },
 					PrevB, Wallets, BlockAnchors, RecentTXMap})),
-	InvBlockIndexRootB = B#block{ hash_list_merkle = crypto:strong_rand_bytes(32) },
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(
-				InvBlockIndexRootB#block{
-					indep_hash = ar_weave:indep_hash(InvBlockIndexRootB) },
-				PrevB, Wallets, BlockAnchors, RecentTXMap, BI, SearchSpaceUpperBound)),
 	?assertEqual({invalid, invalid_block_index_root},
 			validate_block(block_index_root, {
 				InvBlockIndexRootB#block{
-					indep_hash = ar_weave:indep_hash(InvBlockIndexRootB) }, PrevB})),
-	InvCDiffB = B#block{ cumulative_diff = PrevB#block.cumulative_diff * 1000 },
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(InvCDiffB#block{ indep_hash = ar_weave:indep_hash(InvCDiffB) },
-					PrevB, Wallets, BlockAnchors, RecentTXMap, BI, SearchSpaceUpperBound)),
+					indep_hash = ar_block:indep_hash(InvBlockIndexRootB) }, PrevB})),
+	?assertEqual({invalid, invalid_last_retarget},
+			validate_block(last_retarget, {B#block{ last_retarget = 0 }, PrevB})),
 	?assertEqual(
 		{invalid, invalid_cumulative_difficulty},
 		validate_block(cumulative_diff, {
-				InvCDiffB#block{ indep_hash = ar_weave:indep_hash(InvCDiffB) }, PrevB})),
+				InvCDiffB#block{ indep_hash = ar_block:indep_hash(InvCDiffB) }, PrevB})),
 	BI2 = ar_node:get_block_index(),
-	SearchSpaceUpperBound2 = ar_mine:get_search_space_upper_bound(BI2),
+	PartitionUpperBound2 = ar_node:get_partition_upper_bound(BI2),
 	BlockAnchors2 = ar_node:get_block_anchors(),
 	RecentTXMap2 = ar_node:get_recent_txs_map(),
 	ar_node:mine(),
 	[{H2, _, _} | _ ] = ar_test_node:wait_until_height(4),
 	B2 = ar_node:get_block_shadow_from_cache(H2),
 	?assertEqual(valid, validate(B2, B, Wallets, BlockAnchors2, RecentTXMap2,
-			BI2, SearchSpaceUpperBound2)),
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(B2#block{ poa = #poa{} }, B, Wallets, BlockAnchors2, RecentTXMap2,
-					BI2, SearchSpaceUpperBound2)),
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(B2#block{ hash = <<>> }, B, Wallets, BlockAnchors2, RecentTXMap2,
-					BI2, SearchSpaceUpperBound2)),
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(B2#block{ hash = B#block.hash }, B, Wallets, BlockAnchors2,
-					RecentTXMap2, BI2, SearchSpaceUpperBound2)),
-	PoA = B2#block.poa,
-	FakePoA =
-		case get_chunk(1) of
-			P when P#poa.chunk == PoA#poa.chunk ->
-				get_chunk(1 + 256 * 1024);
-			P ->
-				P
-		end,
-	{FakeH0, FakeEntropy} = ar_mine:spora_h0_with_entropy(
-			ar_block:generate_block_data_segment(B2#block{ poa = FakePoA }), B2#block.nonce,
-			B2#block.height),
-	FakeSolutionHash = ar_mine:spora_solution_hash_with_entropy(B#block.indep_hash,
-			B2#block.timestamp, FakeH0, FakePoA#poa.chunk, FakeEntropy, B2#block.height),
-	FakeSolutionHashNoEntropy = ar_mine:spora_solution_hash(B#block.indep_hash,
-			B2#block.timestamp, FakeH0, FakePoA#poa.chunk, B2#block.height),
-	?assertEqual({invalid, invalid_spora},
-			validate(B2#block{ poa = FakePoA, hash = FakeSolutionHash }, B, Wallets,
-					BlockAnchors2, RecentTXMap2, BI2, SearchSpaceUpperBound2)),
-	?assertEqual({invalid, invalid_spora_hash},
-			validate(B2#block{ poa = FakePoA, hash = FakeSolutionHashNoEntropy }, B,
-					Wallets, BlockAnchors2, RecentTXMap2, BI2, SearchSpaceUpperBound2)).
+			PartitionUpperBound2)),
+	case Fork of
+		fork_2_7 ->
+			ok;
+		_ ->
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(B2#block{ poa = #poa{} }, B, Wallets, BlockAnchors2, RecentTXMap2,
+							PartitionUpperBound2)),
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(B2#block{ hash = <<>> }, B, Wallets, BlockAnchors2, RecentTXMap2,
+							PartitionUpperBound2)),
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(B2#block{ hash = B#block.hash }, B, Wallets, BlockAnchors2,
+							RecentTXMap2, PartitionUpperBound2)),
+			PoA = B2#block.poa,
+			FakePoA =
+				case get_chunk(1) of
+					P when P#poa.chunk == PoA#poa.chunk ->
+						get_chunk(1 + 256 * 1024);
+					P ->
+						P
+				end,
+			{FakeH0, FakeEntropy} = ar_mine:spora_h0_with_entropy(
+					ar_block:generate_block_data_segment(B2#block{ poa = FakePoA }),
+					B2#block.nonce, B2#block.height),
+			{FakeSolutionHash, _} = ar_mine:spora_solution_hash_with_entropy(
+					B#block.indep_hash, B2#block.timestamp, FakeH0, FakePoA#poa.chunk,
+					FakeEntropy, B2#block.height),
+			{FakeSolutionHashNoEntropy, _} = ar_mine:spora_solution_hash(B#block.indep_hash,
+					B2#block.timestamp, FakeH0, FakePoA#poa.chunk, B2#block.height),
+			?assertEqual({invalid, invalid_spora},
+					validate(B2#block{ poa = FakePoA, hash = FakeSolutionHash }, B, Wallets,
+							BlockAnchors2, RecentTXMap2, PartitionUpperBound2)),
+			?assertEqual({invalid, invalid_spora_hash},
+					validate(B2#block{ poa = FakePoA, hash = FakeSolutionHashNoEntropy }, B,
+							Wallets, BlockAnchors2, RecentTXMap2, PartitionUpperBound2))
+	end.
 
 get_chunk(Byte) ->
 	{ok, {{<<"200">>, _}, _, JSON, _, _}} = ar_test_node:get_chunk(Byte),

@@ -26,22 +26,22 @@ req(#{ peer := Peer, path := Path } = Opts) ->
 					is_peer_request => maps:get(is_peer_request, Opts, true) },
 			Resp = get_reponse(maps:merge(Opts, RespOpts)),
 			gun_total_metric(Opts#{ response => Resp }),
-			gun:close(Pid),
+			gun:shutdown(Pid),
 			inet:stop_timer(Timer),
 			Resp;
 		{error, timeout} ->
 			Resp = {error, connect_timeout},
-			gun:close(Pid),
+			gun:shutdown(Pid),
 			gun_total_metric(Opts#{ response => Resp }),
 			log(warn, http_connect_timeout, Opts, Resp),
 			Resp;
 		{error, Reason} = Resp when is_tuple(Reason) ->
-			gun:close(Pid),
+			gun:shutdown(Pid),
 			gun_total_metric(Opts#{ response => erlang:element(1, Reason) }),
 			log(warn, gun_await_up_process_down, Opts, Reason),
 			Resp;
 		Unknown ->
-			gun:close(Pid),
+			gun:shutdown(Pid),
 			gun_total_metric(Opts#{ response => Unknown }),
 			log(warn, gun_await_up_unknown, Opts, Unknown),
 			Unknown

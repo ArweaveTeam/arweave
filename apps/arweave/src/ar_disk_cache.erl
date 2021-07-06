@@ -34,24 +34,32 @@
 %%% API
 %%%===================================================================
 
-lookup_block_filename(Hash) when is_binary(Hash)->
+lookup_block_filename(H) when is_binary(H)->
 	%% Use the process dictionary to keep the path.
-	PathBlock = case get(ar_disk_cache_path) of
-		undefined ->
-			{ok, Config} = application:get_env(arweave, config),
-			Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
-			put(ar_disk_cache_path, Path),
-			filename:join(Path, ?DISK_CACHE_BLOCK_DIR);
-		Path ->
-			filename:join(Path, ?DISK_CACHE_BLOCK_DIR)
-	end,
-	FileName = binary_to_list(ar_util:encode(Hash)) ++ ".json",
-	File = filename:join(PathBlock, FileName),
-	case ar_storage:is_file(File) of
+	PathBlock =
+		case get(ar_disk_cache_path) of
+			undefined ->
+				{ok, Config} = application:get_env(arweave, config),
+				Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
+				put(ar_disk_cache_path, Path),
+				filename:join(Path, ?DISK_CACHE_BLOCK_DIR);
+			Path ->
+				filename:join(Path, ?DISK_CACHE_BLOCK_DIR)
+		end,
+	FileName = binary_to_list(ar_util:encode(H)),
+	FilePath = filename:join(PathBlock, FileName),
+	FilePathJSON = iolist_to_binary([FilePath, ".json"]),
+	case ar_storage:is_file(FilePathJSON) of
 		true ->
-			{ok, File};
+			{ok, {FilePathJSON, json}};
 		_ ->
-			unavailable
+			FilePathBin = iolist_to_binary([FilePath, ".bin"]),
+			case ar_storage:is_file(FilePathBin) of
+				true ->
+					{ok, {FilePathBin, binary}};
+				_ ->
+					unavailable
+			end
 	end.
 
 lookup_tx_filename(Hash) when is_binary(Hash) ->
@@ -74,13 +82,12 @@ lookup_tx_filename(Hash) when is_binary(Hash) ->
 	end.
 
 write_block_shadow(B) ->
-	Name = binary_to_list(ar_util:encode(B#block.indep_hash)) ++ ".json",
+	Name = binary_to_list(ar_util:encode(B#block.indep_hash)) ++ ".bin",
 	File = filename:join(get_block_path(), Name),
-	JSONStruct = ar_serialize:block_to_json_struct(B),
-	Data = ar_serialize:jsonify(JSONStruct),
-	Size = byte_size(Data),
+	Bin = ar_serialize:block_to_binary(B),
+	Size = byte_size(Bin),
 	gen_server:cast(?MODULE, {record_written_data, Size}),
-	case ar_storage:write_file_atomic(File, Data) of
+	case ar_storage:write_file_atomic(File, Bin) of
 		ok ->
 			ok;
 		{error, Reason} = Error ->

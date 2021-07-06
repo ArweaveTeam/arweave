@@ -4,10 +4,19 @@
 
 -module(ar_fork).
 
--export([height_1_7/0, height_1_8/0, height_1_9/0, height_2_0/0, height_2_2/0, height_2_3/0,
-		height_2_4/0, height_2_5/0]).
+-export([height_1_6/0, height_1_7/0, height_1_8/0, height_1_9/0, height_2_0/0, height_2_2/0,
+		height_2_3/0, height_2_4/0, height_2_5/0, height_2_6/0, height_2_7/0, height_2_8/0]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
+
+-ifdef(FORKS_RESET).
+height_1_6() ->
+	0.
+-else.
+height_1_6() ->
+	95000.
+-endif.
 
 -ifdef(FORKS_RESET).
 height_1_7() ->
@@ -71,4 +80,38 @@ height_2_5() ->
 -else.
 height_2_5() ->
 	812970.
+-endif.
+
+-ifdef(FORKS_RESET).
+height_2_6() ->
+	0.
+-else.
+height_2_6() ->
+	infinity.
+-endif.
+
+-ifdef(FORKS_RESET).
+height_2_7() ->
+	0.
+-else.
+height_2_7() ->
+	Fork_2_6 = height_2_6(),
+	case Fork_2_6 of
+		infinity ->
+			infinity;
+		_ ->
+			PerBlock = (?DATA_CHUNK_SIZE)
+					* (?PACKING_2_6_THRESHOLD_CHUNKS_PER_SECOND)
+					* (?TARGET_TIME),
+			FirstRepackedBlock = Fork_2_6 + ?PACKING_2_6_THRESHOLD_START div PerBlock + 1,
+			((FirstRepackedBlock - 1) div 10 + 1) * 10
+	end.
+-endif.
+
+-ifdef(FORKS_RESET).
+height_2_8() ->
+	infinity.
+-else.
+height_2_8() ->
+	infinity.
 -endif.
