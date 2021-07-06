@@ -221,29 +221,38 @@ to_address(PubKey) ->
 %%% Tests.
 %%%===================================================================
 
-rsa_wallet_sign_verify_test() ->
-	test_wallet_sign_verify(?DEFAULT_KEY_TYPE).
+wallet_sign_verify_test_() ->
+	TestWalletSignVerify = fun(KeyTypeEnc) ->
+		fun() ->
+			KeyType = ar_serialize:list_to_signature_type(KeyTypeEnc),
+			{Priv, Pub} = new(KeyType),
+			TestData = <<"TEST DATA">>,
+			Signature = sign(Priv, TestData),
+			true = verify(Pub, TestData, Signature)
+		end
+	end,
+	[
+		{"rsa_pss_65537", TestWalletSignVerify(<<"rsa_pss_65537">>)},
+		{"ecdsa_secp256k1", TestWalletSignVerify(<<"ecdsa_secp256k1">>)},
+		{"eddsa_ed25519", TestWalletSignVerify(<<"eddsa_ed25519">>)}
+	].
 
-ecdsa_wallet_sign_verify_test() ->
-	test_wallet_sign_verify({?ECDSA_SIGN_ALG, secp256k1}).
+invalid_signature_test_() ->
+    TestInvalidSignature = fun(KeyTypeEnc) ->
+        fun() ->
+			KeyType = ar_serialize:list_to_signature_type(KeyTypeEnc),
+			{Priv, Pub} = new(KeyType),
+           	TestData = <<"TEST DATA">>,
+			<< _:32, Signature/binary >> = sign(Priv, TestData),
+			false = verify(Pub, TestData, << 0:32, Signature/binary >>)
+        end
+    end,
+    [
+        {"rsa_pss_65537", TestInvalidSignature(<<"rsa_pss_65537">>)},
+        {"ecdsa_secp256k1", TestInvalidSignature(<<"ecdsa_secp256k1">>)},
+		{"eddsa_ed25519", TestInvalidSignature(<<"eddsa_ed25519">>)}
+    ].
 
-test_wallet_sign_verify(KeyType) ->
-	TestData = <<"TEST DATA">>,
-	{Priv, Pub} = new(KeyType),
-	Signature = sign(Priv, TestData),
-	true = verify(Pub, TestData, Signature).
-
-invalid_rsa_signature_test() ->
-	test_invalid_signature(?DEFAULT_KEY_TYPE).
-
-invalid_ecdsa_signature_test() ->
-	test_invalid_signature({?ECDSA_SIGN_ALG, secp256k1}).
-
-test_invalid_signature(KeyType) ->
-	TestData = <<"TEST DATA">>,
-	{Priv, Pub} = new(KeyType),
-	<< _:32, Signature/binary >> = sign(Priv, TestData),
-	false = verify(Pub, TestData, << 0:32, Signature/binary >>).
 
 %% @doc Ensure that to_address'ing twice does not result in double hashing.
 address_double_encode_test() ->
@@ -252,13 +261,17 @@ address_double_encode_test() ->
 	Addr = to_address(Addr).
 
 %% @doc Check generated keyfiles can be retrieved.
-generate_rsa_keyfile_test() ->
-	test_generate_keyfile(?DEFAULT_KEY_TYPE).
-
-generate_ecdsa_keyfile_test() ->
-	test_generate_keyfile({?ECDSA_SIGN_ALG, secp256k1}).
-
-test_generate_keyfile(KeyType) ->
-	{Priv, Pub} = new_keyfile(KeyType, wallet_address),
-	FileName = wallet_filepath(ar_util:encode(to_address(Pub))),
-	{Priv, Pub} = load_keyfile(FileName).
+generate_keyfile_test_() ->
+	GenerateKeyFile = fun(KeyTypeEnc) ->
+		fun() ->
+			KeyType = ar_serialize:list_to_signature_type(KeyTypeEnc),
+			{Priv, Pub} = new_keyfile(KeyType, wallet_address),
+			FileName = wallet_filepath(ar_util:encode(to_address(Pub))),
+			{Priv, Pub} = load_keyfile(FileName)
+		end
+	end,
+	[
+		{"rsa_pss_65537", GenerateKeyFile(<<"rsa_pss_65537">>)},
+		{"ecdsa_secp256k1", GenerateKeyFile(<<"ecdsa_secp256k1">>)},
+		{"eddsa_ed25519", GenerateKeyFile(<<"eddsa_ed25519">>)}
+	].

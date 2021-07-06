@@ -625,20 +625,28 @@ block_roundtrip_test() ->
 	?assertEqual(B, BRes#block{ hash_list = B#block.hash_list, size_tagged_txs = [] }).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
-tx_roundtrip_test() ->
-	TXBase = ar_tx:new(<<"test">>),
-	TX =
-		TXBase#tx {
-			format = 2,
-			tags = [{<<"Name1">>, <<"Value1">>}],
-			data_root = << 0:256 >>,
-			signature_type = ?DEFAULT_KEY_TYPE
-		},
-	JsonTX = jsonify(tx_to_json_struct(TX)),
-	?assertEqual(
-		TX,
-		json_struct_to_tx(JsonTX)
-	).
+tx_roundtrip_test_() ->
+	TXSerializeRoundtrip = fun(KeyType) ->
+		fun() ->
+			TXBase = ar_tx:new(<<"test">>),
+			TX =
+				TXBase#tx {
+					format = 2,
+					tags = [{<<"Name1">>, <<"Value1">>}],
+					data_root = << 0:256 >>,
+					signature_type = KeyType
+				},
+			JsonTX = jsonify(tx_to_json_struct(TX)),
+			?assertEqual(
+				TX,
+				json_struct_to_tx(JsonTX)
+			)
+		end
+	end,
+	[
+		{"unspecified signature_type", TXSerializeRoundtrip(undefined)},
+		{"specified signature_type", TXSerializeRoundtrip(?DEFAULT_KEY_TYPE)}	
+	].
 
 wallet_list_roundtrip_test() ->
 	[B] = ar_weave:init(),
