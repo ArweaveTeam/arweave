@@ -131,8 +131,9 @@ register(MetricsDir) ->
 	]),
 	prometheus_gauge:new([
 		{name, v2_index_data_size_by_packing},
-		{labels, [packing]},
-		{help, "The size (in bytes) of the data stored and indexed. Groupped by packing."}
+		{labels, [store_id, packing]},
+		{help, "The size (in bytes) of the data stored and indexed. Groupped by "
+				"store ID and packing."}
 	]),
 
 	%% Disk pool.
@@ -140,7 +141,7 @@ register(MetricsDir) ->
 		{name, pending_chunks_size},
 		{
 			help,
-			"The total size in bytes of stored pending chunks."
+			"The total size in bytes of stored pending and seeded chunks."
 		}
 	]),
 	prometheus_gauge:new([
@@ -166,6 +167,7 @@ register(MetricsDir) ->
 		{name, arweave_block_height},
 		{help, "Block height"}
 	]),
+	prometheus_gauge:new([{name, block_time}, {help, "Block time"}]),
 	prometheus_histogram:new([
 		{name, fork_recovery_depth},
 		{buckets, lists:seq(1, 50)},
@@ -213,6 +215,56 @@ register(MetricsDir) ->
 			"The per second average rate of the number of tried solution candidates "
 			"computed over the last block time."}
 	]),
+	prometheus_gauge:new([
+		{name, mining_server_chunk_cache_size},
+		{help, "The number of chunks fetched during mining and not processed yet."}
+	]),
+	prometheus_histogram:new([
+		{name, vdf_step_time_milliseconds},
+		{buckets, [100, 250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2500, 3000, 3500, 4000,
+				4500, 5000, 5500, 6000, 6500, 7000, 7500, 8000, 8500, 9000, 9500, 10000, 15000,
+				20000, 30000]},
+		{labels, []},
+		{help, "The time in milliseconds it took to compute a VDF step."}
+	]),
+	prometheus_gauge:new([
+		{name, network_hashrate},
+		{help, "An estimation of the network hashrate based on the mining difficulty."}
+	]),
+	prometheus_gauge:new([
+		{name, network_burden},
+		{help, "The estimated cost of storing the current weave assuming the 0.5% storage "
+				"costs decline rate, in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, network_burden_10_usd_ar},
+		{help, "The estimated cost of storing the current weave assuming the 0.5% storage "
+				"costs decline rate and 10 $/AR, in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, endowment_pool},
+		{help, "The amount of Winston in the endowment pool."}
+	]),
+	prometheus_gauge:new([
+		{name, network_burden_200_years},
+		{help, "The estimated cost of storing the current weave for 200 years assuming the "
+				"0.5% storage costs decline rate, in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, network_burden_200_years_10_usd_ar},
+		{help, "The estimated cost of storing the current weave for 200 years assuming the "
+				"0.5% storage costs decline rate and 10 $/AR, in Winston."}
+	]),
+	prometheus_gauge:new([
+		{name, expected_minimum_200_years_storage_costs_decline_rate},
+		{help, "The expected minimum decline rate sufficient to subsidize storage of "
+				"the current weave for 200 years."}
+	]),
+	prometheus_gauge:new([
+		{name, expected_minimum_200_years_storage_costs_decline_rate_10_usd_ar},
+		{help, "The expected minimum decline rate sufficient to subsidize storage of "
+				"the current weave for 200 years, assuming 10 $/AR."}
+	]),
 
 	%% Packing.
 	prometheus_histogram:new([
@@ -230,7 +282,17 @@ register(MetricsDir) ->
 	prometheus_counter:new([
 		{name, validating_unpacked_spora},
 		{help, "The number of SPoRA solutions based on unpacked chunks entered validation."}
-	]).
+	]),
+	prometheus_counter:new([
+		{name, validating_packed_2_6_spora},
+		{help, "The number of SPoRA solutions based on chunks packed for 2.6 entered "
+				"validation."}
+	]),
+
+	prometheus_gauge:new([{name, packing_buffer_size},
+			{help, "The number of chunks in the packing server queue."}]),
+	prometheus_gauge:new([{name, sync_buffer_size}, {labels, [store_id]},
+			{help, "The number of chunks scheduled for downloading."}]).
 
 %% @doc Store the given metric in a file.
 store(Name) ->

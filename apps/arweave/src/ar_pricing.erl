@@ -1,19 +1,14 @@
 -module(ar_pricing).
 
--export([
-	get_tx_fee/4,
-	get_miner_reward_and_endowment_pool/1,
-	get_tx_fee_pre_fork_2_4/4,
-	usd_to_ar_rate/1, usd_to_ar/3,
-	recalculate_usd_to_ar_rate/1,
-	usd_to_ar_pre_fork_2_4/3,
-	get_miner_reward_and_endowment_pool_pre_fork_2_4/1
-]).
+-export([get_tx_fee/4, get_miner_reward_and_endowment_pool/1, get_tx_fee_pre_fork_2_4/4,
+		usd_to_ar_rate/1, usd_to_ar/3, recalculate_usd_to_ar_rate/1, usd_to_ar_pre_fork_2_4/3,
+		get_miner_reward_and_endowment_pool_pre_fork_2_4/1, get_storage_cost/4,
+		get_expected_min_decline_rate/6]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_inflation.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_mine.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -32,8 +27,8 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Calculate the transaction fee.
-get_tx_fee(DataSize, Timestamp, Rate, Height) ->
+%% @doc Return the perpetual cost of storing the given amount of data.
+get_storage_cost(DataSize, Timestamp, Rate, Height) ->
 	Size = ?TX_SIZE_BASE + DataSize,
 	PerpetualGBStorageCost =
 		usd_to_ar(
@@ -43,7 +38,11 @@ get_tx_fee(DataSize, Timestamp, Rate, Height) ->
 		),
 	StorageCost = max(1, PerpetualGBStorageCost div (1024 * 1024 * 1024)) * Size,
 	HashingCost = StorageCost,
-	MaintenanceCost = StorageCost + HashingCost,
+	StorageCost + HashingCost.
+
+%% @doc Calculate the transaction fee.
+get_tx_fee(DataSize, Timestamp, Rate, Height) ->
+	MaintenanceCost = get_storage_cost(DataSize, Timestamp, Rate, Height),
 	MinerFeeShare = get_miner_fee_share(MaintenanceCost, Height),
 	MaintenanceCost + MinerFeeShare.
 
@@ -162,6 +161,25 @@ usd_to_ar_pre_fork_2_4(USD, Diff, Height) ->
 	erlang:trunc(
 		(USD * ?WINSTON_PER_AR * DeltaInflation) / (?INITIAL_USD_PER_AR(Height)() * DeltaP)
 	).
+
+%% @doc Return an estimation for the minimum required decline rate making the given
+%% Amount (in Winston) sufficient to subsidize storage for Period seconds starting from
+%% Timestamp and assuming the given USD to AR rate.
+%% When computing the exponent, the function accounts for the first 16 summands in
+%% the Taylor series. The fraction is reduced to the 1/1000000 precision.
+get_expected_min_decline_rate(Timestamp, Period, Amount, Size, Rate, Height) ->
+	{USDDiv1, USDDivisor1} = get_gb_cost_per_year_at_timestamp(Timestamp, Height),
+	%% Multiply by 2 to account for hashing costs.
+	Sum1 = 2 * usd_to_ar({USDDiv1, USDDivisor1}, Rate, Height),
+	{USDDiv2, USDDivisor2} = get_gb_cost_per_year_at_timestamp(Timestamp + Period, Height),
+	Sum2 = 2 * usd_to_ar({USDDiv2, USDDivisor2}, Rate, Height),
+	%% Sum1 / -logRate - Sum2 / -logRate = Amount
+	%% => -logRate = (Sum1 - Sum2) / Amount
+	%% => 1 / Rate = exp((Sum1 - Sum2) / Amount)
+	%% => Rate = 1 / exp((Sum1 - Sum2) / Amount)
+	{ExpDiv, ExpDivisor} = ar_fraction:natural_exponent(
+			{(Sum1 - Sum2) * Size, Amount * (1024 * 1024 * 1024)}, 16),
+	ar_fraction:reduce({ExpDivisor, ExpDiv}, 1000000).
 
 %%%===================================================================
 %%% Private functions.

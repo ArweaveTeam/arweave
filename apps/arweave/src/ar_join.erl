@@ -1,8 +1,6 @@
 -module(ar_join).
 
--export([
-	start/1
-]).
+-export([start/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -50,6 +48,7 @@ get_block_index(Peers, Retries) ->
 						" Consider changing the peers.~n"
 					),
 					?LOG_ERROR([{event, failed_to_fetch_block_index}]),
+					timer:sleep(1000),
 					erlang:halt()
 			end;
 		BI ->
@@ -87,6 +86,7 @@ get_block(Peers, H, Retries) ->
 						{event, failed_to_fetch_joining_block},
 						{block, ar_util:encode(H)}
 					]),
+					timer:sleep(1000),
 					erlang:halt()
 			end
 	end.
@@ -119,13 +119,19 @@ get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries) ->
 						{event, failed_to_fetch_joining_tx},
 						{block, ar_util:encode(TXID)}
 					]),
+					timer:sleep(1000),
 					erlang:halt()
 			end
 	end.
 
 %% @doc Perform the joining process.
 do_join(Peers, B, BI) ->
-	ar_randomx_state:init(BI, Peers),
+	case B#block.height - ?STORE_BLOCKS_BEHIND_CURRENT > ar_fork:height_2_7() of
+		true ->
+			ok;
+		_ ->
+			ar_randomx_state:init(BI, Peers)
+	end,
 	ar:console("Downloading the block trail.~n", []),
 	Blocks = get_block_and_trail(Peers, B, BI),
 	ar:console("Downloaded the block trail successfully.~n", []),

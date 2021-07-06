@@ -3,11 +3,16 @@
 #include "randomx.h"
 #include "ar_mine_randomx.h"
 #include <gmp.h>
+#include <openssl/sha.h>
 #include "sha-256.h"
 #include "randomx_long_with_entropy.h"
 #include "feistel_msgsize_key_cipher.h"
+#include "vdf.h"
 
 ErlNifResourceType* stateType;
+ErlNifResourceType* vdfRandomxVmType;
+// just for split sources
+#include "ar_mine_vdf.h"
 
 static ErlNifFunc nif_funcs[] = {
 	{"init_fast_nif", 4, init_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
@@ -21,7 +26,10 @@ static ErlNifFunc nif_funcs[] = {
 	{"hash_fast_long_with_entropy_nif", 6, hash_fast_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"hash_light_long_with_entropy_nif", 6, hash_light_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"bulk_hash_fast_long_with_entropy_nif", 14, bulk_hash_fast_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-	{"release_state_nif", 1, release_state_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND}
+	{"release_state_nif", 1, release_state_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"vdf_sha2_nif", 5, vdf_sha2_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"vdf_parallel_sha_verify_nif", 8, vdf_parallel_sha_verify_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"vdf_parallel_sha_verify_with_reset_nif", 10, vdf_parallel_sha_verify_with_reset_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND}
 };
 
 ERL_NIF_INIT(ar_mine_randomx, nif_funcs, load, NULL, NULL, NULL);
@@ -32,9 +40,9 @@ static int load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info)
 	stateType = enif_open_resource_type(envPtr, NULL, "state", state_dtor, flags, NULL);
 	if (stateType == NULL) {
 		return 1;
-	} else {
-		return 0;
 	}
+
+	return 0;
 }
 
 static void state_dtor(ErlNifEnv* envPtr, void* objPtr)
@@ -317,7 +325,8 @@ static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	unsigned char nonce[RANDOMX_HASH_SIZE];
 	unsigned char prevNonce[RANDOMX_HASH_SIZE];
 	unsigned char segment[RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE];
-	int hashingIterations, pidCount, proxyPIDCount;
+	int hashingIterations;
+	unsigned int pidCount, proxyPIDCount;
 	ErlNifPid *pids, *proxyPIDs;
 
 	mpz_t mpzH, mpzSearchSpaceUpperBound;
@@ -895,7 +904,8 @@ static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int 
 	unsigned char nonce[RANDOMX_HASH_SIZE];
 	unsigned char prevNonce[RANDOMX_HASH_SIZE];
 	unsigned char segment[RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE];
-	int hashingIterations, pidCount, proxyPIDCount;
+	int hashingIterations;
+	unsigned int pidCount, proxyPIDCount;
 	ErlNifPid *pids, *proxyPIDs;
 
 	mpz_t mpzH, mpzSearchSpaceUpperBound;

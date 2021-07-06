@@ -215,11 +215,11 @@ make_tx_chain(Key, Height, Timestamp) ->
 	TX2 = tx(Key, fee(Height, Timestamp), TX1#tx.id),
 	[TX1, TX2].
 
-tx(Key = {_, Pub}, Reward, Anchor) ->
+tx(Key = {_, {_, Owner}}, Reward, Anchor) ->
 	ar_tx:sign(
 		#tx {
 			format = 2,
-			owner = Pub,
+			owner = Owner,
 			reward = Reward,
 			last_tx = Anchor
 		},

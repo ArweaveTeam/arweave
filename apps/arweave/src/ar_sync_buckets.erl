@@ -158,8 +158,8 @@ delete(Start, End, Size, Map) ->
 %%%===================================================================
 
 buckets_test() ->
-	Size = ?DEFAULT_SYNC_BUCKET_SIZE,
-	B1 = new(),
+	Size = 10000000000,
+	B1 = {10000000000, #{}},
 	?assertException(throw, uncompressable_buckets, serialize(B1, 10)),
 	{B1, S1} = serialize(B1, 20),
 	{ok, B1} = deserialize(S1),
@@ -177,7 +177,7 @@ buckets_test() ->
 	?assertEqual({Size, #{ 0 => 5 / Size, 1 => 0.5 }}, cut(Size + Size div 2, B3)),
 	?assertEqual({Size, #{ 0 => (1 - (Size - 4) / Size) * (5 / Size), 1 => 0 }},
 			delete(Size * 2, 4, B3)),
-	B4 = from_intervals(gb_sets:from_list([{5, 0}, {2 * Size, Size}])),
+	B4 = from_intervals(gb_sets:from_list([{5, 0}, {2 * Size, Size}]), {10000000000, #{}}),
 	?assertEqual(B3, B4),
 	B5 = from_intervals(gb_sets:from_list([{2 * Size, Size}]), B2),
 	?assertEqual(B4, B5).

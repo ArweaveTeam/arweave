@@ -8,22 +8,10 @@
 
 -behaviour(gen_server).
 
--export([
-	start_link/0,
-	started_hashing/0,
-	block_received_n_confirmations/2,
-	mined_block/2,
-	foreign_block/1
-]).
+-export([start_link/0, started_hashing/0, block_received_n_confirmations/2, mined_block/3,
+		foreign_block/1]).
 
--export([
-	init/1,
-	handle_call/3,
-	handle_cast/2,
-	handle_info/2,
-	terminate/2,
-	code_change/3
-]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -44,8 +32,8 @@ started_hashing() ->
 block_received_n_confirmations(BH, Height) ->
 	gen_server:cast(?MODULE, {block_received_n_confirmations, BH, Height}).
 
-mined_block(BH, Height) ->
-	gen_server:cast(?MODULE, {mined_block, BH, Height}).
+mined_block(BH, Height, PrevH) ->
+	gen_server:cast(?MODULE, {mined_block, BH, Height, PrevH}).
 
 foreign_block(BH) ->
 	gen_server:cast(?MODULE, {foreign_block, BH}).
@@ -115,8 +103,8 @@ handle_call(Request, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(started_hashing, State) when State#state.miner_logging == true ->
-	Message = "[Stage 1/3] Starting to hash",
-	?LOG_INFO(Message),
+	Message = "Starting to hash.",
+	?LOG_INFO([{event, starting_to_hash}]),
 	ar:console("~s~n", [Message]),
 	{noreply, State};
 
@@ -129,12 +117,9 @@ handle_cast({block_received_n_confirmations, BH, Height}, State) ->
 		{BH, Map} when State#state.miner_logging == true ->
 			%% Log the message for block mined by the local node
 			%% got confirmed by the network.
-			Message =
-				io_lib:format(
-					"[Stage 3/3] Your block ~s was accepted by the network!",
-					[ar_util:encode(BH)]
-				),
-			?LOG_INFO(Message),
+			Message = io_lib:format("Your block ~s was accepted by the network!",
+					[ar_util:encode(BH)]),
+			?LOG_INFO([{event, block_got_10_confirmations}, {block, ar_util:encode(BH)}]),
 			ar:console("~s~n", [Message]),
 			Map;
 		{_, Map} ->
@@ -144,19 +129,17 @@ handle_cast({block_received_n_confirmations, BH, Height}, State) ->
 	end,
 	{noreply, State#state{ mined_blocks = UpdatedMinedBlocks }};
 
-handle_cast({mined_block, BH, Height}, State) when State#state.miner_logging == true ->
-	Message =
-		io_lib:format(
-			"[Stage 2/3] Produced candidate block ~s and dispatched to network.",
-			[ar_util:encode(BH)]
-		),
-	?LOG_INFO(Message),
+handle_cast({mined_block, BH, Height, PrevH}, State) when State#state.miner_logging == true ->
+	Message = io_lib:format("Produced candidate block ~s (height ~B, previous block ~s).",
+			[ar_util:encode(BH), Height, ar_util:encode(PrevH)]),
+	?LOG_INFO([{event, mined_block}, {block, ar_util:encode(BH)}, {height, Height},
+			{previous_block, ar_util:encode(PrevH)}]),
 	ar:console("~s~n", [Message]),
 	MinedBlocks = State#state.mined_blocks,
 	State1 = State#state{ mined_blocks = MinedBlocks#{ Height => BH } },
 	{noreply, State1};
 
-handle_cast({mined_block, BH, Height}, State) ->
+handle_cast({mined_block, BH, Height, _PrevH}, State) ->
 	MinedBlocks = State#state.mined_blocks,
 	State1 = State#state{ mined_blocks = MinedBlocks#{ Height => BH } },
 	{noreply, State1};
@@ -184,7 +167,7 @@ handle_info(no_foreign_blocks, State) ->
 	Message =
 		"No foreign blocks received from the network or found by trusted peers. "
 		"Please check your internet connection and the logs for errors.",
-	?LOG_WARNING(Message),
+	?LOG_WARNING([{event, no_blocks_received}, {time, ?FOREIGN_BLOCK_ALERT_TIME div 1000}]),
 	ar:console("~s~n", [Message]),
 	{ok, Timer} = timer:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), no_foreign_blocks),
 	{noreply, State#state{ no_foreign_blocks_timer = Timer }};
@@ -211,14 +194,3 @@ handle_info(Info, State) ->
 %%--------------------------------------------------------------------
 terminate(_Reason, _State) ->
 	ok.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% @end
-%%--------------------------------------------------------------------
-code_change(_OldVsn, State, _Extra) ->
-	{ok, State}.

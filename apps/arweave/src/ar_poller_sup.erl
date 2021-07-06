@@ -1,21 +1,35 @@
 -module(ar_poller_sup).
+
 -behaviour(supervisor).
 
--export([start_link/1]).
+-export([start_link/0]).
+
 -export([init/1]).
+
+-include_lib("arweave/include/ar_config.hrl").
 
 %%%===================================================================
 %%% Public API.
 %%%===================================================================
 
-start_link(Args) ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, Args).
+start_link() ->
+	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-%%%===================================================================
-%%% Supervisor callbacks.
-%%%===================================================================
+%% ===================================================================
+%% Supervisor callbacks.
+%% ===================================================================
 
-init(Args) ->
-	SupFlags = #{strategy => one_for_one, intensity => 10, period => 1},
-	ChildSpec = #{ id => ar_poller, start => {ar_poller, start_link, [Args]} },
-	{ok, {SupFlags, [ChildSpec]}}.
+init([]) ->
+	{ok, Config} = application:get_env(arweave, config),
+	Children = lists:map(
+		fun(Num) ->
+			Name = list_to_atom("ar_poller_worker_" ++ integer_to_list(Num)),
+			{Name, {ar_poller_worker, start_link, [Name]}, permanent, 5000, worker,
+					[ar_poller_worker]}
+		end,
+		lists:seq(1, Config#config.block_pollers)
+	),
+	Workers = [element(1, El) || El <- Children],
+	Children2 = [{ar_poller, {ar_poller, start_link, [ar_poller, Workers]},
+			permanent, 5000, worker, [ar_poller]} | Children],
+	{ok, {{one_for_one, 5, 10}, Children2}}.

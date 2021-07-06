@@ -4,7 +4,8 @@
 		parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2,
 		genesis_wallets/0, pmap/2, pfilter/2,
 		do_until/3, block_index_entry_from_block/1,
-		bytes_to_mb_string/1, cast_after/3]).
+		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
+		take_every_nth/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -148,9 +149,9 @@ genesis_wallets() ->
 	{ok, Bin} = file:read_file("data/genesis_wallets.csv"),
 	lists:map(
 		fun(Line) ->
-			[PubKey, RawQty] = string:tokens(Line, ","),
+			[Addr, RawQty] = string:tokens(Line, ","),
 			{
-				ar_wallet:to_address(ar_util:decode(PubKey)),
+				ar_util:decode(Addr),
 				erlang:trunc(math:ceil(list_to_integer(RawQty))) * ?WINSTON_PER_AR,
 				<<>>
 			}
@@ -186,6 +187,36 @@ block_index_entry_from_block(B) ->
 %% @doc Convert the given number of bytes into the "%s MiB" string.
 bytes_to_mb_string(Bytes) ->
 	integer_to_list(Bytes div 1024 div 1024) ++ " MiB".
+
+%% @doc Encode the given list of sorted numbers into a binary where the nth bit
+%% is 1 the corresponding number is present in the given list; 0 otherwise.
+encode_list_indices(Indices) ->
+	encode_list_indices(Indices, 0).
+
+encode_list_indices([Index | Indices], N) ->
+	<< 0:(Index - N), 1:1, (encode_list_indices(Indices, Index + 1))/bitstring >>;
+encode_list_indices([], N) when N rem 8 == 0 ->
+	<<>>;
+encode_list_indices([], N) ->
+	<< 0:(8 - N rem 8) >>.
+
+%% @doc Return a list of position numbers corresponding to 1 bits of the given binary.
+parse_list_indices(Input) ->
+	parse_list_indices(Input, 0).
+
+parse_list_indices(<< 0:1, Rest/bitstring >>, N) ->
+	parse_list_indices(Rest, N + 1);
+parse_list_indices(<< 1:1, Rest/bitstring >>, N) ->
+	case parse_list_indices(Rest, N + 1) of
+		error ->
+			error;
+		Indices ->
+			[N | Indices]
+	end;
+parse_list_indices(<<>>, _N) ->
+	[];
+parse_list_indices(_BadInput, _N) ->
+	error.
 
 %%%
 %%% Tests.
@@ -227,3 +258,28 @@ cast_after(Delay, Module, Message) ->
 	%% Not using timer:apply_after here because send_after is more efficient:
 	%% http://erlang.org/doc/efficiency_guide/commoncaveats.html#timer-module.
 	erlang:send_after(Delay, Module, {'$gen_cast', Message}).
+
+take_every_nth(N, L) ->
+	take_every_nth(N, L, 0).
+
+take_every_nth(_N, [], _I) ->
+	[];
+take_every_nth(N, [El | L], I) when I rem N == 0 ->
+	[El | take_every_nth(N, L, I + 1)];
+take_every_nth(N, [_El | L], I) ->
+	take_every_nth(N, L, I + 1).
+
+encode_list_indices_test() ->
+	lists:foldl(
+		fun(Input, N) ->
+			?assertEqual(Input, lists:sort(Input)),
+			Encoded = encode_list_indices(Input),
+			?assert(byte_size(Encoded) =< 125),
+			Indices = parse_list_indices(Encoded),
+			?assertEqual(Input, Indices, io_lib:format("Case ~B", [N])),
+			N + 1
+		end,
+		0,
+		[[], [0], [1], [999], [0, 1], lists:seq(0, 999), lists:seq(0, 999, 2),
+			lists:seq(1, 999, 3)]
+	).

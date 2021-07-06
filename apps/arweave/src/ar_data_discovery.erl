@@ -56,11 +56,13 @@ get_bucket_peers(Bucket) ->
 get_bucket_peers(Bucket, Cursor, Peers) ->
 	case ets:next(?MODULE, Cursor) of
 		'$end_of_table' ->
-			pick_peers(Peers, ?QUERY_BEST_PEERS_COUNT);
+			UniquePeers = sets:to_list(sets:from_list(Peers)),
+			pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT);
 		{Bucket, _Share, Peer} = Key ->
 			get_bucket_peers(Bucket, Key, [Peer | Peers]);
 		_ ->
-			pick_peers(Peers, ?QUERY_BEST_PEERS_COUNT)
+			UniquePeers = sets:to_list(sets:from_list(Peers)),
+			pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT)
 	end.
 
 %%%===================================================================
@@ -94,7 +96,7 @@ handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
 			ar_util:cast_after(200, ?MODULE, update_network_data_map),
 			{noreply, State};
 		{{value, Peer}, Queue} ->
-			monitor(process, spawn(
+			monitor(process, spawn_link(
 				fun() ->
 					process_flag(trap_exit, true),
 					case ar_http_iface_client:get_sync_buckets(Peer) of
@@ -151,6 +153,9 @@ handle_cast({remove_peer, Peer}, State) ->
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
+
+handle_info({'EXIT', _, normal}, State) ->
+	{noreply, State};
 
 handle_info({'DOWN', _,  process, _, _}, #state{ peers_pending = N } = State) ->
 	{noreply, State#state{ peers_pending = N - 1 }};

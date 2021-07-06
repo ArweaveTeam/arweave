@@ -20,34 +20,61 @@ For more information, refer to the [mining guide](https://docs.arweave.org/info/
 
 ## Requirements
 
-- Erlang OTP v23+, with OpenSSL support
-- GCC or Clang
+- OpenSSL 1.1.1+
+- OpenSSL development headers
+- GCC or Clang (GCC 8 recommended)
+- Erlang OTP v24, with OpenSSL support
 - GNU Make
 - CMake (CMake version > 3.10.0)
 - SQLite3 headers (libsqlite3-dev on Ubuntu)
 - GNU MP (libgmp-dev on Ubuntu)
 
+To install the dependencies on Ubuntu 22 (recommended), run:
+
+```sh
+sudo apt install erlang-base erlang libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
+```
+
+Download the repo:
+
 ```sh
 $ git clone --recursive https://github.com/ArweaveTeam/arweave.git
 $ cd arweave
+```
+
+Increase the [open file
+limits](https://docs.arweave.org/info/mining/mining-guide#preparation-file-descriptors-limit).
+
+Run in the development mode:
+
+```sh
+./arweave-server peer 188.166.200.45 peer 188.166.192.169 peer 163.47.11.64 peer 139.59.51.59 peer 138.197.232.192
+```
+
+Make a production build:
+
+```sh
 $ ./rebar3 as prod tar
 ```
 
 You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z.tar.gz`.
+
+Make a testnet build:
+
+```sh
+$ ./rebar3 as testnet tar
+```
+
+The tarball is created at `_build/testnet/rel/arweave/arweave-x.y.z.tar.gz`.
 
 # Contributing
 
 Make sure to have the build requirements installed.
 
 Clone the repo and initialize the Git submodules:
+
 ```sh
 $ git clone --recursive https://github.com/ArweaveTeam/arweave.git
-```
-
-## Running a node locally
-
-```sh
-$ bin/start-dev
 ```
 
 ## Running the tests
@@ -62,11 +89,18 @@ $ bin/test
 $ bin/shell
 ```
 
-`bin/test` and `bin/shell` launch two connected Erlang VMs in distributed mode. The
-master VM runs an HTTP server on the port 1984. The slave VM uses the
-port 1983. The data folders are `data_test_master` and `data_test_slave`
-respectively. The tests that do not depend on two VMs are run against the
-master VM.
+`bin/test` and `bin/shell` launch two connected Erlang VMs in distributed mode. The master VM runs an HTTP server on the port 1984. The slave VM uses the port 1983. The data folders are `data_test_master` and `data_test_slave` respectively. The tests that do not depend on two VMs are run against the master VM.
+
+Run a specific test (the shell offers autocompletion):
+
+```sh
+(master@127.0.0.1)1> eunit:test(ar_fork_recovery_tests:height_plus_one_fork_recovery_test_()).
+```
+
+If it fails, the nodes keep running so you can inspect them through Erlang shell or HTTP API.
+The logs from both nodes are collected in `logs/`. They are rotated so you probably want to
+consult the latest modified `master@127.0.0.1.*` and `slave@127.0.0.1.*` files first - `ls -lat
+logs/`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for more information.
 

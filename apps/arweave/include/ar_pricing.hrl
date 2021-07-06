@@ -7,10 +7,13 @@
 %% The target number of replications.
 -define(N_REPLICATIONS, fun(MACRO_Height) ->
 	MACRO_Forks = {
-		ar_fork:height_2_5()
+		ar_fork:height_2_5(),
+		ar_fork:height_2_6()
 	},
 	case MACRO_Forks of
-		{MACRO_Fork_2_5} when MACRO_Height >= MACRO_Fork_2_5 ->
+		{_MACRO_Fork_2_5, MACRO_Fork_2_6} when MACRO_Height >= MACRO_Fork_2_6 ->
+			15;
+		{MACRO_Fork_2_5, _MACRO_Fork_2_6} when MACRO_Height >= MACRO_Fork_2_5 ->
 			45;
 		_ ->
 			10
@@ -43,12 +46,18 @@ end).
 -define(INITIAL_USD_TO_AR(Height), fun() ->
 	Forks = {
 		ar_fork:height_2_4(),
-		ar_fork:height_2_5()
+		ar_fork:height_2_5(),
+		ar_fork:height_2_6(),
+		ar_fork:height_2_7()
 	},
 	case Forks of
-		{_Fork_2_4, Fork_2_5} when Height >= Fork_2_5 ->
+		{_Fork_2_4, _Fork_2_5, _Fork_2_6, Fork_2_7} when Height >= Fork_2_7 ->
+			{1, 10};
+		{_Fork_2_4, _Fork_2_5, Fork_2_6, _Fork_2_7} when Height >= Fork_2_6 ->
+			{1, 10};
+		{_Fork_2_4, Fork_2_5, _Fork_2_6, _Fork_2_7} when Height >= Fork_2_5 ->
 			{1, 65};
-		{Fork_2_4, _Fork_2_5} when Height >= Fork_2_4 ->
+		{Fork_2_4, _Fork_2_5, _Fork_2_6, _Fork_2_7} when Height >= Fork_2_4 ->
 			?INITIAL_USD_TO_AR_PRE_FORK_2_5
 	end
 end).
@@ -64,14 +73,20 @@ end).
 	Forks = {
 		ar_fork:height_1_9(),
 		ar_fork:height_2_2(),
-		ar_fork:height_2_5()
+		ar_fork:height_2_5(),
+		ar_fork:height_2_6(),
+		ar_fork:height_2_7()
 	},
 	case Forks of
-		{_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
+		{_Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6, Fork_2_7} when Height >= Fork_2_7 ->
+			32; % TODO
+		{_Fork_1_9, _Fork_2_2, _Fork_2_5, Fork_2_6, _Fork_2_7} when Height >= Fork_2_6 ->
 			32;
-		{_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
+		{_Fork_1_9, _Fork_2_2, Fork_2_5, _Fork_2_6, _Fork_2_7} when Height >= Fork_2_5 ->
+			32;
+		{_Fork_1_9, Fork_2_2, _Fork_2_5, _Fork_2_6, _Fork_2_7} when Height >= Fork_2_2 ->
 			34;
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6, _Fork_2_7} when Height < Fork_1_9 ->
 			28;
 		_ ->
 			29
@@ -85,19 +100,25 @@ end).
 	Forks = {
 		ar_fork:height_1_9(),
 		ar_fork:height_2_2(),
-		ar_fork:height_2_5()
+		ar_fork:height_2_5(),
+		ar_fork:height_2_6(),
+		ar_fork:height_2_7()
 	},
 	%% In case the fork heights are reset to 0 (e.g. on testnets),
 	%% set the initial height to 1 - the height where the inflation
 	%% emission essentially begins.
 	case Forks of
-		{_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
+		{_Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6, Fork_2_7} when Height >= Fork_2_7 ->
+			max(Fork_2_7, 1);
+		{_Fork_1_9, _Fork_2_2, _Fork_2_5, Fork_2_6, _Fork_2_7} when Height >= Fork_2_6 ->
+			max(Fork_2_6, 1);
+		{_Fork_1_9, _Fork_2_2, Fork_2_5, _Fork_2_6, _Fork_2_7} when Height >= Fork_2_5 ->
 			max(Fork_2_5, 1);
-		{_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
+		{_Fork_1_9, Fork_2_2, _Fork_2_5, _Fork_2_6, _Fork_2_7} when Height >= Fork_2_2 ->
 			max(Fork_2_2, 1);
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6, _Fork_2_7} when Height < Fork_1_9 ->
 			max(ar_fork:height_1_8(), 1);
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6, _Fork_2_7} ->
 			max(Fork_1_9, 1)
 	end
 end).

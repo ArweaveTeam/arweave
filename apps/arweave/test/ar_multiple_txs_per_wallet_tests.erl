@@ -7,10 +7,10 @@
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0,
 	slave_mine/0, join_on_slave/0, assert_wait_until_receives_txs/1,
 	wait_until_height/1, assert_slave_wait_until_height/1,
-	slave_call/3, assert_wait_until_block_block_index/1, post_tx_to_slave/1,
+	slave_call/3, assert_wait_until_block_index/1, post_tx_to_slave/1,
 	post_tx_to_slave/2, post_tx_to_master/1, assert_post_tx_to_slave/1,
-	assert_post_tx_to_master/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
-	get_tx_anchor/0, get_tx_anchor/1, get_tx_confirmations/2,
+	assert_post_tx_to_master/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2,
+	sign_v1_tx/3, get_tx_anchor/0, get_tx_anchor/1, get_tx_confirmations/2,
 	disconnect_from_slave/0, read_block_when_stored/1, random_v1_data/1, slave_peer/0]).
 
 accepts_gossips_and_mines_test_() ->
@@ -94,7 +94,7 @@ mines_blocks_under_the_size_limit_test_() ->
 	[
 		{
 			"Five transactions with block anchors",
-			{timeout, 30, PrepareTestFor(fun() -> grouped_txs() end)}
+			{timeout, 120, PrepareTestFor(fun() -> grouped_txs() end)}
 		}
 	].
 
@@ -244,10 +244,11 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}),
 	?debugFmt("TX: ~s Reply: ~p~n", [ar_util:encode(ExceedBalanceTX#tx.id), Body]),
-	?assertEqual({ok, ["overspend"]}, ar_tx_db:get_error_codes(ExceedBalanceTX#tx.id)).
+	?assertEqual({ok, ["overspend"]}, slave_call(ar_tx_db, get_error_codes,
+			[ExceedBalanceTX#tx.id])).
 
 rejects_transactions_above_the_size_limit_test_() ->
-	{timeout, 60, fun test_rejects_transactions_above_the_size_limit/0}.
+	{timeout, 120, fun test_rejects_transactions_above_the_size_limit/0}.
 
 test_rejects_transactions_above_the_size_limit() ->
 	%% Create a genesis block with a wallet.
@@ -275,7 +276,7 @@ test_rejects_transactions_above_the_size_limit() ->
 	).
 
 accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
-	{timeout, 60, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
+	{timeout, 120, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
 
 test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	%% Post a TX, mine a block.
@@ -309,7 +310,7 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	?assertEqual([TX2#tx.id, TX4#tx.id], B2#block.txs).
 
 does_not_allow_to_spend_mempool_tokens_test_() ->
-	{timeout, 60, fun test_does_not_allow_to_spend_mempool_tokens/0}.
+	{timeout, 120, fun test_does_not_allow_to_spend_mempool_tokens/0}.
 
 test_does_not_allow_to_spend_mempool_tokens() ->
 	%% Post a transaction sending tokens to a wallet with few tokens.
@@ -364,7 +365,7 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 	?assertEqual([TX3#tx.id], B2#block.txs).
 
 does_not_allow_to_replay_empty_wallet_txs_test_() ->
-	{timeout, 60, fun test_does_not_allow_to_replay_empty_wallet_txs/0}.
+	{timeout, 120, fun test_does_not_allow_to_replay_empty_wallet_txs/0}.
 
 test_does_not_allow_to_replay_empty_wallet_txs() ->
 	%% Create a new wallet by sending some tokens to it. Mine a block.
@@ -509,7 +510,7 @@ mines_format_2_txs_without_size_limit() ->
 	?assert(TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT).
 
 rejects_txs_with_outdated_anchors_test_() ->
-	{timeout, 60, fun() ->
+	{timeout, 120, fun() ->
 		%% Post a transaction anchoring the block at ?MAX_TX_ANCHOR_DEPTH + 1.
 		%%
 		%% Expect the transaction to be rejected.
@@ -526,7 +527,7 @@ rejects_txs_with_outdated_anchors_test_() ->
 	end}.
 
 drops_v1_txs_exceeding_mempool_limit_test_() ->
-	{timeout, 60, fun test_drops_v1_txs_exceeding_mempool_limit/0}.
+	{timeout, 120, fun test_drops_v1_txs_exceeding_mempool_limit/0}.
 
 test_drops_v1_txs_exceeding_mempool_limit() ->
 	%% Post transactions which exceed the mempool size limit.
@@ -562,7 +563,7 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
 
 drops_v2_txs_exceeding_mempool_limit_test_() ->
-	{timeout, 60, fun drops_v2_txs_exceeding_mempool_limit/0}.
+	{timeout, 120, fun drops_v2_txs_exceeding_mempool_limit/0}.
 
 drops_v2_txs_exceeding_mempool_limit() ->
 	Key = {_, Pub} = ar_wallet:new(),
@@ -605,7 +606,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 			++ [StrippedTX#tx.id], Mempool3).
 
 mines_format_2_txs_without_size_limit_test_() ->
-	{timeout, 60, fun mines_format_2_txs_without_size_limit/0}.
+	{timeout, 120, fun mines_format_2_txs_without_size_limit/0}.
 
 joins_network_successfully() ->
 	%% Start a node and mine ?MAX_TX_ANCHOR_DEPTH blocks, some of them
@@ -668,7 +669,7 @@ joins_network_successfully() ->
 	),
 	_Master = join_on_slave(),
 	BI = slave_call(ar_node, get_block_index, []),
-	assert_wait_until_block_block_index(BI),
+	assert_wait_until_block_index(BI),
 	TX1 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		post_tx_to_master(TX1),
@@ -692,24 +693,17 @@ joins_network_successfully() ->
 			Reply = post_tx_to_master(TX),
 			case AnchorType of
 				tx_anchor ->
-					?assertMatch(
-						{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}},
-						Reply
-					);
+					?assertMatch({ok, {{<<"400">>, _}, _,
+							<<"Invalid anchor (last_tx).">>, _, _}}, Reply);
 				block_anchor ->
 					RecentBHL = lists:sublist(?BI_TO_BHL(BI), ?MAX_TX_ANCHOR_DEPTH),
 					case lists:member(TX#tx.last_tx, RecentBHL) of
 						true ->
-							?assertMatch(
-								{ok, {{<<"400">>, _}, _,
-									<<"Transaction is already on the weave.">>, _, _}},
-								Reply
-							);
+							?assertMatch({ok, {{<<"400">>, _}, _,
+									<<"Transaction is already on the weave.">>, _, _}}, Reply);
 						false ->
-							?assertMatch(
-								{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}},
-								Reply
-							)
+							?assertMatch({ok, {{<<"400">>, _}, _,
+									<<"Invalid anchor (last_tx).">>, _, _}}, Reply)
 					end	
 			end
 		end,
@@ -720,11 +714,11 @@ joins_network_successfully() ->
 	assert_post_tx_to_master(TX2),
 	ar_node:mine(),
 	wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
-	connect_to_slave(),
 	TX3 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
 	assert_post_tx_to_slave(TX3),
 	slave_mine(),
 	BI2 = assert_slave_wait_until_height(?MAX_TX_ANCHOR_DEPTH + 1),
+	connect_to_slave(),
 	TX4 = sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
 	assert_post_tx_to_slave(TX4),
 	assert_wait_until_receives_txs([TX4]),
@@ -772,7 +766,8 @@ recovers_from_forks(ForkHeight) ->
 	),
 	PostTXToMaster =
 		fun() ->
-			UnsignedTX = #{ last_tx => get_tx_anchor(master), tags => [{<<"nonce">>, random_nonce()}] },
+			UnsignedTX = #{ last_tx => get_tx_anchor(master),
+					tags => [{<<"nonce">>, random_nonce()}] },
 			TX = case rand:uniform(2) of
 				1 ->
 					sign_tx(master, Key, UnsignedTX);
@@ -784,7 +779,8 @@ recovers_from_forks(ForkHeight) ->
 		end,
 	PostTXToSlave =
 		fun() ->
-			UnsignedTX = #{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] },
+			UnsignedTX = #{ last_tx => get_tx_anchor(),
+					tags => [{<<"nonce">>, random_nonce()}] },
 			TX = case rand:uniform(2) of
 				1 ->
 					sign_tx(Key, UnsignedTX);
@@ -794,15 +790,14 @@ recovers_from_forks(ForkHeight) ->
 			assert_post_tx_to_slave(TX),
 			[TX]
 		end,
+	disconnect_from_slave(),
 	{MasterPostForkTXs, SlavePostForkTXs} = lists:foldl(
 		fun(Height, {MasterTXs, SlaveTXs}) ->
-			disconnect_from_slave(),
 			UpdatedMasterTXs = MasterTXs ++ ([NewMasterTX] = PostTXToMaster()),
 			ar_node:mine(),
 			BI = wait_until_height(Height),
 			assert_block_txs([NewMasterTX], BI),
 			UpdatedSlaveTXs = SlaveTXs ++ ([NewSlaveTX] = PostTXToSlave()),
-			connect_to_slave(),
 			slave_mine(),
 			SlaveBI = assert_slave_wait_until_height(Height),
 			slave_assert_block_txs([NewSlaveTX], SlaveBI),
@@ -811,7 +806,9 @@ recovers_from_forks(ForkHeight) ->
 		{[], []},
 		lists:seq(ForkHeight + 1, 9)
 	),
-	TX2 = sign_tx(Key, #{ last_tx => get_tx_anchor(), tags => [{<<"nonce">>, random_nonce()}] }),
+	connect_to_slave(),
+	TX2 = sign_tx(Key, #{ last_tx => get_tx_anchor(),
+			tags => [{<<"nonce">>, random_nonce()}] }),
 	assert_post_tx_to_slave(TX2),
 	assert_wait_until_receives_txs([TX2]),
 	slave_mine(),
@@ -878,12 +875,7 @@ empty_tx_set(_Key, _B0) ->
 block_anchor_txs_spending_balance_plus_one_more() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	TX1 = sign_v1_tx(Key, #{
-		quantity => ?AR(4),
-		target => crypto:strong_rand_bytes(32),
-		reward => ?AR(6),
-		last_tx => B0#block.indep_hash
-	}),
+	TX1 = sign_v1_tx(Key, #{ reward => ?AR(10), last_tx => B0#block.indep_hash }),
 	TX2 = sign_v1_tx(Key, #{ reward => ?AR(10), last_tx => B0#block.indep_hash }),
 	ExceedBalanceTX = sign_v1_tx(Key, #{ reward => ?AR(1), last_tx => B0#block.indep_hash }),
 	{B0, [TX1, TX2], ExceedBalanceTX}.
@@ -891,11 +883,7 @@ block_anchor_txs_spending_balance_plus_one_more() ->
 mixed_anchor_txs_spending_balance_plus_one_more() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
-	TX1 = sign_v1_tx(Key, #{
-		quantity => ?AR(4),
-		reward => ?AR(6),
-		target => crypto:strong_rand_bytes(32)
-	}),
+	TX1 = sign_v1_tx(Key, #{ reward => ?AR(10) }),
 	TX2 = sign_v1_tx(Key, #{ reward => ?AR(5), last_tx => B0#block.indep_hash }),
 	TX3 = sign_v1_tx(Key, #{ reward => ?AR(2), last_tx => B0#block.indep_hash }),
 	TX4 = sign_v1_tx(Key, #{ reward => ?AR(3), last_tx => B0#block.indep_hash }),

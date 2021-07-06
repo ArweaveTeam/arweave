@@ -3,19 +3,18 @@
 %%% @end
 -module(ar_poa).
 
--export([validate_pre_fork_2_5/4, validate/6, get_padded_offset/2]).
+-export([validate_pre_fork_2_5/4, validate/8, get_padded_offset/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
-
--define(MIN_MAX_OPTION_DEPTH, 100).
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
 %% @doc Validate a proof of access.
-validate(BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, StrictDataSplitThreshold) ->
+validate(BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, Packing_2_6_Threshold,
+		StrictDataSplitThreshold, RewardAddr) ->
 	#poa{ chunk = Chunk } = SPoA,
 	TXPath = SPoA#poa.tx_path,
 	RecallBucketOffset =
@@ -46,9 +45,18 @@ validate(BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, StrictDataSpli
 				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
 					ChunkSize = ChunkEndOffset - ChunkStartOffset,
 					AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-					case ar_packing_server:unpack(spora_2_5, AbsoluteEndOffset, TXRoot, Chunk,
+					Packing =
+						case BlockStartOffset >= Packing_2_6_Threshold of
+							true ->
+								prometheus_counter:inc(validating_packed_2_6_spora),
+								{spora_2_6, RewardAddr};
+							false ->
+								prometheus_counter:inc(validating_packed_spora),
+								spora_2_5
+						end,
+					case ar_packing_server:unpack(Packing, AbsoluteEndOffset, TXRoot, Chunk,
 							ChunkSize) of
-						{error, invalid_packed_size} ->
+						{error, _} ->
 							false;
 						{ok, Unpacked} ->
 							ChunkID == ar_tx:generate_chunk_id(Unpacked)

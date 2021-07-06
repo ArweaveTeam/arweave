@@ -1,18 +1,8 @@
 %%% @doc An implementation of a tree closely resembling a merkle patricia tree.
 -module(ar_patricia_tree).
 
--export([
-	new/0,
-	insert/3,
-	get/2,
-	size/1,
-	compute_hash/2,
-	foldr/3,
-	is_empty/1,
-	from_proplist/1,
-	delete/2,
-	get_range/2, get_range/3
-]).
+-export([new/0, insert/3, get/2, size/1, compute_hash/2, foldr/3, is_empty/1, from_proplist/1,
+		delete/2, get_range/2, get_range/3]).
 
 -include_lib("eunit/include/eunit.hrl").
 

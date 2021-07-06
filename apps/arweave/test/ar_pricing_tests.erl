@@ -8,44 +8,38 @@
 %% issue with picking them up after the module is rebuilt (e.g. during debugging).
 -export([get_miner_reward_and_endowment_pool/1]).
 
--import(ar_test_node, [
-	start/1, start/2, slave_start/2, connect_to_slave/0, slave_call/3,
-	slave_mine/0,
-	sign_tx/1, sign_tx/2,
-	assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
-	wait_until_height/1, assert_slave_wait_until_height/1,
-	get_tx_anchor/0, get_tx_anchor/1,
-	get_balance/1,
-	test_with_mocked_functions/2,
-	read_block_when_stored/1
-]).
-
--import(ar_test_fork, [
-	test_on_fork/3
-]).
+-import(ar_test_node, [start/1, start/2, slave_start/2, connect_to_slave/0, slave_call/3,
+		slave_mine/0, sign_tx/1, sign_tx/2, assert_post_tx_to_slave/1,
+		assert_post_tx_to_master/1, wait_until_height/1, assert_slave_wait_until_height/1,
+		get_tx_anchor/0, get_tx_anchor/1, get_balance/1, test_with_mocked_functions/2,
+		read_block_when_stored/1]).
+-import(ar_test_fork, [test_on_fork/3]).
 
 -define(HUGE_WEAVE_SIZE, 1000000000000000).
 
 updates_pool_and_assigns_rewards_correctly_before_burden_test_() ->
-	test_on_fork(height_2_5, 0, fun updates_pool_and_assigns_rewards_correctly_before_burden/0).
+	test_on_fork(height_2_6, 0,
+			fun updates_pool_and_assigns_rewards_correctly_before_burden/0).
 
 updates_pool_and_assigns_rewards_correctly_after_burden_test_() ->
 	%% Bigger burden is achieved by mocking `ar_pricing:get_miner_reward_and_endowment_pool/1`
 	%% so that it considers the weave size really big. Otherwise, we cannot start a big
 	%% weave without storing a significant share of the data - test nodes won't be able to
 	%% mine blocks.
-	test_on_fork(height_2_5, 0,
-		test_with_mocked_functions(
-			[
-				{ar_pricing, get_miner_reward_and_endowment_pool,
-					fun ar_pricing_tests:get_miner_reward_and_endowment_pool/1}
-			],
-			fun updates_pool_and_assigns_rewards_correctly_after_burden/0
-		)
+	test_with_mocked_functions(
+		[
+			{ar_pricing, get_miner_reward_and_endowment_pool,
+				fun ar_pricing_tests:get_miner_reward_and_endowment_pool/1},
+			{ar_fork, height_2_6, fun() -> 0 end}
+		],
+		fun updates_pool_and_assigns_rewards_correctly_after_burden/0
 	).
 
 unclaimed_rewards_go_to_endowment_pool_test_() ->
-	test_on_fork(height_2_5, 0, fun test_unclaimed_rewards_go_to_endowment_pool/0).
+	ar_test_node:test_with_mocked_functions([
+			{ar_fork, height_2_6, fun() -> infinity end},
+			{ar_fork, height_2_7, fun() -> infinity end}],
+		fun test_unclaimed_rewards_go_to_endowment_pool/0).
 
 get_miner_reward_and_endowment_pool(Args) ->
 	{Pool, TXs, Addr, _WeaveSize, Height, Timestamp, Rate} = Args,
@@ -55,7 +49,12 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
 	Key2 = {_, Pub2} = ar_wallet:new(),
 	Key3 = {_, Pub3} = ar_wallet:new(),
-	RewardKey = {_, RewardAddr} = ar_wallet:new(),
+	RewardKey = {_, RewardAddr} = ar_wallet:new_keyfile(),
+	WalletName = ar_util:encode(ar_wallet:to_address(RewardKey)),
+	Path = ar_wallet:wallet_filepath(WalletName),
+	SlavePath = slave_call(ar_wallet, wallet_filepath, [WalletName]),
+	%% Copy the key because we mine blocks on both nodes using the same key in this test.
+	{ok, _} = file:copy(Path, SlavePath),
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(2000), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
@@ -177,13 +176,13 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 
 updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
-	RewardKey = {_, RewardAddr} = ar_wallet:new(),
+	RewardKey = {_, RewardAddr} = slave_call(ar_wallet, new_keyfile, []),
 	[BNoPool] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(2000), <<>>},
 		{ar_wallet:to_address(RewardAddr), ?AR(1), <<>>}
 	]),
 	B0 = BNoPool#block{ reward_pool = ?AR(10000000000000) },
-	{_Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
+	{_Master, _} = start(B0),
 	{_Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
 	connect_to_slave(),
 	Balance = get_balance(RewardAddr),
@@ -207,7 +206,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 			trunc(ar_inflation:calculate(1))
 			+ MultiplierDividend * RewardPoolIncrement div MultiplierDivisor
 	),
-	?assertEqual(Size1, B1#block.weave_size),
+	?assertEqual(Size1, B1#block.block_size),
 	%% Mine an empty block. Expect an inflation reward and a share of the endowment pool.
 	slave_mine(),
 	BI2 = wait_until_height(2),
@@ -245,6 +244,7 @@ test_unclaimed_rewards_go_to_endowment_pool() ->
 	Key = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2000), <<>>}]),
 	start(B0),
+	ar_node_worker:set_reward_addr(unclaimed),
 	%% Mine a block without transactions. Expect no endowment pool increase.
 	ar_node:mine(),
 	BI1 = wait_until_height(1),
