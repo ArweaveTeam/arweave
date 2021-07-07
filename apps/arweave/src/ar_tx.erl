@@ -216,11 +216,11 @@ get_wallet_fee_pre_fork_2_4(Diff, Height) ->
 %%%===================================================================
 
 %% @doc Generate the data segment to be signed for a given v2 TX.
-signature_data_segment_v2(TX = #tx { signature_type = TXSigType }) ->
+signature_data_segment_v2(TX = #tx { signature_type = SigType }) ->
 	SigTypeTrailer =
-		case TXSigType of
-			undefined -> [];
-			_ -> [list_to_binary(ar_serialize:signature_type_to_list(TXSigType))]
+		case SigType of
+			?DEFAULT_KEY_TYPE -> [];
+			_ -> [list_to_binary(ar_serialize:signature_type_to_list(SigType))]
 		end,
 	ar_deep_hash:hash([
 		<<(integer_to_binary(TX#tx.format))/binary>>,
@@ -454,42 +454,29 @@ ends_with_digit(Data) ->
 	LastByte = binary:last(Data),
 	LastByte >= 48 andalso LastByte =< 57.
 
-verify_signature_type(#tx { format = Format, signature_type = TXSigType }, Height) ->
-	case Height < ar_fork:height_2_5() of
-		true -> Format > 1;
-		false -> TXSigType == undefined
+verify_signature_type(#tx { signature_type = SigType }, Height) ->
+	case Height >= ar_fork:height_2_5() of
+		% Invalid signature types should have already been caught during deserialization
+		% so we don't actually have to validate anything here.
+		true -> true;
+		false -> SigType =:= ?DEFAULT_KEY_TYPE
 	end.
 
 verify_signature_v2(_TX, do_not_verify_signature) ->
 	true;
-verify_signature_v2(TX = #tx { signature_type = TXSigType }, verify_signature) ->
-	SigType =
-		case TXSigType of
-			undefined -> ?DEFAULT_KEY_TYPE;
-			_ -> TXSigType
-		end,
+verify_signature_v2(TX = #tx { signature_type = SigType }, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
 	ar_wallet:verify({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v2(_TX, do_not_verify_signature, _Height) ->
 	true;
-verify_signature_v2(TX = #tx { signature_type = TXSigType }, verify_signature, Height) ->
+verify_signature_v2(TX = #tx { signature_type = SigType }, verify_signature, Height) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
 	case Height >= ar_fork:height_2_4() of
 		true ->
-			SigType =
-				case Height < ar_fork:height_2_5() of
-					true ->
-						case TXSigType of
-							undefined -> ?DEFAULT_KEY_TYPE;
-							_ -> TXSigType
-						end;
-					false ->
-						?DEFAULT_KEY_TYPE
-				end,
 			ar_wallet:verify({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature);
 		false ->
-			ar_wallet:verify_pre_fork_2_4({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment, TX#tx.signature)
+			ar_wallet:verify_pre_fork_2_4({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature)
 	end.
 
 validate_overspend(TX, Wallets) ->

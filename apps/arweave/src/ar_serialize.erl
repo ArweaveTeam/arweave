@@ -600,7 +600,6 @@ json_map_to_chunk_proof(JSON) ->
 
 signature_type_to_list(SigType) ->
 	case SigType of
-		undefined -> null;
 		?DEFAULT_KEY_TYPE -> <<"rsa_pss_65537">>;
 		{?ECDSA_SIGN_ALG, secp256k1} -> <<"ecdsa_secp256k1">>;
 		{?EDDSA_SIGN_ALG, ed25519} -> <<"eddsa_ed25519">>
@@ -608,11 +607,11 @@ signature_type_to_list(SigType) ->
 
 list_to_signature_type(List) ->
 	case List of
-		undefined -> undefined;
-		null -> undefined;
+		undefined -> ?DEFAULT_KEY_TYPE;
 		<<"rsa_pss_65537">> -> ?DEFAULT_KEY_TYPE;
 		<<"ecdsa_secp256k1">> -> {?ECDSA_SIGN_ALG, secp256k1};
-		<<"eddsa_ed25519">> -> {?EDDSA_SIGN_ALG, ed25519}
+		<<"eddsa_ed25519">> -> {?EDDSA_SIGN_ALG, ed25519};
+		_ -> throw(invalid_signature_type)
 	end.
 
 %%% Tests: ar_serialize
@@ -625,28 +624,20 @@ block_roundtrip_test() ->
 	?assertEqual(B, BRes#block{ hash_list = B#block.hash_list, size_tagged_txs = [] }).
 
 %% @doc Convert a new TX into JSON and back, ensure the result is the same.
-tx_roundtrip_test_() ->
-	TXSerializeRoundtrip = fun(KeyType) ->
-		fun() ->
-			TXBase = ar_tx:new(<<"test">>),
-			TX =
-				TXBase#tx {
-					format = 2,
-					tags = [{<<"Name1">>, <<"Value1">>}],
-					data_root = << 0:256 >>,
-					signature_type = KeyType
-				},
-			JsonTX = jsonify(tx_to_json_struct(TX)),
-			?assertEqual(
-				TX,
-				json_struct_to_tx(JsonTX)
-			)
-		end
-	end,
-	[
-		{"unspecified signature_type", TXSerializeRoundtrip(undefined)},
-		{"specified signature_type", TXSerializeRoundtrip(?DEFAULT_KEY_TYPE)}	
-	].
+tx_roundtrip_test() ->
+	TXBase = ar_tx:new(<<"test">>),
+	TX =
+		TXBase#tx {
+			format = 2,
+			tags = [{<<"Name1">>, <<"Value1">>}],
+			data_root = << 0:256 >>,
+			signature_type = ?DEFAULT_KEY_TYPE
+		},
+	JsonTX = jsonify(tx_to_json_struct(TX)),
+	?assertEqual(
+		TX,
+		json_struct_to_tx(JsonTX)
+	).
 
 wallet_list_roundtrip_test() ->
 	[B] = ar_weave:init(),

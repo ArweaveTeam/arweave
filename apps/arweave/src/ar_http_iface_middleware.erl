@@ -1929,6 +1929,15 @@ post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 					ar_ignore_registry:remove_temporary(TXID)
 			end,
 			{error, invalid_json, Req};
+		{error, invalid_signature_type} ->
+            case TXID of
+                not_set ->
+                    noop;
+                _ ->
+                    ar_ignore_registry:remove_temporary(TXID),
+					ar_tx_db:put_error_codes(TXID, [<<"invalid_signature_type">>])
+            end,
+            {error, invalid_signature_type, Req};
 		{error, _} ->
 			case TXID of
 				not_set ->
