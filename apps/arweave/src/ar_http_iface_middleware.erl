@@ -450,6 +450,8 @@ handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
 					{400, #{}, <<"Invalid hash.">>, Req2};
 				{error, tx_already_processed, Req2} ->
 					{208, #{}, <<"Transaction already processed.">>, Req2};
+				{error, invalid_signature_type, Req2} ->
+					{400, #{}, <<"Invalid signature type.">>, Req2};
 				{error, invalid_json, Req2} ->
 					{400, #{}, <<"Invalid JSON.">>, Req2};
 				{error, body_size_too_large, Req2} ->
