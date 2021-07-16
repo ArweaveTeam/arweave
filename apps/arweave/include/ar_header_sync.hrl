@@ -1,22 +1,13 @@
 %% The number of recent blocks tracked, used for erasing the orphans.
 -define(HEADER_SYNC_TRACK_CONFIRMATIONS, 100).
 
-%% The size in bytes of a portion of the disk space reserved for recent block
-%% and transaction headers. The node stops syncing historical headers when the remaining
+%% The size in bytes of a portion of the disk space.
+%% The node stops syncing historical headers when the remaining
 %% disk space is smaller than this amount.
 -ifdef(DEBUG).
 -define(DISK_HEADERS_BUFFER_SIZE, 20 * 1024 * 1024).
 -else.
--define(DISK_HEADERS_BUFFER_SIZE, 10 * 1024 * 1024 * 1024).
--endif.
-
-%% The threshold in bytes for the remaining disk space. When reached, the node
-%% removes the oldest of the stored block and transaction headers until the space
-%% exceeding this threshold is available.
--ifdef(DEBUG).
--define(DISK_HEADERS_CLEANUP_THRESHOLD, 10 * 1024 * 1024).
--else.
--define(DISK_HEADERS_CLEANUP_THRESHOLD, 2 * 1024 * 1024 * 1024).
+-define(DISK_HEADERS_BUFFER_SIZE, 20 * 1024 * 1024 * 1024).
 -endif.
 
 %% The frequency of processing items in the queue.

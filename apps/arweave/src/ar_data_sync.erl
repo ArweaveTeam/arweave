@@ -780,7 +780,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof, SubIntervals, L
 			end
 	end;
 
-handle_cast(process_disk_pool_item, #sync_data_state{ disk_full = true } = State) ->
+handle_cast(process_disk_pool_item, #sync_data_state{ sync_disk_space = false } = State) ->
 	cast_after(?DISK_POOL_SCAN_FREQUENCY_MS, process_disk_pool_item),
 	{noreply, State};
 handle_cast(process_disk_pool_item, State) ->
@@ -1357,7 +1357,7 @@ data_root_offset_index_from_reversed_block_index(
 			Error
 	end;
 data_root_offset_index_from_reversed_block_index(_Index, [], _StartOffset) ->
-	ok.	
+	ok.
 
 remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	ok = remove_orphaned_txs(State, BlockStartOffset, WeaveSize),
@@ -1439,7 +1439,7 @@ remove_orphaned_data_roots(State, BlockStartOffset) ->
 				end,
 				{ok, sets:new()},
 				Map
-			);	
+			);
 		Error ->
 			Error
 	end.

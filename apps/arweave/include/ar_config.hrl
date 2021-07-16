@@ -114,6 +114,7 @@
 		gateway_arql => ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS,
 		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS
 	},
+	disk_cache_size = ?DISK_CACHE_SIZE,
 	debug = false
 }).
 

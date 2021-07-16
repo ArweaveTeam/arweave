@@ -36,7 +36,9 @@ start_test_application(RewardAddress) ->
 	end,
 	ok = application:set_env(arweave, config, Config#config{
 		mining_addr = RewardAddress,
-		disable = Disable
+		disable = Disable,
+		enable = [search_in_rocksdb_when_mining, serve_arql, serve_wallet_txs,
+			serve_wallet_deposits]
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	ok.
@@ -45,7 +47,8 @@ stop_test_application() ->
 	{ok, Config} = application:get_env(arweave, config),
 	ok = application:stop(arweave),
 	%% Do not stop dependencies.
-	os:cmd("rm -r " ++ Config#config.data_dir ++ "/*").
+	os:cmd("rm -r " ++ Config#config.data_dir ++ "/*"),
+	ok.
 
 start_peering(Node, Peer) ->
 	ct_rpc_call_strict(Node, ar_test_lib, start_peering, [Peer]).

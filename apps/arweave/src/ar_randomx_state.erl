@@ -287,6 +287,7 @@ get_block(BH, BI, Peers) ->
 				{_, B} ->
 					case ar_weave:indep_hash(B) of
 						BH ->
+							ar_disk_cache:write_block_shadow(B),
 							{ok, B};
 						InvalidBH ->
 							?LOG_WARNING([

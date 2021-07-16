@@ -2,11 +2,14 @@
 
 -export([
 	init/0,
-	write_block/1, write_full_block/1, write_full_block/2,
+	write_full_block/2,
 	read_block/1, read_block/2,
-	invalidate_block/1, blocks_on_disk/0,
-	write_tx/1, write_tx_data/1, write_tx_data/2, write_tx_data/3, read_tx/1, read_tx_data/1,
-	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/4,
+	blocks_on_disk/0,
+	write_tx/1, write_tx_data/1, write_tx_data/2, write_tx_data/3,
+	read_tx/1, read_tx_data/1,
+	update_confirmation_index/1,
+	get_wallet_list_range/2,
+	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/3,
 	write_block_index/1, read_block_index/0,
 	delete_full_block/1, delete_tx/1, delete_block/1,
 	get_free_space/1,
@@ -120,23 +123,6 @@ clear() ->
 blocks_on_disk() ->
 	ar_meta_db:get(blocks_on_disk).
 
-%% @doc Move a block into the 'invalid' block directory.
-invalidate_block(B) ->
-	ar_meta_db:increase(blocks_on_disk, -1),
-	TargetFile = invalid_block_filepath(B),
-	filelib:ensure_dir(TargetFile),
-	file:rename(block_filepath(B), TargetFile).
-
-write_block(Blocks) when is_list(Blocks) ->
-	lists:foldl(
-		fun (B, ok) ->
-				write_block(B);
-			(_B, Acc) ->
-				Acc
-		end,
-		ok,
-		Blocks
-	);
 write_block(B) ->
 	case ar_meta_db:get(disk_logging) of
 		true ->
@@ -162,15 +148,12 @@ write_block(B) ->
 			end
 	end.
 
-write_full_block(B) ->
-	BShadow = B#block{ txs = [T#tx.id || T <- B#block.txs] },
-	write_full_block(BShadow, B#block.txs).
-
 write_full_block(#block{ height = 0 } = BShadow, TXs) when ?NETWORK_NAME == "arweave.N.1" ->
+	%% Genesis transactions are stored in data/genesis_txs; they are part of the repository.
 	write_full_block2(BShadow, TXs);
 write_full_block(BShadow, TXs) ->
 	case write_tx(TXs) of
-		Response when Response == ok orelse Response == {error, firewall_check} ->
+		ok ->
 			write_full_block2(BShadow, TXs);
 		Error ->
 			Error
@@ -179,22 +162,26 @@ write_full_block(BShadow, TXs) ->
 write_full_block2(BShadow, TXs) ->
 	case write_block(BShadow) of
 		ok ->
-			StoreTags = case ar_meta_db:get(arql_tags_index) of
-				true ->
-					store_tags;
-				_ ->
-					do_not_store_tags
-			end,
-			case ar_arql_db:insert_full_block(BShadow#block{ txs = TXs }, StoreTags) of
+			case update_confirmation_index(BShadow#block{ txs = TXs }) of
 				ok ->
 					app_ipfs:maybe_ipfs_add_txs(TXs),
 					ok;
-				SQLiteError ->
-					SQLiteError
+				Error ->
+					Error
 			end;
-		Error ->
-			Error
+		Error2 ->
+			Error2
 	end.
+
+update_confirmation_index(B) ->
+	{ok, Config} = application:get_env(arweave, config),
+	StoreTags = case lists:member(arql_tags_index, Config#config.enable) of
+		true ->
+			store_tags;
+		_ ->
+			do_not_store_tags
+	end,
+	ar_arql_db:insert_full_block(B, StoreTags).
 
 %% @doc Read a block from disk, given a height
 %% and a block index (used to determine the hash by height).
@@ -221,15 +208,28 @@ read_block(Blocks) when is_list(Blocks) ->
 read_block({H, _, _}) ->
 	read_block(H);
 read_block(BH) ->
-	case lookup_block_filename(BH) of
+	Filename =
+		%% The cache keeps a rotated number of recent headers when the
+		%% node is out of disk space.
+		case ar_disk_cache:lookup_block_filename(BH) of
+			unavailable ->
+				case lookup_block_filename(BH) of
+					unavailable ->
+						unavailable;
+					Name ->
+						Name
+				end;
+			{ok, DiskCacheName} ->
+				DiskCacheName
+		end,
+	case Filename of
 		unavailable ->
 			unavailable;
-		Filename ->
+		_ ->
 			case file:read_file(Filename) of
 				{ok, JSON} ->
 					case parse_block_shadow_json(JSON) of
 						{error, _} ->
-							invalidate_block(BH),
 							unavailable;
 						{ok, B} ->
 							B
@@ -417,8 +417,6 @@ write_tx(TXs) when is_list(TXs) ->
 	lists:foldl(
 		fun (TX, ok) ->
 				write_tx(TX);
-			(TX, {error, firewall_check}) ->
-				write_tx(TX);
 			(_TX, Acc) ->
 				Acc
 		end,
@@ -556,7 +554,16 @@ read_tx(TX) when is_record(TX, tx) -> TX;
 read_tx(TXs) when is_list(TXs) ->
 	lists:map(fun read_tx/1, TXs);
 read_tx(ID) ->
-	case lookup_tx_filename(ID) of
+	MaybeFilename =
+		%% The cache keeps a rotated number of recent headers when the
+		%% node is out of disk space.
+		case ar_disk_cache:lookup_tx_filename(ID) of
+			unavailable ->
+				lookup_tx_filename(ID);
+			Name ->
+				Name
+		end,
+	case MaybeFilename of
 		{ok, Filename} ->
 			case read_tx_file(Filename) of
 				{ok, TX} ->
@@ -645,40 +652,24 @@ write_wallet_list(RootHash, Tree) ->
 	write_wallet_list_chunks(RootHash, Tree, first, 0).
 
 write_wallet_list_chunks(RootHash, Tree, Cursor, Position) ->
-	case write_wallet_list_chunk(RootHash, Tree, Cursor, Position) of
-		{ok, complete} ->
+	{NextCursor, Range} = get_wallet_list_range(Tree, Cursor),
+	StoredRange = case NextCursor of last -> [last | Range]; _ -> Range end,
+	case {write_wallet_list_chunk(RootHash, StoredRange, Position), NextCursor} of
+		{ok, last} ->
 			ok;
-		{ok, NextCursor, NextPosition} ->
+		{ok, _} ->
+			NextPosition = Position + ?WALLET_LIST_CHUNK_SIZE,
 			write_wallet_list_chunks(RootHash, Tree, NextCursor, NextPosition);
-		{error, _Reason} = Error ->
+		{{error, _Reason} = Error, _} ->
 			Error
 	end.
 
-write_wallet_list_chunk(RootHash, Tree, Cursor, Position) ->
+write_wallet_list_chunk(RootHash, Range, Position) ->
 	{ok, Config} = application:get_env(arweave, config),
-	Range =
-		case Cursor of
-			first ->
-				ar_patricia_tree:get_range(?WALLET_LIST_CHUNK_SIZE + 1, Tree);
-			_ ->
-				ar_patricia_tree:get_range(Cursor, ?WALLET_LIST_CHUNK_SIZE + 1, Tree)
-		end,
-	{NextCursor, NextPosition, Range2} =
-		case length(Range) of
-			?WALLET_LIST_CHUNK_SIZE + 1 ->
-				{element(1, hd(Range)), Position + ?WALLET_LIST_CHUNK_SIZE, tl(Range)};
-			_ ->
-				{last, none, [last | Range]}
-		end,
 	Name = wallet_list_chunk_relative_filepath(Position, RootHash),
-	case write_term(Config#config.data_dir, Name, Range2, do_not_override) of
+	case write_term(Config#config.data_dir, Name, Range, do_not_override) of
 		ok ->
-			case NextCursor of
-				last ->
-					{ok, complete};
-				_ ->
-					{ok, NextCursor, NextPosition}
-			end;
+			ok;
 		{error, Reason} = Error ->
 			?LOG_ERROR([
 				{event, failed_to_write_wallet_list_chunk},
@@ -714,16 +705,33 @@ read_block_index() ->
 			Error
 	end.
 
+get_wallet_list_range(Tree, Cursor) ->
+	Range =
+		case Cursor of
+			first ->
+				ar_patricia_tree:get_range(?WALLET_LIST_CHUNK_SIZE + 1, Tree);
+			_ ->
+				ar_patricia_tree:get_range(Cursor, ?WALLET_LIST_CHUNK_SIZE + 1, Tree)
+		end,
+	case length(Range) of
+		?WALLET_LIST_CHUNK_SIZE + 1 ->
+			{element(1, hd(Range)), tl(Range)};
+		_ ->
+			{last, Range}
+	end.
+
 %% @doc Read a given wallet list (by hash) from the disk.
 read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
-	case read_wallet_chunk(WalletListHash) of
+	case read_wallet_list_chunk(WalletListHash) of
 		not_found ->
 			Filename = wallet_list_filepath(WalletListHash),
 			case file:read_file(Filename) of
 				{ok, JSON} ->
 					parse_wallet_list_json(JSON);
-				{error, Reason} ->
-					{error, {failed_reading_file, Filename, Reason}}
+				{error, enoent} ->
+					not_found;
+				Error ->
+					Error
 			end;
 		{ok, Tree} ->
 			{ok, Tree};
@@ -733,28 +741,36 @@ read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
 read_wallet_list(WL) when is_list(WL) ->
 	{ok, ar_patricia_tree:from_proplist([{A, {B, LTX}} || {A, B, LTX} <- WL])}.
 
-read_wallet_chunk(RootHash) ->
-	read_wallet_chunk(RootHash, 0, ar_patricia_tree:new()).
+read_wallet_list_chunk(RootHash) ->
+	read_wallet_list_chunk(RootHash, 0, ar_patricia_tree:new()).
 
-read_wallet_chunk(RootHash, Cursor, Tree) ->
-	{ok, Config} = application:get_env(arweave, config),
-	Name = binary_to_list(iolist_to_binary([
-		?WALLET_LIST_DIR,
-		"/",
-		ar_util:encode(RootHash),
-		"-",
-		integer_to_binary(Cursor),
-		"-",
-		integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
-	])),
-	case read_term(Config#config.data_dir, Name) of
+read_wallet_list_chunk(RootHash, Position, Tree) ->
+	Filename =
+		case ar_disk_cache:lookup_wallet_list_chunk_filename(RootHash, Position) of
+			{ok, Name} ->
+				Name;
+			_ ->
+				{ok, Config} = application:get_env(arweave, config),
+				binary_to_list(iolist_to_binary([
+					Config#config.data_dir,
+					"/",
+					?WALLET_LIST_DIR,
+					"/",
+					ar_util:encode(RootHash),
+					"-",
+					integer_to_binary(Position),
+					"-",
+					integer_to_binary(?WALLET_LIST_CHUNK_SIZE)
+				]))
+		end,
+	case read_term(".", Filename) of
 		{ok, Chunk} ->
-			{NextCursor, Wallets} =
+			{NextPosition, Wallets} =
 				case Chunk of
 					[last | Tail] ->
 						{last, Tail};
 					_ ->
-						{Cursor + ?WALLET_LIST_CHUNK_SIZE, Chunk}
+						{Position + ?WALLET_LIST_CHUNK_SIZE, Chunk}
 				end,
 			Tree2 =
 				lists:foldl(
@@ -762,15 +778,15 @@ read_wallet_chunk(RootHash, Cursor, Tree) ->
 					Tree,
 					Wallets
 				),
-			case NextCursor of
+			case NextPosition of
 				last ->
 					{ok, Tree2};
 				_ ->
-					read_wallet_chunk(RootHash, NextCursor, Tree2)
+					read_wallet_list_chunk(RootHash, NextPosition, Tree2)
 			end;
 		{error, Reason} = Error ->
 			?LOG_ERROR([
-				{event, failed_to_read_wallet_chunk},
+				{event, failed_to_read_wallet_list_chunk},
 				{reason, Reason}
 			]),
 			Error;
@@ -860,9 +876,6 @@ block_filename(BH) when is_binary(BH) ->
 
 block_filepath(B) ->
 	filepath([?BLOCK_DIR, block_filename(B)]).
-
-invalid_block_filepath(B) ->
-	filepath([?BLOCK_DIR, "invalid", block_filename(B)]).
 
 tx_filepath(TX) ->
 	filepath([?TX_DIR, tx_filename(TX)]).
@@ -1037,25 +1050,6 @@ test_store_and_retrieve_block() ->
 	?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(BH1)),
 	?assertMatch(#block{ height = 2, indep_hash = BH1 }, read_block(2, BI1)).
 
-%% @doc Ensure blocks can be written to disk, then moved into the 'invalid'
-%% block directory.
-invalidate_block_test() ->
-	[B] = ar_weave:init(),
-	write_full_block(B),
-	invalidate_block(B),
-	unavailable = read_block(B#block.indep_hash, ar_weave:generate_block_index([B])),
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	TargetFile = filename:join([
-		DataDir,
-		?BLOCK_DIR,
-		"invalid",
-		binary_to_list(ar_util:encode(B#block.indep_hash)) ++ ".json"
-	]),
-	{ok, Binary} = file:read_file(TargetFile),
-	{ok, JSON} = ar_serialize:json_decode(Binary),
-	?assertEqual(B#block.indep_hash, (ar_serialize:json_struct_to_block(JSON))#block.indep_hash).
-
 store_and_retrieve_block_block_index_test() ->
 	RandomEntry =
 		fun() ->
@@ -1102,7 +1096,7 @@ read_wallet_list_chunks_test() ->
 			?assertEqual(true, filelib:is_file(wallet_list_chunk_filepath(0, RootHash))),
 			?assertMatch({ok, _}, delete_wallet_list(RootHash)),
 			?assertEqual({ok, 0}, delete_wallet_list(RootHash)),
-			?assertMatch({error, {failed_reading_file, _, enoent}}, read_wallet_list(RootHash)),
+			?assertEqual(not_found, read_wallet_list(RootHash)),
 			?assertEqual(false, filelib:is_file(wallet_list_chunk_filepath(0, RootHash))),
 			%% Not chunked write - wallets before the fork 2.2.
 			ok = write_wallet_list(RootHash, unclaimed, false, Tree),
@@ -1113,15 +1107,10 @@ read_wallet_list_chunks_test() ->
 			?assertMatch({ok, _}, delete_wallet_list(RootHash)),
 			?assertEqual({ok, 0}, delete_wallet_list(RootHash)),
 			?assertEqual(false, filelib:is_file(wallet_list_filepath(RootHash))),
-			?assertMatch({error, {failed_reading_file, _, enoent}}, read_wallet_list(RootHash))
+			?assertEqual(not_found, read_wallet_list(RootHash))
 		end,
 		TestCases
 	).
 
 random_wallet() ->
 	{crypto:strong_rand_bytes(32), {rand:uniform(1000000000), crypto:strong_rand_bytes(32)}}.
-
-handle_corrupted_wallet_list_test() ->
-	H = crypto:strong_rand_bytes(32),
-	ok = file:write_file(wallet_list_filepath(H), <<>>),
-	?assertMatch({error, _}, read_wallet_list(H)).

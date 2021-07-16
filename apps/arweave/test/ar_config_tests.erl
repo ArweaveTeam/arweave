@@ -65,6 +65,7 @@ parse_config() ->
 		max_disk_pool_buffer_mb = 100000,
 		max_disk_pool_data_root_buffer_mb = 100000000,
 		randomx_bulk_hashing_iterations = 40,
+		disk_cache_size = 1024,
 		semaphores = #{
 			get_chunk := 1,
 			get_and_pack_chunk := 2,

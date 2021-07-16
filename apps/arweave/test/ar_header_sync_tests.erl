@@ -10,13 +10,13 @@
 	start/1,
 	join_on_master/0,
 	slave_call/3,
-	sign_tx/3, assert_post_tx_to_master/1,
+	sign_tx/3, sign_v1_tx/3, assert_post_tx_to_master/1, get_tx_anchor/0,
 	wait_until_height/1, assert_slave_wait_until_height/1,
 	read_block_when_stored/1
 ]).
 
 syncs_headers_test_() ->
-	{timeout, 120, fun test_syncs_headers/0}.
+	{timeout, 240, fun test_syncs_headers/0}.
 
 test_syncs_headers() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
@@ -45,52 +45,55 @@ test_syncs_headers() ->
 			MasterTXs = ar_storage:read_tx(B#block.txs),
 			?assertEqual(TXs, MasterTXs)
 		end,
-		lists:reverse(lists:seq(0, 5))
+		lists:reverse(lists:seq(0, ?MAX_TX_ANCHOR_DEPTH + 5))
 	),
-	B1 = ar_storage:read_block(1, BI),
+	%% Set disk_space to 0 to make the node use the disk cache.
 	{ok, Config} = application:get_env(arweave, config),
 	application:set_env(
 		arweave,
 		config,
-		Config#config{ disk_space = ?DISK_HEADERS_CLEANUP_THRESHOLD - 1 }
+		Config#config{ disk_space = 0 }
 	),
-	true = ar_util:do_until(
-		fun() ->
-			case ar_storage:read_block(0, BI) of
-				unavailable ->
-					true;
-				_ ->
-					false
-			end
-		end,
-		200,
-		Config#config.disk_space_check_frequency * 2
-	),
-	?assertEqual([unavailable || _ <- B0#block.txs], ar_storage:read_tx(B0#block.txs)),
-	application:set_env(arweave, config, Config),
-	?assertMatch(#block{}, ar_test_node:read_block_when_stored(B0#block.indep_hash)),
-	?assertMatch(#block{}, ar_test_node:read_block_when_stored(B1#block.indep_hash)),
-	application:set_env(
-		arweave,
-		config,
-		Config#config{ disk_space = ?DISK_HEADERS_CLEANUP_THRESHOLD - 1 }
-	),
+	timer:sleep(Config#config.disk_space_check_frequency),
+	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
+	NoSpaceTX = sign_v1_tx(master, Wallet,
+		#{ data => crypto:strong_rand_bytes(10 * 1024), last_tx => get_tx_anchor() }),
+	assert_post_tx_to_master(NoSpaceTX),
 	ar_node:mine(),
-	[{H, _, _} | _] = wait_until_height(length(BI)),
-	#block{} = read_block_when_stored(H),
+	[{NoSpaceH, _, _} | _] = wait_until_height(NoSpaceHeight),
+	timer:sleep(1000),
+	%% The cleanup is not expected to kick in yet.
+	NoSpaceB = ar_test_node:read_block_when_stored(NoSpaceH),
+	?assertMatch(#block{}, NoSpaceB),
+	?assertMatch(#tx{}, ar_storage:read_tx(NoSpaceTX#tx.id)),
+	?assertMatch({ok, _}, ar_storage:read_wallet_list(NoSpaceB#block.wallet_list)),
+	ets:new(test_syncs_header, [set, named_table]),
+	ets:insert(test_syncs_header, {height, NoSpaceHeight + 1}),
 	true = ar_util:do_until(
 		fun() ->
-			case ar_storage:read_block(1, BI) of
-				unavailable ->
-					true;
-				_ ->
-					false
-			end
+			%% Keep mining blocks. At some point the cleanup procedure will
+			%% kick in and remove the oldest files.
+			TX = sign_v1_tx(master, Wallet, #{
+				data => crypto:strong_rand_bytes(200 * 1024), last_tx => get_tx_anchor() }),
+			assert_post_tx_to_master(TX),
+			ar_node:mine(),
+			[{_, Height}] = ets:lookup(test_syncs_header, height),
+			[_ | _] = wait_until_height(Height),
+			ets:insert(test_syncs_header, {height, Height + 1}),
+			unavailable == ar_storage:read_block(NoSpaceH)
+				andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
+				andalso ar_storage:read_wallet_list(NoSpaceB#block.wallet_list) == not_found
 		end,
-		200,
-		Config#config.disk_space_check_frequency * 2
+		100,
+		10000
 	),
-	?assertEqual([unavailable || _ <- B1#block.txs], ar_storage:read_tx(B1#block.txs)),
+	timer:sleep(1000),
+	[{LatestH, _, _} | _] = ar_node:get_block_index(),
+	%% The latest block must not be cleaned up.
+	LatestB = ar_test_node:read_block_when_stored(LatestH),
+	?assertMatch(#block{}, LatestB),
+	?assertMatch(#tx{}, ar_storage:read_tx(lists:nth(1, LatestB#block.txs))),
+	?assertMatch({ok, _}, ar_storage:read_wallet_list(LatestB#block.wallet_list)),
 	application:set_env(arweave, config, Config).
 
 post_random_blocks(Wallet, TargetHeight, B0) ->
@@ -101,7 +104,11 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 					fun(_, Acc) ->
 						case rand:uniform(2) == 1 of
 							true ->
-								TX = sign_tx(master, Wallet, #{ last_tx => Anchor }),
+								TX = sign_tx(master, Wallet,
+									#{
+										last_tx => Anchor,
+										data => crypto:strong_rand_bytes(10 * 1024)
+									}),
 								assert_post_tx_to_master(TX),
 								[TX | Acc];
 							false ->

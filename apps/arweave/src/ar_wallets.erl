@@ -25,6 +25,7 @@
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_header_sync.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 
@@ -127,21 +128,8 @@ handle_call({get_chunk, RootHash, Cursor}, _From, DAG) ->
 		{error, not_found} ->
 			{reply, {error, root_hash_not_found}, DAG};
 		Tree ->
-			Range =
-				case Cursor of
-					first ->
-						ar_patricia_tree:get_range(?WALLET_LIST_CHUNK_SIZE + 1, Tree);
-					_ ->
-						ar_patricia_tree:get_range(Cursor, ?WALLET_LIST_CHUNK_SIZE + 1, Tree)
-				end,
-			{NextCursor, Range2} =	
-				case length(Range) of
-					?WALLET_LIST_CHUNK_SIZE + 1 ->
-						{element(1, hd(Range)), tl(Range)};
-					_ ->
-						{last, Range}
-				end,
-			{reply, {ok, {NextCursor, Range2}}, DAG}
+			{NextCursor, Range} = ar_storage:get_wallet_list_range(Tree, Cursor),
+			{reply, {ok, {NextCursor, Range}}, DAG}
 	end;
 
 handle_call({get_balance, Address}, _From, DAG) ->
@@ -226,13 +214,23 @@ handle_cast({write_wallet_list_chunk, RootHash, Cursor, Position}, DAG) ->
 			%% pruned from DAG.
 			ok;
 		Tree ->
-			case ar_storage:write_wallet_list_chunk(RootHash, Tree, Cursor, Position) of
-				{ok, NextCursor, NextPosition} ->
+			{NextCursor, Range} = ar_storage:get_wallet_list_range(Tree, Cursor),
+			StoredRange = case NextCursor of last -> [last | Range]; _ -> Range end,
+			StoreFun =
+				case ar_storage:get_free_space(".") > ?DISK_HEADERS_BUFFER_SIZE of
+					false ->
+						fun ar_disk_cache:write_wallet_list_chunk/3;
+					true ->
+						fun ar_storage:write_wallet_list_chunk/3
+				end,
+			case {StoreFun(RootHash, StoredRange, Position), NextCursor} of
+				{ok, last} ->
+					ok;
+				{ok, _} ->
+					NextPosition = Position + ?WALLET_LIST_CHUNK_SIZE,
 					Cast = {write_wallet_list_chunk, RootHash, NextCursor, NextPosition},
 					gen_server:cast(self(), Cast);
-				{ok, complete} ->
-					ok;
-				{error, _Reason} ->
+				{{error, _Reason}, _} ->
 					ok
 			end
 	end,

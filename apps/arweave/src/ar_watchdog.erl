@@ -104,7 +104,7 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_call(Request, _From, State) ->
-	?LOG_ERROR([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+	?LOG_ERROR([{event, unhandled_call}, {request, Request}]),
 	{reply, ok, State}.
 
 %%--------------------------------------------------------------------
@@ -170,7 +170,7 @@ handle_cast({foreign_block, _BH}, #state{ no_foreign_blocks_timer = Timer } = St
 	{noreply, State#state{ no_foreign_blocks_timer = Timer2 }};
 
 handle_cast(Msg, State) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
+	?LOG_ERROR([{event, unhandled_cast}, {message, Msg}]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------

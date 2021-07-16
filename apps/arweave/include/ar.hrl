@@ -335,6 +335,15 @@
 
 -define(NOTE_SIZE, 32).
 
+%% Disk cache size in MB
+-ifdef(DEBUG).
+-define(DISK_CACHE_SIZE, 1).
+-define(DISK_CACHE_CLEAN_PERCENT_MAX, 20).
+-else.
+-define(DISK_CACHE_SIZE, 5120).
+-define(DISK_CACHE_CLEAN_PERCENT_MAX, 20).
+-endif.
+
 %% @doc A succinct proof of access to a recall byte found in a TX.
 -record(poa, {
 	option = 1,			% The recall byte option chosen, a sequence number.

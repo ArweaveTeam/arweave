@@ -52,6 +52,7 @@ init([]) ->
 		?CHILD(ar_meta_db, worker),
 		?CHILD(ar_arql_db, worker),
 		?CHILD(ar_events_sup, supervisor),
+		?CHILD(ar_disk_cache, worker),
 		?CHILD(ar_watchdog, worker),
 		?CHILD(ar_tx_blacklist, worker),
 		?CHILD(ar_bridge, worker),
