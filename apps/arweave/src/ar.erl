@@ -26,6 +26,8 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_wallet,
+		ar_wallet_tests,
 		ar_chunk_storage,
 		ar_poa,
 		ar_node_utils,
@@ -48,7 +50,6 @@
 		ar_semaphore_tests,
 		ar_tx_db,
 		ar_tx,
-		ar_wallet,
 		ar_gossip,
 		ar_serialize,
 		ar_block,
