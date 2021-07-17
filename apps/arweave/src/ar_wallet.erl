@@ -2,19 +2,18 @@
 -module(ar_wallet).
 
 -export([
-	new/0,
+	new/0, new/1,
 	sign/2,
 	verify/3, verify_pre_fork_2_4/3,
 	to_address/1,
 	load_keyfile/1,
-	new_keyfile/0, new_keyfile/1,
+	new_keyfile/0, new_keyfile/1, new_keyfile/2,
 	wallet_filepath/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--include_lib("eunit/include/eunit.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
 %% @doc Generate a new wallet public key and private key.
@@ -229,62 +228,3 @@ compress_ecdsa_pubkey(<<4:8, PubPoint/binary>>) ->
 			1 -> <<3:8>>
 		end,
 	iolist_to_binary([PubKeyHeader, X]).
-
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
-
-wallet_sign_verify_test_() ->
-	TestWalletSignVerify = fun(KeyTypeEnc) ->
-		fun() ->
-			KeyType = ar_serialize:list_to_signature_type(KeyTypeEnc),
-			{Priv, Pub} = new(KeyType),
-			TestData = <<"TEST DATA">>,
-			Signature = sign(Priv, TestData),
-			true = verify(Pub, TestData, Signature)
-		end
-	end,
-	[
-		{"rsa_pss_65537", TestWalletSignVerify(<<"rsa_pss_65537">>)},
-		{"ecdsa_secp256k1", TestWalletSignVerify(<<"ecdsa_secp256k1">>)},
-		{"eddsa_ed25519", TestWalletSignVerify(<<"eddsa_ed25519">>)}
-	].
-
-invalid_signature_test_() ->
-    TestInvalidSignature = fun(KeyTypeEnc) ->
-        fun() ->
-			KeyType = ar_serialize:list_to_signature_type(KeyTypeEnc),
-			{Priv, Pub} = new(KeyType),
-           	TestData = <<"TEST DATA">>,
-			<< _:32, Signature/binary >> = sign(Priv, TestData),
-			false = verify(Pub, TestData, << 0:32, Signature/binary >>)
-        end
-    end,
-    [
-        {"rsa_pss_65537", TestInvalidSignature(<<"rsa_pss_65537">>)},
-        {"ecdsa_secp256k1", TestInvalidSignature(<<"ecdsa_secp256k1">>)},
-		{"eddsa_ed25519", TestInvalidSignature(<<"eddsa_ed25519">>)}
-    ].
-
-
-%% @doc Ensure that to_address'ing twice does not result in double hashing.
-address_double_encode_test() ->
-	{_, Pub} = new(),
-	Addr = to_address(Pub),
-	Addr = to_address(Addr).
-
-%% @doc Check generated keyfiles can be retrieved.
-generate_keyfile_test_() ->
-	GenerateKeyFile = fun(KeyTypeEnc) ->
-		fun() ->
-			KeyType = ar_serialize:list_to_signature_type(KeyTypeEnc),
-			{Priv, Pub} = new_keyfile(KeyType, wallet_address),
-			FileName = wallet_filepath(ar_util:encode(to_address(Pub))),
-			{Priv, Pub} = load_keyfile(FileName)
-		end
-	end,
-	[
-		{"rsa_pss_65537", GenerateKeyFile(<<"rsa_pss_65537">>)},
-		{"ecdsa_secp256k1", GenerateKeyFile(<<"ecdsa_secp256k1">>)},
-		{"eddsa_ed25519", GenerateKeyFile(<<"eddsa_ed25519">>)}
-	].

@@ -26,7 +26,6 @@
 	CORE_TEST_MODS,
 	[
 		ar,
-		ar_wallet,
 		ar_wallet_tests,
 		ar_chunk_storage,
 		ar_poa,
