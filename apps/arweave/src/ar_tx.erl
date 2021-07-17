@@ -343,6 +343,8 @@ do_verify_v2(TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
 		{"tx_signature_type_not_valid",
 		 verify_signature_type(TX, Height)},
+		{"tx_owner_wrong_size",
+		 verify_owner_size(TX)},
 		{"tx_signature_not_valid",
 		 verify_signature_v2(TX, VerifySignature, Height)},
 		{"tx_data_size_negative",
@@ -460,6 +462,13 @@ verify_signature_type(#tx { signature_type = SigType }, Height) ->
 		% so we don't actually have to validate anything here.
 		true -> true;
 		false -> SigType =:= ?DEFAULT_KEY_TYPE
+	end.
+
+verify_owner_size(#tx { owner = Owner, signature_type = SigType }) ->
+	case SigType of
+		{?RSA_SIGN_ALG, 65537} -> true;
+		{?ECDSA_SIGN_ALG, secp256k1} -> byte_size(Owner) =:= 33;
+		{?EDDSA_SIGN_ALG, ed25519} -> byte_size(Owner) =:= 32
 	end.
 
 verify_signature_v2(_TX, do_not_verify_signature) ->
