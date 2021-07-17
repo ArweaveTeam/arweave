@@ -19,7 +19,7 @@
 
 %% @doc Generate a new wallet public key and private key.
 new() -> new(?DEFAULT_KEY_TYPE).
-new(KeyType = {KeyAlg, PublicExpnt}) when KeyType =:= ?DEFAULT_KEY_TYPE ->
+new(KeyType = {KeyAlg, PublicExpnt}) when KeyType =:= {?RSA_SIGN_ALG, 65537} ->
     {[_, Pub], [_, Pub, Priv|_]} = {[_, Pub], [_, Pub, Priv|_]}
 		= crypto:generate_key(KeyAlg, {?RSA_PRIV_KEY_SZ, PublicExpnt}),
     {{KeyType, Priv, Pub}, {KeyType, Pub}};
@@ -137,7 +137,7 @@ load_keyfile(File) ->
 			{<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
 			Pub = ar_util:decode(PubEncoded),
 			Priv = ar_util:decode(PrivEncoded),
-			KeyType = ?DEFAULT_KEY_TYPE
+			KeyType = {?RSA_SIGN_ALG, 65537}
 	end,
 	{{KeyType, Priv, Pub}, {KeyType, Pub}}.
 
@@ -168,7 +168,7 @@ sign({{KeyAlg, KeyCrv}, Priv, _}, Data) when KeyAlg =:= ?EDDSA_SIGN_ALG andalso 
 	).
 
 %% @doc Verify that a signature is correct.
-verify({KeyType = {?RSA_SIGN_ALG, PublicExpnt}, Pub}, Data, Sig) when KeyType =:= ?DEFAULT_KEY_TYPE ->
+verify({{KeyAlg, PublicExpnt}, Pub}, Data, Sig) when KeyAlg =:= ?RSA_SIGN_ALG andalso PublicExpnt =:= 65537 ->
 	rsa_pss:verify(
 		Data,
 		sha256,
@@ -201,7 +201,7 @@ verify({{KeyAlg, KeyCrv}, Pub}, Data, Sig) when KeyAlg =:= ?EDDSA_SIGN_ALG andal
 %% verifies all the historical transactions so this function is not used anywhere
 %% after the fork 2.4.
 %% @end
-verify_pre_fork_2_4({KeyType = {?RSA_SIGN_ALG, PublicExpnt}, Pub}, Data, Sig) when KeyType =:= ?DEFAULT_KEY_TYPE ->
+verify_pre_fork_2_4({{KeyAlg, PublicExpnt}, Pub}, Data, Sig) when KeyAlg =:= ?RSA_SIGN_ALG andalso PublicExpnt =:= 65537 ->
 	rsa_pss:verify_legacy(
 		Data,
 		sha256,
