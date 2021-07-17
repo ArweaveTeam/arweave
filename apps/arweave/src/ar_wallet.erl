@@ -24,7 +24,8 @@ new(KeyType = {KeyAlg, PublicExpnt}) when KeyType =:= ?DEFAULT_KEY_TYPE ->
 		= crypto:generate_key(KeyAlg, {?RSA_PRIV_KEY_SZ, PublicExpnt}),
     {{KeyType, Priv, Pub}, {KeyType, Pub}};
 new(KeyType = {KeyAlg, KeyCrv}) when KeyAlg =:= ?ECDSA_SIGN_ALG andalso KeyCrv =:= secp256k1 ->
-    {Pub, Priv} = crypto:generate_key(ecdh, KeyCrv),
+    {OrigPub, Priv} = crypto:generate_key(ecdh, KeyCrv),
+	Pub = compress_ecdsa_pubkey(OrigPub),
     {{KeyType, Priv, Pub}, {KeyType, Pub}};
 new(KeyType = {KeyAlg, KeyCrv}) when KeyAlg =:= ?EDDSA_SIGN_ALG andalso KeyCrv =:= ed25519 ->
     {Pub, Priv} = crypto:generate_key(KeyAlg, KeyCrv),
@@ -62,8 +63,8 @@ new_keyfile(KeyType, WalletName) ->
 					}
 				);
 		{?ECDSA_SIGN_ALG, secp256k1} ->
-			{{_, Priv, Pub}, _} = new(KeyType),
-			<<_:8, PubPoint/binary>> = Pub,
+			{OrigPub, Priv} = crypto:generate_key(ecdh, secp256k1),
+			<<4:8, PubPoint/binary>> = OrigPub,
 			PubPointMid = byte_size(PubPoint) div 2,
 			<<X:PubPointMid/binary, Y:PubPointMid/binary>> = PubPoint,
 			Key =
@@ -77,7 +78,8 @@ new_keyfile(KeyType, WalletName) ->
 							{d, ar_util:encode(Priv)}
 						]
 					}
-				);
+				),
+			Pub = compress_ecdsa_pubkey(OrigPub);
 		{?EDDSA_SIGN_ALG, ed25519} ->
 			{{_, Priv, Pub}, _} = new(KeyType),
 			Key =
@@ -120,7 +122,8 @@ load_keyfile(File) ->
 			{<<"x">>, XEncoded} = lists:keyfind(<<"x">>, 1, Key),
 			{<<"y">>, YEncoded} = lists:keyfind(<<"y">>, 1, Key),
 			{<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
-			Pub = iolist_to_binary([<<4:8>>, ar_util:decode(XEncoded), ar_util:decode(YEncoded)]),
+			OrigPub = iolist_to_binary([<<4:8>>, ar_util:decode(XEncoded), ar_util:decode(YEncoded)]),
+			Pub = compress_ecdsa_pubkey(OrigPub),
 			Priv = ar_util:decode(PrivEncoded),
 			KeyType = {?ECDSA_SIGN_ALG, secp256k1};
 		{<<"kty">>, <<"OKP">>} ->
@@ -131,8 +134,8 @@ load_keyfile(File) ->
 			KeyType = {?EDDSA_SIGN_ALG, ed25519};
 		_ ->
 			{<<"n">>, PubEncoded} = lists:keyfind(<<"n">>, 1, Key),
-			Pub = ar_util:decode(PubEncoded),
 			{<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
+			Pub = ar_util:decode(PubEncoded),
 			Priv = ar_util:decode(PrivEncoded),
 			KeyType = ?DEFAULT_KEY_TYPE
 	end,
@@ -216,6 +219,16 @@ to_address({_, _, Pub}) -> to_address(Pub);
 to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
 	crypto:hash(?HASH_ALG, PubKey).
+
+compress_ecdsa_pubkey(<<4:8, PubPoint/binary>>) ->
+	PubPointMid = byte_size(PubPoint) div 2,
+	<<X:PubPointMid/binary, Y:PubPointMid/integer-unit:8>> = PubPoint,
+	PubKeyHeader =
+		case Y rem 2 of
+			0 -> <<2:8>>;
+			1 -> <<3:8>>
+		end,
+	iolist_to_binary([PubKeyHeader, X]).
 
 %%%===================================================================
 %%% Tests.
