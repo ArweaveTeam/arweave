@@ -27,6 +27,7 @@
 	[
 		ar,
 		ar_wallet_tests,
+		ar_node_tests,
 		ar_chunk_storage,
 		ar_poa,
 		ar_node_utils,
@@ -59,7 +60,6 @@
 		ar_tx_blacklist_tests,
 		ar_data_sync_tests,
 		ar_header_sync_tests,
-		ar_node_tests,
 		ar_fork_recovery_tests,
 		ar_mine,
 		ar_tx_replay_pool_tests,

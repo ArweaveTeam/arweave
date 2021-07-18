@@ -70,11 +70,11 @@ new(Dest, Reward, Qty, Last) ->
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
 %% disabled by default.
 %% @end
-sign(TX, {PrivKey, PubKey = {_, Owner}}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner })).
+sign(TX, {PrivKey, PubKey = {KeyType, Owner}}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner, signature_type = KeyType })).
 
-sign(TX, PrivKey, PubKey = {_, Owner}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner })).
+sign(TX, PrivKey, PubKey = {KeyType, Owner}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner, signature_type = KeyType })).
 
 %% @doc Cryptographically sign (claim ownership of) a v1 transaction.
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
@@ -220,7 +220,7 @@ signature_data_segment_v2(TX = #tx { signature_type = SigType }) ->
 	SigTypeTrailer =
 		case SigType of
 			?DEFAULT_KEY_TYPE -> [];
-			_ -> [list_to_binary(ar_serialize:signature_type_to_list(SigType))]
+			_ -> [ar_serialize:signature_type_to_binary(SigType)]
 		end,
 	ar_deep_hash:hash([
 		<<(integer_to_binary(TX#tx.format))/binary>>,
@@ -246,15 +246,11 @@ signature_data_segment_v1(T) ->
 		(tags_to_binary(T#tx.tags))/binary
 	>>.
 
-sign(TX, PrivKey, {_, Owner}, SignatureDataSegment) ->
-	NewTX = TX#tx{ owner = Owner },
+sign(TX, PrivKey, {KeyType, Owner}, SignatureDataSegment) ->
+	NewTX = TX#tx{ owner = Owner, signature_type = KeyType },
 	Sig = ar_wallet:sign(PrivKey, SignatureDataSegment),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
-	NewTX#tx {
-		id = ID,
-		signature = Sig
-		% signature_type = KeyType
-	}.
+	NewTX#tx { id = ID, signature = Sig }.
 
 do_verify(#tx{ format = 1 } = TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
 	do_verify_v1(TX, Rate, Height, Wallets, Timestamp, VerifySignature);

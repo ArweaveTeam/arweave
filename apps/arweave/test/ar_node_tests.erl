@@ -95,35 +95,42 @@ replay_attack_test_() ->
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test_() ->
-	{timeout, 60, fun() ->
-		{Priv1, Pub1} = ar_wallet:new(),
-		{_Priv2, Pub2} = ar_wallet:new(),
-		TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
-		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
-		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
-		{_Node1, _} = ar_test_node:start(B0),
-		ar_test_node:slave_start(B0),
-		Node2 = {ar_node_worker, 'slave@127.0.0.1'},
-		ar_node:add_peers(Node2),
-		ar_node:add_tx(SignedTX),
-		ar_test_node:wait_until_receives_txs([SignedTX]),
-		ar_node:mine(),
-		ar_test_node:wait_until_height(1),
-		ar_test_node:slave_wait_until_height(1),
-		?assertEqual(?AR(999), slave_call(ar_node, get_balance, [Pub1])),
-		?assertEqual(?AR(9000), slave_call(ar_node, get_balance, [Pub2]))
-	end}.
+	TestWalletTransaction = fun(KeyType) ->
+		fun() ->
+			{Priv1, Pub1} = ar_wallet:new(KeyType),
+			{_Priv2, Pub2} = ar_wallet:new(),
+			TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
+			SignedTX = ar_tx:sign(TX#tx { format = 2 }, Priv1, Pub1),
+			[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
+			{_Node1, _} = ar_test_node:start(B0),
+			ar_test_node:slave_start(B0),
+			Node2 = {ar_node_worker, 'slave@127.0.0.1'},
+			ar_node:add_peers(Node2),
+			ar_node:add_tx(SignedTX),
+			ar_test_node:wait_until_receives_txs([SignedTX]),
+			ar_node:mine(),
+			ar_test_node:wait_until_height(1),
+			ar_test_node:slave_wait_until_height(1),
+			?assertEqual(?AR(999), slave_call(ar_node, get_balance, [Pub1])),
+			?assertEqual(?AR(9000), slave_call(ar_node, get_balance, [Pub2]))
+		end
+	end,
+	[
+		{"rsa_pss_65537", timeout, 60, TestWalletTransaction({?RSA_SIGN_ALG, 65537})},
+		{"ecdsa_secp256k1", timeout, 60, TestWalletTransaction({?ECDSA_SIGN_ALG, secp256k1})},
+		{"eddsa_ed25519", timeout, 60, TestWalletTransaction({?EDDSA_SIGN_ALG, ed25519})}
+	].
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check
 wallet_two_transaction_test_() ->
 	{timeout, 60, fun() ->
-		{Priv1, Pub1} = ar_wallet:new(),
-		{Priv2, Pub2} = ar_wallet:new(),
-		{_Priv3, Pub3} = ar_wallet:new(),
+		{Priv1, Pub1} = ar_wallet:new({?RSA_SIGN_ALG, 65537}),
+		{Priv2, Pub2} = ar_wallet:new({?ECDSA_SIGN_ALG, secp256k1}),
+		{_Priv3, Pub3} = ar_wallet:new({?EDDSA_SIGN_ALG, ed25519}),
 		TX = ar_tx:new(Pub2, ?AR(1), ?AR(9000), <<>>),
 		SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
-		SignedTX2 = ar_tx:sign_v1(TX2, Priv2, Pub2),
+		SignedTX2 = ar_tx:sign(TX2#tx { format = 2 }, Priv2, Pub2),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
 		{Node1, _} = ar_test_node:start(B0),
 		ar_test_node:slave_start(B0),
