@@ -116,9 +116,9 @@ wallet_transaction_test_() ->
 		end
 	end,
 	[
-		{"rsa_pss_65537", timeout, 60, TestWalletTransaction({?RSA_SIGN_ALG, 65537})},
-		{"ecdsa_secp256k1", timeout, 60, TestWalletTransaction({?ECDSA_SIGN_ALG, secp256k1})},
-		{"eddsa_ed25519", timeout, 60, TestWalletTransaction({?EDDSA_SIGN_ALG, ed25519})}
+		{"PS256_65537", timeout, 60, TestWalletTransaction({?RSA_SIGN_ALG, 65537})},
+		{"ES256K", timeout, 60, TestWalletTransaction({?ECDSA_SIGN_ALG, secp256k1})},
+		{"Ed25519", timeout, 60, TestWalletTransaction({?EDDSA_SIGN_ALG, ed25519})}
 	].
 
 %% @doc Wallet0 -> Wallet1 | mine | Wallet1 -> Wallet2 | mine | check

@@ -13,9 +13,9 @@ wallet_sign_verify_test_() ->
 		end
 	end,
 	[
-		{"rsa_pss_65537", TestWalletSignVerify(<<"rsa_pss_65537">>)},
-		{"ecdsa_secp256k1", TestWalletSignVerify(<<"ecdsa_secp256k1">>)},
-		{"eddsa_ed25519", TestWalletSignVerify(<<"eddsa_ed25519">>)}
+		{"PS256_65537", TestWalletSignVerify(<<"PS256_65537">>)},
+		{"ES256K", TestWalletSignVerify(<<"ES256K">>)},
+		{"Ed25519", TestWalletSignVerify(<<"Ed25519">>)}
 	].
 
 invalid_signature_test_() ->
@@ -29,9 +29,9 @@ invalid_signature_test_() ->
         end
     end,
     [
-        {"rsa_pss_65537", TestInvalidSignature(<<"rsa_pss_65537">>)},
-        {"ecdsa_secp256k1", TestInvalidSignature(<<"ecdsa_secp256k1">>)},
-		{"eddsa_ed25519", TestInvalidSignature(<<"eddsa_ed25519">>)}
+        {"PS256_65537", TestInvalidSignature(<<"PS256_65537">>)},
+        {"ES256K", TestInvalidSignature(<<"ES256K">>)},
+		{"Ed25519", TestInvalidSignature(<<"Ed25519">>)}
     ].
 
 %% @doc Check generated keyfiles can be retrieved.
@@ -45,9 +45,9 @@ generate_keyfile_test_() ->
 		end
 	end,
 	[
-		{"rsa_pss_65537", GenerateKeyFile(<<"rsa_pss_65537">>)},
-		{"ecdsa_secp256k1", GenerateKeyFile(<<"ecdsa_secp256k1">>)},
-		{"eddsa_ed25519", GenerateKeyFile(<<"eddsa_ed25519">>)}
+		{"PS256_65537", GenerateKeyFile(<<"PS256_65537">>)},
+		{"ES256K", GenerateKeyFile(<<"ES256K">>)},
+		{"Ed25519", GenerateKeyFile(<<"Ed25519">>)}
 	].
 
 load_keyfile_test_() ->
@@ -61,9 +61,9 @@ load_keyfile_test_() ->
         end
     end,
     [
-        {"rsa_pss_65537", TestLoadKeyfile(<<"rsa_pss_65537">>)},
-        {"ecdsa_secp256k1", TestLoadKeyfile(<<"ecdsa_secp256k1">>)},
-        {"eddsa_ed25519", TestLoadKeyfile(<<"eddsa_ed25519">>)}
+        {"PS256_65537", TestLoadKeyfile(<<"PS256_65537">>)},
+        {"ES256K", TestLoadKeyfile(<<"ES256K">>)},
+        {"Ed25519", TestLoadKeyfile(<<"Ed25519">>)}
     ].
 
 %% @doc Ensure that to_address'ing twice does not result in double hashing.

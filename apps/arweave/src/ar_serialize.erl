@@ -600,17 +600,17 @@ json_map_to_chunk_proof(JSON) ->
 
 signature_type_to_binary(SigType) ->
 	case SigType of
-		{?RSA_SIGN_ALG, 65537} -> <<"rsa_pss_65537">>;
-		{?ECDSA_SIGN_ALG, secp256k1} -> <<"ecdsa_secp256k1">>;
-		{?EDDSA_SIGN_ALG, ed25519} -> <<"eddsa_ed25519">>
+		{?RSA_SIGN_ALG, 65537} -> <<"PS256_65537">>;
+		{?ECDSA_SIGN_ALG, secp256k1} -> <<"ES256K">>;
+		{?EDDSA_SIGN_ALG, ed25519} -> <<"Ed25519">>
 	end.
 
 binary_to_signature_type(List) ->
 	case List of
 		undefined -> ?DEFAULT_KEY_TYPE;
-		<<"rsa_pss_65537">> -> {?RSA_SIGN_ALG, 65537};
-		<<"ecdsa_secp256k1">> -> {?ECDSA_SIGN_ALG, secp256k1};
-		<<"eddsa_ed25519">> -> {?EDDSA_SIGN_ALG, ed25519};
+		<<"PS256_65537">> -> {?RSA_SIGN_ALG, 65537};
+		<<"ES256K">> -> {?ECDSA_SIGN_ALG, secp256k1};
+		<<"Ed25519">> -> {?EDDSA_SIGN_ALG, ed25519};
 		_ -> throw(invalid_signature_type)
 	end.
 
