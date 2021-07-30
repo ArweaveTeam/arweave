@@ -828,7 +828,7 @@ post_unsigned_tx() ->
 
 get_wallet_txs_test_() ->
 	{timeout, 10, fun() ->
-		{_, Pub} = ar_wallet:new(),
+		{_, Pub = { _, Owner}} = ar_wallet:new(),
 		WalletAddress = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub), 10000, <<>>}]),
 		{_Node, _} = ar_test_node:start(B0),
@@ -842,7 +842,7 @@ get_wallet_txs_test_() ->
 		%% Expect the wallet to have no transactions
 		?assertEqual([], TXs),
 		%% Sign and post a transaction and expect it to appear in the wallet list
-		TX = (ar_tx:new())#tx{ owner = Pub },
+		TX = (ar_tx:new())#tx{ owner = Owner },
 		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 			ar_http:req(#{
 				method => post,
@@ -873,7 +873,7 @@ get_wallet_txs_test_() ->
 		OneTXAgain = ar_serialize:dejsonify(GetOneTXAgainBody),
 		?assertEqual([ar_util:encode(TX#tx.id)], OneTXAgain),
 		%% Add one more TX and expect it to be appended to the wallet list
-		SecondTX = (ar_tx:new())#tx{ owner = Pub, last_tx = TX#tx.id },
+		SecondTX = (ar_tx:new())#tx{ owner = Owner, last_tx = TX#tx.id },
 		{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 			ar_http:req(#{
 				method => post,
@@ -909,7 +909,7 @@ get_wallet_deposits_test_() ->
 		{_, PubTo} = ar_wallet:new(),
 		WalletAddressTo = binary_to_list(ar_util:encode(ar_wallet:to_address(PubTo))),
 		%% Create a wallet to transfer tokens from
-		{_, PubFrom} = ar_wallet:new(),
+		{_, PubFrom = { _, OwnerFrom }} = ar_wallet:new(),
 		[B0] = ar_weave:init([
 			{ar_wallet:to_address(PubTo), 0, <<>>},
 			{ar_wallet:to_address(PubFrom), 200, <<>>}
@@ -930,7 +930,7 @@ get_wallet_deposits_test_() ->
 		?assertEqual([], GetTXs("")),
 		%% Send some Winston to WalletAddressTo
 		FirstTX = (ar_tx:new())#tx{
-			owner = PubFrom,
+			owner = OwnerFrom,
 			target = ar_wallet:to_address(PubTo),
 			quantity = 100
 		},
@@ -951,7 +951,7 @@ get_wallet_deposits_test_() ->
 		?assertEqual([ar_util:encode(FirstTX#tx.id)], GetTXs("")),
 		%% Send some more Winston to WalletAddressTo
 		SecondTX = (ar_tx:new())#tx{
-			owner = PubFrom,
+			owner = OwnerFrom,
 			target = ar_wallet:to_address(PubTo),
 			last_tx = FirstTX#tx.id,
 			quantity = 100

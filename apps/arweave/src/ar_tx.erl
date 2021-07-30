@@ -47,6 +47,11 @@ new(Data, Reward, Last) ->
 		data_size = byte_size(Data),
 		reward = Reward
 	}.
+new({_, Dest}, Reward, Qty, Last) ->
+	%% When Dest is the destination public key it can have a bit size of ?HASH_SZ
+	%% which if uncaught will leave #tx.target unhashed. We accept a tuple of {KeyType, Dest}
+	%% here so the caller can specify that they're not passing an address.
+	new(ar_wallet:to_address(Dest), Reward, Qty, Last);
 new(Dest, Reward, Qty, Last) when bit_size(Dest) == ?HASH_SZ ->
 	#tx{
 		id = crypto:strong_rand_bytes(32),
@@ -65,21 +70,21 @@ new(Dest, Reward, Qty, Last) ->
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
 %% disabled by default.
 %% @end
-sign(TX, {PrivKey, PubKey}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = PubKey })).
+sign(TX, {PrivKey, PubKey = {KeyType, Owner}}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner, signature_type = KeyType })).
 
-sign(TX, PrivKey, PubKey) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = PubKey })).
+sign(TX, PrivKey, PubKey = {KeyType, Owner}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v2(TX#tx{ owner = Owner, signature_type = KeyType })).
 
 %% @doc Cryptographically sign (claim ownership of) a v1 transaction.
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
 %% disabled by default.
 %% @end
-sign_v1(TX, {PrivKey, PubKey}) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = PubKey })).
+sign_v1(TX, {PrivKey, PubKey = {_, Owner}}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = Owner })).
 
-sign_v1(TX, PrivKey, PubKey) ->
-	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = PubKey })).
+sign_v1(TX, PrivKey, PubKey = {_, Owner}) ->
+	sign(TX, PrivKey, PubKey, signature_data_segment_v1(TX#tx{ owner = Owner })).
 
 %% @doc Verify whether a transaction is valid.
 %% Signature verification can be optionally skipped, useful for
@@ -211,7 +216,12 @@ get_wallet_fee_pre_fork_2_4(Diff, Height) ->
 %%%===================================================================
 
 %% @doc Generate the data segment to be signed for a given v2 TX.
-signature_data_segment_v2(TX) ->
+signature_data_segment_v2(TX = #tx { signature_type = SigType }) ->
+	SigTypeTrailer =
+		case SigType of
+			?DEFAULT_KEY_TYPE -> [];
+			_ -> [ar_serialize:signature_type_to_binary(SigType)]
+		end,
 	ar_deep_hash:hash([
 		<<(integer_to_binary(TX#tx.format))/binary>>,
 		<<(TX#tx.owner)/binary>>,
@@ -222,7 +232,7 @@ signature_data_segment_v2(TX) ->
 		tags_to_list(TX#tx.tags),
 		<<(integer_to_binary(TX#tx.data_size))/binary>>,
 		<<(TX#tx.data_root)/binary>>
-	]).
+	] ++ SigTypeTrailer).
 
 %% @doc Generate the data segment to be signed for a given v1 TX.
 signature_data_segment_v1(T) ->
@@ -236,13 +246,11 @@ signature_data_segment_v1(T) ->
 		(tags_to_binary(T#tx.tags))/binary
 	>>.
 
-sign(TX, PrivKey, PubKey, SignatureDataSegment) ->
-	NewTX = TX#tx{ owner = PubKey },
+sign(TX, PrivKey, {KeyType, Owner}, SignatureDataSegment) ->
+	NewTX = TX#tx{ owner = Owner, signature_type = KeyType },
 	Sig = ar_wallet:sign(PrivKey, SignatureDataSegment),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
-	NewTX#tx {
-		signature = Sig, id = ID
-	}.
+	NewTX#tx { id = ID, signature = Sig }.
 
 do_verify(#tx{ format = 1 } = TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
 	do_verify_v1(TX, Rate, Height, Wallets, Timestamp, VerifySignature);
@@ -329,6 +337,10 @@ do_verify_v2(TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
 		 verify_hash(TX)},
 		{"overspend",
 		 validate_overspend(TX, ar_node_utils:apply_tx(Wallets, TX, Height))},
+		{"tx_signature_type_not_valid",
+		 verify_signature_type(TX, Height)},
+		{"tx_owner_wrong_size",
+		 verify_owner_size(TX)},
 		{"tx_signature_not_valid",
 		 verify_signature_v2(TX, VerifySignature, Height)},
 		{"tx_data_size_negative",
@@ -382,7 +394,7 @@ verify_signature_v1(_TX, do_not_verify_signature) ->
 	true;
 verify_signature_v1(TX, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v1(TX),
-	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
+	ar_wallet:verify({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v1(_TX, do_not_verify_signature, _Height) ->
 	true;
@@ -390,9 +402,9 @@ verify_signature_v1(TX, verify_signature, Height) ->
 	SignatureDataSegment = signature_data_segment_v1(TX),
 	case Height >= ar_fork:height_2_4() of
 		true ->
-			ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature);
+			ar_wallet:verify({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment, TX#tx.signature);
 		false ->
-			ar_wallet:verify_pre_fork_2_4(TX#tx.owner, SignatureDataSegment, TX#tx.signature)
+			ar_wallet:verify_pre_fork_2_4({?DEFAULT_KEY_TYPE, TX#tx.owner}, SignatureDataSegment, TX#tx.signature)
 	end.
 
 verify_malleability(TX, Rate, Height, Wallets, Timestamp) ->
@@ -440,21 +452,36 @@ ends_with_digit(Data) ->
 	LastByte = binary:last(Data),
 	LastByte >= 48 andalso LastByte =< 57.
 
+verify_signature_type(#tx { signature_type = SigType }, Height) ->
+	case Height >= ar_fork:height_2_5() of
+		% Invalid signature types should have already been caught during deserialization
+		% so we don't actually have to validate anything here.
+		true -> true;
+		false -> SigType =:= ?DEFAULT_KEY_TYPE
+	end.
+
+verify_owner_size(#tx { owner = Owner, signature_type = SigType }) ->
+	case SigType of
+		{?RSA_SIGN_ALG, 65537} -> true;
+		{?ECDSA_SIGN_ALG, secp256k1} -> byte_size(Owner) =:= 33;
+		{?EDDSA_SIGN_ALG, ed25519} -> byte_size(Owner) =:= 32
+	end.
+
 verify_signature_v2(_TX, do_not_verify_signature) ->
 	true;
-verify_signature_v2(TX, verify_signature) ->
+verify_signature_v2(TX = #tx { signature_type = SigType }, verify_signature) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
-	ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature).
+	ar_wallet:verify({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature).
 
 verify_signature_v2(_TX, do_not_verify_signature, _Height) ->
 	true;
-verify_signature_v2(TX, verify_signature, Height) ->
+verify_signature_v2(TX = #tx { signature_type = SigType }, verify_signature, Height) ->
 	SignatureDataSegment = signature_data_segment_v2(TX),
 	case Height >= ar_fork:height_2_4() of
 		true ->
-			ar_wallet:verify(TX#tx.owner, SignatureDataSegment, TX#tx.signature);
+			ar_wallet:verify({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature);
 		false ->
-			ar_wallet:verify_pre_fork_2_4(TX#tx.owner, SignatureDataSegment, TX#tx.signature)
+			ar_wallet:verify_pre_fork_2_4({SigType, TX#tx.owner}, SignatureDataSegment, TX#tx.signature)
 	end.
 
 validate_overspend(TX, Wallets) ->
