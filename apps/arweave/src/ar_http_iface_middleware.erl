@@ -185,6 +185,14 @@ handle(<<"GET">>, [], Req, _Pid) ->
 handle(<<"GET">>, [<<"info">>], Req, _Pid) ->
 	return_info(Req);
 
+handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
+	case ar_util:safe_decode(EncodedTXID) of
+		{error, invalid} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_tx_id }), Req};
+		{ok, TXID} ->
+			{200, #{}, jiffy:encode(ar_tx_blacklist:is_tx_blacklisted(TXID)), Req}
+	end;
+
 %% Some load balancers use 'HEAD's rather than 'GET's to tell if a node
 %% is alive. Appease them.
 handle(<<"HEAD">>, [], Req, _Pid) ->
