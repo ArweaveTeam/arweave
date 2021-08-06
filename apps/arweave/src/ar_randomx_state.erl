@@ -277,23 +277,25 @@ get_block(Height, BI, Peers) when is_integer(Height) ->
 	{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
 	get_block(BH, BI, Peers);
 get_block(BH, BI, Peers) ->
-	case ar_http_iface_client:get_block(Peers, BH) of
+	case ar_storage:read_block(BH) of
+		B when is_record(B, block) ->
+			{ok, B};
 		unavailable ->
-			unavailable;
-		B ->
-			case ar_weave:indep_hash(B) of
-				BH ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs),
-					ar_data_sync:add_block(B, SizeTaggedTXs),
-					ar_header_sync:add_block(B),
-					{ok, B};
-				InvalidBH ->
-					?LOG_WARNING([
-						{event, ar_randomx_state_got_invalid_block},
-						{requested_block_hash, ar_util:encode(BH)},
-						{received_block_hash, ar_util:encode(InvalidBH)}
-					]),
-					get_block(BH, BI)
+			case ar_http_iface_client:get_block_shadow(Peers, BH) of
+				unavailable ->
+					unavailable;
+				{_, B} ->
+					case ar_weave:indep_hash(B) of
+						BH ->
+							{ok, B};
+						InvalidBH ->
+							?LOG_WARNING([
+								{event, ar_randomx_state_got_invalid_block},
+								{requested_block_hash, ar_util:encode(BH)},
+								{received_block_hash, ar_util:encode(InvalidBH)}
+							]),
+							get_block(BH, BI)
+					end
 			end
 	end.
 

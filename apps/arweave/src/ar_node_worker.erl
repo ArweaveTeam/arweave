@@ -228,6 +228,7 @@ handle_info(wallets_ready, State) ->
 	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
 	ar_header_sync:join(BI, Blocks),
 	ar_data_sync:join(BI),
+	ar_tx_blacklist:start_taking_down(),
 	Current = element(1, hd(BI)),
 	B = hd(Blocks),
 	ar_block_cache:initialize_from_list(block_cache, Blocks),

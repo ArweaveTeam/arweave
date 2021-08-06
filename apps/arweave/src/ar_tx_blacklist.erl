@@ -10,6 +10,7 @@
 
 -export([
 	start_link/0,
+	start_taking_down/0,
 	is_tx_blacklisted/1,
 	is_byte_blacklisted/1,
 	get_next_not_blacklisted_byte/1,
@@ -28,7 +29,7 @@
 -ifdef(DEBUG).
 -define(REFRESH_BLACKLISTS_FREQUENCY_MS, 2000).
 -else.
--define(REFRESH_BLACKLISTS_FREQUENCY_MS, 60 * 60 * 1000).
+-define(REFRESH_BLACKLISTS_FREQUENCY_MS, 10 * 60 * 1000).
 -endif.
 
 %% How long to wait before retrying to compose a blacklist from local and external
@@ -37,7 +38,11 @@
 
 %% How long to wait for the response to the previously requested
 %% header or data removal (takedown) before requesting it for a new tx.
--define(REQUEST_TAKEDOWN_DELAY_MS, 2000).
+-ifdef(DEBUG).
+-define(REQUEST_TAKEDOWN_DELAY_MS, 1000).
+-else.
+-define(REQUEST_TAKEDOWN_DELAY_MS, 30000).
+-endif.
 
 %% The frequency of checking whether the time for the response to
 %% the previously requested takedown is due.
@@ -66,6 +71,10 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% @doc Start removing blacklisted headers and data, if any.
+start_taking_down() ->
+	gen_server:cast(?MODULE, start_taking_down).
 
 %% @doc Check whether the given transaction is blacklisted.
 is_tx_blacklisted(TXID) ->
@@ -122,13 +131,16 @@ init([]) ->
 	ok = initialize_state(),
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, refresh_blacklist),
-	gen_server:cast(?MODULE, maybe_request_takedown),
 	{ok, _} = timer:apply_interval(?STORE_STATE_FREQUENCY_MS, ?MODULE, store_state, []),
 	{ok, #ar_tx_blacklist_state{}}.
 
 handle_call(Request, _From, State) ->
 	?LOG_ERROR([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_cast(start_taking_down, State) ->
+	gen_server:cast(?MODULE, maybe_request_takedown),
+	{noreply, State};
 
 handle_cast(refresh_blacklist, State) ->
 	case refresh_blacklist() of
@@ -318,9 +330,9 @@ refresh_blacklist(Whitelist, Blacklist) ->
 		),
 	lists:foreach(
 		fun(TXID) ->
+			ets:insert(ar_tx_blacklist, [{TXID}]),
 			ets:insert(ar_tx_blacklist_pending_headers, [{TXID}]),
-			ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
-			ets:insert(ar_tx_blacklist, [{TXID}])
+			ets:insert(ar_tx_blacklist_pending_data, [{TXID}])
 		end,
 		Removed
 	),
@@ -332,9 +344,9 @@ refresh_blacklist(Whitelist, Blacklist) ->
 				[{TXID, End, Start}] ->
 					restore_offsets(End, Start)
 			end,
+			ets:delete(ar_tx_blacklist, TXID),
 			ets:delete(ar_tx_blacklist_pending_data, TXID),
-			ets:delete(ar_tx_blacklist_pending_headers, TXID),
-			ets:delete(ar_tx_blacklist, TXID)
+			ets:delete(ar_tx_blacklist_pending_headers, TXID)
 		end,
 		Restored
 	),
