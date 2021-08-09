@@ -726,22 +726,28 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof, SubIntervals, L
 					Byte2 = Byte + ChunkSize,
 					Cast = {sync_chunk, [{Byte2, RightBound, Peer} | SubIntervals], Loop},
 					gen_server:cast(?MODULE, Cast),
-					store_fetched_chunk(
-						{
-							DataRoot,
-							AbsoluteTXStartOffset,
-							TXPath,
-							TXRoot,
-							TXSize,
-							DataPath,
-							Packing,
-							ChunkEndOffset,
-							ChunkSize,
-							Chunk,
-							UnpackedChunk
-						},
-						State
-					)
+					case ar_sync_record:is_recorded(Byte + 1, ?MODULE) of
+						{true, _} ->
+							%% The chunk has been synced by another job already.
+							{noreply, State};
+						false ->
+							store_fetched_chunk(
+								{
+									DataRoot,
+									AbsoluteTXStartOffset,
+									TXPath,
+									TXRoot,
+									TXSize,
+									DataPath,
+									Packing,
+									ChunkEndOffset,
+									ChunkSize,
+									Chunk,
+									UnpackedChunk
+								},
+								State
+							)
+					end
 			end
 	end;
 
@@ -1944,6 +1950,7 @@ update_chunks_index(Args, State) ->
 	{
 		AbsoluteChunkOffset,
 		ChunkOffset,
+		DiskPoolChunkKey,
 		ChunkDataKey,
 		TXRoot,
 		DataRoot,
@@ -1951,34 +1958,31 @@ update_chunks_index(Args, State) ->
 		ChunkSize,
 		Packing
 	} = Args,
-	case ar_sync_record:is_recorded(AbsoluteChunkOffset, Packing, ?MODULE) of
+	case ar_tx_blacklist:is_byte_blacklisted(AbsoluteChunkOffset) of
 		true ->
 			ok;
 		false ->
-			case ar_tx_blacklist:is_byte_blacklisted(AbsoluteChunkOffset) of
-				true ->
-					ok;
-				false ->
-					update_chunks_index2(
-						{
-							AbsoluteChunkOffset,
-							ChunkOffset,
-							ChunkDataKey,
-							TXRoot,
-							DataRoot,
-							TXPath,
-							ChunkSize,
-							Packing
-						},
-						State
-					)
-			end
+			update_chunks_index2(
+				{
+					AbsoluteChunkOffset,
+					ChunkOffset,
+					DiskPoolChunkKey,
+					ChunkDataKey,
+					TXRoot,
+					DataRoot,
+					TXPath,
+					ChunkSize,
+					Packing
+				},
+				State
+			)
 	end.
 
 update_chunks_index2(Args, State) ->
 	{
 		AbsoluteOffset,
 		Offset,
+		DiskPoolChunkKey,
 		ChunkDataDBKey,
 		TXRoot,
 		DataRoot,
@@ -1991,19 +1995,61 @@ update_chunks_index2(Args, State) ->
 	} = State,
 	Key = << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>,
 	Value = {ChunkDataDBKey, TXRoot, DataRoot, TXPath, Offset, ChunkSize},
-	case ar_kv:put(ChunksIndex, Key, term_to_binary(Value)) of
+	{Delete, Write} =
+		case ar_kv:get(ChunksIndex, Key) of
+			{ok, PrevV} ->
+				case binary_to_term(PrevV) of
+					{DiskPoolChunkKey, _, _, _, _, _} ->
+						%% We get here when the chunk falls below disk_pool_threshold.
+						%% The same chunk may still be written under offsets above the
+						%% threshold so we do not remove it from the disk pool yet.
+						{false, true};
+					{ChunkDataDBKey, _, _, _, _, _} ->
+						%% In practice this should never happen because we
+						%% make ar_sync_record:is_recorded checks everywhere
+						%% where we run this function.
+						{false, false};
+					{PreviousKey, _, _, _, _, _} ->
+						%% We get here when the chunk is present under offsets
+						%% both above and below disk_pool_threshold. Since
+						%% PrevousKey /= DiskPoolChunkKey we know that the previously
+						%% written chunk is unique so we need to remove it.
+						{{true, PreviousKey}, true}
+				end;
+			not_found ->
+				{false, true}
+		end,
+	WriteResult =
+		case Write of
+			true ->
+				case ar_kv:put(ChunksIndex, Key, term_to_binary(Value)) of
+					ok ->
+						StartOffset = AbsoluteOffset - ChunkSize,
+						ok = ar_sync_record:add(AbsoluteOffset, StartOffset, Packing, ?MODULE),
+						ok;
+					{error, Reason} ->
+						?LOG_ERROR([
+							{event, failed_to_update_chunk_index},
+							{reason, Reason},
+							{chunk, ar_util:encode(ChunkDataDBKey)},
+							{offset, AbsoluteOffset}
+						]),
+						{error, Reason}
+				end;
+			false ->
+				ok
+		end,
+	case WriteResult of
 		ok ->
-			StartOffset = AbsoluteOffset - ChunkSize,
-			ok = ar_sync_record:add(AbsoluteOffset, StartOffset, Packing, ?MODULE),
-			ok;
-		{error, Reason} ->
-			?LOG_ERROR([
-				{event, failed_to_update_chunk_index},
-				{reason, Reason},
-				{chunk, ar_util:encode(ChunkDataDBKey)},
-				{offset, AbsoluteOffset}
-			]),
-			{error, Reason}
+			case Delete of
+				{true, PrevKey} ->
+					ok = delete_disk_pool_chunk(PrevKey, State),
+					ok;
+				false ->
+					ok
+			end;
+		Error ->
+			Error
 	end.
 
 add_chunk_to_disk_pool(Args, State) ->
@@ -2083,6 +2129,7 @@ store_fetched_chunk(Args, State) ->
 									AbsoluteOffset,
 									Offset,
 									ChunkDataKey,
+									ChunkDataKey,
 									TXRoot,
 									DataRoot,
 									TXPath,
@@ -2135,6 +2182,7 @@ store_fetched_chunk(Args, State) ->
 						{
 							AbsoluteOffset,
 							Offset,
+							not_set,
 							ChunkDataKey,
 							TXRoot,
 							DataRoot,
@@ -2219,15 +2267,18 @@ delete_disk_pool_chunk(ChunkDataKey, State) ->
 process_disk_pool_chunk_offsets(Iterator, LatestOffset, Args, State) ->
 	#sync_data_state{
 		disk_pool_chunks_index = DiskPoolChunksIndex,
-		disk_pool_threshold = DiskPoolThreshold
+		disk_pool_threshold = DiskPoolThreshold,
+		chunk_data_db = ChunkDataDB
 	} = State,
-	{Offset, DataRootInDiskPool, _, _, _, _, Key} = Args,
+	{Offset, DataRootInDiskPool, _, _, _, ChunkDataKey, Key} = Args,
 	case next(Iterator) of
 		none ->
-			case LatestOffset =< DiskPoolThreshold andalso not DataRootInDiskPool of
+			case (LatestOffset =< DiskPoolThreshold andalso (not DataRootInDiskPool))
+					orelse ar_kv:get(ChunkDataDB, ChunkDataKey) == not_found of
 				true ->
 					ok = ar_kv:delete(DiskPoolChunksIndex, Key),
-					prometheus_gauge:dec(disk_pool_chunks_count);
+					prometheus_gauge:dec(disk_pool_chunks_count),
+					ok = delete_disk_pool_chunk(ChunkDataKey, State);
 				false ->
 					ok
 			end,
@@ -2255,32 +2306,43 @@ process_disk_pool_chunk_offset(
 	{Offset, _DataRootInDiskPool, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, _Key} = Args,
 	case AbsoluteOffset > DiskPoolThreshold of
 		true ->
-			case update_chunks_index(
-					{
-						AbsoluteOffset,
-						Offset,
-						ChunkDataKey,
-						TXRoot,
-						DataRoot,
-						TXPath,
-						ChunkSize,
-						unpacked
-					},
-					State
-			) of
-				ok ->
+			case ar_sync_record:is_recorded(AbsoluteOffset, ?MODULE) of
+				{true, _} ->
 					process_disk_pool_chunk_offsets(
 						Iterator,
 						max(LatestOffset, AbsoluteOffset),
 						Args,
 						State
 					);
-				{error, Reason} ->
-					?LOG_ERROR([
-						{event, failed_to_update_chunks_index},
-						{reason, io_lib:format("~p", [Reason])}
-					]),
-					{noreply, State}
+				false ->
+					case update_chunks_index(
+							{
+								AbsoluteOffset,
+								Offset,
+								ChunkDataKey,
+								ChunkDataKey,
+								TXRoot,
+								DataRoot,
+								TXPath,
+								ChunkSize,
+								unpacked
+							},
+							State
+					) of
+						ok ->
+							process_disk_pool_chunk_offsets(
+								Iterator,
+								max(LatestOffset, AbsoluteOffset),
+								Args,
+								State
+							);
+						{error, Reason} ->
+							?LOG_ERROR([
+								{event, failed_to_update_chunks_index},
+								{reason, io_lib:format("~p", [Reason])}
+							]),
+							{noreply, State}
+					end
 			end;
 		false ->
 			case ar_sync_record:is_recorded(AbsoluteOffset, aes_256_cbc, ?MODULE) of
@@ -2343,6 +2405,7 @@ process_disk_pool_chunk_offset(
 											{
 												AbsoluteOffset,
 												Offset,
+												ChunkDataKey,
 												PackedChunkDataKey,
 												TXRoot,
 												DataRoot,
