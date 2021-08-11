@@ -139,9 +139,18 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 	end.
 
 %% @doc Fetch the transaction data. Return {error, tx_data_too_big} if
-%% the size is bigger than ?MAX_SERVED_TX_DATA_SIZE.
+%% the size is bigger than ?MAX_SERVED_TX_DATA_SIZE, unless the limitation
+%% is disabled in the configuration.
 get_tx_data(TXID) ->
-	get_tx_data(TXID, ?MAX_SERVED_TX_DATA_SIZE).
+	{ok, Config} = application:get_env(arweave, config),
+	SizeLimit =
+		case lists:member(serve_tx_data_without_limits, Config#config.enable) of
+			true ->
+				infinity;
+			false ->
+				?MAX_SERVED_TX_DATA_SIZE
+		end,
+	get_tx_data(TXID, SizeLimit).
 
 %% @doc Fetch the transaction data. Return {error, tx_data_too_big} if
 %% the size is bigger than SizeLimit.
