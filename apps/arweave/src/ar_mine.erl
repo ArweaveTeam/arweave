@@ -21,7 +21,6 @@
 
 %% State record for miners.
 -record(state, {
-	parent,
 	current_block,
 	candidate_block,
 	block_anchors,	% List of block hashes of the latest ?MAX_TX_ANCHOR_DEPTH blocks.
@@ -53,7 +52,7 @@
 
 %% @doc Spawns a new mining process and returns its PID.
 start(Args) ->
-	{CurrentB, TXs, RewardAddr, Tags, Parent, BlockAnchors, RecentTXMap, BI, IOThreads} = Args,
+	{CurrentB, TXs, RewardAddr, Tags, BlockAnchors, RecentTXMap, BI, IOThreads} = Args,
 	CurrentHeight = CurrentB#block.height,
 	CandidateB = #block{
 		height = CurrentHeight + 1,
@@ -65,7 +64,6 @@ start(Args) ->
 	},
 	State =
 		#state{
-			parent = Parent,
 			current_block = CurrentB,
 			data_segment_duration = 0,
 			reward_addr = RewardAddr,
@@ -1013,13 +1011,12 @@ log_spora_performance() ->
 
 process_spora_solution(BDS, B, MinedTXs, S) ->
 	#state {
-		parent = Parent,
 		current_block = #block{ indep_hash = CurrentBH }
 	} = S,
 	SPoA = B#block.poa,
 	IndepHash = ar_weave:indep_hash(BDS, B#block.hash, B#block.nonce, SPoA),
 	B2 = B#block{ indep_hash = IndepHash },
-	Parent ! {work_complete, CurrentBH, B2, MinedTXs, BDS, SPoA},
+	ar_events:send(block, {mined, B2, MinedTXs, CurrentBH}),
 	log_spora_performance().
 
 prepare_randomx(Height) ->
@@ -1126,7 +1123,8 @@ test_basic() ->
 	BI = ar_test_node:wait_until_height(1),
 	B1 = ar_test_node:read_block_when_stored(hd(BI)),
 	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
-	start({B1, [], unclaimed, [], self(), [], #{}, BI, Threads}),
+	ar_events:subscribe(block),
+	start({B1, [], unclaimed, [], [], #{}, BI, Threads}),
 	assert_mine_output(B1, []).
 
 %% Ensure that the block timestamp gets updated regularly while mining.
@@ -1140,16 +1138,17 @@ test_timestamp_refresh() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(20)),
 	ar_test_node:start(B0),
 	B = B0,
+	ar_events:subscribe(block),
 	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
 	Run = fun(_) ->
 		TXs = [],
 		StartTime = os:system_time(seconds),
+		ar_events:subscribe(block),
 		start({
 			B,
 			TXs,
 			unclaimed,
 			[],
-			self(),
 			[],
 			#{},
 			[ar_util:block_index_entry_from_block(B0)],
@@ -1170,7 +1169,7 @@ test_start_stop() ->
 	BI = ar_test_node:wait_until_height(0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
 	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
-	PID = start({B#block{ diff = HighDiff }, [], unclaimed, [], self(), [], #{}, BI, Threads}),
+	PID = start({B#block{ diff = HighDiff }, [], unclaimed, [], [], #{}, BI, Threads}),
 	timer:sleep(500),
 	assert_alive(PID),
 	stop(PID),
@@ -1178,7 +1177,7 @@ test_start_stop() ->
 
 assert_mine_output(B, TXs) ->
 	receive
-		{work_complete, BH, NewB, MinedTXs, BDS, _POA} ->
+		{event, block, {mined, NewB, MinedTXs, BH}} ->
 			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
 			BDS = ar_block:generate_block_data_segment(NewB),
@@ -1195,7 +1194,9 @@ assert_mine_output(B, TXs) ->
 				NewB#block.hash
 			),
 			?assert(binary:decode_unsigned(NewB#block.hash) > NewB#block.diff),
-			{NewB#block.diff, NewB#block.timestamp}
+			{NewB#block.diff, NewB#block.timestamp};
+		{event, block, {new, _NewB, _FromPeerID}} ->
+			assert_mine_output(B, TXs)
 	after 20000 ->
 		error(timeout)
 	end.

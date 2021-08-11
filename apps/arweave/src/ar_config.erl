@@ -324,6 +324,9 @@ parse_options([{<<"max_disk_pool_data_root_buffer_mb">>, D} | Rest], Config) whe
 parse_options([{<<"randomx_bulk_hashing_iterations">>, D} | Rest], Config) when is_integer(D) ->
 	parse_options(Rest, Config#config{ randomx_bulk_hashing_iterations = D });
 
+parse_options([{<<"debug">>, B} | Rest], Config) when is_boolean(B) ->
+	parse_options(Rest, Config#config{ debug = B });
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

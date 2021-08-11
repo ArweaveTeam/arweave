@@ -16,7 +16,9 @@
 
 -export([
 	mod_exist/1,
-	ar_data_sync_fork_recovery/1
+	ar_data_sync_fork_recovery/1, % ar_data_sync.erl
+	events_subscribe_send_cancel/1, % ar_events.erl
+	events_process_terminated/1
 ]).
 
 %%%===================================================================
@@ -171,11 +173,13 @@ end_per_testcase(_TestCase, Config) ->
 %% Description: Returns a list of test case group definitions.
 %%--------------------------------------------------------------------
 groups() ->
-	[
-		{nodeBasic, [sequence], [
-			ar_data_sync_fork_recovery
-		]}
-	].
+    [
+    {nodeBasic,[sequence], [
+			ar_data_sync_fork_recovery,
+			events_subscribe_send_cancel,
+			events_process_terminated
+        ]}
+    ].
 
 %%--------------------------------------------------------------------
 %% Function: all() -> GroupsAndTestCases | {skip, Reason}
@@ -197,15 +201,19 @@ all() ->
 		{group, nodeBasic}
 	].
 
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
+%% Tests.
+%%
+%% Note! Please, dont use this module for the tests. Wrap it up by the
+%% short function and put the real test implementation into the external module.
+%% Lets keep this module clean.
+mod_exist(Config) ->
+	{module, ar_node} = code:load_file(ar_node),
+	{module, ar_events} = code:load_file(ar_events),
+	Config.
 
-%% Note! Please, do not use this module for the tests. Wrap it up by a
-%% short function and put the actual test implementation into an external module.
-%% Let's keep this module clean.
-mod_exist(_Config) -> {module, ar_node} = code:load_file(ar_node).
 ar_data_sync_fork_recovery(Config) -> ar_ct_data_sync:fork_recovery(Config).
+events_subscribe_send_cancel(Config) -> ar_test_events:subscribe_send_cancel(Config).
+events_process_terminated(Config) -> ar_test_events:process_terminated(Config).
 
 %%%===================================================================
 %%% Private functions.
@@ -213,7 +221,7 @@ ar_data_sync_fork_recovery(Config) -> ar_ct_data_sync:fork_recovery(Config).
 
 start_slave_node() ->
 	{ok, Slave} = ct_slave:start('slave', [{monitor_master, true}]),
-	ok = rpc:call(Slave, code, add_pathsz, [code:get_path()]),
+	ok = ct_rpc:call(Slave, code, add_pathsz, [code:get_path()]),
 	Slave.
 
 stop_slave_node(Config) ->

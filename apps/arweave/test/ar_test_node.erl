@@ -4,7 +4,6 @@
 	start/1, start/2, start/3, slave_start/1, slave_start/2, wait_until_joined/0,
 	connect_to_slave/0, disconnect_from_slave/0,
 	slave_call/3, slave_call/4,
-	gossip/1, slave_gossip/1,
 	slave_add_tx/1,
 	slave_mine/0,
 	wait_until_height/1, slave_wait_until_height/1, assert_slave_wait_until_height/1,
@@ -24,7 +23,8 @@
 	get_tx_price/1,
 	post_and_mine/2,
 	read_block_when_stored/1,
-	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2
+	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
+	add_peer/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -185,21 +185,11 @@ disconnect_from_slave() ->
 	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
 	slave_call(application, set_env, [arweave, config, SlaveConfig#config{ peers = [] }]).
 
-gossip(off) ->
-	ar_node:set_loss_probability(1);
-gossip(on) ->
-	ar_node:set_loss_probability(0).
-
 slave_call(Module, Function, Args) ->
 	slave_call(Module, Function, Args, 60000).
 
 slave_call(Module, Function, Args, Timeout) ->
 	ar_rpc:call(slave, Module, Function, Args, Timeout).
-
-slave_gossip(off) ->
-	slave_call(?MODULE, gossip, [off]);
-slave_gossip(on) ->
-	slave_call(?MODULE, gossip, [on]).
 
 slave_add_tx(TX) ->
 	slave_call(ar_node, add_tx, [TX]).
@@ -646,3 +636,6 @@ post_chunk2(Peer, Proof) ->
 		path => "/chunk",
 		body => Proof
 	}).
+
+add_peer(Port) ->
+	ar_bridge:add_remote_peer({127, 0, 0, 1, Port}).

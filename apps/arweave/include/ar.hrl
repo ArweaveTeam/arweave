@@ -417,23 +417,6 @@
 	reward = 0			% The fee in Winstons.
 }).
 
-%% Gossip protocol state.
-%% Passed to and from the gossip library functions of `ar_gossip`.
--record(gs_state, {
-	peers, % A list of the peers known to this node.
-	heard = [], % Hashes of the messages received thus far.
-	loss_probability = 0, % Message loss probability for network simulation.
-	delay = 0, % Message passing delay for network simulation.
-	xfer_speed = undefined % Transfer speed in bytes/s for network simulation.
-}).
-
-%% A message intended to be handled by the internal gossip protocol
-%% library, `ar_gossip`.
--record(gs_msg, {
-	hash,
-	data
-}).
-
 %% Peering performance of a node.
 -record(performance, {
 	bytes = 0,

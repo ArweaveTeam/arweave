@@ -8,7 +8,7 @@
 	ar_test_node, [
 		slave_mine/0,
 		assert_wait_until_receives_txs/1, assert_slave_wait_until_height/1,
-		slave_call/3, slave_add_tx/1
+		slave_call/3, slave_add_tx/1, add_peer/1
 	]
 ).
 
@@ -26,28 +26,6 @@ get_current_block_hash_test() ->
 	{_Node1, _} = ar_test_node:start(B0),
 	?assertEqual(B0#block.indep_hash, ar_node:get_current_block_hash()).
 
-%% @doc Ensure that nodes will not re-gossip txs more than once.
-single_tx_regossip_test() ->
-	[B0] = ar_weave:init([], ?DEFAULT_DIFF, ?AR(1)),
-	{Node1, _} = ar_test_node:start(B0),
-	ar_node:add_peers(self()),
-	InitGS = ar_gossip:init([Node1]),
-	TX = ar_tx:new(<<"TEST DATA">>),
-	% Send transaction first time.
-	ar_gossip:send(InitGS, {add_tx, TX}),
-	receive
-		#gs_msg{data = {add_tx, TX1}} ->
-			?assertEqual(TX, TX1)
-	end,
-	% Send transaction second time.
-	ar_gossip:send(InitGS, {add_tx, TX}),
-	receive
-		#gs_msg{data = {add_tx, TX}} ->
-			error("TX re-gossiped")
-	after 1000 ->
-		ok
-	end.
-
 %% @doc Ensure that a 'claimed' block triggers a non-zero mining reward.
 mining_reward_test() ->
 	{_Priv1, Pub1} = ar_wallet:new(),
@@ -62,9 +40,9 @@ multi_node_mining_reward_test_() ->
 	{timeout, 20, fun() ->
 		{_Priv1, Pub1} = ar_wallet:new(),
 		[B0] = ar_weave:init([]),
-		{Node1, _} = ar_test_node:start(B0),
+		ar_test_node:start(B0),
 		ar_test_node:slave_start(B0, ar_wallet:to_address(Pub1)),
-		slave_call(ar_node, add_peers, [Node1]),
+		slave_call(ar_test_node, add_peer, [ar_meta_db:get(port)]),
 		slave_mine(),
 		ar_test_node:wait_until_height(1),
 		?assert(ar_node:get_balance(Pub1) > 0)
@@ -80,8 +58,7 @@ replay_attack_test_() ->
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		{_Node1, _} = ar_test_node:start(B0),
 		ar_test_node:slave_start(B0),
-		Node2 = {ar_node_worker, 'slave@127.0.0.1'},
-		ar_node:add_peers(Node2),
+		add_peer(slave_call(ar_meta_db, get, [port])),
 		ar_node:add_tx(SignedTX),
 		ar_node:mine(),
 		ar_test_node:wait_until_height(1),
@@ -103,8 +80,7 @@ wallet_transaction_test_() ->
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		{_Node1, _} = ar_test_node:start(B0),
 		ar_test_node:slave_start(B0),
-		Node2 = {ar_node_worker, 'slave@127.0.0.1'},
-		ar_node:add_peers(Node2),
+		add_peer(slave_call(ar_meta_db, get, [port])),
 		ar_node:add_tx(SignedTX),
 		ar_test_node:wait_until_receives_txs([SignedTX]),
 		ar_node:mine(),
@@ -125,11 +101,10 @@ wallet_two_transaction_test_() ->
 		TX2 = ar_tx:new(Pub3, ?AR(1), ?AR(500), <<>>),
 		SignedTX2 = ar_tx:sign_v1(TX2, Priv2, Pub2),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
-		{Node1, _} = ar_test_node:start(B0),
+		ar_test_node:start(B0),
 		ar_test_node:slave_start(B0),
-		Node2 = {ar_node_worker, 'slave@127.0.0.1'},
-		ar_node:add_peers(Node2),
-		slave_call(ar_node, add_peers, [Node1]),
+		add_peer(slave_call(ar_meta_db, get, [port])),
+		slave_call(ar_test_node, add_peer, [ar_meta_db:get(port)]),
 		ar_node:add_tx(SignedTX),
 		ar_test_node:wait_until_receives_txs([SignedTX]),
 		ar_node:mine(),
@@ -153,8 +128,7 @@ mine_tx_with_key_val_tags_test_() ->
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}], 8),
 		{_Node1, _} = ar_test_node:start(B0),
 		ar_test_node:slave_start(B0),
-		Node2 = {ar_node_worker, 'slave@127.0.0.1'},
-		ar_node:add_peers(Node2),
+		add_peer(slave_call(ar_meta_db, get, [port])),
 		ar_storage:write_tx([SignedTX]),
 		ar_node:add_tx(SignedTX),
 		ar_test_node:wait_until_receives_txs([SignedTX]),
@@ -177,8 +151,7 @@ tx_threading_test_() ->
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		{_Node1, _} = ar_test_node:start(B0),
 		ar_test_node:slave_start(B0),
-		Node2 = {ar_node_worker, 'slave@127.0.0.1'},
-		ar_node:add_peers(Node2),
+		add_peer(slave_call(ar_meta_db, get, [port])),
 		ar_node:add_tx(SignedTX),
 		ar_test_node:wait_until_receives_txs([SignedTX]),
 		ar_node:mine(),
@@ -203,8 +176,7 @@ bogus_tx_thread_test_() ->
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
 		{_Node1, _} = ar_test_node:start(B0),
 		ar_test_node:slave_start(B0),
-		Node2 = {ar_node_worker, 'slave@127.0.0.1'},
-		ar_node:add_peers(Node2),
+		add_peer(slave_call(ar_meta_db, get, [port])),
 		ar_node:add_tx(SignedTX),
 		ar_test_node:wait_until_receives_txs([SignedTX]),
 		ar_node:mine(),

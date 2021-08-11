@@ -118,7 +118,7 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	?assertEqual([TXID], H4TXIDs).
 
 invalid_block_with_high_cumulative_difficulty_test_() ->
-	{timeout, 20, fun test_invalid_block_with_high_cumulative_difficulty/0}.
+	{timeout, 30, fun test_invalid_block_with_high_cumulative_difficulty/0}.
 
 test_invalid_block_with_high_cumulative_difficulty() ->
 	%% Submit an alternative fork with valid blocks weaker than the tip and

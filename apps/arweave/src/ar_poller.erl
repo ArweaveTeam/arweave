@@ -145,7 +145,8 @@ submit_fetched_blocks([B | Blocks], Peer, ReceiveTimestamp) ->
 		{block, ar_util:encode(B#block.indep_hash)},
 		{height, B#block.height}
 	]),
-	ar_node_worker ! {new_block, Peer, B#block.height, B, no_data_segment, ReceiveTimestamp},
+	%% Won't be broadcasted.
+	ar_events:send(block, {new, B, ar_poller}),
 	submit_fetched_blocks(Blocks, Peer, ReceiveTimestamp);
 submit_fetched_blocks([], _Peer, _ReceiveTimestamp) ->
 	ok.

@@ -6,15 +6,18 @@
 -export([
 	start_link/0, stop/0,
 	set_max_emitters/1, set_max_header_size/1, set_max_data_size/1, set_pause/1,
-	add_tx/1, show_queue/0,
-	utility/1,
-	drop_tx/1
+	show_queue/0,
+	utility/1
 ]).
 
 %% gen_server callbacks
 -export([
-	init/1, handle_call/3, handle_cast/2,
-	terminate/2, code_change/3, format_status/2
+	init/1,
+	handle_call/3,
+	handle_cast/2,
+	handle_info/2,
+	terminate/2,
+	code_change/3
 ]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -67,25 +70,31 @@ set_max_data_size(Bytes) ->
 set_max_emitters(N) ->
 	gen_server:call(?MODULE, {set_max_emitters, N}).
 
-add_tx(TX) ->
-	gen_server:cast(?MODULE, {add_tx, TX}).
-
 show_queue() ->
 	gen_server:call(?MODULE, show_queue).
-
-drop_tx(TX) ->
-	gen_server:cast(?MODULE, {drop_tx, TX}).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Initializes the server
+%%
+%% @spec init(Args) -> {ok, State} |
+%%					   {ok, State, Timeout} |
+%%					   ignore |
+%%					   {stop, Reason}
+%% @end
+%%--------------------------------------------------------------------
 init([]) ->
 	MaxEmitters =
 		case ar_meta_db:get(max_emitters) of
 			not_found -> ?NUM_EMITTER_PROCESSES;
 			X -> X
 		end,
+	ok = ar_events:subscribe(tx),
 	start_emitters(),
 	{ok, #state{
 		tx_queue = gb_sets:new(),
@@ -99,6 +108,20 @@ init([]) ->
 		emit_map = #{}
 	}}.
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling call messages
+%%
+%% @spec handle_call(Request, From, State) ->
+%%									 {reply, Reply, State} |
+%%									 {reply, Reply, State, Timeout} |
+%%									 {noreply, State} |
+%%									 {noreply, State, Timeout} |
+%%									 {stop, Reason, Reply, State} |
+%%									 {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
 handle_call({set_pause, PauseOrNot}, _From, State) ->
 	{reply, ok, State#state{ paused = PauseOrNot }};
 
@@ -115,9 +138,20 @@ handle_call(show_queue, _From, State = #state{ tx_queue = Q }) ->
 	Reply = show_queue(Q),
 	{reply, Reply, State};
 
-handle_call(_Request, _From, State) ->
-	{noreply, State}.
+handle_call(Request, _From, State) ->
+	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	{reply, ok, State}.
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling cast messages
+%%
+%% @spec handle_cast(Msg, State) -> {noreply, State} |
+%%									{noreply, State, Timeout} |
+%%									{stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
 handle_cast(start_emitters, State) ->
 	#state{ max_emitters = MaxEmitters, emitters_running = EmittersRunning } = State,
 	lists:foreach(
@@ -129,80 +163,6 @@ handle_cast(start_emitters, State) ->
 	),
 	{noreply, State#state{ emitters_running = MaxEmitters, paused = false }};
 
-handle_cast({add_tx, TX}, State) ->
-	#state{
-		tx_queue = Q,
-		max_header_size = MaxHeaderSize,
-		max_data_size = MaxDataSize,
-		header_size = HeaderSize,
-		data_size = DataSize
-	} = State,
-	{TXHeaderSize, TXDataSize} = tx_queue_size(TX),
-	U = utility(TX),
-	Item = {U, {TX, {TXHeaderSize, TXDataSize}}},
-	case gb_sets:is_element(Item, Q) of
-		true ->
-			{noreply, State};
-		false ->
-			{NewQ, {NewHeaderSize, NewDataSize}, DroppedTXs} =
-				maybe_drop(
-					gb_sets:add_element(Item, Q),
-					{HeaderSize + TXHeaderSize, DataSize + TXDataSize},
-					{MaxHeaderSize, MaxDataSize}
-				),
-			case DroppedTXs of
-				[] ->
-					noop;
-				_ ->
-					DroppedIDs = lists:map(
-						fun(DroppedTX) ->
-							case TX#tx.format of
-								2 ->
-									ar_data_sync:maybe_drop_data_root_from_disk_pool(
-										DroppedTX#tx.data_root,
-										DroppedTX#tx.data_size,
-										DroppedTX#tx.id
-									);
-								_ ->
-									nothing_to_drop_from_disk_pool
-							end,
-							ar_util:encode(DroppedTX#tx.id)
-						end,
-						DroppedTXs
-					),
-					?LOG_INFO([
-						{event, drop_txs_from_queue},
-						{dropped_txs, DroppedIDs}
-					]),
-					ar_bridge:drop_waiting_txs(DroppedTXs)
-			end,
-			NewState = State#state{
-				tx_queue = NewQ,
-				header_size = NewHeaderSize,
-				data_size = NewDataSize
-			},
-			{noreply, NewState}
-	end;
-
-handle_cast({drop_tx, TX}, State) ->
-	#state{
-		tx_queue = Q,
-		header_size = HeaderSize,
-		data_size = DataSize
-	} = State,
-	{TXHeaderSize, TXDataSize} = tx_queue_size(TX),
-	U = utility(TX),
-	Item = {U, {TX, {TXHeaderSize, TXDataSize}}},
-	case gb_sets:is_element(Item, Q) of
-		true ->
-			{noreply, State#state{
-				tx_queue = gb_sets:del_element(Item, Q),
-				header_size = HeaderSize - TXHeaderSize,
-				data_size = DataSize - TXDataSize
-			}};
-		false ->
-			{noreply, State}
-	end;
 
 handle_cast(emitter_go, State = #state{ paused = true }) ->
 	timer:apply_after(?EMITTER_START_WAIT, gen_server, cast, [?MODULE, emitter_go]),
@@ -294,26 +254,145 @@ handle_cast({emitted_tx_to_peer, {Reply, TX}}, State = #state{ emit_map = EmitMa
 	end;
 
 handle_cast({emitter_finished, TX}, State) ->
+	%% Send this TX to the mining pool with some delay depending on the TX size.
 	timer:apply_after(
 		ar_node_utils:calculate_delay(tx_propagated_size(TX)),
-		ar_bridge,
-		move_tx_to_mining_pool,
-		[TX]
+		ar_events,
+		send,
+		[tx, {ready_for_mining, TX}]
 	),
 	timer:apply_after(?EMITTER_INTER_WAIT, gen_server, cast, [?MODULE, emitter_go]),
 	{noreply, State};
 
-handle_cast(_Request, State) ->
+handle_cast(Cast, State) ->
+	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling all non call/cast messages
+%%
+%% @spec handle_info(Info, State) -> {noreply, State} |
+%%									 {noreply, State, Timeout} |
+%%									 {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_info({event, tx, {new, TX, Source}}, State) ->
+	#state{
+		tx_queue = Q,
+		max_header_size = MaxHeaderSize,
+		max_data_size = MaxDataSize,
+		header_size = HeaderSize,
+		data_size = DataSize
+	} = State,
+	?LOG_DEBUG("TX Queue new tx received ~p from ~p", [ar_util:encode(TX#tx.id), Source]),
+	{TXHeaderSize, TXDataSize} = tx_queue_size(TX),
+	U = utility(TX),
+	Item = {U, {TX, {TXHeaderSize, TXDataSize}}},
+	case gb_sets:is_element(Item, Q) of
+		true ->
+			{noreply, State};
+		false ->
+			{NewQ, {NewHeaderSize, NewDataSize}, DroppedTXs} =
+				maybe_drop(
+					gb_sets:add_element(Item, Q),
+					{HeaderSize + TXHeaderSize, DataSize + TXDataSize},
+					{MaxHeaderSize, MaxDataSize}
+				),
+			case DroppedTXs of
+				[] ->
+					noop;
+				_ ->
+					DroppedIDs = lists:map(
+						fun(DroppedTX) ->
+							case TX#tx.format of
+								2 ->
+									ar_data_sync:maybe_drop_data_root_from_disk_pool(
+										DroppedTX#tx.data_root,
+										DroppedTX#tx.data_size,
+										DroppedTX#tx.id
+									);
+								_ ->
+									nothing_to_drop_from_disk_pool
+							end,
+							ar_events:send(tx, {dropped, DroppedTX, removed_from_tx_queue}),
+							ar_util:encode(DroppedTX#tx.id)
+						end,
+						DroppedTXs
+					),
+					case lists:member(TX#tx.id, DroppedIDs) of
+						false ->
+							ar_ignore_registry:add(TX#tx.id);
+						true ->
+							ok
+					end,
+					?LOG_INFO([
+						{event, drop_txs_from_queue},
+						{dropped_txs, DroppedIDs}
+					])
+			end,
+			NewState = State#state{
+				tx_queue = NewQ,
+				header_size = NewHeaderSize,
+				data_size = NewDataSize
+			},
+			{noreply, NewState}
+	end;
+
+handle_info({event, tx, {dropped, TX, Reason}}, State) ->
+	#state{
+		tx_queue = Q,
+		header_size = HeaderSize,
+		data_size = DataSize
+	} = State,
+	{TXHeaderSize, TXDataSize} = tx_queue_size(TX),
+	U = utility(TX),
+	Item = {U, {TX, {TXHeaderSize, TXDataSize}}},
+	case gb_sets:is_element(Item, Q) of
+		true ->
+			?LOG_DEBUG("Drop TX from queue ~p with reason: ~p", [ar_util:encode(TX#tx.id), Reason]),
+			{noreply, State#state{
+				tx_queue = gb_sets:del_element(Item, Q),
+				header_size = HeaderSize - TXHeaderSize,
+				data_size = DataSize - TXDataSize
+			}};
+		false ->
+			{noreply, State}
+	end;
+
+handle_info({event, tx, _Event}, State) ->
+	{noreply, State};
+
+handle_info(Message, State) ->
+	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	{noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% This function is called by a gen_server when it is about to
+%% terminate. It should be the opposite of Module:init/1 and do any
+%% necessary cleaning up. When it returns, the gen_server terminates
+%% with Reason. The return value is ignored.
+%%
+%% @spec terminate(Reason, State) -> void()
+%% @end
+%%--------------------------------------------------------------------
+terminate(Reason, _State) ->
+	?LOG_INFO([{event, ar_tx_queue_terminated}, {reason, Reason}]),
 	ok.
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Convert process state when code is changed
+%%
+%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
+%% @end
+%%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
-
-format_status(_Opt, Status) ->
-	Status.
 
 %%%===================================================================
 %%% Private functions.

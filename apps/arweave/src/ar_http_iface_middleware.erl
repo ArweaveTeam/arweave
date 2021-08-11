@@ -461,8 +461,8 @@ handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
 				{error, body_size_too_large, Req2} ->
 					{413, #{}, <<"Payload too large">>, Req2};
 				{ok, TX} ->
-					{PeerIP, _Port} = cowboy_req:peer(Req),
-					case handle_post_tx(Req, PeerIP, TX) of
+					Peer = ar_http_util:arweave_peer(Req),
+					case handle_post_tx(Req, Peer, TX) of
 						ok ->
 							{200, #{}, <<"OK">>, Req};
 						{error_response, {Status, Headers, Body}} ->
@@ -514,9 +514,9 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 						data_root = DataRoot
 					},
 					SignedTX = ar_tx:sign(Format2TX, KeyPair),
-					{PeerIP, _Port} = cowboy_req:peer(Req),
+					Peer = ar_http_util:arweave_peer(Req),
 					Reply = ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}),
-					case handle_post_tx(Req2, PeerIP, SignedTX) of
+					case handle_post_tx(Req2, Peer, SignedTX) of
 						ok ->
 							{200, #{}, Reply, Req2};
 						{error_response, {Status, Headers, ErrBody}} ->
@@ -1166,16 +1166,16 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 			get_wallet_txs(EarliestTXID, TXIDs, [TXID | Acc])
 	end.
 
-handle_post_tx(Req, PeerIP, TX) ->
+handle_post_tx(Req, Peer, TX) ->
 	case verify_mempool_txs_size(TX) of
 		invalid ->
 			handle_post_tx_no_mempool_space_response();
 		valid ->
 			Height = ar_node:get_height(),
-			handle_post_tx(Req, PeerIP, TX, Height)
+			handle_post_tx(Req, Peer, TX, Height)
 	end.
 
-handle_post_tx(Req, PeerIP, TX, Height) ->
+handle_post_tx(Req, Peer, TX, Height) ->
 	RecentTXMap = ar_node:get_recent_txs_map(),
 	BlockAnchors = ar_node:get_block_anchors(),
 	MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
@@ -1202,7 +1202,7 @@ handle_post_tx(Req, PeerIP, TX, Height) ->
 		{invalid, tx_already_in_mempool} ->
 			handle_post_tx_already_in_mempool_response();
 		valid  ->
-			handle_post_tx_accepted(Req, PeerIP, TX)
+			handle_post_tx_accepted(Req, Peer, TX)
 	end.
 
 verify_mempool_txs_size(TX) ->
@@ -1220,12 +1220,13 @@ verify_mempool_txs_size(TX) ->
 			end
 	end.
 
-handle_post_tx_accepted(Req, PeerIP, TX) ->
+handle_post_tx_accepted(Req, Peer, TX) ->
 	%% Exclude successful requests with valid transactions from the
 	%% IP-based throttling, to avoid connectivity issues at the times
 	%% of excessive transaction volumes.
-	ar_blacklist_middleware:decrement_ip_addr(PeerIP, Req),
-	ar_bridge:add_tx(TX),
+	{A, B, C, D, _} = Peer,
+	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
+	ar_events:send(tx, {new, TX, Peer}),
 	case TX#tx.format of
 		2 ->
 			ar_data_sync:add_data_root_to_disk_pool(TX#tx.data_root, TX#tx.data_size, TX#tx.id);
@@ -1383,7 +1384,7 @@ check_internal_api_secret(Req) ->
 			cowboy_req:header(<<"x-internal-api-secret">>, Req)} of
 		{not_set, _} ->
 			Reject("Request to disabled internal API");
-		{_Secret, _Secret} when is_binary(_Secret) ->
+		{Secret, Secret} when is_binary(Secret) ->
 			pass;
 		_ ->
 			Reject("Invalid secret for internal API request")
@@ -1647,18 +1648,13 @@ post_block(check_pow, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimestamp) ->
 			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 			{400, #{}, <<"Invalid Block Proof of Work">>, Req}
 	end;
-post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp) ->
+post_block(post_block, {BShadow, OrigPeer, _BDS}, Req, ReceiveTimestamp) ->
 	record_block_pre_validation_time(ReceiveTimestamp),
 	?LOG_INFO([
 		{event, ar_http_iface_handler_accepted_block},
 		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
 	]),
-	ar_bridge:add_block(
-		OrigPeer,
-		BShadow,
-		BDS,
-		ReceiveTimestamp
-	),
+	ar_events:send(block, {new, BShadow, OrigPeer}),
 	{200, #{}, <<"OK">>, Req}.
 
 compute_hash(B, Height) ->
