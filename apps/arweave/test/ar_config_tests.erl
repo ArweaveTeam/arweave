@@ -27,7 +27,6 @@ parse_config() ->
 		metrics_dir = "metrics_dir",
 		polling = 10,
 		auto_join = false,
-		clean = true,
 		diff = 42,
 		mining_addr = ExpectedMiningAddr,
 		max_miners = 43,

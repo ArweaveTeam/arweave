@@ -75,13 +75,6 @@ parse_options([{<<"polling">>, Frequency} | Rest], Config) when is_integer(Frequ
 parse_options([{<<"polling">>, Opt} | _], _) ->
 	{error, {bad_type, polling, number}, Opt};
 
-parse_options([{<<"clean">>, true} | Rest], Config) ->
-	parse_options(Rest, Config#config{ clean = true });
-parse_options([{<<"clean">>, false} | Rest], Config) ->
-	parse_options(Rest, Config);
-parse_options([{<<"clean">>, Opt} | _], _) ->
-	{error, {bad_type, clean, boolean}, Opt};
-
 parse_options([{<<"no_auto_join">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ auto_join = false });
 parse_options([{<<"no_auto_join">>, false} | Rest], Config) ->

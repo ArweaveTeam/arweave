@@ -5,9 +5,7 @@
 
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
-	ar_storage:clear(),
 	ar_test_node:disconnect_from_slave(),
-
 	ar_test_node:start(no_block),
 	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, name)),
 	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, release)),
@@ -711,7 +709,7 @@ get_tx_status_test() ->
 		200,
 		5000
 	),
-	%% Create a fork where the TX doesn't exist.
+	%% Create a fork which returns the TX to mempool.
 	{_Slave, _} = ar_test_node:slave_start(B0),
 	ar_test_node:connect_to_slave(),
 	ar_test_node:slave_mine(),
@@ -720,7 +718,7 @@ get_tx_status_test() ->
 	ar_test_node:assert_slave_wait_until_height(2),
 	ar_test_node:slave_mine(),
 	ar_test_node:wait_until_height(3),
-	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, FetchStatus()).
+	?assertMatch({ok, {{<<"202">>, _}, _, _, _, _}}, FetchStatus()).
 
 post_unsigned_tx_test_() ->
 	{timeout, 20, fun post_unsigned_tx/0}.

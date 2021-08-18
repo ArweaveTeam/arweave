@@ -120,7 +120,6 @@ show_help() ->
 						[?DEFAULT_POLLING_INTERVAL]
 					)
 			)},
-			{"clean", "Clear the block cache before starting."},
 			{"no_auto_join", "Do not automatically join the network of your peers."},
 			{"mining_addr (addr)",
 				"The address that mining rewards should be credited to."
@@ -290,8 +289,6 @@ parse_cli_args(["metrics_dir", MetricsDir|Rest], C) ->
 	parse_cli_args(Rest, C#config { metrics_dir = MetricsDir });
 parse_cli_args(["polling", Frequency|Rest], C) ->
 	parse_cli_args(Rest, C#config { polling = list_to_integer(Frequency) });
-parse_cli_args(["clean"|Rest], C) ->
-	parse_cli_args(Rest, C#config { clean = true });
 parse_cli_args(["no_auto_join"|Rest], C) ->
 	parse_cli_args(Rest, C#config { auto_join = false });
 parse_cli_args(["mining_addr", "unclaimed"|Rest], C) ->

@@ -5,6 +5,7 @@
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Represents a process that handles downloading the block index and the latest
@@ -124,7 +125,13 @@ get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries) ->
 
 %% @doc Perform the joining process.
 do_join(Peers, B, BI) ->
-	ar_arql_db:populate_db(?BI_TO_BHL(BI)),
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(arql_tags_index, Config#config.enable) of
+		true ->
+			ar_arql_db:populate_db(?BI_TO_BHL(BI));
+		false ->
+			ok
+	end,
 	ar_randomx_state:init(BI, Peers),
 	ar:console("Downloading the block trail.~n", []),
 	Blocks = get_block_and_trail(Peers, B, BI),
@@ -172,7 +179,6 @@ join_peers(Peers) ->
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test() ->
 	{timeout, 60, fun() ->
-		ar_storage:clear(),
 		[B0] = ar_weave:init([]),
 		ar_test_node:start(B0),
 		ar_node:mine(),

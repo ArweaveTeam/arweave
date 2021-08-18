@@ -837,14 +837,6 @@ recovers_from_forks(ForkHeight) ->
 		end,
 		PreForkTXs ++ SlavePostForkTXs ++ [TX2]
 	),
-	%% Assert the transactions included in the abandoned fork are removed.
-	lists:foreach(
-		fun(TX) ->
-			Confirmations = get_tx_confirmations(master, TX#tx.id),
-			?assertEqual(-1, Confirmations)
-		end,
-		MasterPostForkTXs
-	),
 	%% Assert the block anchored transactions from the abandoned fork are
 	%% back in the memory pool.
 	lists:foreach(

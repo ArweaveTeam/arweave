@@ -1,13 +1,15 @@
 -module(ar_storage).
 
+-behaviour(gen_server).
+
 -export([
-	init/0,
+	start_link/0,
 	write_full_block/2,
 	read_block/1, read_block/2,
-	blocks_on_disk/0,
 	write_tx/1, write_tx_data/1, write_tx_data/2, write_tx_data/3,
 	read_tx/1, read_tx_data/1,
 	update_confirmation_index/1,
+	get_tx_confirmation_data/1,
 	get_wallet_list_range/2,
 	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/3,
 	write_block_index/1, read_block_index/0,
@@ -16,11 +18,13 @@
 	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
 	tx_filepath/1, tx_data_filepath/1,
 	read_tx_file/1, read_migrated_v1_tx_file/1,
-	ensure_directories/1, clear/0,
+	ensure_directories/1,
 	write_file_atomic/2,
 	has_chunk/1, write_chunk/3, read_chunk/1, delete_chunk/1,
 	write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1
 ]).
+
+-export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -28,100 +32,20 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
+-record(state, {
+	tx_confirmation_db
+}).
 
-%%% Reads and writes blocks from disk.
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
-%% @doc Ready the system for block/tx reading and writing.
-init() ->
-	{ok, Config} = application:get_env(arweave, config),
-	ensure_directories(Config#config.data_dir),
-	ok = migrate_block_filenames(),
-	count_blocks_on_disk(),
-	ok.
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-migrate_block_filenames() ->
-	case v1_migration_file_exists() of
-		true ->
-			ok;
-		false ->
-			{ok, Config} = application:get_env(arweave, config),
-			DataDir = Config#config.data_dir,
-			BlockDir = filename:join(DataDir, ?BLOCK_DIR),
-			{ok, Filenames} = file:list_dir(BlockDir),
-			lists:foreach(
-				fun(Filename) ->
-					case string:split(Filename, ".json") of
-						[Height_Hash, []] ->
-							case string:split(Height_Hash, "_") of
-								[_, H] when length(H) == 64 ->
-									rename_block_file(BlockDir, Filename, H ++ ".json");
-								_ ->
-									noop
-							end;
-						_ ->
-							noop
-					end
-				end,
-				Filenames
-			),
-			complete_v1_migration()
-	end.
-
-v1_migration_file_exists() ->
-	filelib:is_file(v1_migration_file()).
-
-v1_migration_file() ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	filename:join([DataDir, ?STORAGE_MIGRATIONS_DIR, "v1"]).
-
-rename_block_file(BlockDir, Source, Dest) ->
-	file:rename(filename:join(BlockDir, Source), filename:join(BlockDir, Dest)).
-
-complete_v1_migration() ->
-	write_file_atomic(v1_migration_file(), <<>>).
-
-count_blocks_on_disk() ->
-	spawn(
-		fun() ->
-			{ok, Config} = application:get_env(arweave, config),
-			DataDir = Config#config.data_dir,
-			case file:list_dir(filename:join(DataDir, ?BLOCK_DIR)) of
-				{ok, List} ->
-					ar_meta_db:put(blocks_on_disk, length(List) - 1); %% - the "invalid" folder
-				{error, Reason} ->
-					?LOG_WARNING([
-						{event, failed_to_count_blocks_on_disk},
-						{reason, Reason}
-					]),
-					error
-			end
-		end
-	).
-
-%% @doc Ensure that all of the relevant storage directories exist.
-ensure_directories(DataDir) ->
-	%% Append "/" to every path so that filelib:ensure_dir/1 creates a directory if it does not exist.
-	filelib:ensure_dir(filename:join(DataDir, ?TX_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?WALLET_LIST_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?STORAGE_MIGRATIONS_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join([DataDir, ?TX_DIR, "migrated_v1"]) ++ "/").
-
-%% @doc Clear the cache of saved blocks.
-clear() ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	lists:map(
-		fun file:delete/1,
-		filelib:wildcard(filename:join([DataDir, ?BLOCK_DIR, "*.json"]))
-	),
-	ar_meta_db:put(blocks_on_disk, 0).
-
-%% @doc Returns the number of blocks stored on disk.
-blocks_on_disk() ->
-	ar_meta_db:get(blocks_on_disk).
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
 
 write_block(B) ->
 	case ar_meta_db:get(disk_logging) of
@@ -175,13 +99,38 @@ write_full_block2(BShadow, TXs) ->
 
 update_confirmation_index(B) ->
 	{ok, Config} = application:get_env(arweave, config),
-	StoreTags = case lists:member(arql_tags_index, Config#config.enable) of
+	case lists:member(arql_tags_index, Config#config.enable) of
 		true ->
-			store_tags;
-		_ ->
-			do_not_store_tags
-	end,
-	ar_arql_db:insert_full_block(B, StoreTags).
+			ar_arql_db:insert_full_block(B, store_tags);
+		false ->
+			case catch gen_server:call(?MODULE, {put_tx_confirmation_data, B}) of
+				{'EXIT', {timeout, {gen_server, call, _}}} ->
+					{error, timeout};
+				Reply ->
+					Reply
+			end
+	end.
+
+%% @doc Return {BlockHeight, BlockHash} belonging to the block where
+%% the given transaction was included.
+get_tx_confirmation_data(TXID) ->
+	[{_, TXConfirmationDB}] = ets:lookup(?MODULE, tx_confirmation_db),
+	case ar_kv:get(TXConfirmationDB, TXID) of
+		{ok, Binary} ->
+			{ok, binary_to_term(Binary)};
+		not_found ->
+			case catch ar_arql_db:select_block_by_tx_id(ar_util:encode(TXID)) of
+				{ok, #{
+					height := Height,
+					indep_hash := EncodedIndepHash
+				}} ->
+					{ok, {Height, ar_util:decode(EncodedIndepHash)}};
+				not_found ->
+					not_found;
+				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
+					{error, timeout}
+			end
+	end.
 
 %% @doc Read a block from disk, given a height
 %% and a block index (used to determine the hash by height).
@@ -238,6 +187,17 @@ read_block(BH) ->
 					unavailable
 			end
 	end.
+
+%% @doc Ensure that all of the relevant storage directories exist.
+ensure_directories(DataDir) ->
+	%% Append "/" to every path so that filelib:ensure_dir/1 creates a directory
+	%% if it does not exist.
+	filelib:ensure_dir(filename:join(DataDir, ?TX_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?WALLET_LIST_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?STORAGE_MIGRATIONS_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join([DataDir, ?TX_DIR, "migrated_v1"]) ++ "/").
 
 parse_block_shadow_json(JSON) ->
 	case ar_serialize:json_decode(JSON) of
@@ -817,6 +777,50 @@ lookup_tx_filename(ID) ->
 			end
 	end.
 
+%%%===================================================================
+%%% Generic server callbacks.
+%%%===================================================================
+
+init([]) ->
+	{ok, Config} = application:get_env(arweave, config),
+	ensure_directories(Config#config.data_dir),
+	{ok, DB} = ar_kv:open_without_column_families("ar_storage_tx_confirmation_db", []),
+	ets:insert(?MODULE, {tx_confirmation_db, DB}),
+	{ok, #state{ tx_confirmation_db = DB }}.
+
+handle_call({put_tx_confirmation_data, B}, _From, State) ->
+	#state{ tx_confirmation_db = TXConfirmationDB } = State,
+	Data = term_to_binary({B#block.height, B#block.indep_hash}),
+	{reply, lists:foldl(
+		fun	(TX, ok) ->
+				ar_kv:put(TXConfirmationDB, TX#tx.id, Data);
+			(_TX, Acc) ->
+				Acc
+		end,
+		ok,
+		B#block.txs
+	), State};
+
+handle_call(Request, _From, State) ->
+	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
+	{reply, ok, State}.
+
+handle_cast(Cast, State) ->
+	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
+	{noreply, State}.
+
+handle_info(Message, State) ->
+	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
+	{noreply, State}.
+
+terminate(_Reason, #state{ tx_confirmation_db = DB }) ->
+	ar_kv:close(DB),
+	ok.
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
 get_disk_data(Dir) ->
 	[DiskData | _] = select_drive(ar_disksup:get_disk_data(), filename:absname(Dir)),
 	DiskData.
@@ -1022,8 +1026,6 @@ store_and_retrieve_block_test_() ->
 	{timeout, 20, fun test_store_and_retrieve_block/0}.
 
 test_store_and_retrieve_block() ->
-	ar_storage:clear(),
-	?assertEqual(0, blocks_on_disk()),
 	BI0 = [B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
 	?assertEqual(
@@ -1039,9 +1041,10 @@ test_store_and_retrieve_block() ->
 	ar_test_node:wait_until_height(1),
 	ar_node:mine(),
 	BI1 = ar_test_node:wait_until_height(2),
+	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
 	ar_util:do_until(
 		fun() ->
-			3 == blocks_on_disk()
+			3 == BlockCount
 		end,
 		100,
 		2000

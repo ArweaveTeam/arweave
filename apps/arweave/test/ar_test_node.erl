@@ -66,7 +66,7 @@ start(B0, RewardAddr, Config) ->
 		disk_space_check_frequency = 1000,
 		header_sync_jobs = 4,
 		enable = [search_in_rocksdb_when_mining, serve_arql, serve_wallet_txs,
-			serve_wallet_deposits]
+			serve_wallet_deposits, arql_tags_index]
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),

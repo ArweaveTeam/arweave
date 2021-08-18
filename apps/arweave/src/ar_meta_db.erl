@@ -133,10 +133,6 @@ init(_) ->
 		end,
 		Config#config.disable
 	),
-	%% Prepare the storage for operation.
-	spawn(fun() -> ar_storage:init() end),
-	%% Optionally clear the block cache.
-	if Config#config.clean -> ar_storage:clear(); true -> do_nothing end,
 	{ok, #{}}.
 
 handle_call(reset, _From, State) ->

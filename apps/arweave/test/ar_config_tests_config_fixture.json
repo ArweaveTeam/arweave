@@ -15,7 +15,6 @@
   "data_dir": "some_data_dir",
   "metrics_dir": "metrics_dir",
   "polling": 10,
-  "clean": true,
   "no_auto_join": true,
   "diff": 42,
   "mining_addr": "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw",

@@ -68,7 +68,6 @@
 	metrics_dir = ?METRICS_DIR,
 	polling = ?DEFAULT_POLLING_INTERVAL, % Polling frequency in seconds.
 	auto_join = true,
-	clean = false,
 	diff = ?DEFAULT_DIFF,
 	mining_addr = not_set,
 	max_miners = 0, % DEPRECATED.

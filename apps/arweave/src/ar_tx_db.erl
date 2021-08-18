@@ -56,7 +56,6 @@ assert_clear_error_codes(TXID) ->
 	ok.
 
 tx_db_test() ->
-	ar_storage:clear(),
 	{_, Pub1} = ar_wallet:new(),
 	{Priv2, Pub2} = ar_wallet:new(),
 	Wallets = [

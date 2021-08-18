@@ -973,37 +973,39 @@ not_found(Req) ->
 not_joined(Req) ->
 	{503, #{}, jiffy:encode(#{ error => not_joined }), Req}.
 
-handle_get_tx_status(Hash, Req) ->
-	case get_tx_filename(Hash) of
-		{Source, _} when Source == ok orelse Source == migrated_v1 ->
-			case catch ar_arql_db:select_block_by_tx_id(Hash) of
-				{ok, #{
-					height := Height,
-					indep_hash := EncodedIndepHash
-				}} ->
-					PseudoTags = [
-						{<<"block_height">>, Height},
-						{<<"block_indep_hash">>, EncodedIndepHash}
-					],
-					case ar_node:is_in_block_index(ar_util:decode(EncodedIndepHash)) of
-						false ->
+handle_get_tx_status(EncodedTXID, Req) ->
+	case ar_util:safe_decode(EncodedTXID) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>};
+		{ok, TXID} ->
+			case is_a_pending_tx(TXID) of
+				true ->
+					{202, #{}, <<"Pending">>, Req};
+				false ->
+					case ar_storage:get_tx_confirmation_data(TXID) of
+						{ok, {Height, BH}} ->
+							PseudoTags = [
+								{<<"block_height">>, Height},
+								{<<"block_indep_hash">>, ar_util:encode(BH)}
+							],
+							case ar_node:is_in_block_index(BH) of
+								false ->
+									{404, #{}, <<"Not Found.">>, Req};
+								true ->
+									CurrentHeight = ar_node:get_height(),
+									%% First confirmation is when the TX is in the latest block.
+									NumberOfConfirmations = CurrentHeight - Height + 1,
+									Status = PseudoTags
+											++ [{<<"number_of_confirmations">>,
+												NumberOfConfirmations}],
+									{200, #{}, ar_serialize:jsonify({Status}), Req}
+							end;
+						not_found ->
 							{404, #{}, <<"Not Found.">>, Req};
-						true ->
-							CurrentHeight = ar_node:get_height(),
-							%% First confirmation is when the TX is in the latest block.
-							NumberOfConfirmations = CurrentHeight - Height + 1,
-							Status =
-								PseudoTags
-								++ [{<<"number_of_confirmations">>, NumberOfConfirmations}],
-							{200, #{}, ar_serialize:jsonify({Status}), Req}
-					end;
-				not_found ->
-					{404, #{}, <<"Not Found.">>, Req};
-				{'EXIT', {timeout, {gen_server, call, [ar_arql_db, _]}}} ->
-					{503, #{}, <<"ArQL unavailable.">>, Req}
-			end;
-		{response, {Status, Headers, Body}} ->
-			{Status, Headers, Body, Req}
+						{error, timeout} ->
+							{503, #{}, <<"ArQL unavailable.">>, Req}
+					end
+			end
 	end.
 
 %% @doc Get the filename for an encoded TX id.
@@ -1465,6 +1467,7 @@ return_info(Req) ->
 		timer:tc(fun() -> ar_node:get_current_block_hash() end),
 	{Time2, Height} =
 		timer:tc(fun() -> ar_node:get_height() end),
+	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
 	{200, #{},
 		ar_serialize:jsonify(
 			{
@@ -1484,7 +1487,7 @@ return_info(Req) ->
 							false -> ar_util:encode(Current)
 						end
 					},
-					{blocks, ar_storage:blocks_on_disk()},
+					{blocks, BlockCount},
 					{peers, length(ar_bridge:get_remote_peers())},
 					{queue_length,
 						element(

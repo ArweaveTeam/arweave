@@ -28,9 +28,11 @@ start_link() ->
 init([]) ->
 	%% These ETS tables should belong to the supervisor.
 	ets:new(ar_meta_db, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_storage, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(blacklist, [set, public, named_table]),
 	ets:new(ignored_ids, [bag, public, named_table]),
 	ets:new(ar_tx_db, [set, public, named_table]),
+	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_sync, [ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
@@ -51,6 +53,7 @@ init([]) ->
 		?CHILD(ar_disksup, worker),
 		?CHILD(ar_meta_db, worker),
 		?CHILD(ar_arql_db, worker),
+		?CHILD(ar_storage, worker),
 		?CHILD(ar_events_sup, supervisor),
 		?CHILD(ar_disk_cache, worker),
 		?CHILD(ar_watchdog, worker),

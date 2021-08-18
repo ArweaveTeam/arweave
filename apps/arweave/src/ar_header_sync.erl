@@ -69,6 +69,7 @@ init([]) ->
 		lists:seq(1, Config#config.header_sync_jobs)
 	),
 	gen_server:cast(?MODULE, store_sync_state),
+	ets:insert(?MODULE, {synced_blocks, ar_intervals:sum(SyncRecord)}),
 	{ok,
 		#{
 			db => DB,
@@ -147,7 +148,7 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 			{noreply, State#{ disk_full => true }}
 	end;
 
-handle_cast({add_historical_block, _} = Cast, #{ sync_disk_space := false } = State) ->
+handle_cast({add_historical_block, _}, #{ sync_disk_space := false } = State) ->
 	{noreply, State};
 handle_cast({add_historical_block, B}, State) ->
 	State2 = add_block(B, State),
@@ -290,7 +291,9 @@ terminate(Reason, State) ->
 
 store_sync_state(State) ->
 	#{ sync_record := SyncRecord, last_height := LastHeight, block_index := BI } = State,
-	prometheus_gauge:set(synced_blocks, ar_intervals:sum(SyncRecord)),
+	SyncedCount = ar_intervals:sum(SyncRecord),
+	prometheus_gauge:set(synced_blocks, SyncedCount),
+	ets:insert(?MODULE, {synced_blocks, SyncedCount}),
 	ar_storage:write_term(header_sync_state, {SyncRecord, LastHeight, BI}).
 
 get_base_height([{H, _, _} | CurrentBI], CurrentHeight, RecentBI) ->
