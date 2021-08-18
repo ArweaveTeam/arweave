@@ -1017,8 +1017,7 @@ handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
 			not_joined(Req);
 		true ->
 			List = ar_node:get_block_anchors(),
-			SuggestedAnchor =
-				lists:nth(min(length(List), (?MAX_TX_ANCHOR_DEPTH)) div 2 + 1, List),
+			SuggestedAnchor = lists:nth(min(length(List), ?SUGGESTED_TX_ANCHOR_DEPTH), List),
 			{200, #{}, ar_util:encode(SuggestedAnchor), Req}
 	end;
 

@@ -112,6 +112,14 @@
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
 -endif.
 
+%% The recommended depth of the block to use as an anchor for transactions.
+%% The corresponding block hash is returned by the GET /tx_anchor endpoint.
+-ifdef(DEBUG).
+-define(SUGGESTED_TX_ANCHOR_DEPTH, 5).
+-else.
+-define(SUGGESTED_TX_ANCHOR_DEPTH, 6).
+-endif.
+
 %% How long to wait before giving up on test(s).
 -define(TEST_TIMEOUT, 90 * 60).
 
