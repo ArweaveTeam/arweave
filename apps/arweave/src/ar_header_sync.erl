@@ -172,11 +172,11 @@ handle_cast(check_space_alarm, State) ->
 		true ->
 			ok
 	end,
-	cast_after(?DISK_SPACE_WARNING_FREQUENCY, check_space_alarm),
+	ar_util:cast_after(?DISK_SPACE_WARNING_FREQUENCY, ?MODULE, check_space_alarm),
 	{noreply, State};
 
 handle_cast(check_space, State) ->
-	cast_after(ar_disksup:get_disk_space_check_frequency(), check_space),
+	ar_util:cast_after(ar_disksup:get_disk_space_check_frequency(), ?MODULE, check_space),
 	case have_free_space() of
 		true ->
 			{noreply, State#{ sync_disk_space => true }};
@@ -185,7 +185,7 @@ handle_cast(check_space, State) ->
 	end;
 
 handle_cast(process_item, #{ sync_disk_space := false } = State) ->
-	cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, process_item),
+	ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, ?MODULE, process_item),
 	{noreply, State};
 handle_cast(process_item, State) ->
 	#{
@@ -242,7 +242,7 @@ handle_cast({remove_tx, TXID}, State) ->
 	{noreply, State};
 
 handle_cast(store_sync_state, State) ->
-	cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, store_sync_state),
+	ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, ?MODULE, store_sync_state),
 	case store_sync_state(State) of
 		ok ->
 			{noreply, State#{ disk_full => false }};
@@ -344,11 +344,6 @@ have_free_space() ->
 		andalso ar_storage:get_free_space(?ROCKS_DB_DIR) > ?DISK_HEADERS_BUFFER_SIZE
 			andalso ar_storage:get_free_space(?CHUNK_DIR) > ?DISK_HEADERS_BUFFER_SIZE.
 
-cast_after(Delay, Message) ->
-	%% Not using timer:apply_after here because send_after is more efficient:
-	%% http://erlang.org/doc/efficiency_guide/commoncaveats.html#timer-module.
-	erlang:send_after(Delay, ?MODULE, {'$gen_cast', Message}).
-
 %% @doc Pick the biggest height smaller than LastPicked from outside the sync record.
 pick_unsynced_block(LastPicked, SyncRecord) ->
 	case ar_intervals:is_empty(SyncRecord) of
@@ -382,11 +377,11 @@ process_item(Queue) ->
 	Now = os:system_time(second),
 	case queue:out(Queue) of
 		{empty, _Queue} ->
-			cast_after(?PROCESS_ITEM_INTERVAL_MS, process_item),
+			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item),
 			Queue;
 		{{value, {Item, {BackoffTimestamp, _} = Backoff}}, UpdatedQueue}
 				when BackoffTimestamp > Now ->
-			cast_after(?PROCESS_ITEM_INTERVAL_MS, process_item),
+			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item),
 			enqueue(Item, Backoff, UpdatedQueue);
 		{{value, {{block, {H, H2, TXRoot}}, Backoff}}, UpdatedQueue} ->
 			monitor(process, spawn(
@@ -396,7 +391,7 @@ process_item(Queue) ->
 							gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot, Backoff});
 						{ok, B} ->
 							gen_server:cast(?MODULE, {add_historical_block, B}),
-							cast_after(?PROCESS_ITEM_INTERVAL_MS, process_item)
+							ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item)
 					end
 				end
 			)),

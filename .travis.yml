@@ -12,6 +12,8 @@ otp_release:
 branches:
     except:
     - master
-# AR UT
+
+before_script: ./rebar3 ct --cover --sname=master@localhost
+
 script:
     - ./bin/test

@@ -2,7 +2,7 @@
 
 -module(ar_http).
 
--export([req/1, gun_total_metric/1]).
+-export([req/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -11,7 +11,8 @@
 %%% API
 %%% ==================================================================
 
-req(#{peer := Peer} = Opts) ->
+req(#{ peer := Peer, path := Path } = Opts) ->
+	ar_rate_limiter:throttle(Peer, Path),
 	{IpOrHost, Port} = get_ip_port(Peer),
 	{ok, Pid} = gun:open(IpOrHost, Port, #{ http_opts => #{ keepalive => infinity } }),
 	ConnectTimeout =
@@ -19,16 +20,10 @@ req(#{peer := Peer} = Opts) ->
 	case gun:await_up(Pid, ConnectTimeout) of
 		{ok, _} ->
 			Timer = inet:start_timer(maps:get(timeout, Opts, ?HTTP_REQUEST_SEND_TIMEOUT)),
-			RespOpts = #{
-				pid => Pid,
-				stream_ref => make_request(Pid, Opts),
-				timer => Timer,
-				limit => maps:get(limit, Opts, infinity),
-				counter => 0,
-				acc => [],
-				start => os:system_time(microsecond),
-				is_peer_request => maps:get(is_peer_request, Opts, true)
-			},
+			RespOpts = #{ pid => Pid, stream_ref => make_request(Pid, Opts),
+					timer => Timer, limit => maps:get(limit, Opts, infinity),
+					counter => 0, acc => [], start => os:system_time(microsecond),
+					is_peer_request => maps:get(is_peer_request, Opts, true) },
 			Resp = get_reponse(maps:merge(Opts, RespOpts)),
 			gun_total_metric(Opts#{ response => Resp }),
 			gun:close(Pid),
@@ -56,7 +51,7 @@ req(#{peer := Peer} = Opts) ->
 %%% Internal functions
 %%% ==================================================================
 
-make_request(Pid, #{method := post, path := P} = Opts) ->
+make_request(Pid, #{ method := post, path := P } = Opts) ->
 	Headers = case maps:get(is_peer_request, Opts, true) of
 		true ->
 			merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []));
@@ -64,7 +59,7 @@ make_request(Pid, #{method := post, path := P} = Opts) ->
 			maps:get(headers, Opts, [])
 	end,
 	gun:post(Pid, P, Headers, maps:get(body, Opts, <<>>));
-make_request(Pid, #{method := get, path := P} = Opts) ->
+make_request(Pid, #{ method := get, path := P } = Opts) ->
 	gun:get(Pid, P, merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []))).
 
 get_reponse(Opts) ->

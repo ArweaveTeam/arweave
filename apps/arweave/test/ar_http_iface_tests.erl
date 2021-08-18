@@ -8,7 +8,8 @@ get_info_test() ->
 	ar_test_node:disconnect_from_slave(),
 	ar_test_node:start(no_block),
 	?assertEqual(<<?NETWORK_NAME>>, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, name)),
-	?assertEqual({<<"release">>, ?RELEASE_NUMBER}, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, release)),
+	?assertEqual({<<"release">>, ?RELEASE_NUMBER},
+			ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, release)),
 	?assertEqual(?CLIENT_VERSION, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, version)),
 	?assertEqual(0, ar_http_iface_client:get_info({127, 0, 0, 1, 1984}, peers)),
 	ar_util:do_until(
@@ -49,7 +50,8 @@ single_regossip_test() ->
 post_block_to_unjoined_node_test() ->
 	JB = ar_serialize:jsonify({[{foo, [<<"bing">>, 2.3, true]}]}),
 	{ok, {RespTup, _, Body, _, _}} =
-		ar_http:req(#{method => post, peer => {127, 0, 0, 1, 1984}, path => "/block/", body => JB}),
+		ar_http:req(#{ method => post, peer => {127, 0, 0, 1, 1984}, path => "/block/",
+				body => JB }),
 	case ar_node:is_joined() of
 		false ->
 			?assertEqual({<<"503">>, <<"Service Unavailable">>}, RespTup),
@@ -103,6 +105,7 @@ get_fun_msg_pair(send_new_tx) ->
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_test_node:disconnect_from_slave(),
 	ar_blacklist_middleware:reset(),
+	ar_rate_limiter:off(),
 	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
 	ar_blacklist_middleware:reset(),
@@ -111,7 +114,8 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 		error_responses => ExpectedErrors,
 		ok_responses => NRequests - ExpectedErrors
 	},
-	?assertEqual(Expected, ByResponseType).
+	?assertEqual(Expected, ByResponseType),
+	ar_rate_limiter:on().
 
 %% @doc Count the number of successful and error responses.
 count_by_response_type(ErrorResponse, Responses) ->
@@ -611,7 +615,7 @@ get_pending_tx_test() ->
 
 %% @doc Mine a transaction into a block and retrieve it's binary body via HTTP.
 get_tx_body_test() ->
-	[B0] = ar_weave:init(),
+	[B0] = ar_weave:init(random_wallets()),
 	{_Node, _} = ar_test_node:start(B0),
 	TX = ar_tx:new(<<"TEST DATA">>),
 	% Add tx to network
@@ -621,6 +625,10 @@ get_tx_body_test() ->
 	ar_test_node:wait_until_height(1),
 	{ok, Data} = wait_until_syncs_tx_data(TX#tx.id),
 	?assertEqual(<<"TEST DATA">>, ar_util:decode(Data)).
+
+random_wallets() ->
+	{_, Pub} = ar_wallet:new(),
+	[{ar_wallet:to_address(Pub), ?AR(10000), <<>>}].
 
 get_txs_by_send_recv_test_() ->
 	{timeout, 60, fun() ->

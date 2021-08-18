@@ -26,6 +26,7 @@
 	CORE_TEST_MODS,
 	[
 		ar,
+		ar_sync_buckets,
 		ar_chunk_storage,
 		ar_poa,
 		ar_packing_server,

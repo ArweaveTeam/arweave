@@ -8,6 +8,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
+-include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_mine.hrl").
 
 -define(HANDLER_TIMEOUT, 55000).
@@ -280,6 +281,22 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 						_ ->
 							{500, #{}, <<>>, Req}
 					end
+			end
+	end;
+
+handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			ok = ar_semaphore:acquire(get_sync_record, infinity),
+			case ar_sync_record:get_serialized_sync_buckets(ar_data_sync) of
+				{ok, Binary} ->
+					{200, #{}, Binary, Req};
+				{error, not_initialized} ->
+					{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
+				{error, timeout} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
 	end;
 
@@ -1004,7 +1021,7 @@ not_joined(Req) ->
 handle_get_tx_status(EncodedTXID, Req) ->
 	case ar_util:safe_decode(EncodedTXID) of
 		{error, invalid} ->
-			{400, #{}, <<"Invalid address.">>};
+			{400, #{}, <<"Invalid address.">>, Req};
 		{ok, TXID} ->
 			case is_a_pending_tx(TXID) of
 				true ->

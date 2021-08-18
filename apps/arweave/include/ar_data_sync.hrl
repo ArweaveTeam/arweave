@@ -7,44 +7,6 @@
 -define(DISK_DATA_BUFFER_SIZE, 20 * 1024 * 1024 * 1024). % >15 GiB ~5 mins of syncing at 60 MiB/s
 -endif.
 
-%% How many peers to collect sync records from.
--define(PEER_SYNC_RECORD_COUNT, 50).
-
-%% The upper limit for how many synced intervals to keep per peer.
--define(MAX_PEER_INTERVALS_COUNT, 100000).
-
-%% How often to pick a new set of peers to collect sync records from.
--ifdef(DEBUG).
--define(SHUFFLE_PEERS_FREQUENCY_MS, 2000).
--else.
--define(SHUFFLE_PEERS_FREQUENCY_MS, 10 * 60 * 1000).
--endif.
-
-%% How long to wait before asking peer for yet another sync record chunk.
--ifdef(DEBUG).
--define(PEER_SYNC_RECORD_NEW_CHUNK_DELAY_MS, 500).
--else.
--define(PEER_SYNC_RECORD_NEW_CHUNK_DELAY_MS, 10 * 1000).
--endif.
-
-%% How long to wait before asking peer for sync record updates after fetching its full record.
--ifdef(DEBUG).
--define(PEER_SYNC_RECORD_UPDATE_DELAY_MS, 500).
--else.
--define(PEER_SYNC_RECORD_UPDATE_DELAY_MS, 60 * 1000).
--endif.
-
-%% How long to wait after peer fails to serve a sync record before asking again.
--ifdef(DEBUG).
--define(PEER_FAILED_TO_SERVE_SYNC_RECORD_DELAY_MS, 1000).
--else.
--define(PEER_FAILED_TO_SERVE_SYNC_RECORD_DELAY_MS, 60 * 1000).
--endif.
-
-%% The time a sync job waits after it fails to find an interval
-%% by any of its peers.
--define(SEARCH_FOR_SYNC_INTERVAL_DELAY_MS, 1000).
-
 %% The size in bits of the offset key in kv databases.
 -define(OFFSET_KEY_BITSIZE, 256).
 
@@ -69,16 +31,6 @@
 -else.
 -define(SYNCED_INTERVALS_TARGET, 2000).
 -endif.
-
-%% The maximum number of synced intervals shared with peers.
--ifdef(DEBUG).
--define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 20).
--else.
--define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 10000).
--endif.
-
-%% The upper limit for the size of a sync record serialized using Erlang Term Format.
--define(MAX_ETF_SYNC_RECORD_SIZE, 80 * ?MAX_SHARED_SYNCED_INTERVALS_COUNT).
 
 %% The upper size limit for a serialized chunk with its proof
 %% as it travels around the network.
@@ -117,8 +69,6 @@
 
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
-	%% The mapping Peer => SyncRecord containing sync records of the best peers.
-	peer_sync_records,
 	%% The last ?TRACK_CONFIRMATIONS entries of the block index.
 	%% Used to determine orphaned data upon startup or chain reorg.
 	block_index,

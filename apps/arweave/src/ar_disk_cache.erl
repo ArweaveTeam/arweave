@@ -293,7 +293,7 @@ handle_call(reset, _From, State) ->
 	{reply, ok, State#state{ size = 0 }};
 
 handle_call(Request, _From, State) ->
-	?LOG_ERROR([{event, unhandled_call}, {request, Request}]),
+	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
 %%--------------------------------------------------------------------
@@ -327,8 +327,8 @@ handle_cast(may_be_clean_up, State) when State#state.size > State#state.limit_ma
 handle_cast(may_be_clean_up, State) ->
 	{noreply, State};
 
-handle_cast(Msg, State) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
+handle_cast(Cast, State) ->
+	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -341,8 +341,8 @@ handle_cast(Msg, State) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info(Info, State) ->
-	?LOG_ERROR([{event, unhandled_info}, {message, Info}]),
+handle_info(Message, State) ->
+	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------

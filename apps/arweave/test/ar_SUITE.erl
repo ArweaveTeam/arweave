@@ -16,7 +16,6 @@
 
 -export([
 	mod_exist/1,
-	ar_data_sync_fork_recovery/1, % ar_data_sync.erl
 	events_subscribe_send_cancel/1, % ar_events.erl
 	events_process_terminated/1
 ]).
@@ -175,7 +174,6 @@ end_per_testcase(_TestCase, Config) ->
 groups() ->
     [
     {nodeBasic,[sequence], [
-			ar_data_sync_fork_recovery,
 			events_subscribe_send_cancel,
 			events_process_terminated
         ]}
@@ -211,7 +209,6 @@ mod_exist(Config) ->
 	{module, ar_events} = code:load_file(ar_events),
 	Config.
 
-ar_data_sync_fork_recovery(Config) -> ar_ct_data_sync:fork_recovery(Config).
 events_subscribe_send_cancel(Config) -> ar_test_events:subscribe_send_cancel(Config).
 events_process_terminated(Config) -> ar_test_events:process_terminated(Config).
 

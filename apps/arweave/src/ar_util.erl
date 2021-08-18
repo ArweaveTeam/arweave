@@ -9,7 +9,8 @@
 	do_until/3,
 	block_index_entry_from_block/1, get_block_index_intersection/2,
 	reset_peer/1, get_performance/1, update_timer/1,
-	bytes_to_mb_string/1
+	bytes_to_mb_string/1,
+	cast_after/3
 ]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -277,3 +278,8 @@ pmap_test() ->
 		X * 2
 	end,
 	?assertEqual([6, 2, 4], pmap(Mapper, [3, 1, 2])).
+
+cast_after(Delay, Module, Message) ->
+	%% Not using timer:apply_after here because send_after is more efficient:
+	%% http://erlang.org/doc/efficiency_guide/commoncaveats.html#timer-module.
+	erlang:send_after(Delay, Module, {'$gen_cast', Message}).

@@ -20,6 +20,7 @@ test_height_plus_one_fork_recovery() ->
 	%% Expect the other one to recover.
 	{_SlaveNode, B0} = slave_start(no_block),
 	{_MasterNode, B0} = start(B0),
+	disconnect_from_slave(),
 	slave_mine(),
 	slave_wait_until_height(1),
 	connect_to_slave(),
@@ -46,6 +47,7 @@ test_height_plus_three_fork_recovery() ->
 	%% Expect the other one to recover.
 	{_SlaveNode, B0} = slave_start(no_block),
 	{_MasterNode, B0} = start(B0),
+	disconnect_from_slave(),
 	slave_mine(),
 	slave_wait_until_height(1),
 	connect_to_slave(),
@@ -78,6 +80,7 @@ test_missing_txs_fork_recovery() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(20), <<>>}]),
 	{_SlaveNode, _} = slave_start(B0),
 	{_MasterNode, _} = start(B0),
+	disconnect_from_slave(),
 	TX1 = sign_tx(Key, #{}),
 	slave_add_tx(TX1),
 	assert_slave_wait_until_receives_txs([TX1]),
