@@ -790,7 +790,6 @@ handle_cast(process_disk_pool_item, State) ->
 	} = State,
 	case ar_kv:get_next(DiskPoolChunksIndex, Cursor) of
 		{ok, Key, Value} ->
-			gen_server:cast(?MODULE, process_disk_pool_item),
 			process_disk_pool_item(State, Key, Value);
 		none ->
 			case ar_kv:get_next(DiskPoolChunksIndex, first) of
@@ -806,6 +805,20 @@ handle_cast(process_disk_pool_item, State) ->
 			cast_after(?DISK_POOL_SCAN_FREQUENCY_MS, process_disk_pool_item),
 			{noreply, State#sync_data_state{ disk_pool_cursor = first }}
 	end;
+
+handle_cast({process_disk_pool_chunk_offset, LatestOffset, TXMeta, ChunkMeta, Iterator}, State) ->
+	{TXRoot, TXStartOffset, TXPath} = TXMeta,
+	{Offset, _, _, _, _, _, _} = ChunkMeta,
+	AbsoluteOffset = TXStartOffset + Offset,
+	process_disk_pool_chunk_offset(
+		Iterator,
+		TXRoot,
+		TXPath,
+		AbsoluteOffset,
+		LatestOffset,
+		ChunkMeta,
+		State
+	);
 
 handle_cast(update_disk_pool_data_roots, State) ->
 	#sync_data_state{ disk_pool_data_roots = DiskPoolDataRoots } = State,
@@ -2277,6 +2290,7 @@ process_disk_pool_item(State, Key, Value) ->
 			%% all chunks belonging to the same data root because the data root is not
 			%% yet on chain.
 			NextCursor = {seek, << (Timestamp + 1):256 >>},
+			gen_server:cast(?MODULE, process_disk_pool_item),
 			{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{not_found, false} ->
 			%% The chunk never made it to the chain, the data root has expired in disk pool.
@@ -2284,6 +2298,7 @@ process_disk_pool_item(State, Key, Value) ->
 			prometheus_gauge:dec(disk_pool_chunks_count),
 			ok = delete_disk_pool_chunk(ChunkDataKey, State),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
+			gen_server:cast(?MODULE, process_disk_pool_item),
 			{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{DataRootMap, _} ->
 			DataRootIndexIterator = data_root_index_iterator(DataRootMap),
@@ -2305,7 +2320,7 @@ process_disk_pool_chunk_offsets(Iterator, LatestOffset, Args, State) ->
 		disk_pool_threshold = DiskPoolThreshold,
 		chunk_data_db = ChunkDataDB
 	} = State,
-	{Offset, DataRootInDiskPool, _, _, _, ChunkDataKey, Key} = Args,
+	{_, DataRootInDiskPool, _, _, _, ChunkDataKey, Key} = Args,
 	case next(Iterator) of
 		none ->
 			case (LatestOffset =< DiskPoolThreshold andalso (not DataRootInDiskPool))
@@ -2317,18 +2332,12 @@ process_disk_pool_chunk_offsets(Iterator, LatestOffset, Args, State) ->
 				false ->
 					ok
 			end,
+			gen_server:cast(?MODULE, process_disk_pool_item),
 			{noreply, State};
-		{{TXRoot, TXStartOffset, TXPath}, Iterator2} ->
-			AbsoluteOffset = TXStartOffset + Offset,
-			process_disk_pool_chunk_offset(
-				Iterator2,
-				TXRoot,
-				TXPath,
-				AbsoluteOffset,
-				LatestOffset,
-				Args,
-				State
-			)
+		{TXMeta, Iterator2} ->
+			gen_server:cast(?MODULE,
+				{process_disk_pool_chunk_offset, LatestOffset, TXMeta, Args, Iterator2}),
+			{noreply, State}
 	end.
 
 process_disk_pool_chunk_offset(
@@ -2376,6 +2385,7 @@ process_disk_pool_chunk_offset(
 								{event, failed_to_update_chunks_index},
 								{reason, io_lib:format("~p", [Reason])}
 							]),
+							gen_server:cast(?MODULE, process_disk_pool_item),
 							{noreply, State}
 					end
 			end;
@@ -2402,6 +2412,7 @@ process_disk_pool_chunk_offset(
 								{event, failed_to_read_disk_pool_chunk},
 								{reason, io_lib:format("~p", [Reason])}
 							]),
+							gen_server:cast(?MODULE, process_disk_pool_item),
 							{noreply, State};
 						{ok, {Chunk, DataPath}} ->
 							Packing = get_packing(ChunkDataKey),
@@ -2431,6 +2442,7 @@ process_disk_pool_chunk_offset(
 										{event, failed_to_write_disk_pool_chunk},
 										{reason, io_lib:format("~p", [Reason])}
 									]),
+									gen_server:cast(?MODULE, process_disk_pool_item),
 									{noreply,
 										State#sync_data_state{
 											disk_full = Reason == enospc
@@ -2462,6 +2474,7 @@ process_disk_pool_chunk_offset(
 												{event, failed_to_update_disk_pool_chunk_index},
 												{reason, io_lib:format("~p", [Reason])}
 											]),
+											gen_server:cast(?MODULE, process_disk_pool_item),
 											{noreply, State}
 									end
 							end

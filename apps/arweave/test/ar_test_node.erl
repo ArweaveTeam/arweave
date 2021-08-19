@@ -24,7 +24,8 @@
 	post_and_mine/2,
 	read_block_when_stored/1,
 	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
-	add_peer/1
+	add_peer/1,
+	random_v1_data/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -639,3 +640,7 @@ post_chunk2(Peer, Proof) ->
 
 add_peer(Port) ->
 	ar_bridge:add_remote_peer({127, 0, 0, 1, Port}).
+
+random_v1_data(Size) ->
+	%% Make sure v1 txs do not end with a digit, otherwise they are malleable.
+	<< (crypto:strong_rand_bytes(Size - 1))/binary, <<"a">>/binary >>.

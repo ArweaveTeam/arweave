@@ -12,7 +12,8 @@
 	slave_call/3,
 	sign_tx/3, sign_v1_tx/3, assert_post_tx_to_master/1, get_tx_anchor/0,
 	wait_until_height/1, assert_slave_wait_until_height/1,
-	read_block_when_stored/1
+	read_block_when_stored/1,
+	random_v1_data/1
 ]).
 
 syncs_headers_test_() ->
@@ -63,7 +64,7 @@ test_syncs_headers() ->
 	[{NoSpaceH, _, _} | _] = wait_until_height(NoSpaceHeight),
 	timer:sleep(1000),
 	%% The cleanup is not expected to kick in yet.
-	NoSpaceB = ar_test_node:read_block_when_stored(NoSpaceH),
+	NoSpaceB = read_block_when_stored(NoSpaceH),
 	?assertMatch(#block{}, NoSpaceB),
 	?assertMatch(#tx{}, ar_storage:read_tx(NoSpaceTX#tx.id)),
 	?assertMatch({ok, _}, ar_storage:read_wallet_list(NoSpaceB#block.wallet_list)),
@@ -74,7 +75,7 @@ test_syncs_headers() ->
 			%% Keep mining blocks. At some point the cleanup procedure will
 			%% kick in and remove the oldest files.
 			TX = sign_v1_tx(master, Wallet, #{
-				data => crypto:strong_rand_bytes(200 * 1024), last_tx => get_tx_anchor() }),
+				data => random_v1_data(200 * 1024), last_tx => get_tx_anchor() }),
 			assert_post_tx_to_master(TX),
 			ar_node:mine(),
 			[{_, Height}] = ets:lookup(test_syncs_header, height),
@@ -90,7 +91,7 @@ test_syncs_headers() ->
 	timer:sleep(1000),
 	[{LatestH, _, _} | _] = ar_node:get_block_index(),
 	%% The latest block must not be cleaned up.
-	LatestB = ar_test_node:read_block_when_stored(LatestH),
+	LatestB = read_block_when_stored(LatestH),
 	?assertMatch(#block{}, LatestB),
 	?assertMatch(#tx{}, ar_storage:read_tx(lists:nth(1, LatestB#block.txs))),
 	?assertMatch({ok, _}, ar_storage:read_wallet_list(LatestB#block.wallet_list)),
