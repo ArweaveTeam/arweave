@@ -572,7 +572,7 @@ start_miners(S) ->
 	ets:insert(mining_state, [
 		{started_at, os:timestamp()},
 		{sporas, 0},
-		{kibs, 0},
+		{bytes_read, 0},
 		{recall_bytes_computed, 0}
 	]),
 	start_hashing_threads(S).
@@ -785,9 +785,11 @@ io_thread(SearchInRocksDB) ->
 				{error, _} ->
 					io_thread(SearchInRocksDB);
 				{ok, #{ chunk := Chunk }} ->
+					ets:update_counter(mining_state, bytes_read, byte_size(Chunk)),
 					HashingThread ! {chunk, H0, Nonce, Timestamp, Diff, Chunk, SessionRef},
 					io_thread(SearchInRocksDB);
 				{ok, Chunk} ->
+					ets:update_counter(mining_state, bytes_read, byte_size(Chunk)),
 					HashingThread ! {chunk, H0, Nonce, Timestamp, Diff, Chunk, SessionRef},
 					io_thread(SearchInRocksDB)
 			end;
@@ -989,7 +991,8 @@ log_spora_performance() ->
 			ok;
 		false ->
 			[{_, RecallBytes}] = ets:lookup(mining_state, recall_bytes_computed),
-			[{_, KiBs}] = ets:lookup(mining_state, kibs),
+			[{_, BytesRead}] = ets:lookup(mining_state, bytes_read),
+			KiBs = BytesRead / 1024,
 			[{_, SPoRAs}] = ets:lookup(mining_state, sporas),
 			RecallByteRate = RecallBytes / (Time / 1000000),
 			Rate = SPoRAs / (Time / 1000000),
