@@ -32,7 +32,8 @@
 	header_size,
 	data_size,
 	paused,
-	emit_map
+	emit_map,
+	timestamp_map
 }).
 
 -define(EMITTER_START_WAIT, 150).
@@ -105,7 +106,8 @@ init([]) ->
 		header_size = 0,
 		data_size = 0,
 		paused = false,
-		emit_map = #{}
+		emit_map = #{},
+		timestamp_map = #{}
 	}}.
 
 %%--------------------------------------------------------------------
@@ -167,14 +169,17 @@ handle_cast(start_emitters, State) ->
 handle_cast(emitter_go, State = #state{ paused = true }) ->
 	timer:apply_after(?EMITTER_START_WAIT, gen_server, cast, [?MODULE, emitter_go]),
 	{noreply, State};
-handle_cast(emitter_go, State = #state{ emitters_running = EmittersRunning, max_emitters = MaxEmitters }) when EmittersRunning > MaxEmitters ->
+handle_cast(emitter_go,
+		State = #state{ emitters_running = EmittersRunning, max_emitters = MaxEmitters })
+			when EmittersRunning > MaxEmitters ->
 	{noreply, State#state { emitters_running = EmittersRunning - 1}};
 handle_cast(emitter_go, State) ->
 	#state{
 		tx_queue = Q,
 		header_size = HeaderSize,
 		data_size = DataSize,
-		emit_map = EmitMap
+		emit_map = EmitMap,
+		timestamp_map = TimestampMap
 	} = State,
 	NewState =
 		case gb_sets:is_empty(Q) of
@@ -190,7 +195,8 @@ handle_cast(emitter_go, State) ->
 						State#state{
 							tx_queue = NewQ,
 							header_size = HeaderSize - TXHeaderSize,
-							data_size = DataSize - TXDataSize
+							data_size = DataSize - TXDataSize,
+							timestamp_map = maps:remove(TX#tx.id, TimestampMap)
 						};
 					_ ->
 						%% Send transactions to the "max_propagation_peers" best peers,
@@ -214,7 +220,8 @@ handle_cast(emitter_go, State) ->
 							tx_queue = NewQ,
 							header_size = HeaderSize - TXHeaderSize,
 							data_size = DataSize - TXDataSize,
-							emit_map = NewEmitMap
+							emit_map = NewEmitMap,
+							timestamp_map = maps:remove(TX#tx.id, TimestampMap)
 						}
 				end
 		end,
@@ -238,7 +245,8 @@ handle_cast({emit_tx_to_peer, TX}, State = #state{ emit_map = EmitMap }) ->
 			{noreply, State}
 	end;
 
-handle_cast({emitted_tx_to_peer, {Reply, TX}}, State = #state{ emit_map = EmitMap, tx_queue = Q }) ->
+handle_cast({emitted_tx_to_peer, {Reply, TX}},
+		State = #state{ emit_map = EmitMap, tx_queue = Q }) ->
 	TXID = TX#tx.id,
 	case EmitMap of
 		#{ TXID := #{ peers := [], started_at := StartedAt } } ->
@@ -278,27 +286,30 @@ handle_cast(Cast, State) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({event, tx, {new, TX, Source}}, State) ->
+handle_info({event, tx, {new, #tx{ id = TXID } = TX, _Source}}, State) ->
 	#state{
 		tx_queue = Q,
 		max_header_size = MaxHeaderSize,
 		max_data_size = MaxDataSize,
 		header_size = HeaderSize,
-		data_size = DataSize
+		data_size = DataSize,
+		timestamp_map = TimestampMap
 	} = State,
-	?LOG_DEBUG("TX Queue new tx received ~p from ~p", [ar_util:encode(TX#tx.id), Source]),
 	{TXHeaderSize, TXDataSize} = tx_queue_size(TX),
-	U = utility(TX),
+	Timestamp = maps:get(TXID, TimestampMap, -os:system_time(microsecond)),
+	U = {utility(TX), Timestamp},
 	Item = {U, {TX, {TXHeaderSize, TXDataSize}}},
 	case gb_sets:is_element(Item, Q) of
 		true ->
 			{noreply, State};
 		false ->
-			{NewQ, {NewHeaderSize, NewDataSize}, DroppedTXs} =
+			TXID = TX#tx.id,
+			{NewQ, {NewHeaderSize, NewDataSize}, DroppedTXs, TimestampMap2} =
 				maybe_drop(
 					gb_sets:add_element(Item, Q),
 					{HeaderSize + TXHeaderSize, DataSize + TXDataSize},
-					{MaxHeaderSize, MaxDataSize}
+					{MaxHeaderSize, MaxDataSize},
+					maps:put(TXID, Timestamp, TimestampMap)
 				),
 			case DroppedTXs of
 				[] ->
@@ -321,9 +332,9 @@ handle_info({event, tx, {new, TX, Source}}, State) ->
 						end,
 						DroppedTXs
 					),
-					case lists:member(TX#tx.id, DroppedIDs) of
+					case lists:member(ar_util:encode(TXID), DroppedIDs) of
 						false ->
-							ar_ignore_registry:add(TX#tx.id);
+							ar_ignore_registry:add(TXID);
 						true ->
 							ok
 					end,
@@ -335,27 +346,30 @@ handle_info({event, tx, {new, TX, Source}}, State) ->
 			NewState = State#state{
 				tx_queue = NewQ,
 				header_size = NewHeaderSize,
-				data_size = NewDataSize
+				data_size = NewDataSize,
+				timestamp_map = TimestampMap2
 			},
 			{noreply, NewState}
 	end;
 
-handle_info({event, tx, {dropped, TX, Reason}}, State) ->
+handle_info({event, tx, {dropped, #tx{ id = TXID } = TX, _Reason}}, State) ->
 	#state{
 		tx_queue = Q,
 		header_size = HeaderSize,
-		data_size = DataSize
+		data_size = DataSize,
+		timestamp_map = TimestampMap
 	} = State,
+	Timestamp = maps:get(TXID, TimestampMap, 0),
+	U = {utility(TX), Timestamp},
 	{TXHeaderSize, TXDataSize} = tx_queue_size(TX),
-	U = utility(TX),
 	Item = {U, {TX, {TXHeaderSize, TXDataSize}}},
 	case gb_sets:is_element(Item, Q) of
 		true ->
-			?LOG_DEBUG("Drop TX from queue ~p with reason: ~p", [ar_util:encode(TX#tx.id), Reason]),
 			{noreply, State#state{
 				tx_queue = gb_sets:del_element(Item, Q),
 				header_size = HeaderSize - TXHeaderSize,
-				data_size = DataSize - TXDataSize
+				data_size = DataSize - TXDataSize,
+				timestamp_map = maps:remove(TXID, TimestampMap)
 			}};
 		false ->
 			{noreply, State}
@@ -398,10 +412,11 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Private functions.
 %%%===================================================================
 
-maybe_drop(Q, Size, MaxSize) ->
-	maybe_drop(Q, Size, MaxSize, []).
+maybe_drop(Q, Size, MaxSize, TimestampMap) ->
+	maybe_drop(Q, Size, MaxSize, TimestampMap, []).
 
-maybe_drop(Q, {HeaderSize, DataSize} = Size, {MaxHeaderSize, MaxDataSize} = MaxSize, DroppedTXs) ->
+maybe_drop(Q, {HeaderSize, DataSize} = Size,
+		{MaxHeaderSize, MaxDataSize} = MaxSize, TimestampMap, DroppedTXs) ->
 	case HeaderSize > MaxHeaderSize orelse DataSize > MaxDataSize of
 		true ->
 			{{_, {TX, {DroppedHeaderSize, DroppedDataSize}}}, NewQ} = gb_sets:take_smallest(Q),
@@ -409,10 +424,11 @@ maybe_drop(Q, {HeaderSize, DataSize} = Size, {MaxHeaderSize, MaxDataSize} = MaxS
 				NewQ,
 				{HeaderSize - DroppedHeaderSize, DataSize - DroppedDataSize},
 				MaxSize,
+				maps:remove(TX#tx.id, TimestampMap),
 				[TX | DroppedTXs]
 			);
 		false ->
-			{Q, Size, lists:filter(fun(TX) -> TX /= none end, DroppedTXs)}
+			{Q, Size, DroppedTXs, TimestampMap}
 	end.
 
 get_peers() ->
