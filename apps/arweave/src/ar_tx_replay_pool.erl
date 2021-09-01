@@ -283,7 +283,7 @@ compare_txs_by_utility(TX1, TX2, BHL) ->
 	U2 = ar_tx_queue:utility(TX2),
 	case U1 == U2 of
 		true ->
-			compare_anchors(TX1, TX2, BHL);
+			compare_anchors(TX1#tx.last_tx, TX2#tx.last_tx, BHL);
 		false ->
 			U1 > U2
 	end.
