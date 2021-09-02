@@ -1,32 +1,17 @@
 -module(ar_block).
 
--export([
-	block_field_size_limit/1,
-	verify_dep_hash/2,
-	verify_timestamp/1,
-	verify_height/2,
-	verify_last_retarget/2,
-	verify_previous_block/2,
-	verify_block_hash_list/2,
-	verify_weave_size/3,
-	verify_cumulative_diff/2,
-	verify_block_hash_list_merkle/3,
-	verify_tx_root/1,
-	hash_wallet_list/2,
-	hash_wallet_list/3,
-	hash_wallet_list_without_reward_wallet/2,
-	generate_block_data_segment/1,
-	generate_block_data_segment/2,
-	generate_block_data_segment/3,
-	generate_block_data_segment_base/1,
-	generate_hash_list_for_block/2,
-	generate_tx_root_for_block/1,
-	generate_size_tagged_list_from_txs/1,
-	generate_tx_tree/1, generate_tx_tree/2,
-	compute_hash_list_merkle/2, compute_hash_list_merkle/1,
-	test_wallet_list_performance/1,
-	poa_to_list/1
-]).
+-export([block_field_size_limit/1, verify_dep_hash/2, verify_timestamp/1, verify_height/2,
+		verify_last_retarget/2, verify_previous_block/2, verify_block_hash_list/2,
+		verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/3,
+		verify_tx_root/1, hash_wallet_list/2, hash_wallet_list/3,
+		hash_wallet_list_without_reward_wallet/2, generate_block_data_segment/1,
+		generate_block_data_segment/2, generate_block_data_segment/3,
+		generate_block_data_segment_base/1, generate_hash_list_for_block/2,
+		generate_tx_root_for_block/1, generate_tx_root_for_block/2,
+		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
+		compute_hash_list_merkle/2, compute_hash_list_merkle/1,
+		test_wallet_list_performance/1, poa_to_list/1, shift_packing_2_5_threshold/1,
+		get_packing_threshold/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_block.hrl").
@@ -90,20 +75,36 @@ hash_wallet_list(RewardWallet, NoRewardWalletListHash) ->
 
 %% @doc Generate the TX tree and set the TX root for a block.
 generate_tx_tree(B) ->
-	SizeTaggedTXs = generate_size_tagged_list_from_txs(B#block.txs),
+	SizeTaggedTXs = generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	generate_tx_tree(B, SizeTaggedDataRoots).
-generate_tx_tree(B, SizeTaggedTXs) ->
-	{Root, Tree} = ar_merkle:generate_tree(SizeTaggedTXs),
-	B#block { tx_tree = Tree, tx_root = Root }.
 
-generate_size_tagged_list_from_txs(TXs) ->
+generate_tx_tree(B, SizeTaggedDataRoots) ->
+	{Root, Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
+	B#block{ tx_tree = Tree, tx_root = Root }.
+
+generate_size_tagged_list_from_txs(TXs, Height) ->
 	lists:reverse(
 		element(2,
 			lists:foldl(
 				fun(TX, {Pos, List}) ->
-					End = Pos + TX#tx.data_size,
-					{End, [{{TX#tx.id, get_tx_data_root(TX)}, End} | List]}
+					DataSize = TX#tx.data_size,
+					End = Pos + DataSize,
+					case Height >= ar_fork:height_2_5() of
+						true ->
+							Padding = ar_tx:get_weave_size_increase(DataSize, Height) - DataSize,
+							%% Encode the padding information in the Merkle tree.
+							case Padding > 0 of
+								true ->
+									PaddingRoot = ?PADDING_NODE_DATA_ROOT,
+									{End + Padding, [{{padding, PaddingRoot}, End + Padding},
+											{{TX#tx.id, get_tx_data_root(TX)}, End} | List]};
+								false ->
+									{End, [{{TX#tx.id, get_tx_data_root(TX)}, End} | List]}
+							end;
+						false ->
+							{End, [{{TX#tx.id, get_tx_data_root(TX)}, End} | List]}
+					end
 				end,
 				{0, []},
 				lists:sort(TXs)
@@ -152,7 +153,7 @@ block_field_size_limit(B) ->
 		(byte_size(B#block.hash) =< 48) and
 		(byte_size(B#block.indep_hash) =< 48) and
 		(byte_size(B#block.reward_addr) =< 32) and
-		(byte_size(list_to_binary(B#block.tags)) =< 2048) and
+		validate_tags_size(B) and
 		(byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
 		(byte_size(integer_to_binary(B#block.block_size)) =< 64) and
 		(ChunkSize =< ?DATA_CHUNK_SIZE) and
@@ -180,6 +181,22 @@ block_field_size_limit(B) ->
 			ok
 	end,
 	Check.
+
+validate_tags_size(B) ->
+	case B#block.height >= ar_fork:height_2_5() of
+		true ->
+			Tags = B#block.tags,
+			validate_tags_length(Tags, 0) andalso byte_size(list_to_binary(Tags)) =< 2048;
+		false ->
+			byte_size(list_to_binary(B#block.tags)) =< 2048
+	end.
+
+validate_tags_length(_, N) when N > 2048 ->
+	false;
+validate_tags_length([_ | Tags], N) ->
+	validate_tags_length(Tags, N + 1);
+validate_tags_length([], _) ->
+	true.
 
 compute_hash_list_merkle(B, BI) ->
 	NewHeight = B#block.height + 1,
@@ -274,7 +291,7 @@ generate_block_data_segment_base(B) ->
 					_ ->
 						B#block.reward_addr
 				end,
-				ar_tx:tags_to_list(B#block.tags)
+				encode_tags(B)
 			],
 			Props2 =
 				case B#block.height >= ar_fork:height_2_5() of
@@ -286,7 +303,9 @@ generate_block_data_segment_base(B) ->
 							integer_to_binary(RateDividend),
 							integer_to_binary(RateDivisor),
 							integer_to_binary(ScheduledRateDividend),
-							integer_to_binary(ScheduledRateDivisor)
+							integer_to_binary(ScheduledRateDivisor),
+							integer_to_binary(B#block.packing_2_5_threshold),
+							integer_to_binary(B#block.strict_data_split_threshold)
 							| Props
 						];
 					false ->
@@ -307,9 +326,17 @@ generate_block_data_segment_base(B) ->
 					_ ->
 						B#block.reward_addr
 				end,
-				ar_tx:tags_to_list(B#block.tags),
+				encode_tags(B),
 				poa_to_list(B#block.poa)
 			])
+	end.
+
+encode_tags(B) ->
+	case B#block.height >= ar_fork:height_2_5() of
+		true ->
+			B#block.tags;
+		false ->
+			ar_tx:tags_to_list(B#block.tags)
 	end.
 
 poa_to_list(POA) ->
@@ -320,6 +347,29 @@ poa_to_list(POA) ->
 		POA#poa.chunk
 	].
 
+%% @doc Compute the 2.5 packing threshold.
+get_packing_threshold(B, SearchSpaceUpperBound) ->
+	#block{ height = Height, packing_2_5_threshold = PrevPackingThreshold } = B,
+	Fork_2_5 = ar_fork:height_2_5(),
+	case Height + 1 == Fork_2_5 of
+		true ->
+			SearchSpaceUpperBound;
+		false ->
+			case Height + 1 > Fork_2_5 of
+				true ->
+					ar_block:shift_packing_2_5_threshold(PrevPackingThreshold);
+				false ->
+					undefined
+			end
+	end.
+
+%% @doc Move the fork 2.5 packing threshold
+shift_packing_2_5_threshold(0) ->
+	0;
+shift_packing_2_5_threshold(Threshold) ->
+	Shift = (?DATA_CHUNK_SIZE) * (?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND) * (?TARGET_TIME),
+	max(0, Threshold - Shift).
+
 %% @doc Verify the dependent hash of a given block is valid
 verify_dep_hash(NewB, BDSHash) ->
 	NewB#block.hash == BDSHash.
@@ -329,15 +379,15 @@ verify_tx_root(B) ->
 
 %% @doc Given a list of TXs in various formats, or a block, generate the
 %% correct TX merkle tree root.
-%% @end
 generate_tx_root_for_block(B) when is_record(B, block) ->
-	generate_tx_root_for_block(B#block.txs);
-generate_tx_root_for_block(TXIDs = [TXID | _]) when is_binary(TXID) ->
-	generate_tx_root_for_block(ar_storage:read_tx(TXIDs));
-generate_tx_root_for_block([]) ->
+	generate_tx_root_for_block(B#block.txs, B#block.height).
+
+generate_tx_root_for_block(TXIDs = [TXID | _], Height) when is_binary(TXID) ->
+	generate_tx_root_for_block(ar_storage:read_tx(TXIDs), Height);
+generate_tx_root_for_block([], _Height) ->
 	<<>>;
-generate_tx_root_for_block(TXs = [TX | _]) when is_record(TX, tx) ->
-	SizeTaggedTXs = generate_size_tagged_list_from_txs(TXs),
+generate_tx_root_for_block(TXs = [TX | _], Height) when is_record(TX, tx) ->
+	SizeTaggedTXs = generate_size_tagged_list_from_txs(TXs, Height),
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{Root, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	Root.
@@ -353,7 +403,6 @@ get_tx_data_root(TX) ->
 %% network which we don't take into account. Instead, we assume two nodes can
 %% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
 %% other.
-%% @end
 verify_timestamp(B) ->
 	CurrentTime = os:system_time(seconds),
 	MaxNodesClockDeviation = ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX,
@@ -396,7 +445,7 @@ verify_block_hash_list(_NewB, _OldB) -> true.
 verify_weave_size(NewB, OldB, TXs) ->
 	NewB#block.weave_size == lists:foldl(
 		fun(TX, Acc) ->
-			Acc + TX#tx.data_size
+			Acc + ar_tx:get_weave_size_increase(TX, NewB#block.height)
 		end,
 		OldB#block.weave_size,
 		TXs
@@ -441,7 +490,9 @@ verify_block_hash_list_merkle(NewB, CurrentB, _) when NewB#block.height == ?FORK
 	NewB#block.hash_list_merkle ==
 		ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list).
 
-%% Tests: ar_block
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
 
 hash_list_gen_test() ->
 	[B0] = ar_weave:init([]),
@@ -454,6 +505,35 @@ hash_list_gen_test() ->
 	B2 = ar_storage:read_block(hd(BI2)),
 	?assertEqual([B0#block.indep_hash], generate_hash_list_for_block(B1, BI2)),
 	?assertEqual([H || {H, _, _} <- BI1], generate_hash_list_for_block(B2#block.indep_hash, BI2)).
+
+generate_size_tagged_list_from_txs_test() ->
+	Fork_2_5 = ar_fork:height_2_5(),
+	?assertEqual([], generate_size_tagged_list_from_txs([], Fork_2_5)),
+	?assertEqual([], generate_size_tagged_list_from_txs([], Fork_2_5 - 1)),
+	EmptyV1Root = (ar_tx:generate_chunk_tree(#tx{}))#tx.data_root,
+	?assertEqual([{{<<>>, EmptyV1Root}, 0}],
+			generate_size_tagged_list_from_txs([#tx{}], Fork_2_5)),
+	?assertEqual([{{<<>>, <<>>}, 0}],
+			generate_size_tagged_list_from_txs([#tx{ format = 2 }], Fork_2_5)),
+	?assertEqual([{{<<>>, <<>>}, 0}],
+			generate_size_tagged_list_from_txs([#tx{ format = 2}], Fork_2_5 - 1)),
+	?assertEqual([{{<<>>, <<"r">>}, 1}, {{padding, <<>>}, 262144}],
+			generate_size_tagged_list_from_txs([#tx{ format = 2, data_root = <<"r">>,
+					data_size = 1 }], Fork_2_5)),
+	?assertEqual([
+			{{<<"1">>, <<"r">>}, 1}, {{padding, <<>>}, 262144},
+			{{<<"2">>, <<>>}, 262144},
+			{{<<"3">>, <<>>}, 262144 * 5},
+			{{<<"4">>, <<>>}, 262144 * 5},
+			{{<<"5">>, <<>>}, 262144 * 5},
+			{{<<"6">>, <<>>}, 262144 * 6}],
+			generate_size_tagged_list_from_txs([
+					#tx{ id = <<"1">>, format = 2, data_root = <<"r">>, data_size = 1 },
+					#tx{ id = <<"2">>, format = 2 },
+					#tx{ id = <<"3">>, format = 2, data_size = 262144 * 4 },
+					#tx{ id = <<"4">>, format = 2 },
+					#tx{ id = <<"5">>, format = 2 },
+					#tx{ id = <<"6">>, format = 2, data_size = 262144 }], Fork_2_5)).
 
 test_wallet_list_performance(Length) ->
 	io:format("# ~B wallets~n", [Length]),

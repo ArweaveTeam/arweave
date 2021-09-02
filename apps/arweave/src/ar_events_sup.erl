@@ -33,6 +33,8 @@ init([]) ->
 		?CHILD(ar_events, tx, worker),
 		%% Events: new, mined.
 		?CHILD(ar_events, block, worker),
+		%% Events: unpack_request, unpacked, repack_request, packed.
+		?CHILD(ar_events, chunk, worker),
 		%% Used for the testing purposes.
 		?CHILD(ar_events, testing, worker)
 	]}}.

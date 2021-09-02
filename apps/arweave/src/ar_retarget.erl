@@ -6,8 +6,8 @@
 
 -export([
 	is_retarget_height/1,
-	maybe_retarget/4,
-	calculate_difficulty/4,
+	maybe_retarget/5,
+	calculate_difficulty/5,
 	validate_difficulty/2,
 	switch_to_linear_diff/1,
 	switch_to_linear_diff_pre_fork_2_5/1
@@ -49,28 +49,25 @@ is_retarget_height(Height) ->
 %% @doc Maybe set a new difficulty and last retarget, if the block is at
 %% an appropriate retarget height, else returns the current diff
 %% @end
-maybe_retarget(Height, CurDiff, TS, Last) when ?IS_RETARGET_HEIGHT(Height) ->
-	calculate_difficulty(
-		CurDiff,
-		TS,
-		Last,
-		Height
-	);
-maybe_retarget(_Height, CurDiff, _TS, _Last) ->
+maybe_retarget(Height, CurDiff, TS, LastRetargetTS, PrevTS) when ?IS_RETARGET_HEIGHT(Height) ->
+	calculate_difficulty(CurDiff, TS, LastRetargetTS, Height, PrevTS);
+maybe_retarget(_Height, CurDiff, _TS, _LastRetargetTS, _PrevTS) ->
 	CurDiff.
 
 %% @doc Calculate a new difficulty, given an old difficulty and the period
 %% since the last retarget occcurred.
 %% @end
-calculate_difficulty(OldDiff, TS, Last, Height) ->
+calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_1_7 = ar_fork:height_1_7(),
 	Fork_1_8 = ar_fork:height_1_8(),
 	Fork_1_9 = ar_fork:height_1_9(),
 	Fork_2_4 = ar_fork:height_2_4(),
 	Fork_2_5 = ar_fork:height_2_5(),
 	case Height of
-		_ when Height >= Fork_2_5 ->
-			calculate_difficulty2(OldDiff, TS, Last, Height);
+		_ when Height > Fork_2_5 ->
+			calculate_difficulty(OldDiff, TS, Last, Height);
+		_ when Height == Fork_2_5 ->
+			calculate_difficulty_at_2_5(OldDiff, TS, Last, Height, PrevTS);
 		_ when Height > Fork_2_4 ->
 			calculate_difficulty_after_2_4_before_2_5(OldDiff, TS, Last, Height);
 		_ when Height == Fork_2_4 ->
@@ -90,12 +87,8 @@ calculate_difficulty(OldDiff, TS, Last, Height) ->
 %% @doc Validate that a new block has an appropriate difficulty.
 validate_difficulty(NewB, OldB) when ?IS_RETARGET_BLOCK(NewB) ->
 	(NewB#block.diff ==
-		calculate_difficulty(
-			OldB#block.diff,
-			NewB#block.timestamp,
-			OldB#block.last_retarget,
-			NewB#block.height)
-	);
+		calculate_difficulty(OldB#block.diff, NewB#block.timestamp, OldB#block.last_retarget,
+				NewB#block.height, OldB#block.timestamp));
 validate_difficulty(NewB, OldB) ->
 	(NewB#block.diff == OldB#block.diff) and
 		(NewB#block.last_retarget == OldB#block.last_retarget).
@@ -113,7 +106,7 @@ switch_to_linear_diff_pre_fork_2_5(Diff) ->
 %%% Private functions.
 %%%===================================================================
 
-calculate_difficulty2(OldDiff, TS, Last, Height) ->
+calculate_difficulty(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
 	ActualTime = TS - Last,
 	case ActualTime < ?RETARGET_TOLERANCE_UPPER_BOUND
@@ -130,6 +123,17 @@ calculate_difficulty2(OldDiff, TS, Last, Height) ->
 				MaxDiff - 1
 			)
 	end.
+
+calculate_difficulty_at_2_5(OldDiff, TS, Last, Height, PrevTS) ->
+	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
+	ActualTime = TS - Last,
+	Step = 10 * 60,
+	%% Drop the difficulty 2x right away, then drop extra 2x for every 10 minutes passed.
+	ActualTime2 = ActualTime * 2 * ar_decimal:pow(2, max(TS - PrevTS, 0) div Step),
+	MaxDiff = ?MAX_DIFF,
+	MinDiff = ar_mine:min_difficulty(Height),
+	DiffInverse = (MaxDiff - OldDiff) * ActualTime2 div TargetTime,
+	between(MaxDiff - DiffInverse, MinDiff, MaxDiff - 1).
 
 calculate_difficulty_after_2_4_before_2_5(OldDiff, TS, Last, Height) ->
 	TargetTime = ?RETARGET_BLOCKS * ?TARGET_TIME,
@@ -303,9 +307,21 @@ test_calculate_difficulty_linear() ->
 			)
 	),
 	?assert(
+		3.001 / 2 * hashes(Diff)
+			> hashes( % Expect 2x drop at 2.5.
+				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget5, 0, Timestamp - 1)
+			)
+	),
+	?assert(
 		2.999 * hashes(Diff)
 			< hashes(
 				calculate_difficulty(Diff, Timestamp, Retarget5, 1)
+			)
+	),
+	?assert(
+		2.999 / 2 * hashes(Diff)
+			< hashes( % Expect 2x drop at 2.5.
+				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget5, 0, Timestamp - 1)
 			)
 	),
 	%% The actual time is two times bigger.
@@ -318,8 +334,32 @@ test_calculate_difficulty_linear() ->
 	),
 	?assert(
 		hashes(Diff)
+			> 3.999 * hashes( % Expect 2x drop at 2.5.
+				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 1)
+			)
+	),
+	?assert(
+		hashes(Diff)
+			> 7.999 * hashes( % Expect extra 2x after 10 minutes.
+				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 600)
+			)
+	),
+	?assert(
+		hashes(Diff)
 			< 2.001 * hashes(
 				calculate_difficulty(Diff, Timestamp, Retarget6, 1)
+			)
+	),
+	?assert(
+		hashes(Diff)
+			< 4.001 * hashes( % Expect 2x drop at 2.5.
+				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 1)
+			)
+	),
+	?assert(
+		hashes(Diff)
+			< 8.001 * hashes( % Expect extra 2x after 10 minutes.
+				calculate_difficulty_at_2_5(Diff, Timestamp, Retarget6, 0, Timestamp - 600)
 			)
 	).
 

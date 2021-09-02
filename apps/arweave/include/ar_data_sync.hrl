@@ -54,7 +54,7 @@
 %% between the keys with the same prefix. The prefix should be bigger than
 %% max chunk size (256 KiB) so that the chunk in question is likely to be
 %% found in the filter and smaller than an SST table (200 MiB) so that the
-%% filter lookup can narrow the search down to a single table. @end
+%% filter lookup can narrow the search down to a single table.
 -define(OFFSET_KEY_PREFIX_BITSIZE, 232).
 
 %% The number of block confirmations to track. When the node
@@ -217,5 +217,16 @@
 	%% A flag indicating whether the disk is full. If true, we avoid writing anything to it.
 	disk_full = false,
 	%% A flag indicating whether there is sufficient disk space for syncing more data.
-	sync_disk_space = true
+	sync_disk_space = true,
+	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
+	%% some chunk metadata needed for storing the chunk once it is packed.
+	packing_map = #{},
+	%% Chunks above the threshold are packed because the protocol requires them to be packed.
+	packing_2_5_threshold,
+	%% The end offset of the last interval possibly scheduled for repacking or 0.
+	repacking_cursor,
+	%% If true, the node does not pack incoming data or re-pack already stored data.
+	packing_disabled = false,
+	%% Chunks above the threshold must comply to stricter splitting rules.
+	strict_data_split_threshold
 }).

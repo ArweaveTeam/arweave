@@ -4,6 +4,8 @@
 #include "ar_mine_randomx.h"
 #include <gmp.h>
 #include "sha-256.h"
+#include "randomx_long_with_entropy.h"
+#include "feistel_msgsize_key_cipher.h"
 
 ErlNifResourceType* stateType;
 
@@ -14,6 +16,11 @@ static ErlNifFunc nif_funcs[] = {
 	{"hash_light_nif", 5, hash_light_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"bulk_hash_fast_nif", 13, bulk_hash_fast_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"hash_fast_verify_nif", 6, hash_fast_verify_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_encrypt_chunk_nif", 7, randomx_encrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"randomx_decrypt_chunk_nif", 8, randomx_decrypt_chunk_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"hash_fast_long_with_entropy_nif", 6, hash_fast_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"hash_light_long_with_entropy_nif", 6, hash_light_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"bulk_hash_fast_long_with_entropy_nif", 14, bulk_hash_fast_long_with_entropy_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 	{"release_state_nif", 1, release_state_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND}
 };
 
@@ -642,6 +649,517 @@ static ERL_NIF_TERM hash_fast_verify_nif(ErlNifEnv* envPtr, int argc, const ERL_
 	randomx_destroy_vm(vmPtr);
 	enif_rwlock_runlock(statePtr->lockPtr);
 	return enif_make_atom(envPtr, "false");
+}
+
+
+static ERL_NIF_TERM randomx_encrypt_chunk_nif(
+	ErlNifEnv* envPtr,
+	int argc,
+	const ERL_NIF_TERM argv[]
+) {
+	randomx_vm *vmPtr = NULL;
+	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	randomx_flags flags;
+	struct state* statePtr;
+	ErlNifBinary inputData;
+	ErlNifBinary inputChunk;
+
+	if (argc != 7) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[3], &randomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[6], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+
+	enif_rwlock_rlock(statePtr->lockPtr);
+	if (statePtr->isRandomxReleased != 0) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return error(envPtr, "state has been released");
+	}
+
+	flags = RANDOMX_FLAG_DEFAULT;
+	flags |= RANDOMX_FLAG_FULL_MEM;
+	if (hardwareAESEnabled) {
+		flags |= RANDOMX_FLAG_HARD_AES;
+	}
+	if (jitEnabled) {
+		flags |= RANDOMX_FLAG_JIT;
+	}
+	if (largePagesEnabled) {
+		flags |= RANDOMX_FLAG_LARGE_PAGES;
+	}
+	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	if (vmPtr == NULL) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return error(envPtr, "randomx_create_vm failed");
+	}
+	size_t outChunkLen = (((inputChunk.size - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1) * (2*FEISTEL_BLOCK_LENGTH);
+	unsigned char outChunk[256*1024]; // max chunk size, NOTE, second big allocation on stack
+	// unsigned char *outChunk = (unsigned char*)malloc(outChunkLen);
+	randomx_encrypt_chunk(vmPtr, inputData.data, inputData.size, inputChunk.data, inputChunk.size, outChunk, randomxRoundCount);
+
+	randomx_destroy_vm(vmPtr);
+	enif_rwlock_runlock(statePtr->lockPtr);
+
+	return ok_tuple(envPtr, make_output_binary(envPtr, outChunk, outChunkLen));
+	// ERL_NIF_TERM res = ok_tuple(envPtr, make_output_binary(envPtr, outChunk, outChunkLen));
+	// free(outChunk);
+	// return res;
+}
+
+static ERL_NIF_TERM randomx_decrypt_chunk_nif(
+	ErlNifEnv* envPtr,
+	int argc,
+	const ERL_NIF_TERM argv[]
+) {
+	randomx_vm *vmPtr = NULL;
+	int outChunkLen, randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	randomx_flags flags;
+	struct state* statePtr;
+	ErlNifBinary inputData;
+	ErlNifBinary inputChunk;
+
+	if (argc != 8) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[3], &outChunkLen)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &randomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[6], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[7], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+
+	enif_rwlock_rlock(statePtr->lockPtr);
+	if (statePtr->isRandomxReleased != 0) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return error(envPtr, "state has been released");
+	}
+
+	flags = RANDOMX_FLAG_DEFAULT;
+	flags |= RANDOMX_FLAG_FULL_MEM;
+	if (hardwareAESEnabled) {
+		flags |= RANDOMX_FLAG_HARD_AES;
+	}
+	if (jitEnabled) {
+		flags |= RANDOMX_FLAG_JIT;
+	}
+	if (largePagesEnabled) {
+		flags |= RANDOMX_FLAG_LARGE_PAGES;
+	}
+	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	if (vmPtr == NULL) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return error(envPtr, "randomx_create_vm failed");
+	}
+	unsigned char outChunk[256*1024]; // max chunk size, NOTE, second big allocation on stack
+	// unsigned char *outChunk = (unsigned char*)malloc(outChunkLen);
+	randomx_decrypt_chunk(vmPtr, inputData.data, inputData.size, inputChunk.data, inputChunk.size, outChunk, randomxRoundCount);
+
+	randomx_destroy_vm(vmPtr);
+	enif_rwlock_runlock(statePtr->lockPtr);
+
+	return ok_tuple(envPtr, make_output_binary(envPtr, outChunk, outChunkLen));
+	// ERL_NIF_TERM res = ok_tuple(envPtr, make_output_binary(envPtr, outChunk, outChunkLen));
+	// free(outChunk);
+	// return res;
+}
+
+static ERL_NIF_TERM hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
+{
+	return randomx_hash_long_with_entropy_nif(envPtr, argc, argv, HASHING_MODE_FAST);
+}
+
+static ERL_NIF_TERM hash_light_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
+{
+	return randomx_hash_long_with_entropy_nif(envPtr, argc, argv, HASHING_MODE_LIGHT);
+}
+
+static ERL_NIF_TERM randomx_hash_long_with_entropy_nif(
+	ErlNifEnv* envPtr,
+	int argc,
+	const ERL_NIF_TERM argv[],
+	hashing_mode hashingMode
+) {
+	randomx_vm *vmPtr = NULL;
+	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	randomx_flags flags;
+	unsigned char hashPtr[RANDOMX_HASH_SIZE];
+	unsigned char entropyPtr[RANDOMX_ENTROPY_SIZE];
+	struct state* statePtr;
+	ErlNifBinary inputData;
+
+	if (argc != 6) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[2], &randomxRoundCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[3], &jitEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[4], &largePagesEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[5], &hardwareAESEnabled)) {
+		return enif_make_badarg(envPtr);
+	}
+
+	enif_rwlock_rlock(statePtr->lockPtr);
+	if (statePtr->isRandomxReleased != 0) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return error(envPtr, "state has been released");
+	}
+
+	flags = RANDOMX_FLAG_DEFAULT;
+	if (hashingMode == HASHING_MODE_FAST) {
+		flags |= RANDOMX_FLAG_FULL_MEM;
+	}
+	if (hardwareAESEnabled) {
+		flags |= RANDOMX_FLAG_HARD_AES;
+	}
+	if (jitEnabled) {
+		flags |= RANDOMX_FLAG_JIT;
+	}
+	if (largePagesEnabled) {
+		flags |= RANDOMX_FLAG_LARGE_PAGES;
+	}
+	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	if (vmPtr == NULL) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		return error(envPtr, "randomx_create_vm failed");
+	}
+	randomx_calculate_hash_long_with_entropy(vmPtr, inputData.data, inputData.size, hashPtr, entropyPtr, randomxRoundCount);
+	randomx_destroy_vm(vmPtr);
+	enif_rwlock_runlock(statePtr->lockPtr);
+
+	return ok_tuple2(envPtr, make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE), make_output_binary(envPtr, entropyPtr, RANDOMX_ENTROPY_SIZE));
+}
+
+static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
+{
+	randomx_vm *vmPtr = NULL;
+	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	randomx_flags flags;
+	unsigned char hashPtr[RANDOMX_HASH_SIZE];
+	unsigned char entropyPtr[RANDOMX_ENTROPY_SIZE];
+	struct state* statePtr;
+	ErlNifBinary firstNonceBinary, secondNonceBinary, inputData, prevH, searchSpaceUpperBound;
+	unsigned char nonce[RANDOMX_HASH_SIZE];
+	unsigned char prevNonce[RANDOMX_HASH_SIZE];
+	unsigned char segment[RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE];
+	int hashingIterations, pidCount, proxyPIDCount;
+	ErlNifPid *pids, *proxyPIDs;
+
+	mpz_t mpzH, mpzSearchSpaceUpperBound;
+	mpz_t mpzSubspaceNumber, mpzSubspaces, mpzEvenSubspaceSize;
+	mpz_t mpzSearchSpaceSize, mpzSearchSubspaceSize;
+	mpz_t mpzSearchSpaceShare;
+	mpz_t mpzSubspaceStart, mpzSubspaceSize, mpzSearchSubspaceStart;
+	mpz_t mpzSeed, mpzSearchSubspaceByteSeed, mpzSearchSubspaceByte;
+	mpz_t diff, sum1, rem, result;
+	unsigned char seedBin[32], searchSubspaceByteSeedBin[32];
+	bigInt encodedSubspaceNumber;
+	size_t encodedSubspaceNumberLen;
+	unsigned char bin[80];
+	bigInt byte;
+	size_t size;
+
+	if (argc != 14) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_resource(envPtr, argv[0], stateType, (void**) &statePtr)) {
+		return error(envPtr, "failed to read state");
+	}
+	if (!enif_inspect_binary(envPtr, argv[1], &firstNonceBinary)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (firstNonceBinary.size != RANDOMX_HASH_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[2], &secondNonceBinary)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (secondNonceBinary.size != RANDOMX_HASH_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[3], &inputData)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (inputData.size != ARWEAVE_INPUT_DATA_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[4], &prevH)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (prevH.size != ARWEAVE_HASH_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_inspect_binary(envPtr, argv[5], &searchSpaceUpperBound)) {
+		return enif_make_badarg(envPtr);
+	}
+	if (searchSpaceUpperBound.size > BIG_NUM_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_list_length(envPtr, argv[6], &pidCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	pids = (ErlNifPid*) enif_alloc(pidCount * sizeof(ErlNifPid));
+	ERL_NIF_TERM list = argv[6];
+	ERL_NIF_TERM head;
+	for (int i = 0; i < pidCount; i++) {
+		if (!enif_get_list_cell(envPtr, list, &head, &list)) {
+			enif_free(pids);
+			return enif_make_badarg(envPtr);
+		}
+		if (!enif_get_local_pid(envPtr, head, &pids[i])) {
+			enif_free(pids);
+			return enif_make_badarg(envPtr);
+		}
+	}
+	if (!enif_get_list_length(envPtr, argv[7], &proxyPIDCount)) {
+		return enif_make_badarg(envPtr);
+	}
+	proxyPIDs = (ErlNifPid*) enif_alloc(proxyPIDCount * sizeof(ErlNifPid));
+	list = argv[7];
+	for (int i = 0; i < proxyPIDCount; i++) {
+		if (!enif_get_list_cell(envPtr, list, &head, &list)) {
+			enif_free(pids);
+			enif_free(proxyPIDs);
+			return enif_make_badarg(envPtr);
+		}
+		if (!enif_get_local_pid(envPtr, head, &proxyPIDs[i])) {
+			enif_free(pids);
+			enif_free(proxyPIDs);
+			return enif_make_badarg(envPtr);
+		}
+	}
+	// argv[8] is a reference, it is simply passed on.
+	if (!enif_get_int(envPtr, argv[9], &hashingIterations)) {
+		enif_free(pids);
+		enif_free(proxyPIDs);
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[10], &randomxRoundCount)) {
+		enif_free(pids);
+		enif_free(proxyPIDs);
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[11], &jitEnabled)) {
+		enif_free(pids);
+		enif_free(proxyPIDs);
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[12], &largePagesEnabled)) {
+		enif_free(pids);
+		enif_free(proxyPIDs);
+		return enif_make_badarg(envPtr);
+	}
+	if (!enif_get_int(envPtr, argv[13], &hardwareAESEnabled)) {
+		enif_free(pids);
+		enif_free(proxyPIDs);
+		return enif_make_badarg(envPtr);
+	}
+
+	enif_rwlock_rlock(statePtr->lockPtr);
+	if (statePtr->isRandomxReleased != 0) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		enif_free(pids);
+		enif_free(proxyPIDs);
+		return error(envPtr, "state has been released");
+	}
+
+	flags = RANDOMX_FLAG_FULL_MEM;
+	if (hardwareAESEnabled) {
+		flags |= RANDOMX_FLAG_HARD_AES;
+	}
+	if (jitEnabled) {
+		flags |= RANDOMX_FLAG_JIT;
+	}
+	if (largePagesEnabled) {
+		flags |= RANDOMX_FLAG_LARGE_PAGES;
+	}
+	vmPtr = randomx_create_vm(flags, statePtr->cachePtr, statePtr->datasetPtr);
+	if (vmPtr == NULL) {
+		enif_rwlock_runlock(statePtr->lockPtr);
+		enif_free(pids);
+		enif_free(proxyPIDs);
+		return error(envPtr, "randomx_create_vm failed");
+	}
+
+	mpz_init_set_ui(mpzSubspaces, (unsigned long int) SPORA_SUBSPACES_COUNT);
+	mpz_init(mpzEvenSubspaceSize);
+	mpz_init(mpzSearchSpaceUpperBound);
+	mpz_init(mpzH);
+	mpz_init(mpzSubspaceNumber);
+	mpz_init(mpzSearchSpaceSize);
+	mpz_init(mpzSearchSpaceShare);
+	mpz_init_set_ui(mpzSearchSpaceShare, (unsigned long int) SPORA_SEARCH_SPACE_SHARE);
+	mpz_init(mpzSearchSubspaceSize);
+	mpz_init(mpzSubspaceStart);
+	mpz_init(diff);
+	mpz_init(mpzSubspaceSize);
+	mpz_init(mpzSeed);
+	mpz_init(mpzSearchSubspaceStart);
+	mpz_init(mpzSearchSubspaceByteSeed);
+	mpz_init(mpzSearchSubspaceByte);
+	mpz_init(sum1);
+	mpz_init(rem);
+	mpz_init(result);
+
+	mpz_import(
+		mpzSearchSpaceUpperBound,
+		searchSpaceUpperBound.size,
+		1,
+		1,
+		1,
+		0,
+		searchSpaceUpperBound.data
+	);
+	mpz_fdiv_q(mpzEvenSubspaceSize, mpzSearchSpaceUpperBound, mpzSubspaces);
+	mpz_fdiv_q(mpzSearchSpaceSize, mpzSearchSpaceUpperBound, mpzSearchSpaceShare);
+	mpz_fdiv_q(mpzSearchSubspaceSize, mpzSearchSpaceSize, mpzSubspaces);
+
+	memcpy(nonce, firstNonceBinary.data, RANDOMX_HASH_SIZE);
+	memcpy(segment, nonce, RANDOMX_HASH_SIZE);
+	memcpy(segment + RANDOMX_HASH_SIZE, inputData.data, ARWEAVE_INPUT_DATA_SIZE);
+
+	int pidCursor = 0, proxyPIDCursor = 0;
+	randomx_calculate_hash_long_with_entropy_first(vmPtr, segment, RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE);
+	for (int i = 0; i < hashingIterations; i++) {
+		memcpy(prevNonce, nonce, RANDOMX_HASH_SIZE);
+		if (i == 0) {
+			memcpy(nonce, secondNonceBinary.data, RANDOMX_HASH_SIZE);
+		} else {
+			memcpy(nonce, hashPtr, RANDOMX_HASH_SIZE);
+		}
+		if (i == hashingIterations - 1) {
+			randomx_calculate_hash_long_with_entropy_last(vmPtr, hashPtr, entropyPtr, randomxRoundCount);
+		} else {
+			memcpy(segment, nonce, RANDOMX_HASH_SIZE);
+			memcpy(segment + RANDOMX_HASH_SIZE, inputData.data, ARWEAVE_INPUT_DATA_SIZE);
+			randomx_calculate_hash_long_with_entropy_next(
+				vmPtr,
+				segment,
+				RANDOMX_HASH_SIZE + ARWEAVE_INPUT_DATA_SIZE,
+				hashPtr,
+				entropyPtr,
+				randomxRoundCount
+			);
+		}
+
+		mpz_import(mpzH, BIG_NUM_SIZE, 1, 1, 1, 0, hashPtr);
+		mpz_fdiv_r(mpzSubspaceNumber, mpzH, mpzSubspaces);
+		mpz_mul(mpzSubspaceStart, mpzSubspaceNumber, mpzEvenSubspaceSize);
+		mpz_sub(diff, mpzSearchSpaceUpperBound, mpzSubspaceStart);
+		if (mpz_cmp(diff, mpzEvenSubspaceSize) <= 0) {
+			mpz_set(mpzSubspaceSize, diff);
+		} else {
+			mpz_set(mpzSubspaceSize, mpzEvenSubspaceSize);
+		}
+		mpz_export(
+			encodedSubspaceNumber, &encodedSubspaceNumberLen, 1, 1, 1, 0, mpzSubspaceNumber);
+		memcpy(bin, prevH.data, prevH.size);
+		memcpy(bin + ARWEAVE_HASH_SIZE, encodedSubspaceNumber, encodedSubspaceNumberLen);
+		calc_sha_256(seedBin, bin, ARWEAVE_HASH_SIZE + encodedSubspaceNumberLen);
+		mpz_import(mpzSeed, 32, 1, 1, 1, 0, seedBin);
+		mpz_fdiv_r(mpzSearchSubspaceStart, mpzSeed, mpzSubspaceSize);
+		calc_sha_256(searchSubspaceByteSeedBin, hashPtr, BIG_NUM_SIZE);
+		mpz_import(mpzSearchSubspaceByteSeed, 32, 1, 1, 1, 0, searchSubspaceByteSeedBin);
+		mpz_fdiv_r(mpzSearchSubspaceByte, mpzSearchSubspaceByteSeed, mpzSearchSubspaceSize);
+		mpz_add(sum1, mpzSearchSubspaceStart, mpzSearchSubspaceByte);
+		mpz_fdiv_r(rem, sum1, mpzSubspaceSize);
+		mpz_add(result, mpzSubspaceStart, rem);
+		mpz_export(byte, &size, 1, 1, 1, 0, result);
+
+		ERL_NIF_TERM byteTerm = make_output_binary(envPtr, byte, size);
+		ERL_NIF_TERM hashTerm = make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE);
+		ERL_NIF_TERM entropyTerm = make_output_binary(envPtr, entropyPtr, RANDOMX_ENTROPY_SIZE);
+		ERL_NIF_TERM nonceTerm = make_output_binary(envPtr, prevNonce, RANDOMX_HASH_SIZE);
+		ERL_NIF_TERM pidTerm = enif_make_pid(envPtr, &proxyPIDs[proxyPIDCursor]);
+		ERL_NIF_TERM tupleTerm = enif_make_tuple6(
+			envPtr,
+			byteTerm,
+			hashTerm,
+			entropyTerm,
+			nonceTerm,
+			pidTerm,
+			argv[8]
+		);
+		enif_send(envPtr, &pids[pidCursor], NULL, tupleTerm);
+		pidCursor++;
+		if (pidCursor == pidCount) {
+			pidCursor = 0;
+		}
+		proxyPIDCursor++;
+		if (proxyPIDCursor == proxyPIDCount) {
+			proxyPIDCursor = 0;
+		}
+	}
+	randomx_destroy_vm(vmPtr);
+	enif_rwlock_runlock(statePtr->lockPtr);
+	enif_free(pids);
+	enif_free(proxyPIDs);
+	mpz_clear(mpzH);
+	mpz_clear(diff);
+	mpz_clear(sum1);
+	mpz_clear(rem);
+	mpz_clear(mpzSearchSpaceUpperBound);
+	mpz_clear(mpzSubspaceNumber);
+	mpz_clear(mpzSubspaces);
+	mpz_clear(mpzEvenSubspaceSize);
+	mpz_clear(mpzSearchSpaceSize);
+	mpz_clear(mpzSearchSubspaceSize);
+	mpz_clear(mpzSearchSpaceShare);
+	mpz_clear(mpzSubspaceStart);
+	mpz_clear(mpzSubspaceSize);
+	mpz_clear(mpzSearchSubspaceStart);
+	mpz_clear(mpzSeed);
+	mpz_clear(mpzSearchSubspaceByteSeed);
+	mpz_clear(mpzSearchSubspaceByte);
+	mpz_clear(result);
+	return enif_make_atom(envPtr, "ok");
 }
 
 static ERL_NIF_TERM release_state_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])

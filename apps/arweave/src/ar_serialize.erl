@@ -96,6 +96,13 @@ block_to_json_struct(
 			false ->
 				{RewardPool, BlockSize, WeaveSize}
 	end,
+	Tags =
+		case Height >= ar_fork:height_2_5() of
+			true ->
+				[ar_util:encode(Tag) || Tag <- Tags];
+			false ->
+				Tags
+		end,
 	JSONElements =
 		[
 			{nonce, ar_util:encode(Nonce)},
@@ -157,7 +164,10 @@ block_to_json_struct(
 						[integer_to_binary(RateDividend), integer_to_binary(RateDivisor)]},
 					{scheduled_usd_to_ar_rate,
 						[integer_to_binary(ScheduledRateDividend),
-							integer_to_binary(ScheduledRateDivisor)]}
+							integer_to_binary(ScheduledRateDivisor)]},
+					{packing_2_5_threshold, integer_to_binary(B#block.packing_2_5_threshold)},
+					{strict_data_split_threshold,
+							integer_to_binary(B#block.strict_data_split_threshold)}
 					| JSONElements3
 				];
 			false ->
@@ -178,10 +188,20 @@ json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
 	json_struct_to_block(dejsonify(JSONBlock));
 json_struct_to_block({BlockStruct}) ->
 	Height = find_value(<<"height">>, BlockStruct),
+	true = is_integer(Height),
+	Fork_2_5 = ar_fork:height_2_5(),
 	TXIDs = find_value(<<"txs">>, BlockStruct),
 	WalletList = find_value(<<"wallet_list">>, BlockStruct),
 	HashList = find_value(<<"hash_list">>, BlockStruct),
-	Tags = find_value(<<"tags">>, BlockStruct),
+	TagsValue = find_value(<<"tags">>, BlockStruct),
+	Tags =
+		case Height >= Fork_2_5 of
+			true ->
+				[ar_util:decode(Tag) || Tag <- TagsValue];
+			false ->
+				true = (byte_size(list_to_binary(TagsValue)) =< 2048),
+				TagsValue
+		end,
 	Fork_1_8 = ar_fork:height_1_8(),
 	CDiff =
 		case find_value(<<"cumulative_diff">>, BlockStruct) of
@@ -221,8 +241,8 @@ json_struct_to_block({BlockStruct}) ->
 					find_value(<<"weave_size">>, BlockStruct)
 				}
 		end,
-	{Rate, ScheduledRate} =
-		case Height >= ar_fork:height_2_5() of
+	{Rate, ScheduledRate, Packing_2_5_Threshold, StrictDataSplitThreshold} =
+		case Height >= Fork_2_5 of
 			true ->
 				[RateDividendBinary, RateDivisorBinary] =
 					find_value(<<"usd_to_ar_rate">>, BlockStruct),
@@ -230,18 +250,23 @@ json_struct_to_block({BlockStruct}) ->
 					find_value(<<"scheduled_usd_to_ar_rate">>, BlockStruct),
 				{{binary_to_integer(RateDividendBinary), binary_to_integer(RateDivisorBinary)},
 					{binary_to_integer(ScheduledRateDividendBinary),
-						binary_to_integer(ScheduledRateDivisorBinary)}};
+						binary_to_integer(ScheduledRateDivisorBinary)},
+							binary_to_integer(find_value(<<"packing_2_5_threshold">>,
+								BlockStruct)),
+							binary_to_integer(find_value(<<"strict_data_split_threshold">>,
+								BlockStruct))};
 			false ->
-				{undefined, undefined}
+				{undefined, undefined, undefined, undefined}
 		end,
+	Timestamp = find_value(<<"timestamp">>, BlockStruct),
+	true = is_integer(Timestamp),
+	LastRetarget = find_value(<<"last_retarget">>, BlockStruct),
+	true = is_integer(LastRetarget),
 	#block{
 		nonce = ar_util:decode(find_value(<<"nonce">>, BlockStruct)),
-		previous_block =
-			ar_util:decode(
-				find_value(<<"previous_block">>, BlockStruct)
-			),
-		timestamp = find_value(<<"timestamp">>, BlockStruct),
-		last_retarget = find_value(<<"last_retarget">>, BlockStruct),
+		previous_block = ar_util:decode(find_value(<<"previous_block">>, BlockStruct)),
+		timestamp = Timestamp,
+		last_retarget = LastRetarget,
 		diff = Diff,
 		height = Height,
 		hash = ar_util:decode(find_value(<<"hash">>, BlockStruct)),
@@ -271,12 +296,14 @@ json_struct_to_block({BlockStruct}) ->
 				POAStruct -> json_struct_to_poa(POAStruct)
 			end,
 		usd_to_ar_rate = Rate,
-		scheduled_usd_to_ar_rate = ScheduledRate
+		scheduled_usd_to_ar_rate = ScheduledRate,
+		packing_2_5_threshold = Packing_2_5_Threshold,
+		strict_data_split_threshold = StrictDataSplitThreshold
 	}.
 
 %% @doc Convert a transaction record into a JSON struct.
 tx_to_json_struct(
-	#tx {
+	#tx{
 		id = ID,
 		format = Format,
 		last_tx = Last,
@@ -335,7 +362,7 @@ poa_to_json_struct(POA) ->
 	]}.
 
 json_struct_to_poa({JSONStruct}) ->
-	#poa {
+	#poa{
 		option = binary_to_integer(find_value(<<"option">>, JSONStruct)),
 		tx_path = ar_util:decode(find_value(<<"tx_path">>, JSONStruct)),
 		data_path = ar_util:decode(find_value(<<"data_path">>, JSONStruct)),
@@ -365,17 +392,14 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 			N when is_integer(N) -> N;
 			N when is_binary(N) -> binary_to_integer(N)
 		end,
-	#tx {
+	#tx{
 		format = Format,
 		id = ar_util:decode(find_value(<<"id">>, TXStruct)),
 		last_tx = ar_util:decode(find_value(<<"last_tx">>, TXStruct)),
 		owner = ar_util:decode(find_value(<<"owner">>, TXStruct)),
-		tags =
-			[
-					{ar_util:decode(Name), ar_util:decode(Value)}
-				||
-					{[{<<"name">>, Name}, {<<"value">>, Value}]} <- Tags
-			],
+		tags = [{ar_util:decode(Name), ar_util:decode(Value)}
+				%% Only the elements matching this pattern are included in the list.
+				|| {[{<<"name">>, Name}, {<<"value">>, Value}]} <- Tags],
 		target = ar_util:decode(find_value(<<"target">>, TXStruct)),
 		quantity = binary_to_integer(find_value(<<"quantity">>, TXStruct)),
 		data = Data,
@@ -561,8 +585,8 @@ chunk_proof_to_json_map(Map) ->
 		case Packing of
 			unpacked ->
 				<<"unpacked">>;
-			aes_256_cbc ->
-				<<"aes_256_cbc">>
+			spora_2_5 ->
+				<<"spora_2_5">>
 		end,
 	#{
 		chunk => ar_util:encode(Chunk),
@@ -583,8 +607,10 @@ json_map_to_chunk_proof(JSON) ->
 		case maps:get(<<"packing">>, JSON, <<"unpacked">>) of
 			<<"unpacked">> ->
 				maps:put(packing, unpacked, Map);
-			<<"aes_256_cbc">> ->
-				maps:put(packing, aes_256_cbc, Map)
+			<<"spora_2_5">> ->
+				maps:put(packing, spora_2_5, Map);
+			_ ->
+				error(unsupported_packing)
 		end,
 	case maps:get(<<"offset">>, JSON, none) of
 		none ->

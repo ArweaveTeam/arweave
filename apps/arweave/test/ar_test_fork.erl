@@ -1,10 +1,13 @@
 -module(ar_test_fork).
 
--export([test_on_fork/3]).
+-export([test_on_fork/3, test_on_fork/4]).
 
 -import(ar_test_node, [slave_call/3]).
 
 test_on_fork(ForkHeightFun, ForkHeight, TestFun) ->
+	test_on_fork(ForkHeightFun, ForkHeight, TestFun, 120).
+
+test_on_fork(ForkHeightFun, ForkHeight, TestFun, Timeout) ->
 	{
 		foreach,
 		fun() ->
@@ -20,6 +23,6 @@ test_on_fork(ForkHeightFun, ForkHeight, TestFun) ->
 			slave_call(meck, unload, [ar_fork])
 		end,
 		[
-			{timeout, 120, TestFun}
+			{timeout, Timeout, TestFun}
 		]
 	}.

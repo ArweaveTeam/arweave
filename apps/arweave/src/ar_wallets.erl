@@ -251,13 +251,7 @@ handle_cast({init, Blocks, Peers}, _) ->
 				Height = PreviousB#block.height,
 				RootHash = PreviousB#block.wallet_list,
 				ExpectedRootHash = B#block.wallet_list,
-				Rate =
-					case Height >= ar_fork:height_2_5() of
-						true ->
-							PreviousB#block.usd_to_ar_rate;
-						false ->
-							?USD_TO_AR_INITIAL_RATE
-					end,
+				Rate = ar_pricing:usd_to_ar_rate(PreviousB),
 				{{ok, ExpectedRootHash}, DAG2} =
 					apply_block(DAG, B, RootHash, RewardPool, Rate, Height),
 				{DAG2, B, PreviousB#block.wallet_list}

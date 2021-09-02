@@ -25,7 +25,7 @@
 	get_block_index/1,
 	get_block_index/2,
 	get_sync_record/1, get_sync_record/3,
-	get_chunk/2,
+	get_chunk/3,
 	get_mempool/1
 ]).
 
@@ -328,7 +328,20 @@ get_sync_record(Peer, Start, Limit) ->
 		headers => Headers
 	})).
 
-get_chunk(Peer, Offset) ->
+get_chunk(Peer, Offset, RequestedPacking) ->
+	Headers = [{<<"x-packing">>, atom_to_binary(RequestedPacking)},
+			%% The nodes not upgraded to the 2.5 version would ignore this header.
+			%% It is fine because all offsets before 2.5 are not bucket-based.
+			%% Client libraries do not send this header - normally they do not need
+			%% bucket-based offsets. Bucket-based offsets are required in mining
+			%% after the fork 2.5 and it is convenient to use them for syncing,
+			%% thus setting the header here. A bucket-based offset corresponds to
+			%% the chunk that ends in the same 256 KiB bucket starting from the
+			%% 2.5 block. In most cases a bucket-based offset would correspond to
+			%% the same chunk as the normal offset except for the offsets of the
+			%% last and second last chunks of the transactions when these chunks
+			%% are smaller than 256 KiB.
+			{<<"x-bucket-based-offset">>, <<"true">>}],
 	handle_chunk_response(ar_http:req(#{
 		peer => Peer,
 		method => get,
@@ -336,7 +349,7 @@ get_chunk(Peer, Offset) ->
 		timeout => 30 * 1000,
 		connect_timeout => 2000,
 		limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
-		headers => p2p_headers()
+		headers => p2p_headers() ++ Headers
 	})).
 
 get_mempool(Peer) ->
@@ -362,7 +375,14 @@ handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 		{'EXIT', Reason} ->
 			{error, Reason};
 		Proof ->
-			{ok, Proof}
+			case maps:get(chunk, Proof) of
+				<<>> ->
+					{error, empty_chunk};
+				Chunk when byte_size(Chunk) > ?DATA_CHUNK_SIZE ->
+					{error, chunk_bigger_than_256kib};
+				_ ->
+					{ok, Proof}
+			end
 	end;
 handle_chunk_response(Response) ->
 	{error, Response}.

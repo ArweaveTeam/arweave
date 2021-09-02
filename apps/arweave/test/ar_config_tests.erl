@@ -76,7 +76,8 @@ parse_config() ->
 			arql := 3,
 			gateway_arql := 3,
 			get_sync_record := 10
-		}
+		},
+		packing_rate = 20
 	}, ParsedConfig).
 
 config_fixture() ->

@@ -907,16 +907,18 @@ grouped_txs() ->
 	[B0] = ar_weave:init(Wallets),
 	Chunk1 = random_v1_data(?TX_DATA_SIZE_LIMIT),
 	Chunk2 = <<"a">>,
-	Rate = ?USD_TO_AR_INITIAL_RATE,
+	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
+	Size1 = ar_tx:get_weave_size_increase(byte_size(Chunk1), 1),
 	TX1 =
 		sign_v1_tx(Key1, #{
-			reward => ar_tx:get_tx_fee(byte_size(Chunk1), Rate, 0, B0#block.timestamp),
+			reward => ar_tx:get_tx_fee(Size1, Rate, 0, B0#block.timestamp),
 			data => Chunk1,
 			last_tx => <<>>
 		}),
+	Size2 = ar_tx:get_weave_size_increase(byte_size(Chunk2), 2),
 	TX2 =
 		sign_v1_tx(Key2, #{
-			reward => ar_tx:get_tx_fee(byte_size(Chunk2), Rate, 0, B0#block.timestamp),
+			reward => ar_tx:get_tx_fee(Size2, Rate, 0, B0#block.timestamp),
 			data => Chunk2,
 			last_tx => B0#block.indep_hash
 		}),

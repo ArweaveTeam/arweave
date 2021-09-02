@@ -150,18 +150,19 @@ do_join(Peers, B, BI) ->
 %% @end
 get_block_and_trail(Peers, B, BI) ->
 	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
 	[B#block{ size_tagged_txs = SizeTaggedTXs } | get_block_and_trail(Peers, Trail)].
 
 get_block_and_trail(Peers, Trail) when length(Trail) < 10 ->
 	ar_util:pmap(fun({H, _, _}) -> get_block_and_trail(Peers, H) end, Trail);
 get_block_and_trail(Peers, Trail) when is_list(Trail) ->
 	{Chunk, Trail2} = lists:split(10, Trail),
-	ar_util:pmap(fun({H, _, _}) -> get_block_and_trail(Peers, H) end, Chunk) ++ get_block_and_trail(Peers, Trail2);
+	ar_util:pmap(fun({H, _, _}) -> get_block_and_trail(Peers, H) end, Chunk)
+			++ get_block_and_trail(Peers, Trail2);
 
 get_block_and_trail(Peers, H) ->
 	B = get_block(Peers, H),
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
 	B#block{ size_tagged_txs = SizeTaggedTXs }.
 
 join_peers(Peers) ->

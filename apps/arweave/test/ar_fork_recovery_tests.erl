@@ -162,6 +162,6 @@ fake_block_with_strong_cumulative_difficulty(B, CDiff) ->
 	        hash_list_merkle = ar_block:compute_hash_list_merkle(B)
 	    },
 	BDS = ar_block:generate_block_data_segment(B2),
-	H0 = ar_weave:hash(BDS, Nonce, Height + 1),
+	{H0, _Entropy} = ar_mine:spora_h0_with_entropy(BDS, Nonce, Height + 1),
 	B3 = B2#block{ hash = ar_mine:spora_solution_hash(H, Timestamp, H0, Chunk, Height + 1) },
 	{B3#block{ indep_hash = ar_weave:indep_hash(B3) }, BDS}.

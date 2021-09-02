@@ -162,7 +162,7 @@ start_io_threads() ->
 	%% processes keep the database files open for better performance so
 	%% we do not want to restart them.
 	{ok, Config} = application:get_env(arweave, config),
-	ets:insert(mining_state, {session, {make_ref(), os:system_time(second), not_set}}),
+	ets:insert(mining_state, {session, {make_ref(), os:system_time(second), not_set, not_set}}),
 	SearchInRocksDB = lists:member(search_in_rocksdb_when_mining, Config#config.enable),
 	[spawn_link(
 		fun() ->
@@ -215,8 +215,9 @@ handle_info({join, BI, Blocks}, State) ->
 	{ok, Config} = application:get_env(arweave, config),
 	{ok, _} = ar_wallets:start_link([{blocks, Blocks}, {peers, Config#config.peers}]),
 	ets:insert(node_state, [
-		{block_index,	BI},
-		{joined_blocks,	Blocks}
+		{block_index,			BI},
+		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
+		{joined_blocks,			Blocks}
 	]),
 	{noreply, State};
 
@@ -256,7 +257,7 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 		[{block_index, [{CurrentBH, _, _} | _] = BI}] ->
 			[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 			[{current, Current}] = ets:lookup(node_state, current),
-			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, Block#block.height),
 			B = Block#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
 			ar_watchdog:mined_block(B#block.indep_hash, B#block.height),
 			?LOG_INFO([
@@ -302,7 +303,8 @@ handle_info({event, tx, {ready_for_mining, TX}}, State) ->
 
 %% Remove dropped transactions.
 handle_info({event, tx, {dropped, DroppedTX, Reason}}, State) ->
-	?LOG_DEBUG("Drop TX ~p from pool with reason: ~p", [ar_util:encode(DroppedTX#tx.id), Reason]),
+	?LOG_DEBUG("Drop TX ~p from pool with reason: ~p",
+			[ar_util:encode(DroppedTX#tx.id), Reason]),
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	drop_txs([DroppedTX], Map, MempoolSize),
@@ -312,10 +314,10 @@ handle_info(wallets_ready, State) ->
 	[{block_index, BI}] = ets:lookup(node_state, block_index),
 	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
 	ar_header_sync:join(BI, Blocks),
-	ar_data_sync:join(BI),
+	B = hd(Blocks),
+	ar_data_sync:join(B#block.packing_2_5_threshold, B#block.strict_data_split_threshold, BI),
 	ar_tx_blacklist:start_taking_down(),
 	Current = element(1, hd(BI)),
-	B = hd(Blocks),
 	ar_block_cache:initialize_from_list(block_cache, Blocks),
 	BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
@@ -324,13 +326,14 @@ handle_info(wallets_ready, State) ->
 			true ->
 				{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
 			false ->
-				{?USD_TO_AR_INITIAL_RATE, ?USD_TO_AR_INITIAL_RATE}
+				{?INITIAL_USD_TO_AR_PRE_FORK_2_5, ?INITIAL_USD_TO_AR_PRE_FORK_2_5}
 		end,
 	ar:console("Joined the Arweave network successfully.~n"),
 	?LOG_INFO([{event, joined_the_network}]),
 	ets:insert(node_state, [
 		{is_joined,				true},
 		{block_index,			BI},
+		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
 		{current,				Current},
 		{wallet_list,			B#block.wallet_list},
 		{height,				B#block.height},
@@ -604,18 +607,13 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 	{TXs, MissingTXIDs} = pick_txs(BShadow#block.txs, Mempool),
 	case MissingTXIDs of
 		[] ->
-			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
+					BShadow#block.height),
 			B = BShadow#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
 			PrevWalletList = PrevB#block.wallet_list,
 			PrevRewardPool = PrevB#block.reward_pool,
 			PrevHeight = PrevB#block.height,
-			Rate =
-				case PrevHeight >= ar_fork:height_2_5() of
-					true ->
-						PrevB#block.usd_to_ar_rate;
-					false ->
-						?USD_TO_AR_INITIAL_RATE
-				end,
+			Rate = ar_pricing:usd_to_ar_rate(PrevB),
 			case validate_wallet_list(B, PrevWalletList, PrevRewardPool, Rate, PrevHeight) of
 				error ->
 					BH = B#block.indep_hash,
@@ -707,7 +705,8 @@ block_index_entry(B) ->
 	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
 
 update_block_txs_pairs(B, PrevBlocks, BlockTXPairs) ->
-	lists:sublist(update_block_txs_pairs2(B, PrevBlocks, BlockTXPairs), 2 * ?MAX_TX_ANCHOR_DEPTH).
+	lists:sublist(update_block_txs_pairs2(B, PrevBlocks, BlockTXPairs),
+			2 * ?MAX_TX_ANCHOR_DEPTH).
 
 update_block_txs_pairs2(B, [PrevB, PrevPrevB | PrevBlocks], BP) ->
 	[block_txs_pair(B) | update_block_txs_pairs2(PrevB, [PrevPrevB | PrevBlocks], BP)];
@@ -833,7 +832,8 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 		lists:reverse([B | PrevBlocks])
 	),
 	RecentBI = lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 2),
-	ar_data_sync:add_tip_block(B#block.height, BlockTXPairs, RecentBI),
+	ar_data_sync:add_tip_block(B#block.packing_2_5_threshold,
+			B#block.strict_data_split_threshold, BlockTXPairs, RecentBI),
 	ar_header_sync:add_tip_block(B, RecentBI),
 	lists:foreach(
 		fun(PrevB) ->
@@ -853,10 +853,11 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 			true ->
 				{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
 			false ->
-				{?USD_TO_AR_INITIAL_RATE, ?USD_TO_AR_INITIAL_RATE}
+				{?INITIAL_USD_TO_AR_PRE_FORK_2_5, ?INITIAL_USD_TO_AR_PRE_FORK_2_5}
 		end,
 	ets:insert(node_state, [
 		{block_index,			BI},
+		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
 		{current,				B#block.indep_hash},
 		{wallet_list,			B#block.wallet_list},
 		{height,				B#block.height},
@@ -1026,7 +1027,7 @@ read_recent_blocks2([]) ->
 read_recent_blocks2([{BH, _, _} | BI]) ->
 	B = ar_storage:read_block(BH),
 	TXs = ar_storage:read_tx(B#block.txs),
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
 	[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | read_recent_blocks2(BI)].
 
 dump_mempool(TXs, MempoolSize) ->

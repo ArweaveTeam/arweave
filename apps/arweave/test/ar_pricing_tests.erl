@@ -55,12 +55,13 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
 	Key2 = {_, Pub2} = ar_wallet:new(),
 	Key3 = {_, Pub3} = ar_wallet:new(),
+	RewardKey = {_, RewardAddr} = ar_wallet:new(),
 	[B0] = ar_weave:init([
 		{ar_wallet:to_address(Pub1), ?AR(2000), <<>>},
 		{ar_wallet:to_address(Pub2), ?AR(2000), <<>>},
-		{ar_wallet:to_address(Pub3), ?AR(2000), <<>>}
+		{ar_wallet:to_address(Pub3), ?AR(2000), <<>>},
+		{ar_wallet:to_address(RewardAddr), ?AR(1), <<>>}
 	]),
-	RewardKey = {_, RewardAddr} = ar_wallet:new(),
 	{_Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
 	{_Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
 	connect_to_slave(),
@@ -71,7 +72,7 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	?assertEqual(0, B1#block.reward_pool),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B1#block.reward_addr),
 	Balance = get_balance(RewardAddr),
-	?assertEqual(ar_inflation:calculate(1), Balance),
+	?assertEqual(?AR(1) + ar_inflation:calculate(1), Balance),
 	%% Mine a block with an empty transaction. Expect an inflation reward and
 	%% data reward for the base tx size.
 	TX1 = sign_tx(Key1),
@@ -99,8 +100,8 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	BI3 = wait_until_height(3),
 	B3 = read_block_when_stored(hd(BI3)),
 	RewardPoolIncrement2 = B3#block.reward_pool - B2#block.reward_pool,
-	TXFee2 =
-		ar_pricing:get_tx_fee(byte_size(Data), B2#block.timestamp, B1#block.usd_to_ar_rate, 2),
+	Size3 = ar_tx:get_weave_size_increase(byte_size(Data), B3#block.height),
+	TXFee2 = ar_pricing:get_tx_fee(Size3, B2#block.timestamp, B1#block.usd_to_ar_rate, 2),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B3#block.reward_addr),
 	Balance3 = get_balance(RewardAddr),
 	MinerReward2 = Balance3 - Balance2,
@@ -139,7 +140,8 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 		lists:foldl(
 			fun(Chunk, Sum) ->
 				Rate = B3#block.usd_to_ar_rate,
-				Sum + ar_pricing:get_tx_fee(byte_size(Chunk), B4#block.timestamp, Rate, 4)
+				Size = ar_tx:get_weave_size_increase(byte_size(Chunk), B4#block.height),
+				Sum + ar_pricing:get_tx_fee(Size, B4#block.timestamp, Rate, 4)
 			end,
 			0,
 			[Data2, Data3, Data4, Data5]
@@ -160,14 +162,9 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 	BI5 = assert_slave_wait_until_height(5),
 	B5 = slave_call(ar_test_node, read_block_when_stored, [hd(BI5)]),
 	RewardPoolIncrement4 = B5#block.reward_pool - B4#block.reward_pool,
-	TXFee4 =
-		ar_pricing:get_tx_fee(
-			byte_size(RewardWalletTX#tx.data),
-			B5#block.timestamp,
-			B4#block.usd_to_ar_rate,
-			5
-		),
-	?assertEqual(B4#block.weave_size + byte_size(RewardWalletTX#tx.data), B5#block.weave_size),
+	Size5 = ar_tx:get_weave_size_increase(byte_size(RewardWalletTX#tx.data), B5#block.height),
+	TXFee4 = ar_pricing:get_tx_fee(Size5, B5#block.timestamp, B4#block.usd_to_ar_rate, 5),
+	?assertEqual(B4#block.weave_size + 262144, B5#block.weave_size),
 	?assertEqual(ar_wallet:to_address(RewardAddr), B5#block.reward_addr),
 	Balance5 = get_balance(RewardAddr),
 	?assertEqual(
@@ -180,11 +177,12 @@ updates_pool_and_assigns_rewards_correctly_before_burden() ->
 
 updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
+	RewardKey = {_, RewardAddr} = ar_wallet:new(),
 	[BNoPool] = ar_weave:init([
-		{ar_wallet:to_address(Pub1), ?AR(2000), <<>>}
+		{ar_wallet:to_address(Pub1), ?AR(2000), <<>>},
+		{ar_wallet:to_address(RewardAddr), ?AR(1), <<>>}
 	]),
 	B0 = BNoPool#block{ reward_pool = ?AR(10000000000000) },
-	RewardKey = {_, RewardAddr} = ar_wallet:new(),
 	{_Master, _} = start(B0, ar_wallet:to_address(RewardAddr)),
 	{_Slave, _} = slave_start(B0, ar_wallet:to_address(RewardAddr)),
 	connect_to_slave(),
@@ -198,13 +196,8 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	BI1 = wait_until_height(1),
 	B1 = read_block_when_stored(hd(BI1)),
 	RewardPoolIncrement = B1#block.reward_pool - B0#block.reward_pool,
-	TXFee =
-		ar_pricing:get_tx_fee(
-			byte_size(BigChunk),
-			B1#block.timestamp,
-			B0#block.usd_to_ar_rate,
-			1
-		),
+	Size1 = ar_tx:get_weave_size_increase(byte_size(BigChunk), B1#block.height),
+	TXFee = ar_pricing:get_tx_fee(Size1, B1#block.timestamp, B0#block.usd_to_ar_rate, 1),
 	Balance2 = get_balance(RewardAddr),
 	MinerReward = Balance2 - Balance,
 	?assertEqual(TXFee + trunc(ar_inflation:calculate(1)), MinerReward + RewardPoolIncrement),
@@ -214,7 +207,7 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 			trunc(ar_inflation:calculate(1))
 			+ MultiplierDividend * RewardPoolIncrement div MultiplierDivisor
 	),
-	?assertEqual(byte_size(TX1#tx.data), B1#block.weave_size),
+	?assertEqual(Size1, B1#block.weave_size),
 	%% Mine an empty block. Expect an inflation reward and a share of the endowment pool.
 	slave_mine(),
 	BI2 = wait_until_height(2),
@@ -233,13 +226,8 @@ updates_pool_and_assigns_rewards_correctly_after_burden() ->
 	BI3 = wait_until_height(3),
 	B3 = read_block_when_stored(hd(BI3)),
 	RewardPoolIncrement3 = B3#block.reward_pool - B2#block.reward_pool,
-	TXFee2 =
-		ar_pricing:get_tx_fee(
-			RewardWalletTX#tx.data_size,
-			B3#block.timestamp,
-			B2#block.usd_to_ar_rate,
-			3
-		),
+	Size3 = ar_tx:get_weave_size_increase(RewardWalletTX#tx.data_size, B3#block.height),
+	TXFee2 = ar_pricing:get_tx_fee(Size3, B3#block.timestamp, B2#block.usd_to_ar_rate, 3),
 	Balance4 = get_balance(RewardAddr),
 	MinerReward3 = Balance4 - Balance3,
 	?assertEqual(

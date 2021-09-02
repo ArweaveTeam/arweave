@@ -18,7 +18,11 @@
 
 %% The number of data sync jobs to run. Each job periodically picks a range
 %% and downloads it from peers.
+-ifdef(DEBUG).
+-define(DEFAULT_SYNC_JOBS, 50).
+-else.
 -define(DEFAULT_SYNC_JOBS, 20).
+-endif.
 
 %% The number of header sync jobs to run. Each job picks the latest not synced
 %% block header and downloads it from peers.
@@ -52,11 +56,18 @@
 -define(MAX_PARALLEL_ARQL_REQUESTS, 10).
 -define(MAX_PARALLEL_GATEWAY_ARQL_REQUESTS, infinity).
 -define(MAX_PARALLEL_GET_CHUNK_REQUESTS, 100).
--define(MAX_PARALLEL_GET_AND_PACK_CHUNK_REQUESTS, 2).
--define(MAX_PARALLEL_GET_TX_DATA_REQUESTS, 2).
+-define(MAX_PARALLEL_GET_AND_PACK_CHUNK_REQUESTS, 1).
+-define(MAX_PARALLEL_GET_TX_DATA_REQUESTS, 1).
 -define(MAX_PARALLEL_WALLET_LIST_REQUESTS, 1).
 -define(MAX_PARALLEL_POST_CHUNK_REQUESTS, 100).
 -define(MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS, 10).
+
+%% The maximum number of chunks per second the node attempts to pack or unpack.
+-ifdef(DEBUG).
+-define(DEFAULT_PACKING_RATE, 50).
+-else.
+-define(DEFAULT_PACKING_RATE, 15).
+-endif.
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -115,6 +126,7 @@
 		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS
 	},
 	disk_cache_size = ?DISK_CACHE_SIZE,
+	packing_rate = ?DEFAULT_PACKING_RATE,
 	debug = false
 }).
 

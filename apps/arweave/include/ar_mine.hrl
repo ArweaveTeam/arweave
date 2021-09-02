@@ -31,7 +31,10 @@ end()).
 %% Recall bytes are only picked from the subspace up to the size
 %% of the weave at the block of the depth defined by this constant.
 -ifdef(DEBUG).
--define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 1).
+-define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 2).
 -else.
 -define(SEARCH_SPACE_UPPER_BOUND_DEPTH, 50).
 -endif.
+
+%% The number of RandomX hashes to compute to pack a chunk.
+-define(PACKING_DIFFICULTY, 20).

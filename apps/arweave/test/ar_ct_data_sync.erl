@@ -140,10 +140,11 @@ original_split(Data) ->
 	{DataRoot, Chunks}.
 
 build_proofs(B, TX, Chunks) ->
-	build_proofs(TX, Chunks, B#block.txs, B#block.weave_size - B#block.block_size).
+	build_proofs(TX, Chunks, B#block.txs, B#block.weave_size - B#block.block_size,
+			B#block.height).
 
-build_proofs(TX, Chunks, TXs, BlockStartOffset) ->
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
+build_proofs(TX, Chunks, TXs, BlockStartOffset, Height) ->
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, Height),
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{value, {_, TXOffset}} =
 		lists:search(fun({{TXID, _}, _}) -> TXID == TX#tx.id end, SizeTaggedTXs),

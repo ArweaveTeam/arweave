@@ -3,16 +3,11 @@
 %%% @end
 -module(ar_poa).
 
--export([
-	validate_pre_fork_2_4/4, validate_pre_fork_2_5/3, validate/3,
-	pack/4, unpack/5
-]).
+-export([validate_pre_fork_2_4/4, validate_pre_fork_2_5/3, validate/4, get_padded_offset/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
--include_lib("eunit/include/eunit.hrl").
 
--define(PACKING_ROUNDS, 20).
 -define(MIN_MAX_OPTION_DEPTH, 100).
 
 %%%===================================================================
@@ -20,9 +15,16 @@
 %%%===================================================================
 
 %% @doc Validate a proof of access.
-validate(RecallByte, BI, SPoA) ->
+validate(RecallByte, BI, SPoA, StrictDataSplitThreshold) ->
 	{TXRoot, BlockBase, BlockTop, _BH} = find_challenge_block(RecallByte, BI),
-	validate(BlockBase, RecallByte - BlockBase, TXRoot, BlockTop - BlockBase, SPoA).
+	validate(BlockBase, RecallByte, TXRoot, BlockTop - BlockBase, SPoA,
+			StrictDataSplitThreshold).
+
+%% @doc Return the smallest multiple of 256 KiB counting from StrictDataSplitThreshold
+%% bigger than or equal to Offset.
+get_padded_offset(Offset, StrictDataSplitThreshold) ->
+	Diff = Offset - StrictDataSplitThreshold,
+	StrictDataSplitThreshold + ((Diff - 1) div (?DATA_CHUNK_SIZE) + 1) * (?DATA_CHUNK_SIZE).
 
 %% @doc Validate a proof of access.
 validate_pre_fork_2_5(RecallByte, BI, POA) ->
@@ -40,50 +42,6 @@ validate_pre_fork_2_4(LastIndepHash, WeaveSize, BI, POA) ->
 	RecallByte = calculate_challenge_byte_pre_fork_2_4(LastIndepHash, WeaveSize, POA#poa.option),
 	validate_pre_fork_2_5(RecallByte, BI, POA).
 
-%% @doc Pack the chunk for mining. Packing ensures every mined chunk of data is globally
-%% unique and cannot be easily inferred during mining from any metadata stored in RAM.
-%% @end
-pack(unpacked, _AbsoluteEndOffset, _TXRoot, Chunk) ->
-	%% Allows to reuse the same interface for unpacking and repacking.
-	Chunk;
-pack(aes_256_cbc, AbsoluteEndOffset, TXRoot, Chunk) ->
-	Options = [{encrypt, true}, {padding, zero}],
-	%% The presence of the absolute end offset in the key makes sure
-	%% packing of every chunk is unique, even when the same chunk is
-	%% present in the same transaction or across multiple transactions
-	%% or blocks. The presence of the transaction root in the key
-	%% ensures one cannot find data that has certain patterns after
-	%% packing.
-	Key = crypto:hash(sha256, << AbsoluteEndOffset:256, TXRoot/binary >>),
-	%% An initialization vector is used for compliance with the CBC cipher
-	%% although it is not needed for our purposes because every chunk is
-	%% encrypted with a unique key.
-	IV = binary:part(Key, {0, 16}),
-	pack(Key, IV, Chunk, Options, ?PACKING_ROUNDS).
-
-pack(_Key, _IV, Chunk, _Options, 0) ->
-	Chunk;
-pack(Key, IV, Chunk, Options, Round) ->
-	Chunk2 = crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options),
-	pack(Key, IV, Chunk2, Options, Round - 1).
-
-%% @doc Unpack the chunk packed for mining.
-unpack(unpacked, _AbsoluteEndOffset, _TXRoot, Chunk, _ChunkSize) ->
-	%% Allows to reuse the same interface for unpacking and repacking.
-	Chunk;
-unpack(aes_256_cbc, AbsoluteEndOffset, TXRoot, Chunk, ChunkSize) ->
-	Options = [{encrypt, false}],
-	Key = crypto:hash(sha256, << AbsoluteEndOffset:256, TXRoot/binary >>),
-	IV = binary:part(Key, {0, 16}),
-	Unpacked = unpack2(Key, IV, Chunk, Options, ?PACKING_ROUNDS),
-	binary:part(Unpacked, {0, ChunkSize}).
-
-unpack2(_Key, _IV, Chunk, _Options, 0) ->
-	Chunk;
-unpack2(Key, IV, Chunk, Options, Round) ->
-	Chunk2 = crypto:crypto_one_time(aes_256_cbc, Key, IV, Chunk, Options),
-	unpack2(Key, IV, Chunk2, Options, Round - 1).
-
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -98,26 +56,42 @@ find_challenge_block(Byte, [{BH, BlockTop, TXRoot}, {_, BlockBase, _} | _])
 find_challenge_block(Byte, [_ | BI]) ->
 	find_challenge_block(Byte, BI).
 
-validate(BlockStartOffset, TXOffset, TXRoot, BlockSize, #poa{ chunk = Chunk } = SPoA) ->
+validate(BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, StrictDataSplitThreshold) ->
+	#poa{ chunk = Chunk } = SPoA,
 	TXPath = SPoA#poa.tx_path,
-	case ar_merkle:validate_path(TXRoot, TXOffset, BlockSize, TXPath) of
+	RecallBucketOffset =
+		case RecallOffset >= StrictDataSplitThreshold of
+			true ->
+				get_padded_offset(RecallOffset + 1, StrictDataSplitThreshold)
+						- (?DATA_CHUNK_SIZE) - BlockStartOffset;
+			false ->
+				RecallOffset - BlockStartOffset
+		end,
+	ValidateDataPathFun =
+		case BlockStartOffset >= StrictDataSplitThreshold of
+			true ->
+				fun ar_merkle:validate_path_strict_data_split/4;
+			false ->
+				fun ar_merkle:validate_path_strict_borders/4
+		end,
+	case ar_merkle:validate_path(TXRoot, RecallBucketOffset, BlockSize, TXPath) of
 		false ->
 			false;
 		{DataRoot, TXStartOffset, TXEndOffset} ->
-			ChunkOffset = TXOffset - TXStartOffset,
 			TXSize = TXEndOffset - TXStartOffset,
+			RecallChunkOffset = RecallBucketOffset - TXStartOffset,
 			DataPath = SPoA#poa.data_path,
-			case ar_merkle:validate_path_strict(DataRoot, ChunkOffset, TXSize, DataPath) of
+			case ValidateDataPathFun(DataRoot, RecallChunkOffset, TXSize, DataPath) of
 				false ->
 					false;
 				{ChunkID, ChunkStartOffset, ChunkEndOffset} ->
 					ChunkSize = ChunkEndOffset - ChunkStartOffset,
 					AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-					Unpacked = unpack(aes_256_cbc, AbsoluteEndOffset, TXRoot, Chunk, ChunkSize),
-					case byte_size(Unpacked) == ChunkSize of
-						false ->
+					case ar_packing_server:unpack(spora_2_5, AbsoluteEndOffset, TXRoot, Chunk,
+							ChunkSize) of
+						{error, invalid_packed_size} ->
 							false;
-						true ->
+						{ok, Unpacked} ->
 							ChunkID == ar_tx:generate_chunk_id(Unpacked)
 					end
 			end
@@ -162,34 +136,3 @@ calculate_challenge_byte_pre_fork_2_4(LastIndepHash, WeaveSize, Option) ->
 multihash(X, Remaining) when Remaining =< 0 -> X;
 multihash(X, Remaining) ->
 	multihash(crypto:hash(?HASH_ALG, X), Remaining - 1).
-
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
-
-pack_test() ->
-	Root = crypto:strong_rand_bytes(32),
-	Cases = [
-		{<<1>>, 1, Root},
-		{<<1>>, 2, Root},
-		{<<0>>, 1, crypto:strong_rand_bytes(32)},
-		{<<0>>, 2, crypto:strong_rand_bytes(32)},
-		{<<0>>, 1234234534535, crypto:strong_rand_bytes(32)},
-		{crypto:strong_rand_bytes(2), 234134234, crypto:strong_rand_bytes(32)},
-		{crypto:strong_rand_bytes(3), 333, crypto:strong_rand_bytes(32)},
-		{crypto:strong_rand_bytes(15), 9999999999999999999999999999, crypto:strong_rand_bytes(32)},
-		{crypto:strong_rand_bytes(16), 16, crypto:strong_rand_bytes(32)},
-		{crypto:strong_rand_bytes(256 * 1024), 100000000000000, crypto:strong_rand_bytes(32)},
-		{crypto:strong_rand_bytes(256 * 1024 - 1), 100000000000000, crypto:strong_rand_bytes(32)}
-	],
-	lists:foreach(
-		fun({Chunk, Offset, TXRoot}) ->
-			Packed = pack(aes_256_cbc, Offset, TXRoot, Chunk),
-			?assertNotEqual(Packed, Chunk),
-			?assertEqual(Chunk, unpack(aes_256_cbc, Offset, TXRoot, Packed, byte_size(Chunk)))
-		end,
-		Cases
-	),
-	Packed =
-		[ar_poa:pack(aes_256_cbc, Offset, TXRoot, Chunk) || {Chunk, Offset, TXRoot} <- Cases],
-	?assertEqual(length(Packed), sets:size(sets:from_list(Packed))).

@@ -110,7 +110,7 @@ test_uses_blacklists() ->
 		Wallet,
 		#{
 			format => 1,
-			data => crypto:strong_rand_bytes(102400),
+			data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 			last_tx => get_tx_anchor(slave)
 		}
 	),
@@ -125,7 +125,7 @@ test_uses_blacklists() ->
 		Wallet,
 		#{
 			format => 1,
-			data => crypto:strong_rand_bytes(204800),
+			data => crypto:strong_rand_bytes(2 * ?DATA_CHUNK_SIZE),
 			last_tx => get_tx_anchor(slave)
 		}
 	),
@@ -164,7 +164,7 @@ setup() ->
 				%% Every TX in this test consists of 10 chunks.
 				%% Only every second chunk is uploaded in this test
 				%% for (originally) blacklisted transactions.
-				[TXOffset - 102400 * I || I <- lists:seq(0, 9, 2)]
+				[TXOffset - ?DATA_CHUNK_SIZE * I || I <- lists:seq(0, 9, 2)]
 			end,
 			BadOffsets
 		),
@@ -176,7 +176,7 @@ setup() ->
 		lists:map(
 			fun(TXOffset) ->
 				%% Every TX in this test consists of 10 chunks.
-				[TXOffset - 102400 * I || I <- lists:seq(0, 9)]
+				[TXOffset - ?DATA_CHUNK_SIZE * I || I <- lists:seq(0, 9)]
 			end,
 			GoodOffsets
 		),
@@ -204,7 +204,8 @@ create_txs(Wallet) ->
 			(_, {TXs, DataTrees}) ->
 				Chunks =
 					lists:sublist(
-						ar_tx:chunk_binary(102400, crypto:strong_rand_bytes(1024000)),
+						ar_tx:chunk_binary(?DATA_CHUNK_SIZE,
+								crypto:strong_rand_bytes(10 * ?DATA_CHUNK_SIZE)),
 						10
 					), % Exclude empty chunk created by chunk_to_binary.
 				SizedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
@@ -216,7 +217,7 @@ create_txs(Wallet) ->
 					#{
 						format => 2,
 						data_root => DataRoot,
-						data_size => 1024000,
+						data_size => 10 * ?DATA_CHUNK_SIZE,
 						last_tx => get_tx_anchor(slave)
 					}
 				),
@@ -274,13 +275,15 @@ upload_data(TXs, GoodTXIDs, DataTrees) ->
 				data_size = DataSize
 			} = TX,
 			{DataTree, Chunks} = maps:get(TXID, DataTrees),
-			ChunkOffsets = lists:zip(Chunks, lists:seq(102400, 1024000, 102400)),
+			ChunkOffsets = lists:zip(Chunks,
+					lists:seq(?DATA_CHUNK_SIZE, 10 * ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE)),
 			UploadChunks =
 				case lists:member(TXID, GoodTXIDs) of
 					true ->
 						ChunkOffsets;
 					false ->
-						[{Chunk, O} || {Chunk, O} <- ChunkOffsets, O rem 204800 == 0]
+						[{Chunk, O} || {Chunk, O} <- ChunkOffsets,
+							O rem (2 * ?DATA_CHUNK_SIZE) == 0]
 				end,
 			lists:foreach(
 				fun({Chunk, Offset}) ->
@@ -382,7 +385,7 @@ assert_does_not_accept_offsets(BadOffsets) ->
 							Proof2 = Proof#{
 								offset => RelativeOffset - 1,
 								data_root => DataRoot,
-								data_size => 1024000
+								data_size => 10 * ?DATA_CHUNK_SIZE
 							},
 							EncodedProof2 = encode_chunk(Proof2),
 							%% The node returns 200 but does not store the chunk.

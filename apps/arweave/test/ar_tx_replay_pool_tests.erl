@@ -230,4 +230,4 @@ wallet({_, Pub}, Balance) ->
 	{ar_wallet:to_address(Pub), Balance, <<>>}.
 
 fee(Height, Timestamp) ->
-	ar_tx:get_tx_fee(?TX_SIZE_BASE, {1, 4}, Height, Timestamp).
+	ar_tx:get_tx_fee(0, {1, 4}, Height, Timestamp).

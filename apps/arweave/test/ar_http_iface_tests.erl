@@ -557,7 +557,7 @@ update_block_timestamp(B, Timestamp) ->
 	} = B,
 	B2 = B#block{ timestamp = Timestamp },
 	BDS = ar_block:generate_block_data_segment(B2),
-	H0 = ar_weave:hash(BDS, Nonce, Height),
+	{H0, _Entropy} = ar_mine:spora_h0_with_entropy(BDS, Nonce, Height),
 	B3 = B2#block{ hash = ar_mine:spora_solution_hash(PrevH, Timestamp, H0, Chunk, Height) },
 	B3#block{ indep_hash = ar_weave:indep_hash(B3) }.
 

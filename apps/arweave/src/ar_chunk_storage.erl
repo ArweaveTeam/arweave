@@ -3,17 +3,8 @@
 
 -behaviour(gen_server).
 
--export([
-	start_link/0,
-	put/2,
-	open_files/0,
-	get/1,
-	has_chunk/1,
-	close_files/0,
-	cut/1,
-	delete/1,
-	repair_chunk/2
-]).
+-export([start_link/0, put/2, open_files/0, get/1, has_chunk/1, close_files/0, cut/1, delete/1,
+		repair_chunk/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 

@@ -326,6 +326,9 @@ parse_options([{<<"randomx_bulk_hashing_iterations">>, D} | Rest], Config) when 
 parse_options([{<<"disk_cache_size_mb">>, D} | Rest], Config) when is_integer(D) ->
 	parse_options(Rest, Config#config{ disk_cache_size = D });
 
+parse_options([{<<"packing_rate">>, D} | Rest], Config) when is_integer(D) ->
+	parse_options(Rest, Config#config{ packing_rate = D });
+
 parse_options([{<<"debug">>, B} | Rest], Config) when is_boolean(B) ->
 	parse_options(Rest, Config#config{ debug = B });
 

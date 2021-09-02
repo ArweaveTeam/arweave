@@ -12,6 +12,7 @@
 
 register(MetricsDir) ->
 	filelib:ensure_dir(MetricsDir ++ "/"),
+	%% Networking.
 	prometheus_counter:new([
 		{name, http_server_accepted_bytes_total},
 		{help, "The total amount of bytes accepted by the HTTP server, per endpoint"},
@@ -32,23 +33,33 @@ register(MetricsDir) ->
 		{help, "The total amount of bytes posted via HTTP, per remote endpoint"},
 		{labels, [route]}
 	]),
-	prometheus_histogram:new([
-		{name, fork_recovery_depth},
-		{buckets, lists:seq(1, 50)},
-		{help, "Fork recovery depth metric"}
-	]),
-	prometheus_gauge:new([
-		{name, arweave_block_height},
-		{help, "Block height"}
-	]),
 	prometheus_gauge:new([
 		{name, arweave_peer_count},
 		{help, "peer count"}
 	]),
+	prometheus_counter:new([
+		{name, gun_requests_total},
+		{labels, [http_method, route, status_class]},
+		{
+			help,
+			"The total number of GUN requests."
+		}
+	]),
 	prometheus_gauge:new([
 		{name, downloader_queue_size},
-		{help, "The size of the downloader queue"}
+		{help, "The size of the back-off queue for the block and transaction headers "
+				"the node failed to sync and will retry later."}
 	]),
+
+	%% SQLite.
+	prometheus_histogram:new([
+		{name, sqlite_query_time},
+		{buckets, [1, 10, 100, 500, 1000, 2000, 10000, 30000]},
+		{labels, [query_type]},
+		{help, "The time in milliseconds of SQLite queries."}
+	]),
+
+	%% Transaction propagation.
 	prometheus_gauge:new([
 		{name, tx_queue_size},
 		{help, "The size of the transaction propagation queue"}
@@ -60,14 +71,6 @@ register(MetricsDir) ->
 			help,
 			"The total number of propagated transactions. Increases "
 			"with the number of peers the node propagates transactions to."
-		}
-	]),
-	prometheus_counter:new([
-		{name, gun_requests_total},
-		{labels, [http_method, route, status_class]},
-		{
-			help,
-			"The total number of GUN requests."
 		}
 	]),
 	prometheus_histogram:declare([
@@ -93,20 +96,23 @@ register(MetricsDir) ->
 			"to be transaction data."
 		}
 	]),
+
+	%% Data seeding.
 	prometheus_gauge:new([
 		{name, weave_size},
-		{
-			help,
-			"The size of the weave (in bytes)."
-		}
+		{help, "The size of the weave (in bytes)."}
 	]),
 	prometheus_gauge:new([
 		{name, v2_index_data_size},
-		{
-			help,
-			"The size (in bytes) of the data stored and indexed in 2.1 chunk index."
-		}
+		{help, "The size (in bytes) of the data stored and indexed."}
 	]),
+	prometheus_gauge:new([
+		{name, v2_index_data_size_by_packing},
+		{labels, [packing]},
+		{help, "The size (in bytes) of the data stored and indexed. Groupped by packing."}
+	]),
+
+	%% Disk pool.
 	prometheus_gauge:new([
 		{name, pending_chunks_size},
 		{
@@ -131,6 +137,23 @@ register(MetricsDir) ->
 			" looks up a chunk from the disk pool and decides whether to"
 			" remove it, include it in the weave, or keep in the disk pool."
 		}
+	]),
+
+	%% Consensus.
+	prometheus_gauge:new([
+		{name, arweave_block_height},
+		{help, "Block height"}
+	]),
+	prometheus_histogram:new([
+		{name, fork_recovery_depth},
+		{buckets, lists:seq(1, 50)},
+		{help, "Fork recovery depth metric"}
+	]),
+	prometheus_histogram:new([
+		{name, block_construction_time_milliseconds},
+		{buckets, [1, 10, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 10000, 30000]},
+		{help, "The time it takes to pick and validate transactions for a block and generate"
+				" a preimage to use in mining."}
 	]),
 	prometheus_gauge:new([
 		{name, wallet_list_size},
@@ -168,11 +191,22 @@ register(MetricsDir) ->
 			"The per second average rate of the number of tried solution candidates "
 			"computed over the last block time."}
 	]),
+	%% Packing.
 	prometheus_histogram:new([
-		{name, sqlite_query_time},
-		{buckets, [1, 10, 100, 500, 1000, 2000, 10000, 30000]},
-		{labels, [query_type]},
-		{help, "The time in milliseconds of SQLite queries."}
+		{name, packing_duration_milliseconds},
+		{labels, [type, trigger]},
+		{buckets, lists:seq(1, 200)},
+		{help, "The packing/unpacking time in milliseconds. The type label distinguishes"
+				"packing from unpacking. The trigger label shows whether packing was triggered"
+				"externally (an HTTP request) or internally (during syncing or repacking)."}
+	]),
+	prometheus_counter:new([
+		{name, validating_packed_spora},
+		{help, "The number of SPoRA solutions based on packed chunks entered validation."}
+	]),
+	prometheus_counter:new([
+		{name, validating_unpacked_spora},
+		{help, "The number of SPoRA solutions based on unpacked chunks entered validation."}
 	]).
 
 load_gauge(MetricsDir, Name) ->

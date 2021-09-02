@@ -1,19 +1,11 @@
 %%% @doc The module with utilities for transaction creation, signing and verification.
 -module(ar_tx).
 
--export([
-	new/0, new/1, new/2, new/3, new/4,
-	sign/2, sign/3,
-	sign_v1/2, sign_v1/3,
-	verify/5, verify/6,
-	verify_tx_id/2,
-	tags_to_list/1,
-	get_tx_fee/4, get_tx_fee/6,
-	check_last_tx/2,
-	generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
-	chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
-	get_addresses/1
-]).
+-export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, sign_v1/2, sign_v1/3, verify/5,
+		verify/6, verify_tx_id/2, tags_to_list/1, get_tx_fee/4, get_tx_fee/6, check_last_tx/2,
+		generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
+		chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
+		get_addresses/1, get_weave_size_increase/2]).
 
 -export([get_wallet_fee_pre_fork_2_4/2]).
 
@@ -192,6 +184,22 @@ sized_chunks_to_sized_chunk_ids(SizedChunks) ->
 get_addresses(TXs) ->
 	get_addresses(TXs, sets:new()).
 
+%% @doc Return the number of bytes the weave is increased by when the given transaction
+%% is included.
+get_weave_size_increase(#tx{ data_size = DataSize }, Height) ->
+	get_weave_size_increase(DataSize, Height);
+
+get_weave_size_increase(0, _Height) ->
+	0;
+get_weave_size_increase(DataSize, Height) ->
+	case Height >= ar_fork:height_2_5() of
+		true ->
+			%% The smallest multiple of ?DATA_CHUNK_SIZE larger than or equal to data_size.
+			ar_poa:get_padded_offset(DataSize, 0);
+		false ->
+			DataSize
+	end.
+
 get_wallet_fee_pre_fork_2_4(Diff, Height) ->
 	case Height >= ar_fork:height_2_2() of
 		true ->
@@ -281,8 +289,6 @@ do_verify_v1(TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
 		 is_tx_fee_sufficient(TX, Rate, Height, Wallets, TX#tx.target, Timestamp)},
 		{"tx_fields_too_large",
 		 tx_field_size_limit_v1(TX, Height)},
-		{"tag_field_illegally_specified",
-		 tag_field_legal(TX)},
 		{"last_tx_not_valid",
 		 LastTXCheck},
 		{"tx_id_not_valid",
@@ -322,9 +328,7 @@ do_verify_v2(TX, Rate, Height, Wallets, Timestamp, VerifySignature) ->
 		{"tx_too_cheap",
 		 is_tx_fee_sufficient(TX, Rate, Height, Wallets, TX#tx.target, Timestamp)},
 		{"tx_fields_too_large",
-		 tx_field_size_limit_v2(TX)},
-		{"tag_field_illegally_specified",
-		 tag_field_legal(TX)},
+		 tx_field_size_limit_v2(TX, Height)},
 		{"tx_id_not_valid",
 		 verify_hash(TX)},
 		{"overspend",
@@ -349,30 +353,14 @@ tx_field_size_limit_v1(TX, Height) ->
 			false ->
 				32
 		end,
-	case tag_field_legal(TX) of
-		true ->
-			(byte_size(TX#tx.id) =< 32) and
-			(byte_size(TX#tx.last_tx) =< LastTXLimit) and
-			(byte_size(TX#tx.owner) =< 512) and
-			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
-			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
-			(byte_size(TX#tx.data) =< (?TX_DATA_SIZE_LIMIT)) and
-			(byte_size(TX#tx.signature) =< 512) and
-			(byte_size(integer_to_binary(TX#tx.reward)) =< 21);
-		false -> false
-	end.
-
-%% @doc Check that the structure of the txs tag field is in the expected key value format.
-tag_field_legal(TX) ->
-	lists:all(
-		fun(X) ->
-			case X of
-				{_, _} -> true;
-				_ -> false
-			end
-		end,
-		TX#tx.tags
-	).
+	(byte_size(TX#tx.id) =< 32) andalso
+	(byte_size(TX#tx.last_tx) =< LastTXLimit) andalso
+	(byte_size(TX#tx.owner) =< 512) andalso
+	validate_tags_size(TX, Height) andalso
+	(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) andalso
+	(byte_size(TX#tx.data) =< (?TX_DATA_SIZE_LIMIT)) andalso
+	(byte_size(TX#tx.signature) =< 512) andalso
+	(byte_size(integer_to_binary(TX#tx.reward)) =< 21).
 
 %% @doc Verify that the transactions ID is a hash of its signature.
 verify_hash(#tx {signature = Sig, id = ID}) ->
@@ -483,7 +471,8 @@ validate_overspend(TX, Wallets) ->
 
 %% @doc Ensure that transaction fee is sufficiently big.
 is_tx_fee_sufficient(TX, Rate, Height, Wallets, Addr, Timestamp) ->
-	TX#tx.reward >= get_tx_fee(TX#tx.data_size, Rate, Height + 1, Wallets, Addr, Timestamp).
+	Size = get_weave_size_increase(TX, Height + 1),
+	TX#tx.reward >= get_tx_fee(Size, Rate, Height + 1, Wallets, Addr, Timestamp).
 
 %% @doc Calculate the minimum required transaction fee, including a wallet fee,
 %% if `Addr` is not in `Wallets`.
@@ -513,20 +502,32 @@ verify_target_length(TX, Height) ->
 			byte_size(TX#tx.target) =< 32
 	end.
 
-tx_field_size_limit_v2(TX) ->
-	case tag_field_legal(TX) of
+tx_field_size_limit_v2(TX, Height) ->
+	(byte_size(TX#tx.id) =< 32) andalso
+	(byte_size(TX#tx.last_tx) =< 48) andalso
+	(byte_size(TX#tx.owner) =< 512) andalso
+	validate_tags_size(TX, Height) andalso
+	(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) andalso
+	(byte_size(integer_to_binary(TX#tx.data_size)) =< 21) andalso
+	(byte_size(TX#tx.signature) =< 512) andalso
+	(byte_size(integer_to_binary(TX#tx.reward)) =< 21) andalso
+	(byte_size(TX#tx.data_root) =< 32).
+
+validate_tags_size(TX, Height) ->
+	case Height >= ar_fork:height_2_5() of
 		true ->
-			(byte_size(TX#tx.id) =< 32) and
-			(byte_size(TX#tx.last_tx) =< 48) and
-			(byte_size(TX#tx.owner) =< 512) and
-			(byte_size(tags_to_binary(TX#tx.tags)) =< 2048) and
-			(byte_size(integer_to_binary(TX#tx.quantity)) =< 21) and
-			(byte_size(integer_to_binary(TX#tx.data_size)) =< 21) and
-			(byte_size(TX#tx.signature) =< 512) and
-			(byte_size(integer_to_binary(TX#tx.reward)) =< 21) and
-			(byte_size(TX#tx.data_root) =< 32);
-		false -> false
+			Tags = TX#tx.tags,
+			validate_tags_length(Tags, 0) andalso byte_size(tags_to_binary(Tags)) =< 2048;
+		false ->
+			byte_size(tags_to_binary(TX#tx.tags)) =< 2048
 	end.
+
+validate_tags_length(_, N) when N > 2048 ->
+	false;
+validate_tags_length([_ | Tags], N) ->
+	validate_tags_length(Tags, N + 1);
+validate_tags_length([], _) ->
+	true.
 
 %% @doc Convert a transactions key-value tags to binary a format.
 tags_to_binary(Tags) ->
@@ -547,7 +548,7 @@ tags_to_binary(Tags) ->
 sign_tx_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(1)),
 	{Priv, Pub} = ar_wallet:new(),
-	Rate = ?USD_TO_AR_INITIAL_RATE,
+	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
 	Timestamp = os:system_time(seconds),
 	ValidTXs = [
 		sign_v1(NewTX, Priv, Pub),
@@ -637,7 +638,7 @@ test_sign_and_verify_chunked() ->
 forge_test() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(10)),
 	{Priv, Pub} = ar_wallet:new(),
-	Rate = ?USD_TO_AR_INITIAL_RATE,
+	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
 	Height = 0,
 	InvalidSignTX = (sign_v1(NewTX, Priv, Pub))#tx {
 		data = <<"FAKE DATA">>
@@ -692,7 +693,7 @@ tx_fee_test() ->
 	Addr2 = ar_wallet:to_address(Pub2),
 	WalletList = maps:from_list([{Addr1, {1000, <<>>}}]),
 	Size = 1000,
-	Rate = ?USD_TO_AR_INITIAL_RATE,
+	Rate = ?INITIAL_USD_TO_AR_PRE_FORK_2_5,
 	Height = ar_fork:height_2_4(),
 	Timestamp = os:system_time(seconds),
 	TXFee = get_tx_fee(Size, Rate, Height, Timestamp),
@@ -742,6 +743,31 @@ test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
 	RealChunkID = ar_tx:generate_chunk_id(Chunk),
 	{PathChunkID, StartOffset, EndOffset} =
 		ar_merkle:validate_path(DataRoot, ChallengeLocation, byte_size(Data), DataPath),
+	{PathChunkID, StartOffset, EndOffset} =
+		ar_merkle:validate_path_strict_data_split(DataRoot, ChallengeLocation, byte_size(Data),
+				DataPath),
+	{PathChunkID, StartOffset, EndOffset} =
+		ar_merkle:validate_path_strict_borders(DataRoot, ChallengeLocation, byte_size(Data),
+				DataPath),
 	?assertEqual(RealChunkID, PathChunkID),
 	?assert(ChallengeLocation >= StartOffset),
 	?assert(ChallengeLocation < EndOffset).
+
+get_weave_size_increase_test() ->
+	?assertEqual(0, get_weave_size_increase(#tx{}, ar_fork:height_2_5())),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5())),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 256 }, ar_fork:height_2_5())),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 256 * 1024 - 1 }, ar_fork:height_2_5())),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5())),
+	?assertEqual(2 * 262144,
+			get_weave_size_increase(#tx{ data_size = 256 * 1024 + 1}, ar_fork:height_2_5())),
+	?assertEqual(0,
+			get_weave_size_increase(#tx{ data_size = 0 }, ar_fork:height_2_5() - 1)),
+	?assertEqual(1,
+			get_weave_size_increase(#tx{ data_size = 1 }, ar_fork:height_2_5() - 1)),
+	?assertEqual(262144,
+			get_weave_size_increase(#tx{ data_size = 256 * 1024 }, ar_fork:height_2_5() - 1)).

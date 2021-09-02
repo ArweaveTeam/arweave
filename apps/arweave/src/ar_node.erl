@@ -5,26 +5,13 @@
 
 -module(ar_node).
 
--export([
-	get_blocks/0,
-	get_block_index/0, is_in_block_index/1, get_height/0,
-	get_balance/1,
-	get_last_tx/1,
-	get_wallets/1,
-	get_wallet_list_chunk/2,
-	get_current_diff/0, get_diff/0,
-	get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
-	get_current_usd_to_ar_rate/0,
-	get_current_block_hash/0,
-	get_block_index_entry/1,
-	get_2_0_hash_of_1_0_block/1,
-	is_joined/0,
-	get_block_anchors/0, get_recent_txs_map/0,
-	mine/0,
-	add_tx/1,
-	get_mempool_size/0,
-	get_block_shadow_from_cache/1
-]).
+-export([get_blocks/0, get_block_index/0, is_in_block_index/1, get_height/0, get_balance/1,
+		get_last_tx/1, get_wallets/1, get_wallet_list_chunk/2, get_current_diff/0, get_diff/0,
+		get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
+		get_current_usd_to_ar_rate/0, get_current_block_hash/0, get_block_index_entry/1,
+		get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0, get_recent_txs_map/0,
+		mine/0, add_tx/1, get_mempool_size/0, get_block_shadow_from_cache/1,
+		get_recent_search_space_upper_bound_by_prev_h/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -192,23 +179,14 @@ is_joined() ->
 %% The function name is confusing and needs to be changed.
 %% @end
 get_current_diff() ->
-	Props =
-		ets:select(
-			node_state,
-			[{{'$1', '$2'},
-				[{'or',
-					{'==', '$1', height},
-					{'==', '$1', last_retarget},
-					{'==', '$1', diff}}], ['$_']}]
-		),
-	Height = proplists:get_value(height, Props),
-	Diff = proplists:get_value(diff, Props),
-	LastRetarget = proplists:get_value(last_retarget, Props),
+	H = get_current_block_hash(),
+	B = ar_node:get_block_shadow_from_cache(H),
 	ar_retarget:maybe_retarget(
-		Height + 1,
-		Diff,
+		B#block.height + 1,
+		B#block.diff,
 		os:system_time(seconds),
-		LastRetarget
+		B#block.last_retarget,
+		B#block.timestamp
 	).
 
 %% @doc Get the currently estimated USD to AR exchange rate.
@@ -277,3 +255,42 @@ mine() ->
 %% @doc Add a transaction to the memory pool, ready for mining.
 add_tx(TX)->
 	ar_events:send(tx, {ready_for_mining, TX}).
+
+%% @doc Return the search space upper bound for the block following the block with the
+%% given hash. Only works for the recent ?STORE_BLOCKS_BEHIND_CURRENT blocks.
+%% Return not_found if the given hash is not found in the block cache.
+get_recent_search_space_upper_bound_by_prev_h(H) ->
+	get_recent_search_space_upper_bound_by_prev_h(H, 0).
+
+get_recent_search_space_upper_bound_by_prev_h(H, Diff) ->
+	case ar_block_cache:get_block_and_status(block_cache, H) of
+		{_B, on_chain} ->
+			[{_, BI}] = ets:lookup(node_state, recent_block_index),
+			get_recent_search_space_upper_bound_by_prev_h(H, Diff, BI);
+		{#block{ previous_block = PrevH, weave_size = WeaveSize }, _} ->
+			case Diff == ?SEARCH_SPACE_UPPER_BOUND_DEPTH - 1 of
+				true ->
+					WeaveSize;
+				false ->
+					get_recent_search_space_upper_bound_by_prev_h(PrevH, Diff + 1)
+			end;
+		not_found ->
+			?LOG_INFO([{event, prev_block_not_found}, {h, ar_util:encode(H)}, {depth, Diff}]),
+			not_found
+	end.
+
+get_recent_search_space_upper_bound_by_prev_h(H, Diff, [{H, _, _} | _] = BI) ->
+	SearchSpaceUpperBoundDepth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
+	Depth = SearchSpaceUpperBoundDepth - Diff,
+	case length(BI) < Depth of
+		true ->
+			element(2, lists:last(BI));
+		false ->
+			element(2, lists:nth(Depth, BI))
+	end;
+get_recent_search_space_upper_bound_by_prev_h(H, Diff, [_ | BI]) ->
+	get_recent_search_space_upper_bound_by_prev_h(H, Diff, BI);
+get_recent_search_space_upper_bound_by_prev_h(H, Diff, []) ->
+	?LOG_INFO([{event, prev_block_not_found_when_scanning_recent_block_index},
+			{h, ar_util:encode(H)}, {depth, Diff}]),
+	not_found.

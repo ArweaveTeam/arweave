@@ -28,6 +28,7 @@
 		ar,
 		ar_chunk_storage,
 		ar_poa,
+		ar_packing_server,
 		ar_node_utils,
 		ar_meta_db,
 		ar_webhook_tests,
@@ -235,6 +236,9 @@ show_help() ->
 					[?DISK_CACHE_SIZE]
 				)
 			)},
+			{"packing_rate", io_lib:format(
+				"The maximum number of chunks per second to pack or unpack. "
+				"Default: ~B.", [?DEFAULT_PACKING_RATE])},
 			{"debug",
 				"Enable extended logging."
 			}
@@ -366,7 +370,8 @@ parse_cli_args(["randomx_bulk_hashing_iterations", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { randomx_bulk_hashing_iterations = list_to_integer(Num) });
 parse_cli_args(["disk_cache_size_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { disk_cache_size = list_to_integer(Num) });
-
+parse_cli_args(["packing_rate", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config { packing_rate = list_to_integer(Num) });
 parse_cli_args(["debug" | Rest], C) ->
 	parse_cli_args(Rest, C#config { debug = true });
 parse_cli_args([Arg|_Rest], _O) ->
@@ -405,11 +410,9 @@ start(normal, _Args) ->
 		max_no_files => 10,
 		max_no_bytes => 51418800 % 10 x 5MB
 	},
-	logger:add_handler(
-		disk_log,
-		logger_disk_log_h,
-		#{ config => LoggerConfigDisk, level => info }
-	),
+	Level = case Config#config.debug of false -> info; _ -> debug end,
+	logger:add_handler(disk_log, logger_disk_log_h,
+			#{ config => LoggerConfigDisk, level => Level }),
 	LoggerFormatterDisk = #{
 		chars_limit => 512,
 		max_size => 512,
@@ -419,7 +422,7 @@ start(normal, _Args) ->
 		template => [time," [",level,"] ",file,":",line," ",msg,"\n"]
 	},
 	logger:set_handler_config(disk_log, formatter, {logger_formatter, LoggerFormatterDisk}),
-	logger:set_application_level(arweave, info),
+	logger:set_application_level(arweave, Level),
 	%% Start the Prometheus metrics subsystem.
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
@@ -578,7 +581,7 @@ warn_if_single_scheduler() ->
 
 %% @doc Run all of the tests associated with the core project.
 tests() ->
-	tests(?CORE_TEST_MODS, #config {}).
+	tests(?CORE_TEST_MODS, #config{ debug = true }).
 
 tests(Mods, Config) when is_list(Mods) ->
 	start_for_tests(Config),

@@ -2,7 +2,6 @@
 
 -export([
 	init/0, init/1, init/2, init/3, init/4,
-	hash/3,
 	indep_hash/1, indep_hash/3, indep_hash/4,
 	create_genesis_txs/0,
 	read_v1_genesis_txs/0,
@@ -26,14 +25,8 @@ init(WalletList, StartingDiff, RewardPool, TXs) ->
 	WL = ar_patricia_tree:from_proplist([{A, {B, LTX}} || {A, B, LTX} <- WalletList]),
 	WLH = element(1, ar_block:hash_wallet_list(0, unclaimed, WL)),
 	ok = ar_storage:write_wallet_list(WLH, WL),
-	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs),
-	BlockSize =
-		case SizeTaggedTXs of
-			[] ->
-				0;
-			_ ->
-				element(2, lists:last(SizeTaggedTXs))
-		end,
+	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, 0),
+	BlockSize = case SizeTaggedTXs of [] -> 0; _ -> element(2, lists:last(SizeTaggedTXs)) end,
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{TXRoot, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	B0 =
@@ -64,7 +57,9 @@ init(WalletList, StartingDiff, RewardPool, TXs) ->
 			false ->
 				B0#block{
 					usd_to_ar_rate = ?NEW_WEAVE_USD_TO_AR_RATE,
-					scheduled_usd_to_ar_rate = ?NEW_WEAVE_USD_TO_AR_RATE
+					scheduled_usd_to_ar_rate = ?NEW_WEAVE_USD_TO_AR_RATE,
+					packing_2_5_threshold = 0,
+					strict_data_split_threshold = 0
 				}
 		end,
 	B2 = B1#block { last_retarget = B1#block.timestamp },
@@ -86,14 +81,6 @@ generate_block_index(Blocks) ->
 		end,
 		Blocks
 	).
-
-%% @doc Create the hash of the next block in the list, given a previous block,
-%% and the TXs and the nonce.
-%% @end
-hash(BDS, Nonce, Height) ->
-	HashData = << Nonce/binary, BDS/binary >>,
-	true = Height >= ar_fork:height_1_7(),
-	ar_randomx_state:hash(Height, HashData).
 
 %% @doc Compute the block identifier (also referred to as "independent hash").
 indep_hash(B) ->

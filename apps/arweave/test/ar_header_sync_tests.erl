@@ -108,7 +108,7 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 								TX = sign_tx(master, Wallet,
 									#{
 										last_tx => Anchor,
-										data => crypto:strong_rand_bytes(10 * 1024)
+										data => crypto:strong_rand_bytes(10 * 1024 * 1024)
 									}),
 								assert_post_tx_to_master(TX),
 								[TX | Acc];

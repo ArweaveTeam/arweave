@@ -4,7 +4,7 @@
 	get_tx_fee/4,
 	get_miner_reward_and_endowment_pool/1,
 	get_tx_fee_pre_fork_2_4/4,
-	usd_to_ar/3,
+	usd_to_ar_rate/1, usd_to_ar/3,
 	recalculate_usd_to_ar_rate/1,
 	usd_to_ar_pre_fork_2_4/3,
 	get_miner_reward_and_endowment_pool_pre_fork_2_4/1
@@ -110,6 +110,17 @@ get_miner_reward_and_endowment_pool_pre_fork_2_4(Args) ->
 		false ->
 			Take = min(Pool2, Burden - BaseReward),
 			{BaseReward + Take, Pool2 - Take}
+	end.
+
+%% @doc Return the effective USD to AR rate corresponding to the given block
+%% considering its previous block.
+usd_to_ar_rate(#block{ height = PrevHeight } = PrevB) ->
+	Height_2_5 = ar_fork:height_2_5(),
+	case PrevHeight < Height_2_5 of
+		true ->
+			?INITIAL_USD_TO_AR(PrevHeight)();
+		false ->
+			PrevB#block.usd_to_ar_rate
 	end.
 
 %% @doc Return the amount of AR the given number of USD is worth.

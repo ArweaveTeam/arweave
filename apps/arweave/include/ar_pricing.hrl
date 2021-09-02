@@ -32,13 +32,20 @@
 %% rewards.
 -define(INITIAL_USD_TO_AR(Height), fun() ->
 	Forks = {
+		ar_fork:height_2_4(),
 		ar_fork:height_2_5()
 	},
 	case Forks of
-		{Fork_2_5} when Height >= Fork_2_5 ->
-			{1, 20}
+		{_Fork_2_4, Fork_2_5} when Height >= Fork_2_5 ->
+			{1, 5};
+		{Fork_2_4, _Fork_2_5} when Height >= Fork_2_4 ->
+			?INITIAL_USD_TO_AR_PRE_FORK_2_5
 	end
 end).
+
+%% The original USD to AR conversion rate, defined as a fraction. Set up at fork 2.4.
+%% Used until the fork 2.5.
+-define(INITIAL_USD_TO_AR_PRE_FORK_2_5, {1, 5}).
 
 %% The network difficulty at the time when the USD to AR exchange rate was
 %% ?INITIAL_USD_TO_AR(Height). Used to account for the change in the network
@@ -68,16 +75,16 @@ end).
 	Forks = {
 		ar_fork:height_1_9(),
 		ar_fork:height_2_2(),
-		ar_fork:height_2_5()
+		ar_fork:height_2_6()
 	},
 	case Forks of
-		{_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
-			Fork_2_5;
-		{_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
+		{_Fork_1_9, _Fork_2_2, Fork_2_6} when Height >= Fork_2_6 ->
+			Fork_2_6;
+		{_Fork_1_9, Fork_2_2, _Fork_2_6} when Height >= Fork_2_2 ->
 			Fork_2_2;
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_6} when Height < Fork_1_9 ->
 			ar_fork:height_1_8();
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_6} ->
 			Fork_1_9
 	end
 end).
@@ -90,11 +97,7 @@ end).
 -define(MINING_REWARD_MULTIPLIER, {2, 10}).
 
 %% The USD to AR exchange rate for a new chain, e.g. a testnet.
--define(NEW_WEAVE_USD_TO_AR_RATE, {1, 4}).
-
-%% The original USD to AR conversion rate, defined as a fraction. Set up at fork 2.4.
-%% Used until the fork 2.5.
--define(USD_TO_AR_INITIAL_RATE, {1, 5}).
+-define(NEW_WEAVE_USD_TO_AR_RATE, ?INITIAL_USD_TO_AR_PRE_FORK_2_5).
 
 %% How much harder it should be to mine each
 %% subsequent alternative POA option. Used until the fork 2.4.

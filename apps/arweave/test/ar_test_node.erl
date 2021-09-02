@@ -1,32 +1,21 @@
 -module(ar_test_node).
 
--export([
-	start/1, start/2, start/3, slave_start/1, slave_start/2, wait_until_joined/0,
-	connect_to_slave/0, disconnect_from_slave/0,
-	slave_call/3, slave_call/4,
-	slave_add_tx/1,
-	slave_mine/0,
-	wait_until_height/1, slave_wait_until_height/1, assert_slave_wait_until_height/1,
-	wait_until_block_block_index/1, assert_wait_until_block_block_index/1,
-	wait_until_receives_txs/1, assert_wait_until_receives_txs/1,
-	assert_slave_wait_until_receives_txs/1,
-	post_tx_to_slave/1, post_tx_to_master/1, post_tx_to_master/2,
-	assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
-	sign_tx/1, sign_tx/2, sign_tx/3,
-	sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
-	get_tx_anchor/0, get_tx_anchor/1,
-	join/1, join_on_slave/0, join_on_master/0,
-	get_last_tx/1, get_last_tx/2,
-	get_tx_confirmations/2,
-	get_balance/1,
-	test_with_mocked_functions/2,
-	get_tx_price/1,
-	post_and_mine/2,
-	read_block_when_stored/1,
-	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
-	add_peer/1,
-	random_v1_data/1
-]).
+-export([start/1, start/2, start/3, slave_start/1, slave_start/2, wait_until_joined/0,
+		connect_to_slave/0, disconnect_from_slave/0, slave_call/3, slave_call/4,
+		slave_add_tx/1, slave_mine/0, wait_until_height/1, slave_wait_until_height/1,
+		assert_slave_wait_until_height/1, wait_until_block_block_index/1,
+		assert_wait_until_block_block_index/1, wait_until_receives_txs/1,
+		assert_wait_until_receives_txs/1, assert_slave_wait_until_receives_txs/1,
+		post_tx_to_slave/1, post_tx_to_master/1, post_tx_to_master/2,
+		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, sign_tx/1, sign_tx/2, sign_tx/3,
+		sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3, get_tx_anchor/0, get_tx_anchor/1,
+		join/1, join_on_slave/0, join_on_master/0,
+		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
+		get_balance/1, test_with_mocked_functions/2,
+		get_tx_price/1, post_and_mine/2, read_block_when_stored/1,
+		get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2, add_peer/1, random_v1_data/1,
+		assert_get_tx_data/3, assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
+		assert_data_not_found_master/1, assert_data_not_found_slave/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -66,7 +55,8 @@ start(B0, RewardAddr, Config) ->
 		disk_space_check_frequency = 1000,
 		header_sync_jobs = 4,
 		enable = [search_in_rocksdb_when_mining, serve_arql, serve_wallet_txs,
-			serve_wallet_deposits, arql_tags_index]
+			serve_wallet_deposits, arql_tags_index, serve_tx_data_without_limits],
+		debug = true
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	wait_until_joined(),
@@ -125,7 +115,7 @@ write_genesis_files(DataDir, B0, WalletList) ->
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
 
 join_on_slave() ->
-	join({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}).
+	join(slave_peer()).
 
 join(Peer) ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -138,7 +128,7 @@ join(Peer) ->
 	whereis(ar_node_worker).
 
 join_on_master() ->
-	slave_call(ar_test_node, join, [{127, 0, 0, 1, ar_meta_db:get(port)}]).
+	slave_call(ar_test_node, join, [master_peer()]).
 
 connect_to_slave() ->
 	%% Connect the nodes by making two HTTP calls.
@@ -147,21 +137,22 @@ connect_to_slave() ->
 	%% not in the remote peer list. So we need to remove it from ar_meta_db
 	%% otherwise it's not added to the remote peer list when it makes a request
 	%% to us in turn.
-	MasterPort = ar_meta_db:get(port),
-	slave_call(ar_meta_db, reset_peer, [{127, 0, 0, 1, MasterPort}]),
-	SlavePort = slave_call(ar_meta_db, get, [port]),
+	{ok, Config} = application:get_env(arweave, config),
+	MasterPort = Config#config.port,
+	slave_call(ar_meta_db, reset_peer, [master_peer()]),
+	SlavePort = (element(2, slave_call(application, get_env, [arweave, config])))#config.port,
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, SlavePort},
+			peer => slave_peer(),
 			path => "/info",
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(MasterPort)}]
 		}),
-	ar_meta_db:reset_peer({127, 0, 0, 1, SlavePort}),
+	ar_meta_db:reset_peer(slave_peer()),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, MasterPort},
+			peer => master_peer(),
 			path => "/info",
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}]
 		}).
@@ -175,10 +166,8 @@ disconnect_from_slave() ->
 	%% x-p2p-port HTTP header corresponding to the listening port of
 	%% the receiving node so that freshly started nodes do not start peering
 	%% unless connect_to_slave/0 is called.
-	SlavePort = slave_call(ar_meta_db, get, [port]),
-	ar_meta_db:put({peer, {127, 0, 0, 1, SlavePort}}, #performance{}),
-	MasterPort = ar_meta_db:get(port),
-	slave_call(ar_meta_db, put, [{peer, {127, 0, 0, 1, MasterPort}}, #performance{}]),
+	ar_meta_db:put({peer, slave_peer()}, #performance{}),
+	slave_call(ar_meta_db, put, [{peer, master_peer()}, #performance{}]),
 	slave_call(ar_bridge, set_remote_peers, [[]]),
 	ar_bridge:set_remote_peers([]),
 	{ok, Config} = application:get_env(arweave, config),
@@ -275,7 +264,7 @@ assert_slave_wait_until_receives_txs(TXs) ->
 
 post_tx_to_slave(TX) ->
 	SlavePort = slave_call(ar_meta_db, get, [port]),
-	SlaveIP = {127, 0, 0, 1, SlavePort},
+	SlaveIP = slave_peer(),
 	Reply =
 		ar_http:req(#{
 			method => post,
@@ -325,10 +314,8 @@ post_tx_to_master(TX, Wait) ->
 					ok
 			end;
 		_ ->
-			?LOG_INFO(
-				"Failed to post transaction. Error DB entries: ~p~n",
-				[ar_tx_db:get_error_codes(TX#tx.id)]
-			),
+			?debugFmt("Failed to post transaction. Error DB entries: ~p.",
+					[ar_tx_db:get_error_codes(TX#tx.id)]),
 			noop
 	end,
 	Reply.
@@ -618,7 +605,8 @@ get_chunk2(Peer, Offset) ->
 	ar_http:req(#{
 		method => get,
 		peer => Peer,
-		path => "/chunk/" ++ integer_to_list(Offset)
+		path => "/chunk/" ++ integer_to_list(Offset),
+		headers => [{<<"x-bucket-based-offset">>, <<"true">>}]
 	}).
 
 post_chunk(Proof) ->
@@ -644,3 +632,82 @@ add_peer(Port) ->
 random_v1_data(Size) ->
 	%% Make sure v1 txs do not end with a digit, otherwise they are malleable.
 	<< (crypto:strong_rand_bytes(Size - 1))/binary, <<"a">>/binary >>.
+
+assert_get_tx_data_master(TXID, ExpectedData) ->
+	assert_get_tx_data(master_peer(), TXID, ExpectedData).
+
+assert_get_tx_data_slave(TXID, ExpectedData) ->
+	assert_get_tx_data(slave_peer(), TXID, ExpectedData).
+
+assert_get_tx_data(Peer, TXID, ExpectedData) ->
+	?debugFmt("Polling for data of ~s.", [ar_util:encode(TXID)]),
+	true = ar_util:do_until(
+		fun() ->
+			case ar_http:req(#{ method => get, peer => Peer,
+					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" }) of
+				{ok, {{<<"200">>, _}, _, ExpectedData, _, _}} ->
+					true;
+				{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
+					false;
+				UnexpectedResponse ->
+					?debugFmt("Got unexpected response: ~p.", [UnexpectedResponse]),
+					false
+			end
+		end,
+		100,
+		120 * 1000
+	),
+	{ok, {{<<"200">>, _}, _, OffsetJSON, _, _}}
+			= ar_http:req(#{ method => get, peer => Peer,
+					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/offset" }),
+	Map = jiffy:decode(OffsetJSON, [return_maps]),
+	Offset = binary_to_integer(maps:get(<<"offset">>, Map)),
+	Size = binary_to_integer(maps:get(<<"size">>, Map)),
+	?assertEqual(ExpectedData, get_tx_data_in_chunks(Offset, Size, Peer)),
+	?assertEqual(ExpectedData, get_tx_data_in_chunks_traverse_forward(Offset, Size, Peer)).
+
+get_tx_data_in_chunks(Offset, Size, Peer) ->
+	get_tx_data_in_chunks(Offset, Offset - Size, Peer, []).
+
+get_tx_data_in_chunks(Offset, Start, _Peer, Bin) when Offset =< Start ->
+	ar_util:encode(iolist_to_binary(Bin));
+get_tx_data_in_chunks(Offset, Start, Peer, Bin) ->
+	{ok, {{<<"200">>, _}, _, JSON, _, _}}
+			= ar_http:req(#{ method => get, peer => Peer,
+					path => "/chunk/" ++ integer_to_list(Offset),
+					headers => [{<<"x-bucket-based-offset">>, <<"true">>}] }),
+	Map = jiffy:decode(JSON, [return_maps]),
+	Chunk = ar_util:decode(maps:get(<<"chunk">>, Map)),
+	get_tx_data_in_chunks(Offset - byte_size(Chunk), Start, Peer, [Chunk | Bin]).
+
+get_tx_data_in_chunks_traverse_forward(Offset, Size, Peer) ->
+	get_tx_data_in_chunks_traverse_forward(Offset, Offset - Size, Peer, []).
+
+get_tx_data_in_chunks_traverse_forward(Offset, Start, _Peer, Bin) when Offset =< Start ->
+	ar_util:encode(iolist_to_binary(lists:reverse(Bin)));
+get_tx_data_in_chunks_traverse_forward(Offset, Start, Peer, Bin) ->
+	{ok, {{<<"200">>, _}, _, JSON, _, _}}
+			= ar_http:req(#{ method => get, peer => Peer,
+					path => "/chunk/" ++ integer_to_list(Start + 1) }),
+	Map = jiffy:decode(JSON, [return_maps]),
+	Chunk = ar_util:decode(maps:get(<<"chunk">>, Map)),
+	get_tx_data_in_chunks_traverse_forward(Offset, Start + byte_size(Chunk), Peer, [Chunk | Bin]).
+
+assert_data_not_found_master(TXID) ->
+	assert_data_not_found(master_peer(), TXID).
+
+assert_data_not_found_slave(TXID) ->
+	assert_data_not_found(slave_peer(), TXID).
+
+assert_data_not_found(Peer, TXID) ->
+	?assertMatch({ok, {{<<"200">>, _}, _, <<>>, _, _}},
+			ar_http:req(#{ method => get, peer => Peer,
+					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).
+
+master_peer() ->
+	{ok, Config} = application:get_env(arweave, config),
+	{127, 0, 0, 1, Config#config.port}.
+
+slave_peer() ->
+	{ok, Config} = slave_call(application, get_env, [arweave, config]),
+	{127, 0, 0, 1, Config#config.port}.

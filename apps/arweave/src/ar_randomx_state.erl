@@ -1,13 +1,8 @@
 -module(ar_randomx_state).
 
--export([
-	init/2, init/4,
-	start/0, start_block_polling/0, reset/0,
-	hash/2,
-	randomx_state_by_height/1,
-	swap_height/1,
-	debug_server/0
-]).
+-export([init/2, init/4, start/0, start_block_polling/0, reset/0, hash/2,
+		hash_long_with_entropy/2, randomx_state_by_height/1, swap_height/1, get_key_block/1,
+		debug_server/0]).
 
 -include_lib("arweave/include/ar.hrl").
 
@@ -63,6 +58,17 @@ hash(Height, Data) ->
 			ar_mine_randomx:hash_light(LightState, Data)
 	end.
 
+hash_long_with_entropy(Height, Data) ->
+	case randomx_state_by_height(Height) of
+		{state, {fast, FastState}} ->
+			ar_mine_randomx:hash_fast_long_with_entropy(FastState, Data);
+		{state, {light, LightState}} ->
+			ar_mine_randomx:hash_light_long_with_entropy(LightState, Data);
+		{key, Key} ->
+			LightState = ar_mine_randomx:init_light(Key),
+			ar_mine_randomx:hash_light_long_with_entropy(LightState, Data)
+	end.
+
 randomx_state_by_height(Height) when is_integer(Height) andalso Height >= 0 ->
 	Ref = make_ref(),
 	whereis(?MODULE) ! {get_state_by_height, Height, Ref, self()},
@@ -79,6 +85,14 @@ randomx_state_by_height(Height) when is_integer(Height) andalso Height >= 0 ->
 
 swap_height(Height) ->
 	(Height div ?RANDOMX_KEY_SWAP_FREQ) * ?RANDOMX_KEY_SWAP_FREQ.
+
+get_key_block(H) ->
+	case ets:lookup(ar_randomx_state_key_blocks, H) of
+		[{_, B}] ->
+			{ok, B};
+		_ ->
+			not_found
+	end.
 
 debug_server() ->
 	whereis(?MODULE) ! {get_state, self()},
@@ -130,12 +144,27 @@ server(State) ->
 		{get_state, From} ->
 			From ! {state, State},
 			State;
-		{cache_randomx_key, SwapHeight, Key} ->
+		{cache_randomx_key, SwapHeight, KeyB} ->
+			Key = KeyB#block.hash,
+			cache_key_block(KeyB),
 			State#state{ key_cache = maps:put(SwapHeight, Key, State#state.key_cache) };
 		reset ->
 			init_state()
 	end,
 	server(NewState).
+
+cache_key_block(B) ->
+	ets:insert(ar_randomx_state_key_blocks, {B#block.indep_hash, B}),
+	ets:insert(ar_randomx_state_key_heights, {B#block.height, B#block.indep_hash}),
+	case ets:info(ar_randomx_state_key_heights, size) > 10 of
+		true ->
+			OldestHeight = ets:first(ar_randomx_state_key_heights),
+			[{_, OldestH}] = ets:lookup(ar_randomx_state_key_heights, OldestHeight),
+			ets:delete(ar_randomx_state_key_heights, OldestHeight),
+			ets:delete(ar_randomx_state_key_blocks, OldestH);
+		false ->
+			ok
+	end.
 
 poll_new_blocks(State) ->
 	case ar_node:is_joined() of
@@ -247,7 +276,7 @@ randomx_key(SwapHeight) ->
 	case get_block(KeyBlockHeight) of
 		{ok, KeyB} ->
 			Key = KeyB#block.hash,
-			whereis(?MODULE) ! {cache_randomx_key, SwapHeight, Key},
+			whereis(?MODULE) ! {cache_randomx_key, SwapHeight, KeyB},
 			{ok, Key};
 		unavailable ->
 			unavailable
@@ -287,7 +316,6 @@ get_block(BH, BI, Peers) ->
 				{_, B} ->
 					case ar_weave:indep_hash(B) of
 						BH ->
-							ar_disk_cache:write_block_shadow(B),
 							{ok, B};
 						InvalidBH ->
 							?LOG_WARNING([
@@ -306,6 +334,7 @@ randomx_key(SwapHeight, BI, Peers) ->
 	KeyBlockHeight = SwapHeight - ?RANDOMX_KEY_SWAP_FREQ,
 	case get_block(KeyBlockHeight, BI, Peers) of
 		{ok, KeyB} ->
+			whereis(?MODULE) ! {cache_randomx_key, SwapHeight, KeyB},
 			{ok, KeyB#block.hash};
 		unavailable ->
 			unavailable

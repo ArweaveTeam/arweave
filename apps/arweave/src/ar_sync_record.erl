@@ -2,17 +2,8 @@
 
 -behaviour(gen_server).
 
--export([
-	start_link/0,
-	set/2, set/3,
-	add/3, add/4,
-	delete/3,
-	cut/2,
-	is_recorded/2, is_recorded/3,
-	get_record/2,
-	get_next_unsynced_interval/3,
-	get_interval/2
-]).
+-export([start_link/0, set/2, set/3, add/3, add/4, delete/3, cut/2, is_recorded/2, is_recorded/3,
+		get_record/2, get_next_unsynced_interval/3, get_next_synced_interval/4, get_interval/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -64,39 +55,69 @@ start_link() ->
 %% with the given ID. Store the changes on disk before
 %% returning ok.
 set(SyncRecord, ID) ->
-	gen_server:call(?MODULE, {set, SyncRecord, ID}, infinity).
+	case catch gen_server:call(?MODULE, {set, SyncRecord, ID}, infinity) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 %% @doc Add the given set of intervals to the record
 %% with the given Type and ID. Store the changes on disk
 %% before, returning ok.
 set(SyncRecord, Type, ID) ->
-	gen_server:call(?MODULE, {set, SyncRecord, Type, ID}, infinity).
+	case catch gen_server:call(?MODULE, {set, SyncRecord, Type, ID}, infinity) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 %% @doc Add the given interval to the record with the
 %% given ID. Store the changes on disk before returning ok.
 add(End, Start, ID) ->
-	gen_server:call(?MODULE, {add, End, Start, ID}, 10000).
+	case catch gen_server:call(?MODULE, {add, End, Start, ID}, 10000) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 %% @doc Add the given interval to the record with the
 %% given ID and Type. Store the changes on disk before
 %% returning ok.
 add(End, Start, Type, ID) ->
-	gen_server:call(?MODULE, {add, End, Start, Type, ID}, 10000).
+	case catch gen_server:call(?MODULE, {add, End, Start, Type, ID}, 10000) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 %% @doc Remove the given interval from the record
 %% with the given ID. Store the changes on disk before
 %% returning ok.
 delete(End, Start, ID) ->
-	gen_server:call(?MODULE, {delete, End, Start, ID}, 10000).
+	case catch gen_server:call(?MODULE, {delete, End, Start, ID}, 10000) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 %% @doc Remove everything strictly above the given
 %% Offset from the record. Store the changes on disk
 %% before returning ok.
 cut(Offset, ID) ->
-	gen_server:call(?MODULE, {cut, Offset, ID}, 10000).
+	case catch gen_server:call(?MODULE, {cut, Offset, ID}, 10000) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			{error, timeout};
+		Reply ->
+			Reply
+	end.
 
 %% @doc Return true or {true, Type} if a chunk containing
-% the given Offset is found in the record with the given ID,
+%% the given Offset is found in the record with the given ID,
 %% false otherwise. If several types are recorded for the chunk,
 %% only one of them is returned, the choice is not defined.
 %% The offset is 1-based - if a chunk consists of a single
@@ -151,6 +172,17 @@ get_record(Args, ID) ->
 %% Return not_found if there are no such intervals.
 get_next_unsynced_interval(Offset, RightBound, ID) ->
 	ar_ets_intervals:get_next_interval_outside(ID, Offset, RightBound).
+
+%% @doc Return the lowest synced interval with the end offset strictly above the given Offset
+%% and with the right bound at most RightBound.
+%% Return not_found if there are no such intervals.
+get_next_synced_interval(Offset, RightBound, Type, ID) ->
+	case ets:lookup(sync_records, {ID, Type}) of
+		[] ->
+			not_found;
+		[{_, TID}] ->
+			ar_ets_intervals:get_next_interval(TID, Offset, RightBound)
+	end.
 
 %% @doc Return the interval containing the given Offset, including the right bound,
 %% excluding the left bound. Return not_found if the given offset does not belong to
@@ -514,6 +546,15 @@ store_state(State) ->
 		ok ->
 			SyncRecord = maps:get(ar_data_sync, SyncRecordByID, ar_intervals:new()),
 			prometheus_gauge:set(v2_index_data_size, ar_intervals:sum(SyncRecord)),
+			maps:map(
+				fun	({ar_data_sync, Type}, TypeRecord) ->
+						prometheus_gauge:set(v2_index_data_size_by_packing, [Type],
+								ar_intervals:sum(TypeRecord));
+					(_, _) ->
+						ok
+				end,
+				SyncRecordByIDType
+			),
 			{ok, State#state{ wal = 0 }}
 	end.
 
