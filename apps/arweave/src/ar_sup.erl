@@ -31,8 +31,8 @@ init([]) ->
 	ets:new(ar_storage, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(blacklist, [set, public, named_table]),
 	ets:new(ignored_ids, [bag, public, named_table]),
-	ets:new(peer_txid, [set, public, named_table, {write_concurrency, true}]),
-	ets:new(timestamp_peer_txid, [ordered_set, public, named_table, {write_concurrency, true}]),
+	ets:new(txid_peer, [ordered_set, public, named_table, {write_concurrency, true}]),
+	ets:new(timestamp_txid_peer, [ordered_set, public, named_table, {write_concurrency, true}]),
 	ets:new(ar_tx_db, [set, public, named_table]),
 	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
@@ -66,6 +66,7 @@ init([]) ->
 		?CHILD(ar_chunk_storage, worker),
 		?CHILD(ar_header_sync, worker),
 		?CHILD(ar_data_sync, worker),
+		?CHILD(ar_peer_mempool_monitor, worker),
 		?CHILD(ar_node_sup, supervisor),
 		?CHILD(ar_webhook_sup, supervisor),
 		?CHILD(ar_poller, worker)

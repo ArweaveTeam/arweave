@@ -454,8 +454,7 @@ handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
 			case post_tx_parse_id({Req, Pid}) of
 				{error, invalid_hash, Req2} ->
 					{400, #{}, <<"Invalid hash.">>, Req2};
-				{error, tx_already_processed, TXID, Req2} ->
-					register_peer_mempool_tx(TXID, Req),
+				{error, tx_already_processed, _TXID, Req2} ->
 					{208, #{}, <<"Transaction already processed.">>, Req2};
 				{error, invalid_json, Req2} ->
 					{400, #{}, <<"Invalid JSON.">>, Req2};
@@ -465,7 +464,6 @@ handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
 					Peer = ar_http_util:arweave_peer(Req),
 					case handle_post_tx(Req, Peer, TX) of
 						ok ->
-							register_peer_mempool_tx(TX#tx.id, Req),
 							{200, #{}, <<"OK">>, Req};
 						{error_response, {Status, Headers, Body}} ->
 							ar_ignore_registry:remove_temporary(TX#tx.id),
@@ -873,7 +871,6 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 				{error, ID, unavailable} ->
 					case is_a_pending_tx(ID) of
 						true ->
-							register_peer_mempool_tx(ID, Req),
 							{202, #{}, <<"Pending">>, Req};
 						false ->
 							{404, #{}, <<"Not Found.">>, Req}
@@ -1365,16 +1362,6 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req};
 		{error, timeout} ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
-	end.
-
-register_peer_mempool_tx(TXID, Req) ->
-	case cowboy_req:header(<<"x-p2p-port">>, Req, not_set) of
-		not_set ->
-			ok;
-		_ ->
-			Peer = ar_http_util:arweave_peer(Req),
-			ets:insert(timestamp_peer_txid, {os:system_time(microsecond), {Peer, TXID}}),
-			ets:insert(peer_txid, {{Peer, TXID}, ok})
 	end.
 
 check_internal_api_secret(Req) ->
