@@ -25,7 +25,8 @@
 	get_block_index/1,
 	get_block_index/2,
 	get_sync_record/1, get_sync_record/3,
-	get_chunk/2
+	get_chunk/2,
+	get_mempool/1
 ]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -36,7 +37,7 @@
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
 	TXID = TX#tx.id,
-	case ets:member(peer_txid, {Peer, TXID}) of
+	case ets:member(txid_peer, {TXID, Peer}) of
 		true ->
 			not_sent;
 		false ->
@@ -338,6 +339,19 @@ get_chunk(Peer, Offset) ->
 		headers => p2p_headers()
 	})).
 
+get_mempool(Peer) ->
+	handle_mempool_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/tx/pending",
+		timeout => 5 * 1000,
+		connect_timeout => 500,
+		%% Sufficient for a JSON-encoded list of the transaction identifiers
+		%% from a mempool with 250 MiB worth of transaction headers with no data.
+		limit => 3000000,
+		headers => p2p_headers()
+	})).
+
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_intervals:safe_from_etf(Body);
 handle_sync_record_response(Reply) ->
@@ -351,6 +365,43 @@ handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 			{ok, Proof}
 	end;
 handle_chunk_response(Response) ->
+	{error, Response}.
+
+handle_mempool_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch jiffy:decode(Body) of
+		{'EXIT', Error} ->
+			?LOG_WARNING([{event, failed_to_parse_peer_mempool},
+				{error, io_lib:format("~p", [Error])}]),
+			{error, invalid_json};
+		L when is_list(L) ->
+			lists:foldl(
+				fun	(_, {error, Reason}) ->
+						{error, Reason};
+					(EncodedTXID, {ok, Acc}) ->
+						case ar_util:safe_decode(EncodedTXID) of
+							{ok, TXID} when byte_size(TXID) /= 32 ->
+								?LOG_WARNING([{event, failed_to_parse_peer_mempool},
+									{reason, invalid_txid},
+									{txid, io_lib:format("~p", [EncodedTXID])}]),
+								{error, invalid_txid};
+							{ok, TXID} ->
+								{ok, [TXID | Acc]};
+							{error, invalid} ->
+								?LOG_WARNING([{event, failed_to_parse_peer_mempool},
+									{reason, invalid_txid},
+									{txid, io_lib:format("~p", [EncodedTXID])}]),
+								{error, invalid_txid}
+						end
+				end,
+				{ok, []},
+				L
+			);
+		NotList ->
+			?LOG_WARNING([{event, failed_to_parse_peer_mempool}, {reason, invalid_format},
+				{reply, io_lib:format("~p", [NotList])}]),
+			{error, invalid_format}
+	end;
+handle_mempool_response(Response) ->
 	{error, Response}.
 
 %% @doc Return the current height of a remote node.

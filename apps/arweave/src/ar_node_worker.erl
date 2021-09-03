@@ -9,7 +9,7 @@
 %%% @end
 -module(ar_node_worker).
 
--export([start_link/0, cleanup_peer_mempools/0]).
+-export([start_link/0]).
 
 -export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1]).
 
@@ -27,60 +27,12 @@
 
 -define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
 
--ifdef(DEBUG).
--define(CLEANUP_PEER_MEMPOOLS_FREQUENCY_MS, 1000).
--else.
--define(CLEANUP_PEER_MEMPOOLS_FREQUENCY_MS, 30 * 1000).
--endif.
-
--ifdef(DEBUG).
--define(PEER_MEMPOOLS_MAX_SIZE, 4).
--else.
--define(PEER_MEMPOOLS_MAX_SIZE, 1000000).
--endif.
-
--ifdef(DEBUG).
--define(PEER_MEMPOOL_TXID_EXPIRATION_TIME_US, 2 * 1000000).
--else.
--define(PEER_MEMPOOL_TXID_EXPIRATION_TIME_US, 60 * 1000000).
--endif.
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-cleanup_peer_mempools() ->
-	Size = ets:info(timestamp_peer_txid, size),
-	cleanup_peer_mempools(ets:first(timestamp_peer_txid), Size - ?PEER_MEMPOOLS_MAX_SIZE).
-
-cleanup_peer_mempools('$end_of_table', _N) ->
-	ok;
-cleanup_peer_mempools(Timestamp, N) when N > 0 ->
-	case ets:lookup(timestamp_peer_txid, Timestamp) of
-		[{_, PeerTXID}] ->
-			ets:delete(peer_txid, PeerTXID),
-			ets:delete(timestamp_peer_txid, Timestamp),
-			cleanup_peer_mempools(ets:next(timestamp_peer_txid, Timestamp), N - 1);
-		[] ->
-			ok
-	end;
-cleanup_peer_mempools(Timestamp, N) ->
-	case Timestamp + ?PEER_MEMPOOL_TXID_EXPIRATION_TIME_US > os:system_time(microsecond) of
-		true ->
-			ok;
-		false ->
-			case ets:lookup(timestamp_peer_txid, Timestamp) of
-				[{_, PeerTXID}] ->
-					ets:delete(peer_txid, PeerTXID),
-					ets:delete(timestamp_peer_txid, Timestamp),
-					cleanup_peer_mempools(ets:next(timestamp_peer_txid, Timestamp), N);
-				[] ->
-					ok
-			end
-	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -94,12 +46,6 @@ init([]) ->
 	ar_randomx_state:start_block_polling(),
 	%% Read persisted mempool.
 	load_mempool(),
-	timer:apply_interval(
-		?CLEANUP_PEER_MEMPOOLS_FREQUENCY_MS,
-		ar_node_worker,
-		cleanup_peer_mempools,
-		[]
-	),
 	%% Join the network.
 	{ok, Config} = application:get_env(arweave, config),
 	BI =
