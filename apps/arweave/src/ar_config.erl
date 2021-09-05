@@ -136,6 +136,12 @@ parse_options([{<<"max_propagation_peers">>, Value} | Rest], Config)
 parse_options([{<<"max_propagation_peers">>, Value} | _], _) ->
 	{error, {bad_type, max_propagation_peers, number}, Value};
 
+parse_options([{<<"max_block_propagation_peers">>, Value} | Rest], Config)
+		when is_integer(Value) ->
+	parse_options(Rest, Config#config{ max_block_propagation_peers = Value });
+parse_options([{<<"max_block_propagation_peers">>, Value} | _], _) ->
+	{error, {bad_type, max_block_propagation_peers, number}, Value};
+
 parse_options([{<<"sync_jobs">>, Value} | Rest], Config)
 		when is_integer(Value) ->
 	parse_options(Rest, Config#config{ sync_jobs = Value });

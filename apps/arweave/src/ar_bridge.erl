@@ -256,8 +256,9 @@ send_block_to_external_parallel(Peers, NewB) ->
 		min(length(Peers), ?BLOCK_PROPAGATION_PARALLELIZATION),
 		Peers
 	),
+	{ok, Config} = application:get_env(arweave, config),
 	NSeqPeers =
-		max(0, ar_meta_db:get(max_propagation_peers) - ?BLOCK_PROPAGATION_PARALLELIZATION),
+		max(0, Config#config.max_block_propagation_peers - ?BLOCK_PROPAGATION_PARALLELIZATION),
 	PeersSequential = lists:sublist(PeersRest, NSeqPeers),
 	?LOG_INFO(
 		[
