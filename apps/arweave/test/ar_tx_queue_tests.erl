@@ -27,10 +27,6 @@ test_txs_broadcast_order() ->
 	%% Pause the bridge to give time for txs
 	%% to accumulate in the queue.
 	ar_tx_queue:set_pause(true),
-	%% Limit the number of emitters so that
-	%% the order in which transactions are
-	%% received by the node can be asserted.
-	ar_tx_queue:set_max_emitters(1),
 	assert_post_tx_to_slave(TX1),
 	assert_post_tx_to_slave(TX2),
 	assert_post_tx_to_slave(TX3),
@@ -155,10 +151,8 @@ test_txs_are_included_in_blocks_sorted_by_utility() ->
 		sign_tx(Wallet, #{ last_tx => get_tx_anchor() })
 	],
 	SortedTXs = lists:sort(
-		fun(#tx{ reward = Reward1, data = Data1 }, #tx{ reward = Reward2, data = Data2 }) ->
-			DataSize1 = byte_size(Data1) + ?TX_SIZE_BASE,
-			DataSize2 = byte_size(Data2) + ?TX_SIZE_BASE,
-			erlang:trunc(Reward1 / DataSize1) > erlang:trunc(Reward2 / DataSize2)
+		fun(#tx{ reward = Reward1 }, #tx{ reward = Reward2 }) ->
+			Reward1 > Reward2
 		end,
 		TXs
 	),

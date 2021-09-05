@@ -51,6 +51,7 @@ init([]) ->
 	ets:new(ar_chunk_storage, [ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_tx_queue, [set, public, named_table]),
 	{ok, {{one_for_one, 5, 10}, [
 		?CHILD(ar_disksup, worker),
 		?CHILD(ar_meta_db, worker),
