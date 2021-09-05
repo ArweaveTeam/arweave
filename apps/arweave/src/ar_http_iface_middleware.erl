@@ -194,6 +194,22 @@ handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
+%% Return a possibly unconfirmed transaction.
+%% GET request to endpoint /unconfirmed_tx/{hash}.
+handle(<<"GET">>, [<<"unconfirmed_tx">>, Hash], Req, Pid) ->
+	case ar_util:safe_decode(Hash) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid hash.">>, Req};
+		{ok, TXID} ->
+			case ets:lookup(node_state, {tx, TXID}) of
+				[{_, TX}] ->
+					Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+					{200, #{}, Body, Req};
+				[] ->
+					handle(<<"GET">>, [<<"tx">>, Hash], Req, Pid)
+			end
+	end;
+
 %% Return the transaction IDs of all txs where the tags in post match the given set
 %% of key value pairs. POST request to endpoint /arql with body of request being a logical
 %% expression valid in ar_parser.
