@@ -728,16 +728,44 @@ validate_wallet_list(B, WalletList, RewardPool, Rate, Height) ->
 			{ok, RootHash}
 	end.
 
+get_missing_txs_and_retry(#block{ txs = TXIDs }, _Mempool, _Worker)
+		when length(TXIDs) > 1000 ->
+	?LOG_WARNING([{event, ar_node_worker_downloaded_txs_count_exceeds_limit}]),
+	ok;
 get_missing_txs_and_retry(BShadow, Mempool, Worker) ->
 	Peers = ar_bridge:get_remote_peers(),
-	case ar_http_iface_client:get_txs(Peers, Mempool, BShadow) of
-		{ok, TXs} ->
-			gen_server:cast(Worker, {cache_missing_txs, BShadow#block.indep_hash, TXs});
-		_ ->
-			?LOG_WARNING([
-				{event, ar_node_worker_could_not_find_block_txs},
-				{block, ar_util:encode(BShadow#block.indep_hash)}
-			])
+	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs, Mempool, Worker,
+		Peers, [], 0).
+
+get_missing_txs_and_retry(_H, _TXIDs, _Mempool, _Worker, _Peers, _TXs, TotalSize)
+		when TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
+	?LOG_WARNING([{event, ar_node_worker_downloaded_txs_exceed_block_size_limit}]),
+	ok;
+get_missing_txs_and_retry(H, [], _Mempool, Worker, _Peers, TXs, _TotalSize) ->
+	gen_server:cast(Worker, {cache_missing_txs, H, lists:reverse(TXs)});
+get_missing_txs_and_retry(H, TXIDs, Mempool, Worker, Peers, TXs, TotalSize) ->
+	Split = min(5, length(TXIDs)),
+	{Bulk, Rest} = lists:split(Split, TXIDs),
+	Fetch =
+		lists:foldl(
+			fun	(TX = #tx{ format = 1, data_size = DataSize }, {Acc1, Acc2}) ->
+					{[TX | Acc1], Acc2 + DataSize};
+				(TX = #tx{}, {Acc1, Acc2}) ->
+					{[TX#tx{ data = <<>> } | Acc1], Acc2};
+				(_, failed_to_fetch_tx) ->
+					failed_to_fetch_tx;
+				(_, _) ->
+					failed_to_fetch_tx
+			end,
+			{TXs, TotalSize},
+			ar_util:pmap(fun(TXID) -> ar_http_iface_client:get_tx(Peers, TXID, Mempool) end, Bulk)
+		),
+	case Fetch of
+		failed_to_fetch_tx ->
+			?LOG_WARNING([{event, ar_node_worker_failed_to_fetch_missing_tx}]),
+			ok;
+		{TXs2, TotalSize2} ->
+			get_missing_txs_and_retry(H, Rest, Mempool, Worker, Peers, TXs2, TotalSize2)
 	end.
 
 apply_validated_block(State, B, PrevBlocks, BI, BlockTXPairs) ->
