@@ -246,13 +246,16 @@
 
 %% The number of the best peers to send new transactions to in parallel.
 %% Can be overriden by a command line argument.
--define(TX_PROPAGATION_PARALLELIZATION, 4).
+-define(TX_PROPAGATION_PARALLELIZATION, 6).
 
 %% The number of the best peers to send new blocks to in parallel.
 -define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
 
-%% The maximum number of peers to propagate blocks or txs to, by default.
--define(DEFAULT_MAX_PROPAGATION_PEERS, 50).
+%% The maximum number of peers to propagate txs to, by default.
+-define(DEFAULT_MAX_PROPAGATION_PEERS, 40).
+
+%% The maximum number of peers to propagate blocks to, by default.
+-define(DEFAULT_MAX_BLOCK_PROPAGATION_PEERS, 50).
 
 %% When the transaction data size is smaller than this number of bytes,
 %% the transaction is gossiped to the peer without a prior check if the peer
@@ -299,7 +302,7 @@
 %% Each emitter picks a transaction from the queue and propagates it
 %% to the best peers, a configured number of peers at a time.
 %% Can be overriden by a command line argument.
--define(NUM_EMITTER_PROCESSES, 2).
+-define(NUM_EMITTER_PROCESSES, 4).
 
 %% Target number of blocks per year.
 -define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME / 60))).

@@ -152,9 +152,12 @@ show_help() ->
 			{"tx_propagation_parallelization (num)",
 				"The maximum number of best peers to propagate transactions to at a time "
 				"(default 4)."},
-			{"max_propagation_peers (num)",
-				"The maximum number of best peers to propagate blocks and transactions to. "
-				"Default is 50."},
+			{io_lib:format("max_propagation_peers (num)",
+				"The maximum number of best peers to propagate transactions to. "
+				"Default is ~B.", [?DEFAULT_MAX_PROPAGATION_PEERS])},
+			{io_lib:format("max_block_propagation_peers (num)",
+				"The maximum number of best peers to propagate blocks to. "
+				"Default is ~B.", [?DEFAULT_MAX_BLOCK_PROPAGATION_PEERS])},
 			{"sync_jobs (num)",
 				io_lib:format(
 					"The number of data syncing jobs to run. Default: ~B."
@@ -339,6 +342,8 @@ parse_cli_args(["requests_per_minute_limit", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args(["max_propagation_peers", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { max_propagation_peers = list_to_integer(Num) });
+parse_cli_args(["max_block_propagation_peers", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { max_block_propagation_peers = list_to_integer(Num) });
 parse_cli_args(["sync_jobs", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { sync_jobs = list_to_integer(Num) });
 parse_cli_args(["header_sync_jobs", Num|Rest], C) ->

@@ -35,6 +35,7 @@ parse_config() ->
 		stage_two_hashing_threads = 37,
 		max_emitters = 2,
 		max_propagation_peers = 8,
+		max_block_propagation_peers = 60,
 		tx_propagation_parallelization = 4,
 		sync_jobs = 10,
 		header_sync_jobs = 1,
