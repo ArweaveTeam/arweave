@@ -1595,7 +1595,7 @@ post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 				true ->
 					case catch compute_hash(BShadow, PrevHeight + 1) of
 						{BDS, BH} ->
-							ar_ignore_registry:add_temporary(BH, 500),
+							ar_ignore_registry:add_temporary(BH, 5000),
 							post_block(
 								check_timestamp,
 								{BShadow, OrigPeer, BDS, PrevB},
@@ -1960,7 +1960,7 @@ post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, FirstChunk}) ->
 		true ->
 			{error, tx_already_processed, TXID, Req};
 		false ->
-			ar_ignore_registry:add_temporary(TXID, 500),
+			ar_ignore_registry:add_temporary(TXID, 5000),
 			post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk})
 	end;
 post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk}) ->
@@ -2012,7 +2012,7 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 						true ->
 							{error, tx_already_processed, TXID, Req};
 						false ->
-							ar_ignore_registry:add_temporary(TXID, 500),
+							ar_ignore_registry:add_temporary(TXID, 5000),
 							{ok, TX}
 					end
 			end
