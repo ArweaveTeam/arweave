@@ -152,10 +152,10 @@ show_help() ->
 			{"tx_propagation_parallelization (num)",
 				"The maximum number of best peers to propagate transactions to at a time "
 				"(default 4)."},
-			{io_lib:format("max_propagation_peers (num)",
+			{"max_propagation_peers", io_lib:format("max_propagation_peers (num)"
 				"The maximum number of best peers to propagate transactions to. "
 				"Default is ~B.", [?DEFAULT_MAX_PROPAGATION_PEERS])},
-			{io_lib:format("max_block_propagation_peers (num)",
+			{"max_block_propagation_peers", io_lib:format("max_block_propagation_peers (num)"
 				"The maximum number of best peers to propagate blocks to. "
 				"Default is ~B.", [?DEFAULT_MAX_BLOCK_PROPAGATION_PEERS])},
 			{"sync_jobs (num)",
