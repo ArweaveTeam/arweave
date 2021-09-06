@@ -123,7 +123,7 @@ init([]) ->
 
 load_mempool() ->
 	case ar_storage:read_term(mempool) of
-		{ok, {TXs, MempoolSize}} ->
+		{ok, {TXs, _MempoolSize}} ->
 			Map =
 				maps:map(
 					fun(TXID, {TX, Status}) ->
@@ -132,6 +132,13 @@ load_mempool() ->
 					end,
 					TXs
 				),
+			MempoolSize = maps:fold(
+				fun(_, {TX, _}, Acc) ->
+					increase_mempool_size(Acc, TX)
+				end,
+				{0, 0},
+				TXs
+			),
 			ets:insert(node_state, [
 				{mempool_size, MempoolSize},
 				{tx_statuses, Map}
@@ -751,14 +758,19 @@ get_missing_txs_and_retry(H, TXIDs, Mempool, Worker, Peers, TXs, TotalSize) ->
 			fun	(TX = #tx{ format = 1, data_size = DataSize }, {Acc1, Acc2}) ->
 					{[TX | Acc1], Acc2 + DataSize};
 				(TX = #tx{}, {Acc1, Acc2}) ->
-					{[TX#tx{ data = <<>> } | Acc1], Acc2};
+					{[TX | Acc1], Acc2};
 				(_, failed_to_fetch_tx) ->
 					failed_to_fetch_tx;
 				(_, _) ->
 					failed_to_fetch_tx
 			end,
 			{TXs, TotalSize},
-			ar_util:pmap(fun(TXID) -> ar_http_iface_client:get_tx(Peers, TXID, Mempool) end, Bulk)
+			ar_util:pmap(
+				fun(TXID) ->
+					ar_http_iface_client:get_tx(Peers, TXID, Mempool)
+				end,
+				Bulk
+			)
 		),
 	case Fetch of
 		failed_to_fetch_tx ->

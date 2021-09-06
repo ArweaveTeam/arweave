@@ -688,8 +688,10 @@ reconstruct_full_block(Peers, B) when is_record(B, block) ->
 %% @doc Process the response of a /tx call.
 handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	case catch ar_serialize:json_struct_to_tx(Body) of
-		TX when is_record(TX, tx) -> TX;
-		_ -> not_found
+		TX when is_record(TX, tx) ->
+			case TX#tx.format == 1 of true -> TX; _ -> TX#tx{ data = <<>> } end;
+		_ ->
+			not_found
 	end;
 handle_tx_response({ok, {{<<"202">>, _}, _, _, _, _}}) -> pending;
 handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
