@@ -4,8 +4,20 @@
 %% The amount in AR depends on the current difficulty and height.
 -define(WALLET_GEN_FEE_USD, {1, 10}).
 
-%% Assumed number of replications in the long term.
--define(N_REPLICATIONS, 10).
+%% The target number of replications.
+-define(N_REPLICATIONS(Height), fun() ->
+	Forks = {
+		ar_fork:height_2_5()
+	},
+	case Forks of
+		{Fork_2_5} when Height >= Fork_2_5 ->
+			45;
+		_ ->
+			10
+	end
+end).
+
+
 
 %% An approximation of the natural logarithm of ?USD_PER_GBY_DECAY_ANNUAL (0.995),
 %% expressed as a decimal fraction, with the precision of math:log.

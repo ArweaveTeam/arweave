@@ -238,7 +238,7 @@ get_gb_cost_per_year_at_datetime({{Y, M, _}, _} = DT, Height) ->
 			{PrevYCostDividend, PrevYCostDivisor} = PrevYCost,
 			{NextYCostDividend, NextYCostDivisor} = NextYCost,
 			Dividend =
-				?N_REPLICATIONS
+				(?N_REPLICATIONS(Height)())
 				* (
 					PrevYCostDividend * NextYCostDivisor * FracYDivisor
 					- FracYDividend
@@ -256,7 +256,7 @@ get_gb_cost_per_year_at_datetime({{Y, M, _}, _} = DT, Height) ->
 			{Dividend, Divisor};
 		false ->
 			CY = PrevYCost - (FracY * (PrevYCost - NextYCost)),
-			CY * ?N_REPLICATIONS
+			CY * (?N_REPLICATIONS(Height)())
 	end.
 
 prev_jun_30_year(Y, M) when M < 7 ->
