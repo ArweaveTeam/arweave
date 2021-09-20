@@ -111,6 +111,10 @@
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
 
+%% The maximum number of chunks to scheduler for packing/unpacking.
+%% A bigger number means more memory allocated for the chunks not packed/unpacked yet.
+-define(PACKING_BUFFER_SIZE, 200).
+
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
 	%% The mapping Peer => SyncRecord containing sync records of the best peers.

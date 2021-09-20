@@ -1126,18 +1126,12 @@ estimate_tx_fee(Size, Addr) ->
 					{'==', '$1', scheduled_usd_to_ar_rate}}], ['$_']}]
 		),
 	Height = proplists:get_value(height, Props),
-	{Dividend, Divisor} = proplists:get_value(usd_to_ar_rate, Props),
-	{ScheduledDividend, ScheduledDivisor} = proplists:get_value(scheduled_usd_to_ar_rate, Props),
+	CurrentRate = proplists:get_value(usd_to_ar_rate, Props),
+	ScheduledRate = proplists:get_value(scheduled_usd_to_ar_rate, Props),
 	%% Of the two rates - the currently active one and the one scheduled to be
 	%% used soon - pick the one that leads to a higher fee in AR to make sure the
 	%% transaction does not become underpaid.
-	Rate =
-		case Dividend * ScheduledDivisor =< Divisor * ScheduledDividend of
-			true ->
-				{Dividend, Divisor};
-			false ->
-				{ScheduledDividend, ScheduledDivisor}
-		end,
+	Rate = ar_fraction:maximum(CurrentRate, ScheduledRate),
 	RootHash = proplists:get_value(wallet_list, Props),
 	PaidSize = ar_tx:get_weave_size_increase(Size, Height + 1),
 	estimate_tx_fee(PaidSize, Rate, Height + 1, Addr, RootHash).

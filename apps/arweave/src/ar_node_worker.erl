@@ -321,12 +321,13 @@ handle_info(wallets_ready, State) ->
 	ar_block_cache:initialize_from_list(block_cache, Blocks),
 	BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
+	Height = B#block.height,
 	{Rate, ScheduledRate} =
-		case B#block.height >= ar_fork:height_2_5() of
+		case Height >= ar_fork:height_2_5() of
 			true ->
 				{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
 			false ->
-				{?INITIAL_USD_TO_AR_PRE_FORK_2_5, ?INITIAL_USD_TO_AR_PRE_FORK_2_5}
+				{?INITIAL_USD_TO_AR((Height + 1))(), ?INITIAL_USD_TO_AR((Height + 1))()}
 		end,
 	ar:console("Joined the Arweave network successfully.~n"),
 	?LOG_INFO([{event, joined_the_network}]),
@@ -848,12 +849,13 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	[{tx_statuses, Map2}] = ets:lookup(node_state, tx_statuses),
 	gen_server:cast(self(), {filter_mempool, maps:iterator(Map2)}),
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
+	Height = B#block.height,
 	{Rate, ScheduledRate} =
-		case B#block.height >= ar_fork:height_2_5() of
+		case Height >= ar_fork:height_2_5() of
 			true ->
 				{B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
 			false ->
-				{?INITIAL_USD_TO_AR_PRE_FORK_2_5, ?INITIAL_USD_TO_AR_PRE_FORK_2_5}
+				{?INITIAL_USD_TO_AR((Height + 1))(), ?INITIAL_USD_TO_AR((Height + 1))()}
 		end,
 	ets:insert(node_state, [
 		{block_index,			BI},

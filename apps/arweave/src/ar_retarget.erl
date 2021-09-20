@@ -97,7 +97,7 @@ validate_difficulty(NewB, OldB) ->
 %% as the old-style Diff (number of leading zeros in the bitstring).
 %% @end
 switch_to_linear_diff(Diff) ->
-	?MAX_DIFF - ar_decimal:pow(2, 256 - Diff).
+	?MAX_DIFF - ar_fraction:pow(2, 256 - Diff).
 
 switch_to_linear_diff_pre_fork_2_5(Diff) ->
 	erlang:trunc(math:pow(2, 256)) - erlang:trunc(math:pow(2, 256 - Diff)).
@@ -129,7 +129,7 @@ calculate_difficulty_at_2_5(OldDiff, TS, Last, Height, PrevTS) ->
 	ActualTime = TS - Last,
 	Step = 10 * 60,
 	%% Drop the difficulty 2x right away, then drop extra 2x for every 10 minutes passed.
-	ActualTime2 = ActualTime * 2 * ar_decimal:pow(2, max(TS - PrevTS, 0) div Step),
+	ActualTime2 = ActualTime * 2 * ar_fraction:pow(2, max(TS - PrevTS, 0) div Step),
 	MaxDiff = ?MAX_DIFF,
 	MinDiff = ar_mine:min_difficulty(Height),
 	DiffInverse = (MaxDiff - OldDiff) * ActualTime2 div TargetTime,

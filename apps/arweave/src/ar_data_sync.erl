@@ -602,7 +602,8 @@ handle_cast({sync_chunk, _, _} = Cast,
 	cast_after(ar_disksup:get_disk_space_check_frequency(), Cast),
 	{noreply, State};
 handle_cast({sync_chunk, _, _} = Cast,
-		#sync_data_state{ packing_map = Map } = State) when map_size(Map) >= 200 ->
+		#sync_data_state{ packing_map = Map } = State)
+			when map_size(Map) >= ?PACKING_BUFFER_SIZE ->
 	cast_after(200, Cast),
 	{noreply, State};
 handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop}, State) ->
@@ -873,7 +874,7 @@ handle_cast(repack_stored_chunks,
 	cast_after(30000, repack_stored_chunks),
 	{noreply, State};
 handle_cast(repack_stored_chunks, #sync_data_state{ packing_map = Map } = State)
-		when map_size(Map) >= 200 ->
+		when map_size(Map) >= ?PACKING_BUFFER_SIZE ->
 	cast_after(200, repack_stored_chunks),
 	{noreply, State};
 handle_cast(repack_stored_chunks, State) ->
@@ -902,7 +903,8 @@ handle_cast({repack_stored_chunks, Offset, End}, State) when Offset >= End ->
 	cast_after(200, repack_stored_chunks),
 	{noreply, State#sync_data_state{ repacking_cursor = End }};
 handle_cast({repack_stored_chunks, Offset, End},
-		#sync_data_state{ packing_map = Map } = State) when map_size(Map) >= 200 ->
+		#sync_data_state{ packing_map = Map } = State)
+			when map_size(Map) >= ?PACKING_BUFFER_SIZE ->
 	cast_after(200, {repack_stored_chunks, Offset, End}),
 	{noreply, State};
 handle_cast({repack_stored_chunks, Offset, End}, State) ->
@@ -2453,7 +2455,8 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 	end.
 
 process_disk_pool_matured_chunk_offset(Iterator, _, _, _, _, Args,
-		#sync_data_state{ packing_map = Map } = State) when map_size(Map) >= 200 ->
+		#sync_data_state{ packing_map = Map } = State)
+			when map_size(Map) >= ?PACKING_BUFFER_SIZE ->
 	process_disk_pool_chunk_offsets(Iterator, false, Args, State);
 process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 		Args, State) ->

@@ -277,10 +277,10 @@ post_tx_to_slave(TX) ->
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			assert_slave_wait_until_receives_txs([TX]);
 		_ ->
-			?LOG_INFO(
-				"Failed to post transaction. Error DB entries: ~p~n",
-				[slave_call(ar_tx_db, get_error_codes, [TX#tx.id])]
-			),
+			?debugFmt(
+				"Failed to post transaction. TX fee: ~B. TX size: ~B. Error(s): ~p~n",
+				[TX#tx.reward, TX#tx.data_size,
+					slave_call(ar_tx_db, get_error_codes, [TX#tx.id])]),
 			noop
 	end,
 	Reply.

@@ -5,19 +5,17 @@
 -define(WALLET_GEN_FEE_USD, {1, 10}).
 
 %% The target number of replications.
--define(N_REPLICATIONS(Height), fun() ->
-	Forks = {
+-define(N_REPLICATIONS, fun(MACRO_Height) ->
+	MACRO_Forks = {
 		ar_fork:height_2_5()
 	},
-	case Forks of
-		{Fork_2_5} when Height >= Fork_2_5 ->
+	case MACRO_Forks of
+		{MACRO_Fork_2_5} when MACRO_Height >= MACRO_Fork_2_5 ->
 			45;
 		_ ->
 			10
 	end
 end).
-
-
 
 %% An approximation of the natural logarithm of ?USD_PER_GBY_DECAY_ANNUAL (0.995),
 %% expressed as a decimal fraction, with the precision of math:log.
@@ -49,7 +47,7 @@ end).
 	},
 	case Forks of
 		{_Fork_2_4, Fork_2_5} when Height >= Fork_2_5 ->
-			{1, 5};
+			{1, 65};
 		{Fork_2_4, _Fork_2_5} when Height >= Fork_2_4 ->
 			?INITIAL_USD_TO_AR_PRE_FORK_2_5
 	end
@@ -66,14 +64,14 @@ end).
 	Forks = {
 		ar_fork:height_1_9(),
 		ar_fork:height_2_2(),
-		ar_fork:height_2_6()
+		ar_fork:height_2_5()
 	},
 	case Forks of
-		{_Fork_1_9, _Fork_2_2, Fork_2_6} when Height >= Fork_2_6 ->
-			not_set;
-		{_Fork_1_9, Fork_2_2, _Fork_2_6} when Height >= Fork_2_2 ->
+		{_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
+			32;
+		{_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
 			34;
-		{Fork_1_9, _Fork_2_2, _Fork_2_6} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
 			28;
 		_ ->
 			29
@@ -87,22 +85,39 @@ end).
 	Forks = {
 		ar_fork:height_1_9(),
 		ar_fork:height_2_2(),
-		ar_fork:height_2_6()
+		ar_fork:height_2_5()
 	},
 	case Forks of
-		{_Fork_1_9, _Fork_2_2, Fork_2_6} when Height >= Fork_2_6 ->
-			Fork_2_6;
-		{_Fork_1_9, Fork_2_2, _Fork_2_6} when Height >= Fork_2_2 ->
+		{_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
+			Fork_2_5;
+		{_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
 			Fork_2_2;
-		{Fork_1_9, _Fork_2_2, _Fork_2_6} when Height < Fork_1_9 ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
 			ar_fork:height_1_8();
-		{Fork_1_9, _Fork_2_2, _Fork_2_6} ->
+		{Fork_1_9, _Fork_2_2, _Fork_2_5} ->
 			Fork_1_9
 	end
 end).
 
 %% The USD to AR rate is re-estimated every so many blocks.
+-ifdef(DEBUG).
+-define(USD_TO_AR_ADJUSTMENT_FREQUENCY, 10).
+-else.
 -define(USD_TO_AR_ADJUSTMENT_FREQUENCY, 50).
+-endif.
+
+%% The largest possible multiplier for a one-step increase of the USD to AR Rate.
+-define(USD_TO_AR_MAX_ADJUSTMENT_UP_MULTIPLIER, {1005, 1000}).
+
+%% The largest possible multiplier for a one-step decrease of the USD to AR Rate.
+-define(USD_TO_AR_MAX_ADJUSTMENT_DOWN_MULTIPLIER, {995, 1000}).
+
+%% Reduce the USD to AR fraction if both the dividend and the devisor become bigger than this.
+-ifdef(DEBUG).
+-define(USD_TO_AR_FRACTION_REDUCTION_LIMIT, 100).
+-else.
+-define(USD_TO_AR_FRACTION_REDUCTION_LIMIT, 1000000).
+-endif.
 
 %% Mining reward as a proportion of the estimated transaction storage costs,
 %% defined as a fraction.
@@ -110,10 +125,6 @@ end).
 
 %% The USD to AR exchange rate for a new chain, e.g. a testnet.
 -define(NEW_WEAVE_USD_TO_AR_RATE, ?INITIAL_USD_TO_AR_PRE_FORK_2_5).
-
-%% How much harder it should be to mine each
-%% subsequent alternative POA option. Used until the fork 2.4.
--define(ALTERNATIVE_POA_DIFF_MULTIPLIER, 2).
 
 %% Initial $/AR exchange rate. Used until the fork 2.4.
 -define(INITIAL_USD_PER_AR(Height), fun() ->
