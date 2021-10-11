@@ -8,4 +8,4 @@
 
 - The Arweave Team is not in any way under duress.
 
-Last update: 24 July 2018.
+Last update: 11 October 2021.
