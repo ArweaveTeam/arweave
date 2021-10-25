@@ -2,12 +2,7 @@
 
 -behaviour(gen_server).
 
--export([
-	start_link/0,
-	join/2,
-	add_tip_block/2, add_block/1,
-	request_tx_removal/1
-]).
+-export([start_link/0, join/2, add_tip_block/2, add_block/1, request_tx_removal/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -51,6 +46,7 @@ request_tx_removal(TXID) ->
 init([]) ->
 	?LOG_INFO([{event, ar_header_sync_start}]),
 	process_flag(trap_exit, true),
+	ok = ar_events:subscribe(tx),
 	{ok, Config} = application:get_env(arweave, config),
 	{ok, DB} = ar_kv:open("ar_header_sync_db"),
 	{SyncRecord, LastHeight, CurrentBI} =
@@ -142,7 +138,8 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 			%% Delete from the kv store only after the sync record is saved - no matter
 			%% what happens to the process, if a height is in the record, it must be present
 			%% in the kv store.
-			ok = ar_kv:delete_range(DB, << (BaseHeight + 1):256 >>, << (CurrentHeight + 1):256 >>),
+			ok = ar_kv:delete_range(DB, << (BaseHeight + 1):256 >>,
+					<< (CurrentHeight + 1):256 >>),
 			{noreply, State3#{ disk_full => false }};
 		{error, enospc} ->
 			{noreply, State#{ disk_full => true }}
@@ -237,7 +234,7 @@ handle_cast({failed_to_get_block, H, H2, TXRoot, Backoff}, #{ queue := Queue } =
 	{noreply, State#{ queue => Queue2 }};
 
 handle_cast({remove_tx, TXID}, State) ->
-	{ok, _Size} = ar_storage:delete_tx(TXID),
+	{ok, _Size} = ar_storage:delete_blacklisted_tx(TXID),
 	ar_tx_blacklist:notify_about_removed_tx(TXID),
 	{noreply, State};
 
@@ -256,6 +253,30 @@ handle_cast(Msg, State) ->
 
 handle_call(_Msg, _From, State) ->
 	{reply, not_implemented, State}.
+
+handle_info({event, tx, {preparing_unblacklisting, TXID}}, State) ->
+	#{ db := DB, sync_record := SyncRecord } = State,
+	case ar_storage:get_tx_confirmation_data(TXID) of
+		{ok, {Height, _BH}} ->
+			?LOG_DEBUG([{event, mark_block_with_blacklisted_tx_for_resyncing},
+					{tx, ar_util:encode(TXID)}, {height, Height}]),
+			State2 = State#{ sync_record => ar_intervals:delete(SyncRecord, Height,
+					Height - 1) },
+			ok = store_sync_state(State2),
+			ok = ar_kv:delete(DB, << Height:256 >>),
+			ar_events:send(tx, {ready_for_unblacklisting, TXID}),
+			{noreply, State2};
+		not_found ->
+			ar_events:send(tx, {ready_for_unblacklisting, TXID}),
+			{noreply, State};
+		{error, Reason} ->
+			?LOG_WARNING([{event, failed_to_read_tx_confirmation_index},
+					{error, io_lib:format("~p", [Reason])}]),
+			{noreply, State}
+	end;
+
+handle_info({event, tx, _}, State) ->
+	{noreply, State};
 
 handle_info({'DOWN', _,  process, _, normal}, State) ->
 	{noreply, State};
@@ -317,8 +338,7 @@ add_block(B, #{ sync_disk_space := false } = State) ->
 add_block(B, State) ->
 	#{ db := DB, sync_record := SyncRecord } = State,
 	#block{ indep_hash = H, previous_block = PrevH, height = Height } = B,
-	TXs = [TX || TX <- B#block.txs, not ar_tx_blacklist:is_tx_blacklisted(TX#tx.id)],
-	case ar_storage:write_full_block(B, TXs) of
+	case ar_storage:write_full_block(B, B#block.txs) of
 		ok ->
 			case ar_intervals:is_inside(SyncRecord, Height) of
 				true ->

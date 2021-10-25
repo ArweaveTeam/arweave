@@ -279,6 +279,9 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 			{noreply, State}
 	end;
 
+handle_info({event, block, _}, State) ->
+	{noreply, State};
+
 %% Add the new waiting transaction to the server state.
 handle_info({event, tx, {new, TX, _Source}}, State) ->
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
@@ -308,6 +311,9 @@ handle_info({event, tx, {dropped, DroppedTX, Reason}}, State) ->
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	drop_txs([DroppedTX], Map, MempoolSize),
+	{noreply, State};
+
+handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
 handle_info(wallets_ready, State) ->

@@ -13,7 +13,7 @@
 	get_wallet_list_range/2,
 	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/3,
 	write_block_index/1, read_block_index/0,
-	delete_full_block/1, delete_tx/1, delete_block/1,
+	delete_blacklisted_tx/1, delete_block/1,
 	get_free_space/1,
 	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
 	tx_filepath/1, tx_data_filepath/1,
@@ -76,12 +76,17 @@ write_full_block(#block{ height = 0 } = BShadow, TXs) when ?NETWORK_NAME == "arw
 	%% Genesis transactions are stored in data/genesis_txs; they are part of the repository.
 	write_full_block2(BShadow, TXs);
 write_full_block(BShadow, TXs) ->
-	case write_tx(TXs) of
+	case write_tx([TX || TX <- TXs, not is_blacklisted(TX)]) of
 		ok ->
 			write_full_block2(BShadow, TXs);
 		Error ->
 			Error
 	end.
+
+is_blacklisted(#tx{ format = 2 }) ->
+	false;
+is_blacklisted(#tx{ id = TXID }) ->
+	ar_tx_blacklist:is_tx_blacklisted(TXID).
 
 write_full_block2(BShadow, TXs) ->
 	case write_block(BShadow) of
@@ -238,51 +243,6 @@ lookup_block_filename(H) ->
 			unavailable
 	end.
 
-%% @doc Remove the block header, its transaction headers, and its wallet list.
-%% Return {ok, BytesRemoved} if everything was removed successfully or either
-%% of the files has been already removed.
-delete_full_block(H) ->
-	case read_block(H) of
-		unavailable ->
-			{ok, 0};
-		B ->
-			DeleteTXsResult =
-				lists:foldl(
-					fun (TXID, {ok, Bytes}) ->
-							case delete_tx(TXID) of
-								{ok, BytesRemoved} ->
-									{ok, Bytes + BytesRemoved};
-								Error ->
-									Error
-							end;
-						(_TXID, Acc) ->
-							Acc
-					end,
-					{ok, 0},
-					B#block.txs
-				),
-			case DeleteTXsResult of
-				{ok, TXBytesRemoved} ->
-					case delete_wallet_list(B#block.wallet_list) of
-						{ok, WalletListBytesRemoved} ->
-							case delete_block(H) of
-								{ok, BlockBytesRemoved} ->
-									BytesRemoved =
-										TXBytesRemoved +
-										WalletListBytesRemoved +
-										BlockBytesRemoved,
-									{ok, BytesRemoved};
-								Error ->
-									Error
-							end;
-						Error ->
-							Error
-					end;
-				Error ->
-					Error
-			end
-	end.
-
 delete_wallet_list(RootHash) ->
 	WalletListFile = wallet_list_filepath(RootHash),
 	case filelib:is_file(WalletListFile) of
@@ -325,29 +285,29 @@ delete_wallet_list_chunks(Position, RootHash, BytesRemoved) ->
 			{ok, BytesRemoved}
 	end.
 
-%% @doc Delete the tx with the given hash from disk. Return {ok, BytesRemoved} if
+%% @doc Delete the blacklisted tx with the given hash from disk. Return {ok, BytesRemoved} if
 %% the removal is successful or the file does not exist. The reported number of removed
 %% bytes does not include the migrated v1 data. The removal of migrated v1 data is requested
-%% from ar_data_sync asynchronously.
-delete_tx(Hash) ->
+%% from ar_data_sync asynchronously. The v2 headers are not removed.
+delete_blacklisted_tx(Hash) ->
 	case lookup_tx_filename(Hash) of
 		{Status, Filename} ->
 			case Status of
 				migrated_v1 ->
-					ar_data_sync:request_tx_data_removal(Hash);
-				_ ->
-					ok
-			end,
-			case file:read_file_info(Filename) of
-				{ok, FileInfo} ->
-					case file:delete(Filename) of
-						ok ->
-							{ok, FileInfo#file_info.size};
+					ar_data_sync:request_tx_data_removal(Hash),
+					case file:read_file_info(Filename) of
+						{ok, FileInfo} ->
+							case file:delete(Filename) of
+								ok ->
+									{ok, FileInfo#file_info.size};
+								Error ->
+									Error
+							end;
 						Error ->
 							Error
 					end;
-				Error ->
-					Error
+				_ ->
+					{ok, 0}
 			end;
 		unavailable ->
 			{ok, 0}
@@ -400,25 +360,32 @@ write_tx(#tx{ format = Format } = TX) ->
 						{true, 1} ->
 							%% v1 data is considered to be a part of the header therefore
 							%% if we fail to store it, we return an error here.
+							%% We have already checked whether the transaction is blacklisted
+							%% prior to calling this function, see is_blacklisted/1.
 							write_tx_data(
 								no_expected_data_root,
 								TX#tx.data,
 								write_to_free_space_buffer
 							);
 						{true, 2} ->
-							case write_tx_data(TX#tx.data_root, TX#tx.data) of
-								ok ->
+							case ar_tx_blacklist:is_tx_blacklisted(TX#tx.id) of
+								true ->
 									ok;
-								{error, Reason} ->
-									%% v2 data is not part of the header. We have to
-									%% report success here even if we failed to store
-									%% the attached data.
-									?LOG_WARNING([
-										{event, failed_to_store_tx_data},
-										{reason, Reason},
-										{tx, ar_util:encode(TX#tx.id)}
-									]),
-									ok
+								false ->
+									case write_tx_data(TX#tx.data_root, TX#tx.data) of
+										ok ->
+											ok;
+										{error, Reason} ->
+											%% v2 data is not part of the header. We have to
+											%% report success here even if we failed to store
+											%% the attached data.
+											?LOG_WARNING([
+												{event, failed_to_store_tx_data},
+												{reason, Reason},
+												{tx, ar_util:encode(TX#tx.id)}
+											]),
+											ok
+									end
 							end
 					end;
 				false ->
