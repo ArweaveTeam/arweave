@@ -1,14 +1,9 @@
 -module(ar_arql_db).
 -behaviour(gen_server).
 
--export([
-	start_link/0,
-	populate_db/1,
-	select_tx_by_id/1, select_txs_by/1,
-	select_block_by_tx_id/1, select_tags_by_tx_id/1,
-	eval_legacy_arql/1,
-	insert_full_block/1, insert_full_block/2, insert_block/1, insert_tx/2, insert_tx/3
-]).
+-export([start_link/0, select_tx_by_id/1, select_txs_by/1, select_block_by_tx_id/1,
+		select_tags_by_tx_id/1, eval_legacy_arql/1, insert_full_block/1, insert_full_block/2,
+		insert_block/1, insert_tx/2, insert_tx/3]).
 
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
@@ -106,9 +101,6 @@ DROP INDEX idx_tag_name_value;
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-populate_db(BHL) ->
-	gen_server:cast(?MODULE, {populate_db, BHL}).
 
 select_tx_by_id(ID) ->
 	gen_server:call(?MODULE, {select_tx_by_id, ID}, ?SELECT_TIMEOUT).
@@ -306,10 +298,6 @@ handle_call({eval_legacy_arql, Query}, _, #{ conn := Conn } = State) ->
 	record_query_time(eval_legacy_arql, Time),
 	{reply, Reply, State}.
 
-handle_cast({populate_db, BHL}, State) ->
-	ok = ensure_db_populated(BHL, State),
-	{noreply, State};
-
 handle_cast({insert_block, BlockFields}, State) ->
 	#{
 		conn := Conn,
@@ -402,33 +390,9 @@ create_schema(Conn) ->
 	ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
 	ok = ar_sqlite3:exec(Conn, ?CREATE_TABLES_SQL, ?DRIVER_TIMEOUT),
 	ok = ar_sqlite3:exec(Conn, ?CREATE_INDEXES_SQL, ?DRIVER_TIMEOUT),
-	done = sql_fetchone(Conn, "INSERT INTO migration VALUES ('20191009160000_schema_created', ?)", [sql_now()], ?DRIVER_TIMEOUT),
+	done = sql_fetchone(Conn, "INSERT INTO migration VALUES ('20191009160000_schema_created', ?)",
+			[sql_now()], ?DRIVER_TIMEOUT),
 	ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", ?DRIVER_TIMEOUT),
-	ok.
-
-ensure_db_populated(BHL, #{ conn := Conn} = State) ->
-	case sql_fetchone(Conn, "
-		SELECT 1 FROM migration
-		WHERE name = '20191015153000_db_populated'
-	", ?DRIVER_TIMEOUT) of
-		{row, [1]} ->
-			ok;
-		done ->
-			?LOG_INFO([{ar_arql_db, populating_db}]),
-			{Time, ok} = timer:tc(fun() -> ok = do_populate_db(BHL, State) end),
-			?LOG_INFO([{ar_arql_db, populated_db}, {time, Time}]),
-			ok
-	end.
-
-do_populate_db(BHL, #{ conn := Conn} = State) ->
-	ok = ar_sqlite3:exec(Conn, "BEGIN TRANSACTION", ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3:exec(Conn, ?DROP_INDEXES_SQL, ?DRIVER_TIMEOUT),
-	ok = lists:foreach(fun(BH) ->
-		ok = insert_block_json(BH, State)
-	end, BHL),
-	ok = ar_sqlite3:exec(Conn, ?CREATE_INDEXES_SQL, infinity),
-	done = sql_fetchone(Conn, "INSERT INTO migration VALUES ('20191015153000_db_populated', ?)", [sql_now()], ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3:exec(Conn, "COMMIT TRANSACTION", infinity),
 	ok.
 
 sql_fetchone(Conn, SQL, Timeout) -> sql_fetchone(Conn, SQL, [], Timeout).
@@ -467,94 +431,6 @@ collect_sql_results(Stmt, Acc) ->
 		{row, Row} -> collect_sql_results(Stmt, [Row | Acc]);
 		done -> lists:reverse(Acc)
 	end.
-
-insert_block_json(BH,  Env) ->
-	#{ data_dir := DataDir, insert_block_stmt := Stmt } = Env,
-	case read_block(BH, DataDir) of
-		{ok, BlockMap} ->
-			ok = ar_sqlite3:bind(Stmt, [
-				maps:get(<<"indep_hash">>, BlockMap),
-				maps:get(<<"previous_block">>, BlockMap),
-				maps:get(<<"height">>, BlockMap),
-				maps:get(<<"timestamp">>, BlockMap)
-			], ?DRIVER_TIMEOUT),
-			done = ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT),
-			ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
-			ok = lists:foreach(fun(TXHash) ->
-				ok = insert_tx_json(TXHash, maps:get(<<"indep_hash">>, BlockMap), Env)
-			end, maps:get(<<"txs">>, BlockMap)),
-			ok;
-		not_found ->
-			ok
-	end.
-
-insert_tx_json(TXHash, BlockIndepHash, Env) ->
-	#{ insert_tx_stmt := Stmt, data_dir := DataDir } = Env,
-	case read_tx(TXHash, DataDir) of
-		{ok, TxMap} ->
-			ok = ar_sqlite3:bind(Stmt, [
-				maps:get(<<"id">>, TxMap),
-				BlockIndepHash,
-				maps:get(<<"last_tx">>, TxMap),
-				maps:get(<<"owner">>, TxMap),
-				to_wallet(maps:get(<<"owner">>, TxMap)),
-				maps:get(<<"target">>, TxMap),
-				maps:get(<<"quantity">>, TxMap),
-				maps:get(<<"signature">>, TxMap),
-				maps:get(<<"reward">>, TxMap)
-			], ?DRIVER_TIMEOUT),
-			done = ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT),
-			ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
-			ok = lists:foreach(fun(TagMap) ->
-				ok = insert_tag_json(TagMap, maps:get(<<"id">>, TxMap), Env)
-			end, maps:get(<<"tags">>, TxMap)),
-			ok;
-		not_found ->
-			ok
-	end.
-
-insert_tag_json(TagMap, TXID, #{ insert_tag_stmt := Stmt }) ->
-	ok = ar_sqlite3:bind(Stmt, [
-		TXID,
-		ar_util:decode(maps:get(<<"name">>, TagMap)),
-		ar_util:decode(maps:get(<<"value">>, TagMap))
-	], ?DRIVER_TIMEOUT),
-	done = ar_sqlite3:step(Stmt, ?DRIVER_TIMEOUT),
-	ok = ar_sqlite3:reset(Stmt, ?DRIVER_TIMEOUT),
-	ok.
-
-read_block(BH, _DataDir) ->
-	case ar_storage:lookup_block_filename(BH) of
-		unavailable ->
-			not_found;
-		Filename ->
-			{ok, Bin} = file:read_file(Filename),
-			case ar_serialize:json_decode(Bin, [return_maps]) of
-				{ok, BlockMap} ->
-					{ok, BlockMap};
-				{error, _} ->
-					not_found
-			end
-	end.
-
-read_tx(TX, DataDir) ->
-	case file:read_file(filename:join([DataDir, ?TX_DIR, tx_filename(TX)])) of
-		{ok, Bin} ->
-			case ar_serialize:json_decode(Bin, [return_maps]) of
-				{ok, TXMap} ->
-					{ok, TXMap};
-				{error, _} ->
-					not_found
-			end;
-		{error, enoent} ->
-			not_found
-	end.
-
-tx_filename(Hash) ->
-	<<Hash/binary, ".json">>.
-
-to_wallet(OwnerHash) ->
-	ar_util:encode(ar_wallet:to_address(ar_util:decode(OwnerHash))).
 
 sql_now() ->
 	calendar:system_time_to_rfc3339(erlang:system_time(second), [{offset, "Z"}]).

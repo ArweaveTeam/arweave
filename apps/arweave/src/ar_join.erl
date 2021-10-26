@@ -125,13 +125,6 @@ get_block(Peers, BShadow, Mempool, [TXID | TXIDs], TXs, Retries) ->
 
 %% @doc Perform the joining process.
 do_join(Peers, B, BI) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(arql_tags_index, Config#config.enable) of
-		true ->
-			ar_arql_db:populate_db(?BI_TO_BHL(BI));
-		false ->
-			ok
-	end,
 	ar_randomx_state:init(BI, Peers),
 	ar:console("Downloading the block trail.~n", []),
 	Blocks = get_block_and_trail(Peers, B, BI),

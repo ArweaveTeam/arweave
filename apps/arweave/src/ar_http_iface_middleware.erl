@@ -180,19 +180,17 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 %% Return a transaction specified via the the transaction id (hash).
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
-	case get_tx_filename(Hash) of
-		{ok, Filename} ->
-			{200, #{}, sendfile(Filename), Req};
-		{migrated_v1, Filename} ->
-			case ar_storage:read_migrated_v1_tx_file(Filename) of
-				{ok, TX} ->
+	case ar_util:safe_decode(Hash) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid hash.">>, Req};
+		{ok, ID} ->
+			case ar_storage:read_tx(ID) of
+				unavailable ->
+					maybe_tx_is_pending_response(ID, Req);
+				#tx{} = TX ->
 					Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-					{200, #{}, Body, Req};
-				_ ->
-					{404, #{}, <<>>, Req}
-			end;
-		{response, {Status, Headers, Body}} ->
-			{Status, Headers, Body, Req}
+					{200, #{}, Body, Req}
+			end
 	end;
 
 %% Return a possibly unconfirmed transaction.
@@ -264,22 +262,15 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 		false ->
 			{421, #{}, <<"Serving HTML data is disabled on this node.">>, Req};
 		_ ->
-			case hash_to_filename(tx, Hash) of
+			case ar_util:safe_decode(Hash) of
 				{error, invalid} ->
 					{400, #{}, <<"Invalid hash.">>, Req};
-				{error, _, unavailable} ->
-					{404, #{}, sendfile("data/not_found.html"), Req};
-				{ok, Filename} ->
-					{ok, TX} = ar_storage:read_tx_file(Filename),
-					serve_tx_html_data(Req, TX);
-				{migrated_v1, Filename} ->
-					case ar_storage:read_migrated_v1_tx_file(Filename) of
-						{ok, TX} ->
-							serve_tx_html_data(Req, TX);
-						{error, data_unavailable} ->
-							{404, #{}, <<>>, Req};
-						_ ->
-							{500, #{}, <<>>, Req}
+				{ok, ID} ->
+					case ar_storage:read_tx(ID) of
+						unavailable ->
+							{404, #{}, sendfile("data/not_found.html"), Req};
+						#tx{} = TX ->
+							serve_tx_html_data(Req, TX)
 					end
 			end
 	end;
@@ -836,19 +827,24 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, Pid)
 		when Type == <<"height">> orelse Type == <<"hash">> ->
 	case Type of
 		<<"hash">> ->
-			case hash_to_filename(block, ID) of
+			case ar_util:safe_decode(ID) of
 				{error, invalid} ->
-					{400, #{}, <<"Invalid hash.">>, Req};
-				{error, DecodedID, unavailable} ->
-					case ar_randomx_state:get_key_block(DecodedID) of
-						not_found ->
+					{404, #{}, <<"Block not found.">>, Req};
+				{ok, H} ->
+					ReadB =
+						case ar_randomx_state:get_key_block(H) of
+							not_found ->
+								ar_storage:read_block(H);
+							{ok, B} ->
+								B
+						end,
+					case ReadB of
+						unavailable ->
 							{404, #{}, <<"Block not found.">>, Req};
-						{ok, B} ->
-							{200, #{}, ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-									Req}
-					end;
-				{ok, Filename} ->
-					{200, #{}, sendfile(Filename), Req}
+						#block{} ->
+							{200, #{}, ar_serialize:jsonify(
+									ar_serialize:block_to_json_struct(ReadB)), Req}
+					end
 			end;
 		<<"height">> ->
 			case ar_node:is_joined() of
@@ -870,7 +866,8 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, Pid)
 									{404, #{}, <<"Block not found.">>, Req};
 								false ->
 									{H, _, _} = lists:nth(Len - Height, BI),
-									handle(<<"GET">>, [<<"block">>, <<"hash">>, ar_util:encode(H)], Req, Pid)
+									handle(<<"GET">>, [<<"block">>, <<"hash">>,
+											ar_util:encode(H)], Req, Pid)
 							end
 					catch _:_ ->
 						{400, #{}, <<"Invalid height.">>, Req}
@@ -911,67 +908,47 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			case hash_to_filename(tx, Hash) of
-				{error, invalid} ->
-					{400, #{}, <<"Invalid hash.">>, Req};
-				{error, ID, unavailable} ->
-					case is_a_pending_tx(ID) of
+			ReadTX =
+				case ar_util:safe_decode(Hash) of
+					{error, invalid} ->
+						{reply, {400, #{}, <<"Invalid hash.">>, Req}};
+					{ok, ID} ->
+						{ar_storage:read_tx(ID), ID}
+				end,
+			case ReadTX of
+				{unavailable, TXID} ->
+					case is_a_pending_tx(TXID) of
 						true ->
 							{202, #{}, <<"Pending">>, Req};
 						false ->
 							{404, #{}, <<"Not Found.">>, Req}
 					end;
-				{Status, Filename} ->
+				{reply, Reply} ->
+					Reply;
+				{#tx{} = TX, _} ->
 					case Field of
 						<<"tags">> ->
-							case ar_storage:read_tx_file(Filename) of
-								{ok, TX} ->
-									{200, #{}, ar_serialize:jsonify(
-										lists:map(
-											fun({Name, Value}) ->
-												{
-													[
-														{name, ar_util:encode(Name)},
-														{value, ar_util:encode(Value)}
-													]
-												}
-											end,
-											TX#tx.tags
-										)
-									), Req};
-								{error, enoent} ->
-									{404, #{}, <<>>, Req};
-								_ ->
-									{500, #{}, <<>>, Req}
-							end;
+							{200, #{}, ar_serialize:jsonify(lists:map(
+									fun({Name, Value}) ->
+										{[{name, ar_util:encode(Name)},
+												{value, ar_util:encode(Value)}]}
+									end,
+									TX#tx.tags)), Req};
 						<<"data">> ->
-							Result =
-								case Status of
-									ok ->
-										ar_storage:read_tx_file(Filename);
-									migrated_v1 ->
-										ar_storage:read_migrated_v1_tx_file(Filename)
-								end,
-							case Result of
-								{ok, TX} ->
-									serve_tx_data(Req, TX);
-								{error, enoent} ->
-									{404, #{}, <<>>, Req};
-								{error, data_unavailable} ->
-									{404, #{}, <<>>, Req};
-								_ ->
-									{500, #{}, <<>>, Req}
-							end;
+							serve_tx_data(Req, TX);
 						_ ->
-							case file:read_file(Filename) of
-								{ok, JSONBlock} ->
-									{TXJSON} = ar_serialize:dejsonify(JSONBlock),
-									Res = val_for_key(Field, TXJSON),
-									{200, #{}, Res, Req};
-								{error, enoent} ->
-									{404, #{}, <<>>, Req};
-								_ ->
-									{500, #{}, <<>>, Req}
+							case catch binary_to_existing_atom(Field) of
+								{'EXIT', _} ->
+									{400, #{}, jiffy:encode(#{ error => invalid_field }), Req};
+								FieldAtom ->
+									{TXJSON} = ar_serialize:tx_to_json_struct(TX),
+									case catch val_for_key(FieldAtom, TXJSON) of
+										{'EXIT', _} ->
+											{400, #{}, jiffy:encode(#{ error => invalid_field }),
+													Req};
+										Val ->
+											{200, #{}, Val, Req}
+									end
 							end
 					end
 			end
@@ -1054,28 +1031,17 @@ handle_get_tx_status(EncodedTXID, Req) ->
 			end
 	end.
 
-%% @doc Get the filename for an encoded TX id.
-get_tx_filename(Hash) ->
-	case hash_to_filename(tx, Hash) of
-		{error, invalid} ->
-			{response, {400, #{}, <<"Invalid hash.">>}};
-		{error, ID, unavailable} ->
-			maybe_tx_is_pending_response(ID);
-		{Status, Filename} ->
-			{Status, Filename}
-	end.
-
-maybe_tx_is_pending_response(ID) ->
+maybe_tx_is_pending_response(ID, Req) ->
 	case is_a_pending_tx(ID) of
 		true ->
-			{response, {202, #{}, <<"Pending">>}};
+			{202, #{}, <<"Pending">>, Req};
 		false ->
 			case ar_tx_db:get_error_codes(ID) of
 				{ok, ErrorCodes} ->
 					ErrorBody = list_to_binary(lists:join(" ", ErrorCodes)),
-					{response, {410, #{}, ErrorBody}};
+					{410, #{}, ErrorBody, Req};
 				not_found ->
-					{response, {404, #{}, <<"Not Found.">>}}
+					{404, #{}, <<"Not Found.">>, Req}
 			end
 	end.
 
@@ -1445,47 +1411,6 @@ block_field_to_string(<<"scheduled_usd_to_ar_rate">>, Res) -> ar_serialize:jsoni
 block_field_to_string(<<"poa">>, Res) -> ar_serialize:jsonify(Res);
 block_field_to_string(_, Res) -> Res.
 
-hash_to_filename(Type, Hash) ->
-	case hash_to_filename_from_diskcache(Type, Hash) of
-		unavailable ->
-			hash_to_filename_from_storage(Type, Hash);
-		{ok, FileName} ->
-			{ok, FileName}
-	end.
-hash_to_filename_from_diskcache(tx, Hash) ->
-	case ar_util:safe_decode(Hash) of
-		{ok, ID} ->
-			ar_disk_cache:lookup_tx_filename(ID);
-		_ ->
-			unavailable
-	end;
-hash_to_filename_from_diskcache(block, Hash) ->
-	case ar_util:safe_decode(Hash) of
-		{ok, ID} ->
-			ar_disk_cache:lookup_block_filename(ID);
-		_ ->
-			unavailable
-	end;
-hash_to_filename_from_diskcache(_,_) ->
-	unavailable.
-
-hash_to_filename_from_storage(Type, Hash) ->
-	case ar_util:safe_decode(Hash) of
-		{error, invalid} ->
-			{error, invalid};
-		{ok, ID} ->
-			{Mod, Fun} = type_to_mf({Type, lookup_filename}),
-			F = apply(Mod, Fun, [ID]),
-			case F of
-				unavailable ->
-					{error, ID, unavailable};
-				Filename when Type == block ->
-					{ok, Filename};
-				Response ->
-					Response
-			end
-	end.
-
 %% @doc Return true if ID is a pending tx.
 is_a_pending_tx(ID) ->
 	ar_node:is_a_pending_tx(ID).
@@ -1541,12 +1466,6 @@ return_info(Req) ->
 			}
 		),
 	Req}.
-
-%% @doc converts a tuple of atoms to a {Module, Function} tuple.
-type_to_mf({tx, lookup_filename}) ->
-	{ar_storage, lookup_tx_filename};
-type_to_mf({block, lookup_filename}) ->
-	{ar_storage, lookup_block_filename}.
 
 %% @doc Convenience function for lists:keyfind(Key, 1, List). Returns Value, not {Key, Value}.
 val_for_key(K, L) ->
@@ -1851,18 +1770,30 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 							{404, #{}, <<"Block not found.">>, Req};
 						false ->
 							{H, _, _} = lists:nth(Len - Height, BI),
-							process_request(get_block, [<<"hash">>, ar_util:encode(H), <<"wallet_list">>], Req)
+							process_request(get_block, [<<"hash">>, ar_util:encode(H),
+									<<"wallet_list">>], Req)
 					end
 			end;
 		<<"hash">> ->
-			case hash_to_filename(block, ID) of
-				{ok, Filename} ->
-					{ok, Binary} = file:read_file(Filename),
-					B = ar_serialize:json_struct_to_block(Binary),
-					case {B#block.height >= ar_fork:height_2_2(), ar_meta_db:get(serve_wallet_lists)} of
+			ReadB =
+				case ar_util:safe_decode(ID) of
+					{ok, H} ->
+						ar_storage:read_block(H);
+					{error, invalid} ->
+						{reply, {404, #{}, <<"Block not found.">>, Req}}
+				end,
+			case ReadB of
+				{reply, Reply} ->
+					Reply;
+				unavailable ->
+					{404, #{}, <<"Block not found.">>, Req};
+				#block{} = B ->
+					case {B#block.height >= ar_fork:height_2_2(),
+							ar_meta_db:get(serve_wallet_lists)} of
 						{true, false} ->
 							{400, #{},
-								jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }), Req};
+								jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
+										Req};
 						{true, _} ->
 							ok = ar_semaphore:acquire(get_wallet_list, infinity),
 							case ar_storage:read_wallet_list(B#block.wallet_list) of

@@ -2,27 +2,15 @@
 
 -behaviour(gen_server).
 
--export([
-	start_link/0,
-	write_full_block/2,
-	read_block/1, read_block/2,
-	write_tx/1, write_tx_data/1, write_tx_data/2, write_tx_data/3,
-	read_tx/1, read_tx_data/1,
-	update_confirmation_index/1,
-	get_tx_confirmation_data/1,
-	get_wallet_list_range/2,
-	read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/3,
-	write_block_index/1, read_block_index/0,
-	delete_blacklisted_tx/1, delete_block/1,
-	get_free_space/1,
-	lookup_block_filename/1, lookup_tx_filename/1, wallet_list_filepath/1,
-	tx_filepath/1, tx_data_filepath/1,
-	read_tx_file/1, read_migrated_v1_tx_file/1,
-	ensure_directories/1,
-	write_file_atomic/2,
-	has_chunk/1, write_chunk/3, read_chunk/1, delete_chunk/1,
-	write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1
-]).
+-export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
+		write_tx_data/1, write_tx_data/2, write_tx_data/3, read_tx/1, read_tx_data/1,
+		update_confirmation_index/1, get_tx_confirmation_data/1, get_wallet_list_range/2,
+		read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/3,
+		write_block_index/1, read_block_index/0, delete_blacklisted_tx/1,
+		get_free_space/1, lookup_tx_filename/1, wallet_list_filepath/1,
+		tx_filepath/1, tx_data_filepath/1, read_tx_file/1, read_migrated_v1_tx_file/1,
+		ensure_directories/1, write_file_atomic/2, write_term/2, write_term/3, read_term/1,
+		read_term/2, delete_term/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -33,7 +21,9 @@
 -include_lib("kernel/include/file.hrl").
 
 -record(state, {
-	tx_confirmation_db
+	tx_confirmation_db,
+	tx_db,
+	block_db
 }).
 
 %%%===================================================================
@@ -42,35 +32,6 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-%%%===================================================================
-%%% Public interface.
-%%%===================================================================
-
-write_block(B) ->
-	case ar_meta_db:get(disk_logging) of
-		true ->
-			?LOG_INFO([
-				{event, writing_block_to_disk},
-				{block, ar_util:encode(B#block.indep_hash)}
-			]);
-		_ ->
-			do_nothing
-	end,
-	Filepath = block_filepath(B),
-	case filelib:is_file(Filepath) of
-		true ->
-			ok;
-		false ->
-			BlockJSON = ar_serialize:jsonify(ar_serialize:block_to_json_struct(B)),
-			case write_file_atomic(Filepath, BlockJSON) of
-				ok ->
-					ar_meta_db:increase(blocks_on_disk, 1),
-					ok;
-				Error ->
-					Error
-			end
-	end.
 
 write_full_block(#block{ height = 0 } = BShadow, TXs) when ?NETWORK_NAME == "arweave.N.1" ->
 	%% Genesis transactions are stored in data/genesis_txs; they are part of the repository.
@@ -81,25 +42,6 @@ write_full_block(BShadow, TXs) ->
 			write_full_block2(BShadow, TXs);
 		Error ->
 			Error
-	end.
-
-is_blacklisted(#tx{ format = 2 }) ->
-	false;
-is_blacklisted(#tx{ id = TXID }) ->
-	ar_tx_blacklist:is_tx_blacklisted(TXID).
-
-write_full_block2(BShadow, TXs) ->
-	case write_block(BShadow) of
-		ok ->
-			case update_confirmation_index(BShadow#block{ txs = TXs }) of
-				ok ->
-					app_ipfs:maybe_ipfs_add_txs(TXs),
-					ok;
-				Error ->
-					Error
-			end;
-		Error2 ->
-			Error2
 	end.
 
 update_confirmation_index(B) ->
@@ -162,59 +104,35 @@ read_block(Blocks) when is_list(Blocks) ->
 read_block({H, _, _}) ->
 	read_block(H);
 read_block(BH) ->
-	Filename =
-		%% The cache keeps a rotated number of recent headers when the
-		%% node is out of disk space.
-		case ar_disk_cache:lookup_block_filename(BH) of
-			unavailable ->
-				case lookup_block_filename(BH) of
-					unavailable ->
-						unavailable;
-					Name ->
-						Name
-				end;
-			{ok, DiskCacheName} ->
-				DiskCacheName
-		end,
-	case Filename of
-		unavailable ->
-			unavailable;
+	case ar_disk_cache:lookup_block_filename(BH) of
+		{ok, Filename} ->
+			%% The cache keeps a rotated number of recent headers when the
+			%% node is out of disk space.
+			read_block_from_file(Filename);
 		_ ->
-			case file:read_file(Filename) of
-				{ok, JSON} ->
-					case parse_block_shadow_json(JSON) of
-						{error, _} ->
-							unavailable;
-						{ok, B} ->
-							B
+			case ets:lookup(?MODULE, block_db) of
+				[{_, DB}] ->
+					case ar_kv:get(DB, BH) of
+						not_found ->
+							case lookup_block_filename(BH) of
+								unavailable ->
+									unavailable;
+								Filename ->
+									read_block_from_file(Filename)
+							end;
+						{ok, V} ->
+							binary_to_term(V);
+						{error, Reason} ->
+							?LOG_WARNING([{event, error_reading_block_from_kv_storage},
+									{block, ar_util:encode(BH)},
+									{error, io_lib:format("~p", [Reason])}])
 					end;
-				{error, _} ->
+				_ ->
+					?LOG_WARNING([{event, cannot_read_block},
+							{block, ar_util:encode(BH)},
+							{reason, kv_storage_not_initialized}]),
 					unavailable
 			end
-	end.
-
-%% @doc Ensure that all of the relevant storage directories exist.
-ensure_directories(DataDir) ->
-	%% Append "/" to every path so that filelib:ensure_dir/1 creates a directory
-	%% if it does not exist.
-	filelib:ensure_dir(filename:join(DataDir, ?TX_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?WALLET_LIST_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join(DataDir, ?STORAGE_MIGRATIONS_DIR) ++ "/"),
-	filelib:ensure_dir(filename:join([DataDir, ?TX_DIR, "migrated_v1"]) ++ "/").
-
-parse_block_shadow_json(JSON) ->
-	case ar_serialize:json_decode(JSON) of
-		{ok, JiffyStruct} ->
-			case catch ar_serialize:json_struct_to_block(JiffyStruct) of
-				B when is_record(B, block) ->
-					{ok, B};
-				_ ->
-					{error, json_struct_to_block}
-			end;
-		Error ->
-			Error
 	end.
 
 %% @doc Return available disk space, in bytes.
@@ -290,46 +208,48 @@ delete_wallet_list_chunks(Position, RootHash, BytesRemoved) ->
 %% bytes does not include the migrated v1 data. The removal of migrated v1 data is requested
 %% from ar_data_sync asynchronously. The v2 headers are not removed.
 delete_blacklisted_tx(Hash) ->
-	case lookup_tx_filename(Hash) of
-		{Status, Filename} ->
-			case Status of
-				migrated_v1 ->
-					ar_data_sync:request_tx_data_removal(Hash),
-					case file:read_file_info(Filename) of
-						{ok, FileInfo} ->
-							case file:delete(Filename) of
+	case ets:lookup(?MODULE, tx_db) of
+		[{_, DB}] ->
+			case ar_kv:get(DB, Hash) of
+				{ok, V} ->
+					TX = binary_to_term(V),
+					case TX#tx.format == 1 andalso TX#tx.data_size > 0 of
+						true ->
+							ar_data_sync:request_tx_data_removal(Hash),
+							case ar_kv:delete(DB, Hash) of
 								ok ->
-									{ok, FileInfo#file_info.size};
+									{ok, byte_size(V)};
 								Error ->
 									Error
 							end;
-						Error ->
-							Error
+						_ ->
+							{ok, 0}
 					end;
-				_ ->
-					{ok, 0}
-			end;
-		unavailable ->
-			{ok, 0}
-	end.
-
-%% @doc Delete the block with the given hash from disk. Return {ok, BytesRemoved} if
-%% the removal is successful or the file does not exist.
-delete_block(H) ->
-	case lookup_block_filename(H) of
-		unavailable ->
-			{ok, 0};
-		Filename ->
-			case file:read_file_info(Filename) of
-				{ok, FileInfo} ->
-					case file:delete(Filename) of
-						ok ->
-							{ok, FileInfo#file_info.size};
-						Error ->
-							Error
-					end;
-				Error ->
-					Error
+				{error, _} = DBError ->
+					DBError;
+				not_found ->
+					case lookup_tx_filename(Hash) of
+						{Status, Filename} ->
+							case Status of
+								migrated_v1 ->
+									ar_data_sync:request_tx_data_removal(Hash),
+									case file:read_file_info(Filename) of
+										{ok, FileInfo} ->
+											case file:delete(Filename) of
+												ok ->
+													{ok, FileInfo#file_info.size};
+												Error ->
+													Error
+											end;
+										Error ->
+											Error
+									end;
+								_ ->
+									{ok, 0}
+							end;
+						unavailable ->
+							{ok, 0}
+					end
 			end
 	end.
 
@@ -396,19 +316,11 @@ write_tx(#tx{ format = Format } = TX) ->
 	end.
 
 write_tx_header(TX) ->
-	TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX#tx{ data = <<>> })),
-	Filepath =
-		case {TX#tx.format, byte_size(TX#tx.data) > 0} of
-			{1, true} ->
-				filepath([?TX_DIR, "migrated_v1", tx_filename(TX)]);
-			_ ->
-				tx_filepath(TX)
-		end,
-	case filelib:is_file(Filepath) of
-		true ->
-			ok;
-		false ->
-			write_file_atomic(Filepath, TXJSON)
+	case ets:lookup(?MODULE, tx_db) of
+		[{_, DB}] ->
+			ar_kv:put(DB, TX#tx.id, term_to_binary(TX#tx{ data = <<>> }));
+		_ ->
+			{error, not_initialized}
 	end.
 
 write_tx_data(Data) ->
@@ -476,11 +388,47 @@ write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpa
 	end.
 
 %% @doc Read a tx from disk, given a hash.
-read_tx(unavailable) -> unavailable;
-read_tx(TX) when is_record(TX, tx) -> TX;
+read_tx(unavailable) ->
+	unavailable;
+read_tx(TX) when is_record(TX, tx) ->
+	TX;
 read_tx(TXs) when is_list(TXs) ->
 	lists:map(fun read_tx/1, TXs);
 read_tx(ID) ->
+	case ets:lookup(?MODULE, tx_db) of
+		[{_, DB}] ->
+			case ar_kv:get(DB, ID) of
+				not_found ->
+					read_tx_from_file(ID);
+				{ok, Binary} ->
+					TX = binary_to_term(Binary),
+					case TX#tx.format == 1 andalso TX#tx.data_size > 0 of
+						true ->
+							case read_tx_data_from_kv_storage(TX#tx.id) of
+								{ok, Data} ->
+									TX#tx{ data = Data };
+								Error ->
+									%% When a v1 tx is written its data is submitted
+									%% to ar_data_sync where it first enters the disk pool.
+									%% It is expected we may not yet find the data here
+									%% as it may still be in the disk pool.
+									?LOG_DEBUG([{event, error_reading_tx_from_kv_storage},
+											{tx, ar_util:encode(ID)},
+											{error, io_lib:format("~p", [Error])}]),
+									unavailable
+							end;
+						_ ->
+							TX
+					end
+			end;
+		_ ->
+			?LOG_WARNING([{event, cannot_read_transaction},
+					{tx, ar_util:encode(ID)},
+					{reason, kv_storage_not_initialized}]),
+			unavailable
+	end.
+
+read_tx_from_file(ID) ->
 	MaybeFilename =
 		%% The cache keeps a rotated number of recent headers when the
 		%% node is out of disk space.
@@ -513,10 +461,8 @@ read_tx_file(Filename) ->
 	case file:read_file(Filename) of
 		{ok, <<>>} ->
 			file:delete(Filename),
-			?LOG_ERROR([
-				{event, empty_tx_file},
-				{filename, Filename}
-			]),
+			?LOG_WARNING([{event, empty_tx_file},
+					{filename, Filename}]),
 			{error, tx_file_empty};
 		{ok, Binary} ->
 			case catch ar_serialize:json_struct_to_tx(Binary) of
@@ -524,10 +470,7 @@ read_tx_file(Filename) ->
 					{ok, TX};
 				_ ->
 					file:delete(Filename),
-					?LOG_ERROR([
-						{event, failed_to_parse_tx},
-						{filename, Filename}
-					]),
+					?LOG_WARNING([{event, failed_to_parse_tx}, {filename, Filename}]),
 					{error, failed_to_parse_tx}
 			end;
 		Error ->
@@ -539,17 +482,25 @@ read_migrated_v1_tx_file(Filename) ->
 		{ok, Binary} ->
 			case catch ar_serialize:json_struct_to_v1_tx(Binary) of
 				#tx{ id = ID } = TX ->
-					case ar_data_sync:get_tx_data(ID) of
+					case read_tx_data_from_kv_storage(ID) of
 						{ok, Data} ->
 							{ok, TX#tx{ data = Data }};
-						{error, not_found} ->
-							{error, data_unavailable};
-						{error, timeout} ->
-							{error, data_fetch_timeout};
 						Error ->
 							Error
 					end
 			end;
+		Error ->
+			Error
+	end.
+
+read_tx_data_from_kv_storage(ID) ->
+	case ar_data_sync:get_tx_data(ID) of
+		{ok, Data} ->
+			{ok, Data};
+		{error, not_found} ->
+			{error, data_unavailable};
+		{error, timeout} ->
+			{error, data_fetch_timeout};
 		Error ->
 			Error
 	end.
@@ -749,11 +700,14 @@ lookup_tx_filename(ID) ->
 %%%===================================================================
 
 init([]) ->
+	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
 	ensure_directories(Config#config.data_dir),
 	{ok, DB} = ar_kv:open_without_column_families("ar_storage_tx_confirmation_db", []),
-	ets:insert(?MODULE, {tx_confirmation_db, DB}),
-	{ok, #state{ tx_confirmation_db = DB }}.
+	{ok, TXDB} = ar_kv:open_without_column_families("ar_storage_tx_db", []),
+	{ok, BlockDB} = ar_kv:open_without_column_families("ar_storage_block_db", []),
+	ets:insert(?MODULE, [{tx_confirmation_db, DB}, {tx_db, TXDB}, {block_db, BlockDB}]),
+	{ok, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = BlockDB }}.
 
 handle_call({put_tx_confirmation_data, B}, _From, State) ->
 	#state{ tx_confirmation_db = TXConfirmationDB } = State,
@@ -780,13 +734,79 @@ handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
 
-terminate(_Reason, #state{ tx_confirmation_db = DB }) ->
+terminate(_Reason, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = BlockDB }) ->
 	ar_kv:close(DB),
+	ar_kv:close(TXDB),
+	ar_kv:close(BlockDB),
 	ok.
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+write_block(B) ->
+	case ar_meta_db:get(disk_logging) of
+		true ->
+			?LOG_INFO([{event, writing_block_to_disk},
+					{block, ar_util:encode(B#block.indep_hash)}]);
+		_ ->
+			do_nothing
+	end,
+	case ets:lookup(?MODULE, block_db) of
+		[{_, DB}] ->
+			TXIDs = lists:map(fun(TXID) when is_binary(TXID) -> TXID;
+					(#tx{ id = TXID }) -> TXID end, B#block.txs),
+			ar_kv:put(DB, B#block.indep_hash, term_to_binary(B#block{
+					hash_list = unset, size_tagged_txs = unset, txs = TXIDs }));
+		_ ->
+			{error, not_initialized}
+	end.
+
+is_blacklisted(#tx{ format = 2 }) ->
+	false;
+is_blacklisted(#tx{ id = TXID }) ->
+	ar_tx_blacklist:is_tx_blacklisted(TXID).
+
+write_full_block2(BShadow, TXs) ->
+	case write_block(BShadow) of
+		ok ->
+			case update_confirmation_index(BShadow#block{ txs = TXs }) of
+				ok ->
+					app_ipfs:maybe_ipfs_add_txs(TXs),
+					ok;
+				Error ->
+					Error
+			end;
+		Error2 ->
+			Error2
+	end.
+
+read_block_from_file(Filename) ->
+	case file:read_file(Filename) of
+		{ok, JSON} ->
+			parse_block_json(JSON);
+		{error, Reason} ->
+			?LOG_WARNING([{event, error_reading_block},
+					{error, io_lib:format("~p", [Reason])}]),
+			unavailable
+	end.
+
+parse_block_json(JSON) ->
+	case catch ar_serialize:json_decode(JSON) of
+		{ok, JiffyStruct} ->
+			case catch ar_serialize:json_struct_to_block(JiffyStruct) of
+				B when is_record(B, block) ->
+					B;
+				Error ->
+					?LOG_WARNING([{event, error_parsing_block_json},
+							{error, io_lib:format("~p", [Error])}]),
+					unavailable
+			end;
+		Error ->
+			?LOG_WARNING([{event, error_parsing_block_json},
+					{error, io_lib:format("~p", [Error])}]),
+			unavailable
+	end.
 
 get_disk_data(Dir) ->
 	[DiskData | _] = select_drive(ar_disksup:get_disk_data(), filename:absname(Dir)),
@@ -840,13 +860,16 @@ to_string(Bin) when is_binary(Bin) ->
 to_string(String) ->
 	String.
 
-block_filename(B) when is_record(B, block) ->
-	block_filename(B#block.indep_hash);
-block_filename(BH) when is_binary(BH) ->
-	iolist_to_binary([ar_util:encode(BH), ".json"]).
-
-block_filepath(B) ->
-	filepath([?BLOCK_DIR, block_filename(B)]).
+%% @doc Ensure that all of the relevant storage directories exist.
+ensure_directories(DataDir) ->
+	%% Append "/" to every path so that filelib:ensure_dir/1 creates a directory
+	%% if it does not exist.
+	filelib:ensure_dir(filename:join(DataDir, ?TX_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?BLOCK_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?WALLET_LIST_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join(DataDir, ?STORAGE_MIGRATIONS_DIR) ++ "/"),
+	filelib:ensure_dir(filename:join([DataDir, ?TX_DIR, "migrated_v1"]) ++ "/").
 
 tx_filepath(TX) ->
 	filepath([?TX_DIR, tx_filename(TX)]).
@@ -896,49 +919,6 @@ write_file_atomic(Filename, Data) ->
 		Error ->
 			Error
 	end.
-
-has_chunk(DataPathHash) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	ChunkDir = filename:join(DataDir, ?DATA_CHUNK_DIR),
-	filelib:is_file(filename:join(ChunkDir, ar_util:encode(DataPathHash))).
-
-write_chunk(DataPathHash, Chunk, DataPath) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	Data = term_to_binary({Chunk, DataPath}),
-	ChunkDir = filename:join(DataDir, ?DATA_CHUNK_DIR),
-	case filelib:ensure_dir(ChunkDir ++ "/") of
-		{error, Reason} ->
-			{error, Reason};
-		ok ->
-			write_file_atomic(
-				filename:join(
-					ChunkDir,
-					binary_to_list(ar_util:encode(DataPathHash))
-				),
-				Data
-			)
-	end.
-
-read_chunk(DataPathHash) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	ChunkDir = filename:join(DataDir, ?DATA_CHUNK_DIR),
-	case file:read_file(filename:join(ChunkDir, ar_util:encode(DataPathHash))) of
-		{error, enoent} ->
-			not_found;
-		{ok, Binary} ->
-			{ok, binary_to_term(Binary)};
-		Error ->
-			Error
-	end.
-
-delete_chunk(DataPathHash) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
-	ChunkDir = filename:join(DataDir, ?DATA_CHUNK_DIR),
-	file:delete(filename:join(ChunkDir, ar_util:encode(DataPathHash))).
 
 write_term(Name, Term) ->
 	{ok, Config} = application:get_env(arweave, config),

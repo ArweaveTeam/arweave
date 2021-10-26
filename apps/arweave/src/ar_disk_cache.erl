@@ -7,25 +7,11 @@
 
 -behaviour(gen_server).
 
--export([
-	lookup_block_filename/1,
-	lookup_tx_filename/1,
-	write_block/1,
-	write_block_shadow/1,
-	lookup_wallet_list_chunk_filename/2,
-	write_wallet_list_chunk/3,
-	reset/0
-]).
+-export([lookup_block_filename/1, lookup_tx_filename/1, write_block/1, write_block_shadow/1,
+		lookup_wallet_list_chunk_filename/2, write_wallet_list_chunk/3, reset/0]).
 
--export([
-	start_link/0,
-	init/1,
-	handle_call/3,
-	handle_cast/2,
-	handle_info/2,
-	terminate/2,
-	code_change/3
-]).
+-export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+		code_change/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
