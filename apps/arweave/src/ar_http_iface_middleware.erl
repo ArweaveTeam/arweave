@@ -582,7 +582,8 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 				list_to_binary(ar_util:format_peer(P))
 			||
 				P <- ar_bridge:get_remote_peers(),
-				P /= ar_http_util:arweave_peer(Req)
+				P /= ar_http_util:arweave_peer(Req),
+				ar_manage_peers:is_public_peer(P)
 			]
 		),
 	Req};

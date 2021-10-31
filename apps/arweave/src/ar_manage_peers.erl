@@ -1,11 +1,47 @@
 -module(ar_manage_peers).
 
--export([update/1, stats/0, reset/0]).
--export([get_more_peers/1]).
+-export([update/1, stats/0, reset/0, get_more_peers/1, is_public_peer/1]).
 
 -include_lib("arweave/include/ar.hrl").
 
 %%% Manage and update peer lists.
+
+%% @doc Return true if the given peer has a public IPv4 address.
+%% https://en.wikipedia.org/wiki/Reserved_IP_addresses.
+is_public_peer({Oct1, Oct2, Oct3, Oct4, _Port}) ->
+	is_public_peer({Oct1, Oct2, Oct3, Oct4});
+is_public_peer({0, _, _, _}) ->
+	false;
+is_public_peer({10, _, _, _}) ->
+	false;
+is_public_peer({127, _, _, _}) ->
+	false;
+is_public_peer({100, Oct2, _, _}) when Oct2 >= 64 andalso Oct2 =< 127 ->
+	false;
+is_public_peer({169, 254, _, _}) ->
+	false;
+is_public_peer({172, Oct2, _, _}) when Oct2 >= 16 andalso Oct2 =< 31 ->
+	false;
+is_public_peer({192, 0, 0, _}) ->
+	false;
+is_public_peer({192, 0, 2, _}) ->
+	false;
+is_public_peer({192, 88, 99, _}) ->
+	false;
+is_public_peer({192, 168, _, _}) ->
+	false;
+is_public_peer({198, 18, _, _}) ->
+	false;
+is_public_peer({198, 19, _, _}) ->
+	false;
+is_public_peer({198, 51, 100, _}) ->
+	false;
+is_public_peer({203, 0, 113, _}) ->
+	false;
+is_public_peer({Oct1, _, _, _}) when Oct1 >= 224 ->
+	false;
+is_public_peer(_) ->
+	true.
 
 %% @doc Print statistics about the current peers.
 stats() ->
@@ -52,8 +88,8 @@ update(Peers) ->
 				filter_peers(get_more_peers(Peers), Height)
 			)
 		),
-	NewPeers = (lists:sublist(maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ]), ?MAXIMUM_PEERS)
-		++ [ Peer || {Peer, newbie} <- Newbies ]),
+	NewPeers = (lists:sublist(maybe_drop_peers([ Peer || {Peer, _} <- rank_peers(Rankable) ]),
+			?MAXIMUM_PEERS) ++ [ Peer || {Peer, newbie} <- Newbies ]),
 	lists:foreach(
 		fun(P) ->
 			case lists:member(P, NewPeers) of
@@ -69,14 +105,9 @@ update(Peers) ->
 
 %% @doc Return a new list, with the peers and their peers.
 get_more_peers(Peers) ->
-	ar_util:unique(
-		lists:flatten(
-			[
-				ar_util:pmap(fun get_peers/1, lists:sublist(Peers, 10)),
-				Peers
-			]
-		)
-	).
+	ar_util:unique(lists:flatten([
+			[Peer || Peer <- ar_util:pmap(fun get_peers/1, lists:sublist(Peers, 10)),
+					is_public_peer(Peer)], Peers])).
 
 get_peers(Peer) ->
 	case ar_http_iface_client:get_peers(Peer) of
