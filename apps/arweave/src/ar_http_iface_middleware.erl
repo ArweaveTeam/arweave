@@ -611,7 +611,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			case ar_util:safe_decode(Addr) of
+			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
 				{error, invalid} ->
 					{400, #{}, <<"Invalid address.">>, Req};
 				{ok, AddrOK} ->
@@ -711,7 +711,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			case ar_util:safe_decode(Addr) of
+			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
 				{error, invalid} ->
 					{400, #{}, <<"Invalid address.">>, Req};
 				{ok, AddrOK} ->
@@ -734,7 +734,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
 		false ->
 			not_joined(Req);
 		true ->
-			case ar_util:safe_decode(Addr) of
+			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
 				{error, invalid} ->
 					{400, #{}, <<"Invalid address.">>, Req};
 				{ok, AddrOK} ->
@@ -1165,7 +1165,7 @@ estimate_tx_fee(Size, Rate, Height, Addr, RootHash) ->
 	end.
 
 handle_get_wallet_txs(Addr, EarliestTXID) ->
-	case ar_util:safe_decode(Addr) of
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>};
 		{ok, _} ->

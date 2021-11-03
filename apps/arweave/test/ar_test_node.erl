@@ -15,7 +15,8 @@
 		get_tx_price/1, post_and_mine/2, read_block_when_stored/1,
 		get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2, add_peer/1, random_v1_data/1,
 		assert_get_tx_data/3, assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
-		assert_data_not_found_master/1, assert_data_not_found_slave/1]).
+		assert_data_not_found_master/1, assert_data_not_found_slave/1,
+		post_tx_json_to_master/1, post_tx_json_to_slave/1, master_peer/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -262,17 +263,34 @@ wait_until_receives_txs(TXs) ->
 assert_slave_wait_until_receives_txs(TXs) ->
 	?assertEqual(ok, slave_call(?MODULE, wait_until_receives_txs, [TXs])).
 
+assert_post_tx_to_slave(TX) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(TX).
+
+assert_post_tx_to_master(TX) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(TX).
+
+post_tx_to_master(TX) ->
+	post_tx_to_master(TX, true).
+
+post_tx_to_master(TX, Wait) ->
+	Reply = post_tx_json_to_master(ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
+	case Reply of
+		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
+			case Wait of
+				true ->
+					assert_wait_until_receives_txs([TX]);
+				false ->
+					ok
+			end;
+		_ ->
+			?debugFmt("Failed to post transaction. Error DB entries: ~p.",
+					[ar_tx_db:get_error_codes(TX#tx.id)]),
+			noop
+	end,
+	Reply.
+
 post_tx_to_slave(TX) ->
-	SlavePort = slave_call(ar_meta_db, get, [port]),
-	SlaveIP = slave_peer(),
-	Reply =
-		ar_http:req(#{
-			method => post,
-			peer => SlaveIP,
-			path => "/tx",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}],
-			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-		}),
+	Reply = post_tx_json_to_slave(ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			assert_slave_wait_until_receives_txs([TX]);
@@ -294,40 +312,21 @@ post_tx_to_slave(TX) ->
 	end,
 	Reply.
 
-assert_post_tx_to_slave(TX) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_slave(TX).
+post_tx_json_to_master(JSON) ->
+	post_tx_json(JSON, master_peer()).
 
-assert_post_tx_to_master(TX) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_master(TX).
+post_tx_json_to_slave(JSON) ->
+	post_tx_json(JSON, slave_peer()).
 
-post_tx_to_master(TX) ->
-	post_tx_to_master(TX, true).
-
-post_tx_to_master(TX, Wait) ->
-	Port = ar_meta_db:get(port),
-	MasterIP = {127, 0, 0, 1, Port},
-	Reply =
-		ar_http:req(#{
-			method => post,
-			peer => MasterIP,
-			path => "/tx",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}],
-			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
-		}),
-	case Reply of
-		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
-			case Wait of
-				true ->
-					assert_wait_until_receives_txs([TX]);
-				false ->
-					ok
-			end;
-		_ ->
-			?debugFmt("Failed to post transaction. Error DB entries: ~p.",
-					[ar_tx_db:get_error_codes(TX#tx.id)]),
-			noop
-	end,
-	Reply.
+post_tx_json(JSON, Peer) ->
+	{_, _, _, _, Port} = Peer,
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/tx",
+		headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}],
+		body => JSON
+	}).
 
 sign_tx(Wallet) ->
 	sign_tx(slave, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
@@ -364,7 +363,7 @@ sign_tx(Node, Wallet, TXParams, SignFun) ->
 	DataSize = maps:get(data_size, TXParams, byte_size(Data)),
 	Reward = case maps:get(reward, TXParams, none) of
 		none ->
-			get_tx_price(Node, DataSize);
+			get_tx_price(Node, DataSize, maps:get(target, TXParams, <<>>));
 		AssignedReward ->
 			AssignedReward
 	end,
@@ -472,13 +471,14 @@ get_tx_confirmations(master, TXID) ->
 	end.
 
 get_balance(Pub) ->
-	Port = slave_call(ar_meta_db, get, [port]),
-	IP = {127, 0, 0, 1, Port},
+	Peer = slave_peer(),
+	{_, _, _, _, Port} = Peer,
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => IP,
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/balance",
+			peer => Peer,
+			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub)))
+					++ "/balance",
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
 		}),
 	binary_to_integer(Reply).
@@ -521,33 +521,20 @@ test_with_mocked_functions(Functions, TestFun) ->
 	}.
 
 get_tx_price(DataSize) ->
-	get_tx_price(slave, DataSize).
+	get_tx_price(slave, DataSize, <<>>).
 
-get_tx_price(Node, DataSize) ->
-	{IP, Port} = case Node of
-		slave ->
-			P = slave_call(ar_meta_db, get, [port]),
-			{{127, 0, 0, 1, P}, P};
-		master ->
-			P = ar_meta_db:get(port),
-			{{127, 0, 0, 1, P}, P}
-	end,
-	{ok, {{<<"200">>, _}, _, Reply, _, _}} = case Node of
-		slave ->
-			ar_http:req(#{
-				method => get,
-				peer => IP,
-				path => "/price/" ++ integer_to_binary(DataSize),
-				headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-			});
-		master ->
-			ar_http:req(#{
-				method => get,
-				peer => IP,
-				path => "/price/" ++ integer_to_binary(DataSize),
-				headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
-			})
-	end,
+get_tx_price(Node, DataSize, Target) ->
+	Peer = case Node of slave -> slave_peer(); master -> master_peer() end,
+	{_, _, _, _, Port} = Peer,
+	Path = "/price/" ++ integer_to_list(DataSize) ++ "/"
+			++ binary_to_list(ar_util:encode(Target)),
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => Path,
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
 	binary_to_integer(Reply).
 
 post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->

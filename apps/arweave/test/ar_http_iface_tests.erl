@@ -3,6 +3,131 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, get_tx_anchor/0,
+		sign_tx/2, post_tx_json_to_master/1, assert_slave_wait_until_receives_txs/1,
+		slave_wait_until_height/1, read_block_when_stored/1, master_peer/0]).
+
+addresses_with_checksums_test_() ->
+	{timeout, 60, fun test_addresses_with_checksum/0}.
+
+test_addresses_with_checksum() ->
+	{_, Pub} = Wallet = ar_wallet:new(),
+	{_, Pub2} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>},
+			{ar_wallet:to_address(Pub2), ?AR(100), <<>>}]),
+	start(B0),
+	slave_start(B0),
+	connect_to_slave(),
+	Address19 = crypto:strong_rand_bytes(19),
+	Address65 = crypto:strong_rand_bytes(65),
+	Address20 = crypto:strong_rand_bytes(20),
+	Address32 = ar_wallet:to_address(Pub2),
+	TX = sign_tx(Wallet, #{ last_tx => get_tx_anchor() }),
+	{JSON} = ar_serialize:tx_to_json_struct(TX),
+	JSON2 = proplists:delete(<<"target">>, JSON),
+	TX2 = sign_tx(Wallet, #{ last_tx => get_tx_anchor(), target => Address32 }),
+	{JSON3} = ar_serialize:tx_to_json_struct(TX2),
+	InvalidPayloads = [
+		[{<<"target">>, <<":">>} | JSON2],
+		[{<<"target">>, << <<":">>/binary, (ar_util:encode(<< 0:32 >>))/binary >>} | JSON2],
+		[{<<"target">>, << (ar_util:encode(Address19))/binary, <<":">>/binary,
+				(ar_util:encode(<< (erlang:crc32(Address19)):32 >> ))/binary >>} | JSON2],
+		[{<<"target">>, << (ar_util:encode(Address65))/binary, <<":">>/binary,
+				(ar_util:encode(<< (erlang:crc32(Address65)):32 >>))/binary >>} | JSON2],
+		[{<<"target">>, << (ar_util:encode(Address32))/binary, <<":">>/binary,
+				(ar_util:encode(<< 0:32 >>))/binary >>} | JSON2],
+		[{<<"target">>, << (ar_util:encode(Address20))/binary, <<":">>/binary,
+				(ar_util:encode(<< 1:32 >>))/binary >>} | JSON2],
+		[{<<"target">>, << (ar_util:encode(Address32))/binary, <<":">>/binary,
+				(ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary,
+				<<":">>/binary >>} | JSON2],
+		[{<<"target">>, << (ar_util:encode(Address32))/binary, <<":">>/binary >>} | JSON3]
+	],
+	lists:foreach(
+		fun(Struct) ->
+			Payload = ar_serialize:jsonify({Struct}),
+			?assertMatch({ok, {{<<"400">>, _}, _, <<"Invalid JSON.">>, _, _}},
+					post_tx_json_to_master(Payload))
+		end,
+		InvalidPayloads
+	),
+	ValidPayloads = [
+		[{<<"target">>, << (ar_util:encode(Address32))/binary, <<":">>/binary,
+				(ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>} | JSON3],
+		JSON
+	],
+	lists:foreach(
+		fun(Struct) ->
+			Payload = ar_serialize:jsonify({Struct}),
+			?assertMatch({ok, {{<<"200">>, _}, _, <<"OK">>, _, _}},
+					post_tx_json_to_master(Payload))
+		end,
+		ValidPayloads
+	),
+	assert_slave_wait_until_receives_txs([TX, TX2]),
+	ar_node:mine(),
+	[{H, _, _} | _] = slave_wait_until_height(1),
+	B = read_block_when_stored(H),
+	ChecksumAddr = << (ar_util:encode(Address32))/binary, <<":">>/binary,
+			(ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>,
+	?assertEqual(2, length(B#block.txs)),
+	Balance = get_balance(ar_util:encode(Address32)),
+	?assertEqual(Balance, get_balance(ChecksumAddr)),
+	LastTX = get_last_tx(ar_util:encode(Address32)),
+	?assertEqual(LastTX, get_last_tx(ChecksumAddr)),
+	Price = get_price(ar_util:encode(Address32)),
+	?assertEqual(Price, get_price(ChecksumAddr)),
+	ServeTXTarget = maps:get(<<"target">>, jiffy:decode(get_tx(TX2#tx.id), [return_maps])),
+	?assertEqual(ar_util:encode(TX2#tx.target), ServeTXTarget).
+
+get_balance(EncodedAddr) ->
+	Peer = master_peer(),
+	{_, _, _, _, Port} = Peer,
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/wallet/" ++ binary_to_list(EncodedAddr) ++ "/balance",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	binary_to_integer(Reply).
+
+get_last_tx(EncodedAddr) ->
+	Peer = master_peer(),
+	{_, _, _, _, Port} = Peer,
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/wallet/" ++ binary_to_list(EncodedAddr) ++ "/last_tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	Reply.
+
+get_price(EncodedAddr) ->
+	Peer = master_peer(),
+	{_, _, _, _, Port} = Peer,
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/price/0/" ++ binary_to_list(EncodedAddr),
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	binary_to_integer(Reply).
+
+get_tx(ID) ->
+	Peer = master_peer(),
+	{_, _, _, _, Port} = Peer,
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/tx/" ++ binary_to_list(ar_util:encode(ID)),
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+		}),
+	Reply.
+
 %% @doc Ensure that server info can be retreived via the HTTP interface.
 get_info_test() ->
 	ar_test_node:disconnect_from_slave(),

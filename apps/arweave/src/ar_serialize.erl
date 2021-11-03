@@ -224,7 +224,7 @@ json_struct_to_block({BlockStruct}) ->
 	RewardAddr =
 		case find_value(<<"reward_addr">>, BlockStruct) of
 			<<"unclaimed">> -> unclaimed;
-			AddrBinary -> ar_util:decode(AddrBinary)
+			AddrBinary -> ar_wallet:base64_address_with_optional_checksum_to_decoded_address(AddrBinary)
 		end,
 	{RewardPool, BlockSize, WeaveSize} =
 		case Height >= ar_fork:height_2_4() of
@@ -400,7 +400,7 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 		tags = [{ar_util:decode(Name), ar_util:decode(Value)}
 				%% Only the elements matching this pattern are included in the list.
 				|| {[{<<"name">>, Name}, {<<"value">>, Value}]} <- Tags],
-		target = ar_util:decode(find_value(<<"target">>, TXStruct)),
+		target = ar_wallet:base64_address_with_optional_checksum_to_decoded_address(find_value(<<"target">>, TXStruct)),
 		quantity = binary_to_integer(find_value(<<"quantity">>, TXStruct)),
 		data = Data,
 		reward = binary_to_integer(find_value(<<"reward">>, TXStruct)),

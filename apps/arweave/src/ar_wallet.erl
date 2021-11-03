@@ -6,6 +6,8 @@
 	sign/2,
 	verify/3, verify_pre_fork_2_4/3,
 	to_address/1,
+	base64_address_with_optional_checksum_to_decoded_address/1,
+	base64_address_with_optional_checksum_to_decoded_address_safe/1,
 	load_keyfile/1,
 	new_keyfile/0,
 	new_keyfile/1,
@@ -129,6 +131,52 @@ to_address({_, Pub}) -> to_address(Pub);
 to_address(PubKey) ->
 	crypto:hash(?HASH_ALG, PubKey).
 
+decoded_address_to_checksum(AddrDecoded) ->
+	Crc = erlang:crc32(AddrDecoded),
+	<< Crc:32 >>.
+
+decoded_address_to_base64_address_with_checksum(AddrDecoded) ->
+	Checksum = decoded_address_to_checksum(AddrDecoded),
+	AddrBase64 = ar_util:encode(AddrDecoded),
+	ChecksumBase64 = ar_util:encode(Checksum),
+	<< AddrBase64/binary, ":", ChecksumBase64/binary >>.
+
+base64_address_with_optional_checksum_to_decoded_address(AddrBase64) ->
+	Size = byte_size(AddrBase64),
+	case Size > 7 of
+		false ->
+			ar_util:decode(AddrBase64);
+		true ->
+			case AddrBase64 of
+				<< MainBase64url:(Size - 7)/binary, ":", ChecksumBase64url:6/binary >> ->
+					AddrDecoded = ar_util:decode(MainBase64url),
+					case byte_size(AddrDecoded) < 20 of
+						true -> throw({error, invalid_address});
+						false -> ok
+					end,
+					case byte_size(AddrDecoded) > 64 of
+						true -> throw({error, invalid_address});
+						false -> ok
+					end,
+					Checksum = ar_util:decode(ChecksumBase64url),
+					case decoded_address_to_checksum(AddrDecoded) =:= Checksum of
+						true -> AddrDecoded;
+						false -> throw({error, invalid_address_checksum})
+					end;
+				_ ->
+					ar_util:decode(AddrBase64)
+			end
+	end.
+
+base64_address_with_optional_checksum_to_decoded_address_safe(AddrBase64)->
+	try
+		D = base64_address_with_optional_checksum_to_decoded_address(AddrBase64),
+		{ok, D}
+	catch
+		_:_ ->
+			{error, invalid}
+	end.
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -156,3 +204,47 @@ generate_keyfile_test() ->
 	{Priv, Pub} = new_keyfile(),
 	FileName = wallet_filepath(ar_util:encode(to_address(Pub))),
 	{Priv, Pub} = load_keyfile(FileName).
+
+checksum_test() ->
+	{_, Pub} = new(),
+	Addr = to_address(Pub),
+	AddrBase64 = ar_util:encode(Addr),
+	AddrBase64Wide = decoded_address_to_base64_address_with_checksum(Addr),
+	Addr = base64_address_with_optional_checksum_to_decoded_address(AddrBase64Wide),
+	Addr = base64_address_with_optional_checksum_to_decoded_address(AddrBase64),
+	%% 64 bytes, for future.
+	CorrectLongAddress = <<"0123456789012345678901234567890123456789012345678901234567890123">>,
+	CorrectCheckSum = decoded_address_to_checksum(CorrectLongAddress),
+	CorrectLongAddressBase64 = ar_util:encode(CorrectLongAddress),
+	CorrectCheckSumBase64 = ar_util:encode(CorrectCheckSum),
+	CorrectLongAddressWithChecksumBase64 = <<CorrectLongAddressBase64/binary, ":", CorrectCheckSumBase64/binary>>,
+	case catch base64_address_with_optional_checksum_to_decoded_address(CorrectLongAddressWithChecksumBase64) of
+		{error, _} -> throw({error, correct_long_address_should_bypass});
+		_ -> ok
+	end,
+	%% 65 bytes.
+	InvalidLongAddress = <<"01234567890123456789012345678901234567890123456789012345678901234">>,
+	InvalidLongAddressBase64 = ar_util:encode(InvalidLongAddress),
+	case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidLongAddressBase64/binary, ":MDA">>) of
+		{'EXIT', _} -> ok
+	end,
+	%% 100 bytes.
+	InvalidLongAddress2 = <<"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789">>,
+	InvalidLongAddress2Base64 = ar_util:encode(InvalidLongAddress2),
+	case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidLongAddress2Base64/binary, ":MDA">>) of
+		{'EXIT', _} -> ok
+	end,
+	%% 10 bytes
+	InvalidShortAddress = <<"0123456789">>,
+	InvalidShortAddressBase64 = ar_util:encode(InvalidShortAddress),
+	case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidShortAddressBase64/binary, ":MDA">>) of
+		{'EXIT', _} -> ok
+	end,
+	InvalidChecksum = ar_util:encode(<< 0:32 >>),
+	case catch base64_address_with_optional_checksum_to_decoded_address(
+			<< AddrBase64/binary, ":", InvalidChecksum/binary >>) of
+		{error, invalid_address_checksum} -> ok
+	end,
+	case catch base64_address_with_optional_checksum_to_decoded_address(<<":MDA">>) of
+		{'EXIT', _} -> ok
+	end.
