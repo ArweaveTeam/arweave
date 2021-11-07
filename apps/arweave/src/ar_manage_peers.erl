@@ -106,8 +106,8 @@ update(Peers) ->
 %% @doc Return a new list, with the peers and their peers.
 get_more_peers(Peers) ->
 	ar_util:unique(lists:flatten([
-			[Peer || Peer <- ar_util:pmap(fun get_peers/1, lists:sublist(Peers, 10)),
-					is_public_peer(Peer)], Peers])).
+			[Peer || Peer <- lists:flatten(ar_util:pmap(fun get_peers/1,
+					lists:sublist(Peers, 10))), is_public_peer(Peer)], Peers])).
 
 get_peers(Peer) ->
 	case ar_http_iface_client:get_peers(Peer) of
