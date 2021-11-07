@@ -76,7 +76,14 @@ get(DB, Key) ->
 %% @doc Return the key ({ok, Key, Value}) equal to or bigger than OffsetBinary with
 %% either the matching PrefixBitSize first bits or PrefixBitSize first bits bigger by one.
 get_next_by_prefix({DB, CF}, PrefixBitSize, KeyBitSize, OffsetBinary) ->
-	case rocksdb:iterator(DB, CF, [{prefix_same_as_start, true}]) of
+	case catch rocksdb:iterator(DB, CF, [{prefix_same_as_start, true}]) of
+		{'EXIT', _} ->
+			<< Offset: 256 >> = OffsetBinary,
+			?LOG_WARNING([{event, failed_to_instantiate_rocksdb_iterator},
+					{offset, Offset}]),
+			%% Presumably, happens when there is a lot of writing activity in the vicinity
+			%% of the offset.
+			{error, temporary_error};
 		{ok, Iterator} ->
 			case rocksdb:iterator_move(Iterator, {seek, OffsetBinary}) of
 				{error, invalid_iterator} ->
