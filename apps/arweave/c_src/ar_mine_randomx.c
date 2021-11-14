@@ -522,7 +522,12 @@ static ERL_NIF_TERM bulk_hash_fast_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 		mpz_export(
 			encodedSubspaceNumber, &encodedSubspaceNumberLen, 1, 1, 1, 0, mpzSubspaceNumber);
 		memcpy(bin, prevH.data, prevH.size);
-		memcpy(bin + ARWEAVE_HASH_SIZE, encodedSubspaceNumber, encodedSubspaceNumberLen);
+		if (encodedSubspaceNumberLen == 0) {
+			bin[ARWEAVE_HASH_SIZE] = 0;
+			encodedSubspaceNumberLen = 1;
+		} else {
+			memcpy(bin + ARWEAVE_HASH_SIZE, encodedSubspaceNumber, encodedSubspaceNumberLen);
+		}
 		calc_sha_256(seedBin, bin, ARWEAVE_HASH_SIZE + encodedSubspaceNumberLen);
 		mpz_import(mpzSeed, 32, 1, 1, 1, 0, seedBin);
 		mpz_fdiv_r(mpzSearchSubspaceStart, mpzSeed, mpzSubspaceSize);
@@ -1101,7 +1106,12 @@ static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int 
 		mpz_export(
 			encodedSubspaceNumber, &encodedSubspaceNumberLen, 1, 1, 1, 0, mpzSubspaceNumber);
 		memcpy(bin, prevH.data, prevH.size);
-		memcpy(bin + ARWEAVE_HASH_SIZE, encodedSubspaceNumber, encodedSubspaceNumberLen);
+		if (encodedSubspaceNumberLen == 0) {
+			bin[ARWEAVE_HASH_SIZE] = 0;
+			encodedSubspaceNumberLen = 1;
+		} else {
+			memcpy(bin + ARWEAVE_HASH_SIZE, encodedSubspaceNumber, encodedSubspaceNumberLen);
+		}
 		calc_sha_256(seedBin, bin, ARWEAVE_HASH_SIZE + encodedSubspaceNumberLen);
 		mpz_import(mpzSeed, 32, 1, 1, 1, 0, seedBin);
 		mpz_fdiv_r(mpzSearchSubspaceStart, mpzSeed, mpzSubspaceSize);
