@@ -135,7 +135,6 @@
 %% further transactions. Having a separate limit for data allows the miner
 %% to continue accepting transaction headers.
 
-
 %% The maximum allowed size of transaction headers stored in mempool.
 %% The data field of a format=1 transaction is considered to belong to
 %% its headers.
@@ -153,33 +152,6 @@
 -else.
 -define(MEMPOOL_DATA_SIZE_LIMIT, 500 * 1024 * 1024).
 -endif.
-
-%% The size limits for the transaction priority queue.
-%%
-%% The two limits are used to align the priority queues of the miners
-%% accepting transactions with and without data. See above for the
-%% explanation of why two mempool size limits are used. Simply not
-%% accounting for transaction data size in the priority queue would not
-%% work because big format=2 transaction would never be dropped from
-%% the queue due to the full data mempool.
-
-%% The maximum allowed size in bytes of the transaction headers
-%% in the transaction queue. The data fields of format=1 transactions
-%% count as transaction headers. When the limit is reached, transactions
-%% with the lowest utility score are dropped from the queue.
-%%
-%% This limit has to be lower than the corresponding mempool limit,
-%% otherwise transactions would never be dropped from the queue.
--define(TX_QUEUE_HEADER_SIZE_LIMIT, 200 * 1024 * 1024).
-
-%% The maximum allowed size in bytes of the transaction data
-%% in the transaction queue. The data fields of format=1 transactions
-%% does not count as transaction data. When the limit is reached, transactions
-%% with the lowest utility score are dropped from the queue.
-%%
-%% This limit has to be lower than the corresponding mempool limit,
-%% otherwise transactions would never be dropped from the queue.
--define(TX_QUEUE_DATA_SIZE_LIMIT, 400 * 1024 * 1024).
 
 -define(MAX_TX_ANCHOR_DEPTH, ?STORE_BLOCKS_BEHIND_CURRENT).
 
@@ -244,15 +216,11 @@
 -define(TX_PROPAGATION_BITS_PER_SECOND, 160000). % 160 kbps
 -endif.
 
-%% The number of the best peers to send new transactions to in parallel.
-%% Can be overriden by a command line argument.
--define(TX_PROPAGATION_PARALLELIZATION, 6).
-
-%% The number of the best peers to send new blocks to in parallel.
+%% The number of peers to send new blocks to in parallel.
 -define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
 
 %% The maximum number of peers to propagate txs to, by default.
--define(DEFAULT_MAX_PROPAGATION_PEERS, 40).
+-define(DEFAULT_MAX_PROPAGATION_PEERS, 16).
 
 %% The maximum number of peers to propagate blocks to, by default.
 -define(DEFAULT_MAX_BLOCK_PROPAGATION_PEERS, 50).
@@ -299,10 +267,10 @@
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).
 
 %% Number of transaction propagation processes to spawn.
-%% Each emitter picks a transaction from the queue and propagates it
-%% to the best peers, a configured number of peers at a time.
+%% Each emitter picks the most valued transaction from the queue
+%% and propagates it to the chosen peers.
 %% Can be overriden by a command line argument.
--define(NUM_EMITTER_PROCESSES, 4).
+-define(NUM_EMITTER_PROCESSES, 16).
 
 %% Target number of blocks per year.
 -define(BLOCK_PER_YEAR, (525600 / (?TARGET_TIME / 60))).

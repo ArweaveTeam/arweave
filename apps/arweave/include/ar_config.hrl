@@ -61,6 +61,7 @@
 -define(MAX_PARALLEL_WALLET_LIST_REQUESTS, 1).
 -define(MAX_PARALLEL_POST_CHUNK_REQUESTS, 100).
 -define(MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS, 10).
+-define(MAX_PARALLEL_POST_TX_REQUESTS, 100).
 
 %% The maximum number of chunks per second the node attempts to pack or unpack.
 -ifdef(DEBUG).
@@ -68,6 +69,9 @@
 -else.
 -define(DEFAULT_PACKING_RATE, 15).
 -endif.
+
+%% How many processes to spawn for validating pushed and fetched transactions.
+-define(DEFAULT_TX_VALIDATOR_COUNT, 10).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -85,8 +89,9 @@
 	io_threads = ?NUM_IO_MINING_THREADS,
 	stage_one_hashing_threads = ?NUM_STAGE_ONE_HASHING_PROCESSES,
 	stage_two_hashing_threads = ?NUM_STAGE_TWO_HASHING_PROCESSES,
+	tx_validators = ?DEFAULT_TX_VALIDATOR_COUNT,
 	max_emitters = ?NUM_EMITTER_PROCESSES,
-	tx_propagation_parallelization = ?TX_PROPAGATION_PARALLELIZATION,
+	tx_propagation_parallelization, % DEPRECATED.
 	sync_jobs = ?DEFAULT_SYNC_JOBS,
 	header_sync_jobs = ?DEFAULT_HEADER_SYNC_JOBS,
 	load_key = not_set,
@@ -123,7 +128,8 @@
 		get_wallet_list => ?MAX_PARALLEL_WALLET_LIST_REQUESTS,
 		arql => ?MAX_PARALLEL_ARQL_REQUESTS,
 		gateway_arql => ?MAX_PARALLEL_GATEWAY_ARQL_REQUESTS,
-		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS
+		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS,
+		post_tx => ?MAX_PARALLEL_POST_TX_REQUESTS
 	},
 	disk_cache_size = ?DISK_CACHE_SIZE,
 	packing_rate = ?DEFAULT_PACKING_RATE,

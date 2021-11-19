@@ -124,6 +124,12 @@ parse_options([{<<"max_emitters">>, Value} | Rest], Config) when is_integer(Valu
 parse_options([{<<"max_emitters">>, Value} | _], _) ->
 	{error, {bad_type, max_emitters, number}, Value};
 
+parse_options([{<<"tx_validators">>, Value} | Rest], Config)
+		when is_integer(Value) ->
+	parse_options(Rest, Config#config{ tx_validators = Value });
+parse_options([{<<"tx_validators">>, Value} | _], _) ->
+	{error, {bad_type, tx_validators, number}, Value};
+
 parse_options([{<<"tx_propagation_parallelization">>, Value} | Rest], Config)
 		when is_integer(Value) ->
 	parse_options(Rest, Config#config{ tx_propagation_parallelization = Value });

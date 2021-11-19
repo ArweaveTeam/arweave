@@ -1,17 +1,11 @@
 -module(ar_util).
 
--export([
-	pick_random/1, pick_random/2,
-	encode/1, decode/1, safe_decode/1,
-	parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2,
-	genesis_wallets/0,
-	pmap/2, pfilter/2,
-	do_until/3,
-	block_index_entry_from_block/1, get_block_index_intersection/2,
-	reset_peer/1, get_performance/1, update_timer/1,
-	bytes_to_mb_string/1,
-	cast_after/3
-]).
+-export([pick_random/1, pick_random/2,
+		encode/1, decode/1, safe_decode/1,
+		parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2,
+		genesis_wallets/0, pmap/2, pfilter/2,
+		do_until/3, block_index_entry_from_block/1, get_block_index_intersection/2,
+		reset_peer/1, get_performance/1, update_timer/1, bytes_to_mb_string/1, cast_after/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").

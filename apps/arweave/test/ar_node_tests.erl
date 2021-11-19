@@ -7,8 +7,8 @@
 -import(
 	ar_test_node, [
 		slave_mine/0,
-		assert_wait_until_receives_txs/1, assert_slave_wait_until_height/1,
-		slave_call/3, slave_add_tx/1, add_peer/1
+		assert_slave_wait_until_receives_txs/1,
+		assert_slave_wait_until_height/1, slave_call/3, slave_add_tx/1, add_peer/1
 	]
 ).
 
@@ -190,7 +190,11 @@ bogus_tx_thread_test_() ->
 	end}.
 
 persisted_mempool_test_() ->
-	{timeout, 10, fun test_persisted_mempool/0}.
+	%% Make the propagation delay noticeable so that the submitted transactions do not
+	%% become ready for mining before the node is restarted and we assert that waiting
+	%% transactions found in the persisted mempool are (re-)submitted to peers.
+	ar_test_node:test_with_mocked_functions([{ar_node_worker, calculate_delay,
+			fun(_Size) -> 5000 end}], fun test_persisted_mempool/0).
 
 test_persisted_mempool() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
@@ -198,9 +202,6 @@ test_persisted_mempool() ->
 	ar_test_node:start(B0),
 	ar_test_node:slave_start(B0),
 	ar_test_node:disconnect_from_slave(),
-	%% Pause the distribution queue so that transactions do not become ready for mining -
-	%% it happens very quickly in debug mode.
-	ar_tx_queue:set_pause(true),
 	SignedTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(master) }),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_master(SignedTX, false),
 	true = ar_util:do_until(
@@ -220,7 +221,7 @@ test_persisted_mempool() ->
 	}),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	ar_test_node:wait_until_joined(),
-	assert_wait_until_receives_txs([SignedTX]),
+	assert_slave_wait_until_receives_txs([SignedTX]),
 	ar_node:mine(),
 	[{H, _, _} | _] = assert_slave_wait_until_height(1),
 	B = ar_test_node:read_block_when_stored(H),

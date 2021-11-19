@@ -5,15 +5,9 @@
 
 -behaviour(application).
 
--export([
-	main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0,
-	tests/0, tests/1, tests/2,
-	test_ipfs/0,
-	docs/0,
-	start_for_tests/0,
-	shutdown/1,
-	console/1, console/2
-]).
+-export([main/0, main/1, start/0, start/1, start/2, stop/1, stop_dependencies/0,
+		tests/0, tests/1, tests/2, test_ipfs/0, docs/0, start_for_tests/0, shutdown/1,
+		console/1, console/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -64,7 +58,6 @@
 		ar_fork_recovery_tests,
 		ar_mine,
 		ar_tx_replay_pool_tests,
-		ar_tx_queue,
 		ar_http_iface_tests,
 		ar_multiple_txs_per_wallet_tests,
 		ar_pricing,
@@ -149,13 +142,15 @@ show_help() ->
 					"otherwise.",
 					[?NUM_STAGE_TWO_HASHING_PROCESSES]
 				)},
-			{"max_emitters (num)",
-				"The maximum number of transaction propagation processes (default 2)."},
+			{"max_emitters (num)", io_lib:format("The number of transaction propagation "
+				"processes to spawn. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
+			{"tx_validators (num)", io_lib:format("The number of transaction validators"
+				" to spawn. Transaction validators validate transactions pushed to the node"
+				" or fetched from the peers. Default is ~B.", [?DEFAULT_TX_VALIDATOR_COUNT])},
 			{"tx_propagation_parallelization (num)",
-				"The maximum number of best peers to propagate transactions to at a time "
-				"(default 4)."},
-			{"max_propagation_peers", io_lib:format("max_propagation_peers (num)"
-				"The maximum number of best peers to propagate transactions to. "
+				"DEPRECATED. Does not affect anything."},
+			{"max_propagation_peers", io_lib:format(
+				"The maximum number of peers to propagate transactions to. "
 				"Default is ~B.", [?DEFAULT_MAX_PROPAGATION_PEERS])},
 			{"max_block_propagation_peers", io_lib:format("max_block_propagation_peers (num)"
 				"The maximum number of best peers to propagate blocks to. "
@@ -353,6 +348,8 @@ parse_cli_args(["sync_jobs", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { sync_jobs = list_to_integer(Num) });
 parse_cli_args(["header_sync_jobs", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { header_sync_jobs = list_to_integer(Num) });
+parse_cli_args(["tx_validators", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { tx_validators = list_to_integer(Num) });
 parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->

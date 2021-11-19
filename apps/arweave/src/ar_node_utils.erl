@@ -1,14 +1,7 @@
 %%% @doc Different utility functions for node and node worker.
 -module(ar_node_utils).
 
--export([
-	apply_mining_reward/3,
-	apply_tx/3,
-	apply_txs/3,
-	update_wallets/5,
-	validate/6,
-	calculate_delay/1
-]).
+-export([apply_mining_reward/3, apply_tx/3, apply_txs/3, update_wallets/5, validate/6]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_mine.hrl").
@@ -104,15 +97,6 @@ validate(BI, NewB, B, Wallets, BlockAnchors, RecentTXMap) ->
 			),
 			{invalid, Reason}
 	end.
-
-%% @doc Return a delay in milliseconds to wait before including a transaction into a block.
-%% The delay is computed as base delay + a function of data size with a conservative
-%% estimation of the network speed.
-%% @end
-calculate_delay(Bytes) ->
-	BaseDelay = (?BASE_TX_PROPAGATION_DELAY) * 1000,
-	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
-	BaseDelay + NetworkDelay.
 
 %%%===================================================================
 %%% Private functions.

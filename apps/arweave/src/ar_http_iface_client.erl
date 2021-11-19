@@ -19,21 +19,16 @@
 %% @doc Send a new transaction to an Arweave HTTP node.
 send_new_tx(Peer, TX) ->
 	TXID = TX#tx.id,
-	case ets:member(txid_peer, {TXID, Peer}) of
-		true ->
-			not_sent;
-		false ->
-			TXSize = byte_size(TX#tx.data),
-			ar_http:req(#{
-				method => post,
-				peer => Peer,
-				path => "/tx",
-				headers => p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TXID)}],
-				body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-				connect_timeout => 500,
-				timeout => max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
-			})
-	end.
+	TXSize = byte_size(TX#tx.data),
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/tx",
+		headers => p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TXID)}],
+		body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
+		connect_timeout => 500,
+		timeout => max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
+	}).
 
 %% @doc Distribute a newly found block to remote nodes.
 send_new_block(Peer, #block{ height = Height } = NewB, BDS) ->
@@ -412,7 +407,7 @@ handle_mempool_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 				{error, io_lib:format("~p", [Error])}]),
 			{error, invalid_json};
 		L when is_list(L) ->
-			lists:foldl(
+			lists:foldr(
 				fun	(_, {error, Reason}) ->
 						{error, Reason};
 					(EncodedTXID, {ok, Acc}) ->
@@ -531,20 +526,16 @@ get_tx_from_remote_peer(Peers, TXID) ->
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
-			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)),
+			path => "/unconfirmed_tx/" ++ binary_to_list(ar_util:encode(TXID)),
 			headers => p2p_headers(),
-			connect_timeout => 2000,
-			timeout => 60 * 1000,
+			connect_timeout => 1000,
+			timeout => 30 * 1000,
 			limit => ?MAX_BODY_SIZE
 		})
 	) of
 		not_found ->
 			get_tx_from_remote_peer(Peers -- [Peer], TXID);
-		pending ->
-			get_tx_from_remote_peer(Peers -- [Peer], TXID);
-		gone ->
-			get_tx_from_remote_peer(Peers -- [Peer], TXID);
-		#tx{} = TX ->
+		{ok, #tx{} = TX} ->
 			case ar_tx:verify_tx_id(TXID, TX) of
 				false ->
 					?LOG_WARNING([
@@ -738,18 +729,14 @@ reconstruct_full_block(Peers, B) when is_record(B, block) ->
 			unavailable
 	end.
 
-%% @doc Process the response of a /tx call.
+%% @doc Process the response of a GET /unconfirmed_tx call.
 handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	case catch ar_serialize:json_struct_to_tx(Body) of
 		TX when is_record(TX, tx) ->
-			case TX#tx.format == 1 of true -> TX; _ -> TX#tx{ data = <<>> } end;
+			case TX#tx.format == 1 of true -> {ok, TX}; _ -> {ok, TX#tx{ data = <<>> }} end;
 		_ ->
 			not_found
 	end;
-handle_tx_response({ok, {{<<"202">>, _}, _, _, _, _}}) -> pending;
-handle_tx_response({ok, {{<<"404">>, _}, _, _, _, _}}) -> not_found;
-handle_tx_response({ok, {{<<"410">>, _}, _, _, _, _}}) -> gone;
-handle_tx_response({ok, {{<<"500">>, _}, _, _, _, _}}) -> not_found;
 handle_tx_response(_Response) ->
 	not_found.
 

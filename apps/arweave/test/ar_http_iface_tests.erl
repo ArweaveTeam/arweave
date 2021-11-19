@@ -166,10 +166,7 @@ single_regossip_test() ->
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
 		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
-	),
-	%% Wait until the node fetches the peer's mempool.
-	timer:sleep(1000),
-	?assertEqual(not_sent, ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)).
+	).
 
 %% @doc Unjoined nodes should not accept blocks
 post_block_to_unjoined_node_test() ->

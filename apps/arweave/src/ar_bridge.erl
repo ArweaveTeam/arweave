@@ -248,30 +248,16 @@ is_loopback_ip({255, 255, 255, 255}) -> true;
 is_loopback_ip({_, _, _, _}) -> false.
 -endif.
 
-%% @doc Send the new block to the peers by first sending it in parallel to the
-%% best/first peers and then continuing sequentially with the rest of the peers
-%% in order.
-send_block_to_external_parallel(Peers, NewB) ->
-	{PeersParallel, PeersRest} = lists:split(
-		min(length(Peers), ?BLOCK_PROPAGATION_PARALLELIZATION),
-		Peers
-	),
+%% @doc Send the new block to #config.max_block_propagation_peers peers,
+%% ?BLOCK_PROPAGATION_PARALLELIZATION peers at a time. The peers
+%% are chosen using ar_tx_emitter:pick_peers/2.
+send_block_to_external_parallel(Peers, B) ->
 	{ok, Config} = application:get_env(arweave, config),
-	NSeqPeers =
-		max(0, Config#config.max_block_propagation_peers - ?BLOCK_PROPAGATION_PARALLELIZATION),
-	PeersSequential = lists:sublist(PeersRest, NSeqPeers),
-	?LOG_INFO(
-		[
-			{sending_block_to_external_peers, ar_util:encode(NewB#block.indep_hash)},
-			{peers, length(PeersParallel) + length(PeersSequential)}
-		]
-	),
-	BDS = ar_block:generate_block_data_segment(NewB),
-	Send = fun(Peer) ->
-		ar_http_iface_client:send_new_block(Peer, NewB, BDS)
-	end,
+	PickedPeers = ar_tx_emitter:pick_peers(Peers, Config#config.max_block_propagation_peers),
+	BDS = ar_block:generate_block_data_segment(B),
+	Send = fun(Peer) -> ar_http_iface_client:send_new_block(Peer, B, BDS) end,
 	SendRetry = fun(Peer) ->
-		case ar_http_iface_client:send_new_block(Peer, NewB, BDS) of
+		case ar_http_iface_client:send_new_block(Peer, B, BDS) of
 			{ok, {{<<"412">>, _}, _, _, _, _}} ->
 				timer:sleep(5000),
 				Send(Peer);
@@ -279,8 +265,18 @@ send_block_to_external_parallel(Peers, NewB) ->
 				ok
 		end
 	end,
-	ar_util:pmap(SendRetry, PeersParallel),
-	lists:foreach(Send, PeersSequential).
+	EncodedBH = ar_util:encode(B#block.indep_hash),
+	PeerLen = length(PickedPeers),
+	?LOG_INFO([{event, sending_block_to_external_peers}, {block, EncodedBH}, {peers, PeerLen}]),
+	send_block_to_external_parallel(PickedPeers, SendRetry, ?BLOCK_PROPAGATION_PARALLELIZATION),
+	?LOG_INFO([{event, sent_block_to_external_peers}, {block, EncodedBH}, {peers, PeerLen}]).
+
+send_block_to_external_parallel(Peers, SendFun, ThreadCount) when length(Peers) < ThreadCount ->
+	ar_util:pmap(SendFun, Peers);
+send_block_to_external_parallel(Peers, SendFun, ThreadCount) ->
+	{Chunk, Peers2} = lists:split(ThreadCount, Peers),
+	ar_util:pmap(SendFun, Chunk),
+	send_block_to_external_parallel(Peers2, SendFun, ThreadCount).
 
 ping_peers(Peers) when length(Peers) < 10 ->
 	ar_util:pmap(fun ar_http_iface_client:add_peer/1, Peers);

@@ -651,8 +651,10 @@ test_fork_recovery(Split) ->
 	slave_wait_until_syncs_chunks(MasterProofs2),
 	slave_wait_until_syncs_chunks(MasterProofs3),
 	slave_wait_until_syncs_chunks(Proofs1),
-	MasterB4 = post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} },
-			[SlaveTX2, SlaveTX4]),
+	%% The slave is expected to return SlaveTX2 and SlaveTX4 to the mempool and gossip them
+	%% because it has a peer now and these transactions have not been gossiped to anyone.
+	wait_until_receives_txs([SlaveTX2, SlaveTX4]),
+	MasterB4 = post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, []),
 	Proofs4 = build_proofs(MasterB4, SlaveTX4, SlaveChunks4),
 	%% We did not submit proofs for SlaveTX4 to master - they are supposed to be still stored
 	%% in the disk pool.

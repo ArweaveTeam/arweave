@@ -157,14 +157,9 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _Pid) ->
 
 %% Return outgoing transaction priority queue.
 %% GET request to endpoint /queue.
+%% @deprecated
 handle(<<"GET">>, [<<"queue">>], Req, _Pid) ->
-	{200, #{}, ar_serialize:jsonify(
-		lists:map(
-			fun({TXID, Reward, Size}) ->
-				{[{tx, TXID}, {reward, Reward}, {size, Size}]}
-			end,
-			ar_tx_queue:show_queue())),
-	Req};
+	{200, #{}, <<"[]">>, Req};
 
 %% Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}/status.
@@ -1166,28 +1161,7 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 	end.
 
 handle_post_tx(Req, Peer, TX) ->
-	case verify_mempool_txs_size(TX) of
-		invalid ->
-			handle_post_tx_no_mempool_space_response();
-		valid ->
-			Height = ar_node:get_height(),
-			handle_post_tx(Req, Peer, TX, Height)
-	end.
-
-handle_post_tx(Req, Peer, TX, Height) ->
-	RecentTXMap = ar_node:get_recent_txs_map(),
-	BlockAnchors = ar_node:get_block_anchors(),
-	MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
-	Wallets = ar_node:get_wallets(ar_tx:get_addresses([TX])),
-	case ar_tx_replay_pool:verify_tx({
-		TX,
-		ar_node:get_current_usd_to_ar_rate(),
-		Height,
-		BlockAnchors,
-		RecentTXMap,
-		MempoolTXs,
-		Wallets
-	}) of
+	case ar_tx_validator:validate(TX, Peer) of
 		{invalid, tx_verification_failed} ->
 			handle_post_tx_verification_response();
 		{invalid, last_tx_in_mempool} ->
@@ -1201,50 +1175,22 @@ handle_post_tx(Req, Peer, TX, Height) ->
 		{invalid, tx_already_in_mempool} ->
 			handle_post_tx_already_in_mempool_response();
 		valid  ->
-			handle_post_tx_accepted(Req, Peer, TX)
+			handle_post_tx_accepted(Req, Peer)
 	end.
 
-verify_mempool_txs_size(TX) ->
-	{HeaderSize, DataSize} = ar_node_worker:tx_mempool_size(TX),
-	{MempoolHeaderSize, MempoolDataSize} = ar_node:get_mempool_size(),
-	case MempoolHeaderSize + HeaderSize > ?MEMPOOL_HEADER_SIZE_LIMIT of
-		true ->
-			invalid;
-		false ->
-			case DataSize + MempoolDataSize > ?MEMPOOL_DATA_SIZE_LIMIT of
-				true ->
-					invalid;
-				false ->
-					valid
-			end
-	end.
-
-handle_post_tx_accepted(Req, Peer, TX) ->
+handle_post_tx_accepted(Req, Peer) ->
 	%% Exclude successful requests with valid transactions from the
 	%% IP-based throttling, to avoid connectivity issues at the times
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
-	ar_events:send(tx, {new, TX, Peer}),
-	case TX#tx.format of
-		2 ->
-			ar_data_sync:add_data_root_to_disk_pool(TX#tx.data_root, TX#tx.data_size, TX#tx.id);
-		1 ->
-			ok
-	end.
+	ok.
 
 handle_post_tx_verification_response() ->
 	{error_response, {400, #{}, <<"Transaction verification failed.">>}}.
 
 handle_post_tx_last_tx_in_mempool_response() ->
 	{error_response, {400, #{}, <<"Invalid anchor (last_tx from mempool).">>}}.
-
-handle_post_tx_no_mempool_space_response() ->
-	?LOG_ERROR([
-		{event, ar_http_iface_middleware_rejected_transaction},
-		{reason, mempool_is_full}
-	]),
-	{error_response, {400, #{}, <<"Mempool is full.">>}}.
 
 handle_post_tx_bad_anchor_response() ->
 	{error_response, {400, #{}, <<"Invalid anchor (last_tx).">>}}.
@@ -1931,6 +1877,14 @@ find_block(<<"height">>, RawHeight) ->
 find_block(<<"hash">>, ID) ->
 	ar_storage:read_block(ID).
 
+is_tx_already_processed(TXID) ->
+	case ar_ignore_registry:member(TXID) of
+		true ->
+			true;
+		false ->
+			ets:member(node_state, {tx, TXID})
+	end.
+
 post_tx_parse_id({Req, Pid}) ->
 	post_tx_parse_id(check_header, {Req, Pid}).
 
@@ -1956,7 +1910,7 @@ post_tx_parse_id(check_body, {Req, Pid}) ->
 			post_tx_parse_id(read_body, {not_set, Req2, Pid, <<>>})
 	end;
 post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, FirstChunk}) ->
-	case ar_ignore_registry:member(TXID) of
+	case is_tx_already_processed(TXID) of
 		true ->
 			{error, tx_already_processed, TXID, Req};
 		false ->
@@ -1964,6 +1918,7 @@ post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, FirstChunk}) ->
 			post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk})
 	end;
 post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk}) ->
+	ok = ar_semaphore:acquire(post_tx, infinity),
 	case read_complete_body(Req, Pid) of
 		{ok, SecondChunk, Req2} ->
 			Body = iolist_to_binary([FirstChunk | SecondChunk]),
@@ -2008,7 +1963,7 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 				true ->
 					{error, invalid_hash, Req};
 				false ->
-					case ar_ignore_registry:member(TXID) of
+					case is_tx_already_processed(TXID) of
 						true ->
 							{error, tx_already_processed, TXID, Req};
 						false ->

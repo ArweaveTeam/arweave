@@ -102,7 +102,6 @@ init(_) ->
 	ets:insert(?MODULE, {port, Config#config.port}),
 	ets:insert(?MODULE, {mine, Config#config.mine}),
 	ets:insert(?MODULE, {max_miners, Config#config.max_miners}),
-	ets:insert(?MODULE, {max_emitters, Config#config.max_emitters}),
 	ets:insert(?MODULE,
 		{tx_propagation_parallelization, Config#config.tx_propagation_parallelization}),
 	ets:insert(?MODULE,

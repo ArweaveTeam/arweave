@@ -6,7 +6,7 @@
 		assert_slave_wait_until_height/1, wait_until_block_block_index/1,
 		assert_wait_until_block_block_index/1, wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_slave_wait_until_receives_txs/1,
-		post_tx_to_slave/1, post_tx_to_master/1, post_tx_to_master/2,
+		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
 		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, sign_tx/1, sign_tx/2, sign_tx/3,
 		sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3, get_tx_anchor/0, get_tx_anchor/1,
 		join/1, join_on_slave/0, join_on_master/0,
@@ -16,7 +16,7 @@
 		get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2, add_peer/1, random_v1_data/1,
 		assert_get_tx_data/3, assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
 		assert_data_not_found_master/1, assert_data_not_found_slave/1,
-		post_tx_json_to_master/1, post_tx_json_to_slave/1, master_peer/0]).
+		post_tx_json_to_master/1, post_tx_json_to_slave/1, master_peer/0, slave_peer/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -283,22 +283,30 @@ post_tx_to_master(TX, Wait) ->
 					ok
 			end;
 		_ ->
-			?debugFmt("Failed to post transaction. Error DB entries: ~p.",
-					[ar_tx_db:get_error_codes(TX#tx.id)]),
+			?debugFmt("Failed to post transaction ~s. Error DB entries: ~p.",
+					[ar_util:encode(TX#tx.id), ar_tx_db:get_error_codes(TX#tx.id)]),
 			noop
 	end,
 	Reply.
 
 post_tx_to_slave(TX) ->
+	post_tx_to_slave(TX, true).
+
+post_tx_to_slave(TX, Wait) ->
 	Reply = post_tx_json_to_slave(ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
-			assert_slave_wait_until_receives_txs([TX]);
+			case Wait of
+				true ->
+					assert_slave_wait_until_receives_txs([TX]);
+				false ->
+					ok
+			end;
 		_ ->
 			ErrorInfo =
 				case Reply of
-					{ok, {_, _, Text, _, _}} ->
-						Text;
+					{ok, {{StatusCode, _}, _, Text, _, _}} ->
+						{StatusCode, Text};
 					Other ->
 						Other
 				end,
@@ -542,11 +550,23 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 		{slave, _MiningNode} ->
 			Height = slave_call(ar_node, get_height, []),
 			lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, TXs),
+			case AwaitOn of
+				{master, _} ->
+					assert_wait_until_receives_txs(TXs);
+				_ ->
+					ok
+			end,
 			slave_mine(),
 			Height;
 		{master, _MiningNode} ->
 			Height = ar_node:get_height(),
 			lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+			case AwaitOn of
+				{slave, _} ->
+					assert_slave_wait_until_receives_txs(TXs);
+				_ ->
+					ok
+			end,
 			ar_node:mine(),
 			Height
 	end,

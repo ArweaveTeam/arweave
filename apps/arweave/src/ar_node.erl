@@ -6,7 +6,7 @@
 -module(ar_node).
 
 -export([get_blocks/0, get_block_index/0, is_in_block_index/1, get_height/0, get_balance/1,
-		get_last_tx/1, get_wallets/1, get_wallet_list_chunk/2, get_current_diff/0, get_diff/0,
+		get_last_tx/1, get_wallets/1, get_wallet_list_chunk/2,
 		get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
 		get_current_usd_to_ar_rate/0, get_current_block_hash/0, get_block_index_entry/1,
 		get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0, get_recent_txs_map/0,
@@ -35,11 +35,7 @@ get_block_index() ->
 			[]
 	end.
 
-%% @doc Get pending transactions. This includes:
-%% 1. The transactions currently staying in the priority queue.
-%% 2. The transactions on timeout waiting to be distributed around the network.
-%% 3. The transactions ready to be and being mined.
-%% @end
+%% @doc Get pending transactions.
 get_pending_txs() ->
 	get_pending_txs([]).
 
@@ -58,17 +54,23 @@ get_pending_txs(Opts) ->
 			[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 			Map;
 		{false, true} ->
-			[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-			maps:keys(Map);
+			[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
+			gb_sets:fold(
+				fun({_Utility, TXID, _Status}, Acc) ->
+					[TXID | Acc]
+				end,
+				[],
+				Set
+			);
 		{false, false} ->
-			[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-			maps:fold(
-				fun(TXID, _Value, Acc) ->
+			[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
+			gb_sets:fold(
+				fun({_Utility, TXID, _Status}, Acc) ->
 					[{{tx, TXID}, TX}] = ets:lookup(node_state, {tx, TXID}),
 					[TX | Acc]
 				end,
 				[],
-				Map
+				Set
 			)
 	end.
 
@@ -78,21 +80,19 @@ is_a_pending_tx(TXID) ->
 	maps:is_key(TXID, Map).
 
 %% @doc Get the list of being mined or ready to be mined transactions.
-%% The list does _not_ include transactions in the priority queue or
-%% those on timeout waiting for network propagation.
-%% @end
+%% The list does _not_ include transactions waiting for network propagation.
 get_ready_for_mining_txs() ->
-	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
-	maps:fold(
+	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
+	gb_sets:fold(
 		fun
-			(TXID, ready_for_mining, Acc) ->
+			({_Utility, TXID, ready_for_mining}, Acc) ->
 				[{{tx, TXID}, TX}] = ets:lookup(node_state, {tx, TXID}),
 				[TX | Acc];
-			(_, _, Acc) ->
+			(_, Acc) ->
 				Acc
 		end,
 		[],
-		Map
+		Set
 	).
 
 %% @doc Return true if the given block hash is found in the block index.
@@ -175,29 +175,10 @@ is_joined() ->
 			false
 	end.
 
-%% @doc Returns the estimated future difficulty of the currently mined block.
-%% The function name is confusing and needs to be changed.
-%% @end
-get_current_diff() ->
-	H = get_current_block_hash(),
-	B = ar_node:get_block_shadow_from_cache(H),
-	ar_retarget:maybe_retarget(
-		B#block.height + 1,
-		B#block.diff,
-		os:system_time(seconds),
-		B#block.last_retarget,
-		B#block.timestamp
-	).
-
 %% @doc Get the currently estimated USD to AR exchange rate.
 get_current_usd_to_ar_rate() ->
 	[{_, Rate}] = ets:lookup(node_state, usd_to_ar_rate),
 	Rate.
-
-%% @doc Returns the difficulty of the current block (the last applied one).
-get_diff() ->
-	[{diff, Diff}] = ets:lookup(node_state, diff),
-	Diff.
 
 %% @doc Returns a list of block anchors corrsponding to the current state -
 %% the hashes of the recent blocks that can be used in transactions as anchors.

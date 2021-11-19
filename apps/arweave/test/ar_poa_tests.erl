@@ -3,11 +3,11 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0]).
--import(ar_test_node, [assert_post_tx_to_slave/1]).
--import(ar_test_node, [slave_mine/0, slave_call/3]).
--import(ar_test_node, [wait_until_height/1, assert_slave_wait_until_height/1]).
--import(ar_test_node, [get_tx_anchor/0, sign_tx/2, read_block_when_stored/1]).
+-import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0,
+		assert_post_tx_to_slave/1, slave_mine/0, slave_call/3,
+		wait_until_height/1, assert_slave_wait_until_height/1,
+		assert_wait_until_receives_txs/1,
+		get_tx_anchor/0, sign_tx/2, read_block_when_stored/1]).
 
 v1_transactions_after_2_0_test_() ->
 	{timeout, 240, fun test_v1_transactions_after_2_0/0}.
@@ -29,6 +29,7 @@ test_v1_transactions_after_2_0() ->
 		end,
 		TXs
 	),
+	assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
 			slave_mine(),
@@ -50,6 +51,7 @@ test_v1_transactions_after_2_0() ->
 		end,
 		MoreTXs
 	),
+	assert_wait_until_receives_txs(MoreTXs),
 	lists:foreach(
 		fun(Height) ->
 			slave_mine(),
@@ -85,6 +87,7 @@ test_v2_transactions_after_2_0() ->
 		end,
 		TXs
 	),
+	assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
 			slave_mine(),
@@ -106,6 +109,7 @@ test_v2_transactions_after_2_0() ->
 		end,
 		MoreTXs
 	),
+	assert_wait_until_receives_txs(MoreTXs),
 	lists:foreach(
 		fun(Height) ->
 			slave_mine(),
@@ -146,6 +150,7 @@ test_recall_byte_on_the_border() ->
 		end,
 		TXs
 	),
+	assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
 			slave_mine(),
@@ -193,6 +198,7 @@ test_over_reported_tx_size() ->
 		end,
 		TXs
 	),
+	assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
 			slave_mine(),
@@ -240,6 +246,7 @@ test_under_reported_tx_size() ->
 		end,
 		TXs
 	),
+	assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
 			slave_mine(),
@@ -296,6 +303,7 @@ test_ignores_transactions_with_invalid_data_root() ->
 		end,
 		TXs
 	),
+	assert_wait_until_receives_txs(TXs),
 	lists:foreach(
 		fun(Height) ->
 			slave_mine(),
