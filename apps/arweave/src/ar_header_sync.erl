@@ -326,7 +326,6 @@ get_base_height([{H, _, _} | CurrentBI], CurrentHeight, RecentBI) ->
 	end.
 
 add_block(B, #{ sync_disk_space := false } = State) ->
-	ar_disk_cache:write_block(B),
 	case ar_storage:update_confirmation_index(B) of
 		ok ->
 			ok;
@@ -408,7 +407,8 @@ process_item(Queue) ->
 				fun() ->
 					case download_block(H, H2, TXRoot) of
 						{error, _Reason} ->
-							gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot, Backoff});
+							gen_server:cast(?MODULE,
+									{failed_to_get_block, H, H2, TXRoot, Backoff});
 						{ok, B} ->
 							gen_server:cast(?MODULE, {add_historical_block, B}),
 							ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item)

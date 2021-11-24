@@ -844,10 +844,12 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	ar_header_sync:add_tip_block(B, RecentBI),
 	lists:foreach(
 		fun(PrevB) ->
-			ar_header_sync:add_block(PrevB)
+			ar_header_sync:add_block(PrevB),
+			ar_disk_cache:write_block(PrevB)
 		end,
 		tl(lists:reverse(PrevBlocks))
 	),
+	ar_disk_cache:write_block(B),
 	BlockTXs = B#block.txs,
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
