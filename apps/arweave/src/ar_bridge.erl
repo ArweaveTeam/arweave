@@ -253,7 +253,9 @@ is_loopback_ip({_, _, _, _}) -> false.
 %% are chosen using ar_tx_emitter:pick_peers/2.
 send_block_to_external_parallel(Peers, B) ->
 	{ok, Config} = application:get_env(arweave, config),
-	PickedPeers = ar_tx_emitter:pick_peers(Peers, Config#config.max_block_propagation_peers),
+	TrustedPeers = Config#config.peers,
+	PickedPeers = (ar_tx_emitter:pick_peers(Peers, Config#config.max_block_propagation_peers)
+			-- TrustedPeers) ++ TrustedPeers,
 	BDS = ar_block:generate_block_data_segment(B),
 	Send = fun(Peer) -> ar_http_iface_client:send_new_block(Peer, B, BDS) end,
 	SendRetry = fun(Peer) ->
