@@ -96,6 +96,22 @@ add_data(IP, Port, DataB, FilenameB) ->
 	{<<"Hash">>, Hash} = lists:keyfind(<<"Hash">>, 1, Props),
 	{ok, Hash}.
 
+dag_put_object(ObjectData, Multihash) ->
+	dag_put_object(?IPFS_HOST, ?IPFS_PORT, ObjectData, Multihash).
+
+dag_put_object(IP, Port, ObjectDataB, MultihashB) ->
+	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/dag/put?pin=true",
+	Data = binary_to_list(ObjectDataB),
+	Filename = thing_to_list(MultihashB),
+	Boundary = ?BOUNDARY,
+	Body = format_multipart_formdata(Boundary, [{Filename, Data}]),
+	ContentType = lists:concat(["multipart/form-data; boundary=", Boundary]),
+	Headers = [{"Content-Length", integer_to_list(length(Body))}],
+	{ok, Response} = request(post, {URL, Headers, ContentType, Body}),
+	{Props} = response_to_json(Response),
+	{<<"Hash">>, Hash} = lists:keyfind(<<"Hash">>, 1, Props),
+	{ok, Hash}.
+
 add_file(Path) ->
 	add_file(?IPFS_HOST, ?IPFS_PORT, Path).
 
@@ -109,6 +125,13 @@ cat_data_by_hash(Hash) ->
 
 cat_data_by_hash(IP, Port, Hash) ->
 	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/cat?arg=" ++ binary_to_list(Hash),
+	request(get, {URL, []}).
+
+get_object_by_hash(Hash) ->
+	get_object_by_hash(?IPFS_HOST, ?IPFS_PORT, Hash).
+
+get_object_by_hash(IP, Port, Hash) ->
+	URL = "http://" ++ IP ++ ":" ++ Port ++ "/api/v0/dag/get?arg=" ++ binary_to_list(Hash),
 	request(get, {URL, []}).
 
 -spec config_get_identity() -> string().
