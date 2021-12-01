@@ -13,7 +13,7 @@ jobs:
           submodules: "recursive"
       - uses: gleam-lang/setup-erlang@v1.1.3
         with:
-          otp-version: "23.2"
+          otp-version: "24.1"
       - name: Install linux dependencies
         run: sudo apt-get install -y sqlite3 libgmp-dev
       - name: Start empd
