@@ -1,7 +1,7 @@
 -module(ar_sync_buckets).
 
 -export([new/0, from_intervals/1, from_intervals/2, add/3, delete/3, cut/2, get/3, serialize/2,
-		deserialize/1]).
+		deserialize/1, foreach/3]).
 
 -include_lib("arweave/include/ar_sync_buckets.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -109,6 +109,22 @@ deserialize(SerializedBuckets) ->
 		{'EXIT', Reason} ->
 			{error, Reason}
 	end.
+
+%% @doc Apply the given function of two arguments (Bucket, Share) to each
+%% of the given buckets breaking them down according to the given size.
+foreach(Fun, BucketSize, {Size, Map}) when Size >= BucketSize, Size rem BucketSize == 0 ->
+	maps:fold(
+		fun(Bucket, Share, ok) ->
+			lists:foreach(
+				fun(SubBucket) -> Fun(SubBucket, Share) end,
+				lists:seq(Bucket * Size div BucketSize, (Bucket + 1) * Size div BucketSize - 1)
+			)
+		end,
+		ok,
+		Map
+	);
+foreach(_Fun, _BucketSize, _Buckets) ->
+	ok.
 
 %%%===================================================================
 %%% Private functions.

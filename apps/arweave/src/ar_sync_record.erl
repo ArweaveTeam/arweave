@@ -2,8 +2,9 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, set/2, set/3, add/3, add/4, delete/3, cut/2, is_recorded/2, is_recorded/3,
-		get_record/2, get_serialized_sync_buckets/1, get_next_unsynced_interval/3,
+-export([start_link/0, set/2, set/3, add/3, add/4, delete/3, cut/2,
+		is_recorded/2, is_recorded/3, get_record/2,
+		get_serialized_sync_buckets/1,
 		get_next_synced_interval/4, get_interval/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -159,12 +160,12 @@ is_recorded(Offset, Type, ID) ->
 
 %% @doc Return a set of intervals of synced data ranges.
 %%
-%% Args is a map with he following keys
+%% Args is a map with the following keys
 %%
-%% format			required	etf or json	serialize in Erlang Term Format or JSON
-%% random_subset	optional	any()		pick a random subset if the key is present
-%% start			optional	integer()	pick intervals with right bound >= start
-%% limit			optional	integer()	the number of intervals to pick
+%% format			required	etf or json	or raw	serialize in Erlang Term Format or JSON
+%% random_subset	optional	any()				pick a random subset if the key is present
+%% start			optional	integer()			pick intervals with right bound >= start
+%% limit			optional	integer()			the number of intervals to pick
 %%
 %% ?MAX_SHARED_SYNCED_INTERVALS_COUNT is both the default and the maximum value for limit.
 %% If random_subset key is present, a random subset of intervals is picked, the start key is
@@ -188,12 +189,6 @@ get_serialized_sync_buckets(ID) ->
 		[{_, SerializedSyncBuckets}] ->
 			{ok, SerializedSyncBuckets}
 	end.
-
-%% @doc Return the lowest unsynced interval strictly above the given Offset
-%% and with the right bound at most RightBound.
-%% Return not_found if there are no such intervals.
-get_next_unsynced_interval(Offset, RightBound, ID) ->
-	ar_ets_intervals:get_next_interval_outside(ID, Offset, RightBound).
 
 %% @doc Return the lowest synced interval with the end offset strictly above the given Offset
 %% and with the right bound at most RightBound.
@@ -390,6 +385,17 @@ handle_call({cut, Offset, ID}, _From, State) ->
 			sync_buckets_by_id = SyncBucketsByID2 },
 	{Reply, State3} = update_write_ahead_log({cut, {Offset, ID}}, StateDB, State2),
 	{reply, Reply, State3};
+
+handle_call({get_record, #{ format := raw } = Args, ID}, _From, State) ->
+	case map_size(Args) /= 1 of
+		true ->
+			throw("extra arguments are not supported for format=raw");
+		false ->
+			ok
+	end,
+	#state{ sync_record_by_id = SyncRecordByID } = State,
+	SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
+	{reply, {ok, SyncRecord}, State};
 
 handle_call({get_record, Args, ID}, _From, State) ->
 	#state{ sync_record_by_id = SyncRecordByID } = State,

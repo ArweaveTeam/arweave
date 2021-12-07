@@ -27,9 +27,9 @@
 
 %% Try to have so many spread out continuous intervals.
 -ifdef(DEBUG).
--define(SYNCED_INTERVALS_TARGET, 10).
+-define(SYNCED_INTERVALS_TARGET, 2).
 -else.
--define(SYNCED_INTERVALS_TARGET, 2000).
+-define(SYNCED_INTERVALS_TARGET, 500).
 -endif.
 
 %% The upper size limit for a serialized chunk with its proof
@@ -57,15 +57,33 @@
 %% The frequency of removing expired data roots from the disk pool.
 -define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
 
-%% Time to wait before retrying a failed migration step.
--define(MIGRATION_RETRY_DELAY_MS, 10000).
-
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
 
 %% The maximum number of chunks to scheduler for packing/unpacking.
 %% A bigger number means more memory allocated for the chunks not packed/unpacked yet.
--define(PACKING_BUFFER_SIZE, 200).
+-define(PACKING_BUFFER_SIZE, 1000).
+
+%% The maximum number of intervals to schedule for syncing. Should be big enough so
+%% that many sync jobs cannot realistically process it completely before the process
+%% that collects intervals fills it up.
+-define(SYNC_INTERVALS_MAX_QUEUE_SIZE, 10000).
+
+%% The maximum number of chunks currently being downloaded or processed.
+-ifdef(DEBUG).
+-define(SYNC_BUFFER_SIZE, 100).
+-else.
+-define(SYNC_BUFFER_SIZE, 1000).
+-endif.
+
+%% Defines how long we keep the interval excluded from syncing.
+%% If we cannot find an interval by peers, we temporarily exclude
+%% it from the sought ranges to prevent the syncing process from slowing down.
+-ifdef(DEBUG).
+-define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 2000).
+-else.
+-define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 10 * 60 * 1000).
+-endif.
 
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
@@ -75,7 +93,7 @@
 	%% The current weave size. The upper limit for the absolute chunk end offsets.
 	weave_size,
 	%% A reference to the on-disk key-value storage mapping
-	%% AbsoluteChunkEndOffset => {ChunkDataIndexKey, TXRoot, DataRoot, TXPath, ChunkSize}.
+	%% AbsoluteChunkEndOffset => {ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize}
 	%% for all synced chunks.
 	%%
 	%% Chunks themselves and their DataPaths are stored separately because the offsets
@@ -131,7 +149,7 @@
 	disk_pool_data_roots,
 	%% A reference to the on-disk key value storage mapping
 	%% << DataRootTimestamp:256, ChunkDataIndexKey/binary >> =>
-	%%     {RelativeChunkEndOffset, ChunkSize, DataRoot, TXSize, ChunkDataIndexKey}.
+	%%     {RelativeChunkEndOffset, ChunkSize, DataRoot, TXSize, ChunkDataKey, IsStrictSplit}.
 	%%
 	%% The index is used to keep track of pending, orphaned, and recent chunks.
 	%% A periodic process iterates over chunks from earliest to latest, consults
@@ -182,5 +200,14 @@
 	%% If true, the node does not pack incoming data or re-pack already stored data.
 	packing_disabled = false,
 	%% Chunks above the threshold must comply to stricter splitting rules.
-	strict_data_split_threshold
+	strict_data_split_threshold,
+	%% The queue with unique {Start, End, Peer} triplets. Sync jobs are taking intervals
+	%% from this queue and syncing them.
+	sync_intervals_queue = queue:new(),
+	%% A compact set of non-overlapping intervals containing all the intervals from the
+	%% sync intervals queue. We use it to quickly check which intervals have been queued
+	%% already and avoid syncing the same interval twice.
+	sync_intervals_queue_intervals = ar_intervals:new(),
+	%% The number of chunks currently being downloaded and processed.
+	sync_buffer_size = 0
 }).

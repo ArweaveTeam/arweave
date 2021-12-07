@@ -356,7 +356,7 @@ assert_present_offsets(GoodOffsets) ->
 			)
 		end,
 		500,
-		60000
+		120000
 	).
 
 assert_removed_offsets(BadOffsets) ->

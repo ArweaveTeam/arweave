@@ -1,9 +1,9 @@
 %%% @doc A set of non-overlapping intervals.
 -module(ar_intervals).
 
--export([new/0, add/3, delete/3, cut/2, is_inside/2, sum/1, union/2, serialize/2,
+-export([new/0, from_list/1, add/3, delete/3, cut/2, is_inside/2, sum/1, union/2, serialize/2,
 		safe_from_etf/1, count/1, is_empty/1, take_smallest/1, take_largest/1, largest/1,
-		smallest/1, iterator_from/2, next/1, fold/3]).
+		smallest/1, iterator_from/2, next/1, fold/3, outerjoin/2, intersection/2]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -14,6 +14,10 @@
 %% @doc Create an empty set of intervals.
 new() ->
 	gb_sets:new().
+
+%% @doc Create a set from a list of {End, Start} pairs.
+from_list(L) ->
+	lists:foldl(fun({End, Start}, Acc) -> add(Acc, End, Start) end, new(), L).
 
 %% @doc Add a new interval. Intervals are compacted - e.g., (2, 1) and (1, 0) are joined
 %% into (2, 0). Also, if two intervals intersect each other, they are joined.
@@ -144,6 +148,27 @@ next(Iterator) ->
 fold(Fun, Acc, Intervals) ->
 	gb_sets:fold(Fun, Acc, Intervals).
 
+%% @doc Return a set of intervals containing the points from the second given set of
+%% intervals and excluding the points from the first given set of intervals.
+outerjoin(I1, I2) ->
+	%% intersection(inverse(I1), I2) also works but slower because inverse is relatively
+	%% expensive. intersection(I1, I2) is expected to be relatively small so inverting it
+	%% is quick.
+	intersection(inverse(intersection(I1, I2)), I2).
+
+%% @doc Return the set of intervals - the intersection of the two given sets.
+intersection(I1, I2) ->
+	case gb_sets:is_empty(I1) orelse gb_sets:is_empty(I2) of
+		true ->
+			new();
+		false ->
+			{_, Start1} = gb_sets:smallest(I1),
+			{_, Start2} = gb_sets:smallest(I2),
+			Start = min(Start1, Start2),
+			intersection(gb_sets:iterator_from({Start, infinity}, I1),
+					gb_sets:iterator_from({Start, infinity}, I2), new())
+	end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -252,6 +277,40 @@ from_etf([{<< End:256 >>, << Start:256 >>} | List], R, Intervals)
 		when End > Start andalso R > End andalso Start >= 0 ->
 	from_etf(List, Start, gb_sets:add_element({End, Start}, Intervals)).
 
+inverse(Intervals) ->
+	inverse(gb_sets:iterator(Intervals), 0, new()).
+
+inverse(Iterator, L, G) ->
+	case gb_sets:next(Iterator) of
+		none ->
+			gb_sets:add_element({infinity, L}, G);
+		{{End1, Start1}, I1} ->
+			G2 = case Start1 > L of true -> gb_sets:add_element({Start1, L}, G); _ -> G end,
+			L2 = End1,
+			case gb_sets:next(I1) of
+				none ->
+					gb_sets:add_element({infinity, L2}, G2);
+				{{End2, Start2}, I2} ->
+					inverse(I2, End2, gb_sets:add_element({Start2, End1}, G2))
+			end
+	end.
+
+intersection(I1, I2, G) ->
+	case {gb_sets:next(I1), gb_sets:next(I2)} of
+		{none, _} ->
+			G;
+		{_, none} ->
+			G;
+		{{{End1, _Start1}, UpdatedI1}, {{_End2, Start2}, _UpdatedI2}} when Start2 >= End1 ->
+			intersection(UpdatedI1, I2, G);
+		{{{_End1, Start1}, _UpdatedI1}, {{End2, _Start2}, UpdatedI2}} when Start1 >= End2 ->
+			intersection(I1, UpdatedI2, G);
+		{{{End1, Start1}, UpdatedI1}, {{End2, Start2}, _UpdatedI2}} when End2 >= End1 ->
+			intersection(UpdatedI1, I2, gb_sets:add_element({End1, max(Start1, Start2)}, G));
+		{{{End1, Start1}, _UpdatedI1}, {{End2, Start2}, UpdatedI2}} when End1 > End2 ->
+			intersection(I1, UpdatedI2, gb_sets:add_element({End2, max(Start1, Start2)}, G))
+	end.
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -269,6 +328,7 @@ intervals_test() ->
 		{ok, new()},
 		safe_from_etf(serialize(#{ random_subset => true, format => etf, limit => 1 }, I))
 	),
+	?assertEqual(new(), outerjoin(I, I)),
 	?assertEqual(new(), delete(I, 2, 1)),
 	I2 = add(I, 2, 1),
 	?assertEqual(1, count(I2)),
@@ -315,6 +375,8 @@ intervals_test() ->
 	compare(I2, add(I2, 2, 1)),
 	compare(add(new(), 3, 1), add(I2, 3, 1)),
 	compare(add(new(), 2, 0), add(I2, 2, 0)),
+	?assertEqual(new(), outerjoin(I2, I)),
+	compare(add(add(new(), 1, 0), 3, 2), outerjoin(I2, add(new(), 3, 0))),
 	I3 = add(I2, 6, 3),
 	?assertEqual(2, count(I3)),
 	?assertEqual(4, sum(I3)),
@@ -356,6 +418,10 @@ intervals_test() ->
 	compare(I3, I3_FromETF),
 	compare(I3, add(I3, 4, 3)),
 	compare(add(new(), 6, 1), add(I3, 3, 1)),
+	I3_2 = add(new(), 7, 5),
+	compare(add(new(), 7, 5), outerjoin(I2, I3_2)),
+	compare(add(new(), 7, 6), outerjoin(I3, I3_2)),
+	compare(add(add(add(new(), 1, 0), 3, 2), 8, 6), outerjoin(I3, add(new(), 8, 0))),
 	I4 = add(I3, 7, 6),
 	?assertEqual(2, count(I4)),
 	?assertEqual(5, sum(I4)),

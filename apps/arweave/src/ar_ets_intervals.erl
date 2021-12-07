@@ -152,7 +152,7 @@ get_next_interval_outside(Table, Offset, RightBound) ->
 		NextOffset ->
 			case ets:lookup(Table, NextOffset) of
 				[{NextOffset, Start}] when Start > Offset ->
-					{Start, Offset};
+					{min(RightBound, Start), Offset};
 				_ ->
 					get_next_interval_outside(Table, NextOffset, RightBound)
 			end

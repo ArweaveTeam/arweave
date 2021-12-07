@@ -930,12 +930,18 @@ test_packs_pre_2_5_chunks_depending_on_packing_threshold() ->
 		element(3, sys:get_state(ar_sync_record))
 	),
 	?assertEqual(2, length(maps:keys(SyncRecordByType))),
-	UnpackedSize = ar_intervals:sum(maps:get({ar_data_sync, unpacked}, SyncRecordByType)),
-	PackedSize = ar_intervals:sum(maps:get({ar_data_sync, spora_2_5}, SyncRecordByType)),
-	?assertEqual(true, PackedSize < LastB#block.weave_size),
-	?assertEqual(true, UnpackedSize + PackedSize < LastB#block.strict_data_split_threshold
-			+ PadFun(LastB#block.weave_size - LastB#block.strict_data_split_threshold)),
-	?assertEqual(true, PackedSize > ExpectedPackedSizeLowerBound),
+	true = ar_util:do_until(
+		fun() ->
+			UnpackedSize = ar_intervals:sum(maps:get({ar_data_sync, unpacked}, SyncRecordByType)),
+			PackedSize = ar_intervals:sum(maps:get({ar_data_sync, spora_2_5}, SyncRecordByType)),
+			PackedSize < LastB#block.weave_size
+				andalso UnpackedSize + PackedSize < LastB#block.strict_data_split_threshold
+						+ PadFun(LastB#block.weave_size - LastB#block.strict_data_split_threshold)
+				andalso PackedSize > ExpectedPackedSizeLowerBound
+		end,
+		200,
+		60000
+	),
 	SlaveSyncRecordByType = maps:filter(
 		fun	({ar_data_sync, _}, _) ->
 				true;
@@ -945,15 +951,21 @@ test_packs_pre_2_5_chunks_depending_on_packing_threshold() ->
 		element(3, slave_call(sys, get_state, [ar_sync_record]))
 	),
 	?assertEqual(2, length(maps:keys(SlaveSyncRecordByType))),
-	SlaveUnpackedSize = ar_intervals:sum(maps:get({ar_data_sync, unpacked},
-			SlaveSyncRecordByType)),
-	SlavePackedSize = ar_intervals:sum(maps:get({ar_data_sync, spora_2_5},
-			SlaveSyncRecordByType)),
-	?assertEqual(true, SlavePackedSize < LastB#block.weave_size),
-	?assertEqual(true,
-			SlaveUnpackedSize + SlavePackedSize < LastB#block.strict_data_split_threshold
-			+ PadFun(LastB#block.weave_size - LastB#block.strict_data_split_threshold)),
-	?assertEqual(true, SlavePackedSize > ExpectedPackedSizeLowerBound).
+	true = ar_util:do_until(
+		fun() ->
+			SlaveUnpackedSize = ar_intervals:sum(maps:get({ar_data_sync, unpacked},
+					SlaveSyncRecordByType)),
+			SlavePackedSize = ar_intervals:sum(maps:get({ar_data_sync, spora_2_5},
+					SlaveSyncRecordByType)),
+			SlavePackedSize < LastB#block.weave_size
+				andalso SlaveUnpackedSize
+					+ SlavePackedSize < LastB#block.strict_data_split_threshold
+					+ PadFun(LastB#block.weave_size - LastB#block.strict_data_split_threshold)
+				andalso SlavePackedSize > ExpectedPackedSizeLowerBound
+		end,
+		200,
+		60000
+	).
 
 get_records_with_proofs(B, TX, Chunks) ->
 	[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)].

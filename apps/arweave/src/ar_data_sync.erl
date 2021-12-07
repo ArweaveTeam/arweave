@@ -212,6 +212,11 @@ init([]) ->
 	State = init_kv(),
 	{CurrentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize,
 			Packing_2_5_Threshold, StrictDataSplitThreshold} = read_data_sync_state(),
+	{ok, SyncRecord} = ar_sync_record:get_record(#{ format => raw }, ?MODULE),
+	%% A set of intervals temporarily excluded from syncing. The intervals
+	%% are recorded here after we failed to find them. The motivation
+	%% is to prevent missing intervals from slowing down the syncing process.
+	ar_ets_intervals:init_from_gb_set(ar_data_sync_skip_intervals, SyncRecord),
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = WeaveSize,
@@ -228,6 +233,7 @@ init([]) ->
 	repair_genesis_block_index(State2),
 	gen_server:cast(?MODULE, check_space),
 	gen_server:cast(?MODULE, check_space_warning),
+	gen_server:cast(?MODULE, collect_sync_intervals),
 	lists:foreach(
 		fun(_SyncingJobNumber) ->
 			gen_server:cast(?MODULE, sync_random_interval)
@@ -389,49 +395,93 @@ handle_cast(check_space_warning, #sync_data_state{ sync_disk_space = false } = S
 		"The node has stopped syncing data - the available disk space is"
 		" less than ~s. Add more disk space if you wish to store more data.~n",
 	ar:console(Msg, [ar_util:bytes_to_mb_string(?DISK_DATA_BUFFER_SIZE)]),
-	?LOG_INFO([
-		{event, ar_data_sync_stopped_syncing},
-		{reason, little_disk_space_left}
-	]),
+	?LOG_INFO([{event, ar_data_sync_stopped_syncing}, {reason, little_disk_space_left}]),
 	ar_util:cast_after(?DISK_SPACE_WARNING_FREQUENCY, ?MODULE, check_space_warning),
 	{noreply, State};
 handle_cast(check_space_warning, State) ->
 	ar_util:cast_after(?DISK_SPACE_WARNING_FREQUENCY, ?MODULE, check_space_warning),
 	{noreply, State};
 
-%% Pick a random not synced interval and sync it.
-handle_cast(sync_random_interval, #sync_data_state{ sync_disk_space = false } = State) ->
+%% Pick a random not synced interval and place it in the syncing queue.
+handle_cast(collect_sync_intervals, #sync_data_state{ sync_disk_space = false } = State) ->
 	Delay = ar_disksup:get_disk_space_check_frequency(),
-	ar_util:cast_after(Delay, ?MODULE, sync_random_interval),
+	ar_util:cast_after(Delay, ?MODULE, collect_sync_intervals),
 	{noreply, State};
-handle_cast(sync_random_interval, State) ->
-	#sync_data_state{ weave_size = WeaveSize } = State,
-	spawn(
-		fun() ->
-			case get_random_interval(WeaveSize) of
-				[] ->
-					ar_util:cast_after(2000, ?MODULE, sync_random_interval);
-				SubIntervals ->
-					gen_server:cast(?MODULE, {sync_chunk, SubIntervals, loop})
-			end
-		end
-	),
+handle_cast(collect_sync_intervals, State) ->
+	#sync_data_state{ weave_size = WeaveSize, sync_intervals_queue = Q } = State,
+	case queue:len(Q) > ?SYNC_INTERVALS_MAX_QUEUE_SIZE of
+		true ->
+			ar_util:cast_after(500, ?MODULE, collect_sync_intervals);
+		false ->
+			spawn_link(
+				fun() ->
+					find_random_interval(WeaveSize),
+					ar_util:cast_after(500, ?MODULE, collect_sync_intervals)
+				end
+			)
+	end,
 	{noreply, State};
 
-handle_cast({sync_interval, _, _}, #sync_data_state{ sync_disk_space = false } = State) ->
+handle_cast({enqueue_intervals, Peer, Intervals}, State) ->
+	#sync_data_state{ sync_intervals_queue = Q,
+			sync_intervals_queue_intervals = QIntervals } = State,
+	%% Only keep unique intervals. We may get some duplicates for two
+	%% reasons:
+	%% 1) find_random_interval might choose the same interval several
+	%%    times in a row even when there are other unsynced intervals
+	%%    to pick because it is probabilistic.
+	%% 2) We ask many peers simultaneously about the same interval
+	%%    to make finding of the relatively rare intervals quicker.
+	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+	{Q2, QIntervals2} =
+		ar_intervals:fold(
+			fun({End, Start}, {Acc, QIAcc}) ->
+				?LOG_DEBUG([{event, add_interval_to_sync_queue}, {right, End}, {left, Start},
+						{peer, ar_util:format_peer(Peer)}]),
+				{lists:foldl(
+					fun(Start2, Acc2) ->
+						End2 = min(Start2 + ?DATA_CHUNK_SIZE, End),
+						queue:in({Start2, End2, Peer}, Acc2)
+					end,
+					Acc,
+					lists:seq(Start, End - 1, ?DATA_CHUNK_SIZE)
+				), ar_intervals:add(QIAcc, End, Start)}
+			end,
+			{Q, QIntervals},
+			OuterJoin
+		),
+	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
+			sync_intervals_queue_intervals = QIntervals2 }};
+
+handle_cast({exclude_interval_from_syncing, Left, Right}, State) ->
+	ar_ets_intervals:add(ar_data_sync_skip_intervals, Right, Left),
+	ar_util:cast_after(?EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, ?MODULE,
+			{re_include_interval_for_syncing, Left, Right}),
+	{noreply, State};
+
+handle_cast({re_include_interval_for_syncing, Left, Right}, State) ->
+	ar_ets_intervals:delete(ar_data_sync_skip_intervals, Right, Left),
+	{noreply, State};
+
+handle_cast({sync_interval, _, _},
+		#sync_data_state{ sync_disk_space = false } = State) ->
 	{noreply, State};
 handle_cast({sync_interval, Left, Right}, State) ->
-	spawn(
-		fun() ->
-			case get_subintervals(Left, Right) of
-				[] ->
-					ok;
-				SubIntervals ->
-					gen_server:cast(?MODULE, {sync_chunk, SubIntervals, do_not_loop})
-			end
-		end
-	),
+	spawn(fun() -> find_subintervals(Left, Right) end),
 	{noreply, State};
+
+handle_cast(sync_random_interval, State) ->
+	#sync_data_state{ sync_intervals_queue = Q,
+			sync_intervals_queue_intervals = QIntervals } = State,
+	case queue:out(Q) of
+		{empty, _} ->
+			ar_util:cast_after(500, ?MODULE, sync_random_interval),
+			{noreply, State};
+		{{value, {Start, End, _Peer} = Interval}, Q2} ->
+			gen_server:cast(?MODULE, {sync_chunk, [Interval], loop}),
+			{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
+					sync_intervals_queue_intervals = ar_intervals:delete(QIntervals, End, Start) }}
+	end;
 
 handle_cast({sync_chunk, [{Byte, RightBound, _} | SubIntervals], Loop}, State)
 		when Byte >= RightBound ->
@@ -447,45 +497,43 @@ handle_cast({sync_chunk, _, _} = Cast,
 	ar_util:cast_after(ar_disksup:get_disk_space_check_frequency(), ?MODULE, Cast),
 	{noreply, State};
 handle_cast({sync_chunk, _, _} = Cast,
-		#sync_data_state{ packing_map = Map } = State)
-			when map_size(Map) >= ?PACKING_BUFFER_SIZE ->
+		#sync_data_state{ sync_buffer_size = Size } = State)
+			when Size >= ?SYNC_BUFFER_SIZE ->
 	ar_util:cast_after(200, ?MODULE, Cast),
 	{noreply, State};
 handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop}, State) ->
-	case ar_sync_record:get_interval(Byte + 1, ?MODULE) of
-		{End, _Start} ->
-			%% Multiple jobs sync random intervals, which may intersect each other.
-			%% This check minimizes the amount of times when an already requested
-			%% chunk is requested again.
-			gen_server:cast(
-				?MODULE,
-				{sync_chunk, [{End, RightBound, Peer} | SubIntervals], Loop}
-			);
-		not_found ->
-			Byte2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Byte + 1),
-			case Byte2 >= RightBound of
-				true ->
-					gen_server:cast(?MODULE, {sync_chunk, SubIntervals, Loop});
-				false ->
-					Self = self(),
-					spawn(
-						fun() ->
-							case ar_http_iface_client:get_chunk(Peer, Byte2, any) of
-								{ok, Proof} ->
-									gen_server:cast(Self, {store_fetched_chunk, Peer, Byte2 - 1,
-											RightBound, Proof, SubIntervals, Loop});
-								{error, Reason} ->
-									?LOG_DEBUG([{event, failed_to_fetch_chunk},
-											{peer, ar_util:format_peer(Peer)},
-											{reason, io_lib:format("~p", [Reason])}]),
-									ar_events:send(peer, {bad_response, {Peer, chunk, Reason}}),
-									gen_server:cast(Self, {sync_chunk, SubIntervals, Loop})
-							end
-						end
-					)
-			end
+	#sync_data_state{ sync_buffer_size = Size } = State,
+	Byte2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Byte + 1),
+	case Byte2 > Byte + 1 of
+		true ->
+			gen_server:cast(?MODULE, {exclude_interval_from_syncing, Byte, Byte2 - 1});
+		false ->
+			ok
 	end,
-	{noreply, State};
+	case Byte2 >= RightBound of
+		true ->
+			gen_server:cast(?MODULE, {sync_chunk, SubIntervals, Loop}),
+			{noreply, State};
+		false ->
+			Self = self(),
+			spawn_link(
+				fun() ->
+					case ar_http_iface_client:get_chunk(Peer, Byte2, any) of
+						{ok, Proof} ->
+							gen_server:cast(Self, {store_fetched_chunk, Peer, Byte2 - 1,
+									RightBound, Proof, SubIntervals, Loop});
+						{error, Reason} ->
+							?LOG_DEBUG([{event, failed_to_fetch_chunk},
+									{peer, ar_util:format_peer(Peer)},
+									{reason, io_lib:format("~p", [Reason])}]),
+							ar_events:send(peer, {bad_response, {Peer, chunk, Reason}}),
+							gen_server:cast(Self, dec_sync_buffer_size),
+							gen_server:cast(Self, {sync_chunk, SubIntervals, Loop})
+					end
+				end
+			),
+			{noreply, State#sync_data_state{ sync_buffer_size = Size + 1 }}
+	end;
 
 handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof, SubIntervals, Loop}, State) ->
 	#sync_data_state{ data_root_offset_index = DataRootOffsetIndex,
@@ -507,16 +555,18 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof, SubIntervals, L
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathFun) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
+			gen_server:cast(?MODULE, {sync_chunk, [{get_chunk_padded_offset(AbsoluteOffset,
+					StrictDataSplitThreshold) + 1, RightBound, Peer} | SubIntervals], Loop}),
 			{Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkID} = VArgs,
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-					Chunk, ChunkID, ChunkEndOffset, Strict, Peer, Byte, RightBound,
-					SubIntervals, Loop},
+					Chunk, ChunkID, ChunkEndOffset, Strict, Peer, Byte},
 			case maps:is_key(AbsoluteOffset, PackingMap) of
 				true ->
 					?LOG_DEBUG([{event, fetched_chunk_already_being_packed},
-							{offset, AbsoluteOffset}]),
+							{offset, AbsoluteOffset}, {byte, Byte}]),
 					Byte2 = get_chunk_padded_offset(AbsoluteOffset, StrictDataSplitThreshold) + 1,
+					gen_server:cast(?MODULE, dec_sync_buffer_size),
 					gen_server:cast(?MODULE, {sync_chunk, [{Byte2, RightBound, Peer}
 							| SubIntervals], Loop}),
 					{noreply, State};
@@ -524,24 +574,29 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof, SubIntervals, L
 					?LOG_DEBUG([{event, schedule_fetched_chunk_unpacking},
 							{offset, AbsoluteOffset}]),
 					ar_events:send(chunk, {unpack_request, AbsoluteOffset, ChunkArgs}),
-					ar_util:cast_after(60000, ?MODULE,
+					ar_util:cast_after(600000, ?MODULE,
 							{expire_unpack_fetched_chunk_request, AbsoluteOffset}),
 					{noreply, State#sync_data_state{
 							packing_map = PackingMap#{
 								AbsoluteOffset => {unpack_fetched_chunk, Args} } }}
 			end;
 		false ->
-			process_invalid_fetched_chunk(Peer, Byte, SubIntervals, Loop, State);
+			gen_server:cast(?MODULE, {sync_chunk, SubIntervals, Loop}),
+			process_invalid_fetched_chunk(Peer, Byte, State);
 		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkSize, ChunkID} ->
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
+			gen_server:cast(?MODULE, {sync_chunk, [{get_chunk_padded_offset(AbsoluteEndOffset,
+					StrictDataSplitThreshold) + 1, RightBound, Peer} | SubIntervals], Loop}),
 			ChunkArgs = {unpacked, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-					Chunk, ChunkID, ChunkEndOffset, Strict, Peer, Byte, RightBound,
-					SubIntervals, Loop},
+					Chunk, ChunkID, ChunkEndOffset, Strict, Peer, Byte},
 			process_valid_fetched_chunk(ChunkArgs, Args, State)
 	end;
+
+handle_cast(dec_sync_buffer_size, #sync_data_state{ sync_buffer_size = Size } = State) ->
+	{noreply, State#sync_data_state{ sync_buffer_size = Size - 1 }};
 
 handle_cast(process_disk_pool_item, #sync_data_state{ sync_disk_space = false } = State) ->
 	ar_util:cast_after(?DISK_POOL_SCAN_FREQUENCY_MS, ?MODULE, process_disk_pool_item),
@@ -687,11 +742,9 @@ handle_cast({expire_repack_chunk_request, Offset}, State) ->
 handle_cast({expire_unpack_fetched_chunk_request, Offset}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	case maps:get(Offset, PackingMap, not_found) of
-		{unpack_fetched_chunk, Args} ->
-			State2 = State#sync_data_state{ packing_map = maps:remove(Offset, PackingMap) },
-			{_, _, _, _, _, _, _, _, _, _, _, _, SubIntervals, Loop} = Args,
-			gen_server:cast(?MODULE, {sync_chunk, SubIntervals, Loop}),
-			{noreply, State2};
+		{unpack_fetched_chunk, _Args} ->
+			gen_server:cast(?MODULE, dec_sync_buffer_size),
+			{noreply, State#sync_data_state{ packing_map = maps:remove(Offset, PackingMap) }};
 		_ ->
 			{noreply, State}
 	end;
@@ -786,7 +839,7 @@ handle_cast({repack_stored_chunks, Offset, End}, State) ->
 					ChunkSize = (?DATA_CHUNK_SIZE),
 					ar_events:send(chunk, {repack_request, AbsoluteOffset,
 							{spora_2_5, unpacked, Chunk, AbsoluteOffset, TXRoot, ChunkSize}}),
-					ar_util:cast_after(60000, ?MODULE,
+					ar_util:cast_after(600000, ?MODULE,
 							{expire_repack_chunk_request, AbsoluteOffset}),
 					{noreply, State#sync_data_state{
 						packing_map = maps:put(AbsoluteOffset, repack_stored_chunk,
@@ -849,6 +902,9 @@ handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
 	end;
 
 handle_info({event, chunk, _}, State) ->
+	{noreply, State};
+
+handle_info({'EXIT', _PID, normal}, State) ->
 	{noreply, State};
 
 handle_info(Message, State) ->
@@ -1578,81 +1634,144 @@ store_sync_state(State) ->
 			State#sync_data_state{ disk_full = false }
 	end.
 
-get_random_interval(0) ->
+find_random_interval(0) ->
 	[];
-get_random_interval(WeaveSize) ->
+find_random_interval(WeaveSize) ->
 	%% Try keeping no more than ?SYNCED_INTERVALS_TARGET intervals
 	%% in the sync record by choosing the appropriate size of continuous
 	%% intervals to sync. The motivation is to have a syncing heuristic
 	%% that syncs data quickly, keeps the record size small, and has
-	%% synced data reasonably spread out.
-	%% Include at least one byte - relevant for tests where the weave can be very small.
-	SyncSize = max(1, WeaveSize div ?SYNCED_INTERVALS_TARGET),
-	N = rand:uniform(WeaveSize) - 1,
-	case ar_sync_record:get_next_unsynced_interval(N, WeaveSize, ?MODULE) of
+	%% synced data reasonably spread out. Attempt syncing entire buckets
+	%% to improve discoverability of the data. Choose at least one bucket.
+	SyncSize = WeaveSize div ?SYNCED_INTERVALS_TARGET,
+	SyncBucketCount = max(1, 1 + SyncSize div ?NETWORK_DATA_BUCKET_SIZE),
+	BucketCount = max(1, 1 + WeaveSize div ?NETWORK_DATA_BUCKET_SIZE),
+	RandomBucket = rand:uniform(BucketCount) - 1,
+	BucketStart = RandomBucket * ?NETWORK_DATA_BUCKET_SIZE,
+	find_random_interval(BucketStart, SyncBucketCount, WeaveSize).
+
+find_random_interval(Start, SyncBucketCount, WeaveSize) ->
+	case get_next_unsynced_interval(Start, WeaveSize) of
 		not_found ->
-			[];
-		{Right, Left} ->
-			?LOG_DEBUG([{event, picked_interval_for_syncing},
-					{random_byte, N}, {left, Left}, {right, Right}]),
-			Right2 = min(Right, Left + SyncSize),
-			get_subintervals(Left, Right2)
+			case Start of
+				0 ->
+					[];
+				_ ->
+					find_random_interval(0, SyncBucketCount, WeaveSize)
+			end;
+		{_Right, Left} ->
+			BucketSize = ?NETWORK_DATA_BUCKET_SIZE,
+			SyncSize = SyncBucketCount * BucketSize,
+			NextBucketBorder = Left - Left rem SyncSize + SyncSize,
+			Right = min(WeaveSize, NextBucketBorder),
+			find_subintervals(Left, Right)
 	end.
 
-get_subintervals(Left, Right) ->
-	get_subintervals(Left, Right, []).
+%% @doc Return the lowest unsynced interval strictly above the given Offset.
+%% The right bound of the interval is at most RightBound.
+%% Return not_found if there are no such intervals.
+%% Skip the intervals we have recently failed to find.
+get_next_unsynced_interval(Offset, RightBound) when Offset >= RightBound ->
+	not_found;
+get_next_unsynced_interval(Offset, RightBound) ->
+	case ets:next(?MODULE, Offset) of
+		'$end_of_table' ->
+			{RightBound, Offset};
+		NextOffset ->
+			case ets:lookup(?MODULE, NextOffset) of
+				[{NextOffset, Start}] when Start > Offset ->
+					End = min(RightBound, Start),
+					case ets:next(ar_data_sync_skip_intervals, Offset) of
+						'$end_of_table' ->
+							{End, Offset};
+						SkipEnd ->
+							case ets:lookup(ar_data_sync_skip_intervals,
+									SkipEnd) of
+								[{SkipEnd, SkipStart}]
+										when SkipStart >= End ->
+									{End, Offset};
+								[{SkipEnd, SkipStart}]
+										when SkipStart > Offset ->
+									{SkipStart, Offset};
+								[{SkipEnd, SkipStart}]
+										when SkipEnd < End ->
+									{End, SkipEnd};
+								_ ->
+									get_next_unsynced_interval(SkipEnd, RightBound)
+							end
+					end;
+				_ ->
+					get_next_unsynced_interval(NextOffset, RightBound)
+			end
+	end.
 
-get_subintervals(Left, Right, SubIntervals) when Left >= Right ->
-	SubIntervals;
-get_subintervals(Left, Right, SubIntervals) ->
+%% @doc Collect the unsynced intervals between Start and RightBound.
+get_next_unsynced_intervals(Start, RightBound) ->
+	get_next_unsynced_intervals(Start, RightBound, ar_intervals:new()).
+
+get_next_unsynced_intervals(Start, RightBound, Intervals) when Start >= RightBound ->
+	Intervals;
+get_next_unsynced_intervals(Start, RightBound, Intervals) ->
+	case ets:next(?MODULE, Start) of
+		'$end_of_table' ->
+			ar_intervals:add(Intervals, RightBound, Start);
+		NextOffset ->
+			case ets:lookup(?MODULE, NextOffset) of
+				[{NextOffset, NextStart}] when NextStart > Start ->
+					End = min(NextStart, RightBound),
+					get_next_unsynced_intervals(NextOffset, RightBound,
+							ar_intervals:add(Intervals, End, Start));
+				_ ->
+					get_next_unsynced_intervals(NextOffset, RightBound, Intervals)
+			end
+	end.
+
+find_subintervals(Left, Right) when Left >= Right ->
+	ok;
+find_subintervals(Left, Right) ->
 	Bucket = Left div ?NETWORK_DATA_BUCKET_SIZE,
 	LeftBound = Left - Left rem ?NETWORK_DATA_BUCKET_SIZE,
 	Peers = ar_data_discovery:get_bucket_peers(Bucket),
 	RightBound = min(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right),
-	SubIntervals2 = lists:foldl(
-		fun(Peer, Acc) ->
-			case get_peer_intervals(Peer, Left, RightBound) of
-				{ok, Intervals} ->
-					lists:foldl(
-						fun({End, Start}, Acc2) ->
-							[{Start, End, Peer} | Acc2]
-						end,
-						Acc,
-						Intervals
-					);
-				{error, Reason} ->
-					?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
-							{peer, ar_util:format_peer(Peer)},
-							{reason, io_lib:format("~p", [Reason])}]),
-					ar_events:send(peer, {bad_response, {Peer, sync_record, Reason}}),
-					Acc
-			end
-		end,
-		SubIntervals,
-		Peers
-	),
-	get_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right, SubIntervals2).
+	Results =
+		ar_util:pmap(
+			fun(Peer) ->
+				UnsyncedIntervals = get_next_unsynced_intervals(Left, RightBound),
+				case get_peer_intervals(Peer, Left, UnsyncedIntervals) of
+					{ok, Intervals} ->
+						gen_server:cast(?MODULE, {enqueue_intervals, Peer, Intervals}),
+						case ar_intervals:is_empty(Intervals) of
+							true ->
+								not_found;
+							false ->
+								found
+						end;
+					{error, Reason} ->
+						?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
+								{peer, ar_util:format_peer(Peer)},
+								{reason, io_lib:format("~p", [Reason])}]),
+						not_found
+				end
+			end,
+			Peers
+		),
+	case lists:any(fun(Result) -> Result == found end, Results) of
+		false ->
+			?LOG_DEBUG([{event, exclude_interval_from_syncing}, {left, Left}, {right, Right}]),
+			gen_server:cast(?MODULE, {exclude_interval_from_syncing, Left, Right});
+		true ->
+			ok
+	end,
+	find_subintervals(LeftBound + ?NETWORK_DATA_BUCKET_SIZE, Right).
 
-get_peer_intervals(Peer, Left, Right) ->
+get_peer_intervals(Peer, Left, SoughtIntervals) ->
 	%% A guess. A bigger limit may result in unnecesarily large response. A smaller
 	%% limit may be too small to fetch all the synced intervals from the requested range,
 	%% in case the peer's sync record is too choppy.
-	Limit = min(1000, ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
+	Limit = min(2000, ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
 	case ar_http_iface_client:get_sync_record(Peer, Left + 1, Limit) of
-		{ok, SyncRecord} ->
-			{ok, element(2, ar_intervals:fold(
-				fun	(_, {complete, _} = Acc) ->
-						Acc;
-					({End, _Start}, Acc) when End =< Left ->
-						Acc;
-					({_End, Start}, {_, Acc}) when Start >= Right ->
-						{complete, Acc};
-					({End, Start}, {_, Acc}) ->
-						{not_complete, [{min(End, Right), max(Start, Left)} | Acc]}
-				end,
-				{not_complete, []},
-				SyncRecord
-			))};
+		{ok, PeerIntervals} ->
+			{ok, ar_intervals:intersection(PeerIntervals, SoughtIntervals)};
 		Error ->
 			Error
 	end.
@@ -1994,25 +2113,24 @@ pick_missing_blocks([{H, WeaveSize, _} | CurrentBI], BlockTXPairs) ->
 			{WeaveSize, lists:reverse(After)}
 	end.
 
-process_invalid_fetched_chunk(Peer, Byte, SubIntervals, Loop, State) ->
+process_invalid_fetched_chunk(Peer, Byte, State) ->
 	#sync_data_state{ weave_size = WeaveSize } = State,
 	?LOG_WARNING([{event, got_invalid_proof_from_peer}, {peer, ar_util:format_peer(Peer)},
 			{byte, Byte}, {weave_size, WeaveSize}]),
+	gen_server:cast(?MODULE, dec_sync_buffer_size),
 	%% Not necessarily a malicious peer, it might happen
 	%% if the chunk is recent and from a different fork.
-	gen_server:cast(?MODULE, {sync_chunk, SubIntervals, Loop}),
 	{noreply, State}.
 
 process_valid_fetched_chunk(ChunkArgs, Args, State) ->
-	#sync_data_state{ strict_data_split_threshold = StrictDataSplitThreshold } = State,
 	{Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID,
-			ChunkEndOffset, Strict, Peer, Byte, RightBound, SubIntervals, Loop} = Args,
+			ChunkEndOffset, Strict, Peer, Byte} = Args,
+	gen_server:cast(?MODULE, dec_sync_buffer_size),
 	case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
 		false ->
 			?LOG_WARNING([{event, got_too_big_proof_from_peer},
 					{peer, ar_util:format_peer(Peer)}]),
-			gen_server:cast(?MODULE, {sync_chunk, SubIntervals, Loop}),
 			{noreply, State};
 		true ->
 			case ar_sync_record:is_recorded(Byte + 1, ?MODULE) of
@@ -2020,30 +2138,21 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 					?LOG_DEBUG([{event, unpacked_fetched_chunk_already_synced},
 							{offset, AbsoluteEndOffset}]),
 					%% The chunk has been synced by another job already.
-					Byte2 = get_chunk_padded_offset(AbsoluteEndOffset,
-							StrictDataSplitThreshold) + 1,
-					Cast = {sync_chunk, [{Byte2, RightBound, Peer} | SubIntervals], Loop},
-					gen_server:cast(?MODULE, Cast),
 					{noreply, State};
 				false ->
 					pack_and_store_fetched_chunk({DataRoot, AbsoluteTXStartOffset,
 							TXPath, TXRoot, TXSize, DataPath, Packing, ChunkEndOffset,
-							ChunkSize, Chunk, UnpackedChunk, Strict, Byte, Peer, RightBound,
-							SubIntervals, Loop}, State)
+							ChunkSize, Chunk, UnpackedChunk, Strict}, State)
 			end
 	end.
 
 pack_and_store_fetched_chunk(Args, State) ->
 	{DataRoot, AbsoluteTXStartOffset, TXPath, TXRoot, TXSize, DataPath, Packing, Offset,
-			ChunkSize, Chunk, UnpackedChunk, PassedStrictValidation, _Byte, Peer, RightBound,
-			SubIntervals, Loop} = Args,
+			ChunkSize, Chunk, UnpackedChunk, PassedStrictValidation} = Args,
 	#sync_data_state{ disk_pool_threshold = DiskPoolThreshold,
-			packing_map = PackingMap,
-			strict_data_split_threshold = StrictDataSplitThreshold } = State,
+			packing_map = PackingMap } = State,
 	AbsoluteOffset = AbsoluteTXStartOffset + Offset,
 	DataPathHash = crypto:hash(sha256, DataPath),
-	Byte = get_chunk_padded_offset(AbsoluteOffset, StrictDataSplitThreshold) + 1,
-	gen_server:cast(?MODULE, {sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop}),
 	case AbsoluteOffset > DiskPoolThreshold of
 		true ->
 			?LOG_DEBUG([{event, storing_fetched_chunk_in_disk_pool}, {offset, AbsoluteOffset}]),
@@ -2098,7 +2207,7 @@ pack_and_store_fetched_chunk(Args, State) ->
 							ar_events:send(chunk, {repack_request, AbsoluteOffset,
 									{RequiredPacking, unpacked, Chunk, AbsoluteOffset, TXRoot,
 									ChunkSize}}),
-							ar_util:cast_after(60000, ?MODULE,
+							ar_util:cast_after(600000, ?MODULE,
 									{expire_repack_chunk_request, AbsoluteOffset}),
 							PackingArgs = {pack_fetched_chunk, {DataPath, Offset, DataRoot,
 									TXPath}},
@@ -2295,10 +2404,6 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 			end
 	end.
 
-process_disk_pool_matured_chunk_offset(Iterator, _, _, _, _, Args,
-		#sync_data_state{ packing_map = Map } = State)
-			when map_size(Map) >= ?PACKING_BUFFER_SIZE ->
-	process_disk_pool_chunk_offsets(Iterator, false, Args, State);
 process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 		Args, State) ->
 	#sync_data_state{ chunk_data_db = ChunkDataDB, packing_map = PackingMap } = State,
@@ -2315,40 +2420,48 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 			gen_server:cast(?MODULE, process_disk_pool_item),
 			{noreply, State};
 		true ->
-			case read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey) of
-				not_found ->
-					?LOG_WARNING([{event, disk_pool_chunk_not_found}, {offset, AbsoluteOffset},
+			case maps:is_key(AbsoluteOffset, PackingMap) of
+				true ->
+					?LOG_DEBUG([{event, disk_pool_chunk_already_being_packed},
+							{offset, AbsoluteOffset},
 							{chunk_data_key, ar_util:encode(element(5, Args))}]),
-					process_disk_pool_chunk_offsets(Iterator, MayConclude, Args, State);
-				{error, Reason} ->
-					?LOG_ERROR([{event, failed_to_read_disk_pool_chunk},
-							{reason, io_lib:format("~p", [Reason])}]),
-					gen_server:cast(?MODULE, process_disk_pool_item),
-					{noreply, State};
-				{ok, {Chunk, DataPath}} ->
-					State2 = case maps:is_key(AbsoluteOffset, PackingMap) of
+					process_disk_pool_chunk_offsets(Iterator, false, Args, State);
+				false ->
+					case map_size(PackingMap) >= ?PACKING_BUFFER_SIZE of
 						true ->
-							?LOG_DEBUG([{event, disk_pool_chunk_already_being_packed},
-									{offset, AbsoluteOffset},
-									{chunk_data_key, ar_util:encode(element(5, Args))}]),
-							State;
+							process_disk_pool_chunk_offsets(Iterator, false, Args, State);
 						false ->
-							?LOG_DEBUG([{event, request_disk_pool_chunk_packing},
-									{offset, AbsoluteOffset},
-									{chunk_data_key, ar_util:encode(element(5, Args))}]),
-							RequiredPacking = get_required_chunk_packing(AbsoluteOffset,
-									ChunkSize, State),
-							ar_events:send(chunk, {repack_request, AbsoluteOffset,
-									{RequiredPacking, unpacked, Chunk, AbsoluteOffset,
-											TXRoot, ChunkSize}}),
-							ar_util:cast_after(60000, ?MODULE,
-									{expire_repack_chunk_request, AbsoluteOffset}),
-							PackingArgs = {pack_disk_pool_chunk, {DataPath, Offset, DataRoot,
-									TXPath}},
-							State#sync_data_state{
-								packing_map = PackingMap#{ AbsoluteOffset => PackingArgs }}
-					end,
-					process_disk_pool_chunk_offsets(Iterator, false, Args, State2)
+							case read_chunk(AbsoluteOffset, ChunkDataDB, ChunkDataKey) of
+								not_found ->
+									?LOG_WARNING([{event, disk_pool_chunk_not_found},
+											{offset, AbsoluteOffset},
+											{chunk_data_key, ar_util:encode(element(5, Args))}]),
+									process_disk_pool_chunk_offsets(Iterator, MayConclude,
+											Args, State);
+								{error, Reason} ->
+									?LOG_ERROR([{event, failed_to_read_disk_pool_chunk},
+											{reason, io_lib:format("~p", [Reason])}]),
+									gen_server:cast(?MODULE, process_disk_pool_item),
+									{noreply, State};
+								{ok, {Chunk, DataPath}} ->
+									?LOG_DEBUG([{event, request_disk_pool_chunk_packing},
+											{offset, AbsoluteOffset},
+											{chunk_data_key, ar_util:encode(element(5, Args))}]),
+									RequiredPacking = get_required_chunk_packing(AbsoluteOffset,
+											ChunkSize, State),
+									ar_events:send(chunk, {repack_request, AbsoluteOffset,
+											{RequiredPacking, unpacked, Chunk, AbsoluteOffset,
+													TXRoot, ChunkSize}}),
+									ar_util:cast_after(600000, ?MODULE,
+											{expire_repack_chunk_request, AbsoluteOffset}),
+									PackingArgs = {pack_disk_pool_chunk, {DataPath,
+											Offset, DataRoot, TXPath}},
+									process_disk_pool_chunk_offsets(Iterator, false, Args,
+											State#sync_data_state{
+												packing_map = PackingMap#{
+														AbsoluteOffset => PackingArgs }})
+							end
+					end
 			end
 	end.
 
@@ -2371,13 +2484,13 @@ is_disk_pool_chunk(AbsoluteOffset, ChunkDataKey, State) ->
 
 process_unpacked_chunk(ChunkArgs, Args, State) ->
 	{_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot, _Chunk, ChunkID,
-			_ChunkEndOffset, _Strict, Peer, Byte, _RightBound, SubIntervals, Loop} = Args,
+			_ChunkEndOffset, _Strict, Peer, Byte} = Args,
 	{_Packing, Chunk, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
 	?LOG_DEBUG([{event, validating_unpacked_fetched_chunk}, {offset, AbsoluteEndOffset}]),
 	case validate_chunk_id_size(Chunk, ChunkID, ChunkSize) of
 		false ->
 			?LOG_DEBUG([{event, invalid_unpacked_fetched_chunk}, {offset, AbsoluteEndOffset}]),
-			process_invalid_fetched_chunk(Peer, Byte, SubIntervals, Loop, State);
+			process_invalid_fetched_chunk(Peer, Byte, State);
 		true ->
 			?LOG_DEBUG([{event, valid_unpacked_fetched_chunk}, {offset, AbsoluteEndOffset}]),
 			process_valid_fetched_chunk(ChunkArgs, Args, State)

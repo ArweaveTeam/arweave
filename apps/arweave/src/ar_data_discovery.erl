@@ -21,20 +21,20 @@
 -ifdef(DEBUG).
 -define(DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, 2 * 1000).
 -else.
--define(DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, 2 * 60 * 1000).
+-define(DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, 4 * 60 * 1000).
 -endif.
 
 %% The expiration time of peer's buckets. If a peer is found in the list of
 %% the first best ?DATA_DISCOVERY_COLLECT_PEERS_COUNT peers (checked every
 %% ?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS milliseconds), the timer is refreshed.
--define(PEER_EXPIRATION_TIME_MS, 10 * 60 * 1000).
+-define(PEER_EXPIRATION_TIME_MS, 60 * 60 * 1000).
 
 %% The maximum number of requests running at any time.
 -define(DATA_DISCOVERY_PARALLEL_PEER_REQUESTS, 10).
 
 %% The number of peers from the top of the rating to schedule for inclusion
 %% into the peer map every DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS milliseconds.
--define(DATA_DISCOVERY_COLLECT_PEERS_COUNT, 100).
+-define(DATA_DISCOVERY_COLLECT_PEERS_COUNT, 1000).
 
 %%%===================================================================
 %%% Public interface.
@@ -44,22 +44,19 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Return the list of ?QUERY_BEST_PEERS_COUNT peers who have at least one byte of data
-%% synced in the given Bucket of size ?NETWORK_DATA_BUCKET_SIZE, sorted from the biggest
-%% synced share to the lowest.
+%% synced in the given Bucket of size ?NETWORK_DATA_BUCKET_SIZE. 80% of the peers are chosen
+%% from the 20% of peers with the biggest share in the given bucket.
 get_bucket_peers(Bucket) ->
-	case ets:lookup(?MODULE, network_map) of
-		[] ->
-			[];
-		[{_, NetworkMap}] ->
-			BucketSize = ?NETWORK_DATA_BUCKET_SIZE,
-			Shares = maps:fold(
-				fun(Peer, Buckets, Acc) ->
-					[{-ar_sync_buckets:get(Bucket, BucketSize, Buckets), Peer} | Acc]
-				end,
-				[],
-				NetworkMap
-			),
-			[Peer || {_, Peer} <- lists:sublist(lists:sort(Shares), ?QUERY_BEST_PEERS_COUNT)]
+	get_bucket_peers(Bucket, {Bucket, 0, no_peer}, []).
+
+get_bucket_peers(Bucket, Cursor, Peers) ->
+	case ets:next(?MODULE, Cursor) of
+		'$end_of_table' ->
+			ar_tx_emitter:pick_peers(Peers, ?QUERY_BEST_PEERS_COUNT);
+		{Bucket, _Share, Peer} = Key ->
+			get_bucket_peers(Bucket, Key, [Peer | Peers]);
+		_ ->
+			ar_tx_emitter:pick_peers(Peers, ?QUERY_BEST_PEERS_COUNT)
 	end.
 
 %%%===================================================================
@@ -118,14 +115,32 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 	#state{ network_map = Map } = State,
 	State2 = refresh_expiration_timer(Peer, State),
 	Map2 = maps:put(Peer, SyncBuckets, Map),
-	ets:insert(?MODULE, {network_map, Map2}),
+	ar_sync_buckets:foreach(
+		fun(Bucket, Share) ->
+			ets:insert(?MODULE, {{Bucket, Share, Peer}})
+		end,
+		?NETWORK_DATA_BUCKET_SIZE,
+		SyncBuckets
+	),
 	{noreply, State2#state{ network_map = Map2 }};
 
 handle_cast({remove_peer, Peer}, State) ->
 	#state{ network_map = Map, expiration_map = E } = State,
-	Map2 = maps:remove(Peer, Map),
+	Map2 =
+		case maps:take(Peer, Map) of
+			error ->
+				Map;
+			{SyncBuckets, Map3} ->
+				ar_sync_buckets:foreach(
+					fun(Bucket, Share) ->
+						ets:delete(?MODULE, {Bucket, Share, Peer})
+					end,
+					?NETWORK_DATA_BUCKET_SIZE,
+					SyncBuckets
+				),
+				Map3
+		end,
 	E2 = maps:remove(Peer, E),
-	ets:insert(?MODULE, {network_map, Map2}),
 	{noreply, State#state{ network_map = Map2, expiration_map = E2 }};
 
 handle_cast(Cast, State) ->

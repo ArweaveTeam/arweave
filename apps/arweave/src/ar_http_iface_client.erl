@@ -288,7 +288,7 @@ get_sync_record(Peer) ->
 		method => get,
 		path => "/data_sync_record",
 		timeout => 15 * 1000,
-		connect_timeout => 500,
+		connect_timeout => 2000,
 		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
 		headers => Headers
 	})).
@@ -347,8 +347,8 @@ get_sync_buckets(Peer) ->
 		peer => Peer,
 		method => get,
 		path => "/sync_buckets",
-		timeout => 5 * 1000,
-		connect_timeout => 500,
+		timeout => 10 * 1000,
+		connect_timeout => 2000,
 		limit => ?MAX_SYNC_BUCKETS_SIZE,
 		headers => p2p_headers()
 	})).

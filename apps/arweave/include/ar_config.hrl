@@ -21,7 +21,7 @@
 -ifdef(DEBUG).
 -define(DEFAULT_SYNC_JOBS, 50).
 -else.
--define(DEFAULT_SYNC_JOBS, 20).
+-define(DEFAULT_SYNC_JOBS, 100).
 -endif.
 
 %% The number of header sync jobs to run. Each job picks the latest not synced
