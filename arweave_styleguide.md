@@ -1,6 +1,6 @@
 # Arweave code style
 
-The main development language of the Arweave client is Erlang, and as the number of developers of the project continues to grow this stlye guide will act as a means of keeping the codebase clean and comprehensible.
+The main development language of the Arweave client is Erlang, and as the number of developers of the project continues to grow this style guide will act as a means of keeping the codebase clean and comprehensible.
 
 
 
