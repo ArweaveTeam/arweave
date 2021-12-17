@@ -716,18 +716,17 @@ static ERL_NIF_TERM randomx_encrypt_chunk_nif(
 		enif_rwlock_runlock(statePtr->lockPtr);
 		return error(envPtr, "randomx_create_vm failed");
 	}
+
 	size_t outChunkLen = (((inputChunk.size - 1) / (2*FEISTEL_BLOCK_LENGTH)) + 1) * (2*FEISTEL_BLOCK_LENGTH);
-	unsigned char outChunk[256*1024]; // max chunk size, NOTE, second big allocation on stack
-	// unsigned char *outChunk = (unsigned char*)malloc(outChunkLen);
+	ERL_NIF_TERM outChunkTerm;
+	unsigned char* outChunk = enif_make_new_binary(envPtr, outChunkLen, &outChunkTerm);
+
 	randomx_encrypt_chunk(vmPtr, inputData.data, inputData.size, inputChunk.data, inputChunk.size, outChunk, randomxRoundCount);
 
 	randomx_destroy_vm(vmPtr);
 	enif_rwlock_runlock(statePtr->lockPtr);
 
-	return ok_tuple(envPtr, make_output_binary(envPtr, outChunk, outChunkLen));
-	// ERL_NIF_TERM res = ok_tuple(envPtr, make_output_binary(envPtr, outChunk, outChunkLen));
-	// free(outChunk);
-	// return res;
+	return ok_tuple(envPtr, outChunkTerm);
 }
 
 static ERL_NIF_TERM randomx_decrypt_chunk_nif(
@@ -793,6 +792,7 @@ static ERL_NIF_TERM randomx_decrypt_chunk_nif(
 		return error(envPtr, "randomx_create_vm failed");
 	}
 	unsigned char outChunk[256*1024]; // max chunk size, NOTE, second big allocation on stack
+	// NOTE. Decrypt can't use limited outChunkLen, because randomx_decrypt_chunk will unpack padding too, and memory for padding should be allocated
 	// unsigned char *outChunk = (unsigned char*)malloc(outChunkLen);
 	randomx_decrypt_chunk(vmPtr, inputData.data, inputData.size, inputChunk.data, inputChunk.size, outChunk, randomxRoundCount);
 
@@ -825,7 +825,6 @@ static ERL_NIF_TERM randomx_hash_long_with_entropy_nif(
 	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	randomx_flags flags;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
-	unsigned char entropyPtr[RANDOMX_ENTROPY_SIZE];
 	struct state* statePtr;
 	ErlNifBinary inputData;
 
@@ -875,11 +874,14 @@ static ERL_NIF_TERM randomx_hash_long_with_entropy_nif(
 		enif_rwlock_runlock(statePtr->lockPtr);
 		return error(envPtr, "randomx_create_vm failed");
 	}
+
+	ERL_NIF_TERM entropyPtrTerm;
+	unsigned char* entropyPtr = enif_make_new_binary(envPtr, RANDOMX_ENTROPY_SIZE, &entropyPtrTerm);
 	randomx_calculate_hash_long_with_entropy(vmPtr, inputData.data, inputData.size, hashPtr, entropyPtr, randomxRoundCount);
 	randomx_destroy_vm(vmPtr);
 	enif_rwlock_runlock(statePtr->lockPtr);
 
-	return ok_tuple2(envPtr, make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE), make_output_binary(envPtr, entropyPtr, RANDOMX_ENTROPY_SIZE));
+	return ok_tuple2(envPtr, make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE), entropyPtrTerm);
 }
 
 static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
@@ -888,7 +890,6 @@ static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int 
 	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	randomx_flags flags;
 	unsigned char hashPtr[RANDOMX_HASH_SIZE];
-	unsigned char entropyPtr[RANDOMX_ENTROPY_SIZE];
 	struct state* statePtr;
 	ErlNifBinary firstNonceBinary, secondNonceBinary, inputData, prevH, searchSpaceUpperBound;
 	unsigned char nonce[RANDOMX_HASH_SIZE];
@@ -1079,6 +1080,9 @@ static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int 
 		} else {
 			memcpy(nonce, hashPtr, RANDOMX_HASH_SIZE);
 		}
+
+		ERL_NIF_TERM entropyPtrTerm;
+		unsigned char* entropyPtr = enif_make_new_binary(envPtr, RANDOMX_ENTROPY_SIZE, &entropyPtrTerm);
 		if (i == hashingIterations - 1) {
 			randomx_calculate_hash_long_with_entropy_last(vmPtr, hashPtr, entropyPtr, randomxRoundCount);
 		} else {
@@ -1125,14 +1129,13 @@ static ERL_NIF_TERM bulk_hash_fast_long_with_entropy_nif(ErlNifEnv* envPtr, int 
 
 		ERL_NIF_TERM byteTerm = make_output_binary(envPtr, byte, size);
 		ERL_NIF_TERM hashTerm = make_output_binary(envPtr, hashPtr, RANDOMX_HASH_SIZE);
-		ERL_NIF_TERM entropyTerm = make_output_binary(envPtr, entropyPtr, RANDOMX_ENTROPY_SIZE);
 		ERL_NIF_TERM nonceTerm = make_output_binary(envPtr, prevNonce, RANDOMX_HASH_SIZE);
 		ERL_NIF_TERM pidTerm = enif_make_pid(envPtr, &proxyPIDs[proxyPIDCursor]);
 		ERL_NIF_TERM tupleTerm = enif_make_tuple6(
 			envPtr,
 			byteTerm,
 			hashTerm,
-			entropyTerm,
+			entropyPtrTerm,
 			nonceTerm,
 			pidTerm,
 			argv[8]
