@@ -299,8 +299,8 @@ get_sync_record(Peer, Start, Limit) ->
 		peer => Peer,
 		method => get,
 		path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/" ++ integer_to_list(Limit),
-		timeout => 5 * 1000,
-		connect_timeout => 500,
+		timeout => 10 * 1000,
+		connect_timeout => 5000,
 		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
 		headers => Headers
 	}), Start, Limit).
