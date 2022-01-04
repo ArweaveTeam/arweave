@@ -54,6 +54,9 @@
 -define(DISK_POOL_SCAN_FREQUENCY_MS, 10000).
 -endif.
 
+%% How often to measure the number of chunks in the disk pool index.
+-define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 5000).
+
 %% The frequency of removing expired data roots from the disk pool.
 -define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
 
@@ -157,6 +160,7 @@
 	%% be removed from disk as orphaned, reincluded into the weave (by updating chunks_index),
 	%% or removed from disk_pool_chunks_index by expiration.
 	disk_pool_chunks_index,
+	disk_pool_chunks_index_old,
 	%% The sum of sizes of all pending chunks. When it reaches
 	%% ?MAX_DISK_POOL_BUFFER_MB, new chunks with these data roots are rejected.
 	disk_pool_size,

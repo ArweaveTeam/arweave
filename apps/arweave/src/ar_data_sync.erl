@@ -5,7 +5,8 @@
 -export([start_link/0, join/3, add_tip_block/4, add_block/2, is_chunk_proof_ratio_attractive/3,
 		add_chunk/1, add_chunk/2, add_chunk/3, add_data_root_to_disk_pool/3,
 		maybe_drop_data_root_from_disk_pool/3, get_chunk/2, get_tx_data/1, get_tx_data/2,
-		get_tx_offset/1, has_data_root/2, request_tx_data_removal/1, sync_interval/2]).
+		get_tx_offset/1, has_data_root/2, request_tx_data_removal/1, sync_interval/2,
+		record_disk_pool_chunks_count/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -210,6 +211,9 @@ init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
 	ok = ar_events:subscribe(chunk),
 	State = init_kv(),
+	move_disk_pool_index(State),
+	timer:apply_interval(?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, ar_data_sync,
+			record_disk_pool_chunks_count, []),
 	{CurrentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize,
 			Packing_2_5_Threshold, StrictDataSplitThreshold} = read_data_sync_state(),
 	{ok, SyncRecord} = ar_sync_record:get_record(#{ format => raw }, ?MODULE),
@@ -912,10 +916,12 @@ handle_info(Message, State) ->
 	{noreply, State}.
 
 terminate(Reason, State) ->
-	#sync_data_state{ chunks_index = {DB, _}, chunk_data_db = ChunkDataDB } = State,
+	#sync_data_state{ chunks_index = {DB, _}, chunk_data_db = ChunkDataDB,
+			disk_pool_chunks_index = DiskPoolIndexDB } = State,
 	?LOG_INFO([{event, terminate}, {reason, io_lib:format("~p", [Reason])}]),
 	store_sync_state(State),
 	ar_kv:close(DB),
+	ar_kv:close(DiskPoolIndexDB),
 	ar_kv:close(ChunkDataDB).
 
 %%%===================================================================
@@ -1214,13 +1220,26 @@ init_kv() ->
 				{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}
 			]
 		),
+	{ok, DiskPoolIndexDB} =
+		ar_kv:open_without_column_families(
+			"ar_data_sync_disk_pool_chunks_index_db", [
+				{max_open_files, 1000000},
+				{max_background_compactions, 8},
+				{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
+				{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
+				%% 10 files in L1 to make L1 == L0 as recommended by the
+				%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
+				{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}
+			] ++ BloomFilterOpts
+		),
 	State = #sync_data_state{
 		chunks_index = {DB, CF1},
 		data_root_index = {DB, CF2},
 		data_root_offset_index = {DB, CF3},
 		tx_index = {DB, CF4},
 		tx_offset_index = {DB, CF5},
-		disk_pool_chunks_index = {DB, CF6},
+		disk_pool_chunks_index_old = {DB, CF6},
+		disk_pool_chunks_index = DiskPoolIndexDB,
 		migrations_index = {DB, CF7},
 		chunk_data_db = ChunkDataDB
 	},
@@ -1230,10 +1249,35 @@ init_kv() ->
 		{data_root_offset_index, {DB, CF3}},
 		{tx_index, {DB, CF4}},
 		{tx_offset_index, {DB, CF5}},
-		{disk_pool_chunks_index, {DB, CF6}},
+		{disk_pool_chunks_index, DiskPoolIndexDB},
 		{chunk_data_db, ChunkDataDB}
 	]),
 	State.
+
+move_disk_pool_index(State) ->
+	move_disk_pool_index(first, State).
+
+move_disk_pool_index(Cursor, State) ->
+	#sync_data_state{ disk_pool_chunks_index_old = Old,
+			disk_pool_chunks_index = New } = State,
+	case ar_kv:get_next(Old, Cursor) of
+		none ->
+			ok;
+		{ok, Key, Value} ->
+			ok = ar_kv:put(New, Key, Value),
+			ok = ar_kv:delete(Old, Key),
+			move_disk_pool_index(Key, State)
+	end.
+
+record_disk_pool_chunks_count() ->
+	[{_, DB}] = ets:lookup(ar_data_sync_state, disk_pool_chunks_index),
+	case ar_kv:count(DB) of
+		Count when is_integer(Count) ->
+			prometheus_gauge:set(disk_pool_chunks_count, Count);
+		Error ->
+			?LOG_WARNING([{event, failed_to_read_disk_pool_chunks_count},
+					{error, io_lib:format("~p", [Error])}])
+	end.
 
 read_data_sync_state() ->
 	case ar_storage:read_term(data_sync_state) of
@@ -1621,7 +1665,6 @@ store_sync_state(State) ->
 		packing_2_5_threshold = Packing_2_5_Threshold,
 		strict_data_split_threshold = StrictDataSplitThreshold
 	} = State,
-	ar_metrics:store(disk_pool_chunks_count),
 	StoredState = #{ block_index => BI, disk_pool_data_roots => DiskPoolDataRoots,
 			disk_pool_size => DiskPoolSize, packing_2_5_threshold => Packing_2_5_Threshold,
 			strict_data_split_threshold => StrictDataSplitThreshold },
@@ -1958,7 +2001,6 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State) ->
 								{reason, io_lib:format("~p", [Reason3])}]),
 							{reply, {error, failed_to_store_chunk}, State};
 						ok ->
-							prometheus_gauge:inc(disk_pool_chunks_count),
 							{reply, ok, State4}
 					end
 			end
@@ -2095,7 +2137,6 @@ add_chunk_to_disk_pool(Args, State) ->
 					PassedStrictValidation},
 			case ar_kv:put(DiskPoolChunksIndex, DiskPoolChunkKey, term_to_binary(Value)) of
 				ok ->
-					prometheus_gauge:inc(disk_pool_chunks_count),
 					ok;
 				Error ->
 					Error
@@ -2302,7 +2343,6 @@ process_disk_pool_item(State, Key, Value) ->
 			%% The chunk never made it to the chain, the data root has expired in disk pool.
 			?LOG_DEBUG([{event, disk_pool_chunk_data_root_expired}]),
 			ok = ar_kv:delete(DiskPoolChunksIndex, Key),
-			prometheus_gauge:dec(disk_pool_chunks_count),
 			ok = delete_disk_pool_chunk(ChunkDataKey, State),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			gen_server:cast(?MODULE, process_disk_pool_item),
@@ -2340,7 +2380,6 @@ process_disk_pool_chunk_offsets(Iterator, MayConclude, Args, State) ->
 					?LOG_DEBUG([{event, removing_disk_pool_chunk}, {key, ar_util:encode(Key)},
 							{data_doot, ar_util:encode(DataRoot)}]),
 					ok = ar_kv:delete(DiskPoolChunksIndex, Key),
-					prometheus_gauge:dec(disk_pool_chunks_count),
 					ok = delete_disk_pool_chunk(ChunkDataKey, State);
 				false ->
 					ok

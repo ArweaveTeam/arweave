@@ -128,7 +128,6 @@ register(MetricsDir) ->
 			"The disk pool includes pending, recent, and orphaned chunks."
 		}
 	]),
-	load_gauge(MetricsDir, disk_pool_chunks_count),
 	prometheus_counter:new([
 		{name, disk_pool_processed_chunks},
 		{
@@ -208,16 +207,6 @@ register(MetricsDir) ->
 		{name, validating_unpacked_spora},
 		{help, "The number of SPoRA solutions based on unpacked chunks entered validation."}
 	]).
-
-load_gauge(MetricsDir, Name) ->
-	case ar_storage:read_term(MetricsDir, Name) of
-		{ok, Value} ->
-			prometheus_gauge:set(Name, Value);
-		not_found ->
-			nothing_is_stored;
-		{error, Reason} ->
-			?LOG_ERROR([{event, failed_to_load_metric}, {error, Reason}])
-	end.
 
 store(Name) ->
 	ar_storage:write_term(ar_meta_db:get(metrics_dir), Name, prometheus_gauge:value(Name)).
