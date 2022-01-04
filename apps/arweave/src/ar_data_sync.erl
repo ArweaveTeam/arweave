@@ -603,29 +603,53 @@ handle_cast(dec_sync_buffer_size, #sync_data_state{ sync_buffer_size = Size } = 
 	{noreply, State#sync_data_state{ sync_buffer_size = Size - 1 }};
 
 handle_cast(process_disk_pool_item, #sync_data_state{ sync_disk_space = false } = State) ->
-	ar_util:cast_after(?DISK_POOL_SCAN_FREQUENCY_MS, ?MODULE, process_disk_pool_item),
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
 	{noreply, State};
 handle_cast(process_disk_pool_item, State) ->
 	#sync_data_state{
 		disk_pool_cursor = Cursor,
-		disk_pool_chunks_index = DiskPoolChunksIndex
+		disk_pool_chunks_index = DiskPoolChunksIndex,
+		disk_pool_full_scan_start_key = FullScanStartKey,
+		disk_pool_full_scan_start_timestamp = Timestamp
 	} = State,
-	case ar_kv:get_next(DiskPoolChunksIndex, Cursor) of
-		{ok, Key, Value} ->
-			process_disk_pool_item(State, Key, Value);
+	NextKey =
+		case ar_kv:get_next(DiskPoolChunksIndex, Cursor) of
+			{ok, Key1, Value1} ->
+				{ok, Key1, Value1};
+			none ->
+				case ar_kv:get_next(DiskPoolChunksIndex, first) of
+					none ->
+						none;
+					{ok, Key2, Value2} ->
+						{ok, Key2, Value2}
+				end
+		end,
+	case NextKey of
 		none ->
-			case ar_kv:get_next(DiskPoolChunksIndex, first) of
+			ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
+			{noreply, State#sync_data_state{ disk_pool_cursor = first,
+					disk_pool_full_scan_start_key = none }};
+		{ok, Key3, Value3} ->
+			case FullScanStartKey of
 				none ->
-					%% The disk_pool_chunks_count metric may be slightly incorrect
-					%% if the node is stopped abnormally so the recent changes are
-					%% not recorded. Here we correct it every time the disk pool is
-					%% cleared.
-					prometheus_gauge:set(disk_pool_chunks_count, 0);
+					process_disk_pool_item(State#sync_data_state{
+							disk_pool_full_scan_start_key = Key3,
+							disk_pool_full_scan_start_timestamp = erlang:timestamp() },
+							Key3, Value3);
+				Key3 ->
+					TimePassed = timer:now_diff(erlang:timestamp(), Timestamp),
+					case TimePassed < (?DISK_POOL_SCAN_DELAY_MS) * 1000 of
+						true ->
+							ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE,
+									process_disk_pool_item),
+							{noreply, State#sync_data_state{ disk_pool_cursor = first,
+									disk_pool_full_scan_start_key = none }};
+						false ->
+							process_disk_pool_item(State, Key3, Value3)
+					end;
 				_ ->
-					ok
-			end,
-			ar_util:cast_after(?DISK_POOL_SCAN_FREQUENCY_MS, ?MODULE, process_disk_pool_item),
-			{noreply, State#sync_data_state{ disk_pool_cursor = first }}
+					process_disk_pool_item(State, Key3, Value3)
+			end
 	end;
 
 handle_cast({process_disk_pool_chunk_offset, MayConclude, TXArgs, Args, Iterator}, State) ->
@@ -2346,7 +2370,8 @@ process_disk_pool_item(State, Key, Value) ->
 			ok = delete_disk_pool_chunk(ChunkDataKey, State),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			gen_server:cast(?MODULE, process_disk_pool_item),
-			{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
+			State2 = may_be_reset_disk_pool_full_scan_key(Key, State),
+			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{DataRootMap, _} ->
 			DataRootIndexIterator = data_root_index_iterator(DataRootMap),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
@@ -2355,6 +2380,12 @@ process_disk_pool_item(State, Key, Value) ->
 					PassedStrictValidation},
 			process_disk_pool_chunk_offsets(DataRootIndexIterator, true, Args, State2)
 	end.
+
+may_be_reset_disk_pool_full_scan_key(Key,
+		#sync_data_state{ disk_pool_full_scan_start_key = Key } = State) ->
+	State#sync_data_state{ disk_pool_full_scan_start_key = none };
+may_be_reset_disk_pool_full_scan_key(_Key, State) ->
+	State.
 
 parse_disk_pool_chunk(Bin) ->
 	case binary_to_term(Bin) of
@@ -2375,17 +2406,19 @@ process_disk_pool_chunk_offsets(Iterator, MayConclude, Args, State) ->
 	{_, _, _, DataRoot, _, ChunkDataKey, Key, _} = Args,
 	case next(Iterator) of
 		none ->
-			case MayConclude of
-				true ->
-					?LOG_DEBUG([{event, removing_disk_pool_chunk}, {key, ar_util:encode(Key)},
-							{data_doot, ar_util:encode(DataRoot)}]),
-					ok = ar_kv:delete(DiskPoolChunksIndex, Key),
-					ok = delete_disk_pool_chunk(ChunkDataKey, State);
-				false ->
-					ok
-			end,
+			State2 =
+				case MayConclude of
+					true ->
+						?LOG_DEBUG([{event, removing_disk_pool_chunk}, {key, ar_util:encode(Key)},
+								{data_doot, ar_util:encode(DataRoot)}]),
+						ok = ar_kv:delete(DiskPoolChunksIndex, Key),
+						ok = delete_disk_pool_chunk(ChunkDataKey, State),
+						may_be_reset_disk_pool_full_scan_key(Key, State);
+					false ->
+						State
+				end,
 			gen_server:cast(?MODULE, process_disk_pool_item),
-			{noreply, State};
+			{noreply, State2};
 		{TXArgs, Iterator2} ->
 			gen_server:cast(?MODULE, {process_disk_pool_chunk_offset, MayConclude, TXArgs, Args,
 					Iterator2}),

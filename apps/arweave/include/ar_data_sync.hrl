@@ -49,9 +49,9 @@
 
 %% The time to wait until the next full disk pool scan.
 -ifdef(DEBUG).
--define(DISK_POOL_SCAN_FREQUENCY_MS, 1000).
+-define(DISK_POOL_SCAN_DELAY_MS, 1000).
 -else.
--define(DISK_POOL_SCAN_FREQUENCY_MS, 10000).
+-define(DISK_POOL_SCAN_DELAY_MS, 10000).
 -endif.
 
 %% How often to measure the number of chunks in the disk pool index.
@@ -213,5 +213,11 @@
 	%% already and avoid syncing the same interval twice.
 	sync_intervals_queue_intervals = ar_intervals:new(),
 	%% The number of chunks currently being downloaded and processed.
-	sync_buffer_size = 0
+	sync_buffer_size = 0,
+	%% A key marking the beginning of a full disk pool scan.
+	disk_pool_full_scan_start_key = none,
+	%% The timestamp of the beginning of a full disk pool scan. Used to measure
+	%% the time it takes to scan the current disk pool - if it is too short, we postpone
+	%% the next scan to save some disk IO.
+	disk_pool_full_scan_start_timestamp
 }).
