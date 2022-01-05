@@ -80,7 +80,7 @@ handle_cast({throttle, Peer, Path, From}, State) ->
 			%% is 30 seconds.
 			HalfLimit = Limit div 2,
 			%% Try to approach but not hit the limit.
-			case N2 + 1 > max(1, HalfLimit * 95 / 100) of
+			case N2 + 1 > max(1, HalfLimit * 80 / 100) of
 				true ->
 					?LOG_DEBUG([{event, approaching_peer_rpm_limit},
 							{path, Path}, {minute_limit, Limit},
