@@ -57,6 +57,10 @@
 %% How often to measure the number of chunks in the disk pool index.
 -define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 5000).
 
+%% How long to keep the offsets of the recently processed "matured" chunks in a cache.
+%% We use the cache to quickly skip matured chunks when scanning the disk pool.
+-define(CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS, 60 * 60 * 1000).
+
 %% The frequency of removing expired data roots from the disk pool.
 -define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
 
@@ -219,5 +223,10 @@
 	%% The timestamp of the beginning of a full disk pool scan. Used to measure
 	%% the time it takes to scan the current disk pool - if it is too short, we postpone
 	%% the next scan to save some disk IO.
-	disk_pool_full_scan_start_timestamp
+	disk_pool_full_scan_start_timestamp,
+	%% A cache of the offsets of the recently "matured" chunks. We use it to quickly
+	%% skip matured chunks when scanning the disk pool. The reason the chunk is still
+	%% in the disk pool is some of its offsets have not matured yet (the same data can be
+	%% submitted several times).
+	recently_processed_disk_pool_offsets = #{}
 }).

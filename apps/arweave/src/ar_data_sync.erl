@@ -711,7 +711,8 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) when Cursor > En
 	{noreply, State};
 handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 	#sync_data_state{ chunks_index = ChunksIndex,
-			strict_data_split_threshold = StrictDataSplitThreshold } = State,
+			strict_data_split_threshold = StrictDataSplitThreshold,
+			recently_processed_disk_pool_offsets = RecentlyProcessedOffsets } = State,
 	case get_chunk_by_byte(ChunksIndex, Cursor) of
 		{ok, Key, Chunk} ->
 			<< AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >> = Key,
@@ -737,7 +738,9 @@ handle_cast({remove_tx_data, TXID, TXSize, End, Cursor}, State) ->
 					ok = ar_kv:delete(ChunksIndex, Key),
 					gen_server:cast(?MODULE,
 						{remove_tx_data, TXID, TXSize, End, AbsoluteEndOffset + 1}),
-					{noreply, State}
+					{noreply, State#sync_data_state{
+							recently_processed_disk_pool_offsets = maps:remove(
+									AbsoluteEndOffset, RecentlyProcessedOffsets) }}
 			end;
 		{error, invalid_iterator} ->
 			%% get_chunk_by_byte looks for a key with the same prefix or the next prefix.
@@ -759,7 +762,7 @@ handle_cast({expire_repack_chunk_request, Offset}, State) ->
 	case maps:get(Offset, PackingMap, not_found) of
 		{pack_fetched_chunk, _} ->
 			{noreply, State#sync_data_state{ packing_map = maps:remove(Offset, PackingMap) }};
-		{pack_disk_pool_chunk, _} ->
+		{pack_disk_pool_chunk, _, _} ->
 			{noreply, State#sync_data_state{ packing_map = maps:remove(Offset, PackingMap) }};
 		repack_stored_chunk ->
 			{noreply, State#sync_data_state{ packing_map = maps:remove(Offset, PackingMap) }};
@@ -795,13 +798,7 @@ handle_cast(repack_stored_chunks, #sync_data_state{ packing_map = Map } = State)
 handle_cast(repack_stored_chunks, State) ->
 	#sync_data_state{ packing_2_5_threshold = PackingThreshold,
 			disk_pool_threshold = DiskPoolThreshold, repacking_cursor = Cursor } = State,
-	SearchStart =
-		case Cursor >= DiskPoolThreshold of
-			true ->
-				PackingThreshold;
-			false ->
-				max(Cursor, PackingThreshold)
-		end,
+	SearchStart = max(Cursor, PackingThreshold),
 	case ar_sync_record:get_next_synced_interval(SearchStart, DiskPoolThreshold, unpacked,
 			?MODULE) of
 		not_found ->
@@ -875,6 +872,12 @@ handle_cast({repack_stored_chunks, Offset, End}, State) ->
 			end
 	end;
 
+handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
+	#sync_data_state{ recently_processed_disk_pool_offsets = Map } = State,
+	Set = maps:get(Offset, Map, sets:new()),
+	Map2 = maps:put(Offset, sets:del_element(ChunkDataKey, Set), Map),
+	{noreply, State#sync_data_state{ recently_processed_disk_pool_offsets = Map2 }};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
@@ -915,12 +918,20 @@ handle_info({event, chunk, {packed, Offset, ChunkArgs}}, State) ->
 	case maps:get(Offset, PackingMap, not_found) of
 		{pack_fetched_chunk, Args} ->
 			?LOG_DEBUG([{event, storing_packed_fetched_chunk}, {offset, Offset}]),
-			store_chunk(ChunkArgs, Args, State#sync_data_state{
-					packing_map = maps:remove(Offset, PackingMap) });
-		{pack_disk_pool_chunk, Args} ->
+			State2 = State#sync_data_state{ packing_map = maps:remove(Offset, PackingMap) },
+			store_chunk(ChunkArgs, Args, State2),
+			{noreply, State2};
+		{pack_disk_pool_chunk, ChunkDataKey, Args} ->
 			?LOG_DEBUG([{event, storing_packed_disk_pool_chunk}, {offset, Offset}]),
-			store_chunk(ChunkArgs, Args, State#sync_data_state{
-					packing_map = maps:remove(Offset, PackingMap) });
+			State2 = State#sync_data_state{ packing_map = maps:remove(Offset, PackingMap) },
+			case store_chunk(ChunkArgs, Args, State2) of
+				ok ->
+					{_, _, AbsoluteOffset, _, _} = ChunkArgs,
+					{noreply, cache_recently_processed_offset(AbsoluteOffset, ChunkDataKey,
+							State2)};
+				_Error ->
+					{noreply, State2}
+			end;
 		repack_stored_chunk ->
 			?LOG_DEBUG([{event, storing_repacked_stored_chunk}, {offset, Offset}]),
 			store_repacked_chunk(ChunkArgs, State#sync_data_state{
@@ -1760,7 +1771,7 @@ get_next_unsynced_interval(Offset, RightBound) ->
 								[{SkipEnd, SkipStart}]
 										when SkipStart > Offset ->
 									{SkipStart, Offset};
-								[{SkipEnd, SkipStart}]
+								[{SkipEnd, _SkipStart}]
 										when SkipEnd < End ->
 									{End, SkipEnd};
 								_ ->
@@ -2260,7 +2271,8 @@ pack_and_store_fetched_chunk(Args, State) ->
 					?LOG_DEBUG([{event, storing_fetched_chunk}, {offset, AbsoluteOffset},
 							{packing, StoredPacking}]),
 					ChunkArgs = {StoredPacking, StoredChunk, AbsoluteOffset, TXRoot, ChunkSize},
-					store_chunk(ChunkArgs, {DataPath, Offset, DataRoot, TXPath}, State);
+					store_chunk(ChunkArgs, {DataPath, Offset, DataRoot, TXPath}, State),
+					{noreply, State};
 				{need_packing, RequiredPacking} ->
 					case maps:is_key(AbsoluteOffset, PackingMap) of
 						true ->
@@ -2290,7 +2302,8 @@ store_chunk(ChunkArgs, Args, State) ->
 	StartOffset = get_chunk_padded_offset(AbsoluteOffset - ChunkSize, StrictDataSplitThreshold),
 	case ar_sync_record:delete(PaddedOffset, StartOffset, ?MODULE) of
 		{error, Reason} ->
-			log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot);
+			log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot),
+			{error, Reason};
 		ok ->
 			DataPathHash = crypto:hash(sha256, DataPath),
 			ChunkDataKey = get_chunk_data_key(DataPathHash),
@@ -2302,17 +2315,33 @@ store_chunk(ChunkArgs, Args, State) ->
 						ok ->
 							ok;
 						{error, Reason} ->
-							log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot)
+							log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot),
+							{error, Reason}
 					end;
 				{error, Reason} ->
-					log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot)
+					log_failed_to_store_chunk(Reason, AbsoluteOffset, DataRoot),
+					{error, Reason}
 			end
-	end,
-	{noreply, State}.
+	end.
 
 log_failed_to_store_chunk(Reason, Offset, DataRoot) ->
 	?LOG_ERROR([{event, failed_to_store_chunk}, {reason, io_lib:format("~p", [Reason])},
 			{absolute_chunk_offset, Offset}, {data_root, ar_util:encode(DataRoot)}]).
+
+cache_recently_processed_offset(Offset, ChunkDataKey, State) ->
+	#sync_data_state{ recently_processed_disk_pool_offsets = Map } = State,
+	Set = maps:get(Offset, Map, sets:new()),
+	Map2 =
+		case sets:is_element(ChunkDataKey, Set) of
+			false ->
+				ar_util:cast_after(?CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS,
+						?MODULE, {remove_recently_processed_disk_pool_offset, Offset,
+						ChunkDataKey}),
+				maps:put(Offset, sets:add_element(ChunkDataKey, Set), Map);
+			true ->
+				Map
+		end,
+	State#sync_data_state{ recently_processed_disk_pool_offsets = Map2 }.
 
 get_required_chunk_packing(_Offset, _ChunkSize, #sync_data_state{ packing_disabled = true }) ->
 	unpacked;
@@ -2482,10 +2511,11 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 	{Offset, _, ChunkSize, DataRoot, _, ChunkDataKey, _, _} = Args,
 	case is_disk_pool_chunk(AbsoluteOffset, ChunkDataKey, State) of
 		false ->
+			State2 = cache_recently_processed_offset(AbsoluteOffset, ChunkDataKey, State),
 			?LOG_DEBUG([{event, chunk_already_moved_from_disk_pool}, {offset, AbsoluteOffset},
 					{chunk_data_key, ar_util:encode(element(5, Args))},
 					{data_root, ar_util:encode(DataRoot)}]),
-			process_disk_pool_chunk_offsets(Iterator, MayConclude, Args, State);
+			process_disk_pool_chunk_offsets(Iterator, MayConclude, Args, State2);
 		{error, Reason} ->
 			?LOG_WARNING([{event, failed_to_read_chunks_index},
 					{reason, io_lib:format("~p", [Reason])}]),
@@ -2526,7 +2556,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 													TXRoot, ChunkSize}}),
 									ar_util:cast_after(600000, ?MODULE,
 											{expire_repack_chunk_request, AbsoluteOffset}),
-									PackingArgs = {pack_disk_pool_chunk, {DataPath,
+									PackingArgs = {pack_disk_pool_chunk, ChunkDataKey, {DataPath,
 											Offset, DataRoot, TXPath}},
 									process_disk_pool_chunk_offsets(Iterator, false, Args,
 											State#sync_data_state{
@@ -2538,19 +2568,28 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 	end.
 
 is_disk_pool_chunk(AbsoluteOffset, ChunkDataKey, State) ->
-	#sync_data_state{ chunks_index = ChunksIndex } = State,
+	#sync_data_state{ chunks_index = ChunksIndex,
+			recently_processed_disk_pool_offsets = Map } = State,
 	case ar_sync_record:is_recorded(AbsoluteOffset, ?MODULE) of
 		{true, spora_2_5} ->
+			%% We only pack "matured" chunks.
 			false;
 		_ ->
-			case ar_kv:get(ChunksIndex, << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>) of
-				not_found ->
-					true;
-				{ok, V} ->
-					{Key, _, _, _, _, _} = binary_to_term(V),
-					Key == ChunkDataKey;
-				Error ->
-					Error
+			Set = maps:get(AbsoluteOffset, Map, sets:new()),
+			case sets:is_element(ChunkDataKey, Set) of
+				true ->
+					%% The chunk has "matured" but was not packed (e.g., packing is disabled).
+					false;
+				false ->
+					case ar_kv:get(ChunksIndex, << AbsoluteOffset:?OFFSET_KEY_BITSIZE >>) of
+						not_found ->
+							true;
+						{ok, V} ->
+							{Key, _, _, _, _, _} = binary_to_term(V),
+							Key == ChunkDataKey;
+						Error ->
+							Error
+					end
 			end
 	end.
 

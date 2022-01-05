@@ -690,8 +690,7 @@ get_tx_data_in_chunks(Offset, Start, _Peer, Bin) when Offset =< Start ->
 get_tx_data_in_chunks(Offset, Start, Peer, Bin) ->
 	{ok, {{<<"200">>, _}, _, JSON, _, _}}
 			= ar_http:req(#{ method => get, peer => Peer,
-					path => "/chunk/" ++ integer_to_list(Offset),
-					headers => [{<<"x-bucket-based-offset">>, <<"true">>}] }),
+					path => "/chunk/" ++ integer_to_list(Offset) }),
 	Map = jiffy:decode(JSON, [return_maps]),
 	Chunk = ar_util:decode(maps:get(<<"chunk">>, Map)),
 	get_tx_data_in_chunks(Offset - byte_size(Chunk), Start, Peer, [Chunk | Bin]).
