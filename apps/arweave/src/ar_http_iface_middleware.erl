@@ -1174,6 +1174,8 @@ handle_post_tx(Req, Peer, TX) ->
 			handle_post_tx_already_in_weave_response();
 		{invalid, tx_already_in_mempool} ->
 			handle_post_tx_already_in_mempool_response();
+		{invalid, invalid_data_root_size} ->
+			handle_post_tx_invalid_data_root_response();
 		valid  ->
 			handle_post_tx_accepted(Req, Peer)
 	end.
@@ -1200,6 +1202,9 @@ handle_post_tx_already_in_weave_response() ->
 
 handle_post_tx_already_in_mempool_response() ->
 	{error_response, {400, #{}, <<"Transaction is already in the mempool.">>}}.
+
+handle_post_tx_invalid_data_root_response() ->
+	{error_response, {400, #{}, <<"The attached data is split in an unknown way.">>}}.
 
 handle_get_data_sync_record(Start, Limit, Req) ->
 	Format =

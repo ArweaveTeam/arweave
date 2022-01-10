@@ -432,7 +432,14 @@ get_format_2_tx_test() ->
 	EncodedInvalidTXID = binary_to_list(ar_util:encode(InvalidTXID)),
 	EncodedEmptyTXID = binary_to_list(ar_util:encode(EmptyTXID)),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, ValidTX),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, InvalidDataRootTX),
+	{ok, {{<<"400">>, _}, _, <<"The attached data is split in an unknown way.">>, _, _}} =
+		ar_http:req(#{
+			method => post,
+			peer => {127, 0, 0, 1, 1984},
+			path => "/tx",
+			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(InvalidDataRootTX))
+		}),
+	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, InvalidDataRootTX#tx{ data = <<>> }),
 	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, EmptyTX),
 	ar_test_node:wait_until_receives_txs([ValidTX, EmptyTX, InvalidDataRootTX]),
 	ar_node:mine(),
@@ -449,7 +456,6 @@ get_format_2_tx_test() ->
 	%% Ensure data can be fetched for format=2 transactions via /tx/[ID]/data.
 	{ok, Data} = wait_until_syncs_tx_data(TXID),
 	?assertEqual(ar_util:encode(<<"DATA">>), Data),
-	%% Ensure no data is stored when it does not match the data root.
 	{ok, {{<<"200">>, _}, _, InvalidData, _, _}} =
 		ar_http:req(#{
 			method => get,

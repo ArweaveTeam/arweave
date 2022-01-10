@@ -166,102 +166,6 @@ test_recall_byte_on_the_border() ->
 		lists:seq(1, 10)
 	).
 
-over_reported_tx_size_test_() ->
-	{timeout, 60, fun test_over_reported_tx_size/0}.
-
-test_over_reported_tx_size() ->
-	Key = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([
-		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
-	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
-	connect_to_slave(),
-	TXs = [
-		%% Post a transaction with some data and correctly reported size
-		%% so that we do not get stuck picking a recall byte.
-		sign_tx(Key, #{
-			data => crypto:strong_rand_bytes(100),
-			tags => [random_nonce()],
-			last_tx => get_tx_anchor()
-		}),
-		sign_tx(Key, #{
-			data => <<"A">>,
-			tags => [random_nonce()],
-			data_size => 2,
-			last_tx => get_tx_anchor()
-		})
-	],
-	lists:foreach(
-		fun(TX) ->
-			assert_post_tx_to_slave(TX)
-		end,
-		TXs
-	),
-	assert_wait_until_receives_txs(TXs),
-	lists:foreach(
-		fun(Height) ->
-			slave_mine(),
-			BI = wait_until_height(Height),
-			case Height of
-				1 ->
-					assert_txs_mined(TXs, BI);
-				_ ->
-					noop
-			end,
-			assert_slave_wait_until_height(Height)
-		end,
-		lists:seq(1, 4)
-	).
-
-under_reported_tx_size_test_() ->
-	{timeout, 60, fun test_under_reported_tx_size/0}.
-
-test_under_reported_tx_size() ->
-	Key = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([
-		{ar_wallet:to_address(Pub), ?AR(100), <<>>}
-	]),
-	{_Master, _} = start(B0),
-	{_Slave, _} = slave_start(B0),
-	connect_to_slave(),
-	TXs = [
-		%% Post a transaction with some data and correctly reported size
-		%% so that we do not get stuck picking a recall byte.
-		sign_tx(Key, #{
-			data => crypto:strong_rand_bytes(100),
-			tags => [random_nonce()],
-			last_tx => get_tx_anchor()
-		}),
-		sign_tx(Key, #{
-			data => <<"ABCDE">>,
-			tags => [random_nonce()],
-			data_size => 1,
-			last_tx => get_tx_anchor()
-		})
-	],
-	lists:foreach(
-		fun(TX) ->
-			assert_post_tx_to_slave(TX)
-		end,
-		TXs
-	),
-	assert_wait_until_receives_txs(TXs),
-	lists:foreach(
-		fun(Height) ->
-			slave_mine(),
-			BI = wait_until_height(Height),
-			case Height of
-				1 ->
-					assert_txs_mined(TXs, BI);
-				_ ->
-					noop
-			end,
-			assert_slave_wait_until_height(Height)
-		end,
-		lists:seq(1, 4)
-	).
-
 ignores_transactions_with_invalid_data_root_test_() ->
 	{timeout, 60, fun test_ignores_transactions_with_invalid_data_root/0}.
 
@@ -287,15 +191,15 @@ test_ignores_transactions_with_invalid_data_root() ->
 		end,
 	TXs = [
 		sign_tx(Key, GenerateTXParams(valid)),
-		sign_tx(Key, GenerateTXParams(invalid)),
+		(sign_tx(Key, GenerateTXParams(invalid)))#tx{ data = <<>> },
 		sign_tx(Key, GenerateTXParams(valid)),
-		sign_tx(Key, GenerateTXParams(invalid)),
+		(sign_tx(Key, GenerateTXParams(invalid)))#tx{ data = <<>> },
 		sign_tx(Key, GenerateTXParams(valid)),
-		sign_tx(Key, GenerateTXParams(invalid)),
+		(sign_tx(Key, GenerateTXParams(invalid)))#tx{ data = <<>> },
 		sign_tx(Key, GenerateTXParams(valid)),
-		sign_tx(Key, GenerateTXParams(invalid)),
+		(sign_tx(Key, GenerateTXParams(invalid)))#tx{ data = <<>> },
 		sign_tx(Key, GenerateTXParams(valid)),
-		sign_tx(Key, GenerateTXParams(invalid))
+		(sign_tx(Key, GenerateTXParams(invalid)))#tx{ data = <<>> }
 	],
 	lists:foreach(
 		fun(TX) ->
