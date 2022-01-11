@@ -853,14 +853,20 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, Pid)
 						Height when Height > CurrentHeight ->
 							{404, #{}, <<"Block not found.">>, Req};
 						Height ->
-							ok = ar_semaphore:acquire(get_block_index, infinity),
-							BI = ar_node:get_block_index(),
-							Len = length(BI),
-							case Height > Len - 1 of
-								true ->
-									{404, #{}, <<"Block not found.">>, Req};
-								false ->
-									{H, _, _} = lists:nth(Len - Height, BI),
+							case ar_node:get_recent_block_hash_by_height(Height) of
+								not_found ->
+									ok = ar_semaphore:acquire(get_block_index, infinity),
+									BI = ar_node:get_block_index(),
+									Len = length(BI),
+									case Height > Len - 1 of
+										true ->
+											{404, #{}, <<"Block not found.">>, Req};
+										false ->
+											{H, _, _} = lists:nth(Len - Height, BI),
+											handle(<<"GET">>, [<<"block">>, <<"hash">>,
+													ar_util:encode(H)], Req, Pid)
+									end;
+								H ->
 									handle(<<"GET">>, [<<"block">>, <<"hash">>,
 											ar_util:encode(H)], Req, Pid)
 							end
