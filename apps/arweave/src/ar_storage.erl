@@ -913,9 +913,19 @@ wallet_list_chunk_relative_filepath(Position, RootHash) ->
 
 write_file_atomic(Filename, Data) ->
 	SwapFilename = Filename ++ ".swp",
-	case file:write_file(SwapFilename, Data) of
-		ok ->
-			file:rename(SwapFilename, Filename);
+	case file:open(SwapFilename, [write, raw]) of
+		{ok, F} ->
+			case file:write(F, Data) of
+				ok ->
+					case file:close(F) of
+						ok ->
+							file:rename(SwapFilename, Filename);
+						Error ->
+							Error
+					end;
+				Error ->
+					Error
+			end;
 		Error ->
 			Error
 	end.
