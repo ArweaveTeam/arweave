@@ -48,5 +48,28 @@ metrics() ->
 		element(2, erlang:process_info(whereis(ar_bridge), message_queue_len))},
 	 {ignored_ids_len, gauge,
 		"Size of table of Ignored/already seen IDs:",
-		ets:info(ignored_ids, size)}
+		ets:info(ignored_ids, size)},
+	 {ar_data_sync_bytes_total, gauge, "ar_data_sync process memory",
+		get_process_memory(ar_data_sync)},
+	 {ar_sync_record_bytes_total, gauge, "ar_sync_record process memory",
+		get_process_memory(ar_sync_record)},
+	 {ar_data_discovery_bytes_total, gauge, "ar_data_discovery process memory",
+		get_process_memory(ar_data_discovery)},
+	 {ar_node_worker_bytes_total, gauge, "ar_node_worker process memory",
+		get_process_memory(ar_node_worker)},
+	 {ar_header_sync_bytes_total, gauge, "ar_header_sync process memory",
+		get_process_memory(ar_header_sync)},
+	 {ar_wallets_bytes_total, gauge, "ar_wallets process memory",
+		get_process_memory(ar_wallets)},
+	 {ar_sync_intervals_collector_bytes_total, gauge, "ar_sync_intervals_collector memory",
+		get_process_memory(ar_sync_intervals_collector)}
 	].
+
+get_process_memory(Name) ->
+	case whereis(Name) of
+		undefined ->
+			0;
+		PID ->
+			{memory, Memory} = erlang:process_info(PID, memory),
+			Memory
+	end.

@@ -419,6 +419,7 @@ handle_cast(collect_sync_intervals, State) ->
 		false ->
 			spawn_link(
 				fun() ->
+					catch register(ar_sync_intervals_collector, self()),
 					find_random_interval(WeaveSize),
 					ar_util:cast_after(500, ?MODULE, collect_sync_intervals)
 				end
