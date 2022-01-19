@@ -79,7 +79,7 @@ increase(Key, Val) ->
 	gen_server:cast(?MODULE, {increase, Key, Val}).
 
 update_peer_performance(Peer, Time, Bytes) ->
-	gen_server:cast(update_peer_performance, {Peer, Time, Bytes}).
+	gen_server:cast(?MODULE, {update_peer_performance, Peer, Time, Bytes}).
 
 %% @doc Remove entries from the performance database older than ?PEER_TMEOUT.
 purge_peer_performance() ->
