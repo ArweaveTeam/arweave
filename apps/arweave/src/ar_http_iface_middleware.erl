@@ -1012,6 +1012,7 @@ handle_get_tx_status(EncodedTXID, Req) ->
 								{<<"block_height">>, Height},
 								{<<"block_indep_hash">>, ar_util:encode(BH)}
 							],
+							ok = ar_semaphore:acquire(get_block_index, infinity),
 							case ar_node:is_in_block_index(BH) of
 								false ->
 									{404, #{}, <<"Not Found.">>, Req};

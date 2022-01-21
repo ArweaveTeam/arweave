@@ -117,12 +117,18 @@ get_ready_for_mining_txs() ->
 
 %% @doc Return true if the given block hash is found in the block index.
 is_in_block_index(H) ->
-	[{block_index, BI}] = ets:lookup(node_state, block_index),
-	case lists:search(fun({BH, _, _}) -> BH == H end, BI) of
+	[{block_anchors, Anchors}] = ets:lookup(node_state, block_anchors),
+	case lists:search(fun(BH) -> BH == H end, Anchors) of
 		{value, _} ->
 			true;
 		false ->
-			false
+			[{block_index, BI}] = ets:lookup(node_state, block_index),
+			case lists:search(fun({BH, _, _}) -> BH == H end, BI) of
+				{value, _} ->
+					true;
+				false ->
+					false
+			end
 	end.
 
 %% @doc Get the current block hash.
