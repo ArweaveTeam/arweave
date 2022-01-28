@@ -395,6 +395,14 @@ read_tx(TX) when is_record(TX, tx) ->
 read_tx(TXs) when is_list(TXs) ->
 	lists:map(fun read_tx/1, TXs);
 read_tx(ID) ->
+	case read_tx_from_disk_cache(ID) of
+		unavailable ->
+			read_tx2(ID);
+		TX ->
+			TX
+	end.
+
+read_tx2(ID) ->
 	case ets:lookup(?MODULE, tx_db) of
 		[{_, DB}] ->
 			case ar_kv:get(DB, ID) of
@@ -428,17 +436,21 @@ read_tx(ID) ->
 			unavailable
 	end.
 
+read_tx_from_disk_cache(ID) ->
+	case ar_disk_cache:lookup_tx_filename(ID) of
+		unavailable ->
+			unavailable;
+		{ok, Filename} ->
+			case read_tx_file(Filename) of
+				{ok, TX} ->
+					TX;
+				_Error ->
+					unavailable
+			end
+	end.
+
 read_tx_from_file(ID) ->
-	MaybeFilename =
-		%% The cache keeps a rotated number of recent headers when the
-		%% node is out of disk space.
-		case ar_disk_cache:lookup_tx_filename(ID) of
-			unavailable ->
-				lookup_tx_filename(ID);
-			Name ->
-				Name
-		end,
-	case MaybeFilename of
+	case lookup_tx_filename(ID) of
 		{ok, Filename} ->
 			case read_tx_file(Filename) of
 				{ok, TX} ->
