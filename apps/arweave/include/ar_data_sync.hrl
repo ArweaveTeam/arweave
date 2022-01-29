@@ -228,5 +228,10 @@
 	%% skip matured chunks when scanning the disk pool. The reason the chunk is still
 	%% in the disk pool is some of its offsets have not matured yet (the same data can be
 	%% submitted several times).
-	recently_processed_disk_pool_offsets = #{}
+	recently_processed_disk_pool_offsets = #{},
+	%% A registry of the currently processed disk pool chunks consulted by different
+	%% disk pool jobs to avoid double-processing.
+	currently_processed_disk_pool_keys = sets:new(),
+	%% A flag used to temporarily pause all disk pool jobs.
+	disk_pool_scan_pause = false
 }).

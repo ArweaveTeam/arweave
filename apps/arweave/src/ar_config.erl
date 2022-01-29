@@ -160,6 +160,12 @@ parse_options([{<<"header_sync_jobs">>, Value} | Rest], Config)
 parse_options([{<<"header_sync_jobs">>, Value} | _], _) ->
 	{error, {bad_type, header_sync_jobs, number}, Value};
 
+parse_options([{<<"disk_pool_jobs">>, Value} | Rest], Config)
+		when is_integer(Value) ->
+	parse_options(Rest, Config#config{ disk_pool_jobs = Value });
+parse_options([{<<"disk_pool_jobs">>, Value} | _], _) ->
+	{error, {bad_type, disk_pool_jobs, number}, Value};
+
 parse_options([{<<"load_mining_key">>, DataDir} | Rest], Config) when is_binary(DataDir) ->
 	parse_options(Rest, Config#config{ load_key = binary_to_list(DataDir) });
 parse_options([{<<"load_mining_key">>, DataDir} | _], _) ->

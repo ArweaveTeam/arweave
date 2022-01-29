@@ -168,6 +168,14 @@ show_help() ->
 					" and downloads it from peers.",
 					[?DEFAULT_HEADER_SYNC_JOBS]
 				)},
+			{"disk_pool_jobs (num)",
+				io_lib:format(
+					"The number of disk pool jobs to run. Default: ~B."
+					" Disk pool jobs scan the disk pool to index no longer pending or"
+					" orphaned chunks, schedule packing for chunks with a sufficient"
+					" number of confirmations and remove abandoned chunks.",
+					[?DEFAULT_DISK_POOL_JOBS]
+				)},
 			{"load_mining_key (file)",
 				"Load the address that mining rewards should be credited to from file."},
 			{"ipfs_pin", "Pin incoming IPFS tagged transactions on your local IPFS node."},

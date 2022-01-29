@@ -116,6 +116,12 @@ in
       description = "The pace for which to sync up with historical data.";
     };
 
+    diskPoolJobs = mkOption {
+      type = types.int;
+      default = 100;
+      description = "The number of disk pool jobs to run.";
+    };
+
     maxParallelGetChunkRequests = mkOption {
       type = types.int;
       default = 100;
@@ -172,6 +178,7 @@ in
             disable = cfg.featuresDisable;
             header_sync_jobs = cfg.headerSyncJobs;
             sync_jobs = cfg.syncJobs;
+            disk_pool_jobs = cfg.diskPoolJobs;
             debug = cfg.debug;
             semaphores = {
               get_chunk = cfg.maxParallelGetChunkRequests;

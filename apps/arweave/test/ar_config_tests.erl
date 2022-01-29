@@ -40,6 +40,7 @@ parse_config() ->
 		tx_propagation_parallelization = undefined,
 		sync_jobs = 10,
 		header_sync_jobs = 1,
+		disk_pool_jobs = 2,
 		load_key = "some_key_file",
 		disk_space = 44 * 1024 * 1024 * 1024,
 		disk_space_check_frequency = 10 * 1000,

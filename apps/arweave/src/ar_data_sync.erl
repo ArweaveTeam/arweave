@@ -245,7 +245,12 @@ init([]) ->
 		lists:seq(1, Config#config.sync_jobs)
 	),
 	gen_server:cast(?MODULE, update_disk_pool_data_roots),
-	gen_server:cast(?MODULE, process_disk_pool_item),
+	lists:foreach(
+		fun(_DiskPoolJobNumber) ->
+			gen_server:cast(?MODULE, process_disk_pool_item)
+		end,
+		lists:seq(1, Config#config.disk_pool_jobs)
+	),
 	gen_server:cast(?MODULE, store_sync_state),
 	gen_server:cast(?MODULE, repack_stored_chunks),
 	{ok, State2}.
@@ -606,30 +611,45 @@ handle_cast(dec_sync_buffer_size, #sync_data_state{ sync_buffer_size = Size } = 
 handle_cast(process_disk_pool_item, #sync_data_state{ sync_disk_space = false } = State) ->
 	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
 	{noreply, State};
+handle_cast(process_disk_pool_item, #sync_data_state{ disk_pool_scan_pause = true } = State) ->
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
+	{noreply, State};
 handle_cast(process_disk_pool_item, State) ->
 	#sync_data_state{
 		disk_pool_cursor = Cursor,
 		disk_pool_chunks_index = DiskPoolChunksIndex,
 		disk_pool_full_scan_start_key = FullScanStartKey,
-		disk_pool_full_scan_start_timestamp = Timestamp
+		disk_pool_full_scan_start_timestamp = Timestamp,
+		currently_processed_disk_pool_keys = CurrentlyProcessedDiskPoolKeys
 	} = State,
 	NextKey =
 		case ar_kv:get_next(DiskPoolChunksIndex, Cursor) of
 			{ok, Key1, Value1} ->
-				{ok, Key1, Value1};
+				case sets:is_element(Key1, CurrentlyProcessedDiskPoolKeys) of
+					true ->
+						none;
+					false ->
+						{ok, Key1, Value1}
+				end;
 			none ->
 				case ar_kv:get_next(DiskPoolChunksIndex, first) of
 					none ->
 						none;
 					{ok, Key2, Value2} ->
-						{ok, Key2, Value2}
+						case sets:is_element(Key2, CurrentlyProcessedDiskPoolKeys) of
+							true ->
+								none;
+							false ->
+								{ok, Key2, Value2}
+						end
 				end
 		end,
 	case NextKey of
 		none ->
+			ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, resume_disk_pool_scan),
 			ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
 			{noreply, State#sync_data_state{ disk_pool_cursor = first,
-					disk_pool_full_scan_start_key = none }};
+					disk_pool_full_scan_start_key = none, disk_pool_scan_pause = true }};
 		{ok, Key3, Value3} ->
 			case FullScanStartKey of
 				none ->
@@ -642,9 +662,12 @@ handle_cast(process_disk_pool_item, State) ->
 					case TimePassed < (?DISK_POOL_SCAN_DELAY_MS) * 1000 of
 						true ->
 							ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE,
+									resume_disk_pool_scan),
+							ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE,
 									process_disk_pool_item),
 							{noreply, State#sync_data_state{ disk_pool_cursor = first,
-									disk_pool_full_scan_start_key = none }};
+									disk_pool_full_scan_start_key = none,
+									disk_pool_scan_pause = true }};
 						false ->
 							process_disk_pool_item(State, Key3, Value3)
 					end;
@@ -652,6 +675,9 @@ handle_cast(process_disk_pool_item, State) ->
 					process_disk_pool_item(State, Key3, Value3)
 			end
 	end;
+
+handle_cast(resume_disk_pool_scan, State) ->
+	{noreply, State#sync_data_state{ disk_pool_scan_pause = false }};
 
 handle_cast({process_disk_pool_chunk_offset, MayConclude, TXArgs, Args, Iterator}, State) ->
 	{TXRoot, TXStartOffset, TXPath} = TXArgs,
@@ -2448,12 +2474,22 @@ process_disk_pool_chunk_offsets(Iterator, MayConclude, Args, State) ->
 						State
 				end,
 			gen_server:cast(?MODULE, process_disk_pool_item),
-			{noreply, State2};
+			{noreply, deregister_currently_processed_disk_pool_key(Key, State2)};
 		{TXArgs, Iterator2} ->
 			gen_server:cast(?MODULE, {process_disk_pool_chunk_offset, MayConclude, TXArgs, Args,
 					Iterator2}),
-			{noreply, State}
+			{noreply, register_currently_processed_disk_pool_key(Key, State)}
 	end.
+
+register_currently_processed_disk_pool_key(Key, State) ->
+	#sync_data_state{ currently_processed_disk_pool_keys = Keys } = State,
+	Keys2 = sets:add_element(Key, Keys),
+	State#sync_data_state{ currently_processed_disk_pool_keys = Keys2 }.
+
+deregister_currently_processed_disk_pool_key(Key, State) ->
+	#sync_data_state{ currently_processed_disk_pool_keys = Keys } = State,
+	Keys2 = sets:del_element(Key, Keys),
+	State#sync_data_state{ currently_processed_disk_pool_keys = Keys2 }.
 
 process_disk_pool_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 		Args, State) ->
@@ -2493,7 +2529,7 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 		false ->
 			?LOG_DEBUG([{event, record_disk_pool_chunk}, {offset, AbsoluteOffset},
 					{chunk_data_key, ar_util:encode(element(5, Args))}]),
-			{Offset, _, ChunkSize, DataRoot, _, ChunkDataKey, _, _} = Args,
+			{Offset, _, ChunkSize, DataRoot, _, ChunkDataKey, Key, _} = Args,
 			case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey,
 					TXRoot, DataRoot, TXPath, ChunkSize, unpacked}, State) of
 				ok ->
@@ -2502,14 +2538,14 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 					?LOG_WARNING([{event, failed_to_update_chunks_index},
 							{reason, io_lib:format("~p", [Reason])}]),
 					gen_server:cast(?MODULE, process_disk_pool_item),
-					{noreply, State}
+					{noreply, deregister_currently_processed_disk_pool_key(Key, State)}
 			end
 	end.
 
 process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 		Args, State) ->
 	#sync_data_state{ chunk_data_db = ChunkDataDB, packing_map = PackingMap } = State,
-	{Offset, _, ChunkSize, DataRoot, _, ChunkDataKey, _, _} = Args,
+	{Offset, _, ChunkSize, DataRoot, _, ChunkDataKey, Key, _} = Args,
 	case is_disk_pool_chunk(AbsoluteOffset, ChunkDataKey, State) of
 		false ->
 			State2 = cache_recently_processed_offset(AbsoluteOffset, ChunkDataKey, State),
@@ -2521,7 +2557,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 			?LOG_WARNING([{event, failed_to_read_chunks_index},
 					{reason, io_lib:format("~p", [Reason])}]),
 			gen_server:cast(?MODULE, process_disk_pool_item),
-			{noreply, State};
+			{noreply, deregister_currently_processed_disk_pool_key(Key, State)};
 		true ->
 			case maps:is_key(AbsoluteOffset, PackingMap) of
 				true ->
@@ -2545,7 +2581,8 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 									?LOG_ERROR([{event, failed_to_read_disk_pool_chunk},
 											{reason, io_lib:format("~p", [Reason])}]),
 									gen_server:cast(?MODULE, process_disk_pool_item),
-									{noreply, State};
+									{noreply, deregister_currently_processed_disk_pool_key(Key,
+											State)};
 								{ok, {Chunk, DataPath}} ->
 									?LOG_DEBUG([{event, request_disk_pool_chunk_packing},
 											{offset, AbsoluteOffset},

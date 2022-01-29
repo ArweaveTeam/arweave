@@ -24,6 +24,15 @@
 -define(DEFAULT_SYNC_JOBS, 100).
 -endif.
 
+%% The number of disk pool jobs to run. Disk pool jobs scan the disk pool to index
+%% no longer pending or orphaned chunks, pack chunks with a sufficient number of confirmations,
+%% or remove the abandoned ones.
+-ifdef(DEBUG).
+-define(DEFAULT_DISK_POOL_JOBS, 50).
+-else.
+-define(DEFAULT_DISK_POOL_JOBS, 100).
+-endif.
+
 %% The number of header sync jobs to run. Each job picks the latest not synced
 %% block header and downloads it from peers.
 -define(DEFAULT_HEADER_SYNC_JOBS, 1).
@@ -94,6 +103,7 @@
 	tx_propagation_parallelization, % DEPRECATED.
 	sync_jobs = ?DEFAULT_SYNC_JOBS,
 	header_sync_jobs = ?DEFAULT_HEADER_SYNC_JOBS,
+	disk_pool_jobs = ?DEFAULT_DISK_POOL_JOBS,
 	load_key = not_set,
 	disk_space,
 	disk_space_check_frequency = ?DISK_SPACE_CHECK_FREQUENCY_MS,
