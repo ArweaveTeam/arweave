@@ -82,7 +82,6 @@ add_chunk(
 
 %% @doc Notify the server about the new pending data root (added to mempool).
 %% The server may accept pending chunks and store them in the disk pool.
-%% @end
 add_data_root_to_disk_pool(<<>>, _, _) ->
 	ok;
 add_data_root_to_disk_pool(_, 0, _) ->
@@ -680,7 +679,7 @@ handle_cast(resume_disk_pool_scan, State) ->
 	{noreply, State#sync_data_state{ disk_pool_scan_pause = false }};
 
 handle_cast({process_disk_pool_chunk_offset, MayConclude, TXArgs, Args, Iterator}, State) ->
-	{TXRoot, TXStartOffset, TXPath} = TXArgs,
+	{TXStartOffset, TXRoot, TXPath} = TXArgs,
 	{Offset, _, _, _, _, _, _, _} = Args,
 	AbsoluteOffset = TXStartOffset + Offset,
 	process_disk_pool_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
@@ -1644,11 +1643,11 @@ add_block_data_roots(State, SizeTaggedTXs, CurrentWeaveSize) ->
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	{BlockSize, DataRootIndexKeySet} = lists:foldl(
-		fun ({_DataRoot, Offset}, {Offset, _} = Acc) ->
+		fun ({_, Offset}, {Offset, _} = Acc) ->
 				Acc;
-			({{padding, _}, Offset}, {_, Acc}) ->
+			({{{padding, _}, _}, Offset}, {_, Acc}) ->
 				{Offset, Acc};
-			({DataRoot, TXEndOffset}, {PrevOffset, CurrentDataRootSet}) ->
+			({{_, DataRoot}, TXEndOffset}, {PrevOffset, CurrentDataRootSet}) ->
 				TXPath = ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree),
 				TXOffset = CurrentWeaveSize + PrevOffset,
 				TXSize = TXEndOffset - PrevOffset,
@@ -1657,7 +1656,7 @@ add_block_data_roots(State, SizeTaggedTXs, CurrentWeaveSize) ->
 				{TXEndOffset, sets:add_element(DataRootKey, CurrentDataRootSet)}
 		end,
 		{0, sets:new()},
-		SizeTaggedDataRoots
+		SizeTaggedTXs
 	),
 	case BlockSize > 0 of
 		true ->
@@ -2053,7 +2052,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State) ->
 				{error, Reason2} ->
 					?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
 						{reason, io_lib:format("~p", [Reason2])}]),
-					{reply, {error, failed_to_store_chunk}, State4};
+					{reply, {error, failed_to_store_chunk}, State};
 				ok ->
 					DiskPoolChunkValue = term_to_binary({EndOffset3, ChunkSize, DataRoot,
 							TXSize, ChunkDataKey, PassesStrict3}),
@@ -2069,14 +2068,15 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State) ->
 	end.
 
 all_offsets_synced(DataRootIndex, Offset, State) ->
-	Iterator = data_root_index_iterator(DataRootIndex),
+	{Time, Iterator} = timer:tc(fun() -> data_root_index_iterator(DataRootIndex) end),
+	?LOG_DEBUG([{event, constructed_data_root_index_iterator}, {time, Time}]),
 	all_offsets_synced2(Iterator, Offset, State).
 
 all_offsets_synced2(Iterator, Offset, State) ->
-	case next(Iterator) of
+	case data_root_index_next(Iterator, 10) of
 		none ->
 			true;
-		{{_, TXStartOffset, _}, Iterator2} ->
+		{{TXStartOffset, _, _}, Iterator2} ->
 			case ar_sync_record:is_recorded(TXStartOffset + Offset, ?MODULE) of
 				{true, _} ->
 					all_offsets_synced2(Iterator2, Offset, State);
@@ -2429,7 +2429,9 @@ process_disk_pool_item(State, Key, Value) ->
 			State2 = may_be_reset_disk_pool_full_scan_key(Key, State),
 			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{DataRootMap, _} ->
-			DataRootIndexIterator = data_root_index_iterator(DataRootMap),
+			{Time, DataRootIndexIterator} =
+					timer:tc(fun() -> data_root_index_iterator(DataRootMap) end),
+			?LOG_DEBUG([{event, constructed_data_root_index_iterator}, {time, Time}]),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			State2 = State#sync_data_state{ disk_pool_cursor = NextCursor },
 			Args = {Offset, InDiskPool, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key,
@@ -2460,7 +2462,7 @@ delete_disk_pool_chunk(ChunkDataKey, State) ->
 process_disk_pool_chunk_offsets(Iterator, MayConclude, Args, State) ->
 	#sync_data_state{ disk_pool_chunks_index = DiskPoolChunksIndex } = State,
 	{_, _, _, DataRoot, _, ChunkDataKey, Key, _} = Args,
-	case next(Iterator) of
+	case data_root_index_next(Iterator, 10) of
 		none ->
 			State2 =
 				case MayConclude of
@@ -2687,23 +2689,27 @@ store_repacked_chunk(ChunkArgs, State) ->
 	{noreply, State}.
 
 data_root_index_iterator(TXRootMap) ->
-	{maps:iterator(TXRootMap), none}.
+	{maps:fold(
+		fun(TXRoot, Map, Acc) ->
+			maps:fold(
+				fun(Offset, TXPath, Acc2) ->
+					gb_sets:insert({Offset, TXRoot, TXPath}, Acc2)
+				end,
+				Acc,
+				Map
+			)
+		end,
+		gb_sets:new(),
+		TXRootMap
+	), 0}.
 
-next({TXRootMapIterator, none}) ->
-	case maps:next(TXRootMapIterator) of
-		none ->
+data_root_index_next({_Index, Count}, Limit) when Count >= Limit ->
+	none;
+data_root_index_next({Index, Count}, _Limit) ->
+	case gb_sets:is_empty(Index) of
+		true ->
 			none;
-		{TXRoot, OffsetMap, UpdatedTXRootMapIterator} ->
-			OffsetMapIterator = maps:iterator(OffsetMap),
-			{Offset, TXPath, UpdatedOffsetMapIterator} = maps:next(OffsetMapIterator),
-			UpdatedIterator = {UpdatedTXRootMapIterator, {TXRoot, UpdatedOffsetMapIterator}},
-			{{TXRoot, Offset, TXPath}, UpdatedIterator}
-	end;
-next({TXRootMapIterator, {TXRoot, OffsetMapIterator}}) ->
-	case maps:next(OffsetMapIterator) of
-		none ->
-			next({TXRootMapIterator, none});
-		{Offset, TXPath, UpdatedOffsetMapIterator} ->
-			UpdatedIterator = {TXRootMapIterator, {TXRoot, UpdatedOffsetMapIterator}},
-			{{TXRoot, Offset, TXPath}, UpdatedIterator}
+		false ->
+			{Element, Index2} = gb_sets:take_largest(Index),
+			{Element, {Index2, Count + 1}}
 	end.
