@@ -50,8 +50,8 @@ handle_cast({validate, TX, Peer, ReplyTo}, State) ->
 	Result = ar_tx_replay_pool:verify_tx({TX, USDToARRate, Height, BlockAnchors, RecentTXMap,
 			MempoolTXs, Wallets}),
 	Result2 =
-		case TX#tx.format == 2 andalso byte_size(TX#tx.data) /= 0 of
-			true ->
+		case {Result, TX#tx.format == 2 andalso byte_size(TX#tx.data) /= 0} of
+			{valid, true} ->
 				Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, TX#tx.data),
 				SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
 				SizeTaggedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks),
@@ -63,7 +63,7 @@ handle_cast({validate, TX, Peer, ReplyTo}, State) ->
 					false ->
 						{invalid, invalid_data_root_size}
 				end;
-			false ->
+			_ ->
 				Result
 		end,
 	case Result2 of
