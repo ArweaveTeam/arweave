@@ -141,7 +141,9 @@ emit(Set, Q, Emitting, Peers, MaxPeers, N) ->
 				true ->
 					emit(Set2, Q, Emitting, Peers, MaxPeers, N);
 				false ->
-					PickedPeers = pick_peers(Peers, MaxPeers),
+					{ok, Config} = application:get_env(arweave, config),
+					TrustedPeers = Config#config.peers,
+					PickedPeers = (pick_peers(Peers, MaxPeers) -- TrustedPeers) ++ TrustedPeers,
 					{Emitting2, Q2} =
 						lists:foldl(
 							fun(Peer, {Acc, Workers}) ->
