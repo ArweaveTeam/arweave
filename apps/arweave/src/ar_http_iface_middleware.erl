@@ -632,6 +632,39 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 			Req}
 	end;
 
+handle(<<"GET">>, [<<"hash_list">>, From, To], Req, _Pid) ->
+	handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid);
+
+handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
+	ok = ar_semaphore:acquire(get_block_index, infinity),
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			try
+				FromHeight = binary_to_integer(From),
+				ToHeight = binary_to_integer(To),
+				{Height, BI} = ar_node:get_block_index_and_height(),
+				{_, BI2} = lists:split(Height - ToHeight, BI),
+				BI3 = lists:sublist(BI2, ToHeight - FromHeight + 1),
+				{200, #{},
+					ar_serialize:jsonify(
+						ar_serialize:block_index_to_json_struct(format_bi_for_peer(BI3, Req))
+					), Req}
+			catch _:_ ->
+				{400, #{}, jiffy:encode(#{ error => invalid_range }), Req}
+			end
+	end;
+
+handle(<<"GET">>, [<<"recent_hash_list">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			Encoded = [ar_util:encode(H) || H <- ar_node:get_block_anchors()],
+			{200, #{}, ar_serialize:jsonify(Encoded), Req}
+	end;
+
 %% Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list.
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->

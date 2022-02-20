@@ -6,6 +6,7 @@
 -module(ar_node).
 
 -export([get_recent_block_hash_by_height/1, get_blocks/0, get_block_index/0, is_in_block_index/1,
+		get_block_index_and_height/0,
 		get_height/0, get_balance/1, get_last_tx/1, get_wallets/1, get_wallet_list_chunk/2,
 		get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
 		get_current_usd_to_ar_rate/0, get_current_block_hash/0, get_block_index_entry/1,
@@ -54,6 +55,19 @@ get_block_index() ->
 		_ ->
 			[]
 	end.
+
+get_block_index_and_height() ->
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', height},
+					{'==', '$1', block_index}}], ['$_']}]
+		),
+	Height = proplists:get_value(height, Props),
+	BI = proplists:get_value(block_index, Props),
+	{Height, BI}.
 
 %% @doc Get pending transactions.
 get_pending_txs() ->
