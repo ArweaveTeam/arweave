@@ -35,10 +35,6 @@ $ ./rebar3 as prod tar
 
 You will then find the gzipped tarball at `_build/prod/rel/arweave/arweave-x.y.z.tar.gz`.
 
-# Running a gateway
-
-To run a gateway, consult the [gateway setup guide](doc/gateway_setup_guide.md).
-
 # Contributing
 
 Make sure to have the build requirements installed.
