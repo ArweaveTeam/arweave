@@ -9,12 +9,14 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_taking_down/0, is_tx_blacklisted/1, is_byte_blacklisted/1,
-		get_next_not_blacklisted_byte/1, notify_about_removed_tx/1, notify_about_removed_tx_data/3,
-		norify_about_orphaned_tx/1, notify_about_added_tx/3, store_state/0]).
+		get_next_not_blacklisted_byte/1, notify_about_removed_tx/1,
+		notify_about_removed_tx_data/3, norify_about_orphaned_tx/1, notify_about_added_tx/3,
+		store_state/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 
 %% The frequency of refreshing the blacklist.
 -ifdef(DEBUG).
@@ -283,7 +285,8 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 initialize_state() ->
-	DataDir = ar_meta_db:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	Dir = filename:join(DataDir, "ar_tx_blacklist"),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	Names = [
@@ -303,12 +306,13 @@ initialize_state() ->
 	).
 
 refresh_blacklist() ->
-	WhitelistFiles = ar_meta_db:get(transaction_whitelist_files),
+	{ok, Config} = application:get_env(arweave, config),
+	WhitelistFiles = Config#config.transaction_whitelist_files,
 	case load_from_files(WhitelistFiles) of
 		error ->
 			error;
 		{ok, Whitelist} ->
-			WhitelistURLs = ar_meta_db:get(transaction_whitelist_urls),
+			WhitelistURLs = Config#config.transaction_whitelist_urls,
 			case load_from_urls(WhitelistURLs) of
 				error ->
 					error;
@@ -318,12 +322,13 @@ refresh_blacklist() ->
 	end.
 
 refresh_blacklist(Whitelist) ->
-	BlacklistFiles = ar_meta_db:get(transaction_blacklist_files),
+	{ok, Config} = application:get_env(arweave, config),
+	BlacklistFiles = Config#config.transaction_blacklist_files,
 	case load_from_files(BlacklistFiles) of
 		error ->
 			error;
 		{ok, Blacklist} ->
-			BlacklistURLs = ar_meta_db:get(transaction_blacklist_urls),
+			BlacklistURLs = Config#config.transaction_blacklist_urls,
 			case load_from_urls(BlacklistURLs) of
 				error ->
 					error;

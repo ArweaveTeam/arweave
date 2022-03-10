@@ -75,7 +75,6 @@ get_reponse(Opts) ->
 	case gun:await(Pid, SR, inet:timeout(T)) of
 		{response, fin, Status, Headers} ->
 			End = os:system_time(microsecond),
-			update_peer_performance(Opts, <<>>, End - S),
 			upload_metric(Opts),
 			{ok, {{integer_to_binary(Status), <<>>}, Headers, <<>>, S, End}};
 		{response, nofin, Status, Headers} ->
@@ -104,8 +103,8 @@ get_reponse(Opts) ->
 			FinData = iolist_to_binary([Acc | Data]),
 			download_metric(FinData, Opts),
 			upload_metric(Opts),
-			update_peer_performance(Opts, FinData, End - S),
-			{ok, {gen_code_rest(maps:get(status, Opts)), maps:get(headers, Opts), FinData, S, End}};
+			{ok, {gen_code_rest(maps:get(status, Opts)), maps:get(headers, Opts), FinData,
+					S, End}};
 		{error, timeout} = Resp ->
 			gun_total_metric(Opts#{ response => Resp }),
 			log(warn, gun_await_process_down, Opts, Resp),
@@ -175,15 +174,8 @@ download_metric(Data, #{path := Path}) ->
 	).
 
 gun_total_metric(#{method := M, path := P, response := Resp}) ->
-	prometheus_counter:inc(
-		gun_requests_total,
-		[method_to_list(M), ar_metrics:label_http_path(list_to_binary(P)), ar_metrics:get_status_class(Resp)]
-	).
-
-update_peer_performance(#{ is_peer_request := false }, _, _) ->
-	ok;
-update_peer_performance(#{ peer := Peer }, Data, MicroSecs) ->
-	ar_meta_db:update_peer_performance(Peer, MicroSecs, size(Data)).
+	prometheus_counter:inc(gun_requests_total, [method_to_list(M),
+			ar_metrics:label_http_path(list_to_binary(P)), ar_metrics:get_status_class(Resp)]).
 
 merge_headers(HeadersA, HeadersB) ->
 	lists:ukeymerge(1, lists:keysort(1, HeadersB), lists:keysort(1, HeadersA)).

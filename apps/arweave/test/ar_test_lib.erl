@@ -54,28 +54,24 @@ start_peering(Node, Peer) ->
 	ct_rpc_call_strict(Node, ar_test_lib, start_peering, [Peer]).
 
 start_peering(Peer) ->
-	%% Connect the nodes by making two HTTP calls.
-	%%
-	%% After a request to a peer, the peer is recorded in ar_meta_db but
-	%% not in the remote peer list. So we need to remove it from ar_meta_db
-	%% otherwise it's not added to the remote peer list when it makes a request
-	%% to us in turn.
+	%% Unblock connections possibly blocked in the prior test code.
+	ar_peers:unblock_connections(),
+	PeerConfig = ct_rpc_call_strict(Peer, ar_peers, unblock_connections, []),
 	{ok, Config} = application:get_env(arweave, config),
-	Port = Config#config.port,
-	ct_rpc_call_strict(Peer, ar_meta_db, reset_peer, [{127, 0, 0, 1, Port}]),
-	PeerPort = ct_rpc_call_strict(Peer, ar_meta_db, get, [port]),
+	PeerConfig = ct_rpc_call_strict(Peer, application, get_env, [config]),
+	PeerPort = PeerConfig#config.port,
+	%% Make requests to the nodes to make them discover each other.
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, PeerPort},
+			peer => PeerPort,
 			path => "/info",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(Config#config.port)}]
 		}),
-	ar_meta_db:reset_peer({127, 0, 0, 1, PeerPort}),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => {127, 0, 0, 1, Port},
+			peer => Config#config.port,
 			path => "/info",
 			headers => [{<<"X-P2p-Port">>, integer_to_binary(PeerPort)}]
 		}).
@@ -236,36 +232,8 @@ stop_peering(Node, Peer) ->
 	ct_rpc_call_strict(Node, ar_test_lib, stop_peering, [Peer]).
 
 stop_peering(Peer) ->
-	%% Disconnects this node from a peer so that they do not share blocks
-	%% and transactions unless they were bound by ar_node:add_peers/2.
-	%% The peers are added in ar_meta_db so that they do not start adding each other
-	%% to their peer lists after disconnect.
-	%% Also, all HTTP requests made in this module are made with the
-	%% x-p2p-port HTTP header corresponding to the listening port of
-	%% the receiving node so that freshly started nodes do not start peering
-	%% unless connect_to_slave/0 is called.
-	{ok, Config} = application:get_env(arweave, config),
-	Port = Config#config.port,
-	PeerPort = ct_rpc_call_strict(Peer, ar_meta_db, get, [port]),
-	true = ar_meta_db:put({peer, {127, 0, 0, 1, PeerPort}}, #performance{}),
-	true =
-		ct_rpc_call_strict(
-			Peer,
-			ar_meta_db,
-			put,
-			[{peer, {127, 0, 0, 1, Port}}, #performance{}]
-		),
-	ar_bridge:set_remote_peers([]),
-	ct_rpc_call_strict(Peer, ar_bridge, set_remote_peers, [[]]),
-	application:set_env(arweave, config, Config#config{peers = []}),
-	{ok, SlaveConfig} = ct_rpc_call_strict(Peer, application, get_env, [arweave, config]),
-	ok =
-		ct_rpc_call_strict(
-			Peer,
-			application,
-			set_env,
-			[arweave, config, SlaveConfig#config{ peers = [] }]
-		).
+	ar_peers:block_connections(),
+	ct_rpc_call_strict(Peer, ar_peers, block_connections, []).
 
 mine(Node) ->
 	ct_rpc_call_strict(Node, ar_test_lib, mine, []).

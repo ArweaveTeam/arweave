@@ -1,6 +1,7 @@
 -module(ar_http_iface_tests).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, get_tx_anchor/0,
@@ -185,19 +186,21 @@ post_block_to_unjoined_node_test() ->
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
 node_blacklisting_get_spammer_test() ->
+	{ok, Config} = application:get_env(arweave, config),
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
 	node_blacklisting_test_frame(
 		RequestFun,
 		ErrorResponse,
-		(ar_meta_db:get(requests_per_minute_limit) div 2)+ 1,
+		Config#config.requests_per_minute_limit div 2 + 1,
 		1
 	).
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 node_blacklisting_post_spammer_test() ->
+	{ok, Config} = application:get_env(arweave, config),
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
 	NErrors = 11,
-	NRequests = (ar_meta_db:get(requests_per_minute_limit) div 2) + NErrors,
+	NRequests = Config#config.requests_per_minute_limit div 2 + NErrors,
 	node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, NErrors).
 
 %% @doc Given a label, return a fun and a message.
@@ -350,7 +353,8 @@ get_time_test() ->
 get_block_by_hash_test() ->
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
-	B1 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash),
+	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}],
+			B0#block.indep_hash),
 	?assertEqual(B0#block{ hash_list = unset, size_tagged_txs = unset }, B1).
 
 %% @doc Ensure that blocks can be received via a height.
@@ -358,7 +362,7 @@ get_block_by_height_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
 	ar_test_node:wait_until_height(0),
-	{_, B1} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}], 0),
+	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}], 0),
 	?assertEqual(
 		B0#block{ hash_list = unset, wallet_list = not_set, size_tagged_txs = unset },
 		B1#block{ wallet_list = not_set }
@@ -377,7 +381,7 @@ test_get_current_block() ->
 	),
 	Peer = {127, 0, 0, 1, 1984},
 	BI = ar_http_iface_client:get_block_index([Peer]),
-	B1 = ar_http_iface_client:get_block([Peer], hd(BI)),
+	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow([Peer], hd(BI)),
 	?assertEqual(B0#block{ hash_list = unset, size_tagged_txs = unset }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/current"}),
@@ -556,17 +560,6 @@ find_external_tx_test() ->
 			1000
 		),
 	?assertEqual(FoundTXID, TX#tx.id).
-
-fail_external_tx_test() ->
-	[B0] = ar_weave:init(),
-	{_Node, _} = ar_test_node:start(B0),
-	TX = ar_tx:new(<<"DATA">>),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
-	ar_test_node:wait_until_receives_txs([TX]),
-	ar_node:mine(),
-	ar_test_node:wait_until_height(1),
-	BadTX = ar_tx:new(<<"BADDATA">>),
-	?assertEqual(not_found, ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], BadTX#tx.id, maps:new())).
 
 add_block_with_invalid_hash_test_() ->
 	{timeout, 20, fun test_add_block_with_invalid_hash/0}.
@@ -815,7 +808,10 @@ get_txs_by_send_recv_test_() ->
 			))
 	end}.
 
-get_tx_status_test() ->
+get_tx_status_test_() ->
+	{timeout, 20, fun test_get_tx_status/0}.
+
+test_get_tx_status() ->
 	[B0] = ar_weave:init([]),
 	{_Node, _} = ar_test_node:start(B0),
 	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
@@ -882,7 +878,9 @@ post_unsigned_tx() ->
 			peer => {127, 0, 0, 1, 1984},
 			path => "/wallet"
 		}),
-	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
+	{ok, Config} = application:get_env(arweave, config),
+	application:set_env(arweave, config,
+			Config#config{ internal_api_secret = <<"correct_secret">> }),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
@@ -897,7 +895,7 @@ post_unsigned_tx() ->
 			path => "/wallet",
 			headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}]
 		}),
-	ar_meta_db:put(internal_api_secret, not_set),
+	application:set_env(arweave, config, Config#config{ internal_api_secret = not_set }),
 	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
 	[WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
 	[Address] = proplists:get_all_values(<<"wallet_address">>, CreateWalletRes),
@@ -935,7 +933,8 @@ post_unsigned_tx() ->
 			path => "/unsigned_tx",
 			body => ar_serialize:jsonify({UnsignedTXProps})
 		}),
-	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
+	application:set_env(arweave, config,
+			Config#config{ internal_api_secret = <<"correct_secret">> }),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
@@ -952,7 +951,7 @@ post_unsigned_tx() ->
 			headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
 			body => ar_serialize:jsonify({UnsignedTXProps})
 		}),
-	ar_meta_db:put(internal_api_secret, not_set),
+	application:set_env(arweave, config, Config#config{ internal_api_secret = not_set }),
 	{Res} = ar_serialize:dejsonify(Body),
 	TXID = proplists:get_value(<<"id">>, Res),
 	timer:sleep(200),

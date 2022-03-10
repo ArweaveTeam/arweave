@@ -77,7 +77,7 @@ init([]) ->
 		end,
 	case {BI, Config#config.auto_join} of
 		{not_joined, true} ->
-			ar_join:start(Config#config.peers);
+			ar_join:start(ar_peers:get_trusted_peers());
 		{BI, true} ->
 			start_from_block_index(BI);
 		{_, false} ->
@@ -251,8 +251,8 @@ handle_cast(Message, #{ task_queue := TaskQueue } = State) ->
 	end.
 
 handle_info({join, BI, Blocks}, State) ->
-	{ok, Config} = application:get_env(arweave, config),
-	{ok, _} = ar_wallets:start_link([{blocks, Blocks}, {peers, Config#config.peers}]),
+	{ok, _} = ar_wallets:start_link([{blocks, Blocks},
+			{peers, ar_peers:get_trusted_peers()}]),
 	ets:insert(node_state, [
 		{block_index,			BI},
 		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
@@ -869,9 +869,8 @@ get_missing_txs_and_retry(#block{ txs = TXIDs }, _Mempool, _Worker)
 	?LOG_WARNING([{event, ar_node_worker_downloaded_txs_count_exceeds_limit}]),
 	ok;
 get_missing_txs_and_retry(BShadow, Mempool, Worker) ->
-	Peers = ar_bridge:get_remote_peers(),
-	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs, Mempool, Worker,
-		Peers, [], 0).
+	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs, Mempool,
+			Worker, ar_peers:get_peers(), [], 0).
 
 get_missing_txs_and_retry(_H, _TXIDs, _Mempool, _Worker, _Peers, _TXs, TotalSize)
 		when TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->

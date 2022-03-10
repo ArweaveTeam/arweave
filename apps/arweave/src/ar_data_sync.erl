@@ -528,9 +528,10 @@ handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop}, State
 			spawn_link(
 				fun() ->
 					case ar_http_iface_client:get_chunk(Peer, Byte2, any) of
-						{ok, Proof} ->
-							gen_server:cast(Self, {store_fetched_chunk, Peer, Byte2 - 1,
-									RightBound, Proof, SubIntervals, Loop});
+						{ok, Proof, Time, TransferSize} ->
+							gen_server:cast(Self, {store_fetched_chunk, Peer, Time,
+									TransferSize, Byte2 - 1, RightBound, Proof,
+									SubIntervals, Loop});
 						{error, Reason} ->
 							?LOG_DEBUG([{event, failed_to_fetch_chunk},
 									{peer, ar_util:format_peer(Peer)},
@@ -544,7 +545,8 @@ handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop}, State
 			{noreply, State#sync_data_state{ sync_buffer_size = Size + 1 }}
 	end;
 
-handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof, SubIntervals, Loop}, State) ->
+handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, RightBound, Proof,
+		SubIntervals, Loop}, State) ->
 	#sync_data_state{ data_root_offset_index = DataRootOffsetIndex,
 			packing_map = PackingMap,
 			strict_data_split_threshold = StrictDataSplitThreshold } = State,
@@ -564,6 +566,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof, SubIntervals, L
 	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
 			ValidateDataPathFun) of
 		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
+			ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
 			gen_server:cast(?MODULE, {sync_chunk, [{get_chunk_padded_offset(AbsoluteOffset,
 					StrictDataSplitThreshold) + 1, RightBound, Peer} | SubIntervals], Loop}),
 			{Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkID} = VArgs,
@@ -593,6 +596,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, RightBound, Proof, SubIntervals, L
 			gen_server:cast(?MODULE, {sync_chunk, SubIntervals, Loop}),
 			process_invalid_fetched_chunk(Peer, Byte, State);
 		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkSize, ChunkID} ->
+			ar_events:send(peer, {served_chunk, Peer, Time, TransferSize}),
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
 			gen_server:cast(?MODULE, {sync_chunk, [{get_chunk_padded_offset(AbsoluteEndOffset,
@@ -688,9 +692,10 @@ handle_cast({process_disk_pool_chunk_offset, MayConclude, TXArgs, Args, Iterator
 handle_cast(update_disk_pool_data_roots, State) ->
 	#sync_data_state{ disk_pool_data_roots = DiskPoolDataRoots } = State,
 	Now = os:system_time(microsecond),
+	{ok, Config} = application:get_env(arweave, config),
 	UpdatedDiskPoolDataRoots = maps:filter(
 		fun(_, {_, Timestamp, _}) ->
-			Timestamp + ar_meta_db:get(disk_pool_data_root_expiration_time_us) > Now
+			Timestamp + Config#config.disk_pool_data_root_expiration_time * 1000000  > Now
 		end,
 		DiskPoolDataRoots
 	),

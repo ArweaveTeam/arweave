@@ -29,15 +29,8 @@ maybe_add_peer(Peer, Req) ->
 		not_set ->
 			ok;
 		_ ->
-			case ar_meta_db:get({peer, Peer}) of
-				not_found ->
-					ar_meta_db:put({peer, Peer}, #performance{}),
-					ar_bridge:add_remote_peer(Peer);
-				_ ->
-					ok
-			end
+			ar_events:send(peer, {made_request, Peer})
 	end.
 
 wrong_network(Req) ->
 	{stop, cowboy_req:reply(412, #{}, jiffy:encode(#{ error => wrong_network }), Req)}.
-

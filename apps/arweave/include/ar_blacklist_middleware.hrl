@@ -3,14 +3,8 @@
 -define(BAN_CLEANUP_INTERVAL, 60000).
 
 -define(RPM_BY_PATH(Path), fun() ->
-	DefaultPathLimit =
-		case ar_meta_db:get(requests_per_minute_limit) of
-			not_found ->
-				?DEFAULT_REQUESTS_PER_MINUTE_LIMIT;
-			Limit ->
-				Limit
-		end,
-	?RPM_BY_PATH(Path, DefaultPathLimit)()
+	{ok, Config} = application:get_env(arweave, config),
+	?RPM_BY_PATH(Path, Config#config.requests_per_minute_limit)()
 end).
 
 -ifdef(DEBUG).

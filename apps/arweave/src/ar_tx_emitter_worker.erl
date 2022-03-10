@@ -9,9 +9,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--record(state, {
-	trusted_peers
-}).
+-record(state, {}).
 
 %%%===================================================================
 %%% Public interface.
@@ -25,8 +23,7 @@ start_link(Name) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
-	{ok, #state{ trusted_peers = Config#config.peers }}.
+	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -38,7 +35,7 @@ handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
 			ok;
 		[{_, TX}] ->
 			StartedAt = erlang:timestamp(),
-			#state{ trusted_peers = TrustedPeers } = State,
+			TrustedPeers = ar_peers:get_trusted_peers(),
 			PropagatedTX = tx_to_propagated_tx(TX, Peer, TrustedPeers),
 			Reply = ar_http_iface_client:send_new_tx(Peer, PropagatedTX),
 			PropagationTimeUs = timer:now_diff(erlang:timestamp(), StartedAt),
@@ -49,7 +46,7 @@ handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
 	{noreply, State};
 
 handle_cast(Msg, State) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
 handle_info({event, tx, _}, State) ->
@@ -63,7 +60,7 @@ handle_info({gun_up, _, http}, State) ->
 	{noreply, State};
 
 handle_info(Info, State) ->
-	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->

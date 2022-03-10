@@ -757,7 +757,8 @@ terminate(_Reason, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = Blo
 %%%===================================================================
 
 write_block(B) ->
-	case ar_meta_db:get(disk_logging) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(disk_logging, Config#config.enable) of
 		true ->
 			?LOG_INFO([{event, writing_block_to_disk},
 					{block, ar_util:encode(B#block.indep_hash)}]);

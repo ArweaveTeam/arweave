@@ -7,12 +7,14 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, sign_tx/2, sign_v1_tx/2,
-		wait_until_height/1, slave_wait_until_height/1, post_and_mine/2, get_tx_anchor/1,
-		disconnect_from_slave/0, join_on_master/0, assert_post_tx_to_slave/1,
-		assert_post_tx_to_master/1, wait_until_receives_txs/1, slave_mine/0,
-		read_block_when_stored/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
-		assert_get_tx_data_master/2, assert_get_tx_data_slave/2, assert_data_not_found_master/1,
+-import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, sign_tx/2,
+		sign_v1_tx/2, wait_until_height/1, slave_wait_until_height/1, post_and_mine/2,
+		get_tx_anchor/1, disconnect_from_slave/0, join_on_master/0,
+		assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
+		assert_wait_until_receives_txs/1, slave_mine/0, read_block_when_stored/1,
+		get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
+		assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
+		assert_data_not_found_master/1, post_tx_to_master/1,
 		assert_data_not_found_slave/1, slave_call/3]).
 -import(ar_test_fork, [test_on_fork/3, test_on_fork/4]).
 
@@ -464,7 +466,7 @@ test_accepts_chunks(Split) ->
 	{_Master, _Slave, Wallet} = setup_nodes(),
 	{TX, Chunks} = tx(Wallet, {Split, 3}),
 	assert_post_tx_to_slave(TX),
-	wait_until_receives_txs([TX]),
+	assert_wait_until_receives_txs([TX]),
 	[{EndOffset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] = build_proofs(TX, Chunks,
 			[TX], 0, 0),
 	%% Post the third proof to the disk pool.
@@ -651,9 +653,11 @@ test_fork_recovery(Split) ->
 	slave_wait_until_syncs_chunks(MasterProofs2),
 	slave_wait_until_syncs_chunks(MasterProofs3),
 	slave_wait_until_syncs_chunks(Proofs1),
-	%% The slave is expected to return SlaveTX2 and SlaveTX4 to the mempool and gossip them
-	%% because it has a peer now and these transactions have not been gossiped to anyone.
-	wait_until_receives_txs([SlaveTX2, SlaveTX4]),
+	%% The slave node will return the orphaned transactions to the mempool
+	%% and gossip them.
+	post_tx_to_master(SlaveTX2),
+	post_tx_to_master(SlaveTX4),
+	assert_wait_until_receives_txs([SlaveTX2, SlaveTX4]),
 	MasterB4 = post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, []),
 	Proofs4 = build_proofs(MasterB4, SlaveTX4, SlaveChunks4),
 	%% We did not submit proofs for SlaveTX4 to master - they are supposed to be still stored

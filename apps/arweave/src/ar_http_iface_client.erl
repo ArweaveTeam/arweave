@@ -4,7 +4,7 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/3, send_new_tx/2, get_block/2, get_block_shadow/2, get_tx/3, get_txs/3,
+-export([send_new_block/3, send_new_tx/2, get_block_shadow/2, get_tx/3, get_txs/3,
 		get_tx_from_remote_peer/2, get_tx_data/2, get_wallet_list_chunk/2,
 		get_wallet_list_chunk/3, get_wallet_list/2, add_peer/1, get_info/1, get_info/2,
 		get_peers/1, get_time/2, get_height/1, get_block_index/1, get_block_index/2,
@@ -75,55 +75,8 @@ add_peer(Peer) ->
 		path => "/peers",
 		headers => p2p_headers(),
 		body => ar_serialize:jsonify({[{network, list_to_binary(?NETWORK_NAME)}]}),
-		timeout => 3 * 1000,
-		connect_timeout => 500
+		timeout => 3 * 1000
 	}).
-
-%% @doc Retreive a block by hash from disk or a remote peer.
-get_block(Peers, H) when is_list(Peers) ->
-	case ar_storage:read_block(H) of
-		unavailable ->
-			get_block_from_remote_peers(Peers, H);
-		B ->
-			case catch reconstruct_full_block(Peers, B) of
-				{'EXIT', Reason} ->
-					?LOG_INFO([
-						{event, failed_to_construct_full_block_from_shadow},
-						{reason, Reason}
-					]),
-					unavailable;
-				Handled ->
-					Handled
-			end
-	end;
-get_block(Peer, H) ->
-	get_block([Peer], H).
-
-get_block_from_remote_peers([], _H) ->
-	unavailable;
-get_block_from_remote_peers(Peers = [_ | _], H) ->
-	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	case handle_block_response(
-		Peer,
-		Peers,
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => prepare_block_id(H),
-			headers => p2p_headers(),
-			connect_timeout => 2000,
-			timeout => 30 * 1000,
-			limit => ?MAX_BODY_SIZE
-		}),
-		full_block
-	) of
-		unavailable ->
-			get_block_from_remote_peers(Peers -- [Peer], H);
-		not_found ->
-			get_block_from_remote_peers(Peers -- [Peer], H);
-		B ->
-			B
-	end.
 
 %% @doc Generate an appropriate URL for a block by its identifier.
 prepare_block_id({ID, _, _}) ->
@@ -138,26 +91,20 @@ get_block_shadow([], _ID) ->
 	unavailable;
 get_block_shadow(Peers, ID) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	case handle_block_response(
-		Peer,
-		Peers,
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => prepare_block_id(ID),
-			headers => p2p_headers(),
-			connect_timeout => 500,
-			timeout => 30 * 1000,
-			limit => ?MAX_BODY_SIZE
-		}),
-		block_shadow
-	) of
-		unavailable ->
-			get_block_shadow(Peers -- [Peer], ID);
+	case handle_block_response(Peer, Peers,
+			ar_http:req(#{
+				method => get,
+				peer => Peer,
+				path => prepare_block_id(ID),
+				headers => p2p_headers(),
+				connect_timeout => 500,
+				timeout => 30 * 1000,
+				limit => ?MAX_BODY_SIZE
+			})) of
 		not_found ->
 			get_block_shadow(Peers -- [Peer], ID);
-		B ->
-			{Peer, B}
+		{ok, B, Time, Size} ->
+			{Peer, B, Time, Size}
 	end.
 
 %% @doc Get a bunch of wallets by the given root hash from external peers.
@@ -383,7 +330,7 @@ handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit)
 handle_sync_record_response(Reply, _, _) ->
 	{error, Reply}.
 
-handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+handle_chunk_response({ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
 	case catch ar_serialize:json_map_to_chunk_proof(jiffy:decode(Body, [return_maps])) of
 		{'EXIT', Reason} ->
 			{error, Reason};
@@ -394,7 +341,7 @@ handle_chunk_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 				Chunk when byte_size(Chunk) > ?DATA_CHUNK_SIZE ->
 					{error, chunk_bigger_than_256kib};
 				_ ->
-					{ok, Proof}
+					{ok, Proof, End - Start, byte_size(term_to_binary(Proof))}
 			end
 	end;
 handle_chunk_response(Response) ->
@@ -522,7 +469,7 @@ get_tx_from_remote_peer([], _TXID) ->
 	not_found;
 get_tx_from_remote_peer(Peers, TXID) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	case handle_tx_response(
+	case handle_tx_response(Peer,
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
@@ -535,7 +482,7 @@ get_tx_from_remote_peer(Peers, TXID) ->
 	) of
 		not_found ->
 			get_tx_from_remote_peer(Peers -- [Peer], TXID);
-		{ok, #tx{} = TX} ->
+		{ok, #tx{} = TX, Time, Size} ->
 			case ar_tx:verify_tx_id(TXID, TX) of
 				false ->
 					?LOG_WARNING([
@@ -543,8 +490,10 @@ get_tx_from_remote_peer(Peers, TXID) ->
 						{peer, ar_util:format_peer(Peer)},
 						{tx, ar_util:encode(TXID)}
 					]),
+					ar_events:send(peer, {bad_response, {Peer, tx, invalid}}),
 					get_tx_from_remote_peer(Peers -- [Peer], TXID);
 				true ->
+					ar_events:send(peer, {served_tx, Peer, Time, Size}),
 					TX
 			end
 	end.
@@ -590,7 +539,8 @@ get_tx_data(Peer, Hash) ->
 
 %% @doc Retreive the current universal time as claimed by a foreign node.
 get_time(Peer, Timeout) ->
-	case ar_http:req(#{method => get, peer => Peer, path => "/time", headers => p2p_headers(), timeout => Timeout + 100}) of
+	case ar_http:req(#{method => get, peer => Peer, path => "/time",
+			headers => p2p_headers(), timeout => Timeout + 100}) of
 		{ok, {{<<"200">>, _}, _, Body, Start, End}} ->
 			Time = binary_to_integer(Body),
 			RequestTime = ceil((End - Start) / 1000000),
@@ -676,68 +626,56 @@ process_get_info(Props) ->
 	end.
 
 %% @doc Process the response of an /block call.
-handle_block_response(_, _, {error, _}, _) -> unavailable;
-handle_block_response(_, _, {ok, {{<<"400">>, _}, _, _, _, _}}, _) -> unavailable;
-handle_block_response(_, _, {ok, {{<<"404">>, _}, _, _, _, _}}, _) -> not_found;
-handle_block_response(_, _, {ok, {{<<"500">>, _}, _, _, _, _}}, _) -> unavailable;
-handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, block_shadow) ->
+handle_block_response(_, _, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
+	not_found;
+handle_block_response(_, _, {ok, {{<<"404">>, _}, _, _, _, _}}) ->
+	not_found;
+handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
 	case catch ar_serialize:json_struct_to_block(Body) of
 		{'EXIT', Reason} ->
 			?LOG_INFO(
 				"event: failed_to_parse_block_response, peer: ~s, reason: ~p",
-				[ar_util:format_peer(Peer), Reason]
-			),
-			unavailable;
+				[ar_util:format_peer(Peer), Reason]),
+			ar_events:send(peer, {bad_response, {Peer, block, Reason}}),
+			not_found;
 		B when is_record(B, block) ->
-			B;
+			{ok, B, End - Start, byte_size(term_to_binary(B))};
 		Error ->
 			?LOG_INFO(
 				"event: failed_to_parse_block_response, peer: ~s, error: ~p",
-				[ar_util:format_peer(Peer), Error]
-			),
-			unavailable
-	end;
-handle_block_response(Peer, Peers, {ok, {{<<"200">>, _}, _, Body, _, _}}, full_block) ->
-	case catch reconstruct_full_block(Peers, Body) of
-		{'EXIT', Reason} ->
-			?LOG_INFO(
-				"event: failed_to_parse_block_response, peer: ~s, reason: ~p",
-				[ar_util:format_peer(Peer), Reason]
-			),
-			unavailable;
-		Handled ->
-			Handled
-	end;
-handle_block_response(_, _, _, _) ->
-	unavailable.
-
-reconstruct_full_block(Peers, Body) when is_binary(Body) ->
-	case ar_serialize:json_struct_to_block(Body) of
-		B when is_record(B, block) ->
-			reconstruct_full_block(Peers, B);
-		B ->
-			B
-	end;
-reconstruct_full_block(Peers, B) when is_record(B, block) ->
-	MempoolTXs = ar_node:get_pending_txs([as_map]),
-	case get_txs(Peers, MempoolTXs, B) of
-		{ok, TXs} ->
-			B#block {
-				txs = TXs
-			};
-		_ ->
-			unavailable
-	end.
-
-%% @doc Process the response of a GET /unconfirmed_tx call.
-handle_tx_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	case catch ar_serialize:json_struct_to_tx(Body) of
-		TX when is_record(TX, tx) ->
-			case TX#tx.format == 1 of true -> {ok, TX}; _ -> {ok, TX#tx{ data = <<>> }} end;
-		_ ->
+				[ar_util:format_peer(Peer), Error]),
+			ar_events:send(peer, {bad_response, {Peer, block, Error}}),
 			not_found
 	end;
-handle_tx_response(_Response) ->
+handle_block_response(Peer, _, Response) ->
+	ar_events:send(peer, {bad_response, {Peer, block, Response}}),
+	not_found.
+
+%% @doc Process the response of a GET /unconfirmed_tx call.
+handle_tx_response(_Peer, {ok, {{<<"404">>, _}, _, _, _, _}}) ->
+	not_found;
+handle_tx_response(_Peer, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
+	not_found;
+handle_tx_response(Peer, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
+	case catch ar_serialize:json_struct_to_tx(Body) of
+		TX when is_record(TX, tx) ->
+			Size = byte_size(term_to_binary(TX)),
+			case TX#tx.format == 1 of
+				true ->
+					{ok, TX, End - Start, Size};
+				_ ->
+					DataSize = byte_size(TX#tx.data),
+					{ok, TX#tx{ data = <<>> }, End - Start, Size - DataSize}
+			end;
+		{'EXIT', Reason} ->
+			ar_events:send(peer, {bad_response, {Peer, tx, Reason}}),
+			not_found;
+		Reply ->
+			ar_events:send(peer, {bad_response, {Peer, tx, Reply}}),
+			not_found
+	end;
+handle_tx_response(Peer, Response) ->
+	ar_events:send(peer, {bad_response, {Peer, tx, Response}}),
 	not_found.
 
 p2p_headers() ->

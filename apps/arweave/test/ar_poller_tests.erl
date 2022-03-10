@@ -6,14 +6,13 @@
 
 -import(ar_test_node, [
 	start/1, slave_start/1,
-	disconnect_from_slave/0,
-	slave_call/3,
+	disconnect_from_slave/0, connect_to_slave/0,
 	get_tx_anchor/0,
 	sign_tx/2,
 	assert_post_tx_to_slave/1,
 	slave_mine/0,
 	slave_wait_until_height/1, wait_until_height/1,
-	read_block_when_stored/1
+	read_block_when_stored/1, slave_peer/0
 ]).
 
 polling_test_() ->
@@ -36,6 +35,7 @@ test_polling() ->
 			end,
 			lists:seq(1, 10)
 		),
+	connect_to_slave(),
 	set_slave_as_trusted_peer(),
 	wait_until_height(10),
 	lists:foreach(
@@ -65,9 +65,11 @@ test_polling() ->
 	[{MH13, _, _} | _] = wait_until_height(13),
 	[{SH13, _, _} | _] = slave_wait_until_height(13),
 	?assertNotEqual(SH13, MH13),
+	connect_to_slave(),
 	set_slave_as_trusted_peer(),
 	slave_mine(),
-	[{MH14, _, _}, {MH13_1, _, _}, {MH12_1, _, _}, {MH11_1, _, _} | _] = wait_until_height(14),
+	[{MH14, _, _}, {MH13_1, _, _}, {MH12_1, _, _}, {MH11_1, _, _} | _]
+		= wait_until_height(14),
 	[{SH14, _, _} | _] = slave_wait_until_height(14),
 	?assertEqual(MH14, SH14),
 	?assertEqual(SH13, MH13_1),
@@ -76,7 +78,5 @@ test_polling() ->
 
 set_slave_as_trusted_peer() ->
 	{ok, Config} = application:get_env(arweave, config),
-	Peer = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
-	Config2 = Config#config{ peers = [Peer] },
-	application:set_env(arweave, config, Config2),
-	ar_bridge:add_remote_peer(Peer).
+	Config2 = Config#config{ peers = [slave_peer()] },
+	application:set_env(arweave, config, Config2).

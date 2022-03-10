@@ -84,7 +84,8 @@ handle(Req, Pid) ->
 handle(Peer, Req, Pid) ->
 	Method = cowboy_req:method(Req),
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-	case ar_meta_db:get(http_logging) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(http_logging, Config#config.enable) of
 		true ->
 			?LOG_INFO([
 				{event, http_request},
@@ -253,8 +254,9 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 %% served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
-	case ar_meta_db:get(serve_html_data) of
-		false ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_html_data, Config#config.disable) of
+		true ->
 			{421, #{}, <<"Serving HTML data is disabled on this node.">>, Req};
 		_ ->
 			case ar_util:safe_decode(Hash) of
@@ -567,9 +569,9 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 			[
 				list_to_binary(ar_util:format_peer(P))
 			||
-				P <- ar_bridge:get_remote_peers(),
+				P <- ar_peers:get_peers(),
 				P /= ar_http_util:arweave_peer(Req),
-				ar_manage_peers:is_public_peer(P)
+				ar_peers:is_public_peer(P)
 			]
 		),
 	Req};
@@ -1183,7 +1185,7 @@ handle_post_tx(Req, Peer, TX) ->
 			handle_post_tx_already_in_mempool_response();
 		{invalid, invalid_data_root_size} ->
 			handle_post_tx_invalid_data_root_response();
-		valid  ->
+		valid ->
 			handle_post_tx_accepted(Req, Peer)
 	end.
 
@@ -1193,6 +1195,8 @@ handle_post_tx_accepted(Req, Peer) ->
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
+	ar_events:send(peer, {gossiped_tx, Peer, erlang:get(read_body_time),
+			erlang:get(body_size)}),
 	ok.
 
 handle_post_tx_verification_response() ->
@@ -1337,7 +1341,8 @@ check_internal_api_secret(Req) ->
 		{reject,
 			{421, #{}, <<"Internal API disabled or invalid internal API secret in request.">>}}
 	end,
-	case {ar_meta_db:get(internal_api_secret),
+	{ok, Config} = application:get_env(arweave, config),
+	case {Config#config.internal_api_secret,
 			cowboy_req:header(<<"x-internal-api-secret">>, Req)} of
 		{not_set, _} ->
 			Reject("Request to disabled internal API");
@@ -1412,7 +1417,7 @@ return_info(Req) ->
 						end
 					},
 					{blocks, BlockCount},
-					{peers, length(ar_bridge:get_remote_peers())},
+					{peers, prometheus_gauge:value(arweave_peer_count)},
 					{queue_length,
 						element(
 							2,
@@ -1473,6 +1478,10 @@ post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp) ->
 						{error, {_, _}, ReadReq} ->
 							{400, #{}, <<"Invalid block.">>, ReadReq};
 						{ok, {_ReqStruct, BShadow}, ReadReq} ->
+							ReadBodyTime = timer:now_diff(erlang:timestamp(),
+									ReceiveTimestamp),
+							erlang:put(read_body_time, ReadBodyTime),
+							erlang:put(body_size, byte_size(term_to_binary(BShadow))),
 							case byte_size(BShadow#block.indep_hash) > 48 of
 								true ->
 									{400, #{}, <<"Invalid block.">>, ReadReq};
@@ -1597,6 +1606,8 @@ post_block(post_block, {BShadow, OrigPeer, _BDS}, Req, ReceiveTimestamp) ->
 		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
 	]),
 	ar_events:send(block, {new, BShadow, OrigPeer}),
+	ar_events:send(peer, {gossiped_block, OrigPeer, erlang:get(read_body_time),
+			erlang:get(body_size)}),
 	{200, #{}, <<"OK">>, Req}.
 
 compute_hash(B, Height) ->
@@ -1746,12 +1757,14 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 				unavailable ->
 					{404, #{}, <<"Block not found.">>, Req};
 				#block{} = B ->
+					{ok, Config} = application:get_env(arweave, config),
 					case {B#block.height >= ar_fork:height_2_2(),
-							ar_meta_db:get(serve_wallet_lists)} of
-						{true, false} ->
+							lists:member(serve_wallet_lists, Config#config.disable)} of
+						{true, true} ->
 							{400, #{},
-								jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
-										Req};
+								jiffy:encode(
+									#{ error => does_not_serve_blocks_after_2_2_fork }),
+								Req};
 						{true, _} ->
 							ok = ar_semaphore:acquire(get_wallet_list, infinity),
 							case ar_storage:read_wallet_list(B#block.wallet_list) of
@@ -1764,7 +1777,8 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 									{404, #{}, <<"Block not found.">>, Req}
 							end;
 						_ ->
-							WLFilepath = ar_storage:wallet_list_filepath(B#block.wallet_list),
+							WLFilepath = ar_storage:wallet_list_filepath(
+									B#block.wallet_list),
 							case filelib:is_file(WLFilepath) of
 								true ->
 									{200, #{}, sendfile(WLFilepath), Req};
@@ -1782,7 +1796,8 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 %% field :: nonce | previous_block | timestamp | last_retarget | diff | height | hash |
 %%			indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
 process_request(get_block, [Type, ID, Field], Req) ->
-	case ar_meta_db:get(subfield_queries) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(subfield_queries, Config#config.enable) of
 		true ->
 			case find_block(Type, ID) of
 				{error, height_not_integer} ->
@@ -1931,14 +1946,15 @@ post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, FirstChunk}) ->
 	end;
 post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk}) ->
 	ok = ar_semaphore:acquire(post_tx, infinity),
+	Timestamp = erlang:timestamp(),
 	case read_complete_body(Req, Pid) of
 		{ok, SecondChunk, Req2} ->
 			Body = iolist_to_binary([FirstChunk | SecondChunk]),
-			post_tx_parse_id(parse_json, {TXID, Req2, Body});
+			post_tx_parse_id(parse_json, {TXID, Req2, Body, Timestamp});
 		{error, body_size_too_large} ->
 			{error, body_size_too_large, Req}
 	end;
-post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
+post_tx_parse_id(parse_json, {TXID, Req, Body, Timestamp}) ->
 	case catch ar_serialize:json_struct_to_tx(Body) of
 		{'EXIT', _} ->
 			case TXID of
@@ -1957,6 +1973,9 @@ post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 			end,
 			{error, invalid_json, Req};
 		TX ->
+			Time = timer:now_diff(erlang:timestamp(), Timestamp),
+			erlang:put(read_body_time, Time),
+			erlang:put(body_size, byte_size(term_to_binary(TX))),
 			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
 	end;
 post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->

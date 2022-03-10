@@ -292,7 +292,7 @@ get_block(Height) ->
 
 get_block(BH, BI) ->
 	try
-		Peers = ar_bridge:get_remote_peers(),
+		Peers = ar_peers:get_peers(),
 		get_block(BH, BI, Peers)
 	catch Type:Exception:StackTrace ->
 		?LOG_ERROR([
@@ -313,9 +313,10 @@ get_block(BH, BI, Peers) ->
 			case ar_http_iface_client:get_block_shadow(Peers, BH) of
 				unavailable ->
 					unavailable;
-				{_, B} ->
+				{Peer, B, Time, Size} ->
 					case ar_weave:indep_hash(B) of
 						BH ->
+							ar_events:send(peer, {served_block, Peer, Time, Size}),
 							{ok, B};
 						InvalidBH ->
 							?LOG_WARNING([

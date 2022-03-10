@@ -170,19 +170,6 @@
 %% the peers before giving up.
 -define(REJOIN_RETRIES, 3).
 
-%% The frequency in milliseconds of asking peers for their peers.
--define(GET_MORE_PEERS_TIME,  240 * 1000).
-
-%% Number of transfers for which not to score (and potentially drop)
-%% new peers.
--define(PEER_GRACE_PERIOD, 100).
-
-%% Never drop to lower than this number of peers.
--define(MINIMUM_PEERS, 4).
-
-%% Never have more than this number of peers (new peers excluded).
--define(MAXIMUM_PEERS, 20).
-
 %% Maximum allowed number of accepted requests per minute per IP.
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
 
@@ -192,12 +179,6 @@
 
 %% Delay before mining rewards manifest.
 -define(REWARD_DELAY, ?BLOCK_PER_YEAR/4).
-
-%% Peers to never add to the peer list.
--define(PEER_PERMANENT_BLACKLIST, []).
-
-%% How long to wait before dropping after last activity, in seconds.
--define(PEER_TIMEOUT, 8 * 60).
 
 %% A part of transaction propagation delay independent from the size, in seconds.
 -ifdef(DEBUG).
@@ -217,13 +198,13 @@
 -endif.
 
 %% The number of peers to send new blocks to in parallel.
--define(BLOCK_PROPAGATION_PARALLELIZATION, 30).
+-define(BLOCK_PROPAGATION_PARALLELIZATION, 20).
 
 %% The maximum number of peers to propagate txs to, by default.
 -define(DEFAULT_MAX_PROPAGATION_PEERS, 16).
 
 %% The maximum number of peers to propagate blocks to, by default.
--define(DEFAULT_MAX_BLOCK_PROPAGATION_PEERS, 50).
+-define(DEFAULT_MAX_BLOCK_PROPAGATION_PEERS, 1000).
 
 %% When the transaction data size is smaller than this number of bytes,
 %% the transaction is gossiped to the peer without a prior check if the peer
@@ -438,15 +419,6 @@
 	data_root = <<>>,	% The Merkle root of the Merkle tree of data chunks.
 	signature = <<>>,	% The signature.
 	reward = 0			% The fee in Winstons.
-}).
-
-%% Peering performance of a node.
--record(performance, {
-	bytes = 0,
-	time = 0,
-	transfers = 0,
-	timestamp = 0,
-	timeout = os:system_time(seconds)
 }).
 
 %% A macro to convert AR into Winstons.

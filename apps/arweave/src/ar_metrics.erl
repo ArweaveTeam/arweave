@@ -1,11 +1,6 @@
 -module(ar_metrics).
 
--export([
-	register/1,
-	store/1,
-	label_http_path/1,
-	get_status_class/1
-]).
+-export([register/1, store/1, label_http_path/1, get_status_class/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -209,7 +204,8 @@ register(MetricsDir) ->
 	]).
 
 store(Name) ->
-	ar_storage:write_term(ar_meta_db:get(metrics_dir), Name, prometheus_gauge:value(Name)).
+	{ok, Config} = application:get_env(arweave, config),
+	ar_storage:write_term(Config#config.metrics_dir, Name, prometheus_gauge:value(Name)).
 
 label_http_path(Path) ->
 	name_route(split_path(Path)).

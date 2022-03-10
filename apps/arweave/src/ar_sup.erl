@@ -27,7 +27,7 @@ start_link() ->
 %% ===================================================================
 init([]) ->
 	%% These ETS tables should belong to the supervisor.
-	ets:new(ar_meta_db, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_storage, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_randomx_state_key_blocks, [set, public, named_table]),
 	ets:new(ar_randomx_state_key_heights, [ordered_set, public, named_table]),
@@ -66,14 +66,14 @@ init([]) ->
 	{ok, {{one_for_one, 5, 10}, [
 		?CHILD(ar_rate_limiter, worker),
 		?CHILD(ar_disksup, worker),
-		?CHILD(ar_meta_db, worker),
+		?CHILD(ar_events_sup, supervisor),
 		?CHILD(ar_arql_db, worker),
 		?CHILD(ar_storage, worker),
-		?CHILD(ar_events_sup, supervisor),
+		?CHILD(ar_peers, worker),
 		?CHILD(ar_disk_cache, worker),
 		?CHILD(ar_watchdog, worker),
 		?CHILD(ar_tx_blacklist, worker),
-		?CHILD(ar_bridge, worker),
+		?CHILD(ar_bridge_sup, supervisor),
 		?CHILD(ar_packing_server, worker),
 		?CHILD(ar_sync_record, worker),
 		?CHILD(ar_chunk_storage, worker),

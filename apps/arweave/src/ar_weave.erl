@@ -1,15 +1,11 @@
 -module(ar_weave).
 
--export([
-	init/0, init/1, init/2, init/3, init/4,
-	indep_hash/1, indep_hash/3, indep_hash/4,
-	create_genesis_txs/0,
-	read_v1_genesis_txs/0,
-	generate_block_index/1,
-	tx_id/1
-]).
+-export([init/0, init/1, init/2, init/3, init/4,
+		indep_hash/1, indep_hash/3, indep_hash/4, create_genesis_txs/0,
+		read_v1_genesis_txs/0, generate_block_index/1, tx_id/1]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
@@ -104,11 +100,12 @@ tx_id(TX) -> TX#tx.id.
 
 read_v1_genesis_txs() ->
 	{ok, Files} = file:list_dir("data/genesis_txs"),
+	{ok, Config} = application:get_env(arweave, config),
 	lists:foldl(
 		fun(F, Acc) ->
 			file:copy(
 				"data/genesis_txs/" ++ F,
-				ar_meta_db:get(data_dir) ++ "/" ++ ?TX_DIR ++ "/" ++ F
+				Config#config.data_dir ++ "/" ++ ?TX_DIR ++ "/" ++ F
 			),
 			[ar_util:decode(hd(string:split(F, ".")))|Acc]
 		end,

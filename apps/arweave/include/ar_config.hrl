@@ -88,6 +88,7 @@
 	port = ?DEFAULT_HTTP_IFACE_PORT,
 	mine = false,
 	peers = [],
+	block_gossip_peers = [],
 	data_dir = ".",
 	metrics_dir = ?METRICS_DIR,
 	polling = ?DEFAULT_POLLING_INTERVAL, % Polling frequency in seconds.

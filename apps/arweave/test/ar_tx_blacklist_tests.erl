@@ -244,12 +244,11 @@ create_files(BadTXIDs) ->
 	[Filename || {Filename, _} <- Files].
 
 random_filename() ->
-	filename:join(
-		slave_call(ar_meta_db, get, [data_dir]),
+	{ok, Config} = slave_call(application, get_env, [arweave, config]),
+	filename:join(Config#config.data_dir,
 		"ar-tx-blacklist-tests-transaction-blacklist-"
 		++
-		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))
-	).
+		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))).
 
 encode_chunk(Proof) ->
 	ar_serialize:jsonify(#{
@@ -330,7 +329,7 @@ assert_removed_txs(BadTXIDs) ->
 			)
 		end,
 		500,
-		10000
+		30000
 	),
 	%% We have to keep the confirmation data even for blacklisted transactions.
 	lists:foreach(

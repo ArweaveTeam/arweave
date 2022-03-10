@@ -84,6 +84,8 @@ test_missing_txs_fork_recovery() ->
 	TX1 = sign_tx(Key, #{}),
 	slave_add_tx(TX1),
 	assert_slave_wait_until_receives_txs([TX1]),
+	%% Wait to make sure the tx will not be gossiped upon reconnect.
+	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
 	connect_to_slave(),
 	?assertEqual([], ar_node:get_pending_txs()),
 	slave_mine(),
@@ -146,7 +148,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	%% Assert the nodes have continued building on the original fork.
 	[{H3, _, _} | _] = slave_wait_until_height(2),
 	?assertNotEqual(B2#block.indep_hash, H3),
-	{_, B3} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1983}], 1),
+	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1983}], 1),
 	?assertEqual(H2, B3#block.indep_hash).
 
 fake_block_with_strong_cumulative_difficulty(B, CDiff) ->

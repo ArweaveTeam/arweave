@@ -184,6 +184,8 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 		end,
 		SecondTXSet
 	),
+	%% Wait to make sure the tx will not be gossiped upon reconnect.
+	timer:sleep(2000), % == 2 * ?CHECK_MEMPOOL_FREQUENCY
 	%% Connect the nodes and mine a block on slave.
 	connect_to_slave(),
 	slave_mine(),
@@ -237,7 +239,7 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	{ok, {{<<"400">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
-			peer => {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
+			peer => slave_peer(),
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}),
@@ -387,12 +389,11 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	assert_post_tx_to_slave(TX1),
 	slave_mine(),
 	assert_slave_wait_until_height(1),
-	SlaveIP = {127, 0, 0, 1, slave_call(ar_meta_db, get, [port])},
 	GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => SlaveIP,
+			peer => slave_peer(),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	Balance = binary_to_integer(Body),
@@ -410,7 +411,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => SlaveIP,
+			peer => slave_peer(),
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	?assertEqual(0, binary_to_integer(Body2)),

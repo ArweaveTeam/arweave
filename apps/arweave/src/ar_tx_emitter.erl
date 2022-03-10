@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, pick_peers/2]).
+-export([start_link/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -36,12 +36,6 @@
 start_link(Name, Workers) ->
 	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
 
-%% @doc Return a list of peers where 80% of the peers are randomly chosen
-%% from the first 20% of Peers and the other 20% of the peers are randomly
-%% chosen from the other 80% of Peers.
-pick_peers(Peers, N) ->
-	pick_peers(Peers, length(Peers), N).
-
 %%%===================================================================
 %%% gen_server callbacks.
 %%%===================================================================
@@ -56,14 +50,13 @@ handle_call(Request, _From, State) ->
 
 handle_cast(process_chunk, State) ->
 	#state{ workers = Q, currently_emitting = Emitting } = State,
-	case {ar_bridge:get_remote_peers(), ets:lookup(node_state, tx_propagation_queue)} of
-		{[], _} ->
+	TrustedPeers = ar_peers:get_trusted_peers(),
+	Peers = (ar_peers:get_peers() -- TrustedPeers) ++ TrustedPeers,
+	case ets:lookup(node_state, tx_propagation_queue) of
+		[] ->
 			ar_util:cast_after(?CHECK_MEMPOOL_FREQUENCY, ?MODULE, process_chunk),
 			{noreply, State};
-		{_, []} ->
-			ar_util:cast_after(?CHECK_MEMPOOL_FREQUENCY, ?MODULE, process_chunk),
-			{noreply, State};
-		{Peers, [{tx_propagation_queue, Set}]} ->
+		[{tx_propagation_queue, Set}] ->
 			{ok, Config} = application:get_env(arweave, config),
 			{Q2, Emitting2} = emit(Set, Q, Emitting, Peers,
 					Config#config.max_propagation_peers, ?CHUNK_SIZE),
@@ -141,9 +134,6 @@ emit(Set, Q, Emitting, Peers, MaxPeers, N) ->
 				true ->
 					emit(Set2, Q, Emitting, Peers, MaxPeers, N);
 				false ->
-					{ok, Config} = application:get_env(arweave, config),
-					TrustedPeers = Config#config.peers,
-					PickedPeers = (pick_peers(Peers, MaxPeers) -- TrustedPeers) ++ TrustedPeers,
 					{Emitting2, Q2} =
 						lists:foldl(
 							fun(Peer, {Acc, Workers}) ->
@@ -151,10 +141,11 @@ emit(Set, Q, Emitting, Peers, MaxPeers, N) ->
 								gen_server:cast(W, {emit, TXID, Peer, self()}),
 								erlang:send_after(?WORKER_TIMEOUT, ?MODULE,
 										{timeout, TXID, Peer}),
-								{sets:add_element({TXID, Peer}, Acc), queue:in(W, Workers2)}
+								{sets:add_element({TXID, Peer}, Acc),
+										queue:in(W, Workers2)}
 							end,
 							{Emitting, Q},
-							PickedPeers
+							lists:sublist(Peers, MaxPeers)
 						),
 					%% The cache storing recently emitted transactions is used instead
 					%% of an explicit synchronization of the propagation queue updates
@@ -167,16 +158,3 @@ emit(Set, Q, Emitting, Peers, MaxPeers, N) ->
 					emit(Set2, Q2, Emitting2, Peers, MaxPeers, N - 1)
 			end
 	end.
-
-pick_peers(Peers, PeerLen, N) when N >= PeerLen ->
-	Peers;
-pick_peers([], _PeerLen, _N) ->
-	[];
-pick_peers(_Peers, _PeerLen, 0) ->
-	[];
-pick_peers(Peers, PeerLen, N) ->
-	{Best, Other} = lists:split(max(PeerLen div 5, 1), Peers),
-	TakeBest = max(8 * N div 10, 1),
-	Part1 = ar_util:pick_random(Best, min(length(Best), TakeBest)),
-	Part2 = ar_util:pick_random(Other, min(length(Other), N - TakeBest)),
-	Part1 ++ Part2.
