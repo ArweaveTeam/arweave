@@ -21,7 +21,7 @@
 ]).
 
 -define(HTTP_IFACE_ROUTES, [
-	{"/metrics/[:registry]", prometheus_cowboy2_handler, []},
+	{"/metrics/[:registry]", ar_prometheus_cowboy_handler, []},
 	{"/[...]", ar_http_iface_handler, []}
 ]).
 
