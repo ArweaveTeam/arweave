@@ -64,7 +64,7 @@ send_new_block(Peer, #block{ height = Height } = NewB, BDS) ->
 		headers =>
 			p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
 		body => ar_serialize:jsonify({PostProps}),
-		timeout => 3 * 1000
+		timeout => 20 * 1000
 	}).
 
 %% @doc Request to be added as a peer to a remote host.
