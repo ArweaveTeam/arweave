@@ -4,11 +4,13 @@
 
 -module(ar_http_iface_client).
 
--export([send_new_block/3, send_new_tx/2, get_block_shadow/2, get_tx/3, get_txs/3,
-		get_tx_from_remote_peer/2, get_tx_data/2, get_wallet_list_chunk/2,
-		get_wallet_list_chunk/3, get_wallet_list/2, add_peer/1, get_info/1, get_info/2,
+-export([send_block_json/3, send_block_binary/3, send_new_tx/2, get_block_shadow/2,
+		get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2,
+		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
+		add_peer/1, get_info/1, get_info/2,
 		get_peers/1, get_time/2, get_height/1, get_block_index/1, get_block_index/2,
-		get_sync_record/1, get_sync_record/3, get_chunk/3, get_mempool/1, get_sync_buckets/1]).
+		get_sync_record/1, get_sync_record/3, get_chunk/3, get_mempool/1,
+		get_sync_buckets/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -30,40 +32,25 @@ send_new_tx(Peer, TX) ->
 		timeout => max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
 	}).
 
-%% @doc Distribute a newly found block to remote nodes.
-send_new_block(Peer, #block{ height = Height } = NewB, BDS) ->
-	{BlockProps} = ar_serialize:block_to_json_struct(NewB),
-	BlockShadowProps =
-		case Height >= ar_fork:height_2_4() of
-			true ->
-				BlockProps;
-			false ->
-				case NewB#block.hash_list of
-					unset ->
-						BlockProps;
-					_ ->
-						ShortHashList =
-							lists:map(
-								fun ar_util:encode/1,
-								lists:sublist(NewB#block.hash_list, ?STORE_BLOCKS_BEHIND_CURRENT)
-							),
-						[{<<"hash_list">>, ShortHashList} | BlockProps]
-				end
-		end,
-	PostProps = [
-		{<<"new_block">>, {BlockShadowProps}},
-		%% Add the P2P port field to be backwards compatible with nodes
-		%% running the old version of the P2P port feature.
-		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
-		{<<"block_data_segment">>, ar_util:encode(BDS)}
-	],
+%% @doc Send the given JSON-encoded block to the given peer.
+send_block_json(Peer, H, Payload) ->
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
 		path => "/block",
-		headers =>
-			p2p_headers() ++ [{<<"arweave-block-hash">>, ar_util:encode(NewB#block.indep_hash)}],
-		body => ar_serialize:jsonify({PostProps}),
+		headers => [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
+		body => Payload,
+		timeout => 20 * 1000
+	}).
+
+%% @doc Send the given binary-encoded block to the given peer.
+send_block_binary(Peer, H, Payload) ->
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/block2",
+		headers => [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
+		body => Payload,
 		timeout => 20 * 1000
 	}).
 
@@ -444,6 +431,8 @@ get_txs(Height, Peers, MempoolTXs, [TXID | Rest], TXs, TotalSize) ->
 	end.
 
 %% @doc Retreive a tx by ID from the memory pool, disk, or a remote peer.
+get_tx(_Peers, #tx{} = TX, _MempoolTXs) ->
+	TX;
 get_tx(Peers, TXID, MempoolTXs) ->
 	case maps:get(TXID, MempoolTXs, not_in_mempool) of
 		not_in_mempool ->
@@ -680,7 +669,8 @@ handle_tx_response(Peer, Response) ->
 
 p2p_headers() ->
 	{ok, Config} = application:get_env(arweave, config),
-	[{<<"X-P2p-Port">>, integer_to_binary(Config#config.port)}].
+	[{<<"X-P2p-Port">>, integer_to_binary(Config#config.port)},
+			{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}].
 
 %% @doc Return values for keys - or error if any key is missing.
 safe_get_vals(Keys, Props) ->

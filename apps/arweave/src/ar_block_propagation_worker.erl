@@ -29,18 +29,18 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast({send_block, Peer, B, BDS, From}, State) ->
-	case ar_http_iface_client:send_new_block(Peer, B, BDS) of
+handle_cast({send_block, SendFun, From}, State) ->
+	case SendFun() of
 		{ok, {{<<"412">>, _}, _, _, _, _}} ->
-			ar_util:cast_after(5000, self(), {send_block_retry, Peer, B, BDS, From}),
+			ar_util:cast_after(5000, self(), {send_block_retry, SendFun, From}),
 			{noreply, State};
 		_ ->
 			From ! {worker_sent_block, self()},
 			{noreply, State}
 	end;
 
-handle_cast({send_block_retry, Peer, B, BDS, From}, State) ->
-	ar_http_iface_client:send_new_block(Peer, B, BDS),
+handle_cast({send_block_retry, SendFun, From}, State) ->
+	SendFun(),
 	From ! {worker_sent_block, self()},
 	{noreply, State};
 

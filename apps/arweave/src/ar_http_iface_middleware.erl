@@ -452,11 +452,13 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 			end
 	end;
 
-%% Share a new block to a peer.
-%% POST request to endpoint /block with the body of the request being a JSON encoded block
-%% as specified in ar_serialize.
+%% Accept a JSON-encoded block with Base64Url encoded fields.
 handle(<<"POST">>, [<<"block">>], Req, Pid) ->
-	post_block(request, {Req, Pid}, erlang:timestamp());
+	post_block(request, {Req, Pid, json}, erlang:timestamp());
+
+%% Accept a binary-encoded block.
+handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
+	post_block(request, {Req, Pid, binary}, erlang:timestamp());
 
 %% Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
@@ -1411,16 +1413,22 @@ block_field_to_string(_, Res) -> Res.
 is_a_pending_tx(ID) ->
 	ar_node:is_a_pending_tx(ID).
 
-%% @doc Given a request, returns a blockshadow.
-request_to_struct_with_blockshadow(Req, BlockJSON) ->
+decode_block(JSON, json) ->
 	try
-		{Struct} = ar_serialize:dejsonify(BlockJSON),
+		{Struct} = ar_serialize:dejsonify(JSON),
 		JSONB = val_for_key(<<"new_block">>, Struct),
 		BShadow = ar_serialize:json_struct_to_block(JSONB),
-		{ok, {Struct, BShadow}, Req}
+		{ok, BShadow}
 	catch
 		Exception:Reason ->
-			{error, {Exception, Reason}, Req}
+			{error, {Exception, Reason}}
+	end;
+decode_block(Bin, binary) ->
+	try
+		ar_serialize:binary_to_block(Bin)
+	catch
+		Exception:Reason ->
+			{error, {Exception, Reason}}
 	end.
 
 %% @doc Generate and return an informative JSON object regarding the state of the node.
@@ -1473,13 +1481,14 @@ val_for_key(K, L) ->
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
 %% @end
-post_block(request, {Req, Pid}, ReceiveTimestamp) ->
+post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	OrigPeer = ar_http_util:arweave_peer(Req),
 	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
 		not_banned ->
 			case ar_node:is_joined() of
 				true ->
-					post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp);
+					post_block(read_blockshadow, OrigPeer, {Req, Pid, Encoding},
+							ReceiveTimestamp);
 				false ->
 					%% The node is not ready to validate and accept blocks.
 					%% If the network adopts this block, ar_poller will catch up.
@@ -1488,7 +1497,8 @@ post_block(request, {Req, Pid}, ReceiveTimestamp) ->
 		banned ->
 			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
 	end.
-post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp) ->
+
+post_block(read_blockshadow, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	HeaderBlockHashKnown =
 		case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
 			not_set ->
@@ -1506,25 +1516,22 @@ post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp) ->
 			{208, <<"Block already processed.">>, Req};
 		false ->
 			case read_complete_body(Req, Pid) of
-				{ok, BlockJSON, Req2} ->
-					case request_to_struct_with_blockshadow(Req2, BlockJSON) of
-						{error, {_, _}, ReadReq} ->
-							{400, #{}, <<"Invalid block.">>, ReadReq};
-						{ok, {_ReqStruct, BShadow}, ReadReq} ->
+				{ok, Body, Req2} ->
+					case decode_block(Body, Encoding) of
+						{error, _} ->
+							{400, #{}, <<"Invalid block.">>, Req2};
+						{ok, BShadow} ->
 							ReadBodyTime = timer:now_diff(erlang:timestamp(),
 									ReceiveTimestamp),
 							erlang:put(read_body_time, ReadBodyTime),
 							erlang:put(body_size, byte_size(term_to_binary(BShadow))),
 							case byte_size(BShadow#block.indep_hash) > 48 of
 								true ->
-									{400, #{}, <<"Invalid block.">>, ReadReq};
+									{400, #{}, <<"Invalid block.">>, Req2};
 								false ->
-									post_block(
-										check_indep_hash_processed,
-										{BShadow, OrigPeer},
-										ReadReq,
-										ReceiveTimestamp
-									)
+									post_block(check_indep_hash_processed,
+											{BShadow, OrigPeer}, Req2,
+											ReceiveTimestamp)
 							end
 					end;
 				{error, body_size_too_large} ->

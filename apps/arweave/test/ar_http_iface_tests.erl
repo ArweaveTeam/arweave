@@ -580,7 +580,7 @@ test_add_block_with_invalid_hash() ->
 		{ok, {{<<"400">>, _}, _, <<"Invalid Block Hash">>, _, _}},
 		send_new_block(
 			Peer,
-			B1Shadow#block{ indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>> }
+			B1Shadow#block{ indep_hash = crypto:strong_rand_bytes(48), nonce = <<>> }
 		)
 	),
 	%% Verify the IP address of self is banned in ar_blacklist_middleware.
@@ -588,7 +588,7 @@ test_add_block_with_invalid_hash() ->
 		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
 		send_new_block(
 			Peer,
-			B1Shadow#block{ indep_hash = add_rand_suffix(<<"new-hash-again">>) }
+			B1Shadow#block{ indep_hash = crypto:strong_rand_bytes(48) }
 		)
 	),
 	ar_blacklist_middleware:reset(),
@@ -615,7 +615,7 @@ test_add_block_with_invalid_hash() ->
 		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
 		send_new_block(
 			Peer,
-			B1Shadow#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)}
+			B1Shadow#block{indep_hash = crypto:strong_rand_bytes(48) }
 		)
 	),
 	ar_blacklist_middleware:reset().
@@ -668,10 +668,6 @@ add_external_block_with_invalid_timestamp_test() ->
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		send_new_block(Peer, B5Shadow)
 	).
-
-add_rand_suffix(Bin) ->
-	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
-	iolist_to_binary([Bin, " - ", Suffix]).
 
 update_block_timestamp(B, Timestamp) ->
 	#block{
@@ -1146,8 +1142,8 @@ get_error_of_data_limit_test() ->
 	?assertEqual({error, too_much_data}, Resp).
 
 send_new_block(Peer, B) ->
-	BDS = ar_block:generate_block_data_segment(B),
-	ar_http_iface_client:send_new_block(Peer, B, BDS).
+	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,
+			ar_serialize:block_to_binary(B)).
 
 wait_until_syncs_tx_data(TXID) ->
 	ar_util:do_until(

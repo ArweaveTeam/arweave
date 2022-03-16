@@ -6,11 +6,9 @@
 -import(ar_test_node, [
 	start/1, slave_start/1, connect_to_slave/0, disconnect_from_slave/0,
 	slave_mine/0,
-	wait_until_height/1, slave_wait_until_height/1, assert_slave_wait_until_receives_txs/1,
-	sign_tx/2, slave_add_tx/1,
-	read_block_when_stored/1,
-	slave_call/3
-]).
+	wait_until_height/1, slave_wait_until_height/1,
+	assert_slave_wait_until_receives_txs/1, sign_tx/2, slave_add_tx/1,
+	read_block_when_stored/1, slave_call/3]).
 
 height_plus_one_fork_recovery_test_() ->
 	{timeout, 20, fun test_height_plus_one_fork_recovery/0}.
@@ -139,17 +137,24 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	[{H2, _, _} | _] = wait_until_height(1),
 	?assertNotEqual(H2, H1),
 	B1 = read_block_when_stored(H2),
-	{B2, BDS} = fake_block_with_strong_cumulative_difficulty(B1, 10000000000000000),
+	B2 = fake_block_with_strong_cumulative_difficulty(B1, 10000000000000000),
 	?assertMatch(
 	    {ok, {{<<"200">>, _}, _, _, _, _}},
-	    ar_http_iface_client:send_new_block({127, 0, 0, 1, 1984}, B2, BDS)
+	    ar_http_iface_client:send_block_json({127, 0, 0, 1, 1984}, B2#block.indep_hash,
+				block_to_json(B2))
 	),
 	ar_node:mine(),
 	%% Assert the nodes have continued building on the original fork.
 	[{H3, _, _} | _] = slave_wait_until_height(2),
 	?assertNotEqual(B2#block.indep_hash, H3),
-	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1983}], 1),
+	{_Peer, B3, _Time, _Size} = ar_http_iface_client:get_block_shadow(
+			[{127, 0, 0, 1, 1983}], 1),
 	?assertEqual(H2, B3#block.indep_hash).
+
+block_to_json(B) ->
+	{BlockProps} = ar_serialize:block_to_json_struct(B),
+	PostProps = [{<<"new_block">>, {BlockProps}}],
+	ar_serialize:jsonify({PostProps}).
 
 fake_block_with_strong_cumulative_difficulty(B, CDiff) ->
 	#block{
@@ -168,5 +173,6 @@ fake_block_with_strong_cumulative_difficulty(B, CDiff) ->
 	    },
 	BDS = ar_block:generate_block_data_segment(B2),
 	{H0, _Entropy} = ar_mine:spora_h0_with_entropy(BDS, Nonce, Height + 1),
-	B3 = B2#block{ hash = ar_mine:spora_solution_hash(H, Timestamp, H0, Chunk, Height + 1) },
-	{B3#block{ indep_hash = ar_weave:indep_hash(B3) }, BDS}.
+	B3 = B2#block{ hash = ar_mine:spora_solution_hash(H, Timestamp, H0, Chunk,
+			Height + 1) },
+	B3#block{ indep_hash = ar_weave:indep_hash(B3) }.

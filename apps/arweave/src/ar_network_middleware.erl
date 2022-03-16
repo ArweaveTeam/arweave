@@ -29,8 +29,21 @@ maybe_add_peer(Peer, Req) ->
 		not_set ->
 			ok;
 		_ ->
-			ar_events:send(peer, {made_request, Peer})
+			ar_events:send(peer, {made_request, Peer, get_release(Req)})
 	end.
 
 wrong_network(Req) ->
 	{stop, cowboy_req:reply(412, #{}, jiffy:encode(#{ error => wrong_network }), Req)}.
+
+get_release(Req) ->
+	case cowboy_req:header(<<"x-release">>, Req, -1) of
+		-1 ->
+			-1;
+		ReleaseBin ->
+			case catch binary_to_integer(ReleaseBin) of
+				{'EXIT', _} ->
+					-1;
+				Release ->
+					Release
+			end
+	end.

@@ -89,10 +89,10 @@ handle_cast({may_be_send_block, W}, State) ->
 	case dequeue(Q) of
 		empty ->
 			{noreply, State};
-		{{_Priority, Peer, B, BDS}, Q2} ->
+		{{_Priority, Peer, H, JSON, Bin}, Q2} ->
 			case maps:get(W, Workers) of
 				free ->
-					gen_server:cast(W, {send_block, Peer, B, BDS, self()}),
+					send_to_worker(Peer, H, JSON, Bin, W),
 					{noreply, State#state{ block_propagation_queue = Q2,
 							workers = maps:put(W, busy, Workers) }};
 				busy ->
@@ -131,8 +131,10 @@ handle_info({event, block, {new, B, _Source}}, State) ->
 			SpecialPeers = Config#config.block_gossip_peers,
 			Peers = ((SpecialPeers ++ ar_peers:get_peers()) -- TrustedPeers)
 					++ TrustedPeers,
-			BDS = ar_block:generate_block_data_segment(B),
-			Q2 = enqueue_block(Peers, B, BDS, Q),
+			H = B#block.indep_hash,
+			JSON = block_to_json(B),
+			Bin = ar_serialize:block_to_binary(B),
+			Q2 = enqueue_block(Peers, B#block.height, H, JSON, Bin, Q),
 			[gen_server:cast(?MODULE, {may_be_send_block, W}) || W <- maps:keys(Workers)],
 			{noreply, State#state{ block_propagation_queue = Q2 }}
 	end;
@@ -146,8 +148,8 @@ handle_info({worker_sent_block, W},
 	case dequeue(Q) of
 		empty ->
 			{noreply, State#state{ workers = maps:put(W, free, Workers) }};
-		{{_Priority, Peer, B, BDS}, Q2} ->
-			gen_server:cast(W, {send_block, Peer, B, BDS, self()}),
+		{{_Priority, Peer, H, JSON, Bin}, Q2} ->
+			send_to_worker(Peer, H, JSON, Bin, W),
 			{noreply, State#state{ block_propagation_queue = Q2,
 					workers = maps:put(W, busy, Workers) }}
 	end;
@@ -175,14 +177,15 @@ terminate(_Reason, _State) ->
 %%% Internal functions
 %%%===================================================================
 
-enqueue_block(Peers, B, BDS, Q) ->
-	enqueue_block(Peers, B, BDS, Q, 0).
+enqueue_block(Peers, Height, H, JSON, Bin, Q) ->
+	enqueue_block(Peers, Height, H, JSON, Bin, Q, 0).
 
-enqueue_block([], _B, _BDS, Q, _N) ->
+enqueue_block([], _Height, _H, _JSON, _Bin, Q, _N) ->
 	Q;
-enqueue_block([Peer | Peers], B, BDS, Q, N) ->
-	Priority = {N, B#block.height},
-	enqueue_block(Peers, B, BDS, gb_sets:add_element({Priority, Peer, B, BDS}, Q)).
+enqueue_block([Peer | Peers], Height, H, JSON, Bin, Q, N) ->
+	Priority = {N, Height},
+	enqueue_block(Peers, Height, H, JSON, Bin,
+			gb_sets:add_element({Priority, Peer, H, JSON, Bin}, Q)).
 
 dequeue(Q) ->
 	case gb_sets:is_empty(Q) of
@@ -191,3 +194,28 @@ dequeue(Q) ->
 		false ->
 			gb_sets:take_smallest(Q)
 	end.
+
+send_to_worker(Peer, H, JSON, Bin, W) ->
+	Release = ar_peers:get_peer_release(Peer),
+	SendFun =
+		case Release >= 52 of
+			true ->
+				fun() ->
+					ar_http_iface_client:send_block_binary(Peer, H, Bin)
+				end;
+			false ->
+				fun() -> ar_http_iface_client:send_block_json(Peer, H, JSON) end
+		end,
+	gen_server:cast(W, {send_block, SendFun, self()}).
+
+block_to_json(B) ->
+	BDS = ar_block:generate_block_data_segment(B),
+	{BlockProps} = ar_serialize:block_to_json_struct(B),
+	PostProps = [
+		{<<"new_block">>, {BlockProps}},
+		%% Add the P2P port field to be backwards compatible with nodes
+		%% running the old version of the P2P port feature.
+		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
+		{<<"block_data_segment">>, ar_util:encode(BDS)}
+	],
+	ar_serialize:jsonify({PostProps}).

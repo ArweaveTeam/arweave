@@ -9,7 +9,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -export([start_link/0, get_peers/0, get_trusted_peers/0, is_public_peer/1,
-		stats/0, discover_peers/0, rank_peers/1]).
+		get_peer_release/1, stats/0, discover_peers/0, rank_peers/1]).
 
 -export([block_connections/0, unblock_connections/0]). % Only used in tests.
 
@@ -43,7 +43,8 @@
 	time = 0,
 	transfers = 0,
 	failures = 0,
-	rating = 0
+	rating = 0,
+	release = -1
 }).
 
 -record(state, {}).
@@ -123,6 +124,16 @@ is_public_peer({Oct1, _, _, _}) when Oct1 >= 224 ->
 is_public_peer(_) ->
 	true.
 
+%% @doc Return the release nubmer reported by the peer.
+%% Return -1 if the release is not known.
+get_peer_release(Peer) ->
+	case ets:lookup(?MODULE, {peer, Peer}) of
+		[{_, #performance{ release = Release }}] ->
+			Release;
+		_ ->
+			-1
+	end.
+
 %% @doc Print statistics about the current peers.
 stats() ->
 	Connected = get_peers(),
@@ -164,12 +175,15 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast({add_peer, Peer}, State) ->
-	case ets:member(?MODULE, {peer, Peer}) of
-		true ->
+handle_cast({add_peer, Peer, Release}, State) ->
+	case ets:lookup(?MODULE, {peer, Peer}) of
+		[{_, #performance{ release = Release }}] ->
 			ok;
-		false ->
-			ets:insert(?MODULE, {{peer, Peer}, #performance{}})
+		[{_, Performance}] ->
+			ets:insert(?MODULE, {{peer, Peer},
+					Performance#performance{ release = Release }});
+		[] ->
+			ets:insert(?MODULE, {{peer, Peer}, #performance{ release = Release }})
 	end,
 	{noreply, State};
 
@@ -212,14 +226,18 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-handle_info({event, peer, {made_request, Peer}}, State) ->
-	case ets:member(?MODULE, {peer, Peer}) of
-		true ->
+handle_info({event, peer, {made_request, Peer, Release}}, State) ->
+	case ets:lookup(?MODULE, {peer, Peer}) of
+		[{_, #performance{ release = Release }}] ->
 			ok;
-		false ->
+		[{_, Performance}] ->
+			ets:insert(?MODULE, {{peer, Peer},
+					Performance#performance{ release = Release }});
+		[] ->
 			case check_external_peer(Peer) of
 				ok ->
-					ets:insert(?MODULE, {{peer, Peer}, #performance{}});
+					ets:insert(?MODULE, {{peer, Peer},
+							#performance{ release = Release }});
 				_ ->
 					ok
 			end
@@ -310,11 +328,11 @@ discover_peers([Peer | Peers]) ->
 				false ->
 					ok;
 				true ->
-					case ar_http_iface_client:get_info(Peer, height) of
-						info_unavailable ->
-							ok;
+					case ar_http_iface_client:get_info(Peer, release) of
+						{<<"release">>, Release} when is_integer(Release) ->
+							gen_server:cast(?MODULE, {add_peer, Peer, Release});
 						_ ->
-							gen_server:cast(?MODULE, {add_peer, Peer})
+							ok
 					end
 			end
 	end,
@@ -337,6 +355,13 @@ load_peers() ->
 
 load_peers([]) ->
 	ok;
+load_peers([{Peer, {performance, Bytes, Time, Transfers, Failures, Rating}} | Peers]) ->
+	%% For compatibility with a few nodes already storing the records
+	%% without the release field.
+	ets:insert(?MODULE, {{peer, Peer}, #performance{ bytes = Bytes,
+			time = Time, transfers = Transfers, failures = Failures,
+			rating = Rating, release = -1 }}),
+	load_peers(Peers);
 load_peers([{Peer, Performance} | Peers]) ->
 	ets:insert(?MODULE, {{peer, Peer}, Performance}),
 	load_peers(Peers).

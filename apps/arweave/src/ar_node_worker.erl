@@ -301,7 +301,8 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 		[{block_index, [{CurrentBH, _, _} | _] = BI}] ->
 			[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 			[{current, Current}] = ets:lookup(node_state, current),
-			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, Block#block.height),
+			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
+					Block#block.height),
 			B = Block#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
 			ar_watchdog:mined_block(B#block.indep_hash, B#block.height),
 			?LOG_INFO([
@@ -316,7 +317,7 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 			ar_ignore_registry:add(B#block.indep_hash),
 			State2 = apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2),
 			%% Won't be received by itself, but we should let know all "block" subscribers.
-			ar_events:send(block, {new, Block, miner}),
+			ar_events:send(block, {new, Block#block{ txs = TXs }, miner}),
 			{noreply, State2};
 		_ ->
 			?LOG_INFO([{event, ignore_mined_block}, {reason, accepted_foreign_block}]),

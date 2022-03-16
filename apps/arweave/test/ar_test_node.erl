@@ -142,7 +142,8 @@ connect_to_slave() ->
 			method => get,
 			peer => slave_peer(),
 			path => "/info",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))}]
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))},
+					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
 		}),
 	true = ar_util:do_until(
 		fun() ->
@@ -156,7 +157,8 @@ connect_to_slave() ->
 			method => get,
 			peer => master_peer(),
 			path => "/info",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))}]
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))},
+					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
 		}),
 	true = ar_util:do_until(
 		fun() ->

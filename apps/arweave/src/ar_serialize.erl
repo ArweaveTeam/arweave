@@ -1,33 +1,260 @@
+%%% @doc The module contains serialisation/deserialisation utility functions.
 -module(ar_serialize).
 
--export([
-	json_struct_to_block/1,
-	block_to_json_struct/1,
-	json_struct_to_poa/1,
-	poa_to_json_struct/1,
-	tx_to_json_struct/1,
-	json_struct_to_tx/1, json_struct_to_v1_tx/1,
-	etf_to_wallet_chunk_response/1,
-	wallet_list_to_json_struct/3,
-	wallet_to_json_struct/1,
-	json_struct_to_wallet_list/1,
-	block_index_to_json_struct/1,
-	json_struct_to_block_index/1,
-	jsonify/1,
-	dejsonify/1,
-	json_decode/1,
-	json_decode/2,
-	query_to_json_struct/1,
-	json_struct_to_query/1,
-	chunk_proof_to_json_map/1,
-	json_map_to_chunk_proof/1
-]).
+-export([json_struct_to_block/1, block_to_json_struct/1,
+		block_to_binary/1, binary_to_block/1,
+		json_struct_to_poa/1, poa_to_json_struct/1,
+		tx_to_json_struct/1, json_struct_to_tx/1, json_struct_to_v1_tx/1,
+		etf_to_wallet_chunk_response/1, wallet_list_to_json_struct/3,
+		wallet_to_json_struct/1, json_struct_to_wallet_list/1,
+		block_index_to_json_struct/1, json_struct_to_block_index/1,
+		jsonify/1, dejsonify/1, json_decode/1, json_decode/2,
+		query_to_json_struct/1, json_struct_to_query/1,
+		chunk_proof_to_json_map/1, json_map_to_chunk_proof/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%%% Module containing serialisation/deserialisation utility functions
-%%% for use in HTTP server.
+%% The total payload size of the transactions included in the
+%% block payload. Once the limit is reached, include only transaction
+%% identifiers. Striking a balance between the gossiped payload size
+%% and the risk to run into a situation where many recipients won't have
+%% the transactions and thus delay block application.
+-ifdef(DEBUG).
+-define(PACK_TRANSACTIONS_LIMIT, (100 * 1024)).
+-else.
+-define(PACK_TRANSACTIONS_LIMIT, (500 * 1024 * 1024)).
+-endif.
+
+block_to_binary(#block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
+		nonce = Nonce, height = Height, diff = Diff, cumulative_diff = CDiff,
+		last_retarget = LastRetarget, hash = Hash, block_size = BlockSize,
+		weave_size = WeaveSize, reward_addr = Addr, tx_root = TXRoot,
+		wallet_list = WalletList, hash_list_merkle = HashListMerkle,
+		reward_pool = RewardPool,
+		packing_2_5_threshold = Threshold,
+		strict_data_split_threshold = StrictChunkThreshold,
+		usd_to_ar_rate = Rate,
+		scheduled_usd_to_ar_rate = ScheduledRate,
+		poa = #poa{ option = Option, chunk = Chunk, data_path = DataPath,
+				tx_path = TXPath }, tags = Tags, txs = TXs }) ->
+	Addr2 = case Addr of unclaimed -> <<>>; _ -> Addr end,
+	{RateDividend, RateDivisor} = case Rate of undefined -> {undefined, undefined};
+			_ -> Rate end,
+	{ScheduledRateDividend, ScheduledRateDivisor} =
+			case ScheduledRate of
+				undefined ->
+					{undefined, undefined};
+				_ ->
+					ScheduledRate
+			end,
+	<< H:48/binary, (encode_bin(PrevH, 8))/binary, (encode_int(TS, 8))/binary,
+			(encode_bin(Nonce, 16))/binary, (encode_int(Height, 8))/binary,
+			(encode_int(Diff, 16))/binary, (encode_int(CDiff, 16))/binary,
+			(encode_int(LastRetarget, 8))/binary, (encode_bin(Hash, 8))/binary,
+			(encode_int(BlockSize, 16))/binary, (encode_int(WeaveSize, 16))/binary,
+			(encode_bin(Addr2, 8))/binary, (encode_bin(TXRoot, 8))/binary,
+			(encode_bin(WalletList, 8))/binary, (encode_bin(HashListMerkle, 8))/binary,
+			(encode_int(RewardPool, 8))/binary, (encode_int(Threshold, 8))/binary,
+			(encode_int(StrictChunkThreshold, 8))/binary,
+			(encode_int(RateDividend, 8))/binary,
+			(encode_int(RateDivisor, 8))/binary,
+			(encode_int(ScheduledRateDividend, 8))/binary,
+			(encode_int(ScheduledRateDivisor, 8))/binary, (encode_int(Option, 8))/binary,
+			(encode_bin(Chunk, 24))/binary, (encode_bin(TXPath, 24))/binary,
+			(encode_bin(DataPath, 24))/binary, (encode_tags(Tags))/binary,
+			(encode_transactions(TXs))/binary >>.
+
+encode_int(undefined, SizeBits) ->
+	<< 0:SizeBits >>;
+encode_int(N, SizeBits) ->
+	Bin = binary:encode_unsigned(N, big),
+	<< (byte_size(Bin)):SizeBits, Bin/binary >>.
+
+encode_bin(undefined, SizeBits) ->
+	<< 0:SizeBits >>;
+encode_bin(Bin, SizeBits) ->
+	<< (byte_size(Bin)):SizeBits, Bin/binary >>.
+
+encode_tags(Tags) ->
+	encode_tags(Tags, [], 0).
+
+encode_tags([], Encoded, N) ->
+	<< N:16, (iolist_to_binary(Encoded))/binary >>;
+encode_tags([Tag | Tags], Encoded, N) ->
+	encode_tags(Tags, [encode_bin(Tag, 16) | Encoded], N + 1).
+
+encode_transactions(TXs) ->
+	encode_transactions(TXs, [], 0, 0).
+
+encode_transactions([], Encoded, N, _Size) ->
+	<< N:16, (iolist_to_binary(Encoded))/binary >>;
+encode_transactions([<< TXID:32/binary >> | TXs], Encoded, N, Size) ->
+	encode_transactions(TXs, [<< 32:24, TXID:32/binary >> | Encoded], N + 1, Size);
+encode_transactions([TX | TXs], Encoded, N, Size)
+		when Size >= ?PACK_TRANSACTIONS_LIMIT ->
+	encode_transactions(TXs, [<< 32:24, (TX#tx.id):32/binary >> | Encoded], N + 1, Size);
+encode_transactions([TX | TXs], Encoded, N, Size) ->
+	Bin = encode_tx(TX),
+	TXSize = byte_size(Bin),
+	encode_transactions(TXs, [<< TXSize:24, Bin/binary >> | Encoded], N + 1,
+			Size + TXSize).
+
+encode_tx(#tx{ format = Format, id = TXID, last_tx = LastTX, owner = Owner,
+		tags = Tags, target = Target, quantity = Quantity, data = Data,
+		data_size = DataSize, data_root = DataRoot, signature = Signature,
+		reward = Reward }) ->
+	<< Format:8, TXID:32/binary,
+			(encode_bin(LastTX, 8))/binary, (encode_bin(Owner, 16))/binary,
+			(encode_bin(Target, 8))/binary, (encode_int(Quantity, 8))/binary,
+			(encode_int(DataSize, 16))/binary, (encode_bin(DataRoot, 8))/binary,
+			(encode_bin(Signature, 16))/binary, (encode_int(Reward, 8))/binary,
+			(encode_bin(Data, 24))/binary, (encode_tx_tags(Tags))/binary >>.
+
+encode_tx_tags(Tags) ->
+	encode_tx_tags(Tags, [], 0).
+
+encode_tx_tags([], Encoded, N) ->
+	<< N:16, (iolist_to_binary(Encoded))/binary >>;
+encode_tx_tags([{Name, Value} | Tags], Encoded, N) ->
+	TagNameSize = byte_size(Name),
+	TagValueSize = byte_size(Value),
+	Tag = << TagNameSize:16, TagValueSize:16, Name/binary, Value/binary >>,
+	encode_tx_tags(Tags, [Tag | Encoded], N + 1).
+
+binary_to_block(<< H:48/binary, PrevHSize:8, PrevH:PrevHSize/binary,
+		TSSize:8, TS:(TSSize * 8),
+		NonceSize:16, Nonce:NonceSize/binary,
+		HeightSize:8, Height:(HeightSize * 8),
+		DiffSize:16, Diff:(DiffSize * 8),
+		CDiffSize:16, CDiff:(CDiffSize * 8),
+		LastRetargetSize:8, LastRetarget:(LastRetargetSize * 8),
+		HashSize:8, Hash:HashSize/binary,
+		BlockSizeSize:16, BlockSize:(BlockSizeSize * 8),
+		WeaveSizeSize:16, WeaveSize:(WeaveSizeSize * 8),
+		AddrSize:8, Addr:AddrSize/binary,
+		TXRootSize:8, TXRoot:TXRootSize/binary, % 0 or 32
+		WalletListSize:8, WalletList:WalletListSize/binary,
+		HashListMerkleSize:8, HashListMerkle:HashListMerkleSize/binary,
+		RewardPoolSize:8, RewardPool:(RewardPoolSize * 8),
+		PackingThresholdSize:8, Threshold:(PackingThresholdSize * 8),
+		StrictChunkThresholdSize:8, StrictChunkThreshold:(StrictChunkThresholdSize * 8),
+		RateDividendSize:8, RateDividend:(RateDividendSize * 8),
+		RateDivisorSize:8, RateDivisor:(RateDivisorSize * 8),
+		SchedRateDividendSize:8, SchedRateDividend:(SchedRateDividendSize * 8),
+		SchedRateDivisorSize:8, SchedRateDivisor:(SchedRateDivisorSize * 8),
+		PoAOptionSize:8, PoAOption:(PoAOptionSize * 8),
+		ChunkSize:24, Chunk:ChunkSize/binary,
+		TXPathSize:24, TXPath:TXPathSize/binary,
+		DataPathSize:24, DataPath:DataPathSize/binary,
+		Rest/binary >>) when NonceSize =< 512 ->
+	Threshold2 = case PackingThresholdSize of 0 -> undefined; _ -> Threshold end,
+	StrictChunkThreshold2 = case StrictChunkThresholdSize of 0 -> undefined;
+			_ -> StrictChunkThreshold end,
+	Rate = case RateDivisorSize of 0 -> undefined;
+			_ -> {RateDividend, RateDivisor} end,
+	ScheduledRate = case SchedRateDivisor of 0 -> undefined;
+			_ -> {SchedRateDividend, SchedRateDivisor} end,
+	Addr2 = case Addr of <<>> -> unclaimed; _ -> Addr end,
+	B = #block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
+			nonce = Nonce, height = Height, diff = Diff, cumulative_diff = CDiff,
+			last_retarget = LastRetarget, hash = Hash, block_size = BlockSize,
+			weave_size = WeaveSize, reward_addr = Addr2, tx_root = TXRoot,
+			wallet_list = WalletList, hash_list_merkle = HashListMerkle,
+			reward_pool = RewardPool, packing_2_5_threshold = Threshold2,
+			strict_data_split_threshold = StrictChunkThreshold2,
+			usd_to_ar_rate = Rate, scheduled_usd_to_ar_rate = ScheduledRate,
+			poa = #poa{ option = PoAOption, chunk = Chunk, data_path = DataPath,
+					tx_path = TXPath }},
+	parse_block_tags_transactions(Rest, B);
+binary_to_block(_Bin) ->
+	{error, invalid_block_input}.
+
+parse_block_tags_transactions(Bin, B) ->
+	case parse_block_tags(Bin) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, Tags, Rest} ->
+			parse_block_transactions(Rest, B#block{ tags = Tags })
+	end.
+
+parse_block_transactions(Bin, B) ->
+	case parse_block_transactions(Bin) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, TXs} ->
+			{ok, B#block{ txs = TXs }}
+	end.
+
+parse_block_tags(<< TagsLen:16, Rest/binary >>) when TagsLen =< 2048 ->
+	parse_block_tags(TagsLen, Rest, []);
+parse_block_tags(_Bin) ->
+	{error, invalid_tags_input}.
+
+parse_block_tags(0, Rest, Tags) ->
+	{ok, Tags, Rest};
+parse_block_tags(N, << TagSize:16, Tag:TagSize/binary, Rest/binary >>, Tags) ->
+	parse_block_tags(N - 1, << Rest/binary >>, [Tag | Tags]);
+parse_block_tags(_N, _Bin, _Tags) ->
+	{error, invalid_tag_input}.
+
+parse_block_transactions(<< Count:16, Rest/binary >>) when Count =< 1000 ->
+	parse_block_transactions(Count, Rest, []);
+parse_block_transactions(_Bin) ->
+	{error, invalid_transactions_input}.
+
+parse_block_transactions(0, <<>>, TXs) ->
+	{ok, TXs};
+parse_block_transactions(N, << Size:24, Bin:Size/binary, Rest/binary >>, TXs)
+		when N > 0 ->
+	case parse_tx(Bin) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, TX} ->
+			parse_block_transactions(N - 1, Rest, [TX | TXs])
+	end;
+parse_block_transactions(_N, _Rest, _TXs) ->
+	{error, invalid_transactions2_input}.
+
+parse_tx(<< TXID:32/binary >>) ->
+	{ok, TXID};
+parse_tx(<< Format:8, TXID:32/binary,
+		LastTXSize:8, LastTX:LastTXSize/binary,
+		OwnerSize:16, Owner:OwnerSize/binary,
+		TargetSize:8, Target:TargetSize/binary,
+		QuantitySize:8, Quantity:(QuantitySize * 8),
+		DataSizeSize:16, DataSize:(DataSizeSize * 8),
+		DataRootSize:8, DataRoot:DataRootSize/binary,
+		SignatureSize:16, Signature:SignatureSize/binary,
+		RewardSize:8, Reward:(RewardSize * 8),
+		DataEncodingSize:24, Data:DataEncodingSize/binary,
+		Rest/binary >>) when Format == 1 orelse Format == 2 ->
+	case parse_tx_tags(Rest) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, Tags} ->
+			{ok, #tx{ format = Format, id = TXID, last_tx = LastTX,
+					owner = Owner, target = Target, quantity = Quantity,
+					data_size = DataSize, data_root = DataRoot,
+					signature = Signature, reward = Reward, data = Data,
+					tags = Tags }}
+	end;
+parse_tx(_Bin) ->
+	{error, invalid_tx_input}.
+
+parse_tx_tags(<< TagsLen:16, Rest/binary >>) when TagsLen =< 2048 ->
+	parse_tx_tags(TagsLen, Rest, []);
+parse_tx_tags(_Bin) ->
+	{error, invalid_tx_tags_input}.
+
+parse_tx_tags(0, <<>>, Tags) ->
+	{ok, Tags};
+parse_tx_tags(N, << TagNameSize:16, TagValueSize:16,
+		TagName:TagNameSize/binary, TagValue:TagValueSize/binary, Rest/binary >>, Tags)
+		when N > 0 ->
+	parse_tx_tags(N - 1, Rest, [{TagName, TagValue} | Tags]);
+parse_tx_tags(_N, _Bin, _Tags) ->
+	{error, invalid_tx_tag_input}.
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->
@@ -620,6 +847,68 @@ json_map_to_chunk_proof(JSON) ->
 	end.
 
 %%% Tests: ar_serialize
+
+block_to_binary_test() ->
+	Dir = filename:dirname(?FILE),
+	BlockFixtureDir = filename:join(Dir, "../test/fixtures/blocks"),
+	TXFixtureDir = filename:join(Dir, "../test/fixtures/txs"),
+	{ok, BlockFixtures} = file:list_dir(BlockFixtureDir),
+	test_block_to_binary([filename:join(BlockFixtureDir, Name)
+			|| Name <- BlockFixtures], TXFixtureDir).
+
+test_block_to_binary([], _TXFixtureDir) ->
+	ok;
+test_block_to_binary([Fixture | Fixtures], TXFixtureDir) ->
+	{ok, Bin} = file:read_file(Fixture),
+	B = binary_to_term(Bin),
+	?debugFmt("Block ~s, height ~B.~n", [ar_util:encode(B#block.indep_hash),
+			B#block.height]),
+	test_block_to_binary(B),
+	RandomTags = [crypto:strong_rand_bytes(rand:uniform(2048))
+			|| _ <- lists:seq(1, rand:uniform(2048))],
+	B2 = B#block{ tags = RandomTags },
+	test_block_to_binary(B2),
+	B3 = B#block{ reward_addr = unclaimed },
+	test_block_to_binary(B3),
+	{ok, TXFixtures} = file:list_dir(TXFixtureDir),
+	TXs =
+		lists:foldl(
+			fun(TXFixture, Acc) ->
+				{ok, TXBin} = file:read_file(filename:join(TXFixtureDir, TXFixture)),
+				TX = binary_to_term(TXBin),
+				maps:put(TX#tx.id, TX, Acc)
+			end,
+			#{},
+			TXFixtures),
+	BlockTXs = [maps:get(TXID, TXs) || TXID <- B#block.txs],
+	B4 = B#block{ txs = BlockTXs },
+	test_block_to_binary(B4),
+	MixedTXs = lists:sublist(BlockTXs, 5)
+			++ [TX#tx.id
+			|| TX <- lists:sublist(lists:reverse(BlockTXs),
+					max(0, length(BlockTXs) - 5))],
+	B5 = B#block{ txs = MixedTXs },
+	test_block_to_binary(B5),
+	TXIDs = [TX#tx.id || TX <- BlockTXs],
+	B6 = B#block{ txs = TXIDs },
+	test_block_to_binary(B6),
+	test_block_to_binary(Fixtures, TXFixtureDir).
+
+test_block_to_binary(B) ->
+	{ok, B2} = binary_to_block(block_to_binary(B)),
+	?assertEqual(B#block{ txs = [] }, B2#block{ txs = [] }),
+	?assertEqual(true, compare_txs(B#block.txs, B2#block.txs)).
+
+compare_txs([TXID | TXs], [#tx{ id = TXID } | TXs2]) ->
+	compare_txs(TXs, TXs2);
+compare_txs([#tx{ id = TXID } | TXs], [TXID | TXs2]) ->
+	compare_txs(TXs, TXs2);
+compare_txs([TXID | TXs], [TXID | TXs2]) ->
+	compare_txs(TXs, TXs2);
+compare_txs([], []) ->
+	true;
+compare_txs(_TXs, _TXs2) ->
+	false.
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->
