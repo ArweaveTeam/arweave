@@ -65,24 +65,18 @@ add_peer(Peer) ->
 		timeout => 3 * 1000
 	}).
 
-%% @doc Generate an appropriate URL for a block by its identifier.
-prepare_block_id({ID, _, _}) ->
-	prepare_block_id(ID);
-prepare_block_id(ID) when is_binary(ID) ->
-	"/block/hash/" ++ binary_to_list(ar_util:encode(ID));
-prepare_block_id(ID) when is_integer(ID) ->
-	"/block/height/" ++ integer_to_list(ID).
-
 %% @doc Retreive a block shadow by hash or height from remote peers.
 get_block_shadow([], _ID) ->
 	unavailable;
 get_block_shadow(Peers, ID) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	case handle_block_response(Peer, Peers,
+	Release = ar_peers:get_peer_release(Peer),
+	Encoding = case Release >= 42 of true -> binary; _ -> json end,
+	case handle_block_response(Peer, Peers, Encoding,
 			ar_http:req(#{
 				method => get,
 				peer => Peer,
-				path => prepare_block_id(ID),
+				path => get_block_path(ID, Encoding),
 				headers => p2p_headers(),
 				connect_timeout => 500,
 				timeout => 30 * 1000,
@@ -92,6 +86,24 @@ get_block_shadow(Peers, ID) ->
 			get_block_shadow(Peers -- [Peer], ID);
 		{ok, B, Time, Size} ->
 			{Peer, B, Time, Size}
+	end.
+
+%% @doc Generate an appropriate URL for a block by its identifier.
+get_block_path({ID, _, _}, Encoding) ->
+	get_block_path(ID, Encoding);
+get_block_path(ID, Encoding) when is_binary(ID) ->
+	case Encoding of
+		binary ->
+			"/block2/hash/" ++ binary_to_list(ar_util:encode(ID));
+		json ->
+			"/block/hash/" ++ binary_to_list(ar_util:encode(ID))
+	end;
+get_block_path(ID, Encoding) when is_integer(ID) ->
+	case Encoding of
+		binary ->
+			"/block2/height/" ++ integer_to_list(ID);
+		json ->
+			"/block/height/" ++ integer_to_list(ID)
 	end.
 
 %% @doc Get a bunch of wallets by the given root hash from external peers.
@@ -615,18 +627,25 @@ process_get_info(Props) ->
 	end.
 
 %% @doc Process the response of an /block call.
-handle_block_response(_, _, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
+handle_block_response(_Peer, _Peers, _Encoding, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
 	not_found;
-handle_block_response(_, _, {ok, {{<<"404">>, _}, _, _, _, _}}) ->
+handle_block_response(_Peer, _Peers, _Encoding, {ok, {{<<"404">>, _}, _, _, _, _}}) ->
 	not_found;
-handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
-	case catch ar_serialize:json_struct_to_block(Body) of
+handle_block_response(Peer, _Peers, Encoding,
+		{ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
+	DecodeFun = case Encoding of json ->
+			fun(Input) ->
+				ar_serialize:json_struct_to_block(ar_serialize:dejsonify(Input))
+			end; binary -> fun ar_serialize:binary_to_block/1 end,
+	case catch DecodeFun(Body) of
 		{'EXIT', Reason} ->
 			?LOG_INFO(
 				"event: failed_to_parse_block_response, peer: ~s, reason: ~p",
 				[ar_util:format_peer(Peer), Reason]),
 			ar_events:send(peer, {bad_response, {Peer, block, Reason}}),
 			not_found;
+		{ok, B} ->
+			{ok, B, End - Start, byte_size(term_to_binary(B))};
 		B when is_record(B, block) ->
 			{ok, B, End - Start, byte_size(term_to_binary(B))};
 		Error ->
@@ -636,7 +655,7 @@ handle_block_response(Peer, _Peers, {ok, {{<<"200">>, _}, _, Body, Start, End}})
 			ar_events:send(peer, {bad_response, {Peer, block, Error}}),
 			not_found
 	end;
-handle_block_response(Peer, _, Response) ->
+handle_block_response(Peer, _Peers, _Encoding, Response) ->
 	ar_events:send(peer, {bad_response, {Peer, block, Response}}),
 	not_found.
 

@@ -853,65 +853,17 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _P
 			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
 	end;
 
-%% Return the block with the given height or hash.
+%% Return the JSON-encoded block with the given height or hash.
 %% GET request to endpoint /block/{height|hash}/{height|hash}.
 handle(<<"GET">>, [<<"block">>, Type, ID], Req, Pid)
 		when Type == <<"height">> orelse Type == <<"hash">> ->
-	case Type of
-		<<"hash">> ->
-			case ar_util:safe_decode(ID) of
-				{error, invalid} ->
-					{404, #{}, <<"Block not found.">>, Req};
-				{ok, H} ->
-					ReadB =
-						case ar_randomx_state:get_key_block(H) of
-							not_found ->
-								ar_storage:read_block(H);
-							{ok, B} ->
-								B
-						end,
-					case ReadB of
-						unavailable ->
-							{404, #{}, <<"Block not found.">>, Req};
-						#block{} ->
-							{200, #{}, ar_serialize:jsonify(
-									ar_serialize:block_to_json_struct(ReadB)), Req}
-					end
-			end;
-		<<"height">> ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					CurrentHeight = ar_node:get_height(),
-					try binary_to_integer(ID) of
-						Height when Height < 0 ->
-							{400, #{}, <<"Invalid height.">>, Req};
-						Height when Height > CurrentHeight ->
-							{404, #{}, <<"Block not found.">>, Req};
-						Height ->
-							case ar_node:get_recent_block_hash_by_height(Height) of
-								not_found ->
-									ok = ar_semaphore:acquire(get_block_index, infinity),
-									BI = ar_node:get_block_index(),
-									Len = length(BI),
-									case Height > Len - 1 of
-										true ->
-											{404, #{}, <<"Block not found.">>, Req};
-										false ->
-											{H, _, _} = lists:nth(Len - Height, BI),
-											handle(<<"GET">>, [<<"block">>, <<"hash">>,
-													ar_util:encode(H)], Req, Pid)
-									end;
-								H ->
-									handle(<<"GET">>, [<<"block">>, <<"hash">>,
-											ar_util:encode(H)], Req, Pid)
-							end
-					catch _:_ ->
-						{400, #{}, <<"Invalid height.">>, Req}
-					end
-			end
-	end;
+	handle_get_block(Type, ID, Req, Pid, json);
+
+%% Return the binary-encoded block with the given height or hash.
+%% GET request to endpoint /block2/{height|hash}/{height|hash}.
+handle(<<"GET">>, [<<"block2">>, Type, ID], Req, Pid)
+		when Type == <<"height">> orelse Type == <<"hash">> ->
+	handle_get_block(Type, ID, Req, Pid, binary);
 
 %% Return block or block field.
 handle(<<"GET">>, [<<"block">>, Type, ID, Field], Req, _Pid)
@@ -1202,6 +1154,72 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 			[EarliestTXID | Acc];
 		_ ->
 			get_wallet_txs(EarliestTXID, TXIDs, [TXID | Acc])
+	end.
+
+handle_get_block(Type, ID, Req, Pid, Encoding) ->
+	case Type of
+		<<"hash">> ->
+			case ar_util:safe_decode(ID) of
+				{error, invalid} ->
+					{404, #{}, <<"Block not found.">>, Req};
+				{ok, H} ->
+					ReadB =
+						case ar_randomx_state:get_key_block(H) of
+							not_found ->
+								ar_storage:read_block(H);
+							{ok, B} ->
+								B
+						end,
+					case ReadB of
+						unavailable ->
+							{404, #{}, <<"Block not found.">>, Req};
+						#block{} ->
+							Bin =
+								case Encoding of
+									json ->
+										ar_serialize:jsonify(
+												ar_serialize:block_to_json_struct(
+														ReadB));
+									binary ->
+										ar_serialize:block_to_binary(ReadB)
+								end,
+							{200, #{}, Bin, Req}
+					end
+			end;
+		<<"height">> ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					CurrentHeight = ar_node:get_height(),
+					try binary_to_integer(ID) of
+						Height when Height < 0 ->
+							{400, #{}, <<"Invalid height.">>, Req};
+						Height when Height > CurrentHeight ->
+							{404, #{}, <<"Block not found.">>, Req};
+						Height ->
+							case ar_node:get_recent_block_hash_by_height(Height) of
+								not_found ->
+									ok = ar_semaphore:acquire(get_block_index, infinity),
+									BI = ar_node:get_block_index(),
+									Len = length(BI),
+									case Height > Len - 1 of
+										true ->
+											{404, #{}, <<"Block not found.">>, Req};
+										false ->
+											{H, _, _} = lists:nth(Len - Height, BI),
+											handle_get_block(<<"hash">>,
+													ar_util:encode(H), Req, Pid,
+													Encoding)
+									end;
+								H ->
+									handle_get_block(<<"hash">>, ar_util:encode(H),
+											Req, Pid, Encoding)
+							end
+					catch _:_ ->
+						{400, #{}, <<"Invalid height.">>, Req}
+					end
+			end
 	end.
 
 handle_post_tx(Req, Peer, TX) ->
