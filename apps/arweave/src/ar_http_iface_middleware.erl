@@ -173,37 +173,25 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 			handle_get_tx_status(Hash, Req)
 	end;
 
-%% Return a transaction specified via the the transaction id (hash).
+%% Return a JSON-encoded transaction.
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
-	case ar_util:safe_decode(Hash) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid hash.">>, Req};
-		{ok, ID} ->
-			case ar_storage:read_tx(ID) of
-				unavailable ->
-					maybe_tx_is_pending_response(ID, Req);
-				#tx{} = TX ->
-					Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-					{200, #{}, Body, Req}
-			end
-	end;
+	handle_get_tx(Hash, Req, json);
 
-%% Return a possibly unconfirmed transaction.
+%% Return a binary-encoded transaction.
+%% GET request to endpoint /tx2/{hash}.
+handle(<<"GET">>, [<<"tx2">>, Hash], Req, _Pid) ->
+	handle_get_tx(Hash, Req, binary);
+
+%% Return a possibly unconfirmed JSON-encoded transaction.
 %% GET request to endpoint /unconfirmed_tx/{hash}.
-handle(<<"GET">>, [<<"unconfirmed_tx">>, Hash], Req, Pid) ->
-	case ar_util:safe_decode(Hash) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid hash.">>, Req};
-		{ok, TXID} ->
-			case ets:lookup(node_state, {tx, TXID}) of
-				[{_, TX}] ->
-					Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-					{200, #{}, Body, Req};
-				[] ->
-					handle(<<"GET">>, [<<"tx">>, Hash], Req, Pid)
-			end
-	end;
+handle(<<"GET">>, [<<"unconfirmed_tx">>, Hash], Req, _Pid) ->
+	handle_get_unconfirmed_tx(Hash, Req, json);
+
+%% Return a possibly unconfirmed binary-encoded transaction.
+%% GET request to endpoint /unconfirmed_tx2/{hash}.
+handle(<<"GET">>, [<<"unconfirmed_tx2">>, Hash], Req, _Pid) ->
+	handle_get_unconfirmed_tx(Hash, Req, binary);
 
 %% Return the transaction IDs of all txs where the tags in post match the given set
 %% of key value pairs. POST request to endpoint /arql with body of request being a logical
@@ -1001,6 +989,46 @@ handle_get_tx_status(EncodedTXID, Req) ->
 						{error, timeout} ->
 							{503, #{}, <<"ArQL unavailable.">>, Req}
 					end
+			end
+	end.
+
+handle_get_tx(Hash, Req, Encoding) ->
+	case ar_util:safe_decode(Hash) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid hash.">>, Req};
+		{ok, ID} ->
+			case ar_storage:read_tx(ID) of
+				unavailable ->
+					maybe_tx_is_pending_response(ID, Req);
+				#tx{} = TX ->
+					Body =
+						case Encoding of
+							json ->
+								ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX));
+							binary ->
+								ar_serialize:tx_to_binary(TX)
+						end,
+					{200, #{}, Body, Req}
+			end
+	end.
+
+handle_get_unconfirmed_tx(Hash, Req, Encoding) ->
+	case ar_util:safe_decode(Hash) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid hash.">>, Req};
+		{ok, TXID} ->
+			case ets:lookup(node_state, {tx, TXID}) of
+				[{_, TX}] ->
+					Body =
+						case Encoding of
+							json ->
+								ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX));
+							binary ->
+								ar_serialize:tx_to_binary(TX)
+						end,
+					{200, #{}, Body, Req};
+				[] ->
+					handle_get_tx(Hash, Req, Encoding)
 			end
 	end.
 

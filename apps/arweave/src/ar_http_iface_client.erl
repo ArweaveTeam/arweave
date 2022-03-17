@@ -481,11 +481,13 @@ get_tx_from_remote_peer([], _TXID) ->
 	not_found;
 get_tx_from_remote_peer(Peers, TXID) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
-	case handle_tx_response(Peer,
+	Release = ar_peers:get_peer_release(Peer),
+	Encoding = case Release >= 52 of true -> binary; _ -> json end,
+	case handle_tx_response(Peer, Encoding,
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
-			path => "/unconfirmed_tx/" ++ binary_to_list(ar_util:encode(TXID)),
+			path => get_tx_path(TXID, Encoding),
 			headers => p2p_headers(),
 			connect_timeout => 1000,
 			timeout => 30 * 1000,
@@ -509,6 +511,11 @@ get_tx_from_remote_peer(Peers, TXID) ->
 					TX
 			end
 	end.
+
+get_tx_path(TXID, json) ->
+	"/unconfirmed_tx/" ++ binary_to_list(ar_util:encode(TXID));
+get_tx_path(TXID, binary) ->
+	"/unconfirmed_tx2/" ++ binary_to_list(ar_util:encode(TXID)).
 
 %% @doc Retreive only the data associated with a transaction.
 %% The function must only be used when it is known that the transaction
@@ -671,12 +678,23 @@ handle_block_response(Peer, _Peers, _Encoding, Response) ->
 	not_found.
 
 %% @doc Process the response of a GET /unconfirmed_tx call.
-handle_tx_response(_Peer, {ok, {{<<"404">>, _}, _, _, _, _}}) ->
+handle_tx_response(_Peer, _Encoding, {ok, {{<<"404">>, _}, _, _, _, _}}) ->
 	not_found;
-handle_tx_response(_Peer, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
+handle_tx_response(_Peer, _Encoding, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
 	not_found;
-handle_tx_response(Peer, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
-	case catch ar_serialize:json_struct_to_tx(Body) of
+handle_tx_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
+	DecodeFun = case Encoding of json -> fun ar_serialize:json_struct_to_tx/1;
+			binary -> fun ar_serialize:binary_to_tx/1 end,
+	case catch DecodeFun(Body) of
+		{ok, TX} ->
+			Size = byte_size(term_to_binary(TX)),
+			case TX#tx.format == 1 of
+				true ->
+					{ok, TX, End - Start, Size};
+				_ ->
+					DataSize = byte_size(TX#tx.data),
+					{ok, TX#tx{ data = <<>> }, End - Start, Size - DataSize}
+			end;
 		TX when is_record(TX, tx) ->
 			Size = byte_size(term_to_binary(TX)),
 			case TX#tx.format == 1 of
@@ -693,7 +711,7 @@ handle_tx_response(Peer, {ok, {{<<"200">>, _}, _, Body, Start, End}}) ->
 			ar_events:send(peer, {bad_response, {Peer, tx, Reply}}),
 			not_found
 	end;
-handle_tx_response(Peer, Response) ->
+handle_tx_response(Peer, _Encoding, Response) ->
 	ar_events:send(peer, {bad_response, {Peer, tx, Response}}),
 	not_found.
 
