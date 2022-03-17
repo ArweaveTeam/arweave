@@ -194,7 +194,7 @@
 -ifdef(DEBUG).
 -define(TX_PROPAGATION_BITS_PER_SECOND, 1000000000).
 -else.
--define(TX_PROPAGATION_BITS_PER_SECOND, 160000). % 160 kbps
+-define(TX_PROPAGATION_BITS_PER_SECOND, 3000000). % 3 mbps
 -endif.
 
 %% The number of peers to send new blocks to in parallel.

@@ -192,9 +192,9 @@ tx_propagated_size(#tx{ format = 2 }) ->
 tx_propagated_size(#tx{ format = 1, data = Data }) ->
 	?TX_SIZE_BASE + byte_size(Data).
 
-%% @doc Return a delay in milliseconds to wait before including a transaction into a block.
-%% The delay is computed as base delay + a function of data size with a conservative
-%% estimation of the network speed.
+%% @doc Return a delay in milliseconds to wait before including a transaction
+%% into a block. The delay is computed as base delay + a function of data size with
+%% a conservative estimation of the network speed.
 calculate_delay(Bytes) ->
 	BaseDelay = (?BASE_TX_PROPAGATION_DELAY) * 1000,
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,

@@ -37,7 +37,22 @@ handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
 			StartedAt = erlang:timestamp(),
 			TrustedPeers = ar_peers:get_trusted_peers(),
 			PropagatedTX = tx_to_propagated_tx(TX, Peer, TrustedPeers),
-			Reply = ar_http_iface_client:send_new_tx(Peer, PropagatedTX),
+			Release = ar_peers:get_peer_release(Peer),
+			SendFun =
+				case Release >= 42 of
+					true ->
+						fun() ->
+							Bin = ar_serialize:tx_to_binary(PropagatedTX),
+							ar_http_iface_client:send_tx_binary(Peer, TXID, Bin)
+						end;
+					false ->
+						fun() ->
+							JSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(
+									PropagatedTX)),
+							ar_http_iface_client:send_tx_json(Peer, TXID, JSON)
+						end
+				end,
+			Reply = SendFun(),
 			PropagationTimeUs = timer:now_diff(erlang:timestamp(), StartedAt),
 			record_propagation_status(Reply),
 			record_propagation_rate(tx_propagated_size(TX), PropagationTimeUs)

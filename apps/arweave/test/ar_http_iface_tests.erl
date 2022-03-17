@@ -154,19 +154,23 @@ single_regossip_test() ->
 	TX = ar_tx:new(),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+		ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TX#tx.id,
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)))
 	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
+		ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1983}, TX#tx.id,
+				ar_serialize:tx_to_binary(TX))
 	),
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
+		ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1983}, TX#tx.id,
+				ar_serialize:tx_to_binary(TX))
 	),
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
+		ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1983}, TX#tx.id,
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)))
 	).
 
 %% @doc Unjoined nodes should not accept blocks
@@ -198,7 +202,7 @@ node_blacklisting_get_spammer_test() ->
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 node_blacklisting_post_spammer_test() ->
 	{ok, Config} = application:get_env(arweave, config),
-	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
+	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_tx_binary),
 	NErrors = 11,
 	NRequests = Config#config.requests_per_minute_limit div 2 + NErrors,
 	node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, NErrors).
@@ -210,10 +214,11 @@ get_fun_msg_pair(get_info) ->
 			ar_http_iface_client:get_info({127, 0, 0, 1, 1984})
 		end
 	, info_unavailable};
-get_fun_msg_pair(send_new_tx) ->
+get_fun_msg_pair(send_tx_binary) ->
 	{ fun(_) ->
-			InvalidTX = (ar_tx:new())#tx { owner = <<"key">>, signature = <<"invalid">> },
-			case ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, InvalidTX) of
+			InvalidTX = (ar_tx:new())#tx{ owner = <<"key">>, signature = <<"invalid">> },
+			case ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984},
+					InvalidTX#tx.id, ar_serialize:tx_to_binary(InvalidTX)) of
 				{ok,
 					{{<<"429">>, <<"Too Many Requests">>}, _,
 						<<"Too Many Requests">>, _, _}} ->
@@ -362,7 +367,8 @@ get_block_by_height_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
 	ar_test_node:wait_until_height(0),
-	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}], 0),
+	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(
+			[{127, 0, 0, 1, 1984}], 0),
 	?assertEqual(
 		B0#block{ hash_list = unset, wallet_list = not_set, size_tagged_txs = unset },
 		B1#block{ wallet_list = not_set }
@@ -435,7 +441,8 @@ get_format_2_tx_test() ->
 	EncodedTXID = binary_to_list(ar_util:encode(TXID)),
 	EncodedInvalidTXID = binary_to_list(ar_util:encode(InvalidTXID)),
 	EncodedEmptyTXID = binary_to_list(ar_util:encode(EmptyTXID)),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, ValidTX),
+	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, ValidTX#tx.id,
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ValidTX))),
 	{ok, {{<<"400">>, _}, _, <<"The attached data is split in an unknown way.">>, _, _}} =
 		ar_http:req(#{
 			method => post,
@@ -443,8 +450,11 @@ get_format_2_tx_test() ->
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(InvalidDataRootTX))
 		}),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, InvalidDataRootTX#tx{ data = <<>> }),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, EmptyTX),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984},
+			InvalidDataRootTX#tx.id,
+			ar_serialize:tx_to_binary(InvalidDataRootTX#tx{ data = <<>> })),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, EmptyTX#tx.id,
+			ar_serialize:tx_to_binary(EmptyTX)),
 	ar_test_node:wait_until_receives_txs([ValidTX, EmptyTX, InvalidDataRootTX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -492,7 +502,8 @@ get_format_1_tx_test() ->
 	{_Node, _} = ar_test_node:start(B0),
 	TX = #tx{ id = TXID } = ar_tx:new(<<"DATA">>),
 	EncodedTXID = binary_to_list(ar_util:encode(TXID)),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:tx_to_binary(TX)),
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -528,7 +539,8 @@ add_external_tx_with_tags_test() ->
 					{<<"TEST_TAG2">>, <<"TEST_VAL2">>}
 				]
 		},
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TaggedTX),
+	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TaggedTX#tx.id,
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TaggedTX))),
 	ar_test_node:wait_until_receives_txs([TaggedTX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -542,7 +554,9 @@ add_external_tx_with_tags_test() ->
 find_external_tx_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
+	TX = ar_tx:new(<<"DATA">>),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:tx_to_binary(TX)),
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -691,7 +705,8 @@ add_tx_and_get_last_test() ->
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 	ID = SignedTX#tx.id,
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, SignedTX),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, SignedTX#tx.id,
+			ar_serialize:tx_to_binary(SignedTX)),
 	ar_test_node:wait_until_receives_txs([SignedTX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -699,7 +714,9 @@ add_tx_and_get_last_test() ->
 		ar_http:req(#{
 			method => get,
 			peer => {127, 0, 0, 1, 1984},
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
+			path => "/wallet/"
+					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1)))
+					++ "/last_tx"
 		}),
 	?assertEqual(ID, ar_util:decode(Body)).
 
@@ -707,7 +724,9 @@ add_tx_and_get_last_test() ->
 get_subfields_of_tx_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
+	TX = ar_tx:new(<<"DATA">>),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:tx_to_binary(TX)),
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -719,9 +738,10 @@ get_subfields_of_tx_test() ->
 get_pending_tx_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
+	TX = ar_tx:new(<<"DATA1">>),
+	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
 	ar_test_node:wait_until_receives_txs([TX]),
-	%write a get_tx function like get_block
 	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -1124,10 +1144,9 @@ get_error_of_data_limit_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
 	Limit = 1460,
-	ar_http_iface_client:send_new_tx(
-		{127, 0, 0, 1, 1984},
-		TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>)
-	),
+	TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:tx_to_binary(TX)),
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),

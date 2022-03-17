@@ -2,7 +2,7 @@
 
 -behaviour(cowboy_middleware).
 
--export([execute/2]).
+-export([execute/2, read_body_chunk/4]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -477,34 +477,15 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
-%% Share a new transaction with a peer.
-%% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
-%% specified in ar_serialize.
+%% Accept a new JSON-encoded transaction.
+%% POST request to endpoint /tx.
 handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case post_tx_parse_id({Req, Pid}) of
-				{error, invalid_hash, Req2} ->
-					{400, #{}, <<"Invalid hash.">>, Req2};
-				{error, tx_already_processed, _TXID, Req2} ->
-					{208, #{}, <<"Transaction already processed.">>, Req2};
-				{error, invalid_json, Req2} ->
-					{400, #{}, <<"Invalid JSON.">>, Req2};
-				{error, body_size_too_large, Req2} ->
-					{413, #{}, <<"Payload too large">>, Req2};
-				{ok, TX} ->
-					Peer = ar_http_util:arweave_peer(Req),
-					case handle_post_tx(Req, Peer, TX) of
-						ok ->
-							{200, #{}, <<"OK">>, Req};
-						{error_response, {Status, Headers, Body}} ->
-							ar_ignore_registry:remove_temporary(TX#tx.id),
-							{Status, Headers, Body, Req}
-					end
-			end
-	end;
+	handle_post_tx({Req, Pid, json});
+
+%% Accept a new binary-encoded transaction.
+%% POST request to endpoint /tx2.
+handle(<<"POST">>, [<<"tx2">>], Req, Pid) ->
+	handle_post_tx({Req, Pid, binary});
 
 %% Sign and send a tx to the network.
 %% Fetches the wallet by the provided key generated via POST /wallet.
@@ -549,7 +530,8 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					},
 					SignedTX = ar_tx:sign(Format2TX, KeyPair),
 					Peer = ar_http_util:arweave_peer(Req),
-					Reply = ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}),
+					Reply = ar_serialize:jsonify({[{<<"id">>,
+							ar_util:encode(SignedTX#tx.id)}]}),
 					case handle_post_tx(Req2, Peer, SignedTX) of
 						ok ->
 							{200, #{}, Reply, Req2};
@@ -1218,6 +1200,32 @@ handle_get_block(Type, ID, Req, Pid, Encoding) ->
 							end
 					catch _:_ ->
 						{400, #{}, <<"Invalid height.">>, Req}
+					end
+			end
+	end.
+
+handle_post_tx({Req, Pid, Encoding}) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case post_tx_parse_id({Req, Pid, Encoding}) of
+				{error, invalid_hash, Req2} ->
+					{400, #{}, <<"Invalid hash.">>, Req2};
+				{error, tx_already_processed, _TXID, Req2} ->
+					{208, #{}, <<"Transaction already processed.">>, Req2};
+				{error, invalid_json, Req2} ->
+					{400, #{}, <<"Invalid JSON.">>, Req2};
+				{error, body_size_too_large, Req2} ->
+					{413, #{}, <<"Payload too large">>, Req2};
+				{ok, TX} ->
+					Peer = ar_http_util:arweave_peer(Req),
+					case handle_post_tx(Req, Peer, TX) of
+						ok ->
+							{200, #{}, <<"OK">>, Req};
+						{error_response, {Status, Headers, Body}} ->
+							ar_ignore_registry:remove_temporary(TX#tx.id),
+							{Status, Headers, Body, Req}
 					end
 			end
 	end.
@@ -1970,45 +1978,40 @@ is_tx_already_processed(TXID) ->
 			ets:member(node_state, {tx, TXID})
 	end.
 
-post_tx_parse_id({Req, Pid}) ->
-	post_tx_parse_id(check_header, {Req, Pid}).
+post_tx_parse_id({Req, Pid, Encoding}) ->
+	post_tx_parse_id(check_header, {Req, Pid, Encoding}).
 
-post_tx_parse_id(check_header, {Req, Pid}) ->
+post_tx_parse_id(check_header, {Req, Pid, Encoding}) ->
 	case cowboy_req:header(<<"arweave-tx-id">>, Req, not_set) of
 		not_set ->
-			post_tx_parse_id(check_body, {Req, Pid});
+			post_tx_parse_id(read_body, {not_set, Req, Pid, Encoding});
 		EncodedTXID ->
 			case ar_util:safe_decode(EncodedTXID) of
 				{ok, TXID} when byte_size(TXID) =< 32 ->
-					post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, <<>>});
+					post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding});
 				_ ->
 					{error, invalid_hash, Req}
 			end
 	end;
-post_tx_parse_id(check_body, {Req, Pid}) ->
-	{_, Chunk, Req2} = read_body_chunk(Req, Pid, 100, 500),
-	case re:run(Chunk, <<"\"id\":\s*\"(?<ID>[A-Za-z0-9_-]{43})\"">>, [{capture, ['ID']}]) of
-		{match, [Part]} ->
-			TXID = ar_util:decode(binary:part(Chunk, Part)),
-			post_tx_parse_id(check_ignore_list, {TXID, Req2, Pid, Chunk});
-		_ ->
-			post_tx_parse_id(read_body, {not_set, Req2, Pid, <<>>})
-	end;
-post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, FirstChunk}) ->
+post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
 	case is_tx_already_processed(TXID) of
 		true ->
 			{error, tx_already_processed, TXID, Req};
 		false ->
 			ar_ignore_registry:add_temporary(TXID, 5000),
-			post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk})
+			post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
 	end;
-post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk}) ->
+post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
 	ok = ar_semaphore:acquire(post_tx, infinity),
 	Timestamp = erlang:timestamp(),
 	case read_complete_body(Req, Pid) of
-		{ok, SecondChunk, Req2} ->
-			Body = iolist_to_binary([FirstChunk | SecondChunk]),
-			post_tx_parse_id(parse_json, {TXID, Req2, Body, Timestamp});
+		{ok, Body, Req2} ->
+			case Encoding of
+				json ->
+					post_tx_parse_id(parse_json, {TXID, Req2, Body, Timestamp});
+				binary ->
+					post_tx_parse_id(parse_binary, {TXID, Req2, Body, Timestamp})
+			end;
 		{error, body_size_too_large} ->
 			{error, body_size_too_large, Req}
 	end;
@@ -2031,6 +2034,30 @@ post_tx_parse_id(parse_json, {TXID, Req, Body, Timestamp}) ->
 			end,
 			{error, invalid_json, Req};
 		TX ->
+			Time = timer:now_diff(erlang:timestamp(), Timestamp),
+			erlang:put(read_body_time, Time),
+			erlang:put(body_size, byte_size(term_to_binary(TX))),
+			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
+	end;
+post_tx_parse_id(parse_binary, {TXID, Req, Body, Timestamp}) ->
+	case catch ar_serialize:binary_to_tx(Body) of
+		{'EXIT', _} ->
+			case TXID of
+				not_set ->
+					noop;
+				_ ->
+					ar_ignore_registry:remove_temporary(TXID)
+			end,
+			{error, invalid_json, Req};
+		{error, _} ->
+			case TXID of
+				not_set ->
+					noop;
+				_ ->
+					ar_ignore_registry:remove_temporary(TXID)
+			end,
+			{error, invalid_json, Req};
+		{ok, TX} ->
 			Time = timer:now_diff(erlang:timestamp(), Timestamp),
 			erlang:put(read_body_time, Time),
 			erlang:put(body_size, byte_size(term_to_binary(TX))),

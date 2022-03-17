@@ -4,8 +4,9 @@
 
 -module(ar_http_iface_client).
 
--export([send_block_json/3, send_block_binary/3, send_new_tx/2, get_block_shadow/2,
-		get_tx/3, get_txs/3, get_tx_from_remote_peer/2, get_tx_data/2,
+-export([send_block_json/3, send_block_binary/3, send_tx_json/3, send_tx_binary/3,
+		get_block_shadow/2, get_tx/3, get_txs/3, get_tx_from_remote_peer/2,
+		get_tx_data/2,
 		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
 		add_peer/1, get_info/1, get_info/2,
 		get_peers/1, get_time/2, get_height/1, get_block_index/1, get_block_index/2,
@@ -18,18 +19,28 @@
 -include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 
-%% @doc Send a new transaction to an Arweave HTTP node.
-send_new_tx(Peer, TX) ->
-	TXID = TX#tx.id,
-	TXSize = byte_size(TX#tx.data),
+%% @doc Send a JSON-encoded transaction to the given Peer.
+send_tx_json(Peer, TXID, Bin) ->
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
 		path => "/tx",
-		headers => p2p_headers() ++ [{<<"arweave-tx-id">>, ar_util:encode(TXID)}],
-		body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-		connect_timeout => 500,
-		timeout => max(3, min(60, TXSize * 8 div ?TX_PROPAGATION_BITS_PER_SECOND)) * 1000
+		headers => [{<<"arweave-tx-id">>, ar_util:encode(TXID)} | p2p_headers()],
+		body => Bin,
+		connect_timeout => 5000,
+		timeout => 30 * 1000
+	}).
+
+%% @doc Send a binary-encoded transaction to the given Peer.
+send_tx_binary(Peer, TXID, Bin) ->
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/tx2",
+		headers => [{<<"arweave-tx-id">>, ar_util:encode(TXID)} | p2p_headers()],
+		body => Bin,
+		connect_timeout => 5000,
+		timeout => 30 * 1000
 	}).
 
 %% @doc Send the given JSON-encoded block to the given peer.

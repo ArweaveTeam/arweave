@@ -3,6 +3,7 @@
 
 -export([json_struct_to_block/1, block_to_json_struct/1,
 		block_to_binary/1, binary_to_block/1,
+		tx_to_binary/1, binary_to_tx/1,
 		json_struct_to_poa/1, poa_to_json_struct/1,
 		tx_to_json_struct/1, json_struct_to_tx/1, json_struct_to_v1_tx/1,
 		etf_to_wallet_chunk_response/1, wallet_list_to_json_struct/3,
@@ -255,6 +256,16 @@ parse_tx_tags(N, << TagNameSize:16, TagValueSize:16,
 	parse_tx_tags(N - 1, Rest, [{TagName, TagValue} | Tags]);
 parse_tx_tags(_N, _Bin, _Tags) ->
 	{error, invalid_tx_tag_input}.
+
+tx_to_binary(TX) ->
+	Bin = encode_tx(TX),
+	TXSize = byte_size(Bin),
+	<< TXSize:24, Bin/binary >>.
+
+binary_to_tx(<< Size:24, Bin:Size/binary >>) ->
+	parse_tx(Bin);
+binary_to_tx(_Rest) ->
+	{error, invalid_input}.
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->
@@ -897,7 +908,15 @@ test_block_to_binary([Fixture | Fixtures], TXFixtureDir) ->
 test_block_to_binary(B) ->
 	{ok, B2} = binary_to_block(block_to_binary(B)),
 	?assertEqual(B#block{ txs = [] }, B2#block{ txs = [] }),
-	?assertEqual(true, compare_txs(B#block.txs, B2#block.txs)).
+	?assertEqual(true, compare_txs(B#block.txs, B2#block.txs)),
+	lists:foreach(
+		fun	(TX) when is_record(TX, tx)->
+				?assertEqual({ok, TX}, binary_to_tx(tx_to_binary(TX)));
+			(_TXID) ->
+				ok
+		end,
+		B#block.txs
+	).
 
 compare_txs([TXID | TXs], [#tx{ id = TXID } | TXs2]) ->
 	compare_txs(TXs, TXs2);
