@@ -7,6 +7,7 @@
 		binary_to_block_announcement_response/1, block_announcement_response_to_binary/1,
 		tx_to_binary/1, binary_to_tx/1,
 		poa_to_binary/1, binary_to_poa/1,
+		block_index_to_binary/1, binary_to_block_index/1,
 		json_struct_to_poa/1, poa_to_json_struct/1,
 		tx_to_json_struct/1, json_struct_to_tx/1, json_struct_to_v1_tx/1,
 		etf_to_wallet_chunk_response/1, wallet_list_to_json_struct/3,
@@ -344,6 +345,27 @@ binary_to_poa(<< ChunkSize:24, Chunk:ChunkSize/binary,
 	{ok, #{ chunk => Chunk, data_path => DataPath, tx_path => TXPath,
 			packing => Packing2 }};
 binary_to_poa(_Rest) ->
+	{error, invalid_input}.
+
+block_index_to_binary(BI) ->
+	block_index_to_binary(BI, []).
+
+block_index_to_binary([], Encoded) ->
+	iolist_to_binary(Encoded);
+block_index_to_binary([{BH, WeaveSize, TXRoot} | BI], Encoded) ->
+	block_index_to_binary(BI,
+			[<< BH:48/binary, (encode_int(WeaveSize, 16))/binary,
+				(encode_bin(TXRoot, 8))/binary >> | Encoded]).
+
+binary_to_block_index(Bin) ->
+	binary_to_block_index(Bin, []).
+
+binary_to_block_index(<<>>, BI) ->
+	{ok, BI};
+binary_to_block_index(<< BH:48/binary, WeaveSizeSize:16, WeaveSize:(WeaveSizeSize * 8),
+		TXRootSize:8, TXRoot:TXRootSize/binary, Rest/binary >>, BI) ->
+	binary_to_block_index(Rest, [{BH, WeaveSize, TXRoot} | BI]);
+binary_to_block_index(_Rest, _BI) ->
 	{error, invalid_input}.
 
 %% @doc Take a JSON struct and produce JSON string.
@@ -1040,6 +1062,17 @@ poa_to_binary_test() ->
 	Proof3 = Proof2#{ data_path => crypto:strong_rand_bytes(1024),
 			packing => spora_2_5, tx_path => crypto:strong_rand_bytes(1024) },
 	?assertEqual({ok, Proof3}, binary_to_poa(poa_to_binary(Proof3))).
+
+block_index_to_binary_test() ->
+	lists:foreach(
+		fun(BI) ->
+			?assertEqual({ok, BI}, binary_to_block_index(block_index_to_binary(BI)))
+		end,
+		[[], [{crypto:strong_rand_bytes(48), rand:uniform(1000),
+				crypto:strong_rand_bytes(32)}],
+			[{crypto:strong_rand_bytes(48), 0, <<>>}],
+			[{crypto:strong_rand_bytes(48), rand:uniform(1000),
+				crypto:strong_rand_bytes(32)} || _ <- lists:seq(1, 1000)]]).
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->

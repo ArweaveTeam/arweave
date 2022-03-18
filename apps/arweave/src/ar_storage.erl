@@ -528,9 +528,9 @@ read_tx_data(TX) ->
 %% Write a block index to disk for retreival later (in emergencies).
 write_block_index(BI) ->
 	?LOG_INFO([{event, writing_block_index_to_disk}]),
-	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(BI)),
+	Bin = ar_serialize:block_index_to_binary(BI),
 	File = block_index_filepath(),
-	case write_file_atomic(File, JSON) of
+	case write_file_atomic(File, Bin) of
 		ok ->
 			ok;
 		{error, Reason} = Error ->
@@ -585,11 +585,17 @@ write_wallet_list(ID, RewardAddr, IsRewardAddrNew, WalletList) ->
 read_block_index() ->
 	case file:read_file(block_index_filepath()) of
 		{ok, Binary} ->
-			case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Binary)) of
-				[H | _] = HL when is_binary(H) ->
-					[{BH, not_set, not_set} || BH <- HL];
-				BI ->
-					BI
+			case ar_serialize:binary_to_block_index(Binary) of
+				{ok, BI} ->
+					BI;
+				{error, _} ->
+					case ar_serialize:json_struct_to_block_index(
+							ar_serialize:dejsonify(Binary)) of
+						[H | _] = HL when is_binary(H) ->
+							[{BH, not_set, not_set} || BH <- HL];
+						BI ->
+							BI
+					end
 			end;
 		Error ->
 			Error
@@ -1026,7 +1032,8 @@ test_store_and_retrieve_block() ->
 store_and_retrieve_block_block_index_test() ->
 	RandomEntry =
 		fun() ->
-			{crypto:strong_rand_bytes(32), rand:uniform(10000), crypto:strong_rand_bytes(32)}
+			{crypto:strong_rand_bytes(48), rand:uniform(10000),
+					crypto:strong_rand_bytes(32)}
 		end,
 	BI = [RandomEntry() || _ <- lists:seq(1, 100)],
 	write_block_index(BI),

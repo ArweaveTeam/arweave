@@ -557,7 +557,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
 			end
 	end;
 
-%% Return the current hash list held by the node.
+%% Return the current JSON-encoded hash list held by the node.
 %% GET request to endpoint /block_index.
 handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
@@ -574,6 +574,19 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 					ar_serialize:block_index_to_json_struct(format_bi_for_peer(BI, Req))
 				),
 			Req}
+	end;
+
+%% Return the current binary-encoded block index held by the node.
+%% GET request to endpoint /block_index2.
+handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
+	ok = ar_semaphore:acquire(get_block_index, infinity),
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			BI = ar_node:get_block_index(),
+			Bin = ar_serialize:block_index_to_binary(BI),
+			{200, #{}, Bin, Req}
 	end;
 
 handle(<<"GET">>, [<<"hash_list">>, From, To], Req, _Pid) ->

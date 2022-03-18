@@ -198,23 +198,33 @@ get_wallet_list(Peer, H) ->
 		_ -> unavailable
 	end.
 
-%% @doc Get a block hash list (by its hash) from the external peer.
 get_block_index([]) ->
 	unavailable;
 get_block_index(Peers) ->
 	Peer = lists:nth(rand:uniform(min(5, length(Peers))), Peers),
+	Encoding = case ar_peers:get_peer_release(Peer) >= 42 of true -> binary;
+			false -> json end,
 	ar:console("Downloading block index from ~s.~n", [ar_util:format_peer(Peer)]),
 	Reply =
 		ar_http:req(#{
 			method => get,
 			peer => Peer,
-			path => "/hash_list",
+			path => case Encoding of json -> "/block_index";
+					binary -> "/block_index2" end,
 			timeout => 300 * 1000,
 			headers => p2p_headers()
 		}),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			case catch ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Body)) of
+			Decoded =
+				case Encoding of
+					json ->
+						catch ar_serialize:json_struct_to_block_index(
+								ar_serialize:dejsonify(Body));
+					binary ->
+						catch ar_serialize:binary_to_block_index(Body)
+				end,
+			case Decoded of
 				{'EXIT', Reason} ->
 					ar:console("Failed to parse block index.~n", []),
 					?LOG_WARNING([
@@ -223,6 +233,17 @@ get_block_index(Peers) ->
 						{reason, io_lib:format("~p", [Reason])}
 					]),
 					get_block_index(Peers -- [Peer]);
+				{error, Reason} ->
+					ar:console("Failed to parse block index.~n", []),
+					?LOG_WARNING([
+						{event, failed_to_parse_block_index_from_peer},
+						{peer, ar_util:format_peer(Peer)},
+						{reason, io_lib:format("~p", [Reason])}
+					]),
+					get_block_index(Peers -- [Peer]);
+				{ok, BI} ->
+					ar:console("Downloaded block index successfully.~n", []),
+					BI;
 				BI ->
 					ar:console("Downloaded block index successfully.~n", []),
 					BI
