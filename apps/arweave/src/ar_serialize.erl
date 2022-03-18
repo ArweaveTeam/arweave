@@ -6,6 +6,7 @@
 		block_announcement_to_binary/1, binary_to_block_announcement/1,
 		binary_to_block_announcement_response/1, block_announcement_response_to_binary/1,
 		tx_to_binary/1, binary_to_tx/1,
+		poa_to_binary/1, binary_to_poa/1,
 		json_struct_to_poa/1, poa_to_json_struct/1,
 		tx_to_json_struct/1, json_struct_to_tx/1, json_struct_to_v1_tx/1,
 		etf_to_wallet_chunk_response/1, wallet_list_to_json_struct/3,
@@ -325,6 +326,25 @@ encode_missing_tx_indices([], Encoded) ->
 	iolist_to_binary(Encoded);
 encode_missing_tx_indices([Index | Indices], Encoded) ->
 	encode_missing_tx_indices(Indices, [<< Index:16 >> | Encoded]).
+
+poa_to_binary(#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath,
+		packing := Packing }) ->
+	Packing2 = case Packing of unpacked -> <<"unpacked">>;
+			spora_2_5 -> <<"spora_2_5">> end,
+	<< (encode_bin(Chunk, 24))/binary, (encode_bin(TXPath, 24))/binary,
+			(encode_bin(DataPath, 24))/binary, (encode_bin(Packing2, 8))/binary >>.
+
+binary_to_poa(<< ChunkSize:24, Chunk:ChunkSize/binary,
+		TXPathSize:24, TXPath:TXPathSize/binary,
+		DataPathSize:24, DataPath:DataPathSize/binary,
+		PackingSize:8, Packing:PackingSize/binary >>)
+		when Packing == <<"unpacked">> orelse Packing == <<"spora_2_5">> ->
+	Packing2 = case Packing of <<"unpacked">> -> unpacked;
+			<<"spora_2_5">> -> spora_2_5 end,
+	{ok, #{ chunk => Chunk, data_path => DataPath, tx_path => TXPath,
+			packing => Packing2 }};
+binary_to_poa(_Rest) ->
+	{error, invalid_input}.
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->
@@ -1010,6 +1030,16 @@ block_announcement_response_to_binary_test() ->
 			missing_tx_indices = lists:seq(0, 999) },
 	?assertEqual({ok, A2}, binary_to_block_announcement_response(
 			block_announcement_response_to_binary(A2))).
+
+poa_to_binary_test() ->
+	Proof = #{ chunk => crypto:strong_rand_bytes(1), data_path => <<>>,
+			tx_path => <<>>, packing => unpacked },
+	?assertEqual({ok, Proof}, binary_to_poa(poa_to_binary(Proof))),
+	Proof2 = Proof#{ chunk => crypto:strong_rand_bytes(256 * 1024) },
+	?assertEqual({ok, Proof2}, binary_to_poa(poa_to_binary(Proof2))),
+	Proof3 = Proof2#{ data_path => crypto:strong_rand_bytes(1024),
+			packing => spora_2_5, tx_path => crypto:strong_rand_bytes(1024) },
+	?assertEqual({ok, Proof3}, binary_to_poa(poa_to_binary(Proof3))).
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->

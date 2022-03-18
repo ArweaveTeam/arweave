@@ -318,71 +318,10 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pi
 	end;
 
 handle(<<"GET">>, [<<"chunk">>, OffsetBinary], Req, _Pid) ->
-	case catch binary_to_integer(OffsetBinary) of
-		Offset when is_integer(Offset) ->
-			case << Offset:(?NOTE_SIZE * 8) >> of
-				%% A positive number represented by =< ?NOTE_SIZE bytes.
-				<< Offset:(?NOTE_SIZE * 8) >> ->
-					RequestedPacking =
-						case cowboy_req:header(<<"x-packing">>, Req, not_set) of
-							not_set ->
-								unpacked;
-							<<"unpacked">> ->
-								unpacked;
-							<<"spora_2_5">> ->
-								spora_2_5;
-							_ ->
-								any
-						end,
-					IsBucketBasedOffset =
-						case cowboy_req:header(<<"x-bucket-based-offset">>, Req, not_set) of
-							not_set ->
-								false;
-							_ ->
-								true
-						end,
-					{ReadPacking, CheckRecords} =
-						case ar_sync_record:is_recorded(Offset, ar_data_sync) of
-							false ->
-								{none, {reply, {404, #{}, <<>>, Req}}};
-							{true, RequestedPacking} ->
-								ok = ar_semaphore:acquire(get_chunk, infinity),
-								{RequestedPacking, ok};
-							{true, Packing} when RequestedPacking == any ->
-								ok = ar_semaphore:acquire(get_chunk, infinity),
-								{Packing, ok};
-							{true, _} ->
-								ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
-								{RequestedPacking, ok}
-						end,
-					case CheckRecords of
-						{reply, Reply} ->
-							Reply;
-						ok ->
-							Args = #{ packing => ReadPacking,
-									bucket_based_offset => IsBucketBasedOffset },
-							case ar_data_sync:get_chunk(Offset, Args) of
-								{ok, Proof} ->
-									Proof2 = Proof#{ packing => ReadPacking },
-									Reply =
-										jiffy:encode(
-											ar_serialize:chunk_proof_to_json_map(Proof2)
-										),
-									{200, #{}, Reply, Req};
-								{error, chunk_not_found} ->
-									{404, #{}, <<>>, Req};
-								{error, not_joined} ->
-									not_joined(Req);
-								{error, failed_to_read_chunk} ->
-									{500, #{}, <<>>, Req}
-							end
-					end;
-				_ ->
-					{400, #{}, jiffy:encode(#{ error => offset_out_of_bounds }), Req}
-			end;
-		_ ->
-			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
-	end;
+	handle_get_chunk(OffsetBinary, Req, json);
+
+handle(<<"GET">>, [<<"chunk2">>, OffsetBinary], Req, _Pid) ->
+	handle_get_chunk(OffsetBinary, Req, binary);
 
 handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 	case ar_node:is_joined() of
@@ -1353,6 +1292,78 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 			{200, #{}, Binary, Req};
 		{error, timeout} ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+	end.
+
+handle_get_chunk(OffsetBinary, Req, Encoding) ->
+	case catch binary_to_integer(OffsetBinary) of
+		Offset when is_integer(Offset) ->
+			case << Offset:(?NOTE_SIZE * 8) >> of
+				%% A positive number represented by =< ?NOTE_SIZE bytes.
+				<< Offset:(?NOTE_SIZE * 8) >> ->
+					RequestedPacking =
+						case cowboy_req:header(<<"x-packing">>, Req, not_set) of
+							not_set ->
+								unpacked;
+							<<"unpacked">> ->
+								unpacked;
+							<<"spora_2_5">> ->
+								spora_2_5;
+							_ ->
+								any
+						end,
+					IsBucketBasedOffset =
+						case cowboy_req:header(<<"x-bucket-based-offset">>, Req, not_set) of
+							not_set ->
+								false;
+							_ ->
+								true
+						end,
+					{ReadPacking, CheckRecords} =
+						case ar_sync_record:is_recorded(Offset, ar_data_sync) of
+							false ->
+								{none, {reply, {404, #{}, <<>>, Req}}};
+							{true, RequestedPacking} ->
+								ok = ar_semaphore:acquire(get_chunk, infinity),
+								{RequestedPacking, ok};
+							{true, Packing} when RequestedPacking == any ->
+								ok = ar_semaphore:acquire(get_chunk, infinity),
+								{Packing, ok};
+							{true, _} ->
+								ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
+								{RequestedPacking, ok}
+						end,
+					case CheckRecords of
+						{reply, Reply} ->
+							Reply;
+						ok ->
+							Args = #{ packing => ReadPacking,
+									bucket_based_offset => IsBucketBasedOffset },
+							case ar_data_sync:get_chunk(Offset, Args) of
+								{ok, Proof} ->
+									Proof2 = Proof#{ packing => ReadPacking },
+									Reply =
+										case Encoding of
+											json ->
+												jiffy:encode(
+													ar_serialize:chunk_proof_to_json_map(
+															Proof2));
+											binary ->
+												ar_serialize:poa_to_binary(Proof2)
+										end,
+									{200, #{}, Reply, Req};
+								{error, chunk_not_found} ->
+									{404, #{}, <<>>, Req};
+								{error, not_joined} ->
+									not_joined(Req);
+								{error, failed_to_read_chunk} ->
+									{500, #{}, <<>>, Req}
+							end
+					end;
+				_ ->
+					{400, #{}, jiffy:encode(#{ error => offset_out_of_bounds }), Req}
+			end;
+		_ ->
+			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
 	end.
 
 check_if_chunk_data_root_exists(Req) ->

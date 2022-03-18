@@ -11,6 +11,7 @@ end).
 -define(RPM_BY_PATH(Path, DefaultPathLimit), fun() ->
 	case Path of
 		[<<"chunk">> | _]            -> {chunk,            12000};
+		[<<"chunk2">> | _]           -> {chunk,            12000};
 		[<<"data_sync_record">> | _] -> {data_sync_record, 10000};
 		_ ->                            {default,          DefaultPathLimit}
 	end
@@ -19,6 +20,7 @@ end).
 -define(RPM_BY_PATH(Path, DefaultPathLimit), fun() ->
 	case Path of
 		[<<"chunk">> | _]            -> {chunk,            12000}; % ~50 MB/s.
+		[<<"chunk2">> | _]           -> {chunk,            12000}; % ~50 MB/s.
 		[<<"data_sync_record">> | _] -> {data_sync_record, 40};
 		_ ->                            {default,          DefaultPathLimit}
 	end

@@ -527,7 +527,10 @@ handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop}, State
 			Self = self(),
 			spawn_link(
 				fun() ->
-					case ar_http_iface_client:get_chunk(Peer, Byte2, any) of
+					Fun = case ar_peers:get_peer_release(Peer) >= 42 of
+							true -> fun ar_http_iface_client:get_chunk_binary/3;
+							false -> fun ar_http_iface_client:get_chunk_json/3 end,
+					case Fun(Peer, Byte2, any) of
 						{ok, Proof, Time, TransferSize} ->
 							gen_server:cast(Self, {store_fetched_chunk, Peer, Time,
 									TransferSize, Byte2 - 1, RightBound, Proof,
