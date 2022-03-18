@@ -5,6 +5,7 @@
 -module(ar_http_iface_client).
 
 -export([send_block_json/3, send_block_binary/3, send_tx_json/3, send_tx_binary/3,
+		send_block_announcement/2,
 		get_block_shadow/2, get_tx/3, get_txs/3, get_tx_from_remote_peer/2,
 		get_tx_data/2,
 		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
@@ -43,6 +44,17 @@ send_tx_binary(Peer, TXID, Bin) ->
 		timeout => 30 * 1000
 	}).
 
+%% @doc Announce a block to Peer.
+send_block_announcement(Peer, Announcement) ->
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/block_announcement",
+		headers => p2p_headers(),
+		body => ar_serialize:block_announcement_to_binary(Announcement),
+		timeout => 5 * 1000
+	}).
+
 %% @doc Send the given JSON-encoded block to the given peer.
 send_block_json(Peer, H, Payload) ->
 	ar_http:req(#{
@@ -51,6 +63,7 @@ send_block_json(Peer, H, Payload) ->
 		path => "/block",
 		headers => [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
 		body => Payload,
+		connect_timeout => 5000,
 		timeout => 20 * 1000
 	}).
 

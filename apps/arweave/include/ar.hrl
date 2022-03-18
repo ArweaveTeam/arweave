@@ -321,6 +321,23 @@
 	chunk = <<>>		% The data chunk.
 }).
 
+%% @doc A compact announcement of a new block gossiped to peers. Peers
+%% who have not received this block yet and decide to receive it from us,
+%% should reply with a #block_announcement_response.
+-record(block_announcement, {
+	indep_hash,
+	previous_block,
+	chunk_offset,
+	tx_prefixes = [] % 8 byte prefixes of transaction identifiers.
+}).
+
+%% @doc A reply to a block announcement when we are willing to receive this
+%% block from the announcing peer.
+-record(block_announcement_response, {
+	missing_chunk = false,
+	missing_tx_indices = [] % Missing transactions' indices, 0 =<, =< 999.
+}).
+
 %% @doc A full block - the txs field is a list of tx records, or a block shadow -
 %% the txs field is a list of transaction identifiers.
 %% @end
@@ -335,7 +352,7 @@
 	hash,									% Mining solution hash of the block, must satisfy the
 											% mining difficulty.
 	indep_hash,								% The block identifier.
-	txs,									% A list of tx records in full blocks, or a list of TX
+	txs = [],								% A list of tx records in full blocks, or a list of TX
 											% identifiers in block shadows.
 	tx_root,								% Merkle root of the tree of Merkle roots of
 											% block's transactions' data.

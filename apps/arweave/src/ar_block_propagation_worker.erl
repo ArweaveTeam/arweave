@@ -29,24 +29,49 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
-handle_cast({send_block, SendFun, From}, State) ->
+handle_cast({send_block, SendFun, RetryCount, From}, State) ->
 	case SendFun() of
-		{ok, {{<<"412">>, _}, _, _, _, _}} ->
-			ar_util:cast_after(5000, self(), {send_block_retry, SendFun, From}),
+		{ok, {{<<"412">>, _}, _, _, _, _}} when RetryCount > 0 ->
+			ar_util:cast_after(2000, self(),
+					{send_block, SendFun, RetryCount - 1, From}),
 			{noreply, State};
 		_ ->
 			From ! {worker_sent_block, self()},
 			{noreply, State}
 	end;
 
-handle_cast({send_block_retry, SendFun, From}, State) ->
-	SendFun(),
-	From ! {worker_sent_block, self()},
+handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From}, State) ->
+	case SendAnnouncementFun() of
+		{ok, {{<<"412">>, _}, _, _, _, _}} when RetryCount > 0 ->
+			ar_util:cast_after(2000, self(),
+					{send_block2, Peer, SendAnnouncementFun, SendFun,
+							RetryCount - 1, From});
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			case catch ar_serialize:binary_to_block_announcement_response(Body) of
+				{'EXIT', Reason} ->
+					ar_events:send(peer, {bad_response,
+							{Peer, block_announcement, Reason}}),
+					From ! {worker_sent_block, self()};
+				{error, Reason} ->
+					ar_events:send(peer, {bad_response,
+							{Peer, block_announcement, Reason}}),
+					From ! {worker_sent_block, self()};
+				{ok, #block_announcement_response{ missing_tx_indices = L }} ->
+					SendFun(L),
+					From ! {worker_sent_block, self()}
+			end;
+		_ ->	%% 208 (the peer has already received this block) or
+				%% an unexpected response.
+			From ! {worker_sent_block, self()}
+	end,
 	{noreply, State};
 
 handle_cast(Msg, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
+
+handle_info({gun_down, _PID, http, closed, _, _}, State) ->
+	{noreply, State};
 
 handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),

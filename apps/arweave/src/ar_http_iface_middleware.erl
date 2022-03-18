@@ -440,6 +440,39 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 			end
 	end;
 
+%% Accept an announcement of a block. Reply 412 (no previous block),
+%% 200 (optionally specifying missing transactions and chunk in the response)
+%% or 208 (already processing the block).
+handle(<<"POST">>, [<<"block_announcement">>], Req, Pid) ->
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case catch ar_serialize:binary_to_block_announcement(Body) of
+				{ok, #block_announcement{ indep_hash = H, previous_block = PrevH,
+						tx_prefixes = Prefixes }} ->
+					case ar_ignore_registry:member(H) of
+						true ->
+							{208, #{}, <<>>, Req};
+						false ->
+							case ar_node:get_block_shadow_from_cache(PrevH) of
+								not_found ->
+									{412, #{}, <<>>, Req};
+								_ ->
+									Indices = collect_missing_tx_indices(Prefixes),
+									Response = #block_announcement_response{
+											missing_chunk = true,
+											missing_tx_indices = Indices },
+									{200, #{}, ar_serialize:block_announcement_response_to_binary(Response), Req2}
+							end
+					end;
+				{'EXIT', _Reason} ->
+					{400, #{}, <<>>, Req2};
+				{error, _Reason} ->
+					{400, #{}, <<>>, Req2}
+			end;
+		{error, body_size_too_large} ->
+			{400, #{}, <<>>, Req}
+	end;
+
 %% Accept a JSON-encoded block with Base64Url encoded fields.
 handle(<<"POST">>, [<<"block">>], Req, Pid) ->
 	post_block(request, {Req, Pid, json}, erlang:timestamp());
@@ -1530,6 +1563,19 @@ val_for_key(K, L) ->
 	case lists:keyfind(K, 1, L) of
 		false -> false;
 		{K, V} -> V
+	end.
+
+collect_missing_tx_indices(Prefixes) ->
+	collect_missing_tx_indices(Prefixes, [], 0).
+
+collect_missing_tx_indices([], Indices, _N) ->
+	lists:reverse(Indices);
+collect_missing_tx_indices([Prefix | Prefixes], Indices, N) ->
+	case ets:member(tx_prefixes, Prefix) of
+		false ->
+			collect_missing_tx_indices(Prefixes, [N | Indices], N + 1);
+		true ->
+			collect_missing_tx_indices(Prefixes, Indices, N + 1)
 	end.
 
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,

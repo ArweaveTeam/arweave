@@ -11,7 +11,8 @@
 
 -export([start_link/0, calculate_delay/1]).
 
--export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1]).
+-export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1,
+		tx_id_prefix/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -33,6 +34,9 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+tx_id_prefix(TXID) ->
+	binary:part(TXID, 0, 8).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -128,6 +132,7 @@ load_mempool() ->
 				maps:map(
 					fun(TXID, {TX, Status}) ->
 						ets:insert(node_state, {{tx, TXID}, TX}),
+						ets:insert(tx_prefixes, {tx_id_prefix(TXID)}),
 						Status
 					end,
 					TXs
@@ -343,6 +348,7 @@ handle_info({event, tx, {new, TX, _Source}}, State) ->
 			Q2 = gb_sets:add_element({{Utility, Timestamp}, TXID}, Q),
 			MempoolSize2 = increase_mempool_size(MempoolSize, TX),
 			ets:insert(node_state, {{tx, TXID}, TX}),
+			ets:insert(tx_prefixes, {tx_id_prefix(TXID)}),
 			{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2,
 					MempoolSize2),
 			ets:insert(node_state, [
@@ -615,6 +621,7 @@ may_be_drop_low_priority_txs(Map, Set, Q, {MempoolHeaderSize, MempoolDataSize})
 	may_be_drop_from_disk_pool(TX),
 	ets:delete(node_state, {tx, TXID}),
 	ets:delete(node_state, {tx_timestamp, TXID}),
+	ets:delete(tx_prefixes, {tx_id_prefix(TXID)}),
 	may_be_drop_low_priority_txs(Map2, Set2, Q2, MempoolSize2);
 may_be_drop_low_priority_txs(Map, Set, Q, {MempoolHeaderSize, MempoolDataSize})
 		when MempoolDataSize > ?MEMPOOL_DATA_SIZE_LIMIT ->
@@ -636,6 +643,7 @@ may_be_drop_low_priority_txs(Map, Iterator, Set, Q, {MempoolHeaderSize, MempoolD
 			may_be_drop_from_disk_pool(TX),
 			ets:delete(node_state, {tx, TXID}),
 			ets:delete(node_state, {tx_timestamp, TXID}),
+			ets:delete(tx_prefixes, {tx_id_prefix(TXID)}),
 			may_be_drop_low_priority_txs(Map2, Iterator2, Set2, Q2, MempoolSize2);
 		false ->
 			may_be_drop_low_priority_txs(Map, Iterator2, Set, Q,
@@ -651,9 +659,13 @@ decrease_mempool_size({MempoolHeaderSize, MempoolDataSize}, TX) ->
 may_be_drop_from_disk_pool(#tx{ format = 1 }) ->
 	ok;
 may_be_drop_from_disk_pool(TX) ->
-	ar_data_sync:maybe_drop_data_root_from_disk_pool(TX#tx.data_root, TX#tx.data_size, TX#tx.id).
+	ar_data_sync:maybe_drop_data_root_from_disk_pool(TX#tx.data_root, TX#tx.data_size,
+			TX#tx.id).
 
 drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize) ->
+	drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize, true).
+
+drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize, RemoveTXPrefixes) ->
 	{TXs2, Set2, Q2, DroppedTXMap} =
 		lists:foldl(
 			fun(TX, {Acc, SetAcc, QAcc, DroppedAcc}) ->
@@ -687,7 +699,13 @@ drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize) ->
 	maps:map(
 		fun(TXID, _) ->
 			ets:delete(node_state, {tx, TXID}),
-			ets:delete(node_state, {tx_timestamp, TXID})
+			ets:delete(node_state, {tx_timestamp, TXID}),
+			case RemoveTXPrefixes of
+				true ->
+					ets:delete(tx_prefixes, tx_id_prefix(TXID));
+				false ->
+					ok
+			end
 		end,
 		DroppedTXMap
 	).
@@ -978,7 +996,7 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
 	[{tx_propagation_queue, Q}] = ets:lookup(node_state, tx_propagation_queue),
-	drop_txs(BlockTXs, Map, Set, Q, MempoolSize),
+	drop_txs(BlockTXs, Map, Set, Q, MempoolSize, false),
 	[{tx_statuses, Map2}] = ets:lookup(node_state, tx_statuses),
 	gen_server:cast(self(), {filter_mempool, maps:iterator(Map2)}),
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
@@ -1181,7 +1199,8 @@ add_tx_to_mempool(#tx{ id = TXID } = TX, Status) ->
 	{MempoolSize2, Set2, Q2} =
 		case maps:get(TXID, Map, not_found) of
 			not_found ->
-				ets:insert(node_state, {{tx, TX#tx.id}, TX}),
+				ets:insert(node_state, {{tx, TXID}, TX}),
+				ets:insert(tx_prefixes, {tx_id_prefix(TXID)}),
 				{increase_mempool_size(MempoolSize, TX),
 						gb_sets:add_element({Utility, TXID, Status}, Set),
 						gb_sets:add_element({Utility, TXID}, Q)};

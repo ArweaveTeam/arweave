@@ -59,6 +59,7 @@ init([]) ->
 	ets:new(ar_tx_blacklist_pending_restore_headers,
 		[ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(block_cache, [set, public, named_table]),
+	ets:new(tx_prefixes, [set, public, named_table]),
 	ets:new(node_state, [set, public, named_table]),
 	ets:new(ar_chunk_storage, [ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),

@@ -3,6 +3,8 @@
 
 -export([json_struct_to_block/1, block_to_json_struct/1,
 		block_to_binary/1, binary_to_block/1,
+		block_announcement_to_binary/1, binary_to_block_announcement/1,
+		binary_to_block_announcement_response/1, block_announcement_response_to_binary/1,
 		tx_to_binary/1, binary_to_tx/1,
 		json_struct_to_poa/1, poa_to_json_struct/1,
 		tx_to_json_struct/1, json_struct_to_tx/1, json_struct_to_v1_tx/1,
@@ -15,17 +17,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
-%% The total payload size of the transactions included in the
-%% block payload. Once the limit is reached, include only transaction
-%% identifiers. Striking a balance between the gossiped payload size
-%% and the risk to run into a situation where many recipients won't have
-%% the transactions and thus delay block application.
--ifdef(DEBUG).
--define(PACK_TRANSACTIONS_LIMIT, (100 * 1024)).
--else.
--define(PACK_TRANSACTIONS_LIMIT, (500 * 1024 * 1024)).
--endif.
 
 block_to_binary(#block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
 		nonce = Nonce, height = Height, diff = Diff, cumulative_diff = CDiff,
@@ -63,7 +54,7 @@ block_to_binary(#block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
 			(encode_int(ScheduledRateDividend, 8))/binary,
 			(encode_int(ScheduledRateDivisor, 8))/binary, (encode_int(Option, 8))/binary,
 			(encode_bin(Chunk, 24))/binary, (encode_bin(TXPath, 24))/binary,
-			(encode_bin(DataPath, 24))/binary, (encode_tags(Tags))/binary,
+			(encode_bin(DataPath, 24))/binary, (encode_bin_list(Tags, 16, 16))/binary,
 			(encode_transactions(TXs))/binary >>.
 
 encode_int(undefined, SizeBits) ->
@@ -77,29 +68,26 @@ encode_bin(undefined, SizeBits) ->
 encode_bin(Bin, SizeBits) ->
 	<< (byte_size(Bin)):SizeBits, Bin/binary >>.
 
-encode_tags(Tags) ->
-	encode_tags(Tags, [], 0).
+encode_bin_list(Tags, LenBits, ElemSizeBits) ->
+	encode_bin_list(Tags, [], 0, LenBits, ElemSizeBits).
 
-encode_tags([], Encoded, N) ->
-	<< N:16, (iolist_to_binary(Encoded))/binary >>;
-encode_tags([Tag | Tags], Encoded, N) ->
-	encode_tags(Tags, [encode_bin(Tag, 16) | Encoded], N + 1).
+encode_bin_list([], Encoded, N, LenBits, _ElemSizeBits) ->
+	<< N:LenBits, (iolist_to_binary(Encoded))/binary >>;
+encode_bin_list([Tag | Tags], Encoded, N, LenBits, ElemSizeBits) ->
+	encode_bin_list(Tags, [encode_bin(Tag, ElemSizeBits) | Encoded], N + 1, LenBits,
+			ElemSizeBits).
 
 encode_transactions(TXs) ->
-	encode_transactions(TXs, [], 0, 0).
+	encode_transactions(TXs, [], 0).
 
-encode_transactions([], Encoded, N, _Size) ->
+encode_transactions([], Encoded, N) ->
 	<< N:16, (iolist_to_binary(Encoded))/binary >>;
-encode_transactions([<< TXID:32/binary >> | TXs], Encoded, N, Size) ->
-	encode_transactions(TXs, [<< 32:24, TXID:32/binary >> | Encoded], N + 1, Size);
-encode_transactions([TX | TXs], Encoded, N, Size)
-		when Size >= ?PACK_TRANSACTIONS_LIMIT ->
-	encode_transactions(TXs, [<< 32:24, (TX#tx.id):32/binary >> | Encoded], N + 1, Size);
-encode_transactions([TX | TXs], Encoded, N, Size) ->
+encode_transactions([<< TXID:32/binary >> | TXs], Encoded, N) ->
+	encode_transactions(TXs, [<< 32:24, TXID:32/binary >> | Encoded], N + 1);
+encode_transactions([TX | TXs], Encoded, N) ->
 	Bin = encode_tx(TX),
 	TXSize = byte_size(Bin),
-	encode_transactions(TXs, [<< TXSize:24, Bin/binary >> | Encoded], N + 1,
-			Size + TXSize).
+	encode_transactions(TXs, [<< TXSize:24, Bin/binary >> | Encoded], N + 1).
 
 encode_tx(#tx{ format = Format, id = TXID, last_tx = LastTX, owner = Owner,
 		tags = Tags, target = Target, quantity = Quantity, data = Data,
@@ -266,6 +254,77 @@ binary_to_tx(<< Size:24, Bin:Size/binary >>) ->
 	parse_tx(Bin);
 binary_to_tx(_Rest) ->
 	{error, invalid_input}.
+
+block_announcement_to_binary(#block_announcement{ indep_hash = H,
+		previous_block = PrevH, tx_prefixes = L, chunk_offset = O }) ->
+	<< H:48/binary, PrevH:48/binary, (encode_int(O, 8))/binary,
+			(encode_tx_prefixes(L))/binary >>.
+
+encode_tx_prefixes(L) ->
+	<< (length(L)):16, (encode_tx_prefixes(L, []))/binary >>.
+
+encode_tx_prefixes([], Encoded) ->
+	iolist_to_binary(Encoded);
+encode_tx_prefixes([Prefix | Prefixes], Encoded) ->
+	encode_tx_prefixes(Prefixes, [<< Prefix:8/binary >> | Encoded]).
+
+binary_to_block_announcement(<< H:48/binary, PrevH:48/binary,
+		OffsetSize:8, Offset:(OffsetSize * 8), N:16, Rest/binary >>) ->
+	Offset2 = case OffsetSize of 0 -> undefined; _ -> Offset end,
+	case parse_tx_prefixes(N, Rest) of
+		{error, Reason} ->
+			{error, Reason};
+		{ok, Prefixes} ->
+			{ok, #block_announcement{ indep_hash = H, previous_block = PrevH,
+					chunk_offset = Offset2, tx_prefixes = Prefixes }}
+	end;
+binary_to_block_announcement(_Rest) ->
+	{error, invalid_input}.
+
+parse_tx_prefixes(N, Bin) ->
+	parse_tx_prefixes(N, Bin, []).
+
+parse_tx_prefixes(0, <<>>, Prefixes) ->
+	{ok, Prefixes};
+parse_tx_prefixes(N, << Prefix:8/binary, Rest/binary >>, Prefixes) when N > 0 ->
+	parse_tx_prefixes(N - 1, Rest, [Prefix | Prefixes]);
+parse_tx_prefixes(_N, _Rest, _Prefixes) ->
+	{error, invalid_tx_prefixes_input}.
+
+binary_to_block_announcement_response(<< ChunkMissing:8, Rest/binary >>)
+		when ChunkMissing == 1 orelse ChunkMissing == 0 ->
+	ChunkMissing2 = case ChunkMissing of 1 -> true; _ -> false end,
+	case parse_missing_tx_indices(Rest) of
+		{ok, Indices} ->
+			{ok, #block_announcement_response{ missing_chunk = ChunkMissing2,
+					missing_tx_indices = Indices }};
+		{error, Reason} ->
+			{error, Reason}
+	end;
+binary_to_block_announcement_response(_Rest) ->
+	{error, invalid_block_announcement_response_input}.
+
+parse_missing_tx_indices(Bin) ->
+	parse_missing_tx_indices(Bin, []).
+
+parse_missing_tx_indices(<<>>, Indices) ->
+	{ok, Indices};
+parse_missing_tx_indices(<< Index:16, Rest/binary >>, Indices) ->
+	parse_missing_tx_indices(Rest, [Index | Indices]);
+parse_missing_tx_indices(_Rest, _Indices) ->
+	{error, invalid_missing_tx_indices_input}.
+
+block_announcement_response_to_binary(#block_announcement_response{
+		missing_tx_indices = L, missing_chunk = Reply }) ->
+	<< (case Reply of true -> 1; _ -> 0 end):8, (encode_missing_tx_indices(L))/binary >>.
+
+encode_missing_tx_indices(L) ->
+	encode_missing_tx_indices(L, []).
+
+encode_missing_tx_indices([], Encoded) ->
+	iolist_to_binary(Encoded);
+encode_missing_tx_indices([Index | Indices], Encoded) ->
+	encode_missing_tx_indices(Indices, [<< Index:16 >> | Encoded]).
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->
@@ -894,11 +953,9 @@ test_block_to_binary([Fixture | Fixtures], TXFixtureDir) ->
 	BlockTXs = [maps:get(TXID, TXs) || TXID <- B#block.txs],
 	B4 = B#block{ txs = BlockTXs },
 	test_block_to_binary(B4),
-	MixedTXs = lists:sublist(BlockTXs, 5)
-			++ [TX#tx.id
-			|| TX <- lists:sublist(lists:reverse(BlockTXs),
-					max(0, length(BlockTXs) - 5))],
-	B5 = B#block{ txs = MixedTXs },
+	BlockTXs2 = [case rand:uniform(2) of 1 -> TX#tx.id; _ -> TX end
+			|| TX <- BlockTXs],
+	B5 = B#block{ txs = BlockTXs2 },
 	test_block_to_binary(B5),
 	TXIDs = [TX#tx.id || TX <- BlockTXs],
 	B6 = B#block{ txs = TXIDs },
@@ -928,6 +985,31 @@ compare_txs([], []) ->
 	true;
 compare_txs(_TXs, _TXs2) ->
 	false.
+
+block_announcement_to_binary_test() ->
+	A = #block_announcement{ indep_hash = crypto:strong_rand_bytes(48),
+			previous_block = crypto:strong_rand_bytes(48) },
+	?assertEqual({ok, A}, binary_to_block_announcement(
+			block_announcement_to_binary(A))),
+	A2 = A#block_announcement{ chunk_offset = 0 },
+	?assertEqual({ok, A2}, binary_to_block_announcement(
+			block_announcement_to_binary(A2))),
+	A3 = A#block_announcement{ chunk_offset = 1000000000000000000000 },
+	?assertEqual({ok, A3}, binary_to_block_announcement(
+			block_announcement_to_binary(A3))),
+	A4 = A3#block_announcement{ tx_prefixes = [crypto:strong_rand_bytes(8)
+			|| _ <- lists:seq(1, 1000)] },
+	?assertEqual({ok, A4}, binary_to_block_announcement(
+			block_announcement_to_binary(A4))).
+
+block_announcement_response_to_binary_test() ->
+	A = #block_announcement_response{},
+	?assertEqual({ok, A}, binary_to_block_announcement_response(
+			block_announcement_response_to_binary(A))),
+	A2 = A#block_announcement_response{ missing_chunk = true,
+			missing_tx_indices = lists:seq(0, 999) },
+	?assertEqual({ok, A2}, binary_to_block_announcement_response(
+			block_announcement_response_to_binary(A2))).
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test() ->

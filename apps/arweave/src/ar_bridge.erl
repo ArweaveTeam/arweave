@@ -89,10 +89,10 @@ handle_cast({may_be_send_block, W}, State) ->
 	case dequeue(Q) of
 		empty ->
 			{noreply, State};
-		{{_Priority, Peer, H, JSON, Bin}, Q2} ->
+		{{_Priority, Peer, JSON, B}, Q2} ->
 			case maps:get(W, Workers) of
 				free ->
-					send_to_worker(Peer, H, JSON, Bin, W),
+					send_to_worker(Peer, JSON, B, W),
 					{noreply, State#state{ block_propagation_queue = Q2,
 							workers = maps:put(W, busy, Workers) }};
 				busy ->
@@ -131,10 +131,8 @@ handle_info({event, block, {new, B, _Source}}, State) ->
 			SpecialPeers = Config#config.block_gossip_peers,
 			Peers = ((SpecialPeers ++ ar_peers:get_peers()) -- TrustedPeers)
 					++ TrustedPeers,
-			H = B#block.indep_hash,
 			JSON = block_to_json(B),
-			Bin = ar_serialize:block_to_binary(B),
-			Q2 = enqueue_block(Peers, B#block.height, H, JSON, Bin, Q),
+			Q2 = enqueue_block(Peers, B#block.height, JSON, B, Q),
 			[gen_server:cast(?MODULE, {may_be_send_block, W}) || W <- maps:keys(Workers)],
 			{noreply, State#state{ block_propagation_queue = Q2 }}
 	end;
@@ -148,8 +146,8 @@ handle_info({worker_sent_block, W},
 	case dequeue(Q) of
 		empty ->
 			{noreply, State#state{ workers = maps:put(W, free, Workers) }};
-		{{_Priority, Peer, H, JSON, Bin}, Q2} ->
-			send_to_worker(Peer, H, JSON, Bin, W),
+		{{_Priority, Peer, JSON, B}, Q2} ->
+			send_to_worker(Peer, JSON, B, W),
 			{noreply, State#state{ block_propagation_queue = Q2,
 					workers = maps:put(W, busy, Workers) }}
 	end;
@@ -177,15 +175,15 @@ terminate(_Reason, _State) ->
 %%% Internal functions
 %%%===================================================================
 
-enqueue_block(Peers, Height, H, JSON, Bin, Q) ->
-	enqueue_block(Peers, Height, H, JSON, Bin, Q, 0).
+enqueue_block(Peers, Height, JSON, B, Q) ->
+	enqueue_block(Peers, Height, JSON, B, Q, 0).
 
-enqueue_block([], _Height, _H, _JSON, _Bin, Q, _N) ->
+enqueue_block([], _Height, _JSON, _B, Q, _N) ->
 	Q;
-enqueue_block([Peer | Peers], Height, H, JSON, Bin, Q, N) ->
+enqueue_block([Peer | Peers], Height, JSON, B, Q, N) ->
 	Priority = {N, Height},
-	enqueue_block(Peers, Height, H, JSON, Bin,
-			gb_sets:add_element({Priority, Peer, H, JSON, Bin}, Q)).
+	enqueue_block(Peers, Height, JSON, B,
+			gb_sets:add_element({Priority, Peer, JSON, B}, Q), N + 1).
 
 dequeue(Q) ->
 	case gb_sets:is_empty(Q) of
@@ -195,18 +193,31 @@ dequeue(Q) ->
 			gb_sets:take_smallest(Q)
 	end.
 
-send_to_worker(Peer, H, JSON, Bin, W) ->
+send_to_worker(Peer, JSON, B, W) ->
+	#block{ indep_hash = H, previous_block = PrevH, txs = TXs } = B,
 	Release = ar_peers:get_peer_release(Peer),
-	SendFun =
-		case Release >= 52 of
-			true ->
+	case Release >= 52 of
+		true ->
+			SendAnnouncementFun =
 				fun() ->
+					Announcement = #block_announcement{ indep_hash = H,
+							previous_block = PrevH,
+							tx_prefixes = [ar_node_worker:tx_id_prefix(ID)
+									|| #tx{ id = ID } <- TXs] },
+					ar_http_iface_client:send_block_announcement(Peer, Announcement)
+				end,
+			SendFun =
+				fun(MissingTXIndices) ->
+					TXs2 = determine_included_transactions(TXs, MissingTXIndices),
+					Bin = ar_serialize:block_to_binary(B#block{ txs = TXs2 }),
 					ar_http_iface_client:send_block_binary(Peer, H, Bin)
-				end;
-			false ->
-				fun() -> ar_http_iface_client:send_block_json(Peer, H, JSON) end
-		end,
-	gen_server:cast(W, {send_block, SendFun, self()}).
+				end,
+			gen_server:cast(W, {send_block2, Peer,
+					SendAnnouncementFun, SendFun, 1, self()});
+		false ->
+			SendFun = fun() -> ar_http_iface_client:send_block_json(Peer, H, JSON) end,
+			gen_server:cast(W, {send_block, SendFun, 1, self()})
+	end.
 
 block_to_json(B) ->
 	BDS = ar_block:generate_block_data_segment(B),
@@ -219,3 +230,35 @@ block_to_json(B) ->
 		{<<"block_data_segment">>, ar_util:encode(BDS)}
 	],
 	ar_serialize:jsonify({PostProps}).
+
+determine_included_transactions(TXs, Indices) ->
+	determine_included_transactions(TXs, Indices, [], 0).
+
+determine_included_transactions([], _Indices, Included, _N) ->
+	lists:reverse(Included);
+determine_included_transactions([#tx{} = TX | TXs], [], Included, N) ->
+	determine_included_transactions(TXs, [], [TX#tx.id | Included], N);
+determine_included_transactions([TXID | TXs], [], Included, N) ->
+	determine_included_transactions(TXs, [], [TXID | Included], N);
+determine_included_transactions([#tx{} = TX | TXs], [Index | Indices], Included, N) ->
+	case Index == N of
+		true ->
+			determine_included_transactions(TXs, Indices,
+					[strip_v2_data(TX) | Included], N + 1);
+		false ->
+			determine_included_transactions(TXs, [Index | Indices],
+					[TX#tx.id | Included], N + 1)
+	end;
+determine_included_transactions([TXID | TXs], [Index | Indices], Included, N) ->
+	case Index == N of
+		true ->
+			determine_included_transactions(TXs, Indices, [TXID | Included], N + 1);
+		false ->
+			determine_included_transactions(TXs, [Index | Indices],
+					[TXID | Included], N + 1)
+	end.
+
+strip_v2_data(#tx{ format = 2 } = TX) ->
+	TX#tx{ data = <<>> };
+strip_v2_data(TX) ->
+	TX.
