@@ -19,7 +19,22 @@ export NODE_NAME='arweave@127.0.0.1'
 while true; do
     echo Launching Erlang Virtual Machine...
     if
-        "bin/arweave" foreground +Ktrue +A20 +SDio20 +sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long +swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi -run ar main $RANDOMX_JIT "$@"
+        # Anyone knows better way to intercept SIGTERM/SIGINT?
+        tmp=`mktemp -d`
+        stdout=$tmp/stdout
+        stderr=$tmp/stderr
+        mkfifo $stdout $stderr
+        trap "pkill -P \$\$; rm $stdout $stderr && rmdir $tmp" EXIT
+        "bin/arweave" foreground +Ktrue +A20 +SDio20 +sbwtvery_long +sbwtdcpuvery_long +sbwtdiovery_long +swtvery_low +swtdcpuvery_low +swtdiovery_low +Bi -run ar main $RANDOMX_JIT "$@"  1>$stdout 2>$stderr &
+        pid=$!
+        cat $stdout &
+        P1=$!
+        cat $stderr >&2 &
+        P2=$!
+        wait $P1 $P2
+        wait $pid
+        status=$?
+        exit $status
     then
         echo "Arweave Heartbeat: Server terminated safely."
         exit 0
