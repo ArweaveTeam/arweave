@@ -47,7 +47,7 @@ lookup_block_filename(Hash) when is_binary(Hash)->
 	end,
 	FileName = binary_to_list(ar_util:encode(Hash)) ++ ".json",
 	File = filename:join(PathBlock, FileName),
-	case filelib:is_file(File) of
+	case ar_storage:is_file(File) of
 		true ->
 			{ok, File};
 		_ ->
@@ -66,7 +66,7 @@ lookup_tx_filename(Hash) when is_binary(Hash) ->
 	end,
 	FileName = binary_to_list(ar_util:encode(Hash)) ++ ".json",
 	File = filename:join(PathTX, FileName),
-	case filelib:is_file(File) of
+	case ar_storage:is_file(File) of
 		true ->
 			{ok, File};
 		_ ->
@@ -123,7 +123,7 @@ lookup_wallet_list_chunk_filename(RootHash, Position) when is_binary(RootHash) -
 		++ "-" ++ integer_to_list(?WALLET_LIST_CHUNK_SIZE)
 		++ ".bin",
 	Filename = filename:join(WalletListPath, Name),
-	case filelib:is_file(Filename) of
+	case ar_storage:is_file(Filename) of
 		true ->
 			{ok, Filename};
 		_ ->

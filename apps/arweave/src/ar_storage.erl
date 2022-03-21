@@ -5,12 +5,12 @@
 -export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
 		write_tx_data/1, write_tx_data/2, write_tx_data/3, read_tx/1, read_tx_data/1,
 		update_confirmation_index/1, get_tx_confirmation_data/1, get_wallet_list_range/2,
-		read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/3,
-		write_block_index/1, read_block_index/0, delete_blacklisted_tx/1,
-		get_free_space/1, lookup_tx_filename/1, wallet_list_filepath/1,
-		tx_filepath/1, tx_data_filepath/1, read_tx_file/1, read_migrated_v1_tx_file/1,
-		ensure_directories/1, write_file_atomic/2, write_term/2, write_term/3, read_term/1,
-		read_term/2, delete_term/1]).
+		read_wallet_list/1, write_wallet_list/4, write_wallet_list/2,
+		write_wallet_list_chunk/3, write_block_index/1, read_block_index/0,
+		delete_blacklisted_tx/1, get_free_space/1, lookup_tx_filename/1,
+		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
+		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
+		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -154,7 +154,7 @@ lookup_block_filename(H) ->
 		?BLOCK_DIR,
 		binary_to_list(ar_util:encode(H)) ++ ".json"
 	]),
-	case filelib:is_file(Name) of
+	case is_file(Name) of
 		true ->
 			Name;
 		false ->
@@ -470,7 +470,7 @@ read_tx_from_file(ID) ->
 	end.
 
 read_tx_file(Filename) ->
-	case file:read_file(Filename) of
+	case read_file_raw(Filename) of
 		{ok, <<>>} ->
 			file:delete(Filename),
 			?LOG_WARNING([{event, empty_tx_file},
@@ -482,15 +482,30 @@ read_tx_file(Filename) ->
 					{ok, TX};
 				_ ->
 					file:delete(Filename),
-					?LOG_WARNING([{event, failed_to_parse_tx}, {filename, Filename}]),
+					?LOG_WARNING([{event, failed_to_parse_tx},
+							{filename, Filename}]),
 					{error, failed_to_parse_tx}
 			end;
 		Error ->
 			Error
 	end.
 
+read_file_raw(Filename) ->
+	case file:open(Filename, [read, raw, binary]) of
+		{ok, File} ->
+			case file:read(File, 20000000) of
+				{ok, Bin} ->
+					file:close(File),
+					{ok, Bin};
+				Error ->
+					Error
+			end;
+		Error ->
+			Error
+	end.
+
 read_migrated_v1_tx_file(Filename) ->
-	case file:read_file(Filename) of
+	case read_file_raw(Filename) of
 		{ok, Binary} ->
 			case catch ar_serialize:json_struct_to_v1_tx(Binary) of
 				#tx{ id = ID } = TX ->
@@ -518,7 +533,7 @@ read_tx_data_from_kv_storage(ID) ->
 	end.
 
 read_tx_data(TX) ->
-	case file:read_file(tx_data_filepath(TX)) of
+	case read_file_raw(tx_data_filepath(TX)) of
 		{ok, Data} ->
 			{ok, ar_util:decode(Data)};
 		Error ->
@@ -700,17 +715,27 @@ parse_wallet_list_json(JSON) ->
 
 lookup_tx_filename(ID) ->
 	Filepath = tx_filepath(ID),
-	case filelib:is_file(Filepath) of
+	case is_file(Filepath) of
 		true ->
 			{ok, Filepath};
 		false ->
 			MigratedV1Path = filepath([?TX_DIR, "migrated_v1", tx_filename(ID)]),
-			case filelib:is_file(MigratedV1Path) of
+			case is_file(MigratedV1Path) of
 				true ->
 					{migrated_v1, MigratedV1Path};
 				false ->
 					unavailable
 			end
+	end.
+
+%% @doc A quick way to lookup the file without using the Erlang file server.
+%% Helps take off some IO load during the busy times.
+is_file(Filepath) ->
+	case file:read_file_info(Filepath, [raw]) of
+		{ok, #file_info{ type = Type }} when Type == regular orelse Type == symlink ->
+			true;
+		_ ->
+			false
 	end.
 
 %%%===================================================================
@@ -801,7 +826,7 @@ write_full_block2(BShadow, TXs) ->
 	end.
 
 read_block_from_file(Filename) ->
-	case file:read_file(Filename) of
+	case read_file_raw(Filename) of
 		{ok, JSON} ->
 			parse_block_json(JSON);
 		{error, Reason} ->
