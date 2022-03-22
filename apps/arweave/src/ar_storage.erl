@@ -37,9 +37,14 @@ write_full_block(#block{ height = 0 } = BShadow, TXs) when ?NETWORK_NAME == "arw
 	%% Genesis transactions are stored in data/genesis_txs; they are part of the repository.
 	write_full_block2(BShadow, TXs);
 write_full_block(BShadow, TXs) ->
-	case write_tx([TX || TX <- TXs, not is_blacklisted(TX)]) of
+	case update_confirmation_index(BShadow#block{ txs = TXs }) of
 		ok ->
-			write_full_block2(BShadow, TXs);
+			case write_tx([TX || TX <- TXs, not is_blacklisted(TX)]) of
+				ok ->
+					write_full_block2(BShadow, TXs);
+				Error ->
+					Error
+			end;
 		Error ->
 			Error
 	end.
@@ -814,15 +819,10 @@ is_blacklisted(#tx{ id = TXID }) ->
 write_full_block2(BShadow, TXs) ->
 	case write_block(BShadow) of
 		ok ->
-			case update_confirmation_index(BShadow#block{ txs = TXs }) of
-				ok ->
-					app_ipfs:maybe_ipfs_add_txs(TXs),
-					ok;
-				Error ->
-					Error
-			end;
-		Error2 ->
-			Error2
+			app_ipfs:maybe_ipfs_add_txs(TXs),
+			ok;
+		Error ->
+			Error
 	end.
 
 read_block_from_file(Filename) ->
