@@ -836,21 +836,24 @@ test_packs_pre_2_5_chunks_depending_on_packing_threshold() ->
 					ar_block:generate_block_data_segment(B), B#block.nonce, Height),
 			{ok, RecallByte} = ar_mine:pick_recall_byte(H0, PrevB#block.indep_hash,
 					SearchSpaceUpperBound),
+			{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte, BI),
 			case RecallByte >= B#block.packing_2_5_threshold of
 				true ->
 					?debugFmt("Mined a chunk above the packing threshold. Recall byte: ~B."
 							" Previous block: ~s.",
 							[RecallByte, ar_util:encode(PrevB#block.indep_hash)]),
-					?assertEqual(true, ar_poa:validate(RecallByte, BI, PoA,
-							B#block.strict_data_split_threshold)),
-					?assertEqual(false, ar_poa:validate_pre_fork_2_5(RecallByte, BI, PoA));
+					?assertEqual(true, ar_poa:validate(BlockStart, RecallByte, TXRoot,
+							BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold)),
+					?assertEqual(false, ar_poa:validate_pre_fork_2_5(RecallByte - BlockStart,
+							TXRoot, BlockEnd - BlockStart, PoA));
 				false ->
 					?debugFmt("Mined a chunk below the packing threshold. Recall byte: ~B."
 							" Previous block: ~s.",
 							[RecallByte, ar_util:encode(PrevB#block.indep_hash)]),
-					?assertEqual(true, ar_poa:validate_pre_fork_2_5(RecallByte, BI, PoA)),
-					?assertEqual(false, ar_poa:validate(RecallByte, BI, PoA,
-							B#block.strict_data_split_threshold))
+					?assertEqual(true, ar_poa:validate_pre_fork_2_5(RecallByte - BlockStart,
+							TXRoot, BlockEnd - BlockStart, PoA)),
+					?assertEqual(false, ar_poa:validate(BlockStart, RecallByte, TXRoot,
+							BlockEnd - BlockStart, PoA, B#block.strict_data_split_threshold))
 			end,
 			B
 		end,

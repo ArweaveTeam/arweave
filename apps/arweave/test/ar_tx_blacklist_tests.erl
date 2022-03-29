@@ -95,11 +95,10 @@ test_uses_blacklists() ->
 	assert_removed_offsets(BadOffsets),
 	assert_does_not_accept_offsets(BadOffsets),
 	%% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
-	ok = file:write_file(WhitelistFile, ar_util:encode(lists:nth(2, BadTXIDs))),
-	%% Reseting the contents of the files does not remove the corresponding txs from blacklist.
-	ok = file:write_file(lists:nth(2, BlacklistFiles), <<>>),
 	ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
-	ok = file:write_file(lists:nth(4, BlacklistFiles), ar_util:encode(hd(GoodTXIDs))),
+	ok = file:write_file(WhitelistFile, ar_util:encode(lists:nth(2, BadTXIDs))),
+	ok = file:write_file(lists:nth(4, BlacklistFiles), io_lib:format("~s~n~s",
+			[ar_util:encode(hd(GoodTXIDs)), ar_util:encode(V1TX#tx.id)])),
 	[UnblacklistedOffsets, WhitelistOffsets | BadOffsets2] = BadOffsets,
 	RestoredOffsets = [UnblacklistedOffsets, WhitelistOffsets],
 	[_UnblacklistedTXID, _WhitelistTXID | BadTXIDs2] = BadTXIDs,
@@ -297,6 +296,8 @@ upload_data(TXs, GoodTXIDs, DataTrees) ->
 	).
 
 assert_present_txs(GoodTXIDs) ->
+	?debugFmt("Waiting until these txids are stored: ~p.",
+			[[ar_util:encode(TXID) || TXID <- GoodTXIDs]]),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -319,11 +320,16 @@ assert_present_txs(GoodTXIDs) ->
 assert_removed_txs(BadTXIDs) ->
 	?debugFmt("Waiting until these txids are removed: ~p.",
 			[[ar_util:encode(TXID) || TXID <- BadTXIDs]]),
+	[{_, TXDB}] = ets:lookup(ar_storage, tx_db),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
 				fun(TXID) ->
-					unavailable == ar_storage:read_tx(TXID)
+					{error, not_found} == ar_data_sync:get_tx_data(TXID)
+							%% Do not use ar_storage:read_tx because the
+							%% transaction is temporarily kept in the disk cache,
+							%% even when blacklisted.
+							andalso ar_kv:get(TXDB, TXID) == not_found
 				end,
 				BadTXIDs
 			)
@@ -340,6 +346,7 @@ assert_removed_txs(BadTXIDs) ->
 	).
 
 assert_present_offsets(GoodOffsets) ->
+	?debugFmt("Waiting until these offsets are stored: ~p.", [GoodOffsets]),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -359,6 +366,7 @@ assert_present_offsets(GoodOffsets) ->
 	).
 
 assert_removed_offsets(BadOffsets) ->
+	?debugFmt("Waiting until these offsets are removed: ~p.", [BadOffsets]),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(

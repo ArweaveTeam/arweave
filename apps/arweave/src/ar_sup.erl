@@ -60,6 +60,7 @@ init([]) ->
 		[ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(block_cache, [set, public, named_table]),
 	ets:new(tx_prefixes, [set, public, named_table]),
+	ets:new(block_index, [ordered_set, public, named_table]),
 	ets:new(node_state, [set, public, named_table]),
 	ets:new(ar_chunk_storage, [ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),

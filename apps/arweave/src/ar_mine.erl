@@ -31,6 +31,7 @@
 	bds_base = not_generated,
 	stage_one_hasher,
 	stage_two_hasher,
+	recent_block_index,
 	search_space_upper_bound,
 	blocks_by_timestamp = #{},
 	block_index,
@@ -45,18 +46,17 @@
 
 %% @doc Spawns a new mining process and returns its PID.
 start(Args) ->
-	{CurrentB, TXs, RewardAddr, Tags, BlockAnchors, RecentTXMap, BI, IOThreads} = Args,
+	{CurrentB, TXs, RewardAddr, Tags, BlockAnchors, RecentTXMap, SearchSpaceUpperBound,
+			RecentBI, IOThreads} = Args,
 	CurrentHeight = CurrentB#block.height,
 	Height = CurrentHeight + 1,
 	CandidateB = #block{
 		height = Height,
-		hash_list = ?BI_TO_BHL(lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)),
 		previous_block = CurrentB#block.indep_hash,
-		hash_list_merkle = ar_block:compute_hash_list_merkle(CurrentB, BI),
+		hash_list_merkle = ar_block:compute_hash_list_merkle(CurrentB),
 		reward_addr = RewardAddr,
 		tags = Tags
 	},
-	SearchSpaceUpperBound = get_search_space_upper_bound(BI),
 	State =
 		#state{
 			current_block = CurrentB,
@@ -68,8 +68,8 @@ start(Args) ->
 			candidate_block = CandidateB,
 			txs = TXs,
 			search_space_upper_bound = SearchSpaceUpperBound,
+			recent_block_index = RecentBI,
 			io_threads = IOThreads,
-			block_index = BI,
 			session_ref = make_ref()
 		},
 	Fork_2_5 = ar_fork:height_2_5(),
@@ -135,7 +135,7 @@ validate(BDSHash, Diff, Height) ->
 %% @doc Validate Succinct Proof of Random Access.
 validate_spora(Args) ->
 	{BDS, Nonce, Timestamp, Height, Diff, PrevH, SearchSpaceUpperBound, PackingThreshold,
-			StrictDataSplitThreshold, SPoA, BI} = Args,
+			RecentBI, StrictDataSplitThreshold, SPoA} = Args,
 	Chunk = SPoA#poa.chunk,
 	{H0, Entropy} = spora_h0_with_entropy(BDS, Nonce, Height),
 	case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
@@ -165,14 +165,15 @@ validate_spora(Args) ->
 				false ->
 					{false, SolutionHash};
 				true ->
-					validate_spoa({RecallByte, BI, SPoA, SolutionHash, Height, PackingThreshold,
-							StrictDataSplitThreshold})
+					validate_spoa({RecallByte, SPoA, SolutionHash, Height, PackingThreshold,
+							RecentBI, StrictDataSplitThreshold})
 			end
 	end.
 
 validate_spoa(Args) ->
-	{RecallByte, BI, SPoA, SolutionHash, Height, PackingThreshold,
-			StrictDataSplitThreshold} = Args,
+	{RecallByte, SPoA, SolutionHash, Height, PackingThreshold,
+			RecentBI, StrictDataSplitThreshold} = Args,
+	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte, RecentBI),
 	case Height >= ar_fork:height_2_5()
 			andalso RecallByte >= PackingThreshold of
 		true ->
@@ -181,7 +182,8 @@ validate_spoa(Args) ->
 					%% All packed chunks must be padded to 256 KiB before packing.
 					{false, SolutionHash};
 				false ->
-					case ar_poa:validate(RecallByte, BI, SPoA, StrictDataSplitThreshold) of
+					case ar_poa:validate(BlockStart, RecallByte, TXRoot,
+							BlockEnd - BlockStart, SPoA, StrictDataSplitThreshold) of
 						false ->
 							{false, SolutionHash};
 						true ->
@@ -190,7 +192,8 @@ validate_spoa(Args) ->
 					end
 			end;
 		false ->
-			case ar_poa:validate_pre_fork_2_5(RecallByte, BI, SPoA) of
+			case ar_poa:validate_pre_fork_2_5(RecallByte - BlockStart, TXRoot,
+					BlockEnd - BlockStart, SPoA) of
 				false ->
 					{false, SolutionHash};
 				true ->
@@ -689,7 +692,7 @@ server(
 		candidate_block = #block{ height = Height },
 		search_space_upper_bound = SearchSpaceUpperBound,
 		blocks_by_timestamp = BlocksByTimestamp,
-		block_index = BI
+		recent_block_index = RecentBI
 	}
 ) ->
 	receive
@@ -712,8 +715,9 @@ server(
 							server(S);
 						SPoA ->
 							case validate_spora({BDS, Nonce, Timestamp, Height, B#block.diff,
-									PrevH, SearchSpaceUpperBound, B#block.packing_2_5_threshold,
-									B#block.strict_data_split_threshold, SPoA, BI}) of
+									PrevH, SearchSpaceUpperBound,
+									B#block.packing_2_5_threshold, RecentBI,
+									B#block.strict_data_split_threshold, SPoA}) of
 								{true, _, Hash} ->
 									B2 =
 										B#block{
@@ -959,7 +963,7 @@ log_spora_performance() ->
 	end.
 
 process_spora_solution(BDS, B, MinedTXs, S) ->
-	#state {
+	#state{
 		current_block = #block{ indep_hash = CurrentBH }
 	} = S,
 	SPoA = B#block.poa,
@@ -1064,7 +1068,8 @@ test_basic() ->
 	B1 = ar_test_node:read_block_when_stored(hd(BI)),
 	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
 	ar_events:subscribe(block),
-	start({B1, [], unclaimed, [], [], #{}, BI, Threads}),
+	start({B1, [], unclaimed, [], [], #{}, ar_mine:get_search_space_upper_bound(BI), BI,
+			Threads}),
 	assert_mine_output(B1, []).
 
 %% Ensure that the block timestamp gets updated regularly while mining.
@@ -1084,8 +1089,8 @@ test_timestamp_refresh() ->
 		TXs = [],
 		StartTime = os:system_time(seconds),
 		ar_events:subscribe(block),
-		start({B, TXs, unclaimed, [], [], #{}, [ar_util:block_index_entry_from_block(B0)],
-				Threads}),
+		start({B, TXs, unclaimed, [], [], #{}, B0#block.weave_size,
+				[ar_util:block_index_entry_from_block(B0)],Threads}),
 		{_, MinedTimestamp} = assert_mine_output(B, TXs),
 		MinedTimestamp > StartTime + ?MINING_TIMESTAMP_REFRESH_INTERVAL
 	end,
@@ -1101,7 +1106,8 @@ test_start_stop() ->
 	BI = ar_test_node:wait_until_height(0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
 	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
-	PID = start({B#block{ diff = HighDiff }, [], unclaimed, [], [], #{}, BI, Threads}),
+	PID = start({B#block{ diff = HighDiff }, [], unclaimed, [], [], #{},
+			ar_mine:get_search_space_upper_bound(BI), BI, Threads}),
 	timer:sleep(500),
 	assert_alive(PID),
 	stop(PID),

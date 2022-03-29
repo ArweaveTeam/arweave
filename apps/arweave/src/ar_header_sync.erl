@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, join/2, add_tip_block/2, add_block/1, request_tx_removal/1]).
+-export([start_link/0, join/3, add_tip_block/2, add_block/1, request_tx_removal/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -24,8 +24,8 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Update the tip after the node joins the network.
-join(BI, Blocks) ->
-	gen_server:cast(?MODULE, {join, BI, Blocks}).
+join(Height, RecentBI, Blocks) ->
+	gen_server:cast(?MODULE, {join, Height, RecentBI, Blocks}).
 
 %% @doc Add a new tip block to the index and storage, record the new recent block index.
 add_tip_block(B, RecentBI) ->
@@ -78,33 +78,35 @@ init([]) ->
 			sync_disk_space => have_free_space()
 		}}.
 
-handle_cast({join, BI, Blocks}, State) ->
+handle_cast({join, Height, RecentBI, Blocks}, State) ->
 	#{
 		db := DB,
 		last_height := LastHeight,
 		block_index := CurrentBI,
 		sync_record := SyncRecord
 	} = State,
-	LastHeight2 = length(BI) - 1,
 	State2 =
 		State#{
-			last_height => LastHeight2,
-			block_index => lists:sublist(BI, ?HEADER_SYNC_TRACK_CONFIRMATIONS),
-			last_picked => LastHeight2
+			last_height => Height,
+			block_index => lists:sublist(RecentBI, ?HEADER_SYNC_TRACK_CONFIRMATIONS),
+			last_picked => Height
 		},
 	State3 =
-		case {CurrentBI, ar_util:get_block_index_intersection(BI, CurrentBI)} of
-			{[], none} ->
+		case {CurrentBI, ar_block_index:get_intersection(LastHeight, CurrentBI)} of
+			{[], _} ->
 				State2;
-			{_CurrentBI, none} ->
+			{_, {LastHeight, _}} ->
+				State2;
+			{_, no_intersection} ->
 				throw(last_stored_block_index_has_no_intersection_with_the_new_one);
-			{_CurrentBI, {_Entry, Height}} ->
-				S = State2#{ sync_record => ar_intervals:cut(SyncRecord, Height) },
+			{_, {IntersectionHeight, _}} ->
+				S = State2#{ sync_record => ar_intervals:cut(SyncRecord, IntersectionHeight) },
 				ok = store_sync_state(S),
 				%% Delete from the kv store only after the sync record is saved - no matter
 				%% what happens to the process, if a height is in the record, it must be present
 				%% in the kv store.
-				ok = ar_kv:delete_range(DB, << (Height + 1):256 >>, << (LastHeight + 1):256 >>),
+				ok = ar_kv:delete_range(DB, << (IntersectionHeight + 1):256 >>,
+						<< (LastHeight + 1):256 >>),
 				S
 		end,
 	State4 =
@@ -206,6 +208,8 @@ handle_cast(process_item, State) ->
 		Height ->
 			case ar_node:get_block_index_entry(Height) of
 				not_joined ->
+					{noreply, State#{ queue => UpdatedQueue }};
+				not_found ->
 					{noreply, State#{ queue => UpdatedQueue }};
 				{H, _WeaveSize, TXRoot} ->
 					%% Before 2.0, to compute a block hash, the complete wallet list

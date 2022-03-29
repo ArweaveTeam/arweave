@@ -3,7 +3,7 @@
 -export([pick_random/1, pick_random/2, encode/1, decode/1, safe_decode/1,
 		parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2,
 		genesis_wallets/0, pmap/2, pfilter/2,
-		do_until/3, block_index_entry_from_block/1, get_block_index_intersection/2,
+		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -180,30 +180,6 @@ do_until(DoFun, Interval, Timeout) ->
 
 block_index_entry_from_block(B) ->
 	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
-
-%% @doc Find the latest block from the given block index (the second argument) that
-%% is inside the other given block index (the first argument). Return none if no entry
-%% from the second list belongs to the first list.
-get_block_index_intersection(BI, CurrentBI) ->
-	Height = length(BI) - 1,
-	get_block_index_intersection(BI, CurrentBI, Height).
-
-get_block_index_intersection(BI, [{BH, _WeaveSize, _TXRoot} = Entry | CurrentBI], Height) ->
-	case block_index_contains_block(BI, BH, Height) of
-		{true, TipHeight} ->
-			{Entry, TipHeight};
-		false ->
-			get_block_index_intersection(BI, CurrentBI, Height)
-	end;
-get_block_index_intersection(_BI, [], _Height) ->
-	none.
-
-block_index_contains_block([{BH, _, _} | _], BH, Height) ->
-	{true, Height};
-block_index_contains_block([_ | BI], BH, Height) ->
-	block_index_contains_block(BI, BH, Height - 1);
-block_index_contains_block([], _BH, _Height) ->
-	false.
 
 %% @doc Convert the given number of bytes into the "%s MiB" string.
 bytes_to_mb_string(Bytes) ->

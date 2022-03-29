@@ -956,18 +956,20 @@ handle_get_tx_status(EncodedTXID, Req) ->
 								{<<"block_height">>, Height},
 								{<<"block_indep_hash">>, ar_util:encode(BH)}
 							],
-							ok = ar_semaphore:acquire(get_block_index, infinity),
-							case ar_node:is_in_block_index(BH) of
-								false ->
+							case ar_block_index:get_element_by_height(Height) of
+								not_found ->
 									{404, #{}, <<"Not Found.">>, Req};
-								true ->
+								{BH, _, _} ->
 									CurrentHeight = ar_node:get_height(),
-									%% First confirmation is when the TX is in the latest block.
+									%% First confirmation is when the TX is
+									%% in the latest block.
 									NumberOfConfirmations = CurrentHeight - Height + 1,
 									Status = PseudoTags
 											++ [{<<"number_of_confirmations">>,
 												NumberOfConfirmations}],
-									{200, #{}, ar_serialize:jsonify({Status}), Req}
+									{200, #{}, ar_serialize:jsonify({Status}), Req};
+								_ ->
+									{404, #{}, <<"Not Found.">>, Req}
 							end;
 						not_found ->
 							{404, #{}, <<"Not Found.">>, Req};
@@ -1193,21 +1195,10 @@ handle_get_block(Type, ID, Req, Pid, Encoding) ->
 						Height when Height > CurrentHeight ->
 							{404, #{}, <<"Block not found.">>, Req};
 						Height ->
-							case ar_node:get_recent_block_hash_by_height(Height) of
+							case ar_block_index:get_element_by_height(Height) of
 								not_found ->
-									ok = ar_semaphore:acquire(get_block_index, infinity),
-									BI = ar_node:get_block_index(),
-									Len = length(BI),
-									case Height > Len - 1 of
-										true ->
-											{404, #{}, <<"Block not found.">>, Req};
-										false ->
-											{H, _, _} = lists:nth(Len - Height, BI),
-											handle_get_block(<<"hash">>,
-													ar_util:encode(H), Req, Pid,
-													Encoding)
-									end;
-								H ->
+									{404, #{}, <<"Block not found.">>, Req};
+								{H, _, _} ->
 									handle_get_block(<<"hash">>, ar_util:encode(H),
 											Req, Pid, Encoding)
 							end
@@ -1989,12 +1980,16 @@ wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
 
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight) ->
-	BI = ar_node:get_block_index(),
 	case catch binary_to_integer(RawHeight) of
 		{'EXIT', _} ->
 			{error, height_not_integer};
 		Height ->
-			ar_storage:read_block(Height, BI)
+			case ar_block_index:get_element_by_height(Height) of
+				not_found ->
+					unavailable;
+				{H, _, _} ->
+					ar_storage:read_block(H)
+			end
 	end;
 find_block(<<"hash">>, ID) ->
 	case ar_util:safe_decode(ID) of

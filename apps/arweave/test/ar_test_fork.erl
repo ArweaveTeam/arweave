@@ -5,7 +5,7 @@
 -import(ar_test_node, [slave_call/3]).
 
 test_on_fork(ForkHeightFun, ForkHeight, TestFun) ->
-	test_on_fork(ForkHeightFun, ForkHeight, TestFun, 120).
+	test_on_fork(ForkHeightFun, ForkHeight, TestFun, 240).
 
 test_on_fork(ForkHeightFun, ForkHeight, TestFun, Timeout) ->
 	{

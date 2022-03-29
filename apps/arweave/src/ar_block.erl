@@ -2,7 +2,7 @@
 
 -export([block_field_size_limit/1, verify_dep_hash/2, verify_timestamp/1, verify_height/2,
 		verify_last_retarget/2, verify_previous_block/2, verify_block_hash_list/2,
-		verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/3,
+		verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
 		verify_tx_root/1, hash_wallet_list/2, hash_wallet_list/3,
 		hash_wallet_list_without_reward_wallet/2, generate_block_data_segment/1,
 		generate_block_data_segment/2, generate_block_data_segment/3,
@@ -460,35 +460,11 @@ verify_cumulative_diff(NewB, OldB) ->
 			NewB#block.height
 		).
 
-%% @doc After 1.6 fork check that the given merkle root in a new block is valid.
-verify_block_hash_list_merkle(NewB, CurrentB, BI) when NewB#block.height > ?FORK_1_6 ->
-	Fork_2_0 = ar_fork:height_2_0(),
-	case NewB#block.height of
-		H when H < Fork_2_0 ->
-			NewB#block.hash_list_merkle ==
-				ar_unbalanced_merkle:root(
-					CurrentB#block.hash_list_merkle,
-					CurrentB#block.indep_hash
-				);
-		Fork_2_0 ->
-			NewB#block.hash_list_merkle == ar_unbalanced_merkle:block_index_to_merkle_root(BI);
-		_ ->
-			NewB#block.hash_list_merkle ==
-				ar_unbalanced_merkle:root(
-					CurrentB#block.hash_list_merkle,
-					{
-						CurrentB#block.indep_hash,
-						CurrentB#block.weave_size,
-						CurrentB#block.tx_root
-					},
-					fun ar_unbalanced_merkle:hash_block_index_entry/1
-				)
-	end;
-verify_block_hash_list_merkle(NewB, _CurrentB, _) when NewB#block.height < ?FORK_1_6 ->
-	NewB#block.hash_list_merkle == <<>>;
-verify_block_hash_list_merkle(NewB, CurrentB, _) when NewB#block.height == ?FORK_1_6 ->
-	NewB#block.hash_list_merkle ==
-		ar_unbalanced_merkle:hash_list_to_merkle_root(CurrentB#block.hash_list).
+verify_block_hash_list_merkle(NewB, CurrentB) ->
+	true = NewB#block.height > ar_fork:height_2_0(),
+	NewB#block.hash_list_merkle == ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle,
+			{CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
+			fun ar_unbalanced_merkle:hash_block_index_entry/1).
 
 %%%===================================================================
 %%% Tests.

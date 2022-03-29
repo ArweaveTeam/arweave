@@ -132,11 +132,7 @@
 	%% A reference to the on-disk key-value storage mapping
 	%% AbsoluteBlockStartOffset => {TXRoot, BlockSize, DataRootIndexKeySet}.
 	%% Each key in DataRootIndexKeySet is a << DataRoot/binary, TXSize:256 >> binary.
-	%%
-	%% Used to remove orphaned entries from DataRootIndex and to determine
-	%% TXRoot when syncing random offsets of the weave.
-	%% DataRootIndexKeySet may be empty - in this case, the corresponding index entry
-	%% is only used to for syncing the weave.
+	%% Used to remove orphaned entries from DataRootIndex.
 	data_root_offset_index,
 	%% A map of pending, orphaned, and recent data roots
 	%% << DataRoot/binary, TXSize:256 >> => {Size, Timestamp, TXIDSet}.

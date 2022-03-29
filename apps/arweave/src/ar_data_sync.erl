@@ -24,8 +24,8 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Notify the server the node has joined the network on the given block index.
-join(Packing_2_5_Threshold, StrictDataSplitThreshold, BI) ->
-	gen_server:cast(?MODULE, {join, Packing_2_5_Threshold, StrictDataSplitThreshold, BI}).
+join(RecentBI, Packing_2_5_Threshold, StrictDataSplitThreshold) ->
+	gen_server:cast(?MODULE, {join, RecentBI, Packing_2_5_Threshold, StrictDataSplitThreshold}).
 
 %% @doc Notify the server about the new tip block.
 add_tip_block(Packing_2_5_Threshold, StrictDataSplitThreshold, BlockTXPairs, RecentBI) ->
@@ -233,16 +233,8 @@ init([]) ->
 		packing_disabled = lists:member(packing, Config#config.disable)
 	},
 	ets:insert(ar_data_sync_state, {strict_data_split_threshold, StrictDataSplitThreshold}),
-	repair_genesis_block_index(State2),
 	gen_server:cast(?MODULE, check_space),
 	gen_server:cast(?MODULE, check_space_warning),
-	gen_server:cast(?MODULE, collect_sync_intervals),
-	lists:foreach(
-		fun(_SyncingJobNumber) ->
-			gen_server:cast(?MODULE, sync_random_interval)
-		end,
-		lists:seq(1, Config#config.sync_jobs)
-	),
 	gen_server:cast(?MODULE, update_disk_pool_data_roots),
 	lists:foreach(
 		fun(_DiskPoolJobNumber) ->
@@ -252,31 +244,28 @@ init([]) ->
 	),
 	gen_server:cast(?MODULE, store_sync_state),
 	gen_server:cast(?MODULE, repack_stored_chunks),
+	may_be_run_sync_jobs(),
 	{ok, State2}.
 
-handle_cast({join, Packing_2_5_Threshold, StrictDataSplitThreshold, BI}, State) ->
+handle_cast({join, RecentBI, Packing_2_5_Threshold, StrictDataSplitThreshold}, State) ->
 	#sync_data_state{
-		data_root_offset_index = DataRootOffsetIndex,
 		disk_pool_data_roots = DiskPoolDataRoots,
-		block_index = CurrentBI
+		block_index = CurrentBI,
+		weave_size = CurrentWeaveSize
 	} = State,
-	[{_, WeaveSize, _} | _] = BI,
+	[{_, WeaveSize, _} | _] = RecentBI,
 	DiskPoolDataRoots2 =
-		case {CurrentBI, ar_util:get_block_index_intersection(BI, CurrentBI)} of
-			{[], _Intersection} ->
-				ok = data_root_offset_index_from_block_index(DataRootOffsetIndex, BI, 0),
+		case {CurrentBI, ar_block_index:get_intersection(CurrentBI)} of
+			{[], _} ->
 				DiskPoolDataRoots;
-			{_CurrentBI, none} ->
+			{_, {_, CurrentWeaveSize, _}} ->
+				DiskPoolDataRoots;
+			{_, no_intersection} ->
 				throw(last_stored_block_index_has_no_intersection_with_the_new_one);
-			{_CurrentBI, {{H, Offset, _TXRoot}, _Height}} ->
+			{_, {_H, Offset, _TXRoot}} ->
 				PreviousWeaveSize = element(2, hd(CurrentBI)),
 				{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset,
 						PreviousWeaveSize),
-				ok = data_root_offset_index_from_block_index(
-					DataRootOffsetIndex,
-					lists:takewhile(fun({BH, _, _}) -> BH /= H end, BI),
-					Offset
-				),
 				ar_chunk_storage:cut(Offset),
 				ar_sync_record:cut(Offset, ?MODULE),
 				reset_orphaned_data_roots_disk_pool_timestamps(
@@ -288,12 +277,14 @@ handle_cast({join, Packing_2_5_Threshold, StrictDataSplitThreshold, BI}, State) 
 		State#sync_data_state{
 			disk_pool_data_roots = DiskPoolDataRoots2,
 			weave_size = WeaveSize,
-			block_index = lists:sublist(BI, ?TRACK_CONFIRMATIONS),
-			disk_pool_threshold = get_disk_pool_threshold(BI),
+			block_index = lists:sublist(RecentBI, ?TRACK_CONFIRMATIONS),
+			disk_pool_threshold = get_disk_pool_threshold(RecentBI),
 			packing_2_5_threshold = Packing_2_5_Threshold,
 			strict_data_split_threshold = StrictDataSplitThreshold
 		},
 	ets:insert(ar_data_sync_state, {strict_data_split_threshold, StrictDataSplitThreshold}),
+	gen_server:cast(?MODULE, collect_sync_intervals),
+	run_sync_jobs(),
 	{noreply, store_sync_state(State2)};
 
 handle_cast({add_tip_block, Packing_2_5_Threshold, StrictDataSplitThreshold, BlockTXPairs, BI},
@@ -550,14 +541,13 @@ handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop}, State
 
 handle_cast({store_fetched_chunk, Peer, Time, TransferSize, Byte, RightBound, Proof,
 		SubIntervals, Loop}, State) ->
-	#sync_data_state{ data_root_offset_index = DataRootOffsetIndex,
-			packing_map = PackingMap,
+	#sync_data_state{ packing_map = PackingMap, block_index = RecentBI,
 			strict_data_split_threshold = StrictDataSplitThreshold } = State,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = get_chunk_seek_offset(Byte + 1, StrictDataSplitThreshold) - 1,
-	{ok, Key, Value} = ar_kv:get_prev(DataRootOffsetIndex, << SeekByte:?OFFSET_KEY_BITSIZE >>),
-	<< BlockStartOffset:?OFFSET_KEY_BITSIZE >> = Key,
-	{TXRoot, BlockSize, _DataRootIndexKeySet} = binary_to_term(Value),
+	{BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte,
+			RecentBI),
+	BlockSize = BlockEndOffset - BlockStartOffset,
 	Offset = SeekByte - BlockStartOffset,
 	{Strict, ValidateDataPathFun} =
 		case BlockStartOffset >= StrictDataSplitThreshold of
@@ -1323,6 +1313,23 @@ init_kv() ->
 	]),
 	State.
 
+may_be_run_sync_jobs() ->
+	case ar_node:is_joined() of
+		false ->
+			ok;
+		true ->
+			run_sync_jobs()
+	end.
+
+run_sync_jobs() ->
+	{ok, Config} = application:get_env(arweave, config),
+	lists:foreach(
+		fun(_SyncingJobNumber) ->
+			gen_server:cast(?MODULE, sync_random_interval)
+		end,
+		lists:seq(1, Config#config.sync_jobs)
+	).
+
 move_disk_pool_index(State) ->
 	move_disk_pool_index(first, State).
 
@@ -1372,90 +1379,6 @@ get_disk_pool_threshold([]) ->
 	0;
 get_disk_pool_threshold(BI) ->
 	ar_mine:get_search_space_upper_bound(BI).
-
-%% @doc Fix the issue related to the mainnet quirk where the node could have incorrectly
-%% synced the very beginning of the weave. The genesis block on mainnet has weave_size=0
-%% although it has transactions with data. The first non-genesis block with a data
-%% transaction (also the first block with non-zero weave_size)
-%% is 6OAy50Jx7O7JxHkG8SbGenvX_aHQ-6klsc7gOhLtDF1ebleir2sSJ1_MI3VKSv7N,
-%% height 82, size 12364, tx_root P_OiqMNN1s4ltcaq0HXb9VFos_Zz6LFjM8ogUG0vJek,
-%% and a single transaction with data_root kuMLOSJKG7O4NmSBY9KZ2PjU-5O4UBNFl_-kF9FnW7w.
-%% The nodes that removed the genesis block to free up disk space but later re-synced it,
-%% registered its data as the first data of the weave whereas it has to be data from block 82.
-%% Fresh nodes would not replicate the incorrect data because the proofs won't be valid,
-%% but the affected nodes won't correct themselves either thus we do it here.
-%% @end
-repair_genesis_block_index(State) ->
-	#sync_data_state{
-		data_root_offset_index = DataRootOffsetIndex,
-		chunks_index = ChunksIndex,
-		data_root_index = DataRootIndex,
-		tx_index = TXIndex,
-		tx_offset_index = TXOffsetIndex
-	} = State,
-	case ?NETWORK_NAME == "arweave.N.1" of
-		false ->
-			%% Not the mainnet.
-			ok;
-		true ->
-			case ar_kv:get(DataRootOffsetIndex, << 0:256 >>) of
-				not_found ->
-					ok;
-				{ok, Value} ->
-					{TXRoot, _, DataRootIndexKeySet} = binary_to_term(Value),
-					case ar_util:encode(TXRoot) of
-						<<"P_OiqMNN1s4ltcaq0HXb9VFos_Zz6LFjM8ogUG0vJek">> ->
-							ok = ar_sync_record:delete(12364, 0, ?MODULE),
-							lists:foreach(
-								fun(DataRootIndexKey) ->
-									ok = ar_kv:delete(DataRootIndex, DataRootIndexKey)
-								end,
-								sets:to_list(DataRootIndexKeySet)
-							),
-							ok = ar_kv:delete_range(ChunksIndex, << 0:256 >>, << 12365:256 >>),
-							lists:foreach(
-								fun(TXID) ->
-									ok = ar_kv:delete(TXIndex, TXID)
-								end,
-								ar_weave:read_v1_genesis_txs()
-							),
-							ok = ar_kv:delete_range(TXOffsetIndex, << 0:256 >>, << 12364:256 >>),
-							DataRoot =
-								ar_util:decode(<<"kuMLOSJKG7O4NmSBY9KZ2PjU-5O4UBNFl_-kF9FnW7w">>),
-							DataSize = 599058,
-							DataRootKey2 = << DataRoot/binary, DataSize:256 >>,
-							TXRoot2 =
-								ar_util:encode(<<"MzrD8OItolyWnLw9YOheDsAxO5tJeSLAy5QbCYrNJR8">>),
-							V2 = {TXRoot2, DataSize, sets:from_list([DataRootKey2])},
-							ok =
-								ar_kv:put(
-									DataRootOffsetIndex,
-									<< 0:256 >>,
-									term_to_binary(V2)
-								),
-							ok;
-						_ ->
-							ok
-					end
-			end
-	end.
-
-data_root_offset_index_from_block_index(Index, BI, StartOffset) ->
-	data_root_offset_index_from_reversed_block_index(Index, lists:reverse(BI), StartOffset).
-
-data_root_offset_index_from_reversed_block_index(Index, [{_, Offset, _} | BI], Offset) ->
-	data_root_offset_index_from_reversed_block_index(Index, BI, Offset);
-data_root_offset_index_from_reversed_block_index(Index, [{_, WeaveSize, TXRoot} | BI],
-		StartOffset) ->
-	case ar_kv:put(Index, << StartOffset:?OFFSET_KEY_BITSIZE >>,
-			term_to_binary({TXRoot, WeaveSize - StartOffset, sets:new()})) of
-		ok ->
-			data_root_offset_index_from_reversed_block_index(Index, BI, WeaveSize);
-		Error ->
-			Error
-	end;
-data_root_offset_index_from_reversed_block_index(_Index, [], _StartOffset) ->
-	ok.
 
 remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	ok = remove_orphaned_txs(State, BlockStartOffset, WeaveSize),
