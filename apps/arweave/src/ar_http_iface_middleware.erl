@@ -1860,100 +1860,54 @@ record_block_pre_validation_time(ReceiveTimestamp) ->
 
 %% Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
-	ok = ar_semaphore:acquire(get_block_index, infinity),
-	CurrentBI = ar_node:get_block_index(),
-	case is_block_known(Type, ID, CurrentBI) of
+	case find_block(Type, ID) of
 		{error, height_not_integer} ->
 			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-		true ->
-			BlockHL =
-				case Type of
-					<<"height">> ->
-						{_, BI} = lists:split(
-							length(CurrentBI) - ID,
-							CurrentBI
-						),
-						[H || {H, _, _} <- BI];
-					<<"hash">> ->
-						ar_block:generate_hash_list_for_block(ID, CurrentBI)
-				end,
-			{200, #{},
-				ar_serialize:jsonify(
-					lists:map(fun ar_util:encode/1, BlockHL)
-				),
-			Req};
-		false ->
-			{404, #{}, <<"Block not found.">>, Req}
+		unavailable ->
+			{404, #{}, <<"Not Found.">>, Req};
+		B ->
+			ok = ar_semaphore:acquire(get_block_index, infinity),
+			CurrentBI = ar_node:get_block_index(),
+			HL = ar_block:generate_hash_list_for_block(B#block.indep_hash, CurrentBI),
+			{200, #{}, ar_serialize:jsonify(lists:map(fun ar_util:encode/1, HL)), Req}
 	end;
 %% @doc Return the wallet list associated with a block.
 process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
-	case Type of
-		<<"height">> ->
-			CurrentHeight = ar_node:get_height(),
-			case ID of
-				Height when Height < 0 ->
-					{404, #{}, <<"Block not found.">>, Req};
-				Height when Height > CurrentHeight ->
-					{404, #{}, <<"Block not found.">>, Req};
-				Height ->
-					BI = ar_node:get_block_index(),
-					Len = length(BI),
-					case Height > Len - 1 of
-						true ->
-							{404, #{}, <<"Block not found.">>, Req};
-						false ->
-							{H, _, _} = lists:nth(Len - Height, BI),
-							process_request(get_block, [<<"hash">>, ar_util:encode(H),
-									<<"wallet_list">>], Req)
-					end
-			end;
-		<<"hash">> ->
-			ReadB =
-				case ar_util:safe_decode(ID) of
-					{ok, H} ->
-						ar_storage:read_block(H);
-					{error, invalid} ->
-						{reply, {404, #{}, <<"Block not found.">>, Req}}
-				end,
-			case ReadB of
-				{reply, Reply} ->
-					Reply;
-				unavailable ->
-					{404, #{}, <<"Block not found.">>, Req};
-				#block{} = B ->
-					{ok, Config} = application:get_env(arweave, config),
-					case {B#block.height >= ar_fork:height_2_2(),
-							lists:member(serve_wallet_lists, Config#config.disable)} of
-						{true, true} ->
-							{400, #{},
-								jiffy:encode(
-									#{ error => does_not_serve_blocks_after_2_2_fork }),
-								Req};
-						{true, _} ->
-							ok = ar_semaphore:acquire(get_wallet_list, infinity),
-							case ar_storage:read_wallet_list(B#block.wallet_list) of
-								{ok, Tree} ->
-									{200, #{}, ar_serialize:jsonify(
-										ar_serialize:wallet_list_to_json_struct(
-											B#block.reward_addr, false, Tree
-										)), Req};
-								_ ->
-									{404, #{}, <<"Block not found.">>, Req}
-							end;
+	case find_block(Type, ID) of
+		{error, height_not_integer} ->
+			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+		unavailable ->
+			{404, #{}, <<"Not Found.">>, Req};
+		B ->
+			{ok, Config} = application:get_env(arweave, config),
+			case {B#block.height >= ar_fork:height_2_2(),
+					lists:member(serve_wallet_lists, Config#config.disable)} of
+				{true, true} ->
+					{400, #{},
+						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
+						Req};
+				{true, _} ->
+					ok = ar_semaphore:acquire(get_wallet_list, infinity),
+					case ar_storage:read_wallet_list(B#block.wallet_list) of
+						{ok, Tree} ->
+							{200, #{}, ar_serialize:jsonify(
+								ar_serialize:wallet_list_to_json_struct(
+									B#block.reward_addr, false, Tree
+								)), Req};
 						_ ->
-							WLFilepath = ar_storage:wallet_list_filepath(
-									B#block.wallet_list),
-							case filelib:is_file(WLFilepath) of
-								true ->
-									{200, #{}, sendfile(WLFilepath), Req};
-								false ->
-									{404, #{}, <<"Block not found.">>, Req}
-							end
+							{404, #{}, <<"Block not found.">>, Req}
 					end;
 				_ ->
-					{404, #{}, <<"Block not found.">>, Req}
+					WLFilepath = ar_storage:wallet_list_filepath(B#block.wallet_list),
+					case filelib:is_file(WLFilepath) of
+						true ->
+							{200, #{}, sendfile(WLFilepath), Req};
+						false ->
+							{404, #{}, <<"Block not found.">>, Req}
+					end
 			end
 	end;
+
 %% Return a requested field of a given block.
 %% GET request to endpoint /block/hash/{hash|height}/{field}.
 %%
@@ -2033,29 +1987,6 @@ wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
 			})
 	end.
 
-%% @doc Take a block type specifier, an ID, and a BI, returning whether the
-%% given block is part of the BI.
-%% @end
-is_block_known(<<"height">>, RawHeight, BI) when is_binary(RawHeight) ->
-	case catch binary_to_integer(RawHeight) of
-		{'EXIT', _} ->
-			{error, height_not_integer};
-		Height ->
-			is_block_known(<<"height">>, Height, BI)
-	end;
-is_block_known(<<"height">>, Height, BI) ->
-	Height < length(BI);
-is_block_known(<<"hash">>, ID, BI) ->
-	search_in_block_index(ID, BI).
-
-search_in_block_index(H, BI) ->
-	case lists:search(fun({BH, _, _}) -> BH == H end, BI) of
-		{value, _} ->
-			true;
-		false ->
-			false
-	end.
-
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight) ->
 	BI = ar_node:get_block_index(),
@@ -2066,7 +1997,12 @@ find_block(<<"height">>, RawHeight) ->
 			ar_storage:read_block(Height, BI)
 	end;
 find_block(<<"hash">>, ID) ->
-	ar_storage:read_block(ID).
+	case ar_util:safe_decode(ID) of
+		{ok, H} ->
+			ar_storage:read_block(H);
+		_ ->
+			unavailable
+	end.
 
 is_tx_already_processed(TXID) ->
 	case ar_ignore_registry:member(TXID) of
