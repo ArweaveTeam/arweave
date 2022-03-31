@@ -3,12 +3,12 @@
 -behaviour(gen_server).
 
 -export([start_link/0, join/3, add_tip_block/4, add_block/2, is_chunk_proof_ratio_attractive/3,
-		add_chunk/1, add_chunk/2, add_chunk/3, add_data_root_to_disk_pool/3,
-		maybe_drop_data_root_from_disk_pool/3, get_chunk/2, get_tx_data/1, get_tx_data/2,
-		get_tx_offset/1, has_data_root/2, request_tx_data_removal/1, sync_interval/2,
-		record_disk_pool_chunks_count/0]).
+		add_chunk/1, add_data_root_to_disk_pool/3, maybe_drop_data_root_from_disk_pool/3,
+		get_chunk/2, get_tx_data/1, get_tx_data/2, get_tx_offset/1, has_data_root/2,
+		request_tx_data_removal/1, sync_interval/2, record_disk_pool_chunks_count/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([update_disk_pool_data_roots/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -53,31 +53,18 @@ is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) ->
 	end.
 
 %% @doc Store the given chunk if the proof is valid.
-add_chunk(Proof) ->
-	add_chunk(Proof, 5000, do_not_write_to_free_space_buffer).
-
-%% @doc Store the given chunk if the proof is valid.
-add_chunk(Proof, Timeout) ->
-	add_chunk(Proof, Timeout, do_not_write_to_free_space_buffer).
-
-%% @doc Store the given chunk if the proof is valid.
-add_chunk(
-	#{
-		data_root := DataRoot,
-		offset := Offset,
-		data_path := DataPath,
-		chunk := Chunk,
-		data_size := TXSize
-	},
-	Timeout,
-	WriteToFreeSpaceBuffer
-) ->
-	Command = {add_chunk, DataRoot, DataPath, Chunk, Offset, TXSize, WriteToFreeSpaceBuffer},
-	case catch gen_server:call(?MODULE, Command, Timeout) of
-		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			{error, timeout};
-		Reply ->
-			Reply
+%% Called when a chunk is pushed to the node via POST /chunk.
+%% The chunk is placed in the disk pool. The periodic process
+%% scanning the disk pool will later record it as synced.
+%% The item is removed from the disk pool when the chunk's offset
+%% drops below the "disk pool threshold".
+add_chunk(#{ data_root := DataRoot, offset := Offset, data_path := DataPath,
+		chunk := Chunk, data_size := TXSize }) ->
+	case ets:lookup(ar_data_sync_state, have_disk_space) of
+		[{_, false}] ->
+			{error, disk_full};
+		_ ->
+			add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize)
 	end.
 
 %% @doc Notify the server about the new pending data root (added to mempool).
@@ -87,7 +74,18 @@ add_data_root_to_disk_pool(<<>>, _, _) ->
 add_data_root_to_disk_pool(_, 0, _) ->
 	ok;
 add_data_root_to_disk_pool(DataRoot, TXSize, TXID) ->
-	gen_server:cast(?MODULE, {add_data_root_to_disk_pool, {DataRoot, TXSize, TXID}}).
+	Key = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
+	case ets:lookup(ar_disk_pool_data_roots, Key) of
+		[] ->
+			ets:insert(ar_disk_pool_data_roots, {Key,
+					{0, os:system_time(microsecond), sets:from_list([TXID])}});
+		[{_, {_, _, not_set}}] ->
+			ok;
+		[{_, {S, T, TXIDSet}}] ->
+				ets:insert(ar_disk_pool_data_roots,
+						{Key, {S, T, sets:add_element(TXID, TXIDSet)}})
+	end,
+	ok.
 
 %% @doc Notify the server the given data root has been removed from the mempool.
 maybe_drop_data_root_from_disk_pool(<<>>, _, _) ->
@@ -95,7 +93,27 @@ maybe_drop_data_root_from_disk_pool(<<>>, _, _) ->
 maybe_drop_data_root_from_disk_pool(_, 0, _) ->
 	ok;
 maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
-	gen_server:cast(?MODULE, {maybe_drop_data_root_from_disk_pool, {DataRoot, TXSize, TXID}}).
+	Key = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
+	case ets:lookup(ar_disk_pool_data_roots, Key) of
+		[] ->
+			ok;
+		[{_, {_, _, not_set}}] ->
+			ok;
+		[{_, {Size, T, TXIDs}}] ->
+			case sets:subtract(TXIDs, sets:from_list([TXID])) of
+				TXIDs ->
+					ok;
+				UpdatedSet ->
+					case sets:size(UpdatedSet) of
+						0 ->
+							ets:delete(ar_disk_pool_data_roots, Key),
+							ets:update_counter(ar_data_sync_state, disk_pool_size, {2, -Size});
+						_ ->
+							ets:insert(ar_disk_pool_data_roots, {Key, {Size, T, UpdatedSet}})
+					end
+			end
+	end,
+	ok.
 
 %% @doc Fetch the chunk corresponding to Offset. When Offset is less than or equal to
 %% the strict split data threshold, the chunk returned contains the byte with the given
@@ -172,19 +190,17 @@ get_tx_offset(TXID) ->
 %% or in the index.
 has_data_root(DataRoot, DataSize) ->
 	DataRootKey = << DataRoot/binary, DataSize:256 >>,
-	case catch gen_server:call(?MODULE, {is_data_root_in_mempool, DataRootKey}) of
+	case ets:member(ar_disk_pool_data_roots, DataRootKey) of
 		true ->
 			true;
 		false ->
 			[{_, DataRootIndex}] = ets:lookup(ar_data_sync_state, data_root_index),
 			case ar_kv:get(DataRootIndex, DataRootKey) of
-				not_found ->
-					false;
+				{ok, _} ->
+					true;
 				_ ->
-					true
-			end;
-		{'EXIT', {timeout, {gen_server, call, _}}} ->
-			{error, timeout}
+					false
+			end
 	end.
 
 %% @doc Record the metadata of the given block.
@@ -215,6 +231,26 @@ init([]) ->
 			record_disk_pool_chunks_count, []),
 	{CurrentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize,
 			Packing_2_5_Threshold, StrictDataSplitThreshold} = read_data_sync_state(),
+	%% Maintain a map of pending, orphaned, and recent data roots
+	%% << DataRoot/binary, TXSize:256 >> => {Size, Timestamp, TXIDSet}.
+	%%
+	%% Unconfirmed chunks can be accepted only after their data roots end up in this set.
+	%% Each time a pending data root is added to the map the size is set to 0. New chunks
+	%% for these data roots are accepted until the corresponding size reaches
+	%% #config.max_disk_pool_data_root_buffer_mb or the total size of added pending chunks
+	%% reaches #config.max_disk_pool_buffer_mb. When a data root is orphaned, its timestamp
+	%% is refreshed so that the chunks have chance to be reincluded later.
+	%% After a data root expires, the corresponding chunks are removed from
+	%% disk_pool_chunks_index and if they are not in data_root_index - from storage.
+	%% TXIDSet keeps track of pending transaction identifiers - if all pending transactions
+	%% with the << DataRoot/binary, TXSize:256 >> key are dropped from the mempool,
+	%% the corresponding entry is removed from DiskPoolDataRoots. When a data root is
+	%% confirmed, TXIDSet is set to not_set - from this point on, the key cannot be dropped.
+	maps:map(fun(DataRootKey, V) -> ets:insert(ar_disk_pool_data_roots,
+			{DataRootKey, V}) end, DiskPoolDataRoots),
+	%% The sum of sizes of all pending chunks. When it reaches
+	%% ?MAX_DISK_POOL_BUFFER_MB, new chunks with these data roots are rejected.
+	ets:insert(ar_data_sync_state, {disk_pool_size, DiskPoolSize}),
 	{ok, SyncRecord} = ar_sync_record:get_record(#{ format => raw }, ?MODULE),
 	%% A set of intervals temporarily excluded from syncing. The intervals
 	%% are recorded here after we failed to find them. The motivation
@@ -223,8 +259,6 @@ init([]) ->
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = WeaveSize,
-		disk_pool_data_roots = DiskPoolDataRoots,
-		disk_pool_size = DiskPoolSize,
 		disk_pool_cursor = first,
 		disk_pool_threshold = get_disk_pool_threshold(CurrentBI),
 		packing_2_5_threshold = Packing_2_5_Threshold,
@@ -235,7 +269,8 @@ init([]) ->
 	ets:insert(ar_data_sync_state, {strict_data_split_threshold, StrictDataSplitThreshold}),
 	gen_server:cast(?MODULE, check_space),
 	gen_server:cast(?MODULE, check_space_warning),
-	gen_server:cast(?MODULE, update_disk_pool_data_roots),
+	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
+			update_disk_pool_data_roots, []),
 	lists:foreach(
 		fun(_DiskPoolJobNumber) ->
 			gen_server:cast(?MODULE, process_disk_pool_item)
@@ -248,34 +283,24 @@ init([]) ->
 	{ok, State2}.
 
 handle_cast({join, RecentBI, Packing_2_5_Threshold, StrictDataSplitThreshold}, State) ->
-	#sync_data_state{
-		disk_pool_data_roots = DiskPoolDataRoots,
-		block_index = CurrentBI,
-		weave_size = CurrentWeaveSize
-	} = State,
+	#sync_data_state{ block_index = CurrentBI, weave_size = CurrentWeaveSize } = State,
 	[{_, WeaveSize, _} | _] = RecentBI,
-	DiskPoolDataRoots2 =
-		case {CurrentBI, ar_block_index:get_intersection(CurrentBI)} of
-			{[], _} ->
-				DiskPoolDataRoots;
-			{_, {_, CurrentWeaveSize, _}} ->
-				DiskPoolDataRoots;
-			{_, no_intersection} ->
-				throw(last_stored_block_index_has_no_intersection_with_the_new_one);
-			{_, {_H, Offset, _TXRoot}} ->
-				PreviousWeaveSize = element(2, hd(CurrentBI)),
-				{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset,
-						PreviousWeaveSize),
-				ar_chunk_storage:cut(Offset),
-				ar_sync_record:cut(Offset, ?MODULE),
-				reset_orphaned_data_roots_disk_pool_timestamps(
-					DiskPoolDataRoots,
-					OrphanedDataRoots
-				)
-		end,
+	case {CurrentBI, ar_block_index:get_intersection(CurrentBI)} of
+		{[], _} ->
+			ok;
+		{_, {_, CurrentWeaveSize, _}} ->
+			ok;
+		{_, no_intersection} ->
+			throw(last_stored_block_index_has_no_intersection_with_the_new_one);
+		{_, {_H, Offset, _TXRoot}} ->
+			PreviousWeaveSize = element(2, hd(CurrentBI)),
+			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
+			ar_chunk_storage:cut(Offset),
+			ar_sync_record:cut(Offset, ?MODULE),
+			reset_orphaned_data_roots_disk_pool_timestamps(OrphanedDataRoots)
+	end,
 	State2 =
 		State#sync_data_state{
-			disk_pool_data_roots = DiskPoolDataRoots2,
 			weave_size = WeaveSize,
 			block_index = lists:sublist(RecentBI, ?TRACK_CONFIRMATIONS),
 			disk_pool_threshold = get_disk_pool_threshold(RecentBI),
@@ -285,7 +310,8 @@ handle_cast({join, RecentBI, Packing_2_5_Threshold, StrictDataSplitThreshold}, S
 	ets:insert(ar_data_sync_state, {strict_data_split_threshold, StrictDataSplitThreshold}),
 	gen_server:cast(?MODULE, collect_sync_intervals),
 	run_sync_jobs(),
-	{noreply, store_sync_state(State2)};
+	store_sync_state(State2),
+	{noreply, State2};
 
 handle_cast({add_tip_block, Packing_2_5_Threshold, StrictDataSplitThreshold, BlockTXPairs, BI},
 		State) ->
@@ -293,12 +319,11 @@ handle_cast({add_tip_block, Packing_2_5_Threshold, StrictDataSplitThreshold, Blo
 		tx_index = TXIndex,
 		tx_offset_index = TXOffsetIndex,
 		weave_size = CurrentWeaveSize,
-		disk_pool_data_roots = DiskPoolDataRoots,
-		disk_pool_size = DiskPoolSize,
 		block_index = CurrentBI
 	} = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),
 	{ok, OrphanedDataRoots} = remove_orphaned_data(State, BlockStartOffset, CurrentWeaveSize),
+	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	{WeaveSize, AddedDataRoots, DiskPoolSize2} = lists:foldl(
 		fun ({_BH, []}, Acc) ->
 				Acc;
@@ -309,7 +334,9 @@ handle_cast({add_tip_block, Packing_2_5_Threshold, StrictDataSplitThreshold, Blo
 					sets:union(CurrentAddedDataRoots, DataRoots),
 					sets:fold(
 						fun(Key, Acc) ->
-							Acc - element(1, maps:get(Key, DiskPoolDataRoots, {0, noop, noop}))
+							Size = case ets:lookup(ar_disk_pool_data_roots, Key) of
+									[] -> 0; [{_, {N, _, _}}] -> N end,
+							Acc - Size
 						end,
 						CurrentDiskPoolSize,
 						DataRoots
@@ -318,68 +345,21 @@ handle_cast({add_tip_block, Packing_2_5_Threshold, StrictDataSplitThreshold, Blo
 		{BlockStartOffset, sets:new(), DiskPoolSize},
 		Blocks
 	),
-	DiskPoolDataRoots2 =
-		reset_orphaned_data_roots_disk_pool_timestamps(
-			add_block_data_roots_to_disk_pool(DiskPoolDataRoots, AddedDataRoots),
-			OrphanedDataRoots
-		),
+	ets:insert(ar_data_sync_state, {disk_pool_size, DiskPoolSize2}),
+	add_block_data_roots_to_disk_pool(AddedDataRoots),
+	reset_orphaned_data_roots_disk_pool_timestamps(OrphanedDataRoots),
 	ar_chunk_storage:cut(BlockStartOffset),
 	ar_sync_record:cut(BlockStartOffset, ?MODULE),
 	State2 = State#sync_data_state{
 		weave_size = WeaveSize,
 		block_index = BI,
-		disk_pool_data_roots = DiskPoolDataRoots2,
-		disk_pool_size = DiskPoolSize2,
 		disk_pool_threshold = get_disk_pool_threshold(BI),
 		packing_2_5_threshold = Packing_2_5_Threshold,
 		strict_data_split_threshold = StrictDataSplitThreshold
 	},
 	ets:insert(ar_data_sync_state, {strict_data_split_threshold, StrictDataSplitThreshold}),
-	{noreply, store_sync_state(State2)};
-
-handle_cast({add_data_root_to_disk_pool, {DataRoot, TXSize, TXID}}, State) ->
-	#sync_data_state{ disk_pool_data_roots = DiskPoolDataRoots } = State,
-	Key = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	UpdatedDiskPoolDataRoots = maps:update_with(
-		Key,
-		fun ({_, _, not_set} = V) ->
-				V;
-			({S, T, TXIDSet}) ->
-				{S, T, sets:add_element(TXID, TXIDSet)}
-		end,
-		{0, os:system_time(microsecond), sets:from_list([TXID])},
-		DiskPoolDataRoots
-	),
-	{noreply, State#sync_data_state{ disk_pool_data_roots = UpdatedDiskPoolDataRoots }};
-
-handle_cast({maybe_drop_data_root_from_disk_pool, {DataRoot, TXSize, TXID}}, State) ->
-	#sync_data_state{
-		disk_pool_data_roots = DiskPoolDataRoots,
-		disk_pool_size = DiskPoolSize
-	} = State,
-	Key = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	{DiskPoolDataRoots2, DiskPoolSize2} = case maps:get(Key, DiskPoolDataRoots, not_found) of
-		not_found ->
-			{DiskPoolDataRoots, DiskPoolSize};
-		{_, _, not_set} ->
-			{DiskPoolDataRoots, DiskPoolSize};
-		{Size, T, TXIDs} ->
-			case sets:subtract(TXIDs, sets:from_list([TXID])) of
-				TXIDs ->
-					{DiskPoolDataRoots, DiskPoolSize};
-				UpdatedSet ->
-					case sets:size(UpdatedSet) of
-						0 ->
-							{maps:remove(Key, DiskPoolDataRoots), DiskPoolSize - Size};
-						_ ->
-							{DiskPoolDataRoots#{ Key => {Size, T, UpdatedSet} }, DiskPoolSize}
-					end
-			end
-	end,
-	{noreply, State#sync_data_state{
-		disk_pool_data_roots = DiskPoolDataRoots2,
-		disk_pool_size = DiskPoolSize2
-	}};
+	store_sync_state(State2),
+	{noreply, State2};
 
 handle_cast({add_block, B, SizeTaggedTXs}, State) ->
 	add_block(B, SizeTaggedTXs, State),
@@ -387,7 +367,9 @@ handle_cast({add_block, B, SizeTaggedTXs}, State) ->
 
 handle_cast(check_space, State) ->
 	ar_util:cast_after(ar_disksup:get_disk_space_check_frequency(), ?MODULE, check_space),
-	{noreply, State#sync_data_state{ sync_disk_space = have_free_space() }};
+	HaveSpace = have_free_space(),
+	ets:insert(ar_data_sync_state, {have_disk_space, HaveSpace}),
+	{noreply, State#sync_data_state{ sync_disk_space = HaveSpace }};
 
 handle_cast(check_space_warning, #sync_data_state{ sync_disk_space = false } = State) ->
 	Msg =
@@ -682,31 +664,6 @@ handle_cast({process_disk_pool_chunk_offset, MayConclude, TXArgs, Args, Iterator
 	process_disk_pool_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 			Args, State);
 
-handle_cast(update_disk_pool_data_roots, State) ->
-	#sync_data_state{ disk_pool_data_roots = DiskPoolDataRoots } = State,
-	Now = os:system_time(microsecond),
-	{ok, Config} = application:get_env(arweave, config),
-	UpdatedDiskPoolDataRoots = maps:filter(
-		fun(_, {_, Timestamp, _}) ->
-			Timestamp + Config#config.disk_pool_data_root_expiration_time * 1000000  > Now
-		end,
-		DiskPoolDataRoots
-	),
-	DiskPoolSize = maps:fold(
-		fun(_, {Size, _, _}, Acc) ->
-			Acc + Size
-		end,
-		0,
-		UpdatedDiskPoolDataRoots
-	),
-	prometheus_gauge:set(pending_chunks_size, DiskPoolSize),
-	ar_util:cast_after(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
-			update_disk_pool_data_roots),
-	{noreply, State#sync_data_state{
-		disk_pool_data_roots = UpdatedDiskPoolDataRoots,
-		disk_pool_size = DiskPoolSize
-	}};
-
 handle_cast({remove_tx_data, TXID}, State) ->
 	#sync_data_state{ tx_index = TXIndex } = State,
 	case ar_kv:get(TXIndex, TXID) of
@@ -805,9 +762,9 @@ handle_cast({expire_unpack_fetched_chunk_request, Offset}, State) ->
 	end;
 
 handle_cast(store_sync_state, State) ->
-	State2 = store_sync_state(State),
+	store_sync_state(State),
 	ar_util:cast_after(?STORE_STATE_FREQUENCY_MS, ?MODULE, store_sync_state),
-	{noreply, State2};
+	{noreply, State};
 
 handle_cast(repack_stored_chunks, #sync_data_state{ packing_disabled = true } = State) ->
 	{noreply, State};
@@ -906,23 +863,6 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING("event: unhandled_cast, cast: ~p", [Cast]),
 	{noreply, State}.
 
-handle_call({add_chunk, _, _, _, _, _, _}, _, #sync_data_state{ disk_full = true } = State) ->
-	{reply, {error, disk_full}, State};
-handle_call({add_chunk, _, _, _, _, _, _} = Msg, _From, State) ->
-	{add_chunk, DataRoot, DataPath, Chunk, Offset, TXSize, WriteToFreeSpaceBuffer} = Msg,
-	case WriteToFreeSpaceBuffer == write_to_free_space_buffer orelse have_free_space() of
-		false ->
-			{reply, {error, disk_full}, State};
-		true ->
-			add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State)
-	end;
-
-handle_call({is_data_root_in_mempool, DataRootKey}, _From, State) ->
-	#sync_data_state{
-		disk_pool_data_roots = DiskPoolDataRoots
-	} = State,
-	{reply, maps:is_key(DataRootKey, DiskPoolDataRoots), State};
-
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
@@ -986,6 +926,26 @@ terminate(Reason, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+update_disk_pool_data_roots() ->
+	Now = os:system_time(microsecond),
+	{ok, Config} = application:get_env(arweave, config),
+	DiskPoolSize = ets:foldl(
+		fun({Key, {Size, Timestamp, _}}, Acc) ->
+			case Timestamp +
+					Config#config.disk_pool_data_root_expiration_time * 1000000 > Now of
+				true ->
+					Acc + Size;
+				false ->
+					ets:delete(ar_disk_pool_data_roots, Key),
+					Acc
+			end
+		end,
+		0,
+		ar_disk_pool_data_roots
+	),
+	ets:insert(ar_data_sync_state, {disk_pool_size, DiskPoolSize}),
+	prometheus_gauge:set(pending_chunks_size, DiskPoolSize).
 
 get_chunk(Offset, Pack, Packing, StoredPacking, Options) ->
 	case maps:get(search_fast_storage_only, Options, false) of
@@ -1357,23 +1317,28 @@ record_disk_pool_chunks_count() ->
 
 read_data_sync_state() ->
 	case ar_storage:read_term(data_sync_state) of
-		{ok, {SyncRecord, RecentBI, DiskPoolDataRoots, DiskPoolSize}} ->
+		{ok, {SyncRecord, RecentBI, DiskPoolDataRoots, _DiskPoolSize}} ->
+			DiskPoolSize = calculate_disk_pool_size(DiskPoolDataRoots),
 			ok = ar_sync_record:set(SyncRecord, unpacked, ?MODULE),
 			WeaveSize = case RecentBI of [] -> 0; _ -> element(2, hd(RecentBI)) end,
 			{RecentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize, infinity, infinity};
-		{ok, {RecentBI, DiskPoolDataRoots, DiskPoolSize}} ->
+		{ok, {RecentBI, DiskPoolDataRoots, _DiskPoolSize}} ->
+			DiskPoolSize = calculate_disk_pool_size(DiskPoolDataRoots),
 			WeaveSize = case RecentBI of [] -> 0; _ -> element(2, hd(RecentBI)) end,
 			{RecentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize, infinity, infinity};
 		{ok, #{ block_index := RecentBI, disk_pool_data_roots := DiskPoolDataRoots,
-				disk_pool_size := DiskPoolSize,
 				packing_2_5_threshold := PackingThreshold,
 				strict_data_split_threshold := StrictDataSplitThreshold }} ->
 			WeaveSize = case RecentBI of [] -> 0; _ -> element(2, hd(RecentBI)) end,
+			DiskPoolSize = calculate_disk_pool_size(DiskPoolDataRoots),
 			{RecentBI, DiskPoolDataRoots, DiskPoolSize, WeaveSize, PackingThreshold,
 					StrictDataSplitThreshold};
 		not_found ->
 			{[], #{}, 0, 0, infinity, infinity}
 	end.
+
+calculate_disk_pool_size(DiskPoolDataRoots) ->
+	maps:fold(fun(_, {Size, _, _}, Acc) -> Acc + Size end, 0, DiskPoolDataRoots).
 
 get_disk_pool_threshold([]) ->
 	0;
@@ -1619,54 +1584,52 @@ update_data_root_index(State, DataRootKey, TXRoot, AbsoluteTXStartOffset, TXPath
 			ar_kv:put(DataRootIndex, DataRootKey, UpdatedValue)
 	end.
 
-add_block_data_roots_to_disk_pool(DataRoots, DataRootIndexKeySet) ->
-	{U, _} = sets:fold(
-		fun(R, {M, T}) ->
-			{maps:update_with(
-				R,
-				fun({_, Timeout, _}) -> {0, Timeout, not_set} end,
-				{0, T, not_set},
-				M
-			), T + 1}
+add_block_data_roots_to_disk_pool(DataRootKeySet) ->
+	sets:fold(
+		fun(R, T) ->
+			case ets:lookup(ar_disk_pool_data_roots, R) of
+				[] ->
+					ets:insert(ar_disk_pool_data_roots, {R, {0, T, not_set}});
+				[{_, {_, Timeout, _}}] ->
+					ets:insert(ar_disk_pool_data_roots, {R, {0, Timeout, not_set}})
+			end,
+			T + 1
 		end,
-		{DataRoots, os:system_time(microsecond)},
-		DataRootIndexKeySet
-	),
-	U.
+		os:system_time(microsecond),
+		DataRootKeySet
+	).
 
-reset_orphaned_data_roots_disk_pool_timestamps(DataRoots, DataRootIndexKeySet) ->
-	{U, _} = sets:fold(
-		fun(R, {M, T}) ->
-			{maps:update_with(
-				R,
-				fun({Size, _, TXIDSet}) -> {Size, T, TXIDSet} end,
-				{0, T, not_set},
-				M
-			), T + 1}
+reset_orphaned_data_roots_disk_pool_timestamps(DataRootKeySet) ->
+	sets:fold(
+		fun(R, T) ->
+			case ets:lookup(ar_disk_pool_data_roots, R) of
+				[] ->
+					ets:insert(ar_disk_pool_data_roots, {R, {0, T, not_set}});
+				[{_, {Size, _, TXIDSet}}] ->
+					ets:insert(ar_disk_pool_data_roots, {R, {Size, T, TXIDSet}})
+			end,
+			T + 1
 		end,
-		{DataRoots, os:system_time(microsecond)},
-		DataRootIndexKeySet
-	),
-	U.
+		os:system_time(microsecond),
+		DataRootKeySet
+	).
 
 store_sync_state(State) ->
-	#sync_data_state{
-		disk_pool_data_roots = DiskPoolDataRoots,
-		disk_pool_size = DiskPoolSize,
-		block_index = BI,
-		packing_2_5_threshold = Packing_2_5_Threshold,
-		strict_data_split_threshold = StrictDataSplitThreshold
-	} = State,
+	#sync_data_state{ block_index = BI, packing_2_5_threshold = Packing_2_5_Threshold,
+			strict_data_split_threshold = StrictDataSplitThreshold } = State,
+	DiskPoolDataRoots = ets:foldl(
+			fun({DataRootKey, V}, Acc) -> maps:put(DataRootKey, V, Acc) end, #{},
+			ar_disk_pool_data_roots),
+	DiskPoolSize = calculate_disk_pool_size(DiskPoolDataRoots),
 	StoredState = #{ block_index => BI, disk_pool_data_roots => DiskPoolDataRoots,
 			disk_pool_size => DiskPoolSize, packing_2_5_threshold => Packing_2_5_Threshold,
 			strict_data_split_threshold => StrictDataSplitThreshold },
 	case ar_storage:write_term(data_sync_state, StoredState) of
 		{error, enospc} ->
-			?LOG_WARNING([{event, failed_to_dump_state},
-				{reason, disk_full}]),
-			State#sync_data_state{ disk_full = true };
+			?LOG_WARNING([{event, failed_to_dump_state}, {reason, disk_full}]),
+			ok;
 		ok ->
-			State#sync_data_state{ disk_full = false }
+			ok
 	end.
 
 find_random_interval(0) ->
@@ -1878,22 +1841,14 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 			end
 	end.
 
-%% @doc Process the chunk pushed to the node via POST /chunk.
-%% The chunk is placed in the disk pool. The periodic process
-%% scanning the disk pool will later record it as synced.
-%% The item is removed from the disk pool when chunk's offset
-%% drops below the "disk pool threshold".
-%% @end
-add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State) ->
-	#sync_data_state{
-		data_root_index = DataRootIndex,
-		disk_pool_data_roots = DiskPoolDataRoots,
-		disk_pool_size = DiskPoolSize,
-		disk_pool_chunks_index = DiskPoolChunksIndex
-	} = State,
+add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
+	[{_, DataRootIndex}] = ets:lookup(ar_data_sync_state, data_root_index),
+	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
+	[{_, DiskPoolChunksIndex}] = ets:lookup(ar_data_sync_state, disk_pool_chunks_index),
+	[{_, ChunkDataDB}] = ets:lookup(ar_data_sync_state, chunk_data_db),
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
 	DataRootMapReply = ar_kv:get(DataRootIndex, DataRootKey),
-	DataRootInDiskPool = maps:is_key(DataRootKey, DiskPoolDataRoots),
+	DataRootInDiskPool = ets:member(ar_disk_pool_data_roots, DataRootKey),
 	ChunkSize = byte_size(Chunk),
 	CheckDiskPool =
 		case {DataRootMapReply, DataRootInDiskPool} of
@@ -1903,49 +1858,35 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State) ->
 				{ok, Config} = application:get_env(arweave, config),
 				DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * 1024 * 1024,
 				DiskPoolLimit = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
-				{Size, Timestamp, TXIDSet} = maps:get(DataRootKey, DiskPoolDataRoots),
+				[{_, {Size, Timestamp,
+						TXIDSet}}] = ets:lookup(ar_disk_pool_data_roots, DataRootKey),
 				case Size + ChunkSize > DataRootLimit
 						orelse DiskPoolSize + ChunkSize > DiskPoolLimit of
 					true ->
 						{error, exceeds_disk_pool_size_limit};
 					false ->
-						DiskPoolDataRoots2 =
-							maps:put(
-								DataRootKey,
-								{Size + ChunkSize, Timestamp, TXIDSet},
-								DiskPoolDataRoots
-							),
-						DiskPoolSize2 = DiskPoolSize + ChunkSize,
-						State2 =
-							State#sync_data_state{
-								disk_pool_data_roots = DiskPoolDataRoots2,
-								disk_pool_size = DiskPoolSize2
-							},
-						{ok, {Timestamp, State2}}
+						{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
 				end;
 			_ ->
-				Timestamp = os:system_time(microsecond),
-				{ok, {Timestamp, State#sync_data_state{
-						disk_pool_data_roots = maps:put(DataRootKey, {0, Timestamp, not_set},
-								DiskPoolDataRoots) }}}
+				{ok, {0, os:system_time(microsecond), not_set}}
 		end,
 	ValidateProof =
 		case CheckDiskPool of
 			{error, _} = Error ->
 				Error;
-			{ok, PassedState} ->
+			{ok, DiskPoolDataRootValue} ->
 				case validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
 					false ->
 						{error, invalid_proof};
 					{true, PassesStrict, EndOffset} ->
-						{ok, {EndOffset, PassesStrict, PassedState}}
+						{ok, {EndOffset, PassesStrict, DiskPoolDataRootValue}}
 				end
 		end,
 	CheckSynced =
 		case ValidateProof of
 			{error, _} = Error2 ->
 				Error2;
-			{ok, {EndOffset2, _PassesStrict2, {Timestamp2, _}} = PassedState2} ->
+			{ok, {EndOffset2, _PassesStrict2, {_, Timestamp2, _}} = PassedState2} ->
 				DataPathHash = crypto:hash(sha256, DataPath),
 				DiskPoolChunkKey = << Timestamp2:256, DataPathHash/binary >>,
 				case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
@@ -1958,32 +1899,33 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State) ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
 							_ ->
 								DataRootMap = binary_to_term(element(2, DataRootMapReply)),
-								case all_offsets_synced(DataRootMap, EndOffset2, State) of
+								case all_offsets_synced(DataRootMap, EndOffset2) of
 									true ->
 										synced;
 									false ->
 										{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}}
 								end
 						end;
-					{error, Reason} = Error3 ->
+					{error, Reason} ->
 						?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
 								{reason, io_lib:format("~p", [Reason])}]),
-						Error3
+						{error, failed_to_store_chunk}
 				end
 		end,
 	case CheckSynced of
 		synced ->
 			?LOG_DEBUG([{event, chunk_already_synced}, {data_root, ar_util:encode(DataRoot)}]),
-			{reply, ok, State};
+			ok;
 		{error, _} = Error4 ->
-			{reply, Error4, State};
-		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesStrict3, {_, State4}}}} ->
+			Error4;
+		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesStrict3,
+				DiskPoolDataRootValue2}}} ->
 			ChunkDataKey = get_chunk_data_key(DataPathHash2),
-			case write_disk_pool_chunk(ChunkDataKey, Chunk, DataPath, State4) of
+			case ar_kv:put(ChunkDataDB, ChunkDataKey, term_to_binary({Chunk, DataPath})) of
 				{error, Reason2} ->
 					?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
 						{reason, io_lib:format("~p", [Reason2])}]),
-					{reply, {error, failed_to_store_chunk}, State};
+					{error, failed_to_store_chunk};
 				ok ->
 					DiskPoolChunkValue = term_to_binary({EndOffset3, ChunkSize, DataRoot,
 							TXSize, ChunkDataKey, PassesStrict3}),
@@ -1991,26 +1933,30 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, State) ->
 						{error, Reason3} ->
 							?LOG_WARNING([{event, failed_to_record_chunk_in_disk_pool},
 								{reason, io_lib:format("~p", [Reason3])}]),
-							{reply, {error, failed_to_store_chunk}, State};
+							{error, failed_to_store_chunk};
 						ok ->
-							{reply, ok, State4}
+							ets:insert(ar_disk_pool_data_roots,
+									{DataRootKey, DiskPoolDataRootValue2}),
+							ets:update_counter(ar_data_sync_state, disk_pool_size,
+									{2, ChunkSize}),
+							ok
 					end
 			end
 	end.
 
-all_offsets_synced(DataRootIndex, Offset, State) ->
+all_offsets_synced(DataRootIndex, Offset) ->
 	{Time, Iterator} = timer:tc(fun() -> data_root_index_iterator(DataRootIndex) end),
 	?LOG_DEBUG([{event, constructed_data_root_index_iterator}, {time, Time}]),
-	all_offsets_synced2(Iterator, Offset, State).
+	all_offsets_synced2(Iterator, Offset).
 
-all_offsets_synced2(Iterator, Offset, State) ->
+all_offsets_synced2(Iterator, Offset) ->
 	case data_root_index_next(Iterator, 10) of
 		none ->
 			true;
 		{{TXStartOffset, _, _}, Iterator2} ->
 			case ar_sync_record:is_recorded(TXStartOffset + Offset, ?MODULE) of
 				{true, _} ->
-					all_offsets_synced2(Iterator2, Offset, State);
+					all_offsets_synced2(Iterator2, Offset);
 				false ->
 					false
 			end
@@ -2113,14 +2059,13 @@ update_chunks_index2(Args, State) ->
 add_chunk_to_disk_pool(Args, State) ->
 	{DataRoot, TXSize, DataPathHash, ChunkDataKey, ChunkOffset, ChunkSize,
 			PassedStrictValidation} = Args,
-	#sync_data_state{ disk_pool_data_roots = DiskPoolDataRoots,
-			disk_pool_chunks_index = DiskPoolChunksIndex } = State,
+	#sync_data_state{ disk_pool_chunks_index = DiskPoolChunksIndex } = State,
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
 	Timestamp =
-		case maps:get(DataRootKey, DiskPoolDataRoots, not_found) of
-			not_found ->
+		case ets:lookup(ar_disk_pool_data_roots, DataRootKey) of
+			[] ->
 				os:system_time(microsecond);
-			{_, DataRootTimestamp, _} ->
+			[{_, {_, DataRootTimestamp, _}}] ->
 				DataRootTimestamp
 		end,
 	DiskPoolChunkKey = << Timestamp:256, DataPathHash/binary >>,
@@ -2323,11 +2268,8 @@ get_required_chunk_packing(AbsoluteOffset, _ChunkSize, State) ->
 	end.
 
 process_disk_pool_item(State, Key, Value) ->
-	#sync_data_state{
-		disk_pool_chunks_index = DiskPoolChunksIndex,
-		disk_pool_data_roots = DiskPoolDataRoots,
-		data_root_index = DataRootIndex
-	} = State,
+	#sync_data_state{ disk_pool_chunks_index = DiskPoolChunksIndex,
+			data_root_index = DataRootIndex } = State,
 	prometheus_counter:inc(disk_pool_processed_chunks),
 	<< Timestamp:256, DataPathHash/binary >> = Key,
 	DiskPoolChunk = parse_disk_pool_chunk(Value),
@@ -2340,7 +2282,7 @@ process_disk_pool_item(State, Key, Value) ->
 			{ok, DataRootIndexValue} ->
 				binary_to_term(DataRootIndexValue)
 		end,
-	InDiskPool = maps:is_key(DataRootKey, DiskPoolDataRoots),
+	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootKey),
 	case {InDataRootIndex, InDiskPool} of
 		{not_found, true} ->
 			%% Increment the timestamp by one (microsecond), so that the new cursor is

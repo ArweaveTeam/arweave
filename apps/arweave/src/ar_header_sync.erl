@@ -113,7 +113,7 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 		lists:foldl(
 			fun(B, S) ->
 				ar_data_sync:add_block(B, B#block.size_tagged_txs),
-				add_block(B, S)
+				element(2, add_block(B, S))
 			end,
 			State3,
 			Blocks
@@ -134,7 +134,7 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 		block_index => RecentBI,
 		last_height => Height
 	},
-	State3 = add_block(B, State2),
+	State3 = element(2, add_block(B, State2)),
 	case store_sync_state(State3) of
 		ok ->
 			%% Delete from the kv store only after the sync record is saved - no matter
@@ -147,15 +147,19 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 			{noreply, State#{ disk_full => true }}
 	end;
 
-handle_cast({add_historical_block, _}, #{ sync_disk_space := false } = State) ->
+handle_cast({add_historical_block, _, _, _, _, _}, #{ sync_disk_space := false } = State) ->
 	{noreply, State};
-handle_cast({add_historical_block, B}, State) ->
-	State2 = add_block(B, State),
-	{noreply, State2};
+handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
+	case add_block(B, State) of
+		{ok, State2} ->
+			{noreply, State2};
+		{_Error, State2} ->
+			gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot, Backoff}),
+			{noreply, State2}
+	end;
 
 handle_cast({add_block, B}, State) ->
-	State2 = add_block(B, State),
-	{noreply, State2};
+	{noreply, element(2, add_block(B, State))};
 
 handle_cast(check_space_alarm, State) ->
 	case have_free_space() of
@@ -187,12 +191,8 @@ handle_cast(process_item, #{ sync_disk_space := false } = State) ->
 	ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, ?MODULE, process_item),
 	{noreply, State};
 handle_cast(process_item, State) ->
-	#{
-		queue := Queue,
-		sync_record := SyncRecord,
-		last_picked := LastPicked,
-		last_height := LastHeight
-	} = State,
+	#{ queue := Queue, sync_record := SyncRecord,
+			last_picked := LastPicked, last_height := LastHeight } = State,
 	prometheus_gauge:set(downloader_queue_size, queue:len(Queue)),
 	UpdatedQueue = process_item(Queue),
 	case pick_unsynced_block(LastPicked, SyncRecord) of
@@ -332,12 +332,12 @@ get_base_height([{H, _, _} | CurrentBI], CurrentHeight, RecentBI) ->
 add_block(B, #{ sync_disk_space := false } = State) ->
 	case ar_storage:update_confirmation_index(B) of
 		ok ->
-			ok;
+			{ok, State};
 		Error ->
 			?LOG_ERROR([{event, failed_to_record_block_confirmations},
-				{reason, io_lib:format("~p", [Error])}])
-	end,
-	State;
+				{reason, io_lib:format("~p", [Error])}]),
+			{Error, State}
+	end;
 add_block(B, State) ->
 	#{ db := DB, sync_record := SyncRecord } = State,
 	#block{ indep_hash = H, previous_block = PrevH, height = Height } = B,
@@ -345,20 +345,16 @@ add_block(B, State) ->
 		ok ->
 			case ar_intervals:is_inside(SyncRecord, Height) of
 				true ->
-					State;
+					{ok, State};
 				false ->
 					ok = ar_kv:put(DB, << Height:256 >>, term_to_binary({H, PrevH})),
 					UpdatedSyncRecord = ar_intervals:add(SyncRecord, Height, Height - 1),
-					State#{ sync_record => UpdatedSyncRecord }
+					{ok, State#{ sync_record => UpdatedSyncRecord }}
 			end;
 		{error, Reason} ->
-			?LOG_WARNING([
-				{event, failed_to_store_block},
-				{block, ar_util:encode(H)},
-				{height, Height},
-				{reason, Reason}
-			]),
-			State
+			?LOG_WARNING([{event, failed_to_store_block}, {block, ar_util:encode(H)},
+					{height, Height}, {reason, Reason}]),
+			{{error, Reason}, State}
 	end.
 
 have_free_space() ->
@@ -411,11 +407,13 @@ process_item(Queue) ->
 				fun() ->
 					case download_block(H, H2, TXRoot) of
 						{error, _Reason} ->
-							gen_server:cast(?MODULE,
-									{failed_to_get_block, H, H2, TXRoot, Backoff});
+							gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot,
+									Backoff});
 						{ok, B} ->
-							gen_server:cast(?MODULE, {add_historical_block, B}),
-							ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item)
+							gen_server:cast(?MODULE, {add_historical_block, B, H, H2, TXRoot,
+									Backoff}),
+							ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE,
+									process_item)
 					end
 				end
 			)),
@@ -488,17 +486,7 @@ download_txs(Peers, B, TXRoot) ->
 							{ok, B#block{ txs = TXs }};
 						false ->
 							ar_data_sync:add_block(B, SizeTaggedTXs),
-							case move_data_to_v2_index(TXs) of
-								ok ->
-									{ok, B#block{ txs = TXs }};
-								{error, Reason} = Error ->
-									?LOG_WARNING([
-										{event, ar_header_sync_failed_to_migrate_v1_txs},
-										{block, ar_util:encode(B#block.indep_hash)},
-										{reason, Reason}
-									]),
-									Error
-							end
+							{ok, B#block{ txs = TXs }}
 					end;
 				_ ->
 					?LOG_WARNING([
@@ -526,53 +514,3 @@ download_txs(Peers, B, TXRoot) ->
 			]),
 			{error, tx_not_found}
 	end.
-
-move_data_to_v2_index(TXs) ->
-	%% Migrate the transaction data to the new index for blocks
-	%% written prior to this update.
-	lists:foldl(
-		fun (#tx{ format = 2, data_size = DataSize } = TX, ok) when DataSize > 0 ->
-				case ar_storage:read_tx_data(TX) of
-					{error, enoent} ->
-						ok;
-					{ok, Data} ->
-						case ar_storage:write_tx_data(
-									no_expected_data_root,
-									Data,
-									write_to_free_space_buffer
-								) of
-							ok ->
-								file:delete(ar_storage:tx_data_filepath(TX));
-							Error ->
-								Error
-						end;
-					Error ->
-						Error
-				end;
-			(#tx{ format = 1, id = ID, data_size = DataSize } = TX, ok) when DataSize > 0 ->
-				case ar_storage:lookup_tx_filename(ID) of
-					unavailable ->
-						ok;
-					{migrated_v1, _} ->
-						ok;
-					{ok, _} ->
-						case ar_storage:write_tx(TX) of
-							ok ->
-								case file:delete(ar_storage:tx_filepath(TX)) of
-									{error, enoent} ->
-										ok;
-									ok ->
-										ok;
-									Error ->
-										Error
-								end;
-							Error ->
-								Error
-						end
-				end;
-			(_, Acc) ->
-				Acc
-		end,
-		ok,
-		TXs
-	).

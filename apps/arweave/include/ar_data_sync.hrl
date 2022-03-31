@@ -55,7 +55,11 @@
 -endif.
 
 %% How often to measure the number of chunks in the disk pool index.
+-ifdef(DEBUG).
+-define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 1000).
+-else.
 -define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 5000).
+-endif.
 
 %% How long to keep the offsets of the recently processed "matured" chunks in a cache.
 %% We use the cache to quickly skip matured chunks when scanning the disk pool.
@@ -134,22 +138,6 @@
 	%% Each key in DataRootIndexKeySet is a << DataRoot/binary, TXSize:256 >> binary.
 	%% Used to remove orphaned entries from DataRootIndex.
 	data_root_offset_index,
-	%% A map of pending, orphaned, and recent data roots
-	%% << DataRoot/binary, TXSize:256 >> => {Size, Timestamp, TXIDSet}.
-	%%
-	%% Unconfirmed chunks can be accepted only after their data roots end up in this set.
-	%% Each time a pending data root is added to the map the size is set to 0. New chunks
-	%% for these data roots are accepted until the corresponding size reaches
-	%% #config.max_disk_pool_data_root_buffer_mb or the total size of added pending chunks
-	%% reaches #config.max_disk_pool_buffer_mb. When a data root is orphaned, its timestamp
-	%% is refreshed so that the chunks have chance to be reincluded later.
-	%% After a data root expires, the corresponding chunks are removed from
-	%% disk_pool_chunks_index and if they are not in data_root_index - from storage.
-	%% TXIDSet keeps track of pending transaction identifiers - if all pending transactions
-	%% with the << DataRoot/binary, TXSize:256 >> key are dropped from the mempool,
-	%% the corresponding entry is removed from DiskPoolDataRoots. When a data root is confirmed,
-	%% TXIDSet is set to not_set - from this point on, the key cannot be dropped.
-	disk_pool_data_roots,
 	%% A reference to the on-disk key value storage mapping
 	%% << DataRootTimestamp:256, ChunkDataIndexKey/binary >> =>
 	%%     {RelativeChunkEndOffset, ChunkSize, DataRoot, TXSize, ChunkDataKey, IsStrictSplit}.
@@ -161,9 +149,6 @@
 	%% or removed from disk_pool_chunks_index by expiration.
 	disk_pool_chunks_index,
 	disk_pool_chunks_index_old,
-	%% The sum of sizes of all pending chunks. When it reaches
-	%% ?MAX_DISK_POOL_BUFFER_MB, new chunks with these data roots are rejected.
-	disk_pool_size,
 	%% One of the keys from disk_pool_chunks_index or the atom "first".
 	%% The disk pool is processed chunk by chunk going from the oldest entry to the newest,
 	%% trying not to block the syncing process if the disk pool accumulates a lot of orphaned

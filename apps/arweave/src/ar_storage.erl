@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
-		write_tx_data/1, write_tx_data/2, write_tx_data/3, read_tx/1, read_tx_data/1,
+		write_tx_data/1, write_tx_data/2, read_tx/1, read_tx_data/1,
 		update_confirmation_index/1, get_tx_confirmation_data/1, get_wallet_list_range/2,
 		read_wallet_list/1, write_wallet_list/4, write_wallet_list/2,
 		write_wallet_list_chunk/3, write_block_index/1, read_block_index/0,
@@ -55,13 +55,21 @@ update_confirmation_index(B) ->
 		true ->
 			ar_arql_db:insert_full_block(B, store_tags);
 		false ->
-			case catch gen_server:call(?MODULE, {put_tx_confirmation_data, B}) of
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
-					{error, timeout};
-				Reply ->
-					Reply
-			end
+			put_tx_confirmation_data(B)
 	end.
+
+put_tx_confirmation_data(B) ->
+	[{_, TXConfirmationDB}] = ets:lookup(?MODULE, tx_confirmation_db),
+	Data = term_to_binary({B#block.height, B#block.indep_hash}),
+	lists:foldl(
+		fun	(TX, ok) ->
+				ar_kv:put(TXConfirmationDB, TX#tx.id, Data);
+			(_TX, Acc) ->
+				Acc
+		end,
+		ok,
+		B#block.txs
+	).
 
 %% @doc Return {BlockHeight, BlockHash} belonging to the block where
 %% the given transaction was included.
@@ -287,11 +295,7 @@ write_tx(#tx{ format = Format } = TX) ->
 							%% if we fail to store it, we return an error here.
 							%% We have already checked whether the transaction is blacklisted
 							%% prior to calling this function, see is_blacklisted/1.
-							write_tx_data(
-								no_expected_data_root,
-								TX#tx.data,
-								write_to_free_space_buffer
-							);
+							write_tx_data(no_expected_data_root, TX#tx.data);
 						{true, 2} ->
 							case ar_tx_blacklist:is_tx_blacklisted(TX#tx.id) of
 								true ->
@@ -329,31 +333,22 @@ write_tx_header(TX) ->
 	end.
 
 write_tx_data(Data) ->
-	write_tx_data(no_expected_data_root, Data, do_not_write_to_free_space_buffer).
+	write_tx_data(no_expected_data_root, Data).
 
 write_tx_data(ExpectedDataRoot, Data) ->
-	write_tx_data(ExpectedDataRoot, Data, do_not_write_to_free_space_buffer).
-
-write_tx_data(ExpectedDataRoot, Data, WriteToFreeSpaceBuffer) ->
 	Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, Data),
 	SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
 	SizeTaggedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks),
 	case {ExpectedDataRoot, ar_merkle:generate_tree(SizeTaggedChunkIDs)} of
 		{no_expected_data_root, {DataRoot, DataTree}} ->
-			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpaceBuffer);
+			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks);
 		{_, {ExpectedDataRoot, DataTree}} ->
-			write_tx_data(
-				ExpectedDataRoot,
-				DataTree,
-				Data,
-				SizeTaggedChunks,
-				WriteToFreeSpaceBuffer
-			);
+			write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks);
 		_ ->
 			{error, [invalid_data_root]}
 	end.
 
-write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpaceBuffer) ->
+write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
 	Errors = lists:foldl(
 		fun
 			({<<>>, _}, Acc) ->
@@ -375,7 +370,7 @@ write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpa
 					data_path => DataPath,
 					data_size => byte_size(Data)
 				},
-				case ar_data_sync:add_chunk(Proof, 30000, WriteToFreeSpaceBuffer) of
+				case ar_data_sync:add_chunk(Proof) of
 					ok ->
 						Acc;
 					{error, Reason} ->
@@ -756,19 +751,6 @@ init([]) ->
 	{ok, BlockDB} = ar_kv:open_without_column_families("ar_storage_block_db", []),
 	ets:insert(?MODULE, [{tx_confirmation_db, DB}, {tx_db, TXDB}, {block_db, BlockDB}]),
 	{ok, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = BlockDB }}.
-
-handle_call({put_tx_confirmation_data, B}, _From, State) ->
-	#state{ tx_confirmation_db = TXConfirmationDB } = State,
-	Data = term_to_binary({B#block.height, B#block.indep_hash}),
-	{reply, lists:foldl(
-		fun	(TX, ok) ->
-				ar_kv:put(TXConfirmationDB, TX#tx.id, Data);
-			(_TX, Acc) ->
-				Acc
-		end,
-		ok,
-		B#block.txs
-	), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
