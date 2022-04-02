@@ -15,7 +15,7 @@
 		block_index_to_json_struct/1, json_struct_to_block_index/1,
 		jsonify/1, dejsonify/1, json_decode/1, json_decode/2,
 		query_to_json_struct/1, json_struct_to_query/1,
-		chunk_proof_to_json_map/1, json_map_to_chunk_proof/1]).
+		chunk_proof_to_json_map/1, json_map_to_chunk_proof/1, encode_int/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").

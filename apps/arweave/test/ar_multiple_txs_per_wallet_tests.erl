@@ -236,13 +236,14 @@ returns_error_when_txs_exceed_balance(B0, TXs, ExceedBalanceTX) ->
 	%% Post the balance exceeding transaction again
 	%% and expect the balance exceeded error.
 	slave_call(ets, delete, [ignored_ids, ExceedBalanceTX#tx.id]),
-	{ok, {{<<"400">>, _}, _, _, _, _}} =
+	{ok, {{<<"400">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => post,
 			peer => slave_peer(),
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ExceedBalanceTX))
 		}),
+	?debugFmt("TX: ~s Reply: ~p~n", [ar_util:encode(ExceedBalanceTX#tx.id), Body]),
 	?assertEqual({ok, ["overspend"]}, ar_tx_db:get_error_codes(ExceedBalanceTX#tx.id)).
 
 rejects_transactions_above_the_size_limit_test_() ->

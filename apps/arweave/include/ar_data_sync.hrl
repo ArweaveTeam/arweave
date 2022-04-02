@@ -115,24 +115,18 @@
 	%% asks for it and to look up chunks of a transaction.
 	chunks_index,
 	%% A reference to the on-disk key-value storage mapping
-	%% << DataRoot/binary, TXSize:256 >> => TXRoot => AbsoluteTXStartOffset => TXPath.
+	%% << DataRoot/binary, TXSize/binary, AbsoluteTXStartOffset/binary >> => TXPath.
 	%%
-	%% The index is used to look up tx_root for a submitted chunk and
-	%% to compute AbsoluteChunkEndOffset for the accepted chunk.
+	%% The index is used to look up tx_root for a submitted chunk and compute
+	%% AbsoluteChunkEndOffset for the accepted chunk.
 	%%
-	%% We need the index because users should be able to submit their
-	%% data without monitoring the chain, otherwise chain reorganisations
-	%% might make the experience very unnerving. The index is NOT used
-	%% for serving random chunks therefore it is possible to develop
-	%% a lightweight client which would sync and serve random portions
-	%% of the weave without maintaining this index.
-	%%
-	%% The index contains data roots of all stored chunks therefore it is used
-	%% to determine if an orphaned data root can be deleted (the same data root
-	%% can belong to multiple tx roots). A potential lightweight client without
-	%% this index can simply only sync properly confirmed chunks that are extremely
-	%% unlikely to be orphaned.
+	%% We need the index because users should be able to submit their data without
+	%% monitoring the chain, otherwise chain reorganisations might make the experience
+	%% very unnerving. The index is NOT consulted when serving random chunks therefore
+	%% it is possible to develop a lightweight client which would sync and serve random
+	%% portions of the weave without maintaining this index.
 	data_root_index,
+	data_root_index_old,
 	%% A reference to the on-disk key-value storage mapping
 	%% AbsoluteBlockStartOffset => {TXRoot, BlockSize, DataRootIndexKeySet}.
 	%% Each key in DataRootIndexKeySet is a << DataRoot/binary, TXSize:256 >> binary.

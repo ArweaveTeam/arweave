@@ -144,14 +144,24 @@ cyclic_iterator_move({DB, CF}, Cursor) ->
 get_prev({DB, CF}, OffsetBinary) ->
 	case rocksdb:iterator(DB, CF, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary});
+			case rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary}) of
+				{error, invalid_iterator} ->
+					none;
+				Reply ->
+					Reply
+			end;
 		Error ->
 			Error
 	end;
 get_prev(DB, OffsetBinary) ->
 	case rocksdb:iterator(DB, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary});
+			case rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary}) of
+				{error, invalid_iterator} ->
+					none;
+				Reply ->
+					Reply
+			end;
 		Error ->
 			Error
 	end.
