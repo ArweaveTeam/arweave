@@ -123,7 +123,7 @@ read_block(BH) ->
 			%% node is out of disk space.
 			read_block_from_file(Filename);
 		_ ->
-			case ets:lookup(?MODULE, block_db) of
+			case catch ets:lookup(?MODULE, block_db) of
 				[{_, DB}] ->
 					case ar_kv:get(DB, BH) of
 						not_found ->
@@ -403,7 +403,7 @@ read_tx(ID) ->
 	end.
 
 read_tx2(ID) ->
-	case ets:lookup(?MODULE, tx_db) of
+	case catch ets:lookup(?MODULE, tx_db) of
 		[{_, DB}] ->
 			case ar_kv:get(DB, ID) of
 				not_found ->

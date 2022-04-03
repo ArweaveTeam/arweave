@@ -8,12 +8,7 @@
 %%% @end
 -module(ar_ignore_registry).
 
--export([
-	add/1,
-	add_temporary/2,
-	remove_temporary/1,
-	member/1
-]).
+-export([add/1, add_temporary/2, remove_temporary/1, member/1]).
 
 %% @doc Put a permanent ID record into the registry.
 add(ID) ->
@@ -24,11 +19,11 @@ add(ID) ->
 %% @end
 add_temporary(ID, Timeout) ->
 	ets:insert(ignored_ids, {ID, temporary}),
-	timer:apply_after(Timeout, ets, delete_object, [ignored_ids, {ID, temporary}]).
+	timer:apply_after(Timeout, ar_ignore_registry, remove_temporary, [ID]).
 
 %% @doc Remove the temporary record from the registry.
 remove_temporary(ID) ->
-	ets:delete_object(ignored_ids, {ID, temporary}).
+	catch ets:delete_object(ignored_ids, {ID, temporary}).
 
 %% @doc Check if there is a temporary or a permanent record in the registry.
 member(ID) ->

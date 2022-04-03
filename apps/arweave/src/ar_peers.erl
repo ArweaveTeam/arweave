@@ -70,7 +70,9 @@ get_peers() ->
 		true ->
 			[];
 		false ->
-			case ets:lookup(?MODULE, peers) of
+			case catch ets:lookup(?MODULE, peers) of
+				{'EXIT', _} ->
+					[];
 				[] ->
 					[];
 				[{_, Peers}] ->
@@ -127,7 +129,7 @@ is_public_peer(_) ->
 %% @doc Return the release nubmer reported by the peer.
 %% Return -1 if the release is not known.
 get_peer_release(Peer) ->
-	case ets:lookup(?MODULE, {peer, Peer}) of
+	case catch ets:lookup(?MODULE, {peer, Peer}) of
 		[{_, #performance{ release = Release }}] ->
 			Release;
 		_ ->

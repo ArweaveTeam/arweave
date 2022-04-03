@@ -405,6 +405,7 @@ process_item(Queue) ->
 		{{value, {{block, {H, H2, TXRoot}}, Backoff}}, UpdatedQueue} ->
 			monitor(process, spawn(
 				fun() ->
+					process_flag(trap_exit, true),
 					case download_block(H, H2, TXRoot) of
 						{error, _Reason} ->
 							gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot,

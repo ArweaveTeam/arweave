@@ -33,7 +33,7 @@ init([]) ->
 			(Hook) when is_record(Hook, config_webhook) ->
 				Handler = {ar_webhook, Hook#config_webhook.url},
 				{Handler, {ar_webhook, start_link, [Hook]},
-					permanent, 5000, worker, [ar_webhook]};
+					permanent, 30000, worker, [ar_webhook]};
 			(Hook) ->
 				?LOG_ERROR([{event, failed_to_parse_webhook_config},
 					{webhook_config, io_lib:format("~p", [Hook])}])

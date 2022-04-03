@@ -96,6 +96,7 @@ handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
 		{{value, Peer}, Queue} ->
 			monitor(process, spawn(
 				fun() ->
+					process_flag(trap_exit, true),
 					case ar_http_iface_client:get_sync_buckets(Peer) of
 						{ok, SyncBuckets} ->
 							gen_server:cast(?MODULE, {add_peer_sync_buckets, Peer,

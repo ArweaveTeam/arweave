@@ -18,7 +18,7 @@
 
 %% @doc Start a process that will attempt to download the block index and the latest blocks.
 start(Peers) ->
-	spawn(fun() -> start2(Peers) end).
+	spawn(fun() -> process_flag(trap_exit, true), start2(Peers) end).
 
 %%%===================================================================
 %%% Private functions.

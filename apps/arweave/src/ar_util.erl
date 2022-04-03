@@ -109,6 +109,7 @@ pmap(Mapper, List) ->
 	ListWithRefs = [{Elem, make_ref()} || Elem <- List],
 	lists:foreach(fun({Elem, Ref}) ->
 		spawn_link(fun() ->
+			process_flag(trap_exit, true),
 			Master ! {pmap_work, Ref, Mapper(Elem)}
 		end)
 	end, ListWithRefs),
@@ -127,6 +128,7 @@ pfilter(Fun, List) ->
 	ListWithRefs = [{Elem, make_ref()} || Elem <- List],
 	lists:foreach(fun({Elem, Ref}) ->
 		spawn_link(fun() ->
+			process_flag(trap_exit, true),
 			Master ! {pmap_work, Ref, Fun(Elem)}
 		end)
 	end, ListWithRefs),

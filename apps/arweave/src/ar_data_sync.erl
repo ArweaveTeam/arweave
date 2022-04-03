@@ -396,6 +396,7 @@ handle_cast(collect_sync_intervals, State) ->
 		false ->
 			spawn_link(
 				fun() ->
+					process_flag(trap_exit, true),
 					catch register(ar_sync_intervals_collector, self()),
 					find_random_interval(WeaveSize),
 					ar_util:cast_after(500, ?MODULE, collect_sync_intervals)
@@ -449,7 +450,7 @@ handle_cast({sync_interval, _, _},
 		#sync_data_state{ sync_disk_space = false } = State) ->
 	{noreply, State};
 handle_cast({sync_interval, Left, Right}, State) ->
-	spawn(fun() -> find_subintervals(Left, Right) end),
+	spawn(fun() -> process_flag(trap_exit, true), find_subintervals(Left, Right) end),
 	{noreply, State};
 
 handle_cast(sync_random_interval, State) ->
@@ -500,6 +501,7 @@ handle_cast({sync_chunk, [{Byte, RightBound, Peer} | SubIntervals], Loop}, State
 			Self = self(),
 			spawn_link(
 				fun() ->
+					process_flag(trap_exit, true),
 					Fun = case ar_peers:get_peer_release(Peer) >= 42 of
 							true -> fun ar_http_iface_client:get_chunk_binary/3;
 							false -> fun ar_http_iface_client:get_chunk_json/3 end,

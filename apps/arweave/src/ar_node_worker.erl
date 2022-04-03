@@ -795,7 +795,7 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 			Self = self(),
 			monitor(
 				process,
-				PID = spawn(fun() -> get_missing_txs_and_retry(BShadow, Mempool, Self) end)
+				PID = spawn(fun() -> process_flag(trap_exit, true), get_missing_txs_and_retry(BShadow, Mempool, Self) end)
 			),
 			BH = BShadow#block.indep_hash,
 			{noreply, State#{
@@ -1208,7 +1208,8 @@ add_tx_to_mempool(#tx{ id = TXID } = TX, Status) ->
 						gb_sets:del_element({Utility, TXID, PrevStatus}, Set)), Q}
 		end,
 	Map2 = maps:put(TX#tx.id, Status, Map),
-	{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2, MempoolSize2),
+	{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2,
+			MempoolSize2),
 	ets:insert(node_state, [
 		{tx_statuses, Map3},
 		{mempool_size, MempoolSize3},
