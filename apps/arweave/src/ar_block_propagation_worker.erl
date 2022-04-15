@@ -56,8 +56,21 @@ handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From},
 					ar_events:send(peer, {bad_response,
 							{Peer, block_announcement, Reason}}),
 					From ! {worker_sent_block, self()};
-				{ok, #block_announcement_response{ missing_tx_indices = L }} ->
-					SendFun(L),
+				{ok, #block_announcement_response{ missing_tx_indices = L,
+						missing_chunk = MissingChunk }} ->
+					case SendFun(MissingChunk, L) of
+						{ok, {{<<"418">>, _}, _, Bin, _, _}} when RetryCount > 0 ->
+							case parse_txids(Bin) of
+								error ->
+									ok;
+								{ok, TXIDs} ->
+									SendFun(MissingChunk, TXIDs)
+							end;
+						{ok, {{<<"419">>, _}, _, _, _, _}} when RetryCount > 0 ->
+							SendFun(true, L);
+						_ ->
+							ok
+					end,
 					From ! {worker_sent_block, self()}
 			end;
 		_ ->	%% 208 (the peer has already received this block) or
@@ -79,3 +92,17 @@ handle_info(Info, State) ->
 
 terminate(_Reason, _State) ->
 	ok.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+
+parse_txids(<< TXID:32/binary, Rest/binary >>) ->
+	case parse_txids(Rest) of
+		error ->
+			error;
+		{ok, TXIDs} ->
+			{ok, [TXID | TXIDs]}
+	end;
+parse_txids(<<>>) ->
+	{ok, []}.

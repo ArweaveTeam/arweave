@@ -647,7 +647,7 @@ test_fork_recovery(Split) ->
 	post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} }, []),
 	MasterProofs2 = post_proofs_to_master(MasterB2, MasterTX2, MasterChunks2),
 	{MasterTX3, MasterChunks3} = tx(Wallet, {Split, 16}),
-	MasterB3 = post_and_mine(#{ miner => {master, Master}, await_on => {master, Master} },
+	MasterB3 = post_and_mine(#{ miner => {master, Master}, await_on => {slave, Slave} },
 			[MasterTX3]),
 	MasterProofs3 = post_proofs_to_master(MasterB3, MasterTX3, MasterChunks3),
 	slave_wait_until_syncs_chunks(MasterProofs2),

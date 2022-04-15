@@ -258,7 +258,7 @@ binary_to_tx(_Rest) ->
 	{error, invalid_input}.
 
 block_announcement_to_binary(#block_announcement{ indep_hash = H,
-		previous_block = PrevH, tx_prefixes = L, chunk_offset = O }) ->
+		previous_block = PrevH, tx_prefixes = L, recall_byte = O }) ->
 	<< H:48/binary, PrevH:48/binary, (encode_int(O, 8))/binary,
 			(encode_tx_prefixes(L))/binary >>.
 
@@ -271,14 +271,14 @@ encode_tx_prefixes([Prefix | Prefixes], Encoded) ->
 	encode_tx_prefixes(Prefixes, [<< Prefix:8/binary >> | Encoded]).
 
 binary_to_block_announcement(<< H:48/binary, PrevH:48/binary,
-		OffsetSize:8, Offset:(OffsetSize * 8), N:16, Rest/binary >>) ->
-	Offset2 = case OffsetSize of 0 -> undefined; _ -> Offset end,
+		RecallByteSize:8, RecallByte:(RecallByteSize * 8), N:16, Rest/binary >>) ->
+	RecallByte2 = case RecallByteSize of 0 -> undefined; _ -> RecallByte end,
 	case parse_tx_prefixes(N, Rest) of
 		{error, Reason} ->
 			{error, Reason};
 		{ok, Prefixes} ->
 			{ok, #block_announcement{ indep_hash = H, previous_block = PrevH,
-					chunk_offset = Offset2, tx_prefixes = Prefixes }}
+					recall_byte = RecallByte2, tx_prefixes = Prefixes }}
 	end;
 binary_to_block_announcement(_Rest) ->
 	{error, invalid_input}.
@@ -1033,10 +1033,10 @@ block_announcement_to_binary_test() ->
 			previous_block = crypto:strong_rand_bytes(48) },
 	?assertEqual({ok, A}, binary_to_block_announcement(
 			block_announcement_to_binary(A))),
-	A2 = A#block_announcement{ chunk_offset = 0 },
+	A2 = A#block_announcement{ recall_byte = 0 },
 	?assertEqual({ok, A2}, binary_to_block_announcement(
 			block_announcement_to_binary(A2))),
-	A3 = A#block_announcement{ chunk_offset = 1000000000000000000000 },
+	A3 = A#block_announcement{ recall_byte = 1000000000000000000000 },
 	?assertEqual({ok, A3}, binary_to_block_announcement(
 			block_announcement_to_binary(A3))),
 	A4 = A3#block_announcement{ tx_prefixes = [crypto:strong_rand_bytes(8)

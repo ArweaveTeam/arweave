@@ -9,7 +9,7 @@
 %%% @end
 -module(ar_node_worker).
 
--export([start_link/0, calculate_delay/1]).
+-export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1]).
 
 -export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1,
 		tx_id_prefix/1]).
@@ -35,8 +35,15 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+%% @doc Return the prefix used to inform block receivers about the block's transactions
+%% via POST /block_announcement.
 tx_id_prefix(TXID) ->
 	binary:part(TXID, 0, 8).
+
+%% @doc Return true if the given transaction identifier is found in the mempool or
+%% block cache (the last ?STORE_BLOCKS_BEHIND_CURRENT blocks).
+is_mempool_or_block_cache_tx(TXID) ->
+	ets:match_object(tx_prefixes, {tx_id_prefix(TXID), TXID}) /= [].
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -132,7 +139,7 @@ load_mempool() ->
 				maps:map(
 					fun(TXID, {TX, Status}) ->
 						ets:insert(node_state, {{tx, TXID}, TX}),
-						ets:insert(tx_prefixes, {tx_id_prefix(TXID)}),
+						ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 						Status
 					end,
 					TXs
@@ -216,7 +223,6 @@ start_io_threads() ->
 	[spawn_link(
 		fun() ->
 			process_flag(trap_exit, true),
-			process_flag(message_queue_data, off_heap),
 			ar_chunk_storage:open_files(),
 			ar_mine:io_thread(SearchInRocksDB)
 		end)
@@ -301,7 +307,7 @@ handle_info({event, block, {new, Block, _Source}}, State) ->
 			{noreply, State}
 	end;
 
-handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
+handle_info({event, block, {mined, Block, TXs, CurrentBH, RecallByte}}, State) ->
 	case ets:lookup(node_state, recent_block_index) of
 		[{recent_block_index, [{CurrentBH, _, _} | _] = RecentBI}] ->
 			[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
@@ -319,7 +325,8 @@ handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
 			ar_ignore_registry:add(B#block.indep_hash),
 			State2 = apply_validated_block(State, B, PrevBlocks, 0, RecentBI2, BlockTXPairs2),
 			%% Won't be received by itself, but we should let know all "block" subscribers.
-			ar_events:send(block, {new, Block#block{ txs = TXs }, miner}),
+			ar_events:send(block, {new, Block#block{ txs = TXs }, #{ source => miner,
+					recall_byte => RecallByte }}),
 			{noreply, State2};
 		_ ->
 			?LOG_INFO([{event, ignore_mined_block}, {reason, accepted_foreign_block}]),
@@ -345,7 +352,7 @@ handle_info({event, tx, {new, TX, _Source}}, State) ->
 			Q2 = gb_sets:add_element({{Utility, Timestamp}, TXID}, Q),
 			MempoolSize2 = increase_mempool_size(MempoolSize, TX),
 			ets:insert(node_state, {{tx, TXID}, TX}),
-			ets:insert(tx_prefixes, {tx_id_prefix(TXID)}),
+			ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 			{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2,
 					MempoolSize2),
 			ets:insert(node_state, [
@@ -617,7 +624,7 @@ may_be_drop_low_priority_txs(Map, Set, Q, {MempoolHeaderSize, MempoolDataSize})
 	may_be_drop_from_disk_pool(TX),
 	ets:delete(node_state, {tx, TXID}),
 	ets:delete(node_state, {tx_timestamp, TXID}),
-	ets:delete(tx_prefixes, {tx_id_prefix(TXID)}),
+	ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 	may_be_drop_low_priority_txs(Map2, Set2, Q2, MempoolSize2);
 may_be_drop_low_priority_txs(Map, Set, Q, {MempoolHeaderSize, MempoolDataSize})
 		when MempoolDataSize > ?MEMPOOL_DATA_SIZE_LIMIT ->
@@ -639,7 +646,7 @@ may_be_drop_low_priority_txs(Map, Iterator, Set, Q, {MempoolHeaderSize, MempoolD
 			may_be_drop_from_disk_pool(TX),
 			ets:delete(node_state, {tx, TXID}),
 			ets:delete(node_state, {tx_timestamp, TXID}),
-			ets:delete(tx_prefixes, {tx_id_prefix(TXID)}),
+			ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 			may_be_drop_low_priority_txs(Map2, Iterator2, Set2, Q2, MempoolSize2);
 		false ->
 			may_be_drop_low_priority_txs(Map, Iterator2, Set, Q,
@@ -698,7 +705,7 @@ drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize, RemoveTXPrefixes) ->
 			ets:delete(node_state, {tx_timestamp, TXID}),
 			case RemoveTXPrefixes of
 				true ->
-					ets:delete(tx_prefixes, tx_id_prefix(TXID));
+					ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID});
 				false ->
 					ok
 			end
@@ -1199,7 +1206,7 @@ add_tx_to_mempool(#tx{ id = TXID } = TX, Status) ->
 		case maps:get(TXID, Map, not_found) of
 			not_found ->
 				ets:insert(node_state, {{tx, TXID}, TX}),
-				ets:insert(tx_prefixes, {tx_id_prefix(TXID)}),
+				ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 				{increase_mempool_size(MempoolSize, TX),
 						gb_sets:add_element({Utility, TXID, Status}, Set),
 						gb_sets:add_element({Utility, TXID}, Q)};

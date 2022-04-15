@@ -5,6 +5,16 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
+-define(ENDPOINTS, ["info", "block", "block_announcement", "block2", "tx", "tx2",
+		"queue", "recent_hash_list", "tx_anchor", "arql", "time", "chunk", "chunk2",
+		"data_sync_record", "sync_buckets", "wallet", "unsigned_tx", "peers", "hash_list",
+		"block_index", "block_index2", "wallet_list", "height", "metrics"]).
+
+%%%===================================================================
+%%% Public interface.
+%%%===================================================================
+
+%% @doc Declare Arweave metrics.
 register(MetricsDir) ->
 	filelib:ensure_dir(MetricsDir ++ "/"),
 	%% Networking.
@@ -54,7 +64,7 @@ register(MetricsDir) ->
 		{help, "The time in milliseconds of SQLite queries."}
 	]),
 
-	%% Transaction propagation.
+	%% Transaction and block propagation.
 	prometheus_gauge:new([
 		{name, tx_queue_size},
 		{help, "The size of the transaction propagation queue"}
@@ -91,6 +101,23 @@ register(MetricsDir) ->
 			"to be transaction data."
 		}
 	]),
+	prometheus_counter:new([{name, block_announcement_missing_transactions},
+			{help, "The total number of tx prefixes reported to us via "
+					"POST /block_announcement and not found in the mempool or block cache."}]),
+	prometheus_counter:new([{name, block_announcement_reported_transactions},
+			{help, "The total number of tx prefixes reported to us via "
+					"POST /block_announcement."}]),
+	prometheus_counter:new([{name, block2_received_transactions},
+			{help, "The total number of transactions received via POST /block2."}]),
+	prometheus_counter:new([{name, block_announcement_missing_chunks},
+			{help, "The total number of chunks reported to us via "
+					"POST /block_announcement and not found locally."}]),
+	prometheus_counter:new([{name, block_announcement_reported_chunks},
+			{help, "The total number of chunks reported to us via "
+					"POST /block_announcement."}]),
+	prometheus_counter:new([{name, block2_fetched_chunks},
+			{help, "The total number of chunks fetched locally during the successful"
+					" processing of POST /block2."}]),
 
 	%% Data seeding.
 	prometheus_gauge:new([
@@ -185,6 +212,7 @@ register(MetricsDir) ->
 			"The per second average rate of the number of tried solution candidates "
 			"computed over the last block time."}
 	]),
+
 	%% Packing.
 	prometheus_histogram:new([
 		{name, packing_duration_milliseconds},
@@ -203,104 +231,17 @@ register(MetricsDir) ->
 		{help, "The number of SPoRA solutions based on unpacked chunks entered validation."}
 	]).
 
+%% @doc Store the given metric in a file.
 store(Name) ->
 	{ok, Config} = application:get_env(arweave, config),
 	ar_storage:write_term(Config#config.metrics_dir, Name, prometheus_gauge:value(Name)).
 
+%% @doc Return the HTTP path label for cowboy_requests_total and gun_requests_total metrics.
 label_http_path(Path) ->
 	name_route(split_path(Path)).
 
-split_path(Path) ->
-	lists:filter(
-		fun(C) -> C /= <<>> end,
-		string:split(Path, <<"/">>, all)
-	).
-
-name_route([]) ->
-	"/";
-name_route([<<"info">>]) ->
-	"/info";
-name_route([<<"block">>]) ->
-	"/block";
-name_route([<<"tx">>]) ->
-	"/tx";
-name_route([<<"tx_anchor">>]) ->
-	"/tx_anchor";
-name_route([<<"peer">>|_]) ->
-	"/peer/...";
-name_route([<<"arql">>]) ->
-	"/arql";
-name_route([<<"time">>]) ->
-	"/time";
-name_route([<<"tx">>, <<"pending">>]) ->
-	"/tx/pending";
-name_route([<<"tx">>, _Hash, <<"status">>]) ->
-	"/tx/{hash}/status";
-name_route([<<"tx">>, _Hash]) ->
-	"/tx/{hash}";
-name_route([<<"tx">>, _Hash, << "data" >>]) ->
-	"/tx/{hash}/data";
-name_route([<<"tx">>, _Hash, << "data.", _/binary >>]) ->
-	"/tx/{hash}/data.{ext}";
-name_route([<<"tx">>, _Hash, << "offset" >>]) ->
-	"/tx/{hash}/offset";
-name_route([<<"chunk">>, _Offset]) ->
-	"/chunk/{offset}";
-name_route([<<"chunk">>]) ->
-	"/chunk";
-name_route([<<"data_sync_record">>]) ->
-	"/data_sync_record";
-name_route([<<"wallet">>]) ->
-	"/wallet";
-name_route([<<"unsigned_tx">>]) ->
-	"/unsigned_tx";
-name_route([<<"peers">>]) ->
-	"/peers";
-name_route([<<"price">>, _SizeInBytes]) ->
-	"/price/{bytes}";
-name_route([<<"price">>, _SizeInBytes, _Addr]) ->
-	"/price/{bytes}/{address}";
-name_route([<<"hash_list">>]) ->
-	"/hash_list";
-name_route([<<"block_index">>]) ->
-	"/block_index";
-name_route([<<"wallet_list">>]) ->
-	"/wallet_list";
-name_route([<<"wallet">>, _Addr, <<"balance">>]) ->
-	"/wallet/{addr}/balance";
-name_route([<<"wallet">>, _Addr, <<"last_tx">>]) ->
-	"/wallet/{addr}/last_tx";
-name_route([<<"wallet">>, _Addr, <<"txs">>]) ->
-	"/wallet/{addr}/txs";
-name_route([<<"wallet">>, _Addr, <<"txs">>, _EarliestTX]) ->
-	"/wallet/{addr}/txs/{earliest_tx}";
-name_route([<<"wallet">>, _Addr, <<"deposits">>]) ->
-	"/wallet/{addr}/deposits";
-name_route([<<"wallet">>, _Addr, <<"deposits">>, _EarliestDeposit]) ->
-	"/wallet/{addr}/deposits/{earliest_deposit}";
-name_route([<<"block">>, <<"hash">>, _IndepHash]) ->
-	"/block/hash/{indep_hash}";
-name_route([<<"block">>, <<"height">>, _Height]) ->
-	"/block/height/{height}";
-name_route([<<"block">>, _Type, _IDBin, _Field]) ->
-	"/block/{type}/{id_bin}/{field}";
-name_route([<<"block">>, <<"current">>]) ->
-	"/block/current";
-name_route([<<"current_block">>]) ->
-	"/current/block";
-name_route([<<"services">>]) ->
-	"/services";
-name_route([<<"tx">>, _Hash, _Field]) ->
-	"/tx/hash/field";
-name_route([<<"height">>]) ->
-	"/height";
-name_route([<<_Hash:43/binary, _MaybeExt/binary>>]) ->
-	"/{hash}[.{ext}]";
-name_route([<<"metrics">>]) ->
-	"/metrics";
-name_route(_) ->
-	undefined.
-
+%% @doc Return the HTTP status class label for cowboy_requests_total and gun_requests_total
+%% metrics.
 get_status_class({ok, {{Status, _}, _, _, _, _}}) ->
 	get_status_class(Status);
 get_status_class({error, connection_closed}) ->
@@ -313,6 +254,10 @@ get_status_class({error, econnrefused}) ->
 	"econnrefused";
 get_status_class(208) ->
 	"already_processed";
+get_status_class(418) ->
+	"missing_transactions";
+get_status_class(419) ->
+	"missing_chunk";
 get_status_class(Data) when is_integer(Data), Data > 0 ->
 	prometheus_http:status_class(Data);
 get_status_class(Data) when is_binary(Data) ->
@@ -326,3 +271,103 @@ get_status_class(Data) when is_atom(Data) ->
 	atom_to_list(Data);
 get_status_class(_) ->
 	"unknown".
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+split_path(Path) ->
+	lists:filter(
+		fun(C) -> C /= <<>> end,
+		string:split(Path, <<"/">>, all)
+	).
+
+name_route([]) ->
+	"/";
+name_route([<<"current_block">>]) ->
+	"/current/block";
+name_route([<<_Hash:43/binary, _MaybeExt/binary>>]) ->
+	"/{hash}[.{ext}]";
+name_route([Bin]) ->
+	L = binary_to_list(Bin),
+	case lists:member(L, ?ENDPOINTS) of
+		true ->
+			"/" ++ L;
+		false ->
+			undefined
+	end;
+name_route([<<"peer">> | _]) ->
+	"/peer/...";
+
+name_route([<<"tx">>, <<"pending">>]) ->
+	"/tx/pending";
+name_route([<<"tx">>, _Hash, <<"status">>]) ->
+	"/tx/{hash}/status";
+name_route([<<"tx">>, _Hash]) ->
+	"/tx/{hash}";
+name_route([<<"tx2">>, _Hash]) ->
+	"/tx2/{hash}";
+name_route([<<"unconfirmed_tx">>, _Hash]) ->
+	"/unconfirmed_tx/{hash}";
+name_route([<<"unconfirmed_tx2">>, _Hash]) ->
+	"/unconfirmed_tx2/{hash}";
+name_route([<<"tx">>, _Hash, << "data" >>]) ->
+	"/tx/{hash}/data";
+name_route([<<"tx">>, _Hash, << "data.", _/binary >>]) ->
+	"/tx/{hash}/data.{ext}";
+name_route([<<"tx">>, _Hash, << "offset" >>]) ->
+	"/tx/{hash}/offset";
+name_route([<<"tx">>, _Hash, _Field]) ->
+	"/tx/hash/field";
+
+name_route([<<"chunk">>, _Offset]) ->
+	"/chunk/{offset}";
+name_route([<<"chunk2">>, _Offset]) ->
+	"/chunk2/{offset}";
+
+name_route([<<"data_sync_record">>, _Start, _Limit]) ->
+	"/data_sync_record/{start}/{limit}";
+
+name_route([<<"price">>, _SizeInBytes]) ->
+	"/price/{bytes}";
+name_route([<<"price">>, _SizeInBytes, _Addr]) ->
+	"/price/{bytes}/{address}";
+
+name_route([<<"wallet">>, _Addr, <<"balance">>]) ->
+	"/wallet/{addr}/balance";
+name_route([<<"wallet">>, _Addr, <<"last_tx">>]) ->
+	"/wallet/{addr}/last_tx";
+name_route([<<"wallet">>, _Addr, <<"txs">>]) ->
+	"/wallet/{addr}/txs";
+name_route([<<"wallet">>, _Addr, <<"txs">>, _EarliestTX]) ->
+	"/wallet/{addr}/txs/{earliest_tx}";
+name_route([<<"wallet">>, _Addr, <<"deposits">>]) ->
+	"/wallet/{addr}/deposits";
+name_route([<<"wallet">>, _Addr, <<"deposits">>, _EarliestDeposit]) ->
+	"/wallet/{addr}/deposits/{earliest_deposit}";
+
+name_route([<<"wallet_list">>, _Root]) ->
+	"/wallet_list/{root_hash}";
+name_route([<<"wallet_list">>, _Root, _Cursor]) ->
+	"/wallet_list/{root_hash}/{cursor}";
+name_route([<<"wallet_list">>, _Root, _Addr, <<"balance">>]) ->
+	"/wallet_list/{root_hash}/{addr}/balance";
+
+name_route([<<"block_index">>, _From, _To]) ->
+	"/block_index/{from}/{to}";
+
+name_route([<<"block">>, <<"hash">>, _IndepHash]) ->
+	"/block/hash/{indep_hash}";
+name_route([<<"block">>, <<"height">>, _Height]) ->
+	"/block/height/{height}";
+name_route([<<"block2">>, <<"hash">>, _IndepHash]) ->
+	"/block2/hash/{indep_hash}";
+name_route([<<"block2">>, <<"height">>, _Height]) ->
+	"/block2/height/{height}";
+name_route([<<"block">>, _Type, _IDBin, _Field]) ->
+	"/block/{type}/{id_bin}/{field}";
+name_route([<<"block">>, <<"current">>]) ->
+	"/block/current";
+
+name_route(_) ->
+	undefined.

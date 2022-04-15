@@ -327,7 +327,7 @@
 -record(block_announcement, {
 	indep_hash,
 	previous_block,
-	chunk_offset,
+	recall_byte,
 	tx_prefixes = [] % 8 byte prefixes of transaction identifiers.
 }).
 

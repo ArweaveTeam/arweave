@@ -709,7 +709,7 @@ server(
 									{previous_block, ar_util:encode(PrevH)},
 									{h0, ar_util:encode(H0)}, {byte, RecallByte}]),
 							server(S);
-						SPoA ->
+						{SPoA, RecallByte} ->
 							case validate_spora({BDS, Nonce, Timestamp, Height, B#block.diff,
 									PrevH, SearchSpaceUpperBound,
 									B#block.packing_2_5_threshold, RecentBI,
@@ -722,7 +722,7 @@ server(
 											nonce = Nonce
 										},
 									stop_miners(S),
-									process_spora_solution(BDS, B2, MinedTXs, S);
+									process_spora_solution(BDS, B2, MinedTXs, RecallByte, S);
 								_ ->
 									?LOG_ERROR([
 										{event, miner_produced_invalid_spora},
@@ -906,7 +906,7 @@ hashing_thread(S, Type) ->
 get_spoa(H0, PrevH, SearchSpaceUpperBound, Height, PackingThreshold) ->
 	case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
 		{error, weave_size_too_small} ->
-			#poa{};
+			{#poa{}, undefined};
 		{ok, RecallByte} ->
 			Packing =
 				case Height >= ar_fork:height_2_5() andalso RecallByte >= PackingThreshold of
@@ -918,7 +918,8 @@ get_spoa(H0, PrevH, SearchSpaceUpperBound, Height, PackingThreshold) ->
 			Options = #{ pack => true, packing => Packing },
 			case ar_data_sync:get_chunk(RecallByte + 1, Options) of
 				{ok, #{ chunk := Chunk, tx_path := TXPath, data_path := DataPath }} ->
-					#poa{ option = 1, chunk = Chunk, tx_path = TXPath, data_path = DataPath };
+					{#poa{ option = 1, chunk = Chunk, tx_path = TXPath,
+							data_path = DataPath }, RecallByte};
 				_ ->
 					{not_found, RecallByte}
 			end
@@ -942,14 +943,12 @@ log_spora_performance() ->
 			" the round lasted ~B seconds.~n",
 			[trunc(Rate), trunc(RecallByteRate), trunc(ReadRate), Time div 1000000]).
 
-process_spora_solution(BDS, B, MinedTXs, S) ->
-	#state{
-		current_block = #block{ indep_hash = CurrentBH }
-	} = S,
+process_spora_solution(BDS, B, MinedTXs, RecallByte, S) ->
+	#state{ current_block = #block{ indep_hash = CurrentBH } } = S,
 	SPoA = B#block.poa,
 	IndepHash = ar_weave:indep_hash(BDS, B#block.hash, B#block.nonce, SPoA),
 	B2 = B#block{ indep_hash = IndepHash },
-	ar_events:send(block, {mined, B2, MinedTXs, CurrentBH}),
+	ar_events:send(block, {mined, B2, MinedTXs, CurrentBH, RecallByte}),
 	log_spora_performance().
 
 prepare_randomx(Height) ->
@@ -1095,7 +1094,7 @@ test_start_stop() ->
 
 assert_mine_output(B, TXs) ->
 	receive
-		{event, block, {mined, NewB, MinedTXs, BH}} ->
+		{event, block, {mined, NewB, MinedTXs, BH, _RecallByte}} ->
 			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
 			BDS = ar_block:generate_block_data_segment(NewB),

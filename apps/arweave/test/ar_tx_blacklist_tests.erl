@@ -7,17 +7,11 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [
-	slave_start/1, start/3, connect_to_slave/0,
-	get_tx_anchor/1,
-	sign_tx/2, sign_v1_tx/2, random_v1_data/1,
-	slave_call/3,
-	assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
-	slave_mine/0,
-	wait_until_height/1, assert_slave_wait_until_height/1,
-	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
-	disconnect_from_slave/0
-]).
+-import(ar_test_node, [slave_start/1, start/3, connect_to_slave/0, get_tx_anchor/1,
+		sign_tx/2, sign_v1_tx/2, random_v1_data/1, slave_call/3, assert_post_tx_to_slave/1,
+		assert_post_tx_to_master/1, slave_mine/0, wait_until_height/1,
+		assert_slave_wait_until_height/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
+		disconnect_from_slave/0, assert_wait_until_receives_txs/1]).
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -76,9 +70,11 @@ test_uses_blacklists() ->
 	lists:foreach(
 		fun({TX, Height}) ->
 			assert_post_tx_to_slave(TX),
+			assert_wait_until_receives_txs([TX]),
 			case Height == length(TXs) of
 				true ->
-					assert_post_tx_to_slave(V1TX);
+					assert_post_tx_to_slave(V1TX),
+					assert_wait_until_receives_txs([V1TX]);
 				_ ->
 					ok
 			end,
@@ -127,6 +123,7 @@ test_uses_blacklists() ->
 	TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
 			last_tx => get_tx_anchor(slave) }),
 	assert_post_tx_to_slave(TX2),
+	assert_wait_until_receives_txs([TX2]),
 	slave_mine(),
 	assert_slave_wait_until_height(length(TXs) + 1),
 	assert_post_tx_to_slave(TX),

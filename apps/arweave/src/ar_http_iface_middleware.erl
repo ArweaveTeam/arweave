@@ -54,7 +54,7 @@ loop(TimeoutRef) ->
 	receive
 		{handled, {Status, Headers, Body, HandledReq}} ->
 			timer:cancel(TimeoutRef),
-			CowboyStatus = handle208(Status),
+			CowboyStatus = handle_custom_codes(Status),
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
 			{stop, RepliedReq};
 		{read_complete_body, From, Req, SizeLimit} ->
@@ -125,7 +125,7 @@ handle(<<"OPTIONS">>, [<<"block">>], Req, _Pid) ->
 handle(<<"OPTIONS">>, [<<"tx">>], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
-handle(<<"OPTIONS">>, [<<"peer">>|_], Req, _Pid) ->
+handle(<<"OPTIONS">>, [<<"peer">> | _], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
 handle(<<"OPTIONS">>, [<<"arql">>], Req, _Pid) ->
@@ -409,7 +409,7 @@ handle(<<"POST">>, [<<"block_announcement">>], Req, Pid) ->
 		{ok, Body, Req2} ->
 			case catch ar_serialize:binary_to_block_announcement(Body) of
 				{ok, #block_announcement{ indep_hash = H, previous_block = PrevH,
-						tx_prefixes = Prefixes }} ->
+						tx_prefixes = Prefixes, recall_byte = RecallByte }} ->
 					case ar_ignore_registry:member(H) of
 						true ->
 							{208, #{}, <<>>, Req};
@@ -419,8 +419,31 @@ handle(<<"POST">>, [<<"block_announcement">>], Req, Pid) ->
 									{412, #{}, <<>>, Req};
 								_ ->
 									Indices = collect_missing_tx_indices(Prefixes),
+									MissingChunk =
+										case RecallByte of
+											undefined ->
+												true;
+											_ ->
+												prometheus_counter:inc(
+														block_announcement_reported_chunks),
+												case ar_sync_record:is_recorded(RecallByte + 1,
+														ar_data_sync) of
+													{true, spora_2_5} ->
+														false;
+													_ ->
+														prometheus_counter:inc(
+															block_announcement_missing_chunks),
+														true
+												end
+										end,
+									prometheus_counter:inc(
+											block_announcement_reported_transactions,
+											length(Prefixes)),
+									prometheus_counter:inc(
+											block_announcement_missing_transactions,
+											length(Indices)),
 									Response = #block_announcement_response{
-											missing_chunk = true,
+											missing_chunk = MissingChunk,
 											missing_tx_indices = Indices },
 									{200, #{}, ar_serialize:block_announcement_response_to_binary(Response), Req2}
 							end
@@ -440,6 +463,7 @@ handle(<<"POST">>, [<<"block">>], Req, Pid) ->
 
 %% Accept a binary-encoded block.
 handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
+	erlang:put(post_block2, true),
 	post_block(request, {Req, Pid, binary}, erlang:timestamp());
 
 %% Generate a wallet and receive a secret key identifying it.
@@ -940,10 +964,11 @@ handle(<<"GET">>, [<<Hash:43/binary, MaybeExt/binary>>], Req, Pid) ->
 handle(_, _, Req, _Pid) ->
 	not_found(Req).
 
-%% Cowlib does not yet support status code 208 properly.
+%% Cowlib does not yet support status codes 208 and 419 properly.
 %% See https://github.com/ninenines/cowlib/pull/79
-handle208(208) -> <<"208 Already Reported">>;
-handle208(Status) -> Status.
+handle_custom_codes(208) -> <<"208 Already Reported">>;
+handle_custom_codes(419) -> <<"419 Missing Chunk">>;
+handle_custom_codes(Status) -> Status.
 
 format_bi_for_peer(BI, Req) ->
 	case cowboy_req:header(<<"x-block-format">>, Req, <<"2">>) of
@@ -1624,15 +1649,14 @@ collect_missing_tx_indices([Prefix | Prefixes], Indices, N) ->
 
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
-%% @end
 post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	OrigPeer = ar_http_util:arweave_peer(Req),
 	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
 		not_banned ->
 			case ar_node:is_joined() of
 				true ->
-					post_block(read_blockshadow, OrigPeer, {Req, Pid, Encoding},
-							ReceiveTimestamp);
+					post_block(check_block_hash_header, OrigPeer, {Req, Pid, Encoding},
+									ReceiveTimestamp);
 				false ->
 					%% The node is not ready to validate and accept blocks.
 					%% If the network adopts this block, ar_poller will catch up.
@@ -1642,53 +1666,95 @@ post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
 	end.
 
-post_block(read_blockshadow, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-	HeaderBlockHashKnown =
-		case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
-			not_set ->
-				false;
-			EncodedBH ->
-				case ar_util:safe_decode(EncodedBH) of
-					{ok, BH} when byte_size(BH) =< 48 ->
-						ar_ignore_registry:member(BH);
-					_ ->
-						false
-				end
-		end,
-	case HeaderBlockHashKnown of
-		true ->
-			{208, <<"Block already processed.">>, Req};
-		false ->
-			case read_complete_body(Req, Pid) of
-				{ok, Body, Req2} ->
-					case decode_block(Body, Encoding) of
-						{error, _} ->
-							{400, #{}, <<"Invalid block.">>, Req2};
-						{ok, BShadow} ->
-							ReadBodyTime = timer:now_diff(erlang:timestamp(),
-									ReceiveTimestamp),
-							erlang:put(read_body_time, ReadBodyTime),
-							erlang:put(body_size, byte_size(term_to_binary(BShadow))),
-							case byte_size(BShadow#block.indep_hash) > 48 of
-								true ->
-									{400, #{}, <<"Invalid block.">>, Req2};
-								false ->
-									post_block(check_indep_hash_processed,
-											{BShadow, OrigPeer}, Req2,
-											ReceiveTimestamp)
-							end
+post_block(check_block_hash_header, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
+	%% Look up the block hash in the "already processing/processed" registry
+	%% for POST /block. We are gradually moving to using POST /block2 - its handler
+	%% does the check in post_block_process_announcement/4.
+	case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
+		not_set ->
+			post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp);
+		EncodedBH ->
+			case ar_util:safe_decode(EncodedBH) of
+				{ok, BH} when byte_size(BH) =< 48 ->
+					case ar_ignore_registry:member(BH) of
+						true ->
+							{208, #{}, <<"Block already processed.">>, Req};
+						false ->
+							post_block(read_body, OrigPeer, {Req, Pid, Encoding},
+									ReceiveTimestamp)
 					end;
-				{error, body_size_too_large} ->
-					{413, #{}, <<"Payload too large">>, Req}
+				_ ->
+					post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp)
 			end
+	end;
+post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case decode_block(Body, Encoding) of
+				{error, _} ->
+					{400, #{}, <<"Invalid block.">>, Req2};
+				{ok, BShadow} ->
+					ReadBodyTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp),
+					erlang:put(read_body_time, ReadBodyTime),
+					erlang:put(body_size, byte_size(term_to_binary(BShadow))),
+					case byte_size(BShadow#block.indep_hash) > 48 of
+						true ->
+							{400, #{}, <<"Invalid block.">>, Req2};
+						false ->
+							post_block(check_indep_hash_processed, {BShadow, OrigPeer}, Req2,
+									ReceiveTimestamp)
+					end
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
 	end;
 post_block(check_indep_hash_processed, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 	case ar_ignore_registry:member(BShadow#block.indep_hash) of
 		true ->
-			{208, <<"Block already processed.">>, Req};
+			{208, #{}, <<"Block already processed.">>, Req};
 		false ->
-			post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp)
+			post_block(check_transactions_are_present, {BShadow, OrigPeer}, Req,
+					ReceiveTimestamp)
 	end;
+post_block(check_transactions_are_present, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
+	case erlang:get(post_block2) of
+		true ->
+			case get_missing_tx_identifiers(BShadow#block.txs) of
+				[] ->
+					post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
+				{error, tx_list_too_long} ->
+					{400, #{}, <<>>, Req};
+				MissingTXIDs ->
+					{418, #{}, encode_txids(MissingTXIDs), Req}
+			end;
+		_ -> % POST /block; do not reject for backwards-compatibility
+			post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp)
+	end;
+post_block(may_be_fetch_chunk, {#block{ poa = #poa{ chunk = <<>> } } = BShadow, OrigPeer},
+		Req, ReceiveTimestamp) ->
+	case cowboy_req:header(<<"arweave-recall-byte">>, Req, not_set) of
+		not_set ->
+			post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
+		Bin ->
+			case catch binary_to_integer(Bin) of
+				{'EXIT', _} ->
+					post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
+				RecallByte ->
+					case ar_data_sync:get_chunk(RecallByte + 1, #{ pack => false,
+							packing => spora_2_5, bucket_based_offset => true }) of
+						{ok, #{ chunk := Chunk, data_path := DataPath, tx_path := TXPath }} ->
+							erlang:put(fetched_chunk, true),
+							post_block(check_indep_hash, {BShadow#block{
+									poa = #poa{ chunk = Chunk, data_path = DataPath,
+											tx_path = TXPath } }, OrigPeer}, Req,
+											ReceiveTimestamp);
+						_ ->
+							{419, #{}, <<>>, Req}
+					end
+			end
+	end;
+post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
+	post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
 post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 	BH = BShadow#block.indep_hash,
 	PrevH = BShadow#block.previous_block,
@@ -1704,7 +1770,7 @@ post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 				false ->
 					{400, #{}, <<"Invalid block.">>, Req};
 				true ->
-					case catch compute_hash(BShadow, PrevHeight + 1) of
+					case catch compute_hash(BShadow) of
 						{BDS, BH} ->
 							ar_ignore_registry:add_temporary(BH, 5000),
 							post_block(
@@ -1715,7 +1781,6 @@ post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 							);
 						_ ->
 							post_block_reject_warn(BShadow, check_indep_hash, OrigPeer),
-							ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 							{400, #{}, <<"Invalid Block Hash">>, Req}
 					end
 			end
@@ -1753,57 +1818,73 @@ post_block(check_difficulty, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimest
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
 post_block(check_pow, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimestamp) ->
-	Nonce = BShadow#block.nonce,
-	#block{ indep_hash = PrevH, height = PrevHeight } = PrevB,
-	Height = PrevHeight + 1,
+	#block{ indep_hash = PrevH } = PrevB,
 	MaybeValid =
-		case Height >= ar_fork:height_2_4() of
-			true ->
-				case ar_node:get_recent_search_space_upper_bound_by_prev_h(PrevH) of
-					not_found ->
-						{reply, {412, #{}, <<>>, Req}};
-					SearchSpaceUpperBound ->
-						validate_spora_pow(BShadow, PrevB, BDS, SearchSpaceUpperBound)
-				end;
-			false ->
-				case ar_mine:validate(BDS, Nonce, BShadow#block.diff, Height) of
-					{invalid, _} ->
-						false;
-					{valid, _} ->
-						true
-				end
+		case ar_node:get_recent_search_space_upper_bound_by_prev_h(PrevH) of
+			not_found ->
+				{reply, {412, #{}, <<>>, Req}};
+			SearchSpaceUpperBound ->
+				validate_spora_pow(BShadow, PrevB, BDS, SearchSpaceUpperBound)
 		end,
 	case MaybeValid of
 		{reply, Reply} ->
 			Reply;
-		true ->
-			post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp);
+		{true, RecallByte} ->
+			post_block(post_block, {BShadow, OrigPeer, RecallByte}, Req, ReceiveTimestamp);
 		false ->
 			post_block_reject_warn(BShadow, check_pow, OrigPeer),
 			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 			{400, #{}, <<"Invalid Block Proof of Work">>, Req}
 	end;
-post_block(post_block, {BShadow, OrigPeer, _BDS}, Req, ReceiveTimestamp) ->
+post_block(post_block, {BShadow, OrigPeer, RecallByte}, Req, ReceiveTimestamp) ->
 	record_block_pre_validation_time(ReceiveTimestamp),
-	?LOG_INFO([
-		{event, ar_http_iface_handler_accepted_block},
-		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
-	]),
-	ar_events:send(block, {new, BShadow, OrigPeer}),
+	?LOG_INFO([{event, ar_http_iface_handler_accepted_block},
+			{indep_hash, ar_util:encode(BShadow#block.indep_hash)}]),
+	%% Include all transactions found in the mempool in place of the corresponding
+	%% transaction identifiers so that we can gossip them to peers who miss them
+	%% along with the block.
+	B = BShadow#block{ txs = include_transactions(BShadow#block.txs) },
+	ar_events:send(block, {new, B, #{ source => {peer, OrigPeer},
+			recall_byte => RecallByte }}),
 	ar_events:send(peer, {gossiped_block, OrigPeer, erlang:get(read_body_time),
 			erlang:get(body_size)}),
+	prometheus_counter:inc(block2_received_transactions,
+			count_received_transactions(BShadow#block.txs)),
+	case erlang:get(fetched_chunk) of
+		true ->
+			prometheus_counter:inc(block2_fetched_chunks);
+		_ ->
+			ok
+	end,
 	{200, #{}, <<"OK">>, Req}.
 
-compute_hash(B, Height) ->
+encode_txids([]) ->
+	<<>>;
+encode_txids([TXID | TXIDs]) ->
+	<< TXID/binary, (encode_txids(TXIDs))/binary >>.
+
+get_missing_tx_identifiers(TXIDs) ->
+	get_missing_tx_identifiers(TXIDs, [], 0).
+
+get_missing_tx_identifiers([], MissingTXIDs, _N) ->
+	MissingTXIDs;
+get_missing_tx_identifiers([_ | _], _, N) when N == ?BLOCK_TX_COUNT_LIMIT ->
+	{error, tx_list_too_long};
+get_missing_tx_identifiers([#tx{} | TXIDs], MissingTXIDs, N) ->
+	get_missing_tx_identifiers(TXIDs, MissingTXIDs, N + 1);
+get_missing_tx_identifiers([TXID | TXIDs], MissingTXIDs, N) ->
+	case ar_node_worker:is_mempool_or_block_cache_tx(TXID) of
+		true ->
+			get_missing_tx_identifiers(TXIDs, MissingTXIDs, N + 1);
+		false ->
+			get_missing_tx_identifiers(TXIDs, [TXID | MissingTXIDs], N + 1)
+	end.
+
+compute_hash(B) ->
 	BDS = ar_block:generate_block_data_segment(B),
 	Hash = B#block.hash,
 	Nonce = B#block.nonce,
-	case Height >= ar_fork:height_2_4() of
-		true ->
-			{BDS, ar_weave:indep_hash(BDS, Hash, Nonce, B#block.poa)};
-		false ->
-			{BDS, ar_weave:indep_hash(BDS, Hash, Nonce)}
-	end.
+	{BDS, ar_weave:indep_hash(BDS, Hash, Nonce, B#block.poa)}.
 
 validate_spora_pow(B, PrevB, BDS, SearchSpaceUpperBound) ->
 	#block{ height = PrevHeight, indep_hash = PrevH } = PrevB,
@@ -1815,29 +1896,31 @@ validate_spora_pow(B, PrevB, BDS, SearchSpaceUpperBound) ->
 			false;
 		true ->
 			{H0, Entropy} = ar_mine:spora_h0_with_entropy(BDS, Nonce, Height),
-			ComputeSolutionHash =
+			{ComputeSolutionHash, RecallByte} =
 				case ar_mine:pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
 					{error, weave_size_too_small} ->
 						case SPoA == #poa{} of
 							false ->
-								false;
+								{false, undefined};
 							true ->
-								ar_mine:spora_solution_hash(PrevH, Timestamp, H0, Chunk, Height)
+								{ar_mine:spora_solution_hash(PrevH, Timestamp, H0, <<>>,
+										Height), undefined}
 						end;
-					{ok, RecallByte} ->
+					{ok, Byte} ->
 						PackingThreshold = ar_block:get_packing_threshold(PrevB,
 								SearchSpaceUpperBound),
 						case verify_packing_threshold(B, PackingThreshold) of
 							false ->
-								false;
+								{false, Byte};
 							true ->
-								case RecallByte >= PackingThreshold of
+								case Byte >= PackingThreshold of
 									true ->
-										ar_mine:spora_solution_hash_with_entropy(PrevH,
-												Timestamp, H0, Chunk, Entropy, Height);
+										{ar_mine:spora_solution_hash_with_entropy(
+												PrevH, Timestamp, H0, Chunk, Entropy,
+												Height), Byte};
 									false ->
-										ar_mine:spora_solution_hash(PrevH, Timestamp, H0, Chunk,
-												Height)
+										{ar_mine:spora_solution_hash(PrevH, Timestamp,
+												H0, Chunk, Height), Byte}
 								end
 						end
 				end,
@@ -1845,8 +1928,13 @@ validate_spora_pow(B, PrevB, BDS, SearchSpaceUpperBound) ->
 				false ->
 					false;
 				SolutionHash ->
-					ar_mine:validate(SolutionHash, B#block.diff, Height)
-						andalso SolutionHash == B#block.hash
+					case ar_mine:validate(SolutionHash, B#block.diff, Height)
+							andalso SolutionHash == B#block.hash of
+						false ->
+							false;
+						true ->
+							{true, RecallByte}
+					end
 			end
 	end.
 
@@ -1877,6 +1965,28 @@ post_block_reject_warn(BShadow, Step, Peer, Params) ->
 record_block_pre_validation_time(ReceiveTimestamp) ->
 	TimeMs = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000,
 	prometheus_histogram:observe(block_pre_validation_time, TimeMs).
+
+include_transactions([#tx{} = TX | TXs]) ->
+	[TX | include_transactions(TXs)];
+include_transactions([]) ->
+	[];
+include_transactions([TXID | TXs]) ->
+	case ets:lookup(node_state, {tx, TXID}) of
+		[] ->
+			[TXID | include_transactions(TXs)];
+		[{_, TX}] ->
+			[TX | include_transactions(TXs)]
+	end.
+
+count_received_transactions(TXs) ->
+	count_received_transactions(TXs, 0).
+
+count_received_transactions([#tx{} | TXs], N) ->
+	count_received_transactions(TXs, N + 1);
+count_received_transactions([_ | TXs], N) ->
+	count_received_transactions(TXs, N);
+count_received_transactions([], N) ->
+	N.
 
 %% Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->

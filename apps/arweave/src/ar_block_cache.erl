@@ -260,10 +260,10 @@ remove2(Tab, H) ->
 remove_tx_prefixes([]) ->
 	ok;
 remove_tx_prefixes([#tx{ id = TXID } | TXs]) ->
-	ets:delete(tx_prefixes, ar_node_worker:tx_id_prefix(TXID)),
+	ets:delete_object(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
 	remove_tx_prefixes(TXs);
 remove_tx_prefixes([TXID | TXs]) ->
-	ets:delete(tx_prefixes, ar_node_worker:tx_id_prefix(TXID)),
+	ets:delete_object(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
 	remove_tx_prefixes(TXs).
 
 find_max_cdiff(Tab) ->

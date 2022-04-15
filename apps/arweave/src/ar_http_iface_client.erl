@@ -4,8 +4,8 @@
 
 -module(ar_http_iface_client).
 
--export([send_block_json/3, send_block_binary/3, send_tx_json/3, send_tx_binary/3,
-		send_block_announcement/2,
+-export([send_block_json/3, send_block_binary/3, send_block_binary/4, send_tx_json/3,
+		send_tx_binary/3, send_block_announcement/2,
 		get_block_shadow/2, get_tx/3, get_txs/3, get_tx_from_remote_peer/2,
 		get_tx_data/2,
 		get_wallet_list_chunk/2, get_wallet_list_chunk/3, get_wallet_list/2,
@@ -52,7 +52,7 @@ send_block_announcement(Peer, Announcement) ->
 		path => "/block_announcement",
 		headers => p2p_headers(),
 		body => ar_serialize:block_announcement_to_binary(Announcement),
-		timeout => 5 * 1000
+		timeout => 10 * 1000
 	}).
 
 %% @doc Send the given JSON-encoded block to the given peer.
@@ -69,11 +69,17 @@ send_block_json(Peer, H, Payload) ->
 
 %% @doc Send the given binary-encoded block to the given peer.
 send_block_binary(Peer, H, Payload) ->
+	send_block_binary(Peer, H, Payload, undefined).
+
+send_block_binary(Peer, H, Payload, RecallByte) ->
+	Headers = [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
+	Headers2 = case RecallByte of undefined -> Headers; _ ->
+			[{<<"arweave-recall-byte">>, integer_to_binary(RecallByte)} | Headers] end,
 	ar_http:req(#{
 		method => post,
 		peer => Peer,
 		path => "/block2",
-		headers => [{<<"arweave-block-hash">>, ar_util:encode(H)} | p2p_headers()],
+		headers => Headers2,
 		body => Payload,
 		timeout => 20 * 1000
 	}).

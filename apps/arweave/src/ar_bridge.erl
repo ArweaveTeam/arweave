@@ -89,10 +89,10 @@ handle_cast({may_be_send_block, W}, State) ->
 	case dequeue(Q) of
 		empty ->
 			{noreply, State};
-		{{_Priority, Peer, JSON, B}, Q2} ->
+		{{_Priority, Peer, BlockData}, Q2} ->
 			case maps:get(W, Workers) of
 				free ->
-					send_to_worker(Peer, JSON, B, W),
+					send_to_worker(Peer, BlockData, W),
 					{noreply, State#state{ block_propagation_queue = Q2,
 							workers = maps:put(W, busy, Workers) }};
 				busy ->
@@ -114,12 +114,12 @@ handle_cast(Msg, State) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({event, block, {new, _Block, ar_poller}}, State) ->
+handle_info({event, block, {new, _B, #{ source := ar_poller }}}, State) ->
 	%% ar_poller often fetches blocks when the network already knows about them
 	%% so do not gossip.
 	{noreply, State};
 
-handle_info({event, block, {new, B, _Source}}, State) ->
+handle_info({event, block, {new, B, #{ recall_byte := RecallByte }}}, State) ->
 	#state{ block_propagation_queue = Q, workers = Workers } = State,
 	case ar_block_cache:get(block_cache, B#block.previous_block) of
 		not_found ->
@@ -129,15 +129,14 @@ handle_info({event, block, {new, B, _Source}}, State) ->
 			{ok, Config} = application:get_env(arweave, config),
 			TrustedPeers = ar_peers:get_trusted_peers(),
 			SpecialPeers = Config#config.block_gossip_peers,
-			Peers = ((SpecialPeers ++ ar_peers:get_peers()) -- TrustedPeers)
-					++ TrustedPeers,
+			Peers = ((SpecialPeers ++ ar_peers:get_peers()) -- TrustedPeers) ++ TrustedPeers,
 			JSON = block_to_json(B),
-			Q2 = enqueue_block(Peers, B#block.height, JSON, B, Q),
+			Q2 = enqueue_block(Peers, B#block.height, {JSON, B, RecallByte}, Q),
 			[gen_server:cast(?MODULE, {may_be_send_block, W}) || W <- maps:keys(Workers)],
 			{noreply, State#state{ block_propagation_queue = Q2 }}
 	end;
 
-handle_info({event, block, {mined, _Block, _TXs, _CurrentBH}}, State) ->
+handle_info({event, block, {mined, _B, _TXs, _CurrentBH, _RecallByte}}, State) ->
 	%% This event is handled by ar_node_worker. Ignore it.
 	{noreply, State};
 
@@ -146,8 +145,8 @@ handle_info({worker_sent_block, W},
 	case dequeue(Q) of
 		empty ->
 			{noreply, State#state{ workers = maps:put(W, free, Workers) }};
-		{{_Priority, Peer, JSON, B}, Q2} ->
-			send_to_worker(Peer, JSON, B, W),
+		{{_Priority, Peer, BlockData}, Q2} ->
+			send_to_worker(Peer, BlockData, W),
 			{noreply, State#state{ block_propagation_queue = Q2,
 					workers = maps:put(W, busy, Workers) }}
 	end;
@@ -175,15 +174,15 @@ terminate(_Reason, _State) ->
 %%% Internal functions
 %%%===================================================================
 
-enqueue_block(Peers, Height, JSON, B, Q) ->
-	enqueue_block(Peers, Height, JSON, B, Q, 0).
+enqueue_block(Peers, Height, BlockData, Q) ->
+	enqueue_block(Peers, Height, BlockData, Q, 0).
 
-enqueue_block([], _Height, _JSON, _B, Q, _N) ->
+enqueue_block([], _Height, _BlockData, Q, _N) ->
 	Q;
-enqueue_block([Peer | Peers], Height, JSON, B, Q, N) ->
+enqueue_block([Peer | Peers], Height, BlockData, Q, N) ->
 	Priority = {N, Height},
-	enqueue_block(Peers, Height, JSON, B,
-			gb_sets:add_element({Priority, Peer, JSON, B}, Q), N + 1).
+	enqueue_block(Peers, Height, BlockData,
+			gb_sets:add_element({Priority, Peer, BlockData}, Q), N + 1).
 
 dequeue(Q) ->
 	case gb_sets:is_empty(Q) of
@@ -193,7 +192,7 @@ dequeue(Q) ->
 			gb_sets:take_smallest(Q)
 	end.
 
-send_to_worker(Peer, JSON, B, W) ->
+send_to_worker(Peer, {JSON, B, RecallByte}, W) ->
 	#block{ indep_hash = H, previous_block = PrevH, txs = TXs } = B,
 	Release = ar_peers:get_peer_release(Peer),
 	case Release >= 52 of
@@ -202,18 +201,33 @@ send_to_worker(Peer, JSON, B, W) ->
 				fun() ->
 					Announcement = #block_announcement{ indep_hash = H,
 							previous_block = PrevH,
+							recall_byte = RecallByte,
 							tx_prefixes = [ar_node_worker:tx_id_prefix(ID)
 									|| #tx{ id = ID } <- TXs] },
 					ar_http_iface_client:send_block_announcement(Peer, Announcement)
 				end,
 			SendFun =
-				fun(MissingTXIndices) ->
-					TXs2 = determine_included_transactions(TXs, MissingTXIndices),
-					Bin = ar_serialize:block_to_binary(B#block{ txs = TXs2 }),
-					ar_http_iface_client:send_block_binary(Peer, H, Bin)
+				fun(MissingChunk, MissingTXs) ->
+					%% Some transactions might be absent from our mempool. We still gossip
+					%% this block further and search for the missing transactions afterwads
+					%% (the process is initiated by ar_node_worker). We are gradually moving
+					%% to the new process where blocks are sent over POST /block2 along with
+					%% all the missing transactions specified in the preceding
+					%% POST /block_announcement reply. Once the network adopts the new release,
+					%% we will turn off POST /block and remove the missing transactions search
+					%% in ar_node_worker.
+					case determine_included_transactions(TXs, MissingTXs) of
+						missing ->
+							ar_http_iface_client:send_block_json(Peer, H, JSON);
+						TXs2 ->
+							PoA = case MissingChunk of true -> B#block.poa;
+									false -> #poa{} end,
+							Bin = ar_serialize:block_to_binary(B#block{ txs = TXs2,
+									poa = PoA }),
+							ar_http_iface_client:send_block_binary(Peer, H, Bin, RecallByte)
+					end
 				end,
-			gen_server:cast(W, {send_block2, Peer,
-					SendAnnouncementFun, SendFun, 1, self()});
+			gen_server:cast(W, {send_block2, Peer, SendAnnouncementFun, SendFun, 1, self()});
 		false ->
 			SendFun = fun() -> ar_http_iface_client:send_block_json(Peer, H, JSON) end,
 			gen_server:cast(W, {send_block, SendFun, 1, self()})
@@ -231,32 +245,42 @@ block_to_json(B) ->
 	],
 	ar_serialize:jsonify({PostProps}).
 
-determine_included_transactions(TXs, Indices) ->
-	determine_included_transactions(TXs, Indices, [], 0).
+%% @doc Return the list of transactions to gossip or 'missing'. TXs is a list of possibly
+%% both tx records and transaction identifiers - whatever is found in the gossiped block.
+%% MissingTXs is a list of possibly both 0-based indices and tx identifiers. The items
+%% in the new list are in the same order they occur in TXs. Identifiers are simply placed
+%% as-is in the new list. The tx records might be converted to their identifiers (to avoid
+%% sending the entire transactions to peers who already know them) if either their 0-based
+%% indices or identifiers are found in MissingTXs. Elements in MissingTXs are assumed sorted
+%% in the order of their appearance in TXs. Return 'missing' if TXs contains an identifier (
+%% not a tx record) which (or its index) is found in MissingTXs.
+determine_included_transactions(TXs, MissingTXs) ->
+	determine_included_transactions(TXs, MissingTXs, [], 0).
 
-determine_included_transactions([], _Indices, Included, _N) ->
+determine_included_transactions([], _MissingTXs, Included, _N) ->
 	lists:reverse(Included);
-determine_included_transactions([#tx{} = TX | TXs], [], Included, N) ->
-	determine_included_transactions(TXs, [], [TX#tx.id | Included], N);
-determine_included_transactions([TXID | TXs], [], Included, N) ->
-	determine_included_transactions(TXs, [], [TXID | Included], N);
-determine_included_transactions([#tx{} = TX | TXs], [Index | Indices], Included, N) ->
-	case Index == N of
+determine_included_transactions([TXIDOrTX | TXs], [], Included, N) ->
+	determine_included_transactions(TXs, [], [tx_id(TXIDOrTX) | Included], N);
+determine_included_transactions([TXIDOrTX | TXs], [TXIDOrIndex | MissingTXs], Included, N) ->
+	TXID = tx_id(TXIDOrTX),
+	case TXIDOrIndex == N orelse TXIDOrIndex == TXID of
 		true ->
-			determine_included_transactions(TXs, Indices,
-					[strip_v2_data(TX) | Included], N + 1);
+			case TXID == TXIDOrTX of
+				true ->
+					missing;
+				false ->
+					determine_included_transactions(TXs, MissingTXs, [strip_v2_data(TXIDOrTX)
+							| Included], N + 1)
+			end;
 		false ->
-			determine_included_transactions(TXs, [Index | Indices],
-					[TX#tx.id | Included], N + 1)
-	end;
-determine_included_transactions([TXID | TXs], [Index | Indices], Included, N) ->
-	case Index == N of
-		true ->
-			determine_included_transactions(TXs, Indices, [TXID | Included], N + 1);
-		false ->
-			determine_included_transactions(TXs, [Index | Indices],
-					[TXID | Included], N + 1)
+			determine_included_transactions(TXs, [TXIDOrIndex | MissingTXs], [TXID | Included],
+					N + 1)
 	end.
+
+tx_id(#tx{ id = TXID }) ->
+	TXID;
+tx_id(TXID) ->
+	TXID.
 
 strip_v2_data(#tx{ format = 2 } = TX) ->
 	TX#tx{ data = <<>> };

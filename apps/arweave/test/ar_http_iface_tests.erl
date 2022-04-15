@@ -1,12 +1,15 @@
 -module(ar_http_iface_tests).
 
--include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_mine.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, get_tx_anchor/0,
 		sign_tx/2, post_tx_json_to_master/1, assert_slave_wait_until_receives_txs/1,
-		slave_wait_until_height/1, read_block_when_stored/1, master_peer/0]).
+		slave_wait_until_height/1, read_block_when_stored/1, master_peer/0, slave_peer/0,
+		disconnect_from_slave/0, assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
+		wait_until_height/1, assert_slave_wait_until_height/1, read_block_when_stored/2,
+		slave_call/3]).
 
 addresses_with_checksums_test_() ->
 	{timeout, 60, fun test_addresses_with_checksum/0}.
@@ -597,15 +600,6 @@ test_add_block_with_invalid_hash() ->
 			B1Shadow#block{ indep_hash = crypto:strong_rand_bytes(48), nonce = <<>> }
 		)
 	),
-	%% Verify the IP address of self is banned in ar_blacklist_middleware.
-	?assertMatch(
-		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
-		send_new_block(
-			Peer,
-			B1Shadow#block{ indep_hash = crypto:strong_rand_bytes(48) }
-		)
-	),
-	ar_blacklist_middleware:reset(),
 	%% The valid block with the ID from the failed attempt can still go through.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -1159,6 +1153,178 @@ get_error_of_data_limit_test() ->
 			limit => Limit
 		}),
 	?assertEqual({error, too_much_data}, Resp).
+
+send_block2_test_() ->
+	{timeout, 20000, fun test_send_block2/0}.
+
+test_send_block2() ->
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	start(B0),
+	slave_start(B0),
+	disconnect_from_slave(),
+	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
+			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
+	lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, EverySecondTX),
+	ar_node:mine(),
+	[{H, _, _}, _] = wait_until_height(1),
+	B = ar_storage:read_block(H),
+	Announcement = #block_announcement{ indep_hash = B#block.indep_hash,
+			previous_block = B0#block.indep_hash,
+			tx_prefixes = [binary:part(TX#tx.id, 0, 8) || TX <- TXs] },
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(Announcement) }),
+	Response = ar_serialize:binary_to_block_announcement_response(Body),
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = true,
+			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response),
+	Announcement2 = Announcement#block_announcement{ recall_byte = 0 },
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(Announcement2) }),
+	Announcement3 = Announcement#block_announcement{ recall_byte = 100000000000000 },
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(Announcement3) }),
+	{ok, {{<<"418">>, _}, _, Body2, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block2",
+			body => ar_serialize:block_to_binary(B) }),
+	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [Acc | TXID] end,
+			[], TXs -- EverySecondTX)), Body2),
+	B2 = B#block{ txs = [lists:nth(1, TXs) | tl(B#block.txs)] },
+	{ok, {{<<"418">>, _}, _, Body3, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block2",
+			body => ar_serialize:block_to_binary(B2) }),
+	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [Acc | TXID] end,
+			[], TXs -- EverySecondTX -- [lists:nth(1, TXs)])), Body3),
+	TXs2 = [sign_tx(Wallet, #{ last_tx => get_tx_anchor(),
+			data => crypto:strong_rand_bytes(10 * 1024) }) || _ <- lists:seq(1, 10)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs2),
+	ar_node:mine(),
+	[{H2, _, _}, _, _] = wait_until_height(2),
+	{ok, {{<<"412">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(#block_announcement{
+					indep_hash = H2, previous_block = B#block.indep_hash }) }),
+	B3 = B#block{ txs = ar_storage:read_tx(B#block.txs) },
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block2",
+			body => ar_serialize:block_to_binary(B3) }),
+	B4 = read_block_when_stored(H2, true),
+	timer:sleep(500),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block2",
+			body => ar_serialize:block_to_binary(B4) }),
+	connect_to_slave(),
+	lists:foreach(
+		fun(Height) ->
+			ar_node:mine(),
+			assert_slave_wait_until_height(Height)
+		end,
+		lists:seq(3, 3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH)
+	),
+	B5 = ar_storage:read_block(ar_node:get_current_block_hash()),
+	{ok, {{<<"208">>, _}, _, _, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(#block_announcement{
+					indep_hash = B5#block.indep_hash,
+					previous_block = B5#block.previous_block }) }),
+	lists:foreach(
+		fun(#tx{ id = TXID }) ->
+			true = ar_util:do_until(
+				fun() ->
+					{ok, {End, _}} = slave_call(ar_data_sync, get_tx_offset, [TXID]),
+					slave_call(ar_sync_record, is_recorded, [End, ar_data_sync])
+							== {true, spora_2_5}
+				end,
+				100,
+				5000
+			)
+		end,
+		TXs2
+	),
+	disconnect_from_slave(),
+	ar_node:mine(),
+	[_ | _] = wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
+	B6 = ar_storage:read_block(ar_node:get_current_block_hash()),
+	{ok, {{<<"200">>, _}, _, Body4, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(#block_announcement{
+					indep_hash = B6#block.indep_hash,
+					previous_block = B6#block.previous_block,
+					recall_byte = 0 }) }),
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
+			missing_tx_indices = [] }},
+			ar_serialize:binary_to_block_announcement_response(Body4)),
+	{ok, {{<<"200">>, _}, _, Body5, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(#block_announcement{
+					indep_hash = B6#block.indep_hash,
+					previous_block = B6#block.previous_block,
+					recall_byte = 1024 }) }),
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
+			missing_tx_indices = [] }},
+			ar_serialize:binary_to_block_announcement_response(Body5)),
+	{H0, _Entropy} = ar_mine:spora_h0_with_entropy(ar_block:generate_block_data_segment(B6),
+			B6#block.nonce, B6#block.height),
+	SearchSpaceUpperBound = ar_node:get_recent_search_space_upper_bound_by_prev_h(
+			B6#block.previous_block),
+	{ok, RecallByte} = ar_mine:pick_recall_byte(H0, B6#block.previous_block,
+			SearchSpaceUpperBound),
+	{ok, {{<<"419">>, _}, _, _, _, _}} = ar_http:req(#{ method => post,
+		peer => slave_peer(), path => "/block2",
+		headers => [{<<"arweave-recall-byte">>, integer_to_binary(1000000000000)}],
+		body => ar_serialize:block_to_binary(B6#block{ poa = #poa{} }) }),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
+		peer => slave_peer(), path => "/block2",
+		headers => [{<<"arweave-recall-byte">>, integer_to_binary(RecallByte)}],
+		body => ar_serialize:block_to_binary(B6#block{ poa = #poa{} }) }),
+	assert_slave_wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1).
+
+send_missing_transactions_along_with_the_block_test_() ->
+	{timeout, 20000, fun test_send_missing_transactions_along_with_the_block/0}.
+
+test_send_missing_transactions_along_with_the_block() ->
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	start(B0),
+	slave_start(B0),
+	disconnect_from_slave(),
+	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
+			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
+	lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, EverySecondTX),
+	ar_node:mine(),
+	[{H, _, _}, _] = wait_until_height(1),
+	B = ar_storage:read_block(H),
+	B2 = B#block{ txs = ar_storage:read_tx(B#block.txs) },
+	connect_to_slave(),
+	ar_bridge ! {event, block, {new, B2, #{ recall_byte => undefined }}},
+	assert_slave_wait_until_height(1).
+
+falls_back_to_block_endpoint_when_cannot_send_transactions_test_() ->
+	{timeout, 20000, fun test_falls_back_to_block_endpoint_when_cannot_send_transactions/0}.
+
+test_falls_back_to_block_endpoint_when_cannot_send_transactions() ->
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	start(B0),
+	slave_start(B0),
+	disconnect_from_slave(),
+	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
+			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
+	lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, EverySecondTX),
+	ar_node:mine(),
+	[{H, _, _}, _] = wait_until_height(1),
+	B = ar_storage:read_block(H),
+	connect_to_slave(),
+	ar_bridge ! {event, block, {new, B, #{ recall_byte => undefined }}},
+	assert_slave_wait_until_height(1).
 
 send_new_block(Peer, B) ->
 	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,
