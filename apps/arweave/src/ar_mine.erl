@@ -860,47 +860,60 @@ hashing_thread(S, Type) ->
 	{Parent, PrevH, SearchSpaceUpperBound, PackingThreshold, Height, Timestamp, Diff, BDS,
 			Hasher, StageTwoHasher, StageTwoThreads, IOThreads, HashingIterations, JIT,
 			LargePages, HardwareAES, SessionRef} = S,
-	T = case Type of stage_one_thread -> 0; stage_two_thread -> 200 end,
-	receive
-		{chunk, H0, Byte, Nonce, Timestamp2, Diff2, Chunk, Entropy, SessionRef}
-				when Timestamp2 + 19 > Timestamp ->
-			TimestampBinary = << Timestamp2:(?TIMESTAMP_FIELD_SIZE_LIMIT * 8) >>,
-			Preimage = case Byte >= PackingThreshold of
-				false ->
-					[H0, PrevH, TimestampBinary, Chunk];
-				true ->
-					[H0, PrevH, TimestampBinary, Chunk, Entropy]
-			end,
-			case StageTwoHasher(Diff2, Preimage) of
-				{true, Hash} ->
-					Parent ! {solution, Nonce, H0, Timestamp2, Hash};
-				false ->
-					ok
-			end,
-			ets:update_counter(mining_state, sporas, 1),
-			hashing_thread(S, Type);
-		{update_state, Timestamp2, Diff2, BDS2, StageTwoThreads2, SessionRef} ->
-			hashing_thread({Parent, PrevH, SearchSpaceUpperBound, PackingThreshold, Height,
-					Timestamp2, Diff2, BDS2, Hasher, StageTwoHasher, StageTwoThreads2,
-					IOThreads, HashingIterations, JIT, LargePages, HardwareAES, SessionRef},
-					Type);
-		_ ->
-			hashing_thread(S, Type)
-	after T ->
-		case Type of
-			stage_one_thread when StageTwoThreads /= [] ->
+	case Type of
+		stage_one_thread ->
+			%% when StageTwoThreads is empty, the sleep time of StageTwoThreads
+			%% depends on Nyquist sampling time of update_state signal interval.
+			T = case StageTwoThreads /= [] of
+						true -> ?MINING_TIMESTAMP_REFRESH_INTERVAL div 2 * 1000;
+						false -> 0
+					end,
+			receive
+				{update_state, Timestamp2, Diff2, BDS2, StageTwoThreads2, SessionRef} ->
+					hashing_thread({Parent, PrevH, SearchSpaceUpperBound, PackingThreshold, Height,
+						Timestamp2, Diff2, BDS2, Hasher, StageTwoHasher, StageTwoThreads2,
+						IOThreads, HashingIterations, JIT, LargePages, HardwareAES, SessionRef},
+						Type);
+				_ ->
+					hashing_thread(S, Type)
+			after T ->
 				Nonce1 = crypto:strong_rand_bytes(256 div 8),
 				Nonce2 = crypto:strong_rand_bytes(256 div 8),
 				Ref = {Timestamp, Diff, SessionRef},
 				ok = Hasher(Nonce1, Nonce2, BDS, PrevH, SearchSpaceUpperBound, IOThreads,
-						StageTwoThreads, HashingIterations, JIT, LargePages, HardwareAES, Ref),
-				ets:update_counter(mining_state, recall_bytes_computed, HashingIterations);
-			_ ->
-				ok
-		end,
-		hashing_thread({Parent, PrevH, SearchSpaceUpperBound, PackingThreshold, Height,
-				Timestamp, Diff, BDS, Hasher, StageTwoHasher, StageTwoThreads, IOThreads,
-				HashingIterations, JIT, LargePages, HardwareAES, SessionRef}, Type)
+					StageTwoThreads, HashingIterations, JIT, LargePages, HardwareAES, Ref),
+				ets:update_counter(mining_state, recall_bytes_computed, HashingIterations),
+				hashing_thread({Parent, PrevH, SearchSpaceUpperBound, PackingThreshold, Height,
+					Timestamp, Diff, BDS, Hasher, StageTwoHasher, StageTwoThreads, IOThreads,
+					HashingIterations, JIT, LargePages, HardwareAES, SessionRef}, Type)
+			end;
+		stage_two_thread ->
+			receive
+				{chunk, H0, Byte, Nonce, Timestamp2, Diff2, Chunk, Entropy, SessionRef}
+					when Timestamp2 + 19 > Timestamp ->
+					TimestampBinary = <<Timestamp2:(?TIMESTAMP_FIELD_SIZE_LIMIT * 8)>>,
+					Preimage = case Byte >= PackingThreshold of
+											 false ->
+												 [H0, PrevH, TimestampBinary, Chunk];
+											 true ->
+												 [H0, PrevH, TimestampBinary, Chunk, Entropy]
+										 end,
+					case StageTwoHasher(Diff2, Preimage) of
+						{true, Hash} ->
+							Parent ! {solution, Nonce, H0, Timestamp2, Hash};
+						false ->
+							ok
+					end,
+					ets:update_counter(mining_state, sporas, 1),
+					hashing_thread(S, Type);
+				{update_state, Timestamp2, Diff2, BDS2, StageTwoThreads2, SessionRef} ->
+					hashing_thread({Parent, PrevH, SearchSpaceUpperBound, PackingThreshold, Height,
+						Timestamp2, Diff2, BDS2, Hasher, StageTwoHasher, StageTwoThreads2,
+						IOThreads, HashingIterations, JIT, LargePages, HardwareAES, SessionRef},
+						Type);
+				_ ->
+					hashing_thread(S, Type)
+			end
 	end.
 
 get_spoa(H0, PrevH, SearchSpaceUpperBound, Height, PackingThreshold) ->
