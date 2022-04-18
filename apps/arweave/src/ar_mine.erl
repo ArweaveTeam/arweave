@@ -863,10 +863,10 @@ hashing_thread(S, Type) ->
 	case Type of
 		stage_one_thread ->
 			%% when StageTwoThreads is empty, the sleep time of StageTwoThreads
-			%% depends on Nyquist sampling time of update_state signal interval.
+			%% depends on update_state signal interval as Nyquist sampling time.
 			T = case StageTwoThreads /= [] of
 						true -> 0;
-						false -> ?MINING_TIMESTAMP_REFRESH_INTERVAL div 2 * 1000
+						false -> ?MINING_TIMESTAMP_REFRESH_INTERVAL * 2 * 1000
 					end,
 			receive
 				{update_state, Timestamp2, Diff2, BDS2, StageTwoThreads2, SessionRef} ->
