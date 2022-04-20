@@ -254,15 +254,12 @@ start_server(#state{ candidate_block = #block{ height = Height } } = S) ->
 		{ok, {StageOneHasher, StageTwoHasher}} ->
 			spawn(fun() ->
 				try
-					process_flag(message_queue_data, off_heap),
-					S2 =
-						S#state{
-							stage_one_hasher = StageOneHasher,
-							stage_two_hasher = StageTwoHasher
-						},
-					server(start_miners(prometheus_histogram:observe_duration(
+					S2 = S#state{ stage_one_hasher = StageOneHasher,
+							stage_two_hasher = StageTwoHasher },
+					server(notify_hashing_threads(start_miners(
+							prometheus_histogram:observe_duration(
 							block_construction_time_milliseconds,
-							fun() -> update_txs(S2) end)))
+							fun() -> update_txs(S2) end))))
 				catch Type:Exception:StackTrace ->
 					?LOG_ERROR(
 						"event: mining_server_exception, type: ~p, exception: ~p,"
@@ -665,9 +662,8 @@ start_hashing_threads2(S) ->
 	HashingThreads =
 		[spawn(
 			fun() ->
-				process_flag(message_queue_data, off_heap),
-				ShuffledIOThreads =
-					lists:sort(fun(_, _) -> rand:uniform() > 0.5 end, IOThreads),
+				ShuffledIOThreads = lists:sort(fun(_, _) -> rand:uniform() > 0.5 end,
+						IOThreads),
 				Type =
 					case N =< StageOneThreadCount of
 						true ->
@@ -931,36 +927,20 @@ get_spoa(H0, PrevH, SearchSpaceUpperBound, Height, PackingThreshold) ->
 log_spora_performance() ->
 	[{_, StartedAt}] = ets:lookup(mining_state, started_at),
 	Time = timer:now_diff(os:timestamp(), StartedAt),
-	case Time < 10000000 of
-		true ->
-			ar:console("Skipping hashrate report, the round lasted less than 10 seconds.~n"),
-			?LOG_INFO([
-				{event, stopped_mining},
-				{round_time_seconds, Time div 1000000}
-			]),
-			ok;
-		false ->
-			[{_, RecallBytes}] = ets:lookup(mining_state, recall_bytes_computed),
-			[{_, BytesRead}] = ets:lookup(mining_state, bytes_read),
-			KiBs = BytesRead / 1024,
-			[{_, SPoRAs}] = ets:lookup(mining_state, sporas),
-			RecallByteRate = RecallBytes / (Time / 1000000),
-			Rate = SPoRAs / (Time / 1000000),
-			ReadRate = KiBs / 1024 / (Time / 1000000),
-			prometheus_histogram:observe(mining_rate, Rate),
-			?LOG_INFO([
-				{event, stopped_mining},
-				{recall_bytes_computed, RecallByteRate},
-				{miner_sporas_per_second, Rate},
-				{miner_read_mibibytes_per_second, ReadRate},
-				{round_time_seconds, Time div 1000000}
-			]),
-			ar:console(
-				"Miner spora rate: ~B h/s, recall bytes computed/s: ~B, MiB/s read: ~B,"
-				" the round lasted ~B seconds.~n",
-				[trunc(Rate), trunc(RecallByteRate), trunc(ReadRate), Time div 1000000]
-			)
-	end.
+	[{_, RecallBytes}] = ets:lookup(mining_state, recall_bytes_computed),
+	[{_, BytesRead}] = ets:lookup(mining_state, bytes_read),
+	KiBs = BytesRead / 1024,
+	[{_, SPoRAs}] = ets:lookup(mining_state, sporas),
+	RecallByteRate = RecallBytes / (Time / 1000000),
+	Rate = SPoRAs / (Time / 1000000),
+	ReadRate = KiBs / 1024 / (Time / 1000000),
+	prometheus_histogram:observe(mining_rate, Rate),
+	?LOG_INFO([{event, stopped_mining}, {recall_bytes_computed, RecallByteRate},
+			{miner_sporas_per_second, Rate}, {miner_read_mibibytes_per_second, ReadRate},
+			{round_time_seconds, Time div 1000000}]),
+	ar:console("Miner spora rate: ~B h/s, recall bytes computed/s: ~B, MiB/s read: ~B,"
+			" the round lasted ~B seconds.~n",
+			[trunc(Rate), trunc(RecallByteRate), trunc(ReadRate), Time div 1000000]).
 
 process_spora_solution(BDS, B, MinedTXs, S) ->
 	#state{
