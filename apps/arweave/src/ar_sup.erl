@@ -14,7 +14,7 @@
 -export([init/1]).
 
 %% Helper macro for declaring children of supervisor
--define(CHILD(I, Type), {I, {I, start_link, []}, permanent, 5000, Type, [I]}).
+-define(CHILD(I, Type), {I, {I, start_link, []}, permanent, 30000, Type, [I]}).
 
 %% ===================================================================
 %% API functions
@@ -27,7 +27,7 @@ start_link() ->
 %% ===================================================================
 init([]) ->
 	%% These ETS tables should belong to the supervisor.
-	ets:new(ar_meta_db, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_storage, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_randomx_state_key_blocks, [set, public, named_table]),
 	ets:new(ar_randomx_state_key_heights, [ordered_set, public, named_table]),
@@ -37,28 +37,26 @@ init([]) ->
 	ets:new(ar_tx_db, [set, public, named_table]),
 	ets:new(ar_packing_server, [set, public, named_table]),
 	ets:new(ar_sync_record, [set, public, named_table]),
-	ets:new(ar_header_sync, [set, public, named_table,
-			{read_concurrency, true}]),
-	ets:new(ar_data_discovery, [ordered_set, public, named_table,
-			{read_concurrency, true}]),
-	ets:new(ar_data_sync_state, [set, public, named_table,
-			{read_concurrency, true}]),
+	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_data_discovery, [ordered_set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_sync_skip_intervals, [ordered_set, public, named_table,
 			{read_concurrency, true}]),
-	ets:new(ar_data_sync, [ordered_set, public, named_table,
-			{read_concurrency, true}]),
+	ets:new(ar_data_sync, [ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_tx_blacklist,
-		[set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist_pending_headers,
-		[set, public, named_table, {read_concurrency, true}]),
+			[set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist_pending_data,
-		[set, public, named_table, {read_concurrency, true}]),
+			[set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist_offsets,
-		[ordered_set, public, named_table, {read_concurrency, true}]),
+			[ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist_pending_restore_headers,
-		[ordered_set, public, named_table, {read_concurrency, true}]),
+			[ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(block_cache, [set, public, named_table]),
+	ets:new(tx_prefixes, [bag, public, named_table]),
+	ets:new(block_index, [ordered_set, public, named_table]),
 	ets:new(node_state, [set, public, named_table]),
 	ets:new(ar_chunk_storage, [ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),
@@ -66,14 +64,14 @@ init([]) ->
 	{ok, {{one_for_one, 5, 10}, [
 		?CHILD(ar_rate_limiter, worker),
 		?CHILD(ar_disksup, worker),
-		?CHILD(ar_meta_db, worker),
+		?CHILD(ar_events_sup, supervisor),
 		?CHILD(ar_arql_db, worker),
 		?CHILD(ar_storage, worker),
-		?CHILD(ar_events_sup, supervisor),
+		?CHILD(ar_peers, worker),
 		?CHILD(ar_disk_cache, worker),
 		?CHILD(ar_watchdog, worker),
 		?CHILD(ar_tx_blacklist, worker),
-		?CHILD(ar_bridge, worker),
+		?CHILD(ar_bridge_sup, supervisor),
 		?CHILD(ar_packing_server, worker),
 		?CHILD(ar_sync_record, worker),
 		?CHILD(ar_chunk_storage, worker),

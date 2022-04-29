@@ -9,9 +9,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--record(state, {
-	trusted_peers
-}).
+-record(state, {}).
 
 %%%===================================================================
 %%% Public interface.
@@ -25,8 +23,7 @@ start_link(Name) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
-	{ok, #state{ trusted_peers = Config#config.peers }}.
+	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -38,9 +35,24 @@ handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
 			ok;
 		[{_, TX}] ->
 			StartedAt = erlang:timestamp(),
-			#state{ trusted_peers = TrustedPeers } = State,
+			TrustedPeers = ar_peers:get_trusted_peers(),
 			PropagatedTX = tx_to_propagated_tx(TX, Peer, TrustedPeers),
-			Reply = ar_http_iface_client:send_new_tx(Peer, PropagatedTX),
+			Release = ar_peers:get_peer_release(Peer),
+			SendFun =
+				case Release >= 42 of
+					true ->
+						fun() ->
+							Bin = ar_serialize:tx_to_binary(PropagatedTX),
+							ar_http_iface_client:send_tx_binary(Peer, TXID, Bin)
+						end;
+					false ->
+						fun() ->
+							JSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(
+									PropagatedTX)),
+							ar_http_iface_client:send_tx_json(Peer, TXID, JSON)
+						end
+				end,
+			Reply = SendFun(),
 			PropagationTimeUs = timer:now_diff(erlang:timestamp(), StartedAt),
 			record_propagation_status(Reply),
 			record_propagation_rate(tx_propagated_size(TX), PropagationTimeUs)
@@ -49,7 +61,7 @@ handle_cast({emit, TXID, Peer, ReplyTo}, State) ->
 	{noreply, State};
 
 handle_cast(Msg, State) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
 handle_info({event, tx, _}, State) ->
@@ -59,11 +71,19 @@ handle_info({gun_down, _, http, normal, _, _}, State) ->
 	{noreply, State};
 handle_info({gun_down, _, http, closed, _, _}, State) ->
 	{noreply, State};
+handle_info({gun_down, _, http, {error,econnrefused}, _, _}, State) ->
+	{noreply, State};
 handle_info({gun_up, _, http}, State) ->
+	{noreply, State};
+handle_info({gun_response, _, _, _, _, _}, State) ->
+	{noreply, State};
+handle_info({gun_data, _, _, _, _}, state) ->
+	{noreply, state};
+handle_info({gun_error, _, _, _}, State) ->
 	{noreply, State};
 
 handle_info(Info, State) ->
-	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
 
 terminate(_Reason, _State) ->

@@ -76,11 +76,8 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
 	process_flag(trap_exit, true),
-	MinerLogging =
-		case ar_meta_db:get(miner_logging) of
-			false -> false;
-			_ -> true
-		end,
+	{ok, Config} = application:get_env(arweave, config),
+	MinerLogging = not lists:member(miner_logging, Config#config.disable),
 	{ok, Timer} = timer:send_after(?FOREIGN_BLOCK_ALERT_TIME, self(), no_foreign_blocks),
 	State = #state{
 		mined_blocks = maps:new(),

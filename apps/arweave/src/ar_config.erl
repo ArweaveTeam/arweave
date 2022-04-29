@@ -41,6 +41,16 @@ parse_options([{<<"peers">>, Peers} | Rest], Config) when is_list(Peers) ->
 parse_options([{<<"peers">>, Peers} | _], _) ->
 	{error, {bad_type, peers, array}, Peers};
 
+parse_options([{<<"block_gossip_peers">>, Peers} | Rest], Config) when is_list(Peers) ->
+	case parse_peers(Peers, []) of
+		{ok, ParsedPeers} ->
+			parse_options(Rest, Config#config{ block_gossip_peers = ParsedPeers });
+		error ->
+			{error, bad_peers, Peers}
+	end;
+parse_options([{<<"block_gossip_peers">>, Peers} | _], _) ->
+	{error, {bad_type, peers, array}, Peers};
+
 parse_options([{<<"start_from_block_index">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ start_from_block_index = true });
 parse_options([{<<"start_from_block_index">>, false} | Rest], Config) ->

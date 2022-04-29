@@ -7,17 +7,11 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
--import(ar_test_node, [
-	slave_start/1, start/3, connect_to_slave/0,
-	get_tx_anchor/1,
-	sign_tx/2, sign_v1_tx/2, random_v1_data/1,
-	slave_call/3,
-	assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
-	slave_mine/0,
-	wait_until_height/1, assert_slave_wait_until_height/1,
-	get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
-	disconnect_from_slave/0
-]).
+-import(ar_test_node, [slave_start/1, start/3, connect_to_slave/0, get_tx_anchor/1,
+		sign_tx/2, sign_v1_tx/2, random_v1_data/1, slave_call/3, assert_post_tx_to_slave/1,
+		assert_post_tx_to_master/1, slave_mine/0, wait_until_height/1,
+		assert_slave_wait_until_height/1, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
+		disconnect_from_slave/0, assert_wait_until_receives_txs/1]).
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -76,9 +70,11 @@ test_uses_blacklists() ->
 	lists:foreach(
 		fun({TX, Height}) ->
 			assert_post_tx_to_slave(TX),
+			assert_wait_until_receives_txs([TX]),
 			case Height == length(TXs) of
 				true ->
-					assert_post_tx_to_slave(V1TX);
+					assert_post_tx_to_slave(V1TX),
+					assert_wait_until_receives_txs([V1TX]);
 				_ ->
 					ok
 			end,
@@ -95,11 +91,10 @@ test_uses_blacklists() ->
 	assert_removed_offsets(BadOffsets),
 	assert_does_not_accept_offsets(BadOffsets),
 	%% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
-	ok = file:write_file(WhitelistFile, ar_util:encode(lists:nth(2, BadTXIDs))),
-	%% Reseting the contents of the files does not remove the corresponding txs from blacklist.
-	ok = file:write_file(lists:nth(2, BlacklistFiles), <<>>),
 	ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
-	ok = file:write_file(lists:nth(4, BlacklistFiles), ar_util:encode(hd(GoodTXIDs))),
+	ok = file:write_file(WhitelistFile, ar_util:encode(lists:nth(2, BadTXIDs))),
+	ok = file:write_file(lists:nth(4, BlacklistFiles), io_lib:format("~s~n~s",
+			[ar_util:encode(hd(GoodTXIDs)), ar_util:encode(V1TX#tx.id)])),
 	[UnblacklistedOffsets, WhitelistOffsets | BadOffsets2] = BadOffsets,
 	RestoredOffsets = [UnblacklistedOffsets, WhitelistOffsets],
 	[_UnblacklistedTXID, _WhitelistTXID | BadTXIDs2] = BadTXIDs,
@@ -128,6 +123,7 @@ test_uses_blacklists() ->
 	TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
 			last_tx => get_tx_anchor(slave) }),
 	assert_post_tx_to_slave(TX2),
+	assert_wait_until_receives_txs([TX2]),
 	slave_mine(),
 	assert_slave_wait_until_height(length(TXs) + 1),
 	assert_post_tx_to_slave(TX),
@@ -244,12 +240,11 @@ create_files(BadTXIDs) ->
 	[Filename || {Filename, _} <- Files].
 
 random_filename() ->
-	filename:join(
-		slave_call(ar_meta_db, get, [data_dir]),
+	{ok, Config} = slave_call(application, get_env, [arweave, config]),
+	filename:join(Config#config.data_dir,
 		"ar-tx-blacklist-tests-transaction-blacklist-"
 		++
-		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))
-	).
+		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))).
 
 encode_chunk(Proof) ->
 	ar_serialize:jsonify(#{
@@ -298,6 +293,8 @@ upload_data(TXs, GoodTXIDs, DataTrees) ->
 	).
 
 assert_present_txs(GoodTXIDs) ->
+	?debugFmt("Waiting until these txids are stored: ~p.",
+			[[ar_util:encode(TXID) || TXID <- GoodTXIDs]]),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -320,17 +317,22 @@ assert_present_txs(GoodTXIDs) ->
 assert_removed_txs(BadTXIDs) ->
 	?debugFmt("Waiting until these txids are removed: ~p.",
 			[[ar_util:encode(TXID) || TXID <- BadTXIDs]]),
+	[{_, TXDB}] = ets:lookup(ar_storage, tx_db),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
 				fun(TXID) ->
-					unavailable == ar_storage:read_tx(TXID)
+					{error, not_found} == ar_data_sync:get_tx_data(TXID)
+							%% Do not use ar_storage:read_tx because the
+							%% transaction is temporarily kept in the disk cache,
+							%% even when blacklisted.
+							andalso ar_kv:get(TXDB, TXID) == not_found
 				end,
 				BadTXIDs
 			)
 		end,
 		500,
-		10000
+		30000
 	),
 	%% We have to keep the confirmation data even for blacklisted transactions.
 	lists:foreach(
@@ -341,6 +343,7 @@ assert_removed_txs(BadTXIDs) ->
 	).
 
 assert_present_offsets(GoodOffsets) ->
+	?debugFmt("Waiting until these offsets are stored: ~p.", [GoodOffsets]),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -360,6 +363,7 @@ assert_present_offsets(GoodOffsets) ->
 	).
 
 assert_removed_offsets(BadOffsets) ->
+	?debugFmt("Waiting until these offsets are removed: ~p.", [BadOffsets]),
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(

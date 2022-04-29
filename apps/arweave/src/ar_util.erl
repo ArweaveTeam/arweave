@@ -1,11 +1,10 @@
 -module(ar_util).
 
--export([pick_random/1, pick_random/2,
-		encode/1, decode/1, safe_decode/1,
+-export([pick_random/1, pick_random/2, encode/1, decode/1, safe_decode/1,
 		parse_peer/1, parse_port/1, safe_parse_peer/1, format_peer/1, unique/1, count/2,
 		genesis_wallets/0, pmap/2, pfilter/2,
-		do_until/3, block_index_entry_from_block/1, get_block_index_intersection/2,
-		reset_peer/1, get_performance/1, update_timer/1, bytes_to_mb_string/1, cast_after/3]).
+		do_until/3, block_index_entry_from_block/1,
+		bytes_to_mb_string/1, cast_after/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -110,6 +109,7 @@ pmap(Mapper, List) ->
 	ListWithRefs = [{Elem, make_ref()} || Elem <- List],
 	lists:foreach(fun({Elem, Ref}) ->
 		spawn_link(fun() ->
+			process_flag(trap_exit, true),
 			Master ! {pmap_work, Ref, Mapper(Elem)}
 		end)
 	end, ListWithRefs),
@@ -128,6 +128,7 @@ pfilter(Fun, List) ->
 	ListWithRefs = [{Elem, make_ref()} || Elem <- List],
 	lists:foreach(fun({Elem, Ref}) ->
 		spawn_link(fun() ->
+			process_flag(trap_exit, true),
 			Master ! {pmap_work, Ref, Fun(Elem)}
 		end)
 	end, ListWithRefs),
@@ -181,57 +182,6 @@ do_until(DoFun, Interval, Timeout) ->
 
 block_index_entry_from_block(B) ->
 	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
-
-%% @doc Find the latest block from the given block index (the second argument) that
-%% is inside the other given block index (the first argument). Return none if no entry
-%% from the second list belongs to the first list.
-get_block_index_intersection(BI, CurrentBI) ->
-	Height = length(BI) - 1,
-	get_block_index_intersection(BI, CurrentBI, Height).
-
-get_block_index_intersection(BI, [{BH, _WeaveSize, _TXRoot} = Entry | CurrentBI], Height) ->
-	case block_index_contains_block(BI, BH, Height) of
-		{true, TipHeight} ->
-			{Entry, TipHeight};
-		false ->
-			get_block_index_intersection(BI, CurrentBI, Height)
-	end;
-get_block_index_intersection(_BI, [], _Height) ->
-	none.
-
-block_index_contains_block([{BH, _, _} | _], BH, Height) ->
-	{true, Height};
-block_index_contains_block([_ | BI], BH, Height) ->
-	block_index_contains_block(BI, BH, Height - 1);
-block_index_contains_block([], _BH, _Height) ->
-	false.
-
-%% @doc Reset the performance data for a given peer.
-reset_peer(Peer = {_, _, _, _, _}) ->
-	ar_meta_db:put({peer, Peer}, #performance{}).
-
-%% @doc Return the performance object for a node.
-get_performance(Peer = {_, _, _, _, _}) ->
-	case ar_meta_db:get({peer, Peer}) of
-		not_found -> #performance{};
-		P -> P
-	end.
-
-%% @doc Update the "last on list" timestamp of a given peer
-update_timer(Peer = {_, _, _, _, _}) ->
-	case ar_meta_db:get({peer, Peer}) of
-		not_found ->
-			ok;
-		P ->
-			ar_meta_db:put({peer, Peer},
-				P#performance {
-					transfers = P#performance.transfers,
-					time = P#performance.time ,
-					bytes = P#performance.bytes,
-					timestamp = os:system_time(seconds)
-				}
-			)
-	end.
 
 %% @doc Convert the given number of bytes into the "%s MiB" string.
 bytes_to_mb_string(Bytes) ->

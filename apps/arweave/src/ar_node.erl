@@ -5,7 +5,8 @@
 
 -module(ar_node).
 
--export([get_recent_block_hash_by_height/1, get_blocks/0, get_block_index/0, is_in_block_index/1,
+-export([get_recent_block_hash_by_height/1, get_blocks/0, get_block_index/0,
+		is_in_block_index/1, get_block_index_and_height/0,
 		get_height/0, get_balance/1, get_last_tx/1, get_wallets/1, get_wallet_list_chunk/2,
 		get_pending_txs/0, get_pending_txs/1, get_ready_for_mining_txs/0, is_a_pending_tx/1,
 		get_current_usd_to_ar_rate/0, get_current_block_hash/0, get_block_index_entry/1,
@@ -49,11 +50,29 @@ get_blocks() ->
 get_block_index() ->
 	case ets:lookup(node_state, is_joined) of
 		[{_, true}] ->
-			[{block_index, BI}] = ets:lookup(node_state, block_index),
-			BI;
+			element(2, get_block_index_and_height());
 		_ ->
 			[]
 	end.
+
+get_block_index_and_height() ->
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', height},
+					{'==', '$1', recent_block_index}}], ['$_']}]
+		),
+	CurrentHeight = proplists:get_value(height, Props),
+	RecentBI = proplists:get_value(recent_block_index, Props),
+	{CurrentHeight, merge(RecentBI,
+			ar_block_index:get_list(CurrentHeight - length(RecentBI)))}.
+
+merge([Elem | BI], BI2) ->
+	[Elem | merge(BI, BI2)];
+merge([], BI) ->
+	BI.
 
 %% @doc Get pending transactions.
 get_pending_txs() ->
@@ -117,19 +136,7 @@ get_ready_for_mining_txs() ->
 
 %% @doc Return true if the given block hash is found in the block index.
 is_in_block_index(H) ->
-	[{block_anchors, Anchors}] = ets:lookup(node_state, block_anchors),
-	case lists:search(fun(BH) -> BH == H end, Anchors) of
-		{value, _} ->
-			true;
-		false ->
-			[{block_index, BI}] = ets:lookup(node_state, block_index),
-			case lists:search(fun({BH, _, _}) -> BH == H end, BI) of
-				{value, _} ->
-					true;
-				false ->
-					false
-			end
-	end.
+	ar_block_index:member(H).
 
 %% @doc Get the current block hash.
 get_current_block_hash() ->
@@ -148,22 +155,7 @@ get_block_index_entry(Height) ->
 		[{_, false}] ->
 			not_joined;
 		[{_, true}] ->
-			Props =
-				ets:select(
-					node_state,
-					[{{'$1', '$2'},
-						[{'or',
-							{'==', '$1', height},
-							{'==', '$1', block_index}}], ['$_']}]
-				),
-			CurrentHeight = proplists:get_value(height, Props),
-			BI = proplists:get_value(block_index, Props),
-			case Height > CurrentHeight of
-				true ->
-					not_found;
-				false ->
-					lists:nth(CurrentHeight - Height + 1, BI)
-			end
+			ar_block_index:get_element_by_height(Height)
 	end.
 
 %% @doc Get the 2.0 hash for a 1.0 block.

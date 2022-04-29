@@ -2,21 +2,19 @@
 
 -behaviour(cowboy_middleware).
 
-%% cowboy_middleware callbacks
--export([start/0]).
--export([execute/2]).
--export([reset/0, reset_rate_limit/3]).
--export([ban_peer/2, is_peer_banned/1, cleanup_ban/1]).
--export([decrement_ip_addr/2]).
+-export([start/0, execute/2, reset/0, reset_rate_limit/3,
+		ban_peer/2, is_peer_banned/1, cleanup_ban/1, decrement_ip_addr/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_blacklist_middleware.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 execute(Req, Env) ->
 	IpAddr = requesting_ip_addr(Req),
-	case ar_meta_db:get(blacklist) of
-		false ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(blacklist, Config#config.disable) of
+		true ->
 			{ok, Req, Env};
 		_ ->
 			case increment_ip_addr(IpAddr, Req) of
@@ -42,6 +40,7 @@ start() ->
 ban_peer(Peer, TTLSeconds) ->
 	Key = {ban, peer_to_ip_addr(Peer)},
 	Expires = os:system_time(seconds) + TTLSeconds,
+	ar_events:send(peer, {banned, Peer}),
 	ets:insert(?MODULE, {Key, Expires}).
 
 is_peer_banned(Peer) ->

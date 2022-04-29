@@ -1,6 +1,7 @@
 -module(ar_kv).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -export([open/1, open/2, open_without_column_families/2,
@@ -14,7 +15,7 @@ open(Name) ->
 	open_without_column_families(Name, []).
 
 open_without_column_families(Name, Opts) ->
-	RocksDBDir = filename:join(ar_meta_db:get(data_dir), ?ROCKS_DB_DIR),
+	RocksDBDir = filename:join(get_data_dir(), ?ROCKS_DB_DIR),
 	Filename = filename:join(RocksDBDir, Name),
 	ok = filelib:ensure_dir(Filename ++ "/"),
 	LogDir = filename:join([RocksDBDir, "logs", Name]),
@@ -22,7 +23,7 @@ open_without_column_families(Name, Opts) ->
 	rocksdb:open(Filename, [{create_if_missing, true}, {db_log_dir, LogDir}] ++ Opts).
 
 open(Name, CFDescriptors) ->
-	RocksDBDir = filename:join(ar_meta_db:get(data_dir), ?ROCKS_DB_DIR),
+	RocksDBDir = filename:join(get_data_dir(), ?ROCKS_DB_DIR),
 	LogDir = filename:join([RocksDBDir, "logs", Name]),
 	Filename = filename:join(RocksDBDir, Name),
 	ok = filelib:ensure_dir(Filename ++ "/"),
@@ -40,7 +41,7 @@ open(Name, CFDescriptors) ->
 	end.
 
 repair(Name) ->
-	RocksDBDir = filename:join(ar_meta_db:get(data_dir), ?ROCKS_DB_DIR),
+	RocksDBDir = filename:join(get_data_dir(), ?ROCKS_DB_DIR),
 	Filename = filename:join(RocksDBDir, Name),
 	ok = filelib:ensure_dir(Filename ++ "/"),
 	rocksdb:repair(Filename, []).
@@ -143,14 +144,24 @@ cyclic_iterator_move({DB, CF}, Cursor) ->
 get_prev({DB, CF}, OffsetBinary) ->
 	case rocksdb:iterator(DB, CF, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary});
+			case rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary}) of
+				{error, invalid_iterator} ->
+					none;
+				Reply ->
+					Reply
+			end;
 		Error ->
 			Error
 	end;
 get_prev(DB, OffsetBinary) ->
 	case rocksdb:iterator(DB, [{total_order_seek, true}]) of
 		{ok, Iterator} ->
-			rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary});
+			case rocksdb:iterator_move(Iterator, {seek_for_prev, OffsetBinary}) of
+				{error, invalid_iterator} ->
+					none;
+				Reply ->
+					Reply
+			end;
 		Error ->
 			Error
 	end.
@@ -198,7 +209,7 @@ delete_range(DB, StartKey, EndKey) ->
 	rocksdb:delete_range(DB, StartKey, EndKey, []).
 
 destroy(Name) ->
-	RocksDBDir = filename:join(ar_meta_db:get(data_dir), ?ROCKS_DB_DIR),
+	RocksDBDir = filename:join(get_data_dir(), ?ROCKS_DB_DIR),
 	Filename = filename:join(RocksDBDir, Name),
 	case filelib:is_dir(Filename) of
 		true ->
@@ -213,6 +224,10 @@ count(DB) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+get_data_dir() ->
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.data_dir.
 
 get_range2(Iterator, Map) ->
 	case rocksdb:iterator_move(Iterator, next) of

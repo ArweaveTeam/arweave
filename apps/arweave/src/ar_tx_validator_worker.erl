@@ -77,7 +77,27 @@ handle_cast({validate, TX, Peer, ReplyTo}, State) ->
 					ar_data_sync:add_data_root_to_disk_pool(TX#tx.data_root, TX#tx.data_size,
 							TXID);
 				1 ->
-					ok
+					case TX#tx.data_size > 0 of
+						true ->
+							%% Inform ar_data_sync about the new data_root so that it
+							%% can accept the chunks. In case of v1 transactions chunks
+							%% arrive together with the tx header. However, we send
+							%% the data root here anyway, otherwise ar_header_sync may later
+							%% fail to store the chunks when persisting the transaction -
+							%% registering the data roots of a confirmed block is an
+							%% asynchronous procedure (see ar_data_sync:add_tip_block called
+							%% in ar_node_worker) which does not always complete
+							%% before ar_header_sync attempts the insertion.
+							V1Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, TX#tx.data),
+							SizeTaggedV1Chunks = ar_tx:chunks_to_size_tagged_chunks(V1Chunks),
+							SizeTaggedV1ChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
+									SizeTaggedV1Chunks),
+							{DataRoot, _} = ar_merkle:generate_tree(SizeTaggedV1ChunkIDs),
+							ar_data_sync:add_data_root_to_disk_pool(DataRoot,
+									TX#tx.data_size, TXID);
+						false ->
+							ok
+					end
 			end;
 		_ ->
 			ok

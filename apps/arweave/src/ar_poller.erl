@@ -94,7 +94,7 @@ fetch_block(Peers, Height) ->
 	case ar_http_iface_client:get_block_shadow(Peers, Height) of
 		unavailable ->
 			{error, block_not_found};
-		{Peer, BShadow} ->
+		{Peer, BShadow, _Time, _Size} ->
 			Timestamp = erlang:timestamp(),
 			case fetch_previous_blocks(Peer, BShadow, Timestamp) of
 				ok ->
@@ -129,7 +129,7 @@ fetch_previous_blocks2(Peer, FetchedBShadow, BehindCurrentHL, FetchedBlocks) ->
 			case ar_http_iface_client:get_block_shadow([Peer], PrevH) of
 				unavailable ->
 					{error, previous_block_not_found};
-				{_, PrevBShadow} ->
+				{_Peer, PrevBShadow, _Time, _Size} ->
 					fetch_previous_blocks2(
 						Peer,
 						PrevBShadow,
@@ -146,7 +146,7 @@ submit_fetched_blocks([B | Blocks], Peer, ReceiveTimestamp) ->
 		{height, B#block.height}
 	]),
 	%% Won't be broadcasted.
-	ar_events:send(block, {new, B, ar_poller}),
+	ar_events:send(block, {new, B, #{ source => ar_poller }}),
 	submit_fetched_blocks(Blocks, Peer, ReceiveTimestamp);
 submit_fetched_blocks([], _Peer, _ReceiveTimestamp) ->
 	ok.

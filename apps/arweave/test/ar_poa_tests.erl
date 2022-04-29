@@ -4,7 +4,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0,
-		assert_post_tx_to_slave/1, slave_mine/0, slave_call/3,
+		assert_post_tx_to_slave/1, slave_mine/0,
 		wait_until_height/1, assert_slave_wait_until_height/1,
 		assert_wait_until_receives_txs/1,
 		get_tx_anchor/0, sign_tx/2, read_block_when_stored/1]).
@@ -177,8 +177,6 @@ test_ignores_transactions_with_invalid_data_root() ->
 	{_Master, _} = start(B0),
 	{_Slave, _} = slave_start(B0),
 	connect_to_slave(),
-	Default = slave_call(ar_meta_db, get, [max_poa_option_depth]),
-	slave_call(ar_meta_db, put, [max_poa_option_depth, 100]),
 	%% Generate transactions where half of them are valid and the other
 	%% half has an invalid data_root.
 	GenerateTXParams =
@@ -221,8 +219,7 @@ test_ignores_transactions_with_invalid_data_root() ->
 			assert_slave_wait_until_height(Height)
 		end,
 		lists:seq(1, 10)
-	),
-	slave_call(ar_meta_db, put, [max_poa_option_depth, Default]).
+	).
 
 generate_txs(Key, SignFun) ->
 	[

@@ -4,8 +4,7 @@
 
 -export([start_link/0, get_bucket_peers/1, collect_peers/0]).
 
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
-		code_change/3]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
@@ -43,20 +42,25 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% @doc Return the list of ?QUERY_BEST_PEERS_COUNT peers who have at least one byte of data
-%% synced in the given Bucket of size ?NETWORK_DATA_BUCKET_SIZE. 80% of the peers are chosen
-%% from the 20% of peers with the biggest share in the given bucket.
+%% @doc Return the list of ?QUERY_BEST_PEERS_COUNT peers who have at least one byte of
+%% data synced in the given Bucket of size ?NETWORK_DATA_BUCKET_SIZE. 80% of the peers
+%% are chosen from the 20% of peers with the biggest share in the given bucket.
 get_bucket_peers(Bucket) ->
-	get_bucket_peers(Bucket, {Bucket, 0, no_peer}, []).
+	case ets:member(ar_peers, block_connections) of
+		true ->
+			[];
+		false ->
+			get_bucket_peers(Bucket, {Bucket, 0, no_peer}, [])
+	end.
 
 get_bucket_peers(Bucket, Cursor, Peers) ->
 	case ets:next(?MODULE, Cursor) of
 		'$end_of_table' ->
-			ar_tx_emitter:pick_peers(Peers, ?QUERY_BEST_PEERS_COUNT);
+			pick_peers(Peers, ?QUERY_BEST_PEERS_COUNT);
 		{Bucket, _Share, Peer} = Key ->
 			get_bucket_peers(Bucket, Key, [Peer | Peers]);
 		_ ->
-			ar_tx_emitter:pick_peers(Peers, ?QUERY_BEST_PEERS_COUNT)
+			pick_peers(Peers, ?QUERY_BEST_PEERS_COUNT)
 	end.
 
 %%%===================================================================
@@ -92,6 +96,7 @@ handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
 		{{value, Peer}, Queue} ->
 			monitor(process, spawn(
 				fun() ->
+					process_flag(trap_exit, true),
 					case ar_http_iface_client:get_sync_buckets(Peer) of
 						{ok, SyncBuckets} ->
 							gen_server:cast(?MODULE, {add_peer_sync_buckets, Peer,
@@ -154,6 +159,9 @@ handle_info({event, peer, {bad_response, {Peer, _Resource, _Reason}}}, State) ->
 	gen_server:cast(?MODULE, {remove_peer, Peer}),
 	{noreply, State};
 
+handle_info({event, peer, _}, State) ->
+	{noreply, State};
+
 handle_info(Message, State) ->
 	?LOG_WARNING("event: unhandled_info, message: ~p", [Message]),
 	{noreply, State}.
@@ -161,16 +169,32 @@ handle_info(Message, State) ->
 terminate(_Reason, _State) ->
 	ok.
 
-code_change(_OldVsn, State, _Extra) ->
-	{ok, State}.
-
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
+%% @doc Return a list of peers where 80% of the peers are randomly chosen
+%% from the first 20% of Peers and the other 20% of the peers are randomly
+%% chosen from the other 80% of Peers.
+pick_peers(Peers, N) ->
+	pick_peers(Peers, length(Peers), N).
+
+pick_peers(Peers, PeerLen, N) when N >= PeerLen ->
+	Peers;
+pick_peers([], _PeerLen, _N) ->
+	[];
+pick_peers(_Peers, _PeerLen, 0) ->
+	[];
+pick_peers(Peers, PeerLen, N) ->
+	{Best, Other} = lists:split(max(PeerLen div 5, 1), Peers),
+	TakeBest = max(8 * N div 10, 1),
+	Part1 = ar_util:pick_random(Best, min(length(Best), TakeBest)),
+	Part2 = ar_util:pick_random(Other, min(length(Other), N - TakeBest)),
+	Part1 ++ Part2.
+
 collect_peers() ->
 	N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
-	collect_peers(lists:sublist(ar_bridge:get_remote_peers(), N)).
+	collect_peers(lists:sublist(ar_peers:get_peers(), N)).
 
 collect_peers([Peer | Peers]) ->
 	gen_server:cast(?MODULE, {add_peer, Peer}),

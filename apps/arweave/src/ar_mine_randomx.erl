@@ -203,15 +203,17 @@ release_state(RandomxState) ->
 %% Internal
 
 jit() ->
-	case ar_meta_db:get(randomx_jit) of
-		false ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(randomx_jit, Config#config.disable) of
+		true ->
 			0;
 		_ ->
 			1
 	end.
 
 large_pages() ->
-	case ar_meta_db:get(randomx_large_pages) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(randomx_large_pages, Config#config.enable) of
 		true ->
 			1;
 		_ ->
@@ -219,8 +221,9 @@ large_pages() ->
 	end.
 
 hardware_aes() ->
-	case ar_meta_db:get(randomx_hardware_aes) of
-		false ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(randomx_hardware_aes, Config#config.disable) of
+		true ->
 			0;
 		_ ->
 			1

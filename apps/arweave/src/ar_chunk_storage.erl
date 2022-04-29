@@ -194,6 +194,10 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
 	{reply, ok, State}.
 
+handle_info({Ref, _Reply}, State) when is_reference(Ref) ->
+	%% A stale gen_server:call reply.
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {info, io_lib:format("~p", [Info])}]),
 	{noreply, State}.

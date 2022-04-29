@@ -25,7 +25,7 @@
 		ar_poa,
 		ar_packing_server,
 		ar_node_utils,
-		ar_meta_db,
+		ar_peers,
 		ar_webhook_tests,
 		ar_poller_tests,
 		ar_kv,
@@ -100,7 +100,9 @@ show_help() ->
 		end,
 		[
 			{"config_file (path)", "Load configuration from specified file."},
-			{"peer (ip:port)", "Join a network on a peer (or set of peers)."},
+			{"peer (IP:port)", "Join a network on a peer (or set of peers)."},
+			{"block_gossip_peer (IP:port)", "Optionally specify peer(s) to always"
+					" send blocks to."},
 			{"start_from_block_index", "Start the node from the latest stored block index."},
 			{"mine", "Automatically start mining once the netwok has been joined."},
 			{"port", "The local port to use for mining. "
@@ -280,6 +282,15 @@ parse_cli_args(["peer", Peer|Rest], C = #config { peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} ->
 			parse_cli_args(Rest, C#config { peers = [ValidPeer|Ps] });
+		{error, _} ->
+			io:format("Peer ~p invalid ~n", [Peer]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["block_gossip_peer", Peer | Rest],
+		C = #config{ block_gossip_peers = Peers }) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ValidPeer} ->
+			parse_cli_args(Rest, C#config{ block_gossip_peers = [ValidPeer | Peers] });
 		{error, _} ->
 			io:format("Peer ~p invalid ~n", [Peer]),
 			parse_cli_args(Rest, C)
@@ -477,7 +488,8 @@ filter_valid_peers(Peers) ->
 		fun(Peer) ->
 			case ar_http_iface_client:get_info(Peer, name) of
 				info_unavailable ->
-					io:format("~n\tPeer ~s is not available.~n~n", [ar_util:format_peer(Peer)]),
+					io:format("~n\tPeer ~s is not available.~n~n",
+							[ar_util:format_peer(Peer)]),
 					false;
 				<<?NETWORK_NAME>> ->
 					true;

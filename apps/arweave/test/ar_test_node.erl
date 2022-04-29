@@ -7,16 +7,17 @@
 		assert_wait_until_block_block_index/1, wait_until_receives_txs/1,
 		assert_wait_until_receives_txs/1, assert_slave_wait_until_receives_txs/1,
 		post_tx_to_slave/1, post_tx_to_slave/2, post_tx_to_master/1, post_tx_to_master/2,
-		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, sign_tx/1, sign_tx/2, sign_tx/3,
-		sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3, get_tx_anchor/0, get_tx_anchor/1,
-		join/1, join_on_slave/0, join_on_master/0,
+		assert_post_tx_to_slave/1, assert_post_tx_to_master/1, sign_tx/1, sign_tx/2,
+		sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3, get_tx_anchor/0,
+		get_tx_anchor/1, join/1, join_on_slave/0, join_on_master/0,
 		get_last_tx/1, get_last_tx/2, get_tx_confirmations/2,
 		get_balance/1, test_with_mocked_functions/2,
 		get_tx_price/1, post_and_mine/2, read_block_when_stored/1,
-		get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2, add_peer/1, random_v1_data/1,
-		assert_get_tx_data/3, assert_get_tx_data_master/2, assert_get_tx_data_slave/2,
-		assert_data_not_found_master/1, assert_data_not_found_slave/1,
-		post_tx_json_to_master/1, post_tx_json_to_slave/1, master_peer/0, slave_peer/0]).
+		read_block_when_stored/2, get_chunk/1, get_chunk/2, post_chunk/1, post_chunk/2,
+		random_v1_data/1, assert_get_tx_data/3, assert_get_tx_data_master/2,
+		assert_get_tx_data_slave/2, assert_data_not_found_master/1,
+		assert_data_not_found_slave/1, post_tx_json_to_master/1,
+		post_tx_json_to_slave/1, master_peer/0, slave_peer/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -132,49 +133,44 @@ join_on_master() ->
 	slave_call(ar_test_node, join, [master_peer()]).
 
 connect_to_slave() ->
-	%% Connect the nodes by making two HTTP calls.
-	%%
-	%% After a request to a peer, the peer is recorded in ar_meta_db but
-	%% not in the remote peer list. So we need to remove it from ar_meta_db
-	%% otherwise it's not added to the remote peer list when it makes a request
-	%% to us in turn.
-	{ok, Config} = application:get_env(arweave, config),
-	MasterPort = Config#config.port,
-	slave_call(ar_meta_db, reset_peer, [master_peer()]),
-	SlavePort = (element(2, slave_call(application, get_env, [arweave, config])))#config.port,
+	%% Unblock connections possibly blocked in the prior test code.
+	ar_peers:unblock_connections(),
+	slave_call(ar_peers, unblock_connections, []),
+	%% Make requests to the nodes to make them discover each other.
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => slave_peer(),
 			path => "/info",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(MasterPort)}]
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))},
+					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
 		}),
-	ar_meta_db:reset_peer(slave_peer()),
+	true = ar_util:do_until(
+		fun() ->
+			[master_peer()] == slave_call(ar_peers, get_peers, [])
+		end,
+		200,
+		5000
+	),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
 			peer => master_peer(),
 			path => "/info",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}]
-		}).
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))},
+					{<<"X-Release">>, integer_to_binary(?RELEASE_NUMBER)}]
+		}),
+	true = ar_util:do_until(
+		fun() ->
+			[slave_peer()] == ar_peers:get_peers()
+		end,
+		200,
+		5000
+	).
 
 disconnect_from_slave() ->
-	%% Disconnects master from slave so that they do not share blocks
-	%% and transactions unless they were bound by ar_node:add_peers/2.
-	%% The peers are added in ar_meta_db so that they do not start adding each other
-	%% to their peer lists after disconnect.
-	%% Also, all HTTP requests made in this module are made with the
-	%% x-p2p-port HTTP header corresponding to the listening port of
-	%% the receiving node so that freshly started nodes do not start peering
-	%% unless connect_to_slave/0 is called.
-	ar_meta_db:put({peer, slave_peer()}, #performance{}),
-	slave_call(ar_meta_db, put, [{peer, master_peer()}, #performance{}]),
-	slave_call(ar_bridge, set_remote_peers, [[]]),
-	ar_bridge:set_remote_peers([]),
-	{ok, Config} = application:get_env(arweave, config),
-	application:set_env(arweave, config, Config#config{ peers = [] }),
-	{ok, SlaveConfig} = slave_call(application, get_env, [arweave, config]),
-	slave_call(application, set_env, [arweave, config, SlaveConfig#config{ peers = [] }]).
+	ar_peers:block_connections(),
+	slave_call(ar_peers, block_connections, []).
 
 slave_call(Module, Function, Args) ->
 	slave_call(Module, Function, Args, 60000).
@@ -395,25 +391,21 @@ get_tx_anchor() ->
 	get_tx_anchor(slave).
 
 get_tx_anchor(slave) ->
-	SlavePort = slave_call(ar_meta_db, get, [port]),
-	IP = {127, 0, 0, 1, SlavePort},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => IP,
+			peer => slave_peer(),
 			path => "/tx_anchor",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(SlavePort)}]
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))}]
 		}),
 	ar_util:decode(Reply);
 get_tx_anchor(master) ->
-	Port = ar_meta_db:get(port),
-	IP = {127, 0, 0, 1, Port},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => IP,
+			peer => master_peer(),
 			path => "/tx_anchor",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))}]
 		}),
 	ar_util:decode(Reply).
 
@@ -421,37 +413,35 @@ get_last_tx(Key) ->
 	get_last_tx(slave, Key).
 
 get_last_tx(slave, {_, Pub}) ->
-	Port = slave_call(ar_meta_db, get, [port]),
-	IP = {127, 0, 0, 1, Port},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => IP,
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/last_tx",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			peer => slave_peer(),
+			path => "/wallet/"
+					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub)))
+					++ "/last_tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))}]
 		}),
 	ar_util:decode(Reply);
 get_last_tx(master, {_, Pub}) ->
-	Port = ar_meta_db:get(port),
-	IP = {127, 0, 0, 1, Port},
 	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
 		ar_http:req(#{
 			method => get,
-			peer => IP,
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub))) ++ "/last_tx",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			peer => master_peer(),
+			path => "/wallet/"
+					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub)))
+					++ "/last_tx",
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))}]
 		}),
 	ar_util:decode(Reply).
 
 get_tx_confirmations(slave, TXID) ->
-	Port = slave_call(ar_meta_db, get, [port]),
-	IP = {127, 0, 0, 1, Port},
 	Response =
 		ar_http:req(#{
 			method => get,
-			peer => IP,
+			peer => slave_peer(),
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, slave_peer()))}]
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Reply, _, _}} ->
@@ -461,14 +451,12 @@ get_tx_confirmations(slave, TXID) ->
 			-1
 	end;
 get_tx_confirmations(master, TXID) ->
-	Port = ar_meta_db:get(port),
-	IP = {127, 0, 0, 1, Port},
 	Response =
 		ar_http:req(#{
 			method => get,
-			peer => IP,
+			peer => master_peer(),
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/status",
-			headers => [{<<"X-P2p-Port">>, integer_to_binary(Port)}]
+			headers => [{<<"X-P2p-Port">>, integer_to_binary(element(5, master_peer()))}]
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Reply, _, _}} ->
@@ -573,15 +561,16 @@ post_and_mine(#{ miner := Miner, await_on := AwaitOn }, TXs) ->
 	case AwaitOn of
 		{master, _AwaitNode} ->
 			[{H, _, _} | _] = wait_until_height(CurrentHeight + 1),
-			BShadow = read_block_when_stored(H),
-			BShadow#block{ txs = ar_storage:read_tx(BShadow#block.txs) };
+			read_block_when_stored(H, true);
 		{slave, _AwaitNode} ->
 			[{H, _, _} | _] = slave_wait_until_height(CurrentHeight + 1),
-			BShadow = slave_call(ar_test_node, read_block_when_stored, [H]),
-			BShadow#block{ txs = slave_call(ar_storage, read_tx, [BShadow#block.txs]) }
+			slave_call(ar_test_node, read_block_when_stored, [H, true])
 	end.
 
 read_block_when_stored(H) ->
+	read_block_when_stored(H, false).
+
+read_block_when_stored(H, IncludeTXs) ->
 	{ok, B} = ar_util:do_until(
 		fun() ->
 			case ar_storage:read_block(H) of
@@ -595,16 +584,21 @@ read_block_when_stored(H) ->
 								true ->
 									false;
 								false ->
-									{ok, B2}
+									case IncludeTXs of
+										true ->
+											{ok, B2#block{ txs = TXs }};
+										false ->
+											{ok, B2}
+									end
 							end
 						end,
-						100,
-						5000
+						200,
+						10000
 					)
 			end
 		end,
-		100,
-		20000
+		200,
+		60000
 	),
 	B.
 
@@ -612,10 +606,10 @@ get_chunk(Offset) ->
 	get_chunk(master, Offset).
 
 get_chunk(master, Offset) ->
-	get_chunk2({127, 0, 0, 1, ar_meta_db:get(port)}, Offset);
+	get_chunk2(master_peer(), Offset);
 
 get_chunk(slave, Offset) ->
-	get_chunk2({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, Offset).
+	get_chunk2(slave_peer(), Offset).
 
 get_chunk2(Peer, Offset) ->
 	ar_http:req(#{
@@ -629,10 +623,10 @@ post_chunk(Proof) ->
 	post_chunk(master, Proof).
 
 post_chunk(master, Proof) ->
-	post_chunk2({127, 0, 0, 1, ar_meta_db:get(port)}, Proof);
+	post_chunk2(master_peer(), Proof);
 
 post_chunk(slave, Proof) ->
-	post_chunk2({127, 0, 0, 1, slave_call(ar_meta_db, get, [port])}, Proof).
+	post_chunk2(slave_peer(), Proof).
 
 post_chunk2(Peer, Proof) ->
 	ar_http:req(#{
@@ -641,9 +635,6 @@ post_chunk2(Peer, Proof) ->
 		path => "/chunk",
 		body => Proof
 	}).
-
-add_peer(Port) ->
-	ar_bridge:add_remote_peer({127, 0, 0, 1, Port}).
 
 random_v1_data(Size) ->
 	%% Make sure v1 txs do not end with a digit, otherwise they are malleable.

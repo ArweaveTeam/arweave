@@ -3,60 +3,26 @@
 %% with this file, You can obtain one at
 %% https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 
-%%% @doc Represents a bridge node in the internal gossip network
-%%% to the external message passing interfaces.
-%%% @end
+%%% @doc The module gossips blocks to peers.
 -module(ar_bridge).
 
 -behaviour(gen_server).
 
--export([
-	start_link/0,
-	add_remote_peer/1,
-	get_remote_peers/0, get_remote_peers/1, set_remote_peers/1
-]).
+-export([start_link/2]).
 
--export([
-	init/1,
-	handle_call/3,
-	handle_cast/2,
-	handle_info/2,
-	terminate/2,
-	code_change/3
-]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
-%% Internal state definition.
 -record(state, {
-	external_peers,		% External peers ordered by best to worst.
-	updater = undefined	% Spawned process for updating peer list.
+	block_propagation_queue = gb_sets:new(),
+	workers
 }).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
-
-%% @doc Add a remote HTTP peer.
-add_remote_peer(Node) ->
-	case is_loopback_ip(Node) of
-		true -> ok; % do nothing
-		false ->
-			gen_server:cast(?MODULE, {add_peer, remote, Node})
-	end.
-
-%% @doc Get a list of remote peers.
-get_remote_peers(Timeout) ->
-	gen_server:call(?MODULE, {get_peers, remote}, Timeout).
-
-%% @doc Get a list of remote peers.
-get_remote_peers() ->
-	gen_server:call(?MODULE, {get_peers, remote}, 10000).
-
-%% @doc Reset the remote peers list to a specific set.
-set_remote_peers(Peers) ->
-	gen_server:cast(?MODULE, {set_peers, Peers}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -65,8 +31,8 @@ set_remote_peers(Peers) ->
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(Name, Workers) ->
+	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
 
 %%% gen_server callbacks
 %%%===================================================================
@@ -82,15 +48,11 @@ start_link() ->
 %%					   {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
+init(Workers) ->
 	process_flag(trap_exit, true),
-	{ok, Config} = application:get_env(arweave, config),
-	%% Start asking peers about their peers.
-	erlang:send_after(0, self(), get_more_peers),
 	ar_events:subscribe(block),
-	State = #state {
-		external_peers = Config#config.peers
-	},
+	WorkerMap = lists:foldl(fun(W, Acc) -> maps:put(W, free, Acc) end, #{}, Workers),
+	State = #state{ workers = WorkerMap },
 	{ok, State}.
 
 %%--------------------------------------------------------------------
@@ -107,11 +69,8 @@ init([]) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({get_peers, remote}, _From, State) ->
-	{reply, State#state.external_peers, State};
-
 handle_call(Request, _From, State) ->
-	?LOG_ERROR("unhandled call: ~p", [Request]),
+	?LOG_WARNING("unhandled call: ~p", [Request]),
 	{reply, ok, State}.
 
 %%--------------------------------------------------------------------
@@ -125,23 +84,24 @@ handle_call(Request, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 
-handle_cast({add_peer, remote, Peer}, State) ->
-	#state{ external_peers = ExtPeers } = State,
-	case {lists:member(Peer, ?PEER_PERMANENT_BLACKLIST), lists:member(Peer, ExtPeers)} of
-		{true, _} ->
+handle_cast({may_be_send_block, W}, State) ->
+	#state{ workers = Workers, block_propagation_queue = Q } = State,
+	case dequeue(Q) of
+		empty ->
 			{noreply, State};
-		{_, true} ->
-			{noreply, State};
-		{_, false} ->
-			{noreply, State#state{ external_peers = ExtPeers ++ [Peer] }}
+		{{_Priority, Peer, BlockData}, Q2} ->
+			case maps:get(W, Workers) of
+				free ->
+					send_to_worker(Peer, BlockData, W),
+					{noreply, State#state{ block_propagation_queue = Q2,
+							workers = maps:put(W, busy, Workers) }};
+				busy ->
+					{noreply, State}
+			end
 	end;
 
-handle_cast({set_peers, Peers}, State) ->
-	update_state_metrics(Peers),
-	{noreply, State#state{ external_peers = Peers }};
-
 handle_cast(Msg, State) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -154,50 +114,45 @@ handle_cast(Msg, State) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info(get_more_peers, #state{ updater = undefined } = State) ->
-	Self = self(),
-	erlang:send_after(?GET_MORE_PEERS_TIME, Self, get_more_peers),
-	Updater = spawn(
-		fun() ->
-			Peers = ar_manage_peers:update(State#state.external_peers),
-			ping_peers(Peers),
-			Self ! {update_peers, remote, Peers}
-		end
-	),
-	{noreply, State#state{ updater = Updater }};
-
-handle_info(get_more_peers, State) ->
-	?LOG_WARNING([{event, ar_bridge_update_peers_process_is_stuck}]),
-	erlang:send_after(?GET_MORE_PEERS_TIME, self(), get_more_peers),
-	{noreply, State};
-
-handle_info({update_peers, remote, Peers}, State) ->
-	update_state_metrics(Peers),
-	State2 = State#state{ external_peers = Peers, updater = undefined },
-	{noreply, State2};
-
-handle_info({event, block, {new, _Block, ar_poller}}, State) ->
+handle_info({event, block, {new, _B, #{ source := ar_poller }}}, State) ->
 	%% ar_poller often fetches blocks when the network already knows about them
 	%% so do not gossip.
 	{noreply, State};
 
-handle_info({event, block, {new, Block, _Source}}, State) ->
-	case ar_block_cache:get(block_cache, Block#block.previous_block) of
+handle_info({event, block, {new, B, #{ recall_byte := RecallByte }}}, State) ->
+	#state{ block_propagation_queue = Q, workers = Workers } = State,
+	case ar_block_cache:get(block_cache, B#block.previous_block) of
 		not_found ->
 			%% The cache should have been just pruned and this block is old.
 			{noreply, State};
 		_ ->
-			spawn(fun() ->
-				send_block_to_external_parallel(State#state.external_peers, Block)
-			end),
-			{noreply, State}
+			{ok, Config} = application:get_env(arweave, config),
+			TrustedPeers = ar_peers:get_trusted_peers(),
+			SpecialPeers = Config#config.block_gossip_peers,
+			Peers = ((SpecialPeers ++ ar_peers:get_peers()) -- TrustedPeers) ++ TrustedPeers,
+			JSON = block_to_json(B),
+			Q2 = enqueue_block(Peers, B#block.height, {JSON, B, RecallByte}, Q),
+			[gen_server:cast(?MODULE, {may_be_send_block, W}) || W <- maps:keys(Workers)],
+			{noreply, State#state{ block_propagation_queue = Q2 }}
 	end;
 
-handle_info({event, block, {mined, _Block, _TXs, _CurrentBH}}, State) ->
+handle_info({event, block, {mined, _B, _TXs, _CurrentBH, _RecallByte}}, State) ->
 	%% This event is handled by ar_node_worker. Ignore it.
 	{noreply, State};
+
+handle_info({worker_sent_block, W},
+		#state{ workers = Workers, block_propagation_queue = Q } = State) ->
+	case dequeue(Q) of
+		empty ->
+			{noreply, State#state{ workers = maps:put(W, free, Workers) }};
+		{{_Priority, Peer, BlockData}, Q2} ->
+			send_to_worker(Peer, BlockData, W),
+			{noreply, State#state{ block_propagation_queue = Q2,
+					workers = maps:put(W, busy, Workers) }}
+	end;
+
 handle_info(Info, State) ->
-	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -215,79 +170,119 @@ terminate(_Reason, _State) ->
 	?LOG_INFO([{event, ar_bridge_terminated}, {module, ?MODULE}]),
 	ok.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% @end
-%%--------------------------------------------------------------------
-code_change(_OldVsn, State, _Extra) ->
-	{ok, State}.
-
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
--ifdef(DEBUG).
-%% Do not filter out loopback IP addresses with custom port in the debug mode
-%% to allow multiple local VMs to peer with each other.
-is_loopback_ip({127, _, _, _, Port}) ->
-	{ok, Config} = application:get_env(arweave, config),
-	Port == Config#config.port;
-is_loopback_ip({_, _, _, _, _}) ->
-	false.
--else.
-%% @doc Is the IP address in question a loopback ('us') address?
-is_loopback_ip({A, B, C, D, _Port}) -> is_loopback_ip({A, B, C, D});
-is_loopback_ip({127, _, _, _}) -> true;
-is_loopback_ip({0, _, _, _}) -> true;
-is_loopback_ip({169, 254, _, _}) -> true;
-is_loopback_ip({255, 255, 255, 255}) -> true;
-is_loopback_ip({_, _, _, _}) -> false.
--endif.
+enqueue_block(Peers, Height, BlockData, Q) ->
+	enqueue_block(Peers, Height, BlockData, Q, 0).
 
-%% @doc Send the new block to #config.max_block_propagation_peers peers,
-%% ?BLOCK_PROPAGATION_PARALLELIZATION peers at a time. The peers
-%% are chosen using ar_tx_emitter:pick_peers/2.
-send_block_to_external_parallel(Peers, B) ->
-	{ok, Config} = application:get_env(arweave, config),
-	TrustedPeers = Config#config.peers,
-	PickedPeers = (ar_tx_emitter:pick_peers(Peers, Config#config.max_block_propagation_peers)
-			-- TrustedPeers) ++ TrustedPeers,
+enqueue_block([], _Height, _BlockData, Q, _N) ->
+	Q;
+enqueue_block([Peer | Peers], Height, BlockData, Q, N) ->
+	Priority = {N, Height},
+	enqueue_block(Peers, Height, BlockData,
+			gb_sets:add_element({Priority, Peer, BlockData}, Q), N + 1).
+
+dequeue(Q) ->
+	case gb_sets:is_empty(Q) of
+		true ->
+			empty;
+		false ->
+			gb_sets:take_smallest(Q)
+	end.
+
+send_to_worker(Peer, {JSON, B, RecallByte}, W) ->
+	#block{ indep_hash = H, previous_block = PrevH, txs = TXs } = B,
+	Release = ar_peers:get_peer_release(Peer),
+	case Release >= 52 of
+		true ->
+			SendAnnouncementFun =
+				fun() ->
+					Announcement = #block_announcement{ indep_hash = H,
+							previous_block = PrevH,
+							recall_byte = RecallByte,
+							tx_prefixes = [ar_node_worker:tx_id_prefix(ID)
+									|| #tx{ id = ID } <- TXs] },
+					ar_http_iface_client:send_block_announcement(Peer, Announcement)
+				end,
+			SendFun =
+				fun(MissingChunk, MissingTXs) ->
+					%% Some transactions might be absent from our mempool. We still gossip
+					%% this block further and search for the missing transactions afterwads
+					%% (the process is initiated by ar_node_worker). We are gradually moving
+					%% to the new process where blocks are sent over POST /block2 along with
+					%% all the missing transactions specified in the preceding
+					%% POST /block_announcement reply. Once the network adopts the new release,
+					%% we will turn off POST /block and remove the missing transactions search
+					%% in ar_node_worker.
+					case determine_included_transactions(TXs, MissingTXs) of
+						missing ->
+							ar_http_iface_client:send_block_json(Peer, H, JSON);
+						TXs2 ->
+							PoA = case MissingChunk of true -> B#block.poa;
+									false -> #poa{} end,
+							Bin = ar_serialize:block_to_binary(B#block{ txs = TXs2,
+									poa = PoA }),
+							ar_http_iface_client:send_block_binary(Peer, H, Bin, RecallByte)
+					end
+				end,
+			gen_server:cast(W, {send_block2, Peer, SendAnnouncementFun, SendFun, 1, self()});
+		false ->
+			SendFun = fun() -> ar_http_iface_client:send_block_json(Peer, H, JSON) end,
+			gen_server:cast(W, {send_block, SendFun, 1, self()})
+	end.
+
+block_to_json(B) ->
 	BDS = ar_block:generate_block_data_segment(B),
-	Send = fun(Peer) -> ar_http_iface_client:send_new_block(Peer, B, BDS) end,
-	SendRetry = fun(Peer) ->
-		case ar_http_iface_client:send_new_block(Peer, B, BDS) of
-			{ok, {{<<"412">>, _}, _, _, _, _}} ->
-				timer:sleep(5000),
-				Send(Peer);
-			_ ->
-				ok
-		end
-	end,
-	EncodedBH = ar_util:encode(B#block.indep_hash),
-	PeerLen = length(PickedPeers),
-	?LOG_INFO([{event, sending_block_to_external_peers}, {block, EncodedBH}, {peers, PeerLen}]),
-	send_block_to_external_parallel(PickedPeers, SendRetry, ?BLOCK_PROPAGATION_PARALLELIZATION),
-	?LOG_INFO([{event, sent_block_to_external_peers}, {block, EncodedBH}, {peers, PeerLen}]).
+	{BlockProps} = ar_serialize:block_to_json_struct(B),
+	PostProps = [
+		{<<"new_block">>, {BlockProps}},
+		%% Add the P2P port field to be backwards compatible with nodes
+		%% running the old version of the P2P port feature.
+		{<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
+		{<<"block_data_segment">>, ar_util:encode(BDS)}
+	],
+	ar_serialize:jsonify({PostProps}).
 
-send_block_to_external_parallel(Peers, SendFun, ThreadCount) when length(Peers) < ThreadCount ->
-	ar_util:pmap(SendFun, Peers);
-send_block_to_external_parallel(Peers, SendFun, ThreadCount) ->
-	{Chunk, Peers2} = lists:split(ThreadCount, Peers),
-	ar_util:pmap(SendFun, Chunk),
-	send_block_to_external_parallel(Peers2, SendFun, ThreadCount).
+%% @doc Return the list of transactions to gossip or 'missing'. TXs is a list of possibly
+%% both tx records and transaction identifiers - whatever is found in the gossiped block.
+%% MissingTXs is a list of possibly both 0-based indices and tx identifiers. The items
+%% in the new list are in the same order they occur in TXs. Identifiers are simply placed
+%% as-is in the new list. The tx records might be converted to their identifiers (to avoid
+%% sending the entire transactions to peers who already know them) if either their 0-based
+%% indices or identifiers are found in MissingTXs. Elements in MissingTXs are assumed sorted
+%% in the order of their appearance in TXs. Return 'missing' if TXs contains an identifier (
+%% not a tx record) which (or its index) is found in MissingTXs.
+determine_included_transactions(TXs, MissingTXs) ->
+	determine_included_transactions(TXs, MissingTXs, [], 0).
 
-ping_peers(Peers) when length(Peers) < 10 ->
-	ar_util:pmap(fun ar_http_iface_client:add_peer/1, Peers);
-ping_peers(Peers) ->
-	{Send, Rest} = lists:split(10, Peers),
-	ar_util:pmap(fun ar_http_iface_client:add_peer/1, Send),
-	ping_peers(Rest).
+determine_included_transactions([], _MissingTXs, Included, _N) ->
+	lists:reverse(Included);
+determine_included_transactions([TXIDOrTX | TXs], [], Included, N) ->
+	determine_included_transactions(TXs, [], [tx_id(TXIDOrTX) | Included], N);
+determine_included_transactions([TXIDOrTX | TXs], [TXIDOrIndex | MissingTXs], Included, N) ->
+	TXID = tx_id(TXIDOrTX),
+	case TXIDOrIndex == N orelse TXIDOrIndex == TXID of
+		true ->
+			case TXID == TXIDOrTX of
+				true ->
+					missing;
+				false ->
+					determine_included_transactions(TXs, MissingTXs, [strip_v2_data(TXIDOrTX)
+							| Included], N + 1)
+			end;
+		false ->
+			determine_included_transactions(TXs, [TXIDOrIndex | MissingTXs], [TXID | Included],
+					N + 1)
+	end.
 
-update_state_metrics(Peers) when is_list(Peers) ->
-	prometheus_gauge:set(arweave_peer_count, length(Peers));
-update_state_metrics(_) ->
-	ok.
+tx_id(#tx{ id = TXID }) ->
+	TXID;
+tx_id(TXID) ->
+	TXID.
+
+strip_v2_data(#tx{ format = 2 } = TX) ->
+	TX#tx{ data = <<>> };
+strip_v2_data(TX) ->
+	TX.

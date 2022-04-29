@@ -244,8 +244,9 @@ remove2(Tab, H) ->
 	case ets:lookup(Tab, {block, H}) of
 		not_found ->
 			ok;
-		[{_, {#block{ height = Height }, _Status, Children}}] ->
+		[{_, {#block{ txs = TXs, height = Height }, _Status, Children}}] ->
 			ets:delete(Tab, {block, H}),
+			remove_tx_prefixes(TXs),
 			ets:insert(Tab, {links, gb_sets:del_element({Height, H}, Set)}),
 			sets:fold(
 				fun(Child, ok) ->
@@ -255,6 +256,15 @@ remove2(Tab, H) ->
 				Children
 			)
 	end.
+
+remove_tx_prefixes([]) ->
+	ok;
+remove_tx_prefixes([#tx{ id = TXID } | TXs]) ->
+	ets:delete_object(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
+	remove_tx_prefixes(TXs);
+remove_tx_prefixes([TXID | TXs]) ->
+	ets:delete_object(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
+	remove_tx_prefixes(TXs).
 
 find_max_cdiff(Tab) ->
 	[{_, Set}] = ets:lookup(Tab, links),
@@ -288,7 +298,8 @@ prune(Tab, Depth, TipHeight) ->
 				false ->
 					ets:insert(Tab, {links, Set2}),
 					%% The lowest block must be on-chain by construction.
-					[{_, {_B, on_chain, Children}}] = ets:lookup(Tab, {block, H}),
+					[{_, {#block{ txs = TXs }, on_chain, Children}}] = ets:lookup(Tab,
+							{block, H}),
 					sets:fold(
 						fun(Child, ok) ->
 							[{_, {_, Status, _}}] = ets:lookup(Tab, {block, Child}),
@@ -303,6 +314,7 @@ prune(Tab, Depth, TipHeight) ->
 						Children
 					),
 					ets:delete(Tab, {block, H}),
+					remove_tx_prefixes(TXs),
 					prune(Tab, Depth, TipHeight)
 			end
 	end.

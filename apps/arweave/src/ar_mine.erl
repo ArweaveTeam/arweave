@@ -31,6 +31,7 @@
 	bds_base = not_generated,
 	stage_one_hasher,
 	stage_two_hasher,
+	recent_block_index,
 	search_space_upper_bound,
 	blocks_by_timestamp = #{},
 	block_index,
@@ -45,18 +46,17 @@
 
 %% @doc Spawns a new mining process and returns its PID.
 start(Args) ->
-	{CurrentB, TXs, RewardAddr, Tags, BlockAnchors, RecentTXMap, BI, IOThreads} = Args,
+	{CurrentB, TXs, RewardAddr, Tags, BlockAnchors, RecentTXMap, SearchSpaceUpperBound,
+			RecentBI, IOThreads} = Args,
 	CurrentHeight = CurrentB#block.height,
 	Height = CurrentHeight + 1,
 	CandidateB = #block{
 		height = Height,
-		hash_list = ?BI_TO_BHL(lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT)),
 		previous_block = CurrentB#block.indep_hash,
-		hash_list_merkle = ar_block:compute_hash_list_merkle(CurrentB, BI),
+		hash_list_merkle = ar_block:compute_hash_list_merkle(CurrentB),
 		reward_addr = RewardAddr,
 		tags = Tags
 	},
-	SearchSpaceUpperBound = get_search_space_upper_bound(BI),
 	State =
 		#state{
 			current_block = CurrentB,
@@ -68,8 +68,8 @@ start(Args) ->
 			candidate_block = CandidateB,
 			txs = TXs,
 			search_space_upper_bound = SearchSpaceUpperBound,
+			recent_block_index = RecentBI,
 			io_threads = IOThreads,
-			block_index = BI,
 			session_ref = make_ref()
 		},
 	Fork_2_5 = ar_fork:height_2_5(),
@@ -135,7 +135,7 @@ validate(BDSHash, Diff, Height) ->
 %% @doc Validate Succinct Proof of Random Access.
 validate_spora(Args) ->
 	{BDS, Nonce, Timestamp, Height, Diff, PrevH, SearchSpaceUpperBound, PackingThreshold,
-			StrictDataSplitThreshold, SPoA, BI} = Args,
+			RecentBI, StrictDataSplitThreshold, SPoA} = Args,
 	Chunk = SPoA#poa.chunk,
 	{H0, Entropy} = spora_h0_with_entropy(BDS, Nonce, Height),
 	case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
@@ -165,14 +165,15 @@ validate_spora(Args) ->
 				false ->
 					{false, SolutionHash};
 				true ->
-					validate_spoa({RecallByte, BI, SPoA, SolutionHash, Height, PackingThreshold,
-							StrictDataSplitThreshold})
+					validate_spoa({RecallByte, SPoA, SolutionHash, Height, PackingThreshold,
+							RecentBI, StrictDataSplitThreshold})
 			end
 	end.
 
 validate_spoa(Args) ->
-	{RecallByte, BI, SPoA, SolutionHash, Height, PackingThreshold,
-			StrictDataSplitThreshold} = Args,
+	{RecallByte, SPoA, SolutionHash, Height, PackingThreshold,
+			RecentBI, StrictDataSplitThreshold} = Args,
+	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte, RecentBI),
 	case Height >= ar_fork:height_2_5()
 			andalso RecallByte >= PackingThreshold of
 		true ->
@@ -181,7 +182,8 @@ validate_spoa(Args) ->
 					%% All packed chunks must be padded to 256 KiB before packing.
 					{false, SolutionHash};
 				false ->
-					case ar_poa:validate(RecallByte, BI, SPoA, StrictDataSplitThreshold) of
+					case ar_poa:validate(BlockStart, RecallByte, TXRoot,
+							BlockEnd - BlockStart, SPoA, StrictDataSplitThreshold) of
 						false ->
 							{false, SolutionHash};
 						true ->
@@ -190,7 +192,8 @@ validate_spoa(Args) ->
 					end
 			end;
 		false ->
-			case ar_poa:validate_pre_fork_2_5(RecallByte, BI, SPoA) of
+			case ar_poa:validate_pre_fork_2_5(RecallByte - BlockStart, TXRoot,
+					BlockEnd - BlockStart, SPoA) of
 				false ->
 					{false, SolutionHash};
 				true ->
@@ -251,15 +254,12 @@ start_server(#state{ candidate_block = #block{ height = Height } } = S) ->
 		{ok, {StageOneHasher, StageTwoHasher}} ->
 			spawn(fun() ->
 				try
-					process_flag(message_queue_data, off_heap),
-					S2 =
-						S#state{
-							stage_one_hasher = StageOneHasher,
-							stage_two_hasher = StageTwoHasher
-						},
-					server(start_miners(prometheus_histogram:observe_duration(
+					S2 = S#state{ stage_one_hasher = StageOneHasher,
+							stage_two_hasher = StageTwoHasher },
+					server(notify_hashing_threads(start_miners(
+							prometheus_histogram:observe_duration(
 							block_construction_time_milliseconds,
-							fun() -> update_txs(S2) end)))
+							fun() -> update_txs(S2) end))))
 				catch Type:Exception:StackTrace ->
 					?LOG_ERROR(
 						"event: mining_server_exception, type: ~p, exception: ~p,"
@@ -662,9 +662,8 @@ start_hashing_threads2(S) ->
 	HashingThreads =
 		[spawn(
 			fun() ->
-				process_flag(message_queue_data, off_heap),
-				ShuffledIOThreads =
-					lists:sort(fun(_, _) -> rand:uniform() > 0.5 end, IOThreads),
+				ShuffledIOThreads = lists:sort(fun(_, _) -> rand:uniform() > 0.5 end,
+						IOThreads),
 				Type =
 					case N =< StageOneThreadCount of
 						true ->
@@ -689,7 +688,7 @@ server(
 		candidate_block = #block{ height = Height },
 		search_space_upper_bound = SearchSpaceUpperBound,
 		blocks_by_timestamp = BlocksByTimestamp,
-		block_index = BI
+		recent_block_index = RecentBI
 	}
 ) ->
 	receive
@@ -710,10 +709,11 @@ server(
 									{previous_block, ar_util:encode(PrevH)},
 									{h0, ar_util:encode(H0)}, {byte, RecallByte}]),
 							server(S);
-						SPoA ->
+						{SPoA, RecallByte} ->
 							case validate_spora({BDS, Nonce, Timestamp, Height, B#block.diff,
-									PrevH, SearchSpaceUpperBound, B#block.packing_2_5_threshold,
-									B#block.strict_data_split_threshold, SPoA, BI}) of
+									PrevH, SearchSpaceUpperBound,
+									B#block.packing_2_5_threshold, RecentBI,
+									B#block.strict_data_split_threshold, SPoA}) of
 								{true, _, Hash} ->
 									B2 =
 										B#block{
@@ -722,7 +722,7 @@ server(
 											nonce = Nonce
 										},
 									stop_miners(S),
-									process_spora_solution(BDS, B2, MinedTXs, S);
+									process_spora_solution(BDS, B2, MinedTXs, RecallByte, S);
 								_ ->
 									?LOG_ERROR([
 										{event, miner_produced_invalid_spora},
@@ -906,7 +906,7 @@ hashing_thread(S, Type) ->
 get_spoa(H0, PrevH, SearchSpaceUpperBound, Height, PackingThreshold) ->
 	case pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
 		{error, weave_size_too_small} ->
-			#poa{};
+			{#poa{}, undefined};
 		{ok, RecallByte} ->
 			Packing =
 				case Height >= ar_fork:height_2_5() andalso RecallByte >= PackingThreshold of
@@ -918,7 +918,8 @@ get_spoa(H0, PrevH, SearchSpaceUpperBound, Height, PackingThreshold) ->
 			Options = #{ pack => true, packing => Packing },
 			case ar_data_sync:get_chunk(RecallByte + 1, Options) of
 				{ok, #{ chunk := Chunk, tx_path := TXPath, data_path := DataPath }} ->
-					#poa{ option = 1, chunk = Chunk, tx_path = TXPath, data_path = DataPath };
+					{#poa{ option = 1, chunk = Chunk, tx_path = TXPath,
+							data_path = DataPath }, RecallByte};
 				_ ->
 					{not_found, RecallByte}
 			end
@@ -927,45 +928,27 @@ get_spoa(H0, PrevH, SearchSpaceUpperBound, Height, PackingThreshold) ->
 log_spora_performance() ->
 	[{_, StartedAt}] = ets:lookup(mining_state, started_at),
 	Time = timer:now_diff(os:timestamp(), StartedAt),
-	case Time < 10000000 of
-		true ->
-			ar:console("Skipping hashrate report, the round lasted less than 10 seconds.~n"),
-			?LOG_INFO([
-				{event, stopped_mining},
-				{round_time_seconds, Time div 1000000}
-			]),
-			ok;
-		false ->
-			[{_, RecallBytes}] = ets:lookup(mining_state, recall_bytes_computed),
-			[{_, BytesRead}] = ets:lookup(mining_state, bytes_read),
-			KiBs = BytesRead / 1024,
-			[{_, SPoRAs}] = ets:lookup(mining_state, sporas),
-			RecallByteRate = RecallBytes / (Time / 1000000),
-			Rate = SPoRAs / (Time / 1000000),
-			ReadRate = KiBs / 1024 / (Time / 1000000),
-			prometheus_histogram:observe(mining_rate, Rate),
-			?LOG_INFO([
-				{event, stopped_mining},
-				{recall_bytes_computed, RecallByteRate},
-				{miner_sporas_per_second, Rate},
-				{miner_read_mibibytes_per_second, ReadRate},
-				{round_time_seconds, Time div 1000000}
-			]),
-			ar:console(
-				"Miner spora rate: ~B h/s, recall bytes computed/s: ~B, MiB/s read: ~B,"
-				" the round lasted ~B seconds.~n",
-				[trunc(Rate), trunc(RecallByteRate), trunc(ReadRate), Time div 1000000]
-			)
-	end.
+	[{_, RecallBytes}] = ets:lookup(mining_state, recall_bytes_computed),
+	[{_, BytesRead}] = ets:lookup(mining_state, bytes_read),
+	KiBs = BytesRead / 1024,
+	[{_, SPoRAs}] = ets:lookup(mining_state, sporas),
+	RecallByteRate = RecallBytes / (Time / 1000000),
+	Rate = SPoRAs / (Time / 1000000),
+	ReadRate = KiBs / 1024 / (Time / 1000000),
+	prometheus_histogram:observe(mining_rate, Rate),
+	?LOG_INFO([{event, stopped_mining}, {recall_bytes_computed, RecallByteRate},
+			{miner_sporas_per_second, Rate}, {miner_read_mibibytes_per_second, ReadRate},
+			{round_time_seconds, Time div 1000000}]),
+	ar:console("Miner spora rate: ~B h/s, recall bytes computed/s: ~B, MiB/s read: ~B,"
+			" the round lasted ~B seconds.~n",
+			[trunc(Rate), trunc(RecallByteRate), trunc(ReadRate), Time div 1000000]).
 
-process_spora_solution(BDS, B, MinedTXs, S) ->
-	#state {
-		current_block = #block{ indep_hash = CurrentBH }
-	} = S,
+process_spora_solution(BDS, B, MinedTXs, RecallByte, S) ->
+	#state{ current_block = #block{ indep_hash = CurrentBH } } = S,
 	SPoA = B#block.poa,
 	IndepHash = ar_weave:indep_hash(BDS, B#block.hash, B#block.nonce, SPoA),
 	B2 = B#block{ indep_hash = IndepHash },
-	ar_events:send(block, {mined, B2, MinedTXs, CurrentBH}),
+	ar_events:send(block, {mined, B2, MinedTXs, CurrentBH, RecallByte}),
 	log_spora_performance().
 
 prepare_randomx(Height) ->
@@ -1064,7 +1047,8 @@ test_basic() ->
 	B1 = ar_test_node:read_block_when_stored(hd(BI)),
 	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
 	ar_events:subscribe(block),
-	start({B1, [], unclaimed, [], [], #{}, BI, Threads}),
+	start({B1, [], unclaimed, [], [], #{}, ar_mine:get_search_space_upper_bound(BI), BI,
+			Threads}),
 	assert_mine_output(B1, []).
 
 %% Ensure that the block timestamp gets updated regularly while mining.
@@ -1084,8 +1068,8 @@ test_timestamp_refresh() ->
 		TXs = [],
 		StartTime = os:system_time(seconds),
 		ar_events:subscribe(block),
-		start({B, TXs, unclaimed, [], [], #{}, [ar_util:block_index_entry_from_block(B0)],
-				Threads}),
+		start({B, TXs, unclaimed, [], [], #{}, B0#block.weave_size,
+				[ar_util:block_index_entry_from_block(B0)],Threads}),
 		{_, MinedTimestamp} = assert_mine_output(B, TXs),
 		MinedTimestamp > StartTime + ?MINING_TIMESTAMP_REFRESH_INTERVAL
 	end,
@@ -1101,7 +1085,8 @@ test_start_stop() ->
 	BI = ar_test_node:wait_until_height(0),
 	HighDiff = ar_retarget:switch_to_linear_diff(30),
 	Threads = maps:get(io_threads, sys:get_state(ar_node_worker)),
-	PID = start({B#block{ diff = HighDiff }, [], unclaimed, [], [], #{}, BI, Threads}),
+	PID = start({B#block{ diff = HighDiff }, [], unclaimed, [], [], #{},
+			ar_mine:get_search_space_upper_bound(BI), BI, Threads}),
 	timer:sleep(500),
 	assert_alive(PID),
 	stop(PID),
@@ -1109,7 +1094,7 @@ test_start_stop() ->
 
 assert_mine_output(B, TXs) ->
 	receive
-		{event, block, {mined, NewB, MinedTXs, BH}} ->
+		{event, block, {mined, NewB, MinedTXs, BH, _RecallByte}} ->
 			?assertEqual(BH, B#block.indep_hash),
 			?assertEqual(lists:sort(TXs), lists:sort(MinedTXs)),
 			BDS = ar_block:generate_block_data_segment(NewB),

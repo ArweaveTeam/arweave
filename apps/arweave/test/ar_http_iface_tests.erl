@@ -1,11 +1,15 @@
 -module(ar_http_iface_tests).
 
--include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_mine.hrl").
+-include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [start/1, slave_start/1, connect_to_slave/0, get_tx_anchor/0,
 		sign_tx/2, post_tx_json_to_master/1, assert_slave_wait_until_receives_txs/1,
-		slave_wait_until_height/1, read_block_when_stored/1, master_peer/0]).
+		slave_wait_until_height/1, read_block_when_stored/1, master_peer/0, slave_peer/0,
+		disconnect_from_slave/0, assert_post_tx_to_slave/1, assert_post_tx_to_master/1,
+		wait_until_height/1, assert_slave_wait_until_height/1, read_block_when_stored/2,
+		slave_call/3]).
 
 addresses_with_checksums_test_() ->
 	{timeout, 60, fun test_addresses_with_checksum/0}.
@@ -153,19 +157,23 @@ single_regossip_test() ->
 	TX = ar_tx:new(),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX)
+		ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TX#tx.id,
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)))
 	),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
+		ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1983}, TX#tx.id,
+				ar_serialize:tx_to_binary(TX))
 	),
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
+		ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1983}, TX#tx.id,
+				ar_serialize:tx_to_binary(TX))
 	),
 	?assertMatch(
 		{ok, {{<<"208">>, _}, _, _, _, _}},
-		ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1983}, TX)
+		ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1983}, TX#tx.id,
+				ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)))
 	).
 
 %% @doc Unjoined nodes should not accept blocks
@@ -185,19 +193,21 @@ post_block_to_unjoined_node_test() ->
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
 node_blacklisting_get_spammer_test() ->
+	{ok, Config} = application:get_env(arweave, config),
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
 	node_blacklisting_test_frame(
 		RequestFun,
 		ErrorResponse,
-		(ar_meta_db:get(requests_per_minute_limit) div 2)+ 1,
+		Config#config.requests_per_minute_limit div 2 + 1,
 		1
 	).
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 node_blacklisting_post_spammer_test() ->
-	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_new_tx),
+	{ok, Config} = application:get_env(arweave, config),
+	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_tx_binary),
 	NErrors = 11,
-	NRequests = (ar_meta_db:get(requests_per_minute_limit) div 2) + NErrors,
+	NRequests = Config#config.requests_per_minute_limit div 2 + NErrors,
 	node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, NErrors).
 
 %% @doc Given a label, return a fun and a message.
@@ -207,10 +217,11 @@ get_fun_msg_pair(get_info) ->
 			ar_http_iface_client:get_info({127, 0, 0, 1, 1984})
 		end
 	, info_unavailable};
-get_fun_msg_pair(send_new_tx) ->
+get_fun_msg_pair(send_tx_binary) ->
 	{ fun(_) ->
-			InvalidTX = (ar_tx:new())#tx { owner = <<"key">>, signature = <<"invalid">> },
-			case ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, InvalidTX) of
+			InvalidTX = (ar_tx:new())#tx{ owner = <<"key">>, signature = <<"invalid">> },
+			case ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984},
+					InvalidTX#tx.id, ar_serialize:tx_to_binary(InvalidTX)) of
 				{ok,
 					{{<<"429">>, <<"Too Many Requests">>}, _,
 						<<"Too Many Requests">>, _, _}} ->
@@ -350,7 +361,8 @@ get_time_test() ->
 get_block_by_hash_test() ->
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
-	B1 = ar_http_iface_client:get_block({127, 0, 0, 1, 1984}, B0#block.indep_hash),
+	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}],
+			B0#block.indep_hash),
 	?assertEqual(B0#block{ hash_list = unset, size_tagged_txs = unset }, B1).
 
 %% @doc Ensure that blocks can be received via a height.
@@ -358,7 +370,8 @@ get_block_by_height_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
 	ar_test_node:wait_until_height(0),
-	{_, B1} = ar_http_iface_client:get_block_shadow([{127, 0, 0, 1, 1984}], 0),
+	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow(
+			[{127, 0, 0, 1, 1984}], 0),
 	?assertEqual(
 		B0#block{ hash_list = unset, wallet_list = not_set, size_tagged_txs = unset },
 		B1#block{ wallet_list = not_set }
@@ -377,7 +390,7 @@ test_get_current_block() ->
 	),
 	Peer = {127, 0, 0, 1, 1984},
 	BI = ar_http_iface_client:get_block_index([Peer]),
-	B1 = ar_http_iface_client:get_block([Peer], hd(BI)),
+	{_Peer, B1, _Time, _Size} = ar_http_iface_client:get_block_shadow([Peer], hd(BI)),
 	?assertEqual(B0#block{ hash_list = unset, size_tagged_txs = unset }, B1),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/current"}),
@@ -431,7 +444,8 @@ get_format_2_tx_test() ->
 	EncodedTXID = binary_to_list(ar_util:encode(TXID)),
 	EncodedInvalidTXID = binary_to_list(ar_util:encode(InvalidTXID)),
 	EncodedEmptyTXID = binary_to_list(ar_util:encode(EmptyTXID)),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, ValidTX),
+	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, ValidTX#tx.id,
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ValidTX))),
 	{ok, {{<<"400">>, _}, _, <<"The attached data is split in an unknown way.">>, _, _}} =
 		ar_http:req(#{
 			method => post,
@@ -439,8 +453,11 @@ get_format_2_tx_test() ->
 			path => "/tx",
 			body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(InvalidDataRootTX))
 		}),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, InvalidDataRootTX#tx{ data = <<>> }),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, EmptyTX),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984},
+			InvalidDataRootTX#tx.id,
+			ar_serialize:tx_to_binary(InvalidDataRootTX#tx{ data = <<>> })),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, EmptyTX#tx.id,
+			ar_serialize:tx_to_binary(EmptyTX)),
 	ar_test_node:wait_until_receives_txs([ValidTX, EmptyTX, InvalidDataRootTX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -488,7 +505,8 @@ get_format_1_tx_test() ->
 	{_Node, _} = ar_test_node:start(B0),
 	TX = #tx{ id = TXID } = ar_tx:new(<<"DATA">>),
 	EncodedTXID = binary_to_list(ar_util:encode(TXID)),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:tx_to_binary(TX)),
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -524,7 +542,8 @@ add_external_tx_with_tags_test() ->
 					{<<"TEST_TAG2">>, <<"TEST_VAL2">>}
 				]
 		},
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TaggedTX),
+	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TaggedTX#tx.id,
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TaggedTX))),
 	ar_test_node:wait_until_receives_txs([TaggedTX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -538,7 +557,9 @@ add_external_tx_with_tags_test() ->
 find_external_tx_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
+	TX = ar_tx:new(<<"DATA">>),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:tx_to_binary(TX)),
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -556,17 +577,6 @@ find_external_tx_test() ->
 			1000
 		),
 	?assertEqual(FoundTXID, TX#tx.id).
-
-fail_external_tx_test() ->
-	[B0] = ar_weave:init(),
-	{_Node, _} = ar_test_node:start(B0),
-	TX = ar_tx:new(<<"DATA">>),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX),
-	ar_test_node:wait_until_receives_txs([TX]),
-	ar_node:mine(),
-	ar_test_node:wait_until_height(1),
-	BadTX = ar_tx:new(<<"BADDATA">>),
-	?assertEqual(not_found, ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], BadTX#tx.id, maps:new())).
 
 add_block_with_invalid_hash_test_() ->
 	{timeout, 20, fun test_add_block_with_invalid_hash/0}.
@@ -587,18 +597,9 @@ test_add_block_with_invalid_hash() ->
 		{ok, {{<<"400">>, _}, _, <<"Invalid Block Hash">>, _, _}},
 		send_new_block(
 			Peer,
-			B1Shadow#block{ indep_hash = add_rand_suffix(<<"new-hash">>), nonce = <<>> }
+			B1Shadow#block{ indep_hash = crypto:strong_rand_bytes(48), nonce = <<>> }
 		)
 	),
-	%% Verify the IP address of self is banned in ar_blacklist_middleware.
-	?assertMatch(
-		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
-		send_new_block(
-			Peer,
-			B1Shadow#block{ indep_hash = add_rand_suffix(<<"new-hash-again">>) }
-		)
-	),
-	ar_blacklist_middleware:reset(),
 	%% The valid block with the ID from the failed attempt can still go through.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -622,7 +623,7 @@ test_add_block_with_invalid_hash() ->
 		{ok, {{<<"403">>, _}, _, <<"IP address blocked due to previous request.">>, _, _}},
 		send_new_block(
 			Peer,
-			B1Shadow#block{indep_hash = add_rand_suffix(<<"new-hash-again">>)}
+			B1Shadow#block{indep_hash = crypto:strong_rand_bytes(48) }
 		)
 	),
 	ar_blacklist_middleware:reset().
@@ -676,10 +677,6 @@ add_external_block_with_invalid_timestamp_test() ->
 		send_new_block(Peer, B5Shadow)
 	).
 
-add_rand_suffix(Bin) ->
-	Suffix = ar_util:encode(crypto:strong_rand_bytes(6)),
-	iolist_to_binary([Bin, " - ", Suffix]).
-
 update_block_timestamp(B, Timestamp) ->
 	#block{
 		height = Height,
@@ -702,7 +699,8 @@ add_tx_and_get_last_test() ->
 	TX = ar_tx:new(ar_wallet:to_address(Pub2), ?AR(1), ?AR(9000), <<>>),
 	SignedTX = ar_tx:sign_v1(TX, Priv1, Pub1),
 	ID = SignedTX#tx.id,
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, SignedTX),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, SignedTX#tx.id,
+			ar_serialize:tx_to_binary(SignedTX)),
 	ar_test_node:wait_until_receives_txs([SignedTX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -710,7 +708,9 @@ add_tx_and_get_last_test() ->
 		ar_http:req(#{
 			method => get,
 			peer => {127, 0, 0, 1, 1984},
-			path => "/wallet/" ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))) ++ "/last_tx"
+			path => "/wallet/"
+					++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1)))
+					++ "/last_tx"
 		}),
 	?assertEqual(ID, ar_util:decode(Body)).
 
@@ -718,7 +718,9 @@ add_tx_and_get_last_test() ->
 get_subfields_of_tx_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA">>)),
+	TX = ar_tx:new(<<"DATA">>),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:tx_to_binary(TX)),
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -730,9 +732,10 @@ get_subfields_of_tx_test() ->
 get_pending_tx_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
-	ar_http_iface_client:send_new_tx({127, 0, 0, 1, 1984}, TX = ar_tx:new(<<"DATA1">>)),
+	TX = ar_tx:new(<<"DATA1">>),
+	ar_http_iface_client:send_tx_json({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
 	ar_test_node:wait_until_receives_txs([TX]),
-	%write a get_tx function like get_block
 	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -815,7 +818,10 @@ get_txs_by_send_recv_test_() ->
 			))
 	end}.
 
-get_tx_status_test() ->
+get_tx_status_test_() ->
+	{timeout, 20, fun test_get_tx_status/0}.
+
+test_get_tx_status() ->
 	[B0] = ar_weave:init([]),
 	{_Node, _} = ar_test_node:start(B0),
 	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
@@ -882,7 +888,9 @@ post_unsigned_tx() ->
 			peer => {127, 0, 0, 1, 1984},
 			path => "/wallet"
 		}),
-	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
+	{ok, Config} = application:get_env(arweave, config),
+	application:set_env(arweave, config,
+			Config#config{ internal_api_secret = <<"correct_secret">> }),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
@@ -897,7 +905,7 @@ post_unsigned_tx() ->
 			path => "/wallet",
 			headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}]
 		}),
-	ar_meta_db:put(internal_api_secret, not_set),
+	application:set_env(arweave, config, Config#config{ internal_api_secret = not_set }),
 	{CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
 	[WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
 	[Address] = proplists:get_all_values(<<"wallet_address">>, CreateWalletRes),
@@ -935,7 +943,8 @@ post_unsigned_tx() ->
 			path => "/unsigned_tx",
 			body => ar_serialize:jsonify({UnsignedTXProps})
 		}),
-	ar_meta_db:put(internal_api_secret, <<"correct_secret">>),
+	application:set_env(arweave, config,
+			Config#config{ internal_api_secret = <<"correct_secret">> }),
 	{ok, {{<<"421">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => post,
@@ -952,7 +961,7 @@ post_unsigned_tx() ->
 			headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
 			body => ar_serialize:jsonify({UnsignedTXProps})
 		}),
-	ar_meta_db:put(internal_api_secret, not_set),
+	application:set_env(arweave, config, Config#config{ internal_api_secret = not_set }),
 	{Res} = ar_serialize:dejsonify(Body),
 	TXID = proplists:get_value(<<"id">>, Res),
 	timer:sleep(200),
@@ -1129,10 +1138,9 @@ get_error_of_data_limit_test() ->
 	[B0] = ar_weave:init(),
 	{_Node, _} = ar_test_node:start(B0),
 	Limit = 1460,
-	ar_http_iface_client:send_new_tx(
-		{127, 0, 0, 1, 1984},
-		TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>)
-	),
+	TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>),
+	ar_http_iface_client:send_tx_binary({127, 0, 0, 1, 1984}, TX#tx.id,
+			ar_serialize:tx_to_binary(TX)),
 	ar_test_node:wait_until_receives_txs([TX]),
 	ar_node:mine(),
 	ar_test_node:wait_until_height(1),
@@ -1146,9 +1154,181 @@ get_error_of_data_limit_test() ->
 		}),
 	?assertEqual({error, too_much_data}, Resp).
 
+send_block2_test_() ->
+	{timeout, 20000, fun test_send_block2/0}.
+
+test_send_block2() ->
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	start(B0),
+	slave_start(B0),
+	disconnect_from_slave(),
+	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
+			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
+	lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, EverySecondTX),
+	ar_node:mine(),
+	[{H, _, _}, _] = wait_until_height(1),
+	B = ar_storage:read_block(H),
+	Announcement = #block_announcement{ indep_hash = B#block.indep_hash,
+			previous_block = B0#block.indep_hash,
+			tx_prefixes = [binary:part(TX#tx.id, 0, 8) || TX <- TXs] },
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(Announcement) }),
+	Response = ar_serialize:binary_to_block_announcement_response(Body),
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = true,
+			missing_tx_indices = [0, 2, 4, 6, 8] }}, Response),
+	Announcement2 = Announcement#block_announcement{ recall_byte = 0 },
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(Announcement2) }),
+	Announcement3 = Announcement#block_announcement{ recall_byte = 100000000000000 },
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(Announcement3) }),
+	{ok, {{<<"418">>, _}, _, Body2, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block2",
+			body => ar_serialize:block_to_binary(B) }),
+	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [Acc | TXID] end,
+			[], TXs -- EverySecondTX)), Body2),
+	B2 = B#block{ txs = [lists:nth(1, TXs) | tl(B#block.txs)] },
+	{ok, {{<<"418">>, _}, _, Body3, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block2",
+			body => ar_serialize:block_to_binary(B2) }),
+	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [Acc | TXID] end,
+			[], TXs -- EverySecondTX -- [lists:nth(1, TXs)])), Body3),
+	TXs2 = [sign_tx(Wallet, #{ last_tx => get_tx_anchor(),
+			data => crypto:strong_rand_bytes(10 * 1024) }) || _ <- lists:seq(1, 10)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs2),
+	ar_node:mine(),
+	[{H2, _, _}, _, _] = wait_until_height(2),
+	{ok, {{<<"412">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(#block_announcement{
+					indep_hash = H2, previous_block = B#block.indep_hash }) }),
+	B3 = B#block{ txs = ar_storage:read_tx(B#block.txs) },
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block2",
+			body => ar_serialize:block_to_binary(B3) }),
+	B4 = read_block_when_stored(H2, true),
+	timer:sleep(500),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block2",
+			body => ar_serialize:block_to_binary(B4) }),
+	connect_to_slave(),
+	lists:foreach(
+		fun(Height) ->
+			ar_node:mine(),
+			assert_slave_wait_until_height(Height)
+		end,
+		lists:seq(3, 3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH)
+	),
+	B5 = ar_storage:read_block(ar_node:get_current_block_hash()),
+	{ok, {{<<"208">>, _}, _, _, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(#block_announcement{
+					indep_hash = B5#block.indep_hash,
+					previous_block = B5#block.previous_block }) }),
+	lists:foreach(
+		fun(#tx{ id = TXID }) ->
+			true = ar_util:do_until(
+				fun() ->
+					{ok, {End, _}} = slave_call(ar_data_sync, get_tx_offset, [TXID]),
+					slave_call(ar_sync_record, is_recorded, [End, ar_data_sync])
+							== {true, spora_2_5}
+				end,
+				100,
+				5000
+			)
+		end,
+		TXs2
+	),
+	disconnect_from_slave(),
+	ar_node:mine(),
+	[_ | _] = wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
+	B6 = ar_storage:read_block(ar_node:get_current_block_hash()),
+	{ok, {{<<"200">>, _}, _, Body4, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(#block_announcement{
+					indep_hash = B6#block.indep_hash,
+					previous_block = B6#block.previous_block,
+					recall_byte = 0 }) }),
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
+			missing_tx_indices = [] }},
+			ar_serialize:binary_to_block_announcement_response(Body4)),
+	{ok, {{<<"200">>, _}, _, Body5, _, _}} = ar_http:req(#{ method => post,
+			peer => slave_peer(), path => "/block_announcement",
+			body => ar_serialize:block_announcement_to_binary(#block_announcement{
+					indep_hash = B6#block.indep_hash,
+					previous_block = B6#block.previous_block,
+					recall_byte = 1024 }) }),
+	?assertEqual({ok, #block_announcement_response{ missing_chunk = false,
+			missing_tx_indices = [] }},
+			ar_serialize:binary_to_block_announcement_response(Body5)),
+	{H0, _Entropy} = ar_mine:spora_h0_with_entropy(ar_block:generate_block_data_segment(B6),
+			B6#block.nonce, B6#block.height),
+	SearchSpaceUpperBound = ar_node:get_recent_search_space_upper_bound_by_prev_h(
+			B6#block.previous_block),
+	{ok, RecallByte} = ar_mine:pick_recall_byte(H0, B6#block.previous_block,
+			SearchSpaceUpperBound),
+	{ok, {{<<"419">>, _}, _, _, _, _}} = ar_http:req(#{ method => post,
+		peer => slave_peer(), path => "/block2",
+		headers => [{<<"arweave-recall-byte">>, integer_to_binary(1000000000000)}],
+		body => ar_serialize:block_to_binary(B6#block{ poa = #poa{} }) }),
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
+		peer => slave_peer(), path => "/block2",
+		headers => [{<<"arweave-recall-byte">>, integer_to_binary(RecallByte)}],
+		body => ar_serialize:block_to_binary(B6#block{ poa = #poa{} }) }),
+	assert_slave_wait_until_height(3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1).
+
+send_missing_transactions_along_with_the_block_test_() ->
+	{timeout, 20000, fun test_send_missing_transactions_along_with_the_block/0}.
+
+test_send_missing_transactions_along_with_the_block() ->
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	start(B0),
+	slave_start(B0),
+	disconnect_from_slave(),
+	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
+			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
+	lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, EverySecondTX),
+	ar_node:mine(),
+	[{H, _, _}, _] = wait_until_height(1),
+	B = ar_storage:read_block(H),
+	B2 = B#block{ txs = ar_storage:read_tx(B#block.txs) },
+	connect_to_slave(),
+	ar_bridge ! {event, block, {new, B2, #{ recall_byte => undefined }}},
+	assert_slave_wait_until_height(1).
+
+falls_back_to_block_endpoint_when_cannot_send_transactions_test_() ->
+	{timeout, 20000, fun test_falls_back_to_block_endpoint_when_cannot_send_transactions/0}.
+
+test_falls_back_to_block_endpoint_when_cannot_send_transactions() ->
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	start(B0),
+	slave_start(B0),
+	disconnect_from_slave(),
+	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 10)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
+			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
+	lists:foreach(fun(TX) -> assert_post_tx_to_slave(TX) end, EverySecondTX),
+	ar_node:mine(),
+	[{H, _, _}, _] = wait_until_height(1),
+	B = ar_storage:read_block(H),
+	connect_to_slave(),
+	ar_bridge ! {event, block, {new, B, #{ recall_byte => undefined }}},
+	assert_slave_wait_until_height(1).
+
 send_new_block(Peer, B) ->
-	BDS = ar_block:generate_block_data_segment(B),
-	ar_http_iface_client:send_new_block(Peer, B, BDS).
+	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,
+			ar_serialize:block_to_binary(B)).
 
 wait_until_syncs_tx_data(TXID) ->
 	ar_util:do_until(

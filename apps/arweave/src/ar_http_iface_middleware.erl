@@ -2,7 +2,7 @@
 
 -behaviour(cowboy_middleware).
 
--export([execute/2]).
+-export([execute/2, read_body_chunk/4]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -54,7 +54,7 @@ loop(TimeoutRef) ->
 	receive
 		{handled, {Status, Headers, Body, HandledReq}} ->
 			timer:cancel(TimeoutRef),
-			CowboyStatus = handle208(Status),
+			CowboyStatus = handle_custom_codes(Status),
 			RepliedReq = cowboy_req:reply(CowboyStatus, Headers, Body, HandledReq),
 			{stop, RepliedReq};
 		{read_complete_body, From, Req, SizeLimit} ->
@@ -84,7 +84,8 @@ handle(Req, Pid) ->
 handle(Peer, Req, Pid) ->
 	Method = cowboy_req:method(Req),
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-	case ar_meta_db:get(http_logging) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(http_logging, Config#config.enable) of
 		true ->
 			?LOG_INFO([
 				{event, http_request},
@@ -124,7 +125,7 @@ handle(<<"OPTIONS">>, [<<"block">>], Req, _Pid) ->
 handle(<<"OPTIONS">>, [<<"tx">>], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
-handle(<<"OPTIONS">>, [<<"peer">>|_], Req, _Pid) ->
+handle(<<"OPTIONS">>, [<<"peer">> | _], Req, _Pid) ->
 	{200, #{<<"access-control-allow-methods">> => <<"GET, POST">>,
 			<<"access-control-allow-headers">> => <<"Content-Type">>}, <<"OK">>, Req};
 handle(<<"OPTIONS">>, [<<"arql">>], Req, _Pid) ->
@@ -172,37 +173,25 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 			handle_get_tx_status(Hash, Req)
 	end;
 
-%% Return a transaction specified via the the transaction id (hash).
+%% Return a JSON-encoded transaction.
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
-	case ar_util:safe_decode(Hash) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid hash.">>, Req};
-		{ok, ID} ->
-			case ar_storage:read_tx(ID) of
-				unavailable ->
-					maybe_tx_is_pending_response(ID, Req);
-				#tx{} = TX ->
-					Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-					{200, #{}, Body, Req}
-			end
-	end;
+	handle_get_tx(Hash, Req, json);
 
-%% Return a possibly unconfirmed transaction.
+%% Return a binary-encoded transaction.
+%% GET request to endpoint /tx2/{hash}.
+handle(<<"GET">>, [<<"tx2">>, Hash], Req, _Pid) ->
+	handle_get_tx(Hash, Req, binary);
+
+%% Return a possibly unconfirmed JSON-encoded transaction.
 %% GET request to endpoint /unconfirmed_tx/{hash}.
-handle(<<"GET">>, [<<"unconfirmed_tx">>, Hash], Req, Pid) ->
-	case ar_util:safe_decode(Hash) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid hash.">>, Req};
-		{ok, TXID} ->
-			case ets:lookup(node_state, {tx, TXID}) of
-				[{_, TX}] ->
-					Body = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
-					{200, #{}, Body, Req};
-				[] ->
-					handle(<<"GET">>, [<<"tx">>, Hash], Req, Pid)
-			end
-	end;
+handle(<<"GET">>, [<<"unconfirmed_tx">>, Hash], Req, _Pid) ->
+	handle_get_unconfirmed_tx(Hash, Req, json);
+
+%% Return a possibly unconfirmed binary-encoded transaction.
+%% GET request to endpoint /unconfirmed_tx2/{hash}.
+handle(<<"GET">>, [<<"unconfirmed_tx2">>, Hash], Req, _Pid) ->
+	handle_get_unconfirmed_tx(Hash, Req, binary);
 
 %% Return the transaction IDs of all txs where the tags in post match the given set
 %% of key value pairs. POST request to endpoint /arql with body of request being a logical
@@ -253,8 +242,9 @@ handle(<<"POST">>, [<<"arql">>], Req, Pid) ->
 %% served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
-	case ar_meta_db:get(serve_html_data) of
-		false ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_html_data, Config#config.disable) of
+		true ->
 			{421, #{}, <<"Serving HTML data is disabled on this node.">>, Req};
 		_ ->
 			case ar_util:safe_decode(Hash) of
@@ -328,71 +318,10 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pi
 	end;
 
 handle(<<"GET">>, [<<"chunk">>, OffsetBinary], Req, _Pid) ->
-	case catch binary_to_integer(OffsetBinary) of
-		Offset when is_integer(Offset) ->
-			case << Offset:(?NOTE_SIZE * 8) >> of
-				%% A positive number represented by =< ?NOTE_SIZE bytes.
-				<< Offset:(?NOTE_SIZE * 8) >> ->
-					RequestedPacking =
-						case cowboy_req:header(<<"x-packing">>, Req, not_set) of
-							not_set ->
-								unpacked;
-							<<"unpacked">> ->
-								unpacked;
-							<<"spora_2_5">> ->
-								spora_2_5;
-							_ ->
-								any
-						end,
-					IsBucketBasedOffset =
-						case cowboy_req:header(<<"x-bucket-based-offset">>, Req, not_set) of
-							not_set ->
-								false;
-							_ ->
-								true
-						end,
-					{ReadPacking, CheckRecords} =
-						case ar_sync_record:is_recorded(Offset, ar_data_sync) of
-							false ->
-								{none, {reply, {404, #{}, <<>>, Req}}};
-							{true, RequestedPacking} ->
-								ok = ar_semaphore:acquire(get_chunk, infinity),
-								{RequestedPacking, ok};
-							{true, Packing} when RequestedPacking == any ->
-								ok = ar_semaphore:acquire(get_chunk, infinity),
-								{Packing, ok};
-							{true, _} ->
-								ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
-								{RequestedPacking, ok}
-						end,
-					case CheckRecords of
-						{reply, Reply} ->
-							Reply;
-						ok ->
-							Args = #{ packing => ReadPacking,
-									bucket_based_offset => IsBucketBasedOffset },
-							case ar_data_sync:get_chunk(Offset, Args) of
-								{ok, Proof} ->
-									Proof2 = Proof#{ packing => ReadPacking },
-									Reply =
-										jiffy:encode(
-											ar_serialize:chunk_proof_to_json_map(Proof2)
-										),
-									{200, #{}, Reply, Req};
-								{error, chunk_not_found} ->
-									{404, #{}, <<>>, Req};
-								{error, not_joined} ->
-									not_joined(Req);
-								{error, failed_to_read_chunk} ->
-									{500, #{}, <<>>, Req}
-							end
-					end;
-				_ ->
-					{400, #{}, jiffy:encode(#{ error => offset_out_of_bounds }), Req}
-			end;
-		_ ->
-			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
-	end;
+	handle_get_chunk(OffsetBinary, Req, json);
+
+handle(<<"GET">>, [<<"chunk2">>, OffsetBinary], Req, _Pid) ->
+	handle_get_chunk(OffsetBinary, Req, binary);
 
 handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 	case ar_node:is_joined() of
@@ -421,40 +350,121 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 	end;
 
 handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			ok = ar_semaphore:acquire(post_chunk, infinity),
-			case check_if_chunk_data_root_exists(Req) of
-				{reply, Reply} ->
-					Reply;
-				continue ->
-					case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
-						{ok, Body, Req2} ->
-							case ar_serialize:json_decode(Body, [{return_maps, true}]) of
-								{ok, JSON} ->
-									case catch ar_serialize:json_map_to_chunk_proof(JSON) of
-										{'EXIT', _} ->
-											{400, #{},
-												jiffy:encode(#{ error => invalid_json }), Req2};
-										Proof ->
-											handle_post_chunk(Proof, Req2)
-									end;
-								{error, _} ->
-									{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
-							end;
-						{error, body_size_too_large} ->
-							{413, #{}, <<"Payload too large">>, Req}
-					end
-			end
+	Joined =
+		case ar_node:is_joined() of
+			false ->
+				not_joined(Req);
+			true ->
+				ok
+		end,
+	Semaphore =
+		case Joined of
+			ok ->
+				case ar_semaphore:acquire(post_chunk, 5000) of
+					ok ->
+						ok;
+					{error, timeout} ->
+						{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+				end;
+			Reply ->
+				Reply
+		end,
+	DataRootKnown =
+		case Semaphore of
+			ok ->
+				case get_data_root_from_headers(Req) of
+					not_set ->
+						ok;
+					{ok, {DataRoot, DataSize}} ->
+						case ar_data_sync:has_data_root(DataRoot, DataSize) of
+							true ->
+								ok;
+							false ->
+								{400, #{}, jiffy:encode(#{ error => data_root_not_found }),
+										Req}
+						end
+				end;
+			Reply2 ->
+				Reply2
+		end,
+	ParseChunk =
+		case DataRootKnown of
+			ok ->
+				parse_chunk(Req, Pid);
+			Reply3 ->
+				Reply3
+		end,
+	case ParseChunk of
+		{ok, {Proof, Req2}} ->
+			handle_post_chunk(Proof, Req2);
+		Reply4 ->
+			Reply4
 	end;
 
-%% Share a new block to a peer.
-%% POST request to endpoint /block with the body of the request being a JSON encoded block
-%% as specified in ar_serialize.
+%% Accept an announcement of a block. Reply 412 (no previous block),
+%% 200 (optionally specifying missing transactions and chunk in the response)
+%% or 208 (already processing the block).
+handle(<<"POST">>, [<<"block_announcement">>], Req, Pid) ->
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case catch ar_serialize:binary_to_block_announcement(Body) of
+				{ok, #block_announcement{ indep_hash = H, previous_block = PrevH,
+						tx_prefixes = Prefixes, recall_byte = RecallByte }} ->
+					case ar_ignore_registry:member(H) of
+						true ->
+							{208, #{}, <<>>, Req};
+						false ->
+							case ar_node:get_block_shadow_from_cache(PrevH) of
+								not_found ->
+									{412, #{}, <<>>, Req};
+								_ ->
+									Indices = collect_missing_tx_indices(Prefixes),
+									MissingChunk =
+										case RecallByte of
+											undefined ->
+												true;
+											_ ->
+												prometheus_counter:inc(
+														block_announcement_reported_chunks),
+												case ar_sync_record:is_recorded(RecallByte + 1,
+														ar_data_sync) of
+													{true, spora_2_5} ->
+														false;
+													_ ->
+														prometheus_counter:inc(
+															block_announcement_missing_chunks),
+														true
+												end
+										end,
+									prometheus_counter:inc(
+											block_announcement_reported_transactions,
+											length(Prefixes)),
+									prometheus_counter:inc(
+											block_announcement_missing_transactions,
+											length(Indices)),
+									Response = #block_announcement_response{
+											missing_chunk = MissingChunk,
+											missing_tx_indices = Indices },
+									{200, #{}, ar_serialize:block_announcement_response_to_binary(Response), Req2}
+							end
+					end;
+				{'EXIT', _Reason} ->
+					{400, #{}, <<>>, Req2};
+				{error, _Reason} ->
+					{400, #{}, <<>>, Req2}
+			end;
+		{error, body_size_too_large} ->
+			{400, #{}, <<>>, Req}
+	end;
+
+%% Accept a JSON-encoded block with Base64Url encoded fields.
 handle(<<"POST">>, [<<"block">>], Req, Pid) ->
-	post_block(request, {Req, Pid}, erlang:timestamp());
+	post_block(request, {Req, Pid, json}, erlang:timestamp());
+
+%% Accept a binary-encoded block.
+handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
+	erlang:put(post_block2, true),
+	post_block(request, {Req, Pid, binary}, erlang:timestamp());
 
 %% Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
@@ -473,34 +483,15 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
 			{Status, Headers, Body, Req}
 	end;
 
-%% Share a new transaction with a peer.
-%% POST request to endpoint /tx with the body of the request being a JSON encoded tx as
-%% specified in ar_serialize.
+%% Accept a new JSON-encoded transaction.
+%% POST request to endpoint /tx.
 handle(<<"POST">>, [<<"tx">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case post_tx_parse_id({Req, Pid}) of
-				{error, invalid_hash, Req2} ->
-					{400, #{}, <<"Invalid hash.">>, Req2};
-				{error, tx_already_processed, _TXID, Req2} ->
-					{208, #{}, <<"Transaction already processed.">>, Req2};
-				{error, invalid_json, Req2} ->
-					{400, #{}, <<"Invalid JSON.">>, Req2};
-				{error, body_size_too_large, Req2} ->
-					{413, #{}, <<"Payload too large">>, Req2};
-				{ok, TX} ->
-					Peer = ar_http_util:arweave_peer(Req),
-					case handle_post_tx(Req, Peer, TX) of
-						ok ->
-							{200, #{}, <<"OK">>, Req};
-						{error_response, {Status, Headers, Body}} ->
-							ar_ignore_registry:remove_temporary(TX#tx.id),
-							{Status, Headers, Body, Req}
-					end
-			end
-	end;
+	handle_post_tx({Req, Pid, json});
+
+%% Accept a new binary-encoded transaction.
+%% POST request to endpoint /tx2.
+handle(<<"POST">>, [<<"tx2">>], Req, Pid) ->
+	handle_post_tx({Req, Pid, binary});
 
 %% Sign and send a tx to the network.
 %% Fetches the wallet by the provided key generated via POST /wallet.
@@ -545,7 +536,8 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 					},
 					SignedTX = ar_tx:sign(Format2TX, KeyPair),
 					Peer = ar_http_util:arweave_peer(Req),
-					Reply = ar_serialize:jsonify({[{<<"id">>, ar_util:encode(SignedTX#tx.id)}]}),
+					Reply = ar_serialize:jsonify({[{<<"id">>,
+							ar_util:encode(SignedTX#tx.id)}]}),
 					case handle_post_tx(Req2, Peer, SignedTX) of
 						ok ->
 							{200, #{}, Reply, Req2};
@@ -567,9 +559,9 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 			[
 				list_to_binary(ar_util:format_peer(P))
 			||
-				P <- ar_bridge:get_remote_peers(),
+				P <- ar_peers:get_peers(),
 				P /= ar_http_util:arweave_peer(Req),
-				ar_manage_peers:is_public_peer(P)
+				ar_peers:is_public_peer(P)
 			]
 		),
 	Req};
@@ -611,7 +603,7 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, Addr], Req, _Pid) ->
 			end
 	end;
 
-%% Return the current hash list held by the node.
+%% Return the current JSON-encoded hash list held by the node.
 %% GET request to endpoint /block_index.
 handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
@@ -628,6 +620,52 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 					ar_serialize:block_index_to_json_struct(format_bi_for_peer(BI, Req))
 				),
 			Req}
+	end;
+
+%% Return the current binary-encoded block index held by the node.
+%% GET request to endpoint /block_index2.
+handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
+	ok = ar_semaphore:acquire(get_block_index, infinity),
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			BI = ar_node:get_block_index(),
+			Bin = ar_serialize:block_index_to_binary(BI),
+			{200, #{}, Bin, Req}
+	end;
+
+handle(<<"GET">>, [<<"hash_list">>, From, To], Req, _Pid) ->
+	handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid);
+
+handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
+	ok = ar_semaphore:acquire(get_block_index, infinity),
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			try
+				FromHeight = binary_to_integer(From),
+				ToHeight = binary_to_integer(To),
+				{Height, BI} = ar_node:get_block_index_and_height(),
+				{_, BI2} = lists:split(Height - ToHeight, BI),
+				BI3 = lists:sublist(BI2, ToHeight - FromHeight + 1),
+				{200, #{},
+					ar_serialize:jsonify(
+						ar_serialize:block_index_to_json_struct(format_bi_for_peer(BI3, Req))
+					), Req}
+			catch _:_ ->
+				{400, #{}, jiffy:encode(#{ error => invalid_range }), Req}
+			end
+	end;
+
+handle(<<"GET">>, [<<"recent_hash_list">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			Encoded = [ar_util:encode(H) || H <- ar_node:get_block_anchors()],
+			{200, #{}, ar_serialize:jsonify(Encoded), Req}
 	end;
 
 %% Return the current wallet list held by the node.
@@ -816,65 +854,17 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"deposits">>, EarliestDeposit], Req, _P
 			{421, #{}, jiffy:encode(#{ error => endpoint_not_enabled }), Req}
 	end;
 
-%% Return the block with the given height or hash.
+%% Return the JSON-encoded block with the given height or hash.
 %% GET request to endpoint /block/{height|hash}/{height|hash}.
 handle(<<"GET">>, [<<"block">>, Type, ID], Req, Pid)
 		when Type == <<"height">> orelse Type == <<"hash">> ->
-	case Type of
-		<<"hash">> ->
-			case ar_util:safe_decode(ID) of
-				{error, invalid} ->
-					{404, #{}, <<"Block not found.">>, Req};
-				{ok, H} ->
-					ReadB =
-						case ar_randomx_state:get_key_block(H) of
-							not_found ->
-								ar_storage:read_block(H);
-							{ok, B} ->
-								B
-						end,
-					case ReadB of
-						unavailable ->
-							{404, #{}, <<"Block not found.">>, Req};
-						#block{} ->
-							{200, #{}, ar_serialize:jsonify(
-									ar_serialize:block_to_json_struct(ReadB)), Req}
-					end
-			end;
-		<<"height">> ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					CurrentHeight = ar_node:get_height(),
-					try binary_to_integer(ID) of
-						Height when Height < 0 ->
-							{400, #{}, <<"Invalid height.">>, Req};
-						Height when Height > CurrentHeight ->
-							{404, #{}, <<"Block not found.">>, Req};
-						Height ->
-							case ar_node:get_recent_block_hash_by_height(Height) of
-								not_found ->
-									ok = ar_semaphore:acquire(get_block_index, infinity),
-									BI = ar_node:get_block_index(),
-									Len = length(BI),
-									case Height > Len - 1 of
-										true ->
-											{404, #{}, <<"Block not found.">>, Req};
-										false ->
-											{H, _, _} = lists:nth(Len - Height, BI),
-											handle(<<"GET">>, [<<"block">>, <<"hash">>,
-													ar_util:encode(H)], Req, Pid)
-									end;
-								H ->
-									handle(<<"GET">>, [<<"block">>, <<"hash">>,
-											ar_util:encode(H)], Req, Pid)
-							end
-					catch _:_ ->
-						{400, #{}, <<"Invalid height.">>, Req}
-					end
-			end
-	end;
+	handle_get_block(Type, ID, Req, Pid, json);
+
+%% Return the binary-encoded block with the given height or hash.
+%% GET request to endpoint /block2/{height|hash}/{height|hash}.
+handle(<<"GET">>, [<<"block2">>, Type, ID], Req, Pid)
+		when Type == <<"height">> orelse Type == <<"hash">> ->
+	handle_get_block(Type, ID, Req, Pid, binary);
 
 %% Return block or block field.
 handle(<<"GET">>, [<<"block">>, Type, ID, Field], Req, _Pid)
@@ -974,10 +964,11 @@ handle(<<"GET">>, [<<Hash:43/binary, MaybeExt/binary>>], Req, Pid) ->
 handle(_, _, Req, _Pid) ->
 	not_found(Req).
 
-%% Cowlib does not yet support status code 208 properly.
+%% Cowlib does not yet support status codes 208 and 419 properly.
 %% See https://github.com/ninenines/cowlib/pull/79
-handle208(208) -> <<"208 Already Reported">>;
-handle208(Status) -> Status.
+handle_custom_codes(208) -> <<"208 Already Reported">>;
+handle_custom_codes(419) -> <<"419 Missing Chunk">>;
+handle_custom_codes(Status) -> Status.
 
 format_bi_for_peer(BI, Req) ->
 	case cowboy_req:header(<<"x-block-format">>, Req, <<"2">>) of
@@ -1012,24 +1003,66 @@ handle_get_tx_status(EncodedTXID, Req) ->
 								{<<"block_height">>, Height},
 								{<<"block_indep_hash">>, ar_util:encode(BH)}
 							],
-							ok = ar_semaphore:acquire(get_block_index, infinity),
-							case ar_node:is_in_block_index(BH) of
-								false ->
+							case ar_block_index:get_element_by_height(Height) of
+								not_found ->
 									{404, #{}, <<"Not Found.">>, Req};
-								true ->
+								{BH, _, _} ->
 									CurrentHeight = ar_node:get_height(),
-									%% First confirmation is when the TX is in the latest block.
+									%% First confirmation is when the TX is
+									%% in the latest block.
 									NumberOfConfirmations = CurrentHeight - Height + 1,
 									Status = PseudoTags
 											++ [{<<"number_of_confirmations">>,
 												NumberOfConfirmations}],
-									{200, #{}, ar_serialize:jsonify({Status}), Req}
+									{200, #{}, ar_serialize:jsonify({Status}), Req};
+								_ ->
+									{404, #{}, <<"Not Found.">>, Req}
 							end;
 						not_found ->
 							{404, #{}, <<"Not Found.">>, Req};
 						{error, timeout} ->
 							{503, #{}, <<"ArQL unavailable.">>, Req}
 					end
+			end
+	end.
+
+handle_get_tx(Hash, Req, Encoding) ->
+	case ar_util:safe_decode(Hash) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid hash.">>, Req};
+		{ok, ID} ->
+			case ar_storage:read_tx(ID) of
+				unavailable ->
+					maybe_tx_is_pending_response(ID, Req);
+				#tx{} = TX ->
+					Body =
+						case Encoding of
+							json ->
+								ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX));
+							binary ->
+								ar_serialize:tx_to_binary(TX)
+						end,
+					{200, #{}, Body, Req}
+			end
+	end.
+
+handle_get_unconfirmed_tx(Hash, Req, Encoding) ->
+	case ar_util:safe_decode(Hash) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid hash.">>, Req};
+		{ok, TXID} ->
+			case ets:lookup(node_state, {tx, TXID}) of
+				[{_, TX}] ->
+					Body =
+						case Encoding of
+							json ->
+								ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX));
+							binary ->
+								ar_serialize:tx_to_binary(TX)
+						end,
+					{200, #{}, Body, Req};
+				[] ->
+					handle_get_tx(Hash, Req, Encoding)
 			end
 	end.
 
@@ -1167,6 +1200,87 @@ get_wallet_txs(EarliestTXID, [TXID | TXIDs], Acc) ->
 			get_wallet_txs(EarliestTXID, TXIDs, [TXID | Acc])
 	end.
 
+handle_get_block(Type, ID, Req, Pid, Encoding) ->
+	case Type of
+		<<"hash">> ->
+			case ar_util:safe_decode(ID) of
+				{error, invalid} ->
+					{404, #{}, <<"Block not found.">>, Req};
+				{ok, H} ->
+					ReadB =
+						case ar_randomx_state:get_key_block(H) of
+							not_found ->
+								ar_storage:read_block(H);
+							{ok, B} ->
+								B
+						end,
+					case ReadB of
+						unavailable ->
+							{404, #{}, <<"Block not found.">>, Req};
+						#block{} ->
+							Bin =
+								case Encoding of
+									json ->
+										ar_serialize:jsonify(
+												ar_serialize:block_to_json_struct(
+														ReadB));
+									binary ->
+										ar_serialize:block_to_binary(ReadB)
+								end,
+							{200, #{}, Bin, Req}
+					end
+			end;
+		<<"height">> ->
+			case ar_node:is_joined() of
+				false ->
+					not_joined(Req);
+				true ->
+					CurrentHeight = ar_node:get_height(),
+					try binary_to_integer(ID) of
+						Height when Height < 0 ->
+							{400, #{}, <<"Invalid height.">>, Req};
+						Height when Height > CurrentHeight ->
+							{404, #{}, <<"Block not found.">>, Req};
+						Height ->
+							case ar_block_index:get_element_by_height(Height) of
+								not_found ->
+									{404, #{}, <<"Block not found.">>, Req};
+								{H, _, _} ->
+									handle_get_block(<<"hash">>, ar_util:encode(H),
+											Req, Pid, Encoding)
+							end
+					catch _:_ ->
+						{400, #{}, <<"Invalid height.">>, Req}
+					end
+			end
+	end.
+
+handle_post_tx({Req, Pid, Encoding}) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case post_tx_parse_id({Req, Pid, Encoding}) of
+				{error, invalid_hash, Req2} ->
+					{400, #{}, <<"Invalid hash.">>, Req2};
+				{error, tx_already_processed, _TXID, Req2} ->
+					{208, #{}, <<"Transaction already processed.">>, Req2};
+				{error, invalid_json, Req2} ->
+					{400, #{}, <<"Invalid JSON.">>, Req2};
+				{error, body_size_too_large, Req2} ->
+					{413, #{}, <<"Payload too large">>, Req2};
+				{ok, TX} ->
+					Peer = ar_http_util:arweave_peer(Req),
+					case handle_post_tx(Req, Peer, TX) of
+						ok ->
+							{200, #{}, <<"OK">>, Req};
+						{error_response, {Status, Headers, Body}} ->
+							ar_ignore_registry:remove_temporary(TX#tx.id),
+							{Status, Headers, Body, Req}
+					end
+			end
+	end.
+
 handle_post_tx(Req, Peer, TX) ->
 	case ar_tx_validator:validate(TX, Peer) of
 		{invalid, tx_verification_failed} ->
@@ -1183,7 +1297,7 @@ handle_post_tx(Req, Peer, TX) ->
 			handle_post_tx_already_in_mempool_response();
 		{invalid, invalid_data_root_size} ->
 			handle_post_tx_invalid_data_root_response();
-		valid  ->
+		valid ->
 			handle_post_tx_accepted(Req, Peer)
 	end.
 
@@ -1193,6 +1307,8 @@ handle_post_tx_accepted(Req, Peer) ->
 	%% of excessive transaction volumes.
 	{A, B, C, D, _} = Peer,
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
+	ar_events:send(peer, {gossiped_tx, Peer, erlang:get(read_body_time),
+			erlang:get(body_size)}),
 	ok.
 
 handle_post_tx_verification_response() ->
@@ -1229,38 +1345,117 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
-check_if_chunk_data_root_exists(Req) ->
-	case cowboy_req:header(<<"arweave-data-root">>, Req, not_set) of
-		EncodedDataRoot when byte_size(EncodedDataRoot) == 43 ->
-			case cowboy_req:header(<<"arweave-data-size">>, Req, not_set) of
-				not_set ->
-					continue;
-				MaybeNumber ->
-					case catch binary_to_integer(MaybeNumber) of
-						DataSize when is_integer(DataSize) ->
-							case ar_util:safe_decode(EncodedDataRoot) of
-								{ok, DataRoot} ->
-									case ar_data_sync:has_data_root(DataRoot, DataSize) of
-										true ->
-											continue;
-										false ->
-											{reply, {400, #{},
-												jiffy:encode(#{
-													error => data_root_not_found }), Req}};
-										{error, timeout} ->
-											{reply,
-												{503, #{},
-													jiffy:encode(#{ error => timeout }), Req}}
-									end;
-								_ ->
-									continue
-							end;
-						_ ->
-							continue
-					end
+handle_get_chunk(OffsetBinary, Req, Encoding) ->
+	case catch binary_to_integer(OffsetBinary) of
+		Offset when is_integer(Offset) ->
+			case << Offset:(?NOTE_SIZE * 8) >> of
+				%% A positive number represented by =< ?NOTE_SIZE bytes.
+				<< Offset:(?NOTE_SIZE * 8) >> ->
+					RequestedPacking =
+						case cowboy_req:header(<<"x-packing">>, Req, not_set) of
+							not_set ->
+								unpacked;
+							<<"unpacked">> ->
+								unpacked;
+							<<"spora_2_5">> ->
+								spora_2_5;
+							_ ->
+								any
+						end,
+					IsBucketBasedOffset =
+						case cowboy_req:header(<<"x-bucket-based-offset">>, Req, not_set) of
+							not_set ->
+								false;
+							_ ->
+								true
+						end,
+					{ReadPacking, CheckRecords} =
+						case ar_sync_record:is_recorded(Offset, ar_data_sync) of
+							false ->
+								{none, {reply, {404, #{}, <<>>, Req}}};
+							{true, RequestedPacking} ->
+								ok = ar_semaphore:acquire(get_chunk, infinity),
+								{RequestedPacking, ok};
+							{true, Packing} when RequestedPacking == any ->
+								ok = ar_semaphore:acquire(get_chunk, infinity),
+								{Packing, ok};
+							{true, _} ->
+								ok = ar_semaphore:acquire(get_and_pack_chunk, infinity),
+								{RequestedPacking, ok}
+						end,
+					case CheckRecords of
+						{reply, Reply} ->
+							Reply;
+						ok ->
+							Args = #{ packing => ReadPacking,
+									bucket_based_offset => IsBucketBasedOffset },
+							case ar_data_sync:get_chunk(Offset, Args) of
+								{ok, Proof} ->
+									Proof2 = Proof#{ packing => ReadPacking },
+									Reply =
+										case Encoding of
+											json ->
+												jiffy:encode(
+													ar_serialize:chunk_proof_to_json_map(
+															Proof2));
+											binary ->
+												ar_serialize:poa_to_binary(Proof2)
+										end,
+									{200, #{}, Reply, Req};
+								{error, chunk_not_found} ->
+									{404, #{}, <<>>, Req};
+								{error, not_joined} ->
+									not_joined(Req);
+								{error, failed_to_read_chunk} ->
+									{500, #{}, <<>>, Req}
+							end
+					end;
+				_ ->
+					{400, #{}, jiffy:encode(#{ error => offset_out_of_bounds }), Req}
 			end;
 		_ ->
-			continue
+			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
+	end.
+
+get_data_root_from_headers(Req) ->
+	case {cowboy_req:header(<<"arweave-data-root">>, Req, not_set),
+			cowboy_req:header(<<"arweave-data-size">>, Req, not_set)} of
+		{not_set, _} ->
+			not_set;
+		{_, not_set} ->
+			not_set;
+		{EncodedDataRoot, EncodedDataSize} when byte_size(EncodedDataRoot) == 43 ->
+			case catch binary_to_integer(EncodedDataSize) of
+				DataSize when is_integer(DataSize) ->
+					case ar_util:safe_decode(EncodedDataRoot) of
+						{ok, DataRoot} ->
+							{ok, {DataRoot, DataSize}};
+						_ ->
+							not_set
+					end;
+				_ ->
+					not_set
+			end;
+		_ ->
+			not_set
+	end.
+
+parse_chunk(Req, Pid) ->
+	case read_complete_body(Req, Pid, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE) of
+		{ok, Body, Req2} ->
+			case ar_serialize:json_decode(Body, [{return_maps, true}]) of
+				{ok, JSON} ->
+					case catch ar_serialize:json_map_to_chunk_proof(JSON) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+						Proof ->
+							{ok, {Proof, Req2}}
+					end;
+				{error, _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
 	end.
 
 handle_post_chunk(Proof, Req) ->
@@ -1312,7 +1507,9 @@ handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
 			handle_post_chunk(validate_proof, Proof, Req)
 	end;
 handle_post_chunk(validate_proof, Proof, Req) ->
-	case ar_data_sync:add_chunk(Proof) of
+	Parent = self(),
+	spawn(fun() -> Parent ! ar_data_sync:add_chunk(Proof) end),
+	receive
 		ok ->
 			{200, #{}, <<>>, Req};
 		{error, data_root_not_found} ->
@@ -1324,9 +1521,7 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 		{error, failed_to_store_chunk} ->
 			{500, #{}, <<>>, Req};
 		{error, invalid_proof} ->
-			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req};
-		{error, timeout} ->
-			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req}
 	end.
 
 check_internal_api_secret(Req) ->
@@ -1337,7 +1532,8 @@ check_internal_api_secret(Req) ->
 		{reject,
 			{421, #{}, <<"Internal API disabled or invalid internal API secret in request.">>}}
 	end,
-	case {ar_meta_db:get(internal_api_secret),
+	{ok, Config} = application:get_env(arweave, config),
+	case {Config#config.internal_api_secret,
 			cowboy_req:header(<<"x-internal-api-secret">>, Req)} of
 		{not_set, _} ->
 			Reject("Request to disabled internal API");
@@ -1373,16 +1569,22 @@ block_field_to_string(_, Res) -> Res.
 is_a_pending_tx(ID) ->
 	ar_node:is_a_pending_tx(ID).
 
-%% @doc Given a request, returns a blockshadow.
-request_to_struct_with_blockshadow(Req, BlockJSON) ->
+decode_block(JSON, json) ->
 	try
-		{Struct} = ar_serialize:dejsonify(BlockJSON),
+		{Struct} = ar_serialize:dejsonify(JSON),
 		JSONB = val_for_key(<<"new_block">>, Struct),
 		BShadow = ar_serialize:json_struct_to_block(JSONB),
-		{ok, {Struct, BShadow}, Req}
+		{ok, BShadow}
 	catch
 		Exception:Reason ->
-			{error, {Exception, Reason}, Req}
+			{error, {Exception, Reason}}
+	end;
+decode_block(Bin, binary) ->
+	try
+		ar_serialize:binary_to_block(Bin)
+	catch
+		Exception:Reason ->
+			{error, {Exception, Reason}}
 	end.
 
 %% @doc Generate and return an informative JSON object regarding the state of the node.
@@ -1412,7 +1614,7 @@ return_info(Req) ->
 						end
 					},
 					{blocks, BlockCount},
-					{peers, length(ar_bridge:get_remote_peers())},
+					{peers, prometheus_gauge:value(arweave_peer_count)},
 					{queue_length,
 						element(
 							2,
@@ -1432,16 +1634,29 @@ val_for_key(K, L) ->
 		{K, V} -> V
 	end.
 
+collect_missing_tx_indices(Prefixes) ->
+	collect_missing_tx_indices(Prefixes, [], 0).
+
+collect_missing_tx_indices([], Indices, _N) ->
+	lists:reverse(Indices);
+collect_missing_tx_indices([Prefix | Prefixes], Indices, N) ->
+	case ets:member(tx_prefixes, Prefix) of
+		false ->
+			collect_missing_tx_indices(Prefixes, [N | Indices], N + 1);
+		true ->
+			collect_missing_tx_indices(Prefixes, Indices, N + 1)
+	end.
+
 %% @doc Handle multiple steps of POST /block. First argument is a subcommand,
 %% second the argument for that subcommand.
-%% @end
-post_block(request, {Req, Pid}, ReceiveTimestamp) ->
+post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	OrigPeer = ar_http_util:arweave_peer(Req),
 	case ar_blacklist_middleware:is_peer_banned(OrigPeer) of
 		not_banned ->
 			case ar_node:is_joined() of
 				true ->
-					post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp);
+					post_block(check_block_hash_header, OrigPeer, {Req, Pid, Encoding},
+									ReceiveTimestamp);
 				false ->
 					%% The node is not ready to validate and accept blocks.
 					%% If the network adopts this block, ar_poller will catch up.
@@ -1450,52 +1665,96 @@ post_block(request, {Req, Pid}, ReceiveTimestamp) ->
 		banned ->
 			{403, #{}, <<"IP address blocked due to previous request.">>, Req}
 	end.
-post_block(read_blockshadow, OrigPeer, {Req, Pid}, ReceiveTimestamp) ->
-	HeaderBlockHashKnown =
-		case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
-			not_set ->
-				false;
-			EncodedBH ->
-				case ar_util:safe_decode(EncodedBH) of
-					{ok, BH} when byte_size(BH) =< 48 ->
-						ar_ignore_registry:member(BH);
-					_ ->
-						false
-				end
-		end,
-	case HeaderBlockHashKnown of
-		true ->
-			{208, <<"Block already processed.">>, Req};
-		false ->
-			case read_complete_body(Req, Pid) of
-				{ok, BlockJSON, Req2} ->
-					case request_to_struct_with_blockshadow(Req2, BlockJSON) of
-						{error, {_, _}, ReadReq} ->
-							{400, #{}, <<"Invalid block.">>, ReadReq};
-						{ok, {_ReqStruct, BShadow}, ReadReq} ->
-							case byte_size(BShadow#block.indep_hash) > 48 of
-								true ->
-									{400, #{}, <<"Invalid block.">>, ReadReq};
-								false ->
-									post_block(
-										check_indep_hash_processed,
-										{BShadow, OrigPeer},
-										ReadReq,
-										ReceiveTimestamp
-									)
-							end
+
+post_block(check_block_hash_header, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
+	%% Look up the block hash in the "already processing/processed" registry
+	%% for POST /block. We are gradually moving to using POST /block2 - its handler
+	%% does the check in post_block_process_announcement/4.
+	case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
+		not_set ->
+			post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp);
+		EncodedBH ->
+			case ar_util:safe_decode(EncodedBH) of
+				{ok, BH} when byte_size(BH) =< 48 ->
+					case ar_ignore_registry:member(BH) of
+						true ->
+							{208, #{}, <<"Block already processed.">>, Req};
+						false ->
+							post_block(read_body, OrigPeer, {Req, Pid, Encoding},
+									ReceiveTimestamp)
 					end;
-				{error, body_size_too_large} ->
-					{413, #{}, <<"Payload too large">>, Req}
+				_ ->
+					post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp)
 			end
+	end;
+post_block(read_body, OrigPeer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
+	case read_complete_body(Req, Pid) of
+		{ok, Body, Req2} ->
+			case decode_block(Body, Encoding) of
+				{error, _} ->
+					{400, #{}, <<"Invalid block.">>, Req2};
+				{ok, BShadow} ->
+					ReadBodyTime = timer:now_diff(erlang:timestamp(), ReceiveTimestamp),
+					erlang:put(read_body_time, ReadBodyTime),
+					erlang:put(body_size, byte_size(term_to_binary(BShadow))),
+					case byte_size(BShadow#block.indep_hash) > 48 of
+						true ->
+							{400, #{}, <<"Invalid block.">>, Req2};
+						false ->
+							post_block(check_indep_hash_processed, {BShadow, OrigPeer}, Req2,
+									ReceiveTimestamp)
+					end
+			end;
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
 	end;
 post_block(check_indep_hash_processed, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 	case ar_ignore_registry:member(BShadow#block.indep_hash) of
 		true ->
-			{208, <<"Block already processed.">>, Req};
+			{208, #{}, <<"Block already processed.">>, Req};
 		false ->
-			post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp)
+			post_block(check_transactions_are_present, {BShadow, OrigPeer}, Req,
+					ReceiveTimestamp)
 	end;
+post_block(check_transactions_are_present, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
+	case erlang:get(post_block2) of
+		true ->
+			case get_missing_tx_identifiers(BShadow#block.txs) of
+				[] ->
+					post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
+				{error, tx_list_too_long} ->
+					{400, #{}, <<>>, Req};
+				MissingTXIDs ->
+					{418, #{}, encode_txids(MissingTXIDs), Req}
+			end;
+		_ -> % POST /block; do not reject for backwards-compatibility
+			post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp)
+	end;
+post_block(may_be_fetch_chunk, {#block{ poa = #poa{ chunk = <<>> } } = BShadow, OrigPeer},
+		Req, ReceiveTimestamp) ->
+	case cowboy_req:header(<<"arweave-recall-byte">>, Req, not_set) of
+		not_set ->
+			post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
+		Bin ->
+			case catch binary_to_integer(Bin) of
+				{'EXIT', _} ->
+					post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
+				RecallByte ->
+					case ar_data_sync:get_chunk(RecallByte + 1, #{ pack => false,
+							packing => spora_2_5, bucket_based_offset => true }) of
+						{ok, #{ chunk := Chunk, data_path := DataPath, tx_path := TXPath }} ->
+							erlang:put(fetched_chunk, true),
+							post_block(check_indep_hash, {BShadow#block{
+									poa = #poa{ chunk = Chunk, data_path = DataPath,
+											tx_path = TXPath } }, OrigPeer}, Req,
+											ReceiveTimestamp);
+						_ ->
+							{419, #{}, <<>>, Req}
+					end
+			end
+	end;
+post_block(may_be_fetch_chunk, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
+	post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp);
 post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 	BH = BShadow#block.indep_hash,
 	PrevH = BShadow#block.previous_block,
@@ -1511,7 +1770,7 @@ post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 				false ->
 					{400, #{}, <<"Invalid block.">>, Req};
 				true ->
-					case catch compute_hash(BShadow, PrevHeight + 1) of
+					case catch compute_hash(BShadow) of
 						{BDS, BH} ->
 							ar_ignore_registry:add_temporary(BH, 5000),
 							post_block(
@@ -1522,7 +1781,6 @@ post_block(check_indep_hash, {BShadow, OrigPeer}, Req, ReceiveTimestamp) ->
 							);
 						_ ->
 							post_block_reject_warn(BShadow, check_indep_hash, OrigPeer),
-							ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 							{400, #{}, <<"Invalid Block Hash">>, Req}
 					end
 			end
@@ -1560,55 +1818,73 @@ post_block(check_difficulty, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimest
 %% be after the PoW check to reduce the possibility of doing a DOS attack on
 %% the network.
 post_block(check_pow, {BShadow, OrigPeer, BDS, PrevB}, Req, ReceiveTimestamp) ->
-	Nonce = BShadow#block.nonce,
-	#block{ indep_hash = PrevH, height = PrevHeight } = PrevB,
-	Height = PrevHeight + 1,
+	#block{ indep_hash = PrevH } = PrevB,
 	MaybeValid =
-		case Height >= ar_fork:height_2_4() of
-			true ->
-				case ar_node:get_recent_search_space_upper_bound_by_prev_h(PrevH) of
-					not_found ->
-						{reply, {412, #{}, <<>>, Req}};
-					SearchSpaceUpperBound ->
-						validate_spora_pow(BShadow, PrevB, BDS, SearchSpaceUpperBound)
-				end;
-			false ->
-				case ar_mine:validate(BDS, Nonce, BShadow#block.diff, Height) of
-					{invalid, _} ->
-						false;
-					{valid, _} ->
-						true
-				end
+		case ar_node:get_recent_search_space_upper_bound_by_prev_h(PrevH) of
+			not_found ->
+				{reply, {412, #{}, <<>>, Req}};
+			SearchSpaceUpperBound ->
+				validate_spora_pow(BShadow, PrevB, BDS, SearchSpaceUpperBound)
 		end,
 	case MaybeValid of
 		{reply, Reply} ->
 			Reply;
-		true ->
-			post_block(post_block, {BShadow, OrigPeer, BDS}, Req, ReceiveTimestamp);
+		{true, RecallByte} ->
+			post_block(post_block, {BShadow, OrigPeer, RecallByte}, Req, ReceiveTimestamp);
 		false ->
 			post_block_reject_warn(BShadow, check_pow, OrigPeer),
 			ar_blacklist_middleware:ban_peer(OrigPeer, ?BAD_POW_BAN_TIME),
 			{400, #{}, <<"Invalid Block Proof of Work">>, Req}
 	end;
-post_block(post_block, {BShadow, OrigPeer, _BDS}, Req, ReceiveTimestamp) ->
+post_block(post_block, {BShadow, OrigPeer, RecallByte}, Req, ReceiveTimestamp) ->
 	record_block_pre_validation_time(ReceiveTimestamp),
-	?LOG_INFO([
-		{event, ar_http_iface_handler_accepted_block},
-		{indep_hash, ar_util:encode(BShadow#block.indep_hash)}
-	]),
-	ar_events:send(block, {new, BShadow, OrigPeer}),
+	?LOG_INFO([{event, ar_http_iface_handler_accepted_block},
+			{indep_hash, ar_util:encode(BShadow#block.indep_hash)}]),
+	%% Include all transactions found in the mempool in place of the corresponding
+	%% transaction identifiers so that we can gossip them to peers who miss them
+	%% along with the block.
+	B = BShadow#block{ txs = include_transactions(BShadow#block.txs) },
+	ar_events:send(block, {new, B, #{ source => {peer, OrigPeer},
+			recall_byte => RecallByte }}),
+	ar_events:send(peer, {gossiped_block, OrigPeer, erlang:get(read_body_time),
+			erlang:get(body_size)}),
+	prometheus_counter:inc(block2_received_transactions,
+			count_received_transactions(BShadow#block.txs)),
+	case erlang:get(fetched_chunk) of
+		true ->
+			prometheus_counter:inc(block2_fetched_chunks);
+		_ ->
+			ok
+	end,
 	{200, #{}, <<"OK">>, Req}.
 
-compute_hash(B, Height) ->
+encode_txids([]) ->
+	<<>>;
+encode_txids([TXID | TXIDs]) ->
+	<< TXID/binary, (encode_txids(TXIDs))/binary >>.
+
+get_missing_tx_identifiers(TXIDs) ->
+	get_missing_tx_identifiers(TXIDs, [], 0).
+
+get_missing_tx_identifiers([], MissingTXIDs, _N) ->
+	MissingTXIDs;
+get_missing_tx_identifiers([_ | _], _, N) when N == ?BLOCK_TX_COUNT_LIMIT ->
+	{error, tx_list_too_long};
+get_missing_tx_identifiers([#tx{} | TXIDs], MissingTXIDs, N) ->
+	get_missing_tx_identifiers(TXIDs, MissingTXIDs, N + 1);
+get_missing_tx_identifiers([TXID | TXIDs], MissingTXIDs, N) ->
+	case ar_node_worker:is_mempool_or_block_cache_tx(TXID) of
+		true ->
+			get_missing_tx_identifiers(TXIDs, MissingTXIDs, N + 1);
+		false ->
+			get_missing_tx_identifiers(TXIDs, [TXID | MissingTXIDs], N + 1)
+	end.
+
+compute_hash(B) ->
 	BDS = ar_block:generate_block_data_segment(B),
 	Hash = B#block.hash,
 	Nonce = B#block.nonce,
-	case Height >= ar_fork:height_2_4() of
-		true ->
-			{BDS, ar_weave:indep_hash(BDS, Hash, Nonce, B#block.poa)};
-		false ->
-			{BDS, ar_weave:indep_hash(BDS, Hash, Nonce)}
-	end.
+	{BDS, ar_weave:indep_hash(BDS, Hash, Nonce, B#block.poa)}.
 
 validate_spora_pow(B, PrevB, BDS, SearchSpaceUpperBound) ->
 	#block{ height = PrevHeight, indep_hash = PrevH } = PrevB,
@@ -1620,29 +1896,31 @@ validate_spora_pow(B, PrevB, BDS, SearchSpaceUpperBound) ->
 			false;
 		true ->
 			{H0, Entropy} = ar_mine:spora_h0_with_entropy(BDS, Nonce, Height),
-			ComputeSolutionHash =
+			{ComputeSolutionHash, RecallByte} =
 				case ar_mine:pick_recall_byte(H0, PrevH, SearchSpaceUpperBound) of
 					{error, weave_size_too_small} ->
 						case SPoA == #poa{} of
 							false ->
-								false;
+								{false, undefined};
 							true ->
-								ar_mine:spora_solution_hash(PrevH, Timestamp, H0, Chunk, Height)
+								{ar_mine:spora_solution_hash(PrevH, Timestamp, H0, <<>>,
+										Height), undefined}
 						end;
-					{ok, RecallByte} ->
+					{ok, Byte} ->
 						PackingThreshold = ar_block:get_packing_threshold(PrevB,
 								SearchSpaceUpperBound),
 						case verify_packing_threshold(B, PackingThreshold) of
 							false ->
-								false;
+								{false, Byte};
 							true ->
-								case RecallByte >= PackingThreshold of
+								case Byte >= PackingThreshold of
 									true ->
-										ar_mine:spora_solution_hash_with_entropy(PrevH,
-												Timestamp, H0, Chunk, Entropy, Height);
+										{ar_mine:spora_solution_hash_with_entropy(
+												PrevH, Timestamp, H0, Chunk, Entropy,
+												Height), Byte};
 									false ->
-										ar_mine:spora_solution_hash(PrevH, Timestamp, H0, Chunk,
-												Height)
+										{ar_mine:spora_solution_hash(PrevH, Timestamp,
+												H0, Chunk, Height), Byte}
 								end
 						end
 				end,
@@ -1650,8 +1928,13 @@ validate_spora_pow(B, PrevB, BDS, SearchSpaceUpperBound) ->
 				false ->
 					false;
 				SolutionHash ->
-					ar_mine:validate(SolutionHash, B#block.diff, Height)
-						andalso SolutionHash == B#block.hash
+					case ar_mine:validate(SolutionHash, B#block.diff, Height)
+							andalso SolutionHash == B#block.hash of
+						false ->
+							false;
+						true ->
+							{true, RecallByte}
+					end
 			end
 	end.
 
@@ -1683,106 +1966,86 @@ record_block_pre_validation_time(ReceiveTimestamp) ->
 	TimeMs = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000,
 	prometheus_histogram:observe(block_pre_validation_time, TimeMs).
 
+include_transactions([#tx{} = TX | TXs]) ->
+	[TX | include_transactions(TXs)];
+include_transactions([]) ->
+	[];
+include_transactions([TXID | TXs]) ->
+	case ets:lookup(node_state, {tx, TXID}) of
+		[] ->
+			[TXID | include_transactions(TXs)];
+		[{_, TX}] ->
+			[TX | include_transactions(TXs)]
+	end.
+
+count_received_transactions(TXs) ->
+	count_received_transactions(TXs, 0).
+
+count_received_transactions([#tx{} | TXs], N) ->
+	count_received_transactions(TXs, N + 1);
+count_received_transactions([_ | TXs], N) ->
+	count_received_transactions(TXs, N);
+count_received_transactions([], N) ->
+	N.
+
 %% Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
-	ok = ar_semaphore:acquire(get_block_index, infinity),
-	CurrentBI = ar_node:get_block_index(),
-	case is_block_known(Type, ID, CurrentBI) of
+	case find_block(Type, ID) of
 		{error, height_not_integer} ->
 			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-		true ->
-			BlockHL =
-				case Type of
-					<<"height">> ->
-						{_, BI} = lists:split(
-							length(CurrentBI) - ID,
-							CurrentBI
-						),
-						[H || {H, _, _} <- BI];
-					<<"hash">> ->
-						ar_block:generate_hash_list_for_block(ID, CurrentBI)
-				end,
-			{200, #{},
-				ar_serialize:jsonify(
-					lists:map(fun ar_util:encode/1, BlockHL)
-				),
-			Req};
-		false ->
-			{404, #{}, <<"Block not found.">>, Req}
+		unavailable ->
+			{404, #{}, <<"Not Found.">>, Req};
+		B ->
+			ok = ar_semaphore:acquire(get_block_index, infinity),
+			CurrentBI = ar_node:get_block_index(),
+			HL = ar_block:generate_hash_list_for_block(B#block.indep_hash, CurrentBI),
+			{200, #{}, ar_serialize:jsonify(lists:map(fun ar_util:encode/1, HL)), Req}
 	end;
 %% @doc Return the wallet list associated with a block.
 process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
-	case Type of
-		<<"height">> ->
-			CurrentHeight = ar_node:get_height(),
-			case ID of
-				Height when Height < 0 ->
-					{404, #{}, <<"Block not found.">>, Req};
-				Height when Height > CurrentHeight ->
-					{404, #{}, <<"Block not found.">>, Req};
-				Height ->
-					BI = ar_node:get_block_index(),
-					Len = length(BI),
-					case Height > Len - 1 of
-						true ->
-							{404, #{}, <<"Block not found.">>, Req};
-						false ->
-							{H, _, _} = lists:nth(Len - Height, BI),
-							process_request(get_block, [<<"hash">>, ar_util:encode(H),
-									<<"wallet_list">>], Req)
-					end
-			end;
-		<<"hash">> ->
-			ReadB =
-				case ar_util:safe_decode(ID) of
-					{ok, H} ->
-						ar_storage:read_block(H);
-					{error, invalid} ->
-						{reply, {404, #{}, <<"Block not found.">>, Req}}
-				end,
-			case ReadB of
-				{reply, Reply} ->
-					Reply;
-				unavailable ->
-					{404, #{}, <<"Block not found.">>, Req};
-				#block{} = B ->
-					case {B#block.height >= ar_fork:height_2_2(),
-							ar_meta_db:get(serve_wallet_lists)} of
-						{true, false} ->
-							{400, #{},
-								jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
-										Req};
-						{true, _} ->
-							ok = ar_semaphore:acquire(get_wallet_list, infinity),
-							case ar_storage:read_wallet_list(B#block.wallet_list) of
-								{ok, Tree} ->
-									{200, #{}, ar_serialize:jsonify(
-										ar_serialize:wallet_list_to_json_struct(
-											B#block.reward_addr, false, Tree
-										)), Req};
-								_ ->
-									{404, #{}, <<"Block not found.">>, Req}
-							end;
+	case find_block(Type, ID) of
+		{error, height_not_integer} ->
+			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+		unavailable ->
+			{404, #{}, <<"Not Found.">>, Req};
+		B ->
+			{ok, Config} = application:get_env(arweave, config),
+			case {B#block.height >= ar_fork:height_2_2(),
+					lists:member(serve_wallet_lists, Config#config.disable)} of
+				{true, true} ->
+					{400, #{},
+						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
+						Req};
+				{true, _} ->
+					ok = ar_semaphore:acquire(get_wallet_list, infinity),
+					case ar_storage:read_wallet_list(B#block.wallet_list) of
+						{ok, Tree} ->
+							{200, #{}, ar_serialize:jsonify(
+								ar_serialize:wallet_list_to_json_struct(
+									B#block.reward_addr, false, Tree
+								)), Req};
 						_ ->
-							WLFilepath = ar_storage:wallet_list_filepath(B#block.wallet_list),
-							case filelib:is_file(WLFilepath) of
-								true ->
-									{200, #{}, sendfile(WLFilepath), Req};
-								false ->
-									{404, #{}, <<"Block not found.">>, Req}
-							end
+							{404, #{}, <<"Block not found.">>, Req}
 					end;
 				_ ->
-					{404, #{}, <<"Block not found.">>, Req}
+					WLFilepath = ar_storage:wallet_list_filepath(B#block.wallet_list),
+					case filelib:is_file(WLFilepath) of
+						true ->
+							{200, #{}, sendfile(WLFilepath), Req};
+						false ->
+							{404, #{}, <<"Block not found.">>, Req}
+					end
 			end
 	end;
+
 %% Return a requested field of a given block.
 %% GET request to endpoint /block/hash/{hash|height}/{field}.
 %%
 %% field :: nonce | previous_block | timestamp | last_retarget | diff | height | hash |
 %%			indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
 process_request(get_block, [Type, ID, Field], Req) ->
-	case ar_meta_db:get(subfield_queries) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(subfield_queries, Config#config.enable) of
 		true ->
 			case find_block(Type, ID) of
 				{error, height_not_integer} ->
@@ -1854,40 +2117,26 @@ wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
 			})
 	end.
 
-%% @doc Take a block type specifier, an ID, and a BI, returning whether the
-%% given block is part of the BI.
-%% @end
-is_block_known(<<"height">>, RawHeight, BI) when is_binary(RawHeight) ->
-	case catch binary_to_integer(RawHeight) of
-		{'EXIT', _} ->
-			{error, height_not_integer};
-		Height ->
-			is_block_known(<<"height">>, Height, BI)
-	end;
-is_block_known(<<"height">>, Height, BI) ->
-	Height < length(BI);
-is_block_known(<<"hash">>, ID, BI) ->
-	search_in_block_index(ID, BI).
-
-search_in_block_index(H, BI) ->
-	case lists:search(fun({BH, _, _}) -> BH == H end, BI) of
-		{value, _} ->
-			true;
-		false ->
-			false
-	end.
-
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight) ->
-	BI = ar_node:get_block_index(),
 	case catch binary_to_integer(RawHeight) of
 		{'EXIT', _} ->
 			{error, height_not_integer};
 		Height ->
-			ar_storage:read_block(Height, BI)
+			case ar_block_index:get_element_by_height(Height) of
+				not_found ->
+					unavailable;
+				{H, _, _} ->
+					ar_storage:read_block(H)
+			end
 	end;
 find_block(<<"hash">>, ID) ->
-	ar_storage:read_block(ID).
+	case ar_util:safe_decode(ID) of
+		{ok, H} ->
+			ar_storage:read_block(H);
+		_ ->
+			unavailable
+	end.
 
 is_tx_already_processed(TXID) ->
 	case ar_ignore_registry:member(TXID) of
@@ -1897,48 +2146,44 @@ is_tx_already_processed(TXID) ->
 			ets:member(node_state, {tx, TXID})
 	end.
 
-post_tx_parse_id({Req, Pid}) ->
-	post_tx_parse_id(check_header, {Req, Pid}).
+post_tx_parse_id({Req, Pid, Encoding}) ->
+	post_tx_parse_id(check_header, {Req, Pid, Encoding}).
 
-post_tx_parse_id(check_header, {Req, Pid}) ->
+post_tx_parse_id(check_header, {Req, Pid, Encoding}) ->
 	case cowboy_req:header(<<"arweave-tx-id">>, Req, not_set) of
 		not_set ->
-			post_tx_parse_id(check_body, {Req, Pid});
+			post_tx_parse_id(read_body, {not_set, Req, Pid, Encoding});
 		EncodedTXID ->
 			case ar_util:safe_decode(EncodedTXID) of
 				{ok, TXID} when byte_size(TXID) =< 32 ->
-					post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, <<>>});
+					post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding});
 				_ ->
 					{error, invalid_hash, Req}
 			end
 	end;
-post_tx_parse_id(check_body, {Req, Pid}) ->
-	{_, Chunk, Req2} = read_body_chunk(Req, Pid, 100, 500),
-	case re:run(Chunk, <<"\"id\":\s*\"(?<ID>[A-Za-z0-9_-]{43})\"">>, [{capture, ['ID']}]) of
-		{match, [Part]} ->
-			TXID = ar_util:decode(binary:part(Chunk, Part)),
-			post_tx_parse_id(check_ignore_list, {TXID, Req2, Pid, Chunk});
-		_ ->
-			post_tx_parse_id(read_body, {not_set, Req2, Pid, <<>>})
-	end;
-post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, FirstChunk}) ->
+post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
 	case is_tx_already_processed(TXID) of
 		true ->
 			{error, tx_already_processed, TXID, Req};
 		false ->
 			ar_ignore_registry:add_temporary(TXID, 5000),
-			post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk})
+			post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
 	end;
-post_tx_parse_id(read_body, {TXID, Req, Pid, FirstChunk}) ->
+post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
 	ok = ar_semaphore:acquire(post_tx, infinity),
+	Timestamp = erlang:timestamp(),
 	case read_complete_body(Req, Pid) of
-		{ok, SecondChunk, Req2} ->
-			Body = iolist_to_binary([FirstChunk | SecondChunk]),
-			post_tx_parse_id(parse_json, {TXID, Req2, Body});
+		{ok, Body, Req2} ->
+			case Encoding of
+				json ->
+					post_tx_parse_id(parse_json, {TXID, Req2, Body, Timestamp});
+				binary ->
+					post_tx_parse_id(parse_binary, {TXID, Req2, Body, Timestamp})
+			end;
 		{error, body_size_too_large} ->
 			{error, body_size_too_large, Req}
 	end;
-post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
+post_tx_parse_id(parse_json, {TXID, Req, Body, Timestamp}) ->
 	case catch ar_serialize:json_struct_to_tx(Body) of
 		{'EXIT', _} ->
 			case TXID of
@@ -1957,6 +2202,33 @@ post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 			end,
 			{error, invalid_json, Req};
 		TX ->
+			Time = timer:now_diff(erlang:timestamp(), Timestamp),
+			erlang:put(read_body_time, Time),
+			erlang:put(body_size, byte_size(term_to_binary(TX))),
+			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
+	end;
+post_tx_parse_id(parse_binary, {TXID, Req, Body, Timestamp}) ->
+	case catch ar_serialize:binary_to_tx(Body) of
+		{'EXIT', _} ->
+			case TXID of
+				not_set ->
+					noop;
+				_ ->
+					ar_ignore_registry:remove_temporary(TXID)
+			end,
+			{error, invalid_json, Req};
+		{error, _} ->
+			case TXID of
+				not_set ->
+					noop;
+				_ ->
+					ar_ignore_registry:remove_temporary(TXID)
+			end,
+			{error, invalid_json, Req};
+		{ok, TX} ->
+			Time = timer:now_diff(erlang:timestamp(), Timestamp),
+			erlang:put(read_body_time, Time),
+			erlang:put(body_size, byte_size(term_to_binary(TX))),
 			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
 	end;
 post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->

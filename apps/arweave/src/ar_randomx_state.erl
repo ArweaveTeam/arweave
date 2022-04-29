@@ -282,30 +282,30 @@ randomx_key(SwapHeight) ->
 			unavailable
 	end.
 
-get_block(Height) ->
-	case ar_node:get_block_index() of
-		[] -> unavailable;
-		BI ->
-			{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
-			get_block(BH, BI)
-	end.
-
-get_block(BH, BI) ->
+get_block(Height) when is_integer(Height) ->
+	case ar_block_index:get_element_by_height(Height) of
+		not_found ->
+			unavailable;
+		{BH, _, _} ->
+			get_block(BH)
+	end;
+get_block(BH) ->
 	try
-		Peers = ar_bridge:get_remote_peers(),
-		get_block(BH, BI, Peers)
+		Peers = ar_peers:get_peers(),
+		get_block(BH, Peers)
 	catch Type:Exception:StackTrace ->
 		?LOG_ERROR([
 			{event, randomx_state_server_failed_to_fetch_peers},
 			{error, io_lib:format("~p ~p ~p", [Type, Exception, StackTrace])}
 		]),
-		get_block(BH, BI)
+		get_block(BH)
 	end.
 
 get_block(Height, BI, Peers) when is_integer(Height) ->
 	{BH, _, _} = lists:nth(Height + 1, lists:reverse(BI)),
-	get_block(BH, BI, Peers);
-get_block(BH, BI, Peers) ->
+	get_block(BH, Peers).
+
+get_block(BH, Peers) ->
 	case ar_storage:read_block(BH) of
 		B when is_record(B, block) ->
 			{ok, B};
@@ -313,9 +313,10 @@ get_block(BH, BI, Peers) ->
 			case ar_http_iface_client:get_block_shadow(Peers, BH) of
 				unavailable ->
 					unavailable;
-				{_, B} ->
+				{Peer, B, Time, Size} ->
 					case ar_weave:indep_hash(B) of
 						BH ->
+							ar_events:send(peer, {served_block, Peer, Time, Size}),
 							{ok, B};
 						InvalidBH ->
 							?LOG_WARNING([
@@ -323,7 +324,7 @@ get_block(BH, BI, Peers) ->
 								{requested_block_hash, ar_util:encode(BH)},
 								{received_block_hash, ar_util:encode(InvalidBH)}
 							]),
-							get_block(BH, BI)
+							get_block(BH, Peers)
 					end
 			end
 	end.

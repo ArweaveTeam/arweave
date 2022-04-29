@@ -9,9 +9,10 @@
 %%% @end
 -module(ar_node_worker).
 
--export([start_link/0, calculate_delay/1]).
+-export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1]).
 
--export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1]).
+-export([init/1, handle_cast/2, handle_info/2, terminate/2, tx_mempool_size/1,
+		tx_id_prefix/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -33,6 +34,16 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% @doc Return the prefix used to inform block receivers about the block's transactions
+%% via POST /block_announcement.
+tx_id_prefix(TXID) ->
+	binary:part(TXID, 0, 8).
+
+%% @doc Return true if the given transaction identifier is found in the mempool or
+%% block cache (the last ?STORE_BLOCKS_BEHIND_CURRENT blocks).
+is_mempool_or_block_cache_tx(TXID) ->
+	ets:match_object(tx_prefixes, {tx_id_prefix(TXID), TXID}) /= [].
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -77,7 +88,7 @@ init([]) ->
 		end,
 	case {BI, Config#config.auto_join} of
 		{not_joined, true} ->
-			ar_join:start(Config#config.peers);
+			ar_join:start(ar_peers:get_trusted_peers());
 		{BI, true} ->
 			start_from_block_index(BI);
 		{_, false} ->
@@ -128,6 +139,7 @@ load_mempool() ->
 				maps:map(
 					fun(TXID, {TX, Status}) ->
 						ets:insert(node_state, {{tx, TXID}, TX}),
+						ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 						Status
 					end,
 					TXs
@@ -192,9 +204,9 @@ tx_propagated_size(#tx{ format = 2 }) ->
 tx_propagated_size(#tx{ format = 1, data = Data }) ->
 	?TX_SIZE_BASE + byte_size(Data).
 
-%% @doc Return a delay in milliseconds to wait before including a transaction into a block.
-%% The delay is computed as base delay + a function of data size with a conservative
-%% estimation of the network speed.
+%% @doc Return a delay in milliseconds to wait before including a transaction
+%% into a block. The delay is computed as base delay + a function of data size with
+%% a conservative estimation of the network speed.
 calculate_delay(Bytes) ->
 	BaseDelay = (?BASE_TX_PROPAGATION_DELAY) * 1000,
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
@@ -211,7 +223,6 @@ start_io_threads() ->
 	[spawn_link(
 		fun() ->
 			process_flag(trap_exit, true),
-			process_flag(message_queue_data, off_heap),
 			ar_chunk_storage:open_files(),
 			ar_mine:io_thread(SearchInRocksDB)
 		end)
@@ -251,10 +262,10 @@ handle_cast(Message, #{ task_queue := TaskQueue } = State) ->
 	end.
 
 handle_info({join, BI, Blocks}, State) ->
-	{ok, Config} = application:get_env(arweave, config),
-	{ok, _} = ar_wallets:start_link([{blocks, Blocks}, {peers, Config#config.peers}]),
+	{ok, _} = ar_wallets:start_link([{blocks, Blocks},
+			{peers, ar_peers:get_trusted_peers()}]),
+	ar_block_index:init(BI),
 	ets:insert(node_state, [
-		{block_index,			BI},
 		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
 		{joined_blocks,			Blocks}
 	]),
@@ -296,27 +307,26 @@ handle_info({event, block, {new, Block, _Source}}, State) ->
 			{noreply, State}
 	end;
 
-handle_info({event, block, {mined, Block, TXs, CurrentBH}}, State) ->
-	case ets:lookup(node_state, block_index) of
-		[{block_index, [{CurrentBH, _, _} | _] = BI}] ->
+handle_info({event, block, {mined, Block, TXs, CurrentBH, RecallByte}}, State) ->
+	case ets:lookup(node_state, recent_block_index) of
+		[{recent_block_index, [{CurrentBH, _, _} | _] = RecentBI}] ->
 			[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
 			[{current, Current}] = ets:lookup(node_state, current),
-			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, Block#block.height),
+			SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
+					Block#block.height),
 			B = Block#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs },
 			ar_watchdog:mined_block(B#block.indep_hash, B#block.height),
-			?LOG_INFO([
-				{event, mined_block},
-				{indep_hash, ar_util:encode(B#block.indep_hash)},
-				{txs, length(TXs)}
-			]),
+			?LOG_INFO([{event, mined_block},
+					{indep_hash, ar_util:encode(B#block.indep_hash)}, {txs, length(TXs)}]),
 			PrevBlocks = [ar_block_cache:get(block_cache, Current)],
-			BI2 = [block_index_entry(B) | BI],
+			RecentBI2 = [block_index_entry(B) | RecentBI],
 			BlockTXPairs2 = [block_txs_pair(B) | BlockTXPairs],
 			ar_block_cache:add(block_cache, B),
 			ar_ignore_registry:add(B#block.indep_hash),
-			State2 = apply_validated_block(State, B, PrevBlocks, BI2, BlockTXPairs2),
+			State2 = apply_validated_block(State, B, PrevBlocks, 0, RecentBI2, BlockTXPairs2),
 			%% Won't be received by itself, but we should let know all "block" subscribers.
-			ar_events:send(block, {new, Block, miner}),
+			ar_events:send(block, {new, Block#block{ txs = TXs }, #{ source => miner,
+					recall_byte => RecallByte }}),
 			{noreply, State2};
 		_ ->
 			?LOG_INFO([{event, ignore_mined_block}, {reason, accepted_foreign_block}]),
@@ -342,6 +352,7 @@ handle_info({event, tx, {new, TX, _Source}}, State) ->
 			Q2 = gb_sets:add_element({{Utility, Timestamp}, TXID}, Q),
 			MempoolSize2 = increase_mempool_size(MempoolSize, TX),
 			ets:insert(node_state, {{tx, TXID}, TX}),
+			ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 			{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2,
 					MempoolSize2),
 			ets:insert(node_state, [
@@ -388,17 +399,18 @@ handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
 handle_info(wallets_ready, State) ->
-	[{block_index, BI}] = ets:lookup(node_state, block_index),
+	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
 	[{joined_blocks, Blocks}] = ets:lookup(node_state, joined_blocks),
-	ar_header_sync:join(BI, Blocks),
 	B = hd(Blocks),
-	ar_data_sync:join(B#block.packing_2_5_threshold, B#block.strict_data_split_threshold, BI),
+	Height = B#block.height,
+	ar_header_sync:join(Height, RecentBI, Blocks),
+	ar_data_sync:join(RecentBI, B#block.packing_2_5_threshold,
+			B#block.strict_data_split_threshold),
 	ar_tx_blacklist:start_taking_down(),
-	Current = element(1, hd(BI)),
+	Current = element(1, hd(RecentBI)),
 	ar_block_cache:initialize_from_list(block_cache, Blocks),
 	BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
-	Height = B#block.height,
 	{Rate, ScheduledRate} =
 		case Height >= ar_fork:height_2_5() of
 			true ->
@@ -410,8 +422,6 @@ handle_info(wallets_ready, State) ->
 	?LOG_INFO([{event, joined_the_network}]),
 	ets:insert(node_state, [
 		{is_joined,				true},
-		{block_index,			BI},
-		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
 		{current,				Current},
 		{wallet_list,			B#block.wallet_list},
 		{height,				B#block.height},
@@ -614,6 +624,7 @@ may_be_drop_low_priority_txs(Map, Set, Q, {MempoolHeaderSize, MempoolDataSize})
 	may_be_drop_from_disk_pool(TX),
 	ets:delete(node_state, {tx, TXID}),
 	ets:delete(node_state, {tx_timestamp, TXID}),
+	ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 	may_be_drop_low_priority_txs(Map2, Set2, Q2, MempoolSize2);
 may_be_drop_low_priority_txs(Map, Set, Q, {MempoolHeaderSize, MempoolDataSize})
 		when MempoolDataSize > ?MEMPOOL_DATA_SIZE_LIMIT ->
@@ -635,6 +646,7 @@ may_be_drop_low_priority_txs(Map, Iterator, Set, Q, {MempoolHeaderSize, MempoolD
 			may_be_drop_from_disk_pool(TX),
 			ets:delete(node_state, {tx, TXID}),
 			ets:delete(node_state, {tx_timestamp, TXID}),
+			ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 			may_be_drop_low_priority_txs(Map2, Iterator2, Set2, Q2, MempoolSize2);
 		false ->
 			may_be_drop_low_priority_txs(Map, Iterator2, Set, Q,
@@ -650,9 +662,13 @@ decrease_mempool_size({MempoolHeaderSize, MempoolDataSize}, TX) ->
 may_be_drop_from_disk_pool(#tx{ format = 1 }) ->
 	ok;
 may_be_drop_from_disk_pool(TX) ->
-	ar_data_sync:maybe_drop_data_root_from_disk_pool(TX#tx.data_root, TX#tx.data_size, TX#tx.id).
+	ar_data_sync:maybe_drop_data_root_from_disk_pool(TX#tx.data_root, TX#tx.data_size,
+			TX#tx.id).
 
 drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize) ->
+	drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize, true).
+
+drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize, RemoveTXPrefixes) ->
 	{TXs2, Set2, Q2, DroppedTXMap} =
 		lists:foldl(
 			fun(TX, {Acc, SetAcc, QAcc, DroppedAcc}) ->
@@ -686,7 +702,13 @@ drop_txs(DroppedTXs, TXs, Set, Q, MempoolSize) ->
 	maps:map(
 		fun(TXID, _) ->
 			ets:delete(node_state, {tx, TXID}),
-			ets:delete(node_state, {tx_timestamp, TXID})
+			ets:delete(node_state, {tx_timestamp, TXID}),
+			case RemoveTXPrefixes of
+				true ->
+					ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID});
+				false ->
+					ok
+			end
 		end,
 		DroppedTXMap
 	).
@@ -726,12 +748,10 @@ apply_block(#{ blocks_missing_txs := BlocksMissingTXs } = State) ->
 	end.
 
 apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
-	#{
-		blocks_missing_txs := BlocksMissingTXs,
-		missing_txs_lookup_processes := MissingTXsLookupProcesses
-	} = State,
+	#{ blocks_missing_txs := BlocksMissingTXs,
+			missing_txs_lookup_processes := MissingTXsLookupProcesses } = State,
 	[{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
-	[{block_index, BI}] = ets:lookup(node_state, block_index),
+	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
 	[{tx_statuses, Mempool}] = ets:lookup(node_state, tx_statuses),
 	Timestamp = erlang:timestamp(),
 	{TXs, MissingTXIDs} = pick_txs(BShadow#block.txs, Mempool),
@@ -751,36 +771,27 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 					{noreply, State};
 				{ok, RootHash} ->
 					B2 = B#block{ wallet_list = RootHash },
-					Wallets =
-						ar_wallets:get(
-							PrevWalletList,
-							[B#block.reward_addr | ar_tx:get_addresses(B#block.txs)]
-						),
-					BI2 = update_block_index(B, PrevBlocks, BI),
+					Wallets = ar_wallets:get(PrevWalletList,
+							[B#block.reward_addr | ar_tx:get_addresses(B#block.txs)]),
+					{NOrphaned, RecentBI2} = update_block_index(B, PrevBlocks, RecentBI),
 					BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
 					BlockTXPairs3 = tl(BlockTXPairs2),
 					{BlockAnchors, RecentTXMap} =
 						get_block_anchors_and_recent_txs_map(BlockTXPairs3),
-					case ar_node_utils:validate(
-							tl(BI2), B2, PrevB, Wallets, BlockAnchors, RecentTXMap) of
+					RecentBI3 = tl(RecentBI2),
+					SearchSpaceUpperBound = ar_mine:get_search_space_upper_bound(RecentBI3),
+					case ar_node_utils:validate(B2, PrevB, Wallets, BlockAnchors, RecentTXMap,
+							RecentBI3, SearchSpaceUpperBound) of
 						{invalid, Reason} ->
-							?LOG_WARNING([
-								{event, received_invalid_block},
-								{validation_error, Reason}
-							]),
+							?LOG_WARNING([{event, received_invalid_block},
+									{validation_error, Reason}]),
 							BH = B#block.indep_hash,
 							ar_block_cache:remove(block_cache, BH),
 							gen_server:cast(self(), apply_block),
 							{noreply, State};
 						valid ->
-							State2 =
-								apply_validated_block(
-									State,
-									B2,
-									PrevBlocks,
-									BI2,
-									BlockTXPairs2
-								),
+							State2 = apply_validated_block(State, B2, PrevBlocks, NOrphaned,
+									RecentBI2, BlockTXPairs2),
 							ar_watchdog:foreign_block(B#block.indep_hash),
 							record_processing_time(Timestamp),
 							{noreply, State2}
@@ -791,7 +802,7 @@ apply_block(State, BShadow, [PrevB | _] = PrevBlocks) ->
 			Self = self(),
 			monitor(
 				process,
-				PID = spawn(fun() -> get_missing_txs_and_retry(BShadow, Mempool, Self) end)
+				PID = spawn(fun() -> process_flag(trap_exit, true), get_missing_txs_and_retry(BShadow, Mempool, Self) end)
 			),
 			BH = BShadow#block.indep_hash,
 			{noreply, State#{
@@ -826,10 +837,19 @@ pick_txs(TXIDs, TXs) ->
 		TXIDs
 	).
 
-update_block_index(B, [PrevB, PrevPrevB | PrevBlocks], BI) ->
-	[block_index_entry(B) | update_block_index(PrevB, [PrevPrevB | PrevBlocks], BI)];
-update_block_index(B, [#block{ indep_hash = H }], BI) ->
-	[block_index_entry(B) | lists:dropwhile(fun({Hash, _, _}) -> Hash /= H end, BI)].
+update_block_index(B, PrevBlocks, BI) ->
+	#block{ indep_hash = H } = lists:last(PrevBlocks),
+	{NOrphaned, Base} = drop_and_count_orphans(BI, H),
+	{NOrphaned, [block_index_entry(B) |
+		[block_index_entry(PrevB) || PrevB <- PrevBlocks] ++ Base]}.
+
+drop_and_count_orphans(BI, H) ->
+	drop_and_count_orphans(BI, H, 0).
+
+drop_and_count_orphans([{H, _, _} | BI], H, N) ->
+	{N, BI};
+drop_and_count_orphans([_ | BI], H, N) ->
+	drop_and_count_orphans(BI, H, N + 1).
 
 block_index_entry(B) ->
 	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
@@ -869,9 +889,8 @@ get_missing_txs_and_retry(#block{ txs = TXIDs }, _Mempool, _Worker)
 	?LOG_WARNING([{event, ar_node_worker_downloaded_txs_count_exceeds_limit}]),
 	ok;
 get_missing_txs_and_retry(BShadow, Mempool, Worker) ->
-	Peers = ar_bridge:get_remote_peers(),
-	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs, Mempool, Worker,
-		Peers, [], 0).
+	get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs, Mempool,
+			Worker, ar_peers:get_peers(), [], 0).
 
 get_missing_txs_and_retry(_H, _TXIDs, _Mempool, _Worker, _Peers, _TXs, TotalSize)
 		when TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
@@ -909,7 +928,7 @@ get_missing_txs_and_retry(H, TXIDs, Mempool, Worker, Peers, TXs, TotalSize) ->
 			get_missing_txs_and_retry(H, Rest, Mempool, Worker, Peers, TXs2, TotalSize2)
 	end.
 
-apply_validated_block(State, B, PrevBlocks, BI, BlockTXPairs) ->
+apply_validated_block(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) ->
 	[{_, CDiff}] = ets:lookup(node_state, cumulative_diff),
 	case B#block.cumulative_diff =< CDiff of
 		true ->
@@ -919,10 +938,10 @@ apply_validated_block(State, B, PrevBlocks, BI, BlockTXPairs) ->
 			log_applied_block(B),
 			State;
 		false ->
-			apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs)
+			apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs)
 	end.
 
-apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
+apply_validated_block2(State, B, PrevBlocks, NOrphaned, RecentBI, BlockTXPairs) ->
 	[{current, CurrentH}] = ets:lookup(node_state, current),
 	PruneDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	BH = B#block.indep_hash,
@@ -940,9 +959,8 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	gen_server:cast(self(), apply_block),
 	log_applied_block(B),
 	log_tip(B),
-	maybe_report_n_confirmations(B, BI),
-	maybe_store_block_index(B, BI),
-	record_fork_depth(length(PrevBlocks) - 1),
+	maybe_report_n_confirmations(B, RecentBI),
+	record_fork_depth(NOrphaned),
 	return_orphaned_txs_to_mempool(CurrentH, (lists:last(PrevBlocks))#block.indep_hash),
 	lists:foldl(
 		fun (CurrentB, start) ->
@@ -961,10 +979,10 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 		start,
 		lists:reverse([B | PrevBlocks])
 	),
-	RecentBI = lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 2),
 	ar_data_sync:add_tip_block(B#block.packing_2_5_threshold,
-			B#block.strict_data_split_threshold, BlockTXPairs, RecentBI),
-	ar_header_sync:add_tip_block(B, RecentBI),
+			B#block.strict_data_split_threshold, BlockTXPairs,
+			lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
+	ar_header_sync:add_tip_block(B, lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 2)),
 	lists:foreach(
 		fun(PrevB) ->
 			ar_header_sync:add_block(PrevB),
@@ -978,7 +996,7 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 	[{tx_statuses, Map}] = ets:lookup(node_state, tx_statuses),
 	[{tx_priority_set, Set}] = ets:lookup(node_state, tx_priority_set),
 	[{tx_propagation_queue, Q}] = ets:lookup(node_state, tx_propagation_queue),
-	drop_txs(BlockTXs, Map, Set, Q, MempoolSize),
+	drop_txs(BlockTXs, Map, Set, Q, MempoolSize, false),
 	[{tx_statuses, Map2}] = ets:lookup(node_state, tx_statuses),
 	gen_server:cast(self(), {filter_mempool, maps:iterator(Map2)}),
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
@@ -990,9 +1008,12 @@ apply_validated_block2(State, B, PrevBlocks, BI, BlockTXPairs) ->
 			false ->
 				{?INITIAL_USD_TO_AR((Height + 1))(), ?INITIAL_USD_TO_AR((Height + 1))()}
 		end,
+	AddedBIElements = tl(lists:reverse([block_index_entry(B)
+			| [block_index_entry(PrevB) || PrevB <- PrevBlocks]])),
+	ar_block_index:update(AddedBIElements, NOrphaned),
+	maybe_store_block_index(B),
 	ets:insert(node_state, [
-		{block_index,			BI},
-		{recent_block_index,	lists:sublist(BI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
+		{recent_block_index,	lists:sublist(RecentBI, ?STORE_BLOCKS_BEHIND_CURRENT * 3)},
 		{current,				B#block.indep_hash},
 		{wallet_list,			B#block.wallet_list},
 		{height,				B#block.height},
@@ -1034,9 +1055,10 @@ maybe_report_n_confirmations(B, BI) ->
 			do_nothing
 	end.
 
-maybe_store_block_index(B, BI) ->
+maybe_store_block_index(B) ->
 	case B#block.height rem ?STORE_BLOCKS_BEHIND_CURRENT of
 		0 ->
+			BI = ar_node:get_block_index(),
 			spawn(fun() -> ar_storage:write_block_index(BI) end);
 		_ ->
 			ok
@@ -1074,14 +1096,16 @@ reset_miner(#{ miner := Pid, automine := true } = StateIn) ->
 %% @doc Force a node to start mining, update state.
 start_mining(StateIn) ->
 	#{ reward_addr := RewardAddr, tags := Tags, io_threads := IOThreads } = StateIn,
-	[{block_index, BI}] = ets:lookup(node_state, block_index),
+	[{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
 	[{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
 	[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 	[{current, Current}] = ets:lookup(node_state, current),
 	ar_watchdog:started_hashing(),
 	B = ar_block_cache:get(block_cache, Current),
+	SearchSpaceUpperBound = ar_mine:get_search_space_upper_bound(RecentBI),
 	Miner = ar_mine:start({B, collect_mining_transactions(?BLOCK_TX_COUNT_LIMIT),
-			RewardAddr, Tags, BlockAnchors, RecentTXMap, BI, IOThreads}),
+			RewardAddr, Tags, BlockAnchors, RecentTXMap, SearchSpaceUpperBound,
+			RecentBI, IOThreads}),
 	?LOG_INFO([{event, started_mining}]),
 	StateIn#{ miner => Miner }.
 
@@ -1181,7 +1205,8 @@ add_tx_to_mempool(#tx{ id = TXID } = TX, Status) ->
 	{MempoolSize2, Set2, Q2} =
 		case maps:get(TXID, Map, not_found) of
 			not_found ->
-				ets:insert(node_state, {{tx, TX#tx.id}, TX}),
+				ets:insert(node_state, {{tx, TXID}, TX}),
+				ets:insert(tx_prefixes, {tx_id_prefix(TXID), TXID}),
 				{increase_mempool_size(MempoolSize, TX),
 						gb_sets:add_element({Utility, TXID, Status}, Set),
 						gb_sets:add_element({Utility, TXID}, Q)};
@@ -1190,7 +1215,8 @@ add_tx_to_mempool(#tx{ id = TXID } = TX, Status) ->
 						gb_sets:del_element({Utility, TXID, PrevStatus}, Set)), Q}
 		end,
 	Map2 = maps:put(TX#tx.id, Status, Map),
-	{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2, MempoolSize2),
+	{Map3, Set3, Q3, MempoolSize3} = may_be_drop_low_priority_txs(Map2, Set2, Q2,
+			MempoolSize2),
 	ets:insert(node_state, [
 		{tx_statuses, Map3},
 		{mempool_size, MempoolSize3},

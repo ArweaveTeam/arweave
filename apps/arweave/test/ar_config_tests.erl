@@ -23,6 +23,7 @@ parse_config() ->
 			{138,197,232,192,1984},
 			{46,101,67,172,1984}
 		],
+		block_gossip_peers = [{159,203,158,108,1984}, {150,150,150,150, 1983}],
 		data_dir = "some_data_dir",
 		metrics_dir = "metrics_dir",
 		polling = 10,

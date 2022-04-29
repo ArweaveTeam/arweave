@@ -18,7 +18,7 @@
 
 %% @doc Start a process that will attempt to download the block index and the latest blocks.
 start(Peers) ->
-	spawn(fun() -> start2(Peers) end).
+	spawn(fun() -> process_flag(trap_exit, true), start2(Peers) end).
 
 %%%===================================================================
 %%% Private functions.
@@ -62,7 +62,7 @@ get_block(Peers, H) ->
 get_block(Peers, H, Retries) ->
 	ar:console("Downloading joining block ~s.~n", [ar_util:encode(H)]),
 	case ar_http_iface_client:get_block_shadow(Peers, H) of
-		{_, #block{} = BShadow} ->
+		{_Peer, #block{} = BShadow, _Time, _Size} ->
 			Mempool = ar_node:get_pending_txs([as_map, id_only]),
 			get_block(Peers, BShadow, Mempool, BShadow#block.txs, [], Retries);
 		_ ->

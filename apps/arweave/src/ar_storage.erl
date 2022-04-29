@@ -3,14 +3,14 @@
 -behaviour(gen_server).
 
 -export([start_link/0, write_full_block/2, read_block/1, read_block/2, write_tx/1,
-		write_tx_data/1, write_tx_data/2, write_tx_data/3, read_tx/1, read_tx_data/1,
+		write_tx_data/1, write_tx_data/2, read_tx/1, read_tx_data/1,
 		update_confirmation_index/1, get_tx_confirmation_data/1, get_wallet_list_range/2,
-		read_wallet_list/1, write_wallet_list/4, write_wallet_list/2, write_wallet_list_chunk/3,
-		write_block_index/1, read_block_index/0, delete_blacklisted_tx/1,
-		get_free_space/1, lookup_tx_filename/1, wallet_list_filepath/1,
-		tx_filepath/1, tx_data_filepath/1, read_tx_file/1, read_migrated_v1_tx_file/1,
-		ensure_directories/1, write_file_atomic/2, write_term/2, write_term/3, read_term/1,
-		read_term/2, delete_term/1]).
+		read_wallet_list/1, write_wallet_list/4, write_wallet_list/2,
+		write_wallet_list_chunk/3, write_block_index/1, read_block_index/0,
+		delete_blacklisted_tx/1, get_free_space/1, lookup_tx_filename/1,
+		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
+		read_migrated_v1_tx_file/1, ensure_directories/1, write_file_atomic/2,
+		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -37,9 +37,14 @@ write_full_block(#block{ height = 0 } = BShadow, TXs) when ?NETWORK_NAME == "arw
 	%% Genesis transactions are stored in data/genesis_txs; they are part of the repository.
 	write_full_block2(BShadow, TXs);
 write_full_block(BShadow, TXs) ->
-	case write_tx([TX || TX <- TXs, not is_blacklisted(TX)]) of
+	case update_confirmation_index(BShadow#block{ txs = TXs }) of
 		ok ->
-			write_full_block2(BShadow, TXs);
+			case write_tx([TX || TX <- TXs, not is_blacklisted(TX)]) of
+				ok ->
+					write_full_block2(BShadow, TXs);
+				Error ->
+					Error
+			end;
 		Error ->
 			Error
 	end.
@@ -50,13 +55,21 @@ update_confirmation_index(B) ->
 		true ->
 			ar_arql_db:insert_full_block(B, store_tags);
 		false ->
-			case catch gen_server:call(?MODULE, {put_tx_confirmation_data, B}) of
-				{'EXIT', {timeout, {gen_server, call, _}}} ->
-					{error, timeout};
-				Reply ->
-					Reply
-			end
+			put_tx_confirmation_data(B)
 	end.
+
+put_tx_confirmation_data(B) ->
+	[{_, TXConfirmationDB}] = ets:lookup(?MODULE, tx_confirmation_db),
+	Data = term_to_binary({B#block.height, B#block.indep_hash}),
+	lists:foldl(
+		fun	(TX, ok) ->
+				ar_kv:put(TXConfirmationDB, TX#tx.id, Data);
+			(_TX, Acc) ->
+				Acc
+		end,
+		ok,
+		B#block.txs
+	).
 
 %% @doc Return {BlockHeight, BlockHash} belonging to the block where
 %% the given transaction was included.
@@ -110,7 +123,7 @@ read_block(BH) ->
 			%% node is out of disk space.
 			read_block_from_file(Filename);
 		_ ->
-			case ets:lookup(?MODULE, block_db) of
+			case catch ets:lookup(?MODULE, block_db) of
 				[{_, DB}] ->
 					case ar_kv:get(DB, BH) of
 						not_found ->
@@ -154,7 +167,7 @@ lookup_block_filename(H) ->
 		?BLOCK_DIR,
 		binary_to_list(ar_util:encode(H)) ++ ".json"
 	]),
-	case filelib:is_file(Name) of
+	case is_file(Name) of
 		true ->
 			Name;
 		false ->
@@ -282,11 +295,7 @@ write_tx(#tx{ format = Format } = TX) ->
 							%% if we fail to store it, we return an error here.
 							%% We have already checked whether the transaction is blacklisted
 							%% prior to calling this function, see is_blacklisted/1.
-							write_tx_data(
-								no_expected_data_root,
-								TX#tx.data,
-								write_to_free_space_buffer
-							);
+							write_tx_data(no_expected_data_root, TX#tx.data);
 						{true, 2} ->
 							case ar_tx_blacklist:is_tx_blacklisted(TX#tx.id) of
 								true ->
@@ -324,31 +333,22 @@ write_tx_header(TX) ->
 	end.
 
 write_tx_data(Data) ->
-	write_tx_data(no_expected_data_root, Data, do_not_write_to_free_space_buffer).
+	write_tx_data(no_expected_data_root, Data).
 
 write_tx_data(ExpectedDataRoot, Data) ->
-	write_tx_data(ExpectedDataRoot, Data, do_not_write_to_free_space_buffer).
-
-write_tx_data(ExpectedDataRoot, Data, WriteToFreeSpaceBuffer) ->
 	Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, Data),
 	SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
 	SizeTaggedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks),
 	case {ExpectedDataRoot, ar_merkle:generate_tree(SizeTaggedChunkIDs)} of
 		{no_expected_data_root, {DataRoot, DataTree}} ->
-			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpaceBuffer);
+			write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks);
 		{_, {ExpectedDataRoot, DataTree}} ->
-			write_tx_data(
-				ExpectedDataRoot,
-				DataTree,
-				Data,
-				SizeTaggedChunks,
-				WriteToFreeSpaceBuffer
-			);
+			write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks);
 		_ ->
 			{error, [invalid_data_root]}
 	end.
 
-write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpaceBuffer) ->
+write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks) ->
 	Errors = lists:foldl(
 		fun
 			({<<>>, _}, Acc) ->
@@ -370,7 +370,7 @@ write_tx_data(ExpectedDataRoot, DataTree, Data, SizeTaggedChunks, WriteToFreeSpa
 					data_path => DataPath,
 					data_size => byte_size(Data)
 				},
-				case ar_data_sync:add_chunk(Proof, 30000, WriteToFreeSpaceBuffer) of
+				case ar_data_sync:add_chunk(Proof) of
 					ok ->
 						Acc;
 					{error, Reason} ->
@@ -403,7 +403,7 @@ read_tx(ID) ->
 	end.
 
 read_tx2(ID) ->
-	case ets:lookup(?MODULE, tx_db) of
+	case catch ets:lookup(?MODULE, tx_db) of
 		[{_, DB}] ->
 			case ar_kv:get(DB, ID) of
 				not_found ->
@@ -470,7 +470,7 @@ read_tx_from_file(ID) ->
 	end.
 
 read_tx_file(Filename) ->
-	case file:read_file(Filename) of
+	case read_file_raw(Filename) of
 		{ok, <<>>} ->
 			file:delete(Filename),
 			?LOG_WARNING([{event, empty_tx_file},
@@ -482,15 +482,30 @@ read_tx_file(Filename) ->
 					{ok, TX};
 				_ ->
 					file:delete(Filename),
-					?LOG_WARNING([{event, failed_to_parse_tx}, {filename, Filename}]),
+					?LOG_WARNING([{event, failed_to_parse_tx},
+							{filename, Filename}]),
 					{error, failed_to_parse_tx}
 			end;
 		Error ->
 			Error
 	end.
 
+read_file_raw(Filename) ->
+	case file:open(Filename, [read, raw, binary]) of
+		{ok, File} ->
+			case file:read(File, 20000000) of
+				{ok, Bin} ->
+					file:close(File),
+					{ok, Bin};
+				Error ->
+					Error
+			end;
+		Error ->
+			Error
+	end.
+
 read_migrated_v1_tx_file(Filename) ->
-	case file:read_file(Filename) of
+	case read_file_raw(Filename) of
 		{ok, Binary} ->
 			case catch ar_serialize:json_struct_to_v1_tx(Binary) of
 				#tx{ id = ID } = TX ->
@@ -518,7 +533,7 @@ read_tx_data_from_kv_storage(ID) ->
 	end.
 
 read_tx_data(TX) ->
-	case file:read_file(tx_data_filepath(TX)) of
+	case read_file_raw(tx_data_filepath(TX)) of
 		{ok, Data} ->
 			{ok, ar_util:decode(Data)};
 		Error ->
@@ -528,9 +543,9 @@ read_tx_data(TX) ->
 %% Write a block index to disk for retreival later (in emergencies).
 write_block_index(BI) ->
 	?LOG_INFO([{event, writing_block_index_to_disk}]),
-	JSON = ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(BI)),
+	Bin = ar_serialize:block_index_to_binary(BI),
 	File = block_index_filepath(),
-	case write_file_atomic(File, JSON) of
+	case write_file_atomic(File, Bin) of
 		ok ->
 			ok;
 		{error, Reason} = Error ->
@@ -585,11 +600,17 @@ write_wallet_list(ID, RewardAddr, IsRewardAddrNew, WalletList) ->
 read_block_index() ->
 	case file:read_file(block_index_filepath()) of
 		{ok, Binary} ->
-			case ar_serialize:json_struct_to_block_index(ar_serialize:dejsonify(Binary)) of
-				[H | _] = HL when is_binary(H) ->
-					[{BH, not_set, not_set} || BH <- HL];
-				BI ->
-					BI
+			case ar_serialize:binary_to_block_index(Binary) of
+				{ok, BI} ->
+					BI;
+				{error, _} ->
+					case ar_serialize:json_struct_to_block_index(
+							ar_serialize:dejsonify(Binary)) of
+						[H | _] = HL when is_binary(H) ->
+							[{BH, not_set, not_set} || BH <- HL];
+						BI ->
+							BI
+					end
 			end;
 		Error ->
 			Error
@@ -694,17 +715,27 @@ parse_wallet_list_json(JSON) ->
 
 lookup_tx_filename(ID) ->
 	Filepath = tx_filepath(ID),
-	case filelib:is_file(Filepath) of
+	case is_file(Filepath) of
 		true ->
 			{ok, Filepath};
 		false ->
 			MigratedV1Path = filepath([?TX_DIR, "migrated_v1", tx_filename(ID)]),
-			case filelib:is_file(MigratedV1Path) of
+			case is_file(MigratedV1Path) of
 				true ->
 					{migrated_v1, MigratedV1Path};
 				false ->
 					unavailable
 			end
+	end.
+
+%% @doc A quick way to lookup the file without using the Erlang file server.
+%% Helps take off some IO load during the busy times.
+is_file(Filepath) ->
+	case file:read_file_info(Filepath, [raw]) of
+		{ok, #file_info{ type = Type }} when Type == regular orelse Type == symlink ->
+			true;
+		_ ->
+			false
 	end.
 
 %%%===================================================================
@@ -720,19 +751,6 @@ init([]) ->
 	{ok, BlockDB} = ar_kv:open_without_column_families("ar_storage_block_db", []),
 	ets:insert(?MODULE, [{tx_confirmation_db, DB}, {tx_db, TXDB}, {block_db, BlockDB}]),
 	{ok, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = BlockDB }}.
-
-handle_call({put_tx_confirmation_data, B}, _From, State) ->
-	#state{ tx_confirmation_db = TXConfirmationDB } = State,
-	Data = term_to_binary({B#block.height, B#block.indep_hash}),
-	{reply, lists:foldl(
-		fun	(TX, ok) ->
-				ar_kv:put(TXConfirmationDB, TX#tx.id, Data);
-			(_TX, Acc) ->
-				Acc
-		end,
-		ok,
-		B#block.txs
-	), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
@@ -757,7 +775,8 @@ terminate(_Reason, #state{ tx_confirmation_db = DB, tx_db = TXDB, block_db = Blo
 %%%===================================================================
 
 write_block(B) ->
-	case ar_meta_db:get(disk_logging) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(disk_logging, Config#config.enable) of
 		true ->
 			?LOG_INFO([{event, writing_block_to_disk},
 					{block, ar_util:encode(B#block.indep_hash)}]);
@@ -782,19 +801,14 @@ is_blacklisted(#tx{ id = TXID }) ->
 write_full_block2(BShadow, TXs) ->
 	case write_block(BShadow) of
 		ok ->
-			case update_confirmation_index(BShadow#block{ txs = TXs }) of
-				ok ->
-					app_ipfs:maybe_ipfs_add_txs(TXs),
-					ok;
-				Error ->
-					Error
-			end;
-		Error2 ->
-			Error2
+			app_ipfs:maybe_ipfs_add_txs(TXs),
+			ok;
+		Error ->
+			Error
 	end.
 
 read_block_from_file(Filename) ->
-	case file:read_file(Filename) of
+	case read_file_raw(Filename) of
 		{ok, JSON} ->
 			parse_block_json(JSON);
 		{error, Reason} ->
@@ -1025,7 +1039,8 @@ test_store_and_retrieve_block() ->
 store_and_retrieve_block_block_index_test() ->
 	RandomEntry =
 		fun() ->
-			{crypto:strong_rand_bytes(32), rand:uniform(10000), crypto:strong_rand_bytes(32)}
+			{crypto:strong_rand_bytes(48), rand:uniform(10000),
+					crypto:strong_rand_bytes(32)}
 		end,
 	BI = [RandomEntry() || _ <- lists:seq(1, 100)],
 	write_block_index(BI),
