@@ -186,7 +186,6 @@ in
             sync_jobs = cfg.syncJobs;
             disk_pool_jobs = cfg.diskPoolJobs;
             debug = cfg.debug;
-            requests_per_minute_limit = cfg.requestsPerMinuteLimit;
             semaphores = {
               get_chunk = cfg.maxParallelGetChunkRequests;
               get_and_pack_chunk = cfg.maxParallelGetAndPackChunkRequests;
@@ -212,7 +211,7 @@ in
           Type = "forking";
           KillMode = "none";
           ExecStartPre = "${pkgs.bash}/bin/bash -c '(${pkgs.procps}/bin/pkill epmd || true) && (${pkgs.procps}/bin/pkill screen || true) && sleep 5 || true'";
-          ExecStart = "${pkgs.screen}/bin/screen -dmS arweave ${cfg.package}/bin/start-nix config_file ${configFile} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}";
+          ExecStart = "${pkgs.screen}/bin/screen -dmS arweave ${cfg.package}/bin/start-nix config_file ${configFile} requests_per_minute_limit ${cfg.requestsPerMinuteLimit} ${builtins.concatStringsSep " " (builtins.concatMap (p: ["peer" p]) cfg.peer)}";
           ExecStop = "${pkgs.bash}/bin/bash -c '${pkgs.procps}/bin/pkill beam || true; sleep 15'";
           TimeoutStopSec = 15;
           RestartKillSignal = "SIGINT";
