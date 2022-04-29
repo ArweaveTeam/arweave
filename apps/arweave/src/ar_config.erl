@@ -166,6 +166,11 @@ parse_options([{<<"disk_pool_jobs">>, Value} | Rest], Config)
 parse_options([{<<"disk_pool_jobs">>, Value} | _], _) ->
 	{error, {bad_type, disk_pool_jobs, number}, Value};
 
+parse_options([{<<"requests_per_minute_limit">>, L} | Rest], Config) when is_integer(L) ->
+	parse_options(Rest, Config#config{ requests_per_minute_limit = L });
+parse_options([{<<"requests_per_minute_limit">>, L} | _], _) ->
+	{error, {bad_type, requests_per_minute_limit, number}, L};
+
 parse_options([{<<"load_mining_key">>, DataDir} | Rest], Config) when is_binary(DataDir) ->
 	parse_options(Rest, Config#config{ load_key = binary_to_list(DataDir) });
 parse_options([{<<"load_mining_key">>, DataDir} | _], _) ->
