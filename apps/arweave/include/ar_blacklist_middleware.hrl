@@ -10,19 +10,21 @@ end).
 -ifdef(DEBUG).
 -define(RPM_BY_PATH(Path, DefaultPathLimit), fun() ->
 	case Path of
-		[<<"chunk">> | _]            -> {chunk,            12000};
-		[<<"chunk2">> | _]           -> {chunk,            12000};
-		[<<"data_sync_record">> | _] -> {data_sync_record, 10000};
-		_ ->                            {default,          DefaultPathLimit}
+		[<<"chunk">> | _]					-> {chunk,					12000}; % ~50 MB/s.
+		[<<"chunk2">> | _]					-> {chunk,					12000}; % ~50 MB/s.
+		[<<"data_sync_record">> | _]		-> {data_sync_record,		400};
+		[<<"recent_hash_list_diff">> | _]	-> {recent_hash_list_diff,	60};
+		_									-> {default,				DefaultPathLimit}
 	end
 end).
 -else.
 -define(RPM_BY_PATH(Path, DefaultPathLimit), fun() ->
 	case Path of
-		[<<"chunk">> | _]            -> {chunk,            12000}; % ~50 MB/s.
-		[<<"chunk2">> | _]           -> {chunk,            12000}; % ~50 MB/s.
-		[<<"data_sync_record">> | _] -> {data_sync_record, 40};
-		_ ->                            {default,          DefaultPathLimit}
+		[<<"chunk">> | _]					-> {chunk,					12000}; % ~50 MB/s.
+		[<<"chunk2">> | _]					-> {chunk,					12000}; % ~50 MB/s.
+		[<<"data_sync_record">> | _]		-> {data_sync_record,		40};
+		[<<"recent_hash_list_diff">> | _]	-> {recent_hash_list_diff,	60};
+		_									-> {default,				DefaultPathLimit}
 	end
 end).
 -endif.

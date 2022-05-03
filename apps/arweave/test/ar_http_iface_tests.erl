@@ -405,9 +405,17 @@ get_non_existent_block_test() ->
 	[B0] = ar_weave:init([]),
 	ar_test_node:start(B0),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/height/100"}),
+		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984},
+				path => "/block/height/100"}),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
-		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984}, path => "/block/hash/abcd"}),
+		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984},
+				path => "/block2/height/100"}),
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
+		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984},
+				path => "/block/hash/abcd"}),
+	{ok, {{<<"404">>, _}, _, _, _, _}} =
+		ar_http:req(#{method => get, peer => {127, 0, 0, 1, 1984},
+				path => "/block2/hash/abcd"}),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -1208,10 +1216,31 @@ test_send_block2() ->
 			peer => slave_peer(), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
 					indep_hash = H2, previous_block = B#block.indep_hash }) }),
-	B3 = B#block{ txs = ar_storage:read_tx(B#block.txs) },
+	BTXs = ar_storage:read_tx(B#block.txs),
+	B3 = B#block{ txs = BTXs },
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
 			peer => slave_peer(), path => "/block2",
 			body => ar_serialize:block_to_binary(B3) }),
+	{ok, {{<<"200">>, _}, _, SerializedB, _, _}} = ar_http:req(#{ method => get,
+			peer => master_peer(), path => "/block2/height/1" }),
+	?assertEqual({ok, B}, ar_serialize:binary_to_block(SerializedB)),
+	SortedTXs = lists:sort(TXs),
+	Map = element(2, lists:foldl(fun(TX, {N, M}) -> {N + 1, maps:put(TX#tx.id, N, M)} end,
+			{0, #{}}, SortedTXs)),
+	{ok, {{<<"200">>, _}, _, Serialized2B, _, _}} = ar_http:req(#{ method => get,
+			peer => master_peer(), path => "/block2/height/1",
+			body => << 1:1, 0:(8 * 125 - 1) >> }),
+	?assertEqual({ok, B#block{ txs = [case maps:get(TX#tx.id, Map) == 0 of true -> TX;
+			_ -> TX#tx.id end || TX <- BTXs] }}, ar_serialize:binary_to_block(Serialized2B)),
+	{ok, {{<<"200">>, _}, _, Serialized2B, _, _}} = ar_http:req(#{ method => get,
+			peer => master_peer(), path => "/block2/height/1",
+			body => << 1:1, 0:7 >> }),
+	{ok, {{<<"200">>, _}, _, Serialized3B, _, _}} = ar_http:req(#{ method => get,
+			peer => master_peer(), path => "/block2/height/1",
+			body => << 0:1, 1:1, 0:1, 1:1, 0:4 >> }),
+	?assertEqual({ok, B#block{ txs = [case lists:member(maps:get(TX#tx.id, Map), [1, 3]) of
+			true -> TX; _ -> TX#tx.id end || TX <- BTXs] }},
+					ar_serialize:binary_to_block(Serialized3B)),
 	B4 = read_block_when_stored(H2, true),
 	timer:sleep(500),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
@@ -1325,6 +1354,52 @@ test_falls_back_to_block_endpoint_when_cannot_send_transactions() ->
 	connect_to_slave(),
 	ar_bridge ! {event, block, {new, B, #{ recall_byte => undefined }}},
 	assert_slave_wait_until_height(1).
+
+get_recent_hash_list_diff_test_() ->
+	{timeout, 20, fun test_get_recent_hash_list_diff/0}.
+
+test_get_recent_hash_list_diff() ->
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(100), <<>>}]),
+	start(B0),
+	slave_start(B0),
+	{ok, {{<<"404">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => get,
+		peer => master_peer(), path => "/recent_hash_list_diff",
+		headers => [], body => <<>> }),
+	{ok, {{<<"400">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => get,
+		peer => master_peer(), path => "/recent_hash_list_diff",
+		headers => [], body => crypto:strong_rand_bytes(47) }),
+	{ok, {{<<"404">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => get,
+		peer => master_peer(), path => "/recent_hash_list_diff",
+		headers => [], body => crypto:strong_rand_bytes(48) }),
+	B0H = B0#block.indep_hash,
+	{ok, {{<<"200">>, _}, _, B0H, _, _}} = ar_http:req(#{ method => get,
+		peer => master_peer(), path => "/recent_hash_list_diff",
+		headers => [], body => B0H }),
+	ar_node:mine(),
+	[{B1H, _, _}, _] = wait_until_height(1),
+	{ok, {{<<"200">>, _}, _, << B0H:48/binary, B1H:48/binary, 0:16 >> , _, _}}
+			= ar_http:req(#{ method => get, peer => master_peer(),
+			path => "/recent_hash_list_diff", headers => [], body => B0H }),
+	TXs = [sign_tx(Wallet, #{ last_tx => get_tx_anchor() }) || _ <- lists:seq(1, 3)],
+	lists:foreach(fun(TX) -> assert_post_tx_to_master(TX) end, TXs),
+	ar_node:mine(),
+	[{B2H, _, _} | _] = wait_until_height(2),
+	[TXID1, TXID2, TXID3] = [TX#tx.id || TX <- lists:sort(TXs)],
+	{ok, {{<<"200">>, _}, _, << B0H:48/binary, B1H:48/binary, 0:16, B2H:48/binary,
+			3:16, TXID1:32/binary, TXID2:32/binary, TXID3/binary >> , _, _}}
+			= ar_http:req(#{ method => get, peer => master_peer(),
+			path => "/recent_hash_list_diff", headers => [], body => B0H }),
+	{ok, {{<<"200">>, _}, _, << B0H:48/binary, B1H:48/binary, 0:16, B2H:48/binary,
+			3:16, TXID1:32/binary, TXID2:32/binary, TXID3/binary >> , _, _}}
+			= ar_http:req(#{ method => get, peer => master_peer(),
+			path => "/recent_hash_list_diff", headers => [],
+			body => << B0H/binary, (crypto:strong_rand_bytes(48))/binary >>}),
+	{ok, {{<<"200">>, _}, _, << B1H:48/binary, B2H:48/binary,
+			3:16, TXID1:32/binary, TXID2:32/binary, TXID3/binary >> , _, _}}
+			= ar_http:req(#{ method => get, peer => master_peer(),
+			path => "/recent_hash_list_diff", headers => [],
+			body => << B0H/binary, B1H/binary, (crypto:strong_rand_bytes(48))/binary >>}).
 
 send_new_block(Peer, B) ->
 	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,

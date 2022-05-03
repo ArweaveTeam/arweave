@@ -13,6 +13,10 @@
 
 -define(HANDLER_TIMEOUT, 55000).
 
+-define(MAX_SERIALIZED_RECENT_HASH_LIST_DIFF, 2400). % 50 * 48.
+
+-define(MAX_SERIALIZED_MISSING_TX_INDICES, 125). % Every byte encodes 8 positions.
+
 %%%===================================================================
 %%% Cowboy handler callbacks.
 %%%===================================================================
@@ -668,6 +672,35 @@ handle(<<"GET">>, [<<"recent_hash_list">>], Req, _Pid) ->
 			{200, #{}, ar_serialize:jsonify(Encoded), Req}
 	end;
 
+%% Accept the list of independent block hashes ordered from oldest to newest
+%% and return the deviation of our hash list from the given one.
+%% Peers may use this endpoint to make sure they did not miss blocks or learn
+%% about the missed blocks and their transactions so that they can catch up quickly.
+handle(<<"GET">>, [<<"recent_hash_list_diff">>], Req, Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case read_complete_body(Req, Pid, ?MAX_SERIALIZED_RECENT_HASH_LIST_DIFF) of
+				{ok, Body, Req2} ->
+					case decode_recent_hash_list(Body) of
+						{ok, ReverseHL} ->
+							BlockTXPairs = ar_node:get_block_txs_pairs(),
+							case get_recent_hash_list_diff(ReverseHL,
+									lists:reverse(BlockTXPairs)) of
+								no_intersection ->
+									{404, #{}, <<>>, Req2};
+								Bin ->
+									{200, #{}, Bin, Req2}
+							end;
+						error ->
+							{400, #{}, <<>>, Req2}
+					end;
+				{error, body_size_too_large} ->
+					{413, #{}, <<"Payload too large">>, Req}
+			end
+	end;
+
 %% Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list.
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
@@ -862,6 +895,13 @@ handle(<<"GET">>, [<<"block">>, Type, ID], Req, Pid)
 
 %% Return the binary-encoded block with the given height or hash.
 %% GET request to endpoint /block2/{height|hash}/{height|hash}.
+%% Optionally accept an HTTP body, up to 125 bytes - the encoded
+%% transaction indices where the Nth bit being 1 asks to include
+%% the Nth transaction in the alphabetical order (not just its identifier)
+%% in the response. The node only includes transactions in the response
+%% when the corresponding indices are present in the request and those
+%% transactions are found in the block cache - the motivation is to keep
+%% the endpoint lightweight.
 handle(<<"GET">>, [<<"block2">>, Type, ID], Req, Pid)
 		when Type == <<"height">> orelse Type == <<"hash">> ->
 	handle_get_block(Type, ID, Req, Pid, binary);
@@ -1207,28 +1247,7 @@ handle_get_block(Type, ID, Req, Pid, Encoding) ->
 				{error, invalid} ->
 					{404, #{}, <<"Block not found.">>, Req};
 				{ok, H} ->
-					ReadB =
-						case ar_randomx_state:get_key_block(H) of
-							not_found ->
-								ar_storage:read_block(H);
-							{ok, B} ->
-								B
-						end,
-					case ReadB of
-						unavailable ->
-							{404, #{}, <<"Block not found.">>, Req};
-						#block{} ->
-							Bin =
-								case Encoding of
-									json ->
-										ar_serialize:jsonify(
-												ar_serialize:block_to_json_struct(
-														ReadB));
-									binary ->
-										ar_serialize:block_to_binary(ReadB)
-								end,
-							{200, #{}, Bin, Req}
-					end
+					handle_get_block(H, Req, Pid, Encoding)
 			end;
 		<<"height">> ->
 			case ar_node:is_joined() of
@@ -1246,14 +1265,97 @@ handle_get_block(Type, ID, Req, Pid, Encoding) ->
 								not_found ->
 									{404, #{}, <<"Block not found.">>, Req};
 								{H, _, _} ->
-									handle_get_block(<<"hash">>, ar_util:encode(H),
-											Req, Pid, Encoding)
+									handle_get_block(<<"hash">>, ar_util:encode(H), Req, Pid,
+											Encoding)
 							end
 					catch _:_ ->
 						{400, #{}, <<"Invalid height.">>, Req}
 					end
 			end
 	end.
+
+handle_get_block(H, Req, Pid, Encoding) ->
+	case ar_block_cache:get(block_cache, H) of
+		not_found ->
+			handle_get_block2(H, Req, Encoding);
+		B ->
+			case {Encoding, lists:any(fun(TX) -> is_binary(TX) end, B#block.txs)} of
+				{binary, false} ->
+					%% We have found the block in the block cache. Therefore, we can
+					%% include the requested transactions without doing disk lookups.
+					case read_complete_body(Req, Pid, ?MAX_SERIALIZED_MISSING_TX_INDICES) of
+						{ok, Body, Req2} ->
+							case parse_missing_tx_indices(Body) of
+								error ->
+									{400, #{}, <<>>, Req2};
+								Indices ->
+									SortedTXs = lists:sort(B#block.txs),
+									Map = collect_missing_transactions(SortedTXs, Indices),
+									TXs2 = [maps:get(TX#tx.id, Map, TX#tx.id)
+											|| TX <- B#block.txs],
+									handle_get_block3(B#block{ txs = TXs2 }, Req2, binary)
+							end;
+						{error, body_size_too_large} ->
+							{413, #{}, <<"Payload too large">>, Req}
+					end;
+				_ ->
+					handle_get_block3(B, Req, Encoding)
+			end
+	end.
+
+handle_get_block2(H, Req, Encoding) ->
+	ReadB =
+		case ar_randomx_state:get_key_block(H) of
+			not_found ->
+				ar_storage:read_block(H);
+			{ok, B} ->
+				B
+		end,
+	case ReadB of
+		unavailable ->
+			{404, #{}, <<"Block not found.">>, Req};
+		#block{} ->
+			handle_get_block3(ReadB, Req, Encoding)
+	end.
+
+handle_get_block3(B, Req, Encoding) ->
+	Bin =
+		case Encoding of
+			json ->
+				ar_serialize:jsonify(ar_serialize:block_to_json_struct(B));
+			binary ->
+				ar_serialize:block_to_binary(B)
+		end,
+	{200, #{}, Bin, Req}.
+
+parse_missing_tx_indices(Input) ->
+	parse_missing_tx_indices(Input, 0).
+
+parse_missing_tx_indices(<< 0:1, Rest/bitstring >>, N) ->
+	parse_missing_tx_indices(Rest, N + 1);
+parse_missing_tx_indices(<< 1:1, Rest/bitstring >>, N) ->
+	case parse_missing_tx_indices(Rest, N + 1) of
+		error ->
+			error;
+		Indices ->
+			[N | Indices]
+	end;
+parse_missing_tx_indices(<<>>, _N) ->
+	[];
+parse_missing_tx_indices(_BadInput, _N) ->
+	error.
+
+collect_missing_transactions(TXs, Indices) ->
+	collect_missing_transactions(TXs, Indices, 0).
+
+collect_missing_transactions([#tx{ id = TXID } = TX | TXs], [N | Indices], N) ->
+	maps:put(TXID, TX, collect_missing_transactions(TXs, Indices, N + 1));
+collect_missing_transactions([_TX | TXs], Indices, N) ->
+	collect_missing_transactions(TXs, Indices, N + 1);
+collect_missing_transactions(_TXs, [], _N) ->
+	#{};
+collect_missing_transactions([], _Indices, _N) ->
+	#{}.
 
 handle_post_tx({Req, Pid, Encoding}) ->
 	case ar_node:is_joined() of
@@ -1987,6 +2089,42 @@ count_received_transactions([_ | TXs], N) ->
 	count_received_transactions(TXs, N);
 count_received_transactions([], N) ->
 	N.
+
+decode_recent_hash_list(<<>>) ->
+	{ok, []};
+decode_recent_hash_list(<< H:48/binary, Rest/binary >>) ->
+	case decode_recent_hash_list(Rest) of
+		error ->
+			error;
+		{ok, HL} ->
+			{ok, [H | HL]}
+	end;
+decode_recent_hash_list(_Rest) ->
+	error.
+
+get_recent_hash_list_diff([H | HL], [{H, _TXIDs} | BlockTXPairs]) ->
+	get_recent_hash_list_diff(HL, BlockTXPairs, H);
+get_recent_hash_list_diff(_, _) ->
+	no_intersection.
+
+get_recent_hash_list_diff([H | HL], [{H, _SizeTaggedTXs} | BlockTXPairs], _PrevH) ->
+	get_recent_hash_list_diff(HL, BlockTXPairs, H);
+get_recent_hash_list_diff(_HL, BlockTXPairs, PrevH) ->
+	<< PrevH/binary, (get_recent_hash_list_diff(BlockTXPairs))/binary >>.
+
+get_recent_hash_list_diff([{H, SizeTaggedTXs} | BlockTXPairs]) ->
+	{Len, TXIDs} = get_txids_from_size_tagged_txs(SizeTaggedTXs),
+	<< H:48/binary, Len:16,
+			(iolist_to_binary([TXID || TXID <- TXIDs]))/binary,
+			(get_recent_hash_list_diff(BlockTXPairs))/binary >>;
+get_recent_hash_list_diff([]) ->
+	<<>>.
+
+get_txids_from_size_tagged_txs([{{TXID, _}, _} | SizeTaggedTXs]) ->
+	{N, L} = get_txids_from_size_tagged_txs(SizeTaggedTXs),
+	{N + 1, [TXID | L]};
+get_txids_from_size_tagged_txs([]) ->
+	{0, []}.
 
 %% Return the block hash list associated with a block.
 process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->

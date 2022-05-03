@@ -51,16 +51,16 @@ req(#{ peer := Peer, path := Path } = Opts) ->
 %%% Internal functions
 %%% ==================================================================
 
-make_request(Pid, #{ method := post, path := P } = Opts) ->
-	Headers = case maps:get(is_peer_request, Opts, true) of
-		true ->
-			merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []));
-		_ ->
-			maps:get(headers, Opts, [])
-	end,
-	gun:post(Pid, P, Headers, maps:get(body, Opts, <<>>));
-make_request(Pid, #{ method := get, path := P } = Opts) ->
-	gun:get(Pid, P, merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []))).
+make_request(Pid, #{ path := Path } = Opts) ->
+	Headers =
+		case maps:get(is_peer_request, Opts, true) of
+			true ->
+				merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Opts, []));
+			_ ->
+				maps:get(headers, Opts, [])
+		end,
+	Method = case maps:get(method, Opts) of get -> "GET"; post -> "POST" end,
+	gun:request(Pid, Method, Path, Headers, maps:get(body, Opts, <<>>)).
 
 get_reponse(Opts) ->
 	#{
