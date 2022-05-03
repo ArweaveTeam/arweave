@@ -99,7 +99,15 @@ show_help() ->
 			)
 		end,
 		[
-			{"config_file (path)", "Load configuration from specified file."},
+			{"config_file (path)", "Load the configuration from the specified JSON file."
+				" The keys in the root object are mapped to the command line arguments "
+				"described here. Additionally, you may specify a semaphores key. Its value "
+				"has to be a nested JSON object where keys are some of: get_chunk, "
+				"get_and_pack_chunk, get_tx_data, post_chunk, post_tx, get_block_index, "
+				"get_wallet_list, arql, gateway_arql, get_sync_record. For instance, your"
+				" config file contents may look like {\"semaphores\": {\"post_tx\": 100}}."
+				" In this case, the node will validate up to 100 incoming transactions in "
+				"parallel."},
 			{"peer (IP:port)", "Join a network on a peer (or set of peers)."},
 			{"block_gossip_peer (IP:port)", "Optionally specify peer(s) to always"
 					" send blocks to."},
@@ -146,9 +154,14 @@ show_help() ->
 				)},
 			{"max_emitters (num)", io_lib:format("The number of transaction propagation "
 				"processes to spawn. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
-			{"tx_validators (num)", io_lib:format("The number of transaction validators"
-				" to spawn. Transaction validators validate transactions pushed to the node"
-				" or fetched from the peers. Default is ~B.", [?DEFAULT_TX_VALIDATOR_COUNT])},
+			{"tx_validators (num)", "Ignored. Set the post_tx key in the semaphores object"
+				" in the configuration file instead."},
+			{"post_tx_timeout", io_lib:format("The time in seconds to wait for the available"
+				" tx validation process before dropping the POST /tx request. Default is ~B."
+				" By default ~B validation processes are running. You can override it by"
+				" setting a different value for the post_tx key in the semaphores object"
+				" in the configuration file.", [?DEFAULT_POST_TX_TIMEOUT,
+						?MAX_PARALLEL_POST_TX_REQUESTS])},
 			{"tx_propagation_parallelization (num)",
 				"DEPRECATED. Does not affect anything."},
 			{"max_propagation_peers", io_lib:format(
@@ -369,6 +382,8 @@ parse_cli_args(["header_sync_jobs", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { header_sync_jobs = list_to_integer(Num) });
 parse_cli_args(["tx_validators", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { tx_validators = list_to_integer(Num) });
+parse_cli_args(["post_tx_timeout", Num|Rest], C) ->
+	parse_cli_args(Rest, C#config { post_tx_timeout = list_to_integer(Num) });
 parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config { tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->

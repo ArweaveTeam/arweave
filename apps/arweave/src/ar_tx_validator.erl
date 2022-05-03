@@ -1,51 +1,79 @@
 -module(ar_tx_validator).
 
--behaviour(gen_server).
-
--export([start_link/2, validate/2]).
-
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+-export([validate/1]).
 
 -include_lib("arweave/include/ar.hrl").
-
--record(state, {
-	workers
-}).
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
-start_link(Name, Workers) ->
-	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
-
-validate(TX, Peer) ->
-	catch gen_server:call(?MODULE, {validate, TX, Peer}, 30000).
-
-%%%===================================================================
-%%% gen_server callbacks.
-%%%===================================================================
-
-init(Workers) ->
-	{ok, #state{ workers = queue:from_list(Workers) }}.
-
-handle_call({validate, TX, Peer}, From, State) ->
-	#state{ workers = Q } = State,
-	{{value, W}, Q2} = queue:out(Q),
-	gen_server:cast(W, {validate, TX, Peer, From}),
-	{noreply, State#state{ workers = queue:in(W, Q2) }};
-
-handle_call(Request, _From, State) ->
-	?LOG_WARNING("event: unhandled_call, request: ~p", [Request]),
-	{reply, ok, State}.
-
-handle_cast(Msg, State) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
-	{noreply, State}.
-
-handle_info(Info, State) ->
-	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
-	{noreply, State}.
-
-terminate(_Reason, _State) ->
-	ok.
+validate(TX) ->
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', height},
+					{'==', '$1', wallet_list},
+					{'==', '$1', recent_txs_map},
+					{'==', '$1', block_anchors},
+					{'==', '$1', usd_to_ar_rate}}], ['$_']}]
+		),
+	Height = proplists:get_value(height, Props),
+	WL = proplists:get_value(wallet_list, Props),
+	RecentTXMap = proplists:get_value(recent_txs_map, Props),
+	BlockAnchors = proplists:get_value(block_anchors, Props),
+	USDToARRate = proplists:get_value(usd_to_ar_rate, Props),
+	Wallets = ar_wallets:get(WL, ar_tx:get_addresses([TX])),
+	MempoolTXs = ar_node:get_pending_txs([as_map, id_only]),
+	Result = ar_tx_replay_pool:verify_tx({TX, USDToARRate, Height, BlockAnchors, RecentTXMap,
+			MempoolTXs, Wallets}),
+	Result2 =
+		case {Result, TX#tx.format == 2 andalso byte_size(TX#tx.data) /= 0} of
+			{valid, true} ->
+				Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, TX#tx.data),
+				SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
+				SizeTaggedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks),
+				{Root, _} = ar_merkle:generate_tree(SizeTaggedChunkIDs),
+				Size = byte_size(TX#tx.data),
+				case {Root, Size} == {TX#tx.data_root, TX#tx.data_size} of
+					true ->
+						valid;
+					false ->
+						{invalid, invalid_data_root_size}
+				end;
+			_ ->
+				Result
+		end,
+	case Result2 of
+		valid ->
+			case TX#tx.format of
+				2 ->
+					{valid, TX};
+				1 ->
+					case TX#tx.data_size > 0 of
+						true ->
+							%% Compute the data root so that we can inform ar_data_sync about
+							%% it so that it can accept the chunks. One may notice here that
+							%% in case of v1 transactions, chunks arrive together with the tx
+							%% header. However, we send the data root to ar_data_sync in
+							%% advance, otherwise ar_header_sync may fail to store the chunks
+							%% when persisting the transaction as registering the data roots of
+							%% a confirmed block is an asynchronous procedure
+							%% (see ar_data_sync:add_tip_block called in ar_node_worker) which
+							%% does not always complete before ar_header_sync attempts the
+							%% insertion.
+							V1Chunks = ar_tx:chunk_binary(?DATA_CHUNK_SIZE, TX#tx.data),
+							SizeTaggedV1Chunks = ar_tx:chunks_to_size_tagged_chunks(V1Chunks),
+							SizeTaggedV1ChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
+									SizeTaggedV1Chunks),
+							{DataRoot, _} = ar_merkle:generate_tree(SizeTaggedV1ChunkIDs),
+							{valid, TX#tx{ data_root = DataRoot }};
+						false ->
+							{valid, TX}
+					end
+			end;
+		_ ->
+			Result2
+	end.

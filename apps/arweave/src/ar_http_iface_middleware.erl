@@ -1362,29 +1362,35 @@ handle_post_tx({Req, Pid, Encoding}) ->
 		false ->
 			not_joined(Req);
 		true ->
-			case post_tx_parse_id({Req, Pid, Encoding}) of
-				{error, invalid_hash, Req2} ->
-					{400, #{}, <<"Invalid hash.">>, Req2};
-				{error, tx_already_processed, _TXID, Req2} ->
-					{208, #{}, <<"Transaction already processed.">>, Req2};
-				{error, invalid_json, Req2} ->
-					{400, #{}, <<"Invalid JSON.">>, Req2};
-				{error, body_size_too_large, Req2} ->
-					{413, #{}, <<"Payload too large">>, Req2};
-				{ok, TX} ->
-					Peer = ar_http_util:arweave_peer(Req),
-					case handle_post_tx(Req, Peer, TX) of
-						ok ->
-							{200, #{}, <<"OK">>, Req};
-						{error_response, {Status, Headers, Body}} ->
-							ar_ignore_registry:remove_temporary(TX#tx.id),
-							{Status, Headers, Body, Req}
+			{ok, Config} = application:get_env(arweave, config),
+			case ar_semaphore:acquire(post_tx, Config#config.post_tx_timeout * 1000) of
+				{error, timeout} ->
+					{503, #{}, <<>>, Req};
+				ok ->
+					case post_tx_parse_id({Req, Pid, Encoding}) of
+						{error, invalid_hash, Req2} ->
+							{400, #{}, <<"Invalid hash.">>, Req2};
+						{error, tx_already_processed, _TXID, Req2} ->
+							{208, #{}, <<"Transaction already processed.">>, Req2};
+						{error, invalid_json, Req2} ->
+							{400, #{}, <<"Invalid JSON.">>, Req2};
+						{error, body_size_too_large, Req2} ->
+							{413, #{}, <<"Payload too large">>, Req2};
+						{ok, TX} ->
+							Peer = ar_http_util:arweave_peer(Req),
+							case handle_post_tx(Req, Peer, TX) of
+								ok ->
+									{200, #{}, <<"OK">>, Req};
+								{error_response, {Status, Headers, Body}} ->
+									ar_ignore_registry:remove_temporary(TX#tx.id),
+									{Status, Headers, Body, Req}
+							end
 					end
 			end
 	end.
 
 handle_post_tx(Req, Peer, TX) ->
-	case ar_tx_validator:validate(TX, Peer) of
+	case ar_tx_validator:validate(TX) of
 		{invalid, tx_verification_failed} ->
 			handle_post_tx_verification_response();
 		{invalid, last_tx_in_mempool} ->
@@ -1399,11 +1405,13 @@ handle_post_tx(Req, Peer, TX) ->
 			handle_post_tx_already_in_mempool_response();
 		{invalid, invalid_data_root_size} ->
 			handle_post_tx_invalid_data_root_response();
-		valid ->
-			handle_post_tx_accepted(Req, Peer)
+		{valid, TX2} ->
+			ar_data_sync:add_data_root_to_disk_pool(TX2#tx.data_root, TX2#tx.data_size,
+					TX#tx.id),
+			handle_post_tx_accepted(Req, TX, Peer)
 	end.
 
-handle_post_tx_accepted(Req, Peer) ->
+handle_post_tx_accepted(Req, TX, Peer) ->
 	%% Exclude successful requests with valid transactions from the
 	%% IP-based throttling, to avoid connectivity issues at the times
 	%% of excessive transaction volumes.
@@ -1411,6 +1419,10 @@ handle_post_tx_accepted(Req, Peer) ->
 	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
 	ar_events:send(peer, {gossiped_tx, Peer, erlang:get(read_body_time),
 			erlang:get(body_size)}),
+	ar_events:send(tx, {new, TX, Peer}),
+	TXID = TX#tx.id,
+	ar_ignore_registry:remove_temporary(TXID),
+	ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000),
 	ok.
 
 handle_post_tx_verification_response() ->
@@ -2308,7 +2320,6 @@ post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
 			post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
 	end;
 post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
-	ok = ar_semaphore:acquire(post_tx, infinity),
 	Timestamp = erlang:timestamp(),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
